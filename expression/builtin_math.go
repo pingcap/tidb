@@ -21,6 +21,8 @@ import (
 	"hash/crc32"
 	"math"
 	"math/rand"
+	"strconv"
+	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
@@ -190,8 +192,68 @@ func builtinRound(args []types.Datum, ctx context.Context) (d types.Datum, err e
 
 // See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_conv
 func builtinConv(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	//TODO  implement
-	return d, errors.New("Function unimplement")
+	// TODO: Implement it.
+	var (
+		n        string
+		r        string
+		toBase   int64
+		fromBase int64
+		signed   bool
+	)
+	for _, arg := range args {
+		if arg.IsNull() {
+			return d, nil
+		}
+	}
+
+	n, err = args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	sc := ctx.GetSessionVars().StmtCtx
+	fromBase, err = args[1].ToInt64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	toBase, err = args[2].ToInt64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if fromBase < 0 {
+		fromBase = -fromBase
+	}
+	if toBase < 0 {
+		signed = true
+		toBase = -toBase
+	}
+	if fromBase > 36 || fromBase < 2 {
+		return d, nil
+	}
+	if toBase > 36 || toBase < 2 {
+		return d, nil
+	}
+	n = getValidPrefix(n, fromBase)
+	if len(n) == 0 {
+		return d, nil
+	}
+
+	if !signed {
+		c, err := strconv.ParseUint(n, int(fromBase), 64)
+		if err != nil {
+			return d, errors.Trace(types.ErrOverflow)
+		}
+		r = strconv.FormatUint(c, int(toBase))
+	} else {
+		c, err := strconv.ParseInt(n, int(fromBase), 64)
+		if err != nil {
+			return d, errors.Trace(types.ErrOverflow)
+		}
+		r = strconv.FormatInt(c, int(toBase))
+	}
+
+	d.SetString(strings.ToUpper(r))
+	return d, nil
 }
 
 //　See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_crc32

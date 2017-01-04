@@ -191,3 +191,25 @@ func (s *testEvaluatorSuite) TestCRC32(c *C) {
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
 }
+
+func (s *testEvaluatorSuite) TestConv(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Arg []interface{}
+		Ret interface{}
+	}{
+		{[]interface{}{"a", 16, 2}, "1010"},
+		{[]interface{}{"6E", 18, 8}, "172"},
+		{[]interface{}{"-17", 10, -18}, "-H"},
+		{[]interface{}{nil, 10, 10}, nil},
+		{[]interface{}{"+18aZ", 7, 36}, 1},
+	}
+
+	Dtbl := tblToDtbl(tbl)
+
+	for _, t := range Dtbl {
+		v, err := builtinConv(t["Arg"], s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
+	}
+}

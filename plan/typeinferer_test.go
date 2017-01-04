@@ -163,6 +163,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"char_length('TiDB')", mysql.TypeLonglong, charset.CharsetBin},
 		{"character_length('TiDB')", mysql.TypeLonglong, charset.CharsetBin},
 		{"crc32('TiDB')", mysql.TypeLonglong, charset.CharsetBin},
+		{"conv('TiDB',36,10)", mysql.TypeVarString, charset.CharsetUTF8},
 	}
 	for _, ca := range cases {
 		ctx := testKit.Se.(context.Context)
