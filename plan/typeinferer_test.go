@@ -164,8 +164,8 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"character_length('TiDB')", mysql.TypeLonglong, charset.CharsetBin},
 		{"crc32('TiDB')", mysql.TypeLonglong, charset.CharsetBin},
 		{"find_in_set('foo', 'foo,bar')", mysql.TypeLonglong, charset.CharsetBin},
-		{"find_in_set('foo', null)", mysql.TypeNull, charset.CharsetBin},
-		{"find_in_set(null, 'bar')", mysql.TypeNull, charset.CharsetBin},
+		{"find_in_set('foo', null)", mysql.TypeLonglong, charset.CharsetBin},
+		{"find_in_set(null, 'bar')", mysql.TypeLonglong, charset.CharsetBin},
 	}
 	for _, ca := range cases {
 		ctx := testKit.Se.(context.Context)

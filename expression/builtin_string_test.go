@@ -779,6 +779,7 @@ func (s *testEvaluatorSuite) TestFindInSet(c *C) {
 		{"foo", "foobar,bar", 0},
 		{" foo ", "foo, foo ", 2},
 		{"", "foo,bar,", 3},
+		{"", "", 0},
 		{1, 1, 1},
 		{1, "1", 1},
 		{"1", 1, 1},

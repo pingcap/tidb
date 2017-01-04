@@ -320,11 +320,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = types.NewFieldType(mysql.TypeLonglong)
 		tp.Flag |= mysql.UnsignedFlag
 	case "find_in_set":
-		if x.Args[0].GetType().Tp == mysql.TypeNull || x.Args[1].GetType().Tp == mysql.TypeNull {
-			tp = types.NewFieldType(mysql.TypeNull)
-		} else {
-			tp = types.NewFieldType(mysql.TypeLonglong)
-		}
+		tp = types.NewFieldType(mysql.TypeLonglong)
 	case "if":
 		// TODO: fix this
 		// See https://dev.mysql.com/doc/refman/5.5/en/control-flow-functions.html#function_if
