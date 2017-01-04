@@ -129,6 +129,7 @@ func (s *Schema) Append(col *Column) {
 	s.Columns = append(s.Columns, col)
 }
 
+// SetUniqueKeys will set the value of Schema.Keys.
 func (s *Schema) SetUniqueKeys(keys []KeyInfo) {
 	s.Keys = keys
 }
