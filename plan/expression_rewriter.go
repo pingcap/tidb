@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -303,34 +304,40 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 	}
 	schema := expression.NewSchema([]*expression.Column{aggCol0})
 	cond, _ := expression.NewFunction(cmpFunc, types.NewFieldType(mysql.TypeTiny), lexpr, aggCol0.Clone())
+	// All of the inner record set should not contain null value. So for t.id < all(select s.id from s), it
+	// should be rewrited to t.id < min(s.id) and if(count(s.id) == count(s.id is null), true, null)
+	isNullFunc, _ := expression.NewFunction(ast.IsNull, types.NewFieldType(mysql.TypeTiny), rexpr.Clone())
+	countNull := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{isNullFunc}, false)
+	count := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, false)
+	agg.AggFuncs = append(agg.AggFuncs, countNull, count)
+	aggColCountNull := &expression.Column{
+		ColName:  model.NewCIStr("agg_col_cnt_null"),
+		FromID:   agg.id,
+		Position: 1,
+		RetType:  countNull.GetType(),
+	}
+	aggColCount := &expression.Column{
+		ColName:  model.NewCIStr("agg_col_cnt"),
+		FromID:   agg.id,
+		Position: 2,
+		RetType:  count.GetType(),
+	}
+	schema.Append(aggColCountNull)
+	schema.Append(aggColCount)
 	if all {
-		// All of the inner record set should not contain null value. So for t.id < all(select s.id from s), it
-		// should be rewrited to t.id < min(s.id) and count(s.id) != count(s.id is null)
-		isNullFunc, _ := expression.NewFunction(ast.IsNull, types.NewFieldType(mysql.TypeTiny), rexpr.Clone())
-		countNull := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{isNullFunc}, false)
-		count := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, false)
-		agg.AggFuncs = append(agg.AggFuncs, countNull, count)
-		aggCol1 := &expression.Column{
-			ColName:  model.NewCIStr("agg_Col_1"),
-			FromID:   agg.id,
-			Position: 1,
-			RetType:  countNull.GetType(),
-		}
-		aggCol2 := &expression.Column{
-			ColName:  model.NewCIStr("agg_Col_2"),
-			FromID:   agg.id,
-			Position: 2,
-			RetType:  count.GetType(),
-		}
-		schema.Append(aggCol1)
-		schema.Append(aggCol2)
-		cond1, _ := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), aggCol1.Clone(), aggCol2.Clone())
-		cond = expression.ComposeCNFCondition(cond, cond1)
-		checkEmpty, _ := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), aggCol2.Clone(), &expression.Constant{
+		countEQ, _ := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), aggColCountNull.Clone(), aggColCount.Clone())
+		nullChecker, _ := expression.NewFunction(ast.If, types.NewFieldType(mysql.TypeTiny), countEQ, expression.One, expression.Null)
+		cond = expression.ComposeCNFCondition(cond, nullChecker)
+		checkEmpty, _ := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), aggColCountNull.Clone(), &expression.Constant{
 			Value:   types.NewDatum(0),
 			RetType: types.NewFieldType(mysql.TypeShort),
 		})
 		cond = expression.ComposeDNFCondition(cond, checkEmpty)
+		log.Warnf("cond %s", cond)
+	} else {
+		countNE, _ := expression.NewFunction(ast.NE, types.NewFieldType(mysql.TypeTiny), aggColCountNull.Clone(), aggColCount.Clone())
+		nullChecker, _ := expression.NewFunction(ast.If, types.NewFieldType(mysql.TypeTiny), countNE, expression.Null, expression.Zero)
+		cond = expression.ComposeDNFCondition(cond, nullChecker)
 	}
 	agg.SetSchema(schema)
 	er.p = er.b.buildSemiApply(er.p, agg, []expression.Expression{cond}, er.asScalar, false)
@@ -361,10 +368,7 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 		RetType:  countFunc.GetType(),
 	}
 	agg.SetSchema(expression.NewSchema([]*expression.Column{firstRowResultCol, count}))
-	gtFunc, _ := expression.NewFunction(ast.GT, types.NewFieldType(mysql.TypeTiny), count.Clone(), &expression.Constant{
-		Value:   types.NewDatum(1),
-		RetType: types.NewFieldType(mysql.TypeShort),
-	})
+	gtFunc, _ := expression.NewFunction(ast.GT, types.NewFieldType(mysql.TypeTiny), count.Clone(), expression.One)
 	neCond, _ := expression.NewFunction(ast.NE, types.NewFieldType(mysql.TypeTiny), lexpr, firstRowResultCol.Clone())
 	cond := expression.ComposeDNFCondition(gtFunc, neCond)
 	er.p = er.b.buildSemiApply(er.p, agg, []expression.Expression{cond}, er.asScalar, false)
@@ -396,14 +400,8 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 		RetType:  countFunc.GetType(),
 	}
 	agg.SetSchema(expression.NewSchema([]*expression.Column{firstRowResultCol, count}))
-	ltFunc, _ := expression.NewFunction(ast.LT, types.NewFieldType(mysql.TypeTiny), count.Clone(), &expression.Constant{
-		Value:   types.NewDatum(2),
-		RetType: types.NewFieldType(mysql.TypeShort),
-	})
-	checkEmpty, _ := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), count.Clone(), &expression.Constant{
-		Value:   types.NewDatum(0),
-		RetType: types.NewFieldType(mysql.TypeShort),
-	})
+	ltFunc, _ := expression.NewFunction(ast.LE, types.NewFieldType(mysql.TypeTiny), count.Clone(), expression.One)
+	checkEmpty, _ := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), count.Clone(), expression.Zero)
 	eqCond, _ := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), lexpr, firstRowResultCol.Clone())
 	cond := expression.ComposeDNFCondition(checkEmpty, expression.ComposeCNFCondition(ltFunc, eqCond))
 	er.p = er.b.buildSemiApply(er.p, agg, []expression.Expression{cond}, er.asScalar, false)

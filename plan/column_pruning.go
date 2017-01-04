@@ -201,7 +201,7 @@ func (p *Join) PruneColumns(parentUsedCols []*expression.Column) {
 	composedSchema := expression.MergeSchema(lChild.GetSchema(), rChild.GetSchema())
 	if p.JoinType == SemiJoin {
 		p.schema = lChild.GetSchema().Clone()
-	} else if p.JoinType == SemiJoinWithAux {
+	} else if p.JoinType == LeftOuterSemiJoin {
 		joinCol := p.schema.Columns[len(p.schema.Columns)-1]
 		p.schema = lChild.GetSchema().Clone()
 		p.schema.Append(joinCol)

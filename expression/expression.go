@@ -91,6 +91,24 @@ func EvalBool(expr Expression, row []types.Datum, ctx context.Context) (bool, er
 	return i != 0, nil
 }
 
+// One stands for a number 1.
+var One = &Constant{
+	Value:   types.NewDatum(1),
+	RetType: types.NewFieldType(mysql.TypeTiny),
+}
+
+// Zero stands for a number 0.
+var Zero = &Constant{
+	Value:   types.NewDatum(0),
+	RetType: types.NewFieldType(mysql.TypeTiny),
+}
+
+// Null stands for null constant.
+var Null = &Constant{
+	Value:   types.NewDatum(nil),
+	RetType: types.NewFieldType(mysql.TypeTiny),
+}
+
 // Constant stands for a constant value.
 type Constant struct {
 	Value   types.Datum

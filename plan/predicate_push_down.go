@@ -92,9 +92,12 @@ func (p *Join) PredicatePushDown(predicates []expression.Expression) (ret []expr
 		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(expression.PropagateConstant(p.ctx, tempCond), leftPlan, rightPlan)
 	}
 	switch p.JoinType {
-	case LeftOuterJoin, SemiJoinWithAux:
-		rightCond = p.RightConditions
-		p.RightConditions = nil
+	case LeftOuterJoin, LeftOuterSemiJoin:
+		// For LeftOuterSemiJoin, the right condition cannot be pushed down. Because it will process the case of NULL.
+		if p.JoinType == LeftOuterJoin {
+			rightCond = p.RightConditions
+			p.RightConditions = nil
+		}
 		leftCond = leftPushCond
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 		ret = append(ret, rightPushCond...)
@@ -345,7 +348,7 @@ func (p *Limit) PredicatePushDown(predicates []expression.Expression) ([]express
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *MaxOneRow) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
-	// Limit forbids any condition to push down.
+	// MaxOneRow forbids any condition to push down.
 	_, _, err := p.baseLogicalPlan.PredicatePushDown(nil)
 	return predicates, p, errors.Trace(err)
 }

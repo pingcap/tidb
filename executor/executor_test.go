@@ -1128,14 +1128,14 @@ func (s *testSuite) TestSubquery(c *C) {
 	result.Check(testkit.Rows("1", "2", "3"))
 	result = tk.MustQuery("select t.c from t where (t.c) < any (select c from t where d > 1000)")
 	result.Check(testkit.Rows())
-	// TODO: Now we won't process the situation of NULL.
-	//tk.MustExec("insert t values (NULL, NULL)")
-	//result = tk.MustQuery("select (t.c) < any (select c from t) from t")
-	//result.Check(testkit.Rows("1", "1", "<nil>", "<nil>"))
-	//result = tk.MustQuery("select (10) > all (select c from t) from t")
-	//result.Check(testkit.Rows("<nil>", "<nil>", "<nil>", "<nil>"))
-	//result = tk.MustQuery("select (c) > all (select c from t) from t")
-	//result.Check(testkit.Rows("0", "0", "0", "<nil>"))
+
+	tk.MustExec("insert t values (NULL, NULL)")
+	result = tk.MustQuery("select (t.c) < any (select c from t) from t")
+	result.Check(testkit.Rows("1", "1", "<nil>", "<nil>"))
+	result = tk.MustQuery("select (10) > all (select c from t) from t")
+	result.Check(testkit.Rows("<nil>", "<nil>", "<nil>", "<nil>"))
+	result = tk.MustQuery("select (c) > all (select c from t) from t")
+	result.Check(testkit.Rows("0", "0", "0", "<nil>"))
 
 	tk.MustExec("drop table if exists a")
 	tk.MustExec("create table a (c int, d int)")

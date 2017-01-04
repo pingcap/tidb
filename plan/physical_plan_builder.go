@@ -480,7 +480,7 @@ func (p *Join) convert2PhysicalPlanSemi(prop *requiredProperty) (*physicalPlanIn
 		}
 	}
 	join := &PhysicalHashSemiJoin{
-		WithAux:         SemiJoinWithAux == p.JoinType,
+		WithAux:         LeftOuterSemiJoin == p.JoinType,
 		EqualConditions: p.EqualConditions,
 		LeftConditions:  p.LeftConditions,
 		RightConditions: p.RightConditions,
@@ -660,7 +660,7 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 		return info, nil
 	}
 	switch p.JoinType {
-	case SemiJoin, SemiJoinWithAux:
+	case SemiJoin, LeftOuterSemiJoin:
 		info, err = p.convert2PhysicalPlanSemi(prop)
 		if err != nil {
 			return nil, errors.Trace(err)

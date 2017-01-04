@@ -593,13 +593,20 @@ func (e *HashSemiJoinExec) prepare() error {
 			break
 		}
 
-		matched := true
 		if e.smallFilter != nil {
-			matched, err = expression.EvalBool(e.smallFilter, row.Data, e.ctx)
+			d, err := e.smallFilter.Eval(row.Data, e.ctx)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if !matched {
+			if d.IsNull() {
+				e.smallTableHasNull = true
+				continue
+			}
+			match, err := d.ToBool(e.ctx.GetSessionVars().StmtCtx)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if match == 0 {
 				continue
 			}
 		}
