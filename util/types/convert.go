@@ -182,8 +182,11 @@ func floatStrToIntStr(validFloat string) (string, error) {
 			eIdx = i
 		}
 	}
-	if dotIdx == -1 && eIdx == -1 {
-		return validFloat, nil
+	if eIdx == -1 {
+		if dotIdx == -1 {
+			return validFloat, nil
+		}
+		return validFloat[:dotIdx], nil
 	}
 	var intCnt int
 	digits := make([]byte, 0, len(validFloat))
