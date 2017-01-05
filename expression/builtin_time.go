@@ -638,15 +638,16 @@ func builtinDateArith(args []types.Datum, ctx context.Context) (d types.Datum, e
 	// Op is used for distinguishing date_add and date_sub.
 	// args[0] -> Op
 	// args[1] -> Date
-	// args[2] -> DateArithInterval
+	// args[2] -> Interval Value
+	// args[3] -> Interval Unit
 	// health check for date and interval
-	if args[1].IsNull() {
+	if args[1].IsNull() || args[2].IsNull() {
 		return d, nil
 	}
 	nodeDate := args[1]
-	nodeInterval := args[2].GetInterface().(ast.DateArithInterval)
-	nodeIntervalIntervalDatum := nodeInterval.Interval.GetDatum()
-	if nodeIntervalIntervalDatum.IsNull() {
+	nodeIntervalValue := args[2]
+	nodeIntervalUnit := args[3].GetString()
+	if nodeIntervalValue.IsNull() {
 		return d, nil
 	}
 	// parse date
@@ -672,7 +673,7 @@ func builtinDateArith(args []types.Datum, ctx context.Context) (d types.Datum, e
 		}
 	}
 	sc := ctx.GetSessionVars().StmtCtx
-	if types.IsClockUnit(nodeInterval.Unit) {
+	if types.IsClockUnit(nodeIntervalUnit) {
 		fieldType = mysql.TypeDatetime
 	}
 	resultField = types.NewFieldType(fieldType)
@@ -690,24 +691,24 @@ func builtinDateArith(args []types.Datum, ctx context.Context) (d types.Datum, e
 	result := value.GetMysqlTime()
 	// parse interval
 	var interval string
-	if strings.ToLower(nodeInterval.Unit) == "day" {
-		day, err1 := parseDayInterval(sc, *nodeIntervalIntervalDatum)
+	if strings.ToLower(nodeIntervalUnit) == "day" {
+		day, err1 := parseDayInterval(sc, nodeIntervalValue)
 		if err1 != nil {
-			return d, errInvalidOperation.Gen("DateArith invalid day interval, need int but got %T", nodeIntervalIntervalDatum.GetString())
+			return d, errInvalidOperation.Gen("DateArith invalid day interval, need int but got %T", nodeIntervalValue.GetString())
 		}
 		interval = fmt.Sprintf("%d", day)
 	} else {
-		if nodeIntervalIntervalDatum.Kind() == types.KindString {
-			interval = fmt.Sprintf("%v", nodeIntervalIntervalDatum.GetString())
+		if nodeIntervalValue.Kind() == types.KindString {
+			interval = fmt.Sprintf("%v", nodeIntervalValue.GetString())
 		} else {
-			ii, err1 := nodeIntervalIntervalDatum.ToInt64(sc)
+			ii, err1 := nodeIntervalValue.ToInt64(sc)
 			if err1 != nil {
 				return d, errors.Trace(err1)
 			}
 			interval = fmt.Sprintf("%v", ii)
 		}
 	}
-	year, month, day, duration, err := types.ExtractTimeValue(nodeInterval.Unit, interval)
+	year, month, day, duration, err := types.ExtractTimeValue(nodeIntervalUnit, interval)
 	if err != nil {
 		return d, errors.Trace(err)
 	}

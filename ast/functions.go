@@ -71,6 +71,7 @@ const (
 	Coalesce = "coalesce"
 	Greatest = "greatest"
 	Least    = "least"
+	Interval = "interval"
 
 	// math functions
 	Abs     = "abs"
@@ -149,6 +150,7 @@ const (
 	BitLength      = "bit_length"
 	CharFunc       = "char_func"
 	CharLength     = "char_length"
+	FindInSet      = "find_in_set"
 
 	// information functions
 	ConnectionID = "connection_id"
@@ -264,12 +266,6 @@ const (
 	// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-sub
 	DateSub
 )
-
-// DateArithInterval is the struct of DateArith interval part.
-type DateArithInterval struct {
-	Unit     string
-	Interval ExprNode
-}
 
 const (
 	// AggFuncCount is the name of Count function.
