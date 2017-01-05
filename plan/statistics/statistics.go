@@ -497,15 +497,15 @@ func copyFromIndexColumns(ind *Column, id, numBuckets int64) (*Column, error) {
 
 // Builder describes information needed by NewTable
 type Builder struct {
-	Sc                    *variable.StatementContext
-	TblInfo               *model.TableInfo
-	TS, Count, NumBuckets int64
-	ColumnSamples         [][]types.Datum
-	ColOffsets            []int
-	IndResults            []ast.RecordSet
-	IndOffsets            []int
-	PkResult              ast.RecordSet
-	PkOffset              int
+	Sc                         *variable.StatementContext
+	TblInfo                    *model.TableInfo
+	StartTS, Count, NumBuckets int64
+	ColumnSamples              [][]types.Datum
+	ColOffsets                 []int
+	IndResults                 []ast.RecordSet
+	IndOffsets                 []int
+	PkResult                   ast.RecordSet
+	PkOffset                   int
 }
 
 // NewTable creates a table statistics.
@@ -515,7 +515,7 @@ func (b *Builder) NewTable() (*Table, error) {
 	}
 	t := &Table{
 		info:    b.TblInfo,
-		TS:      b.TS,
+		TS:      b.StartTS,
 		Count:   b.Count,
 		Columns: make([]*Column, len(b.TblInfo.Columns)),
 		Indices: make([]*Column, len(b.TblInfo.Indices)),

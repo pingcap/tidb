@@ -378,7 +378,7 @@ func (e *SimpleExec) buildStatisticsAndSaveToKV(tn *ast.TableName, count int64, 
 	statBuilder := &statistics.Builder{
 		Sc:            e.ctx.GetSessionVars().StmtCtx,
 		TblInfo:       tn.TableInfo,
-		TS:            int64(txn.StartTS()),
+		StartTS:       int64(txn.StartTS()),
 		Count:         count,
 		NumBuckets:    defaultBucketCount,
 		ColumnSamples: rowsToColumnSamples(sampleRows),

@@ -161,7 +161,7 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	builder := &Builder{
 		Sc:            sc,
 		TblInfo:       tblInfo,
-		TS:            timestamp,
+		StartTS:       timestamp,
 		Count:         s.count,
 		NumBuckets:    bucketCount,
 		ColumnSamples: [][]types.Datum{s.samples},
