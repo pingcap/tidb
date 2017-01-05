@@ -19,11 +19,9 @@ import (
 	"github.com/pingcap/tidb/mysql"
 )
 
-func (p *Aggregation) buildKeyInfo() {
-	p.baseLogicalPlan.buildKeyInfo()
-	// Aggregation's schema is created from aggFunc.
-	// And the ith column in schema correspond to the ith function in aggFunc.
-	// So we create a temp schema from aggFunc to build key information.
+// Columns of an aggregation's schema is an bijection with aggregation's aggFuncs.
+// Sometimes we need to convert from one side to another, then this function is needed.
+func (p *Aggregation) buildSchemaByAggFuncs() expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, p.schema.Len()))
 	for _, fun := range p.AggFuncs {
 		if col, isCol := fun.GetArgs()[0].(*expression.Column); isCol && fun.GetName() == ast.AggFuncFirstRow {
@@ -35,29 +33,54 @@ func (p *Aggregation) buildKeyInfo() {
 				Position: -1})
 		}
 	}
+	return schema
+}
+
+func (p *Aggregation) buildKeyInfo() {
+	p.baseLogicalPlan.buildKeyInfo()
+	// Dealing with p.AggFuncs.
+	schemaByFuncs := p.buildSchemaByAggFuncs()
+	for _, fun := range p.AggFuncs {
+		if col, isCol := fun.GetArgs()[0].(*expression.Column); isCol && fun.GetName() == ast.AggFuncFirstRow {
+			schemaByFuncs.Append(col)
+		} else {
+			// If the arg is not a column, we add a column to occupy the position.
+			schemaByFuncs.Append(&expression.Column{
+				FromID:   "",
+				Position: -1})
+		}
+	}
 	for _, key := range p.GetChildren()[0].GetSchema().Keys {
-		ok := true
+		indices, ok := schemaByFuncs.GetColumnsIndices(key)
+		if !ok {
+			continue
+		}
 		newKey := make([]*expression.Column, 0, len(key))
-		for _, keyCol := range key {
-			pos := schema.GetColumnIndex(keyCol)
-			if pos == -1 {
-				ok = false
-				break
-			} else {
-				newKey = append(newKey, p.schema.Columns[pos])
-			}
+		for _, i := range indices {
+			newKey = append(newKey, p.schema.Columns[i])
 		}
-		if ok {
-			p.schema.Keys = append(p.schema.Keys, newKey)
+		p.schema.Keys = append(p.schema.Keys, newKey)
+	}
+	// Dealing with p.GroupbyCols
+	// This is only used for optimization and needn't to be pushed up, so only one is enough.
+	schemaByGroupby := expression.NewSchema(p.groupByCols)
+	for _, key := range p.GetChildren()[0].GetSchema().Keys {
+		indices, ok := schemaByGroupby.GetColumnsIndices(key)
+		if !ok {
+			continue
 		}
+		newKey := make([]*expression.Column, 0, len(key))
+		for _, i := range indices {
+			newKey = append(newKey, schemaByGroupby.Columns[i])
+		}
+		p.schema.Keys = append(p.schema.Keys, newKey)
+		break
 	}
 }
 
-func (p *Projection) buildKeyInfo() {
-	p.baseLogicalPlan.buildKeyInfo()
-	// Projection's schema is created from expression of projection.
-	// And the ith column in schema correspond to the ith expression.
-	// So we create a temp schema from p.Exprs to build key information.
+// Columns of a projection's schema is an bijection with projection's Exprs.
+// Sometimes we need to convert from one side to another, then this function is needed.
+func (p *Projection) buildSchemaByExprs() expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, p.schema.Len()))
 	for _, expr := range p.Exprs {
 		if col, isCol := expr.(*expression.Column); isCol {
@@ -69,21 +92,22 @@ func (p *Projection) buildKeyInfo() {
 				Position: -1})
 		}
 	}
+	return schema
+}
+
+func (p *Projection) buildKeyInfo() {
+	p.baseLogicalPlan.buildKeyInfo()
+	schema := p.buildSchemaByExprs()
 	for _, key := range p.GetChildren()[0].GetSchema().Keys {
-		ok := true
+		indices, ok := schema.GetColumnsIndices(key)
+		if !ok {
+			continue
+		}
 		newKey := make([]*expression.Column, 0, len(key))
-		for _, keyCol := range key {
-			pos := schema.GetColumnIndex(keyCol)
-			if pos == -1 {
-				ok = false
-				break
-			} else {
-				newKey = append(newKey, p.schema.Columns[pos])
-			}
+		for _, i := range indices {
+			newKey = append(newKey, p.schema.Columns[i])
 		}
-		if ok {
-			p.schema.Keys = append(p.schema.Keys, newKey)
-		}
+		p.schema.Keys = append(p.schema.Keys, newKey)
 	}
 }
 

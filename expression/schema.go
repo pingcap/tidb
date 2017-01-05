@@ -134,6 +134,22 @@ func (s *Schema) SetUniqueKeys(keys []KeyInfo) {
 	s.Keys = keys
 }
 
+// GetColumnsIndices will return a slice which contains the position of each column in schema,
+// and a boolean which tell you whether all columns are found.
+func (s Schema) GetColumnsIndices(cols []*Column) (ret []int, allFound bool) {
+	allFound = true
+	for _, col := range cols {
+		pos := s.GetColumnIndex(col)
+		if pos != -1 {
+			ret = append(ret, pos)
+		} else {
+			ret = append(ret, -1)
+			allFound = false
+		}
+	}
+	return
+}
+
 // MergeSchema will merge two schema into one schema.
 func MergeSchema(lSchema, rSchema Schema) Schema {
 	tmpL := lSchema.Clone()
