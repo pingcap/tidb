@@ -237,6 +237,7 @@ var tokenMap = map[string]int{
 	"EXTRACT":             extract,
 	"FALSE":               falseKwd,
 	"FIELDS":              fields,
+	"FIND_IN_SET":         findInSet,
 	"FIRST":               first,
 	"FIXED":               fixed,
 	"FOREIGN":             foreign,
