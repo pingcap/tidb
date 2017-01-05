@@ -15,6 +15,7 @@ package varsutil
 
 import (
 	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -57,7 +58,7 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 
 	c.Assert(SetSessionSystemVar(v, "character_set_results", types.Datum{}), IsNil)
 
-	// Test case for get TiDBSkipConstraintCheck session variable
+	// Test case for get TiDBSkipConstraintCheck session variable.
 	val, err = GetSessionSystemVar(v, variable.TiDBSkipConstraintCheck)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "0")
@@ -77,7 +78,7 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "1")
 
-	// Test case for get TiDBSkipDDLWait session variable
+	// Test case for get TiDBSkipDDLWait session variable.
 	val, err = GetSessionSystemVar(v, variable.TiDBSkipDDLWait)
 	c.Assert(val, Equals, "0")
 	c.Assert(v.SkipDDLWait, IsFalse)
@@ -87,4 +88,19 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(v.SkipDDLWait, IsTrue)
 	val, err = GetSessionSystemVar(v, variable.TiDBSkipDDLWait)
 	c.Assert(val, Equals, "1")
+
+	// Test case for time_zone session variable.
+	SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum("Europe/Helsinki"))
+	c.Assert(v.TimeZone.String(), Equals, "Europe/Helsinki")
+	SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum("US/Eastern"))
+	c.Assert(v.TimeZone.String(), Equals, "US/Eastern")
+	SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum("SYSTEM"))
+	c.Assert(v.TimeZone.String(), Equals, "Local")
+	SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum("+10:00"))
+	c.Assert(v.TimeZone.String(), Equals, "UTC")
+	t1 := time.Date(2000, 1, 1, 0, 0, 0, 0, v.TimeZone)
+	t2 := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	c.Assert(t2.Sub(t1), Equals, 10*time.Hour)
+	SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum("-6:00"))
+	c.Assert(v.TimeZone.String(), Equals, "UTC")
 }

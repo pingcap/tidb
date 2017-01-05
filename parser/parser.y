@@ -232,6 +232,7 @@ import (
 	dayofweek	"DAYOFWEEK"
 	dayofyear	"DAYOFYEAR"
 	events		"EVENTS"
+	findInSet	"FIND_IN_SET"
 	foundRows	"FOUND_ROWS"
 	fromUnixTime	"FROM_UNIXTIME"
 	grant		"GRANT"
@@ -278,6 +279,7 @@ import (
 	trim		"TRIM"
 	rtrim 		"RTRIM"
 	ucase 		"UCASE"
+	unixTimestamp	"UNIX_TIMESTAMP"
 	upper 		"UPPER"
 	version		"VERSION"
 	weekday		"WEEKDAY"
@@ -474,7 +476,6 @@ import (
 	CreateUserStmt		"CREATE User statement"
 	DateArithOpt		"Date arith dateadd or datesub option"
 	DateArithMultiFormsOpt	"Date arith adddate or subdate option"
-	DateArithInterval       "Date arith interval part"
 	DBName			"Database Name"
 	DeallocateStmt		"Deallocate prepared statement"
 	Default			"DEFAULT clause"
@@ -724,6 +725,9 @@ import (
 
 %precedence lowerThanSQLCache
 %precedence sqlCache sqlNoCache
+
+%precedence lowerThanIntervalKeyword
+%precedence interval
 
 %precedence lowerThanSetKeyword
 %precedence set
@@ -2114,7 +2118,7 @@ ReservedKeyword:
 
 NotKeywordToken:
 	"ABS" | "ADDDATE" | "ADMIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
-|	"DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS"
+|	"DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FIND_IN_SET" | "FOUND_ROWS"
 |	"GROUP_CONCAT"| "GREATEST" | "LEAST" | "HOUR" | "HEX" | "UNHEX" | "IFNULL" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOCATE" | "LOWER" | "LTRIM"
 |	"MAX" | "MICROSECOND" | "MIN" |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" | "POW" | "POWER" | "RAND"
 |	"SECOND" | "SLEEP" | "SQL_CALC_FOUND_ROWS" | "STR_TO_DATE" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen |
@@ -2469,6 +2473,7 @@ FunctionNameConflict:
 |	"UTC_DATE"
 |	"CURRENT_DATE"
 |	"VERSION"
+|	"INTERVAL" %prec lowerThanIntervalKeyword
 
 FunctionCallConflict:
 	FunctionNameConflict '(' ExpressionListOpt ')'
@@ -2648,35 +2653,39 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
-|	DateArithOpt '(' Expression ',' "INTERVAL" Expression TimeUnit ')'
+|	DateArithMultiFormsOpt '(' Expression ',' Expression ')'
 	{
-		op := ast.NewValueExpr($1)
-		dateArithInterval := ast.NewValueExpr(
-			ast.DateArithInterval{
-				Unit: $7,
-				Interval: $6.(ast.ExprNode),
-			},
-		)
-
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr("DATE_ARITH"),
 			Args: []ast.ExprNode{
-				op,
+				ast.NewValueExpr($1),
 				$3.(ast.ExprNode),
-				dateArithInterval,
+				$5.(ast.ExprNode),
+				ast.NewValueExpr("DAY"),
 			},
 		}
 	}
-|	DateArithMultiFormsOpt '(' Expression ',' DateArithInterval')'
+|	DateArithMultiFormsOpt '(' Expression ',' "INTERVAL" Expression TimeUnit ')'
 	{
-		op := ast.NewValueExpr($1)
-		dateArithInterval := ast.NewValueExpr($5)
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr("DATE_ARITH"),
 			Args: []ast.ExprNode{
-				op,
+				ast.NewValueExpr($1),
 				$3.(ast.ExprNode),
-				dateArithInterval,
+				$6.(ast.ExprNode),
+				ast.NewValueExpr($7),
+			},
+		}
+	}
+|	DateArithOpt '(' Expression ',' "INTERVAL" Expression TimeUnit ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr("DATE_ARITH"),
+			Args: []ast.ExprNode{
+				ast.NewValueExpr($1),
+				$3.(ast.ExprNode),
+				$6.(ast.ExprNode),
+				ast.NewValueExpr($7),
 			},
 		}
 	}
@@ -2696,6 +2705,16 @@ FunctionCallNonKeyword:
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1.(string)),
 			Args: []ast.ExprNode{timeUnit, $5.(ast.ExprNode)},
+		}
+	}
+|	"FIND_IN_SET" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args:	[]ast.ExprNode{
+				$3.(ast.ExprNode),
+				$5.(ast.ExprNode),
+			},
 		}
 	}
 |	"FOUND_ROWS" '(' ')'
@@ -2976,6 +2995,14 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
+|	"UNIX_TIMESTAMP" '(' ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1)}
+	}
+|	"UNIX_TIMESTAMP" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
 |	"WEEKDAY" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
@@ -3084,19 +3111,6 @@ DateArithMultiFormsOpt:
 |	"SUBDATE"
 	{
 		$$ = ast.DateSub
-	}
-
-DateArithInterval:
-	Expression
-	{
-		$$ = ast.DateArithInterval{
-					Unit: "day",
-					Interval: $1.(ast.ExprNode),
-		}
-	}
-|	"INTERVAL" Expression TimeUnit
-	{
-		$$ = ast.DateArithInterval{Unit: $3, Interval: $2.(ast.ExprNode)}
 	}
 
 TrimDirection:

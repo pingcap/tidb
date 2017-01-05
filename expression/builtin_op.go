@@ -20,6 +20,46 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+var (
+	_ functionClass = &andandFunctionClass{}
+	_ functionClass = &ororFunctionClass{}
+	_ functionClass = &logicXorFunctionClass{}
+	_ functionClass = &compareFunctionClass{}
+	_ functionClass = &bitOpFunctionClass{}
+	_ functionClass = &isTrueOpFunctionClass{}
+	_ functionClass = &unaryOpFunctionClass{}
+)
+
+var (
+	_ builtinFunc = &builtinAndAndSig{}
+	_ builtinFunc = &builtinOrOrSig{}
+	_ builtinFunc = &builtinLogicXorSig{}
+	_ builtinFunc = &builtinCompareSig{}
+	_ builtinFunc = &builtinBitOpSig{}
+	_ builtinFunc = &builtinIsTrueOpSig{}
+	_ builtinFunc = &builtinUnaryOpSig{}
+)
+
+type andandFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *andandFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinAndAndSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinAndAndSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinAndAndSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return builtinAndAnd(args, b.ctx)
+}
+
 func builtinAndAnd(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	leftDatum := args[0]
 	rightDatum := args[1]
@@ -50,6 +90,26 @@ func builtinAndAnd(args []types.Datum, ctx context.Context) (d types.Datum, err 
 	}
 	d.SetInt64(int64(1))
 	return
+}
+
+type ororFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *ororFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinOrOrSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinOrOrSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinOrOrSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return builtinOrOr(args, b.ctx)
 }
 
 func builtinOrOr(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
@@ -84,6 +144,26 @@ func builtinOrOr(args []types.Datum, ctx context.Context) (d types.Datum, err er
 	return
 }
 
+type logicXorFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *logicXorFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinLogicXorSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinLogicXorSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinLogicXorSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return builtinLogicXor(args, b.ctx)
+}
+
 func builtinLogicXor(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	leftDatum := args[0]
 	righDatum := args[1]
@@ -106,6 +186,30 @@ func builtinLogicXor(args []types.Datum, ctx context.Context) (d types.Datum, er
 		d.SetInt64(oneI64)
 	}
 	return
+}
+
+type compareFunctionClass struct {
+	baseFunctionClass
+
+	op opcode.Op
+}
+
+func (c *compareFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinCompareSig{newBaseBuiltinFunc(args, ctx), c.op}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinCompareSig struct {
+	baseBuiltinFunc
+
+	op opcode.Op
+}
+
+func (b *builtinCompareSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return compareFuncFactory(b.op)(args, b.ctx)
 }
 
 func compareFuncFactory(op opcode.Op) BuiltinFunc {
@@ -161,6 +265,30 @@ func compareFuncFactory(op opcode.Op) BuiltinFunc {
 	}
 }
 
+type bitOpFunctionClass struct {
+	baseFunctionClass
+
+	op opcode.Op
+}
+
+func (c *bitOpFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinBitOpSig{newBaseBuiltinFunc(args, ctx), c.op}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinBitOpSig struct {
+	baseBuiltinFunc
+
+	op opcode.Op
+}
+
+func (b *builtinBitOpSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return bitOpFactory(b.op)(args, b.ctx)
+}
+
 func bitOpFactory(op opcode.Op) BuiltinFunc {
 	return func(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 		sc := ctx.GetSessionVars().StmtCtx
@@ -201,6 +329,30 @@ func bitOpFactory(op opcode.Op) BuiltinFunc {
 	}
 }
 
+type isTrueOpFunctionClass struct {
+	baseFunctionClass
+
+	op opcode.Op
+}
+
+func (c *isTrueOpFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinIsTrueOpSig{newBaseBuiltinFunc(args, ctx), c.op}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinIsTrueOpSig struct {
+	baseBuiltinFunc
+
+	op opcode.Op
+}
+
+func (b *builtinIsTrueOpSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return isTrueOpFactory(b.op)(args, b.ctx)
+}
+
 func isTrueOpFactory(op opcode.Op) BuiltinFunc {
 	return func(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 		var boolVal bool
@@ -216,6 +368,30 @@ func isTrueOpFactory(op opcode.Op) BuiltinFunc {
 		d.SetInt64(boolToInt64(boolVal))
 		return
 	}
+}
+
+type unaryOpFunctionClass struct {
+	baseFunctionClass
+
+	op opcode.Op
+}
+
+func (c *unaryOpFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinUnaryOpSig{newBaseBuiltinFunc(args, ctx), c.op}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinUnaryOpSig struct {
+	baseBuiltinFunc
+
+	op opcode.Op
+}
+
+func (b *builtinUnaryOpSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return unaryOpFactory(b.op)(args, b.ctx)
 }
 
 func unaryOpFactory(op opcode.Op) BuiltinFunc {
