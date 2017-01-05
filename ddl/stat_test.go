@@ -52,9 +52,10 @@ func (s *testStatSuite) TestStat(c *C) {
 	c.Assert(m[ddlOwnerID], Equals, d.uuid)
 
 	job := &model.Job{
-		SchemaID: dbInfo.ID,
-		Type:     model.ActionDropSchema,
-		Args:     []interface{}{dbInfo.Name},
+		SchemaID:   dbInfo.ID,
+		Type:       model.ActionDropSchema,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{dbInfo.Name},
 	}
 
 	ctx := mock.NewContext()
