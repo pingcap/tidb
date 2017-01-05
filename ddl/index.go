@@ -75,7 +75,7 @@ func BuildIndexInfo(tblInfo *model.TableInfo, indexName model.CIStr,
 			if col.Flen != types.UnspecifiedLength {
 				// special case for the bit type
 				if col.FieldType.Tp == mysql.TypeBit {
-					sumMaxLength += int(math.Ceil(float64(col.Flen + 7) / float64(8)))
+					sumMaxLength += int(math.Ceil(float64(col.Flen+7) / float64(8)))
 				} else {
 					sumMaxLength += col.Flen
 				}
