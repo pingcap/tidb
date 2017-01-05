@@ -189,7 +189,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 		// Finish this job.
 		job.SchemaState = model.StatePublic
 		job.State = model.JobDone
-		addTableHistoryInfo(job, ver, tblInfo)
+		job.BinlogInfo.AddTableInfo(ver, tblInfo)
 	default:
 		err = ErrInvalidColumnState.Gen("invalid column state %v", columnInfo.State)
 	}
@@ -278,7 +278,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 		// Finish this job.
 		job.SchemaState = model.StateNone
 		job.State = model.JobDone
-		addTableHistoryInfo(job, ver, tblInfo)
+		job.BinlogInfo.AddTableInfo(ver, tblInfo)
 	default:
 		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
 	}
@@ -462,7 +462,7 @@ func (d *ddl) onModifyColumn(t *meta.Meta, job *model.Job) error {
 	}
 	job.SchemaState = model.StatePublic
 	job.State = model.JobDone
-	addTableHistoryInfo(job, ver, tblInfo)
+	job.BinlogInfo.AddTableInfo(ver, tblInfo)
 	return nil
 }
 

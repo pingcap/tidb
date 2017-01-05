@@ -167,8 +167,9 @@ func checkCases(cases []testCase, ld *executor.LoadDataInfo,
 	c *C, tk *testkit.TestKit, ctx context.Context, selectSQL, deleteSQL string) {
 	for _, ca := range cases {
 		c.Assert(ctx.NewTxn(), IsNil)
-		data, err1 := ld.InsertData(ca.data1, ca.data2)
+		data, reachLimit, err1 := ld.InsertData(ca.data1, ca.data2)
 		c.Assert(err1, IsNil)
+		c.Assert(reachLimit, IsFalse)
 		if ca.restData == nil {
 			c.Assert(data, HasLen, 0,
 				Commentf("data1:%v, data2:%v, data:%v", string(ca.data1), string(ca.data2), string(data)))
@@ -1195,10 +1196,9 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 	defer testleak.AfterTest(c)()
 	se, err := tidb.CreateSession(s.store)
 	c.Check(err, IsNil)
+	se.GetSessionVars().TxnCtx.InfoSchema = sessionctx.GetDomain(se).InfoSchema()
 	compiler := &executor.Compiler{}
 	ctx := se.(context.Context)
-	c.Check(tidb.PrepareTxnCtx(ctx), IsNil)
-
 	stmtNode, err := s.ParseOneStmt("select 1", "", "")
 	c.Check(err, IsNil)
 	stmt, err := compiler.Compile(ctx, stmtNode)

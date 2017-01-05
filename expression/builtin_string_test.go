@@ -766,3 +766,29 @@ func (s *testEvaluatorSuite) TestCharLength(c *C) {
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
 	}
 }
+
+func (s *testEvaluatorSuite) TestFindInSet(c *C) {
+	defer testleak.AfterTest(c)()
+
+	for _, t := range []struct {
+		str    interface{}
+		strlst interface{}
+		ret    interface{}
+	}{
+		{"foo", "foo,bar", 1},
+		{"foo", "foobar,bar", 0},
+		{" foo ", "foo, foo ", 2},
+		{"", "foo,bar,", 3},
+		{"", "", 0},
+		{1, 1, 1},
+		{1, "1", 1},
+		{"1", 1, 1},
+		{"a,b", "a,b,c", 0},
+		{"foo", nil, nil},
+		{nil, "bar", nil},
+	} {
+		r, err := builtinFindInSet(types.MakeDatums(t.str, t.strlst), s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
+	}
+}

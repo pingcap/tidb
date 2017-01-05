@@ -19,6 +19,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -465,7 +466,7 @@ func (s *testEvaluatorSuite) TestStrToDate(c *C) {
 		}
 		c.Assert(result.Kind(), Equals, types.KindMysqlTime)
 		value := result.GetMysqlTime()
-		t1, _ := value.Time.GoTime()
+		t1, _ := value.Time.GoTime(time.Local)
 		c.Assert(t1, Equals, test.Expect)
 	}
 }
@@ -532,4 +533,57 @@ func (s *testEvaluatorSuite) TestYearWeek(c *C) {
 	result, err := builtinYearWeek([]types.Datum{types.NewStringDatum("2016-00-05")}, s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(result.IsNull(), IsTrue)
+}
+
+func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
+	d, err := builtinUnixTimestamp(nil, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(d.GetInt64()-time.Now().Unix(), GreaterEqual, int64(-1))
+	c.Assert(d.GetInt64()-time.Now().Unix(), LessEqual, int64(1))
+
+	// Set the time_zone variable, because UnixTimestamp() result depends on it.
+	s.ctx.GetSessionVars().TimeZone = time.UTC
+	tests := []struct {
+		input  types.Datum
+		expect string
+	}{
+		{types.NewIntDatum(20151113102019), "1447410019"},
+		{types.NewStringDatum("2015-11-13 10:20:19"), "1447410019"},
+		{types.NewStringDatum("2015-11-13 10:20:19.012"), "1447410019.012"},
+		{types.NewStringDatum("2017-00-02"), "0"},
+	}
+
+	for _, test := range tests {
+		d, err = builtinUnixTimestamp([]types.Datum{test.input}, s.ctx)
+		c.Assert(err, IsNil)
+		str, err := d.ToString()
+		c.Assert(err, IsNil)
+		c.Assert(str, Equals, test.expect)
+	}
+}
+
+func (s *testEvaluatorSuite) TestDateArith(c *C) {
+	defer testleak.AfterTest(c)()
+
+	date := []string{"2016-12-31", "2017-01-01"}
+
+	args := types.MakeDatums(ast.DateAdd, date[0], 1, "DAY")
+	v, err := builtinDateArith(args, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(v.GetMysqlTime().String(), Equals, date[1])
+
+	args = types.MakeDatums(ast.DateSub, date[1], 1, "DAY")
+	v, err = builtinDateArith(args, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(v.GetMysqlTime().String(), Equals, date[0])
+
+	args = types.MakeDatums(ast.DateAdd, date[0], nil, "DAY")
+	v, err = builtinDateArith(args, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(v.IsNull(), IsTrue)
+
+	args = types.MakeDatums(ast.DateSub, date[1], nil, "DAY")
+	v, err = builtinDateArith(args, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(v.IsNull(), IsTrue)
 }

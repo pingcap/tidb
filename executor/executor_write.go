@@ -274,6 +274,11 @@ type LoadDataInfo struct {
 	Ctx        context.Context
 }
 
+// SetBatchCount sets the number of rows to insert in a batch.
+func (e *LoadDataInfo) SetBatchCount(limit int64) {
+	e.insertVal.batchRows = limit
+}
+
 // getValidData returns prevData and curData that starts from starting symbol.
 // If the data doesn't have starting symbol, prevData is nil and curData is curData[len(curData)-startingLen+1:].
 // If curData size less than startingLen, curData is returned directly.
@@ -372,15 +377,16 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) 
 
 // InsertData inserts data into specified table according to the specified format.
 // If it has the rest of data isn't completed the processing, then is returns without completed data.
+// If the number of inserted rows reaches the batchRows, then the second return value is true.
 // If prevData isn't nil and curData is nil, there are no other data to deal with and the isEOF is true.
-func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, error) {
+func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error) {
 	// TODO: support enclosed and escape.
 	if len(prevData) == 0 && len(curData) == 0 {
-		return nil, nil
+		return nil, false, nil
 	}
 
 	var line []byte
-	var isEOF, hasStarting bool
+	var isEOF, hasStarting, reachLimit bool
 	cols := make([]string, 0, len(e.row))
 	if len(prevData) > 0 && len(curData) == 0 {
 		isEOF = true
@@ -411,12 +417,18 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, error) {
 		cols = escapeCols(rawCols)
 		e.insertData(cols)
 		e.insertVal.currRow++
+		if e.insertVal.batchRows != 0 && e.insertVal.currRow%e.insertVal.batchRows == 0 {
+			reachLimit = true
+			log.Infof("This insert rows has reached the batch %d, current total rows %d",
+				e.insertVal.batchRows, e.insertVal.currRow)
+			break
+		}
 	}
 	if e.insertVal.lastInsertID != 0 {
 		e.insertVal.ctx.GetSessionVars().SetLastInsertID(e.insertVal.lastInsertID)
 	}
 
-	return curData, nil
+	return curData, reachLimit, nil
 }
 
 func escapeCols(strs [][]byte) []string {
@@ -540,7 +552,8 @@ func (e *LoadData) Close() error {
 
 // InsertValues is the data to insert.
 type InsertValues struct {
-	currRow      int
+	currRow      int64
+	batchRows    int64
 	lastInsertID uint64
 	ctx          context.Context
 	SelectExec   Executor
@@ -736,7 +749,7 @@ func (e *InsertValues) getRows(cols []*table.Column) (rows [][]types.Datum, err 
 		if err = e.checkValueCount(length, len(list), i, cols); err != nil {
 			return nil, errors.Trace(err)
 		}
-		e.currRow = i
+		e.currRow = int64(i)
 		rows[i], err = e.getRow(cols, list)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -771,7 +784,7 @@ func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, err
 		if innerRow == nil {
 			break
 		}
-		e.currRow = len(rows)
+		e.currRow = int64(len(rows))
 		row, err := e.fillRowData(cols, innerRow.Data, false)
 		if err != nil {
 			return nil, errors.Trace(err)
