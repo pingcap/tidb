@@ -7,7 +7,7 @@ BenchDB is a command line tool to test the performance of TiDB.
 Make sure you have started PD and TiKV, then run:
 
 ```
-./benchdb -run="create,truncate,insert:0_10000,update-random:0_10000:100000,select:0_10000:10"
+./benchdb -run="create|truncate|insert:0_10000|update-random:0_10000:100000|select:0_10000:10"
 ```
 
 
@@ -15,7 +15,7 @@ Make sure you have started PD and TiKV, then run:
 
 #### `run`
 The `run` argument defines the workflow of the test. You can define
-multiple jobs, separated by `,`. The jobs are executed sequentially.
+multiple jobs, separated by `|`. The jobs are executed sequentially.
 The `run` argument has the following options:
  
 * `create` creates a table. Currently it's just a typical simple table, with a few columns.
@@ -32,7 +32,9 @@ The `run` argument has the following options:
   
 * `select:xxx_yyy:zzz` select rows with ID range in `[xxx, yyy)`, for `zzz` times.
 
-* `gc` does a manually triggered GC, so we can compare the performance before and after GC. 
+* `gc` does a manually triggered GC, so we can compare the performance before and after GC.
+
+* `query:xxx:zzz` run a sql query `xxx`, for `zzz` times.
  
  The output shows the execution time.
  
