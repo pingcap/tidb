@@ -235,6 +235,7 @@ var Funcs = map[string]Func{
 	ast.BitLength:      {builtinBitLength, 1, 1},
 	ast.CharFunc:       {builtinChar, 2, -1},
 	ast.CharLength:     {builtinCharLength, 1, 1},
+	ast.FindInSet:      {builtinFindInSet, 2, 2},
 
 	// information functions
 	ast.ConnectionID: {builtinConnectionID, 0, 0},

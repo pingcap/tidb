@@ -669,6 +669,8 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT CHAR(65);`, true},
 		{`SELECT CHAR_LENGTH('abc');`, true},
 		{`SELECT CHARACTER_LENGTH('abc');`, true},
+		{`SELECT FIND_IN_SET('foo', 'foo,bar')`, true},
+		{`SELECT FIND_IN_SET('foo')`, false},
 
 		// Repeat
 		{`SELECT REPEAT("a", 10);`, true},
