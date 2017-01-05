@@ -756,3 +756,35 @@ func builtinCharLength(args []types.Datum, _ context.Context) (d types.Datum, er
 		return d, nil
 	}
 }
+
+// See http://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_find-in-set
+// TODO: This function can be optimized by using bit arithmetic when the first argument is
+// a constant string and the second is a column of type SET.
+func builtinFindInSet(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	// args[0] -> Str
+	// args[1] -> StrList
+	if args[0].IsNull() || args[1].IsNull() {
+		return
+	}
+
+	str, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	strlst, err := args[1].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	d.SetInt64(0)
+	if len(strlst) == 0 {
+		return
+	}
+	for i, s := range strings.Split(strlst, ",") {
+		if s == str {
+			d.SetInt64(int64(i + 1))
+			return
+		}
+	}
+	return
+}

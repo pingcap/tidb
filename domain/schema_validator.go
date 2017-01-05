@@ -88,7 +88,10 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64) bool {
 
 // Latest returns the latest schema version it knows.
 func (s *schemaValidator) Latest() int64 {
-	return s.latestSchemaVer
+	s.mux.RLock()
+	ret := s.latestSchemaVer
+	s.mux.RUnlock()
+	return ret
 }
 
 func extractPhysicalTime(ts uint64) time.Time {
