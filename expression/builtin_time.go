@@ -89,6 +89,7 @@ func convertDatumToTime(sc *variable.StatementContext, d types.Datum) (t types.T
 	return d.GetMysqlTime(), nil
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_datediff
 func builtinDateDiff(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	t1, err := convertDatumToTime(sc, args[0])
