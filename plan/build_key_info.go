@@ -40,16 +40,6 @@ func (p *Aggregation) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
 	// Dealing with p.AggFuncs.
 	schemaByFuncs := p.buildSchemaByAggFuncs()
-	for _, fun := range p.AggFuncs {
-		if col, isCol := fun.GetArgs()[0].(*expression.Column); isCol && fun.GetName() == ast.AggFuncFirstRow {
-			schemaByFuncs.Append(col)
-		} else {
-			// If the arg is not a column, we add a column to occupy the position.
-			schemaByFuncs.Append(&expression.Column{
-				FromID:   "",
-				Position: -1})
-		}
-	}
 	for _, key := range p.GetChildren()[0].GetSchema().Keys {
 		indices, ok := schemaByFuncs.GetColumnsIndices(key)
 		if !ok {
