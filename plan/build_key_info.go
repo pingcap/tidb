@@ -29,7 +29,6 @@ func (p *Aggregation) buildSchemaByAggFuncs() expression.Schema {
 		} else {
 			// If the arg is not a column, we add a column to occupy the position.
 			schema.Append(&expression.Column{
-				FromID:   "",
 				Position: -1})
 		}
 	}
@@ -41,8 +40,8 @@ func (p *Aggregation) buildKeyInfo() {
 	// Dealing with p.AggFuncs.
 	schemaByFuncs := p.buildSchemaByAggFuncs()
 	for _, key := range p.GetChildren()[0].GetSchema().Keys {
-		indices, ok := schemaByFuncs.GetColumnsIndices(key)
-		if !ok {
+		indices := schemaByFuncs.GetColumnsIndices(key)
+		if indices == nil {
 			continue
 		}
 		newKey := make([]*expression.Column, 0, len(key))
@@ -55,8 +54,8 @@ func (p *Aggregation) buildKeyInfo() {
 	// This is only used for optimization and needn't to be pushed up, so only one is enough.
 	schemaByGroupby := expression.NewSchema(p.groupByCols)
 	for _, key := range p.GetChildren()[0].GetSchema().Keys {
-		indices, ok := schemaByGroupby.GetColumnsIndices(key)
-		if !ok {
+		indices := schemaByGroupby.GetColumnsIndices(key)
+		if indices == nil {
 			continue
 		}
 		newKey := make([]*expression.Column, 0, len(key))
@@ -78,7 +77,6 @@ func (p *Projection) buildSchemaByExprs() expression.Schema {
 		} else {
 			// If the expression is not a column, we add a column to occupy the position.
 			schema.Append(&expression.Column{
-				FromID:   "",
 				Position: -1})
 		}
 	}
@@ -89,8 +87,8 @@ func (p *Projection) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
 	schema := p.buildSchemaByExprs()
 	for _, key := range p.GetChildren()[0].GetSchema().Keys {
-		indices, ok := schema.GetColumnsIndices(key)
-		if !ok {
+		indices := schema.GetColumnsIndices(key)
+		if indices == nil {
 			continue
 		}
 		newKey := make([]*expression.Column, 0, len(key))

@@ -167,7 +167,7 @@ type LogicalPlan interface {
 	// with the lowest cost.
 	convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error)
 
-	// buildKeyInfo will collect the information of unique keys into schema
+	// buildKeyInfo will collect the information of unique keys into schema.
 	buildKeyInfo()
 }
 
