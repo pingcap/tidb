@@ -174,16 +174,21 @@ func (s *testTypeEtcSuite) TestTruncate(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input   float64
+		Flen    int
 		Decimal int
 		Expect  float64
+		Err     error
 	}{
-		{100.114, 2, 100.11},
-		{100.115, 2, 100.11},
-		{100.1156, 2, 100.12},
+		{100.114, 10, 2, 100.11, nil},
+		{100.115, 10, 2, 100.12, nil},
+		{100.1156, 10, 3, 100.116, nil},
+		{100.1156, 3, 1, 99.9, ErrOverflow},
+		{1.36, 10, 2, 1.36, nil},
 	}
 
 	for _, t := range tbl {
-		f := truncateFloat(t.Input, t.Decimal)
+		f, err := TruncateFloat(t.Input, t.Flen, t.Decimal)
 		c.Assert(f, Equals, t.Expect)
+		c.Assert(err, Equals, t.Err)
 	}
 }
