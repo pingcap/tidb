@@ -152,6 +152,9 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"least('TiDB', 'D', 'd')", mysql.TypeVarString, "utf8"},
 		{"least(1.1, 2.2)", mysql.TypeNewDecimal, charset.CharsetBin},
 		{"least('TiDB', 3)", mysql.TypeVarString, "utf8"},
+		{"interval(1, 2, 3)", mysql.TypeLonglong, charset.CharsetBin},
+		{"interval(1.0, 2.0, 3.0)", mysql.TypeLonglong, charset.CharsetBin},
+		{"interval('1', '2', '3')", mysql.TypeLonglong, charset.CharsetBin},
 		{"hex('TiDB')", mysql.TypeVarString, "utf8"},
 		{"hex(12)", mysql.TypeVarString, "utf8"},
 		{"unhex('TiDB')", mysql.TypeVarString, "utf8"},
@@ -164,6 +167,9 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"character_length('TiDB')", mysql.TypeLonglong, charset.CharsetBin},
 		{"crc32('TiDB')", mysql.TypeLonglong, charset.CharsetBin},
 		{"timestampdiff(MINUTE,'2003-02-01','2003-05-01 12:05:55')", mysql.TypeLonglong, charset.CharsetBin},
+		{"find_in_set('foo', 'foo,bar')", mysql.TypeLonglong, charset.CharsetBin},
+		{"find_in_set('foo', null)", mysql.TypeLonglong, charset.CharsetBin},
+		{"find_in_set(null, 'bar')", mysql.TypeLonglong, charset.CharsetBin},
 	}
 	for _, ca := range cases {
 		ctx := testKit.Se.(context.Context)
