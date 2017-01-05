@@ -405,9 +405,9 @@ func (b *builtinConvSig) eval(row []types.Datum) (types.Datum, error) {
 // See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_conv
 func builtinConv(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	var (
-		signed   bool
-		negative bool
-		touval   bool
+		signed     bool
+		negative   bool
+		ignoreSign bool
 	)
 	for _, arg := range args {
 		if arg.IsNull() {
@@ -433,7 +433,7 @@ func builtinConv(args []types.Datum, ctx context.Context) (d types.Datum, err er
 		signed = true
 	}
 	if toBase < 0 {
-		touval = true
+		ignoreSign = true
 		toBase = -toBase
 	}
 	if fromBase > 36 || fromBase < 2 || toBase > 36 || toBase < 2 {
@@ -470,12 +470,12 @@ func builtinConv(args []types.Datum, ctx context.Context) (d types.Datum, err er
 	} else {
 		negative = false
 	}
-	if touval && negative {
+	if ignoreSign && negative {
 		val = 0 - val
 	}
 
 	s := strconv.FormatUint(val, int(toBase))
-	if negative && touval {
+	if negative && ignoreSign {
 		s = "-" + s
 	}
 	d.SetString(strings.ToUpper(s))
