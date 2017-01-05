@@ -112,6 +112,7 @@ const unlimitedRetryCnt = -1
 
 type session struct {
 	txn         kv.Transaction // current transaction
+	txnCh       chan *txnWithErr
 	values      map[fmt.Stringer]interface{}
 	store       kv.Storage
 	maxRetryCnt int // Max retry times. If maxRetryCnt <=0, there is no limitation for retry times.
@@ -245,6 +246,7 @@ func (s *session) RollbackTxn() error {
 	}
 	s.cleanRetryInfo()
 	s.txn = nil
+	s.txnCh = nil
 	s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	return errors.Trace(err)
 }
@@ -298,20 +300,18 @@ func (s *session) Retry() error {
 	var err error
 	retryCnt := 0
 	for {
-		err = PrepareTxnCtx(s)
-		if err == nil {
-			s.sessionVars.RetryInfo.ResetOffset()
-			for _, sr := range nh.history {
-				st := sr.st
-				txt := st.OriginText()
-				if len(txt) > sqlLogMaxLen {
-					txt = txt[:sqlLogMaxLen]
-				}
-				log.Warnf("Retry %s (len:%d)", txt, len(st.OriginText()))
-				_, err = st.Exec(s)
-				if err != nil {
-					break
-				}
+		s.prepareTxnCtx()
+		s.sessionVars.RetryInfo.ResetOffset()
+		for _, sr := range nh.history {
+			st := sr.st
+			txt := st.OriginText()
+			if len(txt) > sqlLogMaxLen {
+				txt = txt[:sqlLogMaxLen]
+			}
+			log.Warnf("Retry %s (len:%d)", txt, len(st.OriginText()))
+			_, err = st.Exec(s)
+			if err != nil {
+				break
 			}
 		}
 		if err == nil {
@@ -338,6 +338,7 @@ func (s *session) Retry() error {
 // Unlike normal Exec, it doesn't reset statement status, doesn't commit or rollback the current transaction
 // and doesn't write binlog.
 func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (ast.RecordSet, error) {
+	s.prepareTxnCtx()
 	charset, collation := s.sessionVars.GetCharsetInfo()
 	rawStmts, err := s.ParseSQL(sql, charset, collation)
 	if err != nil {
@@ -366,7 +367,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (ast.Record
 // getExecRet executes restricted sql and the result is one column.
 // It returns a string value.
 func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
-	cleanTxn := s.txn == nil
+	cleanTxn := s.txn == nil && s.txnCh == nil
 	rs, err := s.ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return "", errors.Trace(err)
@@ -387,6 +388,7 @@ func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
 		// This function has some side effect. Run select may create new txn.
 		// We should make environment unchanged.
 		s.txn = nil
+		s.txnCh = nil
 	}
 	return value, nil
 }
@@ -422,6 +424,7 @@ func (s *session) ParseSQL(sql, charset, collation string) ([]ast.StmtNode, erro
 }
 
 func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
+	s.prepareTxnCtx()
 	startTS := time.Now()
 	charset, collation := s.sessionVars.GetCharsetInfo()
 	connID := s.sessionVars.ConnectionID
@@ -435,6 +438,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 	var rs []ast.RecordSet
 	ph := sessionctx.GetDomain(s).PerfSchema()
 	for i, rst := range rawStmts {
+		s.prepareTxnCtx()
 		startTS := time.Now()
 		// Some execution is done in compile stage, so we reset it before compile.
 		resetStmtCtx(s, rawStmts[0])
@@ -471,8 +475,9 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 
 // For execute prepare statement in binary protocol
 func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error) {
-	if err := PrepareTxnCtx(s); err != nil {
-		return 0, 0, nil, errors.Trace(err)
+	if s.sessionVars.TxnCtx.InfoSchema == nil {
+		// We don't need to create a transaction for prepare statement, just get information schema will do.
+		s.sessionVars.TxnCtx.InfoSchema = sessionctx.GetDomain(s).InfoSchema()
 	}
 	prepareExec := &executor.PrepareExec{
 		IS:      executor.GetInfoSchema(s),
@@ -535,11 +540,7 @@ func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (ast.R
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	err = PrepareTxnCtx(s)
-	if err != nil {
-		s.RollbackTxn()
-		return nil, errors.Trace(err)
-	}
+	s.prepareTxnCtx()
 	st := executor.CompileExecutePreparedStmt(s, stmtID, args...)
 	r, err := runStmt(s, st)
 	return r, errors.Trace(err)
@@ -838,5 +839,56 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 		}
 	}
 	vars.CommonGlobalLoaded = true
+	return nil
+}
+
+type txnWithErr struct {
+	txn kv.Transaction
+	err error
+}
+
+// prepareTxnCtx starts a goroutine to begin a transaction if needed, and creates a new transaction context.
+// It is called before we execute a sql query.
+func (s *session) prepareTxnCtx() {
+	if s.txn != nil && s.txn.Valid() {
+		return
+	}
+	if s.txnCh != nil {
+		return
+	}
+	txnCh := make(chan *txnWithErr, 1)
+	go func() {
+		txn, err := s.store.Begin()
+		txnCh <- &txnWithErr{txn: txn, err: err}
+	}()
+	s.txnCh = txnCh
+	is := sessionctx.GetDomain(s).InfoSchema()
+	s.sessionVars.TxnCtx = &variable.TransactionContext{
+		InfoSchema:    is,
+		SchemaVersion: is.SchemaMetaVersion(),
+	}
+	if !s.sessionVars.IsAutocommit() {
+		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
+	}
+}
+
+// ActivePendingTxn implements Session.ActivePendingTxn interface.
+func (s *session) ActivePendingTxn() error {
+	if s.txn != nil && s.txn.Valid() {
+		return nil
+	}
+	if s.txnCh == nil {
+		return errors.New("transaction channel is not set")
+	}
+	txnWithErr := <-s.txnCh
+	s.txnCh = nil
+	if txnWithErr.err != nil {
+		return errors.Trace(txnWithErr.err)
+	}
+	s.txn = txnWithErr.txn
+	err := s.loadCommonGlobalVariablesIfNeeded()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	return nil
 }
