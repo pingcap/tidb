@@ -495,7 +495,7 @@ func (s *testEvaluatorSuite) TestDateDiff(c *C) {
 		c.Assert(result.GetInt64(), Equals, test.expect)
 	}
 
-	//Check if month is 0
+	// Check if month is 0.
 	t1 := types.NewStringDatum("2016-00-01")
 	t2 := types.NewStringDatum("2016-01-13")
 

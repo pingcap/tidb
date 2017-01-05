@@ -101,11 +101,10 @@ func builtinDateDiff(args []types.Datum, ctx context.Context) (d types.Datum, er
 	}
 
 	if t1.Time.Month() == 0 || t1.Time.Day() == 0 || t2.Time.Month() == 0 || t2.Time.Day() == 0 {
-		d.SetNull()
 		return d, nil
 	}
 
-	r, err := types.DateDiff(t1.Time, t2.Time)
+	r := types.DateDiff(t1.Time, t2.Time)
 	d.SetInt64(int64(r))
 	return d, nil
 }
