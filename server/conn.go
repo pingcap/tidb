@@ -515,7 +515,7 @@ func (cc *clientConn) writeReq(filePath string) error {
 
 var defaultLoadDataBatchCnt = 200000
 
-func batchInsertData(prevData, curData []byte, loadDataInfo *executor.LoadDataInfo) ([]byte, error) {
+func insertDataWithCommit(prevData, curData []byte, loadDataInfo *executor.LoadDataInfo) ([]byte, error) {
 	var err error
 	var reachLimit bool
 	for {
@@ -526,10 +526,13 @@ func batchInsertData(prevData, curData []byte, loadDataInfo *executor.LoadDataIn
 		if !reachLimit {
 			break
 		}
+		// Make sure that there are no retries when committing.
 		if err = loadDataInfo.Ctx.Txn().Commit(); err != nil {
 			return nil, errors.Trace(err)
 		}
-		loadDataInfo.Ctx.NewTxn()
+		if err = loadDataInfo.Ctx.NewTxn(); err != nil {
+			return nil, errors.Trace(err)
+		}
 		curData = prevData
 		prevData = nil
 	}
@@ -556,7 +559,10 @@ func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error 
 	var prevData, curData []byte
 	// TODO: Make the loadDataRowCnt settable.
 	loadDataInfo.SetBatchCount(int64(defaultLoadDataBatchCnt))
-	loadDataInfo.Ctx.NewTxn()
+	err = loadDataInfo.Ctx.NewTxn()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	for {
 		curData, err = cc.readPacket()
 		if err != nil {
@@ -571,7 +577,7 @@ func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error 
 				break
 			}
 		}
-		prevData, err = batchInsertData(prevData, curData, loadDataInfo)
+		prevData, err = insertDataWithCommit(prevData, curData, loadDataInfo)
 		if err != nil {
 			break
 		}
