@@ -515,6 +515,28 @@ func (cc *clientConn) writeReq(filePath string) error {
 
 var defaultLoadDataBatchCnt = 200000
 
+func batchInsertData(prevData, curData []byte, loadDataInfo *executor.LoadDataInfo) ([]byte, error) {
+	var err error
+	var reachLimit bool
+	for {
+		prevData, reachLimit, err = loadDataInfo.InsertData(prevData, curData)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if !reachLimit {
+			break
+		}
+		if err = loadDataInfo.Ctx.Txn().Commit(); err != nil {
+			return nil, errors.Trace(err)
+		}
+		loadDataInfo.Ctx.NewTxn()
+		reachLimit = false
+		curData = prevData
+		prevData = nil
+	}
+	return prevData, nil
+}
+
 // handleLoadData does the additional work after processing the 'load data' query.
 // It sends client a file path, then reads the file content from client, inserts data into database.
 func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error {
@@ -531,7 +553,7 @@ func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error 
 		return errors.Trace(err)
 	}
 
-	var shouldCommit, shouldBreak bool
+	var shouldBreak bool
 	var prevData, curData []byte
 	// TODO: Make the loadDataRowCnt settable.
 	loadDataInfo.SetBatchCount(int64(defaultLoadDataBatchCnt))
@@ -550,22 +572,7 @@ func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error 
 				break
 			}
 		}
-		for {
-			prevData, shouldCommit, err = loadDataInfo.InsertData(prevData, curData)
-			if err != nil {
-				break
-			}
-			if !shouldCommit {
-				break
-			}
-			if err = loadDataInfo.Ctx.Txn().Commit(); err != nil {
-				break
-			}
-			loadDataInfo.Ctx.NewTxn()
-			shouldCommit = false
-			curData = prevData
-			prevData = nil
-		}
+		prevData, err = batchInsertData(prevData, curData, loadDataInfo)
 		if err != nil {
 			break
 		}
