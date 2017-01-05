@@ -760,27 +760,27 @@ func builtinUnixTimestamp(args []types.Datum, ctx context.Context) (d types.Datu
 		return
 	}
 
-	d.SetInt64(0)
 	var (
 		t  types.Time
 		t1 time.Time
-		e  error
 	)
 	switch args[0].Kind() {
 	case types.KindString:
-		t, e = types.ParseTime(args[0].GetString(), mysql.TypeDatetime, types.MaxFsp)
+		t, err = types.ParseTime(args[0].GetString(), mysql.TypeDatetime, types.MaxFsp)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
 	case types.KindInt64, types.KindUint64:
-		t, e = types.ParseTimeFromInt64(args[0].GetInt64())
-	default:
-		return
-	}
-	if e != nil {
-		return
+		t, err = types.ParseTimeFromInt64(args[0].GetInt64())
+		if err != nil {
+			return d, errors.Trace(err)
+		}
 	}
 
-	t1, e = t.Time.GoTime(getTimeZone(ctx))
-	if e != nil {
-		return
+	t1, err = t.Time.GoTime(getTimeZone(ctx))
+	if err != nil {
+		d.SetInt64(0)
+		return d, nil
 	}
 
 	if t.Time.Microsecond() > 0 {
