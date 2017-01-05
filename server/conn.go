@@ -530,7 +530,6 @@ func batchInsertData(prevData, curData []byte, loadDataInfo *executor.LoadDataIn
 			return nil, errors.Trace(err)
 		}
 		loadDataInfo.Ctx.NewTxn()
-		reachLimit = false
 		curData = prevData
 		prevData = nil
 	}
