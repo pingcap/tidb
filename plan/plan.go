@@ -241,7 +241,7 @@ func (p *baseLogicalPlan) buildKeyInfo() {
 	}
 	if len(p.children) == 1 {
 		switch p.self.(type) {
-		case *Exists:
+		case *Exists, *Aggregation, *Projection, *Trim:
 			p.schema.Keys = nil
 		case *SelectLock:
 			p.schema.Keys = p.children[0].GetSchema().Keys
