@@ -26,7 +26,7 @@ type tableCache struct {
 	cache map[int64]*Table
 }
 
-var tblCache tableCache = tableCache{cache: map[int64]*Table{}}
+var tblCache = tableCache{cache: map[int64]*Table{}}
 
 // expireDuration is 1 hour.
 var expireDuration int64 = 60 * 60 * 1000
