@@ -194,17 +194,17 @@ func builtinRound(args []types.Datum, ctx context.Context) (d types.Datum, err e
 func builtinConv(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	var (
 		n        string
-		r        string
 		toBase   int64
 		fromBase int64
 		signed   bool
+		negative bool
+		touval   bool
 	)
 	for _, arg := range args {
 		if arg.IsNull() {
 			return d, nil
 		}
 	}
-
 	n, err = args[0].ToString()
 	if err != nil {
 		return d, errors.Trace(err)
@@ -221,37 +221,55 @@ func builtinConv(args []types.Datum, ctx context.Context) (d types.Datum, err er
 
 	if fromBase < 0 {
 		fromBase = -fromBase
+		signed = true
 	}
 	if toBase < 0 {
-		signed = true
+		touval = true
 		toBase = -toBase
 	}
-	if fromBase > 36 || fromBase < 2 {
-		return d, nil
-	}
-	if toBase > 36 || toBase < 2 {
+	if fromBase > 36 || fromBase < 2 || toBase > 36 || toBase < 2 {
 		return d, nil
 	}
 	n = getValidPrefix(n, fromBase)
 	if len(n) == 0 {
 		return d, nil
 	}
-
-	if !signed {
-		c, err := strconv.ParseUint(n, int(fromBase), 64)
-		if err != nil {
-			return d, errors.Trace(types.ErrOverflow)
-		}
-		r = strconv.FormatUint(c, int(toBase))
-	} else {
-		c, err := strconv.ParseInt(n, int(fromBase), 64)
-		if err != nil {
-			return d, errors.Trace(types.ErrOverflow)
-		}
-		r = strconv.FormatInt(c, int(toBase))
+	if n[0] == '-' {
+		negative = true
+		n = n[1:]
 	}
 
-	d.SetString(strings.ToUpper(r))
+	val, err := strconv.ParseUint(n, int(fromBase), 64)
+	if err != nil {
+		return d, errors.Trace(types.ErrOverflow)
+	}
+	//Ref https://github.com/mysql/mysql-server/blob/5.7/strings/ctype-simple.c#L598
+	if signed {
+		if negative && val > -math.MinInt64 {
+			val = -math.MinInt64
+		}
+		if !negative && val > math.MaxInt64 {
+			val = math.MaxInt64
+		}
+	}
+	if negative {
+		val = -val
+	}
+	// Ref https://github.com/mysql/mysql-server/blob/5.7/strings/longlong2str.c#L58
+	if int64(val) < 0 {
+		negative = true
+	} else {
+		negative = false
+	}
+	if touval && negative {
+		val = 0 - val
+	}
+
+	s := strconv.FormatUint(val, int(toBase))
+	if negative && touval {
+		s = "-" + s
+	}
+	d.SetString(strings.ToUpper(s))
 	return d, nil
 }
 

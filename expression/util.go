@@ -115,7 +115,7 @@ func getValidPrefix(s string, base int64) string {
 	default:
 		return ""
 	}
-
+Loop:
 	for i := 0; i < len(s); i++ {
 		c := rune(s[i])
 		switch {
@@ -124,14 +124,14 @@ func getValidPrefix(s string, base int64) string {
 			if c < upper {
 				validLen = i + 1
 			} else {
-				break
+				break Loop
 			}
 		case c == '+' || c == '-':
 			if i != 0 {
-				break
+				break Loop
 			}
 		default:
-			break
+			break Loop
 		}
 	}
 	if validLen > 1 && s[0] == '+' {
