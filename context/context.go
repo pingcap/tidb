@@ -44,9 +44,9 @@ type Context interface {
 
 	GetSessionVars() *variable.SessionVars
 
-	// SyncTxn receives the pending transaction from the transaction channel.
+	// ActivePendingTxn receives the pending transaction from the transaction channel.
 	// It should be called right before we builds an executor.
-	SyncTxn() error
+	ActivePendingTxn() error
 }
 
 type basicCtxType int

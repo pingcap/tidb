@@ -86,7 +86,7 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 	if _, ok := a.plan.(*plan.Execute); !ok {
 		// Do not sync transaction for Execute statement, because the real optimization work is done in
 		// "ExecuteExec.Build".
-		err := ctx.SyncTxn()
+		err := ctx.ActivePendingTxn()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

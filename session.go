@@ -872,8 +872,8 @@ func (s *session) prepareTxnCtx() {
 	}
 }
 
-// SyncTxn implements Session.SyncTxn interface.
-func (s *session) SyncTxn() error {
+// ActivePendingTxn implements Session.ActivePendingTxn interface.
+func (s *session) ActivePendingTxn() error {
 	if s.txn != nil && s.txn.Valid() {
 		return nil
 	}

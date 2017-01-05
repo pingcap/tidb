@@ -109,8 +109,8 @@ func (c *Context) NewTxn() error {
 	return nil
 }
 
-// SyncTxn implements the context.Context interface.
-func (c *Context) SyncTxn() error {
+// ActivePendingTxn implements the context.Context interface.
+func (c *Context) ActivePendingTxn() error {
 	if c.txn != nil {
 		return nil
 	}

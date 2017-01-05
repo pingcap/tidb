@@ -234,7 +234,7 @@ func (e *ExecuteExec) Build() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = e.Ctx.SyncTxn()
+	err = e.Ctx.ActivePendingTxn()
 	if err != nil {
 		return errors.Trace(err)
 	}
