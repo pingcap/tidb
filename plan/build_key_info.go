@@ -21,7 +21,7 @@ import (
 
 func (p *Aggregation) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
-	// Aggregation's schema is create from aggFunc.
+	// Aggregation's schema is created from aggFunc.
 	// And the ith column in schema correspond to the ith function in aggFunc.
 	// So we create a temp schema from aggFunc to build key information.
 	schema := expression.NewSchema(make([]*expression.Column, 0, p.schema.Len()))
@@ -55,7 +55,7 @@ func (p *Aggregation) buildKeyInfo() {
 
 func (p *Projection) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
-	// Projection's schema is create from expression of projection.
+	// Projection's schema is created from expression of projection.
 	// And the ith column in schema correspond to the ith expression.
 	// So we create a temp schema from p.Exprs to build key information.
 	schema := expression.NewSchema(make([]*expression.Column, 0, p.schema.Len()))
@@ -144,26 +144,6 @@ func (p *Join) buildKeyInfo() {
 	}
 }
 
-func (p *Selection) buildKeyInfo() {
-	p.baseLogicalPlan.buildKeyInfo()
-	p.schema.Keys = p.children[0].GetSchema().Clone().Keys
-}
-
-func (p *Distinct) buildKeyInfo() {
-	p.baseLogicalPlan.buildKeyInfo()
-	p.schema.Keys = p.children[0].GetSchema().Clone().Keys
-}
-
-func (p *Sort) buildKeyInfo() {
-	p.baseLogicalPlan.buildKeyInfo()
-	p.schema.Keys = p.children[0].GetSchema().Clone().Keys
-}
-
-func (p *Limit) buildKeyInfo() {
-	p.baseLogicalPlan.buildKeyInfo()
-	p.schema.Keys = p.children[0].GetSchema().Clone().Keys
-}
-
 func (p *DataSource) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
 	indices, _ := availableIndices(p.indexHints, p.tableInfo)
@@ -205,19 +185,4 @@ func (p *DataSource) buildKeyInfo() {
 func (p *Apply) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
 	p.schema.Keys = append(p.children[0].GetSchema().Clone().Keys, p.children[1].GetSchema().Clone().Keys...)
-}
-
-func (p *MaxOneRow) buildKeyInfo() {
-	p.baseLogicalPlan.buildKeyInfo()
-	p.schema.Keys = p.children[0].GetSchema().Clone().Keys
-}
-
-func (p *Update) buildKeyInfo() {
-	p.baseLogicalPlan.buildKeyInfo()
-	p.schema.Keys = p.children[0].GetSchema().Clone().Keys
-}
-
-func (p *SelectLock) buildKeyInfo() {
-	p.baseLogicalPlan.buildKeyInfo()
-	p.schema.Keys = p.children[0].GetSchema().Keys
 }

@@ -239,7 +239,18 @@ func (p *baseLogicalPlan) buildKeyInfo() {
 	for _, child := range p.GetChildren() {
 		child.(LogicalPlan).buildKeyInfo()
 	}
-	p.schema.Keys = nil
+	if len(p.children) == 1 {
+		switch p.self.(type) {
+		case *Exists:
+			p.schema.Keys = nil
+		case *SelectLock:
+			p.schema.Keys = p.children[0].GetSchema().Keys
+		default:
+			p.schema.Keys = p.children[0].GetSchema().Clone().Keys
+		}
+	} else {
+		p.schema.Keys = nil
+	}
 }
 
 func newBaseLogicalPlan(tp string, a *idAllocator) baseLogicalPlan {
