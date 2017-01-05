@@ -71,6 +71,7 @@ const (
 	Coalesce = "coalesce"
 	Greatest = "greatest"
 	Least    = "least"
+	Interval = "interval"
 
 	// math functions
 	Abs     = "abs"
@@ -114,6 +115,7 @@ const (
 	Time             = "time"
 	TimeDiff         = "timediff"
 	UTCDate          = "utc_date"
+	UnixTimestamp    = "unix_timestamp"
 	Week             = "week"
 	Weekday          = "weekday"
 	WeekOfYear       = "weekofyear"
@@ -149,6 +151,7 @@ const (
 	BitLength      = "bit_length"
 	CharFunc       = "char_func"
 	CharLength     = "char_length"
+	FindInSet      = "find_in_set"
 
 	// information functions
 	ConnectionID = "connection_id"
