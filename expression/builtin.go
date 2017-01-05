@@ -18,6 +18,7 @@
 package expression
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/juju/errors"
@@ -25,6 +26,20 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
+)
+
+var (
+	_ functionClass = &coalesceFunctionClass{}
+	_ functionClass = &isNullFunctionClass{}
+	_ functionClass = &greatestFunctionClass{}
+	_ functionClass = &leastFunctionClass{}
+)
+
+var (
+	_ builtinFunc = &builtinCoalesceSig{}
+	_ builtinFunc = &builtinIsNullSig{}
+	_ builtinFunc = &builtinGreatestSig{}
+	_ builtinFunc = &builtinLeastSig{}
 )
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
@@ -141,6 +156,7 @@ var Funcs = map[string]Func{
 	ast.IsNull:   {builtinIsNull, 1, 1},
 	ast.Greatest: {builtinGreatest, 2, -1},
 	ast.Least:    {builtinLeast, 2, -1},
+	ast.Interval: {builtinInterval, 2, -1},
 
 	// math functions
 	ast.Abs:     {builtinAbs, 1, 1},
@@ -333,6 +349,26 @@ func builtinCoalesce(args []types.Datum, ctx context.Context) (d types.Datum, er
 	return d, nil
 }
 
+type isNullFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *isNullFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinIsNullSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinIsNullSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinIsNullSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return builtinIsNull(args, b.ctx)
+}
+
 // See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_isnull
 func builtinIsNull(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	if args[0].IsNull() {
@@ -341,6 +377,26 @@ func builtinIsNull(args []types.Datum, _ context.Context) (d types.Datum, err er
 		d.SetInt64(0)
 	}
 	return d, nil
+}
+
+type greatestFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *greatestFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinGreatestSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinGreatestSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinGreatestSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return builtinGreatest(args, b.ctx)
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
@@ -368,6 +424,26 @@ func builtinGreatest(args []types.Datum, ctx context.Context) (d types.Datum, er
 	return
 }
 
+type leastFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *leastFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinLeastSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinLeastSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinLeastSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return builtinLeast(args, b.ctx)
+}
+
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_least
 func builtinLeast(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	if args[0].IsNull() {
@@ -390,5 +466,36 @@ func builtinLeast(args []types.Datum, ctx context.Context) (d types.Datum, err e
 		}
 	}
 	d = args[min]
+	return
+}
+
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_interval
+func builtinInterval(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	if args[0].IsNull() {
+		d.SetInt64(int64(-1))
+		return
+	}
+	sc := ctx.GetSessionVars().StmtCtx
+
+	idx := sort.Search(len(args)-1, func(i int) bool {
+		d1, d2 := args[0], args[i+1]
+		if d1.Kind() == types.KindInt64 && d1.Kind() == d2.Kind() {
+			return d1.GetInt64() < d2.GetInt64()
+		}
+		if d1.Kind() == types.KindUint64 && d1.Kind() == d2.Kind() {
+			return d1.GetUint64() < d2.GetUint64()
+		}
+		if d1.Kind() == types.KindInt64 && d2.Kind() == types.KindUint64 {
+			return d1.GetInt64() < 0 || d1.GetUint64() < d2.GetUint64()
+		}
+		if d1.Kind() == types.KindUint64 && d2.Kind() == types.KindInt64 {
+			return d2.GetInt64() > 0 && d1.GetUint64() < d2.GetUint64()
+		}
+		v1, _ := d1.ToFloat64(sc)
+		v2, _ := d2.ToFloat64(sc)
+		return v1 < v2
+	})
+	d.SetInt64(int64(idx))
+
 	return
 }
