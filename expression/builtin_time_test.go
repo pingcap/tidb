@@ -466,7 +466,7 @@ func (s *testEvaluatorSuite) TestStrToDate(c *C) {
 		}
 		c.Assert(result.Kind(), Equals, types.KindMysqlTime)
 		value := result.GetMysqlTime()
-		t1, _ := value.Time.GoTime()
+		t1, _ := value.Time.GoTime(time.Local)
 		c.Assert(t1, Equals, test.Expect)
 	}
 }
@@ -563,6 +563,33 @@ func (s *testEvaluatorSuite) TestTimestampDiff(c *C) {
 		types.NewStringDatum("2017-01-01")}, s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(d.Kind(), Equals, types.KindNull)
+}
+
+func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
+	d, err := builtinUnixTimestamp(nil, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(d.GetInt64()-time.Now().Unix(), GreaterEqual, int64(-1))
+	c.Assert(d.GetInt64()-time.Now().Unix(), LessEqual, int64(1))
+
+	// Set the time_zone variable, because UnixTimestamp() result depends on it.
+	s.ctx.GetSessionVars().TimeZone = time.UTC
+	tests := []struct {
+		input  types.Datum
+		expect string
+	}{
+		{types.NewIntDatum(20151113102019), "1447410019"},
+		{types.NewStringDatum("2015-11-13 10:20:19"), "1447410019"},
+		{types.NewStringDatum("2015-11-13 10:20:19.012"), "1447410019.012"},
+		{types.NewStringDatum("2017-00-02"), "0"},
+	}
+
+	for _, test := range tests {
+		d, err = builtinUnixTimestamp([]types.Datum{test.input}, s.ctx)
+		c.Assert(err, IsNil)
+		str, err := d.ToString()
+		c.Assert(err, IsNil)
+		c.Assert(str, Equals, test.expect)
+	}
 }
 
 func (s *testEvaluatorSuite) TestDateArith(c *C) {

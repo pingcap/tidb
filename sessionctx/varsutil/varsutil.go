@@ -145,7 +145,8 @@ func setSnapshotTS(s *variable.SessionVars, sVal string) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	t1, err := t.Time.GoTime()
+	// TODO: Consider time_zone variable.
+	t1, err := t.Time.GoTime(time.Local)
 	ts := (t1.UnixNano() / int64(time.Millisecond)) << epochShiftBits
 	s.SnapshotTS = uint64(ts)
 	return errors.Trace(err)

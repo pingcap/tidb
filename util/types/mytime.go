@@ -58,7 +58,8 @@ func (t mysqlTime) Microsecond() int {
 }
 
 func (t mysqlTime) Weekday() gotime.Weekday {
-	t1, err := t.GoTime()
+	// TODO: Consider time_zone variable.
+	t1, err := t.GoTime(gotime.Local)
 	if err != nil {
 		return 0
 	}
@@ -86,10 +87,10 @@ func (t mysqlTime) Week(mode int) int {
 	return week
 }
 
-func (t mysqlTime) GoTime() (gotime.Time, error) {
+func (t mysqlTime) GoTime(loc *gotime.Location) (gotime.Time, error) {
 	// gotime.Time can't represent month 0 or day 0, date contains 0 would be converted to a nearest date,
 	// For example, 2006-12-00 00:00:00 would become 2015-11-30 23:59:59.
-	tm := gotime.Date(t.Year(), gotime.Month(t.Month()), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Microsecond()*1000, gotime.Local)
+	tm := gotime.Date(t.Year(), gotime.Month(t.Month()), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Microsecond()*1000, loc)
 	year, month, day := tm.Date()
 	hour, minute, second := tm.Clock()
 	microsec := tm.Nanosecond() / 1000
