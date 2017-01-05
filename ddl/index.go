@@ -36,7 +36,7 @@ import (
 
 const maxPrefixLength = 3072
 
-// This function validates index length and create an IndexInfo
+// BuildIndexInfo validates index length and create index info
 func BuildIndexInfo(tblInfo *model.TableInfo, indexName model.CIStr,
 	idxColNames []*ast.IndexColName, primary bool, unique bool, state model.SchemaState) (*model.IndexInfo, error) {
 	// build offsets
