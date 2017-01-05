@@ -225,7 +225,7 @@ import (
 	count		"COUNT"
 	day		"DAY"
 	datediff	"DATEDIFF"
-    dateAdd		"DATE_ADD"
+	dateAdd		"DATE_ADD"
 	dateFormat	"DATE_FORMAT"
 	dateSub		"DATE_SUB"
 	dayname		"DAYNAME"
