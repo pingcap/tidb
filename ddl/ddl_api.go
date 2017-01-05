@@ -223,12 +223,19 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 	setOnUpdateNow := false
 	hasDefaultValue := false
 	if colDef.Options != nil {
+		len := types.UnspecifiedLength
+
+		if types.IsTypeSpecifiable(colDef.Tp.Tp) {
+			len = colDef.Tp.Flen
+		}
+
 		keys := []*ast.IndexColName{
 			{
 				Column: colDef.Name,
-				Length: colDef.Tp.Flen,
+				Length: len,
 			},
 		}
+
 		for _, v := range colDef.Options {
 			switch v.Tp {
 			case ast.ColumnOptionNotNull:

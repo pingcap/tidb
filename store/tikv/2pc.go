@@ -458,6 +458,9 @@ func (c *twoPhaseCommitter) execute() error {
 		return errors.Trace(err)
 	}
 	c.commitTS = commitTS
+	if err := c.checkSchemaValid(); err != nil {
+		return errors.Trace(err)
+	}
 
 	if c.store.oracle.IsExpired(c.startTS, maxTxnTimeUse) {
 		err = errors.Errorf("txn takes too much time, start: %d, commit: %d", c.startTS, c.commitTS)
@@ -471,6 +474,21 @@ func (c *twoPhaseCommitter) execute() error {
 			return errors.Trace(err)
 		}
 		log.Debugf("2PC succeed with error: %v, tid: %d", err, c.startTS)
+	}
+	return nil
+}
+
+type schemaLeaseChecker interface {
+	Check(txnTS uint64) error
+}
+
+func (c *twoPhaseCommitter) checkSchemaValid() error {
+	checker, ok := c.txn.us.GetOption(kv.SchemaLeaseChecker).(schemaLeaseChecker)
+	if ok {
+		err := checker.Check(c.commitTS)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	return nil
 }

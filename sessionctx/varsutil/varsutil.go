@@ -85,6 +85,8 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		return errors.Trace(err)
 	}
 	switch name {
+	case variable.TimeZone:
+		vars.TimeZone = parseTimeZone(sVal)
 	case variable.SQLModeVar:
 		sVal = strings.ToUpper(sVal)
 		if strings.Contains(sVal, "STRICT_TRANS_TABLES") || strings.Contains(sVal, "STRICT_ALL_TABLES") {
@@ -112,6 +114,28 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 	return nil
 }
 
+func parseTimeZone(s string) *time.Location {
+	if s == "SYSTEM" {
+		// TODO: Support global time_zone variable, it should be set to global time_zone value.
+		return time.Local
+	}
+
+	loc, err := time.LoadLocation(s)
+	if err == nil {
+		return loc
+	}
+
+	// The value can be given as a string indicating an offset from UTC, such as '+10:00' or '-6:00'.
+	if strings.HasPrefix(s, "+") || strings.HasPrefix(s, "-") {
+		d, err := types.ParseDuration(s[1:], 0)
+		if err == nil {
+			return time.FixedZone("UTC", int(d.Duration/time.Second))
+		}
+	}
+
+	return nil
+}
+
 func setSnapshotTS(s *variable.SessionVars, sVal string) error {
 	if sVal == "" {
 		s.SnapshotTS = 0
@@ -121,7 +145,8 @@ func setSnapshotTS(s *variable.SessionVars, sVal string) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	t1, err := t.Time.GoTime()
+	// TODO: Consider time_zone variable.
+	t1, err := t.Time.GoTime(time.Local)
 	ts := (t1.UnixNano() / int64(time.Millisecond)) << epochShiftBits
 	s.SnapshotTS = uint64(ts)
 	return errors.Trace(err)

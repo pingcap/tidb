@@ -46,9 +46,10 @@ func testSchemaInfo(c *C, d *ddl, name string) *model.DBInfo {
 
 func testCreateSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) *model.Job {
 	job := &model.Job{
-		SchemaID: dbInfo.ID,
-		Type:     model.ActionCreateSchema,
-		Args:     []interface{}{dbInfo},
+		SchemaID:   dbInfo.ID,
+		Type:       model.ActionCreateSchema,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{dbInfo},
 	}
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
@@ -62,8 +63,9 @@ func testCreateSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) *
 
 func testDropSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) (*model.Job, int64) {
 	job := &model.Job{
-		SchemaID: dbInfo.ID,
-		Type:     model.ActionDropSchema,
+		SchemaID:   dbInfo.ID,
+		Type:       model.ActionDropSchema,
+		BinlogInfo: &model.HistoryInfo{},
 	}
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
@@ -181,8 +183,9 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 
 	// drop a table doesn't exist.
 	job = &model.Job{
-		SchemaID: dbInfo.ID,
-		Type:     model.ActionDropSchema,
+		SchemaID:   dbInfo.ID,
+		Type:       model.ActionDropSchema,
+		BinlogInfo: &model.HistoryInfo{},
 	}
 	err := d.doDDLJob(ctx, job)
 	c.Assert(terror.ErrorEqual(err, infoschema.ErrDatabaseDropExists), IsTrue)
@@ -257,16 +260,18 @@ func (s *testSchemaSuite) TestSchemaResume(c *C) {
 	dbInfo := testSchemaInfo(c, d1, "test")
 
 	job := &model.Job{
-		SchemaID: dbInfo.ID,
-		Type:     model.ActionCreateSchema,
-		Args:     []interface{}{dbInfo},
+		SchemaID:   dbInfo.ID,
+		Type:       model.ActionCreateSchema,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{dbInfo},
 	}
 
 	testRunInterruptedJob(c, d1, job)
 	testCheckSchemaState(c, d1, dbInfo, model.StatePublic)
 	job = &model.Job{
-		SchemaID: dbInfo.ID,
-		Type:     model.ActionDropSchema,
+		SchemaID:   dbInfo.ID,
+		Type:       model.ActionDropSchema,
+		BinlogInfo: &model.HistoryInfo{},
 	}
 
 	testRunInterruptedJob(c, d1, job)
