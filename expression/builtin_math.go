@@ -193,9 +193,6 @@ func builtinRound(args []types.Datum, ctx context.Context) (d types.Datum, err e
 // See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_conv
 func builtinConv(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	var (
-		n        string
-		toBase   int64
-		fromBase int64
 		signed   bool
 		negative bool
 		touval   bool
@@ -205,16 +202,16 @@ func builtinConv(args []types.Datum, ctx context.Context) (d types.Datum, err er
 			return d, nil
 		}
 	}
-	n, err = args[0].ToString()
+	n, err := args[0].ToString()
 	if err != nil {
 		return d, errors.Trace(err)
 	}
 	sc := ctx.GetSessionVars().StmtCtx
-	fromBase, err = args[1].ToInt64(sc)
+	fromBase, err := args[1].ToInt64(sc)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	toBase, err = args[2].ToInt64(sc)
+	toBase, err := args[2].ToInt64(sc)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
@@ -243,7 +240,7 @@ func builtinConv(args []types.Datum, ctx context.Context) (d types.Datum, err er
 	if err != nil {
 		return d, errors.Trace(types.ErrOverflow)
 	}
-	//Ref https://github.com/mysql/mysql-server/blob/5.7/strings/ctype-simple.c#L598
+	// See https://github.com/mysql/mysql-server/blob/5.7/strings/ctype-simple.c#L598
 	if signed {
 		if negative && val > -math.MinInt64 {
 			val = -math.MinInt64
@@ -255,7 +252,7 @@ func builtinConv(args []types.Datum, ctx context.Context) (d types.Datum, err er
 	if negative {
 		val = -val
 	}
-	// Ref https://github.com/mysql/mysql-server/blob/5.7/strings/longlong2str.c#L58
+	// See https://github.com/mysql/mysql-server/blob/5.7/strings/longlong2str.c#L58
 	if int64(val) < 0 {
 		negative = true
 	} else {
