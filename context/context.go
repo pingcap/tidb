@@ -43,6 +43,10 @@ type Context interface {
 	ClearValue(key fmt.Stringer)
 
 	GetSessionVars() *variable.SessionVars
+
+	// ActivePendingTxn receives the pending transaction from the transaction channel.
+	// It should be called right before we builds an executor.
+	ActivePendingTxn() error
 }
 
 type basicCtxType int

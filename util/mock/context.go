@@ -109,6 +109,21 @@ func (c *Context) NewTxn() error {
 	return nil
 }
 
+// ActivePendingTxn implements the context.Context interface.
+func (c *Context) ActivePendingTxn() error {
+	if c.txn != nil {
+		return nil
+	}
+	if c.Store != nil {
+		txn, err := c.Store.Begin()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		c.txn = txn
+	}
+	return nil
+}
+
 // NewContext creates a new mocked context.Context.
 func NewContext() *Context {
 	return &Context{
