@@ -528,6 +528,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 
 		{"SELECT LEAST(1, 2, 3);", true},
 
+		{"SELECT INTERVAL(1, 0, 1, 2)", true},
+		{"SELECT DATE_ADD('2008-01-02', INTERVAL INTERVAL(1, 0, 1) DAY);", true},
+
 		// Information Functions
 		{"SELECT DATABASE();", true},
 		{"SELECT SCHEMA();", true},
