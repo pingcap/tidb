@@ -34,7 +34,7 @@ func (ts *testFunctionsSuite) TestAggregateFuncExtractor(c *C) {
 
 	extractor = &AggregateFuncExtractor{}
 	expr = &FuncCallExpr{
-		FnName: model.NewCIStr("DATE_ARITH"),
+		FnName: model.NewCIStr("FAKE_FUNC"),
 	}
 	expr.Accept(extractor)
 	c.Assert(extractor.AggFuncs, HasLen, 0)
@@ -43,7 +43,7 @@ func (ts *testFunctionsSuite) TestAggregateFuncExtractor(c *C) {
 	r := &AggregateFuncExpr{}
 	expr = &BinaryOperationExpr{
 		L: &FuncCallExpr{
-			FnName: model.NewCIStr("DATE_ARITH"),
+			FnName: model.NewCIStr("FAKE_FUNC"),
 		},
 		R: r,
 	}
