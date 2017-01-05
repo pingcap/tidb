@@ -16,6 +16,7 @@ package variable
 import (
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
@@ -144,6 +145,10 @@ type SessionVars struct {
 	// CurrInsertValues is used to record current ValuesExpr's values.
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	CurrInsertValues interface{}
+
+	// Per-connection time zones. Each client that connects has its own time zone setting, given by the session time_zone variable.
+	// See https://dev.mysql.com/doc/refman/5.7/en/time-zone-support.html
+	TimeZone *time.Location
 }
 
 // NewSessionVars creates a session vars object.
@@ -224,6 +229,7 @@ const (
 	SQLModeVar          = "sql_mode"
 	AutocommitVar       = "autocommit"
 	CharacterSetResults = "character_set_results"
+	TimeZone            = "time_zone"
 )
 
 // GetTiDBSystemVar gets variable value for name.

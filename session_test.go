@@ -22,10 +22,14 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/localstore"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -54,15 +58,11 @@ func (s *testSessionSuite) SetUpSuite(c *C) {
 	s.dropTableSQL = `Drop TABLE if exists t;`
 	s.createTableSQL = `CREATE TABLE t(id TEXT);`
 	s.selectSQL = `SELECT * from t;`
-	schemaExpiredRetryTimes = 3
-	checkSchemaValiditySleepTime = 20 * time.Millisecond
 	runtime.GOMAXPROCS(runtime.NumCPU())
 }
 
 func (s *testSessionSuite) TearDownSuite(c *C) {
 	removeStore(c, s.dbName)
-	schemaExpiredRetryTimes = 30
-	checkSchemaValiditySleepTime = 1 * time.Second
 }
 
 func (s *testSessionSuite) TestPrepare(c *C) {
@@ -394,7 +394,6 @@ func (s *testSessionSuite) TestRowLock(c *C) {
 	se3 := newSession(c, store, s.dbName)
 	r := mustExecSQL(c, se3, "select c2 from t where c1=11")
 	rows, err := GetRows(r)
-	fmt.Println(rows)
 	matches(c, rows, [][]interface{}{{21}})
 
 	mustExecSQL(c, se1, "begin")
@@ -1945,7 +1944,6 @@ func (s *testSessionSuite) TestIssue1265(c *C) {
 	mustExecFailed(c, se, "insert t values ('1e2');")
 }
 
-/*
 func (s *testSessionSuite) TestIssue1435(c *C) {
 	defer testleak.AfterTest(c)()
 	localstore.MockRemoteStore = true
@@ -1959,7 +1957,6 @@ func (s *testSessionSuite) TestIssue1435(c *C) {
 	se2.(*session).sessionVars.RetryInfo.Retrying = true
 
 	ctx := se.(context.Context)
-	sessionctx.GetDomain(ctx).SetLease(20 * time.Millisecond)
 	mustExecSQL(c, se, "drop table if exists t;")
 	mustExecSQL(c, se, "create table t (a int);")
 	mustExecSQL(c, se, "drop table if exists t1;")
@@ -1973,20 +1970,16 @@ func (s *testSessionSuite) TestIssue1435(c *C) {
 	execFailedFunc := func(s Session, tbl string, start chan struct{}, end chan error) {
 		// execute successfully
 		_, err := exec(s, "begin;")
+		c.Check(err, IsNil)
 		<-start
 		<-start
-		if err == nil {
-			// execute failed
-			_, err = exec(s, fmt.Sprintf("insert into %s values(1)", tbl))
-		}
 
-		if err != nil {
-			// table t1 executes failed
-			// table t2 executes successfully
-			_, err = exec(s, "commit")
-		} else if tbl == "t2" {
-			err = errors.New("insert result isn't expected")
-		}
+		_, err = exec(s, fmt.Sprintf("insert into %s values(1)", tbl))
+		c.Check(err, IsNil)
+
+		// table t1 executes failed
+		// table t2 executes successfully
+		_, err = exec(s, "commit")
 		end <- err
 	}
 
@@ -2004,15 +1997,16 @@ func (s *testSessionSuite) TestIssue1435(c *C) {
 	default:
 	}
 	// Make sure loading information schema is failed and server is invalid.
-	sessionctx.GetDomain(ctx).SchemaValidity.MockReloadFailed.SetValue(true)
-	sessionctx.GetDomain(ctx).Reload()
+	sessionctx.GetDomain(ctx).MockReloadFailed.SetValue(true)
+	err := sessionctx.GetDomain(ctx).Reload()
+	c.Assert(err, NotNil)
 	lease := sessionctx.GetDomain(ctx).DDL().GetLease()
 	time.Sleep(lease)
 	// Make sure insert to table t1 transaction executes.
 	startCh1 <- struct{}{}
 	// Make sure executing insert statement is failed when server is invalid.
 	mustExecFailed(c, se, "insert t values (100);")
-	err := <-endCh1
+	err = <-endCh1
 	c.Assert(err, NotNil)
 
 	// recover
@@ -2027,8 +2021,7 @@ func (s *testSessionSuite) TestIssue1435(c *C) {
 	ver, err := store.CurrentVersion()
 	c.Assert(err, IsNil)
 	c.Assert(ver, NotNil)
-	sessionctx.GetDomain(ctx).SchemaValidity.SetExpireInfo(false, ver.Ver)
-	sessionctx.GetDomain(ctx).SchemaValidity.MockReloadFailed.SetValue(false)
+	sessionctx.GetDomain(ctx).MockReloadFailed.SetValue(false)
 	time.Sleep(lease)
 	mustExecSQL(c, se, "drop table if exists t;")
 	mustExecSQL(c, se, "create table t (a int);")
@@ -2038,6 +2031,7 @@ func (s *testSessionSuite) TestIssue1435(c *C) {
 	err = <-endCh2
 	c.Assert(err, IsNil, Commentf("err:%v", err))
 
+	sessionctx.GetDomain(ctx).Close()
 	err = se.Close()
 	c.Assert(err, IsNil)
 	err = se1.Close()
@@ -2048,7 +2042,6 @@ func (s *testSessionSuite) TestIssue1435(c *C) {
 	c.Assert(err, IsNil)
 	localstore.MockRemoteStore = false
 }
-*/
 
 // Testcase for session
 func (s *testSessionSuite) TestSession(c *C) {
@@ -2258,6 +2251,29 @@ func (s *testSessionSuite) TestSpecifyIndexPrefixLength(c *C) {
 	c.Assert(err, IsNil)
 	err = store.Close()
 	c.Assert(err, IsNil)
+}
+
+func (s *testSessionSuite) TestIndexColumnLength(c *C) {
+	defer testleak.AfterTest(c)()
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "drop table if exists t;")
+	mustExecSQL(c, se, "create table t (c1 int, c2 blob);")
+	mustExecSQL(c, se, "create index idx_c1 on t(c1);")
+	mustExecSQL(c, se, "create index idx_c2 on t(c2(6));")
+
+	dom, err1 := domain.NewDomain(store, 80*time.Millisecond)
+	c.Assert(err1, Equals, nil)
+	is := dom.InfoSchema()
+
+	tab, err2 := is.TableByName(model.NewCIStr(s.dbName), model.NewCIStr("t"))
+	c.Assert(err2, Equals, nil)
+
+	idxC1Cols := tables.FindIndexByColName(tab, "c1").Meta().Columns
+	c.Assert(idxC1Cols[0].Length, Equals, types.UnspecifiedLength)
+
+	idxC2Cols := tables.FindIndexByColName(tab, "c2").Meta().Columns
+	c.Assert(idxC2Cols[0].Length, Equals, 6)
 }
 
 func (s *testSessionSuite) TestIgnoreForeignKey(c *C) {
