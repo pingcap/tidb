@@ -557,6 +557,7 @@ func (s *testEvaluatorSuite) TestTimestampDiff(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(d.GetInt64(), Equals, test.expect)
 	}
+	s.ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
 	d, err := builtinTimestampDiff([]types.Datum{types.NewStringDatum("DAY"),
 		types.NewStringDatum("2017-01-00"),
 		types.NewStringDatum("2017-01-01")}, s.ctx)
