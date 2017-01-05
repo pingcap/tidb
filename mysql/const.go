@@ -269,6 +269,7 @@ var AllColumnPrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv}
 // AllPrivilegeLiteral is the string literal for All Privilege.
 const AllPrivilegeLiteral = "ALL PRIVILEGES"
 
+// Default physical length of MySQL data types
 var DefaultLengthOfMysqlTypes = map[byte]int {
 	TypeYear: 1,
 	TypeDate: 3,
@@ -287,6 +288,7 @@ var DefaultLengthOfMysqlTypes = map[byte]int {
 	TypeString: 1,
 }
 
+// Default physical length of time fractions
 var DefaultLengthOfTimeFraction = map[int]int {
 	0: 0,
 
