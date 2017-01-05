@@ -166,6 +166,8 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"char_length('TiDB')", mysql.TypeLonglong, charset.CharsetBin},
 		{"character_length('TiDB')", mysql.TypeLonglong, charset.CharsetBin},
 		{"crc32('TiDB')", mysql.TypeLonglong, charset.CharsetBin},
+		{"unix_timestamp()", mysql.TypeLonglong, charset.CharsetBin},
+		{"unix_timestamp('2015-11-13 10:20:19')", mysql.TypeLonglong, charset.CharsetBin},
 		{"find_in_set('foo', 'foo,bar')", mysql.TypeLonglong, charset.CharsetBin},
 		{"find_in_set('foo', null)", mysql.TypeLonglong, charset.CharsetBin},
 		{"find_in_set(null, 'bar')", mysql.TypeLonglong, charset.CharsetBin},

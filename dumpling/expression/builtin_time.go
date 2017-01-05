@@ -74,6 +74,7 @@ func convertToDuration(sc *variable.StatementContext, arg types.Datum, fsp int) 
 	return d, nil
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date
 func builtinDate(args []types.Datum, ctx context.Context) (types.Datum, error) {
 	return convertToTime(ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
 }
@@ -88,6 +89,7 @@ func convertDatumToTime(sc *variable.StatementContext, d types.Datum) (t types.T
 	return d.GetMysqlTime(), nil
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timediff
 func builtinTimeDiff(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	t1, err := convertDatumToTime(sc, args[0])
@@ -218,6 +220,7 @@ func builtinMonthName(args []types.Datum, ctx context.Context) (types.Datum, err
 	return d, nil
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_now
 func builtinNow(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	// TODO: if NOW is used in stored function or trigger, NOW will return the beginning time
 	// of the execution.
@@ -520,6 +523,7 @@ func builtinStrToDate(args []types.Datum, _ context.Context) (types.Datum, error
 	return d, nil
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_sysdate
 func builtinSysDate(args []types.Datum, ctx context.Context) (types.Datum, error) {
 	// SYSDATE is not the same as NOW if NOW is used in a stored function or trigger.
 	// But here we can just think they are the same because we don't support stored function
@@ -716,7 +720,8 @@ func builtinDateArith(args []types.Datum, ctx context.Context) (d types.Datum, e
 	if op == ast.DateSub {
 		year, month, day, duration = -year, -month, -day, -duration
 	}
-	t, err := result.Time.GoTime()
+	// TODO: Consider time_zone variable.
+	t, err := result.Time.GoTime(time.Local)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
@@ -745,4 +750,53 @@ func parseDayInterval(sc *variable.StatementContext, value types.Datum) (int64, 
 		value.SetString(reg.FindString(vs))
 	}
 	return value.ToInt64(sc)
+}
+
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_unix-timestamp
+func builtinUnixTimestamp(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	if len(args) == 0 {
+		now := time.Now().Unix()
+		d.SetInt64(now)
+		return
+	}
+
+	var (
+		t  types.Time
+		t1 time.Time
+	)
+	switch args[0].Kind() {
+	case types.KindString:
+		t, err = types.ParseTime(args[0].GetString(), mysql.TypeDatetime, types.MaxFsp)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+	case types.KindInt64, types.KindUint64:
+		t, err = types.ParseTimeFromInt64(args[0].GetInt64())
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+	}
+
+	t1, err = t.Time.GoTime(getTimeZone(ctx))
+	if err != nil {
+		d.SetInt64(0)
+		return d, nil
+	}
+
+	if t.Time.Microsecond() > 0 {
+		var dec types.MyDecimal
+		dec.FromFloat64(float64(t1.Unix()) + float64(t.Time.Microsecond())/1e6)
+		d.SetMysqlDecimal(&dec)
+	} else {
+		d.SetInt64(t1.Unix())
+	}
+	return
+}
+
+func getTimeZone(ctx context.Context) *time.Location {
+	ret := ctx.GetSessionVars().TimeZone
+	if ret == nil {
+		ret = time.Local
+	}
+	return ret
 }

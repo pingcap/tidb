@@ -784,6 +784,10 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select subdate("2011-11-11 10:10:10.123456", 0.10)`, true},
 		{`select subdate("2011-11-11 10:10:10.123456", "11,11")`, true},
 
+		// For unix_timestamp
+		{`select unix_timestamp()`, true},
+		{`select unix_timestamp('2015-11-13 10:20:19.012')`, true},
+
 		// For misc functions
 		{`SELECT GET_LOCK('lock1',10);`, true},
 		{`SELECT RELEASE_LOCK('lock1');`, true},
