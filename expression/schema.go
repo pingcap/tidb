@@ -137,6 +137,7 @@ func (s *Schema) SetUniqueKeys(keys []KeyInfo) {
 // GetColumnsIndices will return a slice which contains the position of each column in schema,
 // and a boolean which tell you whether all columns are found.
 func (s Schema) GetColumnsIndices(cols []*Column) (ret []int) {
+	ret = make([]int, 0, len(cols))
 	for _, col := range cols {
 		pos := s.GetColumnIndex(col)
 		if pos != -1 {
