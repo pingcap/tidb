@@ -54,10 +54,14 @@ func (s *testIndexSuite) TearDownSuite(c *C) {
 
 func testCreateIndex(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
 	job := &model.Job{
-		SchemaID: dbInfo.ID,
-		TableID:  tblInfo.ID,
-		Type:     model.ActionAddIndex,
-		Args:     []interface{}{unique, model.NewCIStr(indexName), []*ast.IndexColName{{Column: &ast.ColumnName{Name: model.NewCIStr(colName)}, Length: types.UnspecifiedLength}}},
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionAddIndex,
+		BinlogInfo: &model.HistoryInfo{},
+		Args: []interface{}{unique, model.NewCIStr(indexName),
+			[]*ast.IndexColName{{
+				Column: &ast.ColumnName{Name: model.NewCIStr(colName)},
+				Length: types.UnspecifiedLength}}},
 	}
 
 	err := d.doDDLJob(ctx, job)
@@ -69,10 +73,11 @@ func testCreateIndex(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tb
 
 func testDropIndex(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, indexName string) *model.Job {
 	job := &model.Job{
-		SchemaID: dbInfo.ID,
-		TableID:  tblInfo.ID,
-		Type:     model.ActionDropIndex,
-		Args:     []interface{}{model.NewCIStr(indexName)},
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionDropIndex,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{model.NewCIStr(indexName)},
 	}
 
 	err := d.doDDLJob(ctx, job)

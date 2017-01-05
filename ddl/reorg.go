@@ -173,28 +173,6 @@ func (d *ddl) delKeysWithStartKey(prefix, startKey kv.Key, jobType JobType, job 
 	return count, startKey, nil
 }
 
-// addDBHistoryInfo adds schema version and schema information that are used for binlog.
-// dbInfo is added in the following operations: create database, drop database.
-func addDBHistoryInfo(job *model.Job, ver int64, dbInfo *model.DBInfo) {
-	// TODO: Remove it.
-	// This is for compatibility with previous version.
-	job.Args = []interface{}{ver, dbInfo}
-	if job.BinlogInfo != nil {
-		job.BinlogInfo.AddDBInfo(ver, dbInfo)
-	}
-}
-
-// addTableHistoryInfo adds schema version and table information that are used for binlog.
-// tblInfo is added except for the following operations: create database, drop database.
-func addTableHistoryInfo(job *model.Job, ver int64, tblInfo *model.TableInfo) {
-	// TODO: Remove it.
-	// This is for compatibility with previous version.
-	job.Args = []interface{}{ver, tblInfo}
-	if job.BinlogInfo != nil {
-		job.BinlogInfo.AddTableInfo(ver, tblInfo)
-	}
-}
-
 type reorgInfo struct {
 	*model.Job
 	Handle int64

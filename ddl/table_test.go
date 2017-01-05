@@ -69,10 +69,11 @@ func testTableInfo(c *C, d *ddl, name string, num int) *model.TableInfo {
 
 func testCreateTable(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
 	job := &model.Job{
-		SchemaID: dbInfo.ID,
-		TableID:  tblInfo.ID,
-		Type:     model.ActionCreateTable,
-		Args:     []interface{}{tblInfo},
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionCreateTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{tblInfo},
 	}
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
@@ -86,9 +87,10 @@ func testCreateTable(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tb
 
 func testDropTable(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
 	job := &model.Job{
-		SchemaID: dbInfo.ID,
-		TableID:  tblInfo.ID,
-		Type:     model.ActionDropTable,
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionDropTable,
+		BinlogInfo: &model.HistoryInfo{},
 	}
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
@@ -102,10 +104,11 @@ func testTruncateTable(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, 
 	newTableID, err := d.genGlobalID()
 	c.Assert(err, IsNil)
 	job := &model.Job{
-		SchemaID: dbInfo.ID,
-		TableID:  tblInfo.ID,
-		Type:     model.ActionTruncateTable,
-		Args:     []interface{}{newTableID},
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionTruncateTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{newTableID},
 	}
 	err = d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
@@ -237,18 +240,20 @@ func (s *testTableSuite) TestTableResume(c *C) {
 
 	tblInfo := testTableInfo(c, d, "t1", 3)
 	job := &model.Job{
-		SchemaID: s.dbInfo.ID,
-		TableID:  tblInfo.ID,
-		Type:     model.ActionCreateTable,
-		Args:     []interface{}{tblInfo},
+		SchemaID:   s.dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionCreateTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{tblInfo},
 	}
 	testRunInterruptedJob(c, d, job)
 	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
 
 	job = &model.Job{
-		SchemaID: s.dbInfo.ID,
-		TableID:  tblInfo.ID,
-		Type:     model.ActionDropTable,
+		SchemaID:   s.dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionDropTable,
+		BinlogInfo: &model.HistoryInfo{},
 	}
 	testRunInterruptedJob(c, d, job)
 	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StateNone)

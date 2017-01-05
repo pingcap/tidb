@@ -528,6 +528,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 
 		{"SELECT LEAST(1, 2, 3);", true},
 
+		{"SELECT INTERVAL(1, 0, 1, 2)", true},
+		{"SELECT DATE_ADD('2008-01-02', INTERVAL INTERVAL(1, 0, 1) DAY);", true},
+
 		// Information Functions
 		{"SELECT DATABASE();", true},
 		{"SELECT SCHEMA();", true},
@@ -667,6 +670,8 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT CHAR(65);`, true},
 		{`SELECT CHAR_LENGTH('abc');`, true},
 		{`SELECT CHARACTER_LENGTH('abc');`, true},
+		{`SELECT FIND_IN_SET('foo', 'foo,bar')`, true},
+		{`SELECT FIND_IN_SET('foo')`, false},
 
 		// Repeat
 		{`SELECT REPEAT("a", 10);`, true},
@@ -779,6 +784,10 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select subdate("2011-11-11 10:10:10.123456", 10)`, true},
 		{`select subdate("2011-11-11 10:10:10.123456", 0.10)`, true},
 		{`select subdate("2011-11-11 10:10:10.123456", "11,11")`, true},
+
+		// For unix_timestamp
+		{`select unix_timestamp()`, true},
+		{`select unix_timestamp('2015-11-13 10:20:19.012')`, true},
 
 		// For misc functions
 		{`SELECT GET_LOCK('lock1',10);`, true},

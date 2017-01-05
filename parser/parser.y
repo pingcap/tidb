@@ -233,6 +233,7 @@ import (
 	dayofweek	"DAYOFWEEK"
 	dayofyear	"DAYOFYEAR"
 	events		"EVENTS"
+	findInSet	"FIND_IN_SET"
 	foundRows	"FOUND_ROWS"
 	fromUnixTime	"FROM_UNIXTIME"
 	grant		"GRANT"
@@ -279,6 +280,7 @@ import (
 	trim		"TRIM"
 	rtrim 		"RTRIM"
 	ucase 		"UCASE"
+	unixTimestamp	"UNIX_TIMESTAMP"
 	upper 		"UPPER"
 	version		"VERSION"
 	weekday		"WEEKDAY"
@@ -724,6 +726,9 @@ import (
 
 %precedence lowerThanSQLCache
 %precedence sqlCache sqlNoCache
+
+%precedence lowerThanIntervalKeyword
+%precedence interval
 
 %precedence lowerThanSetKeyword
 %precedence set
@@ -2114,7 +2119,7 @@ ReservedKeyword:
 
 NotKeywordToken:
 	"ABS" | "ADDDATE" | "ADMIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
-|	"DATEDIFF" | "DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS"
+|	"DATEDIFF" | "DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FIND_IN_SET" | "FOUND_ROWS"
 |	"GROUP_CONCAT"| "GREATEST" | "LEAST" | "HOUR" | "HEX" | "UNHEX" | "IFNULL" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOCATE" | "LOWER" | "LTRIM"
 |	"MAX" | "MICROSECOND" | "MIN" |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" | "POW" | "POWER" | "RAND"
 |	"SECOND" | "SLEEP" | "SQL_CALC_FOUND_ROWS" | "STR_TO_DATE" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen |
@@ -2469,6 +2474,7 @@ FunctionNameConflict:
 |	"UTC_DATE"
 |	"CURRENT_DATE"
 |	"VERSION"
+|	"INTERVAL" %prec lowerThanIntervalKeyword
 
 FunctionCallConflict:
 	FunctionNameConflict '(' ExpressionListOpt ')'
@@ -2707,6 +2713,16 @@ FunctionCallNonKeyword:
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1.(string)),
 			Args: []ast.ExprNode{timeUnit, $5.(ast.ExprNode)},
+		}
+	}
+|	"FIND_IN_SET" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args:	[]ast.ExprNode{
+				$3.(ast.ExprNode),
+				$5.(ast.ExprNode),
+			},
 		}
 	}
 |	"FOUND_ROWS" '(' ')'
@@ -2984,6 +3000,14 @@ FunctionCallNonKeyword:
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"UCASE" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
+|	"UNIX_TIMESTAMP" '(' ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1)}
+	}
+|	"UNIX_TIMESTAMP" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}

@@ -18,6 +18,7 @@
 package expression
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/juju/errors"
@@ -155,6 +156,7 @@ var Funcs = map[string]Func{
 	ast.IsNull:   {builtinIsNull, 1, 1},
 	ast.Greatest: {builtinGreatest, 2, -1},
 	ast.Least:    {builtinLeast, 2, -1},
+	ast.Interval: {builtinInterval, 2, -1},
 
 	// math functions
 	ast.Abs:     {builtinAbs, 1, 1},
@@ -205,6 +207,7 @@ var Funcs = map[string]Func{
 	ast.YearWeek:         {builtinYearWeek, 1, 2},
 	ast.FromUnixTime:     {builtinFromUnixTime, 1, 2},
 	ast.TimeDiff:         {builtinTimeDiff, 2, 2},
+	ast.UnixTimestamp:    {builtinUnixTimestamp, 0, 1},
 
 	// string functions
 	ast.ASCII:          {builtinASCII, 1, 1},
@@ -234,6 +237,7 @@ var Funcs = map[string]Func{
 	ast.BitLength:      {builtinBitLength, 1, 1},
 	ast.CharFunc:       {builtinChar, 2, -1},
 	ast.CharLength:     {builtinCharLength, 1, 1},
+	ast.FindInSet:      {builtinFindInSet, 2, 2},
 
 	// information functions
 	ast.ConnectionID: {builtinConnectionID, 0, 0},
@@ -464,5 +468,36 @@ func builtinLeast(args []types.Datum, ctx context.Context) (d types.Datum, err e
 		}
 	}
 	d = args[min]
+	return
+}
+
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_interval
+func builtinInterval(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	if args[0].IsNull() {
+		d.SetInt64(int64(-1))
+		return
+	}
+	sc := ctx.GetSessionVars().StmtCtx
+
+	idx := sort.Search(len(args)-1, func(i int) bool {
+		d1, d2 := args[0], args[i+1]
+		if d1.Kind() == types.KindInt64 && d1.Kind() == d2.Kind() {
+			return d1.GetInt64() < d2.GetInt64()
+		}
+		if d1.Kind() == types.KindUint64 && d1.Kind() == d2.Kind() {
+			return d1.GetUint64() < d2.GetUint64()
+		}
+		if d1.Kind() == types.KindInt64 && d2.Kind() == types.KindUint64 {
+			return d1.GetInt64() < 0 || d1.GetUint64() < d2.GetUint64()
+		}
+		if d1.Kind() == types.KindUint64 && d2.Kind() == types.KindInt64 {
+			return d2.GetInt64() > 0 && d1.GetUint64() < d2.GetUint64()
+		}
+		v1, _ := d1.ToFloat64(sc)
+		v2, _ := d2.ToFloat64(sc)
+		return v1 < v2
+	})
+	d.SetInt64(int64(idx))
+
 	return
 }
