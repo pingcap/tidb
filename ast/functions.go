@@ -115,6 +115,7 @@ const (
 	Time             = "time"
 	TimeDiff         = "timediff"
 	UTCDate          = "utc_date"
+	UnixTimestamp    = "unix_timestamp"
 	Week             = "week"
 	Weekday          = "weekday"
 	WeekOfYear       = "weekofyear"
