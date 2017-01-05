@@ -20,6 +20,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan/statistics"
@@ -908,8 +909,39 @@ func (b *planBuilder) buildTableDual() LogicalPlan {
 }
 
 func (b *planBuilder) getTableStats(table *model.TableInfo) *statistics.Table {
-	// TODO: Currently we always return a pseudo table for good performance. We will use a cache in future.
-	return statistics.PseudoTable(table)
+	tbl := statistics.GetStatisticsTableCache(table)
+	if tbl != nil {
+		return tbl
+	}
+	txn := b.ctx.Txn()
+	if txn == nil {
+		return statistics.PseudoTable(table)
+	}
+	m := meta.NewMeta(txn)
+	tpb, err := m.GetTableStats(table.ID)
+	if err != nil {
+		return statistics.PseudoTable(table)
+	}
+	// This table has no statistics table, we give it a pseudo one and save in cache.
+	if tpb == nil {
+		tbl = statistics.PseudoTable(table)
+		tbl.TS = int64(txn.StartTS())
+		statistics.SetStatisticsTableCache(table.ID, tbl)
+		return tbl
+	}
+	tbl, err = statistics.TableFromPB(table, tpb)
+	// Error is not nil may mean that there are some ddl changes on this table, so the origin
+	// statistics can not be used any more, we give it a pseudo one and save in cache.
+	if err != nil {
+		log.Errorf("Error occured when convert pb table for %s", table.Name.O)
+		tbl = statistics.PseudoTable(table)
+		tbl.TS = int64(txn.StartTS())
+		statistics.SetStatisticsTableCache(table.ID, tbl)
+		return statistics.PseudoTable(table)
+	}
+	tbl.TS = int64(txn.StartTS())
+	statistics.SetStatisticsTableCache(table.ID, tbl)
+	return tbl
 }
 
 func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {

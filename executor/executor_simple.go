@@ -381,6 +381,7 @@ func (e *SimpleExec) buildStatisticsAndSaveToKV(tn *ast.TableName, count int64, 
 	if err != nil {
 		return errors.Trace(err)
 	}
+	statistics.SetStatisticsTableCache(tn.TableInfo.ID, t)
 	tpb, err := t.ToPB()
 	if err != nil {
 		return errors.Trace(err)

@@ -330,6 +330,7 @@ func NewTable(sc *variable.StatementContext, ti *model.TableInfo, ts, count, num
 
 // TableFromPB creates a table statistics from protobuffer.
 func TableFromPB(ti *model.TableInfo, tpb *TablePB) (*Table, error) {
+	// TODO: The following error may mean that there is a ddl change on this table. Currently, The caller simply drop the statistics table. Maybe we can have better solution.
 	if tpb.GetId() != ti.ID {
 		return nil, errors.Errorf("table id not match, expected %d, got %d", ti.ID, tpb.GetId())
 	}
