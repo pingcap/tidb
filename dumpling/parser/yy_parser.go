@@ -138,7 +138,7 @@ func (parser *Parser) endOffset(v *yySymType) int {
 }
 
 func toInt(l yyLexer, lval *yySymType, str string) int {
-	n, err := strconv.ParseUint(str, 0, 64)
+	n, err := strconv.ParseUint(str, 10, 64)
 	if err != nil {
 		l.Errorf("integer literal: %v", err)
 		return int(unicode.ReplacementChar)
