@@ -26,8 +26,8 @@ import (
 )
 
 type statsInfo struct {
-	tbl    *statistics.Table
-	loadTS uint64
+	tbl      *statistics.Table
+	loadTime int64
 }
 
 type statsCache struct {
@@ -41,7 +41,7 @@ var statsTblCache = statsCache{cache: map[int64]statsInfo{}}
 var expireDuration int64 = 60 * 60 * 1000
 
 func tableCacheExpired(si statsInfo) bool {
-	duration := oracle.GetPhysical(time.Now()) - oracle.ExtractPhysical(si.loadTS)
+	duration := oracle.GetPhysical(time.Now()) - si.loadTime
 	if duration >= expireDuration {
 		return true
 	}
@@ -74,7 +74,7 @@ func GetStatisticsTableCache(ctx context.Context, tblInfo *model.TableInfo) *sta
 	// This table has no statistics table, we give it a pseudo one and save in cache.
 	if tpb == nil {
 		tbl := statistics.PseudoTable(tblInfo)
-		SetStatisticsTableCache(tblInfo.ID, tbl, txn.StartTS())
+		SetStatisticsTableCache(tblInfo.ID, tbl)
 		return tbl
 	}
 	tbl, err := statistics.TableFromPB(tblInfo, tpb)
@@ -83,18 +83,18 @@ func GetStatisticsTableCache(ctx context.Context, tblInfo *model.TableInfo) *sta
 	if err != nil {
 		log.Errorf("Error occured when convert pb table for %s", tblInfo.Name.O)
 		tbl = statistics.PseudoTable(tblInfo)
-		SetStatisticsTableCache(tblInfo.ID, tbl, txn.StartTS())
+		SetStatisticsTableCache(tblInfo.ID, tbl)
 		return tbl
 	}
-	SetStatisticsTableCache(tblInfo.ID, tbl, txn.StartTS())
+	SetStatisticsTableCache(tblInfo.ID, tbl)
 	return tbl
 }
 
 // SetStatisticsTableCache sets the statistics table cache.
-func SetStatisticsTableCache(id int64, statsTbl *statistics.Table, ts uint64) {
+func SetStatisticsTableCache(id int64, statsTbl *statistics.Table) {
 	si := statsInfo{
-		tbl:    statsTbl,
-		loadTS: ts,
+		tbl:      statsTbl,
+		loadTime: oracle.GetPhysical(time.Now()),
 	}
 	statsTblCache.m.Lock()
 	statsTblCache.cache[id] = si
