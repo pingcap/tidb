@@ -193,6 +193,11 @@ func (t Time) IsZero() bool {
 	return compareTime(t.Time, ZeroTime) == 0
 }
 
+// InvalidZero returns a boolean indicating whether the month or day is zero.
+func (t Time) InvalidZero() bool {
+	return t.Time.Month() == 0 || t.Time.Day() == 0
+}
+
 const numberFormat = "%Y%m%d%H%i%s"
 const dateFormat = "%Y%m%d"
 

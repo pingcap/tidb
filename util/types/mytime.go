@@ -369,8 +369,6 @@ func timestampDiff(intervalType string, t1 TimeInternal, t2 TimeInternal) int64 
 		// In MySQL difference between any two valid datetime values
 		// in microseconds fits into longlong.
 		return int64(seconds*1000000+microseconds) * negV
-	default:
-		break
 	}
 
 	return 0
