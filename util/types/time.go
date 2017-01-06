@@ -579,13 +579,19 @@ func parseDatetime(str string, fsp int) (Time, error) {
 	if err != nil {
 		return ZeroDatetime, errors.Trace(err)
 	}
+
+	tmp := FromDate(year, month, day, hour, minute, second, microsecond)
 	if overflow {
-		microsecond = 0
-		second++
+		// Convert to Go time and add 1 second, to handle input like 2017-01-05 08:40:59.575601
+		t1, err := tmp.GoTime(gotime.Local)
+		if err != nil {
+			return ZeroDatetime, errors.Trace(err)
+		}
+		tmp = FromGoTime(t1.Add(gotime.Second))
 	}
 
 	nt := Time{
-		Time: FromDate(year, month, day, hour, minute, second, microsecond),
+		Time: tmp,
 		Type: mysql.TypeDatetime,
 		Fsp:  fsp}
 
