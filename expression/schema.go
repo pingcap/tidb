@@ -23,7 +23,7 @@ import (
 // KeyInfo stores the columns of one unique key or primary key.
 type KeyInfo []*Column
 
-//Clone copies the entire UniqueKey.
+// Clone copies the entire UniqueKey.
 func (ki KeyInfo) Clone() KeyInfo {
 	result := make([]*Column, 0, len(ki))
 	for _, col := range ki {
@@ -134,8 +134,8 @@ func (s *Schema) SetUniqueKeys(keys []KeyInfo) {
 	s.Keys = keys
 }
 
-// GetColumnsIndices will return a slice which contains the position of each column in schema,
-// and a boolean which tell you whether all columns are found.
+// GetColumnsIndices will return a slice which contains the position of each column in schema.
+// If there is one column that doesn't match, nil will be returned.
 func (s Schema) GetColumnsIndices(cols []*Column) (ret []int) {
 	ret = make([]int, 0, len(cols))
 	for _, col := range cols {

@@ -37,7 +37,7 @@ func (p *Aggregation) buildSchemaByAggFuncs() expression.Schema {
 
 func (p *Aggregation) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
-	// Dealing with p.AggFuncs.
+	// dealing with p.AggFuncs
 	schemaByFuncs := p.buildSchemaByAggFuncs()
 	for _, key := range p.GetChildren()[0].GetSchema().Keys {
 		indices := schemaByFuncs.GetColumnsIndices(key)
@@ -50,7 +50,7 @@ func (p *Aggregation) buildKeyInfo() {
 		}
 		p.schema.Keys = append(p.schema.Keys, newKey)
 	}
-	// Dealing with p.GroupbyCols
+	// dealing with p.GroupbyCols
 	// This is only used for optimization and needn't to be pushed up, so only one is enough.
 	schemaByGroupby := expression.NewSchema(p.groupByCols)
 	for _, key := range p.GetChildren()[0].GetSchema().Keys {
@@ -102,7 +102,7 @@ func (p *Projection) buildKeyInfo() {
 func (p *Trim) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
 	for _, key := range p.children[0].GetSchema().Keys {
-		ok := false
+		ok := true
 		newKey := make([]*expression.Column, 0, len(key))
 		for _, col := range key {
 			pos := p.schema.GetColumnIndex(col)
@@ -124,13 +124,16 @@ func (p *Join) buildKeyInfo() {
 	case SemiJoin, SemiJoinWithAux:
 		p.schema.Keys = p.children[0].GetSchema().Clone().Keys
 	case InnerJoin, LeftOuterJoin, RightOuterJoin:
-		// We first check the equal conditions. If one side of one equal condition is unique key,
-		// another side's unique key information will all be reserved.
+		// If there is no equal conditions, then cartesian product can't be prevented and unique key information will destroy.
 		if len(p.EqualConditions) == 0 {
 			return
 		}
 		lOk := false
 		rOk := false
+		// Such as 'select * from t1 join t2 where t1.a = t2.a and t1.b = t2.b'.
+		// If one sides (a, b) is a unique key, then the unique key information is remained.
+		// But we don't consider this situation currently.
+		// Only key made by one column is considered now.
 		for _, expr := range p.EqualConditions {
 			ln := expr.GetArgs()[0].(*expression.Column)
 			rn := expr.GetArgs()[1].(*expression.Column)
@@ -147,10 +150,13 @@ func (p *Join) buildKeyInfo() {
 				}
 			}
 		}
-		if lOk {
+		// For inner join, if one side of one equal condition is unique key,
+		// another side's unique key information will all be reserved.
+		// If it's an outer join, NULL value will fill some position, which will destroy the unique key information.
+		if lOk && p.JoinType != LeftOuterJoin {
 			p.schema.Keys = append(p.schema.Keys, p.children[1].GetSchema().Keys...)
 		}
-		if rOk {
+		if rOk && p.JoinType != RightOuterJoin {
 			p.schema.Keys = append(p.schema.Keys, p.children[0].GetSchema().Keys...)
 		}
 	}
@@ -167,9 +173,13 @@ func (p *DataSource) buildKeyInfo() {
 		ok := true
 		for _, idxCol := range idx.Columns {
 			// The columns of this index should all occur in column schema.
+			// Since null value could be duplicate in unique key. So we check NotNull flag of every column.
 			find := false
 			for i, col := range p.schema.Columns {
 				if idxCol.Name.L == col.ColName.L {
+					if !mysql.HasNotNullFlag(p.Columns[i].Flag) {
+						break
+					}
 					newKey = append(newKey, p.schema.Columns[i])
 					find = true
 					break
