@@ -17,6 +17,8 @@ import (
 	"math"
 	"strings"
 	"unicode"
+
+	"github.com/juju/errors"
 )
 
 // RoundFloat rounds float val to the nearest integer value with float64 format, like MySQL Round function.
@@ -74,7 +76,7 @@ func TruncateFloat(f float64, flen int, decimal int) (float64, error) {
 		err = ErrOverflow
 	}
 
-	return f, err
+	return f, errors.Trace(err)
 }
 
 func isSpace(c byte) bool {
