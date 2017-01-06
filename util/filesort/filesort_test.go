@@ -103,7 +103,7 @@ func (s *testFileSortSuite) TestLessThan(c *C) {
 	}
 }
 
-func (s *testFileSortSuite) TestSingleFile(c *C) {
+func (s *testFileSortSuite) TestInMemory(c *C) {
 	defer testleak.AfterTest(c)()
 
 	seed := rand.NewSource(time.Now().UnixNano())
