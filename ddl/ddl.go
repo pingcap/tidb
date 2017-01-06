@@ -378,6 +378,8 @@ const (
 	codeRunMultiSchemaChanges                = 6
 	codeWaitReorgTimeout                     = 7
 	codeInvalidStoreVer                      = 8
+	codeUnknownTypeLength                    = 9
+	codeUnknownFractionLength                = 10
 
 	codeInvalidDBState         = 100
 	codeInvalidTableState      = 101
@@ -402,8 +404,6 @@ const (
 	codeWrongTableName        = 1103
 	codeBlobKeyWithoutLength  = 1170
 	codeInvalidOnUpdate       = 1294
-	codeUnknownTypeLength     = 1300
-	codeUnknownFractionLength = 1301
 )
 
 func init() {

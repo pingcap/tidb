@@ -541,24 +541,20 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 				}
 			}
 		}
-
-		// 1. check if the column is exists
-		// 2. add index
-		var primary, unique bool
-
-		switch constr.Tp {
-		case ast.ConstraintPrimaryKey:
-			primary = true
-			unique = true
-		case ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
-			unique = true
-		}
-
-		idxInfo, err := BuildIndexInfo(tbInfo, model.NewCIStr(constr.Name), constr.Keys, primary, unique, model.StatePublic)
+		// build index info.
+		idxInfo, err := buildIndexInfo(tbInfo, model.NewCIStr(constr.Name), constr.Keys, model.StatePublic)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-
+		//check if the index is primary or uniqiue.
+		switch constr.Tp {
+		case ast.ConstraintPrimaryKey:
+			idxInfo.Primary = true
+			idxInfo.Unique = true
+		case ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
+			idxInfo.Unique = true
+		}
+		// set index type.
 		if constr.Option != nil {
 			idxInfo.Comment = constr.Option.Comment
 			idxInfo.Tp = constr.Option.Tp
@@ -566,7 +562,6 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 			// Use btree as default index type.
 			idxInfo.Tp = model.IndexTypeBtree
 		}
-
 		idxInfo.ID = allocateIndexID(tbInfo)
 		tbInfo.Indices = append(tbInfo.Indices, idxInfo)
 	}
