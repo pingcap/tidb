@@ -376,10 +376,10 @@ func (s *testExpressionSuite) TestDateArith(c *C) {
 			fnName string
 			result interface{}
 		}{
-			{"DATE_ADD", t.AddResult},
-			{"DATE_SUB", t.SubResult},
-			{"ADDDATE", t.AddResult},
-			{"SUBDATE", t.SubResult},
+			{ast.DateAdd, t.AddResult},
+			{ast.DateSub, t.SubResult},
+			{ast.AddDate, t.AddResult},
+			{ast.SubDate, t.SubResult},
 		} {
 			expr := &ast.FuncCallExpr{
 				FnName: model.NewCIStr(x.fnName),
