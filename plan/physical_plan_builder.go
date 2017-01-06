@@ -1135,6 +1135,48 @@ func (p *Distinct) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanIn
 	return info, nil
 }
 
+// convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
+func (p *Analyze) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
+	info, err := p.getPlanInfo(prop)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if info != nil {
+		return info, nil
+	}
+	var childInfos []*physicalPlanInfo
+	for _, ind := range p.IndOffsets {
+		is := &PhysicalIndexScan{
+			Index:               p.Table.TableInfo.Indices[ind],
+			Table:               p.Table.TableInfo,
+			Columns:             p.Table.TableInfo.Columns,
+			TableAsName:         &p.Table.Name,
+			OutOfOrder:          true,
+			DBName:              &p.Table.DBInfo.Name,
+			physicalTableSource: physicalTableSource{client: p.ctx.GetClient()},
+			DoubleRead:          false,
+		}
+		is.tp = Ana
+		is.allocator = p.allocator
+		is.initIDAndContext(p.ctx)
+		is.SetSchema(expression.TableInfo2Schema(p.Table.TableInfo))
+		is.readOnly = true
+		rb := rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
+		is.Ranges = rb.buildIndexRanges(fullRange, types.NewFieldType(mysql.TypeNull))
+		childInfos = append(childInfos, is.matchProperty(prop, &physicalPlanInfo{count: 0}))
+	}
+	for _, child := range p.GetChildren() {
+		childInfo, err := child.(LogicalPlan).convert2PhysicalPlan(&requiredProperty{})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		childInfos = append(childInfos, childInfo)
+	}
+	info = p.matchProperty(prop, childInfos...)
+	p.storePlanInfo(prop, info)
+	return info, nil
+}
+
 // physicalInitialize will set value of some attributes after convert2PhysicalPlan process.
 // Currently, only attribute "correlated" is considered.
 func physicalInitialize(p PhysicalPlan) {
