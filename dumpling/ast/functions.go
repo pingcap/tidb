@@ -95,6 +95,7 @@ const (
 	CurrentTimestamp = "current_timestamp"
 	Curtime          = "curtime"
 	Date             = "date"
+	DateDiff         = "datediff"
 	DateArith        = "date_arith"
 	DateFormat       = "date_format"
 	Day              = "day"

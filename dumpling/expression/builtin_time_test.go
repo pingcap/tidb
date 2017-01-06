@@ -471,6 +471,40 @@ func (s *testEvaluatorSuite) TestStrToDate(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestDateDiff(c *C) {
+	// Test cases from https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_datediff
+	tests := []struct {
+		t1     string
+		t2     string
+		expect int64
+	}{
+		{"2004-05-21", "2004:01:02", 140},
+		{"2004-04-21", "2000:01:02", 1571},
+		{"2008-12-31 23:59:59.000001", "2008-12-30 01:01:01.000002", 1},
+		{"1010-11-30 23:59:59", "2010-12-31", -365274},
+		{"1010-11-30", "2210-11-01", -438262},
+	}
+
+	for _, test := range tests {
+		t1 := types.NewStringDatum(test.t1)
+		t2 := types.NewStringDatum(test.t2)
+
+		result, err := builtinDateDiff([]types.Datum{t1, t2}, s.ctx)
+
+		c.Assert(err, IsNil)
+		c.Assert(result.GetInt64(), Equals, test.expect)
+	}
+
+	// Check if month is 0.
+	t1 := types.NewStringDatum("2016-00-01")
+	t2 := types.NewStringDatum("2016-01-13")
+
+	result, err := builtinDateDiff([]types.Datum{t1, t2}, s.ctx)
+
+	c.Assert(err, IsNil)
+	c.Assert(result.IsNull(), Equals, true)
+}
+
 func (s *testEvaluatorSuite) TestTimeDiff(c *C) {
 	// Test cases from https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timediff
 	tests := []struct {

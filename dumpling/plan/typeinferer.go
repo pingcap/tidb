@@ -295,7 +295,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	case "current_timestamp", "date_arith":
 		tp = types.NewFieldType(mysql.TypeDatetime)
 	case "microsecond", "second", "minute", "hour", "day", "week", "month", "year",
-		"dayofweek", "dayofmonth", "dayofyear", "weekday", "weekofyear", "yearweek",
+		"dayofweek", "dayofmonth", "dayofyear", "weekday", "weekofyear", "yearweek", "datediff",
 		"found_rows", "length", "extract", "locate", "unix_timestamp":
 		tp = types.NewFieldType(mysql.TypeLonglong)
 	case "now", "sysdate":
