@@ -138,12 +138,7 @@ func (parser *Parser) endOffset(v *yySymType) int {
 }
 
 func toInt(l yyLexer, lval *yySymType, str string) int {
-	// Trim prefix 0 because 000107823 is a valid int in mysql, equal to 107823.
-	for len(str) > 1 && str[0] == '0' {
-		str = str[1:]
-	}
-
-	n, err := strconv.ParseUint(str, 0, 64)
+	n, err := strconv.ParseUint(str, 10, 64)
 	if err != nil {
 		l.Errorf("integer literal: %v", err)
 		return int(unicode.ReplacementChar)
