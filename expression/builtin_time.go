@@ -74,6 +74,7 @@ func convertToDuration(sc *variable.StatementContext, arg types.Datum, fsp int) 
 	return d, nil
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date
 func builtinDate(args []types.Datum, ctx context.Context) (types.Datum, error) {
 	return convertToTime(ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
 }
@@ -88,6 +89,29 @@ func convertDatumToTime(sc *variable.StatementContext, d types.Datum) (t types.T
 	return d.GetMysqlTime(), nil
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_datediff
+func builtinDateDiff(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	sc := ctx.GetSessionVars().StmtCtx
+	t1, err := convertDatumToTime(sc, args[0])
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	t2, err := convertDatumToTime(sc, args[1])
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if t1.Time.Month() == 0 || t1.Time.Day() == 0 || t2.Time.Month() == 0 || t2.Time.Day() == 0 {
+		return d, nil
+	}
+
+	r := types.DateDiff(t1.Time, t2.Time)
+	d.SetInt64(int64(r))
+	return d, nil
+}
+
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timediff
 func builtinTimeDiff(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	t1, err := convertDatumToTime(sc, args[0])
@@ -218,6 +242,7 @@ func builtinMonthName(args []types.Datum, ctx context.Context) (types.Datum, err
 	return d, nil
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_now
 func builtinNow(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	// TODO: if NOW is used in stored function or trigger, NOW will return the beginning time
 	// of the execution.
@@ -520,6 +545,7 @@ func builtinStrToDate(args []types.Datum, _ context.Context) (types.Datum, error
 	return d, nil
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_sysdate
 func builtinSysDate(args []types.Datum, ctx context.Context) (types.Datum, error) {
 	// SYSDATE is not the same as NOW if NOW is used in a stored function or trigger.
 	// But here we can just think they are the same because we don't support stored function
@@ -638,15 +664,16 @@ func builtinDateArith(args []types.Datum, ctx context.Context) (d types.Datum, e
 	// Op is used for distinguishing date_add and date_sub.
 	// args[0] -> Op
 	// args[1] -> Date
-	// args[2] -> DateArithInterval
+	// args[2] -> Interval Value
+	// args[3] -> Interval Unit
 	// health check for date and interval
-	if args[1].IsNull() {
+	if args[1].IsNull() || args[2].IsNull() {
 		return d, nil
 	}
 	nodeDate := args[1]
-	nodeInterval := args[2].GetInterface().(ast.DateArithInterval)
-	nodeIntervalIntervalDatum := nodeInterval.Interval.GetDatum()
-	if nodeIntervalIntervalDatum.IsNull() {
+	nodeIntervalValue := args[2]
+	nodeIntervalUnit := args[3].GetString()
+	if nodeIntervalValue.IsNull() {
 		return d, nil
 	}
 	// parse date
@@ -672,7 +699,7 @@ func builtinDateArith(args []types.Datum, ctx context.Context) (d types.Datum, e
 		}
 	}
 	sc := ctx.GetSessionVars().StmtCtx
-	if types.IsClockUnit(nodeInterval.Unit) {
+	if types.IsClockUnit(nodeIntervalUnit) {
 		fieldType = mysql.TypeDatetime
 	}
 	resultField = types.NewFieldType(fieldType)
@@ -690,24 +717,24 @@ func builtinDateArith(args []types.Datum, ctx context.Context) (d types.Datum, e
 	result := value.GetMysqlTime()
 	// parse interval
 	var interval string
-	if strings.ToLower(nodeInterval.Unit) == "day" {
-		day, err1 := parseDayInterval(sc, *nodeIntervalIntervalDatum)
+	if strings.ToLower(nodeIntervalUnit) == "day" {
+		day, err1 := parseDayInterval(sc, nodeIntervalValue)
 		if err1 != nil {
-			return d, errInvalidOperation.Gen("DateArith invalid day interval, need int but got %T", nodeIntervalIntervalDatum.GetString())
+			return d, errInvalidOperation.Gen("DateArith invalid day interval, need int but got %T", nodeIntervalValue.GetString())
 		}
 		interval = fmt.Sprintf("%d", day)
 	} else {
-		if nodeIntervalIntervalDatum.Kind() == types.KindString {
-			interval = fmt.Sprintf("%v", nodeIntervalIntervalDatum.GetString())
+		if nodeIntervalValue.Kind() == types.KindString {
+			interval = fmt.Sprintf("%v", nodeIntervalValue.GetString())
 		} else {
-			ii, err1 := nodeIntervalIntervalDatum.ToInt64(sc)
+			ii, err1 := nodeIntervalValue.ToInt64(sc)
 			if err1 != nil {
 				return d, errors.Trace(err1)
 			}
 			interval = fmt.Sprintf("%v", ii)
 		}
 	}
-	year, month, day, duration, err := types.ExtractTimeValue(nodeInterval.Unit, interval)
+	year, month, day, duration, err := types.ExtractTimeValue(nodeIntervalUnit, interval)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
@@ -715,7 +742,8 @@ func builtinDateArith(args []types.Datum, ctx context.Context) (d types.Datum, e
 	if op == ast.DateSub {
 		year, month, day, duration = -year, -month, -day, -duration
 	}
-	t, err := result.Time.GoTime()
+	// TODO: Consider time_zone variable.
+	t, err := result.Time.GoTime(time.Local)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
@@ -744,4 +772,53 @@ func parseDayInterval(sc *variable.StatementContext, value types.Datum) (int64, 
 		value.SetString(reg.FindString(vs))
 	}
 	return value.ToInt64(sc)
+}
+
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_unix-timestamp
+func builtinUnixTimestamp(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	if len(args) == 0 {
+		now := time.Now().Unix()
+		d.SetInt64(now)
+		return
+	}
+
+	var (
+		t  types.Time
+		t1 time.Time
+	)
+	switch args[0].Kind() {
+	case types.KindString:
+		t, err = types.ParseTime(args[0].GetString(), mysql.TypeDatetime, types.MaxFsp)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+	case types.KindInt64, types.KindUint64:
+		t, err = types.ParseTimeFromInt64(args[0].GetInt64())
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+	}
+
+	t1, err = t.Time.GoTime(getTimeZone(ctx))
+	if err != nil {
+		d.SetInt64(0)
+		return d, nil
+	}
+
+	if t.Time.Microsecond() > 0 {
+		var dec types.MyDecimal
+		dec.FromFloat64(float64(t1.Unix()) + float64(t.Time.Microsecond())/1e6)
+		d.SetMysqlDecimal(&dec)
+	} else {
+		d.SetInt64(t1.Unix())
+	}
+	return
+}
+
+func getTimeZone(ctx context.Context) *time.Location {
+	ret := ctx.GetSessionVars().TimeZone
+	if ret == nil {
+		ret = time.Local
+	}
+	return ret
 }

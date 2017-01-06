@@ -79,27 +79,22 @@ func checkHistoryJobArgs(c *C, ctx context.Context, id int64, args *historyJobAr
 	historyJob, err := t.GetHistoryDDLJob(id)
 	c.Assert(err, IsNil)
 
-	var v int64
-	var ids []int64
-	tbl := &model.TableInfo{}
 	if args.tbl != nil {
-		historyJob.DecodeArgs(&v, &tbl)
-		c.Assert(v, Equals, args.ver)
-		checkEqualTable(c, tbl, args.tbl)
+		c.Assert(historyJob.BinlogInfo.SchemaVersion, Equals, args.ver)
+		checkEqualTable(c, historyJob.BinlogInfo.TableInfo, args.tbl)
 		return
 	}
-	// only for create schema job
-	db := &model.DBInfo{}
+
+	// for handling schema job
+	c.Assert(historyJob.BinlogInfo.SchemaVersion, Equals, args.ver)
+	c.Assert(historyJob.BinlogInfo.DBInfo, DeepEquals, args.db)
+	// only for creating schema job
 	if args.db != nil && len(args.tblIDs) == 0 {
-		historyJob.DecodeArgs(&v, &db)
-		c.Assert(v, Equals, args.ver)
-		c.Assert(db, DeepEquals, args.db)
 		return
 	}
-	// only for drop schema job
-	historyJob.DecodeArgs(&v, &db, &ids)
-	c.Assert(v, Equals, args.ver)
-	c.Assert(db, DeepEquals, args.db)
+	// only for dropping schema job
+	var ids []int64
+	historyJob.DecodeArgs(&ids)
 	for _, id := range ids {
 		c.Assert(args.tblIDs, HasKey, id)
 		delete(args.tblIDs, id)

@@ -247,7 +247,7 @@ func (p *MySQLPrivilege) decodeColumnsPrivTableRow(row *ast.Row, fs []*ast.Resul
 		case f.ColumnAsName.L == "column_name":
 			value.ColumnName = d.GetString()
 		case f.ColumnAsName.L == "timestamp":
-			value.Timestamp, _ = d.GetMysqlTime().Time.GoTime()
+			value.Timestamp, _ = d.GetMysqlTime().Time.GoTime(time.Local)
 		case f.ColumnAsName.L == "column_priv":
 			priv, err := decodeSetToPrivilege(d.GetMysqlSet())
 			if err != nil {

@@ -196,7 +196,8 @@ func dumpBinaryTime(dur time.Duration) (data []byte) {
 
 func dumpBinaryDateTime(t types.Time, loc *time.Location) (data []byte, err error) {
 	if t.Type == mysql.TypeTimestamp && loc != nil {
-		t1, err := t.Time.GoTime()
+		// TODO: Consider time_zone variable.
+		t1, err := t.Time.GoTime(time.Local)
 		if err != nil {
 			return nil, errors.Errorf("FATAL: convert timestamp %v go time return error!", t.Time)
 		}

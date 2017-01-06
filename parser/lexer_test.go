@@ -213,14 +213,41 @@ func (s *testLexerSuite) TestIdentifier(c *C) {
 func (s *testLexerSuite) TestSpecialComment(c *C) {
 	l := NewScanner("/*!40101 select\n5*/")
 	tok, pos, lit := l.scan()
-	fmt.Println(tok, pos, lit)
 	c.Assert(tok, Equals, identifier)
 	c.Assert(lit, Equals, "select")
 	c.Assert(pos, Equals, Pos{0, 0, 9})
 
 	tok, pos, lit = l.scan()
-	fmt.Println(tok, pos, lit)
 	c.Assert(tok, Equals, intLit)
 	c.Assert(lit, Equals, "5")
 	c.Assert(pos, Equals, Pos{1, 1, 16})
+}
+
+func (s *testLexerSuite) TestInt(c *C) {
+	tests := []struct {
+		input  string
+		expect uint64
+	}{
+		{"01000001783", 1000001783},
+		{"00001783", 1783},
+		{"0", 0},
+		{"0000", 0},
+		{"01", 1},
+		{"10", 10},
+	}
+	scanner := NewScanner("")
+	for _, t := range tests {
+		var v yySymType
+		scanner.reset(t.input)
+		tok := scanner.Lex(&v)
+		c.Assert(tok, Equals, intLit)
+		switch i := v.item.(type) {
+		case int64:
+			c.Assert(uint64(i), Equals, t.expect)
+		case uint64:
+			c.Assert(i, Equals, t.expect)
+		default:
+			c.Fail()
+		}
+	}
 }

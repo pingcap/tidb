@@ -717,8 +717,14 @@ func (d *Datum) convertToFloat(sc *variable.StatementContext, target *FieldType)
 	if target.Flen != UnspecifiedLength && target.Decimal != UnspecifiedLength {
 		var err1 error
 		f, err1 = TruncateFloat(f, target.Flen, target.Decimal)
-		if err == nil {
+		if err == nil && err1 != nil {
 			err = err1
+			if sc.IgnoreTruncate {
+				err = nil
+			} else if sc.TruncateAsWarning {
+				sc.AppendWarning(err)
+				err = nil
+			}
 		}
 	}
 	if target.Tp == mysql.TypeFloat {

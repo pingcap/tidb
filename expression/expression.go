@@ -31,13 +31,15 @@ import (
 // Error instances.
 var (
 	errInvalidOperation        = terror.ClassExpression.New(codeInvalidOperation, "invalid operation")
-	errIncorrectParameterCount = terror.ClassExpression.New(codeIncorrectParameterCount, "Incorrect parameter count")
+	errIncorrectParameterCount = terror.ClassExpression.New(codeIncorrectParameterCount, "Incorrect parameter count in the call to native function '%s'")
+	errFunctionNotExists       = terror.ClassExpression.New(codeFunctionNotExists, "FUNCTION %s does not exist")
 )
 
 // Error codes.
 const (
 	codeInvalidOperation        terror.ErrCode = 1
 	codeIncorrectParameterCount                = 1582
+	codeFunctionNotExists                      = 1305
 )
 
 // EvalAstExpr evaluates ast expression directly.
@@ -258,6 +260,7 @@ func EvaluateExprWithNull(ctx context.Context, schema Schema, expr Expression) (
 // TableInfo2Schema converts table info to schema.
 func TableInfo2Schema(tbl *model.TableInfo) Schema {
 	schema := NewSchema(make([]*Column, 0, len(tbl.Columns)))
+	keys := make([]KeyInfo, 0, len(tbl.Indices)+1)
 	for i, col := range tbl.Columns {
 		newCol := &Column{
 			ColName:  col.Name,
@@ -267,6 +270,42 @@ func TableInfo2Schema(tbl *model.TableInfo) Schema {
 		}
 		schema.Append(newCol)
 	}
+	for _, idx := range tbl.Indices {
+		if !idx.Unique || idx.State != model.StatePublic {
+			continue
+		}
+		ok := true
+		newKey := make([]*Column, 0, len(idx.Columns))
+		for _, idxCol := range idx.Columns {
+			find := false
+			for i, col := range tbl.Columns {
+				if idxCol.Name.L == col.Name.L {
+					if !mysql.HasNotNullFlag(col.Flag) {
+						break
+					}
+					newKey = append(newKey, schema.Columns[i])
+					find = true
+					break
+				}
+			}
+			if !find {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			keys = append(keys, newKey)
+		}
+	}
+	if tbl.PKIsHandle {
+		for i, col := range tbl.Columns {
+			if mysql.HasPriKeyFlag(col.Flag) {
+				keys = append(keys, []*Column{schema.Columns[i]})
+				break
+			}
+		}
+	}
+	schema.SetUniqueKeys(keys)
 	return schema
 }
 
@@ -297,6 +336,7 @@ func NewValuesFunc(v *ast.ValuesExpr) *ScalarFunction {
 func init() {
 	expressionMySQLErrCodes := map[terror.ErrCode]uint16{
 		codeIncorrectParameterCount: mysql.ErrWrongParamcountToNativeFct,
+		codeFunctionNotExists:       mysql.ErrSpDoesNotExist,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassExpression] = expressionMySQLErrCodes
 }

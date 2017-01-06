@@ -23,30 +23,56 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-// GetSystemVar gets a system variable.
-func GetSystemVar(s *variable.SessionVars, key string) types.Datum {
-	var d types.Datum
+// GetSessionSystemVar gets a system variable.
+// If it is a session only variable, use the default value defined in code.
+// Returns error if there is no such variable.
+func GetSessionSystemVar(s *variable.SessionVars, key string) (string, error) {
 	key = strings.ToLower(key)
+	sysVar := variable.SysVars[key]
+	if sysVar == nil {
+		return "", variable.UnknownSystemVar
+	}
 	sVal, ok := s.Systems[key]
 	if ok {
-		d.SetString(sVal)
-	} else {
-		// TiDBSkipConstraintCheck is a session scope vars. We do not store it in the global table.
-		if key == variable.TiDBSkipConstraintCheck {
-			d.SetString(variable.SysVars[variable.TiDBSkipConstraintCheck].Value)
-		} else if key == variable.TiDBSkipDDLWait {
-			d.SetString(variable.SysVars[variable.TiDBSkipDDLWait].Value)
-		}
+		return sVal, nil
 	}
-	return d
+	if sysVar.Scope&variable.ScopeGlobal == 0 {
+		// None-Global variable can use pre-defined default value.
+		return sysVar.Value, nil
+	}
+	gVal, err := s.GlobalVarsAccessor.GetGlobalSysVar(key)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	s.Systems[key] = gVal
+	return gVal, nil
+}
+
+// GetGlobalSystemVar gets a global system variable.
+func GetGlobalSystemVar(s *variable.SessionVars, key string) (string, error) {
+	key = strings.ToLower(key)
+	sysVar := variable.SysVars[key]
+	if sysVar == nil {
+		return "", variable.UnknownSystemVar
+	}
+	if sysVar.Scope == variable.ScopeSession {
+		return "", variable.ErrIncorrectScope
+	} else if sysVar.Scope == variable.ScopeNone {
+		return sysVar.Value, nil
+	}
+	return s.GlobalVarsAccessor.GetGlobalSysVar(key)
 }
 
 // epochShiftBits is used to reserve logical part of the timestamp.
 const epochShiftBits = 18
 
-// SetSystemVar sets system variable and updates SessionVars states.
-func SetSystemVar(vars *variable.SessionVars, name string, value types.Datum) error {
+// SetSessionSystemVar sets system variable and updates SessionVars states.
+func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Datum) error {
 	name = strings.ToLower(name)
+	sysVar := variable.SysVars[name]
+	if sysVar == nil {
+		return variable.UnknownSystemVar
+	}
 	if value.IsNull() {
 		if name != variable.CharacterSetResults {
 			return variable.ErrCantSetToNull
@@ -59,6 +85,8 @@ func SetSystemVar(vars *variable.SessionVars, name string, value types.Datum) er
 		return errors.Trace(err)
 	}
 	switch name {
+	case variable.TimeZone:
+		vars.TimeZone = parseTimeZone(sVal)
 	case variable.SQLModeVar:
 		sVal = strings.ToUpper(sVal)
 		if strings.Contains(sVal, "STRICT_TRANS_TABLES") || strings.Contains(sVal, "STRICT_ALL_TABLES") {
@@ -86,6 +114,28 @@ func SetSystemVar(vars *variable.SessionVars, name string, value types.Datum) er
 	return nil
 }
 
+func parseTimeZone(s string) *time.Location {
+	if s == "SYSTEM" {
+		// TODO: Support global time_zone variable, it should be set to global time_zone value.
+		return time.Local
+	}
+
+	loc, err := time.LoadLocation(s)
+	if err == nil {
+		return loc
+	}
+
+	// The value can be given as a string indicating an offset from UTC, such as '+10:00' or '-6:00'.
+	if strings.HasPrefix(s, "+") || strings.HasPrefix(s, "-") {
+		d, err := types.ParseDuration(s[1:], 0)
+		if err == nil {
+			return time.FixedZone("UTC", int(d.Duration/time.Second))
+		}
+	}
+
+	return nil
+}
+
 func setSnapshotTS(s *variable.SessionVars, sVal string) error {
 	if sVal == "" {
 		s.SnapshotTS = 0
@@ -95,7 +145,8 @@ func setSnapshotTS(s *variable.SessionVars, sVal string) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	t1, err := t.Time.GoTime()
+	// TODO: Consider time_zone variable.
+	t1, err := t.Time.GoTime(time.Local)
 	ts := (t1.UnixNano() / int64(time.Millisecond)) << epochShiftBits
 	s.SnapshotTS = uint64(ts)
 	return errors.Trace(err)
