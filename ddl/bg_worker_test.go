@@ -99,9 +99,10 @@ func (s *testDDLSuite) TestInvalidBgJobType(c *C) {
 	defer d.close()
 
 	job := &model.Job{
-		SchemaID: 1,
-		TableID:  1,
-		Type:     model.ActionCreateTable,
+		SchemaID:   1,
+		TableID:    1,
+		Type:       model.ActionCreateTable,
+		BinlogInfo: &model.HistoryInfo{},
 	}
 	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)

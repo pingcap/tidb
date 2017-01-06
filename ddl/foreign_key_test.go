@@ -68,10 +68,11 @@ func (s *testForeighKeySuite) testCreateForeignKey(c *C, tblInfo *model.TableInf
 	}
 
 	job := &model.Job{
-		SchemaID: s.dbInfo.ID,
-		TableID:  tblInfo.ID,
-		Type:     model.ActionAddForeignKey,
-		Args:     []interface{}{fkInfo},
+		SchemaID:   s.dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionAddForeignKey,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{fkInfo},
 	}
 	err := s.d.doDDLJob(s.ctx, job)
 	c.Assert(err, IsNil)
@@ -80,10 +81,11 @@ func (s *testForeighKeySuite) testCreateForeignKey(c *C, tblInfo *model.TableInf
 
 func testDropForeignKey(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, foreignKeyName string) *model.Job {
 	job := &model.Job{
-		SchemaID: dbInfo.ID,
-		TableID:  tblInfo.ID,
-		Type:     model.ActionDropForeignKey,
-		Args:     []interface{}{model.NewCIStr(foreignKeyName)},
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionDropForeignKey,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{model.NewCIStr(foreignKeyName)},
 	}
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
