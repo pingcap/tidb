@@ -79,7 +79,7 @@ func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 					Offset: 3,
 				},
 			},
-			State: model.StatePublic,
+			State:  model.StatePublic,
 			Unique: true,
 		},
 		{
@@ -90,7 +90,7 @@ func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 					Length: types.UnspecifiedLength,
 				},
 			},
-			State: model.StateWriteOnly,
+			State:  model.StateWriteOnly,
 			Unique: true,
 		},
 		{
@@ -102,7 +102,7 @@ func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 					Offset: 1,
 				},
 			},
-			State: model.StatePublic,
+			State:  model.StatePublic,
 			Unique: true,
 		},
 		{
@@ -114,7 +114,7 @@ func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 					Offset: 1,
 				},
 			},
-			State: model.StatePublic,
+			State:  model.StatePublic,
 			Unique: true,
 		},
 		{
@@ -131,7 +131,7 @@ func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 					Offset: 2,
 				},
 			},
-			State: model.StatePublic,
+			State:  model.StatePublic,
 			Unique: true,
 		},
 		{
