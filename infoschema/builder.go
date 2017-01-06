@@ -39,6 +39,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) error {
 		b.applyDropSchema(diff.SchemaID)
 		return nil
 	}
+
 	roDBInfo, ok := b.is.SchemaByID(diff.SchemaID)
 	if !ok {
 		return ErrDatabaseNotExists
@@ -65,7 +66,15 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) error {
 		if oldTableID == newTableID {
 			alloc, _ = b.is.AllocByID(oldTableID)
 		}
-		b.applyDropTable(roDBInfo, oldTableID)
+		if diff.Type == model.ActionRenameTable {
+			oldRoDBInfo, ok := b.is.SchemaByID(diff.OldSchemaID)
+			if !ok {
+				return ErrDatabaseNotExists
+			}
+			b.applyDropTable(oldRoDBInfo, oldTableID)
+		} else {
+			b.applyDropTable(roDBInfo, oldTableID)
+		}
 	}
 	if tableIDIsValid(newTableID) {
 		// All types except DropTable.
@@ -99,20 +108,20 @@ func (b *Builder) copySortedTables(oldTableID, newTableID int64) {
 
 // updateDBInfo clones a new DBInfo from old DBInfo, and update on the new one.
 func (b *Builder) updateDBInfo(roDBInfo *model.DBInfo, oldTableID, newTableID int64) {
-	newDbInfo := *roDBInfo
-	newDbInfo.Tables = make([]*model.TableInfo, 0, len(roDBInfo.Tables))
+	newDBInfo := *roDBInfo
+	newDBInfo.Tables = make([]*model.TableInfo, 0, len(roDBInfo.Tables))
 	if tableIDIsValid(newTableID) {
 		// All types except DropTable.
 		if newTbl, ok := b.is.TableByID(newTableID); ok {
-			newDbInfo.Tables = append(newDbInfo.Tables, newTbl.Meta())
+			newDBInfo.Tables = append(newDBInfo.Tables, newTbl.Meta())
 		}
 	}
 	for _, tblInfo := range roDBInfo.Tables {
 		if tblInfo.ID != oldTableID && tblInfo.ID != newTableID {
-			newDbInfo.Tables = append(newDbInfo.Tables, tblInfo)
+			newDBInfo.Tables = append(newDBInfo.Tables, tblInfo)
 		}
 	}
-	b.is.schemaMap[roDBInfo.Name.L].dbInfo = &newDbInfo
+	b.is.schemaMap[roDBInfo.Name.L].dbInfo = &newDBInfo
 }
 
 func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff) error {
