@@ -299,13 +299,6 @@ func (fs *FileSorter) Input(key []types.Datum, val []types.Datum, handle int64) 
 		return errors.New("mismatch in value size and val slice")
 	}
 
-	row := &comparableRow{
-		key:    key,
-		val:    val,
-		handle: handle,
-	}
-	fs.buf = append(fs.buf, row)
-
 	if len(fs.buf) >= fs.bufSize {
 		err := fs.flushMemory()
 		if err != nil {
@@ -313,6 +306,12 @@ func (fs *FileSorter) Input(key []types.Datum, val []types.Datum, handle int64) 
 		}
 	}
 
+	row := &comparableRow{
+		key:    key,
+		val:    val,
+		handle: handle,
+	}
+	fs.buf = append(fs.buf, row)
 	return nil
 }
 
