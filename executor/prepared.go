@@ -234,6 +234,10 @@ func (e *ExecuteExec) Build() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	err = e.Ctx.ActivePendingTxn()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	b := newExecutorBuilder(e.Ctx, e.IS)
 	stmtExec := b.build(p)
 	if b.err != nil {

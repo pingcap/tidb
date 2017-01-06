@@ -78,7 +78,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 	// Testcase for unreserved keywords
 	unreservedKws := []string{
 		"auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
-		"date", "datetime", "deallocate", "do", "end", "engine", "engines", "execute", "first", "full",
+		"date", "datediff", "datetime", "deallocate", "do", "end", "engine", "engines", "execute", "first", "full",
 		"local", "names", "offset", "password", "prepare", "quick", "rollback", "session", "signed",
 		"start", "global", "tables", "text", "time", "timestamp", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substr", "substring", "mode", "any", "some", "user", "identified",
@@ -217,6 +217,9 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"INSERT INTO foo (a,b,) VALUES (42,314,)", false},
 		{"INSERT INTO foo () VALUES ()", true},
 		{"INSERT INTO foo VALUE ()", true},
+
+		// For issue 2402
+		{"INSERT INTO tt VALUES (01000001783);", true},
 
 		{"REPLACE INTO foo VALUES (1 || 2)", true},
 		{"REPLACE INTO foo VALUES (1 | 2)", true},
@@ -528,6 +531,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 
 		{"SELECT LEAST(1, 2, 3);", true},
 
+		{"SELECT INTERVAL(1, 0, 1, 2)", true},
+		{"SELECT DATE_ADD('2008-01-02', INTERVAL INTERVAL(1, 0, 1) DAY);", true},
+
 		// Information Functions
 		{"SELECT DATABASE();", true},
 		{"SELECT SCHEMA();", true},
@@ -596,6 +602,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 
 		// for date, day, weekday
 		{"SELECT CURRENT_DATE, CURRENT_DATE(), CURDATE()", true},
+		{"SELECT DATEDIFF('2003-12-31', '2003-12-30');", true},
 		{"SELECT DATE('2003-12-31 01:02:03');", true},
 		{"SELECT DATE_FORMAT('2003-12-31 01:02:03', '%W %M %Y');", true},
 		{"SELECT DAY('2007-02-03');", true},
@@ -666,6 +673,8 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT CHAR(65);`, true},
 		{`SELECT CHAR_LENGTH('abc');`, true},
 		{`SELECT CHARACTER_LENGTH('abc');`, true},
+		{`SELECT FIND_IN_SET('foo', 'foo,bar')`, true},
+		{`SELECT FIND_IN_SET('foo')`, false},
 
 		// Repeat
 		{`SELECT REPEAT("a", 10);`, true},
@@ -778,6 +787,10 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select subdate("2011-11-11 10:10:10.123456", 10)`, true},
 		{`select subdate("2011-11-11 10:10:10.123456", 0.10)`, true},
 		{`select subdate("2011-11-11 10:10:10.123456", "11,11")`, true},
+
+		// For unix_timestamp
+		{`select unix_timestamp()`, true},
+		{`select unix_timestamp('2015-11-13 10:20:19.012')`, true},
 
 		// For misc functions
 		{`SELECT GET_LOCK('lock1',10);`, true},

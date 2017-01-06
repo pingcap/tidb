@@ -400,6 +400,10 @@ func init() {
 	// but the plan package cannot import the executor package because of the dependency cycle.
 	// So we assign a function implemented in the executor package to the plan package to avoid the dependency cycle.
 	plan.EvalSubquery = func(p plan.PhysicalPlan, is infoschema.InfoSchema, ctx context.Context) (d []types.Datum, err error) {
+		err = ctx.ActivePendingTxn()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
 		e := &executorBuilder{is: is, ctx: ctx}
 		exec := e.build(p)
 		row, err := exec.Next()

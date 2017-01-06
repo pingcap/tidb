@@ -466,9 +466,43 @@ func (s *testEvaluatorSuite) TestStrToDate(c *C) {
 		}
 		c.Assert(result.Kind(), Equals, types.KindMysqlTime)
 		value := result.GetMysqlTime()
-		t1, _ := value.Time.GoTime()
+		t1, _ := value.Time.GoTime(time.Local)
 		c.Assert(t1, Equals, test.Expect)
 	}
+}
+
+func (s *testEvaluatorSuite) TestDateDiff(c *C) {
+	// Test cases from https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_datediff
+	tests := []struct {
+		t1     string
+		t2     string
+		expect int64
+	}{
+		{"2004-05-21", "2004:01:02", 140},
+		{"2004-04-21", "2000:01:02", 1571},
+		{"2008-12-31 23:59:59.000001", "2008-12-30 01:01:01.000002", 1},
+		{"1010-11-30 23:59:59", "2010-12-31", -365274},
+		{"1010-11-30", "2210-11-01", -438262},
+	}
+
+	for _, test := range tests {
+		t1 := types.NewStringDatum(test.t1)
+		t2 := types.NewStringDatum(test.t2)
+
+		result, err := builtinDateDiff([]types.Datum{t1, t2}, s.ctx)
+
+		c.Assert(err, IsNil)
+		c.Assert(result.GetInt64(), Equals, test.expect)
+	}
+
+	// Check if month is 0.
+	t1 := types.NewStringDatum("2016-00-01")
+	t2 := types.NewStringDatum("2016-01-13")
+
+	result, err := builtinDateDiff([]types.Datum{t1, t2}, s.ctx)
+
+	c.Assert(err, IsNil)
+	c.Assert(result.IsNull(), Equals, true)
 }
 
 func (s *testEvaluatorSuite) TestTimeDiff(c *C) {
@@ -533,6 +567,33 @@ func (s *testEvaluatorSuite) TestYearWeek(c *C) {
 	result, err := builtinYearWeek([]types.Datum{types.NewStringDatum("2016-00-05")}, s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(result.IsNull(), IsTrue)
+}
+
+func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
+	d, err := builtinUnixTimestamp(nil, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(d.GetInt64()-time.Now().Unix(), GreaterEqual, int64(-1))
+	c.Assert(d.GetInt64()-time.Now().Unix(), LessEqual, int64(1))
+
+	// Set the time_zone variable, because UnixTimestamp() result depends on it.
+	s.ctx.GetSessionVars().TimeZone = time.UTC
+	tests := []struct {
+		input  types.Datum
+		expect string
+	}{
+		{types.NewIntDatum(20151113102019), "1447410019"},
+		{types.NewStringDatum("2015-11-13 10:20:19"), "1447410019"},
+		{types.NewStringDatum("2015-11-13 10:20:19.012"), "1447410019.012"},
+		{types.NewStringDatum("2017-00-02"), "0"},
+	}
+
+	for _, test := range tests {
+		d, err = builtinUnixTimestamp([]types.Datum{test.input}, s.ctx)
+		c.Assert(err, IsNil)
+		str, err := d.ToString()
+		c.Assert(err, IsNil)
+		c.Assert(str, Equals, test.expect)
+	}
 }
 
 func (s *testEvaluatorSuite) TestDateArith(c *C) {
