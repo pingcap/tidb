@@ -32,7 +32,7 @@ type userTableRow struct {
 	Privileges mysql.PrivilegeType
 }
 
-const userTablePrivilegeMask = mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.DeletePriv | mysql.CreatePriv | mysql.DropPriv | mysql.ReloadPriv | mysql.ShutdownPriv | mysql.ProcessPriv | mysql.FilePriv | mysql.GrantPriv | mysql.ReferencesPriv | mysql.IndexPriv | mysql.AlterPriv | mysql.ShowDBPriv | mysql.SuperPriv | mysql.CreateTMPTablePriv | mysql.LockTablesPriv | mysql.ExecutePriv | mysql.ReplSlavePriv | mysql.ReplClientPriv | mysql.CreateViewPriv | mysql.ShowViewPriv | mysql.CreateRoutinePriv | mysql.AlterRoutinePriv | mysql.CreateUserPriv | mysql.EventPriv | mysql.TriggerPriv | mysql.CreateTablespacePriv
+const userTablePrivilegeMask = mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.DeletePriv | mysql.CreatePriv | mysql.DropPriv | mysql.GrantPriv | mysql.IndexPriv | mysql.AlterPriv | mysql.ShowDBPriv | mysql.ExecutePriv | mysql.CreateUserPriv
 
 type dbTableRow struct {
 	Host       string
@@ -41,7 +41,7 @@ type dbTableRow struct {
 	Privileges mysql.PrivilegeType
 }
 
-const dbTablePrivilegeMask = mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.DeletePriv | mysql.CreatePriv | mysql.DropPriv | mysql.GrantPriv | mysql.ReferencesPriv | mysql.IndexPriv | mysql.AlterPriv | mysql.CreateTMPTablePriv | mysql.LockTablesPriv | mysql.CreateViewPriv | mysql.ShowViewPriv | mysql.CreateRoutinePriv | mysql.AlterRoutinePriv | mysql.ExecutePriv | mysql.EventPriv | mysql.TriggerPriv
+const dbTablePrivilegeMask = mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.DeletePriv | mysql.CreatePriv | mysql.DropPriv | mysql.GrantPriv | mysql.IndexPriv | mysql.AlterPriv
 
 type tablesPrivTableRow struct {
 	Host       string
@@ -54,9 +54,9 @@ type tablesPrivTableRow struct {
 	ColumnPriv mysql.PrivilegeType
 }
 
-const tablePrivMask = mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.DeletePriv | mysql.CreatePriv | mysql.DropPriv | mysql.GrantPriv | mysql.ReferencesPriv | mysql.IndexPriv | mysql.AlterPriv | mysql.CreateViewPriv | mysql.ShowViewPriv | mysql.TriggerPriv
+const tablePrivMask = mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.DeletePriv | mysql.CreatePriv | mysql.DropPriv | mysql.GrantPriv | mysql.IndexPriv | mysql.AlterPriv
 
-const columnPrivMask = mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.ReferencesPriv
+const columnPrivMask = mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv
 
 type columnsPrivTableRow struct {
 	Host       string

@@ -97,7 +97,7 @@ func (s *testCacheSuite) TestLoadTablesPrivTable(c *C) {
 	var p privileges.MySQLPrivilege
 	err = p.LoadTablesPrivTable(se)
 	c.Assert(err, IsNil)
-	c.Assert(p.TablesPriv[0].Host, Equals, "%")
+	c.Assert(p.TablesPriv[0].Host, Equals, `%`)
 	c.Assert(p.TablesPriv[0].DB, Equals, "db")
 	c.Assert(p.TablesPriv[0].User, Equals, "user")
 	c.Assert(p.TablesPriv[0].TableName, Equals, "table")
@@ -118,7 +118,7 @@ func (s *testCacheSuite) TestLoadColumnsPrivTable(c *C) {
 	var p privileges.MySQLPrivilege
 	err = p.LoadColumnsPrivTable(se)
 	c.Assert(err, IsNil)
-	c.Assert(p.ColumnsPriv[0].Host, Equals, "%")
+	c.Assert(p.ColumnsPriv[0].Host, Equals, `%`)
 	c.Assert(p.ColumnsPriv[0].DB, Equals, "db")
 	c.Assert(p.ColumnsPriv[0].User, Equals, "user")
 	c.Assert(p.ColumnsPriv[0].TableName, Equals, "table")
