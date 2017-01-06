@@ -19,8 +19,8 @@ import (
 	"github.com/pingcap/tidb/mysql"
 )
 
-// Columns of an aggregation's schema is an bijection with aggregation's aggFuncs.
-// Sometimes we need to convert from one side to another, then this function is needed.
+// A bijection exists between columns of an aggregation's schema and this aggregation's aggFuncs.
+// Sometimes we need a schema made by arg of aggFuncs to convert a column in child's schema to a column in this aggregation's Schema.
 func (p *Aggregation) buildSchemaByAggFuncs() expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, p.schema.Len()))
 	for _, fun := range p.AggFuncs {
@@ -67,8 +67,8 @@ func (p *Aggregation) buildKeyInfo() {
 	}
 }
 
-// Columns of a projection's schema is an bijection with projection's Exprs.
-// Sometimes we need to convert from one side to another, then this function is needed.
+// A bijection exists between columns of a projection's schema and this projection's Exprs.
+// Sometimes we need a schema made by expr of Exprs to convert a column in child's schema to a column in this projection's Schema.
 func (p *Projection) buildSchemaByExprs() expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, p.schema.Len()))
 	for _, expr := range p.Exprs {
