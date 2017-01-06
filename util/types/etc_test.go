@@ -19,6 +19,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -189,6 +190,6 @@ func (s *testTypeEtcSuite) TestTruncate(c *C) {
 	for _, t := range tbl {
 		f, err := TruncateFloat(t.Input, t.Flen, t.Decimal)
 		c.Assert(f, Equals, t.Expect)
-		c.Assert(err, Equals, t.Err)
+		c.Assert(terror.ErrorEqual(err, t.Err), IsTrue)
 	}
 }
