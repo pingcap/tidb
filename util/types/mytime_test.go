@@ -104,3 +104,66 @@ func (s *testMyTimeSuite) TestCompareTime(c *C) {
 		c.Assert(compareTime(&t.T2, &t.T1), Equals, -t.Expect)
 	}
 }
+
+func (s *testMyTimeSuite) TestGetDateFromDaynr(c *C) {
+	cases := []struct {
+		daynr uint
+		year  uint
+		month uint
+		day   uint
+	}{
+		{730669, 2000, 7, 3},
+		{720195, 1971, 10, 30},
+		{719528, 1970, 01, 01},
+		{719892, 1970, 12, 31},
+		{730850, 2000, 12, 31},
+		{730544, 2000, 2, 29},
+		{204960, 561, 2, 28},
+		{0, 0, 0, 0},
+		{32, 0, 0, 0},
+		{366, 1, 1, 1},
+		{744729, 2038, 12, 31},
+		{3652424, 9999, 12, 31},
+	}
+
+	for _, t := range cases {
+		yy, mm, dd := getDateFromDaynr(t.daynr)
+		c.Assert(yy, Equals, t.year)
+		c.Assert(mm, Equals, t.month)
+		c.Assert(dd, Equals, t.day)
+	}
+}
+
+func (s *testMyTimeSuite) TestMixDateAndTime(c *C) {
+	cases := []struct {
+		date   mysqlTime
+		time   mysqlTime
+		expect mysqlTime
+	}{
+		{
+			date:   mysqlTime{1896, 3, 4, 0, 0, 0, 0},
+			time:   mysqlTime{0, 0, 0, 12, 23, 24, 5},
+			expect: mysqlTime{1896, 3, 4, 12, 23, 24, 5},
+		},
+		{
+			date:   mysqlTime{1896, 3, 4, 0, 0, 0, 0},
+			time:   mysqlTime{0, 0, 0, 24, 23, 24, 5},
+			expect: mysqlTime{1896, 3, 5, 0, 23, 24, 5},
+		},
+		{
+			date:   mysqlTime{2016, 12, 31, 0, 0, 0, 0},
+			time:   mysqlTime{0, 0, 0, 24, 0, 0, 0},
+			expect: mysqlTime{2017, 1, 1, 0, 0, 0, 0},
+		},
+		{
+			date:   mysqlTime{2016, 12, 0, 0, 0, 0, 0},
+			time:   mysqlTime{0, 0, 0, 24, 0, 0, 0},
+			expect: mysqlTime{2016, 12, 1, 0, 0, 0, 0},
+		},
+	}
+
+	for _, t := range cases {
+		mixDateAndTime(&t.date, &t.time, false)
+		c.Assert(compareTime(&t.date, &t.expect), Equals, 0)
+	}
+}
