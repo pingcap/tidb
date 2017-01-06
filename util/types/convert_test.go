@@ -73,21 +73,21 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	ft.Flen = 5
 	ft.Decimal = 2
 	v, err = Convert(999.999, ft)
-	c.Assert(err, IsNil)
+	c.Assert(err, NotNil)
 	c.Assert(v, Equals, float32(999.99))
 
 	ft = NewFieldType(mysql.TypeFloat)
 	ft.Flen = 5
 	ft.Decimal = 2
 	v, err = Convert(-999.999, ft)
-	c.Assert(err, IsNil)
+	c.Assert(err, NotNil)
 	c.Assert(v, Equals, float32(-999.99))
 
 	ft = NewFieldType(mysql.TypeFloat)
 	ft.Flen = 5
 	ft.Decimal = 2
 	v, err = Convert(1111.11, ft)
-	c.Assert(err, IsNil)
+	c.Assert(err, NotNil)
 	c.Assert(v, Equals, float32(999.99))
 
 	ft = NewFieldType(mysql.TypeFloat)
@@ -100,7 +100,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	ft = NewFieldType(mysql.TypeFloat)
 	ft.Flen = 5
 	ft.Decimal = 2
-	v, err = Convert(999.915, ft)
+	v, err = Convert(999.914, ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, float32(999.91))
 
