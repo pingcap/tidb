@@ -37,7 +37,6 @@ import (
 )
 
 var (
-	_ Executor = &ApplyExec{}
 	_ Executor = &CheckTableExec{}
 	_ Executor = &DistinctExec{}
 	_ Executor = &DummyScanExec{}
@@ -406,6 +405,9 @@ func init() {
 		}
 		e := &executorBuilder{is: is, ctx: ctx}
 		exec := e.build(p)
+		if e.err != nil {
+			return d, errors.Trace(err)
+		}
 		row, err := exec.Next()
 		if err != nil {
 			return d, errors.Trace(err)
@@ -1102,7 +1104,9 @@ func (e *UnionExec) Next() (*Row, error) {
 // Close implements the Executor Close interface.
 func (e *UnionExec) Close() error {
 	e.finished.Store(true)
-	<-e.closedCh
+	if e.inited {
+		<-e.closedCh
+	}
 	e.cursor = 0
 	e.inited = false
 	e.rows = nil

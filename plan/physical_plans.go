@@ -218,7 +218,7 @@ func (p *physicalTableSource) tryToAddUnionScan(resultPlan PhysicalPlan) Physica
 	}
 	conditions := append(p.indexFilterConditions, p.tableFilterConditions...)
 	us := &PhysicalUnionScan{
-		Condition: expression.ComposeCNFCondition(append(conditions, p.AccessCondition...)),
+		Condition: expression.ComposeCNFCondition(append(conditions, p.AccessCondition...)...),
 	}
 	us.SetChildren(resultPlan)
 	us.SetSchema(resultPlan.GetSchema())
@@ -349,8 +349,8 @@ type PhysicalDummyScan struct {
 type PhysicalApply struct {
 	basePlan
 
-	OuterSchema []*expression.CorrelatedColumn
-	Checker     *ApplyConditionChecker
+	PhysicalJoin PhysicalPlan
+	OuterSchema  []*expression.CorrelatedColumn
 }
 
 // PhysicalHashJoin represents hash join for inner/ outer join.
@@ -452,9 +452,7 @@ func (p *PhysicalHashSemiJoin) extractCorrelatedCols() []*expression.CorrelatedC
 
 func (p *PhysicalApply) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := p.basePlan.extractCorrelatedCols()
-	if p.Checker != nil {
-		corCols = append(corCols, extractCorColumns(p.Checker.Condition)...)
-	}
+	corCols = append(corCols, p.PhysicalJoin.extractCorrelatedCols()...)
 	return corCols
 }
 
@@ -528,7 +526,7 @@ func (p *PhysicalApply) Copy() PhysicalPlan {
 
 // MarshalJSON implements json.Marshaler interface.
 func (p *PhysicalApply) MarshalJSON() ([]byte, error) {
-	checker, err := json.Marshal(p.Checker)
+	join, err := json.Marshal(p.PhysicalJoin)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -536,7 +534,7 @@ func (p *PhysicalApply) MarshalJSON() ([]byte, error) {
 	buffer.WriteString(fmt.Sprintf(
 		"\"innerPlan\": \"%s\",\n "+
 			"\"outerPlan\": \"%s\",\n "+
-			"\"condition\": %s\n}", p.children[1].GetID(), p.children[0].GetID(), checker))
+			"\"join\": %s\n}", p.children[1].GetID(), p.children[0].GetID(), join))
 	return buffer.Bytes(), nil
 }
 

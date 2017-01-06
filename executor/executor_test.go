@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/testkit"
@@ -1088,9 +1089,11 @@ func (s *testSuite) TestSQLMode(c *C) {
 }
 
 func (s *testSuite) TestSubquery(c *C) {
+	plan.JoinConcurrency = 1
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
+		plan.JoinConcurrency = 5
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

@@ -91,6 +91,24 @@ func EvalBool(expr Expression, row []types.Datum, ctx context.Context) (bool, er
 	return i != 0, nil
 }
 
+// One stands for a number 1.
+var One = &Constant{
+	Value:   types.NewDatum(1),
+	RetType: types.NewFieldType(mysql.TypeTiny),
+}
+
+// Zero stands for a number 0.
+var Zero = &Constant{
+	Value:   types.NewDatum(0),
+	RetType: types.NewFieldType(mysql.TypeTiny),
+}
+
+// Null stands for null constant.
+var Null = &Constant{
+	Value:   types.NewDatum(nil),
+	RetType: types.NewFieldType(mysql.TypeTiny),
+}
+
 // Constant stands for a constant value.
 type Constant struct {
 	Value   types.Datum
@@ -175,12 +193,12 @@ func composeConditionWithBinaryOp(conditions []Expression, funcName string) Expr
 }
 
 // ComposeCNFCondition composes CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
-func ComposeCNFCondition(conditions []Expression) Expression {
+func ComposeCNFCondition(conditions ...Expression) Expression {
 	return composeConditionWithBinaryOp(conditions, ast.AndAnd)
 }
 
 // ComposeDNFCondition composes DNF items into a balance deep DNF tree.
-func ComposeDNFCondition(conditions []Expression) Expression {
+func ComposeDNFCondition(conditions ...Expression) Expression {
 	return composeConditionWithBinaryOp(conditions, ast.OrOr)
 }
 
