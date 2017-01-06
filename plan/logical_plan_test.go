@@ -79,7 +79,8 @@ func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 					Offset: 3,
 				},
 			},
-			State: model.StatePublic,
+			State:  model.StatePublic,
+			Unique: true,
 		},
 		{
 			Name: model.NewCIStr("e"),
@@ -89,7 +90,8 @@ func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 					Length: types.UnspecifiedLength,
 				},
 			},
-			State: model.StateWriteOnly,
+			State:  model.StateWriteOnly,
+			Unique: true,
 		},
 		{
 			Name: model.NewCIStr("f"),
@@ -100,7 +102,8 @@ func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 					Offset: 1,
 				},
 			},
-			State: model.StatePublic,
+			State:  model.StatePublic,
+			Unique: true,
 		},
 		{
 			Name: model.NewCIStr("g"),
@@ -111,7 +114,8 @@ func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 					Offset: 1,
 				},
 			},
-			State: model.StatePublic,
+			State:  model.StatePublic,
+			Unique: true,
 		},
 		{
 			Name: model.NewCIStr("f_g"),
@@ -127,7 +131,8 @@ func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 					Offset: 2,
 				},
 			},
-			State: model.StatePublic,
+			State:  model.StatePublic,
+			Unique: true,
 		},
 		{
 			Name: model.NewCIStr("c_d_e_str"),
@@ -213,6 +218,12 @@ func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 	}
 
 	pkColumn.Flag = mysql.PriKeyFlag
+	// Column 'b', 'c', 'd', 'f', 'g' is not null.
+	col0.Flag = mysql.NotNullFlag
+	col1.Flag = mysql.NotNullFlag
+	col2.Flag = mysql.NotNullFlag
+	col4.Flag = mysql.NotNullFlag
+	col5.Flag = mysql.NotNullFlag
 	table := &model.TableInfo{
 		Columns:    []*model.ColumnInfo{pkColumn, col0, col1, col2, col3, colStr1, colStr2, colStr3, col4, col5},
 		Indices:    indices,
@@ -1411,5 +1422,114 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		} else {
 			c.Assert(ca.err.Equal(builder.err), IsTrue, comment)
 		}
+	}
+}
+
+func checkUniqueKeys(p Plan, c *C, ans map[string][][]string, comment CommentInterface) {
+	keyList, ok := ans[p.GetID()]
+	c.Assert(ok, IsTrue, comment)
+	c.Assert(len(keyList), Equals, len(p.GetSchema().Keys), comment)
+	for i, key := range keyList {
+		c.Assert(len(key), Equals, len(p.GetSchema().Keys[i]), comment)
+		for j, colName := range key {
+			c.Assert(colName, Equals, p.GetSchema().Keys[i][j].String(), comment)
+		}
+	}
+	for _, child := range p.GetChildren() {
+		checkUniqueKeys(child, c, ans, comment)
+	}
+}
+
+func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		sql string
+		ans map[string][][]string
+	}{
+		{
+			sql: "select a, sum(e) from t group by a",
+			ans: map[string][][]string{
+				"TableScan_1":   {{"test.t.a"}},
+				"Aggregation_2": {{"aggregation_2_col_0"}, {"test.t.a"}},
+				"Projection_3":  {{"a"}},
+			},
+		},
+		{
+			sql: "select a, sum(f) from t group by a",
+			ans: map[string][][]string{
+				"TableScan_1":   {{"test.t.f"}, {"test.t.a"}},
+				"Aggregation_2": {{"aggregation_2_col_0"}, {"test.t.a"}},
+				"Projection_3":  {{"a"}},
+			},
+		},
+		{
+			sql: "select c, d, e, sum(a) from t group by c, d, e",
+			ans: map[string][][]string{
+				"TableScan_1":   {{"test.t.a"}},
+				"Aggregation_2": nil,
+				"Projection_3":  nil,
+			},
+		},
+		{
+			sql: "select f, g, sum(a) from t group by f, g",
+			ans: map[string][][]string{
+				"TableScan_1":   {{"test.t.f"}, {"test.t.g"}, {"test.t.f", "test.t.g"}, {"test.t.a"}},
+				"Aggregation_2": {{"aggregation_2_col_0"}, {"aggregation_2_col_1"}, {"aggregation_2_col_0", "aggregation_2_col_1"}, {"test.t.f"}},
+				"Projection_3":  {{"f"}, {"g"}, {"f", "g"}},
+			},
+		},
+		{
+			sql: "select * from t t1 join t t2 on t1.a = t2.e",
+			ans: map[string][][]string{
+				"TableScan_1":  {{"t1.f"}, {"t1.g"}, {"t1.f", "t1.g"}, {"t1.a"}},
+				"TableScan_2":  {{"t2.f"}, {"t2.g"}, {"t2.f", "t2.g"}, {"t2.a"}},
+				"Join_3":       {{"t2.f"}, {"t2.g"}, {"t2.f", "t2.g"}, {"t2.a"}},
+				"Projection_4": {{"t2.f"}, {"t2.g"}, {"t2.f", "t2.g"}, {"t2.a"}},
+			},
+		},
+		{
+			sql: "select f from t having sum(a) > 0",
+			ans: map[string][][]string{
+				"TableScan_1":   {{"test.t.f"}, {"test.t.a"}},
+				"Aggregation_2": {{"aggregation_2_col_0"}},
+				"Selection_6":   {{"aggregation_2_col_0"}},
+				"Projection_3":  {{"f"}},
+				"Trim_5":        {{"f"}},
+			},
+		},
+		{
+			sql: "select * from t t1 left join t t2 on t1.a = t2.a",
+			ans: map[string][][]string{
+				"TableScan_1":  {{"t1.f"}, {"t1.g"}, {"t1.f", "t1.g"}, {"t1.a"}},
+				"TableScan_2":  {{"t2.f"}, {"t2.g"}, {"t2.f", "t2.g"}, {"t2.a"}},
+				"Join_3":       {{"t1.f"}, {"t1.g"}, {"t1.f", "t1.g"}, {"t1.a"}},
+				"Projection_4": {{"t1.f"}, {"t1.g"}, {"t1.f", "t1.g"}, {"t1.a"}},
+			},
+		},
+	}
+	for _, ca := range cases {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+
+		is, err := mockResolve(stmt)
+		c.Assert(err, IsNil)
+
+		builder := &planBuilder{
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+			allocator: new(idAllocator),
+			ctx:       mockContext(),
+			is:        is,
+		}
+		p := builder.build(stmt).(LogicalPlan)
+		c.Assert(builder.err, IsNil, comment)
+
+		_, p, err = p.PredicatePushDown(nil)
+		c.Assert(err, IsNil)
+		p.PruneColumns(p.GetSchema().Columns)
+		p.ResolveIndicesAndCorCols()
+		p.buildKeyInfo()
+		c.Assert(err, IsNil)
+		checkUniqueKeys(p, c, ca.ans, comment)
 	}
 }
