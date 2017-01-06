@@ -60,7 +60,11 @@ func GetStatisticsTableCache(ctx context.Context, tblInfo *model.TableInfo) *sta
 	}
 	txn := ctx.Txn()
 	if txn == nil {
-		return statistics.PseudoTable(tblInfo)
+		err := ctx.ActivePendingTxn()
+		if err != nil || ctx.Txn() == nil {
+			return statistics.PseudoTable(tblInfo)
+		}
+		txn = ctx.Txn()
 	}
 	m := meta.NewMeta(txn)
 	tpb, err := m.GetTableStats(tblInfo.ID)
