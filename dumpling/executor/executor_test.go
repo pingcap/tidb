@@ -1066,10 +1066,17 @@ func (s *testSuite) TestSQLMode(c *C) {
 	_, err = tk.Exec("insert t values ('1000')")
 	c.Check(err, NotNil)
 
+	tk.MustExec("create table if not exists tdouble (a double(3,2))")
+	_, err = tk.Exec("insert tdouble values (10.23)")
+	c.Check(err, NotNil)
+
 	tk.MustExec("set sql_mode = ''")
 	tk.MustExec("insert t values ()")
 	tk.MustExec("insert t values (1000)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("0", "127"))
+
+	tk.MustExec("insert tdouble values (10.23)")
+	tk.MustQuery("select * from tdouble").Check(testkit.Rows("9.99"))
 
 	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
 	tk.MustExec("set @@global.sql_mode = ''")
