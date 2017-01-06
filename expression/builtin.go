@@ -178,6 +178,7 @@ var Funcs = map[string]Func{
 	ast.CurrentDate:      {builtinCurrentDate, 0, 0},
 	ast.CurrentTime:      {builtinCurrentTime, 0, 1},
 	ast.Date:             {builtinDate, 1, 1},
+	ast.DateDiff:         {builtinDateDiff, 2, 2},
 	ast.DateAdd:          {dateArithFuncFactory(ast.DateArithAdd), 3, 3},
 	ast.AddDate:          {dateArithFuncFactory(ast.DateArithAdd), 3, 3},
 	ast.DateSub:          {dateArithFuncFactory(ast.DateArithSub), 3, 3},
