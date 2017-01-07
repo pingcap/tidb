@@ -188,7 +188,7 @@ func (c *Column) search(sc *variable.StatementContext, target types.Datum) (inde
 
 // Table represents statistics for a table.
 type Table struct {
-	info    *model.TableInfo
+	Info    *model.TableInfo
 	TS      int64 // build timestamp.
 	Columns []*Column
 	Count   int64 // Total row count in a table.
@@ -197,7 +197,7 @@ type Table struct {
 // String implements Stringer interface.
 func (t *Table) String() string {
 	strs := make([]string, 0, len(t.Columns)+1)
-	strs = append(strs, fmt.Sprintf("Table:%d ts:%d count:%d", t.info.ID, t.TS, t.Count))
+	strs = append(strs, fmt.Sprintf("Table:%d ts:%d count:%d", t.Info.ID, t.TS, t.Count))
 	for _, col := range t.Columns {
 		strs = append(strs, col.String())
 	}
@@ -207,7 +207,7 @@ func (t *Table) String() string {
 // ToPB converts Table to TablePB.
 func (t *Table) ToPB() (*TablePB, error) {
 	tblPB := &TablePB{
-		Id:      proto.Int64(t.info.ID),
+		Id:      proto.Int64(t.Info.ID),
 		Ts:      proto.Int64(t.TS),
 		Count:   proto.Int64(t.Count),
 		Columns: make([]*ColumnPB, len(t.Columns)),
@@ -238,7 +238,7 @@ func (t *Table) buildColumn(sc *variable.StatementContext, offset int, samples [
 	if err != nil {
 		return errors.Trace(err)
 	}
-	ci := t.info.Columns[offset]
+	ci := t.Info.Columns[offset]
 	col := &Column{
 		ID:      ci.ID,
 		NDV:     estimatedNDV,
@@ -314,7 +314,7 @@ func estimateNDV(sc *variable.StatementContext, count int64, samples []types.Dat
 // NewTable creates a table statistics.
 func NewTable(sc *variable.StatementContext, ti *model.TableInfo, ts, count, numBuckets int64, columnSamples [][]types.Datum) (*Table, error) {
 	t := &Table{
-		info:    ti,
+		Info:    ti,
 		TS:      ts,
 		Count:   count,
 		Columns: make([]*Column, len(columnSamples)),
@@ -330,6 +330,7 @@ func NewTable(sc *variable.StatementContext, ti *model.TableInfo, ts, count, num
 
 // TableFromPB creates a table statistics from protobuffer.
 func TableFromPB(ti *model.TableInfo, tpb *TablePB) (*Table, error) {
+	// TODO: The following error may mean that there is a ddl change on this table. Currently, The caller simply drop the statistics table. Maybe we can have better solution.
 	if tpb.GetId() != ti.ID {
 		return nil, errors.Errorf("table id not match, expected %d, got %d", ti.ID, tpb.GetId())
 	}
@@ -341,11 +342,11 @@ func TableFromPB(ti *model.TableInfo, tpb *TablePB) (*Table, error) {
 			return nil, errors.Errorf("column ID not match, expected %d, got %d", ti.Columns[i].ID, tpb.Columns[i].GetId())
 		}
 	}
-	t := &Table{info: ti}
+	t := &Table{Info: ti}
 	t.TS = tpb.GetTs()
 	t.Count = tpb.GetCount()
 	t.Columns = make([]*Column, len(tpb.GetColumns()))
-	for i, cInfo := range t.info.Columns {
+	for i, cInfo := range t.Info.Columns {
 		cpb := tpb.Columns[i]
 		values, err := codec.Decode(cpb.GetValue(), 1)
 		if err != nil {
@@ -371,7 +372,7 @@ func TableFromPB(ti *model.TableInfo, tpb *TablePB) (*Table, error) {
 
 // PseudoTable creates a pseudo table statistics when statistic can not be found in KV store.
 func PseudoTable(ti *model.TableInfo) *Table {
-	t := &Table{info: ti}
+	t := &Table{Info: ti}
 	t.TS = pseudoTimestamp
 	t.Count = pseudoRowCount
 	t.Columns = make([]*Column, len(ti.Columns))
