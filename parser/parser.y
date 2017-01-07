@@ -475,8 +475,6 @@ import (
 	DatabaseOptionListOpt	"CREATE Database specification list opt"
 	CreateTableStmt		"CREATE TABLE statement"
 	CreateUserStmt		"CREATE User statement"
-	DateArithOpt		"Date arith dateadd or datesub option"
-	DateArithMultiFormsOpt	"Date arith adddate or subdate option"
 	DBName			"Database Name"
 	DeallocateStmt		"Deallocate prepared statement"
 	Default			"DEFAULT clause"
@@ -716,7 +714,9 @@ import (
 	NotKeywordToken			"Tokens not mysql keyword but treated specially"
 	UnReservedKeyword		"MySQL unreserved keywords"
 	ReservedKeyword			"MySQL reserved keywords"
-	FunctionNameConflict	"Built-in function call names which are conflict with keywords"
+	FunctionNameConflict		"Built-in function call names which are conflict with keywords"
+	FunctionNameDateArith		"Date arith function call names (date_add or date_sub)"
+	FunctionNameDateArithMultiForms	"Date arith function call names (adddate or subdate)"
 
 %precedence lowestOpt
 %token	tableRefPriority
@@ -2661,36 +2661,33 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
-|	DateArithMultiFormsOpt '(' Expression ',' Expression ')'
+|	FunctionNameDateArithMultiForms '(' Expression ',' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr("DATE_ARITH"),
+			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{
-				ast.NewValueExpr($1),
 				$3.(ast.ExprNode),
 				$5.(ast.ExprNode),
 				ast.NewValueExpr("DAY"),
 			},
 		}
 	}
-|	DateArithMultiFormsOpt '(' Expression ',' "INTERVAL" Expression TimeUnit ')'
+|	FunctionNameDateArithMultiForms '(' Expression ',' "INTERVAL" Expression TimeUnit ')'
 	{
 		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr("DATE_ARITH"),
+			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{
-				ast.NewValueExpr($1),
 				$3.(ast.ExprNode),
 				$6.(ast.ExprNode),
 				ast.NewValueExpr($7),
 			},
 		}
 	}
-|	DateArithOpt '(' Expression ',' "INTERVAL" Expression TimeUnit ')'
+|	FunctionNameDateArith '(' Expression ',' "INTERVAL" Expression TimeUnit ')'
 	{
 		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr("DATE_ARITH"),
+			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{
-				ast.NewValueExpr($1),
 				$3.(ast.ExprNode),
 				$6.(ast.ExprNode),
 				ast.NewValueExpr($7),
@@ -3101,25 +3098,15 @@ FunctionCallNonKeyword:
 	}
 
 
-DateArithOpt:
+FunctionNameDateArith:
 	"DATE_ADD"
-	{
-		$$ = ast.DateAdd
-	}
 |	"DATE_SUB"
-	{
-		$$ = ast.DateSub
-	}
 
-DateArithMultiFormsOpt:
+
+FunctionNameDateArithMultiForms:
 	"ADDDATE"
-	{
-		$$ = ast.DateAdd
-	}
 |	"SUBDATE"
-	{
-		$$ = ast.DateSub
-	}
+
 
 TrimDirection:
 	"BOTH"
