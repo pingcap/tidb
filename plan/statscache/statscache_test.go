@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/kv"
 )
 
 func TestT(t *testing.T) {
@@ -43,6 +44,7 @@ func (s *testStatsCacheSuite) TestStatsCache(c *C) {
 	}
 	tblInfo.Columns = columns
 	ctx := mock.NewContext()
+	ctx.Store = kv.NewMockStorage()
 	statsTbl := GetStatisticsTableCache(ctx, tblInfo)
 	c.Check(len(statsTbl.Columns), Equals, 1)
 
@@ -62,4 +64,13 @@ func (s *testStatsCacheSuite) TestStatsCache(c *C) {
 	tblInfo.Columns = columns
 	statsTbl = GetStatisticsTableCache(ctx, tblInfo)
 	c.Check(len(statsTbl.Columns), Equals, 2)
+
+	si, ok := statsTblCache.cache[tblInfo.ID]
+	c.Assert(ok, IsTrue)
+	oriLoadTime := si.loadTime - expireDuration
+	si.loadTime = oriLoadTime
+	GetStatisticsTableCache(ctx, tblInfo)
+	si, ok = statsTblCache.cache[tblInfo.ID]
+	c.Assert(ok, IsTrue)
+	c.Check(si.loadTime, Greater, oriLoadTime)
 }
