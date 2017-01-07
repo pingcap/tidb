@@ -78,6 +78,8 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		strs = strs[:idx]
 		idxs = idxs[:last]
 		str = "Apply{" + strings.Join(children, "->") + "}"
+	case *Exists:
+		str = "Exists"
 	case *MaxOneRow:
 		str = "MaxOneRow"
 	case *Limit:
