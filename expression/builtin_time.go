@@ -757,14 +757,14 @@ func builtinTimestampDiff(args []types.Datum, ctx context.Context) (d types.Datu
 	sc := ctx.GetSessionVars().StmtCtx
 	t1, err := convertDatumToTime(sc, args[1])
 	if err != nil {
-		return d, errorOrWarning(err, sc)
+		return d, errorOrWarning(err, ctx)
 	}
 	t2, err := convertDatumToTime(sc, args[2])
 	if err != nil {
-		return d, errorOrWarning(err, sc)
+		return d, errorOrWarning(err, ctx)
 	}
 	if t1.InvalidZero() || t2.InvalidZero() {
-		return d, errorOrWarning(types.ErrInvalidTimeFormat, sc)
+		return d, errorOrWarning(types.ErrInvalidTimeFormat, ctx)
 	}
 
 	v := types.TimestampDiff(args[0].GetString(), t1, t2)
@@ -773,7 +773,8 @@ func builtinTimestampDiff(args []types.Datum, ctx context.Context) (d types.Datu
 }
 
 // errorOrWarning reports error or warning depend on the context.
-func errorOrWarning(err error, sc *StatementContext) error {
+func errorOrWarning(err error, ctx context.Context) error {
+	sc := ctx.GetSessionVars().StmtCtx
 	// TODO: Use better name, such as sc.IsInsert instead of sc.IgnoreTruncate.
 	if ctx.GetSessionVars().StrictSQLMode && !sc.IgnoreTruncate {
 		return errors.Trace(types.ErrInvalidTimeFormat)
