@@ -260,6 +260,7 @@ func EvaluateExprWithNull(ctx context.Context, schema Schema, expr Expression) (
 // TableInfo2Schema converts table info to schema.
 func TableInfo2Schema(tbl *model.TableInfo) Schema {
 	schema := NewSchema(make([]*Column, 0, len(tbl.Columns)))
+	keys := make([]KeyInfo, 0, len(tbl.Indices)+1)
 	for i, col := range tbl.Columns {
 		newCol := &Column{
 			ColName:  col.Name,
@@ -269,6 +270,42 @@ func TableInfo2Schema(tbl *model.TableInfo) Schema {
 		}
 		schema.Append(newCol)
 	}
+	for _, idx := range tbl.Indices {
+		if !idx.Unique || idx.State != model.StatePublic {
+			continue
+		}
+		ok := true
+		newKey := make([]*Column, 0, len(idx.Columns))
+		for _, idxCol := range idx.Columns {
+			find := false
+			for i, col := range tbl.Columns {
+				if idxCol.Name.L == col.Name.L {
+					if !mysql.HasNotNullFlag(col.Flag) {
+						break
+					}
+					newKey = append(newKey, schema.Columns[i])
+					find = true
+					break
+				}
+			}
+			if !find {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			keys = append(keys, newKey)
+		}
+	}
+	if tbl.PKIsHandle {
+		for i, col := range tbl.Columns {
+			if mysql.HasPriKeyFlag(col.Flag) {
+				keys = append(keys, []*Column{schema.Columns[i]})
+				break
+			}
+		}
+	}
+	schema.SetUniqueKeys(keys)
 	return schema
 }
 

@@ -69,6 +69,7 @@ func doOptimize(logic LogicalPlan, ctx context.Context, allocator *idAllocator) 
 	if !AllowCartesianProduct && existsCartesianProduct(logic) {
 		return nil, ErrCartesianProductUnsupported
 	}
+	logic.buildKeyInfo()
 	info, err := logic.convert2PhysicalPlan(&requiredProperty{})
 	if err != nil {
 		return nil, errors.Trace(err)

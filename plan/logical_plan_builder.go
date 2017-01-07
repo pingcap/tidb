@@ -118,8 +118,7 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 			v.TableAsName = &x.AsName
 		}
 		if x.AsName.L != "" {
-			schema := p.GetSchema()
-			for _, col := range schema.Columns {
+			for _, col := range p.GetSchema().Columns {
 				col.TblName = x.AsName
 				col.DBName = model.NewCIStr("")
 			}
