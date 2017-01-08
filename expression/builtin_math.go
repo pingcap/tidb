@@ -439,7 +439,7 @@ func builtinConv(args []types.Datum, ctx context.Context) (d types.Datum, err er
 	if fromBase > 36 || fromBase < 2 || toBase > 36 || toBase < 2 {
 		return d, nil
 	}
-	n = getValidPrefix(n, fromBase)
+	n = getValidPrefix(strings.TrimSpace(n), fromBase)
 	if len(n) == 0 {
 		return d, nil
 	}
