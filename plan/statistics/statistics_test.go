@@ -166,9 +166,9 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 		NumBuckets:    bucketCount,
 		ColumnSamples: [][]types.Datum{s.samples},
 		ColOffsets:    []int{0},
-		IndResults:    []ast.RecordSet{s.rc},
+		IndRecords:    []ast.RecordSet{s.rc},
 		IndOffsets:    []int{0},
-		PkResult:      ast.RecordSet(s.pk),
+		PkRecords:     ast.RecordSet(s.pk),
 		PkOffset:      2,
 	}
 	t, err := builder.NewTable()
@@ -244,5 +244,5 @@ func (s *testStatisticsSuite) TestPseudoTable(c *C) {
 	c.Assert(count, Equals, int64(10000))
 	count, err = col.BetweenRowCount(sc, types.NewIntDatum(1000), types.NewIntDatum(5000))
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, int64(2500000))
+	c.Assert(count, Equals, int64(250000))
 }

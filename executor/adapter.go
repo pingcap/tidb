@@ -83,6 +83,15 @@ func (a *statement) SetText(text string) {
 // like the INSERT, UPDATE statements, it executes in this function, if the Executor returns
 // result, execution is done after this function returns, in the returned ast.RecordSet Next method.
 func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
+	if _, ok := a.plan.(*plan.Execute); !ok {
+		// Do not sync transaction for Execute statement, because the real optimization work is done in
+		// "ExecuteExec.Build".
+		err := ctx.ActivePendingTxn()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
 	b := newExecutorBuilder(ctx, a.is)
 	e := b.build(a.plan)
 	if b.err != nil {

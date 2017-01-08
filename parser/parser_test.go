@@ -78,7 +78,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 	// Testcase for unreserved keywords
 	unreservedKws := []string{
 		"auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
-		"date", "datetime", "deallocate", "do", "end", "engine", "engines", "execute", "first", "full",
+		"date", "datediff", "datetime", "deallocate", "do", "end", "engine", "engines", "execute", "first", "full",
 		"local", "names", "offset", "password", "prepare", "quick", "rollback", "session", "signed",
 		"start", "global", "tables", "text", "time", "timestamp", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substr", "substring", "mode", "any", "some", "user", "identified",
@@ -87,7 +87,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"delay_key_write", "isolation", "partitions", "repeatable", "committed", "uncommitted", "only", "serializable", "level",
 		"curtime", "variables", "dayname", "version", "btree", "hash", "row_format", "dynamic", "fixed", "compressed",
 		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache", "action", "round",
-		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest",
+		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest", "least",
 		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events", "less", "than", "timediff",
 		"ln", "log", "log2", "log10",
 	}
@@ -217,6 +217,9 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"INSERT INTO foo (a,b,) VALUES (42,314,)", false},
 		{"INSERT INTO foo () VALUES ()", true},
 		{"INSERT INTO foo VALUE ()", true},
+
+		// For issue 2402
+		{"INSERT INTO tt VALUES (01000001783);", true},
 
 		{"REPLACE INTO foo VALUES (1 || 2)", true},
 		{"REPLACE INTO foo VALUES (1 | 2)", true},
@@ -511,6 +514,8 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT LOG(2, 65536);", true},
 		{"SELECT LOG2(2);", true},
 		{"SELECT LOG10(10);", true},
+		{"SELECT CONV(10+'10'+'10'+X'0a',10,10);", true},
+		{"SELECT CRC32('MySQL');", true},
 
 		{"SELECT SUBSTR('Quadratically',5);", true},
 		{"SELECT SUBSTR('Quadratically',5, 3);", true},
@@ -523,6 +528,11 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT SUBSTRING('Quadratically' FROM 5 FOR 3);", true},
 
 		{"SELECT CONVERT('111', SIGNED);", true},
+
+		{"SELECT LEAST(1, 2, 3);", true},
+
+		{"SELECT INTERVAL(1, 0, 1, 2)", true},
+		{"SELECT DATE_ADD('2008-01-02', INTERVAL INTERVAL(1, 0, 1) DAY);", true},
 
 		// Information Functions
 		{"SELECT DATABASE();", true},
@@ -592,6 +602,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 
 		// for date, day, weekday
 		{"SELECT CURRENT_DATE, CURRENT_DATE(), CURDATE()", true},
+		{"SELECT DATEDIFF('2003-12-31', '2003-12-30');", true},
 		{"SELECT DATE('2003-12-31 01:02:03');", true},
 		{"SELECT DATE_FORMAT('2003-12-31 01:02:03', '%W %M %Y');", true},
 		{"SELECT DAY('2007-02-03');", true},
@@ -662,6 +673,8 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT CHAR(65);`, true},
 		{`SELECT CHAR_LENGTH('abc');`, true},
 		{`SELECT CHARACTER_LENGTH('abc');`, true},
+		{`SELECT FIND_IN_SET('foo', 'foo,bar')`, true},
+		{`SELECT FIND_IN_SET('foo')`, false},
 
 		// Repeat
 		{`SELECT REPEAT("a", 10);`, true},
@@ -690,6 +703,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select date_add("2011-11-11 10:10:10.123456", interval "11 10:10" day_minute)`, true},
 		{`select date_add("2011-11-11 10:10:10.123456", interval "11 10" day_hour)`, true},
 		{`select date_add("2011-11-11 10:10:10.123456", interval "11-11" year_month)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", 10)`, false},
+		{`select date_add("2011-11-11 10:10:10.123456", 0.10)`, false},
+		{`select date_add("2011-11-11 10:10:10.123456", "11,11")`, false},
 
 		// For strcmp
 		{`select strcmp('abc', 'def')`, true},
@@ -743,6 +759,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select date_sub("2011-11-11 10:10:10.123456", interval "11 10:10" day_minute)`, true},
 		{`select date_sub("2011-11-11 10:10:10.123456", interval "11 10" day_hour)`, true},
 		{`select date_sub("2011-11-11 10:10:10.123456", interval "11-11" year_month)`, true},
+		{`select date_sub("2011-11-11 10:10:10.123456", 10)`, false},
+		{`select date_sub("2011-11-11 10:10:10.123456", 0.10)`, false},
+		{`select date_sub("2011-11-11 10:10:10.123456", "11,11")`, false},
 
 		// For subdate
 		{`select subdate("2011-11-11 10:10:10.123456", interval 10 microsecond)`, true},
@@ -765,9 +784,13 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select subdate("2011-11-11 10:10:10.123456", interval "11 10:10" day_minute)`, true},
 		{`select subdate("2011-11-11 10:10:10.123456", interval "11 10" day_hour)`, true},
 		{`select subdate("2011-11-11 10:10:10.123456", interval "11-11" year_month)`, true},
-		{`select adddate("2011-11-11 10:10:10.123456", 10)`, true},
-		{`select adddate("2011-11-11 10:10:10.123456", 0.10)`, true},
-		{`select adddate("2011-11-11 10:10:10.123456", "11,11")`, true},
+		{`select subdate("2011-11-11 10:10:10.123456", 10)`, true},
+		{`select subdate("2011-11-11 10:10:10.123456", 0.10)`, true},
+		{`select subdate("2011-11-11 10:10:10.123456", "11,11")`, true},
+
+		// For unix_timestamp
+		{`select unix_timestamp()`, true},
+		{`select unix_timestamp('2015-11-13 10:20:19.012')`, true},
 
 		// For misc functions
 		{`SELECT GET_LOCK('lock1',10);`, true},
@@ -973,11 +996,13 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"CREATE TABLE address (\r\nid bigint(20) NOT NULL AUTO_INCREMENT,\r\ncreate_at datetime NOT NULL,\r\ndeleted tinyint(1) NOT NULL,\r\nupdate_at datetime NOT NULL,\r\nversion bigint(20) DEFAULT NULL,\r\naddress varchar(128) NOT NULL,\r\naddress_detail varchar(128) NOT NULL,\r\ncellphone varchar(16) NOT NULL,\r\nlatitude double NOT NULL,\r\nlongitude double NOT NULL,\r\nname varchar(16) NOT NULL,\r\nsex tinyint(1) NOT NULL,\r\nuser_id bigint(20) NOT NULL,\r\nPRIMARY KEY (id),\r\nCONSTRAINT FK_7rod8a71yep5vxasb0ms3osbg FOREIGN KEY (user_id) REFERENCES waimaiqa.user (id) ON DELETE CASCADE ON UPDATE NO ACTION,\r\nINDEX FK_7rod8a71yep5vxasb0ms3osbg (user_id) comment ''\r\n) ENGINE=InnoDB AUTO_INCREMENT=30 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci ROW_FORMAT=COMPACT COMMENT='' CHECKSUM=0 DELAY_KEY_WRITE=0;", true},
 		// For issue 1802
 		{`CREATE TABLE t1 (
-accout_id int(11) DEFAULT '0',
-summoner_id int(11) DEFAULT '0',
-union_name varbinary(52) NOT NULL,
-union_id int(11) DEFAULT '0',
-PRIMARY KEY (union_name)) ENGINE=MyISAM DEFAULT CHARSET=binary;`, true},
+		accout_id int(11) DEFAULT '0',
+		summoner_id int(11) DEFAULT '0',
+		union_name varbinary(52) NOT NULL,
+		union_id int(11) DEFAULT '0',
+		PRIMARY KEY (union_name)) ENGINE=MyISAM DEFAULT CHARSET=binary;`, true},
+		// Create table with multiple index options
+		{`create table t (c int, index ci (c) USING BTREE COMMENT "123");`, true},
 	}
 	s.RunTest(c, table)
 }

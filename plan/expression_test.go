@@ -304,6 +304,9 @@ func (s *testExpressionSuite) TestDateArith(c *C) {
 		// nil test
 		{nil, 1, "DAY", nil, nil, false},
 		{"2011-11-11", nil, "DAY", nil, nil, false},
+		// tests for inner function call
+		{"2011-11-11", s.parseExpr(c, "LEAST(1, 2)"), "DAY", "2011-11-12", "2011-11-10", false},
+		{"2011-11-11", s.parseExpr(c, "LEAST(NULL, 2)"), "DAY", nil, nil, false},
 		// tests for different units
 		{"2011-11-11 10:10:10", 1000, "MICROSECOND", "2011-11-11 10:10:10.001000", "2011-11-11 10:10:09.999000", false},
 		{"2011-11-11 10:10:10", "10", "SECOND", "2011-11-11 10:10:20", "2011-11-11 10:10:00", false},
@@ -363,50 +366,42 @@ func (s *testExpressionSuite) TestDateArith(c *C) {
 
 	// run the test cases
 	for _, t := range tests {
-		op := ast.NewValueExpr(ast.DateAdd)
-		dateArithInterval := ast.NewValueExpr(
-			ast.DateArithInterval{
-				Unit:     t.Unit,
-				Interval: ast.NewValueExpr(t.Interval),
-			},
-		)
-		date := ast.NewValueExpr(t.Date)
-		expr := &ast.FuncCallExpr{
-			FnName: model.NewCIStr("DATE_ARITH"),
-			Args: []ast.ExprNode{
-				op,
-				date,
-				dateArithInterval,
-			},
-		}
-		ast.SetFlag(expr)
-		v, err := evalAstExpr(expr, s.ctx)
-		if t.error == true {
-			c.Assert(err, NotNil)
+		var interval ast.ExprNode
+		if n, ok := t.Interval.(ast.ExprNode); ok {
+			interval = n
 		} else {
-			c.Assert(err, IsNil)
-			if v.IsNull() {
-				c.Assert(nil, Equals, t.AddResult)
-			} else {
-				c.Assert(v.Kind(), Equals, types.KindMysqlTime)
-				value := v.GetMysqlTime()
-				c.Assert(value.String(), Equals, t.AddResult)
+			interval = ast.NewValueExpr(t.Interval)
+		}
+		for _, x := range []struct {
+			fnName string
+			result interface{}
+		}{
+			{ast.DateAdd, t.AddResult},
+			{ast.DateSub, t.SubResult},
+			{ast.AddDate, t.AddResult},
+			{ast.SubDate, t.SubResult},
+		} {
+			expr := &ast.FuncCallExpr{
+				FnName: model.NewCIStr(x.fnName),
+				Args: []ast.ExprNode{
+					ast.NewValueExpr(t.Date),
+					interval,
+					ast.NewValueExpr(t.Unit),
+				},
 			}
-		}
-
-		op = ast.NewValueExpr(ast.DateSub)
-		expr.Args[0] = op
-		v, err = evalAstExpr(expr, s.ctx)
-		if t.error == true {
-			c.Assert(err, NotNil)
-		} else {
-			c.Assert(err, IsNil)
-			if v.IsNull() {
-				c.Assert(nil, Equals, t.AddResult)
+			ast.SetFlag(expr)
+			v, err := evalAstExpr(expr, s.ctx)
+			if t.error == true {
+				c.Assert(err, NotNil)
 			} else {
-				c.Assert(v.Kind(), Equals, types.KindMysqlTime)
-				value := v.GetMysqlTime()
-				c.Assert(value.String(), Equals, t.SubResult)
+				c.Assert(err, IsNil)
+				if v.IsNull() {
+					c.Assert(nil, Equals, x.result)
+				} else {
+					c.Assert(v.Kind(), Equals, types.KindMysqlTime)
+					value := v.GetMysqlTime()
+					c.Assert(value.String(), Equals, x.result)
+				}
 			}
 		}
 	}

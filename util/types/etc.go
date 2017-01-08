@@ -49,6 +49,12 @@ func IsTypeChar(tp byte) bool {
 	}
 }
 
+//IsTypeSpecifiable returns a boolean indicating
+// whether the tp is a specifiable type.
+func IsTypeSpecifiable(tp byte) bool {
+	return IsTypeBlob(tp) || IsTypeChar(tp) || tp == mysql.TypeBit
+}
+
 var type2Str = map[byte]string{
 	mysql.TypeBit:        "bit",
 	mysql.TypeBlob:       "text",

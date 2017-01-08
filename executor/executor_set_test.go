@@ -133,16 +133,19 @@ func (s *testSuite) TestSetCharset(c *C) {
 	ctx := tk.Se.(context.Context)
 	sessionVars := ctx.GetSessionVars()
 	for _, v := range variable.SetNamesVariables {
-		sVar := varsutil.GetSystemVar(sessionVars, v)
-		c.Assert(sVar.GetString() != "utf8", IsTrue)
+		sVar, err := varsutil.GetSessionSystemVar(sessionVars, v)
+		c.Assert(err, IsNil)
+		c.Assert(sVar != "utf8", IsTrue)
 	}
 	tk.MustExec(`SET NAMES utf8`)
 	for _, v := range variable.SetNamesVariables {
-		sVar := varsutil.GetSystemVar(sessionVars, v)
-		c.Assert(sVar.GetString(), Equals, "utf8")
+		sVar, err := varsutil.GetSessionSystemVar(sessionVars, v)
+		c.Assert(err, IsNil)
+		c.Assert(sVar, Equals, "utf8")
 	}
-	sVar := varsutil.GetSystemVar(sessionVars, variable.CollationConnection)
-	c.Assert(sVar.GetString(), Equals, "utf8_general_ci")
+	sVar, err := varsutil.GetSessionSystemVar(sessionVars, variable.CollationConnection)
+	c.Assert(err, IsNil)
+	c.Assert(sVar, Equals, "utf8_general_ci")
 
 	// Issue 1523
 	tk.MustExec(`SET NAMES binary`)

@@ -171,3 +171,23 @@ func (s *testEvaluatorSuite) TestRound(c *C) {
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
 }
+
+func (s *testEvaluatorSuite) TestCRC32(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Arg []interface{}
+		Ret uint64
+	}{
+		{[]interface{}{"mysql"}, 2501908538},
+		{[]interface{}{"MySQL"}, 3259397556},
+		{[]interface{}{"hello"}, 907060870},
+	}
+
+	Dtbl := tblToDtbl(tbl)
+
+	for _, t := range Dtbl {
+		v, err := builtinCRC32(t["Arg"], s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
+	}
+}

@@ -34,11 +34,11 @@ const (
 
 	// When we haven't analyzed a table, we use pseudo statistics to estimate costs.
 	// It has row count 10000000, equal condition selects 1/1000 of total rows, less condition selects 1/3 of total rows,
-	// between condition selects 1/4 of total rows.
+	// between condition selects 1/40 of total rows.
 	pseudoRowCount    = 10000000
 	pseudoEqualRate   = 1000
 	pseudoLessRate    = 3
-	pseudoBetweenRate = 4
+	pseudoBetweenRate = 40
 	pseudoTimestamp   = 1
 )
 
@@ -252,7 +252,7 @@ func columnFromPB(cpb *ColumnPB, ft *types.FieldType) (*Column, error) {
 
 // Table represents statistics for a table.
 type Table struct {
-	info    *model.TableInfo
+	Info    *model.TableInfo
 	TS      int64 // build timestamp.
 	Columns []*Column
 	Indices []*Column
@@ -262,7 +262,7 @@ type Table struct {
 // String implements Stringer interface.
 func (t *Table) String() string {
 	strs := make([]string, 0, len(t.Columns)+1)
-	strs = append(strs, fmt.Sprintf("Table:%d ts:%d count:%d", t.info.ID, t.TS, t.Count))
+	strs = append(strs, fmt.Sprintf("Table:%d ts:%d count:%d", t.Info.ID, t.TS, t.Count))
 	for _, col := range t.Columns {
 		strs = append(strs, col.String())
 	}
@@ -272,7 +272,7 @@ func (t *Table) String() string {
 // ToPB converts Table to TablePB.
 func (t *Table) ToPB() (*TablePB, error) {
 	tblPB := &TablePB{
-		Id:      proto.Int64(t.info.ID),
+		Id:      proto.Int64(t.Info.ID),
 		Ts:      proto.Int64(t.TS),
 		Count:   proto.Int64(t.Count),
 		Columns: make([]*ColumnPB, len(t.Columns)),
@@ -305,7 +305,7 @@ func (t *Table) buildColumn(sc *variable.StatementContext, offset int, samples [
 	if err != nil {
 		return errors.Trace(err)
 	}
-	ci := t.info.Columns[offset]
+	ci := t.Info.Columns[offset]
 	col := &Column{
 		ID:      ci.ID,
 		NDV:     estimatedNDV,
@@ -379,12 +379,12 @@ func estimateNDV(sc *variable.StatementContext, count int64, samples []types.Dat
 }
 
 // build4SortedColumn builds column statistics for sorted columns.
-func (t *Table) build4SortedColumn(sc *variable.StatementContext, offset int, result ast.RecordSet, bucketCount int64, isPK bool) error {
+func (t *Table) build4SortedColumn(sc *variable.StatementContext, offset int, records ast.RecordSet, bucketCount int64, isPK bool) error {
 	var id int64
 	if isPK {
-		id = t.info.Columns[offset].ID
+		id = t.Info.Columns[offset].ID
 	} else {
-		id = t.info.Indices[offset].ID
+		id = t.Info.Indices[offset].ID
 	}
 	col := &Column{
 		ID:      id,
@@ -403,7 +403,7 @@ func (t *Table) build4SortedColumn(sc *variable.StatementContext, offset int, re
 		valuesPerBucket = t.Count/bucketCount + 1
 	}
 	for {
-		row, err := result.Next()
+		row, err := records.Next()
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -497,15 +497,17 @@ func copyFromIndexColumns(ind *Column, id, numBuckets int64) (*Column, error) {
 
 // Builder describes information needed by NewTable
 type Builder struct {
-	Sc                         *variable.StatementContext
-	TblInfo                    *model.TableInfo
-	StartTS, Count, NumBuckets int64
-	ColumnSamples              [][]types.Datum
-	ColOffsets                 []int
-	IndResults                 []ast.RecordSet
-	IndOffsets                 []int
-	PkResult                   ast.RecordSet
-	PkOffset                   int
+	Sc            *variable.StatementContext // Sc is the statement context.
+	TblInfo       *model.TableInfo           // TblInfo is the table info of the table.
+	StartTS       int64                      // StartTS is the start timestamp of the statistics table builder.
+	Count         int64                      // Count is the total rows in the table.
+	NumBuckets    int64                      // NumBuckets is the number of buckets a column histogram has.
+	ColumnSamples [][]types.Datum            // ColumnSamples is the sample of columns.
+	ColOffsets    []int                      // ColOffsets is the offset of columns in the table.
+	IndRecords    []ast.RecordSet            // IndRecords is the record set of index columns.
+	IndOffsets    []int                      // IndOffsets is the offset of indexes in the table.
+	PkRecords     ast.RecordSet              // PkRecords is the record set of primary key of integer type.
+	PkOffset      int                        // PkOffset is the offset of primary key of integer type in the table.
 }
 
 // NewTable creates a table statistics.
@@ -514,7 +516,7 @@ func (b *Builder) NewTable() (*Table, error) {
 		return PseudoTable(b.TblInfo), nil
 	}
 	t := &Table{
-		info:    b.TblInfo,
+		Info:    b.TblInfo,
 		TS:      b.StartTS,
 		Count:   b.Count,
 		Columns: make([]*Column, len(b.TblInfo.Columns)),
@@ -527,13 +529,13 @@ func (b *Builder) NewTable() (*Table, error) {
 		}
 	}
 	if b.PkOffset != -1 {
-		err := t.build4SortedColumn(b.Sc, b.PkOffset, b.PkResult, b.NumBuckets, true)
+		err := t.build4SortedColumn(b.Sc, b.PkOffset, b.PkRecords, b.NumBuckets, true)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 	for i, offset := range b.IndOffsets {
-		err := t.build4SortedColumn(b.Sc, offset, b.IndResults[i], b.NumBuckets, false)
+		err := t.build4SortedColumn(b.Sc, offset, b.IndRecords[i], b.NumBuckets, false)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -569,6 +571,7 @@ func (b *Builder) NewTable() (*Table, error) {
 
 // TableFromPB creates a table statistics from protobuffer.
 func TableFromPB(ti *model.TableInfo, tpb *TablePB) (*Table, error) {
+	// TODO: The following error may mean that there is a ddl change on this table. Currently, The caller simply drop the statistics table. Maybe we can have better solution.
 	if tpb.GetId() != ti.ID {
 		return nil, errors.Errorf("table id not match, expected %d, got %d", ti.ID, tpb.GetId())
 	}
@@ -588,19 +591,19 @@ func TableFromPB(ti *model.TableInfo, tpb *TablePB) (*Table, error) {
 			return nil, errors.Errorf("index column ID not match, expected %d, got %d", ti.Indices[i].ID, tpb.Indices[i].GetId())
 		}
 	}
-	t := &Table{info: ti}
+	t := &Table{Info: ti}
 	t.TS = tpb.GetTs()
 	t.Count = tpb.GetCount()
 	t.Columns = make([]*Column, len(tpb.GetColumns()))
 	t.Indices = make([]*Column, len(tpb.GetIndices()))
-	for i, cInfo := range t.info.Columns {
+	for i, cInfo := range t.Info.Columns {
 		c, err := columnFromPB(tpb.Columns[i], &cInfo.FieldType)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		t.Columns[i] = c
 	}
-	for i := range t.info.Indices {
+	for i := range t.Info.Indices {
 		c, err := columnFromPB(tpb.Indices[i], types.NewFieldType(types.KindBytes))
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -612,7 +615,7 @@ func TableFromPB(ti *model.TableInfo, tpb *TablePB) (*Table, error) {
 
 // PseudoTable creates a pseudo table statistics when statistic can not be found in KV store.
 func PseudoTable(ti *model.TableInfo) *Table {
-	t := &Table{info: ti}
+	t := &Table{Info: ti}
 	t.TS = pseudoTimestamp
 	t.Count = pseudoRowCount
 	t.Columns = make([]*Column, len(ti.Columns))

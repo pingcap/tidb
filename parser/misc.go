@@ -197,6 +197,7 @@ var tokenMap = map[string]int{
 	"DATA":                data,
 	"DATABASE":            database,
 	"DATABASES":           databases,
+	"DATEDIFF":            datediff,
 	"DATE_ADD":            dateAdd,
 	"DATE_FORMAT":         dateFormat,
 	"DATE_SUB":            dateSub,
@@ -237,6 +238,7 @@ var tokenMap = map[string]int{
 	"EXTRACT":             extract,
 	"FALSE":               falseKwd,
 	"FIELDS":              fields,
+	"FIND_IN_SET":         findInSet,
 	"FIRST":               first,
 	"FIXED":               fixed,
 	"FOREIGN":             foreign,
@@ -283,6 +285,7 @@ var tokenMap = map[string]int{
 	"KEYS":                keys,
 	"LAST_INSERT_ID":      lastInsertID,
 	"LEADING":             leading,
+	"LEAST":               least,
 	"LEFT":                left,
 	"LENGTH":              length,
 	"LESS":                less,
@@ -400,6 +403,7 @@ var tokenMap = map[string]int{
 	"UNIQUE":              unique,
 	"UNLOCK":              unlock,
 	"UNSIGNED":            unsigned,
+	"UNIX_TIMESTAMP":      unixTimestamp,
 	"UPDATE":              update,
 	"UPPER":               upper,
 	"UCASE":               ucase,
@@ -484,6 +488,9 @@ var tokenMap = map[string]int{
 	"CHAR_FUNC":           charFunc,
 	"CHAR_LENGTH":         charLength,
 	"CHARACTER_LENGTH":    charLength,
+	"CONV":                conv,
+	"BIT_XOR":             bitXor,
+	"CRC32":               crc32,
 }
 
 func isTokenIdentifier(s string, buf *bytes.Buffer) int {

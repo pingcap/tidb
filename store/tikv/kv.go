@@ -123,6 +123,19 @@ func NewMockTikvStore() (kv.Storage, error) {
 	return newTikvStore(uuid, pdCli, client, false)
 }
 
+// GetMockTiKVClient gets the *mocktikv.RPCClient from a mocktikv store.
+// Used for test.
+func GetMockTiKVClient(store kv.Storage) *mocktikv.RPCClient {
+	s := store.(*tikvStore)
+	return s.client.(*mocktikv.RPCClient)
+}
+
+// ClearRegionCache clears the region cache in the store.
+func ClearRegionCache(store kv.Storage) {
+	s := store.(*tikvStore)
+	s.regionCache = NewRegionCache(s.regionCache.pdClient)
+}
+
 func (s *tikvStore) Begin() (kv.Transaction, error) {
 	txn, err := newTiKVTxn(s)
 	if err != nil {

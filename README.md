@@ -2,7 +2,7 @@
 
 [![Build Status](https://travis-ci.org/pingcap/tidb.svg?branch=master)](https://travis-ci.org/pingcap/tidb)
 [![Go Report Card](https://goreportcard.com/badge/github.com/pingcap/tidb)](https://goreportcard.com/report/github.com/pingcap/tidb)
-![Project Status](https://img.shields.io/badge/status-beta-yellow.svg)
+![Project Status](https://img.shields.io/badge/status-rc-yellow.svg)
 [![CircleCI Status](https://circleci.com/gh/pingcap/tidb.svg?style=shield)](https://circleci.com/gh/pingcap/tidb)
 
 ## What is TiDB?
@@ -25,13 +25,13 @@ Use TiDB as MySQL. You can replace MySQL with TiDB to power your application wit
 - __Written in Go__  
 Enjoy TiDB as much as we love Go. We believe Go code is both easy and enjoyable to work with. Go makes us improve TiDB fast and makes it easy to dive into the codebase.
 
-
 - __NewSQL over TiKV__  
   Turn [TiKV](https://github.com/pingcap/tikv) into NewSQL database.
 
 - __Multiple storage engine support__  
 Power TiDB with your most favorite engines. TiDB supports many popular storage engines in single-machine mode. You can choose from GolevelDB, LevelDB, RocksDB, LMDB, BoltDB and even more to come.
 
+For more details, read our blog [How we build TiDB](https://pingcap.github.io/blog/2016/10/17/how-we-build-tidb/)
 
 ## Roadmap
 
