@@ -42,8 +42,7 @@ func extractCorColumnsBySchema(schema expression.Schema, innerPlan LogicalPlan) 
 			length++
 		}
 	}
-	resultCorCols = resultCorCols[:length]
-	return resultCorCols
+	return resultCorCols[:length]
 }
 
 // decorrelate function tries to convert apply plan to join plan.
