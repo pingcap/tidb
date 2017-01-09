@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan/statistics"
+	"github.com/pingcap/tidb/plan/statscache"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
@@ -381,6 +382,7 @@ func (e *SimpleExec) buildStatisticsAndSaveToKV(tn *ast.TableName, count int64, 
 	if err != nil {
 		return errors.Trace(err)
 	}
+	statscache.SetStatisticsTableCache(tn.TableInfo.ID, t)
 	tpb, err := t.ToPB()
 	if err != nil {
 		return errors.Trace(err)

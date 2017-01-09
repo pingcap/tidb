@@ -331,6 +331,10 @@ func (s *testPlanSuite) TestCBO(c *C) {
 			best: "Table(t)",
 		},
 		{
+			sql:  "select a from t where a between 1 and 2 order by c",
+			best: "Table(t)->Sort->Trim",
+		},
+		{
 			sql:  "select * from t t1 use index(c_d_e)",
 			best: "Index(t.c_d_e)[[<nil>,+inf]]",
 		},
