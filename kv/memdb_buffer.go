@@ -28,9 +28,9 @@ import (
 // Those limits is enforced to make sure the transaction can be well handled by TiKV.
 var (
 	// The limit of single entry size (len(key) + len(value)).
-	EntrySizeLimit  = 8 * 1024 * 1024
+	EntrySizeLimit = 8 * 1024 * 1024
 	// The limit of number of entries in the MemBuffer.
-	BufferLenLimit  = 100 * 1000
+	BufferLenLimit = 100 * 1000
 	// The limit of the sum of all entry size.
 	BufferSizeLimit = 100 * 1024 * 1024
 )
