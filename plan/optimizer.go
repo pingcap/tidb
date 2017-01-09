@@ -58,7 +58,7 @@ func doOptimize(logic LogicalPlan, ctx context.Context, allocator *idAllocator) 
 	}
 	logic.buildKeyInfo()
 	ap := &aggPrune{
-		ctx: ctx,
+		ctx:       ctx,
 		allocator: allocator,
 	}
 	ap.pruneAggregation(logic)
