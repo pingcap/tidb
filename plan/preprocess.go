@@ -45,7 +45,7 @@ func CheckPrivilege(node ast.Node, ctx context.Context, checker privilege.Checke
 	}
 	node.Accept(&privChecker)
 	if !privChecker.pass {
-		return errors.New("check privilege failed!")
+		return errors.New("check privilege failed")
 	}
 
 	return nil
@@ -71,34 +71,19 @@ func (pc *privilegeChecker) Enter(in ast.Node) (ast.Node, bool) {
 	case *ast.AlterTableStmt:
 		pc.check(v.Table, mysql.AlterPriv)
 	case *ast.AnalyzeTableStmt:
-		for _, t := range v.TableNames {
-			pc.check(t, mysql.SelectPriv)
-		}
 	case *ast.CreateIndexStmt:
 		pc.check(v.Table, mysql.IndexPriv)
 	case *ast.CreateTableStmt:
 		pc.check(v.Table, mysql.CreatePriv)
 	case *ast.DeleteStmt:
-		for _, t := range v.Tables.Tables {
-			pc.check(t, mysql.DeletePriv)
-		}
 	case *ast.DeleteTableList:
-		for _, t := range v.Tables {
-			pc.check(t, mysql.DeletePriv)
-		}
 	case *ast.DropTableStmt:
-		for _, t := range v.Tables {
-			pc.check(t, mysql.DropPriv)
-		}
 	case *ast.DropIndexStmt:
 		pc.check(v.Table, mysql.IndexPriv)
 	case *ast.FieldList:
 	case *ast.InsertStmt:
 	case *ast.LoadDataStmt:
 	case *ast.SelectStmt:
-		for _, rf := range v.GetResultFields() {
-			pc.check(rf.TableName, mysql.SelectPriv)
-		}
 	case *ast.SetStmt:
 	case *ast.ShowStmt:
 		pc.check(v.Table, mysql.ShowDBPriv)
