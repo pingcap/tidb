@@ -15,7 +15,6 @@ package plan
 import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/ngaut/log"
 )
 
 type aggPrune struct {
@@ -26,7 +25,6 @@ type aggPrune struct {
 func (ap *aggPrune) pruneAggregation(p LogicalPlan) {
 	for _, child := range p.GetChildren() {
 		if agg, ok := child.(*Aggregation); ok {
-			log.Warn("%v :%v     %v", agg.GetID(), agg.schema.Keys, agg.groupByCols)
 			schemaByGroupby := expression.NewSchema(agg.groupByCols)
 			for _, key := range agg.schema.Keys {
 				if schemaByGroupby.GetColumnsIndices(key) == nil {
@@ -37,7 +35,6 @@ func (ap *aggPrune) pruneAggregation(p LogicalPlan) {
 					Exprs: make([]expression.Expression, 0, len(agg.AggFuncs)),
 					baseLogicalPlan: newBaseLogicalPlan(Proj, ap.allocator),
 				}
-				//schema := expression.NewSchema(make([]*expression.Column, 0, len(agg.AggFuncs)))
 				proj.self = proj
 				proj.initIDAndContext(ap.ctx)
 				for _, fun := range agg.AggFuncs {
