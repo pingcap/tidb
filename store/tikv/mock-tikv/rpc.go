@@ -25,6 +25,8 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 )
 
+const requestMaxSize = 4 * 1024 * 1024
+
 type rpcHandler struct {
 	cluster   *Cluster
 	mvccStore *MvccStore
@@ -45,6 +47,12 @@ func newRPCHandler(cluster *Cluster, mvccStore *MvccStore, storeID uint64) *rpcH
 func (h *rpcHandler) handleRequest(req *kvrpcpb.Request) *kvrpcpb.Response {
 	var resp kvrpcpb.Response
 	if err := h.checkContext(req.GetContext()); err != nil {
+		resp.RegionError = err
+		return &resp
+	}
+	// TiKV has a limitation on raft log size.
+	// mock-tikv has no raft inside, so we check the request's size instead.
+	if err := h.checkSize(req); err != nil {
 		resp.RegionError = err
 		return &resp
 	}
@@ -147,6 +155,15 @@ func (h *rpcHandler) checkContext(ctx *kvrpcpb.Context) *errorpb.Error {
 		}
 	}
 	h.startKey, h.endKey = region.StartKey, region.EndKey
+	return nil
+}
+
+func (h *rpcHandler) checkSize(req *kvrpcpb.Request) *errorpb.Error {
+	if req.Size() >= requestMaxSize {
+		return &errorpb.Error{
+			RaftEntryTooLarge: &errorpb.RaftEntryTooLarge{},
+		}
+	}
 	return nil
 }
 
