@@ -206,6 +206,7 @@ func (s *testEvaluatorSuite) TestConv(c *C) {
 		{[]interface{}{"+18aZ", 7, 36}, 1},
 		{[]interface{}{"18446744073709551615", -10, 16}, "7FFFFFFFFFFFFFFF"},
 		{[]interface{}{"12F", -10, 16}, "C"},
+		{[]interface{}{"  FF ", 16, 10}, "255"},
 	}
 
 	Dtbl := tblToDtbl(tbl)
