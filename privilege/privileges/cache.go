@@ -25,25 +25,28 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-type userTableRow struct {
+const (
+	userTablePrivilegeMask = mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.DeletePriv | mysql.CreatePriv | mysql.DropPriv | mysql.GrantPriv | mysql.IndexPriv | mysql.AlterPriv | mysql.ShowDBPriv | mysql.ExecutePriv | mysql.CreateUserPriv
+	dbTablePrivilegeMask   = mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.DeletePriv | mysql.CreatePriv | mysql.DropPriv | mysql.GrantPriv | mysql.IndexPriv | mysql.AlterPriv
+	tablePrivMask          = mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.DeletePriv | mysql.CreatePriv | mysql.DropPriv | mysql.GrantPriv | mysql.IndexPriv | mysql.AlterPriv
+	columnPrivMask         = mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv
+)
+
+type userRecord struct {
 	Host       string // max length 60, primary key
 	User       string // max length 16, primary key
 	Password   string // max length 41
 	Privileges mysql.PrivilegeType
 }
 
-const userTablePrivilegeMask = mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.DeletePriv | mysql.CreatePriv | mysql.DropPriv | mysql.GrantPriv | mysql.IndexPriv | mysql.AlterPriv | mysql.ShowDBPriv | mysql.ExecutePriv | mysql.CreateUserPriv
-
-type dbTableRow struct {
+type dbRecord struct {
 	Host       string
 	DB         string
 	User       string
 	Privileges mysql.PrivilegeType
 }
 
-const dbTablePrivilegeMask = mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.DeletePriv | mysql.CreatePriv | mysql.DropPriv | mysql.GrantPriv | mysql.IndexPriv | mysql.AlterPriv
-
-type tablesPrivTableRow struct {
+type tablesPrivRecord struct {
 	Host       string
 	DB         string
 	User       string
@@ -54,11 +57,7 @@ type tablesPrivTableRow struct {
 	ColumnPriv mysql.PrivilegeType
 }
 
-const tablePrivMask = mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.DeletePriv | mysql.CreatePriv | mysql.DropPriv | mysql.GrantPriv | mysql.IndexPriv | mysql.AlterPriv
-
-const columnPrivMask = mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv
-
-type columnsPrivTableRow struct {
+type columnsPrivRecord struct {
 	Host       string
 	DB         string
 	User       string
@@ -70,10 +69,10 @@ type columnsPrivTableRow struct {
 
 // MySQLPrivilege is the in-memory cache of mysql privilege tables.
 type MySQLPrivilege struct {
-	User        []userTableRow
-	DB          []dbTableRow
-	TablesPriv  []tablesPrivTableRow
-	ColumnsPriv []columnsPrivTableRow
+	User        []userRecord
+	DB          []dbRecord
+	TablesPriv  []tablesPrivRecord
+	ColumnsPriv []columnsPrivRecord
 }
 
 // LoadAll loads the tables from database to memory.
@@ -147,7 +146,7 @@ func (p *MySQLPrivilege) loadTable(ctx context.Context, sql string,
 }
 
 func (p *MySQLPrivilege) decodeUserTableRow(row *ast.Row, fs []*ast.ResultField) error {
-	var value userTableRow
+	var value userRecord
 	for i, f := range fs {
 		d := row.Data[i]
 		switch {
@@ -174,7 +173,7 @@ func (p *MySQLPrivilege) decodeUserTableRow(row *ast.Row, fs []*ast.ResultField)
 }
 
 func (p *MySQLPrivilege) decodeDBTableRow(row *ast.Row, fs []*ast.ResultField) error {
-	var value dbTableRow
+	var value dbRecord
 	for i, f := range fs {
 		d := row.Data[i]
 		switch {
@@ -201,7 +200,7 @@ func (p *MySQLPrivilege) decodeDBTableRow(row *ast.Row, fs []*ast.ResultField) e
 }
 
 func (p *MySQLPrivilege) decodeTablesPrivTableRow(row *ast.Row, fs []*ast.ResultField) error {
-	var value tablesPrivTableRow
+	var value tablesPrivRecord
 	for i, f := range fs {
 		d := row.Data[i]
 		switch {
@@ -232,7 +231,7 @@ func (p *MySQLPrivilege) decodeTablesPrivTableRow(row *ast.Row, fs []*ast.Result
 }
 
 func (p *MySQLPrivilege) decodeColumnsPrivTableRow(row *ast.Row, fs []*ast.ResultField) error {
-	var value columnsPrivTableRow
+	var value columnsPrivRecord
 	for i, f := range fs {
 		d := row.Data[i]
 		switch {
@@ -265,7 +264,7 @@ func decodeSetToPrivilege(s types.Set) (mysql.PrivilegeType, error) {
 	for _, str := range strings.Split(s.Name, ",") {
 		priv, ok := mysql.SetStr2Priv[str]
 		if !ok {
-			return ret, errInvalidPrivilegeType.Gen("Unknown PrivilegeType!")
+			return ret, errInvalidPrivilegeType
 		}
 		ret |= priv
 	}
