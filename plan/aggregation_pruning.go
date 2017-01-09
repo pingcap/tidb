@@ -32,7 +32,7 @@ func (ap *aggPrune) pruneAggregation(p LogicalPlan) {
 				}
 				// GroupByCols has unique key. So this aggregation can be removed.
 				proj := &Projection{
-					Exprs: make([]expression.Expression, 0, len(agg.AggFuncs)),
+					Exprs:           make([]expression.Expression, 0, len(agg.AggFuncs)),
 					baseLogicalPlan: newBaseLogicalPlan(Proj, ap.allocator),
 				}
 				proj.self = proj
@@ -46,6 +46,8 @@ func (ap *aggPrune) pruneAggregation(p LogicalPlan) {
 				break
 			}
 		}
-		ap.pruneAggregation(child.(LogicalPlan))
+	}
+	for _, child := range p.GetChildren() {
+		ap.pruneAggregation(child)
 	}
 }
