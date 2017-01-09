@@ -52,25 +52,25 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 
 		// Length must be specified for BLOB and TEXT column indexes.
 		if types.IsTypeBlob(col.FieldType.Tp) && ic.Length == types.UnspecifiedLength {
-			return nil, errBlobKeyWithoutLength
+			return nil, errors.Trace(errBlobKeyWithoutLength)
 		}
 
 		if ic.Length != types.UnspecifiedLength &&
 			!types.IsTypeSpecifiable(col.FieldType.Tp) {
-			return nil, errIncorrectPrefixKey
+			return nil, errors.Trace(errIncorrectPrefixKey)
 		}
 
 		if ic.Length > maxPrefixLength {
-			return nil, errTooLongKey
+			return nil, errors.Trace(errTooLongKey)
 		}
 
 		// Take care of the sum of length of all index columns.
 		if ic.Length != types.UnspecifiedLength {
 			sumLength += ic.Length
 		} else {
-			// specified data types.
+			// Specified data types.
 			if col.Flen != types.UnspecifiedLength {
-				// special case for the bit type.
+				// Special case for the bit type.
 				if col.FieldType.Tp == mysql.TypeBit {
 					sumLength += int(math.Ceil(float64(col.Flen+7) / float64(8)))
 				} else {
@@ -98,7 +98,7 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 		}
 
 		if sumLength > maxPrefixLength {
-			return nil, errTooLongKey
+			return nil, errors.Trace(errTooLongKey)
 		}
 
 		idxColumns = append(idxColumns, &model.IndexColumn{
@@ -117,7 +117,7 @@ func buildIndexInfo(tblInfo *model.TableInfo, indexName model.CIStr, idxColNames
 		return nil, errors.Trace(err)
 	}
 
-	// create index info
+	// Create index info.
 	idxInfo := &model.IndexInfo{
 		Name:    indexName,
 		Columns: idxColumns,
