@@ -1449,7 +1449,7 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 		{
 			sql: "select a, sum(e) from t group by a",
 			ans: map[string][][]string{
-				"TableScan_1":   {{"test.t.a"}},
+				"TableScan_1":   {{"test.t.f"}, {"test.t.g"}, {"test.t.f", "test.t.g"}, {"test.t.a"}},
 				"Aggregation_2": {{"aggregation_2_col_0"}, {"test.t.a"}},
 				"Projection_3":  {{"a"}},
 			},
@@ -1457,7 +1457,7 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 		{
 			sql: "select a, sum(f) from t group by a",
 			ans: map[string][][]string{
-				"TableScan_1":   {{"test.t.f"}, {"test.t.a"}},
+				"TableScan_1":   {{"test.t.f"}, {"test.t.g"}, {"test.t.f", "test.t.g"}, {"test.t.a"}},
 				"Aggregation_2": {{"aggregation_2_col_0"}, {"test.t.a"}},
 				"Projection_3":  {{"a"}},
 			},
@@ -1465,7 +1465,7 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 		{
 			sql: "select c, d, e, sum(a) from t group by c, d, e",
 			ans: map[string][][]string{
-				"TableScan_1":   {{"test.t.a"}},
+				"TableScan_1":   {{"test.t.f"}, {"test.t.g"}, {"test.t.f", "test.t.g"}, {"test.t.a"}},
 				"Aggregation_2": nil,
 				"Projection_3":  nil,
 			},
@@ -1490,10 +1490,10 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 		{
 			sql: "select f from t having sum(a) > 0",
 			ans: map[string][][]string{
-				"TableScan_1":   {{"test.t.f"}, {"test.t.a"}},
-				"Aggregation_2": {{"aggregation_2_col_0"}},
-				"Selection_6":   {{"aggregation_2_col_0"}},
-				"Projection_3":  {{"f"}},
+				"TableScan_1":   {{"test.t.f"}, {"test.t.g"}, {"test.t.f", "test.t.g"}, {"test.t.a"}},
+				"Aggregation_2": {{"aggregation_2_col_0"}, {"aggregation_2_col_1"}},
+				"Selection_6":   {{"aggregation_2_col_0"}, {"aggregation_2_col_1"}},
+				"Projection_3":  {{"f"}, {"a"}},
 				"Trim_5":        {{"f"}},
 			},
 		},
@@ -1526,10 +1526,7 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 
 		_, p, err = p.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		p.PruneColumns(p.GetSchema().Columns)
-		p.ResolveIndicesAndCorCols()
 		p.buildKeyInfo()
-		c.Assert(err, IsNil)
 		checkUniqueKeys(p, c, ca.ans, comment)
 	}
 }
