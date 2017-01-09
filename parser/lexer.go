@@ -83,7 +83,7 @@ func (s *Scanner) Errorf(format string, a ...interface{}) {
 	if len(val) > 2048 {
 		val = val[:2048]
 	}
-	err := fmt.Errorf("line %d column %d near \"%s\"%s (len %d)", s.r.p.Line, s.r.p.Col, val, str, len(s.r.s))
+	err := fmt.Errorf("line %d column %d near \"%s\"%s (total length %d)", s.r.p.Line, s.r.p.Col, val, str, len(s.r.s))
 	s.errs = append(s.errs, err)
 }
 
