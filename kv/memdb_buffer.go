@@ -65,7 +65,6 @@ func (m *memDbBuffer) SeekReverse(k Key) (Iterator, error) {
 	} else {
 		i = &memDbIter{iter: m.db.NewIterator(&util.Range{Limit: []byte(k)}), reverse: true}
 	}
-	m.db.Len()
 	i.iter.Last()
 	return i, nil
 }

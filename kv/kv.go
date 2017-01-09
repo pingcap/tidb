@@ -69,7 +69,9 @@ type RetrieverMutator interface {
 // MemBuffer is an in-memory kv collection, can be used to buffer write operations.
 type MemBuffer interface {
 	RetrieverMutator
+	// Size returns sum of keys and values length.
 	Size() int
+	// Len returns the number of entries in the DB.
 	Len() int
 }
 
