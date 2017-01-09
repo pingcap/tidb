@@ -348,9 +348,10 @@ func (cc *clientConn) Run() {
 			}
 			cmd := string(data[1:])
 			if len(cmd) > size {
-				cmd = cmd[:size]
+				log.Warnf("[%d] dispatch error:\n%s\n%s\n%s (len %d)", cc.connectionID, cc, cmd[:size], errors.ErrorStack(err), len(cmd))
+			} else {
+				log.Warnf("[%d] dispatch error:\n%s\n%s\n%s", cc.connectionID, cc, cmd, errors.ErrorStack(err))
 			}
-			log.Warnf("[%d] dispatch error:\n%s\n%s\n%s", cc.connectionID, cc, cmd, errors.ErrorStack(err))
 			cc.writeError(err)
 		}
 
