@@ -608,7 +608,11 @@ func (b *executorBuilder) buildApply(v *plan.PhysicalApply) Executor {
 	case *plan.PhysicalHashJoin:
 		if x.JoinType == plan.InnerJoin {
 			join = b.buildNestedLoopJoin(x)
+		} else {
+			b.err = errors.Errorf("Unsupported join type %v in nested loop join", x.JoinType)
 		}
+	default:
+		b.err = errors.Errorf("Unsupported plan type %T in apply", v)
 	}
 	apply := &ApplyJoinExec{
 		join:        join,
