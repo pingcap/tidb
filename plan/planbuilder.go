@@ -15,6 +15,7 @@ package plan
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
-	"strings"
 )
 
 // Error instances.
@@ -332,9 +332,9 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 	return p
 }
 
-// detachIndexColumns will separate index columns from normal columns because index columns will
+// getColumnOffsets will separate index columns from normal columns because index columns will
 // use more effective algorithms.
-func detachIndexColumns(tn *ast.TableName) (indexOffsets []int, columnOffsets []int, priOffset int) {
+func getColumnOffsets(tn *ast.TableName) (indexOffsets []int, columnOffsets []int, priOffset int) {
 	tbl := tn.TableInfo
 	var indNames []string
 	priOffset = -1
@@ -390,7 +390,7 @@ func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) LogicalPlan {
 		baseLogicalPlan: newBaseLogicalPlan(Ana, b.allocator),
 	}
 	for _, tbl := range as.TableNames {
-		indOffsets, colOffsets, pkOffset := detachIndexColumns(tbl)
+		indOffsets, colOffsets, pkOffset := getColumnOffsets(tbl)
 		result := &Analyze{
 			baseLogicalPlan: newBaseLogicalPlan(Ana, b.allocator),
 			Table:           tbl,

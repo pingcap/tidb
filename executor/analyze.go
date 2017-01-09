@@ -49,6 +49,12 @@ func (e *AnalyzeExec) Schema() expression.Schema {
 
 // Close implements the Executor Close interface.
 func (e *AnalyzeExec) Close() error {
+	for _, s := range e.Srcs {
+		err := s.Close()
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	return nil
 }
 
@@ -62,7 +68,6 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 			rs := &recordSet{executor: e.Srcs[len(e.Srcs)-1]}
 			var err error
 			count, sampleRows, err = collectSamples(rs)
-			rs.Close()
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -81,34 +86,40 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 			indRes = append(indRes, &recordSet{executor: e.Srcs[i]})
 		}
 		err := e.buildStatisticsAndSaveToKV(count, columnSamples, indRes, pkRes)
-		for _, ir := range indRes {
-			ir.Close()
-		}
-		if e.pkOffset != -1 {
-			pkRes.Close()
-		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		e.Close()
 	}
 	return nil, nil
 }
 
 func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]types.Datum, indRes []ast.RecordSet, pkRes ast.RecordSet) error {
 	txn := e.ctx.Txn()
-	sc := e.ctx.GetSessionVars().StmtCtx
-	t, err := statistics.NewTable(sc, e.table.TableInfo, int64(txn.StartTS()), count, defaultBucketCount, columnSamples)
+	tblInfo := e.table.TableInfo
+	statBuilder := &statistics.Builder{
+		Sc:            e.ctx.GetSessionVars().StmtCtx,
+		TblInfo:       tblInfo,
+		StartTS:       int64(txn.StartTS()),
+		Count:         count,
+		NumBuckets:    defaultBucketCount,
+		ColumnSamples: columnSamples,
+		ColOffsets:    e.colOffsets,
+		IndRecords:    indRes,
+		IndOffsets:    e.indOffsets,
+		PkRecords:     pkRes,
+		PkOffset:      e.pkOffset,
+	}
+	t, err := statBuilder.NewTable()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	statscache.SetStatisticsTableCache(e.table.TableInfo.ID, t)
+	statscache.SetStatisticsTableCache(tblInfo.ID, t)
 	tpb, err := t.ToPB()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	m := meta.NewMeta(txn)
-	err = m.SetTableStats(e.table.TableInfo.ID, tpb)
+	err = m.SetTableStats(tblInfo.ID, tpb)
 	if err != nil {
 		return errors.Trace(err)
 	}
