@@ -21,6 +21,8 @@ import (
 	"hash/crc32"
 	"math"
 	"math/rand"
+	"strconv"
+	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
@@ -402,8 +404,82 @@ func (b *builtinConvSig) eval(row []types.Datum) (types.Datum, error) {
 
 // See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_conv
 func builtinConv(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	// TODO: Implement it.
-	return d, errors.New("Function unimplement")
+	var (
+		signed     bool
+		negative   bool
+		ignoreSign bool
+	)
+	for _, arg := range args {
+		if arg.IsNull() {
+			return d, nil
+		}
+	}
+	n, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	sc := ctx.GetSessionVars().StmtCtx
+	fromBase, err := args[1].ToInt64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	toBase, err := args[2].ToInt64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if fromBase < 0 {
+		fromBase = -fromBase
+		signed = true
+	}
+	if toBase < 0 {
+		ignoreSign = true
+		toBase = -toBase
+	}
+	if fromBase > 36 || fromBase < 2 || toBase > 36 || toBase < 2 {
+		return d, nil
+	}
+	n = getValidPrefix(strings.TrimSpace(n), fromBase)
+	if len(n) == 0 {
+		return d, nil
+	}
+	if n[0] == '-' {
+		negative = true
+		n = n[1:]
+	}
+
+	val, err := strconv.ParseUint(n, int(fromBase), 64)
+	if err != nil {
+		return d, errors.Trace(types.ErrOverflow)
+	}
+	// See https://github.com/mysql/mysql-server/blob/5.7/strings/ctype-simple.c#L598
+	if signed {
+		if negative && val > -math.MinInt64 {
+			val = -math.MinInt64
+		}
+		if !negative && val > math.MaxInt64 {
+			val = math.MaxInt64
+		}
+	}
+	if negative {
+		val = -val
+	}
+	// See https://github.com/mysql/mysql-server/blob/5.7/strings/longlong2str.c#L58
+	if int64(val) < 0 {
+		negative = true
+	} else {
+		negative = false
+	}
+	if ignoreSign && negative {
+		val = 0 - val
+	}
+
+	s := strconv.FormatUint(val, int(toBase))
+	if negative && ignoreSign {
+		s = "-" + s
+	}
+	d.SetString(strings.ToUpper(s))
+	return d, nil
 }
 
 type crc32FunctionClass struct {
