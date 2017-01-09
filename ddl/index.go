@@ -37,10 +37,10 @@ import (
 const maxPrefixLength = 3072
 
 func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColName) ([]*model.IndexColumn, error) {
-	// build offsets.
+	// Build offsets.
 	idxColumns := make([]*model.IndexColumn, 0, len(idxColNames))
 
-	// the sum of length of all index columns.
+	// The sum of length of all index columns.
 	sumLength := 0
 
 	for _, ic := range idxColNames {
@@ -64,7 +64,7 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 			return nil, errTooLongKey
 		}
 
-		// take care of the sum of length of all index columns.
+		// Take care of the sum of length of all index columns.
 		if ic.Length != types.UnspecifiedLength {
 			sumLength += ic.Length
 		} else {
@@ -83,7 +83,7 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 					return nil, errUnknownTypeLength.GenByArgs(col.FieldType.Tp)
 				}
 
-				// special case for time fraction.
+				// Special case for time fraction.
 				if (col.FieldType.Tp == mysql.TypeDatetime ||
 					col.FieldType.Tp == mysql.TypeDuration ||
 					col.FieldType.Tp == mysql.TypeTimestamp) && col.FieldType.Decimal != -1 {
