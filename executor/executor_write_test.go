@@ -630,8 +630,9 @@ func (s *testSuite) TestLoadData(c *C) {
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
 	// data1 = nil, data2 = nil, fields and lines is default
-	_, err = ld.InsertData(nil, nil)
+	_, reachLimit, err := ld.InsertData(nil, nil)
 	c.Assert(err, IsNil)
+	c.Assert(reachLimit, IsFalse)
 	r := tk.MustQuery(selectSQL)
 	r.Check(nil)
 
@@ -826,6 +827,7 @@ func makeLoadDataInfo(column int, ctx context.Context, c *C) (ld *executor.LoadD
 	fields := &ast.FieldsClause{Terminated: "\t"}
 	lines := &ast.LinesClause{Starting: "", Terminated: "\n"}
 	ld = executor.NewLoadDataInfo(make([]types.Datum, column), ctx, tbl)
+	ld.SetBatchCount(0)
 	ld.FieldsInfo = fields
 	ld.LinesInfo = lines
 	return

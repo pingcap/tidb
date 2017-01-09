@@ -182,8 +182,11 @@ func floatStrToIntStr(validFloat string) (string, error) {
 			eIdx = i
 		}
 	}
-	if dotIdx == -1 && eIdx == -1 {
-		return validFloat, nil
+	if eIdx == -1 {
+		if dotIdx == -1 {
+			return validFloat, nil
+		}
+		return validFloat[:dotIdx], nil
 	}
 	var intCnt int
 	digits := make([]byte, 0, len(validFloat))
@@ -193,23 +196,17 @@ func floatStrToIntStr(validFloat string) (string, error) {
 	} else {
 		digits = append(digits, validFloat[:dotIdx]...)
 		intCnt = len(digits)
-		if eIdx == -1 {
-			digits = append(digits, validFloat[dotIdx+1:]...)
-		} else {
-			digits = append(digits, validFloat[dotIdx+1:eIdx]...)
-		}
+		digits = append(digits, validFloat[dotIdx+1:eIdx]...)
 	}
-	if eIdx != -1 {
-		exp, err := strconv.Atoi(validFloat[eIdx+1:])
-		if err != nil {
-			return validFloat, errors.Trace(err)
-		}
-		if exp > 0 && intCnt > (math.MaxInt64-exp) {
-			// (exp + incCnt) overflows MaxInt64.
-			return validFloat, errors.Trace(ErrOverflow)
-		}
-		intCnt += exp
+	exp, err := strconv.Atoi(validFloat[eIdx+1:])
+	if err != nil {
+		return validFloat, errors.Trace(err)
 	}
+	if exp > 0 && intCnt > (math.MaxInt64-exp) {
+		// (exp + incCnt) overflows MaxInt64.
+		return validFloat, errors.Trace(ErrOverflow)
+	}
+	intCnt += exp
 	if intCnt <= 0 {
 		return "0", nil
 	}
