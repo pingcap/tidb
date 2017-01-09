@@ -321,10 +321,10 @@ func (cc *clientConn) readHandshakeResponse() error {
 // it will be recovered and log the panic error.
 // This function returns and the connection is closed if there is an IO error or there is a panic.
 func (cc *clientConn) Run() {
+	const size = 4096
 	defer func() {
 		r := recover()
 		if r != nil {
-			const size = 4096
 			buf := make([]byte, size)
 			buf = buf[:runtime.Stack(buf, false)]
 			log.Errorf("lastCmd %s, %v, %s", cc.lastCmd, r, buf)
@@ -347,6 +347,9 @@ func (cc *clientConn) Run() {
 				return
 			}
 			cmd := string(data[1:])
+			if len(cmd) > size {
+				cmd = cmd[:size]
+			}
 			log.Warnf("[%d] dispatch error:\n%s\n%s\n%s", cc.connectionID, cc, cmd, errors.ErrorStack(err))
 			cc.writeError(err)
 		}
