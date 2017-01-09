@@ -280,8 +280,8 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 	return v, true
 }
 
-// handleNEAny handles the case of != any. For example, if the query is t.id < any (select s.id from s), it will be rewrited to
-// t.id < (select max(s.id) from s).
+// handleOtherComparableSubq handles the queries like < any, < max, etc. For example, if the query is t.id < any (select s.id from s),
+// it will be rewrited to t.id < (select max(s.id) from s).
 func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.Expression, np LogicalPlan, useMin bool, cmpFunc string, all bool) {
 	funcName := ast.AggFuncMax
 	if useMin {
