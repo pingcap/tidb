@@ -178,10 +178,10 @@ func (e *DeleteExec) deleteMultiTables() error {
 		return nil
 	}
 
+	// Table ID may not be unique for deleting multiple tables, for statements like
+	// `delete from t as t1, t as t2`, the same table has two alias, we have to identify a table
+	// by its alias instead of ID, so the table map value is an array which contains table aliases.
 	tblMap := make(map[int64][]string, len(e.Tables))
-	// Get table alias map.
-
-	// Delete from multiple tables should consider table ident list.
 	for _, t := range e.Tables {
 		tblMap[t.TableInfo.ID] = append(tblMap[t.TableInfo.ID], t.Name.L)
 	}
