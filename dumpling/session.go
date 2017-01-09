@@ -167,8 +167,10 @@ func (s *schemaLeaseChecker) Check(txnTS uint64) error {
 		case nil:
 			return nil
 		case domain.ErrInfoSchemaChanged:
+			schemaLeaseErrorCounter.WithLabelValues("changed").Inc()
 			return errors.Trace(err)
 		default:
+			schemaLeaseErrorCounter.WithLabelValues("outdated").Inc()
 			time.Sleep(schemaOutOfDateRetryInterval)
 		}
 	}
