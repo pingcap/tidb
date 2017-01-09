@@ -577,6 +577,10 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			sql:  "do sleep(5)",
 			plan: "*plan.TableDual->Projection",
 		},
+		{
+			sql:  "select substr(\"abc\", 1)",
+			plan: "*plan.TableDual->Projection",
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
