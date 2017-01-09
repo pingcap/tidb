@@ -96,7 +96,10 @@ const (
 	Curtime          = "curtime"
 	Date             = "date"
 	DateDiff         = "datediff"
-	DateArith        = "date_arith"
+	DateAdd          = "date_add"
+	AddDate          = "adddate"
+	DateSub          = "date_sub"
+	SubDate          = "subdate"
 	DateFormat       = "date_format"
 	Day              = "day"
 	DayName          = "dayname"
@@ -259,14 +262,14 @@ const (
 type DateArithType byte
 
 const (
-	// DateAdd is to run adddate or date_add function option.
+	// DateArithAdd is to run adddate or date_add function option.
 	// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_adddate
 	// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-add
-	DateAdd DateArithType = iota + 1
-	// DateSub is to run subdate or date_sub function option.
+	DateArithAdd DateArithType = iota + 1
+	// DateArithSub is to run subdate or date_sub function option.
 	// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
 	// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-sub
-	DateSub
+	DateArithSub
 )
 
 const (
