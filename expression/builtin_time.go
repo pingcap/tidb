@@ -145,6 +145,12 @@ func builtinDateFormat(args []types.Datum, ctx context.Context) (types.Datum, er
 	return d, nil
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_from-days
+func builtinFromDays(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	d.SetMysqlTime(types.TimeFromDays(args[0].GetInt64()))
+	return d, nil
+}
+
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_day
 // Day is a synonym for DayOfMonth.
 func builtinDay(args []types.Datum, ctx context.Context) (types.Datum, error) {

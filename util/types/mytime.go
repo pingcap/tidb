@@ -148,6 +148,59 @@ func calcTimeDiff(t1, t2 TimeInternal, sign int) (seconds, microseconds int, neg
 	return
 }
 
+func calcTimefromDays(days int) mysqlTime {
+	if days < 366 {
+		return newMysqlTime(0, 0, 0, 0, 0, 0, 0)
+	}
+
+	year := 1
+	month := 0
+	day := 0
+
+	// Start calculation from first year, it makes algorithm much simpler.
+	days -= 365
+
+	// 400 years, 100 years, 4 years, 1 non leap year
+	daysInYears := []int{146097, 36524, 1461, 365}
+	years := []int{400, 100, 4, 1}
+
+	// Calc year.
+	for i := 0; i < len(daysInYears); i++ {
+		year += (days / daysInYears[i]) * years[i]
+		days %= daysInYears[i]
+	}
+
+	// Calc month.
+	daysInMonthsLeapYear := []int{31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335, 366}
+	daysInMonthsNonLeapYear := []int{31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365}
+
+	var daysInMonths []int = nil
+	if isYearLeap(year) {
+		daysInMonths = daysInMonthsLeapYear
+	} else {
+		daysInMonths = daysInMonthsNonLeapYear
+	}
+
+	month = 0
+	// Find month.
+	for days > daysInMonths[month] {
+		month++
+	}
+
+	if month != 0 {
+		// Calculate day of month.
+		days -= daysInMonths[month - 1]
+	}
+
+	month++ // Month should start with 1.
+	day = days // Take rest part of days.
+	return newMysqlTime(year, month, day, 0, 0, 0, 0)
+}
+
+func isYearLeap(year int) bool {
+	return year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
+}
+
 // datetimeToUint64 converts time value to integer in YYYYMMDDHHMMSS format.
 func datetimeToUint64(t TimeInternal) uint64 {
 	return dateToUint64(t)*1e6 + timeToUint64(t)

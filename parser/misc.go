@@ -222,6 +222,7 @@ var tokenMap = map[string]int{
 	"DUAL":                dual,
 	"DUPLICATE":           duplicate,
 	"DYNAMIC":             dynamic,
+	"FROM_DAYS":           fromDays,
 	"ELSE":                elseKwd,
 	"ENABLE":              enable,
 	"ENCLOSED":            enclosed,

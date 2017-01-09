@@ -1119,6 +1119,16 @@ func ParseDateFromNum(num int64) (Time, error) {
 	return ParseTimeFromNum(num, mysql.TypeDate, MinFsp)
 }
 
+func TimeFromDays(num int64) Time {
+	t := calcTimefromDays(int(num))
+
+	return Time{
+		Time: t,
+		Type: mysql.TypeDate,
+		Fsp: 0,
+	}
+}
+
 func checkDateType(t TimeInternal) error {
 	year, month, day := t.Year(), t.Month(), t.Day()
 	if year == 0 && month == 0 && day == 0 {
