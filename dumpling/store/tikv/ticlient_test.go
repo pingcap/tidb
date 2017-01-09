@@ -19,6 +19,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/codec"
 )
 
@@ -133,6 +134,16 @@ func (s *testTiclientSuite) TestNotExist(c *C) {
 	txn := s.beginTxn(c)
 	_, err := txn.Get(encodeKey(s.prefix, "noSuchKey"))
 	c.Assert(err, NotNil)
+}
+
+func (s *testTiclientSuite) TestLargeRequest(c *C) {
+	largeValue := make([]byte, 10*1024*1024) // 10M value.
+	txn := s.beginTxn(c)
+	err := txn.Set([]byte("key"), largeValue)
+	c.Assert(err, IsNil)
+	err = txn.Commit()
+	c.Assert(err, NotNil)
+	c.Assert(kv.IsRetryableError(err), IsFalse)
 }
 
 func encodeKey(prefix, s string) []byte {
