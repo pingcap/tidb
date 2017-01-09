@@ -80,6 +80,9 @@ func (s *Scanner) stmtText() string {
 func (s *Scanner) Errorf(format string, a ...interface{}) {
 	str := fmt.Sprintf(format, a...)
 	val := s.r.s[s.r.pos().Offset:]
+	if len(val) > 2048 {
+		val = val[:2048]
+	}
 	err := fmt.Errorf("line %d column %d near \"%s\"%s", s.r.p.Line, s.r.p.Col, val, str)
 	s.errs = append(s.errs, err)
 }
