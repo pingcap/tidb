@@ -48,6 +48,6 @@ func (ap *aggPrune) pruneAggregation(p LogicalPlan) {
 		}
 	}
 	for _, child := range p.GetChildren() {
-		ap.pruneAggregation(child)
+		ap.pruneAggregation(child.(LogicalPlan))
 	}
 }
