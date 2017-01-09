@@ -231,3 +231,29 @@ func (s *testEvaluatorSuite) TestConv(c *C) {
 		c.Assert(r, Equals, t.ret)
 	}
 }
+
+func (s *testEvaluatorSuite) TestSign(c *C) {
+	defer testleak.AfterTest(c)()
+
+	for _, t := range []struct {
+		num interface{}
+		ret interface{}
+	}{
+		{nil, nil},
+		{1, 1},
+		{0, 0},
+		{-1, -1},
+		{0.4, 1},
+		{-0.4, -1},
+		{"1", 1},
+		{"-1", -1},
+		{"1a", 1},
+		{"-1a", -1},
+		{"a", 0},
+		{uint64(9223372036854775808), 1},
+	} {
+		v, err := builtinSign(types.MakeDatums(t.num), s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, types.NewDatum(t.ret))
+	}
+}
