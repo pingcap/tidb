@@ -25,6 +25,13 @@ import (
 	"github.com/pingcap/tidb/terror"
 )
 
+// Those limits is enforced to make sure the transaction can be well handled by TiKV.
+var (
+	EntrySizeLimit  = 8 * 1024 * 1024
+	BufferLenLimit  = 100 * 1000
+	BufferSizeLimit = 100 * 1024 * 1024
+)
+
 type memDbBuffer struct {
 	db *memdb.DB
 }
@@ -58,6 +65,7 @@ func (m *memDbBuffer) SeekReverse(k Key) (Iterator, error) {
 	} else {
 		i = &memDbIter{iter: m.db.NewIterator(&util.Range{Limit: []byte(k)}), reverse: true}
 	}
+	m.db.Len()
 	i.iter.Last()
 	return i, nil
 }
@@ -76,7 +84,17 @@ func (m *memDbBuffer) Set(k Key, v []byte) error {
 	if len(v) == 0 {
 		return errors.Trace(ErrCannotSetNilValue)
 	}
+	if len(k)+len(v) > EntrySizeLimit {
+		return ErrEntryTooLarge.Gen("entry too large, size: %d", len(k)+len(v))
+	}
+
 	err := m.db.Put(k, v)
+	if m.Size() > BufferSizeLimit {
+		return ErrTxnTooLarge.Gen("transaction too large, size:%d", m.Size())
+	}
+	if m.Len() > BufferLenLimit {
+		return ErrTxnTooLarge.Gen("transaction too large, len:%d", m.Len())
+	}
 	return errors.Trace(err)
 }
 
@@ -84,6 +102,16 @@ func (m *memDbBuffer) Set(k Key, v []byte) error {
 func (m *memDbBuffer) Delete(k Key) error {
 	err := m.db.Put(k, nil)
 	return errors.Trace(err)
+}
+
+// Size returns sum of keys and values length.
+func (m *memDbBuffer) Size() int {
+	return m.db.Size()
+}
+
+// Len returns the number of entries in the DB.
+func (m *memDbBuffer) Len() int {
+	return m.db.Len()
 }
 
 // Next implements the Iterator Next.

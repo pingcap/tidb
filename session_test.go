@@ -841,7 +841,7 @@ func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 
 	_, err = exec(se1, "commit")
 	c.Assert(err, NotNil)
-	err = se1.Retry()
+	err = se1.(*session).retry(10)
 	// retry should fail
 	c.Assert(err, NotNil)
 
@@ -1813,13 +1813,13 @@ func (s *testSessionSuite) TestIssue571(c *C) {
 	mustExecSQL(c, se, "commit")
 
 	se1 := newSession(c, store, s.dbName)
-	se1.(*session).maxRetryCnt = unlimitedRetryCnt
+	se1.(*session).unlimitedRetryCount = true
 	mustExecSQL(c, se1, "SET SESSION autocommit=1;")
 	se2 := newSession(c, store, s.dbName)
-	se2.(*session).maxRetryCnt = unlimitedRetryCnt
+	se2.(*session).unlimitedRetryCount = true
 	mustExecSQL(c, se2, "SET SESSION autocommit=1;")
 	se3 := newSession(c, store, s.dbName)
-	se3.(*session).maxRetryCnt = unlimitedRetryCnt
+	se3.(*session).unlimitedRetryCount = true
 	mustExecSQL(c, se3, "SET SESSION autocommit=0;")
 
 	var wg sync.WaitGroup
@@ -2090,7 +2090,7 @@ func (s *testSessionSuite) TestErrorRollback(c *C) {
 			defer wg.Done()
 			se := newSession(c, store, s.dbName)
 			// retry forever
-			se.(*session).maxRetryCnt = unlimitedRetryCnt
+			se.(*session).unlimitedRetryCount = true
 			defer se.Close()
 
 			for j := 0; j < num; j++ {

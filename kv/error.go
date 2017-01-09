@@ -33,6 +33,7 @@ const (
 	codeNotCommitted                              = 9
 	codeNotImplemented                            = 10
 	codeTxnTooLarge                               = 11
+	codeEntryTooLarge                             = 12
 
 	codeKeyExists = 1062
 )
@@ -57,6 +58,8 @@ var (
 	ErrInvalidTxn = terror.ClassKV.New(codeInvalidTxn, "invalid transaction")
 	// ErrTxnTooLarge is the error when transaction is too large, lock time reached the maximum value.
 	ErrTxnTooLarge = terror.ClassKV.New(codeTxnTooLarge, "transaction is too large")
+	// ErrEntryTooLarge is the error when a key value entry is too large.
+	ErrEntryTooLarge = terror.ClassKV.New(codeEntryTooLarge, "entry is too large")
 
 	// ErrNotCommitted is the error returned by CommitVersion when this
 	// transaction is not committed.
