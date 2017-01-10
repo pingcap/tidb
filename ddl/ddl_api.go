@@ -225,7 +225,7 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 	if colDef.Options != nil {
 		len := types.UnspecifiedLength
 
-		if types.IsTypeSpecifiable(colDef.Tp.Tp) {
+		if types.IsTypePrefixable(colDef.Tp.Tp) {
 			len = colDef.Tp.Flen
 		}
 
