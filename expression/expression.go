@@ -325,7 +325,7 @@ func NewCastFunc(tp *types.FieldType, arg Expression) (*ScalarFunction, error) {
 
 // NewValuesFunc creates a new values function.
 func NewValuesFunc(v *ast.ValuesExpr) *ScalarFunction {
-	bt := BuildinValuesFactory(v)
+	bt := BuiltinValuesFactory(v.Column.Refer.Column.Offset)
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(ast.Values),
 		RetType:  &v.Type,

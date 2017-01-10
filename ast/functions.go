@@ -145,6 +145,7 @@ const (
 	Space          = "space"
 	Strcmp         = "strcmp"
 	Substring      = "substring"
+	Substr         = "substr"
 	SubstringIndex = "substring_index"
 	Trim           = "trim"
 	Upper          = "upper"

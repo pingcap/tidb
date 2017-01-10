@@ -215,6 +215,7 @@ var Funcs = map[string]Func{
 	ast.Space:          {builtinSpace, 1, 1},
 	ast.Strcmp:         {builtinStrcmp, 2, 2},
 	ast.Substring:      {builtinSubstring, 2, 3},
+	ast.Substr:         {builtinSubstring, 2, 3},
 	ast.SubstringIndex: {builtinSubstringIndex, 3, 3},
 	ast.Trim:           {builtinTrim, 1, 3},
 	ast.Upper:          {builtinUpper, 1, 1},

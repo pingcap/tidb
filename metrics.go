@@ -49,6 +49,14 @@ var (
 			Name:      "schema_lease_error_counter",
 			Help:      "Counter of schema lease error",
 		}, []string{"type"})
+	sessionRetry = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "session_retry",
+			Help:      "Bucketed histogram of session retry count.",
+			Buckets:   prometheus.LinearBuckets(0, 1, 10),
+		})
 )
 
 func init() {
