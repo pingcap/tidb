@@ -589,16 +589,16 @@ func (s *testEvaluatorSuite) TestTrim(c *C) {
 		str, result interface{}
 		fn          string
 	}{
-		{"  ", "", ast.Ltrim},
-		{"  ", "", ast.Rtrim},
-		{"foo0", "foo0", ast.Ltrim},
-		{"bar0", "bar0", ast.Rtrim},
-		{"  foo1", "foo1", ast.Ltrim},
-		{"bar1  ", "bar1", ast.Rtrim},
-		{spaceChars + "foo2  ", "foo2  ", ast.Ltrim},
-		{"  bar2" + spaceChars, "  bar2", ast.Rtrim},
-		{nil, nil, ast.Ltrim},
-		{nil, nil, ast.Rtrim},
+		{"  ", "", ast.LTrim},
+		{"  ", "", ast.RTrim},
+		{"foo0", "foo0", ast.LTrim},
+		{"bar0", "bar0", ast.RTrim},
+		{"  foo1", "foo1", ast.LTrim},
+		{"bar1  ", "bar1", ast.RTrim},
+		{spaceChars + "foo2  ", "foo2  ", ast.LTrim},
+		{"  bar2" + spaceChars, "  bar2", ast.RTrim},
+		{nil, nil, ast.LTrim},
+		{nil, nil, ast.RTrim},
 	} {
 		f := Funcs[v.fn]
 		r, err := f.F(types.MakeDatums(v.str), s.ctx)

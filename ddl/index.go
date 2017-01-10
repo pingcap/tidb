@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"math"
 	"sort"
 	"sync"
 	"time"
@@ -33,17 +34,20 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-const maxPrefixLength = 767
+const maxPrefixLength = 3072
 
-func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr,
-	idxColNames []*ast.IndexColName) (*model.IndexInfo, error) {
-	// build offsets
+func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColName) ([]*model.IndexColumn, error) {
+	// Build offsets.
 	idxColumns := make([]*model.IndexColumn, 0, len(idxColNames))
+
+	// The sum of length of all index columns.
+	sumLength := 0
+
 	for _, ic := range idxColNames {
-		col := findCol(tblInfo.Columns, ic.Column.Name.O)
+		col := findCol(columns, ic.Column.Name.O)
 		if col == nil {
-			return nil, errKeyColumnDoesNotExits.Gen("column does not exist: %s",
-				ic.Column.Name)
+			return nil, errors.Trace(errKeyColumnDoesNotExits.Gen("column does not exist: %s",
+				ic.Column.Name))
 		}
 
 		// Length must be specified for BLOB and TEXT column indexes.
@@ -52,12 +56,48 @@ func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr
 		}
 
 		if ic.Length != types.UnspecifiedLength &&
-			!types.IsTypeChar(col.FieldType.Tp) &&
-			!types.IsTypeBlob(col.FieldType.Tp) {
+			!types.IsTypeSpecifiable(col.FieldType.Tp) {
 			return nil, errors.Trace(errIncorrectPrefixKey)
 		}
 
 		if ic.Length > maxPrefixLength {
+			return nil, errors.Trace(errTooLongKey)
+		}
+
+		// Take care of the sum of length of all index columns.
+		if ic.Length != types.UnspecifiedLength {
+			sumLength += ic.Length
+		} else {
+			// Specified data types.
+			if col.Flen != types.UnspecifiedLength {
+				// Special case for the bit type.
+				if col.FieldType.Tp == mysql.TypeBit {
+					sumLength += int(math.Ceil(float64(col.Flen+7) / float64(8)))
+				} else {
+					sumLength += col.Flen
+				}
+			} else {
+				if len, ok := mysql.DefaultLengthOfMysqlTypes[col.FieldType.Tp]; ok {
+					sumLength += len
+				} else {
+					return nil, errors.Trace(errUnknownTypeLength.GenByArgs(col.FieldType.Tp))
+				}
+
+				// Special case for time fraction.
+				if (col.FieldType.Tp == mysql.TypeDatetime ||
+					col.FieldType.Tp == mysql.TypeDuration ||
+					col.FieldType.Tp == mysql.TypeTimestamp) && col.FieldType.Decimal != -1 {
+
+					if len, ok := mysql.DefaultLengthOfTimeFraction[col.FieldType.Decimal]; ok {
+						sumLength += len
+					} else {
+						return nil, errors.Trace(errUnknownFractionLength.GenByArgs(col.FieldType.Tp, col.FieldType.Decimal))
+					}
+				}
+			}
+		}
+
+		if sumLength > maxPrefixLength {
 			return nil, errors.Trace(errTooLongKey)
 		}
 
@@ -67,12 +107,21 @@ func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr
 			Length: ic.Length,
 		})
 	}
-	// create index info
+
+	return idxColumns, nil
+}
+
+func buildIndexInfo(tblInfo *model.TableInfo, indexName model.CIStr, idxColNames []*ast.IndexColName, state model.SchemaState) (*model.IndexInfo, error) {
+	idxColumns, err := buildIndexColumns(tblInfo.Columns, idxColNames)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// Create index info.
 	idxInfo := &model.IndexInfo{
 		Name:    indexName,
 		Columns: idxColumns,
-		Unique:  unique,
-		State:   model.StateNone,
+		State:   state,
 	}
 	return idxInfo, nil
 }
@@ -145,11 +194,13 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 	}
 
 	if indexInfo == nil {
-		indexInfo, err = buildIndexInfo(tblInfo, unique, indexName, idxColNames)
+		indexInfo, err = buildIndexInfo(tblInfo, indexName, idxColNames, model.StateNone)
 		if err != nil {
 			job.State = model.JobCancelled
 			return errors.Trace(err)
 		}
+		indexInfo.Primary = false
+		indexInfo.Unique = unique
 		indexInfo.ID = allocateIndexID(tblInfo)
 		tblInfo.Indices = append(tblInfo.Indices, indexInfo)
 	}

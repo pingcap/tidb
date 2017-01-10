@@ -15,4 +15,5 @@ message TablePB {
     optional int64 ts = 2;
     optional int64 count = 3;
     repeated ColumnPB columns = 4;
+    repeated ColumnPB indices = 5;
 }

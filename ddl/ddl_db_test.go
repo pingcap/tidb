@@ -511,6 +511,22 @@ func (s *testDBSuite) TestIssue2293(c *C) {
 	s.tk.MustQuery("select * from t_issue_2293").Check(testkit.Rows("1"))
 }
 
+func (s *testDBSuite) TestCreateIndexType(c *C) {
+	defer testleak.AfterTest(c)()
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	sql := `CREATE TABLE test_index (
+		price int(5) DEFAULT '0' NOT NULL,
+		area varchar(40) DEFAULT '' NOT NULL,
+		type varchar(40) DEFAULT '' NOT NULL,
+		transityes set('a','b'),
+		shopsyes enum('Y','N') DEFAULT 'Y' NOT NULL,
+		schoolsyes enum('Y','N') DEFAULT 'Y' NOT NULL,
+		petsyes enum('Y','N') DEFAULT 'Y' NOT NULL,
+		KEY price (price,area,type,transityes,shopsyes,schoolsyes,petsyes));`
+	s.tk.MustExec(sql)
+}
+
 func (s *testDBSuite) TestColumn(c *C) {
 	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)

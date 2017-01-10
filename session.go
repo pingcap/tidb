@@ -67,7 +67,6 @@ type Session interface {
 	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
 	Close() error
-	Retry() error
 	Auth(user string, auth []byte, salt []byte) bool
 }
 
@@ -108,14 +107,14 @@ func (h *stmtHistory) clone() *stmtHistory {
 	return &nh
 }
 
-const unlimitedRetryCnt = -1
-
 type session struct {
-	txn         kv.Transaction // current transaction
-	txnCh       chan *txnWithErr
-	values      map[fmt.Stringer]interface{}
-	store       kv.Storage
-	maxRetryCnt int // Max retry times. If maxRetryCnt <=0, there is no limitation for retry times.
+	txn    kv.Transaction // current transaction
+	txnCh  chan *txnWithErr
+	values map[fmt.Stringer]interface{}
+	store  kv.Storage
+
+	// Used for test only.
+	unlimitedRetryCount bool
 
 	// For performance_schema only.
 	stmtState *perfschema.StatementState
@@ -223,10 +222,18 @@ func (s *session) doCommit() error {
 }
 
 func (s *session) doCommitWithRetry() error {
+	var txnSize int
+	if s.txn != nil && s.txn.Valid() {
+		txnSize = s.txn.Size()
+	}
 	err := s.doCommit()
 	if err != nil {
 		if s.isRetryableError(err) {
-			err = s.Retry()
+			// Transactions will retry 2 ~ 10 times.
+			// We make larger transactions retry less times to prevent cluster resource outage.
+			txnSizeRate := float64(txnSize) / float64(kv.BufferSizeLimit)
+			maxRetryCount := 10 - int(txnSizeRate*9.0)
+			err = s.retry(maxRetryCount)
 		}
 	}
 	s.cleanRetryInfo()
@@ -290,7 +297,7 @@ func (s *session) isRetryableError(err error) bool {
 	return kv.IsRetryableError(err) || terror.ErrorEqual(err, domain.ErrInfoSchemaChanged)
 }
 
-func (s *session) Retry() error {
+func (s *session) retry(maxCnt int) error {
 	if s.sessionVars.TxnCtx.ForUpdate {
 		return errors.Errorf("can not retry select for update statement")
 	}
@@ -328,7 +335,7 @@ func (s *session) Retry() error {
 			return errors.Trace(err)
 		}
 		retryCnt++
-		if (s.maxRetryCnt != unlimitedRetryCnt) && (retryCnt >= s.maxRetryCnt) {
+		if !s.unlimitedRetryCount && (retryCnt >= maxCnt) {
 			return errors.Trace(err)
 		}
 		kv.BackOff(retryCnt)
@@ -738,7 +745,6 @@ func createSession(store kv.Storage) (*session, error) {
 	s := &session{
 		values:      make(map[fmt.Stringer]interface{}),
 		store:       store,
-		maxRetryCnt: 10,
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
 	}
