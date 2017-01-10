@@ -166,53 +166,58 @@ func (e *DeleteExec) Next() (*Row, error) {
 	defer func() {
 		e.finished = true
 	}()
-	if e.IsMultiTable && len(e.Tables) == 0 {
-		return &Row{}, nil
-	}
 
-	tblMap := make(map[int64][]string, len(e.Tables))
-	// Get table alias map.
 	if e.IsMultiTable {
-		// Delete from multiple tables should consider table ident list.
-		for _, t := range e.Tables {
-			tblMap[t.TableInfo.ID] = append(tblMap[t.TableInfo.ID], t.Name.L)
-		}
+		return nil, e.deleteMultiTables()
+	}
+	return nil, e.deleteSingleTable()
+}
+
+func (e *DeleteExec) deleteMultiTables() error {
+	if len(e.Tables) == 0 {
+		return nil
 	}
 
-	// Map for unique (Table, handle) pair.
-	rowKeyMap := make(map[table.Table]map[int64]struct{})
+	// Table ID may not be unique for deleting multiple tables, for statements like
+	// `delete from t as t1, t as t2`, the same table has two alias, we have to identify a table
+	// by its alias instead of ID, so the table map value is an array which contains table aliases.
+	tblMap := make(map[int64][]string, len(e.Tables))
+	for _, t := range e.Tables {
+		tblMap[t.TableInfo.ID] = append(tblMap[t.TableInfo.ID], t.Name.L)
+	}
+
+	// Map for unique (Table, Row) pair.
+	tblRowMap := make(map[table.Table]map[int64][]types.Datum)
 	for {
-		row, err := e.SelectExec.Next()
+		joinedRow, err := e.SelectExec.Next()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
-		if row == nil {
+		if joinedRow == nil {
 			break
 		}
 
-		for _, entry := range row.RowKeys {
-			if e.IsMultiTable && !isMatchTableName(entry, tblMap) {
+		for _, entry := range joinedRow.RowKeys {
+			if !isMatchTableName(entry, tblMap) {
 				continue
 			}
-			if rowKeyMap[entry.Tbl] == nil {
-				rowKeyMap[entry.Tbl] = make(map[int64]struct{})
+			if tblRowMap[entry.Tbl] == nil {
+				tblRowMap[entry.Tbl] = make(map[int64][]types.Datum)
 			}
-			rowKeyMap[entry.Tbl][entry.Handle] = struct{}{}
+			offset := getTableOffset(e.SelectExec.Schema(), entry)
+			data := joinedRow.Data[offset : offset+len(entry.Tbl.WritableCols())]
+			tblRowMap[entry.Tbl][entry.Handle] = data
 		}
 	}
-	for t, handleMap := range rowKeyMap {
-		for handle := range handleMap {
-			data, err := t.Row(e.ctx, handle)
+	for t, rowMap := range tblRowMap {
+		for handle, data := range rowMap {
+			err := e.removeRow(e.ctx, t, handle, data)
 			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			err = e.removeRow(e.ctx, t, handle, data)
-			if err != nil {
-				return nil, errors.Trace(err)
+				return errors.Trace(err)
 			}
 		}
 	}
-	return nil, nil
+	return nil
 }
 
 func isMatchTableName(entry *RowKeyEntry, tblMap map[int64][]string) bool {
@@ -235,6 +240,24 @@ func isMatchTableName(entry *RowKeyEntry, tblMap map[int64][]string) bool {
 	}
 
 	return false
+}
+
+func (e *DeleteExec) deleteSingleTable() error {
+	for {
+		row, err := e.SelectExec.Next()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if row == nil {
+			break
+		}
+		rowKey := row.RowKeys[0]
+		err = e.removeRow(e.ctx, rowKey.Tbl, rowKey.Handle, row.Data)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 func (e *DeleteExec) removeRow(ctx context.Context, t table.Table, h int64, data []types.Datum) error {
@@ -1104,7 +1127,7 @@ func (e *UpdateExec) Next() (*Row, error) {
 		if e.updatedRowKeys[tbl] == nil {
 			e.updatedRowKeys[tbl] = make(map[int64]struct{})
 		}
-		offset := e.getTableOffset(*entry)
+		offset := getTableOffset(e.SelectExec.Schema(), entry)
 		handle := entry.Handle
 		oldData := row.Data[offset : offset+len(tbl.WritableCols())]
 		newTableData := newData[offset : offset+len(tbl.WritableCols())]
@@ -1167,7 +1190,7 @@ func (e *UpdateExec) fetchRows() error {
 	}
 }
 
-func (e *UpdateExec) getTableOffset(entry RowKeyEntry) int {
+func getTableOffset(schema expression.Schema, entry *RowKeyEntry) int {
 	t := entry.Tbl
 	var tblName string
 	if entry.TableAsName == nil || len(entry.TableAsName.L) == 0 {
@@ -1175,7 +1198,6 @@ func (e *UpdateExec) getTableOffset(entry RowKeyEntry) int {
 	} else {
 		tblName = entry.TableAsName.L
 	}
-	schema := e.SelectExec.Schema()
 	for i := 0; i < schema.Len(); i++ {
 		s := schema.Columns[i]
 		if s.TblName.L == tblName {
