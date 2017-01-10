@@ -62,6 +62,7 @@ var (
 	_ functionClass = &timeFunctionClass{}
 	_ functionClass = &utcDateFunctionClass{}
 	_ functionClass = &extractFunctionClass{}
+	_ functionClass = &arithmeticFunctionClass{}
 	_ functionClass = &unixTimestampFunctionClass{}
 )
 
@@ -95,6 +96,7 @@ var (
 	_ builtinFunc = &builtinTimeSig{}
 	_ builtinFunc = &builtinUTCDateSig{}
 	_ builtinFunc = &builtinExtractSig{}
+	_ builtinFunc = &builtinArithmeticSig{}
 	_ builtinFunc = &builtinUnixTimestampSig{}
 )
 
@@ -1304,6 +1306,30 @@ func checkFsp(sc *variable.StatementContext, arg types.Datum) (int, error) {
 		return 0, errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
 	}
 	return int(fsp), nil
+}
+
+type dateArithFunctionClass struct {
+	baseFunctionClass
+
+	op ast.DateArithType
+}
+
+func (c *dateArithFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinDateArithSig{newBaseBuiltinFunc(args, ctx), c.op}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinDateArithSig struct {
+	baseBuiltinFunc
+
+	op ast.DateArithType
+}
+
+func (b *builtinDateArithSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return dateArithFuncFactory(b.op)(args, b.ctx)
 }
 
 func dateArithFuncFactory(op ast.DateArithType) BuiltinFunc {
