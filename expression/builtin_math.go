@@ -27,7 +27,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/parser/opcode"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -545,13 +544,10 @@ func builtinSign(args []types.Datum, ctx context.Context) (d types.Datum, err er
 		return d, nil
 	}
 	cmp, err := args[0].CompareDatum(ctx.GetSessionVars().StmtCtx, types.NewIntDatum(0))
-	switch {
-	case err == nil:
-	case terror.ErrorEqual(err, types.ErrTruncated):
-	default:
+	d.SetInt64(int64(cmp))
+	if err != nil {
 		return d, errors.Trace(err)
 	}
-	d.SetInt64(int64(cmp))
 	return d, nil
 }
 

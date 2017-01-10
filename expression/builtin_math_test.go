@@ -238,22 +238,23 @@ func (s *testEvaluatorSuite) TestSign(c *C) {
 	for _, t := range []struct {
 		num interface{}
 		ret interface{}
+		err Checker
 	}{
-		{nil, nil},
-		{1, 1},
-		{0, 0},
-		{-1, -1},
-		{0.4, 1},
-		{-0.4, -1},
-		{"1", 1},
-		{"-1", -1},
-		{"1a", 1},
-		{"-1a", -1},
-		{"a", 0},
-		{uint64(9223372036854775808), 1},
+		{nil, nil, IsNil},
+		{1, 1, IsNil},
+		{0, 0, IsNil},
+		{-1, -1, IsNil},
+		{0.4, 1, IsNil},
+		{-0.4, -1, IsNil},
+		{"1", 1, IsNil},
+		{"-1", -1, IsNil},
+		{"1a", 1, NotNil},
+		{"-1a", -1, NotNil},
+		{"a", 0, NotNil},
+		{uint64(9223372036854775808), 1, IsNil},
 	} {
 		v, err := builtinSign(types.MakeDatums(t.num), s.ctx)
-		c.Assert(err, IsNil)
+		c.Assert(err, t.err)
 		c.Assert(v, testutil.DatumEquals, types.NewDatum(t.ret))
 	}
 }
