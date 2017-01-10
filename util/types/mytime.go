@@ -288,18 +288,18 @@ func mixDateAndTime(date, time *mysqlTime, neg bool) {
 		return
 	}
 
-	// time is negative or outside of 24 hours internal.
+	// Time is negative or outside of 24 hours internal.
 	sign := -1
 	if neg {
 		sign = 1
 	}
-	seconds, useconds, neg := calcTimeDiff(date, time, sign)
+	seconds, microseconds, neg := calcTimeDiff(date, time, sign)
 
 	// If we want to use this function with arbitrary dates, this code will need
 	// to cover cases when time is negative and "date < -time".
 
 	days := seconds / secondsIn24Hour
-	calcTimeFromSec(date, seconds%secondsIn24Hour, useconds)
+	calcTimeFromSec(date, seconds%secondsIn24Hour, microseconds)
 	year, month, day := getDateFromDaynr(uint(days))
 	date.year = uint16(year)
 	date.month = uint8(month)
@@ -331,7 +331,7 @@ func getDateFromDaynr(daynr uint) (year uint, month uint, day uint) {
 		if dayOfYear > 31+28 {
 			dayOfYear--
 			if dayOfYear == 31+28 {
-				// Handle leapyears leapday
+				// Handle leapyears leapday.
 				leapDay = 1
 			}
 		}

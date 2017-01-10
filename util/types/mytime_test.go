@@ -138,32 +138,43 @@ func (s *testMyTimeSuite) TestMixDateAndTime(c *C) {
 	cases := []struct {
 		date   mysqlTime
 		time   mysqlTime
+		neg    bool
 		expect mysqlTime
 	}{
 		{
 			date:   mysqlTime{1896, 3, 4, 0, 0, 0, 0},
 			time:   mysqlTime{0, 0, 0, 12, 23, 24, 5},
+			neg:    false,
 			expect: mysqlTime{1896, 3, 4, 12, 23, 24, 5},
 		},
 		{
 			date:   mysqlTime{1896, 3, 4, 0, 0, 0, 0},
 			time:   mysqlTime{0, 0, 0, 24, 23, 24, 5},
+			neg:    false,
 			expect: mysqlTime{1896, 3, 5, 0, 23, 24, 5},
 		},
 		{
 			date:   mysqlTime{2016, 12, 31, 0, 0, 0, 0},
 			time:   mysqlTime{0, 0, 0, 24, 0, 0, 0},
+			neg:    false,
 			expect: mysqlTime{2017, 1, 1, 0, 0, 0, 0},
 		},
 		{
 			date:   mysqlTime{2016, 12, 0, 0, 0, 0, 0},
 			time:   mysqlTime{0, 0, 0, 24, 0, 0, 0},
+			neg:    false,
 			expect: mysqlTime{2016, 12, 1, 0, 0, 0, 0},
+		},
+		{
+			date:   mysqlTime{2017, 1, 12, 3, 23, 15, 0},
+			time:   mysqlTime{0, 0, 0, 2, 21, 10, 0},
+			neg:    true,
+			expect: mysqlTime{2017, 1, 12, 1, 2, 5, 0},
 		},
 	}
 
-	for _, t := range cases {
-		mixDateAndTime(&t.date, &t.time, false)
-		c.Assert(compareTime(&t.date, &t.expect), Equals, 0)
+	for ith, t := range cases {
+		mixDateAndTime(&t.date, &t.time, t.neg)
+		c.Assert(compareTime(&t.date, &t.expect), Equals, 0, Commentf("%d", ith))
 	}
 }
