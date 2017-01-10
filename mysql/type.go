@@ -15,41 +15,39 @@ package mysql
 
 // MySQL type informations.
 const (
-	TypeDecimal byte = iota
-	TypeTiny
-	TypeShort
-	TypeLong
-	TypeFloat
-	TypeDouble
-	TypeNull
-	TypeTimestamp
-	TypeLonglong
-	TypeInt24
-	TypeDate
-	TypeDuration /* Original name was TypeTime, renamed to Duration to resolve the conflict with Go type Time.*/
-	TypeDatetime
-	TypeYear
-	TypeNewDate
-	TypeVarchar
-	TypeBit
+	TypeDecimal   byte = 0
+	TypeTiny      byte = 1
+	TypeShort     byte = 2
+	TypeLong      byte = 3
+	TypeFloat     byte = 4
+	TypeDouble    byte = 5
+	TypeNull      byte = 6
+	TypeTimestamp byte = 7
+	TypeLonglong  byte = 8
+	TypeInt24     byte = 9
+	TypeDate      byte = 10
+	/* Original name was TypeTime, renamed to Duration to resolve the conflict with Go type Time.*/
+	TypeDuration byte = 11
+	TypeDatetime byte = 12
+	TypeYear     byte = 13
+	TypeNewDate  byte = 14
+	TypeVarchar  byte = 15
+	TypeBit      byte = 16
+
+	TypeNewDecimal byte = 0xf6
+	TypeEnum       byte = 0xf7
+	TypeSet        byte = 0xf8
+	TypeTinyBlob   byte = 0xf9
+	TypeMediumBlob byte = 0xfa
+	TypeLongBlob   byte = 0xfb
+	TypeBlob       byte = 0xfc
+	TypeVarString  byte = 0xfd
+	TypeString     byte = 0xfe
+	TypeGeometry   byte = 0xff
 )
 
 // TypeUnspecified is an uninitialized type. TypeDecimal is not used in MySQL.
 var TypeUnspecified = TypeDecimal
-
-// MySQL type informations.
-const (
-	TypeNewDecimal byte = iota + 0xf6
-	TypeEnum
-	TypeSet
-	TypeTinyBlob
-	TypeMediumBlob
-	TypeLongBlob
-	TypeBlob
-	TypeVarString
-	TypeString
-	TypeGeometry
-)
 
 // IsUninitializedType check if a type code is uninitialized.
 // TypeDecimal is the old type code for decimal and not be used in the new mysql version.
