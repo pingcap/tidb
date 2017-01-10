@@ -57,11 +57,14 @@ func doOptimize(logic LogicalPlan, ctx context.Context, allocator *idAllocator) 
 		return nil, errors.Trace(err)
 	}
 	logic.buildKeyInfo()
-	ap := &aggPrune{
+	ap := &aggPruner{
 		ctx:       ctx,
 		allocator: allocator,
 	}
-	ap.pruneAggregation(logic)
+	err = ap.pruneAggregation(logic)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	solver := &aggPushDownSolver{
 		ctx:   ctx,
 		alloc: allocator,
