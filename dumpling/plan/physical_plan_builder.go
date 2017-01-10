@@ -24,8 +24,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan/statistics"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -42,91 +40,6 @@ const (
 
 // JoinConcurrency means the number of goroutines that participate in joining.
 var JoinConcurrency = 5
-
-func getRowCountByIndexRanges(sc *variable.StatementContext, table *statistics.Table, indexRanges []*IndexRange, indexInfo *model.IndexInfo) (uint64, error) {
-	totalCount := float64(0)
-	for _, indexRange := range indexRanges {
-		count := float64(table.Count)
-		i := len(indexRange.LowVal) - 1
-		l := indexRange.LowVal[i]
-		r := indexRange.HighVal[i]
-		var rowCount int64
-		var err error
-		offset := indexInfo.Columns[i].Offset
-		if l.Kind() == types.KindNull && r.Kind() == types.KindMaxValue {
-			return uint64(table.Count), nil
-		} else if l.Kind() == types.KindMinNotNull {
-			rowCount, err = table.Columns[offset].EqualRowCount(sc, types.Datum{})
-			if r.Kind() == types.KindMaxValue {
-				rowCount = table.Count - rowCount
-			} else if err == nil {
-				lessCount, err1 := table.Columns[offset].LessRowCount(sc, r)
-				rowCount = lessCount - rowCount
-				err = err1
-			}
-		} else if r.Kind() == types.KindMaxValue {
-			rowCount, err = table.Columns[offset].GreaterRowCount(sc, l)
-		} else {
-			compare, err1 := l.CompareDatum(sc, r)
-			if err1 != nil {
-				return 0, errors.Trace(err1)
-			}
-			if compare == 0 {
-				rowCount, err = table.Columns[offset].EqualRowCount(sc, l)
-			} else {
-				rowCount, err = table.Columns[offset].BetweenRowCount(sc, l, r)
-			}
-		}
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		count = count / float64(table.Count) * float64(rowCount)
-		// If the condition is a = 1, b = 1, c = 1, d = 1, we think every a=1, b=1, c=1 only filtrate 1/100 data,
-		// so as to avoid collapsing too fast.
-		for j := 0; j < i; j++ {
-			count = count / float64(100)
-		}
-		totalCount += count
-	}
-	// To avoid the totalCount become too small.
-	if uint64(totalCount) < 1000 {
-		// We will not let the row count less than 1000 to avoid collapsing too fast in the future calculation.
-		totalCount = 1000.0
-	}
-	if totalCount > float64(table.Count) {
-		totalCount = float64(table.Count) / 3.0
-	}
-	return uint64(totalCount), nil
-}
-
-func getRowCountByTableRange(sc *variable.StatementContext, statsTbl *statistics.Table, ranges []TableRange, offset int) (uint64, error) {
-	var rowCount uint64
-	for _, rg := range ranges {
-		var cnt int64
-		var err error
-		if rg.LowVal == math.MinInt64 && rg.HighVal == math.MaxInt64 {
-			cnt = statsTbl.Count
-		} else if rg.LowVal == math.MinInt64 {
-			cnt, err = statsTbl.Columns[offset].LessRowCount(sc, types.NewDatum(rg.HighVal))
-		} else if rg.HighVal == math.MaxInt64 {
-			cnt, err = statsTbl.Columns[offset].GreaterRowCount(sc, types.NewDatum(rg.LowVal))
-		} else {
-			if rg.LowVal == rg.HighVal {
-				cnt, err = statsTbl.Columns[offset].EqualRowCount(sc, types.NewDatum(rg.LowVal))
-			} else {
-				cnt, err = statsTbl.Columns[offset].BetweenRowCount(sc, types.NewDatum(rg.LowVal), types.NewDatum(rg.HighVal))
-			}
-		}
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		rowCount += uint64(cnt)
-	}
-	if rowCount > uint64(statsTbl.Count) {
-		rowCount = uint64(statsTbl.Count)
-	}
-	return rowCount, nil
-}
 
 func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	client := p.ctx.GetClient()
@@ -248,7 +161,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 			}
 			log.Warn("truncate error in buildIndexRange")
 		}
-		rowCount, err = getRowCountByIndexRanges(sc, statsTbl, is.Ranges, is.Index)
+		rowCount, err = getRowCountByIndexRanges(sc, statsTbl, is.Ranges, is.Index, is.Table)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
