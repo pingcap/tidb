@@ -404,7 +404,7 @@ var funcs = map[string]functionClass{
 	// miscellaneous functions
 	ast.Sleep: &sleepFunctionClass{baseFunctionClass{ast.Sleep, 1, 1}},
 
-	// get_lock() and release_lock() is parsed but do nothing.
+	// get_lock() and release_lock() are parsed but do nothing.
 	// It is used for preventing error in Ruby's activerecord migrations.
 	ast.GetLock:     &lockFunctionClass{baseFunctionClass{ast.GetLock, 2, 2}},
 	ast.ReleaseLock: &releaseLockFunctionClass{baseFunctionClass{ast.ReleaseLock, 1, 1}},
