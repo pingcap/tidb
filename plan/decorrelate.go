@@ -19,8 +19,11 @@ import (
 )
 
 // extractCorColumnsBySchema only extracts the correlated columns that match the outer plan's schema.
-func extractCorColumnsBySchema(schema expression.Schema, innerPlan LogicalPlan) []*expression.CorrelatedColumn {
-	corCols := innerPlan.extractCorrelatedCols()
+// e.g. If the correlated columns from inner plan are [t1.a, t2.a, t3.a] and outer plan's schema is [t2.a, t2.b, t2.c],
+// only [t2.a] is treated as this apply's correlated column.
+func (a *Apply) extractCorColumnsBySchema() {
+	schema := a.children[0].GetSchema()
+	corCols := a.children[1].(LogicalPlan).extractCorrelatedCols()
 	resultCorCols := make([]*expression.CorrelatedColumn, schema.Len())
 	for _, corCol := range corCols {
 		idx := schema.GetColumnIndex(&corCol.Column)
@@ -42,7 +45,7 @@ func extractCorColumnsBySchema(schema expression.Schema, innerPlan LogicalPlan) 
 			length++
 		}
 	}
-	return resultCorCols[:length]
+	a.corCols = resultCorCols[:length]
 }
 
 // decorrelate function tries to convert apply plan to join plan.
@@ -50,7 +53,7 @@ func decorrelate(p LogicalPlan) LogicalPlan {
 	if apply, ok := p.(*Apply); ok {
 		outerPlan := apply.children[0]
 		innerPlan := apply.children[1].(LogicalPlan)
-		apply.corCols = extractCorColumnsBySchema(outerPlan.GetSchema(), innerPlan)
+		apply.extractCorColumnsBySchema()
 		if len(apply.corCols) == 0 {
 			// If the inner plan is non-correlated, the apply will be simplified to join.
 			join := &apply.Join
