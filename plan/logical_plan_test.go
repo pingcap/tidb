@@ -578,6 +578,10 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			plan: "*plan.TableDual->Projection",
 		},
 		{
+			sql:  "select substr(\"abc\", 1)",
+			plan: "*plan.TableDual->Projection",
+		},
+		{
 			sql:  "analyze table t",
 			plan: "DataScan(t)->Projection->Sort->DataScan(t)->Projection->*plan.Analyze->*plan.Analyze",
 		},

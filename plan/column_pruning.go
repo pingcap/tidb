@@ -255,6 +255,11 @@ func (p *Update) PruneColumns(parentUsedCols []*expression.Column) {
 }
 
 // PruneColumns implements LogicalPlan interface.
+func (p *Delete) PruneColumns(parentUsedCols []*expression.Column) {
+	p.baseLogicalPlan.PruneColumns(p.GetChildByIndex(0).GetSchema().Columns)
+}
+
+// PruneColumns implements LogicalPlan interface.
 // We should not prune columns for Analyze.
 func (p *Analyze) PruneColumns(parentUsedCols []*expression.Column) {
 

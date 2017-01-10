@@ -681,9 +681,9 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 		pkOffset:   v.PkOffset,
 		Srcs:       make([]Executor, len(v.GetChildren())),
 	}
-	for i, sel := range v.GetChildren() {
-		selExec := b.build(sel)
-		e.Srcs[i] = selExec
+	for i, child := range v.GetChildren() {
+		childExec := b.build(child)
+		e.Srcs[i] = childExec
 	}
 	return e
 }
