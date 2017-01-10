@@ -62,6 +62,8 @@ var (
 	errDupKeyName            = terror.ClassDDL.New(codeDupKeyName, "duplicate key name")
 	errWrongDBName           = terror.ClassDDL.New(codeWrongDBName, "Incorrect database name '%s'")
 	errWrongTableName        = terror.ClassDDL.New(codeWrongTableName, "Incorrect table name '%s'")
+	errUnknownTypeLength     = terror.ClassDDL.New(codeUnknownTypeLength, "Unknown length for type tp %d")
+	errUnknownFractionLength = terror.ClassDDL.New(codeUnknownFractionLength, "Unknown Length for type tp %d and fraction %d")
 
 	// ErrInvalidDBState returns for invalid database state.
 	ErrInvalidDBState = terror.ClassDDL.New(codeInvalidDBState, "invalid database state")
@@ -376,6 +378,8 @@ const (
 	codeRunMultiSchemaChanges                = 6
 	codeWaitReorgTimeout                     = 7
 	codeInvalidStoreVer                      = 8
+	codeUnknownTypeLength                    = 9
+	codeUnknownFractionLength                = 10
 
 	codeInvalidDBState         = 100
 	codeInvalidTableState      = 101
