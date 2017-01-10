@@ -285,7 +285,9 @@ var DefaultLengthOfMysqlTypes = map[byte]int{
 	TypeFloat:    4,
 	TypeDouble:   8,
 
+	TypeEnum:   1,
 	TypeString: 1,
+	TypeSet:    8,
 }
 
 // DefaultLengthOfTimeFraction is the map for default physical length of time fractions.
