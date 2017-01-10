@@ -56,6 +56,8 @@ var (
 	_ functionClass = &hexFunctionClass{}
 	_ functionClass = &unhexFunctionClass{}
 	_ functionClass = &trimFunctionClass{}
+	_ functionClass = &lTrimFunctionClass{}
+	_ functionClass = &rTrimFunctionClass{}
 	_ functionClass = &rpadFunctionClass{}
 	_ functionClass = &bitLengthFunctionClass{}
 	_ functionClass = &charFunctionClass{}
@@ -83,6 +85,8 @@ var (
 	_ builtinFunc = &builtinHexSig{}
 	_ builtinFunc = &builtinUnHexSig{}
 	_ builtinFunc = &builtinTrimSig{}
+	_ builtinFunc = &builtinLTrimSig{}
+	_ builtinFunc = &builtinRTrimSig{}
 	_ builtinFunc = &builtinRpadSig{}
 	_ builtinFunc = &builtinBitLengthSig{}
 	_ builtinFunc = &builtinCharSig{}
