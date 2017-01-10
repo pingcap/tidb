@@ -488,6 +488,7 @@ func (s *testParserSuite) TestExpression(c *C) {
 		{`select "\"a\"";`, true},
 		{`select """a""";`, true},
 		{`select _utf8"string";`, true},
+		{`select _binary"string";`, true},
 		// For comparison
 		{"select 1 <=> 0, 1 <=> null, 1 = null", true},
 	}
