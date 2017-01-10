@@ -1060,8 +1060,9 @@ func (p *Analyze) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInf
 	var childInfos []*physicalPlanInfo
 	for _, ind := range p.IndOffsets {
 		var columns []*model.ColumnInfo
-		for _, indCol := range p.Table.TableInfo.Indices[ind].Columns {
-			for _, col := range p.Table.TableInfo.Columns {
+		tblInfo := p.Table.TableInfo
+		for _, indCol := range tblInfo.Indices[ind].Columns {
+			for _, col := range tblInfo.Columns {
 				if col.Name.L == indCol.Name.L {
 					columns = append(columns, col)
 					break
@@ -1069,8 +1070,8 @@ func (p *Analyze) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInf
 			}
 		}
 		is := &PhysicalIndexScan{
-			Index:               p.Table.TableInfo.Indices[ind],
-			Table:               p.Table.TableInfo,
+			Index:               tblInfo.Indices[ind],
+			Table:               tblInfo,
 			Columns:             columns,
 			TableAsName:         &p.Table.Name,
 			OutOfOrder:          true,
@@ -1081,7 +1082,7 @@ func (p *Analyze) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInf
 		is.tp = Ana
 		is.allocator = p.allocator
 		is.initIDAndContext(p.ctx)
-		is.SetSchema(expression.TableInfo2Schema(p.Table.TableInfo))
+		is.SetSchema(expression.TableInfo2Schema(tblInfo))
 		is.readOnly = true
 		rb := rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
 		is.Ranges = rb.buildIndexRanges(fullRange, types.NewFieldType(mysql.TypeNull))

@@ -672,9 +672,13 @@ func (b *executorBuilder) buildCache(v *plan.Cache) Executor {
 }
 
 func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
+	var tblInfo *model.TableInfo
+	if v.Table != nil {
+		tblInfo = v.Table.TableInfo
+	}
 	e := &AnalyzeExec{
 		schema:     v.GetSchema(),
-		table:      v.Table,
+		tblInfo:    tblInfo,
 		ctx:        b.ctx,
 		indOffsets: v.IndOffsets,
 		colOffsets: v.ColOffsets,
