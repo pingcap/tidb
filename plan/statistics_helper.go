@@ -157,7 +157,7 @@ func getRowCountByTableRange(sc *variable.StatementContext, statsTbl *statistics
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		if rg.LowVal != math.MinInt64 && rg.HighVal != math.MaxInt64 && cnt > rg.HighVal-rg.LowVal {
+		if rg.HighVal-rg.LowVal > 0 && cnt > rg.HighVal-rg.LowVal {
 			cnt = rg.HighVal - rg.LowVal
 		}
 		rowCount += uint64(cnt)
