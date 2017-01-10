@@ -208,6 +208,9 @@ func (s *RegionRequestSender) onRegionError(ctx *RPCContext, regionErr *errorpb.
 		log.Debugf("tikv reports `StaleCommand`, ctx: %s", ctx.KVCtx)
 		return true, nil
 	}
+	if regionErr.GetRaftEntryTooLarge() != nil {
+		return false, errors.New(regionErr.String())
+	}
 	// For other errors, we only drop cache here.
 	// Because caller may need to re-split the request.
 	log.Debugf("tikv reports region error: %s, ctx: %s", regionErr, ctx.KVCtx)

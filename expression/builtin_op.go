@@ -24,20 +24,20 @@ var (
 	_ functionClass = &andandFunctionClass{}
 	_ functionClass = &ororFunctionClass{}
 	_ functionClass = &logicXorFunctionClass{}
-	_ functionClass = &compareFunctionClass{}
 	_ functionClass = &bitOpFunctionClass{}
 	_ functionClass = &isTrueOpFunctionClass{}
 	_ functionClass = &unaryOpFunctionClass{}
+	_ functionClass = &isNullFunctionClass{}
 )
 
 var (
 	_ builtinFunc = &builtinAndAndSig{}
 	_ builtinFunc = &builtinOrOrSig{}
 	_ builtinFunc = &builtinLogicXorSig{}
-	_ builtinFunc = &builtinCompareSig{}
 	_ builtinFunc = &builtinBitOpSig{}
 	_ builtinFunc = &builtinIsTrueOpSig{}
 	_ builtinFunc = &builtinUnaryOpSig{}
+	_ builtinFunc = &builtinIsNullSig{}
 )
 
 type andandFunctionClass struct {
@@ -186,83 +186,6 @@ func builtinLogicXor(args []types.Datum, ctx context.Context) (d types.Datum, er
 		d.SetInt64(oneI64)
 	}
 	return
-}
-
-type compareFunctionClass struct {
-	baseFunctionClass
-
-	op opcode.Op
-}
-
-func (c *compareFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinCompareSig{newBaseBuiltinFunc(args, ctx), c.op}, errors.Trace(c.verifyArgs(args))
-}
-
-type builtinCompareSig struct {
-	baseBuiltinFunc
-
-	op opcode.Op
-}
-
-func (b *builtinCompareSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	return compareFuncFactory(b.op)(args, b.ctx)
-}
-
-func compareFuncFactory(op opcode.Op) BuiltinFunc {
-	return func(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-		sc := ctx.GetSessionVars().StmtCtx
-		var a, b = args[0], args[1]
-		if op != opcode.NullEQ {
-			a, b, err = types.CoerceDatum(sc, a, b)
-			if err != nil {
-				return d, errors.Trace(err)
-			}
-		}
-		if a.IsNull() || b.IsNull() {
-			// for <=>, if a and b are both nil, return true.
-			// if a or b is nil, return false.
-			if op == opcode.NullEQ {
-				if a.IsNull() && b.IsNull() {
-					d.SetInt64(oneI64)
-				} else {
-					d.SetInt64(zeroI64)
-				}
-			}
-			return
-		}
-
-		n, err := a.CompareDatum(sc, b)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		var result bool
-		switch op {
-		case opcode.LT:
-			result = n < 0
-		case opcode.LE:
-			result = n <= 0
-		case opcode.EQ, opcode.NullEQ:
-			result = n == 0
-		case opcode.GT:
-			result = n > 0
-		case opcode.GE:
-			result = n >= 0
-		case opcode.NE:
-			result = n != 0
-		default:
-			return d, errInvalidOperation.Gen("invalid op %v in comparison operation", op)
-		}
-		if result {
-			d.SetInt64(oneI64)
-		} else {
-			d.SetInt64(zeroI64)
-		}
-		return
-	}
 }
 
 type bitOpFunctionClass struct {
@@ -486,4 +409,34 @@ func unaryOpFactory(op opcode.Op) BuiltinFunc {
 		}
 		return
 	}
+}
+
+type isNullFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *isNullFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinIsNullSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinIsNullSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinIsNullSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return builtinIsNull(args, b.ctx)
+}
+
+// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_isnull
+func builtinIsNull(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	if args[0].IsNull() {
+		d.SetInt64(1)
+	} else {
+		d.SetInt64(0)
+	}
+	return d, nil
 }

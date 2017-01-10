@@ -176,3 +176,11 @@ func (txn *tikvTxn) StartTS() uint64 {
 func (txn *tikvTxn) Valid() bool {
 	return txn.valid
 }
+
+func (txn *tikvTxn) Len() int {
+	return txn.us.Len()
+}
+
+func (txn *tikvTxn) Size() int {
+	return txn.us.Size()
+}

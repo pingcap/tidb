@@ -137,6 +137,20 @@ func (lmb *lazyMemBuffer) SeekReverse(k Key) (Iterator, error) {
 	return lmb.mb.SeekReverse(k)
 }
 
+func (lmb *lazyMemBuffer) Size() int {
+	if lmb.mb == nil {
+		return 0
+	}
+	return lmb.mb.Size()
+}
+
+func (lmb *lazyMemBuffer) Len() int {
+	if lmb.mb == nil {
+		return 0
+	}
+	return lmb.mb.Len()
+}
+
 // Get implements the Retriever interface.
 func (us *unionStore) Get(k Key) ([]byte, error) {
 	v, err := us.MemBuffer.Get(k)
