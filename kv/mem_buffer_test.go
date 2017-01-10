@@ -217,18 +217,9 @@ func (s *testKVSuite) TestNewIteratorMin(c *C) {
 }
 
 func (s *testKVSuite) TestBufferLimit(c *C) {
-	originBufferLenLimit := BufferLenLimit
-	originBufferSizeLimit := BufferSizeLimit
-	originEntrySizeLimit := EntrySizeLimit
-	BufferLenLimit = 10
-	BufferSizeLimit = 1000
-	EntrySizeLimit = 500
-	defer func() {
-		BufferLenLimit = originBufferLenLimit
-		BufferSizeLimit = originBufferSizeLimit
-		EntrySizeLimit = originEntrySizeLimit
-	}()
-	buffer := NewMemDbBuffer()
+	buffer := NewMemDbBuffer().(*memDbBuffer)
+	buffer.bufferSizeLimit = 1000
+	buffer.entrySizeLimit = 500
 	var err error
 
 	err = buffer.Set([]byte("x"), make([]byte, 500))
@@ -239,7 +230,8 @@ func (s *testKVSuite) TestBufferLimit(c *C) {
 	err = buffer.Set([]byte("yz"), make([]byte, 499))
 	c.Assert(err, NotNil) // buffer size limit
 
-	buffer = NewMemDbBuffer()
+	buffer = NewMemDbBuffer().(*memDbBuffer)
+	buffer.bufferLenLimit = 10
 	for i := 0; i < 10; i++ {
 		err = buffer.Set([]byte{byte(i)}, []byte{byte(i)})
 		c.Assert(err, IsNil)
