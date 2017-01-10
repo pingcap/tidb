@@ -118,6 +118,7 @@ const (
 	Sysdate          = "sysdate"
 	Time             = "time"
 	TimeDiff         = "timediff"
+	TimestampDiff    = "timestampdiff"
 	UTCDate          = "utc_date"
 	UnixTimestamp    = "unix_timestamp"
 	Week             = "week"
