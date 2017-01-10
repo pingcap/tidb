@@ -674,7 +674,7 @@ func (b *executorBuilder) buildCache(v *plan.Cache) Executor {
 func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	e := &AnalyzeExec{
 		schema:     v.GetSchema(),
-		table:      v.Table,
+		tblInfo:    v.Table.TableInfo,
 		ctx:        b.ctx,
 		indOffsets: v.IndOffsets,
 		colOffsets: v.ColOffsets,

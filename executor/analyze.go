@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan/statistics"
 	"github.com/pingcap/tidb/plan/statscache"
 	"github.com/pingcap/tidb/util/types"
@@ -29,7 +30,7 @@ import (
 // AnalyzeExec represents Analyze executor.
 type AnalyzeExec struct {
 	schema     expression.Schema
-	table      *ast.TableName
+	tblInfo    *model.TableInfo
 	ctx        context.Context
 	indOffsets []int
 	colOffsets []int
@@ -49,8 +50,8 @@ func (e *AnalyzeExec) Schema() expression.Schema {
 
 // Close implements the Executor Close interface.
 func (e *AnalyzeExec) Close() error {
-	for _, s := range e.Srcs {
-		err := s.Close()
+	for _, src := range e.Srcs {
+		err := src.Close()
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -60,12 +61,12 @@ func (e *AnalyzeExec) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *AnalyzeExec) Next() (*Row, error) {
-	for _, ana := range e.Srcs {
-		e, _ := ana.(*AnalyzeExec)
+	for _, src := range e.Srcs {
+		ae := src.(*AnalyzeExec)
 		var count int64 = -1
 		var sampleRows []*ast.Row
-		if e.colOffsets != nil {
-			rs := &recordSet{executor: e.Srcs[len(e.Srcs)-1]}
+		if ae.colOffsets != nil {
+			rs := &recordSet{executor: ae.Srcs[len(ae.Srcs)-1]}
 			var err error
 			count, sampleRows, err = collectSamples(rs)
 			if err != nil {
@@ -74,18 +75,18 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 		}
 		columnSamples := rowsToColumnSamples(sampleRows)
 		var pkRes ast.RecordSet
-		if e.pkOffset != -1 {
-			offset := len(e.Srcs) - 1
-			if e.colOffsets != nil {
+		if ae.pkOffset != -1 {
+			offset := len(ae.Srcs) - 1
+			if ae.colOffsets != nil {
 				offset--
 			}
-			pkRes = &recordSet{executor: e.Srcs[offset]}
+			pkRes = &recordSet{executor: ae.Srcs[offset]}
 		}
 		var indRes []ast.RecordSet
-		for i := range e.indOffsets {
-			indRes = append(indRes, &recordSet{executor: e.Srcs[i]})
+		for i := range ae.indOffsets {
+			indRes = append(indRes, &recordSet{executor: ae.Srcs[i]})
 		}
-		err := e.buildStatisticsAndSaveToKV(count, columnSamples, indRes, pkRes)
+		err := ae.buildStatisticsAndSaveToKV(count, columnSamples, indRes, pkRes)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -95,10 +96,9 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 
 func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]types.Datum, indRes []ast.RecordSet, pkRes ast.RecordSet) error {
 	txn := e.ctx.Txn()
-	tblInfo := e.table.TableInfo
 	statBuilder := &statistics.Builder{
 		Sc:            e.ctx.GetSessionVars().StmtCtx,
-		TblInfo:       tblInfo,
+		TblInfo:       e.tblInfo,
 		StartTS:       int64(txn.StartTS()),
 		Count:         count,
 		NumBuckets:    defaultBucketCount,
@@ -113,13 +113,13 @@ func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]
 	if err != nil {
 		return errors.Trace(err)
 	}
-	statscache.SetStatisticsTableCache(tblInfo.ID, t)
+	statscache.SetStatisticsTableCache(e.tblInfo.ID, t)
 	tpb, err := t.ToPB()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	m := meta.NewMeta(txn)
-	err = m.SetTableStats(tblInfo.ID, tpb)
+	err = m.SetTableStats(e.tblInfo.ID, tpb)
 	if err != nil {
 		return errors.Trace(err)
 	}
