@@ -195,6 +195,7 @@ var Funcs = map[string]Func{
 	ast.YearWeek:         {builtinYearWeek, 1, 2},
 	ast.FromUnixTime:     {builtinFromUnixTime, 1, 2},
 	ast.TimeDiff:         {builtinTimeDiff, 2, 2},
+	ast.TimestampDiff:    {builtinTimestampDiff, 3, 3},
 	ast.UnixTimestamp:    {builtinUnixTimestamp, 0, 1},
 
 	// string functions
