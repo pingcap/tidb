@@ -167,8 +167,10 @@ func (s *schemaLeaseChecker) Check(txnTS uint64) error {
 		case nil:
 			return nil
 		case domain.ErrInfoSchemaChanged:
+			schemaLeaseErrorCounter.WithLabelValues("changed").Inc()
 			return errors.Trace(err)
 		default:
+			schemaLeaseErrorCounter.WithLabelValues("outdated").Inc()
 			time.Sleep(schemaOutOfDateRetryInterval)
 		}
 	}
@@ -293,12 +295,13 @@ func (s *session) Retry() error {
 		return errors.Errorf("can not retry select for update statement")
 	}
 	s.sessionVars.RetryInfo.Retrying = true
+	retryCnt := 0
 	defer func() {
 		s.sessionVars.RetryInfo.Retrying = false
+		sessionRetry.Observe(float64(retryCnt))
 	}()
 	nh := getHistory(s)
 	var err error
-	retryCnt := 0
 	for {
 		s.prepareTxnCtx()
 		s.sessionVars.RetryInfo.ResetOffset()
