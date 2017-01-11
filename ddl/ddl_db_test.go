@@ -836,23 +836,32 @@ func (s *testDBSuite) TestRenameTable(c *C) {
 	defer testleak.AfterTest(c)
 	store, err := tidb.NewStore("memory://rename_table")
 	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (c1 int, c2 int)")
-	tk.MustExec("insert t values (1, 1), (2, 2)")
-	ctx := tk.Se.(context.Context)
+	s.tk = testkit.NewTestKit(c, store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("create table t (c1 int, c2 int)")
+	s.tk.MustExec("insert t values (1, 1), (2, 2)")
+	ctx := s.tk.Se.(context.Context)
 	is := sessionctx.GetDomain(ctx).InfoSchema()
 	oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	oldTblID := oldTblInfo.Meta().ID
-	tk.MustExec("create database test1")
-	tk.MustExec("use test1")
-	tk.MustExec("rename table test.t to test1.t1")
+	s.tk.MustExec("create database test1")
+	s.tk.MustExec("use test1")
+	s.tk.MustExec("rename table test.t to test1.t1")
 	is = sessionctx.GetDomain(ctx).InfoSchema()
 	newTblInfo, err := is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	c.Assert(newTblInfo.Meta().ID, Equals, oldTblID)
-	tk.MustQuery("select * from t1").Check(testkit.Rows("1 1", "2 2"))
-	tk.MustExec("use test")
-	tk.MustQuery("show tables").Check(testkit.Rows())
+	s.tk.MustQuery("select * from t1").Check(testkit.Rows("1 1", "2 2"))
+	s.tk.MustExec("use test")
+	s.tk.MustQuery("show tables").Check(testkit.Rows())
+
+	sql := "rename table test_not_exist.t to test_not_exist.t"
+	s.testErrorCode(c, sql, tmysql.ErrFileNotFound)
+	sql = "rename table test.t_not_exist to test_not_exist.t"
+	s.testErrorCode(c, sql, tmysql.ErrFileNotFound)
+	sql = "rename table test1.t1 to test_not_exist.t"
+	s.testErrorCode(c, sql, tmysql.ErrErrorOnRename)
+	sql = "rename table test1.t1 to test1.t1"
+	s.testErrorCode(c, sql, tmysql.ErrTableExists)
 }
