@@ -389,6 +389,7 @@ var tokenMap = map[string]int{
 	"TABLES":              tables,
 	"TERMINATED":          terminated,
 	"TIMEDIFF":            timediff,
+	"TIMESTAMPDIFF":       timestampDiff,
 	"THAN":                than,
 	"THEN":                then,
 	"TO":                  to,

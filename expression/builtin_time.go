@@ -722,7 +722,7 @@ func builtinDayOfYear(args []types.Datum, ctx context.Context) (types.Datum, err
 	}
 
 	t := d.GetMysqlTime()
-	if t.Time.Month() == 0 || t.Time.Day() == 0 {
+	if t.InvalidZero() {
 		// TODO: log warning or return error?
 		d.SetNull()
 		return d, nil
@@ -921,7 +921,7 @@ func builtinYearWeek(args []types.Datum, ctx context.Context) (types.Datum, erro
 
 	// No need to check type here.
 	t := d.GetMysqlTime()
-	if t.Time.Month() == 0 || t.Time.Day() == 0 {
+	if t.InvalidZero() {
 		d.SetNull()
 		// TODO: log warning or return error?
 		return d, nil
@@ -1443,6 +1443,37 @@ func parseDayInterval(sc *variable.StatementContext, value types.Datum) (int64, 
 		value.SetString(reg.FindString(vs))
 	}
 	return value.ToInt64(sc)
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timestampdiff
+func builtinTimestampDiff(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	sc := ctx.GetSessionVars().StmtCtx
+	t1, err := convertDatumToTime(sc, args[1])
+	if err != nil {
+		return d, errorOrWarning(err, ctx)
+	}
+	t2, err := convertDatumToTime(sc, args[2])
+	if err != nil {
+		return d, errorOrWarning(err, ctx)
+	}
+	if t1.InvalidZero() || t2.InvalidZero() {
+		return d, errorOrWarning(types.ErrInvalidTimeFormat, ctx)
+	}
+
+	v := types.TimestampDiff(args[0].GetString(), t1, t2)
+	d.SetInt64(v)
+	return
+}
+
+// errorOrWarning reports error or warning depend on the context.
+func errorOrWarning(err error, ctx context.Context) error {
+	sc := ctx.GetSessionVars().StmtCtx
+	// TODO: Use better name, such as sc.IsInsert instead of sc.IgnoreTruncate.
+	if ctx.GetSessionVars().StrictSQLMode && !sc.IgnoreTruncate {
+		return errors.Trace(types.ErrInvalidTimeFormat)
+	}
+	sc.AppendWarning(err)
+	return nil
 }
 
 type unixTimestampFunctionClass struct {
