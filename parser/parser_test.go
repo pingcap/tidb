@@ -311,6 +311,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		// For default value
 		{"CREATE TABLE sbtest (id INTEGER UNSIGNED NOT NULL AUTO_INCREMENT, k integer UNSIGNED DEFAULT '0' NOT NULL, c char(120) DEFAULT '' NOT NULL, pad char(60) DEFAULT '' NOT NULL, PRIMARY KEY  (id) )", true},
 		{"create table test (create_date TIMESTAMP NOT NULL COMMENT '创建日期 create date' DEFAULT now());", true},
+		{"create table ts (t int, v timestamp(3) default CURRENT_TIMESTAMP(3));", true},
 
 		// For truncate statement
 		{"TRUNCATE TABLE t1", true},
