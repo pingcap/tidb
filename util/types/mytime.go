@@ -278,6 +278,78 @@ func calcWeek(t *mysqlTime, wb weekBehaviour) (year int, week int) {
 	return
 }
 
+// mixDateAndTime mixes a date value and a time value.
+func mixDateAndTime(date, time *mysqlTime, neg bool) {
+	if !neg && time.hour < 24 {
+		date.hour = time.hour
+		date.minute = time.minute
+		date.second = time.second
+		date.microsecond = time.microsecond
+		return
+	}
+
+	// Time is negative or outside of 24 hours internal.
+	sign := -1
+	if neg {
+		sign = 1
+	}
+	seconds, microseconds, neg := calcTimeDiff(date, time, sign)
+
+	// If we want to use this function with arbitrary dates, this code will need
+	// to cover cases when time is negative and "date < -time".
+
+	days := seconds / secondsIn24Hour
+	calcTimeFromSec(date, seconds%secondsIn24Hour, microseconds)
+	year, month, day := getDateFromDaynr(uint(days))
+	date.year = uint16(year)
+	date.month = uint8(month)
+	date.day = uint8(day)
+}
+
+var daysInMonth = []int{31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
+
+// getDateFromDaynr changes a daynr to year, month and day,
+// daynr 0 is returned as date 00.00.00
+func getDateFromDaynr(daynr uint) (year uint, month uint, day uint) {
+	if daynr <= 365 || daynr >= 3652500 {
+		return
+	}
+
+	year = daynr * 100 / 36525
+	temp := (((year-1)/100 + 1) * 3) / 4
+	dayOfYear := uint(daynr-year*365) - (year-1)/4 + temp
+
+	daysInYear := calcDaysInYear(int(year))
+	for dayOfYear > uint(daysInYear) {
+		dayOfYear -= uint(daysInYear)
+		year++
+		daysInYear = calcDaysInYear(int(year))
+	}
+
+	leapDay := uint(0)
+	if daysInYear == 366 {
+		if dayOfYear > 31+28 {
+			dayOfYear--
+			if dayOfYear == 31+28 {
+				// Handle leapyears leapday.
+				leapDay = 1
+			}
+		}
+	}
+
+	month = 1
+	for _, days := range daysInMonth {
+		if dayOfYear <= uint(days) {
+			break
+		}
+		dayOfYear -= uint(days)
+		month++
+	}
+
+	day = dayOfYear + leapDay
+	return
+}
+
 const (
 	intervalYEAR        = "YEAR"
 	intervalQUARTER     = "QUARTER"
