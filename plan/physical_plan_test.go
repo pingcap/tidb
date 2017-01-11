@@ -115,6 +115,12 @@ func (s *testPlanSuite) TestPushDownOrderbyAndLimit(c *C) {
 			limit:        "5",
 		},
 		{
+			sql:          "select * from t where a < 1 limit 1, 1",
+			best:         "Table(t)->Limit->Projection",
+			orderByItmes: "[]",
+			limit:        "2",
+		},
+		{
 			sql:          "select * from t limit 5",
 			best:         "Table(t)->Limit->Projection",
 			orderByItmes: "[]",

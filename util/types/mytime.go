@@ -123,11 +123,12 @@ func calcTimeFromSec(to *mysqlTime, seconds, microseconds int) {
 	to.microsecond = uint32(microseconds)
 }
 
+const secondsIn24Hour = 86400
+
 // calcTimeDiff calculates difference between two datetime values as seconds + microseconds.
 // t1 and t2 should be TIME/DATE/DATETIME value.
 // sign can be +1 or -1, and t2 is preprocessed with sign first.
 func calcTimeDiff(t1, t2 TimeInternal, sign int) (seconds, microseconds int, neg bool) {
-	const secondsIn24Hour = 86400
 	days := calcDaynr(t1.Year(), t1.Month(), t1.Day())
 	days -= sign * calcDaynr(t2.Year(), t2.Month(), t2.Day())
 
@@ -275,4 +276,105 @@ func calcWeek(t *mysqlTime, wb weekBehaviour) (year int, week int) {
 	}
 	week = days/7 + 1
 	return
+}
+
+const (
+	intervalYEAR        = "YEAR"
+	intervalQUARTER     = "QUARTER"
+	intervalMONTH       = "MONTH"
+	intervalWEEK        = "WEEK"
+	intervalDAY         = "DAY"
+	intervalHOUR        = "HOUR"
+	intervalMINUTE      = "MINUTE"
+	intervalSECOND      = "SECOND"
+	intervalMICROSECOND = "MICROSECOND"
+)
+
+func timestampDiff(intervalType string, t1 TimeInternal, t2 TimeInternal) int64 {
+	seconds, microseconds, neg := calcTimeDiff(t2, t1, 1)
+	months := uint(0)
+	if intervalType == intervalYEAR || intervalType == intervalQUARTER ||
+		intervalType == intervalMONTH {
+		var (
+			yearBeg, yearEnd, monthBeg, monthEnd, dayBeg, dayEnd uint
+			secondBeg, secondEnd, microsecondBeg, microsecondEnd uint
+		)
+
+		if neg {
+			yearBeg = uint(t2.Year())
+			yearEnd = uint(t1.Year())
+			monthBeg = uint(t2.Month())
+			monthEnd = uint(t1.Month())
+			dayBeg = uint(t2.Day())
+			dayEnd = uint(t1.Day())
+			secondBeg = uint(t2.Hour()*3600 + t2.Minute()*60 + t2.Second())
+			secondEnd = uint(t1.Hour()*3600 + t1.Minute()*60 + t1.Second())
+			microsecondBeg = uint(t2.Microsecond())
+			microsecondEnd = uint(t1.Microsecond())
+		} else {
+			yearBeg = uint(t1.Year())
+			yearEnd = uint(t2.Year())
+			monthBeg = uint(t1.Month())
+			monthEnd = uint(t2.Month())
+			dayBeg = uint(t1.Day())
+			dayEnd = uint(t2.Day())
+			secondBeg = uint(t1.Hour()*3600 + t1.Minute()*60 + t1.Second())
+			secondEnd = uint(t2.Hour()*3600 + t2.Minute()*60 + t2.Second())
+			microsecondBeg = uint(t1.Microsecond())
+			microsecondEnd = uint(t2.Microsecond())
+		}
+
+		// calc years
+		years := yearEnd - yearBeg
+		if monthEnd < monthBeg ||
+			(monthEnd == monthBeg && dayEnd < dayBeg) {
+			years--
+		}
+
+		// calc months
+		months = 12 * years
+		if monthEnd < monthBeg ||
+			(monthEnd == monthBeg && dayEnd < dayBeg) {
+			months += 12 - (monthBeg - monthEnd)
+		} else {
+			months += (monthEnd - monthBeg)
+		}
+
+		if dayEnd < dayBeg {
+			months--
+		} else if (dayEnd == dayBeg) &&
+			((secondEnd < secondBeg) ||
+				(secondEnd == secondBeg && microsecondEnd < microsecondBeg)) {
+			months--
+		}
+	}
+
+	negV := int64(1)
+	if neg {
+		negV = -1
+	}
+	switch intervalType {
+	case intervalYEAR:
+		return int64(months) / 12 * negV
+	case intervalQUARTER:
+		return int64(months) / 3 * negV
+	case intervalMONTH:
+		return int64(months) * negV
+	case intervalWEEK:
+		return int64(seconds) / secondsIn24Hour / 7 * negV
+	case intervalDAY:
+		return int64(seconds) / secondsIn24Hour * negV
+	case intervalHOUR:
+		return int64(seconds) / 3600 * negV
+	case intervalMINUTE:
+		return int64(seconds) / 60 * negV
+	case intervalSECOND:
+		return int64(seconds) * negV
+	case intervalMICROSECOND:
+		// In MySQL difference between any two valid datetime values
+		// in microseconds fits into longlong.
+		return int64(seconds*1000000+microseconds) * negV
+	}
+
+	return 0
 }
