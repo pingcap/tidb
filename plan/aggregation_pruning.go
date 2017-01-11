@@ -110,7 +110,7 @@ func (ap *aggPruner) eliminateAggregation(p LogicalPlan) error {
 		}
 	}
 	for _, child := range p.GetChildren() {
-		err := ap.pruneAggregation(child.(LogicalPlan))
+		err := ap.eliminateAggregation(child.(LogicalPlan))
 		if err != nil {
 			return errors.Trace(err)
 		}
