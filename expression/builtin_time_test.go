@@ -569,6 +569,36 @@ func (s *testEvaluatorSuite) TestYearWeek(c *C) {
 	c.Assert(result.IsNull(), IsTrue)
 }
 
+func (s *testEvaluatorSuite) TestTimestampDiff(c *C) {
+	tests := []struct {
+		unit   string
+		t1     string
+		t2     string
+		expect int64
+	}{
+		{"MONTH", "2003-02-01", "2003-05-01", 3},
+		{"YEAR", "2002-05-01", "2001-01-01", -1},
+		{"MINUTE", "2003-02-01", "2003-05-01 12:05:55", 128885},
+	}
+
+	for _, test := range tests {
+		args := []types.Datum{
+			types.NewStringDatum(test.unit),
+			types.NewStringDatum(test.t1),
+			types.NewStringDatum(test.t2),
+		}
+		d, err := builtinTimestampDiff(args, s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(d.GetInt64(), Equals, test.expect)
+	}
+	s.ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
+	d, err := builtinTimestampDiff([]types.Datum{types.NewStringDatum("DAY"),
+		types.NewStringDatum("2017-01-00"),
+		types.NewStringDatum("2017-01-01")}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(d.Kind(), Equals, types.KindNull)
+}
+
 func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 	d, err := builtinUnixTimestamp(nil, s.ctx)
 	c.Assert(err, IsNil)
