@@ -19,6 +19,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -34,11 +35,36 @@ var _ = Suite(&testStatisticsSuite{})
 type testStatisticsSuite struct {
 	count   int64
 	samples []types.Datum
+	rc      ast.RecordSet
+	pk      ast.RecordSet
 }
 
 type dataTable struct {
 	count   int64
 	samples []types.Datum
+}
+
+type recordSet struct {
+	data   []types.Datum
+	count  int64
+	cursor int64
+}
+
+func (r *recordSet) Fields() ([]*ast.ResultField, error) {
+	return nil, nil
+}
+
+func (r *recordSet) Next() (*ast.Row, error) {
+	if r.cursor == r.count {
+		return nil, nil
+	}
+	r.cursor++
+	return &ast.Row{Data: []types.Datum{r.data[r.cursor-1]}}, nil
+}
+
+func (r *recordSet) Close() error {
+	r.cursor = 0
+	return nil
 }
 
 func (s *testStatisticsSuite) SetUpSuite(c *C) {
@@ -58,6 +84,34 @@ func (s *testStatisticsSuite) SetUpSuite(c *C) {
 	err := types.SortDatums(sc, samples)
 	c.Check(err, IsNil)
 	s.samples = samples
+
+	rc := &recordSet{
+		data:   make([]types.Datum, s.count),
+		count:  s.count,
+		cursor: 0,
+	}
+	for i := int64(start); i < rc.count; i++ {
+		rc.data[i].SetInt64(int64(i))
+	}
+	for i := int64(start); i < rc.count; i += 3 {
+		rc.data[i].SetInt64(rc.data[i].GetInt64() + 1)
+	}
+	for i := int64(start); i < rc.count; i += 5 {
+		rc.data[i].SetInt64(rc.data[i].GetInt64() + 2)
+	}
+	err = types.SortDatums(sc, rc.data)
+	c.Check(err, IsNil)
+	s.rc = rc
+
+	pk := &recordSet{
+		data:   make([]types.Datum, s.count),
+		count:  s.count,
+		cursor: 0,
+	}
+	for i := int64(0); i < rc.count; i++ {
+		pk.data[i].SetInt64(int64(i))
+	}
+	s.pk = pk
 }
 
 func (s *testStatisticsSuite) TestEstimateNDV(c *C) {
@@ -74,14 +128,50 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	columns := []*model.ColumnInfo{
 		{
 			ID:        2,
+			Name:      model.NewCIStr("a"),
+			FieldType: *types.NewFieldType(mysql.TypeLonglong),
+		},
+		{
+			ID:        3,
+			Name:      model.NewCIStr("b"),
+			FieldType: *types.NewFieldType(mysql.TypeLonglong),
+		},
+		{
+			ID:        4,
+			Name:      model.NewCIStr("c"),
 			FieldType: *types.NewFieldType(mysql.TypeLonglong),
 		},
 	}
+	indices := []*model.IndexInfo{
+		{
+			Columns: []*model.IndexColumn{
+				{
+					Name:   model.NewCIStr("b"),
+					Length: types.UnspecifiedLength,
+					Offset: 1,
+				},
+			},
+		},
+	}
 	tblInfo.Columns = columns
+	tblInfo.Indices = indices
 	timestamp := int64(10)
 	bucketCount := int64(256)
 	sc := new(variable.StatementContext)
-	t, err := NewTable(sc, tblInfo, timestamp, s.count, bucketCount, [][]types.Datum{s.samples})
+	builder := &Builder{
+		Sc:            sc,
+		TblInfo:       tblInfo,
+		StartTS:       timestamp,
+		Count:         s.count,
+		NumBuckets:    bucketCount,
+		ColumnSamples: [][]types.Datum{s.samples},
+		ColOffsets:    []int{0},
+		IndRecords:    []ast.RecordSet{s.rc},
+		IndOffsets:    []int{0},
+		PkRecords:     ast.RecordSet(s.pk),
+		PkOffset:      2,
+	}
+	t, err := builder.NewTable()
 	c.Check(err, IsNil)
 
 	col := t.Columns[0]
@@ -94,6 +184,28 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	count, err = col.BetweenRowCount(sc, types.NewIntDatum(3000), types.NewIntDatum(3500))
 	c.Check(err, IsNil)
 	c.Check(count, Equals, int64(5075))
+
+	col = t.Columns[1]
+	count, err = col.EqualRowCount(sc, types.NewIntDatum(10000))
+	c.Check(err, IsNil)
+	c.Check(count, Equals, int64(1))
+	count, err = col.LessRowCount(sc, types.NewIntDatum(20000))
+	c.Check(err, IsNil)
+	c.Check(count, Equals, int64(19980))
+	count, err = col.BetweenRowCount(sc, types.NewIntDatum(30000), types.NewIntDatum(35000))
+	c.Check(err, IsNil)
+	c.Check(count, Equals, int64(4696))
+
+	col = t.Columns[2]
+	count, err = col.EqualRowCount(sc, types.NewIntDatum(10000))
+	c.Check(err, IsNil)
+	c.Check(count, Equals, int64(1))
+	count, err = col.LessRowCount(sc, types.NewIntDatum(20000))
+	c.Check(err, IsNil)
+	c.Check(count, Equals, int64(20136))
+	count, err = col.BetweenRowCount(sc, types.NewIntDatum(30000), types.NewIntDatum(35000))
+	c.Check(err, IsNil)
+	c.Check(count, Equals, int64(5083))
 
 	str := t.String()
 	log.Debug(str)

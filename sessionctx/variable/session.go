@@ -253,9 +253,9 @@ func (s *SessionVars) GetTiDBSystemVar(name string) (string, error) {
 // It should be reset before executing a statement.
 type StatementContext struct {
 	/* Variables that are set before execution */
-	InUpdateStmt      bool
-	IgnoreTruncate    bool
-	TruncateAsWarning bool
+	InUpdateOrDeleteStmt bool
+	IgnoreTruncate       bool
+	TruncateAsWarning    bool
 
 	/* Variables that changes during execution. */
 	mu struct {

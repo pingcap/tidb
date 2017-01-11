@@ -270,6 +270,7 @@ var AllColumnPrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv}
 const AllPrivilegeLiteral = "ALL PRIVILEGES"
 
 // DefaultLengthOfMysqlTypes is the map for default physical length of MySQL data types.
+// See http://dev.mysql.com/doc/refman/5.7/en/storage-requirements.html
 var DefaultLengthOfMysqlTypes = map[byte]int{
 	TypeYear:      1,
 	TypeDate:      3,
@@ -285,7 +286,9 @@ var DefaultLengthOfMysqlTypes = map[byte]int{
 	TypeFloat:    4,
 	TypeDouble:   8,
 
+	TypeEnum:   2,
 	TypeString: 1,
+	TypeSet:    8,
 }
 
 // DefaultLengthOfTimeFraction is the map for default physical length of time fractions.
