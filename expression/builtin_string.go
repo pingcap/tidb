@@ -56,6 +56,8 @@ var (
 	_ functionClass = &hexFunctionClass{}
 	_ functionClass = &unhexFunctionClass{}
 	_ functionClass = &trimFunctionClass{}
+	_ functionClass = &lTrimFunctionClass{}
+	_ functionClass = &rTrimFunctionClass{}
 	_ functionClass = &rpadFunctionClass{}
 	_ functionClass = &bitLengthFunctionClass{}
 	_ functionClass = &charFunctionClass{}
@@ -83,6 +85,8 @@ var (
 	_ builtinFunc = &builtinHexSig{}
 	_ builtinFunc = &builtinUnHexSig{}
 	_ builtinFunc = &builtinTrimSig{}
+	_ builtinFunc = &builtinLTrimSig{}
+	_ builtinFunc = &builtinRTrimSig{}
 	_ builtinFunc = &builtinRpadSig{}
 	_ builtinFunc = &builtinBitLengthSig{}
 	_ builtinFunc = &builtinCharSig{}
@@ -1000,6 +1004,46 @@ func builtinTrim(args []types.Datum, _ context.Context) (d types.Datum, err erro
 	}
 	d.SetString(result)
 	return d, nil
+}
+
+type lTrimFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *lTrimFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinLTrimSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinLTrimSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinLTrimSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return trimFn(strings.TrimLeft, spaceChars)(args, b.ctx)
+}
+
+type rTrimFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *rTrimFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinRTrimSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinRTrimSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinRTrimSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return trimFn(strings.TrimRight, spaceChars)(args, b.ctx)
 }
 
 // For LTRIM & RTRIM

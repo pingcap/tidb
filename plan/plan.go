@@ -166,6 +166,9 @@ type LogicalPlan interface {
 	// Some logical plans will convert the children to the physical plans in different ways, and return the one
 	// with the lowest cost.
 	convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error)
+
+	// buildKeyInfo will collect the information of unique keys into schema.
+	buildKeyInfo()
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -230,6 +233,24 @@ func (p *baseLogicalPlan) storePlanInfo(prop *requiredProperty, info *physicalPl
 	newInfo := *info // copy it
 	p.planMap[string(key)] = &newInfo
 	return nil
+}
+
+func (p *baseLogicalPlan) buildKeyInfo() {
+	for _, child := range p.GetChildren() {
+		child.(LogicalPlan).buildKeyInfo()
+	}
+	if len(p.children) == 1 {
+		switch p.self.(type) {
+		case *Exists, *Aggregation, *Projection, *Trim:
+			p.schema.Keys = nil
+		case *SelectLock:
+			p.schema.Keys = p.children[0].GetSchema().Keys
+		default:
+			p.schema.Keys = p.children[0].GetSchema().Clone().Keys
+		}
+	} else {
+		p.schema.Keys = nil
+	}
 }
 
 func newBaseLogicalPlan(tp string, a *idAllocator) baseLogicalPlan {

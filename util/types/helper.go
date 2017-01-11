@@ -17,6 +17,8 @@ import (
 	"math"
 	"strings"
 	"unicode"
+
+	"github.com/juju/errors"
 )
 
 // RoundFloat rounds float val to the nearest integer value with float64 format, like MySQL Round function.
@@ -37,9 +39,11 @@ func RoundFloat(f float64) float64 {
 // value f to become zero.
 func Round(f float64, dec int) float64 {
 	shift := math.Pow10(dec)
-	f = f * shift
-	f = RoundFloat(f)
-	return f / shift
+	tmp := f * shift
+	if math.IsInf(tmp, 0) {
+		return f
+	}
+	return RoundFloat(tmp) / shift
 }
 
 func getMaxFloat(flen int, decimal int) float64 {
@@ -49,37 +53,30 @@ func getMaxFloat(flen int, decimal int) float64 {
 	return f
 }
 
-func truncateFloat(f float64, decimal int) float64 {
-	pow := math.Pow10(decimal)
-	t := (f - math.Floor(f)) * pow
-
-	round := RoundFloat(t)
-
-	f = math.Floor(f) + round/pow
-	return f
-}
-
 // TruncateFloat tries to truncate f.
 // If the result exceeds the max/min float that flen/decimal allowed, returns the max/min float allowed.
 func TruncateFloat(f float64, flen int, decimal int) (float64, error) {
 	if math.IsNaN(f) {
 		// nan returns 0
-		return 0, nil
+		return 0, ErrOverflow
 	}
 
 	maxF := getMaxFloat(flen, decimal)
 
 	if !math.IsInf(f, 0) {
-		f = truncateFloat(f, decimal)
+		f = Round(f, decimal)
 	}
 
+	var err error
 	if f > maxF {
 		f = maxF
+		err = ErrOverflow
 	} else if f < -maxF {
 		f = -maxF
+		err = ErrOverflow
 	}
 
-	return f, nil
+	return f, errors.Trace(err)
 }
 
 func isSpace(c byte) bool {

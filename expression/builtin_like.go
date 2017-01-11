@@ -27,6 +27,16 @@ const (
 	patAny
 )
 
+var (
+	_ functionClass = &likeFunctionClass{}
+	_ functionClass = &regexpFunctionClass{}
+)
+
+var (
+	_ builtinFunc = &builtinLikeSig{}
+	_ builtinFunc = &builtinRegexpSig{}
+)
+
 // Handle escapes and wild cards convert pattern characters and pattern types.
 func compilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 	var lastAny bool
@@ -127,6 +137,26 @@ func doMatch(str string, patChars, patTypes []byte) bool {
 	return sIdx == len(str)
 }
 
+type likeFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *likeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinLikeSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinLikeSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinLikeSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return builtinLike(args, b.ctx)
+}
+
 // See http://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html
 func builtinLike(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	if args[0].IsNull() {
@@ -151,6 +181,26 @@ func builtinLike(args []types.Datum, _ context.Context) (d types.Datum, err erro
 	match := doMatch(valStr, patChars, patTypes)
 	d.SetInt64(boolToInt64(match))
 	return
+}
+
+type regexpFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *regexpFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinRegexpSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinRegexpSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinRegexpSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return builtinRegexp(args, b.ctx)
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/regexp.html#operator_regexp

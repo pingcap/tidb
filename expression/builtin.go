@@ -18,7 +18,6 @@
 package expression
 
 import (
-	"sort"
 	"strings"
 
 	"github.com/juju/errors"
@@ -26,20 +25,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
-)
-
-var (
-	_ functionClass = &coalesceFunctionClass{}
-	_ functionClass = &isNullFunctionClass{}
-	_ functionClass = &greatestFunctionClass{}
-	_ functionClass = &leastFunctionClass{}
-)
-
-var (
-	_ builtinFunc = &builtinCoalesceSig{}
-	_ builtinFunc = &builtinIsNullSig{}
-	_ builtinFunc = &builtinGreatestSig{}
-	_ builtinFunc = &builtinLeastSig{}
 )
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
@@ -178,8 +163,11 @@ var Funcs = map[string]Func{
 	ast.CurrentDate:      {builtinCurrentDate, 0, 0},
 	ast.CurrentTime:      {builtinCurrentTime, 0, 1},
 	ast.Date:             {builtinDate, 1, 1},
-	ast.DateArith:        {builtinDateArith, 4, 4},
 	ast.DateDiff:         {builtinDateDiff, 2, 2},
+	ast.DateAdd:          {dateArithFuncFactory(ast.DateArithAdd), 3, 3},
+	ast.AddDate:          {dateArithFuncFactory(ast.DateArithAdd), 3, 3},
+	ast.DateSub:          {dateArithFuncFactory(ast.DateArithSub), 3, 3},
+	ast.SubDate:          {dateArithFuncFactory(ast.DateArithSub), 3, 3},
 	ast.DateFormat:       {builtinDateFormat, 2, 2},
 	ast.CurrentTimestamp: {builtinNow, 0, 1},
 	ast.Curtime:          {builtinCurrentTime, 0, 1},
@@ -207,6 +195,7 @@ var Funcs = map[string]Func{
 	ast.YearWeek:         {builtinYearWeek, 1, 2},
 	ast.FromUnixTime:     {builtinFromUnixTime, 1, 2},
 	ast.TimeDiff:         {builtinTimeDiff, 2, 2},
+	ast.TimestampDiff:    {builtinTimestampDiff, 3, 3},
 	ast.UnixTimestamp:    {builtinUnixTimestamp, 0, 1},
 
 	// string functions
@@ -219,14 +208,15 @@ var Funcs = map[string]Func{
 	ast.Length:         {builtinLength, 1, 1},
 	ast.Locate:         {builtinLocate, 2, 3},
 	ast.Lower:          {builtinLower, 1, 1},
-	ast.Ltrim:          {trimFn(strings.TrimLeft, spaceChars), 1, 1},
+	ast.LTrim:          {trimFn(strings.TrimLeft, spaceChars), 1, 1},
 	ast.Repeat:         {builtinRepeat, 2, 2},
 	ast.Replace:        {builtinReplace, 3, 3},
 	ast.Reverse:        {builtinReverse, 1, 1},
-	ast.Rtrim:          {trimFn(strings.TrimRight, spaceChars), 1, 1},
+	ast.RTrim:          {trimFn(strings.TrimRight, spaceChars), 1, 1},
 	ast.Space:          {builtinSpace, 1, 1},
 	ast.Strcmp:         {builtinStrcmp, 2, 2},
 	ast.Substring:      {builtinSubstring, 2, 3},
+	ast.Substr:         {builtinSubstring, 2, 3},
 	ast.SubstringIndex: {builtinSubstringIndex, 3, 3},
 	ast.Trim:           {builtinTrim, 1, 3},
 	ast.Upper:          {builtinUpper, 1, 1},
@@ -301,6 +291,162 @@ var Funcs = map[string]Func{
 	ast.GetVar:     {builtinGetVar, 1, 1},
 }
 
+// funcs holds all registered builtin functions.
+var funcs = map[string]functionClass{
+	// common functions
+	ast.Coalesce: &coalesceFunctionClass{baseFunctionClass{ast.Coalesce, 1, -1}},
+	ast.IsNull:   &isNullFunctionClass{baseFunctionClass{ast.IsNull, 1, 1}},
+	ast.Greatest: &greatestFunctionClass{baseFunctionClass{ast.Greatest, 2, -1}},
+	ast.Least:    &leastFunctionClass{baseFunctionClass{ast.Least, 2, -1}},
+	ast.Interval: &intervalFunctionClass{baseFunctionClass{ast.Interval, 2, -1}},
+
+	// math functions
+	ast.Abs:     &absFunctionClass{baseFunctionClass{ast.Abs, 1, 1}},
+	ast.Ceil:    &ceilFunctionClass{baseFunctionClass{ast.Ceil, 1, 1}},
+	ast.Ceiling: &ceilFunctionClass{baseFunctionClass{ast.Ceiling, 1, 1}},
+	ast.Ln:      &logFunctionClass{baseFunctionClass{ast.Log, 1, 1}},
+	ast.Log:     &logFunctionClass{baseFunctionClass{ast.Log, 1, 2}},
+	ast.Log2:    &log2FunctionClass{baseFunctionClass{ast.Log2, 1, 1}},
+	ast.Log10:   &log10FunctionClass{baseFunctionClass{ast.Log10, 1, 1}},
+	ast.Pow:     &powFunctionClass{baseFunctionClass{ast.Pow, 2, 2}},
+	ast.Power:   &powFunctionClass{baseFunctionClass{ast.Pow, 2, 2}},
+	ast.Rand:    &randFunctionClass{baseFunctionClass{ast.Rand, 0, 1}},
+	ast.Round:   &roundFunctionClass{baseFunctionClass{ast.Round, 1, 2}},
+	ast.Conv:    &convFunctionClass{baseFunctionClass{ast.Conv, 3, 3}},
+	ast.CRC32:   &crc32FunctionClass{baseFunctionClass{ast.CRC32, 1, 1}},
+
+	// time functions
+	ast.Curdate:          &currentDateFunctionClass{baseFunctionClass{ast.Curdate, 0, 0}},
+	ast.CurrentDate:      &currentDateFunctionClass{baseFunctionClass{ast.CurrentDate, 0, 0}},
+	ast.CurrentTime:      &currentTimeFunctionClass{baseFunctionClass{ast.CurrentTime, 0, 0}},
+	ast.Date:             &dateFunctionClass{baseFunctionClass{ast.Date, 1, 1}},
+	ast.DateDiff:         &dateDiffFunctionClass{baseFunctionClass{ast.DateDiff, 2, 2}},
+	ast.DateAdd:          &dateArithFunctionClass{baseFunctionClass{ast.DateAdd, 3, 3}, ast.DateArithAdd},
+	ast.AddDate:          &dateArithFunctionClass{baseFunctionClass{ast.AddDate, 3, 3}, ast.DateArithAdd},
+	ast.DateSub:          &dateArithFunctionClass{baseFunctionClass{ast.DateSub, 3, 3}, ast.DateArithSub},
+	ast.SubDate:          &dateArithFunctionClass{baseFunctionClass{ast.SubDate, 3, 3}, ast.DateArithSub},
+	ast.DateFormat:       &dateFormatFunctionClass{baseFunctionClass{ast.DateFormat, 2, 2}},
+	ast.CurrentTimestamp: &nowFunctionClass{baseFunctionClass{ast.CurrentTimestamp, 0, 1}},
+	ast.Now:              &nowFunctionClass{baseFunctionClass{ast.Now, 0, 1}},
+	ast.Curtime:          &currentTimeFunctionClass{baseFunctionClass{ast.Curtime, 0, 1}},
+	ast.Day:              &dayFunctionClass{baseFunctionClass{ast.Day, 1, 1}},
+	ast.DayName:          &dayNameFunctionClass{baseFunctionClass{ast.DayName, 1, 1}},
+	ast.DayOfMonth:       &dayOfMonthFunctionClass{baseFunctionClass{ast.DayOfMonth, 1, 1}},
+	ast.DayOfWeek:        &dayOfWeekFunctionClass{baseFunctionClass{ast.DayOfWeek, 1, 1}},
+	ast.DayOfYear:        &dayOfYearFunctionClass{baseFunctionClass{ast.DayOfYear, 1, 1}},
+	ast.Extract:          &extractFunctionClass{baseFunctionClass{ast.Extract, 2, 2}},
+	ast.Hour:             &hourFunctionClass{baseFunctionClass{ast.Hour, 1, 1}},
+	ast.MicroSecond:      &microSecondFunctionClass{baseFunctionClass{ast.MicroSecond, 1, 1}},
+	ast.Minute:           &minuteFunctionClass{baseFunctionClass{ast.Minute, 1, 1}},
+	ast.Month:            &monthFunctionClass{baseFunctionClass{ast.Month, 1, 1}},
+	ast.MonthName:        &monthNameFunctionClass{baseFunctionClass{ast.MonthName, 1, 1}},
+	ast.Second:           &secondFunctionClass{baseFunctionClass{ast.Second, 1, 1}},
+	ast.StrToDate:        &strToDateFunctionClass{baseFunctionClass{ast.StrToDate, 2, 2}},
+	ast.Sysdate:          &sysDateFunctionClass{baseFunctionClass{ast.Sysdate, 0, 1}},
+	ast.Time:             &timeFunctionClass{baseFunctionClass{ast.Time, 1, 1}},
+	ast.UTCDate:          &utcDateFunctionClass{baseFunctionClass{ast.UTCDate, 0, 0}},
+	ast.Week:             &weekFunctionClass{baseFunctionClass{ast.Week, 1, 2}},
+	ast.Weekday:          &weekDayFunctionClass{baseFunctionClass{ast.Weekday, 1, 1}},
+	ast.WeekOfYear:       &weekOfYearFunctionClass{baseFunctionClass{ast.WeekOfYear, 1, 1}},
+	ast.Year:             &yearFunctionClass{baseFunctionClass{ast.Year, 1, 1}},
+	ast.YearWeek:         &yearWeekFunctionClass{baseFunctionClass{ast.YearWeek, 1, 2}},
+	ast.FromUnixTime:     &fromUnixTimeFunctionClass{baseFunctionClass{ast.FromUnixTime, 1, 2}},
+	ast.TimeDiff:         &timeDiffFunctionClass{baseFunctionClass{ast.TimeDiff, 2, 2}},
+	ast.UnixTimestamp:    &unixTimestampFunctionClass{baseFunctionClass{ast.UnixTimestamp, 0, 1}},
+
+	// string functions
+	ast.ASCII:          &asciiFunctionClass{baseFunctionClass{ast.ASCII, 1, 1}},
+	ast.Concat:         &concatFunctionClass{baseFunctionClass{ast.Concat, 1, -1}},
+	ast.ConcatWS:       &concatWSFunctionClass{baseFunctionClass{ast.ConcatWS, 2, -1}},
+	ast.Convert:        &convertFunctionClass{baseFunctionClass{ast.Convert, 2, 2}},
+	ast.Lcase:          &lowerFunctionClass{baseFunctionClass{ast.Lcase, 1, 1}},
+	ast.Left:           &leftFunctionClass{baseFunctionClass{ast.Left, 2, 2}},
+	ast.Length:         &lengthFunctionClass{baseFunctionClass{ast.Length, 1, 1}},
+	ast.Locate:         &locateFunctionClass{baseFunctionClass{ast.Locate, 2, 3}},
+	ast.Lower:          &lowerFunctionClass{baseFunctionClass{ast.Lower, 1, 1}},
+	ast.LTrim:          &lTrimFunctionClass{baseFunctionClass{ast.LTrim, 1, 1}},
+	ast.Repeat:         &repeatFunctionClass{baseFunctionClass{ast.Repeat, 2, 2}},
+	ast.Replace:        &replaceFunctionClass{baseFunctionClass{ast.Replace, 3, 3}},
+	ast.Reverse:        &reverseFunctionClass{baseFunctionClass{ast.Reverse, 1, 1}},
+	ast.RTrim:          &rTrimFunctionClass{baseFunctionClass{ast.RTrim, 1, 1}},
+	ast.Space:          &spaceFunctionClass{baseFunctionClass{ast.Space, 1, 1}},
+	ast.Strcmp:         &strcmpFunctionClass{baseFunctionClass{ast.Strcmp, 2, 2}},
+	ast.Substring:      &substringFunctionClass{baseFunctionClass{ast.Substring, 2, 3}},
+	ast.Substr:         &substringFunctionClass{baseFunctionClass{ast.Substr, 2, 3}},
+	ast.SubstringIndex: &substringIndexFunctionClass{baseFunctionClass{ast.SubstringIndex, 3, 3}},
+	ast.Trim:           &trimFunctionClass{baseFunctionClass{ast.Trim, 1, 3}},
+	ast.Upper:          &upperFunctionClass{baseFunctionClass{ast.Upper, 1, 1}},
+	ast.Ucase:          &upperFunctionClass{baseFunctionClass{ast.Ucase, 1, 1}},
+	ast.Hex:            &hexFunctionClass{baseFunctionClass{ast.Hex, 1, 1}},
+	ast.Unhex:          &unhexFunctionClass{baseFunctionClass{ast.Unhex, 1, 1}},
+	ast.Rpad:           &rpadFunctionClass{baseFunctionClass{ast.Rpad, 3, 3}},
+	ast.BitLength:      &bitLengthFunctionClass{baseFunctionClass{ast.BitLength, 1, 1}},
+	ast.CharFunc:       &charFunctionClass{baseFunctionClass{ast.CharFunc, 2, -1}},
+	ast.CharLength:     &charLengthFunctionClass{baseFunctionClass{ast.CharLength, 1, 1}},
+	ast.FindInSet:      &findInSetFunctionClass{baseFunctionClass{ast.FindInSet, 2, 2}},
+
+	// information functions
+	ast.ConnectionID: &connectionIDFunctionClass{baseFunctionClass{ast.ConnectionID, 0, 0}},
+	ast.CurrentUser:  &currentUserFunctionClass{baseFunctionClass{ast.CurrentUser, 0, 0}},
+	ast.Database:     &databaseFunctionClass{baseFunctionClass{ast.Database, 0, 0}},
+	// This function is a synonym for DATABASE().
+	// See http://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_schema
+	ast.Schema:       &databaseFunctionClass{baseFunctionClass{ast.Schema, 0, 0}},
+	ast.FoundRows:    &foundRowsFunctionClass{baseFunctionClass{ast.FoundRows, 0, 0}},
+	ast.LastInsertId: &lastInsertIDFunctionClass{baseFunctionClass{ast.LastInsertId, 0, 1}},
+	ast.User:         &userFunctionClass{baseFunctionClass{ast.User, 0, 0}},
+	ast.Version:      &versionFunctionClass{baseFunctionClass{ast.Version, 0, 0}},
+
+	// control functions
+	ast.If:     &ifFunctionClass{baseFunctionClass{ast.If, 3, 3}},
+	ast.Ifnull: &ifNullFunctionClass{baseFunctionClass{ast.Ifnull, 2, 2}},
+	ast.Nullif: &nullIfFunctionClass{baseFunctionClass{ast.Nullif, 2, 2}},
+
+	// miscellaneous functions
+	ast.Sleep: &sleepFunctionClass{baseFunctionClass{ast.Sleep, 1, 1}},
+
+	// get_lock() and release_lock() are parsed but do nothing.
+	// It is used for preventing error in Ruby's activerecord migrations.
+	ast.GetLock:     &lockFunctionClass{baseFunctionClass{ast.GetLock, 2, 2}},
+	ast.ReleaseLock: &releaseLockFunctionClass{baseFunctionClass{ast.ReleaseLock, 1, 1}},
+
+	// only used by new plan
+	ast.AndAnd:     &andandFunctionClass{baseFunctionClass{ast.AndAnd, 2, 2}},
+	ast.OrOr:       &ororFunctionClass{baseFunctionClass{ast.OrOr, 2, 2}},
+	ast.GE:         &compareFunctionClass{baseFunctionClass{ast.GE, 2, 2}, opcode.GE},
+	ast.LE:         &compareFunctionClass{baseFunctionClass{ast.LE, 2, 2}, opcode.LE},
+	ast.EQ:         &compareFunctionClass{baseFunctionClass{ast.EQ, 2, 2}, opcode.EQ},
+	ast.NE:         &compareFunctionClass{baseFunctionClass{ast.NE, 2, 2}, opcode.NE},
+	ast.LT:         &compareFunctionClass{baseFunctionClass{ast.LT, 2, 2}, opcode.LE},
+	ast.GT:         &compareFunctionClass{baseFunctionClass{ast.GT, 2, 2}, opcode.GT},
+	ast.NullEQ:     &compareFunctionClass{baseFunctionClass{ast.NullEQ, 2, 2}, opcode.NullEQ},
+	ast.Plus:       &arithmeticFunctionClass{baseFunctionClass{ast.Plus, 2, 2}, opcode.Plus},
+	ast.Minus:      &arithmeticFunctionClass{baseFunctionClass{ast.Minus, 2, 2}, opcode.Minus},
+	ast.Mod:        &arithmeticFunctionClass{baseFunctionClass{ast.Mod, 2, 2}, opcode.Mod},
+	ast.Div:        &arithmeticFunctionClass{baseFunctionClass{ast.Div, 2, 2}, opcode.Div},
+	ast.Mul:        &arithmeticFunctionClass{baseFunctionClass{ast.Mul, 2, 2}, opcode.Mul},
+	ast.IntDiv:     &arithmeticFunctionClass{baseFunctionClass{ast.IntDiv, 2, 2}, opcode.IntDiv},
+	ast.LeftShift:  &bitOpFunctionClass{baseFunctionClass{ast.LeftShift, 2, 2}, opcode.LeftShift},
+	ast.RightShift: &bitOpFunctionClass{baseFunctionClass{ast.RightShift, 2, 2}, opcode.RightShift},
+	ast.And:        &bitOpFunctionClass{baseFunctionClass{ast.And, 2, 2}, opcode.And},
+	ast.Or:         &bitOpFunctionClass{baseFunctionClass{ast.Or, 2, 2}, opcode.Or},
+	ast.Xor:        &bitOpFunctionClass{baseFunctionClass{ast.Xor, 2, 2}, opcode.Xor},
+	ast.LogicXor:   &bitOpFunctionClass{baseFunctionClass{ast.LogicXor, 2, 2}, opcode.LogicXor},
+	ast.UnaryNot:   &unaryOpFunctionClass{baseFunctionClass{ast.UnaryNot, 1, 1}, opcode.Not},
+	ast.BitNeg:     &unaryOpFunctionClass{baseFunctionClass{ast.BitNeg, 1, 1}, opcode.BitNeg},
+	ast.UnaryPlus:  &unaryOpFunctionClass{baseFunctionClass{ast.UnaryPlus, 1, 1}, opcode.Plus},
+	ast.UnaryMinus: &unaryOpFunctionClass{baseFunctionClass{ast.UnaryMinus, 1, 1}, opcode.Minus},
+	ast.In:         &inFunctionClass{baseFunctionClass{ast.In, 1, -1}},
+	ast.IsTruth:    &isTrueOpFunctionClass{baseFunctionClass{ast.IsTruth, 1, 1}, opcode.IsTruth},
+	ast.IsFalsity:  &isTrueOpFunctionClass{baseFunctionClass{ast.IsFalsity, 1, 1}, opcode.IsFalsity},
+	ast.Like:       &likeFunctionClass{baseFunctionClass{ast.Like, 3, 3}},
+	ast.Regexp:     &regexpFunctionClass{baseFunctionClass{ast.Regexp, 2, 2}},
+	ast.Case:       &caseWhenFunctionClass{baseFunctionClass{ast.Case, 1, -1}},
+	ast.RowFunc:    &rowFunctionClass{baseFunctionClass{ast.RowFunc, 2, -1}},
+	ast.SetVar:     &setVarFunctionClass{baseFunctionClass{ast.SetVar, 2, 2}},
+	ast.GetVar:     &getVarFunctionClass{baseFunctionClass{ast.GetVar, 2, 2}},
+}
+
 // DynamicFuncs are those functions that
 // use input parameter ctx or
 // return an uncertain result would not be constant folded
@@ -318,186 +464,4 @@ var DynamicFuncs = map[string]int{
 	ast.GetVar:       0,
 	ast.SetVar:       0,
 	ast.Values:       0,
-}
-
-// Function family for coalesce.
-type coalesceFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *coalesceFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinCoalesceSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
-}
-
-type builtinCoalesceSig struct {
-	baseBuiltinFunc
-}
-
-func (b *builtinCoalesceSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	return builtinCoalesce(args, b.ctx)
-}
-
-// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
-func builtinCoalesce(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	for _, d = range args {
-		if !d.IsNull() {
-			return d, nil
-		}
-	}
-	return d, nil
-}
-
-type isNullFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *isNullFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinIsNullSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
-}
-
-type builtinIsNullSig struct {
-	baseBuiltinFunc
-}
-
-func (b *builtinIsNullSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	return builtinIsNull(args, b.ctx)
-}
-
-// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_isnull
-func builtinIsNull(args []types.Datum, _ context.Context) (d types.Datum, err error) {
-	if args[0].IsNull() {
-		d.SetInt64(1)
-	} else {
-		d.SetInt64(0)
-	}
-	return d, nil
-}
-
-type greatestFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *greatestFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinGreatestSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
-}
-
-type builtinGreatestSig struct {
-	baseBuiltinFunc
-}
-
-func (b *builtinGreatestSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	return builtinGreatest(args, b.ctx)
-}
-
-// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
-func builtinGreatest(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	if args[0].IsNull() {
-		return
-	}
-	max := 0
-	sc := ctx.GetSessionVars().StmtCtx
-	for i := 1; i < len(args); i++ {
-		if args[i].IsNull() {
-			return
-		}
-
-		var cmp int
-		if cmp, err = args[i].CompareDatum(sc, args[max]); err != nil {
-			return
-		}
-
-		if cmp > 0 {
-			max = i
-		}
-	}
-	d = args[max]
-	return
-}
-
-type leastFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *leastFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinLeastSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
-}
-
-type builtinLeastSig struct {
-	baseBuiltinFunc
-}
-
-func (b *builtinLeastSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	return builtinLeast(args, b.ctx)
-}
-
-// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_least
-func builtinLeast(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	if args[0].IsNull() {
-		return
-	}
-	min := 0
-	sc := ctx.GetSessionVars().StmtCtx
-	for i := 1; i < len(args); i++ {
-		if args[i].IsNull() {
-			return
-		}
-
-		var cmp int
-		if cmp, err = args[i].CompareDatum(sc, args[min]); err != nil {
-			return
-		}
-
-		if cmp < 0 {
-			min = i
-		}
-	}
-	d = args[min]
-	return
-}
-
-// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_interval
-func builtinInterval(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	if args[0].IsNull() {
-		d.SetInt64(int64(-1))
-		return
-	}
-	sc := ctx.GetSessionVars().StmtCtx
-
-	idx := sort.Search(len(args)-1, func(i int) bool {
-		d1, d2 := args[0], args[i+1]
-		if d1.Kind() == types.KindInt64 && d1.Kind() == d2.Kind() {
-			return d1.GetInt64() < d2.GetInt64()
-		}
-		if d1.Kind() == types.KindUint64 && d1.Kind() == d2.Kind() {
-			return d1.GetUint64() < d2.GetUint64()
-		}
-		if d1.Kind() == types.KindInt64 && d2.Kind() == types.KindUint64 {
-			return d1.GetInt64() < 0 || d1.GetUint64() < d2.GetUint64()
-		}
-		if d1.Kind() == types.KindUint64 && d2.Kind() == types.KindInt64 {
-			return d2.GetInt64() > 0 && d1.GetUint64() < d2.GetUint64()
-		}
-		v1, _ := d1.ToFloat64(sc)
-		v2, _ := d2.ToFloat64(sc)
-		return v1 < v2
-	})
-	d.SetInt64(int64(idx))
-
-	return
 }
