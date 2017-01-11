@@ -1074,7 +1074,7 @@ func (p *Analyze) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInf
 			Table:               tblInfo,
 			Columns:             columns,
 			TableAsName:         &p.Table.Name,
-			OutOfOrder:          true,
+			OutOfOrder:          false,
 			DBName:              &p.Table.DBInfo.Name,
 			physicalTableSource: physicalTableSource{client: p.ctx.GetClient()},
 			DoubleRead:          false,
