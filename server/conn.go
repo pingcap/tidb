@@ -619,6 +619,7 @@ func (cc *clientConn) handleQuery(sql string) (err error) {
 
 	rs, err := cc.ctx.Execute(sql)
 	if err != nil {
+		executeErrorCounter.WithLabelValues(executeErrorToLabel(err)).Inc()
 		return errors.Trace(err)
 	}
 	if rs != nil {
