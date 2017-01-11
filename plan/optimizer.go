@@ -61,7 +61,7 @@ func doOptimize(logic LogicalPlan, ctx context.Context, allocator *idAllocator) 
 		ctx:       ctx,
 		allocator: allocator,
 	}
-	err = ap.pruneAggregation(logic)
+	err = ap.eliminateAggregation(logic)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

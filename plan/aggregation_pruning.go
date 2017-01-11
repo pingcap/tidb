@@ -26,7 +26,10 @@ type aggPruner struct {
 	ctx       context.Context
 }
 
-func (ap *aggPruner) pruneAggregation(p LogicalPlan) error {
+// eliminateAggregation will eliminate aggregation grouped by unique key.
+// e.g. select min(b) from t group by a. If a is a unique key, then this sql is equal to `select b from t group by a`.
+// For count(expr), sum(expr), avg(expr), we may need to rewrite the expr. Details is shown below.
+func (ap *aggPruner) eliminateAggregation(p LogicalPlan) error {
 	for _, child := range p.GetChildren() {
 		if agg, ok := child.(*Aggregation); ok {
 			schemaByGroupby := expression.NewSchema(agg.groupByCols)
