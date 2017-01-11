@@ -285,7 +285,7 @@ func (s *testDBSuite) testAddIndex(c *C) {
 		s.mustExec(c, "insert into t1 values (?, ?, ?)", i, i, i)
 	}
 
-	done <- sessionExecInGoroutine(c, s.store, "create index c3_index on t1 (c3)")
+	sessionExecInGoroutine(c, s.store, "create index c3_index on t1 (c3)", done)
 
 	deletedKeys := make(map[int]struct{})
 
@@ -410,7 +410,7 @@ func (s *testDBSuite) testDropIndex(c *C) {
 	}
 	c.Assert(c3idx, NotNil)
 
-	done <- sessionExecInGoroutine(c, s.store, "drop index c3_index on t1")
+	sessionExecInGoroutine(c, s.store, "drop index c3_index on t1", done)
 
 	ticker := time.NewTicker(s.lease / 2)
 	defer ticker.Stop()
@@ -541,14 +541,13 @@ func sessionExec(c *C, s kv.Storage, sql string) {
 	se.Close()
 }
 
-func sessionExecInGoroutine(c *C, s kv.Storage, sql string) struct{} {
+func sessionExecInGoroutine(c *C, s kv.Storage, sql string, done chan struct{}) {
 	type params struct {
 		obtained interface{}
 		checker  Checker
 		args     []interface{}
 	}
-	out := make(chan params, 1)
-	done := make(chan struct{}, 1)
+	out := make(chan interface{}, 1)
 	go func() {
 		se, err := tidb.CreateSession(s)
 		defer se.Close()
@@ -586,14 +585,14 @@ func sessionExecInGoroutine(c *C, s kv.Storage, sql string) struct{} {
 			}
 			return
 		}
-		done <- struct{}{}
+		out <- struct{}{}
 	}()
-	select {
-	case err := <-out:
+
+	result := <-out
+	if err, ok := result.(*params); ok {
 		c.Assert(err.obtained, err.checker, err.args...)
-	case <-done:
 	}
-	return struct{}{}
+	done <- struct{}{}
 }
 
 func (s *testDBSuite) testAddColumn(c *C) {
@@ -605,7 +604,7 @@ func (s *testDBSuite) testAddColumn(c *C) {
 		s.mustExec(c, "insert into t2 values (?, ?, ?)", i, i, i)
 	}
 
-	done <- sessionExecInGoroutine(c, s.store, "alter table t2 add column c4 int default -1")
+	sessionExecInGoroutine(c, s.store, "alter table t2 add column c4 int default -1", done)
 
 	ticker := time.NewTicker(s.lease / 2)
 	defer ticker.Stop()
@@ -688,7 +687,7 @@ func (s *testDBSuite) testDropColumn(c *C) {
 	}
 
 	// get c4 column id
-	done <- sessionExecInGoroutine(c, s.store, "alter table t2 drop column c4")
+	sessionExecInGoroutine(c, s.store, "alter table t2 drop column c4", done)
 
 	ticker := time.NewTicker(s.lease / 2)
 	defer ticker.Stop()
