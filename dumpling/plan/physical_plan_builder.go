@@ -835,6 +835,9 @@ func (p *Selection) convert2PhysicalPlanPushOrder(prop *requiredProperty) (*phys
 			scanCount := info.count
 			info.count = limit.Count
 			info.cost = np.calculateCost(info.count, scanCount)
+			if limit.Offset > 0 {
+				info = enforceProperty(&requiredProperty{limit: limit}, info)
+			}
 		} else {
 			info = enforceProperty(&requiredProperty{limit: limit}, info)
 		}
