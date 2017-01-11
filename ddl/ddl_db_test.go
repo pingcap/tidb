@@ -552,7 +552,7 @@ func sessionExecInGoroutine(c *C, s kv.Storage, sql string) struct{} {
 	go func() {
 		se, err := tidb.CreateSession(s)
 		defer se.Close()
-		if err == nil {
+		if err != nil {
 			out <- params{
 				err,
 				IsNil,
