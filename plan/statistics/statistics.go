@@ -37,7 +37,7 @@ const (
 	// between condition selects 1/40 of total rows.
 	pseudoRowCount    = 10000000
 	pseudoEqualRate   = 1000
-	pseudoLessRate    = 3
+	pseudoLessRate    = 30
 	pseudoBetweenRate = 40
 	pseudoTimestamp   = 1
 )

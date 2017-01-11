@@ -238,7 +238,7 @@ func (s *testStatisticsSuite) TestPseudoTable(c *C) {
 	sc := new(variable.StatementContext)
 	count, err := col.LessRowCount(sc, types.NewIntDatum(100))
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, int64(3333333))
+	c.Assert(count, Equals, int64(333333))
 	count, err = col.EqualRowCount(sc, types.NewIntDatum(1000))
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, int64(10000))
