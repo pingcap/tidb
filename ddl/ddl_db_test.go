@@ -284,7 +284,7 @@ func (s *testDBSuite) testAddAnonymousIndex(c *C) {
 }
 
 func (s *testDBSuite) testAddIndex(c *C) {
-	done := make(chan *errorParams, 1)
+	done := make(chan error, 1)
 	num := defaultBatchSize + 10
 	// first add some rows
 	for i := 0; i < num; i++ {
@@ -303,9 +303,8 @@ LOOP:
 		case result := <-done:
 			if result == nil {
 				break LOOP
-			} else {
-				c.Assert(result.obtained, result.checker, result.args...)
 			}
+			c.Assert(result, IsNil, Commentf("err:%v", errors.ErrorStack(result)))
 		case <-ticker.C:
 			step := 10
 			// delete some rows, and add some data
@@ -401,7 +400,7 @@ LOOP:
 }
 
 func (s *testDBSuite) testDropIndex(c *C) {
-	done := make(chan *errorParams, 1)
+	done := make(chan error, 1)
 	s.mustExec(c, "delete from t1")
 
 	num := 100
@@ -429,9 +428,8 @@ LOOP:
 		case result := <-done:
 			if result == nil {
 				break LOOP
-			} else {
-				c.Assert(result.obtained, result.checker, result.args...)
 			}
+			c.Assert(result, IsNil, Commentf("err:%v", errors.ErrorStack(result)))
 		case <-ticker.C:
 			step := 10
 			// delete some rows, and add some data
@@ -554,42 +552,26 @@ func sessionExec(c *C, s kv.Storage, sql string) {
 	se.Close()
 }
 
-func sessionExecInGoroutine(c *C, s kv.Storage, sql string, done chan *errorParams) {
+func sessionExecInGoroutine(c *C, s kv.Storage, sql string, done chan error) {
 	go func() {
 		se, err := tidb.CreateSession(s)
-		defer se.Close()
 		if err != nil {
-			done <- &errorParams{
-				err,
-				IsNil,
-				nil,
-			}
+			done <- errors.Trace(err)
 			return
 		}
+		defer se.Close()
 		_, err = se.Execute("use test_db")
 		if err != nil {
-			done <- &errorParams{
-				err,
-				IsNil,
-				nil,
-			}
+			done <- errors.Trace(err)
 			return
 		}
 		rs, err := se.Execute(sql)
 		if err != nil {
-			done <- &errorParams{
-				err,
-				IsNil,
-				[]interface{}{Commentf("err:%v", errors.ErrorStack(err))},
-			}
+			done <- errors.Trace(err)
 			return
 		}
 		if rs != nil {
-			done <- &errorParams{
-				rs,
-				IsNil,
-				nil,
-			}
+			done <- errors.Errorf("RecordSet should be empty.")
 			return
 		}
 		done <- nil
@@ -597,7 +579,7 @@ func sessionExecInGoroutine(c *C, s kv.Storage, sql string, done chan *errorPara
 }
 
 func (s *testDBSuite) testAddColumn(c *C) {
-	done := make(chan *errorParams, 1)
+	done := make(chan error, 1)
 
 	num := defaultBatchSize + 10
 	// add some rows
@@ -616,9 +598,8 @@ LOOP:
 		case result := <-done:
 			if result == nil {
 				break LOOP
-			} else {
-				c.Assert(result.obtained, result.checker, result.args...)
 			}
+			c.Assert(result, IsNil, Commentf("err:%v", errors.ErrorStack(result)))
 		case <-ticker.C:
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
@@ -681,7 +662,7 @@ LOOP:
 }
 
 func (s *testDBSuite) testDropColumn(c *C) {
-	done := make(chan *errorParams, 1)
+	done := make(chan error, 1)
 	s.mustExec(c, "delete from t2")
 
 	num := 100
@@ -702,9 +683,8 @@ LOOP:
 		case result := <-done:
 			if result == nil {
 				break LOOP
-			} else {
-				c.Assert(result.obtained, result.checker, result.args...)
 			}
+			c.Assert(result, IsNil, Commentf("err:%v", errors.ErrorStack(result)))
 		case <-ticker.C:
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
