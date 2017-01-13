@@ -97,6 +97,16 @@ func (s *testParserSuite) TestSimple(c *C) {
 		c.Assert(err, IsNil, Commentf("source %s", src))
 	}
 
+	// Testcase for not keyword token
+	notKeywordTokens := []string{
+		"field",
+	}
+	for _, t := range notKeywordTokens {
+		src := fmt.Sprintf("SELECT %s FROM tbl;", t)
+		_, err := parser.ParseOneStmt(src, "", "")
+		c.Assert(err, IsNil, Commentf("source %s", src))
+	}
+
 	// Testcase for prepared statement
 	src := "SELECT id+?, id+? from t;"
 	_, err := parser.ParseOneStmt(src, "", "")
@@ -679,6 +689,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT CHAR(65);`, true},
 		{`SELECT CHAR_LENGTH('abc');`, true},
 		{`SELECT CHARACTER_LENGTH('abc');`, true},
+		{`SELECT FIELD('ej', 'Hej', 'ej', 'Heja', 'hej', 'foo');`, true},
 		{`SELECT FIND_IN_SET('foo', 'foo,bar')`, true},
 		{`SELECT FIND_IN_SET('foo')`, false},
 

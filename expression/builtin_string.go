@@ -63,6 +63,7 @@ var (
 	_ functionClass = &charFunctionClass{}
 	_ functionClass = &charLengthFunctionClass{}
 	_ functionClass = &findInSetFunctionClass{}
+	_ functionClass = &fieldFunctionClass{}
 )
 
 var (
@@ -1365,4 +1366,101 @@ func builtinFindInSet(args []types.Datum, _ context.Context) (d types.Datum, err
 		}
 	}
 	return
+}
+
+type fieldFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *fieldFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinFieldSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinFieldSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinFieldSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return builtinField(args, b.ctx)
+}
+
+// See http://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_field
+func builtinField(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	// args[0] -> str
+	// args[1:] -> str list
+	d.SetInt64(0)
+	if args[0].IsNull() {
+		return
+	}
+	var idx int64
+	switch args[0].Kind() {
+	case types.KindString, types.KindBytes:
+		idx, err = fieldCmpString(args, ctx)
+	case types.KindInt64, types.KindUint64:
+		idx, err = fieldCmpNumber(args, ctx)
+	default:
+		idx, err = fieldCmpDouble(args, ctx)
+	}
+	d.SetInt64(idx)
+	return d, errors.Trace(err)
+}
+
+func fieldCmpString(args []types.Datum, _ context.Context) (idx int64, err error) {
+	var str string
+	str, err = args[0].ToString()
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	for i, a := range args[1:] {
+		s, err1 := a.ToString()
+		if err1 != nil {
+			return 0, errors.Trace(err1)
+		}
+		if str == s {
+			return int64(i + 1), nil
+		}
+	}
+	return 0, nil
+}
+
+func fieldCmpNumber(args []types.Datum, ctx context.Context) (idx int64, err error) {
+	sc := ctx.GetSessionVars().StmtCtx
+	var i int64
+	i, err = args[0].ToInt64(sc)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	for j, a := range args[1:] {
+		ai, err1 := a.ToInt64(sc)
+		if err1 != nil {
+			return 0, errors.Trace(err1)
+		}
+		if ai == i {
+			return int64(j + 1), nil
+		}
+	}
+	return 0, nil
+}
+
+func fieldCmpDouble(args []types.Datum, ctx context.Context) (idx int64, err error) {
+	sc := ctx.GetSessionVars().StmtCtx
+	var f float64
+	f, err = args[0].ToFloat64(sc)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	for i, a := range args[1:] {
+		af, err1 := a.ToFloat64(sc)
+		if err1 != nil {
+			return 0, errors.Trace(err1)
+		}
+		if af == f {
+			return int64(i + 1), nil
+		}
+	}
+	return 0, nil
 }

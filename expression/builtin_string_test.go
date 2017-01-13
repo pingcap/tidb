@@ -792,3 +792,23 @@ func (s *testEvaluatorSuite) TestFindInSet(c *C) {
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
 	}
 }
+
+func (s *testEvaluatorSuite) TestField(c *C) {
+	defer testleak.AfterTest(c)()
+
+	tbl := []struct {
+		strlst []interface{}
+		ret    interface{}
+	}{
+		{[]interface{}{"ej", "Hej", "ej", "Heja", "hej", "foo"}, int64(2)},
+		{[]interface{}{"fo", "Hej", "ej", "Heja", "hej", "foo"}, int64(0)},
+		{[]interface{}{1, 2, 3, 11, 1}, int64(4)},
+		{[]interface{}{nil, 2, 3, 11, 1}, int64(0)},
+		{[]interface{}{1.1, 2.1, 3.1, 11.1, 1.1}, int64(4)},
+	}
+	for _, t := range tbl {
+		r, err := builtinField(types.MakeDatums(t.strlst...), s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
+	}
+}
