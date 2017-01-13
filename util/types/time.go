@@ -1132,10 +1132,17 @@ func ParseDateFromNum(num int64) (Time, error) {
 }
 
 func TimeFromDays(num int64) Time {
-	t := calcTimefromDays(int(num))
+	if num < 0 {
+		return Time{
+			Time: FromDate(0, 0, 0, 0, 0, 0, 0),
+			Type: mysql.TypeDate,
+			Fsp: 0,
+		}
+	}
+	year, month, day := getDateFromDaynr(uint(num))
 
 	return Time{
-		Time: t,
+		Time: FromDate(int(year),  int(month),  int(day), 0, 0, 0, 0),
 		Type: mysql.TypeDate,
 		Fsp: 0,
 	}
