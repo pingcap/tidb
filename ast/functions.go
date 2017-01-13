@@ -87,6 +87,7 @@ const (
 	Power   = "power"
 	Rand    = "rand"
 	Round   = "round"
+	Sign    = "sign"
 
 	// time functions
 	Curdate          = "curdate"
