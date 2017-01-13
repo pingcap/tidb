@@ -281,7 +281,7 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 }
 
 // handleOtherComparableSubq handles the queries like < any, < max, etc. For example, if the query is t.id < any (select s.id from s),
-// it will be rewrited to t.id < (select max(s.id) from s).
+// it will be rewrote to t.id < (select max(s.id) from s).
 func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.Expression, np LogicalPlan, useMin bool, cmpFunc string, all bool) {
 	funcName := ast.AggFuncMax
 	if useMin {
@@ -309,29 +309,29 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 
 func (er *expressionRewriter) buildQuatifierPlan(agg *Aggregation, cond, rexpr expression.Expression, all bool) {
 	isNullFunc, _ := expression.NewFunction(ast.IsNull, types.NewFieldType(mysql.TypeTiny), rexpr.Clone())
-	countNull := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{isNullFunc}, false)
-	count := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, false)
-	agg.AggFuncs = append(agg.AggFuncs, countNull, count)
+	sumFunc := expression.NewAggFunction(ast.AggFuncSum, []expression.Expression{isNullFunc}, false)
+	countFuncNull := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{isNullFunc.Clone()}, false)
+	agg.AggFuncs = append(agg.AggFuncs, sumFunc, countFuncNull)
 	posID := agg.schema.Len()
-	aggColCountNull := &expression.Column{
-		ColName:  model.NewCIStr("agg_col_cnt_null"),
+	aggColSum := &expression.Column{
+		ColName:  model.NewCIStr("agg_col_sum"),
 		FromID:   agg.id,
 		Position: posID,
-		RetType:  countNull.GetType(),
+		RetType:  sumFunc.GetType(),
 	}
-	aggColCount := &expression.Column{
+	aggColCountNull := &expression.Column{
 		ColName:  model.NewCIStr("agg_col_cnt"),
 		FromID:   agg.id,
 		Position: posID + 1,
-		RetType:  count.GetType(),
+		RetType:  countFuncNull.GetType(),
 	}
+	agg.schema.Append(aggColSum)
 	agg.schema.Append(aggColCountNull)
-	agg.schema.Append(aggColCount)
 	if all {
 		// All of the inner record set should not contain null value. So for t.id < all(select s.id from s), it
-		// should be rewrited to t.id < min(s.id) and if(count(s.id) == count(s.id is null), true, null).
-		countEQ, _ := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), aggColCountNull.Clone(), aggColCount.Clone())
-		nullChecker, _ := expression.NewFunction(ast.If, types.NewFieldType(mysql.TypeTiny), countEQ, expression.One, expression.Null)
+		// should be rewrote to t.id < min(s.id) and if(sum(s.id is null) = 0, true, null).
+		hasNotNull, _ := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), aggColSum.Clone(), expression.Zero)
+		nullChecker, _ := expression.NewFunction(ast.If, types.NewFieldType(mysql.TypeTiny), hasNotNull, expression.One, expression.Null)
 		cond = expression.ComposeCNFCondition(cond, nullChecker)
 		// If the set is empty, it should always return true.
 		checkEmpty, _ := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), aggColCountNull.Clone(), &expression.Constant{
@@ -341,8 +341,8 @@ func (er *expressionRewriter) buildQuatifierPlan(agg *Aggregation, cond, rexpr e
 		cond = expression.ComposeDNFCondition(cond, checkEmpty)
 	} else {
 		// For "any" expression, if the record set has null and the cond return false, the result should be NULL.
-		countNE, _ := expression.NewFunction(ast.NE, types.NewFieldType(mysql.TypeTiny), aggColCountNull.Clone(), aggColCount.Clone())
-		nullChecker, _ := expression.NewFunction(ast.If, types.NewFieldType(mysql.TypeTiny), countNE, expression.Null, expression.Zero)
+		hasNull, _ := expression.NewFunction(ast.NE, types.NewFieldType(mysql.TypeTiny), aggColSum.Clone(), expression.Zero)
+		nullChecker, _ := expression.NewFunction(ast.If, types.NewFieldType(mysql.TypeTiny), hasNull, expression.Null, expression.Zero)
 		cond = expression.ComposeDNFCondition(cond, nullChecker)
 	}
 	if !er.asScalar {
@@ -373,14 +373,14 @@ func (er *expressionRewriter) buildQuatifierPlan(agg *Aggregation, cond, rexpr e
 	er.p = proj
 }
 
-// handleNEAny handles the case of != any. For exmaple, if the query is t.id != any (select s.id from s), it will be rewrited to
+// handleNEAny handles the case of != any. For exmaple, if the query is t.id != any (select s.id from s), it will be rewrote to
 // t.id != s.id or count(distinct s.id) > 1. If there are two different values in s.id , there must exist a s.id that doesn't equal to t.id.
 func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np LogicalPlan) {
-	firstRow := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
+	firstRowFunc := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
 	countFunc := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, true)
 	agg := &Aggregation{
 		baseLogicalPlan: newBaseLogicalPlan(Agg, er.b.allocator),
-		AggFuncs:        []expression.AggregationFunction{firstRow, countFunc},
+		AggFuncs:        []expression.AggregationFunction{firstRowFunc, countFunc},
 	}
 	agg.initIDAndContext(er.b.ctx)
 	agg.self = agg
@@ -389,7 +389,7 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 		ColName:  model.NewCIStr("col_firstRow"),
 		FromID:   agg.id,
 		Position: 0,
-		RetType:  firstRow.GetType(),
+		RetType:  firstRowFunc.GetType(),
 	}
 	count := &expression.Column{
 		ColName:  model.NewCIStr("col_count"),
@@ -404,15 +404,15 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 	er.buildQuatifierPlan(agg, cond, rexpr, false)
 }
 
-// handleEQAll handles the case of = all. For example, if the query is t.id = all (select s.id from s), it will be rewrited to
+// handleEQAll handles the case of = all. For example, if the query is t.id = all (select s.id from s), it will be rewrote to
 // t.id = (select s.id from s having count(distinct s.id) < 2) or count(distinct s.id) = 0. We add a condition `count(distinct s.id) = 0`
 // to process the case that sub query returns an empty set.
 func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np LogicalPlan) {
-	firstRow := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
+	firstRowFunc := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
 	countFunc := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, true)
 	agg := &Aggregation{
 		baseLogicalPlan: newBaseLogicalPlan(Agg, er.b.allocator),
-		AggFuncs:        []expression.AggregationFunction{firstRow, countFunc},
+		AggFuncs:        []expression.AggregationFunction{firstRowFunc, countFunc},
 	}
 	agg.initIDAndContext(er.b.ctx)
 	agg.self = agg
@@ -421,7 +421,7 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 		ColName:  model.NewCIStr("col_firstRow"),
 		FromID:   agg.id,
 		Position: 0,
-		RetType:  firstRow.GetType(),
+		RetType:  firstRowFunc.GetType(),
 	}
 	count := &expression.Column{
 		ColName:  model.NewCIStr("col_count"),
@@ -503,8 +503,8 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 			return v, true
 		}
 	}
-	// a in (subq) will be rewrited as a = any(subq).
-	// a not in (subq) will be rewrited as a != all(subq).
+	// a in (subq) will be rewrote as a = any(subq).
+	// a not in (subq) will be rewrote as a != all(subq).
 	checkCondition, err := er.constructBinaryOpFunction(lexpr, rexpr, ast.EQ)
 	if err != nil {
 		er.err = errors.Trace(err)

@@ -203,8 +203,3 @@ func (p *DataSource) buildKeyInfo() {
 		}
 	}
 }
-
-func (p *Apply) buildKeyInfo() {
-	p.baseLogicalPlan.buildKeyInfo()
-	p.schema.Keys = append(p.children[0].GetSchema().Clone().Keys, p.children[1].GetSchema().Clone().Keys...)
-}

@@ -964,6 +964,7 @@ type ApplyConditionChecker struct {
 	All       bool
 }
 
+// buildInnerApply builds apply plan with outerPlan and innerPlan, which apply inner-join for every row from outerPlan and the whole innerPlan.
 func (b *planBuilder) buildInnerApply(outerPlan, innerPlan LogicalPlan) LogicalPlan {
 	join := &Join{
 		JoinType:        InnerJoin,
@@ -978,11 +979,11 @@ func (b *planBuilder) buildInnerApply(outerPlan, innerPlan LogicalPlan) LogicalP
 	for i := outerPlan.GetSchema().Len(); i < ap.GetSchema().Len(); i++ {
 		ap.schema.Columns[i].IsAggOrSubq = true
 	}
+	ap.SetCorrelated()
 	return ap
 }
 
-// buildApply builds apply plan with outerPlan and innerPlan. Everytime we fetch a record from outerPlan and apply it to
-// innerPlan. This way is the so-called correlated execution.
+// buildSemiApply builds apply plan with outerPlan and innerPlan, which apply semi-join for every row from outerPlan and the whole innerPlan.
 func (b *planBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition []expression.Expression, asScalar, not bool) LogicalPlan {
 	join := b.buildSemiJoin(outerPlan, innerPlan, condition, asScalar, not)
 	ap := &Apply{Join: *join}

@@ -463,7 +463,10 @@ func (e *NestedLoopJoinExec) fetchBigRow() (*Row, error) {
 // Prepare runs the first time when 'Next' is called and it reads all data from the small table and stores
 // them in a slice.
 func (e *NestedLoopJoinExec) prepare() error {
-	e.SmallExec.Close()
+	err := e.SmallExec.Close()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	e.innerRows = e.innerRows[:0]
 	e.prepared = true
 	for {
@@ -579,7 +582,10 @@ func (e *HashSemiJoinExec) Schema() expression.Schema {
 // Prepare runs the first time when 'Next' is called and it reads all data from the small table and stores
 // them in a hash table.
 func (e *HashSemiJoinExec) prepare() error {
-	e.smallExec.Close()
+	err := e.smallExec.Close()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	e.hashTable = make(map[string][]*Row)
 	sc := e.ctx.GetSessionVars().StmtCtx
 	e.resultRows = make([]*Row, 1)
