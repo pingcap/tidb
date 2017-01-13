@@ -300,11 +300,11 @@ func (s *testDBSuite) testAddIndex(c *C) {
 LOOP:
 	for {
 		select {
-		case result := <-done:
-			if result == nil {
+		case err := <-done:
+			if err == nil {
 				break LOOP
 			}
-			c.Assert(result, IsNil, Commentf("err:%v", errors.ErrorStack(result)))
+			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
 		case <-ticker.C:
 			step := 10
 			// delete some rows, and add some data
@@ -425,11 +425,11 @@ func (s *testDBSuite) testDropIndex(c *C) {
 LOOP:
 	for {
 		select {
-		case result := <-done:
-			if result == nil {
+		case err := <-done:
+			if err == nil {
 				break LOOP
 			}
-			c.Assert(result, IsNil, Commentf("err:%v", errors.ErrorStack(result)))
+			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
 		case <-ticker.C:
 			step := 10
 			// delete some rows, and add some data
@@ -595,11 +595,11 @@ func (s *testDBSuite) testAddColumn(c *C) {
 LOOP:
 	for {
 		select {
-		case result := <-done:
-			if result == nil {
+		case err := <-done:
+			if err == nil {
 				break LOOP
 			}
-			c.Assert(result, IsNil, Commentf("err:%v", errors.ErrorStack(result)))
+			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
 		case <-ticker.C:
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
@@ -680,11 +680,11 @@ func (s *testDBSuite) testDropColumn(c *C) {
 LOOP:
 	for {
 		select {
-		case result := <-done:
-			if result == nil {
+		case err := <-done:
+			if err == nil {
 				break LOOP
 			}
-			c.Assert(result, IsNil, Commentf("err:%v", errors.ErrorStack(result)))
+			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
 		case <-ticker.C:
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
