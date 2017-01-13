@@ -81,6 +81,7 @@ type TablePB struct {
 	Ts               *int64      `protobuf:"varint,2,opt,name=ts" json:"ts,omitempty"`
 	Count            *int64      `protobuf:"varint,3,opt,name=count" json:"count,omitempty"`
 	Columns          []*ColumnPB `protobuf:"bytes,4,rep,name=columns" json:"columns,omitempty"`
+	Indices          []*ColumnPB `protobuf:"bytes,5,rep,name=indices" json:"indices,omitempty"`
 	XXX_unrecognized []byte      `json:"-"`
 }
 
@@ -113,6 +114,13 @@ func (m *TablePB) GetCount() int64 {
 func (m *TablePB) GetColumns() []*ColumnPB {
 	if m != nil {
 		return m.Columns
+	}
+	return nil
+}
+
+func (m *TablePB) GetIndices() []*ColumnPB {
+	if m != nil {
+		return m.Indices
 	}
 	return nil
 }

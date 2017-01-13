@@ -497,6 +497,11 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 			first: "DataScan(t)->Aggr(sum(test.t.b),firstrow(test.t.a))->Projection->Selection->Selection->Projection",
 			best:  "DataScan(t)->Selection->Aggr(sum(test.t.b),firstrow(test.t.a))->Selection->Projection->Projection",
 		},
+		{
+			sql:   "select a, count(a) cnt from t group by a having cnt < 1",
+			first: "DataScan(t)->Aggr(count(test.t.a),firstrow(test.t.a))->Projection->Selection",
+			best:  "DataScan(t)->Aggr(count(test.t.a),firstrow(test.t.a))->Selection->Projection",
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
@@ -510,6 +515,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			is:        is,
+			colMapper: make(map[*ast.ColumnNameExpr]int),
 		}
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil, comment)
@@ -520,7 +526,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		c.Assert(err, IsNil)
 		lp.ResolveIndicesAndCorCols()
 		c.Assert(err, IsNil)
-		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
+		c.Assert(ToString(lp), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
 }
 
