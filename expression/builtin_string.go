@@ -1394,15 +1394,19 @@ func builtinField(args []types.Datum, ctx context.Context) (d types.Datum, err e
 	// args[1:] -> str list
 	d.SetInt64(0)
 	if args[0].IsNull() {
+		// If str is NULL, the return value is 0 because NULL fails equality comparison with any value.
 		return
 	}
 	var idx int64
 	switch args[0].Kind() {
 	case types.KindString, types.KindBytes:
+		// If all arguments to FIELD() are strings, all arguments are compared as strings.
 		idx, err = fieldCmpString(args, ctx)
 	case types.KindInt64, types.KindUint64:
+		//  If all arguments are numbers, they are compared as numbers.
 		idx, err = fieldCmpNumber(args, ctx)
 	default:
+		// Otherwise, the arguments are compared as double.
 		idx, err = fieldCmpDouble(args, ctx)
 	}
 	d.SetInt64(idx)
