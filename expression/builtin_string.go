@@ -1409,15 +1409,15 @@ func builtinField(args []types.Datum, ctx context.Context) (d types.Datum, err e
 	default:
 		argType = 1
 	}
-	// Check whether other arguments are both strings or numbers.
+	// Check whether other arguments are all strings or numbers.
 	for i := 1; i < len(args) && argType != 1; i++ {
 		switch args[i].Kind() {
 		case types.KindString, types.KindBytes:
-			if argType != -1 {
+			if argType == 0 {
 				argType = 1
 			}
 		case types.KindInt64, types.KindUint64:
-			if argType != 0 {
+			if argType == -1 {
 				argType = 1
 			}
 		}
