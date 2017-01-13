@@ -4513,7 +4513,7 @@ Statement:
 |	LoadDataStmt
 |	PreparedStmt
 |	RollbackStmt
-|       RenameTableStmt       
+|	RenameTableStmt
 |	ReplaceIntoStmt
 |	SelectStmt
 |	UnionStmt
