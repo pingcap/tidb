@@ -284,15 +284,14 @@ func (s *testDBSuite) testAddAnonymousIndex(c *C) {
 }
 
 func (s *testDBSuite) testAddIndex(c *C) {
-	done := make(chan struct{}, 1)
-	errCh := make(chan *errorParams, 1)
+	done := make(chan *errorParams, 1)
 	num := defaultBatchSize + 10
 	// first add some rows
 	for i := 0; i < num; i++ {
 		s.mustExec(c, "insert into t1 values (?, ?, ?)", i, i, i)
 	}
 
-	sessionExecInGoroutine(c, s.store, "create index c3_index on t1 (c3)", done, errCh)
+	sessionExecInGoroutine(c, s.store, "create index c3_index on t1 (c3)", done)
 
 	deletedKeys := make(map[int]struct{})
 
@@ -301,10 +300,12 @@ func (s *testDBSuite) testAddIndex(c *C) {
 LOOP:
 	for {
 		select {
-		case err := <-errCh:
-			c.Assert(err.obtained, err.checker, err.args...)
-		case <-done:
-			break LOOP
+		case result := <-done:
+			if result == nil {
+				break LOOP
+			} else {
+				c.Assert(result.obtained, result.checker, result.args...)
+			}
 		case <-ticker.C:
 			step := 10
 			// delete some rows, and add some data
@@ -400,9 +401,7 @@ LOOP:
 }
 
 func (s *testDBSuite) testDropIndex(c *C) {
-	done := make(chan struct{}, 1)
-	errCh := make(chan *errorParams, 1)
-
+	done := make(chan *errorParams, 1)
 	s.mustExec(c, "delete from t1")
 
 	num := 100
@@ -420,17 +419,19 @@ func (s *testDBSuite) testDropIndex(c *C) {
 	}
 	c.Assert(c3idx, NotNil)
 
-	sessionExecInGoroutine(c, s.store, "drop index c3_index on t1", done, errCh)
+	sessionExecInGoroutine(c, s.store, "drop index c3_index on t1", done)
 
 	ticker := time.NewTicker(s.lease / 2)
 	defer ticker.Stop()
 LOOP:
 	for {
 		select {
-		case err := <-errCh:
-			c.Assert(err.obtained, err.checker, err.args...)
-		case <-done:
-			break LOOP
+		case result := <-done:
+			if result == nil {
+				break LOOP
+			} else {
+				c.Assert(result.obtained, result.checker, result.args...)
+			}
 		case <-ticker.C:
 			step := 10
 			// delete some rows, and add some data
@@ -553,12 +554,12 @@ func sessionExec(c *C, s kv.Storage, sql string) {
 	se.Close()
 }
 
-func sessionExecInGoroutine(c *C, s kv.Storage, sql string, done chan struct{}, errCh chan *errorParams) {
+func sessionExecInGoroutine(c *C, s kv.Storage, sql string, done chan *errorParams) {
 	go func() {
 		se, err := tidb.CreateSession(s)
 		defer se.Close()
 		if err != nil {
-			errCh <- &errorParams{
+			done <- &errorParams{
 				err,
 				IsNil,
 				nil,
@@ -567,7 +568,7 @@ func sessionExecInGoroutine(c *C, s kv.Storage, sql string, done chan struct{}, 
 		}
 		_, err = se.Execute("use test_db")
 		if err != nil {
-			errCh <- &errorParams{
+			done <- &errorParams{
 				err,
 				IsNil,
 				nil,
@@ -576,7 +577,7 @@ func sessionExecInGoroutine(c *C, s kv.Storage, sql string, done chan struct{}, 
 		}
 		rs, err := se.Execute(sql)
 		if err != nil {
-			errCh <- &errorParams{
+			done <- &errorParams{
 				err,
 				IsNil,
 				[]interface{}{Commentf("err:%v", errors.ErrorStack(err))},
@@ -584,20 +585,19 @@ func sessionExecInGoroutine(c *C, s kv.Storage, sql string, done chan struct{}, 
 			return
 		}
 		if rs != nil {
-			errCh <- &errorParams{
+			done <- &errorParams{
 				rs,
 				IsNil,
 				nil,
 			}
 			return
 		}
-		done <- struct{}{}
+		done <- nil
 	}()
 }
 
 func (s *testDBSuite) testAddColumn(c *C) {
-	done := make(chan struct{}, 1)
-	errCh := make(chan *errorParams, 1)
+	done := make(chan *errorParams, 1)
 
 	num := defaultBatchSize + 10
 	// add some rows
@@ -605,7 +605,7 @@ func (s *testDBSuite) testAddColumn(c *C) {
 		s.mustExec(c, "insert into t2 values (?, ?, ?)", i, i, i)
 	}
 
-	sessionExecInGoroutine(c, s.store, "alter table t2 add column c4 int default -1", done, errCh)
+	sessionExecInGoroutine(c, s.store, "alter table t2 add column c4 int default -1", done)
 
 	ticker := time.NewTicker(s.lease / 2)
 	defer ticker.Stop()
@@ -613,10 +613,12 @@ func (s *testDBSuite) testAddColumn(c *C) {
 LOOP:
 	for {
 		select {
-		case err := <-errCh:
-			c.Assert(err.obtained, err.checker, err.args...)
-		case <-done:
-			break LOOP
+		case result := <-done:
+			if result == nil {
+				break LOOP
+			} else {
+				c.Assert(result.obtained, result.checker, result.args...)
+			}
 		case <-ticker.C:
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
@@ -679,8 +681,7 @@ LOOP:
 }
 
 func (s *testDBSuite) testDropColumn(c *C) {
-	done := make(chan struct{}, 1)
-	errCh := make(chan *errorParams, 1)
+	done := make(chan *errorParams, 1)
 	s.mustExec(c, "delete from t2")
 
 	num := 100
@@ -690,7 +691,7 @@ func (s *testDBSuite) testDropColumn(c *C) {
 	}
 
 	// get c4 column id
-	sessionExecInGoroutine(c, s.store, "alter table t2 drop column c4", done, errCh)
+	sessionExecInGoroutine(c, s.store, "alter table t2 drop column c4", done)
 
 	ticker := time.NewTicker(s.lease / 2)
 	defer ticker.Stop()
@@ -698,10 +699,12 @@ func (s *testDBSuite) testDropColumn(c *C) {
 LOOP:
 	for {
 		select {
-		case err := <-errCh:
-			c.Assert(err.obtained, err.checker, err.args...)
-		case <-done:
-			break LOOP
+		case result := <-done:
+			if result == nil {
+				break LOOP
+			} else {
+				c.Assert(result.obtained, result.checker, result.args...)
+			}
 		case <-ticker.C:
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
