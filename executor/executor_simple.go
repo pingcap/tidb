@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan/statistics"
+	"github.com/pingcap/tidb/plan/statscache"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
@@ -375,12 +376,23 @@ func (e *SimpleExec) collectSamples(result ast.RecordSet) (count int64, samples 
 
 func (e *SimpleExec) buildStatisticsAndSaveToKV(tn *ast.TableName, count int64, sampleRows []*ast.Row) error {
 	txn := e.ctx.Txn()
-	columnSamples := rowsToColumnSamples(sampleRows)
-	sc := e.ctx.GetSessionVars().StmtCtx
-	t, err := statistics.NewTable(sc, tn.TableInfo, int64(txn.StartTS()), count, defaultBucketCount, columnSamples)
+	statBuilder := &statistics.Builder{
+		Sc:            e.ctx.GetSessionVars().StmtCtx,
+		TblInfo:       tn.TableInfo,
+		StartTS:       int64(txn.StartTS()),
+		Count:         count,
+		NumBuckets:    defaultBucketCount,
+		ColumnSamples: rowsToColumnSamples(sampleRows),
+		PkOffset:      -1,
+	}
+	for i := range statBuilder.ColumnSamples {
+		statBuilder.ColOffsets = append(statBuilder.ColOffsets, i)
+	}
+	t, err := statBuilder.NewTable()
 	if err != nil {
 		return errors.Trace(err)
 	}
+	statscache.SetStatisticsTableCache(tn.TableInfo.ID, t)
 	tpb, err := t.ToPB()
 	if err != nil {
 		return errors.Trace(err)

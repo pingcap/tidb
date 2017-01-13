@@ -89,7 +89,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache", "action", "round",
 		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest", "least",
 		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events", "less", "than", "timediff",
-		"ln", "log", "log2", "log10",
+		"ln", "log", "log2", "log10", "timestampdiff",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -311,6 +311,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		// For default value
 		{"CREATE TABLE sbtest (id INTEGER UNSIGNED NOT NULL AUTO_INCREMENT, k integer UNSIGNED DEFAULT '0' NOT NULL, c char(120) DEFAULT '' NOT NULL, pad char(60) DEFAULT '' NOT NULL, PRIMARY KEY  (id) )", true},
 		{"create table test (create_date TIMESTAMP NOT NULL COMMENT '创建日期 create date' DEFAULT now());", true},
+		{"create table ts (t int, v timestamp(3) default CURRENT_TIMESTAMP(3));", true},
 
 		// For truncate statement
 		{"TRUNCATE TABLE t1", true},
@@ -488,6 +489,7 @@ func (s *testParserSuite) TestExpression(c *C) {
 		{`select "\"a\"";`, true},
 		{`select """a""";`, true},
 		{`select _utf8"string";`, true},
+		{`select _binary"string";`, true},
 		// For comparison
 		{"select 1 <=> 0, 1 <=> null, 1 = null", true},
 	}
@@ -586,6 +588,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"select sysdate(), sysdate(6)", true},
 		{"SELECT time('01:02:03');", true},
 		{"SELECT TIMEDIFF('2000:01:01 00:00:00', '2000:01:01 00:00:00.000001');", true},
+		{"SELECT TIMESTAMPDIFF(MONTH,'2003-02-01','2003-05-01');", true},
+		{"SELECT TIMESTAMPDIFF(YEAR,'2002-05-01','2001-01-01');", true},
+		{"SELECT TIMESTAMPDIFF(MINUTE,'2003-02-01','2003-05-01 12:05:55');", true},
 
 		// Select current_time
 		{"select current_time", true},
@@ -615,6 +620,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 
 		// For utc_date
 		{"SELECT UTC_DATE, UTC_DATE();", true},
+		{"SELECT UTC_DATE(), UTC_DATE()+0", true},
 
 		// for week, month, year
 		{"SELECT WEEK('2007-02-03');", true},
@@ -710,9 +716,6 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 
 		// For strcmp
 		{`select strcmp('abc', 'def')`, true},
-
-		// For utc_date
-		{`select utc_date(), utc_date()+0`, true},
 
 		// For adddate
 		{`select adddate("2011-11-11 10:10:10.123456", interval 10 microsecond)`, true},

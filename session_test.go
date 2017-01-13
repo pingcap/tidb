@@ -841,7 +841,7 @@ func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 
 	_, err = exec(se1, "commit")
 	c.Assert(err, NotNil)
-	err = se1.Retry()
+	err = se1.(*session).retry(10)
 	// retry should fail
 	c.Assert(err, NotNil)
 
@@ -1813,13 +1813,13 @@ func (s *testSessionSuite) TestIssue571(c *C) {
 	mustExecSQL(c, se, "commit")
 
 	se1 := newSession(c, store, s.dbName)
-	se1.(*session).maxRetryCnt = unlimitedRetryCnt
+	se1.(*session).unlimitedRetryCount = true
 	mustExecSQL(c, se1, "SET SESSION autocommit=1;")
 	se2 := newSession(c, store, s.dbName)
-	se2.(*session).maxRetryCnt = unlimitedRetryCnt
+	se2.(*session).unlimitedRetryCount = true
 	mustExecSQL(c, se2, "SET SESSION autocommit=1;")
 	se3 := newSession(c, store, s.dbName)
-	se3.(*session).maxRetryCnt = unlimitedRetryCnt
+	se3.(*session).unlimitedRetryCount = true
 	mustExecSQL(c, se3, "SET SESSION autocommit=0;")
 
 	var wg sync.WaitGroup
@@ -2090,7 +2090,7 @@ func (s *testSessionSuite) TestErrorRollback(c *C) {
 			defer wg.Done()
 			se := newSession(c, store, s.dbName)
 			// retry forever
-			se.(*session).maxRetryCnt = unlimitedRetryCnt
+			se.(*session).unlimitedRetryCount = true
 			defer se.Close()
 
 			for j := 0; j < num; j++ {
@@ -2173,18 +2173,131 @@ func (s *testSessionSuite) TestSubstringIndexExpr(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testSessionSuite) TestIndexMaxLength(c *C) {
+	defer testleak.AfterTest(c)()
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "drop table if exists t;")
+
+	// create simple index at table creation
+	_, err := exec(se, "create table t (c1 varchar(3073), index(c1));")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	// create simple index after table creation
+	mustExecSQL(c, se, "create table t (c1 varchar(3073));")
+	_, err = exec(se, "create index idx_c1 on t(c1) ")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	// create compound index at table creation
+	mustExecSQL(c, se, "drop table if exists t;")
+	_, err = exec(se, "create table t (c1 varchar(3072), c2 varchar(1), index(c1, c2));")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	_, err = exec(se, "create table t (c1 varchar(3072), c2 char(1), index(c1, c2));")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	_, err = exec(se, "create table t (c1 varchar(3072), c2 char, index(c1, c2));")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	_, err = exec(se, "create table t (c1 varchar(3072), c2 date, index(c1, c2));")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	_, err = exec(se, "create table t (c1 varchar(3068), c2 timestamp(1), index(c1, c2));")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	_, err = exec(se, "create table t (c1 varchar(3068), c2 bit(26), index(c1, c2));")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	// create compound index after table creation
+	mustExecSQL(c, se, "create table t (c1 varchar(3072), c2 varchar(1));")
+	_, err = exec(se, "create index idx_c1_c2 on t(c1, c2);")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	mustExecSQL(c, se, "drop table if exists t;")
+	mustExecSQL(c, se, "create table t (c1 varchar(3072), c2 char(1));")
+	_, err = exec(se, "create index idx_c1_c2 on t(c1, c2);")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	mustExecSQL(c, se, "drop table if exists t;")
+	mustExecSQL(c, se, "create table t (c1 varchar(3072), c2 char);")
+	_, err = exec(se, "create index idx_c1_c2 on t(c1, c2);")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	mustExecSQL(c, se, "drop table if exists t;")
+	mustExecSQL(c, se, "create table t (c1 varchar(3072), c2 date);")
+	_, err = exec(se, "create index idx_c1_c2 on t(c1, c2);")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	mustExecSQL(c, se, "drop table if exists t;")
+	mustExecSQL(c, se, "create table t (c1 varchar(3068), c2 timestamp(1));")
+	_, err = exec(se, "create index idx_c1_c2 on t(c1, c2);")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+
+	mustExecSQL(c, se, "drop table if exists t;")
+	mustExecSQL(c, se, "create table t (c1 varchar(3068), c2 bit(26));")
+	_, err = exec(se, "create index idx_c1_c2 on t(c1, c2);")
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
+	c.Assert(err, NotNil)
+}
+
 func (s *testSessionSuite) TestSpecifyIndexPrefixLength(c *C) {
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "drop table if exists t;")
+
+	_, err := exec(se, "create table t (c1 char, index(c1(3)));")
+	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
+	c.Assert(err, NotNil)
+
+	_, err = exec(se, "create table t (c1 int, index(c1(3)));")
+	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
+	c.Assert(err, NotNil)
+
+	_, err = exec(se, "create table t (c1 bit(10), index(c1(3)));")
+	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
+	c.Assert(err, NotNil)
+
+	mustExecSQL(c, se, "create table t (c1 char, c2 int, c3 bit(10));")
+
+	_, err = exec(se, "create index idx_c1 on t (c1(3));")
+	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
+	c.Assert(err, NotNil)
+
+	_, err = exec(se, "create index idx_c1 on t (c2(3));")
+	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
+	c.Assert(err, NotNil)
+
+	_, err = exec(se, "create index idx_c1 on t (c3(3));")
+	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
+	c.Assert(err, NotNil)
+
+	mustExecSQL(c, se, "drop table if exists t;")
+
+	_, err = exec(se, "create table t (c1 int, c2 blob, c3 varchar(64), index(c2));")
+	// ERROR 1170 (42000): BLOB/TEXT column 'c2' used in key specification without a key length
+	c.Assert(err, NotNil)
+
 	mustExecSQL(c, se, "create table t (c1 int, c2 blob, c3 varchar(64));")
-	_, err := exec(se, "create index idx_c1 on t (c2);")
+	_, err = exec(se, "create index idx_c1 on t (c2);")
 	// ERROR 1170 (42000): BLOB/TEXT column 'c2' used in key specification without a key length
 	c.Assert(err, NotNil)
 
 	_, err = exec(se, "create index idx_c1 on t (c2(555555));")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 767 bytes
+	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
 	c.Assert(err, NotNil)
 
 	_, err = exec(se, "create index idx_c1 on t (c1(5))")
