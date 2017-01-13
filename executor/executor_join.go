@@ -81,7 +81,9 @@ type hashJoinCtx struct {
 // Close implements the Executor Close interface.
 func (e *HashJoinExec) Close() error {
 	e.finished.Store(true)
-	<-e.closeCh
+	if e.prepared {
+		<-e.closeCh
+	}
 	e.prepared = false
 	e.cursor = 0
 	return e.smallExec.Close()
@@ -461,6 +463,8 @@ func (e *NestedLoopJoinExec) fetchBigRow() (*Row, error) {
 // Prepare runs the first time when 'Next' is called and it reads all data from the small table and stores
 // them in a slice.
 func (e *NestedLoopJoinExec) prepare() error {
+	e.SmallExec.Close()
+	e.innerRows = e.innerRows[:0]
 	e.prepared = true
 	for {
 		row, err := e.SmallExec.Next()
@@ -575,6 +579,7 @@ func (e *HashSemiJoinExec) Schema() expression.Schema {
 // Prepare runs the first time when 'Next' is called and it reads all data from the small table and stores
 // them in a hash table.
 func (e *HashSemiJoinExec) prepare() error {
+	e.smallExec.Close()
 	e.hashTable = make(map[string][]*Row)
 	sc := e.ctx.GetSessionVars().StmtCtx
 	e.resultRows = make([]*Row, 1)
@@ -588,13 +593,20 @@ func (e *HashSemiJoinExec) prepare() error {
 			break
 		}
 
-		matched := true
 		if e.smallFilter != nil {
-			matched, err = expression.EvalBool(e.smallFilter, row.Data, e.ctx)
+			d, err := e.smallFilter.Eval(row.Data, e.ctx)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if !matched {
+			if d.IsNull() {
+				e.smallTableHasNull = true
+				continue
+			}
+			match, err := d.ToBool(e.ctx.GetSessionVars().StmtCtx)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if match == 0 {
 				continue
 			}
 		}
@@ -636,9 +648,19 @@ func (e *HashSemiJoinExec) rowIsMatched(bigRow *Row) (matched bool, hasNull bool
 		if e.otherFilter != nil {
 			var matchedRow *Row
 			matchedRow = makeJoinRow(bigRow, smallRow)
-			matched, err = expression.EvalBool(e.otherFilter, matchedRow.Data, e.ctx)
+			r, err := e.otherFilter.Eval(matchedRow.Data, e.ctx)
 			if err != nil {
 				return false, false, errors.Trace(err)
+			}
+			if r.IsNull() {
+				hasNull = true
+				matched = false
+			} else {
+				m, err := r.ToBool(e.ctx.GetSessionVars().StmtCtx)
+				if err != nil {
+					return false, false, errors.Trace(err)
+				}
+				matched = (m != 0)
 			}
 		}
 		if matched {
@@ -724,18 +746,17 @@ func (e *HashSemiJoinExec) Next() (*Row, error) {
 }
 
 // ApplyJoinExec is the new logic of apply.
-// TODO: I will add test for it after refactoring the plan part of apply.
 type ApplyJoinExec struct {
 	join        joinExec
-	innerExec   Executor
 	outerSchema []*expression.CorrelatedColumn
 	cursor      int
 	resultRows  []*Row
+	schema      expression.Schema
 }
 
 // Schema implements the Executor interface.
 func (e *ApplyJoinExec) Schema() expression.Schema {
-	return e.join.Schema()
+	return e.schema
 }
 
 // Close implements the Executor interface.
@@ -769,122 +790,5 @@ func (e *ApplyJoinExec) Next() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		e.cursor = 0
-	}
-}
-
-// ApplyExec represents apply executor.
-// Apply gets one row from outer executor and gets one row from inner executor according to outer row.
-type ApplyExec struct {
-	schema      expression.Schema
-	Src         Executor
-	outerSchema []*expression.CorrelatedColumn
-	innerExec   Executor
-	// checker checks if an Src row with an inner row matches the condition,
-	// and if it needs to check more inner rows.
-	checker *conditionChecker
-}
-
-// conditionChecker checks if all or any of the row match this condition.
-type conditionChecker struct {
-	cond        expression.Expression
-	trimLen     int
-	ctx         context.Context
-	all         bool
-	dataHasNull bool
-}
-
-// Check returns finished for checking if the input row can determine the final result,
-// and returns data for the evaluation result.
-func (c *conditionChecker) check(rowData []types.Datum) (finished bool, data types.Datum, err error) {
-	data, err = c.cond.Eval(rowData, c.ctx)
-	if err != nil {
-		return false, data, errors.Trace(err)
-	}
-	var matched int64
-	if data.IsNull() {
-		c.dataHasNull = true
-		matched = 0
-	} else {
-		matched, err = data.ToBool(c.ctx.GetSessionVars().StmtCtx)
-		if err != nil {
-			return false, data, errors.Trace(err)
-		}
-	}
-	return (matched != 0) != c.all, data, nil
-}
-
-// Reset resets dataHasNull to false, so it can be reused for the next row from ApplyExec.Src.
-func (c *conditionChecker) reset() {
-	c.dataHasNull = false
-}
-
-// Schema implements the Executor Schema interface.
-func (e *ApplyExec) Schema() expression.Schema {
-	return e.schema
-}
-
-// Close implements the Executor Close interface.
-func (e *ApplyExec) Close() error {
-	if e.checker != nil {
-		e.checker.dataHasNull = false
-	}
-	return e.Src.Close()
-}
-
-// Next implements the Executor Next interface.
-func (e *ApplyExec) Next() (*Row, error) {
-	srcRow, err := e.Src.Next()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if srcRow == nil {
-		return nil, nil
-	}
-	for {
-		for _, col := range e.outerSchema {
-			idx := col.Index
-			*col.Data = srcRow.Data[idx]
-		}
-		innerRow, err := e.innerExec.Next()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		trimLen := len(srcRow.Data)
-		if innerRow != nil {
-			srcRow.Data = append(srcRow.Data, innerRow.Data...)
-		}
-		if e.checker == nil {
-			e.innerExec.Close()
-			return srcRow, nil
-		}
-		if innerRow == nil {
-			// When inner exec finishes, we need to append a result column to true, false or NULL.
-			var result types.Datum
-			if e.checker.all {
-				result = types.NewDatum(true)
-			} else {
-				// If 'any' meets a null value, the result will be null.
-				if e.checker.dataHasNull {
-					result = types.NewDatum(nil)
-				} else {
-					result = types.NewDatum(false)
-				}
-			}
-			srcRow.Data = append(srcRow.Data, result)
-			e.checker.reset()
-			e.innerExec.Close()
-			return srcRow, nil
-		}
-		finished, data, err := e.checker.check(srcRow.Data)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		srcRow.Data = srcRow.Data[:trimLen]
-		if finished {
-			e.checker.reset()
-			e.innerExec.Close()
-			srcRow.Data = append(srcRow.Data, data)
-			return srcRow, nil
-		}
 	}
 }
