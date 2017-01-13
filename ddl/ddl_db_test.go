@@ -52,13 +52,6 @@ type testDBSuite struct {
 	lease      time.Duration
 }
 
-// errorParams records the params of C.Assert passed by sub-goroutine.
-type errorParams struct {
-	obtained interface{}
-	checker  Checker
-	args     []interface{}
-}
-
 func (s *testDBSuite) SetUpSuite(c *C) {
 	var err error
 
