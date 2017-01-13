@@ -128,9 +128,7 @@ func (s *testFileSortSuite) TestInMemory(c *C) {
 	)
 
 	tmpDir, err = ioutil.TempDir("", "util_filesort_test")
-	if err != nil {
-		panic(err)
-	}
+	c.Assert(err, IsNil)
 
 	fsBuilder := new(Builder)
 	fs, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetDesc(byDesc).SetDir(tmpDir).Build()
@@ -179,9 +177,7 @@ func (s *testFileSortSuite) TestMultipleFiles(c *C) {
 	)
 
 	tmpDir, err = ioutil.TempDir("", "util_filesort_test")
-	if err != nil {
-		panic(err)
-	}
+	c.Assert(err, IsNil)
 
 	fsBuilder := new(Builder)
 	fs, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetDesc(byDesc).SetDir(tmpDir).Build()
@@ -229,16 +225,12 @@ func (s *testFileSortSuite) TestClose(c *C) {
 	// Prepare two FileSorter instances for tests
 	fsBuilder := new(Builder)
 	tmpDir0, err = ioutil.TempDir("", "util_filesort_test")
-	if err != nil {
-		panic(err)
-	}
+	c.Assert(err, IsNil)
 	fs0, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetDesc(byDesc).SetDir(tmpDir0).Build()
 	c.Assert(err, IsNil)
 
 	tmpDir1, err = ioutil.TempDir("", "util_filesort_test")
-	if err != nil {
-		panic(err)
-	}
+	c.Assert(err, IsNil)
 	fs1, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetDesc(byDesc).SetDir(tmpDir1).Build()
 	c.Assert(err, IsNil)
 
@@ -310,16 +302,12 @@ func (s *testFileSortSuite) TestMismatchedUsage(c *C) {
 	// Prepare two FileSorter instances for tests
 	fsBuilder := new(Builder)
 	tmpDir, err = ioutil.TempDir("", "util_filesort_test")
-	if err != nil {
-		panic(err)
-	}
+	c.Assert(err, IsNil)
 	fs0, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetDesc(byDesc).SetDir(tmpDir).Build()
 	c.Assert(err, IsNil)
 
 	tmpDir, err = ioutil.TempDir("", "util_filesort_test")
-	if err != nil {
-		panic(err)
-	}
+	c.Assert(err, IsNil)
 	fs1, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetDesc(byDesc).SetDir(tmpDir).Build()
 	c.Assert(err, IsNil)
 

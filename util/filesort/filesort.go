@@ -191,24 +191,18 @@ func (b *Builder) Build() (*FileSorter, error) {
 	rh := &rowHeap{sc: b.sc,
 		ims:    make([]*item, 0),
 		byDesc: b.byDesc,
-		err:    nil,
 	}
 
 	return &FileSorter{sc: b.sc,
-		keySize:   b.keySize,
-		valSize:   b.valSize,
-		bufSize:   b.bufSize,
-		buf:       make([]*comparableRow, 0, b.bufSize),
-		files:     make([]string, 0),
-		byDesc:    b.byDesc,
-		cursor:    0,
-		fetched:   false,
-		closed:    false,
-		rowHeap:   rh,
-		tmpDir:    b.tmpDir,
-		fds:       make([]*os.File, 0),
-		fileCount: 0,
-		err:       nil,
+		keySize: b.keySize,
+		valSize: b.valSize,
+		bufSize: b.bufSize,
+		buf:     make([]*comparableRow, 0, b.bufSize),
+		files:   make([]string, 0),
+		byDesc:  b.byDesc,
+		rowHeap: rh,
+		tmpDir:  b.tmpDir,
+		fds:     make([]*os.File, 0),
 	}, nil
 }
 
@@ -239,7 +233,6 @@ func (fs *FileSorter) getUniqueFileName() string {
 func (fs *FileSorter) flushToFile() error {
 	var (
 		err        error
-		fileName   string
 		outputFile *os.File
 		outputByte []byte
 	)
@@ -249,7 +242,7 @@ func (fs *FileSorter) flushToFile() error {
 		return errors.Trace(fs.err)
 	}
 
-	fileName = fs.getUniqueFileName()
+	fileName := fs.getUniqueFileName()
 
 	outputFile, err = os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
@@ -391,7 +384,7 @@ func (fs *FileSorter) closeAllFiles() error {
 	return nil
 }
 
-// Close terminates the output process and discards all remaining data.
+// Close terminates the input or output process and discards all remaining data.
 func (fs *FileSorter) Close() error {
 	if fs.closed {
 		return errors.New("FileSorter has been closed")
