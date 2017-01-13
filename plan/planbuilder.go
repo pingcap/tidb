@@ -335,7 +335,7 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 // getColumnOffsets returns the offsets of index columns, normal columns and primary key with integer type.
 func getColumnOffsets(tn *ast.TableName) (indexOffsets []int, columnOffsets []int, pkOffset int) {
 	tbl := tn.TableInfo
-	// indNames contains all the normal columns that can be analyzed more effectively, because those columns occur as index
+	// idxNames contains all the normal columns that can be analyzed more effectively, because those columns occur as index
 	// columns or primary key columns with integer type.
 	var idxNames []string
 	pkOffset = -1
