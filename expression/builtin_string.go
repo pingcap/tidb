@@ -1397,15 +1397,39 @@ func builtinField(args []types.Datum, ctx context.Context) (d types.Datum, err e
 		// If str is NULL, the return value is 0 because NULL fails equality comparison with any value.
 		return
 	}
-	var idx int64
+	var (
+		idx     int64
+		argType int32 // -1:string, 0:int, 1:double
+	)
 	switch args[0].Kind() {
 	case types.KindString, types.KindBytes:
+		argType = -1
+	case types.KindInt64, types.KindUint64:
+		argType = 0
+	default:
+		argType = 1
+	}
+	// Check whether other arguments are both strings or numbers.
+	for i := 1; i < len(args) && argType != 1; i++ {
+		switch args[i].Kind() {
+		case types.KindString, types.KindBytes:
+			if argType != -1 {
+				argType = 1
+			}
+		case types.KindInt64, types.KindUint64:
+			if argType != 0 {
+				argType = 1
+			}
+		}
+	}
+	switch argType {
+	case -1:
 		// If all arguments to FIELD() are strings, all arguments are compared as strings.
 		idx, err = fieldCmpString(args, ctx)
-	case types.KindInt64, types.KindUint64:
+	case 0:
 		//  If all arguments are numbers, they are compared as numbers.
 		idx, err = fieldCmpNumber(args, ctx)
-	default:
+	case 1:
 		// Otherwise, the arguments are compared as double.
 		idx, err = fieldCmpDouble(args, ctx)
 	}
@@ -1453,14 +1477,12 @@ func fieldCmpNumber(args []types.Datum, ctx context.Context) (idx int64, err err
 func fieldCmpDouble(args []types.Datum, ctx context.Context) (idx int64, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	var f float64
-	f, err = args[0].ToFloat64(sc)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
+	// If error occurred when convert args[0] to float64, ignore it and set f as 0.
+	f, _ = args[0].ToFloat64(sc)
 	for i, a := range args[1:] {
-		af, err1 := a.ToFloat64(sc)
-		if err1 != nil {
-			return 0, errors.Trace(err1)
+		af, err := a.ToFloat64(sc)
+		if err != nil {
+			return 0, errors.Trace(err)
 		}
 		if af == f {
 			return int64(i + 1), nil

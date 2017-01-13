@@ -805,6 +805,8 @@ func (s *testEvaluatorSuite) TestField(c *C) {
 		{[]interface{}{1, 2, 3, 11, 1}, int64(4)},
 		{[]interface{}{nil, 2, 3, 11, 1}, int64(0)},
 		{[]interface{}{1.1, 2.1, 3.1, 11.1, 1.1}, int64(4)},
+		{[]interface{}{1.1, "2.1", "3.1", "11.1", "1.1"}, int64(4)},
+		{[]interface{}{"abc", 0, 1, 11.1, 1.1}, int64(1)},
 	}
 	for _, t := range tbl {
 		r, err := builtinField(types.MakeDatums(t.strlst...), s.ctx)
