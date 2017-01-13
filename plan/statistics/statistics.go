@@ -504,8 +504,8 @@ type Builder struct {
 	NumBuckets    int64                      // NumBuckets is the number of buckets a column histogram has.
 	ColumnSamples [][]types.Datum            // ColumnSamples is the sample of columns.
 	ColOffsets    []int                      // ColOffsets is the offset of columns in the table.
-	IndRecords    []ast.RecordSet            // IndRecords is the record set of index columns.
-	IndOffsets    []int                      // IndOffsets is the offset of indexes in the table.
+	IdxRecords    []ast.RecordSet            // IdxRecords is the record set of index columns.
+	IdxOffsets    []int                      // IdxOffsets is the offset of indices in the table.
 	PkRecords     ast.RecordSet              // PkRecords is the record set of primary key of integer type.
 	PkOffset      int                        // PkOffset is the offset of primary key of integer type in the table.
 }
@@ -534,8 +534,8 @@ func (b *Builder) NewTable() (*Table, error) {
 			return nil, errors.Trace(err)
 		}
 	}
-	for i, offset := range b.IndOffsets {
-		err := t.build4SortedColumn(b.Sc, offset, b.IndRecords[i], b.NumBuckets, false)
+	for i, offset := range b.IdxOffsets {
+		err := t.build4SortedColumn(b.Sc, offset, b.IdxRecords[i], b.NumBuckets, false)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

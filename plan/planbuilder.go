@@ -333,36 +333,36 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 }
 
 // getColumnOffsets returns the offsets of index columns, normal columns and primary key with integer type.
-func getColumnOffsets(tn *ast.TableName) (indexOffsets []int, columnOffsets []int, priOffset int) {
+func getColumnOffsets(tn *ast.TableName) (indexOffsets []int, columnOffsets []int, pkOffset int) {
 	tbl := tn.TableInfo
 	// indNames contains all the normal columns that can be analyzed more effectively, because those columns occur as index
 	// columns or primary key columns with integer type.
-	var indNames []string
-	priOffset = -1
+	var idxNames []string
+	pkOffset = -1
 	if tbl.PKIsHandle {
 		for i, col := range tbl.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
-				indNames = append(indNames, col.Name.L)
-				priOffset = i
+				idxNames = append(idxNames, col.Name.L)
+				pkOffset = i
 			}
 		}
 	}
 	indices, _ := availableIndices(tn.IndexHints, tn.TableInfo)
-	for _, ind := range indices {
+	for _, index := range indices {
 		for i, idx := range tn.TableInfo.Indices {
-			if ind.Name.L == idx.Name.L {
+			if index.Name.L == idx.Name.L {
 				indexOffsets = append(indexOffsets, i)
 				break
 			}
 		}
-		if len(ind.Columns) == 1 {
-			indNames = append(indNames, ind.Columns[0].Name.L)
+		if len(index.Columns) == 1 {
+			idxNames = append(idxNames, index.Columns[0].Name.L)
 		}
 	}
 	for i, col := range tbl.Columns {
 		isIndexCol := false
-		for _, ind := range indNames {
-			if ind == col.Name.L {
+		for _, idx := range idxNames {
+			if idx == col.Name.L {
 				isIndexCol = true
 				break
 			}
@@ -388,14 +388,14 @@ func (b *planBuilder) prepareSimpleSelect(colNames, tableName string, ordered bo
 
 func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) LogicalPlan {
 	p := &Analyze{
-		baseLogicalPlan: newBaseLogicalPlan(Ana, b.allocator),
+		baseLogicalPlan: newBaseLogicalPlan(Aly, b.allocator),
 	}
 	for _, tbl := range as.TableNames {
-		indOffsets, colOffsets, pkOffset := getColumnOffsets(tbl)
+		idxOffsets, colOffsets, pkOffset := getColumnOffsets(tbl)
 		result := &Analyze{
-			baseLogicalPlan: newBaseLogicalPlan(Ana, b.allocator),
+			baseLogicalPlan: newBaseLogicalPlan(Aly, b.allocator),
 			Table:           tbl,
-			IndOffsets:      indOffsets,
+			IdxOffsets:      idxOffsets,
 			ColOffsets:      colOffsets,
 			PkOffset:        pkOffset,
 		}

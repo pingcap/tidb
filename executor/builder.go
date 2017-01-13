@@ -680,7 +680,7 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 		schema:     v.GetSchema(),
 		tblInfo:    tblInfo,
 		ctx:        b.ctx,
-		indOffsets: v.IndOffsets,
+		idxOffsets: v.IdxOffsets,
 		colOffsets: v.ColOffsets,
 		pkOffset:   v.PkOffset,
 		Srcs:       make([]Executor, len(v.GetChildren())),

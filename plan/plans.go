@@ -194,7 +194,7 @@ type Analyze struct {
 	baseLogicalPlan
 
 	Table      *ast.TableName
-	IndOffsets []int
+	IdxOffsets []int
 	ColOffsets []int
 	PkOffset   int // Used only when pk is handle.
 }

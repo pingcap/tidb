@@ -27,12 +27,14 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+var _ Executor = &AnalyzeExec{}
+
 // AnalyzeExec represents Analyze executor.
 type AnalyzeExec struct {
 	schema     expression.Schema
 	tblInfo    *model.TableInfo
 	ctx        context.Context
-	indOffsets []int
+	idxOffsets []int
 	colOffsets []int
 	pkOffset   int
 	Srcs       []Executor
@@ -74,19 +76,19 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 			}
 		}
 		columnSamples := rowsToColumnSamples(sampleRows)
-		var pkRes ast.RecordSet
+		var pkRS ast.RecordSet
 		if ae.pkOffset != -1 {
 			offset := len(ae.Srcs) - 1
 			if ae.colOffsets != nil {
 				offset--
 			}
-			pkRes = &recordSet{executor: ae.Srcs[offset]}
+			pkRS = &recordSet{executor: ae.Srcs[offset]}
 		}
-		var indRes []ast.RecordSet
-		for i := range ae.indOffsets {
-			indRes = append(indRes, &recordSet{executor: ae.Srcs[i]})
+		idxRS := make([]ast.RecordSet, 0, len(ae.idxOffsets))
+		for i := range ae.idxOffsets {
+			idxRS = append(idxRS, &recordSet{executor: ae.Srcs[i]})
 		}
-		err := ae.buildStatisticsAndSaveToKV(count, columnSamples, indRes, pkRes)
+		err := ae.buildStatisticsAndSaveToKV(count, columnSamples, idxRS, pkRS)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -94,7 +96,7 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 	return nil, nil
 }
 
-func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]types.Datum, indRes []ast.RecordSet, pkRes ast.RecordSet) error {
+func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]types.Datum, idxRS []ast.RecordSet, pkRS ast.RecordSet) error {
 	txn := e.ctx.Txn()
 	statBuilder := &statistics.Builder{
 		Sc:            e.ctx.GetSessionVars().StmtCtx,
@@ -104,9 +106,9 @@ func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]
 		NumBuckets:    defaultBucketCount,
 		ColumnSamples: columnSamples,
 		ColOffsets:    e.colOffsets,
-		IndRecords:    indRes,
-		IndOffsets:    e.indOffsets,
-		PkRecords:     pkRes,
+		IdxRecords:    idxRS,
+		IdxOffsets:    e.idxOffsets,
+		PkRecords:     pkRS,
 		PkOffset:      e.pkOffset,
 	}
 	t, err := statBuilder.NewTable()

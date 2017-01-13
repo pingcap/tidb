@@ -1058,19 +1058,19 @@ func (p *Analyze) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInf
 		return info, nil
 	}
 	var childInfos []*physicalPlanInfo
-	for _, ind := range p.IndOffsets {
+	for _, idx := range p.IdxOffsets {
 		var columns []*model.ColumnInfo
 		tblInfo := p.Table.TableInfo
-		for _, indCol := range tblInfo.Indices[ind].Columns {
+		for _, idxCol := range tblInfo.Indices[idx].Columns {
 			for _, col := range tblInfo.Columns {
-				if col.Name.L == indCol.Name.L {
+				if col.Name.L == idxCol.Name.L {
 					columns = append(columns, col)
 					break
 				}
 			}
 		}
 		is := &PhysicalIndexScan{
-			Index:               tblInfo.Indices[ind],
+			Index:               tblInfo.Indices[idx],
 			Table:               tblInfo,
 			Columns:             columns,
 			TableAsName:         &p.Table.Name,
@@ -1079,7 +1079,7 @@ func (p *Analyze) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInf
 			physicalTableSource: physicalTableSource{client: p.ctx.GetClient()},
 			DoubleRead:          false,
 		}
-		is.tp = Ana
+		is.tp = Aly
 		is.allocator = p.allocator
 		is.initIDAndContext(p.ctx)
 		is.SetSchema(expression.TableInfo2Schema(tblInfo))

@@ -582,8 +582,8 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			plan: "*plan.TableDual->Projection",
 		},
 		{
-			sql:  "analyze table t",
-			plan: "DataScan(t)->Projection->Sort->DataScan(t)->Projection->*plan.Analyze->*plan.Analyze",
+			sql:  "analyze table t, t",
+			plan: "DataScan(t)->Projection->Sort->DataScan(t)->Projection->*plan.Analyze->DataScan(t)->Projection->Sort->DataScan(t)->Projection->*plan.Analyze->*plan.Analyze",
 		},
 	}
 	for _, ca := range cases {
