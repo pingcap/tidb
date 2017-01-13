@@ -472,11 +472,11 @@ func (s *testEvaluatorSuite) TestStrToDate(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestFromDays(c *C) {
-	// Test cases from https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_datediff
 	tests := []struct {
 		day int64
 		expect string
 	}{
+		{-140, "0000-00-00"}, // mysql FROM_DAYS returns 0000-00-00 for any day <= 365.
 		{140, "0000-00-00"}, // mysql FROM_DAYS returns 0000-00-00 for any day <= 365.
 		{735000, "2012-05-12"}, // Leap year.
 		{735030, "2012-06-11"},
@@ -493,6 +493,25 @@ func (s *testEvaluatorSuite) TestFromDays(c *C) {
 
 	for _, test := range tests {
 		t1 := types.NewIntDatum(test.day)
+
+		result, err := builtinFromDays([]types.Datum{t1}, s.ctx)
+
+		c.Assert(err, IsNil)
+		c.Assert(result.GetMysqlTime().String(), Equals, test.expect)
+	}
+
+
+	stringTests := []struct {
+		day string
+		expect string
+	}{
+		{"z550z", "0000-00-00"},
+		{"6500z", "0017-10-18"},
+		{"440", "0001-03-16"},
+	}
+
+	for _, test := range stringTests {
+		t1 := types.NewStringDatum(test.day)
 
 		result, err := builtinFromDays([]types.Datum{t1}, s.ctx)
 
