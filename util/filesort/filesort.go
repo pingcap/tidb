@@ -399,62 +399,76 @@ func (fs *FileSorter) Close() error {
 }
 
 // Output gets the next sorted row.
-func (fs *FileSorter) Output() (key []types.Datum, val []types.Datum, handle int64, err error) {
+func (fs *FileSorter) Output() ([]types.Datum, []types.Datum, int64, error) {
 	if fs.closed {
 		return nil, nil, 0, errors.New("FileSorter has been closed")
 	}
 	if len(fs.files) == 0 {
 		// No external files generated.
 		// Perform full in-memory sort directly.
-		return fs.internalSort()
+		r, err := fs.internalSort()
+		if err != nil {
+			return nil, nil, 0, errors.Trace(err)
+		} else if r != nil {
+			return r.key, r.val, r.handle, nil
+		} else {
+			return nil, nil, 0, nil
+		}
 	}
-	return fs.externalSort()
+	r, err := fs.externalSort()
+	if err != nil {
+		return nil, nil, 0, errors.Trace(err)
+	} else if r != nil {
+		return r.key, r.val, r.handle, nil
+	} else {
+		return nil, nil, 0, nil
+	}
 }
 
 // Perform full in-memory sort.
-func (fs *FileSorter) internalSort() (key []types.Datum, val []types.Datum, handle int64, err error) {
+func (fs *FileSorter) internalSort() (*comparableRow, error) {
 	if !fs.fetched {
 		sort.Sort(fs)
 		if fs.err != nil {
-			return nil, nil, 0, errors.Trace(fs.err)
+			return nil, errors.Trace(fs.err)
 		}
 		fs.fetched = true
 	}
 	if fs.cursor < len(fs.buf) {
 		r := fs.buf[fs.cursor]
 		fs.cursor++
-		return r.key, r.val, r.handle, nil
+		return r, nil
 	}
-	return nil, nil, 0, nil
+	return nil, nil
 }
 
 // Perform external file sort.
-func (fs *FileSorter) externalSort() (key []types.Datum, val []types.Datum, handle int64, err error) {
+func (fs *FileSorter) externalSort() (*comparableRow, error) {
 	if !fs.fetched {
 		if len(fs.buf) > 0 {
-			err = fs.flushToFile()
+			err := fs.flushToFile()
 			if err != nil {
-				return nil, nil, 0, errors.Trace(err)
+				return nil, errors.Trace(err)
 			}
 		}
 
 		heap.Init(fs.rowHeap)
 		if fs.rowHeap.err != nil {
-			return nil, nil, 0, errors.Trace(fs.rowHeap.err)
+			return nil, errors.Trace(fs.rowHeap.err)
 		}
 
-		err = fs.openAllFiles()
+		err := fs.openAllFiles()
 		if err != nil {
-			return nil, nil, 0, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 
 		for id := range fs.fds {
 			row, err := fs.fetchNextRow(id)
 			if row == nil {
 				if err != nil {
-					return nil, nil, 0, errors.Trace(err)
+					return nil, errors.Trace(err)
 				}
-				return nil, nil, 0, errors.New("file is empty")
+				return nil, errors.New("file is empty")
 			}
 
 			im := &item{
@@ -464,7 +478,7 @@ func (fs *FileSorter) externalSort() (key []types.Datum, val []types.Datum, hand
 
 			heap.Push(fs.rowHeap, im)
 			if fs.rowHeap.err != nil {
-				return nil, nil, 0, errors.Trace(fs.rowHeap.err)
+				return nil, errors.Trace(fs.rowHeap.err)
 			}
 		}
 
@@ -474,13 +488,13 @@ func (fs *FileSorter) externalSort() (key []types.Datum, val []types.Datum, hand
 	if fs.rowHeap.Len() > 0 {
 		im := heap.Pop(fs.rowHeap).(*item)
 		if fs.rowHeap.err != nil {
-			return nil, nil, 0, errors.Trace(fs.rowHeap.err)
+			return nil, errors.Trace(fs.rowHeap.err)
 		}
 
 		row, err := fs.fetchNextRow(im.index)
 		if row == nil {
 			if err != nil {
-				return nil, nil, 0, errors.Trace(err)
+				return nil, errors.Trace(err)
 			}
 		} else {
 			im := &item{
@@ -490,12 +504,12 @@ func (fs *FileSorter) externalSort() (key []types.Datum, val []types.Datum, hand
 
 			heap.Push(fs.rowHeap, im)
 			if fs.rowHeap.err != nil {
-				return nil, nil, 0, errors.Trace(fs.rowHeap.err)
+				return nil, errors.Trace(fs.rowHeap.err)
 			}
 		}
 
-		return im.value.key, im.value.val, im.value.handle, nil
+		return im.value, nil
 	}
 
-	return nil, nil, 0, nil
+	return nil, nil
 }
