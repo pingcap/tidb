@@ -820,6 +820,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select count(*) from t;`, true},
 		{`select count(distinct c1, c2) from t;`, true},
 		{`select count(c1, c2) from t;`, false},
+		{`select count(all c1) from t;`, true},
 		{`select group_concat(c2,c1) from t group by c1;`, true},
 		{`select group_concat(distinct c2,c1) from t group by c1;`, true},
 	}

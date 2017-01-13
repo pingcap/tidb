@@ -2510,7 +2510,15 @@ DistinctOpt:
 	{
 		$$ = false
 	}
+|	"ALL"
+	{
+		$$ = false
+	}
 |	"DISTINCT"
+	{
+		$$ = true
+	}
+|	"DISTINCT" "ALL"
 	{
 		$$ = true
 	}
@@ -3144,6 +3152,10 @@ FunctionCallAgg:
 |	"COUNT" '(' "DISTINCT" ExpressionList ')'
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: $4.([]ast.ExprNode), Distinct: true}
+	}
+|	"COUNT" '(' "ALL" Expression ')'
+	{
+		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4.(ast.ExprNode)}}
 	}
 |	"COUNT" '(' Expression ')'
 	{
