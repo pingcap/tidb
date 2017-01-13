@@ -3163,33 +3163,17 @@ FunctionCallAgg:
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: $4.([]ast.ExprNode), Distinct: $3.(bool)}
 	}
-|	"MAX" '(' Expression ')'
-	{
-		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3.(ast.ExprNode)}}
-	}
 |	"MAX" '(' DistinctOpt Expression ')'
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
-	}
-|	"MIN" '(' Expression ')'
-	{
-		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"MIN" '(' DistinctOpt Expression ')'
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
 	}
-|	"SUM" '(' Expression ')'
-	{
-		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3.(ast.ExprNode)}}
-	}
 |	"SUM" '(' DistinctOpt Expression ')'
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
-	}
-|	"BIT_XOR" '(' Expression ')'
-	{
-		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"BIT_XOR" '(' DistinctOpt Expression ')'
 	{
