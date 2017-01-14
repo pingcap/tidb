@@ -40,6 +40,7 @@ const (
 	ActionDropForeignKey
 	ActionTruncateTable
 	ActionModifyColumn
+	ActionRenameTable
 )
 
 func (action ActionType) String() string {
@@ -68,6 +69,8 @@ func (action ActionType) String() string {
 		return "truncate table"
 	case ActionModifyColumn:
 		return "modify column"
+	case ActionRenameTable:
+		return "rename table"
 	default:
 		return "none"
 	}
@@ -247,4 +250,6 @@ type SchemaDiff struct {
 
 	// OldTableID is the table ID before truncate, only used by truncate table DDL.
 	OldTableID int64 `json:"old_table_id"`
+	// OldSchemaID is the schema ID before rename table, only used by rename table DDL.
+	OldSchemaID int64 `json:"old_schema_id"`
 }

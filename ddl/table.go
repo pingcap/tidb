@@ -35,23 +35,9 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 	}
 
 	tbInfo.State = model.StateNone
-
-	// Check this table's database.
-	tables, err := t.ListTables(schemaID)
-	if terror.ErrorEqual(err, meta.ErrDBNotExists) {
-		job.State = model.JobCancelled
-		return errors.Trace(infoschema.ErrDatabaseNotExists)
-	} else if err != nil {
+	err := checkTableNotExists(t, job, schemaID, tbInfo.Name.L)
+	if err != nil {
 		return errors.Trace(err)
-	}
-
-	// Check the table.
-	for _, tbl := range tables {
-		if tbl.Name.L == tbInfo.Name.L {
-			// This table already exists and can't be created, we should cancel this job now.
-			job.State = model.JobCancelled
-			return errors.Trace(infoschema.ErrTableExists.GenByArgs(tbl.Name))
-		}
 	}
 
 	ver, err := updateSchemaVersion(t, job)
@@ -160,8 +146,7 @@ func (d *ddl) getTable(schemaID int64, tblInfo *model.TableInfo) (table.Table, e
 	return tbl, errors.Trace(err)
 }
 
-func (d *ddl) getTableInfo(t *meta.Meta, job *model.Job) (*model.TableInfo, error) {
-	schemaID := job.SchemaID
+func getTableInfo(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInfo, error) {
 	tableID := job.TableID
 	tblInfo, err := t.GetTable(schemaID, tableID)
 	if terror.ErrorEqual(err, meta.ErrDBNotExists) {
@@ -202,16 +187,9 @@ func (d *ddl) onTruncateTable(t *meta.Meta, job *model.Job) error {
 		job.State = model.JobCancelled
 		return errors.Trace(err)
 	}
-	tblInfo, err := t.GetTable(schemaID, tableID)
-	if terror.ErrorEqual(err, meta.ErrDBNotExists) {
-		job.State = model.JobCancelled
-		return errors.Trace(infoschema.ErrDatabaseNotExists)
-	} else if err != nil {
+	tblInfo, err := getTableInfo(t, job, schemaID)
+	if err != nil {
 		return errors.Trace(err)
-	}
-	if tblInfo == nil {
-		job.State = model.JobCancelled
-		return errors.Trace(infoschema.ErrTableNotExists)
 	}
 
 	err = t.DropTable(schemaID, tableID)
@@ -234,5 +212,69 @@ func (d *ddl) onTruncateTable(t *meta.Meta, job *model.Job) error {
 	job.BinlogInfo.AddTableInfo(ver, tblInfo)
 	startKey := tablecodec.EncodeTablePrefix(tableID)
 	job.Args = []interface{}{startKey}
+	return nil
+}
+
+func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) error {
+	var oldSchemaID int64
+	var tableName model.CIStr
+	if err := job.DecodeArgs(&oldSchemaID, &tableName); err != nil {
+		// Invalid arguments, cancel this job.
+		job.State = model.JobCancelled
+		return errors.Trace(err)
+	}
+
+	tblInfo, err := getTableInfo(t, job, oldSchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	newSchemaID := job.SchemaID
+	if newSchemaID != oldSchemaID {
+		err = checkTableNotExists(t, job, newSchemaID, tblInfo.Name.L)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	err = t.DropTable(oldSchemaID, tblInfo.ID)
+	if err != nil {
+		job.State = model.JobCancelled
+		return errors.Trace(err)
+	}
+	tblInfo.Name = tableName
+	err = t.CreateTable(newSchemaID, tblInfo)
+	if err != nil {
+		job.State = model.JobCancelled
+		return errors.Trace(err)
+	}
+
+	ver, err := updateSchemaVersion(t, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	job.State = model.JobDone
+	job.BinlogInfo.AddTableInfo(ver, tblInfo)
+	return nil
+}
+
+func checkTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName string) error {
+	// Check this table's database.
+	tables, err := t.ListTables(schemaID)
+	if terror.ErrorEqual(err, meta.ErrDBNotExists) {
+		job.State = model.JobCancelled
+		return errors.Trace(infoschema.ErrDatabaseNotExists)
+	} else if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Check the table.
+	for _, tbl := range tables {
+		if tbl.Name.L == tableName {
+			// This table already exists and can't be created, we should cancel this job now.
+			job.State = model.JobCancelled
+			return errors.Trace(infoschema.ErrTableExists.GenByArgs(tbl.Name))
+		}
+	}
+
 	return nil
 }

@@ -95,7 +95,7 @@ func (d *ddl) createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnIn
 
 func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
-	tblInfo, err := d.getTableInfo(t, job)
+	tblInfo, err := getTableInfo(t, job, schemaID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -199,7 +199,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 
 func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
-	tblInfo, err := d.getTableInfo(t, job)
+	tblInfo, err := getTableInfo(t, job, schemaID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -432,7 +432,7 @@ func (d *ddl) backfillColumn(ctx context.Context, t table.Table, colMeta *column
 }
 
 func (d *ddl) onModifyColumn(t *meta.Meta, job *model.Job) error {
-	tblInfo, err := d.getTableInfo(t, job)
+	tblInfo, err := getTableInfo(t, job, job.SchemaID)
 	if err != nil {
 		return errors.Trace(err)
 	}

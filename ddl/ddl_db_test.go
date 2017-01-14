@@ -854,3 +854,52 @@ func (s *testDBSuite) TestTruncateTable(c *C) {
 	}
 	c.Assert(hasOldTableData, IsFalse)
 }
+
+func (s *testDBSuite) TestRenameTable(c *C) {
+	defer testleak.AfterTest(c)
+	store, err := tidb.NewStore("memory://rename_table")
+	c.Assert(err, IsNil)
+	s.tk = testkit.NewTestKit(c, store)
+	s.tk.MustExec("use test")
+
+	// for different databases
+	s.tk.MustExec("create table t (c1 int, c2 int)")
+	s.tk.MustExec("insert t values (1, 1), (2, 2)")
+	ctx := s.tk.Se.(context.Context)
+	is := sessionctx.GetDomain(ctx).InfoSchema()
+	oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	oldTblID := oldTblInfo.Meta().ID
+	s.tk.MustExec("create database test1")
+	s.tk.MustExec("use test1")
+	s.tk.MustExec("rename table test.t to test1.t1")
+	is = sessionctx.GetDomain(ctx).InfoSchema()
+	newTblInfo, err := is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	c.Assert(newTblInfo.Meta().ID, Equals, oldTblID)
+	s.tk.MustQuery("select * from t1").Check(testkit.Rows("1 1", "2 2"))
+	s.tk.MustExec("use test")
+	s.tk.MustQuery("show tables").Check(testkit.Rows())
+
+	// for the same database
+	s.tk.MustExec("use test1")
+	s.tk.MustExec("rename table t1 to t2")
+	is = sessionctx.GetDomain(ctx).InfoSchema()
+	newTblInfo, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t2"))
+	c.Assert(err, IsNil)
+	c.Assert(newTblInfo.Meta().ID, Equals, oldTblID)
+	s.tk.MustQuery("select * from t2").Check(testkit.Rows("1 1", "2 2"))
+	isExist := is.TableExists(model.NewCIStr("test1"), model.NewCIStr("t1"))
+	c.Assert(isExist, IsFalse)
+	s.tk.MustQuery("show tables").Check(testkit.Rows("t2"))
+
+	// for failure case
+	sql := "rename table test_not_exist.t to test_not_exist.t"
+	s.testErrorCode(c, sql, tmysql.ErrFileNotFound)
+	sql = "rename table test.t_not_exist to test_not_exist.t"
+	s.testErrorCode(c, sql, tmysql.ErrFileNotFound)
+	sql = "rename table test1.t2 to test_not_exist.t"
+	s.testErrorCode(c, sql, tmysql.ErrErrorOnRename)
+	sql = "rename table test1.t2 to test1.t2"
+	s.testErrorCode(c, sql, tmysql.ErrTableExists)
+}

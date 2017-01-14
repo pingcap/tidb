@@ -1131,6 +1131,24 @@ func ParseDateFromNum(num int64) (Time, error) {
 	return ParseTimeFromNum(num, mysql.TypeDate, MinFsp)
 }
 
+// TimeFromDays Converts a day number to a date.
+func TimeFromDays(num int64) Time {
+	if num < 0 {
+		return Time{
+			Time: FromDate(0, 0, 0, 0, 0, 0, 0),
+			Type: mysql.TypeDate,
+			Fsp:  0,
+		}
+	}
+	year, month, day := getDateFromDaynr(uint(num))
+
+	return Time{
+		Time: FromDate(int(year), int(month), int(day), 0, 0, 0, 0),
+		Type: mysql.TypeDate,
+		Fsp:  0,
+	}
+}
+
 func checkDateType(t TimeInternal) error {
 	year, month, day := t.Year(), t.Month(), t.Day()
 	if year == 0 && month == 0 && day == 0 {
