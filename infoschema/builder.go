@@ -175,13 +175,16 @@ func (b *Builder) applyDropTable(roDBInfo *model.DBInfo, tableID int64) {
 	b.is.sortedTablesBuckets[bucketIdx] = append(sortedTables[0:idx], sortedTables[idx+1:]...)
 
 	// The old DBInfo still holds a reference to old table info, we need to remove it.
-	tables := make([]*model.TableInfo, 0, len(roDBInfo.Tables)-1)
-	for _, tblInfo := range roDBInfo.Tables {
-		if tblInfo.ID != tableID {
-			tables = append(tables, tblInfo)
+	for i, tblInfo := range roDBInfo.Tables {
+		if tblInfo.ID == tableID {
+			if i == len(roDBInfo.Tables)-1 {
+				roDBInfo.Tables = roDBInfo.Tables[:i]
+			} else {
+				roDBInfo.Tables = append(roDBInfo.Tables[:i], roDBInfo.Tables[i+1:]...)
+			}
+			break
 		}
 	}
-	roDBInfo.Tables = tables
 }
 
 // InitWithOldInfoSchema initializes an empty new InfoSchema by copies all the data from old InfoSchema.
