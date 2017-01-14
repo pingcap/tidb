@@ -276,7 +276,12 @@ type randFunctionClass struct {
 }
 
 func (c *randFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinRandSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	if err := errors.Trace(c.verifyArgs(args)); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bt := &builtinRandSig{newBaseBuiltinFunc(args, ctx)}
+	bt.deterministic = false
+	return bt, nil
 }
 
 type builtinRandSig struct {
@@ -289,10 +294,6 @@ func (b *builtinRandSig) eval(row []types.Datum) (types.Datum, error) {
 		return types.Datum{}, errors.Trace(err)
 	}
 	return builtinRand(args, b.ctx)
-}
-
-func (b *builtinRandSig) isDeterministic() bool {
-	return true
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_rand

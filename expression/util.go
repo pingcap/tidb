@@ -55,10 +55,18 @@ func ColumnSubstitute(expr Expression, schema Schema, newExprs []Expression) Exp
 		for _, arg := range v.GetArgs() {
 			newArgs = append(newArgs, ColumnSubstitute(arg, schema, newExprs))
 		}
-		fun, _ := NewFunction(v.FuncName.L, v.RetType, newArgs...)
+		fun, _ := NewFunction(v.GetCtx(), v.FuncName.L, v.RetType, newArgs...)
 		return fun
 	}
 	return expr
+}
+
+func datumsToConstants(datums []types.Datum) []Expression {
+	constants := make([]Expression, 0, len(datums))
+	for _, d := range datums {
+		constants = append(constants, &Constant{Value: d})
+	}
+	return constants
 }
 
 // calculateSum adds v to sum.

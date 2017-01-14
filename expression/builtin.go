@@ -18,8 +18,6 @@
 package expression
 
 import (
-	"strings"
-
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -29,17 +27,18 @@ import (
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
 type baseBuiltinFunc struct {
-	args      []Expression
-	argValues []types.Datum
-	ctx       context.Context
-	self      builtinFunc
+	args          []Expression
+	argValues     []types.Datum
+	ctx           context.Context
+	deterministic bool
 }
 
 func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc {
 	return baseBuiltinFunc{
-		args:      args,
-		argValues: make([]types.Datum, len(args)),
-		ctx:       ctx,
+		args:          args,
+		argValues:     make([]types.Datum, len(args)),
+		ctx:           ctx,
+		deterministic: true,
 	}
 }
 
@@ -55,7 +54,7 @@ func (b *baseBuiltinFunc) evalArgs(row []types.Datum) (_ []types.Datum, err erro
 
 // isDeterministic will be true by default. Non-deterministic function will override this function.
 func (b *baseBuiltinFunc) isDeterministic() bool {
-	return true
+	return b.deterministic
 }
 
 func (b *baseBuiltinFunc) getArgs() []Expression {
@@ -65,7 +64,7 @@ func (b *baseBuiltinFunc) getArgs() []Expression {
 // equal only checks if both functions are non-deterministic and if these arguments are same.
 // Function name will be checked outside.
 func (b *baseBuiltinFunc) equal(fun builtinFunc) bool {
-	if !b.self.isDeterministic() || !fun.isDeterministic() {
+	if !b.isDeterministic() || !fun.isDeterministic() {
 		return false
 	}
 	funArgs := fun.getArgs()
@@ -124,174 +123,6 @@ type functionClass interface {
 // BuiltinFunc is the function signature for builtin functions
 type BuiltinFunc func([]types.Datum, context.Context) (types.Datum, error)
 
-// Func is for a builtin function.
-type Func struct {
-	// F is the specific calling function.
-	F BuiltinFunc
-	// MinArgs is the minimal arguments needed,
-	MinArgs int
-	// MaxArgs is the maximal arguments needed, -1 for infinity.
-	MaxArgs int
-}
-
-// Funcs holds all registered builtin functions.
-var Funcs = map[string]Func{
-	// common functions
-	ast.Coalesce: {builtinCoalesce, 1, -1},
-	ast.IsNull:   {builtinIsNull, 1, 1},
-	ast.Greatest: {builtinGreatest, 2, -1},
-	ast.Least:    {builtinLeast, 2, -1},
-	ast.Interval: {builtinInterval, 2, -1},
-
-	// math functions
-	ast.Abs:     {builtinAbs, 1, 1},
-	ast.Ceil:    {builtinCeil, 1, 1},
-	ast.Ceiling: {builtinCeil, 1, 1},
-	ast.Ln:      {builtinLog, 1, 1},
-	ast.Log:     {builtinLog, 1, 2},
-	ast.Log2:    {builtinLog2, 1, 1},
-	ast.Log10:   {builtinLog10, 1, 1},
-	ast.Pow:     {builtinPow, 2, 2},
-	ast.Power:   {builtinPow, 2, 2},
-	ast.Rand:    {builtinRand, 0, 1},
-	ast.Round:   {builtinRound, 1, 2},
-	ast.Sign:    {builtinSign, 1, 1},
-	ast.Conv:    {builtinConv, 3, 3},
-	ast.CRC32:   {builtinCRC32, 1, 1},
-
-	// time functions
-	ast.Curdate:          {builtinCurrentDate, 0, 0},
-	ast.CurrentDate:      {builtinCurrentDate, 0, 0},
-	ast.CurrentTime:      {builtinCurrentTime, 0, 1},
-	ast.Date:             {builtinDate, 1, 1},
-	ast.DateDiff:         {builtinDateDiff, 2, 2},
-	ast.DateAdd:          {dateArithFuncFactory(ast.DateArithAdd), 3, 3},
-	ast.AddDate:          {dateArithFuncFactory(ast.DateArithAdd), 3, 3},
-	ast.DateSub:          {dateArithFuncFactory(ast.DateArithSub), 3, 3},
-	ast.SubDate:          {dateArithFuncFactory(ast.DateArithSub), 3, 3},
-	ast.DateFormat:       {builtinDateFormat, 2, 2},
-	ast.CurrentTimestamp: {builtinNow, 0, 1},
-	ast.Curtime:          {builtinCurrentTime, 0, 1},
-	ast.Day:              {builtinDay, 1, 1},
-	ast.DayName:          {builtinDayName, 1, 1},
-	ast.DayOfMonth:       {builtinDayOfMonth, 1, 1},
-	ast.DayOfWeek:        {builtinDayOfWeek, 1, 1},
-	ast.DayOfYear:        {builtinDayOfYear, 1, 1},
-	ast.Extract:          {builtinExtract, 2, 2},
-	ast.Hour:             {builtinHour, 1, 1},
-	ast.MicroSecond:      {builtinMicroSecond, 1, 1},
-	ast.Minute:           {builtinMinute, 1, 1},
-	ast.Month:            {builtinMonth, 1, 1},
-	ast.MonthName:        {builtinMonthName, 1, 1},
-	ast.Now:              {builtinNow, 0, 1},
-	ast.Second:           {builtinSecond, 1, 1},
-	ast.StrToDate:        {builtinStrToDate, 2, 2},
-	ast.Sysdate:          {builtinSysDate, 0, 1},
-	ast.Time:             {builtinTime, 1, 1},
-	ast.UTCDate:          {builtinUTCDate, 0, 0},
-	ast.Week:             {builtinWeek, 1, 2},
-	ast.Weekday:          {builtinWeekDay, 1, 1},
-	ast.WeekOfYear:       {builtinWeekOfYear, 1, 1},
-	ast.Year:             {builtinYear, 1, 1},
-	ast.YearWeek:         {builtinYearWeek, 1, 2},
-	ast.FromUnixTime:     {builtinFromUnixTime, 1, 2},
-	ast.TimeDiff:         {builtinTimeDiff, 2, 2},
-	ast.TimestampDiff:    {builtinTimestampDiff, 3, 3},
-	ast.UnixTimestamp:    {builtinUnixTimestamp, 0, 1},
-
-	// string functions
-	ast.ASCII:          {builtinASCII, 1, 1},
-	ast.Concat:         {builtinConcat, 1, -1},
-	ast.ConcatWS:       {builtinConcatWS, 2, -1},
-	ast.Convert:        {builtinConvert, 2, 2},
-	ast.Lcase:          {builtinLower, 1, 1},
-	ast.Left:           {builtinLeft, 2, 2},
-	ast.Length:         {builtinLength, 1, 1},
-	ast.Locate:         {builtinLocate, 2, 3},
-	ast.Lower:          {builtinLower, 1, 1},
-	ast.LTrim:          {trimFn(strings.TrimLeft, spaceChars), 1, 1},
-	ast.Repeat:         {builtinRepeat, 2, 2},
-	ast.Replace:        {builtinReplace, 3, 3},
-	ast.Reverse:        {builtinReverse, 1, 1},
-	ast.RTrim:          {trimFn(strings.TrimRight, spaceChars), 1, 1},
-	ast.Space:          {builtinSpace, 1, 1},
-	ast.Strcmp:         {builtinStrcmp, 2, 2},
-	ast.Substring:      {builtinSubstring, 2, 3},
-	ast.Substr:         {builtinSubstring, 2, 3},
-	ast.SubstringIndex: {builtinSubstringIndex, 3, 3},
-	ast.Trim:           {builtinTrim, 1, 3},
-	ast.Upper:          {builtinUpper, 1, 1},
-	ast.Ucase:          {builtinUpper, 1, 1},
-	ast.Hex:            {builtinHex, 1, 1},
-	ast.Unhex:          {builtinUnHex, 1, 1},
-	ast.Rpad:           {builtinRpad, 3, 3},
-	ast.BitLength:      {builtinBitLength, 1, 1},
-	ast.CharFunc:       {builtinChar, 2, -1},
-	ast.CharLength:     {builtinCharLength, 1, 1},
-	ast.FindInSet:      {builtinFindInSet, 2, 2},
-
-	// information functions
-	ast.ConnectionID: {builtinConnectionID, 0, 0},
-	ast.CurrentUser:  {builtinCurrentUser, 0, 0},
-	ast.Database:     {builtinDatabase, 0, 0},
-	// This function is a synonym for DATABASE().
-	// See http://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_schema
-	ast.Schema:       {builtinDatabase, 0, 0},
-	ast.FoundRows:    {builtinFoundRows, 0, 0},
-	ast.LastInsertId: {builtinLastInsertID, 0, 1},
-	ast.User:         {builtinUser, 0, 0},
-	ast.Version:      {builtinVersion, 0, 0},
-
-	// control functions
-	ast.If:     {builtinIf, 3, 3},
-	ast.Ifnull: {builtinIfNull, 2, 2},
-	ast.Nullif: {builtinNullIf, 2, 2},
-
-	// miscellaneous functions
-	ast.Sleep: {builtinSleep, 1, 1},
-
-	// get_lock() and release_lock() is parsed but do nothing.
-	// It is used for preventing error in Ruby's activerecord migrations.
-	ast.GetLock:     {builtinLock, 2, 2},
-	ast.ReleaseLock: {builtinReleaseLock, 1, 1},
-
-	// only used by new plan
-	ast.AndAnd:     {builtinAndAnd, 2, 2},
-	ast.OrOr:       {builtinOrOr, 2, 2},
-	ast.GE:         {compareFuncFactory(opcode.GE), 2, 2},
-	ast.LE:         {compareFuncFactory(opcode.LE), 2, 2},
-	ast.EQ:         {compareFuncFactory(opcode.EQ), 2, 2},
-	ast.NE:         {compareFuncFactory(opcode.NE), 2, 2},
-	ast.LT:         {compareFuncFactory(opcode.LT), 2, 2},
-	ast.GT:         {compareFuncFactory(opcode.GT), 2, 2},
-	ast.NullEQ:     {compareFuncFactory(opcode.NullEQ), 2, 2},
-	ast.Plus:       {arithmeticFuncFactory(opcode.Plus), 2, 2},
-	ast.Minus:      {arithmeticFuncFactory(opcode.Minus), 2, 2},
-	ast.Mod:        {arithmeticFuncFactory(opcode.Mod), 2, 2},
-	ast.Div:        {arithmeticFuncFactory(opcode.Div), 2, 2},
-	ast.Mul:        {arithmeticFuncFactory(opcode.Mul), 2, 2},
-	ast.IntDiv:     {arithmeticFuncFactory(opcode.IntDiv), 2, 2},
-	ast.LeftShift:  {bitOpFactory(opcode.LeftShift), 2, 2},
-	ast.RightShift: {bitOpFactory(opcode.RightShift), 2, 2},
-	ast.And:        {bitOpFactory(opcode.And), 2, 2},
-	ast.Or:         {bitOpFactory(opcode.Or), 2, 2},
-	ast.Xor:        {bitOpFactory(opcode.Xor), 2, 2},
-	ast.LogicXor:   {builtinLogicXor, 2, 2},
-	ast.UnaryNot:   {unaryOpFactory(opcode.Not), 1, 1},
-	ast.BitNeg:     {unaryOpFactory(opcode.BitNeg), 1, 1},
-	ast.UnaryPlus:  {unaryOpFactory(opcode.Plus), 1, 1},
-	ast.UnaryMinus: {unaryOpFactory(opcode.Minus), 1, 1},
-	ast.In:         {builtinIn, 1, -1},
-	ast.IsTruth:    {isTrueOpFactory(opcode.IsTruth), 1, 1},
-	ast.IsFalsity:  {isTrueOpFactory(opcode.IsFalsity), 1, 1},
-	ast.Like:       {builtinLike, 3, 3},
-	ast.Regexp:     {builtinRegexp, 2, 2},
-	ast.Case:       {builtinCaseWhen, 1, -1},
-	ast.RowFunc:    {builtinRow, 2, -1},
-	ast.SetVar:     {builtinSetVar, 2, 2},
-	ast.GetVar:     {builtinGetVar, 1, 1},
-}
-
 // funcs holds all registered builtin functions.
 var funcs = map[string]functionClass{
 	// common functions
@@ -319,7 +150,7 @@ var funcs = map[string]functionClass{
 	// time functions
 	ast.Curdate:          &currentDateFunctionClass{baseFunctionClass{ast.Curdate, 0, 0}},
 	ast.CurrentDate:      &currentDateFunctionClass{baseFunctionClass{ast.CurrentDate, 0, 0}},
-	ast.CurrentTime:      &currentTimeFunctionClass{baseFunctionClass{ast.CurrentTime, 0, 0}},
+	ast.CurrentTime:      &currentTimeFunctionClass{baseFunctionClass{ast.CurrentTime, 0, 1}},
 	ast.Date:             &dateFunctionClass{baseFunctionClass{ast.Date, 1, 1}},
 	ast.DateDiff:         &dateDiffFunctionClass{baseFunctionClass{ast.DateDiff, 2, 2}},
 	ast.DateAdd:          &dateArithFunctionClass{baseFunctionClass{ast.DateAdd, 3, 3}, ast.DateArithAdd},
@@ -418,7 +249,7 @@ var funcs = map[string]functionClass{
 	ast.LE:         &compareFunctionClass{baseFunctionClass{ast.LE, 2, 2}, opcode.LE},
 	ast.EQ:         &compareFunctionClass{baseFunctionClass{ast.EQ, 2, 2}, opcode.EQ},
 	ast.NE:         &compareFunctionClass{baseFunctionClass{ast.NE, 2, 2}, opcode.NE},
-	ast.LT:         &compareFunctionClass{baseFunctionClass{ast.LT, 2, 2}, opcode.LE},
+	ast.LT:         &compareFunctionClass{baseFunctionClass{ast.LT, 2, 2}, opcode.LT},
 	ast.GT:         &compareFunctionClass{baseFunctionClass{ast.GT, 2, 2}, opcode.GT},
 	ast.NullEQ:     &compareFunctionClass{baseFunctionClass{ast.NullEQ, 2, 2}, opcode.NullEQ},
 	ast.Plus:       &arithmeticFunctionClass{baseFunctionClass{ast.Plus, 2, 2}, opcode.Plus},
@@ -432,7 +263,7 @@ var funcs = map[string]functionClass{
 	ast.And:        &bitOpFunctionClass{baseFunctionClass{ast.And, 2, 2}, opcode.And},
 	ast.Or:         &bitOpFunctionClass{baseFunctionClass{ast.Or, 2, 2}, opcode.Or},
 	ast.Xor:        &bitOpFunctionClass{baseFunctionClass{ast.Xor, 2, 2}, opcode.Xor},
-	ast.LogicXor:   &bitOpFunctionClass{baseFunctionClass{ast.LogicXor, 2, 2}, opcode.LogicXor},
+	ast.LogicXor:   &logicXorFunctionClass{baseFunctionClass{ast.LogicXor, 2, 2}},
 	ast.UnaryNot:   &unaryOpFunctionClass{baseFunctionClass{ast.UnaryNot, 1, 1}, opcode.Not},
 	ast.BitNeg:     &unaryOpFunctionClass{baseFunctionClass{ast.BitNeg, 1, 1}, opcode.BitNeg},
 	ast.UnaryPlus:  &unaryOpFunctionClass{baseFunctionClass{ast.UnaryPlus, 1, 1}, opcode.Plus},
@@ -445,7 +276,7 @@ var funcs = map[string]functionClass{
 	ast.Case:       &caseWhenFunctionClass{baseFunctionClass{ast.Case, 1, -1}},
 	ast.RowFunc:    &rowFunctionClass{baseFunctionClass{ast.RowFunc, 2, -1}},
 	ast.SetVar:     &setVarFunctionClass{baseFunctionClass{ast.SetVar, 2, 2}},
-	ast.GetVar:     &getVarFunctionClass{baseFunctionClass{ast.GetVar, 2, 2}},
+	ast.GetVar:     &getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}},
 }
 
 // DynamicFuncs are those functions that
