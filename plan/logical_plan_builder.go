@@ -52,7 +52,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 	agg.self = agg
 	agg.initIDAndContext(b.ctx)
 	addChild(agg, p)
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncList)))
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncList)+p.GetSchema().Len()))
 	// aggIdxMap maps the old index to new index after applying common aggregation functions elimination.
 	aggIndexMap := make(map[int]int)
 	for i, aggFunc := range aggFuncList {
@@ -86,6 +86,11 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 				IsAggOrSubq: true,
 				RetType:     aggFunc.GetType()})
 		}
+	}
+	for _, col := range p.GetSchema().Columns {
+		newFunc := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{col.Clone()}, false)
+		agg.AggFuncs = append(agg.AggFuncs, newFunc)
+		schema.Append(col.Clone().(*expression.Column))
 	}
 	agg.GroupByItems = gbyItems
 	agg.SetSchema(schema)
@@ -685,7 +690,7 @@ func (b *planBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan
 }
 
 func (b *planBuilder) extractAggFuncs(fields []*ast.SelectField) ([]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int) {
-	extractor := &ast.AggregateFuncExtractor{}
+	extractor := &AggregateFuncExtractor{}
 	for _, f := range fields {
 		n, _ := f.Expr.Accept(extractor)
 		f.Expr = n.(ast.ExprNode)
