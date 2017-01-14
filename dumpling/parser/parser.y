@@ -233,6 +233,7 @@ import (
 	dayofmonth	"DAYOFMONTH"
 	dayofweek	"DAYOFWEEK"
 	dayofyear	"DAYOFYEAR"
+	fromDays	"FROM_DAYS"
 	events		"EVENTS"
 	findInSet	"FIND_IN_SET"
 	foundRows	"FOUND_ROWS"
@@ -2140,7 +2141,7 @@ ReservedKeyword:
 
 NotKeywordToken:
 	"ABS" | "ADDDATE" | "ADMIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
-|	"DATEDIFF" | "DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FIND_IN_SET" | "FOUND_ROWS"
+|	"DATEDIFF" | "DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FROM_DAYS" | "FIND_IN_SET" | "FOUND_ROWS"
 |	"GROUP_CONCAT"| "GREATEST" | "LEAST" | "HOUR" | "HEX" | "UNHEX" | "IFNULL" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOCATE" | "LOWER" | "LTRIM"
 |	"MAX" | "MICROSECOND" | "MIN" |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" | "POW" | "POWER" | "RAND"
 |	"SECOND" | "SIGN" | "SLEEP" | "SQL_CALC_FOUND_ROWS" | "STR_TO_DATE" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen |
@@ -2723,6 +2724,13 @@ FunctionCallNonKeyword:
 				$3.(ast.ExprNode),
 				$5.(ast.ExprNode),
 			},
+		}
+	}
+|	"FROM_DAYS" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
 		}
 	}
 |	"EXTRACT" '(' TimeUnit "FROM" Expression ')'

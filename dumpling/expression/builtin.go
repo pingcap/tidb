@@ -177,6 +177,7 @@ var Funcs = map[string]Func{
 	ast.DayOfMonth:       {builtinDayOfMonth, 1, 1},
 	ast.DayOfWeek:        {builtinDayOfWeek, 1, 1},
 	ast.DayOfYear:        {builtinDayOfYear, 1, 1},
+	ast.FromDays:         {builtinFromDays, 1, 1},
 	ast.Extract:          {builtinExtract, 2, 2},
 	ast.Hour:             {builtinHour, 1, 1},
 	ast.MicroSecond:      {builtinMicroSecond, 1, 1},
