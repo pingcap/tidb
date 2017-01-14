@@ -155,7 +155,7 @@ type DeleteExec struct {
 
 // Schema implements the Executor Schema interface.
 func (e *DeleteExec) Schema() expression.Schema {
-	return nil
+	return expression.NewSchema(nil)
 }
 
 // Next implements the Executor Next interface.
@@ -166,53 +166,58 @@ func (e *DeleteExec) Next() (*Row, error) {
 	defer func() {
 		e.finished = true
 	}()
-	if e.IsMultiTable && len(e.Tables) == 0 {
-		return &Row{}, nil
-	}
 
-	tblMap := make(map[int64][]string, len(e.Tables))
-	// Get table alias map.
 	if e.IsMultiTable {
-		// Delete from multiple tables should consider table ident list.
-		for _, t := range e.Tables {
-			tblMap[t.TableInfo.ID] = append(tblMap[t.TableInfo.ID], t.Name.L)
-		}
+		return nil, e.deleteMultiTables()
+	}
+	return nil, e.deleteSingleTable()
+}
+
+func (e *DeleteExec) deleteMultiTables() error {
+	if len(e.Tables) == 0 {
+		return nil
 	}
 
-	// Map for unique (Table, handle) pair.
-	rowKeyMap := make(map[table.Table]map[int64]struct{})
+	// Table ID may not be unique for deleting multiple tables, for statements like
+	// `delete from t as t1, t as t2`, the same table has two alias, we have to identify a table
+	// by its alias instead of ID, so the table map value is an array which contains table aliases.
+	tblMap := make(map[int64][]string, len(e.Tables))
+	for _, t := range e.Tables {
+		tblMap[t.TableInfo.ID] = append(tblMap[t.TableInfo.ID], t.Name.L)
+	}
+
+	// Map for unique (Table, Row) pair.
+	tblRowMap := make(map[table.Table]map[int64][]types.Datum)
 	for {
-		row, err := e.SelectExec.Next()
+		joinedRow, err := e.SelectExec.Next()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
-		if row == nil {
+		if joinedRow == nil {
 			break
 		}
 
-		for _, entry := range row.RowKeys {
-			if e.IsMultiTable && !isMatchTableName(entry, tblMap) {
+		for _, entry := range joinedRow.RowKeys {
+			if !isMatchTableName(entry, tblMap) {
 				continue
 			}
-			if rowKeyMap[entry.Tbl] == nil {
-				rowKeyMap[entry.Tbl] = make(map[int64]struct{})
+			if tblRowMap[entry.Tbl] == nil {
+				tblRowMap[entry.Tbl] = make(map[int64][]types.Datum)
 			}
-			rowKeyMap[entry.Tbl][entry.Handle] = struct{}{}
+			offset := getTableOffset(e.SelectExec.Schema(), entry)
+			data := joinedRow.Data[offset : offset+len(entry.Tbl.WritableCols())]
+			tblRowMap[entry.Tbl][entry.Handle] = data
 		}
 	}
-	for t, handleMap := range rowKeyMap {
-		for handle := range handleMap {
-			data, err := t.Row(e.ctx, handle)
+	for t, rowMap := range tblRowMap {
+		for handle, data := range rowMap {
+			err := e.removeRow(e.ctx, t, handle, data)
 			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			err = e.removeRow(e.ctx, t, handle, data)
-			if err != nil {
-				return nil, errors.Trace(err)
+				return errors.Trace(err)
 			}
 		}
 	}
-	return nil, nil
+	return nil
 }
 
 func isMatchTableName(entry *RowKeyEntry, tblMap map[int64][]string) bool {
@@ -237,6 +242,24 @@ func isMatchTableName(entry *RowKeyEntry, tblMap map[int64][]string) bool {
 	return false
 }
 
+func (e *DeleteExec) deleteSingleTable() error {
+	for {
+		row, err := e.SelectExec.Next()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if row == nil {
+			break
+		}
+		rowKey := row.RowKeys[0]
+		err = e.removeRow(e.ctx, rowKey.Tbl, rowKey.Handle, row.Data)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
 func (e *DeleteExec) removeRow(ctx context.Context, t table.Table, h int64, data []types.Datum) error {
 	err := t.RemoveRecord(ctx, h, data)
 	if err != nil {
@@ -258,6 +281,7 @@ func NewLoadDataInfo(row []types.Datum, ctx context.Context, tbl table.Table) *L
 		row:       row,
 		insertVal: &InsertValues{ctx: ctx, Table: tbl},
 		Table:     tbl,
+		Ctx:       ctx,
 	}
 }
 
@@ -270,6 +294,12 @@ type LoadDataInfo struct {
 	Table      table.Table
 	FieldsInfo *ast.FieldsClause
 	LinesInfo  *ast.LinesClause
+	Ctx        context.Context
+}
+
+// SetBatchCount sets the number of rows to insert in a batch.
+func (e *LoadDataInfo) SetBatchCount(limit int64) {
+	e.insertVal.batchRows = limit
 }
 
 // getValidData returns prevData and curData that starts from starting symbol.
@@ -370,15 +400,16 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) 
 
 // InsertData inserts data into specified table according to the specified format.
 // If it has the rest of data isn't completed the processing, then is returns without completed data.
+// If the number of inserted rows reaches the batchRows, then the second return value is true.
 // If prevData isn't nil and curData is nil, there are no other data to deal with and the isEOF is true.
-func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, error) {
+func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error) {
 	// TODO: support enclosed and escape.
 	if len(prevData) == 0 && len(curData) == 0 {
-		return nil, nil
+		return nil, false, nil
 	}
 
 	var line []byte
-	var isEOF, hasStarting bool
+	var isEOF, hasStarting, reachLimit bool
 	cols := make([]string, 0, len(e.row))
 	if len(prevData) > 0 && len(curData) == 0 {
 		isEOF = true
@@ -409,12 +440,18 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, error) {
 		cols = escapeCols(rawCols)
 		e.insertData(cols)
 		e.insertVal.currRow++
+		if e.insertVal.batchRows != 0 && e.insertVal.currRow%e.insertVal.batchRows == 0 {
+			reachLimit = true
+			log.Infof("This insert rows has reached the batch %d, current total rows %d",
+				e.insertVal.batchRows, e.insertVal.currRow)
+			break
+		}
 	}
 	if e.insertVal.lastInsertID != 0 {
 		e.insertVal.ctx.GetSessionVars().SetLastInsertID(e.insertVal.lastInsertID)
 	}
 
-	return curData, nil
+	return curData, reachLimit, nil
 }
 
 func escapeCols(strs [][]byte) []string {
@@ -528,7 +565,7 @@ func (e *LoadData) Next() (*Row, error) {
 
 // Schema implements the Executor Schema interface.
 func (e *LoadData) Schema() expression.Schema {
-	return nil
+	return expression.NewSchema(nil)
 }
 
 // Close implements the Executor Close interface.
@@ -538,7 +575,8 @@ func (e *LoadData) Close() error {
 
 // InsertValues is the data to insert.
 type InsertValues struct {
-	currRow      int
+	currRow      int64
+	batchRows    int64
 	lastInsertID uint64
 	ctx          context.Context
 	SelectExec   Executor
@@ -564,7 +602,7 @@ type InsertExec struct {
 
 // Schema implements the Executor Schema interface.
 func (e *InsertExec) Schema() expression.Schema {
-	return nil
+	return expression.NewSchema(nil)
 }
 
 // Next implements the Executor Next interface.
@@ -576,7 +614,7 @@ func (e *InsertExec) Next() (*Row, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	txn, err := e.ctx.GetTxn(false)
+	txn := e.ctx.Txn()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -734,7 +772,7 @@ func (e *InsertValues) getRows(cols []*table.Column) (rows [][]types.Datum, err 
 		if err = e.checkValueCount(length, len(list), i, cols); err != nil {
 			return nil, errors.Trace(err)
 		}
-		e.currRow = i
+		e.currRow = int64(i)
 		rows[i], err = e.getRow(cols, list)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -757,8 +795,8 @@ func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression
 
 func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, error) {
 	// process `insert|replace into ... select ... from ...`
-	if len(e.SelectExec.Schema()) != len(cols) {
-		return nil, errors.Errorf("Column count %d doesn't match value count %d", len(cols), len(e.SelectExec.Schema()))
+	if e.SelectExec.Schema().Len() != len(cols) {
+		return nil, errors.Errorf("Column count %d doesn't match value count %d", len(cols), e.SelectExec.Schema().Len())
 	}
 	var rows [][]types.Datum
 	for {
@@ -769,7 +807,7 @@ func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, err
 		if innerRow == nil {
 			break
 		}
-		e.currRow = len(rows)
+		e.currRow = int64(len(rows))
 		row, err := e.fillRowData(cols, innerRow.Data, false)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -952,7 +990,7 @@ type ReplaceExec struct {
 
 // Schema implements the Executor Schema interface.
 func (e *ReplaceExec) Schema() expression.Schema {
-	return nil
+	return expression.NewSchema(nil)
 }
 
 // Close implements the Executor Close interface.
@@ -1059,7 +1097,7 @@ type UpdateExec struct {
 
 // Schema implements the Executor Schema interface.
 func (e *UpdateExec) Schema() expression.Schema {
-	return nil
+	return expression.NewSchema(nil)
 }
 
 // Next implements the Executor Next interface.
@@ -1089,7 +1127,7 @@ func (e *UpdateExec) Next() (*Row, error) {
 		if e.updatedRowKeys[tbl] == nil {
 			e.updatedRowKeys[tbl] = make(map[int64]struct{})
 		}
-		offset := e.getTableOffset(*entry)
+		offset := getTableOffset(e.SelectExec.Schema(), entry)
 		handle := entry.Handle
 		oldData := row.Data[offset : offset+len(tbl.WritableCols())]
 		newTableData := newData[offset : offset+len(tbl.WritableCols())]
@@ -1130,9 +1168,9 @@ func (e *UpdateExec) fetchRows() error {
 		if row == nil {
 			return nil
 		}
-		data := make([]types.Datum, len(e.SelectExec.Schema()))
-		newData := make([]types.Datum, len(e.SelectExec.Schema()))
-		for i, s := range e.SelectExec.Schema() {
+		data := make([]types.Datum, e.SelectExec.Schema().Len())
+		newData := make([]types.Datum, e.SelectExec.Schema().Len())
+		for i, s := range e.SelectExec.Schema().Columns {
 			data[i], err = s.Eval(row.Data, e.ctx)
 			if err != nil {
 				return errors.Trace(err)
@@ -1152,7 +1190,7 @@ func (e *UpdateExec) fetchRows() error {
 	}
 }
 
-func (e *UpdateExec) getTableOffset(entry RowKeyEntry) int {
+func getTableOffset(schema expression.Schema, entry *RowKeyEntry) int {
 	t := entry.Tbl
 	var tblName string
 	if entry.TableAsName == nil || len(entry.TableAsName.L) == 0 {
@@ -1160,9 +1198,8 @@ func (e *UpdateExec) getTableOffset(entry RowKeyEntry) int {
 	} else {
 		tblName = entry.TableAsName.L
 	}
-	schema := e.SelectExec.Schema()
-	for i := 0; i < len(schema); i++ {
-		s := schema[i]
+	for i := 0; i < schema.Len(); i++ {
+		s := schema.Columns[i]
 		if s.TblName.L == tblName {
 			return i
 		}

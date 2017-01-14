@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/engine"
@@ -127,8 +126,8 @@ func resetStmtCtx(ctx context.Context, s ast.StmtNode) {
 	case *ast.UpdateStmt, *ast.InsertStmt, *ast.DeleteStmt:
 		sc.IgnoreTruncate = false
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode
-		if _, ok := s.(*ast.UpdateStmt); ok {
-			sc.InUpdateStmt = true
+		if _, ok := s.(*ast.InsertStmt); !ok {
+			sc.InUpdateOrDeleteStmt = true
 		}
 	default:
 		sc.IgnoreTruncate = true
@@ -143,7 +142,6 @@ func resetStmtCtx(ctx context.Context, s ast.StmtNode) {
 
 // Compile is safe for concurrent use by multiple goroutines.
 func Compile(ctx context.Context, rawStmt ast.StmtNode) (ast.Statement, error) {
-	PrepareTxnCtx(ctx)
 	compiler := executor.Compiler{}
 	st, err := compiler.Compile(ctx, rawStmt)
 	if err != nil {
@@ -152,39 +150,20 @@ func Compile(ctx context.Context, rawStmt ast.StmtNode) (ast.Statement, error) {
 	return st, nil
 }
 
-// PrepareTxnCtx resets transaction context if session is not in a transaction.
-func PrepareTxnCtx(ctx context.Context) {
-	se := ctx.(*session)
-	if se.txn == nil {
-		is := sessionctx.GetDomain(ctx).InfoSchema()
-		se.sessionVars.TxnCtx = &variable.TransactionContext{
-			InfoSchema:    is,
-			SchemaVersion: is.SchemaMetaVersion(),
-		}
-	}
-}
-
 // runStmt executes the ast.Statement and commit or rollback the current transaction.
 func runStmt(ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
 	var err error
 	var rs ast.RecordSet
-	if s.IsDDL() {
-		err = ctx.CommitTxn()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
+	se := ctx.(*session)
 	rs, err = s.Exec(ctx)
 	// All the history should be added here.
-	se := ctx.(*session)
 	getHistory(ctx).add(0, s)
-	// MySQL DDL should be auto-commit.
-	if s.IsDDL() || se.sessionVars.ShouldAutocommit() {
+	if !se.sessionVars.InTxn() {
 		if err != nil {
 			log.Info("RollbackTxn for ddl/autocommit error.")
-			ctx.RollbackTxn()
+			se.RollbackTxn()
 		} else {
-			err = ctx.CommitTxn()
+			err = se.CommitTxn()
 		}
 	}
 	return rs, errors.Trace(err)

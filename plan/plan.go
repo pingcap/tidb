@@ -98,12 +98,19 @@ type Plan interface {
 	GetID() string
 	// Check whether this plan is correlated or not.
 	IsCorrelated() bool
+	// Set the value of attribute "correlated".
+	// A plan will be correlated if one of its expressions or its child plans is correlated, except Apply.
+	// As for Apply, it will be correlated if the outer plan is correlated or the inner plan has column that the outer doesn't has.
+	// It will be called in the final step of logical plan building and the PhysicalInitialize process after convert2PhysicalPlan process.
+	SetCorrelated()
 	// SetParents sets the parents for the plan.
 	SetParents(...Plan)
 	// SetParents sets the children for the plan.
 	SetChildren(...Plan)
 
 	context() context.Context
+
+	extractCorrelatedCols() []*expression.CorrelatedColumn
 }
 
 type columnProp struct {
@@ -151,8 +158,6 @@ type LogicalPlan interface {
 	// PruneColumns prunes the unused columns.
 	PruneColumns([]*expression.Column)
 
-	extractCorrelatedCols() []*expression.CorrelatedColumn
-
 	// ResolveIndicesAndCorCols resolves the index for columns and initializes the correlated columns.
 	ResolveIndicesAndCorCols()
 
@@ -161,6 +166,9 @@ type LogicalPlan interface {
 	// Some logical plans will convert the children to the physical plans in different ways, and return the one
 	// with the lowest cost.
 	convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error)
+
+	// buildKeyInfo will collect the information of unique keys into schema.
+	buildKeyInfo()
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -227,6 +235,24 @@ func (p *baseLogicalPlan) storePlanInfo(prop *requiredProperty, info *physicalPl
 	return nil
 }
 
+func (p *baseLogicalPlan) buildKeyInfo() {
+	for _, child := range p.GetChildren() {
+		child.(LogicalPlan).buildKeyInfo()
+	}
+	if len(p.children) == 1 {
+		switch p.self.(type) {
+		case *Exists, *Aggregation, *Projection, *Trim:
+			p.schema.Keys = nil
+		case *SelectLock:
+			p.schema.Keys = p.children[0].GetSchema().Keys
+		default:
+			p.schema.Keys = p.children[0].GetSchema().Clone().Keys
+		}
+	} else {
+		p.schema.Keys = nil
+	}
+}
+
 func newBaseLogicalPlan(tp string, a *idAllocator) baseLogicalPlan {
 	return baseLogicalPlan{
 		planMap: make(map[string]*physicalPlanInfo),
@@ -256,10 +282,10 @@ func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) 
 	return nil, p.self, nil
 }
 
-func (p *baseLogicalPlan) extractCorrelatedCols() []*expression.CorrelatedColumn {
+func (p *basePlan) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	var corCols []*expression.CorrelatedColumn
 	for _, child := range p.children {
-		corCols = append(corCols, child.(LogicalPlan).extractCorrelatedCols()...)
+		corCols = append(corCols, child.extractCorrelatedCols()...)
 	}
 	return corCols
 }
@@ -269,7 +295,7 @@ func (p *baseLogicalPlan) ResolveIndicesAndCorCols() {
 	for _, child := range p.children {
 		child.(LogicalPlan).ResolveIndicesAndCorCols()
 	}
-	p.schema.InitIndices()
+	p.schema.InitColumnIndices()
 }
 
 // PruneColumns implements LogicalPlan interface.
@@ -321,6 +347,12 @@ func (p *basePlan) MarshalJSON() ([]byte, error) {
 // IsCorrelated implements Plan IsCorrelated interface.
 func (p *basePlan) IsCorrelated() bool {
 	return p.correlated
+}
+
+func (p *basePlan) SetCorrelated() {
+	for _, child := range p.children {
+		p.correlated = p.correlated || child.IsCorrelated()
+	}
 }
 
 // GetID implements Plan GetID interface.

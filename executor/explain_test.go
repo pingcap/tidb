@@ -260,7 +260,7 @@ func (s *testSuite) TestExplain(c *C) {
     "ranges": "[[1,1]]",
     "desc": false,
     "out of order": true,
-    "double read": false,
+    "double read": true,
     "push down info": {
         "limit": 0,
         "access conditions": [

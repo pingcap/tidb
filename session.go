@@ -51,13 +51,12 @@ import (
 
 // Session context
 type Session interface {
-	Status() uint16                               // Flag of current status, such as autocommit.
-	LastInsertID() uint64                         // Last inserted auto_increment id.
-	AffectedRows() uint64                         // Affected rows by latest executed stmt.
-	SetValue(key fmt.Stringer, value interface{}) // SetValue saves a value associated with this session for key.
-	Value(key fmt.Stringer) interface{}           // Value returns the value associated with this session for key.
-	Execute(sql string) ([]ast.RecordSet, error)  // Execute a sql statement.
-	String() string                               // For debug
+	context.Context
+	Status() uint16                              // Flag of current status, such as autocommit.
+	LastInsertID() uint64                        // Last inserted auto_increment id.
+	AffectedRows() uint64                        // Affected rows by latest executed stmt.
+	Execute(sql string) ([]ast.RecordSet, error) // Execute a sql statement.
+	String() string                              // For debug
 	CommitTxn() error
 	RollbackTxn() error
 	// For execute prepare statement in binary protocol.
@@ -68,7 +67,6 @@ type Session interface {
 	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
 	Close() error
-	Retry() error
 	Auth(user string, auth []byte, salt []byte) bool
 }
 
@@ -109,15 +107,14 @@ func (h *stmtHistory) clone() *stmtHistory {
 	return &nh
 }
 
-const unlimitedRetryCnt = -1
-
 type session struct {
-	txn kv.Transaction // current transaction
-	// It is the schema version in current transaction. If it's 0, the transaction is nil.
-	schemaVerInCurrTxn int64
-	values             map[fmt.Stringer]interface{}
-	store              kv.Storage
-	maxRetryCnt        int // Max retry times. If maxRetryCnt <=0, there is no limitation for retry times.
+	txn    kv.Transaction // current transaction
+	txnCh  chan *txnWithErr
+	values map[fmt.Stringer]interface{}
+	store  kv.Storage
+
+	// Used for test only.
+	unlimitedRetryCount bool
 
 	// For performance_schema only.
 	stmtState *perfschema.StatementState
@@ -130,53 +127,6 @@ func (s *session) cleanRetryInfo() {
 	if !s.sessionVars.RetryInfo.Retrying {
 		s.sessionVars.RetryInfo.Clean()
 	}
-}
-
-// TODO: Set them as system variables.
-var (
-	schemaExpiredRetryTimes      = 30
-	checkSchemaValiditySleepTime = 1 * time.Second
-)
-
-// If the schema is invalid, we need to rollback the current transaction.
-func (s *session) checkSchemaValidOrRollback() error {
-	err := s.checkSchemaValid()
-	if err != nil {
-		err1 := s.RollbackTxn()
-		if err1 != nil {
-			// TODO: Handle this error.
-			log.Errorf("rollback txn failed, err:%v", errors.ErrorStack(err1))
-		}
-	}
-	return errors.Trace(err)
-}
-
-func (s *session) checkSchemaValid() error {
-	var ts uint64
-	if s.txn != nil {
-		ts = s.txn.StartTS()
-	} else {
-		s.schemaVerInCurrTxn = 0
-	}
-
-	var err error
-	var currSchemaVer int64
-	for i := 0; i < schemaExpiredRetryTimes; i++ {
-		currSchemaVer, err = sessionctx.GetDomain(s).SchemaValidity.Check(ts, s.schemaVerInCurrTxn)
-		if err == nil {
-			if s.txn == nil {
-				s.schemaVerInCurrTxn = currSchemaVer
-			}
-			return nil
-		}
-		log.Infof("schema version original %d, current %d, sleep time %v",
-			s.schemaVerInCurrTxn, currSchemaVer, checkSchemaValiditySleepTime)
-		if terror.ErrorEqual(err, domain.ErrInfoSchemaChanged) {
-			break
-		}
-		time.Sleep(checkSchemaValiditySleepTime)
-	}
-	return errors.Trace(err)
 }
 
 func (s *session) Status() uint16 {
@@ -199,8 +149,46 @@ func (s *session) SetConnectionID(connectionID uint64) {
 	s.sessionVars.ConnectionID = connectionID
 }
 
+type schemaLeaseChecker struct {
+	domain.SchemaValidator
+	schemaVer int64
+}
+
+const (
+	schemaOutOfDateRetryInterval = 500 * time.Millisecond
+	schemaOutOfDateRetryTimes    = 10
+)
+
+func (s *schemaLeaseChecker) Check(txnTS uint64) error {
+	for i := 0; i < schemaOutOfDateRetryTimes; i++ {
+		err := s.checkOnce(txnTS)
+		switch err {
+		case nil:
+			return nil
+		case domain.ErrInfoSchemaChanged:
+			schemaLeaseErrorCounter.WithLabelValues("changed").Inc()
+			return errors.Trace(err)
+		default:
+			schemaLeaseErrorCounter.WithLabelValues("outdated").Inc()
+			time.Sleep(schemaOutOfDateRetryInterval)
+		}
+	}
+	return domain.ErrInfoSchemaExpired
+}
+
+func (s *schemaLeaseChecker) checkOnce(txnTS uint64) error {
+	succ := s.SchemaValidator.Check(txnTS, s.schemaVer)
+	if !succ {
+		if s.SchemaValidator.Latest() > s.schemaVer {
+			return domain.ErrInfoSchemaChanged
+		}
+		return domain.ErrInfoSchemaExpired
+	}
+	return nil
+}
+
 func (s *session) doCommit() error {
-	if s.txn == nil {
+	if s.txn == nil || !s.txn.Valid() {
 		return nil
 	}
 	defer func() {
@@ -221,13 +209,12 @@ func (s *session) doCommit() error {
 			s.txn.SetOption(kv.BinlogData, bin)
 		}
 	}
-	if err := s.checkSchemaValid(); err != nil {
-		err1 := s.txn.Rollback()
-		if err1 != nil {
-			log.Errorf("rollback txn failed, err:%v", err1)
-		}
-		return errors.Trace(err)
-	}
+
+	// Set this option for 2 phase commit to validate schema lease.
+	s.txn.SetOption(kv.SchemaLeaseChecker, &schemaLeaseChecker{
+		SchemaValidator: sessionctx.GetDomain(s).SchemaValidator,
+		schemaVer:       s.sessionVars.TxnCtx.SchemaVersion,
+	})
 	if err := s.txn.Commit(); err != nil {
 		return errors.Trace(err)
 	}
@@ -235,10 +222,18 @@ func (s *session) doCommit() error {
 }
 
 func (s *session) doCommitWithRetry() error {
+	var txnSize int
+	if s.txn != nil && s.txn.Valid() {
+		txnSize = s.txn.Size()
+	}
 	err := s.doCommit()
 	if err != nil {
 		if s.isRetryableError(err) {
-			err = s.Retry()
+			// Transactions will retry 2 ~ 10 times.
+			// We make larger transactions retry less times to prevent cluster resource outage.
+			txnSizeRate := float64(txnSize) / float64(kv.BufferSizeLimit)
+			maxRetryCount := 10 - int(txnSizeRate*9.0)
+			err = s.retry(maxRetryCount)
 		}
 	}
 	s.cleanRetryInfo()
@@ -254,12 +249,13 @@ func (s *session) CommitTxn() error {
 }
 
 func (s *session) RollbackTxn() error {
-	if s.txn == nil {
-		return nil
+	var err error
+	if s.txn != nil && s.txn.Valid() {
+		err = s.txn.Rollback()
 	}
 	s.cleanRetryInfo()
-	err := s.txn.Rollback()
 	s.txn = nil
+	s.txnCh = nil
 	s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	return errors.Trace(err)
 }
@@ -301,20 +297,20 @@ func (s *session) isRetryableError(err error) bool {
 	return kv.IsRetryableError(err) || terror.ErrorEqual(err, domain.ErrInfoSchemaChanged)
 }
 
-func (s *session) Retry() error {
+func (s *session) retry(maxCnt int) error {
 	if s.sessionVars.TxnCtx.ForUpdate {
 		return errors.Errorf("can not retry select for update statement")
 	}
 	s.sessionVars.RetryInfo.Retrying = true
+	retryCnt := 0
 	defer func() {
 		s.sessionVars.RetryInfo.Retrying = false
+		sessionRetry.Observe(float64(retryCnt))
 	}()
 	nh := getHistory(s)
 	var err error
-	retryCnt := 0
 	for {
-		PrepareTxnCtx(s)
-		success := true
+		s.prepareTxnCtx()
 		s.sessionVars.RetryInfo.ResetOffset()
 		for _, sr := range nh.history {
 			st := sr.st
@@ -325,22 +321,21 @@ func (s *session) Retry() error {
 			log.Warnf("Retry %s (len:%d)", txt, len(st.OriginText()))
 			_, err = st.Exec(s)
 			if err != nil {
-				if s.isRetryableError(err) {
-					success = false
-					break
-				}
-				log.Warnf("session:%v, err:%v", s, err)
-				return errors.Trace(err)
-			}
-		}
-		if success {
-			err = s.doCommit()
-			if !s.isRetryableError(err) {
 				break
 			}
 		}
+		if err == nil {
+			err = s.doCommit()
+			if err == nil {
+				break
+			}
+		}
+		if !s.isRetryableError(err) {
+			log.Warnf("session:%v, err:%v", s, err)
+			return errors.Trace(err)
+		}
 		retryCnt++
-		if (s.maxRetryCnt != unlimitedRetryCnt) && (retryCnt >= s.maxRetryCnt) {
+		if !s.unlimitedRetryCount && (retryCnt >= maxCnt) {
 			return errors.Trace(err)
 		}
 		kv.BackOff(retryCnt)
@@ -353,9 +348,7 @@ func (s *session) Retry() error {
 // Unlike normal Exec, it doesn't reset statement status, doesn't commit or rollback the current transaction
 // and doesn't write binlog.
 func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (ast.RecordSet, error) {
-	if err := s.checkSchemaValidOrRollback(); err != nil {
-		return nil, errors.Trace(err)
-	}
+	s.prepareTxnCtx()
 	charset, collation := s.sessionVars.GetCharsetInfo()
 	rawStmts, err := s.ParseSQL(sql, charset, collation)
 	if err != nil {
@@ -384,7 +377,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (ast.Record
 // getExecRet executes restricted sql and the result is one column.
 // It returns a string value.
 func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
-	cleanTxn := s.txn == nil
+	cleanTxn := s.txn == nil && s.txnCh == nil
 	rs, err := s.ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return "", errors.Trace(err)
@@ -405,6 +398,7 @@ func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
 		// This function has some side effect. Run select may create new txn.
 		// We should make environment unchanged.
 		s.txn = nil
+		s.txnCh = nil
 	}
 	return value, nil
 }
@@ -435,19 +429,12 @@ func (s *session) SetGlobalSysVar(name string, value string) error {
 	return errors.Trace(err)
 }
 
-// IsAutocommit checks if it is in the auto-commit mode.
-func (s *session) isAutocommit(ctx context.Context) bool {
-	return s.sessionVars.GetStatusFlag(mysql.ServerStatusAutocommit)
-}
-
 func (s *session) ParseSQL(sql, charset, collation string) ([]ast.StmtNode, error) {
 	return s.parser.Parse(sql, charset, collation)
 }
 
 func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
-	if err := s.checkSchemaValidOrRollback(); err != nil {
-		return nil, errors.Trace(err)
-	}
+	s.prepareTxnCtx()
 	startTS := time.Now()
 	charset, collation := s.sessionVars.GetCharsetInfo()
 	connID := s.sessionVars.ConnectionID
@@ -461,12 +448,14 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 	var rs []ast.RecordSet
 	ph := sessionctx.GetDomain(s).PerfSchema()
 	for i, rst := range rawStmts {
+		s.prepareTxnCtx()
 		startTS := time.Now()
 		// Some execution is done in compile stage, so we reset it before compile.
 		resetStmtCtx(s, rawStmts[0])
 		st, err1 := Compile(s, rst)
 		if err1 != nil {
 			log.Warnf("[%d] compile error:\n%v\n%s", connID, err1, sql)
+			s.RollbackTxn()
 			return nil, errors.Trace(err1)
 		}
 		sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
@@ -496,10 +485,10 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 
 // For execute prepare statement in binary protocol
 func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error) {
-	if err := s.checkSchemaValidOrRollback(); err != nil {
-		return 0, 0, nil, errors.Trace(err)
+	if s.sessionVars.TxnCtx.InfoSchema == nil {
+		// We don't need to create a transaction for prepare statement, just get information schema will do.
+		s.sessionVars.TxnCtx.InfoSchema = sessionctx.GetDomain(s).InfoSchema()
 	}
-	PrepareTxnCtx(s)
 	prepareExec := &executor.PrepareExec{
 		IS:      executor.GetInfoSchema(s),
 		Ctx:     s,
@@ -557,23 +546,17 @@ func checkArgs(args ...interface{}) error {
 
 // ExecutePreparedStmt executes a prepared statement.
 func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (ast.RecordSet, error) {
-	if err := s.checkSchemaValidOrRollback(); err != nil {
-		return nil, errors.Trace(err)
-	}
 	err := checkArgs(args...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	PrepareTxnCtx(s)
+	s.prepareTxnCtx()
 	st := executor.CompileExecutePreparedStmt(s, stmtID, args...)
 	r, err := runStmt(s, st)
 	return r, errors.Trace(err)
 }
 
 func (s *session) DropPreparedStmt(stmtID uint32) error {
-	if err := s.checkSchemaValidOrRollback(); err != nil {
-		return errors.Trace(err)
-	}
 	vars := s.sessionVars
 	if _, ok := vars.PreparedStmts[stmtID]; !ok {
 		return executor.ErrStmtNotFound
@@ -608,12 +591,31 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	ac := s.isAutocommit(s)
+	ac := s.sessionVars.IsAutocommit()
 	if !ac {
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 	}
 	log.Infof("[%d] %s new txn:%s", s.sessionVars.ConnectionID, force, s.txn)
 	return s.txn, nil
+}
+
+func (s *session) Txn() kv.Transaction {
+	return s.txn
+}
+
+func (s *session) NewTxn() error {
+	if s.txn != nil && s.txn.Valid() {
+		err := s.doCommitWithRetry()
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	txn, err := s.store.Begin()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	s.txn = txn
+	return nil
 }
 
 func (s *session) SetValue(key fmt.Stringer, value interface{}) {
@@ -634,7 +636,7 @@ func (s *session) Close() error {
 	return s.RollbackTxn()
 }
 
-// GetSessionVars implements the context.Context interface
+// GetSessionVars implements the context.Context interface.
 func (s *session) GetSessionVars() *variable.SessionVars {
 	return s.sessionVars
 }
@@ -743,7 +745,6 @@ func createSession(store kv.Storage) (*session, error) {
 	s := &session{
 		values:      make(map[fmt.Stringer]interface{}),
 		store:       store,
-		maxRetryCnt: 10,
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
 	}
@@ -813,8 +814,7 @@ const loadCommonGlobalVarsSQL = "select * from mysql.global_variables where vari
 	variable.DistSQLJoinConcurrencyVar + "', '" +
 	variable.DistSQLScanConcurrencyVar + "')"
 
-// LoadCommonGlobalVariableIfNeeded loads and applies commonly used global variables for the session
-// right before creating a transaction for the first time.
+// LoadCommonGlobalVariableIfNeeded loads and applies commonly used global variables for the session.
 func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	vars := s.sessionVars
 	if vars.CommonGlobalLoaded {
@@ -843,10 +843,61 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 			break
 		}
 		varName := row.Data[0].GetString()
-		if d := varsutil.GetSystemVar(vars, varName); d.IsNull() {
-			varsutil.SetSystemVar(s.sessionVars, varName, row.Data[1])
+		if _, ok := vars.Systems[varName]; !ok {
+			varsutil.SetSessionSystemVar(s.sessionVars, varName, row.Data[1])
 		}
 	}
 	vars.CommonGlobalLoaded = true
+	return nil
+}
+
+type txnWithErr struct {
+	txn kv.Transaction
+	err error
+}
+
+// prepareTxnCtx starts a goroutine to begin a transaction if needed, and creates a new transaction context.
+// It is called before we execute a sql query.
+func (s *session) prepareTxnCtx() {
+	if s.txn != nil && s.txn.Valid() {
+		return
+	}
+	if s.txnCh != nil {
+		return
+	}
+	txnCh := make(chan *txnWithErr, 1)
+	go func() {
+		txn, err := s.store.Begin()
+		txnCh <- &txnWithErr{txn: txn, err: err}
+	}()
+	s.txnCh = txnCh
+	is := sessionctx.GetDomain(s).InfoSchema()
+	s.sessionVars.TxnCtx = &variable.TransactionContext{
+		InfoSchema:    is,
+		SchemaVersion: is.SchemaMetaVersion(),
+	}
+	if !s.sessionVars.IsAutocommit() {
+		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
+	}
+}
+
+// ActivePendingTxn implements Session.ActivePendingTxn interface.
+func (s *session) ActivePendingTxn() error {
+	if s.txn != nil && s.txn.Valid() {
+		return nil
+	}
+	if s.txnCh == nil {
+		return errors.New("transaction channel is not set")
+	}
+	txnWithErr := <-s.txnCh
+	s.txnCh = nil
+	if txnWithErr.err != nil {
+		return errors.Trace(txnWithErr.err)
+	}
+	s.txn = txnWithErr.txn
+	err := s.loadCommonGlobalVariablesIfNeeded()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	return nil
 }

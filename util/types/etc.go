@@ -49,6 +49,18 @@ func IsTypeChar(tp byte) bool {
 	}
 }
 
+// IsTypePrefixable returns a boolean indicating
+// whether an index on a column with the tp can be defined with a prefix.
+func IsTypePrefixable(tp byte) bool {
+	return IsTypeBlob(tp) || IsTypeChar(tp)
+}
+
+// IsTypeFractionable returns a boolean indicating
+// whether the tp can has time fraction.
+func IsTypeFractionable(tp byte) bool {
+	return tp == mysql.TypeDatetime || tp == mysql.TypeDuration || tp == mysql.TypeTimestamp
+}
+
 var type2Str = map[byte]string{
 	mysql.TypeBit:        "bit",
 	mysql.TypeBlob:       "text",

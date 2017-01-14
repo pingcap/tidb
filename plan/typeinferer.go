@@ -262,7 +262,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		if x.FnName.L == "abs" && tp.Tp == mysql.TypeDatetime {
 			tp = types.NewFieldType(mysql.TypeDouble)
 		}
-	case "greatest":
+	case "greatest", "least":
 		for _, arg := range x.Args {
 			InferType(v.sc, arg)
 		}
@@ -272,6 +272,8 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 				mergeArithType(tp.Tp, x.Args[i].GetType().Tp)
 			}
 		}
+	case "interval":
+		tp = types.NewFieldType(mysql.TypeLonglong)
 	case "ceil", "ceiling":
 		t := x.Args[0].GetType().Tp
 		if t == mysql.TypeNull || t == mysql.TypeFloat || t == mysql.TypeDouble || t == mysql.TypeVarchar ||
@@ -290,11 +292,11 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	case "curtime", "current_time", "timediff":
 		tp = types.NewFieldType(mysql.TypeDuration)
 		tp.Decimal = v.getFsp(x)
-	case "current_timestamp", "date_arith":
+	case "current_timestamp", "date_add", "date_sub", "adddate", "subdate":
 		tp = types.NewFieldType(mysql.TypeDatetime)
 	case "microsecond", "second", "minute", "hour", "day", "week", "month", "year",
-		"dayofweek", "dayofmonth", "dayofyear", "weekday", "weekofyear", "yearweek",
-		"found_rows", "length", "extract", "locate":
+		"dayofweek", "dayofmonth", "dayofyear", "weekday", "weekofyear", "yearweek", "datediff",
+		"found_rows", "length", "extract", "locate", "unix_timestamp":
 		tp = types.NewFieldType(mysql.TypeLonglong)
 	case "now", "sysdate":
 		tp = types.NewFieldType(mysql.TypeDatetime)
@@ -311,14 +313,16 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	case "dayname", "version", "database", "user", "current_user", "schema",
 		"concat", "concat_ws", "left", "lcase", "lower", "repeat",
 		"replace", "ucase", "upper", "convert", "substring",
-		"substring_index", "trim", "ltrim", "rtrim", "reverse", "hex", "unhex", "date_format", "rpad":
+		"substring_index", "trim", "ltrim", "rtrim", "reverse", "hex", "unhex", "date_format", "rpad", "char_func", "conv":
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
-	case "strcmp", "isnull":
+	case "strcmp", "isnull", "bit_length", "char_length", "character_length", "crc32", "timestampdiff", "sign":
 		tp = types.NewFieldType(mysql.TypeLonglong)
 	case "connection_id":
 		tp = types.NewFieldType(mysql.TypeLonglong)
 		tp.Flag |= mysql.UnsignedFlag
+	case "find_in_set":
+		tp = types.NewFieldType(mysql.TypeLonglong)
 	case "if":
 		// TODO: fix this
 		// See https://dev.mysql.com/doc/refman/5.5/en/control-flow-functions.html#function_if

@@ -303,30 +303,17 @@ func (e *ShowExec) fetchShowCharset() error {
 
 func (e *ShowExec) fetchShowVariables() error {
 	sessionVars := e.ctx.GetSessionVars()
-	globalVars := sessionVars.GlobalVarsAccessor
 	for _, v := range variable.SysVars {
 		var err error
 		var value string
 		if !e.GlobalScope {
 			// Try to get Session Scope variable value first.
-			sv := varsutil.GetSystemVar(sessionVars, v.Name)
-			if sv.IsNull() {
-				value, err = globalVars.GetGlobalSysVar(v.Name)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				sv.SetString(value)
-				err = varsutil.SetSystemVar(sessionVars, v.Name, sv)
-				if err != nil {
-					return errors.Trace(err)
-				}
-			}
-			value = sv.GetString()
+			value, err = varsutil.GetSessionSystemVar(sessionVars, v.Name)
 		} else {
-			value, err = globalVars.GetGlobalSysVar(v.Name)
-			if err != nil {
-				return errors.Trace(err)
-			}
+			value, err = varsutil.GetGlobalSystemVar(sessionVars, v.Name)
+		}
+		if err != nil {
+			return errors.Trace(err)
 		}
 		row := &Row{Data: types.MakeDatums(v.Name, value)}
 		e.rows = append(e.rows, row)

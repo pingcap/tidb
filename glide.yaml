@@ -147,7 +147,7 @@ import:
   - go-binlog
   - go-tipb
 - package: github.com/pingcap/kvproto
-  version: 679b4719adb44bb55780ad2480f29a0f234b039e
+  version: b66543960fb3508671152f6c9f4a09ee9d7a2322
 - package: github.com/gogo/protobuf
   version: ^0.3.0
   subpackages:

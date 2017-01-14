@@ -49,6 +49,7 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 
 	// Run this test here because parallel would affect the result of it.
 	runTestStmtCount(c)
+	defaultLoadDataBatchCnt = 3
 }
 
 func waitUntilServerOnline() {
@@ -116,10 +117,6 @@ func (ts *TidbTestSuite) TestResultFieldTableIsNull(c *C) {
 
 func (ts *TidbTestSuite) TestStatusAPI(c *C) {
 	runTestStatusAPI(c)
-}
-
-func (ts *TidbTestSuite) TestMultiPacket(c *C) {
-	runTestMultiPacket(c)
 }
 
 func (ts *TidbTestSuite) TestMultiStatements(c *C) {

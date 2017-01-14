@@ -85,7 +85,7 @@ type PrepareExec struct {
 // Schema implements the Executor Schema interface.
 func (e *PrepareExec) Schema() expression.Schema {
 	// Will never be called.
-	return nil
+	return expression.NewSchema(nil)
 }
 
 // Next implements the Executor Next interface.
@@ -180,7 +180,7 @@ type ExecuteExec struct {
 // Schema implements the Executor Schema interface.
 func (e *ExecuteExec) Schema() expression.Schema {
 	// Will never be called.
-	return nil
+	return expression.NewSchema(nil)
 }
 
 // Next implements the Executor Next interface.
@@ -234,6 +234,10 @@ func (e *ExecuteExec) Build() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	err = e.Ctx.ActivePendingTxn()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	b := newExecutorBuilder(e.Ctx, e.IS)
 	stmtExec := b.build(p)
 	if b.err != nil {
@@ -253,7 +257,7 @@ type DeallocateExec struct {
 // Schema implements the Executor Schema interface.
 func (e *DeallocateExec) Schema() expression.Schema {
 	// Will never be called.
-	return nil
+	return expression.NewSchema(nil)
 }
 
 // Next implements the Executor Next interface.

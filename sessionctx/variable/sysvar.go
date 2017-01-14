@@ -57,14 +57,16 @@ func GetSysVar(name string) *SysVar {
 const (
 	CodeUnknownStatusVar terror.ErrCode = 1
 	CodeUnknownSystemVar terror.ErrCode = 1193
+	CodeIncorrectScope   terror.ErrCode = 1238
 )
 
 var tidbSysVars map[string]bool
 
 // Variable errors
 var (
-	UnknownStatusVar = terror.ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
-	UnknownSystemVar = terror.ClassVariable.New(CodeUnknownSystemVar, "unknown system variable '%s'")
+	UnknownStatusVar  = terror.ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
+	UnknownSystemVar  = terror.ClassVariable.New(CodeUnknownSystemVar, "unknown system variable '%s'")
+	ErrIncorrectScope = terror.ClassVariable.New(CodeIncorrectScope, "Incorrect variable scope")
 )
 
 func init() {
@@ -76,6 +78,7 @@ func init() {
 	// Register terror to mysql error map.
 	mySQLErrCodes := map[terror.ErrCode]uint16{
 		CodeUnknownSystemVar: mysql.ErrUnknownSystemVariable,
+		CodeIncorrectScope:   mysql.ErrIncorrectGlobalLocalVar,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassVariable] = mySQLErrCodes
 
@@ -84,6 +87,7 @@ func init() {
 	tidbSysVars[DistSQLJoinConcurrencyVar] = true
 	tidbSysVars[TiDBSnapshot] = true
 	tidbSysVars[TiDBSkipConstraintCheck] = true
+	tidbSysVars[TiDBSkipDDLWait] = true
 }
 
 // we only support MySQL now
@@ -591,6 +595,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, DistSQLScanConcurrencyVar, "10"},
 	{ScopeGlobal | ScopeSession, DistSQLJoinConcurrencyVar, "5"},
 	{ScopeSession, TiDBSkipConstraintCheck, "0"},
+	{ScopeSession, TiDBSkipDDLWait, "0"},
 }
 
 // TiDB system variables
@@ -599,6 +604,7 @@ const (
 	DistSQLScanConcurrencyVar = "tidb_distsql_scan_concurrency"
 	DistSQLJoinConcurrencyVar = "tidb_distsql_join_concurrency"
 	TiDBSkipConstraintCheck   = "tidb_skip_constraint_check"
+	TiDBSkipDDLWait           = "tidb_skip_ddl_wait"
 )
 
 // SetNamesVariables is the system variable names related to set names statements.

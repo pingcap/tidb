@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan/statistics"
+	"github.com/pingcap/tidb/plan/statscache"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
@@ -49,7 +50,7 @@ type SimpleExec struct {
 
 // Schema implements the Executor Schema interface.
 func (e *SimpleExec) Schema() expression.Schema {
-	return nil
+	return expression.NewSchema(nil)
 }
 
 // Next implements Execution Next interface.
@@ -66,7 +67,7 @@ func (e *SimpleExec) Next() (*Row, error) {
 	case *ast.BeginStmt:
 		err = e.executeBegin(x)
 	case *ast.CommitStmt:
-		err = e.executeCommit(x)
+		e.executeCommit(x)
 	case *ast.RollbackStmt:
 		err = e.executeRollback(x)
 	case *ast.CreateUserStmt:
@@ -112,7 +113,7 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 }
 
 func (e *SimpleExec) executeBegin(s *ast.BeginStmt) error {
-	_, err := e.ctx.GetTxn(true)
+	err := e.ctx.NewTxn()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -123,18 +124,18 @@ func (e *SimpleExec) executeBegin(s *ast.BeginStmt) error {
 	return nil
 }
 
-func (e *SimpleExec) executeCommit(s *ast.CommitStmt) error {
-	err := e.ctx.CommitTxn()
+func (e *SimpleExec) executeCommit(s *ast.CommitStmt) {
 	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, false)
-	return errors.Trace(err)
 }
 
 func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	sessVars := e.ctx.GetSessionVars()
 	log.Infof("[%d] execute rollback statement", sessVars.ConnectionID)
-	err := e.ctx.RollbackTxn()
 	sessVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
-	return errors.Trace(err)
+	if e.ctx.Txn().Valid() {
+		return e.ctx.Txn().Rollback()
+	}
+	return nil
 }
 
 func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
@@ -215,12 +216,12 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 			failedUsers = append(failedUsers, spec.User)
 		}
 	}
-
-	err := e.ctx.CommitTxn()
-	if err != nil {
-		return errors.Trace(err)
-	}
 	if len(failedUsers) > 0 {
+		// Commit the transaction even if we returns error
+		err := e.ctx.Txn().Commit()
+		if err != nil {
+			return errors.Trace(err)
+		}
 		errMsg := "Operation ALTER USER failed for " + strings.Join(failedUsers, ",")
 		return terror.ClassExecutor.New(CodeCannotUser, errMsg)
 	}
@@ -247,11 +248,12 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 			failedUsers = append(failedUsers, user)
 		}
 	}
-	err := e.ctx.CommitTxn()
-	if err != nil {
-		return errors.Trace(err)
-	}
 	if len(failedUsers) > 0 {
+		// Commit the transaction even if we returns error
+		err := e.ctx.Txn().Commit()
+		if err != nil {
+			return errors.Trace(err)
+		}
 		errMsg := "Operation DROP USER failed for " + strings.Join(failedUsers, ",")
 		return terror.ClassExecutor.New(CodeCannotUser, errMsg)
 	}
@@ -373,16 +375,24 @@ func (e *SimpleExec) collectSamples(result ast.RecordSet) (count int64, samples 
 }
 
 func (e *SimpleExec) buildStatisticsAndSaveToKV(tn *ast.TableName, count int64, sampleRows []*ast.Row) error {
-	txn, err := e.ctx.GetTxn(false)
+	txn := e.ctx.Txn()
+	statBuilder := &statistics.Builder{
+		Sc:            e.ctx.GetSessionVars().StmtCtx,
+		TblInfo:       tn.TableInfo,
+		StartTS:       int64(txn.StartTS()),
+		Count:         count,
+		NumBuckets:    defaultBucketCount,
+		ColumnSamples: rowsToColumnSamples(sampleRows),
+		PkOffset:      -1,
+	}
+	for i := range statBuilder.ColumnSamples {
+		statBuilder.ColOffsets = append(statBuilder.ColOffsets, i)
+	}
+	t, err := statBuilder.NewTable()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	columnSamples := rowsToColumnSamples(sampleRows)
-	sc := e.ctx.GetSessionVars().StmtCtx
-	t, err := statistics.NewTable(sc, tn.TableInfo, int64(txn.StartTS()), count, defaultBucketCount, columnSamples)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	statscache.SetStatisticsTableCache(tn.TableInfo.ID, t)
 	tpb, err := t.ToPB()
 	if err != nil {
 		return errors.Trace(err)

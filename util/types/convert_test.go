@@ -73,21 +73,21 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	ft.Flen = 5
 	ft.Decimal = 2
 	v, err = Convert(999.999, ft)
-	c.Assert(err, IsNil)
+	c.Assert(err, NotNil)
 	c.Assert(v, Equals, float32(999.99))
 
 	ft = NewFieldType(mysql.TypeFloat)
 	ft.Flen = 5
 	ft.Decimal = 2
 	v, err = Convert(-999.999, ft)
-	c.Assert(err, IsNil)
+	c.Assert(err, NotNil)
 	c.Assert(v, Equals, float32(-999.99))
 
 	ft = NewFieldType(mysql.TypeFloat)
 	ft.Flen = 5
 	ft.Decimal = 2
 	v, err = Convert(1111.11, ft)
-	c.Assert(err, IsNil)
+	c.Assert(err, NotNil)
 	c.Assert(v, Equals, float32(999.99))
 
 	ft = NewFieldType(mysql.TypeFloat)
@@ -100,7 +100,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	ft = NewFieldType(mysql.TypeFloat)
 	ft.Flen = 5
 	ft.Decimal = 2
-	v, err = Convert(999.915, ft)
+	v, err = Convert(999.914, ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, float32(999.91))
 
@@ -628,6 +628,7 @@ func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 		{"123..34", "123."},
 		{"123.23E-10", "123.23E-10"},
 		{"1.1e1.3", "1.1e1"},
+		{"11e1.3", "11e1"},
 		{"1.1e-13a", "1.1e-13"},
 		{"1.", "1."},
 		{".1", ".1"},

@@ -161,12 +161,6 @@ type ResultSetNode interface {
 // If the Exec method requires any Execution domain local data,
 // they must be held out of the implementing instance.
 type Statement interface {
-	// Explain gets the execution plans.
-	//Explain(ctx context.Context, w format.Formatter)
-
-	// IsDDL shows whether the statement is an DDL operation.
-	IsDDL() bool
-
 	// OriginText gets the origin SQL text.
 	OriginText() string
 

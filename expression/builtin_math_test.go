@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package evaluator
+package expression
 
 import (
 	. "github.com/pingcap/check"
@@ -169,5 +169,92 @@ func (s *testEvaluatorSuite) TestRound(c *C) {
 		v, err := builtinRound(t["Arg"], s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
+	}
+}
+
+func (s *testEvaluatorSuite) TestCRC32(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Arg []interface{}
+		Ret uint64
+	}{
+		{[]interface{}{"mysql"}, 2501908538},
+		{[]interface{}{"MySQL"}, 3259397556},
+		{[]interface{}{"hello"}, 907060870},
+	}
+
+	Dtbl := tblToDtbl(tbl)
+
+	for _, t := range Dtbl {
+		v, err := builtinCRC32(t["Arg"], s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
+	}
+}
+
+func (s *testEvaluatorSuite) TestConv(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Arg []interface{}
+		Ret interface{}
+	}{
+		{[]interface{}{"a", 16, 2}, "1010"},
+		{[]interface{}{"6E", 18, 8}, "172"},
+		{[]interface{}{"-17", 10, -18}, "-H"},
+		{[]interface{}{"-17", 10, 18}, "2D3FGB0B9CG4BD1H"},
+		{[]interface{}{nil, 10, 10}, nil},
+		{[]interface{}{"+18aZ", 7, 36}, 1},
+		{[]interface{}{"18446744073709551615", -10, 16}, "7FFFFFFFFFFFFFFF"},
+		{[]interface{}{"12F", -10, 16}, "C"},
+		{[]interface{}{"  FF ", 16, 10}, "255"},
+	}
+
+	Dtbl := tblToDtbl(tbl)
+
+	for _, t := range Dtbl {
+		v, err := builtinConv(t["Arg"], s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
+	}
+
+	v := []struct {
+		s    string
+		base int64
+		ret  string
+	}{
+		{"-123456D1f", 5, "-1234"},
+		{"+12azD", 16, "12a"},
+		{"+", 12, ""},
+	}
+	for _, t := range v {
+		r := getValidPrefix(t.s, t.base)
+		c.Assert(r, Equals, t.ret)
+	}
+}
+
+func (s *testEvaluatorSuite) TestSign(c *C) {
+	defer testleak.AfterTest(c)()
+
+	for _, t := range []struct {
+		num interface{}
+		ret interface{}
+		err Checker
+	}{
+		{nil, nil, IsNil},
+		{1, 1, IsNil},
+		{0, 0, IsNil},
+		{-1, -1, IsNil},
+		{0.4, 1, IsNil},
+		{-0.4, -1, IsNil},
+		{"1", 1, IsNil},
+		{"-1", -1, IsNil},
+		{"1a", 1, NotNil},
+		{"-1a", -1, NotNil},
+		{"a", 0, NotNil},
+		{uint64(9223372036854775808), 1, IsNil},
+	} {
+		v, err := builtinSign(types.MakeDatums(t.num), s.ctx)
+		c.Assert(err, t.err)
+		c.Assert(v, testutil.DatumEquals, types.NewDatum(t.ret))
 	}
 }

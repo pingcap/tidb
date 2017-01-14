@@ -16,6 +16,7 @@ package variable
 import (
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
@@ -131,6 +132,10 @@ type SessionVars struct {
 	// SkipConstraintCheck is true when importing data.
 	SkipConstraintCheck bool
 
+	// SkipDDLWait can be set to true to skip 2 lease wait after create/drop/truncate table, create/drop database.
+	// Then if there are multiple TiDB servers, the new table may not be available for other TiDB servers.
+	SkipDDLWait bool
+
 	// GlobalAccessor is used to set and get global variables.
 	GlobalVarsAccessor GlobalVarAccessor
 
@@ -140,6 +145,10 @@ type SessionVars struct {
 	// CurrInsertValues is used to record current ValuesExpr's values.
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	CurrInsertValues interface{}
+
+	// Per-connection time zones. Each client that connects has its own time zone setting, given by the session time_zone variable.
+	// See https://dev.mysql.com/doc/refman/5.7/en/time-zone-support.html
+	TimeZone *time.Location
 }
 
 // NewSessionVars creates a session vars object.
@@ -199,13 +208,14 @@ func (s *SessionVars) GetStatusFlag(flag uint16) bool {
 	return s.Status&flag > 0
 }
 
-// ShouldAutocommit checks if current session should autocommit.
-// With START TRANSACTION, autocommit remains disabled until you end
-// the transaction with COMMIT or ROLLBACK.
-func (s *SessionVars) ShouldAutocommit() bool {
-	isAutomcommit := s.GetStatusFlag(mysql.ServerStatusAutocommit)
-	inTransaction := s.GetStatusFlag(mysql.ServerStatusInTrans)
-	return isAutomcommit && !inTransaction
+// InTxn returns if the session is in transaction.
+func (s *SessionVars) InTxn() bool {
+	return s.GetStatusFlag(mysql.ServerStatusInTrans)
+}
+
+// IsAutocommit returns if the session is set to autocommit.
+func (s *SessionVars) IsAutocommit() bool {
+	return s.GetStatusFlag(mysql.ServerStatusAutocommit)
 }
 
 // GetNextPreparedStmtID generates and returns the next session scope prepared statement id.
@@ -219,6 +229,7 @@ const (
 	SQLModeVar          = "sql_mode"
 	AutocommitVar       = "autocommit"
 	CharacterSetResults = "character_set_results"
+	TimeZone            = "time_zone"
 )
 
 // GetTiDBSystemVar gets variable value for name.
@@ -242,9 +253,9 @@ func (s *SessionVars) GetTiDBSystemVar(name string) (string, error) {
 // It should be reset before executing a statement.
 type StatementContext struct {
 	/* Variables that are set before execution */
-	InUpdateStmt      bool
-	IgnoreTruncate    bool
-	TruncateAsWarning bool
+	InUpdateOrDeleteStmt bool
+	IgnoreTruncate       bool
+	TruncateAsWarning    bool
 
 	/* Variables that changes during execution. */
 	mu struct {

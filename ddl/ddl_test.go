@@ -48,10 +48,9 @@ func testNewContext(c *C, d *ddl) context.Context {
 }
 
 func getSchemaVer(c *C, ctx context.Context) int64 {
-	txn, err := ctx.GetTxn(true)
+	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
-	c.Assert(txn, NotNil)
-	m := meta.NewMeta(txn)
+	m := meta.NewMeta(ctx.Txn())
 	ver, err := m.GetSchemaVersion()
 	c.Assert(err, IsNil)
 	return ver
@@ -75,33 +74,27 @@ func checkEqualTable(c *C, t1, t2 *model.TableInfo) {
 }
 
 func checkHistoryJobArgs(c *C, ctx context.Context, id int64, args *historyJobArgs) {
-	txn, err := ctx.GetTxn(true)
-	c.Assert(err, IsNil)
-	t := meta.NewMeta(txn)
+	c.Assert(ctx.NewTxn(), IsNil)
+	t := meta.NewMeta(ctx.Txn())
 	historyJob, err := t.GetHistoryDDLJob(id)
 	c.Assert(err, IsNil)
 
-	var v int64
-	var ids []int64
-	tbl := &model.TableInfo{}
 	if args.tbl != nil {
-		historyJob.DecodeArgs(&v, &tbl)
-		c.Assert(v, Equals, args.ver)
-		checkEqualTable(c, tbl, args.tbl)
+		c.Assert(historyJob.BinlogInfo.SchemaVersion, Equals, args.ver)
+		checkEqualTable(c, historyJob.BinlogInfo.TableInfo, args.tbl)
 		return
 	}
-	// only for create schema job
-	db := &model.DBInfo{}
+
+	// for handling schema job
+	c.Assert(historyJob.BinlogInfo.SchemaVersion, Equals, args.ver)
+	c.Assert(historyJob.BinlogInfo.DBInfo, DeepEquals, args.db)
+	// only for creating schema job
 	if args.db != nil && len(args.tblIDs) == 0 {
-		historyJob.DecodeArgs(&v, &db)
-		c.Assert(v, Equals, args.ver)
-		c.Assert(db, DeepEquals, args.db)
 		return
 	}
-	// only for drop schema job
-	historyJob.DecodeArgs(&v, &db, &ids)
-	c.Assert(v, Equals, args.ver)
-	c.Assert(db, DeepEquals, args.db)
+	// only for dropping schema job
+	var ids []int64
+	historyJob.DecodeArgs(&ids)
 	for _, id := range ids {
 		c.Assert(args.tblIDs, HasKey, id)
 		delete(args.tblIDs, id)

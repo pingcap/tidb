@@ -23,7 +23,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/evaluator"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
@@ -260,7 +260,7 @@ func GetColDefaultValue(ctx context.Context, col *model.ColumnInfo) (types.Datum
 			return types.Datum{}, true, nil
 		}
 
-		value, err := evaluator.GetTimeValue(ctx, col.DefaultValue, col.Tp, col.Decimal)
+		value, err := expression.GetTimeValue(ctx, col.DefaultValue, col.Tp, col.Decimal)
 		if err != nil {
 			return types.Datum{}, true, errGetDefaultFailed.Gen("Field '%s' get default value fail - %s",
 				col.Name, errors.Trace(err))

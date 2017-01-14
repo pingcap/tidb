@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package evaluator
+package expression
 
 import (
 	"reflect"
@@ -70,25 +70,85 @@ func (s *testEvaluatorSuite) TestCoalesce(c *C) {
 	c.Assert(v, testutil.DatumEquals, types.NewDatum(nil))
 }
 
-func (s *testEvaluatorSuite) TestGreatestFunc(c *C) {
+func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 	defer testleak.AfterTest(c)()
 
-	v, err := builtinGreatest(types.MakeDatums(2, 0), s.ctx)
+	var datums []types.Datum
+
+	datums = types.MakeDatums(2, 0)
+	v, err := builtinGreatest(datums, s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(2))
+	v, err = builtinLeast(datums, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(v.GetInt64(), Equals, int64(0))
 
-	v, err = builtinGreatest(types.MakeDatums(34.0, 3.0, 5.0, 767.0), s.ctx)
+	datums = types.MakeDatums(34.0, 3.0, 5.0, 767.0)
+	v, err = builtinGreatest(datums, s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetFloat64(), Equals, float64(767.0))
+	v, err = builtinLeast(datums, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(v.GetFloat64(), Equals, float64(3.0))
 
-	v, err = builtinGreatest(types.MakeDatums("B", "A", "C"), s.ctx)
+	datums = types.MakeDatums("B", "A", "C")
+	v, err = builtinGreatest(datums, s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetString(), Equals, "C")
+	v, err = builtinLeast(datums, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(v.GetString(), Equals, "A")
 
-	// GREATEST() returns NULL if any argument is NULL.
-	v, err = builtinGreatest(types.MakeDatums(1, nil, 2), s.ctx)
+	// GREATEST() and LEAST() return NULL if any argument is NULL.
+	datums = types.MakeDatums(nil, 1, 2)
+	v, err = builtinGreatest(datums, s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v.IsNull(), IsTrue)
+	v, err = builtinLeast(datums, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(v.IsNull(), IsTrue)
+
+	datums = types.MakeDatums(1, nil, 2)
+	v, err = builtinGreatest(datums, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(v.IsNull(), IsTrue)
+	v, err = builtinLeast(datums, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(v.IsNull(), IsTrue)
+}
+
+func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
+	defer testleak.AfterTest(c)()
+
+	for _, t := range []struct {
+		args []types.Datum
+		ret  int64
+	}{
+		{types.MakeDatums(nil, 1, 2), -1},
+		{types.MakeDatums(1, 2, 3), 0},
+		{types.MakeDatums(2, 1, 3), 1},
+		{types.MakeDatums(3, 1, 2), 2},
+		{types.MakeDatums(0, "b", "1", "2"), 1},
+		{types.MakeDatums("a", "b", "1", "2"), 1},
+		{types.MakeDatums(23, 1, 23, 23, 23, 30, 44, 200), 4},
+		{types.MakeDatums(23, 1.7, 15.3, 23.1, 30, 44, 200), 2},
+		{types.MakeDatums(9007199254740992, 9007199254740993), 0},
+		{types.MakeDatums(uint64(9223372036854775808), uint64(9223372036854775809)), 0},
+		{types.MakeDatums(9223372036854775807, uint64(9223372036854775808)), 0},
+		{types.MakeDatums(-9223372036854775807, uint64(9223372036854775808)), 0},
+		{types.MakeDatums(uint64(9223372036854775806), 9223372036854775807), 0},
+		{types.MakeDatums(uint64(9223372036854775806), -9223372036854775807), 1},
+		{types.MakeDatums("9007199254740991", "9007199254740992"), 0},
+
+		// tests for appropriate precision loss
+		{types.MakeDatums(9007199254740992, "9007199254740993"), 1},
+		{types.MakeDatums("9007199254740992", 9007199254740993), 1},
+		{types.MakeDatums("9007199254740992", "9007199254740993"), 1},
+	} {
+		v, err := builtinInterval(t.args, s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(v.GetInt64(), Equals, t.ret)
+	}
 }
 
 func (s *testEvaluatorSuite) TestIsNullFunc(c *C) {

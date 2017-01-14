@@ -34,7 +34,7 @@ type MockExec struct {
 }
 
 func (m *MockExec) Schema() expression.Schema {
-	return nil
+	return expression.Schema{}
 }
 
 func (m *MockExec) Fields() []*ast.ResultField {
@@ -103,8 +103,10 @@ func (s *testSuite) TestAggregation(c *C) {
 	result.Check(testkit.Rows("2", "4", "5"))
 	result = tk.MustQuery("select sum(c), sum(c+1), sum(c), sum(c+1) from t group by d")
 	result.Check(testkit.Rows("2 4 2 4", "4 6 4 6", "5 7 5 7"))
-	result = tk.MustQuery("select count(distinct c,d), count(c,d) from t")
-	result.Check(testkit.Rows("5 6"))
+	result = tk.MustQuery("select count(distinct c,d) from t")
+	result.Check(testkit.Rows("5"))
+	_, err := tk.Exec("select count(c,d) from t")
+	c.Assert(err, NotNil)
 	result = tk.MustQuery("select d*2 as ee, sum(c) from t group by ee")
 	result.Check(testkit.Rows("2 2", "4 4", "6 5"))
 	result = tk.MustQuery("select sum(distinct c) from t group by d")
@@ -195,7 +197,7 @@ func (s *testSuite) TestAggregation(c *C) {
 	result.Check(testkit.Rows("-1 1", "0 1", "1 1"))
 	result = tk.MustQuery("select c as d, c as d from t group by d")
 	result.Check(testkit.Rows("1 1", "1 1", "1 1"))
-	_, err := tk.Exec("select d as d, c as d from t group by d")
+	_, err = tk.Exec("select d as d, c as d from t group by d")
 	c.Assert(err, NotNil)
 	_, err = tk.Exec("select t.d, c as d from t group by d")
 	c.Assert(err, NotNil)
@@ -268,6 +270,9 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("insert into t2 values(22, 2), (3, 12), (38, 98)")
 	result = tk.MustQuery("SELECT COALESCE ( + 1, cor0.col0 ) + - CAST( NULL AS DECIMAL ) FROM t2, t1 AS cor0, t2 AS cor1 GROUP BY cor0.col1")
 	result.Check(testkit.Rows("<nil>", "<nil>"))
+
+	result = tk.MustQuery("select count(*) from information_schema.columns")
+	result.Check(testkit.Rows("529"))
 }
 
 func (s *testSuite) TestStreamAgg(c *C) {
