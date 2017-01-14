@@ -124,10 +124,10 @@ func (s *testDDLSuite) TestTableError(c *C) {
 		job.SchemaID = -1
 		job.TableID = -1
 		t := meta.NewMeta(txn)
-		_, err1 := d.getTableInfo(t, job)
+		_, err1 := getTableInfo(t, job, job.SchemaID)
 		c.Assert(err1, NotNil)
 		job.SchemaID = dbInfo.ID
-		_, err1 = d.getTableInfo(t, job)
+		_, err1 = getTableInfo(t, job, job.SchemaID)
 		c.Assert(err1, NotNil)
 		return nil
 	})

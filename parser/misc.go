@@ -348,6 +348,7 @@ var tokenMap = map[string]int{
 	"REFERENCES":          references,
 	"REGEXP":              regexpKwd,
 	"RELEASE_LOCK":        releaseLock,
+	"RENAME":              rename,
 	"REPEAT":              repeat,
 	"REPEATABLE":          repeatable,
 	"REPLACE":             replace,

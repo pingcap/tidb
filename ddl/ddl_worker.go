@@ -368,6 +368,8 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) {
 		err = d.onDropForeignKey(t, job)
 	case model.ActionTruncateTable:
 		err = d.onTruncateTable(t, job)
+	case model.ActionRenameTable:
+		err = d.onRenameTable(t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobCancelled
@@ -430,6 +432,12 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 			return 0, errors.Trace(err)
 		}
 		diff.OldTableID = job.TableID
+	} else if job.Type == model.ActionRenameTable {
+		err = job.DecodeArgs(&diff.OldSchemaID)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		diff.TableID = job.TableID
 	} else {
 		diff.TableID = job.TableID
 	}
