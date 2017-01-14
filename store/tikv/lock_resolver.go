@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/pd/pd-client"
 	"golang.org/x/net/context"
@@ -223,7 +224,9 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 			return status, errors.Trace(errBodyMissing)
 		}
 		if keyErr := cmdResp.GetError(); keyErr != nil {
-			return status, errors.Errorf("unexpected cleanup err: %s", keyErr)
+			err = errors.Errorf("unexpected cleanup err: %s, tid: %v", keyErr, txnID)
+			log.Error(err)
+			return status, err
 		}
 		if cmdResp.CommitVersion != 0 {
 			status = TxnStatus(cmdResp.GetCommitVersion())
@@ -271,7 +274,9 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 			return errors.Trace(errBodyMissing)
 		}
 		if keyErr := cmdResp.GetError(); keyErr != nil {
-			return errors.Errorf("unexpected resolve err: %s", keyErr)
+			err = errors.Errorf("unexpected resolve err: %s, lock: %v", keyErr, l)
+			log.Error(err)
+			return err
 		}
 		cleanRegions[loc.Region] = struct{}{}
 		return nil
