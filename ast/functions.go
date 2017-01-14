@@ -107,6 +107,7 @@ const (
 	DayOfMonth       = "dayofmonth"
 	DayOfWeek        = "dayofweek"
 	DayOfYear        = "dayofyear"
+	FromDays         = "from_days"
 	Extract          = "extract"
 	Hour             = "hour"
 	MicroSecond      = "microsecond"
