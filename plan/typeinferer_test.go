@@ -155,6 +155,14 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"interval(1, 2, 3)", mysql.TypeLonglong, charset.CharsetBin},
 		{"interval(1.0, 2.0, 3.0)", mysql.TypeLonglong, charset.CharsetBin},
 		{"interval('1', '2', '3')", mysql.TypeLonglong, charset.CharsetBin},
+		{"round(null, 2)", mysql.TypeDouble, charset.CharsetBin},
+		{"round('1.2', 2)", mysql.TypeDouble, charset.CharsetBin},
+		{"round(1e2, 2)", mysql.TypeDouble, charset.CharsetBin},
+		// FIXME: the type of `round(1.2, 2)` is actually DECIMAL.
+		//        should we make TiDB be consistent with that?
+		{"round(1.2, 2)", mysql.TypeDouble, charset.CharsetBin},
+		{"round(true, 2)", mysql.TypeLonglong, charset.CharsetBin},
+		{"round(1000, 2)", mysql.TypeLonglong, charset.CharsetBin},
 		{"hex('TiDB')", mysql.TypeVarString, "utf8"},
 		{"hex(12)", mysql.TypeVarString, "utf8"},
 		{"unhex('TiDB')", mysql.TypeVarString, "utf8"},

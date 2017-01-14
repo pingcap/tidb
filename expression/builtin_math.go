@@ -366,6 +366,9 @@ func (b *builtinRoundSig) eval(row []types.Datum) (types.Datum, error) {
 
 // See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_round
 func builtinRound(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	if args[0].IsNull() {
+		return
+	}
 	sc := ctx.GetSessionVars().StmtCtx
 	x, err := args[0].ToFloat64(sc)
 	if err != nil {
@@ -380,7 +383,19 @@ func builtinRound(args []types.Datum, ctx context.Context) (d types.Datum, err e
 		}
 		dec = int(y)
 	}
-	d.SetFloat64(types.Round(x, dec))
+
+	val := types.Round(x, dec)
+	switch args[0].Kind() {
+	case types.KindInt64:
+		d.SetInt64(int64(val))
+	case types.KindUint64:
+		d.SetUint64(uint64(val))
+	default:
+		d.SetFloat64(val)
+		if dec > 0 {
+			d.SetFrac(dec)
+		}
+	}
 	return d, nil
 }
 

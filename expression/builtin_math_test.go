@@ -151,7 +151,7 @@ func (s *testEvaluatorSuite) TestRound(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Arg []interface{}
-		Ret float64
+		Ret interface{}
 	}{
 		{[]interface{}{-1.23}, -1},
 		{[]interface{}{-1.23, 0}, -1},
@@ -161,6 +161,7 @@ func (s *testEvaluatorSuite) TestRound(c *C) {
 		{[]interface{}{1.298}, 1},
 		{[]interface{}{1.298, 0}, 1},
 		{[]interface{}{23.298, -1}, 20},
+		{[]interface{}{nil, 2}, nil},
 	}
 
 	Dtbl := tblToDtbl(tbl)
