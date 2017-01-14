@@ -1412,6 +1412,8 @@ func builtinField(args []types.Datum, ctx context.Context) (d types.Datum, err e
 			allString = false
 		case types.KindString, types.KindBytes:
 			allNumber = false
+		default:
+			allString, allNumber = false, false
 		}
 	}
 	newArgs, err = argsToSpecifiedType(args, allString, allNumber, ctx)

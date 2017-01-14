@@ -797,7 +797,7 @@ func (s *testEvaluatorSuite) TestField(c *C) {
 	defer testleak.AfterTest(c)()
 
 	tbl := []struct {
-		strlst []interface{}
+		argLst []interface{}
 		ret    interface{}
 	}{
 		{[]interface{}{"ej", "Hej", "ej", "Heja", "hej", "foo"}, int64(2)},
@@ -812,7 +812,7 @@ func (s *testEvaluatorSuite) TestField(c *C) {
 		{[]interface{}{"abc", 0, 1, 11.1, 1.1}, int64(1)},
 	}
 	for _, t := range tbl {
-		r, err := builtinField(types.MakeDatums(t.strlst...), s.ctx)
+		r, err := builtinField(types.MakeDatums(t.argLst...), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
 	}
