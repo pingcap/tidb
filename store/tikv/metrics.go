@@ -66,6 +66,7 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "backoff_seconds",
 			Help:      "total backoff seconds of a single backoffer.",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 18),
 		})
 
 	sendReqHistogram = prometheus.NewHistogramVec(
