@@ -105,6 +105,49 @@ func builtinAbs(args []types.Datum, ctx context.Context) (d types.Datum, err err
 	}
 }
 
+type datumToFloat func(types.Datum, context.Context) (float64, *types.Datum, error)
+
+// preprocess for LN, LOG2 and LOG10
+func skipNonPositive(x types.Datum, ctx context.Context) (float64, *types.Datum, error) {
+	v, err := x.ToFloat64(ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return 0, nil, err
+	}
+	if v <= 0 {
+		return 0, new(types.Datum), nil
+	}
+	return v, nil, nil
+}
+
+// preprocess for CEILING and FLOOR
+func skipNullOrInteger(x types.Datum, ctx context.Context) (float64, *types.Datum, error) {
+	if x.IsNull() || x.Kind() == types.KindInt64 || x.Kind() == types.KindUint64 {
+		return 0, &x, nil
+	}
+	v, err := x.ToFloat64(ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return v, nil, err
+	}
+	return v, nil, nil
+}
+
+// factory function for the following builtins:
+// See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_ceiling
+// See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_ln
+// See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_log2
+// See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_log10
+// TODO: floor, exp, sqrt, degrees, radians and trigonometric functions
+func floatMapFnFactory(mapFn func(float64) float64, preprocess datumToFloat) BuiltinFunc {
+	return func(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+		v, x, err := preprocess(args[0], ctx)
+		if err != nil || x != nil {
+			return *x, err
+		}
+		d.SetFloat64(mapFn(v))
+		return
+	}
+}
+
 type ceilFunctionClass struct {
 	baseFunctionClass
 }
@@ -122,22 +165,7 @@ func (b *builtinCeilSig) eval(row []types.Datum) (types.Datum, error) {
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	return builtinCeil(args, b.ctx)
-}
-
-// See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_ceiling
-func builtinCeil(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	if args[0].IsNull() ||
-		args[0].Kind() == types.KindUint64 || args[0].Kind() == types.KindInt64 {
-		return args[0], nil
-	}
-
-	f, err := args[0].ToFloat64(ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	d.SetFloat64(math.Ceil(f))
-	return
+	return floatMapFnFactory(math.Ceil, skipNullOrInteger)(args, b.ctx)
 }
 
 type logFunctionClass struct {
@@ -166,17 +194,7 @@ func builtinLog(args []types.Datum, ctx context.Context) (d types.Datum, err err
 
 	switch len(args) {
 	case 1:
-		x, err := args[0].ToFloat64(sc)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-
-		if x <= 0 {
-			return d, nil
-		}
-
-		d.SetFloat64(math.Log(x))
-		return d, nil
+		return floatMapFnFactory(math.Log, skipNonPositive)(args, ctx)
 	case 2:
 		b, err := args[0].ToFloat64(sc)
 		if err != nil {
@@ -215,23 +233,7 @@ func (b *builtinLog2Sig) eval(row []types.Datum) (types.Datum, error) {
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	return builtinLog2(args, b.ctx)
-}
-
-// See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_log2
-func builtinLog2(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	sc := ctx.GetSessionVars().StmtCtx
-	x, err := args[0].ToFloat64(sc)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	if x <= 0 {
-		return
-	}
-
-	d.SetFloat64(math.Log2(x))
-	return
+	return floatMapFnFactory(math.Log2, skipNonPositive)(args, b.ctx)
 }
 
 type log10FunctionClass struct {
@@ -251,24 +253,7 @@ func (b *builtinLog10Sig) eval(row []types.Datum) (types.Datum, error) {
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	return builtinLog10(args, b.ctx)
-}
-
-// See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_log10
-func builtinLog10(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	sc := ctx.GetSessionVars().StmtCtx
-	x, err := args[0].ToFloat64(sc)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	if x <= 0 {
-		return
-	}
-
-	d.SetFloat64(math.Log10(x))
-	return
-
+	return floatMapFnFactory(math.Log10, skipNonPositive)(args, b.ctx)
 }
 
 type randFunctionClass struct {

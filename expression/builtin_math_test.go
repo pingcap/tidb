@@ -15,6 +15,7 @@ package expression
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
@@ -59,6 +60,7 @@ func (s *testEvaluatorSuite) TestCeil(c *C) {
 
 	Dtbl := tblToDtbl(tbl)
 
+	builtinCeil := Funcs[ast.Ceil].F
 	for _, t := range Dtbl {
 		v, err := builtinCeil(t["Arg"], s.ctx)
 		c.Assert(err, IsNil)
