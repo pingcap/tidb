@@ -78,6 +78,8 @@ func (e *DDLExec) Next() (*Row, error) {
 		err = e.executeDropIndex(x)
 	case *ast.AlterTableStmt:
 		err = e.executeAlterTable(x)
+	case *ast.RenameTableStmt:
+		err = e.executeRenameTable(x)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -110,6 +112,13 @@ func (e *DDLExec) Close() error {
 func (e *DDLExec) executeTruncateTable(s *ast.TruncateTableStmt) error {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	err := sessionctx.GetDomain(e.ctx).DDL().TruncateTable(e.ctx, ident)
+	return errors.Trace(err)
+}
+
+func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
+	oldIdent := ast.Ident{Schema: s.OldTable.Schema, Name: s.OldTable.Name}
+	newIdent := ast.Ident{Schema: s.NewTable.Schema, Name: s.NewTable.Name}
+	err := sessionctx.GetDomain(e.ctx).DDL().RenameTable(e.ctx, oldIdent, newIdent)
 	return errors.Trace(err)
 }
 
