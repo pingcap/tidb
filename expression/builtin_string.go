@@ -1402,9 +1402,10 @@ func builtinField(args []types.Datum, ctx context.Context) (d types.Datum, err e
 	}
 	var (
 		pos       int64
-		allString bool = true
+		allString bool
 		newArgs   []types.Datum
 	)
+	allString = true
 	for i := 0; i < len(args) && allString; i++ {
 		switch args[i].Kind() {
 		case types.KindInt64, types.KindUint64, types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
