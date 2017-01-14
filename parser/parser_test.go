@@ -799,6 +799,30 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		// For misc functions
 		{`SELECT GET_LOCK('lock1',10);`, true},
 		{`SELECT RELEASE_LOCK('lock1');`, true},
+
+		// For aggregate functions
+		{`select avg(c1,c2) from t;`, false},
+		{`select avg(distinct c1) from t;`, true},
+		{`select avg(c2) from t;`, true},
+		{`select bit_xor(c1) from t;`, true},
+		{`select bit_xor(distinct c1) from t;`, false},
+		{`select max(c1,c2) from t;`, false},
+		{`select max(distinct c1) from t;`, true},
+		{`select max(c2) from t;`, true},
+		{`select min(c1,c2) from t;`, false},
+		{`select min(distinct c1) from t;`, true},
+		{`select min(c2) from t;`, true},
+		{`select sum(c1,c2) from t;`, false},
+		{`select sum(distinct c1) from t;`, true},
+		{`select sum(c2) from t;`, true},
+		{`select count(c1) from t;`, true},
+		{`select count(distinct *) from t;`, false},
+		{`select count(*) from t;`, true},
+		{`select count(distinct c1, c2) from t;`, true},
+		{`select count(c1, c2) from t;`, false},
+		{`select count(all c1) from t;`, true},
+		{`select group_concat(c2,c1) from t group by c1;`, true},
+		{`select group_concat(distinct c2,c1) from t group by c1;`, true},
 	}
 	s.RunTest(c, table)
 }
