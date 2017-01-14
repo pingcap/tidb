@@ -229,9 +229,11 @@ func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	}
 	newSchemaID := job.SchemaID
-	err = checkTableNotExists(t, job, newSchemaID, tblInfo.Name.L)
-	if err != nil {
-		return errors.Trace(err)
+	if newSchemaID != oldSchemaID {
+		err = checkTableNotExists(t, job, newSchemaID, tblInfo.Name.L)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	err = t.DropTable(oldSchemaID, tblInfo.ID)
