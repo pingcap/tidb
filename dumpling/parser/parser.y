@@ -170,6 +170,7 @@ import (
 	realType	"REAL"
 	references	"REFERENCES"
 	regexpKwd	"REGEXP"
+	rename          "RENAME"
 	repeat		"REPEAT"
 	replace		"REPLACE"
 	restrict	"RESTRICT"
@@ -586,6 +587,7 @@ import (
 	OnDeleteOpt		"optional ON DELETE clause"
 	OnUpdateOpt		"optional ON UPDATE clause"
 	ReferOpt		"reference option"
+	RenameTableStmt         "rename table statement"
 	ReplaceIntoStmt		"REPLACE INTO statement"
 	ReplacePriority		"replace statement priority"
 	RollbackStmt		"ROLLBACK statement"
@@ -925,6 +927,18 @@ Symbol:
 	{
 		$$ = $1
 	}
+
+/**************************************RenameTableStmt***************************************
+ * See http://dev.mysql.com/doc/refman/5.7/en/rename-table.html
+ *******************************************************************************************/
+RenameTableStmt:
+	 "RENAME" "TABLE" TableName "TO" TableName
+	 {
+		$$ = &ast.RenameTableStmt{
+			OldTable: $3.(*ast.TableName), 
+			NewTable: $5.(*ast.TableName),
+		}	
+	 }
 
 /*******************************************************************************************/
 
@@ -2113,7 +2127,7 @@ ReservedKeyword:
 | "LOCALTIME" | "LOCALTIMESTAMP" | "LOCK" | "LONGBLOB" | "LONGTEXT" | "MAXVALUE" | "MEDIUMBLOB" | "MEDIUMINT" | "MEDIUMTEXT"
 | "MINUTE_MICROSECOND" | "MINUTE_SECOND" | "MOD" | "NOT" | "NO_WRITE_TO_BINLOG" | "NULL" | "NUMERIC"
 | "ON" | "OPTION" | "OR" | "ORDER" | "OUTER" | "PARTITION" | "PRECISION" | "PRIMARY" | "PROCEDURE" | "RANGE" | "READ" 
-| "REAL" | "REFERENCES" | "REGEXP" | "REPEAT" | "REPLACE" | "RESTRICT" | "RIGHT" | "RLIKE"
+| "REAL" | "REFERENCES" | "REGEXP" | "RENAME" | "REPEAT" | "REPLACE" | "RESTRICT" | "RIGHT" | "RLIKE"
 | "SCHEMA" | "SCHEMAS" | "SECOND_MICROSECOND" | "SELECT" | "SET" | "SHOW" | "SMALLINT"
 | "STARTING" | "TABLE" | "TERMINATED" | "THEN" | "TINYBLOB" | "TINYINT" | "TINYTEXT" | "TO"
 | "TRAILING" | "TRUE" | "UNION" | "UNIQUE" | "UNLOCK" | "UNSIGNED"
@@ -4525,6 +4539,7 @@ Statement:
 |	LoadDataStmt
 |	PreparedStmt
 |	RollbackStmt
+|	RenameTableStmt
 |	ReplaceIntoStmt
 |	SelectStmt
 |	UnionStmt

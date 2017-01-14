@@ -991,6 +991,38 @@ func (d *ddl) TruncateTable(ctx context.Context, ti ast.Ident) error {
 	return errors.Trace(err)
 }
 
+func (d *ddl) RenameTable(ctx context.Context, oldIdent, newIdent ast.Ident) error {
+	is := d.GetInformationSchema()
+	oldSchema, ok := is.SchemaByName(oldIdent.Schema)
+	if !ok {
+		return errors.Trace(errFileNotFound.GenByArgs(oldIdent.Schema, oldIdent.Name))
+	}
+	oldTbl, err := is.TableByName(oldIdent.Schema, oldIdent.Name)
+	if err != nil {
+		return errors.Trace(errFileNotFound.GenByArgs(oldIdent.Schema, oldIdent.Name))
+	}
+	newSchema, ok := is.SchemaByName(newIdent.Schema)
+	if !ok {
+		return errors.Trace(errErrorOnRename.GenByArgs(oldIdent.Schema, oldIdent.Name,
+			newIdent.Schema, newIdent.Name))
+	}
+	if is.TableExists(newIdent.Schema, newIdent.Name) {
+		return errors.Trace(infoschema.ErrTableExists.GenByArgs(newIdent))
+	}
+
+	job := &model.Job{
+		SchemaID:   newSchema.ID,
+		TableID:    oldTbl.Meta().ID,
+		Type:       model.ActionRenameTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{oldSchema.ID, newIdent.Name},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
 func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {
 	id := 2
 	l := len(t.Indices())
