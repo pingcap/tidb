@@ -802,6 +802,7 @@ func (s *testEvaluatorSuite) TestField(c *C) {
 	}{
 		{[]interface{}{"ej", "Hej", "ej", "Heja", "hej", "foo"}, int64(2)},
 		{[]interface{}{"fo", "Hej", "ej", "Heja", "hej", "foo"}, int64(0)},
+		{[]interface{}{"ej", "Hej", "ej", "Heja", "ej", "hej", "foo"}, int64(2)},
 		{[]interface{}{1, 2, 3, 11, 1}, int64(4)},
 		{[]interface{}{nil, 2, 3, 11, 1}, int64(0)},
 		{[]interface{}{1.1, 2.1, 3.1, 11.1, 1.1}, int64(4)},

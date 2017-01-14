@@ -1401,18 +1401,20 @@ func builtinField(args []types.Datum, ctx context.Context) (d types.Datum, err e
 		return
 	}
 	var (
-		pos       int64
-		allString bool
-		newArgs   []types.Datum
+		pos                  int64
+		allString, allNumber bool
+		newArgs              []types.Datum
 	)
-	allString = true
-	for i := 0; i < len(args) && allString; i++ {
+	allString, allNumber = true, true
+	for i := 0; i < len(args) && (allString || allNumber); i++ {
 		switch args[i].Kind() {
 		case types.KindInt64, types.KindUint64, types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
 			allString = false
+		case types.KindString, types.KindBytes:
+			allNumber = false
 		}
 	}
-	newArgs, err = argsToSpecifiedType(args, allString, ctx)
+	newArgs, err = argsToSpecifiedType(args, allString, allNumber, ctx)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
@@ -1421,15 +1423,18 @@ func builtinField(args []types.Datum, ctx context.Context) (d types.Datum, err e
 		cmpResult, _ := arg0.CompareDatum(sc, curArg)
 		if cmpResult == 0 {
 			pos = int64(i + 1)
+			break
 		}
 	}
 	d.SetInt64(pos)
 	return d, errors.Trace(err)
 }
 
-// argsToSpecifiedType converts the type of all arguments in args into string type if allString is true,
-// otherwise converts them into double type.
-func argsToSpecifiedType(args []types.Datum, allString bool, ctx context.Context) (newArgs []types.Datum, err error) {
+// argsToSpecifiedType converts the type of all arguments in args into string type or double type.
+func argsToSpecifiedType(args []types.Datum, allString bool, allNumber bool, ctx context.Context) (newArgs []types.Datum, err error) {
+	if allNumber { // If all arguments are numbers, they can be compared directly without type converting.
+		return args, nil
+	}
 	sc := ctx.GetSessionVars().StmtCtx
 	newArgs = make([]types.Datum, len(args))
 	for i, arg := range args {
