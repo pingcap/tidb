@@ -464,10 +464,10 @@ func (fs *FileSorter) externalSort() (*comparableRow, error) {
 
 		for id := range fs.fds {
 			row, err := fs.fetchNextRow(id)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			if row == nil {
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
 				return nil, errors.New("file is empty")
 			}
 
@@ -492,11 +492,10 @@ func (fs *FileSorter) externalSort() (*comparableRow, error) {
 		}
 
 		row, err := fs.fetchNextRow(im.index)
-		if row == nil {
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-		} else {
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if row != nil {
 			im := &item{
 				index: im.index,
 				value: row,
