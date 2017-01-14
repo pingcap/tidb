@@ -293,7 +293,6 @@ func builtinDateFormat(args []types.Datum, ctx context.Context) (types.Datum, er
 	return d, nil
 }
 
-
 type fromDaysFunctionClass struct {
 	baseFunctionClass
 }

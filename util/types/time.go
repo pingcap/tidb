@@ -1137,15 +1137,15 @@ func TimeFromDays(num int64) Time {
 		return Time{
 			Time: FromDate(0, 0, 0, 0, 0, 0, 0),
 			Type: mysql.TypeDate,
-			Fsp: 0,
+			Fsp:  0,
 		}
 	}
 	year, month, day := getDateFromDaynr(uint(num))
 
 	return Time{
-		Time: FromDate(int(year),  int(month),  int(day), 0, 0, 0, 0),
+		Time: FromDate(int(year), int(month), int(day), 0, 0, 0, 0),
 		Type: mysql.TypeDate,
-		Fsp: 0,
+		Fsp:  0,
 	}
 }
 

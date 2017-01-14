@@ -473,11 +473,11 @@ func (s *testEvaluatorSuite) TestStrToDate(c *C) {
 
 func (s *testEvaluatorSuite) TestFromDays(c *C) {
 	tests := []struct {
-		day int64
+		day    int64
 		expect string
 	}{
-		{-140, "0000-00-00"}, // mysql FROM_DAYS returns 0000-00-00 for any day <= 365.
-		{140, "0000-00-00"}, // mysql FROM_DAYS returns 0000-00-00 for any day <= 365.
+		{-140, "0000-00-00"},   // mysql FROM_DAYS returns 0000-00-00 for any day <= 365.
+		{140, "0000-00-00"},    // mysql FROM_DAYS returns 0000-00-00 for any day <= 365.
 		{735000, "2012-05-12"}, // Leap year.
 		{735030, "2012-06-11"},
 		{735130, "2012-09-19"},
@@ -500,9 +500,8 @@ func (s *testEvaluatorSuite) TestFromDays(c *C) {
 		c.Assert(result.GetMysqlTime().String(), Equals, test.expect)
 	}
 
-
 	stringTests := []struct {
-		day string
+		day    string
 		expect string
 	}{
 		{"z550z", "0000-00-00"},
