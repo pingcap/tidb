@@ -1131,6 +1131,7 @@ func ParseDateFromNum(num int64) (Time, error) {
 	return ParseTimeFromNum(num, mysql.TypeDate, MinFsp)
 }
 
+// TimeFromDays Converts a day number to a date.
 func TimeFromDays(num int64) Time {
 	if num < 0 {
 		return Time{
