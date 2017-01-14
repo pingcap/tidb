@@ -2259,7 +2259,35 @@ func (s *testSessionSuite) TestSpecifyIndexPrefixLength(c *C) {
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "drop table if exists t;")
 
-	_, err := exec(se, "create table t (c1 int, c2 blob, c3 varchar(64), index(c2));")
+	_, err := exec(se, "create table t (c1 char, index(c1(3)));")
+	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
+	c.Assert(err, NotNil)
+
+	_, err = exec(se, "create table t (c1 int, index(c1(3)));")
+	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
+	c.Assert(err, NotNil)
+
+	_, err = exec(se, "create table t (c1 bit(10), index(c1(3)));")
+	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
+	c.Assert(err, NotNil)
+
+	mustExecSQL(c, se, "create table t (c1 char, c2 int, c3 bit(10));")
+
+	_, err = exec(se, "create index idx_c1 on t (c1(3));")
+	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
+	c.Assert(err, NotNil)
+
+	_, err = exec(se, "create index idx_c1 on t (c2(3));")
+	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
+	c.Assert(err, NotNil)
+
+	_, err = exec(se, "create index idx_c1 on t (c3(3));")
+	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
+	c.Assert(err, NotNil)
+
+	mustExecSQL(c, se, "drop table if exists t;")
+
+	_, err = exec(se, "create table t (c1 int, c2 blob, c3 varchar(64), index(c2));")
 	// ERROR 1170 (42000): BLOB/TEXT column 'c2' used in key specification without a key length
 	c.Assert(err, NotNil)
 

@@ -55,11 +55,18 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 			return nil, errors.Trace(errBlobKeyWithoutLength)
 		}
 
-		if ic.Length != types.UnspecifiedLength &&
-			!types.IsTypeSpecifiable(col.FieldType.Tp) {
+		// Length can only be specified for specifiable types.
+		if ic.Length != types.UnspecifiedLength && !types.IsTypePrefixable(col.FieldType.Tp) {
 			return nil, errors.Trace(errIncorrectPrefixKey)
 		}
 
+		// Key length must be shorter or equal to the column length.
+		if ic.Length != types.UnspecifiedLength &&
+			types.IsTypeChar(col.FieldType.Tp) && col.Flen < ic.Length {
+			return nil, errors.Trace(errIncorrectPrefixKey)
+		}
+
+		// Specified length must be shorter than the max length for prefix.
 		if ic.Length > maxPrefixLength {
 			return nil, errors.Trace(errTooLongKey)
 		}
@@ -84,10 +91,8 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 				}
 
 				// Special case for time fraction.
-				if (col.FieldType.Tp == mysql.TypeDatetime ||
-					col.FieldType.Tp == mysql.TypeDuration ||
-					col.FieldType.Tp == mysql.TypeTimestamp) && col.FieldType.Decimal != -1 {
-
+				if types.IsTypeFractionable(col.FieldType.Tp) &&
+					col.FieldType.Decimal != types.UnspecifiedLength {
 					if len, ok := mysql.DefaultLengthOfTimeFraction[col.FieldType.Decimal]; ok {
 						sumLength += len
 					} else {
@@ -97,6 +102,7 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 			}
 		}
 
+		// The sum of all lengths must be shorter than the max length for prefix.
 		if sumLength > maxPrefixLength {
 			return nil, errors.Trace(errTooLongKey)
 		}
