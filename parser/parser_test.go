@@ -97,16 +97,6 @@ func (s *testParserSuite) TestSimple(c *C) {
 		c.Assert(err, IsNil, Commentf("source %s", src))
 	}
 
-	// Testcase for not keyword token
-	notKeywordTokens := []string{
-		"field",
-	}
-	for _, t := range notKeywordTokens {
-		src := fmt.Sprintf("SELECT %s FROM tbl;", t)
-		_, err := parser.ParseOneStmt(src, "", "")
-		c.Assert(err, IsNil, Commentf("source %s", src))
-	}
-
 	// Testcase for prepared statement
 	src := "SELECT id+?, id+? from t;"
 	_, err := parser.ParseOneStmt(src, "", "")

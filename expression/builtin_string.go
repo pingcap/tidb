@@ -1389,104 +1389,60 @@ func (b *builtinFieldSig) eval(row []types.Datum) (types.Datum, error) {
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_field
+// Returns the index (position) of arg0 in the arg1, arg2, arg3, ... list.
+// Returns 0 if arg0 is not found.
+// If arg0 is NULL, the return value is 0 because NULL fails equality comparison with any value.
+// If all arguments are strings, all arguments are compared as strings.
+// If all arguments are numbers, they are compared as numbers.
+// Otherwise, the arguments are compared as double.
 func builtinField(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	// args[0] -> str
-	// args[1:] -> str list
 	d.SetInt64(0)
 	if args[0].IsNull() {
-		// If str is NULL, the return value is 0 because NULL fails equality comparison with any value.
 		return
 	}
 	var (
-		idx     int64
-		argType int32 // -1:string, 0:int, 1:double
+		pos       int64
+		allString bool = true
+		newArgs   []types.Datum
 	)
-	switch args[0].Kind() {
-	case types.KindString, types.KindBytes:
-		argType = -1
-	case types.KindInt64, types.KindUint64:
-		argType = 0
-	default:
-		argType = 1
-	}
-	// Check whether other arguments are all strings or numbers.
-	for i := 1; i < len(args) && argType != 1; i++ {
+	for i := 0; i < len(args) && allString; i++ {
 		switch args[i].Kind() {
-		case types.KindString, types.KindBytes:
-			if argType == 0 {
-				argType = 1
-			}
-		case types.KindInt64, types.KindUint64:
-			if argType == -1 {
-				argType = 1
-			}
+		case types.KindInt64, types.KindUint64, types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
+			allString = false
 		}
 	}
-	switch argType {
-	case -1:
-		// If all arguments to FIELD() are strings, all arguments are compared as strings.
-		idx, err = fieldCmpString(args, ctx)
-	case 0:
-		//  If all arguments are numbers, they are compared as numbers.
-		idx, err = fieldCmpNumber(args, ctx)
-	case 1:
-		// Otherwise, the arguments are compared as double.
-		idx, err = fieldCmpDouble(args, ctx)
+	newArgs, err = argsToSpecifiedType(args, allString, ctx)
+	if err != nil {
+		return d, errors.Trace(err)
 	}
-	d.SetInt64(idx)
+	arg0, sc := newArgs[0], ctx.GetSessionVars().StmtCtx
+	for i, curArg := range newArgs[1:] {
+		cmpResult, _ := arg0.CompareDatum(sc, curArg)
+		if cmpResult == 0 {
+			pos = int64(i + 1)
+		}
+	}
+	d.SetInt64(pos)
 	return d, errors.Trace(err)
 }
 
-func fieldCmpString(args []types.Datum, _ context.Context) (idx int64, err error) {
-	var str string
-	str, err = args[0].ToString()
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	for i, a := range args[1:] {
-		s, err1 := a.ToString()
-		if err1 != nil {
-			return 0, errors.Trace(err1)
-		}
-		if str == s {
-			return int64(i + 1), nil
-		}
-	}
-	return 0, nil
-}
-
-func fieldCmpNumber(args []types.Datum, ctx context.Context) (idx int64, err error) {
+// argsToSpecifiedType converts the type of all arguments in args into string type if allString is true,
+// otherwise converts them into double type.
+func argsToSpecifiedType(args []types.Datum, allString bool, ctx context.Context) (newArgs []types.Datum, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
-	var i int64
-	i, err = args[0].ToInt64(sc)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	for j, a := range args[1:] {
-		ai, err1 := a.ToInt64(sc)
-		if err1 != nil {
-			return 0, errors.Trace(err1)
-		}
-		if ai == i {
-			return int64(j + 1), nil
-		}
-	}
-	return 0, nil
-}
-
-func fieldCmpDouble(args []types.Datum, ctx context.Context) (idx int64, err error) {
-	sc := ctx.GetSessionVars().StmtCtx
-	var f float64
-	// If error occurred when convert args[0] to float64, ignore it and set f as 0.
-	f, _ = args[0].ToFloat64(sc)
-	for i, a := range args[1:] {
-		af, err := a.ToFloat64(sc)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		if af == f {
-			return int64(i + 1), nil
+	newArgs = make([]types.Datum, len(args))
+	for i, arg := range args {
+		if allString {
+			str, err := arg.ToString()
+			if err != nil {
+				return newArgs, errors.Trace(err)
+			}
+			newArgs[i] = types.NewStringDatum(str)
+		} else {
+			// If error occurred when convert arg to float64, ignore it and set f as 0.
+			f, _ := arg.ToFloat64(sc)
+			newArgs[i] = types.NewFloat64Datum(f)
 		}
 	}
-	return 0, nil
+	return
 }

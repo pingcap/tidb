@@ -806,6 +806,8 @@ func (s *testEvaluatorSuite) TestField(c *C) {
 		{[]interface{}{nil, 2, 3, 11, 1}, int64(0)},
 		{[]interface{}{1.1, 2.1, 3.1, 11.1, 1.1}, int64(4)},
 		{[]interface{}{1.1, "2.1", "3.1", "11.1", "1.1"}, int64(4)},
+		{[]interface{}{"1.1a", 2.1, 3.1, 11.1, 1.1}, int64(4)},
+		{[]interface{}{1.10, 0, 11e-1}, int64(2)},
 		{[]interface{}{"abc", 0, 1, 11.1, 1.1}, int64(1)},
 	}
 	for _, t := range tbl {
