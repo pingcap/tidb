@@ -149,10 +149,6 @@ func calcTimeDiff(t1, t2 TimeInternal, sign int) (seconds, microseconds int, neg
 	return
 }
 
-func isYearLeap(year int) bool {
-	return year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
-}
-
 // datetimeToUint64 converts time value to integer in YYYYMMDDHHMMSS format.
 func datetimeToUint64(t TimeInternal) uint64 {
 	return dateToUint64(t)*1e6 + timeToUint64(t)
