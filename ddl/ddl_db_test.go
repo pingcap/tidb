@@ -277,18 +277,14 @@ func (s *testDBSuite) testAddAnonymousIndex(c *C) {
 }
 
 func (s *testDBSuite) testAddIndex(c *C) {
-	done := make(chan struct{}, 1)
-
+	done := make(chan error, 1)
 	num := defaultBatchSize + 10
 	// first add some rows
 	for i := 0; i < num; i++ {
 		s.mustExec(c, "insert into t1 values (?, ?, ?)", i, i, i)
 	}
 
-	go func() {
-		sessionExec(c, s.store, "create index c3_index on t1 (c3)")
-		done <- struct{}{}
-	}()
+	sessionExecInGoroutine(c, s.store, "create index c3_index on t1 (c3)", done)
 
 	deletedKeys := make(map[int]struct{})
 
@@ -297,8 +293,11 @@ func (s *testDBSuite) testAddIndex(c *C) {
 LOOP:
 	for {
 		select {
-		case <-done:
-			break LOOP
+		case err := <-done:
+			if err == nil {
+				break LOOP
+			}
+			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
 		case <-ticker.C:
 			step := 10
 			// delete some rows, and add some data
@@ -394,8 +393,7 @@ LOOP:
 }
 
 func (s *testDBSuite) testDropIndex(c *C) {
-	done := make(chan struct{}, 1)
-
+	done := make(chan error, 1)
 	s.mustExec(c, "delete from t1")
 
 	num := 100
@@ -413,18 +411,18 @@ func (s *testDBSuite) testDropIndex(c *C) {
 	}
 	c.Assert(c3idx, NotNil)
 
-	go func() {
-		sessionExec(c, s.store, "drop index c3_index on t1")
-		done <- struct{}{}
-	}()
+	sessionExecInGoroutine(c, s.store, "drop index c3_index on t1", done)
 
 	ticker := time.NewTicker(s.lease / 2)
 	defer ticker.Stop()
 LOOP:
 	for {
 		select {
-		case <-done:
-			break LOOP
+		case err := <-done:
+			if err == nil {
+				break LOOP
+			}
+			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
 		case <-ticker.C:
 			step := 10
 			// delete some rows, and add some data
@@ -547,8 +545,34 @@ func sessionExec(c *C, s kv.Storage, sql string) {
 	se.Close()
 }
 
+func sessionExecInGoroutine(c *C, s kv.Storage, sql string, done chan error) {
+	go func() {
+		se, err := tidb.CreateSession(s)
+		if err != nil {
+			done <- errors.Trace(err)
+			return
+		}
+		defer se.Close()
+		_, err = se.Execute("use test_db")
+		if err != nil {
+			done <- errors.Trace(err)
+			return
+		}
+		rs, err := se.Execute(sql)
+		if err != nil {
+			done <- errors.Trace(err)
+			return
+		}
+		if rs != nil {
+			done <- errors.Errorf("RecordSet should be empty.")
+			return
+		}
+		done <- nil
+	}()
+}
+
 func (s *testDBSuite) testAddColumn(c *C) {
-	done := make(chan struct{}, 1)
+	done := make(chan error, 1)
 
 	num := defaultBatchSize + 10
 	// add some rows
@@ -556,10 +580,7 @@ func (s *testDBSuite) testAddColumn(c *C) {
 		s.mustExec(c, "insert into t2 values (?, ?, ?)", i, i, i)
 	}
 
-	go func() {
-		sessionExec(c, s.store, "alter table t2 add column c4 int default -1")
-		done <- struct{}{}
-	}()
+	sessionExecInGoroutine(c, s.store, "alter table t2 add column c4 int default -1", done)
 
 	ticker := time.NewTicker(s.lease / 2)
 	defer ticker.Stop()
@@ -567,8 +588,11 @@ func (s *testDBSuite) testAddColumn(c *C) {
 LOOP:
 	for {
 		select {
-		case <-done:
-			break LOOP
+		case err := <-done:
+			if err == nil {
+				break LOOP
+			}
+			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
 		case <-ticker.C:
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
@@ -631,8 +655,7 @@ LOOP:
 }
 
 func (s *testDBSuite) testDropColumn(c *C) {
-	done := make(chan struct{}, 1)
-
+	done := make(chan error, 1)
 	s.mustExec(c, "delete from t2")
 
 	num := 100
@@ -642,10 +665,7 @@ func (s *testDBSuite) testDropColumn(c *C) {
 	}
 
 	// get c4 column id
-	go func() {
-		sessionExec(c, s.store, "alter table t2 drop column c4")
-		done <- struct{}{}
-	}()
+	sessionExecInGoroutine(c, s.store, "alter table t2 drop column c4", done)
 
 	ticker := time.NewTicker(s.lease / 2)
 	defer ticker.Stop()
@@ -653,8 +673,11 @@ func (s *testDBSuite) testDropColumn(c *C) {
 LOOP:
 	for {
 		select {
-		case <-done:
-			break LOOP
+		case err := <-done:
+			if err == nil {
+				break LOOP
+			}
+			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
 		case <-ticker.C:
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
@@ -830,4 +853,53 @@ func (s *testDBSuite) TestTruncateTable(c *C) {
 		time.Sleep(time.Millisecond * 100)
 	}
 	c.Assert(hasOldTableData, IsFalse)
+}
+
+func (s *testDBSuite) TestRenameTable(c *C) {
+	defer testleak.AfterTest(c)
+	store, err := tidb.NewStore("memory://rename_table")
+	c.Assert(err, IsNil)
+	s.tk = testkit.NewTestKit(c, store)
+	s.tk.MustExec("use test")
+
+	// for different databases
+	s.tk.MustExec("create table t (c1 int, c2 int)")
+	s.tk.MustExec("insert t values (1, 1), (2, 2)")
+	ctx := s.tk.Se.(context.Context)
+	is := sessionctx.GetDomain(ctx).InfoSchema()
+	oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	oldTblID := oldTblInfo.Meta().ID
+	s.tk.MustExec("create database test1")
+	s.tk.MustExec("use test1")
+	s.tk.MustExec("rename table test.t to test1.t1")
+	is = sessionctx.GetDomain(ctx).InfoSchema()
+	newTblInfo, err := is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	c.Assert(newTblInfo.Meta().ID, Equals, oldTblID)
+	s.tk.MustQuery("select * from t1").Check(testkit.Rows("1 1", "2 2"))
+	s.tk.MustExec("use test")
+	s.tk.MustQuery("show tables").Check(testkit.Rows())
+
+	// for the same database
+	s.tk.MustExec("use test1")
+	s.tk.MustExec("rename table t1 to t2")
+	is = sessionctx.GetDomain(ctx).InfoSchema()
+	newTblInfo, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t2"))
+	c.Assert(err, IsNil)
+	c.Assert(newTblInfo.Meta().ID, Equals, oldTblID)
+	s.tk.MustQuery("select * from t2").Check(testkit.Rows("1 1", "2 2"))
+	isExist := is.TableExists(model.NewCIStr("test1"), model.NewCIStr("t1"))
+	c.Assert(isExist, IsFalse)
+	s.tk.MustQuery("show tables").Check(testkit.Rows("t2"))
+
+	// for failure case
+	sql := "rename table test_not_exist.t to test_not_exist.t"
+	s.testErrorCode(c, sql, tmysql.ErrFileNotFound)
+	sql = "rename table test.t_not_exist to test_not_exist.t"
+	s.testErrorCode(c, sql, tmysql.ErrFileNotFound)
+	sql = "rename table test1.t2 to test_not_exist.t"
+	s.testErrorCode(c, sql, tmysql.ErrErrorOnRename)
+	sql = "rename table test1.t2 to test1.t2"
+	s.testErrorCode(c, sql, tmysql.ErrTableExists)
 }

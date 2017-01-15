@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"fmt"
 	"math"
 	"sort"
 	"strconv"
@@ -38,7 +39,9 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-const defaultConcurrency int = 10
+const (
+	minLogDuration = 50 * time.Millisecond
+)
 
 func resultRowToRow(t table.Table, h int64, data []types.Datum, tableAsName *model.CIStr) *Row {
 	entry := &RowKeyEntry{
@@ -360,6 +363,8 @@ type XSelectIndexExec struct {
 	aggregate bool
 
 	scanConcurrency int
+	execStart       time.Time
+	partialCount    int
 }
 
 // Schema implements Exec Schema interface.
@@ -378,6 +383,7 @@ func (e *XSelectIndexExec) Close() error {
 	e.taskCurr = nil
 	e.taskChan = nil
 	e.returnedRows = 0
+	e.partialCount = 0
 	return nil
 }
 
@@ -395,6 +401,7 @@ func (e *XSelectIndexExec) Next() (*Row, error) {
 
 func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 	if e.result == nil {
+		e.execStart = time.Now()
 		var err error
 		e.result, err = e.doIndexRequest()
 		if err != nil {
@@ -416,8 +423,13 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 			}
 			if e.partialResult == nil {
 				// Finished.
+				duration := time.Since(e.execStart)
+				if duration > minLogDuration {
+					log.Infof("[TIME_INDEX_SINGLE] %s", e.slowQueryInfo(duration))
+				}
 				return nil, nil
 			}
+			e.partialCount++
 		}
 		// Get a row from partial result.
 		h, rowData, err := e.partialResult.Next()
@@ -459,9 +471,8 @@ func (e *XSelectIndexExec) indexRowToTableRow(handle int64, indexRow []types.Dat
 }
 
 func (e *XSelectIndexExec) nextForDoubleRead() (*Row, error) {
-	var startTs time.Time
 	if e.taskChan == nil {
-		startTs = time.Now()
+		e.execStart = time.Now()
 		idxResult, err := e.doIndexRequest()
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -480,18 +491,27 @@ func (e *XSelectIndexExec) nextForDoubleRead() (*Row, error) {
 		if e.taskCurr == nil {
 			taskCurr, ok := <-e.taskChan
 			if !ok {
-				log.Debugf("[TIME_INDEX_TABLE_SCAN] time: %v", time.Since(startTs))
+				duration := time.Since(e.execStart)
+				if duration > minLogDuration {
+					log.Infof("[TIME_INDEX_DOUBLE] %s", e.slowQueryInfo(duration))
+				}
 				return nil, e.tasksErr
 			}
+			e.partialCount++
 			e.taskCurr = taskCurr
 		}
-
 		row, err := e.taskCurr.getRow()
 		if err != nil || row != nil {
 			return row, errors.Trace(err)
 		}
 		e.taskCurr = nil
 	}
+}
+
+func (e *XSelectIndexExec) slowQueryInfo(duration time.Duration) string {
+	return fmt.Sprintf("time: %v, table: %s(%d), index: %s(%d), partials: %d, concurrency: %d, rows: %d",
+		duration, e.tableInfo.Name, e.tableInfo.ID, e.indexPlan.Index.Name, e.indexPlan.Index.ID,
+		e.partialCount, e.scanConcurrency, e.returnedRows)
 }
 
 const concurrencyLimit int = 30
@@ -514,23 +534,12 @@ func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<
 	var concurrency int
 	addWorker(e, workCh, &concurrency)
 
-	totalHandles := 0
-	startTs := time.Now()
-	sc := e.ctx.GetSessionVars().StmtCtx
 	for {
 		handles, finish, err := extractHandlesFromIndexResult(idxResult)
 		if err != nil || finish {
 			e.tasksErr = errors.Trace(err)
-			if totalHandles >= 100000 && len(e.indexPlan.Ranges) == 1 && e.indexPlan.Ranges[0].IsPoint(sc) {
-				log.Warnf("[TIME_INDEX_SCAN] time: %v handles: %d concurrency: %d",
-					time.Since(startTs),
-					totalHandles,
-					concurrency)
-			}
 			return
 		}
-
-		totalHandles += len(handles)
 		tasks := e.buildTableTasks(handles)
 		for _, task := range tasks {
 			if concurrency < len(tasks) {
@@ -574,7 +583,6 @@ func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 		// TODO: when where condition is all index columns limit can be pushed too.
 		selIdxReq.Limit = e.indexPlan.LimitCount
 	}
-	concurrency := e.scanConcurrency
 	selIdxReq.Where = e.indexPlan.IndexConditionPBExpr
 	if e.singleReadMode {
 		selIdxReq.Aggregates = e.aggFuncs
@@ -582,7 +590,7 @@ func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 	} else if !e.indexPlan.OutOfOrder {
 		// The cost of index scan double-read is higher than single-read. Usually ordered index scan has a limit
 		// which may not have been pushed down, so we set concurrency to 1 to avoid fetching unnecessary data.
-		concurrency = 1
+		e.scanConcurrency = 1
 	}
 	fieldTypes := make([]*types.FieldType, len(e.indexPlan.Index.Columns))
 	for i, v := range e.indexPlan.Index.Columns {
@@ -593,7 +601,7 @@ func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return distsql.Select(e.ctx.GetClient(), selIdxReq, keyRanges, concurrency, !e.indexPlan.OutOfOrder)
+	return distsql.Select(e.ctx.GetClient(), selIdxReq, keyRanges, e.scanConcurrency, !e.indexPlan.OutOfOrder)
 }
 
 func (e *XSelectIndexExec) buildTableTasks(handles []int64) []*lookupTableTask {
@@ -775,6 +783,8 @@ type XSelectTableExec struct {
 	aggregate bool
 
 	scanConcurrency int
+	execStart       time.Time
+	partialCount    int
 }
 
 // Schema implements the Executor Schema interface.
@@ -805,8 +815,7 @@ func (e *XSelectTableExec) doRequest() error {
 	selReq.GroupBy = e.byItems
 
 	kvRanges := tableRangesToKVRanges(e.table.Meta().ID, e.ranges)
-	concurrency := e.scanConcurrency
-	e.result, err = distsql.Select(e.ctx.GetClient(), selReq, kvRanges, concurrency, e.keepOrder)
+	e.result, err = distsql.Select(e.ctx.GetClient(), selReq, kvRanges, e.scanConcurrency, e.keepOrder)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -828,6 +837,7 @@ func (e *XSelectTableExec) Close() error {
 	e.result = nil
 	e.partialResult = nil
 	e.returnedRows = 0
+	e.partialCount = 0
 	return nil
 }
 
@@ -837,6 +847,7 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 		return nil, nil
 	}
 	if e.result == nil {
+		e.execStart = time.Now()
 		err := e.doRequest()
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -846,22 +857,19 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 		// Get partial result.
 		if e.partialResult == nil {
 			var err error
-			startTs := time.Now()
 			e.partialResult, err = e.result.Next()
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			if e.partialResult == nil {
 				// Finished.
+				duration := time.Since(e.execStart)
+				if duration > minLogDuration {
+					log.Infof("[%d] [TIME_TABLE_SCAN] %v", e.slowQueryInfo(duration))
+				}
 				return nil, nil
 			}
-			duration := time.Since(startTs)
-			connID := e.ctx.GetSessionVars().ConnectionID
-			if duration > 30*time.Millisecond {
-				log.Infof("[%d] [TIME_TABLE_SCAN] %v", connID, duration)
-			} else {
-				log.Debugf("[%d] [TIME_TABLE_SCAN] %v", connID, duration)
-			}
+			e.partialCount++
 		}
 		// Get a row from partial result.
 		h, rowData, err := e.partialResult.Next()
@@ -880,6 +888,11 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 		}
 		return resultRowToRow(e.table, h, rowData, e.asName), nil
 	}
+}
+
+func (e *XSelectTableExec) slowQueryInfo(duration time.Duration) string {
+	return fmt.Sprintf("time: %v, table: %s(%d), partials: %d, concurrency: %d",
+		duration, e.tableInfo.Name, e.tableInfo.ID, e.partialCount, e.scanConcurrency)
 }
 
 // timeZoneOffset returns the local time zone offset in seconds.

@@ -287,7 +287,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = types.NewFieldType(mysql.TypeDouble)
 	case "pow", "power", "rand":
 		tp = types.NewFieldType(mysql.TypeDouble)
-	case "curdate", "current_date", "date":
+	case "curdate", "current_date", "date", "from_days":
 		tp = types.NewFieldType(mysql.TypeDate)
 	case "curtime", "current_time", "timediff":
 		tp = types.NewFieldType(mysql.TypeDuration)
@@ -316,7 +316,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		"substring_index", "trim", "ltrim", "rtrim", "reverse", "hex", "unhex", "date_format", "rpad", "char_func", "conv":
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
-	case "strcmp", "isnull", "bit_length", "char_length", "character_length", "crc32", "timestampdiff":
+	case "strcmp", "isnull", "bit_length", "char_length", "character_length", "crc32", "timestampdiff", "sign":
 		tp = types.NewFieldType(mysql.TypeLonglong)
 	case "connection_id":
 		tp = types.NewFieldType(mysql.TypeLonglong)

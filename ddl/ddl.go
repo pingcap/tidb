@@ -55,15 +55,18 @@ var (
 	errUnsupportedPKHandle     = terror.ClassDDL.New(codeUnsupportedDropPKHandle,
 		"unsupported drop integer primary key")
 
-	errBlobKeyWithoutLength  = terror.ClassDDL.New(codeBlobKeyWithoutLength, "index for BLOB/TEXT column must specificate a key length")
-	errIncorrectPrefixKey    = terror.ClassDDL.New(codeIncorrectPrefixKey, "Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys")
-	errTooLongKey            = terror.ClassDDL.New(codeTooLongKey, fmt.Sprintf("Specified key was too long; max key length is %d bytes", maxPrefixLength))
+	errBlobKeyWithoutLength = terror.ClassDDL.New(codeBlobKeyWithoutLength, "index for BLOB/TEXT column must specificate a key length")
+	errIncorrectPrefixKey   = terror.ClassDDL.New(codeIncorrectPrefixKey, "Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys")
+	errTooLongKey           = terror.ClassDDL.New(codeTooLongKey,
+		fmt.Sprintf("Specified key was too long; max key length is %d bytes", maxPrefixLength))
 	errKeyColumnDoesNotExits = terror.ClassDDL.New(codeKeyColumnDoesNotExits, "this key column doesn't exist in table")
 	errDupKeyName            = terror.ClassDDL.New(codeDupKeyName, "duplicate key name")
 	errWrongDBName           = terror.ClassDDL.New(codeWrongDBName, "Incorrect database name '%s'")
 	errWrongTableName        = terror.ClassDDL.New(codeWrongTableName, "Incorrect table name '%s'")
 	errUnknownTypeLength     = terror.ClassDDL.New(codeUnknownTypeLength, "Unknown length for type tp %d")
 	errUnknownFractionLength = terror.ClassDDL.New(codeUnknownFractionLength, "Unknown Length for type tp %d and fraction %d")
+	errFileNotFound          = terror.ClassDDL.New(codeFileNotFound, "Can't find file: './%s/%s.frm'")
+	errErrorOnRename         = terror.ClassDDL.New(codeErrorOnRename, "Error on rename of './%s/%s' to './%s/%s'")
 
 	// ErrInvalidDBState returns for invalid database state.
 	ErrInvalidDBState = terror.ClassDDL.New(codeInvalidDBState, "invalid database state")
@@ -101,6 +104,7 @@ type DDL interface {
 	GetInformationSchema() infoschema.InfoSchema
 	AlterTable(ctx context.Context, tableIdent ast.Ident, spec []*ast.AlterTableSpec) error
 	TruncateTable(ctx context.Context, tableIdent ast.Ident) error
+	RenameTable(ctx context.Context, oldTableIdent, newTableIdent ast.Ident) error
 	// SetLease will reset the lease time for online DDL change,
 	// it's a very dangerous function and you must guarantee that all servers have the same lease time.
 	SetLease(lease time.Duration)
@@ -392,6 +396,8 @@ const (
 	codeUnsupportedModifyColumn = 203
 	codeUnsupportedDropPKHandle = 204
 
+	codeFileNotFound          = 1017
+	codeErrorOnRename         = 1025
 	codeBadNull               = 1048
 	codeTooLongIdent          = 1059
 	codeDupKeyName            = 1061
@@ -420,6 +426,8 @@ func init() {
 		codeDupKeyName:            mysql.ErrDupKeyName,
 		codeWrongDBName:           mysql.ErrWrongDBName,
 		codeWrongTableName:        mysql.ErrWrongTableName,
+		codeFileNotFound:          mysql.ErrFileNotFound,
+		codeErrorOnRename:         mysql.ErrErrorOnRename,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

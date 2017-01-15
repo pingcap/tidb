@@ -26,6 +26,7 @@ var (
 	_ DDLNode = &DropDatabaseStmt{}
 	_ DDLNode = &DropIndexStmt{}
 	_ DDLNode = &DropTableStmt{}
+	_ DDLNode = &RenameTableStmt{}
 	_ DDLNode = &TruncateTableStmt{}
 
 	_ Node = &AlterTableSpec{}
@@ -453,6 +454,35 @@ func (n *DropTableStmt) Accept(v Visitor) (Node, bool) {
 		}
 		n.Tables[i] = node.(*TableName)
 	}
+	return v.Leave(n)
+}
+
+// RenameTableStmt is a statement to rename a table.
+// See http://dev.mysql.com/doc/refman/5.7/en/rename-table.html
+type RenameTableStmt struct {
+	ddlNode
+
+	OldTable *TableName
+	NewTable *TableName
+}
+
+// Accept implements Node Accept interface.
+func (n *RenameTableStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*RenameTableStmt)
+	node, ok := n.OldTable.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.OldTable = node.(*TableName)
+	node, ok = n.NewTable.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.NewTable = node.(*TableName)
 	return v.Leave(n)
 }
 
