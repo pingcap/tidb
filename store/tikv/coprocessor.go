@@ -327,7 +327,9 @@ func (it *copIterator) work() {
 		startTime := time.Now()
 		resp, err := it.handleTask(bo, task)
 		coprocessorHistogram.Observe(time.Since(startTime).Seconds())
-		backoffHistogram.Observe(float64(bo.totalSleep) / 1000)
+		if bo.totalSleep > 0 {
+			backoffHistogram.Observe(float64(bo.totalSleep) / 1000)
+		}
 		if err != nil {
 			it.errChan <- err
 			break
