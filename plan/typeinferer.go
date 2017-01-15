@@ -321,7 +321,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	case "connection_id":
 		tp = types.NewFieldType(mysql.TypeLonglong)
 		tp.Flag |= mysql.UnsignedFlag
-	case "find_in_set":
+	case "find_in_set", ast.Field:
 		tp = types.NewFieldType(mysql.TypeLonglong)
 	case "if":
 		// TODO: fix this

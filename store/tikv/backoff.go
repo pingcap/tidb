@@ -154,8 +154,6 @@ func (b *Backoffer) WithCancel() context.CancelFunc {
 // It returns a retryable error if total sleep time exceeds maxSleep.
 func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	backoffCounter.WithLabelValues(typ.String()).Inc()
-	start := time.Now()
-	defer func() { backoffHistogram.WithLabelValues(typ.String()).Observe(time.Since(start).Seconds()) }()
 	// Lazy initialize.
 	if b.fn == nil {
 		b.fn = make(map[backoffType]func() int)
