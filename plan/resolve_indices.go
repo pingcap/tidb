@@ -91,6 +91,7 @@ func (p *Apply) ResolveIndicesAndCorCols() {
 					Column: *childSchema.Columns[idx],
 					Data:   new(types.Datum),
 				}
+				resultCorCols[idx].Column.ResolveIndices(childSchema)
 			}
 			corCol.Data = resultCorCols[idx].Data
 		}

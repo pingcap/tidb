@@ -1170,11 +1170,8 @@ func (e *UpdateExec) fetchRows() error {
 		}
 		data := make([]types.Datum, e.SelectExec.Schema().Len())
 		newData := make([]types.Datum, e.SelectExec.Schema().Len())
-		for i, s := range e.SelectExec.Schema().Columns {
-			data[i], err = s.Eval(row.Data, e.ctx)
-			if err != nil {
-				return errors.Trace(err)
-			}
+		for i := range e.SelectExec.Schema().Columns {
+			data[i] = row.Data[i]
 			newData[i] = data[i]
 			if e.OrderedList[i] != nil {
 				val, err := e.OrderedList[i].Expr.Eval(row.Data, e.ctx)
