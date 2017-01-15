@@ -812,6 +812,7 @@ const loadCommonGlobalVarsSQL = "select * from mysql.global_variables where vari
 	variable.AutocommitVar + "', '" +
 	variable.SQLModeVar + "', '" +
 	variable.DistSQLJoinConcurrencyVar + "', '" +
+	variable.MaxAllowedPacket + "', '" +
 	variable.DistSQLScanConcurrencyVar + "')"
 
 // LoadCommonGlobalVariableIfNeeded loads and applies commonly used global variables for the session.
