@@ -69,10 +69,11 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 
 	// Check this table's database.
 	tblInfo, err := t.GetTable(schemaID, tableID)
-	if terror.ErrorEqual(err, meta.ErrDBNotExists) {
-		job.State = model.JobCancelled
-		return errors.Trace(infoschema.ErrDatabaseNotExists)
-	} else if err != nil {
+	if err != nil {
+		if terror.ErrorEqual(err, meta.ErrDBNotExists) {
+			job.State = model.JobCancelled
+			return errors.Trace(infoschema.ErrDatabaseNotExists)
+		}
 		return errors.Trace(err)
 	}
 
@@ -149,10 +150,11 @@ func (d *ddl) getTable(schemaID int64, tblInfo *model.TableInfo) (table.Table, e
 func getTableInfo(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInfo, error) {
 	tableID := job.TableID
 	tblInfo, err := t.GetTable(schemaID, tableID)
-	if terror.ErrorEqual(err, meta.ErrDBNotExists) {
-		job.State = model.JobCancelled
-		return nil, errors.Trace(infoschema.ErrDatabaseNotExists)
-	} else if err != nil {
+	if err != nil {
+		if terror.ErrorEqual(err, meta.ErrDBNotExists) {
+			job.State = model.JobCancelled
+			return nil, errors.Trace(infoschema.ErrDatabaseNotExists)
+		}
 		return nil, errors.Trace(err)
 	} else if tblInfo == nil {
 		job.State = model.JobCancelled
@@ -260,10 +262,11 @@ func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) error {
 func checkTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName string) error {
 	// Check this table's database.
 	tables, err := t.ListTables(schemaID)
-	if terror.ErrorEqual(err, meta.ErrDBNotExists) {
-		job.State = model.JobCancelled
-		return errors.Trace(infoschema.ErrDatabaseNotExists)
-	} else if err != nil {
+	if err != nil {
+		if terror.ErrorEqual(err, meta.ErrDBNotExists) {
+			job.State = model.JobCancelled
+			return errors.Trace(infoschema.ErrDatabaseNotExists)
+		}
 		return errors.Trace(err)
 	}
 
