@@ -205,7 +205,7 @@ func (s *testCommitterSuite) mustGetRegionID(c *C, key []byte) uint64 {
 	return loc.Region.id
 }
 
-func (s *testCommitterSuite) mustNotLocked(c *C, key []byte) {
+func (s *testCommitterSuite) isKeyLocked(c *C, key []byte) bool {
 	ver, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
 	bo := NewBackoffer(getMaxBackoff, context.Background())
@@ -223,7 +223,7 @@ func (s *testCommitterSuite) mustNotLocked(c *C, key []byte) {
 	cmdGetResp := resp.GetCmdGetResp()
 	c.Assert(cmdGetResp, NotNil)
 	keyErr := cmdGetResp.GetError()
-	c.Assert(keyErr, IsNil)
+	return keyErr.GetLocked() != nil
 }
 
 func (s *testCommitterSuite) TestPrewriteCancel(c *C) {
@@ -253,9 +253,14 @@ func (s *testCommitterSuite) TestPrewriteCancel(c *C) {
 	c.Assert(err, IsNil)
 	err = txn1.Commit()
 	c.Assert(err, NotNil)
-	// "c" should be cleaned up.
-	time.Sleep(time.Millisecond * 10)
-	s.mustNotLocked(c, []byte("c"))
+	// "c" should be cleaned up in reasonable time.
+	for i := 0; i < 50; i++ {
+		if !s.isKeyLocked(c, []byte("c")) {
+			return
+		}
+		time.Sleep(time.Millisecond * 10)
+	}
+	c.Fail()
 }
 
 // slowClient wraps rpcClient and makes some regions respond with delay.
