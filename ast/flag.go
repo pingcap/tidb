@@ -13,35 +13,9 @@
 
 package ast
 
-const preEvaluable = FlagHasParamMarker | FlagHasFunc | FlagHasVariable | FlagHasDefault | FlagPreEvaluated
-
-// ResetEvaluatedFlag resets the evaluated flag.
-func ResetEvaluatedFlag(n Node) {
-	var reseter preEvaluatedReseter
-	n.Accept(&reseter)
-}
-
-func resetEvaluatedExpr(expr ExprNode) {
-	expr.SetFlag(expr.GetFlag() &^ FlagPreEvaluated)
-}
-
 // HasAggFlag checks if the expr contains FlagHasAggregateFunc.
 func HasAggFlag(expr ExprNode) bool {
 	return expr.GetFlag()&FlagHasAggregateFunc > 0
-}
-
-type preEvaluatedReseter struct {
-}
-
-func (r *preEvaluatedReseter) Enter(in Node) (Node, bool) {
-	return in, false
-}
-
-func (r *preEvaluatedReseter) Leave(in Node) (Node, bool) {
-	if expr, ok := in.(ExprNode); ok {
-		resetEvaluatedExpr(expr)
-	}
-	return in, true
 }
 
 // SetFlag sets flag for expression.
