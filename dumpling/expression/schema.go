@@ -93,13 +93,6 @@ func (s Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 	return s.Columns[idx], nil
 }
 
-// InitColumnIndices sets indices for columns in schema.
-func (s Schema) InitColumnIndices() {
-	for i, c := range s.Columns {
-		c.Index = i
-	}
-}
-
 // RetrieveColumn retrieves column in expression from the columns in schema.
 func (s Schema) RetrieveColumn(col *Column) *Column {
 	index := s.GetColumnIndex(col)

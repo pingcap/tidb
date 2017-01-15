@@ -63,7 +63,6 @@ func (p *Projection) PruneColumns(parentUsedCols []*expression.Column) {
 		selfUsedCols = append(selfUsedCols, expression.ExtractColumns(expr)...)
 	}
 	child.PruneColumns(selfUsedCols)
-	p.schema.InitColumnIndices()
 }
 
 // PruneColumns implements LogicalPlan interface.
@@ -96,7 +95,6 @@ func (p *Aggregation) PruneColumns(parentUsedCols []*expression.Column) {
 		selfUsedCols = append(selfUsedCols, expression.ExtractColumns(expr)...)
 	}
 	child.PruneColumns(selfUsedCols)
-	p.schema.InitColumnIndices()
 }
 
 // PruneColumns implements LogicalPlan interface.
@@ -128,7 +126,6 @@ func (p *Union) PruneColumns(parentUsedCols []*expression.Column) {
 		}
 		child.PruneColumns(newCols)
 	}
-	p.schema.InitColumnIndices()
 }
 
 // PruneColumns implements LogicalPlan interface.
@@ -140,7 +137,6 @@ func (p *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 			p.Columns = append(p.Columns[:i], p.Columns[i+1:]...)
 		}
 	}
-	p.schema.InitColumnIndices()
 }
 
 // PruneColumns implements LogicalPlan interface.
@@ -208,7 +204,6 @@ func (p *Join) PruneColumns(parentUsedCols []*expression.Column) {
 	} else {
 		p.schema = composedSchema
 	}
-	p.schema.InitColumnIndices()
 }
 
 // PruneColumns implements LogicalPlan interface.
@@ -246,7 +241,6 @@ func (p *Apply) PruneColumns(parentUsedCols []*expression.Column) {
 		p.schema = child.GetSchema().Clone()
 		p.schema.Columns = append(p.schema.Columns, existsCol)
 	}
-	p.schema.InitColumnIndices()
 }
 
 // PruneColumns implements LogicalPlan interface.
