@@ -334,6 +334,7 @@ func (s *session) retry(maxCnt int) error {
 		}
 		retryCnt++
 		if !s.unlimitedRetryCount && (retryCnt >= maxCnt) {
+			log.Warnf("[%id] Retry reached max count %d", connID, retryCnt)
 			return errors.Trace(err)
 		}
 		kv.BackOff(retryCnt)
