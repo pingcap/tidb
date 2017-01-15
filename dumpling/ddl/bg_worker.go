@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/terror"
 )
 
 // handleBgJobQueue handles the background job queue.
@@ -34,11 +33,8 @@ func (d *ddl) handleBgJobQueue() error {
 	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		owner, err := d.checkOwner(t, bgJobFlag)
-		if terror.ErrorEqual(err, errNotOwner) {
-			return nil
-		}
 		if err != nil {
-			return errors.Trace(err)
+			return errors.Trace(filterError(err, errNotOwner))
 		}
 
 		// Get the first background job and run it.
