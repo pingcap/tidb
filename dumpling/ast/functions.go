@@ -132,6 +132,7 @@ const (
 	Concat         = "concat"
 	ConcatWS       = "concat_ws"
 	Convert        = "convert"
+	Field          = "field"
 	Lcase          = "lcase"
 	Left           = "left"
 	Length         = "length"
