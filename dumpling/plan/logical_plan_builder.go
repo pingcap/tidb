@@ -17,7 +17,6 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
@@ -448,7 +447,6 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 	if limit.Offset != nil {
 		offset, err = getUintForLimitOffset(sc, limit.Offset.GetValue())
 		if err != nil {
-			log.Error(err)
 			b.err = ErrWrongArguments
 			return nil
 		}
@@ -456,8 +454,8 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 	if limit.Count != nil {
 		count, err = getUintForLimitOffset(sc, limit.Count.GetValue())
 		if err != nil {
-			log.Error(err)
 			b.err = ErrWrongArguments
+			return nil
 		}
 	}
 	li := &Limit{
