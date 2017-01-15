@@ -14,6 +14,7 @@ package plan
 
 import (
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 )
@@ -290,6 +291,9 @@ func (p *Union) PredicatePushDown(predicates []expression.Expression) (ret []exp
 // getGbyColIndex gets the column's index in the group-by columns.
 func (p *Aggregation) getGbyColIndex(col *expression.Column) int {
 	id := p.GetSchema().GetColumnIndex(col)
+	if p.AggFuncs[id].GetName() != ast.AggFuncFirstRow {
+		return -1
+	}
 	colOriginal, isColumn := p.AggFuncs[id].GetArgs()[0].(*expression.Column)
 	if !isColumn {
 		return -1

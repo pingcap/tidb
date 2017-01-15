@@ -25,6 +25,8 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 )
 
+const requestMaxSize = 4 * 1024 * 1024
+
 type rpcHandler struct {
 	cluster   *Cluster
 	mvccStore *MvccStore
@@ -48,6 +50,12 @@ func (h *rpcHandler) handleRequest(req *kvrpcpb.Request) *kvrpcpb.Response {
 		resp.RegionError = err
 		return &resp
 	}
+	// TiKV has a limitation on raft log size.
+	// mock-tikv has no raft inside, so we check the request's size instead.
+	if err := h.checkSize(req); err != nil {
+		resp.RegionError = err
+		return &resp
+	}
 	switch req.GetType() {
 	case kvrpcpb.MessageType_CmdGet:
 		resp.CmdGetResp = h.onGet(req.CmdGetReq)
@@ -65,6 +73,8 @@ func (h *rpcHandler) handleRequest(req *kvrpcpb.Request) *kvrpcpb.Response {
 		resp.CmdResolveLockResp = h.onResolveLock(req.CmdResolveLockReq)
 	case kvrpcpb.MessageType_CmdResolveLock:
 		resp.CmdResolveLockResp = h.onResolveLock(req.CmdResolveLockReq)
+	case kvrpcpb.MessageType_CmdBatchRollback:
+		resp.CmdBatchRollbackResp = h.onBatchRollback(req.CmdBatchRollbackReq)
 
 	case kvrpcpb.MessageType_CmdRawGet:
 		resp.CmdRawGetResp = h.onRawGet(req.CmdRawGetReq)
@@ -147,6 +157,15 @@ func (h *rpcHandler) checkContext(ctx *kvrpcpb.Context) *errorpb.Error {
 		}
 	}
 	h.startKey, h.endKey = region.StartKey, region.EndKey
+	return nil
+}
+
+func (h *rpcHandler) checkSize(req *kvrpcpb.Request) *errorpb.Error {
+	if req.Size() >= requestMaxSize {
+		return &errorpb.Error{
+			RaftEntryTooLarge: &errorpb.RaftEntryTooLarge{},
+		}
+	}
 	return nil
 }
 
@@ -254,6 +273,16 @@ func (h *rpcHandler) onResolveLock(req *kvrpcpb.CmdResolveLockRequest) *kvrpcpb.
 		}
 	}
 	return &kvrpcpb.CmdResolveLockResponse{}
+}
+
+func (h *rpcHandler) onBatchRollback(req *kvrpcpb.CmdBatchRollbackRequest) *kvrpcpb.CmdBatchRollbackResponse {
+	err := h.mvccStore.Rollback(req.Keys, req.StartVersion)
+	if err != nil {
+		return &kvrpcpb.CmdBatchRollbackResponse{
+			Error: convertToKeyError(err),
+		}
+	}
+	return &kvrpcpb.CmdBatchRollbackResponse{}
 }
 
 func (h *rpcHandler) onRawGet(req *kvrpcpb.CmdRawGetRequest) *kvrpcpb.CmdRawGetResponse {

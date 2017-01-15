@@ -225,7 +225,7 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 	if colDef.Options != nil {
 		len := types.UnspecifiedLength
 
-		if types.IsTypeSpecifiable(colDef.Tp.Tp) {
+		if types.IsTypePrefixable(colDef.Tp.Tp) {
 			len = colDef.Tp.Flen
 		}
 
@@ -541,34 +541,21 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 				}
 			}
 		}
-
-		// 1. check if the column is exists
-		// 2. add index
-		indexColumns := make([]*model.IndexColumn, 0, len(constr.Keys))
-		for _, key := range constr.Keys {
-			col := table.FindCol(cols, key.Column.Name.O)
-			if col == nil {
-				return nil, errKeyColumnDoesNotExits.Gen("key column %s doesn't exist in table", key.Column.Name)
-			}
-			indexColumns = append(indexColumns, &model.IndexColumn{
-				Name:   key.Column.Name,
-				Offset: col.Offset,
-				Length: key.Length,
-			})
+		// build index info.
+		idxInfo, err := buildIndexInfo(tbInfo, model.NewCIStr(constr.Name), constr.Keys, model.StatePublic)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
-		idxInfo := &model.IndexInfo{
-			Name:    model.NewCIStr(constr.Name),
-			Columns: indexColumns,
-			State:   model.StatePublic,
-		}
+		//check if the index is primary or uniqiue.
 		switch constr.Tp {
 		case ast.ConstraintPrimaryKey:
-			idxInfo.Unique = true
 			idxInfo.Primary = true
+			idxInfo.Unique = true
 			idxInfo.Name = model.NewCIStr(table.PrimaryKeyName)
 		case ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
 			idxInfo.Unique = true
 		}
+		// set index type.
 		if constr.Option != nil {
 			idxInfo.Comment = constr.Option.Comment
 			idxInfo.Tp = constr.Option.Tp
@@ -999,6 +986,38 @@ func (d *ddl) TruncateTable(ctx context.Context, ti ast.Ident) error {
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{newTableID},
 	}
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) RenameTable(ctx context.Context, oldIdent, newIdent ast.Ident) error {
+	is := d.GetInformationSchema()
+	oldSchema, ok := is.SchemaByName(oldIdent.Schema)
+	if !ok {
+		return errors.Trace(errFileNotFound.GenByArgs(oldIdent.Schema, oldIdent.Name))
+	}
+	oldTbl, err := is.TableByName(oldIdent.Schema, oldIdent.Name)
+	if err != nil {
+		return errors.Trace(errFileNotFound.GenByArgs(oldIdent.Schema, oldIdent.Name))
+	}
+	newSchema, ok := is.SchemaByName(newIdent.Schema)
+	if !ok {
+		return errors.Trace(errErrorOnRename.GenByArgs(oldIdent.Schema, oldIdent.Name,
+			newIdent.Schema, newIdent.Name))
+	}
+	if is.TableExists(newIdent.Schema, newIdent.Name) {
+		return errors.Trace(infoschema.ErrTableExists.GenByArgs(newIdent))
+	}
+
+	job := &model.Job{
+		SchemaID:   newSchema.ID,
+		TableID:    oldTbl.Meta().ID,
+		Type:       model.ActionRenameTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{oldSchema.ID, newIdent.Name},
+	}
+
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)

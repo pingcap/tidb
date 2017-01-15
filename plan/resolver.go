@@ -201,6 +201,9 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 		nr.currentContext().inOnCondition = true
 	case *ast.OrderByClause:
 		nr.currentContext().inOrderBy = true
+	case *ast.RenameTableStmt:
+		nr.pushContext()
+		nr.currentContext().inCreateOrDropTable = true
 	case *ast.SelectStmt:
 		nr.pushContext()
 	case *ast.SetStmt:
@@ -286,6 +289,8 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 		nr.currentContext().inByItemExpression = false
 	case *ast.PositionExpr:
 		nr.handlePosition(v)
+	case *ast.RenameTableStmt:
+		nr.popContext()
 	case *ast.SelectStmt:
 		ctx := nr.currentContext()
 		v.SetResultFields(ctx.fieldList)
@@ -367,7 +372,7 @@ func (nr *nameResolver) handleTableName(tn *ast.TableName) {
 	}, len(tn.TableInfo.Columns))
 	status := nr.Ctx.GetSessionVars().StmtCtx
 	for i, v := range tn.TableInfo.Columns {
-		if status.InUpdateStmt {
+		if status.InUpdateOrDeleteStmt {
 			switch v.State {
 			case model.StatePublic, model.StateWriteOnly, model.StateWriteReorganization:
 			default:

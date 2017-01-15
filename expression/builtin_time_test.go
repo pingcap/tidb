@@ -471,6 +471,54 @@ func (s *testEvaluatorSuite) TestStrToDate(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestFromDays(c *C) {
+	tests := []struct {
+		day    int64
+		expect string
+	}{
+		{-140, "0000-00-00"},   // mysql FROM_DAYS returns 0000-00-00 for any day <= 365.
+		{140, "0000-00-00"},    // mysql FROM_DAYS returns 0000-00-00 for any day <= 365.
+		{735000, "2012-05-12"}, // Leap year.
+		{735030, "2012-06-11"},
+		{735130, "2012-09-19"},
+		{734909, "2012-02-11"},
+		{734878, "2012-01-11"},
+		{734927, "2012-02-29"},
+		{734634, "2011-05-12"}, // Non Leap year.
+		{734664, "2011-06-11"},
+		{734764, "2011-09-19"},
+		{734544, "2011-02-11"},
+		{734513, "2011-01-11"},
+	}
+
+	for _, test := range tests {
+		t1 := types.NewIntDatum(test.day)
+
+		result, err := builtinFromDays([]types.Datum{t1}, s.ctx)
+
+		c.Assert(err, IsNil)
+		c.Assert(result.GetMysqlTime().String(), Equals, test.expect)
+	}
+
+	stringTests := []struct {
+		day    string
+		expect string
+	}{
+		{"z550z", "0000-00-00"},
+		{"6500z", "0017-10-18"},
+		{"440", "0001-03-16"},
+	}
+
+	for _, test := range stringTests {
+		t1 := types.NewStringDatum(test.day)
+
+		result, err := builtinFromDays([]types.Datum{t1}, s.ctx)
+
+		c.Assert(err, IsNil)
+		c.Assert(result.GetMysqlTime().String(), Equals, test.expect)
+	}
+}
+
 func (s *testEvaluatorSuite) TestDateDiff(c *C) {
 	// Test cases from https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_datediff
 	tests := []struct {
@@ -569,6 +617,36 @@ func (s *testEvaluatorSuite) TestYearWeek(c *C) {
 	c.Assert(result.IsNull(), IsTrue)
 }
 
+func (s *testEvaluatorSuite) TestTimestampDiff(c *C) {
+	tests := []struct {
+		unit   string
+		t1     string
+		t2     string
+		expect int64
+	}{
+		{"MONTH", "2003-02-01", "2003-05-01", 3},
+		{"YEAR", "2002-05-01", "2001-01-01", -1},
+		{"MINUTE", "2003-02-01", "2003-05-01 12:05:55", 128885},
+	}
+
+	for _, test := range tests {
+		args := []types.Datum{
+			types.NewStringDatum(test.unit),
+			types.NewStringDatum(test.t1),
+			types.NewStringDatum(test.t2),
+		}
+		d, err := builtinTimestampDiff(args, s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(d.GetInt64(), Equals, test.expect)
+	}
+	s.ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
+	d, err := builtinTimestampDiff([]types.Datum{types.NewStringDatum("DAY"),
+		types.NewStringDatum("2017-01-00"),
+		types.NewStringDatum("2017-01-01")}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(d.Kind(), Equals, types.KindNull)
+}
+
 func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 	d, err := builtinUnixTimestamp(nil, s.ctx)
 	c.Assert(err, IsNil)
@@ -596,28 +674,30 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 	}
 }
 
-func (s *testEvaluatorSuite) TestDateArith(c *C) {
+func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 	defer testleak.AfterTest(c)()
 
 	date := []string{"2016-12-31", "2017-01-01"}
+	dateAdd := dateArithFuncFactory(ast.DateArithAdd)
+	dateSub := dateArithFuncFactory(ast.DateArithSub)
 
-	args := types.MakeDatums(ast.DateAdd, date[0], 1, "DAY")
-	v, err := builtinDateArith(args, s.ctx)
+	args := types.MakeDatums(date[0], 1, "DAY")
+	v, err := dateAdd(args, s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetMysqlTime().String(), Equals, date[1])
 
-	args = types.MakeDatums(ast.DateSub, date[1], 1, "DAY")
-	v, err = builtinDateArith(args, s.ctx)
+	args = types.MakeDatums(date[1], 1, "DAY")
+	v, err = dateSub(args, s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetMysqlTime().String(), Equals, date[0])
 
-	args = types.MakeDatums(ast.DateAdd, date[0], nil, "DAY")
-	v, err = builtinDateArith(args, s.ctx)
+	args = types.MakeDatums(date[0], nil, "DAY")
+	v, err = dateAdd(args, s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v.IsNull(), IsTrue)
 
-	args = types.MakeDatums(ast.DateSub, date[1], nil, "DAY")
-	v, err = builtinDateArith(args, s.ctx)
+	args = types.MakeDatums(date[1], nil, "DAY")
+	v, err = dateSub(args, s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v.IsNull(), IsTrue)
 }

@@ -119,10 +119,6 @@ func (ts *TidbTestSuite) TestStatusAPI(c *C) {
 	runTestStatusAPI(c)
 }
 
-func (ts *TidbTestSuite) TestMultiPacket(c *C) {
-	runTestMultiPacket(c)
-}
-
 func (ts *TidbTestSuite) TestMultiStatements(c *C) {
 	c.Parallel()
 	runTestMultiStatements(c)

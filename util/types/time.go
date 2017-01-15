@@ -193,6 +193,11 @@ func (t Time) IsZero() bool {
 	return compareTime(t.Time, ZeroTime) == 0
 }
 
+// InvalidZero returns a boolean indicating whether the month or day is zero.
+func (t Time) InvalidZero() bool {
+	return t.Time.Month() == 0 || t.Time.Day() == 0
+}
+
 const numberFormat = "%Y%m%d%H%i%s"
 const dateFormat = "%Y%m%d"
 
@@ -464,6 +469,13 @@ func (t *Time) Sub(t1 *Time) Duration {
 		Duration: duration,
 		Fsp:      fsp,
 	}
+}
+
+// TimestampDiff returns t2 - t1 where t1 and t2 are date or datetime expressions.
+// The unit for the result (an integer) is given by the unit argument.
+// The legal values for unit are "YEAR" "QUARTER" "MONTH" "DAY" "HOUR" "SECOND" and so on.
+func TimestampDiff(unit string, t1 Time, t2 Time) int64 {
+	return timestampDiff(unit, t1.Time, t2.Time)
 }
 
 func parseDateFormat(format string) []string {
@@ -1117,6 +1129,24 @@ func ParseTimestampFromNum(num int64) (Time, error) {
 func ParseDateFromNum(num int64) (Time, error) {
 	// date has no fractional seconds precision
 	return ParseTimeFromNum(num, mysql.TypeDate, MinFsp)
+}
+
+// TimeFromDays Converts a day number to a date.
+func TimeFromDays(num int64) Time {
+	if num < 0 {
+		return Time{
+			Time: FromDate(0, 0, 0, 0, 0, 0, 0),
+			Type: mysql.TypeDate,
+			Fsp:  0,
+		}
+	}
+	year, month, day := getDateFromDaynr(uint(num))
+
+	return Time{
+		Time: FromDate(int(year), int(month), int(day), 0, 0, 0, 0),
+		Type: mysql.TypeDate,
+		Fsp:  0,
+	}
 }
 
 func checkDateType(t TimeInternal) error {

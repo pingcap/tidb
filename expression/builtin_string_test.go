@@ -589,16 +589,16 @@ func (s *testEvaluatorSuite) TestTrim(c *C) {
 		str, result interface{}
 		fn          string
 	}{
-		{"  ", "", ast.Ltrim},
-		{"  ", "", ast.Rtrim},
-		{"foo0", "foo0", ast.Ltrim},
-		{"bar0", "bar0", ast.Rtrim},
-		{"  foo1", "foo1", ast.Ltrim},
-		{"bar1  ", "bar1", ast.Rtrim},
-		{spaceChars + "foo2  ", "foo2  ", ast.Ltrim},
-		{"  bar2" + spaceChars, "  bar2", ast.Rtrim},
-		{nil, nil, ast.Ltrim},
-		{nil, nil, ast.Rtrim},
+		{"  ", "", ast.LTrim},
+		{"  ", "", ast.RTrim},
+		{"foo0", "foo0", ast.LTrim},
+		{"bar0", "bar0", ast.RTrim},
+		{"  foo1", "foo1", ast.LTrim},
+		{"bar1  ", "bar1", ast.RTrim},
+		{spaceChars + "foo2  ", "foo2  ", ast.LTrim},
+		{"  bar2" + spaceChars, "  bar2", ast.RTrim},
+		{nil, nil, ast.LTrim},
+		{nil, nil, ast.RTrim},
 	} {
 		f := Funcs[v.fn]
 		r, err := f.F(types.MakeDatums(v.str), s.ctx)
@@ -788,6 +788,31 @@ func (s *testEvaluatorSuite) TestFindInSet(c *C) {
 		{nil, "bar", nil},
 	} {
 		r, err := builtinFindInSet(types.MakeDatums(t.str, t.strlst), s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
+	}
+}
+
+func (s *testEvaluatorSuite) TestField(c *C) {
+	defer testleak.AfterTest(c)()
+
+	tbl := []struct {
+		argLst []interface{}
+		ret    interface{}
+	}{
+		{[]interface{}{"ej", "Hej", "ej", "Heja", "hej", "foo"}, int64(2)},
+		{[]interface{}{"fo", "Hej", "ej", "Heja", "hej", "foo"}, int64(0)},
+		{[]interface{}{"ej", "Hej", "ej", "Heja", "ej", "hej", "foo"}, int64(2)},
+		{[]interface{}{1, 2, 3, 11, 1}, int64(4)},
+		{[]interface{}{nil, 2, 3, 11, 1}, int64(0)},
+		{[]interface{}{1.1, 2.1, 3.1, 11.1, 1.1}, int64(4)},
+		{[]interface{}{1.1, "2.1", "3.1", "11.1", "1.1"}, int64(4)},
+		{[]interface{}{"1.1a", 2.1, 3.1, 11.1, 1.1}, int64(4)},
+		{[]interface{}{1.10, 0, 11e-1}, int64(2)},
+		{[]interface{}{"abc", 0, 1, 11.1, 1.1}, int64(1)},
+	}
+	for _, t := range tbl {
+		r, err := builtinField(types.MakeDatums(t.argLst...), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
 	}

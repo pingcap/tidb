@@ -162,3 +162,11 @@ func (txn *dbTxn) StartTS() uint64 {
 func (txn *dbTxn) Valid() bool {
 	return txn.valid
 }
+
+func (txn *dbTxn) Size() int {
+	return txn.us.Size()
+}
+
+func (txn *dbTxn) Len() int {
+	return txn.us.Len()
+}

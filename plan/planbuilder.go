@@ -118,6 +118,8 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return b.buildSimple(node.(ast.StmtNode))
 	case *ast.TruncateTableStmt:
 		return b.buildDDL(x)
+	case *ast.RenameTableStmt:
+		return b.buildDDL(x)
 	}
 	b.err = ErrUnsupportedType.Gen("Unsupported type %T", node)
 	return nil
