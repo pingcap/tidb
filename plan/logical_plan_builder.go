@@ -1123,6 +1123,7 @@ func (b *planBuilder) buildUpdateLists(list []*ast.Assignment, p LogicalPlan) ([
 		offset := schema.GetColumnIndex(col)
 		if offset == -1 {
 			b.err = errors.Trace(errors.Errorf("could not find column %s.%s", col.TblName, col.ColName))
+			return nil, nil
 		}
 		newExpr, np, err := b.rewrite(assign.Expr, p, nil, false)
 		if err != nil {
