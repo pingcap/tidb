@@ -22,7 +22,7 @@ import (
 
 func (d *ddl) onCreateForeignKey(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
-	tblInfo, err := d.getTableInfo(t, job)
+	tblInfo, err := getTableInfo(t, job, schemaID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -61,7 +61,7 @@ func (d *ddl) onCreateForeignKey(t *meta.Meta, job *model.Job) error {
 
 func (d *ddl) onDropForeignKey(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
-	tblInfo, err := d.getTableInfo(t, job)
+	tblInfo, err := getTableInfo(t, job, schemaID)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -597,13 +597,19 @@ LOOP:
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
 				n := rand.Intn(num)
+				s.tk.MustExec("begin")
 				s.tk.MustExec("delete from t2 where c1 = ?", n)
+				s.tk.MustExec("commit")
+
+				// Make sure that statement of insert and show use the same infoSchema.
+				s.tk.MustExec("begin")
 				_, err := s.tk.Exec("insert into t2 values (?, ?, ?)", i, i, i)
 				if err != nil {
 					// if err is failed, the column number must be 4 now.
 					values := s.showColumns(c, "t2")
-					c.Assert(values, HasLen, 4, Commentf("err:%v", err))
+					c.Assert(values, HasLen, 4, Commentf("err:%v", errors.ErrorStack(err)))
 				}
+				s.tk.MustExec("commit")
 			}
 			num += step
 		}
@@ -681,16 +687,15 @@ LOOP:
 		case <-ticker.C:
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
+				// Make sure that statement of insert and show use the same infoSchema.
+				s.tk.MustExec("begin")
 				_, err := s.tk.Exec("insert into t2 values (?, ?, ?)", i, i, i)
-				if err == nil {
-					continue
+				if err != nil {
+					// If executing is failed, the column number must be 4 now.
+					values := s.showColumns(c, "t2")
+					c.Assert(values, HasLen, 4, Commentf("err:%v", errors.ErrorStack(err)))
 				}
-				// If executing is failed, the column number must be 4 now.
-				values := s.showColumns(c, "t2")
-				if len(values) != 4 {
-					c.Log(errors.ErrorStack(err))
-					c.FailNow()
-				}
+				s.tk.MustExec("commit")
 			}
 			num += step
 		}
@@ -853,4 +858,53 @@ func (s *testDBSuite) TestTruncateTable(c *C) {
 		time.Sleep(time.Millisecond * 100)
 	}
 	c.Assert(hasOldTableData, IsFalse)
+}
+
+func (s *testDBSuite) TestRenameTable(c *C) {
+	defer testleak.AfterTest(c)
+	store, err := tidb.NewStore("memory://rename_table")
+	c.Assert(err, IsNil)
+	s.tk = testkit.NewTestKit(c, store)
+	s.tk.MustExec("use test")
+
+	// for different databases
+	s.tk.MustExec("create table t (c1 int, c2 int)")
+	s.tk.MustExec("insert t values (1, 1), (2, 2)")
+	ctx := s.tk.Se.(context.Context)
+	is := sessionctx.GetDomain(ctx).InfoSchema()
+	oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	oldTblID := oldTblInfo.Meta().ID
+	s.tk.MustExec("create database test1")
+	s.tk.MustExec("use test1")
+	s.tk.MustExec("rename table test.t to test1.t1")
+	is = sessionctx.GetDomain(ctx).InfoSchema()
+	newTblInfo, err := is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	c.Assert(newTblInfo.Meta().ID, Equals, oldTblID)
+	s.tk.MustQuery("select * from t1").Check(testkit.Rows("1 1", "2 2"))
+	s.tk.MustExec("use test")
+	s.tk.MustQuery("show tables").Check(testkit.Rows())
+
+	// for the same database
+	s.tk.MustExec("use test1")
+	s.tk.MustExec("rename table t1 to t2")
+	is = sessionctx.GetDomain(ctx).InfoSchema()
+	newTblInfo, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t2"))
+	c.Assert(err, IsNil)
+	c.Assert(newTblInfo.Meta().ID, Equals, oldTblID)
+	s.tk.MustQuery("select * from t2").Check(testkit.Rows("1 1", "2 2"))
+	isExist := is.TableExists(model.NewCIStr("test1"), model.NewCIStr("t1"))
+	c.Assert(isExist, IsFalse)
+	s.tk.MustQuery("show tables").Check(testkit.Rows("t2"))
+
+	// for failure case
+	sql := "rename table test_not_exist.t to test_not_exist.t"
+	s.testErrorCode(c, sql, tmysql.ErrFileNotFound)
+	sql = "rename table test.t_not_exist to test_not_exist.t"
+	s.testErrorCode(c, sql, tmysql.ErrFileNotFound)
+	sql = "rename table test1.t2 to test_not_exist.t"
+	s.testErrorCode(c, sql, tmysql.ErrErrorOnRename)
+	sql = "rename table test1.t2 to test1.t2"
+	s.testErrorCode(c, sql, tmysql.ErrTableExists)
 }

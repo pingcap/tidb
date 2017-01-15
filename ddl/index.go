@@ -177,7 +177,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 
 	// Handle normal job.
 	schemaID := job.SchemaID
-	tblInfo, err := d.getTableInfo(t, job)
+	tblInfo, err := getTableInfo(t, job, schemaID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -255,11 +255,11 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 		err = d.runReorgJob(func() error {
 			return d.addTableIndex(tbl, indexInfo, reorgInfo, job)
 		})
-		if terror.ErrorEqual(err, errWaitReorgTimeout) {
-			// if timeout, we should return, check for the owner and re-wait job done.
-			return nil
-		}
 		if err != nil {
+			if terror.ErrorEqual(err, errWaitReorgTimeout) {
+				// if timeout, we should return, check for the owner and re-wait job done.
+				return nil
+			}
 			if terror.ErrorEqual(err, kv.ErrKeyExists) {
 				log.Warnf("[ddl] run DDL job %v err %v, convert job to rollback job", job, err)
 				err = d.convert2RollbackJob(t, job, tblInfo, indexInfo)
@@ -303,7 +303,7 @@ func (d *ddl) convert2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.T
 
 func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
-	tblInfo, err := d.getTableInfo(t, job)
+	tblInfo, err := getTableInfo(t, job, schemaID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -346,13 +346,10 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 		err = d.runReorgJob(func() error {
 			return d.dropTableIndex(indexInfo, job)
 		})
-		if terror.ErrorEqual(err, errWaitReorgTimeout) {
+		if err != nil {
 			// If the timeout happens, we should return.
 			// Then check for the owner and re-wait job to finish.
-			return nil
-		}
-		if err != nil {
-			return errors.Trace(err)
+			return errors.Trace(filterError(err, errWaitReorgTimeout))
 		}
 
 		// All reorganization jobs are done, drop this index.
@@ -711,9 +708,10 @@ func (d *ddl) iterateSnapshotRows(t table.Table, version uint64, seekHandle int6
 		}
 
 		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
-		if terror.ErrorEqual(err, kv.ErrNotExist) {
-			break
-		} else if err != nil {
+		if err != nil {
+			if terror.ErrorEqual(err, kv.ErrNotExist) {
+				break
+			}
 			return errors.Trace(err)
 		}
 	}

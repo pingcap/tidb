@@ -471,6 +471,54 @@ func (s *testEvaluatorSuite) TestStrToDate(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestFromDays(c *C) {
+	tests := []struct {
+		day    int64
+		expect string
+	}{
+		{-140, "0000-00-00"},   // mysql FROM_DAYS returns 0000-00-00 for any day <= 365.
+		{140, "0000-00-00"},    // mysql FROM_DAYS returns 0000-00-00 for any day <= 365.
+		{735000, "2012-05-12"}, // Leap year.
+		{735030, "2012-06-11"},
+		{735130, "2012-09-19"},
+		{734909, "2012-02-11"},
+		{734878, "2012-01-11"},
+		{734927, "2012-02-29"},
+		{734634, "2011-05-12"}, // Non Leap year.
+		{734664, "2011-06-11"},
+		{734764, "2011-09-19"},
+		{734544, "2011-02-11"},
+		{734513, "2011-01-11"},
+	}
+
+	for _, test := range tests {
+		t1 := types.NewIntDatum(test.day)
+
+		result, err := builtinFromDays([]types.Datum{t1}, s.ctx)
+
+		c.Assert(err, IsNil)
+		c.Assert(result.GetMysqlTime().String(), Equals, test.expect)
+	}
+
+	stringTests := []struct {
+		day    string
+		expect string
+	}{
+		{"z550z", "0000-00-00"},
+		{"6500z", "0017-10-18"},
+		{"440", "0001-03-16"},
+	}
+
+	for _, test := range stringTests {
+		t1 := types.NewStringDatum(test.day)
+
+		result, err := builtinFromDays([]types.Datum{t1}, s.ctx)
+
+		c.Assert(err, IsNil)
+		c.Assert(result.GetMysqlTime().String(), Equals, test.expect)
+	}
+}
+
 func (s *testEvaluatorSuite) TestDateDiff(c *C) {
 	// Test cases from https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_datediff
 	tests := []struct {

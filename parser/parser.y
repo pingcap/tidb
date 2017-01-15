@@ -170,6 +170,7 @@ import (
 	realType	"REAL"
 	references	"REFERENCES"
 	regexpKwd	"REGEXP"
+	rename          "RENAME"
 	repeat		"REPEAT"
 	replace		"REPLACE"
 	restrict	"RESTRICT"
@@ -232,7 +233,9 @@ import (
 	dayofmonth	"DAYOFMONTH"
 	dayofweek	"DAYOFWEEK"
 	dayofyear	"DAYOFYEAR"
+	fromDays	"FROM_DAYS"
 	events		"EVENTS"
+	fieldKwd	"FIELD_KWD"
 	findInSet	"FIND_IN_SET"
 	foundRows	"FOUND_ROWS"
 	fromUnixTime	"FROM_UNIXTIME"
@@ -586,6 +589,7 @@ import (
 	OnDeleteOpt		"optional ON DELETE clause"
 	OnUpdateOpt		"optional ON UPDATE clause"
 	ReferOpt		"reference option"
+	RenameTableStmt         "rename table statement"
 	ReplaceIntoStmt		"REPLACE INTO statement"
 	ReplacePriority		"replace statement priority"
 	RollbackStmt		"ROLLBACK statement"
@@ -925,6 +929,18 @@ Symbol:
 	{
 		$$ = $1
 	}
+
+/**************************************RenameTableStmt***************************************
+ * See http://dev.mysql.com/doc/refman/5.7/en/rename-table.html
+ *******************************************************************************************/
+RenameTableStmt:
+	 "RENAME" "TABLE" TableName "TO" TableName
+	 {
+		$$ = &ast.RenameTableStmt{
+			OldTable: $3.(*ast.TableName), 
+			NewTable: $5.(*ast.TableName),
+		}	
+	 }
 
 /*******************************************************************************************/
 
@@ -2113,7 +2129,7 @@ ReservedKeyword:
 | "LOCALTIME" | "LOCALTIMESTAMP" | "LOCK" | "LONGBLOB" | "LONGTEXT" | "MAXVALUE" | "MEDIUMBLOB" | "MEDIUMINT" | "MEDIUMTEXT"
 | "MINUTE_MICROSECOND" | "MINUTE_SECOND" | "MOD" | "NOT" | "NO_WRITE_TO_BINLOG" | "NULL" | "NUMERIC"
 | "ON" | "OPTION" | "OR" | "ORDER" | "OUTER" | "PARTITION" | "PRECISION" | "PRIMARY" | "PROCEDURE" | "RANGE" | "READ" 
-| "REAL" | "REFERENCES" | "REGEXP" | "REPEAT" | "REPLACE" | "RESTRICT" | "RIGHT" | "RLIKE"
+| "REAL" | "REFERENCES" | "REGEXP" | "RENAME" | "REPEAT" | "REPLACE" | "RESTRICT" | "RIGHT" | "RLIKE"
 | "SCHEMA" | "SCHEMAS" | "SECOND_MICROSECOND" | "SELECT" | "SET" | "SHOW" | "SMALLINT"
 | "STARTING" | "TABLE" | "TERMINATED" | "THEN" | "TINYBLOB" | "TINYINT" | "TINYTEXT" | "TO"
 | "TRAILING" | "TRUE" | "UNION" | "UNIQUE" | "UNLOCK" | "UNSIGNED"
@@ -2126,12 +2142,12 @@ ReservedKeyword:
 
 NotKeywordToken:
 	"ABS" | "ADDDATE" | "ADMIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
-|	"DATEDIFF" | "DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FIND_IN_SET" | "FOUND_ROWS"
+|	"DATEDIFF" | "DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FROM_DAYS" | "FIND_IN_SET" | "FOUND_ROWS"
 |	"GROUP_CONCAT"| "GREATEST" | "LEAST" | "HOUR" | "HEX" | "UNHEX" | "IFNULL" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOCATE" | "LOWER" | "LTRIM"
 |	"MAX" | "MICROSECOND" | "MIN" |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" | "POW" | "POWER" | "RAND"
 |	"SECOND" | "SIGN" | "SLEEP" | "SQL_CALC_FOUND_ROWS" | "STR_TO_DATE" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen |
 "SUBSTRING_INDEX" | "SUM" | "TRIM" | "RTRIM" | "UCASE" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
-|	"STATS_PERSISTENT" | "GET_LOCK" | "RELEASE_LOCK" | "CEIL" | "CEILING" | "FROM_UNIXTIME" | "TIMEDIFF" | "LN" | "LOG" | "LOG2" | "LOG10"
+|	"STATS_PERSISTENT" | "GET_LOCK" | "RELEASE_LOCK" | "CEIL" | "CEILING" | "FROM_UNIXTIME" | "TIMEDIFF" | "LN" | "LOG" | "LOG2" | "LOG10" | "FIELD_KWD"
 
 /************************************************************************************
  *
@@ -2668,6 +2684,10 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
+|	"FIELD_KWD" '(' ExpressionList ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+	}
 |	FunctionNameDateArithMultiForms '(' Expression ',' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
@@ -2709,6 +2729,13 @@ FunctionCallNonKeyword:
 				$3.(ast.ExprNode),
 				$5.(ast.ExprNode),
 			},
+		}
+	}
+|	"FROM_DAYS" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
 		}
 	}
 |	"EXTRACT" '(' TimeUnit "FROM" Expression ')'
@@ -4525,6 +4552,7 @@ Statement:
 |	LoadDataStmt
 |	PreparedStmt
 |	RollbackStmt
+|	RenameTableStmt
 |	ReplaceIntoStmt
 |	SelectStmt
 |	UnionStmt

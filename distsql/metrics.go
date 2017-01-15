@@ -18,14 +18,14 @@ import (
 )
 
 var (
-	queryHistgram = prometheus.NewHistogram(
+	queryHistgram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "distsql",
 			Name:      "handle_query_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of handled queries.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 13),
-		})
+		}, []string{"type"})
 
 	queryCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{

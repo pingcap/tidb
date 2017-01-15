@@ -125,7 +125,11 @@ type session struct {
 
 func (s *session) cleanRetryInfo() {
 	if !s.sessionVars.RetryInfo.Retrying {
-		s.sessionVars.RetryInfo.Clean()
+		retryInfo := s.sessionVars.RetryInfo
+		for _, stmtID := range retryInfo.DroppedPreparedStmtIDs {
+			delete(s.sessionVars.PreparedStmts, stmtID)
+		}
+		retryInfo.Clean()
 	}
 }
 
@@ -238,7 +242,7 @@ func (s *session) doCommitWithRetry() error {
 	}
 	s.cleanRetryInfo()
 	if err != nil {
-		log.Warnf("finished txn:%s, %v", s.txn, err)
+		log.Warnf("[%d] finished txn:%s, %v", s.sessionVars.ConnectionID, s.txn, err)
 		return errors.Trace(err)
 	}
 	return nil
@@ -298,8 +302,9 @@ func (s *session) isRetryableError(err error) bool {
 }
 
 func (s *session) retry(maxCnt int) error {
+	connID := s.sessionVars.ConnectionID
 	if s.sessionVars.TxnCtx.ForUpdate {
-		return errors.Errorf("can not retry select for update statement")
+		return errors.Errorf("[%d] can not retry select for update statement", connID)
 	}
 	s.sessionVars.RetryInfo.Retrying = true
 	retryCnt := 0
@@ -315,10 +320,7 @@ func (s *session) retry(maxCnt int) error {
 		for _, sr := range nh.history {
 			st := sr.st
 			txt := st.OriginText()
-			if len(txt) > sqlLogMaxLen {
-				txt = txt[:sqlLogMaxLen]
-			}
-			log.Warnf("Retry %s (len:%d)", txt, len(st.OriginText()))
+			log.Warnf("[%d] Retry %s", connID, sqlForLog(txt))
 			_, err = st.Exec(s)
 			if err != nil {
 				break
@@ -331,16 +333,24 @@ func (s *session) retry(maxCnt int) error {
 			}
 		}
 		if !s.isRetryableError(err) {
-			log.Warnf("session:%v, err:%v", s, err)
+			log.Warnf("[%d] session:%v, err:%v", connID, s, err)
 			return errors.Trace(err)
 		}
 		retryCnt++
 		if !s.unlimitedRetryCount && (retryCnt >= maxCnt) {
+			log.Warnf("[%id] Retry reached max count %d", connID, retryCnt)
 			return errors.Trace(err)
 		}
 		kv.BackOff(retryCnt)
 	}
 	return err
+}
+
+func sqlForLog(sql string) string {
+	if len(sql) > sqlLogMaxLen {
+		return sql[:sqlLogMaxLen] + fmt.Sprintf("(len:%d)", len(sql))
+	}
+	return sql
 }
 
 // ExecRestrictedSQL implements RestrictedSQLExecutor interface.
@@ -561,7 +571,7 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 	if _, ok := vars.PreparedStmts[stmtID]; !ok {
 		return executor.ErrStmtNotFound
 	}
-	delete(vars.PreparedStmts, stmtID)
+	vars.RetryInfo.DroppedPreparedStmtIDs = append(vars.RetryInfo.DroppedPreparedStmtIDs, stmtID)
 	return nil
 }
 
@@ -812,6 +822,7 @@ const loadCommonGlobalVarsSQL = "select * from mysql.global_variables where vari
 	variable.AutocommitVar + "', '" +
 	variable.SQLModeVar + "', '" +
 	variable.DistSQLJoinConcurrencyVar + "', '" +
+	variable.MaxAllowedPacket + "', '" +
 	variable.DistSQLScanConcurrencyVar + "')"
 
 // LoadCommonGlobalVariableIfNeeded loads and applies commonly used global variables for the session.
