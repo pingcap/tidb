@@ -229,6 +229,7 @@ const (
 	SQLModeVar          = "sql_mode"
 	AutocommitVar       = "autocommit"
 	CharacterSetResults = "character_set_results"
+	MaxAllowedPacket    = "max_allowed_packet"
 	TimeZone            = "time_zone"
 )
 
