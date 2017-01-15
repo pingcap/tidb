@@ -14,10 +14,7 @@
 package ast
 
 import (
-	"bytes"
-
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/util/distinct"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -321,13 +318,4 @@ func (n *AggregateFuncExpr) Accept(v Visitor) (Node, bool) {
 		n.Args[i] = node.(ExprNode)
 	}
 	return v.Leave(n)
-}
-
-// AggEvaluateContext is used to store intermediate result when calculating aggregate functions.
-type AggEvaluateContext struct {
-	DistinctChecker *distinct.Checker
-	Count           int64
-	Value           types.Datum
-	Buffer          *bytes.Buffer // Buffer is used for group_concat.
-	GotFirstRow     bool          // It will check if the agg has met the first row key.
 }
