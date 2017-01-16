@@ -22,8 +22,8 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -95,8 +95,8 @@ func testDropForeignKey(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo,
 	return job
 }
 
-func getForeignKey(ti *model.TableInfo, name string) *model.FKInfo {
-	for _, fk := range ti.ForeignKeys {
+func getForeignKey(t table.Table, name string) *model.FKInfo {
+	for _, fk := range t.Meta().ForeignKeys {
 		// only public foreign key can be read.
 		if fk.State != model.StatePublic {
 			continue
@@ -108,17 +108,12 @@ func getForeignKey(ti *model.TableInfo, name string) *model.FKInfo {
 	return nil
 }
 
-func (s *testForeighKeySuite) testForeignKeyExist(ti *model.TableInfo, name string, isExist bool) bool {
-	fk := getForeignKey(ti, name)
-	return isExist == (fk != nil)
-}
-
 func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	defer testleak.AfterTest(c)()
 	d := newDDL(s.store, nil, nil, testLease)
 	s.d = d
 	s.dbInfo = testSchemaInfo(c, d, "test_foreign")
-	ctx := testNewContext(c, d)
+	ctx := testNewContext(d)
 	s.ctx = ctx
 	testCreateSchema(c, ctx, d, s.dbInfo)
 	tblInfo := testTableInfo(c, d, "t", 3)
@@ -142,12 +137,12 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 		}
 		mu.Lock()
 		defer mu.Unlock()
-		ti, err := testGetTableInfo(d, s.dbInfo.ID, tblInfo.ID)
+		t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 		if err != nil {
 			hookErr = errors.Trace(err)
 			return
 		}
-		fk := getForeignKey(ti, "c1_fk")
+		fk := getForeignKey(t, "c1_fk")
 		if fk == nil {
 			hookErr = errors.New("foreign key not exists")
 			return
@@ -179,12 +174,12 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 		}
 		mu.Lock()
 		defer mu.Unlock()
-		ti, err := testGetTableInfo(d, s.dbInfo.ID, tblInfo.ID)
+		t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 		if err != nil {
 			hookErr = errors.Trace(err)
 			return
 		}
-		fk := getForeignKey(ti, "c1_fk")
+		fk := getForeignKey(t, "c1_fk")
 		if fk != nil {
 			hookErr = errors.New("foreign key has not been dropped")
 			return
@@ -218,18 +213,4 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	c.Assert(err, IsNil)
 
 	d.close()
-}
-
-func testGetTableInfo(d *ddl, schemaID, tableID int64) (*model.TableInfo, error) {
-	var tblInfo *model.TableInfo
-	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		var err1 error
-		tblInfo, err1 = t.GetTable(schemaID, tableID)
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-		return nil
-	})
-	return tblInfo, errors.Trace(err)
 }

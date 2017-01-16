@@ -120,7 +120,7 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	defer store.Close()
 	d := newDDL(store, nil, nil, testLease)
 	defer d.close()
-	ctx := testNewContext(c, d)
+	ctx := testNewContext(d)
 	dbInfo := testSchemaInfo(c, d, "test")
 
 	// create a table.
@@ -203,7 +203,7 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 
 	d2 := newDDL(store, nil, nil, testLease*4)
 	defer d2.close()
-	ctx := testNewContext(c, d2)
+	ctx := testNewContext(d2)
 
 	// d2 must not be owner.
 	testCheckOwner(c, d2, false, ddlJobFlag)
