@@ -67,7 +67,7 @@ func decorrelate(p LogicalPlan) LogicalPlan {
 			for _, cond := range sel.Conditions {
 				newConds = append(newConds, cond.Decorrelate(outerPlan.GetSchema()))
 			}
-			apply.Join.attachOnConds(newConds)
+			apply.attachOnConds(newConds)
 			innerPlan = sel.children[0].(LogicalPlan)
 			apply.SetChildren(outerPlan, innerPlan)
 			innerPlan.SetParents(apply)

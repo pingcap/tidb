@@ -264,7 +264,7 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 				er.handleNEAny(lexpr, rexpr, np)
 			}
 		} else {
-			// TODO: support this in future.
+			// TODO: Support this in future.
 			er.err = errors.New("We don't support <=> all or <=> any now")
 			return v, true
 		}
@@ -304,10 +304,11 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 	schema := expression.NewSchema([]*expression.Column{aggCol0})
 	agg.SetSchema(schema)
 	cond, _ := expression.NewFunction(cmpFunc, types.NewFieldType(mysql.TypeTiny), lexpr, aggCol0.Clone())
-	er.buildQuatifierPlan(agg, cond, rexpr, all)
+	er.buildQuantifierPlan(agg, cond, rexpr, all)
 }
 
-func (er *expressionRewriter) buildQuatifierPlan(agg *Aggregation, cond, rexpr expression.Expression, all bool) {
+// buildQuantifierPlan adds extra condition for any / all subquery.
+func (er *expressionRewriter) buildQuantifierPlan(agg *Aggregation, cond, rexpr expression.Expression, all bool) {
 	isNullFunc, _ := expression.NewFunction(ast.IsNull, types.NewFieldType(mysql.TypeTiny), rexpr.Clone())
 	sumFunc := expression.NewAggFunction(ast.AggFuncSum, []expression.Expression{isNullFunc}, false)
 	countFuncNull := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{isNullFunc.Clone()}, false)
@@ -402,7 +403,7 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 	gtFunc, _ := expression.NewFunction(ast.GT, types.NewFieldType(mysql.TypeTiny), count.Clone(), expression.One)
 	neCond, _ := expression.NewFunction(ast.NE, types.NewFieldType(mysql.TypeTiny), lexpr, firstRowResultCol.Clone())
 	cond := expression.ComposeDNFCondition(gtFunc, neCond)
-	er.buildQuatifierPlan(agg, cond, rexpr, false)
+	er.buildQuantifierPlan(agg, cond, rexpr, false)
 }
 
 // handleEQAll handles the case of = all. For example, if the query is t.id = all (select s.id from s), it will be rewrote to
@@ -430,10 +431,10 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 		RetType:  countFunc.GetType(),
 	}
 	agg.SetSchema(expression.NewSchema([]*expression.Column{firstRowResultCol, count}))
-	ltFunc, _ := expression.NewFunction(ast.LE, types.NewFieldType(mysql.TypeTiny), count.Clone(), expression.One)
+	leFunc, _ := expression.NewFunction(ast.LE, types.NewFieldType(mysql.TypeTiny), count.Clone(), expression.One)
 	eqCond, _ := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), lexpr, firstRowResultCol.Clone())
-	cond := expression.ComposeCNFCondition(ltFunc, eqCond)
-	er.buildQuatifierPlan(agg, cond, rexpr, true)
+	cond := expression.ComposeCNFCondition(leFunc, eqCond)
+	er.buildQuantifierPlan(agg, cond, rexpr, true)
 }
 
 func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (ast.Node, bool) {
