@@ -40,6 +40,10 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 	testKit.MustExec("create index b on t (b)")
 	testKit.MustExec("insert into t (a,b) values (1,1),(1,2),(1,3),(1,4),(2,5),(2,6),(2,7),(2,8)")
 	testKit.MustExec("analyze table t")
+	testKit.MustExec("create table t1 (a int, b int)")
+	testKit.MustExec("create index a on t1 (a)")
+	testKit.MustExec("create index b on t1 (b)")
+	testKit.MustExec("insert into t1 (a,b) values (1,1),(1,2),(1,3),(1,4),(2,5),(2,6),(2,7),(2,8)")
 	cases := []struct {
 		sql  string
 		best string
@@ -51,6 +55,14 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		{
 			sql:  "select * from t where t.a = 1 and t.b <= 2",
 			best: "Index(t.b)[[-inf,2]]",
+		},
+		{
+			sql:  "select * from t1 where t1.a <= 2",
+			best: "Index(t1.a)[[-inf,2]]",
+		},
+		{
+			sql:  "select * from t1 where t1.a = 1 and t1.b <= 2",
+			best: "Index(t1.a)[[1,1]]",
 		},
 	}
 	for _, ca := range cases {
