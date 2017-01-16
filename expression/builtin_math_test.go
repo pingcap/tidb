@@ -73,6 +73,31 @@ func (s *testEvaluatorSuite) TestCeil(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestFloor(c *C) {
+	defer testleak.AfterTest(c)()
+	for _, t := range []struct {
+		num interface{}
+		ret interface{}
+		err Checker
+	}{
+		{nil, nil, IsNil},
+		{int64(1), int64(1), IsNil},
+		{float64(1.23), float64(1), IsNil},
+		{float64(-1.23), float64(-2), IsNil},
+		{"1.23", float64(1), IsNil},
+		{"-1.23", float64(-2), IsNil},
+		{"-1.b23", float64(-1), IsNil},
+		{"abce", float64(0), IsNil},
+	} {
+		fc := funcs[ast.Floor]
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.num)), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
+		c.Assert(err, t.err)
+		c.Assert(v, testutil.DatumEquals, types.NewDatum(t.ret))
+	}
+}
+
 func (s *testEvaluatorSuite) TestLog(c *C) {
 	defer testleak.AfterTest(c)()
 
