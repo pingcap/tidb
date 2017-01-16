@@ -845,11 +845,11 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 
 	tc := &testDDLCallback{}
 	tc.onJobUpdated = func(job *model.Job) {
+		mu.Lock()
+		defer mu.Unlock()
 		if checkOK {
 			return
 		}
-		mu.Lock()
-		defer mu.Unlock()
 		t, err1 := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 		if err1 != nil {
 			hookErr = errors.Trace(err1)
