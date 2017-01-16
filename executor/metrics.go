@@ -90,6 +90,7 @@ const (
 	Update = "Update"
 )
 
+// StatementLabel generates a label for a statement.
 func StatementLabel(node ast.StmtNode, p plan.Plan) string {
 	switch x := node.(type) {
 	case *ast.AlterTableStmt:
