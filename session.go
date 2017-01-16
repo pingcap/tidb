@@ -94,19 +94,6 @@ func (h *stmtHistory) add(stmtID uint32, st ast.Statement, params ...interface{}
 	h.history = append(h.history, s)
 }
 
-func (h *stmtHistory) reset() {
-	if len(h.history) > 0 {
-		h.history = h.history[:0]
-	}
-}
-
-func (h *stmtHistory) clone() *stmtHistory {
-	nh := *h
-	nh.history = make([]*stmtRecord, len(h.history))
-	copy(nh.history, h.history)
-	return &nh
-}
-
 type session struct {
 	txn    kv.Transaction // current transaction
 	txnCh  chan *txnWithErr
