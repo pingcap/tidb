@@ -126,12 +126,12 @@ func (e *PrepareExec) DoPrepare() {
 		return
 	}
 	if len(stmts) != 1 {
-		e.Err = ErrPrepareMulti
+		e.Err = errors.Trace(ErrPrepareMulti)
 		return
 	}
 	stmt := stmts[0]
 	if _, ok := stmt.(ast.DDLNode); ok {
-		e.Err = ErrPrepareDDL
+		e.Err = errors.Trace(ErrPrepareDDL)
 		return
 	}
 	var extractor paramMarkerExtractor
@@ -204,12 +204,12 @@ func (e *ExecuteExec) Build() error {
 	}
 	v := vars.PreparedStmts[e.ID]
 	if v == nil {
-		return ErrStmtNotFound
+		return errors.Trace(ErrStmtNotFound)
 	}
 	prepared := v.(*Prepared)
 
 	if len(prepared.Params) != len(e.UsingVars) {
-		return ErrWrongParamCount
+		return errors.Trace(ErrWrongParamCount)
 	}
 
 	for i, usingVar := range e.UsingVars {
@@ -265,7 +265,7 @@ func (e *DeallocateExec) Next() (*Row, error) {
 	vars := e.ctx.GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]
 	if !ok {
-		return nil, ErrStmtNotFound
+		return nil, errors.Trace(ErrStmtNotFound)
 	}
 	delete(vars.PreparedStmtNameToID, e.Name)
 	delete(vars.PreparedStmts, id)

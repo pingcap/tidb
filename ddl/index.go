@@ -46,8 +46,7 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 	for _, ic := range idxColNames {
 		col := findCol(columns, ic.Column.Name.O)
 		if col == nil {
-			return nil, errors.Trace(errKeyColumnDoesNotExits.Gen("column does not exist: %s",
-				ic.Column.Name))
+			return nil, errKeyColumnDoesNotExits.Gen("column does not exist: %s", ic.Column.Name)
 		}
 
 		// Length must be specified for BLOB and TEXT column indexes.
@@ -87,7 +86,7 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 				if len, ok := mysql.DefaultLengthOfMysqlTypes[col.FieldType.Tp]; ok {
 					sumLength += len
 				} else {
-					return nil, errors.Trace(errUnknownTypeLength.GenByArgs(col.FieldType.Tp))
+					return nil, errUnknownTypeLength.GenByArgs(col.FieldType.Tp)
 				}
 
 				// Special case for time fraction.
@@ -96,7 +95,7 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 					if len, ok := mysql.DefaultLengthOfTimeFraction[col.FieldType.Decimal]; ok {
 						sumLength += len
 					} else {
-						return nil, errors.Trace(errUnknownFractionLength.GenByArgs(col.FieldType.Tp, col.FieldType.Decimal))
+						return nil, errUnknownFractionLength.GenByArgs(col.FieldType.Tp, col.FieldType.Decimal)
 					}
 				}
 			}
@@ -297,8 +296,7 @@ func (d *ddl) convert2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.T
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = kv.ErrKeyExists.Gen("Duplicate for key %s", indexInfo.Name.O)
-	return errors.Trace(err)
+	return kv.ErrKeyExists.Gen("Duplicate for key %s", indexInfo.Name.O)
 }
 
 func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
