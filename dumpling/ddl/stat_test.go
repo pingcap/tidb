@@ -45,7 +45,7 @@ func (s *testStatSuite) TestStat(c *C) {
 	time.Sleep(testLease)
 
 	dbInfo := testSchemaInfo(c, d, "test")
-	testCreateSchema(c, testNewContext(c, d), d, dbInfo)
+	testCreateSchema(c, testNewContext(d), d, dbInfo)
 
 	m, err := d.Stats()
 	c.Assert(err, IsNil)
