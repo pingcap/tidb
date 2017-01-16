@@ -175,6 +175,7 @@ type ExecuteExec struct {
 	ID        uint32
 	StmtExec  Executor
 	Stmt      ast.StmtNode
+	Plan      plan.Plan
 }
 
 // Schema implements the Executor Schema interface.
@@ -244,6 +245,7 @@ func (e *ExecuteExec) Build() error {
 	}
 	e.StmtExec = stmtExec
 	e.Stmt = prepared.Stmt
+	e.Plan = p
 	return nil
 }
 
