@@ -113,9 +113,14 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 }
 
 func (e *SimpleExec) executeBegin(s *ast.BeginStmt) error {
-	err := e.ctx.NewTxn()
-	if err != nil {
-		return errors.Trace(err)
+	// If BEGIN is the first statement in TxnCtx, we can reuse the existing transaction, without the
+	// need to call NewTxn, which commits the existing transaction and begins a new one.
+	txnCtx := e.ctx.GetSessionVars().TxnCtx
+	if txnCtx.Histroy != nil {
+		err := e.ctx.NewTxn()
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	// With START TRANSACTION, autocommit remains disabled until you end
 	// the transaction with COMMIT or ROLLBACK. The autocommit mode then
