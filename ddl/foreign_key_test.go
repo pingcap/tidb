@@ -17,12 +17,13 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -94,8 +95,8 @@ func testDropForeignKey(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo,
 	return job
 }
 
-func getForeignKey(t table.Table, name string) *model.FKInfo {
-	for _, fk := range t.Meta().ForeignKeys {
+func getForeignKey(ti *model.TableInfo, name string) *model.FKInfo {
+	for _, fk := range ti.ForeignKeys {
 		// only public foreign key can be read.
 		if fk.State != model.StatePublic {
 			continue
@@ -107,13 +108,9 @@ func getForeignKey(t table.Table, name string) *model.FKInfo {
 	return nil
 }
 
-func (s *testForeighKeySuite) testForeignKeyExist(c *C, t table.Table, name string, isExist bool) {
-	fk := getForeignKey(t, name)
-	if isExist {
-		c.Assert(fk, NotNil)
-	} else {
-		c.Assert(fk, IsNil)
-	}
+func (s *testForeighKeySuite) testForeignKeyExist(ti *model.TableInfo, name string, isExist bool) bool {
+	fk := getForeignKey(ti, name)
+	return isExist == (fk != nil)
 }
 
 func (s *testForeighKeySuite) TestForeignKey(c *C) {
@@ -137,19 +134,26 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	// fix data race
 	var mu sync.Mutex
 	checkOK := false
+	var hookErr error
 	tc := &testDDLCallback{}
 	tc.onJobUpdated = func(job *model.Job) {
 		if job.State != model.JobDone {
 			return
 		}
-
-		t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-		s.testForeignKeyExist(c, t, "c1_fk", true)
 		mu.Lock()
+		defer mu.Unlock()
+		ti, err := testGetTableInfo(d, s.dbInfo.ID, tblInfo.ID)
+		if err != nil {
+			hookErr = errors.Trace(err)
+			return
+		}
+		fk := getForeignKey(ti, "c1_fk")
+		if fk == nil {
+			hookErr = errors.New("foreign key not exists")
+			return
+		}
 		checkOK = true
-		mu.Unlock()
 	}
-
 	d.setHook(tc)
 
 	d.close()
@@ -160,6 +164,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	err = ctx.Txn().Commit()
 	c.Assert(err, IsNil)
 	mu.Lock()
+	c.Assert(hookErr, IsNil)
 	c.Assert(checkOK, IsTrue)
 	mu.Unlock()
 	v := getSchemaVer(c, ctx)
@@ -172,11 +177,19 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 		if job.State != model.JobDone {
 			return
 		}
-		t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-		s.testForeignKeyExist(c, t, "c1_fk", false)
 		mu.Lock()
+		defer mu.Unlock()
+		ti, err := testGetTableInfo(d, s.dbInfo.ID, tblInfo.ID)
+		if err != nil {
+			hookErr = errors.Trace(err)
+			return
+		}
+		fk := getForeignKey(ti, "c1_fk")
+		if fk != nil {
+			hookErr = errors.New("foreign key has not been dropped")
+			return
+		}
 		checkOK = true
-		mu.Unlock()
 	}
 
 	d.close()
@@ -185,6 +198,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	job = testDropForeignKey(c, ctx, d, s.dbInfo, tblInfo, "c1_fk")
 	testCheckJobDone(c, d, job, false)
 	mu.Lock()
+	c.Assert(hookErr, IsNil)
 	c.Assert(checkOK, IsTrue)
 	mu.Unlock()
 
@@ -204,4 +218,18 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	c.Assert(err, IsNil)
 
 	d.close()
+}
+
+func testGetTableInfo(d *ddl, schemaID, tableID int64) (*model.TableInfo, error) {
+	var tblInfo *model.TableInfo
+	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		var err1 error
+		tblInfo, err1 = t.GetTable(schemaID, tableID)
+		if err1 != nil {
+			return errors.Trace(err1)
+		}
+		return nil
+	})
+	return tblInfo, errors.Trace(err)
 }
