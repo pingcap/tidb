@@ -36,9 +36,10 @@ var (
 
 // RetryInfo saves retry information.
 type RetryInfo struct {
-	Retrying         bool
-	currRetryOff     int
-	autoIncrementIDs []int64
+	Retrying               bool
+	DroppedPreparedStmtIDs []uint32
+	currRetryOff           int
+	autoIncrementIDs       []int64
 }
 
 // Clean does some clean work.
@@ -46,6 +47,9 @@ func (r *RetryInfo) Clean() {
 	r.currRetryOff = 0
 	if len(r.autoIncrementIDs) > 0 {
 		r.autoIncrementIDs = r.autoIncrementIDs[:0]
+	}
+	if len(r.DroppedPreparedStmtIDs) > 0 {
+		r.DroppedPreparedStmtIDs = r.DroppedPreparedStmtIDs[:0]
 	}
 }
 

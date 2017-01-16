@@ -125,7 +125,11 @@ type session struct {
 
 func (s *session) cleanRetryInfo() {
 	if !s.sessionVars.RetryInfo.Retrying {
-		s.sessionVars.RetryInfo.Clean()
+		retryInfo := s.sessionVars.RetryInfo
+		for _, stmtID := range retryInfo.DroppedPreparedStmtIDs {
+			delete(s.sessionVars.PreparedStmts, stmtID)
+		}
+		retryInfo.Clean()
 	}
 }
 
@@ -567,7 +571,7 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 	if _, ok := vars.PreparedStmts[stmtID]; !ok {
 		return executor.ErrStmtNotFound
 	}
-	delete(vars.PreparedStmts, stmtID)
+	vars.RetryInfo.DroppedPreparedStmtIDs = append(vars.RetryInfo.DroppedPreparedStmtIDs, stmtID)
 	return nil
 }
 
