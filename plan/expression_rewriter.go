@@ -374,7 +374,8 @@ func (er *expressionRewriter) buildQuatifierPlan(agg *Aggregation, cond, rexpr e
 }
 
 // handleNEAny handles the case of != any. For exmaple, if the query is t.id != any (select s.id from s), it will be rewrote to
-// t.id != s.id or count(distinct s.id) > 1. If there are two different values in s.id , there must exist a s.id that doesn't equal to t.id.
+// t.id != s.id or count(distinct s.id) > 1 or [any checker]. If there are two different values in s.id ,
+// there must exist a s.id that doesn't equal to t.id.
 func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np LogicalPlan) {
 	firstRowFunc := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
 	countFunc := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, true)
@@ -405,8 +406,7 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 }
 
 // handleEQAll handles the case of = all. For example, if the query is t.id = all (select s.id from s), it will be rewrote to
-// t.id = (select s.id from s having count(distinct s.id) < 2) or count(distinct s.id) = 0. We add a condition `count(distinct s.id) = 0`
-// to process the case that sub query returns an empty set.
+// t.id = (select s.id from s having count(distinct s.id) <= 1 and [all checker]).
 func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np LogicalPlan) {
 	firstRowFunc := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
 	countFunc := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, true)
