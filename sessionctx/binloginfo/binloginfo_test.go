@@ -119,11 +119,13 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	var matched bool // got matched pre DDL and commit DDL
 	for i := 0; i < 10; i++ {
 		preDDL, commitDDL := getLatestDDLBinlog(c, pump, ddlQuery)
-		if preDDL.DdlJobId == commitDDL.DdlJobId {
-			c.Assert(commitDDL.StartTs, Equals, preDDL.StartTs)
-			c.Assert(commitDDL.CommitTs, Greater, commitDDL.StartTs)
-			matched = true
-			break
+		if preDDL != nil && commitDDL != nil {
+			if preDDL.DdlJobId == commitDDL.DdlJobId {
+				c.Assert(commitDDL.StartTs, Equals, preDDL.StartTs)
+				c.Assert(commitDDL.CommitTs, Greater, commitDDL.StartTs)
+				matched = true
+				break
+			}
 		}
 		time.Sleep(time.Millisecond * 10)
 	}
