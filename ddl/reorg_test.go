@@ -42,7 +42,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 
 	time.Sleep(testLease)
 
-	ctx := testNewContext(c, d)
+	ctx := testNewContext(d)
 
 	ctx.SetValue(testCtxKey, 1)
 	c.Assert(ctx.Value(testCtxKey), Equals, 1)
@@ -120,7 +120,7 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 	d1 := newDDL(store, nil, nil, testLease)
 	defer d1.close()
 
-	ctx := testNewContext(c, d1)
+	ctx := testNewContext(d1)
 
 	testCheckOwner(c, d1, true, ddlJobFlag)
 

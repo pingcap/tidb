@@ -47,11 +47,11 @@ func (s *testColumnSuite) SetUpSuite(c *C) {
 	s.d = newDDL(s.store, nil, nil, testLease)
 
 	s.dbInfo = testSchemaInfo(c, s.d, "test_column")
-	testCreateSchema(c, testNewContext(c, s.d), s.d, s.dbInfo)
+	testCreateSchema(c, testNewContext(s.d), s.d, s.dbInfo)
 }
 
 func (s *testColumnSuite) TearDownSuite(c *C) {
-	testDropSchema(c, testNewContext(c, s.d), s.d, s.dbInfo)
+	testDropSchema(c, testNewContext(s.d), s.d, s.dbInfo)
 	s.d.close()
 
 	err := s.store.Close()
@@ -105,7 +105,7 @@ func testDropColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tbl
 func (s *testColumnSuite) TestColumn(c *C) {
 	defer testleak.AfterTest(c)()
 	tblInfo := testTableInfo(c, s.d, "t1", 3)
-	ctx := testNewContext(c, s.d)
+	ctx := testNewContext(s.d)
 
 	testCreateTable(c, ctx, s.d, s.dbInfo, tblInfo)
 
@@ -289,9 +289,12 @@ func (s *testColumnSuite) checkColumnKVExist(ctx context.Context, t table.Table,
 	return nil
 }
 
-func (s *testColumnSuite) checkNoneColumn(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, columnValue interface{}) error {
-	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-	err := s.checkColumnKVExist(ctx, t, handle, col, columnValue, false)
+func (s *testColumnSuite) checkNoneColumn(ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, columnValue interface{}) error {
+	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = s.checkColumnKVExist(ctx, t, handle, col, columnValue, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -302,9 +305,12 @@ func (s *testColumnSuite) checkNoneColumn(c *C, ctx context.Context, d *ddl, tbl
 	return nil
 }
 
-func (s *testColumnSuite) checkDeleteOnlyColumn(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, row []types.Datum, columnValue interface{}) error {
-	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-	err := ctx.NewTxn()
+func (s *testColumnSuite) checkDeleteOnlyColumn(ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, row []types.Datum, columnValue interface{}) error {
+	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = ctx.NewTxn()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -400,10 +406,12 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(c *C, ctx context.Context, d *dd
 	return nil
 }
 
-func (s *testColumnSuite) checkWriteOnlyColumn(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, row []types.Datum, columnValue interface{}) error {
-	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-
-	err := ctx.NewTxn()
+func (s *testColumnSuite) checkWriteOnlyColumn(ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, row []types.Datum, columnValue interface{}) error {
+	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = ctx.NewTxn()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -503,10 +511,12 @@ func (s *testColumnSuite) checkWriteOnlyColumn(c *C, ctx context.Context, d *ddl
 	return nil
 }
 
-func (s *testColumnSuite) checkReorganizationColumn(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, row []types.Datum, columnValue interface{}) error {
-	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-
-	err := ctx.NewTxn()
+func (s *testColumnSuite) checkReorganizationColumn(ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, row []types.Datum, columnValue interface{}) error {
+	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = ctx.NewTxn()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -597,10 +607,12 @@ func (s *testColumnSuite) checkReorganizationColumn(c *C, ctx context.Context, d
 	return nil
 }
 
-func (s *testColumnSuite) checkPublicColumn(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, newCol *table.Column, oldRow []types.Datum, columnValue interface{}) error {
-	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-
-	err := ctx.NewTxn()
+func (s *testColumnSuite) checkPublicColumn(ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, newCol *table.Column, oldRow []types.Datum, columnValue interface{}) error {
+	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = ctx.NewTxn()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -669,7 +681,9 @@ func (s *testColumnSuite) checkPublicColumn(c *C, ctx context.Context, d *ddl, t
 
 	i = int64(0)
 	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-		c.Assert(data, DeepEquals, updatedRow)
+		if !reflect.DeepEqual(data, updatedRow) {
+			return false, errors.Errorf("%v not equal to %v", data, updatedRow)
+		}
 		i++
 		return true, nil
 	})
@@ -687,20 +701,20 @@ func (s *testColumnSuite) checkPublicColumn(c *C, ctx context.Context, d *ddl, t
 	return nil
 }
 
-func (s *testColumnSuite) checkAddColumn(c *C, state model.SchemaState, d *ddl, tblInfo *model.TableInfo, handle int64, newCol *table.Column, oldRow []types.Datum, columnValue interface{}) error {
-	ctx := testNewContext(c, d)
+func (s *testColumnSuite) checkAddColumn(state model.SchemaState, d *ddl, tblInfo *model.TableInfo, handle int64, newCol *table.Column, oldRow []types.Datum, columnValue interface{}) error {
+	ctx := testNewContext(d)
 	var err error
 	switch state {
 	case model.StateNone:
-		err = errors.Trace(s.checkNoneColumn(c, ctx, d, tblInfo, handle, newCol, columnValue))
+		err = errors.Trace(s.checkNoneColumn(ctx, d, tblInfo, handle, newCol, columnValue))
 	case model.StateDeleteOnly:
-		err = errors.Trace(s.checkDeleteOnlyColumn(c, ctx, d, tblInfo, handle, newCol, oldRow, columnValue))
+		err = errors.Trace(s.checkDeleteOnlyColumn(ctx, d, tblInfo, handle, newCol, oldRow, columnValue))
 	case model.StateWriteOnly:
-		err = errors.Trace(s.checkWriteOnlyColumn(c, ctx, d, tblInfo, handle, newCol, oldRow, columnValue))
+		err = errors.Trace(s.checkWriteOnlyColumn(ctx, d, tblInfo, handle, newCol, oldRow, columnValue))
 	case model.StateWriteReorganization, model.StateDeleteReorganization:
-		err = errors.Trace(s.checkReorganizationColumn(c, ctx, d, tblInfo, handle, newCol, oldRow, columnValue))
+		err = errors.Trace(s.checkReorganizationColumn(ctx, d, tblInfo, handle, newCol, oldRow, columnValue))
 	case model.StatePublic:
-		err = errors.Trace(s.checkPublicColumn(c, ctx, d, tblInfo, handle, newCol, oldRow, columnValue))
+		err = errors.Trace(s.checkPublicColumn(ctx, d, tblInfo, handle, newCol, oldRow, columnValue))
 	}
 	return err
 }
@@ -723,7 +737,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	defer testleak.AfterTest(c)()
 	d := newDDL(s.store, nil, nil, testLease)
 	tblInfo := testTableInfo(c, d, "t", 3)
-	ctx := testNewContext(c, d)
+	ctx := testNewContext(d)
 
 	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
@@ -740,24 +754,33 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 
 	newColName := "c4"
 	defaultColValue := int64(4)
+
+	var mu sync.Mutex
+	var hookErr error
 	checkOK := false
 
 	tc := &testDDLCallback{}
-	var checkErr error
 	tc.onJobUpdated = func(job *model.Job) {
+		mu.Lock()
+		defer mu.Unlock()
 		if checkOK {
 			return
 		}
 
-		t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID).(*tables.Table)
-		newCol := table.FindCol(t.Columns, newColName)
+		t, err1 := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
+		if err1 != nil {
+			hookErr = errors.Trace(err1)
+			return
+		}
+		newCol := table.FindCol(t.(*tables.Table).Columns, newColName)
 		if newCol == nil {
 			return
 		}
 
-		err1 := s.checkAddColumn(c, newCol.State, d, tblInfo, handle, newCol, oldRow, defaultColValue)
+		err1 = s.checkAddColumn(newCol.State, d, tblInfo, handle, newCol, oldRow, defaultColValue)
 		if err1 != nil {
-			checkErr = errors.Trace(err1)
+			hookErr = errors.Trace(err1)
+			return
 		}
 
 		if newCol.State == model.StatePublic {
@@ -774,8 +797,12 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	d.start()
 
 	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, newColName, &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, defaultColValue)
-	c.Assert(errors.ErrorStack(checkErr), Equals, "")
+
 	testCheckJobDone(c, d, job, true)
+	mu.Lock()
+	c.Assert(errors.ErrorStack(hookErr), Equals, "")
+	c.Assert(checkOK, IsTrue)
+	mu.Unlock()
 
 	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
@@ -794,7 +821,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	defer testleak.AfterTest(c)()
 	d := newDDL(s.store, nil, nil, testLease)
 	tblInfo := testTableInfo(c, d, "t", 4)
-	ctx := testNewContext(c, d)
+	ctx := testNewContext(d)
 
 	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
@@ -813,19 +840,24 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	c.Assert(err, IsNil)
 
 	checkOK := false
+	var hookErr error
 	var mu sync.Mutex
 
 	tc := &testDDLCallback{}
 	tc.onJobUpdated = func(job *model.Job) {
+		mu.Lock()
+		defer mu.Unlock()
 		if checkOK {
 			return
 		}
-		t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID).(*tables.Table)
-		col := table.FindCol(t.Columns, colName)
+		t, err1 := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
+		if err1 != nil {
+			hookErr = errors.Trace(err1)
+			return
+		}
+		col := table.FindCol(t.(*tables.Table).Columns, colName)
 		if col == nil {
-			mu.Lock()
 			checkOK = true
-			mu.Unlock()
 			return
 		}
 	}
@@ -841,6 +873,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	job := testDropColumn(c, ctx, s.d, s.dbInfo, tblInfo, colName, false)
 	testCheckJobDone(c, d, job, false)
 	mu.Lock()
+	c.Assert(hookErr, IsNil)
 	c.Assert(checkOK, IsTrue)
 	mu.Unlock()
 

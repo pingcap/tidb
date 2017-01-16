@@ -57,7 +57,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	d := newDDL(s.store, nil, nil, testLease)
 	// create table t (c1 int, c2 int);
 	tblInfo := testTableInfo(c, d, "t", 2)
-	ctx := testNewContext(c, d)
+	ctx := testNewContext(d)
 	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
