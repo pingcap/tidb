@@ -78,6 +78,8 @@ func (s *testBinlogSuite) SetUpSuite(c *C) {
 	store, err := tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	s.store = store
+	err = tidb.BootstrapSession(store)
+	c.Assert(err, IsNil)
 	tidb.SetSchemaLease(0)
 	s.unixFile = "/tmp/mock-binlog-pump"
 	os.Remove(s.unixFile)
