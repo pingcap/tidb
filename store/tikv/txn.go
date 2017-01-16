@@ -30,13 +30,14 @@ var (
 
 // tikvTxn implements kv.Transaction.
 type tikvTxn struct {
-	us       kv.UnionStore
-	store    *tikvStore // for connection to region.
-	startTS  uint64
-	commitTS uint64
-	valid    bool
-	lockKeys [][]byte
-	dirty    bool
+	us        kv.UnionStore
+	store     *tikvStore // for connection to region.
+	startTS   uint64
+	startTime time.Time
+	commitTS  uint64
+	valid     bool
+	lockKeys  [][]byte
+	dirty     bool
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
@@ -47,10 +48,11 @@ func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
 	}
 	ver := kv.NewVersion(startTS)
 	return &tikvTxn{
-		us:      kv.NewUnionStore(newTiKVSnapshot(store, ver)),
-		store:   store,
-		startTS: startTS,
-		valid:   true,
+		us:        kv.NewUnionStore(newTiKVSnapshot(store, ver)),
+		store:     store,
+		startTS:   startTS,
+		startTime: time.Now(),
+		valid:     true,
 	}, nil
 }
 
