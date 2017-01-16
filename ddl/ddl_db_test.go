@@ -597,13 +597,19 @@ LOOP:
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
 				n := rand.Intn(num)
+				s.tk.MustExec("begin")
 				s.tk.MustExec("delete from t2 where c1 = ?", n)
+				s.tk.MustExec("commit")
+
+				// Make sure that statement of insert and show use the same infoSchema.
+				s.tk.MustExec("begin")
 				_, err := s.tk.Exec("insert into t2 values (?, ?, ?)", i, i, i)
 				if err != nil {
 					// if err is failed, the column number must be 4 now.
 					values := s.showColumns(c, "t2")
-					c.Assert(values, HasLen, 4, Commentf("err:%v", err))
+					c.Assert(values, HasLen, 4, Commentf("err:%v", errors.ErrorStack(err)))
 				}
+				s.tk.MustExec("commit")
 			}
 			num += step
 		}
@@ -681,16 +687,15 @@ LOOP:
 		case <-ticker.C:
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
+				// Make sure that statement of insert and show use the same infoSchema.
+				s.tk.MustExec("begin")
 				_, err := s.tk.Exec("insert into t2 values (?, ?, ?)", i, i, i)
-				if err == nil {
-					continue
+				if err != nil {
+					// If executing is failed, the column number must be 4 now.
+					values := s.showColumns(c, "t2")
+					c.Assert(values, HasLen, 4, Commentf("err:%v", errors.ErrorStack(err)))
 				}
-				// If executing is failed, the column number must be 4 now.
-				values := s.showColumns(c, "t2")
-				if len(values) != 4 {
-					c.Log(errors.ErrorStack(err))
-					c.FailNow()
-				}
+				s.tk.MustExec("commit")
 			}
 			num += step
 		}

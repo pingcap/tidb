@@ -63,6 +63,7 @@ var (
 	_ functionClass = &charFunctionClass{}
 	_ functionClass = &charLengthFunctionClass{}
 	_ functionClass = &findInSetFunctionClass{}
+	_ functionClass = &fieldFunctionClass{}
 )
 
 var (
@@ -1362,6 +1363,93 @@ func builtinFindInSet(args []types.Datum, _ context.Context) (d types.Datum, err
 		if s == str {
 			d.SetInt64(int64(i + 1))
 			return
+		}
+	}
+	return
+}
+
+type fieldFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *fieldFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinFieldSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinFieldSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinFieldSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return builtinField(args, b.ctx)
+}
+
+// See http://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_field
+// Returns the index (position) of arg0 in the arg1, arg2, arg3, ... list.
+// Returns 0 if arg0 is not found.
+// If arg0 is NULL, the return value is 0 because NULL fails equality comparison with any value.
+// If all arguments are strings, all arguments are compared as strings.
+// If all arguments are numbers, they are compared as numbers.
+// Otherwise, the arguments are compared as double.
+func builtinField(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	d.SetInt64(0)
+	if args[0].IsNull() {
+		return
+	}
+	var (
+		pos                  int64
+		allString, allNumber bool
+		newArgs              []types.Datum
+	)
+	allString, allNumber = true, true
+	for i := 0; i < len(args) && (allString || allNumber); i++ {
+		switch args[i].Kind() {
+		case types.KindInt64, types.KindUint64, types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
+			allString = false
+		case types.KindString, types.KindBytes:
+			allNumber = false
+		default:
+			allString, allNumber = false, false
+		}
+	}
+	newArgs, err = argsToSpecifiedType(args, allString, allNumber, ctx)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	arg0, sc := newArgs[0], ctx.GetSessionVars().StmtCtx
+	for i, curArg := range newArgs[1:] {
+		cmpResult, _ := arg0.CompareDatum(sc, curArg)
+		if cmpResult == 0 {
+			pos = int64(i + 1)
+			break
+		}
+	}
+	d.SetInt64(pos)
+	return d, errors.Trace(err)
+}
+
+// argsToSpecifiedType converts the type of all arguments in args into string type or double type.
+func argsToSpecifiedType(args []types.Datum, allString bool, allNumber bool, ctx context.Context) (newArgs []types.Datum, err error) {
+	if allNumber { // If all arguments are numbers, they can be compared directly without type converting.
+		return args, nil
+	}
+	sc := ctx.GetSessionVars().StmtCtx
+	newArgs = make([]types.Datum, len(args))
+	for i, arg := range args {
+		if allString {
+			str, err := arg.ToString()
+			if err != nil {
+				return newArgs, errors.Trace(err)
+			}
+			newArgs[i] = types.NewStringDatum(str)
+		} else {
+			// If error occurred when convert arg to float64, ignore it and set f as 0.
+			f, _ := arg.ToFloat64(sc)
+			newArgs[i] = types.NewFloat64Datum(f)
 		}
 	}
 	return
