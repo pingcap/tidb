@@ -129,8 +129,9 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	testCheckJobDone(c, d, job, true)
 	mu.Lock()
-	s.testColumnDrop(c, ctx, d, publicTable)
+	tb := publicTable
 	mu.Unlock()
+	s.testColumnDrop(c, ctx, d, tb)
 	s.testAddColumnNoDefault(c, ctx, d, tblInfo)
 	d.close()
 }

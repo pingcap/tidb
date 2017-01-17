@@ -29,17 +29,18 @@ import (
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
 type baseBuiltinFunc struct {
-	args      []Expression
-	argValues []types.Datum
-	ctx       context.Context
-	self      builtinFunc
+	args          []Expression
+	argValues     []types.Datum
+	ctx           context.Context
+	deterministic bool
 }
 
 func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc {
 	return baseBuiltinFunc{
-		args:      args,
-		argValues: make([]types.Datum, len(args)),
-		ctx:       ctx,
+		args:          args,
+		argValues:     make([]types.Datum, len(args)),
+		ctx:           ctx,
+		deterministic: true,
 	}
 }
 
@@ -55,7 +56,7 @@ func (b *baseBuiltinFunc) evalArgs(row []types.Datum) (_ []types.Datum, err erro
 
 // isDeterministic will be true by default. Non-deterministic function will override this function.
 func (b *baseBuiltinFunc) isDeterministic() bool {
-	return true
+	return b.deterministic
 }
 
 func (b *baseBuiltinFunc) getArgs() []Expression {
@@ -65,7 +66,7 @@ func (b *baseBuiltinFunc) getArgs() []Expression {
 // equal only checks if both functions are non-deterministic and if these arguments are same.
 // Function name will be checked outside.
 func (b *baseBuiltinFunc) equal(fun builtinFunc) bool {
-	if !b.self.isDeterministic() || !fun.isDeterministic() {
+	if !b.isDeterministic() || !fun.isDeterministic() {
 		return false
 	}
 	funArgs := fun.getArgs()
@@ -315,13 +316,14 @@ var funcs = map[string]functionClass{
 	ast.Power:   &powFunctionClass{baseFunctionClass{ast.Pow, 2, 2}},
 	ast.Rand:    &randFunctionClass{baseFunctionClass{ast.Rand, 0, 1}},
 	ast.Round:   &roundFunctionClass{baseFunctionClass{ast.Round, 1, 2}},
+	ast.Sign:    &signFunctionClass{baseFunctionClass{ast.Sign, 1, 1}},
 	ast.Conv:    &convFunctionClass{baseFunctionClass{ast.Conv, 3, 3}},
 	ast.CRC32:   &crc32FunctionClass{baseFunctionClass{ast.CRC32, 1, 1}},
 
 	// time functions
 	ast.Curdate:          &currentDateFunctionClass{baseFunctionClass{ast.Curdate, 0, 0}},
 	ast.CurrentDate:      &currentDateFunctionClass{baseFunctionClass{ast.CurrentDate, 0, 0}},
-	ast.CurrentTime:      &currentTimeFunctionClass{baseFunctionClass{ast.CurrentTime, 0, 0}},
+	ast.CurrentTime:      &currentTimeFunctionClass{baseFunctionClass{ast.CurrentTime, 0, 1}},
 	ast.Date:             &dateFunctionClass{baseFunctionClass{ast.Date, 1, 1}},
 	ast.DateDiff:         &dateDiffFunctionClass{baseFunctionClass{ast.DateDiff, 2, 2}},
 	ast.DateAdd:          &dateArithFunctionClass{baseFunctionClass{ast.DateAdd, 3, 3}, ast.DateArithAdd},
@@ -355,6 +357,7 @@ var funcs = map[string]functionClass{
 	ast.YearWeek:         &yearWeekFunctionClass{baseFunctionClass{ast.YearWeek, 1, 2}},
 	ast.FromUnixTime:     &fromUnixTimeFunctionClass{baseFunctionClass{ast.FromUnixTime, 1, 2}},
 	ast.TimeDiff:         &timeDiffFunctionClass{baseFunctionClass{ast.TimeDiff, 2, 2}},
+	ast.TimestampDiff:    &timestampDiffFunctionClass{baseFunctionClass{ast.TimestampDiff, 3, 3}},
 	ast.UnixTimestamp:    &unixTimestampFunctionClass{baseFunctionClass{ast.UnixTimestamp, 0, 1}},
 
 	// string functions
@@ -421,7 +424,7 @@ var funcs = map[string]functionClass{
 	ast.LE:         &compareFunctionClass{baseFunctionClass{ast.LE, 2, 2}, opcode.LE},
 	ast.EQ:         &compareFunctionClass{baseFunctionClass{ast.EQ, 2, 2}, opcode.EQ},
 	ast.NE:         &compareFunctionClass{baseFunctionClass{ast.NE, 2, 2}, opcode.NE},
-	ast.LT:         &compareFunctionClass{baseFunctionClass{ast.LT, 2, 2}, opcode.LE},
+	ast.LT:         &compareFunctionClass{baseFunctionClass{ast.LT, 2, 2}, opcode.LT},
 	ast.GT:         &compareFunctionClass{baseFunctionClass{ast.GT, 2, 2}, opcode.GT},
 	ast.NullEQ:     &compareFunctionClass{baseFunctionClass{ast.NullEQ, 2, 2}, opcode.NullEQ},
 	ast.Plus:       &arithmeticFunctionClass{baseFunctionClass{ast.Plus, 2, 2}, opcode.Plus},
@@ -435,7 +438,7 @@ var funcs = map[string]functionClass{
 	ast.And:        &bitOpFunctionClass{baseFunctionClass{ast.And, 2, 2}, opcode.And},
 	ast.Or:         &bitOpFunctionClass{baseFunctionClass{ast.Or, 2, 2}, opcode.Or},
 	ast.Xor:        &bitOpFunctionClass{baseFunctionClass{ast.Xor, 2, 2}, opcode.Xor},
-	ast.LogicXor:   &bitOpFunctionClass{baseFunctionClass{ast.LogicXor, 2, 2}, opcode.LogicXor},
+	ast.LogicXor:   &logicXorFunctionClass{baseFunctionClass{ast.LogicXor, 2, 2}},
 	ast.UnaryNot:   &unaryOpFunctionClass{baseFunctionClass{ast.UnaryNot, 1, 1}, opcode.Not},
 	ast.BitNeg:     &unaryOpFunctionClass{baseFunctionClass{ast.BitNeg, 1, 1}, opcode.BitNeg},
 	ast.UnaryPlus:  &unaryOpFunctionClass{baseFunctionClass{ast.UnaryPlus, 1, 1}, opcode.Plus},
@@ -448,7 +451,7 @@ var funcs = map[string]functionClass{
 	ast.Case:       &caseWhenFunctionClass{baseFunctionClass{ast.Case, 1, -1}},
 	ast.RowFunc:    &rowFunctionClass{baseFunctionClass{ast.RowFunc, 2, -1}},
 	ast.SetVar:     &setVarFunctionClass{baseFunctionClass{ast.SetVar, 2, 2}},
-	ast.GetVar:     &getVarFunctionClass{baseFunctionClass{ast.GetVar, 2, 2}},
+	ast.GetVar:     &getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}},
 }
 
 // DynamicFuncs are those functions that
