@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/_vendor/src/github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
@@ -1603,7 +1602,6 @@ func builtinTimestamp(args []types.Datum, ctx context.Context) (d types.Datum, e
 		}
 		arg0, err = types.ParseTime(s, mysql.TypeDatetime, getFsp(s))
 		if err != nil {
-			log.Warning(s, "here")
 			return d, errors.Trace(err)
 		}
 	case types.KindMysqlTime:
