@@ -91,7 +91,7 @@ func checkResult(c *C, se Session, affectedRows uint64, insertID uint64) {
 func (s *testMainSuite) TestConcurrent(c *C) {
 	dbName := "test_concurrent_db"
 	defer removeStore(c, dbName)
-	store := newStore(c, dbName)
+	store := newStoreWithBootstrap(c, dbName)
 	se := newSession(c, store, dbName)
 	defer store.Close()
 	// create db
@@ -123,7 +123,7 @@ func (s *testMainSuite) TestConcurrent(c *C) {
 }
 
 func (s *testMainSuite) TestTableInfoMeta(c *C) {
-	store := newStore(c, s.dbName)
+	store := newStoreWithBootstrap(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	defer store.Close()
 
@@ -157,7 +157,7 @@ func (s *testMainSuite) TestTableInfoMeta(c *C) {
 }
 
 func (s *testMainSuite) TestInfoSchema(c *C) {
-	store := newStore(c, s.dbName)
+	store := newStoreWithBootstrap(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	rs := mustExecSQL(c, se, "SELECT CHARACTER_SET_NAME FROM INFORMATION_SCHEMA.CHARACTER_SETS WHERE CHARACTER_SET_NAME = 'utf8mb4'")
 	row, err := rs.Next()
@@ -169,7 +169,7 @@ func (s *testMainSuite) TestInfoSchema(c *C) {
 }
 
 func (s *testMainSuite) TestCaseInsensitive(c *C) {
-	store := newStore(c, s.dbName)
+	store := newStoreWithBootstrap(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	defer store.Close()
 	mustExecSQL(c, se, "create table T (a text, B int)")
@@ -202,7 +202,7 @@ func (s *testMainSuite) TestCaseInsensitive(c *C) {
 
 // Testcase for delete panic
 func (s *testMainSuite) TestDeletePanic(c *C) {
-	store := newStore(c, s.dbName)
+	store := newStoreWithBootstrap(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	defer store.Close()
 	mustExecSQL(c, se, "create table t (c int)")
@@ -214,7 +214,7 @@ func (s *testMainSuite) TestDeletePanic(c *C) {
 
 // Testcase for arg type.
 func (s *testMainSuite) TestCheckArgs(c *C) {
-	store := newStore(c, s.dbName)
+	store := newStoreWithBootstrap(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	defer store.Close()
 	mustExecSQL(c, se, "create table if not exists t (c datetime)")
@@ -267,7 +267,7 @@ func (s *testMainSuite) TestRetryOpenStore(c *C) {
 // TODO: Merge TestIssue1435 in session test.
 func (s *testMainSuite) TestSchemaValidity(c *C) {
 	localstore.MockRemoteStore = true
-	store := newStore(c, s.dbName+"schema_validity")
+	store := newStoreWithBootstrap(c, s.dbName+"schema_validity")
 	se := newSession(c, store, s.dbName)
 	se1 := newSession(c, store, s.dbName)
 	se2 := newSession(c, store, s.dbName)
@@ -369,6 +369,12 @@ func sessionExec(c *C, se Session, sql string) ([]ast.RecordSet, error) {
 func newStore(c *C, dbPath string) kv.Storage {
 	store, err := NewStore(*store + "://" + dbPath)
 	c.Assert(err, IsNil)
+	return store
+}
+
+func newStoreWithBootstrap(c *C, dbPath string) kv.Storage {
+	store := newStore(c, dbPath)
+	BootstrapSession(store)
 	return store
 }
 
