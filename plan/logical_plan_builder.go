@@ -514,7 +514,7 @@ func resolveFromSelectFields(v *ast.ColumnNameExpr, fields []*ast.SelectField, i
 				index = i
 			} else if !colMatch(matchedExpr.(*ast.ColumnNameExpr).Name, curCol.Name) &&
 				!colMatch(curCol.Name, matchedExpr.(*ast.ColumnNameExpr).Name) {
-				return -1, errors.Errorf("Column '%s' in field list is ambiguous", curCol.Name.Name.L)
+				return -1, ErrAmbiguous.GenByArgs(curCol.Name.Name.L)
 			}
 		}
 	}
@@ -618,10 +618,9 @@ func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool
 				}
 			}
 		} else {
-			index, a.err = a.resolveFromSchema(v, a.p.GetSchema())
-			if a.err != nil {
-				return node, false
-			}
+			// We should ignore the err when resolving from schema. Because we could resolve successfully
+			// when considering select fields.
+			index, _ = a.resolveFromSchema(v, a.p.GetSchema())
 			if index == -1 {
 				index, a.err = resolveFromSelectFields(v, a.selectFields, false)
 			}
