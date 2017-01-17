@@ -14,33 +14,14 @@
 package plan
 
 import (
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
 )
 
-// A bijection exists between columns of an aggregation's schema and this aggregation's aggFuncs.
-// Sometimes we need a schema made by arg of aggFuncs to convert a column in child's schema to a column in this aggregation's Schema.
-func (p *Aggregation) buildSchemaByAggFuncs() expression.Schema {
-	schema := expression.NewSchema(make([]*expression.Column, 0, p.schema.Len()))
-	for _, fun := range p.AggFuncs {
-		if col, isCol := fun.GetArgs()[0].(*expression.Column); isCol && fun.GetName() == ast.AggFuncFirstRow {
-			schema.Append(col)
-		} else {
-			// If the arg is not a column, we add a column to occupy the position.
-			schema.Append(&expression.Column{
-				Position: -1})
-		}
-	}
-	return schema
-}
-
 func (p *Aggregation) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
-	// dealing with p.AggFuncs
-	schemaByFuncs := p.buildSchemaByAggFuncs()
 	for _, key := range p.GetChildren()[0].GetSchema().Keys {
-		indices := schemaByFuncs.GetColumnsIndices(key)
+		indices := p.schema.GetColumnsIndices(key)
 		if indices == nil {
 			continue
 		}
