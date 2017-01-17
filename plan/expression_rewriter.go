@@ -335,10 +335,7 @@ func (er *expressionRewriter) buildQuantifierPlan(agg *Aggregation, cond, rexpr 
 		nullChecker, _ := expression.NewFunction(ast.If, types.NewFieldType(mysql.TypeTiny), hasNotNull, expression.One, expression.Null)
 		cond = expression.ComposeCNFCondition(cond, nullChecker)
 		// If the set is empty, it should always return true.
-		checkEmpty, _ := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), aggColCountNull.Clone(), &expression.Constant{
-			Value:   types.NewDatum(0),
-			RetType: types.NewFieldType(mysql.TypeShort),
-		})
+		checkEmpty, _ := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), aggColCountNull.Clone(), expression.Zero)
 		cond = expression.ComposeDNFCondition(cond, checkEmpty)
 	} else {
 		// For "any" expression, if the record set has null and the cond return false, the result should be NULL.
