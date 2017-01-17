@@ -71,6 +71,7 @@ func (ap *aggPruner) eliminateAggregation(p LogicalPlan) error {
 	return nil
 }
 
+// rewriteExpr will rewrite the aggregate function to expression doesn't contain aggregate function.
 func (ap *aggPruner) rewriteExpr(expr expression.Expression, funcName string) (newExpr expression.Expression, err error) {
 	switch funcName {
 	case ast.AggFuncCount:
@@ -94,8 +95,8 @@ func (ap *aggPruner) rewriteExpr(expr expression.Expression, funcName string) (n
 	case ast.AggFuncSum:
 		// Numeric type do nothing. Others will cast to decimal.
 		switch expr.GetType().Tp {
-		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-		case mysql.TypeDouble, mysql.TypeFloat, mysql.TypeDecimal, mysql.TypeNewDecimal:
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeDouble,
+			mysql.TypeFloat, mysql.TypeDecimal, mysql.TypeNewDecimal:
 			newExpr = expr
 		default:
 			newExpr, err = expression.NewCastFunc(types.NewFieldType(mysql.TypeNewDecimal), expr)
