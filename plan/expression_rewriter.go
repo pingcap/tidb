@@ -320,15 +320,15 @@ func (er *expressionRewriter) buildQuantifierPlan(agg *Aggregation, cond, rexpr 
 		Position: posID,
 		RetType:  sumFunc.GetType(),
 	}
-	aggColCountNull := &expression.Column{
-		ColName:  model.NewCIStr("agg_col_cnt"),
-		FromID:   agg.id,
-		Position: posID + 1,
-		RetType:  countFuncNull.GetType(),
-	}
 	agg.schema.Append(aggColSum)
-	agg.schema.Append(aggColCountNull)
 	if all {
+		aggColCountNull := &expression.Column{
+			ColName:  model.NewCIStr("agg_col_cnt"),
+			FromID:   agg.id,
+			Position: posID + 1,
+			RetType:  countFuncNull.GetType(),
+		}
+		agg.schema.Append(aggColCountNull)
 		// All of the inner record set should not contain null value. So for t.id < all(select s.id from s), it
 		// should be rewrote to t.id < min(s.id) and if(sum(s.id is null) = 0, true, null).
 		hasNotNull, _ := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), aggColSum.Clone(), expression.Zero)
