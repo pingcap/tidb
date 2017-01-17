@@ -46,8 +46,6 @@ func (s *testStoreSuite) SetUpTest(c *C) {
 	store, err := newTikvStore("mock-tikv-store", pdCli, clientFactory, false)
 	c.Assert(err, IsNil)
 	s.store = store
-	err = tidb.BootstrapSession(store)
-	c.Assert(err, IsNil)
 }
 
 func (s *testStoreSuite) TestParsePath(c *C) {

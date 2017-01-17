@@ -60,7 +60,6 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	s.schemaName = "test_db"
 	s.store, err = tidb.NewStore(tidb.EngineGoLevelDBMemory)
 	c.Assert(err, IsNil)
-	tidb.BootstrapSession(s.store)
 	localstore.MockRemoteStore = true
 
 	err = tidb.BootstrapSession(s.store)
