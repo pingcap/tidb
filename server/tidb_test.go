@@ -34,8 +34,6 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	log.SetLevelByString("error")
 	store, err := tidb.NewStore("memory:///tmp/tidb")
 	c.Assert(err, IsNil)
-	err = tidb.BootstrapSession(store)
-	c.Assert(err, IsNil)
 	ts.tidbdrv = NewTiDBDriver(store)
 	cfg := &Config{
 		Addr:         ":4001",

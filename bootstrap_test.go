@@ -28,7 +28,7 @@ import (
 
 func (s *testSessionSuite) TestBootstrap(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "USE mysql;")
 	r := mustExecSQL(c, se, `select * from user;`)
@@ -121,7 +121,6 @@ func (s *testSessionSuite) TestBootstrapWithError(c *C) {
 	store := newStore(c, s.dbNameBootstrap)
 	s.bootstrapWithOnlyDDLWork(store, c)
 
-	BootstrapSession(store)
 	se := newSession(c, store, s.dbNameBootstrap)
 	mustExecSQL(c, se, "USE mysql;")
 	r := mustExecSQL(c, se, `select * from user;`)
@@ -154,7 +153,7 @@ func (s *testSessionSuite) TestBootstrapWithError(c *C) {
 // Test case for upgrade
 func (s *testSessionSuite) TestUpgrade(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "USE mysql;")
 
@@ -196,7 +195,6 @@ func (s *testSessionSuite) TestUpgrade(c *C) {
 	c.Assert(ver, Equals, int64(0))
 
 	// Create a new session then upgrade() will run automatically.
-	BootstrapSession(store)
 	se2 := newSession(c, store, s.dbName)
 	r = mustExecSQL(c, se2, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
 	row, err = r.Next()

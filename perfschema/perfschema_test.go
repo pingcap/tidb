@@ -73,8 +73,6 @@ func (p *testPerfSchemaSuit) TestInsert(c *C) {
 	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
 	c.Assert(err, IsNil)
 	defer store.Close()
-	err = tidb.BootstrapSession(store)
-	c.Assert(err, IsNil)
 	se := newSession(c, store, "")
 	defer se.Close()
 	mustExec(c, se, `insert into performance_schema.setup_actors values("localhost", "nieyy", "contributor", "NO", "NO");`)
@@ -110,8 +108,6 @@ func (p *testPerfSchemaSuit) TestInstrument(c *C) {
 	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory + "/test_instrument_db")
 	c.Assert(err, IsNil)
 	defer store.Close()
-	err = tidb.BootstrapSession(store)
-	c.Assert(err, IsNil)
 	se := newSession(c, store, "test_instrument_db")
 	defer se.Close()
 
@@ -126,8 +122,6 @@ func (p *testPerfSchemaSuit) TestConcurrentStatement(c *C) {
 	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory + "/test_con_stmt")
 	c.Assert(err, IsNil)
 	defer store.Close()
-	err = tidb.BootstrapSession(store)
-	c.Assert(err, IsNil)
 	se := newSession(c, store, "test_con_stmt")
 
 	mustExec(c, se, "drop table if exists test")

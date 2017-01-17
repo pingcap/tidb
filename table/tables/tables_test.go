@@ -49,8 +49,6 @@ func (ts *testSuite) SetUpSuite(c *C) {
 	store, err := driver.Open("memory")
 	c.Check(err, IsNil)
 	ts.store = store
-	err = tidb.BootstrapSession(store)
-	c.Assert(err, IsNil)
 	ts.se, err = tidb.CreateSession(ts.store)
 	c.Assert(err, IsNil)
 }

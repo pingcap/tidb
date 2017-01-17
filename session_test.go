@@ -67,7 +67,7 @@ func (s *testSessionSuite) TearDownSuite(c *C) {
 
 func (s *testSessionSuite) TestPrepare(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	// create table
 	mustExecSQL(c, se, s.dropTableSQL)
@@ -111,7 +111,7 @@ func (s *testSessionSuite) TestPrepare(c *C) {
 
 func (s *testSessionSuite) TestAffectedRows(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, s.dropTableSQL)
 	mustExecSQL(c, se, s.createTableSQL)
@@ -173,7 +173,7 @@ func (s *testSessionSuite) TestAffectedRows(c *C) {
 
 func (s *testSessionSuite) TestString(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	sessionExec(c, se, "select 1")
 	// here to check the panic bug in String() when txn is nil after committed.
@@ -185,7 +185,7 @@ func (s *testSessionSuite) TestString(c *C) {
 
 func (s *testSessionSuite) TestResultField(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	// create table
 	mustExecSQL(c, se, s.dropTableSQL)
@@ -211,7 +211,7 @@ func (s *testSessionSuite) TestResultField(c *C) {
 
 func (s *testSessionSuite) TestPrimaryKeyAutoincrement(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "drop table if exists t")
 	mustExecSQL(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL, name varchar(255) UNIQUE NOT NULL, status int)")
@@ -249,7 +249,7 @@ func (s *testSessionSuite) TestPrimaryKeyAutoincrement(c *C) {
 
 func (s *testSessionSuite) TestAutoIncrementID(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 
 	mustExecSQL(c, se, "drop table if exists t")
@@ -291,7 +291,7 @@ func checkAutocommit(c *C, se Session, expectStatus uint16) {
 // See https://dev.mysql.com/doc/internals/en/status-flags.html
 func (s *testSessionSuite) TestAutocommit(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	checkTxn(c, se, "drop table if exists t;", 0)
 	checkAutocommit(c, se, 2)
@@ -333,7 +333,7 @@ func checkInTrans(c *C, se Session, stmt string, expectStatus uint16) {
 // See https://dev.mysql.com/doc/internals/en/status-flags.html
 func (s *testSessionSuite) TestInTrans(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	checkInTrans(c, se, "drop table if exists t;", 0)
 	checkInTrans(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", 0)
@@ -368,7 +368,7 @@ func (s *testSessionSuite) TestInTrans(c *C) {
 // See http://dev.mysql.com/doc/refman/5.7/en/commit.html
 func (s *testSessionSuite) TestRowLock(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	se1 := newSession(c, store, s.dbName)
 	se2 := newSession(c, store, s.dbName)
@@ -412,7 +412,7 @@ func (s *testSessionSuite) TestRowLock(c *C) {
 
 func (s *testSessionSuite) TestIssue1118(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	c.Assert(se.(*session).txn, IsNil)
 
@@ -475,7 +475,7 @@ func (s *testSessionSuite) TestIssue1118(c *C) {
 
 func (s *testSessionSuite) TestIssue827(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	se1 := newSession(c, store, s.dbName)
 
@@ -638,7 +638,7 @@ func (s *testSessionSuite) TestIssue827(c *C) {
 
 func (s *testSessionSuite) TestIssue996(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 
 	mustExecSQL(c, se, "drop table if exists t")
@@ -672,7 +672,7 @@ func (s *testSessionSuite) TestIssue986(c *C) {
 	sqlText := `CREATE TABLE address (
  		id bigint(20) NOT NULL AUTO_INCREMENT,
  		PRIMARY KEY (id));`
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, sqlText)
 	sqlText = `insert into address values ('10')`
@@ -684,7 +684,7 @@ func (s *testSessionSuite) TestIssue986(c *C) {
 
 func (s *testSessionSuite) TestIssue1089(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 
 	r := mustExecSQL(c, se, "select cast(0.5 as unsigned)")
@@ -702,7 +702,7 @@ func (s *testSessionSuite) TestIssue1089(c *C) {
 
 func (s *testSessionSuite) TestIssue1135(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	se1 := newSession(c, store, s.dbName+"1")
 
@@ -766,7 +766,7 @@ func (s *testSessionSuite) TestIssue1135(c *C) {
 
 func (s *testSessionSuite) TestIssue1114(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 
 	mustExecSQL(c, se, "set @tmp = 0")
@@ -814,7 +814,7 @@ func (s *testSessionSuite) TestIssue1114(c *C) {
 
 func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	se1 := newSession(c, store, s.dbName)
 	se2 := newSession(c, store, s.dbName)
@@ -894,7 +894,7 @@ func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 
 func (s *testSessionSuite) TestRow(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 
 	r := mustExecSQL(c, se, "select row(1, 1) in (row(1, 1))")
@@ -938,7 +938,7 @@ func (s *testSessionSuite) TestRow(c *C) {
 
 func (s *testSessionSuite) TestIndex(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 
 	mustExecSQL(c, se, "create table if not exists test_index (c1 int, c double, index(c1), index(c))")
@@ -987,7 +987,7 @@ func (s *testSessionSuite) TestIndex(c *C) {
 
 func (s *testSessionSuite) TestMySQLTypes(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 
 	r := mustExecSQL(c, se, `select 0x01 + 1, x'4D7953514C' = "MySQL"`)
@@ -1008,7 +1008,7 @@ func (s *testSessionSuite) TestMySQLTypes(c *C) {
 
 func (s *testSessionSuite) TestExpression(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 
 	r := mustExecSQL(c, se, `select + (1 > 0), -(1 >0), + (1 < 0), - (1 < 0)`)
@@ -1029,7 +1029,7 @@ func (s *testSessionSuite) TestExpression(c *C) {
 
 func (s *testSessionSuite) TestSelect(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 
 	mustExecSQL(c, se, "create table if not exists t (c1 int, c2 int)")
@@ -1197,7 +1197,7 @@ func (s *testSessionSuite) TestSelect(c *C) {
 
 func (s *testSessionSuite) TestSubQuery(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 
 	mustExecSQL(c, se, "create table if not exists t1 (c1 int, c2 int)")
@@ -1225,7 +1225,7 @@ func (s *testSessionSuite) TestSubQuery(c *C) {
 
 func (s *testSessionSuite) TestShow(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 
 	mustExecSQL(c, se, "set global autocommit=1")
@@ -1288,7 +1288,7 @@ func (s *testSessionSuite) TestShow(c *C) {
 
 func (s *testSessionSuite) TestTimeFunc(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 
 	last := time.Now().Format(types.TimeFormat)
@@ -1315,7 +1315,7 @@ func (s *testSessionSuite) TestTimeFunc(c *C) {
 
 func (s *testSessionSuite) TestBit(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 
 	mustExecSQL(c, se, "drop table if exists t")
@@ -1334,7 +1334,7 @@ func (s *testSessionSuite) TestBit(c *C) {
 
 func (s *testSessionSuite) TestEnum(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 
 	mustExecSQL(c, se, "drop table if exists t")
@@ -1364,7 +1364,7 @@ func (s *testSessionSuite) TestEnum(c *C) {
 
 func (s *testSessionSuite) TestSet(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 
 	mustExecSQL(c, se, "drop table if exists t")
@@ -1399,7 +1399,7 @@ func (s *testSessionSuite) TestSet(c *C) {
 
 func (s *testSessionSuite) TestDatabase(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 
 	// Test database.
@@ -1426,7 +1426,7 @@ func (s *testSessionSuite) TestDatabase(c *C) {
 
 func (s *testSessionSuite) TestWhereLike(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 
 	mustExecSQL(c, se, "drop table if exists t")
@@ -1449,7 +1449,7 @@ func (s *testSessionSuite) TestDefaultFlenBug(c *C) {
 	defer testleak.AfterTest(c)()
 	// If set unspecified column flen to 0, it will cause bug in union.
 	// This test is used to prevent the bug reappear.
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 
 	mustExecSQL(c, se, "create table t1 (c double);")
@@ -1470,7 +1470,7 @@ func (s *testSessionSuite) TestDefaultFlenBug(c *C) {
 
 func (s *testSessionSuite) TestExecRestrictedSQL(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName).(*session)
 	r, err := se.ExecRestrictedSQL(se, "select 1;")
 	c.Assert(r, NotNil)
@@ -1486,7 +1486,7 @@ func (s *testSessionSuite) TestExecRestrictedSQL(c *C) {
 
 func (s *testSessionSuite) TestGroupBy(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "drop table if exists t")
 	mustExecSQL(c, se, "create table t (c1 int, c2 int)")
@@ -1513,7 +1513,7 @@ func (s *testSessionSuite) TestGroupBy(c *C) {
 
 func (s *testSessionSuite) TestOrderBy(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "drop table if exists t")
 	mustExecSQL(c, se, "create table t (c1 int, c2 int, c3 varchar(20))")
@@ -1548,7 +1548,7 @@ func (s *testSessionSuite) TestOrderBy(c *C) {
 
 func (s *testSessionSuite) TestHaving(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "drop table if exists t")
 	mustExecSQL(c, se, "create table t (c1 int, c2 int, c3 int)")
@@ -1590,7 +1590,7 @@ func (s *testSessionSuite) TestHaving(c *C) {
 func (s *testSessionSuite) TestResultType(c *C) {
 	defer testleak.AfterTest(c)()
 	// Testcase for https://github.com/pingcap/tidb/issues/325
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	rs := mustExecSQL(c, se, `select cast(null as char(30))`)
 	c.Assert(rs, NotNil)
@@ -1607,7 +1607,7 @@ func (s *testSessionSuite) TestResultType(c *C) {
 
 func (s *testSessionSuite) TestIssue461(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se1 := newSession(c, store, s.dbName)
 	mustExecSQL(c, se1,
 		`CREATE TABLE test ( id int(11) UNSIGNED NOT NULL AUTO_INCREMENT, val int UNIQUE, PRIMARY KEY (id)); `)
@@ -1640,7 +1640,7 @@ func (s *testSessionSuite) TestIssue461(c *C) {
 func (s *testSessionSuite) TestIssue463(c *C) {
 	defer testleak.AfterTest(c)()
 	// Testcase for https://github.com/pingcap/tidb/issues/463
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "DROP TABLE IF EXISTS test")
 	mustExecSQL(c, se,
@@ -1688,7 +1688,7 @@ func (s *testSessionSuite) TestIssue463(c *C) {
 
 func (s *testSessionSuite) TestIssue177(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, `drop table if exists t1;`)
 	mustExecSQL(c, se, `drop table if exists t2;`)
@@ -1708,7 +1708,7 @@ func (s *testSessionSuite) TestIssue177(c *C) {
 
 func (s *testSessionSuite) TestBuiltin(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 
 	// Testcase for https://github.com/pingcap/tidb/issues/382
@@ -1721,7 +1721,7 @@ func (s *testSessionSuite) TestBuiltin(c *C) {
 
 func (s *testSessionSuite) TestFieldText(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "drop table if exists t")
 	mustExecSQL(c, se, "create table t (a int)")
@@ -1750,7 +1750,7 @@ func (s *testSessionSuite) TestFieldText(c *C) {
 
 func (s *testSessionSuite) TestIndexPointLookup(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "drop table if exists t")
 	mustExecSQL(c, se, "create table t (a int)")
@@ -1768,7 +1768,7 @@ func (s *testSessionSuite) TestIndexPointLookup(c *C) {
 
 func (s *testSessionSuite) TestIssue454(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 
 	mustExecSQL(c, se, "drop table if exists t")
@@ -1785,7 +1785,7 @@ func (s *testSessionSuite) TestIssue454(c *C) {
 
 func (s *testSessionSuite) TestIssue456(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 
 	mustExecSQL(c, se, "drop table if exists t")
@@ -1803,7 +1803,7 @@ func (s *testSessionSuite) TestIssue456(c *C) {
 // For https://github.com/pingcap/tidb/issues/571
 func (s *testSessionSuite) TestIssue571(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 
 	mustExecSQL(c, se, "begin")
@@ -1855,7 +1855,7 @@ func (s *testSessionSuite) TestIssue571(c *C) {
 
 func (s *testSessionSuite) TestIssue620(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 
 	mustExecSQL(c, se, "drop table if exists t1")
@@ -1875,7 +1875,7 @@ func (s *testSessionSuite) TestIssue620(c *C) {
 
 func (s *testSessionSuite) TestRetryPreparedStmt(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	se1 := newSession(c, store, s.dbName)
 	se2 := newSession(c, store, s.dbName)
@@ -1906,7 +1906,7 @@ func (s *testSessionSuite) TestRetryPreparedStmt(c *C) {
 
 func (s *testSessionSuite) TestSleep(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 
 	mustExecSQL(c, se, "select sleep(0.01);")
@@ -1924,7 +1924,7 @@ func (s *testSessionSuite) TestSleep(c *C) {
 
 func (s *testSessionSuite) TestIssue893(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "drop table if exists t1; create table t1(id int ); insert into t1 values (1);")
 	mustExecMatch(c, se, "select * from t1;", [][]interface{}{{1}})
@@ -1935,7 +1935,7 @@ func (s *testSessionSuite) TestIssue893(c *C) {
 
 func (s *testSessionSuite) TestIssue1265(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 
 	mustExecSQL(c, se, "drop table if exists t;")
@@ -1947,7 +1947,7 @@ func (s *testSessionSuite) TestIssue1265(c *C) {
 func (s *testSessionSuite) TestIssue1435(c *C) {
 	defer testleak.AfterTest(c)()
 	localstore.MockRemoteStore = true
-	store := newStoreWithBootstrap(c, s.dbName+"issue1435")
+	store := newStore(c, s.dbName+"issue1435")
 	se := newSession(c, store, s.dbName)
 	se1 := newSession(c, store, s.dbName)
 	se2 := newSession(c, store, s.dbName)
@@ -2046,7 +2046,7 @@ func (s *testSessionSuite) TestIssue1435(c *C) {
 // Testcase for session
 func (s *testSessionSuite) TestSession(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "ROLLBACK;")
 
@@ -2058,7 +2058,7 @@ func (s *testSessionSuite) TestSession(c *C) {
 
 func (s *testSessionSuite) TestSessionAuth(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	defer se.Close()
 	c.Assert(se.Auth("Any not exist username with zero password! @anyhost", []byte(""), []byte("")), IsFalse)
@@ -2069,7 +2069,7 @@ func (s *testSessionSuite) TestSessionAuth(c *C) {
 
 func (s *testSessionSuite) TestErrorRollback(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	s1 := newSession(c, store, s.dbName)
 
 	defer s1.Close()
@@ -2115,7 +2115,7 @@ func (s *testSessionSuite) TestErrorRollback(c *C) {
 
 func (s *testSessionSuite) TestMultiColumnIndex(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "drop table if exists t;")
 	mustExecSQL(c, se, "create table t (c1 int, c2 int);")
@@ -2162,7 +2162,7 @@ func (s *testSessionSuite) TestMultiColumnIndex(c *C) {
 
 func (s *testSessionSuite) TestSubstringIndexExpr(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "drop table if exists t;")
 	mustExecSQL(c, se, "create table t (c varchar(128));")
@@ -2175,7 +2175,7 @@ func (s *testSessionSuite) TestSubstringIndexExpr(c *C) {
 
 func (s *testSessionSuite) TestIndexMaxLength(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "drop table if exists t;")
 
@@ -2255,7 +2255,7 @@ func (s *testSessionSuite) TestIndexMaxLength(c *C) {
 
 func (s *testSessionSuite) TestSpecifyIndexPrefixLength(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "drop table if exists t;")
 
@@ -2368,7 +2368,7 @@ func (s *testSessionSuite) TestSpecifyIndexPrefixLength(c *C) {
 
 func (s *testSessionSuite) TestIndexColumnLength(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "drop table if exists t;")
 	mustExecSQL(c, se, "create table t (c1 int, c2 blob);")
@@ -2399,7 +2399,7 @@ func (s *testSessionSuite) TestIgnoreForeignKey(c *C) {
 		CONSTRAINT FK_7rod8a71yep5vxasb0ms3osbg FOREIGN KEY (user_id) REFERENCES waimaiqa.user (id),
 		INDEX FK_7rod8a71yep5vxasb0ms3osbg (user_id) comment ''
 		) ENGINE=InnoDB AUTO_INCREMENT=30 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci ROW_FORMAT=COMPACT COMMENT='' CHECKSUM=0 DELAY_KEY_WRITE=0;`
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, sqlText)
 
@@ -2409,7 +2409,7 @@ func (s *testSessionSuite) TestIgnoreForeignKey(c *C) {
 
 func (s *testSessionSuite) TestJoinSubquery(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "CREATE TABLE table1 (id INTEGER key AUTO_INCREMENT, data VARCHAR(30))")
 	mustExecSQL(c, se, "CREATE TABLE table2 (id INTEGER key AUTO_INCREMENT, data VARCHAR(30), t1id INTEGER)")
@@ -2431,7 +2431,7 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	varValue1 := "4194305"
 	varValue2 := "4194306"
 
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName).(*session)
 	// Get globalSysVar twice and get the same value
 	v, err := se.GetGlobalSysVar(varName)
@@ -2498,7 +2498,7 @@ func (s *testSessionSuite) TestSqlLogicTestCase(c *C) {
 		CREATE TABLE tab1(pk INTEGER PRIMARY KEY, col0 INTEGER, col1 FLOAT)
 		INSERT INTO tab1 VALUES(0,26,690.51)
 		CREATE INDEX idx_tab1_1 on tab1 (col1)`
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecMultiSQL(c, se, initSQL)
 
@@ -2511,7 +2511,7 @@ func (s *testSessionSuite) TestXAggregateWithIndexScan(c *C) {
 		drop table IF EXISTS t;
 		CREATE TABLE t(c INT, index cidx (c));
 		INSERT INTO t VALUES(1), (null), (2);`
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecMultiSQL(c, se, initSQL)
 	sql := "SELECT COUNT(c) FROM t WHERE c > 0;"
@@ -2538,7 +2538,7 @@ func (s *testSessionSuite) TestXAggregateWithoutAggFunc(c *C) {
 		drop table IF EXISTS t;
 		CREATE TABLE t (c INT);
 		INSERT INTO t VALUES(1), (2), (3), (3);`
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecMultiSQL(c, se, initSQL)
 	sql := "SELECT 18 FROM t group by c;"
@@ -2565,7 +2565,7 @@ func (s *testSessionSuite) TestSelectHaving(c *C) {
 		insert INTO %s VALUES (1, "hello");
 		insert into %s VALUES (2, "hello");`,
 		table, table, table, table)
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecMultiSQL(c, se, initSQL)
 	sql := "select id, name from select_having_test where id in (1,3) having name like 'he%';"
@@ -2575,7 +2575,7 @@ func (s *testSessionSuite) TestSelectHaving(c *C) {
 }
 
 func (s *testSessionSuite) TestQueryString(c *C) {
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecute(se, "use "+s.dbName)
 	_, err := se.Execute("create table mutil1 (a int);create table multi2 (a int)")
@@ -2587,7 +2587,7 @@ func (s *testSessionSuite) TestQueryString(c *C) {
 
 // Test that the auto_increment ID does not reuse the old table's allocator.
 func (s *testSessionSuite) TestTruncateAlloc(c *C) {
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecute(se, "use "+s.dbName)
 	_, err := se.Execute("create table truncate_id (a int primary key auto_increment)")
@@ -2604,7 +2604,7 @@ func (s *testSessionSuite) TestTruncateAlloc(c *C) {
 // Test infomation_schema.columns.
 func (s *testSessionSuite) TestISColumns(c *C) {
 	defer testleak.AfterTest(c)()
-	store := newStoreWithBootstrap(c, s.dbName)
+	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	sql := "select ORDINAL_POSITION from INFORMATION_SCHEMA.COLUMNS;"
 	mustExecSQL(c, se, sql)
