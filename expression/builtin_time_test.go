@@ -701,3 +701,35 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v.IsNull(), IsTrue)
 }
+
+func (s *testEvaluatorSuite) TestTimestamp(c *C) {
+	tests := []struct {
+		t      []types.Datum
+		expect string
+	}{
+		{[]types.Datum{types.NewStringDatum("2017-01-18")}, "2017-01-18 00:00:00"},
+		{[]types.Datum{types.NewStringDatum("20170118")}, "2017-01-18 00:00:00"},
+		{[]types.Datum{types.NewStringDatum("170118")}, "2017-01-18 00:00:00"},
+		{[]types.Datum{types.NewStringDatum("20170118123056")}, "2017-01-18 12:30:56"},
+		{[]types.Datum{types.NewStringDatum("2017-01-18 12:30:56")}, "2017-01-18 12:30:56"},
+		{[]types.Datum{types.NewIntDatum(170118)}, "2017-01-18 00:00:00"},
+		{[]types.Datum{types.NewFloat64Datum(20170118)}, "2017-01-18 00:00:00"},
+		{[]types.Datum{types.NewStringDatum("20170118123950.999")}, "2017-01-18 12:30:50.999"},
+		{[]types.Datum{types.NewFloat64Datum(20170118123950.999)}, "2017-01-18 12:30:50.999"},
+
+		// the following test cases will cause time format error.
+		//{[]types.Datum{types.NewFloat64Datum(20170118.999)}, "2017-01-18 00:00:00.000"},
+		//{[]types.Datum{types.NewStringDatum("11111111111")}, "2011-11-11 11:11:01"},
+
+		{[]types.Datum{types.NewStringDatum("2017-01-18"), types.NewStringDatum("12:30:59")}, "2017-01-18 12:30:59"},
+		{[]types.Datum{types.NewStringDatum("2017-01-18"), types.NewStringDatum("12:30:59")}, "2017-01-18 12:30:59"},
+		{[]types.Datum{types.NewStringDatum("2017-01-18 01:01:01"), types.NewStringDatum("12:30:50")}, "2017-01-18 13:32:00"},
+		{[]types.Datum{types.NewStringDatum("2017-01-18 01:01:01"), types.NewStringDatum("838:59:59")}, "2017-02-21 23:32:00"},
+	}
+	for _, test := range tests {
+		d, err := builtinTimestamp(test.t, s.ctx)
+		c.Assert(err, IsNil)
+		result, _ := d.ToString()
+		c.Assert(result, Equals, test.expect)
+	}
+}
