@@ -18,7 +18,6 @@
 package tidb
 
 import (
-	"fmt"
 	"net/url"
 	"strings"
 	"sync"

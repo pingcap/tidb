@@ -15,7 +15,6 @@ package plan_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/parser"
@@ -81,7 +80,7 @@ var resolverTestCases = []resolverTestCase{
 }
 
 func (ts *testNameResolverSuite) TestNameResolver(c *C) {
-	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
+	store, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	defer store.Close()
 	testKit := testkit.NewTestKit(c, store)

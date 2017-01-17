@@ -60,6 +60,7 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	s.schemaName = "test_db"
 	s.store, err = tidb.NewStore(tidb.EngineGoLevelDBMemory)
 	c.Assert(err, IsNil)
+	tidb.BootstrapSession(s.store)
 	localstore.MockRemoteStore = true
 	s.s, err = tidb.CreateSession(s.store)
 	c.Assert(err, IsNil)
@@ -755,6 +756,7 @@ func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
 	defer testleak.AfterTest(c)
 	store, err := tidb.NewStore("memory://update_multiple_table")
 	c.Assert(err, IsNil)
+	tidb.BootstrapSession(store)
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (c1 int, c2 int)")
@@ -814,6 +816,7 @@ func (s *testDBSuite) TestTruncateTable(c *C) {
 	defer testleak.AfterTest(c)
 	store, err := tidb.NewStore("memory://truncate_table")
 	c.Assert(err, IsNil)
+	tidb.BootstrapSession(store)
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (c1 int, c2 int)")
@@ -864,6 +867,7 @@ func (s *testDBSuite) TestRenameTable(c *C) {
 	defer testleak.AfterTest(c)
 	store, err := tidb.NewStore("memory://rename_table")
 	c.Assert(err, IsNil)
+	tidb.BootstrapSession(store)
 	s.tk = testkit.NewTestKit(c, store)
 	s.tk.MustExec("use test")
 

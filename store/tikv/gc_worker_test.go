@@ -29,7 +29,7 @@ type testGCWorkerSuite struct {
 var _ = Suite(&testGCWorkerSuite{})
 
 func (s *testGCWorkerSuite) SetUpTest(c *C) {
-	s.store = newTestStore(c)
+	s.store = newTestStoreWithBootstrap(c)
 	s.oracle = &mockOracle{}
 	s.store.oracle = s.oracle
 	gcWorker, err := NewGCWorker(s.store)
