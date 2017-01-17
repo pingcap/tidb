@@ -339,6 +339,7 @@ var funcs = map[string]functionClass{
 	ast.DayOfMonth:       &dayOfMonthFunctionClass{baseFunctionClass{ast.DayOfMonth, 1, 1}},
 	ast.DayOfWeek:        &dayOfWeekFunctionClass{baseFunctionClass{ast.DayOfWeek, 1, 1}},
 	ast.DayOfYear:        &dayOfYearFunctionClass{baseFunctionClass{ast.DayOfYear, 1, 1}},
+	ast.FromDays:         &fromDaysFunctionClass{baseFunctionClass{ast.FromDays, 1, 1}},
 	ast.Extract:          &extractFunctionClass{baseFunctionClass{ast.Extract, 2, 2}},
 	ast.Hour:             &hourFunctionClass{baseFunctionClass{ast.Hour, 1, 1}},
 	ast.MicroSecond:      &microSecondFunctionClass{baseFunctionClass{ast.MicroSecond, 1, 1}},
