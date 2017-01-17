@@ -293,6 +293,33 @@ func builtinDateFormat(args []types.Datum, ctx context.Context) (types.Datum, er
 	return d, nil
 }
 
+type fromDaysFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *fromDaysFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinFromDaysSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinFromDaysSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinFromDaysSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return builtinFromDays(args, b.ctx)
+}
+
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_from-days
+func builtinFromDays(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	days, err := args[0].ToInt64(ctx.GetSessionVars().StmtCtx)
+	d.SetMysqlTime(types.TimeFromDays(days))
+	return d, nil
+}
+
 type dayFunctionClass struct {
 	baseFunctionClass
 }

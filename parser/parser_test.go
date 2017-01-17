@@ -52,7 +52,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"localtime", "localtimestamp", "lock", "longblob", "longtext", "mediumblob", "maxvalue", "mediumint", "mediumtext",
 		"minute_microsecond", "minute_second", "mod", "not", "no_write_to_binlog", "null", "numeric",
 		"on", "option", "or", "order", "outer", "partition", "precision", "primary", "procedure", "range", "read", "real",
-		"references", "regexp", "repeat", "replace", "restrict", "right", "rlike",
+		"references", "regexp", "rename", "repeat", "replace", "restrict", "right", "rlike",
 		"schema", "schemas", "second_microsecond", "select", "set", "show", "smallint",
 		"starting", "table", "terminated", "then", "tinyblob", "tinyint", "tinytext", "to",
 		"trailing", "true", "union", "unique", "unlock", "unsigned",
@@ -78,7 +78,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 	// Testcase for unreserved keywords
 	unreservedKws := []string{
 		"auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
-		"date", "datediff", "datetime", "deallocate", "do", "end", "engine", "engines", "execute", "first", "full",
+		"date", "datediff", "datetime", "deallocate", "do", "from_days", "end", "engine", "engines", "execute", "first", "full",
 		"local", "names", "offset", "password", "prepare", "quick", "rollback", "session", "signed",
 		"start", "global", "tables", "text", "time", "timestamp", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substr", "substring", "mode", "any", "some", "user", "identified",
@@ -312,6 +312,10 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"CREATE TABLE sbtest (id INTEGER UNSIGNED NOT NULL AUTO_INCREMENT, k integer UNSIGNED DEFAULT '0' NOT NULL, c char(120) DEFAULT '' NOT NULL, pad char(60) DEFAULT '' NOT NULL, PRIMARY KEY  (id) )", true},
 		{"create table test (create_date TIMESTAMP NOT NULL COMMENT '创建日期 create date' DEFAULT now());", true},
 		{"create table ts (t int, v timestamp(3) default CURRENT_TIMESTAMP(3));", true},
+
+		// For rename table statement
+		{"RENAME TABLE t TO t1", true},
+		{"RENAME TABLE d.t TO d1.t1", true},
 
 		// For truncate statement
 		{"TRUNCATE TABLE t1", true},
@@ -616,6 +620,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT DAYOFWEEK('2007-02-03');", true},
 		{"SELECT DAYOFYEAR('2007-02-03');", true},
 		{"SELECT DAYNAME('2007-02-03');", true},
+		{"SELECT FROM_DAYS(1423);", true},
 		{"SELECT WEEKDAY('2007-02-03');", true},
 
 		// For utc_date
@@ -680,6 +685,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT CHAR(65);`, true},
 		{`SELECT CHAR_LENGTH('abc');`, true},
 		{`SELECT CHARACTER_LENGTH('abc');`, true},
+		{`SELECT FIELD('ej', 'Hej', 'ej', 'Heja', 'hej', 'foo');`, true},
 		{`SELECT FIND_IN_SET('foo', 'foo,bar')`, true},
 		{`SELECT FIND_IN_SET('foo')`, false},
 
