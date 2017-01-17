@@ -96,7 +96,7 @@ func (s *testDDLSuite) TestSchemaError(c *C) {
 
 	d := newDDL(store, nil, nil, testLease)
 	defer d.close()
-	ctx := testNewContext(c, d)
+	ctx := testNewContext(d)
 
 	doDDLJobErr(c, 1, 0, model.ActionCreateSchema, []interface{}{1}, ctx, d)
 }
@@ -108,13 +108,13 @@ func (s *testDDLSuite) TestTableError(c *C) {
 
 	d := newDDL(store, nil, nil, testLease)
 	defer d.close()
-	ctx := testNewContext(c, d)
+	ctx := testNewContext(d)
 
 	// Schema ID is wrong, so dropping table is failed.
 	doDDLJobErr(c, -1, 1, model.ActionDropTable, nil, ctx, d)
 	// Table ID is wrong, so dropping table is failed.
 	dbInfo := testSchemaInfo(c, d, "test")
-	testCreateSchema(c, testNewContext(c, d), d, dbInfo)
+	testCreateSchema(c, testNewContext(d), d, dbInfo)
 	job := doDDLJobErr(c, dbInfo.ID, -1, model.ActionDropTable, nil, ctx, d)
 
 	// Table ID or schema ID is wrong, so getting table is failed.
@@ -150,7 +150,7 @@ func (s *testDDLSuite) TestForeignKeyError(c *C) {
 
 	d := newDDL(store, nil, nil, testLease)
 	defer d.close()
-	ctx := testNewContext(c, d)
+	ctx := testNewContext(d)
 
 	doDDLJobErr(c, -1, 1, model.ActionAddForeignKey, nil, ctx, d)
 	doDDLJobErr(c, -1, 1, model.ActionDropForeignKey, nil, ctx, d)
@@ -169,7 +169,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 
 	d := newDDL(store, nil, nil, testLease)
 	defer d.close()
-	ctx := testNewContext(c, d)
+	ctx := testNewContext(d)
 
 	// Schema ID is wrong.
 	doDDLJobErr(c, -1, 1, model.ActionAddIndex, nil, ctx, d)
@@ -205,7 +205,7 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 	defer store.Close()
 	d := newDDL(store, nil, nil, testLease)
 	defer d.close()
-	ctx := testNewContext(c, d)
+	ctx := testNewContext(d)
 
 	dbInfo := testSchemaInfo(c, d, "test")
 	tblInfo := testTableInfo(c, d, "t", 3)

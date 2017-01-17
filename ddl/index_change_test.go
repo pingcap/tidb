@@ -53,7 +53,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 	tblInfo := testTableInfo(c, d, "t", 2)
 	tblInfo.Columns[0].Flag = mysql.PriKeyFlag | mysql.NotNullFlag
 	tblInfo.PKIsHandle = true
-	ctx := testNewContext(c, d)
+	ctx := testNewContext(d)
 	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
@@ -83,7 +83,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 		if job.SchemaState == prevState {
 			return
 		}
-		ctx1 := testNewContext(c, d)
+		ctx1 := testNewContext(d)
 		prevState = job.SchemaState
 		var err error
 		switch job.SchemaState {
@@ -125,7 +125,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 		}
 		prevState = job.SchemaState
 		var err error
-		ctx1 := testNewContext(c, d)
+		ctx1 := testNewContext(d)
 		switch job.SchemaState {
 		case model.StateWriteOnly:
 			writeOnlyTable, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)

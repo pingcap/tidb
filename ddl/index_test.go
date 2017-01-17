@@ -41,11 +41,11 @@ func (s *testIndexSuite) SetUpSuite(c *C) {
 	s.d = newDDL(s.store, nil, nil, testLease)
 
 	s.dbInfo = testSchemaInfo(c, s.d, "test_index")
-	testCreateSchema(c, testNewContext(c, s.d), s.d, s.dbInfo)
+	testCreateSchema(c, testNewContext(s.d), s.d, s.dbInfo)
 }
 
 func (s *testIndexSuite) TearDownSuite(c *C) {
-	testDropSchema(c, testNewContext(c, s.d), s.d, s.dbInfo)
+	testDropSchema(c, testNewContext(s.d), s.d, s.dbInfo)
 	s.d.close()
 
 	err := s.store.Close()
@@ -90,7 +90,7 @@ func testDropIndex(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblI
 func (s *testIndexSuite) TestIndex(c *C) {
 	defer testleak.AfterTest(c)()
 	tblInfo := testTableInfo(c, s.d, "t1", 3)
-	ctx := testNewContext(c, s.d)
+	ctx := testNewContext(s.d)
 
 	testCreateTable(c, ctx, s.d, s.dbInfo, tblInfo)
 
@@ -511,7 +511,7 @@ func (s *testIndexSuite) checkPublicIndex(c *C, ctx context.Context, d *ddl, tbl
 }
 
 func (s *testIndexSuite) checkAddOrDropIndex(c *C, state model.SchemaState, d *ddl, tblInfo *model.TableInfo, handle int64, index table.Index, row []types.Datum, isDropped bool) {
-	ctx := testNewContext(c, d)
+	ctx := testNewContext(d)
 
 	switch state {
 	case model.StateNone:
@@ -531,7 +531,7 @@ func (s *testIndexSuite) TestAddIndex(c *C) {
 	defer testleak.AfterTest(c)()
 	d := newDDL(s.store, nil, nil, testLease)
 	tblInfo := testTableInfo(c, d, "t", 3)
-	ctx := testNewContext(c, d)
+	ctx := testNewContext(d)
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
@@ -596,7 +596,7 @@ func (s *testIndexSuite) TestDropIndex(c *C) {
 	defer testleak.AfterTest(c)()
 	d := newDDL(s.store, nil, nil, testLease)
 	tblInfo := testTableInfo(c, d, "t", 3)
-	ctx := testNewContext(c, d)
+	ctx := testNewContext(d)
 
 	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
@@ -668,7 +668,7 @@ func (s *testIndexSuite) TestAddIndexWithNullColumn(c *C) {
 	tblInfo := testTableInfo(c, d, "t", 3)
 	// Change c2.DefaultValue to nil
 	tblInfo.Columns[1].DefaultValue = nil
-	ctx := testNewContext(c, d)
+	ctx := testNewContext(d)
 
 	err := ctx.NewTxn()
 	c.Assert(err, IsNil)

@@ -34,9 +34,11 @@ func (s *testEvaluatorSuite) TestDatabase(c *C) {
 	c.Assert(d.GetString(), Equals, "test")
 
 	// Test case for schema().
-	f := Funcs[ast.Schema]
-	c.Assert(f, NotNil)
-	d, err = f.F(types.MakeDatums(), ctx)
+	fc := funcs[ast.Schema]
+	c.Assert(fc, NotNil)
+	f, err := fc.getFunction(nil, ctx)
+	c.Assert(err, IsNil)
+	d, err = f.eval(types.MakeDatums())
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "test")
 }
