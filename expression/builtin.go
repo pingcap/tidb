@@ -18,6 +18,7 @@
 package expression
 
 import (
+	"math"
 	"strings"
 
 	"github.com/juju/errors"
@@ -146,12 +147,12 @@ var Funcs = map[string]Func{
 
 	// math functions
 	ast.Abs:     {builtinAbs, 1, 1},
-	ast.Ceil:    {builtinCeil, 1, 1},
-	ast.Ceiling: {builtinCeil, 1, 1},
-	ast.Ln:      {builtinLog, 1, 1},
+	ast.Ceil:    {floatMapFnFactory(math.Ceil, skipNullOrInteger), 1, 1},
+	ast.Ceiling: {floatMapFnFactory(math.Ceil, skipNullOrInteger), 1, 1},
+	ast.Ln:      {floatMapFnFactory(math.Log, skipNonPositive), 1, 1},
 	ast.Log:     {builtinLog, 1, 2},
-	ast.Log2:    {builtinLog2, 1, 1},
-	ast.Log10:   {builtinLog10, 1, 1},
+	ast.Log2:    {floatMapFnFactory(math.Log2, skipNonPositive), 1, 1},
+	ast.Log10:   {floatMapFnFactory(math.Log10, skipNonPositive), 1, 1},
 	ast.Pow:     {builtinPow, 2, 2},
 	ast.Power:   {builtinPow, 2, 2},
 	ast.Rand:    {builtinRand, 0, 1},

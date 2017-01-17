@@ -63,6 +63,7 @@ func (s *testEvaluatorSuite) TestCeil(c *C) {
 
 	Dtbl := tblToDtbl(tbl)
 
+	builtinCeil := Funcs[ast.Ceil].F
 	for _, t := range Dtbl {
 		fc := funcs[ast.Ceil]
 		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
