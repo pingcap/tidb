@@ -1540,3 +1540,49 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 		checkUniqueKeys(p, c, ca.ans, comment)
 	}
 }
+
+func (s *testPlanSuite) TestAggPrune(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		sql  string
+		best string
+	}{
+		{
+			sql:  "select a, count(b) from t group by a",
+			best: "",
+		},
+		{
+			sql:  "select sum(b) from t group by c, d, e",
+			best: "DataScan(t)->Aggr(sum(test.t.b))->Projection",
+		},
+		{
+			sql:  "select sum(e) from t group by f, g",
+			best: "",
+		},
+	}
+	for _, ca := range cases {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+
+		is, err := mockResolve(stmt)
+		c.Assert(err, IsNil)
+
+		builder := &planBuilder{
+			allocator: new(idAllocator),
+			ctx:       mockContext(),
+			is:        is,
+		}
+		p := builder.build(stmt).(LogicalPlan)
+		c.Assert(builder.err, IsNil)
+
+		_, p, err = p.PredicatePushDown(nil)
+		c.Assert(err, IsNil)
+		p.PruneColumns(p.GetSchema().Columns)
+		p.ResolveIndicesAndCorCols()
+		info, err := p.convert2PhysicalPlan(&requiredProperty{})
+		c.Assert(err, IsNil)
+		jsonPlan, _ := info.p.MarshalJSON()
+		c.Assert(ToString(info.p), Equals, ca.best, Commentf("for %s, %s", ca.sql, string(jsonPlan)))
+	}
+}

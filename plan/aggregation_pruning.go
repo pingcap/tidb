@@ -51,58 +51,11 @@ func (ap *aggPruner) eliminateAggregation(p LogicalPlan) error {
 			proj.self = proj
 			proj.initIDAndContext(ap.ctx)
 			for _, fun := range agg.AggFuncs {
-				var (
-					newExpr expression.Expression
-					err     error
-				)
-				expr := fun.GetArgs()[0].Clone()
-				switch fun.GetName() {
-				case ast.AggFuncCount:
-					// If is count(expr), we will change it to if(isnull(expr), 0, 1).
-					isNullExpr, err := expression.NewFunction(ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					zero := &expression.Constant{
-						Value:   types.NewIntDatum(0),
-						RetType: types.NewFieldType(mysql.TypeLonglong),
-					}
-					one := &expression.Constant{
-						Value:   types.NewIntDatum(1),
-						RetType: types.NewFieldType(mysql.TypeLonglong),
-					}
-					newExpr, err = expression.NewFunction(ast.If, zero.RetType, isNullExpr, zero, one)
-					if err != nil {
-						return errors.Trace(err)
-					}
-				case ast.AggFuncSum:
-					// Numeric type do nothing. Others will cast to decimal.
-					switch expr.GetType().Tp {
-					case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-					case mysql.TypeDouble, mysql.TypeFloat, mysql.TypeDecimal, mysql.TypeNewDecimal:
-						newExpr = expr
-					default:
-						newExpr, err = expression.NewCastFunc(types.NewFieldType(mysql.TypeNewDecimal), expr)
-						if err != nil {
-							return errors.Trace(err)
-						}
-					}
-				case ast.AggFuncAvg:
-					switch expr.GetType().Tp {
-					// Float-point number or fixed-point numnber will do nothing, Others will cast to decimal.
-					case mysql.TypeDouble, mysql.TypeFloat, mysql.TypeDecimal, mysql.TypeNewDecimal:
-						newExpr = expr
-					default:
-						newExpr, err = expression.NewCastFunc(types.NewFieldType(mysql.TypeNewDecimal), expr)
-						if err != nil {
-							return errors.Trace(err)
-						}
-					}
-				default:
-					// Default we do nothing about expr.
-					newExpr = expr
+				expr, err := ap.rewriteExpr(fun.GetArgs()[0].Clone(), fun.GetName())
+				if err != nil {
+					return errors.Trace(err)
 				}
-				proj.Exprs = append(proj.Exprs, newExpr)
+				proj.Exprs = append(proj.Exprs, expr)
 			}
 			proj.SetSchema(agg.schema.Clone())
 			InsertPlan(p, agg, proj)
@@ -116,4 +69,54 @@ func (ap *aggPruner) eliminateAggregation(p LogicalPlan) error {
 		}
 	}
 	return nil
+}
+
+func (ap *aggPruner) rewriteExpr(expr expression.Expression, funcName string) (newExpr expression.Expression, err error) {
+	switch funcName {
+	case ast.AggFuncCount:
+		// If is count(expr), we will change it to if(isnull(expr), 0, 1).
+		isNullExpr, err := expression.NewFunction(ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		zero := &expression.Constant{
+			Value:   types.NewIntDatum(0),
+			RetType: types.NewFieldType(mysql.TypeLonglong),
+		}
+		one := &expression.Constant{
+			Value:   types.NewIntDatum(1),
+			RetType: types.NewFieldType(mysql.TypeLonglong),
+		}
+		newExpr, err = expression.NewFunction(ast.If, zero.RetType, isNullExpr, zero, one)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	case ast.AggFuncSum:
+		// Numeric type do nothing. Others will cast to decimal.
+		switch expr.GetType().Tp {
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		case mysql.TypeDouble, mysql.TypeFloat, mysql.TypeDecimal, mysql.TypeNewDecimal:
+			newExpr = expr
+		default:
+			newExpr, err = expression.NewCastFunc(types.NewFieldType(mysql.TypeNewDecimal), expr)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+	case ast.AggFuncAvg:
+		switch expr.GetType().Tp {
+		// Float-point number or fixed-point numnber will do nothing, Others will cast to decimal.
+		case mysql.TypeDouble, mysql.TypeFloat, mysql.TypeDecimal, mysql.TypeNewDecimal:
+			newExpr = expr
+		default:
+			newExpr, err = expression.NewCastFunc(types.NewFieldType(mysql.TypeNewDecimal), expr)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+	default:
+		// Default we do nothing about expr.
+		newExpr = expr
+	}
+	return
 }
