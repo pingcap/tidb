@@ -685,6 +685,13 @@ func (s *session) Auth(user string, auth []byte, salt []byte) bool {
 		return false
 	}
 	s.sessionVars.User = user
+
+	// TODO: Use the new privilege implementation.
+	domain := sessionctx.GetDomain(s)
+	checker := domain.Privilege()
+	succ := checker.ConnectionVerification(name, host)
+	log.Debug("RequestVerification result:", succ)
+
 	return true
 }
 
@@ -752,6 +759,19 @@ func createSession(store kv.Storage) (*session, error) {
 	sessionctx.BindDomain(s, domain)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
+
+	// TODO: Refact this after bootstap session is separated.
+	if d.Privilege() == nil {
+		s := &session{
+			values:      make(map[fmt.Stringer]interface{}),
+			store:       store,
+			parser:      parser.New(),
+			sessionVars: variable.NewSessionVars(),
+		}
+		c := make(chan error)
+		go d.LoadPrivilegeLoop(s, c)
+		err = <-c
+	}
 
 	// TODO: Add auth here
 	privChecker := &privileges.UserPrivileges{}

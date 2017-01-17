@@ -15,7 +15,9 @@ package privileges
 
 import (
 	"strings"
+	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -269,4 +271,103 @@ func decodeSetToPrivilege(s types.Set) (mysql.PrivilegeType, error) {
 		ret |= priv
 	}
 	return ret, nil
+}
+
+func (record *userRecord) match(user, host string) bool {
+	return record.User == user && patternMatch(record.Host, host)
+}
+
+func (record *dbRecord) match(user, host, db string) bool {
+	return record.User == user && patternMatch(record.Host, host) && record.DB == db
+}
+
+func (record *tablesPrivRecord) match(user, host, db, table string) bool {
+	return record.User == user && patternMatch(record.Host, host) &&
+		record.DB == db && record.TableName == table
+}
+
+func (record *columnsPrivRecord) match(user, host, db, table, col string) bool {
+	return record.User == user && patternMatch(record.Host, host) &&
+		record.DB == db && record.TableName == table && record.ColumnName == col
+}
+
+func patternMatch(pattern, str string) bool {
+	for i := 0; i < len(pattern); i++ {
+		p := pattern[i]
+		if p == '%' {
+			return true
+		}
+		if i >= len(str) || p != str[i] {
+			return false
+		}
+	}
+	return len(pattern) == len(str)
+}
+
+func (p *MySQLPrivilege) ConnectionVerification(user, host string) bool {
+	for _, record := range p.User {
+		if record.match(user, host) {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *MySQLPrivilege) RequestVerification(user, host, db, table, column string, priv mysql.PrivilegeType) bool {
+	for _, record := range p.User {
+		if record.match(user, host) && record.Privileges&priv > 0 {
+			return true
+		}
+	}
+
+	for _, record := range p.DB {
+		if record.match(user, host, db) && record.Privileges&priv > 0 {
+			return true
+		}
+	}
+
+	for _, record := range p.TablesPriv {
+		if record.match(user, host, db, table) {
+			if record.TablePriv&priv > 0 {
+				return true
+			}
+			if column != "" && record.ColumnPriv&priv > 0 {
+				return true
+			}
+		}
+	}
+
+	for _, record := range p.ColumnsPriv {
+		if record.match(user, host, db, table, column) && record.ColumnPriv&priv > 0 {
+			return true
+		}
+	}
+
+	return false
+}
+
+// Handle wraps MySQLPrivilege providing thread safe access.
+type Handle struct {
+	priv *MySQLPrivilege
+}
+
+// Get the MySQLPrivilege for read.
+func (h *Handle) Get() *MySQLPrivilege {
+	addr := (*uintptr)(unsafe.Pointer(&h.priv))
+	ptr := atomic.LoadUintptr(addr)
+	return (*MySQLPrivilege)(unsafe.Pointer(ptr))
+}
+
+// Update the MySQLPrivilege.
+func (h *Handle) Update(ctx context.Context) error {
+	var priv MySQLPrivilege
+	err := priv.LoadAll(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	addr := (*uintptr)(unsafe.Pointer(&h.priv))
+	ptr := (uintptr)(unsafe.Pointer(&priv))
+	atomic.StoreUintptr(addr, ptr)
+	return nil
 }
