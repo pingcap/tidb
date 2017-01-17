@@ -41,7 +41,7 @@ func testCreateStore(c *C, name string) kv.Storage {
 	return store
 }
 
-func testNewContext(c *C, d *ddl) context.Context {
+func testNewContext(d *ddl) context.Context {
 	ctx := mock.NewContext()
 	ctx.Store = d.store
 	return ctx

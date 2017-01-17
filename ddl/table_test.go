@@ -137,19 +137,34 @@ func testCheckTableState(c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.Tabl
 }
 
 func testGetTable(c *C, d *ddl, schemaID int64, tableID int64) table.Table {
-	var tblInfo *model.TableInfo
-	kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		var err error
-		tblInfo, err = t.GetTable(schemaID, tableID)
-		c.Assert(err, IsNil)
-		c.Assert(tblInfo, NotNil)
-		return nil
-	})
-	alloc := autoid.NewAllocator(d.store, schemaID)
-	tbl, err := table.TableFromMeta(alloc, tblInfo)
+	tbl, err := testGetTableWithError(d, schemaID, tableID)
 	c.Assert(err, IsNil)
 	return tbl
+}
+
+func testGetTableWithError(d *ddl, schemaID, tableID int64) (table.Table, error) {
+	var tblInfo *model.TableInfo
+	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		var err1 error
+		tblInfo, err1 = t.GetTable(schemaID, tableID)
+		if err1 != nil {
+			return errors.Trace(err1)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if tblInfo == nil {
+		return nil, errors.New("table not found")
+	}
+	alloc := autoid.NewAllocator(d.store, schemaID)
+	tbl, err := table.TableFromMeta(alloc, tblInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return tbl, nil
 }
 
 func (s *testTableSuite) SetUpSuite(c *C) {
@@ -157,14 +172,14 @@ func (s *testTableSuite) SetUpSuite(c *C) {
 	s.d = newDDL(s.store, nil, nil, testLease)
 
 	s.dbInfo = testSchemaInfo(c, s.d, "test")
-	testCreateSchema(c, testNewContext(c, s.d), s.d, s.dbInfo)
+	testCreateSchema(c, testNewContext(s.d), s.d, s.dbInfo)
 
 	// Use a smaller limit to prevent the test from consuming too much time.
 	reorgTableDeleteLimit = 2000
 }
 
 func (s *testTableSuite) TearDownSuite(c *C) {
-	testDropSchema(c, testNewContext(c, s.d), s.d, s.dbInfo)
+	testDropSchema(c, testNewContext(s.d), s.d, s.dbInfo)
 	s.d.close()
 	s.store.Close()
 
@@ -175,7 +190,7 @@ func (s *testTableSuite) TestTable(c *C) {
 	defer testleak.AfterTest(c)()
 	d := s.d
 
-	ctx := testNewContext(c, d)
+	ctx := testNewContext(d)
 
 	tblInfo := testTableInfo(c, d, "t", 3)
 	job := testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
