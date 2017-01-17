@@ -159,9 +159,11 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	err = ctx.Txn().Commit()
 	c.Assert(err, IsNil)
 	mu.Lock()
-	c.Assert(hookErr, IsNil)
-	c.Assert(checkOK, IsTrue)
+	hErr := hookErr
+	ok := checkOK
 	mu.Unlock()
+	c.Assert(hErr, IsNil)
+	c.Assert(ok, IsTrue)
 	v := getSchemaVer(c, ctx)
 	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 
@@ -193,9 +195,11 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	job = testDropForeignKey(c, ctx, d, s.dbInfo, tblInfo, "c1_fk")
 	testCheckJobDone(c, d, job, false)
 	mu.Lock()
-	c.Assert(hookErr, IsNil)
-	c.Assert(checkOK, IsTrue)
+	hErr = hookErr
+	ok = checkOK
 	mu.Unlock()
+	c.Assert(hErr, IsNil)
+	c.Assert(ok, IsTrue)
 
 	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
