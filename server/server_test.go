@@ -564,9 +564,6 @@ func runTestStmtCount(t *C) {
 		currentStmtCnt := getStmtCnt(string(getMetrics(t)))
 		t.Assert(currentStmtCnt[executor.CreateTable], Equals, originStmtCnt[executor.CreateTable]+1)
 		t.Assert(currentStmtCnt[executor.Insert], Equals, originStmtCnt[executor.Insert]+5)
-		t.Assert(currentStmtCnt[executor.Delete], Equals, originStmtCnt[executor.Delete]+1)
-		t.Assert(currentStmtCnt[executor.Update], Equals, originStmtCnt[executor.Update]+2)
-		t.Assert(currentStmtCnt[executor.SimpleSelect], Equals, originStmtCnt[executor.SimpleSelect]+3)
 	})
 }
 
