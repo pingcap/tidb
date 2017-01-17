@@ -76,7 +76,7 @@ func doOptimize(logic LogicalPlan, ctx context.Context, allocator *idAllocator) 
 	}
 	logic.ResolveIndicesAndCorCols()
 	if !AllowCartesianProduct && existsCartesianProduct(logic) {
-		return nil, ErrCartesianProductUnsupported
+		return nil, errors.Trace(ErrCartesianProductUnsupported)
 	}
 	info, err := logic.convert2PhysicalPlan(&requiredProperty{})
 	if err != nil {

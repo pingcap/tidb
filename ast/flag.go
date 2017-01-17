@@ -13,51 +13,9 @@
 
 package ast
 
-const preEvaluable = FlagHasParamMarker | FlagHasFunc | FlagHasVariable | FlagHasDefault | FlagPreEvaluated
-
-// IsPreEvaluable checks if the expression can be evaluated before execution.
-func IsPreEvaluable(expr ExprNode) bool {
-	return expr.GetFlag()|preEvaluable == preEvaluable
-}
-
-// ResetEvaluatedFlag resets the evaluated flag.
-func ResetEvaluatedFlag(n Node) {
-	var reseter preEvaluatedReseter
-	n.Accept(&reseter)
-}
-
-func resetEvaluatedExpr(expr ExprNode) {
-	expr.SetFlag(expr.GetFlag() &^ FlagPreEvaluated)
-}
-
-// IsEvaluated checks if the expression are evaluated and needn't be evaluated any more.
-func IsEvaluated(expr ExprNode) bool {
-	return expr.GetFlag()&FlagPreEvaluated == FlagPreEvaluated
-}
-
-// IsConstant checks if the expression is constant.
-// A constant expression is safe to be rewritten to value expression.
-func IsConstant(expr ExprNode) bool {
-	return (expr.GetFlag() &^ FlagPreEvaluated) == FlagConstant
-}
-
 // HasAggFlag checks if the expr contains FlagHasAggregateFunc.
 func HasAggFlag(expr ExprNode) bool {
 	return expr.GetFlag()&FlagHasAggregateFunc > 0
-}
-
-type preEvaluatedReseter struct {
-}
-
-func (r *preEvaluatedReseter) Enter(in Node) (Node, bool) {
-	return in, false
-}
-
-func (r *preEvaluatedReseter) Leave(in Node) (Node, bool) {
-	if expr, ok := in.(ExprNode); ok {
-		resetEvaluatedExpr(expr)
-	}
-	return in, true
 }
 
 // SetFlag sets flag for expression.
@@ -195,13 +153,4 @@ func (f *flagSetter) aggregateFunc(x *AggregateFuncExpr) {
 		flag |= val.GetFlag()
 	}
 	x.SetFlag(flag)
-}
-
-// MergeChildrenFlags sets flag to parent by children.
-func MergeChildrenFlags(parent ExprNode, children ...ExprNode) {
-	var flag uint64
-	for _, child := range children {
-		flag |= child.GetFlag()
-	}
-	parent.SetFlag(flag &^ FlagPreEvaluated)
 }

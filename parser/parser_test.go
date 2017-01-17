@@ -52,7 +52,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"localtime", "localtimestamp", "lock", "longblob", "longtext", "mediumblob", "maxvalue", "mediumint", "mediumtext",
 		"minute_microsecond", "minute_second", "mod", "not", "no_write_to_binlog", "null", "numeric",
 		"on", "option", "or", "order", "outer", "partition", "precision", "primary", "procedure", "range", "read", "real",
-		"references", "regexp", "repeat", "replace", "restrict", "right", "rlike",
+		"references", "regexp", "rename", "repeat", "replace", "restrict", "right", "rlike",
 		"schema", "schemas", "second_microsecond", "select", "set", "show", "smallint",
 		"starting", "table", "terminated", "then", "tinyblob", "tinyint", "tinytext", "to",
 		"trailing", "true", "union", "unique", "unlock", "unsigned",
@@ -78,7 +78,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 	// Testcase for unreserved keywords
 	unreservedKws := []string{
 		"auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
-		"date", "datediff", "datetime", "deallocate", "do", "end", "engine", "engines", "execute", "first", "full",
+		"date", "datediff", "datetime", "deallocate", "do", "from_days", "end", "engine", "engines", "execute", "first", "full",
 		"local", "names", "offset", "password", "prepare", "quick", "rollback", "session", "signed",
 		"start", "global", "tables", "text", "time", "timestamp", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substr", "substring", "mode", "any", "some", "user", "identified",
@@ -89,7 +89,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache", "action", "round",
 		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest", "least",
 		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events", "less", "than", "timediff",
-		"ln", "log", "log2", "log10",
+		"ln", "log", "log2", "log10", "timestampdiff",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -311,6 +311,11 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		// For default value
 		{"CREATE TABLE sbtest (id INTEGER UNSIGNED NOT NULL AUTO_INCREMENT, k integer UNSIGNED DEFAULT '0' NOT NULL, c char(120) DEFAULT '' NOT NULL, pad char(60) DEFAULT '' NOT NULL, PRIMARY KEY  (id) )", true},
 		{"create table test (create_date TIMESTAMP NOT NULL COMMENT '创建日期 create date' DEFAULT now());", true},
+		{"create table ts (t int, v timestamp(3) default CURRENT_TIMESTAMP(3));", true},
+
+		// For rename table statement
+		{"RENAME TABLE t TO t1", true},
+		{"RENAME TABLE d.t TO d1.t1", true},
 
 		// For truncate statement
 		{"TRUNCATE TABLE t1", true},
@@ -488,6 +493,7 @@ func (s *testParserSuite) TestExpression(c *C) {
 		{`select "\"a\"";`, true},
 		{`select """a""";`, true},
 		{`select _utf8"string";`, true},
+		{`select _binary"string";`, true},
 		// For comparison
 		{"select 1 <=> 0, 1 <=> null, 1 = null", true},
 	}
@@ -516,6 +522,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT LOG10(10);", true},
 		{"SELECT CONV(10+'10'+'10'+X'0a',10,10);", true},
 		{"SELECT CRC32('MySQL');", true},
+		{"SELECT SIGN(0);", true},
 
 		{"SELECT SUBSTR('Quadratically',5);", true},
 		{"SELECT SUBSTR('Quadratically',5, 3);", true},
@@ -586,6 +593,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"select sysdate(), sysdate(6)", true},
 		{"SELECT time('01:02:03');", true},
 		{"SELECT TIMEDIFF('2000:01:01 00:00:00', '2000:01:01 00:00:00.000001');", true},
+		{"SELECT TIMESTAMPDIFF(MONTH,'2003-02-01','2003-05-01');", true},
+		{"SELECT TIMESTAMPDIFF(YEAR,'2002-05-01','2001-01-01');", true},
+		{"SELECT TIMESTAMPDIFF(MINUTE,'2003-02-01','2003-05-01 12:05:55');", true},
 
 		// Select current_time
 		{"select current_time", true},
@@ -610,10 +620,12 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT DAYOFWEEK('2007-02-03');", true},
 		{"SELECT DAYOFYEAR('2007-02-03');", true},
 		{"SELECT DAYNAME('2007-02-03');", true},
+		{"SELECT FROM_DAYS(1423);", true},
 		{"SELECT WEEKDAY('2007-02-03');", true},
 
 		// For utc_date
 		{"SELECT UTC_DATE, UTC_DATE();", true},
+		{"SELECT UTC_DATE(), UTC_DATE()+0", true},
 
 		// for week, month, year
 		{"SELECT WEEK('2007-02-03');", true},
@@ -673,6 +685,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT CHAR(65);`, true},
 		{`SELECT CHAR_LENGTH('abc');`, true},
 		{`SELECT CHARACTER_LENGTH('abc');`, true},
+		{`SELECT FIELD('ej', 'Hej', 'ej', 'Heja', 'hej', 'foo');`, true},
 		{`SELECT FIND_IN_SET('foo', 'foo,bar')`, true},
 		{`SELECT FIND_IN_SET('foo')`, false},
 
@@ -709,9 +722,6 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 
 		// For strcmp
 		{`select strcmp('abc', 'def')`, true},
-
-		// For utc_date
-		{`select utc_date(), utc_date()+0`, true},
 
 		// For adddate
 		{`select adddate("2011-11-11 10:10:10.123456", interval 10 microsecond)`, true},
@@ -795,6 +805,30 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		// For misc functions
 		{`SELECT GET_LOCK('lock1',10);`, true},
 		{`SELECT RELEASE_LOCK('lock1');`, true},
+
+		// For aggregate functions
+		{`select avg(c1,c2) from t;`, false},
+		{`select avg(distinct c1) from t;`, true},
+		{`select avg(c2) from t;`, true},
+		{`select bit_xor(c1) from t;`, true},
+		{`select bit_xor(distinct c1) from t;`, false},
+		{`select max(c1,c2) from t;`, false},
+		{`select max(distinct c1) from t;`, true},
+		{`select max(c2) from t;`, true},
+		{`select min(c1,c2) from t;`, false},
+		{`select min(distinct c1) from t;`, true},
+		{`select min(c2) from t;`, true},
+		{`select sum(c1,c2) from t;`, false},
+		{`select sum(distinct c1) from t;`, true},
+		{`select sum(c2) from t;`, true},
+		{`select count(c1) from t;`, true},
+		{`select count(distinct *) from t;`, false},
+		{`select count(*) from t;`, true},
+		{`select count(distinct c1, c2) from t;`, true},
+		{`select count(c1, c2) from t;`, false},
+		{`select count(all c1) from t;`, true},
+		{`select group_concat(c2,c1) from t group by c1;`, true},
+		{`select group_concat(distinct c2,c1) from t group by c1;`, true},
 	}
 	s.RunTest(c, table)
 }

@@ -41,6 +41,7 @@ var (
 	_ functionClass = &roundFunctionClass{}
 	_ functionClass = &convFunctionClass{}
 	_ functionClass = &crc32FunctionClass{}
+	_ functionClass = &signFunctionClass{}
 	_ functionClass = &arithmeticFunctionClass{}
 )
 
@@ -55,6 +56,7 @@ var (
 	_ builtinFunc = &builtinRoundSig{}
 	_ builtinFunc = &builtinConvSig{}
 	_ builtinFunc = &builtinCRC32Sig{}
+	_ builtinFunc = &builtinSignSig{}
 	_ builtinFunc = &builtinArithmeticSig{}
 )
 
@@ -274,7 +276,12 @@ type randFunctionClass struct {
 }
 
 func (c *randFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinRandSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	if err := errors.Trace(c.verifyArgs(args)); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bt := &builtinRandSig{newBaseBuiltinFunc(args, ctx)}
+	bt.deterministic = false
+	return bt, nil
 }
 
 type builtinRandSig struct {
@@ -287,10 +294,6 @@ func (b *builtinRandSig) eval(row []types.Datum) (types.Datum, error) {
 		return types.Datum{}, errors.Trace(err)
 	}
 	return builtinRand(args, b.ctx)
-}
-
-func (b *builtinRandSig) isDeterministic() bool {
-	return true
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_rand
@@ -502,7 +505,7 @@ func (b *builtinCRC32Sig) eval(row []types.Datum) (types.Datum, error) {
 	return builtinCRC32(args, b.ctx)
 }
 
-//　See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_crc32
+// See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_crc32
 func builtinCRC32(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	if args[0].IsNull() {
 		return d, nil
@@ -513,6 +516,39 @@ func builtinCRC32(args []types.Datum, ctx context.Context) (d types.Datum, err e
 	}
 	r := crc32.ChecksumIEEE([]byte(x))
 	d.SetUint64(uint64(r))
+	return d, nil
+}
+
+type signFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *signFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinSignSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinSignSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinSignSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return builtinSign(args, b.ctx)
+}
+
+// See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_sign
+func builtinSign(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	if args[0].IsNull() {
+		return d, nil
+	}
+	cmp, err := args[0].CompareDatum(ctx.GetSessionVars().StmtCtx, types.NewIntDatum(0))
+	d.SetInt64(int64(cmp))
+	if err != nil {
+		return d, errors.Trace(err)
+	}
 	return d, nil
 }
 

@@ -61,6 +61,14 @@ func ColumnSubstitute(expr Expression, schema Schema, newExprs []Expression) Exp
 	return expr
 }
 
+func datumsToConstants(datums []types.Datum) []Expression {
+	constants := make([]Expression, 0, len(datums))
+	for _, d := range datums {
+		constants = append(constants, &Constant{Value: d})
+	}
+	return constants
+}
+
 // calculateSum adds v to sum.
 func calculateSum(sc *variable.StatementContext, sum, v types.Datum) (data types.Datum, err error) {
 	// for avg and sum calculation

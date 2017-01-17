@@ -126,12 +126,12 @@ func (e *PrepareExec) DoPrepare() {
 		return
 	}
 	if len(stmts) != 1 {
-		e.Err = ErrPrepareMulti
+		e.Err = errors.Trace(ErrPrepareMulti)
 		return
 	}
 	stmt := stmts[0]
 	if _, ok := stmt.(ast.DDLNode); ok {
-		e.Err = ErrPrepareDDL
+		e.Err = errors.Trace(ErrPrepareDDL)
 		return
 	}
 	var extractor paramMarkerExtractor
@@ -175,6 +175,7 @@ type ExecuteExec struct {
 	ID        uint32
 	StmtExec  Executor
 	Stmt      ast.StmtNode
+	Plan      plan.Plan
 }
 
 // Schema implements the Executor Schema interface.
@@ -204,12 +205,12 @@ func (e *ExecuteExec) Build() error {
 	}
 	v := vars.PreparedStmts[e.ID]
 	if v == nil {
-		return ErrStmtNotFound
+		return errors.Trace(ErrStmtNotFound)
 	}
 	prepared := v.(*Prepared)
 
 	if len(prepared.Params) != len(e.UsingVars) {
-		return ErrWrongParamCount
+		return errors.Trace(ErrWrongParamCount)
 	}
 
 	for i, usingVar := range e.UsingVars {
@@ -220,7 +221,6 @@ func (e *ExecuteExec) Build() error {
 		prepared.Params[i].SetDatum(val)
 	}
 
-	ast.ResetEvaluatedFlag(prepared.Stmt)
 	if prepared.SchemaVersion != e.IS.SchemaMetaVersion() {
 		// If the schema version has changed we need to prepare it again,
 		// if this time it failed, the real reason for the error is schema changed.
@@ -245,6 +245,7 @@ func (e *ExecuteExec) Build() error {
 	}
 	e.StmtExec = stmtExec
 	e.Stmt = prepared.Stmt
+	e.Plan = p
 	return nil
 }
 
@@ -265,7 +266,7 @@ func (e *DeallocateExec) Next() (*Row, error) {
 	vars := e.ctx.GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]
 	if !ok {
-		return nil, ErrStmtNotFound
+		return nil, errors.Trace(ErrStmtNotFound)
 	}
 	delete(vars.PreparedStmtNameToID, e.Name)
 	delete(vars.PreparedStmts, id)

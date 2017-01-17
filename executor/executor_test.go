@@ -530,6 +530,12 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("insert into t (c1, c2) values (2, 3)")
 	r = tk.MustQuery("select * from t where t.c1 = 1 union select * from t where t.id = 1")
 	r.Check(testkit.Rows("1 1 1", "2 1 2"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (f1 DATE)")
+	tk.MustExec("INSERT INTO t VALUES ('1978-11-26')")
+	r = tk.MustQuery("SELECT f1+0 FROM t UNION SELECT f1+0 FROM t")
+	r.Check(testkit.Rows("19781126"))
 }
 
 func (s *testSuite) TestIn(c *C) {
