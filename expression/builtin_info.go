@@ -49,7 +49,12 @@ type databaseFunctionClass struct {
 }
 
 func (c *databaseFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinDatabaseSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	if err := errors.Trace(c.verifyArgs(args)); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bt := &builtinDatabaseSig{newBaseBuiltinFunc(args, ctx)}
+	bt.deterministic = false
+	return bt, nil
 }
 
 type builtinDatabaseSig struct {
@@ -62,10 +67,6 @@ func (b *builtinDatabaseSig) eval(row []types.Datum) (types.Datum, error) {
 		return types.Datum{}, errors.Trace(err)
 	}
 	return builtinDatabase(args, b.ctx)
-}
-
-func (b *builtinDatabaseSig) isDeterministic() bool {
-	return false
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html
@@ -83,7 +84,12 @@ type foundRowsFunctionClass struct {
 }
 
 func (c *foundRowsFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinFoundRowsSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	if err := errors.Trace(c.verifyArgs(args)); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bt := &builtinFoundRowsSig{newBaseBuiltinFunc(args, ctx)}
+	bt.deterministic = false
+	return bt, nil
 }
 
 type builtinFoundRowsSig struct {
@@ -96,10 +102,6 @@ func (b *builtinFoundRowsSig) eval(row []types.Datum) (types.Datum, error) {
 		return types.Datum{}, errors.Trace(err)
 	}
 	return builtinFoundRows(args, b.ctx)
-}
-
-func (b *builtinFoundRowsSig) isDeterministic() bool {
-	return false
 }
 
 func builtinFoundRows(arg []types.Datum, ctx context.Context) (d types.Datum, err error) {
@@ -117,7 +119,12 @@ type currentUserFunctionClass struct {
 }
 
 func (c *currentUserFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinCurrentUserSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	if err := errors.Trace(c.verifyArgs(args)); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bt := &builtinCurrentUserSig{newBaseBuiltinFunc(args, ctx)}
+	bt.deterministic = false
+	return bt, nil
 }
 
 type builtinCurrentUserSig struct {
@@ -130,10 +137,6 @@ func (b *builtinCurrentUserSig) eval(row []types.Datum) (types.Datum, error) {
 		return types.Datum{}, errors.Trace(err)
 	}
 	return builtinCurrentUser(args, b.ctx)
-}
-
-func (b *builtinCurrentUserSig) isDeterministic() bool {
-	return false
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
@@ -153,7 +156,12 @@ type userFunctionClass struct {
 }
 
 func (c *userFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinUserSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	if err := errors.Trace(c.verifyArgs(args)); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bt := &builtinUserSig{newBaseBuiltinFunc(args, ctx)}
+	bt.deterministic = false
+	return bt, nil
 }
 
 type builtinUserSig struct {
@@ -166,10 +174,6 @@ func (b *builtinUserSig) eval(row []types.Datum) (types.Datum, error) {
 		return types.Datum{}, errors.Trace(err)
 	}
 	return builtinUser(args, b.ctx)
-}
-
-func (b *builtinUserSig) isDeterministic() bool {
-	return false
 }
 
 func builtinUser(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
@@ -187,7 +191,12 @@ type connectionIDFunctionClass struct {
 }
 
 func (c *connectionIDFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinConnectionIDSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	if err := errors.Trace(c.verifyArgs(args)); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bt := &builtinConnectionIDSig{newBaseBuiltinFunc(args, ctx)}
+	bt.deterministic = false
+	return bt, nil
 }
 
 type builtinConnectionIDSig struct {
@@ -200,10 +209,6 @@ func (b *builtinConnectionIDSig) eval(row []types.Datum) (types.Datum, error) {
 		return types.Datum{}, errors.Trace(err)
 	}
 	return builtinConnectionID(args, b.ctx)
-}
-
-func (b *builtinConnectionIDSig) isDeterministic() bool {
-	return false
 }
 
 func builtinConnectionID(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
@@ -221,7 +226,12 @@ type lastInsertIDFunctionClass struct {
 }
 
 func (c *lastInsertIDFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinLastInsertIDSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	if err := errors.Trace(c.verifyArgs(args)); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bt := &builtinLastInsertIDSig{newBaseBuiltinFunc(args, ctx)}
+	bt.deterministic = false
+	return bt, nil
 }
 
 type builtinLastInsertIDSig struct {
@@ -234,10 +244,6 @@ func (b *builtinLastInsertIDSig) eval(row []types.Datum) (types.Datum, error) {
 		return types.Datum{}, errors.Trace(err)
 	}
 	return builtinLastInsertID(args, b.ctx)
-}
-
-func (b *builtinLastInsertIDSig) isDeterministic() bool {
-	return false
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_last-insert-id
@@ -259,7 +265,12 @@ type versionFunctionClass struct {
 }
 
 func (c *versionFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinVersionSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	if err := errors.Trace(c.verifyArgs(args)); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bt := &builtinVersionSig{newBaseBuiltinFunc(args, ctx)}
+	bt.deterministic = false
+	return bt, nil
 }
 
 type builtinVersionSig struct {
@@ -272,10 +283,6 @@ func (b *builtinVersionSig) eval(row []types.Datum) (types.Datum, error) {
 		return types.Datum{}, errors.Trace(err)
 	}
 	return builtinVersion(args, b.ctx)
-}
-
-func (b *builtinVersionSig) isDeterministic() bool {
-	return false
 }
 
 func builtinVersion(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
