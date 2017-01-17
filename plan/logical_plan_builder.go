@@ -618,6 +618,8 @@ func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool
 				}
 			}
 		} else {
+			// We should ignore the err when resolving from schema. Because we could resolve successfully
+			// when considering select fields.
 			index, _ = a.resolveFromSchema(v, a.p.GetSchema())
 			if index == -1 {
 				index, a.err = resolveFromSelectFields(v, a.selectFields, false)
