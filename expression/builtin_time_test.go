@@ -714,17 +714,22 @@ func (s *testEvaluatorSuite) TestTimestamp(c *C) {
 		{[]types.Datum{types.NewStringDatum("2017-01-18 12:30:56")}, "2017-01-18 12:30:56"},
 		{[]types.Datum{types.NewIntDatum(170118)}, "2017-01-18 00:00:00"},
 		{[]types.Datum{types.NewFloat64Datum(20170118)}, "2017-01-18 00:00:00"},
-		{[]types.Datum{types.NewStringDatum("20170118123950.999")}, "2017-01-18 12:30:50.999"},
-		{[]types.Datum{types.NewFloat64Datum(20170118123950.999)}, "2017-01-18 12:30:50.999"},
+		{[]types.Datum{types.NewStringDatum("20170118123050.999")}, "2017-01-18 12:30:50.999"},
 
-		// the following test cases will cause time format error.
+		{[]types.Datum{types.NewStringDatum("2017-01-18"), types.NewStringDatum("12:30:59")}, "2017-01-18 12:30:59"},
+		{[]types.Datum{types.NewStringDatum("2017-01-18"), types.NewStringDatum("12:30:59")}, "2017-01-18 12:30:59"},
+		{[]types.Datum{types.NewStringDatum("2017-01-18 01:01:01"), types.NewStringDatum("12:30:50")}, "2017-01-18 13:31:51"},
+		{[]types.Datum{types.NewStringDatum("2017-01-18 01:01:01"), types.NewStringDatum("838:59:59")}, "2017-02-22 00:01:00"},
+
+		// TODO: the following test cases exists precision questions.
+		//{[]types.Datum{types.NewFloat64Datum(20170118123950.123)}, "2017-01-18 12:30:50.123"},
+		//{[]types.Datum{types.NewFloat64Datum(20170118123950.999)}, "2017-01-18 12:30:50.699"},
+		//{[]types.Datum{types.NewFloat32Datum(float32(20170118123950.999))}, "2017-01-18 12:30:50.699"},
+
+		// TODO: the following test cases will cause time format error.
 		//{[]types.Datum{types.NewFloat64Datum(20170118.999)}, "2017-01-18 00:00:00.000"},
 		//{[]types.Datum{types.NewStringDatum("11111111111")}, "2011-11-11 11:11:01"},
 
-		{[]types.Datum{types.NewStringDatum("2017-01-18"), types.NewStringDatum("12:30:59")}, "2017-01-18 12:30:59"},
-		{[]types.Datum{types.NewStringDatum("2017-01-18"), types.NewStringDatum("12:30:59")}, "2017-01-18 12:30:59"},
-		{[]types.Datum{types.NewStringDatum("2017-01-18 01:01:01"), types.NewStringDatum("12:30:50")}, "2017-01-18 13:32:00"},
-		{[]types.Datum{types.NewStringDatum("2017-01-18 01:01:01"), types.NewStringDatum("838:59:59")}, "2017-02-21 23:32:00"},
 	}
 	for _, test := range tests {
 		d, err := builtinTimestamp(test.t, s.ctx)
@@ -732,4 +737,9 @@ func (s *testEvaluatorSuite) TestTimestamp(c *C) {
 		result, _ := d.ToString()
 		c.Assert(result, Equals, test.expect)
 	}
+
+	nilDatum := types.NewDatum(nil)
+	d, err := builtinTimestamp([]types.Datum{nilDatum}, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(d.Kind(), Equals, types.KindNull)
 }

@@ -1588,6 +1588,9 @@ func (b *builtinTimestampSig) eval(row []types.Datum) (types.Datum, error) {
 
 // https://dev.mysql.com/doc/refman/5.5/en/date-and-time-functions.html#function_timestamp
 func builtinTimestamp(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	if args[0].IsNull() {
+		return
+	}
 	var arg0 types.Time
 	switch tp := args[0].Kind(); tp {
 	case types.KindInt64, types.KindUint64:
@@ -1606,6 +1609,8 @@ func builtinTimestamp(args []types.Datum, ctx context.Context) (d types.Datum, e
 		}
 	case types.KindMysqlTime:
 		arg0 = args[0].GetMysqlTime()
+	default:
+		return d, errors.Errorf("Unkonwn args type for timestamp %d", tp)
 	}
 	if len(args) == 1 {
 		d.SetMysqlTime(arg0)
