@@ -81,6 +81,10 @@ type hashJoinCtx struct {
 // Close implements the Executor Close interface.
 func (e *HashJoinExec) Close() error {
 	e.finished.Store(true)
+	chLen := len(e.resultRows)
+	for i := 0; i < chLen; i++ {
+		<-e.resultRows
+	}
 	<-e.closeCh
 	e.prepared = false
 	e.cursor = 0
