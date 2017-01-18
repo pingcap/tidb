@@ -157,6 +157,7 @@ var Funcs = map[string]Func{
 	ast.Rand:    {builtinRand, 0, 1},
 	ast.Round:   {builtinRound, 1, 2},
 	ast.Sign:    {builtinSign, 1, 1},
+	ast.Sqrt:    {builtinSqrt, 1, 1},
 	ast.Conv:    {builtinConv, 3, 3},
 	ast.CRC32:   {builtinCRC32, 1, 1},
 
