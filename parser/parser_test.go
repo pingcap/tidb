@@ -523,6 +523,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT CONV(10+'10'+'10'+X'0a',10,10);", true},
 		{"SELECT CRC32('MySQL');", true},
 		{"SELECT SIGN(0);", true},
+		{"SELECT SQRT(0);", true},
 
 		{"SELECT SUBSTR('Quadratically',5);", true},
 		{"SELECT SUBSTR('Quadratically',5, 3);", true},
