@@ -18,6 +18,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb"
 )
 
 type testGCWorkerSuite struct {
@@ -32,6 +33,8 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	s.store = newTestStoreWithBootstrap(c)
 	s.oracle = &mockOracle{}
 	s.store.oracle = s.oracle
+	err := tidb.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
 	gcWorker, err := NewGCWorker(s.store)
 	c.Assert(err, IsNil)
 	s.gcWorker = gcWorker
