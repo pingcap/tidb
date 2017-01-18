@@ -1566,6 +1566,10 @@ func builtinUnixTimestamp(args []types.Datum, ctx context.Context) (d types.Datu
 		if err != nil {
 			return d, errors.Trace(err)
 		}
+	case types.KindMysqlTime:
+		t = args[0].GetMysqlTime()
+	default:
+		return d, errors.Errorf("Unkonwn args type for unix_timestamp %d", args[0].Kind())
 	}
 
 	t1, err = t.Time.GoTime(getTimeZone(ctx))
