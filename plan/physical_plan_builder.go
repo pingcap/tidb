@@ -1048,6 +1048,45 @@ func (p *Distinct) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanIn
 	return info, nil
 }
 
+func (p *Analyze) prepareSimpleTableScan(cols []*model.ColumnInfo) *PhysicalTableScan {
+	ts := &PhysicalTableScan{
+		Table:               p.Table.TableInfo,
+		Columns:             cols,
+		TableAsName:         &p.Table.Name,
+		DBName:              &p.Table.DBInfo.Name,
+		physicalTableSource: physicalTableSource{client: p.ctx.GetClient()},
+	}
+	ts.tp = Tbl
+	ts.allocator = p.allocator
+	ts.SetSchema(p.GetSchema())
+	ts.initIDAndContext(p.ctx)
+	ts.readOnly = true
+	ts.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
+	return ts
+}
+
+func (p *Analyze) prepareSimpleIndexScan(idxOffset int, cols []*model.ColumnInfo) *PhysicalIndexScan {
+	tblInfo := p.Table.TableInfo
+	is := &PhysicalIndexScan{
+		Index:               tblInfo.Indices[idxOffset],
+		Table:               tblInfo,
+		Columns:             cols,
+		TableAsName:         &p.Table.Name,
+		OutOfOrder:          false,
+		DBName:              &p.Table.DBInfo.Name,
+		physicalTableSource: physicalTableSource{client: p.ctx.GetClient()},
+		DoubleRead:          false,
+	}
+	is.tp = Aly
+	is.allocator = p.allocator
+	is.initIDAndContext(p.ctx)
+	is.SetSchema(expression.TableInfo2Schema(tblInfo))
+	is.readOnly = true
+	rb := rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
+	is.Ranges = rb.buildIndexRanges(fullRange, types.NewFieldType(mysql.TypeNull))
+	return is
+}
+
 // convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
 func (p *Analyze) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	info, err := p.getPlanInfo(prop)
@@ -1069,24 +1108,22 @@ func (p *Analyze) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInf
 				}
 			}
 		}
-		is := &PhysicalIndexScan{
-			Index:               tblInfo.Indices[idx],
-			Table:               tblInfo,
-			Columns:             columns,
-			TableAsName:         &p.Table.Name,
-			OutOfOrder:          false,
-			DBName:              &p.Table.DBInfo.Name,
-			physicalTableSource: physicalTableSource{client: p.ctx.GetClient()},
-			DoubleRead:          false,
-		}
-		is.tp = Aly
-		is.allocator = p.allocator
-		is.initIDAndContext(p.ctx)
-		is.SetSchema(expression.TableInfo2Schema(tblInfo))
-		is.readOnly = true
-		rb := rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
-		is.Ranges = rb.buildIndexRanges(fullRange, types.NewFieldType(mysql.TypeNull))
+		is := p.prepareSimpleIndexScan(idx, columns)
 		childInfos = append(childInfos, is.matchProperty(prop, &physicalPlanInfo{count: 0}))
+	}
+	// TODO: It's inefficient to do table scan two times for massive data.
+	if p.PkOffset != -1 {
+		col := p.Table.TableInfo.Columns[p.PkOffset]
+		ts := p.prepareSimpleTableScan([]*model.ColumnInfo{col})
+		childInfos = append(childInfos, ts.matchProperty(prop, &physicalPlanInfo{count: 0}))
+	}
+	if p.ColOffsets != nil {
+		cols := make([]*model.ColumnInfo, len(p.ColOffsets))
+		for _, offset := range p.ColOffsets {
+			cols = append(cols, p.Table.TableInfo.Columns[offset])
+		}
+		ts := p.prepareSimpleTableScan(cols)
+		childInfos = append(childInfos, ts.matchProperty(prop, &physicalPlanInfo{count: 0}))
 	}
 	for _, child := range p.GetChildren() {
 		childInfo, err := child.(LogicalPlan).convert2PhysicalPlan(&requiredProperty{})

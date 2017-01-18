@@ -15,7 +15,6 @@ package plan
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -24,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
@@ -374,21 +372,10 @@ func getColumnOffsets(tn *ast.TableName) (indexOffsets []int, columnOffsets []in
 	return
 }
 
-func (b *planBuilder) prepareSimpleSelect(colNames, tableName string, ordered bool) Plan {
-	sql := "select " + colNames + " from " + tableName
-	if ordered {
-		sql = sql + " order by " + colNames
-	}
-	parser := parser.New()
-	stmt, _ := parser.ParseOneStmt(sql, "", "")
-	Preprocess(stmt, b.is, b.ctx)
-	Validate(stmt, false)
-	return b.build(stmt)
-}
-
 func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) LogicalPlan {
 	p := &Analyze{
 		baseLogicalPlan: newBaseLogicalPlan(Aly, b.allocator),
+		PkOffset:        -1,
 	}
 	for _, tbl := range as.TableNames {
 		idxOffsets, colOffsets, pkOffset := getColumnOffsets(tbl)
@@ -398,25 +385,6 @@ func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) LogicalPlan {
 			IdxOffsets:      idxOffsets,
 			ColOffsets:      colOffsets,
 			PkOffset:        pkOffset,
-		}
-		var tableName string
-		if tbl.Schema.L == "" {
-			tableName = tbl.Name.L
-		} else {
-			tableName = tbl.Schema.L + "." + tbl.Name.L
-		}
-		if pkOffset != -1 {
-			colName := tbl.TableInfo.Columns[pkOffset].Name.L
-			sel := b.prepareSimpleSelect(colName, tableName, true)
-			addChild(result, sel)
-		}
-		if colOffsets != nil {
-			var colNames []string
-			for _, offset := range colOffsets {
-				colNames = append(colNames, tbl.TableInfo.Columns[offset].Name.L)
-			}
-			sel := b.prepareSimpleSelect(strings.Join(colNames, ","), tableName, false)
-			addChild(result, sel)
 		}
 		result.self = result
 		result.initIDAndContext(b.ctx)
