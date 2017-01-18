@@ -67,7 +67,7 @@ func (s *testDDLSuite) TestDropTableError(c *C) {
 	defer d.close()
 
 	dbInfo := testSchemaInfo(c, d, "test")
-	testCreateSchema(c, testNewContext(c, d), d, dbInfo)
+	testCreateSchema(c, testNewContext(d), d, dbInfo)
 
 	job := &model.Job{
 		SchemaID: dbInfo.ID,

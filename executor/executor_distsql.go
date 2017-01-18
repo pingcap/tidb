@@ -425,7 +425,8 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 				// Finished.
 				duration := time.Since(e.execStart)
 				if duration > minLogDuration {
-					log.Infof("[TIME_INDEX_SINGLE] %s", e.slowQueryInfo(duration))
+					connID := e.ctx.GetSessionVars().ConnectionID
+					log.Infof("[%d] [TIME_INDEX_SINGLE] %s", connID, e.slowQueryInfo(duration))
 				}
 				return nil, nil
 			}
@@ -493,7 +494,8 @@ func (e *XSelectIndexExec) nextForDoubleRead() (*Row, error) {
 			if !ok {
 				duration := time.Since(e.execStart)
 				if duration > minLogDuration {
-					log.Infof("[TIME_INDEX_DOUBLE] %s", e.slowQueryInfo(duration))
+					connID := e.ctx.GetSessionVars().ConnectionID
+					log.Infof("[%d] [TIME_INDEX_DOUBLE] %s", connID, e.slowQueryInfo(duration))
 				}
 				return nil, e.tasksErr
 			}
@@ -865,7 +867,8 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 				// Finished.
 				duration := time.Since(e.execStart)
 				if duration > minLogDuration {
-					log.Infof("[%d] [TIME_TABLE_SCAN] %v", e.slowQueryInfo(duration))
+					connID := e.ctx.GetSessionVars().ConnectionID
+					log.Infof("[%d] [TIME_TABLE_SCAN] %s", connID, e.slowQueryInfo(duration))
 				}
 				return nil, nil
 			}
@@ -891,8 +894,8 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 }
 
 func (e *XSelectTableExec) slowQueryInfo(duration time.Duration) string {
-	return fmt.Sprintf("time: %v, table: %s(%d), partials: %d, concurrency: %d",
-		duration, e.tableInfo.Name, e.tableInfo.ID, e.partialCount, e.scanConcurrency)
+	return fmt.Sprintf("time: %v, table: %s(%d), partials: %d, concurrency: %d, start_ts: %d",
+		duration, e.tableInfo.Name, e.tableInfo.ID, e.partialCount, e.scanConcurrency, e.startTS)
 }
 
 // timeZoneOffset returns the local time zone offset in seconds.

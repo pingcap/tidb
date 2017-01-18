@@ -57,7 +57,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	d := newDDL(s.store, nil, nil, testLease)
 	// create table t (c1 int, c2 int);
 	tblInfo := testTableInfo(c, d, "t", 2)
-	ctx := testNewContext(c, d)
+	ctx := testNewContext(d)
 	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
@@ -129,8 +129,9 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	testCheckJobDone(c, d, job, true)
 	mu.Lock()
-	s.testColumnDrop(c, ctx, d, publicTable)
+	tb := publicTable
 	mu.Unlock()
+	s.testColumnDrop(c, ctx, d, tb)
 	s.testAddColumnNoDefault(c, ctx, d, tblInfo)
 	d.close()
 }

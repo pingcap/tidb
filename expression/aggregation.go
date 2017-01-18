@@ -67,7 +67,7 @@ type AggregationFunction interface {
 	IsDistinct() bool
 
 	// SetContext sets the aggregate evaluation context.
-	SetContext(ctx map[string](*ast.AggEvaluateContext))
+	SetContext(ctx map[string](*aggEvaluateContext))
 
 	// Equal checks whether two aggregation functions are equal.
 	Equal(agg AggregationFunction, ctx context.Context) bool
@@ -82,6 +82,15 @@ type AggregationFunction interface {
 	// The input stands for the schema of Aggregation's child. If the function can't produce a default value, the second
 	// return value will be false.
 	CalculateDefaultValue(schema Schema, ctx context.Context) (types.Datum, bool)
+}
+
+// aggEvaluateContext is used to store intermediate result when calculating aggregate functions.
+type aggEvaluateContext struct {
+	DistinctChecker *distinct.Checker
+	Count           int64
+	Value           types.Datum
+	Buffer          *bytes.Buffer // Buffer is used for group_concat.
+	GotFirstRow     bool          // It will check if the agg has met the first row key.
 }
 
 // NewAggFunction creates a new AggregationFunction.
@@ -105,7 +114,7 @@ func NewAggFunction(funcType string, funcArgs []Expression, distinct bool) Aggre
 	return nil
 }
 
-type aggCtxMapper map[string]*ast.AggEvaluateContext
+type aggCtxMapper map[string]*aggEvaluateContext
 
 // AggFunctionMode stands for the aggregation function's mode.
 type AggFunctionMode int
@@ -123,7 +132,7 @@ type aggFunction struct {
 	Args         []Expression
 	Distinct     bool
 	resultMapper aggCtxMapper
-	streamCtx    *ast.AggEvaluateContext
+	streamCtx    *aggEvaluateContext
 }
 
 // Equal implements AggregationFunction interface.
@@ -213,10 +222,10 @@ func (af *aggFunction) SetArgs(args []Expression) {
 	af.Args = args
 }
 
-func (af *aggFunction) getContext(groupKey []byte) *ast.AggEvaluateContext {
+func (af *aggFunction) getContext(groupKey []byte) *aggEvaluateContext {
 	ctx, ok := af.resultMapper[string(groupKey)]
 	if !ok {
-		ctx = &ast.AggEvaluateContext{}
+		ctx = &aggEvaluateContext{}
 		if af.Distinct {
 			ctx.DistinctChecker = distinct.CreateDistinctChecker()
 		}
@@ -225,9 +234,9 @@ func (af *aggFunction) getContext(groupKey []byte) *ast.AggEvaluateContext {
 	return ctx
 }
 
-func (af *aggFunction) getStreamedContext() *ast.AggEvaluateContext {
+func (af *aggFunction) getStreamedContext() *aggEvaluateContext {
 	if af.streamCtx == nil {
-		af.streamCtx = &ast.AggEvaluateContext{}
+		af.streamCtx = &aggEvaluateContext{}
 		if af.Distinct {
 			af.streamCtx.DistinctChecker = distinct.CreateDistinctChecker()
 		}
@@ -236,7 +245,7 @@ func (af *aggFunction) getStreamedContext() *ast.AggEvaluateContext {
 }
 
 // SetContext implements AggregationFunction interface.
-func (af *aggFunction) SetContext(ctx map[string](*ast.AggEvaluateContext)) {
+func (af *aggFunction) SetContext(ctx map[string](*aggEvaluateContext)) {
 	af.resultMapper = ctx
 }
 
@@ -554,7 +563,7 @@ func (af *avgFunction) StreamUpdate(row []types.Datum, ctx context.Context) erro
 	return af.streamUpdateSum(row, ctx)
 }
 
-func (af *avgFunction) calculateResult(ctx *ast.AggEvaluateContext) (d types.Datum) {
+func (af *avgFunction) calculateResult(ctx *aggEvaluateContext) (d types.Datum) {
 	switch ctx.Value.Kind() {
 	case types.KindFloat64:
 		t := ctx.Value.GetFloat64() / float64(ctx.Count)

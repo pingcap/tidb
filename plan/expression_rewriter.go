@@ -804,10 +804,9 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 }
 
 func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
-	var err error
 	column, err := er.schema.FindColumn(v)
 	if err != nil {
-		er.err = errors.Trace(err)
+		er.err = ErrAmbiguous.GenByArgs(v.Name)
 		return
 	}
 	if column != nil {

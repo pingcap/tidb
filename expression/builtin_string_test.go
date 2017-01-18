@@ -325,7 +325,8 @@ func (s *testEvaluatorSuite) TestSubstring(c *C) {
 			datums = append(datums, types.NewDatum(v.slen))
 		}
 		args := datumsToConstants(datums)
-		f, _ := fc.getFunction(args, s.ctx)
+		f, err := fc.getFunction(args, s.ctx)
+		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(r.Kind(), Equals, types.KindString)
@@ -352,8 +353,9 @@ func (s *testEvaluatorSuite) TestSubstring(c *C) {
 			datums = append(datums, types.NewDatum(v.len))
 		}
 		args := datumsToConstants(datums)
-		f, _ := fc.getFunction(args, s.ctx)
-		_, err := f.eval(nil)
+		f, err := fc.getFunction(args, s.ctx)
+		c.Assert(err, IsNil)
+		_, err = f.eval(nil)
 		c.Assert(err, NotNil)
 	}
 }
@@ -370,7 +372,8 @@ func (s *testEvaluatorSuite) TestConvert(c *C) {
 	}
 	for _, v := range tbl {
 		fc := funcs[ast.Convert]
-		f, _ := fc.getFunction(datumsToConstants(types.MakeDatums(v.str, v.cs)), s.ctx)
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(v.str, v.cs)), s.ctx)
+		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(r.Kind(), Equals, types.KindString)
@@ -387,8 +390,9 @@ func (s *testEvaluatorSuite) TestConvert(c *C) {
 	}
 	for _, v := range errTbl {
 		fc := funcs[ast.Convert]
-		f, _ := fc.getFunction(datumsToConstants(types.MakeDatums(v.str, v.cs)), s.ctx)
-		_, err := f.eval(nil)
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(v.str, v.cs)), s.ctx)
+		c.Assert(err, IsNil)
+		_, err = f.eval(nil)
 		c.Assert(err, NotNil)
 	}
 }
@@ -423,7 +427,8 @@ func (s *testEvaluatorSuite) TestSubstringIndex(c *C) {
 	}
 	for _, v := range tbl {
 		fc := funcs[ast.SubstringIndex]
-		f, _ := fc.getFunction(datumsToConstants(types.MakeDatums(v.str, v.delim, v.count)), s.ctx)
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(v.str, v.delim, v.count)), s.ctx)
+		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(r.Kind(), Equals, types.KindString)
@@ -444,7 +449,8 @@ func (s *testEvaluatorSuite) TestSubstringIndex(c *C) {
 	}
 	for _, v := range errTbl {
 		fc := funcs[ast.SubstringIndex]
-		f, _ := fc.getFunction(datumsToConstants(types.MakeDatums(v.str, v.delim, v.count)), s.ctx)
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(v.str, v.delim, v.count)), s.ctx)
+		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
 		c.Assert(err, NotNil)
 		c.Assert(r.Kind(), Equals, types.KindNull)
@@ -510,7 +516,8 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 	}
 	for _, v := range tbl {
 		fc := funcs[ast.Locate]
-		f, _ := fc.getFunction(datumsToConstants(types.MakeDatums(v.subStr, v.Str)), s.ctx)
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(v.subStr, v.Str)), s.ctx)
+		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(r.Kind(), Equals, types.KindInt64)
@@ -531,7 +538,8 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 	}
 	for _, v := range tbl2 {
 		fc := funcs[ast.Locate]
-		f, _ := fc.getFunction(datumsToConstants(types.MakeDatums(v.subStr, v.Str, v.pos)), s.ctx)
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(v.subStr, v.Str, v.pos)), s.ctx)
+		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(r.Kind(), Equals, types.KindInt64)
@@ -550,8 +558,10 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 	}
 	for _, v := range errTbl {
 		fc := funcs[ast.Locate]
-		f, _ := fc.getFunction(datumsToConstants(types.MakeDatums(v.subStr, v.Str)), s.ctx)
-		r, _ := f.eval(nil)
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(v.subStr, v.Str)), s.ctx)
+		c.Assert(err, IsNil)
+		r, err := f.eval(nil)
+		c.Assert(err, IsNil)
 		c.Assert(r.Kind(), Equals, types.KindNull)
 	}
 
@@ -568,8 +578,10 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 	}
 	for _, v := range errTbl2 {
 		fc := funcs[ast.Locate]
-		f, _ := fc.getFunction(datumsToConstants(types.MakeDatums(v.subStr, v.Str)), s.ctx)
-		r, _ := f.eval(nil)
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(v.subStr, v.Str)), s.ctx)
+		c.Assert(err, IsNil)
+		r, err := f.eval(nil)
+		c.Assert(err, IsNil)
 		c.Assert(r.Kind(), Equals, types.KindNull)
 	}
 }
@@ -592,7 +604,8 @@ func (s *testEvaluatorSuite) TestTrim(c *C) {
 	}
 	for _, v := range tbl {
 		fc := funcs[ast.Trim]
-		f, _ := fc.getFunction(datumsToConstants(types.MakeDatums(v.str, v.remstr, v.dir)), s.ctx)
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(v.str, v.remstr, v.dir)), s.ctx)
+		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
@@ -614,7 +627,8 @@ func (s *testEvaluatorSuite) TestTrim(c *C) {
 		{nil, nil, ast.RTrim},
 	} {
 		fc := funcs[v.fn]
-		f, _ := fc.getFunction(datumsToConstants(types.MakeDatums(v.str)), s.ctx)
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(v.str)), s.ctx)
+		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
@@ -742,7 +756,8 @@ func (s *testEvaluatorSuite) TestChar(c *C) {
 	for _, v := range tbl {
 		for _, char := range []interface{}{"utf8", nil} {
 			fc := funcs[ast.CharFunc]
-			f, _ := fc.getFunction(datumsToConstants(types.MakeDatums(v.str, v.iNum, v.fNum, char)), s.ctx)
+			f, err := fc.getFunction(datumsToConstants(types.MakeDatums(v.str, v.iNum, v.fNum, char)), s.ctx)
+			c.Assert(err, IsNil)
 			r, err := f.eval(nil)
 			c.Assert(err, IsNil)
 			c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
@@ -757,7 +772,8 @@ func (s *testEvaluatorSuite) TestChar(c *C) {
 	}{"65", 66, nil, "AB"}
 
 	fc := funcs[ast.CharFunc]
-	f, _ := fc.getFunction(datumsToConstants(types.MakeDatums(v.str, v.iNum, nil)), s.ctx)
+	f, err := fc.getFunction(datumsToConstants(types.MakeDatums(v.str, v.iNum, nil)), s.ctx)
+	c.Assert(err, IsNil)
 	r, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
@@ -777,7 +793,8 @@ func (s *testEvaluatorSuite) TestCharLength(c *C) {
 	}
 	for _, v := range tbl {
 		fc := funcs[ast.CharLength]
-		f, _ := fc.getFunction(datumsToConstants(types.MakeDatums(v.input)), s.ctx)
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(v.input)), s.ctx)
+		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
@@ -805,6 +822,31 @@ func (s *testEvaluatorSuite) TestFindInSet(c *C) {
 		{nil, "bar", nil},
 	} {
 		r, err := builtinFindInSet(types.MakeDatums(t.str, t.strlst), s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
+	}
+}
+
+func (s *testEvaluatorSuite) TestField(c *C) {
+	defer testleak.AfterTest(c)()
+
+	tbl := []struct {
+		argLst []interface{}
+		ret    interface{}
+	}{
+		{[]interface{}{"ej", "Hej", "ej", "Heja", "hej", "foo"}, int64(2)},
+		{[]interface{}{"fo", "Hej", "ej", "Heja", "hej", "foo"}, int64(0)},
+		{[]interface{}{"ej", "Hej", "ej", "Heja", "ej", "hej", "foo"}, int64(2)},
+		{[]interface{}{1, 2, 3, 11, 1}, int64(4)},
+		{[]interface{}{nil, 2, 3, 11, 1}, int64(0)},
+		{[]interface{}{1.1, 2.1, 3.1, 11.1, 1.1}, int64(4)},
+		{[]interface{}{1.1, "2.1", "3.1", "11.1", "1.1"}, int64(4)},
+		{[]interface{}{"1.1a", 2.1, 3.1, 11.1, 1.1}, int64(4)},
+		{[]interface{}{1.10, 0, 11e-1}, int64(2)},
+		{[]interface{}{"abc", 0, 1, 11.1, 1.1}, int64(1)},
+	}
+	for _, t := range tbl {
+		r, err := builtinField(types.MakeDatums(t.argLst...), s.ctx)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
 	}

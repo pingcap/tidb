@@ -95,7 +95,7 @@ func (d *ddl) createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnIn
 
 func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
-	tblInfo, err := d.getTableInfo(t, job)
+	tblInfo, err := getTableInfo(t, job, schemaID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -169,13 +169,10 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 			err = d.runReorgJob(func() error {
 				return d.addTableColumn(tbl, columnInfo, reorgInfo, job)
 			})
-			if terror.ErrorEqual(err, errWaitReorgTimeout) {
+			if err != nil {
 				// If the timeout happens, we should return.
 				// Then check for the owner and re-wait job to finish.
-				return nil
-			}
-			if err != nil {
-				return errors.Trace(err)
+				return errors.Trace(filterError(err, errWaitReorgTimeout))
 			}
 		}
 
@@ -199,7 +196,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 
 func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
-	tblInfo, err := d.getTableInfo(t, job)
+	tblInfo, err := getTableInfo(t, job, schemaID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -357,11 +354,11 @@ func (d *ddl) backfillColumnInTxn(t table.Table, colMeta *columnMeta, handles []
 		log.Debug("[ddl] backfill column...", handle)
 		rowKey := t.RecordKey(handle)
 		rowVal, err := txn.Get(rowKey)
-		if terror.ErrorEqual(err, kv.ErrNotExist) {
-			// If row doesn't exist, skip it.
-			continue
-		}
 		if err != nil {
+			if terror.ErrorEqual(err, kv.ErrNotExist) {
+				// If row doesn't exist, skip it.
+				continue
+			}
 			return 0, errors.Trace(err)
 		}
 
@@ -432,7 +429,7 @@ func (d *ddl) backfillColumn(ctx context.Context, t table.Table, colMeta *column
 }
 
 func (d *ddl) onModifyColumn(t *meta.Meta, job *model.Job) error {
-	tblInfo, err := d.getTableInfo(t, job)
+	tblInfo, err := getTableInfo(t, job, job.SchemaID)
 	if err != nil {
 		return errors.Trace(err)
 	}

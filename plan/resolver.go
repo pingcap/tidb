@@ -201,6 +201,9 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 		nr.currentContext().inOnCondition = true
 	case *ast.OrderByClause:
 		nr.currentContext().inOrderBy = true
+	case *ast.RenameTableStmt:
+		nr.pushContext()
+		nr.currentContext().inCreateOrDropTable = true
 	case *ast.SelectStmt:
 		nr.pushContext()
 	case *ast.SetStmt:
@@ -286,6 +289,8 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 		nr.currentContext().inByItemExpression = false
 	case *ast.PositionExpr:
 		nr.handlePosition(v)
+	case *ast.RenameTableStmt:
+		nr.popContext()
 	case *ast.SelectStmt:
 		ctx := nr.currentContext()
 		v.SetResultFields(ctx.fieldList)
@@ -625,10 +630,6 @@ func (nr *nameResolver) resolveColumnInTableSources(cn *ast.ColumnNameExpr, tabl
 				matchAsName := rf.ColumnAsName.L != "" && rf.ColumnAsName.L == columnNameL
 				matchColumnName := rf.ColumnAsName.L == "" && rf.Column.Name.L == columnNameL
 				if matchAsName || matchColumnName {
-					if matchedResultField != nil {
-						nr.Err = errors.Errorf("column %s is ambiguous.", cn.Name.Name.O)
-						return true
-					}
 					matchedResultField = rf
 				}
 			}
@@ -672,12 +673,6 @@ func (nr *nameResolver) resolveColumnInResultFields(ctx *resolverContext, cn *as
 			}
 			if matched == nil {
 				matched = rf
-			} else {
-				sameColumn := matched.TableName == rf.TableName && matched.Column.Name.L == rf.Column.Name.L
-				if !sameColumn {
-					nr.Err = errors.Errorf("column %s is ambiguous.", cn.Name.Name.O)
-					return true
-				}
 			}
 		}
 	}

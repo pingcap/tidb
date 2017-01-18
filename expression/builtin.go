@@ -144,6 +144,7 @@ var funcs = map[string]functionClass{
 	ast.Power:   &powFunctionClass{baseFunctionClass{ast.Pow, 2, 2}},
 	ast.Rand:    &randFunctionClass{baseFunctionClass{ast.Rand, 0, 1}},
 	ast.Round:   &roundFunctionClass{baseFunctionClass{ast.Round, 1, 2}},
+	ast.Sign:    &signFunctionClass{baseFunctionClass{ast.Sign, 1, 1}},
 	ast.Conv:    &convFunctionClass{baseFunctionClass{ast.Conv, 3, 3}},
 	ast.CRC32:   &crc32FunctionClass{baseFunctionClass{ast.CRC32, 1, 1}},
 
@@ -166,6 +167,7 @@ var funcs = map[string]functionClass{
 	ast.DayOfMonth:       &dayOfMonthFunctionClass{baseFunctionClass{ast.DayOfMonth, 1, 1}},
 	ast.DayOfWeek:        &dayOfWeekFunctionClass{baseFunctionClass{ast.DayOfWeek, 1, 1}},
 	ast.DayOfYear:        &dayOfYearFunctionClass{baseFunctionClass{ast.DayOfYear, 1, 1}},
+	ast.FromDays:         &fromDaysFunctionClass{baseFunctionClass{ast.FromDays, 1, 1}},
 	ast.Extract:          &extractFunctionClass{baseFunctionClass{ast.Extract, 2, 2}},
 	ast.Hour:             &hourFunctionClass{baseFunctionClass{ast.Hour, 1, 1}},
 	ast.MicroSecond:      &microSecondFunctionClass{baseFunctionClass{ast.MicroSecond, 1, 1}},
@@ -184,6 +186,7 @@ var funcs = map[string]functionClass{
 	ast.YearWeek:         &yearWeekFunctionClass{baseFunctionClass{ast.YearWeek, 1, 2}},
 	ast.FromUnixTime:     &fromUnixTimeFunctionClass{baseFunctionClass{ast.FromUnixTime, 1, 2}},
 	ast.TimeDiff:         &timeDiffFunctionClass{baseFunctionClass{ast.TimeDiff, 2, 2}},
+	ast.TimestampDiff:    &timestampDiffFunctionClass{baseFunctionClass{ast.TimestampDiff, 3, 3}},
 	ast.UnixTimestamp:    &unixTimestampFunctionClass{baseFunctionClass{ast.UnixTimestamp, 0, 1}},
 
 	// string functions
@@ -191,6 +194,7 @@ var funcs = map[string]functionClass{
 	ast.Concat:         &concatFunctionClass{baseFunctionClass{ast.Concat, 1, -1}},
 	ast.ConcatWS:       &concatWSFunctionClass{baseFunctionClass{ast.ConcatWS, 2, -1}},
 	ast.Convert:        &convertFunctionClass{baseFunctionClass{ast.Convert, 2, 2}},
+	ast.Field:          &fieldFunctionClass{baseFunctionClass{ast.Field, 2, -1}},
 	ast.Lcase:          &lowerFunctionClass{baseFunctionClass{ast.Lcase, 1, 1}},
 	ast.Left:           &leftFunctionClass{baseFunctionClass{ast.Left, 2, 2}},
 	ast.Length:         &lengthFunctionClass{baseFunctionClass{ast.Length, 1, 1}},

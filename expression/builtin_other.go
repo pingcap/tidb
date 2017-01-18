@@ -52,7 +52,12 @@ type sleepFunctionClass struct {
 }
 
 func (c *sleepFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinSleepSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	if err := errors.Trace(c.verifyArgs(args)); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bt := &builtinSleepSig{newBaseBuiltinFunc(args, ctx)}
+	bt.deterministic = false
+	return bt, nil
 }
 
 type builtinSleepSig struct {
@@ -65,10 +70,6 @@ func (b *builtinSleepSig) eval(row []types.Datum) (types.Datum, error) {
 		return types.Datum{}, errors.Trace(err)
 	}
 	return builtinSleep(args, b.ctx)
-}
-
-func (b *builtinSleepSig) isDeterministic() bool {
-	return false
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_sleep
