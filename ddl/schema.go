@@ -81,7 +81,7 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) error {
 	}
 	if dbInfo == nil {
 		job.State = model.JobCancelled
-		return infoschema.ErrDatabaseDropExists.Gen("Can't drop database; database doesn't exist")
+		return infoschema.ErrDatabaseDropExists.GenByArgs("")
 	}
 
 	ver, err := updateSchemaVersion(t, job)
