@@ -1444,12 +1444,12 @@ func (s *testPlanSuite) TestValidate(c *C) {
 
 func checkUniqueKeys(p Plan, c *C, ans map[string][][]string, sql string) {
 	keyList, ok := ans[p.GetID()]
-	c.Assert(ok, IsTrue, Commentf("for %s, %v not found", p.GetID()))
-	c.Assert(len(p.GetSchema().Keys), Equals, len(keyList), Commentf("for %s, %v, the number of key doesn't match", sql, p.GetID()))
+	c.Assert(ok, IsTrue, Commentf("for %s, %v not found", sql, p.GetID()))
+	c.Assert(len(keyList), Equals, len(p.GetSchema().Keys), Commentf("for %s, %v, the number of key doesn't match", sql, p.GetID()))
 	for i, key := range keyList {
-		c.Assert(len(p.GetSchema().Keys[i]), Equals, len(key), Commentf("for %s, %v %v, the number of column doesn't match", sql, p.GetID(), key))
+		c.Assert(len(key), Equals, len(p.GetSchema().Keys[i]), Commentf("for %s, %v %v, the number of column doesn't match", sql, p.GetID(), key))
 		for j, colName := range key {
-			c.Assert(p.GetSchema().Keys[i][j].String(), Equals, colName, Commentf("for %s, %v %v, column dosen't match", sql, p.GetID(), key))
+			c.Assert(colName, Equals, p.GetSchema().Keys[i][j].String(), Commentf("for %s, %v %v, column dosen't match", sql, p.GetID(), key))
 		}
 	}
 	for _, child := range p.GetChildren() {
@@ -1596,7 +1596,7 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 			ctx:       builder.ctx,
 			allocator: builder.allocator,
 		}
-		err = ap.eliminateAggregation(p)
+		p, err = ap.eliminateAggregation(p)
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, ca.best, comment)
 	}

@@ -29,7 +29,8 @@ type aggPruner struct {
 // eliminateAggregation will eliminate aggregation grouped by unique key.
 // e.g. select min(b) from t group by a. If a is a unique key, then this sql is equal to `select b from t group by a`.
 // For count(expr), sum(expr), avg(expr), we may need to rewrite the expr. Details is shown below.
-func (ap *aggPruner) eliminateAggregation(p LogicalPlan) error {
+func (ap *aggPruner) eliminateAggregation(p LogicalPlan) (LogicalPlan, error) {
+	newChildren := make([]Plan, 0, len(p.GetChildren()))
 	for _, child := range p.GetChildren() {
 		if agg, ok := child.(*Aggregation); ok {
 			schemaByGroupby := expression.NewSchema(agg.groupByCols)
@@ -41,6 +42,11 @@ func (ap *aggPruner) eliminateAggregation(p LogicalPlan) error {
 				}
 			}
 			if !coveredByUniqueKey {
+				newChild, err := ap.eliminateAggregation(agg)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				newChildren = append(newChildren, newChild)
 				continue
 			}
 			// GroupByCols has unique key. So this aggregation can be removed.
@@ -53,22 +59,28 @@ func (ap *aggPruner) eliminateAggregation(p LogicalPlan) error {
 			for _, fun := range agg.AggFuncs {
 				expr, err := ap.rewriteExpr(fun.GetArgs()[0].Clone(), fun.GetName())
 				if err != nil {
-					return errors.Trace(err)
+					return nil, errors.Trace(err)
 				}
 				proj.Exprs = append(proj.Exprs, expr)
 			}
 			proj.SetSchema(agg.schema.Clone())
-			InsertPlan(p, agg, proj)
-			RemovePlan(agg)
+			newChild, err := ap.eliminateAggregation(agg.GetChildren()[0].(LogicalPlan))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			proj.SetChildren(newChild)
+			newChild.SetParents(proj)
+			newChildren = append(newChildren, proj)
+		} else {
+			newChild, err := ap.eliminateAggregation(child.(LogicalPlan))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			newChildren = append(newChildren, newChild)
 		}
 	}
-	for _, child := range p.GetChildren() {
-		err := ap.eliminateAggregation(child.(LogicalPlan))
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
+	p.SetChildren(newChildren...)
+	return p, nil
 }
 
 // rewriteExpr will rewrite the aggregate function to expression doesn't contain aggregate function.
