@@ -370,7 +370,7 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 func (do *Domain) LoadPrivilegeLoop(ctx context.Context, c chan<- error) {
 	do.privHandle = &privileges.Handle{}
 	err := do.privHandle.Update(ctx)
-	c <- err
+	c <- errors.Trace(err)
 	if err != nil {
 		return
 	}
@@ -389,6 +389,7 @@ func (do *Domain) LoadPrivilegeLoop(ctx context.Context, c chan<- error) {
 	}
 }
 
+// Privilege returns the MySQLPrivilege.
 func (do *Domain) Privilege() *privileges.MySQLPrivilege {
 	if do.privHandle == nil {
 		return nil

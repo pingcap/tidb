@@ -263,6 +263,9 @@ func (p *MySQLPrivilege) decodeColumnsPrivTableRow(row *ast.Row, fs []*ast.Resul
 
 func decodeSetToPrivilege(s types.Set) (mysql.PrivilegeType, error) {
 	var ret mysql.PrivilegeType
+	if s.Name == "" {
+		return ret, nil
+	}
 	for _, str := range strings.Split(s.Name, ",") {
 		priv, ok := mysql.SetStr2Priv[str]
 		if !ok {
@@ -304,6 +307,7 @@ func patternMatch(pattern, str string) bool {
 	return len(pattern) == len(str)
 }
 
+// ConnectionVerification verifies the connection have access to TiDB server.
 func (p *MySQLPrivilege) ConnectionVerification(user, host string) bool {
 	for _, record := range p.User {
 		if record.match(user, host) {
@@ -313,6 +317,7 @@ func (p *MySQLPrivilege) ConnectionVerification(user, host string) bool {
 	return false
 }
 
+// RequestVerification checks whether ther userhave sufficient privileges to do the operation.
 func (p *MySQLPrivilege) RequestVerification(user, host, db, table, column string, priv mysql.PrivilegeType) bool {
 	for _, record := range p.User {
 		if record.match(user, host) && record.Privileges&priv > 0 {
