@@ -292,3 +292,26 @@ func (s *testEvaluatorSuite) TestSign(c *C) {
 		c.Assert(v, testutil.DatumEquals, types.NewDatum(t.ret))
 	}
 }
+
+func (s *testEvaluatorSuite) TestSqrt(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Arg interface{}
+		Ret interface{}
+	}{
+		{nil, nil},
+		{int64(1), float64(1)},
+		{float64(4), float64(2)},
+		{"4", float64(2)},
+		{"9", float64(3)},
+		{"-16", nil},
+	}
+
+	Dtbl := tblToDtbl(tbl)
+
+	for _, t := range Dtbl {
+		v, err := builtinSqrt(t["Arg"], s.ctx)
+		c.Assert(err, IsNil)
+		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("arg:%v", t["Arg"]))
+	}
+}

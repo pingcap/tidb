@@ -832,6 +832,16 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 	c.Assert(d.GetInt64()-time.Now().Unix(), GreaterEqual, int64(-1))
 	c.Assert(d.GetInt64()-time.Now().Unix(), LessEqual, int64(1))
 
+	// Test case for https://github.com/pingcap/tidb/issues/2496
+	// select unix_timestamp(now());
+	n, err := builtinNow(nil, s.ctx)
+	c.Assert(err, IsNil)
+	args := []types.Datum{n}
+	d, err = builtinUnixTimestamp(args, s.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(d.GetInt64()-time.Now().Unix(), GreaterEqual, int64(-1))
+	c.Assert(d.GetInt64()-time.Now().Unix(), LessEqual, int64(1))
+
 	// Set the time_zone variable, because UnixTimestamp() result depends on it.
 	s.ctx.GetSessionVars().TimeZone = time.UTC
 	tests := []struct {
