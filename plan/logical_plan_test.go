@@ -546,6 +546,10 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			plan: "Apply{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)->Selection->Projection->MaxOneRow}->Projection",
 		},
 		{
+			sql:  "select count(c) ,(select count(s.b) from t s where s.a = t.a) from t",
+			plan: "Apply{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)->Selection->Aggr(count(s.b))->Projection->MaxOneRow}->Projection",
+		},
+		{
 			// This will be resolved as in sub query.
 			sql:  "select * from t where 10 in (((select b from t s where s.a = t.a)))",
 			plan: "Apply{DataScan(t)->DataScan(s)->Selection->Projection}->Selection->Projection",
