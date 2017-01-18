@@ -15,6 +15,7 @@ package expression
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
@@ -37,7 +38,10 @@ func (s *testEvaluatorSuite) TestAbs(c *C) {
 	Dtbl := tblToDtbl(tbl)
 
 	for _, t := range Dtbl {
-		v, err := builtinAbs(t["Arg"], s.ctx)
+		fc := funcs[ast.Abs]
+		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
@@ -60,7 +64,10 @@ func (s *testEvaluatorSuite) TestCeil(c *C) {
 	Dtbl := tblToDtbl(tbl)
 
 	for _, t := range Dtbl {
-		v, err := builtinCeil(t["Arg"], s.ctx)
+		fc := funcs[ast.Ceil]
+		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("arg:%v", t["Arg"]))
 	}
@@ -82,7 +89,10 @@ func (s *testEvaluatorSuite) TestLog(c *C) {
 	Dtbl := tblToDtbl(tbl)
 
 	for _, t := range Dtbl {
-		v, err := builtinLog(t["Arg"], s.ctx)
+		fc := funcs[ast.Log]
+		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("arg:%v", t["Arg"]))
 	}
@@ -97,7 +107,10 @@ func (s *testEvaluatorSuite) TestLog(c *C) {
 	nullDtbl := tblToDtbl(nullTbl)
 
 	for _, t := range nullDtbl {
-		v, err := builtinLog(t["Arg"], s.ctx)
+		fc := funcs[ast.Log]
+		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v.Kind(), Equals, types.KindNull)
 	}
@@ -105,7 +118,10 @@ func (s *testEvaluatorSuite) TestLog(c *C) {
 
 func (s *testEvaluatorSuite) TestRand(c *C) {
 	defer testleak.AfterTest(c)()
-	v, err := builtinRand(make([]types.Datum, 0), s.ctx)
+	fc := funcs[ast.Rand]
+	f, err := fc.getFunction(nil, s.ctx)
+	c.Assert(err, IsNil)
+	v, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetFloat64(), Less, float64(1))
 	c.Assert(v.GetFloat64(), GreaterEqual, float64(0))
@@ -126,7 +142,10 @@ func (s *testEvaluatorSuite) TestPow(c *C) {
 	Dtbl := tblToDtbl(tbl)
 
 	for _, t := range Dtbl {
-		v, err := builtinPow(t["Arg"], s.ctx)
+		fc := funcs[ast.Pow]
+		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
@@ -142,7 +161,10 @@ func (s *testEvaluatorSuite) TestPow(c *C) {
 
 	errDtbl := tblToDtbl(errTbl)
 	for _, t := range errDtbl {
-		_, err := builtinPow(t["Arg"], s.ctx)
+		fc := funcs[ast.Pow]
+		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+		c.Assert(err, IsNil)
+		_, err = f.eval(nil)
 		c.Assert(err, NotNil)
 	}
 }
@@ -166,7 +188,10 @@ func (s *testEvaluatorSuite) TestRound(c *C) {
 	Dtbl := tblToDtbl(tbl)
 
 	for _, t := range Dtbl {
-		v, err := builtinRound(t["Arg"], s.ctx)
+		fc := funcs[ast.Round]
+		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
@@ -186,7 +211,10 @@ func (s *testEvaluatorSuite) TestCRC32(c *C) {
 	Dtbl := tblToDtbl(tbl)
 
 	for _, t := range Dtbl {
-		v, err := builtinCRC32(t["Arg"], s.ctx)
+		fc := funcs[ast.CRC32]
+		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
@@ -212,7 +240,10 @@ func (s *testEvaluatorSuite) TestConv(c *C) {
 	Dtbl := tblToDtbl(tbl)
 
 	for _, t := range Dtbl {
-		v, err := builtinConv(t["Arg"], s.ctx)
+		fc := funcs[ast.Conv]
+		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
@@ -253,7 +284,10 @@ func (s *testEvaluatorSuite) TestSign(c *C) {
 		{"a", 0, NotNil},
 		{uint64(9223372036854775808), 1, IsNil},
 	} {
-		v, err := builtinSign(types.MakeDatums(t.num), s.ctx)
+		fc := funcs[ast.Sign]
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.num)), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
 		c.Assert(err, t.err)
 		c.Assert(v, testutil.DatumEquals, types.NewDatum(t.ret))
 	}
