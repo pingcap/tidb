@@ -82,7 +82,7 @@ func (t backoffType) createFn() func() int {
 	case boTiKVRPC:
 		return NewBackoffFn(100, 2000, EqualJitter)
 	case boTxnLock:
-		return NewBackoffFn(300, 3000, EqualJitter)
+		return NewBackoffFn(200, 3000, EqualJitter)
 	case boPDRPC:
 		return NewBackoffFn(500, 3000, EqualJitter)
 	case boRegionMiss:
