@@ -606,10 +606,19 @@ const queryLogMaxLen = 2048
 // As the execution time of this function represents the performance of TiDB, we do time log and metrics here.
 // There is a special query `load data` that does not return result, which is handled differently.
 func (cc *clientConn) handleQuery(sql string) (err error) {
-	startTS := time.Now()
+	startTime := time.Now()
 	defer func() {
+		costTime := time.Since(startTime)
+		if len(sql) > queryLogMaxLen {
+			sql = sql[:queryLogMaxLen] + fmt.Sprintf("(len:%d)", len(sql))
+		}
+		if costTime < 300*time.Millisecond {
+			log.Debugf("[%d][TIME_QUERY] %v %s", cc.connectionID, costTime, sql)
+		} else {
+			log.Warnf("[%d][TIME_QUERY] %v %s", cc.connectionID, costTime, sql)
+		}
 		// Add metrics
-		queryHistogram.Observe(time.Since(startTS).Seconds())
+		queryHistogram.Observe(costTime.Seconds())
 		label := querySucc
 		if err != nil {
 			label = queryFailed
@@ -637,15 +646,6 @@ func (cc *clientConn) handleQuery(sql string) (err error) {
 			}
 		}
 		err = cc.writeOK()
-	}
-	costTime := time.Since(startTS)
-	if len(sql) > queryLogMaxLen {
-		sql = sql[:queryLogMaxLen] + fmt.Sprintf("(len:%d)", len(sql))
-	}
-	if costTime < time.Second {
-		log.Debugf("[%d][TIME_QUERY] %v\n%s", cc.connectionID, costTime, sql)
-	} else {
-		log.Warnf("[%d][TIME_QUERY] %v\n%s", cc.connectionID, costTime, sql)
 	}
 	return errors.Trace(err)
 }
