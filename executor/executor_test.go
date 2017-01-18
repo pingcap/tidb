@@ -1348,9 +1348,10 @@ func (s *testSuite) TestHistoryRead(c *C) {
 }
 
 func (s *testSuite) TestJoinLeak(c *C) {
+	savedConcurrency := plan.JoinConcurrency
 	plan.JoinConcurrency = 1
 	defer func() {
-		plan.JoinConcurrency = 5
+		plan.JoinConcurrency = savedConcurrency
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
