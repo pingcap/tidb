@@ -1348,3 +1348,28 @@ func (s *testSuite) TestHistoryRead(c *C) {
 	tk.MustExec("set @@tidb_snapshot = ''")
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2 <nil>", "4 <nil>", "8 8", "9 9"))
 }
+
+func (s *testSuite) TestJoinLeak(c *C) {
+	savedConcurrency := plan.JoinConcurrency
+	plan.JoinConcurrency = 1
+	defer func() {
+		plan.JoinConcurrency = savedConcurrency
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (d int)")
+	tk.MustExec("begin")
+	for i := 0; i < 1002; i++ {
+		tk.MustExec("insert t values (1)")
+	}
+	tk.MustExec("commit")
+	rs, err := tk.Se.Execute("select * from t t1 left join (select 1) t2 on 1")
+	c.Assert(err, IsNil)
+	result := rs[0]
+	result.Next()
+	time.Sleep(100 * time.Millisecond)
+	result.Close()
+}

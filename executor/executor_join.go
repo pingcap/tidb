@@ -82,6 +82,8 @@ type hashJoinCtx struct {
 func (e *HashJoinExec) Close() error {
 	e.finished.Store(true)
 	if e.prepared {
+		for range e.resultRows {
+		}
 		<-e.closeCh
 	}
 	e.prepared = false

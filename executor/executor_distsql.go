@@ -894,8 +894,8 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 }
 
 func (e *XSelectTableExec) slowQueryInfo(duration time.Duration) string {
-	return fmt.Sprintf("time: %v, table: %s(%d), partials: %d, concurrency: %d, start_ts: %d",
-		duration, e.tableInfo.Name, e.tableInfo.ID, e.partialCount, e.scanConcurrency, e.startTS)
+	return fmt.Sprintf("time: %v, table: %s(%d), partials: %d, concurrency: %d, start_ts: %d, rows: %d",
+		duration, e.tableInfo.Name, e.tableInfo.ID, e.partialCount, e.scanConcurrency, e.startTS, e.returnedRows)
 }
 
 // timeZoneOffset returns the local time zone offset in seconds.
