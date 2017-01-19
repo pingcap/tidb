@@ -64,7 +64,7 @@ func (ap *aggPruner) eliminateAggregation(p LogicalPlan) (LogicalPlan, error) {
 		}
 	}
 	newChildren := make([]Plan, 0, len(p.GetChildren()))
-	for _, child := range retPlan.GetChildren() {
+	for _, child := range p.GetChildren() {
 		newChild, err := ap.eliminateAggregation(child.(LogicalPlan))
 		if err != nil {
 			return nil, errors.Trace(err)
