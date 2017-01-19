@@ -325,14 +325,21 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 	return proj, oldLen
 }
 
-func (b *planBuilder) buildDistinct(src LogicalPlan) LogicalPlan {
-	d := &Distinct{baseLogicalPlan: newBaseLogicalPlan(Dis, b.allocator)}
-	d.self = d
-	d.initIDAndContext(b.ctx)
-	addChild(d, src)
-	d.SetSchema(src.GetSchema())
-	d.SetCorrelated()
-	return d
+func (b *planBuilder) buildDistinct(child LogicalPlan) LogicalPlan {
+	agg := &Aggregation{
+		baseLogicalPlan: newBaseLogicalPlan(Agg, b.allocator),
+		AggFuncs:        make([]expression.AggregationFunction, 0, child.GetSchema().Len()),
+		GroupByItems:    expression.Column2Exprs(child.GetSchema().Clone().Columns)}
+	agg.collectGroupByColumns()
+	for _, col := range child.GetSchema().Columns {
+		agg.AggFuncs = append(agg.AggFuncs, expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{col}, false))
+	}
+	agg.self = agg
+	agg.initIDAndContext(b.ctx)
+	addChild(agg, child)
+	agg.SetSchema(child.GetSchema())
+	agg.SetCorrelated()
+	return agg
 }
 
 func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
