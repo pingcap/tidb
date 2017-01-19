@@ -1472,6 +1472,26 @@ func parseDayInterval(sc *variable.StatementContext, value types.Datum) (int64, 
 	return value.ToInt64(sc)
 }
 
+type timestampDiffFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *timestampDiffFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinTimestampDiffSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinTimestampDiffSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinTimestampDiffSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return builtinTimestampDiff(args, b.ctx)
+}
+
 // https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timestampdiff
 func builtinTimestampDiff(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
@@ -1546,6 +1566,10 @@ func builtinUnixTimestamp(args []types.Datum, ctx context.Context) (d types.Datu
 		if err != nil {
 			return d, errors.Trace(err)
 		}
+	case types.KindMysqlTime:
+		t = args[0].GetMysqlTime()
+	default:
+		return d, errors.Errorf("Unkonwn args type for unix_timestamp %d", args[0].Kind())
 	}
 
 	t1, err = t.Time.GoTime(getTimeZone(ctx))

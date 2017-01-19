@@ -197,7 +197,7 @@ func (p *Join) PruneColumns(parentUsedCols []*expression.Column) {
 	composedSchema := expression.MergeSchema(lChild.GetSchema(), rChild.GetSchema())
 	if p.JoinType == SemiJoin {
 		p.schema = lChild.GetSchema().Clone()
-	} else if p.JoinType == SemiJoinWithAux {
+	} else if p.JoinType == LeftOuterSemiJoin {
 		joinCol := p.schema.Columns[len(p.schema.Columns)-1]
 		p.schema = lChild.GetSchema().Clone()
 		p.schema.Append(joinCol)
@@ -207,40 +207,11 @@ func (p *Join) PruneColumns(parentUsedCols []*expression.Column) {
 }
 
 // PruneColumns implements LogicalPlan interface.
-// e.g. For query select b.c, (select count(*) from a where a.id = b.id) from b. Its plan is Projection->Apply->TableScan.
-// The schema of b is (a,b,c,id). When Pruning Apply, the parentUsedCols is (c, extra), outerSchema is (a,b,c,id).
-// Then after pruning inner plan, the childOuterUsedCols schema in apply becomes (id).
-// Now there're two columns in parentUsedCols, c is the column from Apply's child ---- TableScan, but extra isn't.
-// So only c in parentUsedCols and id in outerSchema can be passed to TableScan.
-func (p *Apply) PruneColumns(parentUsedCols []*expression.Column) {
-	child := p.GetChildByIndex(0).(LogicalPlan)
-	innerPlan := p.GetChildByIndex(1).(LogicalPlan)
-	var usedCols []*expression.Column
-	if p.Checker != nil {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(p.Checker.Condition)...)
+func (p *Apply) PruneColumns(parentUseCols []*expression.Column) {
+	for _, col := range p.corCols {
+		parentUseCols = append(parentUseCols, &col.Column)
 	}
-	for _, col := range parentUsedCols {
-		if child.GetSchema().GetColumnIndex(col) != -1 {
-			usedCols = append(usedCols, col)
-		}
-	}
-	innerPlan.PruneColumns(innerPlan.GetSchema().Columns)
-	corCols := innerPlan.extractCorrelatedCols()
-	for _, corCol := range corCols {
-		idx := child.GetSchema().GetColumnIndex(&corCol.Column)
-		if idx != -1 {
-			usedCols = append(usedCols, &corCol.Column)
-		}
-	}
-	child.PruneColumns(usedCols)
-	combinedSchema := expression.MergeSchema(child.GetSchema(), innerPlan.GetSchema())
-	if p.Checker == nil {
-		p.schema = combinedSchema
-	} else {
-		existsCol := p.schema.Columns[len(p.schema.Columns)-1]
-		p.schema = child.GetSchema().Clone()
-		p.schema.Columns = append(p.schema.Columns, existsCol)
-	}
+	p.Join.PruneColumns(parentUseCols)
 }
 
 // PruneColumns implements LogicalPlan interface.

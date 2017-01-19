@@ -800,9 +800,11 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 
 	testCheckJobDone(c, d, job, true)
 	mu.Lock()
-	c.Assert(errors.ErrorStack(hookErr), Equals, "")
-	c.Assert(checkOK, IsTrue)
+	hErr := hookErr
+	ok := checkOK
 	mu.Unlock()
+	c.Assert(errors.ErrorStack(hErr), Equals, "")
+	c.Assert(ok, IsTrue)
 
 	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
@@ -873,9 +875,11 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	job := testDropColumn(c, ctx, s.d, s.dbInfo, tblInfo, colName, false)
 	testCheckJobDone(c, d, job, false)
 	mu.Lock()
-	c.Assert(hookErr, IsNil)
-	c.Assert(checkOK, IsTrue)
+	hErr := hookErr
+	ok := checkOK
 	mu.Unlock()
+	c.Assert(hErr, IsNil)
+	c.Assert(ok, IsTrue)
 
 	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
