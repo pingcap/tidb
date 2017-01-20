@@ -1028,29 +1028,6 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	return info, nil
 }
 
-// convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
-// TODO: support streaming distinct.
-func (p *Distinct) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
-	info, err := p.getPlanInfo(prop)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if info != nil {
-		return info, nil
-	}
-	child := p.GetChildByIndex(0).(LogicalPlan)
-	limit := prop.limit
-	info, err = child.convert2PhysicalPlan(removeLimit(prop))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	info = addPlanToResponse(p, info)
-	info.count = uint64(float64(info.count) * distinctFactor)
-	info = enforceProperty(limitProperty(limit), info)
-	p.storePlanInfo(prop, info)
-	return info, nil
-}
-
 // physicalInitialize will set value of some attributes after convert2PhysicalPlan process.
 // Currently, only attribute "correlated" is considered.
 func physicalInitialize(p PhysicalPlan) {
