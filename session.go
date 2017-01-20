@@ -229,7 +229,7 @@ func (s *session) doCommitWithRetry() error {
 	}
 	s.cleanRetryInfo()
 	if err != nil {
-		log.Warnf("[%d] finished txn:%s, %v", s.sessionVars.ConnectionID, s.txn, err)
+		log.Warnf("[%d] finished txn:%v, %v", s.sessionVars.ConnectionID, s.txn, err)
 		return errors.Trace(err)
 	}
 	return nil

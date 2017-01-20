@@ -275,7 +275,7 @@ func checkTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName
 		if tbl.Name.L == tableName {
 			// This table already exists and can't be created, we should cancel this job now.
 			job.State = model.JobCancelled
-			return errors.Trace(infoschema.ErrTableExists.GenByArgs(tbl.Name))
+			return infoschema.ErrTableExists.GenByArgs(tbl.Name)
 		}
 	}
 

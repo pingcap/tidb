@@ -559,7 +559,7 @@ type sqrtFunctionClass struct {
 }
 
 func (c *sqrtFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinSignSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	return &builtinSqrtSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinSqrtSig struct {
