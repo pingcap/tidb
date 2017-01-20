@@ -41,6 +41,13 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 			gbyItems:  "[]",
 		},
 		{
+			sql:       "select distinct a,b from t",
+			best:      "Table(t)->HashAgg",
+			aggFuns:   "[firstrow(test.t.a) firstrow(test.t.b)]",
+			aggFields: "[blob int int]",
+			gbyItems:  "[test.t.a test.t.b]",
+		},
+		{
 			sql:       "select sum(b) from t group by c",
 			best:      "Table(t)->HashAgg->Projection",
 			aggFuns:   "[sum(test.t.b)]",
@@ -76,6 +83,8 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
 		lp.PruneColumns(lp.GetSchema().Columns)
+		solver := &aggPushDownSolver{builder.allocator, builder.ctx}
+		solver.aggPushDown(lp)
 		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
@@ -483,7 +492,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from (select t.a from t union select t.d from t where t.c = 1 union select t.c from t) k order by a limit 1",
-			best: "UnionAll{Table(t)->Index(t.c_d_e)[[1,1]]->Projection->Table(t)}->Distinct->Sort + Limit(1) + Offset(0)",
+			best: "UnionAll{Table(t)->HashAgg->Index(t.c_d_e)[[1,1]]->HashAgg->Table(t)->HashAgg}->HashAgg->Sort + Limit(1) + Offset(0)",
 		},
 		{
 			sql:  "select * from (select t.a from t union all select t.d from t where t.c = 1 union all select t.c from t) k order by a limit 1",
@@ -491,7 +500,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from (select t.a from t union select t.d from t union select t.c from t) k order by a limit 1",
-			best: "UnionAll{Table(t)->Table(t)->Table(t)}->Distinct->Sort + Limit(1) + Offset(0)",
+			best: "UnionAll{Table(t)->HashAgg->Table(t)->HashAgg->Table(t)->HashAgg}->HashAgg->Sort + Limit(1) + Offset(0)",
 		},
 	}
 	for _, ca := range cases {

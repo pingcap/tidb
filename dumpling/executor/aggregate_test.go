@@ -80,6 +80,8 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("insert t values (4, 3)")
 	result := tk.MustQuery("select count(*) from t group by d")
 	result.Check(testkit.Rows("3", "2", "2"))
+	result = tk.MustQuery("select distinct 99 from t group by d having d > 0")
+	result.Check(testkit.Rows("99"))
 	result = tk.MustQuery("select count(*) from t having 1 = 0")
 	result.Check(testkit.Rows())
 	result = tk.MustQuery("select c,d from t group by d")
