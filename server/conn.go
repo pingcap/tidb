@@ -406,9 +406,10 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 		label = strconv.Itoa(int(cmd))
 	}
 	if err != nil {
-		label += "Error"
+		queryCounter.WithLabelValues(label, "Error").Inc()
+	} else {
+		queryCounter.WithLabelValues(label).Inc()
 	}
-	queryCounter.WithLabelValues(label).Inc()
 	queryHistogram.Observe(time.Since(startTime).Seconds())
 }
 
