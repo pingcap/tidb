@@ -92,6 +92,16 @@ func DecodeRecordKey(key kv.Key) (tableID int64, handle int64, err error) {
 	return
 }
 
+// DecodeTableID decodes the table ID of the key, if the key is not table key, returns 0.
+func DecodeTableID(key kv.Key) int64 {
+	if !key.HasPrefix(tablePrefix) {
+		return 0
+	}
+	key = key[len(tablePrefix):]
+	_, tableID, _ := codec.DecodeInt(key)
+	return tableID
+}
+
 // DecodeRowKey decodes the key and gets the handle.
 func DecodeRowKey(key kv.Key) (int64, error) {
 	_, handle, err := DecodeRecordKey(key)
