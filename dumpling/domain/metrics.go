@@ -21,7 +21,7 @@ var (
 	loadSchemaCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
-			Subsystem: "server",
+			Subsystem: "domain",
 			Name:      "load_schema_total",
 			Help:      "Counter of load schema",
 		}, []string{"type"})
@@ -29,7 +29,7 @@ var (
 	loadSchemaDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
-			Subsystem: "server",
+			Subsystem: "domain",
 			Name:      "load_schema_duration",
 			Help:      "Bucketed histogram of processing time (s) in load schema.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 15),
