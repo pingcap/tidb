@@ -630,10 +630,6 @@ func (nr *nameResolver) resolveColumnInTableSources(cn *ast.ColumnNameExpr, tabl
 				matchAsName := rf.ColumnAsName.L != "" && rf.ColumnAsName.L == columnNameL
 				matchColumnName := rf.ColumnAsName.L == "" && rf.Column.Name.L == columnNameL
 				if matchAsName || matchColumnName {
-					if matchedResultField != nil {
-						nr.Err = errors.Errorf("column %s is ambiguous.", cn.Name.Name.O)
-						return true
-					}
 					matchedResultField = rf
 				}
 			}
@@ -677,12 +673,6 @@ func (nr *nameResolver) resolveColumnInResultFields(ctx *resolverContext, cn *as
 			}
 			if matched == nil {
 				matched = rf
-			} else {
-				sameColumn := matched.TableName == rf.TableName && matched.Column.Name.L == rf.Column.Name.L
-				if !sameColumn {
-					nr.Err = errors.Errorf("column %s is ambiguous.", cn.Name.Name.O)
-					return true
-				}
 			}
 		}
 	}

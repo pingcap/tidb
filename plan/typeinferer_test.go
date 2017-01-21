@@ -94,6 +94,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"LOG(3, 10)", mysql.TypeDouble, charset.CharsetBin},
 		{"LOG2(3)", mysql.TypeDouble, charset.CharsetBin},
 		{"LOG10(3)", mysql.TypeDouble, charset.CharsetBin},
+		{"SQRT(3)", mysql.TypeDouble, charset.CharsetBin},
 		{"rand()", mysql.TypeDouble, charset.CharsetBin},
 		{"curdate()", mysql.TypeDate, charset.CharsetBin},
 		{"current_date()", mysql.TypeDate, charset.CharsetBin},

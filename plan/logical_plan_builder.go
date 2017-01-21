@@ -325,14 +325,21 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 	return proj, oldLen
 }
 
-func (b *planBuilder) buildDistinct(src LogicalPlan) LogicalPlan {
-	d := &Distinct{baseLogicalPlan: newBaseLogicalPlan(Dis, b.allocator)}
-	d.self = d
-	d.initIDAndContext(b.ctx)
-	addChild(d, src)
-	d.SetSchema(src.GetSchema())
-	d.SetCorrelated()
-	return d
+func (b *planBuilder) buildDistinct(child LogicalPlan, length int) LogicalPlan {
+	agg := &Aggregation{
+		baseLogicalPlan: newBaseLogicalPlan(Agg, b.allocator),
+		AggFuncs:        make([]expression.AggregationFunction, 0, child.GetSchema().Len()),
+		GroupByItems:    expression.Column2Exprs(child.GetSchema().Clone().Columns[:length])}
+	agg.collectGroupByColumns()
+	for _, col := range child.GetSchema().Columns {
+		agg.AggFuncs = append(agg.AggFuncs, expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{col}, false))
+	}
+	agg.self = agg
+	agg.initIDAndContext(b.ctx)
+	addChild(agg, child)
+	agg.SetSchema(child.GetSchema().Clone())
+	agg.SetCorrelated()
+	return agg
 }
 
 func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
@@ -381,7 +388,7 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 	var p LogicalPlan
 	p = u
 	if union.Distinct {
-		p = b.buildDistinct(u)
+		p = b.buildDistinct(u, u.GetSchema().Len())
 	}
 	if union.OrderBy != nil {
 		p = b.buildSort(p, union.OrderBy.Items, nil)
@@ -514,7 +521,7 @@ func resolveFromSelectFields(v *ast.ColumnNameExpr, fields []*ast.SelectField, i
 				index = i
 			} else if !colMatch(matchedExpr.(*ast.ColumnNameExpr).Name, curCol.Name) &&
 				!colMatch(curCol.Name, matchedExpr.(*ast.ColumnNameExpr).Name) {
-				return -1, errors.Errorf("Column '%s' in field list is ambiguous", curCol.Name.Name.L)
+				return -1, ErrAmbiguous.GenByArgs(curCol.Name.Name.L)
 			}
 		}
 	}
@@ -618,10 +625,9 @@ func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool
 				}
 			}
 		} else {
-			index, a.err = a.resolveFromSchema(v, a.p.GetSchema())
-			if a.err != nil {
-				return node, false
-			}
+			// We should ignore the err when resolving from schema. Because we could resolve successfully
+			// when considering select fields.
+			index, _ = a.resolveFromSchema(v, a.p.GetSchema())
 			if index == -1 {
 				index, a.err = resolveFromSelectFields(v, a.selectFields, false)
 			}
@@ -868,7 +874,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		}
 	}
 	if sel.Distinct {
-		p = b.buildDistinct(p)
+		p = b.buildDistinct(p, oldLen)
 		if b.err != nil {
 			return nil
 		}

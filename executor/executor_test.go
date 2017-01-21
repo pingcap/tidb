@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/testkit"
@@ -530,6 +531,12 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("insert into t (c1, c2) values (2, 3)")
 	r = tk.MustQuery("select * from t where t.c1 = 1 union select * from t where t.id = 1")
 	r.Check(testkit.Rows("1 1 1", "2 1 2"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (f1 DATE)")
+	tk.MustExec("INSERT INTO t VALUES ('1978-11-26')")
+	r = tk.MustQuery("SELECT f1+0 FROM t UNION SELECT f1+0 FROM t")
+	r.Check(testkit.Rows("19781126"))
 }
 
 func (s *testSuite) TestIn(c *C) {
@@ -1338,4 +1345,29 @@ func (s *testSuite) TestHistoryRead(c *C) {
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2", "4"))
 	tk.MustExec("set @@tidb_snapshot = ''")
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2 <nil>", "4 <nil>", "8 8", "9 9"))
+}
+
+func (s *testSuite) TestJoinLeak(c *C) {
+	savedConcurrency := plan.JoinConcurrency
+	plan.JoinConcurrency = 1
+	defer func() {
+		plan.JoinConcurrency = savedConcurrency
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (d int)")
+	tk.MustExec("begin")
+	for i := 0; i < 1002; i++ {
+		tk.MustExec("insert t values (1)")
+	}
+	tk.MustExec("commit")
+	rs, err := tk.Se.Execute("select * from t t1 left join (select 1) t2 on 1")
+	c.Assert(err, IsNil)
+	result := rs[0]
+	result.Next()
+	time.Sleep(100 * time.Millisecond)
+	result.Close()
 }
