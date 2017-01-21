@@ -123,7 +123,7 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 	const logSize = 4 * 1024 * 1024 // 4MB
 	if len(keys) > logEntryCount || size > logSize {
 		tableID := tablecodec.DecodeTableID(keys[0])
-		log.Infof("[BIG_TXN] tableID:%d size:%d, keys:%d, puts:%d, dels:%d, locks:%d, startTS:%d",
+		log.Infof("[BIG_TXN] table id:%d size:%d, keys:%d, puts:%d, dels:%d, locks:%d, startTS:%d",
 			tableID, size, len(keys), putCnt, delCnt, lockCnt, txn.startTS)
 	}
 
