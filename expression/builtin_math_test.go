@@ -310,7 +310,10 @@ func (s *testEvaluatorSuite) TestSqrt(c *C) {
 	Dtbl := tblToDtbl(tbl)
 
 	for _, t := range Dtbl {
-		v, err := builtinSqrt(t["Arg"], s.ctx)
+		fc := funcs[ast.Sqrt]
+		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("arg:%v", t["Arg"]))
 	}
