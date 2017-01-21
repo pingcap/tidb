@@ -51,6 +51,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"-'1'", mysql.TypeDouble, charset.CharsetBin},
 		{"~1", mysql.TypeLonglong, charset.CharsetBin},
 		{"1e0", mysql.TypeDouble, charset.CharsetBin},
+		{"1.0", mysql.TypeNewDecimal, charset.CharsetBin},
 		{"!true", mysql.TypeLonglong, charset.CharsetBin},
 
 		{"c1 is true", mysql.TypeLonglong, charset.CharsetBin},
