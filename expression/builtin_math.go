@@ -173,14 +173,15 @@ func builtinFloor(args []types.Datum, ctx context.Context) (d types.Datum, err e
 
 	// have to set IgnoreTruncate to true in order to getValidPrefix
 	sc := ctx.GetSessionVars().StmtCtx
+	tmpIT := sc.IgnoreTruncate
 	sc.IgnoreTruncate = true
 	f, err := args[0].ToFloat64(sc)
 	if err != nil {
-		sc.IgnoreTruncate = false
+		sc.IgnoreTruncate = tmpIT
 		return d, errors.Trace(err)
 	}
 
-	sc.IgnoreTruncate = false
+	sc.IgnoreTruncate = tmpIT
 	d.SetFloat64(math.Floor(f))
 	return
 }
