@@ -42,6 +42,7 @@ type RegionRequestSender struct {
 	bo          *Backoffer
 	regionCache *RegionCache
 	client      Client
+	storeAddr   string
 }
 
 // NewRegionRequestSender creates a new sender.
@@ -118,6 +119,7 @@ func (s *RegionRequestSender) SendCopReq(req *coprocessor.Request, regionID Regi
 			}, nil
 		}
 
+		s.storeAddr = ctx.Addr
 		resp, retry, err := s.sendCopReqToRegion(ctx, req, timeout)
 		if err != nil {
 			return nil, errors.Trace(err)
