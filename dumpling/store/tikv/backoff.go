@@ -133,6 +133,7 @@ type Backoffer struct {
 	totalSleep int
 	errors     []error
 	ctx        context.Context
+	types      []backoffType
 }
 
 // NewBackoffer creates a Backoffer with maximum sleep time(in ms).
@@ -165,6 +166,7 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	}
 
 	b.totalSleep += f()
+	b.types = append(b.types, typ)
 
 	log.Debugf("%v, retry later(totalSleep %dms, maxSleep %dms)", err, b.totalSleep, b.maxSleep)
 	b.errors = append(b.errors, err)
@@ -179,6 +181,13 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 		return errors.Annotate(errors.New(errMsg), txnRetryableMark)
 	}
 	return nil
+}
+
+func (b *Backoffer) String() string {
+	if b.totalSleep == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" backoff(%dms %#s)", b.totalSleep, b.types)
 }
 
 // Fork creates a new Backoffer which keeps current Backoffer's sleep time and errors.
