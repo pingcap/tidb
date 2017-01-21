@@ -119,7 +119,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 	_, ok := stmt.(*ast.SetStmt)
 	c.Assert(ok, IsTrue)
 
-	// For issue #2017
+	// for issue #2017
 	src = "insert into blobtable (a) values ('/*! truncated */');"
 	stmt, err = parser.ParseOneStmt(src, "", "")
 	c.Assert(err, IsNil)
@@ -140,7 +140,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 	c.Assert(ok, IsTrue)
 	c.Assert(cv.FunctionType, Equals, ast.CastConvertFunction)
 
-	// For query start with comment
+	// for query start with comment
 	srcs := []string{
 		"/* some comments */ SELECT CONVERT('111', SIGNED) ;",
 		"/* some comments */ /*comment*/ SELECT CONVERT('111', SIGNED) ;",
@@ -155,7 +155,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		c.Assert(ok, IsTrue)
 	}
 
-	// For issue #961
+	// for issue #961
 	src = "create table t (c int key);"
 	st, err = parser.ParseOneStmt(src, "", "")
 	c.Assert(err, IsNil)
@@ -218,7 +218,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"INSERT INTO foo () VALUES ()", true},
 		{"INSERT INTO foo VALUE ()", true},
 
-		// For issue 2402
+		// for issue 2402
 		{"INSERT INTO tt VALUES (01000001783);", true},
 
 		{"REPLACE INTO foo VALUES (1 || 2)", true},
@@ -257,7 +257,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"SELECT a FROM t", true},
 		{"SELECT a.b.c.d FROM t", false},
 
-		// Do statement
+		// do statement
 		{"DO 1", true},
 		{"DO 1 from t", false},
 
@@ -281,18 +281,9 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' lines terminated by 'xy'", true},
 		{"load data local infile '/tmp/t.csv' into table t terminated by 'xy' fields terminated by 'ab'", false},
 
-		// Select for update
+		// select for update
 		{"SELECT * from t for update", true},
 		{"SELECT * from t lock in share mode", true},
-
-		// For alter table
-		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED", true},
-		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED FIRST", true},
-		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED AFTER b", true},
-		{"ALTER TABLE t DISABLE KEYS", true},
-		{"ALTER TABLE t ENABLE KEYS", true},
-		{"ALTER TABLE t MODIFY COLUMN a varchar(255)", true},
-		{"ALTER TABLE t CHANGE COLUMN a b varchar(255)", true},
 
 		// from join
 		{"SELECT * from t1, t2, t3", true},
@@ -300,56 +291,43 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"select * from t1 right join t2 on t1.id = t2.id left join t3 on t3.id = t2.id", true},
 		{"select * from t1 right join t2 on t1.id = t2.id left join t3", false},
 
-		// For admin
+		// for admin
 		{"admin show ddl;", true},
 		{"admin check table t1, t2;", true},
 
-		// For on duplicate key update
+		// for on duplicate key update
 		{"INSERT INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true},
 		{"INSERT IGNORE INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true},
 
-		// For default value
-		{"CREATE TABLE sbtest (id INTEGER UNSIGNED NOT NULL AUTO_INCREMENT, k integer UNSIGNED DEFAULT '0' NOT NULL, c char(120) DEFAULT '' NOT NULL, pad char(60) DEFAULT '' NOT NULL, PRIMARY KEY  (id) )", true},
-		{"create table test (create_date TIMESTAMP NOT NULL COMMENT '创建日期 create date' DEFAULT now());", true},
-		{"create table ts (t int, v timestamp(3) default CURRENT_TIMESTAMP(3));", true},
-
-		// For rename table statement
-		{"RENAME TABLE t TO t1", true},
-		{"RENAME TABLE d.t TO d1.t1", true},
-
-		// For truncate statement
-		{"TRUNCATE TABLE t1", true},
-		{"TRUNCATE t1", true},
-
-		// For delete statement
+		// for delete statement
 		{"DELETE t1, t2 FROM t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id;", true},
 		{"DELETE FROM t1, t2 USING t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id;", true},
 		{"DELETE t1, t2 FROM t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id limit 10;", false},
 
-		// For update statement
+		// for update statement
 		{"UPDATE t SET id = id + 1 ORDER BY id DESC;", true},
 		{"UPDATE items,month SET items.price=month.price WHERE items.id=month.id;", true},
 		{"UPDATE items,month SET items.price=month.price WHERE items.id=month.id LIMIT 10;", false},
 		{"UPDATE user T0 LEFT OUTER JOIN user_profile T1 ON T1.id = T0.profile_id SET T0.profile_id = 1 WHERE T0.profile_id IN (1);", true},
 
-		// For select with where clause
+		// for select with where clause
 		{"SELECT * FROM t WHERE 1 = 1", true},
 
-		// For dual
+		// for dual
 		{"select 1 from dual", true},
 		{"select 1 from dual limit 1", true},
 		{"select 1 where exists (select 2)", false},
 		{"select 1 from dual where not exists (select 2)", true},
 
-		// For https://github.com/pingcap/tidb/issues/320
+		// for https://github.com/pingcap/tidb/issues/320
 		{`(select 1);`, true},
 
-		// For https://github.com/pingcap/tidb/issues/1050
+		// for https://github.com/pingcap/tidb/issues/1050
 		{`SELECT /*!40001 SQL_NO_CACHE */ * FROM test WHERE 1 limit 0, 2000;`, true},
 
 		{`ANALYZE TABLE t`, true},
 
-		// For Binlog stmt
+		// for Binlog stmt
 		{`BINLOG '
 BxSFVw8JAAAA8QAAAPUAAAAAAAQANS41LjQ0LU1hcmlhREItbG9nAAAAAAAAAAAAAAAAAAAAAAAA
 AAAAAAAAAAAAAAAAAAAAAAAAEzgNAAgAEgAEBAQEEgAA2QAEGggAAAAICAgCAAAAAAAAAAAAAAAA
@@ -364,7 +342,7 @@ AAAAAAAAAAAA5gm5Mg==
 func (s *testParserSuite) TestDBAStmt(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []testCase{
-		// For SHOW statement
+		// for SHOW statement
 		{"SHOW VARIABLES LIKE 'character_set_results'", true},
 		{"SHOW GLOBAL VARIABLES LIKE 'character_set_results'", true},
 		{"SHOW SESSION VARIABLES LIKE 'character_set_results'", true},
@@ -394,16 +372,16 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{`SHOW INDEXES IN t where true;`, true},
 		{`SHOW KEYS FROM t FROM test where true;`, true},
 		{`SHOW EVENTS FROM test_db WHERE definer = 'current_user'`, true},
-		// For show character set
+		// for show character set
 		{"show character set;", true},
-		// For show collation
+		// for show collation
 		{"show collation", true},
 		{"show collation like 'utf8%'", true},
 		{"show collation where Charset = 'utf8' and Collation = 'utf8_bin'", true},
-		// For show full columns
+		// for show full columns
 		{"show columns in t;", true},
 		{"show full columns in t;", true},
-		// For show create table
+		// for show create table
 		{"show create table test.t", true},
 		{"show create table t", true},
 
@@ -424,13 +402,13 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		// global system variables
 		{"SET GLOBAL autocommit = 1", true},
 		{"SET @@global.autocommit = 1", true},
-		// Set default value
+		// set default value
 		{"SET @@global.autocommit = default", true},
 		{"SET @@session.autocommit = default", true},
 		// SET CHARACTER SET
 		{"SET CHARACTER SET utf8mb4;", true},
 		{"SET CHARACTER SET 'utf8mb4';", true},
-		// Set password
+		// set password
 		{"SET PASSWORD = 'password';", true},
 		{"SET PASSWORD FOR 'root'@'localhost' = 'password';", true},
 		// SET TRANSACTION Syntax
@@ -441,15 +419,15 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{"SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED", true},
 		{"SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED", true},
 		{"SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE", true},
-		// For set names
+		// for set names
 		{"set names utf8", true},
 		{"set names utf8 collate utf8_unicode_ci", true},
 		{"set names binary", true},
-		// For set names and set vars
+		// for set names and set vars
 		{"set names utf8, @@session.sql_mode=1;", true},
 		{"set @@session.sql_mode=1, names utf8, charset utf8;", true},
 
-		// For FLUSH statement
+		// for FLUSH statement
 		{"flush no_write_to_binlog tables tbl1 with read lock", true},
 		{"flush table", true},
 		{"flush tables", true},
@@ -477,14 +455,14 @@ func (s *testParserSuite) TestFlushTable(c *C) {
 func (s *testParserSuite) TestExpression(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []testCase{
-		// Sign expression
+		// sign expression
 		{"SELECT ++1", true},
 		{"SELECT -*1", false},
 		{"SELECT -+1", true},
 		{"SELECT -1", true},
 		{"SELECT --1", true},
 
-		// For string literal
+		// for string literal
 		{`select '''a''', """a"""`, true},
 		{`select ''a''`, false},
 		{`select ""a""`, false},
@@ -494,7 +472,7 @@ func (s *testParserSuite) TestExpression(c *C) {
 		{`select """a""";`, true},
 		{`select _utf8"string";`, true},
 		{`select _binary"string";`, true},
-		// For comparison
+		// for comparison
 		{"select 1 <=> 0, 1 <=> null, 1 = null", true},
 	}
 	s.RunTest(c, table)
@@ -503,7 +481,7 @@ func (s *testParserSuite) TestExpression(c *C) {
 func (s *testParserSuite) TestBuiltin(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []testCase{
-		// For buildin functions
+		// for buildin functions
 		{"SELECT POW(1, 2)", true},
 		{"SELECT POW(1, 0.5)", true},
 		{"SELECT POW(1, -1)", true},
@@ -542,7 +520,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT INTERVAL(1, 0, 1, 2)", true},
 		{"SELECT DATE_ADD('2008-01-02', INTERVAL INTERVAL(1, 0, 1) DAY);", true},
 
-		// Information Functions
+		// information functions
 		{"SELECT DATABASE();", true},
 		{"SELECT SCHEMA();", true},
 		{"SELECT USER();", true},
@@ -564,10 +542,10 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT LOCATE('bar', 'foobarbar');`, true},
 		{`SELECT LOCATE('bar', 'foobarbar', 5);`, true},
 
-		// For time fsp
+		// for time fsp
 		{"CREATE TABLE t( c1 TIME(2), c2 DATETIME(2), c3 TIMESTAMP(2) );", true},
 
-		// For row
+		// for row
 		{"select row(1)", false},
 		{"select row(1, 1,)", false},
 		{"select (1, 1,)", false},
@@ -575,17 +553,17 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"Select (1, 1) > (1, 1)", true},
 		{"create table t (row int)", true},
 
-		// For cast with charset
+		// for cast with charset
 		{"SELECT *, CAST(data AS CHAR CHARACTER SET utf8) FROM t;", true},
 
-		// For last_insert_id
+		// for last_insert_id
 		{"SELECT last_insert_id();", true},
 		{"SELECT last_insert_id(1);", true},
 
-		// For binary operator
+		// for binary operator
 		{"SELECT binary 'a';", true},
 
-		// Select time
+		// select time
 		{"select current_timestamp", true},
 		{"select current_timestamp()", true},
 		{"select current_timestamp(6)", true},
@@ -598,7 +576,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT TIMESTAMPDIFF(YEAR,'2002-05-01','2001-01-01');", true},
 		{"SELECT TIMESTAMPDIFF(MINUTE,'2003-02-01','2003-05-01 12:05:55');", true},
 
-		// Select current_time
+		// select current_time
 		{"select current_time", true},
 		{"select current_time()", true},
 		{"select current_time(6)", true},
@@ -624,7 +602,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT FROM_DAYS(1423);", true},
 		{"SELECT WEEKDAY('2007-02-03');", true},
 
-		// For utc_date
+		// for utc_date
 		{"SELECT UTC_DATE, UTC_DATE();", true},
 		{"SELECT UTC_DATE(), UTC_DATE()+0", true},
 
@@ -638,7 +616,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT YEARWEEK('2007-02-03');", true},
 		{"SELECT YEARWEEK('2007-02-03', 0);", true},
 
-		// For time extract
+		// for time extract
 		{`select extract(microsecond from "2011-11-11 10:10:10.123456")`, true},
 		{`select extract(second from "2011-11-11 10:10:10.123456")`, true},
 		{`select extract(minute from "2011-11-11 10:10:10.123456")`, true},
@@ -660,7 +638,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select extract(day_hour from "2011-11-11 10:10:10.123456")`, true},
 		{`select extract(year_month from "2011-11-11 10:10:10.123456")`, true},
 
-		// For from_unixtime
+		// for from_unixtime
 		{`select from_unixtime(1447430881)`, true},
 		{`select from_unixtime(1447430881.123456)`, true},
 		{`select from_unixtime(1447430881.1234567)`, true},
@@ -669,11 +647,11 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select from_unixtime(1447430881.123456, "%Y %D %M %h:%i:%s %x")`, true},
 		{`select from_unixtime(1447430881.1234567, "%Y %D %M %h:%i:%s %x")`, true},
 
-		// For issue 224
+		// for issue 224
 		{`SELECT CAST('test collated returns' AS CHAR CHARACTER SET utf8) COLLATE utf8_bin;`, true},
 
-		// For string functions
-		// Trim
+		// for string functions
+		// trim
 		{`SELECT TRIM('  bar   ');`, true},
 		{`SELECT TRIM(LEADING 'x' FROM 'xxxbarxxx');`, true},
 		{`SELECT TRIM(BOTH 'x' FROM 'xxxbarxxx');`, true},
@@ -690,13 +668,13 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT FIND_IN_SET('foo', 'foo,bar')`, true},
 		{`SELECT FIND_IN_SET('foo')`, false},
 
-		// Repeat
+		// repeat
 		{`SELECT REPEAT("a", 10);`, true},
 
-		// Sleep
+		// sleep
 		{`SELECT SLEEP(10);`, true},
 
-		// For date_add
+		// for date_add
 		{`select date_add("2011-11-11 10:10:10.123456", interval 10 microsecond)`, true},
 		{`select date_add("2011-11-11 10:10:10.123456", interval 10 second)`, true},
 		{`select date_add("2011-11-11 10:10:10.123456", interval 10 minute)`, true},
@@ -721,10 +699,10 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select date_add("2011-11-11 10:10:10.123456", 0.10)`, false},
 		{`select date_add("2011-11-11 10:10:10.123456", "11,11")`, false},
 
-		// For strcmp
+		// for strcmp
 		{`select strcmp('abc', 'def')`, true},
 
-		// For adddate
+		// for adddate
 		{`select adddate("2011-11-11 10:10:10.123456", interval 10 microsecond)`, true},
 		{`select adddate("2011-11-11 10:10:10.123456", interval 10 second)`, true},
 		{`select adddate("2011-11-11 10:10:10.123456", interval 10 minute)`, true},
@@ -749,7 +727,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select adddate("2011-11-11 10:10:10.123456", 0.10)`, true},
 		{`select adddate("2011-11-11 10:10:10.123456", "11,11")`, true},
 
-		// For date_sub
+		// for date_sub
 		{`select date_sub("2011-11-11 10:10:10.123456", interval 10 microsecond)`, true},
 		{`select date_sub("2011-11-11 10:10:10.123456", interval 10 second)`, true},
 		{`select date_sub("2011-11-11 10:10:10.123456", interval 10 minute)`, true},
@@ -774,7 +752,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select date_sub("2011-11-11 10:10:10.123456", 0.10)`, false},
 		{`select date_sub("2011-11-11 10:10:10.123456", "11,11")`, false},
 
-		// For subdate
+		// for subdate
 		{`select subdate("2011-11-11 10:10:10.123456", interval 10 microsecond)`, true},
 		{`select subdate("2011-11-11 10:10:10.123456", interval 10 second)`, true},
 		{`select subdate("2011-11-11 10:10:10.123456", interval 10 minute)`, true},
@@ -799,15 +777,15 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select subdate("2011-11-11 10:10:10.123456", 0.10)`, true},
 		{`select subdate("2011-11-11 10:10:10.123456", "11,11")`, true},
 
-		// For unix_timestamp
+		// for unix_timestamp
 		{`select unix_timestamp()`, true},
 		{`select unix_timestamp('2015-11-13 10:20:19.012')`, true},
 
-		// For misc functions
+		// for misc functions
 		{`SELECT GET_LOCK('lock1',10);`, true},
 		{`SELECT RELEASE_LOCK('lock1');`, true},
 
-		// For aggregate functions
+		// for aggregate functions
 		{`select avg(c1,c2) from t;`, false},
 		{`select avg(distinct c1) from t;`, true},
 		{`select avg(c2) from t;`, true},
@@ -837,11 +815,11 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 func (s *testParserSuite) TestIdentifier(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []testCase{
-		// For quote identifier
+		// for quote identifier
 		{"select `a`, `a.b`, `a b` from t", true},
-		// For unquoted identifier
+		// for unquoted identifier
 		{"create table MergeContextTest$Simple (value integer not null, primary key (value))", true},
-		// For as
+		// for as
 		{"select 1 as a, 1 as `a`, 1 as \"a\", 1 as 'a'", true},
 		{`select 1 as a, 1 as "a", 1 as 'a'`, true},
 		{`select 1 a, 1 "a", 1 'a'`, true},
@@ -855,7 +833,7 @@ func (s *testParserSuite) TestIdentifier(c *C) {
 		{`select * from t as a`, true},
 		{"select 1 full, 1 row, 1 abs", true},
 		{"select * from t full, t1 row, t2 abs", true},
-		// For issue 1878, identifiers may begin with digit.
+		// for issue 1878, identifiers may begin with digit.
 		{"create database 123test", true},
 		{"create database 123", false},
 		{"create database `123`", true},
@@ -889,10 +867,9 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"CREATE TABLE foo (name CHAR(50) COLLATE utf8_bin)", true},
 		{"CREATE TABLE foo (name CHAR(50) CHARACTER SET utf8)", true},
 		{"CREATE TABLE foo (name CHAR(50) BINARY CHARACTER SET utf8 COLLATE utf8_bin)", true},
-
 		{"CREATE TABLE foo (a.b, b);", false},
 		{"CREATE TABLE foo (a, b.c);", false},
-		// For table option
+		// for table option
 		{"create table t (c int) avg_row_length = 3", true},
 		{"create table t (c int) avg_row_length 3", true},
 		{"create table t (c int) checksum = 0", true},
@@ -921,10 +898,10 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table t (c int) STATS_PERSISTENT = default", true},
 		{"create table t (c int) STATS_PERSISTENT = 0", true},
 		{"create table t (c int) STATS_PERSISTENT = 1", true},
-		// Partition option
+		// partition option
 		{"create table t (c int) PARTITION BY HASH (c) PARTITIONS 32;", true},
 		{"create table t (c int) PARTITION BY RANGE (Year(VDate)) (PARTITION p1980 VALUES LESS THAN (1980) ENGINE = MyISAM, PARTITION p1990 VALUES LESS THAN (1990) ENGINE = MyISAM, PARTITION pothers VALUES LESS THAN MAXVALUE ENGINE = MyISAM)", true},
-		// For check clause
+		// for check clause
 		{"create table t (c1 bool, c2 bool, check (c1 in (0, 1)), check (c2 in (0, 1)))", true},
 		{"CREATE TABLE Customer (SD integer CHECK (SD > 0), First_Name varchar(30));", true},
 
@@ -934,7 +911,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create schema xxx", true},
 		{"create schema if exists xxx", false},
 		{"create schema if not exists xxx", true},
-		// For drop database/schema/table
+		// for drop database/schema/table
 		{"drop database xxx", true},
 		{"drop database if exists xxx", true},
 		{"drop database if not exists xxx", false},
@@ -948,7 +925,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"drop table if exists xxx", true},
 		{"drop table if not exists xxx", false},
 		{"drop view if exists xxx", true},
-		// For issue 974
+		// for issue 974
 		{`CREATE TABLE address (
 		id bigint(20) NOT NULL AUTO_INCREMENT,
 		create_at datetime NOT NULL,
@@ -967,7 +944,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		CONSTRAINT FK_7rod8a71yep5vxasb0ms3osbg FOREIGN KEY (user_id) REFERENCES waimaiqa.user (id),
 		INDEX FK_7rod8a71yep5vxasb0ms3osbg (user_id) comment ''
 		) ENGINE=InnoDB AUTO_INCREMENT=30 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci ROW_FORMAT=COMPACT COMMENT='' CHECKSUM=0 DELAY_KEY_WRITE=0;`, true},
-		// For issue 975
+		// for issue 975
 		{`CREATE TABLE test_data (
 		id bigint(20) NOT NULL AUTO_INCREMENT,
 		create_at datetime NOT NULL,
@@ -1029,15 +1006,36 @@ func (s *testParserSuite) TestDDL(c *C) {
 		INDEX FK_7rod8a71yep5vxasb0ms3osbg (user_id) comment ''
 		) ENGINE=InnoDB AUTO_INCREMENT=30 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci ROW_FORMAT=COMPACT COMMENT='' CHECKSUM=0 DELAY_KEY_WRITE=0;`, true},
 		{"CREATE TABLE address (\r\nid bigint(20) NOT NULL AUTO_INCREMENT,\r\ncreate_at datetime NOT NULL,\r\ndeleted tinyint(1) NOT NULL,\r\nupdate_at datetime NOT NULL,\r\nversion bigint(20) DEFAULT NULL,\r\naddress varchar(128) NOT NULL,\r\naddress_detail varchar(128) NOT NULL,\r\ncellphone varchar(16) NOT NULL,\r\nlatitude double NOT NULL,\r\nlongitude double NOT NULL,\r\nname varchar(16) NOT NULL,\r\nsex tinyint(1) NOT NULL,\r\nuser_id bigint(20) NOT NULL,\r\nPRIMARY KEY (id),\r\nCONSTRAINT FK_7rod8a71yep5vxasb0ms3osbg FOREIGN KEY (user_id) REFERENCES waimaiqa.user (id) ON DELETE CASCADE ON UPDATE NO ACTION,\r\nINDEX FK_7rod8a71yep5vxasb0ms3osbg (user_id) comment ''\r\n) ENGINE=InnoDB AUTO_INCREMENT=30 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci ROW_FORMAT=COMPACT COMMENT='' CHECKSUM=0 DELAY_KEY_WRITE=0;", true},
-		// For issue 1802
+		// for issue 1802
 		{`CREATE TABLE t1 (
 		accout_id int(11) DEFAULT '0',
 		summoner_id int(11) DEFAULT '0',
 		union_name varbinary(52) NOT NULL,
 		union_id int(11) DEFAULT '0',
 		PRIMARY KEY (union_name)) ENGINE=MyISAM DEFAULT CHARSET=binary;`, true},
-		// Create table with multiple index options
+		// create table with multiple index options
 		{`create table t (c int, index ci (c) USING BTREE COMMENT "123");`, true},
+		// for default value
+		{"CREATE TABLE sbtest (id INTEGER UNSIGNED NOT NULL AUTO_INCREMENT, k integer UNSIGNED DEFAULT '0' NOT NULL, c char(120) DEFAULT '' NOT NULL, pad char(60) DEFAULT '' NOT NULL, PRIMARY KEY  (id) )", true},
+		{"create table test (create_date TIMESTAMP NOT NULL COMMENT '创建日期 create date' DEFAULT now());", true},
+		{"create table ts (t int, v timestamp(3) default CURRENT_TIMESTAMP(3));", true},
+
+		// for alter table
+		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED", true},
+		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED FIRST", true},
+		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED AFTER b", true},
+		{"ALTER TABLE t DISABLE KEYS", true},
+		{"ALTER TABLE t ENABLE KEYS", true},
+		{"ALTER TABLE t MODIFY COLUMN a varchar(255)", true},
+		{"ALTER TABLE t CHANGE COLUMN a b varchar(255)", true},
+
+		// for rename table statement
+		{"RENAME TABLE t TO t1", true},
+		{"RENAME TABLE d.t TO d1.t1", true},
+
+		// for truncate statement
+		{"TRUNCATE TABLE t1", true},
+		{"TRUNCATE t1", true},
 	}
 	s.RunTest(c, table)
 }
@@ -1045,36 +1043,36 @@ func (s *testParserSuite) TestDDL(c *C) {
 func (s *testParserSuite) TestType(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []testCase{
-		// For time fsp
+		// for time fsp
 		{"CREATE TABLE t( c1 TIME(2), c2 DATETIME(2), c3 TIMESTAMP(2) );", true},
 
-		// For hexadecimal
+		// for hexadecimal
 		{"select x'0a', X'11', 0x11", true},
 		{"select x'13181C76734725455A'", true},
 		{"select x'0xaa'", false},
 		{"select 0X11", false},
 		{"select 0x4920616D2061206C6F6E672068657820737472696E67", true},
 
-		// For bit
+		// for bit
 		{"select 0b01, 0b0, b'11', B'11'", true},
 		{"select 0B01", false},
 		{"select 0b21", false},
 
-		// For enum and set type
+		// for enum and set type
 		{"create table t (c1 enum('a', 'b'), c2 set('a', 'b'))", true},
 		{"create table t (c1 enum)", false},
 		{"create table t (c1 set)", false},
 
-		// For blob and text field length
+		// for blob and text field length
 		{"create table t (c1 blob(1024), c2 text(1024))", true},
 
-		// For year
+		// for year
 		{"create table t (y year(4), y1 year)", true},
 
-		// For national
+		// for national
 		{"create table t (c1 national char(2), c2 national varchar(2))", true},
 
-		// For https://github.com/pingcap/tidb/issues/312
+		// for https://github.com/pingcap/tidb/issues/312
 		{`create table t (c float(53));`, true},
 		{`create table t (c float(54));`, false},
 	}
@@ -1084,7 +1082,7 @@ func (s *testParserSuite) TestType(c *C) {
 func (s *testParserSuite) TestPrivilege(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []testCase{
-		// For create user
+		// for create user
 		{`CREATE USER IF NOT EXISTS 'root'@'localhost' IDENTIFIED BY 'new-password'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY PASSWORD 'hashstring'`, true},
@@ -1098,7 +1096,7 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 		{`DROP USER 'root'@'localhost', 'root1'@'localhost'`, true},
 		{`DROP USER IF EXISTS 'root'@'localhost'`, true},
 
-		// For grant statement
+		// for grant statement
 		{"GRANT ALL ON db1.* TO 'jeffrey'@'localhost';", true},
 		{"GRANT SELECT ON db2.invoice TO 'jeffrey'@'localhost';", true},
 		{"GRANT ALL ON *.* TO 'someuser'@'somehost';", true},
@@ -1122,7 +1120,7 @@ func (s *testParserSuite) TestComment(c *C) {
 		{"create table t (c int) comment comment", false},
 		{"create table t (comment text)", true},
 		{"START TRANSACTION /*!40108 WITH CONSISTENT SNAPSHOT */", true},
-		// For comment in query
+		// for comment in query
 		{"/*comment*/ /*comment*/ select c /* this is a comment */ from t;", true},
 	}
 	s.RunTest(c, table)
@@ -1130,13 +1128,13 @@ func (s *testParserSuite) TestComment(c *C) {
 func (s *testParserSuite) TestSubquery(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []testCase{
-		// For compare subquery
+		// for compare subquery
 		{"SELECT 1 > (select 1)", true},
 		{"SELECT 1 > ANY (select 1)", true},
 		{"SELECT 1 > ALL (select 1)", true},
 		{"SELECT 1 > SOME (select 1)", true},
 
-		// For exists subquery
+		// for exists subquery
 		{"SELECT EXISTS select 1", false},
 		{"SELECT EXISTS (select 1)", true},
 		{"SELECT + EXISTS (select 1)", true},
@@ -1173,7 +1171,7 @@ func (s *testParserSuite) TestUnion(c *C) {
 func (s *testParserSuite) TestLikeEscape(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []testCase{
-		// For like escape
+		// for like escape
 		{`select "abc_" like "abc\\_" escape ''`, true},
 		{`select "abc_" like "abc\\_" escape '\\'`, true},
 		{`select "abc_" like "abc\\_" escape '||'`, false},
