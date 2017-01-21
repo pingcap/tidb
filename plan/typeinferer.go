@@ -267,6 +267,8 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		switch t {
 		case mysql.TypeBit, mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLonglong:
 			tp = types.NewFieldType(mysql.TypeLonglong)
+		case mysql.TypeNewDecimal:
+			tp = types.NewFieldType(mysql.TypeNewDecimal)
 		default:
 			tp = types.NewFieldType(mysql.TypeDouble)
 		}
