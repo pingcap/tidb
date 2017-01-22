@@ -57,8 +57,6 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildDeallocate(v)
 	case *plan.Delete:
 		return b.buildDelete(v)
-	case *plan.Distinct:
-		return b.buildDistinct(v)
 	case *plan.Execute:
 		return b.buildExecute(v)
 	case *plan.Explain:
@@ -190,10 +188,6 @@ func (b *executorBuilder) buildLimit(v *plan.Limit) Executor {
 		schema: v.GetSchema(),
 	}
 	return e
-}
-
-func (b *executorBuilder) buildDistinct(v *plan.Distinct) Executor {
-	return &DistinctExec{Src: b.build(v.GetChildByIndex(0)), schema: v.GetSchema()}
 }
 
 func (b *executorBuilder) buildPrepare(v *plan.Prepare) Executor {
