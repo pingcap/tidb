@@ -96,19 +96,7 @@ func (ap *aggPruner) rewriteExpr(expr expression.Expression, funcName string) (n
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-	case ast.AggFuncSum:
-		// Numeric type do nothing. Others will cast to decimal.
-		switch expr.GetType().Tp {
-		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeDouble,
-			mysql.TypeFloat, mysql.TypeDecimal, mysql.TypeNewDecimal:
-			newExpr = expr
-		default:
-			newExpr, err = expression.NewCastFunc(types.NewFieldType(mysql.TypeNewDecimal), expr)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
-	case ast.AggFuncAvg:
+	case ast.AggFuncSum, ast.AggFuncAvg:
 		switch expr.GetType().Tp {
 		// Float-point number or fixed-point numnber will do nothing, Others will cast to decimal.
 		case mysql.TypeDouble, mysql.TypeFloat, mysql.TypeDecimal, mysql.TypeNewDecimal:
