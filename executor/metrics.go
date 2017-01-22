@@ -14,8 +14,10 @@
 package executor
 
 import (
+	"fmt"
 	"strings"
 
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/plan"
 	"github.com/prometheus/client_golang/prometheus"
@@ -148,6 +150,7 @@ func getSelectStmtLabel(stmt *ast.SelectStmt, p plan.Plan) string {
 	var attributes stmtAttributes
 	attributes.fromSelectStmt(stmt)
 	attributes.fromPlan(p)
+	attributes.logExpensiveStmt(stmt.Text())
 	return Select + attributes.toLabel()
 }
 
@@ -155,6 +158,7 @@ func getDeleteStmtLabel(stmt *ast.DeleteStmt, p plan.Plan) string {
 	var attributes stmtAttributes
 	attributes.fromDeleteStmt(stmt)
 	attributes.fromPlan(p)
+	attributes.logExpensiveStmt(stmt.Text())
 	return Delete + attributes.toLabel()
 }
 
@@ -162,6 +166,7 @@ func getUpdateStmtLabel(stmt *ast.UpdateStmt, p plan.Plan) string {
 	var attributes stmtAttributes
 	attributes.fromUpdateStmt(stmt)
 	attributes.fromPlan(p)
+	attributes.logExpensiveStmt(stmt.Text())
 	return Update + attributes.toLabel()
 }
 
@@ -282,4 +287,18 @@ func (pa *stmtAttributes) toLabel() string {
 		attrs = append(attrs, attrLimit)
 	}
 	return strings.Join(attrs, "")
+}
+
+func (pa *stmtAttributes) logExpensiveStmt(sql string) {
+	if pa.hasRange || pa.hasLimit {
+		return
+	}
+	if !pa.hasIndexScan && !pa.hasTableScan && !pa.hasIndexDouble {
+		return
+	}
+	const logSQLLen = 1024
+	if len(sql) > logSQLLen {
+		sql = sql[:logSQLLen] + fmt.Sprintf("len(%d)", len(sql))
+	}
+	log.Warnf("[EXPENSIVE_QUERY] %s", sql)
 }
