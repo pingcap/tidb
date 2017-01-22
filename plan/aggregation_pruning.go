@@ -84,23 +84,22 @@ func (ap *aggPruner) rewriteExpr(expr expression.Expression, funcName string) (n
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		zero := &expression.Constant{
-			Value:   types.NewIntDatum(0),
-			RetType: types.NewFieldType(mysql.TypeLonglong),
-		}
-		one := &expression.Constant{
-			Value:   types.NewIntDatum(1),
-			RetType: types.NewFieldType(mysql.TypeLonglong),
-		}
-		newExpr, err = expression.NewFunction(ap.ctx, ast.If, zero.RetType, isNullExpr, zero, one)
+		newExpr, err = expression.NewFunction(ap.ctx, ast.If, types.NewFieldType(mysql.TypeLonglong), isNullExpr, expression.Zero, expression.One)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+	// https://dev.mysql.com/doc/refman/5.7/en/group-by-functions.html
+	// The SUM() and AVG() functions return a DECIMAL value for exact-value arguments (integer or DECIMAL),
+	// and a DOUBLE value for approximate-value arguments (FLOAT or DOUBLE).
 	case ast.AggFuncSum, ast.AggFuncAvg:
 		switch expr.GetType().Tp {
-		// Float-point number or fixed-point numnber will do nothing, Others will cast to decimal.
-		case mysql.TypeDouble, mysql.TypeFloat, mysql.TypeDecimal, mysql.TypeNewDecimal:
+		// Integer type should be cast to decimal.
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+			newExpr = expression.NewCastFunc(types.NewFieldType(mysql.TypeDouble), expr, ap.ctx)
+		// Double and Decimal doesn't need to be cast.
+		case mysql.TypeDouble, mysql.TypeDecimal, mysql.TypeNewDecimal:
 			newExpr = expr
+		// Float should be cast to double. And other non-numeric type should be cast to double too.
 		default:
 			newExpr = expression.NewCastFunc(types.NewFieldType(mysql.TypeNewDecimal), expr, ap.ctx)
 		}
