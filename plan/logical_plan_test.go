@@ -1317,7 +1317,7 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 		c.Assert(selection, NotNil, Commentf("expr:%v", ca.exprStr))
 		result := fullRange
 		for _, cond := range selection.Conditions {
-			result = rb.intersection(result, rb.build(pushDownNot(cond, false)))
+			result = rb.intersection(result, rb.build(pushDownNot(cond, false, nil)))
 		}
 		c.Assert(rb.err, IsNil)
 		got := fmt.Sprintf("%v", result)

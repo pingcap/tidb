@@ -48,9 +48,9 @@ func (s *testSuite) TestNestedLoopJoin(c *C) {
 	col0 := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}
 	col1 := &expression.Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLong)}
 	con := &expression.Constant{Value: types.NewDatum(6), RetType: types.NewFieldType(mysql.TypeLong)}
-	bigFilter, _ := expression.NewFunction(ast.LT, types.NewFieldType(mysql.TypeTiny), col0, con)
+	bigFilter, _ := expression.NewFunction(mock.NewContext(), ast.LT, types.NewFieldType(mysql.TypeTiny), col0, con)
 	smallFilter := bigFilter.Clone()
-	otherFilter, _ := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col1)
+	otherFilter, _ := expression.NewFunction(mock.NewContext(), ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col1)
 	join := &executor.NestedLoopJoinExec{
 		BigExec:     bigExec,
 		SmallExec:   smallExec,
