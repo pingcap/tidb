@@ -72,6 +72,7 @@ type backoffType int
 const (
 	boTiKVRPC backoffType = iota
 	boTxnLock
+	boTxnLockFast
 	boPDRPC
 	boRegionMiss
 	boServerBusy
@@ -82,7 +83,9 @@ func (t backoffType) createFn() func() int {
 	case boTiKVRPC:
 		return NewBackoffFn(100, 2000, EqualJitter)
 	case boTxnLock:
-		return NewBackoffFn(300, 3000, EqualJitter)
+		return NewBackoffFn(200, 3000, EqualJitter)
+	case boTxnLockFast:
+		return NewBackoffFn(100, 3000, EqualJitter)
 	case boPDRPC:
 		return NewBackoffFn(500, 3000, EqualJitter)
 	case boRegionMiss:
@@ -99,6 +102,8 @@ func (t backoffType) String() string {
 		return "tikvRPC"
 	case boTxnLock:
 		return "txnLock"
+	case boTxnLockFast:
+		return "txnLockFast"
 	case boPDRPC:
 		return "pdRPC"
 	case boRegionMiss:
