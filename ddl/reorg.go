@@ -78,7 +78,7 @@ func (d *ddl) runReorgJob(f func() error) error {
 func (d *ddl) isReorgRunnable(txn kv.Transaction, flag JobType) error {
 	if d.isClosed() {
 		// worker is closed, can't run reorganization.
-		return errors.Trace(errInvalidWorker.Gen("worker is closed"))
+		return errInvalidWorker.Gen("worker is closed")
 	}
 
 	t := meta.NewMeta(txn)

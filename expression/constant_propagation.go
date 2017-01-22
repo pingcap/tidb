@@ -229,9 +229,9 @@ func (s *propagateConstantSolver) solve(conditions []Expression) []Expression {
 		if dnf, ok := cond.(*ScalarFunction); ok && dnf.FuncName.L == ast.OrOr {
 			dnfItems := SplitDNFItems(cond)
 			for j, item := range dnfItems {
-				dnfItems[j] = ComposeCNFCondition(s.ctx, PropagateConstant(s.ctx, []Expression{item}))
+				dnfItems[j] = ComposeCNFCondition(s.ctx, PropagateConstant(s.ctx, []Expression{item})...)
 			}
-			s.conditions[i] = ComposeDNFCondition(s.ctx, dnfItems)
+			s.conditions[i] = ComposeDNFCondition(s.ctx, dnfItems...)
 		}
 	}
 	return s.conditions

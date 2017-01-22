@@ -288,11 +288,6 @@ func (p *Limit) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *phys
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
-func (p *Distinct) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *physicalPlanInfo {
-	panic("You can't call this function!")
-}
-
-// matchProperty implements PhysicalPlan matchProperty interface.
 func (p *TableDual) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *physicalPlanInfo {
 	panic("You can't call this function!")
 }
