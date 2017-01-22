@@ -52,6 +52,7 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 
 func doOptimize(logic LogicalPlan, ctx context.Context, allocator *idAllocator) (PhysicalPlan, error) {
 	var err error
+	logic = decorrelate(logic)
 	_, logic, err = logic.PredicatePushDown(nil)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -62,13 +63,11 @@ func doOptimize(logic LogicalPlan, ctx context.Context, allocator *idAllocator) 
 	}
 	solver.aggPushDown(logic)
 	logic.PruneColumns(logic.GetSchema().Columns)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	logic.ResolveIndicesAndCorCols()
 	if !AllowCartesianProduct && existsCartesianProduct(logic) {
-		return nil, ErrCartesianProductUnsupported
+		return nil, errors.Trace(ErrCartesianProductUnsupported)
 	}
+	logic.buildKeyInfo()
 	info, err := logic.convert2PhysicalPlan(&requiredProperty{})
 	if err != nil {
 		return nil, errors.Trace(err)

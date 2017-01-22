@@ -126,8 +126,8 @@ func resetStmtCtx(ctx context.Context, s ast.StmtNode) {
 	case *ast.UpdateStmt, *ast.InsertStmt, *ast.DeleteStmt:
 		sc.IgnoreTruncate = false
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode
-		if _, ok := s.(*ast.UpdateStmt); ok {
-			sc.InUpdateStmt = true
+		if _, ok := s.(*ast.InsertStmt); !ok {
+			sc.InUpdateOrDeleteStmt = true
 		}
 	default:
 		sc.IgnoreTruncate = true

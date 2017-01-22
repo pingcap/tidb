@@ -61,6 +61,10 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	s.store, err = tidb.NewStore(tidb.EngineGoLevelDBMemory)
 	c.Assert(err, IsNil)
 	localstore.MockRemoteStore = true
+
+	err = tidb.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+
 	s.s, err = tidb.CreateSession(s.store)
 	c.Assert(err, IsNil)
 
@@ -277,18 +281,14 @@ func (s *testDBSuite) testAddAnonymousIndex(c *C) {
 }
 
 func (s *testDBSuite) testAddIndex(c *C) {
-	done := make(chan struct{}, 1)
-
+	done := make(chan error, 1)
 	num := defaultBatchSize + 10
 	// first add some rows
 	for i := 0; i < num; i++ {
 		s.mustExec(c, "insert into t1 values (?, ?, ?)", i, i, i)
 	}
 
-	go func() {
-		sessionExec(c, s.store, "create index c3_index on t1 (c3)")
-		done <- struct{}{}
-	}()
+	sessionExecInGoroutine(c, s.store, "create index c3_index on t1 (c3)", done)
 
 	deletedKeys := make(map[int]struct{})
 
@@ -297,8 +297,11 @@ func (s *testDBSuite) testAddIndex(c *C) {
 LOOP:
 	for {
 		select {
-		case <-done:
-			break LOOP
+		case err := <-done:
+			if err == nil {
+				break LOOP
+			}
+			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
 		case <-ticker.C:
 			step := 10
 			// delete some rows, and add some data
@@ -394,8 +397,7 @@ LOOP:
 }
 
 func (s *testDBSuite) testDropIndex(c *C) {
-	done := make(chan struct{}, 1)
-
+	done := make(chan error, 1)
 	s.mustExec(c, "delete from t1")
 
 	num := 100
@@ -413,18 +415,18 @@ func (s *testDBSuite) testDropIndex(c *C) {
 	}
 	c.Assert(c3idx, NotNil)
 
-	go func() {
-		sessionExec(c, s.store, "drop index c3_index on t1")
-		done <- struct{}{}
-	}()
+	sessionExecInGoroutine(c, s.store, "drop index c3_index on t1", done)
 
 	ticker := time.NewTicker(s.lease / 2)
 	defer ticker.Stop()
 LOOP:
 	for {
 		select {
-		case <-done:
-			break LOOP
+		case err := <-done:
+			if err == nil {
+				break LOOP
+			}
+			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
 		case <-ticker.C:
 			step := 10
 			// delete some rows, and add some data
@@ -511,6 +513,22 @@ func (s *testDBSuite) TestIssue2293(c *C) {
 	s.tk.MustQuery("select * from t_issue_2293").Check(testkit.Rows("1"))
 }
 
+func (s *testDBSuite) TestCreateIndexType(c *C) {
+	defer testleak.AfterTest(c)()
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	sql := `CREATE TABLE test_index (
+		price int(5) DEFAULT '0' NOT NULL,
+		area varchar(40) DEFAULT '' NOT NULL,
+		type varchar(40) DEFAULT '' NOT NULL,
+		transityes set('a','b'),
+		shopsyes enum('Y','N') DEFAULT 'Y' NOT NULL,
+		schoolsyes enum('Y','N') DEFAULT 'Y' NOT NULL,
+		petsyes enum('Y','N') DEFAULT 'Y' NOT NULL,
+		KEY price (price,area,type,transityes,shopsyes,schoolsyes,petsyes));`
+	s.tk.MustExec(sql)
+}
+
 func (s *testDBSuite) TestColumn(c *C) {
 	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)
@@ -531,8 +549,34 @@ func sessionExec(c *C, s kv.Storage, sql string) {
 	se.Close()
 }
 
+func sessionExecInGoroutine(c *C, s kv.Storage, sql string, done chan error) {
+	go func() {
+		se, err := tidb.CreateSession(s)
+		if err != nil {
+			done <- errors.Trace(err)
+			return
+		}
+		defer se.Close()
+		_, err = se.Execute("use test_db")
+		if err != nil {
+			done <- errors.Trace(err)
+			return
+		}
+		rs, err := se.Execute(sql)
+		if err != nil {
+			done <- errors.Trace(err)
+			return
+		}
+		if rs != nil {
+			done <- errors.Errorf("RecordSet should be empty.")
+			return
+		}
+		done <- nil
+	}()
+}
+
 func (s *testDBSuite) testAddColumn(c *C) {
-	done := make(chan struct{}, 1)
+	done := make(chan error, 1)
 
 	num := defaultBatchSize + 10
 	// add some rows
@@ -540,10 +584,7 @@ func (s *testDBSuite) testAddColumn(c *C) {
 		s.mustExec(c, "insert into t2 values (?, ?, ?)", i, i, i)
 	}
 
-	go func() {
-		sessionExec(c, s.store, "alter table t2 add column c4 int default -1")
-		done <- struct{}{}
-	}()
+	sessionExecInGoroutine(c, s.store, "alter table t2 add column c4 int default -1", done)
 
 	ticker := time.NewTicker(s.lease / 2)
 	defer ticker.Stop()
@@ -551,19 +592,28 @@ func (s *testDBSuite) testAddColumn(c *C) {
 LOOP:
 	for {
 		select {
-		case <-done:
-			break LOOP
+		case err := <-done:
+			if err == nil {
+				break LOOP
+			}
+			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
 		case <-ticker.C:
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
 				n := rand.Intn(num)
+				s.tk.MustExec("begin")
 				s.tk.MustExec("delete from t2 where c1 = ?", n)
+				s.tk.MustExec("commit")
+
+				// Make sure that statement of insert and show use the same infoSchema.
+				s.tk.MustExec("begin")
 				_, err := s.tk.Exec("insert into t2 values (?, ?, ?)", i, i, i)
 				if err != nil {
 					// if err is failed, the column number must be 4 now.
 					values := s.showColumns(c, "t2")
-					c.Assert(values, HasLen, 4, Commentf("err:%v", err))
+					c.Assert(values, HasLen, 4, Commentf("err:%v", errors.ErrorStack(err)))
 				}
+				s.tk.MustExec("commit")
 			}
 			num += step
 		}
@@ -615,8 +665,7 @@ LOOP:
 }
 
 func (s *testDBSuite) testDropColumn(c *C) {
-	done := make(chan struct{}, 1)
-
+	done := make(chan error, 1)
 	s.mustExec(c, "delete from t2")
 
 	num := 100
@@ -626,10 +675,7 @@ func (s *testDBSuite) testDropColumn(c *C) {
 	}
 
 	// get c4 column id
-	go func() {
-		sessionExec(c, s.store, "alter table t2 drop column c4")
-		done <- struct{}{}
-	}()
+	sessionExecInGoroutine(c, s.store, "alter table t2 drop column c4", done)
 
 	ticker := time.NewTicker(s.lease / 2)
 	defer ticker.Stop()
@@ -637,21 +683,23 @@ func (s *testDBSuite) testDropColumn(c *C) {
 LOOP:
 	for {
 		select {
-		case <-done:
-			break LOOP
+		case err := <-done:
+			if err == nil {
+				break LOOP
+			}
+			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
 		case <-ticker.C:
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
+				// Make sure that statement of insert and show use the same infoSchema.
+				s.tk.MustExec("begin")
 				_, err := s.tk.Exec("insert into t2 values (?, ?, ?)", i, i, i)
-				if err == nil {
-					continue
+				if err != nil {
+					// If executing is failed, the column number must be 4 now.
+					values := s.showColumns(c, "t2")
+					c.Assert(values, HasLen, 4, Commentf("err:%v", errors.ErrorStack(err)))
 				}
-				// If executing is failed, the column number must be 4 now.
-				values := s.showColumns(c, "t2")
-				if len(values) != 4 {
-					c.Log(errors.ErrorStack(err))
-					c.FailNow()
-				}
+				s.tk.MustExec("commit")
 			}
 			num += step
 		}
@@ -710,6 +758,8 @@ func match(c *C, row []interface{}, expected ...interface{}) {
 func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
 	defer testleak.AfterTest(c)
 	store, err := tidb.NewStore("memory://update_multiple_table")
+	c.Assert(err, IsNil)
+	err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
@@ -770,6 +820,8 @@ func (s *testDBSuite) TestTruncateTable(c *C) {
 	defer testleak.AfterTest(c)
 	store, err := tidb.NewStore("memory://truncate_table")
 	c.Assert(err, IsNil)
+	err = tidb.BootstrapSession(store)
+	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (c1 int, c2 int)")
@@ -814,4 +866,63 @@ func (s *testDBSuite) TestTruncateTable(c *C) {
 		time.Sleep(time.Millisecond * 100)
 	}
 	c.Assert(hasOldTableData, IsFalse)
+}
+
+func (s *testDBSuite) TestRenameTable(c *C) {
+	s.testRenameTable(c, "rename_table", "rename table %s to %s")
+}
+
+func (s *testDBSuite) TestAlterTableRenameTable(c *C) {
+	s.testRenameTable(c, "alter_table_rename_table", "alter table %s rename to %s")
+}
+
+func (s *testDBSuite) testRenameTable(c *C, storeStr, sql string) {
+	defer testleak.AfterTest(c)
+	store, err := tidb.NewStore("memory://" + storeStr)
+	c.Assert(err, IsNil)
+	err = tidb.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	s.tk = testkit.NewTestKit(c, store)
+	s.tk.MustExec("use test")
+
+	// for different databases
+	s.tk.MustExec("create table t (c1 int, c2 int)")
+	s.tk.MustExec("insert t values (1, 1), (2, 2)")
+	ctx := s.tk.Se.(context.Context)
+	is := sessionctx.GetDomain(ctx).InfoSchema()
+	oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	oldTblID := oldTblInfo.Meta().ID
+	s.tk.MustExec("create database test1")
+	s.tk.MustExec("use test1")
+	s.tk.MustExec(fmt.Sprintf(sql, "test.t", "test1.t1"))
+	is = sessionctx.GetDomain(ctx).InfoSchema()
+	newTblInfo, err := is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	c.Assert(newTblInfo.Meta().ID, Equals, oldTblID)
+	s.tk.MustQuery("select * from t1").Check(testkit.Rows("1 1", "2 2"))
+	s.tk.MustExec("use test")
+	s.tk.MustQuery("show tables").Check(testkit.Rows())
+
+	// for the same database
+	s.tk.MustExec("use test1")
+	s.tk.MustExec(fmt.Sprintf(sql, "t1", "t2"))
+	is = sessionctx.GetDomain(ctx).InfoSchema()
+	newTblInfo, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t2"))
+	c.Assert(err, IsNil)
+	c.Assert(newTblInfo.Meta().ID, Equals, oldTblID)
+	s.tk.MustQuery("select * from t2").Check(testkit.Rows("1 1", "2 2"))
+	isExist := is.TableExists(model.NewCIStr("test1"), model.NewCIStr("t1"))
+	c.Assert(isExist, IsFalse)
+	s.tk.MustQuery("show tables").Check(testkit.Rows("t2"))
+
+	// for failure case
+	failSQL := fmt.Sprintf(sql, "test_not_exist.t", "test_not_exist.t")
+	s.testErrorCode(c, failSQL, tmysql.ErrFileNotFound)
+	failSQL = fmt.Sprintf(sql, "test.t_not_exist", "test_not_exist.t")
+	s.testErrorCode(c, failSQL, tmysql.ErrFileNotFound)
+	failSQL = fmt.Sprintf(sql, "test1.t2", "test_not_exist.t")
+	s.testErrorCode(c, failSQL, tmysql.ErrErrorOnRename)
+	failSQL = fmt.Sprintf(sql, "test1.t2", "test1.t2")
+	s.testErrorCode(c, failSQL, tmysql.ErrTableExists)
 }

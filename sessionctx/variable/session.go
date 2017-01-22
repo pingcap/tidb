@@ -36,9 +36,10 @@ var (
 
 // RetryInfo saves retry information.
 type RetryInfo struct {
-	Retrying         bool
-	currRetryOff     int
-	autoIncrementIDs []int64
+	Retrying               bool
+	DroppedPreparedStmtIDs []uint32
+	currRetryOff           int
+	autoIncrementIDs       []int64
 }
 
 // Clean does some clean work.
@@ -46,6 +47,9 @@ func (r *RetryInfo) Clean() {
 	r.currRetryOff = 0
 	if len(r.autoIncrementIDs) > 0 {
 		r.autoIncrementIDs = r.autoIncrementIDs[:0]
+	}
+	if len(r.DroppedPreparedStmtIDs) > 0 {
+		r.DroppedPreparedStmtIDs = r.DroppedPreparedStmtIDs[:0]
 	}
 }
 
@@ -229,6 +233,7 @@ const (
 	SQLModeVar          = "sql_mode"
 	AutocommitVar       = "autocommit"
 	CharacterSetResults = "character_set_results"
+	MaxAllowedPacket    = "max_allowed_packet"
 	TimeZone            = "time_zone"
 )
 
@@ -253,9 +258,9 @@ func (s *SessionVars) GetTiDBSystemVar(name string) (string, error) {
 // It should be reset before executing a statement.
 type StatementContext struct {
 	/* Variables that are set before execution */
-	InUpdateStmt      bool
-	IgnoreTruncate    bool
-	TruncateAsWarning bool
+	InUpdateOrDeleteStmt bool
+	IgnoreTruncate       bool
+	TruncateAsWarning    bool
 
 	/* Variables that changes during execution. */
 	mu struct {

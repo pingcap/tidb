@@ -14,10 +14,7 @@
 package ast
 
 import (
-	"bytes"
-
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/util/distinct"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -76,6 +73,7 @@ const (
 	// math functions
 	Abs     = "abs"
 	Ceil    = "ceil"
+	Floor   = "floor"
 	Ceiling = "ceiling"
 	Conv    = "conv"
 	CRC32   = "crc32"
@@ -87,6 +85,8 @@ const (
 	Power   = "power"
 	Rand    = "rand"
 	Round   = "round"
+	Sign    = "sign"
+	Sqrt    = "sqrt"
 
 	// time functions
 	Curdate          = "curdate"
@@ -96,13 +96,17 @@ const (
 	Curtime          = "curtime"
 	Date             = "date"
 	DateDiff         = "datediff"
-	DateArith        = "date_arith"
+	DateAdd          = "date_add"
+	AddDate          = "adddate"
+	DateSub          = "date_sub"
+	SubDate          = "subdate"
 	DateFormat       = "date_format"
 	Day              = "day"
 	DayName          = "dayname"
 	DayOfMonth       = "dayofmonth"
 	DayOfWeek        = "dayofweek"
 	DayOfYear        = "dayofyear"
+	FromDays         = "from_days"
 	Extract          = "extract"
 	Hour             = "hour"
 	MicroSecond      = "microsecond"
@@ -115,6 +119,7 @@ const (
 	Sysdate          = "sysdate"
 	Time             = "time"
 	TimeDiff         = "timediff"
+	TimestampDiff    = "timestampdiff"
 	UTCDate          = "utc_date"
 	UnixTimestamp    = "unix_timestamp"
 	Week             = "week"
@@ -129,19 +134,21 @@ const (
 	Concat         = "concat"
 	ConcatWS       = "concat_ws"
 	Convert        = "convert"
+	Field          = "field"
 	Lcase          = "lcase"
 	Left           = "left"
 	Length         = "length"
 	Locate         = "locate"
 	Lower          = "lower"
-	Ltrim          = "ltrim"
+	LTrim          = "ltrim"
 	Repeat         = "repeat"
 	Replace        = "replace"
 	Reverse        = "reverse"
-	Rtrim          = "rtrim"
+	RTrim          = "rtrim"
 	Space          = "space"
 	Strcmp         = "strcmp"
 	Substring      = "substring"
+	Substr         = "substr"
 	SubstringIndex = "substring_index"
 	Trim           = "trim"
 	Upper          = "upper"
@@ -259,14 +266,14 @@ const (
 type DateArithType byte
 
 const (
-	// DateAdd is to run adddate or date_add function option.
+	// DateArithAdd is to run adddate or date_add function option.
 	// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_adddate
 	// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-add
-	DateAdd DateArithType = iota + 1
-	// DateSub is to run subdate or date_sub function option.
+	DateArithAdd DateArithType = iota + 1
+	// DateArithSub is to run subdate or date_sub function option.
 	// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
 	// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-sub
-	DateSub
+	DateArithSub
 )
 
 const (
@@ -297,11 +304,6 @@ type AggregateFuncExpr struct {
 	// For example, column c1 values are "1", "2", "2",  "sum(c1)" is "5",
 	// but "sum(distinct c1)" is "3".
 	Distinct bool
-
-	CurrentGroup []byte
-	// contextPerGroupMap is used to store aggregate evaluation context.
-	// Each entry for a group.
-	contextPerGroupMap map[string](*AggEvaluateContext)
 }
 
 // Accept implements Node Accept interface.
@@ -319,63 +321,4 @@ func (n *AggregateFuncExpr) Accept(v Visitor) (Node, bool) {
 		n.Args[i] = node.(ExprNode)
 	}
 	return v.Leave(n)
-}
-
-// AggregateFuncExtractor visits Expr tree.
-// It converts ColunmNameExpr to AggregateFuncExpr and collects AggregateFuncExpr.
-type AggregateFuncExtractor struct {
-	inAggregateFuncExpr bool
-	// AggFuncs is the collected AggregateFuncExprs.
-	AggFuncs   []*AggregateFuncExpr
-	extracting bool
-}
-
-// Enter implements Visitor interface.
-func (a *AggregateFuncExtractor) Enter(n Node) (node Node, skipChildren bool) {
-	switch n.(type) {
-	case *AggregateFuncExpr:
-		a.inAggregateFuncExpr = true
-	case *SelectStmt, *InsertStmt, *DeleteStmt, *UpdateStmt:
-		// Enter a new context, skip it.
-		// For example: select sum(c) + c + exists(select c from t) from t;
-		if a.extracting {
-			return n, true
-		}
-	}
-	a.extracting = true
-	return n, false
-}
-
-// Leave implements Visitor interface.
-func (a *AggregateFuncExtractor) Leave(n Node) (node Node, ok bool) {
-	switch v := n.(type) {
-	case *AggregateFuncExpr:
-		a.inAggregateFuncExpr = false
-		a.AggFuncs = append(a.AggFuncs, v)
-	case *ColumnNameExpr:
-		// compose new AggregateFuncExpr
-		if !a.inAggregateFuncExpr {
-			// For example: select sum(c) + c from t;
-			// The c in sum() should be evaluated for each row.
-			// The c after plus should be evaluated only once.
-			agg := &AggregateFuncExpr{
-				F:    AggFuncFirstRow,
-				Args: []ExprNode{v},
-			}
-			agg.SetFlag((v.GetFlag() | FlagHasAggregateFunc))
-			agg.SetType(v.GetType())
-			a.AggFuncs = append(a.AggFuncs, agg)
-			return agg, true
-		}
-	}
-	return n, true
-}
-
-// AggEvaluateContext is used to store intermediate result when calculating aggregate functions.
-type AggEvaluateContext struct {
-	DistinctChecker *distinct.Checker
-	Count           int64
-	Value           types.Datum
-	Buffer          *bytes.Buffer // Buffer is used for group_concat.
-	GotFirstRow     bool          // It will check if the agg has met the first row key.
 }

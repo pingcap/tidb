@@ -42,6 +42,7 @@ type RegionRequestSender struct {
 	bo          *Backoffer
 	regionCache *RegionCache
 	client      Client
+	storeAddr   string
 }
 
 // NewRegionRequestSender creates a new sender.
@@ -118,6 +119,7 @@ func (s *RegionRequestSender) SendCopReq(req *coprocessor.Request, regionID Regi
 			}, nil
 		}
 
+		s.storeAddr = ctx.Addr
 		resp, retry, err := s.sendCopReqToRegion(ctx, req, timeout)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -207,6 +209,9 @@ func (s *RegionRequestSender) onRegionError(ctx *RPCContext, regionErr *errorpb.
 	if regionErr.GetStaleCommand() != nil {
 		log.Debugf("tikv reports `StaleCommand`, ctx: %s", ctx.KVCtx)
 		return true, nil
+	}
+	if regionErr.GetRaftEntryTooLarge() != nil {
+		return false, errors.New(regionErr.String())
 	}
 	// For other errors, we only drop cache here.
 	// Because caller may need to re-split the request.

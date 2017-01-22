@@ -21,6 +21,8 @@ import (
 	"hash/crc32"
 	"math"
 	"math/rand"
+	"strconv"
+	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
@@ -31,6 +33,7 @@ import (
 var (
 	_ functionClass = &absFunctionClass{}
 	_ functionClass = &ceilFunctionClass{}
+	_ functionClass = &floorFunctionClass{}
 	_ functionClass = &logFunctionClass{}
 	_ functionClass = &log2FunctionClass{}
 	_ functionClass = &log10FunctionClass{}
@@ -39,12 +42,15 @@ var (
 	_ functionClass = &roundFunctionClass{}
 	_ functionClass = &convFunctionClass{}
 	_ functionClass = &crc32FunctionClass{}
+	_ functionClass = &signFunctionClass{}
+	_ functionClass = &sqrtFunctionClass{}
 	_ functionClass = &arithmeticFunctionClass{}
 )
 
 var (
 	_ builtinFunc = &builtinAbsSig{}
 	_ builtinFunc = &builtinCeilSig{}
+	_ builtinFunc = &builtinFloorSig{}
 	_ builtinFunc = &builtinLogSig{}
 	_ builtinFunc = &builtinLog2Sig{}
 	_ builtinFunc = &builtinLog10Sig{}
@@ -53,6 +59,8 @@ var (
 	_ builtinFunc = &builtinRoundSig{}
 	_ builtinFunc = &builtinConvSig{}
 	_ builtinFunc = &builtinCRC32Sig{}
+	_ builtinFunc = &builtinSignSig{}
+	_ builtinFunc = &builtinSqrtSig{}
 	_ builtinFunc = &builtinArithmeticSig{}
 )
 
@@ -133,6 +141,48 @@ func builtinCeil(args []types.Datum, ctx context.Context) (d types.Datum, err er
 		return d, errors.Trace(err)
 	}
 	d.SetFloat64(math.Ceil(f))
+	return
+}
+
+type floorFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *floorFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinFloorSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinFloorSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinFloorSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return builtinFloor(args, b.ctx)
+}
+
+// See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_floor
+func builtinFloor(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	if args[0].IsNull() ||
+		args[0].Kind() == types.KindUint64 || args[0].Kind() == types.KindInt64 {
+		return args[0], nil
+	}
+
+	// have to set IgnoreTruncate to true in order to getValidPrefix
+	sc := ctx.GetSessionVars().StmtCtx
+	tmpIT := sc.IgnoreTruncate
+	sc.IgnoreTruncate = true
+	f, err := args[0].ToFloat64(sc)
+	if err != nil {
+		sc.IgnoreTruncate = tmpIT
+		return d, errors.Trace(err)
+	}
+
+	sc.IgnoreTruncate = tmpIT
+	d.SetFloat64(math.Floor(f))
 	return
 }
 
@@ -272,7 +322,12 @@ type randFunctionClass struct {
 }
 
 func (c *randFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinRandSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	if err := errors.Trace(c.verifyArgs(args)); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bt := &builtinRandSig{newBaseBuiltinFunc(args, ctx)}
+	bt.deterministic = false
+	return bt, nil
 }
 
 type builtinRandSig struct {
@@ -285,10 +340,6 @@ func (b *builtinRandSig) eval(row []types.Datum) (types.Datum, error) {
 		return types.Datum{}, errors.Trace(err)
 	}
 	return builtinRand(args, b.ctx)
-}
-
-func (b *builtinRandSig) isDeterministic() bool {
-	return true
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_rand
@@ -362,21 +413,47 @@ func (b *builtinRoundSig) eval(row []types.Datum) (types.Datum, error) {
 
 // See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_round
 func builtinRound(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	if args[0].IsNull() {
+		return
+	}
 	sc := ctx.GetSessionVars().StmtCtx
+
+	frac := 0
+	if len(args) == 2 {
+		frac64, err1 := args[1].ToInt64(sc)
+		if err1 != nil {
+			return d, errors.Trace(err1)
+		}
+		frac = int(frac64)
+	}
+
+	if args[0].Kind() == types.KindMysqlDecimal {
+		var dec types.MyDecimal
+		err = args[0].GetMysqlDecimal().Round(&dec, frac)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		d.SetMysqlDecimal(&dec)
+		return d, nil
+	}
+
 	x, err := args[0].ToFloat64(sc)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
 
-	dec := 0
-	if len(args) == 2 {
-		y, err1 := args[1].ToInt64(sc)
-		if err1 != nil {
-			return d, errors.Trace(err1)
+	val := types.Round(x, frac)
+	switch args[0].Kind() {
+	case types.KindInt64:
+		d.SetInt64(int64(val))
+	case types.KindUint64:
+		d.SetUint64(uint64(val))
+	default:
+		d.SetFloat64(val)
+		if frac > 0 {
+			d.SetFrac(frac)
 		}
-		dec = int(y)
 	}
-	d.SetFloat64(types.Round(x, dec))
 	return d, nil
 }
 
@@ -402,8 +479,82 @@ func (b *builtinConvSig) eval(row []types.Datum) (types.Datum, error) {
 
 // See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_conv
 func builtinConv(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	// TODO: Implement it.
-	return d, errors.New("Function unimplement")
+	var (
+		signed     bool
+		negative   bool
+		ignoreSign bool
+	)
+	for _, arg := range args {
+		if arg.IsNull() {
+			return d, nil
+		}
+	}
+	n, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	sc := ctx.GetSessionVars().StmtCtx
+	fromBase, err := args[1].ToInt64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	toBase, err := args[2].ToInt64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if fromBase < 0 {
+		fromBase = -fromBase
+		signed = true
+	}
+	if toBase < 0 {
+		ignoreSign = true
+		toBase = -toBase
+	}
+	if fromBase > 36 || fromBase < 2 || toBase > 36 || toBase < 2 {
+		return d, nil
+	}
+	n = getValidPrefix(strings.TrimSpace(n), fromBase)
+	if len(n) == 0 {
+		return d, nil
+	}
+	if n[0] == '-' {
+		negative = true
+		n = n[1:]
+	}
+
+	val, err := strconv.ParseUint(n, int(fromBase), 64)
+	if err != nil {
+		return d, errors.Trace(types.ErrOverflow)
+	}
+	// See https://github.com/mysql/mysql-server/blob/5.7/strings/ctype-simple.c#L598
+	if signed {
+		if negative && val > -math.MinInt64 {
+			val = -math.MinInt64
+		}
+		if !negative && val > math.MaxInt64 {
+			val = math.MaxInt64
+		}
+	}
+	if negative {
+		val = -val
+	}
+	// See https://github.com/mysql/mysql-server/blob/5.7/strings/longlong2str.c#L58
+	if int64(val) < 0 {
+		negative = true
+	} else {
+		negative = false
+	}
+	if ignoreSign && negative {
+		val = 0 - val
+	}
+
+	s := strconv.FormatUint(val, int(toBase))
+	if negative && ignoreSign {
+		s = "-" + s
+	}
+	d.SetString(strings.ToUpper(s))
+	return d, nil
 }
 
 type crc32FunctionClass struct {
@@ -426,7 +577,7 @@ func (b *builtinCRC32Sig) eval(row []types.Datum) (types.Datum, error) {
 	return builtinCRC32(args, b.ctx)
 }
 
-//　See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_crc32
+// See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_crc32
 func builtinCRC32(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	if args[0].IsNull() {
 		return d, nil
@@ -438,6 +589,82 @@ func builtinCRC32(args []types.Datum, ctx context.Context) (d types.Datum, err e
 	r := crc32.ChecksumIEEE([]byte(x))
 	d.SetUint64(uint64(r))
 	return d, nil
+}
+
+type signFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *signFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinSignSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinSignSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinSignSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return builtinSign(args, b.ctx)
+}
+
+// See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_sign
+func builtinSign(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	if args[0].IsNull() {
+		return d, nil
+	}
+	cmp, err := args[0].CompareDatum(ctx.GetSessionVars().StmtCtx, types.NewIntDatum(0))
+	d.SetInt64(int64(cmp))
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	return d, nil
+}
+
+type sqrtFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *sqrtFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinSqrtSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinSqrtSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinSqrtSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return builtinSqrt(args, b.ctx)
+}
+
+// See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_sqrt
+func builtinSqrt(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	if args[0].IsNull() {
+		return args[0], nil
+	}
+
+	sc := ctx.GetSessionVars().StmtCtx
+	f, err := args[0].ToFloat64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	// negative value does not have any square root in rational number
+	// Need return null directly.
+	if f < 0 {
+		d.SetNull()
+		return d, nil
+	}
+
+	d.SetFloat64(math.Sqrt(f))
+	return
 }
 
 type arithmeticFunctionClass struct {

@@ -26,7 +26,10 @@ import (
 )
 
 type memDbBuffer struct {
-	db *memdb.DB
+	db              *memdb.DB
+	entrySizeLimit  int
+	bufferLenLimit  int
+	bufferSizeLimit int
 }
 
 type memDbIter struct {
@@ -36,7 +39,12 @@ type memDbIter struct {
 
 // NewMemDbBuffer creates a new memDbBuffer.
 func NewMemDbBuffer() MemBuffer {
-	return &memDbBuffer{db: memdb.New(comparer.DefaultComparer, 4*1024)}
+	return &memDbBuffer{
+		db:              memdb.New(comparer.DefaultComparer, 4*1024),
+		entrySizeLimit:  TxnEntrySizeLimit,
+		bufferLenLimit:  TxnEntryCountLimit,
+		bufferSizeLimit: TxnTotalSizeLimit,
+	}
 }
 
 // Seek creates an Iterator.
@@ -76,7 +84,17 @@ func (m *memDbBuffer) Set(k Key, v []byte) error {
 	if len(v) == 0 {
 		return errors.Trace(ErrCannotSetNilValue)
 	}
+	if len(k)+len(v) > m.entrySizeLimit {
+		return ErrEntryTooLarge.Gen("entry too large, size: %d", len(k)+len(v))
+	}
+
 	err := m.db.Put(k, v)
+	if m.Size() > m.bufferSizeLimit {
+		return ErrTxnTooLarge.Gen("transaction too large, size:%d", m.Size())
+	}
+	if m.Len() > m.bufferLenLimit {
+		return ErrTxnTooLarge.Gen("transaction too large, len:%d", m.Len())
+	}
 	return errors.Trace(err)
 }
 
@@ -84,6 +102,16 @@ func (m *memDbBuffer) Set(k Key, v []byte) error {
 func (m *memDbBuffer) Delete(k Key) error {
 	err := m.db.Put(k, nil)
 	return errors.Trace(err)
+}
+
+// Size returns sum of keys and values length.
+func (m *memDbBuffer) Size() int {
+	return m.db.Size()
+}
+
+// Len returns the number of entries in the DB.
+func (m *memDbBuffer) Len() int {
+	return m.db.Len()
 }
 
 // Next implements the Iterator Next.

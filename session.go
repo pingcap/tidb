@@ -67,7 +67,6 @@ type Session interface {
 	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
 	Close() error
-	Retry() error
 	Auth(user string, auth []byte, salt []byte) bool
 }
 
@@ -95,27 +94,14 @@ func (h *stmtHistory) add(stmtID uint32, st ast.Statement, params ...interface{}
 	h.history = append(h.history, s)
 }
 
-func (h *stmtHistory) reset() {
-	if len(h.history) > 0 {
-		h.history = h.history[:0]
-	}
-}
-
-func (h *stmtHistory) clone() *stmtHistory {
-	nh := *h
-	nh.history = make([]*stmtRecord, len(h.history))
-	copy(nh.history, h.history)
-	return &nh
-}
-
-const unlimitedRetryCnt = -1
-
 type session struct {
-	txn         kv.Transaction // current transaction
-	txnCh       chan *txnWithErr
-	values      map[fmt.Stringer]interface{}
-	store       kv.Storage
-	maxRetryCnt int // Max retry times. If maxRetryCnt <=0, there is no limitation for retry times.
+	txn    kv.Transaction // current transaction
+	txnCh  chan *txnWithErr
+	values map[fmt.Stringer]interface{}
+	store  kv.Storage
+
+	// Used for test only.
+	unlimitedRetryCount bool
 
 	// For performance_schema only.
 	stmtState *perfschema.StatementState
@@ -126,7 +112,11 @@ type session struct {
 
 func (s *session) cleanRetryInfo() {
 	if !s.sessionVars.RetryInfo.Retrying {
-		s.sessionVars.RetryInfo.Clean()
+		retryInfo := s.sessionVars.RetryInfo
+		for _, stmtID := range retryInfo.DroppedPreparedStmtIDs {
+			delete(s.sessionVars.PreparedStmts, stmtID)
+		}
+		retryInfo.Clean()
 	}
 }
 
@@ -167,8 +157,10 @@ func (s *schemaLeaseChecker) Check(txnTS uint64) error {
 		case nil:
 			return nil
 		case domain.ErrInfoSchemaChanged:
+			schemaLeaseErrorCounter.WithLabelValues("changed").Inc()
 			return errors.Trace(err)
 		default:
+			schemaLeaseErrorCounter.WithLabelValues("outdated").Inc()
 			time.Sleep(schemaOutOfDateRetryInterval)
 		}
 	}
@@ -221,15 +213,23 @@ func (s *session) doCommit() error {
 }
 
 func (s *session) doCommitWithRetry() error {
+	var txnSize int
+	if s.txn != nil && s.txn.Valid() {
+		txnSize = s.txn.Size()
+	}
 	err := s.doCommit()
 	if err != nil {
 		if s.isRetryableError(err) {
-			err = s.Retry()
+			// Transactions will retry 2 ~ 10 times.
+			// We make larger transactions retry less times to prevent cluster resource outage.
+			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
+			maxRetryCount := 10 - int(txnSizeRate*9.0)
+			err = s.retry(maxRetryCount)
 		}
 	}
 	s.cleanRetryInfo()
 	if err != nil {
-		log.Warnf("finished txn:%s, %v", s.txn, err)
+		log.Warnf("[%d] finished txn:%v, %v", s.sessionVars.ConnectionID, s.txn, err)
 		return errors.Trace(err)
 	}
 	return nil
@@ -288,27 +288,26 @@ func (s *session) isRetryableError(err error) bool {
 	return kv.IsRetryableError(err) || terror.ErrorEqual(err, domain.ErrInfoSchemaChanged)
 }
 
-func (s *session) Retry() error {
+func (s *session) retry(maxCnt int) error {
+	connID := s.sessionVars.ConnectionID
 	if s.sessionVars.TxnCtx.ForUpdate {
-		return errors.Errorf("can not retry select for update statement")
+		return errors.Errorf("[%d] can not retry select for update statement", connID)
 	}
 	s.sessionVars.RetryInfo.Retrying = true
+	retryCnt := 0
 	defer func() {
 		s.sessionVars.RetryInfo.Retrying = false
+		sessionRetry.Observe(float64(retryCnt))
 	}()
 	nh := getHistory(s)
 	var err error
-	retryCnt := 0
 	for {
 		s.prepareTxnCtx()
 		s.sessionVars.RetryInfo.ResetOffset()
 		for _, sr := range nh.history {
 			st := sr.st
 			txt := st.OriginText()
-			if len(txt) > sqlLogMaxLen {
-				txt = txt[:sqlLogMaxLen]
-			}
-			log.Warnf("Retry %s (len:%d)", txt, len(st.OriginText()))
+			log.Warnf("[%d] Retry %s", connID, sqlForLog(txt))
 			_, err = st.Exec(s)
 			if err != nil {
 				break
@@ -321,16 +320,24 @@ func (s *session) Retry() error {
 			}
 		}
 		if !s.isRetryableError(err) {
-			log.Warnf("session:%v, err:%v", s, err)
+			log.Warnf("[%d] session:%v, err:%v", connID, s, err)
 			return errors.Trace(err)
 		}
 		retryCnt++
-		if (s.maxRetryCnt != unlimitedRetryCnt) && (retryCnt >= s.maxRetryCnt) {
+		if !s.unlimitedRetryCount && (retryCnt >= maxCnt) {
+			log.Warnf("[%id] Retry reached max count %d", connID, retryCnt)
 			return errors.Trace(err)
 		}
 		kv.BackOff(retryCnt)
 	}
 	return err
+}
+
+func sqlForLog(sql string) string {
+	if len(sql) > sqlLogMaxLen {
+		return sql[:sqlLogMaxLen] + fmt.Sprintf("(len:%d)", len(sql))
+	}
+	return sql
 }
 
 // ExecRestrictedSQL implements RestrictedSQLExecutor interface.
@@ -551,7 +558,7 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 	if _, ok := vars.PreparedStmts[stmtID]; !ok {
 		return executor.ErrStmtNotFound
 	}
-	delete(vars.PreparedStmts, stmtID)
+	vars.RetryInfo.DroppedPreparedStmtIDs = append(vars.RetryInfo.DroppedPreparedStmtIDs, stmtID)
 	return nil
 }
 
@@ -695,6 +702,20 @@ func chooseMinLease(n1 time.Duration, n2 time.Duration) time.Duration {
 
 // CreateSession creates a new session environment.
 func CreateSession(store kv.Storage) (Session, error) {
+	s, err := createSession(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// TODO: Add auth here
+	privChecker := &privileges.UserPrivileges{}
+	privilege.BindPrivilegeChecker(s, privChecker)
+
+	return s, nil
+}
+
+// BootstrapSession runs the first time when the TiDB server start.
+func BootstrapSession(store kv.Storage) error {
 	ver := getStoreBootstrapVersion(store)
 	if ver == notBootstrapped {
 		runInBootstrapSession(store, bootstrap)
@@ -702,7 +723,8 @@ func CreateSession(store kv.Storage) (Session, error) {
 		runInBootstrapSession(store, upgrade)
 	}
 
-	return createSession(store)
+	_, err := domap.Get(store)
+	return errors.Trace(err)
 }
 
 // runInBootstrapSession create a special session for boostrap to run.
@@ -735,7 +757,6 @@ func createSession(store kv.Storage) (*session, error) {
 	s := &session{
 		values:      make(map[fmt.Stringer]interface{}),
 		store:       store,
-		maxRetryCnt: 10,
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
 	}
@@ -747,9 +768,6 @@ func createSession(store kv.Storage) (*session, error) {
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
 
-	// TODO: Add auth here
-	privChecker := &privileges.UserPrivileges{}
-	privilege.BindPrivilegeChecker(s, privChecker)
 	return s, nil
 }
 
@@ -803,6 +821,7 @@ const loadCommonGlobalVarsSQL = "select * from mysql.global_variables where vari
 	variable.AutocommitVar + "', '" +
 	variable.SQLModeVar + "', '" +
 	variable.DistSQLJoinConcurrencyVar + "', '" +
+	variable.MaxAllowedPacket + "', '" +
 	variable.DistSQLScanConcurrencyVar + "')"
 
 // LoadCommonGlobalVariableIfNeeded loads and applies commonly used global variables for the session.

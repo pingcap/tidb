@@ -34,6 +34,8 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	log.SetLevelByString("error")
 	store, err := tidb.NewStore("memory:///tmp/tidb")
 	c.Assert(err, IsNil)
+	err = tidb.BootstrapSession(store)
+	c.Assert(err, IsNil)
 	ts.tidbdrv = NewTiDBDriver(store)
 	cfg := &Config{
 		Addr:         ":4001",
@@ -117,10 +119,6 @@ func (ts *TidbTestSuite) TestResultFieldTableIsNull(c *C) {
 
 func (ts *TidbTestSuite) TestStatusAPI(c *C) {
 	runTestStatusAPI(c)
-}
-
-func (ts *TidbTestSuite) TestMultiPacket(c *C) {
-	runTestMultiPacket(c)
 }
 
 func (ts *TidbTestSuite) TestMultiStatements(c *C) {

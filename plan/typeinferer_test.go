@@ -14,10 +14,12 @@
 package plan_test
 
 import (
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
@@ -34,7 +36,7 @@ type testTypeInferrerSuite struct {
 }
 
 func (ts *testTypeInferrerSuite) TestInferType(c *C) {
-	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
+	store, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	defer store.Close()
 	testKit := testkit.NewTestKit(c, store)
@@ -50,6 +52,8 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"-1", mysql.TypeLonglong, charset.CharsetBin},
 		{"-'1'", mysql.TypeDouble, charset.CharsetBin},
 		{"~1", mysql.TypeLonglong, charset.CharsetBin},
+		{"1e0", mysql.TypeDouble, charset.CharsetBin},
+		{"1.0", mysql.TypeNewDecimal, charset.CharsetBin},
 		{"!true", mysql.TypeLonglong, charset.CharsetBin},
 
 		{"c1 is true", mysql.TypeLonglong, charset.CharsetBin},
@@ -94,6 +98,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"LOG(3, 10)", mysql.TypeDouble, charset.CharsetBin},
 		{"LOG2(3)", mysql.TypeDouble, charset.CharsetBin},
 		{"LOG10(3)", mysql.TypeDouble, charset.CharsetBin},
+		{"SQRT(3)", mysql.TypeDouble, charset.CharsetBin},
 		{"rand()", mysql.TypeDouble, charset.CharsetBin},
 		{"curdate()", mysql.TypeDate, charset.CharsetBin},
 		{"current_date()", mysql.TypeDate, charset.CharsetBin},
@@ -155,6 +160,12 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"interval(1, 2, 3)", mysql.TypeLonglong, charset.CharsetBin},
 		{"interval(1.0, 2.0, 3.0)", mysql.TypeLonglong, charset.CharsetBin},
 		{"interval('1', '2', '3')", mysql.TypeLonglong, charset.CharsetBin},
+		{"round(null, 2)", mysql.TypeDouble, charset.CharsetBin},
+		{"round('1.2', 2)", mysql.TypeDouble, charset.CharsetBin},
+		{"round(1e2, 2)", mysql.TypeDouble, charset.CharsetBin},
+		{"round(1.2, 2)", mysql.TypeNewDecimal, charset.CharsetBin},
+		{"round(true, 2)", mysql.TypeLonglong, charset.CharsetBin},
+		{"round(1000, 2)", mysql.TypeLonglong, charset.CharsetBin},
 		{"hex('TiDB')", mysql.TypeVarString, "utf8"},
 		{"hex(12)", mysql.TypeVarString, "utf8"},
 		{"unhex('TiDB')", mysql.TypeVarString, "utf8"},
@@ -166,11 +177,17 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"char_length('TiDB')", mysql.TypeLonglong, charset.CharsetBin},
 		{"character_length('TiDB')", mysql.TypeLonglong, charset.CharsetBin},
 		{"crc32('TiDB')", mysql.TypeLonglong, charset.CharsetBin},
+		{"timestampdiff(MINUTE,'2003-02-01','2003-05-01 12:05:55')", mysql.TypeLonglong, charset.CharsetBin},
+		{"sign(0)", mysql.TypeLonglong, charset.CharsetBin},
+		{"sign(null)", mysql.TypeLonglong, charset.CharsetBin},
 		{"unix_timestamp()", mysql.TypeLonglong, charset.CharsetBin},
 		{"unix_timestamp('2015-11-13 10:20:19')", mysql.TypeLonglong, charset.CharsetBin},
+		{"floor(1.23)", mysql.TypeLonglong, charset.CharsetBin},
+		{"field('foo', null)", mysql.TypeLonglong, charset.CharsetBin},
 		{"find_in_set('foo', 'foo,bar')", mysql.TypeLonglong, charset.CharsetBin},
 		{"find_in_set('foo', null)", mysql.TypeLonglong, charset.CharsetBin},
 		{"find_in_set(null, 'bar')", mysql.TypeLonglong, charset.CharsetBin},
+		{"conv('TiDB',36,10)", mysql.TypeVarString, charset.CharsetUTF8},
 	}
 	for _, ca := range cases {
 		ctx := testKit.Se.(context.Context)
@@ -191,7 +208,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 
 func (s *testTypeInferrerSuite) TestColumnInfoModified(c *C) {
 	defer testleak.AfterTest(c)()
-	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
+	store, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	defer store.Close()
 	testKit := testkit.NewTestKit(c, store)
@@ -204,4 +221,13 @@ func (s *testTypeInferrerSuite) TestColumnInfoModified(c *C) {
 	tbl, _ := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tab0"))
 	col := table.FindCol(tbl.Cols(), "col1")
 	c.Assert(col.Tp, Equals, mysql.TypeLong)
+}
+
+func newStoreWithBootstrap() (kv.Storage, error) {
+	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	err = tidb.BootstrapSession(store)
+	return store, errors.Trace(err)
 }

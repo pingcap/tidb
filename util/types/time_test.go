@@ -765,3 +765,26 @@ func (s *testTimeSuite) TestParseDateFormat(c *C) {
 		c.Assert(r, DeepEquals, t.Result)
 	}
 }
+
+func (s *testTimeSuite) TestTamestampDiff(c *C) {
+	tests := []struct {
+		unit   string
+		t1     TimeInternal
+		t2     TimeInternal
+		expect int64
+	}{
+		{"MONTH", FromDate(2002, 5, 30, 0, 0, 0, 0), FromDate(2001, 1, 1, 0, 0, 0, 0), -16},
+		{"YEAR", FromDate(2002, 5, 1, 0, 0, 0, 0), FromDate(2001, 1, 1, 0, 0, 0, 0), -1},
+		{"MINUTE", FromDate(2003, 2, 1, 0, 0, 0, 0), FromDate(2003, 5, 1, 12, 5, 55, 0), 128885},
+		{"MICROSECOND", FromDate(2002, 5, 30, 0, 0, 0, 0), FromDate(2002, 5, 30, 0, 13, 25, 0), 805000000},
+		{"MICROSECOND", FromDate(2000, 1, 1, 0, 0, 0, 12345), FromDate(2000, 1, 1, 0, 0, 45, 32), 44987687},
+		{"QUARTER", FromDate(2000, 1, 12, 0, 0, 0, 0), FromDate(2016, 1, 1, 0, 0, 0, 0), 63},
+		{"QUARTER", FromDate(2016, 1, 1, 0, 0, 0, 0), FromDate(2000, 1, 12, 0, 0, 0, 0), -63},
+	}
+
+	for _, test := range tests {
+		t1 := Time{test.t1, mysql.TypeDatetime, 6}
+		t2 := Time{test.t2, mysql.TypeDatetime, 6}
+		c.Assert(TimestampDiff(test.unit, t1, t2), Equals, test.expect)
+	}
+}

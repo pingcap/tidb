@@ -17,12 +17,11 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan/statistics"
+	"github.com/pingcap/tidb/plan/statscache"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -52,7 +51,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 	agg.self = agg
 	agg.initIDAndContext(b.ctx)
 	addChild(agg, p)
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncList)))
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncList)+p.GetSchema().Len()))
 	// aggIdxMap maps the old index to new index after applying common aggregation functions elimination.
 	aggIndexMap := make(map[int]int)
 	for i, aggFunc := range aggFuncList {
@@ -87,6 +86,11 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 				RetType:     aggFunc.GetType()})
 		}
 	}
+	for _, col := range p.GetSchema().Columns {
+		newFunc := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{col.Clone()}, false)
+		agg.AggFuncs = append(agg.AggFuncs, newFunc)
+		schema.Append(col.Clone().(*expression.Column))
+	}
 	agg.GroupByItems = gbyItems
 	agg.SetSchema(schema)
 	agg.collectGroupByColumns()
@@ -118,8 +122,7 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 			v.TableAsName = &x.AsName
 		}
 		if x.AsName.L != "" {
-			schema := p.GetSchema()
-			for _, col := range schema.Columns {
+			for _, col := range p.GetSchema().Columns {
 				col.TblName = x.AsName
 				col.DBName = model.NewCIStr("")
 			}
@@ -196,6 +199,8 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	rightPlan := b.buildResultSetNode(join.Right)
 	newSchema := expression.MergeSchema(leftPlan.GetSchema(), rightPlan.GetSchema())
 	joinPlan := &Join{baseLogicalPlan: newBaseLogicalPlan(Jn, b.allocator)}
+	addChild(joinPlan, leftPlan)
+	addChild(joinPlan, rightPlan)
 	joinPlan.self = joinPlan
 	joinPlan.initIDAndContext(b.ctx)
 	joinPlan.SetSchema(newSchema)
@@ -209,11 +214,7 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 			b.err = errors.New("ON condition doesn't support subqueries yet")
 		}
 		onCondition := expression.SplitCNFItems(onExpr)
-		eqCond, leftCond, rightCond, otherCond := extractOnCondition(onCondition, leftPlan, rightPlan)
-		joinPlan.EqualConditions = eqCond
-		joinPlan.LeftConditions = leftCond
-		joinPlan.RightConditions = rightCond
-		joinPlan.OtherConditions = otherCond
+		joinPlan.attachOnConds(onCondition)
 	} else if joinPlan.JoinType == InnerJoin {
 		joinPlan.cartesianJoin = true
 	}
@@ -226,8 +227,6 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	} else {
 		joinPlan.JoinType = InnerJoin
 	}
-	addChild(joinPlan, leftPlan)
-	addChild(joinPlan, rightPlan)
 	joinPlan.SetCorrelated()
 	return joinPlan
 }
@@ -322,14 +321,21 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 	return proj, oldLen
 }
 
-func (b *planBuilder) buildDistinct(src LogicalPlan) LogicalPlan {
-	d := &Distinct{baseLogicalPlan: newBaseLogicalPlan(Dis, b.allocator)}
-	d.self = d
-	d.initIDAndContext(b.ctx)
-	addChild(d, src)
-	d.SetSchema(src.GetSchema())
-	d.SetCorrelated()
-	return d
+func (b *planBuilder) buildDistinct(child LogicalPlan, length int) LogicalPlan {
+	agg := &Aggregation{
+		baseLogicalPlan: newBaseLogicalPlan(Agg, b.allocator),
+		AggFuncs:        make([]expression.AggregationFunction, 0, child.GetSchema().Len()),
+		GroupByItems:    expression.Column2Exprs(child.GetSchema().Clone().Columns[:length])}
+	agg.collectGroupByColumns()
+	for _, col := range child.GetSchema().Columns {
+		agg.AggFuncs = append(agg.AggFuncs, expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{col}, false))
+	}
+	agg.self = agg
+	agg.initIDAndContext(b.ctx)
+	addChild(agg, child)
+	agg.SetSchema(child.GetSchema().Clone())
+	agg.SetCorrelated()
+	return agg
 }
 
 func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
@@ -378,7 +384,7 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 	var p LogicalPlan
 	p = u
 	if union.Distinct {
-		p = b.buildDistinct(u)
+		p = b.buildDistinct(u, u.GetSchema().Len())
 	}
 	if union.OrderBy != nil {
 		p = b.buildSort(p, union.OrderBy.Items, nil)
@@ -444,7 +450,6 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 	if limit.Offset != nil {
 		offset, err = getUintForLimitOffset(sc, limit.Offset.GetValue())
 		if err != nil {
-			log.Error(err)
 			b.err = ErrWrongArguments
 			return nil
 		}
@@ -452,8 +457,8 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 	if limit.Count != nil {
 		count, err = getUintForLimitOffset(sc, limit.Count.GetValue())
 		if err != nil {
-			log.Error(err)
 			b.err = ErrWrongArguments
+			return nil
 		}
 	}
 	li := &Limit{
@@ -512,7 +517,7 @@ func resolveFromSelectFields(v *ast.ColumnNameExpr, fields []*ast.SelectField, i
 				index = i
 			} else if !colMatch(matchedExpr.(*ast.ColumnNameExpr).Name, curCol.Name) &&
 				!colMatch(curCol.Name, matchedExpr.(*ast.ColumnNameExpr).Name) {
-				return -1, errors.Errorf("Column '%s' in field list is ambiguous", curCol.Name.Name.L)
+				return -1, ErrAmbiguous.GenByArgs(curCol.Name.Name.L)
 			}
 		}
 	}
@@ -616,10 +621,9 @@ func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool
 				}
 			}
 		} else {
-			index, a.err = a.resolveFromSchema(v, a.p.GetSchema())
-			if a.err != nil {
-				return node, false
-			}
+			// We should ignore the err when resolving from schema. Because we could resolve successfully
+			// when considering select fields.
+			index, _ = a.resolveFromSchema(v, a.p.GetSchema())
 			if index == -1 {
 				index, a.err = resolveFromSelectFields(v, a.selectFields, false)
 			}
@@ -686,7 +690,7 @@ func (b *planBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan
 }
 
 func (b *planBuilder) extractAggFuncs(fields []*ast.SelectField) ([]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int) {
-	extractor := &ast.AggregateFuncExtractor{}
+	extractor := &AggregateFuncExtractor{}
 	for _, f := range fields {
 		n, _ := f.Expr.Accept(extractor)
 		f.Expr = n.(ast.ExprNode)
@@ -866,7 +870,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		}
 	}
 	if sel.Distinct {
-		p = b.buildDistinct(p)
+		p = b.buildDistinct(p, oldLen)
 		if b.err != nil {
 			return nil
 		}
@@ -907,13 +911,8 @@ func (b *planBuilder) buildTableDual() LogicalPlan {
 	return dual
 }
 
-func (b *planBuilder) getTableStats(table *model.TableInfo) *statistics.Table {
-	// TODO: Currently we always return a pseudo table for good performance. We will use a cache in future.
-	return statistics.PseudoTable(table)
-}
-
 func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
-	statisticTable := b.getTableStats(tn.TableInfo)
+	statisticTable := statscache.GetStatisticsTableCache(b.ctx, tn.TableInfo)
 	if b.err != nil {
 		return nil
 	}
@@ -969,34 +968,33 @@ type ApplyConditionChecker struct {
 	All       bool
 }
 
-// buildApply builds apply plan with outerPlan and innerPlan. Everytime we fetch a record from outerPlan and apply it to
-// innerPlan. This way is the so-called correlated execution.
-func (b *planBuilder) buildApply(outerPlan, innerPlan LogicalPlan, checker *ApplyConditionChecker) LogicalPlan {
-	ap := &Apply{
-		Checker:         checker,
-		baseLogicalPlan: newBaseLogicalPlan(App, b.allocator),
+// buildInnerApply builds apply plan with outerPlan and innerPlan, which apply inner-join for every row from outerPlan and the whole innerPlan.
+func (b *planBuilder) buildInnerApply(outerPlan, innerPlan LogicalPlan) LogicalPlan {
+	join := &Join{
+		JoinType:        InnerJoin,
+		baseLogicalPlan: newBaseLogicalPlan(Jn, b.allocator),
 	}
-	ap.self = ap
+	ap := &Apply{Join: *join}
 	ap.initIDAndContext(b.ctx)
+	ap.self = ap
 	addChild(ap, outerPlan)
 	addChild(ap, innerPlan)
-	innerSchema := innerPlan.GetSchema().Clone()
-	if checker == nil {
-		for _, col := range innerSchema.Columns {
-			col.IsAggOrSubq = true
-		}
-		ap.SetSchema(expression.MergeSchema(outerPlan.GetSchema(), innerSchema))
-	} else {
-		newSchema := outerPlan.GetSchema().Clone()
-		newSchema.Append(&expression.Column{
-			FromID:      ap.id,
-			ColName:     model.NewCIStr("exists_row"),
-			RetType:     types.NewFieldType(mysql.TypeTiny),
-			IsAggOrSubq: true,
-		})
-		ap.SetSchema(newSchema)
+	ap.SetSchema(expression.MergeSchema(outerPlan.GetSchema(), innerPlan.GetSchema()))
+	for i := outerPlan.GetSchema().Len(); i < ap.GetSchema().Len(); i++ {
+		ap.schema.Columns[i].IsAggOrSubq = true
 	}
 	ap.SetCorrelated()
+	return ap
+}
+
+// buildSemiApply builds apply plan with outerPlan and innerPlan, which apply semi-join for every row from outerPlan and the whole innerPlan.
+func (b *planBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition []expression.Expression, asScalar, not bool) LogicalPlan {
+	join := b.buildSemiJoin(outerPlan, innerPlan, condition, asScalar, not)
+	ap := &Apply{Join: *join}
+	ap.initIDAndContext(b.ctx)
+	ap.self = ap
+	ap.children[0].SetParents(ap)
+	ap.children[1].SetParents(ap)
 	return ap
 }
 
@@ -1036,18 +1034,17 @@ func (b *planBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
 	return maxOneRow
 }
 
-func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onCondition []expression.Expression, asScalar bool, not bool) LogicalPlan {
+func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onCondition []expression.Expression, asScalar bool, not bool) *Join {
 	joinPlan := &Join{baseLogicalPlan: newBaseLogicalPlan(Jn, b.allocator)}
 	joinPlan.self = joinPlan
 	joinPlan.initIDAndContext(b.ctx)
 	for i, expr := range onCondition {
 		onCondition[i] = expr.Decorrelate(outerPlan.GetSchema())
 	}
-	eqCond, leftCond, rightCond, otherCond := extractOnCondition(onCondition, outerPlan, innerPlan)
-	joinPlan.EqualConditions = eqCond
-	joinPlan.LeftConditions = leftCond
-	joinPlan.RightConditions = rightCond
-	joinPlan.OtherConditions = otherCond
+	joinPlan.SetChildren(outerPlan, innerPlan)
+	outerPlan.SetParents(joinPlan)
+	innerPlan.SetParents(joinPlan)
+	joinPlan.attachOnConds(onCondition)
 	if asScalar {
 		newSchema := outerPlan.GetSchema().Clone()
 		newSchema.Append(&expression.Column{
@@ -1057,15 +1054,12 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 			IsAggOrSubq: true,
 		})
 		joinPlan.SetSchema(newSchema)
-		joinPlan.JoinType = SemiJoinWithAux
+		joinPlan.JoinType = LeftOuterSemiJoin
 	} else {
 		joinPlan.SetSchema(outerPlan.GetSchema().Clone())
 		joinPlan.JoinType = SemiJoin
 	}
 	joinPlan.anti = not
-	joinPlan.SetChildren(outerPlan, innerPlan)
-	outerPlan.SetParents(joinPlan)
-	innerPlan.SetParents(joinPlan)
 	joinPlan.SetCorrelated()
 	return joinPlan
 }
@@ -1126,6 +1120,7 @@ func (b *planBuilder) buildUpdateLists(list []*ast.Assignment, p LogicalPlan) ([
 		offset := schema.GetColumnIndex(col)
 		if offset == -1 {
 			b.err = errors.Trace(errors.Errorf("could not find column %s.%s", col.TblName, col.ColName))
+			return nil, nil
 		}
 		newExpr, np, err := b.rewrite(assign.Expr, p, nil, false)
 		if err != nil {

@@ -91,6 +91,24 @@ func EvalBool(expr Expression, row []types.Datum, ctx context.Context) (bool, er
 	return i != 0, nil
 }
 
+// One stands for a number 1.
+var One = &Constant{
+	Value:   types.NewDatum(1),
+	RetType: types.NewFieldType(mysql.TypeTiny),
+}
+
+// Zero stands for a number 0.
+var Zero = &Constant{
+	Value:   types.NewDatum(0),
+	RetType: types.NewFieldType(mysql.TypeTiny),
+}
+
+// Null stands for null constant.
+var Null = &Constant{
+	Value:   types.NewDatum(nil),
+	RetType: types.NewFieldType(mysql.TypeTiny),
+}
+
 // Constant stands for a constant value.
 type Constant struct {
 	Value   types.Datum
@@ -175,12 +193,12 @@ func composeConditionWithBinaryOp(conditions []Expression, funcName string) Expr
 }
 
 // ComposeCNFCondition composes CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
-func ComposeCNFCondition(conditions []Expression) Expression {
+func ComposeCNFCondition(conditions ...Expression) Expression {
 	return composeConditionWithBinaryOp(conditions, ast.AndAnd)
 }
 
 // ComposeDNFCondition composes DNF items into a balance deep DNF tree.
-func ComposeDNFCondition(conditions []Expression) Expression {
+func ComposeDNFCondition(conditions ...Expression) Expression {
 	return composeConditionWithBinaryOp(conditions, ast.OrOr)
 }
 
@@ -260,6 +278,7 @@ func EvaluateExprWithNull(ctx context.Context, schema Schema, expr Expression) (
 // TableInfo2Schema converts table info to schema.
 func TableInfo2Schema(tbl *model.TableInfo) Schema {
 	schema := NewSchema(make([]*Column, 0, len(tbl.Columns)))
+	keys := make([]KeyInfo, 0, len(tbl.Indices)+1)
 	for i, col := range tbl.Columns {
 		newCol := &Column{
 			ColName:  col.Name,
@@ -269,6 +288,42 @@ func TableInfo2Schema(tbl *model.TableInfo) Schema {
 		}
 		schema.Append(newCol)
 	}
+	for _, idx := range tbl.Indices {
+		if !idx.Unique || idx.State != model.StatePublic {
+			continue
+		}
+		ok := true
+		newKey := make([]*Column, 0, len(idx.Columns))
+		for _, idxCol := range idx.Columns {
+			find := false
+			for i, col := range tbl.Columns {
+				if idxCol.Name.L == col.Name.L {
+					if !mysql.HasNotNullFlag(col.Flag) {
+						break
+					}
+					newKey = append(newKey, schema.Columns[i])
+					find = true
+					break
+				}
+			}
+			if !find {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			keys = append(keys, newKey)
+		}
+	}
+	if tbl.PKIsHandle {
+		for i, col := range tbl.Columns {
+			if mysql.HasPriKeyFlag(col.Flag) {
+				keys = append(keys, []*Column{schema.Columns[i]})
+				break
+			}
+		}
+	}
+	schema.SetUniqueKeys(keys)
 	return schema
 }
 
@@ -288,7 +343,7 @@ func NewCastFunc(tp *types.FieldType, arg Expression) (*ScalarFunction, error) {
 
 // NewValuesFunc creates a new values function.
 func NewValuesFunc(v *ast.ValuesExpr) *ScalarFunction {
-	bt := BuildinValuesFactory(v)
+	bt := BuiltinValuesFactory(v.Column.Refer.Column.Offset)
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(ast.Values),
 		RetType:  &v.Type,

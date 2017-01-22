@@ -35,6 +35,16 @@ const (
 	SchemaLeaseChecker
 )
 
+// Those limits is enforced to make sure the transaction can be well handled by TiKV.
+const (
+	// The limit of single entry size (len(key) + len(value)).
+	TxnEntrySizeLimit = 6 * 1024 * 1024
+	// The limit of number of entries in the MemBuffer.
+	TxnEntryCountLimit = 100 * 1000
+	// The limit of the sum of all entry size.
+	TxnTotalSizeLimit = 100 * 1024 * 1024
+)
+
 // Retriever is the interface wraps the basic Get and Seek methods.
 type Retriever interface {
 	// Get gets the value for key k from kv store.
@@ -67,12 +77,18 @@ type RetrieverMutator interface {
 }
 
 // MemBuffer is an in-memory kv collection, can be used to buffer write operations.
-type MemBuffer RetrieverMutator
+type MemBuffer interface {
+	RetrieverMutator
+	// Size returns sum of keys and values length.
+	Size() int
+	// Len returns the number of entries in the DB.
+	Len() int
+}
 
 // Transaction defines the interface for operations inside a Transaction.
 // This is not thread safe.
 type Transaction interface {
-	RetrieverMutator
+	MemBuffer
 	// Commit commits the transaction operations to KV store.
 	Commit() error
 	// Rollback undoes the transaction operations to KV store.

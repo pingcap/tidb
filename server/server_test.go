@@ -22,7 +22,6 @@ import (
 	"os"
 	"regexp"
 	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/go-sql-driver/mysql"
@@ -507,20 +506,6 @@ func runTestStatusAPI(c *C) {
 	c.Assert(data.GitHash, Equals, printer.TiDBGitHash)
 }
 
-func runTestMultiPacket(c *C) {
-	runTests(c, dsn, func(dbt *DBTest) {
-		dbt.mustExec(fmt.Sprintf("set global max_allowed_packet=%d", 1024*1024*160)) // 160M
-	})
-
-	runTests(c, dsn, func(dbt *DBTest) {
-		dbt.mustExec("create table test (a longtext)")
-		// When i == 30, packet size will be 16777215(2^24−1) bytes.
-		for i := 30; i < 32; i++ {
-			dbt.mustExec("insert into test values ('" + strings.Repeat("x", 1024*1024*16-i) + "')")
-		}
-	})
-}
-
 func runTestMultiStatements(c *C) {
 	runTestsOnNewDB(c, "MultiStatements", func(dbt *DBTest) {
 		// Create Table
@@ -579,9 +564,6 @@ func runTestStmtCount(t *C) {
 		currentStmtCnt := getStmtCnt(string(getMetrics(t)))
 		t.Assert(currentStmtCnt[executor.CreateTable], Equals, originStmtCnt[executor.CreateTable]+1)
 		t.Assert(currentStmtCnt[executor.Insert], Equals, originStmtCnt[executor.Insert]+5)
-		t.Assert(currentStmtCnt[executor.Delete], Equals, originStmtCnt[executor.Delete]+1)
-		t.Assert(currentStmtCnt[executor.Update], Equals, originStmtCnt[executor.Update]+2)
-		t.Assert(currentStmtCnt[executor.SimpleSelect], Equals, originStmtCnt[executor.SimpleSelect]+3)
 	})
 }
 

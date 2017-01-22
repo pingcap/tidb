@@ -254,9 +254,12 @@ func (do *Domain) Reload() error {
 	}
 
 	latestSchemaVersion, err = do.loadInfoSchema(do.infoHandle, schemaVersion, ver.Ver)
+	loadSchemaDuration.Observe(time.Since(startTime).Seconds())
 	if err != nil {
+		loadSchemaCounter.WithLabelValues("failed").Inc()
 		return errors.Trace(err)
 	}
+	loadSchemaCounter.WithLabelValues("succ").Inc()
 
 	do.SchemaValidator.Update(ver.Ver, latestSchemaVersion)
 

@@ -41,6 +41,13 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 			gbyItems:  "[]",
 		},
 		{
+			sql:       "select distinct a,b from t",
+			best:      "Table(t)->HashAgg",
+			aggFuns:   "[firstrow(test.t.a) firstrow(test.t.b)]",
+			aggFields: "[blob int int]",
+			gbyItems:  "[test.t.a test.t.b]",
+		},
+		{
 			sql:       "select sum(b) from t group by c",
 			best:      "Table(t)->HashAgg->Projection",
 			aggFuns:   "[sum(test.t.b)]",
@@ -76,6 +83,8 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
 		lp.PruneColumns(lp.GetSchema().Columns)
+		solver := &aggPushDownSolver{builder.allocator, builder.ctx}
+		solver.aggPushDown(lp)
 		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
@@ -113,6 +122,12 @@ func (s *testPlanSuite) TestPushDownOrderbyAndLimit(c *C) {
 			best:         "Table(t)->Limit->Projection",
 			orderByItmes: "[]",
 			limit:        "5",
+		},
+		{
+			sql:          "select * from t where a < 1 limit 1, 1",
+			best:         "Table(t)->Limit->Projection",
+			orderByItmes: "[]",
+			limit:        "2",
 		},
 		{
 			sql:          "select * from t limit 5",
@@ -312,7 +327,7 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 			}
 			if ts != nil {
 				conditions := append(ts.indexFilterConditions, ts.tableFilterConditions...)
-				c.Assert(fmt.Sprintf("%s", expression.ComposeCNFCondition(conditions).String()), Equals, ca.cond, Commentf("for %s", sql))
+				c.Assert(fmt.Sprintf("%s", expression.ComposeCNFCondition(conditions...).String()), Equals, ca.cond, Commentf("for %s", sql))
 				break
 			}
 			p = p.GetChildByIndex(0)
@@ -329,6 +344,10 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		{
 			sql:  "select * from t t1 use index(e)",
 			best: "Table(t)",
+		},
+		{
+			sql:  "select a from t where a between 1 and 2 order by c",
+			best: "Table(t)->Sort->Trim",
 		},
 		{
 			sql:  "select * from t t1 use index(c_d_e)",
@@ -473,7 +492,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from (select t.a from t union select t.d from t where t.c = 1 union select t.c from t) k order by a limit 1",
-			best: "UnionAll{Table(t)->Index(t.c_d_e)[[1,1]]->Projection->Table(t)}->Distinct->Sort + Limit(1) + Offset(0)",
+			best: "UnionAll{Table(t)->HashAgg->Index(t.c_d_e)[[1,1]]->HashAgg->Table(t)->HashAgg}->HashAgg->Sort + Limit(1) + Offset(0)",
 		},
 		{
 			sql:  "select * from (select t.a from t union all select t.d from t where t.c = 1 union all select t.c from t) k order by a limit 1",
@@ -481,7 +500,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from (select t.a from t union select t.d from t union select t.c from t) k order by a limit 1",
-			best: "UnionAll{Table(t)->Table(t)->Table(t)}->Distinct->Sort + Limit(1) + Offset(0)",
+			best: "UnionAll{Table(t)->HashAgg->Table(t)->HashAgg->Table(t)->HashAgg}->HashAgg->Sort + Limit(1) + Offset(0)",
 		},
 	}
 	for _, ca := range cases {
@@ -501,7 +520,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
-
+		lp = decorrelate(lp)
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
 		solver := aggPushDownSolver{
@@ -599,7 +618,7 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		},
 		{
 			sql: "select t1.a from t t1 where t1.a in (select t2.a from t t2 where t1.a > 1)",
-			ans: "Apply{Table(t)->Table(t)->Selection}->Selection->Projection",
+			ans: "Apply{Table(t)->Table(t)->Selection}",
 		},
 		{
 			sql: "select t1.a from t t1, (select @a:=0, @b:=0) t2",
@@ -623,6 +642,7 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
+		lp = decorrelate(lp)
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
 		lp.PruneColumns(lp.GetSchema().Columns)
@@ -755,7 +775,7 @@ func (s *testPlanSuite) TestPhysicalInitialize(c *C) {
 	}{
 		{
 			sql: "select * from t t1 where t1.a=(select min(t2.a) from t t2, t t3 where t2.a=t3.a and t2.b > t1.b + t3.b)",
-			ans: "Apply{Table(t)->LeftHashJoin{Table(t)->Cache->Table(t)->Cache}(t2.a,t3.a)->StreamAgg->MaxOneRow}->Selection->Projection",
+			ans: "Apply{Table(t)->LeftHashJoin{Table(t)->Cache->Table(t)->Cache}(t2.a,t3.a)->StreamAgg->MaxOneRow}->Projection",
 		},
 	}
 	for _, ca := range cases {

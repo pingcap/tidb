@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"math"
 	"sort"
 	"sync"
 	"time"
@@ -33,17 +34,19 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-const maxPrefixLength = 767
+const maxPrefixLength = 3072
 
-func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr,
-	idxColNames []*ast.IndexColName) (*model.IndexInfo, error) {
-	// build offsets
+func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColName) ([]*model.IndexColumn, error) {
+	// Build offsets.
 	idxColumns := make([]*model.IndexColumn, 0, len(idxColNames))
+
+	// The sum of length of all index columns.
+	sumLength := 0
+
 	for _, ic := range idxColNames {
-		col := findCol(tblInfo.Columns, ic.Column.Name.O)
+		col := findCol(columns, ic.Column.Name.O)
 		if col == nil {
-			return nil, errKeyColumnDoesNotExits.Gen("column does not exist: %s",
-				ic.Column.Name)
+			return nil, errKeyColumnDoesNotExits.Gen("column does not exist: %s", ic.Column.Name)
 		}
 
 		// Length must be specified for BLOB and TEXT column indexes.
@@ -51,13 +54,55 @@ func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr
 			return nil, errors.Trace(errBlobKeyWithoutLength)
 		}
 
-		if ic.Length != types.UnspecifiedLength &&
-			!types.IsTypeChar(col.FieldType.Tp) &&
-			!types.IsTypeBlob(col.FieldType.Tp) {
+		// Length can only be specified for specifiable types.
+		if ic.Length != types.UnspecifiedLength && !types.IsTypePrefixable(col.FieldType.Tp) {
 			return nil, errors.Trace(errIncorrectPrefixKey)
 		}
 
+		// Key length must be shorter or equal to the column length.
+		if ic.Length != types.UnspecifiedLength &&
+			types.IsTypeChar(col.FieldType.Tp) && col.Flen < ic.Length {
+			return nil, errors.Trace(errIncorrectPrefixKey)
+		}
+
+		// Specified length must be shorter than the max length for prefix.
 		if ic.Length > maxPrefixLength {
+			return nil, errors.Trace(errTooLongKey)
+		}
+
+		// Take care of the sum of length of all index columns.
+		if ic.Length != types.UnspecifiedLength {
+			sumLength += ic.Length
+		} else {
+			// Specified data types.
+			if col.Flen != types.UnspecifiedLength {
+				// Special case for the bit type.
+				if col.FieldType.Tp == mysql.TypeBit {
+					sumLength += int(math.Ceil(float64(col.Flen+7) / float64(8)))
+				} else {
+					sumLength += col.Flen
+				}
+			} else {
+				if len, ok := mysql.DefaultLengthOfMysqlTypes[col.FieldType.Tp]; ok {
+					sumLength += len
+				} else {
+					return nil, errUnknownTypeLength.GenByArgs(col.FieldType.Tp)
+				}
+
+				// Special case for time fraction.
+				if types.IsTypeFractionable(col.FieldType.Tp) &&
+					col.FieldType.Decimal != types.UnspecifiedLength {
+					if len, ok := mysql.DefaultLengthOfTimeFraction[col.FieldType.Decimal]; ok {
+						sumLength += len
+					} else {
+						return nil, errUnknownFractionLength.GenByArgs(col.FieldType.Tp, col.FieldType.Decimal)
+					}
+				}
+			}
+		}
+
+		// The sum of all lengths must be shorter than the max length for prefix.
+		if sumLength > maxPrefixLength {
 			return nil, errors.Trace(errTooLongKey)
 		}
 
@@ -67,12 +112,21 @@ func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr
 			Length: ic.Length,
 		})
 	}
-	// create index info
+
+	return idxColumns, nil
+}
+
+func buildIndexInfo(tblInfo *model.TableInfo, indexName model.CIStr, idxColNames []*ast.IndexColName, state model.SchemaState) (*model.IndexInfo, error) {
+	idxColumns, err := buildIndexColumns(tblInfo.Columns, idxColNames)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// Create index info.
 	idxInfo := &model.IndexInfo{
 		Name:    indexName,
 		Columns: idxColumns,
-		Unique:  unique,
-		State:   model.StateNone,
+		State:   state,
 	}
 	return idxInfo, nil
 }
@@ -122,7 +176,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 
 	// Handle normal job.
 	schemaID := job.SchemaID
-	tblInfo, err := d.getTableInfo(t, job)
+	tblInfo, err := getTableInfo(t, job, schemaID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -145,11 +199,13 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 	}
 
 	if indexInfo == nil {
-		indexInfo, err = buildIndexInfo(tblInfo, unique, indexName, idxColNames)
+		indexInfo, err = buildIndexInfo(tblInfo, indexName, idxColNames, model.StateNone)
 		if err != nil {
 			job.State = model.JobCancelled
 			return errors.Trace(err)
 		}
+		indexInfo.Primary = false
+		indexInfo.Unique = unique
 		indexInfo.ID = allocateIndexID(tblInfo)
 		tblInfo.Indices = append(tblInfo.Indices, indexInfo)
 	}
@@ -198,11 +254,11 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 		err = d.runReorgJob(func() error {
 			return d.addTableIndex(tbl, indexInfo, reorgInfo, job)
 		})
-		if terror.ErrorEqual(err, errWaitReorgTimeout) {
-			// if timeout, we should return, check for the owner and re-wait job done.
-			return nil
-		}
 		if err != nil {
+			if terror.ErrorEqual(err, errWaitReorgTimeout) {
+				// if timeout, we should return, check for the owner and re-wait job done.
+				return nil
+			}
 			if terror.ErrorEqual(err, kv.ErrKeyExists) {
 				log.Warnf("[ddl] run DDL job %v err %v, convert job to rollback job", job, err)
 				err = d.convert2RollbackJob(t, job, tblInfo, indexInfo)
@@ -240,13 +296,12 @@ func (d *ddl) convert2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.T
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = kv.ErrKeyExists.Gen("Duplicate for key %s", indexInfo.Name.O)
-	return errors.Trace(err)
+	return kv.ErrKeyExists.Gen("Duplicate for key %s", indexInfo.Name.O)
 }
 
 func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
-	tblInfo, err := d.getTableInfo(t, job)
+	tblInfo, err := getTableInfo(t, job, schemaID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -289,13 +344,10 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 		err = d.runReorgJob(func() error {
 			return d.dropTableIndex(indexInfo, job)
 		})
-		if terror.ErrorEqual(err, errWaitReorgTimeout) {
+		if err != nil {
 			// If the timeout happens, we should return.
 			// Then check for the owner and re-wait job to finish.
-			return nil
-		}
-		if err != nil {
-			return errors.Trace(err)
+			return errors.Trace(filterError(err, errWaitReorgTimeout))
 		}
 
 		// All reorganization jobs are done, drop this index.
@@ -654,9 +706,10 @@ func (d *ddl) iterateSnapshotRows(t table.Table, version uint64, seekHandle int6
 		}
 
 		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
-		if terror.ErrorEqual(err, kv.ErrNotExist) {
-			break
-		} else if err != nil {
+		if err != nil {
+			if terror.ErrorEqual(err, kv.ErrNotExist) {
+				break
+			}
 			return errors.Trace(err)
 		}
 	}

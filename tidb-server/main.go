@@ -42,7 +42,7 @@ import (
 )
 
 var (
-	version         = flag.Bool("v", false, "print version information and exit")
+	version         = flag.Bool("V", false, "print version information and exit")
 	store           = flag.String("store", "goleveldb", "registered store name, [memory, goleveldb, boltdb, tikv]")
 	storePath       = flag.String("path", "/tmp/tidb", "tidb storage path")
 	logLevel        = flag.String("L", "info", "log level: info, debug, warn, error, fatal")
@@ -111,12 +111,11 @@ func main() {
 		createBinlogClient()
 	}
 
-	// Create a session to load information schema.
-	se, err := tidb.CreateSession(store)
+	// Bootstrap a session to load information schema.
+	err := tidb.BootstrapSession(store)
 	if err != nil {
 		log.Fatal(errors.ErrorStack(err))
 	}
-	se.Close()
 
 	var driver server.IDriver
 	driver = server.NewTiDBDriver(store)

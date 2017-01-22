@@ -116,9 +116,15 @@ type copTask struct {
 	region RegionVerID
 	ranges *copRanges
 
-	status   int
-	idx      int // Index of task in the tasks slice.
-	respChan chan *coprocessor.Response
+	status    int
+	idx       int // Index of task in the tasks slice.
+	respChan  chan *coprocessor.Response
+	storeAddr string
+}
+
+func (r *copTask) String() string {
+	return fmt.Sprintf("region(%d %d %d) ranges(%d) store(%s)",
+		r.region.id, r.region.confVer, r.region.ver, r.ranges.len(), r.storeAddr)
 }
 
 // copRanges is like []kv.KeyRange, but may has extra elements at head/tail.
@@ -276,8 +282,6 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 	if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
 		log.Warnf("buildCopTasks takes too much time (%v), range len %v, task len %v", elapsed, rangesLen, len(tasks))
 	}
-	copBuildTaskHistogram.Observe(time.Since(start).Seconds())
-	copTaskLenHistogram.Observe(float64(len(tasks)))
 	return tasks, nil
 }
 
@@ -303,6 +307,8 @@ type copIterator struct {
 	errChan  chan error
 }
 
+const minLogCopTaskTime = 50 * time.Millisecond
+
 // Pick the next new copTask and send request to tikv-server.
 func (it *copIterator) work() {
 	for {
@@ -326,7 +332,16 @@ func (it *copIterator) work() {
 		task.status = taskRunning
 		it.mu.Unlock()
 		bo := NewBackoffer(copNextMaxBackoff, context.Background())
+		startTime := time.Now()
 		resp, err := it.handleTask(bo, task)
+		costTime := time.Since(startTime)
+		if costTime > minLogCopTaskTime {
+			log.Infof("[TIME_COP_TASK] %s%s %s", costTime, bo, task)
+		}
+		coprocessorHistogram.Observe(costTime.Seconds())
+		if bo.totalSleep > 0 {
+			backoffHistogram.Observe(float64(bo.totalSleep) / 1000)
+		}
 		if err != nil {
 			it.errChan <- err
 			break
@@ -449,7 +464,7 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) (*coprocessor.Re
 				return nil, errors.Trace(err1)
 			}
 			if !ok {
-				err = bo.Backoff(boTxnLock, errors.New(e.String()))
+				err = bo.Backoff(boTxnLockFast, errors.New(e.String()))
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -461,6 +476,7 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) (*coprocessor.Re
 			log.Warnf("coprocessor err: %v", err)
 			return nil, errors.Trace(err)
 		}
+		task.storeAddr = sender.storeAddr
 		return resp, nil
 	}
 }

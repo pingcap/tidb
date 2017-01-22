@@ -101,7 +101,7 @@ type lazyMemBuffer struct {
 
 func (lmb *lazyMemBuffer) Get(k Key) ([]byte, error) {
 	if lmb.mb == nil {
-		return nil, ErrNotExist
+		return nil, errors.Trace(ErrNotExist)
 	}
 
 	return lmb.mb.Get(k)
@@ -135,6 +135,20 @@ func (lmb *lazyMemBuffer) SeekReverse(k Key) (Iterator, error) {
 		return invalidIterator{}, nil
 	}
 	return lmb.mb.SeekReverse(k)
+}
+
+func (lmb *lazyMemBuffer) Size() int {
+	if lmb.mb == nil {
+		return 0
+	}
+	return lmb.mb.Size()
+}
+
+func (lmb *lazyMemBuffer) Len() int {
+	if lmb.mb == nil {
+		return 0
+	}
+	return lmb.mb.Len()
 }
 
 // Get implements the Retriever interface.

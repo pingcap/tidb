@@ -24,8 +24,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan/statistics"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -42,91 +40,6 @@ const (
 
 // JoinConcurrency means the number of goroutines that participate in joining.
 var JoinConcurrency = 5
-
-func getRowCountByIndexRanges(sc *variable.StatementContext, table *statistics.Table, indexRanges []*IndexRange, indexInfo *model.IndexInfo) (uint64, error) {
-	totalCount := float64(0)
-	for _, indexRange := range indexRanges {
-		count := float64(table.Count)
-		i := len(indexRange.LowVal) - 1
-		l := indexRange.LowVal[i]
-		r := indexRange.HighVal[i]
-		var rowCount int64
-		var err error
-		offset := indexInfo.Columns[i].Offset
-		if l.Kind() == types.KindNull && r.Kind() == types.KindMaxValue {
-			return uint64(table.Count), nil
-		} else if l.Kind() == types.KindMinNotNull {
-			rowCount, err = table.Columns[offset].EqualRowCount(sc, types.Datum{})
-			if r.Kind() == types.KindMaxValue {
-				rowCount = table.Count - rowCount
-			} else if err == nil {
-				lessCount, err1 := table.Columns[offset].LessRowCount(sc, r)
-				rowCount = lessCount - rowCount
-				err = err1
-			}
-		} else if r.Kind() == types.KindMaxValue {
-			rowCount, err = table.Columns[offset].GreaterRowCount(sc, l)
-		} else {
-			compare, err1 := l.CompareDatum(sc, r)
-			if err1 != nil {
-				return 0, errors.Trace(err1)
-			}
-			if compare == 0 {
-				rowCount, err = table.Columns[offset].EqualRowCount(sc, l)
-			} else {
-				rowCount, err = table.Columns[offset].BetweenRowCount(sc, l, r)
-			}
-		}
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		count = count / float64(table.Count) * float64(rowCount)
-		// If the condition is a = 1, b = 1, c = 1, d = 1, we think every a=1, b=1, c=1 only filtrate 1/100 data,
-		// so as to avoid collapsing too fast.
-		for j := 0; j < i; j++ {
-			count = count / float64(100)
-		}
-		totalCount += count
-	}
-	// To avoid the totalCount become too small.
-	if uint64(totalCount) < 1000 {
-		// We will not let the row count less than 1000 to avoid collapsing too fast in the future calculation.
-		totalCount = 1000.0
-	}
-	if totalCount > float64(table.Count) {
-		totalCount = float64(table.Count) / 3.0
-	}
-	return uint64(totalCount), nil
-}
-
-func getRowCountByTableRange(sc *variable.StatementContext, statsTbl *statistics.Table, ranges []TableRange, offset int) (uint64, error) {
-	var rowCount uint64
-	for _, rg := range ranges {
-		var cnt int64
-		var err error
-		if rg.LowVal == math.MinInt64 && rg.HighVal == math.MaxInt64 {
-			cnt = statsTbl.Count
-		} else if rg.LowVal == math.MinInt64 {
-			cnt, err = statsTbl.Columns[offset].LessRowCount(sc, types.NewDatum(rg.HighVal))
-		} else if rg.HighVal == math.MaxInt64 {
-			cnt, err = statsTbl.Columns[offset].GreaterRowCount(sc, types.NewDatum(rg.LowVal))
-		} else {
-			if rg.LowVal == rg.HighVal {
-				cnt, err = statsTbl.Columns[offset].EqualRowCount(sc, types.NewDatum(rg.LowVal))
-			} else {
-				cnt, err = statsTbl.Columns[offset].BetweenRowCount(sc, types.NewDatum(rg.LowVal), types.NewDatum(rg.HighVal))
-			}
-		}
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		rowCount += uint64(cnt)
-	}
-	if rowCount > uint64(statsTbl.Count) {
-		rowCount = uint64(statsTbl.Count)
-	}
-	return rowCount, nil
-}
 
 func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	client := p.ctx.GetClient()
@@ -248,7 +161,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 			}
 			log.Warn("truncate error in buildIndexRange")
 		}
-		rowCount, err = getRowCountByIndexRanges(sc, statsTbl, is.Ranges, is.Index)
+		rowCount, err = getRowCountByIndexRanges(sc, statsTbl, is.Ranges, is.Index, is.Table)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -480,7 +393,7 @@ func (p *Join) convert2PhysicalPlanSemi(prop *requiredProperty) (*physicalPlanIn
 		}
 	}
 	join := &PhysicalHashSemiJoin{
-		WithAux:         SemiJoinWithAux == p.JoinType,
+		WithAux:         LeftOuterSemiJoin == p.JoinType,
 		EqualConditions: p.EqualConditions,
 		LeftConditions:  p.LeftConditions,
 		RightConditions: p.RightConditions,
@@ -660,7 +573,7 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 		return info, nil
 	}
 	switch p.JoinType {
-	case SemiJoin, SemiJoinWithAux:
+	case SemiJoin, LeftOuterSemiJoin:
 		info, err = p.convert2PhysicalPlanSemi(prop)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -922,6 +835,9 @@ func (p *Selection) convert2PhysicalPlanPushOrder(prop *requiredProperty) (*phys
 			scanCount := info.count
 			info.count = limit.Count
 			info.cost = np.calculateCost(info.count, scanCount)
+			if limit.Offset > 0 {
+				info = enforceProperty(&requiredProperty{limit: limit}, info)
+			}
 		} else {
 			info = enforceProperty(&requiredProperty{limit: limit}, info)
 		}
@@ -1077,60 +993,30 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	if info != nil {
 		return info, nil
 	}
-	innerPlan := p.children[1].(LogicalPlan)
-	allFromOuter := true
-	for _, col := range prop.props {
-		if innerPlan.GetSchema().GetColumnIndex(col.col) != -1 {
-			allFromOuter = false
+	if p.JoinType == InnerJoin {
+		info, err = p.Join.convert2PhysicalPlanLeft(prop, true)
+	} else {
+		info, err = p.Join.convert2PhysicalPlanSemi(prop)
+	}
+	if err != nil {
+		return info, errors.Trace(err)
+	}
+	switch info.p.(type) {
+	case *PhysicalHashJoin, *PhysicalHashSemiJoin:
+		ap := &PhysicalApply{
+			PhysicalJoin: info.p,
+			OuterSchema:  p.corCols,
 		}
+		ap.tp = App
+		ap.allocator = p.allocator
+		ap.initIDAndContext(p.ctx)
+		ap.SetChildren(info.p.GetChildren()...)
+		ap.SetSchema(info.p.GetSchema())
+		info.p = ap
+	default:
+		info.cost = math.MaxFloat64
+		info.p = nil
 	}
-	if !allFromOuter {
-		return &physicalPlanInfo{cost: math.MaxFloat64}, err
-	}
-	child := p.GetChildByIndex(0).(LogicalPlan)
-	innerInfo, err := innerPlan.convert2PhysicalPlan(&requiredProperty{})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	np := &PhysicalApply{
-		OuterSchema: p.corCols,
-		Checker:     p.Checker,
-	}
-	np.tp = "PhysicalApply"
-	np.allocator = p.allocator
-	np.initIDAndContext(p.ctx)
-	np.SetSchema(p.GetSchema())
-	limit := prop.limit
-	info, err = child.convert2PhysicalPlan(removeLimit(prop))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	info = addPlanToResponse(np, info)
-	addChild(info.p, innerInfo.p)
-	info = enforceProperty(limitProperty(limit), info)
-	p.storePlanInfo(prop, info)
-	return info, nil
-}
-
-// convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
-// TODO: support streaming distinct.
-func (p *Distinct) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
-	info, err := p.getPlanInfo(prop)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if info != nil {
-		return info, nil
-	}
-	child := p.GetChildByIndex(0).(LogicalPlan)
-	limit := prop.limit
-	info, err = child.convert2PhysicalPlan(removeLimit(prop))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	info = addPlanToResponse(p, info)
-	info.count = uint64(float64(info.count) * distinctFactor)
-	info = enforceProperty(limitProperty(limit), info)
 	p.storePlanInfo(prop, info)
 	return info, nil
 }

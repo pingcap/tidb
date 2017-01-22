@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"unicode"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -59,6 +61,14 @@ func ColumnSubstitute(expr Expression, schema Schema, newExprs []Expression) Exp
 	return expr
 }
 
+func datumsToConstants(datums []types.Datum) []Expression {
+	constants := make([]Expression, 0, len(datums))
+	for _, d := range datums {
+		constants = append(constants, &Constant{Value: d})
+	}
+	return constants
+}
+
 // calculateSum adds v to sum.
 func calculateSum(sc *variable.StatementContext, sum, v types.Datum) (data types.Datum, err error) {
 	// for avg and sum calculation
@@ -97,4 +107,43 @@ func calculateSum(sc *variable.StatementContext, sum, v types.Datum) (data types
 	default:
 		return data, errors.Errorf("invalid value %v for aggregate", sum.Kind())
 	}
+}
+
+// getValidPrefix gets a prefix of string which can parsed to a number with base. the minimun base is 2 and the maximum is 36.
+func getValidPrefix(s string, base int64) string {
+	var (
+		validLen int
+		upper    rune
+	)
+	switch {
+	case base >= 2 && base <= 9:
+		upper = rune('0' + base)
+	case base <= 36:
+		upper = rune('A' + base - 10)
+	default:
+		return ""
+	}
+Loop:
+	for i := 0; i < len(s); i++ {
+		c := rune(s[i])
+		switch {
+		case unicode.IsDigit(c) || unicode.IsLower(c) || unicode.IsUpper(c):
+			c = unicode.ToUpper(c)
+			if c < upper {
+				validLen = i + 1
+			} else {
+				break Loop
+			}
+		case c == '+' || c == '-':
+			if i != 0 {
+				break Loop
+			}
+		default:
+			break Loop
+		}
+	}
+	if validLen > 1 && s[0] == '+' {
+		return s[1:validLen]
+	}
+	return s[:validLen]
 }
