@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -327,7 +328,7 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 			}
 			if ts != nil {
 				conditions := append(ts.indexFilterConditions, ts.tableFilterConditions...)
-				c.Assert(fmt.Sprintf("%s", expression.ComposeCNFCondition(conditions...).String()), Equals, ca.cond, Commentf("for %s", sql))
+				c.Assert(fmt.Sprintf("%s", expression.ComposeCNFCondition(mock.NewContext(), conditions...).String()), Equals, ca.cond, Commentf("for %s", sql))
 				break
 			}
 			p = p.GetChildByIndex(0)
