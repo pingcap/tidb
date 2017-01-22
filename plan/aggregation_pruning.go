@@ -80,7 +80,7 @@ func (ap *aggPruner) rewriteExpr(expr expression.Expression, funcName string) (n
 	switch funcName {
 	case ast.AggFuncCount:
 		// If is count(expr), we will change it to if(isnull(expr), 0, 1).
-		isNullExpr, err := expression.NewFunction(ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)
+		isNullExpr, err := expression.NewFunction(ap.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -92,7 +92,7 @@ func (ap *aggPruner) rewriteExpr(expr expression.Expression, funcName string) (n
 			Value:   types.NewIntDatum(1),
 			RetType: types.NewFieldType(mysql.TypeLonglong),
 		}
-		newExpr, err = expression.NewFunction(ast.If, zero.RetType, isNullExpr, zero, one)
+		newExpr, err = expression.NewFunction(ap.ctx, ast.If, zero.RetType, isNullExpr, zero, one)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -102,10 +102,7 @@ func (ap *aggPruner) rewriteExpr(expr expression.Expression, funcName string) (n
 		case mysql.TypeDouble, mysql.TypeFloat, mysql.TypeDecimal, mysql.TypeNewDecimal:
 			newExpr = expr
 		default:
-			newExpr, err = expression.NewCastFunc(types.NewFieldType(mysql.TypeNewDecimal), expr)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+			newExpr = expression.NewCastFunc(types.NewFieldType(mysql.TypeNewDecimal), expr, ap.ctx)
 		}
 	default:
 		// Default we do nothing about expr.
