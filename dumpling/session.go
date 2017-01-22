@@ -702,6 +702,20 @@ func chooseMinLease(n1 time.Duration, n2 time.Duration) time.Duration {
 
 // CreateSession creates a new session environment.
 func CreateSession(store kv.Storage) (Session, error) {
+	s, err := createSession(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// TODO: Add auth here
+	privChecker := &privileges.UserPrivileges{}
+	privilege.BindPrivilegeChecker(s, privChecker)
+
+	return s, nil
+}
+
+// BootstrapSession runs the first time when the TiDB server start.
+func BootstrapSession(store kv.Storage) error {
 	ver := getStoreBootstrapVersion(store)
 	if ver == notBootstrapped {
 		runInBootstrapSession(store, bootstrap)
@@ -709,7 +723,8 @@ func CreateSession(store kv.Storage) (Session, error) {
 		runInBootstrapSession(store, upgrade)
 	}
 
-	return createSession(store)
+	_, err := domap.Get(store)
+	return errors.Trace(err)
 }
 
 // runInBootstrapSession create a special session for boostrap to run.
@@ -753,9 +768,6 @@ func createSession(store kv.Storage) (*session, error) {
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
 
-	// TODO: Add auth here
-	privChecker := &privileges.UserPrivileges{}
-	privilege.BindPrivilegeChecker(s, privChecker)
 	return s, nil
 }
 

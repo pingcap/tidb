@@ -14,10 +14,12 @@
 package plan_test
 
 import (
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
@@ -34,7 +36,7 @@ type testTypeInferrerSuite struct {
 }
 
 func (ts *testTypeInferrerSuite) TestInferType(c *C) {
-	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
+	store, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	defer store.Close()
 	testKit := testkit.NewTestKit(c, store)
@@ -206,7 +208,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 
 func (s *testTypeInferrerSuite) TestColumnInfoModified(c *C) {
 	defer testleak.AfterTest(c)()
-	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
+	store, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	defer store.Close()
 	testKit := testkit.NewTestKit(c, store)
@@ -219,4 +221,13 @@ func (s *testTypeInferrerSuite) TestColumnInfoModified(c *C) {
 	tbl, _ := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tab0"))
 	col := table.FindCol(tbl.Cols(), "col1")
 	c.Assert(col.Tp, Equals, mysql.TypeLong)
+}
+
+func newStoreWithBootstrap() (kv.Storage, error) {
+	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	err = tidb.BootstrapSession(store)
+	return store, errors.Trace(err)
 }
