@@ -635,6 +635,7 @@ const (
 	AlterTableDropForeignKey
 	AlterTableModifyColumn
 	AlterTableChangeColumn
+	AlterTableRenameTable
 
 // TODO: Add more actions
 )
@@ -647,6 +648,7 @@ type AlterTableSpec struct {
 	Name          string
 	Constraint    *Constraint
 	Options       []*TableOption
+	NewTable      *TableName
 	NewColumn     *ColumnDef
 	OldColumnName *ColumnName
 	Position      *ColumnPosition
@@ -665,6 +667,13 @@ func (n *AlterTableSpec) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.Constraint = node.(*Constraint)
+	}
+	if n.NewTable != nil {
+		node, ok := n.NewTable.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.NewTable = node.(*TableName)
 	}
 	if n.NewColumn != nil {
 		node, ok := n.NewColumn.Accept(v)

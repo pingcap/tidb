@@ -220,7 +220,7 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 				return nil, errors.Trace(err)
 			}
 			if !ok {
-				err = bo.Backoff(boTxnLock, errors.New(keyErr.String()))
+				err = bo.Backoff(boTxnLockFast, errors.New(keyErr.String()))
 				if err != nil {
 					return nil, errors.Trace(err)
 				}

@@ -14,10 +14,13 @@
 package executor
 
 import (
+	"fmt"
+	"time"
+
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
@@ -27,13 +30,13 @@ import (
 type recordSet struct {
 	fields   []*ast.ResultField
 	executor Executor
-	schema   expression.Schema
-	ctx      context.Context
+	stmt     *statement
+	err      error
 }
 
 func (a *recordSet) Fields() ([]*ast.ResultField, error) {
 	if len(a.fields) == 0 {
-		for _, col := range a.schema.Columns {
+		for _, col := range a.executor.Schema().Columns {
 			rf := &ast.ResultField{
 				ColumnAsName: col.ColName,
 				TableAsName:  col.TblName,
@@ -58,24 +61,23 @@ func (a *recordSet) Next() (*ast.Row, error) {
 }
 
 func (a *recordSet) Close() error {
-	return a.executor.Close()
+	err := a.executor.Close()
+	a.stmt.logSlowQuery()
+	return errors.Trace(err)
 }
 
 // statement implements the ast.Statement interface, it builds a plan.Plan to an ast.Statement.
 type statement struct {
 	// The InfoSchema cannot change during execution, so we hold a reference to it.
-	is   infoschema.InfoSchema
-	plan plan.Plan
-	text string
+	is        infoschema.InfoSchema
+	ctx       context.Context
+	text      string
+	plan      plan.Plan
+	startTime time.Time
 }
 
 func (a *statement) OriginText() string {
 	return a.text
-}
-
-func (a *statement) SetText(text string) {
-	a.text = text
-	return
 }
 
 // Exec implements the ast.Statement Exec interface.
@@ -83,6 +85,8 @@ func (a *statement) SetText(text string) {
 // like the INSERT, UPDATE statements, it executes in this function, if the Executor returns
 // result, execution is done after this function returns, in the returned ast.RecordSet Next method.
 func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
+	a.startTime = time.Now()
+	a.ctx = ctx
 	if _, ok := a.plan.(*plan.Execute); !ok {
 		// Do not sync transaction for Execute statement, because the real optimization work is done in
 		// "ExecuteExec.Build".
@@ -104,7 +108,8 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		stmtCount(executorExec.Stmt, executorExec.Plan)
+		a.text = executorExec.Stmt.Text()
+		a.plan = executorExec.Plan
 		e = executorExec.StmtExec
 	}
 
@@ -120,7 +125,10 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 			}
 		}
 
-		defer e.Close()
+		defer func() {
+			e.Close()
+			a.logSlowQuery()
+		}()
 		for {
 			row, err := e.Next()
 			if err != nil {
@@ -137,7 +145,25 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 	}
 	return &recordSet{
 		executor: e,
-		schema:   e.Schema(),
-		ctx:      ctx,
+		stmt:     a,
 	}, nil
+}
+
+const (
+	queryLogMaxLen = 2048
+	slowThreshold  = 300 * time.Millisecond
+)
+
+func (a *statement) logSlowQuery() {
+	costTime := time.Since(a.startTime)
+	sql := a.text
+	if len(sql) > queryLogMaxLen {
+		sql = sql[:queryLogMaxLen] + fmt.Sprintf("(len:%d)", len(sql))
+	}
+	connID := a.ctx.GetSessionVars().ConnectionID
+	if costTime < slowThreshold {
+		log.Debugf("[%d][TIME_QUERY] %v %s", connID, costTime, sql)
+	} else {
+		log.Warnf("[%d][TIME_QUERY] %v %s", connID, costTime, sql)
+	}
 }
