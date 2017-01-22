@@ -667,12 +667,6 @@ func (p *PhysicalHashJoin) SetCorrelated() {
 }
 
 // Copy implements the PhysicalPlan Copy interface.
-func (p *Distinct) Copy() PhysicalPlan {
-	np := *p
-	return &np
-}
-
-// Copy implements the PhysicalPlan Copy interface.
 func (p *Selection) Copy() PhysicalPlan {
 	np := *p
 	return &np

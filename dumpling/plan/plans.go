@@ -114,11 +114,6 @@ type Limit struct {
 	Count  uint64
 }
 
-// Distinct represents Distinct plan.
-type Distinct struct {
-	baseLogicalPlan
-}
-
 // Prepare represents prepare plan.
 type Prepare struct {
 	basePlan
