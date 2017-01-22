@@ -34,8 +34,8 @@ const (
 	RightOuterJoin
 	// SemiJoin means if row a in table A matches some rows in B, just output a.
 	SemiJoin
-	// SemiJoinWithAux means if row a in table A matches some rows in B, output (a, true), otherwise, output (a, false).
-	SemiJoinWithAux
+	// LeftOuterSemiJoin means if row a in table A matches some rows in B, output (a, true), otherwise, output (a, false).
+	LeftOuterSemiJoin
 )
 
 // Join is the logical join plan.
@@ -55,6 +55,14 @@ type Join struct {
 	// DefaultValues is only used for outer join, which stands for the default values when the outer table cannot find join partner
 	// instead of null padding.
 	DefaultValues []types.Datum
+}
+
+func (p *Join) attachOnConds(onConds []expression.Expression) {
+	eq, left, right, other := extractOnCondition(onConds, p.children[0].(LogicalPlan), p.children[1].(LogicalPlan))
+	p.EqualConditions = append(eq, p.EqualConditions...)
+	p.LeftConditions = append(left, p.LeftConditions...)
+	p.RightConditions = append(right, p.RightConditions...)
+	p.OtherConditions = append(other, p.OtherConditions...)
 }
 
 func (p *Join) extractCorrelatedCols() []*expression.CorrelatedColumn {
@@ -181,18 +189,9 @@ func (p *Selection) SetCorrelated() {
 
 // Apply gets one row from outer executor and gets one row from inner executor according to outer row.
 type Apply struct {
-	baseLogicalPlan
+	Join
 
-	Checker *ApplyConditionChecker
 	corCols []*expression.CorrelatedColumn
-}
-
-func (p *Apply) extractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := p.basePlan.extractCorrelatedCols()
-	if p.Checker != nil {
-		corCols = append(corCols, extractCorColumns(p.Checker.Condition)...)
-	}
-	return corCols
 }
 
 // SetCorrelated implements Plan interface.
