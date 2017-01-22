@@ -55,7 +55,7 @@ func ColumnSubstitute(expr Expression, schema Schema, newExprs []Expression) Exp
 		for _, arg := range v.GetArgs() {
 			newArgs = append(newArgs, ColumnSubstitute(arg, schema, newExprs))
 		}
-		fun, _ := NewFunction(v.FuncName.L, v.RetType, newArgs...)
+		fun, _ := NewFunction(v.GetCtx(), v.FuncName.L, v.RetType, newArgs...)
 		return fun
 	}
 	return expr

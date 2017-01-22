@@ -18,6 +18,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -175,7 +176,7 @@ func detachIndexScanConditions(conditions []expression.Expression, indexScan *Ph
 	var filterConds []expression.Expression
 	// pushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	for i, cond := range conditions {
-		conditions[i] = pushDownNot(cond, false)
+		conditions[i] = pushDownNot(cond, false, nil)
 	}
 	for _, cond := range conditions {
 		offset := getEQFunctionOffset(cond, indexScan.Index.Columns)
@@ -248,7 +249,7 @@ func detachTableScanConditions(conditions []expression.Expression, table *model.
 		tableName: table.Name,
 		pkName:    pkName}
 	for _, cond := range conditions {
-		cond = pushDownNot(cond, false)
+		cond = pushDownNot(cond, false, nil)
 		if !checker.check(cond) {
 			filterConditions = append(filterConditions, cond)
 			continue
@@ -442,50 +443,50 @@ var oppositeOp = map[string]string{
 	ast.NE: ast.EQ,
 }
 
-func pushDownNot(expr expression.Expression, not bool) expression.Expression {
+func pushDownNot(expr expression.Expression, not bool, ctx context.Context) expression.Expression {
 	if f, ok := expr.(*expression.ScalarFunction); ok {
 		switch f.FuncName.L {
 		case ast.UnaryNot:
-			return pushDownNot(f.GetArgs()[0], !not)
+			return pushDownNot(f.GetArgs()[0], !not, f.GetCtx())
 		case ast.LT, ast.GE, ast.GT, ast.LE, ast.EQ, ast.NE:
 			if not {
-				nf, _ := expression.NewFunction(oppositeOp[f.FuncName.L], f.GetType(), f.GetArgs()...)
+				nf, _ := expression.NewFunction(f.GetCtx(), oppositeOp[f.FuncName.L], f.GetType(), f.GetArgs()...)
 				return nf
 			}
 			for i, arg := range f.GetArgs() {
-				f.GetArgs()[i] = pushDownNot(arg, false)
+				f.GetArgs()[i] = pushDownNot(arg, false, f.GetCtx())
 			}
 			return f
 		case ast.AndAnd:
 			if not {
 				args := f.GetArgs()
 				for i, a := range args {
-					args[i] = pushDownNot(a, true)
+					args[i] = pushDownNot(a, true, f.GetCtx())
 				}
-				nf, _ := expression.NewFunction(ast.OrOr, f.GetType(), args...)
+				nf, _ := expression.NewFunction(f.GetCtx(), ast.OrOr, f.GetType(), args...)
 				return nf
 			}
 			for i, arg := range f.GetArgs() {
-				f.GetArgs()[i] = pushDownNot(arg, false)
+				f.GetArgs()[i] = pushDownNot(arg, false, f.GetCtx())
 			}
 			return f
 		case ast.OrOr:
 			if not {
 				args := f.GetArgs()
 				for i, a := range args {
-					args[i] = pushDownNot(a, true)
+					args[i] = pushDownNot(a, true, f.GetCtx())
 				}
-				nf, _ := expression.NewFunction(ast.AndAnd, f.GetType(), args...)
+				nf, _ := expression.NewFunction(f.GetCtx(), ast.AndAnd, f.GetType(), args...)
 				return nf
 			}
 			for i, arg := range f.GetArgs() {
-				f.GetArgs()[i] = pushDownNot(arg, false)
+				f.GetArgs()[i] = pushDownNot(arg, false, f.GetCtx())
 			}
 			return f
 		}
 	}
 	if not {
-		expr, _ = expression.NewFunction(ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), expr)
+		expr, _ = expression.NewFunction(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), expr)
 	}
 	return expr
 }

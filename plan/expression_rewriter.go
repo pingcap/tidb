@@ -119,7 +119,7 @@ func getRowArg(e expression.Expression, idx int) expression.Expression {
 func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression, r expression.Expression, op string) (expression.Expression, error) {
 	lLen, rLen := getRowLen(l), getRowLen(r)
 	if lLen == 1 && rLen == 1 {
-		return expression.NewFunction(op, types.NewFieldType(mysql.TypeTiny), l, r)
+		return expression.NewFunction(er.ctx, op, types.NewFieldType(mysql.TypeTiny), l, r)
 	} else if rLen != lLen {
 		return nil, ErrOperandColumns.GenByArgs(lLen)
 	}
@@ -131,7 +131,7 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 			return nil, errors.Trace(err)
 		}
 	}
-	return expression.ComposeCNFCondition(funcs...), nil
+	return expression.ComposeCNFCondition(er.ctx, funcs...), nil
 }
 
 func (er *expressionRewriter) buildSubquery(subq *ast.SubqueryExpr) LogicalPlan {
@@ -194,7 +194,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		return er.handleScalarSubquery(v)
 	case *ast.ParenthesesExpr:
 	case *ast.ValuesExpr:
-		er.ctxStack = append(er.ctxStack, expression.NewValuesFunc(v))
+		er.ctxStack = append(er.ctxStack, expression.NewValuesFunc(v.Column.Refer.Column.Offset, &v.Type, er.ctx))
 		return inNode, true
 	default:
 		er.asScalar = true
@@ -237,7 +237,7 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 		for _, col := range np.GetSchema().Columns {
 			args = append(args, col.Clone())
 		}
-		rexpr, er.err = expression.NewFunction(ast.RowFunc, types.NewFieldType(types.KindRow), args...)
+		rexpr, er.err = expression.NewFunction(er.ctx, ast.RowFunc, types.NewFieldType(types.KindRow), args...)
 		if er.err != nil {
 			er.err = errors.Trace(er.err)
 			return v, true
@@ -303,13 +303,13 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 	}
 	schema := expression.NewSchema([]*expression.Column{aggCol0})
 	agg.SetSchema(schema)
-	cond, _ := expression.NewFunction(cmpFunc, types.NewFieldType(mysql.TypeTiny), lexpr, aggCol0.Clone())
+	cond, _ := expression.NewFunction(er.ctx, cmpFunc, types.NewFieldType(mysql.TypeTiny), lexpr, aggCol0.Clone())
 	er.buildQuantifierPlan(agg, cond, rexpr, all)
 }
 
 // buildQuantifierPlan adds extra condition for any / all subquery.
 func (er *expressionRewriter) buildQuantifierPlan(agg *Aggregation, cond, rexpr expression.Expression, all bool) {
-	isNullFunc, _ := expression.NewFunction(ast.IsNull, types.NewFieldType(mysql.TypeTiny), rexpr.Clone())
+	isNullFunc, _ := expression.NewFunction(er.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), rexpr.Clone())
 	sumFunc := expression.NewAggFunction(ast.AggFuncSum, []expression.Expression{isNullFunc}, false)
 	countFuncNull := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{isNullFunc.Clone()}, false)
 	agg.AggFuncs = append(agg.AggFuncs, sumFunc, countFuncNull)
@@ -331,17 +331,17 @@ func (er *expressionRewriter) buildQuantifierPlan(agg *Aggregation, cond, rexpr 
 		agg.schema.Append(aggColCountNull)
 		// All of the inner record set should not contain null value. So for t.id < all(select s.id from s), it
 		// should be rewrote to t.id < min(s.id) and if(sum(s.id is null) = 0, true, null).
-		hasNotNull, _ := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), aggColSum.Clone(), expression.Zero)
-		nullChecker, _ := expression.NewFunction(ast.If, types.NewFieldType(mysql.TypeTiny), hasNotNull, expression.One, expression.Null)
-		cond = expression.ComposeCNFCondition(cond, nullChecker)
+		hasNotNull, _ := expression.NewFunction(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), aggColSum.Clone(), expression.Zero)
+		nullChecker, _ := expression.NewFunction(er.ctx, ast.If, types.NewFieldType(mysql.TypeTiny), hasNotNull, expression.One, expression.Null)
+		cond = expression.ComposeCNFCondition(er.ctx, cond, nullChecker)
 		// If the set is empty, it should always return true.
-		checkEmpty, _ := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), aggColCountNull.Clone(), expression.Zero)
-		cond = expression.ComposeDNFCondition(cond, checkEmpty)
+		checkEmpty, _ := expression.NewFunction(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), aggColCountNull.Clone(), expression.Zero)
+		cond = expression.ComposeDNFCondition(er.ctx, cond, checkEmpty)
 	} else {
 		// For "any" expression, if the record set has null and the cond return false, the result should be NULL.
-		hasNull, _ := expression.NewFunction(ast.NE, types.NewFieldType(mysql.TypeTiny), aggColSum.Clone(), expression.Zero)
-		nullChecker, _ := expression.NewFunction(ast.If, types.NewFieldType(mysql.TypeTiny), hasNull, expression.Null, expression.Zero)
-		cond = expression.ComposeDNFCondition(cond, nullChecker)
+		hasNull, _ := expression.NewFunction(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), aggColSum.Clone(), expression.Zero)
+		nullChecker, _ := expression.NewFunction(er.ctx, ast.If, types.NewFieldType(mysql.TypeTiny), hasNull, expression.Null, expression.Zero)
+		cond = expression.ComposeDNFCondition(er.ctx, cond, nullChecker)
 	}
 	if !er.asScalar {
 		// For Semi Apply without aux column, the result is no matter false or null. So we can add it to join predicate.
@@ -397,9 +397,9 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 		RetType:  countFunc.GetType(),
 	}
 	agg.SetSchema(expression.NewSchema([]*expression.Column{firstRowResultCol, count}))
-	gtFunc, _ := expression.NewFunction(ast.GT, types.NewFieldType(mysql.TypeTiny), count.Clone(), expression.One)
-	neCond, _ := expression.NewFunction(ast.NE, types.NewFieldType(mysql.TypeTiny), lexpr, firstRowResultCol.Clone())
-	cond := expression.ComposeDNFCondition(gtFunc, neCond)
+	gtFunc, _ := expression.NewFunction(er.ctx, ast.GT, types.NewFieldType(mysql.TypeTiny), count.Clone(), expression.One)
+	neCond, _ := expression.NewFunction(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), lexpr, firstRowResultCol.Clone())
+	cond := expression.ComposeDNFCondition(er.ctx, gtFunc, neCond)
 	er.buildQuantifierPlan(agg, cond, rexpr, false)
 }
 
@@ -428,9 +428,9 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 		RetType:  countFunc.GetType(),
 	}
 	agg.SetSchema(expression.NewSchema([]*expression.Column{firstRowResultCol, count}))
-	leFunc, _ := expression.NewFunction(ast.LE, types.NewFieldType(mysql.TypeTiny), count.Clone(), expression.One)
-	eqCond, _ := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), lexpr, firstRowResultCol.Clone())
-	cond := expression.ComposeCNFCondition(leFunc, eqCond)
+	leFunc, _ := expression.NewFunction(er.ctx, ast.LE, types.NewFieldType(mysql.TypeTiny), count.Clone(), expression.One)
+	eqCond, _ := expression.NewFunction(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lexpr, firstRowResultCol.Clone())
+	cond := expression.ComposeCNFCondition(er.ctx, leFunc, eqCond)
 	er.buildQuantifierPlan(agg, cond, rexpr, true)
 }
 
@@ -495,7 +495,7 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		for _, col := range np.GetSchema().Columns {
 			args = append(args, col.Clone())
 		}
-		rexpr, er.err = expression.NewFunction(ast.RowFunc, nil, args...)
+		rexpr, er.err = expression.NewFunction(er.ctx, ast.RowFunc, nil, args...)
 		if er.err != nil {
 			er.err = errors.Trace(er.err)
 			return v, true
@@ -531,7 +531,7 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 			for _, col := range np.GetSchema().Columns {
 				newCols = append(newCols, col.Clone())
 			}
-			expr, err := expression.NewFunction(ast.RowFunc, nil, newCols...)
+			expr, err := expression.NewFunction(er.ctx, ast.RowFunc, nil, newCols...)
 			if err != nil {
 				er.err = errors.Trace(err)
 				return v, true
@@ -559,7 +559,7 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 				Value:   data,
 				RetType: np.GetSchema().Columns[i].GetType()})
 		}
-		expr, err1 := expression.NewFunction(ast.RowFunc, nil, newCols...)
+		expr, err1 := expression.NewFunction(er.ctx, ast.RowFunc, nil, newCols...)
 		if err1 != nil {
 			er.err = errors.Trace(err1)
 			return v, true
@@ -609,10 +609,7 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 		if er.err != nil {
 			return retNode, false
 		}
-		er.ctxStack[len(er.ctxStack)-1], er.err = expression.NewCastFunc(v.Tp, arg)
-		if er.err != nil {
-			return retNode, false
-		}
+		er.ctxStack[len(er.ctxStack)-1] = expression.NewCastFunc(v.Tp, arg, er.ctx)
 	case *ast.PatternLikeExpr:
 		er.likeToScalarFunc(v)
 	case *ast.PatternRegexpExpr:
@@ -648,14 +645,16 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	sessionVars := er.b.ctx.GetSessionVars()
 	if !v.IsSystem {
 		if v.Value != nil {
-			er.ctxStack[stkLen-1], er.err = expression.NewFunction(ast.SetVar,
+			er.ctxStack[stkLen-1], er.err = expression.NewFunction(er.ctx,
+				ast.SetVar,
 				er.ctxStack[stkLen-1].GetType(),
 				datumToConstant(types.NewDatum(name), mysql.TypeString),
 				er.ctxStack[stkLen-1])
 			return
 		}
 		if _, ok := sessionVars.Users[name]; ok {
-			f, err := expression.NewFunction(ast.GetVar,
+			f, err := expression.NewFunction(er.ctx,
+				ast.GetVar,
 				// TODO: Here is wrong, the sessionVars should store a name -> Datum map. Will fix it later.
 				types.NewFieldType(mysql.TypeString),
 				datumToConstant(types.NewStringDatum(name), mysql.TypeString))
@@ -706,7 +705,7 @@ func (er *expressionRewriter) unaryOpToExpression(v *ast.UnaryOperationExpr) {
 		er.err = ErrOperandColumns.GenByArgs(1)
 		return
 	}
-	er.ctxStack[stkLen-1], er.err = expression.NewFunction(op, &v.Type, er.ctxStack[stkLen-1])
+	er.ctxStack[stkLen-1], er.err = expression.NewFunction(er.ctx, op, &v.Type, er.ctxStack[stkLen-1])
 }
 
 func (er *expressionRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
@@ -732,7 +731,7 @@ func (er *expressionRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
 		if er.err != nil {
 			return
 		}
-		function, er.err = expression.NewFunction(v.Op.String(), &v.Type, er.ctxStack[stkLen-2:]...)
+		function, er.err = expression.NewFunction(er.ctx, v.Op.String(), &v.Type, er.ctxStack[stkLen-2:]...)
 	}
 	if er.err != nil {
 		er.err = errors.Trace(er.err)
@@ -744,7 +743,7 @@ func (er *expressionRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
 
 func (er *expressionRewriter) notToExpression(hasNot bool, op string, tp *types.FieldType,
 	args ...expression.Expression) expression.Expression {
-	opFunc, err := expression.NewFunction(op, tp, args...)
+	opFunc, err := expression.NewFunction(er.ctx, op, tp, args...)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return nil
@@ -753,7 +752,7 @@ func (er *expressionRewriter) notToExpression(hasNot bool, op string, tp *types.
 		return opFunc
 	}
 
-	opFunc, err = expression.NewFunction(ast.UnaryNot, tp, opFunc)
+	opFunc, err = expression.NewFunction(er.ctx, ast.UnaryNot, tp, opFunc)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return nil
@@ -836,7 +835,7 @@ func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
 		value := er.ctxStack[stkLen-argsLen-1]
 		args = make([]expression.Expression, 0, argsLen)
 		for i := stkLen - argsLen; i < stkLen-1; i += 2 {
-			arg, err := expression.NewFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), value.Clone(), er.ctxStack[i])
+			arg, err := expression.NewFunction(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), value.Clone(), er.ctxStack[i])
 			if err != nil {
 				er.err = errors.Trace(err)
 				return
@@ -855,7 +854,7 @@ func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
 		//        else clause
 		args = er.ctxStack[stkLen-argsLen:]
 	}
-	function, err := expression.NewFunction(ast.Case, &v.Type, args...)
+	function, err := expression.NewFunction(er.ctx, ast.Case, &v.Type, args...)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return
@@ -895,7 +894,7 @@ func (er *expressionRewriter) rowToScalarFunc(v *ast.RowExpr) {
 		rows = append(rows, er.ctxStack[i])
 	}
 	er.ctxStack = er.ctxStack[:stkLen-length]
-	function, err := expression.NewFunction(ast.RowFunc, nil, rows...)
+	function, err := expression.NewFunction(er.ctx, ast.RowFunc, nil, rows...)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return
@@ -911,22 +910,22 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	}
 	var op string
 	var l, r expression.Expression
-	l, er.err = expression.NewFunction(ast.GE, &v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-2])
+	l, er.err = expression.NewFunction(er.ctx, ast.GE, &v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-2])
 	if er.err == nil {
-		r, er.err = expression.NewFunction(ast.LE, &v.Type, er.ctxStack[stkLen-3].Clone(), er.ctxStack[stkLen-1])
+		r, er.err = expression.NewFunction(er.ctx, ast.LE, &v.Type, er.ctxStack[stkLen-3].Clone(), er.ctxStack[stkLen-1])
 	}
 	op = ast.AndAnd
 	if er.err != nil {
 		er.err = errors.Trace(er.err)
 		return
 	}
-	function, err := expression.NewFunction(op, &v.Type, l, r)
+	function, err := expression.NewFunction(er.ctx, op, &v.Type, l, r)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return
 	}
 	if v.Not {
-		function, err = expression.NewFunction(ast.UnaryNot, &v.Type, function)
+		function, err = expression.NewFunction(er.ctx, ast.UnaryNot, &v.Type, function)
 		if err != nil {
 			er.err = errors.Trace(err)
 			return
@@ -953,7 +952,7 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 		return
 	}
 	var function expression.Expression
-	function, er.err = expression.NewFunction(v.FnName.L, &v.Type, args...)
+	function, er.err = expression.NewFunction(er.ctx, v.FnName.L, &v.Type, args...)
 	er.ctxStack = er.ctxStack[:stackLen-len(v.Args)]
 	er.ctxStack = append(er.ctxStack, function)
 }
