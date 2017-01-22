@@ -73,6 +73,7 @@ const (
 	// math functions
 	Abs     = "abs"
 	Ceil    = "ceil"
+	Floor   = "floor"
 	Ceiling = "ceiling"
 	Conv    = "conv"
 	CRC32   = "crc32"

@@ -33,6 +33,7 @@ import (
 var (
 	_ functionClass = &absFunctionClass{}
 	_ functionClass = &ceilFunctionClass{}
+	_ functionClass = &floorFunctionClass{}
 	_ functionClass = &logFunctionClass{}
 	_ functionClass = &log2FunctionClass{}
 	_ functionClass = &log10FunctionClass{}
@@ -49,6 +50,7 @@ var (
 var (
 	_ builtinFunc = &builtinAbsSig{}
 	_ builtinFunc = &builtinCeilSig{}
+	_ builtinFunc = &builtinFloorSig{}
 	_ builtinFunc = &builtinLogSig{}
 	_ builtinFunc = &builtinLog2Sig{}
 	_ builtinFunc = &builtinLog10Sig{}
@@ -139,6 +141,48 @@ func builtinCeil(args []types.Datum, ctx context.Context) (d types.Datum, err er
 		return d, errors.Trace(err)
 	}
 	d.SetFloat64(math.Ceil(f))
+	return
+}
+
+type floorFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *floorFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinFloorSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinFloorSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinFloorSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return builtinFloor(args, b.ctx)
+}
+
+// See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_floor
+func builtinFloor(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	if args[0].IsNull() ||
+		args[0].Kind() == types.KindUint64 || args[0].Kind() == types.KindInt64 {
+		return args[0], nil
+	}
+
+	// have to set IgnoreTruncate to true in order to getValidPrefix
+	sc := ctx.GetSessionVars().StmtCtx
+	tmpIT := sc.IgnoreTruncate
+	sc.IgnoreTruncate = true
+	f, err := args[0].ToFloat64(sc)
+	if err != nil {
+		sc.IgnoreTruncate = tmpIT
+		return d, errors.Trace(err)
+	}
+
+	sc.IgnoreTruncate = tmpIT
+	d.SetFloat64(math.Floor(f))
 	return
 }
 
