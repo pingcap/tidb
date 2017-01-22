@@ -255,6 +255,7 @@ func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	}
 	job.State = model.JobDone
+	job.SchemaState = model.StatePublic
 	job.BinlogInfo.AddTableInfo(ver, tblInfo)
 	return nil
 }
