@@ -172,6 +172,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"sign(null)", mysql.TypeLonglong, charset.CharsetBin},
 		{"unix_timestamp()", mysql.TypeLonglong, charset.CharsetBin},
 		{"unix_timestamp('2015-11-13 10:20:19')", mysql.TypeLonglong, charset.CharsetBin},
+		{"floor(1.23)", mysql.TypeLonglong, charset.CharsetBin},
 		{"field('foo', null)", mysql.TypeLonglong, charset.CharsetBin},
 		{"find_in_set('foo', 'foo,bar')", mysql.TypeLonglong, charset.CharsetBin},
 		{"find_in_set('foo', null)", mysql.TypeLonglong, charset.CharsetBin},

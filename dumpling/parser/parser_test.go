@@ -493,6 +493,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT ROUND(1.23, 1);", true},
 		{"SELECT CEIL(-1.23);", true},
 		{"SELECT CEILING(1.23);", true},
+		{"SELECT FLOOR(-1.23);", true},
 		{"SELECT LN(1);", true},
 		{"SELECT LOG(-2);", true},
 		{"SELECT LOG(2, 65536);", true},
