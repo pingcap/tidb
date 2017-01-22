@@ -55,7 +55,7 @@ func (col *CorrelatedColumn) IsCorrelated() bool {
 }
 
 // Decorrelate implements Expression interface.
-func (col *CorrelatedColumn) Decorrelate(schema Schema) Expression {
+func (col *CorrelatedColumn) Decorrelate(schema *Schema) Expression {
 	if schema.GetColumnIndex(&col.Column) == -1 {
 		return col
 	}
@@ -63,7 +63,7 @@ func (col *CorrelatedColumn) Decorrelate(schema Schema) Expression {
 }
 
 // ResolveIndices implements Expression interface.
-func (col *CorrelatedColumn) ResolveIndices(_ Schema) {
+func (col *CorrelatedColumn) ResolveIndices(_ *Schema) {
 }
 
 // Column represents a column.
@@ -136,7 +136,7 @@ func (col *Column) IsCorrelated() bool {
 }
 
 // Decorrelate implements Expression interface.
-func (col *Column) Decorrelate(_ Schema) Expression {
+func (col *Column) Decorrelate(_ *Schema) Expression {
 	return col
 }
 
@@ -150,7 +150,7 @@ func (col *Column) HashCode() []byte {
 }
 
 // ResolveIndices implements Expression interface.
-func (col *Column) ResolveIndices(schema Schema) {
+func (col *Column) ResolveIndices(schema *Schema) {
 	col.Index = schema.GetColumnIndex(col)
 	// If col's index equals to -1, it means a internal logic error happens.
 	if col.Index == -1 {

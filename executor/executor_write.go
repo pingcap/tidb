@@ -154,8 +154,8 @@ type DeleteExec struct {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *DeleteExec) Schema() expression.Schema {
-	return expression.NewSchema(nil)
+func (e *DeleteExec) Schema() *expression.Schema {
+	return expression.NewSchema()
 }
 
 // Next implements the Executor Next interface.
@@ -564,8 +564,8 @@ func (e *LoadData) Next() (*Row, error) {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *LoadData) Schema() expression.Schema {
-	return expression.NewSchema(nil)
+func (e *LoadData) Schema() *expression.Schema {
+	return expression.NewSchema()
 }
 
 // Close implements the Executor Close interface.
@@ -601,8 +601,8 @@ type InsertExec struct {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *InsertExec) Schema() expression.Schema {
-	return expression.NewSchema(nil)
+func (e *InsertExec) Schema() *expression.Schema {
+	return expression.NewSchema()
 }
 
 // Next implements the Executor Next interface.
@@ -989,8 +989,8 @@ type ReplaceExec struct {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *ReplaceExec) Schema() expression.Schema {
-	return expression.NewSchema(nil)
+func (e *ReplaceExec) Schema() *expression.Schema {
+	return expression.NewSchema()
 }
 
 // Close implements the Executor Close interface.
@@ -1096,8 +1096,8 @@ type UpdateExec struct {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *UpdateExec) Schema() expression.Schema {
-	return expression.NewSchema(nil)
+func (e *UpdateExec) Schema() *expression.Schema {
+	return expression.NewSchema()
 }
 
 // Next implements the Executor Next interface.
@@ -1187,7 +1187,7 @@ func (e *UpdateExec) fetchRows() error {
 	}
 }
 
-func getTableOffset(schema expression.Schema, entry *RowKeyEntry) int {
+func getTableOffset(schema *expression.Schema, entry *RowKeyEntry) int {
 	t := entry.Tbl
 	var tblName string
 	if entry.TableAsName == nil || len(entry.TableAsName.L) == 0 {

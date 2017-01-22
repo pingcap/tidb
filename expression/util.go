@@ -37,7 +37,7 @@ func ExtractColumns(expr Expression) (cols []*Column) {
 
 // ColumnSubstitute substitutes the columns in filter to expressions in select fields.
 // e.g. select * from (select b as a from t) k where a < 10 => select * from (select b as a from t where b < 10) k.
-func ColumnSubstitute(expr Expression, schema Schema, newExprs []Expression) Expression {
+func ColumnSubstitute(expr Expression, schema *Schema, newExprs []Expression) Expression {
 	switch v := expr.(type) {
 	case *Column:
 		id := schema.GetColumnIndex(v)

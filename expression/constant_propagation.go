@@ -129,7 +129,7 @@ func (s *propagateConstantSolver) propagateEQ() {
 		}
 		for i, cond := range s.conditions {
 			if !visited[i] {
-				s.conditions[i] = ColumnSubstitute(cond, NewSchema(cols), cons)
+				s.conditions[i] = ColumnSubstitute(cond, NewSchema(cols...), cons)
 			}
 		}
 	}

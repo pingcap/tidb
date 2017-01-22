@@ -68,10 +68,10 @@ type Expression interface {
 	IsCorrelated() bool
 
 	// Decorrelate try to decorrelate the expression by schema.
-	Decorrelate(schema Schema) Expression
+	Decorrelate(schema *Schema) Expression
 
 	// ResolveIndices resolves indices by the given schema.
-	ResolveIndices(schema Schema)
+	ResolveIndices(schema *Schema)
 }
 
 // EvalBool evaluates expression to a boolean value.
@@ -161,7 +161,7 @@ func (c *Constant) IsCorrelated() bool {
 }
 
 // Decorrelate implements Expression interface.
-func (c *Constant) Decorrelate(_ Schema) Expression {
+func (c *Constant) Decorrelate(_ *Schema) Expression {
 	return c
 }
 
@@ -173,7 +173,7 @@ func (c *Constant) HashCode() []byte {
 }
 
 // ResolveIndices implements Expression interface.
-func (c *Constant) ResolveIndices(_ Schema) {
+func (c *Constant) ResolveIndices(_ *Schema) {
 }
 
 // composeConditionWithBinaryOp composes condition with binary operator into a balance deep tree, which benefits a lot for pb decoder/encoder.
@@ -248,7 +248,7 @@ func SplitDNFItems(onExpr Expression) []Expression {
 
 // EvaluateExprWithNull sets columns in schema as null and calculate the final result of the scalar function.
 // If the Expression is a non-constant value, it means the result is unknown.
-func EvaluateExprWithNull(ctx context.Context, schema Schema, expr Expression) (Expression, error) {
+func EvaluateExprWithNull(ctx context.Context, schema *Schema, expr Expression) (Expression, error) {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		var err error
@@ -276,8 +276,8 @@ func EvaluateExprWithNull(ctx context.Context, schema Schema, expr Expression) (
 }
 
 // TableInfo2Schema converts table info to schema.
-func TableInfo2Schema(tbl *model.TableInfo) Schema {
-	schema := NewSchema(make([]*Column, 0, len(tbl.Columns)))
+func TableInfo2Schema(tbl *model.TableInfo) *Schema {
+	cols := make([]*Column, 0, len(tbl.Columns))
 	keys := make([]KeyInfo, 0, len(tbl.Indices)+1)
 	for i, col := range tbl.Columns {
 		newCol := &Column{
@@ -286,7 +286,7 @@ func TableInfo2Schema(tbl *model.TableInfo) Schema {
 			RetType:  &col.FieldType,
 			Position: i,
 		}
-		schema.Append(newCol)
+		cols = append(cols, newCol)
 	}
 	for _, idx := range tbl.Indices {
 		if !idx.Unique || idx.State != model.StatePublic {
@@ -301,7 +301,7 @@ func TableInfo2Schema(tbl *model.TableInfo) Schema {
 					if !mysql.HasNotNullFlag(col.Flag) {
 						break
 					}
-					newKey = append(newKey, schema.Columns[i])
+					newKey = append(newKey, cols[i])
 					find = true
 					break
 				}
@@ -318,11 +318,12 @@ func TableInfo2Schema(tbl *model.TableInfo) Schema {
 	if tbl.PKIsHandle {
 		for i, col := range tbl.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
-				keys = append(keys, []*Column{schema.Columns[i]})
+				keys = append(keys, KeyInfo{cols[i]})
 				break
 			}
 		}
 	}
+	schema := NewSchema(cols...)
 	schema.SetUniqueKeys(keys)
 	return schema
 }

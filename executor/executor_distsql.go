@@ -368,7 +368,7 @@ type XSelectIndexExec struct {
 }
 
 // Schema implements Exec Schema interface.
-func (e *XSelectIndexExec) Schema() expression.Schema {
+func (e *XSelectIndexExec) Schema() *expression.Schema {
 	return e.indexPlan.GetSchema()
 }
 
@@ -762,7 +762,7 @@ type XSelectTableExec struct {
 
 	where        *tipb.Expr
 	Columns      []*model.ColumnInfo
-	schema       expression.Schema
+	schema       *expression.Schema
 	ranges       []plan.TableRange
 	desc         bool
 	limitCount   *int64
@@ -790,7 +790,7 @@ type XSelectTableExec struct {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *XSelectTableExec) Schema() expression.Schema {
+func (e *XSelectTableExec) Schema() *expression.Schema {
 	return e.schema
 }
 
