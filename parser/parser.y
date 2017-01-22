@@ -879,6 +879,20 @@ AlterTableSpec:
 			NewColumn: 	$4.(*ast.ColumnDef),
 		}
 	}
+|	"RENAME" "TO" TableName
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:    		ast.AlterTableRenameTable,
+			NewTable:      $3.(*ast.TableName),
+		}
+	}
+|	"RENAME" "AS" TableName
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:    		ast.AlterTableRenameTable,
+			NewTable:      $3.(*ast.TableName),
+		}
+	}
 
 
 KeyOrIndex: "KEY" | "INDEX"

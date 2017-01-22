@@ -690,6 +690,9 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 			err = d.ModifyColumn(ctx, ident, spec)
 		case ast.AlterTableChangeColumn:
 			err = d.ChangeColumn(ctx, ident, spec)
+		case ast.AlterTableRenameTable:
+			newIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
+			err = d.RenameTable(ctx, ident, newIdent)
 		default:
 			// Nothing to do now.
 		}
