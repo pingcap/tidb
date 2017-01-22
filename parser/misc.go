@@ -252,6 +252,7 @@ var tokenMap = map[string]int{
 	"FULL":                full,
 	"FULLTEXT":            fulltext,
 	"FUNCTION":            function,
+	"FLOOR":               floor,
 	"FLUSH":               flush,
 	"GET_LOCK":            getLock,
 	"GLOBAL":              global,

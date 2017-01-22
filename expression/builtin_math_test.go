@@ -73,6 +73,31 @@ func (s *testEvaluatorSuite) TestCeil(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestFloor(c *C) {
+	defer testleak.AfterTest(c)()
+	for _, t := range []struct {
+		num interface{}
+		ret interface{}
+		err Checker
+	}{
+		{nil, nil, IsNil},
+		{int64(1), int64(1), IsNil},
+		{float64(1.23), float64(1), IsNil},
+		{float64(-1.23), float64(-2), IsNil},
+		{"1.23", float64(1), IsNil},
+		{"-1.23", float64(-2), IsNil},
+		{"-1.b23", float64(-1), IsNil},
+		{"abce", float64(0), IsNil},
+	} {
+		fc := funcs[ast.Floor]
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.num)), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
+		c.Assert(err, t.err)
+		c.Assert(v, testutil.DatumEquals, types.NewDatum(t.ret))
+	}
+}
+
 func (s *testEvaluatorSuite) TestLog(c *C) {
 	defer testleak.AfterTest(c)()
 
@@ -171,9 +196,10 @@ func (s *testEvaluatorSuite) TestPow(c *C) {
 
 func (s *testEvaluatorSuite) TestRound(c *C) {
 	defer testleak.AfterTest(c)()
+	newDec := types.NewDecFromStringForTest
 	tbl := []struct {
 		Arg []interface{}
-		Ret float64
+		Ret interface{}
 	}{
 		{[]interface{}{-1.23}, -1},
 		{[]interface{}{-1.23, 0}, -1},
@@ -183,6 +209,13 @@ func (s *testEvaluatorSuite) TestRound(c *C) {
 		{[]interface{}{1.298}, 1},
 		{[]interface{}{1.298, 0}, 1},
 		{[]interface{}{23.298, -1}, 20},
+		{[]interface{}{newDec("-1.23")}, newDec("-1")},
+		{[]interface{}{newDec("-1.23"), 1}, newDec("-1.2")},
+		{[]interface{}{newDec("-1.58")}, newDec("-2")},
+		{[]interface{}{newDec("1.58")}, newDec("2")},
+		{[]interface{}{newDec("1.58"), 1}, newDec("1.6")},
+		{[]interface{}{newDec("23.298"), -1}, newDec("20")},
+		{[]interface{}{nil, 2}, nil},
 	}
 
 	Dtbl := tblToDtbl(tbl)
@@ -310,7 +343,10 @@ func (s *testEvaluatorSuite) TestSqrt(c *C) {
 	Dtbl := tblToDtbl(tbl)
 
 	for _, t := range Dtbl {
-		v, err := builtinSqrt(t["Arg"], s.ctx)
+		fc := funcs[ast.Sqrt]
+		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("arg:%v", t["Arg"]))
 	}

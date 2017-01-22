@@ -19,6 +19,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/codec"
 )
@@ -42,6 +43,13 @@ func newTestStore(c *C) *tikvStore {
 	store, err := NewMockTikvStore()
 	c.Assert(err, IsNil)
 	return store.(*tikvStore)
+}
+
+func newTestStoreWithBootstrap(c *C) *tikvStore {
+	store := newTestStore(c)
+	err := tidb.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	return store
 }
 
 type testTiclientSuite struct {

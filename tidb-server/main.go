@@ -111,12 +111,11 @@ func main() {
 		createBinlogClient()
 	}
 
-	// Create a session to load information schema.
-	se, err := tidb.CreateSession(store)
+	// Bootstrap a session to load information schema.
+	err := tidb.BootstrapSession(store)
 	if err != nil {
 		log.Fatal(errors.ErrorStack(err))
 	}
-	se.Close()
 
 	var driver server.IDriver
 	driver = server.NewTiDBDriver(store)

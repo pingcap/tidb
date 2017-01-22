@@ -66,6 +66,8 @@ func (s *testSuite) SetUpSuite(c *C) {
 		c.Assert(err, IsNil)
 		s.store = store
 	}
+	err := tidb.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
 	logLevel := os.Getenv("log_level")
 	log.SetLevelByString(logLevel)
 	executor.BaseLookupTableTaskSize = 2
@@ -1102,9 +1104,11 @@ func (s *testSuite) TestSQLMode(c *C) {
 }
 
 func (s *testSuite) TestSubquery(c *C) {
+	plan.JoinConcurrency = 1
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
+		plan.JoinConcurrency = 5
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
