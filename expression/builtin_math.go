@@ -413,21 +413,47 @@ func (b *builtinRoundSig) eval(row []types.Datum) (types.Datum, error) {
 
 // See http://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_round
 func builtinRound(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	if args[0].IsNull() {
+		return
+	}
 	sc := ctx.GetSessionVars().StmtCtx
+
+	frac := 0
+	if len(args) == 2 {
+		frac64, err1 := args[1].ToInt64(sc)
+		if err1 != nil {
+			return d, errors.Trace(err1)
+		}
+		frac = int(frac64)
+	}
+
+	if args[0].Kind() == types.KindMysqlDecimal {
+		var dec types.MyDecimal
+		err = args[0].GetMysqlDecimal().Round(&dec, frac)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		d.SetMysqlDecimal(&dec)
+		return d, nil
+	}
+
 	x, err := args[0].ToFloat64(sc)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
 
-	dec := 0
-	if len(args) == 2 {
-		y, err1 := args[1].ToInt64(sc)
-		if err1 != nil {
-			return d, errors.Trace(err1)
+	val := types.Round(x, frac)
+	switch args[0].Kind() {
+	case types.KindInt64:
+		d.SetInt64(int64(val))
+	case types.KindUint64:
+		d.SetUint64(uint64(val))
+	default:
+		d.SetFloat64(val)
+		if frac > 0 {
+			d.SetFrac(frac)
 		}
-		dec = int(y)
 	}
-	d.SetFloat64(types.Round(x, dec))
 	return d, nil
 }
 
