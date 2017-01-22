@@ -30,7 +30,7 @@ type testGCWorkerSuite struct {
 var _ = Suite(&testGCWorkerSuite{})
 
 func (s *testGCWorkerSuite) SetUpTest(c *C) {
-	s.store = newTestStoreWithBootstrap(c)
+	s.store = newTestStore(c)
 	s.oracle = &mockOracle{}
 	s.store.oracle = s.oracle
 	err := tidb.BootstrapSession(s.store)
