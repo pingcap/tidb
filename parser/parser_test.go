@@ -493,6 +493,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT ROUND(1.23, 1);", true},
 		{"SELECT CEIL(-1.23);", true},
 		{"SELECT CEILING(1.23);", true},
+		{"SELECT FLOOR(-1.23);", true},
 		{"SELECT LN(1);", true},
 		{"SELECT LOG(-2);", true},
 		{"SELECT LOG(2, 65536);", true},
@@ -1028,6 +1029,8 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t ENABLE KEYS", true},
 		{"ALTER TABLE t MODIFY COLUMN a varchar(255)", true},
 		{"ALTER TABLE t CHANGE COLUMN a b varchar(255)", true},
+		{"ALTER TABLE db.t RENAME to db1.t1", true},
+		{"ALTER TABLE t RENAME as t1", true},
 
 		// for rename table statement
 		{"RENAME TABLE t TO t1", true},

@@ -95,6 +95,8 @@ func (s *testBinlogSuite) SetUpSuite(c *C) {
 	c.Assert(clientCon, NotNil)
 	binloginfo.PumpClient = binlog.NewPumpClient(clientCon)
 	s.tk = testkit.NewTestKit(c, s.store)
+	err = tidb.BootstrapSession(store)
+	c.Assert(err, IsNil)
 	s.tk.MustExec("use test")
 	domain := sessionctx.GetDomain(s.tk.Se.(context.Context))
 	s.ddl = domain.DDL()
@@ -117,11 +119,13 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	var matched bool // got matched pre DDL and commit DDL
 	for i := 0; i < 10; i++ {
 		preDDL, commitDDL := getLatestDDLBinlog(c, pump, ddlQuery)
-		if preDDL.DdlJobId == commitDDL.DdlJobId {
-			c.Assert(commitDDL.StartTs, Equals, preDDL.StartTs)
-			c.Assert(commitDDL.CommitTs, Greater, commitDDL.StartTs)
-			matched = true
-			break
+		if preDDL != nil && commitDDL != nil {
+			if preDDL.DdlJobId == commitDDL.DdlJobId {
+				c.Assert(commitDDL.StartTs, Equals, preDDL.StartTs)
+				c.Assert(commitDDL.CommitTs, Greater, commitDDL.StartTs)
+				matched = true
+				break
+			}
 		}
 		time.Sleep(time.Millisecond * 10)
 	}

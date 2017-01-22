@@ -154,6 +154,12 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 		}
 	case *ast.AlterTableStmt:
 		nr.pushContext()
+		for _, spec := range v.Specs {
+			if spec.Tp == ast.AlterTableRenameTable {
+				nr.currentContext().inCreateOrDropTable = true
+				break
+			}
+		}
 	case *ast.AnalyzeTableStmt:
 		nr.pushContext()
 	case *ast.ByItem:

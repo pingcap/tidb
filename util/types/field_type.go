@@ -134,7 +134,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		tp.Charset = mysql.DefaultCharset
 		tp.Collate = mysql.DefaultCollationName
 	case float64:
-		tp.Tp = mysql.TypeNewDecimal
+		tp.Tp = mysql.TypeDouble
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
 	case []byte:

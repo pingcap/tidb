@@ -136,6 +136,7 @@ var funcs = map[string]functionClass{
 	ast.Abs:     &absFunctionClass{baseFunctionClass{ast.Abs, 1, 1}},
 	ast.Ceil:    &ceilFunctionClass{baseFunctionClass{ast.Ceil, 1, 1}},
 	ast.Ceiling: &ceilFunctionClass{baseFunctionClass{ast.Ceiling, 1, 1}},
+	ast.Floor:   &floorFunctionClass{baseFunctionClass{ast.Floor, 1, 1}},
 	ast.Ln:      &logFunctionClass{baseFunctionClass{ast.Log, 1, 1}},
 	ast.Log:     &logFunctionClass{baseFunctionClass{ast.Log, 1, 2}},
 	ast.Log2:    &log2FunctionClass{baseFunctionClass{ast.Log2, 1, 1}},
