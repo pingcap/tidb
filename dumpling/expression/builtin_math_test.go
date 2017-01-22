@@ -196,9 +196,10 @@ func (s *testEvaluatorSuite) TestPow(c *C) {
 
 func (s *testEvaluatorSuite) TestRound(c *C) {
 	defer testleak.AfterTest(c)()
+	newDec := types.NewDecFromStringForTest
 	tbl := []struct {
 		Arg []interface{}
-		Ret float64
+		Ret interface{}
 	}{
 		{[]interface{}{-1.23}, -1},
 		{[]interface{}{-1.23, 0}, -1},
@@ -208,6 +209,13 @@ func (s *testEvaluatorSuite) TestRound(c *C) {
 		{[]interface{}{1.298}, 1},
 		{[]interface{}{1.298, 0}, 1},
 		{[]interface{}{23.298, -1}, 20},
+		{[]interface{}{newDec("-1.23")}, newDec("-1")},
+		{[]interface{}{newDec("-1.23"), 1}, newDec("-1.2")},
+		{[]interface{}{newDec("-1.58")}, newDec("-2")},
+		{[]interface{}{newDec("1.58")}, newDec("2")},
+		{[]interface{}{newDec("1.58"), 1}, newDec("1.6")},
+		{[]interface{}{newDec("23.298"), -1}, newDec("20")},
+		{[]interface{}{nil, 2}, nil},
 	}
 
 	Dtbl := tblToDtbl(tbl)

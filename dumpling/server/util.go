@@ -325,9 +325,17 @@ func dumpTextValue(mysqlType uint8, value types.Datum) ([]byte, error) {
 	case types.KindUint64:
 		return strconv.AppendUint(nil, value.GetUint64(), 10), nil
 	case types.KindFloat32:
-		return strconv.AppendFloat(nil, value.GetFloat64(), 'f', -1, 32), nil
+		prec := -1
+		if frac := value.Frac(); frac > 0 {
+			prec = frac
+		}
+		return strconv.AppendFloat(nil, value.GetFloat64(), 'f', prec, 32), nil
 	case types.KindFloat64:
-		return strconv.AppendFloat(nil, value.GetFloat64(), 'f', -1, 64), nil
+		prec := -1
+		if frac := value.Frac(); frac > 0 {
+			prec = frac
+		}
+		return strconv.AppendFloat(nil, value.GetFloat64(), 'f', prec, 64), nil
 	case types.KindString, types.KindBytes:
 		return value.GetBytes(), nil
 	case types.KindMysqlTime:
