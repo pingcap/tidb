@@ -222,14 +222,14 @@ func (s *session) doCommitWithRetry() error {
 		if s.isRetryableError(err) {
 			// Transactions will retry 2 ~ 10 times.
 			// We make larger transactions retry less times to prevent cluster resource outage.
-			txnSizeRate := float64(txnSize) / float64(kv.BufferSizeLimit)
+			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
 			maxRetryCount := 10 - int(txnSizeRate*9.0)
 			err = s.retry(maxRetryCount)
 		}
 	}
 	s.cleanRetryInfo()
 	if err != nil {
-		log.Warnf("[%d] finished txn:%s, %v", s.sessionVars.ConnectionID, s.txn, err)
+		log.Warnf("[%d] finished txn:%v, %v", s.sessionVars.ConnectionID, s.txn, err)
 		return errors.Trace(err)
 	}
 	return nil

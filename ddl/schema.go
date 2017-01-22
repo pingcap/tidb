@@ -44,7 +44,7 @@ func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
 			if db.ID != schemaID {
 				// The database already exists, can't create it, we should cancel this job now.
 				job.State = model.JobCancelled
-				return errors.Trace(infoschema.ErrDatabaseExists.GenByArgs(db.Name))
+				return infoschema.ErrDatabaseExists.GenByArgs(db.Name)
 			}
 			dbInfo = db
 		}
@@ -81,7 +81,7 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) error {
 	}
 	if dbInfo == nil {
 		job.State = model.JobCancelled
-		return errors.Trace(infoschema.ErrDatabaseDropExists)
+		return infoschema.ErrDatabaseDropExists.GenByArgs("")
 	}
 
 	ver, err := updateSchemaVersion(t, job)

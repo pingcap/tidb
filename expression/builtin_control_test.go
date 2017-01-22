@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
@@ -37,7 +38,10 @@ func (s *testEvaluatorSuite) TestIf(c *C) {
 	}
 
 	for _, t := range tbl {
-		d, err := builtinIf(types.MakeDatums([]interface{}{t.Arg1, t.Arg2, t.Arg3}...), s.ctx)
+		fc := funcs[ast.If]
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.Arg1, t.Arg2, t.Arg3)), s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, types.NewDatum(t.Ret))
 	}
@@ -59,7 +63,10 @@ func (s *testEvaluatorSuite) TestIfNull(c *C) {
 	}
 
 	for _, t := range tbl {
-		d, err := builtinIfNull(types.MakeDatums([]interface{}{t.Arg1, t.Arg2}...), s.ctx)
+		fc := funcs[ast.Ifnull]
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.Arg1, t.Arg2)), s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, types.NewDatum(t.Ret))
 	}
@@ -79,7 +86,10 @@ func (s *testEvaluatorSuite) TestNullIf(c *C) {
 	}
 
 	for _, t := range tbl {
-		d, err := builtinNullIf(types.MakeDatums([]interface{}{t.Arg1, t.Arg2}...), s.ctx)
+		fc := funcs[ast.Nullif]
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.Arg1, t.Arg2)), s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, types.NewDatum(t.Ret))
 	}

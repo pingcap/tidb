@@ -23,6 +23,7 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tipb/go-binlog"
 	"golang.org/x/net/context"
 )
@@ -65,8 +66,13 @@ type twoPhaseCommitter struct {
 
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
 func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
-	var keys [][]byte
-	var size int
+	var (
+		keys    [][]byte
+		size    int
+		putCnt  int
+		delCnt  int
+		lockCnt int
+	)
 	mutations := make(map[string]*pb.Mutation)
 	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
 		if len(v) > 0 {
@@ -75,14 +81,20 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 				Key:   k,
 				Value: v,
 			}
+			putCnt++
 		} else {
 			mutations[string(k)] = &pb.Mutation{
 				Op:  pb.Op_Del,
 				Key: k,
 			}
+			delCnt++
 		}
 		keys = append(keys, k)
-		size += len(k) + len(v)
+		entrySize := len(k) + len(v)
+		if entrySize > kv.TxnEntrySizeLimit {
+			return kv.ErrEntryTooLarge
+		}
+		size += entrySize
 		return nil
 	})
 	if err != nil {
@@ -99,10 +111,22 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 				Op:  pb.Op_Lock,
 				Key: lockKey,
 			}
+			lockCnt++
 			keys = append(keys, lockKey)
 			size += len(lockKey)
 		}
 	}
+	if len(keys) > kv.TxnEntryCountLimit || size > kv.TxnTotalSizeLimit {
+		return nil, kv.ErrTxnTooLarge
+	}
+	const logEntryCount = 10000
+	const logSize = 4 * 1024 * 1024 // 4MB
+	if len(keys) > logEntryCount || size > logSize {
+		tableID := tablecodec.DecodeTableID(keys[0])
+		log.Infof("[BIG_TXN] table id:%d size:%d, keys:%d, puts:%d, dels:%d, locks:%d, startTS:%d",
+			tableID, size, len(keys), putCnt, delCnt, lockCnt, txn.startTS)
+	}
+
 	txnWriteKVCountHistogram.Observe(float64(len(keys)))
 	txnWriteSizeHistogram.Observe(float64(size / 1024))
 
@@ -119,7 +143,7 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 			lockTTL = defaultLockTTL
 		}
 		if lockTTL > maxLockTTL {
-			return nil, kv.ErrTxnTooLarge
+			lockTTL = maxLockTTL
 		}
 	}
 

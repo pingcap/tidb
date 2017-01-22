@@ -35,12 +35,14 @@ var (
 	SystemInternalErrorType = terror.ClassOptimizerPlan.New(SystemInternalError, "System internal error")
 	ErrUnknownColumn        = terror.ClassOptimizerPlan.New(CodeUnknownColumn, "Unknown column '%s' in '%s'")
 	ErrWrongArguments       = terror.ClassOptimizerPlan.New(CodeWrongArguments, "Incorrect arguments to EXECUTE")
+	ErrAmbiguous            = terror.ClassOptimizerPlan.New(CodeAmbiguous, "Column '%s' in field list is ambiguous")
 )
 
 // Error codes.
 const (
 	CodeUnsupportedType terror.ErrCode = 1
 	SystemInternalError terror.ErrCode = 2
+	CodeAmbiguous       terror.ErrCode = 1052
 	CodeUnknownColumn   terror.ErrCode = 1054
 	CodeWrongArguments  terror.ErrCode = 1210
 )
@@ -48,6 +50,7 @@ const (
 func init() {
 	tableMySQLErrCodes := map[terror.ErrCode]uint16{
 		CodeUnknownColumn:  mysql.ErrBadField,
+		CodeAmbiguous:      mysql.ErrNonUniq,
 		CodeWrongArguments: mysql.ErrWrongArguments,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizerPlan] = tableMySQLErrCodes

@@ -92,7 +92,7 @@ func (p *Join) PredicatePushDown(predicates []expression.Expression) (ret []expr
 		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(expression.PropagateConstant(p.ctx, tempCond), leftPlan, rightPlan)
 	}
 	switch p.JoinType {
-	case LeftOuterJoin, SemiJoinWithAux:
+	case LeftOuterJoin, LeftOuterSemiJoin:
 		rightCond = p.RightConditions
 		p.RightConditions = nil
 		leftCond = leftPushCond
@@ -332,38 +332,15 @@ func (p *Aggregation) PredicatePushDown(predicates []expression.Expression) (ret
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *Apply) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan, err error) {
-	child := p.GetChildByIndex(0).(LogicalPlan)
-	var push []expression.Expression
-	for _, cond := range predicates {
-		extractedCols := expression.ExtractColumns(cond)
-		canPush := true
-		for _, col := range extractedCols {
-			if child.GetSchema().GetColumnIndex(col) == -1 {
-				canPush = false
-				break
-			}
-		}
-		if canPush {
-			push = append(push, cond)
-		} else {
-			ret = append(ret, cond)
-		}
-	}
-	childRet, _, err := child.PredicatePushDown(push)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	_, p.children[1], err = p.children[1].(LogicalPlan).PredicatePushDown(nil)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	return append(ret, childRet...), p, nil
+func (p *Limit) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
+	// Limit forbids any condition to push down.
+	_, _, err := p.baseLogicalPlan.PredicatePushDown(nil)
+	return predicates, p, errors.Trace(err)
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *Limit) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
-	// Limit forbids any condition to push down.
+func (p *MaxOneRow) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
+	// MaxOneRow forbids any condition to push down.
 	_, _, err := p.baseLogicalPlan.PredicatePushDown(nil)
 	return predicates, p, errors.Trace(err)
 }

@@ -391,9 +391,6 @@ func (do *Domain) LoadPrivilegeLoop(ctx context.Context, c chan<- error) {
 
 // Privilege returns the MySQLPrivilege.
 func (do *Domain) Privilege() *privileges.MySQLPrivilege {
-	if do.privHandle == nil {
-		return nil
-	}
 	return do.privHandle.Get()
 }
 
