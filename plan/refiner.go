@@ -64,6 +64,23 @@ func buildIndexRange(sc *variable.StatementContext, p *PhysicalIndexScan) error 
 			refineRange(p.Ranges[i], p.Index)
 		}
 	}
+
+	if p.accessInAndEqCount+1 < len(p.Index.Columns) {
+		for _, ran := range p.Ranges {
+			if ran.HighExclude || ran.LowExclude {
+				if ran.HighExclude {
+					ran.HighVal = append(ran.HighVal, types.NewDatum(nil))
+				} else {
+					ran.HighVal = append(ran.HighVal, types.MaxValueDatum())
+				}
+				if ran.LowExclude {
+					ran.LowVal = append(ran.LowVal, types.MaxValueDatum())
+				} else {
+					ran.LowVal = append(ran.LowVal, types.NewDatum(nil))
+				}
+			}
+		}
+	}
 	return errors.Trace(rb.err)
 }
 

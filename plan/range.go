@@ -317,7 +317,7 @@ func (r *rangeBuilder) newBuildFromPatternLike(expr *expression.ScalarFunction) 
 			// Get the prefix, but exclude the prefix.
 			// e.g., "abc_x", the start point exclude "abc",
 			// because the string length is more than 3.
-			exclude = true
+			exclude = false
 			isExactMatch = false
 			break
 		}
