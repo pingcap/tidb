@@ -15,7 +15,6 @@ package plan
 
 import (
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/util/types"
 )
 
 // ResolveIndicesAndCorCols implements LogicalPlan interface.
@@ -77,37 +76,9 @@ func (p *Sort) ResolveIndicesAndCorCols() {
 
 // ResolveIndicesAndCorCols implements LogicalPlan interface.
 func (p *Apply) ResolveIndicesAndCorCols() {
-	p.baseLogicalPlan.ResolveIndicesAndCorCols()
-	innerPlan := p.children[1].(LogicalPlan)
-	innerPlan.ResolveIndicesAndCorCols()
-	corCols := innerPlan.extractCorrelatedCols()
-	childSchema := p.children[0].GetSchema()
-	resultCorCols := make([]*expression.CorrelatedColumn, childSchema.Len())
-	for _, corCol := range corCols {
-		idx := childSchema.GetColumnIndex(&corCol.Column)
-		if idx != -1 {
-			if resultCorCols[idx] == nil {
-				resultCorCols[idx] = &expression.CorrelatedColumn{
-					Column: *childSchema.Columns[idx],
-					Data:   new(types.Datum),
-				}
-				resultCorCols[idx].Column.ResolveIndices(childSchema)
-			}
-			corCol.Data = resultCorCols[idx].Data
-		}
-	}
-	// Shrink slice. e.g. [col1, nil, col2, nil] will be changed to [col1, col2]
-	length := 0
-	for _, col := range resultCorCols {
-		if col != nil {
-			resultCorCols[length] = col
-			length++
-		}
-	}
-	p.corCols = resultCorCols[:length]
-
-	if p.Checker != nil {
-		p.Checker.Condition.ResolveIndices(expression.MergeSchema(childSchema, innerPlan.GetSchema()))
+	p.Join.ResolveIndicesAndCorCols()
+	for _, col := range p.corCols {
+		col.Column.ResolveIndices(p.children[0].GetSchema())
 	}
 }
 

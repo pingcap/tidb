@@ -1102,9 +1102,11 @@ func (s *testSuite) TestSQLMode(c *C) {
 }
 
 func (s *testSuite) TestSubquery(c *C) {
+	plan.JoinConcurrency = 1
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
+		plan.JoinConcurrency = 5
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

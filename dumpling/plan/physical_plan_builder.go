@@ -393,7 +393,7 @@ func (p *Join) convert2PhysicalPlanSemi(prop *requiredProperty) (*physicalPlanIn
 		}
 	}
 	join := &PhysicalHashSemiJoin{
-		WithAux:         SemiJoinWithAux == p.JoinType,
+		WithAux:         LeftOuterSemiJoin == p.JoinType,
 		EqualConditions: p.EqualConditions,
 		LeftConditions:  p.LeftConditions,
 		RightConditions: p.RightConditions,
@@ -573,7 +573,7 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 		return info, nil
 	}
 	switch p.JoinType {
-	case SemiJoin, SemiJoinWithAux:
+	case SemiJoin, LeftOuterSemiJoin:
 		info, err = p.convert2PhysicalPlanSemi(prop)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -993,37 +993,30 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	if info != nil {
 		return info, nil
 	}
-	innerPlan := p.children[1].(LogicalPlan)
-	allFromOuter := true
-	for _, col := range prop.props {
-		if innerPlan.GetSchema().GetColumnIndex(col.col) != -1 {
-			allFromOuter = false
+	if p.JoinType == InnerJoin {
+		info, err = p.Join.convert2PhysicalPlanLeft(prop, true)
+	} else {
+		info, err = p.Join.convert2PhysicalPlanSemi(prop)
+	}
+	if err != nil {
+		return info, errors.Trace(err)
+	}
+	switch info.p.(type) {
+	case *PhysicalHashJoin, *PhysicalHashSemiJoin:
+		ap := &PhysicalApply{
+			PhysicalJoin: info.p,
+			OuterSchema:  p.corCols,
 		}
+		ap.tp = App
+		ap.allocator = p.allocator
+		ap.initIDAndContext(p.ctx)
+		ap.SetChildren(info.p.GetChildren()...)
+		ap.SetSchema(info.p.GetSchema())
+		info.p = ap
+	default:
+		info.cost = math.MaxFloat64
+		info.p = nil
 	}
-	if !allFromOuter {
-		return &physicalPlanInfo{cost: math.MaxFloat64}, err
-	}
-	child := p.GetChildByIndex(0).(LogicalPlan)
-	innerInfo, err := innerPlan.convert2PhysicalPlan(&requiredProperty{})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	np := &PhysicalApply{
-		OuterSchema: p.corCols,
-		Checker:     p.Checker,
-	}
-	np.tp = "PhysicalApply"
-	np.allocator = p.allocator
-	np.initIDAndContext(p.ctx)
-	np.SetSchema(p.GetSchema())
-	limit := prop.limit
-	info, err = child.convert2PhysicalPlan(removeLimit(prop))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	info = addPlanToResponse(np, info)
-	addChild(info.p, innerInfo.p)
-	info = enforceProperty(limitProperty(limit), info)
 	p.storePlanInfo(prop, info)
 	return info, nil
 }
