@@ -464,7 +464,7 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) (*coprocessor.Re
 				return nil, errors.Trace(err1)
 			}
 			if !ok {
-				err = bo.Backoff(boTxnLock, errors.New(e.String()))
+				err = bo.Backoff(boTxnLockFast, errors.New(e.String()))
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
