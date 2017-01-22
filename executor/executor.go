@@ -32,14 +32,11 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/distinct"
 	"github.com/pingcap/tidb/util/types"
 )
 
 var (
-	_ Executor = &ApplyExec{}
 	_ Executor = &CheckTableExec{}
-	_ Executor = &DistinctExec{}
 	_ Executor = &DummyScanExec{}
 	_ Executor = &ExistsExec{}
 	_ Executor = &HashAggExec{}
@@ -309,50 +306,6 @@ type orderByRow struct {
 	row *Row
 }
 
-// DistinctExec represents Distinct executor.
-// It ignores duplicate rows from source Executor by using a *distinct.Checker which maintains
-// a map to check duplication.
-// Because every distinct row will be added to the map, the memory usage might be very high.
-type DistinctExec struct {
-	Src     Executor
-	checker *distinct.Checker
-	schema  expression.Schema
-}
-
-// Schema implements the Executor Schema interface.
-func (e *DistinctExec) Schema() expression.Schema {
-	return e.schema
-}
-
-// Next implements the Executor Next interface.
-func (e *DistinctExec) Next() (*Row, error) {
-	if e.checker == nil {
-		e.checker = distinct.CreateDistinctChecker()
-	}
-	for {
-		row, err := e.Src.Next()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if row == nil {
-			return nil, nil
-		}
-		ok, err := e.checker.Check(types.DatumsToInterfaces(row.Data))
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if !ok {
-			continue
-		}
-		return row, nil
-	}
-}
-
-// Close implements the Executor Close interface.
-func (e *DistinctExec) Close() error {
-	return e.Src.Close()
-}
-
 // ReverseExec produces reverse ordered result, it is used to wrap executors that do not support reverse scan.
 type ReverseExec struct {
 	Src    Executor
@@ -406,6 +359,9 @@ func init() {
 		}
 		e := &executorBuilder{is: is, ctx: ctx}
 		exec := e.build(p)
+		if e.err != nil {
+			return d, errors.Trace(err)
+		}
 		row, err := exec.Next()
 		if err != nil {
 			return d, errors.Trace(err)
@@ -1100,7 +1056,9 @@ func (e *UnionExec) Next() (*Row, error) {
 // Close implements the Executor Close interface.
 func (e *UnionExec) Close() error {
 	e.finished.Store(true)
-	<-e.closedCh
+	if e.inited {
+		<-e.closedCh
+	}
 	e.cursor = 0
 	e.inited = false
 	e.rows = nil
