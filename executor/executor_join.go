@@ -44,7 +44,7 @@ type HashJoinExec struct {
 	smallFilter   expression.Expression
 	bigFilter     expression.Expression
 	otherFilter   expression.Expression
-	schema        expression.Schema
+	schema        *expression.Schema
 	outer         bool
 	leftSmall     bool
 	cursor        int
@@ -130,7 +130,7 @@ func getHashKey(sc *variable.StatementContext, cols []*expression.Column, row *R
 }
 
 // Schema implements the Executor Schema interface.
-func (e *HashJoinExec) Schema() expression.Schema {
+func (e *HashJoinExec) Schema() *expression.Schema {
 	return e.schema
 }
 
@@ -418,11 +418,11 @@ type NestedLoopJoinExec struct {
 	SmallFilter expression.Expression
 	BigFilter   expression.Expression
 	OtherFilter expression.Expression
-	schema      expression.Schema
+	schema      *expression.Schema
 }
 
 // Schema implements Executor interface.
-func (e *NestedLoopJoinExec) Schema() expression.Schema {
+func (e *NestedLoopJoinExec) Schema() *expression.Schema {
 	return e.schema
 }
 
@@ -552,7 +552,7 @@ type HashSemiJoinExec struct {
 	smallFilter  expression.Expression
 	bigFilter    expression.Expression
 	otherFilter  expression.Expression
-	schema       expression.Schema
+	schema       *expression.Schema
 	resultRows   []*Row
 	// In auxMode, the result row always returns with an extra column which stores a boolean
 	// or NULL value to indicate if this row is matched.
@@ -577,7 +577,7 @@ func (e *HashSemiJoinExec) Close() error {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *HashSemiJoinExec) Schema() expression.Schema {
+func (e *HashSemiJoinExec) Schema() *expression.Schema {
 	return e.schema
 }
 
@@ -742,11 +742,11 @@ type ApplyJoinExec struct {
 	outerSchema []*expression.CorrelatedColumn
 	cursor      int
 	resultRows  []*Row
-	schema      expression.Schema
+	schema      *expression.Schema
 }
 
 // Schema implements the Executor interface.
-func (e *ApplyJoinExec) Schema() expression.Schema {
+func (e *ApplyJoinExec) Schema() *expression.Schema {
 	return e.schema
 }
 

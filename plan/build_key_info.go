@@ -33,7 +33,7 @@ func (p *Aggregation) buildKeyInfo() {
 	}
 	// dealing with p.GroupbyCols
 	// This is only used for optimization and needn't to be pushed up, so only one is enough.
-	schemaByGroupby := expression.NewSchema(p.groupByCols)
+	schemaByGroupby := expression.NewSchema(p.groupByCols...)
 	for _, key := range p.GetChildren()[0].GetSchema().Keys {
 		indices := schemaByGroupby.GetColumnsIndices(key)
 		if indices == nil {
@@ -50,8 +50,8 @@ func (p *Aggregation) buildKeyInfo() {
 
 // A bijection exists between columns of a projection's schema and this projection's Exprs.
 // Sometimes we need a schema made by expr of Exprs to convert a column in child's schema to a column in this projection's Schema.
-func (p *Projection) buildSchemaByExprs() expression.Schema {
-	schema := expression.NewSchema(make([]*expression.Column, 0, p.schema.Len()))
+func (p *Projection) buildSchemaByExprs() *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, p.schema.Len())...)
 	for _, expr := range p.Exprs {
 		if col, isCol := expr.(*expression.Column); isCol {
 			schema.Append(col)
