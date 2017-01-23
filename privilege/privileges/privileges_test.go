@@ -274,6 +274,8 @@ func mustExec(c *C, se tidb.Session, sql string) {
 func newStore(c *C, dbPath string) kv.Storage {
 	store, err := tidb.NewStore("memory" + "://" + dbPath)
 	c.Assert(err, IsNil)
+	err = tidb.BootstrapSession(store)
+	c.Assert(err, IsNil)
 	return store
 }
 
