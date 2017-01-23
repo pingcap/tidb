@@ -28,7 +28,7 @@ type aggPruner struct {
 
 // eliminateAggregation will eliminate aggregation grouped by unique key.
 // e.g. select min(b) from t group by a. If a is a unique key, then this sql is equal to `select b from t group by a`.
-// For count(expr), sum(expr), avg(expr), we may need to rewrite the expr. Details is shown below.
+// For count(expr), sum(expr), avg(expr), count(distinct expr, [expr...]) we may need to rewrite the expr. Details are shown below.
 func (ap *aggPruner) eliminateAggregation(p LogicalPlan) (LogicalPlan, error) {
 	retPlan := p
 	if agg, ok := p.(*Aggregation); ok {
@@ -49,7 +49,7 @@ func (ap *aggPruner) eliminateAggregation(p LogicalPlan) (LogicalPlan, error) {
 			proj.self = proj
 			proj.initIDAndContext(ap.ctx)
 			for _, fun := range agg.AggFuncs {
-				expr, err := ap.rewriteExpr(fun.GetArgs()[0].Clone(), fun.GetName())
+				expr, err := ap.rewriteExpr(fun.GetArgs(), fun.GetName())
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -76,22 +76,45 @@ func (ap *aggPruner) eliminateAggregation(p LogicalPlan) (LogicalPlan, error) {
 }
 
 // rewriteExpr will rewrite the aggregate function to expression doesn't contain aggregate function.
-func (ap *aggPruner) rewriteExpr(expr expression.Expression, funcName string) (newExpr expression.Expression, err error) {
+func (ap *aggPruner) rewriteExpr(exprs []expression.Expression, funcName string) (newExpr expression.Expression, err error) {
 	switch funcName {
 	case ast.AggFuncCount:
 		// If is count(expr), we will change it to if(isnull(expr), 0, 1).
-		isNullExpr, err := expression.NewFunction(ap.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)
+		// If is count(distinct x, y, z) we will change it to if(or(or(isnull(x), isnull(y)), isnull(z)), 0, 1).
+		isNullExprs := make([]expression.Expression, 0, len(exprs))
+		for _, expr := range exprs {
+			isNullExpr, err := expression.NewFunction(ap.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr.Clone())
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			isNullExprs = append(isNullExprs, isNullExpr)
+		}
+		var innerExpr expression.Expression
+		if len(isNullExprs) > 1 {
+			// Build or(or(...), z) expression.
+			orExpr, err := expression.NewFunction(ap.ctx, ast.OrOr, types.NewFieldType(mysql.TypeTiny), isNullExprs[0], isNullExprs[1])
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			for _, expr := range isNullExprs[2:] {
+				orExpr, err = expression.NewFunction(ap.ctx, ast.OrOr, types.NewFieldType(mysql.TypeTiny), orExpr, expr)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+			}
+			innerExpr = orExpr
+		} else {
+			innerExpr = isNullExprs[0]
+		}
+		newExpr, err = expression.NewFunction(ap.ctx, ast.If, types.NewFieldType(mysql.TypeLonglong), innerExpr, expression.Zero, expression.One)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		newExpr, err = expression.NewFunction(ap.ctx, ast.If, types.NewFieldType(mysql.TypeLonglong), isNullExpr, expression.Zero, expression.One)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	// https://dev.mysql.com/doc/refman/5.7/en/group-by-functions.html
+	// See https://dev.mysql.com/doc/refman/5.7/en/group-by-functions.html
 	// The SUM() and AVG() functions return a DECIMAL value for exact-value arguments (integer or DECIMAL),
 	// and a DOUBLE value for approximate-value arguments (FLOAT or DOUBLE).
 	case ast.AggFuncSum, ast.AggFuncAvg:
+		expr := exprs[0].Clone()
 		switch expr.GetType().Tp {
 		// Integer type should be cast to decimal.
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
@@ -105,7 +128,7 @@ func (ap *aggPruner) rewriteExpr(expr expression.Expression, funcName string) (n
 		}
 	default:
 		// Default we do nothing about expr.
-		newExpr = expr
+		newExpr = exprs[0].Clone()
 	}
 	return
 }
