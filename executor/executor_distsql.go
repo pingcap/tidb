@@ -188,8 +188,7 @@ func indexRangesToKVRanges(sc *variable.StatementContext, tid, idxID int64, rang
 
 func convertIndexRangeTypes(sc *variable.StatementContext, ran *plan.IndexRange, fieldTypes []*types.FieldType) error {
 	for i := range ran.LowVal {
-		if ran.LowVal[i].Kind() == types.KindMinNotNull {
-			ran.LowVal[i].SetBytes([]byte{})
+		if ran.LowVal[i].Kind() == types.KindMinNotNull || ran.LowVal[i].Kind() == types.KindMaxValue {
 			continue
 		}
 		converted, err := ran.LowVal[i].ConvertTo(sc, fieldTypes[i])
@@ -218,7 +217,7 @@ func convertIndexRangeTypes(sc *variable.StatementContext, ran *plan.IndexRange,
 		break
 	}
 	for i := range ran.HighVal {
-		if ran.HighVal[i].Kind() == types.KindMaxValue {
+		if ran.HighVal[i].Kind() == types.KindMaxValue || ran.LowVal[i].Kind() == types.KindNull {
 			continue
 		}
 		converted, err := ran.HighVal[i].ConvertTo(sc, fieldTypes[i])
