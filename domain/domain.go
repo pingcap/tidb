@@ -381,7 +381,7 @@ func (do *Domain) LoadPrivilegeLoop(ctx context.Context, c chan<- error) {
 		case <-ticker.C:
 			err := do.privHandle.Update(ctx)
 			if err != nil {
-				log.Error(err)
+				log.Error(errors.ErrorStack(err))
 			}
 		case <-do.exit:
 			return

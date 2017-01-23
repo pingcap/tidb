@@ -281,17 +281,19 @@ func (record *userRecord) match(user, host string) bool {
 }
 
 func (record *dbRecord) match(user, host, db string) bool {
-	return record.User == user && patternMatch(record.Host, host) && record.DB == db
+	return record.User == user && record.DB == db &&
+		patternMatch(record.Host, host)
 }
 
 func (record *tablesPrivRecord) match(user, host, db, table string) bool {
-	return record.User == user && patternMatch(record.Host, host) &&
-		record.DB == db && record.TableName == table
+	return record.User == user && record.DB == db &&
+		record.TableName == table && patternMatch(record.Host, host)
 }
 
 func (record *columnsPrivRecord) match(user, host, db, table, col string) bool {
-	return record.User == user && patternMatch(record.Host, host) &&
-		record.DB == db && record.TableName == table && record.ColumnName == col
+	return record.User == user && record.DB == db &&
+		record.TableName == table && record.ColumnName == col &&
+		patternMatch(record.Host, host)
 }
 
 func patternMatch(pattern, str string) bool {
@@ -317,7 +319,7 @@ func (p *MySQLPrivilege) ConnectionVerification(user, host string) bool {
 	return false
 }
 
-// RequestVerification checks whether ther userhave sufficient privileges to do the operation.
+// RequestVerification checks whether the user have sufficient privileges to do the operation.
 func (p *MySQLPrivilege) RequestVerification(user, host, db, table, column string, priv mysql.PrivilegeType) bool {
 	for _, record := range p.User {
 		if record.match(user, host) && record.Privileges&priv > 0 {
