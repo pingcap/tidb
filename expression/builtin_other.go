@@ -219,8 +219,9 @@ func (b *builtinCastSig) eval(row []types.Datum) (types.Datum, error) {
 func CastFuncFactory(tp *types.FieldType) (BuiltinFunc, error) {
 	switch tp.Tp {
 	// Parser has restricted this.
+	// TypeDouble is used during plan optimization.
 	case mysql.TypeString, mysql.TypeDuration, mysql.TypeDatetime,
-		mysql.TypeDate, mysql.TypeLonglong, mysql.TypeNewDecimal:
+		mysql.TypeDate, mysql.TypeLonglong, mysql.TypeNewDecimal, mysql.TypeDouble:
 		return func(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 			d = args[0]
 			if d.IsNull() {
