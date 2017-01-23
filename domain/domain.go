@@ -366,27 +366,31 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 	return d, nil
 }
 
-// LoadPrivilegeLoop loads privilege tables in a loop, it should be called in a goroutine.
-func (do *Domain) LoadPrivilegeLoop(ctx context.Context, c chan<- error) {
+// LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it should be called only once
+// in BootstrapSession
+func (do *Domain) LoadPrivilegeLoop(ctx context.Context) error {
 	do.privHandle = &privileges.Handle{}
 	err := do.privHandle.Update(ctx)
-	c <- errors.Trace(err)
 	if err != nil {
-		return
+		return errors.Trace(err)
 	}
 
-	ticker := time.NewTicker(5 * time.Minute)
-	for {
-		select {
-		case <-ticker.C:
-			err := do.privHandle.Update(ctx)
-			if err != nil {
-				log.Error(errors.ErrorStack(err))
+	go func(do *Domain) {
+		ticker := time.NewTicker(5 * time.Minute)
+		for {
+			select {
+			case <-ticker.C:
+				err := do.privHandle.Update(ctx)
+				if err != nil {
+					log.Error(errors.ErrorStack(err))
+				}
+			case <-do.exit:
+				return
 			}
-		case <-do.exit:
-			return
 		}
-	}
+	}(do)
+
+	return nil
 }
 
 // Privilege returns the MySQLPrivilege.

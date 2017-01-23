@@ -735,10 +735,7 @@ func BootstrapSession(store kv.Storage) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	c := make(chan error)
-	go sessionctx.GetDomain(se).LoadPrivilegeLoop(se, c)
-	err = <-c
+	err = sessionctx.GetDomain(se).LoadPrivilegeLoop(se, c)
 
 	return errors.Trace(err)
 }
