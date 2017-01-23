@@ -32,7 +32,7 @@ type aggPruner struct {
 func (ap *aggPruner) eliminateAggregation(p LogicalPlan) (LogicalPlan, error) {
 	retPlan := p
 	if agg, ok := p.(*Aggregation); ok {
-		schemaByGroupby := expression.NewSchema(agg.groupByCols)
+		schemaByGroupby := expression.NewSchema(agg.groupByCols...)
 		coveredByUniqueKey := false
 		for _, key := range agg.schema.Keys {
 			if schemaByGroupby.GetColumnsIndices(key) != nil {
