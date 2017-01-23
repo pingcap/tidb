@@ -40,7 +40,7 @@ const (
 	// The limit of single entry size (len(key) + len(value)).
 	TxnEntrySizeLimit = 6 * 1024 * 1024
 	// The limit of number of entries in the MemBuffer.
-	TxnEntryCountLimit = 100 * 1000
+	TxnEntryCountLimit = 300 * 1000
 	// The limit of the sum of all entry size.
 	TxnTotalSizeLimit = 100 * 1024 * 1024
 )
