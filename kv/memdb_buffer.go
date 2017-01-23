@@ -25,16 +25,6 @@ import (
 	"github.com/pingcap/tidb/terror"
 )
 
-// Those limits is enforced to make sure the transaction can be well handled by TiKV.
-const (
-	// The limit of single entry size (len(key) + len(value)).
-	EntrySizeLimit = 6 * 1024 * 1024
-	// The limit of number of entries in the MemBuffer.
-	BufferLenLimit = 100 * 1000
-	// The limit of the sum of all entry size.
-	BufferSizeLimit = 100 * 1024 * 1024
-)
-
 type memDbBuffer struct {
 	db              *memdb.DB
 	entrySizeLimit  int
@@ -51,9 +41,9 @@ type memDbIter struct {
 func NewMemDbBuffer() MemBuffer {
 	return &memDbBuffer{
 		db:              memdb.New(comparer.DefaultComparer, 4*1024),
-		entrySizeLimit:  EntrySizeLimit,
-		bufferLenLimit:  BufferLenLimit,
-		bufferSizeLimit: BufferSizeLimit,
+		entrySizeLimit:  TxnEntrySizeLimit,
+		bufferLenLimit:  TxnEntryCountLimit,
+		bufferSizeLimit: TxnTotalSizeLimit,
 	}
 }
 
