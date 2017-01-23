@@ -70,6 +70,8 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	c.Assert(err, NotNil)
 
 	<-done
+	// Make sure the function of f is returned.
+	time.Sleep(5 * time.Millisecond)
 	err = d.runReorgJob(f)
 	c.Assert(err, IsNil)
 
