@@ -1567,69 +1567,69 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: "insert into t values (1)",
 			ans: []visitInfo{
-				visitInfo{mysql.InsertPriv, "test", "t", ""},
+				{mysql.InsertPriv, "test", "t", ""},
 			},
 		},
 		{
 			sql: "delete from t where a = 1",
 			ans: []visitInfo{
-				visitInfo{mysql.DeletePriv, "test", "t", ""},
-				visitInfo{mysql.SelectPriv, "test", "t", ""},
+				{mysql.DeletePriv, "test", "t", ""},
+				{mysql.SelectPriv, "test", "t", ""},
 			},
 		},
 		{
 			sql: "update t set a = 7 where a = 1",
 			ans: []visitInfo{
-				visitInfo{mysql.UpdatePriv, "test", "t", ""},
-				visitInfo{mysql.SelectPriv, "test", "t", ""},
+				{mysql.UpdatePriv, "test", "t", ""},
+				{mysql.SelectPriv, "test", "t", ""},
 			},
 		},
 		{
 			sql: "select a, sum(e) from t group by a",
 			ans: []visitInfo{
-				visitInfo{mysql.SelectPriv, "test", "t", ""},
+				{mysql.SelectPriv, "test", "t", ""},
 			},
 		},
 		{
 			sql: "truncate table t",
 			ans: []visitInfo{
-				visitInfo{mysql.DeletePriv, "test", "t", ""},
+				{mysql.DeletePriv, "test", "t", ""},
 			},
 		},
 		{
 			sql: "drop table t",
 			ans: []visitInfo{
-				visitInfo{mysql.DropPriv, "test", "t", ""},
+				{mysql.DropPriv, "test", "t", ""},
 			},
 		},
 		{
 			sql: "create table t (a int)",
 			ans: []visitInfo{
-				visitInfo{mysql.CreatePriv, "test", "t", ""},
+				{mysql.CreatePriv, "test", "t", ""},
 			},
 		},
 		{
 			sql: "create database test",
 			ans: []visitInfo{
-				visitInfo{mysql.CreatePriv, "test", "", ""},
+				{mysql.CreatePriv, "test", "", ""},
 			},
 		},
 		{
 			sql: "drop database test",
 			ans: []visitInfo{
-				visitInfo{mysql.DropPriv, "test", "", ""},
+				{mysql.DropPriv, "test", "", ""},
 			},
 		},
 		{
 			sql: "create index t_1 on t (a)",
 			ans: []visitInfo{
-				visitInfo{mysql.IndexPriv, "test", "t", ""},
+				{mysql.IndexPriv, "test", "t", ""},
 			},
 		},
 		{
 			sql: "drop index e on t",
 			ans: []visitInfo{
-				visitInfo{mysql.IndexPriv, "test", "t", ""},
+				{mysql.IndexPriv, "test", "t", ""},
 			},
 		},
 	}

@@ -62,7 +62,7 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 
 func checkPrivilege(ctx context.Context, vs []visitInfo) (succ bool) {
 	// TODO: Fix here
-	_ := privilege.GetPrivilegeChecker(ctx)
+	_ = privilege.GetPrivilegeChecker(ctx)
 	succ = true
 	return
 }
