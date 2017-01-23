@@ -53,7 +53,9 @@ func main() {
 	flag.PrintDefaults()
 	log.SetLevelByString(*logLevel)
 	tidb.RegisterStore("tikv", tikv.Driver{})
-	blobString = strings.Repeat("0", *blobSize)
+	buf := make([]byte, *blobSize/2)
+	rand.Read(buf)
+	blobString = fmt.Sprintf("%x", buf)
 	ut := newBenchDB()
 	works := strings.Split(*runJobs, "|")
 	for _, v := range works {
@@ -92,6 +94,7 @@ type benchDB struct {
 func newBenchDB() *benchDB {
 	// Create TiKV store and disable GC as we will trigger GC manually.
 	store, err := tidb.NewStore("tikv://" + *addr + "?disableGC=true")
+	tidb.BootstrapSession(store)
 	if err != nil {
 		log.Fatal(err)
 	}
