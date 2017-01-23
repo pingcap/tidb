@@ -87,7 +87,7 @@ func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*a
 type expressionRewriter struct {
 	ctxStack []expression.Expression
 	p        LogicalPlan
-	schema   expression.Schema
+	schema   *expression.Schema
 	err      error
 	aggrMap  map[*ast.AggregateFuncExpr]int
 	b        *planBuilder
@@ -301,7 +301,7 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 		Position: 0,
 		RetType:  aggFunc.GetType(),
 	}
-	schema := expression.NewSchema([]*expression.Column{aggCol0})
+	schema := expression.NewSchema(aggCol0)
 	agg.SetSchema(schema)
 	cond, _ := expression.NewFunction(er.ctx, cmpFunc, types.NewFieldType(mysql.TypeTiny), lexpr, aggCol0.Clone())
 	er.buildQuantifierPlan(agg, cond, rexpr, all)
@@ -358,7 +358,7 @@ func (er *expressionRewriter) buildQuantifierPlan(agg *Aggregation, cond, rexpr 
 	}
 	proj.self = proj
 	proj.initIDAndContext(er.ctx)
-	proj.SetSchema(expression.NewSchema(joinSchema.Clone().Columns[:outerSchemaLen]))
+	proj.SetSchema(expression.NewSchema(joinSchema.Clone().Columns[:outerSchemaLen]...))
 	proj.Exprs = append(proj.Exprs, cond)
 	proj.schema.Append(&expression.Column{
 		FromID:      proj.id,
@@ -396,7 +396,7 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 		Position: 1,
 		RetType:  countFunc.GetType(),
 	}
-	agg.SetSchema(expression.NewSchema([]*expression.Column{firstRowResultCol, count}))
+	agg.SetSchema(expression.NewSchema(firstRowResultCol, count))
 	gtFunc, _ := expression.NewFunction(er.ctx, ast.GT, types.NewFieldType(mysql.TypeTiny), count.Clone(), expression.One)
 	neCond, _ := expression.NewFunction(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), lexpr, firstRowResultCol.Clone())
 	cond := expression.ComposeDNFCondition(er.ctx, gtFunc, neCond)
@@ -427,7 +427,7 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 		Position: 1,
 		RetType:  countFunc.GetType(),
 	}
-	agg.SetSchema(expression.NewSchema([]*expression.Column{firstRowResultCol, count}))
+	agg.SetSchema(expression.NewSchema(firstRowResultCol, count))
 	leFunc, _ := expression.NewFunction(er.ctx, ast.LE, types.NewFieldType(mysql.TypeTiny), count.Clone(), expression.One)
 	eqCond, _ := expression.NewFunction(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lexpr, firstRowResultCol.Clone())
 	cond := expression.ComposeCNFCondition(er.ctx, leFunc, eqCond)

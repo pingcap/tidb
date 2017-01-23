@@ -491,7 +491,7 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 }
 
 // replaceColsInPropBySchema replaces the columns in original prop with the columns in schema.
-func replaceColsInPropBySchema(prop *requiredProperty, schema expression.Schema) *requiredProperty {
+func replaceColsInPropBySchema(prop *requiredProperty, schema *expression.Schema) *requiredProperty {
 	newProps := make([]*columnProp, 0, len(prop.props))
 	for _, p := range prop.props {
 		idx := schema.GetColumnIndex(p.col)

@@ -135,8 +135,8 @@ func (e *SetExecutor) executeSet() error {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *SetExecutor) Schema() expression.Schema {
-	return expression.NewSchema(nil)
+func (e *SetExecutor) Schema() *expression.Schema {
+	return expression.NewSchema()
 }
 
 // Close implements the Executor Close interface.
