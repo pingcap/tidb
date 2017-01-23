@@ -735,7 +735,7 @@ func BootstrapSession(store kv.Storage) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = sessionctx.GetDomain(se).LoadPrivilegeLoop(se, c)
+	err = sessionctx.GetDomain(se).LoadPrivilegeLoop(se)
 
 	return errors.Trace(err)
 }
