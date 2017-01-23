@@ -89,23 +89,7 @@ func (ap *aggPruner) rewriteExpr(exprs []expression.Expression, funcName string)
 			}
 			isNullExprs = append(isNullExprs, isNullExpr)
 		}
-		var innerExpr expression.Expression
-		if len(isNullExprs) > 1 {
-			// Build or(or(...), z) expression.
-			orExpr, err := expression.NewFunction(ap.ctx, ast.OrOr, types.NewFieldType(mysql.TypeTiny), isNullExprs[0], isNullExprs[1])
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			for _, expr := range isNullExprs[2:] {
-				orExpr, err = expression.NewFunction(ap.ctx, ast.OrOr, types.NewFieldType(mysql.TypeTiny), orExpr, expr)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-			}
-			innerExpr = orExpr
-		} else {
-			innerExpr = isNullExprs[0]
-		}
+		innerExpr := expression.ComposeDNFCondition(ap.ctx, isNullExprs...)
 		newExpr, err = expression.NewFunction(ap.ctx, ast.If, types.NewFieldType(mysql.TypeLonglong), innerExpr, expression.Zero, expression.One)
 		if err != nil {
 			return nil, errors.Trace(err)
