@@ -26,13 +26,13 @@ import (
 // See https://dev.mysql.com/doc/refman/5.7/en/explain-output.html
 type ExplainExec struct {
 	StmtPlan plan.Plan
-	schema   expression.Schema
+	schema   *expression.Schema
 	rows     []*Row
 	cursor   int
 }
 
 // Schema implements the Executor Schema interface.
-func (e *ExplainExec) Schema() expression.Schema {
+func (e *ExplainExec) Schema() *expression.Schema {
 	return e.schema
 }
 

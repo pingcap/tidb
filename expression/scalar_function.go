@@ -133,7 +133,7 @@ func (sf *ScalarFunction) IsCorrelated() bool {
 }
 
 // Decorrelate implements Expression interface.
-func (sf *ScalarFunction) Decorrelate(schema Schema) Expression {
+func (sf *ScalarFunction) Decorrelate(schema *Schema) Expression {
 	for i, arg := range sf.GetArgs() {
 		sf.GetArgs()[i] = arg.Decorrelate(schema)
 	}
@@ -160,7 +160,7 @@ func (sf *ScalarFunction) HashCode() []byte {
 }
 
 // ResolveIndices implements Expression interface.
-func (sf *ScalarFunction) ResolveIndices(schema Schema) {
+func (sf *ScalarFunction) ResolveIndices(schema *Schema) {
 	for _, arg := range sf.GetArgs() {
 		arg.ResolveIndices(schema)
 	}

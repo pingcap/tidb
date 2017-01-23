@@ -51,7 +51,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 	agg.self = agg
 	agg.initIDAndContext(b.ctx)
 	addChild(agg, p)
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncList)+p.GetSchema().Len()))
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncList)+p.GetSchema().Len())...)
 	// aggIdxMap maps the old index to new index after applying common aggregation functions elimination.
 	aggIndexMap := make(map[int]int)
 	for i, aggFunc := range aggFuncList {
@@ -267,7 +267,7 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 	}
 	proj.self = proj
 	proj.initIDAndContext(b.ctx)
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(fields)))
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(fields))...)
 	oldLen := 0
 	for _, field := range fields {
 		newExpr, np, err := b.rewrite(field.Expr, p, mapper, true)
@@ -536,7 +536,7 @@ type havingAndOrderbyExprResolver struct {
 	aggMapper    map[*ast.AggregateFuncExpr]int
 	colMapper    map[*ast.ColumnNameExpr]int
 	gbyItems     []*ast.ByItem
-	outerSchemas []expression.Schema
+	outerSchemas []*expression.Schema
 }
 
 // Enter implements Visitor interface.
@@ -555,7 +555,7 @@ func (a *havingAndOrderbyExprResolver) Enter(n ast.Node) (node ast.Node, skipChi
 	return n, false
 }
 
-func (a *havingAndOrderbyExprResolver) resolveFromSchema(v *ast.ColumnNameExpr, schema expression.Schema) (int, error) {
+func (a *havingAndOrderbyExprResolver) resolveFromSchema(v *ast.ColumnNameExpr, schema *expression.Schema) (int, error) {
 	col, err := schema.FindColumn(v.Name)
 	if err != nil {
 		return -1, errors.Trace(err)
@@ -707,7 +707,7 @@ func (b *planBuilder) extractAggFuncs(fields []*ast.SelectField) ([]*ast.Aggrega
 // gbyResolver resolves group by items from select fields.
 type gbyResolver struct {
 	fields []*ast.SelectField
-	schema expression.Schema
+	schema *expression.Schema
 	err    error
 	inExpr bool
 }
@@ -898,7 +898,7 @@ func (b *planBuilder) buildTrim(p LogicalPlan, len int) LogicalPlan {
 	trim.self = trim
 	trim.initIDAndContext(b.ctx)
 	addChild(trim, p)
-	schema := expression.NewSchema(p.GetSchema().Clone().Columns[:len])
+	schema := expression.NewSchema(p.GetSchema().Clone().Columns[:len]...)
 	trim.SetSchema(schema)
 	trim.SetCorrelated()
 	return trim
@@ -908,6 +908,7 @@ func (b *planBuilder) buildTableDual() LogicalPlan {
 	dual := &TableDual{baseLogicalPlan: newBaseLogicalPlan(Dual, b.allocator)}
 	dual.self = dual
 	dual.initIDAndContext(b.ctx)
+	dual.SetSchema(expression.NewSchema())
 	return dual
 }
 
@@ -937,7 +938,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	p.self = p
 	p.initIDAndContext(b.ctx)
 	// Equal condition contains a column from previous joined table.
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns)))
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
 	for i, col := range tableInfo.Columns {
 		if b.inUpdateStmt {
 			switch col.State {
@@ -1019,7 +1020,7 @@ out:
 		FromID:  exists.id,
 		RetType: types.NewFieldType(mysql.TypeTiny),
 		ColName: model.NewCIStr("exists_col")}
-	exists.SetSchema(expression.NewSchema([]*expression.Column{newCol}))
+	exists.SetSchema(expression.NewSchema(newCol))
 	exists.SetCorrelated()
 	return exists
 }
@@ -1170,6 +1171,6 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 	del.self = del
 	del.initIDAndContext(b.ctx)
 	addChild(del, p)
+	del.SetSchema(expression.NewSchema())
 	return del
-
 }
