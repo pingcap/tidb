@@ -80,7 +80,7 @@ func (ap *aggPruner) rewriteExpr(exprs []expression.Expression, funcName string)
 	switch funcName {
 	case ast.AggFuncCount:
 		// If is count(expr), we will change it to if(isnull(expr), 0, 1).
-		// If is count(distinct x, y, z) we will change it to if(or(or(isnull(x), isnull(y)), isnull(z)), 0, 1).
+		// If is count(distinct x, y, z) we will change it to if(isnull(x) or isnull(y) or isnull(z), 0, 1).
 		isNullExprs := make([]expression.Expression, 0, len(exprs))
 		for _, expr := range exprs {
 			isNullExpr, err := expression.NewFunction(ap.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr.Clone())
