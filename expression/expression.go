@@ -177,7 +177,7 @@ func (c *Constant) ResolveIndices(_ Schema) {
 }
 
 // composeConditionWithBinaryOp composes condition with binary operator into a balance deep tree, which benefits a lot for pb decoder/encoder.
-func composeConditionWithBinaryOp(conditions []Expression, funcName string) Expression {
+func composeConditionWithBinaryOp(ctx context.Context, conditions []Expression, funcName string) Expression {
 	length := len(conditions)
 	if length == 0 {
 		return nil
@@ -185,21 +185,21 @@ func composeConditionWithBinaryOp(conditions []Expression, funcName string) Expr
 	if length == 1 {
 		return conditions[0]
 	}
-	expr, _ := NewFunction(funcName,
+	expr, _ := NewFunction(ctx, funcName,
 		types.NewFieldType(mysql.TypeTiny),
-		composeConditionWithBinaryOp(conditions[:length/2], funcName),
-		composeConditionWithBinaryOp(conditions[length/2:], funcName))
+		composeConditionWithBinaryOp(ctx, conditions[:length/2], funcName),
+		composeConditionWithBinaryOp(ctx, conditions[length/2:], funcName))
 	return expr
 }
 
 // ComposeCNFCondition composes CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
-func ComposeCNFCondition(conditions ...Expression) Expression {
-	return composeConditionWithBinaryOp(conditions, ast.AndAnd)
+func ComposeCNFCondition(ctx context.Context, conditions ...Expression) Expression {
+	return composeConditionWithBinaryOp(ctx, conditions, ast.AndAnd)
 }
 
 // ComposeDNFCondition composes DNF items into a balance deep DNF tree.
-func ComposeDNFCondition(conditions ...Expression) Expression {
-	return composeConditionWithBinaryOp(conditions, ast.OrOr)
+func ComposeDNFCondition(ctx context.Context, conditions ...Expression) Expression {
+	return composeConditionWithBinaryOp(ctx, conditions, ast.OrOr)
 }
 
 // Assignment represents a set assignment in Update, such as
@@ -259,7 +259,7 @@ func EvaluateExprWithNull(ctx context.Context, schema Schema, expr Expression) (
 				return nil, errors.Trace(err)
 			}
 		}
-		newFunc, err := NewFunction(x.FuncName.L, types.NewFieldType(mysql.TypeTiny), args...)
+		newFunc, err := NewFunction(ctx, x.FuncName.L, types.NewFieldType(mysql.TypeTiny), args...)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -328,25 +328,21 @@ func TableInfo2Schema(tbl *model.TableInfo) Schema {
 }
 
 // NewCastFunc creates a new cast function.
-func NewCastFunc(tp *types.FieldType, arg Expression) (*ScalarFunction, error) {
-	bt, err := CastFuncFactory(tp)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+func NewCastFunc(tp *types.FieldType, arg Expression, ctx context.Context) *ScalarFunction {
+	bt := &builtinCastSig{newBaseBuiltinFunc([]Expression{arg}, ctx), tp}
 	return &ScalarFunction{
-		args:      []Expression{arg},
-		FuncName:  model.NewCIStr(ast.Cast),
-		RetType:   tp,
-		Function:  bt,
-		ArgValues: make([]types.Datum, 1)}, nil
+		FuncName: model.NewCIStr(ast.Cast),
+		RetType:  tp,
+		Function: bt,
+	}
 }
 
 // NewValuesFunc creates a new values function.
-func NewValuesFunc(v *ast.ValuesExpr) *ScalarFunction {
-	bt := BuiltinValuesFactory(v.Column.Refer.Column.Offset)
+func NewValuesFunc(offset int, retTp *types.FieldType, ctx context.Context) *ScalarFunction {
+	bt := &builtinValuesSig{newBaseBuiltinFunc(nil, ctx), offset}
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(ast.Values),
-		RetType:  &v.Type,
+		RetType:  retTp,
 		Function: bt,
 	}
 }
