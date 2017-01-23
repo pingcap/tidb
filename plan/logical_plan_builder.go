@@ -936,6 +936,11 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	}
 	p.self = p
 	p.initIDAndContext(b.ctx)
+	b.visitInfo = append(b.visitInfo, visitInfo{
+		privilege: mysql.SelectPriv,
+		db:        schemaName.L,
+		table:     tableInfo.Name.L,
+	})
 	// Equal condition contains a column from previous joined table.
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns)))
 	for i, col := range tableInfo.Columns {
@@ -1071,6 +1076,15 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 	if b.err != nil {
 		return nil
 	}
+
+	if ds, ok := p.(*DataSource); ok {
+		b.visitInfo = append(b.visitInfo, visitInfo{
+			privilege: mysql.UpdatePriv,
+			db:        ds.DBName.L,
+			table:     ds.tableInfo.Name.L,
+		})
+	}
+
 	_, _ = b.resolveHavingAndOrderBy(sel, p)
 	if sel.Where != nil {
 		p = b.buildSelection(p, sel.Where, nil)
@@ -1139,6 +1153,15 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 	if b.err != nil {
 		return nil
 	}
+
+	if ds, ok := p.(*DataSource); ok {
+		b.visitInfo = append(b.visitInfo, visitInfo{
+			privilege: mysql.DeletePriv,
+			db:        ds.DBName.L,
+			table:     ds.tableInfo.Name.L,
+		})
+	}
+
 	_, _ = b.resolveHavingAndOrderBy(sel, p)
 	if sel.Where != nil {
 		p = b.buildSelection(p, sel.Where, nil)
@@ -1171,5 +1194,4 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 	del.initIDAndContext(b.ctx)
 	addChild(del, p)
 	return del
-
 }

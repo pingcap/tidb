@@ -15,6 +15,7 @@ package plan
 
 import (
 	"fmt"
+	"sort"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -1554,5 +1555,139 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 		p.buildKeyInfo()
 		c.Assert(err, IsNil)
 		checkUniqueKeys(p, c, ca.ans, comment)
+	}
+}
+
+func (s *testPlanSuite) TestVisitInfo(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		sql string
+		ans []visitInfo
+	}{
+		{
+			sql: "insert into t values (1)",
+			ans: []visitInfo{
+				visitInfo{mysql.InsertPriv, "test", "t", ""},
+			},
+		},
+		{
+			sql: "delete from t where a = 1",
+			ans: []visitInfo{
+				visitInfo{mysql.DeletePriv, "test", "t", ""},
+				visitInfo{mysql.SelectPriv, "test", "t", ""},
+			},
+		},
+		{
+			sql: "update t set a = 7 where a = 1",
+			ans: []visitInfo{
+				visitInfo{mysql.UpdatePriv, "test", "t", ""},
+				visitInfo{mysql.SelectPriv, "test", "t", ""},
+			},
+		},
+		{
+			sql: "select a, sum(e) from t group by a",
+			ans: []visitInfo{
+				visitInfo{mysql.SelectPriv, "test", "t", ""},
+			},
+		},
+		{
+			sql: "truncate table t",
+			ans: []visitInfo{
+				visitInfo{mysql.DeletePriv, "test", "t", ""},
+			},
+		},
+		{
+			sql: "drop table t",
+			ans: []visitInfo{
+				visitInfo{mysql.DropPriv, "test", "t", ""},
+			},
+		},
+		{
+			sql: "create table t (a int)",
+			ans: []visitInfo{
+				visitInfo{mysql.CreatePriv, "test", "t", ""},
+			},
+		},
+		{
+			sql: "create database test",
+			ans: []visitInfo{
+				visitInfo{mysql.CreatePriv, "test", "", ""},
+			},
+		},
+		{
+			sql: "drop database test",
+			ans: []visitInfo{
+				visitInfo{mysql.DropPriv, "test", "", ""},
+			},
+		},
+		{
+			sql: "create index t_1 on t (a)",
+			ans: []visitInfo{
+				visitInfo{mysql.IndexPriv, "test", "t", ""},
+			},
+		},
+		{
+			sql: "drop index e on t",
+			ans: []visitInfo{
+				visitInfo{mysql.IndexPriv, "test", "t", ""},
+			},
+		},
+	}
+
+	for _, ca := range cases {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+
+		is, err := mockResolve(stmt)
+		c.Assert(err, IsNil)
+
+		builder := &planBuilder{
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+			allocator: new(idAllocator),
+			ctx:       mockContext(),
+			is:        is,
+		}
+		builder.build(stmt)
+		c.Assert(builder.err, IsNil, comment)
+
+		checkVisitInfo(c, builder.visitInfo, ca.ans, comment)
+	}
+}
+
+type visitInfoArray []visitInfo
+
+func (v visitInfoArray) Len() int {
+	return len(v)
+}
+
+func (v visitInfoArray) Less(i, j int) bool {
+	if v[i].privilege < v[j].privilege {
+		return true
+	}
+	if v[i].db < v[j].db {
+		return true
+	}
+	if v[i].table < v[j].table {
+		return true
+	}
+	if v[i].column < v[j].column {
+		return true
+	}
+
+	return false
+}
+
+func (v visitInfoArray) Swap(i, j int) {
+	v[i], v[j] = v[j], v[i]
+}
+
+func checkVisitInfo(c *C, v1, v2 []visitInfo, comment CommentInterface) {
+	sort.Sort(visitInfoArray(v1))
+	sort.Sort(visitInfoArray(v2))
+
+	c.Assert(len(v1), Equals, len(v2), comment)
+	for i := 0; i < len(v1); i++ {
+		c.Assert(v1[i], Equals, v2[i], comment)
 	}
 }
