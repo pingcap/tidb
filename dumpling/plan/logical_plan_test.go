@@ -1448,18 +1448,18 @@ func (s *testPlanSuite) TestValidate(c *C) {
 	}
 }
 
-func checkUniqueKeys(p Plan, c *C, ans map[string][][]string, comment CommentInterface) {
+func checkUniqueKeys(p Plan, c *C, ans map[string][][]string, sql string) {
 	keyList, ok := ans[p.GetID()]
-	c.Assert(ok, IsTrue, comment)
-	c.Assert(len(keyList), Equals, len(p.GetSchema().Keys), comment)
+	c.Assert(ok, IsTrue, Commentf("for %s, %v not found", sql, p.GetID()))
+	c.Assert(len(keyList), Equals, len(p.GetSchema().Keys), Commentf("for %s, %v, the number of key doesn't match", sql, p.GetID()))
 	for i, key := range keyList {
-		c.Assert(len(key), Equals, len(p.GetSchema().Keys[i]), comment)
+		c.Assert(len(key), Equals, len(p.GetSchema().Keys[i]), Commentf("for %s, %v %v, the number of column doesn't match", sql, p.GetID(), key))
 		for j, colName := range key {
-			c.Assert(colName, Equals, p.GetSchema().Keys[i][j].String(), comment)
+			c.Assert(colName, Equals, p.GetSchema().Keys[i][j].String(), Commentf("for %s, %v %v, column dosen't match", sql, p.GetID(), key))
 		}
 	}
 	for _, child := range p.GetChildren() {
-		checkUniqueKeys(child, c, ans, comment)
+		checkUniqueKeys(child, c, ans, sql)
 	}
 }
 
@@ -1552,7 +1552,58 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 		p.PruneColumns(p.GetSchema().Columns)
 		p.ResolveIndicesAndCorCols()
 		p.buildKeyInfo()
+		checkUniqueKeys(p, c, ca.ans, ca.sql)
+	}
+}
+
+func (s *testPlanSuite) TestAggPrune(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		sql  string
+		best string
+	}{
+		{
+			sql:  "select a, count(b) from t group by a",
+			best: "DataScan(t)->Projection->Projection",
+		},
+		{
+			sql:  "select sum(b) from t group by c, d, e",
+			best: "DataScan(t)->Aggr(sum(test.t.b),firstrow(test.t.a),firstrow(test.t.b),firstrow(test.t.c),firstrow(test.t.d),firstrow(test.t.e),firstrow(test.t.c_str),firstrow(test.t.d_str),firstrow(test.t.e_str),firstrow(test.t.f),firstrow(test.t.g))->Projection",
+		},
+		{
+			sql:  "select t1.a, count(t2.b) from t t1, t t2 where t1.a = t2.a group by t1.a",
+			best: "Join{DataScan(t1)->DataScan(t2)}(t1.a,t2.a)->Projection->Projection",
+		},
+		{
+			sql:  "select tt.a, sum(tt.b) from (select a, b from t) tt group by tt.a",
+			best: "DataScan(t)->Projection->Projection->Projection",
+		},
+	}
+	for _, ca := range cases {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+
+		is, err := mockResolve(stmt)
 		c.Assert(err, IsNil)
-		checkUniqueKeys(p, c, ca.ans, comment)
+
+		builder := &planBuilder{
+			allocator: new(idAllocator),
+			ctx:       mockContext(),
+			is:        is,
+		}
+		p := builder.build(stmt).(LogicalPlan)
+		c.Assert(builder.err, IsNil)
+
+		_, p, err = p.PredicatePushDown(nil)
+		c.Assert(err, IsNil)
+		p.buildKeyInfo()
+		ap := &aggPruner{
+			ctx:       builder.ctx,
+			allocator: builder.allocator,
+		}
+		p, err = ap.eliminateAggregation(p)
+		c.Assert(err, IsNil)
+		c.Assert(ToString(p), Equals, ca.best, comment)
 	}
 }
