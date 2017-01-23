@@ -906,7 +906,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  "select a from t where c_str like 'abc_'",
-			best: "Index(t.c_d_e_str)[[abc <nil>,abd <nil>)]->Selection->Projection",
+			best: "Index(t.c_d_e_str)[(abc +inf,abd <nil>)]->Selection->Projection",
 		},
 		{
 			sql:  "select a from t where c_str like 'abc%af'",
@@ -922,7 +922,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  `select a from t where c_str like 'abc\\\\_'`,
-			best: "Index(t.c_d_e_str)[[abc\\ <nil>,abc] <nil>)]->Selection->Projection",
+			best: "Index(t.c_d_e_str)[(abc\\ +inf,abc] <nil>)]->Selection->Projection",
 		},
 		{
 			sql:  `select a from t where c_str like 'abc\\_%'`,
@@ -934,7 +934,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  `select a from t where c_str like 'abc\\__'`,
-			best: "Index(t.c_d_e_str)[[abc_ <nil>,abc` <nil>)]->Selection->Projection",
+			best: "Index(t.c_d_e_str)[(abc_ +inf,abc` <nil>)]->Selection->Projection",
 		},
 		{
 			// Check that 123 is converted to string '123'. index can be used.
@@ -1260,7 +1260,7 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 		},
 		{
 			exprStr:   "a LIKE 'abc_'",
-			resultStr: "[[abc abd)]",
+			resultStr: "[(abc abd)]",
 		},
 		{
 			exprStr:   "a LIKE 'abc'",
