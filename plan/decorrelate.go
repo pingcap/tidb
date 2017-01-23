@@ -72,8 +72,25 @@ func decorrelate(p LogicalPlan) LogicalPlan {
 			apply.SetChildren(outerPlan, innerPlan)
 			innerPlan.SetParents(apply)
 			return decorrelate(p)
+		} else if proj, ok := innerPlan.(*Projection); ok {
+			for i, expr := range proj.Exprs {
+				proj.Exprs[i] = expr.Decorrelate(outerPlan.GetSchema())
+			}
+			apply.columnSubstitute(proj.GetSchema(), proj.Exprs)
+			innerPlan = proj.children[0].(LogicalPlan)
+			apply.SetChildren(outerPlan, innerPlan)
+			innerPlan.SetParents(apply)
+			if apply.JoinType != SemiJoin && apply.JoinType != LeftOuterSemiJoin {
+				proj.SetSchema(apply.GetSchema())
+				proj.Exprs = append(expression.Column2Exprs(outerPlan.GetSchema().Clone().Columns), proj.Exprs...)
+				apply.SetSchema(expression.MergeSchema(outerPlan.GetSchema(), innerPlan.GetSchema()))
+				proj.SetParents(apply.GetParents()...)
+				proj.SetChildren(apply)
+				apply.SetParents(proj)
+			}
+			return decorrelate(p)
 		}
-		// TODO: Deal with aggregation and projection.
+		// TODO: Deal with aggregation.
 	}
 	newChildren := make([]Plan, 0, len(p.GetChildren()))
 	for _, child := range p.GetChildren() {
