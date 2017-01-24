@@ -453,6 +453,12 @@ func (p *PhysicalHashSemiJoin) extractCorrelatedCols() []*expression.CorrelatedC
 func (p *PhysicalApply) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := p.basePlan.extractCorrelatedCols()
 	corCols = append(corCols, p.PhysicalJoin.extractCorrelatedCols()...)
+	for i := len(corCols) - 1; i >= 0; i-- {
+		idx := p.PhysicalJoin.GetChildren()[0].GetSchema().GetColumnIndex(&corCols[i].Column)
+		if idx != -1 {
+			corCols = append(corCols[:i], corCols[i+1:]...)
+		}
+	}
 	return corCols
 }
 
@@ -538,18 +544,6 @@ func (p *PhysicalApply) MarshalJSON() ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-// SetCorrelated implements Plan interface.
-func (p *PhysicalApply) SetCorrelated() {
-	corColumns := p.GetChildren()[1].extractCorrelatedCols()
-	p.correlated = p.GetChildren()[0].IsCorrelated()
-	for _, corCol := range corColumns {
-		if idx := p.GetChildren()[0].GetSchema().GetColumnIndex(&corCol.Column); idx == -1 {
-			p.correlated = true
-			break
-		}
-	}
-}
-
 // Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalHashSemiJoin) Copy() PhysicalPlan {
 	np := *p
@@ -591,23 +585,6 @@ func (p *PhysicalHashSemiJoin) MarshalJSON() ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-// SetCorrelated implements Plan interface.
-func (p *PhysicalHashSemiJoin) SetCorrelated() {
-	p.basePlan.SetCorrelated()
-	for _, cond := range p.EqualConditions {
-		p.correlated = p.correlated || cond.IsCorrelated()
-	}
-	for _, cond := range p.LeftConditions {
-		p.correlated = p.correlated || cond.IsCorrelated()
-	}
-	for _, cond := range p.RightConditions {
-		p.correlated = p.correlated || cond.IsCorrelated()
-	}
-	for _, cond := range p.OtherConditions {
-		p.correlated = p.correlated || cond.IsCorrelated()
-	}
-}
-
 // Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalHashJoin) Copy() PhysicalPlan {
 	np := *p
@@ -645,23 +622,6 @@ func (p *PhysicalHashJoin) MarshalJSON() ([]byte, error) {
 			"}",
 		eqConds, leftConds, rightConds, otherConds, leftChild.GetID(), rightChild.GetID()))
 	return buffer.Bytes(), nil
-}
-
-// SetCorrelated implements Plan interface.
-func (p *PhysicalHashJoin) SetCorrelated() {
-	p.basePlan.SetCorrelated()
-	for _, cond := range p.EqualConditions {
-		p.correlated = p.correlated || cond.IsCorrelated()
-	}
-	for _, cond := range p.LeftConditions {
-		p.correlated = p.correlated || cond.IsCorrelated()
-	}
-	for _, cond := range p.RightConditions {
-		p.correlated = p.correlated || cond.IsCorrelated()
-	}
-	for _, cond := range p.OtherConditions {
-		p.correlated = p.correlated || cond.IsCorrelated()
-	}
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -810,19 +770,6 @@ func (p *PhysicalAggregation) MarshalJSON() ([]byte, error) {
 			"\"GroupByItems\": %s,\n"+
 			"\"child\": \"%s\"}", aggFuncs, gbyExprs, p.children[0].GetID()))
 	return buffer.Bytes(), nil
-}
-
-// SetCorrelated implements Plan interface.
-func (p *PhysicalAggregation) SetCorrelated() {
-	p.basePlan.SetCorrelated()
-	for _, item := range p.GroupByItems {
-		p.correlated = p.correlated || item.IsCorrelated()
-	}
-	for _, fun := range p.AggFuncs {
-		for _, arg := range fun.GetArgs() {
-			p.correlated = p.correlated || arg.IsCorrelated()
-		}
-	}
 }
 
 // Copy implements the PhysicalPlan Copy interface.
