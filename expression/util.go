@@ -19,6 +19,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -37,7 +38,7 @@ func ExtractColumns(expr Expression) (cols []*Column) {
 
 // ColumnSubstitute substitutes the columns in filter to expressions in select fields.
 // e.g. select * from (select b as a from t) k where a < 10 => select * from (select b as a from t where b < 10) k.
-func ColumnSubstitute(expr Expression, schema Schema, newExprs []Expression) Expression {
+func ColumnSubstitute(expr Expression, schema *Schema, newExprs []Expression) Expression {
 	switch v := expr.(type) {
 	case *Column:
 		id := schema.GetColumnIndex(v)
@@ -55,10 +56,18 @@ func ColumnSubstitute(expr Expression, schema Schema, newExprs []Expression) Exp
 		for _, arg := range v.GetArgs() {
 			newArgs = append(newArgs, ColumnSubstitute(arg, schema, newExprs))
 		}
-		fun, _ := NewFunction(v.FuncName.L, v.RetType, newArgs...)
+		fun, _ := NewFunction(v.GetCtx(), v.FuncName.L, v.RetType, newArgs...)
 		return fun
 	}
 	return expr
+}
+
+func datumsToConstants(datums []types.Datum) []Expression {
+	constants := make([]Expression, 0, len(datums))
+	for _, d := range datums {
+		constants = append(constants, &Constant{Value: d})
+	}
+	return constants
 }
 
 // calculateSum adds v to sum.
@@ -138,4 +147,31 @@ Loop:
 		return s[1:validLen]
 	}
 	return s[:validLen]
+}
+
+// createDistinctChecker creates a new distinct checker.
+func createDistinctChecker() *distinctChecker {
+	return &distinctChecker{
+		existingKeys: make(map[string]bool),
+	}
+}
+
+// Checker stores existing keys and checks if given data is distinct.
+type distinctChecker struct {
+	existingKeys map[string]bool
+}
+
+// Check checks if values is distinct.
+func (d *distinctChecker) Check(values []interface{}) (bool, error) {
+	bs, err := codec.EncodeValue([]byte{}, types.MakeDatums(values...)...)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	key := string(bs)
+	_, ok := d.existingKeys[key]
+	if ok {
+		return false, nil
+	}
+	d.existingKeys[key] = true
+	return true, nil
 }

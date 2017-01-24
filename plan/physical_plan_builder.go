@@ -32,7 +32,6 @@ const (
 	netWorkFactor   = 1.5
 	memoryFactor    = 5.0
 	selectionFactor = 0.8
-	distinctFactor  = 0.7
 	cpuFactor       = 0.9
 	aggFactor       = 0.1
 	joinFactor      = 0.3
@@ -161,7 +160,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 			}
 			log.Warn("truncate error in buildIndexRange")
 		}
-		rowCount, err = getRowCountByIndexRanges(sc, statsTbl, is.Ranges, is.Index, is.Table)
+		rowCount, err = is.getRowCountByIndexRanges(sc, statsTbl)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -393,7 +392,7 @@ func (p *Join) convert2PhysicalPlanSemi(prop *requiredProperty) (*physicalPlanIn
 		}
 	}
 	join := &PhysicalHashSemiJoin{
-		WithAux:         SemiJoinWithAux == p.JoinType,
+		WithAux:         LeftOuterSemiJoin == p.JoinType,
 		EqualConditions: p.EqualConditions,
 		LeftConditions:  p.LeftConditions,
 		RightConditions: p.RightConditions,
@@ -491,7 +490,7 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 }
 
 // replaceColsInPropBySchema replaces the columns in original prop with the columns in schema.
-func replaceColsInPropBySchema(prop *requiredProperty, schema expression.Schema) *requiredProperty {
+func replaceColsInPropBySchema(prop *requiredProperty, schema *expression.Schema) *requiredProperty {
 	newProps := make([]*columnProp, 0, len(prop.props))
 	for _, p := range prop.props {
 		idx := schema.GetColumnIndex(p.col)
@@ -573,7 +572,7 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 		return info, nil
 	}
 	switch p.JoinType {
-	case SemiJoin, SemiJoinWithAux:
+	case SemiJoin, LeftOuterSemiJoin:
 		info, err = p.convert2PhysicalPlanSemi(prop)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -835,6 +834,9 @@ func (p *Selection) convert2PhysicalPlanPushOrder(prop *requiredProperty) (*phys
 			scanCount := info.count
 			info.count = limit.Count
 			info.cost = np.calculateCost(info.count, scanCount)
+			if limit.Offset > 0 {
+				info = enforceProperty(&requiredProperty{limit: limit}, info)
+			}
 		} else {
 			info = enforceProperty(&requiredProperty{limit: limit}, info)
 		}
@@ -990,60 +992,30 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	if info != nil {
 		return info, nil
 	}
-	innerPlan := p.children[1].(LogicalPlan)
-	allFromOuter := true
-	for _, col := range prop.props {
-		if innerPlan.GetSchema().GetColumnIndex(col.col) != -1 {
-			allFromOuter = false
+	if p.JoinType == InnerJoin {
+		info, err = p.Join.convert2PhysicalPlanLeft(prop, true)
+	} else {
+		info, err = p.Join.convert2PhysicalPlanSemi(prop)
+	}
+	if err != nil {
+		return info, errors.Trace(err)
+	}
+	switch info.p.(type) {
+	case *PhysicalHashJoin, *PhysicalHashSemiJoin:
+		ap := &PhysicalApply{
+			PhysicalJoin: info.p,
+			OuterSchema:  p.corCols,
 		}
+		ap.tp = App
+		ap.allocator = p.allocator
+		ap.initIDAndContext(p.ctx)
+		ap.SetChildren(info.p.GetChildren()...)
+		ap.SetSchema(info.p.GetSchema())
+		info.p = ap
+	default:
+		info.cost = math.MaxFloat64
+		info.p = nil
 	}
-	if !allFromOuter {
-		return &physicalPlanInfo{cost: math.MaxFloat64}, err
-	}
-	child := p.GetChildByIndex(0).(LogicalPlan)
-	innerInfo, err := innerPlan.convert2PhysicalPlan(&requiredProperty{})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	np := &PhysicalApply{
-		OuterSchema: p.corCols,
-		Checker:     p.Checker,
-	}
-	np.tp = "PhysicalApply"
-	np.allocator = p.allocator
-	np.initIDAndContext(p.ctx)
-	np.SetSchema(p.GetSchema())
-	limit := prop.limit
-	info, err = child.convert2PhysicalPlan(removeLimit(prop))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	info = addPlanToResponse(np, info)
-	addChild(info.p, innerInfo.p)
-	info = enforceProperty(limitProperty(limit), info)
-	p.storePlanInfo(prop, info)
-	return info, nil
-}
-
-// convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
-// TODO: support streaming distinct.
-func (p *Distinct) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
-	info, err := p.getPlanInfo(prop)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if info != nil {
-		return info, nil
-	}
-	child := p.GetChildByIndex(0).(LogicalPlan)
-	limit := prop.limit
-	info, err = child.convert2PhysicalPlan(removeLimit(prop))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	info = addPlanToResponse(p, info)
-	info.count = uint64(float64(info.count) * distinctFactor)
-	info = enforceProperty(limitProperty(limit), info)
 	p.storePlanInfo(prop, info)
 	return info, nil
 }

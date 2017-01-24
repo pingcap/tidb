@@ -57,8 +57,6 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildDeallocate(v)
 	case *plan.Delete:
 		return b.buildDelete(v)
-	case *plan.Distinct:
-		return b.buildDistinct(v)
 	case *plan.Execute:
 		return b.buildExecute(v)
 	case *plan.Explain:
@@ -192,10 +190,6 @@ func (b *executorBuilder) buildLimit(v *plan.Limit) Executor {
 		schema: v.GetSchema(),
 	}
 	return e
-}
-
-func (b *executorBuilder) buildDistinct(v *plan.Distinct) Executor {
-	return &DistinctExec{Src: b.build(v.GetChildByIndex(0)), schema: v.GetSchema()}
 }
 
 func (b *executorBuilder) buildPrepare(v *plan.Prepare) Executor {
@@ -368,7 +362,7 @@ func (b *executorBuilder) buildJoin(v *plan.PhysicalHashJoin) Executor {
 	}
 	e := &HashJoinExec{
 		schema:        v.GetSchema(),
-		otherFilter:   expression.ComposeCNFCondition(v.OtherConditions),
+		otherFilter:   expression.ComposeCNFCondition(b.ctx, v.OtherConditions...),
 		prepared:      false,
 		ctx:           b.ctx,
 		targetTypes:   targetTypes,
@@ -376,15 +370,15 @@ func (b *executorBuilder) buildJoin(v *plan.PhysicalHashJoin) Executor {
 		defaultValues: v.DefaultValues,
 	}
 	if v.SmallTable == 1 {
-		e.smallFilter = expression.ComposeCNFCondition(v.RightConditions)
-		e.bigFilter = expression.ComposeCNFCondition(v.LeftConditions)
+		e.smallFilter = expression.ComposeCNFCondition(b.ctx, v.RightConditions...)
+		e.bigFilter = expression.ComposeCNFCondition(b.ctx, v.LeftConditions...)
 		e.smallHashKey = rightHashKey
 		e.bigHashKey = leftHashKey
 		e.leftSmall = false
 	} else {
 		e.leftSmall = true
-		e.smallFilter = expression.ComposeCNFCondition(v.LeftConditions)
-		e.bigFilter = expression.ComposeCNFCondition(v.RightConditions)
+		e.smallFilter = expression.ComposeCNFCondition(b.ctx, v.LeftConditions...)
+		e.bigFilter = expression.ComposeCNFCondition(b.ctx, v.RightConditions...)
 		e.smallHashKey = leftHashKey
 		e.bigHashKey = rightHashKey
 	}
@@ -413,7 +407,7 @@ func (b *executorBuilder) buildJoin(v *plan.PhysicalHashJoin) Executor {
 	return e
 }
 
-func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) Executor {
+func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) *HashSemiJoinExec {
 	var leftHashKey, rightHashKey []*expression.Column
 	var targetTypes []*types.FieldType
 	for _, eqCond := range v.EqualConditions {
@@ -425,9 +419,9 @@ func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) Executor {
 	}
 	e := &HashSemiJoinExec{
 		schema:       v.GetSchema(),
-		otherFilter:  expression.ComposeCNFCondition(v.OtherConditions),
-		bigFilter:    expression.ComposeCNFCondition(v.LeftConditions),
-		smallFilter:  expression.ComposeCNFCondition(v.RightConditions),
+		otherFilter:  expression.ComposeCNFCondition(b.ctx, v.OtherConditions...),
+		bigFilter:    expression.ComposeCNFCondition(b.ctx, v.LeftConditions...),
+		smallFilter:  expression.ComposeCNFCondition(b.ctx, v.RightConditions...),
 		bigExec:      b.build(v.GetChildByIndex(0)),
 		smallExec:    b.build(v.GetChildByIndex(1)),
 		prepared:     false,
@@ -466,7 +460,7 @@ func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor
 func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
 	exec := &SelectionExec{
 		Src:       b.build(v.GetChildByIndex(0)),
-		Condition: expression.ComposeCNFCondition(v.Conditions),
+		Condition: expression.ComposeCNFCondition(b.ctx, v.Conditions...),
 		schema:    v.GetSchema(),
 		ctx:       b.ctx,
 	}
@@ -588,21 +582,38 @@ func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
 	}
 }
 
-func (b *executorBuilder) buildApply(v *plan.PhysicalApply) Executor {
-	src := b.build(v.GetChildByIndex(0))
-	apply := &ApplyExec{
+func (b *executorBuilder) buildNestedLoopJoin(v *plan.PhysicalHashJoin) *NestedLoopJoinExec {
+	bigExec := b.build(v.GetChildByIndex(0))
+	smallExec := b.build(v.GetChildByIndex(1))
+	return &NestedLoopJoinExec{
+		SmallExec:   smallExec,
+		BigExec:     bigExec,
+		Ctx:         b.ctx,
+		BigFilter:   expression.ComposeCNFCondition(b.ctx, v.LeftConditions...),
+		SmallFilter: expression.ComposeCNFCondition(b.ctx, v.RightConditions...),
+		OtherFilter: expression.ComposeCNFCondition(b.ctx, append(expression.ScalarFuncs2Exprs(v.EqualConditions), v.OtherConditions...)...),
 		schema:      v.GetSchema(),
-		innerExec:   b.build(v.GetChildByIndex(1)),
-		outerSchema: v.OuterSchema,
-		Src:         src,
 	}
-	if v.Checker != nil {
-		apply.checker = &conditionChecker{
-			all:     v.Checker.All,
-			cond:    v.Checker.Condition,
-			trimLen: src.Schema().Len(),
-			ctx:     b.ctx,
+}
+
+func (b *executorBuilder) buildApply(v *plan.PhysicalApply) Executor {
+	var join joinExec
+	switch x := v.PhysicalJoin.(type) {
+	case *plan.PhysicalHashSemiJoin:
+		join = b.buildSemiJoin(x)
+	case *plan.PhysicalHashJoin:
+		if x.JoinType == plan.InnerJoin {
+			join = b.buildNestedLoopJoin(x)
+		} else {
+			b.err = errors.Errorf("Unsupported join type %v in nested loop join", x.JoinType)
 		}
+	default:
+		b.err = errors.Errorf("Unsupported plan type %T in apply", v)
+	}
+	apply := &ApplyJoinExec{
+		join:        join,
+		outerSchema: v.OuterSchema,
+		schema:      v.GetSchema(),
 	}
 	return apply
 }

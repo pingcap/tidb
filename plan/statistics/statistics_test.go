@@ -17,7 +17,6 @@ import (
 	"testing"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
@@ -208,7 +207,6 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	c.Check(count, Equals, int64(5083))
 
 	str := t.String()
-	log.Debug(str)
 	c.Check(len(str), Greater, 0)
 
 	tpb, err := t.ToPB()

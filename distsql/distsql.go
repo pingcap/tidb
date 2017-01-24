@@ -86,7 +86,18 @@ func (r *selectResult) Fetch() {
 }
 
 func (r *selectResult) fetch() {
-	defer close(r.results)
+	startTime := time.Now()
+	defer func() {
+		close(r.results)
+		duration := time.Since(startTime)
+		var label string
+		if r.index {
+			label = "index"
+		} else {
+			label = "table"
+		}
+		queryHistgram.WithLabelValues(label).Observe(duration.Seconds())
+	}()
 	for {
 		reader, err := r.resp.Next()
 		if err != nil {
@@ -264,15 +275,13 @@ func (pr *partialResult) Close() error {
 }
 
 // Select do a select request, returns SelectResult.
-// conncurrency: The max concurrency for underlying coprocessor request.
+// concurrency: The max concurrency for underlying coprocessor request.
 // keepOrder: If the result should returned in key order. For example if we need keep data in order by
 //            scan index, we should set keepOrder to true.
 func Select(client kv.Client, req *tipb.SelectRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool) (SelectResult, error) {
 	var err error
-	startTs := time.Now()
 	defer func() {
 		// Add metrics
-		queryHistgram.Observe(time.Since(startTs).Seconds())
 		if err != nil {
 			queryCounter.WithLabelValues(queryFailed).Inc()
 		} else {

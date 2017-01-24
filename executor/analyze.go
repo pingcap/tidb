@@ -31,7 +31,7 @@ var _ Executor = &AnalyzeExec{}
 
 // AnalyzeExec represents Analyze executor.
 type AnalyzeExec struct {
-	schema     expression.Schema
+	schema     *expression.Schema
 	tblInfo    *model.TableInfo
 	ctx        context.Context
 	idxOffsets []int
@@ -46,7 +46,7 @@ const (
 )
 
 // Schema implements the Executor Schema interface.
-func (e *AnalyzeExec) Schema() expression.Schema {
+func (e *AnalyzeExec) Schema() *expression.Schema {
 	return e.schema
 }
 

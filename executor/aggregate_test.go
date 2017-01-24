@@ -33,8 +33,8 @@ type MockExec struct {
 	curRowIdx int
 }
 
-func (m *MockExec) Schema() expression.Schema {
-	return expression.Schema{}
+func (m *MockExec) Schema() *expression.Schema {
+	return expression.NewSchema()
 }
 
 func (m *MockExec) Fields() []*ast.ResultField {
@@ -80,6 +80,8 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("insert t values (4, 3)")
 	result := tk.MustQuery("select count(*) from t group by d")
 	result.Check(testkit.Rows("3", "2", "2"))
+	result = tk.MustQuery("select distinct 99 from t group by d having d > 0")
+	result.Check(testkit.Rows("99"))
 	result = tk.MustQuery("select count(*) from t having 1 = 0")
 	result.Check(testkit.Rows())
 	result = tk.MustQuery("select c,d from t group by d")
@@ -88,9 +90,8 @@ func (s *testSuite) TestAggregation(c *C) {
 	result.Check(testkit.Rows())
 	result = tk.MustQuery("select - c as c from t group by c having t.c > 5")
 	result.Check(testkit.Rows())
-	// TODO: This query is reported error in resolver.
-	//result := tk.MustQuery("select t1.c from t t1, t t2 group by c having c > 5")
-	//result.Check(testkit.Rows())
+	result = tk.MustQuery("select t1.c from t t1, t t2 group by c having c > 5")
+	result.Check(testkit.Rows())
 	result = tk.MustQuery("select count(*) from (select d, c from t) k where d != 0 group by d")
 	result.Check(testkit.Rows("3", "2", "2"))
 	result = tk.MustQuery("select c as a from t group by d having a < 0")
@@ -103,8 +104,10 @@ func (s *testSuite) TestAggregation(c *C) {
 	result.Check(testkit.Rows("2", "4", "5"))
 	result = tk.MustQuery("select sum(c), sum(c+1), sum(c), sum(c+1) from t group by d")
 	result.Check(testkit.Rows("2 4 2 4", "4 6 4 6", "5 7 5 7"))
-	result = tk.MustQuery("select count(distinct c,d), count(c,d) from t")
-	result.Check(testkit.Rows("5 6"))
+	result = tk.MustQuery("select count(distinct c,d) from t")
+	result.Check(testkit.Rows("5"))
+	_, err := tk.Exec("select count(c,d) from t")
+	c.Assert(err, NotNil)
 	result = tk.MustQuery("select d*2 as ee, sum(c) from t group by ee")
 	result.Check(testkit.Rows("2 2", "4 4", "6 5"))
 	result = tk.MustQuery("select sum(distinct c) from t group by d")
@@ -195,7 +198,7 @@ func (s *testSuite) TestAggregation(c *C) {
 	result.Check(testkit.Rows("-1 1", "0 1", "1 1"))
 	result = tk.MustQuery("select c as d, c as d from t group by d")
 	result.Check(testkit.Rows("1 1", "1 1", "1 1"))
-	_, err := tk.Exec("select d as d, c as d from t group by d")
+	_, err = tk.Exec("select d as d, c as d from t group by d")
 	c.Assert(err, NotNil)
 	_, err = tk.Exec("select t.d, c as d from t group by d")
 	c.Assert(err, NotNil)

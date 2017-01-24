@@ -293,6 +293,33 @@ func builtinDateFormat(args []types.Datum, ctx context.Context) (types.Datum, er
 	return d, nil
 }
 
+type fromDaysFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *fromDaysFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinFromDaysSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinFromDaysSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinFromDaysSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return builtinFromDays(args, b.ctx)
+}
+
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_from-days
+func builtinFromDays(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	days, err := args[0].ToInt64(ctx.GetSessionVars().StmtCtx)
+	d.SetMysqlTime(types.TimeFromDays(days))
+	return d, nil
+}
+
 type dayFunctionClass struct {
 	baseFunctionClass
 }
@@ -722,7 +749,7 @@ func builtinDayOfYear(args []types.Datum, ctx context.Context) (types.Datum, err
 	}
 
 	t := d.GetMysqlTime()
-	if t.Time.Month() == 0 || t.Time.Day() == 0 {
+	if t.InvalidZero() {
 		// TODO: log warning or return error?
 		d.SetNull()
 		return d, nil
@@ -921,7 +948,7 @@ func builtinYearWeek(args []types.Datum, ctx context.Context) (types.Datum, erro
 
 	// No need to check type here.
 	t := d.GetMysqlTime()
-	if t.Time.Month() == 0 || t.Time.Day() == 0 {
+	if t.InvalidZero() {
 		d.SetNull()
 		// TODO: log warning or return error?
 		return d, nil
@@ -1445,6 +1472,57 @@ func parseDayInterval(sc *variable.StatementContext, value types.Datum) (int64, 
 	return value.ToInt64(sc)
 }
 
+type timestampDiffFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *timestampDiffFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinTimestampDiffSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinTimestampDiffSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinTimestampDiffSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return builtinTimestampDiff(args, b.ctx)
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timestampdiff
+func builtinTimestampDiff(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	sc := ctx.GetSessionVars().StmtCtx
+	t1, err := convertDatumToTime(sc, args[1])
+	if err != nil {
+		return d, errorOrWarning(err, ctx)
+	}
+	t2, err := convertDatumToTime(sc, args[2])
+	if err != nil {
+		return d, errorOrWarning(err, ctx)
+	}
+	if t1.InvalidZero() || t2.InvalidZero() {
+		return d, errorOrWarning(types.ErrInvalidTimeFormat, ctx)
+	}
+
+	v := types.TimestampDiff(args[0].GetString(), t1, t2)
+	d.SetInt64(v)
+	return
+}
+
+// errorOrWarning reports error or warning depend on the context.
+func errorOrWarning(err error, ctx context.Context) error {
+	sc := ctx.GetSessionVars().StmtCtx
+	// TODO: Use better name, such as sc.IsInsert instead of sc.IgnoreTruncate.
+	if ctx.GetSessionVars().StrictSQLMode && !sc.IgnoreTruncate {
+		return errors.Trace(types.ErrInvalidTimeFormat)
+	}
+	sc.AppendWarning(err)
+	return nil
+}
+
 type unixTimestampFunctionClass struct {
 	baseFunctionClass
 }
@@ -1488,6 +1566,10 @@ func builtinUnixTimestamp(args []types.Datum, ctx context.Context) (d types.Datu
 		if err != nil {
 			return d, errors.Trace(err)
 		}
+	case types.KindMysqlTime:
+		t = args[0].GetMysqlTime()
+	default:
+		return d, errors.Errorf("Unkonwn args type for unix_timestamp %d", args[0].Kind())
 	}
 
 	t1, err = t.Time.GoTime(getTimeZone(ctx))
