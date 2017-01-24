@@ -88,6 +88,7 @@ type builtinFoundRowsSig struct {
 	baseBuiltinFunc
 }
 
+// See https://dev.mysql.com/doc/refman/5.6/en/information-functions.html#function_found-rows
 func (b *builtinFoundRowsSig) eval(_ []types.Datum) (d types.Datum, err error) {
 	data := b.ctx.GetSessionVars()
 	if data == nil {
@@ -171,7 +172,7 @@ type builtinConnectionIDSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinConnectionIDSig) eval(row []types.Datum) (d types.Datum, err error) {
+func (b *builtinConnectionIDSig) eval(_ []types.Datum) (d types.Datum, err error) {
 	data := b.ctx.GetSessionVars()
 	if data == nil {
 		return d, errors.Errorf("Missing session variable when evalue builtin")
