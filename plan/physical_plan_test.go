@@ -768,7 +768,7 @@ func (s *testPlanSuite) TestFilterConditionPushDown(c *C) {
 	}
 }
 
-func (s *testPlanSuite) TestPhysicalInitialize(c *C) {
+func (s *testPlanSuite) TestAddCache(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql string
@@ -804,7 +804,6 @@ func (s *testPlanSuite) TestPhysicalInitialize(c *C) {
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		pp := info.p
 		pp = EliminateProjection(pp)
-		physicalInitialize(pp)
 		addCachePlan(pp, builder.allocator)
 		c.Assert(ToString(pp), Equals, ca.ans, Commentf("for %s", ca.sql))
 	}
