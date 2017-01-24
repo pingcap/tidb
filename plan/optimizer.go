@@ -36,7 +36,7 @@ const (
 	flagAggPushDown
 )
 
-var optRuleList = []optimizeRule{
+var optRuleList = []logicalOptRule{
 	&decorrelateSolver{},
 	&ppdSolver{},
 	&columnPruner{},
@@ -45,7 +45,8 @@ var optRuleList = []optimizeRule{
 	&aggPushDownSolver{},
 }
 
-type optimizeRule interface {
+// logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
+type logicalOptRule interface {
 	optimize(LogicalPlan, context.Context, *idAllocator) (LogicalPlan, error)
 }
 
@@ -87,6 +88,9 @@ func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context, allocator *
 func logicalOptimize(flag uint64, logic LogicalPlan, ctx context.Context, alloc *idAllocator) (LogicalPlan, error) {
 	var err error
 	for i, rule := range optRuleList {
+		// The order of flags is same as the order of optRule in the list.
+		// We use a bitmask to record which opt rules should be used. If the i-th bit is 1, it means we should
+		// apply i-th optimizing rule.
 		if flag&(1<<uint(i)) == 0 {
 			continue
 		}
@@ -109,7 +113,6 @@ func physicalOptimize(logic LogicalPlan, allocator *idAllocator) (PhysicalPlan, 
 	addCachePlan(pp, allocator)
 	log.Debugf("[PLAN] %s", ToString(pp))
 	return pp, nil
-
 }
 
 func existsCartesianProduct(p LogicalPlan) bool {
