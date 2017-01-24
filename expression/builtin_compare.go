@@ -227,8 +227,8 @@ func (s *builtinCompareSig) eval(row []types.Datum) (d types.Datum, err error) {
 		}
 	}
 	if a.IsNull() || b.IsNull() {
-		// for <=>, if a and b are both nil, return true.
-		// if a or b is nil, return false.
+		// For <=>, if a and b are both nil, return true.
+		// If a or b is nil, return false.
 		if s.op == opcode.NullEQ {
 			if a.IsNull() && b.IsNull() {
 				d.SetInt64(oneI64)
