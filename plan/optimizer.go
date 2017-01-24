@@ -109,7 +109,6 @@ func physicalOptimize(logic LogicalPlan, allocator *idAllocator) (PhysicalPlan, 
 	}
 	pp := info.p
 	pp = EliminateProjection(pp)
-	physicalInitialize(pp)
 	addCachePlan(pp, allocator)
 	log.Debugf("[PLAN] %s", ToString(pp))
 	return pp, nil

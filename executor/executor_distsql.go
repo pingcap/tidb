@@ -188,8 +188,7 @@ func indexRangesToKVRanges(sc *variable.StatementContext, tid, idxID int64, rang
 
 func convertIndexRangeTypes(sc *variable.StatementContext, ran *plan.IndexRange, fieldTypes []*types.FieldType) error {
 	for i := range ran.LowVal {
-		if ran.LowVal[i].Kind() == types.KindMinNotNull {
-			ran.LowVal[i].SetBytes([]byte{})
+		if ran.LowVal[i].Kind() == types.KindMinNotNull || ran.LowVal[i].Kind() == types.KindMaxValue {
 			continue
 		}
 		converted, err := ran.LowVal[i].ConvertTo(sc, fieldTypes[i])
@@ -218,7 +217,7 @@ func convertIndexRangeTypes(sc *variable.StatementContext, ran *plan.IndexRange,
 		break
 	}
 	for i := range ran.HighVal {
-		if ran.HighVal[i].Kind() == types.KindMaxValue {
+		if ran.HighVal[i].Kind() == types.KindMaxValue || ran.LowVal[i].Kind() == types.KindNull {
 			continue
 		}
 		converted, err := ran.HighVal[i].ConvertTo(sc, fieldTypes[i])
@@ -346,6 +345,7 @@ type XSelectIndexExec struct {
 	singleReadMode bool
 
 	returnedRows uint64 // returned row count
+	handleCount  uint64 // returned handle count when reading first
 
 	mu sync.Mutex
 
@@ -511,9 +511,9 @@ func (e *XSelectIndexExec) nextForDoubleRead() (*Row, error) {
 }
 
 func (e *XSelectIndexExec) slowQueryInfo(duration time.Duration) string {
-	return fmt.Sprintf("time: %v, table: %s(%d), index: %s(%d), partials: %d, concurrency: %d, rows: %d",
+	return fmt.Sprintf("time: %v, table: %s(%d), index: %s(%d), partials: %d, concurrency: %d, rows: %d, handles: %d",
 		duration, e.tableInfo.Name, e.tableInfo.ID, e.indexPlan.Index.Name, e.indexPlan.Index.ID,
-		e.partialCount, e.scanConcurrency, e.returnedRows)
+		e.partialCount, e.scanConcurrency, e.returnedRows, e.handleCount)
 }
 
 const concurrencyLimit int = 30
@@ -542,6 +542,7 @@ func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<
 			e.tasksErr = errors.Trace(err)
 			return
 		}
+		e.handleCount += uint64(len(handles))
 		tasks := e.buildTableTasks(handles)
 		for _, task := range tasks {
 			if concurrency < len(tasks) {

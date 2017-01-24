@@ -445,7 +445,7 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 		return v, true
 	}
 	np = er.b.buildExists(np)
-	if np.IsCorrelated() {
+	if len(np.extractCorrelatedCols()) > 0 {
 		er.p = er.b.buildSemiApply(er.p, np.GetChildren()[0].(LogicalPlan), nil, er.asScalar, false)
 		if !er.asScalar {
 			return v, true
@@ -524,7 +524,7 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 		return v, true
 	}
 	np = er.b.buildMaxOneRow(np)
-	if np.IsCorrelated() {
+	if len(np.extractCorrelatedCols()) > 0 {
 		er.p = er.b.buildInnerApply(er.p, np)
 		if np.GetSchema().Len() > 1 {
 			newCols := make([]expression.Expression, 0, np.GetSchema().Len())
