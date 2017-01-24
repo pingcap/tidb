@@ -366,8 +366,8 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 	return d, nil
 }
 
-// LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it should be called only once
-// in BootstrapSession
+// LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it
+// should be called only once in BootstrapSession.
 func (do *Domain) LoadPrivilegeLoop(ctx context.Context) error {
 	do.privHandle = &privileges.Handle{}
 	err := do.privHandle.Update(ctx)
