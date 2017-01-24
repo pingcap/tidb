@@ -296,6 +296,13 @@ func (a *aggPushDownSolver) pushAggCrossUnion(agg *Aggregation, unionSchema *exp
 	return newAgg
 }
 
+func (a *aggPushDownSolver) optimize(p LogicalPlan, ctx context.Context, alloc *idAllocator) (LogicalPlan, error) {
+	a.ctx = ctx
+	a.alloc = alloc
+	a.aggPushDown(p)
+	return p, nil
+}
+
 // aggPushDown tries to push down aggregate functions to join paths.
 func (a *aggPushDownSolver) aggPushDown(p LogicalPlan) {
 	if agg, ok := p.(*Aggregation); ok {

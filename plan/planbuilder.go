@@ -69,9 +69,12 @@ type planBuilder struct {
 	inUpdateStmt bool
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
+
+	optFlag uint64
 }
 
 func (b *planBuilder) build(node ast.Node) Plan {
+	b.optFlag = flagPrunColumns
 	switch x := node.(type) {
 	case *ast.AdminStmt:
 		return b.buildAdmin(x)

@@ -18,6 +18,13 @@ import (
 	"github.com/pingcap/tidb/expression"
 )
 
+type ppdSolver struct{}
+
+func (s *ppdSolver) optimize(lp LogicalPlan, _ context.Context, _ *idAllocator) (LogicalPlan, error) {
+	_, p, err := lp.PredicatePushDown(nil)
+	return p, errors.Trace(err)
+}
+
 func addSelection(p Plan, child LogicalPlan, conditions []expression.Expression, allocator *idAllocator) error {
 	conditions = expression.PropagateConstant(p.context(), conditions)
 	selection := &Selection{
