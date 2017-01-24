@@ -160,7 +160,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 			}
 			log.Warn("truncate error in buildIndexRange")
 		}
-		rowCount, err = getRowCountByIndexRanges(sc, statsTbl, is.Ranges, is.Index, is.Table)
+		rowCount, err = is.getRowCountByIndexRanges(sc, statsTbl)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

@@ -810,7 +810,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  "select a from t where c = 4 and d <= 5 and d > 3",
-			best: "Index(t.c_d_e)[(4 3,4 5]]->Projection",
+			best: "Index(t.c_d_e)[(4 3 +inf,4 5 +inf]]->Projection",
 		},
 		{
 			sql:  "select a from t where d <= 5 and d > 3",
@@ -822,7 +822,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  "select a from t where c not between 1 and 2",
-			best: "Index(t.c_d_e)[[-inf,1) (2,+inf]]->Projection",
+			best: "Index(t.c_d_e)[[-inf <nil>,1 <nil>) (2 +inf,+inf +inf]]->Projection",
 		},
 		{
 			sql:  "select a from t where c <= 5 and c >= 3 and d = 1",
@@ -854,11 +854,11 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  "select a from t where c in (1) and d > 3",
-			best: "Index(t.c_d_e)[(1 3,1 +inf]]->Projection",
+			best: "Index(t.c_d_e)[(1 3 +inf,1 +inf +inf]]->Projection",
 		},
 		{
 			sql:  "select a from t where c in (1, 2, 3) and (d > 3 and d < 4 or d > 5 and d < 6)",
-			best: "Index(t.c_d_e)[(1 3,1 4) (1 5,1 6) (2 3,2 4) (2 5,2 6) (3 3,3 4) (3 5,3 6)]->Projection",
+			best: "Index(t.c_d_e)[(1 3 +inf,1 4 <nil>) (1 5 +inf,1 6 <nil>) (2 3 +inf,2 4 <nil>) (2 5 +inf,2 6 <nil>) (3 3 +inf,3 4 <nil>) (3 5 +inf,3 6 <nil>)]->Projection",
 		},
 		{
 			sql:  "select a from t where c in (1, 2, 3)",
@@ -875,6 +875,10 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		{
 			sql:  "select a from t where c not in (1)",
 			best: "Table(t)->Projection",
+		},
+		{
+			sql:  "select a from t use index(c_d_e) where c != 1",
+			best: "Index(t.c_d_e)[[-inf <nil>,1 <nil>) (1 +inf,+inf +inf]]->Projection",
 		},
 		{
 			sql:  "select a from t where c_str like ''",
@@ -898,15 +902,15 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  "select a from t where c_str like 'abc%'",
-			best: "Index(t.c_d_e_str)[[abc,abd)]->Projection",
+			best: "Index(t.c_d_e_str)[[abc <nil>,abd <nil>)]->Projection",
 		},
 		{
 			sql:  "select a from t where c_str like 'abc_'",
-			best: "Index(t.c_d_e_str)[(abc,abd)]->Selection->Projection",
+			best: "Index(t.c_d_e_str)[(abc +inf,abd <nil>)]->Selection->Projection",
 		},
 		{
 			sql:  "select a from t where c_str like 'abc%af'",
-			best: "Index(t.c_d_e_str)[[abc,abd)]->Selection->Projection",
+			best: "Index(t.c_d_e_str)[[abc <nil>,abd <nil>)]->Selection->Projection",
 		},
 		{
 			sql:  `select a from t where c_str like 'abc\\_' escape ''`,
@@ -918,19 +922,19 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  `select a from t where c_str like 'abc\\\\_'`,
-			best: "Index(t.c_d_e_str)[(abc\\,abc])]->Selection->Projection",
+			best: "Index(t.c_d_e_str)[(abc\\ +inf,abc] <nil>)]->Selection->Projection",
 		},
 		{
 			sql:  `select a from t where c_str like 'abc\\_%'`,
-			best: "Index(t.c_d_e_str)[[abc_,abc`)]->Projection",
+			best: "Index(t.c_d_e_str)[[abc_ <nil>,abc` <nil>)]->Projection",
 		},
 		{
 			sql:  `select a from t where c_str like 'abc=_%' escape '='`,
-			best: "Index(t.c_d_e_str)[[abc_,abc`)]->Projection",
+			best: "Index(t.c_d_e_str)[[abc_ <nil>,abc` <nil>)]->Projection",
 		},
 		{
 			sql:  `select a from t where c_str like 'abc\\__'`,
-			best: "Index(t.c_d_e_str)[(abc_,abc`)]->Selection->Projection",
+			best: "Index(t.c_d_e_str)[(abc_ +inf,abc` <nil>)]->Selection->Projection",
 		},
 		{
 			// Check that 123 is converted to string '123'. index can be used.
@@ -956,11 +960,11 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  `select a from t where c <= 1.9`,
-			best: "Index(t.c_d_e)[[-inf,2)]->Projection",
+			best: "Index(t.c_d_e)[[-inf <nil>,2 <nil>)]->Projection",
 		},
 		{
 			sql:  `select a from t where c >= 1.1`,
-			best: "Index(t.c_d_e)[(1,+inf]]->Projection",
+			best: "Index(t.c_d_e)[(1 +inf,+inf +inf]]->Projection",
 		},
 		{
 			sql:  `select a from t where c > 1.9`,
