@@ -1020,25 +1020,16 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	return info, nil
 }
 
-// physicalInitialize will set value of some attributes after convert2PhysicalPlan process.
-// Currently, only attribute "correlated" is considered.
-func physicalInitialize(p PhysicalPlan) {
-	for _, child := range p.GetChildren() {
-		physicalInitialize(child.(PhysicalPlan))
-	}
-	// initialize attributes
-	p.SetCorrelated()
-}
-
 // addCachePlan will add a Cache plan above the plan whose father's IsCorrelated() is true but its own IsCorrelated() is false.
-func addCachePlan(p PhysicalPlan, allocator *idAllocator) {
+func addCachePlan(p PhysicalPlan, allocator *idAllocator) []*expression.CorrelatedColumn {
 	if len(p.GetChildren()) == 0 {
-		return
+		return nil
 	}
+	selfCorCols := p.extractCorrelatedCols()
 	newChildren := make([]Plan, 0, len(p.GetChildren()))
 	for _, child := range p.GetChildren() {
-		addCachePlan(child.(PhysicalPlan), allocator)
-		if p.IsCorrelated() && !child.IsCorrelated() {
+		childCorCols := addCachePlan(child.(PhysicalPlan), allocator)
+		if len(selfCorCols) > 0 && len(childCorCols) == 0 {
 			newChild := &Cache{}
 			newChild.tp = "Cache"
 			newChild.allocator = allocator
@@ -1054,4 +1045,5 @@ func addCachePlan(p PhysicalPlan, allocator *idAllocator) {
 		}
 	}
 	p.SetChildren(newChildren...)
+	return selfCorCols
 }

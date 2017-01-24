@@ -565,6 +565,11 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			plan: "Join{DataScan(t)->DataScan(s)->Aggr(sum(s.a))->Projection}(test.t.a,sel_agg_1)->Projection",
 		},
 		{
+			// Test Nested sub query.
+			sql:  "select * from t where exists (select s.a from t s where s.c in (select c from t as k where k.d = s.d) having sum(s.a) = t.a )",
+			plan: "Join{DataScan(t)->Apply{DataScan(s)->DataScan(k)->Selection->Projection}->Aggr(sum(s.a))->Projection}(test.t.a,sel_agg_1)->Projection",
+		},
+		{
 			sql:  "select * from t for update",
 			plan: "DataScan(t)->Lock->Projection",
 		},
