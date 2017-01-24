@@ -32,7 +32,6 @@ const (
 	netWorkFactor   = 1.5
 	memoryFactor    = 5.0
 	selectionFactor = 0.8
-	distinctFactor  = 0.7
 	cpuFactor       = 0.9
 	aggFactor       = 0.1
 	joinFactor      = 0.3
@@ -491,7 +490,7 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 }
 
 // replaceColsInPropBySchema replaces the columns in original prop with the columns in schema.
-func replaceColsInPropBySchema(prop *requiredProperty, schema expression.Schema) *requiredProperty {
+func replaceColsInPropBySchema(prop *requiredProperty, schema *expression.Schema) *requiredProperty {
 	newProps := make([]*columnProp, 0, len(prop.props))
 	for _, p := range prop.props {
 		idx := schema.GetColumnIndex(p.col)

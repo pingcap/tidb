@@ -91,9 +91,9 @@ type Plan interface {
 	// Get all the children.
 	GetChildren() []Plan
 	// Set the schema.
-	SetSchema(schema expression.Schema)
+	SetSchema(schema *expression.Schema)
 	// Get the schema.
-	GetSchema() expression.Schema
+	GetSchema() *expression.Schema
 	// Get the ID.
 	GetID() string
 	// Check whether this plan is correlated or not.
@@ -320,7 +320,7 @@ type basePlan struct {
 	parents  []Plan
 	children []Plan
 
-	schema    expression.Schema
+	schema    *expression.Schema
 	tp        string
 	id        string
 	allocator *idAllocator
@@ -360,12 +360,12 @@ func (p *basePlan) GetID() string {
 }
 
 // SetSchema implements Plan SetSchema interface.
-func (p *basePlan) SetSchema(schema expression.Schema) {
+func (p *basePlan) SetSchema(schema *expression.Schema) {
 	p.schema = schema
 }
 
 // GetSchema implements Plan GetSchema interface.
-func (p *basePlan) GetSchema() expression.Schema {
+func (p *basePlan) GetSchema() *expression.Schema {
 	return p.schema
 }
 

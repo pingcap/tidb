@@ -201,7 +201,7 @@ func outerJoinSimplify(p *Join, predicates []expression.Expression) error {
 // If it is a predicate containing a reference to an inner table that evaluates to UNKNOWN or FALSE when one of its arguments is NULL.
 // If it is a conjunction containing a null-rejected condition as a conjunct.
 // If it is a disjunction of null-rejected conditions.
-func isNullRejected(ctx context.Context, schema expression.Schema, expr expression.Expression) (bool, error) {
+func isNullRejected(ctx context.Context, schema *expression.Schema, expr expression.Expression) (bool, error) {
 	result, err := expression.EvaluateExprWithNull(ctx, schema, expr)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -289,7 +289,7 @@ func (p *Union) PredicatePushDown(predicates []expression.Expression) (ret []exp
 
 // getGbyColIndex gets the column's index in the group-by columns.
 func (p *Aggregation) getGbyColIndex(col *expression.Column) int {
-	return expression.NewSchema(p.groupByCols).GetColumnIndex(col)
+	return expression.NewSchema(p.groupByCols...).GetColumnIndex(col)
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.

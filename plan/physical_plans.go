@@ -37,7 +37,6 @@ var (
 
 // PhysicalIndexScan represents an index scan plan.
 type PhysicalIndexScan struct {
-	basePlan
 	physicalTableSource
 
 	Table      *model.TableInfo
@@ -78,7 +77,7 @@ func (p *PhysicalMemTable) Copy() PhysicalPlan {
 // physicalDistSQLPlan means the plan that can be executed distributively.
 // We can push down other plan like selection, limit, aggregation, topn into this plan.
 type physicalDistSQLPlan interface {
-	addAggregation(ctx context.Context, agg *PhysicalAggregation) expression.Schema
+	addAggregation(ctx context.Context, agg *PhysicalAggregation) *expression.Schema
 	addTopN(ctx context.Context, prop *requiredProperty) bool
 	addLimit(limit *Limit)
 	// scanCount means the original row count that need to be scanned and resultCount means the row count after scanning.
@@ -114,6 +113,8 @@ func (p *PhysicalTableScan) calculateCost(resultCount uint64, scanCount uint64) 
 }
 
 type physicalTableSource struct {
+	basePlan
+
 	client kv.Client
 
 	Aggregated bool
@@ -218,7 +219,7 @@ func (p *physicalTableSource) tryToAddUnionScan(resultPlan PhysicalPlan) Physica
 	}
 	conditions := append(p.indexFilterConditions, p.tableFilterConditions...)
 	us := &PhysicalUnionScan{
-		Condition: expression.ComposeCNFCondition(append(conditions, p.AccessCondition...)...),
+		Condition: expression.ComposeCNFCondition(p.ctx, append(conditions, p.AccessCondition...)...),
 	}
 	us.SetChildren(resultPlan)
 	us.SetSchema(resultPlan.GetSchema())
@@ -259,9 +260,9 @@ func (p *physicalTableSource) addTopN(ctx context.Context, prop *requiredPropert
 	return true
 }
 
-func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalAggregation) expression.Schema {
+func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalAggregation) *expression.Schema {
 	if p.client == nil {
-		return expression.NewSchema(nil)
+		return expression.NewSchema()
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	for _, f := range agg.AggFuncs {
@@ -269,7 +270,7 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 		if pb == nil {
 			// When we fail to convert any agg function to PB struct, we should clear the environments.
 			p.clearForAggPushDown()
-			return expression.NewSchema(nil)
+			return expression.NewSchema()
 		}
 		p.AggFuncsPB = append(p.AggFuncsPB, pb)
 		p.aggFuncs = append(p.aggFuncs, f.Clone())
@@ -279,7 +280,7 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 		if pb == nil {
 			// When we fail to convert any group-by item to PB struct, we should clear the environments.
 			p.clearForAggPushDown()
-			return expression.NewSchema(nil)
+			return expression.NewSchema()
 		}
 		p.GbyItemsPB = append(p.GbyItemsPB, pb)
 		p.gbyItems = append(p.gbyItems, item.Clone())
@@ -289,7 +290,7 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 	gk.Charset = charset.CharsetBin
 	gk.Collate = charset.CollationBin
 	p.AggFields = append(p.AggFields, gk)
-	schema := expression.NewSchema(nil)
+	schema := expression.NewSchema()
 	cursor := 0
 	schema.Append(&expression.Column{Index: cursor, ColName: model.NewCIStr(fmt.Sprint(agg.GroupByItems))})
 	agg.GroupByItems = []expression.Expression{schema.Columns[cursor]}
@@ -324,7 +325,6 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 
 // PhysicalTableScan represents a table scan plan.
 type PhysicalTableScan struct {
-	basePlan
 	physicalTableSource
 
 	Table   *model.TableInfo

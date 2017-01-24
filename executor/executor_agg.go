@@ -27,7 +27,7 @@ import (
 // and updates all the items in AggFuncs.
 type HashAggExec struct {
 	Src               Executor
-	schema            expression.Schema
+	schema            *expression.Schema
 	executed          bool
 	hasGby            bool
 	aggType           plan.AggregationType
@@ -51,7 +51,7 @@ func (e *HashAggExec) Close() error {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *HashAggExec) Schema() expression.Schema {
+func (e *HashAggExec) Schema() *expression.Schema {
 	return e.schema
 }
 
@@ -154,7 +154,7 @@ func (e *HashAggExec) innerNext() (ret bool, err error) {
 // When Next() is called, it will return a result for the same group.
 type StreamAggExec struct {
 	Src                Executor
-	schema             expression.Schema
+	schema             *expression.Schema
 	executed           bool
 	hasData            bool
 	Ctx                context.Context
@@ -176,7 +176,7 @@ func (e *StreamAggExec) Close() error {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *StreamAggExec) Schema() expression.Schema {
+func (e *StreamAggExec) Schema() *expression.Schema {
 	return e.schema
 }
 

@@ -19,7 +19,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 )
 
-func getUsedList(usedCols []*expression.Column, schema expression.Schema) []bool {
+func getUsedList(usedCols []*expression.Column, schema *expression.Schema) []bool {
 	used := make([]bool, schema.Len())
 	for _, col := range usedCols {
 		idx := schema.GetColumnIndex(col)

@@ -57,6 +57,15 @@ func doOptimize(logic LogicalPlan, ctx context.Context, allocator *idAllocator) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	logic.buildKeyInfo()
+	ap := &aggPruner{
+		ctx:       ctx,
+		allocator: allocator,
+	}
+	logic, err = ap.eliminateAggregation(logic)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	solver := &aggPushDownSolver{
 		ctx:   ctx,
 		alloc: allocator,
@@ -67,7 +76,6 @@ func doOptimize(logic LogicalPlan, ctx context.Context, allocator *idAllocator) 
 	if !AllowCartesianProduct && existsCartesianProduct(logic) {
 		return nil, errors.Trace(ErrCartesianProductUnsupported)
 	}
-	logic.buildKeyInfo()
 	info, err := logic.convert2PhysicalPlan(&requiredProperty{})
 	if err != nil {
 		return nil, errors.Trace(err)

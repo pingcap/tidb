@@ -175,7 +175,7 @@ type Insert struct {
 	baseLogicalPlan
 
 	Table       table.Table
-	tableSchema expression.Schema
+	tableSchema *expression.Schema
 	Columns     []*ast.ColumnName
 	Lists       [][]expression.Expression
 	Setlist     []*expression.Assignment

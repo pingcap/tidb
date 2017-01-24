@@ -11,28 +11,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package distinct
+package expression
 
 import (
-	"testing"
-
 	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
-func TestT(t *testing.T) {
-	check.CustomVerboseFlag = true
-	check.TestingT(t)
+var _ = check.Suite(&testUtilSuite{})
+
+type testUtilSuite struct {
 }
 
-var _ = check.Suite(&testDistinctSuite{})
-
-type testDistinctSuite struct {
-}
-
-func (s *testDistinctSuite) TestDistinct(c *check.C) {
+func (s *testUtilSuite) TestDistinct(c *check.C) {
 	defer testleak.AfterTest(c)()
-	dc := CreateDistinctChecker()
+	dc := createDistinctChecker()
 	cases := []struct {
 		vals   []interface{}
 		expect bool
