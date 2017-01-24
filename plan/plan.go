@@ -82,20 +82,16 @@ type Plan interface {
 	ReplaceParent(parent, newPar Plan) error
 	// ReplaceChild means replacing a child with another one.
 	ReplaceChild(children, newChild Plan) error
-	// Retrieve the parent by index.
-	GetParentByIndex(index int) Plan
-	// Retrieve the child by index.
-	GetChildByIndex(index int) Plan
 	// Get all the parents.
-	GetParents() []Plan
+	Parents() []Plan
 	// Get all the children.
-	GetChildren() []Plan
+	Children() []Plan
 	// Set the schema.
 	SetSchema(schema *expression.Schema)
 	// Get the schema.
-	GetSchema() *expression.Schema
+	Schema() *expression.Schema
 	// Get the ID.
-	GetID() string
+	ID() string
 	// Check whether this plan is correlated or not.
 	IsCorrelated() bool
 	// Set the value of attribute "correlated".
@@ -236,7 +232,7 @@ func (p *baseLogicalPlan) storePlanInfo(prop *requiredProperty, info *physicalPl
 }
 
 func (p *baseLogicalPlan) buildKeyInfo() {
-	for _, child := range p.GetChildren() {
+	for _, child := range p.Children() {
 		child.(LogicalPlan).buildKeyInfo()
 	}
 	if len(p.children) == 1 {
@@ -244,9 +240,9 @@ func (p *baseLogicalPlan) buildKeyInfo() {
 		case *Exists, *Aggregation, *Projection, *Trim:
 			p.schema.Keys = nil
 		case *SelectLock:
-			p.schema.Keys = p.children[0].GetSchema().Keys
+			p.schema.Keys = p.children[0].Schema().Keys
 		default:
-			p.schema.Keys = p.children[0].GetSchema().Clone().Keys
+			p.schema.Keys = p.children[0].Schema().Clone().Keys
 		}
 	} else {
 		p.schema.Keys = nil
@@ -265,10 +261,10 @@ func newBaseLogicalPlan(tp string, a *idAllocator) baseLogicalPlan {
 
 // PredicatePushDown implements LogicalPlan interface.
 func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
-	if len(p.GetChildren()) == 0 {
+	if len(p.Children()) == 0 {
 		return predicates, p.self, nil
 	}
-	child := p.GetChildByIndex(0).(LogicalPlan)
+	child := p.ChildByIndex(0).(LogicalPlan)
 	rest, _, err := child.PredicatePushDown(predicates)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -302,9 +298,9 @@ func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) {
 	if len(p.children) == 0 {
 		return
 	}
-	child := p.GetChildByIndex(0).(LogicalPlan)
+	child := p.ChildByIndex(0).(LogicalPlan)
 	child.PruneColumns(parentUsedCols)
-	p.SetSchema(child.GetSchema())
+	p.SetSchema(child.Schema())
 }
 
 func (p *basePlan) initIDAndContext(ctx context.Context) {
@@ -331,7 +327,7 @@ type basePlan struct {
 func (p *basePlan) MarshalJSON() ([]byte, error) {
 	children := make([]string, 0, len(p.children))
 	for _, child := range p.children {
-		children = append(children, child.GetID())
+		children = append(children, child.ID())
 	}
 	childrenStrs, err := json.Marshal(children)
 	if err != nil {
@@ -354,8 +350,8 @@ func (p *basePlan) SetCorrelated() {
 	}
 }
 
-// GetID implements Plan GetID interface.
-func (p *basePlan) GetID() string {
+// ID implements Plan ID interface.
+func (p *basePlan) ID() string {
 	return p.id
 }
 
@@ -364,8 +360,8 @@ func (p *basePlan) SetSchema(schema *expression.Schema) {
 	p.schema = schema
 }
 
-// GetSchema implements Plan GetSchema interface.
-func (p *basePlan) GetSchema() *expression.Schema {
+// Schema implements Plan Schema interface.
+func (p *basePlan) Schema() *expression.Schema {
 	return p.schema
 }
 
@@ -382,7 +378,7 @@ func (p *basePlan) AddChild(child Plan) {
 // ReplaceParent means replace a parent for another one.
 func (p *basePlan) ReplaceParent(parent, newPar Plan) error {
 	for i, par := range p.parents {
-		if par.GetID() == parent.GetID() {
+		if par.ID() == parent.ID() {
 			p.parents[i] = newPar
 			return nil
 		}
@@ -393,7 +389,7 @@ func (p *basePlan) ReplaceParent(parent, newPar Plan) error {
 // ReplaceChild means replace a child with another one.
 func (p *basePlan) ReplaceChild(child, newChild Plan) error {
 	for i, ch := range p.children {
-		if ch.GetID() == child.GetID() {
+		if ch.ID() == child.ID() {
 			p.children[i] = newChild
 			return nil
 		}
@@ -401,29 +397,13 @@ func (p *basePlan) ReplaceChild(child, newChild Plan) error {
 	return SystemInternalErrorType.Gen("ReplaceChildren Failed!")
 }
 
-// GetParentByIndex implements Plan GetParentByIndex interface.
-func (p *basePlan) GetParentByIndex(index int) (parent Plan) {
-	if index < len(p.parents) && index >= 0 {
-		return p.parents[index]
-	}
-	return nil
-}
-
-// GetChildByIndex implements Plan GetChildByIndex interface.
-func (p *basePlan) GetChildByIndex(index int) (parent Plan) {
-	if index < len(p.children) && index >= 0 {
-		return p.children[index]
-	}
-	return nil
-}
-
-// GetParents implements Plan GetParents interface.
-func (p *basePlan) GetParents() []Plan {
+// Parents implements Plan Parents interface.
+func (p *basePlan) Parents() []Plan {
 	return p.parents
 }
 
-// GetChildren implements Plan GetChildren interface.
-func (p *basePlan) GetChildren() []Plan {
+// Children implements Plan Children interface.
+func (p *basePlan) Children() []Plan {
 	return p.children
 }
 
