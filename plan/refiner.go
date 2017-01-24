@@ -65,7 +65,7 @@ func buildIndexRange(sc *variable.StatementContext, p *PhysicalIndexScan) error 
 		}
 	}
 
-	if p.accessInAndEqCount+1 < len(p.Index.Columns) {
+	if len(p.Ranges) > 0 && len(p.Ranges[0].LowVal) < len(p.Index.Columns) {
 		for _, ran := range p.Ranges {
 			if ran.HighExclude || ran.LowExclude {
 				if ran.HighExclude {
