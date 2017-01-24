@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
@@ -444,8 +445,8 @@ func (s *testEvaluatorSuite) TestLike(c *C) {
 		{`++_a`, `+xa`, '+', true},
 	}
 	for _, v := range tbl {
-		patChars, patTypes := compilePattern(v.pattern, v.escape)
-		match := doMatch(v.input, patChars, patTypes)
+		patChars, patTypes := stringutil.CompilePattern(v.pattern, v.escape)
+		match := stringutil.DoMatch(v.input, patChars, patTypes)
 		c.Assert(match, Equals, v.match, Commentf("%v", v))
 	}
 	testCases := []struct {
