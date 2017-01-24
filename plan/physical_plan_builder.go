@@ -1052,7 +1052,7 @@ func (p *Analyze) prepareSimpleIndexScan(idxOffset int, cols []*model.ColumnInfo
 	is.tp = Aly
 	is.allocator = p.allocator
 	is.initIDAndContext(p.ctx)
-	is.SetSchema(expression.TableInfo2Schema(tblInfo))
+	is.SetSchema(p.GetSchema())
 	is.readOnly = true
 	rb := rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
 	is.Ranges = rb.buildIndexRanges(fullRange, types.NewFieldType(mysql.TypeNull))
@@ -1090,7 +1090,7 @@ func (p *Analyze) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInf
 		childInfos = append(childInfos, ts.matchProperty(prop, &physicalPlanInfo{count: 0}))
 	}
 	if p.ColOffsets != nil {
-		cols := make([]*model.ColumnInfo, len(p.ColOffsets))
+		cols := make([]*model.ColumnInfo, 0, len(p.ColOffsets))
 		for _, offset := range p.ColOffsets {
 			cols = append(cols, p.Table.TableInfo.Columns[offset])
 		}

@@ -398,10 +398,12 @@ func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) LogicalPlan {
 		}
 		result.self = result
 		result.initIDAndContext(b.ctx)
+		result.SetSchema(expression.TableInfo2Schema(tbl.TableInfo))
 		addChild(p, result)
 	}
 	p.self = p
 	p.initIDAndContext(b.ctx)
+	p.SetSchema(&expression.Schema{})
 	return p
 }
 
