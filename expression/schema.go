@@ -27,8 +27,7 @@ type KeyInfo []*Column
 func (ki KeyInfo) Clone() KeyInfo {
 	result := make([]*Column, 0, len(ki))
 	for _, col := range ki {
-		newCol := *col
-		result = append(result, &newCol)
+		result = append(result, col.Clone().(*Column))
 	}
 	return result
 }
@@ -40,7 +39,7 @@ type Schema struct {
 }
 
 // String implements fmt.Stringer interface.
-func (s Schema) String() string {
+func (s *Schema) String() string {
 	colStrs := make([]string, 0, len(s.Columns))
 	for _, col := range s.Columns {
 		colStrs = append(colStrs, col.String())
@@ -57,23 +56,23 @@ func (s Schema) String() string {
 }
 
 // Clone copies the total schema.
-func (s Schema) Clone() Schema {
-	result := NewSchema(make([]*Column, 0, s.Len()))
+func (s *Schema) Clone() *Schema {
+	cols := make([]*Column, 0, s.Len())
 	keys := make([]KeyInfo, 0, len(s.Keys))
 	for _, col := range s.Columns {
-		newCol := *col
-		result.Append(&newCol)
+		cols = append(cols, col.Clone().(*Column))
 	}
 	for _, key := range s.Keys {
 		keys = append(keys, key.Clone())
 	}
-	result.SetUniqueKeys(keys)
-	return result
+	schema := NewSchema(cols...)
+	schema.SetUniqueKeys(keys)
+	return schema
 }
 
 // FindColumn finds an Column from schema for a ast.ColumnName. It compares the db/table/column names.
 // If there are more than one result, it will raise ambiguous error.
-func (s Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
+func (s *Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
 	idx := -1
 	for i, col := range s.Columns {
@@ -94,7 +93,7 @@ func (s Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 }
 
 // RetrieveColumn retrieves column in expression from the columns in schema.
-func (s Schema) RetrieveColumn(col *Column) *Column {
+func (s *Schema) RetrieveColumn(col *Column) *Column {
 	index := s.GetColumnIndex(col)
 	if index != -1 {
 		return s.Columns[index]
@@ -103,7 +102,7 @@ func (s Schema) RetrieveColumn(col *Column) *Column {
 }
 
 // GetColumnIndex finds the index for a column.
-func (s Schema) GetColumnIndex(col *Column) int {
+func (s *Schema) GetColumnIndex(col *Column) int {
 	for i, c := range s.Columns {
 		if c.FromID == col.FromID && c.Position == col.Position {
 			return i
@@ -113,13 +112,13 @@ func (s Schema) GetColumnIndex(col *Column) int {
 }
 
 // Len returns the number of columns in schema.
-func (s Schema) Len() int {
+func (s *Schema) Len() int {
 	return len(s.Columns)
 }
 
 // Append append new column to the columns stored in schema.
-func (s *Schema) Append(col *Column) {
-	s.Columns = append(s.Columns, col)
+func (s *Schema) Append(col ...*Column) {
+	s.Columns = append(s.Columns, col...)
 }
 
 // SetUniqueKeys will set the value of Schema.Keys.
@@ -129,7 +128,7 @@ func (s *Schema) SetUniqueKeys(keys []KeyInfo) {
 
 // GetColumnsIndices will return a slice which contains the position of each column in schema.
 // If there is one column that doesn't match, nil will be returned.
-func (s Schema) GetColumnsIndices(cols []*Column) (ret []int) {
+func (s *Schema) GetColumnsIndices(cols []*Column) (ret []int) {
 	ret = make([]int, 0, len(cols))
 	for _, col := range cols {
 		pos := s.GetColumnIndex(col)
@@ -143,15 +142,15 @@ func (s Schema) GetColumnsIndices(cols []*Column) (ret []int) {
 }
 
 // MergeSchema will merge two schema into one schema.
-func MergeSchema(lSchema, rSchema Schema) Schema {
+func MergeSchema(lSchema, rSchema *Schema) *Schema {
 	tmpL := lSchema.Clone()
 	tmpR := rSchema.Clone()
-	ret := NewSchema(append(tmpL.Columns, tmpR.Columns...))
+	ret := NewSchema(append(tmpL.Columns, tmpR.Columns...)...)
 	ret.SetUniqueKeys(append(tmpL.Keys, tmpR.Keys...))
 	return ret
 }
 
 // NewSchema returns a schema made by its parameter.
-func NewSchema(cols []*Column) Schema {
-	return Schema{Columns: cols}
+func NewSchema(cols ...*Column) *Schema {
+	return &Schema{Columns: cols}
 }

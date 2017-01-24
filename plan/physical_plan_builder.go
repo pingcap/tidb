@@ -32,7 +32,6 @@ const (
 	netWorkFactor   = 1.5
 	memoryFactor    = 5.0
 	selectionFactor = 0.8
-	distinctFactor  = 0.7
 	cpuFactor       = 0.9
 	aggFactor       = 0.1
 	joinFactor      = 0.3
@@ -161,7 +160,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 			}
 			log.Warn("truncate error in buildIndexRange")
 		}
-		rowCount, err = getRowCountByIndexRanges(sc, statsTbl, is.Ranges, is.Index, is.Table)
+		rowCount, err = is.getRowCountByIndexRanges(sc, statsTbl)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -491,7 +490,7 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 }
 
 // replaceColsInPropBySchema replaces the columns in original prop with the columns in schema.
-func replaceColsInPropBySchema(prop *requiredProperty, schema expression.Schema) *requiredProperty {
+func replaceColsInPropBySchema(prop *requiredProperty, schema *expression.Schema) *requiredProperty {
 	newProps := make([]*columnProp, 0, len(prop.props))
 	for _, p := range prop.props {
 		idx := schema.GetColumnIndex(p.col)
@@ -1021,25 +1020,16 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	return info, nil
 }
 
-// physicalInitialize will set value of some attributes after convert2PhysicalPlan process.
-// Currently, only attribute "correlated" is considered.
-func physicalInitialize(p PhysicalPlan) {
-	for _, child := range p.GetChildren() {
-		physicalInitialize(child.(PhysicalPlan))
-	}
-	// initialize attributes
-	p.SetCorrelated()
-}
-
 // addCachePlan will add a Cache plan above the plan whose father's IsCorrelated() is true but its own IsCorrelated() is false.
-func addCachePlan(p PhysicalPlan, allocator *idAllocator) {
+func addCachePlan(p PhysicalPlan, allocator *idAllocator) []*expression.CorrelatedColumn {
 	if len(p.GetChildren()) == 0 {
-		return
+		return nil
 	}
+	selfCorCols := p.extractCorrelatedCols()
 	newChildren := make([]Plan, 0, len(p.GetChildren()))
 	for _, child := range p.GetChildren() {
-		addCachePlan(child.(PhysicalPlan), allocator)
-		if p.IsCorrelated() && !child.IsCorrelated() {
+		childCorCols := addCachePlan(child.(PhysicalPlan), allocator)
+		if len(selfCorCols) > 0 && len(childCorCols) == 0 {
 			newChild := &Cache{}
 			newChild.tp = "Cache"
 			newChild.allocator = allocator
@@ -1055,4 +1045,5 @@ func addCachePlan(p PhysicalPlan, allocator *idAllocator) {
 		}
 	}
 	p.SetChildren(newChildren...)
+	return selfCorCols
 }

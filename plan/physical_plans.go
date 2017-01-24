@@ -37,7 +37,6 @@ var (
 
 // PhysicalIndexScan represents an index scan plan.
 type PhysicalIndexScan struct {
-	basePlan
 	physicalTableSource
 
 	Table      *model.TableInfo
@@ -78,7 +77,7 @@ func (p *PhysicalMemTable) Copy() PhysicalPlan {
 // physicalDistSQLPlan means the plan that can be executed distributively.
 // We can push down other plan like selection, limit, aggregation, topn into this plan.
 type physicalDistSQLPlan interface {
-	addAggregation(ctx context.Context, agg *PhysicalAggregation) expression.Schema
+	addAggregation(ctx context.Context, agg *PhysicalAggregation) *expression.Schema
 	addTopN(ctx context.Context, prop *requiredProperty) bool
 	addLimit(limit *Limit)
 	// scanCount means the original row count that need to be scanned and resultCount means the row count after scanning.
@@ -114,6 +113,8 @@ func (p *PhysicalTableScan) calculateCost(resultCount uint64, scanCount uint64) 
 }
 
 type physicalTableSource struct {
+	basePlan
+
 	client kv.Client
 
 	Aggregated bool
@@ -218,7 +219,7 @@ func (p *physicalTableSource) tryToAddUnionScan(resultPlan PhysicalPlan) Physica
 	}
 	conditions := append(p.indexFilterConditions, p.tableFilterConditions...)
 	us := &PhysicalUnionScan{
-		Condition: expression.ComposeCNFCondition(append(conditions, p.AccessCondition...)...),
+		Condition: expression.ComposeCNFCondition(p.ctx, append(conditions, p.AccessCondition...)...),
 	}
 	us.SetChildren(resultPlan)
 	us.SetSchema(resultPlan.GetSchema())
@@ -259,9 +260,9 @@ func (p *physicalTableSource) addTopN(ctx context.Context, prop *requiredPropert
 	return true
 }
 
-func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalAggregation) expression.Schema {
+func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalAggregation) *expression.Schema {
 	if p.client == nil {
-		return expression.NewSchema(nil)
+		return expression.NewSchema()
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	for _, f := range agg.AggFuncs {
@@ -269,7 +270,7 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 		if pb == nil {
 			// When we fail to convert any agg function to PB struct, we should clear the environments.
 			p.clearForAggPushDown()
-			return expression.NewSchema(nil)
+			return expression.NewSchema()
 		}
 		p.AggFuncsPB = append(p.AggFuncsPB, pb)
 		p.aggFuncs = append(p.aggFuncs, f.Clone())
@@ -279,7 +280,7 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 		if pb == nil {
 			// When we fail to convert any group-by item to PB struct, we should clear the environments.
 			p.clearForAggPushDown()
-			return expression.NewSchema(nil)
+			return expression.NewSchema()
 		}
 		p.GbyItemsPB = append(p.GbyItemsPB, pb)
 		p.gbyItems = append(p.gbyItems, item.Clone())
@@ -289,7 +290,7 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 	gk.Charset = charset.CharsetBin
 	gk.Collate = charset.CollationBin
 	p.AggFields = append(p.AggFields, gk)
-	schema := expression.NewSchema(nil)
+	schema := expression.NewSchema()
 	cursor := 0
 	schema.Append(&expression.Column{Index: cursor, ColName: model.NewCIStr(fmt.Sprint(agg.GroupByItems))})
 	agg.GroupByItems = []expression.Expression{schema.Columns[cursor]}
@@ -324,7 +325,6 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 
 // PhysicalTableScan represents a table scan plan.
 type PhysicalTableScan struct {
-	basePlan
 	physicalTableSource
 
 	Table   *model.TableInfo
@@ -453,6 +453,12 @@ func (p *PhysicalHashSemiJoin) extractCorrelatedCols() []*expression.CorrelatedC
 func (p *PhysicalApply) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := p.basePlan.extractCorrelatedCols()
 	corCols = append(corCols, p.PhysicalJoin.extractCorrelatedCols()...)
+	for i := len(corCols) - 1; i >= 0; i-- {
+		idx := p.PhysicalJoin.GetChildren()[0].GetSchema().GetColumnIndex(&corCols[i].Column)
+		if idx != -1 {
+			corCols = append(corCols[:i], corCols[i+1:]...)
+		}
+	}
 	return corCols
 }
 
@@ -538,18 +544,6 @@ func (p *PhysicalApply) MarshalJSON() ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-// SetCorrelated implements Plan interface.
-func (p *PhysicalApply) SetCorrelated() {
-	corColumns := p.GetChildren()[1].extractCorrelatedCols()
-	p.correlated = p.GetChildren()[0].IsCorrelated()
-	for _, corCol := range corColumns {
-		if idx := p.GetChildren()[0].GetSchema().GetColumnIndex(&corCol.Column); idx == -1 {
-			p.correlated = true
-			break
-		}
-	}
-}
-
 // Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalHashSemiJoin) Copy() PhysicalPlan {
 	np := *p
@@ -591,23 +585,6 @@ func (p *PhysicalHashSemiJoin) MarshalJSON() ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-// SetCorrelated implements Plan interface.
-func (p *PhysicalHashSemiJoin) SetCorrelated() {
-	p.basePlan.SetCorrelated()
-	for _, cond := range p.EqualConditions {
-		p.correlated = p.correlated || cond.IsCorrelated()
-	}
-	for _, cond := range p.LeftConditions {
-		p.correlated = p.correlated || cond.IsCorrelated()
-	}
-	for _, cond := range p.RightConditions {
-		p.correlated = p.correlated || cond.IsCorrelated()
-	}
-	for _, cond := range p.OtherConditions {
-		p.correlated = p.correlated || cond.IsCorrelated()
-	}
-}
-
 // Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalHashJoin) Copy() PhysicalPlan {
 	np := *p
@@ -645,23 +622,6 @@ func (p *PhysicalHashJoin) MarshalJSON() ([]byte, error) {
 			"}",
 		eqConds, leftConds, rightConds, otherConds, leftChild.GetID(), rightChild.GetID()))
 	return buffer.Bytes(), nil
-}
-
-// SetCorrelated implements Plan interface.
-func (p *PhysicalHashJoin) SetCorrelated() {
-	p.basePlan.SetCorrelated()
-	for _, cond := range p.EqualConditions {
-		p.correlated = p.correlated || cond.IsCorrelated()
-	}
-	for _, cond := range p.LeftConditions {
-		p.correlated = p.correlated || cond.IsCorrelated()
-	}
-	for _, cond := range p.RightConditions {
-		p.correlated = p.correlated || cond.IsCorrelated()
-	}
-	for _, cond := range p.OtherConditions {
-		p.correlated = p.correlated || cond.IsCorrelated()
-	}
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -810,19 +770,6 @@ func (p *PhysicalAggregation) MarshalJSON() ([]byte, error) {
 			"\"GroupByItems\": %s,\n"+
 			"\"child\": \"%s\"}", aggFuncs, gbyExprs, p.children[0].GetID()))
 	return buffer.Bytes(), nil
-}
-
-// SetCorrelated implements Plan interface.
-func (p *PhysicalAggregation) SetCorrelated() {
-	p.basePlan.SetCorrelated()
-	for _, item := range p.GroupByItems {
-		p.correlated = p.correlated || item.IsCorrelated()
-	}
-	for _, fun := range p.AggFuncs {
-		for _, arg := range fun.GetArgs() {
-			p.correlated = p.correlated || arg.IsCorrelated()
-		}
-	}
 }
 
 // Copy implements the PhysicalPlan Copy interface.

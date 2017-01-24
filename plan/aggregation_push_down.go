@@ -49,7 +49,7 @@ func (a *aggPushDownSolver) isDecomposable(fun expression.AggregationFunction) b
 }
 
 // getAggFuncChildIdx gets which children it belongs to, 0 stands for left, 1 stands for right, -1 stands for both.
-func (a *aggPushDownSolver) getAggFuncChildIdx(aggFunc expression.AggregationFunction, schema expression.Schema) int {
+func (a *aggPushDownSolver) getAggFuncChildIdx(aggFunc expression.AggregationFunction, schema *expression.Schema) int {
 	fromLeft, fromRight := false, false
 	var cols []*expression.Column
 	for _, arg := range aggFunc.GetArgs() {
@@ -171,18 +171,18 @@ func (a *aggPushDownSolver) checkValidJoin(join *Join) bool {
 
 // decompose splits an aggregate function to two parts: a final mode function and a partial mode function. Currently
 // there are no differences between partial mode and complete mode, so we can confuse them.
-func (a *aggPushDownSolver) decompose(aggFunc expression.AggregationFunction, schema expression.Schema, id string) ([]expression.AggregationFunction, expression.Schema) {
+func (a *aggPushDownSolver) decompose(aggFunc expression.AggregationFunction, schema *expression.Schema, id string) ([]expression.AggregationFunction, *expression.Schema) {
 	// Result is a slice because avg should be decomposed to sum and count. Currently we don't process this case.
 	result := []expression.AggregationFunction{aggFunc.Clone()}
 	for _, aggFunc := range result {
 		schema.Append(&expression.Column{
 			ColName:  model.NewCIStr(fmt.Sprintf("join_agg_%d", schema.Len())), // useless but for debug
 			FromID:   id,
-			Position: len(schema.Columns),
+			Position: schema.Len(),
 			RetType:  aggFunc.GetType(),
 		})
 	}
-	aggFunc.SetArgs(expression.Column2Exprs(schema.Columns[len(schema.Columns)-len(result):]))
+	aggFunc.SetArgs(expression.Column2Exprs(schema.Columns[schema.Len()-len(result):]))
 	aggFunc.SetMode(expression.FinalMode)
 	return result, schema
 }
@@ -253,7 +253,7 @@ func (a *aggPushDownSolver) makeNewAgg(aggFuncs []expression.AggregationFunction
 	}
 	agg.initIDAndContext(a.ctx)
 	var newAggFuncs []expression.AggregationFunction
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncs)))
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncs))...)
 	for _, aggFunc := range aggFuncs {
 		var newFuncs []expression.AggregationFunction
 		newFuncs, schema = a.decompose(aggFunc, schema, agg.GetID())
@@ -269,7 +269,7 @@ func (a *aggPushDownSolver) makeNewAgg(aggFuncs []expression.AggregationFunction
 	return agg
 }
 
-func (a *aggPushDownSolver) pushAggCrossUnion(agg *Aggregation, unionSchema expression.Schema, unionChild LogicalPlan) LogicalPlan {
+func (a *aggPushDownSolver) pushAggCrossUnion(agg *Aggregation, unionSchema *expression.Schema, unionChild LogicalPlan) LogicalPlan {
 	newAgg := &Aggregation{
 		AggFuncs:        make([]expression.AggregationFunction, 0, len(agg.AggFuncs)),
 		GroupByItems:    make([]expression.Expression, 0, len(agg.GroupByItems)),

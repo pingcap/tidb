@@ -83,9 +83,9 @@ type PrepareExec struct {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *PrepareExec) Schema() expression.Schema {
+func (e *PrepareExec) Schema() *expression.Schema {
 	// Will never be called.
-	return expression.NewSchema(nil)
+	return expression.NewSchema()
 }
 
 // Next implements the Executor Next interface.
@@ -179,9 +179,9 @@ type ExecuteExec struct {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *ExecuteExec) Schema() expression.Schema {
+func (e *ExecuteExec) Schema() *expression.Schema {
 	// Will never be called.
-	return expression.NewSchema(nil)
+	return expression.NewSchema()
 }
 
 // Next implements the Executor Next interface.
@@ -256,9 +256,9 @@ type DeallocateExec struct {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *DeallocateExec) Schema() expression.Schema {
+func (e *DeallocateExec) Schema() *expression.Schema {
 	// Will never be called.
-	return expression.NewSchema(nil)
+	return expression.NewSchema()
 }
 
 // Next implements the Executor Next interface.

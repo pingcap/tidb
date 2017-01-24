@@ -91,18 +91,11 @@ type Plan interface {
 	// Get all the children.
 	GetChildren() []Plan
 	// Set the schema.
-	SetSchema(schema expression.Schema)
+	SetSchema(schema *expression.Schema)
 	// Get the schema.
-	GetSchema() expression.Schema
+	GetSchema() *expression.Schema
 	// Get the ID.
 	GetID() string
-	// Check whether this plan is correlated or not.
-	IsCorrelated() bool
-	// Set the value of attribute "correlated".
-	// A plan will be correlated if one of its expressions or its child plans is correlated, except Apply.
-	// As for Apply, it will be correlated if the outer plan is correlated or the inner plan has column that the outer doesn't has.
-	// It will be called in the final step of logical plan building and the PhysicalInitialize process after convert2PhysicalPlan process.
-	SetCorrelated()
 	// SetParents sets the parents for the plan.
 	SetParents(...Plan)
 	// SetParents sets the children for the plan.
@@ -315,12 +308,10 @@ func (p *basePlan) initIDAndContext(ctx context.Context) {
 // basePlan implements base Plan interface.
 // Should be used as embedded struct in Plan implementations.
 type basePlan struct {
-	correlated bool
-
 	parents  []Plan
 	children []Plan
 
-	schema    expression.Schema
+	schema    *expression.Schema
 	tp        string
 	id        string
 	allocator *idAllocator
@@ -343,29 +334,18 @@ func (p *basePlan) MarshalJSON() ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-// IsCorrelated implements Plan IsCorrelated interface.
-func (p *basePlan) IsCorrelated() bool {
-	return p.correlated
-}
-
-func (p *basePlan) SetCorrelated() {
-	for _, child := range p.children {
-		p.correlated = p.correlated || child.IsCorrelated()
-	}
-}
-
 // GetID implements Plan GetID interface.
 func (p *basePlan) GetID() string {
 	return p.id
 }
 
 // SetSchema implements Plan SetSchema interface.
-func (p *basePlan) SetSchema(schema expression.Schema) {
+func (p *basePlan) SetSchema(schema *expression.Schema) {
 	p.schema = schema
 }
 
 // GetSchema implements Plan GetSchema interface.
-func (p *basePlan) GetSchema() expression.Schema {
+func (p *basePlan) GetSchema() *expression.Schema {
 	return p.schema
 }
 
