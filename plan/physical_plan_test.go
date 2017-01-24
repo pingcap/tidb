@@ -763,7 +763,7 @@ func (s *testPlanSuite) TestFilterConditionPushDown(c *C) {
 				c.Assert(fmt.Sprintf("%s", ts.tableFilterConditions), Equals, ca.tableFilter, Commentf("for %s", ca.sql))
 				break
 			}
-			p = p.ChildByIndex(0)
+			p = p.Children()[0]
 		}
 	}
 }
