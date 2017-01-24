@@ -150,13 +150,13 @@ func (s *testPlanSuite) TestPushDownOrderbyAndLimit(c *C) {
 		},
 		{
 			sql:          "select * from t where c > 0 order by d limit 1",
-			best:         "Index(t.c_d_e)[(0,+inf]]->Sort + Limit(1) + Offset(0)->Projection",
+			best:         "Index(t.c_d_e)[(0 +inf,+inf +inf]]->Sort + Limit(1) + Offset(0)->Projection",
 			orderByItmes: "[(test.t.d, false)]",
 			limit:        "1",
 		},
 		{
 			sql:          "select * from t a where a.c < 10000 and a.d in (1000, a.e) order by a.b limit 2",
-			best:         "Index(t.c_d_e)[[-inf,10000)]->Selection->Sort + Limit(2) + Offset(0)->Projection",
+			best:         "Index(t.c_d_e)[[-inf <nil>,10000 <nil>)]->Selection->Sort + Limit(2) + Offset(0)->Projection",
 			orderByItmes: "[]",
 			limit:        "nil",
 		},
@@ -356,7 +356,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from t where (t.c > 0 and t.c < 1) or (t.c > 2 and t.c < 3) or (t.c > 4 and t.c < 5) or (t.c > 6 and t.c < 7) or (t.c > 9 and t.c < 10)",
-			best: "Index(t.c_d_e)[(0,1) (2,3) (4,5) (6,7) (9,10)]",
+			best: "Index(t.c_d_e)[(0 +inf,1 <nil>) (2 +inf,3 <nil>) (4 +inf,5 <nil>) (6 +inf,7 <nil>) (9 +inf,10 <nil>)]",
 		},
 		{
 			sql:  "select sum(t.a) from t where t.c in (1,2) and t.d in (1,3) group by t.d order by t.d",
@@ -380,7 +380,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from t t1 ignore index(e) where c < 0",
-			best: "Index(t.c_d_e)[[-inf,0)]",
+			best: "Index(t.c_d_e)[[-inf <nil>,0 <nil>)]",
 		},
 		{
 			sql:  "select * from t t1 ignore index(c_d_e) where c < 0",
@@ -457,7 +457,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from t a where 1 = a.c and a.d > 1 order by a.d desc limit 2",
-			best: "Index(t.c_d_e)[(1 1,1 +inf]]",
+			best: "Index(t.c_d_e)[(1 1 +inf,1 +inf +inf]]",
 		},
 		{
 			sql:  "select * from t a where a.c < 10000 order by a.a limit 2",
@@ -465,7 +465,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from t a where a.c < 10000 and a.d in (1000, a.e) order by a.a limit 2",
-			best: "Index(t.c_d_e)[[-inf,10000)]->Selection->Sort + Limit(2) + Offset(0)",
+			best: "Index(t.c_d_e)[[-inf <nil>,10000 <nil>)]->Selection->Sort + Limit(2) + Offset(0)",
 		},
 		{
 			sql:  "select * from (select * from t) a left outer join (select * from t) b on 1 order by a.c",

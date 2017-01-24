@@ -685,6 +685,9 @@ func (s *testSuite) TestIndexScan(c *C) {
 	result.Check(testkit.Rows("1 1 1", "3 1 2"))
 	result = tk.MustQuery("SELECT * FROM tab1 WHERE pk <= 4 AND a = 1 AND b = 2")
 	result.Check(testkit.Rows("3 1 2"))
+	tk.MustExec("CREATE INDEX idx_tab1_1 on tab1 (b, a)")
+	result = tk.MustQuery("SELECT pk FROM tab1 WHERE b > 1")
+	result.Check(testkit.Rows("3", "4"))
 }
 
 func (s *testSuite) TestSubquerySameTable(c *C) {
