@@ -49,9 +49,10 @@ func (a *Apply) extractCorColumnsBySchema() {
 	a.corCols = resultCorCols[:length]
 }
 
+// decorrelateSolver tries to convert apply plan to join plan.
 type decorrelateSolver struct{}
 
-// decorrelate function tries to convert apply plan to join plan.
+// optimize implements logicalOptRule interface.
 func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllocator) (LogicalPlan, error) {
 	if apply, ok := p.(*Apply); ok {
 		outerPlan := apply.children[0]
