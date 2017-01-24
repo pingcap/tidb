@@ -21,7 +21,7 @@ import (
 func (p *Aggregation) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
 	for _, key := range p.Children()[0].Schema().Keys {
-		indices := p.schema.GetColumnsIndices(key)
+		indices := p.schema.ColumnsIndices(key)
 		if indices == nil {
 			continue
 		}
@@ -35,7 +35,7 @@ func (p *Aggregation) buildKeyInfo() {
 	// This is only used for optimization and needn't to be pushed up, so only one is enough.
 	schemaByGroupby := expression.NewSchema(p.groupByCols...)
 	for _, key := range p.Children()[0].Schema().Keys {
-		indices := schemaByGroupby.GetColumnsIndices(key)
+		indices := schemaByGroupby.ColumnsIndices(key)
 		if indices == nil {
 			continue
 		}
@@ -68,7 +68,7 @@ func (p *Projection) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
 	schema := p.buildSchemaByExprs()
 	for _, key := range p.Children()[0].Schema().Keys {
-		indices := schema.GetColumnsIndices(key)
+		indices := schema.ColumnsIndices(key)
 		if indices == nil {
 			continue
 		}
@@ -86,7 +86,7 @@ func (p *Trim) buildKeyInfo() {
 		ok := true
 		newKey := make([]*expression.Column, 0, len(key))
 		for _, col := range key {
-			pos := p.schema.GetColumnIndex(col)
+			pos := p.schema.ColumnIndex(col)
 			if pos == -1 {
 				ok = false
 				break

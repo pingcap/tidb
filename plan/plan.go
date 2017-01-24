@@ -92,13 +92,6 @@ type Plan interface {
 	Schema() *expression.Schema
 	// Get the ID.
 	ID() string
-	// Check whether this plan is correlated or not.
-	IsCorrelated() bool
-	// Set the value of attribute "correlated".
-	// A plan will be correlated if one of its expressions or its child plans is correlated, except Apply.
-	// As for Apply, it will be correlated if the outer plan is correlated or the inner plan has column that the outer doesn't has.
-	// It will be called in the final step of logical plan building and the PhysicalInitialize process after convert2PhysicalPlan process.
-	SetCorrelated()
 	// SetParents sets the parents for the plan.
 	SetParents(...Plan)
 	// SetParents sets the children for the plan.
@@ -264,7 +257,7 @@ func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) 
 	if len(p.Children()) == 0 {
 		return predicates, p.self, nil
 	}
-	child := p.ChildByIndex(0).(LogicalPlan)
+	child := p.children[0].(LogicalPlan)
 	rest, _, err := child.PredicatePushDown(predicates)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -298,7 +291,7 @@ func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) {
 	if len(p.children) == 0 {
 		return
 	}
-	child := p.ChildByIndex(0).(LogicalPlan)
+	child := p.children[0].(LogicalPlan)
 	child.PruneColumns(parentUsedCols)
 	p.SetSchema(child.Schema())
 }
@@ -311,8 +304,6 @@ func (p *basePlan) initIDAndContext(ctx context.Context) {
 // basePlan implements base Plan interface.
 // Should be used as embedded struct in Plan implementations.
 type basePlan struct {
-	correlated bool
-
 	parents  []Plan
 	children []Plan
 
@@ -337,17 +328,6 @@ func (p *basePlan) MarshalJSON() ([]byte, error) {
 	buffer.WriteString(fmt.Sprintf("\"children\": %s", childrenStrs))
 	buffer.WriteString("}")
 	return buffer.Bytes(), nil
-}
-
-// IsCorrelated implements Plan IsCorrelated interface.
-func (p *basePlan) IsCorrelated() bool {
-	return p.correlated
-}
-
-func (p *basePlan) SetCorrelated() {
-	for _, child := range p.children {
-		p.correlated = p.correlated || child.IsCorrelated()
-	}
 }
 
 // ID implements Plan ID interface.

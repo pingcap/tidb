@@ -26,7 +26,7 @@ func (a *Apply) extractCorColumnsBySchema() {
 	corCols := a.children[1].(LogicalPlan).extractCorrelatedCols()
 	resultCorCols := make([]*expression.CorrelatedColumn, schema.Len())
 	for _, corCol := range corCols {
-		idx := schema.GetColumnIndex(&corCol.Column)
+		idx := schema.ColumnIndex(&corCol.Column)
 		if idx != -1 {
 			if resultCorCols[idx] == nil {
 				resultCorCols[idx] = &expression.CorrelatedColumn{

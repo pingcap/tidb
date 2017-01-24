@@ -22,7 +22,7 @@ import (
 func getUsedList(usedCols []*expression.Column, schema *expression.Schema) []bool {
 	used := make([]bool, schema.Len())
 	for _, col := range usedCols {
-		idx := schema.GetColumnIndex(col)
+		idx := schema.ColumnIndex(col)
 		if idx == -1 {
 			log.Errorf("Can't find column %s from schema %s.", col, schema)
 		}
@@ -186,9 +186,9 @@ func (p *Join) PruneColumns(parentUsedCols []*expression.Column) {
 	rChild := p.children[1].(LogicalPlan)
 	var leftCols, rightCols []*expression.Column
 	for _, col := range parentUsedCols {
-		if lChild.Schema().GetColumnIndex(col) != -1 {
+		if lChild.Schema().ColumnIndex(col) != -1 {
 			leftCols = append(leftCols, col)
-		} else if rChild.Schema().GetColumnIndex(col) != -1 {
+		} else if rChild.Schema().ColumnIndex(col) != -1 {
 			rightCols = append(rightCols, col)
 		}
 	}

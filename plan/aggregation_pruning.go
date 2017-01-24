@@ -35,7 +35,7 @@ func (ap *aggPruner) eliminateAggregation(p LogicalPlan) (LogicalPlan, error) {
 		schemaByGroupby := expression.NewSchema(agg.groupByCols...)
 		coveredByUniqueKey := false
 		for _, key := range agg.schema.Keys {
-			if schemaByGroupby.GetColumnsIndices(key) != nil {
+			if schemaByGroupby.ColumnsIndices(key) != nil {
 				coveredByUniqueKey = true
 				break
 			}
