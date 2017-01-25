@@ -61,17 +61,9 @@ type builtinDatabaseSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinDatabaseSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	return builtinDatabase(args, b.ctx)
-}
-
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html
-func builtinDatabase(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	currentDB := ctx.GetSessionVars().CurrentDB
+func (b *builtinDatabaseSig) eval(_ []types.Datum) (d types.Datum, err error) {
+	currentDB := b.ctx.GetSessionVars().CurrentDB
 	if currentDB == "" {
 		return d, nil
 	}
@@ -96,16 +88,9 @@ type builtinFoundRowsSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinFoundRowsSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	return builtinFoundRows(args, b.ctx)
-}
-
-func builtinFoundRows(arg []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	data := ctx.GetSessionVars()
+// See https://dev.mysql.com/doc/refman/5.6/en/information-functions.html#function_found-rows
+func (b *builtinFoundRowsSig) eval(_ []types.Datum) (d types.Datum, err error) {
+	data := b.ctx.GetSessionVars()
 	if data == nil {
 		return d, errors.Errorf("Missing session variable when evalue builtin")
 	}
@@ -131,18 +116,10 @@ type builtinCurrentUserSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinCurrentUserSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	return builtinCurrentUser(args, b.ctx)
-}
-
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
 // TODO: The value of CURRENT_USER() can differ from the value of USER(). We will finish this after we support grant tables.
-func builtinCurrentUser(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	data := ctx.GetSessionVars()
+func (b *builtinCurrentUserSig) eval(_ []types.Datum) (d types.Datum, err error) {
+	data := b.ctx.GetSessionVars()
 	if data == nil {
 		return d, errors.Errorf("Missing session variable when evalue builtin")
 	}
@@ -168,16 +145,8 @@ type builtinUserSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinUserSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	return builtinUser(args, b.ctx)
-}
-
-func builtinUser(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	data := ctx.GetSessionVars()
+func (b *builtinUserSig) eval(_ []types.Datum) (d types.Datum, err error) {
+	data := b.ctx.GetSessionVars()
 	if data == nil {
 		return d, errors.Errorf("Missing session variable when evalue builtin")
 	}
@@ -203,16 +172,8 @@ type builtinConnectionIDSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinConnectionIDSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	return builtinConnectionID(args, b.ctx)
-}
-
-func builtinConnectionID(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	data := ctx.GetSessionVars()
+func (b *builtinConnectionIDSig) eval(_ []types.Datum) (d types.Datum, err error) {
+	data := b.ctx.GetSessionVars()
 	if data == nil {
 		return d, errors.Errorf("Missing session variable when evalue builtin")
 	}
@@ -238,25 +199,21 @@ type builtinLastInsertIDSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinLastInsertIDSig) eval(row []types.Datum) (types.Datum, error) {
+// See http://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_last-insert-id
+func (b *builtinLastInsertIDSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	return builtinLastInsertID(args, b.ctx)
-}
-
-// See http://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_last-insert-id
-func builtinLastInsertID(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	if len(args) == 1 {
-		id, err := args[0].ToInt64(ctx.GetSessionVars().StmtCtx)
+		id, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
 		if err != nil {
 			return d, errors.Trace(err)
 		}
-		ctx.GetSessionVars().SetLastInsertID(uint64(id))
+		b.ctx.GetSessionVars().SetLastInsertID(uint64(id))
 	}
 
-	d.SetUint64(ctx.GetSessionVars().LastInsertID)
+	d.SetUint64(b.ctx.GetSessionVars().LastInsertID)
 	return
 }
 
@@ -277,15 +234,7 @@ type builtinVersionSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinVersionSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	return builtinVersion(args, b.ctx)
-}
-
-func builtinVersion(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+func (b *builtinVersionSig) eval(_ []types.Datum) (d types.Datum, err error) {
 	d.SetString(mysql.ServerVersion)
 	return d, nil
 }
