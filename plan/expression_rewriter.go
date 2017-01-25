@@ -65,7 +65,7 @@ func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*a
 		ctx:      b.ctx,
 	}
 	if p != nil {
-		er.schema = p.GetSchema()
+		er.schema = p.Schema()
 	}
 	expr.Accept(er)
 	if er.err != nil {
@@ -219,22 +219,22 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 	}
 	// Only (a,b,c) = all (...) and (a,b,c) != any () can use row expression.
 	canMultiCol := (!v.All && v.Op == opcode.EQ) || (v.All && v.Op == opcode.NE)
-	if !canMultiCol && (getRowLen(lexpr) != 1 || np.GetSchema().Len() != 1) {
+	if !canMultiCol && (getRowLen(lexpr) != 1 || np.Schema().Len() != 1) {
 		er.err = ErrOperandColumns.GenByArgs(1)
 		return v, true
 	}
 	lLen := getRowLen(lexpr)
-	if lLen != np.GetSchema().Len() {
+	if lLen != np.Schema().Len() {
 		er.err = ErrOperandColumns.GenByArgs(lLen)
 		return v, true
 	}
 	var condition expression.Expression
 	var rexpr expression.Expression
-	if np.GetSchema().Len() == 1 {
-		rexpr = np.GetSchema().Columns[0].Clone()
+	if np.Schema().Len() == 1 {
+		rexpr = np.Schema().Columns[0].Clone()
 	} else {
-		args := make([]expression.Expression, 0, np.GetSchema().Len())
-		for _, col := range np.GetSchema().Columns {
+		args := make([]expression.Expression, 0, np.Schema().Len())
+		for _, col := range np.Schema().Columns {
 			args = append(args, col.Clone())
 		}
 		rexpr, er.err = expression.NewFunction(er.ctx, ast.RowFunc, types.NewFieldType(types.KindRow), args...)
@@ -275,7 +275,7 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 	}
 	if er.asScalar {
 		// The parent expression only use the last column in schema, which represents whether the condition is matched.
-		er.ctxStack[len(er.ctxStack)-1] = er.p.GetSchema().Columns[er.p.GetSchema().Len()-1]
+		er.ctxStack[len(er.ctxStack)-1] = er.p.Schema().Columns[er.p.Schema().Len()-1]
 	}
 	return v, true
 }
@@ -349,9 +349,9 @@ func (er *expressionRewriter) buildQuantifierPlan(agg *Aggregation, cond, rexpr 
 		return
 	}
 	// If we treat the result as a scalar value, we will add a projection with a extra column to output true, false or null.
-	outerSchemaLen := er.p.GetSchema().Len()
+	outerSchemaLen := er.p.Schema().Len()
 	er.p = er.b.buildInnerApply(er.p, agg)
-	joinSchema := er.p.GetSchema()
+	joinSchema := er.p.Schema()
 	proj := &Projection{
 		baseLogicalPlan: newBaseLogicalPlan(Proj, er.b.allocator),
 		Exprs:           expression.Column2Exprs(joinSchema.Clone().Columns[:outerSchemaLen]),
@@ -446,11 +446,11 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 	}
 	np = er.b.buildExists(np)
 	if len(np.extractCorrelatedCols()) > 0 {
-		er.p = er.b.buildSemiApply(er.p, np.GetChildren()[0].(LogicalPlan), nil, er.asScalar, false)
+		er.p = er.b.buildSemiApply(er.p, np.Children()[0].(LogicalPlan), nil, er.asScalar, false)
 		if !er.asScalar {
 			return v, true
 		}
-		er.ctxStack = append(er.ctxStack, er.p.GetSchema().Columns[er.p.GetSchema().Len()-1])
+		er.ctxStack = append(er.ctxStack, er.p.Schema().Columns[er.p.Schema().Len()-1])
 	} else {
 		physicalPlan, err := doOptimize(np, er.b.ctx, er.b.allocator)
 		d, err := EvalSubquery(physicalPlan, er.b.is, er.b.ctx)
@@ -483,16 +483,16 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		return v, true
 	}
 	lLen := getRowLen(lexpr)
-	if lLen != np.GetSchema().Len() {
+	if lLen != np.Schema().Len() {
 		er.err = ErrOperandColumns.GenByArgs(lLen)
 		return v, true
 	}
 	var rexpr expression.Expression
-	if np.GetSchema().Len() == 1 {
-		rexpr = np.GetSchema().Columns[0].Clone()
+	if np.Schema().Len() == 1 {
+		rexpr = np.Schema().Columns[0].Clone()
 	} else {
-		args := make([]expression.Expression, 0, np.GetSchema().Len())
-		for _, col := range np.GetSchema().Columns {
+		args := make([]expression.Expression, 0, np.Schema().Len())
+		for _, col := range np.Schema().Columns {
 			args = append(args, col.Clone())
 		}
 		rexpr, er.err = expression.NewFunction(er.ctx, ast.RowFunc, nil, args...)
@@ -510,7 +510,7 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 	}
 	er.p = er.b.buildSemiApply(er.p, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not)
 	if asScalar {
-		col := er.p.GetSchema().Columns[er.p.GetSchema().Len()-1]
+		col := er.p.Schema().Columns[er.p.Schema().Len()-1]
 		er.ctxStack[len(er.ctxStack)-1] = col
 	} else {
 		er.ctxStack = er.ctxStack[:len(er.ctxStack)-1]
@@ -526,9 +526,9 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 	np = er.b.buildMaxOneRow(np)
 	if len(np.extractCorrelatedCols()) > 0 {
 		er.p = er.b.buildInnerApply(er.p, np)
-		if np.GetSchema().Len() > 1 {
-			newCols := make([]expression.Expression, 0, np.GetSchema().Len())
-			for _, col := range np.GetSchema().Columns {
+		if np.Schema().Len() > 1 {
+			newCols := make([]expression.Expression, 0, np.Schema().Len())
+			for _, col := range np.Schema().Columns {
 				newCols = append(newCols, col.Clone())
 			}
 			expr, err := expression.NewFunction(er.ctx, ast.RowFunc, nil, newCols...)
@@ -538,7 +538,7 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 			}
 			er.ctxStack = append(er.ctxStack, expr)
 		} else {
-			er.ctxStack = append(er.ctxStack, er.p.GetSchema().Columns[er.p.GetSchema().Len()-1])
+			er.ctxStack = append(er.ctxStack, er.p.Schema().Columns[er.p.Schema().Len()-1])
 		}
 		return v, true
 	}
@@ -552,12 +552,12 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 		er.err = errors.Trace(err)
 		return v, true
 	}
-	if np.GetSchema().Len() > 1 {
-		newCols := make([]expression.Expression, 0, np.GetSchema().Len())
+	if np.Schema().Len() > 1 {
+		newCols := make([]expression.Expression, 0, np.Schema().Len())
 		for i, data := range d {
 			newCols = append(newCols, &expression.Constant{
 				Value:   data,
-				RetType: np.GetSchema().Columns[i].GetType()})
+				RetType: np.Schema().Columns[i].GetType()})
 		}
 		expr, err1 := expression.NewFunction(er.ctx, ast.RowFunc, nil, newCols...)
 		if err1 != nil {
@@ -568,7 +568,7 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 	} else {
 		er.ctxStack = append(er.ctxStack, &expression.Constant{
 			Value:   d[0],
-			RetType: np.GetSchema().Columns[0].GetType(),
+			RetType: np.Schema().Columns[0].GetType(),
 		})
 	}
 	return v, true

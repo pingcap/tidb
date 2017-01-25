@@ -24,13 +24,13 @@ func EliminateProjection(p PhysicalPlan) PhysicalPlan {
 		if !projectionCanBeEliminated(plan) {
 			break
 		}
-		child := p.GetChildByIndex(0).(PhysicalPlan)
-		child.SetSchema(plan.GetSchema())
+		child := plan.children[0].(PhysicalPlan)
+		child.SetSchema(plan.Schema())
 		RemovePlan(p)
 		p = EliminateProjection(child)
 	}
-	children := make([]Plan, 0, len(p.GetChildren()))
-	for _, child := range p.GetChildren() {
+	children := make([]Plan, 0, len(p.Children()))
+	for _, child := range p.Children() {
 		children = append(children, EliminateProjection(child.(PhysicalPlan)))
 	}
 	p.SetChildren(children...)
@@ -46,8 +46,8 @@ func EliminateProjection(p PhysicalPlan) PhysicalPlan {
 // or "SELECT c AS a, c AS b FROM t WHERE d = 1",
 // or "SELECT t1.a, t2.b, t1.b, t2.a FROM t1, t2 WHERE t1.a < 0 AND t2.b > 0".
 func projectionCanBeEliminated(p *Projection) bool {
-	child := p.GetChildByIndex(0).(PhysicalPlan)
-	if p.GetSchema().Len() != child.GetSchema().Len() {
+	child := p.children[0].(PhysicalPlan)
+	if p.Schema().Len() != child.Schema().Len() {
 		return false
 	}
 	for i, expr := range p.Exprs {
@@ -55,7 +55,7 @@ func projectionCanBeEliminated(p *Projection) bool {
 		if !ok {
 			return false
 		}
-		if col.FromID != child.GetSchema().Columns[i].FromID || col.Position != child.GetSchema().Columns[i].Position {
+		if col.FromID != child.Schema().Columns[i].FromID || col.Position != child.Schema().Columns[i].Position {
 			return false
 		}
 	}

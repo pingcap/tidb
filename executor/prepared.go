@@ -280,7 +280,7 @@ func (e *DeallocateExec) Close() error {
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
 func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interface{}) ast.Statement {
-	execPlan := &plan.Execute{ID: ID}
+	execPlan := &plan.Execute{ExecID: ID}
 	execPlan.UsingVars = make([]expression.Expression, len(args))
 	for i, val := range args {
 		value := ast.NewValueExpr(val)

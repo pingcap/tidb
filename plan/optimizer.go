@@ -71,7 +71,7 @@ func doOptimize(logic LogicalPlan, ctx context.Context, allocator *idAllocator) 
 		alloc: allocator,
 	}
 	solver.aggPushDown(logic)
-	logic.PruneColumns(logic.GetSchema().Columns)
+	logic.PruneColumns(logic.Schema().Columns)
 	logic.ResolveIndicesAndCorCols()
 	if !AllowCartesianProduct && existsCartesianProduct(logic) {
 		return nil, errors.Trace(ErrCartesianProductUnsupported)
@@ -91,7 +91,7 @@ func existsCartesianProduct(p LogicalPlan) bool {
 	if join, ok := p.(*Join); ok && len(join.EqualConditions) == 0 {
 		return join.JoinType == InnerJoin || join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin
 	}
-	for _, child := range p.GetChildren() {
+	for _, child := range p.Children() {
 		if existsCartesianProduct(child.(LogicalPlan)) {
 			return true
 		}

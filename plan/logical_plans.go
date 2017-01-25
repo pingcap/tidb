@@ -151,7 +151,7 @@ type Apply struct {
 func (p *Apply) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := p.Join.extractCorrelatedCols()
 	for i := len(corCols) - 1; i >= 0; i-- {
-		if idx := p.GetChildren()[0].GetSchema().GetColumnIndex(&corCols[i].Column); idx != -1 {
+		if idx := p.children[0].Schema().ColumnIndex(&corCols[i].Column); idx != -1 {
 			corCols = append(corCols[:i], corCols[i+1:]...)
 		}
 	}
@@ -256,8 +256,8 @@ func InsertPlan(parent Plan, child Plan, insert Plan) error {
 
 // RemovePlan means removing a plan.
 func RemovePlan(p Plan) error {
-	parents := p.GetParents()
-	children := p.GetChildren()
+	parents := p.Parents()
+	children := p.Children()
 	if len(parents) > 1 || len(children) != 1 {
 		return SystemInternalErrorType.Gen("can't remove this plan")
 	}

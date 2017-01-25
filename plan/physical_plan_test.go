@@ -83,7 +83,7 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		lp.PruneColumns(lp.GetSchema().Columns)
+		lp.PruneColumns(lp.Schema().Columns)
 		solver := &aggPushDownSolver{builder.allocator, builder.ctx}
 		solver.aggPushDown(lp)
 		lp.ResolveIndicesAndCorCols()
@@ -105,7 +105,7 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 				c.Assert(fmt.Sprintf("%s", ts.AggFields), Equals, ca.aggFields, Commentf("for %s", ca.sql))
 				break
 			}
-			p = p.GetChildByIndex(0)
+			p = p.Children()[0]
 		}
 	}
 }
@@ -181,7 +181,7 @@ func (s *testPlanSuite) TestPushDownOrderbyAndLimit(c *C) {
 
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		lp.PruneColumns(lp.GetSchema().Columns)
+		lp.PruneColumns(lp.Schema().Columns)
 		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
@@ -206,7 +206,7 @@ func (s *testPlanSuite) TestPushDownOrderbyAndLimit(c *C) {
 				c.Assert(limitStr, Equals, ca.limit, Commentf("for %s", ca.sql))
 				break
 			}
-			p = p.GetChildByIndex(0)
+			p = p.Children()[0]
 		}
 	}
 }
@@ -313,7 +313,7 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		lp.PruneColumns(lp.GetSchema().Columns)
+		lp.PruneColumns(lp.Schema().Columns)
 		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
@@ -331,7 +331,7 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 				c.Assert(fmt.Sprintf("%s", expression.ComposeCNFCondition(mock.NewContext(), conditions...).String()), Equals, ca.cond, Commentf("for %s", sql))
 				break
 			}
-			p = p.GetChildByIndex(0)
+			p = p.Children()[0]
 		}
 	}
 }
@@ -529,7 +529,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 			alloc: builder.allocator,
 		}
 		solver.aggPushDown(lp)
-		lp.PruneColumns(lp.GetSchema().Columns)
+		lp.PruneColumns(lp.Schema().Columns)
 		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
@@ -646,7 +646,7 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		lp = decorrelate(lp)
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		lp.PruneColumns(lp.GetSchema().Columns)
+		lp.PruneColumns(lp.Schema().Columns)
 		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		p = EliminateProjection(info.p)
@@ -744,7 +744,7 @@ func (s *testPlanSuite) TestFilterConditionPushDown(c *C) {
 
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		lp.PruneColumns(lp.GetSchema().Columns)
+		lp.PruneColumns(lp.Schema().Columns)
 		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
@@ -763,7 +763,7 @@ func (s *testPlanSuite) TestFilterConditionPushDown(c *C) {
 				c.Assert(fmt.Sprintf("%s", ts.tableFilterConditions), Equals, ca.tableFilter, Commentf("for %s", ca.sql))
 				break
 			}
-			p = p.GetChildByIndex(0)
+			p = p.Children()[0]
 		}
 	}
 }
@@ -799,7 +799,7 @@ func (s *testPlanSuite) TestAddCache(c *C) {
 		lp := p.(LogicalPlan)
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		lp.PruneColumns(lp.GetSchema().Columns)
+		lp.PruneColumns(lp.Schema().Columns)
 		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		pp := info.p
