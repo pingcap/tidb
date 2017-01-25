@@ -308,7 +308,7 @@ func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *Select
 	selectLock.self = selectLock
 	selectLock.initIDAndContext(b.ctx)
 	addChild(selectLock, src)
-	selectLock.SetSchema(src.GetSchema())
+	selectLock.SetSchema(src.Schema())
 	return selectLock
 }
 
@@ -453,7 +453,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 		sel.initIDAndContext(b.ctx)
 		sel.self = sel
 		addChild(sel, p)
-		sel.SetSchema(p.GetSchema())
+		sel.SetSchema(p.Schema())
 		resultPlan = sel
 	}
 	return resultPlan
