@@ -369,7 +369,7 @@ type XSelectIndexExec struct {
 
 // Schema implements Exec Schema interface.
 func (e *XSelectIndexExec) Schema() *expression.Schema {
-	return e.indexPlan.GetSchema()
+	return e.indexPlan.Schema()
 }
 
 // Close implements Exec Close interface.

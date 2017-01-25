@@ -521,7 +521,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		c.Assert(builder.err, IsNil, comment)
 		lp := p.(LogicalPlan)
 		lp = decorrelate(lp)
-		lp.PruneColumns(lp.GetSchema().Columns)
+		lp.PruneColumns(lp.Schema().Columns)
 		c.Assert(ToString(lp), Equals, ca.first, Commentf("for %s", ca.sql))
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
@@ -619,7 +619,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		p := builder.build(stmt)
 		if lp, ok := p.(LogicalPlan); ok {
 			lp = decorrelate(lp)
-			lp.PruneColumns(p.GetSchema().Columns)
+			lp.PruneColumns(p.Schema().Columns)
 		}
 		c.Assert(builder.err, IsNil)
 		c.Assert(ToString(p), Equals, ca.plan, Commentf("for %s", ca.sql))
@@ -677,7 +677,7 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		lp.PruneColumns(lp.GetSchema().Columns)
+		lp.PruneColumns(lp.Schema().Columns)
 		lp.ResolveIndicesAndCorCols()
 		c.Assert(err, IsNil)
 		c.Assert(ToString(lp), Equals, ca.best, Commentf("for %s", ca.sql))
@@ -776,7 +776,7 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 			alloc: builder.allocator,
 		}
 		solver.aggPushDown(lp)
-		lp.PruneColumns(lp.GetSchema().Columns)
+		lp.PruneColumns(lp.Schema().Columns)
 		lp.ResolveIndicesAndCorCols()
 		c.Assert(err, IsNil)
 		c.Assert(ToString(lp), Equals, ca.best, Commentf("for %s", ca.sql))
@@ -994,7 +994,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 
 		_, p, err = p.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		p.PruneColumns(p.GetSchema().Columns)
+		p.PruneColumns(p.Schema().Columns)
 		p.ResolveIndicesAndCorCols()
 		info, err := p.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
@@ -1131,7 +1131,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 
 		_, p, err = p.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		p.PruneColumns(p.GetSchema().Columns)
+		p.PruneColumns(p.Schema().Columns)
 		p.ResolveIndicesAndCorCols()
 		c.Assert(err, IsNil)
 		checkDataSourceCols(p, c, ca.ans, comment)
@@ -1316,7 +1316,7 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 		p := builder.build(stmt)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, ca.exprStr))
 		var selection *Selection
-		for _, child := range p.GetChildren() {
+		for _, child := range p.Children() {
 			plan, ok := child.(*Selection)
 			if ok {
 				selection = plan
@@ -1337,13 +1337,13 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 func checkDataSourceCols(p Plan, c *C, ans map[string][]string, comment CommentInterface) {
 	switch p.(type) {
 	case *PhysicalTableScan:
-		colList, ok := ans[p.GetID()]
+		colList, ok := ans[p.ID()]
 		c.Assert(ok, IsTrue, comment)
 		for i, colName := range colList {
-			c.Assert(colName, Equals, p.GetSchema().Columns[i].ColName.L, comment)
+			c.Assert(colName, Equals, p.Schema().Columns[i].ColName.L, comment)
 		}
 	}
-	for _, child := range p.GetChildren() {
+	for _, child := range p.Children() {
 		checkDataSourceCols(child, c, ans, comment)
 	}
 }
@@ -1458,16 +1458,16 @@ func (s *testPlanSuite) TestValidate(c *C) {
 }
 
 func checkUniqueKeys(p Plan, c *C, ans map[string][][]string, sql string) {
-	keyList, ok := ans[p.GetID()]
-	c.Assert(ok, IsTrue, Commentf("for %s, %v not found", sql, p.GetID()))
-	c.Assert(len(keyList), Equals, len(p.GetSchema().Keys), Commentf("for %s, %v, the number of key doesn't match", sql, p.GetID()))
+	keyList, ok := ans[p.ID()]
+	c.Assert(ok, IsTrue, Commentf("for %s, %v not found", sql, p.ID()))
+	c.Assert(len(keyList), Equals, len(p.Schema().Keys), Commentf("for %s, %v, the number of key doesn't match", sql, p.ID()))
 	for i, key := range keyList {
-		c.Assert(len(key), Equals, len(p.GetSchema().Keys[i]), Commentf("for %s, %v %v, the number of column doesn't match", sql, p.GetID(), key))
+		c.Assert(len(key), Equals, len(p.Schema().Keys[i]), Commentf("for %s, %v %v, the number of column doesn't match", sql, p.ID(), key))
 		for j, colName := range key {
-			c.Assert(colName, Equals, p.GetSchema().Keys[i][j].String(), Commentf("for %s, %v %v, column dosen't match", sql, p.GetID(), key))
+			c.Assert(colName, Equals, p.Schema().Keys[i][j].String(), Commentf("for %s, %v %v, column dosen't match", sql, p.ID(), key))
 		}
 	}
-	for _, child := range p.GetChildren() {
+	for _, child := range p.Children() {
 		checkUniqueKeys(child, c, ans, sql)
 	}
 }
@@ -1558,7 +1558,7 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 
 		_, p, err = p.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		p.PruneColumns(p.GetSchema().Columns)
+		p.PruneColumns(p.Schema().Columns)
 		p.ResolveIndicesAndCorCols()
 		p.buildKeyInfo()
 		checkUniqueKeys(p, c, ca.ans, ca.sql)
