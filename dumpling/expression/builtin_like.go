@@ -18,13 +18,8 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/types"
-)
-
-const (
-	patMatch = iota + 1
-	patOne
-	patAny
 )
 
 var (
@@ -36,106 +31,6 @@ var (
 	_ builtinFunc = &builtinLikeSig{}
 	_ builtinFunc = &builtinRegexpSig{}
 )
-
-// Handle escapes and wild cards convert pattern characters and pattern types.
-func compilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
-	var lastAny bool
-	patChars = make([]byte, len(pattern))
-	patTypes = make([]byte, len(pattern))
-	patLen := 0
-	for i := 0; i < len(pattern); i++ {
-		var tp byte
-		var c = pattern[i]
-		switch c {
-		case escape:
-			lastAny = false
-			tp = patMatch
-			if i < len(pattern)-1 {
-				i++
-				c = pattern[i]
-				if c == escape || c == '_' || c == '%' {
-					// valid escape.
-				} else {
-					// invalid escape, fall back to escape byte
-					// mysql will treat escape character as the origin value even
-					// the escape sequence is invalid in Go or C.
-					// e.g, \m is invalid in Go, but in MySQL we will get "m" for select '\m'.
-					// Following case is correct just for escape \, not for others like +.
-					// TODO: add more checks for other escapes.
-					i--
-					c = escape
-				}
-			}
-		case '_':
-			lastAny = false
-			tp = patOne
-		case '%':
-			if lastAny {
-				continue
-			}
-			lastAny = true
-			tp = patAny
-		default:
-			lastAny = false
-			tp = patMatch
-		}
-		patChars[patLen] = c
-		patTypes[patLen] = tp
-		patLen++
-	}
-	for i := 0; i < patLen-1; i++ {
-		if (patTypes[i] == patAny) && (patTypes[i+1] == patOne) {
-			patTypes[i] = patOne
-			patTypes[i+1] = patAny
-		}
-	}
-	patChars = patChars[:patLen]
-	patTypes = patTypes[:patLen]
-	return
-}
-
-const caseDiff = 'a' - 'A'
-
-func matchByteCI(a, b byte) bool {
-	if a == b {
-		return true
-	}
-	if a >= 'a' && a <= 'z' && a-caseDiff == b {
-		return true
-	}
-	return a >= 'A' && a <= 'Z' && a+caseDiff == b
-}
-
-func doMatch(str string, patChars, patTypes []byte) bool {
-	var sIdx int
-	for i := 0; i < len(patChars); i++ {
-		switch patTypes[i] {
-		case patMatch:
-			if sIdx >= len(str) || !matchByteCI(str[sIdx], patChars[i]) {
-				return false
-			}
-			sIdx++
-		case patOne:
-			sIdx++
-			if sIdx > len(str) {
-				return false
-			}
-		case patAny:
-			i++
-			if i == len(patChars) {
-				return true
-			}
-			for sIdx < len(str) {
-				if matchByteCI(patChars[i], str[sIdx]) && doMatch(str[sIdx:], patChars[i:], patTypes[i:]) {
-					return true
-				}
-				sIdx++
-			}
-			return false
-		}
-	}
-	return sIdx == len(str)
-}
 
 type likeFunctionClass struct {
 	baseFunctionClass
@@ -173,8 +68,8 @@ func (b *builtinLikeSig) eval(row []types.Datum) (d types.Datum, err error) {
 		return d, errors.Trace(err)
 	}
 	escape := byte(args[2].GetInt64())
-	patChars, patTypes := compilePattern(patternStr, escape)
-	match := doMatch(valStr, patChars, patTypes)
+	patChars, patTypes := stringutil.CompilePattern(patternStr, escape)
+	match := stringutil.DoMatch(valStr, patChars, patTypes)
 	d.SetInt64(boolToInt64(match))
 	return
 }
