@@ -390,7 +390,15 @@ func (p *MySQLPrivilege) RequestVerification(user, host, db, table, column strin
 
 // Handle wraps MySQLPrivilege providing thread safe access.
 type Handle struct {
+	ctx  context.Context
 	priv atomic.Value
+}
+
+// NewHandle returns a Handle.
+func NewHandle(ctx context.Context) *Handle {
+	return &Handle{
+		ctx: ctx,
+	}
 }
 
 // Get the MySQLPrivilege for read.
@@ -399,9 +407,9 @@ func (h *Handle) Get() *MySQLPrivilege {
 }
 
 // Update the MySQLPrivilege.
-func (h *Handle) Update(ctx context.Context) error {
+func (h *Handle) Update() error {
 	var priv MySQLPrivilege
-	err := priv.LoadAll(ctx)
+	err := priv.LoadAll(h.ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}

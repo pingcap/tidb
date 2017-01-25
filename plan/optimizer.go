@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/terror"
 )
 
@@ -39,15 +40,35 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 		ctx:       ctx,
 		is:        is,
 		colMapper: make(map[*ast.ColumnNameExpr]int),
-		allocator: allocator}
+		allocator: allocator,
+		visitInfo: make([]visitInfo, 0, 3),
+	}
 	p := builder.build(node)
 	if builder.err != nil {
 		return nil, errors.Trace(builder.err)
 	}
+
+	// Maybe it's better put this in Preprocess, but check privilege need table
+	// information, which is collected into visitInfo during logical plan builder.
+	if checker := privilege.GetPrivilegeChecker(ctx); checker != nil {
+		if !checkPrivilege(checker, builder.visitInfo) {
+			return nil, errors.New("privilege check fail")
+		}
+	}
+
 	if logic, ok := p.(LogicalPlan); ok {
 		return doOptimize(logic, ctx, allocator)
 	}
 	return p, nil
+}
+
+func checkPrivilege(checker privilege.Checker, vs []visitInfo) bool {
+	for _, v := range vs {
+		if !checker.RequestVerification(v.db, v.table, v.column, v.privilege) {
+			return false
+		}
+	}
+	return true
 }
 
 func doOptimize(logic LogicalPlan, ctx context.Context, allocator *idAllocator) (PhysicalPlan, error) {

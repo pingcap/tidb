@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan/statistics"
 	"github.com/pingcap/tidb/plan/statscache"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
@@ -311,7 +312,10 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 
 func (e *SimpleExec) executeFlushTable(s *ast.FlushTableStmt) error {
 	// TODO: A dummy implement
-	return nil
+	dom := sessionctx.GetDomain(e.ctx)
+	handle := dom.PrivilegeHandle()
+	err := handle.Update()
+	return errors.Trace(err)
 }
 
 func (e *SimpleExec) executeAnalyzeTable(s *ast.AnalyzeTableStmt) error {

@@ -253,17 +253,16 @@ func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {
 
 	ctx.GetSessionVars().User = "drop@localhost"
 	mustExec(c, se, `SELECT * FROM todrop;`)
-
 	_, err := se.Execute("DROP TABLE todrop;")
 	c.Assert(err, NotNil)
 
+	se = newSession(c, s.store, s.dbName)
 	ctx.GetSessionVars().User = "root@localhost"
 	mustExec(c, se, `GRANT Drop ON test.todrop TO  'drop'@'localhost';`)
 
-	se1 := newSession(c, s.store, s.dbName)
-	ctx1, _ := se1.(context.Context)
-	ctx1.GetSessionVars().User = "drop@localhost"
-	mustExec(c, se1, `DROP TABLE todrop;`)
+	se = newSession(c, s.store, s.dbName)
+	ctx.GetSessionVars().User = "drop@localhost"
+	mustExec(c, se, `DROP TABLE todrop;`)
 }
 
 func mustExec(c *C, se tidb.Session, sql string) {
