@@ -121,6 +121,9 @@ benchraw:
 benchdb:
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/benchdb cmd/benchdb/main.go
 
+dump_region:
+	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/dump_region cmd/dump_region/main.go
+
 update:
 	which glide >/dev/null || curl https://glide.sh/get | sh
 	which glide-vc || go get -v -u github.com/sgotti/glide-vc
