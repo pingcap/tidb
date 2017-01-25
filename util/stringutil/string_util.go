@@ -156,14 +156,14 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 				i++
 				c = pattern[i]
 				if c == escape || c == '_' || c == '%' {
-					// valid escape.
+					// Valid escape.
 				} else {
-					// invalid escape, fall back to escape byte
+					// Invalid escape, fall back to escape byte.
 					// mysql will treat escape character as the origin value even
 					// the escape sequence is invalid in Go or C.
-					// e.g, \m is invalid in Go, but in MySQL we will get "m" for select '\m'.
+					// e.g., \m is invalid in Go, but in MySQL we will get "m" for select '\m'.
 					// Following case is correct just for escape \, not for others like +.
-					// TODO: add more checks for other escapes.
+					// TODO: Add more checks for other escapes.
 					i--
 					c = escape
 				}
