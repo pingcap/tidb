@@ -72,7 +72,7 @@ type planBuilder struct {
 	allocator    *idAllocator
 	ctx          context.Context
 	is           infoschema.InfoSchema
-	outerSchemas []expression.Schema
+	outerSchemas []*expression.Schema
 	inUpdateStmt bool
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
@@ -132,6 +132,7 @@ func (b *planBuilder) buildExecute(v *ast.ExecuteStmt) Plan {
 		vars = append(vars, newExpr)
 	}
 	exe := &Execute{Name: v.Name, UsingVars: vars}
+	exe.SetSchema(expression.NewSchema())
 	return exe
 }
 
@@ -149,6 +150,7 @@ func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 		}
 		exprs = append(exprs, expr)
 	}
+	dual.SetSchema(expression.NewSchema())
 	p := &Projection{
 		Exprs:           exprs,
 		baseLogicalPlan: newBaseLogicalPlan(Proj, b.allocator),
@@ -156,6 +158,7 @@ func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 	p.initIDAndContext(b.ctx)
 	addChild(p, dual)
 	p.self = p
+	p.SetSchema(expression.NewSchema())
 	return p
 }
 
@@ -186,6 +189,7 @@ func (b *planBuilder) buildSet(v *ast.SetStmt) Plan {
 		p.VarAssigns = append(p.VarAssigns, assign)
 	}
 	p.initIDAndContext(b.ctx)
+	p.SetSchema(expression.NewSchema())
 	return p
 }
 
@@ -295,7 +299,7 @@ func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *Select
 	selectLock.self = selectLock
 	selectLock.initIDAndContext(b.ctx)
 	addChild(selectLock, src)
-	selectLock.SetSchema(src.GetSchema())
+	selectLock.SetSchema(src.Schema())
 	return selectLock
 }
 
@@ -308,6 +312,7 @@ func (b *planBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 	} else {
 		p.SQLText = x.SQLText
 	}
+	p.SetSchema(expression.NewSchema())
 	return p
 }
 
@@ -317,18 +322,18 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 	switch as.Tp {
 	case ast.AdminCheckTable:
 		p = &CheckTable{Tables: as.Tables}
+		p.SetSchema(expression.NewSchema())
 	case ast.AdminShowDDL:
 		p = &ShowDDL{}
 		p.SetSchema(buildShowDDLFields())
 	default:
 		b.err = ErrUnsupportedType.Gen("Unsupported type %T", as)
 	}
-
 	return p
 }
 
-func buildShowDDLFields() expression.Schema {
-	schema := expression.NewSchema(make([]*expression.Column, 0, 6))
+func buildShowDDLFields() *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, 6)...)
 	schema.Append(buildColumn("", "SCHEMA_VER", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "OWNER", mysql.TypeVarchar, 64))
 	schema.Append(buildColumn("", "JOB", mysql.TypeVarchar, 128))
@@ -439,13 +444,16 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 		sel.initIDAndContext(b.ctx)
 		sel.self = sel
 		addChild(sel, p)
+		sel.SetSchema(p.Schema())
 		resultPlan = sel
 	}
 	return resultPlan
 }
 
 func (b *planBuilder) buildSimple(node ast.StmtNode) Plan {
-	return &Simple{Statement: node}
+	p := &Simple{Statement: node}
+	p.SetSchema(expression.NewSchema())
+	return p
 }
 
 func (b *planBuilder) getDefaultValue(col *table.Column) (*expression.Constant, error) {
@@ -468,7 +476,6 @@ func (b *planBuilder) findDefaultValue(cols []*table.Column, name *ast.ColumnNam
 }
 
 func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
-	// Get Table
 	ts, ok := insert.Table.TableRefs.Left.(*ast.TableSource)
 	if !ok {
 		b.err = infoschema.ErrTableNotExists.GenByArgs()
@@ -582,6 +589,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		}
 		addChild(insertPlan, selectPlan)
 	}
+	insertPlan.SetSchema(expression.NewSchema())
 	return insertPlan
 }
 
@@ -593,6 +601,7 @@ func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) Plan {
 		FieldsInfo: ld.FieldsInfo,
 		LinesInfo:  ld.LinesInfo,
 	}
+	p.SetSchema(expression.NewSchema())
 	return p
 }
 
@@ -659,7 +668,9 @@ func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {
 		})
 	}
 
-	return &DDL{Statement: node}
+	p := &DDL{Statement: node}
+	p.SetSchema(expression.NewSchema())
+	return p
 }
 
 func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
@@ -673,7 +684,7 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 	}
 	p := &Explain{StmtPlan: targetPlan}
 	addChild(p, targetPlan)
-	schema := expression.NewSchema(make([]*expression.Column, 0, 3))
+	schema := expression.NewSchema(make([]*expression.Column, 0, 3)...)
 	schema.Append(&expression.Column{
 		ColName: model.NewCIStr("ID"),
 		RetType: types.NewFieldType(mysql.TypeString),
@@ -690,9 +701,9 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 	return p
 }
 
-func buildShowProcedureSchema() expression.Schema {
+func buildShowProcedureSchema() *expression.Schema {
 	tblName := "ROUTINES"
-	schema := expression.NewSchema(make([]*expression.Column, 0, 11))
+	schema := expression.NewSchema(make([]*expression.Column, 0, 11)...)
 	schema.Append(buildColumn(tblName, "Db", mysql.TypeVarchar, 128))
 	schema.Append(buildColumn(tblName, "Name", mysql.TypeVarchar, 128))
 	schema.Append(buildColumn(tblName, "Type", mysql.TypeVarchar, 128))
@@ -707,9 +718,9 @@ func buildShowProcedureSchema() expression.Schema {
 	return schema
 }
 
-func buildShowTriggerSchema() expression.Schema {
+func buildShowTriggerSchema() *expression.Schema {
 	tblName := "TRIGGERS"
-	schema := expression.NewSchema(make([]*expression.Column, 0, 11))
+	schema := expression.NewSchema(make([]*expression.Column, 0, 11)...)
 	schema.Append(buildColumn(tblName, "Trigger", mysql.TypeVarchar, 128))
 	schema.Append(buildColumn(tblName, "Event", mysql.TypeVarchar, 128))
 	schema.Append(buildColumn(tblName, "Table", mysql.TypeVarchar, 128))
@@ -724,9 +735,9 @@ func buildShowTriggerSchema() expression.Schema {
 	return schema
 }
 
-func buildShowEventsSchema() expression.Schema {
+func buildShowEventsSchema() *expression.Schema {
 	tblName := "EVENTS"
-	schema := expression.NewSchema(make([]*expression.Column, 0, 15))
+	schema := expression.NewSchema(make([]*expression.Column, 0, 15)...)
 	schema.Append(buildColumn(tblName, "Db", mysql.TypeVarchar, 128))
 	schema.Append(buildColumn(tblName, "Name", mysql.TypeVarchar, 128))
 	schema.Append(buildColumn(tblName, "Time zone", mysql.TypeVarchar, 32))
@@ -801,9 +812,9 @@ func getShowColNamesAndTypes(s *ast.ShowStmt) (names []string, ftypes []byte) {
 	return
 }
 
-func buildShowDefaultSchema(s *ast.ShowStmt) expression.Schema {
+func buildShowDefaultSchema(s *ast.ShowStmt) *expression.Schema {
 	names, ftypes := getShowColNamesAndTypes(s)
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(names)))
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(names))...)
 	for i, name := range names {
 		col := &expression.Column{
 			ColName: model.NewCIStr(name),

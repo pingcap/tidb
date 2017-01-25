@@ -104,12 +104,12 @@ type RowKeyEntry struct {
 type Executor interface {
 	Next() (*Row, error)
 	Close() error
-	Schema() expression.Schema
+	Schema() *expression.Schema
 }
 
 // ShowDDLExec represents a show DDL executor.
 type ShowDDLExec struct {
-	schema  expression.Schema
+	schema  *expression.Schema
 	ctx     context.Context
 	ddlInfo *inspectkv.DDLInfo
 	bgInfo  *inspectkv.DDLInfo
@@ -117,7 +117,7 @@ type ShowDDLExec struct {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *ShowDDLExec) Schema() expression.Schema {
+func (e *ShowDDLExec) Schema() *expression.Schema {
 	return e.schema
 }
 
@@ -172,8 +172,8 @@ type CheckTableExec struct {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *CheckTableExec) Schema() expression.Schema {
-	return expression.NewSchema(nil)
+func (e *CheckTableExec) Schema() *expression.Schema {
+	return expression.NewSchema()
 }
 
 // Next implements the Executor Next interface.
@@ -217,11 +217,11 @@ type SelectLockExec struct {
 	Src    Executor
 	Lock   ast.SelectLockType
 	ctx    context.Context
-	schema expression.Schema
+	schema *expression.Schema
 }
 
 // Schema implements the Executor Schema interface.
-func (e *SelectLockExec) Schema() expression.Schema {
+func (e *SelectLockExec) Schema() *expression.Schema {
 	return e.schema
 }
 
@@ -260,11 +260,11 @@ type LimitExec struct {
 	Offset uint64
 	Count  uint64
 	Idx    uint64
-	schema expression.Schema
+	schema *expression.Schema
 }
 
 // Schema implements the Executor Schema interface.
-func (e *LimitExec) Schema() expression.Schema {
+func (e *LimitExec) Schema() *expression.Schema {
 	return e.schema
 }
 
@@ -315,7 +315,7 @@ type ReverseExec struct {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *ReverseExec) Schema() expression.Schema {
+func (e *ReverseExec) Schema() *expression.Schema {
 	return e.Src.Schema()
 }
 
@@ -381,14 +381,14 @@ func init() {
 // ProjectionExec represents a select fields executor.
 type ProjectionExec struct {
 	Src      Executor
-	schema   expression.Schema
+	schema   *expression.Schema
 	executed bool
 	ctx      context.Context
 	exprs    []expression.Expression
 }
 
 // Schema implements the Executor Schema interface.
-func (e *ProjectionExec) Schema() expression.Schema {
+func (e *ProjectionExec) Schema() *expression.Schema {
 	return e.schema
 }
 
@@ -436,7 +436,7 @@ func (e *ProjectionExec) Close() error {
 
 // TableDualExec represents a dual table executor.
 type TableDualExec struct {
-	schema   expression.Schema
+	schema   *expression.Schema
 	executed bool
 }
 
@@ -446,7 +446,7 @@ func (e *TableDualExec) Init() {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *TableDualExec) Schema() expression.Schema {
+func (e *TableDualExec) Schema() *expression.Schema {
 	return e.schema
 }
 
@@ -469,11 +469,11 @@ type SelectionExec struct {
 	Src       Executor
 	Condition expression.Expression
 	ctx       context.Context
-	schema    expression.Schema
+	schema    *expression.Schema
 }
 
 // Schema implements the Executor Schema interface.
-func (e *SelectionExec) Schema() expression.Schema {
+func (e *SelectionExec) Schema() *expression.Schema {
 	return e.schema
 }
 
@@ -511,7 +511,7 @@ type TableScanExec struct {
 	seekHandle int64
 	iter       kv.Iterator
 	cursor     int
-	schema     expression.Schema
+	schema     *expression.Schema
 	columns    []*model.ColumnInfo
 
 	isInfoSchema     bool
@@ -520,7 +520,7 @@ type TableScanExec struct {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *TableScanExec) Schema() expression.Schema {
+func (e *TableScanExec) Schema() *expression.Schema {
 	return e.schema
 }
 
@@ -648,7 +648,7 @@ type SortExec struct {
 	Idx     int
 	fetched bool
 	err     error
-	schema  expression.Schema
+	schema  *expression.Schema
 }
 
 // Close implements the Executor Close interface.
@@ -659,7 +659,7 @@ func (e *SortExec) Close() error {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *SortExec) Schema() expression.Schema {
+func (e *SortExec) Schema() *expression.Schema {
 	return e.schema
 }
 
@@ -848,13 +848,13 @@ func (e *TopnExec) Next() (*Row, error) {
 
 // ExistsExec represents exists executor.
 type ExistsExec struct {
-	schema    expression.Schema
+	schema    *expression.Schema
 	Src       Executor
 	evaluated bool
 }
 
 // Schema implements the Executor Schema interface.
-func (e *ExistsExec) Schema() expression.Schema {
+func (e *ExistsExec) Schema() *expression.Schema {
 	return e.schema
 }
 
@@ -881,13 +881,13 @@ func (e *ExistsExec) Next() (*Row, error) {
 // MaxOneRowExec checks if the number of rows that a query returns is at maximum one.
 // It's built from subquery expression.
 type MaxOneRowExec struct {
-	schema    expression.Schema
+	schema    *expression.Schema
 	Src       Executor
 	evaluated bool
 }
 
 // Schema implements the Executor Schema interface.
-func (e *MaxOneRowExec) Schema() expression.Schema {
+func (e *MaxOneRowExec) Schema() *expression.Schema {
 	return e.schema
 }
 
@@ -925,13 +925,13 @@ func (e *MaxOneRowExec) Next() (*Row, error) {
 // For example, in the 'SELECT a from t order by b' statement,
 // 'b' is needed for ordering, but not needed in the result.
 type TrimExec struct {
-	schema expression.Schema
+	schema *expression.Schema
 	Src    Executor
 	len    int
 }
 
 // Schema implements the Executor Schema interface.
-func (e *TrimExec) Schema() expression.Schema {
+func (e *TrimExec) Schema() *expression.Schema {
 	return e.schema
 }
 
@@ -957,7 +957,7 @@ func (e *TrimExec) Next() (*Row, error) {
 // UnionExec has multiple source Executors, it executes them sequentially, and do conversion to the same type
 // as source Executors may has different field type, we need to do conversion.
 type UnionExec struct {
-	schema   expression.Schema
+	schema   *expression.Schema
 	Srcs     []Executor
 	ctx      context.Context
 	inited   bool
@@ -971,7 +971,7 @@ type UnionExec struct {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *UnionExec) Schema() expression.Schema {
+func (e *UnionExec) Schema() *expression.Schema {
 	return e.schema
 }
 
@@ -1074,11 +1074,11 @@ func (e *UnionExec) Close() error {
 // DummyScanExec returns zero results, when some where condition never match, there won't be any
 // rows to return, so DummyScan is used to avoid real scan on KV.
 type DummyScanExec struct {
-	schema expression.Schema
+	schema *expression.Schema
 }
 
 // Schema implements the Executor Schema interface.
-func (e *DummyScanExec) Schema() expression.Schema {
+func (e *DummyScanExec) Schema() *expression.Schema {
 	return e.schema
 }
 
@@ -1095,7 +1095,7 @@ func (e *DummyScanExec) Next() (*Row, error) {
 // CacheExec represents Cache executor.
 // it stores the return values of the executor of its child node.
 type CacheExec struct {
-	schema      expression.Schema
+	schema      *expression.Schema
 	Src         Executor
 	storedRows  []*Row
 	cursor      int
@@ -1103,7 +1103,7 @@ type CacheExec struct {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *CacheExec) Schema() expression.Schema {
+func (e *CacheExec) Schema() *expression.Schema {
 	return e.schema
 }
 

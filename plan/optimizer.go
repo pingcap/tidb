@@ -74,24 +74,31 @@ func doOptimize(logic LogicalPlan, ctx context.Context, allocator *idAllocator) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	logic.buildKeyInfo()
+	ap := &aggPruner{
+		ctx:       ctx,
+		allocator: allocator,
+	}
+	logic, err = ap.eliminateAggregation(logic)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	solver := &aggPushDownSolver{
 		ctx:   ctx,
 		alloc: allocator,
 	}
 	solver.aggPushDown(logic)
-	logic.PruneColumns(logic.GetSchema().Columns)
+	logic.PruneColumns(logic.Schema().Columns)
 	logic.ResolveIndicesAndCorCols()
 	if !AllowCartesianProduct && existsCartesianProduct(logic) {
 		return nil, errors.Trace(ErrCartesianProductUnsupported)
 	}
-	logic.buildKeyInfo()
 	info, err := logic.convert2PhysicalPlan(&requiredProperty{})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	pp := info.p
 	pp = EliminateProjection(pp)
-	physicalInitialize(pp)
 	addCachePlan(pp, allocator)
 	log.Debugf("[PLAN] %s", ToString(pp))
 	return pp, nil
@@ -101,7 +108,7 @@ func existsCartesianProduct(p LogicalPlan) bool {
 	if join, ok := p.(*Join); ok && len(join.EqualConditions) == 0 {
 		return join.JoinType == InnerJoin || join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin
 	}
-	for _, child := range p.GetChildren() {
+	for _, child := range p.Children() {
 		if existsCartesianProduct(child.(LogicalPlan)) {
 			return true
 		}

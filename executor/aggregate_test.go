@@ -33,8 +33,8 @@ type MockExec struct {
 	curRowIdx int
 }
 
-func (m *MockExec) Schema() expression.Schema {
-	return expression.Schema{}
+func (m *MockExec) Schema() *expression.Schema {
+	return expression.NewSchema()
 }
 
 func (m *MockExec) Fields() []*ast.ResultField {

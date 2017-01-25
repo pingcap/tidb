@@ -566,7 +566,7 @@ func (cc *clientConn) writeReq(filePath string) error {
 	return errors.Trace(cc.flush())
 }
 
-var defaultLoadDataBatchCnt = 200000
+var defaultLoadDataBatchCnt = 20000
 
 func insertDataWithCommit(prevData, curData []byte, loadDataInfo *executor.LoadDataInfo) ([]byte, error) {
 	var err error
