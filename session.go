@@ -662,6 +662,13 @@ func (s *session) Auth(user string, auth []byte, salt []byte) bool {
 	// Get user password.
 	name := strs[0]
 	host := strs[1]
+
+	// TODO: Use the new privilege implementation.
+	domain := sessionctx.GetDomain(s)
+	checker := domain.Privilege()
+	succ := checker.ConnectionVerification(name, host)
+	log.Debug("RequestVerification result:", succ)
+
 	pwd, err := s.getPassword(name, host)
 	if err != nil {
 		if terror.ExecResultIsEmpty.Equal(err) {
@@ -685,6 +692,7 @@ func (s *session) Auth(user string, auth []byte, salt []byte) bool {
 		return false
 	}
 	s.sessionVars.User = user
+
 	return true
 }
 
@@ -723,7 +731,12 @@ func BootstrapSession(store kv.Storage) error {
 		runInBootstrapSession(store, upgrade)
 	}
 
-	_, err := domap.Get(store)
+	se, err := createSession(store)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = sessionctx.GetDomain(se).LoadPrivilegeLoop(se)
+
 	return errors.Trace(err)
 }
 
