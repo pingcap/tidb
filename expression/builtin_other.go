@@ -64,17 +64,13 @@ type builtinSleepSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinSleepSig) eval(row []types.Datum) (types.Datum, error) {
+// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_sleep
+func (b *builtinSleepSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	return builtinSleep(args, b.ctx)
-}
-
-// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_sleep
-func builtinSleep(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	sessVars := ctx.GetSessionVars()
+	sessVars := b.ctx.GetSessionVars()
 	if args[0].IsNull() {
 		if sessVars.StrictSQLMode {
 			return d, errors.New("incorrect arguments to sleep")
@@ -117,20 +113,16 @@ type builtinInSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinInSig) eval(row []types.Datum) (types.Datum, error) {
+// See http://dev.mysql.com/doc/refman/5.7/en/any-in-some-subqueries.html
+func (b *builtinInSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	return builtinIn(args, b.ctx)
-}
-
-// See http://dev.mysql.com/doc/refman/5.7/en/any-in-some-subqueries.html
-func builtinIn(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	if args[0].IsNull() {
 		return
 	}
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := b.ctx.GetSessionVars().StmtCtx
 	var hasNull bool
 	for _, v := range args[1:] {
 		if v.IsNull() {
@@ -173,16 +165,12 @@ type builtinRowSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinRowSig) eval(row []types.Datum) (types.Datum, error) {
+func (b *builtinRowSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	return builtinRow(args, b.ctx)
-}
-
-func builtinRow(row []types.Datum, _ context.Context) (d types.Datum, err error) {
-	d.SetRow(row)
+	d.SetRow(args)
 	return
 }
 
@@ -202,35 +190,25 @@ type builtinCastSig struct {
 	tp *types.FieldType
 }
 
-func (b *builtinCastSig) eval(row []types.Datum) (types.Datum, error) {
+// CastFuncFactory produces builtin function according to field types.
+// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html
+func (b *builtinCastSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	f, err := CastFuncFactory(b.tp)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	return f(args, b.ctx)
-}
-
-// CastFuncFactory produces builtin function according to field types.
-// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html
-func CastFuncFactory(tp *types.FieldType) (BuiltinFunc, error) {
-	switch tp.Tp {
+	switch b.tp.Tp {
 	// Parser has restricted this.
 	// TypeDouble is used during plan optimization.
 	case mysql.TypeString, mysql.TypeDuration, mysql.TypeDatetime,
 		mysql.TypeDate, mysql.TypeLonglong, mysql.TypeNewDecimal, mysql.TypeDouble:
-		return func(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-			d = args[0]
-			if d.IsNull() {
-				return
-			}
-			return d.ConvertTo(ctx.GetSessionVars().StmtCtx, tp)
-		}, nil
+		d = args[0]
+		if d.IsNull() {
+			return
+		}
+		return d.ConvertTo(b.ctx.GetSessionVars().StmtCtx, b.tp)
 	}
-	return nil, errors.Errorf("unknown cast type - %v", tp)
+	return d, errors.Errorf("unknown cast type - %v", b.tp)
 }
 
 type setVarFunctionClass struct {
@@ -255,11 +233,7 @@ func (b *builtinSetVarSig) eval(row []types.Datum) (types.Datum, error) {
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	return builtinSetVar(args, b.ctx)
-}
-
-func builtinSetVar(args []types.Datum, ctx context.Context) (types.Datum, error) {
-	sessionVars := ctx.GetSessionVars()
+	sessionVars := b.ctx.GetSessionVars()
 	varName, _ := args[0].ToString()
 	if !args[1].IsNull() {
 		strVal, err := args[1].ToString()
@@ -293,11 +267,7 @@ func (b *builtinGetVarSig) eval(row []types.Datum) (types.Datum, error) {
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	return builtinGetVar(args, b.ctx)
-}
-
-func builtinGetVar(args []types.Datum, ctx context.Context) (types.Datum, error) {
-	sessionVars := ctx.GetSessionVars()
+	sessionVars := b.ctx.GetSessionVars()
 	varName, _ := args[0].ToString()
 	if v, ok := sessionVars.Users[varName]; ok {
 		return types.NewDatum(v), nil
@@ -317,17 +287,9 @@ type builtinLockSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinLockSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	return builtinLock(args, b.ctx)
-}
-
 // The lock function will do nothing.
 // Warning: get_lock() function is parsed but ignored.
-func builtinLock(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+func (b *builtinLockSig) eval(_ []types.Datum) (d types.Datum, err error) {
 	d.SetInt64(1)
 	return d, nil
 }
@@ -344,19 +306,11 @@ type builtinReleaseLockSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinReleaseLockSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	return builtinReleaseLock(args, b.ctx)
-}
-
 // The release lock function will do nothing.
 // Warning: release_lock() function is parsed but ignored.
-func builtinReleaseLock(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+func (b *builtinReleaseLockSig) eval(_ []types.Datum) (d types.Datum, err error) {
 	d.SetInt64(1)
-	return d, nil
+	return
 }
 
 type valuesFunctionClass struct {
@@ -380,27 +334,14 @@ type builtinValuesSig struct {
 	offset int
 }
 
-func (b *builtinValuesSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinValuesSig) eval(_ []types.Datum) (types.Datum, error) {
+	values := b.ctx.GetSessionVars().CurrInsertValues
+	if values == nil {
+		return types.Datum{}, errors.New("Session current insert values is nil")
 	}
-	return BuiltinValuesFactory(b.offset)(args, b.ctx)
-}
-
-// BuiltinValuesFactory generates values builtin function.
-func BuiltinValuesFactory(offset int) BuiltinFunc {
-	return func(_ []types.Datum, ctx context.Context) (d types.Datum, err error) {
-		values := ctx.GetSessionVars().CurrInsertValues
-		if values == nil {
-			err = errors.New("Session current insert values is nil")
-			return
-		}
-		row := values.([]types.Datum)
-		if len(row) > offset {
-			return row[offset], nil
-		}
-		err = errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), offset)
-		return
+	row := values.([]types.Datum)
+	if len(row) > b.offset {
+		return row[b.offset], nil
 	}
+	return types.Datum{}, errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), b.offset)
 }
