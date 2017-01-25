@@ -73,7 +73,7 @@ func main() {
 	})
 	exitWithErr(err)
 
-	fmt.Println(rangeInfo)
+	fmt.Println(string(rangeInfo))
 
 	for i := 0; i < *limit; i++ {
 		region, leader, err := client.GetRegion(startKey)
@@ -93,6 +93,6 @@ func main() {
 		infos, err := json.MarshalIndent(r, "", "  ")
 		exitWithErr(err)
 
-		fmt.Println(infos)
+		fmt.Println(string(infos))
 	}
 }
