@@ -80,21 +80,17 @@ type builtinGreatestSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinGreatestSig) eval(row []types.Datum) (types.Datum, error) {
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
+func (b *builtinGreatestSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	return builtinGreatest(args, b.ctx)
-}
-
-// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
-func builtinGreatest(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	if args[0].IsNull() {
 		return
 	}
 	max := 0
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := b.ctx.GetSessionVars().StmtCtx
 	for i := 1; i < len(args); i++ {
 		if args[i].IsNull() {
 			return
@@ -125,21 +121,17 @@ type builtinLeastSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinLeastSig) eval(row []types.Datum) (types.Datum, error) {
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_least
+func (b *builtinLeastSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	return builtinLeast(args, b.ctx)
-}
-
-// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_least
-func builtinLeast(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	if args[0].IsNull() {
 		return
 	}
 	min := 0
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := b.ctx.GetSessionVars().StmtCtx
 	for i := 1; i < len(args); i++ {
 		if args[i].IsNull() {
 			return
@@ -170,21 +162,17 @@ type builtinIntervalSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinIntervalSig) eval(row []types.Datum) (types.Datum, error) {
+// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_interval
+func (b *builtinIntervalSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	return builtinInterval(args, b.ctx)
-}
-
-// See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_interval
-func builtinInterval(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	if args[0].IsNull() {
 		d.SetInt64(int64(-1))
 		return
 	}
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := b.ctx.GetSessionVars().StmtCtx
 
 	idx := sort.Search(len(args)-1, func(i int) bool {
 		d1, d2 := args[0], args[i+1]
@@ -225,63 +213,57 @@ type builtinCompareSig struct {
 	op opcode.Op
 }
 
-func (b *builtinCompareSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
+func (s *builtinCompareSig) eval(row []types.Datum) (d types.Datum, err error) {
+	args, err := s.evalArgs(row)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	return compareFuncFactory(b.op)(args, b.ctx)
-}
-
-func compareFuncFactory(op opcode.Op) BuiltinFunc {
-	return func(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-		sc := ctx.GetSessionVars().StmtCtx
-		var a, b = args[0], args[1]
-		if op != opcode.NullEQ {
-			a, b, err = types.CoerceDatum(sc, a, b)
-			if err != nil {
-				return d, errors.Trace(err)
-			}
-		}
-		if a.IsNull() || b.IsNull() {
-			// for <=>, if a and b are both nil, return true.
-			// if a or b is nil, return false.
-			if op == opcode.NullEQ {
-				if a.IsNull() && b.IsNull() {
-					d.SetInt64(oneI64)
-				} else {
-					d.SetInt64(zeroI64)
-				}
-			}
-			return
-		}
-
-		n, err := a.CompareDatum(sc, b)
+	sc := s.ctx.GetSessionVars().StmtCtx
+	var a, b = args[0], args[1]
+	if s.op != opcode.NullEQ {
+		a, b, err = types.CoerceDatum(sc, a, b)
 		if err != nil {
 			return d, errors.Trace(err)
 		}
-		var result bool
-		switch op {
-		case opcode.LT:
-			result = n < 0
-		case opcode.LE:
-			result = n <= 0
-		case opcode.EQ, opcode.NullEQ:
-			result = n == 0
-		case opcode.GT:
-			result = n > 0
-		case opcode.GE:
-			result = n >= 0
-		case opcode.NE:
-			result = n != 0
-		default:
-			return d, errInvalidOperation.Gen("invalid op %v in comparison operation", op)
-		}
-		if result {
-			d.SetInt64(oneI64)
-		} else {
-			d.SetInt64(zeroI64)
+	}
+	if a.IsNull() || b.IsNull() {
+		// For <=>, if a and b are both nil, return true.
+		// If a or b is nil, return false.
+		if s.op == opcode.NullEQ {
+			if a.IsNull() && b.IsNull() {
+				d.SetInt64(oneI64)
+			} else {
+				d.SetInt64(zeroI64)
+			}
 		}
 		return
 	}
+
+	n, err := a.CompareDatum(sc, b)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	var result bool
+	switch s.op {
+	case opcode.LT:
+		result = n < 0
+	case opcode.LE:
+		result = n <= 0
+	case opcode.EQ, opcode.NullEQ:
+		result = n == 0
+	case opcode.GT:
+		result = n > 0
+	case opcode.GE:
+		result = n >= 0
+	case opcode.NE:
+		result = n != 0
+	default:
+		return d, errInvalidOperation.Gen("invalid op %v in comparison operation", s.op)
+	}
+	if result {
+		d.SetInt64(oneI64)
+	} else {
+		d.SetInt64(zeroI64)
+	}
+	return
 }
