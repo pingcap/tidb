@@ -43,7 +43,7 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 		allocator: allocator,
 		visitInfo: make([]visitInfo, 0, 3),
 	}
-	p := builder.build(node, 0)
+	p := builder.build(node)
 	if builder.err != nil {
 		return nil, errors.Trace(builder.err)
 	}

@@ -76,34 +76,35 @@ type planBuilder struct {
 	inUpdateStmt bool
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
+
 	// collect the visit information for privilege check
 	visitInfo []visitInfo
 }
 
-func (b *planBuilder) build(node ast.Node, mark mysql.PrivilegeType) Plan {
+func (b *planBuilder) build(node ast.Node) Plan {
 	switch x := node.(type) {
 	case *ast.AdminStmt:
 		return b.buildAdmin(x)
 	case *ast.DeallocateStmt:
 		return &Deallocate{Name: x.Name}
 	case *ast.DeleteStmt:
-		return b.buildDelete(x, mark|mysql.DeletePriv)
+		return b.buildDelete(x)
 	case *ast.ExecuteStmt:
 		return b.buildExecute(x)
 	case *ast.ExplainStmt:
 		return b.buildExplain(x)
 	case *ast.InsertStmt:
-		return b.buildInsert(x, mark|mysql.InsertPriv)
+		return b.buildInsert(x)
 	case *ast.LoadDataStmt:
 		return b.buildLoadData(x)
 	case *ast.PrepareStmt:
 		return b.buildPrepare(x)
 	case *ast.SelectStmt:
-		return b.buildSelect(x, mark|mysql.SelectPriv)
+		return b.buildSelect(x)
 	case *ast.UnionStmt:
-		return b.buildUnion(x, mark)
+		return b.buildUnion(x)
 	case *ast.UpdateStmt:
-		return b.buildUpdate(x, mark|mysql.UpdatePriv)
+		return b.buildUpdate(x)
 	case *ast.ShowStmt:
 		return b.buildShow(x)
 	case *ast.DoStmt:
@@ -466,7 +467,7 @@ func (b *planBuilder) findDefaultValue(cols []*table.Column, name *ast.ColumnNam
 	return nil, ErrUnknownColumn.GenByArgs(name.Name.O, "field_list")
 }
 
-func (b *planBuilder) buildInsert(insert *ast.InsertStmt, mark mysql.PrivilegeType) Plan {
+func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	// Get Table
 	ts, ok := insert.Table.TableRefs.Left.(*ast.TableSource)
 	if !ok {
@@ -496,7 +497,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt, mark mysql.PrivilegeTy
 	}
 
 	b.visitInfo = append(b.visitInfo, visitInfo{
-		privilege: mark,
+		privilege: mysql.InsertPriv,
 		db:        tn.DBInfo.Name.L,
 		table:     tableInfo.Name.L,
 	})
@@ -575,7 +576,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt, mark mysql.PrivilegeTy
 	insertPlan.initIDAndContext(b.ctx)
 	insertPlan.self = insertPlan
 	if insert.Select != nil {
-		selectPlan := b.build(insert.Select, mark)
+		selectPlan := b.build(insert.Select)
 		if b.err != nil {
 			return nil
 		}
