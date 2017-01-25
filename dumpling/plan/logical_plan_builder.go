@@ -992,10 +992,17 @@ func (b *planBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition
 func (b *planBuilder) buildExists(p LogicalPlan) LogicalPlan {
 out:
 	for {
-		switch p.(type) {
+		switch plan := p.(type) {
 		// This can be removed when in exists clause,
 		// e.g. exists(select count(*) from t order by a) is equal to exists t.
-		case *Trim, *Projection, *Sort, *Aggregation:
+		case *Trim, *Projection, *Sort:
+			p = p.GetChildByIndex(0).(LogicalPlan)
+			p.SetParents()
+		case *Aggregation:
+			if len(plan.GroupByItems) == 0 {
+				p = b.buildTableDual()
+				break out
+			}
 			p = p.GetChildByIndex(0).(LogicalPlan)
 			p.SetParents()
 		default:
