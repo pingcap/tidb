@@ -26,8 +26,8 @@ func tryToGetJoinGroup(j *Join) ([]LogicalPlan, bool) {
 	if j.reordered || !j.cartesianJoin {
 		return nil, false
 	}
-	lChild := j.GetChildByIndex(0).(LogicalPlan)
-	rChild := j.GetChildByIndex(1).(LogicalPlan)
+	lChild := j.children[0].(LogicalPlan)
+	rChild := j.children[1].(LogicalPlan)
 	if nj, ok := lChild.(*Join); ok {
 		plans, valid := tryToGetJoinGroup(nj)
 		return append(plans, rChild), valid
@@ -37,7 +37,7 @@ func tryToGetJoinGroup(j *Join) ([]LogicalPlan, bool) {
 
 func findColumnIndexByGroup(groups []LogicalPlan, col *expression.Column) int {
 	for i, plan := range groups {
-		idx := plan.GetSchema().GetColumnIndex(col)
+		idx := plan.Schema().ColumnIndex(col)
 		if idx != -1 {
 			return i
 		}
@@ -188,7 +188,7 @@ func (e *joinReOrderSolver) newJoin(lChild, rChild LogicalPlan) *Join {
 	join.self = join
 	join.initIDAndContext(lChild.context())
 	join.SetChildren(lChild, rChild)
-	join.SetSchema(expression.MergeSchema(lChild.GetSchema(), rChild.GetSchema()))
+	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 	lChild.SetParents(join)
 	rChild.SetParents(join)
 	return join

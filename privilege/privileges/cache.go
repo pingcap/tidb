@@ -295,6 +295,9 @@ func (record *columnsPrivRecord) match(user, host, db, table, col string) bool {
 		patternMatch(record.Host, host)
 }
 
+// patternMatch matches "%" the same way as ".*" in regular expression, for example,
+// "10.0.%" would match "10.0.1" "10.0.1.118" ...
+// TODO: patternMatch's behaviour is actual LIKE expression, so we should reuse the code.
 func patternMatch(pattern, str string) bool {
 	for i := 0; i < len(pattern); i++ {
 		p := pattern[i]
