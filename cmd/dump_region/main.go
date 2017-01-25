@@ -47,6 +47,8 @@ func main() {
 	client, err := pd.NewClient([]string{*pdAddr})
 	exitWithErr(err)
 
+	defer client.Close()
+
 	var (
 		startKey []byte
 		endKey   []byte
