@@ -53,12 +53,10 @@ type builtinAndAndSig struct {
 }
 
 func (b *builtinAndAndSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
+	leftDatum, err := b.args[0].Eval(row, b.ctx)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
-	leftDatum := args[0]
-	rightDatum := args[1]
 	sc := b.ctx.GetSessionVars().StmtCtx
 	if !leftDatum.IsNull() {
 		var x int64
@@ -70,6 +68,10 @@ func (b *builtinAndAndSig) eval(row []types.Datum) (d types.Datum, err error) {
 			d.SetInt64(x)
 			return
 		}
+	}
+	rightDatum, err := b.args[1].Eval(row, b.ctx)
+	if err != nil {
+		return d, errors.Trace(err)
 	}
 	if !rightDatum.IsNull() {
 		var y int64
@@ -101,13 +103,11 @@ type builtinOrOrSig struct {
 }
 
 func (b *builtinOrOrSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
+	leftDatum, err := b.args[0].Eval(row, b.ctx)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	leftDatum := args[0]
-	rightDatum := args[1]
 	if !leftDatum.IsNull() {
 		var x int64
 		x, err = leftDatum.ToBool(sc)
@@ -118,6 +118,10 @@ func (b *builtinOrOrSig) eval(row []types.Datum) (d types.Datum, err error) {
 			d.SetInt64(x)
 			return
 		}
+	}
+	rightDatum, err := b.args[1].Eval(row, b.ctx)
+	if err != nil {
+		return d, errors.Trace(err)
 	}
 	if !rightDatum.IsNull() {
 		var y int64
