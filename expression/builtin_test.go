@@ -17,6 +17,7 @@ import (
 	"reflect"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
@@ -154,11 +155,16 @@ func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
 func (s *testEvaluatorSuite) TestIsNullFunc(c *C) {
 	defer testleak.AfterTest(c)()
 
-	v, err := builtinIsNull(types.MakeDatums(1), s.ctx)
+	fc := funcs[ast.IsNull]
+	f, err := fc.getFunction(datumsToConstants(types.MakeDatums(1)), s.ctx)
+	c.Assert(err, IsNil)
+	v, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(0))
 
-	v, err = builtinIsNull(types.MakeDatums(nil), s.ctx)
+	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(nil)), s.ctx)
+	c.Assert(err, IsNil)
+	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(1))
 }

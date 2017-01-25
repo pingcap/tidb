@@ -149,16 +149,12 @@ type builtinLikeSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinLikeSig) eval(row []types.Datum) (types.Datum, error) {
+// See http://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html
+func (b *builtinLikeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	return builtinLike(args, b.ctx)
-}
-
-// See http://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html
-func builtinLike(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	if args[0].IsNull() {
 		return
 	}
@@ -195,16 +191,12 @@ type builtinRegexpSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinRegexpSig) eval(row []types.Datum) (types.Datum, error) {
+// See http://dev.mysql.com/doc/refman/5.7/en/regexp.html#operator_regexp
+func (b *builtinRegexpSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	return builtinRegexp(args, b.ctx)
-}
-
-// See http://dev.mysql.com/doc/refman/5.7/en/regexp.html#operator_regexp
-func builtinRegexp(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	// TODO: We don't need to compile pattern if it has been compiled or it is static.
 	if args[0].IsNull() || args[1].IsNull() {
 		return
