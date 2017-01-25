@@ -54,7 +54,7 @@ type testPrivilegeSuite struct {
 }
 
 func (s *testPrivilegeSuite) SetUpSuit(c *C) {
-	Enable = true
+	privileges.Enable = true
 	logLevel := os.Getenv("log_level")
 	log.SetLevelByString(logLevel)
 }
