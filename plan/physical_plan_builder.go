@@ -51,7 +51,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 	}
 	ts.tp = Tbl
 	ts.allocator = p.allocator
-	ts.SetSchema(p.GetSchema())
+	ts.SetSchema(p.Schema())
 	ts.initIDAndContext(p.ctx)
 	if p.ctx.Txn() != nil {
 		ts.readOnly = p.ctx.Txn().IsReadOnly()
@@ -63,7 +63,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 	resultPlan = ts
 	table := p.tableInfo
 	sc := p.ctx.GetSessionVars().StmtCtx
-	if sel, ok := p.GetParentByIndex(0).(*Selection); ok {
+	if sel, ok := p.parents[0].(*Selection); ok {
 		newSel := *sel
 		conds := make([]expression.Expression, 0, len(sel.Conditions))
 		for _, cond := range sel.Conditions {
@@ -89,7 +89,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 	if table.PKIsHandle {
 		for i, colInfo := range ts.Columns {
 			if mysql.HasPriKeyFlag(colInfo.Flag) {
-				ts.pkCol = p.GetSchema().Columns[i]
+				ts.pkCol = p.Schema().Columns[i]
 				break
 			}
 		}
@@ -138,7 +138,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 	statsTbl := p.statisticTable
 	rowCount := uint64(statsTbl.Count)
 	sc := p.ctx.GetSessionVars().StmtCtx
-	if sel, ok := p.GetParentByIndex(0).(*Selection); ok {
+	if sel, ok := p.parents[0].(*Selection); ok {
 		newSel := *sel
 		conds := make([]expression.Expression, 0, len(sel.Conditions))
 		for _, cond := range sel.Conditions {
@@ -262,7 +262,7 @@ func (p *DataSource) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlan
 // tryToConvert2DummyScan is an optimization which checks if its parent is a selection with a constant condition
 // that evaluates to false. If it is, there is no need for a real physical scan, a dummy scan will do.
 func (p *DataSource) tryToConvert2DummyScan(prop *requiredProperty) (*physicalPlanInfo, error) {
-	sel, isSel := p.GetParentByIndex(0).(*Selection)
+	sel, isSel := p.parents[0].(*Selection)
 	if !isSel {
 		return nil, nil
 	}
@@ -310,7 +310,7 @@ func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPl
 			ByItems:   items,
 			ExecLimit: prop.limit,
 		}
-		sort.SetSchema(info.p.GetSchema())
+		sort.SetSchema(info.p.Schema())
 		info = addPlanToResponse(sort, info)
 		count := info.count
 		if prop.limit != nil {
@@ -319,7 +319,7 @@ func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPl
 		info.cost += sortCost(count)
 	} else if prop.limit != nil {
 		limit := prop.limit.Copy().(*Limit)
-		limit.SetSchema(info.p.GetSchema())
+		limit.SetSchema(info.p.Schema())
 		info = addPlanToResponse(limit, info)
 	}
 	if prop.limit != nil && prop.limit.Count < info.count {
@@ -372,7 +372,7 @@ func (p *Limit) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	if info != nil {
 		return info, nil
 	}
-	info, err = p.GetChildByIndex(0).(LogicalPlan).convert2PhysicalPlan(limitProperty(&Limit{Offset: p.Offset, Count: p.Count}))
+	info, err = p.children[0].(LogicalPlan).convert2PhysicalPlan(limitProperty(&Limit{Offset: p.Offset, Count: p.Count}))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -383,11 +383,11 @@ func (p *Limit) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 
 // convert2PhysicalPlanSemi converts the semi join to *physicalPlanInfo.
 func (p *Join) convert2PhysicalPlanSemi(prop *requiredProperty) (*physicalPlanInfo, error) {
-	lChild := p.GetChildByIndex(0).(LogicalPlan)
-	rChild := p.GetChildByIndex(1).(LogicalPlan)
+	lChild := p.children[0].(LogicalPlan)
+	rChild := p.children[1].(LogicalPlan)
 	allLeft := true
 	for _, col := range prop.props {
-		if lChild.GetSchema().GetColumnIndex(col.col) == -1 {
+		if lChild.Schema().ColumnIndex(col.col) == -1 {
 			allLeft = false
 		}
 	}
@@ -435,11 +435,11 @@ func (p *Join) convert2PhysicalPlanSemi(prop *requiredProperty) (*physicalPlanIn
 
 // convert2PhysicalPlanLeft converts the left join to *physicalPlanInfo.
 func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) (*physicalPlanInfo, error) {
-	lChild := p.GetChildByIndex(0).(LogicalPlan)
-	rChild := p.GetChildByIndex(1).(LogicalPlan)
+	lChild := p.children[0].(LogicalPlan)
+	rChild := p.children[1].(LogicalPlan)
 	allLeft := true
 	for _, col := range prop.props {
-		if lChild.GetSchema().GetColumnIndex(col.col) == -1 {
+		if lChild.Schema().ColumnIndex(col.col) == -1 {
 			allLeft = false
 		}
 	}
@@ -493,7 +493,7 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 func replaceColsInPropBySchema(prop *requiredProperty, schema *expression.Schema) *requiredProperty {
 	newProps := make([]*columnProp, 0, len(prop.props))
 	for _, p := range prop.props {
-		idx := schema.GetColumnIndex(p.col)
+		idx := schema.ColumnIndex(p.col)
 		if idx == -1 {
 			log.Errorf("Can't find column %s in schema", p.col)
 		}
@@ -508,11 +508,11 @@ func replaceColsInPropBySchema(prop *requiredProperty, schema *expression.Schema
 
 // convert2PhysicalPlanRight converts the right join to *physicalPlanInfo.
 func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool) (*physicalPlanInfo, error) {
-	lChild := p.GetChildByIndex(0).(LogicalPlan)
-	rChild := p.GetChildByIndex(1).(LogicalPlan)
+	lChild := p.children[0].(LogicalPlan)
+	rChild := p.children[1].(LogicalPlan)
 	allRight := true
 	for _, col := range prop.props {
-		if rChild.GetSchema().GetColumnIndex(col.col) == -1 {
+		if rChild.Schema().ColumnIndex(col.col) == -1 {
 			allRight = false
 		}
 	}
@@ -542,7 +542,7 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 	if !allRight {
 		rProp = &requiredProperty{}
 	} else {
-		rProp = replaceColsInPropBySchema(rProp, rChild.GetSchema())
+		rProp = replaceColsInPropBySchema(rProp, rChild.Schema())
 	}
 	var rInfo *physicalPlanInfo
 	if innerJoin {
@@ -761,14 +761,14 @@ func (p *Union) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	}
 	limit := prop.limit
 	childInfos := make([]*physicalPlanInfo, 0, len(p.children))
-	for _, child := range p.GetChildren() {
+	for _, child := range p.Children() {
 		newProp := &requiredProperty{}
 		if limit != nil {
 			newProp = convertLimitOffsetToCount(prop)
 			newProp.props = make([]*columnProp, 0, len(prop.props))
 			for _, c := range prop.props {
-				idx := p.GetSchema().GetColumnIndex(c.col)
-				newProp.props = append(newProp.props, &columnProp{col: child.GetSchema().Columns[idx], desc: c.desc})
+				idx := p.Schema().ColumnIndex(c.col)
+				newProp.props = append(newProp.props, &columnProp{col: child.Schema().Columns[idx], desc: c.desc})
 			}
 		}
 		childInfo, err := child.(LogicalPlan).convert2PhysicalPlan(newProp)
@@ -807,7 +807,7 @@ func (p *Selection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanI
 			info = infoEnforce
 		}
 	}
-	if ds, ok := p.GetChildByIndex(0).(*DataSource); !ok {
+	if ds, ok := p.children[0].(*DataSource); !ok {
 		info = p.matchProperty(prop, info)
 	} else {
 		client := p.ctx.GetClient()
@@ -822,7 +822,7 @@ func (p *Selection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanI
 }
 
 func (p *Selection) convert2PhysicalPlanPushOrder(prop *requiredProperty) (*physicalPlanInfo, error) {
-	child := p.GetChildByIndex(0).(LogicalPlan)
+	child := p.children[0].(LogicalPlan)
 	limit := prop.limit
 	info, err := child.convert2PhysicalPlan(removeLimit(prop))
 	if err != nil {
@@ -847,7 +847,7 @@ func (p *Selection) convert2PhysicalPlanPushOrder(prop *requiredProperty) (*phys
 // convert2PhysicalPlanEnforce converts a selection to *physicalPlanInfo which does not push the
 // required property to the children, but enforce the property instead.
 func (p *Selection) convert2PhysicalPlanEnforce(prop *requiredProperty) (*physicalPlanInfo, error) {
-	child := p.GetChildByIndex(0).(LogicalPlan)
+	child := p.children[0].(LogicalPlan)
 	info, err := child.convert2PhysicalPlan(&requiredProperty{})
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -876,15 +876,15 @@ func (p *Projection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlan
 		props:      make([]*columnProp, 0, len(prop.props)),
 		sortKeyLen: prop.sortKeyLen,
 		limit:      prop.limit}
-	childSchema := p.GetChildByIndex(0).GetSchema()
+	childSchema := p.children[0].Schema()
 	usedCols := make([]bool, childSchema.Len())
 	canPassSort := true
 loop:
 	for _, c := range prop.props {
-		idx := p.schema.GetColumnIndex(c.col)
+		idx := p.schema.ColumnIndex(c.col)
 		switch v := p.Exprs[idx].(type) {
 		case *expression.Column:
-			childIdx := childSchema.GetColumnIndex(v)
+			childIdx := childSchema.ColumnIndex(v)
 			if !usedCols[childIdx] {
 				usedCols[childIdx] = true
 				newProp.props = append(newProp.props, &columnProp{col: v, desc: c.desc})
@@ -900,7 +900,7 @@ loop:
 	if !canPassSort {
 		return &physicalPlanInfo{cost: math.MaxFloat64}, nil
 	}
-	info, err = p.GetChildByIndex(0).(LogicalPlan).convert2PhysicalPlan(newProp)
+	info, err = p.children[0].(LogicalPlan).convert2PhysicalPlan(newProp)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -957,11 +957,11 @@ func (p *Sort) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 	if len(selfProp.props) != 0 && len(prop.props) == 0 && prop.limit != nil {
 		selfProp.limit = prop.limit
 	}
-	sortedPlanInfo, err := p.GetChildByIndex(0).(LogicalPlan).convert2PhysicalPlan(selfProp)
+	sortedPlanInfo, err := p.children[0].(LogicalPlan).convert2PhysicalPlan(selfProp)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	unSortedPlanInfo, err := p.GetChildByIndex(0).(LogicalPlan).convert2PhysicalPlan(&requiredProperty{})
+	unSortedPlanInfo, err := p.children[0].(LogicalPlan).convert2PhysicalPlan(&requiredProperty{})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1009,8 +1009,8 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 		ap.tp = App
 		ap.allocator = p.allocator
 		ap.initIDAndContext(p.ctx)
-		ap.SetChildren(info.p.GetChildren()...)
-		ap.SetSchema(info.p.GetSchema())
+		ap.SetChildren(info.p.Children()...)
+		ap.SetSchema(info.p.Schema())
 		info.p = ap
 	default:
 		info.cost = math.MaxFloat64
@@ -1022,19 +1022,19 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 
 // addCachePlan will add a Cache plan above the plan whose father's IsCorrelated() is true but its own IsCorrelated() is false.
 func addCachePlan(p PhysicalPlan, allocator *idAllocator) []*expression.CorrelatedColumn {
-	if len(p.GetChildren()) == 0 {
+	if len(p.Children()) == 0 {
 		return nil
 	}
 	selfCorCols := p.extractCorrelatedCols()
-	newChildren := make([]Plan, 0, len(p.GetChildren()))
-	for _, child := range p.GetChildren() {
+	newChildren := make([]Plan, 0, len(p.Children()))
+	for _, child := range p.Children() {
 		childCorCols := addCachePlan(child.(PhysicalPlan), allocator)
 		if len(selfCorCols) > 0 && len(childCorCols) == 0 {
 			newChild := &Cache{}
 			newChild.tp = "Cache"
 			newChild.allocator = allocator
 			newChild.initIDAndContext(p.context())
-			newChild.SetSchema(child.GetSchema())
+			newChild.SetSchema(child.Schema())
 
 			addChild(newChild, child)
 			newChild.SetParents(p)

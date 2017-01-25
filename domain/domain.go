@@ -19,12 +19,14 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/perfschema"
+	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 )
@@ -34,6 +36,7 @@ import (
 type Domain struct {
 	store           kv.Storage
 	infoHandle      *infoschema.Handle
+	privHandle      *privileges.Handle
 	ddl             ddl.DDL
 	m               sync.Mutex
 	SchemaValidator SchemaValidator
@@ -361,6 +364,38 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 	}
 
 	return d, nil
+}
+
+// LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it
+// should be called only once in BootstrapSession.
+func (do *Domain) LoadPrivilegeLoop(ctx context.Context) error {
+	do.privHandle = &privileges.Handle{}
+	err := do.privHandle.Update(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	go func(do *Domain) {
+		ticker := time.NewTicker(5 * time.Minute)
+		for {
+			select {
+			case <-ticker.C:
+				err := do.privHandle.Update(ctx)
+				if err != nil {
+					log.Error(errors.ErrorStack(err))
+				}
+			case <-do.exit:
+				return
+			}
+		}
+	}(do)
+
+	return nil
+}
+
+// Privilege returns the MySQLPrivilege.
+func (do *Domain) Privilege() *privileges.MySQLPrivilege {
+	return do.privHandle.Get()
 }
 
 // Domain error codes.
