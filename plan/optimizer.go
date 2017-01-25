@@ -41,14 +41,13 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 		is:        is,
 		colMapper: make(map[*ast.ColumnNameExpr]int),
 		allocator: allocator,
-		visitInfo: make([]visitInfo, 0, 3),
 	}
 	p := builder.build(node)
 	if builder.err != nil {
 		return nil, errors.Trace(builder.err)
 	}
 
-	// Maybe it's better put this in Preprocess, but check privilege need table
+	// Maybe it's better to move this to Preprocess, but check privilege need table
 	// information, which is collected into visitInfo during logical plan builder.
 	if checker := privilege.GetPrivilegeChecker(ctx); checker != nil {
 		if !checkPrivilege(checker, builder.visitInfo) {

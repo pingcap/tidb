@@ -715,7 +715,7 @@ func CreateSession(store kv.Storage) (Session, error) {
 		return nil, errors.Trace(err)
 	}
 
-	// Add auth here
+	// Add auth here.
 	do, err := domap.Get(store)
 	if err != nil {
 		return nil, errors.Trace(err)

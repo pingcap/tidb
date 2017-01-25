@@ -30,7 +30,7 @@ import (
 )
 
 // Enable enables the new privilege check feature.
-var Enable bool = false
+var Enable = false
 
 // privilege error codes.
 const (
