@@ -29,6 +29,9 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+// Enable enables the new privilege check feature.
+var Enable bool = false
+
 // privilege error codes.
 const (
 	codeInvalidPrivilegeType  terror.ErrCode = 1
@@ -177,6 +180,10 @@ type UserPrivileges struct {
 
 // RequestVerification implements the Checker interface.
 func (p *UserPrivileges) RequestVerification(db, table, column string, priv mysql.PrivilegeType) bool {
+	if !Enable {
+		return true
+	}
+
 	if p.User == "" {
 		return true
 	}
