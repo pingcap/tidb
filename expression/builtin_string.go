@@ -1070,7 +1070,7 @@ type builtinBitLengthSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_bit-length
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_bit-length
 func (b *builtinBitLengthSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
@@ -1100,7 +1100,7 @@ type builtinCharSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_char
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_char
 func (b *builtinCharSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
