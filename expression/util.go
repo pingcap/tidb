@@ -41,7 +41,7 @@ func ExtractColumns(expr Expression) (cols []*Column) {
 func ColumnSubstitute(expr Expression, schema *Schema, newExprs []Expression) Expression {
 	switch v := expr.(type) {
 	case *Column:
-		id := schema.GetColumnIndex(v)
+		id := schema.ColumnIndex(v)
 		if id == -1 {
 			return v
 		}

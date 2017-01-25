@@ -35,7 +35,7 @@ func (ap *aggPruner) eliminateAggregation(p LogicalPlan) (LogicalPlan, error) {
 		schemaByGroupby := expression.NewSchema(agg.groupByCols...)
 		coveredByUniqueKey := false
 		for _, key := range agg.schema.Keys {
-			if schemaByGroupby.GetColumnsIndices(key) != nil {
+			if schemaByGroupby.ColumnsIndices(key) != nil {
 				coveredByUniqueKey = true
 				break
 			}
@@ -56,15 +56,15 @@ func (ap *aggPruner) eliminateAggregation(p LogicalPlan) (LogicalPlan, error) {
 				proj.Exprs = append(proj.Exprs, expr)
 			}
 			proj.SetSchema(agg.schema.Clone())
-			proj.SetParents(p.GetParents()...)
-			for _, child := range p.GetChildren() {
+			proj.SetParents(p.Parents()...)
+			for _, child := range p.Children() {
 				child.SetParents(proj)
 			}
 			retPlan = proj
 		}
 	}
-	newChildren := make([]Plan, 0, len(p.GetChildren()))
-	for _, child := range p.GetChildren() {
+	newChildren := make([]Plan, 0, len(p.Children()))
+	for _, child := range p.Children() {
 		newChild, err := ap.eliminateAggregation(child.(LogicalPlan))
 		if err != nil {
 			return nil, errors.Trace(err)
