@@ -52,18 +52,14 @@ type builtinAndAndSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinAndAndSig) eval(row []types.Datum) (types.Datum, error) {
+func (b *builtinAndAndSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	return builtinAndAnd(args, b.ctx)
-}
-
-func builtinAndAnd(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	leftDatum := args[0]
 	rightDatum := args[1]
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := b.ctx.GetSessionVars().StmtCtx
 	if !leftDatum.IsNull() {
 		var x int64
 		x, err = leftDatum.ToBool(sc)
@@ -104,16 +100,12 @@ type builtinOrOrSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinOrOrSig) eval(row []types.Datum) (types.Datum, error) {
+func (b *builtinOrOrSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	return builtinOrOr(args, b.ctx)
-}
-
-func builtinOrOr(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := b.ctx.GetSessionVars().StmtCtx
 	leftDatum := args[0]
 	rightDatum := args[1]
 	if !leftDatum.IsNull() {
@@ -156,21 +148,17 @@ type builtinLogicXorSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinLogicXorSig) eval(row []types.Datum) (types.Datum, error) {
+func (b *builtinLogicXorSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	return builtinLogicXor(args, b.ctx)
-}
-
-func builtinLogicXor(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	leftDatum := args[0]
 	righDatum := args[1]
 	if leftDatum.IsNull() || righDatum.IsNull() {
 		return
 	}
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := b.ctx.GetSessionVars().StmtCtx
 	x, err := leftDatum.ToBool(sc)
 	if err != nil {
 		return d, errors.Trace(err)
@@ -204,52 +192,46 @@ type builtinBitOpSig struct {
 	op opcode.Op
 }
 
-func (b *builtinBitOpSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
+func (s *builtinBitOpSig) eval(row []types.Datum) (d types.Datum, err error) {
+	args, err := s.evalArgs(row)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	return bitOpFactory(b.op)(args, b.ctx)
-}
-
-func bitOpFactory(op opcode.Op) BuiltinFunc {
-	return func(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-		sc := ctx.GetSessionVars().StmtCtx
-		a, b, err := types.CoerceDatum(sc, args[0], args[1])
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		if a.IsNull() || b.IsNull() {
-			return
-		}
-
-		x, err := a.ToInt64(sc)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-
-		y, err := b.ToInt64(sc)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-
-		// use a int64 for bit operator, return uint64
-		switch op {
-		case opcode.And:
-			d.SetUint64(uint64(x & y))
-		case opcode.Or:
-			d.SetUint64(uint64(x | y))
-		case opcode.Xor:
-			d.SetUint64(uint64(x ^ y))
-		case opcode.RightShift:
-			d.SetUint64(uint64(x) >> uint64(y))
-		case opcode.LeftShift:
-			d.SetUint64(uint64(x) << uint64(y))
-		default:
-			return d, errInvalidOperation.Gen("invalid op %v in bit operation", op)
-		}
+	sc := s.ctx.GetSessionVars().StmtCtx
+	a, b, err := types.CoerceDatum(sc, args[0], args[1])
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if a.IsNull() || b.IsNull() {
 		return
 	}
+
+	x, err := a.ToInt64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	y, err := b.ToInt64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	// use a int64 for bit operator, return uint64
+	switch s.op {
+	case opcode.And:
+		d.SetUint64(uint64(x & y))
+	case opcode.Or:
+		d.SetUint64(uint64(x | y))
+	case opcode.Xor:
+		d.SetUint64(uint64(x ^ y))
+	case opcode.RightShift:
+		d.SetUint64(uint64(x) >> uint64(y))
+	case opcode.LeftShift:
+		d.SetUint64(uint64(x) << uint64(y))
+	default:
+		return d, errInvalidOperation.Gen("invalid op %v in bit operation", s.op)
+	}
+	return
 }
 
 type isTrueOpFunctionClass struct {
@@ -268,29 +250,23 @@ type builtinIsTrueOpSig struct {
 	op opcode.Op
 }
 
-func (b *builtinIsTrueOpSig) eval(row []types.Datum) (types.Datum, error) {
+func (b *builtinIsTrueOpSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	return isTrueOpFactory(b.op)(args, b.ctx)
-}
-
-func isTrueOpFactory(op opcode.Op) BuiltinFunc {
-	return func(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-		var boolVal bool
-		if !args[0].IsNull() {
-			iVal, err := args[0].ToBool(ctx.GetSessionVars().StmtCtx)
-			if err != nil {
-				return d, errors.Trace(err)
-			}
-			if (op == opcode.IsTruth && iVal == 1) || (op == opcode.IsFalsity && iVal == 0) {
-				boolVal = true
-			}
+	var boolVal bool
+	if !args[0].IsNull() {
+		iVal, err := args[0].ToBool(b.ctx.GetSessionVars().StmtCtx)
+		if err != nil {
+			return d, errors.Trace(err)
 		}
-		d.SetInt64(boolToInt64(boolVal))
-		return
+		if (b.op == opcode.IsTruth && iVal == 1) || (b.op == opcode.IsFalsity && iVal == 0) {
+			boolVal = true
+		}
 	}
+	d.SetInt64(boolToInt64(boolVal))
+	return
 }
 
 type unaryOpFunctionClass struct {
@@ -309,106 +285,100 @@ type builtinUnaryOpSig struct {
 	op opcode.Op
 }
 
-func (b *builtinUnaryOpSig) eval(row []types.Datum) (types.Datum, error) {
+func (b *builtinUnaryOpSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	return unaryOpFactory(b.op)(args, b.ctx)
-}
-
-func unaryOpFactory(op opcode.Op) BuiltinFunc {
-	return func(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-		defer func() {
-			if er := recover(); er != nil {
-				err = errors.Errorf("%v", er)
-			}
-		}()
-		aDatum := args[0]
-		if aDatum.IsNull() {
-			return
+	defer func() {
+		if er := recover(); er != nil {
+			err = errors.Errorf("%v", er)
 		}
-		sc := ctx.GetSessionVars().StmtCtx
-		switch op {
-		case opcode.Not:
-			var n int64
-			n, err = aDatum.ToBool(sc)
-			if err != nil {
-				err = errors.Trace(err)
-			} else if n == 0 {
-				d.SetInt64(1)
-			} else {
-				d.SetInt64(0)
-			}
-		case opcode.BitNeg:
-			var n int64
-			// for bit operation, we will use int64 first, then return uint64
-			n, err = aDatum.ToInt64(sc)
-			if err != nil {
-				return d, errors.Trace(err)
-			}
-			d.SetUint64(uint64(^n))
-		case opcode.Plus:
-			switch aDatum.Kind() {
-			case types.KindInt64,
-				types.KindUint64,
-				types.KindFloat64,
-				types.KindFloat32,
-				types.KindMysqlDuration,
-				types.KindMysqlTime,
-				types.KindString,
-				types.KindMysqlDecimal,
-				types.KindBytes,
-				types.KindMysqlHex,
-				types.KindMysqlBit,
-				types.KindMysqlEnum,
-				types.KindMysqlSet:
-				d = aDatum
-			default:
-				return d, errInvalidOperation.Gen("Unsupported type %v for op.Plus", aDatum.Kind())
-			}
-		case opcode.Minus:
-			switch aDatum.Kind() {
-			case types.KindInt64:
-				d.SetInt64(-aDatum.GetInt64())
-			case types.KindUint64:
-				d.SetInt64(-int64(aDatum.GetUint64()))
-			case types.KindFloat64:
-				d.SetFloat64(-aDatum.GetFloat64())
-			case types.KindFloat32:
-				d.SetFloat32(-aDatum.GetFloat32())
-			case types.KindMysqlDuration:
-				dec := new(types.MyDecimal)
-				err = types.DecimalSub(new(types.MyDecimal), aDatum.GetMysqlDuration().ToNumber(), dec)
-				d.SetMysqlDecimal(dec)
-			case types.KindMysqlTime:
-				dec := new(types.MyDecimal)
-				err = types.DecimalSub(new(types.MyDecimal), aDatum.GetMysqlTime().ToNumber(), dec)
-				d.SetMysqlDecimal(dec)
-			case types.KindString, types.KindBytes:
-				f, err1 := types.StrToFloat(sc, aDatum.GetString())
-				err = errors.Trace(err1)
-				d.SetFloat64(-f)
-			case types.KindMysqlDecimal:
-				dec := new(types.MyDecimal)
-				err = types.DecimalSub(new(types.MyDecimal), aDatum.GetMysqlDecimal(), dec)
-				d.SetMysqlDecimal(dec)
-			case types.KindMysqlHex:
-				d.SetFloat64(-aDatum.GetMysqlHex().ToNumber())
-			case types.KindMysqlBit:
-				d.SetFloat64(-aDatum.GetMysqlBit().ToNumber())
-			case types.KindMysqlEnum:
-				d.SetFloat64(-aDatum.GetMysqlEnum().ToNumber())
-			case types.KindMysqlSet:
-				d.SetFloat64(-aDatum.GetMysqlSet().ToNumber())
-			default:
-				return d, errInvalidOperation.Gen("Unsupported type %v for op.Minus", aDatum.Kind())
-			}
-		default:
-			return d, errInvalidOperation.Gen("Unsupported op %v for unary op", op)
-		}
+	}()
+	aDatum := args[0]
+	if aDatum.IsNull() {
 		return
 	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	switch b.op {
+	case opcode.Not:
+		var n int64
+		n, err = aDatum.ToBool(sc)
+		if err != nil {
+			err = errors.Trace(err)
+		} else if n == 0 {
+			d.SetInt64(1)
+		} else {
+			d.SetInt64(0)
+		}
+	case opcode.BitNeg:
+		var n int64
+		// for bit operation, we will use int64 first, then return uint64
+		n, err = aDatum.ToInt64(sc)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		d.SetUint64(uint64(^n))
+	case opcode.Plus:
+		switch aDatum.Kind() {
+		case types.KindInt64,
+			types.KindUint64,
+			types.KindFloat64,
+			types.KindFloat32,
+			types.KindMysqlDuration,
+			types.KindMysqlTime,
+			types.KindString,
+			types.KindMysqlDecimal,
+			types.KindBytes,
+			types.KindMysqlHex,
+			types.KindMysqlBit,
+			types.KindMysqlEnum,
+			types.KindMysqlSet:
+			d = aDatum
+		default:
+			return d, errInvalidOperation.Gen("Unsupported type %v for op.Plus", aDatum.Kind())
+		}
+	case opcode.Minus:
+		switch aDatum.Kind() {
+		case types.KindInt64:
+			d.SetInt64(-aDatum.GetInt64())
+		case types.KindUint64:
+			d.SetInt64(-int64(aDatum.GetUint64()))
+		case types.KindFloat64:
+			d.SetFloat64(-aDatum.GetFloat64())
+		case types.KindFloat32:
+			d.SetFloat32(-aDatum.GetFloat32())
+		case types.KindMysqlDuration:
+			dec := new(types.MyDecimal)
+			err = types.DecimalSub(new(types.MyDecimal), aDatum.GetMysqlDuration().ToNumber(), dec)
+			d.SetMysqlDecimal(dec)
+		case types.KindMysqlTime:
+			dec := new(types.MyDecimal)
+			err = types.DecimalSub(new(types.MyDecimal), aDatum.GetMysqlTime().ToNumber(), dec)
+			d.SetMysqlDecimal(dec)
+		case types.KindString, types.KindBytes:
+			f, err1 := types.StrToFloat(sc, aDatum.GetString())
+			err = errors.Trace(err1)
+			d.SetFloat64(-f)
+		case types.KindMysqlDecimal:
+			dec := new(types.MyDecimal)
+			err = types.DecimalSub(new(types.MyDecimal), aDatum.GetMysqlDecimal(), dec)
+			d.SetMysqlDecimal(dec)
+		case types.KindMysqlHex:
+			d.SetFloat64(-aDatum.GetMysqlHex().ToNumber())
+		case types.KindMysqlBit:
+			d.SetFloat64(-aDatum.GetMysqlBit().ToNumber())
+		case types.KindMysqlEnum:
+			d.SetFloat64(-aDatum.GetMysqlEnum().ToNumber())
+		case types.KindMysqlSet:
+			d.SetFloat64(-aDatum.GetMysqlSet().ToNumber())
+		default:
+			return d, errInvalidOperation.Gen("Unsupported type %v for op.Minus", aDatum.Kind())
+		}
+	default:
+		return d, errInvalidOperation.Gen("Unsupported op %v for unary op", b.op)
+	}
+	return
 }
 
 type isNullFunctionClass struct {
@@ -423,16 +393,12 @@ type builtinIsNullSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinIsNullSig) eval(row []types.Datum) (types.Datum, error) {
+// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_isnull
+func (b *builtinIsNullSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	return builtinIsNull(args, b.ctx)
-}
-
-// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_isnull
-func builtinIsNull(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	if args[0].IsNull() {
 		d.SetInt64(1)
 	} else {
