@@ -17,6 +17,7 @@ import (
 	"reflect"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
@@ -76,43 +77,65 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 	var datums []types.Datum
 
 	datums = types.MakeDatums(2, 0)
-	v, err := builtinGreatest(datums, s.ctx)
+	greatest := funcs[ast.Greatest]
+	f, err := greatest.getFunction(datumsToConstants(datums), s.ctx)
+	c.Assert(err, IsNil)
+	v, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(2))
-	v, err = builtinLeast(datums, s.ctx)
+	least := funcs[ast.Least]
+	f, err = least.getFunction(datumsToConstants(datums), s.ctx)
+	c.Assert(err, IsNil)
+	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(0))
 
 	datums = types.MakeDatums(34.0, 3.0, 5.0, 767.0)
-	v, err = builtinGreatest(datums, s.ctx)
+	f, err = greatest.getFunction(datumsToConstants(datums), s.ctx)
+	c.Assert(err, IsNil)
+	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetFloat64(), Equals, float64(767.0))
-	v, err = builtinLeast(datums, s.ctx)
+	f, err = least.getFunction(datumsToConstants(datums), s.ctx)
+	c.Assert(err, IsNil)
+	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetFloat64(), Equals, float64(3.0))
 
 	datums = types.MakeDatums("B", "A", "C")
-	v, err = builtinGreatest(datums, s.ctx)
+	f, err = greatest.getFunction(datumsToConstants(datums), s.ctx)
+	c.Assert(err, IsNil)
+	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetString(), Equals, "C")
-	v, err = builtinLeast(datums, s.ctx)
+	f, err = least.getFunction(datumsToConstants(datums), s.ctx)
+	c.Assert(err, IsNil)
+	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetString(), Equals, "A")
 
 	// GREATEST() and LEAST() return NULL if any argument is NULL.
 	datums = types.MakeDatums(nil, 1, 2)
-	v, err = builtinGreatest(datums, s.ctx)
+	f, err = greatest.getFunction(datumsToConstants(datums), s.ctx)
+	c.Assert(err, IsNil)
+	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.IsNull(), IsTrue)
-	v, err = builtinLeast(datums, s.ctx)
+	f, err = least.getFunction(datumsToConstants(datums), s.ctx)
+	c.Assert(err, IsNil)
+	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.IsNull(), IsTrue)
 
 	datums = types.MakeDatums(1, nil, 2)
-	v, err = builtinGreatest(datums, s.ctx)
+	f, err = greatest.getFunction(datumsToConstants(datums), s.ctx)
+	c.Assert(err, IsNil)
+	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.IsNull(), IsTrue)
-	v, err = builtinLeast(datums, s.ctx)
+	f, err = least.getFunction(datumsToConstants(datums), s.ctx)
+	c.Assert(err, IsNil)
+	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.IsNull(), IsTrue)
 }
@@ -145,7 +168,10 @@ func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
 		{types.MakeDatums("9007199254740992", 9007199254740993), 1},
 		{types.MakeDatums("9007199254740992", "9007199254740993"), 1},
 	} {
-		v, err := builtinInterval(t.args, s.ctx)
+		fc := funcs[ast.Interval]
+		f, err := fc.getFunction(datumsToConstants(t.args), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v.GetInt64(), Equals, t.ret)
 	}
