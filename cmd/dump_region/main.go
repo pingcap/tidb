@@ -83,7 +83,7 @@ func main() {
 			break
 		}
 
-		startKey = region.GetStartKey()
+		startKey = region.GetEndKey()
 
 		r := &regionInfo{
 			Region: region,
