@@ -197,15 +197,17 @@ func (s *testEvaluatorSuite) TestIsNullFunc(c *C) {
 func (s *testEvaluatorSuite) TestLock(c *C) {
 	defer testleak.AfterTest(c)()
 
-	v, err := builtinLock(types.MakeDatums(1), s.ctx)
+	lock := funcs[ast.GetLock]
+	f, err := lock.getFunction(datumsToConstants(types.MakeDatums(nil, 1)), s.ctx)
+	c.Assert(err, IsNil)
+	v, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(1))
 
-	v, err = builtinLock(types.MakeDatums(nil), s.ctx)
+	releaseLock := funcs[ast.ReleaseLock]
+	f, err = releaseLock.getFunction(datumsToConstants(types.MakeDatums(1)), s.ctx)
 	c.Assert(err, IsNil)
-	c.Assert(v.GetInt64(), Equals, int64(1))
-
-	v, err = builtinReleaseLock(types.MakeDatums(1), s.ctx)
+	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(1))
 }
