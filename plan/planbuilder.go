@@ -80,30 +80,30 @@ type planBuilder struct {
 	visitInfo []visitInfo
 }
 
-func (b *planBuilder) build(node ast.Node) Plan {
+func (b *planBuilder) build(node ast.Node, mark mysql.PrivilegeType) Plan {
 	switch x := node.(type) {
 	case *ast.AdminStmt:
 		return b.buildAdmin(x)
 	case *ast.DeallocateStmt:
 		return &Deallocate{Name: x.Name}
 	case *ast.DeleteStmt:
-		return b.buildDelete(x)
+		return b.buildDelete(x, mark|mysql.DeletePriv)
 	case *ast.ExecuteStmt:
 		return b.buildExecute(x)
 	case *ast.ExplainStmt:
 		return b.buildExplain(x)
 	case *ast.InsertStmt:
-		return b.buildInsert(x)
+		return b.buildInsert(x, mark|mysql.InsertPriv)
 	case *ast.LoadDataStmt:
 		return b.buildLoadData(x)
 	case *ast.PrepareStmt:
 		return b.buildPrepare(x)
 	case *ast.SelectStmt:
-		return b.buildSelect(x)
+		return b.buildSelect(x, mark|mysql.SelectPriv)
 	case *ast.UnionStmt:
-		return b.buildUnion(x)
+		return b.buildUnion(x, mark)
 	case *ast.UpdateStmt:
-		return b.buildUpdate(x)
+		return b.buildUpdate(x, mark|mysql.UpdatePriv)
 	case *ast.ShowStmt:
 		return b.buildShow(x)
 	case *ast.DoStmt:
@@ -466,7 +466,7 @@ func (b *planBuilder) findDefaultValue(cols []*table.Column, name *ast.ColumnNam
 	return nil, ErrUnknownColumn.GenByArgs(name.Name.O, "field_list")
 }
 
-func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
+func (b *planBuilder) buildInsert(insert *ast.InsertStmt, mark mysql.PrivilegeType) Plan {
 	// Get Table
 	ts, ok := insert.Table.TableRefs.Left.(*ast.TableSource)
 	if !ok {
@@ -496,7 +496,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	}
 
 	b.visitInfo = append(b.visitInfo, visitInfo{
-		privilege: mysql.InsertPriv,
+		privilege: mark,
 		db:        tn.DBInfo.Name.L,
 		table:     tableInfo.Name.L,
 	})
@@ -575,7 +575,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	insertPlan.initIDAndContext(b.ctx)
 	insertPlan.self = insertPlan
 	if insert.Select != nil {
-		selectPlan := b.build(insert.Select)
+		selectPlan := b.build(insert.Select, mark)
 		if b.err != nil {
 			return nil
 		}

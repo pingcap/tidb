@@ -76,7 +76,7 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
-		p := builder.build(stmt)
+		p := builder.build(stmt, 0)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
 
@@ -174,7 +174,7 @@ func (s *testPlanSuite) TestPushDownOrderbyAndLimit(c *C) {
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
-		p := builder.build(stmt)
+		p := builder.build(stmt, 0)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
 
@@ -306,7 +306,7 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
-		p := builder.build(stmt)
+		p := builder.build(stmt, 0)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
 
@@ -517,7 +517,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
-		p := builder.build(stmt)
+		p := builder.build(stmt, 0)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
 		lp = decorrelate(lp)
@@ -639,7 +639,7 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 			ctx:       mockContext(),
 			is:        is,
 		}
-		p := builder.build(stmt)
+		p := builder.build(stmt, 0)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
 		lp = decorrelate(lp)
@@ -737,7 +737,7 @@ func (s *testPlanSuite) TestFilterConditionPushDown(c *C) {
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
-		p := builder.build(stmt)
+		p := builder.build(stmt, 0)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
 
@@ -793,7 +793,7 @@ func (s *testPlanSuite) TestPhysicalInitialize(c *C) {
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
-		p := builder.build(stmt)
+		p := builder.build(stmt, 0)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
 		_, lp, err = lp.PredicatePushDown(nil)

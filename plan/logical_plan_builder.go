@@ -98,19 +98,19 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 	return agg, aggIndexMap
 }
 
-func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
+func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode, mark mysql.PrivilegeType) LogicalPlan {
 	switch x := node.(type) {
 	case *ast.Join:
-		return b.buildJoin(x)
+		return b.buildJoin(x, mark)
 	case *ast.TableSource:
 		var p LogicalPlan
 		switch v := x.Source.(type) {
 		case *ast.SelectStmt:
-			p = b.buildSelect(v)
+			p = b.buildSelect(v, mark)
 		case *ast.UnionStmt:
-			p = b.buildUnion(v)
+			p = b.buildUnion(v, mark)
 		case *ast.TableName:
-			p = b.buildDataSource(v)
+			p = b.buildDataSource(v, mark)
 		default:
 			b.err = ErrUnsupportedType.Gen("unsupported table source type %T", v)
 			return nil
@@ -129,9 +129,9 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 		}
 		return p
 	case *ast.SelectStmt:
-		return b.buildSelect(x)
+		return b.buildSelect(x, mark)
 	case *ast.UnionStmt:
-		return b.buildUnion(x)
+		return b.buildUnion(x, mark)
 	default:
 		b.err = ErrUnsupportedType.Gen("unsupported table source type %T", x)
 		return nil
@@ -191,12 +191,12 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 	return
 }
 
-func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
+func (b *planBuilder) buildJoin(join *ast.Join, mark mysql.PrivilegeType) LogicalPlan {
 	if join.Right == nil {
-		return b.buildResultSetNode(join.Left)
+		return b.buildResultSetNode(join.Left, mark)
 	}
-	leftPlan := b.buildResultSetNode(join.Left)
-	rightPlan := b.buildResultSetNode(join.Right)
+	leftPlan := b.buildResultSetNode(join.Left, mark)
+	rightPlan := b.buildResultSetNode(join.Right, mark)
 	newSchema := expression.MergeSchema(leftPlan.GetSchema(), rightPlan.GetSchema())
 	joinPlan := &Join{baseLogicalPlan: newBaseLogicalPlan(Jn, b.allocator)}
 	addChild(joinPlan, leftPlan)
@@ -338,13 +338,13 @@ func (b *planBuilder) buildDistinct(child LogicalPlan, length int) LogicalPlan {
 	return agg
 }
 
-func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
+func (b *planBuilder) buildUnion(union *ast.UnionStmt, mark mysql.PrivilegeType) LogicalPlan {
 	u := &Union{baseLogicalPlan: newBaseLogicalPlan(Un, b.allocator)}
 	u.self = u
 	u.initIDAndContext(b.ctx)
 	u.children = make([]Plan, len(union.SelectList.Selects))
 	for i, sel := range union.SelectList.Selects {
-		u.children[i] = b.buildSelect(sel)
+		u.children[i] = b.buildSelect(sel, mark)
 	}
 	firstSchema := u.children[0].GetSchema().Clone()
 	for _, sel := range u.children {
@@ -805,7 +805,7 @@ func (b *planBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 	return
 }
 
-func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
+func (b *planBuilder) buildSelect(sel *ast.SelectStmt, mark mysql.PrivilegeType) LogicalPlan {
 	hasAgg := b.detectSelectAgg(sel)
 	var (
 		p                             LogicalPlan
@@ -814,7 +814,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		gbyCols                       []expression.Expression
 	)
 	if sel.From != nil {
-		p = b.buildResultSetNode(sel.From.TableRefs)
+		p = b.buildResultSetNode(sel.From.TableRefs, mark)
 	} else {
 		p = b.buildTableDual()
 	}
@@ -911,7 +911,7 @@ func (b *planBuilder) buildTableDual() LogicalPlan {
 	return dual
 }
 
-func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
+func (b *planBuilder) buildDataSource(tn *ast.TableName, mark mysql.PrivilegeType) LogicalPlan {
 	statisticTable := statscache.GetStatisticsTableCache(b.ctx, tn.TableInfo)
 	if b.err != nil {
 		return nil
@@ -937,7 +937,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	p.self = p
 	p.initIDAndContext(b.ctx)
 	b.visitInfo = append(b.visitInfo, visitInfo{
-		privilege: mysql.SelectPriv,
+		privilege: mark,
 		db:        schemaName.L,
 		table:     tableInfo.Name.L,
 	})
@@ -1069,10 +1069,10 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	return joinPlan
 }
 
-func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
+func (b *planBuilder) buildUpdate(update *ast.UpdateStmt, mark mysql.PrivilegeType) LogicalPlan {
 	b.inUpdateStmt = true
 	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: update.TableRefs, Where: update.Where, OrderBy: update.Order, Limit: update.Limit}
-	p := b.buildResultSetNode(sel.From.TableRefs)
+	p := b.buildResultSetNode(sel.From.TableRefs, mark)
 	if b.err != nil {
 		return nil
 	}
@@ -1147,16 +1147,16 @@ func (b *planBuilder) buildUpdateLists(list []*ast.Assignment, p LogicalPlan) ([
 	return newList, p
 }
 
-func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
+func (b *planBuilder) buildDelete(delete *ast.DeleteStmt, mark mysql.PrivilegeType) LogicalPlan {
 	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: delete.TableRefs, Where: delete.Where, OrderBy: delete.Order, Limit: delete.Limit}
-	p := b.buildResultSetNode(sel.From.TableRefs)
+	p := b.buildResultSetNode(sel.From.TableRefs, mark)
 	if b.err != nil {
 		return nil
 	}
 
 	if ds, ok := p.(*DataSource); ok {
 		b.visitInfo = append(b.visitInfo, visitInfo{
-			privilege: mysql.DeletePriv,
+			privilege: mark,
 			db:        ds.DBName.L,
 			table:     ds.tableInfo.Name.L,
 		})

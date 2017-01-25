@@ -137,7 +137,7 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 func (er *expressionRewriter) buildSubquery(subq *ast.SubqueryExpr) LogicalPlan {
 	outerSchema := er.schema.Clone()
 	er.b.outerSchemas = append(er.b.outerSchemas, outerSchema)
-	np := er.b.buildResultSetNode(subq.Query)
+	np := er.b.buildResultSetNode(subq.Query, 0)
 	er.b.outerSchemas = er.b.outerSchemas[0 : len(er.b.outerSchemas)-1]
 	if er.b.err != nil {
 		er.err = errors.Trace(er.b.err)

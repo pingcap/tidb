@@ -518,7 +518,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 			is:        is,
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 		}
-		p := builder.build(stmt)
+		p := builder.build(stmt, 0)
 		c.Assert(builder.err, IsNil, comment)
 		lp := p.(LogicalPlan)
 		lp = decorrelate(lp)
@@ -612,7 +612,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
-		p := builder.build(stmt)
+		p := builder.build(stmt, 0)
 		if lp, ok := p.(LogicalPlan); ok {
 			lp = decorrelate(lp)
 			lp.PruneColumns(p.GetSchema().Columns)
@@ -667,7 +667,7 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
-		p := builder.build(stmt)
+		p := builder.build(stmt, 0)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
 
@@ -761,7 +761,7 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
-		p := builder.build(stmt)
+		p := builder.build(stmt, 0)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
 
@@ -981,7 +981,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			ctx:       mockContext(),
 			is:        is,
 		}
-		p := builder.build(stmt).(LogicalPlan)
+		p := builder.build(stmt, 0).(LogicalPlan)
 		c.Assert(builder.err, IsNil)
 
 		_, p, err = p.PredicatePushDown(nil)
@@ -1118,7 +1118,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 			ctx:       mockContext(),
 			is:        is,
 		}
-		p := builder.build(stmt).(LogicalPlan)
+		p := builder.build(stmt, 0).(LogicalPlan)
 		c.Assert(builder.err, IsNil, comment)
 
 		_, p, err = p.PredicatePushDown(nil)
@@ -1305,7 +1305,7 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 			ctx:       mockContext(),
 			is:        is,
 		}
-		p := builder.build(stmt)
+		p := builder.build(stmt, 0)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, ca.exprStr))
 		var selection *Selection
 		for _, child := range p.GetChildren() {
@@ -1440,7 +1440,7 @@ func (s *testPlanSuite) TestValidate(c *C) {
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
-		builder.build(stmt)
+		builder.build(stmt, 0)
 		if ca.err == nil {
 			c.Assert(builder.err, IsNil, comment)
 		} else {
@@ -1545,7 +1545,7 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 			ctx:       mockContext(),
 			is:        is,
 		}
-		p := builder.build(stmt).(LogicalPlan)
+		p := builder.build(stmt, 0).(LogicalPlan)
 		c.Assert(builder.err, IsNil, comment)
 
 		_, p, err = p.PredicatePushDown(nil)
@@ -1574,14 +1574,12 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			sql: "delete from t where a = 1",
 			ans: []visitInfo{
 				{mysql.DeletePriv, "test", "t", ""},
-				{mysql.SelectPriv, "test", "t", ""},
 			},
 		},
 		{
 			sql: "update t set a = 7 where a = 1",
 			ans: []visitInfo{
 				{mysql.UpdatePriv, "test", "t", ""},
-				{mysql.SelectPriv, "test", "t", ""},
 			},
 		},
 		{
@@ -1648,7 +1646,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			ctx:       mockContext(),
 			is:        is,
 		}
-		builder.build(stmt)
+		builder.build(stmt, 0)
 		c.Assert(builder.err, IsNil, comment)
 
 		checkVisitInfo(c, builder.visitInfo, ca.ans, comment)
@@ -1682,9 +1680,23 @@ func (v visitInfoArray) Swap(i, j int) {
 	v[i], v[j] = v[j], v[i]
 }
 
+func unique(v []visitInfo) []visitInfo {
+	repeat := 0
+	for i := 1; i < len(v); i++ {
+		if v[i] == v[i-1] {
+			repeat++
+		} else {
+			v[i-repeat] = v[i]
+		}
+	}
+	return v[:len(v)-repeat]
+}
+
 func checkVisitInfo(c *C, v1, v2 []visitInfo, comment CommentInterface) {
 	sort.Sort(visitInfoArray(v1))
 	sort.Sort(visitInfoArray(v2))
+	v1 = unique(v1)
+	v2 = unique(v2)
 
 	c.Assert(len(v1), Equals, len(v2), comment)
 	for i := 0; i < len(v1); i++ {
