@@ -1219,16 +1219,16 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 
 func extractTableListFromPlan(p LogicalPlan) []*DataSource {
 	var ret []*DataSource
-	for p != nil {
-		switch v := p.(type) {
-		case *Join:
-			p = v.Children()[0].(LogicalPlan)
-		case *DataSource:
-			ret = append(ret, v)
-			return ret
-		default:
-			return ret
-		}
+	if p == nil {
+		return ret
+	}
+	switch v := p.(type) {
+	case *Join:
+		left := extractTableListFromPlan(v.Children()[0].(LogicalPlan))
+		right := extractTableListFromPlan(v.Children()[1].(LogicalPlan))
+		ret = append(left, right...)
+	case *DataSource:
+		ret = append(ret, v)
 	}
 	return ret
 }
