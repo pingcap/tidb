@@ -1030,7 +1030,7 @@ func (p *Analyze) prepareSimpleTableScan(cols []*model.ColumnInfo) *PhysicalTabl
 	}
 	ts.tp = Tbl
 	ts.allocator = p.allocator
-	ts.SetSchema(p.GetSchema())
+	ts.SetSchema(p.Schema())
 	ts.initIDAndContext(p.ctx)
 	ts.readOnly = true
 	ts.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
@@ -1052,7 +1052,7 @@ func (p *Analyze) prepareSimpleIndexScan(idxOffset int, cols []*model.ColumnInfo
 	is.tp = Aly
 	is.allocator = p.allocator
 	is.initIDAndContext(p.ctx)
-	is.SetSchema(p.GetSchema())
+	is.SetSchema(p.Schema())
 	is.readOnly = true
 	rb := rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
 	is.Ranges = rb.buildIndexRanges(fullRange, types.NewFieldType(mysql.TypeNull))
@@ -1097,7 +1097,7 @@ func (p *Analyze) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInf
 		ts := p.prepareSimpleTableScan(cols)
 		childInfos = append(childInfos, ts.matchProperty(prop, &physicalPlanInfo{count: 0}))
 	}
-	for _, child := range p.GetChildren() {
+	for _, child := range p.Children() {
 		childInfo, err := child.(LogicalPlan).convert2PhysicalPlan(&requiredProperty{})
 		if err != nil {
 			return nil, errors.Trace(err)

@@ -688,15 +688,15 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 		tblInfo = v.Table.TableInfo
 	}
 	e := &AnalyzeExec{
-		schema:     v.GetSchema(),
+		schema:     v.Schema(),
 		tblInfo:    tblInfo,
 		ctx:        b.ctx,
 		idxOffsets: v.IdxOffsets,
 		colOffsets: v.ColOffsets,
 		pkOffset:   v.PkOffset,
-		Srcs:       make([]Executor, len(v.GetChildren())),
+		Srcs:       make([]Executor, len(v.Children())),
 	}
-	for i, child := range v.GetChildren() {
+	for i, child := range v.Children() {
 		childExec := b.build(child)
 		e.Srcs[i] = childExec
 	}
