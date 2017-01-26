@@ -1020,6 +1020,95 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	return info, nil
 }
 
+func (p *Analyze) prepareSimpleTableScan(cols []*model.ColumnInfo) *PhysicalTableScan {
+	ts := &PhysicalTableScan{
+		Table:               p.Table.TableInfo,
+		Columns:             cols,
+		TableAsName:         &p.Table.Name,
+		DBName:              &p.Table.DBInfo.Name,
+		physicalTableSource: physicalTableSource{client: p.ctx.GetClient()},
+	}
+	ts.tp = Tbl
+	ts.allocator = p.allocator
+	ts.SetSchema(p.Schema())
+	ts.initIDAndContext(p.ctx)
+	ts.readOnly = true
+	ts.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
+	return ts
+}
+
+func (p *Analyze) prepareSimpleIndexScan(idxOffset int, cols []*model.ColumnInfo) *PhysicalIndexScan {
+	tblInfo := p.Table.TableInfo
+	is := &PhysicalIndexScan{
+		Index:               tblInfo.Indices[idxOffset],
+		Table:               tblInfo,
+		Columns:             cols,
+		TableAsName:         &p.Table.Name,
+		OutOfOrder:          false,
+		DBName:              &p.Table.DBInfo.Name,
+		physicalTableSource: physicalTableSource{client: p.ctx.GetClient()},
+		DoubleRead:          false,
+	}
+	is.tp = Aly
+	is.allocator = p.allocator
+	is.initIDAndContext(p.ctx)
+	is.SetSchema(p.Schema())
+	is.readOnly = true
+	rb := rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
+	is.Ranges = rb.buildIndexRanges(fullRange, types.NewFieldType(mysql.TypeNull))
+	return is
+}
+
+// convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
+func (p *Analyze) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
+	info, err := p.getPlanInfo(prop)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if info != nil {
+		return info, nil
+	}
+	var childInfos []*physicalPlanInfo
+	for _, idx := range p.IdxOffsets {
+		var columns []*model.ColumnInfo
+		tblInfo := p.Table.TableInfo
+		for _, idxCol := range tblInfo.Indices[idx].Columns {
+			for _, col := range tblInfo.Columns {
+				if col.Name.L == idxCol.Name.L {
+					columns = append(columns, col)
+					break
+				}
+			}
+		}
+		is := p.prepareSimpleIndexScan(idx, columns)
+		childInfos = append(childInfos, is.matchProperty(prop, &physicalPlanInfo{count: 0}))
+	}
+	// TODO: It's inefficient to do table scan two times for massive data.
+	if p.PkOffset != -1 {
+		col := p.Table.TableInfo.Columns[p.PkOffset]
+		ts := p.prepareSimpleTableScan([]*model.ColumnInfo{col})
+		childInfos = append(childInfos, ts.matchProperty(prop, &physicalPlanInfo{count: 0}))
+	}
+	if p.ColOffsets != nil {
+		cols := make([]*model.ColumnInfo, 0, len(p.ColOffsets))
+		for _, offset := range p.ColOffsets {
+			cols = append(cols, p.Table.TableInfo.Columns[offset])
+		}
+		ts := p.prepareSimpleTableScan(cols)
+		childInfos = append(childInfos, ts.matchProperty(prop, &physicalPlanInfo{count: 0}))
+	}
+	for _, child := range p.Children() {
+		childInfo, err := child.(LogicalPlan).convert2PhysicalPlan(&requiredProperty{})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		childInfos = append(childInfos, childInfo)
+	}
+	info = p.matchProperty(prop, childInfos...)
+	p.storePlanInfo(prop, info)
+	return info, nil
+}
+
 // addCachePlan will add a Cache plan above the plan whose father's IsCorrelated() is true but its own IsCorrelated() is false.
 func addCachePlan(p PhysicalPlan, allocator *idAllocator) []*expression.CorrelatedColumn {
 	if len(p.Children()) == 0 {

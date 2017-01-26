@@ -115,7 +115,9 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return b.buildDo(x)
 	case *ast.SetStmt:
 		return b.buildSet(x)
-	case *ast.AnalyzeTableStmt, *ast.BinlogStmt, *ast.FlushTableStmt, *ast.UseStmt,
+	case *ast.AnalyzeTableStmt:
+		return b.buildAnalyze(x)
+	case *ast.BinlogStmt, *ast.FlushTableStmt, *ast.UseStmt,
 		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt:
 		return b.buildSimple(node.(ast.StmtNode))
@@ -335,6 +337,73 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 	default:
 		b.err = ErrUnsupportedType.Gen("Unsupported type %T", as)
 	}
+	return p
+}
+
+// getColumnOffsets returns the offsets of index columns, normal columns and primary key with integer type.
+func getColumnOffsets(tn *ast.TableName) (indexOffsets []int, columnOffsets []int, pkOffset int) {
+	tbl := tn.TableInfo
+	// idxNames contains all the normal columns that can be analyzed more effectively, because those columns occur as index
+	// columns or primary key columns with integer type.
+	var idxNames []string
+	pkOffset = -1
+	if tbl.PKIsHandle {
+		for i, col := range tbl.Columns {
+			if mysql.HasPriKeyFlag(col.Flag) {
+				idxNames = append(idxNames, col.Name.L)
+				pkOffset = i
+			}
+		}
+	}
+	indices, _ := availableIndices(tn.IndexHints, tn.TableInfo)
+	for _, index := range indices {
+		for i, idx := range tn.TableInfo.Indices {
+			if index.Name.L == idx.Name.L {
+				indexOffsets = append(indexOffsets, i)
+				break
+			}
+		}
+		if len(index.Columns) == 1 {
+			idxNames = append(idxNames, index.Columns[0].Name.L)
+		}
+	}
+	for i, col := range tbl.Columns {
+		isIndexCol := false
+		for _, idx := range idxNames {
+			if idx == col.Name.L {
+				isIndexCol = true
+				break
+			}
+		}
+		if !isIndexCol {
+			columnOffsets = append(columnOffsets, i)
+		}
+	}
+	return
+}
+
+func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) LogicalPlan {
+	p := &Analyze{
+		baseLogicalPlan: newBaseLogicalPlan(Aly, b.allocator),
+		PkOffset:        -1,
+	}
+	for _, tbl := range as.TableNames {
+		idxOffsets, colOffsets, pkOffset := getColumnOffsets(tbl)
+		result := &Analyze{
+			baseLogicalPlan: newBaseLogicalPlan(Aly, b.allocator),
+			Table:           tbl,
+			IdxOffsets:      idxOffsets,
+			ColOffsets:      colOffsets,
+			PkOffset:        pkOffset,
+		}
+		result.self = result
+		result.initIDAndContext(b.ctx)
+		result.SetSchema(expression.TableInfo2Schema(tbl.TableInfo))
+		addChild(p, result)
+	}
+	p.self = p
+	p.initIDAndContext(b.ctx)
+	p.SetSchema(&expression.Schema{})
 	return p
 }
 
