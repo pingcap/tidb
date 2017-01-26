@@ -94,15 +94,15 @@ func (s *Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 
 // RetrieveColumn retrieves column in expression from the columns in schema.
 func (s *Schema) RetrieveColumn(col *Column) *Column {
-	index := s.GetColumnIndex(col)
+	index := s.ColumnIndex(col)
 	if index != -1 {
 		return s.Columns[index]
 	}
 	return nil
 }
 
-// GetColumnIndex finds the index for a column.
-func (s *Schema) GetColumnIndex(col *Column) int {
+// ColumnIndex finds the index for a column.
+func (s *Schema) ColumnIndex(col *Column) int {
 	for i, c := range s.Columns {
 		if c.FromID == col.FromID && c.Position == col.Position {
 			return i
@@ -126,12 +126,12 @@ func (s *Schema) SetUniqueKeys(keys []KeyInfo) {
 	s.Keys = keys
 }
 
-// GetColumnsIndices will return a slice which contains the position of each column in schema.
+// ColumnsIndices will return a slice which contains the position of each column in schema.
 // If there is one column that doesn't match, nil will be returned.
-func (s *Schema) GetColumnsIndices(cols []*Column) (ret []int) {
+func (s *Schema) ColumnsIndices(cols []*Column) (ret []int) {
 	ret = make([]int, 0, len(cols))
 	for _, col := range cols {
-		pos := s.GetColumnIndex(col)
+		pos := s.ColumnIndex(col)
 		if pos != -1 {
 			ret = append(ret, pos)
 		} else {

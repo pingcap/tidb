@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -22,11 +23,11 @@ import (
 // e.g. If the correlated columns from inner plan are [t1.a, t2.a, t3.a] and outer plan's schema is [t2.a, t2.b, t2.c],
 // only [t2.a] is treated as this apply's correlated column.
 func (a *Apply) extractCorColumnsBySchema() {
-	schema := a.children[0].GetSchema()
+	schema := a.children[0].Schema()
 	corCols := a.children[1].(LogicalPlan).extractCorrelatedCols()
 	resultCorCols := make([]*expression.CorrelatedColumn, schema.Len())
 	for _, corCol := range corCols {
-		idx := schema.GetColumnIndex(&corCol.Column)
+		idx := schema.ColumnIndex(&corCol.Column)
 		if idx != -1 {
 			if resultCorCols[idx] == nil {
 				resultCorCols[idx] = &expression.CorrelatedColumn{
@@ -48,8 +49,11 @@ func (a *Apply) extractCorColumnsBySchema() {
 	a.corCols = resultCorCols[:length]
 }
 
-// decorrelate function tries to convert apply plan to join plan.
-func decorrelate(p LogicalPlan) LogicalPlan {
+// decorrelateSolver tries to convert apply plan to join plan.
+type decorrelateSolver struct{}
+
+// optimize implements logicalOptRule interface.
+func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllocator) (LogicalPlan, error) {
 	if apply, ok := p.(*Apply); ok {
 		outerPlan := apply.children[0]
 		innerPlan := apply.children[1].(LogicalPlan)
@@ -65,21 +69,22 @@ func decorrelate(p LogicalPlan) LogicalPlan {
 			// Notice that no matter what kind of join is, it's always right.
 			newConds := make([]expression.Expression, 0, len(sel.Conditions))
 			for _, cond := range sel.Conditions {
-				newConds = append(newConds, cond.Decorrelate(outerPlan.GetSchema()))
+				newConds = append(newConds, cond.Decorrelate(outerPlan.Schema()))
 			}
 			apply.attachOnConds(newConds)
 			innerPlan = sel.children[0].(LogicalPlan)
 			apply.SetChildren(outerPlan, innerPlan)
 			innerPlan.SetParents(apply)
-			return decorrelate(p)
+			return s.optimize(p, nil, nil)
 		}
 		// TODO: Deal with aggregation and projection.
 	}
-	newChildren := make([]Plan, 0, len(p.GetChildren()))
-	for _, child := range p.GetChildren() {
-		newChildren = append(newChildren, decorrelate(child.(LogicalPlan)))
+	newChildren := make([]Plan, 0, len(p.Children()))
+	for _, child := range p.Children() {
+		np, _ := s.optimize(child.(LogicalPlan), nil, nil)
+		newChildren = append(newChildren, np)
 		child.SetParents(p)
 	}
 	p.SetChildren(newChildren...)
-	return p
+	return p, nil
 }

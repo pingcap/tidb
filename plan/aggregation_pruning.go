@@ -26,6 +26,12 @@ type aggPruner struct {
 	ctx       context.Context
 }
 
+func (ap *aggPruner) optimize(lp LogicalPlan, ctx context.Context, allocator *idAllocator) (LogicalPlan, error) {
+	ap.ctx = ctx
+	ap.allocator = allocator
+	return ap.eliminateAggregation(lp)
+}
+
 // eliminateAggregation will eliminate aggregation grouped by unique key.
 // e.g. select min(b) from t group by a. If a is a unique key, then this sql is equal to `select b from t group by a`.
 // For count(expr), sum(expr), avg(expr), count(distinct expr, [expr...]) we may need to rewrite the expr. Details are shown below.
@@ -35,7 +41,7 @@ func (ap *aggPruner) eliminateAggregation(p LogicalPlan) (LogicalPlan, error) {
 		schemaByGroupby := expression.NewSchema(agg.groupByCols...)
 		coveredByUniqueKey := false
 		for _, key := range agg.schema.Keys {
-			if schemaByGroupby.GetColumnsIndices(key) != nil {
+			if schemaByGroupby.ColumnsIndices(key) != nil {
 				coveredByUniqueKey = true
 				break
 			}
@@ -56,15 +62,15 @@ func (ap *aggPruner) eliminateAggregation(p LogicalPlan) (LogicalPlan, error) {
 				proj.Exprs = append(proj.Exprs, expr)
 			}
 			proj.SetSchema(agg.schema.Clone())
-			proj.SetParents(p.GetParents()...)
-			for _, child := range p.GetChildren() {
+			proj.SetParents(p.Parents()...)
+			for _, child := range p.Children() {
 				child.SetParents(proj)
 			}
 			retPlan = proj
 		}
 	}
-	newChildren := make([]Plan, 0, len(p.GetChildren()))
-	for _, child := range p.GetChildren() {
+	newChildren := make([]Plan, 0, len(p.Children()))
+	for _, child := range p.Children() {
 		newChild, err := ap.eliminateAggregation(child.(LogicalPlan))
 		if err != nil {
 			return nil, errors.Trace(err)

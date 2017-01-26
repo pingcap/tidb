@@ -130,7 +130,7 @@ type Execute struct {
 
 	Name      string
 	UsingVars []expression.Expression
-	ID        uint32
+	ExecID    uint32
 }
 
 // Deallocate represents deallocate plan.
@@ -184,6 +184,16 @@ type Insert struct {
 	IsReplace bool
 	Priority  int
 	Ignore    bool
+}
+
+// Analyze represents an analyze plan
+type Analyze struct {
+	baseLogicalPlan
+
+	Table      *ast.TableName
+	IdxOffsets []int
+	ColOffsets []int
+	PkOffset   int // Used only when pk is handle.
 }
 
 // LoadData represents a loaddata plan.

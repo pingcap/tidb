@@ -224,7 +224,7 @@ func (p *Union) matchProperty(_ *requiredProperty, childPlanInfo ...*physicalPla
 // matchProperty implements PhysicalPlan matchProperty interface.
 func (p *Selection) matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
 	if p.onTable {
-		res := p.GetChildByIndex(0).(PhysicalPlan).matchProperty(prop, childPlanInfo...)
+		res := p.children[0].(PhysicalPlan).matchProperty(prop, childPlanInfo...)
 		sel := *p
 		sel.SetChildren(res.p)
 		res.p = &sel
@@ -240,7 +240,7 @@ func (p *Selection) matchProperty(prop *requiredProperty, childPlanInfo ...*phys
 // matchProperty implements PhysicalPlan matchProperty interface.
 func (p *PhysicalUnionScan) matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
 	limit := prop.limit
-	res := p.GetChildByIndex(0).(PhysicalPlan).matchProperty(convertLimitOffsetToCount(prop), childPlanInfo...)
+	res := p.children[0].(PhysicalPlan).matchProperty(convertLimitOffsetToCount(prop), childPlanInfo...)
 	np := *p
 	np.SetChildren(res.p)
 	res.p = &np
@@ -255,6 +255,17 @@ func (p *Projection) matchProperty(_ *requiredProperty, childPlanInfo ...*physic
 	np := *p
 	np.SetChildren(childPlanInfo[0].p)
 	return &physicalPlanInfo{p: &np, cost: childPlanInfo[0].cost}
+}
+
+// matchProperty implements PhysicalPlan matchProperty interface.
+func (p *Analyze) matchProperty(_ *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
+	children := make([]Plan, 0, len(childPlanInfo))
+	for _, res := range childPlanInfo {
+		children = append(children, res.p)
+	}
+	np := *p
+	np.SetChildren(children...)
+	return &physicalPlanInfo{p: &np}
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
