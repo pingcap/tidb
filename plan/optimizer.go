@@ -27,7 +27,7 @@ import (
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
 var AllowCartesianProduct = true
 
-// EnableStatistic means tidb will use the statistic information to do cost-based information.
+// EnableStatistic means whether tidb uses the statistic information to do cost-based optimization.
 var EnableStatistic = false
 
 const (
