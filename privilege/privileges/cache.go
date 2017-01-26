@@ -409,7 +409,7 @@ func (h *Handle) Get() *MySQLPrivilege {
 	return h.priv.Load().(*MySQLPrivilege)
 }
 
-// Update the MySQLPrivilege.
+// Update loads all the privilege info from kv storage.
 func (h *Handle) Update() error {
 	var priv MySQLPrivilege
 	err := priv.LoadAll(h.ctx)
