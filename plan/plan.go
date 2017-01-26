@@ -68,6 +68,8 @@ const (
 	Up = "Update"
 	// Del is the type of Delete.
 	Del = "Delete"
+	// Aly is the type of Analyze.
+	Aly = "Analyze"
 )
 
 // Plan is the description of an execution flow.

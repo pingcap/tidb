@@ -40,7 +40,7 @@ func (s *testStatSuite) TestStat(c *C) {
 	defer store.Close()
 
 	d := newDDL(store, nil, nil, testLease)
-	defer d.close()
+	defer d.Stop()
 
 	time.Sleep(testLease)
 

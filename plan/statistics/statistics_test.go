@@ -165,8 +165,8 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 		NumBuckets:    bucketCount,
 		ColumnSamples: [][]types.Datum{s.samples},
 		ColOffsets:    []int{0},
-		IndRecords:    []ast.RecordSet{s.rc},
-		IndOffsets:    []int{0},
+		IdxRecords:    []ast.RecordSet{s.rc},
+		IdxOffsets:    []int{0},
 		PkRecords:     ast.RecordSet(s.pk),
 		PkOffset:      2,
 	}
