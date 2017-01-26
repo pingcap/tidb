@@ -913,9 +913,11 @@ func (b *planBuilder) buildTableDual() LogicalPlan {
 }
 
 func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
-	statisticTable := statistics.PseudoTable(tn.TableInfo)
+	var statisticTable *statistics.Table
 	if EnableStatistic {
 		statisticTable = statscache.GetStatisticsTableCache(b.ctx, tn.TableInfo)
+	} else {
+		statisticTable = statistics.PseudoTable(tn.TableInfo)
 	}
 	if b.err != nil {
 		return nil
