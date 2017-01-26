@@ -231,7 +231,13 @@ func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 		Name:       model.NewCIStr("t"),
 		PKIsHandle: true,
 	}
-	is := infoschema.MockInfoSchema([]*model.TableInfo{table})
+	table1 := &model.TableInfo{
+		Columns:    []*model.ColumnInfo{pkColumn, col0, col1, col2, col3, colStr1, colStr2, colStr3, col4, col5},
+		Indices:    indices,
+		Name:       model.NewCIStr("t1"),
+		PKIsHandle: true,
+	}
+	is := infoschema.MockInfoSchema([]*model.TableInfo{table, table1})
 	ctx := mockContext()
 	err := MockResolveName(node, is, "test", ctx)
 	if err != nil {
@@ -1572,6 +1578,17 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 				{mysql.SelectPriv, "test", "t", ""},
 			},
 		},
+		/* TODO: fix this
+		{
+			sql: "delete t, t1 from t inner join t1 where t.a=t1.a;",
+			ans: []visitInfo{
+				{mysql.DeletePriv, "test", "t", ""},
+				{mysql.SelectPriv, "test", "t", ""},
+				{mysql.DeletePriv, "test", "t1", ""},
+				{mysql.SelectPriv, "test", "t1", ""},
+			},
+		},
+		*/
 		{
 			sql: "update t set a = 7 where a = 1",
 			ans: []visitInfo{
