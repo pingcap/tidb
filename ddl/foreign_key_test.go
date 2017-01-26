@@ -111,6 +111,7 @@ func getForeignKey(t table.Table, name string) *model.FKInfo {
 func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	defer testleak.AfterTest(c)()
 	d := newDDL(s.store, nil, nil, testLease)
+	defer d.Stop()
 	s.d = d
 	s.dbInfo = testSchemaInfo(c, d, "test_foreign")
 	ctx := testNewContext(d)
@@ -151,7 +152,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	}
 	d.setHook(tc)
 
-	d.close()
+	d.Stop()
 	d.start()
 
 	job := s.testCreateForeignKey(c, tblInfo, "c1_fk", []string{"c1"}, "t2", []string{"c1"}, ast.ReferOptionCascade, ast.ReferOptionSetNull)
@@ -189,7 +190,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 		checkOK = true
 	}
 
-	d.close()
+	d.Stop()
 	d.start()
 
 	job = testDropForeignKey(c, ctx, d, s.dbInfo, tblInfo, "c1_fk")
@@ -207,7 +208,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	tc.onJobUpdated = func(job *model.Job) {
 	}
 
-	d.close()
+	d.Stop()
 	d.start()
 
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
@@ -215,6 +216,4 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 
 	err = ctx.Txn().Commit()
 	c.Assert(err, IsNil)
-
-	d.close()
 }
