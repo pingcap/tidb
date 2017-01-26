@@ -27,6 +27,29 @@ import (
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
 var AllowCartesianProduct = true
 
+const (
+	flagDecorrelate uint64 = 1 << iota
+	flagPredicatePushDown
+	flagPrunColumns
+	flagBuildKeyInfo
+	flagEliminateAgg
+	flagAggPushDown
+)
+
+var optRuleList = []logicalOptRule{
+	&decorrelateSolver{},
+	&ppdSolver{},
+	&columnPruner{},
+	&buildKeySolver{},
+	&aggPruner{},
+	&aggPushDownSolver{},
+}
+
+// logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
+type logicalOptRule interface {
+	optimize(LogicalPlan, context.Context, *idAllocator) (LogicalPlan, error)
+}
+
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
 func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
@@ -45,37 +68,41 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 		return nil, errors.Trace(builder.err)
 	}
 	if logic, ok := p.(LogicalPlan); ok {
-		return doOptimize(logic, ctx, allocator)
+		return doOptimize(builder.optFlag, logic, ctx, allocator)
 	}
 	return p, nil
 }
 
-func doOptimize(logic LogicalPlan, ctx context.Context, allocator *idAllocator) (PhysicalPlan, error) {
-	var err error
-	logic = decorrelate(logic)
-	_, logic, err = logic.PredicatePushDown(nil)
+func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context, allocator *idAllocator) (PhysicalPlan, error) {
+	logic, err := logicalOptimize(flag, logic, ctx, allocator)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	logic.buildKeyInfo()
-	ap := &aggPruner{
-		ctx:       ctx,
-		allocator: allocator,
-	}
-	logic, err = ap.eliminateAggregation(logic)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	solver := &aggPushDownSolver{
-		ctx:   ctx,
-		alloc: allocator,
-	}
-	solver.aggPushDown(logic)
-	logic.PruneColumns(logic.Schema().Columns)
-	logic.ResolveIndicesAndCorCols()
 	if !AllowCartesianProduct && existsCartesianProduct(logic) {
 		return nil, errors.Trace(ErrCartesianProductUnsupported)
 	}
+	logic.ResolveIndicesAndCorCols()
+	return physicalOptimize(logic, allocator)
+}
+
+func logicalOptimize(flag uint64, logic LogicalPlan, ctx context.Context, alloc *idAllocator) (LogicalPlan, error) {
+	var err error
+	for i, rule := range optRuleList {
+		// The order of flags is same as the order of optRule in the list.
+		// We use a bitmask to record which opt rules should be used. If the i-th bit is 1, it means we should
+		// apply i-th optimizing rule.
+		if flag&(1<<uint(i)) == 0 {
+			continue
+		}
+		logic, err = rule.optimize(logic, ctx, alloc)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return logic, errors.Trace(err)
+}
+
+func physicalOptimize(logic LogicalPlan, allocator *idAllocator) (PhysicalPlan, error) {
 	info, err := logic.convert2PhysicalPlan(&requiredProperty{})
 	if err != nil {
 		return nil, errors.Trace(err)

@@ -16,8 +16,17 @@ package plan
 import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 )
+
+type columnPruner struct {
+}
+
+func (s *columnPruner) optimize(lp LogicalPlan, _ context.Context, _ *idAllocator) (LogicalPlan, error) {
+	lp.PruneColumns(lp.Schema().Columns)
+	return lp, nil
+}
 
 func getUsedList(usedCols []*expression.Column, schema *expression.Schema) []bool {
 	used := make([]bool, schema.Len())
