@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/testkit"
@@ -65,6 +66,8 @@ func (s *testSuite) SetUpSuite(c *C) {
 		c.Assert(err, IsNil)
 		s.store = store
 	}
+	err := tidb.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
 	logLevel := os.Getenv("log_level")
 	log.SetLevelByString(logLevel)
 	executor.BaseLookupTableTaskSize = 2
@@ -682,6 +685,9 @@ func (s *testSuite) TestIndexScan(c *C) {
 	result.Check(testkit.Rows("1 1 1", "3 1 2"))
 	result = tk.MustQuery("SELECT * FROM tab1 WHERE pk <= 4 AND a = 1 AND b = 2")
 	result.Check(testkit.Rows("3 1 2"))
+	tk.MustExec("CREATE INDEX idx_tab1_1 on tab1 (b, a)")
+	result = tk.MustQuery("SELECT pk FROM tab1 WHERE b > 1")
+	result.Check(testkit.Rows("3", "4"))
 }
 
 func (s *testSuite) TestSubquerySameTable(c *C) {
@@ -1101,9 +1107,11 @@ func (s *testSuite) TestSQLMode(c *C) {
 }
 
 func (s *testSuite) TestSubquery(c *C) {
+	plan.JoinConcurrency = 1
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
+		plan.JoinConcurrency = 5
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1171,6 +1179,11 @@ func (s *testSuite) TestSubquery(c *C) {
 	tk.MustExec("insert into t values(1, 1), (2, 2), (3, 3)")
 	result = tk.MustQuery("select * from t where v=(select min(t1.v) from t t1, t t2, t t3 where t1.id=t2.id and t2.id=t3.id and t1.id=t.id)")
 	result.Check(testkit.Rows("1 1", "2 2", "3 3"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(c int)")
+	result = tk.MustQuery("select exists(select count(*) from t)")
+	result.Check(testkit.Rows("1"))
 }
 
 func (s *testSuite) TestNewTableDual(c *C) {
@@ -1344,4 +1357,51 @@ func (s *testSuite) TestHistoryRead(c *C) {
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2", "4"))
 	tk.MustExec("set @@tidb_snapshot = ''")
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2 <nil>", "4 <nil>", "8 8", "9 9"))
+}
+
+func (s *testSuite) TestJoinLeak(c *C) {
+	savedConcurrency := plan.JoinConcurrency
+	plan.JoinConcurrency = 1
+	defer func() {
+		plan.JoinConcurrency = savedConcurrency
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (d int)")
+	tk.MustExec("begin")
+	for i := 0; i < 1002; i++ {
+		tk.MustExec("insert t values (1)")
+	}
+	tk.MustExec("commit")
+	rs, err := tk.Se.Execute("select * from t t1 left join (select 1) t2 on 1")
+	c.Assert(err, IsNil)
+	result := rs[0]
+	result.Next()
+	time.Sleep(100 * time.Millisecond)
+	result.Close()
+}
+
+func (s *testSuite) TestAggPrune(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, b varchar(50), c int)")
+	tk.MustExec("insert into t values(1, '1ff', NULL), (2, '234.02', 1)")
+	tk.MustQuery("select id, sum(b) from t group by id").Check(testkit.Rows("1 1", "2 234.02"))
+	tk.MustQuery("select id, count(c) from t group by id").Check(testkit.Rows("1 0", "2 1"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, b float, c float)")
+	tk.MustExec("insert into t values(1, 1, 3), (2, 1, 6)")
+	tk.MustQuery("select sum(b/c) from t group by id").Check(testkit.Rows("0.3333333333333333", "0.16666666666666666"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, b float, c float, d float)")
+	tk.MustExec("insert into t values(1, 1, 3, NULL), (2, 1, NULL, 6), (3, NULL, 1, 2), (4, NULL, NULL, 1), (5, NULL, 2, NULL), (6, 3, NULL, NULL), (7, NULL, NULL, NULL), (8, 1, 2 ,3)")
+	tk.MustQuery("select count(distinct b, c, d) from t group by id").Check(testkit.Rows("0", "0", "0", "0", "0", "0", "0", "1"))
 }

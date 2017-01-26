@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -39,6 +40,13 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 			aggFuns:   "[count(1)]",
 			aggFields: "[blob bigint(21)]",
 			gbyItems:  "[]",
+		},
+		{
+			sql:       "select distinct a,b from t",
+			best:      "Table(t)->HashAgg",
+			aggFuns:   "[firstrow(test.t.a) firstrow(test.t.b)]",
+			aggFields: "[blob int int]",
+			gbyItems:  "[test.t.a test.t.b]",
 		},
 		{
 			sql:       "select sum(b) from t group by c",
@@ -75,7 +83,9 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		lp.PruneColumns(lp.GetSchema().Columns)
+		lp.PruneColumns(lp.Schema().Columns)
+		solver := &aggPushDownSolver{builder.allocator, builder.ctx}
+		solver.aggPushDown(lp)
 		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
@@ -95,7 +105,7 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 				c.Assert(fmt.Sprintf("%s", ts.AggFields), Equals, ca.aggFields, Commentf("for %s", ca.sql))
 				break
 			}
-			p = p.GetChildByIndex(0)
+			p = p.Children()[0]
 		}
 	}
 }
@@ -140,13 +150,13 @@ func (s *testPlanSuite) TestPushDownOrderbyAndLimit(c *C) {
 		},
 		{
 			sql:          "select * from t where c > 0 order by d limit 1",
-			best:         "Index(t.c_d_e)[(0,+inf]]->Sort + Limit(1) + Offset(0)->Projection",
+			best:         "Index(t.c_d_e)[(0 +inf,+inf +inf]]->Sort + Limit(1) + Offset(0)->Projection",
 			orderByItmes: "[(test.t.d, false)]",
 			limit:        "1",
 		},
 		{
 			sql:          "select * from t a where a.c < 10000 and a.d in (1000, a.e) order by a.b limit 2",
-			best:         "Index(t.c_d_e)[[-inf,10000)]->Selection->Sort + Limit(2) + Offset(0)->Projection",
+			best:         "Index(t.c_d_e)[[-inf <nil>,10000 <nil>)]->Selection->Sort + Limit(2) + Offset(0)->Projection",
 			orderByItmes: "[]",
 			limit:        "nil",
 		},
@@ -171,7 +181,7 @@ func (s *testPlanSuite) TestPushDownOrderbyAndLimit(c *C) {
 
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		lp.PruneColumns(lp.GetSchema().Columns)
+		lp.PruneColumns(lp.Schema().Columns)
 		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
@@ -196,7 +206,7 @@ func (s *testPlanSuite) TestPushDownOrderbyAndLimit(c *C) {
 				c.Assert(limitStr, Equals, ca.limit, Commentf("for %s", ca.sql))
 				break
 			}
-			p = p.GetChildByIndex(0)
+			p = p.Children()[0]
 		}
 	}
 }
@@ -303,7 +313,7 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		lp.PruneColumns(lp.GetSchema().Columns)
+		lp.PruneColumns(lp.Schema().Columns)
 		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
@@ -318,10 +328,10 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 			}
 			if ts != nil {
 				conditions := append(ts.indexFilterConditions, ts.tableFilterConditions...)
-				c.Assert(fmt.Sprintf("%s", expression.ComposeCNFCondition(conditions).String()), Equals, ca.cond, Commentf("for %s", sql))
+				c.Assert(fmt.Sprintf("%s", expression.ComposeCNFCondition(mock.NewContext(), conditions...).String()), Equals, ca.cond, Commentf("for %s", sql))
 				break
 			}
-			p = p.GetChildByIndex(0)
+			p = p.Children()[0]
 		}
 	}
 }
@@ -346,7 +356,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from t where (t.c > 0 and t.c < 1) or (t.c > 2 and t.c < 3) or (t.c > 4 and t.c < 5) or (t.c > 6 and t.c < 7) or (t.c > 9 and t.c < 10)",
-			best: "Index(t.c_d_e)[(0,1) (2,3) (4,5) (6,7) (9,10)]",
+			best: "Index(t.c_d_e)[(0 +inf,1 <nil>) (2 +inf,3 <nil>) (4 +inf,5 <nil>) (6 +inf,7 <nil>) (9 +inf,10 <nil>)]",
 		},
 		{
 			sql:  "select sum(t.a) from t where t.c in (1,2) and t.d in (1,3) group by t.d order by t.d",
@@ -370,7 +380,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from t t1 ignore index(e) where c < 0",
-			best: "Index(t.c_d_e)[[-inf,0)]",
+			best: "Index(t.c_d_e)[[-inf <nil>,0 <nil>)]",
 		},
 		{
 			sql:  "select * from t t1 ignore index(c_d_e) where c < 0",
@@ -447,7 +457,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from t a where 1 = a.c and a.d > 1 order by a.d desc limit 2",
-			best: "Index(t.c_d_e)[(1 1,1 +inf]]",
+			best: "Index(t.c_d_e)[(1 1 +inf,1 +inf +inf]]",
 		},
 		{
 			sql:  "select * from t a where a.c < 10000 order by a.a limit 2",
@@ -455,7 +465,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from t a where a.c < 10000 and a.d in (1000, a.e) order by a.a limit 2",
-			best: "Index(t.c_d_e)[[-inf,10000)]->Selection->Sort + Limit(2) + Offset(0)",
+			best: "Index(t.c_d_e)[[-inf <nil>,10000 <nil>)]->Selection->Sort + Limit(2) + Offset(0)",
 		},
 		{
 			sql:  "select * from (select * from t) a left outer join (select * from t) b on 1 order by a.c",
@@ -483,7 +493,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from (select t.a from t union select t.d from t where t.c = 1 union select t.c from t) k order by a limit 1",
-			best: "UnionAll{Table(t)->Index(t.c_d_e)[[1,1]]->Projection->Table(t)}->Distinct->Sort + Limit(1) + Offset(0)",
+			best: "UnionAll{Table(t)->HashAgg->Index(t.c_d_e)[[1,1]]->HashAgg->Table(t)->HashAgg}->HashAgg->Sort + Limit(1) + Offset(0)",
 		},
 		{
 			sql:  "select * from (select t.a from t union all select t.d from t where t.c = 1 union all select t.c from t) k order by a limit 1",
@@ -491,7 +501,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from (select t.a from t union select t.d from t union select t.c from t) k order by a limit 1",
-			best: "UnionAll{Table(t)->Table(t)->Table(t)}->Distinct->Sort + Limit(1) + Offset(0)",
+			best: "UnionAll{Table(t)->HashAgg->Table(t)->HashAgg->Table(t)->HashAgg}->HashAgg->Sort + Limit(1) + Offset(0)",
 		},
 	}
 	for _, ca := range cases {
@@ -511,7 +521,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
-
+		lp = decorrelate(lp)
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
 		solver := aggPushDownSolver{
@@ -519,7 +529,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 			alloc: builder.allocator,
 		}
 		solver.aggPushDown(lp)
-		lp.PruneColumns(lp.GetSchema().Columns)
+		lp.PruneColumns(lp.Schema().Columns)
 		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
@@ -609,7 +619,7 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		},
 		{
 			sql: "select t1.a from t t1 where t1.a in (select t2.a from t t2 where t1.a > 1)",
-			ans: "Apply{Table(t)->Table(t)->Selection}->Selection->Projection",
+			ans: "Apply{Table(t)->Table(t)->Selection}",
 		},
 		{
 			sql: "select t1.a from t t1, (select @a:=0, @b:=0) t2",
@@ -633,9 +643,10 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
+		lp = decorrelate(lp)
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		lp.PruneColumns(lp.GetSchema().Columns)
+		lp.PruneColumns(lp.Schema().Columns)
 		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		p = EliminateProjection(info.p)
@@ -733,7 +744,7 @@ func (s *testPlanSuite) TestFilterConditionPushDown(c *C) {
 
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		lp.PruneColumns(lp.GetSchema().Columns)
+		lp.PruneColumns(lp.Schema().Columns)
 		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
@@ -752,12 +763,12 @@ func (s *testPlanSuite) TestFilterConditionPushDown(c *C) {
 				c.Assert(fmt.Sprintf("%s", ts.tableFilterConditions), Equals, ca.tableFilter, Commentf("for %s", ca.sql))
 				break
 			}
-			p = p.GetChildByIndex(0)
+			p = p.Children()[0]
 		}
 	}
 }
 
-func (s *testPlanSuite) TestPhysicalInitialize(c *C) {
+func (s *testPlanSuite) TestAddCache(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql string
@@ -765,7 +776,7 @@ func (s *testPlanSuite) TestPhysicalInitialize(c *C) {
 	}{
 		{
 			sql: "select * from t t1 where t1.a=(select min(t2.a) from t t2, t t3 where t2.a=t3.a and t2.b > t1.b + t3.b)",
-			ans: "Apply{Table(t)->LeftHashJoin{Table(t)->Cache->Table(t)->Cache}(t2.a,t3.a)->StreamAgg->MaxOneRow}->Selection->Projection",
+			ans: "Apply{Table(t)->LeftHashJoin{Table(t)->Cache->Table(t)->Cache}(t2.a,t3.a)->StreamAgg->MaxOneRow}->Projection",
 		},
 	}
 	for _, ca := range cases {
@@ -788,12 +799,11 @@ func (s *testPlanSuite) TestPhysicalInitialize(c *C) {
 		lp := p.(LogicalPlan)
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
-		lp.PruneColumns(lp.GetSchema().Columns)
+		lp.PruneColumns(lp.Schema().Columns)
 		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		pp := info.p
 		pp = EliminateProjection(pp)
-		physicalInitialize(pp)
 		addCachePlan(pp, builder.allocator)
 		c.Assert(ToString(pp), Equals, ca.ans, Commentf("for %s", ca.sql))
 	}

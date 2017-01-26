@@ -262,6 +262,16 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		if x.FnName.L == "abs" && tp.Tp == mysql.TypeDatetime {
 			tp = types.NewFieldType(mysql.TypeDouble)
 		}
+	case "round":
+		t := x.Args[0].GetType().Tp
+		switch t {
+		case mysql.TypeBit, mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLonglong:
+			tp = types.NewFieldType(mysql.TypeLonglong)
+		case mysql.TypeNewDecimal:
+			tp = types.NewFieldType(mysql.TypeNewDecimal)
+		default:
+			tp = types.NewFieldType(mysql.TypeDouble)
+		}
 	case "greatest", "least":
 		for _, arg := range x.Args {
 			InferType(v.sc, arg)
@@ -274,7 +284,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		}
 	case "interval":
 		tp = types.NewFieldType(mysql.TypeLonglong)
-	case "ceil", "ceiling":
+	case "ceil", "ceiling", "floor":
 		t := x.Args[0].GetType().Tp
 		if t == mysql.TypeNull || t == mysql.TypeFloat || t == mysql.TypeDouble || t == mysql.TypeVarchar ||
 			t == mysql.TypeTinyBlob || t == mysql.TypeMediumBlob || t == mysql.TypeLongBlob ||
@@ -283,7 +293,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		} else {
 			tp = types.NewFieldType(mysql.TypeLonglong)
 		}
-	case "ln", "log", "log2", "log10":
+	case "ln", "log", "log2", "log10", "sqrt":
 		tp = types.NewFieldType(mysql.TypeDouble)
 	case "pow", "power", "rand":
 		tp = types.NewFieldType(mysql.TypeDouble)

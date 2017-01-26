@@ -237,6 +237,7 @@ import (
 	events		"EVENTS"
 	fieldKwd	"FIELD_KWD"
 	findInSet	"FIND_IN_SET"
+  	floor   	"FLOOR"
 	foundRows	"FOUND_ROWS"
 	fromUnixTime	"FROM_UNIXTIME"
 	grant		"GRANT"
@@ -272,6 +273,7 @@ import (
 	second		"SECOND"
 	sign		"SIGN"
 	sleep		"SLEEP"
+	sqrt 		"SQRT"
 	calcFoundRows	"SQL_CALC_FOUND_ROWS"
 	strcmp		"STRCMP"
 	strToDate	"STR_TO_DATE"
@@ -875,6 +877,20 @@ AlterTableSpec:
 			Tp:    		ast.AlterTableChangeColumn,
 			OldColumnName:	$3.(*ast.ColumnName),
 			NewColumn: 	$4.(*ast.ColumnDef),
+		}
+	}
+|	"RENAME" "TO" TableName
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:    		ast.AlterTableRenameTable,
+			NewTable:      $3.(*ast.TableName),
+		}
+	}
+|	"RENAME" "AS" TableName
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:    		ast.AlterTableRenameTable,
+			NewTable:      $3.(*ast.TableName),
 		}
 	}
 
@@ -2145,9 +2161,9 @@ NotKeywordToken:
 |	"DATEDIFF" | "DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FROM_DAYS" | "FIND_IN_SET" | "FOUND_ROWS"
 |	"GROUP_CONCAT"| "GREATEST" | "LEAST" | "HOUR" | "HEX" | "UNHEX" | "IFNULL" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOCATE" | "LOWER" | "LTRIM"
 |	"MAX" | "MICROSECOND" | "MIN" |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" | "POW" | "POWER" | "RAND"
-|	"SECOND" | "SIGN" | "SLEEP" | "SQL_CALC_FOUND_ROWS" | "STR_TO_DATE" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen
-|	"SUBSTRING_INDEX" | "SUM" | "TRIM" | "RTRIM" | "UCASE" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
-|	"STATS_PERSISTENT" | "GET_LOCK" | "RELEASE_LOCK" | "CEIL" | "CEILING" | "FROM_UNIXTIME" | "TIMEDIFF" | "LN" | "LOG" | "LOG2" | "LOG10" | "FIELD_KWD"
+	"SECOND" | "SIGN" | "SLEEP" | "SQRT" | "SQL_CALC_FOUND_ROWS" | "STR_TO_DATE" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen |
+"SUBSTRING_INDEX" | "SUM" | "TRIM" | "RTRIM" | "UCASE" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
+|	"STATS_PERSISTENT" | "GET_LOCK" | "RELEASE_LOCK" | "CEIL" | "CEILING" | "FLOOR" | "FROM_UNIXTIME" | "TIMEDIFF" | "LN" | "LOG" | "LOG2" | "LOG10" | "FIELD_KWD"
 
 /************************************************************************************
  *
@@ -2684,6 +2700,10 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
+| 	"FLOOR" '(' Expression ')'
+  	{
+    	$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+  	}
 |	"FIELD_KWD" '(' ExpressionList ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
@@ -2929,6 +2949,11 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
+|	"SQRT" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
+
 |	"SLEEP" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}

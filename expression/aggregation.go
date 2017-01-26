@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tidb/util/distinct"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -81,12 +80,12 @@ type AggregationFunction interface {
 	// CalculateDefaultValue gets the default value when the aggregate function's input is null.
 	// The input stands for the schema of Aggregation's child. If the function can't produce a default value, the second
 	// return value will be false.
-	CalculateDefaultValue(schema Schema, ctx context.Context) (types.Datum, bool)
+	CalculateDefaultValue(schema *Schema, ctx context.Context) (types.Datum, bool)
 }
 
 // aggEvaluateContext is used to store intermediate result when calculating aggregate functions.
 type aggEvaluateContext struct {
-	DistinctChecker *distinct.Checker
+	DistinctChecker *distinctChecker
 	Count           int64
 	Value           types.Datum
 	Buffer          *bytes.Buffer // Buffer is used for group_concat.
@@ -182,7 +181,7 @@ func newAggFunc(name string, args []Expression, dist bool) aggFunction {
 }
 
 // CalculateDefaultValue implements AggregationFunction interface.
-func (af *aggFunction) CalculateDefaultValue(schema Schema, ctx context.Context) (types.Datum, bool) {
+func (af *aggFunction) CalculateDefaultValue(schema *Schema, ctx context.Context) (types.Datum, bool) {
 	return types.Datum{}, false
 }
 
@@ -227,7 +226,7 @@ func (af *aggFunction) getContext(groupKey []byte) *aggEvaluateContext {
 	if !ok {
 		ctx = &aggEvaluateContext{}
 		if af.Distinct {
-			ctx.DistinctChecker = distinct.CreateDistinctChecker()
+			ctx.DistinctChecker = createDistinctChecker()
 		}
 		af.resultMapper[string(groupKey)] = ctx
 	}
@@ -238,7 +237,7 @@ func (af *aggFunction) getStreamedContext() *aggEvaluateContext {
 	if af.streamCtx == nil {
 		af.streamCtx = &aggEvaluateContext{}
 		if af.Distinct {
-			af.streamCtx.DistinctChecker = distinct.CreateDistinctChecker()
+			af.streamCtx.DistinctChecker = createDistinctChecker()
 		}
 	}
 	return af.streamCtx
@@ -343,7 +342,7 @@ func (sf *sumFunction) GetStreamResult() (d types.Datum) {
 }
 
 // CalculateDefaultValue implements AggregationFunction interface.
-func (sf *sumFunction) CalculateDefaultValue(schema Schema, ctx context.Context) (d types.Datum, valid bool) {
+func (sf *sumFunction) CalculateDefaultValue(schema *Schema, ctx context.Context) (d types.Datum, valid bool) {
 	arg := sf.Args[0]
 	result, err := EvaluateExprWithNull(ctx, schema, arg)
 	if err != nil {
@@ -384,7 +383,7 @@ func (cf *countFunction) Clone() AggregationFunction {
 }
 
 // CalculateDefaultValue implements AggregationFunction interface.
-func (cf *countFunction) CalculateDefaultValue(schema Schema, ctx context.Context) (d types.Datum, valid bool) {
+func (cf *countFunction) CalculateDefaultValue(schema *Schema, ctx context.Context) (d types.Datum, valid bool) {
 	for _, arg := range cf.Args {
 		result, err := EvaluateExprWithNull(ctx, schema, arg)
 		if err != nil {
@@ -727,7 +726,7 @@ func (mmf *maxMinFunction) Clone() AggregationFunction {
 }
 
 // CalculateDefaultValue implements AggregationFunction interface.
-func (mmf *maxMinFunction) CalculateDefaultValue(schema Schema, ctx context.Context) (d types.Datum, valid bool) {
+func (mmf *maxMinFunction) CalculateDefaultValue(schema *Schema, ctx context.Context) (d types.Datum, valid bool) {
 	arg := mmf.Args[0]
 	result, err := EvaluateExprWithNull(ctx, schema, arg)
 	if err != nil {
@@ -887,7 +886,7 @@ func (ff *firstRowFunction) GetStreamResult() (d types.Datum) {
 }
 
 // CalculateDefaultValue implements AggregationFunction interface.
-func (ff *firstRowFunction) CalculateDefaultValue(schema Schema, ctx context.Context) (d types.Datum, valid bool) {
+func (ff *firstRowFunction) CalculateDefaultValue(schema *Schema, ctx context.Context) (d types.Datum, valid bool) {
 	arg := ff.Args[0]
 	result, err := EvaluateExprWithNull(ctx, schema, arg)
 	if err != nil {
