@@ -15,7 +15,6 @@ package plan
 
 import (
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -112,7 +111,6 @@ func physicalOptimize(flag uint64, logic LogicalPlan, allocator *idAllocator) (P
 	if flag&(flagDecorrelate) > 0 {
 		addCachePlan(pp, allocator)
 	}
-	log.Debugf("[PLAN] %s", ToString(pp))
 	return pp, nil
 }
 
