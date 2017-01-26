@@ -934,7 +934,7 @@ func (s *testEvaluatorSuite) TestTimestamp(c *C) {
 
 		// TODO: the following test cases exists precision questions.
 		//{[]types.Datum{types.NewFloat64Datum(20170118123950.123)}, "2017-01-18 12:30:50.123"},
-		//{[]types.Datum{types.NewFloat64Datum(20170118123950.999)}, "2017-01-18 12:30:50.699"},
+		//{[]types.Datum{types.NewFloat64Datum(20170118123950.999)}, "2017-01-18 12:30:50.999"},
 		//{[]types.Datum{types.NewFloat32Datum(float32(20170118123950.999))}, "2017-01-18 12:30:50.699"},
 
 		// TODO: the following test cases will cause time format error.
@@ -942,8 +942,11 @@ func (s *testEvaluatorSuite) TestTimestamp(c *C) {
 		//{[]types.Datum{types.NewStringDatum("11111111111")}, "2011-11-11 11:11:01"},
 
 	}
+	fc := funcs[ast.Timestamp]
 	for _, test := range tests {
-		d, err := builtinTimestamp(test.t, s.ctx)
+		f, err := fc.getFunction(datumsToConstants(test.t), s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		result, _ := d.ToString()
 		c.Assert(result, Equals, test.expect)
