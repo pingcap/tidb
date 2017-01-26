@@ -49,6 +49,7 @@ func (s *testIndexChangeSuite) SetUpSuite(c *C) {
 func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 	defer testleak.AfterTest(c)()
 	d := newDDL(s.store, nil, nil, testLease)
+	defer d.Stop()
 	// create table t (c1 int primary key, c2 int);
 	tblInfo := testTableInfo(c, d, "t", 2)
 	tblInfo.Columns[0].Flag = mysql.PriKeyFlag | mysql.NotNullFlag

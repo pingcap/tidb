@@ -168,6 +168,7 @@ func newDDL(store kv.Storage, infoHandle *infoschema.Handle, hook Callback, leas
 	d.start()
 
 	variable.RegisterStatistics(d)
+	log.Infof("start DDL:%s", d.uuid)
 
 	return d
 }
@@ -208,6 +209,7 @@ func (d *ddl) Stop() error {
 		// Background job's owner is me, clean it so other servers can complete it quickly.
 		return t.SetBgJobOwner(&model.Owner{})
 	})
+	log.Infof("stop DDL:%s", d.uuid)
 
 	return errors.Trace(err)
 }
@@ -244,6 +246,7 @@ func (d *ddl) close() {
 	close(d.quitCh)
 
 	d.wait.Wait()
+	log.Infof("close DDL:%s", d.uuid)
 }
 
 func (d *ddl) isClosed() bool {
