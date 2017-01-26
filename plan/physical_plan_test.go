@@ -521,15 +521,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
-		lp = decorrelate(lp)
-		_, lp, err = lp.PredicatePushDown(nil)
-		c.Assert(err, IsNil)
-		solver := aggPushDownSolver{
-			ctx:   builder.ctx,
-			alloc: builder.allocator,
-		}
-		solver.aggPushDown(lp)
-		lp.PruneColumns(lp.Schema().Columns)
+		lp, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagAggPushDown|flagDecorrelate, lp, builder.ctx, builder.allocator)
 		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
@@ -642,11 +634,7 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		}
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
-		lp := p.(LogicalPlan)
-		lp = decorrelate(lp)
-		_, lp, err = lp.PredicatePushDown(nil)
-		c.Assert(err, IsNil)
-		lp.PruneColumns(lp.Schema().Columns)
+		lp, err := logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagDecorrelate, p.(LogicalPlan), builder.ctx, builder.allocator)
 		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		p = EliminateProjection(info.p)

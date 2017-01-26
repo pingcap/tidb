@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -48,8 +49,11 @@ func (a *Apply) extractCorColumnsBySchema() {
 	a.corCols = resultCorCols[:length]
 }
 
-// decorrelate function tries to convert apply plan to join plan.
-func decorrelate(p LogicalPlan) LogicalPlan {
+// decorrelateSolver tries to convert apply plan to join plan.
+type decorrelateSolver struct{}
+
+// optimize implements logicalOptRule interface.
+func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllocator) (LogicalPlan, error) {
 	if apply, ok := p.(*Apply); ok {
 		outerPlan := apply.children[0]
 		innerPlan := apply.children[1].(LogicalPlan)
@@ -71,15 +75,16 @@ func decorrelate(p LogicalPlan) LogicalPlan {
 			innerPlan = sel.children[0].(LogicalPlan)
 			apply.SetChildren(outerPlan, innerPlan)
 			innerPlan.SetParents(apply)
-			return decorrelate(p)
+			return s.optimize(p, nil, nil)
 		}
 		// TODO: Deal with aggregation and projection.
 	}
 	newChildren := make([]Plan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		newChildren = append(newChildren, decorrelate(child.(LogicalPlan)))
+		np, _ := s.optimize(child.(LogicalPlan), nil, nil)
+		newChildren = append(newChildren, np)
 		child.SetParents(p)
 	}
 	p.SetChildren(newChildren...)
-	return p
+	return p, nil
 }
