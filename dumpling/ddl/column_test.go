@@ -52,7 +52,7 @@ func (s *testColumnSuite) SetUpSuite(c *C) {
 
 func (s *testColumnSuite) TearDownSuite(c *C) {
 	testDropSchema(c, testNewContext(s.d), s.d, s.dbInfo)
-	s.d.close()
+	s.d.Stop()
 
 	err := s.store.Close()
 	c.Assert(err, IsNil)
@@ -791,9 +791,9 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	d.setHook(tc)
 
 	// Use local ddl for callback test.
-	s.d.close()
+	s.d.Stop()
 
-	d.close()
+	d.Stop()
 	d.start()
 
 	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, newColName, &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, defaultColValue)
@@ -815,7 +815,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	err = ctx.Txn().Commit()
 	c.Assert(err, IsNil)
 
-	d.close()
+	d.Stop()
 	s.d.start()
 }
 
@@ -867,9 +867,9 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	d.setHook(tc)
 
 	// Use local ddl for callback test.
-	s.d.close()
+	s.d.Stop()
 
-	d.close()
+	d.Stop()
 	d.start()
 
 	job := testDropColumn(c, ctx, s.d, s.dbInfo, tblInfo, colName, false)
@@ -890,12 +890,13 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	err = ctx.Txn().Commit()
 	c.Assert(err, IsNil)
 
-	d.close()
+	d.Stop()
 	s.d.start()
 }
 
 func (s *testColumnSuite) TestModifyColumn(c *C) {
 	d := newDDL(s.store, nil, nil, testLease)
+	defer d.Stop()
 	cases := []struct {
 		origin string
 		to     string
@@ -914,7 +915,6 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 		ftB := s.colDefStrToFieldType(c, ca.to)
 		c.Assert(modifiable(ftA, ftB), Equals, ca.ok)
 	}
-	d.close()
 }
 
 func (s *testColumnSuite) colDefStrToFieldType(c *C, str string) *types.FieldType {
