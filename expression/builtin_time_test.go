@@ -492,6 +492,7 @@ func (s *testEvaluatorSuite) TestFromUnixTime(c *C) {
 		{true, 1451606400, 999999000, 1451606400.999999, "%Y %D %M %h:%i:%s %x", 26},
 		{true, 1451606400, 999999900, 1451606400.9999999, "%Y %D %M %h:%i:%s %x", 19},
 	}
+	fc := funcs[ast.FromUnixTime]
 	for _, t := range tbl {
 		var timestamp types.Datum
 		if !t.isDecimal {
@@ -501,7 +502,6 @@ func (s *testEvaluatorSuite) TestFromUnixTime(c *C) {
 		}
 		// result of from_unixtime() is dependent on specific time zone.
 		unixTime := time.Unix(t.integralPart, t.fractionalPart).Round(time.Microsecond).String()[:t.ansLen]
-		fc := funcs[ast.FromUnixTime]
 		if len(t.format) == 0 {
 			f, err := fc.getFunction(datumsToConstants([]types.Datum{timestamp}), s.ctx)
 			c.Assert(err, IsNil)
@@ -521,11 +521,15 @@ func (s *testEvaluatorSuite) TestFromUnixTime(c *C) {
 		}
 	}
 
-	v, err := builtinFromUnixTime([]types.Datum{types.NewIntDatum(-12345)}, s.ctx)
+	f, err := fc.getFunction(datumsToConstants(types.MakeDatums(-12345)), s.ctx)
+	c.Assert(err, IsNil)
+	v, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
 
-	_, err = builtinFromUnixTime([]types.Datum{types.NewIntDatum(math.MaxInt32 + 1)}, s.ctx)
+	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(math.MaxInt32+1)), s.ctx)
+	c.Assert(err, IsNil)
+	_, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
 }
@@ -788,7 +792,9 @@ func (s *testEvaluatorSuite) TestYearWeek(c *C) {
 		c.Assert(result.GetInt64(), Equals, test.expect)
 	}
 
-	result, err := builtinYearWeek([]types.Datum{types.NewStringDatum("2016-00-05")}, s.ctx)
+	f, err := fc.getFunction(datumsToConstants(types.MakeDatums("2016-00-05")), s.ctx)
+	c.Assert(err, IsNil)
+	result, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(result.IsNull(), IsTrue)
 }
@@ -819,15 +825,19 @@ func (s *testEvaluatorSuite) TestTimestampDiff(c *C) {
 		c.Assert(d.GetInt64(), Equals, test.expect)
 	}
 	s.ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
-	d, err := builtinTimestampDiff([]types.Datum{types.NewStringDatum("DAY"),
+	f, err := fc.getFunction(datumsToConstants([]types.Datum{types.NewStringDatum("DAY"),
 		types.NewStringDatum("2017-01-00"),
-		types.NewStringDatum("2017-01-01")}, s.ctx)
+		types.NewStringDatum("2017-01-01")}), s.ctx)
 	c.Assert(err, IsNil)
+	d, err := f.eval(nil)
 	c.Assert(d.Kind(), Equals, types.KindNull)
 }
 
 func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
-	d, err := builtinUnixTimestamp(nil, s.ctx)
+	fc := funcs[ast.UnixTimestamp]
+	f, err := fc.getFunction(nil, s.ctx)
+	c.Assert(err, IsNil)
+	d, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.GetInt64()-time.Now().Unix(), GreaterEqual, int64(-1))
 	c.Assert(d.GetInt64()-time.Now().Unix(), LessEqual, int64(1))
@@ -837,7 +847,9 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 	n, err := builtinNow(nil, s.ctx)
 	c.Assert(err, IsNil)
 	args := []types.Datum{n}
-	d, err = builtinUnixTimestamp(args, s.ctx)
+	f, err = fc.getFunction(datumsToConstants(args), s.ctx)
+	c.Assert(err, IsNil)
+	d, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.GetInt64()-time.Now().Unix(), GreaterEqual, int64(-1))
 	c.Assert(d.GetInt64()-time.Now().Unix(), LessEqual, int64(1))
@@ -854,7 +866,6 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 		{types.NewStringDatum("2017-00-02"), "0"},
 	}
 
-	fc := funcs[ast.UnixTimestamp]
 	for _, test := range tests {
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{test.input}), s.ctx)
 		c.Assert(err, IsNil)

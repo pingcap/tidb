@@ -19,6 +19,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -40,7 +41,7 @@ func ExtractColumns(expr Expression) (cols []*Column) {
 func ColumnSubstitute(expr Expression, schema *Schema, newExprs []Expression) Expression {
 	switch v := expr.(type) {
 	case *Column:
-		id := schema.GetColumnIndex(v)
+		id := schema.ColumnIndex(v)
 		if id == -1 {
 			return v
 		}
@@ -146,4 +147,31 @@ Loop:
 		return s[1:validLen]
 	}
 	return s[:validLen]
+}
+
+// createDistinctChecker creates a new distinct checker.
+func createDistinctChecker() *distinctChecker {
+	return &distinctChecker{
+		existingKeys: make(map[string]bool),
+	}
+}
+
+// Checker stores existing keys and checks if given data is distinct.
+type distinctChecker struct {
+	existingKeys map[string]bool
+}
+
+// Check checks if values is distinct.
+func (d *distinctChecker) Check(values []interface{}) (bool, error) {
+	bs, err := codec.EncodeValue([]byte{}, types.MakeDatums(values...)...)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	key := string(bs)
+	_, ok := d.existingKeys[key]
+	if ok {
+		return false, nil
+	}
+	d.existingKeys[key] = true
+	return true, nil
 }

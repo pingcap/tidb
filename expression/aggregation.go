@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tidb/util/distinct"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -86,7 +85,7 @@ type AggregationFunction interface {
 
 // aggEvaluateContext is used to store intermediate result when calculating aggregate functions.
 type aggEvaluateContext struct {
-	DistinctChecker *distinct.Checker
+	DistinctChecker *distinctChecker
 	Count           int64
 	Value           types.Datum
 	Buffer          *bytes.Buffer // Buffer is used for group_concat.
@@ -227,7 +226,7 @@ func (af *aggFunction) getContext(groupKey []byte) *aggEvaluateContext {
 	if !ok {
 		ctx = &aggEvaluateContext{}
 		if af.Distinct {
-			ctx.DistinctChecker = distinct.CreateDistinctChecker()
+			ctx.DistinctChecker = createDistinctChecker()
 		}
 		af.resultMapper[string(groupKey)] = ctx
 	}
@@ -238,7 +237,7 @@ func (af *aggFunction) getStreamedContext() *aggEvaluateContext {
 	if af.streamCtx == nil {
 		af.streamCtx = &aggEvaluateContext{}
 		if af.Distinct {
-			af.streamCtx.DistinctChecker = distinct.CreateDistinctChecker()
+			af.streamCtx.DistinctChecker = createDistinctChecker()
 		}
 	}
 	return af.streamCtx

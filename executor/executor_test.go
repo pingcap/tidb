@@ -685,6 +685,9 @@ func (s *testSuite) TestIndexScan(c *C) {
 	result.Check(testkit.Rows("1 1 1", "3 1 2"))
 	result = tk.MustQuery("SELECT * FROM tab1 WHERE pk <= 4 AND a = 1 AND b = 2")
 	result.Check(testkit.Rows("3 1 2"))
+	tk.MustExec("CREATE INDEX idx_tab1_1 on tab1 (b, a)")
+	result = tk.MustQuery("SELECT pk FROM tab1 WHERE b > 1")
+	result.Check(testkit.Rows("3", "4"))
 }
 
 func (s *testSuite) TestSubquerySameTable(c *C) {
@@ -1176,6 +1179,11 @@ func (s *testSuite) TestSubquery(c *C) {
 	tk.MustExec("insert into t values(1, 1), (2, 2), (3, 3)")
 	result = tk.MustQuery("select * from t where v=(select min(t1.v) from t t1, t t2, t t3 where t1.id=t2.id and t2.id=t3.id and t1.id=t.id)")
 	result.Check(testkit.Rows("1 1", "2 2", "3 3"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(c int)")
+	result = tk.MustQuery("select exists(select count(*) from t)")
+	result.Check(testkit.Rows("1"))
 }
 
 func (s *testSuite) TestNewTableDual(c *C) {

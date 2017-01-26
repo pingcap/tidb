@@ -52,30 +52,41 @@ func (s *testEvaluatorSuite) TestSleep(c *C) {
 	ctx := mock.NewContext()
 	sessVars := ctx.GetSessionVars()
 
+	fc := funcs[ast.Sleep]
 	// non-strict model
 	sessVars.StrictSQLMode = false
 	d := make([]types.Datum, 1)
-	ret, err := builtinSleep(d, ctx)
+	f, err := fc.getFunction(datumsToConstants(d), ctx)
+	c.Assert(err, IsNil)
+	ret, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(ret, DeepEquals, types.NewIntDatum(0))
 	d[0].SetInt64(-1)
-	ret, err = builtinSleep(d, ctx)
+	f, err = fc.getFunction(datumsToConstants(d), ctx)
+	c.Assert(err, IsNil)
+	ret, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(ret, DeepEquals, types.NewIntDatum(0))
 
 	// for error case under the strict model
 	sessVars.StrictSQLMode = true
 	d[0].SetNull()
-	_, err = builtinSleep(d, ctx)
+	_, err = fc.getFunction(datumsToConstants(d), ctx)
+	c.Assert(err, IsNil)
+	ret, err = f.eval(nil)
 	c.Assert(err, NotNil)
 	d[0].SetFloat64(-2.5)
-	_, err = builtinSleep(d, ctx)
+	_, err = fc.getFunction(datumsToConstants(d), ctx)
+	c.Assert(err, IsNil)
+	ret, err = f.eval(nil)
 	c.Assert(err, NotNil)
 
 	// strict model
 	d[0].SetFloat64(0.5)
 	start := time.Now()
-	ret, err = builtinSleep(d, ctx)
+	f, err = fc.getFunction(datumsToConstants(d), ctx)
+	c.Assert(err, IsNil)
+	ret, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(ret, DeepEquals, types.NewIntDatum(0))
 	sub := time.Since(start)
@@ -408,46 +419,6 @@ func (s *testEvaluatorSuite) TestLastInsertID(c *C) {
 
 func (s *testEvaluatorSuite) TestLike(c *C) {
 	defer testleak.AfterTest(c)()
-	tbl := []struct {
-		pattern string
-		input   string
-		escape  byte
-		match   bool
-	}{
-		{"", "a", '\\', false},
-		{"a", "a", '\\', true},
-		{"a", "b", '\\', false},
-		{"aA", "aA", '\\', true},
-		{"_", "a", '\\', true},
-		{"_", "ab", '\\', false},
-		{"__", "b", '\\', false},
-		{"_ab", "AAB", '\\', true},
-		{"%", "abcd", '\\', true},
-		{"%", "", '\\', true},
-		{"%a", "AAA", '\\', true},
-		{"%b", "AAA", '\\', false},
-		{"b%", "BBB", '\\', true},
-		{"%a%", "BBB", '\\', false},
-		{"%a%", "BAB", '\\', true},
-		{"a%", "BBB", '\\', false},
-		{`\%a`, `%a`, '\\', true},
-		{`\%a`, `aa`, '\\', false},
-		{`\_a`, `_a`, '\\', true},
-		{`\_a`, `aa`, '\\', false},
-		{`\\_a`, `\xa`, '\\', true},
-		{`\a\b`, `\a\b`, '\\', true},
-		{"%%_", `abc`, '\\', true},
-		{`+_a`, `_a`, '+', true},
-		{`+%a`, `%a`, '+', true},
-		{`\%a`, `%a`, '+', false},
-		{`++a`, `+a`, '+', true},
-		{`++_a`, `+xa`, '+', true},
-	}
-	for _, v := range tbl {
-		patChars, patTypes := compilePattern(v.pattern, v.escape)
-		match := doMatch(v.input, patChars, patTypes)
-		c.Assert(match, Equals, v.match, Commentf("%v", v))
-	}
 	testCases := []struct {
 		input   string
 		pattern string

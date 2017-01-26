@@ -17,7 +17,6 @@ import (
 	"errors"
 
 	. "github.com/pingcap/check"
-
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -37,16 +36,17 @@ func (s *testEvaluatorSuite) TestIf(c *C) {
 		{0, 1, 2, 2},
 	}
 
+	fc := funcs[ast.If]
 	for _, t := range tbl {
-		fc := funcs[ast.If]
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.Arg1, t.Arg2, t.Arg3)), s.ctx)
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, types.NewDatum(t.Ret))
 	}
-
-	_, err := builtinIf(types.MakeDatums([]interface{}{errors.New("must error"), 1, 2}...), s.ctx)
+	f, err := fc.getFunction(datumsToConstants(types.MakeDatums(errors.New("must error"), 1, 2)), s.ctx)
+	c.Assert(err, IsNil)
+	_, err = f.eval(nil)
 	c.Assert(err, NotNil)
 }
 
