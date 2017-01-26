@@ -117,6 +117,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildDummyScan(v)
 	case *plan.Cache:
 		return b.buildCache(v)
+	case *plan.Analyze:
+		return b.buildAnalyze(v)
 	default:
 		b.err = ErrUnknownPlan.Gen("Unknown Plan %T", p)
 		return nil
@@ -678,4 +680,25 @@ func (b *executorBuilder) buildCache(v *plan.Cache) Executor {
 		schema: v.Schema(),
 		Src:    src,
 	}
+}
+
+func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
+	var tblInfo *model.TableInfo
+	if v.Table != nil {
+		tblInfo = v.Table.TableInfo
+	}
+	e := &AnalyzeExec{
+		schema:     v.Schema(),
+		tblInfo:    tblInfo,
+		ctx:        b.ctx,
+		idxOffsets: v.IdxOffsets,
+		colOffsets: v.ColOffsets,
+		pkOffset:   v.PkOffset,
+		Srcs:       make([]Executor, len(v.Children())),
+	}
+	for i, child := range v.Children() {
+		childExec := b.build(child)
+		e.Srcs[i] = childExec
+	}
+	return e
 }
