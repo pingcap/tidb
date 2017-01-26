@@ -115,6 +115,15 @@ func (e *Evaluator) evalTwoChildren(expr *tipb.Expr) (left, right types.Datum, e
 	return
 }
 
+// getTwoChildren makes sure that expr has and only has two children.
+func (e *Evaluator) getTwoChildren(expr *tipb.Expr) (left, right *tipb.Expr, err error) {
+	if len(expr.Children) != 2 {
+		err = ErrInvalid.Gen("%s needs 2 operands but got %d", tipb.ExprType_name[int32(expr.GetTp())], len(expr.Children))
+		return
+	}
+	return expr.Children[0], expr.Children[1], nil
+}
+
 func (e *Evaluator) evalIsNull(expr *tipb.Expr) (types.Datum, error) {
 	if len(expr.Children) != 1 {
 		return types.Datum{}, ErrInvalid.Gen("ISNULL need 1 operand, got %d", len(expr.Children))
