@@ -15,7 +15,6 @@ package executor
 
 import (
 	"fmt"
-	"math/rand"
 	"strings"
 
 	"github.com/juju/errors"
@@ -24,16 +23,12 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan/statistics"
-	"github.com/pingcap/tidb/plan/statscache"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/types"
 )
 
 // SimpleExec represents simple statement executor.
@@ -78,8 +73,6 @@ func (e *SimpleExec) Next() (*Row, error) {
 		err = e.executeDropUser(x)
 	case *ast.SetPwdStmt:
 		err = e.executeSetPwd(x)
-	case *ast.AnalyzeTableStmt:
-		err = e.executeAnalyzeTable(x)
 	case *ast.BinlogStmt:
 		// We just ignore it.
 		return nil, nil
@@ -312,116 +305,4 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 func (e *SimpleExec) executeFlushTable(s *ast.FlushTableStmt) error {
 	// TODO: A dummy implement
 	return nil
-}
-
-func (e *SimpleExec) executeAnalyzeTable(s *ast.AnalyzeTableStmt) error {
-	for _, table := range s.TableNames {
-		err := e.createStatisticsForTable(table)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
-const (
-	maxSampleCount     = 10000
-	defaultBucketCount = 256
-)
-
-func (e *SimpleExec) createStatisticsForTable(tn *ast.TableName) error {
-	var tableName string
-	if tn.Schema.L == "" {
-		tableName = tn.Name.L
-	} else {
-		tableName = tn.Schema.L + "." + tn.Name.L
-	}
-	sql := "select * from " + tableName
-	result, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	count, samples, err := e.collectSamples(result)
-	result.Close()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = e.buildStatisticsAndSaveToKV(tn, count, samples)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-// collectSamples collects sample from the result set, using Reservoir Sampling algorithm.
-// See https://en.wikipedia.org/wiki/Reservoir_sampling
-func (e *SimpleExec) collectSamples(result ast.RecordSet) (count int64, samples []*ast.Row, err error) {
-	for {
-		var row *ast.Row
-		row, err = result.Next()
-		if err != nil {
-			return count, samples, errors.Trace(err)
-		}
-		if row == nil {
-			break
-		}
-		if len(samples) < maxSampleCount {
-			samples = append(samples, row)
-		} else {
-			shouldAdd := rand.Int63n(count) < maxSampleCount
-			if shouldAdd {
-				idx := rand.Intn(maxSampleCount)
-				samples[idx] = row
-			}
-		}
-		count++
-	}
-	return count, samples, nil
-}
-
-func (e *SimpleExec) buildStatisticsAndSaveToKV(tn *ast.TableName, count int64, sampleRows []*ast.Row) error {
-	txn := e.ctx.Txn()
-	statBuilder := &statistics.Builder{
-		Sc:            e.ctx.GetSessionVars().StmtCtx,
-		TblInfo:       tn.TableInfo,
-		StartTS:       int64(txn.StartTS()),
-		Count:         count,
-		NumBuckets:    defaultBucketCount,
-		ColumnSamples: rowsToColumnSamples(sampleRows),
-		PkOffset:      -1,
-	}
-	for i := range statBuilder.ColumnSamples {
-		statBuilder.ColOffsets = append(statBuilder.ColOffsets, i)
-	}
-	t, err := statBuilder.NewTable()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	statscache.SetStatisticsTableCache(tn.TableInfo.ID, t)
-	tpb, err := t.ToPB()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	m := meta.NewMeta(txn)
-	err = m.SetTableStats(tn.TableInfo.ID, tpb)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-func rowsToColumnSamples(rows []*ast.Row) [][]types.Datum {
-	if len(rows) == 0 {
-		return nil
-	}
-	columnSamples := make([][]types.Datum, len(rows[0].Data))
-	for i := range columnSamples {
-		columnSamples[i] = make([]types.Datum, len(rows))
-	}
-	for j, row := range rows {
-		for i, val := range row.Data {
-			columnSamples[i][j] = val
-		}
-	}
-	return columnSamples
 }

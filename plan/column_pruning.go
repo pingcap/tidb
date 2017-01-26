@@ -16,8 +16,17 @@ package plan
 import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 )
+
+type columnPruner struct {
+}
+
+func (s *columnPruner) optimize(lp LogicalPlan, _ context.Context, _ *idAllocator) (LogicalPlan, error) {
+	lp.PruneColumns(lp.Schema().Columns)
+	return lp, nil
+}
 
 func getUsedList(usedCols []*expression.Column, schema *expression.Schema) []bool {
 	used := make([]bool, schema.Len())
@@ -222,4 +231,10 @@ func (p *Update) PruneColumns(parentUsedCols []*expression.Column) {
 // PruneColumns implements LogicalPlan interface.
 func (p *Delete) PruneColumns(parentUsedCols []*expression.Column) {
 	p.baseLogicalPlan.PruneColumns(p.children[0].Schema().Columns)
+}
+
+// PruneColumns implements LogicalPlan interface.
+// We should not prune columns for Analyze.
+func (p *Analyze) PruneColumns(parentUsedCols []*expression.Column) {
+
 }

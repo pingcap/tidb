@@ -14,9 +14,17 @@
 package plan
 
 import (
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
 )
+
+type buildKeySolver struct{}
+
+func (s *buildKeySolver) optimize(lp LogicalPlan, _ context.Context, _ *idAllocator) (LogicalPlan, error) {
+	lp.buildKeyInfo()
+	return lp, nil
+}
 
 func (p *Aggregation) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
