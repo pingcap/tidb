@@ -265,7 +265,7 @@ func EvaluateExprWithNull(ctx context.Context, schema *Schema, expr Expression) 
 		}
 		return FoldConstant(ctx, newFunc), nil
 	case *Column:
-		if schema.GetColumnIndex(x) == -1 {
+		if schema.ColumnIndex(x) == -1 {
 			return x, nil
 		}
 		constant := &Constant{Value: types.Datum{}}

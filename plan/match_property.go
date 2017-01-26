@@ -224,7 +224,7 @@ func (p *Union) matchProperty(_ *requiredProperty, childPlanInfo ...*physicalPla
 // matchProperty implements PhysicalPlan matchProperty interface.
 func (p *Selection) matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
 	if p.onTable {
-		res := p.GetChildByIndex(0).(PhysicalPlan).matchProperty(prop, childPlanInfo...)
+		res := p.children[0].(PhysicalPlan).matchProperty(prop, childPlanInfo...)
 		sel := *p
 		sel.SetChildren(res.p)
 		res.p = &sel
@@ -240,7 +240,7 @@ func (p *Selection) matchProperty(prop *requiredProperty, childPlanInfo ...*phys
 // matchProperty implements PhysicalPlan matchProperty interface.
 func (p *PhysicalUnionScan) matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
 	limit := prop.limit
-	res := p.GetChildByIndex(0).(PhysicalPlan).matchProperty(convertLimitOffsetToCount(prop), childPlanInfo...)
+	res := p.children[0].(PhysicalPlan).matchProperty(convertLimitOffsetToCount(prop), childPlanInfo...)
 	np := *p
 	np.SetChildren(res.p)
 	res.p = &np

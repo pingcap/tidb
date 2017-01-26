@@ -233,7 +233,7 @@ func (pa *stmtAttributes) fromPlan(p plan.Plan) {
 	case *plan.PhysicalHashSemiJoin:
 		pa.hasJoin = true
 	}
-	children := p.GetChildren()
+	children := p.Children()
 	for _, child := range children {
 		pa.fromPlan(child)
 	}

@@ -22,11 +22,11 @@ import (
 // e.g. If the correlated columns from inner plan are [t1.a, t2.a, t3.a] and outer plan's schema is [t2.a, t2.b, t2.c],
 // only [t2.a] is treated as this apply's correlated column.
 func (a *Apply) extractCorColumnsBySchema() {
-	schema := a.children[0].GetSchema()
+	schema := a.children[0].Schema()
 	corCols := a.children[1].(LogicalPlan).extractCorrelatedCols()
 	resultCorCols := make([]*expression.CorrelatedColumn, schema.Len())
 	for _, corCol := range corCols {
-		idx := schema.GetColumnIndex(&corCol.Column)
+		idx := schema.ColumnIndex(&corCol.Column)
 		if idx != -1 {
 			if resultCorCols[idx] == nil {
 				resultCorCols[idx] = &expression.CorrelatedColumn{
@@ -65,7 +65,7 @@ func decorrelate(p LogicalPlan) LogicalPlan {
 			// Notice that no matter what kind of join is, it's always right.
 			newConds := make([]expression.Expression, 0, len(sel.Conditions))
 			for _, cond := range sel.Conditions {
-				newConds = append(newConds, cond.Decorrelate(outerPlan.GetSchema()))
+				newConds = append(newConds, cond.Decorrelate(outerPlan.Schema()))
 			}
 			apply.attachOnConds(newConds)
 			innerPlan = sel.children[0].(LogicalPlan)
@@ -75,8 +75,8 @@ func decorrelate(p LogicalPlan) LogicalPlan {
 		}
 		// TODO: Deal with aggregation and projection.
 	}
-	newChildren := make([]Plan, 0, len(p.GetChildren()))
-	for _, child := range p.GetChildren() {
+	newChildren := make([]Plan, 0, len(p.Children()))
+	for _, child := range p.Children() {
 		newChildren = append(newChildren, decorrelate(child.(LogicalPlan)))
 		child.SetParents(p)
 	}

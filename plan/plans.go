@@ -130,7 +130,7 @@ type Execute struct {
 
 	Name      string
 	UsingVars []expression.Expression
-	ID        uint32
+	ExecID    uint32
 }
 
 // Deallocate represents deallocate plan.
