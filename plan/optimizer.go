@@ -28,18 +28,18 @@ import (
 var AllowCartesianProduct = true
 
 const (
-	flagDecorrelate uint64 = 1 << iota
+	flagPrunColumns uint64 = 1 << iota
+	flagDecorrelate
 	flagPredicatePushDown
-	flagPrunColumns
 	flagBuildKeyInfo
 	flagEliminateAgg
 	flagAggPushDown
 )
 
 var optRuleList = []logicalOptRule{
+	&columnPruner{},
 	&decorrelateSolver{},
 	&ppdSolver{},
-	&columnPruner{},
 	&buildKeySolver{},
 	&aggPruner{},
 	&aggPushDownSolver{},
