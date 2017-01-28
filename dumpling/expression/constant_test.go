@@ -164,8 +164,7 @@ func (*testExpressionSuite) TestConstantFolding(c *C) {
 		},
 	}
 	for _, ca := range cases {
-		ctx := mock.NewContext()
-		newConds := FoldConstant(ctx, ca.condition)
+		newConds := FoldConstant(ca.condition)
 		c.Assert(newConds.String(), Equals, ca.result, Commentf("different for expr %s", ca.condition))
 	}
 }

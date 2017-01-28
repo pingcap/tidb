@@ -417,7 +417,7 @@ func (e *ProjectionExec) Next() (retRow *Row, err error) {
 		Data:    make([]types.Datum, 0, len(e.exprs)),
 	}
 	for _, expr := range e.exprs {
-		val, err := expr.Eval(srcRow.Data, e.ctx)
+		val, err := expr.Eval(srcRow.Data)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -716,7 +716,7 @@ func (e *SortExec) Next() (*Row, error) {
 				key: make([]types.Datum, len(e.ByItems)),
 			}
 			for i, byItem := range e.ByItems {
-				orderRow.key[i], err = byItem.Expr.Eval(srcRow.Data, e.ctx)
+				orderRow.key[i], err = byItem.Expr.Eval(srcRow.Data)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -811,7 +811,7 @@ func (e *TopnExec) Next() (*Row, error) {
 				key: make([]types.Datum, len(e.ByItems)),
 			}
 			for i, byItem := range e.ByItems {
-				orderRow.key[i], err = byItem.Expr.Eval(srcRow.Data, e.ctx)
+				orderRow.key[i], err = byItem.Expr.Eval(srcRow.Data)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
