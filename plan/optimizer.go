@@ -15,7 +15,6 @@ package plan
 
 import (
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -82,7 +81,7 @@ func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context, allocator *
 		return nil, errors.Trace(ErrCartesianProductUnsupported)
 	}
 	logic.ResolveIndicesAndCorCols()
-	return physicalOptimize(logic, allocator)
+	return physicalOptimize(flag, logic, allocator)
 }
 
 func logicalOptimize(flag uint64, logic LogicalPlan, ctx context.Context, alloc *idAllocator) (LogicalPlan, error) {
@@ -102,15 +101,16 @@ func logicalOptimize(flag uint64, logic LogicalPlan, ctx context.Context, alloc 
 	return logic, errors.Trace(err)
 }
 
-func physicalOptimize(logic LogicalPlan, allocator *idAllocator) (PhysicalPlan, error) {
+func physicalOptimize(flag uint64, logic LogicalPlan, allocator *idAllocator) (PhysicalPlan, error) {
 	info, err := logic.convert2PhysicalPlan(&requiredProperty{})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	pp := info.p
 	pp = EliminateProjection(pp)
-	addCachePlan(pp, allocator)
-	log.Debugf("[PLAN] %s", ToString(pp))
+	if flag&(flagDecorrelate) > 0 {
+		addCachePlan(pp, allocator)
+	}
 	return pp, nil
 }
 

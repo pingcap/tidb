@@ -48,7 +48,7 @@ func evalAstExpr(expr ast.ExprNode, ctx context.Context) (types.Datum, error) {
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	return newExpr.Eval(nil, ctx)
+	return newExpr.Eval(nil)
 }
 
 // rewrite function rewrites ast expr to expression.Expression.
@@ -80,7 +80,7 @@ func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*a
 	if getRowLen(er.ctxStack[0]) != 1 {
 		return nil, nil, ErrOperandColumns.GenByArgs(1)
 	}
-	result := expression.FoldConstant(b.ctx, er.ctxStack[0])
+	result := expression.FoldConstant(er.ctxStack[0])
 	return result, er.p, nil
 }
 
