@@ -398,11 +398,11 @@ type joinExec interface {
 	Executor
 
 	// fetchBigRow fetches a valid row from big Exec.
-	fetchBigRow() (*Row, error)
+	fetchBigRow() (*Row, bool, error)
 	// prepare reads all records from small Exec and stores them.
 	prepare() error
 	// doJoin fetch a row from big exec and get all the rows matches the on condition.
-	doJoin(*Row) ([]*Row, error)
+	doJoin(*Row, bool) ([]*Row, error)
 }
 
 // NestedLoopJoinExec implements nested-loop algorithm for join.
@@ -419,6 +419,7 @@ type NestedLoopJoinExec struct {
 	BigFilter   expression.Expression
 	OtherFilter expression.Expression
 	schema      *expression.Schema
+	outer       bool
 }
 
 // Schema implements Executor interface.
@@ -439,25 +440,27 @@ func (e *NestedLoopJoinExec) Close() error {
 	return e.SmallExec.Close()
 }
 
-func (e *NestedLoopJoinExec) fetchBigRow() (*Row, error) {
+func (e *NestedLoopJoinExec) fetchBigRow() (*Row, bool, error) {
 	for {
 		bigRow, err := e.BigExec.Next()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, false, errors.Trace(err)
 		}
 		if bigRow == nil {
-			return nil, e.BigExec.Close()
+			return nil, false, e.BigExec.Close()
 		}
 
 		matched := true
 		if e.BigFilter != nil {
 			matched, err = expression.EvalBool(e.BigFilter, bigRow.Data, e.Ctx)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, false, errors.Trace(err)
 			}
 		}
 		if matched {
-			return bigRow, nil
+			return bigRow, true, nil
+		} else if e.outer {
+			return bigRow, false, nil
 		}
 	}
 }
@@ -496,7 +499,8 @@ func (e *NestedLoopJoinExec) prepare() error {
 	}
 }
 
-func (e *NestedLoopJoinExec) doJoin(bigRow *Row) ([]*Row, error) {
+// TODO: Process outer join case.
+func (e *NestedLoopJoinExec) doJoin(bigRow *Row, _ bool) ([]*Row, error) {
 	e.resultRows = e.resultRows[0:0]
 	for _, row := range e.innerRows {
 		mergedRow := makeJoinRow(bigRow, row)
@@ -528,11 +532,11 @@ func (e *NestedLoopJoinExec) Next() (*Row, error) {
 			e.cursor++
 			return retRow, nil
 		}
-		bigRow, err := e.fetchBigRow()
+		bigRow, match, err := e.fetchBigRow()
 		if bigRow == nil || err != nil {
 			return bigRow, errors.Trace(err)
 		}
-		e.resultRows, err = e.doJoin(bigRow)
+		e.resultRows, err = e.doJoin(bigRow, match)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -661,31 +665,37 @@ func (e *HashSemiJoinExec) rowIsMatched(bigRow *Row) (matched bool, hasNull bool
 	return
 }
 
-func (e *HashSemiJoinExec) fetchBigRow() (*Row, error) {
+func (e *HashSemiJoinExec) fetchBigRow() (*Row, bool, error) {
 	for {
 		bigRow, err := e.bigExec.Next()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, false, errors.Trace(err)
 		}
 		if bigRow == nil {
-			e.bigExec.Close()
-			return nil, nil
+			return nil, false, errors.Trace(e.bigExec.Close())
 		}
 
 		matched := true
 		if e.bigFilter != nil {
 			matched, err = expression.EvalBool(e.bigFilter, bigRow.Data, e.ctx)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, false, errors.Trace(err)
 			}
 		}
 		if matched {
-			return bigRow, err
+			return bigRow, true, nil
+		} else if e.auxMode {
+			return bigRow, false, nil
 		}
 	}
 }
 
-func (e *HashSemiJoinExec) doJoin(bigRow *Row) ([]*Row, error) {
+func (e *HashSemiJoinExec) doJoin(bigRow *Row, match bool) ([]*Row, error) {
+	if e.auxMode && !match {
+		bigRow.Data = append(bigRow.Data, types.NewDatum(false))
+		e.resultRows[0] = bigRow
+		return e.resultRows, nil
+	}
 	matched, isNull, err := e.rowIsMatched(bigRow)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -722,11 +732,11 @@ func (e *HashSemiJoinExec) Next() (*Row, error) {
 	}
 
 	for {
-		bigRow, err := e.fetchBigRow()
+		bigRow, match, err := e.fetchBigRow()
 		if bigRow == nil || err != nil {
 			return bigRow, errors.Trace(err)
 		}
-		resultRows, err := e.doJoin(bigRow)
+		resultRows, err := e.doJoin(bigRow, match)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -765,7 +775,7 @@ func (e *ApplyJoinExec) Next() (*Row, error) {
 			e.cursor++
 			return row, nil
 		}
-		bigRow, err := e.join.fetchBigRow()
+		bigRow, match, err := e.join.fetchBigRow()
 		if bigRow == nil || err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -776,7 +786,7 @@ func (e *ApplyJoinExec) Next() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		e.resultRows, err = e.join.doJoin(bigRow)
+		e.resultRows, err = e.join.doJoin(bigRow, match)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
