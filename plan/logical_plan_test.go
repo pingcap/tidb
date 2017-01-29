@@ -1240,16 +1240,16 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 			sql: "select a, sum(e) from t group by a",
 			ans: map[string][][]string{
 				"TableScan_1":   {{"test.t.a"}},
-				"Aggregation_2": {{"test.t.a"}, {"test.t.a"}},
-				"Projection_3":  {{"a"}, {"a"}},
+				"Aggregation_2": {{"test.t.a"}},
+				"Projection_3":  {{"a"}},
 			},
 		},
 		{
 			sql: "select a, sum(f) from t group by a",
 			ans: map[string][][]string{
 				"TableScan_1":   {{"test.t.f"}, {"test.t.a"}},
-				"Aggregation_2": {{"test.t.a"}, {"test.t.a"}},
-				"Projection_3":  {{"a"}, {"a"}},
+				"Aggregation_2": {{"test.t.a"}},
+				"Projection_3":  {{"a"}},
 			},
 		},
 		{
@@ -1264,8 +1264,8 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 			sql: "select f, g, sum(a) from t group by f, g",
 			ans: map[string][][]string{
 				"TableScan_1":   {{"test.t.f"}, {"test.t.g"}, {"test.t.f", "test.t.g"}, {"test.t.a"}},
-				"Aggregation_2": {{"test.t.f"}, {"test.t.g"}, {"test.t.f", "test.t.g"}, {"test.t.f"}},
-				"Projection_3":  {{"f"}, {"g"}, {"f", "g"}, {"f"}},
+				"Aggregation_2": {{"test.t.f"}, {"test.t.g"}, {"test.t.f", "test.t.g"}},
+				"Projection_3":  {{"f"}, {"g"}, {"f", "g"}},
 			},
 		},
 		{
