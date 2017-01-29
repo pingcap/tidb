@@ -76,6 +76,13 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 			apply.SetChildren(outerPlan, innerPlan)
 			innerPlan.SetParents(apply)
 			return s.optimize(p, nil, nil)
+		} else if m, ok := innerPlan.(*MaxOneRow); ok {
+			if m.children[0].Schema().MaxOneRow {
+				innerPlan = m.children[0].(LogicalPlan)
+				innerPlan.SetParents(apply)
+				apply.SetChildren(outerPlan, innerPlan)
+				return s.optimize(p, nil, nil)
+			}
 		}
 		// TODO: Deal with aggregation and projection.
 	}

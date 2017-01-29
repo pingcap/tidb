@@ -17,6 +17,8 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/ast"
+	"github.com/ngaut/log"
 )
 
 type buildKeySolver struct{}
@@ -54,6 +56,31 @@ func (p *Aggregation) buildKeyInfo() {
 		p.schema.Keys = append(p.schema.Keys, newKey)
 		break
 	}
+	if len(p.GroupByItems) == 0 {
+		p.schema.MaxOneRow = true
+	}
+}
+
+func (p *Selection) checkUniqueCol(expr expression.Expression) bool {
+	col, ok := expr.(*expression.Column)
+	if !ok {
+		return false
+	}
+	return p.children[0].Schema().IsUniqueKey(col)
+}
+
+func (p *Selection) buildKeyInfo() {
+	p.baseLogicalPlan.buildKeyInfo()
+	p.schema.MaxOneRow = p.children[0].Schema().MaxOneRow
+	for _, cond := range p.Conditions {
+		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.EQ {
+			if p.checkUniqueCol(sf.GetArgs()[0]) || p.checkUniqueCol(sf.GetArgs()[1]) {
+				p.schema.MaxOneRow = true
+				break
+			}
+		}
+	}
+	log.Warnf("sel %v", p.schema.MaxOneRow)
 }
 
 // A bijection exists between columns of a projection's schema and this projection's Exprs.
@@ -74,6 +101,8 @@ func (p *Projection) buildSchemaByExprs() *expression.Schema {
 
 func (p *Projection) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
+	p.schema.MaxOneRow = p.children[0].Schema().MaxOneRow
+	log.Warnf("proj %v", p.schema.MaxOneRow)
 	schema := p.buildSchemaByExprs()
 	for _, key := range p.Children()[0].Schema().Keys {
 		indices := schema.ColumnsIndices(key)
@@ -90,6 +119,7 @@ func (p *Projection) buildKeyInfo() {
 
 func (p *Trim) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
+	p.schema.MaxOneRow = p.children[0].Schema().MaxOneRow
 	for _, key := range p.children[0].Schema().Keys {
 		ok := true
 		newKey := make([]*expression.Column, 0, len(key))
@@ -109,6 +139,7 @@ func (p *Trim) buildKeyInfo() {
 
 func (p *Join) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
+	p.schema.MaxOneRow = p.children[0].Schema().MaxOneRow && p.children[1].Schema().MaxOneRow
 	switch p.JoinType {
 	case SemiJoin, LeftOuterSemiJoin:
 		p.schema.Keys = p.children[0].Schema().Clone().Keys

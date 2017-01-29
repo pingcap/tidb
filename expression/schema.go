@@ -36,6 +36,7 @@ func (ki KeyInfo) Clone() KeyInfo {
 type Schema struct {
 	Columns []*Column
 	Keys    []KeyInfo
+	MaxOneRow bool
 }
 
 // String implements fmt.Stringer interface.
@@ -99,6 +100,15 @@ func (s *Schema) RetrieveColumn(col *Column) *Column {
 		return s.Columns[index]
 	}
 	return nil
+}
+
+func (s *Schema) IsUniqueKey(col *Column) bool {
+	for _, key := range s.Keys {
+		if len(key) == 1 && key[0].Equal(col, nil) {
+			return true
+		}
+	}
+	return false
 }
 
 // ColumnIndex finds the index for a column.
