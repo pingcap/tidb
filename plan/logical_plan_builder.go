@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/plan/statistics"
 	"github.com/pingcap/tidb/plan/statscache"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
@@ -912,7 +913,12 @@ func (b *planBuilder) buildTableDual() LogicalPlan {
 }
 
 func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
-	statisticTable := statscache.GetStatisticsTableCache(b.ctx, tn.TableInfo)
+	var statisticTable *statistics.Table
+	if EnableStatistic {
+		statisticTable = statscache.GetStatisticsTableCache(b.ctx, tn.TableInfo)
+	} else {
+		statisticTable = statistics.PseudoTable(tn.TableInfo)
+	}
 	if b.err != nil {
 		return nil
 	}
