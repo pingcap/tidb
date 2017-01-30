@@ -298,12 +298,10 @@ type randFunctionClass struct {
 }
 
 func (c *randFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := errors.Trace(c.verifyArgs(args)); err != nil {
-		return nil, errors.Trace(err)
-	}
+	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinRandSig{newBaseBuiltinFunc(args, ctx)}
 	bt.deterministic = false
-	return bt, nil
+	return bt, errors.Trace(err)
 }
 
 type builtinRandSig struct {
