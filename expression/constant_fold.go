@@ -20,10 +20,7 @@ import (
 // FoldConstant does constant folding optimization on an expression.
 func FoldConstant(expr Expression) Expression {
 	scalarFunc, ok := expr.(*ScalarFunction)
-	if !ok {
-		return expr
-	}
-	if _, isDynamic := DynamicFuncs[scalarFunc.FuncName.L]; isDynamic {
+	if !ok || !scalarFunc.Function.isDeterministic() {
 		return expr
 	}
 	args := scalarFunc.GetArgs()
