@@ -44,7 +44,7 @@ func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc 
 
 func (b *baseBuiltinFunc) evalArgs(row []types.Datum) (_ []types.Datum, err error) {
 	for i, arg := range b.args {
-		b.argValues[i], err = arg.Eval(row, b.ctx)
+		b.argValues[i], err = arg.Eval(row)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

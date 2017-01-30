@@ -37,7 +37,7 @@ func (col *CorrelatedColumn) Clone() Expression {
 }
 
 // Eval implements Expression interface.
-func (col *CorrelatedColumn) Eval(row []types.Datum, _ context.Context) (types.Datum, error) {
+func (col *CorrelatedColumn) Eval(row []types.Datum) (types.Datum, error) {
 	return *col.Data, nil
 }
 
@@ -120,7 +120,7 @@ func (col *Column) GetType() *types.FieldType {
 }
 
 // Eval implements Expression interface.
-func (col *Column) Eval(row []types.Datum, _ context.Context) (types.Datum, error) {
+func (col *Column) Eval(row []types.Datum) (types.Datum, error) {
 	return row[col.Index], nil
 }
 
