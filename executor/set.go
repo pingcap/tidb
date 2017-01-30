@@ -69,7 +69,7 @@ func (e *SetExecutor) executeSet() error {
 		name := strings.ToLower(v.Name)
 		if !v.IsSystem {
 			// Set user variable.
-			value, err := v.Expr.Eval(nil, e.ctx)
+			value, err := v.Expr.Eval(nil)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -176,7 +176,7 @@ func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.
 		}
 		return
 	}
-	value, err = v.Expr.Eval(nil, e.ctx)
+	value, err = v.Expr.Eval(nil)
 	return value, errors.Trace(err)
 }
 

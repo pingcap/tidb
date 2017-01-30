@@ -251,7 +251,7 @@ func (af *aggFunction) SetContext(ctx map[string](*aggEvaluateContext)) {
 func (af *aggFunction) updateSum(row []types.Datum, groupKey []byte, ectx context.Context) error {
 	ctx := af.getContext(groupKey)
 	a := af.Args[0]
-	value, err := a.Eval(row, ectx)
+	value, err := a.Eval(row)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -278,7 +278,7 @@ func (af *aggFunction) updateSum(row []types.Datum, groupKey []byte, ectx contex
 func (af *aggFunction) streamUpdateSum(row []types.Datum, ectx context.Context) error {
 	ctx := af.getStreamedContext()
 	a := af.Args[0]
-	value, err := a.Eval(row, ectx)
+	value, err := a.Eval(row)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -418,7 +418,7 @@ func (cf *countFunction) Update(row []types.Datum, groupKey []byte, ectx context
 		vals = make([]interface{}, 0, len(cf.Args))
 	}
 	for _, a := range cf.Args {
-		value, err := a.Eval(row, ectx)
+		value, err := a.Eval(row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -455,7 +455,7 @@ func (cf *countFunction) StreamUpdate(row []types.Datum, ectx context.Context) e
 		vals = make([]interface{}, 0, len(cf.Args))
 	}
 	for _, a := range cf.Args {
-		value, err := a.Eval(row, ectx)
+		value, err := a.Eval(row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -521,7 +521,7 @@ func (af *avgFunction) GetType() *types.FieldType {
 func (af *avgFunction) updateAvg(row []types.Datum, groupKey []byte, ectx context.Context) error {
 	ctx := af.getContext(groupKey)
 	a := af.Args[1]
-	value, err := a.Eval(row, ectx)
+	value, err := a.Eval(row)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -541,7 +541,7 @@ func (af *avgFunction) updateAvg(row []types.Datum, groupKey []byte, ectx contex
 	if err != nil {
 		return errors.Trace(err)
 	}
-	count, err := af.Args[0].Eval(row, ectx)
+	count, err := af.Args[0].Eval(row)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -618,7 +618,7 @@ func (cf *concatFunction) Update(row []types.Datum, groupKey []byte, ectx contex
 	ctx := cf.getContext(groupKey)
 	vals := make([]interface{}, 0, len(cf.Args))
 	for _, a := range cf.Args {
-		value, err := a.Eval(row, ectx)
+		value, err := a.Eval(row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -654,7 +654,7 @@ func (cf *concatFunction) StreamUpdate(row []types.Datum, ectx context.Context) 
 	ctx := cf.getStreamedContext()
 	vals := make([]interface{}, 0, len(cf.Args))
 	for _, a := range cf.Args {
-		value, err := a.Eval(row, ectx)
+		value, err := a.Eval(row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -766,7 +766,7 @@ func (mmf *maxMinFunction) Update(row []types.Datum, groupKey []byte, ectx conte
 		return errors.New("Wrong number of args for AggFuncMaxMin")
 	}
 	a := mmf.Args[0]
-	value, err := a.Eval(row, ectx)
+	value, err := a.Eval(row)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -794,7 +794,7 @@ func (mmf *maxMinFunction) StreamUpdate(row []types.Datum, ectx context.Context)
 		return errors.New("Wrong number of args for AggFuncMaxMin")
 	}
 	a := mmf.Args[0]
-	value, err := a.Eval(row, ectx)
+	value, err := a.Eval(row)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -843,7 +843,7 @@ func (ff *firstRowFunction) Update(row []types.Datum, groupKey []byte, ectx cont
 	if len(ff.Args) != 1 {
 		return errors.New("Wrong number of args for AggFuncFirstRow")
 	}
-	value, err := ff.Args[0].Eval(row, ectx)
+	value, err := ff.Args[0].Eval(row)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -861,7 +861,7 @@ func (ff *firstRowFunction) StreamUpdate(row []types.Datum, ectx context.Context
 	if len(ff.Args) != 1 {
 		return errors.New("Wrong number of args for AggFuncFirstRow")
 	}
-	value, err := ff.Args[0].Eval(row, ectx)
+	value, err := ff.Args[0].Eval(row)
 	if err != nil {
 		return errors.Trace(err)
 	}
