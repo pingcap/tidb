@@ -50,11 +50,7 @@ func (e *Evaluator) evalBool(expr *tipb.Expr) (int64, error) {
 		return compareResultNull, nil
 	}
 
-	vBool, err := v.ToBool(e.sc)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	return vBool, nil
+	return v.ToBool(e.sc)
 }
 
 // evalAnd computes result of (X && Y). It works in a short-cut way.
