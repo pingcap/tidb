@@ -105,8 +105,9 @@ func (p *Aggregation) PruneColumns(parentUsedCols []*expression.Column) {
 			cols := expression.ExtractColumns(p.GroupByItems[i])
 			if len(cols) == 0 {
 				p.GroupByItems = append(p.GroupByItems[:i], p.GroupByItems[i+1:]...)
+			} else {
+				selfUsedCols = append(selfUsedCols, cols...)
 			}
-			selfUsedCols = append(selfUsedCols, cols...)
 		}
 		if len(p.GroupByItems) == 0 {
 			p.GroupByItems = []expression.Expression{expression.One}
