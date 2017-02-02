@@ -29,7 +29,7 @@ func (s *testDDLSuite) TestDropSchemaError(c *C) {
 	defer store.Close()
 
 	d := newDDL(store, nil, nil, testLease)
-	defer d.close()
+	defer d.Stop()
 
 	job := &model.Job{
 		SchemaID: 1,
@@ -64,10 +64,10 @@ func (s *testDDLSuite) TestDropTableError(c *C) {
 	defer store.Close()
 
 	d := newDDL(store, nil, nil, testLease)
-	defer d.close()
+	defer d.Stop()
 
 	dbInfo := testSchemaInfo(c, d, "test")
-	testCreateSchema(c, testNewContext(c, d), d, dbInfo)
+	testCreateSchema(c, testNewContext(d), d, dbInfo)
 
 	job := &model.Job{
 		SchemaID: dbInfo.ID,
@@ -96,7 +96,7 @@ func (s *testDDLSuite) TestInvalidBgJobType(c *C) {
 	defer store.Close()
 
 	d := newDDL(store, nil, nil, testLease)
-	defer d.close()
+	defer d.Stop()
 
 	job := &model.Job{
 		SchemaID:   1,

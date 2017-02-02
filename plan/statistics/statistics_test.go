@@ -17,7 +17,6 @@ import (
 	"testing"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
@@ -166,8 +165,8 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 		NumBuckets:    bucketCount,
 		ColumnSamples: [][]types.Datum{s.samples},
 		ColOffsets:    []int{0},
-		IndRecords:    []ast.RecordSet{s.rc},
-		IndOffsets:    []int{0},
+		IdxRecords:    []ast.RecordSet{s.rc},
+		IdxOffsets:    []int{0},
 		PkRecords:     ast.RecordSet(s.pk),
 		PkOffset:      2,
 	}
@@ -208,7 +207,6 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	c.Check(count, Equals, int64(5083))
 
 	str := t.String()
-	log.Debug(str)
 	c.Check(len(str), Greater, 0)
 
 	tpb, err := t.ToPB()

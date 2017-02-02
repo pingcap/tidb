@@ -131,6 +131,8 @@ func (s *testStoreSuite) TestBusyServerKV(c *C) {
 func (s *testStoreSuite) TestBusyServerCop(c *C) {
 	client := newBusyClient(s.store.client)
 	s.store.client = client
+	err := tidb.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
 
 	session, err := tidb.CreateSession(s.store)
 	c.Assert(err, IsNil)

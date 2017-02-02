@@ -40,12 +40,12 @@ func (s *testStatSuite) TestStat(c *C) {
 	defer store.Close()
 
 	d := newDDL(store, nil, nil, testLease)
-	defer d.close()
+	defer d.Stop()
 
 	time.Sleep(testLease)
 
 	dbInfo := testSchemaInfo(c, d, "test")
-	testCreateSchema(c, testNewContext(c, d), d, dbInfo)
+	testCreateSchema(c, testNewContext(d), d, dbInfo)
 
 	m, err := d.Stats()
 	c.Assert(err, IsNil)

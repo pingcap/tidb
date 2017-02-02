@@ -15,6 +15,7 @@ package privileges
 
 import (
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
@@ -261,6 +262,9 @@ func (p *MySQLPrivilege) decodeColumnsPrivTableRow(row *ast.Row, fs []*ast.Resul
 
 func decodeSetToPrivilege(s types.Set) (mysql.PrivilegeType, error) {
 	var ret mysql.PrivilegeType
+	if s.Name == "" {
+		return ret, nil
+	}
 	for _, str := range strings.Split(s.Name, ",") {
 		priv, ok := mysql.SetStr2Priv[str]
 		if !ok {
@@ -269,4 +273,142 @@ func decodeSetToPrivilege(s types.Set) (mysql.PrivilegeType, error) {
 		ret |= priv
 	}
 	return ret, nil
+}
+
+func (record *userRecord) match(user, host string) bool {
+	return record.User == user && patternMatch(record.Host, host)
+}
+
+func (record *dbRecord) match(user, host, db string) bool {
+	return record.User == user && record.DB == db &&
+		patternMatch(record.Host, host)
+}
+
+func (record *tablesPrivRecord) match(user, host, db, table string) bool {
+	return record.User == user && record.DB == db &&
+		record.TableName == table && patternMatch(record.Host, host)
+}
+
+func (record *columnsPrivRecord) match(user, host, db, table, col string) bool {
+	return record.User == user && record.DB == db &&
+		record.TableName == table && record.ColumnName == col &&
+		patternMatch(record.Host, host)
+}
+
+// patternMatch matches "%" the same way as ".*" in regular expression, for example,
+// "10.0.%" would match "10.0.1" "10.0.1.118" ...
+// TODO: patternMatch's behaviour is actual LIKE expression, so we should reuse the code.
+func patternMatch(pattern, str string) bool {
+	for i := 0; i < len(pattern); i++ {
+		p := pattern[i]
+		if p == '%' {
+			return true
+		}
+		if i >= len(str) || p != str[i] {
+			return false
+		}
+	}
+	return len(pattern) == len(str)
+}
+
+// ConnectionVerification verifies the connection have access to TiDB server.
+func (p *MySQLPrivilege) ConnectionVerification(user, host string) bool {
+	for _, record := range p.User {
+		if record.match(user, host) {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *MySQLPrivilege) matchUser(user, host string) *userRecord {
+	for i := 0; i < len(p.User); i++ {
+		record := &p.User[i]
+		if record.match(user, host) {
+			return record
+		}
+	}
+	return nil
+}
+
+func (p *MySQLPrivilege) matchDB(user, host, db string) *dbRecord {
+	for i := 0; i < len(p.DB); i++ {
+		record := &p.DB[i]
+		if record.match(user, host, db) {
+			return record
+		}
+	}
+	return nil
+}
+
+func (p *MySQLPrivilege) matchTables(user, host, db, table string) *tablesPrivRecord {
+	for i := 0; i < len(p.TablesPriv); i++ {
+		record := &p.TablesPriv[i]
+		if record.match(user, host, db, table) {
+			return record
+		}
+	}
+	return nil
+}
+
+func (p *MySQLPrivilege) matchColumns(user, host, db, table, column string) *columnsPrivRecord {
+	for i := 0; i < len(p.ColumnsPriv); i++ {
+		record := &p.ColumnsPriv[i]
+		if record.match(user, host, db, table, column) {
+			return record
+		}
+	}
+	return nil
+}
+
+// RequestVerification checks whether the user have sufficient privileges to do the operation.
+func (p *MySQLPrivilege) RequestVerification(user, host, db, table, column string, priv mysql.PrivilegeType) bool {
+	record1 := p.matchUser(user, host)
+	if record1 != nil && record1.Privileges&priv > 0 {
+		return true
+	}
+
+	record2 := p.matchDB(user, host, db)
+	if record2 != nil && record2.Privileges&priv > 0 {
+		return true
+	}
+
+	record3 := p.matchTables(user, host, db, table)
+	if record3 != nil {
+		if record3.TablePriv&priv > 0 {
+			return true
+		}
+		if column != "" && record3.ColumnPriv&priv > 0 {
+			return true
+		}
+	}
+
+	record4 := p.matchColumns(user, host, db, table, column)
+	if record4 != nil && record4.ColumnPriv&priv > 0 {
+		return true
+	}
+
+	return false
+}
+
+// Handle wraps MySQLPrivilege providing thread safe access.
+type Handle struct {
+	priv atomic.Value
+}
+
+// Get the MySQLPrivilege for read.
+func (h *Handle) Get() *MySQLPrivilege {
+	return h.priv.Load().(*MySQLPrivilege)
+}
+
+// Update the MySQLPrivilege.
+func (h *Handle) Update(ctx context.Context) error {
+	var priv MySQLPrivilege
+	err := priv.LoadAll(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	h.priv.Store(&priv)
+	return nil
 }

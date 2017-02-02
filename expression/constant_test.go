@@ -49,7 +49,7 @@ func newLonglong(value int64) *Constant {
 
 func newFunction(funcName string, args ...Expression) Expression {
 	typeLong := types.NewFieldType(mysql.TypeLonglong)
-	newFunc, _ := NewFunction(funcName, typeLong, args...)
+	newFunc, _ := NewFunction(mock.NewContext(), funcName, typeLong, args...)
 	return newFunc
 }
 
@@ -164,8 +164,7 @@ func (*testExpressionSuite) TestConstantFolding(c *C) {
 		},
 	}
 	for _, ca := range cases {
-		ctx := mock.NewContext()
-		newConds := FoldConstant(ctx, ca.condition)
+		newConds := FoldConstant(ca.condition)
 		c.Assert(newConds.String(), Equals, ca.result, Commentf("different for expr %s", ca.condition))
 	}
 }

@@ -154,8 +154,8 @@ type DeleteExec struct {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *DeleteExec) Schema() expression.Schema {
-	return expression.NewSchema(nil)
+func (e *DeleteExec) Schema() *expression.Schema {
+	return expression.NewSchema()
 }
 
 // Next implements the Executor Next interface.
@@ -564,8 +564,8 @@ func (e *LoadData) Next() (*Row, error) {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *LoadData) Schema() expression.Schema {
-	return expression.NewSchema(nil)
+func (e *LoadData) Schema() *expression.Schema {
+	return expression.NewSchema()
 }
 
 // Close implements the Executor Close interface.
@@ -601,8 +601,8 @@ type InsertExec struct {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *InsertExec) Schema() expression.Schema {
-	return expression.NewSchema(nil)
+func (e *InsertExec) Schema() *expression.Schema {
+	return expression.NewSchema()
 }
 
 // Next implements the Executor Next interface.
@@ -784,7 +784,7 @@ func (e *InsertValues) getRows(cols []*table.Column) (rows [][]types.Datum, err 
 func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression) ([]types.Datum, error) {
 	vals := make([]types.Datum, len(list))
 	for i, expr := range list {
-		val, err := expr.Eval(nil, e.ctx)
+		val, err := expr.Eval(nil)
 		vals[i] = val
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -934,7 +934,7 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]
 			newData[i] = c
 			continue
 		}
-		val, err1 := asgn.Expr.Eval(data, e.ctx)
+		val, err1 := asgn.Expr.Eval(data)
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
@@ -989,8 +989,8 @@ type ReplaceExec struct {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *ReplaceExec) Schema() expression.Schema {
-	return expression.NewSchema(nil)
+func (e *ReplaceExec) Schema() *expression.Schema {
+	return expression.NewSchema()
 }
 
 // Close implements the Executor Close interface.
@@ -1096,8 +1096,8 @@ type UpdateExec struct {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *UpdateExec) Schema() expression.Schema {
-	return expression.NewSchema(nil)
+func (e *UpdateExec) Schema() *expression.Schema {
+	return expression.NewSchema()
 }
 
 // Next implements the Executor Next interface.
@@ -1170,14 +1170,11 @@ func (e *UpdateExec) fetchRows() error {
 		}
 		data := make([]types.Datum, e.SelectExec.Schema().Len())
 		newData := make([]types.Datum, e.SelectExec.Schema().Len())
-		for i, s := range e.SelectExec.Schema().Columns {
-			data[i], err = s.Eval(row.Data, e.ctx)
-			if err != nil {
-				return errors.Trace(err)
-			}
+		for i := range e.SelectExec.Schema().Columns {
+			data[i] = row.Data[i]
 			newData[i] = data[i]
 			if e.OrderedList[i] != nil {
-				val, err := e.OrderedList[i].Expr.Eval(row.Data, e.ctx)
+				val, err := e.OrderedList[i].Expr.Eval(row.Data)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -1190,7 +1187,7 @@ func (e *UpdateExec) fetchRows() error {
 	}
 }
 
-func getTableOffset(schema expression.Schema, entry *RowKeyEntry) int {
+func getTableOffset(schema *expression.Schema, entry *RowKeyEntry) int {
 	t := entry.Tbl
 	var tblName string
 	if entry.TableAsName == nil || len(entry.TableAsName.L) == 0 {

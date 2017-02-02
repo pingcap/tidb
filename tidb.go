@@ -73,6 +73,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		return nil, errors.Trace(err)
 	}
 	dm.domains[key] = d
+
 	return
 }
 

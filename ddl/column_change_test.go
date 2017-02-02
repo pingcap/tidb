@@ -55,9 +55,10 @@ func (s *testColumnChangeSuite) SetUpSuite(c *C) {
 func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	defer testleak.AfterTest(c)()
 	d := newDDL(s.store, nil, nil, testLease)
+	defer d.Stop()
 	// create table t (c1 int, c2 int);
 	tblInfo := testTableInfo(c, d, "t", 2)
-	ctx := testNewContext(c, d)
+	ctx := testNewContext(d)
 	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
@@ -129,14 +130,14 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	testCheckJobDone(c, d, job, true)
 	mu.Lock()
-	s.testColumnDrop(c, ctx, d, publicTable)
+	tb := publicTable
 	mu.Unlock()
+	s.testColumnDrop(c, ctx, d, tb)
 	s.testAddColumnNoDefault(c, ctx, d, tblInfo)
-	d.close()
 }
 
 func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo) {
-	d.close()
+	d.Stop()
 	tc := &testDDLCallback{}
 	// set up hook
 	prevState := model.StateNone
@@ -183,7 +184,7 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx context.Context
 }
 
 func (s *testColumnChangeSuite) testColumnDrop(c *C, ctx context.Context, d *ddl, tbl table.Table) {
-	d.close()
+	d.Stop()
 	dropCol := tbl.Cols()[2]
 	tc := &testDDLCallback{}
 	// set up hook

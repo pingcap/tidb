@@ -37,11 +37,7 @@ var (
 			Subsystem: "server",
 			Name:      "query_total",
 			Help:      "Counter of queries.",
-		}, []string{"type"})
-
-	// Query handle result status.
-	querySucc   = "query_succ"
-	queryFailed = "query_failed"
+		}, []string{"type", "status"})
 
 	connGauge = prometheus.NewGauge(
 		prometheus.GaugeOpts{

@@ -47,7 +47,7 @@ type ShowExec struct {
 	// Used by show variables
 	GlobalScope bool
 
-	schema expression.Schema
+	schema *expression.Schema
 	ctx    context.Context
 	is     infoschema.InfoSchema
 
@@ -57,7 +57,7 @@ type ShowExec struct {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *ShowExec) Schema() expression.Schema {
+func (e *ShowExec) Schema() *expression.Schema {
 	return e.schema
 }
 
