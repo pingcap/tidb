@@ -214,6 +214,7 @@ import (
 	/* the following tokens belong to NotKeywordToken*/
 	abs		"ABS"
 	addDate		"ADDDATE"
+	addTime		"ADDTIME"
 	admin		"ADMIN"
 	ceil		"CEIL"
 	ceiling		"CEILING"
@@ -272,7 +273,8 @@ import (
 	strcmp		"STRCMP"
 	strToDate	"STR_TO_DATE"
 	subDate		"SUBDATE"
-	substring	"SUBSTRING"
+	subTime		"SUBTIME"
+    substring	"SUBSTRING"
 	substringIndex	"SUBSTRING_INDEX"
 	sum		"SUM"
 	sysDate		"SYSDATE"
@@ -718,6 +720,7 @@ import (
 	FunctionNameConflict		"Built-in function call names which are conflict with keywords"
 	FunctionNameDateArith		"Date arith function call names (date_add or date_sub)"
 	FunctionNameDateArithMultiForms	"Date arith function call names (adddate or subdate)"
+	FunctionNameTimeArithMultiForms	"Time arith function call names (addtime or subtime)"
 
 %precedence lowestOpt
 %token	tableRefPriority
@@ -2124,11 +2127,11 @@ ReservedKeyword:
 
 
 NotKeywordToken:
-	"ABS" | "ADDDATE" | "ADMIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
+	"ABS" | "ADDDATE" | "ADDTIME" | "ADMIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
 |	"DATEDIFF" | "DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FIND_IN_SET" | "FOUND_ROWS"
 |	"GROUP_CONCAT"| "GREATEST" | "LEAST" | "HOUR" | "HEX" | "UNHEX" | "IFNULL" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOCATE" | "LOWER" | "LTRIM"
 |	"MAX" | "MICROSECOND" | "MIN" |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" | "POW" | "POWER" | "RAND"
-|	"SECOND" | "SLEEP" | "SQL_CALC_FOUND_ROWS" | "STR_TO_DATE" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen |
+|	"SECOND" | "SLEEP" | "SQL_CALC_FOUND_ROWS" | "STR_TO_DATE" | "SUBDATE" | "SUBTIME" | "SUBSTRING" %prec lowerThanLeftParen |
 "SUBSTRING_INDEX" | "SUM" | "TRIM" | "RTRIM" | "UCASE" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
 |	"STATS_PERSISTENT" | "GET_LOCK" | "RELEASE_LOCK" | "CEIL" | "CEILING" | "FROM_UNIXTIME" | "TIMEDIFF" | "LN" | "LOG" | "LOG2" | "LOG10"
 
@@ -2700,6 +2703,16 @@ FunctionCallNonKeyword:
 			},
 		}
 	}
+|	FunctionNameTimeArithMultiForms '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{
+				$3.(ast.ExprNode),
+				$5.(ast.ExprNode),
+			},
+		}
+	}
 |	"DATE_FORMAT" '(' Expression ',' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
@@ -3110,16 +3123,17 @@ FunctionCallNonKeyword:
 		}
 	}
 
-
 FunctionNameDateArith:
 	"DATE_ADD"
 |	"DATE_SUB"
-
 
 FunctionNameDateArithMultiForms:
 	"ADDDATE"
 |	"SUBDATE"
 
+FunctionNameTimeArithMultiForms:
+	"ADDTIME"
+|	"SUBTIME"
 
 TrimDirection:
 	"BOTH"

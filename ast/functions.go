@@ -98,8 +98,10 @@ const (
 	DateDiff         = "datediff"
 	DateAdd          = "date_add"
 	AddDate          = "adddate"
+	AddTime          = "addtime"
 	DateSub          = "date_sub"
 	SubDate          = "subdate"
+	SubTime          = "subtime"
 	DateFormat       = "date_format"
 	Day              = "day"
 	DayName          = "dayname"
@@ -272,6 +274,18 @@ const (
 	// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
 	// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-sub
 	DateArithSub
+)
+
+// TimeArithType is type for TimeArith type.
+type TimeArithType byte
+
+const (
+	// TimeArithAdd is to run addtime function.
+	// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_addtime
+	TimeArithAdd TimeArithType = iota + 1
+	// TimeArithSub is to run subtime function.
+	// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
+	TimeArithSub
 )
 
 const (

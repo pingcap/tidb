@@ -1428,6 +1428,132 @@ func dateArithFuncFactory(op ast.DateArithType) BuiltinFunc {
 	}
 }
 
+type timeArithFunctionClass struct {
+	baseFunctionClass
+
+	op ast.TimeArithType
+}
+
+func (c *timeArithFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinTimeArithSig{newBaseBuiltinFunc(args, ctx), c.op}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinTimeArithSig struct {
+	baseBuiltinFunc
+
+	op ast.TimeArithType
+}
+
+func (b *builtinTimeArithSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return timeArithFuncFactory(b.op)(args, b.ctx)
+}
+
+func timeArithFuncFactory(op ast.TimeArithType) BuiltinFunc {
+	return func(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+		// args[0] -> DateTime, Time
+		// args[1] -> Time
+		// health check for date and interval
+		if args[0].IsNull() || args[1].IsNull() {
+			return d, nil
+		}
+
+		nodeDate := args[0]
+		nodeTime := args[1]
+		d, err := convertDatumToTime(ctx.GetSessionVars().StmtCtx, nodeDate)
+		if err {
+			d,
+		} else {
+
+		}
+		d, err := convertToDuration(ctx.GetSessionVars().StmtCtx, args[0], types.MaxFsp)
+
+		types.co
+		self.convertToDuration()
+		// parse date
+		fieldType := mysql.TypeDate
+		var resultField *types.FieldType
+		switch nodeDate.Kind() {
+		case types.KindMysqlDuration:
+			x := nodeDate.GetMysqlDuration()
+			fieldType = mysql.TypeDuration
+		case types.KindMysqlTime:
+			x := nodeDate.GetMysqlTime()
+			if (x.Type == mysql.TypeDatetime) {
+				fieldType = mysql.TypeDatetime
+			}
+		case types.KindString:
+			x := nodeDate.GetString()
+			if !types.IsDateFormat(x) {
+				fieldType = mysql.TypeDatetime
+			}
+		case types.KindInt64:
+			x := nodeDate.GetInt64()
+			if t, err1 := types.ParseTimeFromInt64(x); err1 == nil {
+				if (t.Type == mysql.TypeDatetime) || (t.Type == mysql.TypeTimestamp) {
+					fieldType = mysql.TypeDatetime
+				}
+			}
+		}
+
+		resultField = types.NewFieldType(fieldType)
+		resultField.Decimal = types.MaxFsp
+		value, err := nodeDate.ConvertTo(ctx.GetSessionVars().StmtCtx, resultField)
+		if err != nil {
+			return d, errInvalidOperation.Gen("TimeArith invalid args, need date but get %T", nodeDate)
+		}
+		if value.IsNull() {
+			return d, errInvalidOperation.Gen("TimeArith invalid args, need date but get %v", value.GetValue())
+		}
+		if value.Kind() != types.KindMysqlTime {
+			return d, errInvalidOperation.Gen("TimeArith need time type, but got %T", value.GetValue())
+		}
+		result := value.GetMysqlTime()
+		// parse interval
+		var interval string
+		if strings.ToLower(nodeIntervalUnit) == "day" {
+			day, err1 := parseDayInterval(sc, nodeIntervalValue)
+			if err1 != nil {
+				return d, errInvalidOperation.Gen("DateArith invalid day interval, need int but got %T", nodeIntervalValue.GetString())
+			}
+			interval = fmt.Sprintf("%d", day)
+		} else {
+			if nodeIntervalValue.Kind() == types.KindString {
+				interval = fmt.Sprintf("%v", nodeIntervalValue.GetString())
+			} else {
+				ii, err1 := nodeIntervalValue.ToInt64(sc)
+				if err1 != nil {
+					return d, errors.Trace(err1)
+				}
+				interval = fmt.Sprintf("%v", ii)
+			}
+		}
+		year, month, day, duration, err := types.ExtractTimeValue(nodeIntervalUnit, interval)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		if op == ast.DateArithSub {
+			year, month, day, duration = -year, -month, -day, -duration
+		}
+		// TODO: Consider time_zone variable.
+		t, err := result.Time.GoTime(time.Local)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		t = t.Add(duration)
+		t = t.AddDate(int(year), int(month), int(day))
+		if t.Nanosecond() == 0 {
+			result.Fsp = 0
+		}
+		result.Time = types.FromGoTime(t)
+		d.SetMysqlTime(result)
+		return d, nil
+	}
+}
+
 var reg = regexp.MustCompile(`[\d]+`)
 
 func parseDayInterval(sc *variable.StatementContext, value types.Datum) (int64, error) {
