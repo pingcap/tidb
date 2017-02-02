@@ -397,11 +397,12 @@ func (e *HashJoinExec) Next() (*Row, error) {
 type joinExec interface {
 	Executor
 
-	// fetchBigRow fetches a valid row from big Exec.
+	// fetchBigRow fetches a valid row from big Exec and returns a bool value that means if it is matched.
 	fetchBigRow() (*Row, bool, error)
 	// prepare reads all records from small Exec and stores them.
 	prepare() error
-	// doJoin fetch a row from big exec and get all the rows matches the on condition.
+	// doJoin fetches a row from big exec and a bool value that means if it's matched with big filter,
+	// then get all the rows matches the on condition.
 	doJoin(*Row, bool) ([]*Row, error)
 }
 
