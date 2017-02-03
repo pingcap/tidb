@@ -178,6 +178,10 @@ func (s *testEvalSuite) TestEval(c *C) {
 			types.NewIntDatum(0),
 		},
 		{
+			buildExpr(tipb.ExprType_And, types.Datum{}, types.NewIntDatum(0)),
+			types.NewIntDatum(0),
+		},
+		{
 			buildExpr(tipb.ExprType_And, types.NewIntDatum(1), types.Datum{}),
 			types.Datum{},
 		},
@@ -195,6 +199,10 @@ func (s *testEvalSuite) TestEval(c *C) {
 		},
 		{
 			buildExpr(tipb.ExprType_Or, types.NewIntDatum(1), types.Datum{}),
+			types.NewIntDatum(1),
+		},
+		{
+			buildExpr(tipb.ExprType_Or, types.Datum{}, types.NewIntDatum(1)),
 			types.NewIntDatum(1),
 		},
 		{
