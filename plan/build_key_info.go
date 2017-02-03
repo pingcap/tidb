@@ -14,9 +14,17 @@
 package plan
 
 import (
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
 )
+
+type buildKeySolver struct{}
+
+func (s *buildKeySolver) optimize(lp LogicalPlan, _ context.Context, _ *idAllocator) (LogicalPlan, error) {
+	lp.buildKeyInfo()
+	return lp, nil
+}
 
 func (p *Aggregation) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
@@ -30,21 +38,6 @@ func (p *Aggregation) buildKeyInfo() {
 			newKey = append(newKey, p.schema.Columns[i])
 		}
 		p.schema.Keys = append(p.schema.Keys, newKey)
-	}
-	// dealing with p.GroupbyCols
-	// This is only used for optimization and needn't to be pushed up, so only one is enough.
-	schemaByGroupby := expression.NewSchema(p.groupByCols...)
-	for _, key := range p.Children()[0].Schema().Keys {
-		indices := schemaByGroupby.ColumnsIndices(key)
-		if indices == nil {
-			continue
-		}
-		newKey := make([]*expression.Column, 0, len(key))
-		for _, i := range indices {
-			newKey = append(newKey, schemaByGroupby.Columns[i])
-		}
-		p.schema.Keys = append(p.schema.Keys, newKey)
-		break
 	}
 }
 

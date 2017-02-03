@@ -38,7 +38,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	defer store.Close()
 
 	d := newDDL(store, nil, nil, testLease)
-	defer d.close()
+	defer d.Stop()
 
 	time.Sleep(testLease)
 
@@ -75,7 +75,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	err = d.runReorgJob(f)
 	c.Assert(err, IsNil)
 
-	d.close()
+	d.Stop()
 	err = d.runReorgJob(func() error {
 		time.Sleep(4 * testLease)
 		return nil
@@ -120,14 +120,14 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 	defer store.Close()
 
 	d1 := newDDL(store, nil, nil, testLease)
-	defer d1.close()
+	defer d1.Stop()
 
 	ctx := testNewContext(d1)
 
 	testCheckOwner(c, d1, true, ddlJobFlag)
 
 	d2 := newDDL(store, nil, nil, testLease)
-	defer d2.close()
+	defer d2.Stop()
 
 	dbInfo := testSchemaInfo(c, d1, "test")
 	testCreateSchema(c, ctx, d1, dbInfo)
@@ -149,7 +149,7 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 	tc := &testDDLCallback{}
 	tc.onJobRunBefore = func(job *model.Job) {
 		if job.SchemaState == model.StateDeleteReorganization {
-			d1.close()
+			d1.Stop()
 		}
 	}
 

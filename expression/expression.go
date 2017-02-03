@@ -50,7 +50,7 @@ type Expression interface {
 	fmt.Stringer
 	json.Marshaler
 	// Eval evaluates an expression through a row.
-	Eval(row []types.Datum, ctx context.Context) (types.Datum, error)
+	Eval(row []types.Datum) (types.Datum, error)
 
 	// Get the expression return type.
 	GetType() *types.FieldType
@@ -76,7 +76,7 @@ type Expression interface {
 
 // EvalBool evaluates expression to a boolean value.
 func EvalBool(expr Expression, row []types.Datum, ctx context.Context) (bool, error) {
-	data, err := expr.Eval(row, ctx)
+	data, err := expr.Eval(row)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -138,7 +138,7 @@ func (c *Constant) GetType() *types.FieldType {
 }
 
 // Eval implements Expression interface.
-func (c *Constant) Eval(_ []types.Datum, _ context.Context) (types.Datum, error) {
+func (c *Constant) Eval(_ []types.Datum) (types.Datum, error) {
 	return c.Value, nil
 }
 
@@ -263,7 +263,7 @@ func EvaluateExprWithNull(ctx context.Context, schema *Schema, expr Expression) 
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return FoldConstant(ctx, newFunc), nil
+		return FoldConstant(newFunc), nil
 	case *Column:
 		if schema.ColumnIndex(x) == -1 {
 			return x, nil

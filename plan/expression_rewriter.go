@@ -48,7 +48,7 @@ func evalAstExpr(expr ast.ExprNode, ctx context.Context) (types.Datum, error) {
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	return newExpr.Eval(nil, ctx)
+	return newExpr.Eval(nil)
 }
 
 // rewrite function rewrites ast expr to expression.Expression.
@@ -80,7 +80,7 @@ func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*a
 	if getRowLen(er.ctxStack[0]) != 1 {
 		return nil, nil, ErrOperandColumns.GenByArgs(1)
 	}
-	result := expression.FoldConstant(b.ctx, er.ctxStack[0])
+	result := expression.FoldConstant(er.ctxStack[0])
 	return result, er.p, nil
 }
 
@@ -452,7 +452,7 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 		}
 		er.ctxStack = append(er.ctxStack, er.p.Schema().Columns[er.p.Schema().Len()-1])
 	} else {
-		physicalPlan, err := doOptimize(np, er.b.ctx, er.b.allocator)
+		physicalPlan, err := doOptimize(er.b.optFlag, np, er.b.ctx, er.b.allocator)
 		d, err := EvalSubquery(physicalPlan, er.b.is, er.b.ctx)
 		if err != nil {
 			er.err = errors.Trace(err)
@@ -542,7 +542,7 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 		}
 		return v, true
 	}
-	physicalPlan, err := doOptimize(np, er.b.ctx, er.b.allocator)
+	physicalPlan, err := doOptimize(er.b.optFlag, np, er.b.ctx, er.b.allocator)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return v, true

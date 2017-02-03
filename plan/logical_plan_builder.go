@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/plan/statistics"
 	"github.com/pingcap/tidb/plan/statscache"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
@@ -45,6 +46,9 @@ func (p *Aggregation) collectGroupByColumns() {
 }
 
 func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gbyItems []expression.Expression) (LogicalPlan, map[int]int) {
+	b.optFlag = b.optFlag | flagBuildKeyInfo
+	b.optFlag = b.optFlag | flagEliminateAgg
+	b.optFlag = b.optFlag | flagAggPushDown
 	agg := &Aggregation{
 		AggFuncs:        make([]expression.AggregationFunction, 0, len(aggFuncList)),
 		baseLogicalPlan: newBaseLogicalPlan(Agg, b.allocator)}
@@ -191,6 +195,7 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 }
 
 func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
+	b.optFlag = b.optFlag | flagPredicatePushDown
 	if join.Right == nil {
 		return b.buildResultSetNode(join.Left)
 	}
@@ -230,6 +235,7 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 }
 
 func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
+	b.optFlag = b.optFlag | flagPredicatePushDown
 	conditions := splitWhere(where)
 	expressions := make([]expression.Expression, 0, len(conditions))
 	selection := &Selection{baseLogicalPlan: newBaseLogicalPlan(Sel, b.allocator)}
@@ -318,6 +324,9 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 }
 
 func (b *planBuilder) buildDistinct(child LogicalPlan, length int) LogicalPlan {
+	b.optFlag = b.optFlag | flagBuildKeyInfo
+	b.optFlag = b.optFlag | flagEliminateAgg
+	b.optFlag = b.optFlag | flagAggPushDown
 	agg := &Aggregation{
 		baseLogicalPlan: newBaseLogicalPlan(Agg, b.allocator),
 		AggFuncs:        make([]expression.AggregationFunction, 0, child.Schema().Len()),
@@ -904,7 +913,12 @@ func (b *planBuilder) buildTableDual() LogicalPlan {
 }
 
 func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
-	statisticTable := statscache.GetStatisticsTableCache(b.ctx, tn.TableInfo)
+	var statisticTable *statistics.Table
+	if EnableStatistic {
+		statisticTable = statscache.GetStatisticsTableCache(b.ctx, tn.TableInfo)
+	} else {
+		statisticTable = statistics.PseudoTable(tn.TableInfo)
+	}
 	if b.err != nil {
 		return nil
 	}
@@ -962,6 +976,8 @@ type ApplyConditionChecker struct {
 
 // buildInnerApply builds apply plan with outerPlan and innerPlan, which apply inner-join for every row from outerPlan and the whole innerPlan.
 func (b *planBuilder) buildInnerApply(outerPlan, innerPlan LogicalPlan) LogicalPlan {
+	b.optFlag = b.optFlag | flagPredicatePushDown
+	b.optFlag = b.optFlag | flagDecorrelate
 	join := &Join{
 		JoinType:        InnerJoin,
 		baseLogicalPlan: newBaseLogicalPlan(Jn, b.allocator),
@@ -980,6 +996,8 @@ func (b *planBuilder) buildInnerApply(outerPlan, innerPlan LogicalPlan) LogicalP
 
 // buildSemiApply builds apply plan with outerPlan and innerPlan, which apply semi-join for every row from outerPlan and the whole innerPlan.
 func (b *planBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition []expression.Expression, asScalar, not bool) LogicalPlan {
+	b.optFlag = b.optFlag | flagPredicatePushDown
+	b.optFlag = b.optFlag | flagDecorrelate
 	join := b.buildSemiJoin(outerPlan, innerPlan, condition, asScalar, not)
 	ap := &Apply{Join: *join}
 	ap.initIDAndContext(b.ctx)

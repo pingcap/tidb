@@ -44,7 +44,7 @@ func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc 
 
 func (b *baseBuiltinFunc) evalArgs(row []types.Datum) (_ []types.Datum, err error) {
 	for i, arg := range b.args {
-		b.argValues[i], err = arg.Eval(row, b.ctx)
+		b.argValues[i], err = arg.Eval(row)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -249,7 +249,6 @@ var funcs = map[string]functionClass{
 	ast.GetLock:     &lockFunctionClass{baseFunctionClass{ast.GetLock, 2, 2}},
 	ast.ReleaseLock: &releaseLockFunctionClass{baseFunctionClass{ast.ReleaseLock, 1, 1}},
 
-	// only used by new plan
 	ast.AndAnd:     &andandFunctionClass{baseFunctionClass{ast.AndAnd, 2, 2}},
 	ast.OrOr:       &ororFunctionClass{baseFunctionClass{ast.OrOr, 2, 2}},
 	ast.GE:         &compareFunctionClass{baseFunctionClass{ast.GE, 2, 2}, opcode.GE},
@@ -284,23 +283,4 @@ var funcs = map[string]functionClass{
 	ast.RowFunc:    &rowFunctionClass{baseFunctionClass{ast.RowFunc, 2, -1}},
 	ast.SetVar:     &setVarFunctionClass{baseFunctionClass{ast.SetVar, 2, 2}},
 	ast.GetVar:     &getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}},
-}
-
-// DynamicFuncs are those functions that
-// use input parameter ctx or
-// return an uncertain result would not be constant folded
-// the value 0 means nothing
-var DynamicFuncs = map[string]int{
-	"rand":           0,
-	"connection_id":  0,
-	"current_user":   0,
-	"database":       0,
-	"found_rows":     0,
-	"last_insert_id": 0,
-	"user":           0,
-	"version":        0,
-	"sleep":          0,
-	ast.GetVar:       0,
-	ast.SetVar:       0,
-	ast.Values:       0,
 }
