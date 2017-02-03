@@ -26,6 +26,12 @@ type aggPruner struct {
 	ctx       context.Context
 }
 
+func (ap *aggPruner) optimize(lp LogicalPlan, ctx context.Context, allocator *idAllocator) (LogicalPlan, error) {
+	ap.ctx = ctx
+	ap.allocator = allocator
+	return ap.eliminateAggregation(lp)
+}
+
 // eliminateAggregation will eliminate aggregation grouped by unique key.
 // e.g. select min(b) from t group by a. If a is a unique key, then this sql is equal to `select b from t group by a`.
 // For count(expr), sum(expr), avg(expr), count(distinct expr, [expr...]) we may need to rewrite the expr. Details are shown below.
@@ -34,7 +40,7 @@ func (ap *aggPruner) eliminateAggregation(p LogicalPlan) (LogicalPlan, error) {
 	if agg, ok := p.(*Aggregation); ok {
 		schemaByGroupby := expression.NewSchema(agg.groupByCols...)
 		coveredByUniqueKey := false
-		for _, key := range agg.schema.Keys {
+		for _, key := range agg.children[0].Schema().Keys {
 			if schemaByGroupby.ColumnsIndices(key) != nil {
 				coveredByUniqueKey = true
 				break

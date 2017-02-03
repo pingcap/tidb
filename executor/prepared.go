@@ -214,7 +214,7 @@ func (e *ExecuteExec) Build() error {
 	}
 
 	for i, usingVar := range e.UsingVars {
-		val, err := usingVar.Eval(nil, e.Ctx)
+		val, err := usingVar.Eval(nil)
 		if err != nil {
 			return errors.Trace(err)
 		}

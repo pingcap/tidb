@@ -110,7 +110,7 @@ func getHashKey(sc *variable.StatementContext, cols []*expression.Column, row *R
 	vals []types.Datum, bytes []byte) (bool, []byte, error) {
 	var err error
 	for i, col := range cols {
-		vals[i], err = col.Eval(row.Data, nil)
+		vals[i], err = col.Eval(row.Data)
 		if err != nil {
 			return false, nil, errors.Trace(err)
 		}

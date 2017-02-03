@@ -784,7 +784,7 @@ func (e *InsertValues) getRows(cols []*table.Column) (rows [][]types.Datum, err 
 func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression) ([]types.Datum, error) {
 	vals := make([]types.Datum, len(list))
 	for i, expr := range list {
-		val, err := expr.Eval(nil, e.ctx)
+		val, err := expr.Eval(nil)
 		vals[i] = val
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -934,7 +934,7 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]
 			newData[i] = c
 			continue
 		}
-		val, err1 := asgn.Expr.Eval(data, e.ctx)
+		val, err1 := asgn.Expr.Eval(data)
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
@@ -1174,7 +1174,7 @@ func (e *UpdateExec) fetchRows() error {
 			data[i] = row.Data[i]
 			newData[i] = data[i]
 			if e.OrderedList[i] != nil {
-				val, err := e.OrderedList[i].Expr.Eval(row.Data, e.ctx)
+				val, err := e.OrderedList[i].Expr.Eval(row.Data)
 				if err != nil {
 					return errors.Trace(err)
 				}

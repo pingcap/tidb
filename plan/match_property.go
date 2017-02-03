@@ -258,6 +258,17 @@ func (p *Projection) matchProperty(_ *requiredProperty, childPlanInfo ...*physic
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
+func (p *Analyze) matchProperty(_ *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
+	children := make([]Plan, 0, len(childPlanInfo))
+	for _, res := range childPlanInfo {
+		children = append(children, res.p)
+	}
+	np := *p
+	np.SetChildren(children...)
+	return &physicalPlanInfo{p: &np}
+}
+
+// matchProperty implements PhysicalPlan matchProperty interface.
 func (p *Cache) matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
 	panic("You can't call this function!")
 }

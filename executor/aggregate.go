@@ -92,7 +92,7 @@ func (e *HashAggExec) Next() (*Row, error) {
 
 func (e *HashAggExec) getGroupKey(row *Row) ([]byte, error) {
 	if e.aggType == plan.FinalAgg {
-		val, err := e.GroupByItems[0].Eval(row.Data, e.ctx)
+		val, err := e.GroupByItems[0].Eval(row.Data)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -103,7 +103,7 @@ func (e *HashAggExec) getGroupKey(row *Row) ([]byte, error) {
 	}
 	vals := make([]types.Datum, 0, len(e.GroupByItems))
 	for _, item := range e.GroupByItems {
-		v, err := item.Eval(row.Data, e.ctx)
+		v, err := item.Eval(row.Data)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -238,7 +238,7 @@ func (e *StreamAggExec) meetNewGroup(row *Row) (bool, error) {
 	}
 	sc := e.Ctx.GetSessionVars().StmtCtx
 	for i, item := range e.GroupByItems {
-		v, err := item.Eval(row.Data, e.Ctx)
+		v, err := item.Eval(row.Data)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
