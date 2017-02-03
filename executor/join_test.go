@@ -386,6 +386,9 @@ func (s *testSuite) TestSubquery(c *C) {
 	result = tk.MustQuery("select * from t where v=(select min(t1.v) from t t1, t t2, t t3 where t1.id=t2.id and t2.id=t3.id and t1.id=t.id)")
 	result.Check(testkit.Rows("1 1", "2 2", "3 3"))
 
+	result = tk.MustQuery("select exists (select t.id from t where s.id < 2 and t.id = s.id) from t s")
+	result.Check(testkit.Rows("1", "0", "0"))
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(c int)")
 	result = tk.MustQuery("select exists(select count(*) from t)")
