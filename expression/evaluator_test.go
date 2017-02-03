@@ -14,10 +14,9 @@
 package expression
 
 import (
+	"fmt"
 	"testing"
 	"time"
-
-	"fmt"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
@@ -578,4 +577,30 @@ func (s *testEvaluatorSuite) TestMod(c *C) {
 	r, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(r, testutil.DatumEquals, types.NewDatum(1.5))
+}
+
+func (s *testEvaluatorSuite) TestDynamic(c *C) {
+	var dynamicFuncs = map[string]int{
+		ast.Rand:         0,
+		ast.ConnectionID: 0,
+		ast.CurrentUser:  0,
+		ast.User:         0,
+		ast.Database:     0,
+		ast.Schema:       0,
+		ast.FoundRows:    0,
+		ast.LastInsertId: 0,
+		ast.Version:      0,
+		ast.Sleep:        0,
+		ast.GetVar:       0,
+		ast.SetVar:       0,
+		ast.Values:       0,
+	}
+	for name, fc := range funcs {
+		f, _ := fc.getFunction(nil, s.ctx)
+		if _, ok := dynamicFuncs[name]; ok {
+			c.Assert(f.isDeterministic(), IsFalse)
+		} else {
+			c.Assert(f.isDeterministic(), IsTrue)
+		}
+	}
 }
