@@ -31,7 +31,7 @@ type testCacheSuite struct {
 func (s *testCacheSuite) SetUpSuite(c *C) {
 	store, err := tidb.NewStore("memory://mysql")
 	c.Assert(err, IsNil)
-	err = tidb.BootstrapSession(store)
+	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	s.store = store
 }

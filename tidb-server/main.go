@@ -114,7 +114,7 @@ func main() {
 	}
 
 	// Bootstrap a session to load information schema.
-	err := tidb.BootstrapSession(store)
+	_, err := tidb.BootstrapSession(store)
 	if err != nil {
 		log.Fatal(errors.ErrorStack(err))
 	}

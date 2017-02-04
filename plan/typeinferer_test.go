@@ -228,6 +228,6 @@ func newStoreWithBootstrap() (kv.Storage, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	err = tidb.BootstrapSession(store)
+	_, err = tidb.BootstrapSession(store)
 	return store, errors.Trace(err)
 }
