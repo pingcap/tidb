@@ -56,7 +56,7 @@ func (a *aggPushDownSolver) getAggFuncChildIdx(aggFunc expression.AggregationFun
 		cols = append(cols, expression.ExtractColumns(arg)...)
 	}
 	for _, col := range cols {
-		if schema.ColumnIndex(col) != -1 {
+		if schema.Contains(col) {
 			fromLeft = true
 		} else {
 			fromRight = true
@@ -103,7 +103,7 @@ func (a *aggPushDownSolver) collectGbyCols(agg *Aggregation, join *Join) (leftGb
 	for _, gbyExpr := range agg.GroupByItems {
 		cols := expression.ExtractColumns(gbyExpr)
 		for _, col := range cols {
-			if leftChild.Schema().ColumnIndex(col) != -1 {
+			if leftChild.Schema().Contains(col) {
 				leftGbyCols = append(leftGbyCols, col)
 			} else {
 				rightGbyCols = append(rightGbyCols, col)
@@ -126,7 +126,7 @@ func (a *aggPushDownSolver) collectGbyCols(agg *Aggregation, join *Join) (leftGb
 	for _, otherCond := range join.OtherConditions {
 		cols := expression.ExtractColumns(otherCond)
 		for _, col := range cols {
-			if leftChild.Schema().ColumnIndex(col) != -1 {
+			if leftChild.Schema().Contains(col) {
 				leftGbyCols = a.addGbyCol(leftGbyCols, col)
 			} else {
 				rightGbyCols = a.addGbyCol(rightGbyCols, col)
