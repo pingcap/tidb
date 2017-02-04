@@ -166,7 +166,7 @@ type Apply struct {
 func (p *Apply) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := p.Join.extractCorrelatedCols()
 	for i := len(corCols) - 1; i >= 0; i-- {
-		if idx := p.children[0].Schema().ColumnIndex(&corCols[i].Column); idx != -1 {
+		if p.children[0].Schema().Contains(&corCols[i].Column) {
 			corCols = append(corCols[:i], corCols[i+1:]...)
 		}
 	}

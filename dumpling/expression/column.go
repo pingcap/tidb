@@ -56,7 +56,7 @@ func (col *CorrelatedColumn) IsCorrelated() bool {
 
 // Decorrelate implements Expression interface.
 func (col *CorrelatedColumn) Decorrelate(schema *Schema) Expression {
-	if schema.ColumnIndex(&col.Column) == -1 {
+	if !schema.Contains(&col.Column) {
 		return col
 	}
 	return &col.Column
