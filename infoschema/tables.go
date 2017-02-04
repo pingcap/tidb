@@ -555,8 +555,8 @@ func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]
 }
 
 const (
-	PrimaryKeyType = "PRIMARY KEY"
-	UniqueKeyType  = "UNIQUE"
+	primaryKeyType = "PRIMARY KEY"
+	uniqueKeyType  = "UNIQUE"
 )
 
 // See https://dev.mysql.com/doc/refman/5.7/en/table-constraints-table.html
@@ -571,7 +571,7 @@ func dataForTableConstraints(schemas []*model.DBInfo) [][]types.Datum {
 					table.PrimaryKeyName, // CONSTRAINT_NAME
 					schema.Name.O,        // TABLE_SCHEMA
 					tbl.Name.O,           // TABLE_NAME
-					PrimaryKeyType,       // CONSTRAINT_TYPE
+					primaryKeyType,       // CONSTRAINT_TYPE
 				)
 				rows = append(rows, record)
 			}
@@ -580,10 +580,10 @@ func dataForTableConstraints(schemas []*model.DBInfo) [][]types.Datum {
 				var cname, ctype string
 				if idx.Primary {
 					cname = table.PrimaryKeyName
-					ctype = PrimaryKeyType
+					ctype = primaryKeyType
 				} else if idx.Unique {
 					cname = idx.Name.O
-					ctype = UniqueKeyType
+					ctype = uniqueKeyType
 				} else {
 					// The index has no constriant.
 					continue
