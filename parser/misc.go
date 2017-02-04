@@ -190,6 +190,7 @@ var tokenMap = map[string]int{
 	"CROSS":               cross,
 	"CURDATE":             curDate,
 	"UTC_DATE":            utcDate,
+	"UTC_TIMESTAMP":       utcTimestamp,
 	"CURRENT_DATE":        currentDate,
 	"CURTIME":             curTime,
 	"CURRENT_TIME":        currentTime,

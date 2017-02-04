@@ -121,6 +121,7 @@ const (
 	TimeDiff         = "timediff"
 	TimestampDiff    = "timestampdiff"
 	UTCDate          = "utc_date"
+	UTCTimestamp     = "utc_timestamp"
 	UnixTimestamp    = "unix_timestamp"
 	Week             = "week"
 	Weekday          = "weekday"

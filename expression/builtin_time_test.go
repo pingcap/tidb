@@ -418,34 +418,52 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 	}
 }
 
-func (s *testEvaluatorSuite) TestNow(c *C) {
+func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 	defer testleak.AfterTest(c)()
-	fc := funcs[ast.Now]
-	f, err := fc.getFunction(datumsToConstants(nil), s.ctx)
-	c.Assert(err, IsNil)
-	v, err := f.eval(nil)
-	c.Assert(err, IsNil)
-	t := v.GetMysqlTime()
-	// we canot use a constant value to check now, so here
-	// just to check whether has fractional seconds part.
-	c.Assert(strings.Contains(t.String(), "."), IsFalse)
 
-	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(6)), s.ctx)
-	c.Assert(err, IsNil)
-	v, err = f.eval(nil)
-	c.Assert(err, IsNil)
-	t = v.GetMysqlTime()
-	c.Assert(strings.Contains(t.String(), "."), IsTrue)
+	gotime := func(t types.Time, l *time.Location) time.Time {
+		tt, err := t.Time.GoTime(l)
+		c.Assert(err, IsNil)
+		return tt
+	}
 
-	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(8)), s.ctx)
-	c.Assert(err, IsNil)
-	_, err = f.eval(nil)
-	c.Assert(err, NotNil)
+	for _, x := range []struct {
+		fc  functionClass
+		now func() time.Time
+	}{
+		{funcs[ast.Now], func() time.Time { return time.Now() }},
+		{funcs[ast.UTCTimestamp], func() time.Time { return time.Now().UTC() }},
+	} {
+		f, err := x.fc.getFunction(datumsToConstants(nil), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
+		ts := x.now()
+		c.Assert(err, IsNil)
+		t := v.GetMysqlTime()
+		// we canot use a constant value to check timestamp funcs, so here
+		// just to check the fractional seconds part and the time delta.
+		c.Assert(strings.Contains(t.String(), "."), IsFalse)
+		c.Assert(ts.Sub(gotime(t, ts.Location())), LessEqual, time.Second)
 
-	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(-2)), s.ctx)
-	c.Assert(err, IsNil)
-	_, err = f.eval(nil)
-	c.Assert(err, NotNil)
+		f, err = x.fc.getFunction(datumsToConstants(types.MakeDatums(6)), s.ctx)
+		c.Assert(err, IsNil)
+		v, err = f.eval(nil)
+		ts = x.now()
+		c.Assert(err, IsNil)
+		t = v.GetMysqlTime()
+		c.Assert(strings.Contains(t.String(), "."), IsTrue)
+		c.Assert(ts.Sub(gotime(t, ts.Location())), LessEqual, time.Millisecond)
+
+		f, err = x.fc.getFunction(datumsToConstants(types.MakeDatums(8)), s.ctx)
+		c.Assert(err, IsNil)
+		_, err = f.eval(nil)
+		c.Assert(err, NotNil)
+
+		f, err = x.fc.getFunction(datumsToConstants(types.MakeDatums(-2)), s.ctx)
+		c.Assert(err, IsNil)
+		_, err = f.eval(nil)
+		c.Assert(err, NotNil)
+	}
 }
 
 func (s *testEvaluatorSuite) TestSysDate(c *C) {
