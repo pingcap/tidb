@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/ast"
-	"github.com/ngaut/log"
 )
 
 type buildKeySolver struct{}
@@ -80,7 +79,6 @@ func (p *Selection) buildKeyInfo() {
 			}
 		}
 	}
-	log.Warnf("sel %v", p.schema.MaxOneRow)
 }
 
 // A bijection exists between columns of a projection's schema and this projection's Exprs.
@@ -102,7 +100,6 @@ func (p *Projection) buildSchemaByExprs() *expression.Schema {
 func (p *Projection) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
 	p.schema.MaxOneRow = p.children[0].Schema().MaxOneRow
-	log.Warnf("proj %v", p.schema.MaxOneRow)
 	schema := p.buildSchemaByExprs()
 	for _, key := range p.Children()[0].Schema().Keys {
 		indices := schema.ColumnsIndices(key)

@@ -26,6 +26,9 @@ import (
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
 var AllowCartesianProduct = true
 
+// EnableStatistic means whether tidb uses the statistic information to do cost-based optimization.
+var EnableStatistic = false
+
 const (
 	flagDecorrelate uint64 = 1 << iota
 	flagPredicatePushDown

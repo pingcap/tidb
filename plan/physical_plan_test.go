@@ -612,7 +612,7 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		},
 		{
 			sql: "select t1.a from t t1 where t1.a in (select t2.a from t t2 where t1.a > 1)",
-			ans: "Apply{Table(t)->Table(t)->Selection}",
+			ans: "SemiJoin{Table(t)->Table(t)}",
 		},
 		{
 			sql: "select t1.a from t t1, (select @a:=0, @b:=0) t2",

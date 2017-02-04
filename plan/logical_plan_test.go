@@ -501,7 +501,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		{
 			// This will be resolved as in sub query.
 			sql:  "select * from t where 10 in (select b from t s where s.a = t.a)",
-			plan: "Apply{DataScan(t)->DataScan(s)->Selection->Projection}->Projection",
+			plan: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Projection",
 		},
 		{
 			sql:  "select count(c) ,(select b from t s where s.a = t.a) from t",
@@ -514,7 +514,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		{
 			// This will be resolved as in sub query.
 			sql:  "select * from t where 10 in (((select b from t s where s.a = t.a)))",
-			plan: "Apply{DataScan(t)->DataScan(s)->Selection->Projection}->Projection",
+			plan: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Projection",
 		},
 		{
 			// This will be resolved as in function.
@@ -528,7 +528,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		{
 			// Test Nested sub query.
 			sql:  "select * from t where exists (select s.a from t s where s.c in (select c from t as k where k.d = s.d) having sum(s.a) = t.a )",
-			plan: "Join{DataScan(t)->Apply{DataScan(s)->DataScan(k)->Selection->Projection}->Aggr(sum(s.a))->Projection}(test.t.a,sel_agg_1)->Projection",
+			plan: "Join{DataScan(t)->Join{DataScan(s)->DataScan(k)}(s.d,k.d)(s.c,k.c)->Aggr(sum(s.a))->Projection}(test.t.a,sel_agg_1)->Projection",
 		},
 		{
 			sql:  "select * from t for update",
@@ -1240,16 +1240,16 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 			sql: "select a, sum(e) from t group by a",
 			ans: map[string][][]string{
 				"TableScan_1":   {{"test.t.a"}},
-				"Aggregation_2": {{"test.t.a"}, {"test.t.a"}},
-				"Projection_3":  {{"a"}, {"a"}},
+				"Aggregation_2": {{"test.t.a"}},
+				"Projection_3":  {{"a"}},
 			},
 		},
 		{
 			sql: "select a, sum(f) from t group by a",
 			ans: map[string][][]string{
 				"TableScan_1":   {{"test.t.f"}, {"test.t.a"}},
-				"Aggregation_2": {{"test.t.a"}, {"test.t.a"}},
-				"Projection_3":  {{"a"}, {"a"}},
+				"Aggregation_2": {{"test.t.a"}},
+				"Projection_3":  {{"a"}},
 			},
 		},
 		{
@@ -1264,8 +1264,8 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 			sql: "select f, g, sum(a) from t group by f, g",
 			ans: map[string][][]string{
 				"TableScan_1":   {{"test.t.f"}, {"test.t.g"}, {"test.t.f", "test.t.g"}, {"test.t.a"}},
-				"Aggregation_2": {{"test.t.f"}, {"test.t.g"}, {"test.t.f", "test.t.g"}, {"test.t.f"}},
-				"Projection_3":  {{"f"}, {"g"}, {"f", "g"}, {"f"}},
+				"Aggregation_2": {{"test.t.f"}, {"test.t.g"}, {"test.t.f", "test.t.g"}},
+				"Projection_3":  {{"f"}, {"g"}, {"f", "g"}},
 			},
 		},
 		{

@@ -1021,6 +1021,9 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table test (create_date TIMESTAMP NOT NULL COMMENT '创建日期 create date' DEFAULT now());", true},
 		{"create table ts (t int, v timestamp(3) default CURRENT_TIMESTAMP(3));", true},
 
+		// Create table with primary key name.
+		{"create table if not exists `t` (`id` int not null auto_increment comment '消息ID', primary key `pk_id` (`id`) );", true},
+
 		// for alter table
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED", true},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED FIRST", true},

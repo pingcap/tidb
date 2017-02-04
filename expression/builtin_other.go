@@ -52,12 +52,10 @@ type sleepFunctionClass struct {
 }
 
 func (c *sleepFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := errors.Trace(c.verifyArgs(args)); err != nil {
-		return nil, errors.Trace(err)
-	}
+	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinSleepSig{newBaseBuiltinFunc(args, ctx)}
 	bt.deterministic = false
-	return bt, nil
+	return bt, errors.Trace(err)
 }
 
 type builtinSleepSig struct {
@@ -216,12 +214,10 @@ type setVarFunctionClass struct {
 }
 
 func (c *setVarFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := errors.Trace(c.verifyArgs(args)); err != nil {
-		return nil, errors.Trace(err)
-	}
+	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinSetVarSig{newBaseBuiltinFunc(args, ctx)}
 	bt.deterministic = false
-	return bt, nil
+	return bt, errors.Trace(err)
 }
 
 type builtinSetVarSig struct {
@@ -250,12 +246,10 @@ type getVarFunctionClass struct {
 }
 
 func (c *getVarFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := errors.Trace(c.verifyArgs(args)); err != nil {
-		return nil, errors.Trace(err)
-	}
+	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinGetVarSig{newBaseBuiltinFunc(args, ctx)}
 	bt.deterministic = false
-	return bt, nil
+	return bt, errors.Trace(err)
 }
 
 type builtinGetVarSig struct {
@@ -320,12 +314,10 @@ type valuesFunctionClass struct {
 }
 
 func (c *valuesFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := errors.Trace(c.verifyArgs(args)); err != nil {
-		return nil, errors.Trace(err)
-	}
+	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinValuesSig{newBaseBuiltinFunc(args, ctx), c.offset}
 	bt.deterministic = false
-	return bt, nil
+	return bt, errors.Trace(err)
 }
 
 type builtinValuesSig struct {
