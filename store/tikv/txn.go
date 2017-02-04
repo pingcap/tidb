@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/coreos/etcd/pkg/monotime"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
@@ -33,7 +34,7 @@ type tikvTxn struct {
 	us        kv.UnionStore
 	store     *tikvStore // for connection to region.
 	startTS   uint64
-	startTime time.Time
+	startTime monotime.Time
 	commitTS  uint64
 	valid     bool
 	lockKeys  [][]byte
@@ -51,7 +52,7 @@ func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
 		us:        kv.NewUnionStore(newTiKVSnapshot(store, ver)),
 		store:     store,
 		startTS:   startTS,
-		startTime: time.Now(),
+		startTime: monotime.Now(),
 		valid:     true,
 	}, nil
 }
