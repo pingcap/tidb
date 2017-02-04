@@ -85,6 +85,7 @@ func (s *testDBSuite) TearDownSuite(c *C) {
 	s.s.Execute("drop database if exists test_db")
 	s.s.Close()
 	s.dom.Close()
+	s.store.Close()
 }
 
 func (s *testDBSuite) testErrorCode(c *C, sql string, errCode int) {

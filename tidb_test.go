@@ -27,6 +27,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/localstore"
@@ -50,6 +51,7 @@ type testMainSuite struct {
 	createTableSQL string
 	selectSQL      string
 	store          kv.Storage
+	dom            *domain.Domain
 }
 
 type brokenStore struct{}
@@ -66,11 +68,15 @@ func (s *testMainSuite) SetUpSuite(c *C) {
     CREATE TABLE tbl_test1(id INT NOT NULL DEFAULT 2, name varchar(255), PRIMARY KEY(id), INDEX name(name));
     CREATE TABLE tbl_test2(id INT NOT NULL DEFAULT 3, name varchar(255), PRIMARY KEY(id));`
 	s.selectSQL = `SELECT * from tbl_test;`
-	s.store = newStoreWithBootstrap(c, s.dbName)
+	s.store = newStore(c, s.dbName)
+	dom, err := BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+	s.dom = dom
 }
 
 func (s *testMainSuite) TearDownSuite(c *C) {
 	defer testleak.AfterTest(c)()
+	s.dom.Close()
 	s.store.Close()
 	removeStore(c, s.dbName)
 }
@@ -325,13 +331,13 @@ func (s *testMainSuite) TestSchemaValidity(c *C) {
 	err = <-endCh2
 	c.Assert(err, IsNil, Commentf("err:%v", err))
 
-	sessionctx.GetDomain(ctx).Close()
 	err = se.Close()
 	c.Assert(err, IsNil)
 	err = se1.Close()
 	c.Assert(err, IsNil)
 	err = se2.Close()
 	c.Assert(err, IsNil)
+	sessionctx.GetDomain(ctx).Close()
 	err = store.Close()
 	c.Assert(err, IsNil)
 	localstore.MockRemoteStore = false

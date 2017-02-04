@@ -54,9 +54,6 @@ type testSessionSuite struct {
 
 func (s *testSessionSuite) SetUpSuite(c *C) {
 	s.dbName = "test_session_db"
-	// s.createDBSQL = fmt.Sprintf("create database if not exists %s;", s.dbName)
-	// s.dropDBSQL = fmt.Sprintf("drop database %s;", s.dbName)
-	// s.useDBSQL = fmt.Sprintf("use %s;", s.dbName)
 	s.dropTableSQL = `Drop TABLE if exists t;`
 	s.createTableSQL = `CREATE TABLE t(id TEXT);`
 	s.selectSQL = `SELECT * from t;`
@@ -69,6 +66,7 @@ func (s *testSessionSuite) SetUpSuite(c *C) {
 
 func (s *testSessionSuite) TearDownSuite(c *C) {
 	removeStore(c, s.dbName)
+	s.dom.Close()
 	s.store.Close()
 }
 
@@ -2033,13 +2031,13 @@ func (s *test1435Suite) TestIssue1435(c *C) {
 	err = <-endCh2
 	c.Assert(err, IsNil, Commentf("err:%v", err))
 
-	sessionctx.GetDomain(ctx).Close()
 	err = se.Close()
 	c.Assert(err, IsNil)
 	err = se1.Close()
 	c.Assert(err, IsNil)
 	err = se2.Close()
 	c.Assert(err, IsNil)
+	sessionctx.GetDomain(ctx).Close()
 	err = store.Close()
 	c.Assert(err, IsNil)
 	localstore.MockRemoteStore = false
