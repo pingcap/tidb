@@ -29,7 +29,11 @@ type testAnalyzeSuite struct {
 }
 
 func (s *testAnalyzeSuite) TestAnalyze(c *C) {
-	defer testleak.AfterTest(c)()
+	plan.EnableStatistic = true
+	defer func() {
+		testleak.AfterTest(c)()
+		plan.EnableStatistic = false
+	}()
 	store, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	defer store.Close()
