@@ -57,6 +57,21 @@ type Join struct {
 	DefaultValues []types.Datum
 }
 
+func (p *Join) columnSubstitute(schema *expression.Schema, exprs []expression.Expression) {
+	for i, fun := range p.EqualConditions {
+		p.EqualConditions[i] = expression.ColumnSubstitute(fun, schema, exprs).(*expression.ScalarFunction)
+	}
+	for i, fun := range p.LeftConditions {
+		p.LeftConditions[i] = expression.ColumnSubstitute(fun, schema, exprs)
+	}
+	for i, fun := range p.RightConditions {
+		p.RightConditions[i] = expression.ColumnSubstitute(fun, schema, exprs)
+	}
+	for i, fun := range p.OtherConditions {
+		p.OtherConditions[i] = expression.ColumnSubstitute(fun, schema, exprs)
+	}
+}
+
 func (p *Join) attachOnConds(onConds []expression.Expression) {
 	eq, left, right, other := extractOnCondition(onConds, p.children[0].(LogicalPlan), p.children[1].(LogicalPlan))
 	p.EqualConditions = append(eq, p.EqualConditions...)

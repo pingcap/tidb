@@ -501,7 +501,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		{
 			// This will be resolved as in sub query.
 			sql:  "select * from t where 10 in (select b from t s where s.a = t.a)",
-			plan: "Apply{DataScan(t)->DataScan(s)->Selection->Projection}->Projection",
+			plan: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Projection",
 		},
 		{
 			sql:  "select count(c) ,(select b from t s where s.a = t.a) from t",
@@ -514,7 +514,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		{
 			// This will be resolved as in sub query.
 			sql:  "select * from t where 10 in (((select b from t s where s.a = t.a)))",
-			plan: "Apply{DataScan(t)->DataScan(s)->Selection->Projection}->Projection",
+			plan: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Projection",
 		},
 		{
 			// This will be resolved as in function.
@@ -528,7 +528,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		{
 			// Test Nested sub query.
 			sql:  "select * from t where exists (select s.a from t s where s.c in (select c from t as k where k.d = s.d) having sum(s.a) = t.a )",
-			plan: "Join{DataScan(t)->Apply{DataScan(s)->DataScan(k)->Selection->Projection}->Aggr(sum(s.a))->Projection}(test.t.a,sel_agg_1)->Projection",
+			plan: "Join{DataScan(t)->Join{DataScan(s)->DataScan(k)}(s.d,k.d)(s.c,k.c)->Aggr(sum(s.a))->Projection}(test.t.a,sel_agg_1)->Projection",
 		},
 		{
 			sql:  "select * from t for update",
