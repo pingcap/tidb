@@ -1461,16 +1461,12 @@ type builtinTimestampSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinTimestampSig) eval(row []types.Datum) (types.Datum, error) {
+// https://dev.mysql.com/doc/refman/5.5/en/date-and-time-functions.html#function_timestamp
+func (b *builtinTimestampSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	return builtinTimestamp(args, b.ctx)
-}
-
-// https://dev.mysql.com/doc/refman/5.5/en/date-and-time-functions.html#function_timestamp
-func builtinTimestamp(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	if args[0].IsNull() {
 		return
 	}
