@@ -387,7 +387,7 @@ func (p *Join) convert2PhysicalPlanSemi(prop *requiredProperty) (*physicalPlanIn
 	rChild := p.children[1].(LogicalPlan)
 	allLeft := true
 	for _, col := range prop.props {
-		if lChild.Schema().ColumnIndex(col.col) == -1 {
+		if !lChild.Schema().Contains(col.col) {
 			allLeft = false
 		}
 	}
@@ -439,7 +439,7 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 	rChild := p.children[1].(LogicalPlan)
 	allLeft := true
 	for _, col := range prop.props {
-		if lChild.Schema().ColumnIndex(col.col) == -1 {
+		if !lChild.Schema().Contains(col.col) {
 			allLeft = false
 		}
 	}
@@ -512,7 +512,7 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 	rChild := p.children[1].(LogicalPlan)
 	allRight := true
 	for _, col := range prop.props {
-		if rChild.Schema().ColumnIndex(col.col) == -1 {
+		if !rChild.Schema().Contains(col.col) {
 			allRight = false
 		}
 	}
