@@ -34,7 +34,7 @@ type tikvTxn struct {
 	us        kv.UnionStore
 	store     *tikvStore // for connection to region.
 	startTS   uint64
-	startTime monotime.Time
+	startTime monotime.Time // Monotonic timestamp for recording txn time consuming.
 	commitTS  uint64
 	valid     bool
 	lockKeys  [][]byte
