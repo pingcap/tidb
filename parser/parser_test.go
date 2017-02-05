@@ -585,7 +585,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"select curtime(6)", true},
 
 		// select utc_timestamp
-		{"select utc_timestamp", false},
+		{"select utc_timestamp", true},
 		{"select utc_timestamp()", true},
 		{"select utc_timestamp(6)", true},
 
