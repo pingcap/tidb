@@ -14,6 +14,9 @@
 package tikv
 
 import (
+	"math"
+	"time"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
@@ -204,6 +207,10 @@ func (s *testLockSuite) mustGetLock(c *C, key []byte) *Lock {
 	return lock
 }
 
+func (s *testLockSuite) ttlEquals(c *C, x, y uint64) {
+	c.Assert(int(math.Abs(float64(x-y))), LessEqual, 2)
+}
+
 func (s *testLockSuite) TestLockTTL(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
@@ -214,6 +221,8 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 
 	// Huge txn has a greater TTL.
 	txn, err = s.store.Begin()
+	start := time.Now()
+	c.Assert(err, IsNil)
 	txn.Set(kv.Key("key"), []byte("value"))
 	for i := 0; i < 2048; i++ {
 		k, v := randKV(1024, 1024)
@@ -221,7 +230,16 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 	}
 	s.prewriteTxn(c, txn.(*tikvTxn))
 	l = s.mustGetLock(c, []byte("key"))
-	c.Assert(l.TTL, Equals, uint64(ttlFactor*2))
+	s.ttlEquals(c, l.TTL, uint64(ttlFactor*2)+uint64(time.Since(start)/time.Millisecond))
+
+	// Txn with long read time.
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	time.Sleep(time.Millisecond * 50)
+	txn.Set(kv.Key("key"), []byte("value"))
+	s.prewriteTxn(c, txn.(*tikvTxn))
+	l = s.mustGetLock(c, []byte("key"))
+	s.ttlEquals(c, l.TTL, defaultLockTTL+50)
 }
 
 func init() {
