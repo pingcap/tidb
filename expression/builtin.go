@@ -182,6 +182,7 @@ var funcs = map[string]functionClass{
 	ast.Time:             &timeFunctionClass{baseFunctionClass{ast.Time, 1, 1}},
 	ast.Timestamp:        &timestampFunctionClass{baseFunctionClass{ast.Timestamp, 1, 2}},
 	ast.UTCDate:          &utcDateFunctionClass{baseFunctionClass{ast.UTCDate, 0, 0}},
+	ast.UTCTimestamp:     &utcTimestampFunctionClass{baseFunctionClass{ast.UnixTimestamp, 0, 1}},
 	ast.Week:             &weekFunctionClass{baseFunctionClass{ast.Week, 1, 2}},
 	ast.Weekday:          &weekDayFunctionClass{baseFunctionClass{ast.Weekday, 1, 1}},
 	ast.WeekOfYear:       &weekOfYearFunctionClass{baseFunctionClass{ast.WeekOfYear, 1, 1}},
