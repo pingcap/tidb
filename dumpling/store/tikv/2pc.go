@@ -17,7 +17,9 @@ import (
 	"bytes"
 	"math"
 	"sync"
+	"time"
 
+	"github.com/coreos/etcd/pkg/monotime"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -130,21 +132,9 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 	txnWriteKVCountHistogram.Observe(float64(len(keys)))
 	txnWriteSizeHistogram.Observe(float64(size / 1024))
 
-	// Increase lockTTL for large transactions.
-	// The formula is `ttl = ttlFactor * sqrt(sizeInMiB)`.
-	// When writeSize <= 256K, ttl is defaultTTL (3s);
-	// When writeSize is 1MiB, 100MiB, or 400MiB, ttl is 6s, 60s, 120s correspondingly;
-	// When writeSize >= 400MiB, we return kv.ErrTxnTooLarge.
-	var lockTTL uint64
-	if size > txnCommitBatchSize {
-		sizeMiB := float64(size) / 1024 / 1024
-		lockTTL = uint64(float64(ttlFactor) * math.Sqrt(float64(sizeMiB)))
-		if lockTTL < defaultLockTTL {
-			lockTTL = defaultLockTTL
-		}
-		if lockTTL > maxLockTTL {
-			lockTTL = maxLockTTL
-		}
+	lockTTL, err := txnLockTTL(txn.startTime, size)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	return &twoPhaseCommitter{
@@ -159,6 +149,33 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 
 func (c *twoPhaseCommitter) primary() []byte {
 	return c.keys[0]
+}
+
+const bytesPerMiB = 1024 * 1024
+
+func txnLockTTL(startTime monotime.Time, txnSize int) (uint64, error) {
+	// Increase lockTTL for large transactions.
+	// The formula is `ttl = ttlFactor * sqrt(sizeInMiB)`.
+	// When writeSize <= 256K, ttl is defaultTTL (3s);
+	// When writeSize is 1MiB, 100MiB, or 400MiB, ttl is 6s, 60s, 120s correspondingly;
+	// When writeSize >= 400MiB, we return kv.ErrTxnTooLarge.
+	var lockTTL uint64
+	if txnSize > txnCommitBatchSize {
+		sizeMiB := float64(txnSize) / bytesPerMiB
+		lockTTL = uint64(float64(ttlFactor) * math.Sqrt(float64(sizeMiB)))
+		if lockTTL < defaultLockTTL {
+			lockTTL = defaultLockTTL
+		}
+		if lockTTL > maxLockTTL {
+			lockTTL = maxLockTTL
+		}
+	}
+
+	// Increase lockTTL by the transaction's read time.
+	// When resolving a lock, we compare current ts and startTS+lockTTL to decide whether to clean up. If a txn
+	// takes a long time to read, increasing its TTL will help to prevent it from been aborted soon after prewrite.
+	elapsed := time.Duration(monotime.Now()-startTime) / time.Millisecond
+	return lockTTL + uint64(elapsed), nil
 }
 
 // doActionOnKeys groups keys into primary batch and secondary batches, if primary batch exists in the key,
