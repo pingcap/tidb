@@ -111,6 +111,11 @@ func (s *Schema) ColumnIndex(col *Column) int {
 	return -1
 }
 
+// Contains checks if the schema contains the column.
+func (s *Schema) Contains(col *Column) bool {
+	return s.ColumnIndex(col) != -1
+}
+
 // Len returns the number of columns in schema.
 func (s *Schema) Len() int {
 	return len(s.Columns)
