@@ -471,6 +471,14 @@ func (t *Time) Sub(t1 *Time) Duration {
 	}
 }
 
+// Add adds d to t, returns a duration value.
+// Note that add should not be done on different time types.
+func (t *Time) Add(d *Duration) Duration {
+	d.Duration = gotime.Duration(-int64(d.Duration))
+	t2, _ := d.ConvertToTime(t.Type)
+	return t.Sub(&t2)
+}
+
 // TimestampDiff returns t2 - t1 where t1 and t2 are date or datetime expressions.
 // The unit for the result (an integer) is given by the unit argument.
 // The legal values for unit are "YEAR" "QUARTER" "MONTH" "DAY" "HOUR" "SECOND" and so on.
@@ -871,7 +879,10 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 			hour, err = strconv.Atoi(seps[0])
 		} else {
 			// No delimiter.
-			if len(str) == 6 {
+			if len(str) == 7 {
+				// HHHMMSS
+				_, err = fmt.Sscanf(str, "%3d%2d%2d", &hour, &minute, &second)
+			} else if len(str) == 6 {
 				// HHMMSS
 				_, err = fmt.Sscanf(str, "%2d%2d%2d", &hour, &minute, &second)
 			} else if len(str) == 4 {

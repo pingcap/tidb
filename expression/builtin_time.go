@@ -63,6 +63,7 @@ var (
 	_ functionClass = &extractFunctionClass{}
 	_ functionClass = &arithmeticFunctionClass{}
 	_ functionClass = &unixTimestampFunctionClass{}
+	_ functionClass = &timestampFunctionClass{}
 )
 
 var (
@@ -96,6 +97,7 @@ var (
 	_ builtinFunc = &builtinExtractSig{}
 	_ builtinFunc = &builtinArithmeticSig{}
 	_ builtinFunc = &builtinUnixTimestampSig{}
+	_ builtinFunc = &builtinTimestampSig{}
 )
 
 func convertToTime(sc *variable.StatementContext, arg types.Datum, tp byte) (d types.Datum, err error) {
@@ -1443,6 +1445,80 @@ func (b *builtinUnixTimestampSig) eval(row []types.Datum) (d types.Datum, err er
 		d.SetMysqlDecimal(&dec)
 	} else {
 		d.SetInt64(t1.Unix())
+	}
+	return
+}
+
+type timestampFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *timestampFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinTimestampSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinTimestampSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.5/en/date-and-time-functions.html#function_timestamp
+func (b *builtinTimestampSig) eval(row []types.Datum) (d types.Datum, err error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	if args[0].IsNull() {
+		return
+	}
+	var arg0 types.Time
+	switch tp := args[0].Kind(); tp {
+	case types.KindInt64, types.KindUint64:
+		arg0, err = types.ParseDatetimeFromNum(args[0].GetInt64())
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+	case types.KindString, types.KindBytes, types.KindMysqlDecimal, types.KindFloat32, types.KindFloat64:
+		s, err := args[0].ToString()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		arg0, err = types.ParseTime(s, mysql.TypeDatetime, getFsp(s))
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+	case types.KindMysqlTime:
+		arg0 = args[0].GetMysqlTime()
+	default:
+		return d, errors.Errorf("Unkonwn args type for timestamp %d", tp)
+	}
+	if len(args) == 1 {
+		d.SetMysqlTime(arg0)
+		return
+	}
+	// If exists args[1].
+	s, err := args[1].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	arg1, err := types.ParseDuration(s, getFsp(s))
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	tmpDuration := arg0.Add(&arg1)
+	result, err := tmpDuration.ConvertToTime(arg0.Type)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d.SetMysqlTime(result)
+	return
+}
+
+func getFsp(s string) (fsp int) {
+	fsp = len(s) - strings.Index(s, ".") - 1
+	if fsp == len(s) {
+		fsp = 0
+	} else if fsp > 6 {
+		fsp = 6
 	}
 	return
 }
