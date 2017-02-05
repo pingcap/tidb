@@ -188,6 +188,8 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"find_in_set('foo', null)", mysql.TypeLonglong, charset.CharsetBin},
 		{"find_in_set(null, 'bar')", mysql.TypeLonglong, charset.CharsetBin},
 		{"conv('TiDB',36,10)", mysql.TypeVarString, charset.CharsetUTF8},
+		{"timestamp('2003-12-31 12:00:00')", mysql.TypeDatetime, charset.CharsetBin},
+		{"timestamp('2003-12-31 12:00:00','12:00:00')", mysql.TypeDatetime, charset.CharsetBin},
 	}
 	for _, ca := range cases {
 		ctx := testKit.Se.(context.Context)

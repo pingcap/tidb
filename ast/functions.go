@@ -119,6 +119,7 @@ const (
 	Sysdate          = "sysdate"
 	Time             = "time"
 	TimeDiff         = "timediff"
+	Timestamp        = "timestamp"
 	TimestampDiff    = "timestampdiff"
 	UTCDate          = "utc_date"
 	UnixTimestamp    = "unix_timestamp"
