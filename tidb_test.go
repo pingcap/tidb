@@ -77,7 +77,8 @@ func (s *testMainSuite) SetUpSuite(c *C) {
 func (s *testMainSuite) TearDownSuite(c *C) {
 	defer testleak.AfterTest(c)()
 	s.dom.Close()
-	s.store.Close()
+	err := s.store.Close()
+	c.Assert(err, IsNil)
 	removeStore(c, s.dbName)
 }
 

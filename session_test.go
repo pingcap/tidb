@@ -67,7 +67,8 @@ func (s *testSessionSuite) SetUpSuite(c *C) {
 func (s *testSessionSuite) TearDownSuite(c *C) {
 	removeStore(c, s.dbName)
 	s.dom.Close()
-	s.store.Close()
+	err := s.store.Close()
+	c.Assert(err, IsNil)
 }
 
 func (s *testSessionSuite) TestPrepare(c *C) {
@@ -2379,8 +2380,10 @@ func (s *testSessionSuite) TestIndexColumnLength(c *C) {
 	mustExecSQL(c, se, "create index idx_c1 on t(c1);")
 	mustExecSQL(c, se, "create index idx_c2 on t(c2(6));")
 
+	// TODO: Create a new store here?
 	dom, err1 := domain.NewDomain(s.store, 80*time.Millisecond)
 	c.Assert(err1, Equals, nil)
+	defer dom.Close()
 	is := dom.InfoSchema()
 
 	tab, err2 := is.TableByName(model.NewCIStr(dbName), model.NewCIStr("t"))
