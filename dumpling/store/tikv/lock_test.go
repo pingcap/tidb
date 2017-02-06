@@ -233,13 +233,14 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 	s.ttlEquals(c, l.TTL, uint64(ttlFactor*2)+uint64(time.Since(start)/time.Millisecond))
 
 	// Txn with long read time.
+	start = time.Now()
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	time.Sleep(time.Millisecond * 50)
 	txn.Set(kv.Key("key"), []byte("value"))
 	s.prewriteTxn(c, txn.(*tikvTxn))
 	l = s.mustGetLock(c, []byte("key"))
-	s.ttlEquals(c, l.TTL, defaultLockTTL+50)
+	s.ttlEquals(c, l.TTL, defaultLockTTL+uint64(time.Since(start)/time.Millisecond))
 }
 
 func init() {
