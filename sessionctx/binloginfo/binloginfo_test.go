@@ -95,7 +95,7 @@ func (s *testBinlogSuite) SetUpSuite(c *C) {
 	c.Assert(clientCon, NotNil)
 	binloginfo.PumpClient = binlog.NewPumpClient(clientCon)
 	s.tk = testkit.NewTestKit(c, s.store)
-	err = tidb.BootstrapSession(store)
+	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	s.tk.MustExec("use test")
 	domain := sessionctx.GetDomain(s.tk.Se.(context.Context))

@@ -120,6 +120,10 @@ func (w *GCWorker) start() {
 				if err != nil {
 					log.Warnf("[gc worker] leader tick err: %v", err)
 				}
+			} else {
+				// Config metrics should always be updated by leader.
+				gcConfigGauge.WithLabelValues(gcRunIntervalKey).Set(0)
+				gcConfigGauge.WithLabelValues(gcLifeTimeKey).Set(0)
 			}
 		case err := <-w.done:
 			w.gcIsRunning = false

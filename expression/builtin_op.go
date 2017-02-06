@@ -53,7 +53,7 @@ type builtinAndAndSig struct {
 }
 
 func (b *builtinAndAndSig) eval(row []types.Datum) (d types.Datum, err error) {
-	leftDatum, err := b.args[0].Eval(row, b.ctx)
+	leftDatum, err := b.args[0].Eval(row)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
@@ -69,7 +69,7 @@ func (b *builtinAndAndSig) eval(row []types.Datum) (d types.Datum, err error) {
 			return
 		}
 	}
-	rightDatum, err := b.args[1].Eval(row, b.ctx)
+	rightDatum, err := b.args[1].Eval(row)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
@@ -103,7 +103,7 @@ type builtinOrOrSig struct {
 }
 
 func (b *builtinOrOrSig) eval(row []types.Datum) (d types.Datum, err error) {
-	leftDatum, err := b.args[0].Eval(row, b.ctx)
+	leftDatum, err := b.args[0].Eval(row)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
@@ -119,7 +119,7 @@ func (b *builtinOrOrSig) eval(row []types.Datum) (d types.Datum, err error) {
 			return
 		}
 	}
-	rightDatum, err := b.args[1].Eval(row, b.ctx)
+	rightDatum, err := b.args[1].Eval(row)
 	if err != nil {
 		return d, errors.Trace(err)
 	}

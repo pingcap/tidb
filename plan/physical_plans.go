@@ -454,8 +454,7 @@ func (p *PhysicalApply) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := p.basePlan.extractCorrelatedCols()
 	corCols = append(corCols, p.PhysicalJoin.extractCorrelatedCols()...)
 	for i := len(corCols) - 1; i >= 0; i-- {
-		idx := p.PhysicalJoin.Children()[0].Schema().ColumnIndex(&corCols[i].Column)
-		if idx != -1 {
+		if p.PhysicalJoin.Children()[0].Schema().Contains(&corCols[i].Column) {
 			corCols = append(corCols[:i], corCols[i+1:]...)
 		}
 	}

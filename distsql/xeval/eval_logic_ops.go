@@ -24,57 +24,108 @@ func (e *Evaluator) evalLogicOps(expr *tipb.Expr) (types.Datum, error) {
 	if expr.GetTp() == tipb.ExprType_Not {
 		return e.evalNot(expr)
 	}
-	leftBool, rightBool, err := e.evalTwoBoolChildren(expr)
+	left, right, err := e.getTwoChildren(expr)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
 	switch op := expr.GetTp(); op {
 	case tipb.ExprType_And:
-		return e.evalAnd(leftBool, rightBool)
+		return e.evalAnd(left, right)
 	case tipb.ExprType_Or:
-		return e.evalOr(leftBool, rightBool)
+		return e.evalOr(left, right)
 	case tipb.ExprType_Xor:
-		return e.evalXor(leftBool, rightBool)
+		return e.evalXor(left, right)
 	default:
 		return types.Datum{}, errors.Errorf("Unknown binop type: %v", op)
 	}
 }
 
-// evalAnd computes result of (X && Y).
-func (e *Evaluator) evalAnd(leftBool, rightBool int64) (types.Datum, error) {
+// evalBool evaluates expr as bool value.
+func (e *Evaluator) evalBool(expr *tipb.Expr) (int64, error) {
+	v, err := e.Eval(expr)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if v.IsNull() {
+		return compareResultNull, nil
+	}
+
+	return v.ToBool(e.sc)
+}
+
+// evalAnd computes result of (X && Y). It works in a short-cut way.
+func (e *Evaluator) evalAnd(left, right *tipb.Expr) (types.Datum, error) {
 	var d types.Datum
-	if leftBool == 0 || rightBool == 0 {
+
+	leftBool, err := e.evalBool(left)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if leftBool == 0 {
 		d.SetInt64(0)
 		return d, nil
 	}
-	if leftBool == compareResultNull || rightBool == compareResultNull {
-		d.SetNull()
+
+	rightBool, err := e.evalBool(right)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if rightBool == 0 {
+		d.SetInt64(0)
 		return d, nil
 	}
+
+	if leftBool == compareResultNull || rightBool == compareResultNull {
+		return d, nil
+	}
+
 	d.SetInt64(1)
 	return d, nil
 }
 
-// evalOr computes result of (X || Y).
-func (e *Evaluator) evalOr(leftBool, rightBool int64) (types.Datum, error) {
+// evalOr computes result of (X || Y). It works in a short-cut way.
+func (e *Evaluator) evalOr(left, right *tipb.Expr) (types.Datum, error) {
 	var d types.Datum
-	if leftBool == 1 || rightBool == 1 {
+	leftBool, err := e.evalBool(left)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if leftBool == 1 {
 		d.SetInt64(1)
 		return d, nil
 	}
-	if leftBool == compareResultNull || rightBool == compareResultNull {
-		d.SetNull()
+	rightBool, err := e.evalBool(right)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if rightBool == 1 {
+		d.SetInt64(1)
 		return d, nil
 	}
+
+	if leftBool == compareResultNull || rightBool == compareResultNull {
+		return d, nil
+	}
+
 	d.SetInt64(0)
 	return d, nil
 }
 
-// evalXor computes result of (X XOR Y).
-func (e *Evaluator) evalXor(leftBool, rightBool int64) (types.Datum, error) {
+// evalXor computes result of (X XOR Y). It works in a short-cut way.
+func (e *Evaluator) evalXor(left, right *tipb.Expr) (types.Datum, error) {
 	var d types.Datum
-	if leftBool == compareResultNull || rightBool == compareResultNull {
-		d.SetNull()
+	leftBool, err := e.evalBool(left)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if leftBool == compareResultNull {
+		return d, nil
+	}
+	rightBool, err := e.evalBool(left)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if rightBool == compareResultNull {
 		return d, nil
 	}
 	if leftBool == rightBool {

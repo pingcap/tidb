@@ -14,7 +14,6 @@
 package plan
 
 import (
-	"fmt"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -25,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
@@ -503,7 +501,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		{
 			// This will be resolved as in sub query.
 			sql:  "select * from t where 10 in (select b from t s where s.a = t.a)",
-			plan: "Apply{DataScan(t)->DataScan(s)->Selection->Projection}->Projection",
+			plan: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Projection",
 		},
 		{
 			sql:  "select count(c) ,(select b from t s where s.a = t.a) from t",
@@ -520,7 +518,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		{
 			// This will be resolved as in sub query.
 			sql:  "select * from t where 10 in (((select b from t s where s.a = t.a)))",
-			plan: "Apply{DataScan(t)->DataScan(s)->Selection->Projection}->Projection",
+			plan: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Projection",
 		},
 		{
 			// This will be resolved as in function.
@@ -534,7 +532,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		{
 			// Test Nested sub query.
 			sql:  "select * from t where exists (select s.a from t s where s.c in (select c from t as k where k.d = s.d) having sum(s.a) = t.a )",
-			plan: "Join{DataScan(t)->Apply{DataScan(s)->DataScan(k)->Selection->Projection}->Aggr(sum(s.a))->Projection}(test.t.a,sel_agg_1)->Projection",
+			plan: "Join{DataScan(t)->Join{DataScan(s)->DataScan(k)}(s.d,k.d)(s.c,k.c)->Aggr(sum(s.a))->Projection}(test.t.a,sel_agg_1)->Projection",
 		},
 		{
 			sql:  "select * from t for update",
@@ -1105,193 +1103,6 @@ func (s *testPlanSuite) TestAllocID(c *C) {
 	c.Assert(pA.id, Equals, pB.id)
 }
 
-func (s *testPlanSuite) TestRangeBuilder(c *C) {
-	defer testleak.AfterTest(c)()
-	rb := &rangeBuilder{sc: new(variable.StatementContext)}
-
-	cases := []struct {
-		exprStr   string
-		resultStr string
-	}{
-		{
-			exprStr:   "a = 1",
-			resultStr: "[[1 1]]",
-		},
-		{
-			exprStr:   "1 = a",
-			resultStr: "[[1 1]]",
-		},
-		{
-			exprStr:   "a != 1",
-			resultStr: "[[-inf 1) (1 +inf]]",
-		},
-		{
-			exprStr:   "1 != a",
-			resultStr: "[[-inf 1) (1 +inf]]",
-		},
-		{
-			exprStr:   "a > 1",
-			resultStr: "[(1 +inf]]",
-		},
-		{
-			exprStr:   "1 < a",
-			resultStr: "[(1 +inf]]",
-		},
-		{
-			exprStr:   "a >= 1",
-			resultStr: "[[1 +inf]]",
-		},
-		{
-			exprStr:   "1 <= a",
-			resultStr: "[[1 +inf]]",
-		},
-		{
-			exprStr:   "a < 1",
-			resultStr: "[[-inf 1)]",
-		},
-		{
-			exprStr:   "1 > a",
-			resultStr: "[[-inf 1)]",
-		},
-		{
-			exprStr:   "a <= 1",
-			resultStr: "[[-inf 1]]",
-		},
-		{
-			exprStr:   "1 >= a",
-			resultStr: "[[-inf 1]]",
-		},
-		{
-			exprStr:   "(a)",
-			resultStr: "[[-inf 0) (0 +inf]]",
-		},
-		{
-			exprStr:   "a in (1, 3, NULL, 2)",
-			resultStr: "[[<nil> <nil>] [1 1] [2 2] [3 3]]",
-		},
-		{
-			exprStr:   `a IN (8,8,81,45)`,
-			resultStr: `[[8 8] [45 45] [81 81]]`,
-		},
-		{
-			exprStr:   "a between 1 and 2",
-			resultStr: "[[1 2]]",
-		},
-		{
-			exprStr:   "a not between 1 and 2",
-			resultStr: "[[-inf 1) (2 +inf]]",
-		},
-		{
-			exprStr:   "a not between null and 0",
-			resultStr: "[(0 +inf]]",
-		},
-		{
-			exprStr:   "a between 2 and 1",
-			resultStr: "[]",
-		},
-		{
-			exprStr:   "a not between 2 and 1",
-			resultStr: "[[-inf +inf]]",
-		},
-		{
-			exprStr:   "a IS NULL",
-			resultStr: "[[<nil> <nil>]]",
-		},
-		{
-			exprStr:   "a IS NOT NULL",
-			resultStr: "[[-inf +inf]]",
-		},
-		{
-			exprStr:   "a IS TRUE",
-			resultStr: "[[-inf 0) (0 +inf]]",
-		},
-		{
-			exprStr:   "a IS NOT TRUE",
-			resultStr: "[[<nil> <nil>] [0 0]]",
-		},
-		{
-			exprStr:   "a IS FALSE",
-			resultStr: "[[0 0]]",
-		},
-		{
-			exprStr:   "a IS NOT FALSE",
-			resultStr: "[[<nil> 0) (0 +inf]]",
-		},
-		{
-			exprStr:   "a LIKE 'abc%'",
-			resultStr: "[[abc abd)]",
-		},
-		{
-			exprStr:   "a LIKE 'abc_'",
-			resultStr: "[(abc abd)]",
-		},
-		{
-			exprStr:   "a LIKE 'abc'",
-			resultStr: "[[abc abc]]",
-		},
-		{
-			exprStr:   `a LIKE "ab\_c"`,
-			resultStr: "[[ab_c ab_c]]",
-		},
-		{
-			exprStr:   "a LIKE '%'",
-			resultStr: "[[-inf +inf]]",
-		},
-		{
-			exprStr:   `a LIKE '\%a'`,
-			resultStr: `[[%a %a]]`,
-		},
-		{
-			exprStr:   `a LIKE "\\"`,
-			resultStr: `[[\ \]]`,
-		},
-		{
-			exprStr:   `a LIKE "\\\\a%"`,
-			resultStr: `[[\a \b)]`,
-		},
-		{
-			exprStr:   `0.4`,
-			resultStr: `[]`,
-		},
-		{
-			exprStr:   `a > NULL`,
-			resultStr: `[]`,
-		},
-	}
-
-	for _, ca := range cases {
-		sql := "select * from t where " + ca.exprStr
-		stmt, err := s.ParseOneStmt(sql, "", "")
-		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, ca.exprStr))
-		is, err := mockResolve(stmt)
-		c.Assert(err, IsNil)
-
-		builder := &planBuilder{
-			allocator: new(idAllocator),
-			ctx:       mockContext(),
-			is:        is,
-		}
-		p := builder.build(stmt)
-		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, ca.exprStr))
-		var selection *Selection
-		for _, child := range p.Children() {
-			plan, ok := child.(*Selection)
-			if ok {
-				selection = plan
-				break
-			}
-		}
-		c.Assert(selection, NotNil, Commentf("expr:%v", ca.exprStr))
-		result := fullRange
-		for _, cond := range selection.Conditions {
-			result = rb.intersection(result, rb.build(pushDownNot(cond, false, nil)))
-		}
-		c.Assert(rb.err, IsNil)
-		got := fmt.Sprintf("%v", result)
-		c.Assert(got, Equals, ca.resultStr, Commentf("different for expr %s", ca.exprStr))
-	}
-}
-
 func checkDataSourceCols(p Plan, c *C, ans map[string][]string, comment CommentInterface) {
 	switch p.(type) {
 	case *PhysicalTableScan:
@@ -1440,16 +1251,16 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 			sql: "select a, sum(e) from t group by a",
 			ans: map[string][][]string{
 				"TableScan_1":   {{"test.t.a"}},
-				"Aggregation_2": {{"test.t.a"}, {"test.t.a"}},
-				"Projection_3":  {{"a"}, {"a"}},
+				"Aggregation_2": {{"test.t.a"}},
+				"Projection_3":  {{"a"}},
 			},
 		},
 		{
 			sql: "select a, sum(f) from t group by a",
 			ans: map[string][][]string{
 				"TableScan_1":   {{"test.t.f"}, {"test.t.a"}},
-				"Aggregation_2": {{"test.t.a"}, {"test.t.a"}},
-				"Projection_3":  {{"a"}, {"a"}},
+				"Aggregation_2": {{"test.t.a"}},
+				"Projection_3":  {{"a"}},
 			},
 		},
 		{
@@ -1464,8 +1275,8 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 			sql: "select f, g, sum(a) from t group by f, g",
 			ans: map[string][][]string{
 				"TableScan_1":   {{"test.t.f"}, {"test.t.g"}, {"test.t.f", "test.t.g"}, {"test.t.a"}},
-				"Aggregation_2": {{"test.t.f"}, {"test.t.g"}, {"test.t.f", "test.t.g"}, {"test.t.f"}},
-				"Projection_3":  {{"f"}, {"g"}, {"f", "g"}, {"f"}},
+				"Aggregation_2": {{"test.t.f"}, {"test.t.g"}, {"test.t.f", "test.t.g"}},
+				"Projection_3":  {{"f"}, {"g"}, {"f", "g"}},
 			},
 		},
 		{

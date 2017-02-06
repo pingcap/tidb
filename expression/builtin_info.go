@@ -49,12 +49,10 @@ type databaseFunctionClass struct {
 }
 
 func (c *databaseFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := errors.Trace(c.verifyArgs(args)); err != nil {
-		return nil, errors.Trace(err)
-	}
+	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinDatabaseSig{newBaseBuiltinFunc(args, ctx)}
 	bt.deterministic = false
-	return bt, nil
+	return bt, errors.Trace(err)
 }
 
 type builtinDatabaseSig struct {
@@ -76,12 +74,10 @@ type foundRowsFunctionClass struct {
 }
 
 func (c *foundRowsFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := errors.Trace(c.verifyArgs(args)); err != nil {
-		return nil, errors.Trace(err)
-	}
+	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinFoundRowsSig{newBaseBuiltinFunc(args, ctx)}
 	bt.deterministic = false
-	return bt, nil
+	return bt, errors.Trace(err)
 }
 
 type builtinFoundRowsSig struct {
@@ -104,12 +100,10 @@ type currentUserFunctionClass struct {
 }
 
 func (c *currentUserFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := errors.Trace(c.verifyArgs(args)); err != nil {
-		return nil, errors.Trace(err)
-	}
+	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinCurrentUserSig{newBaseBuiltinFunc(args, ctx)}
 	bt.deterministic = false
-	return bt, nil
+	return bt, errors.Trace(err)
 }
 
 type builtinCurrentUserSig struct {
@@ -133,12 +127,10 @@ type userFunctionClass struct {
 }
 
 func (c *userFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := errors.Trace(c.verifyArgs(args)); err != nil {
-		return nil, errors.Trace(err)
-	}
+	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinUserSig{newBaseBuiltinFunc(args, ctx)}
 	bt.deterministic = false
-	return bt, nil
+	return bt, errors.Trace(err)
 }
 
 type builtinUserSig struct {
@@ -160,12 +152,10 @@ type connectionIDFunctionClass struct {
 }
 
 func (c *connectionIDFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := errors.Trace(c.verifyArgs(args)); err != nil {
-		return nil, errors.Trace(err)
-	}
+	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinConnectionIDSig{newBaseBuiltinFunc(args, ctx)}
 	bt.deterministic = false
-	return bt, nil
+	return bt, errors.Trace(err)
 }
 
 type builtinConnectionIDSig struct {
@@ -187,12 +177,10 @@ type lastInsertIDFunctionClass struct {
 }
 
 func (c *lastInsertIDFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := errors.Trace(c.verifyArgs(args)); err != nil {
-		return nil, errors.Trace(err)
-	}
+	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinLastInsertIDSig{newBaseBuiltinFunc(args, ctx)}
 	bt.deterministic = false
-	return bt, nil
+	return bt, errors.Trace(err)
 }
 
 type builtinLastInsertIDSig struct {
@@ -222,12 +210,10 @@ type versionFunctionClass struct {
 }
 
 func (c *versionFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	if err := errors.Trace(c.verifyArgs(args)); err != nil {
-		return nil, errors.Trace(err)
-	}
+	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinVersionSig{newBaseBuiltinFunc(args, ctx)}
 	bt.deterministic = false
-	return bt, nil
+	return bt, errors.Trace(err)
 }
 
 type builtinVersionSig struct {
