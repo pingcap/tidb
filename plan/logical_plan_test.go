@@ -1573,7 +1573,21 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			},
 		},
 		{
+			sql: "delete from a1 using t as a1 inner join t as a2 where a1.a = a2.a",
+			ans: []visitInfo{
+				{mysql.DeletePriv, "test", "t", ""},
+				{mysql.SelectPriv, "test", "t", ""},
+			},
+		},
+		{
 			sql: "update t set a = 7 where a = 1",
+			ans: []visitInfo{
+				{mysql.UpdatePriv, "test", "t", ""},
+				{mysql.SelectPriv, "test", "t", ""},
+			},
+		},
+		{
+			sql: "update t, (select * from t) a1 set t.a = a1.a;",
 			ans: []visitInfo{
 				{mysql.UpdatePriv, "test", "t", ""},
 				{mysql.SelectPriv, "test", "t", ""},

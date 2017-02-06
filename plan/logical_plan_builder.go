@@ -1086,11 +1086,17 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 		return nil
 	}
 
-	for _, v := range extractTableListFromPlan(p) {
+	var tableList []*ast.TableName
+	tableList = extractTableList(sel.From.TableRefs, tableList)
+	for _, t := range tableList {
+		dbName := t.Schema.L
+		if dbName == "" {
+			dbName = b.ctx.GetSessionVars().CurrentDB
+		}
 		b.visitInfo = append(b.visitInfo, visitInfo{
 			privilege: mysql.UpdatePriv,
-			db:        v.DBName.L,
-			table:     v.tableInfo.Name.L,
+			db:        dbName,
+			table:     t.Name.L,
 		})
 	}
 
@@ -1162,7 +1168,6 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 	if b.err != nil {
 		return nil
 	}
-	tableList := extractTableListFromPlan(p)
 
 	_, _ = b.resolveHavingAndOrderBy(sel, p)
 	if sel.Where != nil {
@@ -1183,28 +1188,37 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 			return nil
 		}
 	}
+
 	var tables []*ast.TableName
 	if delete.Tables != nil {
 		tables = delete.Tables.Tables
 
-		// Delete a, b from a, b, c, d... add a and b
+		// Delete a, b from a, b, c, d... add a and b.
 		for _, table := range tables {
 			b.visitInfo = append(b.visitInfo, visitInfo{
 				privilege: mysql.DeletePriv,
 				db:        table.Schema.L,
-				table:     table.Name.L,
+				table:     table.TableInfo.Name.L,
 			})
 		}
 	} else {
-		// Delete from a, b, c, d
+		var tableList []*ast.TableName
+		tableList = extractTableList(delete.TableRefs.TableRefs, tableList)
+
+		// Delete from a, b, c, d.
 		for _, v := range tableList {
+			dbName := v.Schema.L
+			if dbName == "" {
+				dbName = b.ctx.GetSessionVars().CurrentDB
+			}
 			b.visitInfo = append(b.visitInfo, visitInfo{
 				privilege: mysql.DeletePriv,
-				db:        v.DBName.L,
-				table:     v.tableInfo.Name.L,
+				db:        dbName,
+				table:     v.Name.L,
 			})
 		}
 	}
+
 	del := &Delete{
 		Tables:          tables,
 		IsMultiTable:    delete.IsMultiTable,
@@ -1217,18 +1231,16 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 	return del
 }
 
-func extractTableListFromPlan(p LogicalPlan) []*DataSource {
-	var ret []*DataSource
-	for p != nil {
-		switch v := p.(type) {
-		case *Join:
-			p = v.Children()[0].(LogicalPlan)
-		case *DataSource:
-			ret = append(ret, v)
-			return ret
-		default:
-			return ret
+func extractTableList(node ast.ResultSetNode, input []*ast.TableName) []*ast.TableName {
+	switch x := node.(type) {
+	case *ast.Join:
+		input = extractTableList(x.Left, input)
+		input = extractTableList(x.Right, input)
+	case *ast.TableSource:
+		if s, ok := x.Source.(*ast.TableName); ok {
+			fmt.Println("xsdfasdf", s.Name.L)
+			input = append(input, s)
 		}
 	}
-	return ret
+	return input
 }
