@@ -182,7 +182,7 @@ func pushMetric(addr string, interval time.Duration) {
 		log.Info("disable Prometheus push client")
 		return
 	}
-	log.Infof("start Prometheus push client with server addr %s and interval %d", addr, interval)
+	log.Infof("start Prometheus push client with server addr %s and interval %s", addr, interval)
 	go prometheusPushClient(addr, interval)
 }
 
