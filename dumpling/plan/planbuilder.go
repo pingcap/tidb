@@ -56,6 +56,13 @@ func init() {
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizerPlan] = tableMySQLErrCodes
 }
 
+type visitInfo struct {
+	privilege mysql.PrivilegeType
+	db        string
+	table     string
+	column    string
+}
+
 // planBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
 type planBuilder struct {
@@ -69,8 +76,9 @@ type planBuilder struct {
 	inUpdateStmt bool
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
-
-	optFlag uint64
+	// Collect the visit information for privilege check.
+	visitInfo []visitInfo
+	optFlag   uint64
 }
 
 func (b *planBuilder) build(node ast.Node) Plan {

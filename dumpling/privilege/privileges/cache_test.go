@@ -29,6 +29,7 @@ type testCacheSuite struct {
 }
 
 func (s *testCacheSuite) SetUpSuite(c *C) {
+	privileges.Enable = true
 	store, err := tidb.NewStore("memory://mysql")
 	c.Assert(err, IsNil)
 	err = tidb.BootstrapSession(store)
