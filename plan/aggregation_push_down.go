@@ -66,8 +66,13 @@ func (a *aggPushDownSolver) getAggFuncChildIdx(aggFunc expression.AggregationFun
 		return -1
 	} else if fromLeft {
 		return 0
+	} else if fromRight {
+		return 1
+	} else if aggFunc.GetName() == ast.AggFuncCount {
+		return -1
+	} else {
+		return 2
 	}
-	return 1
 }
 
 // collectAggFuncs collects all aggregate functions and splits them into two parts: "leftAggFuncs" and "rightAggFuncs" whose
@@ -85,6 +90,9 @@ func (a *aggPushDownSolver) collectAggFuncs(agg *Aggregation, join *Join) (valid
 		case 0:
 			leftAggFuncs = append(leftAggFuncs, aggFunc)
 		case 1:
+			rightAggFuncs = append(rightAggFuncs, aggFunc)
+		case 2:
+			leftAggFuncs = append(leftAggFuncs, aggFunc)
 			rightAggFuncs = append(rightAggFuncs, aggFunc)
 		default:
 			return false, nil, nil
