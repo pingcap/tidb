@@ -109,6 +109,8 @@ func (p *Aggregation) PruneColumns(parentUsedCols []*expression.Column) {
 				selfUsedCols = append(selfUsedCols, cols...)
 			}
 		}
+		// If all the group by items are pruned, we should add a constant 1 to keep the correctness.
+		// Because `select count(*) from t` is different from `select count(*) from t group by 1`.
 		if len(p.GroupByItems) == 0 {
 			p.GroupByItems = []expression.Expression{expression.One}
 		}
