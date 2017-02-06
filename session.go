@@ -729,7 +729,7 @@ func CreateSession(store kv.Storage) (Session, error) {
 }
 
 // BootstrapSession runs the first time when the TiDB server start.
-func BootstrapSession(store kv.Storage) error {
+func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	ver := getStoreBootstrapVersion(store)
 	if ver == notBootstrapped {
 		runInBootstrapSession(store, bootstrap)
@@ -739,11 +739,12 @@ func BootstrapSession(store kv.Storage) error {
 
 	se, err := createSession(store)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	err = sessionctx.GetDomain(se).LoadPrivilegeLoop(se)
+	dom := sessionctx.GetDomain(se)
+	err = dom.LoadPrivilegeLoop(se)
 
-	return errors.Trace(err)
+	return dom, errors.Trace(err)
 }
 
 // runInBootstrapSession create a special session for boostrap to run.
