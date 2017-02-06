@@ -584,6 +584,11 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"select curtime()", true},
 		{"select curtime(6)", true},
 
+		// select utc_timestamp
+		{"select utc_timestamp", true},
+		{"select utc_timestamp()", true},
+		{"select utc_timestamp(6)", true},
+
 		// for microsecond, second, minute, hour
 		{"SELECT MICROSECOND('2009-12-31 23:59:59.000010');", true},
 		{"SELECT SECOND('10:05:03');", true},
@@ -1020,6 +1025,9 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"CREATE TABLE sbtest (id INTEGER UNSIGNED NOT NULL AUTO_INCREMENT, k integer UNSIGNED DEFAULT '0' NOT NULL, c char(120) DEFAULT '' NOT NULL, pad char(60) DEFAULT '' NOT NULL, PRIMARY KEY  (id) )", true},
 		{"create table test (create_date TIMESTAMP NOT NULL COMMENT '创建日期 create date' DEFAULT now());", true},
 		{"create table ts (t int, v timestamp(3) default CURRENT_TIMESTAMP(3));", true},
+
+		// Create table with primary key name.
+		{"create table if not exists `t` (`id` int not null auto_increment comment '消息ID', primary key `pk_id` (`id`) );", true},
 
 		// for alter table
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED", true},

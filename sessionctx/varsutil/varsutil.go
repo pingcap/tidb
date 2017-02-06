@@ -30,7 +30,7 @@ func GetSessionSystemVar(s *variable.SessionVars, key string) (string, error) {
 	key = strings.ToLower(key)
 	sysVar := variable.SysVars[key]
 	if sysVar == nil {
-		return "", variable.UnknownSystemVar
+		return "", variable.UnknownSystemVar.GenByArgs(key)
 	}
 	sVal, ok := s.Systems[key]
 	if ok {
@@ -53,7 +53,7 @@ func GetGlobalSystemVar(s *variable.SessionVars, key string) (string, error) {
 	key = strings.ToLower(key)
 	sysVar := variable.SysVars[key]
 	if sysVar == nil {
-		return "", variable.UnknownSystemVar
+		return "", variable.UnknownSystemVar.GenByArgs(key)
 	}
 	if sysVar.Scope == variable.ScopeSession {
 		return "", variable.ErrIncorrectScope

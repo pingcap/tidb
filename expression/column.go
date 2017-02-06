@@ -37,7 +37,7 @@ func (col *CorrelatedColumn) Clone() Expression {
 }
 
 // Eval implements Expression interface.
-func (col *CorrelatedColumn) Eval(row []types.Datum, _ context.Context) (types.Datum, error) {
+func (col *CorrelatedColumn) Eval(row []types.Datum) (types.Datum, error) {
 	return *col.Data, nil
 }
 
@@ -56,7 +56,7 @@ func (col *CorrelatedColumn) IsCorrelated() bool {
 
 // Decorrelate implements Expression interface.
 func (col *CorrelatedColumn) Decorrelate(schema *Schema) Expression {
-	if schema.ColumnIndex(&col.Column) == -1 {
+	if !schema.Contains(&col.Column) {
 		return col
 	}
 	return &col.Column
@@ -120,7 +120,7 @@ func (col *Column) GetType() *types.FieldType {
 }
 
 // Eval implements Expression interface.
-func (col *Column) Eval(row []types.Datum, _ context.Context) (types.Datum, error) {
+func (col *Column) Eval(row []types.Datum) (types.Datum, error) {
 	return row[col.Index], nil
 }
 
