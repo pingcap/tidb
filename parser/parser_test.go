@@ -584,6 +584,11 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"select curtime()", true},
 		{"select curtime(6)", true},
 
+		// select utc_timestamp
+		{"select utc_timestamp", true},
+		{"select utc_timestamp()", true},
+		{"select utc_timestamp(6)", true},
+
 		// for microsecond, second, minute, hour
 		{"SELECT MICROSECOND('2009-12-31 23:59:59.000010');", true},
 		{"SELECT SECOND('10:05:03');", true},

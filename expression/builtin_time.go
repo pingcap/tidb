@@ -60,9 +60,11 @@ var (
 	_ functionClass = &currentTimeFunctionClass{}
 	_ functionClass = &timeFunctionClass{}
 	_ functionClass = &utcDateFunctionClass{}
+	_ functionClass = &utcTimestampFunctionClass{}
 	_ functionClass = &extractFunctionClass{}
 	_ functionClass = &arithmeticFunctionClass{}
 	_ functionClass = &unixTimestampFunctionClass{}
+	_ functionClass = &timestampFunctionClass{}
 )
 
 var (
@@ -93,10 +95,25 @@ var (
 	_ builtinFunc = &builtinCurrentTimeSig{}
 	_ builtinFunc = &builtinTimeSig{}
 	_ builtinFunc = &builtinUTCDateSig{}
+	_ builtinFunc = &builtinUTCTimestampSig{}
 	_ builtinFunc = &builtinExtractSig{}
 	_ builtinFunc = &builtinArithmeticSig{}
 	_ builtinFunc = &builtinUnixTimestampSig{}
+	_ builtinFunc = &builtinTimestampSig{}
 )
+
+func convertTimeToMysqlTime(t time.Time, fsp int) (types.Time, error) {
+	tr, err := types.RoundFrac(t, int(fsp))
+	if err != nil {
+		return types.Time{}, errors.Trace(err)
+	}
+
+	return types.Time{
+		Time: types.FromGoTime(tr),
+		Type: mysql.TypeDatetime,
+		Fsp:  fsp,
+	}, nil
+}
 
 func convertToTime(sc *variable.StatementContext, arg types.Datum, tp byte) (d types.Datum, err error) {
 	f := types.NewFieldType(tp)
@@ -526,22 +543,13 @@ func builtinNow(args []types.Datum, ctx context.Context) (d types.Datum, err err
 	sc := ctx.GetSessionVars().StmtCtx
 	if len(args) == 1 && !args[0].IsNull() {
 		if fsp, err = checkFsp(sc, args[0]); err != nil {
-			d.SetNull()
 			return d, errors.Trace(err)
 		}
 	}
 
-	tr, err := types.RoundFrac(time.Now(), int(fsp))
+	t, err := convertTimeToMysqlTime(time.Now(), fsp)
 	if err != nil {
-		d.SetNull()
 		return d, errors.Trace(err)
-	}
-
-	t := types.Time{
-		Time: types.FromGoTime(tr),
-		Type: mysql.TypeDatetime,
-		// set unspecified for later round
-		Fsp: fsp,
 	}
 
 	d.SetMysqlTime(t)
@@ -950,16 +958,12 @@ func (b *builtinFromUnixTimeSig) eval(row []types.Datum) (d types.Datum, err err
 	if fracDigitsNumber > types.MaxFsp {
 		fsp = types.MaxFsp
 	}
-	tr, err := types.RoundFrac(time.Unix(integralPart, fractionalPart), fsp)
+
+	t, err := convertTimeToMysqlTime(time.Unix(integralPart, fractionalPart), fsp)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
 
-	t := types.Time{
-		Time: types.FromGoTime(tr),
-		Type: mysql.TypeDatetime,
-		Fsp:  fsp,
-	}
 	if args[0].Kind() == types.KindString { // Keep consistent with MySQL.
 		t.Fsp = types.MaxFsp
 	}
@@ -1139,6 +1143,42 @@ func (b *builtinUTCDateSig) eval(_ []types.Datum) (d types.Datum, err error) {
 	t := types.Time{
 		Time: types.FromGoTime(time.Date(year, month, day, 0, 0, 0, 0, time.UTC)),
 		Type: mysql.TypeDate, Fsp: types.UnspecifiedFsp}
+	d.SetMysqlTime(t)
+	return d, nil
+}
+
+type utcTimestampFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *utcTimestampFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinUTCTimestampSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinUTCTimestampSig struct {
+	baseBuiltinFunc
+}
+
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-timestamp
+func (b *builtinUTCTimestampSig) eval(row []types.Datum) (d types.Datum, err error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+
+	fsp := 0
+	sc := b.ctx.GetSessionVars().StmtCtx
+	if len(args) == 1 && !args[0].IsNull() {
+		if fsp, err = checkFsp(sc, args[0]); err != nil {
+			return d, errors.Trace(err)
+		}
+	}
+
+	t, err := convertTimeToMysqlTime(time.Now().UTC(), fsp)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
 	d.SetMysqlTime(t)
 	return d, nil
 }
@@ -1443,6 +1483,80 @@ func (b *builtinUnixTimestampSig) eval(row []types.Datum) (d types.Datum, err er
 		d.SetMysqlDecimal(&dec)
 	} else {
 		d.SetInt64(t1.Unix())
+	}
+	return
+}
+
+type timestampFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *timestampFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinTimestampSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinTimestampSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.5/en/date-and-time-functions.html#function_timestamp
+func (b *builtinTimestampSig) eval(row []types.Datum) (d types.Datum, err error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	if args[0].IsNull() {
+		return
+	}
+	var arg0 types.Time
+	switch tp := args[0].Kind(); tp {
+	case types.KindInt64, types.KindUint64:
+		arg0, err = types.ParseDatetimeFromNum(args[0].GetInt64())
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+	case types.KindString, types.KindBytes, types.KindMysqlDecimal, types.KindFloat32, types.KindFloat64:
+		s, err := args[0].ToString()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		arg0, err = types.ParseTime(s, mysql.TypeDatetime, getFsp(s))
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+	case types.KindMysqlTime:
+		arg0 = args[0].GetMysqlTime()
+	default:
+		return d, errors.Errorf("Unkonwn args type for timestamp %d", tp)
+	}
+	if len(args) == 1 {
+		d.SetMysqlTime(arg0)
+		return
+	}
+	// If exists args[1].
+	s, err := args[1].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	arg1, err := types.ParseDuration(s, getFsp(s))
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	tmpDuration := arg0.Add(&arg1)
+	result, err := tmpDuration.ConvertToTime(arg0.Type)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d.SetMysqlTime(result)
+	return
+}
+
+func getFsp(s string) (fsp int) {
+	fsp = len(s) - strings.Index(s, ".") - 1
+	if fsp == len(s) {
+		fsp = 0
+	} else if fsp > 6 {
+		fsp = 6
 	}
 	return
 }

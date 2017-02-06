@@ -3,12 +3,13 @@ import:
 - package: github.com/boltdb/bolt
   version: d97499360d1ecebc492ea66c7447ea948f417620
 - package: github.com/coreos/etcd
-  version: e53b99588a05d1f4ef172c178d4ed8e8106b8be4
+  version: 6bef2bddcaced4fc6ed136e7434c4ee72c9e6782
   subpackages:
   - auth/authpb
   - clientv3
   - mvcc/mvccpb
   - pkg/tlsutil
+  - pkg/monotime
 - package: github.com/gengo/grpc-gateway
   version: f52d055dc48aec25854ed7d31862f78913cf17d1
   subpackages:

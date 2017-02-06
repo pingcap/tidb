@@ -195,9 +195,9 @@ func (p *Join) PruneColumns(parentUsedCols []*expression.Column) {
 	rChild := p.children[1].(LogicalPlan)
 	var leftCols, rightCols []*expression.Column
 	for _, col := range parentUsedCols {
-		if lChild.Schema().ColumnIndex(col) != -1 {
+		if lChild.Schema().Contains(col) {
 			leftCols = append(leftCols, col)
-		} else if rChild.Schema().ColumnIndex(col) != -1 {
+		} else if rChild.Schema().Contains(col) {
 			rightCols = append(rightCols, col)
 		}
 	}

@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
@@ -27,6 +28,9 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
 )
+
+// Enable enables the new privilege check feature.
+var Enable = false
 
 // privilege error codes.
 const (
@@ -167,8 +171,38 @@ func (ps *userPrivileges) ShowGrants() []string {
 // UserPrivileges implements privilege.Checker interface.
 // This is used to check privilege for the current user.
 type UserPrivileges struct {
+	// TODO: Clean up the old implementation.
 	User  string
 	privs *userPrivileges
+
+	*Handle
+}
+
+// RequestVerification implements the Checker interface.
+func (p *UserPrivileges) RequestVerification(db, table, column string, priv mysql.PrivilegeType) bool {
+	if !Enable {
+		return true
+	}
+
+	if p.User == "" {
+		return true
+	}
+
+	mysqlPriv := p.Handle.Get()
+
+	// TODO: Store it to UserPrivileges and avoid do it everytime.
+	strs := strings.Split(p.User, "@")
+	if len(strs) != 2 {
+		log.Warnf("Invalid format for user: %s", p.User)
+		return false
+	}
+	// Get user password.
+	user := strs[0]
+	host := strs[1]
+
+	log.Debug("verify privilege use:", user, host)
+
+	return mysqlPriv.RequestVerification(user, host, db, table, column, priv)
 }
 
 // Check implements Checker.Check interface.

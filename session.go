@@ -665,7 +665,7 @@ func (s *session) Auth(user string, auth []byte, salt []byte) bool {
 
 	// TODO: Use the new privilege implementation.
 	domain := sessionctx.GetDomain(s)
-	checker := domain.Privilege()
+	checker := domain.PrivilegeHandle().Get()
 	succ := checker.ConnectionVerification(name, host)
 	log.Debug("RequestVerification result:", succ)
 
@@ -715,8 +715,14 @@ func CreateSession(store kv.Storage) (Session, error) {
 		return nil, errors.Trace(err)
 	}
 
-	// TODO: Add auth here
-	privChecker := &privileges.UserPrivileges{}
+	// Add auth here.
+	do, err := domap.Get(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	privChecker := &privileges.UserPrivileges{
+		Handle: do.PrivilegeHandle(),
+	}
 	privilege.BindPrivilegeChecker(s, privChecker)
 
 	return s, nil
