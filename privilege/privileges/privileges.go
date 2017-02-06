@@ -28,6 +28,9 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+// Enable enables the new privilege check feature.
+var Enable bool = false
+
 // privilege error codes.
 const (
 	codeInvalidPrivilegeType  terror.ErrCode = 1
