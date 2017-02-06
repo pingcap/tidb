@@ -26,7 +26,19 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 )
 
-func (s *testSessionSuite) TestBootstrap(c *C) {
+var _ = Suite(&testBootstrapSuite{})
+
+type testBootstrapSuite struct {
+	dbName          string
+	dbNameBootstrap string
+}
+
+func (s *testBootstrapSuite) SetUpSuite(c *C) {
+	s.dbName = "test_bootstrap"
+	s.dbNameBootstrap = "test_main_db_bootstrap"
+}
+
+func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	defer testleak.AfterTest(c)()
 	store := newStoreWithBootstrap(c, s.dbName)
 	se := newSession(c, store, s.dbName)
@@ -94,7 +106,7 @@ func globalVarsCount() int64 {
 }
 
 // Create a new session on store but only do ddl works.
-func (s *testSessionSuite) bootstrapWithOnlyDDLWork(store kv.Storage, c *C) {
+func (s *testBootstrapSuite) bootstrapWithOnlyDDLWork(store kv.Storage, c *C) {
 	ss := &session{
 		values:      make(map[fmt.Stringer]interface{}),
 		store:       store,
@@ -116,7 +128,7 @@ func (s *testSessionSuite) bootstrapWithOnlyDDLWork(store kv.Storage, c *C) {
 
 // When a session failed in bootstrap process (for example, the session is killed after doDDLWorks()).
 // We should make sure that the following session could finish the bootstrap process.
-func (s *testSessionSuite) TestBootstrapWithError(c *C) {
+func (s *testBootstrapSuite) testBootstrapWithError(c *C) {
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbNameBootstrap)
 	s.bootstrapWithOnlyDDLWork(store, c)
@@ -152,7 +164,7 @@ func (s *testSessionSuite) TestBootstrapWithError(c *C) {
 }
 
 // Test case for upgrade
-func (s *testSessionSuite) TestUpgrade(c *C) {
+func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	defer testleak.AfterTest(c)()
 	store := newStoreWithBootstrap(c, s.dbName)
 	se := newSession(c, store, s.dbName)
