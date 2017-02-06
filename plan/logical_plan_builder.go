@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/plan/statistics"
 	"github.com/pingcap/tidb/plan/statscache"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
@@ -161,11 +162,11 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 			ln, lOK := binop.GetArgs()[0].(*expression.Column)
 			rn, rOK := binop.GetArgs()[1].(*expression.Column)
 			if lOK && rOK {
-				if left.Schema().ColumnIndex(ln) != -1 && right.Schema().ColumnIndex(rn) != -1 {
+				if left.Schema().Contains(ln) && right.Schema().Contains(rn) {
 					eqCond = append(eqCond, binop)
 					continue
 				}
-				if left.Schema().ColumnIndex(rn) != -1 && right.Schema().ColumnIndex(ln) != -1 {
+				if left.Schema().Contains(rn) && right.Schema().Contains(ln) {
 					cond, _ := expression.NewFunction(binop.GetCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), rn, ln)
 					eqCond = append(eqCond, cond.(*expression.ScalarFunction))
 					continue
@@ -175,10 +176,10 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 		columns := expression.ExtractColumns(expr)
 		allFromLeft, allFromRight := true, true
 		for _, col := range columns {
-			if left.Schema().ColumnIndex(col) == -1 {
+			if !left.Schema().Contains(col) {
 				allFromLeft = false
 			}
-			if right.Schema().ColumnIndex(col) == -1 {
+			if !right.Schema().Contains(col) {
 				allFromRight = false
 			}
 		}
@@ -912,7 +913,12 @@ func (b *planBuilder) buildTableDual() LogicalPlan {
 }
 
 func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
-	statisticTable := statscache.GetStatisticsTableCache(b.ctx, tn.TableInfo)
+	var statisticTable *statistics.Table
+	if EnableStatistic {
+		statisticTable = statscache.GetStatisticsTableCache(b.ctx, tn.TableInfo)
+	} else {
+		statisticTable = statistics.PseudoTable(tn.TableInfo)
+	}
 	if b.err != nil {
 		return nil
 	}

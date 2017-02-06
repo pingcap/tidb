@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
@@ -104,7 +105,10 @@ func (e *GrantExec) Next() (*Row, error) {
 		}
 	}
 	e.done = true
-	return nil, nil
+	// Flush privileges.
+	dom := sessionctx.GetDomain(e.ctx)
+	err := dom.PrivilegeHandle().Update()
+	return nil, errors.Trace(err)
 }
 
 // Close implements the Executor Close interface.

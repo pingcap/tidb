@@ -37,8 +37,7 @@ func tryToGetJoinGroup(j *Join) ([]LogicalPlan, bool) {
 
 func findColumnIndexByGroup(groups []LogicalPlan, col *expression.Column) int {
 	for i, plan := range groups {
-		idx := plan.Schema().ColumnIndex(col)
-		if idx != -1 {
+		if plan.Schema().Contains(col) {
 			return i
 		}
 	}

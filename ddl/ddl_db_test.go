@@ -24,6 +24,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -46,6 +47,7 @@ const defaultBatchSize = 1024
 
 type testDBSuite struct {
 	store      kv.Storage
+	dom        *domain.Domain
 	schemaName string
 	tk         *testkit.TestKit
 	s          tidb.Session
@@ -62,7 +64,7 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	localstore.MockRemoteStore = true
 
-	err = tidb.BootstrapSession(s.store)
+	s.dom, err = tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 
 	s.s, err = tidb.CreateSession(s.store)
@@ -82,6 +84,8 @@ func (s *testDBSuite) TearDownSuite(c *C) {
 	localstore.MockRemoteStore = false
 	s.s.Execute("drop database if exists test_db")
 	s.s.Close()
+	s.dom.Close()
+	s.store.Close()
 }
 
 func (s *testDBSuite) testErrorCode(c *C, sql string, errCode int) {
@@ -759,7 +763,7 @@ func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
 	defer testleak.AfterTest(c)
 	store, err := tidb.NewStore("memory://update_multiple_table")
 	c.Assert(err, IsNil)
-	err = tidb.BootstrapSession(store)
+	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
@@ -820,7 +824,7 @@ func (s *testDBSuite) TestTruncateTable(c *C) {
 	defer testleak.AfterTest(c)
 	store, err := tidb.NewStore("memory://truncate_table")
 	c.Assert(err, IsNil)
-	err = tidb.BootstrapSession(store)
+	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
@@ -880,7 +884,7 @@ func (s *testDBSuite) testRenameTable(c *C, storeStr, sql string) {
 	defer testleak.AfterTest(c)
 	store, err := tidb.NewStore("memory://" + storeStr)
 	c.Assert(err, IsNil)
-	err = tidb.BootstrapSession(store)
+	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	s.tk = testkit.NewTestKit(c, store)
 	s.tk.MustExec("use test")

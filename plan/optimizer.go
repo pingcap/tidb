@@ -15,7 +15,6 @@ package plan
 
 import (
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -27,6 +26,9 @@ import (
 
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
 var AllowCartesianProduct = true
+
+// EnableStatistic means whether tidb uses the statistic information to do cost-based optimization.
+var EnableStatistic = false
 
 const (
 	flagDecorrelate uint64 = 1 << iota
@@ -71,10 +73,12 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 		return nil, errors.Trace(builder.err)
 	}
 
-	// Maybe it's better put this in Preprocess, but check privilege need table
+	// Maybe it's better to move this to Preprocess, but check privilege need table
 	// information, which is collected into visitInfo during logical plan builder.
-	if !checkPrivilege(ctx, builder.visitInfo) {
-		// TODO: Report error
+	if checker := privilege.GetPrivilegeChecker(ctx); checker != nil {
+		if !checkPrivilege(checker, builder.visitInfo) {
+			return nil, errors.New("privilege check fail")
+		}
 	}
 
 	if logic, ok := p.(LogicalPlan); ok {
@@ -83,11 +87,13 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 	return p, nil
 }
 
-func checkPrivilege(ctx context.Context, vs []visitInfo) (succ bool) {
-	// TODO: Fix here
-	_ = privilege.GetPrivilegeChecker(ctx)
-	succ = true
-	return
+func checkPrivilege(checker privilege.Checker, vs []visitInfo) bool {
+	for _, v := range vs {
+		if !checker.RequestVerification(v.db, v.table, v.column, v.privilege) {
+			return false
+		}
+	}
+	return true
 }
 
 func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context, allocator *idAllocator) (PhysicalPlan, error) {
@@ -99,7 +105,7 @@ func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context, allocator *
 		return nil, errors.Trace(ErrCartesianProductUnsupported)
 	}
 	logic.ResolveIndicesAndCorCols()
-	return physicalOptimize(logic, allocator)
+	return physicalOptimize(flag, logic, allocator)
 }
 
 func logicalOptimize(flag uint64, logic LogicalPlan, ctx context.Context, alloc *idAllocator) (LogicalPlan, error) {
@@ -119,15 +125,16 @@ func logicalOptimize(flag uint64, logic LogicalPlan, ctx context.Context, alloc 
 	return logic, errors.Trace(err)
 }
 
-func physicalOptimize(logic LogicalPlan, allocator *idAllocator) (PhysicalPlan, error) {
+func physicalOptimize(flag uint64, logic LogicalPlan, allocator *idAllocator) (PhysicalPlan, error) {
 	info, err := logic.convert2PhysicalPlan(&requiredProperty{})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	pp := info.p
 	pp = EliminateProjection(pp)
-	addCachePlan(pp, allocator)
-	log.Debugf("[PLAN] %s", ToString(pp))
+	if flag&(flagDecorrelate) > 0 {
+		addCachePlan(pp, allocator)
+	}
 	return pp, nil
 }
 

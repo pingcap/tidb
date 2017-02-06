@@ -76,8 +76,7 @@ type planBuilder struct {
 	inUpdateStmt bool
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
-
-	// collect the visit information for privilege check
+	// Collect the visit information for privilege check.
 	visitInfo []visitInfo
 	optFlag   uint64
 }
