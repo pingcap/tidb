@@ -312,13 +312,14 @@ func patternMatch(pattern, str string) bool {
 }
 
 // ConnectionVerification verifies the connection have access to TiDB server.
-func (p *MySQLPrivilege) ConnectionVerification(user, host string) bool {
-	for _, record := range p.User {
+func (p *MySQLPrivilege) ConnectionVerification(user, host string) *userRecord {
+	for i := 0; i < len(p.User); i++ {
+		record := &p.User[i]
 		if record.match(user, host) {
-			return true
+			return record
 		}
 	}
-	return false
+	return nil
 }
 
 func (p *MySQLPrivilege) matchUser(user, host string) *userRecord {
