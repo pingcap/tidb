@@ -517,6 +517,8 @@ import (
 	FieldAsNameOpt		"Field alias name opt"
 	FieldList		"field expression list"
 	FlushStmt		"Flush statement"
+	FlushOption		"Flush option"
+	FlushTable		"Flush table statement"
 	TableRefsClause		"Table references clause"
 	Function		"function expr"
 	FunctionCallAgg		"Function call on aggregate data"
@@ -4521,14 +4523,34 @@ ShowTableAliasOpt:
 	}
 
 FlushStmt:
-	"FLUSH" NoWriteToBinLogAliasOpt TableOrTables TableNameListOpt WithReadLockOpt
+	"FLUSH" NoWriteToBinLogAliasOpt FlushOption
+	{
+		tmp := $3
+		if x, ok := tmp.(*ast.FlushTableStmt); ok {
+			x.NoWriteToBinLog = $2.(bool)
+		}
+		$$ = tmp
+	}
+
+FlushOption:
+	"PRIVILEGES"
+	{
+		$$ = &ast.FlushPrivilegesStmt{}
+	}
+|	FlushTable
+	{
+		$$ = $1
+	}
+
+FlushTable:
+	TableOrTables TableNameListOpt WithReadLockOpt
 	{
 		$$ = &ast.FlushTableStmt{
-			Tables: $4.([]*ast.TableName),
-			NoWriteToBinLog: $2.(bool),
-			ReadLock: $5.(bool),
+			Tables: $2.([]*ast.TableName),
+			ReadLock: $3.(bool),
 		}
 	}
+
 
 NoWriteToBinLogAliasOpt:
 	{

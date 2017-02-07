@@ -40,6 +40,7 @@ var (
 	_ StmtNode = &UseStmt{}
 	_ StmtNode = &AnalyzeTableStmt{}
 	_ StmtNode = &FlushTableStmt{}
+	_ StmtNode = &FlushPrivilegesStmt{}
 
 	_ Node = &PrivElem{}
 	_ Node = &VariableAssignment{}
@@ -279,6 +280,21 @@ func (n *VariableAssignment) Accept(v Visitor) (Node, bool) {
 		return n, false
 	}
 	n.Value = node.(ExprNode)
+	return v.Leave(n)
+}
+
+// FlushPrivilegesStmt is the statement to flush privileges.
+type FlushPrivilegesStmt struct {
+	stmtNode
+}
+
+// Accept implements Node Accept interface.
+func (n *FlushPrivilegesStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*FlushPrivilegesStmt)
 	return v.Leave(n)
 }
 

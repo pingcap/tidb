@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
@@ -59,6 +60,8 @@ func (e *SimpleExec) Next() (*Row, error) {
 		err = e.executeUse(x)
 	case *ast.FlushTableStmt:
 		err = e.executeFlushTable(x)
+	case *ast.FlushPrivilegesStmt:
+		err = e.executeFlushPrivileges(x)
 	case *ast.BeginStmt:
 		err = e.executeBegin(x)
 	case *ast.CommitStmt:
@@ -305,4 +308,10 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 func (e *SimpleExec) executeFlushTable(s *ast.FlushTableStmt) error {
 	// TODO: A dummy implement
 	return nil
+}
+
+func (e *SimpleExec) executeFlushPrivileges(s *ast.FlushPrivilegesStmt) error {
+	dom := sessionctx.GetDomain(e.ctx)
+	err := dom.PrivilegeHandle().Update()
+	return errors.Trace(err)
 }

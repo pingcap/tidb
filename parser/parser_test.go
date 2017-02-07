@@ -437,6 +437,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{"flush table with read lock", true},
 		{"flush tables tbl1, tbl2, tbl3", true},
 		{"flush tables tbl1, tbl2, tbl3 with read lock", true},
+		{"flush privileges", true},
 	}
 	s.RunTest(c, table)
 }
@@ -450,6 +451,14 @@ func (s *testParserSuite) TestFlushTable(c *C) {
 	c.Assert(flushTable.Tables[1].Name.L, Equals, "tbl2")
 	c.Assert(flushTable.NoWriteToBinLog, IsTrue)
 	c.Assert(flushTable.ReadLock, IsTrue)
+}
+
+func (s *testParserSuite) TestFlushPrivileges(c *C) {
+	parser := New()
+	stmt, err := parser.Parse("flush privileges", "", "")
+	c.Assert(err, IsNil)
+	_, ok := stmt[0].(*ast.FlushPrivilegesStmt)
+	c.Assert(ok, IsTrue)
 }
 
 func (s *testParserSuite) TestExpression(c *C) {
