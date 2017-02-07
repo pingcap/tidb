@@ -297,31 +297,28 @@ func decodeSetToPrivilege(s types.Set) (mysql.PrivilegeType, error) {
 }
 
 func (record *userRecord) match(user, host string) bool {
-	return record.User == user && patternMatch(record.Host, host, record.patChars, record.patTypes)
+	return record.User == user && patternMatch(host, record.patChars, record.patTypes)
 }
 
 func (record *dbRecord) match(user, host, db string) bool {
 	return record.User == user && record.DB == db &&
-		patternMatch(record.Host, host, record.patChars, record.patTypes)
+		patternMatch(host, record.patChars, record.patTypes)
 }
 
 func (record *tablesPrivRecord) match(user, host, db, table string) bool {
 	return record.User == user && record.DB == db &&
-		record.TableName == table && patternMatch(record.Host, host, record.patChars, record.patTypes)
+		record.TableName == table && patternMatch(host, record.patChars, record.patTypes)
 }
 
 func (record *columnsPrivRecord) match(user, host, db, table, col string) bool {
 	return record.User == user && record.DB == db &&
 		record.TableName == table && record.ColumnName == col &&
-		patternMatch(record.Host, host, record.patChars, record.patTypes)
+		patternMatch(host, record.patChars, record.patTypes)
 }
 
 // patternMatch matches "%" the same way as ".*" in regular expression, for example,
 // "10.0.%" would match "10.0.1" "10.0.1.118" ...
-func patternMatch(pattern, str string, patChars, patTypes []byte) bool {
-	if pattern == "" {
-		return str == ""
-	}
+func patternMatch(str string, patChars, patTypes []byte) bool {
 	return stringutil.DoMatch(str, patChars, patTypes)
 }
 
