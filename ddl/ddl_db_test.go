@@ -24,6 +24,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -46,6 +47,7 @@ const defaultBatchSize = 1024
 
 type testDBSuite struct {
 	store      kv.Storage
+	dom        *domain.Domain
 	schemaName string
 	tk         *testkit.TestKit
 	s          tidb.Session
@@ -61,6 +63,10 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	s.store, err = tidb.NewStore(tidb.EngineGoLevelDBMemory)
 	c.Assert(err, IsNil)
 	localstore.MockRemoteStore = true
+
+	s.dom, err = tidb.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+
 	s.s, err = tidb.CreateSession(s.store)
 	c.Assert(err, IsNil)
 
@@ -78,6 +84,8 @@ func (s *testDBSuite) TearDownSuite(c *C) {
 	localstore.MockRemoteStore = false
 	s.s.Execute("drop database if exists test_db")
 	s.s.Close()
+	s.dom.Close()
+	s.store.Close()
 }
 
 func (s *testDBSuite) testErrorCode(c *C, sql string, errCode int) {
@@ -755,6 +763,8 @@ func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
 	defer testleak.AfterTest(c)
 	store, err := tidb.NewStore("memory://update_multiple_table")
 	c.Assert(err, IsNil)
+	_, err = tidb.BootstrapSession(store)
+	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (c1 int, c2 int)")
@@ -814,6 +824,8 @@ func (s *testDBSuite) TestTruncateTable(c *C) {
 	defer testleak.AfterTest(c)
 	store, err := tidb.NewStore("memory://truncate_table")
 	c.Assert(err, IsNil)
+	_, err = tidb.BootstrapSession(store)
+	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (c1 int, c2 int)")
@@ -861,8 +873,18 @@ func (s *testDBSuite) TestTruncateTable(c *C) {
 }
 
 func (s *testDBSuite) TestRenameTable(c *C) {
+	s.testRenameTable(c, "rename_table", "rename table %s to %s")
+}
+
+func (s *testDBSuite) TestAlterTableRenameTable(c *C) {
+	s.testRenameTable(c, "alter_table_rename_table", "alter table %s rename to %s")
+}
+
+func (s *testDBSuite) testRenameTable(c *C, storeStr, sql string) {
 	defer testleak.AfterTest(c)
-	store, err := tidb.NewStore("memory://rename_table")
+	store, err := tidb.NewStore("memory://" + storeStr)
+	c.Assert(err, IsNil)
+	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	s.tk = testkit.NewTestKit(c, store)
 	s.tk.MustExec("use test")
@@ -877,7 +899,7 @@ func (s *testDBSuite) TestRenameTable(c *C) {
 	oldTblID := oldTblInfo.Meta().ID
 	s.tk.MustExec("create database test1")
 	s.tk.MustExec("use test1")
-	s.tk.MustExec("rename table test.t to test1.t1")
+	s.tk.MustExec(fmt.Sprintf(sql, "test.t", "test1.t1"))
 	is = sessionctx.GetDomain(ctx).InfoSchema()
 	newTblInfo, err := is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
@@ -888,7 +910,7 @@ func (s *testDBSuite) TestRenameTable(c *C) {
 
 	// for the same database
 	s.tk.MustExec("use test1")
-	s.tk.MustExec("rename table t1 to t2")
+	s.tk.MustExec(fmt.Sprintf(sql, "t1", "t2"))
 	is = sessionctx.GetDomain(ctx).InfoSchema()
 	newTblInfo, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t2"))
 	c.Assert(err, IsNil)
@@ -899,12 +921,12 @@ func (s *testDBSuite) TestRenameTable(c *C) {
 	s.tk.MustQuery("show tables").Check(testkit.Rows("t2"))
 
 	// for failure case
-	sql := "rename table test_not_exist.t to test_not_exist.t"
-	s.testErrorCode(c, sql, tmysql.ErrFileNotFound)
-	sql = "rename table test.t_not_exist to test_not_exist.t"
-	s.testErrorCode(c, sql, tmysql.ErrFileNotFound)
-	sql = "rename table test1.t2 to test_not_exist.t"
-	s.testErrorCode(c, sql, tmysql.ErrErrorOnRename)
-	sql = "rename table test1.t2 to test1.t2"
-	s.testErrorCode(c, sql, tmysql.ErrTableExists)
+	failSQL := fmt.Sprintf(sql, "test_not_exist.t", "test_not_exist.t")
+	s.testErrorCode(c, failSQL, tmysql.ErrFileNotFound)
+	failSQL = fmt.Sprintf(sql, "test.t_not_exist", "test_not_exist.t")
+	s.testErrorCode(c, failSQL, tmysql.ErrFileNotFound)
+	failSQL = fmt.Sprintf(sql, "test1.t2", "test_not_exist.t")
+	s.testErrorCode(c, failSQL, tmysql.ErrErrorOnRename)
+	failSQL = fmt.Sprintf(sql, "test1.t2", "test1.t2")
+	s.testErrorCode(c, failSQL, tmysql.ErrTableExists)
 }

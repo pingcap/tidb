@@ -101,7 +101,7 @@ type lazyMemBuffer struct {
 
 func (lmb *lazyMemBuffer) Get(k Key) ([]byte, error) {
 	if lmb.mb == nil {
-		return nil, ErrNotExist
+		return nil, errors.Trace(ErrNotExist)
 	}
 
 	return lmb.mb.Get(k)

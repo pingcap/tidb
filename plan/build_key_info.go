@@ -14,33 +14,22 @@
 package plan
 
 import (
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
 )
 
-// A bijection exists between columns of an aggregation's schema and this aggregation's aggFuncs.
-// Sometimes we need a schema made by arg of aggFuncs to convert a column in child's schema to a column in this aggregation's Schema.
-func (p *Aggregation) buildSchemaByAggFuncs() expression.Schema {
-	schema := expression.NewSchema(make([]*expression.Column, 0, p.schema.Len()))
-	for _, fun := range p.AggFuncs {
-		if col, isCol := fun.GetArgs()[0].(*expression.Column); isCol && fun.GetName() == ast.AggFuncFirstRow {
-			schema.Append(col)
-		} else {
-			// If the arg is not a column, we add a column to occupy the position.
-			schema.Append(&expression.Column{
-				Position: -1})
-		}
-	}
-	return schema
+type buildKeySolver struct{}
+
+func (s *buildKeySolver) optimize(lp LogicalPlan, _ context.Context, _ *idAllocator) (LogicalPlan, error) {
+	lp.buildKeyInfo()
+	return lp, nil
 }
 
 func (p *Aggregation) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
-	// dealing with p.AggFuncs
-	schemaByFuncs := p.buildSchemaByAggFuncs()
-	for _, key := range p.GetChildren()[0].GetSchema().Keys {
-		indices := schemaByFuncs.GetColumnsIndices(key)
+	for _, key := range p.Children()[0].Schema().Keys {
+		indices := p.schema.ColumnsIndices(key)
 		if indices == nil {
 			continue
 		}
@@ -50,27 +39,12 @@ func (p *Aggregation) buildKeyInfo() {
 		}
 		p.schema.Keys = append(p.schema.Keys, newKey)
 	}
-	// dealing with p.GroupbyCols
-	// This is only used for optimization and needn't to be pushed up, so only one is enough.
-	schemaByGroupby := expression.NewSchema(p.groupByCols)
-	for _, key := range p.GetChildren()[0].GetSchema().Keys {
-		indices := schemaByGroupby.GetColumnsIndices(key)
-		if indices == nil {
-			continue
-		}
-		newKey := make([]*expression.Column, 0, len(key))
-		for _, i := range indices {
-			newKey = append(newKey, schemaByGroupby.Columns[i])
-		}
-		p.schema.Keys = append(p.schema.Keys, newKey)
-		break
-	}
 }
 
 // A bijection exists between columns of a projection's schema and this projection's Exprs.
 // Sometimes we need a schema made by expr of Exprs to convert a column in child's schema to a column in this projection's Schema.
-func (p *Projection) buildSchemaByExprs() expression.Schema {
-	schema := expression.NewSchema(make([]*expression.Column, 0, p.schema.Len()))
+func (p *Projection) buildSchemaByExprs() *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, p.schema.Len())...)
 	for _, expr := range p.Exprs {
 		if col, isCol := expr.(*expression.Column); isCol {
 			schema.Append(col)
@@ -86,8 +60,8 @@ func (p *Projection) buildSchemaByExprs() expression.Schema {
 func (p *Projection) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
 	schema := p.buildSchemaByExprs()
-	for _, key := range p.GetChildren()[0].GetSchema().Keys {
-		indices := schema.GetColumnsIndices(key)
+	for _, key := range p.Children()[0].Schema().Keys {
+		indices := schema.ColumnsIndices(key)
 		if indices == nil {
 			continue
 		}
@@ -101,11 +75,11 @@ func (p *Projection) buildKeyInfo() {
 
 func (p *Trim) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
-	for _, key := range p.children[0].GetSchema().Keys {
+	for _, key := range p.children[0].Schema().Keys {
 		ok := true
 		newKey := make([]*expression.Column, 0, len(key))
 		for _, col := range key {
-			pos := p.schema.GetColumnIndex(col)
+			pos := p.schema.ColumnIndex(col)
 			if pos == -1 {
 				ok = false
 				break
@@ -121,8 +95,8 @@ func (p *Trim) buildKeyInfo() {
 func (p *Join) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
 	switch p.JoinType {
-	case SemiJoin, SemiJoinWithAux:
-		p.schema.Keys = p.children[0].GetSchema().Clone().Keys
+	case SemiJoin, LeftOuterSemiJoin:
+		p.schema.Keys = p.children[0].Schema().Clone().Keys
 	case InnerJoin, LeftOuterJoin, RightOuterJoin:
 		// If there is no equal conditions, then cartesian product can't be prevented and unique key information will destroy.
 		if len(p.EqualConditions) == 0 {
@@ -137,13 +111,13 @@ func (p *Join) buildKeyInfo() {
 		for _, expr := range p.EqualConditions {
 			ln := expr.GetArgs()[0].(*expression.Column)
 			rn := expr.GetArgs()[1].(*expression.Column)
-			for _, key := range p.children[0].GetSchema().Keys {
+			for _, key := range p.children[0].Schema().Keys {
 				if len(key) == 1 && key[0].Equal(ln, p.ctx) {
 					lOk = true
 					break
 				}
 			}
-			for _, key := range p.children[1].GetSchema().Keys {
+			for _, key := range p.children[1].Schema().Keys {
 				if len(key) == 1 && key[0].Equal(rn, p.ctx) {
 					rOk = true
 					break
@@ -154,10 +128,10 @@ func (p *Join) buildKeyInfo() {
 		// another side's unique key information will all be reserved.
 		// If it's an outer join, NULL value will fill some position, which will destroy the unique key information.
 		if lOk && p.JoinType != LeftOuterJoin {
-			p.schema.Keys = append(p.schema.Keys, p.children[1].GetSchema().Keys...)
+			p.schema.Keys = append(p.schema.Keys, p.children[1].Schema().Keys...)
 		}
 		if rOk && p.JoinType != RightOuterJoin {
-			p.schema.Keys = append(p.schema.Keys, p.children[0].GetSchema().Keys...)
+			p.schema.Keys = append(p.schema.Keys, p.children[0].Schema().Keys...)
 		}
 	}
 }
@@ -202,9 +176,4 @@ func (p *DataSource) buildKeyInfo() {
 			}
 		}
 	}
-}
-
-func (p *Apply) buildKeyInfo() {
-	p.baseLogicalPlan.buildKeyInfo()
-	p.schema.Keys = append(p.children[0].GetSchema().Clone().Keys, p.children[1].GetSchema().Clone().Keys...)
 }

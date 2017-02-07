@@ -201,6 +201,7 @@ import (
 	use		"USE"
 	using		"USING"
 	utcDate 	"UTC_DATE"
+	utcTimestamp	"UTC_TIMESTAMP"
 	values		"VALUES"
 	varcharType	"VARCHAR"
 	varbinaryType	"VARBINARY"
@@ -237,6 +238,7 @@ import (
 	events		"EVENTS"
 	fieldKwd	"FIELD_KWD"
 	findInSet	"FIND_IN_SET"
+  	floor   	"FLOOR"
 	foundRows	"FOUND_ROWS"
 	fromUnixTime	"FROM_UNIXTIME"
 	grant		"GRANT"
@@ -272,6 +274,7 @@ import (
 	second		"SECOND"
 	sign		"SIGN"
 	sleep		"SLEEP"
+	sqrt 		"SQRT"
 	calcFoundRows	"SQL_CALC_FOUND_ROWS"
 	strcmp		"STRCMP"
 	strToDate	"STR_TO_DATE"
@@ -877,6 +880,20 @@ AlterTableSpec:
 			NewColumn: 	$4.(*ast.ColumnDef),
 		}
 	}
+|	"RENAME" "TO" TableName
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:    		ast.AlterTableRenameTable,
+			NewTable:      $3.(*ast.TableName),
+		}
+	}
+|	"RENAME" "AS" TableName
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:    		ast.AlterTableRenameTable,
+			NewTable:      $3.(*ast.TableName),
+		}
+	}
 
 
 KeyOrIndex: "KEY" | "INDEX"
@@ -1112,20 +1129,20 @@ ColumnOptionListOpt:
 	}
 
 ConstraintElem:
-	"PRIMARY" "KEY" IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
+	"PRIMARY" "KEY" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
 	{
 		c := &ast.Constraint{
 			Tp: ast.ConstraintPrimaryKey,
-			Keys: $5.([]*ast.IndexColName),
+			Keys: $6.([]*ast.IndexColName),
 		}
-		if $7 != nil {
-			c.Option = $7.(*ast.IndexOption)
+		if $8 != nil {
+			c.Option = $8.(*ast.IndexOption)
 		}
-		if $3 != nil {
+		if $4 != nil {
 			if c.Option == nil {
 				c.Option = &ast.IndexOption{}
 			}
-			c.Option.Tp = $3.(model.IndexType)
+			c.Option.Tp = $4.(model.IndexType)
 		}
 		$$ = c
 	}
@@ -2133,7 +2150,7 @@ ReservedKeyword:
 | "SCHEMA" | "SCHEMAS" | "SECOND_MICROSECOND" | "SELECT" | "SET" | "SHOW" | "SMALLINT"
 | "STARTING" | "TABLE" | "TERMINATED" | "THEN" | "TINYBLOB" | "TINYINT" | "TINYTEXT" | "TO"
 | "TRAILING" | "TRUE" | "UNION" | "UNIQUE" | "UNLOCK" | "UNSIGNED"
-| "UPDATE" | "USE" | "USING" | "UTC_DATE" | "VALUES" | "VARBINARY" | "VARCHAR"
+| "UPDATE" | "USE" | "USING" | "UTC_DATE" | "UTC_TIMESTAMP" | "VALUES" | "VARBINARY" | "VARCHAR"
 | "WHEN" | "WHERE" | "WRITE" | "XOR" | "YEAR_MONTH" | "ZEROFILL"
  /*
 | "DELAYED" | "HIGH_PRIORITY" | "LOW_PRIORITY"| "WITH"
@@ -2145,9 +2162,9 @@ NotKeywordToken:
 |	"DATEDIFF" | "DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FROM_DAYS" | "FIND_IN_SET" | "FOUND_ROWS"
 |	"GROUP_CONCAT"| "GREATEST" | "LEAST" | "HOUR" | "HEX" | "UNHEX" | "IFNULL" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOCATE" | "LOWER" | "LTRIM"
 |	"MAX" | "MICROSECOND" | "MIN" |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" | "POW" | "POWER" | "RAND"
-|	"SECOND" | "SIGN" | "SLEEP" | "SQL_CALC_FOUND_ROWS" | "STR_TO_DATE" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen |
+	"SECOND" | "SIGN" | "SLEEP" | "SQRT" | "SQL_CALC_FOUND_ROWS" | "STR_TO_DATE" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen |
 "SUBSTRING_INDEX" | "SUM" | "TRIM" | "RTRIM" | "UCASE" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
-|	"STATS_PERSISTENT" | "GET_LOCK" | "RELEASE_LOCK" | "CEIL" | "CEILING" | "FROM_UNIXTIME" | "TIMEDIFF" | "LN" | "LOG" | "LOG2" | "LOG10" | "FIELD_KWD"
+|	"STATS_PERSISTENT" | "GET_LOCK" | "RELEASE_LOCK" | "CEIL" | "CEILING" | "FLOOR" | "FROM_UNIXTIME" | "TIMEDIFF" | "LN" | "LOG" | "LOG2" | "LOG10" | "FIELD_KWD"
 
 /************************************************************************************
  *
@@ -2684,6 +2701,10 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
+| 	"FLOOR" '(' Expression ')'
+  	{
+    	$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+  	}
 |	"FIELD_KWD" '(' ExpressionList ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
@@ -2929,6 +2950,11 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
+|	"SQRT" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
+
 |	"SLEEP" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
@@ -3006,6 +3032,10 @@ FunctionCallNonKeyword:
 			Args: []ast.ExprNode{ast.NewValueExpr($3), $5.(ast.ExprNode), $7.(ast.ExprNode)},
 		}
 	}
+|	"TIMESTAMP" '(' ExpressionList ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+	}
 |	"TRIM" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
@@ -3052,6 +3082,14 @@ FunctionCallNonKeyword:
 |	"UNIX_TIMESTAMP" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
+|	"UTC_TIMESTAMP" FuncDatetimePrec
+	{
+		args := []ast.ExprNode{}
+		if $2 != nil {
+			args = append(args, $2.(ast.ExprNode))
+		}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
 	}
 |	"WEEKDAY" '(' Expression ')'
 	{

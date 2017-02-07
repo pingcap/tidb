@@ -52,7 +52,6 @@ func (s testMockSuite) TestInterface(c *C) {
 
 	transaction, err = storage.Begin()
 	c.Check(err, IsNil)
-	transaction.String()
 	err = transaction.Rollback()
 	c.Check(err, IsNil)
 

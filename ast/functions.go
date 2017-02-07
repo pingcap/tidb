@@ -73,6 +73,7 @@ const (
 	// math functions
 	Abs     = "abs"
 	Ceil    = "ceil"
+	Floor   = "floor"
 	Ceiling = "ceiling"
 	Conv    = "conv"
 	CRC32   = "crc32"
@@ -85,6 +86,7 @@ const (
 	Rand    = "rand"
 	Round   = "round"
 	Sign    = "sign"
+	Sqrt    = "sqrt"
 
 	// time functions
 	Curdate          = "curdate"
@@ -117,8 +119,10 @@ const (
 	Sysdate          = "sysdate"
 	Time             = "time"
 	TimeDiff         = "timediff"
+	Timestamp        = "timestamp"
 	TimestampDiff    = "timestampdiff"
 	UTCDate          = "utc_date"
+	UTCTimestamp     = "utc_timestamp"
 	UnixTimestamp    = "unix_timestamp"
 	Week             = "week"
 	Weekday          = "weekday"

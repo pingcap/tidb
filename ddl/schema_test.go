@@ -119,8 +119,8 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	store := testCreateStore(c, "test_schema")
 	defer store.Close()
 	d := newDDL(store, nil, nil, testLease)
-	defer d.close()
-	ctx := testNewContext(c, d)
+	defer d.Stop()
+	ctx := testNewContext(d)
 	dbInfo := testSchemaInfo(c, d, "test")
 
 	// create a table.
@@ -197,13 +197,13 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 	defer store.Close()
 
 	d1 := newDDL(store, nil, nil, testLease)
-	defer d1.close()
+	defer d1.Stop()
 
 	testCheckOwner(c, d1, true, ddlJobFlag)
 
 	d2 := newDDL(store, nil, nil, testLease*4)
-	defer d2.close()
-	ctx := testNewContext(c, d2)
+	defer d2.Stop()
+	ctx := testNewContext(d2)
 
 	// d2 must not be owner.
 	testCheckOwner(c, d2, false, ddlJobFlag)
@@ -238,7 +238,7 @@ LOOP:
 	for {
 		select {
 		case <-ticker.C:
-			d.close()
+			d.Stop()
 			d.start()
 		case err := <-done:
 			c.Assert(err, IsNil)
@@ -253,7 +253,7 @@ func (s *testSchemaSuite) TestSchemaResume(c *C) {
 	defer store.Close()
 
 	d1 := newDDL(store, nil, nil, testLease)
-	defer d1.close()
+	defer d1.Stop()
 
 	testCheckOwner(c, d1, true, ddlJobFlag)
 

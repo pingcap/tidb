@@ -38,7 +38,7 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr, charsetInfo 
 	is := d.GetInformationSchema()
 	_, ok := is.SchemaByName(schema)
 	if ok {
-		return errors.Trace(infoschema.ErrDatabaseExists.GenByArgs(schema))
+		return infoschema.ErrDatabaseExists.GenByArgs(schema)
 	}
 
 	if err = checkTooLongSchema(schema); err != nil {
@@ -577,7 +577,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 		return infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
 	}
 	if is.TableExists(ident.Schema, ident.Name) {
-		return errors.Trace(infoschema.ErrTableExists.GenByArgs(ident))
+		return infoschema.ErrTableExists.GenByArgs(ident)
 	}
 	if err = checkTooLongTable(ident.Name); err != nil {
 		return errors.Trace(err)
@@ -690,6 +690,9 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 			err = d.ModifyColumn(ctx, ident, spec)
 		case ast.AlterTableChangeColumn:
 			err = d.ChangeColumn(ctx, ident, spec)
+		case ast.AlterTableRenameTable:
+			newIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
+			err = d.RenameTable(ctx, ident, newIdent)
 		default:
 			// Nothing to do now.
 		}
@@ -950,7 +953,7 @@ func (d *ddl) DropTable(ctx context.Context, ti ast.Ident) (err error) {
 
 	tb, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ti))
+		return infoschema.ErrTableNotExists.GenByArgs(ti)
 	}
 
 	job := &model.Job{
@@ -995,19 +998,18 @@ func (d *ddl) RenameTable(ctx context.Context, oldIdent, newIdent ast.Ident) err
 	is := d.GetInformationSchema()
 	oldSchema, ok := is.SchemaByName(oldIdent.Schema)
 	if !ok {
-		return errors.Trace(errFileNotFound.GenByArgs(oldIdent.Schema, oldIdent.Name))
+		return errFileNotFound.GenByArgs(oldIdent.Schema, oldIdent.Name)
 	}
 	oldTbl, err := is.TableByName(oldIdent.Schema, oldIdent.Name)
 	if err != nil {
-		return errors.Trace(errFileNotFound.GenByArgs(oldIdent.Schema, oldIdent.Name))
+		return errFileNotFound.GenByArgs(oldIdent.Schema, oldIdent.Name)
 	}
 	newSchema, ok := is.SchemaByName(newIdent.Schema)
 	if !ok {
-		return errors.Trace(errErrorOnRename.GenByArgs(oldIdent.Schema, oldIdent.Name,
-			newIdent.Schema, newIdent.Name))
+		return errErrorOnRename.GenByArgs(oldIdent.Schema, oldIdent.Name, newIdent.Schema, newIdent.Name)
 	}
 	if is.TableExists(newIdent.Schema, newIdent.Name) {
-		return errors.Trace(infoschema.ErrTableExists.GenByArgs(newIdent))
+		return infoschema.ErrTableExists.GenByArgs(newIdent)
 	}
 
 	job := &model.Job{

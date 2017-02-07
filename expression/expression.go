@@ -50,7 +50,7 @@ type Expression interface {
 	fmt.Stringer
 	json.Marshaler
 	// Eval evaluates an expression through a row.
-	Eval(row []types.Datum, ctx context.Context) (types.Datum, error)
+	Eval(row []types.Datum) (types.Datum, error)
 
 	// Get the expression return type.
 	GetType() *types.FieldType
@@ -68,15 +68,15 @@ type Expression interface {
 	IsCorrelated() bool
 
 	// Decorrelate try to decorrelate the expression by schema.
-	Decorrelate(schema Schema) Expression
+	Decorrelate(schema *Schema) Expression
 
 	// ResolveIndices resolves indices by the given schema.
-	ResolveIndices(schema Schema)
+	ResolveIndices(schema *Schema)
 }
 
 // EvalBool evaluates expression to a boolean value.
 func EvalBool(expr Expression, row []types.Datum, ctx context.Context) (bool, error) {
-	data, err := expr.Eval(row, ctx)
+	data, err := expr.Eval(row)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -89,6 +89,24 @@ func EvalBool(expr Expression, row []types.Datum, ctx context.Context) (bool, er
 		return false, errors.Trace(err)
 	}
 	return i != 0, nil
+}
+
+// One stands for a number 1.
+var One = &Constant{
+	Value:   types.NewDatum(1),
+	RetType: types.NewFieldType(mysql.TypeTiny),
+}
+
+// Zero stands for a number 0.
+var Zero = &Constant{
+	Value:   types.NewDatum(0),
+	RetType: types.NewFieldType(mysql.TypeTiny),
+}
+
+// Null stands for null constant.
+var Null = &Constant{
+	Value:   types.NewDatum(nil),
+	RetType: types.NewFieldType(mysql.TypeTiny),
 }
 
 // Constant stands for a constant value.
@@ -120,7 +138,7 @@ func (c *Constant) GetType() *types.FieldType {
 }
 
 // Eval implements Expression interface.
-func (c *Constant) Eval(_ []types.Datum, _ context.Context) (types.Datum, error) {
+func (c *Constant) Eval(_ []types.Datum) (types.Datum, error) {
 	return c.Value, nil
 }
 
@@ -143,7 +161,7 @@ func (c *Constant) IsCorrelated() bool {
 }
 
 // Decorrelate implements Expression interface.
-func (c *Constant) Decorrelate(_ Schema) Expression {
+func (c *Constant) Decorrelate(_ *Schema) Expression {
 	return c
 }
 
@@ -155,11 +173,11 @@ func (c *Constant) HashCode() []byte {
 }
 
 // ResolveIndices implements Expression interface.
-func (c *Constant) ResolveIndices(_ Schema) {
+func (c *Constant) ResolveIndices(_ *Schema) {
 }
 
 // composeConditionWithBinaryOp composes condition with binary operator into a balance deep tree, which benefits a lot for pb decoder/encoder.
-func composeConditionWithBinaryOp(conditions []Expression, funcName string) Expression {
+func composeConditionWithBinaryOp(ctx context.Context, conditions []Expression, funcName string) Expression {
 	length := len(conditions)
 	if length == 0 {
 		return nil
@@ -167,21 +185,21 @@ func composeConditionWithBinaryOp(conditions []Expression, funcName string) Expr
 	if length == 1 {
 		return conditions[0]
 	}
-	expr, _ := NewFunction(funcName,
+	expr, _ := NewFunction(ctx, funcName,
 		types.NewFieldType(mysql.TypeTiny),
-		composeConditionWithBinaryOp(conditions[:length/2], funcName),
-		composeConditionWithBinaryOp(conditions[length/2:], funcName))
+		composeConditionWithBinaryOp(ctx, conditions[:length/2], funcName),
+		composeConditionWithBinaryOp(ctx, conditions[length/2:], funcName))
 	return expr
 }
 
 // ComposeCNFCondition composes CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
-func ComposeCNFCondition(conditions []Expression) Expression {
-	return composeConditionWithBinaryOp(conditions, ast.AndAnd)
+func ComposeCNFCondition(ctx context.Context, conditions ...Expression) Expression {
+	return composeConditionWithBinaryOp(ctx, conditions, ast.AndAnd)
 }
 
 // ComposeDNFCondition composes DNF items into a balance deep DNF tree.
-func ComposeDNFCondition(conditions []Expression) Expression {
-	return composeConditionWithBinaryOp(conditions, ast.OrOr)
+func ComposeDNFCondition(ctx context.Context, conditions ...Expression) Expression {
+	return composeConditionWithBinaryOp(ctx, conditions, ast.OrOr)
 }
 
 // Assignment represents a set assignment in Update, such as
@@ -230,7 +248,7 @@ func SplitDNFItems(onExpr Expression) []Expression {
 
 // EvaluateExprWithNull sets columns in schema as null and calculate the final result of the scalar function.
 // If the Expression is a non-constant value, it means the result is unknown.
-func EvaluateExprWithNull(ctx context.Context, schema Schema, expr Expression) (Expression, error) {
+func EvaluateExprWithNull(ctx context.Context, schema *Schema, expr Expression) (Expression, error) {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		var err error
@@ -241,13 +259,13 @@ func EvaluateExprWithNull(ctx context.Context, schema Schema, expr Expression) (
 				return nil, errors.Trace(err)
 			}
 		}
-		newFunc, err := NewFunction(x.FuncName.L, types.NewFieldType(mysql.TypeTiny), args...)
+		newFunc, err := NewFunction(ctx, x.FuncName.L, types.NewFieldType(mysql.TypeTiny), args...)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return FoldConstant(ctx, newFunc), nil
+		return FoldConstant(newFunc), nil
 	case *Column:
-		if schema.GetColumnIndex(x) == -1 {
+		if !schema.Contains(x) {
 			return x, nil
 		}
 		constant := &Constant{Value: types.Datum{}}
@@ -258,8 +276,8 @@ func EvaluateExprWithNull(ctx context.Context, schema Schema, expr Expression) (
 }
 
 // TableInfo2Schema converts table info to schema.
-func TableInfo2Schema(tbl *model.TableInfo) Schema {
-	schema := NewSchema(make([]*Column, 0, len(tbl.Columns)))
+func TableInfo2Schema(tbl *model.TableInfo) *Schema {
+	cols := make([]*Column, 0, len(tbl.Columns))
 	keys := make([]KeyInfo, 0, len(tbl.Indices)+1)
 	for i, col := range tbl.Columns {
 		newCol := &Column{
@@ -268,7 +286,7 @@ func TableInfo2Schema(tbl *model.TableInfo) Schema {
 			RetType:  &col.FieldType,
 			Position: i,
 		}
-		schema.Append(newCol)
+		cols = append(cols, newCol)
 	}
 	for _, idx := range tbl.Indices {
 		if !idx.Unique || idx.State != model.StatePublic {
@@ -283,7 +301,7 @@ func TableInfo2Schema(tbl *model.TableInfo) Schema {
 					if !mysql.HasNotNullFlag(col.Flag) {
 						break
 					}
-					newKey = append(newKey, schema.Columns[i])
+					newKey = append(newKey, cols[i])
 					find = true
 					break
 				}
@@ -300,35 +318,32 @@ func TableInfo2Schema(tbl *model.TableInfo) Schema {
 	if tbl.PKIsHandle {
 		for i, col := range tbl.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
-				keys = append(keys, []*Column{schema.Columns[i]})
+				keys = append(keys, KeyInfo{cols[i]})
 				break
 			}
 		}
 	}
+	schema := NewSchema(cols...)
 	schema.SetUniqueKeys(keys)
 	return schema
 }
 
 // NewCastFunc creates a new cast function.
-func NewCastFunc(tp *types.FieldType, arg Expression) (*ScalarFunction, error) {
-	bt, err := CastFuncFactory(tp)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+func NewCastFunc(tp *types.FieldType, arg Expression, ctx context.Context) *ScalarFunction {
+	bt := &builtinCastSig{newBaseBuiltinFunc([]Expression{arg}, ctx), tp}
 	return &ScalarFunction{
-		args:      []Expression{arg},
-		FuncName:  model.NewCIStr(ast.Cast),
-		RetType:   tp,
-		Function:  bt,
-		ArgValues: make([]types.Datum, 1)}, nil
+		FuncName: model.NewCIStr(ast.Cast),
+		RetType:  tp,
+		Function: bt,
+	}
 }
 
 // NewValuesFunc creates a new values function.
-func NewValuesFunc(v *ast.ValuesExpr) *ScalarFunction {
-	bt := BuiltinValuesFactory(v.Column.Refer.Column.Offset)
+func NewValuesFunc(offset int, retTp *types.FieldType, ctx context.Context) *ScalarFunction {
+	bt := &builtinValuesSig{newBaseBuiltinFunc(nil, ctx), offset}
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(ast.Values),
-		RetType:  &v.Type,
+		RetType:  retTp,
 		Function: bt,
 	}
 }

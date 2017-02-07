@@ -33,12 +33,8 @@ type MockExec struct {
 	curRowIdx int
 }
 
-func (m *MockExec) Schema() expression.Schema {
-	return expression.Schema{}
-}
-
-func (m *MockExec) Fields() []*ast.ResultField {
-	return m.fields
+func (m *MockExec) Schema() *expression.Schema {
+	return expression.NewSchema()
 }
 
 func (m *MockExec) Next() (*executor.Row, error) {
@@ -80,6 +76,8 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("insert t values (4, 3)")
 	result := tk.MustQuery("select count(*) from t group by d")
 	result.Check(testkit.Rows("3", "2", "2"))
+	result = tk.MustQuery("select distinct 99 from t group by d having d > 0")
+	result.Check(testkit.Rows("99"))
 	result = tk.MustQuery("select count(*) from t having 1 = 0")
 	result.Check(testkit.Rows())
 	result = tk.MustQuery("select c,d from t group by d")
@@ -88,9 +86,8 @@ func (s *testSuite) TestAggregation(c *C) {
 	result.Check(testkit.Rows())
 	result = tk.MustQuery("select - c as c from t group by c having t.c > 5")
 	result.Check(testkit.Rows())
-	// TODO: This query is reported error in resolver.
-	//result := tk.MustQuery("select t1.c from t t1, t t2 group by c having c > 5")
-	//result.Check(testkit.Rows())
+	result = tk.MustQuery("select t1.c from t t1, t t2 group by c having c > 5")
+	result.Check(testkit.Rows())
 	result = tk.MustQuery("select count(*) from (select d, c from t) k where d != 0 group by d")
 	result.Check(testkit.Rows("3", "2", "2"))
 	result = tk.MustQuery("select c as a from t group by d having a < 0")
@@ -272,7 +269,7 @@ func (s *testSuite) TestAggregation(c *C) {
 	result.Check(testkit.Rows("<nil>", "<nil>"))
 
 	result = tk.MustQuery("select count(*) from information_schema.columns")
-	result.Check(testkit.Rows("529"))
+	result.Check(testkit.Rows("535"))
 }
 
 func (s *testSuite) TestStreamAgg(c *C) {
@@ -362,4 +359,43 @@ func (s *testSuite) TestStreamAgg(c *C) {
 			c.Assert(fmt.Sprintf("%v", row.Data[0].GetValue()), Equals, res)
 		}
 	}
+}
+
+func (s *testSuite) TestAggPrune(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, b varchar(50), c int)")
+	tk.MustExec("insert into t values(1, '1ff', NULL), (2, '234.02', 1)")
+	tk.MustQuery("select id, sum(b) from t group by id").Check(testkit.Rows("1 1", "2 234.02"))
+	tk.MustQuery("select id, count(c) from t group by id").Check(testkit.Rows("1 0", "2 1"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, b float, c float)")
+	tk.MustExec("insert into t values(1, 1, 3), (2, 1, 6)")
+	tk.MustQuery("select sum(b/c) from t group by id").Check(testkit.Rows("0.3333333333333333", "0.16666666666666666"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, b float, c float, d float)")
+	tk.MustExec("insert into t values(1, 1, 3, NULL), (2, 1, NULL, 6), (3, NULL, 1, 2), (4, NULL, NULL, 1), (5, NULL, 2, NULL), (6, 3, NULL, NULL), (7, NULL, NULL, NULL), (8, 1, 2 ,3)")
+	tk.MustQuery("select count(distinct b, c, d) from t group by id").Check(testkit.Rows("0", "0", "0", "0", "0", "0", "0", "1"))
+}
+
+func (s *testSuite) TestSelectDistinct(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	s.fillData(tk, "select_distinct_test")
+
+	tk.MustExec("begin")
+	r := tk.MustQuery("select distinct name from select_distinct_test;")
+	rowStr := fmt.Sprintf("%v", []byte("hello"))
+	r.Check(testkit.Rows(rowStr))
+	tk.MustExec("commit")
+
 }

@@ -94,19 +94,6 @@ func (h *stmtHistory) add(stmtID uint32, st ast.Statement, params ...interface{}
 	h.history = append(h.history, s)
 }
 
-func (h *stmtHistory) reset() {
-	if len(h.history) > 0 {
-		h.history = h.history[:0]
-	}
-}
-
-func (h *stmtHistory) clone() *stmtHistory {
-	nh := *h
-	nh.history = make([]*stmtRecord, len(h.history))
-	copy(nh.history, h.history)
-	return &nh
-}
-
 type session struct {
 	txn    kv.Transaction // current transaction
 	txnCh  chan *txnWithErr
@@ -235,14 +222,14 @@ func (s *session) doCommitWithRetry() error {
 		if s.isRetryableError(err) {
 			// Transactions will retry 2 ~ 10 times.
 			// We make larger transactions retry less times to prevent cluster resource outage.
-			txnSizeRate := float64(txnSize) / float64(kv.BufferSizeLimit)
+			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
 			maxRetryCount := 10 - int(txnSizeRate*9.0)
 			err = s.retry(maxRetryCount)
 		}
 	}
 	s.cleanRetryInfo()
 	if err != nil {
-		log.Warnf("[%d] finished txn:%s, %v", s.sessionVars.ConnectionID, s.txn, err)
+		log.Warnf("[%d] finished txn:%v, %v", s.sessionVars.ConnectionID, s.txn, err)
 		return errors.Trace(err)
 	}
 	return nil
@@ -675,6 +662,13 @@ func (s *session) Auth(user string, auth []byte, salt []byte) bool {
 	// Get user password.
 	name := strs[0]
 	host := strs[1]
+
+	// TODO: Use the new privilege implementation.
+	domain := sessionctx.GetDomain(s)
+	checker := domain.PrivilegeHandle().Get()
+	succ := checker.ConnectionVerification(name, host)
+	log.Debug("RequestVerification result:", succ)
+
 	pwd, err := s.getPassword(name, host)
 	if err != nil {
 		if terror.ExecResultIsEmpty.Equal(err) {
@@ -698,6 +692,7 @@ func (s *session) Auth(user string, auth []byte, salt []byte) bool {
 		return false
 	}
 	s.sessionVars.User = user
+
 	return true
 }
 
@@ -715,6 +710,26 @@ func chooseMinLease(n1 time.Duration, n2 time.Duration) time.Duration {
 
 // CreateSession creates a new session environment.
 func CreateSession(store kv.Storage) (Session, error) {
+	s, err := createSession(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// Add auth here.
+	do, err := domap.Get(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	privChecker := &privileges.UserPrivileges{
+		Handle: do.PrivilegeHandle(),
+	}
+	privilege.BindPrivilegeChecker(s, privChecker)
+
+	return s, nil
+}
+
+// BootstrapSession runs the first time when the TiDB server start.
+func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	ver := getStoreBootstrapVersion(store)
 	if ver == notBootstrapped {
 		runInBootstrapSession(store, bootstrap)
@@ -722,7 +737,14 @@ func CreateSession(store kv.Storage) (Session, error) {
 		runInBootstrapSession(store, upgrade)
 	}
 
-	return createSession(store)
+	se, err := createSession(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	dom := sessionctx.GetDomain(se)
+	err = dom.LoadPrivilegeLoop(se)
+
+	return dom, errors.Trace(err)
 }
 
 // runInBootstrapSession create a special session for boostrap to run.
@@ -766,9 +788,6 @@ func createSession(store kv.Storage) (*session, error) {
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
 
-	// TODO: Add auth here
-	privChecker := &privileges.UserPrivileges{}
-	privilege.BindPrivilegeChecker(s, privChecker)
 	return s, nil
 }
 

@@ -98,11 +98,11 @@ type UnionScanExec struct {
 	cursor      int
 	sortErr     error
 	snapshotRow *Row
-	schema      expression.Schema
+	schema      *expression.Schema
 }
 
 // Schema implements the Executor Schema interface.
-func (us *UnionScanExec) Schema() expression.Schema {
+func (us *UnionScanExec) Schema() *expression.Schema {
 	return us.schema
 }
 

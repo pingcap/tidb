@@ -55,19 +55,16 @@ func (s *testDDLSuite) TestCheckOwner(c *C) {
 	defer store.Close()
 
 	d1 := newDDL(store, nil, nil, testLease)
-	defer d1.close()
+	defer d1.Stop()
 	time.Sleep(testLease)
 	testCheckOwner(c, d1, true, ddlJobFlag)
 	testCheckOwner(c, d1, true, bgJobFlag)
 
-	// Start a new DDL and the DDL owner is still d1.
 	d2 := newDDL(store, nil, nil, testLease)
-	defer d2.close()
-	testCheckOwner(c, d2, false, ddlJobFlag)
-	testCheckOwner(c, d2, false, bgJobFlag)
+	defer d2.Stop()
 
 	// Change the DDL owner.
-	d1.close()
+	d1.Stop()
 	// Make sure owner is changed.
 	time.Sleep(6 * testLease)
 	testCheckOwner(c, d2, true, ddlJobFlag)
@@ -95,8 +92,8 @@ func (s *testDDLSuite) TestSchemaError(c *C) {
 	defer store.Close()
 
 	d := newDDL(store, nil, nil, testLease)
-	defer d.close()
-	ctx := testNewContext(c, d)
+	defer d.Stop()
+	ctx := testNewContext(d)
 
 	doDDLJobErr(c, 1, 0, model.ActionCreateSchema, []interface{}{1}, ctx, d)
 }
@@ -107,14 +104,14 @@ func (s *testDDLSuite) TestTableError(c *C) {
 	defer store.Close()
 
 	d := newDDL(store, nil, nil, testLease)
-	defer d.close()
-	ctx := testNewContext(c, d)
+	defer d.Stop()
+	ctx := testNewContext(d)
 
 	// Schema ID is wrong, so dropping table is failed.
 	doDDLJobErr(c, -1, 1, model.ActionDropTable, nil, ctx, d)
 	// Table ID is wrong, so dropping table is failed.
 	dbInfo := testSchemaInfo(c, d, "test")
-	testCreateSchema(c, testNewContext(c, d), d, dbInfo)
+	testCreateSchema(c, testNewContext(d), d, dbInfo)
 	job := doDDLJobErr(c, dbInfo.ID, -1, model.ActionDropTable, nil, ctx, d)
 
 	// Table ID or schema ID is wrong, so getting table is failed.
@@ -149,8 +146,8 @@ func (s *testDDLSuite) TestForeignKeyError(c *C) {
 	defer store.Close()
 
 	d := newDDL(store, nil, nil, testLease)
-	defer d.close()
-	ctx := testNewContext(c, d)
+	defer d.Stop()
+	ctx := testNewContext(d)
 
 	doDDLJobErr(c, -1, 1, model.ActionAddForeignKey, nil, ctx, d)
 	doDDLJobErr(c, -1, 1, model.ActionDropForeignKey, nil, ctx, d)
@@ -168,8 +165,8 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 	defer store.Close()
 
 	d := newDDL(store, nil, nil, testLease)
-	defer d.close()
-	ctx := testNewContext(c, d)
+	defer d.Stop()
+	ctx := testNewContext(d)
 
 	// Schema ID is wrong.
 	doDDLJobErr(c, -1, 1, model.ActionAddIndex, nil, ctx, d)
@@ -204,8 +201,8 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 	store := testCreateStore(c, "test_column_error")
 	defer store.Close()
 	d := newDDL(store, nil, nil, testLease)
-	defer d.close()
-	ctx := testNewContext(c, d)
+	defer d.Stop()
+	ctx := testNewContext(d)
 
 	dbInfo := testSchemaInfo(c, d, "test")
 	tblInfo := testTableInfo(c, d, "t", 3)
