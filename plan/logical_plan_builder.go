@@ -938,7 +938,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		tableInfo:       tableInfo,
 		baseLogicalPlan: newBaseLogicalPlan(Tbl, b.allocator),
 		statisticTable:  statisticTable,
-		DBName:          &schemaName,
+		DBName:          schemaName,
 	}
 	p.self = p
 	p.initIDAndContext(b.ctx)
