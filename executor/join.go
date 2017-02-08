@@ -258,6 +258,8 @@ func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 
 // doJoin does join job in one goroutine.
 func (e *HashJoinExec) runJoinWorker(idx int) {
+	maxRowsCnt := 1000
+	result := &execResult{rows: make([]*Row, 0, maxRowsCnt)}
 	for {
 		bigTableResult, ok := <-e.bigTableResultCh[idx]
 		if !ok || e.finished.Load().(bool) {
@@ -268,11 +270,18 @@ func (e *HashJoinExec) runJoinWorker(idx int) {
 			break
 		}
 		for _, bigRow := range bigTableResult.rows {
-			succ := e.joinOneBigRow(e.hashJoinContexts[idx], bigRow)
+			succ := e.joinOneBigRow(e.hashJoinContexts[idx], bigRow, result)
 			if !succ {
 				break
 			}
+			if len(result.rows) >= maxRowsCnt {
+				e.resultCh <- result
+				result = &execResult{rows: make([]*Row, 0, maxRowsCnt)}
+			}
 		}
+	}
+	if len(result.rows) != 0 || result.err != nil {
+		e.resultCh <- result
 	}
 	e.wg.Done()
 }
@@ -280,7 +289,7 @@ func (e *HashJoinExec) runJoinWorker(idx int) {
 // joinOneBigRow creates result rows from a row in a big table and sends them to resultRows channel.
 // Every matching row generates a result row.
 // If there are no matching rows and it is outer join, a null filled result row is created.
-func (e *HashJoinExec) joinOneBigRow(ctx *hashJoinCtx, bigRow *Row) bool {
+func (e *HashJoinExec) joinOneBigRow(ctx *hashJoinCtx, bigRow *Row, result *execResult) bool {
 	var (
 		matchedRows []*Row
 		err         error
@@ -300,21 +309,12 @@ func (e *HashJoinExec) joinOneBigRow(ctx *hashJoinCtx, bigRow *Row) bool {
 			return false
 		}
 	}
-	maxRowsCnt := 1000
-	result := &execResult{rows: make([]*Row, 0, maxRowsCnt)}
 	for _, r := range matchedRows {
-		if len(result.rows) >= maxRowsCnt {
-			e.resultCh <- result
-			result = &execResult{rows: make([]*Row, 0, maxRowsCnt)}
-		}
 		result.rows = append(result.rows, r)
 	}
 	if len(matchedRows) == 0 && e.outer {
 		r := e.fillRowWithDefaultValues(bigRow)
 		result.rows = append(result.rows, r)
-	}
-	if len(result.rows) != 0 || result.err != nil {
-		e.resultCh <- result
 	}
 	return true
 }
