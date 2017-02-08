@@ -832,12 +832,15 @@ func (e *UnionExec) Next() (*Row, error) {
 		e.inited = true
 	}
 	if e.cursor >= len(e.rows) {
-		result, _ := <-e.resultCh
-		if result == nil {
+		result, ok := <-e.resultCh
+		if !ok {
 			return nil, nil
 		}
 		if result.err != nil {
 			return nil, errors.Trace(result.err)
+		}
+		if len(result.rows) == 0 {
+			return nil, nil
 		}
 		e.rows = result.rows
 		e.cursor = 0

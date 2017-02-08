@@ -388,6 +388,9 @@ func (e *HashJoinExec) Next() (*Row, error) {
 			e.finished.Store(true)
 			return nil, errors.Trace(result.err)
 		}
+		if len(result.rows) == 0 {
+			return nil, nil
+		}
 		e.rows = result.rows
 		e.cursor = 0
 	}
