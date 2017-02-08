@@ -370,6 +370,8 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) {
 		err = d.onTruncateTable(t, job)
 	case model.ActionRenameTable:
 		err = d.onRenameTable(t, job)
+	case model.ActionSetDefaultValue:
+		err = d.onSetDefaultValue(t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobCancelled
