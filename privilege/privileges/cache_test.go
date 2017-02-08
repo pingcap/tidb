@@ -129,3 +129,28 @@ func (s *testCacheSuite) TestLoadColumnsPrivTable(c *C) {
 	c.Assert(p.ColumnsPriv[0].ColumnPriv, Equals, mysql.InsertPriv|mysql.UpdatePriv)
 	c.Assert(p.ColumnsPriv[1].ColumnPriv, Equals, mysql.SelectPriv)
 }
+
+func (s *testCacheSuite) TestPatternMatch(c *C) {
+	se, err := tidb.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	defer se.Close()
+	mustExec(c, se, "USE MYSQL;")
+	mustExec(c, se, "TRUNCATE TABLE mysql.user")
+	mustExec(c, se, `INSERT INTO mysql.user VALUES ("10.0.%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+	var p privileges.MySQLPrivilege
+	err = p.LoadUserTable(se)
+	c.Assert(err, IsNil)
+	c.Assert(p.RequestVerification("root", "10.0.1", "test", "", "", mysql.SelectPriv), IsTrue)
+	c.Assert(p.RequestVerification("root", "10.0.1.118", "test", "", "", mysql.SelectPriv), IsTrue)
+	c.Assert(p.RequestVerification("root", "localhost", "test", "", "", mysql.SelectPriv), IsFalse)
+	c.Assert(p.RequestVerification("root", "127.0.0.1", "test", "", "", mysql.SelectPriv), IsFalse)
+	c.Assert(p.RequestVerification("root", "114.114.114.114", "test", "", "", mysql.SelectPriv), IsFalse)
+
+	mustExec(c, se, "TRUNCATE TABLE mysql.user")
+	mustExec(c, se, `INSERT INTO mysql.user VALUES ("", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+	p = privileges.MySQLPrivilege{}
+	err = p.LoadUserTable(se)
+	c.Assert(err, IsNil)
+	c.Assert(p.RequestVerification("root", "", "test", "", "", mysql.SelectPriv), IsTrue)
+	c.Assert(p.RequestVerification("root", "notnull", "test", "", "", mysql.SelectPriv), IsFalse)
+}

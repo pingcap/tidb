@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -38,6 +39,10 @@ type userRecord struct {
 	User       string // max length 16, primary key
 	Password   string // max length 41
 	Privileges mysql.PrivilegeType
+
+	// Compiled from Host, cached for pattern match performance.
+	patChars []byte
+	patTypes []byte
 }
 
 type dbRecord struct {
@@ -45,6 +50,10 @@ type dbRecord struct {
 	DB         string
 	User       string
 	Privileges mysql.PrivilegeType
+
+	// Compiled from Host, cached for pattern match performance.
+	patChars []byte
+	patTypes []byte
 }
 
 type tablesPrivRecord struct {
@@ -56,6 +65,10 @@ type tablesPrivRecord struct {
 	Timestamp  time.Time
 	TablePriv  mysql.PrivilegeType
 	ColumnPriv mysql.PrivilegeType
+
+	// Compiled from Host, cached for pattern match performance.
+	patChars []byte
+	patTypes []byte
 }
 
 type columnsPrivRecord struct {
@@ -66,6 +79,10 @@ type columnsPrivRecord struct {
 	ColumnName string
 	Timestamp  time.Time
 	ColumnPriv mysql.PrivilegeType
+
+	// Compiled from Host, cached for pattern match performance.
+	patChars []byte
+	patTypes []byte
 }
 
 // MySQLPrivilege is the in-memory cache of mysql privilege tables.
@@ -155,6 +172,7 @@ func (p *MySQLPrivilege) decodeUserTableRow(row *ast.Row, fs []*ast.ResultField)
 			value.User = d.GetString()
 		case f.ColumnAsName.L == "host":
 			value.Host = d.GetString()
+			value.patChars, value.patTypes = stringutil.CompilePattern(value.Host, '\\')
 		case f.ColumnAsName.L == "password":
 			value.Password = d.GetString()
 		case d.Kind() == types.KindMysqlEnum:
@@ -182,6 +200,7 @@ func (p *MySQLPrivilege) decodeDBTableRow(row *ast.Row, fs []*ast.ResultField) e
 			value.User = d.GetString()
 		case f.ColumnAsName.L == "host":
 			value.Host = d.GetString()
+			value.patChars, value.patTypes = stringutil.CompilePattern(value.Host, '\\')
 		case f.ColumnAsName.L == "db":
 			value.DB = d.GetString()
 		case d.Kind() == types.KindMysqlEnum:
@@ -209,6 +228,7 @@ func (p *MySQLPrivilege) decodeTablesPrivTableRow(row *ast.Row, fs []*ast.Result
 			value.User = d.GetString()
 		case f.ColumnAsName.L == "host":
 			value.Host = d.GetString()
+			value.patChars, value.patTypes = stringutil.CompilePattern(value.Host, '\\')
 		case f.ColumnAsName.L == "db":
 			value.DB = d.GetString()
 		case f.ColumnAsName.L == "table_name":
@@ -240,6 +260,7 @@ func (p *MySQLPrivilege) decodeColumnsPrivTableRow(row *ast.Row, fs []*ast.Resul
 			value.User = d.GetString()
 		case f.ColumnAsName.L == "host":
 			value.Host = d.GetString()
+			value.patChars, value.patTypes = stringutil.CompilePattern(value.Host, '\\')
 		case f.ColumnAsName.L == "db":
 			value.DB = d.GetString()
 		case f.ColumnAsName.L == "table_name":
@@ -276,39 +297,29 @@ func decodeSetToPrivilege(s types.Set) (mysql.PrivilegeType, error) {
 }
 
 func (record *userRecord) match(user, host string) bool {
-	return record.User == user && patternMatch(record.Host, host)
+	return record.User == user && patternMatch(host, record.patChars, record.patTypes)
 }
 
 func (record *dbRecord) match(user, host, db string) bool {
 	return record.User == user && record.DB == db &&
-		patternMatch(record.Host, host)
+		patternMatch(host, record.patChars, record.patTypes)
 }
 
 func (record *tablesPrivRecord) match(user, host, db, table string) bool {
 	return record.User == user && record.DB == db &&
-		record.TableName == table && patternMatch(record.Host, host)
+		record.TableName == table && patternMatch(host, record.patChars, record.patTypes)
 }
 
 func (record *columnsPrivRecord) match(user, host, db, table, col string) bool {
 	return record.User == user && record.DB == db &&
 		record.TableName == table && record.ColumnName == col &&
-		patternMatch(record.Host, host)
+		patternMatch(host, record.patChars, record.patTypes)
 }
 
 // patternMatch matches "%" the same way as ".*" in regular expression, for example,
 // "10.0.%" would match "10.0.1" "10.0.1.118" ...
-// TODO: patternMatch's behaviour is actual LIKE expression, so we should reuse the code.
-func patternMatch(pattern, str string) bool {
-	for i := 0; i < len(pattern); i++ {
-		p := pattern[i]
-		if p == '%' {
-			return true
-		}
-		if i >= len(str) || p != str[i] {
-			return false
-		}
-	}
-	return len(pattern) == len(str)
+func patternMatch(str string, patChars, patTypes []byte) bool {
+	return stringutil.DoMatch(str, patChars, patTypes)
 }
 
 // ConnectionVerification verifies the connection have access to TiDB server.
