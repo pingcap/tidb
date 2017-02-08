@@ -1,5 +1,5 @@
-hash: 7354d469576fe9c413733e7f86f2e82d88120039261121735708ce377b6daad3
-updated: 2016-12-27T20:41:45.64913731+08:00
+hash: e3d0a2c456701c8149ce41bb8941e2c468f3ddd0ece9883cf01278e9fada6c69
+updated: 2017-02-04T13:33:25.390061805+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -10,11 +10,12 @@ imports:
 - name: github.com/boltdb/bolt
   version: d97499360d1ecebc492ea66c7447ea948f417620
 - name: github.com/coreos/etcd
-  version: e53b99588a05d1f4ef172c178d4ed8e8106b8be4
+  version: 6bef2bddcaced4fc6ed136e7434c4ee72c9e6782
   subpackages:
   - auth/authpb
   - clientv3
   - mvcc/mvccpb
+  - pkg/monotime
   - pkg/tlsutil
 - name: github.com/cznic/golex
   version: da5a7153a51074477ecac5c45a7e5182a0c72448

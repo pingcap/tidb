@@ -665,7 +665,7 @@ func (s *session) Auth(user string, auth []byte, salt []byte) bool {
 
 	// TODO: Use the new privilege implementation.
 	domain := sessionctx.GetDomain(s)
-	checker := domain.Privilege()
+	checker := domain.PrivilegeHandle().Get()
 	succ := checker.ConnectionVerification(name, host)
 	log.Debug("RequestVerification result:", succ)
 
@@ -715,15 +715,21 @@ func CreateSession(store kv.Storage) (Session, error) {
 		return nil, errors.Trace(err)
 	}
 
-	// TODO: Add auth here
-	privChecker := &privileges.UserPrivileges{}
+	// Add auth here.
+	do, err := domap.Get(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	privChecker := &privileges.UserPrivileges{
+		Handle: do.PrivilegeHandle(),
+	}
 	privilege.BindPrivilegeChecker(s, privChecker)
 
 	return s, nil
 }
 
 // BootstrapSession runs the first time when the TiDB server start.
-func BootstrapSession(store kv.Storage) error {
+func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	ver := getStoreBootstrapVersion(store)
 	if ver == notBootstrapped {
 		runInBootstrapSession(store, bootstrap)
@@ -733,11 +739,12 @@ func BootstrapSession(store kv.Storage) error {
 
 	se, err := createSession(store)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	err = sessionctx.GetDomain(se).LoadPrivilegeLoop(se)
+	dom := sessionctx.GetDomain(se)
+	err = dom.LoadPrivilegeLoop(se)
 
-	return errors.Trace(err)
+	return dom, errors.Trace(err)
 }
 
 // runInBootstrapSession create a special session for boostrap to run.

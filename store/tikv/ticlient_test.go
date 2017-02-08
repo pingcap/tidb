@@ -47,7 +47,7 @@ func newTestStore(c *C) *tikvStore {
 
 func newTestStoreWithBootstrap(c *C) *tikvStore {
 	store := newTestStore(c)
-	err := tidb.BootstrapSession(store)
+	_, err := tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	return store
 }

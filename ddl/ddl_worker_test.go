@@ -60,11 +60,8 @@ func (s *testDDLSuite) TestCheckOwner(c *C) {
 	testCheckOwner(c, d1, true, ddlJobFlag)
 	testCheckOwner(c, d1, true, bgJobFlag)
 
-	// Start a new DDL and the DDL owner is still d1.
 	d2 := newDDL(store, nil, nil, testLease)
 	defer d2.Stop()
-	testCheckOwner(c, d2, false, ddlJobFlag)
-	testCheckOwner(c, d2, false, bgJobFlag)
 
 	// Change the DDL owner.
 	d1.Stop()

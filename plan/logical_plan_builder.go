@@ -162,11 +162,11 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 			ln, lOK := binop.GetArgs()[0].(*expression.Column)
 			rn, rOK := binop.GetArgs()[1].(*expression.Column)
 			if lOK && rOK {
-				if left.Schema().ColumnIndex(ln) != -1 && right.Schema().ColumnIndex(rn) != -1 {
+				if left.Schema().Contains(ln) && right.Schema().Contains(rn) {
 					eqCond = append(eqCond, binop)
 					continue
 				}
-				if left.Schema().ColumnIndex(rn) != -1 && right.Schema().ColumnIndex(ln) != -1 {
+				if left.Schema().Contains(rn) && right.Schema().Contains(ln) {
 					cond, _ := expression.NewFunction(binop.GetCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), rn, ln)
 					eqCond = append(eqCond, cond.(*expression.ScalarFunction))
 					continue
@@ -176,10 +176,10 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 		columns := expression.ExtractColumns(expr)
 		allFromLeft, allFromRight := true, true
 		for _, col := range columns {
-			if left.Schema().ColumnIndex(col) == -1 {
+			if !left.Schema().Contains(col) {
 				allFromLeft = false
 			}
-			if right.Schema().ColumnIndex(col) == -1 {
+			if !right.Schema().Contains(col) {
 				allFromRight = false
 			}
 		}
