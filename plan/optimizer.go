@@ -66,7 +66,6 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 		is:        is,
 		colMapper: make(map[*ast.ColumnNameExpr]int),
 		allocator: allocator,
-		visitInfo: make([]visitInfo, 0, 3),
 	}
 	p := builder.build(node)
 	if builder.err != nil {

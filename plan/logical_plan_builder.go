@@ -943,11 +943,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	p.self = p
 	p.initIDAndContext(b.ctx)
 
-	b.visitInfo = append(b.visitInfo, visitInfo{
-		privilege: mysql.SelectPriv,
-		db:        schemaName.L,
-		table:     tableInfo.Name.L,
-	})
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, schemaName.L, tableInfo.Name.L, "")
 
 	// Equal condition contains a column from previous joined table.
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
@@ -1099,11 +1095,7 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 		if dbName == "" {
 			dbName = b.ctx.GetSessionVars().CurrentDB
 		}
-		b.visitInfo = append(b.visitInfo, visitInfo{
-			privilege: mysql.UpdatePriv,
-			db:        dbName,
-			table:     t.Name.L,
-		})
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, dbName, t.Name.L, "")
 	}
 
 	_, _ = b.resolveHavingAndOrderBy(sel, p)
@@ -1198,30 +1190,20 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 	var tables []*ast.TableName
 	if delete.Tables != nil {
 		tables = delete.Tables.Tables
-
 		// Delete a, b from a, b, c, d... add a and b.
-		for _, table := range tables {
-			b.visitInfo = append(b.visitInfo, visitInfo{
-				privilege: mysql.DeletePriv,
-				db:        table.Schema.L,
-				table:     table.TableInfo.Name.L,
-			})
+		for _, table := range delete.Tables.Tables {
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, table.Schema.L, table.TableInfo.Name.L, "")
 		}
 	} else {
+		// Delete from a, b, c, d.
 		var tableList []*ast.TableName
 		tableList = extractTableList(delete.TableRefs.TableRefs, tableList)
-
-		// Delete from a, b, c, d.
 		for _, v := range tableList {
 			dbName := v.Schema.L
 			if dbName == "" {
 				dbName = b.ctx.GetSessionVars().CurrentDB
 			}
-			b.visitInfo = append(b.visitInfo, visitInfo{
-				privilege: mysql.DeletePriv,
-				db:        dbName,
-				table:     v.Name.L,
-			})
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, dbName, v.Name.L, "")
 		}
 	}
 
@@ -1234,6 +1216,7 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 	del.initIDAndContext(b.ctx)
 	addChild(del, p)
 	del.SetSchema(expression.NewSchema())
+
 	return del
 }
 
@@ -1244,9 +1227,17 @@ func extractTableList(node ast.ResultSetNode, input []*ast.TableName) []*ast.Tab
 		input = extractTableList(x.Right, input)
 	case *ast.TableSource:
 		if s, ok := x.Source.(*ast.TableName); ok {
-			fmt.Println("xsdfasdf", s.Name.L)
 			input = append(input, s)
 		}
 	}
 	return input
+}
+
+func appendVisitInfo(vi []visitInfo, priv mysql.PrivilegeType, db, tbl, col string) []visitInfo {
+	return append(vi, visitInfo{
+		privilege: priv,
+		db:        db,
+		table:     tbl,
+		column:    col,
+	})
 }

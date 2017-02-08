@@ -25,6 +25,5 @@ func Preprocess(node ast.Node, info infoschema.InfoSchema, ctx context.Context) 
 	if err := ResolveName(node, info, ctx); err != nil {
 		return errors.Trace(err)
 	}
-
 	return nil
 }

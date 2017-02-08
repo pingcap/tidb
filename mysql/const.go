@@ -176,8 +176,6 @@ const (
 	IndexPriv
 	// AllPriv is the privilege for all actions.
 	AllPriv
-	// NonePriv is a constant initial value for PrivilegeType.
-	NonePriv PrivilegeType = 0
 )
 
 // Priv2UserCol is the privilege to mysql.user table column name.
