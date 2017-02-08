@@ -43,7 +43,7 @@ type PhysicalIndexScan struct {
 	Index      *model.IndexInfo
 	Ranges     []*IndexRange
 	Columns    []*model.ColumnInfo
-	DBName     *model.CIStr
+	DBName     model.CIStr
 	Desc       bool
 	OutOfOrder bool
 	// DoubleRead means if the index executor will read kv two times.
@@ -62,7 +62,7 @@ type PhysicalIndexScan struct {
 type PhysicalMemTable struct {
 	basePlan
 
-	DBName      *model.CIStr
+	DBName      model.CIStr
 	Table       *model.TableInfo
 	Columns     []*model.ColumnInfo
 	Ranges      []TableRange
@@ -329,7 +329,7 @@ type PhysicalTableScan struct {
 
 	Table   *model.TableInfo
 	Columns []*model.ColumnInfo
-	DBName  *model.CIStr
+	DBName  model.CIStr
 	Desc    bool
 	Ranges  []TableRange
 	pkCol   *expression.Column
