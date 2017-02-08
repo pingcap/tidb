@@ -145,6 +145,15 @@ func (s *tikvStore) Begin() (kv.Transaction, error) {
 	return txn, nil
 }
 
+func (s *tikvStore) BeginPointGetByPkOrUniqueKey() (kv.Transaction, error) {
+	txn, err := newTikvPointGetByPkOrUniqueKeyTxn(s)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	txnCounter.Inc()
+	return txn, nil
+}
+
 func (s *tikvStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
 	snapshot := newTiKVSnapshot(s, ver)
 	snapshotCounter.Inc()

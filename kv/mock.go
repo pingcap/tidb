@@ -105,6 +105,11 @@ func (s *mockStorage) Begin() (Transaction, error) {
 	return tx, nil
 
 }
+
+func (s *mockStorage) BeginPointGetByPkOrUniqueKey() (Transaction, error) {
+	return s.Begin()
+}
+
 func (s *mockStorage) GetSnapshot(ver Version) (Snapshot, error) {
 	return &mockSnapshot{
 		store: NewMemDbBuffer(),

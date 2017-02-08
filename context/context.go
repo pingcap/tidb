@@ -47,6 +47,9 @@ type Context interface {
 	// ActivePendingTxn receives the pending transaction from the transaction channel.
 	// It should be called right before we builds an executor.
 	ActivePendingTxn() error
+	// ActivePendingTxn receives the pending transaction from the transaction channel.
+	// It should be called right before we builds an executor.
+	ActivePendingPointGetByPkOrUniqueKeyTxn() error
 }
 
 type basicCtxType int

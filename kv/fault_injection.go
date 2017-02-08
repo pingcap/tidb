@@ -52,6 +52,15 @@ func (s *InjectedStore) Begin() (Transaction, error) {
 	}, err
 }
 
+// Begin creates an injected Transaction.
+func (s *InjectedStore) BeginPointGetByPkOrUniqueKey() (Transaction, error) {
+	txn, err := s.Storage.BeginPointGetByPkOrUniqueKey()
+	return &InjectedTransaction{
+		Transaction: txn,
+		cfg:         s.cfg,
+	}, err
+}
+
 // GetSnapshot creates an injected Snapshot.
 func (s *InjectedStore) GetSnapshot(ver Version) (Snapshot, error) {
 	snapshot, err := s.Storage.GetSnapshot(ver)

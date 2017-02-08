@@ -309,6 +309,10 @@ func (m *mockStore) Begin() (kv.Transaction, error) {
 	return nil, nil
 }
 
+func (m *mockStore) BeginPointGetByPkOrUniqueKey() (kv.Transaction, error) {
+	return m.Begin()
+}
+
 func (m *mockStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
 	return nil, nil
 }

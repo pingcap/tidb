@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tipb/go-binlog"
 	"golang.org/x/net/context"
+	"math"
 )
 
 var (
@@ -47,6 +48,18 @@ func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	ver := kv.NewVersion(startTS)
+	return &tikvTxn{
+		us:        kv.NewUnionStore(newTiKVSnapshot(store, ver)),
+		store:     store,
+		startTS:   startTS,
+		startTime: monotime.Now(),
+		valid:     true,
+	}, nil
+}
+
+func newTikvPointGetByPkOrUniqueKeyTxn(store *tikvStore) (*tikvTxn, error) {
+	startTS := uint64(math.MaxUint64)
 	ver := kv.NewVersion(startTS)
 	return &tikvTxn{
 		us:        kv.NewUnionStore(newTiKVSnapshot(store, ver)),

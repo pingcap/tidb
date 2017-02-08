@@ -80,6 +80,25 @@ func (a *statement) OriginText() string {
 	return a.text
 }
 
+func (a *statement) isPointGetByPkOrUniqueKey() bool {
+	checkPlan := a.plan
+	if proj, ok := checkPlan.(*plan.Projection); ok {
+		if len(proj.Children()) != 1 {
+			return false
+		}
+		checkPlan = proj.Children()[0]
+	}
+
+	if indexScan, ok := checkPlan.(*plan.PhysicalIndexScan); ok {
+		return len(indexScan.Ranges) == 1
+	}
+
+	if tableScan, ok := checkPlan.(*plan.PhysicalTableScan); ok {
+		return len(tableScan.Ranges) == 1
+	}
+	return false
+}
+
 // Exec implements the ast.Statement Exec interface.
 // This function builds an Executor from a plan. If the Executor doesn't return result,
 // like the INSERT, UPDATE statements, it executes in this function, if the Executor returns
@@ -90,7 +109,12 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 	if _, ok := a.plan.(*plan.Execute); !ok {
 		// Do not sync transaction for Execute statement, because the real optimization work is done in
 		// "ExecuteExec.Build".
-		err := ctx.ActivePendingTxn()
+		var err error
+		if a.isPointGetByPkOrUniqueKey() {
+			err = ctx.ActivePendingPointGetByPkOrUniqueKeyTxn()
+		} else {
+			err = ctx.ActivePendingTxn()
+		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

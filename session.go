@@ -931,3 +931,8 @@ func (s *session) ActivePendingTxn() error {
 	}
 	return nil
 }
+
+func (s *session) ActivePendingPointGetByPkOrUniqueKeyTxn() error {
+	//TODO:
+	return s.ActivePendingTxn()
+}

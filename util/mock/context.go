@@ -124,6 +124,20 @@ func (c *Context) ActivePendingTxn() error {
 	return nil
 }
 
+func (c *Context) ActivePendingPointGetByPkOrUniqueKeyTxn() error {
+	if c.txn != nil {
+		return nil
+	}
+	if c.Store != nil {
+		txn, err := c.Store.BeginPointGetByPkOrUniqueKey()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		c.txn = txn
+	}
+	return nil
+}
+
 // NewContext creates a new mocked context.Context.
 func NewContext() *Context {
 	return &Context{

@@ -371,6 +371,11 @@ func (s *dbStore) Begin() (kv.Transaction, error) {
 	return newTxn(s, beginVer), nil
 }
 
+// Begin transaction for point get by pk or unique key
+func (s *dbStore) BeginPointGetByPkOrUniqueKey() (kv.Transaction, error) {
+	return s.Begin()
+}
+
 func (s *dbStore) Close() error {
 	s.mu.Lock()
 	if s.closed {
