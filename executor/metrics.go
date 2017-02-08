@@ -19,6 +19,8 @@ import (
 
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -180,6 +182,7 @@ type stmtAttributes struct {
 	hasRange       bool
 	hasOrder       bool
 	hasLimit       bool
+	isSystemTable  bool
 }
 
 func (pa *stmtAttributes) fromSelectStmt(stmt *ast.SelectStmt) {
@@ -222,6 +225,7 @@ func (pa *stmtAttributes) fromPlan(p plan.Plan) {
 		if len(x.AccessCondition) > 0 {
 			pa.hasRange = true
 		}
+		pa.setIsSystemTable(x.DBName)
 	case *plan.PhysicalIndexScan:
 		pa.hasIndexScan = true
 		if len(x.AccessCondition) > 0 {
@@ -230,12 +234,19 @@ func (pa *stmtAttributes) fromPlan(p plan.Plan) {
 		if x.DoubleRead {
 			pa.hasIndexDouble = true
 		}
+		pa.setIsSystemTable(x.DBName)
 	case *plan.PhysicalHashSemiJoin:
 		pa.hasJoin = true
 	}
 	children := p.Children()
 	for _, child := range children {
 		pa.fromPlan(child)
+	}
+}
+
+func (pa *stmtAttributes) setIsSystemTable(dbName model.CIStr) {
+	if dbName.L == mysql.SystemDB {
+		pa.isSystemTable = true
 	}
 }
 
@@ -290,7 +301,7 @@ func (pa *stmtAttributes) toLabel() string {
 }
 
 func (pa *stmtAttributes) logExpensiveStmt(sql string) {
-	if pa.hasRange || pa.hasLimit {
+	if pa.hasRange || pa.hasLimit || pa.isSystemTable {
 		return
 	}
 	if !pa.hasIndexScan && !pa.hasTableScan && !pa.hasIndexDouble {
