@@ -298,14 +298,14 @@ func (e *HashJoinExec) joinOneBigRow(ctx *hashJoinCtx, bigRow *Row, result *exec
 	if e.bigFilter != nil {
 		bigMatched, err = expression.EvalBool(ctx.bigFilter, bigRow.Data, e.ctx)
 		if err != nil {
-			e.resultCh <- &execResult{err: errors.Trace(err)}
+			result.err = errors.Trace(err)
 			return false
 		}
 	}
 	if bigMatched {
 		matchedRows, err = e.constructMatchedRows(ctx, bigRow)
 		if err != nil {
-			e.resultCh <- &execResult{err: errors.Trace(err)}
+			result.err = errors.Trace(err)
 			return false
 		}
 	}
