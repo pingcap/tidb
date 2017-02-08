@@ -392,7 +392,7 @@ func checkDefaultValue(c *table.Column, hasDefaultValue bool) error {
 
 	// Set not null but default null is invalid.
 	if mysql.HasNotNullFlag(c.Flag) {
-		return ErrColumnBadNull.Gen("invalid default value for %s", c.Name)
+		return errInvalidDefault.GenByArgs(c.Name)
 	}
 
 	return nil
@@ -690,6 +690,8 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 			err = d.ModifyColumn(ctx, ident, spec)
 		case ast.AlterTableChangeColumn:
 			err = d.ChangeColumn(ctx, ident, spec)
+		case ast.AlterTableAlterColumn:
+			err = d.AlterColumn(ctx, ident, spec)
 		case ast.AlterTableRenameTable:
 			newIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
 			err = d.RenameTable(ctx, ident, newIdent)
@@ -936,6 +938,54 @@ func (d *ddl) ModifyColumn(ctx context.Context, ident ast.Ident, spec *ast.Alter
 	job, err := d.getModifiableColumnJob(ctx, ident, originalColName, spec)
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) AlterColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name)
+	}
+	t, err := is.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name)
+	}
+
+	colName := spec.NewColumn.Name.Name
+	// Check whether alter column has existed.
+	col := table.FindCol(t.Cols(), colName.L)
+	if col == nil {
+		return errBadField.GenByArgs(colName, ident.Name)
+	}
+
+	value, err := getDefaultValue(ctx, spec.NewColumn.Options[0], col.Tp, col.Decimal)
+	if err != nil {
+		return ErrColumnBadNull.Gen("invalid default value - %s", err)
+	}
+	col.DefaultValue = value
+	err = checkDefaultValue(col, true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// Check column default value.
+	// TODO: Put this code to checkDefaultValue and fix issue 2600.
+	colInfo := col.ToInfo()
+	_, _, err = table.GetColDefaultValue(ctx, colInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		Type:       model.ActionSetDefaultValue,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{col},
 	}
 
 	err = d.doDDLJob(ctx, job)
