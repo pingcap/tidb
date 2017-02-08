@@ -194,11 +194,11 @@ func (v *typeInferrer) binaryOperation(x *ast.BinaryOperationExpr) {
 
 func mergeArithType(a, b byte) byte {
 	switch a {
-	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat:
+	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeDatetime, mysql.TypeDuration:
 		return mysql.TypeDouble
 	}
 	switch b {
-	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat:
+	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeDatetime, mysql.TypeDuration:
 		return mysql.TypeDouble
 	}
 	if a == mysql.TypeNewDecimal || b == mysql.TypeNewDecimal {
@@ -220,7 +220,7 @@ func (v *typeInferrer) unaryOperation(x *ast.UnaryOperationExpr) {
 		x.Type.Init(mysql.TypeLonglong)
 		if x.V.GetType() != nil {
 			switch x.V.GetType().Tp {
-			case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat:
+			case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeDatetime, mysql.TypeDuration:
 				x.Type.Tp = mysql.TypeDouble
 			case mysql.TypeNewDecimal:
 				x.Type.Tp = mysql.TypeNewDecimal
