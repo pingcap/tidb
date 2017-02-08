@@ -383,7 +383,11 @@ func (s *testSuite) TestIssue2612(c *C) {
 		create_at datetime NOT NULL DEFAULT '1000-01-01 00:00:00',
 		finish_at datetime NOT NULL DEFAULT '1000-01-01 00:00:00');`)
 	tk.MustExec(`insert into t values ('2016-02-13 15:32:24',  '2016-02-11 17:23:22');`)
-	tk.MustExec(`select timediff(finish_at, create_at) from t;`)
+	rs, err := tk.Exec(`select timediff(finish_at, create_at) from t;`)
+	c.Assert(err, IsNil)
+	row, err := rs.Next()
+	c.Assert(err, IsNil)
+	row.Data[0].GetMysqlDuration().String()
 }
 
 // For https://github.com/pingcap/tidb/issues/345
