@@ -1190,6 +1190,20 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 	var tables []*ast.TableName
 	if delete.Tables != nil {
 		tables = delete.Tables.Tables
+	}
+
+	del := &Delete{
+		Tables:          tables,
+		IsMultiTable:    delete.IsMultiTable,
+		baseLogicalPlan: newBaseLogicalPlan(Del, b.allocator),
+	}
+	del.self = del
+	del.initIDAndContext(b.ctx)
+	addChild(del, p)
+	del.SetSchema(expression.NewSchema())
+
+	// Collect visitInfo.
+	if delete.Tables != nil {
 		// Delete a, b from a, b, c, d... add a and b.
 		for _, table := range delete.Tables.Tables {
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, table.Schema.L, table.TableInfo.Name.L, "")
@@ -1206,16 +1220,6 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, dbName, v.Name.L, "")
 		}
 	}
-
-	del := &Delete{
-		Tables:          tables,
-		IsMultiTable:    delete.IsMultiTable,
-		baseLogicalPlan: newBaseLogicalPlan(Del, b.allocator),
-	}
-	del.self = del
-	del.initIDAndContext(b.ctx)
-	addChild(del, p)
-	del.SetSchema(expression.NewSchema())
 
 	return del
 }
