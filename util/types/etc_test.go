@@ -95,7 +95,7 @@ func (s *testTypeEtcSuite) TestTypeToStr(c *C) {
 	testTypeToStr(c, mysql.TypeDate, "binary", "date")
 	testTypeToStr(c, mysql.TypeTimestamp, "binary", "timestamp")
 	testTypeToStr(c, mysql.TypeNewDecimal, "binary", "decimal")
-	testTypeToStr(c, mysql.TypeDecimal, "binary", "decimal")
+	testTypeToStr(c, mysql.TypeUnspecified, "binary", "unspecified")
 	testTypeToStr(c, 0xdd, "binary", "")
 	testTypeToStr(c, mysql.TypeBit, "binary", "bit")
 	testTypeToStr(c, mysql.TypeEnum, "binary", "enum")
