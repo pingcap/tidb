@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -303,12 +304,12 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 	// it is `not null` and not an `AUTO_INCREMENT` field or `TIMESTAMP` field.
 	setNoDefaultValueFlag(col, hasDefaultValue)
 
-	err := checkDefaultValue(col, hasDefaultValue)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
 	if col.Charset == charset.CharsetBin {
 		col.Flag |= mysql.BinaryFlag
+	}
+	err := checkDefaultValue(ctx, col, hasDefaultValue)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
 	}
 	return col, constraints, nil
 }
@@ -381,13 +382,17 @@ func setNoDefaultValueFlag(c *table.Column, hasDefaultValue bool) {
 	}
 }
 
-func checkDefaultValue(c *table.Column, hasDefaultValue bool) error {
+func checkDefaultValue(ctx context.Context, c *table.Column, hasDefaultValue bool) error {
 	if !hasDefaultValue {
 		return nil
 	}
 
 	if c.DefaultValue != nil {
-		return nil
+		_, _, err := table.GetColDefaultValue(ctx, c.ToInfo())
+		if terror.ErrorEqual(err, types.ErrTruncated) {
+			return errInvalidDefault.GenByArgs(c.Name)
+		}
+		return errors.Trace(err)
 	}
 
 	// Set not null but default null is invalid.
@@ -755,15 +760,6 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 		return errors.Trace(err)
 	}
 
-	// Check column default value.
-	colInfo := col.ToInfo()
-	if colInfo.DefaultValue != nil {
-		_, _, err := table.GetColDefaultValue(ctx, colInfo)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
@@ -968,14 +964,7 @@ func (d *ddl) AlterColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterT
 		return ErrColumnBadNull.Gen("invalid default value - %s", err)
 	}
 	col.DefaultValue = value
-	err = checkDefaultValue(col, true)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// Check column default value.
-	// TODO: Put this code to checkDefaultValue and fix issue 2600.
-	colInfo := col.ToInfo()
-	_, _, err = table.GetColDefaultValue(ctx, colInfo)
+	err = checkDefaultValue(ctx, col, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
