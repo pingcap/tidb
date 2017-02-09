@@ -126,6 +126,8 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrKeyColumnDoesNotExits)
 	sql = "create table test_error_code1 (c1 int, c2 int, c3 int, primary key(c_not_exist))"
 	s.testErrorCode(c, sql, tmysql.ErrKeyColumnDoesNotExits)
+	sql = "create table test_error_code1 (c1 int not null default '')"
+	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
 	// add column
 	sql = "alter table test_error_code_succ add column c1 int"
 	s.testErrorCode(c, sql, tmysql.ErrDupFieldName)
@@ -511,8 +513,8 @@ func (s *testDBSuite) TestIssue2293(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 	s.tk.MustExec("create table t_issue_2293 (a int)")
-	_, err := s.tk.Exec("alter table t add b int not null default ''")
-	c.Assert(err, NotNil)
+	sql := "alter table t_issue_2293 add b int not null default 'a'"
+	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
 	s.tk.MustExec("insert into t_issue_2293 value(1)")
 	s.tk.MustQuery("select * from t_issue_2293").Check(testkit.Rows("1"))
 }
