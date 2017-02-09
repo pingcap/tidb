@@ -485,8 +485,6 @@ import (
 	CreateUserStmt		"CREATE User statement"
 	DBName			"Database Name"
 	DeallocateStmt		"Deallocate prepared statement"
-	Default			"DEFAULT clause"
-	DefaultOpt		"optional DEFAULT clause"
 	DefaultValueExpr	"DefaultValueExpr(Now or Signed Literal)"
 	DeleteFromStmt		"DELETE FROM statement"
 	DistinctOpt		"Distinct option"
@@ -880,6 +878,17 @@ AlterTableSpec:
 			Tp:    		ast.AlterTableChangeColumn,
 			OldColumnName:	$3.(*ast.ColumnName),
 			NewColumn: 	$4.(*ast.ColumnDef),
+		}
+	}
+|	"ALTER" "COLUMN" ColumnName "SET" "DEFAULT" SignedLiteral
+	{
+		option := &ast.ColumnOption{Expr: $6.(ast.ExprNode)}
+		$$ = &ast.AlterTableSpec{
+			Tp:		ast.AlterTableAlterColumn,
+			NewColumn:	&ast.ColumnDef{
+						Name: 	 $3.(*ast.ColumnName), 
+						Options: []*ast.ColumnOption{option},
+			},
 		}
 	}
 |	"RENAME" "TO" TableName
@@ -1501,18 +1510,6 @@ CreateTableStmt:
 			Options:        $8.([]*ast.TableOption),
 		}
 	}
-
-Default:
-	"DEFAULT" Expression
-	{
-		$$ = $2
-	}
-
-DefaultOpt:
-	{
-		$$ = nil
-	}
-|	Default
 
 DefaultKwdOpt:
 	{}

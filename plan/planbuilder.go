@@ -86,24 +86,10 @@ func (b *planBuilder) build(node ast.Node) Plan {
 	switch x := node.(type) {
 	case *ast.AdminStmt:
 		return b.buildAdmin(x)
-	case *ast.AlterTableStmt:
-		return b.buildDDL(x)
-	case *ast.CreateDatabaseStmt:
-		return b.buildDDL(x)
-	case *ast.CreateIndexStmt:
-		return b.buildDDL(x)
-	case *ast.CreateTableStmt:
-		return b.buildDDL(x)
 	case *ast.DeallocateStmt:
 		return &Deallocate{Name: x.Name}
 	case *ast.DeleteStmt:
 		return b.buildDelete(x)
-	case *ast.DropDatabaseStmt:
-		return b.buildDDL(x)
-	case *ast.DropIndexStmt:
-		return b.buildDDL(x)
-	case *ast.DropTableStmt:
-		return b.buildDDL(x)
 	case *ast.ExecuteStmt:
 		return b.buildExecute(x)
 	case *ast.ExplainStmt:
@@ -132,9 +118,7 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt:
 		return b.buildSimple(node.(ast.StmtNode))
-	case *ast.TruncateTableStmt:
-		return b.buildDDL(x)
-	case *ast.RenameTableStmt:
+	case ast.DDLNode:
 		return b.buildDDL(x)
 	}
 	b.err = ErrUnsupportedType.Gen("Unsupported type %T", node)
@@ -588,6 +572,13 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		Ignore:          insert.Ignore,
 		baseLogicalPlan: newBaseLogicalPlan(Ins, b.allocator),
 	}
+
+	b.visitInfo = append(b.visitInfo, visitInfo{
+		privilege: mysql.InsertPriv,
+		db:        tn.DBInfo.Name.L,
+		table:     tableInfo.Name.L,
+	})
+
 	cols := table.Cols()
 	for _, valuesItem := range insert.Lists {
 		exprList := make([]expression.Expression, 0, len(valuesItem))
@@ -685,6 +676,68 @@ func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) Plan {
 }
 
 func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {
+	switch v := node.(type) {
+	case *ast.AlterTableStmt:
+		b.visitInfo = append(b.visitInfo, visitInfo{
+			privilege: mysql.AlterPriv,
+			db:        v.Table.Schema.L,
+			table:     v.Table.Name.L,
+		})
+	case *ast.CreateDatabaseStmt:
+		b.visitInfo = append(b.visitInfo, visitInfo{
+			privilege: mysql.CreatePriv,
+			db:        v.Name,
+		})
+	case *ast.CreateIndexStmt:
+		b.visitInfo = append(b.visitInfo, visitInfo{
+			privilege: mysql.IndexPriv,
+			db:        v.Table.Schema.L,
+			table:     v.Table.Name.L,
+		})
+	case *ast.CreateTableStmt:
+		b.visitInfo = append(b.visitInfo, visitInfo{
+			privilege: mysql.CreatePriv,
+			db:        v.Table.Schema.L,
+			table:     v.Table.Name.L,
+		})
+	case *ast.DropDatabaseStmt:
+		b.visitInfo = append(b.visitInfo, visitInfo{
+			privilege: mysql.DropPriv,
+			db:        v.Name,
+		})
+	case *ast.DropIndexStmt:
+		b.visitInfo = append(b.visitInfo, visitInfo{
+			privilege: mysql.IndexPriv,
+			db:        v.Table.Schema.L,
+			table:     v.Table.Name.L,
+		})
+	case *ast.DropTableStmt:
+		for _, table := range v.Tables {
+			b.visitInfo = append(b.visitInfo, visitInfo{
+				privilege: mysql.DropPriv,
+				db:        table.Schema.L,
+				table:     table.Name.L,
+			})
+		}
+	case *ast.TruncateTableStmt:
+		b.visitInfo = append(b.visitInfo, visitInfo{
+			privilege: mysql.DeletePriv,
+			db:        v.Table.Schema.L,
+			table:     v.Table.Name.L,
+		})
+	case *ast.RenameTableStmt:
+		b.visitInfo = append(b.visitInfo, visitInfo{
+			privilege: mysql.AlterPriv,
+			db:        v.OldTable.Schema.L,
+			table:     v.OldTable.Name.L,
+		})
+		b.visitInfo = append(b.visitInfo, visitInfo{
+			privilege: mysql.AlterPriv,
+			db:        v.NewTable.Schema.L,
+			table:     v.NewTable.Name.L,
+		})
+	}
+
 	p := &DDL{Statement: node}
 	p.SetSchema(expression.NewSchema())
 	return p

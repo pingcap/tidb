@@ -304,7 +304,7 @@ func (d *ddl) addTableColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 		colMeta.defaultVal, _, err = table.GetColDefaultValue(ctx, columnInfo)
 		if err != nil {
 			job.State = model.JobCancelled
-			log.Errorf("[ddl] fatal: this case shouldn't happen, err:%v", err)
+			log.Errorf("[ddl] fatal: this case shouldn't happen, column %v err %v", columnInfo, err)
 			return errors.Trace(err)
 		}
 	} else if mysql.HasNotNullFlag(columnInfo.Flag) {
@@ -428,19 +428,34 @@ func (d *ddl) backfillColumn(ctx context.Context, t table.Table, colMeta *column
 	return nil
 }
 
-func (d *ddl) onModifyColumn(t *meta.Meta, job *model.Job) error {
-	tblInfo, err := getTableInfo(t, job, job.SchemaID)
-	if err != nil {
-		return errors.Trace(err)
-	}
+func (d *ddl) onSetDefaultValue(t *meta.Meta, job *model.Job) error {
 	newCol := &model.ColumnInfo{}
-	oldColName := &model.CIStr{}
-	err = job.DecodeArgs(newCol, oldColName)
+	err := job.DecodeArgs(newCol)
 	if err != nil {
 		job.State = model.JobCancelled
 		return errors.Trace(err)
 	}
 
+	return errors.Trace(d.updateColumn(t, job, newCol, &newCol.Name))
+}
+
+func (d *ddl) onModifyColumn(t *meta.Meta, job *model.Job) error {
+	newCol := &model.ColumnInfo{}
+	oldColName := &model.CIStr{}
+	err := job.DecodeArgs(newCol, oldColName)
+	if err != nil {
+		job.State = model.JobCancelled
+		return errors.Trace(err)
+	}
+
+	return errors.Trace(d.updateColumn(t, job, newCol, oldColName))
+}
+
+func (d *ddl) updateColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldColName *model.CIStr) error {
+	tblInfo, err := getTableInfo(t, job, job.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	oldCol := findCol(tblInfo.Columns, oldColName.L)
 	if oldCol == nil || oldCol.State != model.StatePublic {
 		job.State = model.JobCancelled
