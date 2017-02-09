@@ -959,14 +959,18 @@ func (d *ddl) AlterColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterT
 		return errBadField.GenByArgs(colName, ident.Name)
 	}
 
-	value, err := getDefaultValue(ctx, spec.NewColumn.Options[0], col.Tp, col.Decimal)
-	if err != nil {
-		return ErrColumnBadNull.Gen("invalid default value - %s", err)
-	}
-	col.DefaultValue = value
-	err = checkDefaultValue(ctx, col, true)
-	if err != nil {
-		return errors.Trace(err)
+	if len(spec.NewColumn.Options) == 0 {
+		col.DefaultValue = nil
+	} else {
+		value, err := getDefaultValue(ctx, spec.NewColumn.Options[0], col.Tp, col.Decimal)
+		if err != nil {
+			return ErrColumnBadNull.Gen("invalid default value - %s", err)
+		}
+		col.DefaultValue = value
+		err = checkDefaultValue(ctx, col, true)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	job := &model.Job{
