@@ -198,6 +198,8 @@ func toArithType(ft *types.FieldType) (tp byte) {
 	if types.IsTypeTime(tp) {
 		if ft.Decimal > 0 {
 			tp = mysql.TypeNewDecimal
+		} else {
+			tp = mysql.TypeLonglong
 		}
 	}
 	return
