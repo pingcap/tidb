@@ -207,6 +207,9 @@ func (p *UserPrivileges) RequestVerification(db, table, column string, priv mysq
 	return mysqlPriv.RequestVerification(user, host, db, table, column, priv)
 }
 
+// PWDHashLen is the length of password's hash.
+const PWDHashLen = 40
+
 // ConnectionVerification implements the Checker interface.
 func (p *UserPrivileges) ConnectionVerification(user, host string, auth, salt []byte) bool {
 	mysqlPriv := p.Handle.Get()
@@ -217,7 +220,7 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, auth, salt []
 	}
 
 	pwd := record.Password
-	if len(pwd) != 0 && len(pwd) != 40 {
+	if len(pwd) != 0 && len(pwd) != PWDHashLen {
 		log.Errorf("User [%s] password from SystemDB not like a sha1sum", user)
 		return false
 	}
