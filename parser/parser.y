@@ -516,7 +516,6 @@ import (
 	FieldList		"field expression list"
 	FlushStmt		"Flush statement"
 	FlushOption		"Flush option"
-	FlushTable		"Flush table statement"
 	TableRefsClause		"Table references clause"
 	Function		"function expr"
 	FunctionCallAgg		"Function call on aggregate data"
@@ -4543,20 +4542,13 @@ FlushOption:
 	{
 		$$ = &ast.FlushPrivilegesStmt{}
 	}
-|	FlushTable
-	{
-		$$ = $1
-	}
-
-FlushTable:
-	TableOrTables TableNameListOpt WithReadLockOpt
+|	TableOrTables TableNameListOpt WithReadLockOpt
 	{
 		$$ = &ast.FlushTableStmt{
 			Tables: $2.([]*ast.TableName),
 			ReadLock: $3.(bool),
 		}
 	}
-
 
 NoWriteToBinLogAliasOpt:
 	{
