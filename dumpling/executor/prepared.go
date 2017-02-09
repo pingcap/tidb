@@ -290,5 +290,8 @@ func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interfac
 		is:   GetInfoSchema(ctx),
 		plan: execPlan,
 	}
+	if prepared, ok := ctx.GetSessionVars().PreparedStmts[ID].(*Prepared); ok {
+		sa.text = prepared.Stmt.Text()
+	}
 	return sa
 }
