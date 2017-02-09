@@ -196,19 +196,29 @@ func mergeArithType(tpa, tpb *types.FieldType) byte {
 	a, b := tpa.Tp, tpb.Tp
 	isDatetimeOrDuration := false
 	if a == mysql.TypeDatetime || a == mysql.TypeDuration || a == mysql.TypeTimestamp {
-		isDatetimeOrDuration = true
-		if tpa.Decimal > 0 {
-			a = mysql.TypeNewDecimal
-		} else {
-			a = mysql.TypeLonglong
+		switch b {
+		case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
+			return mysql.TypeDouble
+		default:
+			isDatetimeOrDuration = true
+			if tpa.Decimal > 0 {
+				a = mysql.TypeNewDecimal
+			} else {
+				a = mysql.TypeLonglong
+			}
 		}
 	}
 	if b == mysql.TypeDatetime || b == mysql.TypeDuration || b == mysql.TypeTimestamp {
-		isDatetimeOrDuration = true
-		if tpb.Decimal > 0 {
-			b = mysql.TypeNewDecimal
-		} else {
-			b = mysql.TypeLonglong
+		switch a {
+		case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
+			return mysql.TypeDouble
+		default:
+			isDatetimeOrDuration = true
+			if tpb.Decimal > 0 {
+				b = mysql.TypeNewDecimal
+			} else {
+				b = mysql.TypeLonglong
+			}
 		}
 	}
 	tp := mergeType(a, b)
@@ -247,7 +257,7 @@ func (v *typeInferrer) unaryOperation(x *ast.UnaryOperationExpr) {
 		x.Type.Init(mysql.TypeLonglong)
 		if x.V.GetType() != nil {
 			switch x.V.GetType().Tp {
-			case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeDatetime, mysql.TypeDuration:
+			case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeDatetime, mysql.TypeDuration, mysql.TypeTimestamp:
 				x.Type.Tp = mysql.TypeDouble
 			case mysql.TypeNewDecimal:
 				x.Type.Tp = mysql.TypeNewDecimal
