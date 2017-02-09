@@ -889,6 +889,15 @@ AlterTableSpec:
 			},
 		}
 	}
+|	"ALTER" "COLUMN" ColumnName "DROP" "DEFAULT"
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:		ast.AlterTableAlterColumn,
+			NewColumn:	&ast.ColumnDef{
+						Name: 	 $3.(*ast.ColumnName),
+			},
+		}
+	}
 |	"RENAME" "TO" TableName
 	{
 		$$ = &ast.AlterTableSpec{
