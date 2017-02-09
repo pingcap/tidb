@@ -14,19 +14,25 @@
 package privileges
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
 )
+
+// Enable enables the new privilege check feature.
+var Enable = false
 
 // privilege error codes.
 const (
@@ -167,8 +173,68 @@ func (ps *userPrivileges) ShowGrants() []string {
 // UserPrivileges implements privilege.Checker interface.
 // This is used to check privilege for the current user.
 type UserPrivileges struct {
+	// TODO: Clean up the old implementation.
 	User  string
 	privs *userPrivileges
+
+	*Handle
+}
+
+// RequestVerification implements the Checker interface.
+func (p *UserPrivileges) RequestVerification(db, table, column string, priv mysql.PrivilegeType) bool {
+	if !Enable {
+		return true
+	}
+
+	if p.User == "" {
+		return true
+	}
+
+	mysqlPriv := p.Handle.Get()
+
+	// TODO: Store it to UserPrivileges and avoid do it everytime.
+	strs := strings.Split(p.User, "@")
+	if len(strs) != 2 {
+		log.Warnf("Invalid format for user: %s", p.User)
+		return false
+	}
+	// Get user password.
+	user := strs[0]
+	host := strs[1]
+
+	log.Debug("verify privilege use:", user, host)
+
+	return mysqlPriv.RequestVerification(user, host, db, table, column, priv)
+}
+
+// PWDHashLen is the length of password's hash.
+const PWDHashLen = 40
+
+// ConnectionVerification implements the Checker interface.
+func (p *UserPrivileges) ConnectionVerification(user, host string, auth, salt []byte) bool {
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.connectionVerification(user, host)
+	if record == nil {
+		log.Errorf("Get user privilege record fail: user %v, host %v", user, host)
+		return false
+	}
+
+	pwd := record.Password
+	if len(pwd) != 0 && len(pwd) != PWDHashLen {
+		log.Errorf("User [%s] password from SystemDB not like a sha1sum", user)
+		return false
+	}
+	hpwd, err := util.DecodePassword(pwd)
+	if err != nil {
+		log.Errorf("Decode password string error %v", err)
+		return false
+	}
+	checkAuth := util.CalcPassword(salt, hpwd)
+	if !bytes.Equal(auth, checkAuth) {
+		return false
+	}
+
+	return true
 }
 
 // Check implements Checker.Check interface.

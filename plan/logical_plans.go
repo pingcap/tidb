@@ -195,7 +195,7 @@ type DataSource struct {
 	indexHints []*ast.IndexHint
 	tableInfo  *model.TableInfo
 	Columns    []*model.ColumnInfo
-	DBName     *model.CIStr
+	DBName     model.CIStr
 
 	TableAsName *model.CIStr
 

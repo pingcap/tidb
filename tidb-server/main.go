@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/localstore/boltdb"
@@ -52,6 +53,7 @@ var (
 	lease           = flag.String("lease", "1s", "schema lease duration, very dangerous to change only if you know what you do")
 	socket          = flag.String("socket", "", "The socket file to use for connection.")
 	enablePS        = flag.Bool("perfschema", false, "If enable performance schema.")
+	enablePrivilege = flag.Bool("privilege", false, "If enable privilege check feature.")
 	reportStatus    = flag.Bool("report-status", true, "If enable status report HTTP service.")
 	logFile         = flag.String("log-file", "", "log file path")
 	joinCon         = flag.Int("join-concurrency", 5, "the number of goroutines that participate joining.")
@@ -109,12 +111,13 @@ func main() {
 	if *enablePS {
 		perfschema.EnablePerfSchema()
 	}
+	privileges.Enable = *enablePrivilege
 	if *binlogSocket != "" {
 		createBinlogClient()
 	}
 
 	// Bootstrap a session to load information schema.
-	err := tidb.BootstrapSession(store)
+	_, err := tidb.BootstrapSession(store)
 	if err != nil {
 		log.Fatal(errors.ErrorStack(err))
 	}
@@ -179,7 +182,7 @@ func pushMetric(addr string, interval time.Duration) {
 		log.Info("disable Prometheus push client")
 		return
 	}
-	log.Infof("start Prometheus push client with server addr %s and interval %d", addr, interval)
+	log.Infof("start Prometheus push client with server addr %s and interval %s", addr, interval)
 	go prometheusPushClient(addr, interval)
 }
 

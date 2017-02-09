@@ -38,7 +38,8 @@ func (s *testSuite) TestStatementContext(c *C) {
 
 	tk.MustExec(strictModeSQL)
 	tk.MustQuery("select * from sc where a > cast(1.1 as decimal)").Check(testkit.Rows("2"))
-	_, err := tk.Exec("update sc set a = 4 where a > cast(1.1 as decimal)")
+	_, err := tk.Exec(`select * from sc where a > cast(1.1 as decimal); 
+		        update sc set a = 4 where a > cast(1.1 as decimal)`)
 	c.Check(terror.ErrorEqual(err, types.ErrTruncated), IsTrue)
 
 	tk.MustExec(nonStrictModeSQL)

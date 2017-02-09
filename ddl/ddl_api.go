@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -303,12 +304,12 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 	// it is `not null` and not an `AUTO_INCREMENT` field or `TIMESTAMP` field.
 	setNoDefaultValueFlag(col, hasDefaultValue)
 
-	err := checkDefaultValue(col, hasDefaultValue)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
 	if col.Charset == charset.CharsetBin {
 		col.Flag |= mysql.BinaryFlag
+	}
+	err := checkDefaultValue(ctx, col, hasDefaultValue)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
 	}
 	return col, constraints, nil
 }
@@ -381,18 +382,22 @@ func setNoDefaultValueFlag(c *table.Column, hasDefaultValue bool) {
 	}
 }
 
-func checkDefaultValue(c *table.Column, hasDefaultValue bool) error {
+func checkDefaultValue(ctx context.Context, c *table.Column, hasDefaultValue bool) error {
 	if !hasDefaultValue {
 		return nil
 	}
 
 	if c.DefaultValue != nil {
-		return nil
+		_, _, err := table.GetColDefaultValue(ctx, c.ToInfo())
+		if terror.ErrorEqual(err, types.ErrTruncated) {
+			return errInvalidDefault.GenByArgs(c.Name)
+		}
+		return errors.Trace(err)
 	}
 
 	// Set not null but default null is invalid.
 	if mysql.HasNotNullFlag(c.Flag) {
-		return ErrColumnBadNull.Gen("invalid default value for %s", c.Name)
+		return errInvalidDefault.GenByArgs(c.Name)
 	}
 
 	return nil
@@ -690,6 +695,8 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 			err = d.ModifyColumn(ctx, ident, spec)
 		case ast.AlterTableChangeColumn:
 			err = d.ChangeColumn(ctx, ident, spec)
+		case ast.AlterTableAlterColumn:
+			err = d.AlterColumn(ctx, ident, spec)
 		case ast.AlterTableRenameTable:
 			newIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
 			err = d.RenameTable(ctx, ident, newIdent)
@@ -751,15 +758,6 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 	col, _, err = buildColumnAndConstraint(ctx, len(t.Cols()), spec.NewColumn)
 	if err != nil {
 		return errors.Trace(err)
-	}
-
-	// Check column default value.
-	colInfo := col.ToInfo()
-	if colInfo.DefaultValue != nil {
-		_, _, err := table.GetColDefaultValue(ctx, colInfo)
-		if err != nil {
-			return errors.Trace(err)
-		}
 	}
 
 	job := &model.Job{
@@ -936,6 +934,51 @@ func (d *ddl) ModifyColumn(ctx context.Context, ident ast.Ident, spec *ast.Alter
 	job, err := d.getModifiableColumnJob(ctx, ident, originalColName, spec)
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) AlterColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name)
+	}
+	t, err := is.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name)
+	}
+
+	colName := spec.NewColumn.Name.Name
+	// Check whether alter column has existed.
+	col := table.FindCol(t.Cols(), colName.L)
+	if col == nil {
+		return errBadField.GenByArgs(colName, ident.Name)
+	}
+
+	if len(spec.NewColumn.Options) == 0 {
+		col.DefaultValue = nil
+	} else {
+		value, err := getDefaultValue(ctx, spec.NewColumn.Options[0], col.Tp, col.Decimal)
+		if err != nil {
+			return ErrColumnBadNull.Gen("invalid default value - %s", err)
+		}
+		col.DefaultValue = value
+		err = checkDefaultValue(ctx, col, true)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		Type:       model.ActionSetDefaultValue,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{col},
 	}
 
 	err = d.doDDLJob(ctx, job)

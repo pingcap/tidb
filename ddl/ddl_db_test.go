@@ -24,6 +24,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -46,6 +47,7 @@ const defaultBatchSize = 1024
 
 type testDBSuite struct {
 	store      kv.Storage
+	dom        *domain.Domain
 	schemaName string
 	tk         *testkit.TestKit
 	s          tidb.Session
@@ -62,7 +64,7 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	localstore.MockRemoteStore = true
 
-	err = tidb.BootstrapSession(s.store)
+	s.dom, err = tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 
 	s.s, err = tidb.CreateSession(s.store)
@@ -82,6 +84,8 @@ func (s *testDBSuite) TearDownSuite(c *C) {
 	localstore.MockRemoteStore = false
 	s.s.Execute("drop database if exists test_db")
 	s.s.Close()
+	s.dom.Close()
+	s.store.Close()
 }
 
 func (s *testDBSuite) testErrorCode(c *C, sql string, errCode int) {
@@ -122,6 +126,8 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrKeyColumnDoesNotExits)
 	sql = "create table test_error_code1 (c1 int, c2 int, c3 int, primary key(c_not_exist))"
 	s.testErrorCode(c, sql, tmysql.ErrKeyColumnDoesNotExits)
+	sql = "create table test_error_code1 (c1 int not null default '')"
+	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
 	// add column
 	sql = "alter table test_error_code_succ add column c1 int"
 	s.testErrorCode(c, sql, tmysql.ErrDupFieldName)
@@ -507,8 +513,8 @@ func (s *testDBSuite) TestIssue2293(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 	s.tk.MustExec("create table t_issue_2293 (a int)")
-	_, err := s.tk.Exec("alter table t add b int not null default ''")
-	c.Assert(err, NotNil)
+	sql := "alter table t_issue_2293 add b int not null default 'a'"
+	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
 	s.tk.MustExec("insert into t_issue_2293 value(1)")
 	s.tk.MustQuery("select * from t_issue_2293").Check(testkit.Rows("1"))
 }
@@ -535,7 +541,6 @@ func (s *testDBSuite) TestColumn(c *C) {
 	s.tk.MustExec("use " + s.schemaName)
 	s.testAddColumn(c)
 	s.testDropColumn(c)
-	s.testChangeColumn(c)
 }
 
 func sessionExec(c *C, s kv.Storage, sql string) {
@@ -718,7 +723,11 @@ LOOP:
 	c.Assert(count, Greater, int64(0))
 }
 
-func (s *testDBSuite) testChangeColumn(c *C) {
+func (s *testDBSuite) TestChangeColumn(c *C) {
+	defer testleak.AfterTest(c)()
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+
 	s.mustExec(c, "create table t3 (a int, b varchar(10))")
 	s.mustExec(c, "insert into t3 values(1, 'a'), (2, 'b')")
 	s.tk.MustQuery("select a from t3").Check(testkit.Rows("1", "2"))
@@ -728,6 +737,40 @@ func (s *testDBSuite) testChangeColumn(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrWrongDBName)
 	sql = "alter table t3 change t.a aa bigint"
 	s.testErrorCode(c, sql, tmysql.ErrWrongTableName)
+}
+
+func (s *testDBSuite) TestAlterColumn(c *C) {
+	defer testleak.AfterTest(c)()
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+
+	s.mustExec(c, "create table test_alter_column (a int default 111, b varchar(8), c varchar(8) not null, d timestamp on update current_timestamp)")
+	s.mustExec(c, "insert into test_alter_column set b = 'a', c = 'aa'")
+	s.tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111"))
+	s.mustExec(c, "alter table test_alter_column alter column a set default 222")
+	s.mustExec(c, "insert into test_alter_column set b = 'b', c = 'bb'")
+	s.tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222"))
+	s.mustExec(c, "alter table test_alter_column alter column b set default null")
+	s.mustExec(c, "insert into test_alter_column set c = 'cc'")
+	rowStr := fmt.Sprintf("%v", []byte("a"))
+	rowStr1 := fmt.Sprintf("%v", []byte("b"))
+	rowStr2 := fmt.Sprintf("%v", nil)
+	s.tk.MustQuery("select b from test_alter_column").Check(testkit.Rows(rowStr, rowStr1, rowStr2))
+	// TODO: After fix issue 2606.
+	// s.mustExec(c, "alter table test_alter_column alter column d set default null")
+	s.mustExec(c, "alter table test_alter_column alter column a drop default")
+	s.mustExec(c, "insert into test_alter_column set b = 'd', c = 'dd'")
+	s.tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222", "222", rowStr2))
+
+	// for failing tests
+	sql := "alter table db_not_exist.test_alter_column alter column b set default 'c'"
+	s.testErrorCode(c, sql, tmysql.ErrNoSuchTable)
+	sql = "alter table test_not_exist alter column b set default 'c'"
+	s.testErrorCode(c, sql, tmysql.ErrNoSuchTable)
+	sql = "alter table test_alter_column alter column col_not_exist set default 'c'"
+	s.testErrorCode(c, sql, tmysql.ErrBadField)
+	sql = "alter table test_alter_column alter column c set default null"
+	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
 }
 
 func (s *testDBSuite) mustExec(c *C, query string, args ...interface{}) {
@@ -759,7 +802,7 @@ func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
 	defer testleak.AfterTest(c)
 	store, err := tidb.NewStore("memory://update_multiple_table")
 	c.Assert(err, IsNil)
-	err = tidb.BootstrapSession(store)
+	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
@@ -820,7 +863,7 @@ func (s *testDBSuite) TestTruncateTable(c *C) {
 	defer testleak.AfterTest(c)
 	store, err := tidb.NewStore("memory://truncate_table")
 	c.Assert(err, IsNil)
-	err = tidb.BootstrapSession(store)
+	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
@@ -880,7 +923,7 @@ func (s *testDBSuite) testRenameTable(c *C, storeStr, sql string) {
 	defer testleak.AfterTest(c)
 	store, err := tidb.NewStore("memory://" + storeStr)
 	c.Assert(err, IsNil)
-	err = tidb.BootstrapSession(store)
+	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	s.tk = testkit.NewTestKit(c, store)
 	s.tk.MustExec("use test")

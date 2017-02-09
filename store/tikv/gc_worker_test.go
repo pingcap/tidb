@@ -33,7 +33,7 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	s.store = newTestStore(c)
 	s.oracle = &mockOracle{}
 	s.store.oracle = s.oracle
-	err := tidb.BootstrapSession(s.store)
+	_, err := tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	gcWorker, err := NewGCWorker(s.store)
 	c.Assert(err, IsNil)

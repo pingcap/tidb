@@ -33,6 +33,11 @@ type Checker interface {
 	Check(ctx context.Context, db *model.DBInfo, tbl *model.TableInfo, privilege mysql.PrivilegeType) (bool, error)
 	// Show granted privileges for user.
 	ShowGrants(ctx context.Context, user string) ([]string, error)
+
+	// RequestVerification verifies user privilege for the request.
+	RequestVerification(db, table, column string, priv mysql.PrivilegeType) bool
+	// ConnectionVerification verifies user privilege for connection.
+	ConnectionVerification(host, user string, auth, salt []byte) bool
 }
 
 const key keyType = 0
