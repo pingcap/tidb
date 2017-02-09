@@ -136,10 +136,11 @@ func (p *MySQLPrivilege) LoadColumnsPrivTable(ctx context.Context) error {
 
 func (p *MySQLPrivilege) loadTable(ctx context.Context, sql string,
 	decodeTableRow func(*ast.Row, []*ast.ResultField) error) error {
-	rs, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	tmp, err := ctx.(sqlexec.SQLExecutor).Execute(sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	rs := tmp[0]
 	defer rs.Close()
 
 	fs, err := rs.Fields()
