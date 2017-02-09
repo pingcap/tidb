@@ -195,25 +195,25 @@ func (v *typeInferrer) binaryOperation(x *ast.BinaryOperationExpr) {
 func mergeArithType(tpa, tpb *types.FieldType) byte {
 	a, b := tpa.Tp, tpb.Tp
 	isDatetimeOrDuration := false
-	if a == mysql.TypeDatetime || a == mysql.TypeDuration {
+	if a == mysql.TypeDatetime || a == mysql.TypeDuration || a == mysql.TypeTimestamp {
 		isDatetimeOrDuration = true
-		if tpa.Decimal != 0 {
-			a = mysql.TypeDouble
+		if tpa.Decimal > 0 {
+			a = mysql.TypeNewDecimal
 		} else {
 			a = mysql.TypeLonglong
 		}
 	}
-	if b == mysql.TypeDatetime || b == mysql.TypeDuration {
+	if b == mysql.TypeDatetime || b == mysql.TypeDuration || b == mysql.TypeTimestamp {
 		isDatetimeOrDuration = true
-		if tpb.Decimal != 0 {
-			b = mysql.TypeDouble
+		if tpb.Decimal > 0 {
+			b = mysql.TypeNewDecimal
 		} else {
 			b = mysql.TypeLonglong
 		}
 	}
 	tp := mergeType(a, b)
 	if isDatetimeOrDuration && tp != mysql.TypeLonglong {
-		tp = mysql.TypeDecimal
+		tp = mysql.TypeNewDecimal
 	}
 	return tp
 }
