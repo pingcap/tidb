@@ -75,8 +75,12 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 
 		{"1 + '1'", mysql.TypeDouble, charset.CharsetBin},
 		{"1 + 1.1", mysql.TypeNewDecimal, charset.CharsetBin},
-		{"now(2)+0", mysql.TypeDouble, charset.CharsetBin},
-		{"curtime()+0", mysql.TypeDouble, charset.CharsetBin},
+		{"now()+0", mysql.TypeLonglong, charset.CharsetBin},
+		{"now()+1.1", mysql.TypeDecimal, charset.CharsetBin},
+		{"now()+'1'", mysql.TypeDecimal, charset.CharsetBin},
+		{"curtime()+0", mysql.TypeLonglong, charset.CharsetBin},
+		{"now()+curtime()", mysql.TypeLonglong, charset.CharsetBin},
+		{"now()+now()", mysql.TypeLonglong, charset.CharsetBin},
 		{"1 div 2", mysql.TypeLonglong, charset.CharsetBin},
 		{"1 / 2", mysql.TypeNewDecimal, charset.CharsetBin},
 

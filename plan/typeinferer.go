@@ -193,12 +193,28 @@ func (v *typeInferrer) binaryOperation(x *ast.BinaryOperationExpr) {
 }
 
 func mergeArithType(a, b byte) byte {
+	if a == mysql.TypeDatetime || a == mysql.TypeDuration {
+		switch b {
+		case mysql.TypeDatetime, mysql.TypeDuration, mysql.TypeLonglong:
+			return mysql.TypeLonglong
+		default:
+			return mysql.TypeDecimal
+		}
+	}
+	if b == mysql.TypeDatetime || b == mysql.TypeDuration {
+		switch a {
+		case mysql.TypeDatetime, mysql.TypeDuration, mysql.TypeLonglong:
+			return mysql.TypeLonglong
+		default:
+			return mysql.TypeDecimal
+		}
+	}
 	switch a {
-	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeDatetime, mysql.TypeDuration:
+	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat:
 		return mysql.TypeDouble
 	}
 	switch b {
-	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeDatetime, mysql.TypeDuration:
+	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat:
 		return mysql.TypeDouble
 	}
 	if a == mysql.TypeNewDecimal || b == mysql.TypeNewDecimal {
