@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -117,12 +116,17 @@ func (p *MySQLPrivilege) LoadColumnsPrivTable(ctx context.Context) error {
 	return p.loadTable(ctx, "select * from mysql.columns_priv", p.decodeColumnsPrivTableRow)
 }
 
+type sqlExec interface {
+	Execute(sql string) ([]ast.RecordSet, error)
+}
+
 func (p *MySQLPrivilege) loadTable(ctx context.Context, sql string,
 	decodeTableRow func(*ast.Row, []*ast.ResultField) error) error {
-	rs, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	tmp, err := ctx.(sqlExec).Execute(sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	rs := tmp[0]
 	defer rs.Close()
 
 	fs, err := rs.Fields()
@@ -311,8 +315,8 @@ func patternMatch(pattern, str string) bool {
 	return len(pattern) == len(str)
 }
 
-// ConnectionVerification verifies the connection have access to TiDB server.
-func (p *MySQLPrivilege) ConnectionVerification(user, host string) *userRecord {
+// connectionVerification verifies the connection have access to TiDB server.
+func (p *MySQLPrivilege) connectionVerification(user, host string) *userRecord {
 	for i := 0; i < len(p.User); i++ {
 		record := &p.User[i]
 		if record.match(user, host) {
