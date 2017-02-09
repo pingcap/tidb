@@ -168,11 +168,15 @@ func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
 		return nil
 	}
 	sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password) VALUES %s;`, mysql.SystemDB, mysql.UserTable, strings.Join(users, ", "))
-	_, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	_, err := e.ctx.(sqlexec.SQLExecutor).Execute(sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return nil
+
+	// Flush privileges.
+	dom := sessionctx.GetDomain(e.ctx)
+	err = dom.PrivilegeHandle().Update()
+	return errors.Trace(err)
 }
 
 func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
