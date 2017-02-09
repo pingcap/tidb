@@ -192,44 +192,19 @@ func (v *typeInferrer) binaryOperation(x *ast.BinaryOperationExpr) {
 	x.Type.Collate = charset.CollationBin
 }
 
-func mergeArithType(tpa, tpb *types.FieldType) byte {
-	a, b := tpa.Tp, tpb.Tp
-	isDatetimeOrDuration := false
-	if a == mysql.TypeDatetime || a == mysql.TypeDuration || a == mysql.TypeTimestamp {
-		switch b {
-		case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
-			return mysql.TypeDouble
-		default:
-			isDatetimeOrDuration = true
-			if tpa.Decimal > 0 {
-				a = mysql.TypeNewDecimal
-			} else {
-				a = mysql.TypeLonglong
-			}
+// toArithType converts DateTime, Duration and Timestamp types to NewDecimal type if Decimal > 0.
+func toArithType(ft *types.FieldType) (tp byte) {
+	tp = ft.Tp
+	if types.IsTypeTime(tp) {
+		if ft.Decimal > 0 {
+			tp = mysql.TypeNewDecimal
 		}
 	}
-	if b == mysql.TypeDatetime || b == mysql.TypeDuration || b == mysql.TypeTimestamp {
-		switch a {
-		case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
-			return mysql.TypeDouble
-		default:
-			isDatetimeOrDuration = true
-			if tpb.Decimal > 0 {
-				b = mysql.TypeNewDecimal
-			} else {
-				b = mysql.TypeLonglong
-			}
-		}
-	}
-	tp := mergeType(a, b)
-	if isDatetimeOrDuration && tp != mysql.TypeLonglong {
-		tp = mysql.TypeNewDecimal
-	}
-	return tp
+	return
 }
 
-// mergeType performs a true merge operation of arithmetical types.
-func mergeType(a, b byte) byte {
+func mergeArithType(fta, ftb *types.FieldType) byte {
+	a, b := toArithType(fta), toArithType(ftb)
 	switch a {
 	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat:
 		return mysql.TypeDouble
