@@ -172,7 +172,7 @@ func (v *typeInferrer) binaryOperation(x *ast.BinaryOperationExpr) {
 		x.Type.Init(mysql.TypeLonglong)
 	case opcode.Plus, opcode.Minus, opcode.Mul, opcode.Mod:
 		if x.L.GetType() != nil && x.R.GetType() != nil {
-			xTp := mergeArithType(x.L.GetType().Tp, x.R.GetType().Tp)
+			xTp := mergeArithType(x.L.GetType(), x.R.GetType())
 			x.Type.Init(xTp)
 			leftUnsigned := x.L.GetType().Flag & mysql.UnsignedFlag
 			rightUnsigned := x.R.GetType().Flag & mysql.UnsignedFlag
@@ -181,7 +181,7 @@ func (v *typeInferrer) binaryOperation(x *ast.BinaryOperationExpr) {
 		}
 	case opcode.Div:
 		if x.L.GetType() != nil && x.R.GetType() != nil {
-			xTp := mergeArithType(x.L.GetType().Tp, x.R.GetType().Tp)
+			xTp := mergeArithType(x.L.GetType(), x.R.GetType())
 			if xTp == mysql.TypeLonglong {
 				xTp = mysql.TypeNewDecimal
 			}
@@ -192,23 +192,34 @@ func (v *typeInferrer) binaryOperation(x *ast.BinaryOperationExpr) {
 	x.Type.Collate = charset.CollationBin
 }
 
-func mergeArithType(a, b byte) byte {
+func mergeArithType(tpa, tpb *types.FieldType) byte {
+	a, b := tpa.Tp, tpb.Tp
+	isDatetimeOrDuration := false
 	if a == mysql.TypeDatetime || a == mysql.TypeDuration {
-		switch b {
-		case mysql.TypeDatetime, mysql.TypeDuration, mysql.TypeLonglong:
-			return mysql.TypeLonglong
-		default:
-			return mysql.TypeDecimal
+		isDatetimeOrDuration = true
+		if tpa.Decimal != 0 {
+			a = mysql.TypeDouble
+		} else {
+			a = mysql.TypeLonglong
 		}
 	}
 	if b == mysql.TypeDatetime || b == mysql.TypeDuration {
-		switch a {
-		case mysql.TypeDatetime, mysql.TypeDuration, mysql.TypeLonglong:
-			return mysql.TypeLonglong
-		default:
-			return mysql.TypeDecimal
+		isDatetimeOrDuration = true
+		if tpb.Decimal != 0 {
+			b = mysql.TypeDouble
+		} else {
+			b = mysql.TypeLonglong
 		}
 	}
+	tp := mergeType(a, b)
+	if isDatetimeOrDuration && tp != mysql.TypeLonglong {
+		tp = mysql.TypeDecimal
+	}
+	return tp
+}
+
+// mergeType performs a true merge operation of arithmetical types.
+func mergeType(a, b byte) byte {
 	switch a {
 	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat:
 		return mysql.TypeDouble
@@ -295,7 +306,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		if len(x.Args) > 0 {
 			tp = x.Args[0].GetType()
 			for i := 1; i < len(x.Args); i++ {
-				mergeArithType(tp.Tp, x.Args[i].GetType().Tp)
+				mergeArithType(tp, x.Args[i].GetType())
 			}
 		}
 	case "interval":
