@@ -137,10 +137,6 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	return nil
 }
 
-type sqlExec interface {
-	Execute(sql string) ([]ast.RecordSet, error)
-}
-
 func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
 	users := make([]string, 0, len(s.Specs))
 	for _, spec := range s.Specs {
@@ -170,7 +166,7 @@ func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
 		return nil
 	}
 	sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password) VALUES %s;`, mysql.SystemDB, mysql.UserTable, strings.Join(users, ", "))
-	_, err := e.ctx.(sqlExec).Execute(sql)
+	_, err := e.ctx.(sqlexec.SQLExecutor).Execute(sql)
 	if err != nil {
 		return errors.Trace(err)
 	}

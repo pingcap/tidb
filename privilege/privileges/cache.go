@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -133,13 +134,9 @@ func (p *MySQLPrivilege) LoadColumnsPrivTable(ctx context.Context) error {
 	return p.loadTable(ctx, "select * from mysql.columns_priv", p.decodeColumnsPrivTableRow)
 }
 
-type sqlExec interface {
-	Execute(sql string) ([]ast.RecordSet, error)
-}
-
 func (p *MySQLPrivilege) loadTable(ctx context.Context, sql string,
 	decodeTableRow func(*ast.Row, []*ast.ResultField) error) error {
-	tmp, err := ctx.(sqlExec).Execute(sql)
+	tmp, err := ctx.(sqlexec.SQLExecutor).Execute(sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
