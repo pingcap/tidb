@@ -942,6 +942,9 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	}
 	p.self = p
 	p.initIDAndContext(b.ctx)
+
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, schemaName.L, tableInfo.Name.L, "")
+
 	// Equal condition contains a column from previous joined table.
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
 	for i, col := range tableInfo.Columns {
@@ -1084,6 +1087,17 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 	if b.err != nil {
 		return nil
 	}
+
+	var tableList []*ast.TableName
+	tableList = extractTableList(sel.From.TableRefs, tableList)
+	for _, t := range tableList {
+		dbName := t.Schema.L
+		if dbName == "" {
+			dbName = b.ctx.GetSessionVars().CurrentDB
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, dbName, t.Name.L, "")
+	}
+
 	_, _ = b.resolveHavingAndOrderBy(sel, p)
 	if sel.Where != nil {
 		p = b.buildSelection(p, sel.Where, nil)
@@ -1152,6 +1166,7 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 	if b.err != nil {
 		return nil
 	}
+
 	_, _ = b.resolveHavingAndOrderBy(sel, p)
 	if sel.Where != nil {
 		p = b.buildSelection(p, sel.Where, nil)
@@ -1171,10 +1186,12 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 			return nil
 		}
 	}
+
 	var tables []*ast.TableName
 	if delete.Tables != nil {
 		tables = delete.Tables.Tables
 	}
+
 	del := &Delete{
 		Tables:          tables,
 		IsMultiTable:    delete.IsMultiTable,
@@ -1184,5 +1201,47 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 	del.initIDAndContext(b.ctx)
 	addChild(del, p)
 	del.SetSchema(expression.NewSchema())
+
+	// Collect visitInfo.
+	if delete.Tables != nil {
+		// Delete a, b from a, b, c, d... add a and b.
+		for _, table := range delete.Tables.Tables {
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, table.Schema.L, table.TableInfo.Name.L, "")
+		}
+	} else {
+		// Delete from a, b, c, d.
+		var tableList []*ast.TableName
+		tableList = extractTableList(delete.TableRefs.TableRefs, tableList)
+		for _, v := range tableList {
+			dbName := v.Schema.L
+			if dbName == "" {
+				dbName = b.ctx.GetSessionVars().CurrentDB
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, dbName, v.Name.L, "")
+		}
+	}
+
 	return del
+}
+
+func extractTableList(node ast.ResultSetNode, input []*ast.TableName) []*ast.TableName {
+	switch x := node.(type) {
+	case *ast.Join:
+		input = extractTableList(x.Left, input)
+		input = extractTableList(x.Right, input)
+	case *ast.TableSource:
+		if s, ok := x.Source.(*ast.TableName); ok {
+			input = append(input, s)
+		}
+	}
+	return input
+}
+
+func appendVisitInfo(vi []visitInfo, priv mysql.PrivilegeType, db, tbl, col string) []visitInfo {
+	return append(vi, visitInfo{
+		privilege: priv,
+		db:        db,
+		table:     tbl,
+		column:    col,
+	})
 }
