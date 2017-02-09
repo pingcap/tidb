@@ -1681,7 +1681,7 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 		m := t.Time.Month()
 		if m == 0 || m > 12 {
 			return errors.Trace(ErrInvalidTimeFormat)
-}
+		}
 		buf.WriteString(MonthNames[m-1][:3])
 	case 'M':
 		m := t.Time.Month()
