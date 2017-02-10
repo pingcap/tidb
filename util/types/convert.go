@@ -202,7 +202,7 @@ func floatStrToIntStr(validFloat string) (string, error) {
 	if err != nil {
 		return validFloat, errors.Trace(err)
 	}
-	if exp > 0 && intCnt > (math.MaxInt64-exp) {
+	if exp > 0 && int64(intCnt) > (math.MaxInt64-int64(exp)) {
 		// (exp + incCnt) overflows MaxInt64.
 		return validFloat, errors.Trace(ErrOverflow)
 	}
