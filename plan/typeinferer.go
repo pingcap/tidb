@@ -172,7 +172,7 @@ func (v *typeInferrer) binaryOperation(x *ast.BinaryOperationExpr) {
 		x.Type.Init(mysql.TypeLonglong)
 	case opcode.Plus, opcode.Minus, opcode.Mul, opcode.Mod:
 		if x.L.GetType() != nil && x.R.GetType() != nil {
-			xTp := mergeArithType(x.L.GetType().Tp, x.R.GetType().Tp)
+			xTp := mergeArithType(x.L.GetType(), x.R.GetType())
 			x.Type.Init(xTp)
 			leftUnsigned := x.L.GetType().Flag & mysql.UnsignedFlag
 			rightUnsigned := x.R.GetType().Flag & mysql.UnsignedFlag
@@ -181,7 +181,7 @@ func (v *typeInferrer) binaryOperation(x *ast.BinaryOperationExpr) {
 		}
 	case opcode.Div:
 		if x.L.GetType() != nil && x.R.GetType() != nil {
-			xTp := mergeArithType(x.L.GetType().Tp, x.R.GetType().Tp)
+			xTp := mergeArithType(x.L.GetType(), x.R.GetType())
 			if xTp == mysql.TypeLonglong {
 				xTp = mysql.TypeNewDecimal
 			}
@@ -192,7 +192,21 @@ func (v *typeInferrer) binaryOperation(x *ast.BinaryOperationExpr) {
 	x.Type.Collate = charset.CollationBin
 }
 
-func mergeArithType(a, b byte) byte {
+// toArithType converts DateTime, Duration and Timestamp types to NewDecimal type if Decimal > 0.
+func toArithType(ft *types.FieldType) (tp byte) {
+	tp = ft.Tp
+	if types.IsTypeTime(tp) {
+		if ft.Decimal > 0 {
+			tp = mysql.TypeNewDecimal
+		} else {
+			tp = mysql.TypeLonglong
+		}
+	}
+	return
+}
+
+func mergeArithType(fta, ftb *types.FieldType) byte {
+	a, b := toArithType(fta), toArithType(ftb)
 	switch a {
 	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat:
 		return mysql.TypeDouble
@@ -220,7 +234,7 @@ func (v *typeInferrer) unaryOperation(x *ast.UnaryOperationExpr) {
 		x.Type.Init(mysql.TypeLonglong)
 		if x.V.GetType() != nil {
 			switch x.V.GetType().Tp {
-			case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat:
+			case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeDatetime, mysql.TypeDuration, mysql.TypeTimestamp:
 				x.Type.Tp = mysql.TypeDouble
 			case mysql.TypeNewDecimal:
 				x.Type.Tp = mysql.TypeNewDecimal
@@ -279,7 +293,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		if len(x.Args) > 0 {
 			tp = x.Args[0].GetType()
 			for i := 1; i < len(x.Args); i++ {
-				mergeArithType(tp.Tp, x.Args[i].GetType().Tp)
+				mergeArithType(tp, x.Args[i].GetType())
 			}
 		}
 	case "interval":

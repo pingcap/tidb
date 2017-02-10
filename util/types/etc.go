@@ -49,6 +49,17 @@ func IsTypeChar(tp byte) bool {
 	}
 }
 
+// IsTypeTime returns a boolean indicating
+// whether the tp is the time type like a datetime type, a duration type, or a timestamp type.
+func IsTypeTime(tp byte) bool {
+	switch tp {
+	case mysql.TypeDatetime, mysql.TypeDuration, mysql.TypeTimestamp:
+		return true
+	default:
+		return false
+	}
+}
+
 // IsTypePrefixable returns a boolean indicating
 // whether an index on a column with the tp can be defined with a prefix.
 func IsTypePrefixable(tp byte) bool {
@@ -66,7 +77,7 @@ var type2Str = map[byte]string{
 	mysql.TypeBlob:       "text",
 	mysql.TypeDate:       "date",
 	mysql.TypeDatetime:   "datetime",
-	mysql.TypeDecimal:    "decimal",
+	mysql.TypeDecimal:    "unspecified",
 	mysql.TypeNewDecimal: "decimal",
 	mysql.TypeDouble:     "double",
 	mysql.TypeEnum:       "enum",
