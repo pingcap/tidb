@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/privilege"
+	// "github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
@@ -230,9 +230,7 @@ func (s *testSuite) TestFlushPrivileges(c *C) {
 	se, err := tidb.CreateSession(s.store)
 	c.Check(err, IsNil)
 	defer se.Close()
-	checker := privilege.GetPrivilegeChecker(se)
-	raw := checker.(*privileges.UserPrivileges)
-	raw.User = "testflush@localhost"
+	c.Assert(se.Auth("testflush@localhost", nil, nil), IsTrue)
 
 	// Before flush.
 	_, err = se.Execute(`SELECT Password FROM mysql.User WHERE User="testflush" and Host="localhost"`)
