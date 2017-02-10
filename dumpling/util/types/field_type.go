@@ -170,7 +170,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
 	default:
-		tp.Tp = mysql.TypeDecimal
+		tp.Tp = mysql.TypeUnspecified
 	}
 	tp.Flen = UnspecifiedLength
 	tp.Decimal = UnspecifiedLength
