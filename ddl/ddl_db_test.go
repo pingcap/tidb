@@ -733,6 +733,20 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	s.tk.MustQuery("select a from t3").Check(testkit.Rows("1", "2"))
 	s.mustExec(c, "alter table t3 change a aa bigint")
 	s.tk.MustQuery("select aa from t3").Check(testkit.Rows("1", "2"))
+	s.mustExec(c, "alter table t3 modify b varchar(20) default 'c' comment 'my comment'")
+	ctx := s.tk.Se.(context.Context)
+	is := sessionctx.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("t3"))
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	c.Assert(tblInfo.Columns[1].Comment, Equals, "my comment")
+	s.mustExec(c, "insert into t3 set aa = 3")
+	rowStr := fmt.Sprintf("%v", []byte("a"))
+	rowStr1 := fmt.Sprintf("%v", []byte("b"))
+	rowStr2 := fmt.Sprintf("%v", []byte("c"))
+	s.tk.MustQuery("select b from t3").Check(testkit.Rows(rowStr, rowStr1, rowStr2))
+
+	// for failing tests
 	sql := "alter table t3 change a testx.t3.aa bigint"
 	s.testErrorCode(c, sql, tmysql.ErrWrongDBName)
 	sql = "alter table t3 change t.a aa bigint"
