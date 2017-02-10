@@ -23,7 +23,7 @@ Time used: xxxx ms
 Step 2 - Load the data and run the benchmark
 
 ```
-./benchfilesort run -bufSize 50 -inputRatio 100 -outputRatio 50
+./benchfilesort run -bufSize 50 -nWorkers 1 -inputRatio 100 -outputRatio 50
 ```
 
 Expected output:
@@ -103,6 +103,9 @@ The `run` command supports the following arguments:
 
 * `bufSize` (default: 500000)
   Specify the amount of memory used by the benchmark
+
+* `nWorkers` (default: 1)
+  Specify the number of workers used in async sorting
 
 * `inputRatio` (default: 100)
   Specify the percentage of rows to input:

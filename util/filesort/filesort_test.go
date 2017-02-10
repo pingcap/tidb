@@ -131,7 +131,7 @@ func (s *testFileSortSuite) TestInMemory(c *C) {
 	c.Assert(err, IsNil)
 
 	fsBuilder := new(Builder)
-	fs, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetDesc(byDesc).SetDir(tmpDir).Build()
+	fs, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetWorkers(1).SetDesc(byDesc).SetDir(tmpDir).Build()
 	c.Assert(err, IsNil)
 
 	nRows := r.Intn(bufSize-1) + 1 // random int in range [1, bufSize - 1]
@@ -180,7 +180,7 @@ func (s *testFileSortSuite) TestMultipleFiles(c *C) {
 	c.Assert(err, IsNil)
 
 	fsBuilder := new(Builder)
-	fs, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetDesc(byDesc).SetDir(tmpDir).Build()
+	fs, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetWorkers(1).SetDesc(byDesc).SetDir(tmpDir).Build()
 	c.Assert(err, IsNil)
 
 	nRows := (r.Intn(bufSize) + 1) * (r.Intn(10) + 2)
@@ -226,12 +226,12 @@ func (s *testFileSortSuite) TestClose(c *C) {
 	fsBuilder := new(Builder)
 	tmpDir0, err = ioutil.TempDir("", "util_filesort_test")
 	c.Assert(err, IsNil)
-	fs0, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetDesc(byDesc).SetDir(tmpDir0).Build()
+	fs0, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetWorkers(1).SetDesc(byDesc).SetDir(tmpDir0).Build()
 	c.Assert(err, IsNil)
 
 	tmpDir1, err = ioutil.TempDir("", "util_filesort_test")
 	c.Assert(err, IsNil)
-	fs1, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetDesc(byDesc).SetDir(tmpDir1).Build()
+	fs1, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetWorkers(1).SetDesc(byDesc).SetDir(tmpDir1).Build()
 	c.Assert(err, IsNil)
 
 	// 1. Close after some Input
@@ -303,12 +303,12 @@ func (s *testFileSortSuite) TestMismatchedUsage(c *C) {
 	fsBuilder := new(Builder)
 	tmpDir, err = ioutil.TempDir("", "util_filesort_test")
 	c.Assert(err, IsNil)
-	fs0, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetDesc(byDesc).SetDir(tmpDir).Build()
+	fs0, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetWorkers(1).SetDesc(byDesc).SetDir(tmpDir).Build()
 	c.Assert(err, IsNil)
 
 	tmpDir, err = ioutil.TempDir("", "util_filesort_test")
 	c.Assert(err, IsNil)
-	fs1, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetDesc(byDesc).SetDir(tmpDir).Build()
+	fs1, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetWorkers(1).SetDesc(byDesc).SetDir(tmpDir).Build()
 	c.Assert(err, IsNil)
 
 	// 1. call Output after fetched all rows
