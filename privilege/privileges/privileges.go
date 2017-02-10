@@ -14,6 +14,7 @@
 package privileges
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -203,6 +205,36 @@ func (p *UserPrivileges) RequestVerification(db, table, column string, priv mysq
 	log.Debug("verify privilege use:", user, host)
 
 	return mysqlPriv.RequestVerification(user, host, db, table, column, priv)
+}
+
+// PWDHashLen is the length of password's hash.
+const PWDHashLen = 40
+
+// ConnectionVerification implements the Checker interface.
+func (p *UserPrivileges) ConnectionVerification(user, host string, auth, salt []byte) bool {
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.connectionVerification(user, host)
+	if record == nil {
+		log.Errorf("Get user privilege record fail: user %v, host %v", user, host)
+		return false
+	}
+
+	pwd := record.Password
+	if len(pwd) != 0 && len(pwd) != PWDHashLen {
+		log.Errorf("User [%s] password from SystemDB not like a sha1sum", user)
+		return false
+	}
+	hpwd, err := util.DecodePassword(pwd)
+	if err != nil {
+		log.Errorf("Decode password string error %v", err)
+		return false
+	}
+	checkAuth := util.CalcPassword(salt, hpwd)
+	if !bytes.Equal(auth, checkAuth) {
+		return false
+	}
+
+	return true
 }
 
 // Check implements Checker.Check interface.
