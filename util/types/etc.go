@@ -77,7 +77,7 @@ var type2Str = map[byte]string{
 	mysql.TypeBlob:       "text",
 	mysql.TypeDate:       "date",
 	mysql.TypeDatetime:   "datetime",
-	mysql.TypeDecimal:    "decimal",
+	mysql.TypeDecimal:    "unspecified",
 	mysql.TypeNewDecimal: "decimal",
 	mysql.TypeDouble:     "double",
 	mysql.TypeEnum:       "enum",
