@@ -663,7 +663,7 @@ func (d *Datum) ConvertTo(sc *variable.StatementContext, target *FieldType) (Dat
 		return d.convertToMysqlDuration(sc, target)
 	case mysql.TypeBit:
 		return d.convertToMysqlBit(sc, target)
-	case mysql.TypeDecimal, mysql.TypeNewDecimal:
+	case mysql.TypeNewDecimal:
 		return d.convertToMysqlDecimal(sc, target)
 	case mysql.TypeYear:
 		return d.convertToMysqlYear(sc, target)

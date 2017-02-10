@@ -758,6 +758,9 @@ func (s *testDBSuite) TestAlterColumn(c *C) {
 	s.tk.MustQuery("select b from test_alter_column").Check(testkit.Rows(rowStr, rowStr1, rowStr2))
 	// TODO: After fix issue 2606.
 	// s.mustExec(c, "alter table test_alter_column alter column d set default null")
+	s.mustExec(c, "alter table test_alter_column alter column a drop default")
+	s.mustExec(c, "insert into test_alter_column set b = 'd', c = 'dd'")
+	s.tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222", "222", rowStr2))
 
 	// for failing tests
 	sql := "alter table db_not_exist.test_alter_column alter column b set default 'c'"
