@@ -915,16 +915,21 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 		// Make sure the column definition is simple field type.
 		return nil, errors.Trace(errUnsupportedModifyColumn)
 	}
-	if err := setDefaultAndComment(ctx, col, spec.NewColumn.Options); err != nil {
-		return nil, errors.Trace(err)
+
+	newCol := &table.Column{
+		ID:        col.ID,
+		Offset:    col.Offset,
+		State:     col.State,
+		FieldType: *spec.NewColumn.Tp,
 	}
-	setCharsetCollationFlenDecimal(spec.NewColumn.Tp)
-	if !modifiable(&col.FieldType, spec.NewColumn.Tp) {
+	setCharsetCollationFlenDecimal(&newCol.FieldType)
+	if !modifiable(&col.FieldType, &newCol.FieldType) {
 		return nil, errors.Trace(errUnsupportedModifyColumn)
 	}
+	if err := setDefaultAndComment(ctx, newCol, spec.NewColumn.Options); err != nil {
+		return nil, errors.Trace(err)
+	}
 
-	newCol := *col
-	newCol.FieldType = *spec.NewColumn.Tp
 	newCol.Name = spec.NewColumn.Name.Name
 	job := &model.Job{
 		SchemaID:   schema.ID,
