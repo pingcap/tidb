@@ -108,7 +108,7 @@ func getDefaultCharsetAndCollate() (string, string) {
 	// TODO: TableDefaultCharset-->DatabaseDefaultCharset-->SystemDefaultCharset.
 	// TODO: Change TableOption parser to parse collate.
 	// This is a tmp solution.
-	return "utf8", "utf8_unicode_ci"
+	return "utf8", "utf8_bin"
 }
 
 func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constraint) {
