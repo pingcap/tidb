@@ -179,7 +179,7 @@ func buildColumnsAndConstraints(ctx context.Context, colDefs []*ast.ColumnDef,
 func setCharsetCollationFlenDecimal(tp *types.FieldType) {
 	if len(tp.Charset) == 0 {
 		switch tp.Tp {
-		case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeEnum, mysql.TypeSet:
 			tp.Charset, tp.Collate = getDefaultCharsetAndCollate()
 		default:
 			tp.Charset = charset.CharsetBin
