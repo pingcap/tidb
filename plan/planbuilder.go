@@ -114,7 +114,7 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return b.buildSet(x)
 	case *ast.AnalyzeTableStmt:
 		return b.buildAnalyze(x)
-	case *ast.BinlogStmt, *ast.FlushTableStmt, *ast.UseStmt,
+	case *ast.BinlogStmt, *ast.FlushStmt, *ast.UseStmt,
 		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt:
 		return b.buildSimple(node.(ast.StmtNode))
