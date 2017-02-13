@@ -437,6 +437,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{"flush table with read lock", true},
 		{"flush tables tbl1, tbl2, tbl3", true},
 		{"flush tables tbl1, tbl2, tbl3 with read lock", true},
+		{"flush privileges", true},
 	}
 	s.RunTest(c, table)
 }
@@ -445,11 +446,20 @@ func (s *testParserSuite) TestFlushTable(c *C) {
 	parser := New()
 	stmt, err := parser.Parse("flush local tables tbl1,tbl2 with read lock", "", "")
 	c.Assert(err, IsNil)
-	flushTable := stmt[0].(*ast.FlushTableStmt)
+	flushTable := stmt[0].(*ast.FlushStmt)
+	c.Assert(flushTable.Tp, Equals, ast.FlushTables)
 	c.Assert(flushTable.Tables[0].Name.L, Equals, "tbl1")
 	c.Assert(flushTable.Tables[1].Name.L, Equals, "tbl2")
 	c.Assert(flushTable.NoWriteToBinLog, IsTrue)
 	c.Assert(flushTable.ReadLock, IsTrue)
+}
+
+func (s *testParserSuite) TestFlushPrivileges(c *C) {
+	parser := New()
+	stmt, err := parser.Parse("flush privileges", "", "")
+	c.Assert(err, IsNil)
+	flushPrivilege := stmt[0].(*ast.FlushStmt)
+	c.Assert(flushPrivilege.Tp, Equals, ast.FlushPrivileges)
 }
 
 func (s *testParserSuite) TestExpression(c *C) {
@@ -1039,6 +1049,11 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t CHANGE COLUMN a b varchar(255)", true},
 		{"ALTER TABLE db.t RENAME to db1.t1", true},
 		{"ALTER TABLE t RENAME as t1", true},
+		{"ALTER TABLE t ALTER COLUMN a SET DEFAULT 1", true},
+		{"ALTER TABLE t ALTER COLUMN a SET DEFAULT CURRENT_TIMESTAMP", false},
+		{"ALTER TABLE t ALTER COLUMN a SET DEFAULT NOW()", false},
+		{"ALTER TABLE t ALTER COLUMN a SET DEFAULT 1+1", false},
+		{"ALTER TABLE t ALTER COLUMN a DROP DEFAULT", true},
 
 		// for rename table statement
 		{"RENAME TABLE t TO t1", true},

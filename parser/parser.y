@@ -485,8 +485,6 @@ import (
 	CreateUserStmt		"CREATE User statement"
 	DBName			"Database Name"
 	DeallocateStmt		"Deallocate prepared statement"
-	Default			"DEFAULT clause"
-	DefaultOpt		"optional DEFAULT clause"
 	DefaultValueExpr	"DefaultValueExpr(Now or Signed Literal)"
 	DeleteFromStmt		"DELETE FROM statement"
 	DistinctOpt		"Distinct option"
@@ -517,6 +515,7 @@ import (
 	FieldAsNameOpt		"Field alias name opt"
 	FieldList		"field expression list"
 	FlushStmt		"Flush statement"
+	FlushOption		"Flush option"
 	TableRefsClause		"Table references clause"
 	Function		"function expr"
 	FunctionCallAgg		"Function call on aggregate data"
@@ -878,6 +877,26 @@ AlterTableSpec:
 			Tp:    		ast.AlterTableChangeColumn,
 			OldColumnName:	$3.(*ast.ColumnName),
 			NewColumn: 	$4.(*ast.ColumnDef),
+		}
+	}
+|	"ALTER" "COLUMN" ColumnName "SET" "DEFAULT" SignedLiteral
+	{
+		option := &ast.ColumnOption{Expr: $6.(ast.ExprNode)}
+		$$ = &ast.AlterTableSpec{
+			Tp:		ast.AlterTableAlterColumn,
+			NewColumn:	&ast.ColumnDef{
+						Name: 	 $3.(*ast.ColumnName), 
+						Options: []*ast.ColumnOption{option},
+			},
+		}
+	}
+|	"ALTER" "COLUMN" ColumnName "DROP" "DEFAULT"
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:		ast.AlterTableAlterColumn,
+			NewColumn:	&ast.ColumnDef{
+						Name: 	 $3.(*ast.ColumnName),
+			},
 		}
 	}
 |	"RENAME" "TO" TableName
@@ -1499,18 +1518,6 @@ CreateTableStmt:
 			Options:        $8.([]*ast.TableOption),
 		}
 	}
-
-Default:
-	"DEFAULT" Expression
-	{
-		$$ = $2
-	}
-
-DefaultOpt:
-	{
-		$$ = nil
-	}
-|	Default
 
 DefaultKwdOpt:
 	{}
@@ -4521,12 +4528,26 @@ ShowTableAliasOpt:
 	}
 
 FlushStmt:
-	"FLUSH" NoWriteToBinLogAliasOpt TableOrTables TableNameListOpt WithReadLockOpt
+	"FLUSH" NoWriteToBinLogAliasOpt FlushOption
 	{
-		$$ = &ast.FlushTableStmt{
-			Tables: $4.([]*ast.TableName),
-			NoWriteToBinLog: $2.(bool),
-			ReadLock: $5.(bool),
+		tmp := $3.(*ast.FlushStmt)
+		tmp.NoWriteToBinLog = $2.(bool)
+		$$ = tmp
+	}
+
+FlushOption:
+	"PRIVILEGES"
+	{
+		$$ = &ast.FlushStmt{
+			Tp: ast.FlushPrivileges,
+		}
+	}
+|	TableOrTables TableNameListOpt WithReadLockOpt
+	{
+		$$ = &ast.FlushStmt{
+			Tp: ast.FlushTables,
+			Tables: $2.([]*ast.TableName),
+			ReadLock: $3.(bool),
 		}
 	}
 

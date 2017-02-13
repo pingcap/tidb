@@ -41,7 +41,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 	defer store.Close()
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
-	testKit.MustExec("create table t (c1 int, c2 double, c3 text)")
+	testKit.MustExec("create table t (c1 int, c2 double, c3 text, c4 timestamp)")
 	cases := []struct {
 		expr string
 		tp   byte
@@ -51,6 +51,8 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"+1", mysql.TypeLonglong, charset.CharsetBin},
 		{"-1", mysql.TypeLonglong, charset.CharsetBin},
 		{"-'1'", mysql.TypeDouble, charset.CharsetBin},
+		{"-curtime()", mysql.TypeDouble, charset.CharsetBin},
+		{"-now()", mysql.TypeDouble, charset.CharsetBin},
 		{"~1", mysql.TypeLonglong, charset.CharsetBin},
 		{"1e0", mysql.TypeDouble, charset.CharsetBin},
 		{"1.0", mysql.TypeNewDecimal, charset.CharsetBin},
@@ -73,6 +75,22 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 
 		{"1 + '1'", mysql.TypeDouble, charset.CharsetBin},
 		{"1 + 1.1", mysql.TypeNewDecimal, charset.CharsetBin},
+		{"now() + 0", mysql.TypeLonglong, charset.CharsetBin},
+		{"curtime() + 0", mysql.TypeLonglong, charset.CharsetBin},
+		{"now(0) + 0", mysql.TypeLonglong, charset.CharsetBin},
+		{"now(2) + 0", mysql.TypeNewDecimal, charset.CharsetBin},
+		{"now() + 1.1", mysql.TypeNewDecimal, charset.CharsetBin},
+		{"now() + '1'", mysql.TypeDouble, charset.CharsetBin},
+		{"now(2) + '1'", mysql.TypeDouble, charset.CharsetBin},
+		{"now() + curtime()", mysql.TypeLonglong, charset.CharsetBin},
+		{"now() + now()", mysql.TypeLonglong, charset.CharsetBin},
+		{"now() + now(2)", mysql.TypeNewDecimal, charset.CharsetBin},
+		{"c2 + now()", mysql.TypeDouble, charset.CharsetBin},
+		{"c4 + 1", mysql.TypeLonglong, charset.CharsetBin},
+		{"c4 + 1.1", mysql.TypeNewDecimal, charset.CharsetBin},
+		{"c4 + '1.1'", mysql.TypeDouble, charset.CharsetBin},
+		{"1.1 + now()", mysql.TypeNewDecimal, charset.CharsetBin},
+		{"1 + now()", mysql.TypeLonglong, charset.CharsetBin},
 		{"1 div 2", mysql.TypeLonglong, charset.CharsetBin},
 		{"1 / 2", mysql.TypeNewDecimal, charset.CharsetBin},
 
@@ -106,6 +124,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"curtime()", mysql.TypeDuration, charset.CharsetBin},
 		{"current_time()", mysql.TypeDuration, charset.CharsetBin},
 		{"curtime()", mysql.TypeDuration, charset.CharsetBin},
+		{"curtime(2)", mysql.TypeDuration, charset.CharsetBin},
 		{"current_timestamp()", mysql.TypeDatetime, charset.CharsetBin},
 		{"utc_timestamp()", mysql.TypeDatetime, charset.CharsetBin},
 		{"microsecond('2009-12-31 23:59:59.000010')", mysql.TypeLonglong, charset.CharsetBin},
