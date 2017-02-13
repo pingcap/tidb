@@ -733,21 +733,42 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	s.tk.MustQuery("select a from t3").Check(testkit.Rows("1", "2"))
 	s.mustExec(c, "alter table t3 change a aa bigint")
 	s.tk.MustQuery("select aa from t3").Check(testkit.Rows("1", "2"))
-	s.mustExec(c, "alter table t3 modify b varchar(20) default 'c' comment 'my comment'")
+	// for the following definitions: 'not null', 'null', 'default value' and 'comment'
+	s.mustExec(c, "alter table t3 change b b varchar(20) not null default 'c' comment 'my comment'")
 	ctx := s.tk.Se.(context.Context)
 	is := sessionctx.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("t3"))
 	c.Assert(err, IsNil)
 	tblInfo := tbl.Meta()
-	c.Assert(tblInfo.Columns[1].Comment, Equals, "my comment")
+	colB := tblInfo.Columns[1]
+	c.Assert(colB.Comment, Equals, "my comment")
+	hasNotNull := tmysql.HasNotNullFlag(colB.Flag)
+	c.Assert(hasNotNull, IsTrue)
 	s.mustExec(c, "insert into t3 set aa = 3")
 	rowStr := fmt.Sprintf("%v", []byte("a"))
 	rowStr1 := fmt.Sprintf("%v", []byte("b"))
 	rowStr2 := fmt.Sprintf("%v", []byte("c"))
 	s.tk.MustQuery("select b from t3").Check(testkit.Rows(rowStr, rowStr1, rowStr2))
+	// for timestamp
+	s.mustExec(c, "alter table t3 add column c timestamp not null")
+	s.mustExec(c, "alter table t3 change c c timestamp default '2017-02-11' comment 'col c comment' on update current_timestamp")
+	is = sessionctx.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("t3"))
+	c.Assert(err, IsNil)
+	tblInfo = tbl.Meta()
+	colC := tblInfo.Columns[2]
+	c.Assert(colC.Comment, Equals, "col c comment")
+	hasNotNull = tmysql.HasNotNullFlag(colC.Flag)
+	c.Assert(hasNotNull, IsTrue)
 
 	// for failing tests
-	sql := "alter table t3 change a testx.t3.aa bigint"
+	sql := "alter table t3 change c c timestamp not null"
+	s.testErrorCode(c, sql, tmysql.ErrInvalidUseOfNull)
+	sql = "alter table t3 change c c timestamp not null null"
+	s.testErrorCode(c, sql, tmysql.ErrInvalidUseOfNull)
+	sql = "alter table t3 change aa aa int default ''"
+	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
+	sql = "alter table t3 change a testx.t3.aa bigint"
 	s.testErrorCode(c, sql, tmysql.ErrWrongDBName)
 	sql = "alter table t3 change t.a aa bigint"
 	s.testErrorCode(c, sql, tmysql.ErrWrongTableName)
