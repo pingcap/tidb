@@ -175,6 +175,16 @@ func decodeMeta(fd *os.File) error {
 	return nil
 }
 
+/*
+ * The synthetic data is exported as a binary format.
+ * The encoding format is:
+ *   1) Meta Data
+ *      Three 64-bit integers represent scale size, key size and value size.
+ *   2) Row Data
+ *      Each row is encoded as:
+ *		One 64-bit integer represent the row size in bytes, followed by the
+ *      the actual row bytes.
+ */
 func export() error {
 	var (
 		err         error
