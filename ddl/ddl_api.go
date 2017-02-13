@@ -917,7 +917,7 @@ func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast
 	}
 
 	setTimestampDefaultValue(col, hasDefaultValue, setOnUpdateNow)
-	if mysql.HasTimestampFlag(col.Flag) && hasNotNull {
+	if col.Tp == mysql.TypeTimestamp && hasNotNull {
 		return errors.Trace(errInvalidUseOfNull)
 	}
 
@@ -950,18 +950,20 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 		return nil, errors.Trace(errUnsupportedModifyColumn)
 	}
 
-	if err := setDefaultAndComment(ctx, col, spec.NewColumn.Options); err != nil {
-		return nil, errors.Trace(err)
+	newCol := &table.Column{
+		ID:        col.ID,
+		Offset:    col.Offset,
+		State:     col.State,
+		FieldType: *spec.NewColumn.Tp,
 	}
-	setCharsetCollationFlenDecimal(spec.NewColumn.Tp)
-	if !modifiable(&col.FieldType, spec.NewColumn.Tp) {
+	setCharsetCollationFlenDecimal(&newCol.FieldType)
+	if !modifiable(&col.FieldType, &newCol.FieldType) {
 		return nil, errors.Trace(errUnsupportedModifyColumn)
 	}
+	if err := setDefaultAndComment(ctx, newCol, spec.NewColumn.Options); err != nil {
+		return nil, errors.Trace(err)
+	}
 
-	newCol := *col
-	newCol.FieldType = *spec.NewColumn.Tp
-	// TODO: Remove this line after merged PR 2627.
-	newCol.Flag = col.Flag
 	newCol.Name = spec.NewColumn.Name.Name
 	job := &model.Job{
 		SchemaID:   schema.ID,
