@@ -728,11 +728,13 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 
-	s.mustExec(c, "create table t3 (a int, b varchar(10))")
-	s.mustExec(c, "insert into t3 values(1, 'a'), (2, 'b')")
-	s.tk.MustQuery("select a from t3").Check(testkit.Rows("1", "2"))
+	s.mustExec(c, "create table t3 (a int default '0', b varchar(10))")
+	s.mustExec(c, "insert into t3 set b = 'a'")
+	s.tk.MustQuery("select a from t3").Check(testkit.Rows("0"))
 	s.mustExec(c, "alter table t3 change a aa bigint")
-	s.tk.MustQuery("select aa from t3").Check(testkit.Rows("1", "2"))
+	s.mustExec(c, "insert into t3 set b = 'b'")
+	rowStr := fmt.Sprintf("%v", nil)
+	s.tk.MustQuery("select aa from t3").Check(testkit.Rows("0", rowStr))
 	// for the following definitions: 'not null', 'null', 'default value' and 'comment'
 	s.mustExec(c, "alter table t3 change b b varchar(20) not null default 'c' comment 'my comment'")
 	ctx := s.tk.Se.(context.Context)
@@ -745,7 +747,7 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	hasNotNull := tmysql.HasNotNullFlag(colB.Flag)
 	c.Assert(hasNotNull, IsTrue)
 	s.mustExec(c, "insert into t3 set aa = 3")
-	rowStr := fmt.Sprintf("%v", []byte("a"))
+	rowStr = fmt.Sprintf("%v", []byte("a"))
 	rowStr1 := fmt.Sprintf("%v", []byte("b"))
 	rowStr2 := fmt.Sprintf("%v", []byte("c"))
 	s.tk.MustQuery("select b from t3").Check(testkit.Rows(rowStr, rowStr1, rowStr2))
@@ -758,15 +760,13 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	tblInfo = tbl.Meta()
 	colC := tblInfo.Columns[2]
 	c.Assert(colC.Comment, Equals, "col c comment")
-	hasNotNull = tmysql.HasNotNullFlag(colC.Flag)
-	c.Assert(hasNotNull, IsTrue)
 
 	// for failing tests
 	sql := "alter table t3 change c c timestamp not null"
 	s.testErrorCode(c, sql, tmysql.ErrInvalidUseOfNull)
 	sql = "alter table t3 change c c timestamp not null null"
 	s.testErrorCode(c, sql, tmysql.ErrInvalidUseOfNull)
-	sql = "alter table t3 change aa aa int default ''"
+	sql = "alter table t3 change aa a bigint default ''"
 	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
 	sql = "alter table t3 change a testx.t3.aa bigint"
 	s.testErrorCode(c, sql, tmysql.ErrWrongDBName)
