@@ -282,9 +282,10 @@ func (n *VariableAssignment) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// Flush statement type
+// FlushStmtType is the type for FLUSH statement.
 type FlushStmtType int
 
+// Flush statement types.
 const (
 	FlushNone FlushStmtType = iota
 	FlushTables
