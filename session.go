@@ -932,7 +932,8 @@ func (s *session) ActivePendingTxn() error {
 	return nil
 }
 
-func (s *session) ActivePendingPointGetByPkOrUniqueKeyTxn() error {
+// ActivePendingTxnWithStartTs receives the pending transaction with start_ts.
+func (s *session) ActivePendingTxnWithStartTs(startTs uint64) error {
 	//TODO:
 	return s.ActivePendingTxn()
 }

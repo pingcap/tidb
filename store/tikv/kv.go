@@ -145,8 +145,9 @@ func (s *tikvStore) Begin() (kv.Transaction, error) {
 	return txn, nil
 }
 
-func (s *tikvStore) BeginPointGetByPkOrUniqueKey() (kv.Transaction, error) {
-	txn, err := newTikvPointGetByPkOrUniqueKeyTxn(s)
+// BeginPointGetByPkOrUniqueKey begins a transaction for point get by pk or unique key
+func (s *tikvStore) BeginWithStartTs(startTs uint64) (kv.Transaction, error) {
+	txn, err := newTikvPointWithStartTs(s,startTs)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

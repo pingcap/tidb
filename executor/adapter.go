@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
+	"math"
 )
 
 // recordSet wraps an executor, implements ast.RecordSet interface
@@ -111,7 +112,7 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 		// "ExecuteExec.Build".
 		var err error
 		if a.isPointGetByPkOrUniqueKey() {
-			err = ctx.ActivePendingPointGetByPkOrUniqueKeyTxn()
+			err = ctx.ActivePendingTxnWithStartTs(math.MaxUint64)
 		} else {
 			err = ctx.ActivePendingTxn()
 		}

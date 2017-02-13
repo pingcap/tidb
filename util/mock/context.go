@@ -124,12 +124,13 @@ func (c *Context) ActivePendingTxn() error {
 	return nil
 }
 
-func (c *Context) ActivePendingPointGetByPkOrUniqueKeyTxn() error {
+// ActivePendingTxnWithStartTs implements the context.Context interface with start_ts.
+func (c *Context) ActivePendingTxnWithStartTs(startTs uint64) error {
 	if c.txn != nil {
 		return nil
 	}
 	if c.Store != nil {
-		txn, err := c.Store.BeginPointGetByPkOrUniqueKey()
+		txn, err := c.Store.BeginWithStartTs(startTs)
 		if err != nil {
 			return errors.Trace(err)
 		}

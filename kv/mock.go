@@ -103,10 +103,10 @@ func (s *mockStorage) Begin() (Transaction, error) {
 		valid: true,
 	}
 	return tx, nil
-
 }
 
-func (s *mockStorage) BeginPointGetByPkOrUniqueKey() (Transaction, error) {
+// BeginWithStartTs
+func (s *mockStorage) BeginWithStartTs(startTs uint64) (Transaction, error) {
 	return s.Begin()
 }
 

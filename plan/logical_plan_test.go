@@ -309,7 +309,7 @@ func (m *mockStore) Begin() (kv.Transaction, error) {
 	return nil, nil
 }
 
-func (m *mockStore) BeginPointGetByPkOrUniqueKey() (kv.Transaction, error) {
+func (m *mockStore) BeginWithStartTs(startTs uint64) (kv.Transaction, error) {
 	return m.Begin()
 }
 

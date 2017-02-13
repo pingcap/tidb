@@ -53,8 +53,8 @@ func (s *InjectedStore) Begin() (Transaction, error) {
 }
 
 // Begin creates an injected Transaction.
-func (s *InjectedStore) BeginPointGetByPkOrUniqueKey() (Transaction, error) {
-	txn, err := s.Storage.BeginPointGetByPkOrUniqueKey()
+func (s *InjectedStore) BeginWithStartTs(startTs uint64) (Transaction, error) {
+	txn, err := s.Storage.BeginWithStartTs(startTs)
 	return &InjectedTransaction{
 		Transaction: txn,
 		cfg:         s.cfg,

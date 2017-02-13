@@ -176,8 +176,8 @@ type Driver interface {
 type Storage interface {
 	// Begin transaction
 	Begin() (Transaction, error)
-	// Begin transaction for point get by pk or unique key
-	BeginPointGetByPkOrUniqueKey() (Transaction, error)
+	// Begin transaction with startTs
+	BeginWithStartTs(startTs uint64) (Transaction, error)
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
 	GetSnapshot(ver Version) (Snapshot, error)

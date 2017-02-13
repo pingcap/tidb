@@ -372,7 +372,7 @@ func (s *dbStore) Begin() (kv.Transaction, error) {
 }
 
 // Begin transaction for point get by pk or unique key
-func (s *dbStore) BeginPointGetByPkOrUniqueKey() (kv.Transaction, error) {
+func (s *dbStore) BeginWithStartTs(startTs uint64) (kv.Transaction, error) {
 	return s.Begin()
 }
 
