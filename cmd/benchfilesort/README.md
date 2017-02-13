@@ -1,13 +1,13 @@
-## BenchSort
+## BenchFileSort
 
-BenchSort is a command line tool to test the performance of util/filesort.
+BenchFileSort is a command line tool to test the performance of util/filesort.
 
 ### Quick Start (Examples)
 
 Step 1 - Generate the synthetic data
 
 ```
-./benchsort gen -keySize 8 -valSize 16 -scale 1000
+./benchfilesort gen -keySize 8 -valSize 16 -scale 1000
 ```
 
 Expected output:
@@ -23,7 +23,7 @@ Time used: xxxx ms
 Step 2 - Load the data and run the benchmark
 
 ```
-./benchsort run -bufSize 50 -inputRatio 100 -outputRatio 50
+./benchfilesort run -bufSize 50 -inputRatio 100 -outputRatio 50
 ```
 
 Expected output:

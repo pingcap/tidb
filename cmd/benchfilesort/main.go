@@ -276,12 +276,12 @@ func main() {
 
 	if len(os.Args) == 1 {
 		fmt.Println("Usage:\n")
-		fmt.Println("\tbenchsort command [arguments]\n")
+		fmt.Println("\tbenchfilesort command [arguments]\n")
 		fmt.Println("The commands are:\n")
 		fmt.Println("\tgen\t", "generate rows")
 		fmt.Println("\trun\t", "run tests")
 		fmt.Println("")
-		fmt.Println("Checkout benchsort/README for more information.")
+		fmt.Println("Checkout benchfilesort/README for more information.")
 		return
 	}
 
@@ -366,7 +366,7 @@ func main() {
 		for i := 0; i < keySize; i++ {
 			byDesc[i] = false
 		}
-		dir, err = ioutil.TempDir(tmpDir, "benchsort_test")
+		dir, err = ioutil.TempDir(tmpDir, "benchfilesort_test")
 		if err != nil {
 			log.Fatal(err)
 		}
