@@ -52,6 +52,9 @@ Time used: xxxx ms
 =================================
 ```
 
+For performance tuning purpose, `Input` time and `Output` time are two KPIs you should focus on.
+`Close` time reflects the GC performance, which might be noteworthy sometimes.
+
 ### Commands and Arguments
 
 #### `gen` command
