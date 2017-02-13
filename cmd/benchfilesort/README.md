@@ -107,12 +107,12 @@ The `run` command supports the following arguments:
 * `inputRatio` (default: 100)
   Specify the percentage of rows to input:
 
-  # of rows to input = # of total rows * inputRatio / 100
+  `# of rows to input = # of total rows * inputRatio / 100`
 
 * `outputRatio` (default: 100)
   Specify the percentage of rows to output:
 
-  # of rows to output = # of rows to input * outputRatio / 100
+  `# of rows to output = # of rows to input * outputRatio / 100`
 
 * `cpuprofile` (default: "")
   Turn on the CPU profile
