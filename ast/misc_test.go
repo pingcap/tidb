@@ -69,7 +69,7 @@ func (ts *testMiscSuite) TestMiscVisitorCover(c *C) {
 				{},
 			},
 		}),
-		(&FlushTableStmt{}),
+		(&FlushStmt{}),
 		(&PrivElem{}),
 		(&VariableAssignment{Value: &ValueExpr{}}),
 	}
