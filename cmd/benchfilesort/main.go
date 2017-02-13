@@ -250,51 +250,8 @@ func load(ratio int) ([]*comparableRow, error) {
 	return data, nil
 }
 
-func init() {
-	log.SetLevelByString(logLevel)
-
-	cwd, err := os.Getwd()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	genCmd.StringVar(&tmpDir, "dir", cwd, "where to store the generated rows")
-	genCmd.IntVar(&keySize, "keySize", 8, "the size of key")
-	genCmd.IntVar(&valSize, "valSize", 8, "the size of value")
-	genCmd.IntVar(&scale, "scale", 100, "how many rows to generate")
-	genCmd.StringVar(&cpuprofile, "cpuprofile", "", "write cpu profile to file")
-
-	runCmd.StringVar(&tmpDir, "dir", cwd, "where to load the generated rows")
-	runCmd.IntVar(&bufSize, "bufSize", 500000, "how many rows held in memory at a time")
-	runCmd.IntVar(&inputRatio, "inputRatio", 100, "input percentage")
-	runCmd.IntVar(&outputRatio, "outputRatio", 100, "output percentage")
-	runCmd.StringVar(&cpuprofile, "cpuprofile", "", "write cpu profile to file")
-}
-
-func main() {
-	flag.Parse()
-
-	if len(os.Args) == 1 {
-		fmt.Println("Usage:\n")
-		fmt.Println("\tbenchfilesort command [arguments]\n")
-		fmt.Println("The commands are:\n")
-		fmt.Println("\tgen\t", "generate rows")
-		fmt.Println("\trun\t", "run tests")
-		fmt.Println("")
-		fmt.Println("Checkout benchfilesort/README for more information.")
-		return
-	}
-
-	switch os.Args[1] {
-	case "gen":
-		genCmd.Parse(os.Args[2:])
-	case "run":
-		runCmd.Parse(os.Args[2:])
-	default:
-		fmt.Printf("%q is not valid command.\n", os.Args[1])
-		os.Exit(2)
-	}
-
+func driveGenCmd() {
+	genCmd.Parse(os.Args[2:])
 	if genCmd.Parsed() {
 		// Sanity checks
 		if keySize <= 0 {
@@ -323,7 +280,10 @@ func main() {
 		cLog("Time used: ", time.Since(start))
 		cLog("=================================")
 	}
+}
 
+func driveRunCmd() {
+	runCmd.Parse(os.Args[2:])
 	if runCmd.Parsed() {
 		// Sanity checks
 		if bufSize <= 0 {
@@ -424,6 +384,52 @@ func main() {
 		cLog("Done!")
 		cLog("Time used: ", time.Since(start))
 		cLog("=================================")
+	}
+}
+
+func init() {
+	log.SetLevelByString(logLevel)
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	genCmd.StringVar(&tmpDir, "dir", cwd, "where to store the generated rows")
+	genCmd.IntVar(&keySize, "keySize", 8, "the size of key")
+	genCmd.IntVar(&valSize, "valSize", 8, "the size of value")
+	genCmd.IntVar(&scale, "scale", 100, "how many rows to generate")
+	genCmd.StringVar(&cpuprofile, "cpuprofile", "", "write cpu profile to file")
+
+	runCmd.StringVar(&tmpDir, "dir", cwd, "where to load the generated rows")
+	runCmd.IntVar(&bufSize, "bufSize", 500000, "how many rows held in memory at a time")
+	runCmd.IntVar(&inputRatio, "inputRatio", 100, "input percentage")
+	runCmd.IntVar(&outputRatio, "outputRatio", 100, "output percentage")
+	runCmd.StringVar(&cpuprofile, "cpuprofile", "", "write cpu profile to file")
+}
+
+func main() {
+	flag.Parse()
+
+	if len(os.Args) == 1 {
+		fmt.Println("Usage:\n")
+		fmt.Println("\tbenchfilesort command [arguments]\n")
+		fmt.Println("The commands are:\n")
+		fmt.Println("\tgen\t", "generate rows")
+		fmt.Println("\trun\t", "run tests")
+		fmt.Println("")
+		fmt.Println("Checkout benchfilesort/README for more information.")
+		return
+	}
+
+	switch os.Args[1] {
+	case "gen":
+		driveGenCmd()
+	case "run":
+		driveRunCmd()
+	default:
+		fmt.Printf("%q is not valid command.\n", os.Args[1])
+		os.Exit(2)
 	}
 }
 
