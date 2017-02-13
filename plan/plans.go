@@ -31,7 +31,7 @@ type TableRange struct {
 }
 
 // IsPoint returns if the table range is a point.
-func (tr *TableRange)IsPoint() bool {
+func (tr *TableRange) IsPoint() bool {
 	return tr.HighVal == tr.LowVal
 }
 

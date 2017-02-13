@@ -57,7 +57,7 @@ func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
 	}, nil
 }
 
-func newTikvTxnWithStartTs(store *tikvStore,startTs uint64) (*tikvTxn, error) {
+func newTikvTxnWithStartTs(store *tikvStore, startTs uint64) (*tikvTxn, error) {
 	ver := kv.NewVersion(startTs)
 	return &tikvTxn{
 		us:        kv.NewUnionStore(newTiKVSnapshot(store, ver)),

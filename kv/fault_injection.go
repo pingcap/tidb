@@ -52,7 +52,7 @@ func (s *InjectedStore) Begin() (Transaction, error) {
 	}, err
 }
 
-// Begin creates an injected Transaction.
+// BeginWithStartTs creates an injected Transaction.
 func (s *InjectedStore) BeginWithStartTs(startTs uint64) (Transaction, error) {
 	txn, err := s.Storage.BeginWithStartTs(startTs)
 	return &InjectedTransaction{
