@@ -766,6 +766,8 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrInvalidUseOfNull)
 	sql = "alter table t3 change c c timestamp not null null"
 	s.testErrorCode(c, sql, tmysql.ErrInvalidUseOfNull)
+	sql = "alter table t3 change aa aa int default ''"
+	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
 	sql = "alter table t3 change a testx.t3.aa bigint"
 	s.testErrorCode(c, sql, tmysql.ErrWrongDBName)
 	sql = "alter table t3 change t.a aa bigint"
