@@ -277,6 +277,7 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 				hasDefaultValue = true
 				removeOnUpdateNowFlag(col)
 			case ast.ColumnOptionOnUpdate:
+				// TODO: Support other time functions.
 				if !expression.IsCurrentTimeExpr(v.Expr) {
 					return nil, nil, ErrInvalidOnUpdate.Gen("invalid ON UPDATE for - %s", col.Name)
 				}
@@ -902,6 +903,7 @@ func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast
 		case ast.ColumnOptionNull:
 			col.Flag &= ^uint(mysql.NotNullFlag)
 		case ast.ColumnOptionOnUpdate:
+			// TODO: Support other time functions.
 			if !expression.IsCurrentTimeExpr(opt.Expr) {
 				return ErrInvalidOnUpdate.Gen("invalid ON UPDATE for - %s", col.Name)
 			}
