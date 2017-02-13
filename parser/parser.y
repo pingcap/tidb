@@ -4530,21 +4530,22 @@ ShowTableAliasOpt:
 FlushStmt:
 	"FLUSH" NoWriteToBinLogAliasOpt FlushOption
 	{
-		tmp := $3
-		if x, ok := tmp.(*ast.FlushTableStmt); ok {
-			x.NoWriteToBinLog = $2.(bool)
-		}
+		tmp := $3.(*ast.FlushStmt)
+		tmp.NoWriteToBinLog = $2.(bool)
 		$$ = tmp
 	}
 
 FlushOption:
 	"PRIVILEGES"
 	{
-		$$ = &ast.FlushPrivilegesStmt{}
+		$$ = &ast.FlushStmt{
+			Tp: ast.FlushPrivileges,
+		}
 	}
 |	TableOrTables TableNameListOpt WithReadLockOpt
 	{
-		$$ = &ast.FlushTableStmt{
+		$$ = &ast.FlushStmt{
+			Tp: ast.FlushTables,
 			Tables: $2.([]*ast.TableName),
 			ReadLock: $3.(bool),
 		}

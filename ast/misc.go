@@ -39,8 +39,7 @@ var (
 	_ StmtNode = &SetStmt{}
 	_ StmtNode = &UseStmt{}
 	_ StmtNode = &AnalyzeTableStmt{}
-	_ StmtNode = &FlushTableStmt{}
-	_ StmtNode = &FlushPrivilegesStmt{}
+	_ StmtNode = &FlushStmt{}
 
 	_ Node = &PrivElem{}
 	_ Node = &VariableAssignment{}
@@ -283,38 +282,33 @@ func (n *VariableAssignment) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// FlushPrivilegesStmt is the statement to flush privileges.
-type FlushPrivilegesStmt struct {
-	stmtNode
-}
+// Flush statement type
+type FlushStmtType int
 
-// Accept implements Node Accept interface.
-func (n *FlushPrivilegesStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*FlushPrivilegesStmt)
-	return v.Leave(n)
-}
+const (
+	FlushNone FlushStmtType = iota
+	FlushTables
+	FlushPrivileges
+)
 
-// FlushTableStmt is the statement to flush table.
-// if Tables is empty, it means flush all tables.
-type FlushTableStmt struct {
+// FlushStmt is a statement to flush tables/privileges/optimizer costs and so on.
+type FlushStmt struct {
 	stmtNode
 
-	Tables          []*TableName
+	Tp              FlushStmtType // Privileges/Tables/...
 	NoWriteToBinLog bool
-	ReadLock        bool
+	// For FlushTableStmt, if Tables is empty, it means flush all tables.
+	Tables   []*TableName
+	ReadLock bool
 }
 
 // Accept implements Node Accept interface.
-func (n *FlushTableStmt) Accept(v Visitor) (Node, bool) {
+func (n *FlushStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNode)
 	}
-	n = newNode.(*FlushTableStmt)
+	n = newNode.(*FlushStmt)
 	return v.Leave(n)
 }
 

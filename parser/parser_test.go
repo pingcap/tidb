@@ -446,7 +446,8 @@ func (s *testParserSuite) TestFlushTable(c *C) {
 	parser := New()
 	stmt, err := parser.Parse("flush local tables tbl1,tbl2 with read lock", "", "")
 	c.Assert(err, IsNil)
-	flushTable := stmt[0].(*ast.FlushTableStmt)
+	flushTable := stmt[0].(*ast.FlushStmt)
+	c.Assert(flushTable.Tp, Equals, ast.FlushTables)
 	c.Assert(flushTable.Tables[0].Name.L, Equals, "tbl1")
 	c.Assert(flushTable.Tables[1].Name.L, Equals, "tbl2")
 	c.Assert(flushTable.NoWriteToBinLog, IsTrue)
@@ -457,8 +458,8 @@ func (s *testParserSuite) TestFlushPrivileges(c *C) {
 	parser := New()
 	stmt, err := parser.Parse("flush privileges", "", "")
 	c.Assert(err, IsNil)
-	_, ok := stmt[0].(*ast.FlushPrivilegesStmt)
-	c.Assert(ok, IsTrue)
+	flushPrivilege := stmt[0].(*ast.FlushStmt)
+	c.Assert(flushPrivilege.Tp, Equals, ast.FlushPrivileges)
 }
 
 func (s *testParserSuite) TestExpression(c *C) {

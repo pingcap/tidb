@@ -219,6 +219,8 @@ func (s *testSuite) TestSetPwd(c *C) {
 
 func (s *testSuite) TestFlushPrivileges(c *C) {
 	defer testleak.AfterTest(c)()
+	// Global variables is really bad, when the test cases run concurrently.
+	save := privileges.Enable
 	privileges.Enable = true
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -241,5 +243,5 @@ func (s *testSuite) TestFlushPrivileges(c *C) {
 	_, err = se.Execute(`SELECT Password FROM mysql.User WHERE User="testflush" and Host="localhost"`)
 	c.Check(err, IsNil)
 
-	privileges.Enable = false
+	privileges.Enable = save
 }
