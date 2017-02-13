@@ -81,7 +81,8 @@ func (a *statement) OriginText() string {
 	return a.text
 }
 
-func (a *statement) isPointGetByPkOrUniqueKey() bool {
+// isPointGetByPkOrUniqueKey returns true when current plan is point get by pk or unique key
+func (a *statement) isPointGetByPkOrUniqueKey(ctx context.Context) bool {
 	checkPlan := a.plan
 	if proj, ok := checkPlan.(*plan.Projection); ok {
 		if len(proj.Children()) != 1 {
@@ -91,11 +92,11 @@ func (a *statement) isPointGetByPkOrUniqueKey() bool {
 	}
 
 	if indexScan, ok := checkPlan.(*plan.PhysicalIndexScan); ok {
-		return len(indexScan.Ranges) == 1
+		return len(indexScan.Ranges) == 1 && indexScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx)
 	}
 
 	if tableScan, ok := checkPlan.(*plan.PhysicalTableScan); ok {
-		return len(tableScan.Ranges) == 1
+		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint()
 	}
 	return false
 }
@@ -111,7 +112,7 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 		// Do not sync transaction for Execute statement, because the real optimization work is done in
 		// "ExecuteExec.Build".
 		var err error
-		if a.isPointGetByPkOrUniqueKey() {
+		if a.isPointGetByPkOrUniqueKey(ctx) {
 			err = ctx.ActivePendingTxnWithStartTs(math.MaxUint64)
 		} else {
 			err = ctx.ActivePendingTxn()
