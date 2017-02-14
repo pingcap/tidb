@@ -139,6 +139,8 @@ var tokenMap = map[string]int{
 	"ADD":                 add,
 	"ADDDATE":             addDate,
 	"ADMIN":               admin,
+	"AES_DECRYPT":         aesDecrypt,
+	"AES_ENCRYPT":         aesEncrypt,
 	"AFTER":               after,
 	"ALL":                 all,
 	"ALTER":               alter,
