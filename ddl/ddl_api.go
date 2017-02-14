@@ -277,6 +277,7 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 				hasDefaultValue = true
 				removeOnUpdateNowFlag(col)
 			case ast.ColumnOptionOnUpdate:
+				// TODO: Support other time functions.
 				if !expression.IsCurrentTimeExpr(v.Expr) {
 					return nil, nil, ErrInvalidOnUpdate.Gen("invalid ON UPDATE for - %s", col.Name)
 				}
@@ -284,16 +285,12 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 				col.Flag |= mysql.OnUpdateNowFlag
 				setOnUpdateNow = true
 			case ast.ColumnOptionComment:
-				value, err := expression.EvalAstExpr(v.Expr, ctx)
-				if err != nil {
-					return nil, nil, errors.Trace(err)
-				}
-				col.Comment, err = value.ToString()
+				err := setColumnComment(ctx, col, v)
 				if err != nil {
 					return nil, nil, errors.Trace(err)
 				}
 			case ast.ColumnOptionFulltext:
-				// Do nothing.
+				// TODO: Support this type.
 			}
 		}
 	}
@@ -850,8 +847,85 @@ func modifiable(origin *types.FieldType, to *types.FieldType) bool {
 			return false
 		}
 	default:
+		if origin.Tp == to.Tp {
+			return true
+		}
+
 		return false
 	}
+}
+
+func setDefaultValue(ctx context.Context, col *table.Column, option *ast.ColumnOption) error {
+	value, err := getDefaultValue(ctx, option, col.Tp, col.Decimal)
+	if err != nil {
+		return ErrColumnBadNull.Gen("invalid default value - %s", err)
+	}
+	col.DefaultValue = value
+	return errors.Trace(checkDefaultValue(ctx, col, true))
+}
+
+func setColumnComment(ctx context.Context, col *table.Column, option *ast.ColumnOption) error {
+	value, err := expression.EvalAstExpr(option.Expr, ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	col.Comment, err = value.ToString()
+	return errors.Trace(err)
+}
+
+func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast.ColumnOption) error {
+	if len(options) == 0 {
+		return nil
+	}
+
+	var (
+		hasDefaultValue bool
+		hasNotNull      bool
+		setOnUpdateNow  bool
+	)
+	for _, opt := range options {
+		switch opt.Tp {
+		case ast.ColumnOptionDefaultValue:
+			value, err := getDefaultValue(ctx, opt, col.Tp, col.Decimal)
+			if err != nil {
+				return ErrColumnBadNull.Gen("invalid default value - %s", err)
+			}
+			col.DefaultValue = value
+			hasDefaultValue = true
+		case ast.ColumnOptionComment:
+			err := setColumnComment(ctx, col, opt)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		case ast.ColumnOptionNotNull:
+			col.Flag |= mysql.NotNullFlag
+			hasNotNull = true
+		case ast.ColumnOptionNull:
+			col.Flag &= ^uint(mysql.NotNullFlag)
+		case ast.ColumnOptionOnUpdate:
+			// TODO: Support other time functions.
+			if !expression.IsCurrentTimeExpr(opt.Expr) {
+				return ErrInvalidOnUpdate.Gen("invalid ON UPDATE for - %s", col.Name)
+			}
+
+			col.Flag |= mysql.OnUpdateNowFlag
+			setOnUpdateNow = true
+		default:
+			// TODO: Support other types.
+			return errors.Trace(errUnsupportedModifyColumn)
+		}
+	}
+
+	setTimestampDefaultValue(col, hasDefaultValue, setOnUpdateNow)
+	if col.Tp == mysql.TypeTimestamp && hasNotNull {
+		return errors.Trace(errInvalidUseOfNull)
+	}
+
+	if hasDefaultValue {
+		return errors.Trace(checkDefaultValue(ctx, col, true))
+	}
+
+	return nil
 }
 
 func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, originalColName model.CIStr,
@@ -871,17 +945,25 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 		return nil, infoschema.ErrColumnNotExists.GenByArgs(originalColName, ident.Name)
 	}
 	if spec.Constraint != nil || (spec.Position != nil && spec.Position.Tp != ast.ColumnPositionNone) ||
-		len(spec.NewColumn.Options) != 0 || spec.NewColumn.Tp == nil {
+		spec.NewColumn.Tp == nil {
 		// Make sure the column definition is simple field type.
-		return nil, errUnsupportedModifyColumn
-	}
-	setCharsetCollationFlenDecimal(spec.NewColumn.Tp)
-	if !modifiable(&col.FieldType, spec.NewColumn.Tp) {
-		return nil, errUnsupportedModifyColumn
+		return nil, errors.Trace(errUnsupportedModifyColumn)
 	}
 
-	newCol := *col
-	newCol.FieldType = *spec.NewColumn.Tp
+	newCol := &table.Column{
+		ID:        col.ID,
+		Offset:    col.Offset,
+		State:     col.State,
+		FieldType: *spec.NewColumn.Tp,
+	}
+	setCharsetCollationFlenDecimal(&newCol.FieldType)
+	if !modifiable(&col.FieldType, &newCol.FieldType) {
+		return nil, errors.Trace(errUnsupportedModifyColumn)
+	}
+	if err := setDefaultAndComment(ctx, newCol, spec.NewColumn.Options); err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	newCol.Name = spec.NewColumn.Name.Name
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -962,12 +1044,7 @@ func (d *ddl) AlterColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterT
 	if len(spec.NewColumn.Options) == 0 {
 		col.DefaultValue = nil
 	} else {
-		value, err := getDefaultValue(ctx, spec.NewColumn.Options[0], col.Tp, col.Decimal)
-		if err != nil {
-			return ErrColumnBadNull.Gen("invalid default value - %s", err)
-		}
-		col.DefaultValue = value
-		err = checkDefaultValue(ctx, col, true)
+		err := setDefaultValue(ctx, col, spec.NewColumn.Options[0])
 		if err != nil {
 			return errors.Trace(err)
 		}
