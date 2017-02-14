@@ -256,10 +256,6 @@ func mergeCmpType(fta, ftb *types.FieldType) (ft *types.FieldType) {
 	return ft
 }
 
-func isBinary(ft *types.FieldType) bool {
-	return ft.Flag&mysql.BinaryFlag != 0
-}
-
 func (v *typeInferrer) unaryOperation(x *ast.UnaryOperationExpr) {
 	switch x.Op {
 	case opcode.Not:
