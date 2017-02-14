@@ -15,6 +15,7 @@ package executor
 
 import (
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/juju/errors"
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
-	"math"
 )
 
 // recordSet wraps an executor, implements ast.RecordSet interface
@@ -81,8 +81,19 @@ func (a *statement) OriginText() string {
 	return a.text
 }
 
-// isPointGetByPkOrUniqueKey returns true when current plan is point get by pk or unique key
-func (a *statement) isPointGetByPkOrUniqueKey(ctx context.Context) bool {
+// isPointGetByPkOrUniqueKeyWithAutoCommit returns true when current plan is point get by pk or unique key
+func (a *statement) isPointGetByPkOrUniqueKeyWithAutoCommit(ctx context.Context) bool {
+	// check auto commit
+	if !ctx.GetSessionVars().IsAutocommit() {
+		return false
+	}
+
+	// check txn
+	if ctx.Txn() != nil {
+		return false
+	}
+
+	// check plan
 	checkPlan := a.plan
 	if proj, ok := checkPlan.(*plan.Projection); ok {
 		if len(proj.Children()) != 1 {
@@ -91,13 +102,16 @@ func (a *statement) isPointGetByPkOrUniqueKey(ctx context.Context) bool {
 		checkPlan = proj.Children()[0]
 	}
 
+	// get by index key
 	if indexScan, ok := checkPlan.(*plan.PhysicalIndexScan); ok {
-		return len(indexScan.Ranges) == 1 && indexScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx)
+		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx)
 	}
 
+	// get by primary key
 	if tableScan, ok := checkPlan.(*plan.PhysicalTableScan); ok {
 		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint()
 	}
+
 	return false
 }
 
@@ -112,8 +126,8 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 		// Do not sync transaction for Execute statement, because the real optimization work is done in
 		// "ExecuteExec.Build".
 		var err error
-		if a.isPointGetByPkOrUniqueKey(ctx) {
-			err = ctx.ActivePendingTxnWithStartTs(math.MaxUint64)
+		if a.isPointGetByPkOrUniqueKeyWithAutoCommit(ctx) {
+			err = ctx.InitTxnWithStartTS(math.MaxUint64)
 		} else {
 			err = ctx.ActivePendingTxn()
 		}

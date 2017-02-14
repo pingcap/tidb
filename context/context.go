@@ -47,9 +47,9 @@ type Context interface {
 	// ActivePendingTxn receives the pending transaction from the transaction channel.
 	// It should be called right before we builds an executor.
 	ActivePendingTxn() error
-	// ActivePendingTxnWithStartTs receives the pending transaction with start_ts.
+	// InitTxnWithStartTS initializes a transaction with startTS.
 	// It should be called right before we builds an executor.
-	ActivePendingTxnWithStartTs(startTs uint64) error
+	InitTxnWithStartTS(startTS uint64) error
 }
 
 type basicCtxType int

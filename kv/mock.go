@@ -105,8 +105,8 @@ func (s *mockStorage) Begin() (Transaction, error) {
 	return tx, nil
 }
 
-// BeginWithStartTs
-func (s *mockStorage) BeginWithStartTs(startTs uint64) (Transaction, error) {
+// BeginWithStartTS
+func (s *mockStorage) BeginWithStartTS(startTS uint64) (Transaction, error) {
 	return s.Begin()
 }
 

@@ -371,8 +371,8 @@ func (s *dbStore) Begin() (kv.Transaction, error) {
 	return newTxn(s, beginVer), nil
 }
 
-// Begin transaction for point get by pk or unique key
-func (s *dbStore) BeginWithStartTs(startTs uint64) (kv.Transaction, error) {
+// BeginWithStartTS begins transaction with startTS
+func (s *dbStore) BeginWithStartTS(startTS uint64) (kv.Transaction, error) {
 	return s.Begin()
 }
 

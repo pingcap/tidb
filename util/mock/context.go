@@ -124,13 +124,13 @@ func (c *Context) ActivePendingTxn() error {
 	return nil
 }
 
-// ActivePendingTxnWithStartTs implements the context.Context interface with start_ts.
-func (c *Context) ActivePendingTxnWithStartTs(startTs uint64) error {
+// InitTxnWithStartTS implements the context.Context interface with startTS.
+func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 	if c.txn != nil {
 		return nil
 	}
 	if c.Store != nil {
-		txn, err := c.Store.BeginWithStartTs(startTs)
+		txn, err := c.Store.BeginWithStartTS(startTS)
 		if err != nil {
 			return errors.Trace(err)
 		}

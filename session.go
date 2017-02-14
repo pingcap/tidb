@@ -906,8 +906,8 @@ func (s *session) ActivePendingTxn() error {
 	return nil
 }
 
-// ActivePendingTxnWithStartTs receives the pending transaction with start_ts.
-func (s *session) ActivePendingTxnWithStartTs(startTs uint64) error {
+// InitTxnWithStartTS receives the pending transaction with start_ts.
+func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	//TODO:
 	return s.ActivePendingTxn()
 }

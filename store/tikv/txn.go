@@ -57,12 +57,13 @@ func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
 	}, nil
 }
 
-func newTikvTxnWithStartTs(store *tikvStore, startTs uint64) (*tikvTxn, error) {
-	ver := kv.NewVersion(startTs)
+// newTikvTxnWithStartTS creates a txn with startTS
+func newTikvTxnWithStartTS(store *tikvStore, startTS uint64) (*tikvTxn, error) {
+	ver := kv.NewVersion(startTS)
 	return &tikvTxn{
 		us:        kv.NewUnionStore(newTiKVSnapshot(store, ver)),
 		store:     store,
-		startTS:   startTs,
+		startTS:   startTS,
 		startTime: monotime.Now(),
 		valid:     true,
 	}, nil

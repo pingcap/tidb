@@ -310,7 +310,8 @@ func (m *mockStore) Begin() (kv.Transaction, error) {
 	return nil, nil
 }
 
-func (m *mockStore) BeginWithStartTs(startTs uint64) (kv.Transaction, error) {
+// BeginWithStartTS
+func (m *mockStore) BeginWithStartTS(startTS uint64) (kv.Transaction, error) {
 	return m.Begin()
 }
 
