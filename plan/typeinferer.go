@@ -225,7 +225,7 @@ func mergeCmpType(fta, ftb *types.FieldType) (ft *types.FieldType) {
 	ft = &types.FieldType{}
 	if fta.Charset == charset.CharsetUTF8 && ftb.Charset == charset.CharsetUTF8 {
 		ft.Charset = charset.CharsetUTF8
-		ft.Collate = "utf8_bin"
+		ft.Collate = mysql.UTF8DefaultCollation
 	} else {
 		ft.Flag |= mysql.BinaryFlag
 	}
