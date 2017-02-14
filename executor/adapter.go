@@ -81,40 +81,6 @@ func (a *statement) OriginText() string {
 	return a.text
 }
 
-// isPointGetByPkOrUniqueKeyWithAutoCommit returns true when current plan is point get by pk or unique key
-func (a *statement) isPointGetByPkOrUniqueKeyWithAutoCommit(ctx context.Context) bool {
-	// check auto commit
-	if !ctx.GetSessionVars().IsAutocommit() {
-		return false
-	}
-
-	// check txn
-	if ctx.Txn() != nil {
-		return false
-	}
-
-	// check plan
-	checkPlan := a.plan
-	if proj, ok := checkPlan.(*plan.Projection); ok {
-		if len(proj.Children()) != 1 {
-			return false
-		}
-		checkPlan = proj.Children()[0]
-	}
-
-	// get by index key
-	if indexScan, ok := checkPlan.(*plan.PhysicalIndexScan); ok {
-		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx)
-	}
-
-	// get by primary key
-	if tableScan, ok := checkPlan.(*plan.PhysicalTableScan); ok {
-		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint()
-	}
-
-	return false
-}
-
 // Exec implements the ast.Statement Exec interface.
 // This function builds an Executor from a plan. If the Executor doesn't return result,
 // like the INSERT, UPDATE statements, it executes in this function, if the Executor returns
@@ -126,7 +92,7 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 		// Do not sync transaction for Execute statement, because the real optimization work is done in
 		// "ExecuteExec.Build".
 		var err error
-		if a.isPointGetByPkOrUniqueKeyWithAutoCommit(ctx) {
+		if isPointGetWithPkOrUniqueKeyByAutoCommit(ctx, a.plan) {
 			err = ctx.InitTxnWithStartTS(math.MaxUint64)
 		} else {
 			err = ctx.ActivePendingTxn()
@@ -206,4 +172,40 @@ func (a *statement) logSlowQuery() {
 	} else {
 		log.Warnf("[%d][TIME_QUERY] %v %s", connID, costTime, sql)
 	}
+}
+
+// isPointGetWithPkOrUniqueKeyByAutoCommit returns true when meets following conditions:
+//  1. ctx is auto commit tagged
+//  2. txn is nil
+//  2. plan is point get by pk or unique key
+func isPointGetWithPkOrUniqueKeyByAutoCommit(ctx context.Context, p plan.Plan) bool {
+	// check auto commit
+	if !ctx.GetSessionVars().IsAutocommit() {
+		return false
+	}
+
+	// check txn
+	if ctx.Txn() != nil {
+		return false
+	}
+
+	// check plan
+	if proj, ok := p.(*plan.Projection); ok {
+		if len(proj.Children()) != 1 {
+			return false
+		}
+		p = proj.Children()[0]
+	}
+
+	// get by index key
+	if indexScan, ok := p.(*plan.PhysicalIndexScan); ok {
+		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx)
+	}
+
+	// get by primary key
+	if tableScan, ok := p.(*plan.PhysicalTableScan); ok {
+		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint()
+	}
+
+	return false
 }
