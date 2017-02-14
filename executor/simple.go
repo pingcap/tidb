@@ -58,8 +58,8 @@ func (e *SimpleExec) Next() (*Row, error) {
 	switch x := e.Statement.(type) {
 	case *ast.UseStmt:
 		err = e.executeUse(x)
-	case *ast.FlushTableStmt:
-		err = e.executeFlushTable(x)
+	case *ast.FlushStmt:
+		err = e.executeFlush(x)
 	case *ast.BeginStmt:
 		err = e.executeBegin(x)
 	case *ast.CommitStmt:
@@ -307,7 +307,14 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 	return errors.Trace(err)
 }
 
-func (e *SimpleExec) executeFlushTable(s *ast.FlushTableStmt) error {
-	// TODO: A dummy implement
+func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
+	switch s.Tp {
+	case ast.FlushTables:
+		// TODO: A dummy implement
+	case ast.FlushPrivileges:
+		dom := sessionctx.GetDomain(e.ctx)
+		err := dom.PrivilegeHandle().Update()
+		return errors.Trace(err)
+	}
 	return nil
 }

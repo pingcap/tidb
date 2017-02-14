@@ -233,6 +233,7 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, auth, salt []
 	if !bytes.Equal(auth, checkAuth) {
 		return false
 	}
+	p.User = user + "@" + host
 
 	return true
 }
@@ -446,7 +447,7 @@ func (p *UserPrivileges) loadTableScopePrivileges(ctx context.Context) error {
 // ShowGrants implements privilege.Checker ShowGrants interface.
 func (p *UserPrivileges) ShowGrants(ctx context.Context, user string) ([]string, error) {
 	// If user is current user
-	if user == p.User {
+	if user == p.User && p.privs != nil {
 		return p.privs.ShowGrants(), nil
 	}
 	userp := &UserPrivileges{User: user}

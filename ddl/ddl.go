@@ -69,6 +69,7 @@ var (
 	errErrorOnRename         = terror.ClassDDL.New(codeErrorOnRename, "Error on rename of './%s/%s' to './%s/%s'")
 	errBadField              = terror.ClassDDL.New(codeBadField, "Unknown column '%s' in '%s'")
 	errInvalidDefault        = terror.ClassDDL.New(codeInvalidDefault, "Invalid default value for '%s'")
+	errInvalidUseOfNull      = terror.ClassDDL.New(codeInvalidUseOfNull, "Invalid use of NULL value")
 
 	// ErrInvalidDBState returns for invalid database state.
 	ErrInvalidDBState = terror.ClassDDL.New(codeInvalidDBState, "invalid database state")
@@ -422,6 +423,7 @@ const (
 	codeCantDropFieldOrKey    = 1091
 	codeWrongDBName           = 1102
 	codeWrongTableName        = 1103
+	codeInvalidUseOfNull      = 1138
 	codeBlobKeyWithoutLength  = 1170
 	codeInvalidOnUpdate       = 1294
 )
@@ -444,6 +446,7 @@ func init() {
 		codeErrorOnRename:         mysql.ErrErrorOnRename,
 		codeBadField:              mysql.ErrBadField,
 		codeInvalidDefault:        mysql.ErrInvalidDefault,
+		codeInvalidUseOfNull:      mysql.ErrInvalidUseOfNull,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }
