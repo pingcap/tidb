@@ -41,22 +41,22 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 	defer store.Close()
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
-	sql := "create table t (" +
-		"c_int int," +
-		"c_bigint bigint," +
-		"c_double double," +
-		"c_decimal decimal," +
-		"c_datetime datetime," +
-		"c_time time," +
-		"c_timestamp timestamp," +
-		"c_char char," +
-		"c_varchar varchar(20)," +
-		"c_text text," +
-		"c_binary binary," +
-		"c_varbinary varbinary(20)," +
-		"c_blob blob," +
-		"c_set set('a', 'b', 'c')," +
-		"c_enum enum('a', 'b', 'c'))"
+	sql := `create table t (
+		c_int int,
+		c_bigint bigint,
+		c_double double,
+		c_decimal decimal,
+		c_datetime datetime,
+		c_time time,
+		c_timestamp timestamp,
+		c_char char,
+		c_varchar varchar(20),
+		c_text text,
+		c_binary binary,
+		c_varbinary varbinary(20),
+		c_blob blob,
+		c_set set('a', 'b', 'c'),
+		c_enum enum('a', 'b', 'c'))`
 	testKit.MustExec(sql)
 	cases := []struct {
 		expr string
