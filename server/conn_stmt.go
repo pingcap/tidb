@@ -168,7 +168,7 @@ func (cc *clientConn) handleStmtExecute(data []byte) (err error) {
 		return errors.Trace(err)
 	}
 	if rs == nil {
-		return errors.Trace(cc.writeOK(false))
+		return errors.Trace(cc.writeOK(false, false))
 	}
 
 	return errors.Trace(cc.writeResultset(rs, true, false))
@@ -352,7 +352,7 @@ func (cc *clientConn) handleStmtReset(data []byte) (err error) {
 			strconv.Itoa(stmtID), "stmt_reset")
 	}
 	stmt.Reset()
-	return cc.writeOK(false)
+	return cc.writeOK(false, false)
 }
 
 // See https://dev.mysql.com/doc/internals/en/com-set-option.html
