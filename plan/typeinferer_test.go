@@ -199,7 +199,6 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"greatest(c_enum, c_int)", mysql.TypeString, charset.CharsetBin},
 		{"greatest(c_set, c_int)", mysql.TypeString, charset.CharsetBin},
 		{"greatest(c_enum, c_set)", mysql.TypeString, "utf8"},
-		// TODO: the following two cases get "utf8" charset in TiDB, but binary in MySQL.
 		{"interval(1, 2, 3)", mysql.TypeLonglong, charset.CharsetBin},
 		{"interval(1.0, 2.0, 3.0)", mysql.TypeLonglong, charset.CharsetBin},
 		{"interval('1', '2', '3')", mysql.TypeLonglong, charset.CharsetBin},
