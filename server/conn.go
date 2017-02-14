@@ -292,7 +292,7 @@ func (cc *clientConn) readHandshakeResponse() error {
 	if err = handshakeResponseFromData(&p, data); err != nil {
 		return errors.Trace(err)
 	}
-	cc.capability = p.Capability & defaultCapability
+	cc.capability = p.Capability
 	cc.user = p.User
 	cc.dbname = p.DBName
 	cc.collation = p.Collation
@@ -770,8 +770,11 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 		}
 		row, err = rs.Next()
 	}
-
-	err = cc.writeEOF(more)
+	if cc.capability&mysql.ClientDeprecateEOF > 0 {
+		err = cc.writeOK()
+	} else {
+		err = cc.writeEOF(more)
+	}
 	if err != nil {
 		return errors.Trace(err)
 	}

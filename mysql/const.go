@@ -113,6 +113,8 @@ const (
 	ClientPluginAuth
 	ClientConnectAtts
 	ClientPluginAuthLenencClientData
+
+	ClientDeprecateEOF uint32 = 1 << 24
 )
 
 // Cache type informations.
