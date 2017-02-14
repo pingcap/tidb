@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
@@ -66,6 +67,8 @@ type Session interface {
 	SetConnectionID(uint64)
 	Close() error
 	Auth(user string, auth []byte, salt []byte) bool
+	// Cancel the execution of current transaction.
+	Cancel()
 }
 
 var (
@@ -106,6 +109,19 @@ type session struct {
 	parser    *parser.Parser
 
 	sessionVars *variable.SessionVars
+	canceled    int32
+}
+
+// Cancel cancels the execution of current transaction.
+func (s *session) Cancel() {
+	atomic.StoreInt32(&s.canceled, 1)
+	// TODO: how to wait for the resource to release and make sure
+	// it's not leak?
+}
+
+// Canceled implements context.Context interface.
+func (s *session) Canceled() bool {
+	return atomic.LoadInt32(&s.canceled) != 0
 }
 
 func (s *session) cleanRetryInfo() {

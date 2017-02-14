@@ -61,6 +61,9 @@ func (e *HashAggExec) Next() (*Row, error) {
 	if !e.executed {
 		e.groupMap = make(map[string]bool)
 		for {
+			if e.ctx.Canceled() {
+				return nil, nil
+			}
 			hasMore, err := e.innerNext()
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -182,7 +185,7 @@ func (e *StreamAggExec) Schema() *expression.Schema {
 
 // Next implements the Executor Next interface.
 func (e *StreamAggExec) Next() (*Row, error) {
-	if e.executed {
+	if e.executed || e.Ctx.Canceled() {
 		return nil, nil
 	}
 	retRow := &Row{Data: make([]types.Datum, 0, len(e.AggFuncs))}

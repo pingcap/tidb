@@ -47,6 +47,9 @@ type Context interface {
 	// ActivePendingTxn receives the pending transaction from the transaction channel.
 	// It should be called right before we builds an executor.
 	ActivePendingTxn() error
+
+	// Canceled returns true if the current transaction is canceled.
+	Canceled() bool
 }
 
 type basicCtxType int

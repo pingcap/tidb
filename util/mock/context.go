@@ -124,6 +124,15 @@ func (c *Context) ActivePendingTxn() error {
 	return nil
 }
 
+// Cancel implements the context.Context interface.
+func (c *Context) Cancel() {
+}
+
+// Canceled implements the Session interface.
+func (c *Context) Canceled() bool {
+	return false
+}
+
 // NewContext creates a new mocked context.Context.
 func NewContext() *Context {
 	return &Context{

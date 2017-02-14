@@ -141,6 +141,11 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 			if row == nil {
 				return nil, nil
 			}
+
+			// The transaction is canceled by user manually.
+			if ctx.Canceled() {
+				return nil, nil
+			}
 		}
 	}
 	return &recordSet{

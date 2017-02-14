@@ -14,6 +14,7 @@
 package executor
 
 import (
+	goctx "context"
 	"fmt"
 	"math"
 	"sort"
@@ -392,6 +393,9 @@ func (e *XSelectIndexExec) Next() (*Row, error) {
 	if e.indexPlan.LimitCount != nil && e.returnedRows >= uint64(*e.indexPlan.LimitCount) {
 		return nil, nil
 	}
+	if e.ctx.Canceled() {
+		return nil, nil
+	}
 	e.returnedRows++
 	if e.singleReadMode {
 		return e.nextForSingleRead()
@@ -411,7 +415,7 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 			// The returned rows should be aggregate partial result.
 			e.result.SetFields(e.aggFields)
 		}
-		e.result.Fetch()
+		e.result.Fetch(&ctxForCancel{ctx: e.ctx})
 	}
 	for {
 		// Get partial result.
@@ -421,7 +425,7 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			if e.partialResult == nil {
+			if e.partialResult == nil || e.ctx.Canceled() {
 				// Finished.
 				duration := time.Since(e.execStart)
 				if duration > minLogDuration {
@@ -436,6 +440,9 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 		h, rowData, err := e.partialResult.Next()
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		if e.ctx.Canceled() {
+			return nil, nil
 		}
 		if rowData == nil {
 			// Finish current partial result and get the next one.
@@ -479,13 +486,14 @@ func (e *XSelectIndexExec) nextForDoubleRead() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		idxResult.IgnoreData()
-		idxResult.Fetch()
+		ctx := &ctxForCancel{ctx: e.ctx}
+		idxResult.Fetch(ctx)
 
 		// Use a background goroutine to fetch index and put the result in e.taskChan.
 		// e.taskChan serves as a pipeline, so fetching index and getting table data can
 		// run concurrently.
 		e.taskChan = make(chan *lookupTableTask, 50)
-		go e.fetchHandles(idxResult, e.taskChan)
+		go e.fetchHandles(ctx, idxResult, e.taskChan)
 	}
 
 	for {
@@ -527,7 +535,7 @@ func addWorker(e *XSelectIndexExec, ch chan *lookupTableTask, concurrency *int) 
 	}
 }
 
-func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<- *lookupTableTask) {
+func (e *XSelectIndexExec) fetchHandles(ctx goctx.Context, idxResult distsql.SelectResult, ch chan<- *lookupTableTask) {
 	defer close(ch)
 
 	workCh := make(chan *lookupTableTask, 1)
@@ -538,7 +546,7 @@ func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<
 
 	for {
 		handles, finish, err := extractHandlesFromIndexResult(idxResult)
-		if err != nil || finish {
+		if err != nil || finish || e.ctx.Canceled() {
 			e.tasksErr = errors.Trace(err)
 			return
 		}
@@ -550,6 +558,8 @@ func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<
 			}
 
 			select {
+			case <-ctx.Done():
+				return
 			case workCh <- task:
 			default:
 				addWorker(e, workCh, &concurrency)
@@ -688,7 +698,7 @@ func (e *XSelectIndexExec) extractRowsFromTableResult(t table.Table, tblResult d
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if partialResult == nil {
+		if partialResult == nil || e.ctx.Canceled() {
 			break
 		}
 		subRows, err := e.extractRowsFromPartialResult(t, partialResult)
@@ -707,7 +717,7 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if rowData == nil {
+		if rowData == nil || e.ctx.Canceled() {
 			break
 		}
 		row := resultRowToRow(t, h, rowData, e.indexPlan.TableAsName)
@@ -743,7 +753,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 		// The returned rows should be aggregate partial result.
 		resp.SetFields(e.aggFields)
 	}
-	resp.Fetch()
+	resp.Fetch(&ctxForCancel{ctx: e.ctx})
 	return resp, nil
 }
 
@@ -827,7 +837,7 @@ func (e *XSelectTableExec) doRequest() error {
 		// The returned rows should be aggregate partial result.
 		e.result.SetFields(e.aggFields)
 	}
-	e.result.Fetch()
+	e.result.Fetch(&ctxForCancel{ctx: e.ctx})
 	return nil
 }
 
@@ -914,4 +924,33 @@ func statementContextToFlags(sc *variable.StatementContext) uint64 {
 		flags |= xeval.FlagTruncateAsWarning
 	}
 	return flags
+}
+
+// ctxForCancel implements the standard Go context, provide Done() method.
+type ctxForCancel struct {
+	ctx context.Context
+	ch  chan struct{}
+}
+
+func (ctx *ctxForCancel) Done() <-chan struct{} {
+	if ctx.ctx.Canceled() {
+		// NOTE: Not thread safe, but it should work.
+		ctx.ch = make(chan struct{})
+		close(ctx.ch)
+	}
+	// Receive from a nil channel blocks forever.
+	return ctx.ch
+}
+
+func (ctx *ctxForCancel) Deadline() (deadline time.Time, ok bool) {
+	ok = false
+	return
+}
+
+func (ctx *ctxForCancel) Err() error {
+	return nil
+}
+
+func (ctx *ctxForCancel) Value(key interface{}) interface{} {
+	return nil
 }

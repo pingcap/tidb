@@ -14,6 +14,7 @@
 package distsql
 
 import (
+	"context"
 	"io"
 	"io/ioutil"
 	"time"
@@ -49,7 +50,7 @@ type SelectResult interface {
 	Close() error
 	// Fetch fetches partial results from client.
 	// The caller should call SetFields() before call Fetch().
-	Fetch()
+	Fetch(ctx context.Context)
 	// IgnoreData sets ignore data attr to true.
 	// For index double scan, we do not need row data when scanning index.
 	IgnoreData()
@@ -81,11 +82,11 @@ type resultWithErr struct {
 	err    error
 }
 
-func (r *selectResult) Fetch() {
-	go r.fetch()
+func (r *selectResult) Fetch(ctx context.Context) {
+	go r.fetch(ctx)
 }
 
-func (r *selectResult) fetch() {
+func (r *selectResult) fetch(ctx context.Context) {
 	startTime := time.Now()
 	defer func() {
 		close(r.results)
@@ -121,6 +122,8 @@ func (r *selectResult) fetch() {
 		case r.results <- resultWithErr{result: pr}:
 		case <-r.closed:
 			// if selectResult called Close() already, make fetch goroutine exit
+			return
+		case <-ctx.Done():
 			return
 		}
 	}
