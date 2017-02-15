@@ -490,7 +490,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 		SQLText: sql,
 	}
 	prepareExec.DoPrepare()
-	return prepareExec.ID, prepareExec.ParamCount, nil, prepareExec.Err
+	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, prepareExec.Err
 }
 
 // checkArgs makes sure all the arguments' types are known and can be handled.

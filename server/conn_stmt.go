@@ -77,9 +77,10 @@ func (cc *clientConn) handleStmtPrepare(sql string) error {
 				return errors.Trace(err)
 			}
 		}
-
-		if err := cc.writeEOF(false); err != nil {
-			return errors.Trace(err)
+		if cc.capability&mysql.ClientDeprecateEOF == 0 {
+			if err := cc.writeEOF(false); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 
@@ -93,8 +94,10 @@ func (cc *clientConn) handleStmtPrepare(sql string) error {
 			}
 		}
 
-		if err := cc.writeEOF(false); err != nil {
-			return errors.Trace(err)
+		if cc.capability&mysql.ClientDeprecateEOF == 0 {
+			if err := cc.writeEOF(false); err != nil {
+				return errors.Trace(err)
+			}
 		}
 
 	}
