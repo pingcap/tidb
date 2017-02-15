@@ -81,8 +81,9 @@ func (s *testSessionSuite) TestPrepare(c *C) {
 	mustExecSQL(c, se, s.createTableSQL)
 	// insert data
 	mustExecSQL(c, se, `INSERT INTO t VALUES ("id");`)
-	id, ps, _, err := se.PrepareStmt("select id+? from t")
+	id, ps, fields, err := se.PrepareStmt("select id+? from t")
 	c.Assert(err, IsNil)
+	c.Assert(fields, HasLen, 1)
 	c.Assert(id, Equals, uint32(1))
 	c.Assert(ps, Equals, 1)
 	mustExecSQL(c, se, `set @a=1`)

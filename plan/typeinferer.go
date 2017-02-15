@@ -195,7 +195,7 @@ func (v *typeInferrer) binaryOperation(x *ast.BinaryOperationExpr) {
 // toArithType converts DateTime, Duration and Timestamp types to NewDecimal type if Decimal > 0.
 func toArithType(ft *types.FieldType) (tp byte) {
 	tp = ft.Tp
-	if types.IsTypeTime(tp) {
+	if types.IsTypeFractionable(tp) {
 		if ft.Decimal > 0 {
 			tp = mysql.TypeNewDecimal
 		} else {
@@ -219,6 +219,41 @@ func mergeArithType(fta, ftb *types.FieldType) byte {
 		return mysql.TypeNewDecimal
 	}
 	return mysql.TypeLonglong
+}
+
+func mergeCmpType(fta, ftb *types.FieldType) (ft *types.FieldType) {
+	ft = &types.FieldType{}
+	if fta.Charset == charset.CharsetUTF8 && ftb.Charset == charset.CharsetUTF8 {
+		ft.Charset = charset.CharsetUTF8
+		ft.Collate = mysql.UTF8DefaultCollation
+	} else {
+		ft.Flag |= mysql.BinaryFlag
+	}
+	isFtaTime, isFtbTime := types.IsTypeFractionable(fta.Tp), types.IsTypeFractionable(ftb.Tp)
+	if types.IsTypeBlob(fta.Tp) || types.IsTypeBlob(ftb.Tp) {
+		ft.Tp = mysql.TypeBlob
+	} else if types.IsTypeVarchar(fta.Tp) || types.IsTypeVarchar(ftb.Tp) {
+		ft.Tp = mysql.TypeVarString
+	} else if types.IsTypeChar(fta.Tp) || types.IsTypeChar(ftb.Tp) {
+		ft.Tp = mysql.TypeString
+	} else if isFtaTime && isFtbTime {
+		ft.Tp = mysql.TypeDatetime
+	} else if isFtaTime || isFtbTime {
+		ft.Tp = mysql.TypeVarString
+	} else if fta.Tp == mysql.TypeEnum || ftb.Tp == mysql.TypeEnum || fta.Tp == mysql.TypeSet || ftb.Tp == mysql.TypeSet {
+		ft.Tp = mysql.TypeString
+	} else if fta.Tp == mysql.TypeDouble || ftb.Tp == mysql.TypeDouble {
+		ft.Tp = mysql.TypeDouble
+	} else if fta.Tp == mysql.TypeFloat || ftb.Tp == mysql.TypeFloat {
+		ft.Tp = mysql.TypeFloat
+	} else if fta.Tp == mysql.TypeNewDecimal || ftb.Tp == mysql.TypeNewDecimal {
+		ft.Tp = mysql.TypeNewDecimal
+	} else if fta.Tp == mysql.TypeLonglong || ftb.Tp == mysql.TypeLonglong {
+		ft.Tp = mysql.TypeLonglong
+	} else {
+		ft.Tp = mysql.TypeLong
+	}
+	return ft
 }
 
 func (v *typeInferrer) unaryOperation(x *ast.UnaryOperationExpr) {
@@ -293,7 +328,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		if len(x.Args) > 0 {
 			tp = x.Args[0].GetType()
 			for i := 1; i < len(x.Args); i++ {
-				mergeArithType(tp, x.Args[i].GetType())
+				tp = mergeCmpType(tp, x.Args[i].GetType())
 			}
 		}
 	case "interval":
