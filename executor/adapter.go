@@ -93,8 +93,10 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 		// "ExecuteExec.Build".
 		var err error
 		if isPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.plan) {
+			log.Debugf("[%d][InitTxnWithStartTS] %s", ctx.GetSessionVars().ConnectionID, a.text)
 			err = ctx.InitTxnWithStartTS(math.MaxUint64)
 		} else {
+			log.Debugf("[%d][ActivePendingTxn] %s", ctx.GetSessionVars().ConnectionID, a.text)
 			err = ctx.ActivePendingTxn()
 		}
 		if err != nil {
