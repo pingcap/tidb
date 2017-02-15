@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"math"
 	"sort"
 
 	"github.com/juju/errors"
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"math"
 )
 
 var (
@@ -235,7 +235,7 @@ func (e *ExecuteExec) Build() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if isPointGetWithPkOrUniqueKeyByAutoCommit(e.Ctx, p) {
+	if isPointGetWithPKOrUniqueKeyByAutoCommit(e.Ctx, p) {
 		err = e.Ctx.InitTxnWithStartTS(math.MaxUint64)
 	} else {
 		err = e.Ctx.ActivePendingTxn()
