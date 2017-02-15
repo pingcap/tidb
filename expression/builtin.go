@@ -287,5 +287,5 @@ var funcs = map[string]functionClass{
 
 	// encryption and compression functions
 	ast.AesDecrypt: &aesDecryptFunctionClass{baseFunctionClass{ast.AesDecrypt, 2, 3}},
-	ast.AesEncrypt: &aesEncryptFunctionClass{baseFunctionClass{ast.AesDecrypt, 2, 3}},
+	ast.AesEncrypt: &aesEncryptFunctionClass{baseFunctionClass{ast.AesEncrypt, 2, 3}},
 }
