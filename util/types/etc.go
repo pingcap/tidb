@@ -41,23 +41,13 @@ func IsTypeBlob(tp byte) bool {
 // IsTypeChar returns a boolean indicating
 // whether the tp is the char type like a string type or a varchar type.
 func IsTypeChar(tp byte) bool {
-	switch tp {
-	case mysql.TypeString, mysql.TypeVarchar:
-		return true
-	default:
-		return false
-	}
+	return tp == mysql.TypeString || tp == mysql.TypeVarchar
 }
 
-// IsTypeTime returns a boolean indicating
-// whether the tp is the time type like a datetime type, a duration type, or a timestamp type.
-func IsTypeTime(tp byte) bool {
-	switch tp {
-	case mysql.TypeDatetime, mysql.TypeDuration, mysql.TypeTimestamp:
-		return true
-	default:
-		return false
-	}
+// IsTypeVarchar returns a boolean indicating
+// whether the tp is the varchar type like a varstring type or a varchar type.
+func IsTypeVarchar(tp byte) bool {
+	return tp == mysql.TypeVarString || tp == mysql.TypeVarchar
 }
 
 // IsTypePrefixable returns a boolean indicating
