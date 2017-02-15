@@ -89,9 +89,6 @@ func (e *SortExec) Less(i, j int) bool {
 func (e *SortExec) Next() (*Row, error) {
 	if !e.fetched {
 		for {
-			if e.ctx.Canceled() {
-				return nil, nil
-			}
 			srcRow, err := e.Src.Next()
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -192,9 +189,6 @@ func (e *TopnExec) Next() (*Row, error) {
 			}
 			if srcRow == nil {
 				break
-			}
-			if e.ctx.Canceled() {
-				return nil, nil
 			}
 			// build orderRow from srcRow.
 			orderRow := &orderByRow{

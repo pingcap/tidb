@@ -124,13 +124,13 @@ func (c *Context) ActivePendingTxn() error {
 	return nil
 }
 
-// Cancel implements the context.Context interface.
+// Cancel implements the Session interface.
 func (c *Context) Cancel() {
 }
 
-// Canceled implements the Session interface.
-func (c *Context) Canceled() bool {
-	return false
+// Done implements the context.Context interface.
+func (c *Context) Done() <-chan struct{} {
+	return nil
 }
 
 // NewContext creates a new mocked context.Context.

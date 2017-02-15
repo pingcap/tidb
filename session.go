@@ -18,11 +18,11 @@
 package tidb
 
 import (
+	goctx "context"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
@@ -96,8 +96,12 @@ func (h *stmtHistory) add(stmtID uint32, st ast.Statement, params ...interface{}
 }
 
 type session struct {
-	txn    kv.Transaction // current transaction
-	txnCh  chan *txnWithErr
+	txn   kv.Transaction // current transaction
+	txnCh chan *txnWithErr
+	// For cancel the execution of current transaction.
+	txnCtx        goctx.Context
+	txnCancelFunc goctx.CancelFunc
+
 	values map[fmt.Stringer]interface{}
 	store  kv.Storage
 
@@ -109,19 +113,18 @@ type session struct {
 	parser    *parser.Parser
 
 	sessionVars *variable.SessionVars
-	canceled    int32
 }
 
 // Cancel cancels the execution of current transaction.
 func (s *session) Cancel() {
-	atomic.StoreInt32(&s.canceled, 1)
 	// TODO: how to wait for the resource to release and make sure
 	// it's not leak?
+	s.txnCancelFunc()
 }
 
 // Canceled implements context.Context interface.
-func (s *session) Canceled() bool {
-	return atomic.LoadInt32(&s.canceled) != 0
+func (s *session) Done() <-chan struct{} {
+	return s.txnCtx.Done()
 }
 
 func (s *session) cleanRetryInfo() {
@@ -895,7 +898,8 @@ func (s *session) prepareTxnCtx() {
 		txn, err := s.store.Begin()
 		txnCh <- &txnWithErr{txn: txn, err: err}
 	}()
-	s.txnCh = txnCh
+	txnCtx, txnCancelFunc := goctx.WithCancel(goctx.Background())
+	s.txnCh, s.txnCtx, s.txnCancelFunc = txnCh, txnCtx, txnCancelFunc
 	is := sessionctx.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		InfoSchema:    is,

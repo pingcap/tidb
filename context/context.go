@@ -15,6 +15,7 @@ package context
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -48,8 +49,29 @@ type Context interface {
 	// It should be called right before we builds an executor.
 	ActivePendingTxn() error
 
-	// Canceled returns true if the current transaction is canceled.
-	Canceled() bool
+	// Done returns a channel for cancelation, the same as standard context.Context.
+	// See https://godoc.org/context for more examples of how to use it.
+	Done() <-chan struct{}
+}
+
+// CtxForCancel implements the standard Go context.Context interface.
+type CtxForCancel struct {
+	Context
+}
+
+// Value implements the standard Go context.Context interface.
+func (ctx CtxForCancel) Value(interface{}) interface{} {
+	return nil
+}
+
+// Deadline implements the standard Go context.Context interface.
+func (ctx CtxForCancel) Deadline() (deadline time.Time, ok bool) {
+	return
+}
+
+// Err implements the standard Go context.Context interface.
+func (ctx CtxForCancel) Err() error {
+	return nil
 }
 
 type basicCtxType int

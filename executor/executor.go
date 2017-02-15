@@ -121,7 +121,7 @@ func (e *ShowDDLExec) Schema() *expression.Schema {
 
 // Next implements the Executor Next interface.
 func (e *ShowDDLExec) Next() (*Row, error) {
-	if e.done || e.ctx.Canceled() {
+	if e.done {
 		return nil, nil
 	}
 	var ddlOwner, ddlJob string
@@ -176,7 +176,7 @@ func (e *CheckTableExec) Schema() *expression.Schema {
 
 // Next implements the Executor Next interface.
 func (e *CheckTableExec) Next() (*Row, error) {
-	if e.done || e.ctx.Canceled() {
+	if e.done {
 		return nil, nil
 	}
 
@@ -225,9 +225,6 @@ func (e *SelectLockExec) Schema() *expression.Schema {
 
 // Next implements the Executor Next interface.
 func (e *SelectLockExec) Next() (*Row, error) {
-	if e.ctx.Canceled() {
-		return nil, nil
-	}
 	row, err := e.Src.Next()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -395,10 +392,6 @@ func (e *ProjectionExec) Schema() *expression.Schema {
 
 // Next implements the Executor Next interface.
 func (e *ProjectionExec) Next() (retRow *Row, err error) {
-	if e.ctx.Canceled() {
-		return nil, nil
-	}
-
 	var rowKeys []*RowKeyEntry
 	var srcRow *Row
 	if e.Src != nil {
@@ -489,7 +482,7 @@ func (e *SelectionExec) Next() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if srcRow == nil || e.ctx.Canceled() {
+		if srcRow == nil {
 			return nil, nil
 		}
 		match, err := expression.EvalBool(e.Condition, srcRow.Data, e.ctx)
@@ -535,7 +528,7 @@ func (e *TableScanExec) Next() (*Row, error) {
 		return e.nextForInfoSchema()
 	}
 	for {
-		if e.cursor >= len(e.ranges) || e.ctx.Canceled() {
+		if e.cursor >= len(e.ranges) {
 			return nil, nil
 		}
 		ran := e.ranges[e.cursor]
@@ -791,7 +784,7 @@ func (e *UnionExec) fetchData(idx int) {
 			err:  nil,
 		}
 		for i := 0; i < batchSize; i++ {
-			if e.finished.Load().(bool) || e.ctx.Canceled() {
+			if e.finished.Load().(bool) {
 				return
 			}
 			row, err := e.Srcs[idx].Next()
@@ -840,7 +833,7 @@ func (e *UnionExec) Next() (*Row, error) {
 	}
 	if e.cursor >= len(e.rows) {
 		result, ok := <-e.resultCh
-		if !ok || e.ctx.Canceled() {
+		if !ok {
 			return nil, nil
 		}
 		if result.err != nil {
