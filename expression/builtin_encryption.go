@@ -114,11 +114,11 @@ func (b *builtinAesEncryptSig) eval(row []types.Datum) (d types.Datum, err error
 	return
 }
 
+// Transforms an arbitrary long key into a fixed length AES key.
 func handleAESKey(key []byte, mode string) []byte {
 	// TODO: get key size according to mode
 	keySize := 16
 	rKey := make([]byte, keySize)
-
 	rIdx := 0
 	for _, k := range key {
 		if rIdx == keySize {
