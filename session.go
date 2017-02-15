@@ -462,9 +462,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		r, err := runStmt(s, st)
 		ph.EndStatement(s.stmtState)
 		if err != nil {
-			if terror.ErrorEqual(err, kv.ErrKeyExists) {
-				log.Debugf("[%d] session error:\n%v\n%s", connID, errors.ErrorStack(err), s)
-			} else {
+			if !terror.ErrorEqual(err, kv.ErrKeyExists) {
 				log.Warnf("[%d] session error:\n%v\n%s", connID, errors.ErrorStack(err), s)
 			}
 			return nil, errors.Trace(err)
