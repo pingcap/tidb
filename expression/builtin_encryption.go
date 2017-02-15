@@ -30,6 +30,11 @@ var (
 	_ builtinFunc = &builtinAesEncryptSig{}
 )
 
+// TODO: support other mode
+const (
+	aes128ecb string = "aes-128-ecb"
+)
+
 type aesDecryptFunctionClass struct {
 	baseFunctionClass
 }
@@ -57,21 +62,16 @@ func (b *builtinAesDecryptSig) eval(row []types.Datum) (d types.Datum, err error
 			return
 		}
 	}
-	key := args[1].GetBytes()
-	if !(len(key) == 16 || len(key) == 24 || len(key) == 32) {
-		// The key argument should be the AES key, either 16, 24, or 32 bytes to select AES-128, AES-192, or AES-256.
-		// If AES_DECRYPT() detects invalid data or incorrect padding, it returns NULL.
-		// However, it is possible for AES_DECRYPT() to return a non-NULL value (possibly garbage) if the input data or the key is invalid.
-		return
-	}
 	cryptStr := args[0].GetBytes()
+	key := args[1].GetBytes()
+	key = handleAESKey(key, aes128ecb)
 	// By default these functions implement AES with a 128-bit key length.
 	// TODO: We only support aes-128-ecb now. We should support other mode latter.
 	data, err := encrypt.AESDecryptWithECB(cryptStr, key)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	d.SetBytes(data)
+	d.SetString(string(data))
 	return
 }
 
@@ -105,13 +105,27 @@ func (b *builtinAesEncryptSig) eval(row []types.Datum) (d types.Datum, err error
 	}
 	str := args[0].GetBytes()
 	key := args[1].GetBytes()
-	// TOOD:
-	// MySQL support key with other length, but we still do not know how MySQL handle those case.
-	// We will hanlde those cases latter.
+	key = handleAESKey(key, aes128ecb)
 	crypted, err := encrypt.AESEncryptWithECB(str, key)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	d.SetBytes(crypted)
+	d.SetString(string(crypted))
 	return
+}
+
+func handleAESKey(key []byte, mode string) []byte {
+	// TODO: get key size according to mode
+	keySize := 16
+	rKey := make([]byte, keySize)
+
+	rIdx := 0
+	for _, k := range key {
+		if rIdx == keySize {
+			rIdx = 0
+		}
+		rKey[rIdx] ^= k
+		rIdx++
+	}
+	return rKey
 }

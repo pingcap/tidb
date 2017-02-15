@@ -34,7 +34,8 @@ func (s *testEvaluatorSuite) TestAESEncrypt(c *C) {
 	}{
 		{"pingcap", "1234567890123456", "697BFE9B3F8C2F289DD82C88C7BC95C4"},
 		{"pingcap123", "1234567890123456", "CEC348F4EF5F84D3AA6C4FA184C65766"},
-		{"pingcap", "123456789012345678901234", "E435438AC6798B4718533096436EC342"},
+		{"pingcap", "123456789012345678901234", "6F1589686860C8E8C7A40A78B25FF2C0"},
+		{"pingcap", "123", "996E0CA8688D7AD20819B90B273E01C6"},
 	}
 	for _, test := range tests {
 		fc := funcs[ast.AesEncrypt]
@@ -71,7 +72,8 @@ func (s *testEvaluatorSuite) TestAESDecrypt(c *C) {
 	}{
 		{"pingcap", "1234567890123456", "697BFE9B3F8C2F289DD82C88C7BC95C4"},
 		{"pingcap123", "1234567890123456", "CEC348F4EF5F84D3AA6C4FA184C65766"},
-		{"pingcap", "123456789012345678901234", "E435438AC6798B4718533096436EC342"},
+		{"pingcap", "123456789012345678901234", "6F1589686860C8E8C7A40A78B25FF2C0"},
+		{"pingcap", "123", "996E0CA8688D7AD20819B90B273E01C6"},
 	}
 	for _, test := range tests {
 		cryptStr := fromHex(test.hexCryptStr)
@@ -90,12 +92,6 @@ func (s *testEvaluatorSuite) TestAESDecrypt(c *C) {
 	c.Assert(crypt.IsNull(), IsTrue)
 
 	f, err = fc.getFunction(datumsToConstants([]types.Datum{argNull, arg}), s.ctx)
-	crypt, err = f.eval(nil)
-	c.Assert(err, IsNil)
-	c.Assert(crypt.IsNull(), IsTrue)
-
-	// For invalid key length, we also get null
-	f, err = fc.getFunction(datumsToConstants([]types.Datum{arg, arg}), s.ctx)
 	crypt, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(crypt.IsNull(), IsTrue)
