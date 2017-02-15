@@ -218,7 +218,6 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 	if col.Tp == mysql.TypeTimestamp {
 		col.Flag |= mysql.TimestampFlag
 		col.Flag |= mysql.OnUpdateNowFlag
-		col.Flag |= mysql.NotNullFlag
 	}
 
 	setOnUpdateNow := false
