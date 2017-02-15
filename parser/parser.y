@@ -881,7 +881,7 @@ AlterTableSpec:
 			NewColumn: 	$4.(*ast.ColumnDef),
 		}
 	}
-|	"ALTER" "COLUMN" ColumnName "SET" "DEFAULT" SignedLiteral
+|	"ALTER" ColumnKeywordOpt ColumnName "SET" "DEFAULT" SignedLiteral
 	{
 		option := &ast.ColumnOption{Expr: $6.(ast.ExprNode)}
 		$$ = &ast.AlterTableSpec{
@@ -892,7 +892,7 @@ AlterTableSpec:
 			},
 		}
 	}
-|	"ALTER" "COLUMN" ColumnName "DROP" "DEFAULT"
+|	"ALTER" ColumnKeywordOpt ColumnName "DROP" "DEFAULT"
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp:		ast.AlterTableAlterColumn,
