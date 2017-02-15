@@ -17,7 +17,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/ngaut/log"
 )
 
 // extractCorColumnsBySchema only extracts the correlated columns that match the outer plan's schema.
@@ -93,7 +92,6 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 			apply.SetChildren(outerPlan, innerPlan)
 			innerPlan.SetParents(apply)
 			if apply.JoinType != SemiJoin && apply.JoinType != LeftOuterSemiJoin {
-				log.Warnf("add proj")
 				proj.SetSchema(apply.Schema())
 				proj.Exprs = append(expression.Column2Exprs(outerPlan.Schema().Clone().Columns), proj.Exprs...)
 				apply.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
@@ -111,7 +109,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 	for _, child := range p.Children() {
 		np, _ := s.optimize(child.(LogicalPlan), nil, nil)
 		newChildren = append(newChildren, np)
-		child.SetParents(p)
+		np.SetParents(p)
 	}
 	p.SetChildren(newChildren...)
 	return p, nil

@@ -34,8 +34,8 @@ func (ki KeyInfo) Clone() KeyInfo {
 
 // Schema stands for the row schema and unique key information get from input.
 type Schema struct {
-	Columns []*Column
-	Keys    []KeyInfo
+	Columns   []*Column
+	Keys      []KeyInfo
 	MaxOneRow bool
 }
 
