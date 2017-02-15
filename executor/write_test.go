@@ -125,6 +125,10 @@ func (s *testSuite) TestInsert(c *C) {
 	c.Assert(types.ErrDataTooLong.Equal(err), IsTrue)
 	_, err = tk.Exec("insert insert_err values (1, '你好，世界')")
 	c.Assert(err, IsNil)
+
+	tk.MustExec("create table TEST1 (ID INT NOT NULL, VALUE INT DEFAULT NULL, PRIMARY KEY (ID))")
+	_, err = tk.Exec("INSERT INTO TEST1(id,value) VALUE(3,3) on DUPLICATE KEY UPDATE VALUE=4")
+	c.Assert(err, IsNil)
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {
