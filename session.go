@@ -830,7 +830,10 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	}
 	// Set the variable to true to prevent cyclic recursive call.
 	vars.CommonGlobalLoaded = true
+	save := privilege.GetPrivilegeChecker(s)
+	privilege.BindPrivilegeChecker(s, nil)
 	rs, err := s.ExecRestrictedSQL(s, loadCommonGlobalVarsSQL)
+	privilege.BindPrivilegeChecker(s, save)
 	if err != nil {
 		vars.CommonGlobalLoaded = false
 		log.Errorf("Failed to load common global variables.")
