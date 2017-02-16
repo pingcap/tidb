@@ -669,6 +669,7 @@ import (
 	WhenClause		"When clause"
 	WhenClauseList		"When clause list"
 	WithReadLockOpt		"With Read Lock opt"
+	WithGrantOptionOpt	"With Grant Option opt"
 	ElseOpt			"Optional else clause"
 	ExpressionOpt		"Optional expression"
 	Type			"Types"
@@ -5525,15 +5526,25 @@ HashString:
  * See https://dev.mysql.com/doc/refman/5.7/en/grant.html
  *************************************************************************************/
 GrantStmt:
-	 "GRANT" PrivElemList "ON" ObjectType PrivLevel "TO" UserSpecList
+	 "GRANT" PrivElemList "ON" ObjectType PrivLevel "TO" UserSpecList WithGrantOptionOpt
 	 {
 		$$ = &ast.GrantStmt{
 			Privs: $2.([]*ast.PrivElem),
 			ObjectType: $4.(ast.ObjectTypeType),
 			Level: $5.(*ast.GrantLevel),
 			Users: $7.([]*ast.UserSpec),
+			WithGrant: $8.(bool),
 		}
 	 }
+
+WithGrantOptionOpt:
+	{
+		$$ = false
+	}
+|	"WITH" "GRANT" "OPTION"
+	{
+		$$ = true
+	}
 
 PrivElem:
 	PrivType
