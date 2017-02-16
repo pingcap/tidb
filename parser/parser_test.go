@@ -683,6 +683,14 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT FIELD('ej', 'Hej', 'ej', 'Heja', 'hej', 'foo');`, true},
 		{`SELECT FIND_IN_SET('foo', 'foo,bar')`, true},
 		{`SELECT FIND_IN_SET('foo')`, false},
+		{`SELECT BIN(12)`, true},
+		{`SELECT ELT(1, 'ej', 'Heja', 'hej', 'foo')`, true},
+		{`SELECT EXPORT_SET(5,'Y','N'), EXPORT_SET(5,'Y','N',','), EXPORT_SET(5,'Y','N',',',4)`, true},
+		{`SELECT FORMAT(12332.2,2,'de_DE'), FORMAT(12332.123456, 4)`, true},
+		{`SELECT FROM_BASE64('abc')`, true},
+		{`SELECT INSERT('Quadratic', 3, 4, 'What'), INSTR('foobarbar', 'bar')`, true},
+		{`SELECT LOAD_FILE('/tmp/picture')`, true},
+		{`SELECT LPAD('hi',4,'??')`, true},
 
 		// repeat
 		{`SELECT REPEAT("a", 10);`, true},
@@ -1050,10 +1058,12 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE db.t RENAME to db1.t1", true},
 		{"ALTER TABLE t RENAME as t1", true},
 		{"ALTER TABLE t ALTER COLUMN a SET DEFAULT 1", true},
+		{"ALTER TABLE t ALTER a SET DEFAULT 1", true},
 		{"ALTER TABLE t ALTER COLUMN a SET DEFAULT CURRENT_TIMESTAMP", false},
 		{"ALTER TABLE t ALTER COLUMN a SET DEFAULT NOW()", false},
 		{"ALTER TABLE t ALTER COLUMN a SET DEFAULT 1+1", false},
 		{"ALTER TABLE t ALTER COLUMN a DROP DEFAULT", true},
+		{"ALTER TABLE t ALTER a DROP DEFAULT", true},
 
 		// for rename table statement
 		{"RENAME TABLE t TO t1", true},
