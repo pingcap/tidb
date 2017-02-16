@@ -215,10 +215,14 @@ import (
 
 	/* the following tokens belong to NotKeywordToken*/
 	abs		"ABS"
+	acos		"ACOS"
 	addDate		"ADDDATE"
 	admin		"ADMIN"
 	aesDecrypt	"AES_DECRYPT"
 	aesEncrypt	"AES_ENCRYPT"
+	asin		"ASIN"
+	atan		"ATAN"
+	atan2		"ATAN2"
 	bin		"BIN"
 	ceil		"CEIL"
 	ceiling		"CEILING"
@@ -227,6 +231,8 @@ import (
 	concatWs	"CONCAT_WS"
 	connectionID 	"CONNECTION_ID"
 	curTime 	"CUR_TIME"
+	cos		"COS"
+	cot		"COT"
 	count		"COUNT"
 	day		"DAY"
 	datediff	"DATEDIFF"
@@ -237,8 +243,10 @@ import (
 	dayofmonth	"DAYOFMONTH"
 	dayofweek	"DAYOFWEEK"
 	dayofyear	"DAYOFYEAR"
+	degrees		"DEGREES"
 	fromDays	"FROM_DAYS"
 	events		"EVENTS"
+	exp		"EXP"
 	elt		"ELT"
 	exportSet	"EXPORT_SET"
 	fieldKwd	"FIELD_KWD"
@@ -279,11 +287,14 @@ import (
 	month		"MONTH"
 	monthname	"MONTHNAME"
 	now		"NOW"
+	pi		"PI"
 	pow 		"POW"
 	power 		"POWER"
 	rand		"RAND"
+	radians		"RADIANS"
 	second		"SECOND"
 	sign		"SIGN"
+	sin		"SIN"
 	sleep		"SLEEP"
 	sqrt 		"SQRT"
 	calcFoundRows	"SQL_CALC_FOUND_ROWS"
@@ -294,6 +305,7 @@ import (
 	substringIndex	"SUBSTRING_INDEX"
 	sum		"SUM"
 	sysDate		"SYSDATE"
+	tan		"TAN"
 	timediff	"TIMEDIFF"
 	trim		"TRIM"
 	rtrim 		"RTRIM"
@@ -2177,12 +2189,12 @@ ReservedKeyword:
 
 
 NotKeywordToken:
-	"ABS" | "ADDDATE" | "ADMIN" | "BIN"| "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
-|	"DATEDIFF" | "DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "ELT" | "EXPORT_SET" | "FROM_DAYS" | "FROM_BASE64" | "FIND_IN_SET" | "FOUND_ROWS"
+	"ABS" | "ACOS" | "ADDDATE" | "ADMIN" | "ASIN" | "ATAN" | "ATAN2" | "BIN"| "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME" | "COS" | "COT" | "COUNT" | "DAY"
+|	"DATEDIFF" | "DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "DEGREES" | "ELT" | "EXP" | "EXPORT_SET" | "FROM_DAYS" | "FROM_BASE64" | "FIND_IN_SET" | "FOUND_ROWS"
 |	"GROUP_CONCAT"| "GREATEST" | "LEAST" | "HOUR" | "HEX" | "UNHEX" | "IFNULL" | "INSTR" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOAD_FILE" | "LOCATE" | "LOWER" | "LPAD" | "LTRIM"
-|	"MAX" | "MICROSECOND" | "MIN" |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" | "POW" | "POWER" | "RAND"
-	"SECOND" | "SIGN" | "SLEEP" | "SQRT" | "SQL_CALC_FOUND_ROWS" | "STR_TO_DATE" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen |
-"SUBSTRING_INDEX" | "SUM" | "TRIM" | "RTRIM" | "UCASE" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
+|	"MAX" | "MICROSECOND" | "MIN" |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" | "PI" | "POW" | "POWER" | "RAND" | "RADIANS" |
+	"SECOND" | "SIGN" | "SIN" | "SLEEP" | "SQRT" | "SQL_CALC_FOUND_ROWS" | "STR_TO_DATE" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen |
+"SUBSTRING_INDEX" | "SUM" | "TAN" | "TRIM" | "RTRIM" | "UCASE" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
 |	"STATS_PERSISTENT" | "GET_LOCK" | "RELEASE_LOCK" | "CEIL" | "CEILING" | "FLOOR" | "FROM_UNIXTIME" | "TIMEDIFF" | "LN" | "LOG" | "LOG2" | "LOG10" | "FIELD_KWD"
 |	"AES_DECRYPT" | "AES_ENCRYPT"
 
@@ -2679,6 +2691,10 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
+|	"ACOS" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
 |	"AES_DECRYPT" '(' ExpressionList ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
@@ -2687,6 +2703,22 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
+|	"ASIN" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
+|	"ATAN" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
+|	"ATAN" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
+|	"ATAN2" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
 |	"BIN" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
@@ -2694,6 +2726,14 @@ FunctionCallNonKeyword:
 |	"COALESCE" '(' ExpressionList ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+	}
+|	"COS" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
+|	"COT" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"CURDATE" '(' ')'
 	{
@@ -2766,10 +2806,18 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
+|	"DEGREES" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
 |	"ELT" '(' ExpressionList ')'
         {
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
         }
+|	"EXP" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
 |	"EXPORT_SET" '(' Expression ',' Expression ',' Expression ')'
 	{
 		bits, on, off := $3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)
@@ -3036,6 +3084,10 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
+|	"PI" '(' ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1)}
+	}
 |	"POW" '(' Expression ',' Expression ')'
 	{
 		args := []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}
@@ -3045,6 +3097,10 @@ FunctionCallNonKeyword:
 	{
 		args := []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
+	}
+|	"RADIANS" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"RAND" '(' ExpressionOpt ')'
 	{
@@ -3073,6 +3129,10 @@ FunctionCallNonKeyword:
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"SIGN" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
+|	"SIN" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
@@ -3140,6 +3200,10 @@ FunctionCallNonKeyword:
 		}
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
 	}
+|	"TAN" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
 |	"TIME" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
@@ -3192,6 +3256,10 @@ FunctionCallNonKeyword:
 			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$6.(ast.ExprNode),$4.(ast.ExprNode), direction},
 		}
+	}
+|	"TRUNCATE" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}}
 	}
 |	"UPPER" '(' Expression ')'
 	{
