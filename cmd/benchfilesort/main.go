@@ -209,11 +209,11 @@ func export() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-	}
-
-	_, err = outputFile.Write(outputBytes)
-	if err != nil {
-		return errors.Trace(err)
+		_, err = outputFile.Write(outputBytes)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		outputBytes = outputBytes[:0]
 	}
 
 	return nil
