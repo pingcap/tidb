@@ -217,6 +217,7 @@ import (
 	abs		"ABS"
 	addDate		"ADDDATE"
 	admin		"ADMIN"
+	bin		"BIN"
 	ceil		"CEIL"
 	ceiling		"CEILING"
 	coalesce	"COALESCE"
@@ -236,11 +237,15 @@ import (
 	dayofyear	"DAYOFYEAR"
 	fromDays	"FROM_DAYS"
 	events		"EVENTS"
+	elt		"ELT"
+	exportSet	"EXPORT_SET"
 	fieldKwd	"FIELD_KWD"
 	findInSet	"FIND_IN_SET"
   	floor   	"FLOOR"
+	format		"FORMAT"
 	foundRows	"FOUND_ROWS"
 	fromUnixTime	"FROM_UNIXTIME"
+	fromBase64	"FROM_BASE64"
 	grant		"GRANT"
 	groupConcat	"GROUP_CONCAT"
 	greatest	"GREATEST"
@@ -248,17 +253,21 @@ import (
 	hex         	"HEX"
 	unhex         	"UNHEX"
 	ifNull		"IFNULL"
+	insertFunc	"INSERT_FUNC"
+	instr		"INSTR"
 	isNull		"ISNULL"
 	lastInsertID	"LAST_INSERT_ID"
 	lcase 		"LCASE"
 	length		"LENGTH"
 	least		"LEAST"
 	ln		"LN"
+	loadFile	"LOAD_FILE"
 	locate		"LOCATE"
 	log		"LOG"
 	log2		"LOG2"
 	log10		"LOG10"
 	lower 		"LOWER"
+	lpad		"LPAD"
 	ltrim		"LTRIM"
 	max		"MAX"
 	microsecond	"MICROSECOND"
@@ -2129,7 +2138,7 @@ Identifier | ReservedKeyword
 UnReservedKeyword:
  "ACTION" | "ASCII" | "AUTO_INCREMENT" | "AFTER" | "AT" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "CHARSET"
 | "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED" | "CONSISTENT" | "DATA" | "DATE" | "DATETIME" | "DEALLOCATE" | "DO"
-| "DYNAMIC"| "END" | "ENGINE" | "ENGINES" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FULL" |"GLOBAL"
+| "DYNAMIC"| "END" | "ENGINE" | "ENGINES" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FORMAT" | "FULL" |"GLOBAL"
 | "HASH" | "LESS" | "LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT" 
 | "ROLLBACK" | "SESSION" | "SIGNED" | "SNAPSHOT" | "START" | "STATUS" | "TABLES" | "TEXT" | "THAN" | "TIME" | "TIMESTAMP" 
 | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" | "VALUE" | "WARNINGS" | "YEAR" | "MODE"  | "WEEK"  | "ANY" | "SOME" | "USER" | "IDENTIFIED"
@@ -2165,9 +2174,9 @@ ReservedKeyword:
 
 
 NotKeywordToken:
-	"ABS" | "ADDDATE" | "ADMIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
-|	"DATEDIFF" | "DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FROM_DAYS" | "FIND_IN_SET" | "FOUND_ROWS"
-|	"GROUP_CONCAT"| "GREATEST" | "LEAST" | "HOUR" | "HEX" | "UNHEX" | "IFNULL" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOCATE" | "LOWER" | "LTRIM"
+	"ABS" | "ADDDATE" | "ADMIN" | "BIN"| "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
+|	"DATEDIFF" | "DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "ELT" | "EXPORT_SET" | "FROM_DAYS" | "FROM_BASE64" | "FIND_IN_SET" | "FOUND_ROWS"
+|	"GROUP_CONCAT"| "GREATEST" | "LEAST" | "HOUR" | "HEX" | "UNHEX" | "IFNULL" | "INSTR" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOAD_FILE" | "LOCATE" | "LOWER" | "LPAD" | "LTRIM"
 |	"MAX" | "MICROSECOND" | "MIN" |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" | "POW" | "POWER" | "RAND"
 	"SECOND" | "SIGN" | "SLEEP" | "SQRT" | "SQL_CALC_FOUND_ROWS" | "STR_TO_DATE" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen |
 "SUBSTRING_INDEX" | "SUM" | "TRIM" | "RTRIM" | "UCASE" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
@@ -2627,9 +2636,46 @@ FunctionCallKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName:model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
+|	"FORMAT" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args:   []ast.ExprNode{
+				$3.(ast.ExprNode),
+				$5.(ast.ExprNode),
+			},
+		}
+	}
+|	"FORMAT" '(' Expression ',' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args:   []ast.ExprNode{
+				$3.(ast.ExprNode),
+				$5.(ast.ExprNode),
+				$7.(ast.ExprNode),
+			},
+		}
+	}
+|	"INSERT" '(' Expression ',' Expression ',' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr(ast.InsertFunc),
+			Args:   []ast.ExprNode{
+				$3.(ast.ExprNode),
+				$5.(ast.ExprNode),
+				$7.(ast.ExprNode),
+				$9.(ast.ExprNode),
+			},
+		}
+	}
 
 FunctionCallNonKeyword:
-	"COALESCE" '(' ExpressionList ')'
+	"BIN" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
+|	"COALESCE" '(' ExpressionList ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
@@ -2708,6 +2754,34 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
+|	"ELT" '(' ExpressionList ')'
+        {
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+        }
+|	"EXPORT_SET" '(' Expression ',' Expression ',' Expression ')'
+	{
+		bits, on, off := $3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{bits, on, off},
+		}
+	}
+|	"EXPORT_SET" '(' Expression ',' Expression ',' Expression ',' Expression ')'
+	{
+		bits, on, off, separator := $3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode), $9.(ast.ExprNode)
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{bits, on, off, separator},
+		}
+	}
+|	"EXPORT_SET" '(' Expression ',' Expression ',' Expression ',' Expression ',' Expression ')'
+	{
+		bits, on, off, separator, numberOfBits := $3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode), $9.(ast.ExprNode), $11.(ast.ExprNode)
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{bits, on, off, separator, numberOfBits},
+		}
+	}
 | 	"FLOOR" '(' Expression ')'
   	{
     	$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
@@ -2757,6 +2831,13 @@ FunctionCallNonKeyword:
 				$3.(ast.ExprNode),
 				$5.(ast.ExprNode),
 			},
+		}
+	}
+|	"FROM_BASE64" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
 		}
 	}
 |	"FROM_DAYS" '(' Expression ')'
@@ -2827,6 +2908,17 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
+
+|	"INSTR" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{
+				$3.(ast.ExprNode),
+				$5.(ast.ExprNode),
+			},
+		}
+	}
 |	"ISNULL" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
@@ -2844,6 +2936,10 @@ FunctionCallNonKeyword:
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"LN" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
+|	"LOAD_FILE" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
@@ -2880,6 +2976,17 @@ FunctionCallNonKeyword:
 |	"LOWER" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
+|	"LPAD" '(' Expression ',' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{
+				$3.(ast.ExprNode),
+				$5.(ast.ExprNode),
+				$7.(ast.ExprNode),
+			},
+		}
 	}
 |	"LCASE" '(' Expression ')'
 	{
