@@ -154,3 +154,20 @@ func (s *testCacheSuite) TestPatternMatch(c *C) {
 	c.Assert(p.RequestVerification("root", "", "test", "", "", mysql.SelectPriv), IsTrue)
 	c.Assert(p.RequestVerification("root", "notnull", "test", "", "", mysql.SelectPriv), IsFalse)
 }
+
+func (s *testCacheSuite) TestCaseInsensitive(c *C) {
+	se, err := tidb.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	defer se.Close()
+	mustExec(c, se, "CREATE DATABASE TCTrain;")
+	mustExec(c, se, "CREATE TABLE TCTrain.TCTrainOrder (id int);")
+	mustExec(c, se, "TRUNCATE TABLE mysql.user")
+	mustExec(c, se, `INSERT INTO mysql.db VALUES ("127.0.0.1", "TCTrain", "genius", "Y", "Y", "Y", "Y", "Y", "N", "N", "N", "N", "N")`)
+	var p privileges.MySQLPrivilege
+	err = p.LoadDBTable(se)
+	c.Assert(err, IsNil)
+	// DB and Table names are case insensitive in MySQL.
+	c.Assert(p.RequestVerification("genius", "127.0.0.1", "TCTrain", "TCTrainOrder", "", mysql.SelectPriv), IsTrue)
+	c.Assert(p.RequestVerification("genius", "127.0.0.1", "TCTRAIN", "TCTRAINORDER", "", mysql.SelectPriv), IsTrue)
+	c.Assert(p.RequestVerification("genius", "127.0.0.1", "tctrain", "tctrainorder", "", mysql.SelectPriv), IsTrue)
+}
