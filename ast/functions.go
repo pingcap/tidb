@@ -133,15 +133,24 @@ const (
 
 	// string functions
 	ASCII          = "ascii"
+	Bin            = "bin"
 	Concat         = "concat"
 	ConcatWS       = "concat_ws"
 	Convert        = "convert"
+	Elt            = "elt"
+	ExportSet      = "Export"
 	Field          = "field"
+	Format         = "format"
+	FromBase64     = "from_base64"
+	InsertFunc     = "insert_func"
+	Instr          = "instr"
 	Lcase          = "lcase"
 	Left           = "left"
 	Length         = "length"
+	LoadFile       = "load_file"
 	Locate         = "locate"
 	Lower          = "lower"
+	Lpad           = "lpad"
 	LTrim          = "ltrim"
 	Repeat         = "repeat"
 	Replace        = "replace"
@@ -185,6 +194,10 @@ const (
 	// It is used for preventing error in Ruby's activerecord migrations.
 	GetLock     = "get_lock"
 	ReleaseLock = "release_lock"
+
+	// encryption and compression functions
+	AesDecrypt = "aes_decrypt"
+	AesEncrypt = "aes_encrypt"
 )
 
 // FuncCallExpr is for function expression.
