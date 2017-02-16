@@ -436,6 +436,10 @@ func getUintForLimitOffset(sc *variable.StatementContext, val interface{}) (uint
 	switch v := val.(type) {
 	case uint64:
 		return v, nil
+	case int64:
+		if v >= 0 {
+			return uint64(v), nil
+		}
 	case string:
 		uVal, err := types.StrToUint(sc, v)
 		return uVal, errors.Trace(err)
