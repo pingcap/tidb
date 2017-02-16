@@ -64,6 +64,15 @@ var (
 	_ functionClass = &charLengthFunctionClass{}
 	_ functionClass = &findInSetFunctionClass{}
 	_ functionClass = &fieldFunctionClass{}
+	_ functionClass = &binFunctionClass{}
+	_ functionClass = &eltFunctionClass{}
+	_ functionClass = &exportSetFunctionClass{}
+	_ functionClass = &formatFunctionClass{}
+	_ functionClass = &fromBase64FunctionClass{}
+	_ functionClass = &insertFuncFunctionClass{}
+	_ functionClass = &instrFunctionClass{}
+	_ functionClass = &loadFileFunctionClass{}
+	_ functionClass = &lpadFunctionClass{}
 )
 
 var (
@@ -93,6 +102,15 @@ var (
 	_ builtinFunc = &builtinCharSig{}
 	_ builtinFunc = &builtinCharLengthSig{}
 	_ builtinFunc = &builtinFindInSetSig{}
+	_ builtinFunc = &builtinBinSig{}
+	_ builtinFunc = &builtinEltSig{}
+	_ builtinFunc = &builtinExportSetSig{}
+	_ builtinFunc = &builtinFormatSig{}
+	_ builtinFunc = &builtinFromBase64Sig{}
+	_ builtinFunc = &builtinInsertFuncSig{}
+	_ builtinFunc = &builtinInstrSig{}
+	_ builtinFunc = &builtinLoadFileSig{}
+	_ builtinFunc = &builtinLpadSig{}
 )
 
 type lengthFunctionClass struct {
@@ -1353,4 +1371,157 @@ func argsToSpecifiedType(args []types.Datum, allString bool, allNumber bool, ctx
 		}
 	}
 	return
+}
+
+type binFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *binFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinBinSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinBinSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_bin
+func (b *builtinBinSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("bin")
+}
+
+type eltFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *eltFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinEltSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinEltSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_elt
+func (b *builtinEltSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("elt")
+}
+
+type exportSetFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *exportSetFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinExportSetSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinExportSetSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_export-set
+func (b *builtinExportSetSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("export_set")
+}
+
+type formatFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *formatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinFormatSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinFormatSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_format
+func (b *builtinFormatSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("format")
+}
+
+type fromBase64FunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *fromBase64FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinFromBase64Sig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinFromBase64Sig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_from-base64
+func (b *builtinFromBase64Sig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("from_base64")
+}
+
+type insertFuncFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *insertFuncFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinInsertFuncSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinInsertFuncSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_insert
+func (b *builtinInsertFuncSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("insert")
+}
+
+type instrFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *instrFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinInstrSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinInstrSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_instr
+func (b *builtinInstrSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("instr")
+}
+
+type loadFileFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *loadFileFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinLoadFileSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinLoadFileSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_load-file
+func (b *builtinLoadFileSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("load_file")
+}
+
+type lpadFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *lpadFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinLpadSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinLpadSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_lpad
+func (b *builtinLpadSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("lpad")
 }

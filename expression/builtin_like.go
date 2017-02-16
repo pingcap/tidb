@@ -44,7 +44,7 @@ type builtinLikeSig struct {
 	baseBuiltinFunc
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html
+// https://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html#operator_like
 func (b *builtinLikeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
