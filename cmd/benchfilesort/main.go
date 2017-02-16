@@ -186,14 +186,10 @@ func decodeMeta(fd *os.File) error {
  *      the actual row bytes.
  */
 func export() error {
-	var (
-		err         error
-		outputBytes []byte
-		outputFile  *os.File
-	)
+	var outputBytes []byte
 
 	fileName := path.Join(tmpDir, "data.out")
-	outputFile, err = os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	outputFile, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -244,7 +240,7 @@ func load(ratio int) ([]*comparableRow, error) {
 
 	var (
 		row  *comparableRow
-		data = make([]*comparableRow, 0, scale)
+		rows = make([]*comparableRow, 0, scale)
 	)
 
 	totalRows := int(float64(scale) * (float64(ratio) / 100.0))
@@ -254,147 +250,141 @@ func load(ratio int) ([]*comparableRow, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		data = append(data, row)
+		rows = append(rows, row)
 	}
 
-	return data, nil
+	return rows, nil
 }
 
 func driveGenCmd() {
 	genCmd.Parse(os.Args[2:])
-	if genCmd.Parsed() {
-		// Sanity checks
-		if keySize <= 0 {
-			log.Fatal(errors.New("key size must be positive"))
-		}
-		if valSize <= 0 {
-			log.Fatal(errors.New("value size must be positive"))
-		}
-		if scale <= 0 {
-			log.Fatal(errors.New("scale must be positive"))
-		}
-		if _, err := os.Stat(tmpDir); err != nil {
-			if os.IsNotExist(err) {
-				log.Fatal(errors.New("tmpDir does not exist"))
-			}
-			log.Fatal(err)
-		}
-
-		cLog("Generating...")
-		start := time.Now()
-		if err := export(); err != nil {
-			log.Fatal(err)
-		}
-		cLog("Done!")
-		cLogf("Data placed in: %s", path.Join(tmpDir, "data.out"))
-		cLog("Time used: ", time.Since(start))
-		cLog("=================================")
+	// Sanity checks
+	if keySize <= 0 {
+		log.Fatal(errors.New("key size must be positive"))
 	}
+	if valSize <= 0 {
+		log.Fatal(errors.New("value size must be positive"))
+	}
+	if scale <= 0 {
+		log.Fatal(errors.New("scale must be positive"))
+	}
+	if _, err := os.Stat(tmpDir); err != nil {
+		if os.IsNotExist(err) {
+			log.Fatal(errors.New("tmpDir does not exist"))
+		}
+		log.Fatal(err)
+	}
+
+	cLog("Generating...")
+	start := time.Now()
+	if err := export(); err != nil {
+		log.Fatal(err)
+	}
+	cLog("Done!")
+	cLogf("Data placed in: %s", path.Join(tmpDir, "data.out"))
+	cLog("Time used: ", time.Since(start))
+	cLog("=================================")
 }
 
 func driveRunCmd() {
 	runCmd.Parse(os.Args[2:])
-	if runCmd.Parsed() {
-		// Sanity checks
-		if bufSize <= 0 {
-			log.Fatal(errors.New("buffer size must be positive"))
-		}
-		if inputRatio < 0 || inputRatio > 100 {
-			log.Fatal(errors.New("input ratio must between 0 and 100 (inclusive)"))
-		}
-		if outputRatio < 0 || outputRatio > 100 {
-			log.Fatal(errors.New("output ratio must between 0 and 100 (inclusive)"))
-		}
-		if _, err := os.Stat(tmpDir); err != nil {
-			if os.IsNotExist(err) {
-				log.Fatal(errors.New("tmpDir does not exist"))
-			}
-			log.Fatal(err)
-		}
-
-		var (
-			err     error
-			dir     string
-			data    []*comparableRow
-			profile *os.File
-			fs      *filesort.FileSorter
-		)
-		cLog("Loading...")
-		start := time.Now()
-		data, err = load(inputRatio)
-		if err != nil {
-			log.Fatal(err)
-		}
-		cLog("Done!")
-		cLogf("Loaded %d rows", len(data))
-		cLog("Time used: ", time.Since(start))
-		cLog("=================================")
-
-		sc := new(variable.StatementContext)
-		fsBuilder := new(filesort.Builder)
-		byDesc := make([]bool, keySize)
-		for i := 0; i < keySize; i++ {
-			byDesc[i] = false
-		}
-		dir, err = ioutil.TempDir(tmpDir, "benchfilesort_test")
-		if err != nil {
-			log.Fatal(err)
-		}
-		fs, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetDesc(byDesc).SetDir(dir).Build()
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		if cpuprofile != "" {
-			profile, err = os.Create(cpuprofile)
-			if err != nil {
-				log.Fatal(err)
-			}
-		}
-
-		cLog("Inputing...")
-		start = time.Now()
-		for _, r := range data {
-			err = fs.Input(r.key, r.val, r.handle)
-			if err != nil {
-				log.Fatal(err)
-			}
-		}
-		cLog("Done!")
-		cLogf("Input %d rows", len(data))
-		cLog("Time used: ", time.Since(start))
-		cLog("=================================")
-
-		cLog("Outputing...")
-		totalRows := int(float64(len(data)) * (float64(outputRatio) / 100.0))
-		start = time.Now()
-		if cpuprofile != "" {
-			pprof.StartCPUProfile(profile)
-		}
-		for i := 0; i < totalRows; i++ {
-			_, _, _, err = fs.Output()
-			if err != nil {
-				log.Fatal(err)
-			}
-		}
-		if cpuprofile != "" {
-			pprof.StopCPUProfile()
-		}
-		cLog("Done!")
-		cLogf("Output %d rows", totalRows)
-		cLog("Time used: ", time.Since(start))
-		cLog("=================================")
-
-		cLog("Closing...")
-		start = time.Now()
-		err = fs.Close()
-		if err != nil {
-			log.Fatal(err)
-		}
-		cLog("Done!")
-		cLog("Time used: ", time.Since(start))
-		cLog("=================================")
+	// Sanity checks
+	if bufSize <= 0 {
+		log.Fatal(errors.New("buffer size must be positive"))
 	}
+	if inputRatio < 0 || inputRatio > 100 {
+		log.Fatal(errors.New("input ratio must between 0 and 100 (inclusive)"))
+	}
+	if outputRatio < 0 || outputRatio > 100 {
+		log.Fatal(errors.New("output ratio must between 0 and 100 (inclusive)"))
+	}
+	if _, err := os.Stat(tmpDir); err != nil {
+		if os.IsNotExist(err) {
+			log.Fatal(errors.New("tmpDir does not exist"))
+		}
+		log.Fatal(err)
+	}
+
+	var (
+		dir     string
+		profile *os.File
+		fs      *filesort.FileSorter
+	)
+	cLog("Loading...")
+	start := time.Now()
+	data, err := load(inputRatio)
+	if err != nil {
+		log.Fatal(err)
+	}
+	cLog("Done!")
+	cLogf("Loaded %d rows", len(data))
+	cLog("Time used: ", time.Since(start))
+	cLog("=================================")
+
+	sc := new(variable.StatementContext)
+	fsBuilder := new(filesort.Builder)
+	byDesc := make([]bool, keySize)
+	for i := 0; i < keySize; i++ {
+		byDesc[i] = false
+	}
+	dir, err = ioutil.TempDir(tmpDir, "benchfilesort_test")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fs, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetDesc(byDesc).SetDir(dir).Build()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if cpuprofile != "" {
+		profile, err = os.Create(cpuprofile)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	cLog("Inputing...")
+	start = time.Now()
+	for _, r := range data {
+		err = fs.Input(r.key, r.val, r.handle)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	cLog("Done!")
+	cLogf("Input %d rows", len(data))
+	cLog("Time used: ", time.Since(start))
+	cLog("=================================")
+
+	cLog("Outputing...")
+	totalRows := int(float64(len(data)) * (float64(outputRatio) / 100.0))
+	start = time.Now()
+	if cpuprofile != "" {
+		pprof.StartCPUProfile(profile)
+	}
+	for i := 0; i < totalRows; i++ {
+		_, _, _, err = fs.Output()
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	if cpuprofile != "" {
+		pprof.StopCPUProfile()
+	}
+	cLog("Done!")
+	cLogf("Output %d rows", totalRows)
+	cLog("Time used: ", time.Since(start))
+	cLog("=================================")
+
+	cLog("Closing...")
+	start = time.Now()
+	err = fs.Close()
+	if err != nil {
+		log.Fatal(err)
+	}
+	cLog("Done!")
+	cLog("Time used: ", time.Since(start))
+	cLog("=================================")
 }
 
 func init() {
