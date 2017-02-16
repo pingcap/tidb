@@ -832,6 +832,11 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select count(all c1) from t;`, true},
 		{`select group_concat(c2,c1) from t group by c1;`, true},
 		{`select group_concat(distinct c2,c1) from t group by c1;`, true},
+
+		// for encryption and compression functions
+		{`select AES_ENCRYPT('text',UNHEX('F3229A0B371ED2D9441B830D21A390C3'))`, true},
+		{`select AES_DECRYPT(@crypt_str,@key_str)`, true},
+		{`select AES_DECRYPT(@crypt_str,@key_str,@init_vector);`, true},
 	}
 	s.RunTest(c, table)
 }
