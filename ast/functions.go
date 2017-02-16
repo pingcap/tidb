@@ -194,6 +194,10 @@ const (
 	// It is used for preventing error in Ruby's activerecord migrations.
 	GetLock     = "get_lock"
 	ReleaseLock = "release_lock"
+
+	// encryption and compression functions
+	AesDecrypt = "aes_decrypt"
+	AesEncrypt = "aes_encrypt"
 )
 
 // FuncCallExpr is for function expression.
