@@ -76,7 +76,7 @@ const (
 	Asin     = "asin"
 	Atan     = "atan"
 	Atan2    = "atan2"
-	Ceil     = "Ceil"
+	Ceil     = "ceil"
 	Ceiling  = "ceiling"
 	Conv     = "conv"
 	Cos      = "cos"
