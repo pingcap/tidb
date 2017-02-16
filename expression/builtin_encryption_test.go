@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-
 var aesCases = []struct {
 	origin string
 	key    string

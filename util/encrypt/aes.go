@@ -85,16 +85,16 @@ func newECBDecrypter(b cipher.Block) cipher.BlockMode {
 	return (*ecbDecrypter)(newECB(b))
 }
 
-// Padding using PKCS5
+// Padding using PKCS7
 // See https://en.wikipedia.org/wiki/Padding_(cryptography)#PKCS7
-func pkcs5Padding(ciphertext []byte, blockSize int) []byte {
+func pkcs7Padding(ciphertext []byte, blockSize int) []byte {
 	// The bytes need to padding.
 	padding := blockSize - len(ciphertext)%blockSize
 	padtext := bytes.Repeat([]byte{byte(padding)}, padding)
 	return append(ciphertext, padtext...)
 }
 
-// UnPadding using PKCS5
+// UnPadding using PKCS7
 // See https://en.wikipedia.org/wiki/Padding_(cryptography)#PKCS7
 func pkcs5UnPadding(origData []byte) []byte {
 	length := len(origData)
@@ -112,8 +112,7 @@ func AESEncryptWithECB(str, key []byte) ([]byte, error) {
 	// The str arguments can be any length, and padding is automatically added to
 	// str so it is a multiple of a block as required by block-based algorithms such as AES.
 	// This padding is automatically removed by the AES_DECRYPT() function.
-	// data := padding(str, blockSize)
-	data := pkcs5Padding(str, blockSize)
+	data := pkcs7Padding(str, blockSize)
 	crypted := make([]byte, len(data))
 	ecb := newECBEncrypter(cb)
 	ecb.CryptBlocks(crypted, data)
