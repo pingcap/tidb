@@ -1395,7 +1395,7 @@ type builtinMakeSetSig struct {
 
 // https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_make-set
 func (b *builtinMakeSetSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("makeSet")
+	return d, errFunctionNotExists.GenByArgs("make_set")
 }
 
 type octFunctionClass struct {
