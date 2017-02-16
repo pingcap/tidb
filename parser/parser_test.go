@@ -491,7 +491,7 @@ func (s *testParserSuite) TestExpression(c *C) {
 func (s *testParserSuite) TestBuiltin(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []testCase{
-		// for buildtin functions
+		// for builtin functions
 		{"SELECT POW(1, 2)", true},
 		{"SELECT POW(1, 0.5)", true},
 		{"SELECT POW(1, -1)", true},
