@@ -918,6 +918,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 		return errors.New("transaction channel is not set")
 	}
 	// no need to get txn from txnCh since txn should init with startTs
+	s.txnCh = nil
 	var err error
 	s.txn, err = s.store.BeginWithStartTS(startTS)
 	if err != nil {
