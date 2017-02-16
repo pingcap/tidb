@@ -107,4 +107,9 @@ func (s *testSuite) TestPreparedLimitOffset(c *C) {
 	tk.MustExec(`set @c="-1"`)
 	_, err := tk.Exec("execute stmt_test_1 using @c, @c")
 	c.Assert(plan.ErrWrongArguments.Equal(err), IsTrue)
+
+	stmtID, _, _, err := tk.Se.PrepareStmt("select id from prepare_test limit ?")
+	c.Assert(err, IsNil)
+	_, err = tk.Se.ExecutePreparedStmt(stmtID, 1)
+	c.Assert(err, IsNil)
 }
