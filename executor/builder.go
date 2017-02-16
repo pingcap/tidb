@@ -235,6 +235,8 @@ func (b *executorBuilder) buildSimple(v *plan.Simple) Executor {
 	switch s := v.Statement.(type) {
 	case *ast.GrantStmt:
 		return b.buildGrant(s)
+	case *ast.RevokeStmt:
+		return b.buildRevoke(s)
 	}
 	return &SimpleExec{Statement: v.Statement, ctx: b.ctx, is: b.is}
 }
@@ -304,6 +306,17 @@ func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {
 		Level:      grant.Level,
 		Users:      grant.Users,
 		WithGrant:  grant.WithGrant,
+		is:         b.is,
+	}
+}
+
+func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) Executor {
+	return &RevokeExec{
+		ctx:        b.ctx,
+		Privs:      revoke.Privs,
+		ObjectType: revoke.ObjectType,
+		Level:      revoke.Level,
+		Users:      revoke.Users,
 		is:         b.is,
 	}
 }

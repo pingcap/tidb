@@ -79,12 +79,12 @@ func (e *GrantExec) Next() (*Row, error) {
 		// Column scope:	mysql.Columns_priv
 		switch e.Level.Level {
 		case ast.GrantLevelDB:
-			err := e.checkAndInitDBPriv(userName, host)
+			err := checkAndInitDBPriv(e.ctx, e.Level.DBName, e.is, userName, host)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 		case ast.GrantLevelTable:
-			err := e.checkAndInitTablePriv(userName, host)
+			err := checkAndInitTablePriv(e.ctx, e.Level.DBName, e.Level.TableName, e.is, userName, host)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -123,12 +123,12 @@ func (e *GrantExec) Close() error {
 
 // Check if DB scope privilege entry exists in mysql.DB.
 // If unexists, insert a new one.
-func (e *GrantExec) checkAndInitDBPriv(user string, host string) error {
-	db, err := e.getTargetSchema()
+func checkAndInitDBPriv(ctx context.Context, dbName string, is infoschema.InfoSchema, user string, host string) error {
+	db, err := getTargetSchema(ctx, dbName, is)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	ok, err := dbUserExists(e.ctx, user, host, db.Name.O)
+	ok, err := dbUserExists(ctx, user, host, db.Name.O)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -136,17 +136,17 @@ func (e *GrantExec) checkAndInitDBPriv(user string, host string) error {
 		return nil
 	}
 	// Entry does not exist for user-host-db. Insert a new entry.
-	return initDBPrivEntry(e.ctx, user, host, db.Name.O)
+	return initDBPrivEntry(ctx, user, host, db.Name.O)
 }
 
 // Check if table scope privilege entry exists in mysql.Tables_priv.
 // If unexists, insert a new one.
-func (e *GrantExec) checkAndInitTablePriv(user string, host string) error {
-	db, tbl, err := e.getTargetSchemaAndTable()
+func checkAndInitTablePriv(ctx context.Context, dbName, tableName string, is infoschema.InfoSchema, user string, host string) error {
+	db, tbl, err := getTargetSchemaAndTable(ctx, dbName, tableName, is)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	ok, err := tableUserExists(e.ctx, user, host, db.Name.O, tbl.Meta().Name.O)
+	ok, err := tableUserExists(ctx, user, host, db.Name.O, tbl.Meta().Name.O)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -154,13 +154,13 @@ func (e *GrantExec) checkAndInitTablePriv(user string, host string) error {
 		return nil
 	}
 	// Entry does not exist for user-host-db-tbl. Insert a new entry.
-	return initTablePrivEntry(e.ctx, user, host, db.Name.O, tbl.Meta().Name.O)
+	return initTablePrivEntry(ctx, user, host, db.Name.O, tbl.Meta().Name.O)
 }
 
 // Check if column scope privilege entry exists in mysql.Columns_priv.
 // If unexists, insert a new one.
 func (e *GrantExec) checkAndInitColumnPriv(user string, host string, cols []*ast.ColumnName) error {
-	db, tbl, err := e.getTargetSchemaAndTable()
+	db, tbl, err := getTargetSchemaAndTable(e.ctx, e.Level.DBName, e.Level.TableName, e.is)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -225,7 +225,7 @@ func (e *GrantExec) grantPriv(priv *ast.PrivElem, user *ast.UserSpec) error {
 
 // Manipulate mysql.user table.
 func (e *GrantExec) grantGlobalPriv(priv *ast.PrivElem, user *ast.UserSpec) error {
-	asgns, err := composeGlobalPrivUpdate(priv.Priv)
+	asgns, err := composeGlobalPrivUpdate(priv.Priv, "Y")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -237,11 +237,11 @@ func (e *GrantExec) grantGlobalPriv(priv *ast.PrivElem, user *ast.UserSpec) erro
 
 // Manipulate mysql.db table.
 func (e *GrantExec) grantDBPriv(priv *ast.PrivElem, user *ast.UserSpec) error {
-	db, err := e.getTargetSchema()
+	db, err := getTargetSchema(e.ctx, e.Level.DBName, e.is)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	asgns, err := composeDBPrivUpdate(priv.Priv)
+	asgns, err := composeDBPrivUpdate(priv.Priv, "Y")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -253,7 +253,7 @@ func (e *GrantExec) grantDBPriv(priv *ast.PrivElem, user *ast.UserSpec) error {
 
 // Manipulate mysql.tables_priv table.
 func (e *GrantExec) grantTablePriv(priv *ast.PrivElem, user *ast.UserSpec) error {
-	db, tbl, err := e.getTargetSchemaAndTable()
+	db, tbl, err := getTargetSchemaAndTable(e.ctx, e.Level.DBName, e.Level.TableName, e.is)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -269,7 +269,7 @@ func (e *GrantExec) grantTablePriv(priv *ast.PrivElem, user *ast.UserSpec) error
 
 // Manipulate mysql.tables_priv table.
 func (e *GrantExec) grantColumnPriv(priv *ast.PrivElem, user *ast.UserSpec) error {
-	db, tbl, err := e.getTargetSchemaAndTable()
+	db, tbl, err := getTargetSchemaAndTable(e.ctx, e.Level.DBName, e.Level.TableName, e.is)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -293,11 +293,11 @@ func (e *GrantExec) grantColumnPriv(priv *ast.PrivElem, user *ast.UserSpec) erro
 }
 
 // Compose update stmt assignment list string for global scope privilege update.
-func composeGlobalPrivUpdate(priv mysql.PrivilegeType) (string, error) {
+func composeGlobalPrivUpdate(priv mysql.PrivilegeType, value string) (string, error) {
 	if priv == mysql.AllPriv {
 		strs := make([]string, 0, len(mysql.Priv2UserCol))
 		for _, v := range mysql.Priv2UserCol {
-			strs = append(strs, fmt.Sprintf(`%s="Y"`, v))
+			strs = append(strs, fmt.Sprintf(`%s="%s"`, v, value))
 		}
 		return strings.Join(strs, ", "), nil
 	}
@@ -305,11 +305,11 @@ func composeGlobalPrivUpdate(priv mysql.PrivilegeType) (string, error) {
 	if !ok {
 		return "", errors.Errorf("Unknown priv: %v", priv)
 	}
-	return fmt.Sprintf(`%s="Y"`, col), nil
+	return fmt.Sprintf(`%s="%s"`, col, value), nil
 }
 
 // Compose update stmt assignment list for db scope privilege update.
-func composeDBPrivUpdate(priv mysql.PrivilegeType) (string, error) {
+func composeDBPrivUpdate(priv mysql.PrivilegeType, value string) (string, error) {
 	if priv == mysql.AllPriv {
 		strs := make([]string, 0, len(mysql.AllDBPrivs))
 		for _, p := range mysql.AllDBPrivs {
@@ -317,7 +317,7 @@ func composeDBPrivUpdate(priv mysql.PrivilegeType) (string, error) {
 			if !ok {
 				return "", errors.Errorf("Unknown db privilege %v", priv)
 			}
-			strs = append(strs, fmt.Sprintf(`%s="Y"`, v))
+			strs = append(strs, fmt.Sprintf(`%s="%s"`, v, value))
 		}
 		return strings.Join(strs, ", "), nil
 	}
@@ -325,7 +325,7 @@ func composeDBPrivUpdate(priv mysql.PrivilegeType) (string, error) {
 	if !ok {
 		return "", errors.Errorf("Unknown priv: %v", priv)
 	}
-	return fmt.Sprintf(`%s="Y"`, col), nil
+	return fmt.Sprintf(`%s="%s"`, col, value), nil
 }
 
 // Compose update stmt assignment list for table scope privilege update.
@@ -493,18 +493,17 @@ func getColumnPriv(ctx context.Context, name string, host string, db string, tbl
 }
 
 // Find the schema by dbName.
-func (e *GrantExec) getTargetSchema() (*model.DBInfo, error) {
-	dbName := e.Level.DBName
+func getTargetSchema(ctx context.Context, dbName string, is infoschema.InfoSchema) (*model.DBInfo, error) {
 	if len(dbName) == 0 {
 		// Grant *, use current schema
-		dbName = e.ctx.GetSessionVars().CurrentDB
+		dbName = ctx.GetSessionVars().CurrentDB
 		if len(dbName) == 0 {
 			return nil, errors.New("miss DB name for grant privilege")
 		}
 	}
 	//check if db exists
 	schema := model.NewCIStr(dbName)
-	db, ok := e.is.SchemaByName(schema)
+	db, ok := is.SchemaByName(schema)
 	if !ok {
 		return nil, errors.Errorf("Unknown schema name: %s", dbName)
 	}
@@ -512,13 +511,13 @@ func (e *GrantExec) getTargetSchema() (*model.DBInfo, error) {
 }
 
 // Find the schema and table by dbName and tableName.
-func (e *GrantExec) getTargetSchemaAndTable() (*model.DBInfo, table.Table, error) {
-	db, err := e.getTargetSchema()
+func getTargetSchemaAndTable(ctx context.Context, dbName, tableName string, is infoschema.InfoSchema) (*model.DBInfo, table.Table, error) {
+	db, err := getTargetSchema(ctx, dbName, is)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	name := model.NewCIStr(e.Level.TableName)
-	tbl, err := e.is.TableByName(db.Name, name)
+	name := model.NewCIStr(tableName)
+	tbl, err := is.TableByName(db.Name, name)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}

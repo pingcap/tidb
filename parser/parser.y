@@ -174,6 +174,7 @@ import (
 	repeat		"REPEAT"
 	replace		"REPLACE"
 	restrict	"RESTRICT"
+	revoke		"REVOKE"
 	right		"RIGHT"
 	rlike		"RLIKE"
 	schema		"SCHEMA"
@@ -605,6 +606,7 @@ import (
 	RenameTableStmt         "rename table statement"
 	ReplaceIntoStmt		"REPLACE INTO statement"
 	ReplacePriority		"replace statement priority"
+	RevokeStmt		"Revoke statement"
 	RollbackStmt		"ROLLBACK statement"
 	RowFormat		"Row format option"
 	SelectLockOpt		"FOR UPDATE or LOCK IN SHARE MODE,"
@@ -2165,7 +2167,7 @@ ReservedKeyword:
 | "LOCALTIME" | "LOCALTIMESTAMP" | "LOCK" | "LONGBLOB" | "LONGTEXT" | "MAXVALUE" | "MEDIUMBLOB" | "MEDIUMINT" | "MEDIUMTEXT"
 | "MINUTE_MICROSECOND" | "MINUTE_SECOND" | "MOD" | "NOT" | "NO_WRITE_TO_BINLOG" | "NULL" | "NUMERIC"
 | "ON" | "OPTION" | "OR" | "ORDER" | "OUTER" | "PARTITION" | "PRECISION" | "PRIMARY" | "PROCEDURE" | "RANGE" | "READ" 
-| "REAL" | "REFERENCES" | "REGEXP" | "RENAME" | "REPEAT" | "REPLACE" | "RESTRICT" | "RIGHT" | "RLIKE"
+| "REAL" | "REFERENCES" | "REGEXP" | "RENAME" | "REPEAT" | "REPLACE" | "RESTRICT" | "REVOKE" | "RIGHT" | "RLIKE"
 | "SCHEMA" | "SCHEMAS" | "SECOND_MICROSECOND" | "SELECT" | "SET" | "SHOW" | "SMALLINT"
 | "STARTING" | "TABLE" | "TERMINATED" | "THEN" | "TINYBLOB" | "TINYINT" | "TINYTEXT" | "TO"
 | "TRAILING" | "TRUE" | "UNION" | "UNIQUE" | "UNLOCK" | "UNSIGNED"
@@ -4732,6 +4734,7 @@ Statement:
 |	RollbackStmt
 |	RenameTableStmt
 |	ReplaceIntoStmt
+|	RevokeStmt
 |	SelectStmt
 |	UnionStmt
 |	SetStmt
@@ -5684,6 +5687,20 @@ PrivLevel:
 			TableName: $1,
 		}
 	}
+
+/**************************************RevokeStmt*******************************************
+ * See https://dev.mysql.com/doc/refman/5.7/en/revoke.html
+ *******************************************************************************************/
+RevokeStmt:
+	 "REVOKE" PrivElemList "ON" ObjectType PrivLevel "FROM" UserSpecList
+	 {
+		$$ = &ast.RevokeStmt{
+			Privs: $2.([]*ast.PrivElem),
+			ObjectType: $4.(ast.ObjectTypeType),
+			Level: $5.(*ast.GrantLevel),
+			Users: $7.([]*ast.UserSpec),
+		}
+	 }
 
 /**************************************LoadDataStmt*****************************************
  * See https://dev.mysql.com/doc/refman/5.7/en/load-data.html
