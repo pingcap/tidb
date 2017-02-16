@@ -261,7 +261,7 @@ func (h *rpcHandler) getChunksFromSelectReq(ctx *selectContext) ([]tipb.Chunk, e
 		if limit == 0 {
 			break
 		}
-		chunks, err = h.getRowsFromRange(ctx, ran, &limit, ctx.descScan, chunks)
+		chunks, err = h.getRowsFromRange(ctx, ran, &limit, chunks)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -301,7 +301,7 @@ func reverseKVRanges(kvRanges []kv.KeyRange) {
 	}
 }
 
-func (h *rpcHandler) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, limit *int64, desc bool, chunks []tipb.Chunk) ([]tipb.Chunk, error) {
+func (h *rpcHandler) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, limit *int64, chunks []tipb.Chunk) ([]tipb.Chunk, error) {
 	startKey := maxStartKey(ran.StartKey, h.startKey)
 	endKey := minEndKey(ran.EndKey, h.endKey)
 	if (*limit) == 0 || bytes.Compare(startKey, endKey) >= 0 {
@@ -329,7 +329,7 @@ func (h *rpcHandler) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, limit
 		return chunks, nil
 	}
 	var seekKey []byte
-	if desc {
+	if ctx.descScan {
 		seekKey = endKey
 	} else {
 		seekKey = startKey
@@ -343,7 +343,7 @@ func (h *rpcHandler) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, limit
 			pair  Pair
 			err   error
 		)
-		if desc {
+		if ctx.descScan {
 			pairs = h.mvccStore.ReverseScan(startKey, seekKey, 1, ctx.sel.GetStartTs())
 		} else {
 			pairs = h.mvccStore.Scan(seekKey, endKey, 1, ctx.sel.GetStartTs())
@@ -358,7 +358,7 @@ func (h *rpcHandler) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, limit
 		if pair.Key == nil {
 			break
 		}
-		if desc {
+		if ctx.descScan {
 			if bytes.Compare(pair.Key, startKey) < 0 {
 				break
 			}
@@ -526,7 +526,7 @@ func (h *rpcHandler) getChunksFromIndexReq(ctx *selectContext) ([]tipb.Chunk, er
 		if limit == 0 {
 			break
 		}
-		chunks, err = h.getIndexRowFromRange(ctx, ran, ctx.descScan, &limit, chunks)
+		chunks, err = h.getIndexRowFromRange(ctx, ran, &limit, chunks)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -537,7 +537,7 @@ func (h *rpcHandler) getChunksFromIndexReq(ctx *selectContext) ([]tipb.Chunk, er
 	return chunks, nil
 }
 
-func (h *rpcHandler) getIndexRowFromRange(ctx *selectContext, ran kv.KeyRange, desc bool, limit *int64, chunks []tipb.Chunk) ([]tipb.Chunk, error) {
+func (h *rpcHandler) getIndexRowFromRange(ctx *selectContext, ran kv.KeyRange, limit *int64, chunks []tipb.Chunk) ([]tipb.Chunk, error) {
 	idxInfo := ctx.sel.IndexInfo
 	startKey := maxStartKey(ran.StartKey, h.startKey)
 	endKey := minEndKey(ran.EndKey, h.endKey)
@@ -545,7 +545,7 @@ func (h *rpcHandler) getIndexRowFromRange(ctx *selectContext, ran kv.KeyRange, d
 		return nil, nil
 	}
 	var seekKey kv.Key
-	if desc {
+	if ctx.descScan {
 		seekKey = endKey
 	} else {
 		seekKey = startKey
@@ -563,7 +563,7 @@ func (h *rpcHandler) getIndexRowFromRange(ctx *selectContext, ran kv.KeyRange, d
 			pair  Pair
 			err   error
 		)
-		if desc {
+		if ctx.descScan {
 			pairs = h.mvccStore.ReverseScan(startKey, seekKey, 1, ctx.sel.GetStartTs())
 		} else {
 			pairs = h.mvccStore.Scan(seekKey, endKey, 1, ctx.sel.GetStartTs())
@@ -577,7 +577,7 @@ func (h *rpcHandler) getIndexRowFromRange(ctx *selectContext, ran kv.KeyRange, d
 		if pair.Key == nil {
 			break
 		}
-		if desc {
+		if ctx.descScan {
 			if bytes.Compare(pair.Key, startKey) < 0 {
 				break
 			}
