@@ -1139,6 +1139,7 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 
 		// for grant statement
 		{"GRANT ALL ON db1.* TO 'jeffrey'@'localhost';", true},
+		{"GRANT ALL ON db1.* TO 'jeffrey'@'localhost' WITH GRANT OPTION;", true},
 		{"GRANT SELECT ON db2.invoice TO 'jeffrey'@'localhost';", true},
 		{"GRANT ALL ON *.* TO 'someuser'@'somehost';", true},
 		{"GRANT SELECT, INSERT ON *.* TO 'someuser'@'somehost';", true},
