@@ -1050,10 +1050,12 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE db.t RENAME to db1.t1", true},
 		{"ALTER TABLE t RENAME as t1", true},
 		{"ALTER TABLE t ALTER COLUMN a SET DEFAULT 1", true},
+		{"ALTER TABLE t ALTER a SET DEFAULT 1", true},
 		{"ALTER TABLE t ALTER COLUMN a SET DEFAULT CURRENT_TIMESTAMP", false},
 		{"ALTER TABLE t ALTER COLUMN a SET DEFAULT NOW()", false},
 		{"ALTER TABLE t ALTER COLUMN a SET DEFAULT 1+1", false},
 		{"ALTER TABLE t ALTER COLUMN a DROP DEFAULT", true},
+		{"ALTER TABLE t ALTER a DROP DEFAULT", true},
 
 		// for rename table statement
 		{"RENAME TABLE t TO t1", true},
