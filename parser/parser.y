@@ -3022,7 +3022,7 @@ FunctionCallNonKeyword:
 |	"MID" '(' Expression ',' Expression ',' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr(ast.Substring),
+			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)},
 		}
 	}

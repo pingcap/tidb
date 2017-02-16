@@ -153,6 +153,7 @@ const (
 	Lpad           = "lpad"
 	LTrim          = "ltrim"
 	MakeSet        = "make_set"
+	Mid            = "mid"
 	Oct            = "oct"
 	Ord            = "ord"
 	Quote          = "quote"
