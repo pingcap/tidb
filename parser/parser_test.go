@@ -683,6 +683,14 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT FIELD('ej', 'Hej', 'ej', 'Heja', 'hej', 'foo');`, true},
 		{`SELECT FIND_IN_SET('foo', 'foo,bar')`, true},
 		{`SELECT FIND_IN_SET('foo')`, false},
+		{`SELECT BIN(12)`, true},
+		{`SELECT ELT(1, 'ej', 'Heja', 'hej', 'foo')`, true},
+		{`SELECT EXPORT_SET(5,'Y','N'), EXPORT_SET(5,'Y','N',','), EXPORT_SET(5,'Y','N',',',4)`, true},
+		{`SELECT FORMAT(12332.2,2,'de_DE'), FORMAT(12332.123456, 4)`, true},
+		{`SELECT FROM_BASE64('abc')`, true},
+		{`SELECT INSERT('Quadratic', 3, 4, 'What'), INSTR('foobarbar', 'bar')`, true},
+		{`SELECT LOAD_FILE('/tmp/picture')`, true},
+		{`SELECT LPAD('hi',4,'??')`, true},
 
 		// repeat
 		{`SELECT REPEAT("a", 10);`, true},
@@ -1126,6 +1134,7 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 
 		// for grant statement
 		{"GRANT ALL ON db1.* TO 'jeffrey'@'localhost';", true},
+		{"GRANT ALL ON db1.* TO 'jeffrey'@'localhost' WITH GRANT OPTION;", true},
 		{"GRANT SELECT ON db2.invoice TO 'jeffrey'@'localhost';", true},
 		{"GRANT ALL ON *.* TO 'someuser'@'somehost';", true},
 		{"GRANT SELECT, INSERT ON *.* TO 'someuser'@'somehost';", true},
