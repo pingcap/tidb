@@ -363,7 +363,13 @@ func (s *testSuite) TestExplain(c *C) {
     "desc": false,
     "keep order": true,
     "push down info": {
-        "limit": 0,
+        "limit": 1,
+        "sort items": [
+            {
+                "Expr": "test.t2.c2",
+                "Desc": false
+            }
+        ],
         "access conditions": null,
         "index filter conditions": null,
         "table filter conditions": null
