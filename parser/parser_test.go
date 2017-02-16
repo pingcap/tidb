@@ -437,6 +437,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{"flush table with read lock", true},
 		{"flush tables tbl1, tbl2, tbl3", true},
 		{"flush tables tbl1, tbl2, tbl3 with read lock", true},
+		{"flush privileges", true},
 	}
 	s.RunTest(c, table)
 }
@@ -445,11 +446,20 @@ func (s *testParserSuite) TestFlushTable(c *C) {
 	parser := New()
 	stmt, err := parser.Parse("flush local tables tbl1,tbl2 with read lock", "", "")
 	c.Assert(err, IsNil)
-	flushTable := stmt[0].(*ast.FlushTableStmt)
+	flushTable := stmt[0].(*ast.FlushStmt)
+	c.Assert(flushTable.Tp, Equals, ast.FlushTables)
 	c.Assert(flushTable.Tables[0].Name.L, Equals, "tbl1")
 	c.Assert(flushTable.Tables[1].Name.L, Equals, "tbl2")
 	c.Assert(flushTable.NoWriteToBinLog, IsTrue)
 	c.Assert(flushTable.ReadLock, IsTrue)
+}
+
+func (s *testParserSuite) TestFlushPrivileges(c *C) {
+	parser := New()
+	stmt, err := parser.Parse("flush privileges", "", "")
+	c.Assert(err, IsNil)
+	flushPrivilege := stmt[0].(*ast.FlushStmt)
+	c.Assert(flushPrivilege.Tp, Equals, ast.FlushPrivileges)
 }
 
 func (s *testParserSuite) TestExpression(c *C) {
@@ -673,6 +683,14 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT FIELD('ej', 'Hej', 'ej', 'Heja', 'hej', 'foo');`, true},
 		{`SELECT FIND_IN_SET('foo', 'foo,bar')`, true},
 		{`SELECT FIND_IN_SET('foo')`, false},
+		{`SELECT BIN(12)`, true},
+		{`SELECT ELT(1, 'ej', 'Heja', 'hej', 'foo')`, true},
+		{`SELECT EXPORT_SET(5,'Y','N'), EXPORT_SET(5,'Y','N',','), EXPORT_SET(5,'Y','N',',',4)`, true},
+		{`SELECT FORMAT(12332.2,2,'de_DE'), FORMAT(12332.123456, 4)`, true},
+		{`SELECT FROM_BASE64('abc')`, true},
+		{`SELECT INSERT('Quadratic', 3, 4, 'What'), INSTR('foobarbar', 'bar')`, true},
+		{`SELECT LOAD_FILE('/tmp/picture')`, true},
+		{`SELECT LPAD('hi',4,'??')`, true},
 
 		// repeat
 		{`SELECT REPEAT("a", 10);`, true},
@@ -814,6 +832,11 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select count(all c1) from t;`, true},
 		{`select group_concat(c2,c1) from t group by c1;`, true},
 		{`select group_concat(distinct c2,c1) from t group by c1;`, true},
+
+		// for encryption and compression functions
+		{`select AES_ENCRYPT('text',UNHEX('F3229A0B371ED2D9441B830D21A390C3'))`, true},
+		{`select AES_DECRYPT(@crypt_str,@key_str)`, true},
+		{`select AES_DECRYPT(@crypt_str,@key_str,@init_vector);`, true},
 	}
 	s.RunTest(c, table)
 }
@@ -1040,10 +1063,12 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE db.t RENAME to db1.t1", true},
 		{"ALTER TABLE t RENAME as t1", true},
 		{"ALTER TABLE t ALTER COLUMN a SET DEFAULT 1", true},
+		{"ALTER TABLE t ALTER a SET DEFAULT 1", true},
 		{"ALTER TABLE t ALTER COLUMN a SET DEFAULT CURRENT_TIMESTAMP", false},
 		{"ALTER TABLE t ALTER COLUMN a SET DEFAULT NOW()", false},
 		{"ALTER TABLE t ALTER COLUMN a SET DEFAULT 1+1", false},
 		{"ALTER TABLE t ALTER COLUMN a DROP DEFAULT", true},
+		{"ALTER TABLE t ALTER a DROP DEFAULT", true},
 
 		// for rename table statement
 		{"RENAME TABLE t TO t1", true},
@@ -1114,6 +1139,7 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 
 		// for grant statement
 		{"GRANT ALL ON db1.* TO 'jeffrey'@'localhost';", true},
+		{"GRANT ALL ON db1.* TO 'jeffrey'@'localhost' WITH GRANT OPTION;", true},
 		{"GRANT SELECT ON db2.invoice TO 'jeffrey'@'localhost';", true},
 		{"GRANT ALL ON *.* TO 'someuser'@'somehost';", true},
 		{"GRANT SELECT, INSERT ON *.* TO 'someuser'@'somehost';", true},

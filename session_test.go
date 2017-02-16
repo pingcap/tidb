@@ -81,8 +81,9 @@ func (s *testSessionSuite) TestPrepare(c *C) {
 	mustExecSQL(c, se, s.createTableSQL)
 	// insert data
 	mustExecSQL(c, se, `INSERT INTO t VALUES ("id");`)
-	id, ps, _, err := se.PrepareStmt("select id+? from t")
+	id, ps, fields, err := se.PrepareStmt("select id+? from t")
 	c.Assert(err, IsNil)
+	c.Assert(fields, HasLen, 1)
 	c.Assert(id, Equals, uint32(1))
 	c.Assert(ps, Equals, 1)
 	mustExecSQL(c, se, `set @a=1`)
@@ -2430,7 +2431,7 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	defer testleak.AfterTest(c)()
 
 	varName := "max_allowed_packet"
-	varValue := "4194304" // This is the default value for max_allowed_packet
+	varValue := "67108864" // This is the default value for max_allowed_packet
 	varValue1 := "4194305"
 	varValue2 := "4194306"
 
