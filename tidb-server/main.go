@@ -62,6 +62,14 @@ var (
 	metricsAddr     = flag.String("metrics-addr", "", "prometheus pushgateway address, leaves it empty will disable prometheus push.")
 	metricsInterval = flag.Int("metrics-interval", 15, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
 	binlogSocket    = flag.String("binlog-socket", "", "socket file to write binlog")
+
+	timeJumpBackCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "monitor",
+			Name:      "time_jump_back_total",
+			Help:      "Counter of system time jumps backward.",
+		})
 )
 
 func main() {
@@ -144,8 +152,9 @@ func main() {
 		os.Exit(0)
 	}()
 
+	prometheus.MustRegister(timeJumpBackCounter)
 	go systimemon.StartMonitor(time.Now, func() {
-		log.Error("error: system time jump backward")
+		timeJumpBackCounter.Inc()
 	})
 
 	pushMetric(*metricsAddr, time.Duration(*metricsInterval)*time.Second)

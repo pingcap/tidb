@@ -303,6 +303,7 @@ func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {
 		ObjectType: grant.ObjectType,
 		Level:      grant.Level,
 		Users:      grant.Users,
+		WithGrant:  grant.WithGrant,
 		is:         b.is,
 	}
 }
