@@ -205,3 +205,24 @@ func (s *testSuite) TestDefaultDBAfterDropCurDB(c *C) {
 	tk.MustQuery(`select @@character_set_database;`).Check(testkit.Rows("utf8"))
 	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows("utf8_unicode_ci"))
 }
+
+func (s *testSuite) TestRenameTable(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("create database rename1")
+	tk.MustExec("create database rename2")
+	tk.MustExec("create database rename3")
+
+	tk.MustExec("create table rename1.t (a int primary key auto_increment)")
+	tk.MustExec("insert rename1.t values ()")
+	tk.MustExec("rename table rename1.t to rename2.t")
+	tk.MustExec("insert rename2.t values ()")
+	tk.MustExec("rename table rename2.t to rename3.t")
+	tk.MustExec("insert rename3.t values ()")
+	tk.MustQuery("select * from rename3.t").Check(testkit.Rows("1", "2", "3"))
+
+	tk.MustExec("drop database rename1")
+	tk.MustExec("drop database rename2")
+	tk.MustExec("drop database rename3")
+}
