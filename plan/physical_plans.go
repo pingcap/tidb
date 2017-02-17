@@ -501,7 +501,7 @@ func (p *PhysicalIndexScan) MarshalJSON() ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-// IsPointGetByUniqueKey checks whether is a point get by unique key
+// IsPointGetByUniqueKey checks whether is a point get by unique key.
 func (p *PhysicalIndexScan) IsPointGetByUniqueKey(sc *variable.StatementContext) bool {
 	return len(p.Ranges) == 1 &&
 		p.Index.Unique &&

@@ -57,7 +57,7 @@ func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
 	}, nil
 }
 
-// newTikvTxnWithStartTS creates a txn with startTS
+// newTikvTxnWithStartTS creates a txn with startTS.
 func newTikvTxnWithStartTS(store *tikvStore, startTS uint64) (*tikvTxn, error) {
 	ver := kv.NewVersion(startTS)
 	return &tikvTxn{

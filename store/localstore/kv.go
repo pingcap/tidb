@@ -371,7 +371,7 @@ func (s *dbStore) Begin() (kv.Transaction, error) {
 	return newTxn(s, beginVer), nil
 }
 
-// BeginWithStartTS begins transaction with startTS
+// BeginWithStartTS begins transaction with startTS.
 func (s *dbStore) BeginWithStartTS(startTS uint64) (kv.Transaction, error) {
 	return s.Begin()
 }

@@ -930,6 +930,5 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	log.Debug("InitTxnWithStartTS with ", s.txn.StartTS())
 	return nil
 }

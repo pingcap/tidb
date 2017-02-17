@@ -145,7 +145,7 @@ func (s *tikvStore) Begin() (kv.Transaction, error) {
 	return txn, nil
 }
 
-// BeginWithStartTS begins a transaction with startTS
+// BeginWithStartTS begins a transaction with startTS.
 func (s *tikvStore) BeginWithStartTS(startTS uint64) (kv.Transaction, error) {
 	txn, err := newTikvTxnWithStartTS(s, startTS)
 	if err != nil {
