@@ -424,8 +424,8 @@ func (s *testTypeConvertSuite) TestStrToNum(c *C) {
 
 func (s *testTypeConvertSuite) TestFieldTypeToStr(c *C) {
 	defer testleak.AfterTest(c)()
-	v := TypeToStr(mysql.TypeDecimal, "not binary")
-	c.Assert(v, Equals, type2Str[mysql.TypeDecimal])
+	v := TypeToStr(mysql.TypeUnspecified, "not binary")
+	c.Assert(v, Equals, type2Str[mysql.TypeUnspecified])
 	v = TypeToStr(mysql.TypeBlob, charset.CharsetBin)
 	c.Assert(v, Equals, "blob")
 	v = TypeToStr(mysql.TypeString, charset.CharsetBin)

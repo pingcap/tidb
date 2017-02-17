@@ -1025,7 +1025,7 @@ func (p *Analyze) prepareSimpleTableScan(cols []*model.ColumnInfo) *PhysicalTabl
 		Table:               p.Table.TableInfo,
 		Columns:             cols,
 		TableAsName:         &p.Table.Name,
-		DBName:              &p.Table.DBInfo.Name,
+		DBName:              p.Table.DBInfo.Name,
 		physicalTableSource: physicalTableSource{client: p.ctx.GetClient()},
 	}
 	ts.tp = Tbl
@@ -1045,7 +1045,7 @@ func (p *Analyze) prepareSimpleIndexScan(idxOffset int, cols []*model.ColumnInfo
 		Columns:             cols,
 		TableAsName:         &p.Table.Name,
 		OutOfOrder:          false,
-		DBName:              &p.Table.DBInfo.Name,
+		DBName:              p.Table.DBInfo.Name,
 		physicalTableSource: physicalTableSource{client: p.ctx.GetClient()},
 		DoubleRead:          false,
 	}

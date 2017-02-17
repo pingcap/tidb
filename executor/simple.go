@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
@@ -57,8 +58,8 @@ func (e *SimpleExec) Next() (*Row, error) {
 	switch x := e.Statement.(type) {
 	case *ast.UseStmt:
 		err = e.executeUse(x)
-	case *ast.FlushTableStmt:
-		err = e.executeFlushTable(x)
+	case *ast.FlushStmt:
+		err = e.executeFlush(x)
 	case *ast.BeginStmt:
 		err = e.executeBegin(x)
 	case *ast.CommitStmt:
@@ -165,11 +166,15 @@ func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
 		return nil
 	}
 	sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password) VALUES %s;`, mysql.SystemDB, mysql.UserTable, strings.Join(users, ", "))
-	_, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	_, err := e.ctx.(sqlexec.SQLExecutor).Execute(sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return nil
+
+	// Flush privileges.
+	dom := sessionctx.GetDomain(e.ctx)
+	err = dom.PrivilegeHandle().Update()
+	return errors.Trace(err)
 }
 
 func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
@@ -302,7 +307,14 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 	return errors.Trace(err)
 }
 
-func (e *SimpleExec) executeFlushTable(s *ast.FlushTableStmt) error {
-	// TODO: A dummy implement
+func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
+	switch s.Tp {
+	case ast.FlushTables:
+		// TODO: A dummy implement
+	case ast.FlushPrivileges:
+		dom := sessionctx.GetDomain(e.ctx)
+		err := dom.PrivilegeHandle().Update()
+		return errors.Trace(err)
+	}
 	return nil
 }

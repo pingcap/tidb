@@ -44,6 +44,7 @@ type GrantExec struct {
 	ObjectType ast.ObjectTypeType
 	Level      *ast.GrantLevel
 	Users      []*ast.UserSpec
+	WithGrant  bool
 
 	ctx  context.Context
 	is   infoschema.InfoSchema
@@ -88,8 +89,12 @@ func (e *GrantExec) Next() (*Row, error) {
 				return nil, errors.Trace(err)
 			}
 		}
+		privs := e.Privs
+		if e.WithGrant {
+			privs = append(privs, &ast.PrivElem{Priv: mysql.GrantPriv})
+		}
 		// Grant each priv to the user.
-		for _, priv := range e.Privs {
+		for _, priv := range privs {
 			if len(priv.Cols) > 0 {
 				// Check column scope privilege entry.
 				// TODO: Check validity before insert new entry.

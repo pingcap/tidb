@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"sort"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -1360,5 +1361,167 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo|flagEliminateAgg, p.(LogicalPlan), builder.ctx, builder.allocator)
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, ca.best, comment)
+	}
+}
+
+func (s *testPlanSuite) TestVisitInfo(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		sql string
+		ans []visitInfo
+	}{
+		{
+			sql: "insert into t values (1)",
+			ans: []visitInfo{
+				{mysql.InsertPriv, "test", "t", ""},
+			},
+		},
+		{
+			sql: "delete from t where a = 1",
+			ans: []visitInfo{
+				{mysql.DeletePriv, "test", "t", ""},
+				{mysql.SelectPriv, "test", "t", ""},
+			},
+		},
+		{
+			sql: "delete from a1 using t as a1 inner join t as a2 where a1.a = a2.a",
+			ans: []visitInfo{
+				{mysql.DeletePriv, "test", "t", ""},
+				{mysql.SelectPriv, "test", "t", ""},
+			},
+		},
+		{
+			sql: "update t set a = 7 where a = 1",
+			ans: []visitInfo{
+				{mysql.UpdatePriv, "test", "t", ""},
+				{mysql.SelectPriv, "test", "t", ""},
+			},
+		},
+		{
+			sql: "update t, (select * from t) a1 set t.a = a1.a;",
+			ans: []visitInfo{
+				{mysql.UpdatePriv, "test", "t", ""},
+				{mysql.SelectPriv, "test", "t", ""},
+			},
+		},
+		{
+			sql: "select a, sum(e) from t group by a",
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", ""},
+			},
+		},
+		{
+			sql: "truncate table t",
+			ans: []visitInfo{
+				{mysql.DeletePriv, "test", "t", ""},
+			},
+		},
+		{
+			sql: "drop table t",
+			ans: []visitInfo{
+				{mysql.DropPriv, "test", "t", ""},
+			},
+		},
+		{
+			sql: "create table t (a int)",
+			ans: []visitInfo{
+				{mysql.CreatePriv, "test", "t", ""},
+			},
+		},
+		{
+			sql: "create database test",
+			ans: []visitInfo{
+				{mysql.CreatePriv, "test", "", ""},
+			},
+		},
+		{
+			sql: "drop database test",
+			ans: []visitInfo{
+				{mysql.DropPriv, "test", "", ""},
+			},
+		},
+		{
+			sql: "create index t_1 on t (a)",
+			ans: []visitInfo{
+				{mysql.IndexPriv, "test", "t", ""},
+			},
+		},
+		{
+			sql: "drop index e on t",
+			ans: []visitInfo{
+				{mysql.IndexPriv, "test", "t", ""},
+			},
+		},
+	}
+
+	for _, ca := range cases {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+
+		is, err := mockResolve(stmt)
+		c.Assert(err, IsNil)
+
+		builder := &planBuilder{
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+			allocator: new(idAllocator),
+			ctx:       mockContext(),
+			is:        is,
+		}
+		builder.build(stmt)
+		c.Assert(builder.err, IsNil, comment)
+
+		checkVisitInfo(c, builder.visitInfo, ca.ans, comment)
+	}
+}
+
+type visitInfoArray []visitInfo
+
+func (v visitInfoArray) Len() int {
+	return len(v)
+}
+
+func (v visitInfoArray) Less(i, j int) bool {
+	if v[i].privilege < v[j].privilege {
+		return true
+	}
+	if v[i].db < v[j].db {
+		return true
+	}
+	if v[i].table < v[j].table {
+		return true
+	}
+	if v[i].column < v[j].column {
+		return true
+	}
+
+	return false
+}
+
+func (v visitInfoArray) Swap(i, j int) {
+	v[i], v[j] = v[j], v[i]
+}
+
+func unique(v []visitInfo) []visitInfo {
+	repeat := 0
+	for i := 1; i < len(v); i++ {
+		if v[i] == v[i-1] {
+			repeat++
+		} else {
+			v[i-repeat] = v[i]
+		}
+	}
+	return v[:len(v)-repeat]
+}
+
+func checkVisitInfo(c *C, v1, v2 []visitInfo, comment CommentInterface) {
+	sort.Sort(visitInfoArray(v1))
+	sort.Sort(visitInfoArray(v2))
+	v1 = unique(v1)
+	v2 = unique(v2)
+
+	c.Assert(len(v1), Equals, len(v2), comment)
+	for i := 0; i < len(v1); i++ {
+		c.Assert(v1[i], Equals, v2[i], comment)
 	}
 }

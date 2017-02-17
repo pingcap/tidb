@@ -110,7 +110,7 @@ func (ap *aggPruner) rewriteExpr(exprs []expression.Expression, funcName string)
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 			newExpr = expression.NewCastFunc(types.NewFieldType(mysql.TypeNewDecimal), expr, ap.ctx)
 		// Double and Decimal doesn't need to be cast.
-		case mysql.TypeDouble, mysql.TypeDecimal, mysql.TypeNewDecimal:
+		case mysql.TypeDouble, mysql.TypeNewDecimal:
 			newExpr = expr
 		// Float should be cast to double. And other non-numeric type should be cast to double too.
 		default:

@@ -58,15 +58,14 @@ type HashJoinExec struct {
 	// closeCh add a lock for closing executor.
 	closeCh chan struct{}
 
+	rows []*Row
 	// Concurrent channels.
 	concurrency      int
-	bigTableRows     []chan []*Row
-	bigTableErr      chan error
+	bigTableResultCh []chan *execResult
 	hashJoinContexts []*hashJoinCtx
 
 	// Channels for output.
-	resultErr  chan error
-	resultRows chan *Row
+	resultCh chan *execResult
 }
 
 // hashJoinCtx holds the variables needed to do a hash join in one of many concurrent goroutines.
@@ -82,12 +81,13 @@ type hashJoinCtx struct {
 func (e *HashJoinExec) Close() error {
 	e.finished.Store(true)
 	if e.prepared {
-		for range e.resultRows {
+		for range e.resultCh {
 		}
 		<-e.closeCh
 	}
 	e.prepared = false
 	e.cursor = 0
+	e.rows = nil
 	return e.smallExec.Close()
 }
 
@@ -141,23 +141,25 @@ var batchSize = 128
 func (e *HashJoinExec) fetchBigExec() {
 	cnt := 0
 	defer func() {
-		for _, cn := range e.bigTableRows {
+		for _, cn := range e.bigTableResultCh {
 			close(cn)
 		}
 		e.bigExec.Close()
 		e.wg.Done()
 	}()
 	curBatchSize := 1
+	result := &execResult{rows: make([]*Row, 0, batchSize)}
 	for {
-		rows := make([]*Row, 0, batchSize)
 		done := false
+		idx := cnt % e.concurrency
 		for i := 0; i < curBatchSize; i++ {
 			if e.finished.Load().(bool) {
 				return
 			}
 			row, err := e.bigExec.Next()
 			if err != nil {
-				e.bigTableErr <- errors.Trace(err)
+				result.err = errors.Trace(err)
+				e.bigTableResultCh[idx] <- result
 				done = true
 				break
 			}
@@ -165,12 +167,17 @@ func (e *HashJoinExec) fetchBigExec() {
 				done = true
 				break
 			}
-			rows = append(rows, row)
+			result.rows = append(result.rows, row)
+			if len(result.rows) >= batchSize {
+				e.bigTableResultCh[idx] <- result
+				result = &execResult{rows: make([]*Row, 0, batchSize)}
+			}
 		}
-		idx := cnt % e.concurrency
-		e.bigTableRows[idx] <- rows
 		cnt++
 		if done {
+			if len(result.rows) > 0 && len(result.rows) < batchSize {
+				e.bigTableResultCh[idx] <- result
+			}
 			break
 		}
 		if curBatchSize < batchSize {
@@ -184,13 +191,11 @@ func (e *HashJoinExec) fetchBigExec() {
 func (e *HashJoinExec) prepare() error {
 	e.closeCh = make(chan struct{})
 	e.finished.Store(false)
-	e.bigTableRows = make([]chan []*Row, e.concurrency)
+	e.bigTableResultCh = make([]chan *execResult, e.concurrency)
 	e.wg = sync.WaitGroup{}
 	for i := 0; i < e.concurrency; i++ {
-		e.bigTableRows[i] = make(chan []*Row, e.concurrency*batchSize)
+		e.bigTableResultCh[i] = make(chan *execResult, e.concurrency)
 	}
-	e.bigTableErr = make(chan error, 1)
-
 	// Start a worker to fetch big table rows.
 	e.wg.Add(1)
 	go e.fetchBigExec()
@@ -232,8 +237,7 @@ func (e *HashJoinExec) prepare() error {
 		}
 	}
 
-	e.resultRows = make(chan *Row, e.concurrency*1000)
-	e.resultErr = make(chan error, 1)
+	e.resultCh = make(chan *execResult, e.concurrency)
 
 	for i := 0; i < e.concurrency; i++ {
 		e.wg.Add(1)
@@ -247,36 +251,37 @@ func (e *HashJoinExec) prepare() error {
 
 func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 	e.wg.Wait()
-	close(e.resultRows)
+	close(e.resultCh)
 	e.hashTable = nil
 	close(e.closeCh)
 }
 
 // doJoin does join job in one goroutine.
 func (e *HashJoinExec) runJoinWorker(idx int) {
+	maxRowsCnt := 1000
+	result := &execResult{rows: make([]*Row, 0, maxRowsCnt)}
 	for {
-		var (
-			bigRows []*Row
-			ok      bool
-			err     error
-		)
-		select {
-		case bigRows, ok = <-e.bigTableRows[idx]:
-		case err = <-e.bigTableErr:
-		}
-		if err != nil {
-			e.resultErr <- errors.Trace(err)
-			break
-		}
+		bigTableResult, ok := <-e.bigTableResultCh[idx]
 		if !ok || e.finished.Load().(bool) {
 			break
 		}
-		for _, bigRow := range bigRows {
-			succ := e.joinOneBigRow(e.hashJoinContexts[idx], bigRow)
+		if bigTableResult.err != nil {
+			e.resultCh <- &execResult{err: errors.Trace(bigTableResult.err)}
+			break
+		}
+		for _, bigRow := range bigTableResult.rows {
+			succ := e.joinOneBigRow(e.hashJoinContexts[idx], bigRow, result)
 			if !succ {
 				break
 			}
+			if len(result.rows) >= maxRowsCnt {
+				e.resultCh <- result
+				result = &execResult{rows: make([]*Row, 0, maxRowsCnt)}
+			}
 		}
+	}
+	if len(result.rows) != 0 || result.err != nil {
+		e.resultCh <- result
 	}
 	e.wg.Done()
 }
@@ -284,7 +289,7 @@ func (e *HashJoinExec) runJoinWorker(idx int) {
 // joinOneBigRow creates result rows from a row in a big table and sends them to resultRows channel.
 // Every matching row generates a result row.
 // If there are no matching rows and it is outer join, a null filled result row is created.
-func (e *HashJoinExec) joinOneBigRow(ctx *hashJoinCtx, bigRow *Row) bool {
+func (e *HashJoinExec) joinOneBigRow(ctx *hashJoinCtx, bigRow *Row, result *execResult) bool {
 	var (
 		matchedRows []*Row
 		err         error
@@ -293,23 +298,23 @@ func (e *HashJoinExec) joinOneBigRow(ctx *hashJoinCtx, bigRow *Row) bool {
 	if e.bigFilter != nil {
 		bigMatched, err = expression.EvalBool(ctx.bigFilter, bigRow.Data, e.ctx)
 		if err != nil {
-			e.resultErr <- errors.Trace(err)
+			result.err = errors.Trace(err)
 			return false
 		}
 	}
 	if bigMatched {
 		matchedRows, err = e.constructMatchedRows(ctx, bigRow)
 		if err != nil {
-			e.resultErr <- errors.Trace(err)
+			result.err = errors.Trace(err)
 			return false
 		}
 	}
 	for _, r := range matchedRows {
-		e.resultRows <- r
+		result.rows = append(result.rows, r)
 	}
 	if len(matchedRows) == 0 && e.outer {
 		r := e.fillRowWithDefaultValues(bigRow)
-		e.resultRows <- r
+		result.rows = append(result.rows, r)
 	}
 	return true
 }
@@ -374,22 +379,23 @@ func (e *HashJoinExec) Next() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 	}
-	var (
-		row *Row
-		err error
-		ok  bool
-	)
-	select {
-	case row, ok = <-e.resultRows:
-	case err, ok = <-e.resultErr:
+	if e.cursor >= len(e.rows) {
+		result, ok := <-e.resultCh
+		if !ok {
+			return nil, nil
+		}
+		if result.err != nil {
+			e.finished.Store(true)
+			return nil, errors.Trace(result.err)
+		}
+		if len(result.rows) == 0 {
+			return nil, nil
+		}
+		e.rows = result.rows
+		e.cursor = 0
 	}
-	if err != nil {
-		e.finished.Store(true)
-		return nil, errors.Trace(err)
-	}
-	if !ok {
-		return nil, nil
-	}
+	row := e.rows[e.cursor]
+	e.cursor++
 	return row, nil
 }
 
