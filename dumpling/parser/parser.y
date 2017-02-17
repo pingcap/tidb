@@ -3430,25 +3430,85 @@ FuncDatetimePrec:
 
 TimeUnit:
 	"MICROSECOND"
+	{
+		$$ = strings.ToUpper($1)
+	}
 |	"SECOND"
+	{
+		$$ = strings.ToUpper($1)
+	}
 |	"MINUTE"
+	{
+		$$ = strings.ToUpper($1)
+	}
 |	"HOUR"
+	{
+		$$ = strings.ToUpper($1)
+	}
 |	"DAY"
+	{
+		$$ = strings.ToUpper($1)
+	}
 |	"WEEK"
+	{
+		$$ = strings.ToUpper($1)
+	}
 |	"MONTH"
+	{
+		$$ = strings.ToUpper($1)
+	}
 |	"QUARTER"
+	{
+		$$ = strings.ToUpper($1)
+	}
 |	"YEAR"
+	{
+		$$ = strings.ToUpper($1)
+	}
 |	"SECOND_MICROSECOND"
+	{
+		$$ = strings.ToUpper($1)
+	}
 |	"MINUTE_MICROSECOND"
+	{
+		$$ = strings.ToUpper($1)
+	}
 |	"MINUTE_SECOND"
+	{
+		$$ = strings.ToUpper($1)
+	}
 |	"HOUR_MICROSECOND"
+	{
+		$$ = strings.ToUpper($1)
+	}
 |	"HOUR_SECOND"
+	{
+		$$ = strings.ToUpper($1)
+	}
 |	"HOUR_MINUTE"
+	{
+		$$ = strings.ToUpper($1)
+	}
 |	"DAY_MICROSECOND"
+	{
+		$$ = strings.ToUpper($1)
+	}
 |	"DAY_SECOND"
+	{
+		$$ = strings.ToUpper($1)
+	}
 |	"DAY_MINUTE"
+	{
+		$$ = strings.ToUpper($1)
+	}
 |	"DAY_HOUR"
+	{
+		$$ = strings.ToUpper($1)
+	}
 |	"YEAR_MONTH"
+	{
+		$$ = strings.ToUpper($1)
+	}
 
 ExpressionOpt:
 	{
