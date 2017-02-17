@@ -45,12 +45,22 @@ func (p *Aggregation) buildKeyInfo() {
 	}
 }
 
-func (p *Selection) checkUniqueCol(expr expression.Expression) bool {
-	col, ok := expr.(*expression.Column)
+// If a condition is the form of (uniqueKey = constant) or (uniqueKey = Correlated column), it returns at most one row.
+// This function will check it.
+func (p *Selection) checkMaxOneRowCond(unique expression.Expression, constOrCorCol expression.Expression) bool {
+	col, ok := unique.(*expression.Column)
 	if !ok {
 		return false
 	}
-	return p.children[0].Schema().IsUniqueKey(col)
+	if !p.children[0].Schema().IsUniqueKey(col) {
+		return false
+	}
+	_, okCon := constOrCorCol.(*expression.Constant)
+	if okCon {
+		return true
+	}
+	_, okCorCol := constOrCorCol.(*expression.CorrelatedColumn)
+	return okCorCol
 }
 
 func (p *Selection) buildKeyInfo() {
@@ -58,7 +68,7 @@ func (p *Selection) buildKeyInfo() {
 	p.schema.MaxOneRow = p.children[0].Schema().MaxOneRow
 	for _, cond := range p.Conditions {
 		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.EQ {
-			if p.checkUniqueCol(sf.GetArgs()[0]) || p.checkUniqueCol(sf.GetArgs()[1]) {
+			if p.checkMaxOneRowCond(sf.GetArgs()[0], sf.GetArgs()[1]) || p.checkMaxOneRowCond(sf.GetArgs()[1], sf.GetArgs()[0]) {
 				p.schema.MaxOneRow = true
 				break
 			}
