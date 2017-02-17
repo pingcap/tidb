@@ -35,7 +35,7 @@ var (
 	_ Executor = (*RevokeExec)(nil)
 )
 
-// GrantExec executes GrantStmt.
+// RevokeExec executes RevokeStmt.
 type RevokeExec struct {
 	Privs      []*ast.PrivElem
 	ObjectType ast.ObjectTypeType
@@ -153,7 +153,7 @@ func (e *RevokeExec) revokeTablePriv(priv *ast.PrivElem, user, host string) erro
 	if err != nil {
 		return errors.Trace(err)
 	}
-	asgns, err := composeTablePrivUpdate(e.ctx, priv.Priv, user, host, db.Name.O, tbl.Meta().Name.O)
+	asgns, err := composeTablePrivUpdateForRevoke(e.ctx, priv.Priv, user, host, db.Name.O, tbl.Meta().Name.O)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -172,7 +172,7 @@ func (e *RevokeExec) revokeColumnPriv(priv *ast.PrivElem, user, host string) err
 		if col == nil {
 			return errors.Errorf("Unknown column: %s", c)
 		}
-		asgns, err := composeColumnPrivUpdate(e.ctx, priv.Priv, user, host, db.Name.O, tbl.Meta().Name.O, col.Name.O)
+		asgns, err := composeColumnPrivUpdateForRevoke(e.ctx, priv.Priv, user, host, db.Name.O, tbl.Meta().Name.O, col.Name.O)
 		if err != nil {
 			return errors.Trace(err)
 		}

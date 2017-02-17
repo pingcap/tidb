@@ -258,7 +258,7 @@ func (e *GrantExec) grantTablePriv(priv *ast.PrivElem, user *ast.UserSpec) error
 		return errors.Trace(err)
 	}
 	userName, host := parseUser(user.User)
-	asgns, err := composeTablePrivUpdate(e.ctx, priv.Priv, userName, host, db.Name.O, tbl.Meta().Name.O)
+	asgns, err := composeTablePrivUpdateForGrant(e.ctx, priv.Priv, userName, host, db.Name.O, tbl.Meta().Name.O)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -279,7 +279,7 @@ func (e *GrantExec) grantColumnPriv(priv *ast.PrivElem, user *ast.UserSpec) erro
 		if col == nil {
 			return errors.Errorf("Unknown column: %s", c)
 		}
-		asgns, err := composeColumnPrivUpdate(e.ctx, priv.Priv, userName, host, db.Name.O, tbl.Meta().Name.O, col.Name.O)
+		asgns, err := composeColumnPrivUpdateForGrant(e.ctx, priv.Priv, userName, host, db.Name.O, tbl.Meta().Name.O, col.Name.O)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -329,7 +329,7 @@ func composeDBPrivUpdate(priv mysql.PrivilegeType, value string) (string, error)
 }
 
 // Compose update stmt assignment list for table scope privilege update.
-func composeTablePrivUpdate(ctx context.Context, priv mysql.PrivilegeType, name string, host string, db string, tbl string) (string, error) {
+func composeTablePrivUpdateForGrant(ctx context.Context, priv mysql.PrivilegeType, name string, host string, db string, tbl string) (string, error) {
 	var newTablePriv, newColumnPriv string
 	if priv == mysql.AllPriv {
 		for _, p := range mysql.AllTablePrivs {
@@ -337,22 +337,14 @@ func composeTablePrivUpdate(ctx context.Context, priv mysql.PrivilegeType, name 
 			if !ok {
 				return "", errors.Errorf("Unknown table privilege %v", p)
 			}
-			if len(newTablePriv) == 0 {
-				newTablePriv = v
-			} else {
-				newTablePriv = fmt.Sprintf("%s,%s", newTablePriv, v)
-			}
+			newTablePriv = addToSet(newTablePriv, v)
 		}
 		for _, p := range mysql.AllColumnPrivs {
 			v, ok := mysql.Priv2SetStr[p]
 			if !ok {
 				return "", errors.Errorf("Unknown column privilege %v", p)
 			}
-			if len(newColumnPriv) == 0 {
-				newColumnPriv = v
-			} else {
-				newColumnPriv = fmt.Sprintf("%s,%s", newColumnPriv, v)
-			}
+			newColumnPriv = addToSet(newColumnPriv, v)
 		}
 	} else {
 		currTablePriv, currColumnPriv, err := getTablePriv(ctx, name, host, db, tbl)
@@ -363,18 +355,11 @@ func composeTablePrivUpdate(ctx context.Context, priv mysql.PrivilegeType, name 
 		if !ok {
 			return "", errors.Errorf("Unknown priv: %v", priv)
 		}
-		if len(currTablePriv) == 0 {
-			newTablePriv = p
-		} else {
-			newTablePriv = fmt.Sprintf("%s,%s", currTablePriv, p)
-		}
+		newTablePriv = addToSet(currTablePriv, p)
+
 		for _, cp := range mysql.AllColumnPrivs {
 			if priv == cp {
-				if len(currColumnPriv) == 0 {
-					newColumnPriv = p
-				} else {
-					newColumnPriv = fmt.Sprintf("%s,%s", currColumnPriv, p)
-				}
+				newColumnPriv = addToSet(currColumnPriv, p)
 				break
 			}
 		}
@@ -382,8 +367,56 @@ func composeTablePrivUpdate(ctx context.Context, priv mysql.PrivilegeType, name 
 	return fmt.Sprintf(`Table_priv="%s", Column_priv="%s", Grantor="%s"`, newTablePriv, newColumnPriv, ctx.GetSessionVars().User), nil
 }
 
+func composeTablePrivUpdateForRevoke(ctx context.Context, priv mysql.PrivilegeType, name string, host string, db string, tbl string) (string, error) {
+	var newTablePriv, newColumnPriv string
+	if priv == mysql.AllPriv {
+		newTablePriv = ""
+		newColumnPriv = ""
+	} else {
+		currTablePriv, currColumnPriv, err := getTablePriv(ctx, name, host, db, tbl)
+		if err != nil {
+			return "", errors.Trace(err)
+		}
+		p, ok := mysql.Priv2SetStr[priv]
+		if !ok {
+			return "", errors.Errorf("Unknown priv: %v", priv)
+		}
+		newTablePriv = deleteFromSet(currTablePriv, p)
+
+		for _, cp := range mysql.AllColumnPrivs {
+			if priv == cp {
+				newColumnPriv = deleteFromSet(currColumnPriv, p)
+				break
+			}
+		}
+	}
+	return fmt.Sprintf(`Table_priv="%s", Column_priv="%s", Grantor="%s"`, newTablePriv, newColumnPriv, ctx.GetSessionVars().User), nil
+}
+
+// addToSet add a value to the set, e.g:
+// addToSet("Select,Insert", "Update") returns "Select,Insert,Update".
+func addToSet(set string, value string) string {
+	if set == "" {
+		return value
+	}
+	return fmt.Sprintf("%s,%s", set, value)
+}
+
+// deleteFromSet delete the value from the set, e.g:
+// deleteFromSet("Select,Insert,Update", "Update") returns "Select,Insert".
+func deleteFromSet(set string, value string) string {
+	sets := strings.Split(set, ",")
+	res := make([]string, 0, len(sets))
+	for _, v := range sets {
+		if v != value {
+			res = append(res, v)
+		}
+	}
+	return strings.Join(res, ",")
+}
+
 // Compose update stmt assignment list for column scope privilege update.
-func composeColumnPrivUpdate(ctx context.Context, priv mysql.PrivilegeType, name string, host string, db string, tbl string, col string) (string, error) {
+func composeColumnPrivUpdateForGrant(ctx context.Context, priv mysql.PrivilegeType, name string, host string, db string, tbl string, col string) (string, error) {
 	newColumnPriv := ""
 	if priv == mysql.AllPriv {
 		for _, p := range mysql.AllColumnPrivs {
@@ -391,11 +424,7 @@ func composeColumnPrivUpdate(ctx context.Context, priv mysql.PrivilegeType, name
 			if !ok {
 				return "", errors.Errorf("Unknown column privilege %v", p)
 			}
-			if len(newColumnPriv) == 0 {
-				newColumnPriv = v
-			} else {
-				newColumnPriv = fmt.Sprintf("%s,%s", newColumnPriv, v)
-			}
+			newColumnPriv = addToSet(newColumnPriv, v)
 		}
 	} else {
 		currColumnPriv, err := getColumnPriv(ctx, name, host, db, tbl, col)
@@ -406,11 +435,25 @@ func composeColumnPrivUpdate(ctx context.Context, priv mysql.PrivilegeType, name
 		if !ok {
 			return "", errors.Errorf("Unknown priv: %v", priv)
 		}
-		if len(currColumnPriv) == 0 {
-			newColumnPriv = p
-		} else {
-			newColumnPriv = fmt.Sprintf("%s,%s", currColumnPriv, p)
+		newColumnPriv = addToSet(currColumnPriv, p)
+	}
+	return fmt.Sprintf(`Column_priv="%s"`, newColumnPriv), nil
+}
+
+func composeColumnPrivUpdateForRevoke(ctx context.Context, priv mysql.PrivilegeType, name string, host string, db string, tbl string, col string) (string, error) {
+	newColumnPriv := ""
+	if priv == mysql.AllPriv {
+		newColumnPriv = ""
+	} else {
+		currColumnPriv, err := getColumnPriv(ctx, name, host, db, tbl, col)
+		if err != nil {
+			return "", errors.Trace(err)
 		}
+		p, ok := mysql.Priv2SetStr[priv]
+		if !ok {
+			return "", errors.Errorf("Unknown priv: %v", priv)
+		}
+		newColumnPriv = deleteFromSet(currColumnPriv, p)
 	}
 	return fmt.Sprintf(`Column_priv="%s"`, newColumnPriv), nil
 }
