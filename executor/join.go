@@ -516,7 +516,7 @@ func (e *NestedLoopJoinExec) fillRowWithNullValue(row *Row) *Row {
 
 func (e *NestedLoopJoinExec) doJoin(bigRow *Row, match bool) ([]*Row, error) {
 	e.resultRows = e.resultRows[0:0]
-	if !match {
+	if !match && e.outer {
 		row := e.fillRowWithNullValue(bigRow)
 		e.resultRows = append(e.resultRows, row)
 		return e.resultRows, nil
@@ -534,7 +534,7 @@ func (e *NestedLoopJoinExec) doJoin(bigRow *Row, match bool) ([]*Row, error) {
 		}
 		e.resultRows = append(e.resultRows, mergedRow)
 	}
-	if len(e.resultRows) == 0 {
+	if len(e.resultRows) == 0 && e.outer {
 		e.resultRows = append(e.resultRows, e.fillRowWithNullValue(bigRow))
 	}
 	return e.resultRows, nil
