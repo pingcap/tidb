@@ -64,6 +64,10 @@ var (
 	_ functionClass = &charLengthFunctionClass{}
 	_ functionClass = &findInSetFunctionClass{}
 	_ functionClass = &fieldFunctionClass{}
+	_ functionClass = &makeSetFunctionClass{}
+	_ functionClass = &octFunctionClass{}
+	_ functionClass = &ordFunctionClass{}
+	_ functionClass = &quoteFunctionClass{}
 	_ functionClass = &binFunctionClass{}
 	_ functionClass = &eltFunctionClass{}
 	_ functionClass = &exportSetFunctionClass{}
@@ -102,6 +106,10 @@ var (
 	_ builtinFunc = &builtinCharSig{}
 	_ builtinFunc = &builtinCharLengthSig{}
 	_ builtinFunc = &builtinFindInSetSig{}
+	_ builtinFunc = &builtinMakeSetSig{}
+	_ builtinFunc = &builtinOctSig{}
+	_ builtinFunc = &builtinOrdSig{}
+	_ builtinFunc = &builtinQuoteSig{}
 	_ builtinFunc = &builtinBinSig{}
 	_ builtinFunc = &builtinEltSig{}
 	_ builtinFunc = &builtinExportSetSig{}
@@ -1371,6 +1379,74 @@ func argsToSpecifiedType(args []types.Datum, allString bool, allNumber bool, ctx
 		}
 	}
 	return
+}
+
+type makeSetFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *makeSetFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinMakeSetSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinMakeSetSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_make-set
+func (b *builtinMakeSetSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("make_set")
+}
+
+type octFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *octFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinOctSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinOctSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_oct
+func (b *builtinOctSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("oct")
+}
+
+type ordFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *ordFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinOrdSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinOrdSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ord
+func (b *builtinOrdSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("ord")
+}
+
+type quoteFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *quoteFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinQuoteSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinQuoteSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_quote
+func (b *builtinQuoteSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("quote")
 }
 
 type binFunctionClass struct {

@@ -302,18 +302,19 @@ func (record *userRecord) match(user, host string) bool {
 }
 
 func (record *dbRecord) match(user, host, db string) bool {
-	return record.User == user && record.DB == db &&
+	return record.User == user && strings.EqualFold(record.DB, db) &&
 		patternMatch(host, record.patChars, record.patTypes)
 }
 
 func (record *tablesPrivRecord) match(user, host, db, table string) bool {
-	return record.User == user && record.DB == db &&
-		record.TableName == table && patternMatch(host, record.patChars, record.patTypes)
+	return record.User == user && strings.EqualFold(record.DB, db) &&
+		strings.EqualFold(record.TableName, table) && patternMatch(host, record.patChars, record.patTypes)
 }
 
 func (record *columnsPrivRecord) match(user, host, db, table, col string) bool {
-	return record.User == user && record.DB == db &&
-		record.TableName == table && record.ColumnName == col &&
+	return record.User == user && strings.EqualFold(record.DB, db) &&
+		strings.EqualFold(record.TableName, table) &&
+		strings.EqualFold(record.ColumnName, col) &&
 		patternMatch(host, record.patChars, record.patTypes)
 }
 
