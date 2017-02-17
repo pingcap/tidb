@@ -404,6 +404,14 @@ func (s *testSuite) TestSubquery(c *C) {
 	c.Check(err, IsNil)
 	_, err = tidb.GetRows(rs)
 	c.Check(err, NotNil)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int)")
+	tk.MustExec("create table s(id int)")
+	tk.MustExec("insert into t values(1), (2)")
+	tk.MustExec("insert into s values(2), (2)")
+	result = tk.MustQuery("select id from t where(select count(*) from s where s.id = t.id) > 0")
+	result.Check(testkit.Rows("2"))
 }
 
 func (s *testSuite) TestInSubquery(c *C) {
