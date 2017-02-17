@@ -603,7 +603,7 @@ func (b *executorBuilder) buildApply(v *plan.PhysicalApply) Executor {
 	case *plan.PhysicalHashSemiJoin:
 		join = b.buildSemiJoin(x)
 	case *plan.PhysicalHashJoin:
-		if x.JoinType == plan.InnerJoin {
+		if x.JoinType == plan.InnerJoin || x.JoinType == plan.LeftOuterJoin {
 			join = b.buildNestedLoopJoin(x)
 		} else {
 			b.err = errors.Errorf("Unsupported join type %v in nested loop join", x.JoinType)

@@ -31,19 +31,19 @@ var AllowCartesianProduct = true
 var EnableStatistic = false
 
 const (
-	flagDecorrelate uint64 = 1 << iota
-	flagPredicatePushDown
-	flagPrunColumns
+	flagPrunColumns uint64 = 1 << iota
 	flagBuildKeyInfo
+	flagDecorrelate
+	flagPredicatePushDown
 	flagEliminateAgg
 	flagAggPushDown
 )
 
 var optRuleList = []logicalOptRule{
-	&decorrelateSolver{},
-	&ppdSolver{},
 	&columnPruner{},
 	&buildKeySolver{},
+	&decorrelateSolver{},
+	&ppdSolver{},
 	&aggPruner{},
 	&aggPushDownSolver{},
 }

@@ -413,7 +413,6 @@ type joinExec interface {
 }
 
 // NestedLoopJoinExec implements nested-loop algorithm for join.
-// TODO: Currently we only implements inner join for it. We will complete it in future.
 type NestedLoopJoinExec struct {
 	innerRows   []*Row
 	cursor      int
@@ -506,9 +505,22 @@ func (e *NestedLoopJoinExec) prepare() error {
 	}
 }
 
-// TODO: Process outer join case.
-func (e *NestedLoopJoinExec) doJoin(bigRow *Row, _ bool) ([]*Row, error) {
+func (e *NestedLoopJoinExec) fillRowWithNullValue(row *Row) *Row {
+	newRow := &Row{
+		RowKeys: row.RowKeys,
+		Data:    make([]types.Datum, len(row.Data), len(row.Data)+e.SmallExec.Schema().Len()),
+	}
+	copy(newRow.Data, row.Data)
+	return newRow
+}
+
+func (e *NestedLoopJoinExec) doJoin(bigRow *Row, match bool) ([]*Row, error) {
 	e.resultRows = e.resultRows[0:0]
+	if !match {
+		row := e.fillRowWithNullValue(bigRow)
+		e.resultRows = append(e.resultRows, row)
+		return e.resultRows, nil
+	}
 	for _, row := range e.innerRows {
 		mergedRow := makeJoinRow(bigRow, row)
 		if e.OtherFilter != nil {
@@ -521,6 +533,9 @@ func (e *NestedLoopJoinExec) doJoin(bigRow *Row, _ bool) ([]*Row, error) {
 			}
 		}
 		e.resultRows = append(e.resultRows, mergedRow)
+	}
+	if len(e.resultRows) == 0 {
+		e.resultRows = append(e.resultRows, e.fillRowWithNullValue(bigRow))
 	}
 	return e.resultRows, nil
 }
