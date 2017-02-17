@@ -45,6 +45,18 @@ var (
 	_ functionClass = &signFunctionClass{}
 	_ functionClass = &sqrtFunctionClass{}
 	_ functionClass = &arithmeticFunctionClass{}
+	_ functionClass = &acosFunctionClass{}
+	_ functionClass = &asinFunctionClass{}
+	_ functionClass = &atanFunctionClass{}
+	_ functionClass = &cosFunctionClass{}
+	_ functionClass = &cotFunctionClass{}
+	_ functionClass = &degreesFunctionClass{}
+	_ functionClass = &expFunctionClass{}
+	_ functionClass = &piFunctionClass{}
+	_ functionClass = &radiansFunctionClass{}
+	_ functionClass = &sinFunctionClass{}
+	_ functionClass = &tanFunctionClass{}
+	_ functionClass = &truncateFunctionClass{}
 )
 
 var (
@@ -62,6 +74,18 @@ var (
 	_ builtinFunc = &builtinSignSig{}
 	_ builtinFunc = &builtinSqrtSig{}
 	_ builtinFunc = &builtinArithmeticSig{}
+	_ builtinFunc = &builtinAcosSig{}
+	_ builtinFunc = &builtinAsinSig{}
+	_ builtinFunc = &builtinAtanSig{}
+	_ builtinFunc = &builtinCosSig{}
+	_ builtinFunc = &builtinCotSig{}
+	_ builtinFunc = &builtinDegreesSig{}
+	_ builtinFunc = &builtinExpSig{}
+	_ builtinFunc = &builtinPISig{}
+	_ builtinFunc = &builtinRadiansSig{}
+	_ builtinFunc = &builtinSinSig{}
+	_ builtinFunc = &builtinTanSig{}
+	_ builtinFunc = &builtinTruncateSig{}
 )
 
 type absFunctionClass struct {
@@ -668,4 +692,208 @@ func (s *builtinArithmeticSig) eval(row []types.Datum) (d types.Datum, err error
 	default:
 		return d, errInvalidOperation.Gen("invalid op %v in arithmetic operation", s.op)
 	}
+}
+
+type acosFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *acosFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinAcosSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinAcosSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_acos
+func (b *builtinAcosSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("acos")
+}
+
+type asinFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *asinFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinAsinSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinAsinSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_asin
+func (b *builtinAsinSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("asin")
+}
+
+type atanFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *atanFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinAtanSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinAtanSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_atan
+func (b *builtinAtanSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("atan")
+}
+
+type cosFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *cosFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinCosSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinCosSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_cos
+func (b *builtinCosSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("cos")
+}
+
+type cotFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *cotFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinCotSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinCotSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_cot
+func (b *builtinCotSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("cot")
+}
+
+type degreesFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *degreesFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinDegreesSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinDegreesSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_degrees
+func (b *builtinDegreesSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("degrees")
+}
+
+type expFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *expFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinExpSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinExpSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_exp
+func (b *builtinExpSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("exp")
+}
+
+type piFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *piFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinPISig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinPISig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_pi
+func (b *builtinPISig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("pi")
+}
+
+type radiansFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *radiansFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinRadiansSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinRadiansSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_radians
+func (b *builtinRadiansSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("radians")
+}
+
+type sinFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *sinFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinSinSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinSinSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_sin
+func (b *builtinSinSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("sin")
+}
+
+type tanFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *tanFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinTanSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinTanSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_tan
+func (b *builtinTanSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("tan")
+}
+
+type truncateFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *truncateFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinTruncateSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinTruncateSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_truncate
+func (b *builtinTruncateSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("truncate")
 }
