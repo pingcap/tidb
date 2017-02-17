@@ -1313,3 +1313,23 @@ func (s *testParserSuite) TestExplain(c *C) {
 	}
 	s.RunTest(c, table)
 }
+
+func (s *testParserSuite) TestTimestampDiffUnit(c *C) {
+	// Test case for timestampdiff unit.
+	// TimeUnit should be unified to upper case.
+	parser := New()
+	stmt, err := parser.Parse("SELECT TIMESTAMPDIFF(MONTH,'2003-02-01','2003-05-01'), TIMESTAMPDIFF(month,'2003-02-01','2003-05-01');", "", "")
+	c.Assert(err, IsNil)
+	ss := stmt[0].(*ast.SelectStmt)
+	fields := ss.Fields.Fields
+	c.Assert(len(fields), Equals, 2)
+	expr := fields[0].Expr
+	f, ok := expr.(*ast.FuncCallExpr)
+	c.Assert(ok, IsTrue)
+	c.Assert(f.Args[0].GetDatum().GetString(), Equals, "MONTH")
+
+	expr = fields[1].Expr
+	f, ok = expr.(*ast.FuncCallExpr)
+	c.Assert(ok, IsTrue)
+	c.Assert(f.Args[0].GetDatum().GetString(), Equals, "MONTH")
+}
