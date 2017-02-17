@@ -565,6 +565,7 @@ type GrantStmt struct {
 	ObjectType ObjectTypeType
 	Level      *GrantLevel
 	Users      []*UserSpec
+	WithGrant  bool
 }
 
 // Accept implements Node Accept interface.
