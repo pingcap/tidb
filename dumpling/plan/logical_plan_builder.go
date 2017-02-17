@@ -981,12 +981,14 @@ type ApplyConditionChecker struct {
 	All       bool
 }
 
-// buildInnerApply builds apply plan with outerPlan and innerPlan, which apply inner-join for every row from outerPlan and the whole innerPlan.
-func (b *planBuilder) buildInnerApply(outerPlan, innerPlan LogicalPlan) LogicalPlan {
+// buildApplyWithJoinType builds apply plan with outerPlan and innerPlan, which apply join with particular join type for
+// every row from outerPlan and the whole innerPlan.
+func (b *planBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, tp JoinType) LogicalPlan {
 	b.optFlag = b.optFlag | flagPredicatePushDown
+	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagDecorrelate
 	join := &Join{
-		JoinType:        InnerJoin,
+		JoinType:        tp,
 		baseLogicalPlan: newBaseLogicalPlan(Jn, b.allocator),
 	}
 	ap := &Apply{Join: *join}
@@ -1004,6 +1006,7 @@ func (b *planBuilder) buildInnerApply(outerPlan, innerPlan LogicalPlan) LogicalP
 // buildSemiApply builds apply plan with outerPlan and innerPlan, which apply semi-join for every row from outerPlan and the whole innerPlan.
 func (b *planBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition []expression.Expression, asScalar, not bool) LogicalPlan {
 	b.optFlag = b.optFlag | flagPredicatePushDown
+	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagDecorrelate
 	join := b.buildSemiJoin(outerPlan, innerPlan, condition, asScalar, not)
 	ap := &Apply{Join: *join}

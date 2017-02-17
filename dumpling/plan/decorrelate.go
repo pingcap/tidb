@@ -76,6 +76,13 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 			apply.SetChildren(outerPlan, innerPlan)
 			innerPlan.SetParents(apply)
 			return s.optimize(p, nil, nil)
+		} else if m, ok := innerPlan.(*MaxOneRow); ok {
+			if m.children[0].Schema().MaxOneRow {
+				innerPlan = m.children[0].(LogicalPlan)
+				innerPlan.SetParents(apply)
+				apply.SetChildren(outerPlan, innerPlan)
+				return s.optimize(p, nil, nil)
+			}
 		} else if proj, ok := innerPlan.(*Projection); ok {
 			for i, expr := range proj.Exprs {
 				proj.Exprs[i] = expr.Decorrelate(outerPlan.Schema())
@@ -89,8 +96,10 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 				proj.Exprs = append(expression.Column2Exprs(outerPlan.Schema().Clone().Columns), proj.Exprs...)
 				apply.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
 				proj.SetParents(apply.Parents()...)
-				proj.SetChildren(apply)
-				apply.SetParents(proj)
+				np, _ := s.optimize(p, nil, nil)
+				proj.SetChildren(np)
+				np.SetParents(proj)
+				return proj, nil
 			}
 			return s.optimize(p, nil, nil)
 		}
@@ -100,7 +109,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 	for _, child := range p.Children() {
 		np, _ := s.optimize(child.(LogicalPlan), nil, nil)
 		newChildren = append(newChildren, np)
-		child.SetParents(p)
+		np.SetParents(p)
 	}
 	p.SetChildren(newChildren...)
 	return p, nil

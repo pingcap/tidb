@@ -18,6 +18,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
@@ -393,6 +394,16 @@ func (s *testSuite) TestSubquery(c *C) {
 	tk.MustExec("create table t(c int)")
 	result = tk.MustQuery("select exists(select count(*) from t)")
 	result.Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, v int)")
+	tk.MustExec("insert into t values(1, 1), (2, 2), (3, 3)")
+	result = tk.MustQuery("select (select t.id from t where s.id < 2 and t.id = s.id) from t s")
+	result.Check(testkit.Rows("1", "<nil>", "<nil>"))
+	rs, err := tk.Exec("select (select t.id from t where t.id = t.v and t.v != s.id) from t s")
+	c.Check(err, IsNil)
+	_, err = tidb.GetRows(rs)
+	c.Check(err, NotNil)
 }
 
 func (s *testSuite) TestInSubquery(c *C) {
