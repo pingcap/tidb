@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
@@ -39,6 +40,40 @@ func (p *Aggregation) buildKeyInfo() {
 		}
 		p.schema.Keys = append(p.schema.Keys, newKey)
 	}
+	if len(p.GroupByItems) == 0 {
+		p.schema.MaxOneRow = true
+	}
+}
+
+// If a condition is the form of (uniqueKey = constant) or (uniqueKey = Correlated column), it returns at most one row.
+// This function will check it.
+func (p *Selection) checkMaxOneRowCond(unique expression.Expression, constOrCorCol expression.Expression) bool {
+	col, ok := unique.(*expression.Column)
+	if !ok {
+		return false
+	}
+	if !p.children[0].Schema().IsUniqueKey(col) {
+		return false
+	}
+	_, okCon := constOrCorCol.(*expression.Constant)
+	if okCon {
+		return true
+	}
+	_, okCorCol := constOrCorCol.(*expression.CorrelatedColumn)
+	return okCorCol
+}
+
+func (p *Selection) buildKeyInfo() {
+	p.baseLogicalPlan.buildKeyInfo()
+	p.schema.MaxOneRow = p.children[0].Schema().MaxOneRow
+	for _, cond := range p.Conditions {
+		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.EQ {
+			if p.checkMaxOneRowCond(sf.GetArgs()[0], sf.GetArgs()[1]) || p.checkMaxOneRowCond(sf.GetArgs()[1], sf.GetArgs()[0]) {
+				p.schema.MaxOneRow = true
+				break
+			}
+		}
+	}
 }
 
 // A bijection exists between columns of a projection's schema and this projection's Exprs.
@@ -59,6 +94,7 @@ func (p *Projection) buildSchemaByExprs() *expression.Schema {
 
 func (p *Projection) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
+	p.schema.MaxOneRow = p.children[0].Schema().MaxOneRow
 	schema := p.buildSchemaByExprs()
 	for _, key := range p.Children()[0].Schema().Keys {
 		indices := schema.ColumnsIndices(key)
@@ -75,6 +111,7 @@ func (p *Projection) buildKeyInfo() {
 
 func (p *Trim) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
+	p.schema.MaxOneRow = p.children[0].Schema().MaxOneRow
 	for _, key := range p.children[0].Schema().Keys {
 		ok := true
 		newKey := make([]*expression.Column, 0, len(key))
@@ -94,6 +131,7 @@ func (p *Trim) buildKeyInfo() {
 
 func (p *Join) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
+	p.schema.MaxOneRow = p.children[0].Schema().MaxOneRow && p.children[1].Schema().MaxOneRow
 	switch p.JoinType {
 	case SemiJoin, LeftOuterSemiJoin:
 		p.schema.Keys = p.children[0].Schema().Clone().Keys
