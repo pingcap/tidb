@@ -552,6 +552,13 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT CURRENT_USER;", true},
 		{"SELECT CONNECTION_ID();", true},
 		{"SELECT VERSION();", true},
+		{"SELECT BENCHMARK(1000000, AES_ENCRYPT('text',UNHEX('F3229A0B371ED2D9441B830D21A390C3')));", true},
+		{"SELECT CHARSET('abc');", true},
+		{"SELECT COERCIBILITY('abc');", true},
+		{"SELECT COLLATION('abc');", true},
+		{"SELECT ROW_COUNT();", true},
+		{"SELECT SESSION_USER();", true},
+		{"SELECT SYSTEM_USER();", true},
 
 		{"SELECT SUBSTRING_INDEX('www.mysql.com', '.', 2);", true},
 		{"SELECT SUBSTRING_INDEX('www.mysql.com', '.', -2);", true},
