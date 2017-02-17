@@ -388,6 +388,8 @@ func (s *testSuite) TestSubquery(c *C) {
 
 	result = tk.MustQuery("select exists (select t.id from t where s.id < 2 and t.id = s.id) from t s")
 	result.Check(testkit.Rows("1", "0", "0"))
+	result = tk.MustQuery("select (select t.id from t where s.id < 2 and t.id = s.id) from t s")
+	result.Check(testkit.Rows("1", "<nil>", "<nil>"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(c int)")
