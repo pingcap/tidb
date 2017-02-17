@@ -696,6 +696,14 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT FIELD('ej', 'Hej', 'ej', 'Heja', 'hej', 'foo');`, true},
 		{`SELECT FIND_IN_SET('foo', 'foo,bar')`, true},
 		{`SELECT FIND_IN_SET('foo')`, false},
+		{`SELECT MAKE_SET(1,'a'), MAKE_SET(1,'a','b','c')`, true},
+		{`SELECT MID('Sakila', -5, 3)`, true},
+		{`SELECT OCT(12)`, true},
+		{`SELECT OCTET_LENGTH('text')`, true},
+		{`SELECT ORD('2')`, true},
+		// parser of POSITION will cause conflict now.
+		//{`SELECT POSITION('foobarbar' IN 'bar')`, false},
+		{`SELECT QUOTE('Don\'t!')`, true},
 		{`SELECT BIN(12)`, true},
 		{`SELECT ELT(1, 'ej', 'Heja', 'hej', 'foo')`, true},
 		{`SELECT EXPORT_SET(5,'Y','N'), EXPORT_SET(5,'Y','N',','), EXPORT_SET(5,'Y','N',',',4)`, true},
@@ -1317,4 +1325,24 @@ func (s *testParserSuite) TestExplain(c *C) {
 		{"explain select c1 from t1 union (select c2 from t2) limit 1, 1", true},
 	}
 	s.RunTest(c, table)
+}
+
+func (s *testParserSuite) TestTimestampDiffUnit(c *C) {
+	// Test case for timestampdiff unit.
+	// TimeUnit should be unified to upper case.
+	parser := New()
+	stmt, err := parser.Parse("SELECT TIMESTAMPDIFF(MONTH,'2003-02-01','2003-05-01'), TIMESTAMPDIFF(month,'2003-02-01','2003-05-01');", "", "")
+	c.Assert(err, IsNil)
+	ss := stmt[0].(*ast.SelectStmt)
+	fields := ss.Fields.Fields
+	c.Assert(len(fields), Equals, 2)
+	expr := fields[0].Expr
+	f, ok := expr.(*ast.FuncCallExpr)
+	c.Assert(ok, IsTrue)
+	c.Assert(f.Args[0].GetDatum().GetString(), Equals, "MONTH")
+
+	expr = fields[1].Expr
+	f, ok = expr.(*ast.FuncCallExpr)
+	c.Assert(ok, IsTrue)
+	c.Assert(f.Args[0].GetDatum().GetString(), Equals, "MONTH")
 }
