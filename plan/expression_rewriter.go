@@ -350,7 +350,7 @@ func (er *expressionRewriter) buildQuantifierPlan(agg *Aggregation, cond, rexpr 
 	}
 	// If we treat the result as a scalar value, we will add a projection with a extra column to output true, false or null.
 	outerSchemaLen := er.p.Schema().Len()
-	er.p = er.b.buildInnerApply(er.p, agg)
+	er.p = er.b.buildApplyWithJoinType(er.p, agg, InnerJoin)
 	joinSchema := er.p.Schema()
 	proj := &Projection{
 		baseLogicalPlan: newBaseLogicalPlan(Proj, er.b.allocator),
@@ -525,7 +525,7 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 	}
 	np = er.b.buildMaxOneRow(np)
 	if len(np.extractCorrelatedCols()) > 0 {
-		er.p = er.b.buildInnerApply(er.p, np)
+		er.p = er.b.buildApplyWithJoinType(er.p, np, LeftOuterJoin)
 		if np.Schema().Len() > 1 {
 			newCols := make([]expression.Expression, 0, np.Schema().Len())
 			for _, col := range np.Schema().Columns {

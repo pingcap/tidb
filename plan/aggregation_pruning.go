@@ -47,7 +47,7 @@ func (ap *aggPruner) eliminateAggregation(p LogicalPlan) (LogicalPlan, error) {
 			}
 		}
 		if coveredByUniqueKey {
-			// GroupByCols has unique key. So this aggregation can be removed.
+			// GroupByCols has unique key, so this aggregation can be removed.
 			proj := &Projection{
 				Exprs:           make([]expression.Expression, 0, len(agg.AggFuncs)),
 				baseLogicalPlan: newBaseLogicalPlan(Proj, ap.allocator),
