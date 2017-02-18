@@ -412,6 +412,8 @@ func (s *testSuite) TestSubquery(c *C) {
 	tk.MustExec("insert into s values(2), (2)")
 	result = tk.MustQuery("select id from t where(select count(*) from s where s.id = t.id) > 0")
 	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery("select *, (select count(*) from s where id = t.id limit 1, 1) from t")
+	result.Check(testkit.Rows("1 <nil>", "2 <nil>"))
 }
 
 func (s *testSuite) TestInSubquery(c *C) {

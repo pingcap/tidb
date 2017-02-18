@@ -508,7 +508,7 @@ func (e *NestedLoopJoinExec) prepare() error {
 func (e *NestedLoopJoinExec) fillRowWithNullValue(row *Row) *Row {
 	newRow := &Row{
 		RowKeys: row.RowKeys,
-		Data:    make([]types.Datum, len(row.Data), len(row.Data)+e.SmallExec.Schema().Len()),
+		Data:    make([]types.Datum, len(row.Data)+e.SmallExec.Schema().Len()),
 	}
 	copy(newRow.Data, row.Data)
 	return newRow
