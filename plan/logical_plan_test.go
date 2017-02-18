@@ -506,11 +506,11 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "select count(c) ,(select b from t s where s.a = t.a) from t",
-			plan: "Apply{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)->Selection->Projection->MaxOneRow}->Projection",
+			plan: "Join{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)}(test.t.a,s.a)->Projection->Projection",
 		},
 		{
 			sql:  "select count(c) ,(select count(s.b) from t s where s.a = t.a) from t",
-			plan: "Apply{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)->Selection->Aggr(count(s.b))->Projection->MaxOneRow}->Projection",
+			plan: "Apply{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)->Selection->Aggr(count(s.b))}->Projection->Projection",
 		},
 		{
 			// This will be resolved as in sub query.
@@ -520,7 +520,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		{
 			// This will be resolved as in function.
 			sql:  "select * from t where 10 in (((select b from t s where s.a = t.a)), 10)",
-			plan: "Apply{DataScan(t)->DataScan(s)->Selection->Projection->MaxOneRow}->Selection->Projection",
+			plan: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Projection->Selection->Projection",
 		},
 		{
 			sql:  "select * from t where exists (select s.a from t s having sum(s.a) = t.a )",
@@ -584,7 +584,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		}
 		p := builder.build(stmt)
 		if lp, ok := p.(LogicalPlan); ok {
-			p, err = logicalOptimize(flagDecorrelate|flagPrunColumns, lp.(LogicalPlan), builder.ctx, builder.allocator)
+			p, err = logicalOptimize(flagBuildKeyInfo|flagDecorrelate|flagPrunColumns, lp.(LogicalPlan), builder.ctx, builder.allocator)
 		}
 		c.Assert(builder.err, IsNil)
 		c.Assert(ToString(p), Equals, ca.plan, Commentf("for %s", ca.sql))
@@ -1219,7 +1219,7 @@ func (s *testPlanSuite) TestValidate(c *C) {
 func checkUniqueKeys(p Plan, c *C, ans map[string][][]string, sql string) {
 	keyList, ok := ans[p.ID()]
 	c.Assert(ok, IsTrue, Commentf("for %s, %v not found", sql, p.ID()))
-	c.Assert(len(keyList), Equals, len(p.Schema().Keys), Commentf("for %s, %v, the number of key doesn't match", sql, p.ID()))
+	c.Assert(len(p.Schema().Keys), Equals, len(keyList), Commentf("for %s, %v, the number of key doesn't match, the schema is %s", sql, p.ID(), p.Schema()))
 	for i, key := range keyList {
 		c.Assert(len(key), Equals, len(p.Schema().Keys[i]), Commentf("for %s, %v %v, the number of column doesn't match", sql, p.ID(), key))
 		for j, colName := range key {
