@@ -129,6 +129,12 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustExec("create table TEST1 (ID INT NOT NULL, VALUE INT DEFAULT NULL, PRIMARY KEY (ID))")
 	_, err = tk.Exec("INSERT INTO TEST1(id,value) VALUE(3,3) on DUPLICATE KEY UPDATE VALUE=4")
 	c.Assert(err, IsNil)
+
+	tk.MustExec("create table t (id int)")
+	tk.MustExec("insert into t values(1)")
+	tk.MustExec("update t t1 set id = (select count(*) + 1 from t t2 where t1.id = t2.id)")
+	r = tk.MustQuery("select * from t;")
+	r.Check(testkit.Rows("2"))
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {
