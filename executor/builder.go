@@ -594,6 +594,7 @@ func (b *executorBuilder) buildNestedLoopJoin(v *plan.PhysicalHashJoin) *NestedL
 		SmallFilter: expression.ComposeCNFCondition(b.ctx, v.RightConditions...),
 		OtherFilter: expression.ComposeCNFCondition(b.ctx, append(expression.ScalarFuncs2Exprs(v.EqualConditions), v.OtherConditions...)...),
 		schema:      v.Schema(),
+		outer:       v.JoinType != plan.InnerJoin,
 	}
 }
 
