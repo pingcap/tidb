@@ -92,10 +92,10 @@ func (o *pdOracle) setLastTS(ts uint64) {
 }
 
 func (o *pdOracle) updateTS(interval time.Duration) {
-	ticker := time.Tick(interval)
+	ticker := time.NewTicker(interval)
 	for {
 		select {
-		case <-ticker:
+		case <-ticker.C:
 			ts, err := o.getTimestamp()
 			if err != nil {
 				log.Errorf("updateTS error: %v", err)
@@ -103,6 +103,7 @@ func (o *pdOracle) updateTS(interval time.Duration) {
 			}
 			o.setLastTS(ts)
 		case <-o.quit:
+			ticker.Stop()
 			return
 		}
 	}
