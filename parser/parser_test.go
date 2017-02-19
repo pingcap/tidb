@@ -491,7 +491,7 @@ func (s *testParserSuite) TestExpression(c *C) {
 func (s *testParserSuite) TestBuiltin(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []testCase{
-		// for buildin functions
+		// for builtin functions
 		{"SELECT POW(1, 2)", true},
 		{"SELECT POW(1, 0.5)", true},
 		{"SELECT POW(1, -1)", true},
@@ -513,6 +513,19 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT CRC32('MySQL');", true},
 		{"SELECT SIGN(0);", true},
 		{"SELECT SQRT(0);", true},
+		{"SELECT ACOS(1);", true},
+		{"SELECT ASIN(1);", true},
+		{"SELECT ATAN(1), ATAN(1, 2);", true},
+		{"SELECT ATAN2(1,2);", true},
+		{"SELECT COS(1);", true},
+		{"SELECT COT(1);", true},
+		{"SELECT DEGREES(0);", true},
+		{"SELECT EXP(1);", true},
+		{"SELECT PI();", true},
+		{"SELECT RADIANS(1);", true},
+		{"SELECT SIN(1);", true},
+		{"SELECT TAN(1);", true},
+		{"SELECT TRUNCATE(1.223,1);", true},
 
 		{"SELECT SUBSTR('Quadratically',5);", true},
 		{"SELECT SUBSTR('Quadratically',5, 3);", true},
