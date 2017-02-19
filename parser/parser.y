@@ -349,6 +349,31 @@ import (
 	conv		"CONV"
 	bitXor		"BIT_XOR"
 	crc32		"CRC32"
+	asymmetricDecrypt	"ASYMMETRIC_DECRYPT"
+        asymmetricDerive	"ASYMMETRIC_DERIVE"
+        asymmetricEncrypt	"ASYMMETRIC_ENCRYPT"
+        asymmetricSign	"ASYMMETRIC_SIGN"
+        asymmetricVerify	"ASYMMETRIC_VERIFY"
+        compress	"COMPRESS"
+        createAsymmetricPrivKey	"CREATE_ASYMMETRIC_PRIV_KEY"
+        createAsymmetricPubKey	"CREATE_ASYMMETRIC_PUB_KEY"
+        createDHParameters	"CREATE_DH_PARAMETERS"
+        createDigest	"CREATE_DIGEST"
+        decode		"DECODE"
+        desDecrypt	"DES_DECRYPT"
+        desEncrypt	"DES_ENCRYPT"
+        encode		"ENCODE"
+        encrypt		"ENCRYPT"
+        md5		"MD5"
+        oldPassword	"OLD_PASSWORD"
+        passworFunc	"PASSWORD_FUNC"
+        randomBytes	"RANDOM_BYTES"
+        sha1		"SHA1"
+        sha		"SHA"
+        sha2		"SHA2"
+        uncompress	"UNCOMPRESS"
+        uncompressedLength	"UNCOMPRESSED_LENGTH"
+        validatePasswordStrength	"VALIDATE_PASSWORD_STRENGTH"
 
 	/* the following tokens belong to UnReservedKeyword*/
 	action		"ACTION"
@@ -2218,6 +2243,7 @@ NotKeywordToken:
 "SUBSTRING_INDEX" | "SUM" | "TAN" | "TIME_FORMAT" | "TIME_TO_SEC" | "TIMESTAMPADD" | "TO_DAYS" | "TO_SECONDS" | "TRIM" | "RTRIM" | "UCASE" | "UTC_TIME" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
 |	"STATS_PERSISTENT" | "GET_LOCK" | "RELEASE_LOCK" | "CEIL" | "CEILING" | "FLOOR" | "FROM_UNIXTIME" | "TIMEDIFF" | "LN" | "LOG" | "LOG2" | "LOG10" | "FIELD_KWD"
 |	"AES_DECRYPT" | "AES_ENCRYPT"
+|	"ASYMMETRIC_DECRYPT" | "ASYMMETRIC_DERIVE" | "ASYMMETRIC_ENCRYPT" | "ASYMMETRIC_SIGN" | "ASYMMETRIC_VERIFY" | "COMPRESS" | "CREATE_ASYMMETRIC_PRIV_KEY" | "CREATE_ASYMMETRIC_PUB_KEY" | "CREATE_DH_PARAMETERS" | "CREATE_DIGEST" | "DECODE" | "DES_DECRYPT" | "DES_ENCRYPT" | "ENCODE" | "ENCRYPT" | "MD5" | "OLD_PASSWORD" | "RANDOM_BYTES" | "SHA1" | "SHA" | "SHA2" | "UNCOMPRESS" | "UNCOMPRESSED_LENGTH" | "VALIDATE_PASSWORD_STRENGTH"
 
 /************************************************************************************
  *
@@ -3522,6 +3548,209 @@ FunctionCallNonKeyword:
 		}
 	}
 |	"CRC32" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"ASYMMETRIC_DECRYPT" '(' Expression ',' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)},
+		}
+	}
+|	"ASYMMETRIC_DERIVE" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
+		}
+	}
+|	"ASYMMETRIC_ENCRYPT" '(' Expression ',' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)},
+		}
+	}
+|	"ASYMMETRIC_SIGN" '(' Expression ',' Expression ',' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode), $9.(ast.ExprNode)},
+		}
+	}
+|	"ASYMMETRIC_VERIFY" '(' Expression ',' Expression ',' Expression ',' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode), $9.(ast.ExprNode), $11.(ast.ExprNode)},
+		}
+	}
+|	"COMPRESS" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"CREATE_ASYMMETRIC_PRIV_KEY" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"CREATE_ASYMMETRIC_PRIV_KEY" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
+		}
+	}
+|	"CREATE_ASYMMETRIC_PUB_KEY" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
+		}
+	}
+|	"CREATE_DH_PARAMETERS" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"CREATE_DIGEST" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
+		}
+	}
+|	"DECODE" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
+		}
+	}
+|	"DES_DECRYPT" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"DES_DECRYPT" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
+		}
+	}
+|	"DES_ENCRYPT" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"DES_ENCRYPT" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
+		}
+	}
+|	"ENCODE" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
+		}
+	}
+|	"ENCRYPT" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"ENCRYPT" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
+		}
+	}
+|	"MD5" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"OLD_PASSWORD" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"PASSWORD" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"RANDOM_BYTES" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"SHA1" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"SHA" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"SHA2" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
+		}
+	}
+|	"UNCOMPRESS" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"UNCOMPRESSED_LENGTH" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"VALIDATE_PASSWORD_STRENGTH" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
