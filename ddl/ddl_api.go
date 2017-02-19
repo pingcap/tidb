@@ -629,6 +629,9 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 
 // If create table with auto_increment option, we should rebase tableAutoIncID value.
 func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64) error {
+	if tbInfo.OldSchemaID != 0 {
+		schemaID = tbInfo.OldSchemaID
+	}
 	alloc := autoid.NewAllocator(d.store, schemaID)
 	tbInfo.State = model.StatePublic
 	tb, err := table.TableFromMeta(alloc, tbInfo)

@@ -1168,9 +1168,10 @@ func (e *UpdateExec) fetchRows() error {
 		if row == nil {
 			return nil
 		}
-		data := make([]types.Datum, e.SelectExec.Schema().Len())
-		newData := make([]types.Datum, e.SelectExec.Schema().Len())
-		for i := range e.SelectExec.Schema().Columns {
+		l := len(e.OrderedList)
+		data := make([]types.Datum, l)
+		newData := make([]types.Datum, l)
+		for i := 0; i < l; i++ {
 			data[i] = row.Data[i]
 			newData[i] = data[i]
 			if e.OrderedList[i] != nil {
