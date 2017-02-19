@@ -64,6 +64,21 @@ var (
 	_ functionClass = &extractFunctionClass{}
 	_ functionClass = &arithmeticFunctionClass{}
 	_ functionClass = &unixTimestampFunctionClass{}
+	_ functionClass = &addTimeFunctionClass{}
+	_ functionClass = &convertTzFunctionClass{}
+	_ functionClass = &makeDateFunctionClass{}
+	_ functionClass = &makeTimeFunctionClass{}
+	_ functionClass = &periodAddFunctionClass{}
+	_ functionClass = &periodDiffFunctionClass{}
+	_ functionClass = &quarterFunctionClass{}
+	_ functionClass = &secToTimeFunctionClass{}
+	_ functionClass = &subTimeFunctionClass{}
+	_ functionClass = &timeFormatFunctionClass{}
+	_ functionClass = &timeToSecFunctionClass{}
+	_ functionClass = &timestampAddFunctionClass{}
+	_ functionClass = &toDaysFunctionClass{}
+	_ functionClass = &toSecondsFunctionClass{}
+	_ functionClass = &utcTimeFunctionClass{}
 	_ functionClass = &timestampFunctionClass{}
 )
 
@@ -99,6 +114,21 @@ var (
 	_ builtinFunc = &builtinExtractSig{}
 	_ builtinFunc = &builtinArithmeticSig{}
 	_ builtinFunc = &builtinUnixTimestampSig{}
+	_ builtinFunc = &builtinAddTimeSig{}
+	_ builtinFunc = &builtinConvertTzSig{}
+	_ builtinFunc = &builtinMakeDateSig{}
+	_ builtinFunc = &builtinMakeTimeSig{}
+	_ builtinFunc = &builtinPeriodAddSig{}
+	_ builtinFunc = &builtinPeriodDiffSig{}
+	_ builtinFunc = &builtinQuarterSig{}
+	_ builtinFunc = &builtinSecToTimeSig{}
+	_ builtinFunc = &builtinSubTimeSig{}
+	_ builtinFunc = &builtinTimeFormatSig{}
+	_ builtinFunc = &builtinTimeToSecSig{}
+	_ builtinFunc = &builtinTimestampAddSig{}
+	_ builtinFunc = &builtinToDaysSig{}
+	_ builtinFunc = &builtinToSecondsSig{}
+	_ builtinFunc = &builtinUTCTimeSig{}
 	_ builtinFunc = &builtinTimestampSig{}
 )
 
@@ -1579,4 +1609,259 @@ func getTimeZone(ctx context.Context) *time.Location {
 		ret = time.Local
 	}
 	return ret
+}
+
+type addTimeFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *addTimeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinAddTimeSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinAddTimeSig struct {
+	baseBuiltinFunc
+}
+
+/// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_addtime
+func (b *builtinAddTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("ADDTIME")
+}
+
+type convertTzFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *convertTzFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinConvertTzSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinConvertTzSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_convert-tz
+func (b *builtinConvertTzSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("CONVERT_TZ")
+}
+
+type makeDateFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *makeDateFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinMakeDateSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinMakeDateSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_makedate
+func (b *builtinMakeDateSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("MAKEDATE")
+}
+
+type makeTimeFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *makeTimeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinMakeTimeSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinMakeTimeSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_maketime
+func (b *builtinMakeTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("MAKETIME")
+}
+
+type periodAddFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *periodAddFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinPeriodAddSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinPeriodAddSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_period-add
+func (b *builtinPeriodAddSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("PERIOD_ADD")
+}
+
+type periodDiffFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *periodDiffFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinPeriodDiffSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinPeriodDiffSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_period-diff
+func (b *builtinPeriodDiffSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("PERIOD_DIFF")
+}
+
+type quarterFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *quarterFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinQuarterSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinQuarterSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_quarter
+func (b *builtinQuarterSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("QUARTER")
+}
+
+type secToTimeFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *secToTimeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinSecToTimeSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinSecToTimeSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_sec-to-time
+func (b *builtinSecToTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("SEC_TO_TIME")
+}
+
+type subTimeFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *subTimeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinSubTimeSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinSubTimeSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
+func (b *builtinSubTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("SUB_TIME")
+}
+
+type timeFormatFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *timeFormatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinTimeFormatSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinTimeFormatSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time-format
+func (b *builtinTimeFormatSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("TIME_FORMAT")
+}
+
+type timeToSecFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *timeToSecFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinTimeToSecSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinTimeToSecSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time-to-sec
+func (b *builtinTimeToSecSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("TIME_TO_SEC")
+}
+
+type timestampAddFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *timestampAddFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinTimestampAddSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinTimestampAddSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timestampadd
+func (b *builtinTimestampAddSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("TIMESTAMPADD")
+}
+
+type toDaysFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *toDaysFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinToDaysSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinToDaysSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_to-days
+func (b *builtinToDaysSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("to_days")
+}
+
+type toSecondsFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *toSecondsFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinToSecondsSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinToSecondsSig struct {
+	baseBuiltinFunc
+}
+
+/// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_to-seconds
+func (b *builtinToSecondsSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("TO_SECONDS")
+}
+
+type utcTimeFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *utcTimeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinUTCTimeSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinUTCTimeSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-time
+func (b *builtinUTCTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("UTC_TIME")
 }

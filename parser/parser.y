@@ -224,6 +224,7 @@ import (
 	abs		"ABS"
 	acos		"ACOS"
 	addDate		"ADDDATE"
+	addTime		"ADDTIME"
 	admin		"ADMIN"
 	aesDecrypt	"AES_DECRYPT"
 	aesEncrypt	"AES_ENCRYPT"
@@ -237,6 +238,7 @@ import (
 	concat		"CONCAT"
 	concatWs	"CONCAT_WS"
 	connectionID 	"CONNECTION_ID"
+	convertTz	"CONVERT_TZ"
 	curTime 	"CUR_TIME"
 	cos		"COS"
 	cot		"COT"
@@ -286,6 +288,8 @@ import (
 	lower 		"LOWER"
 	lpad		"LPAD"
 	ltrim		"LTRIM"
+	makeDate	"MAKEDATE"
+	makeTime	"MAKETIME"
 	max		"MAX"
 	microsecond	"MICROSECOND"
 	min		"MIN"
@@ -294,14 +298,18 @@ import (
 	month		"MONTH"
 	monthname	"MONTHNAME"
 	now		"NOW"
+	periodAdd	"PERIOD_ADD"
+	periodDiff	"PERIOD_DIFF"
 	pi		"PI"
 	pow 		"POW"
 	power 		"POWER"
 	rand		"RAND"
 	radians		"RADIANS"
+	secToTime	"SEC_TO_TIME"
 	second		"SECOND"
 	sign		"SIGN"
 	sin		"SIN"
+	subTime		"SUBTIME"
 	sleep		"SLEEP"
 	sqrt 		"SQRT"
 	calcFoundRows	"SQL_CALC_FOUND_ROWS"
@@ -314,6 +322,9 @@ import (
 	sysDate		"SYSDATE"
 	tan		"TAN"
 	timediff	"TIMEDIFF"
+	timeFormat	"TIME_FORMAT"
+	timeToSec	"TIME_TO_SEC"
+	timestampAdd	"TIMESTAMPADD"
 	trim		"TRIM"
 	rtrim 		"RTRIM"
 	ucase 		"UCASE"
@@ -325,9 +336,12 @@ import (
 	yearweek	"YEARWEEK"
 	round		"ROUND"
 	statsPersistent	"STATS_PERSISTENT"
+	toDays		"TO_DAYS"
+	toSeconds	"TO_SECONDS"
 	getLock		"GET_LOCK"
 	releaseLock	"RELEASE_LOCK"
 	rpad		"RPAD"
+	utcTime		"UTC_TIME"
 	bitLength	"BIT_LENGTH"
 	charFunc	"CHAR_FUNC"
 	charLength	"CHAR_LENGTH"
@@ -686,7 +700,7 @@ import (
 	VariableAssignmentList	"set variable value list"
 	Variable		"User or system variable"
 	WhereClause		"WHERE clause"
-	WhereClauseOptional	"Optinal WHERE clause"
+	WhereClauseOptional	"Optional WHERE clause"
 	WhenClause		"When clause"
 	WhenClauseList		"When clause list"
 	WithReadLockOpt		"With Read Lock opt"
@@ -2196,12 +2210,12 @@ ReservedKeyword:
 
 
 NotKeywordToken:
-	"ABS" | "ACOS" | "ADDDATE" | "ADMIN" | "ASIN" | "ATAN" | "ATAN2" | "BIN"| "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME" | "COS" | "COT" | "COUNT" | "DAY"
+	"ABS" | "ACOS" | "ADDTIME" | "ADDDATE" | "ADMIN" | "ASIN" | "ATAN" | "ATAN2" | "BIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CONVERT_TZ" | "CUR_TIME"| "COS" | "COT" | "COUNT" | "DAY"
 |	"DATEDIFF" | "DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "DEGREES" | "ELT" | "EXP" | "EXPORT_SET" | "FROM_DAYS" | "FROM_BASE64" | "FIND_IN_SET" | "FOUND_ROWS"
 |	"GROUP_CONCAT"| "GREATEST" | "LEAST" | "HOUR" | "HEX" | "UNHEX" | "IFNULL" | "INSTR" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOAD_FILE" | "LOCATE" | "LOWER" | "LPAD" | "LTRIM"
-|	"MAKE_SET" | "MAX" | "MICROSECOND" | "MID" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" | "OCT" | "OCTET_LENGTH" | "ORD" | "POSITION" | "PI" | "POW" | "POWER" | "QUOTE" | "RAND" | "RADIANS" |
-	"SECOND" | "SIGN" | "SIN" | "SLEEP" | "SQRT" | "SQL_CALC_FOUND_ROWS" | "STR_TO_DATE" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen |
-"SUBSTRING_INDEX" | "SUM" | "TAN" | "TRIM" | "RTRIM" | "UCASE" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
+|	"MAKE_SET" | "MAX" | "MAKEDATE" | "MAKETIME" | "MICROSECOND" | "MID" | "MIN" |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" |  "OCT" | "OCTET_LENGTH" | "ORD" | "POSITION" | "PERIOD_ADD" | "PERIOD_DIFF" | "POW" | "POWER" | "RAND" | "RADIANS"
+	"QUOTE" | "SEC_TO_TIME" | "SECOND" | "SIGN" | "SIN" | "SLEEP" | "SQRT" | "SQL_CALC_FOUND_ROWS" | "STR_TO_DATE" | "SUBTIME" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen |
+"SUBSTRING_INDEX" | "SUM" | "TAN" | "TIME_FORMAT" | "TIME_TO_SEC" | "TIMESTAMPADD" | "TO_DAYS" | "TO_SECONDS" | "TRIM" | "RTRIM" | "UCASE" | "UTC_TIME" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
 |	"STATS_PERSISTENT" | "GET_LOCK" | "RELEASE_LOCK" | "CEIL" | "CEILING" | "FLOOR" | "FROM_UNIXTIME" | "TIMEDIFF" | "LN" | "LOG" | "LOG2" | "LOG10" | "FIELD_KWD"
 |	"AES_DECRYPT" | "AES_ENCRYPT"
 
@@ -2692,12 +2706,36 @@ FunctionCallKeyword:
 			},
 		}
 	}
+|	"LOCALTIME" '(' ExpressionOpt ')'
+	{
+		args := []ast.ExprNode{}
+                if $3 != nil {
+                	args = append(args, $3.(ast.ExprNode))
+                }
+                $$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
+	}
+|	"LOCALTIMESTAMP" '(' ExpressionOpt ')'
+	{
+		args := []ast.ExprNode{}
+                if $3 != nil {
+                	args = append(args, $3.(ast.ExprNode))
+                }
+                $$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
+	}
+|	"QUARTER" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
 
 FunctionCallNonKeyword:
 	"ABS" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
+|	"ADDTIME" '(' Expression ',' Expression ')'
+ 	{
+ 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}}
+ 	}
 |	"ACOS" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
@@ -2734,6 +2772,10 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
+|	"CONVERT_TZ" '(' Expression ',' Expression ',' Expression ')'
+ 	{
+ 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)}}
+ 	}
 |	"COS" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
@@ -3063,6 +3105,16 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
+|	"MAKEDATE" '(' Expression ',' Expression ')'
+	{
+		args := []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
+	}
+|	"MAKETIME" '(' Expression ',' Expression ',' Expression ')'
+	{
+		args := []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
+	}
 |	"MAKE_SET" '(' ExpressionList ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
@@ -3101,6 +3153,16 @@ FunctionCallNonKeyword:
 |	"NULLIF" '(' ExpressionList ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+	}
+|	"PERIOD_ADD" '(' Expression ',' Expression ')'
+	{
+		args := []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
+	}
+|	"PERIOD_DIFF" '(' Expression ',' Expression ')'
+	{
+		args := []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
 	}
 |	"PI" '(' ')'
 	{
@@ -3162,6 +3224,10 @@ FunctionCallNonKeyword:
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"RTRIM" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
+|	"SEC_TO_TIME" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
@@ -3233,6 +3299,10 @@ FunctionCallNonKeyword:
 			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)},
 		}
 	}
+|	"SUBTIME" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}}
+	}
 |	"SYSDATE" '(' ExpressionOpt ')'
 	{
 		args := []ast.ExprNode{}
@@ -3256,6 +3326,28 @@ FunctionCallNonKeyword:
 			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
 		}
 	}
+|	"TIME_FORMAT" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
+		}
+	}
+|	"TIME_TO_SEC" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"TIMESTAMPADD" '(' TimeUnit ',' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{ast.NewValueExpr($3), $5.(ast.ExprNode), $7.(ast.ExprNode)},
+
+		}
+	}
 |	"TIMESTAMPDIFF" '(' TimeUnit ',' Expression ',' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
@@ -3266,6 +3358,20 @@ FunctionCallNonKeyword:
 |	"TIMESTAMP" '(' ExpressionList ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+	}
+|	"TO_DAYS" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"TO_SECONDS" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
 	}
 |	"TRIM" '(' Expression ')'
 	{
@@ -3305,6 +3411,14 @@ FunctionCallNonKeyword:
 |	"UPPER" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
+|	"UTC_TIME" '(' ExpressionOpt ')'
+	{
+		args := []ast.ExprNode{}
+                if $3 != nil {
+                	args = append(args, $3.(ast.ExprNode))
+                }
+                $$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
 	}
 |	"UCASE" '(' Expression ')'
 	{
