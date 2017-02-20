@@ -942,6 +942,9 @@ func (p *Sort) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 	if info != nil {
 		return info, nil
 	}
+	if len(p.ByItems) == 0 {
+		return p.children[0].(LogicalPlan).convert2PhysicalPlan(prop)
+	}
 	selfProp := &requiredProperty{
 		props: make([]*columnProp, 0, len(p.ByItems)),
 	}

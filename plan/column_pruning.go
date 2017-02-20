@@ -121,8 +121,13 @@ func (p *Aggregation) PruneColumns(parentUsedCols []*expression.Column) {
 // PruneColumns implements LogicalPlan interface.
 func (p *Sort) PruneColumns(parentUsedCols []*expression.Column) {
 	child := p.children[0].(LogicalPlan)
-	for _, item := range p.ByItems {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(item.Expr)...)
+	for i := len(p.ByItems) - 1; i >= 0; i-- {
+		cols := expression.ExtractColumns(p.ByItems[i].Expr)
+		if len(cols) == 0 {
+			p.ByItems = append(p.ByItems[:i], p.ByItems[i+1:]...)
+		} else {
+			parentUsedCols = append(parentUsedCols, expression.ExtractColumns(p.ByItems[i].Expr)...)
+		}
 	}
 	child.PruneColumns(parentUsedCols)
 	p.SetSchema(p.children[0].Schema())
