@@ -227,6 +227,7 @@ import (
 	addTime		"ADDTIME"
 	admin		"ADMIN"
 	aesDecrypt	"AES_DECRYPT"
+	benchmark	"BENCHMARK"
 	aesEncrypt	"AES_ENCRYPT"
 	asin		"ASIN"
 	atan		"ATAN"
@@ -235,6 +236,7 @@ import (
 	ceil		"CEIL"
 	ceiling		"CEILING"
 	coalesce	"COALESCE"
+	coercibility	"COERCIBILITY"
 	concat		"CONCAT"
 	concatWs	"CONCAT_WS"
 	connectionID 	"CONNECTION_ID"
@@ -305,8 +307,11 @@ import (
 	power 		"POWER"
 	rand		"RAND"
 	radians		"RADIANS"
+	rowCount	"ROW_COUNT"
 	secToTime	"SEC_TO_TIME"
 	second		"SECOND"
+	sessionUser	"SESSION_USER"
+	systemUser	"SYSTEM_USER"
 	sign		"SIGN"
 	sin		"SIN"
 	subTime		"SUBTIME"
@@ -2210,12 +2215,12 @@ ReservedKeyword:
 
 
 NotKeywordToken:
-	"ABS" | "ACOS" | "ADDTIME" | "ADDDATE" | "ADMIN" | "ASIN" | "ATAN" | "ATAN2" | "BIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CONVERT_TZ" | "CUR_TIME"| "COS" | "COT" | "COUNT" | "DAY"
+	"ABS" | "ACOS" | "ADDTIME" | "ADDDATE" | "ADMIN" | "ASIN" | "ATAN" | "ATAN2" | "BENCHMARK" | "BIN" | "COALESCE" | "COERCIBILITY" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CONVERT_TZ" | "CUR_TIME"| "COS" | "COT" | "COUNT" | "DAY"
 |	"DATEDIFF" | "DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "DEGREES" | "ELT" | "EXP" | "EXPORT_SET" | "FROM_DAYS" | "FROM_BASE64" | "FIND_IN_SET" | "FOUND_ROWS"
 |	"GROUP_CONCAT"| "GREATEST" | "LEAST" | "HOUR" | "HEX" | "UNHEX" | "IFNULL" | "INSTR" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOAD_FILE" | "LOCATE" | "LOWER" | "LPAD" | "LTRIM"
-|	"MAKE_SET" | "MAX" | "MAKEDATE" | "MAKETIME" | "MICROSECOND" | "MID" | "MIN" |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" |  "OCT" | "OCTET_LENGTH" | "ORD" | "POSITION" | "PERIOD_ADD" | "PERIOD_DIFF" | "POW" | "POWER" | "RAND" | "RADIANS"
+|	"MAKE_SET" | "MAX" | "MAKEDATE" | "MAKETIME" | "MICROSECOND" | "MID" | "MIN" |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" |  "OCT" | "OCTET_LENGTH" | "ORD" | "POSITION" | "PERIOD_ADD" | "PERIOD_DIFF" | "POW" | "POWER" | "RAND" | "RADIANS" | "ROW_COUNT"
 	"QUOTE" | "SEC_TO_TIME" | "SECOND" | "SIGN" | "SIN" | "SLEEP" | "SQRT" | "SQL_CALC_FOUND_ROWS" | "STR_TO_DATE" | "SUBTIME" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen |
-"SUBSTRING_INDEX" | "SUM" | "TAN" | "TIME_FORMAT" | "TIME_TO_SEC" | "TIMESTAMPADD" | "TO_DAYS" | "TO_SECONDS" | "TRIM" | "RTRIM" | "UCASE" | "UTC_TIME" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
+	"SESSION_USER" | "SUBSTRING_INDEX" | "SUM" | "SYSTEM_USER" | "TAN" | "TIME_FORMAT" | "TIME_TO_SEC" | "TIMESTAMPADD" | "TO_DAYS" | "TO_SECONDS" | "TRIM" | "RTRIM" | "UCASE" | "UTC_TIME" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
 |	"STATS_PERSISTENT" | "GET_LOCK" | "RELEASE_LOCK" | "CEIL" | "CEILING" | "FLOOR" | "FROM_UNIXTIME" | "TIMEDIFF" | "LN" | "LOG" | "LOG2" | "LOG10" | "FIELD_KWD"
 |	"AES_DECRYPT" | "AES_ENCRYPT"
 
@@ -2630,6 +2635,14 @@ FunctionCallKeyword:
 		}
 		$$ = x
 	}
+|	"CHARSET" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
+|	"COLLATION" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
 |	"CONVERT" '(' Expression "USING" StringName ')'
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
@@ -2764,6 +2777,13 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}}
 	}
+|	"BENCHMARK" '(' Expression ',' Expression ')'
+	{
+   		$$ = &ast.FuncCallExpr{
+   			FnName: model.NewCIStr($1),
+   			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
+   		}
+   	}
 |	"BIN" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
@@ -2781,6 +2801,10 @@ FunctionCallNonKeyword:
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"COT" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
+|	"COERCIBILITY" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
@@ -2829,7 +2853,7 @@ FunctionCallNonKeyword:
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"DATEDIFF" '(' Expression ',' Expression ')'
-    {
+	{
    		$$ = &ast.FuncCallExpr{
    			FnName: model.NewCIStr($1),
    			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
@@ -3227,6 +3251,10 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
+|	"ROW_COUNT" '(' ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1)}
+	}
 |	"SEC_TO_TIME" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
@@ -3234,6 +3262,10 @@ FunctionCallNonKeyword:
 |	"SECOND" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
+|	"SESSION_USER" '('')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1)}
 	}
 |	"SIGN" '(' Expression ')'
 	{
@@ -3314,6 +3346,10 @@ FunctionCallNonKeyword:
 |	"TAN" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
+|	"SYSTEM_USER" '('')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1)}
 	}
 |	"TIME" '(' Expression ')'
 	{

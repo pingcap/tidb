@@ -32,6 +32,11 @@ var (
 	_ functionClass = &connectionIDFunctionClass{}
 	_ functionClass = &lastInsertIDFunctionClass{}
 	_ functionClass = &versionFunctionClass{}
+	_ functionClass = &benchmarkFunctionClass{}
+	_ functionClass = &charsetFunctionClass{}
+	_ functionClass = &coercibilityFunctionClass{}
+	_ functionClass = &collationFunctionClass{}
+	_ functionClass = &rowCountFunctionClass{}
 )
 
 var (
@@ -42,6 +47,11 @@ var (
 	_ builtinFunc = &builtinConnectionIDSig{}
 	_ builtinFunc = &builtinLastInsertIDSig{}
 	_ builtinFunc = &builtinVersionSig{}
+	_ builtinFunc = &builtinBenchmarkSig{}
+	_ builtinFunc = &builtinCharsetSig{}
+	_ builtinFunc = &builtinCoercibilitySig{}
+	_ builtinFunc = &builtinCollationSig{}
+	_ builtinFunc = &builtinRowCountSig{}
 )
 
 type databaseFunctionClass struct {
@@ -223,4 +233,92 @@ type builtinVersionSig struct {
 func (b *builtinVersionSig) eval(_ []types.Datum) (d types.Datum, err error) {
 	d.SetString(mysql.ServerVersion)
 	return d, nil
+}
+
+type benchmarkFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *benchmarkFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinBenchmarkSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinBenchmarkSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_benchmark
+func (b *builtinBenchmarkSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("BENCHMARK")
+}
+
+type charsetFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *charsetFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinCharsetSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinCharsetSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_charset
+func (b *builtinCharsetSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("CHARSET")
+}
+
+type coercibilityFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *coercibilityFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinCoercibilitySig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinCoercibilitySig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_coercibility
+func (b *builtinCoercibilitySig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("COERCIBILITY")
+}
+
+type collationFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *collationFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinCollationSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinCollationSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_collation
+func (b *builtinCollationSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("COLLATION")
+}
+
+type rowCountFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *rowCountFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	err := errors.Trace(c.verifyArgs(args))
+	bt := &builtinRowCountSig{newBaseBuiltinFunc(args, ctx)}
+	bt.deterministic = false
+	return bt, errors.Trace(err)
+}
+
+type builtinRowCountSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_row-count
+func (b *builtinRowCountSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("ROW_COUNT")
 }
