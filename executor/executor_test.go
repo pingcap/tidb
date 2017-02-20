@@ -690,6 +690,11 @@ func (s *testSuite) TestIndexScan(c *C) {
 	tk.MustExec("CREATE INDEX idx_tab1_1 on tab1 (b, a)")
 	result = tk.MustQuery("SELECT pk FROM tab1 WHERE b > 1")
 	result.Check(testkit.Rows("3", "4"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (a varchar(3), index(a))")
+	result = tk.MustQuery("select * from t where a >= \"aaaa\" and a < \"aabb\"")
+	result.Check(testkit.Rows())
 }
 
 func (s *testSuite) TestIndexReverseOrder(c *C) {
