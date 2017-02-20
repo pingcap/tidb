@@ -98,6 +98,9 @@ var (
 	// but you must know that too little may cause badly performance degradation.
 	// For production, you should set a big schema lease, like 300s+.
 	schemaLease = 1 * time.Second
+
+	// The maximum number of retries to recover from retryable errors.
+	commitRetryLimit = 10
 )
 
 // SetSchemaLease changes the default schema lease time for DDL.
@@ -105,6 +108,15 @@ var (
 // SetSchemaLease only affects not local storage after bootstrapped.
 func SetSchemaLease(lease time.Duration) {
 	schemaLease = lease
+}
+
+// SetCommitRetryLimit setups the maximum number of retries when trying to recover
+// from retryable errors.
+// Retryable errors are generally refer to temporary errors that are expected to be
+// reinstated by retry, including network interruption, transaction conflicts, and
+// so on.
+func SetCommitRetryLimit(limit int) {
+	commitRetryLimit = limit
 }
 
 // Parse parses a query string to raw ast.StmtNode.
