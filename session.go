@@ -344,17 +344,17 @@ var sysSessionPool = sync.Pool{}
 // This is used for executing some restricted sql statements, usually executed during a normal statement execution.
 // Unlike normal Exec, it doesn't reset statement status, doesn't commit or rollback the current transaction
 // and doesn't write binlog.
-func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (ast.RecordSet, error) {
+func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rows []*ast.Row, fields []*ast.ResultField, err error) {
 	// Use special session to execute the sql.
 	var se *session
 	tmp := sysSessionPool.Get()
 	if tmp != nil {
 		se = tmp.(*session)
 	} else {
-		var err error
 		se, err = createSession(s.store)
 		if err != nil {
-			return nil, errors.Trace(err)
+			err = errors.Trace(err)
+			return
 		}
 		varsutil.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
 		se.sessionVars.CommonGlobalLoaded = true
@@ -362,30 +362,59 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (ast.Record
 	}
 	defer sysSessionPool.Put(se)
 
-	rs, err := se.Execute(sql)
-	if len(rs) != 1 {
-		return nil, err
+	var recordSets []ast.RecordSet
+	recordSets, err = se.Execute(sql)
+	if err != nil {
+		err = errors.Trace(err)
+		return
 	}
-	return rs[0], err
+
+	for i, rs := range recordSets {
+		tmp, e := drainRecordSet(rs)
+		if e != nil {
+			err = errors.Trace(e)
+			return
+		}
+		if i == 1 {
+			rows = tmp
+			fields, err = rs.Fields()
+			if err != nil {
+				err = errors.Trace(err)
+				return
+			}
+		}
+	}
+	return
+}
+
+func drainRecordSet(rs ast.RecordSet) (rows []*ast.Row, err error) {
+	for {
+		row, e := rs.Next()
+		if e != nil {
+			err = errors.Trace(e)
+			return
+		}
+		if row == nil {
+			break
+		}
+		rows = append(rows, row)
+	}
+	rs.Close()
+	return
 }
 
 // getExecRet executes restricted sql and the result is one column.
 // It returns a string value.
 func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
 	cleanTxn := s.txn == nil && s.txnCh == nil
-	rs, err := s.ExecRestrictedSQL(ctx, sql)
+	rows, _, err := s.ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	defer rs.Close()
-	row, err := rs.Next()
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-	if row == nil {
+	if len(rows) == 0 {
 		return "", terror.ExecResultIsEmpty
 	}
-	value, err := types.ToString(row.Data[0].GetValue())
+	value, err := types.ToString(rows[0].Data[0].GetValue())
 	if err != nil {
 		return "", errors.Trace(err)
 	}
@@ -420,7 +449,7 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 func (s *session) SetGlobalSysVar(name string, value string) error {
 	sql := fmt.Sprintf(`UPDATE  %s.%s SET VARIABLE_VALUE="%s" WHERE VARIABLE_NAME="%s";`,
 		mysql.SystemDB, mysql.GlobalVariablesTable, value, strings.ToLower(name))
-	_, err := s.ExecRestrictedSQL(s, sql)
+	_, _, err := s.ExecRestrictedSQL(s, sql)
 	return errors.Trace(err)
 }
 
@@ -832,22 +861,13 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	}
 	// Set the variable to true to prevent cyclic recursive call.
 	vars.CommonGlobalLoaded = true
-	rs, err := s.ExecRestrictedSQL(s, loadCommonGlobalVarsSQL)
+	rows, _, err := s.ExecRestrictedSQL(s, loadCommonGlobalVarsSQL)
 	if err != nil {
 		vars.CommonGlobalLoaded = false
 		log.Errorf("Failed to load common global variables.")
 		return errors.Trace(err)
 	}
-	for {
-		row, err1 := rs.Next()
-		if err1 != nil {
-			vars.CommonGlobalLoaded = false
-			log.Errorf("Failed to load common global variables.")
-			return errors.Trace(err1)
-		}
-		if row == nil {
-			break
-		}
+	for _, row := range rows {
 		varName := row.Data[0].GetString()
 		if _, ok := vars.Systems[varName]; !ok {
 			varsutil.SetSessionSystemVar(s.sessionVars, varName, row.Data[1])
