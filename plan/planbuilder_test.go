@@ -11,46 +11,30 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package plan_test
+package plan
 
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/testkit"
 )
 
 var _ = Suite(&testPlanBuilderSuite{})
 
 func (s *testPlanBuilderSuite) SetUpSuite(c *C) {
-	s.Parser = parser.New()
 }
 
 type testPlanBuilderSuite struct {
-	*parser.Parser
 }
 
-func (ts *testPlanBuilderSuite) TestShow(c *C) {
-	store, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	defer store.Close()
-	testKit := testkit.NewTestKit(c, store)
-	ctx := testKit.Se.(context.Context)
-	domain := sessionctx.GetDomain(ctx)
-	ctx.GetSessionVars().CurrentDB = "test"
-	node, err := ts.ParseOneStmt("Show Databases;", "", "")
-	c.Assert(err, IsNil)
-	err = plan.ResolveName(node, domain.InfoSchema(), ctx)
-	c.Assert(err, IsNil)
-
-	pb := &PlanBuilder{
-		ctx: ctx,
+func (s *testPlanBuilderSuite) TestShowDatabases(c *C) {
+	pb := &planBuilder{
+		allocator: new(idAllocator),
+	}
+	node := &ast.ShowStmt{
+		Tp: ast.ShowDatabases,
 	}
 	p := pb.build(node)
 	schema := p.Schema()
-	c.Assert(schema, HasLen, 1)
-	c.Assert(schema[0].Flen, Equals, 256)
+	c.Assert(schema.Columns, HasLen, 1)
+	c.Assert(schema.Columns[0].RetType.Flen, Equals, 256)
 }
