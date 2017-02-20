@@ -693,8 +693,9 @@ func (s *testSuite) TestIndexScan(c *C) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE t (a varchar(3), index(a))")
-	result = tk.MustQuery("select * from t where a >= \"aaaa\" and a < \"aabb\"")
-	result.Check(testkit.Rows())
+	tk.MustExec("insert t values('aaa'), ('aab')")
+	result = tk.MustQuery("select * from t where a >= 'aaaa' and a < 'aabb'")
+	result.Check(testkit.Rows("[97 97 98]"))
 }
 
 func (s *testSuite) TestIndexReverseOrder(c *C) {
