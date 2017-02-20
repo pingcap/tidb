@@ -880,6 +880,8 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows(rowStr2))
 	result = tk.MustQuery("select * from t where a = case null when b then 'str3' when 10 then 'str1' else 'str2' end")
 	result.Check(testkit.Rows(rowStr2))
+	result = tk.MustQuery("select cast(1234 as char(3))")
+	result.Check(testkit.Rows("123"))
 
 	// for like and regexp
 	type testCase struct {
