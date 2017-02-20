@@ -768,7 +768,7 @@ func (d *Datum) convertToString(sc *variable.StatementContext, target *FieldType
 	}
 
 	var err error
-	if target.Flen >= 0 && !sc.IgnoreTruncate {
+	if target.Flen >= 0 {
 		// Flen is the rune length, not binary length, for UTF8 charset, we need to calculate the
 		// rune count and truncate to Flen runes if it is too long.
 		if target.Charset == charset.CharsetUTF8 || target.Charset == charset.CharsetUTF8MB4 {
@@ -782,11 +782,15 @@ func (d *Datum) convertToString(sc *variable.StatementContext, target *FieldType
 				}
 			}
 			if truncateLen > 0 {
-				err = ErrDataTooLong.Gen("Data Too Long, field len %d, data len %d", target.Flen, runeCount)
+				if !sc.IgnoreTruncate {
+					err = ErrDataTooLong.Gen("Data Too Long, field len %d, data len %d", target.Flen, runeCount)
+				}
 				s = truncateStr(s, truncateLen)
 			}
 		} else if len(s) > target.Flen {
-			err = ErrDataTooLong.Gen("Data Too Long, field len %d, data len %d", target.Flen, len(s))
+			if !sc.IgnoreTruncate {
+				err = ErrDataTooLong.Gen("Data Too Long, field len %d, data len %d", target.Flen, len(s))
+			}
 			s = truncateStr(s, target.Flen)
 		}
 	}
