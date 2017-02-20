@@ -375,7 +375,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rows []*as
 			err = errors.Trace(e)
 			return
 		}
-		if i == 1 {
+		if i == 0 {
 			rows = tmp
 			fields, err = rs.Fields()
 			if err != nil {
