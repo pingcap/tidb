@@ -221,7 +221,7 @@ func (s *session) doCommitWithRetry() error {
 			// Transactions will retry 2 ~ commitRetryLimit times.
 			// We make larger transactions retry less times to prevent cluster resource outage.
 			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
-			maxRetryCount := commitRetryLimit - int(float64(commitRetryLimit)*txnSizeRate) + 1
+			maxRetryCount := commitRetryLimit - int(float64(commitRetryLimit-1)*txnSizeRate)
 			err = s.retry(maxRetryCount)
 		}
 	}
