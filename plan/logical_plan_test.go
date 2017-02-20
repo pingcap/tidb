@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"sort"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -505,11 +506,11 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "select count(c) ,(select b from t s where s.a = t.a) from t",
-			plan: "Apply{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)->Selection->Projection->MaxOneRow}->Projection",
+			plan: "Join{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)}(test.t.a,s.a)->Projection->Projection",
 		},
 		{
 			sql:  "select count(c) ,(select count(s.b) from t s where s.a = t.a) from t",
-			plan: "Apply{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)->Selection->Aggr(count(s.b))->Projection->MaxOneRow}->Projection",
+			plan: "Apply{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)->Selection->Aggr(count(s.b))}->Projection->Projection",
 		},
 		{
 			sql:  "select a from t where a in (select a from t s group by t.b)",
@@ -523,7 +524,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		{
 			// This will be resolved as in function.
 			sql:  "select * from t where 10 in (((select b from t s where s.a = t.a)), 10)",
-			plan: "Apply{DataScan(t)->DataScan(s)->Selection->Projection->MaxOneRow}->Selection->Projection",
+			plan: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Projection->Selection->Projection",
 		},
 		{
 			sql:  "select * from t where exists (select s.a from t s having sum(s.a) = t.a )",
@@ -587,7 +588,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		}
 		p := builder.build(stmt)
 		if lp, ok := p.(LogicalPlan); ok {
-			p, err = logicalOptimize(flagDecorrelate|flagPrunColumns, lp.(LogicalPlan), builder.ctx, builder.allocator)
+			p, err = logicalOptimize(flagBuildKeyInfo|flagDecorrelate|flagPrunColumns, lp.(LogicalPlan), builder.ctx, builder.allocator)
 		}
 		c.Assert(builder.err, IsNil)
 		c.Assert(ToString(p), Equals, ca.plan, Commentf("for %s", ca.sql))
@@ -1229,7 +1230,7 @@ func (s *testPlanSuite) TestValidate(c *C) {
 func checkUniqueKeys(p Plan, c *C, ans map[string][][]string, sql string) {
 	keyList, ok := ans[p.ID()]
 	c.Assert(ok, IsTrue, Commentf("for %s, %v not found", sql, p.ID()))
-	c.Assert(len(keyList), Equals, len(p.Schema().Keys), Commentf("for %s, %v, the number of key doesn't match", sql, p.ID()))
+	c.Assert(len(p.Schema().Keys), Equals, len(keyList), Commentf("for %s, %v, the number of key doesn't match, the schema is %s", sql, p.ID(), p.Schema()))
 	for i, key := range keyList {
 		c.Assert(len(key), Equals, len(p.Schema().Keys[i]), Commentf("for %s, %v %v, the number of column doesn't match", sql, p.ID(), key))
 		for j, colName := range key {
@@ -1371,5 +1372,167 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo|flagEliminateAgg, p.(LogicalPlan), builder.ctx, builder.allocator)
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, ca.best, comment)
+	}
+}
+
+func (s *testPlanSuite) TestVisitInfo(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		sql string
+		ans []visitInfo
+	}{
+		{
+			sql: "insert into t values (1)",
+			ans: []visitInfo{
+				{mysql.InsertPriv, "test", "t", ""},
+			},
+		},
+		{
+			sql: "delete from t where a = 1",
+			ans: []visitInfo{
+				{mysql.DeletePriv, "test", "t", ""},
+				{mysql.SelectPriv, "test", "t", ""},
+			},
+		},
+		{
+			sql: "delete from a1 using t as a1 inner join t as a2 where a1.a = a2.a",
+			ans: []visitInfo{
+				{mysql.DeletePriv, "test", "t", ""},
+				{mysql.SelectPriv, "test", "t", ""},
+			},
+		},
+		{
+			sql: "update t set a = 7 where a = 1",
+			ans: []visitInfo{
+				{mysql.UpdatePriv, "test", "t", ""},
+				{mysql.SelectPriv, "test", "t", ""},
+			},
+		},
+		{
+			sql: "update t, (select * from t) a1 set t.a = a1.a;",
+			ans: []visitInfo{
+				{mysql.UpdatePriv, "test", "t", ""},
+				{mysql.SelectPriv, "test", "t", ""},
+			},
+		},
+		{
+			sql: "select a, sum(e) from t group by a",
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", ""},
+			},
+		},
+		{
+			sql: "truncate table t",
+			ans: []visitInfo{
+				{mysql.DeletePriv, "test", "t", ""},
+			},
+		},
+		{
+			sql: "drop table t",
+			ans: []visitInfo{
+				{mysql.DropPriv, "test", "t", ""},
+			},
+		},
+		{
+			sql: "create table t (a int)",
+			ans: []visitInfo{
+				{mysql.CreatePriv, "test", "t", ""},
+			},
+		},
+		{
+			sql: "create database test",
+			ans: []visitInfo{
+				{mysql.CreatePriv, "test", "", ""},
+			},
+		},
+		{
+			sql: "drop database test",
+			ans: []visitInfo{
+				{mysql.DropPriv, "test", "", ""},
+			},
+		},
+		{
+			sql: "create index t_1 on t (a)",
+			ans: []visitInfo{
+				{mysql.IndexPriv, "test", "t", ""},
+			},
+		},
+		{
+			sql: "drop index e on t",
+			ans: []visitInfo{
+				{mysql.IndexPriv, "test", "t", ""},
+			},
+		},
+	}
+
+	for _, ca := range cases {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+
+		is, err := mockResolve(stmt)
+		c.Assert(err, IsNil)
+
+		builder := &planBuilder{
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+			allocator: new(idAllocator),
+			ctx:       mockContext(),
+			is:        is,
+		}
+		builder.build(stmt)
+		c.Assert(builder.err, IsNil, comment)
+
+		checkVisitInfo(c, builder.visitInfo, ca.ans, comment)
+	}
+}
+
+type visitInfoArray []visitInfo
+
+func (v visitInfoArray) Len() int {
+	return len(v)
+}
+
+func (v visitInfoArray) Less(i, j int) bool {
+	if v[i].privilege < v[j].privilege {
+		return true
+	}
+	if v[i].db < v[j].db {
+		return true
+	}
+	if v[i].table < v[j].table {
+		return true
+	}
+	if v[i].column < v[j].column {
+		return true
+	}
+
+	return false
+}
+
+func (v visitInfoArray) Swap(i, j int) {
+	v[i], v[j] = v[j], v[i]
+}
+
+func unique(v []visitInfo) []visitInfo {
+	repeat := 0
+	for i := 1; i < len(v); i++ {
+		if v[i] == v[i-1] {
+			repeat++
+		} else {
+			v[i-repeat] = v[i]
+		}
+	}
+	return v[:len(v)-repeat]
+}
+
+func checkVisitInfo(c *C, v1, v2 []visitInfo, comment CommentInterface) {
+	sort.Sort(visitInfoArray(v1))
+	sort.Sort(visitInfoArray(v2))
+	v1 = unique(v1)
+	v2 = unique(v2)
+
+	c.Assert(len(v1), Equals, len(v2), comment)
+	for i := 0; i < len(v1); i++ {
+		c.Assert(v1[i], Equals, v2[i], comment)
 	}
 }

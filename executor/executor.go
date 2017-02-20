@@ -753,12 +753,16 @@ type UnionExec struct {
 	ctx      context.Context
 	inited   bool
 	finished atomic.Value
-	rowsCh   chan []*Row
+	resultCh chan *execResult
 	rows     []*Row
 	cursor   int
 	wg       sync.WaitGroup
 	closedCh chan struct{}
-	errCh    chan error
+}
+
+type execResult struct {
+	rows []*Row
+	err  error
 }
 
 // Schema implements the Executor Schema interface.
@@ -768,14 +772,17 @@ func (e *UnionExec) Schema() *expression.Schema {
 
 func (e *UnionExec) waitAllFinished() {
 	e.wg.Wait()
-	close(e.rowsCh)
+	close(e.resultCh)
 	close(e.closedCh)
 }
 
 func (e *UnionExec) fetchData(idx int) {
 	defer e.wg.Done()
 	for {
-		rows := make([]*Row, 0, batchSize)
+		result := &execResult{
+			rows: make([]*Row, 0, batchSize),
+			err:  nil,
+		}
 		for i := 0; i < batchSize; i++ {
 			if e.finished.Load().(bool) {
 				return
@@ -783,12 +790,13 @@ func (e *UnionExec) fetchData(idx int) {
 			row, err := e.Srcs[idx].Next()
 			if err != nil {
 				e.finished.Store(true)
-				e.errCh <- err
+				result.err = err
+				e.resultCh <- result
 				return
 			}
 			if row == nil {
-				if len(rows) > 0 {
-					e.rowsCh <- rows
+				if len(result.rows) > 0 {
+					e.resultCh <- result
 				}
 				return
 			}
@@ -798,14 +806,15 @@ func (e *UnionExec) fetchData(idx int) {
 				val, err := row.Data[j].ConvertTo(e.ctx.GetSessionVars().StmtCtx, col.RetType)
 				if err != nil {
 					e.finished.Store(true)
-					e.errCh <- err
+					result.err = err
+					e.resultCh <- result
 					return
 				}
 				row.Data[j] = val
 			}
-			rows = append(rows, row)
+			result.rows = append(result.rows, row)
 		}
-		e.rowsCh <- rows
+		e.resultCh <- result
 	}
 }
 
@@ -813,8 +822,7 @@ func (e *UnionExec) fetchData(idx int) {
 func (e *UnionExec) Next() (*Row, error) {
 	if !e.inited {
 		e.finished.Store(false)
-		e.rowsCh = make(chan []*Row, batchSize*len(e.Srcs))
-		e.errCh = make(chan error, len(e.Srcs))
+		e.resultCh = make(chan *execResult, len(e.Srcs))
 		e.closedCh = make(chan struct{})
 		for i := range e.Srcs {
 			e.wg.Add(1)
@@ -824,19 +832,17 @@ func (e *UnionExec) Next() (*Row, error) {
 		e.inited = true
 	}
 	if e.cursor >= len(e.rows) {
-		var rows []*Row
-		var err error
-		select {
-		case rows, _ = <-e.rowsCh:
-		case err, _ = <-e.errCh:
-		}
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if rows == nil {
+		result, ok := <-e.resultCh
+		if !ok {
 			return nil, nil
 		}
-		e.rows = rows
+		if result.err != nil {
+			return nil, errors.Trace(result.err)
+		}
+		if len(result.rows) == 0 {
+			return nil, nil
+		}
+		e.rows = result.rows
 		e.cursor = 0
 	}
 	row := e.rows[e.cursor]

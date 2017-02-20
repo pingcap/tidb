@@ -992,8 +992,8 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	if info != nil {
 		return info, nil
 	}
-	if p.JoinType == InnerJoin {
-		info, err = p.Join.convert2PhysicalPlanLeft(prop, true)
+	if p.JoinType == InnerJoin || p.JoinType == LeftOuterJoin {
+		info, err = p.Join.convert2PhysicalPlanLeft(prop, p.JoinType == InnerJoin)
 	} else {
 		info, err = p.Join.convert2PhysicalPlanSemi(prop)
 	}
@@ -1025,7 +1025,7 @@ func (p *Analyze) prepareSimpleTableScan(cols []*model.ColumnInfo) *PhysicalTabl
 		Table:               p.Table.TableInfo,
 		Columns:             cols,
 		TableAsName:         &p.Table.Name,
-		DBName:              &p.Table.DBInfo.Name,
+		DBName:              p.Table.DBInfo.Name,
 		physicalTableSource: physicalTableSource{client: p.ctx.GetClient()},
 	}
 	ts.tp = Tbl
@@ -1045,7 +1045,7 @@ func (p *Analyze) prepareSimpleIndexScan(idxOffset int, cols []*model.ColumnInfo
 		Columns:             cols,
 		TableAsName:         &p.Table.Name,
 		OutOfOrder:          false,
-		DBName:              &p.Table.DBInfo.Name,
+		DBName:              p.Table.DBInfo.Name,
 		physicalTableSource: physicalTableSource{client: p.ctx.GetClient()},
 		DoubleRead:          false,
 	}

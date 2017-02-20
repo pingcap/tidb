@@ -956,7 +956,7 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]
 }
 
 func findColumnByName(t table.Table, tableName, colName string) (*table.Column, error) {
-	if len(tableName) > 0 && tableName != t.Meta().Name.O {
+	if len(tableName) > 0 && !strings.EqualFold(tableName, t.Meta().Name.O) {
 		return nil, errors.Errorf("unknown field %s.%s", tableName, colName)
 	}
 
@@ -1168,9 +1168,10 @@ func (e *UpdateExec) fetchRows() error {
 		if row == nil {
 			return nil
 		}
-		data := make([]types.Datum, e.SelectExec.Schema().Len())
-		newData := make([]types.Datum, e.SelectExec.Schema().Len())
-		for i := range e.SelectExec.Schema().Columns {
+		l := len(e.OrderedList)
+		data := make([]types.Datum, l)
+		newData := make([]types.Datum, l)
+		for i := 0; i < l; i++ {
 			data[i] = row.Data[i]
 			newData[i] = data[i]
 			if e.OrderedList[i] != nil {

@@ -32,18 +32,18 @@ var EnableStatistic = false
 
 const (
 	flagPrunColumns uint64 = 1 << iota
+	flagBuildKeyInfo
 	flagDecorrelate
 	flagPredicatePushDown
-	flagBuildKeyInfo
 	flagEliminateAgg
 	flagAggPushDown
 )
 
 var optRuleList = []logicalOptRule{
 	&columnPruner{},
+	&buildKeySolver{},
 	&decorrelateSolver{},
 	&ppdSolver{},
-	&buildKeySolver{},
 	&aggPruner{},
 	&aggPushDownSolver{},
 }

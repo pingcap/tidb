@@ -130,6 +130,10 @@ func resetStmtCtx(ctx context.Context, s ast.StmtNode) {
 		if _, ok := s.(*ast.InsertStmt); !ok {
 			sc.InUpdateOrDeleteStmt = true
 		}
+	case *ast.CreateTableStmt, *ast.AlterTableStmt:
+		// Make sure the sql_mode is strict when checking column default value.
+		sc.IgnoreTruncate = false
+		sc.TruncateAsWarning = false
 	default:
 		sc.IgnoreTruncate = true
 		if show, ok := s.(*ast.ShowStmt); ok {

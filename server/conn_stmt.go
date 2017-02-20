@@ -279,7 +279,7 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 			pos += 8
 			continue
 
-		case mysql.TypeDecimal, mysql.TypeNewDecimal, mysql.TypeVarchar,
+		case mysql.TypeUnspecified, mysql.TypeNewDecimal, mysql.TypeVarchar,
 			mysql.TypeBit, mysql.TypeEnum, mysql.TypeSet, mysql.TypeTinyBlob,
 			mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob,
 			mysql.TypeVarString, mysql.TypeString, mysql.TypeGeometry,

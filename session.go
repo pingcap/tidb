@@ -18,7 +18,6 @@
 package tidb
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -44,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-binlog"
 )
@@ -448,7 +446,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		s.prepareTxnCtx()
 		startTS := time.Now()
 		// Some execution is done in compile stage, so we reset it before compile.
-		resetStmtCtx(s, rawStmts[0])
+		resetStmtCtx(s, rst)
 		st, err1 := Compile(s, rst)
 		if err1 != nil {
 			log.Warnf("[%d] compile error:\n%v\n%s", connID, err1, sql)
@@ -464,7 +462,9 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		r, err := runStmt(s, st)
 		ph.EndStatement(s.stmtState)
 		if err != nil {
-			log.Warnf("[%d] session error:\n%v\n%s", connID, err, s)
+			if !terror.ErrorEqual(err, kv.ErrKeyExists) {
+				log.Warnf("[%d] session error:\n%v\n%s", connID, errors.ErrorStack(err), s)
+			}
 			return nil, errors.Trace(err)
 		}
 		sessionExecuteRunDuration.Observe(time.Since(startTS).Seconds())
@@ -492,7 +492,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 		SQLText: sql,
 	}
 	prepareExec.DoPrepare()
-	return prepareExec.ID, prepareExec.ParamCount, nil, prepareExec.Err
+	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, prepareExec.Err
 }
 
 // checkArgs makes sure all the arguments' types are known and can be handled.
@@ -663,36 +663,12 @@ func (s *session) Auth(user string, auth []byte, salt []byte) bool {
 	name := strs[0]
 	host := strs[1]
 
-	// TODO: Use the new privilege implementation.
-	domain := sessionctx.GetDomain(s)
-	checker := domain.PrivilegeHandle().Get()
-	succ := checker.ConnectionVerification(name, host)
-	log.Debug("RequestVerification result:", succ)
-
-	pwd, err := s.getPassword(name, host)
-	if err != nil {
-		if terror.ExecResultIsEmpty.Equal(err) {
-			log.Errorf("User [%s] not exist %v", name, err)
-		} else {
-			log.Errorf("Get User [%s] password from SystemDB error %v", name, err)
-		}
-		return false
-	}
-	if len(pwd) != 0 && len(pwd) != 40 {
-		log.Errorf("User [%s] password from SystemDB not like a sha1sum", name)
-		return false
-	}
-	hpwd, err := util.DecodePassword(pwd)
-	if err != nil {
-		log.Errorf("Decode password string error %v", err)
-		return false
-	}
-	checkAuth := util.CalcPassword(salt, hpwd)
-	if !bytes.Equal(auth, checkAuth) {
+	checker := privilege.GetPrivilegeChecker(s)
+	if !checker.ConnectionVerification(name, host, auth, salt) {
+		log.Errorf("User connection verification failed %v", name)
 		return false
 	}
 	s.sessionVars.User = user
-
 	return true
 }
 
@@ -856,7 +832,10 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	}
 	// Set the variable to true to prevent cyclic recursive call.
 	vars.CommonGlobalLoaded = true
+	save := privilege.GetPrivilegeChecker(s)
+	privilege.BindPrivilegeChecker(s, nil)
 	rs, err := s.ExecRestrictedSQL(s, loadCommonGlobalVarsSQL)
+	privilege.BindPrivilegeChecker(s, save)
 	if err != nil {
 		vars.CommonGlobalLoaded = false
 		log.Errorf("Failed to load common global variables.")
