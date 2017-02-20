@@ -993,7 +993,7 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 		return info, nil
 	}
 	if p.JoinType == InnerJoin || p.JoinType == LeftOuterJoin {
-		info, err = p.Join.convert2PhysicalPlanLeft(prop, true)
+		info, err = p.Join.convert2PhysicalPlanLeft(prop, p.JoinType == InnerJoin)
 	} else {
 		info, err = p.Join.convert2PhysicalPlanSemi(prop)
 	}
