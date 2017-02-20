@@ -190,7 +190,7 @@ type builtinAsymmetricDecryptSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/enterprise-encryption-functions.html#function_asymmetric-decrypt
+// See https://dev.mysql.com/doc/refman/5.7/en/enterprise-encryption-functions.html#function_asymmetric-decrypt
 func (b *builtinAsymmetricDecryptSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("ASYMMETRIC_DECRYPT")
 }
@@ -207,7 +207,7 @@ type builtinAsymmetricDeriveSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/enterprise-encryption-functions.html#function_asymmetric-derive
+// See https://dev.mysql.com/doc/refman/5.7/en/enterprise-encryption-functions.html#function_asymmetric-derive
 func (b *builtinAsymmetricDeriveSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("ASYMMETRIC_DERIVE")
 }
@@ -224,7 +224,7 @@ type builtinAsymmetricEncryptSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/enterprise-encryption-functions.html#function_asymmetric-encrypt
+// See https://dev.mysql.com/doc/refman/5.7/en/enterprise-encryption-functions.html#function_asymmetric-encrypt
 func (b *builtinAsymmetricEncryptSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("ASYMMETRIC_ENCRYPT")
 }
@@ -241,7 +241,7 @@ type builtinAsymmetricSignSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/enterprise-encryption-functions.html#function_asymmetric-sign
+// See https://dev.mysql.com/doc/refman/5.7/en/enterprise-encryption-functions.html#function_asymmetric-sign
 func (b *builtinAsymmetricSignSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("ASYMMETRIC_SIGN")
 }
@@ -258,7 +258,7 @@ type builtinAsymmetricVerifySig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/enterprise-encryption-functions.html#function_asymmetric-verify
+// See https://dev.mysql.com/doc/refman/5.7/en/enterprise-encryption-functions.html#function_asymmetric-verify
 func (b *builtinAsymmetricVerifySig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("ASYMMETRIC_VERIFY")
 }
@@ -275,7 +275,7 @@ type builtinCompressSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_compress
+// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_compress
 func (b *builtinCompressSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("COMPRESS")
 }
@@ -292,7 +292,7 @@ type builtinCreateAsymmetricPrivKeySig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/enterprise-encryption-functions.html#function_create-asymmetric-priv-key
+// See https://dev.mysql.com/doc/refman/5.7/en/enterprise-encryption-functions.html#function_create-asymmetric-priv-key
 func (b *builtinCreateAsymmetricPrivKeySig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("CREATE_ASYMMETRIC_PRIV_KEY")
 }
@@ -309,7 +309,7 @@ type builtinCreateAsymmetricPubKeySig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/enterprise-encryption-functions.html#function_create-asymmetric-pub-key
+// See https://dev.mysql.com/doc/refman/5.7/en/enterprise-encryption-functions.html#function_create-asymmetric-pub-key
 func (b *builtinCreateAsymmetricPubKeySig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("CREATE_ASYMMETRIC_PUB_KEY")
 }
@@ -326,7 +326,7 @@ type builtinCreateDHParametersSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/enterprise-encryption-functions.html#function_create-dh-parameters
+// See https://dev.mysql.com/doc/refman/5.7/en/enterprise-encryption-functions.html#function_create-dh-parameters
 func (b *builtinCreateDHParametersSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("CREATE_DH_PARAMETERS")
 }
@@ -343,7 +343,7 @@ type builtinCreateDigestSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/enterprise-encryption-functions.html#function_create-digest
+// See https://dev.mysql.com/doc/refman/5.7/en/enterprise-encryption-functions.html#function_create-digest
 func (b *builtinCreateDigestSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("CREATE_DIGEST")
 }
@@ -360,7 +360,7 @@ type builtinDecodeSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_decode
+// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_decode
 func (b *builtinDecodeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("DECODE")
 }
@@ -377,7 +377,7 @@ type builtinDesDecryptSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_des-decrypt
+// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_des-decrypt
 func (b *builtinDesDecryptSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("DES_DECRYPT")
 }
@@ -394,7 +394,7 @@ type builtinDesEncryptSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_des-encrypt
+// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_des-encrypt
 func (b *builtinDesEncryptSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("DES_ENCRYPT")
 }
@@ -411,7 +411,7 @@ type builtinEncodeSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_encode
+// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_encode
 func (b *builtinEncodeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("ENCODE")
 }
@@ -428,7 +428,7 @@ type builtinEncryptSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_encrypt
+// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_encrypt
 func (b *builtinEncryptSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("ENCRYPT")
 }
@@ -445,7 +445,7 @@ type builtinMD5Sig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_md5
+// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_md5
 func (b *builtinMD5Sig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("MD5")
 }
@@ -462,7 +462,7 @@ type builtinOldPasswordSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_old-password
+// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_old-password
 func (b *builtinOldPasswordSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("OLD_PASSWORD")
 }
@@ -479,7 +479,7 @@ type builtinPasswordSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
+// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
 func (b *builtinPasswordSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("PASSWORD")
 }
@@ -496,7 +496,7 @@ type builtinRandomBytesSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_random-bytes
+// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_random-bytes
 func (b *builtinRandomBytesSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("RANDOM_BYTES")
 }
@@ -513,7 +513,7 @@ type builtinSHA1Sig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_sha1
+// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_sha1
 func (b *builtinSHA1Sig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("SHA1")
 }
@@ -530,7 +530,7 @@ type builtinSHA2Sig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_sha2
+// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_sha2
 func (b *builtinSHA2Sig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("SHA2")
 }
@@ -547,7 +547,7 @@ type builtinUncompressSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_uncompress
+// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_uncompress
 func (b *builtinUncompressSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("UNCOMPRESS")
 }
@@ -564,7 +564,7 @@ type builtinUncompressedLengthSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_uncompressed-length
+// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_uncompressed-length
 func (b *builtinUncompressedLengthSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("UNCOMPRESSED_LENGTH")
 }
@@ -581,7 +581,7 @@ type builtinValidatePasswordStrengthSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_validate-password-strength
+// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_validate-password-strength
 func (b *builtinValidatePasswordStrengthSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("VALIDATE_PASSWORD_STRENGTH")
 }

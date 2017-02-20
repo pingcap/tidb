@@ -3704,7 +3704,7 @@ FunctionCallNonKeyword:
 |	"PASSWORD" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1),
+			FnName: model.NewCIStr(ast.PasswordFunc),
 			Args: []ast.ExprNode{$3.(ast.ExprNode)},
 		}
 	}
