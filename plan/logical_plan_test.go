@@ -513,6 +513,10 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			plan: "Apply{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)->Selection->Aggr(count(s.b))}->Projection->Projection",
 		},
 		{
+			sql:  "select a from t where a in (select a from t s group by t.b)",
+			plan: "Join{DataScan(t)->DataScan(s)->Aggr(firstrow(s.a))->Projection}(test.t.a,a)->Projection",
+		},
+		{
 			// This will be resolved as in sub query.
 			sql:  "select * from t where 10 in (((select b from t s where s.a = t.a)))",
 			plan: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Projection",
@@ -1058,6 +1062,13 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 			ans: map[string][]string{
 				"TableScan_1": {"a", "b"},
 				"TableScan_2": {"c", "d"},
+			},
+		},
+		{
+			sql: "select a from t where a in (select a from t s group by t.b)",
+			ans: map[string][]string{
+				"TableScan_1": {"a"},
+				"TableScan_2": {"a"},
 			},
 		},
 	}
