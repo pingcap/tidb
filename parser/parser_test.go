@@ -760,7 +760,6 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		// for miscellaneous functions
 		{`SELECT SLEEP(10);`, true},
 		{`SELECT ANY_VALUE(@arg);`, true},
-		{`SELECT DEFAULT_FUNC(@col_name);`, true},
 		{`SELECT INET_ATON('10.0.5.9');`, true},
 		{`SELECT INET_NTOA(167773449);`, true},
 		{`SELECT INET6_ATON('fdfe::5a55:caff:fefa:9089');`, true},

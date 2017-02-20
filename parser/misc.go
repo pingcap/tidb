@@ -544,7 +544,6 @@ var tokenMap = map[string]int{
 	"BIT_XOR":             bitXor,
 	"CRC32":               crc32,
 	"ANY_VALUE":           anyValue,
-	"DEFAULT_FUNC":        defaultFunc,
 	"INET_ATON":           inetAton,
 	"INET_NTOA":           inetNtoa,
 	"INET6_ATON":          inet6Aton,
