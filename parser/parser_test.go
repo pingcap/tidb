@@ -491,7 +491,7 @@ func (s *testParserSuite) TestExpression(c *C) {
 func (s *testParserSuite) TestBuiltin(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []testCase{
-		// for buildin functions
+		// for builtin functions
 		{"SELECT POW(1, 2)", true},
 		{"SELECT POW(1, 0.5)", true},
 		{"SELECT POW(1, -1)", true},
@@ -513,6 +513,19 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT CRC32('MySQL');", true},
 		{"SELECT SIGN(0);", true},
 		{"SELECT SQRT(0);", true},
+		{"SELECT ACOS(1);", true},
+		{"SELECT ASIN(1);", true},
+		{"SELECT ATAN(1), ATAN(1, 2);", true},
+		{"SELECT ATAN2(1,2);", true},
+		{"SELECT COS(1);", true},
+		{"SELECT COT(1);", true},
+		{"SELECT DEGREES(0);", true},
+		{"SELECT EXP(1);", true},
+		{"SELECT PI();", true},
+		{"SELECT RADIANS(1);", true},
+		{"SELECT SIN(1);", true},
+		{"SELECT TAN(1);", true},
+		{"SELECT TRUNCATE(1.223,1);", true},
 
 		{"SELECT SUBSTR('Quadratically',5);", true},
 		{"SELECT SUBSTR('Quadratically',5, 3);", true},
@@ -539,6 +552,13 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT CURRENT_USER;", true},
 		{"SELECT CONNECTION_ID();", true},
 		{"SELECT VERSION();", true},
+		{"SELECT BENCHMARK(1000000, AES_ENCRYPT('text',UNHEX('F3229A0B371ED2D9441B830D21A390C3')));", true},
+		{"SELECT CHARSET('abc');", true},
+		{"SELECT COERCIBILITY('abc');", true},
+		{"SELECT COLLATION('abc');", true},
+		{"SELECT ROW_COUNT();", true},
+		{"SELECT SESSION_USER();", true},
+		{"SELECT SYSTEM_USER();", true},
 
 		{"SELECT SUBSTRING_INDEX('www.mysql.com', '.', 2);", true},
 		{"SELECT SUBSTRING_INDEX('www.mysql.com', '.', -2);", true},
@@ -631,6 +651,47 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT YEAR('2007-02-03');", true},
 		{"SELECT YEARWEEK('2007-02-03');", true},
 		{"SELECT YEARWEEK('2007-02-03', 0);", true},
+
+		// for ADDTIME, SUBTIME
+		{"SELECT ADDTIME('01:00:00.999999', '02:00:00.999998');", true},
+		{"SELECT SUBTIME('01:00:00.999999', '02:00:00.999998');", true},
+
+		// for CONVERT_TZ
+		{"SELECT CONVERT_TZ('2004-01-01 12:00:00','+00:00','+10:00');", true},
+
+		// for LOCALTIME, LOCALTIMESTAMP
+		{"SELECT LOCALTIME(), LOCALTIME(1)", true},
+		{"SELECT LOCALTIMESTAMP(), LOCALTIMESTAMP(2)", true},
+
+		// for MAKEDATE, MAKETIME
+		{"SELECT MAKEDATE(2011,31);", true},
+		{"SELECT MAKETIME(12,15,30);", true},
+
+		// for PERIOD_ADD, PERIOD_DIFF
+		{"SELECT PERIOD_ADD(200801,2)", true},
+		{"SELECT PERIOD_DIFF(200802,200703)", true},
+
+		// for QUARTER
+		{"SELECT QUARTER('2008-04-01');", true},
+
+		// for SEC_TO_TIME
+		{"SELECT SEC_TO_TIME(2378)", true},
+
+		// for TIME_FORMAT
+		{"SELECT TIME_FORMAT('100:00:00', '%H %k %h %I %l')", true},
+
+		// for TIME_TO_SEC
+		{"SELECT TIME_TO_SEC('22:23:00')", true},
+
+		// for TIMESTAMPADD
+		{"SELECT TIMESTAMPADD(WEEK,1,'2003-01-02');", true},
+
+		// for TO_DAYS, TO_SECONDS
+		{"SELECT TO_DAYS('2007-10-07')", true},
+		{"SELECT TO_SECONDS('2009-11-29')", true},
+
+		// for UTC_TIME
+		{"SELECT UTC_TIME(), UTC_TIME(1)", true},
 
 		// for time extract
 		{`select extract(microsecond from "2011-11-11 10:10:10.123456")`, true},
