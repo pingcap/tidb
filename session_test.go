@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
@@ -1467,12 +1468,8 @@ func (s *testSessionSuite) TestExecRestrictedSQL(c *C) {
 	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
 	se := newSession(c, s.store, dbName).(*session)
 	r, err := se.ExecRestrictedSQL(se, "select 1;")
-	c.Assert(r, NotNil)
 	c.Assert(err, IsNil)
-	_, err = se.ExecRestrictedSQL(se, "select 1; select 2;")
-	c.Assert(err, NotNil)
-	_, err = se.ExecRestrictedSQL(se, "")
-	c.Assert(err, NotNil)
+	c.Assert(r, NotNil)
 
 	mustExecSQL(c, se, dropDBSQL)
 }

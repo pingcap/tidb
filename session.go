@@ -338,35 +338,35 @@ func sqlForLog(sql string) string {
 	return sql
 }
 
+var sysSessionPool = sync.Pool{}
+
 // ExecRestrictedSQL implements RestrictedSQLExecutor interface.
 // This is used for executing some restricted sql statements, usually executed during a normal statement execution.
 // Unlike normal Exec, it doesn't reset statement status, doesn't commit or rollback the current transaction
 // and doesn't write binlog.
 func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (ast.RecordSet, error) {
-	s.prepareTxnCtx()
-	charset, collation := s.sessionVars.GetCharsetInfo()
-	rawStmts, err := s.ParseSQL(sql, charset, collation)
-	if err != nil {
-		return nil, errors.Trace(err)
+	// Use special session to execute the sql.
+	var se *session
+	tmp := sysSessionPool.Get()
+	if tmp != nil {
+		se = tmp.(*session)
+	} else {
+		var err error
+		se, err = createSession(s.store)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		varsutil.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
+		se.sessionVars.CommonGlobalLoaded = true
+		se.sessionVars.InRestrictedSQL = true
 	}
-	if len(rawStmts) != 1 {
-		log.Errorf("ExecRestrictedSQL only executes one statement. Too many/few statement in %s", sql)
-		return nil, errors.New("wrong number of statement")
+	defer sysSessionPool.Put(se)
+
+	rs, err := se.Execute(sql)
+	if len(rs) != 1 {
+		return nil, err
 	}
-	// Some execution is done in compile stage, so we reset it before compile.
-	st, err := Compile(s, rawStmts[0])
-	if err != nil {
-		log.Errorf("Compile %s with error: %v", sql, err)
-		return nil, errors.Trace(err)
-	}
-	// Check statement for some restrictions.
-	// For example only support DML on system meta table.
-	// TODO: Add more restrictions.
-	log.Debugf("Executing %s [%s]", st.OriginText(), sql)
-	s.sessionVars.InRestrictedSQL = true
-	rs, err := st.Exec(ctx)
-	s.sessionVars.InRestrictedSQL = false
-	return rs, errors.Trace(err)
+	return rs[0], err
 }
 
 // getExecRet executes restricted sql and the result is one column.
@@ -832,10 +832,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	}
 	// Set the variable to true to prevent cyclic recursive call.
 	vars.CommonGlobalLoaded = true
-	save := privilege.GetPrivilegeChecker(s)
-	privilege.BindPrivilegeChecker(s, nil)
 	rs, err := s.ExecRestrictedSQL(s, loadCommonGlobalVarsSQL)
-	privilege.BindPrivilegeChecker(s, save)
 	if err != nil {
 		vars.CommonGlobalLoaded = false
 		log.Errorf("Failed to load common global variables.")
