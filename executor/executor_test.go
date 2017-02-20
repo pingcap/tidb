@@ -690,6 +690,12 @@ func (s *testSuite) TestIndexScan(c *C) {
 	tk.MustExec("CREATE INDEX idx_tab1_1 on tab1 (b, a)")
 	result = tk.MustQuery("SELECT pk FROM tab1 WHERE b > 1")
 	result.Check(testkit.Rows("3", "4"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (a varchar(3), index(a))")
+	tk.MustExec("insert t values('aaa'), ('aab')")
+	result = tk.MustQuery("select * from t where a >= 'aaaa' and a < 'aabb'")
+	result.Check(testkit.Rows("[97 97 98]"))
 }
 
 func (s *testSuite) TestIndexReverseOrder(c *C) {
@@ -874,6 +880,8 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows(rowStr2))
 	result = tk.MustQuery("select * from t where a = case null when b then 'str3' when 10 then 'str1' else 'str2' end")
 	result.Check(testkit.Rows(rowStr2))
+	result = tk.MustQuery("select cast(1234 as char(3))")
+	result.Check(testkit.Rows("123"))
 
 	// for like and regexp
 	type testCase struct {
