@@ -910,3 +910,25 @@ func (s *session) ActivePendingTxn() error {
 	}
 	return nil
 }
+
+// InitTxnWithStartTS create a transaction with startTS.
+func (s *session) InitTxnWithStartTS(startTS uint64) error {
+	if s.txn != nil && s.txn.Valid() {
+		return nil
+	}
+	if s.txnCh == nil {
+		return errors.New("transaction channel is not set")
+	}
+	// no need to get txn from txnCh since txn should init with startTs
+	s.txnCh = nil
+	var err error
+	s.txn, err = s.store.BeginWithStartTS(startTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = s.loadCommonGlobalVariablesIfNeeded()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
