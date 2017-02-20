@@ -768,7 +768,7 @@ func (d *Datum) convertToString(sc *variable.StatementContext, target *FieldType
 	}
 
 	var err error
-	if target.Flen >= 0 {
+	if target.Flen >= 0 && !sc.IgnoreTruncate {
 		// Flen is the rune length, not binary length, for UTF8 charset, we need to calculate the
 		// rune count and truncate to Flen runes if it is too long.
 		if target.Charset == charset.CharsetUTF8 || target.Charset == charset.CharsetUTF8MB4 {
@@ -777,7 +777,7 @@ func (d *Datum) convertToString(sc *variable.StatementContext, target *FieldType
 			for i := range s {
 				runeCount++
 				if runeCount == target.Flen+1 {
-					// We do break here because we need to iterate to the end to get runeCount.
+					// We don't break here because we need to iterate to the end to get runeCount.
 					truncateLen = i
 				}
 			}
