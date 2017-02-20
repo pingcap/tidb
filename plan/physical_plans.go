@@ -505,7 +505,7 @@ func (p *PhysicalIndexScan) MarshalJSON() ([]byte, error) {
 func (p *PhysicalIndexScan) IsPointGetByUniqueKey(sc *variable.StatementContext) bool {
 	return len(p.Ranges) == 1 &&
 		p.Index.Unique &&
-		len(p.Ranges[0].LowVal) == len(p.Columns) &&
+		len(p.Ranges[0].LowVal) == len(p.Index.Columns) &&
 		p.Ranges[0].IsPoint(sc)
 }
 

@@ -92,7 +92,7 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 		// Do not sync transaction for Execute statement, because the real optimization work is done in
 		// "ExecuteExec.Build".
 		var err error
-		if isPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.plan) {
+		if IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.plan) {
 			log.Debugf("[%d][InitTxnWithStartTS] %s", ctx.GetSessionVars().ConnectionID, a.text)
 			err = ctx.InitTxnWithStartTS(math.MaxUint64)
 		} else {
@@ -176,11 +176,11 @@ func (a *statement) logSlowQuery() {
 	}
 }
 
-// isPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:
+// IsPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:
 //  1. ctx is auto commit tagged
 //  2. txn is nil
 //  2. plan is point get by pk or unique key
-func isPointGetWithPKOrUniqueKeyByAutoCommit(ctx context.Context, p plan.Plan) bool {
+func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx context.Context, p plan.Plan) bool {
 	// check auto commit
 	if !ctx.GetSessionVars().IsAutocommit() {
 		return false

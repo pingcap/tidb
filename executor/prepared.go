@@ -244,7 +244,7 @@ func (e *ExecuteExec) Build() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if isPointGetWithPKOrUniqueKeyByAutoCommit(e.Ctx, p) {
+	if IsPointGetWithPKOrUniqueKeyByAutoCommit(e.Ctx, p) {
 		err = e.Ctx.InitTxnWithStartTS(math.MaxUint64)
 	} else {
 		err = e.Ctx.ActivePendingTxn()
