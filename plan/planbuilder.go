@@ -846,8 +846,7 @@ func buildSchema(names []string, ftypes []byte) *expression.Schema {
 	return schema
 }
 
-// getShowColNamesAndTypes gets column names and types. If the `ftypes` is empty, every column is set to varchar type.
-// func getShowColNamesAndTypes(s *ast.ShowStmt) (names []string, tps []types.FieldType) {
+// buildShowSchema builds column info for ShowStmt including column name and type.
 func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 	var names []string
 	var ftypes []byte
