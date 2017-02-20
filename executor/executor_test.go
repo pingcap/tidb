@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/testkit"
@@ -1109,6 +1110,34 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 	stmt, err = compiler.Compile(ctx, stmtNode)
 	c.Check(err, IsNil)
 	c.Check(stmt.OriginText(), Equals, "create table t (a int)")
+}
+
+func (s *testSuite) TestPointGet(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use mysql")
+	ctx := tk.Se.(context.Context)
+	testCases := map[string]bool{
+		"select * from help_topic where name='aaa'":         true,
+		"select * from help_topic where help_topic_id=1":    true,
+		"select * from help_topic where help_category_id=1": false,
+	}
+	infoSchema := executor.GetInfoSchema(ctx)
+
+	for sqlStr, result := range testCases {
+		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
+		c.Check(err, IsNil)
+		err = plan.Preprocess(stmtNode, infoSchema, ctx)
+		c.Check(err, IsNil)
+		// Validate should be after NameResolve.
+		err = plan.Validate(stmtNode, false)
+		c.Check(err, IsNil)
+		plan, err := plan.Optimize(ctx, stmtNode, infoSchema)
+		c.Check(err, IsNil)
+		ret := executor.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, plan)
+		c.Assert(ret, Equals, result)
+	}
+
 }
 
 func (s *testSuite) TestRow(c *C) {
