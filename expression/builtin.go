@@ -280,6 +280,13 @@ var funcs = map[string]functionClass{
 	ast.LastInsertId: &lastInsertIDFunctionClass{baseFunctionClass{ast.LastInsertId, 0, 1}},
 	ast.User:         &userFunctionClass{baseFunctionClass{ast.User, 0, 0}},
 	ast.Version:      &versionFunctionClass{baseFunctionClass{ast.Version, 0, 0}},
+	ast.Benchmark:    &benchmarkFunctionClass{baseFunctionClass{ast.Benchmark, 2, 2}},
+	ast.Charset:      &charsetFunctionClass{baseFunctionClass{ast.Charset, 1, 1}},
+	ast.Coercibility: &coercibilityFunctionClass{baseFunctionClass{ast.Coercibility, 1, 1}},
+	ast.Collation:    &collationFunctionClass{baseFunctionClass{ast.Collation, 1, 1}},
+	ast.RowCount:     &rowCountFunctionClass{baseFunctionClass{ast.RowCount, 0, 0}},
+	ast.SessionUser:  &userFunctionClass{baseFunctionClass{ast.SessionUser, 0, 0}},
+	ast.SystemUser:   &userFunctionClass{baseFunctionClass{ast.SystemUser, 0, 0}},
 
 	// control functions
 	ast.If:     &ifFunctionClass{baseFunctionClass{ast.If, 3, 3}},
