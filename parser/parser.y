@@ -366,7 +366,6 @@ import (
         encrypt		"ENCRYPT"
         md5		"MD5"
         oldPassword	"OLD_PASSWORD"
-        passworFunc	"PASSWORD_FUNC"
         randomBytes	"RANDOM_BYTES"
         sha1		"SHA1"
         sha		"SHA"
@@ -2752,6 +2751,13 @@ FunctionCallKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
+|	"PASSWORD" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr(ast.PasswordFunc),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
 
 FunctionCallNonKeyword:
 	"ABS" '(' Expression ')'
@@ -3701,13 +3707,7 @@ FunctionCallNonKeyword:
 			Args: []ast.ExprNode{$3.(ast.ExprNode)},
 		}
 	}
-|	"PASSWORD" '(' Expression ')'
-	{
-		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr(ast.PasswordFunc),
-			Args: []ast.ExprNode{$3.(ast.ExprNode)},
-		}
-	}
+
 |	"RANDOM_BYTES" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
