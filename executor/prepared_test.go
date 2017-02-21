@@ -56,10 +56,15 @@ func (s *testSuite) TestPrepared(c *C) {
 	result.Check([][]interface{}{{1, nil}})
 
 	// Call Session PrepareStmt directly to get stmtId.
-	stmtId, _, _, err := tk.Se.PrepareStmt("select c1, c2 from prepare_test where c1 = ?")
+	query := "select c1, c2 from prepare_test where c1 = ?"
+	stmtId, _, _, err := tk.Se.PrepareStmt(query)
 	c.Assert(err, IsNil)
 	_, err = tk.Se.ExecutePreparedStmt(stmtId, 1)
 	c.Assert(err, IsNil)
+
+	// Check that ast.Statement created by executor.CompileExecutePreparedStmt has query text.
+	stmt := executor.CompileExecutePreparedStmt(tk.Se, stmtId, 1)
+	c.Assert(stmt.OriginText(), Equals, query)
 
 	// Make schema change.
 	tk.Exec("create table prepare2 (a int)")
@@ -102,4 +107,9 @@ func (s *testSuite) TestPreparedLimitOffset(c *C) {
 	tk.MustExec(`set @c="-1"`)
 	_, err := tk.Exec("execute stmt_test_1 using @c, @c")
 	c.Assert(plan.ErrWrongArguments.Equal(err), IsTrue)
+
+	stmtID, _, _, err := tk.Se.PrepareStmt("select id from prepare_test limit ?")
+	c.Assert(err, IsNil)
+	_, err = tk.Se.ExecutePreparedStmt(stmtID, 1)
+	c.Assert(err, IsNil)
 }

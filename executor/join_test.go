@@ -18,6 +18,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
@@ -393,6 +394,26 @@ func (s *testSuite) TestSubquery(c *C) {
 	tk.MustExec("create table t(c int)")
 	result = tk.MustQuery("select exists(select count(*) from t)")
 	result.Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, v int)")
+	tk.MustExec("insert into t values(1, 1), (2, 2), (3, 3)")
+	result = tk.MustQuery("select (select t.id from t where s.id < 2 and t.id = s.id) from t s")
+	result.Check(testkit.Rows("1", "<nil>", "<nil>"))
+	rs, err := tk.Exec("select (select t.id from t where t.id = t.v and t.v != s.id) from t s")
+	c.Check(err, IsNil)
+	_, err = tidb.GetRows(rs)
+	c.Check(err, NotNil)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int)")
+	tk.MustExec("create table s(id int)")
+	tk.MustExec("insert into t values(1), (2)")
+	tk.MustExec("insert into s values(2), (2)")
+	result = tk.MustQuery("select id from t where(select count(*) from s where s.id = t.id) > 0")
+	result.Check(testkit.Rows("2"))
+	result = tk.MustQuery("select *, (select count(*) from s where id = t.id limit 1, 1) from t")
+	result.Check(testkit.Rows("1 <nil>", "2 <nil>"))
 }
 
 func (s *testSuite) TestInSubquery(c *C) {

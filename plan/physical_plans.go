@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -43,7 +44,7 @@ type PhysicalIndexScan struct {
 	Index      *model.IndexInfo
 	Ranges     []*IndexRange
 	Columns    []*model.ColumnInfo
-	DBName     *model.CIStr
+	DBName     model.CIStr
 	Desc       bool
 	OutOfOrder bool
 	// DoubleRead means if the index executor will read kv two times.
@@ -62,7 +63,7 @@ type PhysicalIndexScan struct {
 type PhysicalMemTable struct {
 	basePlan
 
-	DBName      *model.CIStr
+	DBName      model.CIStr
 	Table       *model.TableInfo
 	Columns     []*model.ColumnInfo
 	Ranges      []TableRange
@@ -329,7 +330,7 @@ type PhysicalTableScan struct {
 
 	Table   *model.TableInfo
 	Columns []*model.ColumnInfo
-	DBName  *model.CIStr
+	DBName  model.CIStr
 	Desc    bool
 	Ranges  []TableRange
 	pkCol   *expression.Column
@@ -498,6 +499,14 @@ func (p *PhysicalIndexScan) MarshalJSON() ([]byte, error) {
 			"\n \"push down info\": %s\n}",
 		p.DBName.O, p.Table.Name.O, p.Index.Name.O, p.Ranges, p.Desc, p.OutOfOrder, p.DoubleRead, pushDownInfo))
 	return buffer.Bytes(), nil
+}
+
+// IsPointGetByUniqueKey checks whether is a point get by unique key.
+func (p *PhysicalIndexScan) IsPointGetByUniqueKey(sc *variable.StatementContext) bool {
+	return len(p.Ranges) == 1 &&
+		p.Index.Unique &&
+		len(p.Ranges[0].LowVal) == len(p.Index.Columns) &&
+		p.Ranges[0].IsPoint(sc)
 }
 
 // Copy implements the PhysicalPlan Copy interface.

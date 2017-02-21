@@ -18,7 +18,6 @@
 package tidb
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -44,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-binlog"
 )
@@ -220,10 +218,10 @@ func (s *session) doCommitWithRetry() error {
 	err := s.doCommit()
 	if err != nil {
 		if s.isRetryableError(err) {
-			// Transactions will retry 2 ~ 10 times.
+			// Transactions will retry 2 ~ commitRetryLimit times.
 			// We make larger transactions retry less times to prevent cluster resource outage.
 			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
-			maxRetryCount := 10 - int(txnSizeRate*9.0)
+			maxRetryCount := commitRetryLimit - int(float64(commitRetryLimit-1)*txnSizeRate)
 			err = s.retry(maxRetryCount)
 		}
 	}
@@ -448,7 +446,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		s.prepareTxnCtx()
 		startTS := time.Now()
 		// Some execution is done in compile stage, so we reset it before compile.
-		resetStmtCtx(s, rawStmts[0])
+		resetStmtCtx(s, rst)
 		st, err1 := Compile(s, rst)
 		if err1 != nil {
 			log.Warnf("[%d] compile error:\n%v\n%s", connID, err1, sql)
@@ -464,7 +462,9 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		r, err := runStmt(s, st)
 		ph.EndStatement(s.stmtState)
 		if err != nil {
-			log.Warnf("[%d] session error:\n%v\n%s", connID, err, s)
+			if !terror.ErrorEqual(err, kv.ErrKeyExists) {
+				log.Warnf("[%d] session error:\n%v\n%s", connID, errors.ErrorStack(err), s)
+			}
 			return nil, errors.Trace(err)
 		}
 		sessionExecuteRunDuration.Observe(time.Since(startTS).Seconds())
@@ -492,7 +492,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 		SQLText: sql,
 	}
 	prepareExec.DoPrepare()
-	return prepareExec.ID, prepareExec.ParamCount, nil, prepareExec.Err
+	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, prepareExec.Err
 }
 
 // checkArgs makes sure all the arguments' types are known and can be handled.
@@ -663,36 +663,12 @@ func (s *session) Auth(user string, auth []byte, salt []byte) bool {
 	name := strs[0]
 	host := strs[1]
 
-	// TODO: Use the new privilege implementation.
-	domain := sessionctx.GetDomain(s)
-	checker := domain.PrivilegeHandle().Get()
-	succ := checker.ConnectionVerification(name, host)
-	log.Debug("RequestVerification result:", succ)
-
-	pwd, err := s.getPassword(name, host)
-	if err != nil {
-		if terror.ExecResultIsEmpty.Equal(err) {
-			log.Errorf("User [%s] not exist %v", name, err)
-		} else {
-			log.Errorf("Get User [%s] password from SystemDB error %v", name, err)
-		}
-		return false
-	}
-	if len(pwd) != 0 && len(pwd) != 40 {
-		log.Errorf("User [%s] password from SystemDB not like a sha1sum", name)
-		return false
-	}
-	hpwd, err := util.DecodePassword(pwd)
-	if err != nil {
-		log.Errorf("Decode password string error %v", err)
-		return false
-	}
-	checkAuth := util.CalcPassword(salt, hpwd)
-	if !bytes.Equal(auth, checkAuth) {
+	checker := privilege.GetPrivilegeChecker(s)
+	if !checker.ConnectionVerification(name, host, auth, salt) {
+		log.Errorf("User connection verification failed %v", name)
 		return false
 	}
 	s.sessionVars.User = user
-
 	return true
 }
 
@@ -729,7 +705,7 @@ func CreateSession(store kv.Storage) (Session, error) {
 }
 
 // BootstrapSession runs the first time when the TiDB server start.
-func BootstrapSession(store kv.Storage) error {
+func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	ver := getStoreBootstrapVersion(store)
 	if ver == notBootstrapped {
 		runInBootstrapSession(store, bootstrap)
@@ -739,11 +715,12 @@ func BootstrapSession(store kv.Storage) error {
 
 	se, err := createSession(store)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	err = sessionctx.GetDomain(se).LoadPrivilegeLoop(se)
+	dom := sessionctx.GetDomain(se)
+	err = dom.LoadPrivilegeLoop(se)
 
-	return errors.Trace(err)
+	return dom, errors.Trace(err)
 }
 
 // runInBootstrapSession create a special session for boostrap to run.
@@ -855,7 +832,10 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	}
 	// Set the variable to true to prevent cyclic recursive call.
 	vars.CommonGlobalLoaded = true
+	save := privilege.GetPrivilegeChecker(s)
+	privilege.BindPrivilegeChecker(s, nil)
 	rs, err := s.ExecRestrictedSQL(s, loadCommonGlobalVarsSQL)
+	privilege.BindPrivilegeChecker(s, save)
 	if err != nil {
 		vars.CommonGlobalLoaded = false
 		log.Errorf("Failed to load common global variables.")
@@ -925,6 +905,28 @@ func (s *session) ActivePendingTxn() error {
 	}
 	s.txn = txnWithErr.txn
 	err := s.loadCommonGlobalVariablesIfNeeded()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// InitTxnWithStartTS create a transaction with startTS.
+func (s *session) InitTxnWithStartTS(startTS uint64) error {
+	if s.txn != nil && s.txn.Valid() {
+		return nil
+	}
+	if s.txnCh == nil {
+		return errors.New("transaction channel is not set")
+	}
+	// no need to get txn from txnCh since txn should init with startTs
+	s.txnCh = nil
+	var err error
+	s.txn, err = s.store.BeginWithStartTS(startTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
 		return errors.Trace(err)
 	}

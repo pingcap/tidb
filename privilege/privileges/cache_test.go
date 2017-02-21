@@ -32,7 +32,7 @@ func (s *testCacheSuite) SetUpSuite(c *C) {
 	privileges.Enable = true
 	store, err := tidb.NewStore("memory://mysql")
 	c.Assert(err, IsNil)
-	err = tidb.BootstrapSession(store)
+	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	s.store = store
 }
@@ -128,4 +128,46 @@ func (s *testCacheSuite) TestLoadColumnsPrivTable(c *C) {
 	c.Assert(p.ColumnsPriv[0].ColumnName, Equals, "column")
 	c.Assert(p.ColumnsPriv[0].ColumnPriv, Equals, mysql.InsertPriv|mysql.UpdatePriv)
 	c.Assert(p.ColumnsPriv[1].ColumnPriv, Equals, mysql.SelectPriv)
+}
+
+func (s *testCacheSuite) TestPatternMatch(c *C) {
+	se, err := tidb.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	defer se.Close()
+	mustExec(c, se, "USE MYSQL;")
+	mustExec(c, se, "TRUNCATE TABLE mysql.user")
+	mustExec(c, se, `INSERT INTO mysql.user VALUES ("10.0.%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+	var p privileges.MySQLPrivilege
+	err = p.LoadUserTable(se)
+	c.Assert(err, IsNil)
+	c.Assert(p.RequestVerification("root", "10.0.1", "test", "", "", mysql.SelectPriv), IsTrue)
+	c.Assert(p.RequestVerification("root", "10.0.1.118", "test", "", "", mysql.SelectPriv), IsTrue)
+	c.Assert(p.RequestVerification("root", "localhost", "test", "", "", mysql.SelectPriv), IsFalse)
+	c.Assert(p.RequestVerification("root", "127.0.0.1", "test", "", "", mysql.SelectPriv), IsFalse)
+	c.Assert(p.RequestVerification("root", "114.114.114.114", "test", "", "", mysql.SelectPriv), IsFalse)
+
+	mustExec(c, se, "TRUNCATE TABLE mysql.user")
+	mustExec(c, se, `INSERT INTO mysql.user VALUES ("", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+	p = privileges.MySQLPrivilege{}
+	err = p.LoadUserTable(se)
+	c.Assert(err, IsNil)
+	c.Assert(p.RequestVerification("root", "", "test", "", "", mysql.SelectPriv), IsTrue)
+	c.Assert(p.RequestVerification("root", "notnull", "test", "", "", mysql.SelectPriv), IsFalse)
+}
+
+func (s *testCacheSuite) TestCaseInsensitive(c *C) {
+	se, err := tidb.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	defer se.Close()
+	mustExec(c, se, "CREATE DATABASE TCTrain;")
+	mustExec(c, se, "CREATE TABLE TCTrain.TCTrainOrder (id int);")
+	mustExec(c, se, "TRUNCATE TABLE mysql.user")
+	mustExec(c, se, `INSERT INTO mysql.db VALUES ("127.0.0.1", "TCTrain", "genius", "Y", "Y", "Y", "Y", "Y", "N", "N", "N", "N", "N")`)
+	var p privileges.MySQLPrivilege
+	err = p.LoadDBTable(se)
+	c.Assert(err, IsNil)
+	// DB and Table names are case insensitive in MySQL.
+	c.Assert(p.RequestVerification("genius", "127.0.0.1", "TCTrain", "TCTrainOrder", "", mysql.SelectPriv), IsTrue)
+	c.Assert(p.RequestVerification("genius", "127.0.0.1", "TCTRAIN", "TCTRAINORDER", "", mysql.SelectPriv), IsTrue)
+	c.Assert(p.RequestVerification("genius", "127.0.0.1", "tctrain", "tctrainorder", "", mysql.SelectPriv), IsTrue)
 }

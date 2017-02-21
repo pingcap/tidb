@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/testkit"
@@ -65,7 +66,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 		c.Assert(err, IsNil)
 		s.store = store
 	}
-	err := tidb.BootstrapSession(s.store)
+	_, err := tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	logLevel := os.Getenv("log_level")
 	log.SetLevelByString(logLevel)
@@ -370,6 +371,26 @@ func (s *testSuite) TestSelectErrorRow(c *C) {
 	tk.MustExec("commit")
 }
 
+// For https://github.com/pingcap/tidb/issues/2612
+func (s *testSuite) TestIssue2612(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t (
+		create_at datetime NOT NULL DEFAULT '1000-01-01 00:00:00',
+		finish_at datetime NOT NULL DEFAULT '1000-01-01 00:00:00');`)
+	tk.MustExec(`insert into t values ('2016-02-13 15:32:24',  '2016-02-11 17:23:22');`)
+	rs, err := tk.Exec(`select timediff(finish_at, create_at) from t;`)
+	c.Assert(err, IsNil)
+	row, err := rs.Next()
+	c.Assert(err, IsNil)
+	row.Data[0].GetMysqlDuration().String()
+}
+
 // For https://github.com/pingcap/tidb/issues/345
 func (s *testSuite) TestIssue345(c *C) {
 	defer func() {
@@ -670,6 +691,19 @@ func (s *testSuite) TestIndexScan(c *C) {
 	tk.MustExec("CREATE INDEX idx_tab1_1 on tab1 (b, a)")
 	result = tk.MustQuery("SELECT pk FROM tab1 WHERE b > 1")
 	result.Check(testkit.Rows("3", "4"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (a varchar(3), index(a))")
+	tk.MustExec("insert t values('aaa'), ('aab')")
+	result = tk.MustQuery("select * from t where a >= 'aaaa' and a < 'aabb'")
+	result.Check(testkit.Rows("[97 97 98]"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (a int primary key, b int, c int, index(c))")
+	tk.MustExec("insert t values(1, 1, 1), (2, 2, 2), (4, 4, 4), (3, 3, 3), (5, 5, 5)")
+	// Test for double read and top n.
+	result = tk.MustQuery("select a from t where c >= 2 order by b desc limit 1")
+	result.Check(testkit.Rows("5"))
 }
 
 func (s *testSuite) TestIndexReverseOrder(c *C) {
@@ -854,6 +888,8 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows(rowStr2))
 	result = tk.MustQuery("select * from t where a = case null when b then 'str3' when 10 then 'str1' else 'str2' end")
 	result.Check(testkit.Rows(rowStr2))
+	result = tk.MustQuery("select cast(1234 as char(3))")
+	result.Check(testkit.Rows("123"))
 
 	// for like and regexp
 	type testCase struct {
@@ -1054,8 +1090,8 @@ func (s *testSuite) TestTableScan(c *C) {
 	c.Assert(len(result.Rows()), GreaterEqual, 4)
 	tk.MustExec("use test")
 	tk.MustExec("create database mytest")
-	rowStr1 := fmt.Sprintf("%s %s %s %s %v", "def", "mysql", "utf8", "utf8_general_ci", nil)
-	rowStr2 := fmt.Sprintf("%s %s %s %s %v", "def", "mytest", "utf8", "utf8_general_ci", nil)
+	rowStr1 := fmt.Sprintf("%s %s %s %s %v", "def", "mysql", "utf8", "utf8_bin", nil)
+	rowStr2 := fmt.Sprintf("%s %s %s %s %v", "def", "mytest", "utf8", "utf8_bin", nil)
 	tk.MustExec("use information_schema")
 	result = tk.MustQuery("select * from schemata where schema_name = 'mysql'")
 	result.Check(testkit.Rows(rowStr1))
@@ -1081,6 +1117,34 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 	stmt, err = compiler.Compile(ctx, stmtNode)
 	c.Check(err, IsNil)
 	c.Check(stmt.OriginText(), Equals, "create table t (a int)")
+}
+
+func (s *testSuite) TestPointGet(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use mysql")
+	ctx := tk.Se.(context.Context)
+	testCases := map[string]bool{
+		"select * from help_topic where name='aaa'":         true,
+		"select * from help_topic where help_topic_id=1":    true,
+		"select * from help_topic where help_category_id=1": false,
+	}
+	infoSchema := executor.GetInfoSchema(ctx)
+
+	for sqlStr, result := range testCases {
+		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
+		c.Check(err, IsNil)
+		err = plan.Preprocess(stmtNode, infoSchema, ctx)
+		c.Check(err, IsNil)
+		// Validate should be after NameResolve.
+		err = plan.Validate(stmtNode, false)
+		c.Check(err, IsNil)
+		plan, err := plan.Optimize(ctx, stmtNode, infoSchema)
+		c.Check(err, IsNil)
+		ret := executor.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, plan)
+		c.Assert(ret, Equals, result)
+	}
+
 }
 
 func (s *testSuite) TestRow(c *C) {

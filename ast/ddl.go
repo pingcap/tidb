@@ -636,6 +636,7 @@ const (
 	AlterTableModifyColumn
 	AlterTableChangeColumn
 	AlterTableRenameTable
+	AlterTableAlterColumn
 
 // TODO: Add more actions
 )

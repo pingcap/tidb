@@ -172,7 +172,7 @@ func (v *typeInferrer) binaryOperation(x *ast.BinaryOperationExpr) {
 		x.Type.Init(mysql.TypeLonglong)
 	case opcode.Plus, opcode.Minus, opcode.Mul, opcode.Mod:
 		if x.L.GetType() != nil && x.R.GetType() != nil {
-			xTp := mergeArithType(x.L.GetType().Tp, x.R.GetType().Tp)
+			xTp := mergeArithType(x.L.GetType(), x.R.GetType())
 			x.Type.Init(xTp)
 			leftUnsigned := x.L.GetType().Flag & mysql.UnsignedFlag
 			rightUnsigned := x.R.GetType().Flag & mysql.UnsignedFlag
@@ -181,7 +181,7 @@ func (v *typeInferrer) binaryOperation(x *ast.BinaryOperationExpr) {
 		}
 	case opcode.Div:
 		if x.L.GetType() != nil && x.R.GetType() != nil {
-			xTp := mergeArithType(x.L.GetType().Tp, x.R.GetType().Tp)
+			xTp := mergeArithType(x.L.GetType(), x.R.GetType())
 			if xTp == mysql.TypeLonglong {
 				xTp = mysql.TypeNewDecimal
 			}
@@ -192,7 +192,21 @@ func (v *typeInferrer) binaryOperation(x *ast.BinaryOperationExpr) {
 	x.Type.Collate = charset.CollationBin
 }
 
-func mergeArithType(a, b byte) byte {
+// toArithType converts DateTime, Duration and Timestamp types to NewDecimal type if Decimal > 0.
+func toArithType(ft *types.FieldType) (tp byte) {
+	tp = ft.Tp
+	if types.IsTypeFractionable(tp) {
+		if ft.Decimal > 0 {
+			tp = mysql.TypeNewDecimal
+		} else {
+			tp = mysql.TypeLonglong
+		}
+	}
+	return
+}
+
+func mergeArithType(fta, ftb *types.FieldType) byte {
+	a, b := toArithType(fta), toArithType(ftb)
 	switch a {
 	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat:
 		return mysql.TypeDouble
@@ -205,6 +219,41 @@ func mergeArithType(a, b byte) byte {
 		return mysql.TypeNewDecimal
 	}
 	return mysql.TypeLonglong
+}
+
+func mergeCmpType(fta, ftb *types.FieldType) (ft *types.FieldType) {
+	ft = &types.FieldType{}
+	if fta.Charset == charset.CharsetUTF8 && ftb.Charset == charset.CharsetUTF8 {
+		ft.Charset = charset.CharsetUTF8
+		ft.Collate = mysql.UTF8DefaultCollation
+	} else {
+		ft.Flag |= mysql.BinaryFlag
+	}
+	isFtaTime, isFtbTime := types.IsTypeFractionable(fta.Tp), types.IsTypeFractionable(ftb.Tp)
+	if types.IsTypeBlob(fta.Tp) || types.IsTypeBlob(ftb.Tp) {
+		ft.Tp = mysql.TypeBlob
+	} else if types.IsTypeVarchar(fta.Tp) || types.IsTypeVarchar(ftb.Tp) {
+		ft.Tp = mysql.TypeVarString
+	} else if types.IsTypeChar(fta.Tp) || types.IsTypeChar(ftb.Tp) {
+		ft.Tp = mysql.TypeString
+	} else if isFtaTime && isFtbTime {
+		ft.Tp = mysql.TypeDatetime
+	} else if isFtaTime || isFtbTime {
+		ft.Tp = mysql.TypeVarString
+	} else if fta.Tp == mysql.TypeEnum || ftb.Tp == mysql.TypeEnum || fta.Tp == mysql.TypeSet || ftb.Tp == mysql.TypeSet {
+		ft.Tp = mysql.TypeString
+	} else if fta.Tp == mysql.TypeDouble || ftb.Tp == mysql.TypeDouble {
+		ft.Tp = mysql.TypeDouble
+	} else if fta.Tp == mysql.TypeFloat || ftb.Tp == mysql.TypeFloat {
+		ft.Tp = mysql.TypeFloat
+	} else if fta.Tp == mysql.TypeNewDecimal || ftb.Tp == mysql.TypeNewDecimal {
+		ft.Tp = mysql.TypeNewDecimal
+	} else if fta.Tp == mysql.TypeLonglong || ftb.Tp == mysql.TypeLonglong {
+		ft.Tp = mysql.TypeLonglong
+	} else {
+		ft.Tp = mysql.TypeLong
+	}
+	return ft
 }
 
 func (v *typeInferrer) unaryOperation(x *ast.UnaryOperationExpr) {
@@ -220,7 +269,7 @@ func (v *typeInferrer) unaryOperation(x *ast.UnaryOperationExpr) {
 		x.Type.Init(mysql.TypeLonglong)
 		if x.V.GetType() != nil {
 			switch x.V.GetType().Tp {
-			case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat:
+			case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeDatetime, mysql.TypeDuration, mysql.TypeTimestamp:
 				x.Type.Tp = mysql.TypeDouble
 			case mysql.TypeNewDecimal:
 				x.Type.Tp = mysql.TypeNewDecimal
@@ -279,7 +328,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		if len(x.Args) > 0 {
 			tp = x.Args[0].GetType()
 			for i := 1; i < len(x.Args); i++ {
-				mergeArithType(tp.Tp, x.Args[i].GetType().Tp)
+				tp = mergeCmpType(tp, x.Args[i].GetType())
 			}
 		}
 	case "interval":
@@ -344,6 +393,9 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = x.Args[1].GetType()
 	case "get_lock", "release_lock":
 		tp = types.NewFieldType(mysql.TypeLonglong)
+	case ast.AesEncrypt, ast.AesDecrypt:
+		tp = types.NewFieldType(mysql.TypeVarString)
+		chs = v.defaultCharset
 	default:
 		tp = types.NewFieldType(mysql.TypeUnspecified)
 	}
