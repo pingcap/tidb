@@ -742,7 +742,21 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 	selTableReq.TableInfo = &tipb.TableInfo{
 		TableId: e.table.Meta().ID,
 	}
+	var err error
 	selTableReq.TableInfo.Columns = distsql.ColumnsToProto(e.indexPlan.Columns, e.table.Meta().PKIsHandle)
+	for i, c := range e.indexPlan.Columns {
+		if c.State == model.StatePublic {
+			continue
+		}
+		d, _, err := table.GetColDefaultValue(e.ctx, c)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		selTableReq.TableInfo.Columns[i].DefaultVal, err = tablecodec.EncodeValue(d)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
 	selTableReq.Where = e.where
 	// Aggregate Info
 	selTableReq.Aggregates = e.aggFuncs
@@ -819,7 +833,20 @@ func (e *XSelectTableExec) doRequest() error {
 	selReq.Where = e.where
 	selReq.TableInfo = &tipb.TableInfo{
 		TableId: e.tableInfo.ID,
-		Columns: distsql.ColumnsToProto(e.Columns, e.tableInfo.PKIsHandle),
+	}
+	selReq.TableInfo.Columns = distsql.ColumnsToProto(e.Columns, e.tableInfo.PKIsHandle)
+	for i, c := range e.Columns {
+		if c.State == model.StatePublic {
+			continue
+		}
+		d, _, err := table.GetColDefaultValue(e.ctx, c)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		selReq.TableInfo.Columns[i].DefaultVal, err = tablecodec.EncodeValue(d)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	if len(e.orderByList) > 0 {
 		selReq.OrderBy = e.orderByList

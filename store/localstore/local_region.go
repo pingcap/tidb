@@ -533,12 +533,17 @@ func (rs *localRegion) handleRowData(ctx *selectContext, handle int64, value []b
 			values[col.GetColumnId()] = handleData
 		} else {
 			_, ok := values[col.GetColumnId()]
-			if !ok {
-				if mysql.HasNotNullFlag(uint(col.GetFlag())) {
-					return false, errors.New("Miss column")
-				}
-				values[col.GetColumnId()] = []byte{codec.NilFlag}
+			if ok {
+				continue
 			}
+			if len(col.DefaultVal) > 0 {
+				values[col.GetColumnId()] = col.DefaultVal
+				continue
+			}
+			if mysql.HasNotNullFlag(uint(col.Flag)) {
+				return false, errors.New("Miss column")
+			}
+			values[col.GetColumnId()] = []byte{codec.NilFlag}
 		}
 	}
 	return rs.valuesToRow(ctx, handle, values)
