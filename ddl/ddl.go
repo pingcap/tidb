@@ -142,6 +142,8 @@ type ddl struct {
 	// TODO: Now we use goroutine to simulate reorganization jobs, later we may
 	// use a persistent job list.
 	reorgDoneCh chan error
+	// reorgRowCount is for reorganization, it uses to simulate a job's row count.
+	reorgRowCount int64
 
 	quitCh chan struct{}
 	wait   sync.WaitGroup
