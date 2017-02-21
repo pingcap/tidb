@@ -57,6 +57,18 @@ func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
 	}, nil
 }
 
+// newTikvTxnWithStartTS creates a txn with startTS.
+func newTikvTxnWithStartTS(store *tikvStore, startTS uint64) (*tikvTxn, error) {
+	ver := kv.NewVersion(startTS)
+	return &tikvTxn{
+		us:        kv.NewUnionStore(newTiKVSnapshot(store, ver)),
+		store:     store,
+		startTS:   startTS,
+		startTime: monotime.Now(),
+		valid:     true,
+	}, nil
+}
+
 // Implement transaction interface.
 func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
 	txnCmdCounter.WithLabelValues("get").Inc()

@@ -706,7 +706,7 @@ type builtinAcosSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_acos
+// See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_acos
 func (b *builtinAcosSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("acos")
 }
@@ -723,7 +723,7 @@ type builtinAsinSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_asin
+// See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_asin
 func (b *builtinAsinSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("asin")
 }
@@ -740,7 +740,7 @@ type builtinAtanSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_atan
+// See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_atan
 func (b *builtinAtanSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("atan")
 }
@@ -757,7 +757,7 @@ type builtinCosSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_cos
+// See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_cos
 func (b *builtinCosSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("cos")
 }
@@ -774,7 +774,7 @@ type builtinCotSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_cot
+// See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_cot
 func (b *builtinCotSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("cot")
 }
@@ -791,7 +791,7 @@ type builtinDegreesSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_degrees
+// See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_degrees
 func (b *builtinDegreesSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("degrees")
 }
@@ -808,7 +808,7 @@ type builtinExpSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_exp
+// See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_exp
 func (b *builtinExpSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("exp")
 }
@@ -825,7 +825,7 @@ type builtinPISig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_pi
+// See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_pi
 func (b *builtinPISig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("pi")
 }
@@ -842,7 +842,7 @@ type builtinRadiansSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_radians
+// See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_radians
 func (b *builtinRadiansSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("radians")
 }
@@ -859,7 +859,7 @@ type builtinSinSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_sin
+// See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_sin
 func (b *builtinSinSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("sin")
 }
@@ -876,7 +876,7 @@ type builtinTanSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_tan
+// See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_tan
 func (b *builtinTanSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("tan")
 }
@@ -893,7 +893,7 @@ type builtinTruncateSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_truncate
+// See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_truncate
 func (b *builtinTruncateSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("truncate")
 }

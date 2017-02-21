@@ -100,8 +100,20 @@ func (p *Aggregation) PruneColumns(parentUsedCols []*expression.Column) {
 			selfUsedCols = append(selfUsedCols, expression.ExtractColumns(arg)...)
 		}
 	}
-	for _, expr := range p.GroupByItems {
-		selfUsedCols = append(selfUsedCols, expression.ExtractColumns(expr)...)
+	if len(p.GroupByItems) > 0 {
+		for i := len(p.GroupByItems) - 1; i >= 0; i-- {
+			cols := expression.ExtractColumns(p.GroupByItems[i])
+			if len(cols) == 0 {
+				p.GroupByItems = append(p.GroupByItems[:i], p.GroupByItems[i+1:]...)
+			} else {
+				selfUsedCols = append(selfUsedCols, cols...)
+			}
+		}
+		// If all the group by items are pruned, we should add a constant 1 to keep the correctness.
+		// Because `select count(*) from t` is different from `select count(*) from t group by 1`.
+		if len(p.GroupByItems) == 0 {
+			p.GroupByItems = []expression.Expression{expression.One}
+		}
 	}
 	child.PruneColumns(selfUsedCols)
 }
@@ -109,8 +121,13 @@ func (p *Aggregation) PruneColumns(parentUsedCols []*expression.Column) {
 // PruneColumns implements LogicalPlan interface.
 func (p *Sort) PruneColumns(parentUsedCols []*expression.Column) {
 	child := p.children[0].(LogicalPlan)
-	for _, item := range p.ByItems {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(item.Expr)...)
+	for i := len(p.ByItems) - 1; i >= 0; i-- {
+		cols := expression.ExtractColumns(p.ByItems[i].Expr)
+		if len(cols) == 0 {
+			p.ByItems = append(p.ByItems[:i], p.ByItems[i+1:]...)
+		} else {
+			parentUsedCols = append(parentUsedCols, expression.ExtractColumns(p.ByItems[i].Expr)...)
+		}
 	}
 	child.PruneColumns(parentUsedCols)
 	p.SetSchema(p.children[0].Schema())

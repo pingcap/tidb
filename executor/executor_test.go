@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/testkit"
@@ -690,6 +691,12 @@ func (s *testSuite) TestIndexScan(c *C) {
 	tk.MustExec("CREATE INDEX idx_tab1_1 on tab1 (b, a)")
 	result = tk.MustQuery("SELECT pk FROM tab1 WHERE b > 1")
 	result.Check(testkit.Rows("3", "4"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (a varchar(3), index(a))")
+	tk.MustExec("insert t values('aaa'), ('aab')")
+	result = tk.MustQuery("select * from t where a >= 'aaaa' and a < 'aabb'")
+	result.Check(testkit.Rows("[97 97 98]"))
 }
 
 func (s *testSuite) TestIndexReverseOrder(c *C) {
@@ -874,6 +881,8 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows(rowStr2))
 	result = tk.MustQuery("select * from t where a = case null when b then 'str3' when 10 then 'str1' else 'str2' end")
 	result.Check(testkit.Rows(rowStr2))
+	result = tk.MustQuery("select cast(1234 as char(3))")
+	result.Check(testkit.Rows("123"))
 
 	// for like and regexp
 	type testCase struct {
@@ -1101,6 +1110,34 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 	stmt, err = compiler.Compile(ctx, stmtNode)
 	c.Check(err, IsNil)
 	c.Check(stmt.OriginText(), Equals, "create table t (a int)")
+}
+
+func (s *testSuite) TestPointGet(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use mysql")
+	ctx := tk.Se.(context.Context)
+	testCases := map[string]bool{
+		"select * from help_topic where name='aaa'":         true,
+		"select * from help_topic where help_topic_id=1":    true,
+		"select * from help_topic where help_category_id=1": false,
+	}
+	infoSchema := executor.GetInfoSchema(ctx)
+
+	for sqlStr, result := range testCases {
+		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
+		c.Check(err, IsNil)
+		err = plan.Preprocess(stmtNode, infoSchema, ctx)
+		c.Check(err, IsNil)
+		// Validate should be after NameResolve.
+		err = plan.Validate(stmtNode, false)
+		c.Check(err, IsNil)
+		plan, err := plan.Optimize(ctx, stmtNode, infoSchema)
+		c.Check(err, IsNil)
+		ret := executor.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, plan)
+		c.Assert(ret, Equals, result)
+	}
+
 }
 
 func (s *testSuite) TestRow(c *C) {

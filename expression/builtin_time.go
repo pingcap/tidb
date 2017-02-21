@@ -1541,7 +1541,7 @@ type builtinTimestampSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.5/en/date-and-time-functions.html#function_timestamp
+// See https://dev.mysql.com/doc/refman/5.5/en/date-and-time-functions.html#function_timestamp
 func (b *builtinTimestampSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
@@ -1623,7 +1623,7 @@ type builtinAddTimeSig struct {
 	baseBuiltinFunc
 }
 
-/// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_addtime
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_addtime
 func (b *builtinAddTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("ADDTIME")
 }
@@ -1640,7 +1640,7 @@ type builtinConvertTzSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_convert-tz
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_convert-tz
 func (b *builtinConvertTzSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("CONVERT_TZ")
 }
@@ -1657,7 +1657,7 @@ type builtinMakeDateSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_makedate
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_makedate
 func (b *builtinMakeDateSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("MAKEDATE")
 }
@@ -1674,7 +1674,7 @@ type builtinMakeTimeSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_maketime
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_maketime
 func (b *builtinMakeTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("MAKETIME")
 }
@@ -1691,7 +1691,7 @@ type builtinPeriodAddSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_period-add
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_period-add
 func (b *builtinPeriodAddSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("PERIOD_ADD")
 }
@@ -1708,7 +1708,7 @@ type builtinPeriodDiffSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_period-diff
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_period-diff
 func (b *builtinPeriodDiffSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("PERIOD_DIFF")
 }
@@ -1725,7 +1725,7 @@ type builtinQuarterSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_quarter
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_quarter
 func (b *builtinQuarterSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("QUARTER")
 }
@@ -1742,7 +1742,7 @@ type builtinSecToTimeSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_sec-to-time
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_sec-to-time
 func (b *builtinSecToTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("SEC_TO_TIME")
 }
@@ -1759,7 +1759,7 @@ type builtinSubTimeSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
 func (b *builtinSubTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("SUB_TIME")
 }
@@ -1776,7 +1776,7 @@ type builtinTimeFormatSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time-format
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time-format
 func (b *builtinTimeFormatSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("TIME_FORMAT")
 }
@@ -1793,7 +1793,7 @@ type builtinTimeToSecSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time-to-sec
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time-to-sec
 func (b *builtinTimeToSecSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("TIME_TO_SEC")
 }
@@ -1810,7 +1810,7 @@ type builtinTimestampAddSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timestampadd
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timestampadd
 func (b *builtinTimestampAddSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("TIMESTAMPADD")
 }
@@ -1827,7 +1827,7 @@ type builtinToDaysSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_to-days
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_to-days
 func (b *builtinToDaysSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("to_days")
 }
@@ -1844,7 +1844,7 @@ type builtinToSecondsSig struct {
 	baseBuiltinFunc
 }
 
-/// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_to-seconds
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_to-seconds
 func (b *builtinToSecondsSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("TO_SECONDS")
 }
@@ -1861,7 +1861,7 @@ type builtinUTCTimeSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-time
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-time
 func (b *builtinUTCTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("UTC_TIME")
 }
