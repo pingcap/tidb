@@ -276,6 +276,8 @@ func (a *aggPushDownSolver) makeNewAgg(aggFuncs []expression.AggregationFunction
 	return agg
 }
 
+// pushAggCrossUnion will try to push the agg down to the union. If the new aggregation's group-by columns doesn't contain unique key.
+// We will return the new aggregation. Otherwise we will transform the aggregation to projection.
 func (a *aggPushDownSolver) pushAggCrossUnion(agg *Aggregation, unionSchema *expression.Schema, unionChild LogicalPlan) (LogicalPlan, error) {
 	newAgg := &Aggregation{
 		AggFuncs:        make([]expression.AggregationFunction, 0, len(agg.AggFuncs)),
