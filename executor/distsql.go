@@ -503,8 +503,16 @@ func (e *XSelectIndexExec) nextForDoubleRead() (*Row, error) {
 			e.taskCurr = taskCurr
 		}
 		row, err := e.taskCurr.getRow()
-		if err != nil || row != nil {
-			return row, errors.Trace(err)
+		if err != nil {
+			// Consume the task channel in case channel is full.
+			go func() {
+				for range e.taskChan {
+				}
+			}()
+			return nil, errors.Trace(err)
+		}
+		if row != nil {
+			return row, nil
 		}
 		e.taskCurr = nil
 	}
