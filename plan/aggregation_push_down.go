@@ -15,6 +15,7 @@ package plan
 import (
 	"fmt"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -197,12 +198,18 @@ func (a *aggPushDownSolver) allFirstRow(aggFuncs []expression.AggregationFunctio
 }
 
 // tryToPushDownAgg tries to push down an aggregate function into a join path. If all aggFuncs are first row, we won't
-// process it temporarily. If not, We will add additional group by columns and first row functions. We make a new aggregation
-// operator.
+// process it temporarily. If not, We will add additional group by columns and first row functions. We make a new aggregation operator.
+// If the pushed aggregation is grouped by unique key, it's no need to push it down.
 func (a *aggPushDownSolver) tryToPushDownAgg(aggFuncs []expression.AggregationFunction, gbyCols []*expression.Column, join *Join, childIdx int) LogicalPlan {
 	child := join.children[childIdx].(LogicalPlan)
 	if a.allFirstRow(aggFuncs) {
 		return child
+	}
+	tmpSchema := expression.NewSchema(gbyCols...)
+	for _, key := range child.Schema().Keys {
+		if tmpSchema.ColumnsIndices(key) != nil {
+			return child
+		}
 	}
 	agg := a.makeNewAgg(aggFuncs, gbyCols)
 	child.SetParents(agg)
@@ -253,7 +260,7 @@ func (a *aggPushDownSolver) makeNewAgg(aggFuncs []expression.AggregationFunction
 	}
 	agg.initIDAndContext(a.ctx)
 	var newAggFuncs []expression.AggregationFunction
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncs))...)
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncs)+len(gbyCols))...)
 	for _, aggFunc := range aggFuncs {
 		var newFuncs []expression.AggregationFunction
 		newFuncs, schema = a.decompose(aggFunc, schema, agg.ID())
@@ -269,7 +276,7 @@ func (a *aggPushDownSolver) makeNewAgg(aggFuncs []expression.AggregationFunction
 	return agg
 }
 
-func (a *aggPushDownSolver) pushAggCrossUnion(agg *Aggregation, unionSchema *expression.Schema, unionChild LogicalPlan) LogicalPlan {
+func (a *aggPushDownSolver) pushAggCrossUnion(agg *Aggregation, unionSchema *expression.Schema, unionChild LogicalPlan) (LogicalPlan, error) {
 	newAgg := &Aggregation{
 		AggFuncs:        make([]expression.AggregationFunction, 0, len(agg.AggFuncs)),
 		GroupByItems:    make([]expression.Expression, 0, len(agg.GroupByItems)),
@@ -291,20 +298,34 @@ func (a *aggPushDownSolver) pushAggCrossUnion(agg *Aggregation, unionSchema *exp
 		newAgg.GroupByItems = append(newAgg.GroupByItems, newExpr)
 	}
 	newAgg.collectGroupByColumns()
+	tmpSchema := expression.NewSchema(newAgg.groupByCols...)
+	for _, key := range unionChild.Schema().Keys {
+		if tmpSchema.ColumnsIndices(key) != nil {
+			proj, err := convertAggToProj(newAgg, a.ctx, a.alloc)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			proj.SetChildren(unionChild)
+			return proj, nil
+		}
+	}
 	newAgg.SetChildren(unionChild)
 	unionChild.SetParents(newAgg)
-	return newAgg
+	return newAgg, nil
 }
 
 func (a *aggPushDownSolver) optimize(p LogicalPlan, ctx context.Context, alloc *idAllocator) (LogicalPlan, error) {
 	a.ctx = ctx
 	a.alloc = alloc
-	a.aggPushDown(p)
+	err := a.aggPushDown(p)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	return p, nil
 }
 
 // aggPushDown tries to push down aggregate functions to join paths.
-func (a *aggPushDownSolver) aggPushDown(p LogicalPlan) {
+func (a *aggPushDownSolver) aggPushDown(p LogicalPlan) error {
 	if agg, ok := p.(*Aggregation); ok {
 		child := agg.children[0]
 		if join, ok1 := child.(*Join); ok1 && a.checkValidJoin(join) {
@@ -350,7 +371,10 @@ func (a *aggPushDownSolver) aggPushDown(p LogicalPlan) {
 			pushedAgg := a.makeNewAgg(agg.AggFuncs, agg.groupByCols)
 			newChildren := make([]Plan, 0, len(union.children))
 			for _, child := range union.children {
-				newChild := a.pushAggCrossUnion(pushedAgg, union.schema, child.(LogicalPlan))
+				newChild, err := a.pushAggCrossUnion(pushedAgg, union.schema, child.(LogicalPlan))
+				if err != nil {
+					return errors.Trace(nil)
+				}
 				newChildren = append(newChildren, newChild)
 				newChild.SetParents(union)
 			}
@@ -359,6 +383,10 @@ func (a *aggPushDownSolver) aggPushDown(p LogicalPlan) {
 		}
 	}
 	for _, child := range p.Children() {
-		a.aggPushDown(child.(LogicalPlan))
+		err := a.aggPushDown(child.(LogicalPlan))
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
+	return nil
 }
