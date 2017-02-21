@@ -27,9 +27,6 @@ type testPlanBuilderSuite struct {
 }
 
 func (s *testPlanBuilderSuite) TestShow(c *C) {
-	pb := &planBuilder{
-		allocator: new(idAllocator),
-	}
 	node := &ast.ShowStmt{}
 	tps := []ast.ShowStmtType{
 		ast.ShowEngines,
@@ -51,10 +48,10 @@ func (s *testPlanBuilderSuite) TestShow(c *C) {
 		ast.ShowCreateDatabase,
 		ast.ShowEvents,
 	}
-	for tp := range tps {
+	for _, tp := range tps {
 		node.Tp = tp
 		schema := buildShowSchema(node)
-		for col := range schema.Columns {
+		for _, col := range schema.Columns {
 			c.Assert(col.RetType.Flen, Greater, 0)
 		}
 	}
