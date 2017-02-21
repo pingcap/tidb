@@ -291,9 +291,6 @@ func (b *builtinTimeDiffSig) eval(row []types.Datum) (d types.Datum, err error) 
 	}
 
 	t := t1.Sub(&t2)
-	// TODO: It should be the larger between t1.Fsp and t2.Fsp, rather than MaxFsp.
-	// But there is a bug both t1.Fsp and t2.Fsp is -1, we should fix it.
-	t.Fsp = types.MaxFsp
 	d.SetMysqlDuration(t)
 	return d, nil
 }
