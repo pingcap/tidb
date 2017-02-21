@@ -83,20 +83,31 @@ func (e *RevokeExec) Next() (*Row, error) {
 }
 
 func (e *RevokeExec) revokeOneUser(user, host string) error {
+	dbName := e.Level.DBName
+	if len(dbName) == 0 {
+		dbName = e.ctx.GetSessionVars().CurrentDB
+	}
+
 	// If there is no privilege entry in corresponding table, insert a new one.
 	// DB scope:		mysql.DB
 	// Table scope:		mysql.Tables_priv
 	// Column scope:	mysql.Columns_priv
 	switch e.Level.Level {
 	case ast.GrantLevelDB:
-		err := checkAndInitDBPriv(e.ctx, e.Level.DBName, e.is, user, host)
+		ok, err := dbUserExists(e.ctx, user, host, dbName)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		if !ok {
+			return errors.Errorf("There is no such grant defined for user '%s' on host '%s' on database %s", user, host, dbName)
+		}
 	case ast.GrantLevelTable:
-		err := checkAndInitTablePriv(e.ctx, e.Level.DBName, e.Level.TableName, e.is, user, host)
+		ok, err := tableUserExists(e.ctx, user, host, dbName, e.Level.TableName)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		if !ok {
+			return errors.Errorf("There is no such grant defined for user '%s' on host '%s' on table %s.%s", user, host, dbName, e.Level.TableName)
 		}
 	}
 

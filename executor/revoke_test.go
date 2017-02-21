@@ -26,6 +26,10 @@ import (
 func (s *testSuite) TestRevokeGlobal(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
+
+	_, err := tk.Exec(`REVOKE ALL PRIVILEGES ON *.* FROM 'nonexistuser'@'host'`)
+	c.Assert(err, NotNil)
+
 	// Create a new user.
 	createUserSQL := `CREATE USER 'testGlobalRevoke'@'localhost' IDENTIFIED BY '123';`
 	tk.MustExec(createUserSQL)
@@ -55,6 +59,9 @@ func (s *testSuite) TestRevokeDBScope(c *C) {
 	tk.MustExec(`CREATE USER 'testDBRevoke'@'localhost' IDENTIFIED BY '123';`)
 	tk.MustExec(`GRANT ALL ON test.* TO 'testDBRevoke'@'localhost';`)
 
+	_, err := tk.Exec(`REVOKE ALL PRIVILEGES ON nonexistdb.* FROM 'testDBRevoke'@'localhost'`)
+	c.Assert(err, NotNil)
+
 	// Revoke each priv from the user.
 	for _, v := range mysql.AllDBPrivs {
 		check := fmt.Sprintf(`SELECT %s FROM mysql.DB WHERE User="testDBRevoke" and host="localhost" and db="test"`, mysql.Priv2UserCol[v])
@@ -73,6 +80,9 @@ func (s *testSuite) TestRevokeTableScope(c *C) {
 	tk.MustExec(`CREATE USER 'testTblRevoke'@'localhost' IDENTIFIED BY '123';`)
 	tk.MustExec(`CREATE TABLE test.test1(c1 int);`)
 	tk.MustExec(`GRANT ALL PRIVILEGES ON test.test1 TO 'testTblRevoke'@'localhost';`)
+
+	_, err := tk.Exec(`REVOKE ALL PRIVILEGES ON test.nonexisttable FROM 'testTblRevoke'@'localhost'`)
+	c.Assert(err, NotNil)
 
 	// Make sure all the table privs for new user is Y.
 	res := tk.MustQuery(`SELECT Table_priv FROM mysql.tables_priv WHERE User="testTblRevoke" and host="localhost" and db="test" and Table_name="test1"`)
