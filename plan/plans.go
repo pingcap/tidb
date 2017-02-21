@@ -30,6 +30,11 @@ type TableRange struct {
 	HighVal int64
 }
 
+// IsPoint returns if the table range is a point.
+func (tr *TableRange) IsPoint() bool {
+	return tr.HighVal == tr.LowVal
+}
+
 // ShowDDL is for showing DDL information.
 type ShowDDL struct {
 	basePlan

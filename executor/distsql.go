@@ -503,12 +503,16 @@ func (e *XSelectIndexExec) nextForDoubleRead() (*Row, error) {
 			e.taskCurr = taskCurr
 		}
 		row, err := e.taskCurr.getRow()
-		if err != nil || row != nil {
-			log.Warnf("index row")
-			for _, d := range row.Data {
-				log.Warnf("d %v", d.GetValue())
-			}
-			return row, errors.Trace(err)
+		if err != nil {
+			// Consume the task channel in case channel is full.
+			go func() {
+				for range e.taskChan {
+				}
+			}()
+			return nil, errors.Trace(err)
+		}
+		if row != nil {
+			return row, nil
 		}
 		e.taskCurr = nil
 	}
@@ -589,10 +593,8 @@ func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 		if len(e.indexPlan.SortItemsPB) > 0 {
 			selIdxReq.OrderBy = e.indexPlan.SortItemsPB
 		}
-		log.Warnf("ha1?")
 	} else if e.where == nil && len(e.indexPlan.SortItemsPB) == 0 {
 		selIdxReq.Limit = e.indexPlan.LimitCount
-		log.Warnf("ha2?")
 	}
 	selIdxReq.Where = e.indexPlan.IndexConditionPBExpr
 	if e.singleReadMode {
@@ -731,7 +733,6 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 		selTableReq.Limit = e.indexPlan.LimitCount
 		if len(e.indexPlan.SortItemsPB) > 0 {
 			selTableReq.OrderBy = e.indexPlan.SortItemsPB
-			log.Warnf("ha3?")
 		}
 	}
 	selTableReq.StartTs = e.startTS

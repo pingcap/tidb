@@ -64,6 +64,7 @@ var (
 	metricsInterval = flag.Int("metrics-interval", 15, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
 	binlogSocket    = flag.String("binlog-socket", "", "socket file to write binlog")
 	runDDL          = flag.Bool("run-ddl", true, "run ddl worker on this tidb-server")
+	retryLimit      = flag.Int("retry-limit", 10, "the maximum number of retries when commit a transaction")
 
 	timeJumpBackCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
@@ -89,6 +90,7 @@ func main() {
 	leaseDuration := parseLease()
 	tidb.SetSchemaLease(leaseDuration)
 	ddl.RunWorker = *runDDL
+	tidb.SetCommitRetryLimit(*retryLimit)
 
 	cfg := &server.Config{
 		Addr:         fmt.Sprintf("%s:%s", *host, *port),
