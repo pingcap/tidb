@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"context"
 	"math/rand"
 	"strings"
 	"time"
@@ -23,7 +24,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
-	"golang.org/x/net/context"
 )
 
 type testCommitterSuite struct {
@@ -269,20 +269,20 @@ type slowClient struct {
 	regionDelays map[uint64]time.Duration
 }
 
-func (c *slowClient) SendKVReq(addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error) {
+func (c *slowClient) SendKVReq(ctx context.Context, addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error) {
 	for id, delay := range c.regionDelays {
 		if req.GetContext().GetRegionId() == id {
 			time.Sleep(delay)
 		}
 	}
-	return c.Client.SendKVReq(addr, req, timeout)
+	return c.Client.SendKVReq(ctx, addr, req, timeout)
 }
 
-func (c *slowClient) SendCopReq(addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
+func (c *slowClient) SendCopReq(ctx context.Context, addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
 	for id, delay := range c.regionDelays {
 		if req.GetContext().GetRegionId() == id {
 			time.Sleep(delay)
 		}
 	}
-	return c.Client.SendCopReq(addr, req, timeout)
+	return c.Client.SendCopReq(ctx, addr, req, timeout)
 }
