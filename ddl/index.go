@@ -502,7 +502,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 		taskRetCh: make(chan *taskResult, taskCnt),
 	}
 
-	addedCount := job.RowCount
+	addedCount := job.GetRowCount()
 	taskStartHandle := reorgInfo.Handle
 	for {
 		startTime := time.Now()

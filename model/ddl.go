@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/terror"
@@ -127,6 +128,16 @@ type Job struct {
 	BinlogInfo *HistoryInfo `json:"binlog"`
 }
 
+// SetRowCount sets the number of rows. Make sure it can pass `make race`.
+func (job *Job) SetRowCount(count int64) {
+	atomic.StoreInt64(&job.RowCount, count)
+}
+
+// GetRowCount gets the number of rows. Make sure it can pass `make race`.
+func (job *Job) GetRowCount() int64 {
+	return atomic.LoadInt64(&job.RowCount)
+}
+
 // Encode encodes job with json format.
 func (job *Job) Encode() ([]byte, error) {
 	var err error
@@ -159,8 +170,9 @@ func (job *Job) DecodeArgs(args ...interface{}) error {
 
 // String implements fmt.Stringer interface.
 func (job *Job) String() string {
+	rowCount := job.GetRowCount()
 	return fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d",
-		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, job.RowCount, len(job.Args))
+		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args))
 }
 
 // IsFinished returns whether job is finished or not.

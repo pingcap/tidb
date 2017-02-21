@@ -70,10 +70,10 @@ func (d *ddl) runReorgJob(job *model.Job, f func() error) error {
 	// wait reorganization job done or timeout
 	select {
 	case err := <-d.reorgDoneCh:
+		log.Info("[ddl] run reorg job done")
 		d.reorgDoneCh = nil
 		// Update a job's RowCount.
-		job.RowCount = d.getReorgRowCount()
-		log.Infof("[ddl] run reorg job done, handled row count %v", job.RowCount)
+		job.SetRowCount(d.getReorgRowCount())
 		d.setReorgRowCount(0)
 		return errors.Trace(err)
 	case <-d.quitCh:
@@ -82,9 +82,9 @@ func (d *ddl) runReorgJob(job *model.Job, f func() error) error {
 		// We return errWaitReorgTimeout here too, so that outer loop will break.
 		return errWaitReorgTimeout
 	case <-time.After(waitTimeout):
-		log.Infof("[ddl] run reorg job wait timeout %v, handled row count %v", waitTimeout, job.RowCount)
+		log.Infof("[ddl] run reorg job wait timeout %v", waitTimeout)
 		// Update a job's RowCount.
-		job.RowCount = d.getReorgRowCount()
+		job.SetRowCount(d.getReorgRowCount())
 		// If timeout, we will return, check the owner and retry to wait job done again.
 		return errWaitReorgTimeout
 	}
@@ -117,7 +117,7 @@ func (d *ddl) delKeysWithStartKey(prefix, startKey kv.Key, jobType JobType, job 
 	limitedDel := limit >= 0
 
 	var count int
-	total := job.RowCount
+	total := job.GetRowCount()
 	keys := make([]kv.Key, 0, defaultBatchCnt)
 	for {
 		if limitedDel && count >= limit {
@@ -171,7 +171,7 @@ func (d *ddl) delKeysWithStartKey(prefix, startKey kv.Key, jobType JobType, job 
 		}
 
 		// Update the background job's RowCount.
-		job.RowCount = total
+		job.SetRowCount(total)
 		d.setReorgRowCount(total)
 		batchHandleDataHistogram.WithLabelValues(batchDelData).Observe(sub)
 		log.Infof("[ddl] deleted %d keys take time %v, deleted %d keys in total", len(keys), sub, total)
