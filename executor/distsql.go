@@ -389,7 +389,7 @@ func (e *XSelectIndexExec) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *XSelectIndexExec) Next() (*Row, error) {
-	if e.indexPlan.LimitCount != nil && e.returnedRows >= uint64(*e.indexPlan.LimitCount) {
+	if e.indexPlan.LimitCount != nil && len(e.indexPlan.SortItemsPB) == 0 && e.returnedRows >= uint64(*e.indexPlan.LimitCount) {
 		return nil, nil
 	}
 	e.returnedRows++
@@ -504,6 +504,10 @@ func (e *XSelectIndexExec) nextForDoubleRead() (*Row, error) {
 		}
 		row, err := e.taskCurr.getRow()
 		if err != nil || row != nil {
+			log.Warnf("index row")
+			for _, d := range row.Data {
+				log.Warnf("d %v", d.GetValue())
+			}
 			return row, errors.Trace(err)
 		}
 		e.taskCurr = nil
@@ -577,14 +581,18 @@ func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 	selIdxReq.TimeZoneOffset = timeZoneOffset()
 	selIdxReq.Flags = statementContextToFlags(e.ctx.GetSessionVars().StmtCtx)
 	selIdxReq.IndexInfo = distsql.IndexToProto(e.table.Meta(), e.indexPlan.Index)
-	if len(e.indexPlan.SortItemsPB) > 0 {
-		selIdxReq.OrderBy = e.indexPlan.SortItemsPB
-	} else if e.indexPlan.Desc {
+	if e.indexPlan.Desc {
 		selIdxReq.OrderBy = []*tipb.ByItem{{Desc: e.indexPlan.Desc}}
 	}
-	if e.singleReadMode || e.where == nil {
-		// TODO: when where condition is all index columns limit can be pushed too.
+	if e.singleReadMode {
 		selIdxReq.Limit = e.indexPlan.LimitCount
+		if len(e.indexPlan.SortItemsPB) > 0 {
+			selIdxReq.OrderBy = e.indexPlan.SortItemsPB
+		}
+		log.Warnf("ha1?")
+	} else if e.where == nil && len(e.indexPlan.SortItemsPB) == 0 {
+		selIdxReq.Limit = e.indexPlan.LimitCount
+		log.Warnf("ha2?")
 	}
 	selIdxReq.Where = e.indexPlan.IndexConditionPBExpr
 	if e.singleReadMode {
@@ -721,6 +729,10 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 	selTableReq := new(tipb.SelectRequest)
 	if e.indexPlan.OutOfOrder {
 		selTableReq.Limit = e.indexPlan.LimitCount
+		if len(e.indexPlan.SortItemsPB) > 0 {
+			selTableReq.OrderBy = e.indexPlan.SortItemsPB
+			log.Warnf("ha3?")
+		}
 	}
 	selTableReq.StartTs = e.startTS
 	selTableReq.TimeZoneOffset = timeZoneOffset()
