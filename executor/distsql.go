@@ -588,12 +588,15 @@ func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 	if e.indexPlan.Desc {
 		selIdxReq.OrderBy = []*tipb.ByItem{{Desc: e.indexPlan.Desc}}
 	}
+	// If the index is single read, we can push topn down.
 	if e.singleReadMode {
 		selIdxReq.Limit = e.indexPlan.LimitCount
+		// If sortItemsPB is empty, the Desc may be true and we shouldn't overwrite it.
 		if len(e.indexPlan.SortItemsPB) > 0 {
 			selIdxReq.OrderBy = e.indexPlan.SortItemsPB
 		}
 	} else if e.where == nil && len(e.indexPlan.SortItemsPB) == 0 {
+		// If the index is double read but table scan has no filter or topn, we can push limit down to index.
 		selIdxReq.Limit = e.indexPlan.LimitCount
 	}
 	selIdxReq.Where = e.indexPlan.IndexConditionPBExpr
