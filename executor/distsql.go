@@ -734,9 +734,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 	selTableReq := new(tipb.SelectRequest)
 	if e.indexPlan.OutOfOrder {
 		selTableReq.Limit = e.indexPlan.LimitCount
-		if len(e.indexPlan.SortItemsPB) > 0 {
-			selTableReq.OrderBy = e.indexPlan.SortItemsPB
-		}
+		selTableReq.OrderBy = e.indexPlan.SortItemsPB
 	}
 	selTableReq.StartTs = e.startTS
 	selTableReq.TimeZoneOffset = timeZoneOffset()
