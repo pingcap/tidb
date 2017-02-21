@@ -52,308 +52,332 @@ import (
 	oror		"||"
 
 	/* the following tokens belong to ReservedKeyword*/
-	add		"ADD"
-	all 		"ALL"
-	alter		"ALTER"
-	analyze		"ANALYZE"
-	and		"AND"
-	as		"AS"
-	asc		"ASC"
-	between		"BETWEEN"
-	bigIntType	"BIGINT"
-	binaryType	"BINARY"
-	blobType	"BLOB"
-	both		"BOTH"
-	by		"BY"
-	cascade		"CASCADE"
-	caseKwd		"CASE"
-	change          "CHANGE"
-	character	"CHARACTER"
-	charType	"CHAR"
-	check 		"CHECK"
-	collate 	"COLLATE"
-	column		"COLUMN"
-	constraint	"CONSTRAINT"
-	convert		"CONVERT"
-	create		"CREATE"
-	cross 		"CROSS"
-	currentDate 	"CURRENT_DATE"
-	currentTime 	"CURRENT_TIME"
-	currentTs	"CURRENT_TIMESTAMP"
-	currentUser	"CURRENT_USER"
-	database	"DATABASE"
-	databases	"DATABASES"
-	dayHour		"DAY_HOUR"
-	dayMicrosecond	"DAY_MICROSECOND"
-	dayMinute	"DAY_MINUTE"
-	daySecond 	"DAY_SECOND"
-	decimalType	"DECIMAL"
-	defaultKwd	"DEFAULT"
-	delayed		"DELAYED"
-	deleteKwd	"DELETE"
-	desc		"DESC"
-	describe	"DESCRIBE"
-	distinct	"DISTINCT"
-	div 		"DIV"
-	doubleType	"DOUBLE"
-	drop		"DROP"
-	dual 		"DUAL"
-	elseKwd		"ELSE"
-	enclosed	"ENCLOSED"
-	escaped 	"ESCAPED"
-	exists		"EXISTS"
-	explain		"EXPLAIN"
-	falseKwd	"FALSE"
-	floatType	"FLOAT"
-	forKwd		"FOR"
-	force		"FORCE"
-	foreign		"FOREIGN"
-	from		"FROM"
-	fulltext	"FULLTEXT"
-	grants		"GRANTS"
-	group		"GROUP"
-	having		"HAVING"
-	highPriority	"HIGH_PRIORITY"
-	hourMicrosecond	"HOUR_MICROSECOND"
-	hourMinute	"HOUR_MINUTE"
-	hourSecond	"HOUR_SECOND"
-	ifKwd		"IF"
-	ignore		"IGNORE"
-	in		"IN"
-	index		"INDEX"
-	infile		"INFILE"
-	inner 		"INNER"
-	integerType	"INTEGER"
-	interval	"INTERVAL"
-	into		"INTO"
-	is		"IS"
-	insert		"INSERT"
-	intType		"INT"
-	join		"JOIN"
-	key		"KEY"
-	keys		"KEYS"
-	leading		"LEADING"
-	left		"LEFT"
-	like		"LIKE"
-	limit		"LIMIT"
-	lines 		"LINES"
-	load		"LOAD"
-	localTime	"LOCALTIME"
-	localTs		"LOCALTIMESTAMP"
-	lock		"LOCK"
-	longblobType	"LONGBLOB"
-	longtextType	"LONGTEXT"
-	lowPriority	"LOW_PRIORITY"
-	makeSet		"MAKE_SET"
-	maxValue	"MAXVALUE"
-	mediumblobType	"MEDIUMBLOB"
-	mediumIntType	"MEDIUMINT"
-	mediumtextType	"MEDIUMTEXT"
-	mid		"MID"
+	add			"ADD"
+	all 			"ALL"
+	alter			"ALTER"
+	analyze			"ANALYZE"
+	and			"AND"
+	as			"AS"
+	asc			"ASC"
+	between			"BETWEEN"
+	bigIntType		"BIGINT"
+	binaryType		"BINARY"
+	blobType		"BLOB"
+	both			"BOTH"
+	by			"BY"
+	cascade			"CASCADE"
+	caseKwd			"CASE"
+	change        		"CHANGE"
+	character		"CHARACTER"
+	charType		"CHAR"
+	check 			"CHECK"
+	collate 		"COLLATE"
+	column			"COLUMN"
+	constraint		"CONSTRAINT"
+	convert			"CONVERT"
+	create			"CREATE"
+	cross 			"CROSS"
+	currentDate 		"CURRENT_DATE"
+	currentTime 		"CURRENT_TIME"
+	currentTs		"CURRENT_TIMESTAMP"
+	currentUser		"CURRENT_USER"
+	database		"DATABASE"
+	databases		"DATABASES"
+	dayHour			"DAY_HOUR"
+	dayMicrosecond		"DAY_MICROSECOND"
+	dayMinute		"DAY_MINUTE"
+	daySecond 		"DAY_SECOND"
+	decimalType		"DECIMAL"
+	defaultKwd		"DEFAULT"
+	delayed			"DELAYED"
+	deleteKwd		"DELETE"
+	desc			"DESC"
+	describe		"DESCRIBE"
+	distinct		"DISTINCT"
+	div 			"DIV"
+	doubleType		"DOUBLE"
+	drop			"DROP"
+	dual 			"DUAL"
+	elseKwd			"ELSE"
+	enclosed		"ENCLOSED"
+	escaped 		"ESCAPED"
+	exists			"EXISTS"
+	explain			"EXPLAIN"
+	falseKwd		"FALSE"
+	floatType		"FLOAT"
+	forKwd			"FOR"
+	force			"FORCE"
+	foreign			"FOREIGN"
+	from			"FROM"
+	fulltext		"FULLTEXT"
+	grants			"GRANTS"
+	group			"GROUP"
+	having			"HAVING"
+	highPriority		"HIGH_PRIORITY"
+	hourMicrosecond		"HOUR_MICROSECOND"
+	hourMinute		"HOUR_MINUTE"
+	hourSecond		"HOUR_SECOND"
+	ifKwd			"IF"
+	ignore			"IGNORE"
+	in			"IN"
+	index			"INDEX"
+	infile			"INFILE"
+	inner 			"INNER"
+	integerType		"INTEGER"
+	interval		"INTERVAL"
+	into			"INTO"
+	is			"IS"
+	insert			"INSERT"
+	intType			"INT"
+	join			"JOIN"
+	key			"KEY"
+	keys			"KEYS"
+	leading			"LEADING"
+	left			"LEFT"
+	like			"LIKE"
+	limit			"LIMIT"
+	lines 			"LINES"
+	load			"LOAD"
+	localTime		"LOCALTIME"
+	localTs			"LOCALTIMESTAMP"
+	lock			"LOCK"
+	longblobType		"LONGBLOB"
+	longtextType		"LONGTEXT"
+	lowPriority		"LOW_PRIORITY"
+	makeSet			"MAKE_SET"
+	maxValue		"MAXVALUE"
+	mediumblobType		"MEDIUMBLOB"
+	mediumIntType		"MEDIUMINT"
+	mediumtextType		"MEDIUMTEXT"
+	mid			"MID"
 	minuteMicrosecond	"MINUTE_MICROSECOND"
 	minuteSecond 		"MINUTE_SECOND"
-	mod 		"MOD"
-	not		"NOT"
-	noWriteToBinLog "NO_WRITE_TO_BINLOG"
-	null		"NULL"
-	numericType	"NUMERIC"
-	oct		"OCT"
-	octetLength	"OCTET_LENGTH"
-	on		"ON"
-	option		"OPTION"
-	or		"OR"
-	ord		"ORD"
-	order		"ORDER"
-	outer		"OUTER"
-	partition	"PARTITION"
-	partitions	"PARTITIONS"
-	position	"POSITION"
-	precisionType	"PRECISION"
-	primary		"PRIMARY"
-	procedure	"PROCEDURE"
-	quote		"QUOTE"
-	rangeKwd	"RANGE"
-	read		"READ"
-	realType	"REAL"
-	references	"REFERENCES"
-	regexpKwd	"REGEXP"
-	rename          "RENAME"
-	repeat		"REPEAT"
-	replace		"REPLACE"
-	restrict	"RESTRICT"
-	right		"RIGHT"
-	rlike		"RLIKE"
-	schema		"SCHEMA"
-	schemas		"SCHEMAS"
+	mod 			"MOD"
+	not			"NOT"
+	noWriteToBinLog 	"NO_WRITE_TO_BINLOG"
+	null			"NULL"
+	numericType		"NUMERIC"
+	oct			"OCT"
+	octetLength		"OCTET_LENGTH"
+	on			"ON"
+	option			"OPTION"
+	or			"OR"
+	ord			"ORD"
+	order			"ORDER"
+	outer			"OUTER"
+	partition		"PARTITION"
+	partitions		"PARTITIONS"
+	position		"POSITION"
+	precisionType		"PRECISION"
+	primary			"PRIMARY"
+	procedure		"PROCEDURE"
+	quote			"QUOTE"
+	rangeKwd		"RANGE"
+	read			"READ"
+	realType		"REAL"
+	references		"REFERENCES"
+	regexpKwd		"REGEXP"
+	rename         		"RENAME"
+	repeat			"REPEAT"
+	replace			"REPLACE"
+	restrict		"RESTRICT"
+	right			"RIGHT"
+	rlike			"RLIKE"
+	schema			"SCHEMA"
+	schemas			"SCHEMAS"
 	secondMicrosecond	"SECOND_MICROSECOND"
-	selectKwd	"SELECT"
-	set		"SET"
-	show		"SHOW"
-	smallIntType	"SMALLINT"
-	starting	"STARTING"
-	tableKwd	"TABLE"
-	terminated	"TERMINATED"
-	then		"THEN"
-	tinyblobType	"TINYBLOB"
-	tinyIntType	"TINYINT"
-	tinytextType	"TINYTEXT"
-	to		"TO"
-	trailing	"TRAILING"
-	trueKwd		"TRUE"
-	unique		"UNIQUE"
-	union		"UNION"
-	unlock		"UNLOCK"
-	unsigned	"UNSIGNED"
-	update		"UPDATE"
-	use		"USE"
-	using		"USING"
-	utcDate 	"UTC_DATE"
-	utcTimestamp	"UTC_TIMESTAMP"
-	values		"VALUES"
-	varcharType	"VARCHAR"
-	varbinaryType	"VARBINARY"
-	when		"WHEN"
-	where		"WHERE"
-	write		"WRITE"
-	with		"WITH"
-	xor 		"XOR"
-	yearMonth	"YEAR_MONTH"
-	zerofill	"ZEROFILL"
+	selectKwd		"SELECT"
+	set			"SET"
+	show			"SHOW"
+	smallIntType		"SMALLINT"
+	starting		"STARTING"
+	tableKwd		"TABLE"
+	terminated		"TERMINATED"
+	then			"THEN"
+	tinyblobType		"TINYBLOB"
+	tinyIntType		"TINYINT"
+	tinytextType		"TINYTEXT"
+	to			"TO"
+	trailing		"TRAILING"
+	trueKwd			"TRUE"
+	unique			"UNIQUE"
+	union			"UNION"
+	unlock			"UNLOCK"
+	unsigned		"UNSIGNED"
+	update			"UPDATE"
+	use			"USE"
+	using			"USING"
+	utcDate 		"UTC_DATE"
+	utcTimestamp		"UTC_TIMESTAMP"
+	values			"VALUES"
+	varcharType		"VARCHAR"
+	varbinaryType		"VARBINARY"
+	when			"WHEN"
+	where			"WHERE"
+	write			"WRITE"
+	with			"WITH"
+	xor 			"XOR"
+	yearMonth		"YEAR_MONTH"
+	zerofill		"ZEROFILL"
 
 	/* the following tokens belong to NotKeywordToken*/
-	abs		"ABS"
-	acos		"ACOS"
-	addDate		"ADDDATE"
-	addTime		"ADDTIME"
-	admin		"ADMIN"
-	aesDecrypt	"AES_DECRYPT"
-	benchmark	"BENCHMARK"
-	aesEncrypt	"AES_ENCRYPT"
-	asin		"ASIN"
-	atan		"ATAN"
-	atan2		"ATAN2"
-	bin		"BIN"
-	ceil		"CEIL"
-	ceiling		"CEILING"
-	coalesce	"COALESCE"
-	coercibility	"COERCIBILITY"
-	concat		"CONCAT"
-	concatWs	"CONCAT_WS"
-	connectionID 	"CONNECTION_ID"
-	convertTz	"CONVERT_TZ"
-	curTime 	"CUR_TIME"
-	cos		"COS"
-	cot		"COT"
-	count		"COUNT"
-	day		"DAY"
-	datediff	"DATEDIFF"
-	dateAdd		"DATE_ADD"
-	dateFormat	"DATE_FORMAT"
-	dateSub		"DATE_SUB"
-	dayname		"DAYNAME"
-	dayofmonth	"DAYOFMONTH"
-	dayofweek	"DAYOFWEEK"
-	dayofyear	"DAYOFYEAR"
-	degrees		"DEGREES"
-	fromDays	"FROM_DAYS"
-	events		"EVENTS"
-	exp		"EXP"
-	elt		"ELT"
-	exportSet	"EXPORT_SET"
-	fieldKwd	"FIELD_KWD"
-	findInSet	"FIND_IN_SET"
-  	floor   	"FLOOR"
-	format		"FORMAT"
-	foundRows	"FOUND_ROWS"
-	fromUnixTime	"FROM_UNIXTIME"
-	fromBase64	"FROM_BASE64"
-	grant		"GRANT"
-	groupConcat	"GROUP_CONCAT"
-	greatest	"GREATEST"
-	hour		"HOUR"
-	hex         	"HEX"
-	unhex         	"UNHEX"
-	ifNull		"IFNULL"
-	insertFunc	"INSERT_FUNC"
-	instr		"INSTR"
-	isNull		"ISNULL"
-	lastInsertID	"LAST_INSERT_ID"
-	lcase 		"LCASE"
-	length		"LENGTH"
-	least		"LEAST"
-	ln		"LN"
-	loadFile	"LOAD_FILE"
-	locate		"LOCATE"
-	log		"LOG"
-	log2		"LOG2"
-	log10		"LOG10"
-	lower 		"LOWER"
-	lpad		"LPAD"
-	ltrim		"LTRIM"
-	makeDate	"MAKEDATE"
-	makeTime	"MAKETIME"
-	max		"MAX"
-	microsecond	"MICROSECOND"
-	min		"MIN"
-	minute		"MINUTE"
-	nullIf		"NULLIF"
-	month		"MONTH"
-	monthname	"MONTHNAME"
-	now		"NOW"
-	periodAdd	"PERIOD_ADD"
-	periodDiff	"PERIOD_DIFF"
-	pi		"PI"
-	pow 		"POW"
-	power 		"POWER"
-	rand		"RAND"
-	radians		"RADIANS"
-	rowCount	"ROW_COUNT"
-	secToTime	"SEC_TO_TIME"
-	second		"SECOND"
-	sessionUser	"SESSION_USER"
-	systemUser	"SYSTEM_USER"
-	sign		"SIGN"
-	sin		"SIN"
-	subTime		"SUBTIME"
-	sleep		"SLEEP"
-	sqrt 		"SQRT"
-	calcFoundRows	"SQL_CALC_FOUND_ROWS"
-	strcmp		"STRCMP"
-	strToDate	"STR_TO_DATE"
-	subDate		"SUBDATE"
-	substring	"SUBSTRING"
-	substringIndex	"SUBSTRING_INDEX"
-	sum		"SUM"
-	sysDate		"SYSDATE"
-	tan		"TAN"
-	timediff	"TIMEDIFF"
-	timeFormat	"TIME_FORMAT"
-	timeToSec	"TIME_TO_SEC"
-	timestampAdd	"TIMESTAMPADD"
-	trim		"TRIM"
-	rtrim 		"RTRIM"
-	ucase 		"UCASE"
-	unixTimestamp	"UNIX_TIMESTAMP"
-	upper 		"UPPER"
-	version		"VERSION"
-	weekday		"WEEKDAY"
-	weekofyear	"WEEKOFYEAR"
-	yearweek	"YEARWEEK"
-	round		"ROUND"
-	statsPersistent	"STATS_PERSISTENT"
-	toDays		"TO_DAYS"
-	toSeconds	"TO_SECONDS"
-	getLock		"GET_LOCK"
-	releaseLock	"RELEASE_LOCK"
-	rpad		"RPAD"
-	utcTime		"UTC_TIME"
-	bitLength	"BIT_LENGTH"
-	charFunc	"CHAR_FUNC"
-	charLength	"CHAR_LENGTH"
-	characterLength	"CHARACTER_LENGTH"
-	conv		"CONV"
-	bitXor		"BIT_XOR"
-	crc32		"CRC32"
+	abs				"ABS"
+	acos				"ACOS"
+	addDate				"ADDDATE"
+	addTime				"ADDTIME"
+	admin				"ADMIN"
+	aesDecrypt			"AES_DECRYPT"
+	benchmark			"BENCHMARK"
+	aesEncrypt			"AES_ENCRYPT"
+	asin				"ASIN"
+	atan				"ATAN"
+	atan2				"ATAN2"
+	bin				"BIN"
+	ceil				"CEIL"
+	ceiling				"CEILING"
+	coalesce			"COALESCE"
+	coercibility			"COERCIBILITY"
+	concat				"CONCAT"
+	concatWs			"CONCAT_WS"
+	connectionID			"CONNECTION_ID"
+	convertTz			"CONVERT_TZ"
+	curTime				"CUR_TIME"
+	cos				"COS"
+	cot				"COT"
+	count				"COUNT"
+	day				"DAY"
+	datediff			"DATEDIFF"
+	dateAdd				"DATE_ADD"
+	dateFormat			"DATE_FORMAT"
+	dateSub				"DATE_SUB"
+	dayname				"DAYNAME"
+	dayofmonth			"DAYOFMONTH"
+	dayofweek			"DAYOFWEEK"
+	dayofyear			"DAYOFYEAR"
+	degrees				"DEGREES"
+	fromDays			"FROM_DAYS"
+	events				"EVENTS"
+	exp				"EXP"
+	elt				"ELT"
+	exportSet			"EXPORT_SET"
+	fieldKwd			"FIELD_KWD"
+	findInSet			"FIND_IN_SET"
+	floor				"FLOOR"
+	format				"FORMAT"
+	foundRows			"FOUND_ROWS"
+	fromUnixTime			"FROM_UNIXTIME"
+	fromBase64			"FROM_BASE64"
+	grant				"GRANT"
+	groupConcat			"GROUP_CONCAT"
+	greatest			"GREATEST"
+	hour				"HOUR"
+	hex				"HEX"
+	unhex				"UNHEX"
+	ifNull				"IFNULL"
+	insertFunc			"INSERT_FUNC"
+	instr				"INSTR"
+	isNull				"ISNULL"
+	lastInsertID			"LAST_INSERT_ID"
+	lcase				"LCASE"
+	length				"LENGTH"
+	least				"LEAST"
+	ln				"LN"
+	loadFile			"LOAD_FILE"
+	locate				"LOCATE"
+	log				"LOG"
+	log2				"LOG2"
+	log10				"LOG10"
+	lower				"LOWER"
+	lpad				"LPAD"
+	ltrim				"LTRIM"
+	makeDate			"MAKEDATE"
+	makeTime			"MAKETIME"
+	max				"MAX"
+	microsecond			"MICROSECOND"
+	min				"MIN"
+	minute				"MINUTE"
+	nullIf				"NULLIF"
+	month				"MONTH"
+	monthname			"MONTHNAME"
+	now				"NOW"
+	periodAdd			"PERIOD_ADD"
+	periodDiff			"PERIOD_DIFF"
+	pi				"PI"
+	pow				"POW"
+	power				"POWER"
+	rand				"RAND"
+	radians				"RADIANS"
+	rowCount			"ROW_COUNT"
+	secToTime			"SEC_TO_TIME"
+	second				"SECOND"
+	sessionUser			"SESSION_USER"
+	systemUser			"SYSTEM_USER"
+	sign				"SIGN"
+	sin				"SIN"
+	subTime				"SUBTIME"
+	sleep				"SLEEP"
+	sqrt				"SQRT"
+	calcFoundRows			"SQL_CALC_FOUND_ROWS"
+	strcmp				"STRCMP"
+	strToDate			"STR_TO_DATE"
+	subDate				"SUBDATE"
+	substring			"SUBSTRING"
+	substringIndex			"SUBSTRING_INDEX"
+	sum				"SUM"
+	sysDate				"SYSDATE"
+	tan				"TAN"
+	timediff			"TIMEDIFF"
+	timeFormat			"TIME_FORMAT"
+	timeToSec			"TIME_TO_SEC"
+	timestampAdd			"TIMESTAMPADD"
+	trim				"TRIM"
+	rtrim				"RTRIM"
+	ucase				"UCASE"
+	unixTimestamp			"UNIX_TIMESTAMP"
+	upper				"UPPER"
+	version				"VERSION"
+	weekday				"WEEKDAY"
+	weekofyear			"WEEKOFYEAR"
+	yearweek			"YEARWEEK"
+	round				"ROUND"
+	statsPersistent			"STATS_PERSISTENT"
+	toDays				"TO_DAYS"
+	toSeconds			"TO_SECONDS"
+	getLock				"GET_LOCK"
+	releaseLock			"RELEASE_LOCK"
+	rpad				"RPAD"
+	utcTime				"UTC_TIME"
+	bitLength			"BIT_LENGTH"
+	charFunc			"CHAR_FUNC"
+	charLength			"CHAR_LENGTH"
+	characterLength			"CHARACTER_LENGTH"
+	conv				"CONV"
+	bitXor				"BIT_XOR"
+	crc32				"CRC32"
+	asymmetricDecrypt		"ASYMMETRIC_DECRYPT"
+	asymmetricDerive		"ASYMMETRIC_DERIVE"
+	asymmetricEncrypt		"ASYMMETRIC_ENCRYPT"
+	asymmetricSign			"ASYMMETRIC_SIGN"
+	asymmetricVerify		"ASYMMETRIC_VERIFY"
+	compress			"COMPRESS"
+	createAsymmetricPrivKey		"CREATE_ASYMMETRIC_PRIV_KEY"
+	createAsymmetricPubKey		"CREATE_ASYMMETRIC_PUB_KEY"
+	createDHParameters		"CREATE_DH_PARAMETERS"
+	createDigest			"CREATE_DIGEST"
+	decode				"DECODE"
+	desDecrypt			"DES_DECRYPT"
+	desEncrypt			"DES_ENCRYPT"
+	encode				"ENCODE"
+	encrypt				"ENCRYPT"
+	md5				"MD5"
+	oldPassword			"OLD_PASSWORD"
+	randomBytes			"RANDOM_BYTES"
+	sha1				"SHA1"
+	sha				"SHA"
+	sha2				"SHA2"
+	uncompress			"UNCOMPRESS"
+	uncompressedLength		"UNCOMPRESSED_LENGTH"
+	validatePasswordStrength	"VALIDATE_PASSWORD_STRENGTH"
 
 	/* the following tokens belong to UnReservedKeyword*/
 	action		"ACTION"
@@ -2223,6 +2247,7 @@ NotKeywordToken:
 	"SESSION_USER" | "SUBSTRING_INDEX" | "SUM" | "SYSTEM_USER" | "TAN" | "TIME_FORMAT" | "TIME_TO_SEC" | "TIMESTAMPADD" | "TO_DAYS" | "TO_SECONDS" | "TRIM" | "RTRIM" | "UCASE" | "UTC_TIME" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
 |	"STATS_PERSISTENT" | "GET_LOCK" | "RELEASE_LOCK" | "CEIL" | "CEILING" | "FLOOR" | "FROM_UNIXTIME" | "TIMEDIFF" | "LN" | "LOG" | "LOG2" | "LOG10" | "FIELD_KWD"
 |	"AES_DECRYPT" | "AES_ENCRYPT"
+|	"ASYMMETRIC_DECRYPT" | "ASYMMETRIC_DERIVE" | "ASYMMETRIC_ENCRYPT" | "ASYMMETRIC_SIGN" | "ASYMMETRIC_VERIFY" | "COMPRESS" | "CREATE_ASYMMETRIC_PRIV_KEY" | "CREATE_ASYMMETRIC_PUB_KEY" | "CREATE_DH_PARAMETERS" | "CREATE_DIGEST" | "DECODE" | "DES_DECRYPT" | "DES_ENCRYPT" | "ENCODE" | "ENCRYPT" | "MD5" | "OLD_PASSWORD" | "RANDOM_BYTES" | "SHA1" | "SHA" | "SHA2" | "UNCOMPRESS" | "UNCOMPRESSED_LENGTH" | "VALIDATE_PASSWORD_STRENGTH"
 
 /************************************************************************************
  *
@@ -2738,6 +2763,13 @@ FunctionCallKeyword:
 |	"QUARTER" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
+|	"PASSWORD" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr(ast.PasswordFunc),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
 	}
 
 FunctionCallNonKeyword:
@@ -3558,6 +3590,203 @@ FunctionCallNonKeyword:
 		}
 	}
 |	"CRC32" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"ASYMMETRIC_DECRYPT" '(' Expression ',' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)},
+		}
+	}
+|	"ASYMMETRIC_DERIVE" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
+		}
+	}
+|	"ASYMMETRIC_ENCRYPT" '(' Expression ',' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)},
+		}
+	}
+|	"ASYMMETRIC_SIGN" '(' Expression ',' Expression ',' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode), $9.(ast.ExprNode)},
+		}
+	}
+|	"ASYMMETRIC_VERIFY" '(' Expression ',' Expression ',' Expression ',' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode), $9.(ast.ExprNode), $11.(ast.ExprNode)},
+		}
+	}
+|	"COMPRESS" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"CREATE_ASYMMETRIC_PRIV_KEY" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"CREATE_ASYMMETRIC_PRIV_KEY" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
+		}
+	}
+|	"CREATE_ASYMMETRIC_PUB_KEY" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
+		}
+	}
+|	"CREATE_DH_PARAMETERS" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"CREATE_DIGEST" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
+		}
+	}
+|	"DECODE" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
+		}
+	}
+|	"DES_DECRYPT" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"DES_DECRYPT" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
+		}
+	}
+|	"DES_ENCRYPT" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"DES_ENCRYPT" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
+		}
+	}
+|	"ENCODE" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
+		}
+	}
+|	"ENCRYPT" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"ENCRYPT" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
+		}
+	}
+|	"MD5" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"OLD_PASSWORD" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+
+|	"RANDOM_BYTES" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"SHA1" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"SHA" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"SHA2" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
+		}
+	}
+|	"UNCOMPRESS" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"UNCOMPRESSED_LENGTH" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
+|	"VALIDATE_PASSWORD_STRENGTH" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
