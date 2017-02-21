@@ -494,8 +494,7 @@ func (w *GCWorker) loadDurationWithDefault(key string, def time.Duration) (*time
 
 func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 	stmt := fmt.Sprintf(`SELECT (variable_value) FROM mysql.tidb WHERE variable_name='%s' FOR UPDATE`, key)
-	restrictExecutor := w.session.(sqlexec.SQLExecutor)
-	rs, err := restrictExecutor.Execute(stmt)
+	rs, err := w.session.(sqlexec.SQLExecutor).Execute(stmt)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
@@ -517,8 +516,7 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[2]s', comment = '%[3]s'`,
 		key, value, gcVariableComments[key])
-	restrictExecutor := w.session.(sqlexec.SQLExecutor)
-	_, err := restrictExecutor.Execute(stmt)
+	_, err := w.session.(sqlexec.SQLExecutor).Execute(stmt)
 	log.Debugf("[gc worker] save kv, %s:%s %v", key, value, err)
 	return errors.Trace(err)
 }

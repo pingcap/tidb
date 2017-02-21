@@ -406,7 +406,6 @@ func drainRecordSet(rs ast.RecordSet) (rows []*ast.Row, err error) {
 // getExecRet executes restricted sql and the result is one column.
 // It returns a string value.
 func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
-	cleanTxn := s.txn == nil && s.txnCh == nil
 	rows, _, err := s.ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return "", errors.Trace(err)
@@ -417,12 +416,6 @@ func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
 	value, err := types.ToString(rows[0].Data[0].GetValue())
 	if err != nil {
 		return "", errors.Trace(err)
-	}
-	if cleanTxn {
-		// This function has some side effect. Run select may create new txn.
-		// We should make environment unchanged.
-		s.txn = nil
-		s.txnCh = nil
 	}
 	return value, nil
 }
