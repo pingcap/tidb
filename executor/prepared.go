@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"math"
 	"sort"
 
 	"github.com/juju/errors"
@@ -243,7 +244,11 @@ func (e *ExecuteExec) Build() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = e.Ctx.ActivePendingTxn()
+	if IsPointGetWithPKOrUniqueKeyByAutoCommit(e.Ctx, p) {
+		err = e.Ctx.InitTxnWithStartTS(math.MaxUint64)
+	} else {
+		err = e.Ctx.ActivePendingTxn()
+	}
 	if err != nil {
 		return errors.Trace(err)
 	}

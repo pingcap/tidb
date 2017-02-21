@@ -942,6 +942,9 @@ func (p *Sort) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 	if info != nil {
 		return info, nil
 	}
+	if len(p.ByItems) == 0 {
+		return p.children[0].(LogicalPlan).convert2PhysicalPlan(prop)
+	}
 	selfProp := &requiredProperty{
 		props: make([]*columnProp, 0, len(p.ByItems)),
 	}
@@ -992,8 +995,8 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	if info != nil {
 		return info, nil
 	}
-	if p.JoinType == InnerJoin {
-		info, err = p.Join.convert2PhysicalPlanLeft(prop, true)
+	if p.JoinType == InnerJoin || p.JoinType == LeftOuterJoin {
+		info, err = p.Join.convert2PhysicalPlanLeft(prop, p.JoinType == InnerJoin)
 	} else {
 		info, err = p.Join.convert2PhysicalPlanSemi(prop)
 	}

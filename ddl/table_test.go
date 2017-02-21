@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
@@ -250,8 +249,7 @@ func (s *testTableSuite) TestTable(c *C) {
 	testCheckJobDone(c, d, job, false)
 
 	// Check background ddl info.
-	time.Sleep(testLease * 400)
-	verifyBgJobState(c, d, job, model.JobDone)
+	verifyBgJobState(c, d, job, model.JobDone, testLease*350)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	c.Assert(updatedCount, Equals, 2)
 

@@ -481,7 +481,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 	case ast.ShowEvents:
 		p.SetSchema(buildShowEventsSchema())
 	default:
-		p.SetSchema(buildShowDefaultSchema(show))
+		p.SetSchema(buildShowSchema(show))
 	}
 	for i, col := range p.schema.Columns {
 		col.Position = i
@@ -826,13 +826,38 @@ func buildShowEventsSchema() *expression.Schema {
 	return schema
 }
 
-// getShowColNamesAndTypes gets column names and types. If the `ftypes` is empty, every column is set to varchar type.
-func getShowColNamesAndTypes(s *ast.ShowStmt) (names []string, ftypes []byte) {
+func buildSchema(names []string, ftypes []byte) *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(names))...)
+	for i, name := range names {
+		col := &expression.Column{
+			ColName: model.NewCIStr(name),
+		}
+		var retType types.FieldType
+		if len(ftypes) == 0 || ftypes[i] == 0 {
+			// Use varchar as the default return column type.
+			retType.Tp = mysql.TypeVarchar
+		} else {
+			retType.Tp = ftypes[i]
+		}
+		retType.Charset, retType.Collate = types.DefaultCharsetForType(retType.Tp)
+		col.RetType = &retType
+		schema.Append(col)
+	}
+	return schema
+}
+
+// buildShowSchema builds column info for ShowStmt including column name and type.
+func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
+	var names []string
+	var ftypes []byte
 	switch s.Tp {
 	case ast.ShowEngines:
 		names = []string{"Engine", "Support", "Comment", "Transactions", "XA", "Savepoints"}
 	case ast.ShowDatabases:
 		names = []string{"Database"}
+		schema = buildSchema(names, ftypes)
+		schema.Columns[0].RetType.Flen = 256
+		return
 	case ast.ShowTables:
 		names = []string{fmt.Sprintf("Tables_in_%s", s.DBName)}
 		if s.Full {
@@ -879,26 +904,5 @@ func getShowColNamesAndTypes(s *ast.ShowStmt) (names []string, ftypes []byte) {
 		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString}
 	}
-	return
-}
-
-func buildShowDefaultSchema(s *ast.ShowStmt) *expression.Schema {
-	names, ftypes := getShowColNamesAndTypes(s)
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(names))...)
-	for i, name := range names {
-		col := &expression.Column{
-			ColName: model.NewCIStr(name),
-		}
-		var retType types.FieldType
-		if len(ftypes) == 0 || ftypes[i] == 0 {
-			// Use varchar as the default return column type.
-			retType.Tp = mysql.TypeVarchar
-		} else {
-			retType.Tp = ftypes[i]
-		}
-		retType.Charset, retType.Collate = types.DefaultCharsetForType(retType.Tp)
-		col.RetType = &retType
-		schema.Append(col)
-	}
-	return schema
+	return buildSchema(names, ftypes)
 }
