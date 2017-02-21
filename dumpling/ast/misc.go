@@ -557,6 +557,33 @@ type GrantLevel struct {
 	TableName string
 }
 
+// RevokeStmt is the struct for REVOKE statement.
+type RevokeStmt struct {
+	stmtNode
+
+	Privs      []*PrivElem
+	ObjectType ObjectTypeType
+	Level      *GrantLevel
+	Users      []*UserSpec
+}
+
+// Accept implements Node Accept interface.
+func (n *RevokeStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*RevokeStmt)
+	for i, val := range n.Privs {
+		node, ok := val.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Privs[i] = node.(*PrivElem)
+	}
+	return v.Leave(n)
+}
+
 // GrantStmt is the struct for GRANT statement.
 type GrantStmt struct {
 	stmtNode
