@@ -190,7 +190,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 		return errors.Trace(err)
 	}
 
-	txnRegionsNumHistogram.Observe(float64(len(groups)))
+	txnRegionsNumHistogram.WithLabelValues("2pc").Observe(float64(len(groups)))
 
 	var batches []batchKeys
 	var sizeFunc = c.keySize

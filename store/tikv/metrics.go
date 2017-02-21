@@ -173,14 +173,14 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 21),
 		}, []string{"type"})
 
-	txnRegionsNumHistogram = prometheus.NewHistogram(
+	txnRegionsNumHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
 			Name:      "txn_regions_num",
 			Help:      "Number of regions in a transaction.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 20),
-		})
+		}, []string{"type"})
 )
 
 func reportRegionError(e *errorpb.Error) {
@@ -222,4 +222,5 @@ func init() {
 	prometheus.MustRegister(txnWriteSizeHistogram)
 	prometheus.MustRegister(rawkvCmdHistogram)
 	prometheus.MustRegister(rawkvSizeHistogram)
+	prometheus.MustRegister(txnRegionsNumHistogram)
 }
