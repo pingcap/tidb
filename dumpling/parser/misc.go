@@ -572,6 +572,22 @@ var tokenMap = map[string]int{
 	"UNCOMPRESS":                 uncompress,
 	"UNCOMPRESSED_LENGTH":        uncompressedLength,
 	"VALIDATE_PASSWORD_STRENGTH": validatePasswordStrength,
+	"ANY_VALUE":                  anyValue,
+	"INET_ATON":                  inetAton,
+	"INET_NTOA":                  inetNtoa,
+	"INET6_ATON":                 inet6Aton,
+	"INET6_NTOA":                 inet6Ntoa,
+	"IS_FREE_LOCK":               isFreeLock,
+	"IS_IPV4":                    isIPv4,
+	"IS_IPV4_COMPAT":             isIPv4Compat,
+	"IS_IPV4_MAPPED":             isIPv4Mapped,
+	"IS_IPV6":                    isIPv6,
+	"IS_USED_LOCK":               isUsedLock,
+	"MASTER_POS_WAIT":            masterPosWait,
+	"NAME_CONST":                 nameConst,
+	"RELEASE_ALL_LOCKS":          releaseAllLocks,
+	"UUID":                       uuid,
+	"UUID_SHORT":                 uuidShort,
 }
 
 func isTokenIdentifier(s string, buf *bytes.Buffer) int {

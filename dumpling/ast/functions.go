@@ -231,8 +231,24 @@ const (
 	Nullif = "nullif"
 
 	// miscellaneous functions
-	Sleep = "sleep"
-
+	AnyValue        = "any_value"
+	DefaultFunc     = "default_func"
+	InetAton        = "inet_aton"
+	InetNtoa        = "inet_ntoa"
+	Inet6Aton       = "inet6_aton"
+	Inet6Ntoa       = "inet6_ntoa"
+	IsFreeLock      = "is_free_lock"
+	IsIPv4          = "is_ipv4"
+	IsIPv4Compat    = "is_ipv4_compat"
+	IsIPv4Mapped    = "is_ipv4_mapped"
+	IsIPv6          = "is_ipv6"
+	IsUsedLock      = "is_used_lock"
+	MasterPosWait   = "master_pos_wait"
+	NameConst       = "name_const"
+	ReleaseAllLocks = "release_all_locks"
+	Sleep           = "sleep"
+	UUID            = "uuid"
+	UUIDShort       = "uuid_short"
 	// get_lock() and release_lock() is parsed but do nothing.
 	// It is used for preventing error in Ruby's activerecord migrations.
 	GetLock     = "get_lock"
