@@ -764,8 +764,24 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		// repeat
 		{`SELECT REPEAT("a", 10);`, true},
 
-		// sleep
+		// for miscellaneous functions
 		{`SELECT SLEEP(10);`, true},
+		{`SELECT ANY_VALUE(@arg);`, true},
+		{`SELECT INET_ATON('10.0.5.9');`, true},
+		{`SELECT INET_NTOA(167773449);`, true},
+		{`SELECT INET6_ATON('fdfe::5a55:caff:fefa:9089');`, true},
+		{`SELECT INET6_NTOA(INET_NTOA(167773449));`, true},
+		{`SELECT IS_FREE_LOCK(@str);`, true},
+		{`SELECT IS_IPV4('10.0.5.9');`, true},
+		{`SELECT IS_IPV4_COMPAT(INET6_ATON('::10.0.5.9'));`, true},
+		{`SELECT IS_IPV4_MAPPED(INET6_ATON('::10.0.5.9'));`, true},
+		{`SELECT IS_IPV6('10.0.5.9');`, true},
+		{`SELECT IS_USED_LOCK(@str);`, true},
+		{`SELECT MASTER_POS_WAIT(@log_name, @log_pos), MASTER_POS_WAIT(@log_name, @log_pos, @timeout), MASTER_POS_WAIT(@log_name, @log_pos, @timeout, @channel_name);`, true},
+		{`SELECT NAME_CONST('myname', 14);`, true},
+		{`SELECT RELEASE_ALL_LOCKS();`, true},
+		{`SELECT UUID();`, true},
+		{`SELECT UUID_SHORT()`, true},
 
 		// for date_add
 		{`select date_add("2011-11-11 10:10:10.123456", interval 10 microsecond)`, true},
