@@ -209,12 +209,19 @@ const (
 	FindInSet      = "find_in_set"
 
 	// information functions
+	Benchmark    = "benchmark"
+	Charset      = "charset"
+	Coercibility = "coercibility"
+	Collation    = "collation"
 	ConnectionID = "connection_id"
 	CurrentUser  = "current_user"
 	Database     = "database"
-	Schema       = "schema"
 	FoundRows    = "found_rows"
 	LastInsertId = "last_insert_id"
+	RowCount     = "row_count"
+	Schema       = "schema"
+	SessionUser  = "session_user"
+	SystemUser   = "system_user"
 	User         = "user"
 	Version      = "version"
 
