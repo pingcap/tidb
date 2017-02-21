@@ -26,15 +26,36 @@ func (s *testPlanBuilderSuite) SetUpSuite(c *C) {
 type testPlanBuilderSuite struct {
 }
 
-func (s *testPlanBuilderSuite) TestShowDatabases(c *C) {
+func (s *testPlanBuilderSuite) TestShow(c *C) {
 	pb := &planBuilder{
 		allocator: new(idAllocator),
 	}
-	node := &ast.ShowStmt{
-		Tp: ast.ShowDatabases,
+	node := &ast.ShowStmt{}
+	tps := []ast.ShowStmtType{
+		ast.ShowEngines,
+		ast.ShowDatabases,
+		ast.ShowTables,
+		ast.ShowTableStatus,
+		ast.ShowColumns,
+		ast.ShowWarnings,
+		ast.ShowCharset,
+		ast.ShowVariables,
+		ast.ShowStatus,
+		ast.ShowCollation,
+		ast.ShowCreateTable,
+		ast.ShowGrants,
+		ast.ShowTriggers,
+		ast.ShowProcedureStatus,
+		ast.ShowIndex,
+		ast.ShowProcessList,
+		ast.ShowCreateDatabase,
+		ast.ShowEvents,
 	}
-	p := pb.build(node)
-	schema := p.Schema()
-	c.Assert(schema.Columns, HasLen, 1)
-	c.Assert(schema.Columns[0].RetType.Flen, Equals, 256)
+	for tp := range tps {
+		node.Tp = tp
+		schema := buildShowSchema(node)
+		for col := range schema.Columns {
+			c.Assert(col.RetType.Flen, Greater, 0)
+		}
+	}
 }
