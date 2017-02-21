@@ -253,7 +253,7 @@ func handshakeResponseFromData(packet *handshakeResponse41, data []byte) (err er
 			kv := data[pos : pos+int(num)]
 			attrs, err := parseAttrs(kv)
 			if err != nil {
-				log.Info("parse attrs error:%s", errors.ErrorStack(err))
+				log.Warn("parse attrs error:", errors.ErrorStack(err))
 				return nil
 			}
 			packet.Attrs = attrs
