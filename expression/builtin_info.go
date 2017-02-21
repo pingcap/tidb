@@ -147,6 +147,7 @@ type builtinUserSig struct {
 	baseBuiltinFunc
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_user
 func (b *builtinUserSig) eval(_ []types.Datum) (d types.Datum, err error) {
 	data := b.ctx.GetSessionVars()
 	if data == nil {
@@ -230,6 +231,7 @@ type builtinVersionSig struct {
 	baseBuiltinFunc
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_version
 func (b *builtinVersionSig) eval(_ []types.Datum) (d types.Datum, err error) {
 	d.SetString(mysql.ServerVersion)
 	return d, nil
