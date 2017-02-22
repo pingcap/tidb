@@ -17,7 +17,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
-	"sync/atomic"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/terror"
@@ -130,12 +129,18 @@ type Job struct {
 
 // SetRowCount sets the number of rows. Make sure it can pass `make race`.
 func (job *Job) SetRowCount(count int64) {
-	atomic.StoreInt64(&job.RowCount, count)
+	job.Mu.Lock()
+	defer job.Mu.Unlock()
+
+	job.RowCount = count
 }
 
 // GetRowCount gets the number of rows. Make sure it can pass `make race`.
 func (job *Job) GetRowCount() int64 {
-	return atomic.LoadInt64(&job.RowCount)
+	job.Mu.Lock()
+	defer job.Mu.Unlock()
+
+	return job.RowCount
 }
 
 // Encode encodes job with json format.
