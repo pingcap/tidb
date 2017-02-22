@@ -32,7 +32,7 @@ import (
 // This is implemented in session.go.
 type RestrictedSQLExecutor interface {
 	// ExecRestrictedSQL run sql statement in ctx with some restriction.
-	ExecRestrictedSQL(ctx context.Context, sql string) (ast.RecordSet, error)
+	ExecRestrictedSQL(ctx context.Context, sql string) ([]*ast.Row, []*ast.ResultField, error)
 }
 
 // SQLExecutor is an interface provides executing normal sql statement.
