@@ -369,10 +369,11 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rows []*as
 		return
 	}
 
+	// Execute all recordset, take out the first one as result.
 	for i, rs := range recordSets {
-		tmp, e := drainRecordSet(rs)
-		if e != nil {
-			err = errors.Trace(e)
+		tmp, err1 := drainRecordSet(rs)
+		if err1 != nil {
+			err = errors.Trace(err1)
 			return
 		}
 		if i == 0 {
@@ -387,20 +388,19 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rows []*as
 	return
 }
 
-func drainRecordSet(rs ast.RecordSet) (rows []*ast.Row, err error) {
+func drainRecordSet(rs ast.RecordSet) ([]*ast.Row, error) {
+	var rows []*ast.Row
 	for {
-		row, e := rs.Next()
-		if e != nil {
-			err = errors.Trace(e)
-			return
+		row, err := rs.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 		if row == nil {
 			break
 		}
 		rows = append(rows, row)
 	}
-	rs.Close()
-	return
+	return rows, errors.Trace(rs.Close())
 }
 
 // getExecRet executes restricted sql and the result is one column.
