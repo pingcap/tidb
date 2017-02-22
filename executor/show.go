@@ -455,7 +455,6 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		if ast.ReferOptionType(fk.OnUpdate) != ast.ReferOptionNoOption {
 			buf.WriteString(fmt.Sprintf(" ON UPDATE %s", ast.ReferOptionType(fk.OnUpdate)))
 		}
-
 	}
 	buf.WriteString("\n")
 
