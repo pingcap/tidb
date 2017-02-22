@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	goctx "context"
 	"sync"
 	"time"
 
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"golang.org/x/net/context"
 )
 
 type testStoreSuite struct {
@@ -65,7 +65,7 @@ func (s *testStoreSuite) TestOracle(c *C) {
 	o := &mockOracle{}
 	s.store.oracle = o
 
-	ctx := context.Background()
+	ctx := goctx.Background()
 	t1, err := s.store.getTimestampWithRetry(NewBackoffer(100, ctx))
 	c.Assert(err, IsNil)
 	t2, err := s.store.getTimestampWithRetry(NewBackoffer(100, ctx))
@@ -247,7 +247,7 @@ func (c *busyClient) Close() error {
 	return c.client.Close()
 }
 
-func (c *busyClient) SendKVReq(addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error) {
+func (c *busyClient) SendKVReq(ctx goctx.Context, addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -258,10 +258,10 @@ func (c *busyClient) SendKVReq(addr string, req *kvrpcpb.Request, timeout time.D
 			},
 		}, nil
 	}
-	return c.client.SendKVReq(addr, req, timeout)
+	return c.client.SendKVReq(ctx, addr, req, timeout)
 }
 
-func (c *busyClient) SendCopReq(addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
+func (c *busyClient) SendCopReq(ctx goctx.Context, addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -272,7 +272,7 @@ func (c *busyClient) SendCopReq(addr string, req *coprocessor.Request, timeout t
 			},
 		}, nil
 	}
-	return c.client.SendCopReq(addr, req, timeout)
+	return c.client.SendCopReq(ctx, addr, req, timeout)
 }
 
 type mockPDClient struct {

@@ -1466,13 +1466,9 @@ func (s *testSessionSuite) TestExecRestrictedSQL(c *C) {
 	dbName := "test_exec_restricted_sql"
 	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
 	se := newSession(c, s.store, dbName).(*session)
-	r, err := se.ExecRestrictedSQL(se, "select 1;")
-	c.Assert(r, NotNil)
+	r, _, err := se.ExecRestrictedSQL(se, "select 1;")
 	c.Assert(err, IsNil)
-	_, err = se.ExecRestrictedSQL(se, "select 1; select 2;")
-	c.Assert(err, NotNil)
-	_, err = se.ExecRestrictedSQL(se, "")
-	c.Assert(err, NotNil)
+	c.Assert(len(r), Equals, 1)
 
 	mustExecSQL(c, se, dropDBSQL)
 }
