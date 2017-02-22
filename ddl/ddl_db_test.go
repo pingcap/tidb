@@ -915,7 +915,12 @@ func (s *testDBSuite) TestCreateTableWithLike(c *C) {
 	is := sessionctx.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
-	c.Assert(tbl.Meta().ForeignKeys, IsNil)
+	tblInfo := tbl.Meta()
+	c.Assert(tblInfo.ForeignKeys, IsNil)
+	c.Assert(tblInfo.PKIsHandle, Equals, true)
+	col := tblInfo.Columns[0]
+	hasNotNull := tmysql.HasNotNullFlag(col.Flag)
+	c.Assert(hasNotNull, IsTrue)
 	// for different databases
 	s.tk.MustExec("create database test1")
 	s.tk.MustExec("use test1")
