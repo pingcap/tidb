@@ -15,7 +15,6 @@ package plan
 import (
 	"fmt"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -278,7 +277,7 @@ func (a *aggPushDownSolver) makeNewAgg(aggFuncs []expression.AggregationFunction
 
 // pushAggCrossUnion will try to push the agg down to the union. If the new aggregation's group-by columns doesn't contain unique key.
 // We will return the new aggregation. Otherwise we will transform the aggregation to projection.
-func (a *aggPushDownSolver) pushAggCrossUnion(agg *Aggregation, unionSchema *expression.Schema, unionChild LogicalPlan) (LogicalPlan, error) {
+func (a *aggPushDownSolver) pushAggCrossUnion(agg *Aggregation, unionSchema *expression.Schema, unionChild LogicalPlan) LogicalPlan {
 	newAgg := &Aggregation{
 		AggFuncs:        make([]expression.AggregationFunction, 0, len(agg.AggFuncs)),
 		GroupByItems:    make([]expression.Expression, 0, len(agg.GroupByItems)),
@@ -301,33 +300,30 @@ func (a *aggPushDownSolver) pushAggCrossUnion(agg *Aggregation, unionSchema *exp
 	}
 	newAgg.collectGroupByColumns()
 	tmpSchema := expression.NewSchema(newAgg.groupByCols...)
+	// e.g. Union distinct will add a aggregation like `select join_agg_0, join_agg_1, join_agg_2 from t group by a, b, c` above UnionAll.
+	// And the pushed agg will be something like `select a, b, c, a, b, c from t group by a, b, c`. So if we just return child as join does,
+	// this will cause error during executor phase.
 	for _, key := range unionChild.Schema().Keys {
 		if tmpSchema.ColumnsIndices(key) != nil {
-			proj, err := convertAggToProj(newAgg, a.ctx, a.alloc)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+			proj := convertAggToProj(newAgg, a.ctx, a.alloc)
 			proj.SetChildren(unionChild)
-			return proj, nil
+			return proj
 		}
 	}
 	newAgg.SetChildren(unionChild)
 	unionChild.SetParents(newAgg)
-	return newAgg, nil
+	return newAgg
 }
 
 func (a *aggPushDownSolver) optimize(p LogicalPlan, ctx context.Context, alloc *idAllocator) (LogicalPlan, error) {
 	a.ctx = ctx
 	a.alloc = alloc
-	err := a.aggPushDown(p)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	a.aggPushDown(p)
 	return p, nil
 }
 
 // aggPushDown tries to push down aggregate functions to join paths.
-func (a *aggPushDownSolver) aggPushDown(p LogicalPlan) error {
+func (a *aggPushDownSolver) aggPushDown(p LogicalPlan) {
 	if agg, ok := p.(*Aggregation); ok {
 		child := agg.children[0]
 		if join, ok1 := child.(*Join); ok1 && a.checkValidJoin(join) {
@@ -373,10 +369,7 @@ func (a *aggPushDownSolver) aggPushDown(p LogicalPlan) error {
 			pushedAgg := a.makeNewAgg(agg.AggFuncs, agg.groupByCols)
 			newChildren := make([]Plan, 0, len(union.children))
 			for _, child := range union.children {
-				newChild, err := a.pushAggCrossUnion(pushedAgg, union.schema, child.(LogicalPlan))
-				if err != nil {
-					return errors.Trace(nil)
-				}
+				newChild := a.pushAggCrossUnion(pushedAgg, union.schema, child.(LogicalPlan))
 				newChildren = append(newChildren, newChild)
 				newChild.SetParents(union)
 			}
@@ -385,10 +378,6 @@ func (a *aggPushDownSolver) aggPushDown(p LogicalPlan) error {
 		}
 	}
 	for _, child := range p.Children() {
-		err := a.aggPushDown(child.(LogicalPlan))
-		if err != nil {
-			return errors.Trace(err)
-		}
+		a.aggPushDown(child.(LogicalPlan))
 	}
-	return nil
 }
