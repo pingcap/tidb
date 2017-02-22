@@ -700,6 +700,13 @@ func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {
 			db:        v.Table.Schema.L,
 			table:     v.Table.Name.L,
 		})
+		if v.ReferTable != nil {
+			b.visitInfo = append(b.visitInfo, visitInfo{
+				privilege: mysql.SelectPriv,
+				db:        v.ReferTable.Schema.L,
+				table:     v.ReferTable.Name.L,
+			})
+		}
 	case *ast.DropDatabaseStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
 			privilege: mysql.DropPriv,

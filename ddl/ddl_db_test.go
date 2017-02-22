@@ -894,6 +894,32 @@ func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
 	tk.MustQuery("select * from t1").Check(testkit.Rows("8 1 9", "8 2 9"))
 }
 
+func (s *testDBSuite) TestCreateTableWithLike(c *C) {
+	defer testleak.AfterTest(c)
+	store, err := tidb.NewStore("memory://create_table_like")
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	_, err = tidb.BootstrapSession(store)
+	c.Assert(err, IsNil)
+
+	// for the same database
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c1 int not null auto_increment, c2 int, primary key(c1)) auto_increment = 10")
+	tk.MustExec("insert into t set c2=1")
+	tk.MustExec("create table t1 like test.t")
+	tk.MustExec("insert into t1 set c2=11")
+	tk.MustQuery("select * from t").Check(testkit.Rows("10 1"))
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 11"))
+	// for different databases
+	tk.MustExec("create database test1")
+	tk.MustExec("use test1")
+	tk.MustExec("create table t1 like test.t")
+	tk.MustExec("insert into t1 set c2=11")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 11"))
+
+	// for failure case
+}
+
 func (s *testDBSuite) TestTruncateTable(c *C) {
 	defer testleak.AfterTest(c)
 	store, err := tidb.NewStore("memory://truncate_table")
