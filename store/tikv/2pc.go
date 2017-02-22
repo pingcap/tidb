@@ -50,6 +50,11 @@ func (ca twoPhaseCommitAction) String() string {
 	return "unknown"
 }
 
+// MetricsTag return detail tag for metrics
+func (ca twoPhaseCommitAction) MetricsTag() string {
+	return "2pc_" + ca.String()
+}
+
 // twoPhaseCommitter executes a two-phase commit protocol.
 type twoPhaseCommitter struct {
 	store     *tikvStore
@@ -190,17 +195,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 		return errors.Trace(err)
 	}
 
-	actionLabel := "2pc"
-	switch action {
-	case actionPrewrite:
-		actionLabel += "_prewrite"
-	case actionCommit:
-		actionLabel += "_commit"
-	case actionCleanup:
-		actionLabel += "_cleanup"
-	}
-
-	txnRegionsNumHistogram.WithLabelValues(actionLabel).Observe(float64(len(groups)))
+	txnRegionsNumHistogram.WithLabelValues(action.MetricsTag()).Observe(float64(len(groups)))
 
 	var batches []batchKeys
 	var sizeFunc = c.keySize
