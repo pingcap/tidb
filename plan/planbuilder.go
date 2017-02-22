@@ -826,7 +826,7 @@ func buildShowEventsSchema() *expression.Schema {
 	return schema
 }
 
-func buildSchema(names []string, ftypes []byte) *expression.Schema {
+func composeShowSchema(names []string, ftypes []byte) *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(names))...)
 	for i, name := range names {
 		col := &expression.Column{
@@ -838,6 +838,14 @@ func buildSchema(names []string, ftypes []byte) *expression.Schema {
 			retType.Tp = mysql.TypeVarchar
 		} else {
 			retType.Tp = ftypes[i]
+		}
+
+		if retType.Tp == mysql.TypeVarchar || retType.Tp == mysql.TypeString {
+			retType.Flen = 256
+		} else if retType.Tp == mysql.TypeDatetime {
+			retType.Flen = 19
+		} else {
+			retType.Flen = mysql.GetDefaultFieldLength(retType.Tp)
 		}
 		retType.Charset, retType.Collate = types.DefaultCharsetForType(retType.Tp)
 		col.RetType = &retType
@@ -855,9 +863,6 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 		names = []string{"Engine", "Support", "Comment", "Transactions", "XA", "Savepoints"}
 	case ast.ShowDatabases:
 		names = []string{"Database"}
-		schema = buildSchema(names, ftypes)
-		schema.Columns[0].RetType.Flen = 256
-		return
 	case ast.ShowTables:
 		names = []string{fmt.Sprintf("Tables_in_%s", s.DBName)}
 		if s.Full {
@@ -904,5 +909,5 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString}
 	}
-	return buildSchema(names, ftypes)
+	return composeShowSchema(names, ftypes)
 }
