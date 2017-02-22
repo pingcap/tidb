@@ -109,6 +109,7 @@ func (s *testSuite) TestShow(c *C) {
 	tk.MustQuery("SHOW TRIGGERS WHERE Trigger ='test'").Check(testkit.Rows())
 	tk.MustQuery("SHOW processlist;").Check(testkit.Rows())
 	tk.MustQuery("SHOW EVENTS WHERE Db = 'test'").Check(testkit.Rows())
+
 	// Test show create database
 	testSQL = `create database show_test_DB`
 	tk.MustExec(testSQL)
@@ -125,6 +126,25 @@ func (s *testSuite) TestShow(c *C) {
 	tk.MustExec("use show_test_DB")
 	result = tk.MustQuery("SHOW index from show_index from test where Column_name = 'c'")
 	c.Check(result.Rows(), HasLen, 1)
+
+	// For table with multiple fk.
+	testSQL = `CREATE TABLE pilot_languages (
+			pilot_id int(11) NOT NULL,
+			language_id int(11) NOT NULL,
+			CONSTRAINT pilot_language_fkey FOREIGN KEY (pilot_id) REFERENCES pilots (pilot_id),
+		        CONSTRAINT languages_fkey FOREIGN KEY (language_id) REFERENCES languages (language_id)
+		) ENGINE=InnoDB;`
+	tk.MustExec(testSQL)
+	testSQL = "show create table pilot_languages;"
+	result = tk.MustQuery(testSQL)
+	c.Check(result.Rows(), HasLen, 1)
+	row = result.Rows()[0]
+	expectedRow = []interface{}{
+		"pilot_languages", "CREATE TABLE `pilot_languages` (\n  `pilot_id` int(11) NOT NULL,\n  `language_id` int(11) NOT NULL,\n  CONSTRAINT `pilot_language_fkey` FOREIGN KEY (`pilot_id`) REFERENCES `pilots` (`pilot_id`),\n  CONSTRAINT `languages_fkey` FOREIGN KEY (`language_id`) REFERENCES `languages` (`language_id`)\n) ENGINE=InnoDB"}
+	for i, r := range row {
+		c.Check(r, Equals, expectedRow[i])
+	}
+
 }
 
 type stats struct {
