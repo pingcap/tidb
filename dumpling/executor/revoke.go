@@ -141,7 +141,7 @@ func (e *RevokeExec) revokeGlobalPriv(priv *ast.PrivElem, user, host string) err
 		return errors.Trace(err)
 	}
 	sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User="%s" AND Host="%s"`, mysql.SystemDB, mysql.UserTable, asgns, user, host)
-	_, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 	return errors.Trace(err)
 }
 
@@ -155,7 +155,7 @@ func (e *RevokeExec) revokeDBPriv(priv *ast.PrivElem, userName, host string) err
 		return errors.Trace(err)
 	}
 	sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User="%s" AND Host="%s" AND DB="%s";`, mysql.SystemDB, mysql.DBTable, asgns, userName, host, db.Name.O)
-	_, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 	return errors.Trace(err)
 }
 
@@ -169,7 +169,7 @@ func (e *RevokeExec) revokeTablePriv(priv *ast.PrivElem, user, host string) erro
 		return errors.Trace(err)
 	}
 	sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User="%s" AND Host="%s" AND DB="%s" AND Table_name="%s";`, mysql.SystemDB, mysql.TablePrivTable, asgns, user, host, db.Name.O, tbl.Meta().Name.O)
-	_, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 	return errors.Trace(err)
 }
 
@@ -188,7 +188,7 @@ func (e *RevokeExec) revokeColumnPriv(priv *ast.PrivElem, user, host string) err
 			return errors.Trace(err)
 		}
 		sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User="%s" AND Host="%s" AND DB="%s" AND Table_name="%s" AND Column_name="%s";`, mysql.SystemDB, mysql.ColumnPrivTable, asgns, user, host, db.Name.O, tbl.Meta().Name.O, col.Name.O)
-		_, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+		_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 		if err != nil {
 			return errors.Trace(err)
 		}
