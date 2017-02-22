@@ -14,7 +14,7 @@
 package localstore
 
 import (
-	"context"
+	goctx "context"
 	"fmt"
 	"io/ioutil"
 	"math"
@@ -59,7 +59,7 @@ func (s *testXAPISuite) TestSelect(c *C) {
 	err := prepareTableData(store, tbInfo, count, genValues)
 	c.Check(err, IsNil)
 
-	mockCtx := context.Background()
+	mockCtx := goctx.Background()
 
 	// Select Table request.
 	txn, err := store.Begin()

@@ -92,6 +92,10 @@ const (
 	TruncateTable = "TruncateTable"
 	// Update represents update statements.
 	Update = "Update"
+	// Grant represents grant statements.
+	Grant = "Grant"
+	// Revoke represents revoke statements.
+	Revoke = "Revoke"
 )
 
 // StatementLabel generates a label for a statement.
@@ -142,6 +146,10 @@ func StatementLabel(node ast.StmtNode, p plan.Plan) string {
 		return TruncateTable
 	case *ast.UpdateStmt:
 		return getUpdateStmtLabel(x, p)
+	case *ast.GrantStmt:
+		return Grant
+	case *ast.RevokeStmt:
+		return Revoke
 	case *ast.DeallocateStmt, *ast.ExecuteStmt, *ast.PrepareStmt, *ast.UseStmt:
 		return IGNORE
 	}

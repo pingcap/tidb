@@ -1,7 +1,7 @@
 package localstore
 
 import (
-	"context"
+	goctx "context"
 	"io"
 
 	"github.com/juju/errors"
@@ -14,7 +14,7 @@ type dbClient struct {
 	regionInfo []*regionInfo
 }
 
-func (c *dbClient) Send(ctx context.Context, req *kv.Request) kv.Response {
+func (c *dbClient) Send(ctx goctx.Context, req *kv.Request) kv.Response {
 	it := &response{
 		client:      c,
 		concurrency: req.Concurrency,
