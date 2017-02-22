@@ -614,7 +614,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 		Args:       []interface{}{tbInfo},
 	}
 
-	handleTableOptions(options, tbInfo, schema.ID)
+	handleTableOptions(options, tbInfo)
 	err = d.doDDLJob(ctx, job)
 	if err == nil {
 		if tbInfo.AutoIncID > 1 {
@@ -648,7 +648,7 @@ func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64) error {
 }
 
 // Add create table options into TableInfo.
-func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo, schemaID int64) {
+func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) {
 	for _, op := range options {
 		switch op.Tp {
 		case ast.TableOptionAutoIncrement:
