@@ -179,3 +179,11 @@ func (s *testSuite) TestColumnScope(c *C) {
 		c.Assert(strings.Index(p, mysql.Priv2SetStr[v]), Greater, -1)
 	}
 }
+
+func (s *testSuite) TestIssue2456(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER 'dduser'@'%' IDENTIFIED by '123456';")
+	tk.MustExec("GRANT ALL PRIVILEGES ON `dddb_%`.* TO 'dduser'@'%';")
+	tk.MustExec("GRANT ALL PRIVILEGES ON `dddb_%`.`te%` to 'dduser'@'%';")
+}
