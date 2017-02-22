@@ -363,17 +363,17 @@ var sysSessionPool = sync.Pool{}
 // This is used for executing some restricted sql statements, usually executed during a normal statement execution.
 // Unlike normal Exec, it doesn't reset statement status, doesn't commit or rollback the current transaction
 // and doesn't write binlog.
-func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rows []*ast.Row, fields []*ast.ResultField, err error) {
+func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) ([]*ast.Row, []*ast.ResultField, error) {
 	// Use special session to execute the sql.
 	var se *session
 	tmp := sysSessionPool.Get()
 	if tmp != nil {
 		se = tmp.(*session)
 	} else {
+		var err error
 		se, err = createSession(s.store)
 		if err != nil {
-			err = errors.Trace(err)
-			return
+			return nil, nil, errors.Trace(err)
 		}
 		varsutil.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
 		se.sessionVars.CommonGlobalLoaded = true
@@ -381,30 +381,34 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rows []*as
 	}
 	defer sysSessionPool.Put(se)
 
-	var recordSets []ast.RecordSet
-	recordSets, err = se.Execute(sql)
+	recordSets, err := se.Execute(sql)
 	if err != nil {
-		err = errors.Trace(err)
-		return
+		return nil, nil, errors.Trace(err)
 	}
 
+	var (
+		rows   []*ast.Row
+		fields []*ast.ResultField
+	)
 	// Execute all recordset, take out the first one as result.
 	for i, rs := range recordSets {
-		tmp, err1 := drainRecordSet(rs)
-		if err1 != nil {
-			err = errors.Trace(err1)
-			return
+		tmp, err := drainRecordSet(rs)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
 		}
+		if err = rs.Close(); err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+
 		if i == 0 {
 			rows = tmp
 			fields, err = rs.Fields()
 			if err != nil {
-				err = errors.Trace(err)
-				return
+				return nil, nil, errors.Trace(err)
 			}
 		}
 	}
-	return
+	return rows, fields, nil
 }
 
 func drainRecordSet(rs ast.RecordSet) ([]*ast.Row, error) {
@@ -419,7 +423,7 @@ func drainRecordSet(rs ast.RecordSet) ([]*ast.Row, error) {
 		}
 		rows = append(rows, row)
 	}
-	return rows, errors.Trace(rs.Close())
+	return rows, nil
 }
 
 // getExecRet executes restricted sql and the result is one column.
