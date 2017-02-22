@@ -50,7 +50,7 @@ func (ca twoPhaseCommitAction) String() string {
 	return "unknown"
 }
 
-// MetricsTag return detail tag for metrics
+// MetricsTag returns detail tag for metrics.
 func (ca twoPhaseCommitAction) MetricsTag() string {
 	return "2pc_" + ca.String()
 }
