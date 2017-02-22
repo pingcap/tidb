@@ -397,6 +397,7 @@ type CreateTableStmt struct {
 
 	IfNotExists bool
 	Table       *TableName
+	ReferTable  *TableName
 	Cols        []*ColumnDef
 	Constraints []*Constraint
 	Options     []*TableOption
@@ -414,6 +415,13 @@ func (n *CreateTableStmt) Accept(v Visitor) (Node, bool) {
 		return n, false
 	}
 	n.Table = node.(*TableName)
+	if n.ReferTable != nil {
+		node, ok = n.ReferTable.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.ReferTable = node.(*TableName)
+	}
 	for i, val := range n.Cols {
 		node, ok = val.Accept(v)
 		if !ok {

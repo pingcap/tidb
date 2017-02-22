@@ -1610,6 +1610,14 @@ CreateTableStmt:
 			Options:        $8.([]*ast.TableOption),
 		}
 	}
+|	"CREATE" "TABLE" IfNotExists TableName "LIKE" TableName
+	{
+		$$ = &ast.CreateTableStmt{
+			Table:          $4.(*ast.TableName),
+			ReferTable:	$6.(*ast.TableName),
+			IfNotExists:    $3.(bool),
+		}
+	}
 
 DefaultKwdOpt:
 	{}
