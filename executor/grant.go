@@ -188,21 +188,21 @@ func (e *GrantExec) checkAndInitColumnPriv(user string, host string, cols []*ast
 // Insert a new row into mysql.DB with empty privilege.
 func initDBPrivEntry(ctx context.Context, user string, host string, db string) error {
 	sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, DB) VALUES ("%s", "%s", "%s")`, mysql.SystemDB, mysql.DBTable, host, user, db)
-	_, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	_, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	return errors.Trace(err)
 }
 
 // Insert a new row into mysql.Tables_priv with empty privilege.
 func initTablePrivEntry(ctx context.Context, user string, host string, db string, tbl string) error {
 	sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, DB, Table_name, Table_priv, Column_priv) VALUES ("%s", "%s", "%s", "%s", "", "")`, mysql.SystemDB, mysql.TablePrivTable, host, user, db, tbl)
-	_, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	_, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	return errors.Trace(err)
 }
 
 // Insert a new row into mysql.Columns_priv with empty privilege.
 func initColumnPrivEntry(ctx context.Context, user string, host string, db string, tbl string, col string) error {
 	sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, DB, Table_name, Column_name, Column_priv) VALUES ("%s", "%s", "%s", "%s", "%s", "")`, mysql.SystemDB, mysql.ColumnPrivTable, host, user, db, tbl, col)
-	_, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	_, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	return errors.Trace(err)
 }
 
@@ -231,7 +231,7 @@ func (e *GrantExec) grantGlobalPriv(priv *ast.PrivElem, user *ast.UserSpec) erro
 	}
 	userName, host := parseUser(user.User)
 	sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User="%s" AND Host="%s"`, mysql.SystemDB, mysql.UserTable, asgns, userName, host)
-	_, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 	return errors.Trace(err)
 }
 
@@ -247,7 +247,7 @@ func (e *GrantExec) grantDBPriv(priv *ast.PrivElem, user *ast.UserSpec) error {
 	}
 	userName, host := parseUser(user.User)
 	sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User="%s" AND Host="%s" AND DB="%s";`, mysql.SystemDB, mysql.DBTable, asgns, userName, host, db.Name.O)
-	_, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 	return errors.Trace(err)
 }
 
@@ -263,7 +263,7 @@ func (e *GrantExec) grantTablePriv(priv *ast.PrivElem, user *ast.UserSpec) error
 		return errors.Trace(err)
 	}
 	sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User="%s" AND Host="%s" AND DB="%s" AND Table_name="%s";`, mysql.SystemDB, mysql.TablePrivTable, asgns, userName, host, db.Name.O, tbl.Meta().Name.O)
-	_, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 	return errors.Trace(err)
 }
 
@@ -284,7 +284,7 @@ func (e *GrantExec) grantColumnPriv(priv *ast.PrivElem, user *ast.UserSpec) erro
 			return errors.Trace(err)
 		}
 		sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User="%s" AND Host="%s" AND DB="%s" AND Table_name="%s" AND Column_name="%s";`, mysql.SystemDB, mysql.ColumnPrivTable, asgns, userName, host, db.Name.O, tbl.Meta().Name.O, col.Name.O)
-		_, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+		_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -460,16 +460,11 @@ func composeColumnPrivUpdateForRevoke(ctx context.Context, priv mysql.PrivilegeT
 
 // Helper function to check if the sql returns any row.
 func recordExists(ctx context.Context, sql string) (bool, error) {
-	rs, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	defer rs.Close()
-	row, err := rs.Next()
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	return row != nil, nil
+	return len(rows) > 0, nil
 }
 
 // Check if there is an entry with key user-host-db in mysql.DB.
@@ -494,16 +489,15 @@ func columnPrivEntryExists(ctx context.Context, name string, host string, db str
 // Return Table_priv and Column_priv.
 func getTablePriv(ctx context.Context, name string, host string, db string, tbl string) (string, string, error) {
 	sql := fmt.Sprintf(`SELECT Table_priv, Column_priv FROM %s.%s WHERE User="%s" AND Host="%s" AND DB="%s" AND Table_name="%s";`, mysql.SystemDB, mysql.TablePrivTable, name, host, db, tbl)
-	rs, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return "", "", errors.Trace(err)
 	}
-	defer rs.Close()
-	row, err := rs.Next()
-	if err != nil {
-		return "", "", errors.Trace(err)
+	if len(rows) < 1 {
+		return "", "", errors.Errorf("get table privilege fail for %s %s %s %s", name, host, db, tbl)
 	}
 	var tPriv, cPriv string
+	row := rows[0]
 	if row.Data[0].Kind() == types.KindMysqlSet {
 		tablePriv := row.Data[0].GetMysqlSet()
 		tPriv = tablePriv.Name
@@ -519,18 +513,16 @@ func getTablePriv(ctx context.Context, name string, host string, db string, tbl 
 // Return Column_priv.
 func getColumnPriv(ctx context.Context, name string, host string, db string, tbl string, col string) (string, error) {
 	sql := fmt.Sprintf(`SELECT Column_priv FROM %s.%s WHERE User="%s" AND Host="%s" AND DB="%s" AND Table_name="%s" AND Column_name="%s";`, mysql.SystemDB, mysql.ColumnPrivTable, name, host, db, tbl, col)
-	rs, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	defer rs.Close()
-	row, err := rs.Next()
-	if err != nil {
-		return "", errors.Trace(err)
+	if len(rows) < 1 {
+		return "", errors.Errorf("get column privilege fail for %s %s %s %s %s", name, host, db, tbl, col)
 	}
 	cPriv := ""
-	if row.Data[0].Kind() == types.KindMysqlSet {
-		cPriv = row.Data[0].GetMysqlSet().Name
+	if rows[0].Data[0].Kind() == types.KindMysqlSet {
+		cPriv = rows[0].Data[0].GetMysqlSet().Name
 	}
 	return cPriv, nil
 }
