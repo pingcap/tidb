@@ -14,6 +14,7 @@
 package localstore
 
 import (
+	goctx "context"
 	"fmt"
 	"io/ioutil"
 	"math"
@@ -58,13 +59,15 @@ func (s *testXAPISuite) TestSelect(c *C) {
 	err := prepareTableData(store, tbInfo, count, genValues)
 	c.Check(err, IsNil)
 
+	mockCtx := goctx.Background()
+
 	// Select Table request.
 	txn, err := store.Begin()
 	c.Check(err, IsNil)
 	client := store.GetClient()
 	req, err := prepareSelectRequest(tbInfo, txn.StartTS())
 	c.Check(err, IsNil)
-	resp := client.Send(req)
+	resp := client.Send(mockCtx, req)
 	subResp, err := resp.Next()
 	c.Check(err, IsNil)
 	data, err := ioutil.ReadAll(subResp)
@@ -93,7 +96,7 @@ func (s *testXAPISuite) TestSelect(c *C) {
 	client = store.GetClient()
 	req, err = prepareIndexRequest(tbInfo, txn.StartTS())
 	c.Check(err, IsNil)
-	resp = client.Send(req)
+	resp = client.Send(mockCtx, req)
 	subResp, err = resp.Next()
 	c.Check(err, IsNil)
 	data, err = ioutil.ReadAll(subResp)
