@@ -1446,6 +1446,13 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			},
 		},
 		{
+			sql: "create table t1 like t",
+			ans: []visitInfo{
+				{mysql.CreatePriv, "test", "t1", ""},
+				{mysql.SelectPriv, "test", "t", ""},
+			},
+		},
+		{
 			sql: "create database test",
 			ans: []visitInfo{
 				{mysql.CreatePriv, "test", "", ""},

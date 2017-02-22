@@ -571,6 +571,45 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 	return
 }
 
+func (d *ddl) CreateTableWithLike(ctx context.Context, ident, referIdent ast.Ident) error {
+	is := d.GetInformationSchema()
+	_, ok := is.SchemaByName(referIdent.Schema)
+	if !ok {
+		return infoschema.ErrTableNotExists.GenByArgs(referIdent.Schema, referIdent.Name)
+	}
+	referTbl, err := is.TableByName(referIdent.Schema, referIdent.Name)
+	if err != nil {
+		return infoschema.ErrTableNotExists.GenByArgs(referIdent.Schema, referIdent.Name)
+	}
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
+	}
+	if is.TableExists(ident.Schema, ident.Name) {
+		return infoschema.ErrTableExists.GenByArgs(ident)
+	}
+
+	tblInfo := *referTbl.Meta()
+	tblInfo.Name = ident.Name
+	tblInfo.AutoIncID = 0
+	tblInfo.ForeignKeys = nil
+	tblInfo.ID, err = d.genGlobalID()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionCreateTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{tblInfo},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
 func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.ColumnDef,
 	constraints []*ast.Constraint, options []*ast.TableOption) (err error) {
 	is := d.GetInformationSchema()
