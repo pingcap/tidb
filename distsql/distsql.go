@@ -281,7 +281,7 @@ func (pr *partialResult) Close() error {
 // concurrency: The max concurrency for underlying coprocessor request.
 // keepOrder: If the result should returned in key order. For example if we need keep data in order by
 //            scan index, we should set keepOrder to true.
-func Select(client kv.Client, req *tipb.SelectRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool) (SelectResult, error) {
+func Select(client kv.Client, ctx goctx.Context, req *tipb.SelectRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool) (SelectResult, error) {
 	var err error
 	defer func() {
 		// Add metrics
@@ -299,7 +299,7 @@ func Select(client kv.Client, req *tipb.SelectRequest, keyRanges []kv.KeyRange, 
 		return nil, err
 	}
 
-	resp := client.Send(kvReq)
+	resp := client.Send(ctx, kvReq)
 	if resp == nil {
 		err = errors.New("client returns nil response")
 		return nil, err

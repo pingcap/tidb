@@ -14,6 +14,7 @@
 package executor
 
 import (
+	goctx "context"
 	"fmt"
 	"math"
 	"sort"
@@ -619,7 +620,7 @@ func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return distsql.Select(e.ctx.GetClient(), selIdxReq, keyRanges, e.scanConcurrency, !e.indexPlan.OutOfOrder)
+	return distsql.Select(e.ctx.GetClient(), goctx.Background(), selIdxReq, keyRanges, e.scanConcurrency, !e.indexPlan.OutOfOrder)
 }
 
 func (e *XSelectIndexExec) buildTableTasks(handles []int64) []*lookupTableTask {
@@ -751,7 +752,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 	selTableReq.GroupBy = e.byItems
 	keyRanges := tableHandlesToKVRanges(e.table.Meta().ID, handles)
 
-	resp, err := distsql.Select(e.ctx.GetClient(), selTableReq, keyRanges, e.scanConcurrency, false)
+	resp, err := distsql.Select(e.ctx.GetClient(), goctx.Background(), selTableReq, keyRanges, e.scanConcurrency, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -834,7 +835,7 @@ func (e *XSelectTableExec) doRequest() error {
 	selReq.GroupBy = e.byItems
 
 	kvRanges := tableRangesToKVRanges(e.table.Meta().ID, e.ranges)
-	e.result, err = distsql.Select(e.ctx.GetClient(), selReq, kvRanges, e.scanConcurrency, e.keepOrder)
+	e.result, err = distsql.Select(e.ctx.GetClient(), goctx.Background(), selReq, kvRanges, e.scanConcurrency, e.keepOrder)
 	if err != nil {
 		return errors.Trace(err)
 	}
