@@ -49,6 +49,10 @@ type Context interface {
 	// It should be called right before we builds an executor.
 	ActivePendingTxn() error
 
+	// InitTxnWithStartTS initializes a transaction with startTS.
+	// It should be called right before we builds an executor.
+	InitTxnWithStartTS(startTS uint64) error
+
 	// Done returns a channel for cancelation, the same as standard context.Context.
 	// See https://godoc.org/context for more examples of how to use it.
 	Done() <-chan struct{}

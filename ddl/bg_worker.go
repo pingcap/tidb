@@ -74,6 +74,7 @@ func (d *ddl) handleBgJobQueue() error {
 
 // runBgJob runs a background job.
 func (d *ddl) runBgJob(t *meta.Meta, job *model.Job) {
+	log.Infof("[ddl] run background job %s", job)
 	job.State = model.JobRunning
 
 	var err error

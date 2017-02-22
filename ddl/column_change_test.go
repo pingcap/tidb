@@ -108,6 +108,9 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 				checkErr = errors.Trace(err)
 			}
 		case model.StatePublic:
+			if job.GetRowCount() != 1 {
+				checkErr = errors.Errorf("job's row count %d != 1", job.GetRowCount())
+			}
 			mu.Lock()
 			publicTable, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
 			if err != nil {

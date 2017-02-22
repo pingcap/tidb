@@ -100,8 +100,20 @@ func (p *Aggregation) PruneColumns(parentUsedCols []*expression.Column) {
 			selfUsedCols = append(selfUsedCols, expression.ExtractColumns(arg)...)
 		}
 	}
-	for _, expr := range p.GroupByItems {
-		selfUsedCols = append(selfUsedCols, expression.ExtractColumns(expr)...)
+	if len(p.GroupByItems) > 0 {
+		for i := len(p.GroupByItems) - 1; i >= 0; i-- {
+			cols := expression.ExtractColumns(p.GroupByItems[i])
+			if len(cols) == 0 {
+				p.GroupByItems = append(p.GroupByItems[:i], p.GroupByItems[i+1:]...)
+			} else {
+				selfUsedCols = append(selfUsedCols, cols...)
+			}
+		}
+		// If all the group by items are pruned, we should add a constant 1 to keep the correctness.
+		// Because `select count(*) from t` is different from `select count(*) from t group by 1`.
+		if len(p.GroupByItems) == 0 {
+			p.GroupByItems = []expression.Expression{expression.One}
+		}
 	}
 	child.PruneColumns(selfUsedCols)
 }
@@ -109,8 +121,13 @@ func (p *Aggregation) PruneColumns(parentUsedCols []*expression.Column) {
 // PruneColumns implements LogicalPlan interface.
 func (p *Sort) PruneColumns(parentUsedCols []*expression.Column) {
 	child := p.children[0].(LogicalPlan)
-	for _, item := range p.ByItems {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(item.Expr)...)
+	for i := len(p.ByItems) - 1; i >= 0; i-- {
+		cols := expression.ExtractColumns(p.ByItems[i].Expr)
+		if len(cols) == 0 {
+			p.ByItems = append(p.ByItems[:i], p.ByItems[i+1:]...)
+		} else {
+			parentUsedCols = append(parentUsedCols, expression.ExtractColumns(p.ByItems[i].Expr)...)
+		}
 	}
 	child.PruneColumns(parentUsedCols)
 	p.SetSchema(p.children[0].Schema())
@@ -177,8 +194,7 @@ func (p *Insert) PruneColumns(_ []*expression.Column) {
 	child.PruneColumns(child.Schema().Columns)
 }
 
-// PruneColumns implements LogicalPlan interface.
-func (p *Join) PruneColumns(parentUsedCols []*expression.Column) {
+func (p *Join) extractUsedCols(parentUsedCols []*expression.Column) (leftCols []*expression.Column, rightCols []*expression.Column) {
 	for _, eqCond := range p.EqualConditions {
 		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(eqCond)...)
 	}
@@ -193,7 +209,6 @@ func (p *Join) PruneColumns(parentUsedCols []*expression.Column) {
 	}
 	lChild := p.children[0].(LogicalPlan)
 	rChild := p.children[1].(LogicalPlan)
-	var leftCols, rightCols []*expression.Column
 	for _, col := range parentUsedCols {
 		if lChild.Schema().Contains(col) {
 			leftCols = append(leftCols, col)
@@ -201,8 +216,12 @@ func (p *Join) PruneColumns(parentUsedCols []*expression.Column) {
 			rightCols = append(rightCols, col)
 		}
 	}
-	lChild.PruneColumns(leftCols)
-	rChild.PruneColumns(rightCols)
+	return leftCols, rightCols
+}
+
+func (p *Join) mergeSchema() {
+	lChild := p.children[0].(LogicalPlan)
+	rChild := p.children[1].(LogicalPlan)
 	composedSchema := expression.MergeSchema(lChild.Schema(), rChild.Schema())
 	if p.JoinType == SemiJoin {
 		p.schema = lChild.Schema().Clone()
@@ -216,11 +235,27 @@ func (p *Join) PruneColumns(parentUsedCols []*expression.Column) {
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *Apply) PruneColumns(parentUseCols []*expression.Column) {
+func (p *Join) PruneColumns(parentUsedCols []*expression.Column) {
+	leftCols, rightCols := p.extractUsedCols(parentUsedCols)
+	lChild := p.children[0].(LogicalPlan)
+	rChild := p.children[1].(LogicalPlan)
+	lChild.PruneColumns(leftCols)
+	rChild.PruneColumns(rightCols)
+	p.mergeSchema()
+}
+
+// PruneColumns implements LogicalPlan interface.
+func (p *Apply) PruneColumns(parentUsedCols []*expression.Column) {
+	lChild := p.children[0].(LogicalPlan)
+	rChild := p.children[1].(LogicalPlan)
+	leftCols, rightCols := p.extractUsedCols(parentUsedCols)
+	rChild.PruneColumns(rightCols)
+	p.extractCorColumnsBySchema()
 	for _, col := range p.corCols {
-		parentUseCols = append(parentUseCols, &col.Column)
+		leftCols = append(leftCols, &col.Column)
 	}
-	p.Join.PruneColumns(parentUseCols)
+	lChild.PruneColumns(leftCols)
+	p.mergeSchema()
 }
 
 // PruneColumns implements LogicalPlan interface.

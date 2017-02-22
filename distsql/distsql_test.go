@@ -15,7 +15,7 @@ package distsql
 
 import (
 	"bytes"
-	"context"
+	goctx "context"
 	"errors"
 	"io"
 	"io/ioutil"
@@ -63,7 +63,7 @@ func (s *testTableCodecSuite) TestGoroutineLeak(c *C) {
 		results: make(chan resultWithErr, 5),
 		closed:  make(chan struct{}),
 	}
-	go sr.Fetch(context.TODO())
+	go sr.Fetch(goctx.TODO())
 	for {
 		// mock test will generate some partial result then return error
 		_, err := sr.Next()
