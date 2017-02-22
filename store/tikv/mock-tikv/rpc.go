@@ -14,6 +14,7 @@
 package mocktikv
 
 import (
+	goctx "context"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -368,7 +369,7 @@ type RPCClient struct {
 }
 
 // SendKVReq sends a kv request to mock cluster.
-func (c *RPCClient) SendKVReq(addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error) {
+func (c *RPCClient) SendKVReq(ctx goctx.Context, addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error) {
 	store := c.Cluster.GetStoreByAddr(addr)
 	if store == nil {
 		return nil, errors.New("connect fail")
@@ -378,7 +379,7 @@ func (c *RPCClient) SendKVReq(addr string, req *kvrpcpb.Request, timeout time.Du
 }
 
 // SendCopReq sends a coprocessor request to mock cluster.
-func (c *RPCClient) SendCopReq(addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
+func (c *RPCClient) SendCopReq(ctx goctx.Context, addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
 	store := c.Cluster.GetStoreByAddr(addr)
 	if store == nil {
 		return nil, errors.New("connect fail")
