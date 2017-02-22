@@ -260,6 +260,7 @@ func (e *ExecuteExec) Build() error {
 	e.StmtExec = stmtExec
 	e.Stmt = prepared.Stmt
 	e.Plan = p
+	stmtCount(e.Stmt, e.Plan)
 	return nil
 }
 
