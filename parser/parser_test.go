@@ -52,7 +52,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"localtime", "localtimestamp", "lock", "longblob", "longtext", "mediumblob", "maxvalue", "mediumint", "mediumtext",
 		"minute_microsecond", "minute_second", "mod", "not", "no_write_to_binlog", "null", "numeric",
 		"on", "option", "or", "order", "outer", "partition", "precision", "primary", "procedure", "range", "read", "real",
-		"references", "regexp", "rename", "repeat", "replace", "restrict", "right", "rlike",
+		"references", "regexp", "rename", "repeat", "replace", "revoke", "restrict", "right", "rlike",
 		"schema", "schemas", "second_microsecond", "select", "set", "show", "smallint",
 		"starting", "table", "terminated", "then", "tinyblob", "tinyint", "tinytext", "to",
 		"trailing", "true", "union", "unique", "unlock", "unsigned",
@@ -1259,6 +1259,18 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 		{"GRANT SELECT, INSERT ON mydb.mytbl TO 'someuser'@'somehost';", true},
 		{"GRANT SELECT (col1), INSERT (col1,col2) ON mydb.mytbl TO 'someuser'@'somehost';", true},
 		{"grant all privileges on zabbix.* to 'zabbix'@'localhost' identified by 'password';", true},
+
+		// for revoke statement
+		{"REVOKE ALL ON db1.* FROM 'jeffrey'@'localhost';", true},
+		{"REVOKE SELECT ON db2.invoice FROM 'jeffrey'@'localhost';", true},
+		{"REVOKE ALL ON *.* FROM 'someuser'@'somehost';", true},
+		{"REVOKE SELECT, INSERT ON *.* FROM 'someuser'@'somehost';", true},
+		{"REVOKE ALL ON mydb.* FROM 'someuser'@'somehost';", true},
+		{"REVOKE SELECT, INSERT ON mydb.* FROM 'someuser'@'somehost';", true},
+		{"REVOKE ALL ON mydb.mytbl FROM 'someuser'@'somehost';", true},
+		{"REVOKE SELECT, INSERT ON mydb.mytbl FROM 'someuser'@'somehost';", true},
+		{"REVOKE SELECT (col1), INSERT (col1,col2) ON mydb.mytbl FROM 'someuser'@'somehost';", true},
+		{"REVOKE all privileges on zabbix.* FROM 'zabbix'@'localhost' identified by 'password';", true},
 	}
 	s.RunTest(c, table)
 }

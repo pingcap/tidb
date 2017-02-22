@@ -389,6 +389,7 @@ var tokenMap = map[string]int{
 	"REPEAT":                     repeat,
 	"REPEATABLE":                 repeatable,
 	"REPLACE":                    replace,
+	"REVOKE":                     revoke,
 	"RIGHT":                      right,
 	"RLIKE":                      rlike,
 	"ROLLBACK":                   rollback,
