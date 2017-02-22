@@ -411,7 +411,7 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 			// The returned rows should be aggregate partial result.
 			e.result.SetFields(e.aggFields)
 		}
-		e.result.Fetch()
+		e.result.Fetch(context.CtxForCancel{e.ctx})
 	}
 	for {
 		// Get partial result.
@@ -479,7 +479,7 @@ func (e *XSelectIndexExec) nextForDoubleRead() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		idxResult.IgnoreData()
-		idxResult.Fetch()
+		idxResult.Fetch(context.CtxForCancel{e.ctx})
 
 		// Use a background goroutine to fetch index and put the result in e.taskChan.
 		// e.taskChan serves as a pipeline, so fetching index and getting table data can
@@ -558,6 +558,8 @@ func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<
 			}
 
 			select {
+			case <-e.ctx.Done():
+				return
 			case workCh <- task:
 			default:
 				addWorker(e, workCh, &concurrency)
@@ -757,7 +759,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 		// The returned rows should be aggregate partial result.
 		resp.SetFields(e.aggFields)
 	}
-	resp.Fetch()
+	resp.Fetch(context.CtxForCancel{e.ctx})
 	return resp, nil
 }
 
@@ -841,7 +843,7 @@ func (e *XSelectTableExec) doRequest() error {
 		// The returned rows should be aggregate partial result.
 		e.result.SetFields(e.aggFields)
 	}
-	e.result.Fetch()
+	e.result.Fetch(context.CtxForCancel{e.ctx})
 	return nil
 }
 

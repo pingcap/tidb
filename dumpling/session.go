@@ -18,6 +18,7 @@
 package tidb
 
 import (
+	goctx "context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -66,6 +67,8 @@ type Session interface {
 	SetConnectionID(uint64)
 	Close() error
 	Auth(user string, auth []byte, salt []byte) bool
+	// Cancel the execution of current transaction.
+	Cancel()
 }
 
 var (
@@ -93,8 +96,12 @@ func (h *stmtHistory) add(stmtID uint32, st ast.Statement, params ...interface{}
 }
 
 type session struct {
-	txn    kv.Transaction // current transaction
-	txnCh  chan *txnWithErr
+	txn   kv.Transaction // current transaction
+	txnCh chan *txnWithErr
+	// For cancel the execution of current transaction.
+	goCtx      goctx.Context
+	cancelFunc goctx.CancelFunc
+
 	values map[fmt.Stringer]interface{}
 	store  kv.Storage
 
@@ -106,6 +113,18 @@ type session struct {
 	parser    *parser.Parser
 
 	sessionVars *variable.SessionVars
+}
+
+// Cancel cancels the execution of current transaction.
+func (s *session) Cancel() {
+	// TODO: How to wait for the resource to release and make sure
+	// it's not leak?
+	s.cancelFunc()
+}
+
+// Canceled implements context.Context interface.
+func (s *session) Done() <-chan struct{} {
+	return s.goCtx.Done()
 }
 
 func (s *session) cleanRetryInfo() {
@@ -879,7 +898,8 @@ func (s *session) prepareTxnCtx() {
 		txn, err := s.store.Begin()
 		txnCh <- &txnWithErr{txn: txn, err: err}
 	}()
-	s.txnCh = txnCh
+	goCtx, cancelFunc := goctx.WithCancel(goctx.Background())
+	s.txnCh, s.goCtx, s.cancelFunc = txnCh, goCtx, cancelFunc
 	is := sessionctx.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		InfoSchema:    is,
