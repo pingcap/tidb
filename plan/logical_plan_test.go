@@ -14,6 +14,7 @@
 package plan
 
 import (
+	goctx "context"
 	"sort"
 	"testing"
 
@@ -281,7 +282,7 @@ func supportExpr(exprType tipb.ExprType) bool {
 type mockClient struct {
 }
 
-func (c *mockClient) Send(_ *kv.Request) kv.Response {
+func (c *mockClient) Send(ctx goctx.Context, _ *kv.Request) kv.Response {
 	return nil
 }
 

@@ -139,6 +139,15 @@ func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 	return nil
 }
 
+// Cancel implements the Session interface.
+func (c *Context) Cancel() {
+}
+
+// Done implements the context.Context interface.
+func (c *Context) Done() <-chan struct{} {
+	return nil
+}
+
 // NewContext creates a new mocked context.Context.
 func NewContext() *Context {
 	return &Context{
