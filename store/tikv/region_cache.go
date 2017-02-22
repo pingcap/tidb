@@ -15,7 +15,7 @@ package tikv
 
 import (
 	"bytes"
-	"context"
+	goctx "context"
 	"sync"
 
 	"github.com/juju/errors"
@@ -53,7 +53,7 @@ func NewRegionCache(pdClient pd.Client) *RegionCache {
 
 // RPCContext contains data that is needed to send RPC to a region.
 type RPCContext struct {
-	context.Context
+	goctx.Context
 
 	Region RegionVerID
 	KVCtx  *kvrpcpb.Context

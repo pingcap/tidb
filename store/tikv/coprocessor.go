@@ -15,7 +15,7 @@ package tikv
 
 import (
 	"bytes"
-	"context"
+	goctx "context"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -73,7 +73,7 @@ func supportExpr(exprType tipb.ExprType) bool {
 }
 
 // Send builds the request and gets the coprocessor iterator response.
-func (c *CopClient) Send(ctx context.Context, req *kv.Request) kv.Response {
+func (c *CopClient) Send(ctx goctx.Context, req *kv.Request) kv.Response {
 	coprocessorCounter.WithLabelValues("send").Inc()
 
 	bo := NewBackoffer(copBuildTaskMaxBackoff, ctx)
@@ -310,7 +310,7 @@ type copIterator struct {
 const minLogCopTaskTime = 50 * time.Millisecond
 
 // Pick the next new copTask and send request to tikv-server.
-func (it *copIterator) work(ctx context.Context) {
+func (it *copIterator) work(ctx goctx.Context) {
 	for {
 		it.mu.Lock()
 		if it.mu.finished {
@@ -360,7 +360,7 @@ func (it *copIterator) work(ctx context.Context) {
 	}
 }
 
-func (it *copIterator) run(ctx context.Context) {
+func (it *copIterator) run(ctx goctx.Context) {
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
 		go it.work(ctx)

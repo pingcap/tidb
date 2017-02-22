@@ -14,7 +14,7 @@
 package tikv
 
 import (
-	"context"
+	goctx "context"
 	"sync"
 	"time"
 
@@ -65,7 +65,7 @@ func (s *testStoreSuite) TestOracle(c *C) {
 	o := &mockOracle{}
 	s.store.oracle = o
 
-	ctx := context.Background()
+	ctx := goctx.Background()
 	t1, err := s.store.getTimestampWithRetry(NewBackoffer(100, ctx))
 	c.Assert(err, IsNil)
 	t2, err := s.store.getTimestampWithRetry(NewBackoffer(100, ctx))
@@ -247,7 +247,7 @@ func (c *busyClient) Close() error {
 	return c.client.Close()
 }
 
-func (c *busyClient) SendKVReq(ctx context.Context, addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error) {
+func (c *busyClient) SendKVReq(ctx goctx.Context, addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -261,7 +261,7 @@ func (c *busyClient) SendKVReq(ctx context.Context, addr string, req *kvrpcpb.Re
 	return c.client.SendKVReq(ctx, addr, req, timeout)
 }
 
-func (c *busyClient) SendCopReq(ctx context.Context, addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
+func (c *busyClient) SendCopReq(ctx goctx.Context, addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
