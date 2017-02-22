@@ -18,6 +18,7 @@
 package tidb
 
 import (
+	goctx "context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -66,6 +67,8 @@ type Session interface {
 	SetConnectionID(uint64)
 	Close() error
 	Auth(user string, auth []byte, salt []byte) bool
+	// Cancel the execution of current transaction.
+	Cancel()
 }
 
 var (
@@ -93,8 +96,12 @@ func (h *stmtHistory) add(stmtID uint32, st ast.Statement, params ...interface{}
 }
 
 type session struct {
-	txn    kv.Transaction // current transaction
-	txnCh  chan *txnWithErr
+	txn   kv.Transaction // current transaction
+	txnCh chan *txnWithErr
+	// For cancel the execution of current transaction.
+	goCtx      goctx.Context
+	cancelFunc goctx.CancelFunc
+
 	values map[fmt.Stringer]interface{}
 	store  kv.Storage
 
@@ -106,6 +113,18 @@ type session struct {
 	parser    *parser.Parser
 
 	sessionVars *variable.SessionVars
+}
+
+// Cancel cancels the execution of current transaction.
+func (s *session) Cancel() {
+	// TODO: How to wait for the resource to release and make sure
+	// it's not leak?
+	s.cancelFunc()
+}
+
+// Canceled implements context.Context interface.
+func (s *session) Done() <-chan struct{} {
+	return s.goCtx.Done()
 }
 
 func (s *session) cleanRetryInfo() {
@@ -218,10 +237,10 @@ func (s *session) doCommitWithRetry() error {
 	err := s.doCommit()
 	if err != nil {
 		if s.isRetryableError(err) {
-			// Transactions will retry 2 ~ 10 times.
+			// Transactions will retry 2 ~ commitRetryLimit times.
 			// We make larger transactions retry less times to prevent cluster resource outage.
 			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
-			maxRetryCount := 10 - int(txnSizeRate*9.0)
+			maxRetryCount := commitRetryLimit - int(float64(commitRetryLimit-1)*txnSizeRate)
 			err = s.retry(maxRetryCount)
 		}
 	}
@@ -889,7 +908,8 @@ func (s *session) prepareTxnCtx() {
 		txn, err := s.store.Begin()
 		txnCh <- &txnWithErr{txn: txn, err: err}
 	}()
-	s.txnCh = txnCh
+	goCtx, cancelFunc := goctx.WithCancel(goctx.Background())
+	s.txnCh, s.goCtx, s.cancelFunc = txnCh, goCtx, cancelFunc
 	is := sessionctx.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		InfoSchema:    is,
@@ -915,6 +935,28 @@ func (s *session) ActivePendingTxn() error {
 	}
 	s.txn = txnWithErr.txn
 	err := s.loadCommonGlobalVariablesIfNeeded()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// InitTxnWithStartTS create a transaction with startTS.
+func (s *session) InitTxnWithStartTS(startTS uint64) error {
+	if s.txn != nil && s.txn.Valid() {
+		return nil
+	}
+	if s.txnCh == nil {
+		return errors.New("transaction channel is not set")
+	}
+	// no need to get txn from txnCh since txn should init with startTs
+	s.txnCh = nil
+	var err error
+	s.txn, err = s.store.BeginWithStartTS(startTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
 		return errors.Trace(err)
 	}

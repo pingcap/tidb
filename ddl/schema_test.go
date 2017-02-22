@@ -123,7 +123,7 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	ctx := testNewContext(d)
 	dbInfo := testSchemaInfo(c, d, "test")
 
-	// create a table.
+	// create a database.
 	job := testCreateSchema(c, ctx, d, dbInfo)
 	testCheckSchemaState(c, d, dbInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
@@ -176,12 +176,11 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	ids[tblInfo2.ID] = struct{}{}
 	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, db: dbInfo, tblIDs: ids})
 	// check background ddl info
-	time.Sleep(testLease * 400)
-	verifyBgJobState(c, d, job, model.JobDone)
+	verifyBgJobState(c, d, job, model.JobDone, testLease*350)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	c.Assert(updatedCount, Equals, 2)
 
-	// drop a table doesn't exist.
+	// Drop a non-existent database.
 	job = &model.Job{
 		SchemaID:   dbInfo.ID,
 		Type:       model.ActionDropSchema,
@@ -189,6 +188,16 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	}
 	err := d.doDDLJob(ctx, job)
 	c.Assert(terror.ErrorEqual(err, infoschema.ErrDatabaseDropExists), IsTrue)
+
+	// Drop a database without a table.
+	dbInfo1 := testSchemaInfo(c, d, "test1")
+	job = testCreateSchema(c, ctx, d, dbInfo1)
+	testCheckSchemaState(c, d, dbInfo1, model.StatePublic)
+	testCheckJobDone(c, d, job, true)
+	job, _ = testDropSchema(c, ctx, d, dbInfo1)
+	testCheckSchemaState(c, d, dbInfo1, model.StateNone)
+	testCheckJobDone(c, d, job, false)
+	verifyBgJobState(c, d, job, model.JobDone, testLease*5)
 }
 
 func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {

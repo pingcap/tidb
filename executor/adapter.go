@@ -15,6 +15,7 @@ package executor
 
 import (
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/juju/errors"
@@ -90,7 +91,14 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 	if _, ok := a.plan.(*plan.Execute); !ok {
 		// Do not sync transaction for Execute statement, because the real optimization work is done in
 		// "ExecuteExec.Build".
-		err := ctx.ActivePendingTxn()
+		var err error
+		if IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.plan) {
+			log.Debugf("[%d][InitTxnWithStartTS] %s", ctx.GetSessionVars().ConnectionID, a.text)
+			err = ctx.InitTxnWithStartTS(math.MaxUint64)
+		} else {
+			log.Debugf("[%d][ActivePendingTxn] %s", ctx.GetSessionVars().ConnectionID, a.text)
+			err = ctx.ActivePendingTxn()
+		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -166,4 +174,40 @@ func (a *statement) logSlowQuery() {
 	} else {
 		log.Warnf("[%d][TIME_QUERY] %v %s", connID, costTime, sql)
 	}
+}
+
+// IsPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:
+//  1. ctx is auto commit tagged
+//  2. txn is nil
+//  2. plan is point get by pk or unique key
+func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx context.Context, p plan.Plan) bool {
+	// check auto commit
+	if !ctx.GetSessionVars().IsAutocommit() {
+		return false
+	}
+
+	// check txn
+	if ctx.Txn() != nil {
+		return false
+	}
+
+	// check plan
+	if proj, ok := p.(*plan.Projection); ok {
+		if len(proj.Children()) != 1 {
+			return false
+		}
+		p = proj.Children()[0]
+	}
+
+	// get by index key
+	if indexScan, ok := p.(*plan.PhysicalIndexScan); ok {
+		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx)
+	}
+
+	// get by primary key
+	if tableScan, ok := p.(*plan.PhysicalTableScan); ok {
+		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint()
+	}
+
+	return false
 }

@@ -389,7 +389,7 @@ func (e *XSelectIndexExec) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *XSelectIndexExec) Next() (*Row, error) {
-	if e.indexPlan.LimitCount != nil && e.returnedRows >= uint64(*e.indexPlan.LimitCount) {
+	if e.indexPlan.LimitCount != nil && len(e.indexPlan.SortItemsPB) == 0 && e.returnedRows >= uint64(*e.indexPlan.LimitCount) {
 		return nil, nil
 	}
 	e.returnedRows++
@@ -411,7 +411,7 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 			// The returned rows should be aggregate partial result.
 			e.result.SetFields(e.aggFields)
 		}
-		e.result.Fetch()
+		e.result.Fetch(context.CtxForCancel{e.ctx})
 	}
 	for {
 		// Get partial result.
@@ -479,7 +479,7 @@ func (e *XSelectIndexExec) nextForDoubleRead() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		idxResult.IgnoreData()
-		idxResult.Fetch()
+		idxResult.Fetch(context.CtxForCancel{e.ctx})
 
 		// Use a background goroutine to fetch index and put the result in e.taskChan.
 		// e.taskChan serves as a pipeline, so fetching index and getting table data can
@@ -503,8 +503,16 @@ func (e *XSelectIndexExec) nextForDoubleRead() (*Row, error) {
 			e.taskCurr = taskCurr
 		}
 		row, err := e.taskCurr.getRow()
-		if err != nil || row != nil {
-			return row, errors.Trace(err)
+		if err != nil {
+			// Consume the task channel in case channel is full.
+			go func() {
+				for range e.taskChan {
+				}
+			}()
+			return nil, errors.Trace(err)
+		}
+		if row != nil {
+			return row, nil
 		}
 		e.taskCurr = nil
 	}
@@ -550,6 +558,8 @@ func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<
 			}
 
 			select {
+			case <-e.ctx.Done():
+				return
 			case workCh <- task:
 			default:
 				addWorker(e, workCh, &concurrency)
@@ -577,13 +587,18 @@ func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 	selIdxReq.TimeZoneOffset = timeZoneOffset()
 	selIdxReq.Flags = statementContextToFlags(e.ctx.GetSessionVars().StmtCtx)
 	selIdxReq.IndexInfo = distsql.IndexToProto(e.table.Meta(), e.indexPlan.Index)
-	if len(e.indexPlan.SortItemsPB) > 0 {
-		selIdxReq.OrderBy = e.indexPlan.SortItemsPB
-	} else if e.indexPlan.Desc {
+	if e.indexPlan.Desc {
 		selIdxReq.OrderBy = []*tipb.ByItem{{Desc: e.indexPlan.Desc}}
 	}
-	if e.singleReadMode || e.where == nil {
-		// TODO: when where condition is all index columns limit can be pushed too.
+	// If the index is single read, we can push topn down.
+	if e.singleReadMode {
+		selIdxReq.Limit = e.indexPlan.LimitCount
+		// If sortItemsPB is empty, the Desc may be true and we shouldn't overwrite it.
+		if len(e.indexPlan.SortItemsPB) > 0 {
+			selIdxReq.OrderBy = e.indexPlan.SortItemsPB
+		}
+	} else if e.where == nil && len(e.indexPlan.SortItemsPB) == 0 {
+		// If the index is double read but table scan has no filter or topn, we can push limit down to index.
 		selIdxReq.Limit = e.indexPlan.LimitCount
 	}
 	selIdxReq.Where = e.indexPlan.IndexConditionPBExpr
@@ -721,6 +736,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 	selTableReq := new(tipb.SelectRequest)
 	if e.indexPlan.OutOfOrder {
 		selTableReq.Limit = e.indexPlan.LimitCount
+		selTableReq.OrderBy = e.indexPlan.SortItemsPB
 	}
 	selTableReq.StartTs = e.startTS
 	selTableReq.TimeZoneOffset = timeZoneOffset()
@@ -743,7 +759,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 		// The returned rows should be aggregate partial result.
 		resp.SetFields(e.aggFields)
 	}
-	resp.Fetch()
+	resp.Fetch(context.CtxForCancel{e.ctx})
 	return resp, nil
 }
 
@@ -827,7 +843,7 @@ func (e *XSelectTableExec) doRequest() error {
 		// The returned rows should be aggregate partial result.
 		e.result.SetFields(e.aggFields)
 	}
-	e.result.Fetch()
+	e.result.Fetch(context.CtxForCancel{e.ctx})
 	return nil
 }
 
