@@ -473,11 +473,11 @@ func runTestAuth(c *C) {
 	c.Assert(err, NotNil, Commentf("Wrong password should be failed"))
 	db.Close()
 
-	// Test login use IP but user record is host.
+	// Test login use IP that not exists in mysql.user.
 	runTests(c, dsn, func(dbt *DBTest) {
 		dbt.mustExec(`CREATE USER 'xxx'@'localhost' IDENTIFIED BY 'yyy';`)
 	})
-	newDsn := "test:123@tcp(127.0.0.1:4001)/test?strict=true"
+	newDsn = "xxx:yyy@tcp(127.0.0.1:4001)/test?strict=true"
 	runTests(c, newDsn, func(dbt *DBTest) {
 		dbt.mustExec(`USE mysql;`)
 	})

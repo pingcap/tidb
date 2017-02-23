@@ -173,11 +173,19 @@ func (s *testCacheSuite) TestCaseInsensitive(c *C) {
 }
 
 func (s *testCacheSuite) TestAfterSyncMySQLUser(c *C) {
-	se, err := tidb.CreateSession(s.store)
+	privileges.Enable = true
+	store, err := tidb.NewStore("memory://sync_mysql_user")
+	c.Assert(err, IsNil)
+	domain, err := tidb.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer domain.Close()
+
+	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
 	defer se.Close()
 
 	mustExec(c, se, "DROP TABLE mysql.user;")
+	mustExec(c, se, "USE mysql;")
 	mustExec(c, se, `CREATE TABLE user (
   Host char(60) COLLATE utf8_bin NOT NULL DEFAULT '',
   User char(16) COLLATE utf8_bin NOT NULL DEFAULT '',
