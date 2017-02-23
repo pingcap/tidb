@@ -46,7 +46,7 @@ func (ap *aggPruner) eliminateAggregation(p LogicalPlan) LogicalPlan {
 			}
 		}
 		if coveredByUniqueKey {
-			// GroupByCols has unique key. So this aggregation can be removed.
+			// GroupByCols has unique key, so this aggregation can be removed.
 			proj := convertAggToProj(agg, ap.ctx, ap.allocator)
 			proj.SetParents(p.Parents()...)
 			for _, child := range p.Children() {

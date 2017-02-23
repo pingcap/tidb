@@ -732,6 +732,10 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 			sql:  "select max(c.b) from (select * from t a union all select * from t b) c group by c.a",
 			best: "UnionAll{DataScan(a)->Projection->Projection->DataScan(b)->Projection->Projection}->Aggr(max(join_agg_0))->Projection",
 		},
+		{
+			sql:  "select max(a.c) from t a join t b on a.a=b.a and a.b=b.b group by a.b",
+			best: "Join{DataScan(a)->DataScan(b)}(a.a,b.a)(a.b,b.b)->Aggr(max(a.c))->Projection",
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
