@@ -385,7 +385,7 @@ func checkDefaultValue(ctx context.Context, c *table.Column, hasDefaultValue boo
 	}
 
 	if c.DefaultValue != nil {
-		_, _, err := table.GetColDefaultValue(ctx, c.ToInfo())
+		_, err := table.GetColDefaultValue(ctx, c.ToInfo())
 		if terror.ErrorEqual(err, types.ErrTruncated) {
 			return errInvalidDefault.GenByArgs(c.Name)
 		}

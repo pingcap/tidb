@@ -1053,3 +1053,28 @@ func (s *testDBSuite) testRenameTable(c *C, storeStr, sql string) {
 	failSQL = fmt.Sprintf(sql, "test1.t2", "test1.t2")
 	s.testErrorCode(c, failSQL, tmysql.ErrTableExists)
 }
+
+func (s *testDBSuite) TestAddNotNullColumn(c *C) {
+	defer testleak.AfterTest(c)
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test_db")
+	// for different databases
+	s.tk.MustExec("create table tnn (c1 int primary key auto_increment, c2 int)")
+	s.tk.MustExec("insert tnn (c2) values (0)" + strings.Repeat(",(0)", 99))
+	done := make(chan error, 1)
+	sessionExecInGoroutine(c, s.store, "alter table tnn add column c3 int not null default 3", done)
+	updateCnt := 0
+out:
+	for {
+		select {
+		case err := <-done:
+			c.Assert(err, IsNil)
+			break out
+		default:
+			s.tk.MustExec("update tnn set c2 = c2 + 1 where c1 = 99")
+			updateCnt++
+		}
+	}
+	expected := fmt.Sprintf("%d %d", updateCnt, 3)
+	s.tk.MustQuery("select c2, c3 from tnn where c1 = 99").Check(testkit.Rows(expected))
+}
