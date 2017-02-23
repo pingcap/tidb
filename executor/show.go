@@ -426,11 +426,15 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		buf.WriteString(",\n")
 	}
 
+	firstFK := true
 	for _, fk := range tb.Meta().ForeignKeys {
 		if fk.State != model.StatePublic {
 			continue
 		}
-
+		if !firstFK {
+			buf.WriteString(",\n")
+		}
+		firstFK = false
 		cols := make([]string, 0, len(fk.Cols))
 		for _, c := range fk.Cols {
 			cols = append(cols, c.O)

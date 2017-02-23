@@ -1152,15 +1152,17 @@ func (s *testParserSuite) TestDDL(c *C) {
 		union_name varbinary(52) NOT NULL,
 		union_id int(11) DEFAULT '0',
 		PRIMARY KEY (union_name)) ENGINE=MyISAM DEFAULT CHARSET=binary;`, true},
-		// create table with multiple index options
+		// Create table with multiple index options.
 		{`create table t (c int, index ci (c) USING BTREE COMMENT "123");`, true},
 		// for default value
 		{"CREATE TABLE sbtest (id INTEGER UNSIGNED NOT NULL AUTO_INCREMENT, k integer UNSIGNED DEFAULT '0' NOT NULL, c char(120) DEFAULT '' NOT NULL, pad char(60) DEFAULT '' NOT NULL, PRIMARY KEY  (id) )", true},
 		{"create table test (create_date TIMESTAMP NOT NULL COMMENT '创建日期 create date' DEFAULT now());", true},
 		{"create table ts (t int, v timestamp(3) default CURRENT_TIMESTAMP(3));", true},
-
 		// Create table with primary key name.
 		{"create table if not exists `t` (`id` int not null auto_increment comment '消息ID', primary key `pk_id` (`id`) );", true},
+		// Create table with like.
+		{"create table a like b", true},
+		{"create table if not exists a like b", true},
 
 		// for alter table
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED", true},
