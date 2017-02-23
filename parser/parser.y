@@ -1453,7 +1453,6 @@ NowSymOptionFraction:
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")}
 	}
 
-
 // TODO: Process other three keywords
 NowSym:
 "CURRENT_TIMESTAMP" | "LOCALTIME" | "LOCALTIMESTAMP" | "NOW"
