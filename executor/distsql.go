@@ -945,7 +945,7 @@ func setPBColumnsDefaultValue(ctx context.Context, pbColumns []*tipb.ColumnInfo,
 		sessVars := ctx.GetSessionVars()
 		originStrict := sessVars.StrictSQLMode
 		sessVars.StrictSQLMode = false
-		d, _, err := table.GetColDefaultValue(ctx, c)
+		d, err := table.GetColDefaultValue(ctx, c)
 		sessVars.StrictSQLMode = originStrict
 		if err != nil {
 			return errors.Trace(err)

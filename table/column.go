@@ -240,7 +240,7 @@ func CheckNotNull(cols []*Column, row []types.Datum) error {
 }
 
 // GetColDefaultValue gets default value of the column.
-func GetColDefaultValue(ctx context.Context, col *model.ColumnInfo) (types.Datum, bool, error) {
+func GetColDefaultValue(ctx context.Context, col *model.ColumnInfo) (types.Datum, error) {
 	if col.DefaultValue == nil {
 		return getColDefaultValueFromNil(ctx, col)
 	}
@@ -249,33 +249,37 @@ func GetColDefaultValue(ctx context.Context, col *model.ColumnInfo) (types.Datum
 	if col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime {
 		value, err := expression.GetTimeValue(ctx, col.DefaultValue, col.Tp, col.Decimal)
 		if err != nil {
-			return types.Datum{}, true, errGetDefaultFailed.Gen("Field '%s' get default value fail - %s",
+			return types.Datum{}, errGetDefaultFailed.Gen("Field '%s' get default value fail - %s",
 				col.Name, errors.Trace(err))
 		}
-		return value, true, nil
+		return value, nil
 	}
 	value, err := CastValue(ctx, types.NewDatum(col.DefaultValue), col)
 	if err != nil {
-		return types.Datum{}, false, errors.Trace(err)
+		return types.Datum{}, errors.Trace(err)
 	}
-	return value, true, nil
+	return value, nil
 }
 
-func getColDefaultValueFromNil(ctx context.Context, col *model.ColumnInfo) (types.Datum, bool, error) {
+func getColDefaultValueFromNil(ctx context.Context, col *model.ColumnInfo) (types.Datum, error) {
 	if !mysql.HasNotNullFlag(col.Flag) {
-		return types.Datum{}, true, nil
+		return types.Datum{}, nil
 	}
 	if col.Tp == mysql.TypeEnum {
 		// For enum type, if no default value and not null is set,
 		// the default value is the first element of the enum list
-		return types.NewDatum(col.FieldType.Elems[0]), true, nil
+		return types.NewDatum(col.FieldType.Elems[0]), nil
+	}
+	if mysql.HasAutoIncrementFlag(col.Flag) {
+		// Auto increment column doesn't has default value and we should not return error.
+		return types.Datum{}, nil
 	}
 	if !ctx.GetSessionVars().StrictSQLMode {
 		// Non strict mode use zero value.
 		// TODO: add warning.
-		return GetZeroValue(col), true, nil
+		return GetZeroValue(col), nil
 	}
-	return types.Datum{}, false, errNoDefaultValue.Gen("Field '%s' doesn't have a default value", col.Name)
+	return types.Datum{}, errNoDefaultValue.Gen("Field '%s' doesn't have a default value", col.Name)
 }
 
 // GetZeroValue gets zero value for given column type.
