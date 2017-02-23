@@ -14,6 +14,7 @@
 package plan
 
 import (
+	goctx "context"
 	"sort"
 	"testing"
 
@@ -281,7 +282,7 @@ func supportExpr(exprType tipb.ExprType) bool {
 type mockClient struct {
 }
 
-func (c *mockClient) Send(_ *kv.Request) kv.Response {
+func (c *mockClient) Send(ctx goctx.Context, _ *kv.Request) kv.Response {
 	return nil
 }
 
@@ -308,6 +309,11 @@ func (m *mockStore) GetClient() kv.Client {
 
 func (m *mockStore) Begin() (kv.Transaction, error) {
 	return nil, nil
+}
+
+// BeginWithStartTS begins with startTS.
+func (m *mockStore) BeginWithStartTS(startTS uint64) (kv.Transaction, error) {
+	return m.Begin()
 }
 
 func (m *mockStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
@@ -531,6 +537,10 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			// Aggregate function like count(1) cannot decorrelate.
 			sql:  "select (select count(1) k from t s where s.a = t.a having k != 0) from t",
 			plan: "Apply{DataScan(t)->DataScan(s)->Selection->Aggr(count(1))}->Projection->Projection",
+		},
+		{
+			sql:  "select a from t where a in (select a from t s group by t.b)",
+			plan: "Join{DataScan(t)->DataScan(s)->Aggr(firstrow(s.a))->Projection}(test.t.a,a)->Projection",
 		},
 		{
 			// This will be resolved as in sub query.
@@ -1080,6 +1090,13 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 				"TableScan_2": {"c", "d"},
 			},
 		},
+		{
+			sql: "select a from t where a in (select a from t s group by t.b)",
+			ans: map[string][]string{
+				"TableScan_1": {"a"},
+				"TableScan_2": {"a"},
+			},
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
@@ -1446,6 +1463,13 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			sql: "create table t (a int)",
 			ans: []visitInfo{
 				{mysql.CreatePriv, "test", "t", ""},
+			},
+		},
+		{
+			sql: "create table t1 like t",
+			ans: []visitInfo{
+				{mysql.CreatePriv, "test", "t1", ""},
+				{mysql.SelectPriv, "test", "t", ""},
 			},
 		},
 		{

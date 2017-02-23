@@ -15,7 +15,6 @@ package expression
 
 import (
 	"strings"
-	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
@@ -46,58 +45,6 @@ var (
 	_ builtinFunc = &builtinReleaseLockSig{}
 	_ builtinFunc = &builtinValuesSig{}
 )
-
-type sleepFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *sleepFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	err := errors.Trace(c.verifyArgs(args))
-	bt := &builtinSleepSig{newBaseBuiltinFunc(args, ctx)}
-	bt.deterministic = false
-	return bt, errors.Trace(err)
-}
-
-type builtinSleepSig struct {
-	baseBuiltinFunc
-}
-
-// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_sleep
-func (b *builtinSleepSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	sessVars := b.ctx.GetSessionVars()
-	if args[0].IsNull() {
-		if sessVars.StrictSQLMode {
-			return d, errors.New("incorrect arguments to sleep")
-		}
-		d.SetInt64(0)
-		return
-	}
-	// processing argument is negative
-	zero := types.NewIntDatum(0)
-	sc := sessVars.StmtCtx
-	ret, err := args[0].CompareDatum(sc, zero)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	if ret == -1 {
-		if sessVars.StrictSQLMode {
-			return d, errors.New("incorrect arguments to sleep")
-		}
-		d.SetInt64(0)
-		return
-	}
-
-	// TODO: consider it's interrupted using KILL QUERY from other session, or
-	// interrupted by time out.
-	duration := time.Duration(args[0].GetFloat64() * float64(time.Second.Nanoseconds()))
-	time.Sleep(duration)
-	d.SetInt64(0)
-	return
-}
 
 type inFunctionClass struct {
 	baseFunctionClass
@@ -267,44 +214,6 @@ func (b *builtinGetVarSig) eval(row []types.Datum) (types.Datum, error) {
 		return types.NewDatum(v), nil
 	}
 	return types.Datum{}, nil
-}
-
-type lockFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *lockFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinLockSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
-}
-
-type builtinLockSig struct {
-	baseBuiltinFunc
-}
-
-// The lock function will do nothing.
-// Warning: get_lock() function is parsed but ignored.
-func (b *builtinLockSig) eval(_ []types.Datum) (d types.Datum, err error) {
-	d.SetInt64(1)
-	return d, nil
-}
-
-type releaseLockFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *releaseLockFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinReleaseLockSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
-}
-
-type builtinReleaseLockSig struct {
-	baseBuiltinFunc
-}
-
-// The release lock function will do nothing.
-// Warning: release_lock() function is parsed but ignored.
-func (b *builtinReleaseLockSig) eval(_ []types.Datum) (d types.Datum, err error) {
-	d.SetInt64(1)
-	return
 }
 
 type valuesFunctionClass struct {

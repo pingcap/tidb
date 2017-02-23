@@ -319,24 +319,13 @@ const dbTablePrivColumnStartIndex = 3
 func (p *UserPrivileges) loadGlobalPrivileges(ctx context.Context) error {
 	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User="%s" AND (Host="%s" OR Host="%%");`,
 		mysql.SystemDB, mysql.UserTable, p.privs.User, p.privs.Host)
-	rs, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	rows, fs, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer rs.Close()
+
 	ps := &privileges{Level: ast.GrantLevelGlobal}
-	fs, err := rs.Fields()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	for {
-		row, err := rs.Next()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if row == nil {
-			break
-		}
+	for _, row := range rows {
 		for i := userTablePrivColumnStartIndex; i < len(fs); i++ {
 			d := row.Data[i]
 			if d.Kind() != types.KindMysqlEnum {
@@ -361,24 +350,12 @@ func (p *UserPrivileges) loadGlobalPrivileges(ctx context.Context) error {
 func (p *UserPrivileges) loadDBScopePrivileges(ctx context.Context) error {
 	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User="%s" AND (Host="%s" OR Host="%%");`,
 		mysql.SystemDB, mysql.DBTable, p.privs.User, p.privs.Host)
-	rs, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	rows, fs, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer rs.Close()
 	ps := make(map[string]*privileges)
-	fs, err := rs.Fields()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	for {
-		row, err := rs.Next()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if row == nil {
-			break
-		}
+	for _, row := range rows {
 		// DB
 		dbStr := row.Data[1].GetString()
 		ps[dbStr] = &privileges{Level: ast.GrantLevelDB}
@@ -406,20 +383,12 @@ func (p *UserPrivileges) loadDBScopePrivileges(ctx context.Context) error {
 func (p *UserPrivileges) loadTableScopePrivileges(ctx context.Context) error {
 	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User="%s" AND (Host="%s" OR Host="%%");`,
 		mysql.SystemDB, mysql.TablePrivTable, p.privs.User, p.privs.Host)
-	rs, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer rs.Close()
 	ps := make(map[string]map[string]*privileges)
-	for {
-		row, err := rs.Next()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if row == nil {
-			break
-		}
+	for _, row := range rows {
 		// DB
 		dbStr := row.Data[1].GetString()
 		// Table_name

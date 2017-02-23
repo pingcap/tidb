@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"bytes"
+	goctx "context"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tipb/go-tipb"
-	"golang.org/x/net/context"
 )
 
 // CopClient is coprocessor client.
@@ -73,10 +73,10 @@ func supportExpr(exprType tipb.ExprType) bool {
 }
 
 // Send builds the request and gets the coprocessor iterator response.
-func (c *CopClient) Send(req *kv.Request) kv.Response {
+func (c *CopClient) Send(ctx goctx.Context, req *kv.Request) kv.Response {
 	coprocessorCounter.WithLabelValues("send").Inc()
 
-	bo := NewBackoffer(copBuildTaskMaxBackoff, context.Background())
+	bo := NewBackoffer(copBuildTaskMaxBackoff, ctx)
 	tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req.Desc)
 	if err != nil {
 		return copErrorResponse{err}
@@ -101,7 +101,7 @@ func (c *CopClient) Send(req *kv.Request) kv.Response {
 	if len(it.mu.tasks) == 0 {
 		it.Close()
 	}
-	it.run()
+	it.run(ctx)
 	return it
 }
 
@@ -310,7 +310,7 @@ type copIterator struct {
 const minLogCopTaskTime = 50 * time.Millisecond
 
 // Pick the next new copTask and send request to tikv-server.
-func (it *copIterator) work() {
+func (it *copIterator) work(ctx goctx.Context) {
 	for {
 		it.mu.Lock()
 		if it.mu.finished {
@@ -331,7 +331,7 @@ func (it *copIterator) work() {
 		}
 		task.status = taskRunning
 		it.mu.Unlock()
-		bo := NewBackoffer(copNextMaxBackoff, context.Background())
+		bo := NewBackoffer(copNextMaxBackoff, ctx)
 		startTime := time.Now()
 		resp, err := it.handleTask(bo, task)
 		costTime := time.Since(startTime)
@@ -346,18 +346,24 @@ func (it *copIterator) work() {
 			it.errChan <- err
 			break
 		}
+		var ch chan *coprocessor.Response
 		if !it.req.KeepOrder {
-			it.respChan <- resp
+			ch = it.respChan
 		} else {
-			task.respChan <- resp
+			ch = task.respChan
+		}
+		select {
+		case ch <- resp:
+		case <-ctx.Done():
+			return
 		}
 	}
 }
 
-func (it *copIterator) run() {
+func (it *copIterator) run(ctx goctx.Context) {
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
-		go it.work()
+		go it.work(ctx)
 	}
 }
 

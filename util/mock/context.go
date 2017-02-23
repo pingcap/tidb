@@ -124,6 +124,30 @@ func (c *Context) ActivePendingTxn() error {
 	return nil
 }
 
+// InitTxnWithStartTS implements the context.Context interface with startTS.
+func (c *Context) InitTxnWithStartTS(startTS uint64) error {
+	if c.txn != nil {
+		return nil
+	}
+	if c.Store != nil {
+		txn, err := c.Store.BeginWithStartTS(startTS)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		c.txn = txn
+	}
+	return nil
+}
+
+// Cancel implements the Session interface.
+func (c *Context) Cancel() {
+}
+
+// Done implements the context.Context interface.
+func (c *Context) Done() <-chan struct{} {
+	return nil
+}
+
 // NewContext creates a new mocked context.Context.
 func NewContext() *Context {
 	return &Context{

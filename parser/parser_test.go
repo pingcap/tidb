@@ -52,7 +52,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"localtime", "localtimestamp", "lock", "longblob", "longtext", "mediumblob", "maxvalue", "mediumint", "mediumtext",
 		"minute_microsecond", "minute_second", "mod", "not", "no_write_to_binlog", "null", "numeric",
 		"on", "option", "or", "order", "outer", "partition", "precision", "primary", "procedure", "range", "read", "real",
-		"references", "regexp", "rename", "repeat", "replace", "restrict", "right", "rlike",
+		"references", "regexp", "rename", "repeat", "replace", "revoke", "restrict", "right", "rlike",
 		"schema", "schemas", "second_microsecond", "select", "set", "show", "smallint",
 		"starting", "table", "terminated", "then", "tinyblob", "tinyint", "tinytext", "to",
 		"trailing", "true", "union", "unique", "unlock", "unsigned",
@@ -552,6 +552,13 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT CURRENT_USER;", true},
 		{"SELECT CONNECTION_ID();", true},
 		{"SELECT VERSION();", true},
+		{"SELECT BENCHMARK(1000000, AES_ENCRYPT('text',UNHEX('F3229A0B371ED2D9441B830D21A390C3')));", true},
+		{"SELECT CHARSET('abc');", true},
+		{"SELECT COERCIBILITY('abc');", true},
+		{"SELECT COLLATION('abc');", true},
+		{"SELECT ROW_COUNT();", true},
+		{"SELECT SESSION_USER();", true},
+		{"SELECT SYSTEM_USER();", true},
 
 		{"SELECT SUBSTRING_INDEX('www.mysql.com', '.', 2);", true},
 		{"SELECT SUBSTRING_INDEX('www.mysql.com', '.', -2);", true},
@@ -757,8 +764,24 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		// repeat
 		{`SELECT REPEAT("a", 10);`, true},
 
-		// sleep
+		// for miscellaneous functions
 		{`SELECT SLEEP(10);`, true},
+		{`SELECT ANY_VALUE(@arg);`, true},
+		{`SELECT INET_ATON('10.0.5.9');`, true},
+		{`SELECT INET_NTOA(167773449);`, true},
+		{`SELECT INET6_ATON('fdfe::5a55:caff:fefa:9089');`, true},
+		{`SELECT INET6_NTOA(INET_NTOA(167773449));`, true},
+		{`SELECT IS_FREE_LOCK(@str);`, true},
+		{`SELECT IS_IPV4('10.0.5.9');`, true},
+		{`SELECT IS_IPV4_COMPAT(INET6_ATON('::10.0.5.9'));`, true},
+		{`SELECT IS_IPV4_MAPPED(INET6_ATON('::10.0.5.9'));`, true},
+		{`SELECT IS_IPV6('10.0.5.9');`, true},
+		{`SELECT IS_USED_LOCK(@str);`, true},
+		{`SELECT MASTER_POS_WAIT(@log_name, @log_pos), MASTER_POS_WAIT(@log_name, @log_pos, @timeout), MASTER_POS_WAIT(@log_name, @log_pos, @timeout, @channel_name);`, true},
+		{`SELECT NAME_CONST('myname', 14);`, true},
+		{`SELECT RELEASE_ALL_LOCKS();`, true},
+		{`SELECT UUID();`, true},
+		{`SELECT UUID_SHORT()`, true},
 
 		// for date_add
 		{`select date_add("2011-11-11 10:10:10.123456", interval 10 microsecond)`, true},
@@ -899,6 +922,31 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select AES_ENCRYPT('text',UNHEX('F3229A0B371ED2D9441B830D21A390C3'))`, true},
 		{`select AES_DECRYPT(@crypt_str,@key_str)`, true},
 		{`select AES_DECRYPT(@crypt_str,@key_str,@init_vector);`, true},
+		{`SELECT ASYMMETRIC_DECRYPT(0, 0, 0);`, true},
+		{`SELECT ASYMMETRIC_DERIVE(@pub2, @priv1);`, true},
+		{`SELECT ASYMMETRIC_ENCRYPT('RSA', 'The quick brown fox', @priv);`, true},
+		{`SELECT ASYMMETRIC_SIGN(@algorithm, @digest_str, @priv_key_str, @digest_type);`, true},
+		{`SELECT ASYMMETRIC_VERIFY(@algorithm, @digest_str, @sig_str, @pub_key_str, @digest_type);`, true},
+		{`SELECT COMPRESS('');`, true},
+		{`SELECT CREATE_ASYMMETRIC_PRIV_KEY('DSA', 2048);`, true},
+		{`SELECT CREATE_ASYMMETRIC_PUB_KEY(@algorithm, @priv_key_str);`, true},
+		{`SELECT CREATE_DH_PARAMETERS(1024);`, true},
+		{`SELECT CREATE_DIGEST('SHA512', 'The quick brown fox');`, true},
+		{`SELECT DECODE(@crypt_str, @pass_str);`, true},
+		{`SELECT DES_DECRYPT(@crypt_str), DES_DECRYPT(@crypt_str, @key_str);`, true},
+		{`SELECT DES_ENCRYPT(@str), DES_ENCRYPT(@key_num);`, true},
+		{`SELECT ENCODE('cleartext', CONCAT('my_random_salt','my_secret_password'));`, true},
+		{`SELECT ENCRYPT('hello'), ENCRYPT('hello', @salt);`, true},
+		{`SELECT MD5('testing');`, true},
+		{`SELECT OLD_PASSWORD(@str);`, true},
+		{`SELECT PASSWORD(@str);`, true},
+		{`SELECT RANDOM_BYTES(@len);`, true},
+		{`SELECT SHA1('abc');`, true},
+		{`SELECT SHA('abc');`, true},
+		{`SELECT SHA2('abc', 224);`, true},
+		{`SELECT UNCOMPRESS('any string');`, true},
+		{`SELECT UNCOMPRESSED_LENGTH(@compressed_string);`, true},
+		{`SELECT VALIDATE_PASSWORD_STRENGTH(@str);`, true},
 	}
 	s.RunTest(c, table)
 }
@@ -1104,15 +1152,17 @@ func (s *testParserSuite) TestDDL(c *C) {
 		union_name varbinary(52) NOT NULL,
 		union_id int(11) DEFAULT '0',
 		PRIMARY KEY (union_name)) ENGINE=MyISAM DEFAULT CHARSET=binary;`, true},
-		// create table with multiple index options
+		// Create table with multiple index options.
 		{`create table t (c int, index ci (c) USING BTREE COMMENT "123");`, true},
 		// for default value
 		{"CREATE TABLE sbtest (id INTEGER UNSIGNED NOT NULL AUTO_INCREMENT, k integer UNSIGNED DEFAULT '0' NOT NULL, c char(120) DEFAULT '' NOT NULL, pad char(60) DEFAULT '' NOT NULL, PRIMARY KEY  (id) )", true},
 		{"create table test (create_date TIMESTAMP NOT NULL COMMENT '创建日期 create date' DEFAULT now());", true},
 		{"create table ts (t int, v timestamp(3) default CURRENT_TIMESTAMP(3));", true},
-
 		// Create table with primary key name.
 		{"create table if not exists `t` (`id` int not null auto_increment comment '消息ID', primary key `pk_id` (`id`) );", true},
+		// Create table with like.
+		{"create table a like b", true},
+		{"create table if not exists a like b", true},
 
 		// for alter table
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED", true},
@@ -1211,6 +1261,18 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 		{"GRANT SELECT, INSERT ON mydb.mytbl TO 'someuser'@'somehost';", true},
 		{"GRANT SELECT (col1), INSERT (col1,col2) ON mydb.mytbl TO 'someuser'@'somehost';", true},
 		{"grant all privileges on zabbix.* to 'zabbix'@'localhost' identified by 'password';", true},
+
+		// for revoke statement
+		{"REVOKE ALL ON db1.* FROM 'jeffrey'@'localhost';", true},
+		{"REVOKE SELECT ON db2.invoice FROM 'jeffrey'@'localhost';", true},
+		{"REVOKE ALL ON *.* FROM 'someuser'@'somehost';", true},
+		{"REVOKE SELECT, INSERT ON *.* FROM 'someuser'@'somehost';", true},
+		{"REVOKE ALL ON mydb.* FROM 'someuser'@'somehost';", true},
+		{"REVOKE SELECT, INSERT ON mydb.* FROM 'someuser'@'somehost';", true},
+		{"REVOKE ALL ON mydb.mytbl FROM 'someuser'@'somehost';", true},
+		{"REVOKE SELECT, INSERT ON mydb.mytbl FROM 'someuser'@'somehost';", true},
+		{"REVOKE SELECT (col1), INSERT (col1,col2) ON mydb.mytbl FROM 'someuser'@'somehost';", true},
+		{"REVOKE all privileges on zabbix.* FROM 'zabbix'@'localhost' identified by 'password';", true},
 	}
 	s.RunTest(c, table)
 }

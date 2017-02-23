@@ -14,6 +14,7 @@
 package kv
 
 import (
+	goctx "context"
 	"io"
 )
 
@@ -114,7 +115,7 @@ type Transaction interface {
 // Client is used to send request to KV layer.
 type Client interface {
 	// Send sends request to KV layer, returns a Response.
-	Send(req *Request) Response
+	Send(ctx goctx.Context, req *Request) Response
 
 	// SupportRequestType checks if reqType and subType is supported.
 	SupportRequestType(reqType, subType int64) bool
@@ -176,6 +177,8 @@ type Driver interface {
 type Storage interface {
 	// Begin transaction
 	Begin() (Transaction, error)
+	// BeginWithStartTS begins transaction with startTS.
+	BeginWithStartTS(startTS uint64) (Transaction, error)
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
 	GetSnapshot(ver Version) (Snapshot, error)
