@@ -510,6 +510,48 @@ type Builder struct {
 	PkOffset      int                        // PkOffset is the offset of primary key of integer type in the table.
 }
 
+func (b *Builder) buildMultiColumns(t *Table, offsets []int, baseOffset int, isSorted bool, done chan error) {
+	for i, offset := range offsets {
+		var err error
+		if isSorted {
+			err = t.build4SortedColumn(b.Sc, offset, b.IdxRecords[i+baseOffset], b.NumBuckets, false)
+		} else {
+			err = t.buildColumn(b.Sc, offset, b.ColumnSamples[i+baseOffset], b.NumBuckets)
+		}
+		if err != nil {
+			done <- err
+			return
+		}
+	}
+	done <- nil
+}
+
+const buildColumnConcurrency = 8
+
+func (b *Builder) splitAndConcurrentBuild(t *Table, offsets []int, isSorted bool) error {
+	offsetCnt := len(offsets)
+	groupSize := (offsetCnt + buildColumnConcurrency - 1) / buildColumnConcurrency
+	splittedOffsets := make([][]int, 0, buildColumnConcurrency)
+	for i := 0; i < offsetCnt; i += groupSize {
+		end := i + groupSize
+		if end > offsetCnt {
+			end = offsetCnt
+		}
+		splittedOffsets = append(splittedOffsets, offsets[i:end])
+	}
+	doneCh := make(chan error, len(splittedOffsets))
+	for i, offsets := range splittedOffsets {
+		go b.buildMultiColumns(t, offsets, i*groupSize, isSorted, doneCh)
+	}
+	for range splittedOffsets {
+		err := <-doneCh
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
 // NewTable creates a table statistics.
 func (b *Builder) NewTable() (*Table, error) {
 	if b.Count == 0 {
@@ -522,11 +564,9 @@ func (b *Builder) NewTable() (*Table, error) {
 		Columns: make([]*Column, len(b.TblInfo.Columns)),
 		Indices: make([]*Column, len(b.TblInfo.Indices)),
 	}
-	for i, offset := range b.ColOffsets {
-		err := t.buildColumn(b.Sc, offset, b.ColumnSamples[i], b.NumBuckets)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+	err := b.splitAndConcurrentBuild(t, b.ColOffsets, false)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	if b.PkOffset != -1 {
 		err := t.build4SortedColumn(b.Sc, b.PkOffset, b.PkRecords, b.NumBuckets, true)
@@ -534,11 +574,11 @@ func (b *Builder) NewTable() (*Table, error) {
 			return nil, errors.Trace(err)
 		}
 	}
-	for i, offset := range b.IdxOffsets {
-		err := t.build4SortedColumn(b.Sc, offset, b.IdxRecords[i], b.NumBuckets, false)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+	err = b.splitAndConcurrentBuild(t, b.IdxOffsets, true)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for _, offset := range b.IdxOffsets {
 		if len(b.TblInfo.Indices[offset].Columns) == 1 {
 			for j, col := range b.TblInfo.Columns {
 				if col.Name.L == b.TblInfo.Indices[offset].Columns[0].Name.L && t.Columns[j] == nil {
