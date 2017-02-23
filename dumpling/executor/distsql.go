@@ -746,6 +746,10 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 		TableId: e.table.Meta().ID,
 	}
 	selTableReq.TableInfo.Columns = distsql.ColumnsToProto(e.indexPlan.Columns, e.table.Meta().PKIsHandle)
+	err := setPBColumnsDefaultValue(e.ctx, selTableReq.TableInfo.Columns, e.indexPlan.Columns)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	selTableReq.Where = e.where
 	// Aggregate Info
 	selTableReq.Aggregates = e.aggFuncs
@@ -814,7 +818,6 @@ func (e *XSelectTableExec) Schema() *expression.Schema {
 
 // doRequest sends a *tipb.SelectRequest via kv.Client and gets the distsql.SelectResult.
 func (e *XSelectTableExec) doRequest() error {
-	var err error
 	selReq := new(tipb.SelectRequest)
 	selReq.StartTs = e.startTS
 	selReq.TimeZoneOffset = timeZoneOffset()
@@ -822,7 +825,11 @@ func (e *XSelectTableExec) doRequest() error {
 	selReq.Where = e.where
 	selReq.TableInfo = &tipb.TableInfo{
 		TableId: e.tableInfo.ID,
-		Columns: distsql.ColumnsToProto(e.Columns, e.tableInfo.PKIsHandle),
+	}
+	selReq.TableInfo.Columns = distsql.ColumnsToProto(e.Columns, e.tableInfo.PKIsHandle)
+	err := setPBColumnsDefaultValue(e.ctx, selReq.TableInfo.Columns, e.Columns)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	if len(e.orderByList) > 0 {
 		selReq.OrderBy = e.orderByList
@@ -931,4 +938,25 @@ func statementContextToFlags(sc *variable.StatementContext) uint64 {
 		flags |= xeval.FlagTruncateAsWarning
 	}
 	return flags
+}
+
+func setPBColumnsDefaultValue(ctx context.Context, pbColumns []*tipb.ColumnInfo, columns []*model.ColumnInfo) error {
+	for i, c := range columns {
+		if c.State == model.StatePublic {
+			continue
+		}
+		sessVars := ctx.GetSessionVars()
+		originStrict := sessVars.StrictSQLMode
+		sessVars.StrictSQLMode = false
+		d, err := table.GetColDefaultValue(ctx, c)
+		sessVars.StrictSQLMode = originStrict
+		if err != nil {
+			return errors.Trace(err)
+		}
+		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(d)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
