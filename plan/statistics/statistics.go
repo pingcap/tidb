@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync/atomic"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
@@ -395,12 +396,13 @@ func (t *Table) build4SortedColumn(sc *variable.StatementContext, offset int, re
 	}
 	var valuesPerBucket, lastNumber, bucketIdx int64 = 1, 0, 0
 	knowCount := true
-	if t.Count < 0 {
-		t.Count = 0
+	count := atomic.LoadInt64(&t.Count)
+	if count < 0 {
+		count = 0
 		knowCount = false
 	}
 	if knowCount {
-		valuesPerBucket = t.Count/bucketCount + 1
+		valuesPerBucket = count/bucketCount + 1
 	}
 	for {
 		row, err := records.Next()
@@ -425,7 +427,7 @@ func (t *Table) build4SortedColumn(sc *variable.StatementContext, offset int, re
 			return errors.Trace(err)
 		}
 		if !knowCount {
-			t.Count++
+			count++
 		}
 		if cmp == 0 {
 			// The new item has the same value as current bucket value, to ensure that
@@ -465,6 +467,9 @@ func (t *Table) build4SortedColumn(sc *variable.StatementContext, offset int, re
 			}
 			col.NDV++
 		}
+	}
+	if !knowCount {
+		atomic.StoreInt64(&t.Count, count)
 	}
 	if isPK {
 		t.Columns[offset] = col
