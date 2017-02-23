@@ -527,13 +527,11 @@ func (b *planBuilder) buildSimple(node ast.StmtNode) Plan {
 }
 
 func (b *planBuilder) getDefaultValue(col *table.Column) (*expression.Constant, error) {
-	if value, ok, err := table.GetColDefaultValue(b.ctx, col.ToInfo()); ok {
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return &expression.Constant{Value: value, RetType: &col.FieldType}, nil
+	value, err := table.GetColDefaultValue(b.ctx, col.ToInfo())
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	return &expression.Constant{RetType: &col.FieldType}, nil
+	return &expression.Constant{Value: value, RetType: &col.FieldType}, nil
 }
 
 func (b *planBuilder) findDefaultValue(cols []*table.Column, name *ast.ColumnName) (*expression.Constant, error) {
