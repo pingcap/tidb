@@ -894,6 +894,55 @@ func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
 	tk.MustQuery("select * from t1").Check(testkit.Rows("8 1 9", "8 2 9"))
 }
 
+func (s *testDBSuite) TestCreateTableWithLike(c *C) {
+	defer testleak.AfterTest(c)
+	store, err := tidb.NewStore("memory://create_table_like")
+	c.Assert(err, IsNil)
+	s.tk = testkit.NewTestKit(c, store)
+	_, err = tidb.BootstrapSession(store)
+	c.Assert(err, IsNil)
+
+	// for the same database
+	s.tk.MustExec("use test")
+	s.tk.MustExec("create table tt(id int primary key)")
+	s.tk.MustExec("create table t (c1 int not null auto_increment, c2 int, constraint cc foreign key (c2) references tt(id), primary key(c1)) auto_increment = 10")
+	s.tk.MustExec("insert into t set c2=1")
+	s.tk.MustExec("create table t1 like test.t")
+	s.tk.MustExec("insert into t1 set c2=11")
+	s.tk.MustQuery("select * from t").Check(testkit.Rows("10 1"))
+	s.tk.MustQuery("select * from t1").Check(testkit.Rows("1 11"))
+	ctx := s.tk.Se.(context.Context)
+	is := sessionctx.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	c.Assert(tblInfo.ForeignKeys, IsNil)
+	c.Assert(tblInfo.PKIsHandle, Equals, true)
+	col := tblInfo.Columns[0]
+	hasNotNull := tmysql.HasNotNullFlag(col.Flag)
+	c.Assert(hasNotNull, IsTrue)
+	// for different databases
+	s.tk.MustExec("create database test1")
+	s.tk.MustExec("use test1")
+	s.tk.MustExec("create table t1 like test.t")
+	s.tk.MustExec("insert into t1 set c2=11")
+	s.tk.MustQuery("select * from t1").Check(testkit.Rows("1 11"))
+	is = sessionctx.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().ForeignKeys, IsNil)
+
+	// for failure cases
+	failSQL := fmt.Sprintf("create table t1 like test_not_exist.t")
+	s.testErrorCode(c, failSQL, tmysql.ErrNoSuchTable)
+	failSQL = fmt.Sprintf("create table t1 like test.t_not_exist")
+	s.testErrorCode(c, failSQL, tmysql.ErrNoSuchTable)
+	failSQL = fmt.Sprintf("create table test_not_exis.t1 like test.t")
+	s.testErrorCode(c, failSQL, tmysql.ErrBadDB)
+	failSQL = fmt.Sprintf("create table t1 like test.t")
+	s.testErrorCode(c, failSQL, tmysql.ErrTableExists)
+}
+
 func (s *testDBSuite) TestTruncateTable(c *C) {
 	defer testleak.AfterTest(c)
 	store, err := tidb.NewStore("memory://truncate_table")

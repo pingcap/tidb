@@ -14,6 +14,7 @@
 package executor
 
 import (
+	goctx "context"
 	"fmt"
 	"math"
 	"sort"
@@ -411,7 +412,7 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 			// The returned rows should be aggregate partial result.
 			e.result.SetFields(e.aggFields)
 		}
-		e.result.Fetch()
+		e.result.Fetch(context.CtxForCancel{e.ctx})
 	}
 	for {
 		// Get partial result.
@@ -479,7 +480,7 @@ func (e *XSelectIndexExec) nextForDoubleRead() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		idxResult.IgnoreData()
-		idxResult.Fetch()
+		idxResult.Fetch(context.CtxForCancel{e.ctx})
 
 		// Use a background goroutine to fetch index and put the result in e.taskChan.
 		// e.taskChan serves as a pipeline, so fetching index and getting table data can
@@ -558,6 +559,8 @@ func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<
 			}
 
 			select {
+			case <-e.ctx.Done():
+				return
 			case workCh <- task:
 			default:
 				addWorker(e, workCh, &concurrency)
@@ -617,7 +620,7 @@ func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return distsql.Select(e.ctx.GetClient(), selIdxReq, keyRanges, e.scanConcurrency, !e.indexPlan.OutOfOrder)
+	return distsql.Select(e.ctx.GetClient(), goctx.Background(), selIdxReq, keyRanges, e.scanConcurrency, !e.indexPlan.OutOfOrder)
 }
 
 func (e *XSelectIndexExec) buildTableTasks(handles []int64) []*lookupTableTask {
@@ -753,7 +756,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 	selTableReq.GroupBy = e.byItems
 	keyRanges := tableHandlesToKVRanges(e.table.Meta().ID, handles)
 
-	resp, err := distsql.Select(e.ctx.GetClient(), selTableReq, keyRanges, e.scanConcurrency, false)
+	resp, err := distsql.Select(e.ctx.GetClient(), goctx.Background(), selTableReq, keyRanges, e.scanConcurrency, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -761,7 +764,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 		// The returned rows should be aggregate partial result.
 		resp.SetFields(e.aggFields)
 	}
-	resp.Fetch()
+	resp.Fetch(context.CtxForCancel{e.ctx})
 	return resp, nil
 }
 
@@ -839,7 +842,7 @@ func (e *XSelectTableExec) doRequest() error {
 	selReq.GroupBy = e.byItems
 
 	kvRanges := tableRangesToKVRanges(e.table.Meta().ID, e.ranges)
-	e.result, err = distsql.Select(e.ctx.GetClient(), selReq, kvRanges, e.scanConcurrency, e.keepOrder)
+	e.result, err = distsql.Select(e.ctx.GetClient(), goctx.Background(), selReq, kvRanges, e.scanConcurrency, e.keepOrder)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -848,7 +851,7 @@ func (e *XSelectTableExec) doRequest() error {
 		// The returned rows should be aggregate partial result.
 		e.result.SetFields(e.aggFields)
 	}
-	e.result.Fetch()
+	e.result.Fetch(context.CtxForCancel{e.ctx})
 	return nil
 }
 

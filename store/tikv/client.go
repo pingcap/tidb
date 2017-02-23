@@ -15,6 +15,7 @@
 package tikv
 
 import (
+	goctx "context"
 	"sync/atomic"
 	"time"
 
@@ -32,9 +33,9 @@ type Client interface {
 	// Close should release all data.
 	Close() error
 	// SendKVReq sends kv request.
-	SendKVReq(addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error)
+	SendKVReq(ctx goctx.Context, addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error)
 	// SendCopReq sends coprocessor request.
-	SendCopReq(addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error)
+	SendCopReq(ctx goctx.Context, addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error)
 }
 
 const (
@@ -61,7 +62,7 @@ func newRPCClient() *rpcClient {
 }
 
 // SendCopReq sends a Request to co-processor and receives Response.
-func (c *rpcClient) SendCopReq(addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
+func (c *rpcClient) SendCopReq(ctx goctx.Context, addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
 	start := time.Now()
 	defer func() { sendReqHistogram.WithLabelValues("cop").Observe(time.Since(start).Seconds()) }()
 
@@ -87,7 +88,7 @@ func (c *rpcClient) SendCopReq(addr string, req *coprocessor.Request, timeout ti
 }
 
 // SendKVReq sends a Request to kv server and receives Response.
-func (c *rpcClient) SendKVReq(addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error) {
+func (c *rpcClient) SendKVReq(ctx goctx.Context, addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error) {
 	start := time.Now()
 	defer func() { sendReqHistogram.WithLabelValues("kv").Observe(time.Since(start).Seconds()) }()
 

@@ -23,8 +23,8 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/sqlexec"
 	goctx "golang.org/x/net/context"
@@ -48,6 +48,9 @@ func NewGCWorker(store kv.Storage) (*GCWorker, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	// Disable privilege check for gc worker session.
+	privilege.BindPrivilegeChecker(session, nil)
+
 	ver, err := store.CurrentVersion()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -491,13 +494,11 @@ func (w *GCWorker) loadDurationWithDefault(key string, def time.Duration) (*time
 
 func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 	stmt := fmt.Sprintf(`SELECT (variable_value) FROM mysql.tidb WHERE variable_name='%s' FOR UPDATE`, key)
-	restrictExecutor := w.session.(sqlexec.RestrictedSQLExecutor)
-	ctx := w.session.(context.Context)
-	rs, err := restrictExecutor.ExecRestrictedSQL(ctx, stmt)
+	rs, err := w.session.(sqlexec.SQLExecutor).Execute(stmt)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	row, err := rs.Next()
+	row, err := rs[0].Next()
 	if err != nil {
 		return "", errors.Trace(err)
 	}
@@ -515,9 +516,7 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[2]s', comment = '%[3]s'`,
 		key, value, gcVariableComments[key])
-	restrictExecutor := w.session.(sqlexec.RestrictedSQLExecutor)
-	ctx := w.session.(context.Context)
-	_, err := restrictExecutor.ExecRestrictedSQL(ctx, stmt)
+	_, err := w.session.(sqlexec.SQLExecutor).Execute(stmt)
 	log.Debugf("[gc worker] save kv, %s:%s %v", key, value, err)
 	return errors.Trace(err)
 }

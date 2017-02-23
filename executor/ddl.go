@@ -146,7 +146,13 @@ func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 
 func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
-	err := sessionctx.GetDomain(e.ctx).DDL().CreateTable(e.ctx, ident, s.Cols, s.Constraints, s.Options)
+	var err error
+	if s.ReferTable == nil {
+		err = sessionctx.GetDomain(e.ctx).DDL().CreateTable(e.ctx, ident, s.Cols, s.Constraints, s.Options)
+	} else {
+		referIdent := ast.Ident{Schema: s.ReferTable.Schema, Name: s.ReferTable.Name}
+		err = sessionctx.GetDomain(e.ctx).DDL().CreateTableWithLike(e.ctx, ident, referIdent)
+	}
 	if terror.ErrorEqual(err, infoschema.ErrTableExists) {
 		if s.IfNotExists {
 			return nil

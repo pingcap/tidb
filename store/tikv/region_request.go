@@ -143,7 +143,7 @@ func (s *RegionRequestSender) SendCopReq(req *coprocessor.Request, regionID Regi
 
 func (s *RegionRequestSender) sendKVReqToRegion(ctx *RPCContext, req *kvrpcpb.Request, timeout time.Duration) (resp *kvrpcpb.Response, retry bool, err error) {
 	req.Context = ctx.KVCtx
-	resp, err = s.client.SendKVReq(ctx.Addr, req, timeout)
+	resp, err = s.client.SendKVReq(ctx.Context, ctx.Addr, req, timeout)
 	if err != nil {
 		if e := s.onSendFail(ctx, err); e != nil {
 			return nil, false, errors.Trace(e)
@@ -155,7 +155,7 @@ func (s *RegionRequestSender) sendKVReqToRegion(ctx *RPCContext, req *kvrpcpb.Re
 
 func (s *RegionRequestSender) sendCopReqToRegion(ctx *RPCContext, req *coprocessor.Request, timeout time.Duration) (resp *coprocessor.Response, retry bool, err error) {
 	req.Context = ctx.KVCtx
-	resp, err = s.client.SendCopReq(ctx.Addr, req, timeout)
+	resp, err = s.client.SendCopReq(ctx.Context, ctx.Addr, req, timeout)
 	if err != nil {
 		if e := s.onSendFail(ctx, err); e != nil {
 			return nil, false, errors.Trace(err)

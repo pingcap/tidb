@@ -14,6 +14,8 @@
 package executor_test
 
 import (
+	"strings"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testkit"
@@ -109,6 +111,7 @@ func (s *testSuite) TestShow(c *C) {
 	tk.MustQuery("SHOW TRIGGERS WHERE Trigger ='test'").Check(testkit.Rows())
 	tk.MustQuery("SHOW processlist;").Check(testkit.Rows())
 	tk.MustQuery("SHOW EVENTS WHERE Db = 'test'").Check(testkit.Rows())
+
 	// Test show create database
 	testSQL = `create database show_test_DB`
 	tk.MustExec(testSQL)
@@ -152,14 +155,39 @@ func (s *testSuite) TestForeignKeyInShowCreateTable(c *C) {
 	testSQL = `CREATE TABLE t1 (id int PRIMARY KEY AUTO_INCREMENT)`
 	tk.MustExec(testSQL)
 
-	testSQL = "create table show_test (`id` int PRIMARY KEY AUTO_INCREMENT, FOREIGN KEY `Fk` (`id`) REFERENCES `t1` (`a`) ON DELETE CASCADE ON UPDATE CASCADE) ENGINE=InnoDB"
+	// For table with single fk.
+	sqlLines := []string{
+		"CREATE TABLE `show_test` (",
+		"  `id` int(11) NOT NULL AUTO_INCREMENT,",
+		" PRIMARY KEY (`id`),",
+		"  CONSTRAINT `Fk` FOREIGN KEY (`id`) REFERENCES `t1` (`id`) ON DELETE CASCADE ON UPDATE CASCADE",
+		") ENGINE=InnoDB",
+	}
+	testSQL = strings.Join(sqlLines, "\n")
 	tk.MustExec(testSQL)
-	testSQL = "show create table show_test;"
-	result := tk.MustQuery(testSQL)
+	result := tk.MustQuery("show create table show_test;")
 	c.Check(result.Rows(), HasLen, 1)
 	row := result.Rows()[0]
-	expectedRow := []interface{}{
-		"show_test", "CREATE TABLE `show_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n PRIMARY KEY (`id`),\n  CONSTRAINT `Fk` FOREIGN KEY (`id`) REFERENCES `t1` (`id`) ON DELETE CASCADE ON UPDATE CASCADE\n) ENGINE=InnoDB"}
+	expectedRow := []interface{}{"show_test", testSQL}
+	for i, r := range row {
+		c.Check(r, Equals, expectedRow[i])
+	}
+
+	// For table with multiple fk.
+	sqlLines = []string{
+		"CREATE TABLE `pilot_languages` (",
+		"  `pilot_id` int(11) NOT NULL,",
+		"  `language_id` int(11) NOT NULL,",
+		"  CONSTRAINT `pilot_language_fkey` FOREIGN KEY (`pilot_id`) REFERENCES `pilots` (`pilot_id`),",
+		"  CONSTRAINT `languages_fkey` FOREIGN KEY (`language_id`) REFERENCES `languages` (`language_id`)",
+		") ENGINE=InnoDB",
+	}
+	testSQL = strings.Join(sqlLines, "\n")
+	tk.MustExec(testSQL)
+	result = tk.MustQuery("show create table pilot_languages;")
+	c.Check(result.Rows(), HasLen, 1)
+	row = result.Rows()[0]
+	expectedRow = []interface{}{"pilot_languages", testSQL}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}

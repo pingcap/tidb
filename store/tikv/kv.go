@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	goctx "context"
 	"fmt"
 	"math/rand"
 	"net/url"
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
-	"golang.org/x/net/context"
 )
 
 type storeCache struct {
@@ -181,7 +181,7 @@ func (s *tikvStore) UUID() string {
 }
 
 func (s *tikvStore) CurrentVersion() (kv.Version, error) {
-	bo := NewBackoffer(tsoMaxBackoff, context.Background())
+	bo := NewBackoffer(tsoMaxBackoff, goctx.Background())
 	startTS, err := s.getTimestampWithRetry(bo)
 	if err != nil {
 		return kv.NewVersion(0), errors.Trace(err)
