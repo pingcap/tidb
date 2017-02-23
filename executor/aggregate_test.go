@@ -407,7 +407,7 @@ func (s *testSuite) TestAggPushDown(c *C) {
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t, tt")
 	tk.MustExec("create table t(a int primary key, b int, c int)")
 	tk.MustExec("create table tt(a int primary key, b int, c int)")
 	tk.MustExec("insert into t values(1, 1, 1), (2, 1, 1)")
