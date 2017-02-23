@@ -50,7 +50,7 @@ func (a *Apply) extractCorColumnsBySchema() {
 	a.corCols = resultCorCols[:length]
 }
 
-// canPullUpAgg check if an apply can pull an aggregation up.
+// canPullUpAgg checks if an apply can pull an aggregation up.
 func (a *Apply) canPullUpAgg() bool {
 	if a.JoinType != InnerJoin && a.JoinType != LeftOuterJoin {
 		return false
@@ -61,7 +61,7 @@ func (a *Apply) canPullUpAgg() bool {
 	return len(a.children[0].Schema().Keys) > 0
 }
 
-// canPullUp check if an aggregation can be pulled up. An aggregate function like count(*) cannot be pulled up.
+// canPullUp checks if an aggregation can be pulled up. An aggregate function like count(*) cannot be pulled up.
 func (a *Aggregation) canPullUp() bool {
 	if len(a.GroupByItems) > 0 {
 		return false
