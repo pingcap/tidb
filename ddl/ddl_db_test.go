@@ -753,20 +753,18 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	s.tk.MustQuery("select b from t3").Check(testkit.Rows(rowStr, rowStr1, rowStr2))
 	// for timestamp
 	s.mustExec(c, "alter table t3 add column c timestamp not null")
-	s.mustExec(c, "alter table t3 change c c timestamp default '2017-02-11' comment 'col c comment' on update current_timestamp")
+	s.mustExec(c, "alter table t3 change c c timestamp not null default '2017-02-11' comment 'col c comment' on update current_timestamp")
 	is = sessionctx.GetDomain(ctx).InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("t3"))
 	c.Assert(err, IsNil)
 	tblInfo = tbl.Meta()
 	colC := tblInfo.Columns[2]
 	c.Assert(colC.Comment, Equals, "col c comment")
+	hasNotNull = tmysql.HasNotNullFlag(colC.Flag)
+	c.Assert(hasNotNull, IsTrue)
 
 	// for failing tests
-	sql := "alter table t3 change c c timestamp not null"
-	s.testErrorCode(c, sql, tmysql.ErrInvalidUseOfNull)
-	sql = "alter table t3 change c c timestamp not null null"
-	s.testErrorCode(c, sql, tmysql.ErrInvalidUseOfNull)
-	sql = "alter table t3 change aa a bigint default ''"
+	sql := "alter table t3 change aa a bigint default ''"
 	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
 	sql = "alter table t3 change a testx.t3.aa bigint"
 	s.testErrorCode(c, sql, tmysql.ErrWrongDBName)
@@ -1052,4 +1050,29 @@ func (s *testDBSuite) testRenameTable(c *C, storeStr, sql string) {
 	s.testErrorCode(c, failSQL, tmysql.ErrErrorOnRename)
 	failSQL = fmt.Sprintf(sql, "test1.t2", "test1.t2")
 	s.testErrorCode(c, failSQL, tmysql.ErrTableExists)
+}
+
+func (s *testDBSuite) TestAddNotNullColumn(c *C) {
+	defer testleak.AfterTest(c)
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test_db")
+	// for different databases
+	s.tk.MustExec("create table tnn (c1 int primary key auto_increment, c2 int)")
+	s.tk.MustExec("insert tnn (c2) values (0)" + strings.Repeat(",(0)", 99))
+	done := make(chan error, 1)
+	sessionExecInGoroutine(c, s.store, "alter table tnn add column c3 int not null default 3", done)
+	updateCnt := 0
+out:
+	for {
+		select {
+		case err := <-done:
+			c.Assert(err, IsNil)
+			break out
+		default:
+			s.tk.MustExec("update tnn set c2 = c2 + 1 where c1 = 99")
+			updateCnt++
+		}
+	}
+	expected := fmt.Sprintf("%d %d", updateCnt, 3)
+	s.tk.MustQuery("select c2, c3 from tnn where c1 = 99").Check(testkit.Rows(expected))
 }
