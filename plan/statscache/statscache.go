@@ -50,6 +50,9 @@ func tableCacheExpired(si statsInfo) bool {
 
 // GetStatisticsTableCache retrieves the statistics table from cache, and will refill cache if necessary.
 func GetStatisticsTableCache(ctx context.Context, tblInfo *model.TableInfo) *statistics.Table {
+	if tblInfo.StatisticVer == 0 {
+		return statistics.PseudoTable(tblInfo)
+	}
 	statsTblCache.m.RLock()
 	si, ok := statsTblCache.cache[tblInfo.ID]
 	statsTblCache.m.RUnlock()

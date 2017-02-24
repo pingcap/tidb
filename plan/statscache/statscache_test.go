@@ -59,13 +59,19 @@ func (s *testStatsCacheSuite) TestStatsCache(c *C) {
 		},
 	}
 	tblInfo = &model.TableInfo{
-		ID: 1,
+		ID:           1,
+		StatisticVer: 0,
 	}
 	tblInfo.Columns = columns
 	statsTbl = GetStatisticsTableCache(ctx, tblInfo)
 	c.Check(len(statsTbl.Columns), Equals, 2)
 
 	si, ok := statsTblCache.cache[tblInfo.ID]
+	c.Assert(ok, IsFalse)
+	tblInfo.StatisticVer = 1
+	statsTbl = GetStatisticsTableCache(ctx, tblInfo)
+	c.Check(len(statsTbl.Columns), Equals, 2)
+	si, ok = statsTblCache.cache[tblInfo.ID]
 	c.Assert(ok, IsTrue)
 	oriLoadTime := si.loadTime - expireDuration
 	si.loadTime = oriLoadTime

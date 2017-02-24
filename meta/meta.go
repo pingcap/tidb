@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/plan/statistics"
 	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/codec"
 )
 
 var (
@@ -53,16 +54,17 @@ var (
 //
 
 var (
-	mMetaPrefix       = []byte("m")
-	mNextGlobalIDKey  = []byte("NextGlobalID")
-	mSchemaVersionKey = []byte("SchemaVersionKey")
-	mDBs              = []byte("DBs")
-	mDBPrefix         = "DB"
-	mTablePrefix      = "Table"
-	mTableIDPrefix    = "TID"
-	mBootstrapKey     = []byte("BootstrapKey")
-	mTableStatsPrefix = "TStats"
-	mSchemaDiffPrefix = "Diff"
+	mMetaPrefix              = []byte("m")
+	mNextGlobalIDKey         = []byte("NextGlobalID")
+	mSchemaVersionKey        = []byte("SchemaVersionKey")
+	mDBs                     = []byte("DBs")
+	mDBPrefix                = "DB"
+	mTablePrefix             = "Table"
+	mTableIDPrefix           = "TID"
+	mBootstrapKey            = []byte("BootstrapKey")
+	mTableStatsPrefix        = "TStats"
+	mTableStatsVersionPrefix = "TStatsVersion"
+	mSchemaDiffPrefix        = "Diff"
 )
 
 var (
@@ -123,7 +125,7 @@ func (m *Meta) parseDatabaseID(key string) (int64, error) {
 	return n, errors.Trace(err)
 }
 
-func (m *Meta) autoTalbeIDKey(tableID int64) []byte {
+func (m *Meta) autoTableIDKey(tableID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mTableIDPrefix, tableID))
 }
 
@@ -155,12 +157,12 @@ func (m *Meta) GenAutoTableID(dbID int64, tableID int64, step int64) (int64, err
 		return 0, errors.Trace(err)
 	}
 
-	return m.txn.HInc(dbKey, m.autoTalbeIDKey(tableID), step)
+	return m.txn.HInc(dbKey, m.autoTableIDKey(tableID), step)
 }
 
 // GetAutoTableID gets current auto id with table id.
 func (m *Meta) GetAutoTableID(dbID int64, tableID int64) (int64, error) {
-	return m.txn.HGetInt64(m.dbKey(dbID), m.autoTalbeIDKey(tableID))
+	return m.txn.HGetInt64(m.dbKey(dbID), m.autoTableIDKey(tableID))
 }
 
 // GetSchemaVersion gets current global schema version.
@@ -310,7 +312,7 @@ func (m *Meta) DropTable(dbID int64, tableID int64) error {
 		return errors.Trace(err)
 	}
 
-	if err := m.txn.HDel(dbKey, m.autoTalbeIDKey(tableID)); err != nil {
+	if err := m.txn.HDel(dbKey, m.autoTableIDKey(tableID)); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -420,7 +422,11 @@ func (m *Meta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
 
 	tableInfo := &model.TableInfo{}
 	err = json.Unmarshal(value, tableInfo)
-	return tableInfo, errors.Trace(err)
+	if err != nil {
+		return tableInfo, errors.Trace(err)
+	}
+	tableInfo.StatisticVer, _ = m.getTableStatsVer(tableID)
+	return tableInfo, nil
 }
 
 // DDL job structure
@@ -702,6 +708,28 @@ func (m *Meta) SetBgJobOwner(o *model.Owner) error {
 
 func (m *Meta) tableStatsKey(tableID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mTableStatsPrefix, tableID))
+}
+
+func (m *Meta) tableStatsVersionKey(tableID int64) []byte {
+	return []byte(fmt.Sprintf("%s:%d", mTableStatsVersionPrefix, tableID))
+}
+
+// SetTableStatsVer sets table statistics version.
+func (m *Meta) SetTableStatsVer(tableID int64, ver int64) error {
+	key := m.tableStatsVersionKey(tableID)
+	data := codec.EncodeInt(nil, ver)
+	err := m.txn.Set(key, data)
+	return errors.Trace(err)
+}
+
+func (m *Meta) getTableStatsVer(tableID int64) (int64, error) {
+	key := m.tableStatsVersionKey(tableID)
+	data, err := m.txn.Get(key)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	_, ver, err := codec.DecodeInt(data)
+	return ver, errors.Trace(err)
 }
 
 // SetTableStats sets table statistics.

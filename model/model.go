@@ -93,6 +93,8 @@ type TableInfo struct {
 	// We need to save original schemaID to keep autoID unchanged
 	// while renaming a table from one database to another.
 	OldSchemaID int64 `json:"old_schema_id,omitempty"`
+	// StatisticVer stands for the version of statistic info, which default values is 0.
+	StatisticVer int64 `json:"statistic_version"`
 }
 
 // Clone clones TableInfo.
