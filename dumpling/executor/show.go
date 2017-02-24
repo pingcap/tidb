@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -109,7 +110,9 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowTriggers()
 	case ast.ShowVariables:
 		return e.fetchShowVariables()
-	case ast.ShowWarnings, ast.ShowProcessList, ast.ShowEvents:
+	case ast.ShowWarnings:
+		return e.fetchShowWarnings()
+	case ast.ShowProcessList, ast.ShowEvents:
 		// empty result
 	}
 	return nil
@@ -536,6 +539,25 @@ func (e *ShowExec) fetchShowTriggers() error {
 }
 
 func (e *ShowExec) fetchShowProcedureStatus() error {
+	return nil
+}
+
+func (e *ShowExec) fetchShowWarnings() error {
+	warns := e.ctx.GetSessionVars().StmtCtx.GetWarnings()
+	for _, warn := range warns {
+		datums := make([]types.Datum, 3)
+		datums[0] = types.NewStringDatum("Warning")
+		switch x := warn.(type) {
+		case *terror.Error:
+			sqlErr := x.ToSQLError()
+			datums[1] = types.NewIntDatum(int64(sqlErr.Code))
+			datums[2] = types.NewStringDatum(sqlErr.Message)
+		default:
+			datums[1] = types.NewIntDatum(int64(mysql.ErrUnknown))
+			datums[2] = types.NewStringDatum(warn.Error())
+		}
+		e.rows = append(e.rows, &Row{Data: datums})
+	}
 	return nil
 }
 
