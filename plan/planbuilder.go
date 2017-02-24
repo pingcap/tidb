@@ -480,6 +480,8 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 		p.SetSchema(buildShowTriggerSchema())
 	case ast.ShowEvents:
 		p.SetSchema(buildShowEventsSchema())
+	case ast.ShowWarnings:
+		p.SetSchema(buildShowWarningsSchema())
 	default:
 		p.SetSchema(buildShowSchema(show))
 	}
@@ -828,6 +830,15 @@ func buildShowEventsSchema() *expression.Schema {
 	schema.Append(buildColumn(tblName, "character_set_client", mysql.TypeVarchar, 32))
 	schema.Append(buildColumn(tblName, "collation_connection", mysql.TypeVarchar, 32))
 	schema.Append(buildColumn(tblName, "Database Collation", mysql.TypeVarchar, 32))
+	return schema
+}
+
+func buildShowWarningsSchema() *expression.Schema {
+	tblName := "WARNINGS"
+	schema := expression.NewSchema(make([]*expression.Column, 0, 3)...)
+	schema.Append(buildColumn(tblName, "Level", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn(tblName, "Code", mysql.TypeLong, 19))
+	schema.Append(buildColumn(tblName, "Message", mysql.TypeVarchar, 64))
 	return schema
 }
 
