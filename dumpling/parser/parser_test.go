@@ -1163,6 +1163,8 @@ func (s *testParserSuite) TestDDL(c *C) {
 		// Create table with like.
 		{"create table a like b", true},
 		{"create table if not exists a like b", true},
+		// Create table with ON UPDATE CURRENT_TIMESTAMP(6), specify fraction part.
+		{"CREATE TABLE IF NOT EXISTS `general_log` (`event_time` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),`user_host` mediumtext NOT NULL,`thread_id` bigint(21) unsigned NOT NULL,`server_id` int(10) unsigned NOT NULL,`command_type` varchar(64) NOT NULL,`argument` mediumblob NOT NULL) ENGINE=CSV DEFAULT CHARSET=utf8 COMMENT='General log'", true},
 
 		// for alter table
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED", true},
