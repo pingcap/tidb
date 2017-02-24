@@ -740,6 +740,12 @@ func (s *testEvaluatorSuite) TestDateDiff(c *C) {
 
 	c.Assert(err, IsNil)
 	c.Assert(result.IsNull(), Equals, true)
+
+	f, err = fc.getFunction(datumsToConstants([]types.Datum{{}, types.NewStringDatum("2017-01-01")}), s.ctx)
+	c.Assert(err, IsNil)
+	d, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(d.IsNull(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestTimeDiff(c *C) {
@@ -763,6 +769,11 @@ func (s *testEvaluatorSuite) TestTimeDiff(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(result.GetMysqlDuration().String(), Equals, test.expectStr)
 	}
+	f, err := fc.getFunction(datumsToConstants([]types.Datum{{}, types.NewStringDatum("2017-01-01")}), s.ctx)
+	c.Assert(err, IsNil)
+	d, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(d.IsNull(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestWeek(c *C) {
@@ -849,6 +860,13 @@ func (s *testEvaluatorSuite) TestTimestampDiff(c *C) {
 	c.Assert(err, IsNil)
 	d, err := f.eval(nil)
 	c.Assert(d.Kind(), Equals, types.KindNull)
+
+	f, err = fc.getFunction(datumsToConstants([]types.Datum{types.NewStringDatum("DAY"),
+		{}, types.NewStringDatum("2017-01-01")}), s.ctx)
+	c.Assert(err, IsNil)
+	d, err = f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(d.IsNull(), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {

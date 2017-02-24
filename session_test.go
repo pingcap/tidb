@@ -81,8 +81,9 @@ func (s *testSessionSuite) TestPrepare(c *C) {
 	mustExecSQL(c, se, s.createTableSQL)
 	// insert data
 	mustExecSQL(c, se, `INSERT INTO t VALUES ("id");`)
-	id, ps, _, err := se.PrepareStmt("select id+? from t")
+	id, ps, fields, err := se.PrepareStmt("select id+? from t")
 	c.Assert(err, IsNil)
+	c.Assert(fields, HasLen, 1)
 	c.Assert(id, Equals, uint32(1))
 	c.Assert(ps, Equals, 1)
 	mustExecSQL(c, se, `set @a=1`)
@@ -1465,13 +1466,9 @@ func (s *testSessionSuite) TestExecRestrictedSQL(c *C) {
 	dbName := "test_exec_restricted_sql"
 	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
 	se := newSession(c, s.store, dbName).(*session)
-	r, err := se.ExecRestrictedSQL(se, "select 1;")
-	c.Assert(r, NotNil)
+	r, _, err := se.ExecRestrictedSQL(se, "select 1;")
 	c.Assert(err, IsNil)
-	_, err = se.ExecRestrictedSQL(se, "select 1; select 2;")
-	c.Assert(err, NotNil)
-	_, err = se.ExecRestrictedSQL(se, "")
-	c.Assert(err, NotNil)
+	c.Assert(len(r), Equals, 1)
 
 	mustExecSQL(c, se, dropDBSQL)
 }
@@ -2430,7 +2427,7 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	defer testleak.AfterTest(c)()
 
 	varName := "max_allowed_packet"
-	varValue := "4194304" // This is the default value for max_allowed_packet
+	varValue := "67108864" // This is the default value for max_allowed_packet
 	varValue1 := "4194305"
 	varValue2 := "4194306"
 

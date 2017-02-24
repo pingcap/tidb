@@ -85,6 +85,21 @@ func (s *testSuite) TestGrantDBScope(c *C) {
 	}
 }
 
+func (s *testSuite) TestWithGrantOption(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	// Create a new user.
+	createUserSQL := `CREATE USER 'testWithGrant'@'localhost' IDENTIFIED BY '123';`
+	tk.MustExec(createUserSQL)
+	// Make sure all the db privs for new user is empty.
+	sql := fmt.Sprintf("SELECT * FROM mysql.db WHERE User=\"testWithGrant\" and host=\"localhost\"")
+	tk.MustQuery(sql).Check(testkit.Rows())
+
+	// Grant select priv to the user, with grant option.
+	tk.MustExec("GRANT select ON test.* TO 'testWithGrant'@'localhost' WITH GRANT OPTION;")
+	tk.MustQuery("SELECT grant_priv FROM mysql.DB WHERE User=\"testWithGrant\" and host=\"localhost\" and db=\"test\"").Check(testkit.Rows("Y"))
+}
+
 func (s *testSuite) TestTableScope(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
@@ -163,4 +178,12 @@ func (s *testSuite) TestColumnScope(c *C) {
 		p := fmt.Sprintf("%v", row[0])
 		c.Assert(strings.Index(p, mysql.Priv2SetStr[v]), Greater, -1)
 	}
+}
+
+func (s *testSuite) TestIssue2456(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER 'dduser'@'%' IDENTIFIED by '123456';")
+	tk.MustExec("GRANT ALL PRIVILEGES ON `dddb_%`.* TO 'dduser'@'%';")
+	tk.MustExec("GRANT ALL PRIVILEGES ON `dddb_%`.`te%` to 'dduser'@'%';")
 }

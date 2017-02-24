@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"math"
 	"sort"
 
 	"github.com/juju/errors"
@@ -80,6 +81,7 @@ type PrepareExec struct {
 	ID         uint32
 	ParamCount int
 	Err        error
+	Fields     []*ast.ResultField
 }
 
 // Schema implements the Executor Schema interface.
@@ -136,6 +138,14 @@ func (e *PrepareExec) DoPrepare() {
 	}
 	var extractor paramMarkerExtractor
 	stmt.Accept(&extractor)
+	err = plan.Preprocess(stmt, e.IS, e.Ctx)
+	if err != nil {
+		e.Err = errors.Trace(err)
+		return
+	}
+	if result, ok := stmt.(ast.ResultSetNode); ok {
+		e.Fields = result.GetResultFields()
+	}
 
 	// The parameter markers are appended in visiting order, which may not
 	// be the same as the position order in the query string. We need to
@@ -234,7 +244,11 @@ func (e *ExecuteExec) Build() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = e.Ctx.ActivePendingTxn()
+	if IsPointGetWithPKOrUniqueKeyByAutoCommit(e.Ctx, p) {
+		err = e.Ctx.InitTxnWithStartTS(math.MaxUint64)
+	} else {
+		err = e.Ctx.ActivePendingTxn()
+	}
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -246,6 +260,7 @@ func (e *ExecuteExec) Build() error {
 	e.StmtExec = stmtExec
 	e.Stmt = prepared.Stmt
 	e.Plan = p
+	stmtCount(e.Stmt, e.Plan)
 	return nil
 }
 

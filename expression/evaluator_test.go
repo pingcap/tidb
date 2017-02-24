@@ -594,6 +594,9 @@ func (s *testEvaluatorSuite) TestDynamic(c *C) {
 		ast.GetVar:       0,
 		ast.SetVar:       0,
 		ast.Values:       0,
+		ast.SessionUser:  0,
+		ast.SystemUser:   0,
+		ast.RowCount:     0,
 	}
 	for name, fc := range funcs {
 		f, _ := fc.getFunction(nil, s.ctx)

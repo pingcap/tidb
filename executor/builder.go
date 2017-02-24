@@ -235,6 +235,8 @@ func (b *executorBuilder) buildSimple(v *plan.Simple) Executor {
 	switch s := v.Statement.(type) {
 	case *ast.GrantStmt:
 		return b.buildGrant(s)
+	case *ast.RevokeStmt:
+		return b.buildRevoke(s)
 	}
 	return &SimpleExec{Statement: v.Statement, ctx: b.ctx, is: b.is}
 }
@@ -303,6 +305,18 @@ func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {
 		ObjectType: grant.ObjectType,
 		Level:      grant.Level,
 		Users:      grant.Users,
+		WithGrant:  grant.WithGrant,
+		is:         b.is,
+	}
+}
+
+func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) Executor {
+	return &RevokeExec{
+		ctx:        b.ctx,
+		Privs:      revoke.Privs,
+		ObjectType: revoke.ObjectType,
+		Level:      revoke.Level,
+		Users:      revoke.Users,
 		is:         b.is,
 	}
 }
@@ -593,6 +607,7 @@ func (b *executorBuilder) buildNestedLoopJoin(v *plan.PhysicalHashJoin) *NestedL
 		SmallFilter: expression.ComposeCNFCondition(b.ctx, v.RightConditions...),
 		OtherFilter: expression.ComposeCNFCondition(b.ctx, append(expression.ScalarFuncs2Exprs(v.EqualConditions), v.OtherConditions...)...),
 		schema:      v.Schema(),
+		outer:       v.JoinType != plan.InnerJoin,
 	}
 }
 
@@ -602,7 +617,7 @@ func (b *executorBuilder) buildApply(v *plan.PhysicalApply) Executor {
 	case *plan.PhysicalHashSemiJoin:
 		join = b.buildSemiJoin(x)
 	case *plan.PhysicalHashJoin:
-		if x.JoinType == plan.InnerJoin {
+		if x.JoinType == plan.InnerJoin || x.JoinType == plan.LeftOuterJoin {
 			join = b.buildNestedLoopJoin(x)
 		} else {
 			b.err = errors.Errorf("Unsupported join type %v in nested loop join", x.JoinType)

@@ -52,7 +52,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"localtime", "localtimestamp", "lock", "longblob", "longtext", "mediumblob", "maxvalue", "mediumint", "mediumtext",
 		"minute_microsecond", "minute_second", "mod", "not", "no_write_to_binlog", "null", "numeric",
 		"on", "option", "or", "order", "outer", "partition", "precision", "primary", "procedure", "range", "read", "real",
-		"references", "regexp", "rename", "repeat", "replace", "restrict", "right", "rlike",
+		"references", "regexp", "rename", "repeat", "replace", "revoke", "restrict", "right", "rlike",
 		"schema", "schemas", "second_microsecond", "select", "set", "show", "smallint",
 		"starting", "table", "terminated", "then", "tinyblob", "tinyint", "tinytext", "to",
 		"trailing", "true", "union", "unique", "unlock", "unsigned",
@@ -491,7 +491,7 @@ func (s *testParserSuite) TestExpression(c *C) {
 func (s *testParserSuite) TestBuiltin(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []testCase{
-		// for buildin functions
+		// for builtin functions
 		{"SELECT POW(1, 2)", true},
 		{"SELECT POW(1, 0.5)", true},
 		{"SELECT POW(1, -1)", true},
@@ -513,6 +513,19 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT CRC32('MySQL');", true},
 		{"SELECT SIGN(0);", true},
 		{"SELECT SQRT(0);", true},
+		{"SELECT ACOS(1);", true},
+		{"SELECT ASIN(1);", true},
+		{"SELECT ATAN(1), ATAN(1, 2);", true},
+		{"SELECT ATAN2(1,2);", true},
+		{"SELECT COS(1);", true},
+		{"SELECT COT(1);", true},
+		{"SELECT DEGREES(0);", true},
+		{"SELECT EXP(1);", true},
+		{"SELECT PI();", true},
+		{"SELECT RADIANS(1);", true},
+		{"SELECT SIN(1);", true},
+		{"SELECT TAN(1);", true},
+		{"SELECT TRUNCATE(1.223,1);", true},
 
 		{"SELECT SUBSTR('Quadratically',5);", true},
 		{"SELECT SUBSTR('Quadratically',5, 3);", true},
@@ -539,6 +552,13 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT CURRENT_USER;", true},
 		{"SELECT CONNECTION_ID();", true},
 		{"SELECT VERSION();", true},
+		{"SELECT BENCHMARK(1000000, AES_ENCRYPT('text',UNHEX('F3229A0B371ED2D9441B830D21A390C3')));", true},
+		{"SELECT CHARSET('abc');", true},
+		{"SELECT COERCIBILITY('abc');", true},
+		{"SELECT COLLATION('abc');", true},
+		{"SELECT ROW_COUNT();", true},
+		{"SELECT SESSION_USER();", true},
+		{"SELECT SYSTEM_USER();", true},
 
 		{"SELECT SUBSTRING_INDEX('www.mysql.com', '.', 2);", true},
 		{"SELECT SUBSTRING_INDEX('www.mysql.com', '.', -2);", true},
@@ -632,6 +652,47 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT YEARWEEK('2007-02-03');", true},
 		{"SELECT YEARWEEK('2007-02-03', 0);", true},
 
+		// for ADDTIME, SUBTIME
+		{"SELECT ADDTIME('01:00:00.999999', '02:00:00.999998');", true},
+		{"SELECT SUBTIME('01:00:00.999999', '02:00:00.999998');", true},
+
+		// for CONVERT_TZ
+		{"SELECT CONVERT_TZ('2004-01-01 12:00:00','+00:00','+10:00');", true},
+
+		// for LOCALTIME, LOCALTIMESTAMP
+		{"SELECT LOCALTIME(), LOCALTIME(1)", true},
+		{"SELECT LOCALTIMESTAMP(), LOCALTIMESTAMP(2)", true},
+
+		// for MAKEDATE, MAKETIME
+		{"SELECT MAKEDATE(2011,31);", true},
+		{"SELECT MAKETIME(12,15,30);", true},
+
+		// for PERIOD_ADD, PERIOD_DIFF
+		{"SELECT PERIOD_ADD(200801,2)", true},
+		{"SELECT PERIOD_DIFF(200802,200703)", true},
+
+		// for QUARTER
+		{"SELECT QUARTER('2008-04-01');", true},
+
+		// for SEC_TO_TIME
+		{"SELECT SEC_TO_TIME(2378)", true},
+
+		// for TIME_FORMAT
+		{"SELECT TIME_FORMAT('100:00:00', '%H %k %h %I %l')", true},
+
+		// for TIME_TO_SEC
+		{"SELECT TIME_TO_SEC('22:23:00')", true},
+
+		// for TIMESTAMPADD
+		{"SELECT TIMESTAMPADD(WEEK,1,'2003-01-02');", true},
+
+		// for TO_DAYS, TO_SECONDS
+		{"SELECT TO_DAYS('2007-10-07')", true},
+		{"SELECT TO_SECONDS('2009-11-29')", true},
+
+		// for UTC_TIME
+		{"SELECT UTC_TIME(), UTC_TIME(1)", true},
+
 		// for time extract
 		{`select extract(microsecond from "2011-11-11 10:10:10.123456")`, true},
 		{`select extract(second from "2011-11-11 10:10:10.123456")`, true},
@@ -683,12 +744,44 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT FIELD('ej', 'Hej', 'ej', 'Heja', 'hej', 'foo');`, true},
 		{`SELECT FIND_IN_SET('foo', 'foo,bar')`, true},
 		{`SELECT FIND_IN_SET('foo')`, false},
+		{`SELECT MAKE_SET(1,'a'), MAKE_SET(1,'a','b','c')`, true},
+		{`SELECT MID('Sakila', -5, 3)`, true},
+		{`SELECT OCT(12)`, true},
+		{`SELECT OCTET_LENGTH('text')`, true},
+		{`SELECT ORD('2')`, true},
+		// parser of POSITION will cause conflict now.
+		//{`SELECT POSITION('foobarbar' IN 'bar')`, false},
+		{`SELECT QUOTE('Don\'t!')`, true},
+		{`SELECT BIN(12)`, true},
+		{`SELECT ELT(1, 'ej', 'Heja', 'hej', 'foo')`, true},
+		{`SELECT EXPORT_SET(5,'Y','N'), EXPORT_SET(5,'Y','N',','), EXPORT_SET(5,'Y','N',',',4)`, true},
+		{`SELECT FORMAT(12332.2,2,'de_DE'), FORMAT(12332.123456, 4)`, true},
+		{`SELECT FROM_BASE64('abc')`, true},
+		{`SELECT INSERT('Quadratic', 3, 4, 'What'), INSTR('foobarbar', 'bar')`, true},
+		{`SELECT LOAD_FILE('/tmp/picture')`, true},
+		{`SELECT LPAD('hi',4,'??')`, true},
 
 		// repeat
 		{`SELECT REPEAT("a", 10);`, true},
 
-		// sleep
+		// for miscellaneous functions
 		{`SELECT SLEEP(10);`, true},
+		{`SELECT ANY_VALUE(@arg);`, true},
+		{`SELECT INET_ATON('10.0.5.9');`, true},
+		{`SELECT INET_NTOA(167773449);`, true},
+		{`SELECT INET6_ATON('fdfe::5a55:caff:fefa:9089');`, true},
+		{`SELECT INET6_NTOA(INET_NTOA(167773449));`, true},
+		{`SELECT IS_FREE_LOCK(@str);`, true},
+		{`SELECT IS_IPV4('10.0.5.9');`, true},
+		{`SELECT IS_IPV4_COMPAT(INET6_ATON('::10.0.5.9'));`, true},
+		{`SELECT IS_IPV4_MAPPED(INET6_ATON('::10.0.5.9'));`, true},
+		{`SELECT IS_IPV6('10.0.5.9');`, true},
+		{`SELECT IS_USED_LOCK(@str);`, true},
+		{`SELECT MASTER_POS_WAIT(@log_name, @log_pos), MASTER_POS_WAIT(@log_name, @log_pos, @timeout), MASTER_POS_WAIT(@log_name, @log_pos, @timeout, @channel_name);`, true},
+		{`SELECT NAME_CONST('myname', 14);`, true},
+		{`SELECT RELEASE_ALL_LOCKS();`, true},
+		{`SELECT UUID();`, true},
+		{`SELECT UUID_SHORT()`, true},
 
 		// for date_add
 		{`select date_add("2011-11-11 10:10:10.123456", interval 10 microsecond)`, true},
@@ -824,6 +917,36 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select count(all c1) from t;`, true},
 		{`select group_concat(c2,c1) from t group by c1;`, true},
 		{`select group_concat(distinct c2,c1) from t group by c1;`, true},
+
+		// for encryption and compression functions
+		{`select AES_ENCRYPT('text',UNHEX('F3229A0B371ED2D9441B830D21A390C3'))`, true},
+		{`select AES_DECRYPT(@crypt_str,@key_str)`, true},
+		{`select AES_DECRYPT(@crypt_str,@key_str,@init_vector);`, true},
+		{`SELECT ASYMMETRIC_DECRYPT(0, 0, 0);`, true},
+		{`SELECT ASYMMETRIC_DERIVE(@pub2, @priv1);`, true},
+		{`SELECT ASYMMETRIC_ENCRYPT('RSA', 'The quick brown fox', @priv);`, true},
+		{`SELECT ASYMMETRIC_SIGN(@algorithm, @digest_str, @priv_key_str, @digest_type);`, true},
+		{`SELECT ASYMMETRIC_VERIFY(@algorithm, @digest_str, @sig_str, @pub_key_str, @digest_type);`, true},
+		{`SELECT COMPRESS('');`, true},
+		{`SELECT CREATE_ASYMMETRIC_PRIV_KEY('DSA', 2048);`, true},
+		{`SELECT CREATE_ASYMMETRIC_PUB_KEY(@algorithm, @priv_key_str);`, true},
+		{`SELECT CREATE_DH_PARAMETERS(1024);`, true},
+		{`SELECT CREATE_DIGEST('SHA512', 'The quick brown fox');`, true},
+		{`SELECT DECODE(@crypt_str, @pass_str);`, true},
+		{`SELECT DES_DECRYPT(@crypt_str), DES_DECRYPT(@crypt_str, @key_str);`, true},
+		{`SELECT DES_ENCRYPT(@str), DES_ENCRYPT(@key_num);`, true},
+		{`SELECT ENCODE('cleartext', CONCAT('my_random_salt','my_secret_password'));`, true},
+		{`SELECT ENCRYPT('hello'), ENCRYPT('hello', @salt);`, true},
+		{`SELECT MD5('testing');`, true},
+		{`SELECT OLD_PASSWORD(@str);`, true},
+		{`SELECT PASSWORD(@str);`, true},
+		{`SELECT RANDOM_BYTES(@len);`, true},
+		{`SELECT SHA1('abc');`, true},
+		{`SELECT SHA('abc');`, true},
+		{`SELECT SHA2('abc', 224);`, true},
+		{`SELECT UNCOMPRESS('any string');`, true},
+		{`SELECT UNCOMPRESSED_LENGTH(@compressed_string);`, true},
+		{`SELECT VALIDATE_PASSWORD_STRENGTH(@str);`, true},
 	}
 	s.RunTest(c, table)
 }
@@ -1029,15 +1152,17 @@ func (s *testParserSuite) TestDDL(c *C) {
 		union_name varbinary(52) NOT NULL,
 		union_id int(11) DEFAULT '0',
 		PRIMARY KEY (union_name)) ENGINE=MyISAM DEFAULT CHARSET=binary;`, true},
-		// create table with multiple index options
+		// Create table with multiple index options.
 		{`create table t (c int, index ci (c) USING BTREE COMMENT "123");`, true},
 		// for default value
 		{"CREATE TABLE sbtest (id INTEGER UNSIGNED NOT NULL AUTO_INCREMENT, k integer UNSIGNED DEFAULT '0' NOT NULL, c char(120) DEFAULT '' NOT NULL, pad char(60) DEFAULT '' NOT NULL, PRIMARY KEY  (id) )", true},
 		{"create table test (create_date TIMESTAMP NOT NULL COMMENT '创建日期 create date' DEFAULT now());", true},
 		{"create table ts (t int, v timestamp(3) default CURRENT_TIMESTAMP(3));", true},
-
 		// Create table with primary key name.
 		{"create table if not exists `t` (`id` int not null auto_increment comment '消息ID', primary key `pk_id` (`id`) );", true},
+		// Create table with like.
+		{"create table a like b", true},
+		{"create table if not exists a like b", true},
 
 		// for alter table
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED", true},
@@ -1050,10 +1175,12 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE db.t RENAME to db1.t1", true},
 		{"ALTER TABLE t RENAME as t1", true},
 		{"ALTER TABLE t ALTER COLUMN a SET DEFAULT 1", true},
+		{"ALTER TABLE t ALTER a SET DEFAULT 1", true},
 		{"ALTER TABLE t ALTER COLUMN a SET DEFAULT CURRENT_TIMESTAMP", false},
 		{"ALTER TABLE t ALTER COLUMN a SET DEFAULT NOW()", false},
 		{"ALTER TABLE t ALTER COLUMN a SET DEFAULT 1+1", false},
 		{"ALTER TABLE t ALTER COLUMN a DROP DEFAULT", true},
+		{"ALTER TABLE t ALTER a DROP DEFAULT", true},
 
 		// for rename table statement
 		{"RENAME TABLE t TO t1", true},
@@ -1124,6 +1251,7 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 
 		// for grant statement
 		{"GRANT ALL ON db1.* TO 'jeffrey'@'localhost';", true},
+		{"GRANT ALL ON db1.* TO 'jeffrey'@'localhost' WITH GRANT OPTION;", true},
 		{"GRANT SELECT ON db2.invoice TO 'jeffrey'@'localhost';", true},
 		{"GRANT ALL ON *.* TO 'someuser'@'somehost';", true},
 		{"GRANT SELECT, INSERT ON *.* TO 'someuser'@'somehost';", true},
@@ -1133,6 +1261,18 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 		{"GRANT SELECT, INSERT ON mydb.mytbl TO 'someuser'@'somehost';", true},
 		{"GRANT SELECT (col1), INSERT (col1,col2) ON mydb.mytbl TO 'someuser'@'somehost';", true},
 		{"grant all privileges on zabbix.* to 'zabbix'@'localhost' identified by 'password';", true},
+
+		// for revoke statement
+		{"REVOKE ALL ON db1.* FROM 'jeffrey'@'localhost';", true},
+		{"REVOKE SELECT ON db2.invoice FROM 'jeffrey'@'localhost';", true},
+		{"REVOKE ALL ON *.* FROM 'someuser'@'somehost';", true},
+		{"REVOKE SELECT, INSERT ON *.* FROM 'someuser'@'somehost';", true},
+		{"REVOKE ALL ON mydb.* FROM 'someuser'@'somehost';", true},
+		{"REVOKE SELECT, INSERT ON mydb.* FROM 'someuser'@'somehost';", true},
+		{"REVOKE ALL ON mydb.mytbl FROM 'someuser'@'somehost';", true},
+		{"REVOKE SELECT, INSERT ON mydb.mytbl FROM 'someuser'@'somehost';", true},
+		{"REVOKE SELECT (col1), INSERT (col1,col2) ON mydb.mytbl FROM 'someuser'@'somehost';", true},
+		{"REVOKE all privileges on zabbix.* FROM 'zabbix'@'localhost' identified by 'password';", true},
 	}
 	s.RunTest(c, table)
 }
@@ -1288,4 +1428,24 @@ func (s *testParserSuite) TestExplain(c *C) {
 		{"explain select c1 from t1 union (select c2 from t2) limit 1, 1", true},
 	}
 	s.RunTest(c, table)
+}
+
+func (s *testParserSuite) TestTimestampDiffUnit(c *C) {
+	// Test case for timestampdiff unit.
+	// TimeUnit should be unified to upper case.
+	parser := New()
+	stmt, err := parser.Parse("SELECT TIMESTAMPDIFF(MONTH,'2003-02-01','2003-05-01'), TIMESTAMPDIFF(month,'2003-02-01','2003-05-01');", "", "")
+	c.Assert(err, IsNil)
+	ss := stmt[0].(*ast.SelectStmt)
+	fields := ss.Fields.Fields
+	c.Assert(len(fields), Equals, 2)
+	expr := fields[0].Expr
+	f, ok := expr.(*ast.FuncCallExpr)
+	c.Assert(ok, IsTrue)
+	c.Assert(f.Args[0].GetDatum().GetString(), Equals, "MONTH")
+
+	expr = fields[1].Expr
+	f, ok = expr.(*ast.FuncCallExpr)
+	c.Assert(ok, IsTrue)
+	c.Assert(f.Args[0].GetDatum().GetString(), Equals, "MONTH")
 }

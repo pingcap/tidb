@@ -100,6 +100,7 @@ type DDL interface {
 	DropSchema(ctx context.Context, schema model.CIStr) error
 	CreateTable(ctx context.Context, ident ast.Ident, cols []*ast.ColumnDef,
 		constrs []*ast.Constraint, options []*ast.TableOption) error
+	CreateTableWithLike(ctx context.Context, ident, referIdent ast.Ident) error
 	DropTable(ctx context.Context, tableIdent ast.Ident) (err error)
 	CreateIndex(ctx context.Context, tableIdent ast.Ident, unique bool, indexName model.CIStr,
 		columnNames []*ast.IndexColName) error
@@ -142,6 +143,8 @@ type ddl struct {
 	// TODO: Now we use goroutine to simulate reorganization jobs, later we may
 	// use a persistent job list.
 	reorgDoneCh chan error
+	// reorgRowCount is for reorganization, it uses to simulate a job's row count.
+	reorgRowCount int64
 
 	quitCh chan struct{}
 	wait   sync.WaitGroup

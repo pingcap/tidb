@@ -14,6 +14,7 @@
 package distsql
 
 import (
+	goctx "context"
 	"io"
 	"io/ioutil"
 	"time"
@@ -49,7 +50,7 @@ type SelectResult interface {
 	Close() error
 	// Fetch fetches partial results from client.
 	// The caller should call SetFields() before call Fetch().
-	Fetch()
+	Fetch(ctx goctx.Context)
 	// IgnoreData sets ignore data attr to true.
 	// For index double scan, we do not need row data when scanning index.
 	IgnoreData()
@@ -81,11 +82,11 @@ type resultWithErr struct {
 	err    error
 }
 
-func (r *selectResult) Fetch() {
-	go r.fetch()
+func (r *selectResult) Fetch(ctx goctx.Context) {
+	go r.fetch(ctx)
 }
 
-func (r *selectResult) fetch() {
+func (r *selectResult) fetch(ctx goctx.Context) {
 	startTime := time.Now()
 	defer func() {
 		close(r.results)
@@ -121,6 +122,8 @@ func (r *selectResult) fetch() {
 		case r.results <- resultWithErr{result: pr}:
 		case <-r.closed:
 			// if selectResult called Close() already, make fetch goroutine exit
+			return
+		case <-ctx.Done():
 			return
 		}
 	}
@@ -278,7 +281,7 @@ func (pr *partialResult) Close() error {
 // concurrency: The max concurrency for underlying coprocessor request.
 // keepOrder: If the result should returned in key order. For example if we need keep data in order by
 //            scan index, we should set keepOrder to true.
-func Select(client kv.Client, req *tipb.SelectRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool) (SelectResult, error) {
+func Select(client kv.Client, ctx goctx.Context, req *tipb.SelectRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool) (SelectResult, error) {
 	var err error
 	defer func() {
 		// Add metrics
@@ -296,7 +299,7 @@ func Select(client kv.Client, req *tipb.SelectRequest, keyRanges []kv.KeyRange, 
 		return nil, err
 	}
 
-	resp := client.Send(kvReq)
+	resp := client.Send(ctx, kvReq)
 	if resp == nil {
 		err = errors.New("client returns nil response")
 		return nil, err

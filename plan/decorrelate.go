@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/util/types"
@@ -49,6 +50,36 @@ func (a *Apply) extractCorColumnsBySchema() {
 	a.corCols = resultCorCols[:length]
 }
 
+// canPullUpAgg checks if an apply can pull an aggregation up.
+func (a *Apply) canPullUpAgg() bool {
+	if a.JoinType != InnerJoin && a.JoinType != LeftOuterJoin {
+		return false
+	}
+	if len(a.EqualConditions)+len(a.LeftConditions)+len(a.RightConditions)+len(a.OtherConditions) > 0 {
+		return false
+	}
+	return len(a.children[0].Schema().Keys) > 0
+}
+
+// canPullUp checks if an aggregation can be pulled up. An aggregate function like count(*) cannot be pulled up.
+func (a *Aggregation) canPullUp() bool {
+	if len(a.GroupByItems) > 0 {
+		return false
+	}
+	for _, f := range a.AggFuncs {
+		for _, arg := range f.GetArgs() {
+			expr, err := expression.EvaluateExprWithNull(a.ctx, a.children[0].Schema(), arg)
+			if err != nil {
+				return false
+			}
+			if con, ok := expr.(*expression.Constant); !ok || !con.Value.IsNull() {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // decorrelateSolver tries to convert apply plan to join plan.
 type decorrelateSolver struct{}
 
@@ -76,6 +107,13 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 			apply.SetChildren(outerPlan, innerPlan)
 			innerPlan.SetParents(apply)
 			return s.optimize(p, nil, nil)
+		} else if m, ok := innerPlan.(*MaxOneRow); ok {
+			if m.children[0].Schema().MaxOneRow {
+				innerPlan = m.children[0].(LogicalPlan)
+				innerPlan.SetParents(apply)
+				apply.SetChildren(outerPlan, innerPlan)
+				return s.optimize(p, nil, nil)
+			}
 		} else if proj, ok := innerPlan.(*Projection); ok {
 			for i, expr := range proj.Exprs {
 				proj.Exprs[i] = expr.Decorrelate(outerPlan.Schema())
@@ -89,18 +127,41 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 				proj.Exprs = append(expression.Column2Exprs(outerPlan.Schema().Clone().Columns), proj.Exprs...)
 				apply.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
 				proj.SetParents(apply.Parents()...)
-				proj.SetChildren(apply)
-				apply.SetParents(proj)
+				np, _ := s.optimize(p, nil, nil)
+				proj.SetChildren(np)
+				np.SetParents(proj)
+				return proj, nil
 			}
 			return s.optimize(p, nil, nil)
+		} else if agg, ok := innerPlan.(*Aggregation); ok {
+			if apply.canPullUpAgg() && agg.canPullUp() {
+				innerPlan = agg.children[0].(LogicalPlan)
+				apply.JoinType = LeftOuterJoin
+				apply.SetChildren(outerPlan, innerPlan)
+				innerPlan.SetParents(apply)
+				agg.SetSchema(apply.Schema())
+				agg.GroupByItems = expression.Column2Exprs(outerPlan.Schema().Keys[0])
+				newAggFuncs := make([]expression.AggregationFunction, 0, apply.Schema().Len())
+				for _, col := range outerPlan.Schema().Columns {
+					first := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{col}, false)
+					newAggFuncs = append(newAggFuncs, first)
+				}
+				newAggFuncs = append(newAggFuncs, agg.AggFuncs...)
+				agg.AggFuncs = newAggFuncs
+				apply.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
+				agg.SetParents(apply.Parents()...)
+				np, _ := s.optimize(p, nil, nil)
+				agg.SetChildren(np)
+				np.SetParents(agg)
+				return agg, nil
+			}
 		}
-		// TODO: Deal with aggregation.
 	}
 	newChildren := make([]Plan, 0, len(p.Children()))
 	for _, child := range p.Children() {
 		np, _ := s.optimize(child.(LogicalPlan), nil, nil)
 		newChildren = append(newChildren, np)
-		child.SetParents(p)
+		np.SetParents(p)
 	}
 	p.SetChildren(newChildren...)
 	return p, nil
