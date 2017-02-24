@@ -46,14 +46,11 @@ var (
 	}, "|"), "jobs to run")
 )
 
-var blobString string
-
 func main() {
 	flag.Parse()
 	flag.PrintDefaults()
 	log.SetLevelByString(*logLevel)
 	tidb.RegisterStore("tikv", tikv.Driver{})
-	blobString = strings.Repeat("0", *blobSize)
 	ut := newBenchDB()
 	works := strings.Split(*runJobs, "|")
 	for _, v := range works {
@@ -92,6 +89,7 @@ type benchDB struct {
 func newBenchDB() *benchDB {
 	// Create TiKV store and disable GC as we will trigger GC manually.
 	store, err := tidb.NewStore("tikv://" + *addr + "?disableGC=true")
+	tidb.BootstrapSession(store)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -225,12 +223,14 @@ func (ut *benchDB) insertRows(spec string) {
 	id := start
 	ut.runCountTimes("insert", loopCount, func() {
 		ut.mustExec("begin")
+		buf := make([]byte, *blobSize/2)
 		for i := 0; i < *batchSize; i++ {
 			if id == end {
 				break
 			}
-			insetQuery := fmt.Sprintf("insert %s (id, name, data) values (%d, '%d', '%s')",
-				*tableName, id, id, blobString)
+			rand.Read(buf)
+			insetQuery := fmt.Sprintf("insert %s (id, name, data) values (%d, '%d', '%x')",
+				*tableName, id, id, buf)
 			ut.mustExec(insetQuery)
 			id++
 		}
