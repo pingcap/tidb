@@ -651,6 +651,7 @@ import (
 	NotOpt			"optional NOT"
 	NumLiteral		"Num/Int/Float/Decimal Literal"
 	NoWriteToBinLogAliasOpt "NO_WRITE_TO_BINLOG alias LOCAL or empty"
+	NowSymOptionFraction	"NowSym with optional fraction part"
 	ObjectType		"Grant statement object type"
 	OnDuplicateKeyUpdate	"ON DUPLICATE KEY UPDATE value list"
 	Operand			"operand"
@@ -1204,7 +1205,7 @@ ColumnOption:
 	{
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionDefaultValue, Expr: $2.(ast.ExprNode)}
 	}
-|	"ON" "UPDATE" NowSym
+|	"ON" "UPDATE" NowSymOptionFraction
 	{
 		nowFunc := &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")}
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionOnUpdate, Expr: nowFunc}
@@ -1436,6 +1437,9 @@ ReferOpt:
  *      https://github.com/mysql/mysql-server/blob/5.7/sql/sql_yacc.yy#L6832
  */
 DefaultValueExpr:
+	NowSymOptionFraction | SignedLiteral
+
+NowSymOptionFraction:
 	NowSym
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")}
@@ -1448,7 +1452,6 @@ DefaultValueExpr:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")}
 	}
-|	SignedLiteral
 
 // TODO: Process other three keywords
 NowSym:
