@@ -186,17 +186,105 @@ func (s *testColumnSuite) TestGetZeroValue(c *C) {
 }
 
 func (s *testColumnSuite) TestGetDefaultValue(c *C) {
-	colInfo := &model.ColumnInfo{
-		FieldType:    *types.NewFieldType(mysql.TypeLong),
-		State:        model.StatePublic,
-		DefaultValue: 1.0,
+	tcases := []struct {
+		colInfo *model.ColumnInfo
+		strict  bool
+		val     types.Datum
+		err     error
+	}{
+		{
+			&model.ColumnInfo{
+				FieldType: types.FieldType{
+					Tp:   mysql.TypeLonglong,
+					Flag: mysql.NotNullFlag,
+				},
+				DefaultValue: 1.0,
+			},
+			false,
+			types.NewIntDatum(1),
+			nil,
+		},
+		{
+			&model.ColumnInfo{
+				FieldType: types.FieldType{
+					Tp:   mysql.TypeLonglong,
+					Flag: mysql.NotNullFlag,
+				},
+			},
+			false,
+			types.NewIntDatum(0),
+			nil,
+		},
+		{
+			&model.ColumnInfo{
+				FieldType: types.FieldType{
+					Tp: mysql.TypeLonglong,
+				},
+			},
+			false,
+			types.Datum{},
+			nil,
+		},
+		{
+			&model.ColumnInfo{
+				FieldType: types.FieldType{
+					Tp:    mysql.TypeEnum,
+					Flag:  mysql.NotNullFlag,
+					Elems: []string{"abc", "def"},
+				},
+			},
+			false,
+			types.NewStringDatum("abc"),
+			nil,
+		},
+		{
+			&model.ColumnInfo{
+				FieldType: types.FieldType{
+					Tp:   mysql.TypeTimestamp,
+					Flag: mysql.TimestampFlag,
+				},
+				DefaultValue: "0000-00-00 00:00:00",
+			},
+			false,
+			types.NewDatum(types.ZeroTimestamp),
+			nil,
+		},
+		{
+			&model.ColumnInfo{
+				FieldType: types.FieldType{
+					Tp:   mysql.TypeLonglong,
+					Flag: mysql.NotNullFlag,
+				},
+			},
+			true,
+			types.NewDatum(types.ZeroTimestamp),
+			errNoDefaultValue,
+		},
+		{
+			&model.ColumnInfo{
+				FieldType: types.FieldType{
+					Tp:   mysql.TypeLonglong,
+					Flag: mysql.NotNullFlag | mysql.AutoIncrementFlag,
+				},
+			},
+			true,
+			types.Datum{},
+			nil,
+		},
 	}
+
 	ctx := mock.NewContext()
-	val, ok, err := GetColDefaultValue(ctx, colInfo)
-	c.Assert(err, IsNil)
-	c.Assert(ok, IsTrue)
-	c.Assert(val.Kind(), Equals, types.KindInt64)
-	c.Assert(val.GetInt64(), Equals, int64(1))
+
+	for _, tc := range tcases {
+		ctx.GetSessionVars().StrictSQLMode = tc.strict
+		val, err := GetColDefaultValue(ctx, tc.colInfo)
+		if err != nil {
+			c.Assert(tc.err, NotNil, Commentf("%v", err))
+			continue
+		}
+		c.Assert(val, DeepEquals, tc.val)
+	}
+
 }
 
 func newCol(name string) *Column {

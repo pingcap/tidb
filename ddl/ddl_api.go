@@ -385,7 +385,7 @@ func checkDefaultValue(ctx context.Context, c *table.Column, hasDefaultValue boo
 	}
 
 	if c.DefaultValue != nil {
-		_, _, err := table.GetColDefaultValue(ctx, c.ToInfo())
+		_, err := table.GetColDefaultValue(ctx, c.ToInfo())
 		if terror.ErrorEqual(err, types.ErrTruncated) {
 			return errInvalidDefault.GenByArgs(c.Name)
 		}
@@ -920,11 +920,7 @@ func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast
 		return nil
 	}
 
-	var (
-		hasDefaultValue bool
-		hasNotNull      bool
-		setOnUpdateNow  bool
-	)
+	var hasDefaultValue, setOnUpdateNow bool
 	for _, opt := range options {
 		switch opt.Tp {
 		case ast.ColumnOptionDefaultValue:
@@ -941,7 +937,6 @@ func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast
 			}
 		case ast.ColumnOptionNotNull:
 			col.Flag |= mysql.NotNullFlag
-			hasNotNull = true
 		case ast.ColumnOptionNull:
 			col.Flag &= ^uint(mysql.NotNullFlag)
 		case ast.ColumnOptionOnUpdate:
@@ -959,10 +954,6 @@ func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast
 	}
 
 	setTimestampDefaultValue(col, hasDefaultValue, setOnUpdateNow)
-	if col.Tp == mysql.TypeTimestamp && hasNotNull {
-		return errors.Trace(errInvalidUseOfNull)
-	}
-
 	if hasDefaultValue {
 		return errors.Trace(checkDefaultValue(ctx, col, true))
 	}

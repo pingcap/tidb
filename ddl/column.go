@@ -301,7 +301,7 @@ func (d *ddl) addTableColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 	// Get column default value.
 	var err error
 	if columnInfo.DefaultValue != nil {
-		colMeta.defaultVal, _, err = table.GetColDefaultValue(ctx, columnInfo)
+		colMeta.defaultVal, err = table.GetColDefaultValue(ctx, columnInfo)
 		if err != nil {
 			job.State = model.JobCancelled
 			log.Errorf("[ddl] fatal: this case shouldn't happen, column %v err %v", columnInfo, err)
