@@ -269,6 +269,16 @@ func (tc *TiDBContext) Prepare(sql string) (statement PreparedStatement, columns
 	return
 }
 
+// ShowProcess implements QueryCtx ShowProcess method.
+func (tc *TiDBContext) ShowProcess() (ResultSet, error) {
+	fmt.Println("QueryCtx ShowProcess called!")
+	rs, err := tc.session.ShowProcess()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &tidbResultSet{rs}, nil
+}
+
 type tidbResultSet struct {
 	recordSet ast.RecordSet
 }
@@ -291,10 +301,12 @@ func (trs *tidbResultSet) Close() error {
 func (trs *tidbResultSet) Columns() ([]*ColumnInfo, error) {
 	fields, err := trs.recordSet.Fields()
 	if err != nil {
+		fmt.Println("skdjflasdjflkasdjfalksdjf")
 		return nil, errors.Trace(err)
 	}
 	var columns []*ColumnInfo
 	for _, v := range fields {
+		fmt.Println("这种就傻逼了")
 		columns = append(columns, convertColumnInfo(v))
 	}
 	return columns, nil

@@ -209,6 +209,20 @@ func (s *Server) onConn(c net.Conn) {
 	conn.Run()
 }
 
+func (s *Server) showProcessList() (rs []ResultSet, err error) {
+	s.rwlock.RLock()
+	for _, client := range s.clients {
+		tmp, err1 := client.ctx.ShowProcess()
+		if err1 != nil {
+			err = errors.Trace(err1)
+			break
+		}
+		rs = append(rs, tmp)
+	}
+	s.rwlock.RUnlock()
+	return
+}
+
 var once sync.Once
 
 const defaultStatusAddr = ":10080"

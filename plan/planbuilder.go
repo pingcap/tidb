@@ -842,6 +842,20 @@ func buildShowWarningsSchema() *expression.Schema {
 	return schema
 }
 
+// func buildShowProcessListSchema() *expression.Schema {
+// 	tblName := "PROCESSLIST"
+// 	schema := expression.NewSchema(make([]*expression.Column, 0, 8)...)
+// 	schema.Append(buildColumn(tblName, "ID", mysql.TypeLongLong, 21))
+// 	schema.Append(buildColumn(tblName, "USER", mysql.TypeVarchar, 16))
+// 	schema.Append(buildColumn(tblName, "HOST", mysql.TypeVarchar, 64))
+// 	schema.Append(buildColumn(tblName, "DB", mysql.TypeVarchar, 64))
+// 	schema.Append(buildColumn(tblName, "COMMAND", mysql.TypeVarchar, 16))
+// 	schema.Append(buildColumn(tblName, "TIME", mysql.TypeLongLong, 7))
+// 	schema.Append(buildColumn(tblName, "STATE", mysql.TypeVarchar, 64))
+// 	schema.Append(buildColumn(tblName, "INFO", mysql.TypeVarchar, 128))
+// 	return schema
+// }
+
 func composeShowSchema(names []string, ftypes []byte) *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(names))...)
 	for i, name := range names {

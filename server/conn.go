@@ -593,6 +593,10 @@ func insertDataWithCommit(prevData, curData []byte, loadDataInfo *executor.LoadD
 	return prevData, nil
 }
 
+func (cc *clientConn) handleShowProcessList() ([]ResultSet, error) {
+	return cc.server.showProcessList()
+}
+
 // handleLoadData does the additional work after processing the 'load data' query.
 // It sends client a file path, then reads the file content from client, inserts data into database.
 func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error {
@@ -654,11 +658,13 @@ func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error 
 // As the execution time of this function represents the performance of TiDB, we do time log and metrics here.
 // There is a special query `load data` that does not return result, which is handled differently.
 func (cc *clientConn) handleQuery(sql string) (err error) {
+	fmt.Println("handle Query:", sql)
 	rs, err := cc.ctx.Execute(sql)
 	if err != nil {
 		executeErrorCounter.WithLabelValues(executeErrorToLabel(err)).Inc()
 		return errors.Trace(err)
 	}
+	fmt.Println("xxxxx", rs)
 	if rs != nil {
 		if len(rs) == 1 {
 			err = cc.writeResultset(rs[0], false, false)
@@ -666,12 +672,20 @@ func (cc *clientConn) handleQuery(sql string) (err error) {
 			err = cc.writeMultiResultset(rs, false)
 		}
 	} else {
-		loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
-		if loadDataInfo != nil {
+		fmt.Println("result is nil...so ...")
+		if loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey); loadDataInfo != nil {
 			defer cc.ctx.SetValue(executor.LoadDataVarKey, nil)
 			if err = cc.handleLoadData(loadDataInfo.(*executor.LoadDataInfo)); err != nil {
 				return errors.Trace(err)
 			}
+		} else if showProcess := cc.ctx.Value(executor.ShowProcessListKey); showProcess != nil {
+			fmt.Println("run here!!!!")
+			defer cc.ctx.SetValue(executor.ShowProcessListKey, nil)
+			rs, err = cc.handleShowProcessList()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			cc.writeMultiResultset(rs, false)
 		}
 		err = cc.writeOK()
 	}
@@ -713,10 +727,16 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 		return errors.Trace(err)
 	}
 
+	fmt.Println("run here1111:", row)
+
 	columns, err := rs.Columns()
 	if err != nil {
+		fmt.Println("fuck...!!", err)
 		return errors.Trace(err)
 	}
+
+	fmt.Println("columns is ..............", len(columns), columns)
+
 	columnLen := dumpLengthEncodedInt(uint64(len(columns)))
 	data := cc.alloc.AllocWithLen(4, 1024)
 	data = append(data, columnLen...)
@@ -725,6 +745,9 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 	}
 
 	for _, v := range columns {
+
+		fmt.Println("column:", v)
+
 		data = data[0:4]
 		data = append(data, v.Dump(cc.alloc)...)
 		if err = cc.writePacket(data); err != nil {

@@ -35,19 +35,38 @@ type recordSet struct {
 	err      error
 }
 
+// func getResultFieldFromSchema(schema *expression.Schema) []*ast.ResultField {
+// 	var rfs []*ast.ResultField
+// 	for _, col := range schema.Columns {
+// 		rf := &ast.ResultField{
+// 			ColumnAsName: col.ColName,
+// 			TableAsName:  col.TblName,
+// 			DBName:       col.DBName,
+// 			Column: &model.ColumnInfo{
+// 				FieldType: *col.RetType,
+// 				Name:      col.ColName,
+// 			},
+// 		}
+// 		rfs = append(rfs, rf)
+// 	}
+// 	return rfs
+// }
+
 func (a *recordSet) Fields() ([]*ast.ResultField, error) {
 	if len(a.fields) == 0 {
-		for _, col := range a.executor.Schema().Columns {
-			rf := &ast.ResultField{
-				ColumnAsName: col.ColName,
-				TableAsName:  col.TblName,
-				DBName:       col.DBName,
-				Column: &model.ColumnInfo{
-					FieldType: *col.RetType,
-					Name:      col.ColName,
-				},
+		if len(a.fields) == 0 {
+			for _, col := range a.executor.Schema().Columns {
+				rf := &ast.ResultField{
+					ColumnAsName: col.ColName,
+					TableAsName:  col.TblName,
+					DBName:       col.DBName,
+					Column: &model.ColumnInfo{
+						FieldType: *col.RetType,
+						Name:      col.ColName,
+					},
+				}
+				a.fields = append(a.fields, rf)
 			}
-			a.fields = append(a.fields, rf)
 		}
 	}
 	return a.fields, nil
@@ -121,6 +140,7 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 		e = executorExec.StmtExec
 	}
 
+	var consume bool
 	// Fields or Schema are only used for statements that return result set.
 	if e.Schema().Len() == 0 {
 		// Check if "tidb_snapshot" is set for the write executors.
@@ -132,7 +152,14 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 				return nil, errors.New("can not execute write statement when 'tidb_snapshot' is set")
 			}
 		}
+		consume = true
+	} else if show, ok := e.(*ShowExec); ok {
+		if show.Tp == ast.ShowProcessList {
+			consume = true
+		}
+	}
 
+	if consume {
 		defer func() {
 			e.Close()
 			a.logSlowQuery()
@@ -151,6 +178,7 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 			}
 		}
 	}
+
 	return &recordSet{
 		executor: e,
 		stmt:     a,

@@ -32,8 +32,10 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/perfschema"
@@ -70,6 +72,7 @@ type Session interface {
 	Auth(user string, auth []byte, salt []byte) bool
 	// Cancel the execution of current transaction.
 	Cancel()
+	ShowProcess() (ast.RecordSet, error)
 }
 
 var (
@@ -984,4 +987,78 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+// processInfo implements ast.RecordSet interface, this struct used for the
+// result of 'show process list' statement.
+type processInfo struct {
+	id    uint64
+	user  string
+	host  string
+	db    string
+	state string
+	info  string
+
+	is       infoschema.InfoSchema
+	consumed bool
+}
+
+func (pi *processInfo) Fields() ([]*ast.ResultField, error) {
+	fmt.Println("processinfo field called")
+	tbl, err := pi.is.TableByName(model.NewCIStr("information_schema"), model.NewCIStr("processlist"))
+	if err != nil {
+		fmt.Println("什么 呀？")
+		return nil, errors.Trace(err)
+	}
+	var rfs []*ast.ResultField
+	for _, col := range tbl.Meta().Columns {
+		rf := &ast.ResultField{
+			// ColumnAsName: col.ColName,
+			// TableAsName:  col.TblName,
+			// DBName:       col.DBName,
+			Column: col,
+		}
+		rfs = append(rfs, rf)
+	}
+	fmt.Println("什么 ，没打印？")
+	return rfs, nil
+}
+
+func (pi *processInfo) Next() (*ast.Row, error) {
+	fmt.Println("next called")
+	if pi.consumed {
+		return nil, nil
+	}
+	pi.consumed = true
+	return &ast.Row{
+		Data: []types.Datum{
+			types.NewUintDatum(pi.id),
+			types.NewStringDatum(pi.user),
+			types.NewStringDatum(pi.host),
+			types.NewStringDatum(pi.db),
+			types.NewStringDatum(pi.state),
+			types.NewStringDatum(pi.info),
+		},
+	}, nil
+}
+
+func (pi *processInfo) Close() error {
+	return nil
+}
+
+func (s *session) ShowProcess() (ast.RecordSet, error) {
+	is := sessionctx.GetDomain(s).InfoSchema()
+	fmt.Println("session show process")
+	var pi processInfo
+	pi.is = is
+	pi.id = s.sessionVars.ConnectionID
+	strs := strings.Split(s.sessionVars.User, "@")
+	if len(strs) == 2 {
+		pi.user = strs[0]
+		pi.host = strs[1]
+	}
+	pi.db = s.sessionVars.CurrentDB
+	pi.state = "todo"
+	pi.info = s.String()
+	return &pi, nil
 }

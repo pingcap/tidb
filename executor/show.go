@@ -112,7 +112,9 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowVariables()
 	case ast.ShowWarnings:
 		return e.fetchShowWarnings()
-	case ast.ShowProcessList, ast.ShowEvents:
+	case ast.ShowProcessList:
+		return e.fetchShowProcessList()
+	case ast.ShowEvents:
 		// empty result
 	}
 	return nil
@@ -140,6 +142,24 @@ func (e *ShowExec) fetchShowDatabases() error {
 	for _, d := range dbs {
 		e.rows = append(e.rows, &Row{Data: types.MakeDatums(d)})
 	}
+	return nil
+}
+
+type showProcessListType int
+
+func (_ showProcessListType) String() string {
+	return "show_process_list"
+}
+
+// ShowProcessListKey is a variable key for show process list
+const ShowProcessListKey showProcessListType = 0
+
+func (e *ShowExec) fetchShowProcessList() error {
+	fmt.Println("fetchShowProcessList")
+	// Mark a special flag to the context. If the caller find this flag, it
+	// will handle the logic properly. Actually, show processlist is
+	// implemented in server.Server.
+	e.ctx.SetValue(ShowProcessListKey, struct{}{})
 	return nil
 }
 
