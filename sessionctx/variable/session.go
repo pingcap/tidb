@@ -14,6 +14,7 @@
 package variable
 
 import (
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -261,6 +262,7 @@ type StatementContext struct {
 	InUpdateOrDeleteStmt bool
 	IgnoreTruncate       bool
 	TruncateAsWarning    bool
+	InShowWarning        bool
 
 	/* Variables that changes during execution. */
 	mu struct {
@@ -310,6 +312,17 @@ func (sc *StatementContext) GetWarnings() []error {
 	return warns
 }
 
+// WarningCount gets warning count.
+func (sc *StatementContext) WarningCount() uint16 {
+	if sc.InShowWarning {
+		return 0
+	}
+	sc.mu.Lock()
+	wc := uint16(len(sc.mu.warnings))
+	sc.mu.Unlock()
+	return wc
+}
+
 // SetWarnings sets warnings.
 func (sc *StatementContext) SetWarnings(warns []error) {
 	sc.mu.Lock()
@@ -320,6 +333,8 @@ func (sc *StatementContext) SetWarnings(warns []error) {
 // AppendWarning appends a warning.
 func (sc *StatementContext) AppendWarning(warn error) {
 	sc.mu.Lock()
-	sc.mu.warnings = append(sc.mu.warnings, warn)
+	if len(sc.mu.warnings) < math.MaxUint16 {
+		sc.mu.warnings = append(sc.mu.warnings, warn)
+	}
 	sc.mu.Unlock()
 }

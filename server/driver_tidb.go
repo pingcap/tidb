@@ -39,10 +39,9 @@ func NewTiDBDriver(store kv.Storage) *TiDBDriver {
 
 // TiDBContext implements QueryCtx.
 type TiDBContext struct {
-	session      tidb.Session
-	currentDB    string
-	warningCount uint16
-	stmts        map[int]*TiDBStatement
+	session   tidb.Session
+	currentDB string
+	stmts     map[int]*TiDBStatement
 }
 
 // TiDBStatement implements PreparedStatement.
@@ -185,7 +184,7 @@ func (tc *TiDBContext) CurrentDB() string {
 
 // WarningCount implements QueryCtx WarningCount method.
 func (tc *TiDBContext) WarningCount() uint16 {
-	return tc.warningCount
+	return tc.session.GetSessionVars().StmtCtx.WarningCount()
 }
 
 // Execute implements QueryCtx Execute method.
