@@ -317,7 +317,7 @@ const userTablePrivColumnStartIndex = 3
 const dbTablePrivColumnStartIndex = 3
 
 func (p *UserPrivileges) loadGlobalPrivileges(ctx context.Context) error {
-	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User="%s" AND (Host="%s" OR Host="%%");`,
+	sql := fmt.Sprintf(`SELECT Host,User,Password,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Alter_priv,Show_db_priv,Execute_priv,Index_priv,Create_user_priv FROM %s.%s WHERE User="%s" AND (Host="%s" OR Host="%%");`,
 		mysql.SystemDB, mysql.UserTable, p.privs.User, p.privs.Host)
 	rows, fs, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
@@ -348,7 +348,7 @@ func (p *UserPrivileges) loadGlobalPrivileges(ctx context.Context) error {
 }
 
 func (p *UserPrivileges) loadDBScopePrivileges(ctx context.Context) error {
-	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User="%s" AND (Host="%s" OR Host="%%");`,
+	sql := fmt.Sprintf(`SELECT Host,DB,User,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Index_priv,Alter_priv,Execute_priv FROM %s.%s WHERE User="%s" AND (Host="%s" OR Host="%%");`,
 		mysql.SystemDB, mysql.DBTable, p.privs.User, p.privs.Host)
 	rows, fs, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
@@ -381,7 +381,7 @@ func (p *UserPrivileges) loadDBScopePrivileges(ctx context.Context) error {
 }
 
 func (p *UserPrivileges) loadTableScopePrivileges(ctx context.Context) error {
-	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User="%s" AND (Host="%s" OR Host="%%");`,
+	sql := fmt.Sprintf(`SELECT Host,DB,User,Table_name,Grantor,Timestamp,Table_priv,Column_priv FROM %s.%s WHERE User="%s" AND (Host="%s" OR Host="%%");`,
 		mysql.SystemDB, mysql.TablePrivTable, p.privs.User, p.privs.Host)
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {

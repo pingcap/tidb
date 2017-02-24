@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
@@ -116,22 +117,22 @@ func (p *MySQLPrivilege) LoadAll(ctx context.Context) error {
 
 // LoadUserTable loads the mysql.user table from database.
 func (p *MySQLPrivilege) LoadUserTable(ctx context.Context) error {
-	return p.loadTable(ctx, "select * from mysql.user order by host, user;", p.decodeUserTableRow)
+	return p.loadTable(ctx, "select Host,User,Password,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Alter_priv,Show_db_priv,Execute_priv,Index_priv,Create_user_priv from mysql.user order by host, user;", p.decodeUserTableRow)
 }
 
 // LoadDBTable loads the mysql.db table from database.
 func (p *MySQLPrivilege) LoadDBTable(ctx context.Context) error {
-	return p.loadTable(ctx, "select * from mysql.db order by host, db, user;", p.decodeDBTableRow)
+	return p.loadTable(ctx, "select Host,DB,User,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Index_priv,Alter_priv,Execute_priv from mysql.db order by host, db, user;", p.decodeDBTableRow)
 }
 
 // LoadTablesPrivTable loads the mysql.tables_priv table from database.
 func (p *MySQLPrivilege) LoadTablesPrivTable(ctx context.Context) error {
-	return p.loadTable(ctx, "select * from mysql.tables_priv", p.decodeTablesPrivTableRow)
+	return p.loadTable(ctx, "select Host,DB,User,Table_name,Grantor,Timestamp,Table_priv,Column_priv from mysql.tables_priv", p.decodeTablesPrivTableRow)
 }
 
 // LoadColumnsPrivTable loads the mysql.columns_priv table from database.
 func (p *MySQLPrivilege) LoadColumnsPrivTable(ctx context.Context) error {
-	return p.loadTable(ctx, "select * from mysql.columns_priv", p.decodeColumnsPrivTableRow)
+	return p.loadTable(ctx, "select Host,DB,User,Table_name,Column_name,Timestamp,Column_priv from mysql.columns_priv", p.decodeColumnsPrivTableRow)
 }
 
 func (p *MySQLPrivilege) loadTable(ctx context.Context, sql string,
@@ -235,17 +236,9 @@ func (p *MySQLPrivilege) decodeTablesPrivTableRow(row *ast.Row, fs []*ast.Result
 		case f.ColumnAsName.L == "table_name":
 			value.TableName = d.GetString()
 		case f.ColumnAsName.L == "table_priv":
-			priv, err := decodeSetToPrivilege(d.GetMysqlSet())
-			if err != nil {
-				return errors.Trace(err)
-			}
-			value.TablePriv = priv
+			value.TablePriv = decodeSetToPrivilege(d.GetMysqlSet())
 		case f.ColumnAsName.L == "column_priv":
-			priv, err := decodeSetToPrivilege(d.GetMysqlSet())
-			if err != nil {
-				return errors.Trace(err)
-			}
-			value.ColumnPriv = priv
+			value.ColumnPriv = decodeSetToPrivilege(d.GetMysqlSet())
 		}
 	}
 	p.TablesPriv = append(p.TablesPriv, value)
@@ -271,30 +264,27 @@ func (p *MySQLPrivilege) decodeColumnsPrivTableRow(row *ast.Row, fs []*ast.Resul
 		case f.ColumnAsName.L == "timestamp":
 			value.Timestamp, _ = d.GetMysqlTime().Time.GoTime(time.Local)
 		case f.ColumnAsName.L == "column_priv":
-			priv, err := decodeSetToPrivilege(d.GetMysqlSet())
-			if err != nil {
-				return errors.Trace(err)
-			}
-			value.ColumnPriv = priv
+			value.ColumnPriv = decodeSetToPrivilege(d.GetMysqlSet())
 		}
 	}
 	p.ColumnsPriv = append(p.ColumnsPriv, value)
 	return nil
 }
 
-func decodeSetToPrivilege(s types.Set) (mysql.PrivilegeType, error) {
+func decodeSetToPrivilege(s types.Set) mysql.PrivilegeType {
 	var ret mysql.PrivilegeType
 	if s.Name == "" {
-		return ret, nil
+		return ret
 	}
 	for _, str := range strings.Split(s.Name, ",") {
 		priv, ok := mysql.SetStr2Priv[str]
 		if !ok {
-			return ret, errInvalidPrivilegeType
+			log.Warn("unsupported privilege type:", str)
+			continue
 		}
 		ret |= priv
 	}
-	return ret, nil
+	return ret
 }
 
 func (record *userRecord) match(user, host string) bool {
