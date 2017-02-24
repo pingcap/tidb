@@ -406,6 +406,7 @@ func (s *testSuite) TestSubquery(c *C) {
 	c.Check(err, NotNil)
 
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists s")
 	tk.MustExec("create table t(id int)")
 	tk.MustExec("create table s(id int)")
 	tk.MustExec("insert into t values(1), (2)")
@@ -414,6 +415,17 @@ func (s *testSuite) TestSubquery(c *C) {
 	result.Check(testkit.Rows("2"))
 	result = tk.MustQuery("select *, (select count(*) from s where id = t.id limit 1, 1) from t")
 	result.Check(testkit.Rows("1 <nil>", "2 <nil>"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists s")
+	tk.MustExec("create table t(id int primary key)")
+	tk.MustExec("create table s(id int)")
+	tk.MustExec("insert into t values(1), (2)")
+	tk.MustExec("insert into s values(2), (2)")
+	result = tk.MustQuery("select *, (select count(id) from s where id = t.id) from t")
+	result.Check(testkit.Rows("1 0", "2 2"))
+	result = tk.MustQuery("select *, 0 < any (select count(id) from s where id = t.id) from t")
+	result.Check(testkit.Rows("1 0", "2 1"))
 }
 
 func (s *testSuite) TestInSubquery(c *C) {
