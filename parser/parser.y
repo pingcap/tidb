@@ -783,7 +783,8 @@ import (
 	KeyOrIndex		"{KEY|INDEX}"
 	ColumnKeywordOpt	"Column keyword or empty"
 	PrimaryOpt		"Optional primary keyword"
-	NowSym			"CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP/NOW"
+	NowSym			"CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP"
+	NowSymFunc		"CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP/NOW"
 	DefaultKwdOpt		"optional DEFAULT keyword"
 	DatabaseSym		"DATABASE or SCHEMA"
 	ExplainSym		"EXPLAIN or DESCRIBE or DESC"
@@ -1444,18 +1445,24 @@ NowSymOptionFraction:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")}
 	}
-|	NowSym '(' ')'
+|	NowSymFunc '(' ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")}
 	}
-|	NowSym '(' NUM ')'
+|	NowSymFunc '(' NUM ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")}
 	}
 
-// TODO: Process other three keywords
+/*
+* See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_localtime
+* TODO: Process other three keywords
+*/
+NowSymFunc:
+	"CURRENT_TIMESTAMP" | "LOCALTIME" | "LOCALTIMESTAMP" | "NOW"
 NowSym:
-"CURRENT_TIMESTAMP" | "LOCALTIME" | "LOCALTIMESTAMP" | "NOW"
+	"CURRENT_TIMESTAMP" | "LOCALTIME" | "LOCALTIMESTAMP"
+
 
 SignedLiteral:
 	Literal
