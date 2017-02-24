@@ -46,16 +46,11 @@ var (
 	}, "|"), "jobs to run")
 )
 
-var blobString string
-
 func main() {
 	flag.Parse()
 	flag.PrintDefaults()
 	log.SetLevelByString(*logLevel)
 	tidb.RegisterStore("tikv", tikv.Driver{})
-	buf := make([]byte, *blobSize/2)
-	rand.Read(buf)
-	blobString = fmt.Sprintf("%x", buf)
 	ut := newBenchDB()
 	works := strings.Split(*runJobs, "|")
 	for _, v := range works {
@@ -228,12 +223,14 @@ func (ut *benchDB) insertRows(spec string) {
 	id := start
 	ut.runCountTimes("insert", loopCount, func() {
 		ut.mustExec("begin")
+		buf := make([]byte, *blobSize/2)
 		for i := 0; i < *batchSize; i++ {
 			if id == end {
 				break
 			}
-			insetQuery := fmt.Sprintf("insert %s (id, name, data) values (%d, '%d', '%s')",
-				*tableName, id, id, blobString)
+			rand.Read(buf)
+			insetQuery := fmt.Sprintf("insert %s (id, name, data) values (%d, '%d', '%x')",
+				*tableName, id, id, buf)
 			ut.mustExec(insetQuery)
 			id++
 		}
