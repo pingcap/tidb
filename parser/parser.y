@@ -491,6 +491,7 @@ import (
 	tables		"TABLES"
 	textType	"TEXT"
 	than		"THAN"
+	tidb		"TIDB"
 	timeType	"TIME"
 	timestampType	"TIMESTAMP"
 	timestampDiff	"TIMESTAMPDIFF"
@@ -641,6 +642,7 @@ import (
 	JoinTable 		"join table"
 	JoinType		"join type"
 	KillStmt		"Kill statement"
+	KillOrKillTiDB		"Kill or Kill TiDB"
 	LikeEscapeOpt 		"like escape option"
 	LimitClause		"LIMIT clause"
 	LimitOption		"Limit option could be integer or parameter marker."
@@ -2238,8 +2240,8 @@ UnReservedKeyword:
  "ACTION" | "ASCII" | "AUTO_INCREMENT" | "AFTER" | "AT" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "CHARSET"
 | "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED" | "CONSISTENT" | "DATA" | "DATE" | "DATETIME" | "DEALLOCATE" | "DO"
 | "DYNAMIC"| "END" | "ENGINE" | "ENGINES" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FORMAT" | "FULL" |"GLOBAL"
-| "HASH" | "LESS" | "LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT" 
-| "ROLLBACK" | "SESSION" | "SIGNED" | "SNAPSHOT" | "START" | "STATUS" | "TABLES" | "TEXT" | "THAN" | "TIME" | "TIMESTAMP" 
+| "HASH" | "LESS" | "LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT"
+| "ROLLBACK" | "SESSION" | "SIGNED" | "SNAPSHOT" | "START" | "STATUS" | "TABLES" | "TEXT" | "THAN" | "TIDB" | "TIME" | "TIMESTAMP"
 | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" | "VALUE" | "WARNINGS" | "YEAR" | "MODE"  | "WEEK"  | "ANY" | "SOME" | "USER" | "IDENTIFIED"
 | "COLLATION" | "COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS"
 | "MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION"
@@ -6551,24 +6553,37 @@ TableLockList:
  *******************************************************************/
 
 KillStmt:
-	"KILL" NUM
+	KillOrKillTiDB NUM
 	{
 		$$ = &ast.KillStmt{
 			ConnectionID: getUint64FromNUM($2),
+			TiDBExtension: $1.(bool),
 		}
 	}
-|	"KILL" "CONNECTION" NUM
+|	KillOrKillTiDB "CONNECTION" NUM
 	{
 		$$ = &ast.KillStmt{
 			ConnectionID: getUint64FromNUM($3),
+			TiDBExtension: $1.(bool),
 		}
 	}
-|	"KILL" "QUERY" NUM
+|	KillOrKillTiDB "QUERY" NUM
 	{
 		$$ = &ast.KillStmt{
 			ConnectionID: getUint64FromNUM($3),
 			Query: true,
+			TiDBExtension: $1.(bool),
 		}
+	}
+
+KillOrKillTiDB:
+	"KILL"
+	{
+		$$ = false
+	}
+|	"KILL" "TIDB"
+	{
+		$$ = true
 	}
 
 %%

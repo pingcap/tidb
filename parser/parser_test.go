@@ -80,7 +80,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
 		"date", "datediff", "datetime", "deallocate", "do", "from_days", "end", "engine", "engines", "execute", "first", "full",
 		"local", "names", "offset", "password", "prepare", "quick", "rollback", "session", "signed",
-		"start", "global", "tables", "text", "time", "timestamp", "transaction", "truncate", "unknown",
+		"start", "global", "tables", "text", "time", "timestamp", "tidb", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substr", "substring", "mode", "any", "some", "user", "identified",
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
 		"max_rows", "min_rows", "national", "row", "quarter", "escape", "grants", "status", "fields", "triggers",
@@ -1464,6 +1464,9 @@ func (s *testParserSuite) TestSessionManage(c *C) {
 		{"kill 23123", true},
 		{"kill connection 23123", true},
 		{"kill query 23123", true},
+		{"kill tidb 23123", true},
+		{"kill tidb connection 23123", true},
+		{"kill tidb query 23123", true},
 	}
 	s.RunTest(c, table)
 }

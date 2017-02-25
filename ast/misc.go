@@ -320,8 +320,9 @@ type KillStmt struct {
 
 	// If Query is true, terminates the statement the connection is currently executing, but leaves the connection itself intact.
 	// If Query is false, terminates the connection associated with the given ConnectionID, after terminating any statement the connection is executing.
-	Query        bool
-	ConnectionID uint64
+	Query         bool
+	ConnectionID  uint64
+	TiDBExtension bool
 }
 
 // Accept implements Node Accept interface.
