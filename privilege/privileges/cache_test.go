@@ -245,6 +245,6 @@ func (s *testCacheSuite) TestAbnormalMySQLTable(c *C) {
 	mustExec(c, se, "DROP TABLE mysql.db;")
 	mustExec(c, se, "DROP TABLE mysql.tables_priv;")
 	mustExec(c, se, "DROP TABLE mysql.columns_priv;")
-	err = p.LoadAll()
+	err = p.LoadAll(se)
 	c.Assert(err, IsNil)
 }
