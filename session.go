@@ -21,6 +21,7 @@ import (
 	goctx "context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -707,14 +708,32 @@ func (s *session) Auth(user string, auth []byte, salt []byte) bool {
 	// Get user password.
 	name := strs[0]
 	host := strs[1]
-
 	checker := privilege.GetPrivilegeChecker(s)
-	if !checker.ConnectionVerification(name, host, auth, salt) {
-		log.Errorf("User connection verification failed %v", name)
-		return false
+
+	// Check IP.
+	if checker.ConnectionVerification(name, host, auth, salt) {
+		s.sessionVars.User = name + "@" + host
+		return true
 	}
-	s.sessionVars.User = user
-	return true
+
+	// Check Hostname.
+	for _, addr := range getHostByIP(host) {
+		if checker.ConnectionVerification(name, addr, auth, salt) {
+			s.sessionVars.User = name + "@" + addr
+			return true
+		}
+	}
+
+	log.Errorf("User connection verification failed %v", user)
+	return false
+}
+
+func getHostByIP(ip string) []string {
+	if ip == "127.0.0.1" {
+		return []string{"localhost"}
+	}
+	addrs, _ := net.LookupAddr(ip)
+	return addrs
 }
 
 // Some vars name for debug.
