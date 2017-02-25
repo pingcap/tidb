@@ -102,15 +102,18 @@ func (p *MySQLPrivilege) LoadAll(ctx context.Context) error {
 	}
 	err = p.LoadDBTable(ctx)
 	if err != nil {
-		return errors.Trace(err)
+		log.Warn("mysql.db maybe missing:", errors.ErrorStack(err))
+		return nil
 	}
 	err = p.LoadTablesPrivTable(ctx)
 	if err != nil {
-		return errors.Trace(err)
+		log.Warn("mysql.tables_priv missing:", errors.ErrorStack(err))
+		return nil
 	}
 	err = p.LoadColumnsPrivTable(ctx)
 	if err != nil {
-		return errors.Trace(err)
+		log.Warn("mysql.columns_priv missing:", errors.ErrorStack(err))
+		return nil
 	}
 	return nil
 }
