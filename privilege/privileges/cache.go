@@ -123,7 +123,7 @@ func (p *MySQLPrivilege) LoadAll(ctx context.Context) error {
 		if !noSuchTable(err) {
 			return errors.Trace(err)
 		}
-		log.Warn("mysql.columns_priv missing:")
+		log.Warn("mysql.columns_priv missing")
 	}
 	return nil
 }
