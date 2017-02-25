@@ -40,6 +40,7 @@ var (
 	_ StmtNode = &UseStmt{}
 	_ StmtNode = &AnalyzeTableStmt{}
 	_ StmtNode = &FlushStmt{}
+	_ StmtNode = &KillStmt{}
 
 	_ Node = &PrivElem{}
 	_ Node = &VariableAssignment{}
@@ -310,6 +311,26 @@ func (n *FlushStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*FlushStmt)
+	return v.Leave(n)
+}
+
+// KillStmt is a statement to kill a query or connection.
+type KillStmt struct {
+	stmtNode
+
+	// If Query is true, terminates the statement the connection is currently executing, but leaves the connection itself intact.
+	// If Query is false, terminates the connection associated with the given ConnectionID, after terminating any statement the connection is executing.
+	Query        bool
+	ConnectionID uint64
+}
+
+// Accept implements Node Accept interface.
+func (n *KillStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*KillStmt)
 	return v.Leave(n)
 }
 

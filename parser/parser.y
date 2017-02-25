@@ -278,6 +278,7 @@ import (
 	insertFunc			"INSERT_FUNC"
 	instr				"INSTR"
 	isNull				"ISNULL"
+	kill				"KILL"
 	lastInsertID			"LAST_INSERT_ID"
 	lcase				"LCASE"
 	length				"LENGTH"
@@ -306,6 +307,7 @@ import (
 	pi				"PI"
 	pow				"POW"
 	power				"POWER"
+	query				"QUERY"
 	rand				"RAND"
 	radians				"RADIANS"
 	rowCount			"ROW_COUNT"
@@ -638,6 +640,7 @@ import (
 	InsertValues		"Rest part of INSERT/REPLACE INTO statement"
 	JoinTable 		"join table"
 	JoinType		"join type"
+	KillStmt		"Kill statement"
 	LikeEscapeOpt 		"like escape option"
 	LimitClause		"LIMIT clause"
 	LimitOption		"Limit option could be integer or parameter marker."
@@ -1822,12 +1825,7 @@ ExplainStmt:
 LengthNum:
 	NUM
 	{
-		switch v := $1.(type) {
-		case int64:
-			$$ = uint64(v)
-		case uint64:
-			$$ = uint64(v)
-		}
+		$$ = getUint64FromNUM($1)
 	}
 
 NUM:
@@ -2259,7 +2257,7 @@ ReservedKeyword:
 | "EXISTS" | "EXPLAIN" | "FALSE" | "FLOAT" | "FOR" | "FORCE" | "FOREIGN" | "FROM"
 | "FULLTEXT" | "GRANT" | "GROUP" | "HAVING" | "HOUR_MICROSECOND" | "HOUR_MINUTE"
 | "HOUR_SECOND" | "IF" | "IGNORE" | "IN" | "INDEX" | "INFILE" | "INNER" | "INSERT" | "INT" | "INTO" | "INTEGER"
-| "INTERVAL" | "IS" | "JOIN" | "KEY" | "KEYS" | "LEADING" | "LEFT" | "LIKE" | "LIMIT" | "LINES" | "LOAD"
+| "INTERVAL" | "IS" | "JOIN" | "KEY" | "KEYS" | "KILL" | "LEADING" | "LEFT" | "LIKE" | "LIMIT" | "LINES" | "LOAD"
 | "LOCALTIME" | "LOCALTIMESTAMP" | "LOCK" | "LONGBLOB" | "LONGTEXT" | "MAXVALUE" | "MEDIUMBLOB" | "MEDIUMINT" | "MEDIUMTEXT"
 | "MINUTE_MICROSECOND" | "MINUTE_SECOND" | "MOD" | "NOT" | "NO_WRITE_TO_BINLOG" | "NULL" | "NUMERIC"
 | "ON" | "OPTION" | "OR" | "ORDER" | "OUTER" | "PARTITION" | "PRECISION" | "PRIMARY" | "PROCEDURE" | "RANGE" | "READ" 
@@ -5427,6 +5425,7 @@ Statement:
 |	FlushStmt
 |	GrantStmt
 |	InsertIntoStmt
+|	KillStmt
 |	LoadDataStmt
 |	PreparedStmt
 |	RollbackStmt
@@ -6544,5 +6543,32 @@ LockType:
 TableLockList:
 	TableLock
 |	TableLockList ',' TableLock
+
+
+/********************************************************************
+ * Kill Statement
+ * See https://dev.mysql.com/doc/refman/5.7/en/kill.html
+ *******************************************************************/
+
+KillStmt:
+	"KILL" NUM
+	{
+		$$ = &ast.KillStmt{
+			ConnectionID: getUint64FromNUM($2),
+		}
+	}
+|	"KILL" "CONNECTION" NUM
+	{
+		$$ = &ast.KillStmt{
+			ConnectionID: getUint64FromNUM($3),
+		}
+	}
+|	"KILL" "QUERY" NUM
+	{
+		$$ = &ast.KillStmt{
+			ConnectionID: getUint64FromNUM($3),
+			Query: true,
+		}
+	}
 
 %%

@@ -48,7 +48,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"exists", "explain", "false", "float", "for", "force", "foreign", "from",
 		"fulltext", "grant", "group", "having", "hour_microsecond", "hour_minute",
 		"hour_second", "if", "ignore", "in", "index", "infile", "inner", "insert", "int", "into", "integer",
-		"interval", "is", "join", "key", "keys", "leading", "left", "like", "limit", "lines", "load",
+		"interval", "is", "join", "key", "keys", "kill", "leading", "left", "like", "limit", "lines", "load",
 		"localtime", "localtimestamp", "lock", "longblob", "longtext", "mediumblob", "maxvalue", "mediumint", "mediumtext",
 		"minute_microsecond", "minute_second", "mod", "not", "no_write_to_binlog", "null", "numeric",
 		"on", "option", "or", "order", "outer", "partition", "precision", "primary", "procedure", "range", "read", "real",
@@ -1454,4 +1454,16 @@ func (s *testParserSuite) TestTimestampDiffUnit(c *C) {
 	f, ok = expr.(*ast.FuncCallExpr)
 	c.Assert(ok, IsTrue)
 	c.Assert(f.Args[0].GetDatum().GetString(), Equals, "MONTH")
+}
+
+func (s *testParserSuite) TestSessionManage(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []testCase{
+		// Kill statement.
+		// See https://dev.mysql.com/doc/refman/5.7/en/kill.html
+		{"kill 23123", true},
+		{"kill connection 23123", true},
+		{"kill query 23123", true},
+	}
+	s.RunTest(c, table)
 }
