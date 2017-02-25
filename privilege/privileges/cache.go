@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/types"
@@ -100,22 +101,41 @@ func (p *MySQLPrivilege) LoadAll(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	err = p.LoadDBTable(ctx)
 	if err != nil {
-		log.Warn("mysql.db maybe missing:", errors.ErrorStack(err))
-		return nil
+		if !noSuchTable(err) {
+			return errors.Trace(err)
+		}
+		log.Warn("mysql.db maybe missing")
 	}
+
 	err = p.LoadTablesPrivTable(ctx)
 	if err != nil {
-		log.Warn("mysql.tables_priv missing:", errors.ErrorStack(err))
-		return nil
+		if !noSuchTable(err) {
+			return errors.Trace(err)
+		}
+		log.Warn("mysql.tables_priv missing")
 	}
+
 	err = p.LoadColumnsPrivTable(ctx)
 	if err != nil {
-		log.Warn("mysql.columns_priv missing:", errors.ErrorStack(err))
-		return nil
+		if !noSuchTable(err) {
+			return errors.Trace(err)
+		}
+		log.Warn("mysql.columns_priv missing:")
 	}
 	return nil
+}
+
+func noSuchTable(err error) bool {
+	e1 := errors.Cause(err)
+	if e2, ok := e1.(*terror.Error); ok {
+		if e2.Code() == terror.ErrCode(mysql.ErrNoSuchTable) {
+			return true
+		}
+	}
+	return false
 }
 
 // LoadUserTable loads the mysql.user table from database.
