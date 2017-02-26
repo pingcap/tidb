@@ -13,6 +13,10 @@
 
 package mysql
 
+import (
+	"strings"
+)
+
 // Version informations.
 const (
 	MinProtocolVersion byte = 10
@@ -303,4 +307,91 @@ var DefaultLengthOfTimeFraction = map[int]int{
 
 	5: 3,
 	6: 3,
+}
+
+// SQLMode is the type for MySQL sql_mode.
+// See https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html
+type SQLMode int
+
+// consts for sql modes.
+const (
+	ModeNone        SQLMode = 0
+	ModeRealAsFloat SQLMode = 1 << iota
+	ModePipesAsConcat
+	ModeANSIQuotes
+	ModeIgnoreSpace
+	ModeNotUsed
+	ModeOnlyFullGroupBy
+	ModeNoUnsignedSubtraction
+	ModeNoDirInCreate
+	ModePostgreSQL
+	ModeOracle
+	ModeMsSQL
+	ModeDb2
+	ModeMaxdb
+	ModeNoKeyOptions
+	ModeNoTableOptions
+	ModeNoFieldOptions
+	ModeMySQL323
+	ModeMySQL40
+	ModeANSI
+	ModeNoAutoValueOnZero
+	ModeNoBackslashEscapes
+	ModeStrictTransTables
+	ModeStrictAllTables
+	ModeNoZeroInDate
+	ModeNoZeroDate
+	ModeInvalidDates
+	ModeErrorForDivisionByZero
+	ModeTraditional
+	ModeNoAutoCreateUser
+	ModeHighNotPrecedence
+	ModeNoEngineSubstitution
+	ModePadCharToFullLength
+)
+
+// GetSQLMode gets the sql mode for string literal.
+func GetSQLMode(str string) SQLMode {
+	str = strings.ToUpper(str)
+	mode, ok := Str2SQLMode[str]
+	if !ok {
+		return ModeNone
+	}
+	return mode
+}
+
+// Str2SQLMode is the string represent of sql_mode to sql_mode map.
+var Str2SQLMode = map[string]SQLMode{
+	"MODE_REAL_AS_FLOAT":              ModeRealAsFloat,
+	"MODE_PIPES_AS_CONCAT":            ModePipesAsConcat,
+	"MODE_ANSI_QUOTES":                ModeANSIQuotes,
+	"MODE_IGNORE_SPACE":               ModeIgnoreSpace,
+	"MODE_NOT_USED":                   ModeNotUsed,
+	"MODE_ONLY_FULL_GROUP_BY":         ModeOnlyFullGroupBy,
+	"MODE_NO_UNSIGNED_SUBTRACTION":    ModeNoUnsignedSubtraction,
+	"MODE_NO_DIR_IN_CREATE":           ModeNoDirInCreate,
+	"MODE_POSTGRESQL":                 ModePostgreSQL,
+	"MODE_ORACLE":                     ModeOracle,
+	"MODE_MSSQL":                      ModeMsSQL,
+	"MODE_DB2":                        ModeDb2,
+	"MODE_MAXDB":                      ModeMaxdb,
+	"MODE_NO_KEY_OPTIONS":             ModeNoKeyOptions,
+	"MODE_NO_TABLE_OPTIONS":           ModeNoTableOptions,
+	"MODE_NO_FIELD_OPTIONS":           ModeNoFieldOptions,
+	"MODE_MYSQL323":                   ModeMySQL323,
+	"MODE_MYSQL40":                    ModeMySQL40,
+	"MODE_ANSI":                       ModeANSI,
+	"MODE_NO_AUTO_VALUE_ON_ZERO":      ModeNoAutoValueOnZero,
+	"MODE_NO_BACKSLASH_ESCAPES":       ModeNoBackslashEscapes,
+	"MODE_STRICT_TRANS_TABLES":        ModeStrictTransTables,
+	"MODE_STRICT_ALL_TABLES":          ModeStrictAllTables,
+	"MODE_NO_ZERO_IN_DATE":            ModeNoZeroInDate,
+	"MODE_NO_ZERO_DATE":               ModeNoZeroDate,
+	"MODE_INVALID_DATES":              ModeInvalidDates,
+	"MODE_ERROR_FOR_DIVISION_BY_ZERO": ModeErrorForDivisionByZero,
+	"MODE_TRADITIONAL":                ModeTraditional,
+	"MODE_NO_AUTO_CREATE_USER":        ModeNoAutoCreateUser,
+	"MODE_HIGH_NOT_PRECEDENCE":        ModeHighNotPrecedence,
+	"MODE_NO_ENGINE_SUBSTITUTION":     ModeNoEngineSubstitution,
+	"MODE_PAD_CHAR_TO_FULL_LENGTH":    ModePadCharToFullLength,
 }
