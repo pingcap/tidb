@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	// "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/hack"
 )
@@ -317,6 +318,8 @@ func (cc *clientConn) readHandshakeResponse() error {
 			return errors.Trace(mysql.NewErr(mysql.ErrAccessDenied, cc.user, host, "Yes"))
 		}
 	}
+	fmt.Println("连接进来，ctx设置了sessionmanager的")
+	cc.ctx.SetSessionManager(cc.server)
 	return nil
 }
 
@@ -326,6 +329,7 @@ func (cc *clientConn) readHandshakeResponse() error {
 func (cc *clientConn) Run() {
 	const size = 4096
 	defer func() {
+		fmt.Println("毛毛细雨，难度panic")
 		r := recover()
 		if r != nil {
 			buf := make([]byte, size)
@@ -342,6 +346,7 @@ func (cc *clientConn) Run() {
 			if terror.ErrorNotEqual(err, io.EOF) {
 				log.Error(errors.ErrorStack(err))
 			}
+			fmt.Println("read packet的时候EOF了？？", err)
 			return
 		}
 
@@ -349,6 +354,7 @@ func (cc *clientConn) Run() {
 		if err = cc.dispatch(data); err != nil {
 			if terror.ErrorEqual(err, io.EOF) {
 				cc.addMetrics(data[0], startTime, nil)
+				fmt.Println(" dispatch的时候EOF了??")
 				return
 			}
 			log.Warnf("[%d] dispatch error:\n%s\n%s\n%s",
@@ -593,10 +599,6 @@ func insertDataWithCommit(prevData, curData []byte, loadDataInfo *executor.LoadD
 	return prevData, nil
 }
 
-func (cc *clientConn) handleShowProcessList() ([]ResultSet, error) {
-	return cc.server.showProcessList()
-}
-
 // handleLoadData does the additional work after processing the 'load data' query.
 // It sends client a file path, then reads the file content from client, inserts data into database.
 func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error {
@@ -672,23 +674,15 @@ func (cc *clientConn) handleQuery(sql string) (err error) {
 			err = cc.writeMultiResultset(rs, false)
 		}
 	} else {
-		fmt.Println("result is nil...so ...")
 		if loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey); loadDataInfo != nil {
 			defer cc.ctx.SetValue(executor.LoadDataVarKey, nil)
 			if err = cc.handleLoadData(loadDataInfo.(*executor.LoadDataInfo)); err != nil {
 				return errors.Trace(err)
 			}
-		} else if showProcess := cc.ctx.Value(executor.ShowProcessListKey); showProcess != nil {
-			fmt.Println("run here!!!!")
-			defer cc.ctx.SetValue(executor.ShowProcessListKey, nil)
-			rs, err = cc.handleShowProcessList()
-			if err != nil {
-				return errors.Trace(err)
-			}
-			cc.writeMultiResultset(rs, false)
 		}
 		err = cc.writeOK()
 	}
+	fmt.Println("err=", err)
 	return errors.Trace(err)
 }
 

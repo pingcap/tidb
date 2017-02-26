@@ -32,10 +32,8 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/perfschema"
@@ -47,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-binlog"
 )
@@ -68,11 +67,12 @@ type Session interface {
 	DropPreparedStmt(stmtID uint32) error
 	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
+	SetSessionManager(sm util.SessionManager)
 	Close() error
 	Auth(user string, auth []byte, salt []byte) bool
 	// Cancel the execution of current transaction.
 	Cancel()
-	ShowProcess() (ast.RecordSet, error)
+	ShowProcess() util.ProcessInfo
 }
 
 var (
@@ -116,7 +116,8 @@ type session struct {
 	stmtState *perfschema.StatementState
 	parser    *parser.Parser
 
-	sessionVars *variable.SessionVars
+	sessionVars    *variable.SessionVars
+	sessionManager util.SessionManager
 }
 
 // Cancel cancels the execution of current transaction.
@@ -159,6 +160,14 @@ func (s *session) SetClientCapability(capability uint32) {
 
 func (s *session) SetConnectionID(connectionID uint64) {
 	s.sessionVars.ConnectionID = connectionID
+}
+
+func (s *session) SetSessionManager(sm util.SessionManager) {
+	s.sessionManager = sm
+}
+
+func (s *session) GetSessionManager() util.SessionManager {
+	return s.sessionManager
 }
 
 type schemaLeaseChecker struct {
@@ -665,6 +674,7 @@ func (s *session) NewTxn() error {
 }
 
 func (s *session) SetValue(key fmt.Stringer, value interface{}) {
+	fmt.Println("session setvalue ", key, value)
 	s.values[key] = value
 }
 
@@ -989,76 +999,80 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	return nil
 }
 
-// processInfo implements ast.RecordSet interface, this struct used for the
-// result of 'show process list' statement.
-type processInfo struct {
-	id    uint64
-	user  string
-	host  string
-	db    string
-	state string
-	info  string
+// // processInfo implements ast.RecordSet interface, this struct used for the
+// // result of 'show process list' statement.
+// type processInfo struct {
+// 	id      uint64
+// 	user    string
+// 	host    string
+// 	db      string
+// 	command string
+// 	time    uint64
+// 	state   string
+// 	info    string
 
-	is       infoschema.InfoSchema
-	consumed bool
-}
+// 	is       infoschema.InfoSchema
+// 	consumed bool
+// }
 
-func (pi *processInfo) Fields() ([]*ast.ResultField, error) {
-	fmt.Println("processinfo field called")
-	tbl, err := pi.is.TableByName(model.NewCIStr("information_schema"), model.NewCIStr("processlist"))
-	if err != nil {
-		fmt.Println("什么 呀？")
-		return nil, errors.Trace(err)
-	}
-	var rfs []*ast.ResultField
-	for _, col := range tbl.Meta().Columns {
-		rf := &ast.ResultField{
-			// ColumnAsName: col.ColName,
-			// TableAsName:  col.TblName,
-			// DBName:       col.DBName,
-			Column: col,
-		}
-		rfs = append(rfs, rf)
-	}
-	fmt.Println("什么 ，没打印？")
-	return rfs, nil
-}
+// func (pi *processInfo) Fields() ([]*ast.ResultField, error) {
+// 	fmt.Println("processinfo field called")
+// 	tbl, err := pi.is.TableByName(model.NewCIStr("information_schema"), model.NewCIStr("processlist"))
+// 	if err != nil {
+// 		fmt.Println("什么 呀？")
+// 		return nil, errors.Trace(err)
+// 	}
+// 	var rfs []*ast.ResultField
+// 	tblInfo := tbl.Meta()
+// 	for _, col := range tblInfo.Columns {
+// 		rf := &ast.ResultField{
+// 			Column:       col,
+// 			ColumnAsName: col.Name,
+// 			Table:        tblInfo,
+// 			TableAsName:  model.NewCIStr("processlist"),
+// 			DBName:       model.NewCIStr("information_schema"),
+// 		}
+// 		rfs = append(rfs, rf)
+// 	}
+// 	fmt.Println("什么 ，没打印？")
+// 	return rfs, nil
+// }
 
-func (pi *processInfo) Next() (*ast.Row, error) {
-	fmt.Println("next called")
-	if pi.consumed {
-		return nil, nil
-	}
-	pi.consumed = true
-	return &ast.Row{
-		Data: []types.Datum{
-			types.NewUintDatum(pi.id),
-			types.NewStringDatum(pi.user),
-			types.NewStringDatum(pi.host),
-			types.NewStringDatum(pi.db),
-			types.NewStringDatum(pi.state),
-			types.NewStringDatum(pi.info),
-		},
-	}, nil
-}
+// func (pi *processInfo) Next() (*ast.Row, error) {
+// 	fmt.Println("next called")
+// 	if pi.consumed {
+// 		return nil, nil
+// 	}
+// 	pi.consumed = true
+// 	return &ast.Row{
+// 		Data: []types.Datum{
+// 			types.NewUintDatum(pi.id),
+// 			types.NewStringDatum(pi.user),
+// 			types.NewStringDatum(pi.host),
+// 			types.NewStringDatum(pi.db),
+// 			types.NewStringDatum(pi.command),
+// 			types.NewUintDatum(pi.time),
+// 			types.NewStringDatum(pi.state),
+// 			types.NewStringDatum(pi.info),
+// 		},
+// 	}, nil
+// }
 
-func (pi *processInfo) Close() error {
-	return nil
-}
+// func (pi *processInfo) Close() error {
+// 	return nil
+// }
 
-func (s *session) ShowProcess() (ast.RecordSet, error) {
-	is := sessionctx.GetDomain(s).InfoSchema()
+func (s *session) ShowProcess() util.ProcessInfo {
 	fmt.Println("session show process")
-	var pi processInfo
-	pi.is = is
-	pi.id = s.sessionVars.ConnectionID
+	var pi util.ProcessInfo
+	pi.ID = s.sessionVars.ConnectionID
 	strs := strings.Split(s.sessionVars.User, "@")
 	if len(strs) == 2 {
-		pi.user = strs[0]
-		pi.host = strs[1]
+		pi.User = strs[0]
+		pi.Host = strs[1]
 	}
-	pi.db = s.sessionVars.CurrentDB
-	pi.state = "todo"
-	pi.info = s.String()
-	return &pi, nil
+	pi.DB = s.sessionVars.CurrentDB
+	pi.State = "todo"
+	pi.Info = "info"
+	return pi
 }

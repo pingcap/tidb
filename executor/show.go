@@ -64,6 +64,7 @@ func (e *ShowExec) Schema() *expression.Schema {
 
 // Next implements Execution Next interface.
 func (e *ShowExec) Next() (*Row, error) {
+	fmt.Println("show exec next called")
 	if e.rows == nil {
 		err := e.fetchAll()
 		if err != nil {
@@ -145,21 +146,26 @@ func (e *ShowExec) fetchShowDatabases() error {
 	return nil
 }
 
-type showProcessListType int
-
-func (_ showProcessListType) String() string {
-	return "show_process_list"
-}
-
-// ShowProcessListKey is a variable key for show process list
-const ShowProcessListKey showProcessListType = 0
-
 func (e *ShowExec) fetchShowProcessList() error {
+	sm := e.ctx.GetSessionManager()
+
 	fmt.Println("fetchShowProcessList")
-	// Mark a special flag to the context. If the caller find this flag, it
-	// will handle the logic properly. Actually, show processlist is
-	// implemented in server.Server.
-	e.ctx.SetValue(ShowProcessListKey, struct{}{})
+	pl := sm.ShowProcessList()
+	for _, pi := range pl {
+		row := &Row{
+			Data: []types.Datum{
+				types.NewUintDatum(pi.ID),
+				types.NewStringDatum(pi.User),
+				types.NewStringDatum(pi.Host),
+				types.NewStringDatum(pi.DB),
+				types.NewStringDatum(pi.Command),
+				types.NewUintDatum(pi.Time),
+				types.NewStringDatum(pi.State),
+				types.NewStringDatum(pi.Info),
+			},
+		}
+		e.rows = append(e.rows, row)
+	}
 	return nil
 }
 

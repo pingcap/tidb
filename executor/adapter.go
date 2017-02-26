@@ -140,7 +140,6 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 		e = executorExec.StmtExec
 	}
 
-	var consume bool
 	// Fields or Schema are only used for statements that return result set.
 	if e.Schema().Len() == 0 {
 		// Check if "tidb_snapshot" is set for the write executors.
@@ -152,14 +151,7 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 				return nil, errors.New("can not execute write statement when 'tidb_snapshot' is set")
 			}
 		}
-		consume = true
-	} else if show, ok := e.(*ShowExec); ok {
-		if show.Tp == ast.ShowProcessList {
-			consume = true
-		}
-	}
 
-	if consume {
 		defer func() {
 			e.Close()
 			a.logSlowQuery()

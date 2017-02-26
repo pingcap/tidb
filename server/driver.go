@@ -16,6 +16,7 @@ package server
 import (
 	"fmt"
 
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -76,7 +77,9 @@ type QueryCtx interface {
 	Auth(user string, auth []byte, salt []byte) bool
 
 	// ShowProcess shows the information about the session.
-	ShowProcess() (ResultSet, error)
+	ShowProcess() util.ProcessInfo
+
+	SetSessionManager(util.SessionManager)
 }
 
 // PreparedStatement is the interface to use a prepared statement.
