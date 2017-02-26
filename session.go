@@ -471,7 +471,7 @@ func (s *session) SetGlobalSysVar(name string, value string) error {
 }
 
 func (s *session) ParseSQL(sql, charset, collation string) ([]ast.StmtNode, error) {
-	s.parser.SetSQLMode(mysql.ModeANSIQuotes)
+	s.parser.SetSQLMode(s.sessionVars.SQLMode)
 	return s.parser.Parse(sql, charset, collation)
 }
 
