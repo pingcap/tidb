@@ -716,7 +716,6 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 
 	columns, err := rs.Columns()
 	if err != nil {
-		fmt.Println("fuck...!!", err)
 		return errors.Trace(err)
 	}
 

@@ -155,10 +155,7 @@ type SessionVars struct {
 	// See https://dev.mysql.com/doc/refman/5.7/en/time-zone-support.html
 	TimeZone *time.Location
 
-	// Last SQL the session executed.
-	LastSQL string
-	// Last Time when the SQL executed.
-	LastTime time.Time
+	SQLMode mysql.SQLMode
 }
 
 // NewSessionVars creates a session vars object.
