@@ -82,6 +82,8 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 		return errors.Trace(err)
 	}
 
+	txnRegionsNumHistogram.WithLabelValues("snapshot").Observe(float64(len(groups)))
+
 	var batches []batchKeys
 	for id, g := range groups {
 		batches = appendBatchBySize(batches, id, g, func([]byte) int { return 1 }, batchGetSize)

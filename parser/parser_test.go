@@ -48,7 +48,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"exists", "explain", "false", "float", "for", "force", "foreign", "from",
 		"fulltext", "grant", "group", "having", "hour_microsecond", "hour_minute",
 		"hour_second", "if", "ignore", "in", "index", "infile", "inner", "insert", "int", "into", "integer",
-		"interval", "is", "join", "key", "keys", "leading", "left", "like", "limit", "lines", "load",
+		"interval", "is", "join", "key", "keys", "kill", "leading", "left", "like", "limit", "lines", "load",
 		"localtime", "localtimestamp", "lock", "longblob", "longtext", "mediumblob", "maxvalue", "mediumint", "mediumtext",
 		"minute_microsecond", "minute_second", "mod", "not", "no_write_to_binlog", "null", "numeric",
 		"on", "option", "or", "order", "outer", "partition", "precision", "primary", "procedure", "range", "read", "real",
@@ -80,7 +80,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
 		"date", "datediff", "datetime", "deallocate", "do", "from_days", "end", "engine", "engines", "execute", "first", "full",
 		"local", "names", "offset", "password", "prepare", "quick", "rollback", "session", "signed",
-		"start", "global", "tables", "text", "time", "timestamp", "transaction", "truncate", "unknown",
+		"start", "global", "tables", "text", "time", "timestamp", "tidb", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substr", "substring", "mode", "any", "some", "user", "identified",
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
 		"max_rows", "min_rows", "national", "row", "quarter", "escape", "grants", "status", "fields", "triggers",
@@ -1454,4 +1454,19 @@ func (s *testParserSuite) TestTimestampDiffUnit(c *C) {
 	f, ok = expr.(*ast.FuncCallExpr)
 	c.Assert(ok, IsTrue)
 	c.Assert(f.Args[0].GetDatum().GetString(), Equals, "MONTH")
+}
+
+func (s *testParserSuite) TestSessionManage(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []testCase{
+		// Kill statement.
+		// See https://dev.mysql.com/doc/refman/5.7/en/kill.html
+		{"kill 23123", true},
+		{"kill connection 23123", true},
+		{"kill query 23123", true},
+		{"kill tidb 23123", true},
+		{"kill tidb connection 23123", true},
+		{"kill tidb query 23123", true},
+	}
+	s.RunTest(c, table)
 }

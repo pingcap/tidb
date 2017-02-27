@@ -278,6 +278,7 @@ import (
 	insertFunc			"INSERT_FUNC"
 	instr				"INSTR"
 	isNull				"ISNULL"
+	kill				"KILL"
 	lastInsertID			"LAST_INSERT_ID"
 	lcase				"LCASE"
 	length				"LENGTH"
@@ -306,6 +307,7 @@ import (
 	pi				"PI"
 	pow				"POW"
 	power				"POWER"
+	query				"QUERY"
 	rand				"RAND"
 	radians				"RADIANS"
 	rowCount			"ROW_COUNT"
@@ -489,6 +491,7 @@ import (
 	tables		"TABLES"
 	textType	"TEXT"
 	than		"THAN"
+	tidb		"TIDB"
 	timeType	"TIME"
 	timestampType	"TIMESTAMP"
 	timestampDiff	"TIMESTAMPDIFF"
@@ -638,6 +641,8 @@ import (
 	InsertValues		"Rest part of INSERT/REPLACE INTO statement"
 	JoinTable 		"join table"
 	JoinType		"join type"
+	KillStmt		"Kill statement"
+	KillOrKillTiDB		"Kill or Kill TiDB"
 	LikeEscapeOpt 		"like escape option"
 	LimitClause		"LIMIT clause"
 	LimitOption		"Limit option could be integer or parameter marker."
@@ -1822,12 +1827,7 @@ ExplainStmt:
 LengthNum:
 	NUM
 	{
-		switch v := $1.(type) {
-		case int64:
-			$$ = uint64(v)
-		case uint64:
-			$$ = uint64(v)
-		}
+		$$ = getUint64FromNUM($1)
 	}
 
 NUM:
@@ -2240,8 +2240,8 @@ UnReservedKeyword:
  "ACTION" | "ASCII" | "AUTO_INCREMENT" | "AFTER" | "AT" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "CHARSET"
 | "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED" | "CONSISTENT" | "DATA" | "DATE" | "DATETIME" | "DEALLOCATE" | "DO"
 | "DYNAMIC"| "END" | "ENGINE" | "ENGINES" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FORMAT" | "FULL" |"GLOBAL"
-| "HASH" | "LESS" | "LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT" 
-| "ROLLBACK" | "SESSION" | "SIGNED" | "SNAPSHOT" | "START" | "STATUS" | "TABLES" | "TEXT" | "THAN" | "TIME" | "TIMESTAMP" 
+| "HASH" | "LESS" | "LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT"
+| "ROLLBACK" | "SESSION" | "SIGNED" | "SNAPSHOT" | "START" | "STATUS" | "TABLES" | "TEXT" | "THAN" | "TIDB" | "TIME" | "TIMESTAMP"
 | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" | "VALUE" | "WARNINGS" | "YEAR" | "MODE"  | "WEEK"  | "ANY" | "SOME" | "USER" | "IDENTIFIED"
 | "COLLATION" | "COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS"
 | "MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION"
@@ -2259,7 +2259,7 @@ ReservedKeyword:
 | "EXISTS" | "EXPLAIN" | "FALSE" | "FLOAT" | "FOR" | "FORCE" | "FOREIGN" | "FROM"
 | "FULLTEXT" | "GRANT" | "GROUP" | "HAVING" | "HOUR_MICROSECOND" | "HOUR_MINUTE"
 | "HOUR_SECOND" | "IF" | "IGNORE" | "IN" | "INDEX" | "INFILE" | "INNER" | "INSERT" | "INT" | "INTO" | "INTEGER"
-| "INTERVAL" | "IS" | "JOIN" | "KEY" | "KEYS" | "LEADING" | "LEFT" | "LIKE" | "LIMIT" | "LINES" | "LOAD"
+| "INTERVAL" | "IS" | "JOIN" | "KEY" | "KEYS" | "KILL" | "LEADING" | "LEFT" | "LIKE" | "LIMIT" | "LINES" | "LOAD"
 | "LOCALTIME" | "LOCALTIMESTAMP" | "LOCK" | "LONGBLOB" | "LONGTEXT" | "MAXVALUE" | "MEDIUMBLOB" | "MEDIUMINT" | "MEDIUMTEXT"
 | "MINUTE_MICROSECOND" | "MINUTE_SECOND" | "MOD" | "NOT" | "NO_WRITE_TO_BINLOG" | "NULL" | "NUMERIC"
 | "ON" | "OPTION" | "OR" | "ORDER" | "OUTER" | "PARTITION" | "PRECISION" | "PRIMARY" | "PROCEDURE" | "RANGE" | "READ" 
@@ -5427,6 +5427,7 @@ Statement:
 |	FlushStmt
 |	GrantStmt
 |	InsertIntoStmt
+|	KillStmt
 |	LoadDataStmt
 |	PreparedStmt
 |	RollbackStmt
@@ -6544,5 +6545,47 @@ LockType:
 TableLockList:
 	TableLock
 |	TableLockList ',' TableLock
+
+
+/********************************************************************
+ * Kill Statement
+ * See https://dev.mysql.com/doc/refman/5.7/en/kill.html
+ *******************************************************************/
+
+KillStmt:
+	KillOrKillTiDB NUM
+	{
+		$$ = &ast.KillStmt{
+			ConnectionID: getUint64FromNUM($2),
+			TiDBExtension: $1.(bool),
+		}
+	}
+|	KillOrKillTiDB "CONNECTION" NUM
+	{
+		$$ = &ast.KillStmt{
+			ConnectionID: getUint64FromNUM($3),
+			TiDBExtension: $1.(bool),
+		}
+	}
+|	KillOrKillTiDB "QUERY" NUM
+	{
+		$$ = &ast.KillStmt{
+			ConnectionID: getUint64FromNUM($3),
+			Query: true,
+			TiDBExtension: $1.(bool),
+		}
+	}
+
+KillOrKillTiDB:
+	"KILL"
+	{
+		$$ = false
+	}
+/* KILL TIDB is a special grammar extension in TiDB, it can be used only when
+   the client connect to TiDB directly, not proxied under LVS. */
+|	"KILL" "TIDB"
+	{
+		$$ = true
+	}
 
 %%
