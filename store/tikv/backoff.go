@@ -118,17 +118,17 @@ func (t backoffType) String() string {
 const (
 	copBuildTaskMaxBackoff  = 5000
 	tsoMaxBackoff           = 5000
-	scannerNextMaxBackoff   = 5000
-	batchGetMaxBackoff      = 10000
-	copNextMaxBackoff       = 10000
-	getMaxBackoff           = 10000
-	prewriteMaxBackoff      = 10000
-	commitMaxBackoff        = 10000
+	scannerNextMaxBackoff   = 20000
+	batchGetMaxBackoff      = 20000
+	copNextMaxBackoff       = 20000
+	getMaxBackoff           = 20000
+	prewriteMaxBackoff      = 20000
+	commitMaxBackoff        = 20000
 	commitPrimaryMaxBackoff = -1
-	cleanupMaxBackoff       = 10000
+	cleanupMaxBackoff       = 20000
 	gcMaxBackoff            = 100000
 	gcResolveLockMaxBackoff = 100000
-	rawkvMaxBackoff         = 5000
+	rawkvMaxBackoff         = 20000
 )
 
 // Backoffer is a utility for retrying queries.
