@@ -498,8 +498,8 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		ID:      s.sessionVars.ConnectionID,
 		DB:      s.sessionVars.CurrentDB,
 		Command: "Query",
-		Time:    uint64(startTS.Unix()),
-		State:   fmt.Sprintf("%d", s.Status()),
+		Time:    startTS,
+		State:   s.Status(),
 		Info:    sql,
 	}
 	strs := strings.Split(s.sessionVars.User, "@")
@@ -627,6 +627,23 @@ func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (ast.R
 	}
 	s.prepareTxnCtx()
 	st := executor.CompileExecutePreparedStmt(s, stmtID, args...)
+
+	// Update processinfo, ShowProcess() will use it.
+	pi := util.ProcessInfo{
+		ID:      s.sessionVars.ConnectionID,
+		DB:      s.sessionVars.CurrentDB,
+		Command: "Query",
+		Time:    time.Now(),
+		State:   s.Status(),
+		Info:    st.OriginText(),
+	}
+	strs := strings.Split(s.sessionVars.User, "@")
+	if len(strs) == 2 {
+		pi.User = strs[0]
+		pi.Host = strs[1]
+	}
+	s.processInfo.Store(pi)
+
 	r, err := runStmt(s, st)
 	return r, errors.Trace(err)
 }
@@ -1023,7 +1040,6 @@ func (s *session) ShowProcess() util.ProcessInfo {
 	tmp := s.processInfo.Load()
 	if tmp != nil {
 		pi = tmp.(util.ProcessInfo)
-		pi.Time = uint64(time.Now().Unix()) - pi.Time
 	}
 	return pi
 }

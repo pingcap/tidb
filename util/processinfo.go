@@ -13,6 +13,10 @@
 
 package util
 
+import (
+	"time"
+)
+
 // ProcessInfo is a struct used for show processlist statement.
 type ProcessInfo struct {
 	ID      uint64
@@ -20,8 +24,8 @@ type ProcessInfo struct {
 	Host    string
 	DB      string
 	Command string
-	Time    uint64
-	State   string
+	Time    time.Time
+	State   uint16
 	Info    string
 }
 

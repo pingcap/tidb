@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -160,8 +161,8 @@ func (e *ShowExec) fetchShowProcessList() error {
 				types.NewStringDatum(pi.Host),
 				types.NewStringDatum(pi.DB),
 				types.NewStringDatum(pi.Command),
-				types.NewUintDatum(pi.Time),
-				types.NewStringDatum(pi.State),
+				types.NewUintDatum(uint64(time.Since(pi.Time) / time.Second)),
+				types.NewStringDatum(fmt.Sprintf("%d", pi.State)),
 				types.NewStringDatum(pi.Info),
 			},
 		}
