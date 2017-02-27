@@ -24,6 +24,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
@@ -100,8 +101,10 @@ func (h *stmtHistory) add(stmtID uint32, st ast.Statement, params ...interface{}
 }
 
 type session struct {
-	txn   kv.Transaction // current transaction
-	txnCh chan *txnWithErr
+	// It's used by ShowProcess(), and should be modified atomically.
+	processInfo atomic.Value
+	txn         kv.Transaction // current transaction
+	txnCh       chan *txnWithErr
 	// For cancel the execution of current transaction.
 	goCtx      goctx.Context
 	cancelFunc goctx.CancelFunc
@@ -489,8 +492,23 @@ func (s *session) ParseSQL(sql, charset, collation string) ([]ast.StmtNode, erro
 func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 	s.prepareTxnCtx()
 	startTS := time.Now()
-	s.GetSessionVars().LastTime = startTS
-	s.GetSessionVars().LastSQL = sql
+
+	// Update processinfo, ShowProcess() will use it.
+	pi := util.ProcessInfo{
+		ID:      s.sessionVars.ConnectionID,
+		DB:      s.sessionVars.CurrentDB,
+		Command: "Query",
+		Time:    uint64(startTS.Unix()),
+		State:   fmt.Sprintf("%d", s.Status()),
+		Info:    sql,
+	}
+	strs := strings.Split(s.sessionVars.User, "@")
+	if len(strs) == 2 {
+		pi.User = strs[0]
+		pi.Host = strs[1]
+	}
+	s.processInfo.Store(pi)
+
 	charset, collation := s.sessionVars.GetCharsetInfo()
 	connID := s.sessionVars.ConnectionID
 	rawStmts, err := s.ParseSQL(sql, charset, collation)
@@ -1002,16 +1020,10 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 
 func (s *session) ShowProcess() util.ProcessInfo {
 	var pi util.ProcessInfo
-	pi.ID = s.sessionVars.ConnectionID
-	strs := strings.Split(s.sessionVars.User, "@")
-	if len(strs) == 2 {
-		pi.User = strs[0]
-		pi.Host = strs[1]
+	tmp := s.processInfo.Load()
+	if tmp != nil {
+		pi = tmp.(util.ProcessInfo)
+		pi.Time = uint64(time.Now().Unix()) - pi.Time
 	}
-	pi.DB = s.sessionVars.CurrentDB
-	pi.Command = "Query"
-	pi.Time = uint64(time.Since(s.GetSessionVars().LastTime) / time.Second)
-	pi.State = fmt.Sprintf("%d", s.Status())
-	pi.Info = s.GetSessionVars().LastSQL
 	return pi
 }
