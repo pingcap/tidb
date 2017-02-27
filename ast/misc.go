@@ -320,8 +320,15 @@ type KillStmt struct {
 
 	// If Query is true, terminates the statement the connection is currently executing, but leaves the connection itself intact.
 	// If Query is false, terminates the connection associated with the given ConnectionID, after terminating any statement the connection is executing.
-	Query         bool
-	ConnectionID  uint64
+	Query        bool
+	ConnectionID uint64
+	// When the SQL grammar is "KILL TIDB [CONNECTION | QUERY] connectionID", TiDBExtension will be set.
+	// It's a special grammar extension in TiDB. This extension exists because, when the connection is:
+	// client -> LVS proxy -> TiDB, and type Ctrl+C in client, the following action will be executed:
+	// new a connection; kill xxx;
+	// kill command may send to the wrong TiDB, because the exists of LVS proxy, and kill the wrong session.
+	// So, "KILL TIDB" grammar is introduced, and it REQUIRES DIRECT client -> TiDB TOPOLOGY.
+	// TODO: The standard KILL grammar will be supported once we have global connectionID.
 	TiDBExtension bool
 }
 

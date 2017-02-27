@@ -6581,6 +6581,8 @@ KillOrKillTiDB:
 	{
 		$$ = false
 	}
+/* KILL TIDB is a special grammar extension in TiDB, it can be used only when
+   the client connect to TiDB directly, not proxied under LVS. */
 |	"KILL" "TIDB"
 	{
 		$$ = true
