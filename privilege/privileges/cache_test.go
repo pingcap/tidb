@@ -172,7 +172,7 @@ func (s *testCacheSuite) TestCaseInsensitive(c *C) {
 	c.Assert(p.RequestVerification("genius", "127.0.0.1", "tctrain", "tctrainorder", "", mysql.SelectPriv), IsTrue)
 }
 
-func (s *testCacheSuite) TestAfterSyncMySQLUser(c *C) {
+func (s *testCacheSuite) TestAbnormalMySQLTable(c *C) {
 	privileges.Enable = true
 	store, err := tidb.NewStore("memory://sync_mysql_user")
 	c.Assert(err, IsNil)
@@ -184,6 +184,7 @@ func (s *testCacheSuite) TestAfterSyncMySQLUser(c *C) {
 	c.Assert(err, IsNil)
 	defer se.Close()
 
+	// Simulate the case mysql.user is synchronized from MySQL.
 	mustExec(c, se, "DROP TABLE mysql.user;")
 	mustExec(c, se, "USE mysql;")
 	mustExec(c, se, `CREATE TABLE user (
@@ -239,4 +240,11 @@ func (s *testCacheSuite) TestAfterSyncMySQLUser(c *C) {
 	c.Assert(err, IsNil)
 	// MySQL mysql.user table schema is not identical to TiDB, check it doesn't break privilege.
 	c.Assert(p.RequestVerification("root", "localhost", "test", "", "", mysql.SelectPriv), IsTrue)
+
+	// Absent of those tables doesn't cause error.
+	mustExec(c, se, "DROP TABLE mysql.db;")
+	mustExec(c, se, "DROP TABLE mysql.tables_priv;")
+	mustExec(c, se, "DROP TABLE mysql.columns_priv;")
+	err = p.LoadAll(se)
+	c.Assert(err, IsNil)
 }

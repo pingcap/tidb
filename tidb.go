@@ -150,6 +150,7 @@ func resetStmtCtx(ctx context.Context, s ast.StmtNode) {
 		sc.IgnoreTruncate = true
 		if show, ok := s.(*ast.ShowStmt); ok {
 			if show.Tp == ast.ShowWarnings {
+				sc.InShowWarning = true
 				sc.SetWarnings(sessVars.StmtCtx.GetWarnings())
 			}
 		}
