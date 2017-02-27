@@ -201,3 +201,13 @@ func toBit(l yyLexer, lval *yySymType, str string) int {
 	lval.item = b
 	return bitLit
 }
+
+func getUint64FromNUM(num interface{}) uint64 {
+	switch v := num.(type) {
+	case int64:
+		return uint64(v)
+	case uint64:
+		return uint64(v)
+	}
+	return 0
+}
