@@ -92,6 +92,12 @@ func (c *rpcClient) SendKVReq(ctx goctx.Context, addr string, req *kvrpcpb.Reque
 	start := time.Now()
 	defer func() { sendReqHistogram.WithLabelValues("kv").Observe(time.Since(start).Seconds()) }()
 
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
 	conn, err := c.p.GetConn(addr)
 	if err != nil {
 		return nil, errors.Trace(err)
