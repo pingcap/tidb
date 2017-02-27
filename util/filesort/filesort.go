@@ -112,7 +112,6 @@ type FileSorter struct {
 	workers  []*Worker
 	nWorkers int // number of workers used in async sorting
 	cWorker  int // the next worker to which the sorting job is sent
-	tCounter int // counter to avoid infinite loop
 
 	mu      sync.Mutex
 	wg      sync.WaitGroup
@@ -240,7 +239,6 @@ func (b *Builder) Build() (*FileSorter, error) {
 		workers:  ws,
 		nWorkers: b.nWorkers,
 		cWorker:  0,
-		tCounter: 0,
 
 		head:    make([]byte, 8),
 		dcod:    make([]types.Datum, 0, b.keySize+b.valSize+1),
@@ -435,12 +433,15 @@ func (fs *FileSorter) Input(key []types.Datum, val []types.Datum, handle int64) 
 	}
 
 	assigned := false
+	abortTime := time.Duration(1) * time.Minute           // 1 minute
+	cooldownTime := time.Duration(100) * time.Millisecond // 100 milliseconds
 	row := &comparableRow{
 		key:    key,
 		val:    val,
 		handle: handle,
 	}
 
+	origin := time.Now()
 	// assign input row to some worker in a round-robin way
 	for {
 		for i := 0; i < fs.nWorkers; i++ {
@@ -456,14 +457,12 @@ func (fs *FileSorter) Input(key []types.Datum, val []types.Datum, handle int64) 
 			}
 		}
 		if assigned {
-			fs.tCounter = 0
 			break
 		} else {
-			// if all workers are busy, block 100ms and try again
-			time.Sleep(100 * time.Millisecond)
-			fs.tCounter++
+			// all workers are busy now, cooldown and retry
+			time.Sleep(cooldownTime)
 		}
-		if fs.tCounter > 600 {
+		if time.Now().Sub(origin) >= abortTime {
 			// weird: all workers are busy for at least 1 min
 			// choose to abort for safety
 			return errors.New("can not make progress since all workers are busy")
