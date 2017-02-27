@@ -269,7 +269,7 @@ func (s *testSuite) TestAggregation(c *C) {
 	result.Check(testkit.Rows("<nil>", "<nil>"))
 
 	result = tk.MustQuery("select count(*) from information_schema.columns")
-	result.Check(testkit.Rows("535"))
+	result.Check(testkit.Rows("557"))
 }
 
 func (s *testSuite) TestStreamAgg(c *C) {
