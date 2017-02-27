@@ -140,6 +140,7 @@ func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 	return nil
 }
 
+// GetSessionManager implements the context.Context interface.
 func (c *Context) GetSessionManager() util.SessionManager {
 	return nil
 }

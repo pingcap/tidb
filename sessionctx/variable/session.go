@@ -154,6 +154,11 @@ type SessionVars struct {
 	// Per-connection time zones. Each client that connects has its own time zone setting, given by the session time_zone variable.
 	// See https://dev.mysql.com/doc/refman/5.7/en/time-zone-support.html
 	TimeZone *time.Location
+
+	// Last SQL the session executed.
+	LastSQL string
+	// Last Time when the SQL executed.
+	LastTime time.Time
 }
 
 // NewSessionVars creates a session vars object.

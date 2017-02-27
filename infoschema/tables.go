@@ -297,17 +297,6 @@ var tableConstraintsCols = []columnInfo{
 	{"CONSTRAINT_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
 }
 
-var processlistCols = []columnInfo{
-	{"ID", mysql.TypeLong, 21, 0, nil, nil},
-	{"USER", mysql.TypeVarchar, 16, 0, nil, nil},
-	{"HOST", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"DB", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"COMMAND", mysql.TypeVarchar, 16, 0, nil, nil},
-	{"TIME", mysql.TypeLong, 7, 0, nil, nil},
-	{"STATE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"INFO", mysql.TypeVarchar, 64, 0, nil, nil},
-}
-
 func dataForCharacterSets() (records [][]types.Datum) {
 	records = append(records,
 		types.MakeDatums("ascii", "ascii_general_ci", "US ASCII", 1),
@@ -630,7 +619,6 @@ var tableNameToColumns = map[string]([]columnInfo){
 	tableSessionVar:    sessionVarCols,
 	tablePlugins:       pluginsCols,
 	tableConstraints:   tableConstraintsCols,
-	tableProcessList:   processlistCols,
 }
 
 func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {

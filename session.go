@@ -67,7 +67,7 @@ type Session interface {
 	DropPreparedStmt(stmtID uint32) error
 	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
-	SetSessionManager(sm util.SessionManager)
+	SetSessionManager(util.SessionManager)
 	Close() error
 	Auth(user string, auth []byte, salt []byte) bool
 	// Cancel the execution of current transaction.
@@ -489,6 +489,8 @@ func (s *session) ParseSQL(sql, charset, collation string) ([]ast.StmtNode, erro
 func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 	s.prepareTxnCtx()
 	startTS := time.Now()
+	s.GetSessionVars().LastTime = startTS
+	s.GetSessionVars().LastSQL = sql
 	charset, collation := s.sessionVars.GetCharsetInfo()
 	connID := s.sessionVars.ConnectionID
 	rawStmts, err := s.ParseSQL(sql, charset, collation)
@@ -674,7 +676,6 @@ func (s *session) NewTxn() error {
 }
 
 func (s *session) SetValue(key fmt.Stringer, value interface{}) {
-	fmt.Println("session setvalue ", key, value)
 	s.values[key] = value
 }
 
@@ -999,71 +1000,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	return nil
 }
 
-// // processInfo implements ast.RecordSet interface, this struct used for the
-// // result of 'show process list' statement.
-// type processInfo struct {
-// 	id      uint64
-// 	user    string
-// 	host    string
-// 	db      string
-// 	command string
-// 	time    uint64
-// 	state   string
-// 	info    string
-
-// 	is       infoschema.InfoSchema
-// 	consumed bool
-// }
-
-// func (pi *processInfo) Fields() ([]*ast.ResultField, error) {
-// 	fmt.Println("processinfo field called")
-// 	tbl, err := pi.is.TableByName(model.NewCIStr("information_schema"), model.NewCIStr("processlist"))
-// 	if err != nil {
-// 		fmt.Println("什么 呀？")
-// 		return nil, errors.Trace(err)
-// 	}
-// 	var rfs []*ast.ResultField
-// 	tblInfo := tbl.Meta()
-// 	for _, col := range tblInfo.Columns {
-// 		rf := &ast.ResultField{
-// 			Column:       col,
-// 			ColumnAsName: col.Name,
-// 			Table:        tblInfo,
-// 			TableAsName:  model.NewCIStr("processlist"),
-// 			DBName:       model.NewCIStr("information_schema"),
-// 		}
-// 		rfs = append(rfs, rf)
-// 	}
-// 	fmt.Println("什么 ，没打印？")
-// 	return rfs, nil
-// }
-
-// func (pi *processInfo) Next() (*ast.Row, error) {
-// 	fmt.Println("next called")
-// 	if pi.consumed {
-// 		return nil, nil
-// 	}
-// 	pi.consumed = true
-// 	return &ast.Row{
-// 		Data: []types.Datum{
-// 			types.NewUintDatum(pi.id),
-// 			types.NewStringDatum(pi.user),
-// 			types.NewStringDatum(pi.host),
-// 			types.NewStringDatum(pi.db),
-// 			types.NewStringDatum(pi.command),
-// 			types.NewUintDatum(pi.time),
-// 			types.NewStringDatum(pi.state),
-// 			types.NewStringDatum(pi.info),
-// 		},
-// 	}, nil
-// }
-
-// func (pi *processInfo) Close() error {
-// 	return nil
-// }
-
 func (s *session) ShowProcess() util.ProcessInfo {
-	fmt.Println("session show process")
 	var pi util.ProcessInfo
 	pi.ID = s.sessionVars.ConnectionID
 	strs := strings.Split(s.sessionVars.User, "@")
@@ -1072,7 +1009,9 @@ func (s *session) ShowProcess() util.ProcessInfo {
 		pi.Host = strs[1]
 	}
 	pi.DB = s.sessionVars.CurrentDB
-	pi.State = "todo"
-	pi.Info = "info"
+	pi.Command = "Query"
+	pi.Time = uint64(time.Since(s.GetSessionVars().LastTime) / time.Second)
+	pi.State = fmt.Sprintf("%d", s.Status())
+	pi.Info = s.GetSessionVars().LastSQL
 	return pi
 }

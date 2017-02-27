@@ -51,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
-	// "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/hack"
 )
@@ -318,7 +317,6 @@ func (cc *clientConn) readHandshakeResponse() error {
 			return errors.Trace(mysql.NewErr(mysql.ErrAccessDenied, cc.user, host, "Yes"))
 		}
 	}
-	fmt.Println("连接进来，ctx设置了sessionmanager的")
 	cc.ctx.SetSessionManager(cc.server)
 	return nil
 }
@@ -329,7 +327,6 @@ func (cc *clientConn) readHandshakeResponse() error {
 func (cc *clientConn) Run() {
 	const size = 4096
 	defer func() {
-		fmt.Println("毛毛细雨，难度panic")
 		r := recover()
 		if r != nil {
 			buf := make([]byte, size)
@@ -346,7 +343,6 @@ func (cc *clientConn) Run() {
 			if terror.ErrorNotEqual(err, io.EOF) {
 				log.Error(errors.ErrorStack(err))
 			}
-			fmt.Println("read packet的时候EOF了？？", err)
 			return
 		}
 
@@ -354,7 +350,6 @@ func (cc *clientConn) Run() {
 		if err = cc.dispatch(data); err != nil {
 			if terror.ErrorEqual(err, io.EOF) {
 				cc.addMetrics(data[0], startTime, nil)
-				fmt.Println(" dispatch的时候EOF了??")
 				return
 			}
 			log.Warnf("[%d] dispatch error:\n%s\n%s\n%s",
@@ -660,13 +655,11 @@ func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error 
 // As the execution time of this function represents the performance of TiDB, we do time log and metrics here.
 // There is a special query `load data` that does not return result, which is handled differently.
 func (cc *clientConn) handleQuery(sql string) (err error) {
-	fmt.Println("handle Query:", sql)
 	rs, err := cc.ctx.Execute(sql)
 	if err != nil {
 		executeErrorCounter.WithLabelValues(executeErrorToLabel(err)).Inc()
 		return errors.Trace(err)
 	}
-	fmt.Println("xxxxx", rs)
 	if rs != nil {
 		if len(rs) == 1 {
 			err = cc.writeResultset(rs[0], false, false)
@@ -674,7 +667,8 @@ func (cc *clientConn) handleQuery(sql string) (err error) {
 			err = cc.writeMultiResultset(rs, false)
 		}
 	} else {
-		if loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey); loadDataInfo != nil {
+		loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
+		if loadDataInfo != nil {
 			defer cc.ctx.SetValue(executor.LoadDataVarKey, nil)
 			if err = cc.handleLoadData(loadDataInfo.(*executor.LoadDataInfo)); err != nil {
 				return errors.Trace(err)
@@ -682,7 +676,6 @@ func (cc *clientConn) handleQuery(sql string) (err error) {
 		}
 		err = cc.writeOK()
 	}
-	fmt.Println("err=", err)
 	return errors.Trace(err)
 }
 
@@ -721,15 +714,11 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 		return errors.Trace(err)
 	}
 
-	fmt.Println("run here1111:", row)
-
 	columns, err := rs.Columns()
 	if err != nil {
 		fmt.Println("fuck...!!", err)
 		return errors.Trace(err)
 	}
-
-	fmt.Println("columns is ..............", len(columns), columns)
 
 	columnLen := dumpLengthEncodedInt(uint64(len(columns)))
 	data := cc.alloc.AllocWithLen(4, 1024)
@@ -739,9 +728,6 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 	}
 
 	for _, v := range columns {
-
-		fmt.Println("column:", v)
-
 		data = data[0:4]
 		data = append(data, v.Dump(cc.alloc)...)
 		if err = cc.writePacket(data); err != nil {

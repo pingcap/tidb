@@ -35,38 +35,19 @@ type recordSet struct {
 	err      error
 }
 
-// func getResultFieldFromSchema(schema *expression.Schema) []*ast.ResultField {
-// 	var rfs []*ast.ResultField
-// 	for _, col := range schema.Columns {
-// 		rf := &ast.ResultField{
-// 			ColumnAsName: col.ColName,
-// 			TableAsName:  col.TblName,
-// 			DBName:       col.DBName,
-// 			Column: &model.ColumnInfo{
-// 				FieldType: *col.RetType,
-// 				Name:      col.ColName,
-// 			},
-// 		}
-// 		rfs = append(rfs, rf)
-// 	}
-// 	return rfs
-// }
-
 func (a *recordSet) Fields() ([]*ast.ResultField, error) {
 	if len(a.fields) == 0 {
-		if len(a.fields) == 0 {
-			for _, col := range a.executor.Schema().Columns {
-				rf := &ast.ResultField{
-					ColumnAsName: col.ColName,
-					TableAsName:  col.TblName,
-					DBName:       col.DBName,
-					Column: &model.ColumnInfo{
-						FieldType: *col.RetType,
-						Name:      col.ColName,
-					},
-				}
-				a.fields = append(a.fields, rf)
+		for _, col := range a.executor.Schema().Columns {
+			rf := &ast.ResultField{
+				ColumnAsName: col.ColName,
+				TableAsName:  col.TblName,
+				DBName:       col.DBName,
+				Column: &model.ColumnInfo{
+					FieldType: *col.RetType,
+					Name:      col.ColName,
+				},
 			}
+			a.fields = append(a.fields, rf)
 		}
 	}
 	return a.fields, nil
@@ -170,7 +151,6 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 			}
 		}
 	}
-
 	return &recordSet{
 		executor: e,
 		stmt:     a,

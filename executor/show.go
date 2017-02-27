@@ -64,7 +64,6 @@ func (e *ShowExec) Schema() *expression.Schema {
 
 // Next implements Execution Next interface.
 func (e *ShowExec) Next() (*Row, error) {
-	fmt.Println("show exec next called")
 	if e.rows == nil {
 		err := e.fetchAll()
 		if err != nil {
@@ -148,8 +147,10 @@ func (e *ShowExec) fetchShowDatabases() error {
 
 func (e *ShowExec) fetchShowProcessList() error {
 	sm := e.ctx.GetSessionManager()
+	if sm == nil {
+		return nil
+	}
 
-	fmt.Println("fetchShowProcessList")
 	pl := sm.ShowProcessList()
 	for _, pi := range pl {
 		row := &Row{
