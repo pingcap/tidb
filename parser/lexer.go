@@ -19,6 +19,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/pingcap/tidb/mysql"
 )
 
 var _ = yyLexer(&Scanner{})
@@ -40,6 +42,8 @@ type Scanner struct {
 
 	// for scanning such kind of comment: /*! MySQL-specific code */
 	specialComment *specialCommentScanner
+
+	sqlMode mysql.SQLMode
 }
 
 type specialCommentScanner struct {
@@ -128,6 +132,10 @@ func (s *Scanner) Lex(v *yySymType) int {
 		return 0
 	}
 	return tok
+}
+
+func (s *Scanner) SetSQLMode(mode mysql.SQLMode) {
+	s.sqlMode = mode
 }
 
 // NewScanner returns a new scanner object.
@@ -347,14 +355,15 @@ func scanQuotedIdent(s *Scanner) (tok int, pos Pos, lit string) {
 	pos = s.r.pos()
 	s.r.inc()
 	s.buf.Reset()
+	startCh := s.r.peek()
 	for {
 		ch := s.r.readByte()
 		if ch == unicode.ReplacementChar && s.r.eof() {
 			tok = unicode.ReplacementChar
 			return
 		}
-		if ch == '`' {
-			if s.r.peek() != '`' {
+		if ch == startCh {
+			if s.r.peek() != startCh {
 				// don't return identifier in case that it's interpreted as keyword token later.
 				tok, lit = quotedIdentifier, s.buf.String()
 				return
@@ -366,11 +375,18 @@ func scanQuotedIdent(s *Scanner) (tok int, pos Pos, lit string) {
 }
 
 func startString(s *Scanner) (tok int, pos Pos, lit string) {
+	ch := s.r.peek()
+	if ch == '"' && (s.sqlMode&mysql.ModeANSIQuotes > 0) {
+		// ANSI_QUOTES treats " as an identifier quote character (like the ` quote character) and not as a string quote character.
+		// You can still use ` to quote identifiers with this mode enabled.
+		// With ANSI_QUOTES enabled, you cannot use double quotation marks to quote literal strings, because it is interpreted as an identifier.
+		return scanQuotedIdent(s)
+	}
 	tok, pos, lit = s.scanString()
 
 	// Quoted strings placed next to each other are concatenated to a single string.
 	// See http://dev.mysql.com/doc/refman/5.7/en/string-literals.html
-	ch := s.skipWhitespace()
+	ch = s.skipWhitespace()
 	for ch == '\'' || ch == '"' {
 		_, _, lit1 := s.scanString()
 		lit = lit + lit1

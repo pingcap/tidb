@@ -115,6 +115,10 @@ func (parser *Parser) ParseOneStmt(sql, charset, collation string) (ast.StmtNode
 	return stmts[0], nil
 }
 
+func (parser *Parser) SetSQLMode(mode mysql.SQLMode) {
+	parser.lexer.SetSQLMode(mode)
+}
+
 // The select statement is not at the end of the whole statement, if the last
 // field text was set from its offset to the end of the src string, update
 // the last field text.

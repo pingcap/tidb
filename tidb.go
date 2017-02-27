@@ -123,7 +123,9 @@ func SetCommitRetryLimit(limit int) {
 func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
 	log.Debug("compiling", src)
 	charset, collation := ctx.GetSessionVars().GetCharsetInfo()
-	stmts, err := parser.New().Parse(src, charset, collation)
+	p := parser.New()
+	p.SetSQLMode(ctx.GetSessionVars().SQLMode)
+	stmts, err := p.Parse(src, charset, collation)
 	if err != nil {
 		log.Warnf("compiling %s, error: %v", src, err)
 		return nil, errors.Trace(err)
