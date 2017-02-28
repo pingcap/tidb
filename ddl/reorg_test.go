@@ -61,29 +61,36 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	c.Assert(err, IsNil)
 
 	done := make(chan struct{})
+	rowCount := int64(10)
 	f := func() error {
+		d.setReorgRowCount(rowCount)
 		time.Sleep(4 * testLease)
 		close(done)
 		return nil
 	}
-	err = d.runReorgJob(f)
+	job := &model.Job{}
+	err = d.runReorgJob(job, f)
 	c.Assert(err, NotNil)
+	c.Assert(job.RowCount, Equals, rowCount)
+	c.Assert(d.reorgRowCount, Equals, rowCount)
 
 	<-done
 	// Make sure the function of f is returned.
 	time.Sleep(5 * time.Millisecond)
-	err = d.runReorgJob(f)
+	err = d.runReorgJob(job, f)
 	c.Assert(err, IsNil)
+	c.Assert(job.RowCount, Equals, rowCount)
+	c.Assert(d.reorgRowCount, Equals, int64(0))
 
 	d.Stop()
-	err = d.runReorgJob(func() error {
+	err = d.runReorgJob(job, func() error {
 		time.Sleep(4 * testLease)
 		return nil
 	})
 	c.Assert(err, NotNil)
 	d.start()
 
-	job := &model.Job{
+	job = &model.Job{
 		ID:       1,
 		SchemaID: 1,
 		Type:     model.ActionCreateSchema,

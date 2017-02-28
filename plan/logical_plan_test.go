@@ -14,6 +14,7 @@
 package plan
 
 import (
+	goctx "context"
 	"sort"
 	"testing"
 
@@ -281,7 +282,7 @@ func supportExpr(exprType tipb.ExprType) bool {
 type mockClient struct {
 }
 
-func (c *mockClient) Send(_ *kv.Request) kv.Response {
+func (c *mockClient) Send(ctx goctx.Context, _ *kv.Request) kv.Response {
 	return nil
 }
 
@@ -515,7 +516,27 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "select count(c) ,(select count(s.b) from t s where s.a = t.a) from t",
-			plan: "Apply{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)->Selection->Aggr(count(s.b))}->Projection->Projection",
+			plan: "Join{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)}(test.t.a,s.a)->Aggr(firstrow(aggregation_2_col_0),firstrow(test.t.a),count(s.b))->Projection->Projection",
+		},
+		{
+			// Semi-join with agg cannot decorrelate.
+			sql:  "select t.c in (select count(s.b) from t s where s.a = t.a) from t",
+			plan: "Apply{DataScan(t)->DataScan(s)->Selection->Aggr(count(s.b))}->Projection",
+		},
+		{
+			// Theta-join with agg cannot decorrelate.
+			sql:  "select (select count(s.b) k from t s where s.a = t.a having k != 0) from t",
+			plan: "Apply{DataScan(t)->DataScan(s)->Selection->Aggr(count(s.b))}->Projection->Projection",
+		},
+		{
+			// Relation without keys cannot decorrelate.
+			sql:  "select (select count(s.b) k from t s where s.a = t1.a) from t t1, t t2",
+			plan: "Apply{Join{DataScan(t1)->DataScan(t2)}->DataScan(s)->Selection->Aggr(count(s.b))}->Projection->Projection",
+		},
+		{
+			// Aggregate function like count(1) cannot decorrelate.
+			sql:  "select (select count(1) k from t s where s.a = t.a having k != 0) from t",
+			plan: "Apply{DataScan(t)->DataScan(s)->Selection->Aggr(count(1))}->Projection->Projection",
 		},
 		{
 			sql:  "select a from t where a in (select a from t s group by t.b)",
@@ -1458,6 +1479,13 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			sql: "create table t (a int)",
 			ans: []visitInfo{
 				{mysql.CreatePriv, "test", "t", ""},
+			},
+		},
+		{
+			sql: "create table t1 like t",
+			ans: []visitInfo{
+				{mysql.CreatePriv, "test", "t1", ""},
+				{mysql.SelectPriv, "test", "t", ""},
 			},
 		},
 		{

@@ -251,7 +251,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 			return errors.Trace(err)
 		}
 
-		err = d.runReorgJob(func() error {
+		err = d.runReorgJob(job, func() error {
 			return d.addTableIndex(tbl, indexInfo, reorgInfo, job)
 		})
 		if err != nil {
@@ -341,7 +341,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 		err = t.UpdateTable(schemaID, tblInfo)
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
-		err = d.runReorgJob(func() error {
+		err = d.runReorgJob(job, func() error {
 			return d.dropTableIndex(indexInfo, job)
 		})
 		if err != nil {
@@ -542,7 +542,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 				addedCount, taskAddedCount, sub)
 			return errors.Trace(err)
 		}
-		job.SetRowCount(addedCount)
+		d.setReorgRowCount(addedCount)
 		batchHandleDataHistogram.WithLabelValues(batchAddIdx).Observe(sub)
 		log.Infof("[ddl] total added index for %d rows, this task added index for %d rows, take time %v",
 			addedCount, taskAddedCount, sub)

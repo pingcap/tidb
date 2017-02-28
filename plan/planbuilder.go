@@ -116,7 +116,7 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return b.buildAnalyze(x)
 	case *ast.BinlogStmt, *ast.FlushStmt, *ast.UseStmt,
 		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt,
-		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt:
+		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt:
 		return b.buildSimple(node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(x)
@@ -480,6 +480,8 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 		p.SetSchema(buildShowTriggerSchema())
 	case ast.ShowEvents:
 		p.SetSchema(buildShowEventsSchema())
+	case ast.ShowWarnings:
+		p.SetSchema(buildShowWarningsSchema())
 	default:
 		p.SetSchema(buildShowSchema(show))
 	}
@@ -527,13 +529,11 @@ func (b *planBuilder) buildSimple(node ast.StmtNode) Plan {
 }
 
 func (b *planBuilder) getDefaultValue(col *table.Column) (*expression.Constant, error) {
-	if value, ok, err := table.GetColDefaultValue(b.ctx, col.ToInfo()); ok {
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return &expression.Constant{Value: value, RetType: &col.FieldType}, nil
+	value, err := table.GetColDefaultValue(b.ctx, col.ToInfo())
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	return &expression.Constant{RetType: &col.FieldType}, nil
+	return &expression.Constant{Value: value, RetType: &col.FieldType}, nil
 }
 
 func (b *planBuilder) findDefaultValue(cols []*table.Column, name *ast.ColumnName) (*expression.Constant, error) {
@@ -700,6 +700,13 @@ func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {
 			db:        v.Table.Schema.L,
 			table:     v.Table.Name.L,
 		})
+		if v.ReferTable != nil {
+			b.visitInfo = append(b.visitInfo, visitInfo{
+				privilege: mysql.SelectPriv,
+				db:        v.ReferTable.Schema.L,
+				table:     v.ReferTable.Name.L,
+			})
+		}
 	case *ast.DropDatabaseStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
 			privilege: mysql.DropPriv,
@@ -826,7 +833,16 @@ func buildShowEventsSchema() *expression.Schema {
 	return schema
 }
 
-func buildSchema(names []string, ftypes []byte) *expression.Schema {
+func buildShowWarningsSchema() *expression.Schema {
+	tblName := "WARNINGS"
+	schema := expression.NewSchema(make([]*expression.Column, 0, 3)...)
+	schema.Append(buildColumn(tblName, "Level", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn(tblName, "Code", mysql.TypeLong, 19))
+	schema.Append(buildColumn(tblName, "Message", mysql.TypeVarchar, 64))
+	return schema
+}
+
+func composeShowSchema(names []string, ftypes []byte) *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(names))...)
 	for i, name := range names {
 		col := &expression.Column{
@@ -838,6 +854,14 @@ func buildSchema(names []string, ftypes []byte) *expression.Schema {
 			retType.Tp = mysql.TypeVarchar
 		} else {
 			retType.Tp = ftypes[i]
+		}
+
+		if retType.Tp == mysql.TypeVarchar || retType.Tp == mysql.TypeString {
+			retType.Flen = 256
+		} else if retType.Tp == mysql.TypeDatetime {
+			retType.Flen = 19
+		} else {
+			retType.Flen = mysql.GetDefaultFieldLength(retType.Tp)
 		}
 		retType.Charset, retType.Collate = types.DefaultCharsetForType(retType.Tp)
 		col.RetType = &retType
@@ -855,9 +879,6 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 		names = []string{"Engine", "Support", "Comment", "Transactions", "XA", "Savepoints"}
 	case ast.ShowDatabases:
 		names = []string{"Database"}
-		schema = buildSchema(names, ftypes)
-		schema.Columns[0].RetType.Flen = 256
-		return
 	case ast.ShowTables:
 		names = []string{fmt.Sprintf("Tables_in_%s", s.DBName)}
 		if s.Full {
@@ -904,5 +925,5 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString}
 	}
-	return buildSchema(names, ftypes)
+	return composeShowSchema(names, ftypes)
 }

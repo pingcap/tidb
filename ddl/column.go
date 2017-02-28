@@ -166,7 +166,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 			return errors.Trace(err)
 		}
 		if columnInfo.DefaultValue != nil || mysql.HasNotNullFlag(columnInfo.Flag) {
-			err = d.runReorgJob(func() error {
+			err = d.runReorgJob(job, func() error {
 				return d.addTableColumn(tbl, columnInfo, reorgInfo, job)
 			})
 			if err != nil {
@@ -301,7 +301,7 @@ func (d *ddl) addTableColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 	// Get column default value.
 	var err error
 	if columnInfo.DefaultValue != nil {
-		colMeta.defaultVal, _, err = table.GetColDefaultValue(ctx, columnInfo)
+		colMeta.defaultVal, err = table.GetColDefaultValue(ctx, columnInfo)
 		if err != nil {
 			job.State = model.JobCancelled
 			log.Errorf("[ddl] fatal: this case shouldn't happen, column %v err %v", columnInfo, err)
@@ -340,7 +340,7 @@ func (d *ddl) addTableColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 			return errors.Trace(err)
 		}
 
-		job.SetRowCount(count)
+		d.setReorgRowCount(count)
 		batchHandleDataHistogram.WithLabelValues(batchAddCol).Observe(sub)
 		log.Infof("[ddl] added column for %v rows, take time %v", count, sub)
 	}

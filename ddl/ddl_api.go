@@ -385,7 +385,7 @@ func checkDefaultValue(ctx context.Context, c *table.Column, hasDefaultValue boo
 	}
 
 	if c.DefaultValue != nil {
-		_, _, err := table.GetColDefaultValue(ctx, c.ToInfo())
+		_, err := table.GetColDefaultValue(ctx, c.ToInfo())
 		if terror.ErrorEqual(err, types.ErrTruncated) {
 			return errInvalidDefault.GenByArgs(c.Name)
 		}
@@ -571,6 +571,45 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 	return
 }
 
+func (d *ddl) CreateTableWithLike(ctx context.Context, ident, referIdent ast.Ident) error {
+	is := d.GetInformationSchema()
+	_, ok := is.SchemaByName(referIdent.Schema)
+	if !ok {
+		return infoschema.ErrTableNotExists.GenByArgs(referIdent.Schema, referIdent.Name)
+	}
+	referTbl, err := is.TableByName(referIdent.Schema, referIdent.Name)
+	if err != nil {
+		return infoschema.ErrTableNotExists.GenByArgs(referIdent.Schema, referIdent.Name)
+	}
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
+	}
+	if is.TableExists(ident.Schema, ident.Name) {
+		return infoschema.ErrTableExists.GenByArgs(ident)
+	}
+
+	tblInfo := *referTbl.Meta()
+	tblInfo.Name = ident.Name
+	tblInfo.AutoIncID = 0
+	tblInfo.ForeignKeys = nil
+	tblInfo.ID, err = d.genGlobalID()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionCreateTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{tblInfo},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
 func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.ColumnDef,
 	constraints []*ast.Constraint, options []*ast.TableOption) (err error) {
 	is := d.GetInformationSchema()
@@ -614,7 +653,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 		Args:       []interface{}{tbInfo},
 	}
 
-	handleTableOptions(options, tbInfo, schema.ID)
+	handleTableOptions(options, tbInfo)
 	err = d.doDDLJob(ctx, job)
 	if err == nil {
 		if tbInfo.AutoIncID > 1 {
@@ -648,7 +687,7 @@ func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64) error {
 }
 
 // Add create table options into TableInfo.
-func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo, schemaID int64) {
+func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) {
 	for _, op := range options {
 		switch op.Tp {
 		case ast.TableOptionAutoIncrement:
@@ -881,11 +920,7 @@ func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast
 		return nil
 	}
 
-	var (
-		hasDefaultValue bool
-		hasNotNull      bool
-		setOnUpdateNow  bool
-	)
+	var hasDefaultValue, setOnUpdateNow bool
 	for _, opt := range options {
 		switch opt.Tp {
 		case ast.ColumnOptionDefaultValue:
@@ -902,7 +937,6 @@ func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast
 			}
 		case ast.ColumnOptionNotNull:
 			col.Flag |= mysql.NotNullFlag
-			hasNotNull = true
 		case ast.ColumnOptionNull:
 			col.Flag &= ^uint(mysql.NotNullFlag)
 		case ast.ColumnOptionOnUpdate:
@@ -920,10 +954,6 @@ func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast
 	}
 
 	setTimestampDefaultValue(col, hasDefaultValue, setOnUpdateNow)
-	if col.Tp == mysql.TypeTimestamp && hasNotNull {
-		return errors.Trace(errInvalidUseOfNull)
-	}
-
 	if hasDefaultValue {
 		return errors.Trace(checkDefaultValue(ctx, col, true))
 	}

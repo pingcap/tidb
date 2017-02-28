@@ -89,11 +89,19 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		vars.TimeZone = parseTimeZone(sVal)
 	case variable.SQLModeVar:
 		sVal = strings.ToUpper(sVal)
+		// TODO: Remove this latter.
 		if strings.Contains(sVal, "STRICT_TRANS_TABLES") || strings.Contains(sVal, "STRICT_ALL_TABLES") {
 			vars.StrictSQLMode = true
 		} else {
 			vars.StrictSQLMode = false
 		}
+		// Modes is a list of different modes separated by commas.
+		modes := strings.Split(sVal, ",")
+		var sqlMode mysql.SQLMode
+		for _, mode := range modes {
+			sqlMode = sqlMode | mysql.GetSQLMode(mode)
+		}
+		vars.SQLMode = sqlMode
 	case variable.TiDBSnapshot:
 		err = setSnapshotTS(vars, sVal)
 		if err != nil {

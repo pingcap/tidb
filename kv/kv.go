@@ -14,6 +14,7 @@
 package kv
 
 import (
+	goctx "context"
 	"io"
 )
 
@@ -114,7 +115,7 @@ type Transaction interface {
 // Client is used to send request to KV layer.
 type Client interface {
 	// Send sends request to KV layer, returns a Response.
-	Send(req *Request) Response
+	Send(ctx goctx.Context, req *Request) Response
 
 	// SupportRequestType checks if reqType and subType is supported.
 	SupportRequestType(reqType, subType int64) bool

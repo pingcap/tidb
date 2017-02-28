@@ -472,6 +472,15 @@ func runTestAuth(c *C) {
 	_, err = db.Query("USE mysql;")
 	c.Assert(err, NotNil, Commentf("Wrong password should be failed"))
 	db.Close()
+
+	// Test login use IP that not exists in mysql.user.
+	runTests(c, dsn, func(dbt *DBTest) {
+		dbt.mustExec(`CREATE USER 'xxx'@'localhost' IDENTIFIED BY 'yyy';`)
+	})
+	newDsn = "xxx:yyy@tcp(127.0.0.1:4001)/test?strict=true"
+	runTests(c, newDsn, func(dbt *DBTest) {
+		dbt.mustExec(`USE mysql;`)
+	})
 }
 
 func runTestIssues(c *C) {
@@ -564,6 +573,12 @@ func runTestStmtCount(t *C) {
 		currentStmtCnt := getStmtCnt(string(getMetrics(t)))
 		t.Assert(currentStmtCnt[executor.CreateTable], Equals, originStmtCnt[executor.CreateTable]+1)
 		t.Assert(currentStmtCnt[executor.Insert], Equals, originStmtCnt[executor.Insert]+5)
+		deleteLabel := "DeleteTableFull"
+		t.Assert(currentStmtCnt[deleteLabel], Equals, originStmtCnt[deleteLabel]+1)
+		updateLabel := "UpdateTableFull"
+		t.Assert(currentStmtCnt[updateLabel], Equals, originStmtCnt[updateLabel]+2)
+		selectLabel := "SelectTableFull"
+		t.Assert(currentStmtCnt[selectLabel], Equals, originStmtCnt[selectLabel]+2)
 	})
 }
 
