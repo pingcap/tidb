@@ -89,7 +89,7 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		vars.TimeZone = parseTimeZone(sVal)
 	case variable.SQLModeVar:
 		sVal = strings.ToUpper(sVal)
-		// TODO: remove this latter.
+		// TODO: Remove this latter.
 		if strings.Contains(sVal, "STRICT_TRANS_TABLES") || strings.Contains(sVal, "STRICT_ALL_TABLES") {
 			vars.StrictSQLMode = true
 		} else {
