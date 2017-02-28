@@ -316,6 +316,8 @@ func (s *session) retry(maxCnt int) error {
 	defer func() {
 		s.sessionVars.RetryInfo.Retrying = false
 		sessionRetry.Observe(float64(retryCnt))
+		s.txn = nil
+		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}()
 	nh := getHistory(s)
 	var err error
