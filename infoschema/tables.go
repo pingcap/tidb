@@ -46,7 +46,6 @@ const (
 	tableSessionVar    = "SESSION_VARIABLES"
 	tablePlugins       = "PLUGINS"
 	tableConstraints   = "TABLE_CONSTRAINTS"
-	tableProcessList   = "PROCESSLIST"
 )
 
 type columnInfo struct {
