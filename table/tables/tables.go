@@ -609,12 +609,12 @@ func (t *Table) IterRecords(ctx context.Context, startKey kv.Key, cols []*table.
 		if err != nil {
 			return errors.Trace(err)
 		}
-		data := make([]types.Datum, 0, len(cols))
+		data := make([]types.Datum, len(cols))
 		for _, col := range cols {
 			if col.IsPKHandleColumn(t.Meta()) {
-				data = append(data, types.NewIntDatum(handle))
+				data[col.Offset] = types.NewIntDatum(handle)
 			} else {
-				data = append(data, rowMap[col.ID])
+				data[col.Offset] = rowMap[col.ID]
 			}
 		}
 		more, err := fn(handle, data, cols)
