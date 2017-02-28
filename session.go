@@ -945,7 +945,7 @@ func (s *session) prepareTxnCtx() {
 	}
 }
 
-// ActivePendingTxn implements context.ActivePendingTxn interface.
+// ActivePendingTxn implements Context.ActivePendingTxn interface.
 func (s *session) ActivePendingTxn() error {
 	if s.txn != nil && s.txn.Valid() {
 		return nil
