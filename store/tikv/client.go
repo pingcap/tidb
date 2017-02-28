@@ -66,6 +66,12 @@ func (c *rpcClient) SendCopReq(ctx goctx.Context, addr string, req *coprocessor.
 	start := time.Now()
 	defer func() { sendReqHistogram.WithLabelValues("cop").Observe(time.Since(start).Seconds()) }()
 
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
 	conn, err := c.p.GetConn(addr)
 	if err != nil {
 		return nil, errors.Trace(err)
