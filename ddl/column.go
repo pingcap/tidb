@@ -165,7 +165,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if columnInfo.DefaultValue != nil || mysql.HasNotNullFlag(columnInfo.Flag) {
+		if columnInfo.DefaultValue == nil && mysql.HasNotNullFlag(columnInfo.Flag) {
 			err = d.runReorgJob(job, func() error {
 				return d.addTableColumn(tbl, columnInfo, reorgInfo, job)
 			})

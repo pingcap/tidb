@@ -798,6 +798,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 	if err != nil {
 		return errors.Trace(err)
 	}
+	col.OriginDefaultValue = col.DefaultValue
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -984,10 +985,11 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 	}
 
 	newCol := &table.Column{
-		ID:        col.ID,
-		Offset:    col.Offset,
-		State:     col.State,
-		FieldType: *spec.NewColumn.Tp,
+		ID:                 col.ID,
+		Offset:             col.Offset,
+		State:              col.State,
+		OriginDefaultValue: col.OriginDefaultValue,
+		FieldType:          *spec.NewColumn.Tp,
 	}
 	setCharsetCollationFlenDecimal(&newCol.FieldType)
 	if !modifiable(&col.FieldType, &newCol.FieldType) {

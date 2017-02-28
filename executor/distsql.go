@@ -942,17 +942,25 @@ func statementContextToFlags(sc *variable.StatementContext) uint64 {
 
 func setPBColumnsDefaultValue(ctx context.Context, pbColumns []*tipb.ColumnInfo, columns []*model.ColumnInfo) error {
 	for i, c := range columns {
-		if c.State == model.StatePublic {
+		if c.State == model.StatePublic && c.OriginDefaultValue == nil {
 			continue
 		}
+
 		sessVars := ctx.GetSessionVars()
 		originStrict := sessVars.StrictSQLMode
 		sessVars.StrictSQLMode = false
-		d, err := table.GetColDefaultValue(ctx, c)
+		var d types.Datum
+		var err error
+		if c.State == model.StatePublic {
+			d, err = table.GetColOriginDefaultValue(ctx, c)
+		} else {
+			d, err = table.GetColDefaultValue(ctx, c)
+		}
 		sessVars.StrictSQLMode = originStrict
 		if err != nil {
 			return errors.Trace(err)
 		}
+
 		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(d)
 		if err != nil {
 			return errors.Trace(err)

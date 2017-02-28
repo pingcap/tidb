@@ -65,7 +65,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	// insert t values (1, 2);
 	originTable := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 	row := types.MakeDatums(1, 2)
-	_, err = originTable.AddRecord(ctx, row)
+	h, err := originTable.AddRecord(ctx, row)
 	c.Assert(err, IsNil)
 	err = ctx.Txn().Commit()
 	c.Assert(err, IsNil)
@@ -103,14 +103,11 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
-			err = s.checkAddWriteOnly(d, hookCtx, deleteOnlyTable, writeOnlyTable)
+			err = s.checkAddWriteOnly(d, hookCtx, deleteOnlyTable, writeOnlyTable, h)
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
 		case model.StatePublic:
-			if job.GetRowCount() != 1 {
-				checkErr = errors.Errorf("job's row count %d != 1", job.GetRowCount())
-			}
 			mu.Lock()
 			publicTable, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
 			if err != nil {
@@ -214,7 +211,7 @@ func (s *testColumnChangeSuite) testColumnDrop(c *C, ctx context.Context, d *ddl
 	testDropColumn(c, ctx, d, s.dbInfo, tbl.Meta(), dropCol.Name.L, false)
 }
 
-func (s *testColumnChangeSuite) checkAddWriteOnly(d *ddl, ctx context.Context, deleteOnlyTable, writeOnlyTable table.Table) error {
+func (s *testColumnChangeSuite) checkAddWriteOnly(d *ddl, ctx context.Context, deleteOnlyTable, writeOnlyTable table.Table, h int64) error {
 	// WriteOnlyTable: insert t values (2, 3)
 	err := ctx.NewTxn()
 	if err != nil {
@@ -232,13 +229,23 @@ func (s *testColumnChangeSuite) checkAddWriteOnly(d *ddl, ctx context.Context, d
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// This test is for RowWithCols when column state is StateWriteOnly.
+	row, err := writeOnlyTable.RowWithCols(ctx, h, writeOnlyTable.WritableCols())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	got := fmt.Sprintf("%v", row)
+	expect := fmt.Sprintf("%v", []types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewDatum(nil)})
+	if got != expect {
+		return errors.Errorf("expect %v, got %v", expect, got)
+	}
 	// DeleteOnlyTable: select * from t
 	err = checkResult(ctx, deleteOnlyTable, testutil.RowsWithSep(" ", "1 2", "2 3"))
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// WriteOnlyTable: update t set c1 = 2 where c1 = 1
-	h, _, err := writeOnlyTable.Seek(ctx, 0)
+	h, _, err = writeOnlyTable.Seek(ctx, 0)
 	if err != nil {
 		return errors.Trace(err)
 	}
