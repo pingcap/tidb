@@ -606,4 +606,6 @@ func (s *testEvaluatorSuite) TestDynamic(c *C) {
 			c.Assert(f.isDeterministic(), IsTrue)
 		}
 	}
+	values := NewValuesFunc(0, nil, nil)
+	c.Assert(values.Function.isDeterministic(), IsFalse)
 }
