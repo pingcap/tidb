@@ -2643,7 +2643,7 @@ func (s *testSessionSuite) TestRetryCleanTxn(c *C) {
 	se2 := newSession(c, s.store, dbName)
 	se2.Execute("update retrytxn set b = b + 1 where a = 1")
 
-	// hijack retry history, add an statement that returns error.
+	// Hijack retry history, add a statement that returns error.
 	history := getHistory(se)
 	stmtNode, err := parser.New().ParseOneStmt("insert retrytxn values (2, 3, 4)", "", "")
 	c.Assert(err, IsNil)
