@@ -22,6 +22,7 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
@@ -134,7 +135,7 @@ type FileSorter struct {
 // Worker sorts file asynchronously.
 type Worker struct {
 	ctx     *FileSorter
-	busy    bool
+	busy    int32
 	keySize int
 	valSize int
 	rowSize int
@@ -291,7 +292,7 @@ func (fs *FileSorter) externalSort() (*comparableRow, error) {
 	if !fs.fetched {
 		// flush all remaining content to file (if any)
 		for _, w := range fs.workers {
-			if !w.busy && len(w.buf) > 0 {
+			if atomic.LoadInt32(&(w.busy)) == 0 && len(w.buf) > 0 {
 				fs.wg.Add(1)
 				go w.flushToFile()
 			}
@@ -446,7 +447,7 @@ func (fs *FileSorter) Input(key []types.Datum, val []types.Datum, handle int64) 
 	for {
 		for i := 0; i < fs.nWorkers; i++ {
 			wid := (fs.cWorker + i) % fs.nWorkers
-			if !fs.workers[wid].busy {
+			if atomic.LoadInt32(&(fs.workers[wid].busy)) == 0 {
 				err := fs.workers[wid].input(row)
 				if err != nil {
 					return errors.Trace(err)
@@ -521,7 +522,7 @@ func (w *Worker) input(row *comparableRow) error {
 	w.buf = append(w.buf, row)
 
 	if len(w.buf) >= w.bufSize {
-		w.busy = true
+		atomic.StoreInt32(&(w.busy), int32(1))
 		w.ctx.wg.Add(1)
 		go w.flushToFile()
 	}
@@ -592,6 +593,6 @@ func (w *Worker) flushToFile() {
 
 	w.ctx.appendFileName(fileName)
 	w.buf = w.buf[:0]
-	w.busy = false
+	atomic.StoreInt32(&(w.busy), int32(0))
 	return
 }
