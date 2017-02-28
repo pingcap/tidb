@@ -21,6 +21,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -1454,4 +1455,17 @@ func (s *testParserSuite) TestTimestampDiffUnit(c *C) {
 	f, ok = expr.(*ast.FuncCallExpr)
 	c.Assert(ok, IsTrue)
 	c.Assert(f.Args[0].GetDatum().GetString(), Equals, "MONTH")
+}
+
+func (s *testParserSuite) TestSQLModeANSIQuotes(c *C) {
+	parser := New()
+	parser.SetSQLMode(mysql.ModeANSIQuotes)
+	tests := []string{
+		`CREATE TABLE "table" ("id" int)`,
+		`select * from t "tt"`,
+	}
+	for _, test := range tests {
+		_, err := parser.Parse(test, "", "")
+		c.Assert(err, IsNil)
+	}
 }
