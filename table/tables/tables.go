@@ -491,70 +491,28 @@ func (t *Table) RemoveRecord(ctx context.Context, h int64, r []types.Datum) erro
 		return errors.Trace(err)
 	}
 	if shouldWriteBinlog(ctx) {
-		err = t.addDeleteBinlog(ctx, h, r)
+		err = t.addDeleteBinlog(ctx, r)
 	}
 	return errors.Trace(err)
 }
 
 func (t *Table) addUpdateBinlog(ctx context.Context, h int64, old []types.Datum, newValue []byte, colIDs []int64) error {
-	mutation := t.getMutation(ctx)
-	hasPK := false
-	if t.meta.PKIsHandle {
-		hasPK = true
-	} else {
-		for _, idx := range t.meta.Indices {
-			if idx.Primary {
-				hasPK = true
-				break
-			}
-		}
-	}
 	var bin []byte
-	if hasPK {
-		handleData, _ := codec.EncodeValue(nil, types.NewIntDatum(h))
-		bin = append(handleData, newValue...)
-	} else {
-		oldData, err := tablecodec.EncodeRow(old, colIDs)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		bin = append(oldData, newValue...)
+	oldData, err := tablecodec.EncodeRow(old, colIDs)
+	if err != nil {
+		return errors.Trace(err)
 	}
+	bin = append(oldData, newValue...)
+	mutation := t.getMutation(ctx)
 	mutation.UpdatedRows = append(mutation.UpdatedRows, bin)
 	mutation.Sequence = append(mutation.Sequence, binlog.MutationType_Update)
 	return nil
 }
 
-func (t *Table) addDeleteBinlog(ctx context.Context, h int64, r []types.Datum) error {
+func (t *Table) addDeleteBinlog(ctx context.Context, r []types.Datum) error {
 	mutation := t.getMutation(ctx)
-	if t.meta.PKIsHandle {
-		mutation.DeletedIds = append(mutation.DeletedIds, h)
-		mutation.Sequence = append(mutation.Sequence, binlog.MutationType_DeleteID)
-		return nil
-	}
-
-	var primaryIdx *model.IndexInfo
-	for _, idx := range t.meta.Indices {
-		if idx.Primary {
-			primaryIdx = idx
-			break
-		}
-	}
 	var data []byte
 	var err error
-	if primaryIdx != nil {
-		indexedValues := make([]types.Datum, len(primaryIdx.Columns))
-		for i := range indexedValues {
-			indexedValues[i] = r[primaryIdx.Columns[i].Offset]
-		}
-		data, err = codec.EncodeKey(nil, indexedValues...)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		mutation.DeletedPks = append(mutation.DeletedPks, data)
-		mutation.Sequence = append(mutation.Sequence, binlog.MutationType_DeletePK)
-		return nil
-	}
 	colIDs := make([]int64, len(t.Cols()))
 	for i, col := range t.Cols() {
 		colIDs[i] = col.ID
