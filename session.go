@@ -489,16 +489,12 @@ func (s *session) ParseSQL(sql, charset, collation string) ([]ast.StmtNode, erro
 	return s.parser.Parse(sql, charset, collation)
 }
 
-func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
-	s.prepareTxnCtx()
-	startTS := time.Now()
-
-	// Update processinfo, ShowProcess() will use it.
+func (s *session) setProcessInfo(sql string) {
 	pi := util.ProcessInfo{
 		ID:      s.sessionVars.ConnectionID,
 		DB:      s.sessionVars.CurrentDB,
 		Command: "Query",
-		Time:    startTS,
+		Time:    time.Now(),
 		State:   s.Status(),
 		Info:    sql,
 	}
@@ -508,6 +504,14 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		pi.Host = strs[1]
 	}
 	s.processInfo.Store(pi)
+}
+
+func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
+	s.prepareTxnCtx()
+	startTS := time.Now()
+
+	// Update processinfo, ShowProcess() will use it.
+	s.setProcessInfo(sql)
 
 	charset, collation := s.sessionVars.GetCharsetInfo()
 	connID := s.sessionVars.ConnectionID
@@ -555,7 +559,22 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		// return the first recordset if client doesn't support ClientMultiResults.
 		rs = rs[:1]
 	}
+	if len(rs) > 0 {
+		rs[len(rs)-1] = wrapRecordSet{rs[len(rs)-1], s}
+	} else if rs == nil {
+		s.setProcessInfo("")
+	}
 	return rs, nil
+}
+
+type wrapRecordSet struct {
+	ast.RecordSet
+	*session
+}
+
+func (r wrapRecordSet) Close() error {
+	r.session.setProcessInfo("")
+	return r.RecordSet.Close()
 }
 
 // For execute prepare statement in binary protocol
@@ -629,22 +648,14 @@ func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (ast.R
 	st := executor.CompileExecutePreparedStmt(s, stmtID, args...)
 
 	// Update processinfo, ShowProcess() will use it.
-	pi := util.ProcessInfo{
-		ID:      s.sessionVars.ConnectionID,
-		DB:      s.sessionVars.CurrentDB,
-		Command: "Query",
-		Time:    time.Now(),
-		State:   s.Status(),
-		Info:    st.OriginText(),
-	}
-	strs := strings.Split(s.sessionVars.User, "@")
-	if len(strs) == 2 {
-		pi.User = strs[0]
-		pi.Host = strs[1]
-	}
-	s.processInfo.Store(pi)
+	s.setProcessInfo(st.OriginText())
 
 	r, err := runStmt(s, st)
+	if r == nil {
+		s.setProcessInfo("")
+	} else {
+		r = wrapRecordSet{r, s}
+	}
 	return r, errors.Trace(err)
 }
 

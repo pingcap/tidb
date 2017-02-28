@@ -154,6 +154,10 @@ func (e *ShowExec) fetchShowProcessList() error {
 
 	pl := sm.ShowProcessList()
 	for _, pi := range pl {
+		var t uint64
+		if len(pi.Info) != 0 {
+			t = uint64(time.Since(pi.Time) / time.Second)
+		}
 		row := &Row{
 			Data: []types.Datum{
 				types.NewUintDatum(pi.ID),
@@ -161,7 +165,7 @@ func (e *ShowExec) fetchShowProcessList() error {
 				types.NewStringDatum(pi.Host),
 				types.NewStringDatum(pi.DB),
 				types.NewStringDatum(pi.Command),
-				types.NewUintDatum(uint64(time.Since(pi.Time) / time.Second)),
+				types.NewUintDatum(t),
 				types.NewStringDatum(fmt.Sprintf("%d", pi.State)),
 				types.NewStringDatum(pi.Info),
 			},
