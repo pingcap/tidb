@@ -115,6 +115,7 @@ func (parser *Parser) ParseOneStmt(sql, charset, collation string) (ast.StmtNode
 	return stmts[0], nil
 }
 
+// SetSQLMode sets the SQL mode for parser.
 func (parser *Parser) SetSQLMode(mode mysql.SQLMode) {
 	parser.lexer.SetSQLMode(mode)
 }
@@ -204,4 +205,14 @@ func toBit(l yyLexer, lval *yySymType, str string) int {
 	}
 	lval.item = b
 	return bitLit
+}
+
+func getUint64FromNUM(num interface{}) uint64 {
+	switch v := num.(type) {
+	case int64:
+		return uint64(v)
+	case uint64:
+		return uint64(v)
+	}
+	return 0
 }

@@ -46,6 +46,7 @@ const (
 	tableSessionVar    = "SESSION_VARIABLES"
 	tablePlugins       = "PLUGINS"
 	tableConstraints   = "TABLE_CONSTRAINTS"
+	tableTriggers      = "TRIGGERS"
 )
 
 type columnInfo struct {
@@ -294,6 +295,31 @@ var tableConstraintsCols = []columnInfo{
 	{"TABLE_SCHEMA", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"CONSTRAINT_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
+}
+
+var tableTriggersCols = []columnInfo{
+	{"TRIGGER_CATALOG", mysql.TypeVarchar, 512, 0, nil, nil},
+	{"TRIGGER_SCHEMA", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TRIGGER_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"EVENT_MANIPULATION", mysql.TypeVarchar, 6, 0, nil, nil},
+	{"EVENT_OBJECT_CATALOG", mysql.TypeVarchar, 512, 0, nil, nil},
+	{"EVENT_OBJECT_SCHEMA", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"EVENT_OBJECT_TABLE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"ACTION_ORDER", mysql.TypeLonglong, 4, 0, nil, nil},
+	{"ACTION_CONDITION", mysql.TypeBlob, -1, 0, nil, nil},
+	{"ACTION_STATEMENT", mysql.TypeBlob, -1, 0, nil, nil},
+	{"ACTION_ORIENTATION", mysql.TypeVarchar, 9, 0, nil, nil},
+	{"ACTION_TIMING", mysql.TypeVarchar, 6, 0, nil, nil},
+	{"ACTION_REFERENCE_OLD_TABLE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"ACTION_REFERENCE_NEW_TABLE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"ACTION_REFERENCE_OLD_ROW", mysql.TypeVarchar, 3, 0, nil, nil},
+	{"ACTION_REFERENCE_NEW_ROW", mysql.TypeVarchar, 3, 0, nil, nil},
+	{"CREATED", mysql.TypeDatetime, 2, 0, nil, nil},
+	{"SQL_MODE", mysql.TypeVarchar, 8192, 0, nil, nil},
+	{"DEFINER", mysql.TypeVarchar, 77, 0, nil, nil},
+	{"CHARACTER_SET_CLIENT", mysql.TypeVarchar, 32, 0, nil, nil},
+	{"COLLATION_CONNECTION", mysql.TypeVarchar, 32, 0, nil, nil},
+	{"DATABASE_COLLATION", mysql.TypeVarchar, 32, 0, nil, nil},
 }
 
 func dataForCharacterSets() (records [][]types.Datum) {
@@ -618,6 +644,7 @@ var tableNameToColumns = map[string]([]columnInfo){
 	tableSessionVar:    sessionVarCols,
 	tablePlugins:       pluginsCols,
 	tableConstraints:   tableConstraintsCols,
+	tableTriggers:      tableTriggersCols,
 }
 
 func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
@@ -680,7 +707,7 @@ func (it *infoschemaTable) getRows(ctx context.Context, cols []*table.Column) (f
 	case tablePartitions:
 	case tableKeyColumm:
 	case tableReferConst:
-	case tablePlugins:
+	case tablePlugins, tableTriggers:
 	}
 	if err != nil {
 		return nil, errors.Trace(err)

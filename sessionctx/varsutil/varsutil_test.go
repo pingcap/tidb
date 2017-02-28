@@ -112,6 +112,6 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	}
 
 	// Combined sql_mode
-	SetSessionSystemVar(v, "sql_mode", types.NewStringDatum("MODE_REAL_AS_FLOAT,MODE_ANSI_QUOTES"))
+	SetSessionSystemVar(v, "sql_mode", types.NewStringDatum("REAL_AS_FLOAT,ANSI_QUOTES"))
 	c.Assert(v.SQLMode, Equals, mysql.ModeRealAsFloat|mysql.ModeANSIQuotes)
 }

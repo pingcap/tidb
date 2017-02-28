@@ -74,6 +74,8 @@ func (e *SimpleExec) Next() (*Row, error) {
 		err = e.executeDropUser(x)
 	case *ast.SetPwdStmt:
 		err = e.executeSetPwd(x)
+	case *ast.KillStmt:
+		err = e.executeKillStmt(x)
 	case *ast.BinlogStmt:
 		// We just ignore it.
 		return nil, nil
@@ -300,6 +302,11 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 	sql := fmt.Sprintf(`UPDATE %s.%s SET password="%s" WHERE User="%s" AND Host="%s";`, mysql.SystemDB, mysql.UserTable, util.EncodePassword(s.Password), userName, host)
 	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 	return errors.Trace(err)
+}
+
+func (e *SimpleExec) executeKillStmt(s *ast.KillStmt) error {
+	// TODO: Implement it.
+	return nil
 }
 
 func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {

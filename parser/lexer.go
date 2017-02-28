@@ -139,6 +139,7 @@ func (s *Scanner) Lex(v *yySymType) int {
 	return tok
 }
 
+// SetSQLMode sets the SQL mode for scanner.
 func (s *Scanner) SetSQLMode(mode mysql.SQLMode) {
 	s.sqlMode = mode
 }
