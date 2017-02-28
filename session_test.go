@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/localstore"
@@ -2626,4 +2627,30 @@ func (s *testSessionSuite) TestISColumns(c *C) {
 	mustExecSQL(c, se, sql)
 
 	mustExecSQL(c, se, dropDBSQL)
+}
+
+func (s *testSessionSuite) TestRetryCleanTxn(c *C) {
+	defer testleak.AfterTest(c)()
+	dbName := "test_retry_clean_txn"
+	se := newSession(c, s.store, dbName).(*session)
+	se.Execute("create table retrytxn (a int unique, b int)")
+	_, err := se.Execute("insert retrytxn values (1, 1)")
+	c.Assert(err, IsNil)
+	se.Execute("begin")
+	se.Execute("update retrytxn set b = b + 1 where a = 1")
+
+	// Make retryable error.
+	se2 := newSession(c, s.store, dbName)
+	se2.Execute("update retrytxn set b = b + 1 where a = 1")
+
+	// Hijack retry history, add a statement that returns error.
+	history := getHistory(se)
+	stmtNode, err := parser.New().ParseOneStmt("insert retrytxn values (2, 3, 4)", "", "")
+	c.Assert(err, IsNil)
+	stmt, err := Compile(se, stmtNode)
+	history.add(0, stmt)
+	_, err = se.Execute("commit")
+	c.Assert(err, NotNil)
+	c.Assert(se.Txn(), IsNil)
+	c.Assert(se.sessionVars.InTxn(), IsFalse)
 }
