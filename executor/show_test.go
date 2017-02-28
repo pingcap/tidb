@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 func (s *testSuite) TestShow(c *C) {
@@ -215,5 +216,18 @@ func (s *testSuite) TestForeignKeyInShowCreateTable(c *C) {
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}
+}
 
+func (s *testSuite) TestShowWarnings(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	testSQL := `create table if not exists show_warnings (a int)`
+	tk.MustExec(testSQL)
+	tk.MustExec("set @@sql_mode=''")
+	tk.MustExec("insert show_warnings values ('a')")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1265|Data Truncated"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1265|Data Truncated"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
 }

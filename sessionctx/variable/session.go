@@ -14,6 +14,7 @@
 package variable
 
 import (
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -153,6 +154,8 @@ type SessionVars struct {
 	// Per-connection time zones. Each client that connects has its own time zone setting, given by the session time_zone variable.
 	// See https://dev.mysql.com/doc/refman/5.7/en/time-zone-support.html
 	TimeZone *time.Location
+
+	SQLMode mysql.SQLMode
 }
 
 // NewSessionVars creates a session vars object.
@@ -261,6 +264,7 @@ type StatementContext struct {
 	InUpdateOrDeleteStmt bool
 	IgnoreTruncate       bool
 	TruncateAsWarning    bool
+	InShowWarning        bool
 
 	/* Variables that changes during execution. */
 	mu struct {
@@ -310,6 +314,17 @@ func (sc *StatementContext) GetWarnings() []error {
 	return warns
 }
 
+// WarningCount gets warning count.
+func (sc *StatementContext) WarningCount() uint16 {
+	if sc.InShowWarning {
+		return 0
+	}
+	sc.mu.Lock()
+	wc := uint16(len(sc.mu.warnings))
+	sc.mu.Unlock()
+	return wc
+}
+
 // SetWarnings sets warnings.
 func (sc *StatementContext) SetWarnings(warns []error) {
 	sc.mu.Lock()
@@ -320,6 +335,8 @@ func (sc *StatementContext) SetWarnings(warns []error) {
 // AppendWarning appends a warning.
 func (sc *StatementContext) AppendWarning(warn error) {
 	sc.mu.Lock()
-	sc.mu.warnings = append(sc.mu.warnings, warn)
+	if len(sc.mu.warnings) < math.MaxUint16 {
+		sc.mu.warnings = append(sc.mu.warnings, warn)
+	}
 	sc.mu.Unlock()
 }
