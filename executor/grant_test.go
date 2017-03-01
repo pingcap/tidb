@@ -197,3 +197,13 @@ func (s *testSuite) TestCreateUserWhenGrant(c *C) {
 	rows := tk.MustQuery("SELECT user FROM mysql.user WHERE user='test' and host='%'").Rows()
 	c.Assert(rows, HasLen, 1)
 }
+
+func (s *testSuite) TestIssue2654(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("DROP USER IF EXISTS 'test'@'%'")
+	tk.MustExec("CREATE USER 'test'@'%' IDENTIFIED BY 'test'")
+	tk.MustExec("GRANT SELECT ON test.* to 'test'")
+	rows := tk.MustQuery("SELECT user,host FROM mysql.user WHERE user='test' and host='%'")
+	rows.Check(testkit.Rows("[116 101 115 116] [37]")) // "test" "%"
+}
