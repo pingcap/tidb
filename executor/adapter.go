@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 )
 
-type processinfoReset interface {
+type processinfoSetter interface {
 	SetProcessInfo(string)
 }
 
@@ -36,7 +36,7 @@ type recordSet struct {
 	fields      []*ast.ResultField
 	executor    Executor
 	stmt        *statement
-	processinfo processinfoReset
+	processinfo processinfoSetter
 	err         error
 }
 
@@ -69,7 +69,9 @@ func (a *recordSet) Next() (*ast.Row, error) {
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
 	a.stmt.logSlowQuery()
-	a.processinfo.SetProcessInfo("")
+	if a.processinfo != nil {
+		a.processinfo.SetProcessInfo("")
+	}
 	return errors.Trace(err)
 }
 
@@ -157,10 +159,14 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 			}
 		}
 	}
+	var pi processinfoSetter
+	if raw, ok := ctx.(processinfoSetter); ok {
+		pi = raw
+	}
 	return &recordSet{
 		executor:    e,
 		stmt:        a,
-		processinfo: ctx.(processinfoReset),
+		processinfo: pi,
 	}, nil
 }
 
