@@ -114,14 +114,14 @@ func (s *testSessionSuite) TestPrepare(c *C) {
 	mustExecSQL(c, se, "deallocate prepare stmt")
 
 	// Execute prepared statements for more than one time.
-	mustExecSQL(c, se,"create table multiexec (a int, b int)")
+	mustExecSQL(c, se, "create table multiexec (a int, b int)")
 	mustExecSQL(c, se, "insert multiexec values (1, 1), (2, 2)")
 	id, _, _, err = se.PrepareStmt("select a from multiexec where b = ? order by b")
 	c.Assert(err, IsNil)
-	rs, err = se.ExecutePreparedStmt(id,1)
+	rs, err = se.ExecutePreparedStmt(id, 1)
 	c.Assert(err, IsNil)
 	rs.Close()
-	rs, err = se.ExecutePreparedStmt(id,2)
+	rs, err = se.ExecutePreparedStmt(id, 2)
 	rs.Close()
 	c.Assert(err, IsNil)
 
