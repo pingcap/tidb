@@ -489,7 +489,7 @@ func (s *session) ParseSQL(sql, charset, collation string) ([]ast.StmtNode, erro
 	return s.parser.Parse(sql, charset, collation)
 }
 
-func (s *session) setProcessInfo(sql string) {
+func (s *session) SetProcessInfo(sql string) {
 	pi := util.ProcessInfo{
 		ID:      s.sessionVars.ConnectionID,
 		DB:      s.sessionVars.CurrentDB,
@@ -509,9 +509,6 @@ func (s *session) setProcessInfo(sql string) {
 func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 	s.prepareTxnCtx()
 	startTS := time.Now()
-
-	// Update processinfo, ShowProcess() will use it.
-	s.setProcessInfo(sql)
 
 	charset, collation := s.sessionVars.GetCharsetInfo()
 	connID := s.sessionVars.ConnectionID
@@ -540,6 +537,9 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		s.stmtState = ph.StartStatement(sql, connID, perfschema.CallerNameSessionExecute, rawStmts[i])
 		s.SetValue(context.QueryString, st.OriginText())
 
+		// Update processinfo, ShowProcess() will use it.
+		s.SetProcessInfo(st.OriginText())
+
 		startTS = time.Now()
 		r, err := runStmt(s, st)
 		ph.EndStatement(s.stmtState)
@@ -559,22 +559,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		// return the first recordset if client doesn't support ClientMultiResults.
 		rs = rs[:1]
 	}
-	if len(rs) > 0 {
-		rs[len(rs)-1] = wrapRecordSet{rs[len(rs)-1], s}
-	} else if rs == nil {
-		s.setProcessInfo("")
-	}
 	return rs, nil
-}
-
-type wrapRecordSet struct {
-	ast.RecordSet
-	*session
-}
-
-func (r wrapRecordSet) Close() error {
-	r.session.setProcessInfo("")
-	return r.RecordSet.Close()
 }
 
 // For execute prepare statement in binary protocol
@@ -648,14 +633,9 @@ func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (ast.R
 	st := executor.CompileExecutePreparedStmt(s, stmtID, args...)
 
 	// Update processinfo, ShowProcess() will use it.
-	s.setProcessInfo(st.OriginText())
+	s.SetProcessInfo(st.OriginText())
 
 	r, err := runStmt(s, st)
-	if r == nil {
-		s.setProcessInfo("")
-	} else {
-		r = wrapRecordSet{r, s}
-	}
 	return r, errors.Trace(err)
 }
 
