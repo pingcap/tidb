@@ -2645,10 +2645,11 @@ func (s *testSessionSuite) TestRetryCleanTxn(c *C) {
 
 	// Hijack retry history, add a statement that returns error.
 	history := getHistory(se)
-	stmtNode, err := parser.New().ParseOneStmt("insert retrytxn values (2, 3, 4)", "", "")
+	stmtNode, err := parser.New().ParseOneStmt("insert retrytxn values (2, 'a')", "", "")
 	c.Assert(err, IsNil)
 	stmt, err := Compile(se, stmtNode)
-	history.add(0, stmt)
+	resetStmtCtx(se, stmtNode)
+	history.add(0, stmt, se.sessionVars.StmtCtx)
 	_, err = se.Execute("commit")
 	c.Assert(err, NotNil)
 	c.Assert(se.Txn(), IsNil)
