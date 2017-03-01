@@ -826,6 +826,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 	if b.err != nil {
 		return nil
 	}
+	originalFields := sel.Fields.Fields
 	sel.Fields.Fields = b.unfoldWildStar(p, sel.Fields.Fields)
 	if b.err != nil {
 		return nil
@@ -892,6 +893,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 			return nil
 		}
 	}
+	sel.Fields.Fields = originalFields
 	if oldLen != p.Schema().Len() {
 		return b.buildTrim(p, oldLen)
 	}
