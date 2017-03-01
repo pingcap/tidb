@@ -44,6 +44,9 @@ func (s *Server) listTableRegions(dbName, tableName string) (data []RegionItem, 
 	}
 	dom := sessionctx.GetDomain(session.(context.Context))
 	table, err := dom.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+	if err != nil {
+		return data,err
+	}
 	tableID := table.Meta().ID
 
 	// create regionCache
@@ -80,7 +83,6 @@ func (s *Server) listTableRegions(dbName, tableName string) (data []RegionItem, 
 		if err != nil {
 			return nil, err
 		}
-		log.Debugf("%+v", index.Meta().Columns)
 		data[offset] = RegionItem{
 			TableName: tableName,
 			TableID:   tableID,
