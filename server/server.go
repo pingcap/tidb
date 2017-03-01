@@ -234,7 +234,7 @@ func (s *Server) startStatusHTTP() {
 			})
 			// HTTP path for prometheus.
 			http.Handle("/metrics", prometheus.Handler())
-			http.HandleFunc("/", s.handleTable)
+			http.HandleFunc("/", s.handle)
 			addr := s.cfg.StatusAddr
 			if len(addr) == 0 {
 				addr = defaultStatusAddr

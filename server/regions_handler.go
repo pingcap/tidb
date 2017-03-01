@@ -45,15 +45,18 @@ func (s *Server) listTableRegions(dbName, tableName string) (data []RegionItem, 
 	dom := sessionctx.GetDomain(session.(context.Context))
 	table, err := dom.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
 	tableID := table.Meta().ID
-	// for primary
-	tableStartKey := tablecodec.EncodeRowKeyWithHandle(tableID, math.MinInt64)
-	tableEndKey := tablecodec.EncodeRowKeyWithHandle(tableID, math.MaxInt64)
+
+	// create regionCache
 	storePath := fmt.Sprintf("%s://%s", s.cfg.Store, s.cfg.StorePath)
 	regionCache, err := tikv.NewRegionCacheFromStorePath(storePath)
 	if err != nil {
 		return data, err
 	}
 	bo := tikv.NewBackoffer(5000, gContext.Background())
+
+	// for primary
+	tableStartKey := tablecodec.EncodeRowKeyWithHandle(tableID, math.MinInt64)
+	tableEndKey := tablecodec.EncodeRowKeyWithHandle(tableID, math.MaxInt64)
 
 	regions, err := regionCache.ListRegionIDsInKeyRange(bo, tableStartKey, tableEndKey)
 	if err != nil {
@@ -77,6 +80,7 @@ func (s *Server) listTableRegions(dbName, tableName string) (data []RegionItem, 
 		if err != nil {
 			return nil, err
 		}
+		log.Debugf("%+v", index.Meta().Columns)
 		data[offset] = RegionItem{
 			TableName: tableName,
 			TableID:   tableID,
@@ -90,13 +94,12 @@ func (s *Server) listTableRegions(dbName, tableName string) (data []RegionItem, 
 	return data, nil
 }
 
-func (s *Server) handleTable(w http.ResponseWriter, req *http.Request) {
-	//TODO:check storage engine
+func (s *Server) handle(w http.ResponseWriter, req *http.Request) {
 	path := strings.Trim(req.URL.Path, "/")
 	data := HTTPResponseItem{
 		Success:   false,
-		Msg:       "Illegal Request:" + path,
-		RequestID: fmt.Sprintf("http_%d", time.Now().Second()), //TODO genuuid
+		Msg:       "",
+		RequestID: fmt.Sprintf("http_%d", time.Now().UnixNano()), //TODO genuuid
 		Data:      nil,
 	}
 	params := strings.Split(path, "/")
@@ -115,6 +118,8 @@ func (s *Server) handleTable(w http.ResponseWriter, req *http.Request) {
 		// TODO
 		data.Success = true
 
+	} else {
+		data.Msg = "Illegal Request:" + path
 	}
 
 	w.Header().Set("Content-Type", "application/json")
