@@ -163,6 +163,24 @@ func (c *RegionCache) GroupKeysByRegion(bo *Backoffer, keys [][]byte) (map[Regio
 	return groups, first, nil
 }
 
+// ListRegionIDsInKeyRange list region_ids in [start_key,end_key]
+func (c *RegionCache) ListRegionIDsInKeyRange(bo *Backoffer, startKey, endKey []byte) (regions []uint64, err error) {
+	regions = make([]uint64, 0, 0)
+	for err == nil {
+		// TODO:should we locate key only from pd without getting from cache first?
+		curRegion, curErr := c.LocateKey(bo, startKey)
+		if curErr != nil {
+			return nil, errors.Trace(curErr)
+		}
+		regions = append(regions, curRegion.Region.id)
+		if curRegion.Contains(endKey) {
+			break
+		}
+		startKey = curRegion.EndKey
+	}
+	return regions, err
+}
+
 // DropRegion removes a cached Region.
 func (c *RegionCache) DropRegion(id RegionVerID) {
 	c.mu.Lock()
