@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/pd-client"
+	"strings"
 )
 
 // RegionCache caches Regions loaded from PD.
@@ -49,6 +50,24 @@ func NewRegionCache(pdClient pd.Client) *RegionCache {
 	c.mu.sorted = llrb.New()
 	c.storeMu.stores = make(map[uint64]*Store)
 	return c
+}
+
+// NewRegionCacheFromStorePath create a region cache from store's path
+func NewRegionCacheFromStorePath(path string) (*RegionCache, error) {
+	etcdAddrs, _, err := parsePath(path)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	pdCli, err := pd.NewClient(etcdAddrs)
+	if err != nil {
+		if strings.Contains(err.Error(), "i/o timeout") {
+			return nil, errors.Annotate(err, txnRetryableMark)
+		}
+		return nil, errors.Trace(err)
+	}
+
+	return NewRegionCache(pdCli), nil
 }
 
 // RPCContext contains data that is needed to send RPC to a region.

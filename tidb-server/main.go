@@ -98,6 +98,8 @@ func main() {
 		StatusAddr:   fmt.Sprintf(":%s", *statusPort),
 		Socket:       *socket,
 		ReportStatus: *reportStatus,
+		Store:        *store,
+		StorePath:    *storePath,
 	}
 
 	// set log options
