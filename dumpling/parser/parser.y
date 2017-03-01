@@ -5064,7 +5064,11 @@ UserVariable:
 	}
 
 Username:
-	stringLit "AT" stringLit
+	stringLit
+	{
+		$$ = $1 + "@%"
+	}
+|	stringLit "AT" stringLit
 	{
 		$$ = $1 + "@" + $3
 	}
