@@ -175,7 +175,7 @@ func runStmt(ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
 	se := ctx.(*session)
 	rs, err = s.Exec(ctx)
 	// All the history should be added here.
-	getHistory(ctx).add(0, s)
+	getHistory(ctx).add(0, s, se.sessionVars.StmtCtx)
 	if !se.sessionVars.InTxn() {
 		if err != nil {
 			log.Info("RollbackTxn for ddl/autocommit error.")

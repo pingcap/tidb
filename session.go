@@ -78,20 +78,22 @@ var (
 )
 
 type stmtRecord struct {
-	stmtID uint32
-	st     ast.Statement
-	params []interface{}
+	stmtID  uint32
+	st      ast.Statement
+	stmtCtx *variable.StatementContext
+	params  []interface{}
 }
 
 type stmtHistory struct {
 	history []*stmtRecord
 }
 
-func (h *stmtHistory) add(stmtID uint32, st ast.Statement, params ...interface{}) {
+func (h *stmtHistory) add(stmtID uint32, st ast.Statement, stmtCtx *variable.StatementContext, params ...interface{}) {
 	s := &stmtRecord{
-		stmtID: stmtID,
-		st:     st,
-		params: append(([]interface{})(nil), params...),
+		stmtID:  stmtID,
+		st:      st,
+		stmtCtx: stmtCtx,
+		params:  append(([]interface{})(nil), params...),
 	}
 	h.history = append(h.history, s)
 }
@@ -328,6 +330,7 @@ func (s *session) retry(maxCnt int) error {
 			st := sr.st
 			txt := st.OriginText()
 			log.Warnf("[%d] Retry %s", connID, sqlForLog(txt))
+			s.sessionVars.StmtCtx = sr.stmtCtx
 			_, err = st.Exec(s)
 			if err != nil {
 				break
