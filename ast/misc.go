@@ -472,14 +472,17 @@ type AdminStmtType int
 const (
 	AdminShowDDL = iota + 1
 	AdminCheckTable
+	AdminShowTableRegions
+	AdminShowRegions
 )
 
 // AdminStmt is the struct for Admin statement.
 type AdminStmt struct {
 	stmtNode
 
-	Tp     AdminStmtType
-	Tables []*TableName
+	Tp       AdminStmtType
+	Tables   []*TableName
+	RegionID int64
 }
 
 // Accept implements Node Accpet interface.

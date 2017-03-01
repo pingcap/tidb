@@ -294,6 +294,8 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		// for admin
 		{"admin show ddl;", true},
 		{"admin check table t1, t2;", true},
+		{"admin show table regions where table_name = d.t", true},
+		{"admin show regions where region_id = 1", true},
 
 		// for on duplicate key update
 		{"INSERT INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true},
