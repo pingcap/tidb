@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util"
 )
 
 var _ context.Context = (*Context)(nil)
@@ -136,6 +137,11 @@ func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 		}
 		c.txn = txn
 	}
+	return nil
+}
+
+// GetSessionManager implements the context.Context interface.
+func (c *Context) GetSessionManager() util.SessionManager {
 	return nil
 }
 

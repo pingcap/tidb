@@ -43,6 +43,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/prometheus/client_golang/prometheus"
@@ -207,6 +208,21 @@ func (s *Server) onConn(c net.Conn) {
 	connGauge.Set(float64(connections))
 
 	conn.Run()
+}
+
+// ShowProcessList implements the SessionManager interface.
+func (s *Server) ShowProcessList() []util.ProcessInfo {
+	var rs []util.ProcessInfo
+	s.rwlock.RLock()
+	for _, client := range s.clients {
+		rs = append(rs, client.ctx.ShowProcess())
+	}
+	s.rwlock.RUnlock()
+	return rs
+}
+
+// Kill implements the SessionManager interface.
+func (s *Server) Kill(connectionID uint64, query bool) {
 }
 
 var once sync.Once
