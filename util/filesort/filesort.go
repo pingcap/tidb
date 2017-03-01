@@ -114,13 +114,15 @@ type FileSorter struct {
 	nWorkers int // number of workers used in async sorting
 	cWorker  int // the next worker to which the sorting job is sent
 
-	mu      sync.Mutex
-	wg      sync.WaitGroup
-	tmpDir  string
-	files   []string
-	nFiles  int
-	closed  bool
-	fetched bool
+	mu       sync.Mutex
+	wg       sync.WaitGroup
+	tmpDir   string
+	files    []string
+	nFiles   int
+	closed   bool
+	fetched  bool
+	external bool // mark the necessity of performing external file sort
+	cursor   int  // required when performing full in-memory sort
 
 	rowHeap    *rowHeap
 	fds        []*os.File
@@ -285,6 +287,25 @@ func (fs *FileSorter) closeAllFiles() error {
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+// Perform full in-memory sort.
+func (fs *FileSorter) internalSort() (*comparableRow, error) {
+	w := fs.workers[fs.cWorker]
+
+	if !fs.fetched {
+		sort.Sort(w)
+		if w.err != nil {
+			return nil, errors.Trace(w.err)
+		}
+		fs.fetched = true
+	}
+	if fs.cursor < len(w.buf) {
+		r := w.buf[fs.cursor]
+		fs.cursor++
+		return r, nil
+	}
+	return nil, nil
 }
 
 // Perform external file sort.
@@ -474,10 +495,20 @@ func (fs *FileSorter) Input(key []types.Datum, val []types.Datum, handle int64) 
 
 // Output gets the next sorted row.
 func (fs *FileSorter) Output() ([]types.Datum, []types.Datum, int64, error) {
+	var (
+		r   *comparableRow
+		err error
+	)
 	if fs.closed {
 		return nil, nil, 0, errors.New("FileSorter has been closed")
 	}
-	r, err := fs.externalSort()
+
+	if fs.external {
+		r, err = fs.externalSort()
+	} else {
+		r, err = fs.internalSort()
+	}
+
 	if err != nil {
 		return nil, nil, 0, errors.Trace(err)
 	} else if r != nil {
@@ -524,6 +555,7 @@ func (w *Worker) input(row *comparableRow) error {
 	if len(w.buf) >= w.bufSize {
 		atomic.StoreInt32(&(w.busy), int32(1))
 		w.ctx.wg.Add(1)
+		w.ctx.external = true
 		go w.flushToFile()
 	}
 
