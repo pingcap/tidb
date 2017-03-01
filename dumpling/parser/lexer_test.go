@@ -18,6 +18,7 @@ import (
 	"unicode"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -249,5 +250,30 @@ func (s *testLexerSuite) TestInt(c *C) {
 		default:
 			c.Fail()
 		}
+	}
+}
+
+func (s *testLexerSuite) TestSQLModeANSIQuotes(c *C) {
+	tests := []struct {
+		input string
+		tok   int
+		ident string
+	}{
+		{`"identifier"`, identifier, "identifier"},
+		{"`identifier`", identifier, "identifier"},
+		{`"identifier""and"`, identifier, `identifier"and`},
+		{`'string''string'`, stringLit, "string'string"},
+		{`'string' 'string'`, stringLit, "stringstring"},
+		{`"identifier"'and'`, identifier, "identifier"},
+		{`'string'"identifier"`, stringLit, "string"},
+	}
+	scanner := NewScanner("")
+	scanner.SetSQLMode(mysql.ModeANSIQuotes)
+	for _, t := range tests {
+		var v yySymType
+		scanner.reset(t.input)
+		tok := scanner.Lex(&v)
+		c.Assert(tok, Equals, t.tok)
+		c.Assert(v.ident, Equals, t.ident)
 	}
 }

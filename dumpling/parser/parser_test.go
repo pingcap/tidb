@@ -21,6 +21,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -1471,4 +1472,17 @@ func (s *testParserSuite) TestSessionManage(c *C) {
 		{"kill tidb query 23123", true},
 	}
 	s.RunTest(c, table)
+}
+
+func (s *testParserSuite) TestSQLModeANSIQuotes(c *C) {
+	parser := New()
+	parser.SetSQLMode(mysql.ModeANSIQuotes)
+	tests := []string{
+		`CREATE TABLE "table" ("id" int)`,
+		`select * from t "tt"`,
+	}
+	for _, test := range tests {
+		_, err := parser.Parse(test, "", "")
+		c.Assert(err, IsNil)
+	}
 }
