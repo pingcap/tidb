@@ -24,6 +24,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
@@ -45,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-binlog"
 )
@@ -66,10 +68,12 @@ type Session interface {
 	DropPreparedStmt(stmtID uint32) error
 	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
+	SetSessionManager(util.SessionManager)
 	Close() error
 	Auth(user string, auth []byte, salt []byte) bool
 	// Cancel the execution of current transaction.
 	Cancel()
+	ShowProcess() util.ProcessInfo
 }
 
 var (
@@ -99,8 +103,10 @@ func (h *stmtHistory) add(stmtID uint32, st ast.Statement, stmtCtx *variable.Sta
 }
 
 type session struct {
-	txn   kv.Transaction // current transaction
-	txnCh chan *txnWithErr
+	// It's used by ShowProcess(), and should be modified atomically.
+	processInfo atomic.Value
+	txn         kv.Transaction // current transaction
+	txnCh       chan *txnWithErr
 	// For cancel the execution of current transaction.
 	goCtx      goctx.Context
 	cancelFunc goctx.CancelFunc
@@ -115,7 +121,8 @@ type session struct {
 	stmtState *perfschema.StatementState
 	parser    *parser.Parser
 
-	sessionVars *variable.SessionVars
+	sessionVars    *variable.SessionVars
+	sessionManager util.SessionManager
 }
 
 // Cancel cancels the execution of current transaction.
@@ -158,6 +165,14 @@ func (s *session) SetClientCapability(capability uint32) {
 
 func (s *session) SetConnectionID(connectionID uint64) {
 	s.sessionVars.ConnectionID = connectionID
+}
+
+func (s *session) SetSessionManager(sm util.SessionManager) {
+	s.sessionManager = sm
+}
+
+func (s *session) GetSessionManager() util.SessionManager {
+	return s.sessionManager
 }
 
 type schemaLeaseChecker struct {
@@ -480,9 +495,27 @@ func (s *session) ParseSQL(sql, charset, collation string) ([]ast.StmtNode, erro
 	return s.parser.Parse(sql, charset, collation)
 }
 
+func (s *session) SetProcessInfo(sql string) {
+	pi := util.ProcessInfo{
+		ID:      s.sessionVars.ConnectionID,
+		DB:      s.sessionVars.CurrentDB,
+		Command: "Query",
+		Time:    time.Now(),
+		State:   s.Status(),
+		Info:    sql,
+	}
+	strs := strings.Split(s.sessionVars.User, "@")
+	if len(strs) == 2 {
+		pi.User = strs[0]
+		pi.Host = strs[1]
+	}
+	s.processInfo.Store(pi)
+}
+
 func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 	s.prepareTxnCtx()
 	startTS := time.Now()
+
 	charset, collation := s.sessionVars.GetCharsetInfo()
 	connID := s.sessionVars.ConnectionID
 	rawStmts, err := s.ParseSQL(sql, charset, collation)
@@ -509,6 +542,9 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 
 		s.stmtState = ph.StartStatement(sql, connID, perfschema.CallerNameSessionExecute, rawStmts[i])
 		s.SetValue(context.QueryString, st.OriginText())
+
+		// Update processinfo, ShowProcess() will use it.
+		s.SetProcessInfo(st.OriginText())
 
 		startTS = time.Now()
 		r, err := runStmt(s, st)
@@ -601,6 +637,10 @@ func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (ast.R
 	}
 	s.prepareTxnCtx()
 	st := executor.CompileExecutePreparedStmt(s, stmtID, args...)
+
+	// Update processinfo, ShowProcess() will use it.
+	s.SetProcessInfo(st.OriginText())
+
 	r, err := runStmt(s, st)
 	return r, errors.Trace(err)
 }
@@ -990,4 +1030,13 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+func (s *session) ShowProcess() util.ProcessInfo {
+	var pi util.ProcessInfo
+	tmp := s.processInfo.Load()
+	if tmp != nil {
+		pi = tmp.(util.ProcessInfo)
+	}
+	return pi
 }

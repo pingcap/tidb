@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -205,6 +206,11 @@ func (tc *TiDBContext) Execute(sql string) (rs []ResultSet, err error) {
 	return
 }
 
+// SetSessionManager implements the QueryCtx interface.
+func (tc *TiDBContext) SetSessionManager(sm util.SessionManager) {
+	tc.session.SetSessionManager(sm)
+}
+
 // SetClientCapability implements QueryCtx SetClientCapability method.
 func (tc *TiDBContext) SetClientCapability(flags uint32) {
 	tc.session.SetClientCapability(flags)
@@ -267,6 +273,11 @@ func (tc *TiDBContext) Prepare(sql string) (statement PreparedStatement, columns
 	}
 	tc.stmts[int(stmtID)] = stmt
 	return
+}
+
+// ShowProcess implements QueryCtx ShowProcess method.
+func (tc *TiDBContext) ShowProcess() util.ProcessInfo {
+	return tc.session.ShowProcess()
 }
 
 type tidbResultSet struct {
