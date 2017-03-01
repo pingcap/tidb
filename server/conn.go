@@ -77,6 +77,7 @@ type clientConn struct {
 	lastCmd      string            // latest sql query string, currently used for logging error.
 	ctx          QueryCtx          // an interface to execute sql statements.
 	attrs        map[string]string // attributes parsed from client handshake response, not used for now.
+	killed       bool
 }
 
 func (cc *clientConn) String() string {
@@ -336,7 +337,7 @@ func (cc *clientConn) Run() {
 		cc.Close()
 	}()
 
-	for {
+	for !cc.killed {
 		cc.alloc.Reset()
 		data, err := cc.readPacket()
 		if err != nil {
