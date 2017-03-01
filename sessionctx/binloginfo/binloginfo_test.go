@@ -144,24 +144,38 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 
 	tk.MustExec("update local_binlog set name = 'xyz' where id = 2")
 	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
-	expected = [][]types.Datum{
+	oldRow := [][]types.Datum{
+		{types.NewIntDatum(2), types.NewStringDatum("cde")},
+	}
+	newRow := [][]types.Datum{
 		{types.NewIntDatum(2), types.NewStringDatum("xyz")},
 	}
-	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].UpdatedRows, 2, 4)
-	c.Assert(gotRows, DeepEquals, expected)
+	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].UpdatedRows, 1, 3)
+	c.Assert(gotRows, DeepEquals, oldRow)
+
+	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].UpdatedRows, 5, 7)
+	c.Assert(gotRows, DeepEquals, newRow)
 
 	tk.MustExec("delete from local_binlog where id = 1")
 	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
-	c.Assert(prewriteVal.Mutations[0].DeletedIds, DeepEquals, []int64{1})
+	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].DeletedRows, 1, 3)
+	expected = [][]types.Datum{
+		{types.NewIntDatum(1), types.NewStringDatum("abc")},
+	}
+	c.Assert(gotRows, DeepEquals, expected)
 
 	// Test table primary key is not integer.
 	tk.MustExec("create table local_binlog2 (name varchar(64) primary key, age int)")
 	tk.MustExec("insert local_binlog2 values ('abc', 16), ('def', 18)")
 	tk.MustExec("delete from local_binlog2 where name = 'def'")
 	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
-	c.Assert(prewriteVal.Mutations[0].Sequence[0], Equals, binlog.MutationType_DeletePK)
-	_, deletedPK, _ := codec.DecodeOne(prewriteVal.Mutations[0].DeletedPks[0])
-	c.Assert(deletedPK.GetString(), Equals, "def")
+	c.Assert(prewriteVal.Mutations[0].Sequence[0], Equals, binlog.MutationType_DeleteRow)
+
+	expected = [][]types.Datum{
+		{types.NewStringDatum("def"), types.NewIntDatum(18)},
+	}
+	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].DeletedRows, 1, 3)
+	c.Assert(gotRows, DeepEquals, expected)
 
 	// Test Table don't have primary key.
 	tk.MustExec("create table local_binlog3 (c1 int, c2 int)")
@@ -193,7 +207,7 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	tk.MustExec("commit")
 	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
 	c.Assert(prewriteVal.Mutations[0].Sequence, DeepEquals, []binlog.MutationType{
-		binlog.MutationType_DeleteID,
+		binlog.MutationType_DeleteRow,
 		binlog.MutationType_Insert,
 		binlog.MutationType_Update,
 	})
@@ -293,10 +307,6 @@ func mutationRowsToRows(c *C, mutationRows [][]byte, firstColumn, secondColumn i
 		datums, err := codec.Decode(mutationRow, 5)
 		c.Assert(err, IsNil)
 		for i := range datums {
-			if i != firstColumn && i != secondColumn {
-				// Column ID or handle
-				c.Assert(datums[i].GetInt64(), Greater, int64(0))
-			}
 			if datums[i].Kind() == types.KindBytes {
 				datums[i].SetBytesAsString(datums[i].GetBytes())
 			}
