@@ -783,7 +783,10 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	}
 	dom := sessionctx.GetDomain(se)
 	err = dom.LoadPrivilegeLoop(se)
-
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	err = dom.LoadTableStatsLoop(se)
 	return dom, errors.Trace(err)
 }
 

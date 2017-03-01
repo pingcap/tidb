@@ -115,6 +115,15 @@ const (
   		PRIMARY KEY (help_topic_id),
   		UNIQUE KEY name (name)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8 STATS_PERSISTENT=0 COMMENT='help topics';`
+
+	// CreateStatsMetaTable store's the meta of table statistics.
+	CreateStatsMetaTable = `CREATE TABLE if not exists mysql.stats_meta (
+		version bigint(64) unsigned NOT NULL,
+		table_id bigint(64) NOT NULL,
+		cardinality int(64) unsigned NOT NULL DEFAULT 0,
+		dist int(64) unsigned NOT NULL DEFAULT 0,
+		index idx_ver(version)
+	);`
 )
 
 // Bootstrap initiates system DB for a store.
@@ -298,6 +307,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateTiDBTable)
 	// Create help table.
 	mustExecute(s, CreateHelpTopic)
+	// Create stats_meta table.
+	mustExecute(s, CreateStatsMetaTable)
 }
 
 // Execute DML statements in bootstrap stage.

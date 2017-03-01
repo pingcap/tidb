@@ -16,6 +16,7 @@ package executor
 import (
 	"math/rand"
 
+	"fmt"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan/statistics"
 	"github.com/pingcap/tidb/plan/statscache"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -115,13 +117,24 @@ func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]
 	if err != nil {
 		return errors.Trace(err)
 	}
-	statscache.SetStatisticsTableCache(e.tblInfo.ID, t)
+	version := e.ctx.Txn().StartTS()
+	statscache.SetStatisticsTableCache(e.tblInfo.ID, t, version)
 	tpb, err := t.ToPB()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	m := meta.NewMeta(txn)
 	err = m.SetTableStats(e.tblInfo.ID, tpb)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	delSQL := fmt.Sprintf("delete from mysql.stats_meta where table_id = %d", e.tblInfo.ID)
+	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, delSQL)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	insertSQL := fmt.Sprintf("insert into mysql.stats_meta (version, table_id) values(%d, %d)", version, e.tblInfo.ID)
+	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, insertSQL)
 	if err != nil {
 		return errors.Trace(err)
 	}
