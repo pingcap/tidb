@@ -40,6 +40,7 @@ var (
 	_ StmtNode = &UseStmt{}
 	_ StmtNode = &AnalyzeTableStmt{}
 	_ StmtNode = &FlushStmt{}
+	_ StmtNode = &KillStmt{}
 
 	_ Node = &PrivElem{}
 	_ Node = &VariableAssignment{}
@@ -310,6 +311,34 @@ func (n *FlushStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*FlushStmt)
+	return v.Leave(n)
+}
+
+// KillStmt is a statement to kill a query or connection.
+type KillStmt struct {
+	stmtNode
+
+	// If Query is true, terminates the statement the connection is currently executing, but leaves the connection itself intact.
+	// If Query is false, terminates the connection associated with the given ConnectionID, after terminating any statement the connection is executing.
+	Query        bool
+	ConnectionID uint64
+	// When the SQL grammar is "KILL TIDB [CONNECTION | QUERY] connectionID", TiDBExtension will be set.
+	// It's a special grammar extension in TiDB. This extension exists because, when the connection is:
+	// client -> LVS proxy -> TiDB, and type Ctrl+C in client, the following action will be executed:
+	// new a connection; kill xxx;
+	// kill command may send to the wrong TiDB, because the exists of LVS proxy, and kill the wrong session.
+	// So, "KILL TIDB" grammar is introduced, and it REQUIRES DIRECT client -> TiDB TOPOLOGY.
+	// TODO: The standard KILL grammar will be supported once we have global connectionID.
+	TiDBExtension bool
+}
+
+// Accept implements Node Accept interface.
+func (n *KillStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*KillStmt)
 	return v.Leave(n)
 }
 

@@ -377,6 +377,7 @@ var tokenMap = map[string]int{
 	"QUARTER":                    quarter,
 	"QUICK":                      quick,
 	"RADIANS":                    radians,
+	"QUERY":                      query,
 	"QUOTE":                      quote,
 	"RANGE":                      rangeKwd,
 	"RAND":                       rand,
@@ -431,6 +432,7 @@ var tokenMap = map[string]int{
 	"SUBSTRING_INDEX":            substringIndex,
 	"SUM":                        sum,
 	"SYSDATE":                    sysDate,
+	"TIDB":                       tidb,
 	"TABLE":                      tableKwd,
 	"TABLE_NAME":                 tableName,
 	"TABLES":                     tables,
@@ -592,6 +594,7 @@ var tokenMap = map[string]int{
 	"RELEASE_ALL_LOCKS":          releaseAllLocks,
 	"UUID":                       uuid,
 	"UUID_SHORT":                 uuidShort,
+	"KILL":                       kill,
 }
 
 func isTokenIdentifier(s string, buf *bytes.Buffer) int {
