@@ -92,7 +92,6 @@ func (s *testSessionSuite) TestPrepare(c *C) {
 	c.Assert(err, IsNil)
 	err = se.DropPreparedStmt(id)
 	c.Assert(err, IsNil)
-	mustExecSQL(c, se, dropDBSQL)
 
 	mustExecSQL(c, se, "prepare stmt from 'select 1+?'")
 	mustExecSQL(c, se, "set @v1=100")
@@ -113,6 +112,20 @@ func (s *testSessionSuite) TestPrepare(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r.Data[0].GetFloat64(), Equals, float64(301))
 	mustExecSQL(c, se, "deallocate prepare stmt")
+
+	// Execute prepared statements for more than one time.
+	mustExecSQL(c, se, "create table multiexec (a int, b int)")
+	mustExecSQL(c, se, "insert multiexec values (1, 1), (2, 2)")
+	id, _, _, err = se.PrepareStmt("select a from multiexec where b = ? order by b")
+	c.Assert(err, IsNil)
+	rs, err = se.ExecutePreparedStmt(id, 1)
+	c.Assert(err, IsNil)
+	rs.Close()
+	rs, err = se.ExecutePreparedStmt(id, 2)
+	rs.Close()
+	c.Assert(err, IsNil)
+
+	mustExecSQL(c, se, dropDBSQL)
 }
 
 func (s *testSessionSuite) TestAffectedRows(c *C) {
