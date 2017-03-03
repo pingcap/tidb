@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"net"
 	"time"
 
 	"github.com/juju/errors"
@@ -161,7 +162,12 @@ func (s *RegionRequestSender) sendCopReqToRegion(ctx *RPCContext, req *coprocess
 
 func (s *RegionRequestSender) onSendFail(ctx *RPCContext, err error) error {
 	s.regionCache.OnRequestFail(ctx)
-	err = s.bo.Backoff(boTiKVRPC, errors.Errorf("send tikv request error: %v, ctx: %s, try next peer later", err, ctx.KVCtx))
+
+	if netErr, ok := errors.Cause(err).(net.Error); ok {
+		if netErr.Temporary() {
+			err = s.bo.Backoff(boTiKVRPC, errors.Errorf("send tikv request error: %v, ctx: %s, try next peer later", err, ctx.KVCtx))
+		}
+	}
 	return errors.Trace(err)
 }
 
