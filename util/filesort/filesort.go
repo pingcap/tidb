@@ -552,7 +552,7 @@ func (w *Worker) Less(i, j int) bool {
 func (w *Worker) input(row *comparableRow) error {
 	w.buf = append(w.buf, row)
 
-	if len(w.buf) >= w.bufSize {
+	if len(w.buf) > w.bufSize {
 		atomic.StoreInt32(&(w.busy), int32(1))
 		w.ctx.wg.Add(1)
 		w.ctx.external = true
