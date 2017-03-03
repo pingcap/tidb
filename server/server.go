@@ -231,10 +231,9 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 		return
 	}
 
+	conn.ctx.Cancel()
 	if query {
-		conn.ctx.Cancel()
 	} else {
-		conn.ctx.Cancel()
 		conn.killed = true
 	}
 }
