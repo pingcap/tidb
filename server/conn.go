@@ -317,6 +317,7 @@ func (cc *clientConn) readHandshakeResponse() error {
 			return errors.Trace(mysql.NewErr(mysql.ErrAccessDenied, cc.user, host, "Yes"))
 		}
 	}
+	cc.ctx.SetSessionManager(cc.server)
 	return nil
 }
 
@@ -717,6 +718,7 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	columnLen := dumpLengthEncodedInt(uint64(len(columns)))
 	data := cc.alloc.AllocWithLen(4, 1024)
 	data = append(data, columnLen...)
