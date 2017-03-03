@@ -178,9 +178,9 @@ func (s *Server) listTableRegions(dbName, tableName string) (data *TableRegions,
 
 	// create regionCache
 	storePath := fmt.Sprintf("%s://%s", s.cfg.Store, s.cfg.StorePath)
-	regionCache, terr := tikv.NewRegionCacheFromStorePath(storePath)
-	if terr != nil {
-		return data, terr
+	regionCache, err := tikv.NewRegionCacheFromStorePath(storePath)
+	if err != nil {
+		return nil, err
 	}
 	bo := tikv.NewBackoffer(5000, gContext.Background())
 
