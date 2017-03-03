@@ -125,10 +125,11 @@ func init() {
 	initTokenFunc("-", startWithDash)
 	initTokenFunc("#", startWithSharp)
 	initTokenFunc("Xx", startWithXx)
+	initTokenFunc("Nn", startWithNn)
 	initTokenFunc("x", startWithXx)
 	initTokenFunc("b", startWithb)
 	initTokenFunc(".", startWithDot)
-	initTokenFunc("_$ABCDEFGHIJKLMNOPQRSTUVWYZacdefghijklmnopqrstuvwyz", scanIdentifier)
+	initTokenFunc("_$ABCDEFGHIJKLMOPQRSTUVWYZacdefghijklmopqrstuvwyz", scanIdentifier)
 	initTokenFunc("`", scanQuotedIdent)
 	initTokenFunc("0123456789", startWithNumber)
 	initTokenFunc("'\"", startString)
@@ -621,6 +622,6 @@ func handleIdent(lval *yySymType) int {
 	if err != nil {
 		return identifier
 	}
-	lval.item = cs
+	lval.ident = cs
 	return underscoreCS
 }
