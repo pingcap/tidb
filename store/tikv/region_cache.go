@@ -52,7 +52,7 @@ func NewRegionCache(pdClient pd.Client) *RegionCache {
 	return c
 }
 
-// NewRegionCacheFromStorePath create a region cache from store's path
+// NewRegionCacheFromStorePath create a region cache with store's path.
 func NewRegionCacheFromStorePath(path string) (*RegionCache, error) {
 	etcdAddrs, _, err := parsePath(path)
 	if err != nil {
