@@ -14,8 +14,9 @@
 package executor_test
 
 import (
+	"bytes"
 	"fmt"
-	"runtime"
+	"runtime/pprof"
 	"strings"
 	"time"
 
@@ -58,7 +59,9 @@ func (s *testSuite) TestIndexDoubleReadClose(c *C) {
 }
 
 func taskGoroutineExists() bool {
-	buf := make([]byte, 1024*1024)
-	buf = buf[:runtime.Stack(buf, true)]
-	return strings.Contains(string(buf), "pickAndExecTask")
+	buf := new(bytes.Buffer)
+	profile := pprof.Lookup("goroutine")
+	profile.WriteTo(buf, 1)
+	str := buf.String()
+	return strings.Contains(str, "pickAndExecTask")
 }
