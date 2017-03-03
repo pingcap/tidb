@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/prometheus/client_golang/prometheus"
+	"strings"
 )
 
 var (
@@ -234,7 +235,18 @@ func (s *Server) startStatusHTTP() {
 			})
 			// HTTP path for prometheus.
 			http.Handle("/metrics", prometheus.Handler())
-			http.HandleFunc("/", s.handle)
+			// default path for regions status info
+			http.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+				path := strings.Trim(req.URL.Path, "/")
+				request := RegionsHttpRequest{
+					server:  s,
+					req:     req,
+					resp:    w,
+					path:    path,
+					retData: NewRegionsResponse(path),
+				}
+				request.Handle()
+			})
 			addr := s.cfg.StatusAddr
 			if len(addr) == 0 {
 				addr = defaultStatusAddr

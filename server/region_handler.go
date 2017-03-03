@@ -16,7 +16,6 @@ package server
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
@@ -31,12 +30,96 @@ import (
 	"time"
 )
 
-// HTTPResponseItem is the response struct for http
-type HTTPResponseItem struct {
+// RegionsHttpRequest for regions http request
+type RegionsHttpRequest struct {
+	resp    http.ResponseWriter
+	req     *http.Request
+	server  *Server
+	path    string
+	retData *RegionsResponse
+}
+
+func (req *RegionsHttpRequest) showResponse() {
+	js, err := json.Marshal(req.retData)
+	if err != nil {
+		req.resp.WriteHeader(http.StatusInternalServerError)
+		req.resp.Write([]byte(err.Error()))
+		return
+	}
+
+	req.resp.Header().Set("Content-Type", "application/json")
+	if !req.retData.Success {
+		req.resp.WriteHeader(http.StatusBadRequest)
+	} else {
+		req.resp.WriteHeader(http.StatusOK)
+	}
+	req.resp.Write(js)
+}
+
+// handleListTableRegions lists regions info for table
+func (req *RegionsHttpRequest) handleListTableRegions() {
+	// tables/${dbname}/{table}
+	params := strings.Split(req.path, "/")
+	if len(params) < 3 {
+		req.showInvalidPath()
+		return
+	}
+	data, err := req.server.listTableRegions(params[1], params[2])
+	if err != nil {
+		req.retData.SetError(err.Error())
+	} else {
+		req.retData.SetData(data)
+	}
+	req.showResponse()
+}
+
+func (req *RegionsHttpRequest) showInvalidPath() {
+	req.retData.SetError("InvalidPath")
+	req.showResponse()
+}
+
+func (req *RegionsHttpRequest) Handle() {
+
+	if strings.HasPrefix(req.path, "tables") {
+		// /tables/${database_name}/${table_name}
+		req.handleListTableRegions()
+		return
+	} else if strings.HasPrefix(req.path, "regions") {
+		// /regions/${region_id}
+		// TODO
+	}
+	req.showInvalidPath()
+}
+
+// RegionsResponse is the response struct for regions
+type RegionsResponse struct {
 	Success   bool        `json:"status"`
-	Msg       string      `json:"message"`
+	Msg       string      `json:"message,omitempty"`
 	RequestID string      `json:"request_id"`
 	Data      interface{} `json:"data,omitempty"`
+	Path      string      `json:"path"`
+}
+
+func NewRegionsResponse(path string) *RegionsResponse {
+	return &RegionsResponse{
+		Success: false,
+		Msg:     "",
+		//TODO genuuid
+		RequestID: fmt.Sprintf("http_%d", time.Now().UnixNano()),
+		Data:      nil,
+		Path:      path,
+	}
+}
+
+func (this *RegionsResponse) SetError(errMsg string) {
+	this.Msg = errMsg
+	this.Success = false
+}
+
+func (this *RegionsResponse) SetData(data interface{}) {
+	this.Success = true
+	this.Msg = ""
+	this.Data = data
 }
 
 func getTableHandleKeyRange(tableID int64) (startKey, endKey []byte) {
@@ -81,7 +164,6 @@ func (s *Server) listTableRegions(dbName, tableName string) (data *TableRegions,
 	if err = s.onlyStoreTIKVSupported(); err != nil {
 		return
 	}
-
 	// prepare table structure
 	session, err := tidb.CreateSession(s.driver.(*TiDBDriver).store)
 	if err != nil {
@@ -128,45 +210,4 @@ func (s *Server) listTableRegions(dbName, tableName string) (data *TableRegions,
 		}
 	}
 	return data, nil
-}
-
-func (s *Server) handle(w http.ResponseWriter, req *http.Request) {
-	path := strings.Trim(req.URL.Path, "/")
-
-	data := HTTPResponseItem{
-		Success:   false,
-		Msg:       "",
-		RequestID: fmt.Sprintf("http_%d", time.Now().UnixNano()), //TODO genuuid
-		Data:      nil,
-	}
-
-	params := strings.Split(path, "/")
-	if len(params) >= 3 && strings.HasPrefix(path, "tables") {
-		// /tables/${db}/${table}
-		curData, err := s.listTableRegions(params[1], params[2])
-		if err != nil {
-			data.Msg = err.Error()
-		} else {
-			data.Data = curData
-			data.Success = true
-		}
-
-	} else if len(params) >= 2 && strings.HasPrefix(path, "regions") {
-		// /regions/${region_id}
-		// TODO
-		data.Success = true
-
-	} else {
-		data.Msg = "Illegal Request:" + path
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-
-	js, err := json.Marshal(data)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		log.Error("Encode json error", err)
-	} else {
-		w.Write(js)
-	}
 }
