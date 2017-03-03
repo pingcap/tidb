@@ -238,7 +238,7 @@ func (s *Server) startStatusHTTP() {
 			// default path for regions status info
 			http.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
 				path := strings.Trim(req.URL.Path, "/")
-				request := RegionsHttpRequest{
+				request := RegionsHTTPRequest{
 					server:  s,
 					req:     req,
 					resp:    w,

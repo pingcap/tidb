@@ -30,8 +30,8 @@ import (
 	"time"
 )
 
-// RegionsHttpRequest for regions http request
-type RegionsHttpRequest struct {
+// RegionsHTTPRequest is for regions http request.
+type RegionsHTTPRequest struct {
 	resp    http.ResponseWriter
 	req     *http.Request
 	server  *Server
@@ -39,7 +39,7 @@ type RegionsHttpRequest struct {
 	retData *RegionsResponse
 }
 
-func (req *RegionsHttpRequest) showResponse() {
+func (req *RegionsHTTPRequest) showResponse() {
 	js, err := json.Marshal(req.retData)
 	if err != nil {
 		req.resp.WriteHeader(http.StatusInternalServerError)
@@ -56,8 +56,8 @@ func (req *RegionsHttpRequest) showResponse() {
 	req.resp.Write(js)
 }
 
-// handleListTableRegions lists regions info for table
-func (req *RegionsHttpRequest) handleListTableRegions() {
+// handleListTableRegions lists regions info for table.
+func (req *RegionsHTTPRequest) handleListTableRegions() {
 	// tables/${dbname}/{table}
 	params := strings.Split(req.path, "/")
 	if len(params) < 3 {
@@ -73,13 +73,13 @@ func (req *RegionsHttpRequest) handleListTableRegions() {
 	req.showResponse()
 }
 
-func (req *RegionsHttpRequest) showInvalidPath() {
+func (req *RegionsHTTPRequest) showInvalidPath() {
 	req.retData.SetError("InvalidPath")
 	req.showResponse()
 }
 
-func (req *RegionsHttpRequest) Handle() {
-
+// Handle handles http request for regions.
+func (req *RegionsHTTPRequest) Handle() {
 	if strings.HasPrefix(req.path, "tables") {
 		// /tables/${database_name}/${table_name}
 		req.handleListTableRegions()
@@ -91,7 +91,7 @@ func (req *RegionsHttpRequest) Handle() {
 	req.showInvalidPath()
 }
 
-// RegionsResponse is the response struct for regions
+// RegionsResponse is the response struct for regions.
 type RegionsResponse struct {
 	Success   bool        `json:"status"`
 	Msg       string      `json:"message,omitempty"`
@@ -100,6 +100,7 @@ type RegionsResponse struct {
 	Path      string      `json:"path"`
 }
 
+// NewRegionsResponse create a response for regions.
 func NewRegionsResponse(path string) *RegionsResponse {
 	return &RegionsResponse{
 		Success: false,
@@ -111,15 +112,17 @@ func NewRegionsResponse(path string) *RegionsResponse {
 	}
 }
 
-func (this *RegionsResponse) SetError(errMsg string) {
-	this.Msg = errMsg
-	this.Success = false
+// SetError sets error for response.
+func (res *RegionsResponse) SetError(errMsg string) {
+	res.Msg = errMsg
+	res.Success = false
 }
 
-func (this *RegionsResponse) SetData(data interface{}) {
-	this.Success = true
-	this.Msg = ""
-	this.Data = data
+// SetData sets data for response.
+func (res *RegionsResponse) SetData(data interface{}) {
+	res.Success = true
+	res.Msg = ""
+	res.Data = data
 }
 
 func getTableHandleKeyRange(tableID int64) (startKey, endKey []byte) {
@@ -138,14 +141,14 @@ func getTableIndexKeyRange(tableID, indexID int64) (startKey, endKey []byte) {
 	return
 }
 
-// IndexRegions is the region info for one index
+// IndexRegions is the region info for one index.
 type IndexRegions struct {
 	Name    string   `json:"name"`
 	ID      int64    `json:"id"`
 	Regions []uint64 `json:"regions"`
 }
 
-// TableRegions is the region info for one table
+// TableRegions is the region info for one table.
 type TableRegions struct {
 	TableName  string         `json:"name"`
 	TableID    int64          `json:"id"`
