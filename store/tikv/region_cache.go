@@ -186,21 +186,15 @@ func (c *RegionCache) GroupKeysByRegion(bo *Backoffer, keys [][]byte) (map[Regio
 func (c *RegionCache) ListRegionIDsInKeyRange(bo *Backoffer, startKey, endKey []byte) (regions []uint64, err error) {
 	regions = make([]uint64, 0, 0)
 	for err == nil {
-		curRegion, curErr := c.loadRegion(bo, startKey)
+		curRegion, curErr := c.LocateKey(bo, startKey)
 		if curErr != nil {
 			return nil, errors.Trace(curErr)
 		}
-
-		log.Debugf("1s:%+v",startKey)
-		log.Debugf("2e:%+v",endKey)
-		log.Debugf("3s:%+v",curRegion.StartKey())
-		log.Debugf("4e:%+v",curRegion.EndKey())
-
-		regions = append(regions, curRegion.GetID())
+		regions = append(regions, curRegion.Region.id)
 		if curRegion.Contains(endKey) {
 			break
 		}
-		startKey = curRegion.EndKey()
+		startKey = curRegion.EndKey
 	}
 	return regions, err
 }
