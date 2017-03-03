@@ -58,7 +58,7 @@ func (s *testSuite) TestIndexDoubleReadClose(c *C) {
 }
 
 func taskGoroutineExists() bool {
-	buf := make([]byte, 4*1024)
+	buf := make([]byte, 1024*1024)
 	buf = buf[:runtime.Stack(buf, true)]
 	return strings.Contains(string(buf), "pickAndExecTask")
 }
