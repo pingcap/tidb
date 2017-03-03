@@ -57,12 +57,6 @@ func NewRegionRequestSender(bo *Backoffer, regionCache *RegionCache, client Clie
 // SendKVReq sends a KV request to tikv server.
 func (s *RegionRequestSender) SendKVReq(req *kvrpcpb.Request, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.Response, error) {
 	for {
-		select {
-		case <-s.bo.ctx.Done():
-			return nil, errors.Trace(s.bo.ctx.Err())
-		default:
-		}
-
 		ctx, err := s.regionCache.GetRPCContext(s.bo, regionID)
 		if err != nil {
 			return nil, errors.Trace(err)
