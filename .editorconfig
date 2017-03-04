@@ -3,7 +3,7 @@ end_of_line = lf
 insert_final_newline = true
 charset = utf-8
 
-# default 8 spaces indent is bad for golang's tab
+# tab_size = 4 spaces
 [*.go]
 indent_style = tab
 indent_size = 4
