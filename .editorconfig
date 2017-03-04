@@ -4,11 +4,7 @@ insert_final_newline = true
 charset = utf-8
 
 # default 8 spaces indent is bad for golang's tab
-[*.{go}]
+[*.go]
 indent_style = tab
 indent_size = 4
 trim_trailing_whitespace = true
-
-[*.{yml,yaml}]
-indent_style = space
-indent_size = 2
