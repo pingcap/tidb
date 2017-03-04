@@ -16,6 +16,7 @@ package server
 import (
 	"fmt"
 
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -69,11 +70,16 @@ type QueryCtx interface {
 	// FieldList returns columns of a table.
 	FieldList(tableName string) (columns []*ColumnInfo, err error)
 
-	// Close closes the IContext.
+	// Close closes the QueryCtx.
 	Close() error
 
 	// Auth verifies user's authentication.
 	Auth(user string, auth []byte, salt []byte) bool
+
+	// ShowProcess shows the information about the session.
+	ShowProcess() util.ProcessInfo
+
+	SetSessionManager(util.SessionManager)
 }
 
 // PreparedStatement is the interface to use a prepared statement.

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -112,7 +113,9 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowVariables()
 	case ast.ShowWarnings:
 		return e.fetchShowWarnings()
-	case ast.ShowProcessList, ast.ShowEvents:
+	case ast.ShowProcessList:
+		return e.fetchShowProcessList()
+	case ast.ShowEvents:
 		// empty result
 	}
 	return nil
@@ -139,6 +142,35 @@ func (e *ShowExec) fetchShowDatabases() error {
 	sort.Strings(dbs)
 	for _, d := range dbs {
 		e.rows = append(e.rows, &Row{Data: types.MakeDatums(d)})
+	}
+	return nil
+}
+
+func (e *ShowExec) fetchShowProcessList() error {
+	sm := e.ctx.GetSessionManager()
+	if sm == nil {
+		return nil
+	}
+
+	pl := sm.ShowProcessList()
+	for _, pi := range pl {
+		var t uint64
+		if len(pi.Info) != 0 {
+			t = uint64(time.Since(pi.Time) / time.Second)
+		}
+		row := &Row{
+			Data: []types.Datum{
+				types.NewUintDatum(pi.ID),
+				types.NewStringDatum(pi.User),
+				types.NewStringDatum(pi.Host),
+				types.NewStringDatum(pi.DB),
+				types.NewStringDatum(pi.Command),
+				types.NewUintDatum(t),
+				types.NewStringDatum(fmt.Sprintf("%d", pi.State)),
+				types.NewStringDatum(pi.Info),
+			},
+		}
+		e.rows = append(e.rows, row)
 	}
 	return nil
 }
