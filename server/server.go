@@ -39,6 +39,7 @@ import (
 	// For pprof
 	_ "net/http/pprof"
 
+	"github.com/gorilla/mux"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/mysql"
@@ -46,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/prometheus/client_golang/prometheus"
-	"strings"
 )
 
 var (
@@ -217,7 +217,8 @@ const defaultStatusAddr = ":10080"
 func (s *Server) startStatusHTTP() {
 	once.Do(func() {
 		go func() {
-			http.HandleFunc("/status", func(w http.ResponseWriter, req *http.Request) {
+			router := mux.NewRouter()
+			router.HandleFunc("/status", func(w http.ResponseWriter, req *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				s := status{
 					Connections: s.ConnectionCount(),
@@ -234,25 +235,18 @@ func (s *Server) startStatusHTTP() {
 
 			})
 			// HTTP path for prometheus.
-			http.Handle("/metrics", prometheus.Handler())
-			// default path for regions status info
-			http.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
-				path := strings.Trim(req.URL.Path, "/")
-				request := RegionsHTTPRequest{
-					server:  s,
-					req:     req,
-					resp:    w,
-					path:    path,
-					retData: NewRegionsResponse(path),
-				}
-				request.Handle()
+			router.Handle("/metrics", prometheus.Handler())
+
+			router.HandleFunc("/tables/{db}/{table}/regions", func(w http.ResponseWriter, req *http.Request) {
+				request := NewRegionsHTTPRequest(s, w, req)
+				request.HandleListRegions()
 			})
 			addr := s.cfg.StatusAddr
 			if len(addr) == 0 {
 				addr = defaultStatusAddr
 			}
 			log.Infof("Listening on %v for status and metrics report.", addr)
-			err := http.ListenAndServe(addr, nil)
+			err := http.ListenAndServe(addr, router)
 			if err != nil {
 				log.Fatal(err)
 			}

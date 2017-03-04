@@ -16,6 +16,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/gorilla/mux"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
@@ -26,21 +27,38 @@ import (
 	gContext "golang.org/x/net/context"
 	"math"
 	"net/http"
-	"strings"
 	"time"
 )
 
 // RegionsHTTPRequest is for regions http request.
 type RegionsHTTPRequest struct {
-	resp    http.ResponseWriter
-	req     *http.Request
-	server  *Server
-	path    string
-	retData *RegionsResponse
+	resp      http.ResponseWriter
+	req       *http.Request
+	server    *Server
+	params    map[string]string
+	RequestID string
 }
 
-func (req *RegionsHTTPRequest) showResponse() {
-	js, err := json.Marshal(req.retData)
+// NewRegionsHTTPRequest create a RegionsHTTPRequest
+func NewRegionsHTTPRequest(s *Server, w http.ResponseWriter, req *http.Request) *RegionsHTTPRequest {
+	return &RegionsHTTPRequest{
+		server: s,
+		req:    req,
+		resp:   w,
+		params: mux.Vars(req),
+		//TODO genuuid
+		RequestID: fmt.Sprintf("http_%d", time.Now().UnixNano()),
+	}
+}
+
+func (req *RegionsHTTPRequest) showResponse(data interface{}, err error) {
+	var retItem *RegionsResponse
+	if err != nil {
+		retItem = NewRegionsResponseWithError(req.RequestID, err)
+	} else {
+		retItem = NewRegionsResponseWithData(req.RequestID, data)
+	}
+	js, err := json.Marshal(retItem)
 	if err != nil {
 		req.resp.WriteHeader(http.StatusInternalServerError)
 		req.resp.Write([]byte(err.Error()))
@@ -48,7 +66,7 @@ func (req *RegionsHTTPRequest) showResponse() {
 	}
 
 	req.resp.Header().Set("Content-Type", "application/json")
-	if !req.retData.Success {
+	if !retItem.Success {
 		req.resp.WriteHeader(http.StatusBadRequest)
 	} else {
 		req.resp.WriteHeader(http.StatusOK)
@@ -56,39 +74,12 @@ func (req *RegionsHTTPRequest) showResponse() {
 	req.resp.Write(js)
 }
 
-// handleListTableRegions lists regions info for table.
-func (req *RegionsHTTPRequest) handleListTableRegions() {
-	// tables/${dbname}/{table}
-	params := strings.Split(req.path, "/")
-	if len(params) < 3 {
-		req.showInvalidPath()
-		return
-	}
-	data, err := req.server.listTableRegions(params[1], params[2])
-	if err != nil {
-		req.retData.SetError(err.Error())
-	} else {
-		req.retData.SetData(data)
-	}
-	req.showResponse()
-}
-
-func (req *RegionsHTTPRequest) showInvalidPath() {
-	req.retData.SetError("InvalidPath")
-	req.showResponse()
-}
-
-// Handle handles http request for regions.
-func (req *RegionsHTTPRequest) Handle() {
-	if strings.HasPrefix(req.path, "tables") {
-		// /tables/${database_name}/${table_name}
-		req.handleListTableRegions()
-		return
-	} else if strings.HasPrefix(req.path, "regions") {
-		// /regions/${region_id}
-		// TODO
-	}
-	req.showInvalidPath()
+// HandleListRegions handles http request for list regions.
+func (req *RegionsHTTPRequest) HandleListRegions() {
+	dbName, _ := req.params["db"]
+	tableName, _ := req.params["table"]
+	data, err := req.server.listTableRegions(dbName, tableName)
+	req.showResponse(data, err)
 }
 
 // RegionsResponse is the response struct for regions.
@@ -97,32 +88,25 @@ type RegionsResponse struct {
 	Msg       string      `json:"message,omitempty"`
 	RequestID string      `json:"request_id"`
 	Data      interface{} `json:"data,omitempty"`
-	Path      string      `json:"path"`
 }
 
-// NewRegionsResponse create a response for regions.
-func NewRegionsResponse(path string) *RegionsResponse {
+// NewRegionsResponseWithError create a response item with error
+func NewRegionsResponseWithError(reqID string, err error) *RegionsResponse {
 	return &RegionsResponse{
-		Success: false,
-		Msg:     "",
-		//TODO genuuid
-		RequestID: fmt.Sprintf("http_%d", time.Now().UnixNano()),
+		Success:   false,
+		Msg:       err.Error(),
+		RequestID: reqID,
 		Data:      nil,
-		Path:      path,
 	}
 }
 
-// SetError sets error for response.
-func (res *RegionsResponse) SetError(errMsg string) {
-	res.Msg = errMsg
-	res.Success = false
-}
-
-// SetData sets data for response.
-func (res *RegionsResponse) SetData(data interface{}) {
-	res.Success = true
-	res.Msg = ""
-	res.Data = data
+// NewRegionsResponseWithData create a response item with data
+func NewRegionsResponseWithData(reqID string, data interface{}) *RegionsResponse {
+	return &RegionsResponse{
+		Success:   true,
+		RequestID: reqID,
+		Data:      data,
+	}
 }
 
 func getTableHandleKeyRange(tableID int64) (startKey, endKey []byte) {
