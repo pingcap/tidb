@@ -1333,6 +1333,20 @@ func (d *Datum) ToString() (string, error) {
 	}
 }
 
+// ToBytes gets the bytes representation of the datum.
+func (d *Datum) ToBytes() ([]byte, error) {
+	switch d.k {
+	case KindString, KindBytes:
+		return d.GetBytes(), nil
+	default:
+		str, err := d.ToString()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return []byte(str), nil
+	}
+}
+
 func invalidConv(d *Datum, tp byte) (Datum, error) {
 	return Datum{}, errors.Errorf("cannot convert %v to type %s", d, TypeStr(tp))
 }
