@@ -545,11 +545,13 @@ func (b *builtinSHA1Sig) eval(row []types.Datum) (d types.Datum, err error) {
 	if arg.IsNull() {
 		return
 	}
-
+	bin, err := arg.ToBytes()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
 	hasher := sha1.New()
-	hasher.Write(arg.GetBytes())
+	hasher.Write(bin)
 	data := fmt.Sprintf("%x", hasher.Sum(nil))
-
 	d.SetString(data)
 	return
 }
