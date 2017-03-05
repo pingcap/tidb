@@ -15,6 +15,7 @@ package expression
 
 import (
 	"crypto/md5"
+	"crypto/sha1"
 	"fmt"
 
 	"github.com/juju/errors"
@@ -533,8 +534,24 @@ type builtinSHA1Sig struct {
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_sha1
+// The value is returned as a string of 40 hexadecimal digits, or NULL if the argument was NULL.
 func (b *builtinSHA1Sig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("SHA1")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	// SHA/SHA1 function only accept 1 parameter
+	arg := args[0]
+	if arg.IsNull() {
+		return
+	}
+
+	hasher := sha1.New()
+	hasher.Write(arg.GetBytes())
+	data := fmt.Sprintf("%x", hasher.Sum(nil))
+
+	d.SetString(data)
+	return
 }
 
 type sha2FunctionClass struct {
