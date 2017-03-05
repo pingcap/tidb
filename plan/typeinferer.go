@@ -393,9 +393,13 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = x.Args[1].GetType()
 	case "get_lock", "release_lock":
 		tp = types.NewFieldType(mysql.TypeLonglong)
-	case ast.AesEncrypt, ast.AesDecrypt, ast.MD5:
+	case ast.AesEncrypt, ast.AesDecrypt:
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
+	case ast.MD5:
+		tp = types.NewFieldType(mysql.TypeVarString)
+		chs = v.defaultCharset
+		tp.Flen = 32
 	default:
 		tp = types.NewFieldType(mysql.TypeUnspecified)
 	}

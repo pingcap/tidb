@@ -40,7 +40,7 @@ type md5Test struct {
 	in  interface{}
 }
 
-var golden = []md5Test{
+var md5Cases = []md5Test{
 	{"d41d8cd98f00b204e9800998ecf8427e", ""},
 	{"0cc175b9c0f1b6a831c399e269772661", "a"},
 	{"187ef4436122d1cc2f40dc2b92f0eba0", "ab"},
@@ -108,7 +108,7 @@ func fromHex(str string) (d types.Datum) {
 func (s *testEvaluatorSuite) TestMD5(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.MD5]
-	for _, test := range golden {
+	for _, test := range md5Cases {
 		arg := types.NewDatum(test.in)
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{arg}), s.ctx)
 		c.Assert(err, IsNil)

@@ -459,16 +459,9 @@ func (b *builtinMD5Sig) eval(row []types.Datum) (d types.Datum, err error) {
 	if arg.IsNull() {
 		return
 	}
-	var bin []byte
-	switch arg.Kind() {
-	case types.KindBytes, types.KindString:
-		bin = arg.GetBytes()
-	default:
-		str, err := arg.ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		bin = []byte(str)
+	bin, err := arg.ToBytes()
+	if err != nil {
+		return d, errors.Trace(err)
 	}
 	sum := md5.Sum(bin)
 	hexStr := fmt.Sprintf("%x", sum)
