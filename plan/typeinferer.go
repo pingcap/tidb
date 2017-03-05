@@ -396,6 +396,10 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	case ast.AesEncrypt, ast.AesDecrypt:
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
+	case ast.ast.SHA:
+		tp = types.NewFieldType(mysql.TypeVarString)
+		tp.Flen = 40
+		chs = v.defaultCharset
 	default:
 		tp = types.NewFieldType(mysql.TypeUnspecified)
 	}
