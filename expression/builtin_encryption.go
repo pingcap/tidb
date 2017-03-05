@@ -106,12 +106,12 @@ type builtinAesDecryptSig struct {
 func (b *builtinAesDecryptSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	for _, arg := range args {
 		// If either function argument is NULL, the function returns NULL.
 		if arg.IsNull() {
-			return
+			return d, nil
 		}
 	}
 	cryptStr := args[0].GetBytes()
@@ -124,7 +124,7 @@ func (b *builtinAesDecryptSig) eval(row []types.Datum) (d types.Datum, err error
 		return d, errors.Trace(err)
 	}
 	d.SetString(string(data))
-	return
+	return d, nil
 }
 
 type aesEncryptFunctionClass struct {
@@ -543,7 +543,7 @@ func (b *builtinSHA1Sig) eval(row []types.Datum) (d types.Datum, err error) {
 	// SHA/SHA1 function only accept 1 parameter
 	arg := args[0]
 	if arg.IsNull() {
-		return
+		return d, nil
 	}
 	bin, err := arg.ToBytes()
 	if err != nil {
@@ -553,7 +553,7 @@ func (b *builtinSHA1Sig) eval(row []types.Datum) (d types.Datum, err error) {
 	hasher.Write(bin)
 	data := fmt.Sprintf("%x", hasher.Sum(nil))
 	d.SetString(data)
-	return
+	return d, nil
 }
 
 type sha2FunctionClass struct {
