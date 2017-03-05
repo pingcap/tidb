@@ -234,6 +234,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"timestamp('2003-12-31 12:00:00','12:00:00')", mysql.TypeDatetime, charset.CharsetBin},
 		{`aes_encrypt("pingcap", "fit2cloud@2014")`, mysql.TypeVarString, "utf8"},
 		{`aes_decrypt("pingcap", "fit2cloud@2014")`, mysql.TypeVarString, "utf8"},
+		{`md5(123)`, mysql.TypeVarString, "utf8"},
 	}
 	for _, ca := range cases {
 		ctx := testKit.Se.(context.Context)

@@ -14,6 +14,9 @@
 package expression
 
 import (
+	"crypto/md5"
+	"fmt"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/util/encrypt"
@@ -447,7 +450,30 @@ type builtinMD5Sig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_md5
 func (b *builtinMD5Sig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("MD5")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	// This function takes one argument.
+	arg := args[0]
+	if arg.IsNull() {
+		return
+	}
+	var bin []byte
+	switch arg.Kind() {
+	case types.KindBytes, types.KindString:
+		bin = arg.GetBytes()
+	default:
+		str, err := arg.ToString()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		bin = []byte(str)
+	}
+	sum := md5.Sum(bin)
+	hexStr := fmt.Sprintf("%x", sum)
+	d.SetString(hexStr)
+	return d, nil
 }
 
 type oldPasswordFunctionClass struct {
