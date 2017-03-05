@@ -400,6 +400,10 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
 		tp.Flen = 32
+	case ast.SHA, ast.SHA1:
+		tp = types.NewFieldType(mysql.TypeVarString)
+		chs = v.defaultCharset
+		tp.Flen = 40
 	default:
 		tp = types.NewFieldType(mysql.TypeUnspecified)
 	}

@@ -51,6 +51,38 @@ var md5Cases = []md5Test{
 	{nil, nil},
 }
 
+var shaCases = []struct {
+	origin interface{}
+	crypt  string
+}{
+	{"test", "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3"},
+	{"c4pt0r", "034923dcabf099fc4c8917c0ab91ffcd4c2578a6"},
+	{"pingcap", "73bf9ef43a44f42e2ea2894d62f0917af149a006"},
+	{"foobar", "8843d7f92416211de9ebb963ff4ce28125932878"},
+	{1024, "128351137a9c47206c4507dcf2e6fbeeca3a9079"},
+	{123.45, "22f8b438ad7e89300b51d88684f3f0b9fa1d7a32"},
+}
+
+func (s *testEvaluatorSuite) TestShaEncrypt(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.SHA]
+	for _, test := range shaCases {
+		in := types.NewDatum(test.origin)
+		f, _ := fc.getFunction(datumsToConstants([]types.Datum{in}), s.ctx)
+		crypt, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		res, err := crypt.ToString()
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, test.crypt)
+	}
+	// test NULL input for sha
+	var argNull types.Datum
+	f, _ := fc.getFunction(datumsToConstants([]types.Datum{argNull}), s.ctx)
+	crypt, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(crypt.IsNull(), IsTrue)
+}
+
 func (s *testEvaluatorSuite) TestAESEncrypt(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.AesEncrypt]
