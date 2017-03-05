@@ -114,8 +114,14 @@ func (b *builtinAesDecryptSig) eval(row []types.Datum) (d types.Datum, err error
 			return d, nil
 		}
 	}
-	cryptStr := args[0].GetBytes()
-	key := args[1].GetBytes()
+	cryptStr, err := args[0].ToBytes()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	key, err := args[1].ToBytes()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
 	key = handleAESKey(key, aes128ecb)
 	// By default these functions implement AES with a 128-bit key length.
 	// TODO: We only support aes-128-ecb now. We should support other mode latter.
@@ -155,8 +161,14 @@ func (b *builtinAesEncryptSig) eval(row []types.Datum) (d types.Datum, err error
 			return
 		}
 	}
-	str := args[0].GetBytes()
-	key := args[1].GetBytes()
+	str, err := args[0].ToBytes()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	key, err := args[1].ToBytes()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
 	key = handleAESKey(key, aes128ecb)
 	crypted, err := encrypt.AESEncryptWithECB(str, key)
 	if err != nil {
