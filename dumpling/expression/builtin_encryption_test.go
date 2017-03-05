@@ -35,6 +35,22 @@ var aesCases = []struct {
 	{"pingcap", "123", "996E0CA8688D7AD20819B90B273E01C6"},
 }
 
+type md5Test struct {
+	out interface{}
+	in  interface{}
+}
+
+var md5Cases = []md5Test{
+	{"d41d8cd98f00b204e9800998ecf8427e", ""},
+	{"0cc175b9c0f1b6a831c399e269772661", "a"},
+	{"187ef4436122d1cc2f40dc2b92f0eba0", "ab"},
+	{"900150983cd24fb0d6963f7d28e17f72", "abc"},
+	{"202cb962ac59075b964b07152d234b70", 123},
+	{"202cb962ac59075b964b07152d234b70", "123"},
+	{"46ddc40585caa8abc07c460b3485781e", 123.123},
+	{nil, nil},
+}
+
 func (s *testEvaluatorSuite) TestAESEncrypt(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.AesEncrypt]
@@ -87,4 +103,18 @@ func fromHex(str string) (d types.Datum) {
 	h, _ := hex.DecodeString(str)
 	d.SetBytes(h)
 	return d
+}
+
+func (s *testEvaluatorSuite) TestMD5(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.MD5]
+	for _, test := range md5Cases {
+		arg := types.NewDatum(test.in)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{arg}), s.ctx)
+		c.Assert(err, IsNil)
+		out, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(out, DeepEquals, types.NewDatum(test.out))
+	}
+	s.testNullInput(c, ast.AesDecrypt)
 }
