@@ -798,6 +798,9 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if col.DefaultValue == nil && mysql.HasNotNullFlag(col.Flag) {
+		col.DefaultValue = table.GetZeroValue(col.ToInfo())
+	}
 	col.OriginDefaultValue = col.DefaultValue
 
 	job := &model.Job{

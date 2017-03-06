@@ -61,7 +61,7 @@ type ColumnInfo struct {
 	ID                 int64       `json:"id"`
 	Name               CIStr       `json:"name"`
 	Offset             int         `json:"offset"`
-	OriginDefaultValue interface{} `json:"origin default"`
+	OriginDefaultValue interface{} `json:"origin_default"`
 	DefaultValue       interface{} `json:"default"`
 	types.FieldType    `json:"type"`
 	State              SchemaState `json:"state"`
