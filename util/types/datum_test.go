@@ -300,3 +300,22 @@ func (ts *testDatumSuite) TestBitOps(c *C) {
 		c.Assert(result.GetUint64(), Equals, ca.result.GetUint64())
 	}
 }
+
+func (ts *testDatumSuite) TestToBytes(c *C) {
+	testCases := []struct {
+		a   Datum
+		out []byte
+	}{
+		{NewIntDatum(1), []byte("1")},
+		{NewDecimalDatum(NewDecFromInt(1)), []byte("1")},
+		{NewFloat64Datum(1.23), []byte("1.23")},
+		{NewStringDatum("abc"), []byte("abc")},
+	}
+	sc := new(variable.StatementContext)
+	sc.IgnoreTruncate = true
+	for _, ca := range testCases {
+		bin, err := ca.a.ToBytes()
+		c.Assert(err, IsNil)
+		c.Assert(bin, BytesEquals, ca.out)
+	}
+}
