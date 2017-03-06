@@ -236,7 +236,7 @@ func startWithNn(s *Scanner) (tok int, pos Pos, lit string) {
 	return
 }
 
-func startWithb(s *Scanner) (tok int, pos Pos, lit string) {
+func startWithBb(s *Scanner) (tok int, pos Pos, lit string) {
 	pos = s.r.pos()
 	s.r.inc()
 	if s.r.peek() == '\'' {
