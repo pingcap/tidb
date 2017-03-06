@@ -1,5 +1,5 @@
-hash: 56cc4ff50dad17df74f930121017c4d3549339b022c7561575f095425c733d19
-updated: 2017-02-21T19:45:51.825820804+08:00
+hash: 12f9eede0bd8ff5075b4ea69f294071e81f9ee7a619e23add973a70d8f5bcb51
+updated: 2017-03-06T11:00:23.325284612+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -121,7 +121,7 @@ imports:
   - pkg/rpcutil
   - pkg/timeutil
 - name: github.com/pingcap/tipb
-  version: 979fbca78d449e3c52de37b6fdd1dfbf0977b462
+  version: 05a4d27c130a965745196e4da8ca395a15d7928f
   subpackages:
   - go-binlog
   - go-tipb
@@ -171,11 +171,11 @@ imports:
   - encoding/unicode
   - transform
 - name: golang.org/x/time
-  version: f51c12702a4d776e4c1fa9b0fabab841babae631
+  version: a4bde12657593d5e90d0533a3e4fd95e635124cb
   subpackages:
   - rate
 - name: google.golang.org/grpc
-  version: 02fca896ff5f50c6bbbee0860345a49344b37a03
+  version: 777daa17ff9b5daef1cfdf915088a2ada3332bf0
   subpackages:
   - codes
   - credentials
