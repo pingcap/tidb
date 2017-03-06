@@ -1,5 +1,5 @@
-hash: 12f9eede0bd8ff5075b4ea69f294071e81f9ee7a619e23add973a70d8f5bcb51
-updated: 2017-03-06T11:00:23.325284612+08:00
+hash: 69c8b0a13ba9c488c1a34d8fbc66cc55863e0bf595e738e642ca343c58bec615
+updated: 2017-03-06T19:54:24.967046566+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -33,6 +33,8 @@ imports:
   version: 1eb03e3cc9d345307a45ec82bd3016cde4bd4464
 - name: github.com/cznic/y
   version: 9fdf92d4aac058959f814606bb729ed50f5e4240
+- name: github.com/dustin/go-humanize
+  version: 8929fe90cee4b2cb9deb468b51fb34eba64d1bf0
 - name: github.com/gengo/grpc-gateway
   version: f52d055dc48aec25854ed7d31862f78913cf17d1
   subpackages:
@@ -100,7 +102,7 @@ imports:
   - leveldb/table
   - leveldb/util
 - name: github.com/pingcap/kvproto
-  version: b66543960fb3508671152f6c9f4a09ee9d7a2322
+  version: 854b7eeb43e436a692463a18f03dabfe917ebe2b
   subpackages:
   - pkg/coprocessor
   - pkg/eraftpb
@@ -113,13 +115,13 @@ imports:
   - pkg/raft_serverpb
   - pkg/util
 - name: github.com/pingcap/pd
-  version: 3d5bb2b3a056925b656d29b88a5b216f6f309368
+  version: 174171b2b15c871c480959397d9b8047175559e7
   subpackages:
   - pd-client
   - pkg/apiutil
   - pkg/metricutil
   - pkg/rpcutil
-  - pkg/timeutil
+  - pkg/typeutil
 - name: github.com/pingcap/tipb
   version: 05a4d27c130a965745196e4da8ca395a15d7928f
   subpackages:
@@ -171,7 +173,7 @@ imports:
   - encoding/unicode
   - transform
 - name: golang.org/x/time
-  version: a4bde12657593d5e90d0533a3e4fd95e635124cb
+  version: f51c12702a4d776e4c1fa9b0fabab841babae631
   subpackages:
   - rate
 - name: google.golang.org/grpc

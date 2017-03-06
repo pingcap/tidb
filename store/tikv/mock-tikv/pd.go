@@ -63,6 +63,11 @@ func (c *pdClient) GetRegion(key []byte) (*metapb.Region, *metapb.Peer, error) {
 	return region, peer, nil
 }
 
+func (c *pdClient) GetRegionByID(regionID uint64) (*metapb.Region, *metapb.Peer, error) {
+	region, peer := c.cluster.GetRegionByID(regionID)
+	return region, peer, nil
+}
+
 func (c *pdClient) GetStore(storeID uint64) (*metapb.Store, error) {
 	store := c.cluster.GetStore(storeID)
 	return store, nil
