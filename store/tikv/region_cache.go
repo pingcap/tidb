@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/pd-client"
-	"strings"
 )
 
 // RegionCache caches Regions loaded from PD.
@@ -61,9 +60,6 @@ func NewRegionCacheFromStorePath(path string) (*RegionCache, error) {
 
 	pdCli, err := pd.NewClient(etcdAddrs)
 	if err != nil {
-		if strings.Contains(err.Error(), "i/o timeout") {
-			return nil, errors.Annotate(err, txnRetryableMark)
-		}
 		return nil, errors.Trace(err)
 	}
 
@@ -183,20 +179,19 @@ func (c *RegionCache) GroupKeysByRegion(bo *Backoffer, keys [][]byte) (map[Regio
 }
 
 // ListRegionIDsInKeyRange lists ids of regions in [start_key,end_key].
-func (c *RegionCache) ListRegionIDsInKeyRange(bo *Backoffer, startKey, endKey []byte) (regions []uint64, err error) {
-	regions = make([]uint64, 0, 0)
+func (c *RegionCache) ListRegionIDsInKeyRange(bo *Backoffer, startKey, endKey []byte) (regionIDs []uint64, err error) {
 	for err == nil {
 		curRegion, curErr := c.LocateKey(bo, startKey)
 		if curErr != nil {
 			return nil, errors.Trace(curErr)
 		}
-		regions = append(regions, curRegion.Region.id)
+		regionIDs = append(regionIDs, curRegion.Region.id)
 		if curRegion.Contains(endKey) {
 			break
 		}
 		startKey = curRegion.EndKey
 	}
-	return regions, err
+	return regionIDs, err
 }
 
 // DropRegion removes a cached Region.

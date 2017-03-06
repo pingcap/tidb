@@ -16,6 +16,10 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"math"
+	"net/http"
+	"time"
+
 	"github.com/gorilla/mux"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
@@ -24,10 +28,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
-	gContext "golang.org/x/net/context"
-	"math"
-	"net/http"
-	"time"
+	goctx "golang.org/x/net/context"
 )
 
 // RegionsHTTPRequest is for regions http request.
@@ -51,7 +52,7 @@ func NewRegionsHTTPRequest(s *Server, w http.ResponseWriter, req *http.Request) 
 	}
 }
 
-func (req *RegionsHTTPRequest) showResponse(data interface{}, err error) {
+func (req *RegionsHTTPRequest) writeResponse(data interface{}, err error) {
 	var retItem *RegionsResponse
 	if err != nil {
 		retItem = NewRegionsResponseWithError(req.RequestID, err)
@@ -79,7 +80,7 @@ func (req *RegionsHTTPRequest) HandleListRegions() {
 	dbName, _ := req.params["db"]
 	tableName, _ := req.params["table"]
 	data, err := req.server.listTableRegions(dbName, tableName)
-	req.showResponse(data, err)
+	req.writeResponse(data, err)
 }
 
 // RegionsResponse is the response struct for regions.
@@ -169,13 +170,13 @@ func (s *Server) listTableRegions(dbName, tableName string) (data *TableRegions,
 	if err != nil {
 		return nil, err
 	}
-	bo := tikv.NewBackoffer(5000, gContext.Background())
+	bo := tikv.NewBackoffer(5000, goctx.Background())
 
 	data = &TableRegions{
 		TableName:  tableName,
 		TableID:    tableID,
 		RowRegions: nil,
-		Indices:    make([]IndexRegions, len(table.Indices()), len(table.Indices())),
+		Indices:    make([]IndexRegions, len(table.Indices())),
 	}
 
 	// for primary
