@@ -196,6 +196,7 @@ func (s *testSuite) TestCreateUserWhenGrant(c *C) {
 	// Make sure user is created automaticly when grant to a non-exists one.
 	rows := tk.MustQuery("SELECT user FROM mysql.user WHERE user='test' and host='%'").Rows()
 	c.Assert(rows, HasLen, 1)
+	c.Check(fmt.Sprintf("%v", rows[0]), Equals, fmt.Sprintf("[%v]", []byte("test")))
 }
 
 func (s *testSuite) TestIssue2654(c *C) {
