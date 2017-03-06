@@ -26,6 +26,7 @@ import (
 )
 
 var (
+	errInvalidKey         = terror.ClassXEval.New(codeInvalidKey, "invalid key")
 	errInvalidRecordKey   = terror.ClassXEval.New(codeInvalidRecordKey, "invalid record key")
 	errInvalidColumnCount = terror.ClassXEval.New(codeInvalidColumnCount, "invalid column count")
 )
@@ -88,6 +89,41 @@ func DecodeRecordKey(key kv.Key) (tableID int64, handle int64, err error) {
 	key, handle, err = codec.DecodeInt(key)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
+	}
+	return
+}
+
+// DecodeKeyHead decodes the key's head and gets the tableID, indexID. isRecordKey is true when is a record key.
+func DecodeKeyHead(key kv.Key) (tableID int64, indexID int64, isRecordKey bool, err error) {
+	isRecordKey = false
+	k := key
+	if !key.HasPrefix(tablePrefix) {
+		err = errInvalidKey.Gen("invalid key - %q", k)
+		return
+	}
+
+	key = key[len(tablePrefix):]
+	key, tableID, err = codec.DecodeInt(key)
+	if err != nil {
+		err = errors.Trace(err)
+		return
+	}
+
+	if key.HasPrefix(recordPrefixSep) {
+		isRecordKey = true
+		return
+	}
+	if !key.HasPrefix(indexPrefixSep) {
+		err = errInvalidKey.Gen("invalid key - %q", k)
+		return
+	}
+
+	key = key[len(indexPrefixSep):]
+
+	key, indexID, err = codec.DecodeInt(key)
+	if err != nil {
+		err = errors.Trace(err)
+		return
 	}
 	return
 }
@@ -453,4 +489,5 @@ func (r *keyRangeSorter) Swap(i, j int) {
 const (
 	codeInvalidRecordKey   = 4
 	codeInvalidColumnCount = 5
+	codeInvalidKey         = 6
 )

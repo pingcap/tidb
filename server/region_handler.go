@@ -23,12 +23,15 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	goctx "golang.org/x/net/context"
+	"strconv"
 )
 
 // RegionsHTTPRequest is for regions http request.
@@ -83,6 +86,18 @@ func (req *RegionsHTTPRequest) HandleListRegions() {
 	req.writeResponse(data, err)
 }
 
+// HandleGetRegionByID handles request for get region by ID
+func (req *RegionsHTTPRequest) HandleGetRegionByID() {
+	regionIDStr, _ := req.params["regionID"]
+	regionID, err := strconv.ParseInt(regionIDStr, 0, 64)
+	if err != nil {
+		req.writeResponse(nil, err)
+		return
+	}
+	data, err := req.server.getRegionWithRegionID(uint64(regionID))
+	req.writeResponse(data, err)
+}
+
 // RegionsResponse is the response struct for regions.
 type RegionsResponse struct {
 	Success   bool        `json:"status"`
@@ -126,6 +141,104 @@ func getTableIndexKeyRange(tableID, indexID int64) (startKey, endKey []byte) {
 	return
 }
 
+// IndexInfo include a index of table,include tableID,
+// 	indexID,and whether is a record key.
+type IndexInfo struct {
+	TableID     int64
+	IndexID     int64
+	IsRecordKey bool
+}
+
+// NewIndexInfoFromKey init a IndexInfo with a key.
+func NewIndexInfoFromKey(key []byte) (info *IndexInfo, err error) {
+	_, key, err = codec.DecodeBytes(key)
+	if err != nil {
+		return
+	}
+	info = &IndexInfo{}
+	info.TableID, info.IndexID, info.IsRecordKey, err = tablecodec.DecodeKeyHead(key)
+	return
+}
+
+// RegionIndexRange contains index's range for a region.
+type RegionIndexRange struct {
+	first  *IndexInfo
+	last   *IndexInfo
+	region *tikv.KeyLocation
+}
+
+// NewRegionIndexRange init a RegionIndexRange with region info.
+func NewRegionIndexRange(region *tikv.KeyLocation) (*RegionIndexRange, error) {
+	startIndex, err := NewIndexInfoFromKey(region.StartKey)
+	if err != nil {
+		return nil, err
+	}
+	endIndex, err := NewIndexInfoFromKey(region.EndKey)
+	if err != nil {
+		return nil, err
+	}
+	return &RegionIndexRange{
+		first: startIndex,
+		last:  endIndex,
+	}, nil
+}
+
+// getFirstIdxIdRange return the first table's index range.
+// 1. [start,end] means index id in [start,end] are needed,while record key is not in.
+// 2. [start,~) means index's id in [start,~) are needed including record key index.
+// 3. [~,~] means only record key index is needed
+func (ir *RegionIndexRange) getFirstIdxIDRange() (start, end int64) {
+	start = int64(math.MinInt64)
+	end = int64(math.MaxInt64)
+	if ir.first.IsRecordKey {
+		start = end // need record key only,
+		return
+	}
+
+	start = ir.first.IndexID
+	if ir.first.TableID != ir.last.TableID || ir.last.IsRecordKey {
+		return // [start,~)
+	}
+	end = ir.last.IndexID // [start,end]
+	return
+}
+
+// getLastInxIdRange return the last table's index range.
+// (~,end] means index's id in (~,end] are legal, record key index not included.
+// (~,~) means all indexes are legal include record key index.
+func (ir *RegionIndexRange) getLastInxIDRange() (start, end int64) {
+	start = int64(math.MinInt64)
+	end = int64(math.MaxInt64)
+	if ir.last.IsRecordKey {
+		return
+	}
+	end = ir.last.IndexID
+	return
+}
+
+// getIndexRangeForTable return the legal index range for table with tableID.
+// end=math.MaxInt64 means record key index is included.
+func (ir *RegionIndexRange) getIndexRangeForTable(tableID int64) (start, end int64) {
+	start = int64(math.MinInt64)
+	end = int64(math.MaxInt64)
+	switch tableID {
+	case ir.firstTableID():
+		return ir.getFirstIdxIDRange()
+	case ir.lastTableID():
+		return ir.getLastInxIDRange()
+	default:
+		return
+	}
+}
+
+func (ir RegionIndexRange) firstTableID() int64 {
+	return ir.first.TableID
+}
+
+func (ir RegionIndexRange) lastTableID() int64 {
+	return ir.last.TableID
+}
+
 // IndexRegions is the region info for one index.
 type IndexRegions struct {
 	Name    string   `json:"name"`
@@ -141,23 +254,111 @@ type TableRegions struct {
 	Indices    []IndexRegions `json:"indices"`
 }
 
-func (s *Server) onlyStoreTIKVSupported() error {
-	if s.cfg.Store != "tikv" {
-		return fmt.Errorf("only store tikv support,current store:%s", s.cfg.Store)
-	}
-	return nil
+// RegionItem is the response data for get region by ID
+// it includes indices detail in current region.
+type RegionItem struct {
+	RegionID uint64      `json:"region_id"`
+	StartKey []byte      `json:"start_key"`
+	EndKey   []byte      `json:"end_key"`
+	Indices  []IndexItem `json:"indices"`
 }
 
-func (s *Server) listTableRegions(dbName, tableName string) (data *TableRegions, err error) {
-	if err = s.onlyStoreTIKVSupported(); err != nil {
-		return
+func (rt *RegionItem) addIndex(tName string, tID int64, indexName string, indexID int64) {
+	rt.Indices = append(rt.Indices, IndexItem{
+		TableName: tName,
+		TableID:   tID,
+		IndexName: indexName,
+		IndexID:   indexID,
+	})
+}
+
+func (rt *RegionItem) addTableIndicesInRange(curTable table.Table, startID, endID int64) {
+	tName := curTable.Meta().Name.String()
+	tID := curTable.Meta().ID
+	for _, index := range curTable.Indices() {
+		if index.Meta().ID >= startID && index.Meta().ID <= endID {
+			rt.addIndex(tName,
+				tID,
+				index.Meta().Name.String(),
+				index.Meta().ID)
+		}
 	}
-	// prepare table structure
-	session, err := tidb.CreateSession(s.driver.(*TiDBDriver).store)
+	if endID == math.MaxInt64 {
+		rt.addIndex(tName, tID, "", 0)
+	}
+}
+
+// IndexItem includes a index's meta data which includes table's info.
+type IndexItem struct {
+	TableName string `json:"table_name"`
+	TableID   int64  `json:"table_id"`
+	IndexName string `json:"index_name"`
+	IndexID   int64  `json:"index_id"`
+}
+
+func (s *Server) getRegionWithRegionID(regionID uint64) (*RegionItem, error) {
+	regionCache, bo, dom, err := s.prepareForRegionRequest()
 	if err != nil {
 		return nil, err
 	}
+	region, err := regionCache.LocateRegionByID(bo, regionID)
+	if err != nil {
+		return nil, err
+	}
+
+	indexRange, err := NewRegionIndexRange(region)
+	if err != nil {
+		return nil, err
+	}
+
+	regionItem := &RegionItem{
+		RegionID: regionID,
+		StartKey: region.StartKey,
+		EndKey:   region.EndKey,
+		Indices:  []IndexItem{},
+	}
+	for tableID := indexRange.firstTableID(); tableID < indexRange.lastTableID(); tableID++ {
+		curTable, exist := dom.InfoSchema().TableByID(tableID)
+		if exist {
+			start, end := indexRange.getLastInxIDRange()
+			regionItem.addTableIndicesInRange(curTable, start, end)
+		}
+	}
+
+	return regionItem, nil
+
+}
+
+func (s *Server) prepareForRegionRequest() (*tikv.RegionCache, *tikv.Backoffer, *domain.Domain, error) {
+	if s.cfg.Store != "tikv" {
+		err := fmt.Errorf("only store tikv support,current store:%s", s.cfg.Store)
+		return nil, nil, nil, err
+	}
+
+	// create regionCache
+	storePath := fmt.Sprintf("%s://%s", s.cfg.Store, s.cfg.StorePath)
+	regionCache, err := tikv.NewRegionCacheFromStorePath(storePath)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	bo := tikv.NewBackoffer(5000, goctx.Background())
+	// prepare table structure
+	session, err := tidb.CreateSession(s.driver.(*TiDBDriver).store)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	dom := sessionctx.GetDomain(session.(context.Context))
+
+	return regionCache, bo, dom, err
+
+}
+
+func (s *Server) listTableRegions(dbName, tableName string) (data *TableRegions, err error) {
+
+	regionCache, bo, dom, err := s.prepareForRegionRequest()
+	if err != nil {
+		return nil, err
+	}
 	table, err := dom.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
 	if err != nil {
 		return nil, err
@@ -165,12 +366,10 @@ func (s *Server) listTableRegions(dbName, tableName string) (data *TableRegions,
 	tableID := table.Meta().ID
 
 	// create regionCache
-	storePath := fmt.Sprintf("%s://%s", s.cfg.Store, s.cfg.StorePath)
-	regionCache, err := tikv.NewRegionCacheFromStorePath(storePath)
+
 	if err != nil {
 		return nil, err
 	}
-	bo := tikv.NewBackoffer(5000, goctx.Background())
 
 	data = &TableRegions{
 		TableName:  tableName,

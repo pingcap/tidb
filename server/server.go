@@ -257,6 +257,11 @@ func (s *Server) startStatusHTTP() {
 				request := NewRegionsHTTPRequest(s, w, req)
 				request.HandleListRegions()
 			})
+
+			router.HandleFunc("/regions/{regionID}", func(w http.ResponseWriter, req *http.Request) {
+				request := NewRegionsHTTPRequest(s, w, req)
+				request.HandleGetRegionByID()
+			})
 			addr := s.cfg.StatusAddr
 			if len(addr) == 0 {
 				addr = defaultStatusAddr
