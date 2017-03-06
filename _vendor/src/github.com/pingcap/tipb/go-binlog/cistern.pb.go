@@ -13,8 +13,8 @@
 		DumpBinlogResp
 		DumpDDLJobsReq
 		DumpDDLJobsResp
-		GetLatestCommitTSReq
-		GetLatestCommitTSResp
+		NotifyReq
+		NotifyResp
 */
 package binlog
 
@@ -56,6 +56,13 @@ func (m *DumpBinlogReq) String() string            { return proto.CompactTextStr
 func (*DumpBinlogReq) ProtoMessage()               {}
 func (*DumpBinlogReq) Descriptor() ([]byte, []int) { return fileDescriptorCistern, []int{0} }
 
+func (m *DumpBinlogReq) GetBeginCommitTS() int64 {
+	if m != nil {
+		return m.BeginCommitTS
+	}
+	return 0
+}
+
 type DumpBinlogResp struct {
 	// CommitTS specifies the commitTS of binlog
 	CommitTS int64 `protobuf:"varint,1,opt,name=commitTS,proto3" json:"commitTS,omitempty"`
@@ -70,6 +77,27 @@ func (m *DumpBinlogResp) String() string            { return proto.CompactTextSt
 func (*DumpBinlogResp) ProtoMessage()               {}
 func (*DumpBinlogResp) Descriptor() ([]byte, []int) { return fileDescriptorCistern, []int{1} }
 
+func (m *DumpBinlogResp) GetCommitTS() int64 {
+	if m != nil {
+		return m.CommitTS
+	}
+	return 0
+}
+
+func (m *DumpBinlogResp) GetPayload() []byte {
+	if m != nil {
+		return m.Payload
+	}
+	return nil
+}
+
+func (m *DumpBinlogResp) GetDdljob() []byte {
+	if m != nil {
+		return m.Ddljob
+	}
+	return nil
+}
+
 type DumpDDLJobsReq struct {
 	// beginCommitTS is the start point of drainer processing binlog, DumpDDLJobs() returns
 	// all history DDL jobs before this position, then drainer will apply these DDL jobs
@@ -82,6 +110,13 @@ func (m *DumpDDLJobsReq) String() string            { return proto.CompactTextSt
 func (*DumpDDLJobsReq) ProtoMessage()               {}
 func (*DumpDDLJobsReq) Descriptor() ([]byte, []int) { return fileDescriptorCistern, []int{2} }
 
+func (m *DumpDDLJobsReq) GetBeginCommitTS() int64 {
+	if m != nil {
+		return m.BeginCommitTS
+	}
+	return 0
+}
+
 type DumpDDLJobsResp struct {
 	// ddljobs is an array of JSON encoded history DDL jobs
 	Ddljobs [][]byte `protobuf:"bytes,1,rep,name=ddljobs" json:"ddljobs,omitempty"`
@@ -92,33 +127,36 @@ func (m *DumpDDLJobsResp) String() string            { return proto.CompactTextS
 func (*DumpDDLJobsResp) ProtoMessage()               {}
 func (*DumpDDLJobsResp) Descriptor() ([]byte, []int) { return fileDescriptorCistern, []int{3} }
 
-type GetLatestCommitTSReq struct {
+func (m *DumpDDLJobsResp) GetDdljobs() [][]byte {
+	if m != nil {
+		return m.Ddljobs
+	}
+	return nil
 }
 
-func (m *GetLatestCommitTSReq) Reset()                    { *m = GetLatestCommitTSReq{} }
-func (m *GetLatestCommitTSReq) String() string            { return proto.CompactTextString(m) }
-func (*GetLatestCommitTSReq) ProtoMessage()               {}
-func (*GetLatestCommitTSReq) Descriptor() ([]byte, []int) { return fileDescriptorCistern, []int{4} }
-
-type GetLatestCommitTSResp struct {
-	// commitTS specifies the Last binlog commitTS of the TiDB
-	CommitTS int64 `protobuf:"varint,1,opt,name=commitTS,proto3" json:"commitTS,omitempty"`
-	// isSynced specifies whether the all binlogs are consumed from pump
-	IsSynced bool `protobuf:"varint,2,opt,name=isSynced,proto3" json:"isSynced,omitempty"`
+type NotifyReq struct {
 }
 
-func (m *GetLatestCommitTSResp) Reset()                    { *m = GetLatestCommitTSResp{} }
-func (m *GetLatestCommitTSResp) String() string            { return proto.CompactTextString(m) }
-func (*GetLatestCommitTSResp) ProtoMessage()               {}
-func (*GetLatestCommitTSResp) Descriptor() ([]byte, []int) { return fileDescriptorCistern, []int{5} }
+func (m *NotifyReq) Reset()                    { *m = NotifyReq{} }
+func (m *NotifyReq) String() string            { return proto.CompactTextString(m) }
+func (*NotifyReq) ProtoMessage()               {}
+func (*NotifyReq) Descriptor() ([]byte, []int) { return fileDescriptorCistern, []int{4} }
+
+type NotifyResp struct {
+}
+
+func (m *NotifyResp) Reset()                    { *m = NotifyResp{} }
+func (m *NotifyResp) String() string            { return proto.CompactTextString(m) }
+func (*NotifyResp) ProtoMessage()               {}
+func (*NotifyResp) Descriptor() ([]byte, []int) { return fileDescriptorCistern, []int{5} }
 
 func init() {
 	proto.RegisterType((*DumpBinlogReq)(nil), "binlog.DumpBinlogReq")
 	proto.RegisterType((*DumpBinlogResp)(nil), "binlog.DumpBinlogResp")
 	proto.RegisterType((*DumpDDLJobsReq)(nil), "binlog.DumpDDLJobsReq")
 	proto.RegisterType((*DumpDDLJobsResp)(nil), "binlog.DumpDDLJobsResp")
-	proto.RegisterType((*GetLatestCommitTSReq)(nil), "binlog.GetLatestCommitTSReq")
-	proto.RegisterType((*GetLatestCommitTSResp)(nil), "binlog.GetLatestCommitTSResp")
+	proto.RegisterType((*NotifyReq)(nil), "binlog.NotifyReq")
+	proto.RegisterType((*NotifyResp)(nil), "binlog.NotifyResp")
 }
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -127,7 +165,7 @@ var _ grpc.ClientConn
 
 // This is a compile-time assertion to ensure that this generated file
 // is compatible with the grpc package it is being compiled against.
-const _ = grpc.SupportPackageIsVersion3
+const _ = grpc.SupportPackageIsVersion4
 
 // Client API for Cistern service
 
@@ -136,8 +174,9 @@ type CisternClient interface {
 	DumpBinlog(ctx context.Context, in *DumpBinlogReq, opts ...grpc.CallOption) (Cistern_DumpBinlogClient, error)
 	// DumpDDLJobs dumps all history DDL jobs before a specified commitTS
 	DumpDDLJobs(ctx context.Context, in *DumpDDLJobsReq, opts ...grpc.CallOption) (*DumpDDLJobsResp, error)
-	// GetLatestCommitTS returns the Last binlog commitTS of the TiDB
-	GetLatestCommitTS(ctx context.Context, in *GetLatestCommitTSReq, opts ...grpc.CallOption) (*GetLatestCommitTSResp, error)
+	// Notify notifies all living cisterns that a new pump is coming
+	// the living cisterns can be queried from pd
+	Notify(ctx context.Context, in *NotifyReq, opts ...grpc.CallOption) (*NotifyResp, error)
 }
 
 type cisternClient struct {
@@ -189,9 +228,9 @@ func (c *cisternClient) DumpDDLJobs(ctx context.Context, in *DumpDDLJobsReq, opt
 	return out, nil
 }
 
-func (c *cisternClient) GetLatestCommitTS(ctx context.Context, in *GetLatestCommitTSReq, opts ...grpc.CallOption) (*GetLatestCommitTSResp, error) {
-	out := new(GetLatestCommitTSResp)
-	err := grpc.Invoke(ctx, "/binlog.Cistern/GetLatestCommitTS", in, out, c.cc, opts...)
+func (c *cisternClient) Notify(ctx context.Context, in *NotifyReq, opts ...grpc.CallOption) (*NotifyResp, error) {
+	out := new(NotifyResp)
+	err := grpc.Invoke(ctx, "/binlog.Cistern/Notify", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -205,8 +244,9 @@ type CisternServer interface {
 	DumpBinlog(*DumpBinlogReq, Cistern_DumpBinlogServer) error
 	// DumpDDLJobs dumps all history DDL jobs before a specified commitTS
 	DumpDDLJobs(context.Context, *DumpDDLJobsReq) (*DumpDDLJobsResp, error)
-	// GetLatestCommitTS returns the Last binlog commitTS of the TiDB
-	GetLatestCommitTS(context.Context, *GetLatestCommitTSReq) (*GetLatestCommitTSResp, error)
+	// Notify notifies all living cisterns that a new pump is coming
+	// the living cisterns can be queried from pd
+	Notify(context.Context, *NotifyReq) (*NotifyResp, error)
 }
 
 func RegisterCisternServer(s *grpc.Server, srv CisternServer) {
@@ -252,20 +292,20 @@ func _Cistern_DumpDDLJobs_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Cistern_GetLatestCommitTS_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetLatestCommitTSReq)
+func _Cistern_Notify_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(NotifyReq)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(CisternServer).GetLatestCommitTS(ctx, in)
+		return srv.(CisternServer).Notify(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/binlog.Cistern/GetLatestCommitTS",
+		FullMethod: "/binlog.Cistern/Notify",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(CisternServer).GetLatestCommitTS(ctx, req.(*GetLatestCommitTSReq))
+		return srv.(CisternServer).Notify(ctx, req.(*NotifyReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -279,8 +319,8 @@ var _Cistern_serviceDesc = grpc.ServiceDesc{
 			Handler:    _Cistern_DumpDDLJobs_Handler,
 		},
 		{
-			MethodName: "GetLatestCommitTS",
-			Handler:    _Cistern_GetLatestCommitTS_Handler,
+			MethodName: "Notify",
+			Handler:    _Cistern_Notify_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
@@ -290,127 +330,127 @@ var _Cistern_serviceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 	},
-	Metadata: fileDescriptorCistern,
+	Metadata: "cistern.proto",
 }
 
-func (m *DumpBinlogReq) Marshal() (data []byte, err error) {
+func (m *DumpBinlogReq) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
-	data = make([]byte, size)
-	n, err := m.MarshalTo(data)
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
 	if err != nil {
 		return nil, err
 	}
-	return data[:n], nil
+	return dAtA[:n], nil
 }
 
-func (m *DumpBinlogReq) MarshalTo(data []byte) (int, error) {
+func (m *DumpBinlogReq) MarshalTo(dAtA []byte) (int, error) {
 	var i int
 	_ = i
 	var l int
 	_ = l
 	if m.BeginCommitTS != 0 {
-		data[i] = 0x8
+		dAtA[i] = 0x8
 		i++
-		i = encodeVarintCistern(data, i, uint64(m.BeginCommitTS))
+		i = encodeVarintCistern(dAtA, i, uint64(m.BeginCommitTS))
 	}
 	return i, nil
 }
 
-func (m *DumpBinlogResp) Marshal() (data []byte, err error) {
+func (m *DumpBinlogResp) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
-	data = make([]byte, size)
-	n, err := m.MarshalTo(data)
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
 	if err != nil {
 		return nil, err
 	}
-	return data[:n], nil
+	return dAtA[:n], nil
 }
 
-func (m *DumpBinlogResp) MarshalTo(data []byte) (int, error) {
+func (m *DumpBinlogResp) MarshalTo(dAtA []byte) (int, error) {
 	var i int
 	_ = i
 	var l int
 	_ = l
 	if m.CommitTS != 0 {
-		data[i] = 0x8
+		dAtA[i] = 0x8
 		i++
-		i = encodeVarintCistern(data, i, uint64(m.CommitTS))
+		i = encodeVarintCistern(dAtA, i, uint64(m.CommitTS))
 	}
 	if len(m.Payload) > 0 {
-		data[i] = 0x12
+		dAtA[i] = 0x12
 		i++
-		i = encodeVarintCistern(data, i, uint64(len(m.Payload)))
-		i += copy(data[i:], m.Payload)
+		i = encodeVarintCistern(dAtA, i, uint64(len(m.Payload)))
+		i += copy(dAtA[i:], m.Payload)
 	}
 	if len(m.Ddljob) > 0 {
-		data[i] = 0x1a
+		dAtA[i] = 0x1a
 		i++
-		i = encodeVarintCistern(data, i, uint64(len(m.Ddljob)))
-		i += copy(data[i:], m.Ddljob)
+		i = encodeVarintCistern(dAtA, i, uint64(len(m.Ddljob)))
+		i += copy(dAtA[i:], m.Ddljob)
 	}
 	return i, nil
 }
 
-func (m *DumpDDLJobsReq) Marshal() (data []byte, err error) {
+func (m *DumpDDLJobsReq) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
-	data = make([]byte, size)
-	n, err := m.MarshalTo(data)
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
 	if err != nil {
 		return nil, err
 	}
-	return data[:n], nil
+	return dAtA[:n], nil
 }
 
-func (m *DumpDDLJobsReq) MarshalTo(data []byte) (int, error) {
+func (m *DumpDDLJobsReq) MarshalTo(dAtA []byte) (int, error) {
 	var i int
 	_ = i
 	var l int
 	_ = l
 	if m.BeginCommitTS != 0 {
-		data[i] = 0x8
+		dAtA[i] = 0x8
 		i++
-		i = encodeVarintCistern(data, i, uint64(m.BeginCommitTS))
+		i = encodeVarintCistern(dAtA, i, uint64(m.BeginCommitTS))
 	}
 	return i, nil
 }
 
-func (m *DumpDDLJobsResp) Marshal() (data []byte, err error) {
+func (m *DumpDDLJobsResp) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
-	data = make([]byte, size)
-	n, err := m.MarshalTo(data)
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
 	if err != nil {
 		return nil, err
 	}
-	return data[:n], nil
+	return dAtA[:n], nil
 }
 
-func (m *DumpDDLJobsResp) MarshalTo(data []byte) (int, error) {
+func (m *DumpDDLJobsResp) MarshalTo(dAtA []byte) (int, error) {
 	var i int
 	_ = i
 	var l int
 	_ = l
 	if len(m.Ddljobs) > 0 {
 		for _, b := range m.Ddljobs {
-			data[i] = 0xa
+			dAtA[i] = 0xa
 			i++
-			i = encodeVarintCistern(data, i, uint64(len(b)))
-			i += copy(data[i:], b)
+			i = encodeVarintCistern(dAtA, i, uint64(len(b)))
+			i += copy(dAtA[i:], b)
 		}
 	}
 	return i, nil
 }
 
-func (m *GetLatestCommitTSReq) Marshal() (data []byte, err error) {
+func (m *NotifyReq) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
-	data = make([]byte, size)
-	n, err := m.MarshalTo(data)
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
 	if err != nil {
 		return nil, err
 	}
-	return data[:n], nil
+	return dAtA[:n], nil
 }
 
-func (m *GetLatestCommitTSReq) MarshalTo(data []byte) (int, error) {
+func (m *NotifyReq) MarshalTo(dAtA []byte) (int, error) {
 	var i int
 	_ = i
 	var l int
@@ -418,64 +458,49 @@ func (m *GetLatestCommitTSReq) MarshalTo(data []byte) (int, error) {
 	return i, nil
 }
 
-func (m *GetLatestCommitTSResp) Marshal() (data []byte, err error) {
+func (m *NotifyResp) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
-	data = make([]byte, size)
-	n, err := m.MarshalTo(data)
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
 	if err != nil {
 		return nil, err
 	}
-	return data[:n], nil
+	return dAtA[:n], nil
 }
 
-func (m *GetLatestCommitTSResp) MarshalTo(data []byte) (int, error) {
+func (m *NotifyResp) MarshalTo(dAtA []byte) (int, error) {
 	var i int
 	_ = i
 	var l int
 	_ = l
-	if m.CommitTS != 0 {
-		data[i] = 0x8
-		i++
-		i = encodeVarintCistern(data, i, uint64(m.CommitTS))
-	}
-	if m.IsSynced {
-		data[i] = 0x10
-		i++
-		if m.IsSynced {
-			data[i] = 1
-		} else {
-			data[i] = 0
-		}
-		i++
-	}
 	return i, nil
 }
 
-func encodeFixed64Cistern(data []byte, offset int, v uint64) int {
-	data[offset] = uint8(v)
-	data[offset+1] = uint8(v >> 8)
-	data[offset+2] = uint8(v >> 16)
-	data[offset+3] = uint8(v >> 24)
-	data[offset+4] = uint8(v >> 32)
-	data[offset+5] = uint8(v >> 40)
-	data[offset+6] = uint8(v >> 48)
-	data[offset+7] = uint8(v >> 56)
+func encodeFixed64Cistern(dAtA []byte, offset int, v uint64) int {
+	dAtA[offset] = uint8(v)
+	dAtA[offset+1] = uint8(v >> 8)
+	dAtA[offset+2] = uint8(v >> 16)
+	dAtA[offset+3] = uint8(v >> 24)
+	dAtA[offset+4] = uint8(v >> 32)
+	dAtA[offset+5] = uint8(v >> 40)
+	dAtA[offset+6] = uint8(v >> 48)
+	dAtA[offset+7] = uint8(v >> 56)
 	return offset + 8
 }
-func encodeFixed32Cistern(data []byte, offset int, v uint32) int {
-	data[offset] = uint8(v)
-	data[offset+1] = uint8(v >> 8)
-	data[offset+2] = uint8(v >> 16)
-	data[offset+3] = uint8(v >> 24)
+func encodeFixed32Cistern(dAtA []byte, offset int, v uint32) int {
+	dAtA[offset] = uint8(v)
+	dAtA[offset+1] = uint8(v >> 8)
+	dAtA[offset+2] = uint8(v >> 16)
+	dAtA[offset+3] = uint8(v >> 24)
 	return offset + 4
 }
-func encodeVarintCistern(data []byte, offset int, v uint64) int {
+func encodeVarintCistern(dAtA []byte, offset int, v uint64) int {
 	for v >= 1<<7 {
-		data[offset] = uint8(v&0x7f | 0x80)
+		dAtA[offset] = uint8(v&0x7f | 0x80)
 		v >>= 7
 		offset++
 	}
-	data[offset] = uint8(v)
+	dAtA[offset] = uint8(v)
 	return offset + 1
 }
 func (m *DumpBinlogReq) Size() (n int) {
@@ -525,21 +550,15 @@ func (m *DumpDDLJobsResp) Size() (n int) {
 	return n
 }
 
-func (m *GetLatestCommitTSReq) Size() (n int) {
+func (m *NotifyReq) Size() (n int) {
 	var l int
 	_ = l
 	return n
 }
 
-func (m *GetLatestCommitTSResp) Size() (n int) {
+func (m *NotifyResp) Size() (n int) {
 	var l int
 	_ = l
-	if m.CommitTS != 0 {
-		n += 1 + sovCistern(uint64(m.CommitTS))
-	}
-	if m.IsSynced {
-		n += 2
-	}
 	return n
 }
 
@@ -556,8 +575,8 @@ func sovCistern(x uint64) (n int) {
 func sozCistern(x uint64) (n int) {
 	return sovCistern(uint64((x << 1) ^ uint64((int64(x) >> 63))))
 }
-func (m *DumpBinlogReq) Unmarshal(data []byte) error {
-	l := len(data)
+func (m *DumpBinlogReq) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
 		preIndex := iNdEx
@@ -569,7 +588,7 @@ func (m *DumpBinlogReq) Unmarshal(data []byte) error {
 			if iNdEx >= l {
 				return io.ErrUnexpectedEOF
 			}
-			b := data[iNdEx]
+			b := dAtA[iNdEx]
 			iNdEx++
 			wire |= (uint64(b) & 0x7F) << shift
 			if b < 0x80 {
@@ -597,7 +616,7 @@ func (m *DumpBinlogReq) Unmarshal(data []byte) error {
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				m.BeginCommitTS |= (int64(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -606,7 +625,7 @@ func (m *DumpBinlogReq) Unmarshal(data []byte) error {
 			}
 		default:
 			iNdEx = preIndex
-			skippy, err := skipCistern(data[iNdEx:])
+			skippy, err := skipCistern(dAtA[iNdEx:])
 			if err != nil {
 				return err
 			}
@@ -625,8 +644,8 @@ func (m *DumpBinlogReq) Unmarshal(data []byte) error {
 	}
 	return nil
 }
-func (m *DumpBinlogResp) Unmarshal(data []byte) error {
-	l := len(data)
+func (m *DumpBinlogResp) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
 		preIndex := iNdEx
@@ -638,7 +657,7 @@ func (m *DumpBinlogResp) Unmarshal(data []byte) error {
 			if iNdEx >= l {
 				return io.ErrUnexpectedEOF
 			}
-			b := data[iNdEx]
+			b := dAtA[iNdEx]
 			iNdEx++
 			wire |= (uint64(b) & 0x7F) << shift
 			if b < 0x80 {
@@ -666,7 +685,7 @@ func (m *DumpBinlogResp) Unmarshal(data []byte) error {
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				m.CommitTS |= (int64(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -685,7 +704,7 @@ func (m *DumpBinlogResp) Unmarshal(data []byte) error {
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				byteLen |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -699,7 +718,7 @@ func (m *DumpBinlogResp) Unmarshal(data []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Payload = append(m.Payload[:0], data[iNdEx:postIndex]...)
+			m.Payload = append(m.Payload[:0], dAtA[iNdEx:postIndex]...)
 			if m.Payload == nil {
 				m.Payload = []byte{}
 			}
@@ -716,7 +735,7 @@ func (m *DumpBinlogResp) Unmarshal(data []byte) error {
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				byteLen |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -730,14 +749,14 @@ func (m *DumpBinlogResp) Unmarshal(data []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Ddljob = append(m.Ddljob[:0], data[iNdEx:postIndex]...)
+			m.Ddljob = append(m.Ddljob[:0], dAtA[iNdEx:postIndex]...)
 			if m.Ddljob == nil {
 				m.Ddljob = []byte{}
 			}
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
-			skippy, err := skipCistern(data[iNdEx:])
+			skippy, err := skipCistern(dAtA[iNdEx:])
 			if err != nil {
 				return err
 			}
@@ -756,8 +775,8 @@ func (m *DumpBinlogResp) Unmarshal(data []byte) error {
 	}
 	return nil
 }
-func (m *DumpDDLJobsReq) Unmarshal(data []byte) error {
-	l := len(data)
+func (m *DumpDDLJobsReq) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
 		preIndex := iNdEx
@@ -769,7 +788,7 @@ func (m *DumpDDLJobsReq) Unmarshal(data []byte) error {
 			if iNdEx >= l {
 				return io.ErrUnexpectedEOF
 			}
-			b := data[iNdEx]
+			b := dAtA[iNdEx]
 			iNdEx++
 			wire |= (uint64(b) & 0x7F) << shift
 			if b < 0x80 {
@@ -797,7 +816,7 @@ func (m *DumpDDLJobsReq) Unmarshal(data []byte) error {
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				m.BeginCommitTS |= (int64(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -806,7 +825,7 @@ func (m *DumpDDLJobsReq) Unmarshal(data []byte) error {
 			}
 		default:
 			iNdEx = preIndex
-			skippy, err := skipCistern(data[iNdEx:])
+			skippy, err := skipCistern(dAtA[iNdEx:])
 			if err != nil {
 				return err
 			}
@@ -825,8 +844,8 @@ func (m *DumpDDLJobsReq) Unmarshal(data []byte) error {
 	}
 	return nil
 }
-func (m *DumpDDLJobsResp) Unmarshal(data []byte) error {
-	l := len(data)
+func (m *DumpDDLJobsResp) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
 		preIndex := iNdEx
@@ -838,7 +857,7 @@ func (m *DumpDDLJobsResp) Unmarshal(data []byte) error {
 			if iNdEx >= l {
 				return io.ErrUnexpectedEOF
 			}
-			b := data[iNdEx]
+			b := dAtA[iNdEx]
 			iNdEx++
 			wire |= (uint64(b) & 0x7F) << shift
 			if b < 0x80 {
@@ -866,7 +885,7 @@ func (m *DumpDDLJobsResp) Unmarshal(data []byte) error {
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				byteLen |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -881,11 +900,11 @@ func (m *DumpDDLJobsResp) Unmarshal(data []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			m.Ddljobs = append(m.Ddljobs, make([]byte, postIndex-iNdEx))
-			copy(m.Ddljobs[len(m.Ddljobs)-1], data[iNdEx:postIndex])
+			copy(m.Ddljobs[len(m.Ddljobs)-1], dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
-			skippy, err := skipCistern(data[iNdEx:])
+			skippy, err := skipCistern(dAtA[iNdEx:])
 			if err != nil {
 				return err
 			}
@@ -904,8 +923,8 @@ func (m *DumpDDLJobsResp) Unmarshal(data []byte) error {
 	}
 	return nil
 }
-func (m *GetLatestCommitTSReq) Unmarshal(data []byte) error {
-	l := len(data)
+func (m *NotifyReq) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
 		preIndex := iNdEx
@@ -917,7 +936,7 @@ func (m *GetLatestCommitTSReq) Unmarshal(data []byte) error {
 			if iNdEx >= l {
 				return io.ErrUnexpectedEOF
 			}
-			b := data[iNdEx]
+			b := dAtA[iNdEx]
 			iNdEx++
 			wire |= (uint64(b) & 0x7F) << shift
 			if b < 0x80 {
@@ -927,15 +946,15 @@ func (m *GetLatestCommitTSReq) Unmarshal(data []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: GetLatestCommitTSReq: wiretype end group for non-group")
+			return fmt.Errorf("proto: NotifyReq: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: GetLatestCommitTSReq: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: NotifyReq: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		default:
 			iNdEx = preIndex
-			skippy, err := skipCistern(data[iNdEx:])
+			skippy, err := skipCistern(dAtA[iNdEx:])
 			if err != nil {
 				return err
 			}
@@ -954,8 +973,8 @@ func (m *GetLatestCommitTSReq) Unmarshal(data []byte) error {
 	}
 	return nil
 }
-func (m *GetLatestCommitTSResp) Unmarshal(data []byte) error {
-	l := len(data)
+func (m *NotifyResp) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
 		preIndex := iNdEx
@@ -967,7 +986,7 @@ func (m *GetLatestCommitTSResp) Unmarshal(data []byte) error {
 			if iNdEx >= l {
 				return io.ErrUnexpectedEOF
 			}
-			b := data[iNdEx]
+			b := dAtA[iNdEx]
 			iNdEx++
 			wire |= (uint64(b) & 0x7F) << shift
 			if b < 0x80 {
@@ -977,54 +996,15 @@ func (m *GetLatestCommitTSResp) Unmarshal(data []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: GetLatestCommitTSResp: wiretype end group for non-group")
+			return fmt.Errorf("proto: NotifyResp: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: GetLatestCommitTSResp: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: NotifyResp: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
-		case 1:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field CommitTS", wireType)
-			}
-			m.CommitTS = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowCistern
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := data[iNdEx]
-				iNdEx++
-				m.CommitTS |= (int64(b) & 0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 2:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field IsSynced", wireType)
-			}
-			var v int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowCistern
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := data[iNdEx]
-				iNdEx++
-				v |= (int(b) & 0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			m.IsSynced = bool(v != 0)
 		default:
 			iNdEx = preIndex
-			skippy, err := skipCistern(data[iNdEx:])
+			skippy, err := skipCistern(dAtA[iNdEx:])
 			if err != nil {
 				return err
 			}
@@ -1043,8 +1023,8 @@ func (m *GetLatestCommitTSResp) Unmarshal(data []byte) error {
 	}
 	return nil
 }
-func skipCistern(data []byte) (n int, err error) {
-	l := len(data)
+func skipCistern(dAtA []byte) (n int, err error) {
+	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
 		var wire uint64
@@ -1055,7 +1035,7 @@ func skipCistern(data []byte) (n int, err error) {
 			if iNdEx >= l {
 				return 0, io.ErrUnexpectedEOF
 			}
-			b := data[iNdEx]
+			b := dAtA[iNdEx]
 			iNdEx++
 			wire |= (uint64(b) & 0x7F) << shift
 			if b < 0x80 {
@@ -1073,7 +1053,7 @@ func skipCistern(data []byte) (n int, err error) {
 					return 0, io.ErrUnexpectedEOF
 				}
 				iNdEx++
-				if data[iNdEx-1] < 0x80 {
+				if dAtA[iNdEx-1] < 0x80 {
 					break
 				}
 			}
@@ -1090,7 +1070,7 @@ func skipCistern(data []byte) (n int, err error) {
 				if iNdEx >= l {
 					return 0, io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				length |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -1113,7 +1093,7 @@ func skipCistern(data []byte) (n int, err error) {
 					if iNdEx >= l {
 						return 0, io.ErrUnexpectedEOF
 					}
-					b := data[iNdEx]
+					b := dAtA[iNdEx]
 					iNdEx++
 					innerWire |= (uint64(b) & 0x7F) << shift
 					if b < 0x80 {
@@ -1124,7 +1104,7 @@ func skipCistern(data []byte) (n int, err error) {
 				if innerWireType == 4 {
 					break
 				}
-				next, err := skipCistern(data[start:])
+				next, err := skipCistern(dAtA[start:])
 				if err != nil {
 					return 0, err
 				}
@@ -1151,7 +1131,7 @@ var (
 func init() { proto.RegisterFile("cistern.proto", fileDescriptorCistern) }
 
 var fileDescriptorCistern = []byte{
-	// 324 bytes of a gzipped FileDescriptorProto
+	// 301 bytes of a gzipped FileDescriptorProto
 	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0xe2, 0xe2, 0x4d, 0xce, 0x2c, 0x2e,
 	0x49, 0x2d, 0xca, 0xd3, 0x2b, 0x28, 0xca, 0x2f, 0xc9, 0x17, 0x62, 0x4b, 0xca, 0xcc, 0xcb, 0xc9,
 	0x4f, 0x97, 0x12, 0x49, 0xcf, 0x4f, 0xcf, 0x07, 0x0b, 0xe9, 0x83, 0x58, 0x10, 0x59, 0x25, 0x53,
@@ -1162,15 +1142,13 @@ var fileDescriptorCistern = []byte{
 	0xc4, 0x14, 0x09, 0x26, 0x05, 0x46, 0x0d, 0x9e, 0x20, 0x18, 0x57, 0x48, 0x8c, 0x8b, 0x2d, 0x25,
 	0x25, 0x27, 0x2b, 0x3f, 0x49, 0x82, 0x19, 0x2c, 0x01, 0xe5, 0x29, 0x99, 0x41, 0xcc, 0x77, 0x71,
 	0xf1, 0xf1, 0xca, 0x4f, 0x2a, 0x26, 0xde, 0x5d, 0xda, 0x5c, 0xfc, 0x28, 0xfa, 0x8a, 0x0b, 0x40,
-	0x96, 0x43, 0x0c, 0x2d, 0x96, 0x60, 0x54, 0x60, 0x06, 0x59, 0x0e, 0xe5, 0x2a, 0x89, 0x71, 0x89,
-	0xb8, 0xa7, 0x96, 0xf8, 0x24, 0x96, 0xa4, 0x16, 0x97, 0xc0, 0x4c, 0x08, 0x4a, 0x2d, 0x54, 0xf2,
-	0xe7, 0x12, 0xc5, 0x22, 0x4e, 0xc0, 0x8f, 0x52, 0x5c, 0x1c, 0x99, 0xc5, 0xc1, 0x95, 0x79, 0xc9,
-	0xa9, 0x10, 0x4f, 0x72, 0x04, 0xc1, 0xf9, 0x46, 0x0f, 0x18, 0xb9, 0xd8, 0x9d, 0x21, 0x91, 0x22,
-	0x64, 0xcf, 0xc5, 0x85, 0x08, 0x39, 0x21, 0x51, 0x3d, 0x48, 0xec, 0xe8, 0xa1, 0x44, 0x82, 0x94,
-	0x18, 0x36, 0xe1, 0xe2, 0x02, 0x25, 0x06, 0x03, 0x46, 0x21, 0x07, 0x2e, 0x6e, 0x24, 0x2f, 0x0a,
-	0xa1, 0x28, 0x45, 0x84, 0x97, 0x94, 0x38, 0x56, 0x71, 0x90, 0x19, 0x42, 0x41, 0x5c, 0x82, 0x18,
-	0xfe, 0x13, 0x92, 0x81, 0xa9, 0xc7, 0x16, 0x24, 0x52, 0xb2, 0x78, 0x64, 0x41, 0x66, 0x3a, 0x09,
-	0x9c, 0x78, 0x24, 0xc7, 0x78, 0xe1, 0x91, 0x1c, 0xe3, 0x83, 0x47, 0x72, 0x8c, 0x33, 0x1e, 0xcb,
-	0x31, 0x24, 0xb1, 0x81, 0x13, 0x98, 0x31, 0x20, 0x00, 0x00, 0xff, 0xff, 0x28, 0xda, 0xbc, 0xd4,
-	0x8f, 0x02, 0x00, 0x00,
+	0x96, 0x43, 0x0c, 0x2d, 0x96, 0x60, 0x54, 0x60, 0x06, 0x59, 0x0e, 0xe5, 0x2a, 0x71, 0x73, 0x71,
+	0xfa, 0xe5, 0x97, 0x64, 0xa6, 0x55, 0x06, 0xa5, 0x16, 0x2a, 0xf1, 0x70, 0x71, 0xc1, 0x38, 0xc5,
+	0x05, 0x46, 0xfb, 0x19, 0xb9, 0xd8, 0x9d, 0x21, 0xc1, 0x28, 0x64, 0xcf, 0xc5, 0x85, 0xf0, 0xab,
+	0x90, 0xa8, 0x1e, 0x24, 0x3c, 0xf5, 0x50, 0x82, 0x4d, 0x4a, 0x0c, 0x9b, 0x70, 0x71, 0x81, 0x12,
+	0x83, 0x01, 0xa3, 0x90, 0x03, 0x17, 0x37, 0x92, 0xa3, 0x84, 0x50, 0x94, 0x22, 0x7c, 0x28, 0x25,
+	0x8e, 0x55, 0x1c, 0x64, 0x86, 0x90, 0x21, 0x17, 0x1b, 0xc4, 0x71, 0x42, 0x82, 0x30, 0x45, 0x70,
+	0x97, 0x4b, 0x09, 0xa1, 0x0b, 0x81, 0xb4, 0x38, 0x09, 0x9c, 0x78, 0x24, 0xc7, 0x78, 0xe1, 0x91,
+	0x1c, 0xe3, 0x83, 0x47, 0x72, 0x8c, 0x33, 0x1e, 0xcb, 0x31, 0x24, 0xb1, 0x81, 0x63, 0xdc, 0x18,
+	0x10, 0x00, 0x00, 0xff, 0xff, 0xdd, 0x2d, 0x8f, 0x8f, 0x20, 0x02, 0x00, 0x00,
 }
