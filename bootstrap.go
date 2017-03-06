@@ -121,7 +121,7 @@ const (
 		version bigint(64) unsigned NOT NULL,
 		table_id bigint(64) NOT NULL,
 		cardinality int(64) unsigned NOT NULL DEFAULT 0,
-		dist int(64) unsigned NOT NULL DEFAULT 0,
+		count int(64) unsigned NOT NULL DEFAULT 0,
 		index idx_ver(version)
 	);`
 )

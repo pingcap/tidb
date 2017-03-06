@@ -55,8 +55,6 @@ func (s *testStatsCacheSuite) TestStatsCache(c *C) {
 	is = do.InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
 	tableInfo = tbl.Meta()
 	statsTbl = statscache.GetStatisticsTableCache(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsTrue)

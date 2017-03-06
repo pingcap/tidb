@@ -28,7 +28,6 @@ import (
 )
 
 type statsInfo struct {
-	m       sync.RWMutex
 	tbl     *statistics.Table
 	version uint64
 }
@@ -67,7 +66,7 @@ func (h *Handle) Update(m *meta.Meta, is infoschema.InfoSchema) error {
 		if tpb != nil {
 			tbl, err = statistics.TableFromPB(tableInfo, tpb)
 			// Error is not nil may mean that there are some ddl changes on this table, so the origin
-			// statistics can not be used any more, we give it a pseudo one and save in cache.
+			// statistics can not be used any more, we give it a nil one.
 			if err != nil {
 				log.Errorf("Error occured when convert pb table for table id %d", tableID)
 			}
@@ -80,19 +79,20 @@ func (h *Handle) Update(m *meta.Meta, is infoschema.InfoSchema) error {
 
 type statsCache struct {
 	cache map[int64]*statsInfo
+	m     sync.RWMutex
 }
 
 var statsTblCache = statsCache{cache: map[int64]*statsInfo{}}
 
-// GetStatisticsTableCache retrieves the statistics table from cache, and will refill cache if necessary.
+// GetStatisticsTableCache retrieves the statistics table from cache, and the cache will be updated by a goroutine.
 func GetStatisticsTableCache(tblInfo *model.TableInfo) *statistics.Table {
+	statsTblCache.m.RLock()
+	defer statsTblCache.m.RUnlock()
 	stats, ok := statsTblCache.cache[tblInfo.ID]
 	if !ok || stats == nil {
 		return statistics.PseudoTable(tblInfo)
 	}
-	stats.m.RLock()
 	tbl := stats.tbl
-	stats.m.RUnlock()
 	// Here we check the TableInfo because there may be some ddl changes in the duration period.
 	// Also, we rely on the fact that TableInfo will not be same if and only if there are ddl changes.
 	if tblInfo == tbl.Info {
@@ -103,6 +103,8 @@ func GetStatisticsTableCache(tblInfo *model.TableInfo) *statistics.Table {
 
 // SetStatisticsTableCache sets the statistics table cache.
 func SetStatisticsTableCache(id int64, statsTbl *statistics.Table, version uint64) {
+	statsTblCache.m.Lock()
+	defer statsTblCache.m.Unlock()
 	stats, ok := statsTblCache.cache[id]
 	if !ok {
 		si := &statsInfo{
@@ -112,8 +114,6 @@ func SetStatisticsTableCache(id int64, statsTbl *statistics.Table, version uint6
 		statsTblCache.cache[id] = si
 		return
 	}
-	stats.m.Lock()
-	defer stats.m.Unlock()
 	if stats.version >= version {
 		return
 	}
