@@ -181,7 +181,7 @@ import (
 	repeat			"REPEAT"
 	replace			"REPLACE"
 	restrict		"RESTRICT"
-	revoke		"REVOKE"
+	revoke			"REVOKE"
 	right			"RIGHT"
 	rlike			"RLIKE"
 	schema			"SCHEMA"
@@ -397,6 +397,7 @@ import (
 	releaseAllLocks			"RELEASE_ALL_LOCKS"
 	uuid				"UUID"
 	uuidShort			"UUID_SHORT"
+	underscoreCS			"UNDERSCORE_CHARSET"
 
 	/* the following tokens belong to UnReservedKeyword*/
 	action		"ACTION"
@@ -534,7 +535,6 @@ import (
 	placeholder	"PLACEHOLDER"
 	rsh		">>"
 	sysVar		"SYS_VAR"
-	underscoreCS	"UNDERSCORE_CHARSET"
 	userVar		"USER_VAR"
 
 %type   <item>
@@ -2461,7 +2461,7 @@ Literal:
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/charset-literal.html
 		tp := types.NewFieldType(mysql.TypeString)
-		tp.Charset = $1.(string)
+		tp.Charset = $1
 		co, err := charset.GetDefaultCollation(tp.Charset)
 		if err != nil {
 			yylex.Errorf("Get collation error for charset: %s", tp.Charset)

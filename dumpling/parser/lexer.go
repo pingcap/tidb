@@ -222,7 +222,21 @@ func startWithXx(s *Scanner) (tok int, pos Pos, lit string) {
 	return
 }
 
-func startWithb(s *Scanner) (tok int, pos Pos, lit string) {
+func startWithNn(s *Scanner) (tok int, pos Pos, lit string) {
+	tok, pos, lit = scanIdentifier(s)
+	// The National Character Set, N'some text' or n'some test'.
+	// See https://dev.mysql.com/doc/refman/5.7/en/string-literals.html
+	// and https://dev.mysql.com/doc/refman/5.7/en/charset-national.html
+	if lit == "N" || lit == "n" {
+		if s.r.peek() == '\'' {
+			tok = underscoreCS
+			lit = "utf8"
+		}
+	}
+	return
+}
+
+func startWithBb(s *Scanner) (tok int, pos Pos, lit string) {
 	pos = s.r.pos()
 	s.r.inc()
 	if s.r.peek() == '\'' {
