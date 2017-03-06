@@ -1,5 +1,5 @@
-hash: 56cc4ff50dad17df74f930121017c4d3549339b022c7561575f095425c733d19
-updated: 2017-02-21T19:45:51.825820804+08:00
+hash: 2b6131873ef14f0052a206e29b1c08b4aa355768377ebc1ecf13721058abbbc2
+updated: 2017-03-06T12:58:33.785791672+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -54,6 +54,10 @@ imports:
   - proto
 - name: github.com/golang/snappy
   version: 723cc1e459b8eea2dea4583200fd60757d40097a
+- name: github.com/gorilla/context
+  version: 08b5f424b9271eedf6f9f0ce86cb9396ed337a42
+- name: github.com/gorilla/mux
+  version: 599cba5e7b6137d46ddf58fb1765f5d928e69604
 - name: github.com/grpc-ecosystem/grpc-gateway
   version: c8ec92d0481dd77d9b8c1808eb6476d190aa039a
   subpackages:

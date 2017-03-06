@@ -162,3 +162,5 @@ import:
   - rate
 - package: golang.org/x/sys
   version: 8d1157a435470616f975ff9bb013bea8d0962067
+- package: github.com/gorilla/mux
+  version: 599cba5e7b6137d46ddf58fb1765f5d928e69604
