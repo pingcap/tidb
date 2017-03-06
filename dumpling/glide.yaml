@@ -84,7 +84,7 @@ import:
   - encoding/unicode
   - transform
 - package: google.golang.org/grpc
-  version: 02fca896ff5f50c6bbbee0860345a49344b37a03
+  version: v1.0.4
   subpackages:
   - codes
   - credentials
@@ -143,7 +143,7 @@ import:
 - package: github.com/pingcap/pd
   version: 3d5bb2b3a056925b656d29b88a5b216f6f309368
 - package: github.com/pingcap/tipb
-  version: 979fbca78d449e3c52de37b6fdd1dfbf0977b462
+  version: 05a4d27c130a965745196e4da8ca395a15d7928f
   subpackages:
   - go-binlog
   - go-tipb
