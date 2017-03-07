@@ -14,16 +14,19 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
@@ -31,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	goctx "golang.org/x/net/context"
-	"strconv"
 )
 
 // RegionsHTTPRequest is for regions http request.
@@ -144,19 +146,19 @@ func getTableIndexKeyRange(tableID, indexID int64) (startKey, endKey []byte) {
 // IndexInfo include a index of table,include tableID,
 // 	indexID,and whether is a record key.
 type IndexInfo struct {
-	TableID     int64
-	IndexID     int64
-	IsRecordKey bool
+	indexID     int64
+	isRecordKey bool
+	tableID     int64
 }
 
-// NewIndexInfoFromKey init a IndexInfo with a key.
+// NewIndexInfoFromKey creates a IndexInfo with key,returns err when key is illegal.
 func NewIndexInfoFromKey(key []byte) (info *IndexInfo, err error) {
 	_, key, err = codec.DecodeBytes(key)
 	if err != nil {
 		return
 	}
 	info = &IndexInfo{}
-	info.TableID, info.IndexID, info.IsRecordKey, err = tablecodec.DecodeKeyHead(key)
+	info.tableID, info.indexID, info.isRecordKey, err = tablecodec.DecodeKeyHead(key)
 	return
 }
 
@@ -165,22 +167,109 @@ type RegionIndexRange struct {
 	first  *IndexInfo
 	last   *IndexInfo
 	region *tikv.KeyLocation
+	is     infoschema.InfoSchema
 }
 
 // NewRegionIndexRange init a RegionIndexRange with region info.
-func NewRegionIndexRange(region *tikv.KeyLocation) (*RegionIndexRange, error) {
-	startIndex, err := NewIndexInfoFromKey(region.StartKey)
-	if err != nil {
-		return nil, err
+func NewRegionIndexRange(region *tikv.KeyLocation) *RegionIndexRange {
+	idxRange := &RegionIndexRange{
+		region: region,
+		first:  nil,
+		last:   nil,
 	}
-	endIndex, err := NewIndexInfoFromKey(region.EndKey)
-	if err != nil {
-		return nil, err
+	idxRange.initFirstIndexRange()
+	idxRange.initLastIndexRange()
+	return idxRange
+}
+
+func (ir *RegionIndexRange) initFirstIndexRange() {
+	// try to parse from start_key
+	first, err := NewIndexInfoFromKey(ir.region.StartKey)
+	if err == nil {
+		ir.first = first
+		return
 	}
-	return &RegionIndexRange{
-		first: startIndex,
-		last:  endIndex,
-	}, nil
+	// if start_key is not a legal key,try to binary search first table
+	ir.first = &IndexInfo{
+		tableID:     int64(math.MaxInt64),
+		indexID:     int64(math.MaxInt64),
+		isRecordKey: false,
+	}
+	left, right := int64(0), int64(math.MaxInt64)
+	// init table
+	for left < right {
+		mid := left>>1 + right>>1
+		prefix := codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(mid))
+		if ir.region.Contains(prefix) ||
+			bytes.Compare(ir.region.EndKey, prefix) < 0 {
+			right = mid - 1
+		} else {
+			left = mid
+		}
+	}
+	tableID := right
+	prefix := codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(tableID))
+	if !ir.region.Contains(prefix) {
+		tableID++
+		prefix = codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(tableID))
+	}
+
+	if !ir.region.Contains(prefix) {
+		ir.first.tableID = int64(math.MaxInt64)
+		return // no table in current region
+	}
+	ir.first.tableID = tableID
+	// we won't binary search for index id
+	// since if a region start with key which is not index,
+	// means the first table's front part was in the region.
+	ir.first.indexID = int64(math.MinInt64)
+	ir.first.isRecordKey = false
+}
+
+func (ir *RegionIndexRange) initLastIndexRange() {
+	// try to parse from end_key
+	last, err := NewIndexInfoFromKey(ir.region.EndKey)
+	if err == nil {
+		ir.last = last
+		return
+	}
+	// if end_key is not a legal index,binary search end index
+	ir.last = &IndexInfo{
+		tableID:     int64(math.MinInt64),
+		indexID:     int64(math.MinInt64),
+		isRecordKey: false,
+	}
+
+	left, right := int64(0), int64(math.MaxInt64)
+	// init table
+	for left < right {
+		mid := left>>1 + right>>1
+		prefix := codec.EncodeBytes(nil, tablecodec.EncodeRowKeyWithHandle(mid, int64(math.MaxInt64)))
+		if ir.region.Contains(prefix) || bytes.Compare(ir.region.StartKey, prefix) > 0 {
+			left = mid + 1
+		} else {
+			right = mid
+		}
+	}
+	tableID := left
+	prefix := codec.EncodeBytes(nil, tablecodec.EncodeRowKeyWithHandle(tableID, int64(math.MaxInt64)))
+	if !ir.region.Contains(prefix) {
+		tableID--
+		prefix = tablecodec.EncodeRowKeyWithHandle(tableID, int64(math.MaxInt64))
+	}
+
+	if !ir.region.Contains(prefix) { // no table found
+		ir.last.tableID = int64(math.MinInt64)
+		return
+	}
+
+	ir.last.tableID = tableID
+	// we won't binary search for last index id
+	// since if a region end with key which is not index,
+	// means the last table's last part was already in the region.
+	ir.last.indexID = int64(math.MaxInt64)
+	ir.last.isRecordKey = true
+	return
 }
 
 // getFirstIdxIdRange return the first table's index range.
@@ -190,16 +279,16 @@ func NewRegionIndexRange(region *tikv.KeyLocation) (*RegionIndexRange, error) {
 func (ir *RegionIndexRange) getFirstIdxIDRange() (start, end int64) {
 	start = int64(math.MinInt64)
 	end = int64(math.MaxInt64)
-	if ir.first.IsRecordKey {
+	if ir.first.isRecordKey {
 		start = end // need record key only,
 		return
 	}
 
-	start = ir.first.IndexID
-	if ir.first.TableID != ir.last.TableID || ir.last.IsRecordKey {
+	start = ir.first.indexID
+	if ir.first.tableID != ir.last.tableID || ir.last.isRecordKey {
 		return // [start,~)
 	}
-	end = ir.last.IndexID // [start,end]
+	end = ir.last.indexID // [start,end]
 	return
 }
 
@@ -209,10 +298,10 @@ func (ir *RegionIndexRange) getFirstIdxIDRange() (start, end int64) {
 func (ir *RegionIndexRange) getLastInxIDRange() (start, end int64) {
 	start = int64(math.MinInt64)
 	end = int64(math.MaxInt64)
-	if ir.last.IsRecordKey {
+	if ir.last.isRecordKey {
 		return
 	}
-	end = ir.last.IndexID
+	end = ir.last.indexID
 	return
 }
 
@@ -232,11 +321,11 @@ func (ir *RegionIndexRange) getIndexRangeForTable(tableID int64) (start, end int
 }
 
 func (ir RegionIndexRange) firstTableID() int64 {
-	return ir.first.TableID
+	return ir.first.tableID
 }
 
 func (ir RegionIndexRange) lastTableID() int64 {
-	return ir.last.TableID
+	return ir.last.tableID
 }
 
 // IndexRegions is the region info for one index.
@@ -306,10 +395,7 @@ func (s *Server) getRegionWithRegionID(regionID uint64) (*RegionItem, error) {
 		return nil, err
 	}
 
-	indexRange, err := NewRegionIndexRange(region)
-	if err != nil {
-		return nil, err
-	}
+	indexRange := NewRegionIndexRange(region)
 
 	regionItem := &RegionItem{
 		RegionID: regionID,
@@ -317,6 +403,7 @@ func (s *Server) getRegionWithRegionID(regionID uint64) (*RegionItem, error) {
 		EndKey:   region.EndKey,
 		Indices:  []IndexItem{},
 	}
+
 	for tableID := indexRange.firstTableID(); tableID < indexRange.lastTableID(); tableID++ {
 		curTable, exist := dom.InfoSchema().TableByID(tableID)
 		if exist {
