@@ -55,6 +55,12 @@ type regionRequest struct {
 	pbResp *pdpb.GetRegionResponse
 }
 
+type regionByIDRequest struct {
+	pbReq  *pdpb.GetRegionByIDRequest
+	done   chan error
+	pbResp *pdpb.GetRegionResponse
+}
+
 type clusterConfigRequest struct {
 	pbReq  *pdpb.GetClusterConfigRequest
 	done   chan error
@@ -173,6 +179,17 @@ func (w *rpcWorker) handleRequests(requests []interface{}, conn *bufio.ReadWrite
 				r.pbResp = regionResp
 				r.done <- nil
 			}
+		case *regionByIDRequest:
+			regionResp, err := w.getRegionByIDFromRemote(conn, r.pbReq)
+			if err != nil {
+				ok = false
+				log.Error(err)
+				r.done <- err
+			} else {
+				r.pbResp = regionResp
+				r.done <- nil
+			}
+
 		case *clusterConfigRequest:
 			clusterConfigResp, err := w.getClusterConfigFromRemote(conn, r.pbReq)
 			if err != nil {
@@ -324,6 +341,25 @@ func (w *rpcWorker) getRegionFromRemote(conn *bufio.ReadWriter, regionReq *pdpb.
 		return nil, errors.New("[pd] GetRegion field in rpc response not set")
 	}
 	return rsp.GetGetRegion(), nil
+}
+
+func (w *rpcWorker) getRegionByIDFromRemote(conn *bufio.ReadWriter, regionReq *pdpb.GetRegionByIDRequest) (*pdpb.GetRegionResponse, error) {
+	req := &pdpb.Request{
+		Header: &pdpb.RequestHeader{
+			Uuid:      uuid.NewV4().Bytes(),
+			ClusterId: w.clusterID,
+		},
+		CmdType:       pdpb.CommandType_GetRegionByID,
+		GetRegionById: regionReq,
+	}
+	rsp, err := w.callRPC(conn, req)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if rsp.GetGetRegionById() == nil {
+		return nil, errors.New("[pd] GetRegion field in rpc response not set")
+	}
+	return rsp.GetGetRegionById(), nil
 }
 
 func (w *rpcWorker) getClusterConfigFromRemote(conn *bufio.ReadWriter, clusterConfigReq *pdpb.GetClusterConfigRequest) (*pdpb.GetClusterConfigResponse, error) {
