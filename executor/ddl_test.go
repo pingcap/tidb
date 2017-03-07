@@ -153,6 +153,9 @@ func (s *testSuite) TestAlterTableAddColumn(c *C) {
 	time.Sleep(1 * time.Second)
 	rowStr := fmt.Sprintf("%v", now)
 	tk.MustQuery("select c2 from alter_test").Check(testkit.Rows(rowStr))
+	tk.MustExec("alter table alter_test add column c3 varchar(50) default 'CURRENT_TIMESTAMP'")
+	rowStr = fmt.Sprintf("%v", []byte("CURRENT_TIMESTAMP"))
+	tk.MustQuery("select c3 from alter_test").Check(testkit.Rows(rowStr))
 }
 
 func (s *testSuite) TestAddNotNullColumnNoDefault(c *C) {

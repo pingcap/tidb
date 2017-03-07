@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -275,7 +274,6 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 				if err != nil {
 					return nil, nil, ErrColumnBadNull.Gen("invalid default value - %s", err)
 				}
-				log.Warnf("default value %v, %s", value, value)
 				col.DefaultValue = value
 				hasDefaultValue = true
 				removeOnUpdateNowFlag(col)
@@ -804,7 +802,8 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 		col.DefaultValue = table.GetZeroValue(col.ToInfo())
 	}
 	col.OriginDefaultValue = col.DefaultValue
-	if col.OriginDefaultValue == expression.CurrentTimestamp {
+	if col.OriginDefaultValue == expression.CurrentTimestamp &&
+		(col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime) {
 		col.OriginDefaultValue = time.Now().Format(types.TimeFormat)
 	}
 
