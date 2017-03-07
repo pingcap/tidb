@@ -326,6 +326,14 @@ func (c *RegionCache) OnRequestFail(ctx *RPCContext) {
 	c.storeMu.Lock()
 	delete(c.storeMu.stores, storeID)
 	c.storeMu.Unlock()
+
+	c.mu.Lock()
+	for id, r := range c.mu.regions {
+		if r.peer.GetStoreId() == storeID {
+			c.dropRegionFromCache(id)
+		}
+	}
+	c.mu.Unlock()
 }
 
 // OnRegionStale removes the old region and inserts new regions into the cache.
