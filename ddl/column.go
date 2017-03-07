@@ -267,6 +267,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 	return errors.Trace(err)
 }
 
+// TODO: Use it when updating the column type or remove it.
 // How to backfill column data in reorganization state?
 //  1. Generate a snapshot with special version.
 //  2. Traverse the snapshot, get every row in the table.
