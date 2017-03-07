@@ -20,6 +20,7 @@ package ddl
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -798,6 +799,14 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if col.DefaultValue == nil && mysql.HasNotNullFlag(col.Flag) {
+		col.DefaultValue = table.GetZeroValue(col.ToInfo())
+	}
+	col.OriginDefaultValue = col.DefaultValue
+	if col.OriginDefaultValue == expression.CurrentTimestamp &&
+		(col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime) {
+		col.OriginDefaultValue = time.Now().Format(types.TimeFormat)
+	}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -984,10 +993,11 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 	}
 
 	newCol := &table.Column{
-		ID:        col.ID,
-		Offset:    col.Offset,
-		State:     col.State,
-		FieldType: *spec.NewColumn.Tp,
+		ID:                 col.ID,
+		Offset:             col.Offset,
+		State:              col.State,
+		OriginDefaultValue: col.OriginDefaultValue,
+		FieldType:          *spec.NewColumn.Tp,
 	}
 	setCharsetCollationFlenDecimal(&newCol.FieldType)
 	if !modifiable(&col.FieldType, &newCol.FieldType) {
