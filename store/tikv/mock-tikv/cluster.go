@@ -156,6 +156,19 @@ func (c *Cluster) GetRegionByKey(key []byte) (*metapb.Region, *metapb.Peer) {
 	return nil, nil
 }
 
+// GetRegionByID returns the Region and its leader whose ID is regionID.
+func (c *Cluster) GetRegionByID(regionID uint64) (*metapb.Region, *metapb.Peer) {
+	c.RLock()
+	defer c.RUnlock()
+
+	for _, r := range c.regions {
+		if r.Meta.GetId() == regionID {
+			return proto.Clone(r.Meta).(*metapb.Region), proto.Clone(r.leaderPeer()).(*metapb.Peer)
+		}
+	}
+	return nil, nil
+}
+
 // Bootstrap creates the first Region. The Stores should be in the Cluster before
 // bootstrap.
 func (c *Cluster) Bootstrap(regionID uint64, storeIDs, peerIDs []uint64, leaderStoreID uint64) {

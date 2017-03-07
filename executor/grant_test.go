@@ -188,6 +188,17 @@ func (s *testSuite) TestIssue2456(c *C) {
 	tk.MustExec("GRANT ALL PRIVILEGES ON `dddb_%`.`te%` to 'dduser'@'%';")
 }
 
+func (s *testSuite) TestCreateUserWhenGrant(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("DROP USER IF EXISTS 'test'@'%'")
+	tk.MustExec("GRANT ALL PRIVILEGES ON *.* to 'test'@'%' IDENTIFIED BY 'xxx'")
+	// Make sure user is created automaticly when grant to a non-exists one.
+	rows := tk.MustQuery("SELECT user FROM mysql.user WHERE user='test' and host='%'").Rows()
+	c.Assert(rows, HasLen, 1)
+	c.Check(fmt.Sprintf("%v", rows[0]), Equals, fmt.Sprintf("[%v]", []byte("test")))
+}
+
 func (s *testSuite) TestIssue2654(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)

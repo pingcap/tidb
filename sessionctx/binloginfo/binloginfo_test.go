@@ -57,8 +57,8 @@ func (p *mockBinlogPump) WriteBinlog(ctx goctx.Context, req *binlog.WriteBinlogR
 }
 
 // PullBinlogs implements PumpServer interface.
-func (p *mockBinlogPump) PullBinlogs(ctx goctx.Context, req *binlog.PullBinlogReq) (*binlog.PullBinlogResp, error) {
-	return &binlog.PullBinlogResp{}, nil
+func (p *mockBinlogPump) PullBinlogs(req *binlog.PullBinlogReq, srv binlog.Pump_PullBinlogsServer) error {
+	return nil
 }
 
 var _ = Suite(&testBinlogSuite{})
