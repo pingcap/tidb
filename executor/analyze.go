@@ -125,6 +125,8 @@ func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]
 	if err != nil {
 		return errors.Trace(err)
 	}
+	e.tblInfo.StatisticVer++
+	err = m.SetTableStatsVer(e.tblInfo.ID, e.tblInfo.StatisticVer)
 	return nil
 }
 
