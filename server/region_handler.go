@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
@@ -198,6 +199,7 @@ func (ir *RegionIndexRange) initFirstIndexRange() {
 	left, right := int64(0), int64(math.MaxInt64)
 	// init table
 	for left < right {
+		log.Debugf("left:%v,right:%v\n", left, right)
 		mid := left>>1 + right>>1
 		prefix := codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(mid))
 		if ir.region.Contains(prefix) ||
@@ -243,6 +245,7 @@ func (ir *RegionIndexRange) initLastIndexRange() {
 	left, right := int64(0), int64(math.MaxInt64)
 	// init table
 	for left < right {
+		log.Debugf("left:%v,right:%v\n", left, right)
 		mid := left>>1 + right>>1
 		prefix := codec.EncodeBytes(nil, tablecodec.EncodeRowKeyWithHandle(mid, int64(math.MaxInt64)))
 		if ir.region.Contains(prefix) || bytes.Compare(ir.region.StartKey, prefix) > 0 {
@@ -404,14 +407,27 @@ func (s *Server) getRegionWithRegionID(regionID uint64) (*RegionItem, error) {
 		Indices:  []IndexItem{},
 	}
 
-	for tableID := indexRange.firstTableID(); tableID < indexRange.lastTableID(); tableID++ {
-		curTable, exist := dom.InfoSchema().TableByID(tableID)
-		if exist {
-			start, end := indexRange.getLastInxIDRange()
-			regionItem.addTableIndicesInRange(curTable, start, end)
+	// table's number is smaller than 1000, iterate table ID in index range.
+	if indexRange.lastTableID()-indexRange.firstTableID() <= 1000 {
+		for tableID := indexRange.firstTableID(); tableID <= indexRange.lastTableID(); tableID++ {
+			curTable, exist := dom.InfoSchema().TableByID(tableID)
+			if exist {
+				start, end := indexRange.getLastInxIDRange()
+				regionItem.addTableIndicesInRange(curTable, start, end)
+			}
 		}
+		return regionItem, nil
 	}
 
+	for _, db := range dom.InfoSchema().AllSchemaNames() {
+		for _, table := range dom.InfoSchema().SchemaTables(model.NewCIStr(db)) {
+			curTable, exist := dom.InfoSchema().TableByID(table.Meta().ID)
+			if exist {
+				start, end := indexRange.getLastInxIDRange()
+				regionItem.addTableIndicesInRange(curTable, start, end)
+			}
+		}
+	}
 	return regionItem, nil
 
 }
