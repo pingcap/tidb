@@ -42,6 +42,7 @@ type Domain struct {
 	ddl             ddl.DDL
 	m               sync.Mutex
 	SchemaValidator SchemaValidator
+	sysSessionPool  *sync.Pool
 	exit            chan struct{}
 
 	MockReloadFailed MockFailure // It mocks reload failed.
@@ -347,6 +348,7 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 		store:           store,
 		SchemaValidator: newSchemaValidator(lease),
 		exit:            make(chan struct{}),
+		sysSessionPool:  &sync.Pool{},
 	}
 
 	d.infoHandle, err = infoschema.NewHandle(d.store)
@@ -366,6 +368,11 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 	}
 
 	return d, nil
+}
+
+// SysSessionPool returns the system session pool.
+func (do *Domain) SysSessionPool() *sync.Pool {
+	return do.sysSessionPool
 }
 
 // LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it
