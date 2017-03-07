@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2017 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
@@ -199,7 +198,6 @@ func (ir *RegionIndexRange) initFirstIndexRange() {
 	left, right := int64(0), int64(math.MaxInt64)
 	// init table
 	for left < right {
-		log.Debugf("left:%v,right:%v\n", left, right)
 		mid := left>>1 + right>>1
 		prefix := codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(mid))
 		if ir.region.Contains(prefix) ||
@@ -245,7 +243,6 @@ func (ir *RegionIndexRange) initLastIndexRange() {
 	left, right := int64(0), int64(math.MaxInt64)
 	// init table
 	for left < right {
-		log.Debugf("left:%v,right:%v\n", left, right)
 		mid := left>>1 + right>>1
 		prefix := codec.EncodeBytes(nil, tablecodec.EncodeRowKeyWithHandle(mid, int64(math.MaxInt64)))
 		if ir.region.Contains(prefix) || bytes.Compare(ir.region.StartKey, prefix) > 0 {
