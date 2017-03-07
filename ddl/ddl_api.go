@@ -283,6 +283,7 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 					return nil, nil, ErrInvalidOnUpdate.Gen("invalid ON UPDATE for - %s", col.Name)
 				}
 
+				col.Flag |= mysql.OnUpdateNowFlag
 				setOnUpdateNow = true
 			case ast.ColumnOptionComment:
 				err := setColumnComment(ctx, col, v)
