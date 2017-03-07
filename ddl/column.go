@@ -161,21 +161,6 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 			return errors.Trace(err)
 		}
 
-		tbl, err := d.getTable(schemaID, tblInfo)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if columnInfo.DefaultValue != nil || mysql.HasNotNullFlag(columnInfo.Flag) {
-			err = d.runReorgJob(job, func() error {
-				return d.addTableColumn(tbl, columnInfo, reorgInfo, job)
-			})
-			if err != nil {
-				// If the timeout happens, we should return.
-				// Then check for the owner and re-wait job to finish.
-				return errors.Trace(filterError(err, errWaitReorgTimeout))
-			}
-		}
-
 		// Adjust column offset.
 		d.adjustColumnOffset(tblInfo.Columns, tblInfo.Indices, offset, true)
 		columnInfo.State = model.StatePublic
@@ -282,6 +267,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 	return errors.Trace(err)
 }
 
+// TODO: Use it when updating the column type or remove it.
 // How to backfill column data in reorganization state?
 //  1. Generate a snapshot with special version.
 //  2. Traverse the snapshot, get every row in the table.
