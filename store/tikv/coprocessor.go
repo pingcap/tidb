@@ -308,7 +308,7 @@ type copIterator struct {
 	errChan  chan error
 }
 
-const minLogCopTaskTime = 50 * time.Millisecond
+const minLogCopTaskTime = time.Second
 
 // Pick the next new copTask and send request to tikv-server.
 func (it *copIterator) work(ctx goctx.Context) {
