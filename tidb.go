@@ -123,7 +123,9 @@ func SetCommitRetryLimit(limit int) {
 func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
 	log.Debug("compiling", src)
 	charset, collation := ctx.GetSessionVars().GetCharsetInfo()
-	stmts, err := parser.New().Parse(src, charset, collation)
+	p := parser.New()
+	p.SetSQLMode(ctx.GetSessionVars().SQLMode)
+	stmts, err := p.Parse(src, charset, collation)
 	if err != nil {
 		log.Warnf("compiling %s, error: %v", src, err)
 		return nil, errors.Trace(err)
@@ -150,6 +152,7 @@ func resetStmtCtx(ctx context.Context, s ast.StmtNode) {
 		sc.IgnoreTruncate = true
 		if show, ok := s.(*ast.ShowStmt); ok {
 			if show.Tp == ast.ShowWarnings {
+				sc.InShowWarning = true
 				sc.SetWarnings(sessVars.StmtCtx.GetWarnings())
 			}
 		}
@@ -174,7 +177,7 @@ func runStmt(ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
 	se := ctx.(*session)
 	rs, err = s.Exec(ctx)
 	// All the history should be added here.
-	getHistory(ctx).add(0, s)
+	getHistory(ctx).add(0, s, se.sessionVars.StmtCtx)
 	if !se.sessionVars.InTxn() {
 		if err != nil {
 			log.Info("RollbackTxn for ddl/autocommit error.")

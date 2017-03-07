@@ -125,10 +125,10 @@ func init() {
 	initTokenFunc("-", startWithDash)
 	initTokenFunc("#", startWithSharp)
 	initTokenFunc("Xx", startWithXx)
-	initTokenFunc("x", startWithXx)
-	initTokenFunc("b", startWithb)
+	initTokenFunc("Nn", startWithNn)
+	initTokenFunc("Bb", startWithBb)
 	initTokenFunc(".", startWithDot)
-	initTokenFunc("_$ABCDEFGHIJKLMNOPQRSTUVWYZacdefghijklmnopqrstuvwyz", scanIdentifier)
+	initTokenFunc("_$ACDEFGHIJKLMOPQRSTUVWYZacdefghijklmopqrstuvwyz", scanIdentifier)
 	initTokenFunc("`", scanQuotedIdent)
 	initTokenFunc("0123456789", startWithNumber)
 	initTokenFunc("'\"", startString)
@@ -377,6 +377,7 @@ var tokenMap = map[string]int{
 	"QUARTER":                    quarter,
 	"QUICK":                      quick,
 	"RADIANS":                    radians,
+	"QUERY":                      query,
 	"QUOTE":                      quote,
 	"RANGE":                      rangeKwd,
 	"RAND":                       rand,
@@ -429,6 +430,7 @@ var tokenMap = map[string]int{
 	"SUBSTRING_INDEX":            substringIndex,
 	"SUM":                        sum,
 	"SYSDATE":                    sysDate,
+	"TIDB":                       tidb,
 	"TABLE":                      tableKwd,
 	"TABLES":                     tables,
 	"TAN":                        tan,
@@ -589,6 +591,7 @@ var tokenMap = map[string]int{
 	"RELEASE_ALL_LOCKS":          releaseAllLocks,
 	"UUID":                       uuid,
 	"UUID_SHORT":                 uuidShort,
+	"KILL":                       kill,
 }
 
 func isTokenIdentifier(s string, buf *bytes.Buffer) int {
@@ -618,6 +621,6 @@ func handleIdent(lval *yySymType) int {
 	if err != nil {
 		return identifier
 	}
-	lval.item = cs
+	lval.ident = cs
 	return underscoreCS
 }

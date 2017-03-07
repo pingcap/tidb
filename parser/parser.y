@@ -181,7 +181,7 @@ import (
 	repeat			"REPEAT"
 	replace			"REPLACE"
 	restrict		"RESTRICT"
-	revoke		"REVOKE"
+	revoke			"REVOKE"
 	right			"RIGHT"
 	rlike			"RLIKE"
 	schema			"SCHEMA"
@@ -278,6 +278,7 @@ import (
 	insertFunc			"INSERT_FUNC"
 	instr				"INSTR"
 	isNull				"ISNULL"
+	kill				"KILL"
 	lastInsertID			"LAST_INSERT_ID"
 	lcase				"LCASE"
 	length				"LENGTH"
@@ -306,6 +307,7 @@ import (
 	pi				"PI"
 	pow				"POW"
 	power				"POWER"
+	query				"QUERY"
 	rand				"RAND"
 	radians				"RADIANS"
 	rowCount			"ROW_COUNT"
@@ -395,6 +397,7 @@ import (
 	releaseAllLocks			"RELEASE_ALL_LOCKS"
 	uuid				"UUID"
 	uuidShort			"UUID_SHORT"
+	underscoreCS			"UNDERSCORE_CHARSET"
 
 	/* the following tokens belong to UnReservedKeyword*/
 	action		"ACTION"
@@ -489,6 +492,7 @@ import (
 	tables		"TABLES"
 	textType	"TEXT"
 	than		"THAN"
+	tidb		"TIDB"
 	timeType	"TIME"
 	timestampType	"TIMESTAMP"
 	timestampDiff	"TIMESTAMPDIFF"
@@ -531,7 +535,6 @@ import (
 	placeholder	"PLACEHOLDER"
 	rsh		">>"
 	sysVar		"SYS_VAR"
-	underscoreCS	"UNDERSCORE_CHARSET"
 	userVar		"USER_VAR"
 
 %type   <item>
@@ -638,6 +641,8 @@ import (
 	InsertValues		"Rest part of INSERT/REPLACE INTO statement"
 	JoinTable 		"join table"
 	JoinType		"join type"
+	KillStmt		"Kill statement"
+	KillOrKillTiDB		"Kill or Kill TiDB"
 	LikeEscapeOpt 		"like escape option"
 	LimitClause		"LIMIT clause"
 	LimitOption		"Limit option could be integer or parameter marker."
@@ -651,6 +656,7 @@ import (
 	NotOpt			"optional NOT"
 	NumLiteral		"Num/Int/Float/Decimal Literal"
 	NoWriteToBinLogAliasOpt "NO_WRITE_TO_BINLOG alias LOCAL or empty"
+	NowSymOptionFraction	"NowSym with optional fraction part"
 	ObjectType		"Grant statement object type"
 	OnDuplicateKeyUpdate	"ON DUPLICATE KEY UPDATE value list"
 	Operand			"operand"
@@ -782,7 +788,8 @@ import (
 	KeyOrIndex		"{KEY|INDEX}"
 	ColumnKeywordOpt	"Column keyword or empty"
 	PrimaryOpt		"Optional primary keyword"
-	NowSym			"CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP/NOW"
+	NowSym			"CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP"
+	NowSymFunc		"CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP/NOW"
 	DefaultKwdOpt		"optional DEFAULT keyword"
 	DatabaseSym		"DATABASE or SCHEMA"
 	ExplainSym		"EXPLAIN or DESCRIBE or DESC"
@@ -1204,7 +1211,7 @@ ColumnOption:
 	{
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionDefaultValue, Expr: $2.(ast.ExprNode)}
 	}
-|	"ON" "UPDATE" NowSym
+|	"ON" "UPDATE" NowSymOptionFraction
 	{
 		nowFunc := &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")}
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionOnUpdate, Expr: nowFunc}
@@ -1436,23 +1443,31 @@ ReferOpt:
  *      https://github.com/mysql/mysql-server/blob/5.7/sql/sql_yacc.yy#L6832
  */
 DefaultValueExpr:
+	NowSymOptionFraction | SignedLiteral
+
+NowSymOptionFraction:
 	NowSym
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")}
 	}
-|	NowSym '(' ')'
+|	NowSymFunc '(' ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")}
 	}
-|	NowSym '(' NUM ')'
+|	NowSymFunc '(' NUM ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")}
 	}
-|	SignedLiteral
 
-// TODO: Process other three keywords
+/*
+* See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_localtime
+* TODO: Process other three keywords
+*/
+NowSymFunc:
+	"CURRENT_TIMESTAMP" | "LOCALTIME" | "LOCALTIMESTAMP" | "NOW"
 NowSym:
-"CURRENT_TIMESTAMP" | "LOCALTIME" | "LOCALTIMESTAMP" | "NOW"
+	"CURRENT_TIMESTAMP" | "LOCALTIME" | "LOCALTIMESTAMP"
+
 
 SignedLiteral:
 	Literal
@@ -1812,12 +1827,7 @@ ExplainStmt:
 LengthNum:
 	NUM
 	{
-		switch v := $1.(type) {
-		case int64:
-			$$ = uint64(v)
-		case uint64:
-			$$ = uint64(v)
-		}
+		$$ = getUint64FromNUM($1)
 	}
 
 NUM:
@@ -2230,8 +2240,8 @@ UnReservedKeyword:
  "ACTION" | "ASCII" | "AUTO_INCREMENT" | "AFTER" | "AT" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "CHARSET"
 | "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED" | "CONSISTENT" | "DATA" | "DATE" | "DATETIME" | "DEALLOCATE" | "DO"
 | "DYNAMIC"| "END" | "ENGINE" | "ENGINES" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FORMAT" | "FULL" |"GLOBAL"
-| "HASH" | "LESS" | "LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT" 
-| "ROLLBACK" | "SESSION" | "SIGNED" | "SNAPSHOT" | "START" | "STATUS" | "TABLES" | "TEXT" | "THAN" | "TIME" | "TIMESTAMP" 
+| "HASH" | "LESS" | "LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT"
+| "ROLLBACK" | "SESSION" | "SIGNED" | "SNAPSHOT" | "START" | "STATUS" | "TABLES" | "TEXT" | "THAN" | "TIDB" | "TIME" | "TIMESTAMP"
 | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" | "VALUE" | "WARNINGS" | "YEAR" | "MODE"  | "WEEK"  | "ANY" | "SOME" | "USER" | "IDENTIFIED"
 | "COLLATION" | "COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS"
 | "MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION"
@@ -2249,7 +2259,7 @@ ReservedKeyword:
 | "EXISTS" | "EXPLAIN" | "FALSE" | "FLOAT" | "FOR" | "FORCE" | "FOREIGN" | "FROM"
 | "FULLTEXT" | "GRANT" | "GROUP" | "HAVING" | "HOUR_MICROSECOND" | "HOUR_MINUTE"
 | "HOUR_SECOND" | "IF" | "IGNORE" | "IN" | "INDEX" | "INFILE" | "INNER" | "INSERT" | "INT" | "INTO" | "INTEGER"
-| "INTERVAL" | "IS" | "JOIN" | "KEY" | "KEYS" | "LEADING" | "LEFT" | "LIKE" | "LIMIT" | "LINES" | "LOAD"
+| "INTERVAL" | "IS" | "JOIN" | "KEY" | "KEYS" | "KILL" | "LEADING" | "LEFT" | "LIKE" | "LIMIT" | "LINES" | "LOAD"
 | "LOCALTIME" | "LOCALTIMESTAMP" | "LOCK" | "LONGBLOB" | "LONGTEXT" | "MAXVALUE" | "MEDIUMBLOB" | "MEDIUMINT" | "MEDIUMTEXT"
 | "MINUTE_MICROSECOND" | "MINUTE_SECOND" | "MOD" | "NOT" | "NO_WRITE_TO_BINLOG" | "NULL" | "NUMERIC"
 | "ON" | "OPTION" | "OR" | "ORDER" | "OUTER" | "PARTITION" | "PRECISION" | "PRIMARY" | "PROCEDURE" | "RANGE" | "READ" 
@@ -2268,7 +2278,7 @@ NotKeywordToken:
 	"ABS" | "ACOS" | "ADDTIME" | "ADDDATE" | "ADMIN" | "ASIN" | "ATAN" | "ATAN2" | "BENCHMARK" | "BIN" | "COALESCE" | "COERCIBILITY" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CONVERT_TZ" | "CUR_TIME"| "COS" | "COT" | "COUNT" | "DAY"
 |	"DATEDIFF" | "DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "DEGREES" | "ELT" | "EXP" | "EXPORT_SET" | "FROM_DAYS" | "FROM_BASE64" | "FIND_IN_SET" | "FOUND_ROWS"
 |	"GROUP_CONCAT"| "GREATEST" | "LEAST" | "HOUR" | "HEX" | "UNHEX" | "IFNULL" | "INSTR" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOAD_FILE" | "LOCATE" | "LOWER" | "LPAD" | "LTRIM"
-|	"MAKE_SET" | "MAX" | "MAKEDATE" | "MAKETIME" | "MICROSECOND" | "MID" | "MIN" |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" |  "OCT" | "OCTET_LENGTH" | "ORD" | "POSITION" | "PERIOD_ADD" | "PERIOD_DIFF" | "POW" | "POWER" | "RAND" | "RADIANS" | "ROW_COUNT"
+|	"MAKE_SET" | "MAX" | "MAKEDATE" | "MAKETIME" | "MICROSECOND" | "MID" | "MIN" |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" |  "OCT" | "OCTET_LENGTH" | "ORD" | "POSITION" | "PERIOD_ADD" | "PERIOD_DIFF" | "PI" | "POW" | "POWER" | "RAND" | "RADIANS" | "ROW_COUNT"
 	"QUOTE" | "SEC_TO_TIME" | "SECOND" | "SIGN" | "SIN" | "SLEEP" | "SQRT" | "SQL_CALC_FOUND_ROWS" | "STR_TO_DATE" | "SUBTIME" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen |
 	"SESSION_USER" | "SUBSTRING_INDEX" | "SUM" | "SYSTEM_USER" | "TAN" | "TIME_FORMAT" | "TIME_TO_SEC" | "TIMESTAMPADD" | "TO_DAYS" | "TO_SECONDS" | "TRIM" | "RTRIM" | "UCASE" | "UTC_TIME" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
 |	"STATS_PERSISTENT" | "GET_LOCK" | "RELEASE_LOCK" | "CEIL" | "CEILING" | "FLOOR" | "FROM_UNIXTIME" | "TIMEDIFF" | "LN" | "LOG" | "LOG2" | "LOG10" | "FIELD_KWD"
@@ -2451,7 +2461,7 @@ Literal:
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/charset-literal.html
 		tp := types.NewFieldType(mysql.TypeString)
-		tp.Charset = $1.(string)
+		tp.Charset = $1
 		co, err := charset.GetDefaultCollation(tp.Charset)
 		if err != nil {
 			yylex.Errorf("Get collation error for charset: %s", tp.Charset)
@@ -5054,7 +5064,11 @@ UserVariable:
 	}
 
 Username:
-	stringLit "AT" stringLit
+	stringLit
+	{
+		$$ = $1 + "@%"
+	}
+|	stringLit "AT" stringLit
 	{
 		$$ = $1 + "@" + $3
 	}
@@ -5417,6 +5431,7 @@ Statement:
 |	FlushStmt
 |	GrantStmt
 |	InsertIntoStmt
+|	KillStmt
 |	LoadDataStmt
 |	PreparedStmt
 |	RollbackStmt
@@ -6534,5 +6549,47 @@ LockType:
 TableLockList:
 	TableLock
 |	TableLockList ',' TableLock
+
+
+/********************************************************************
+ * Kill Statement
+ * See https://dev.mysql.com/doc/refman/5.7/en/kill.html
+ *******************************************************************/
+
+KillStmt:
+	KillOrKillTiDB NUM
+	{
+		$$ = &ast.KillStmt{
+			ConnectionID: getUint64FromNUM($2),
+			TiDBExtension: $1.(bool),
+		}
+	}
+|	KillOrKillTiDB "CONNECTION" NUM
+	{
+		$$ = &ast.KillStmt{
+			ConnectionID: getUint64FromNUM($3),
+			TiDBExtension: $1.(bool),
+		}
+	}
+|	KillOrKillTiDB "QUERY" NUM
+	{
+		$$ = &ast.KillStmt{
+			ConnectionID: getUint64FromNUM($3),
+			Query: true,
+			TiDBExtension: $1.(bool),
+		}
+	}
+
+KillOrKillTiDB:
+	"KILL"
+	{
+		$$ = false
+	}
+/* KILL TIDB is a special grammar extension in TiDB, it can be used only when
+   the client connect to TiDB directly, not proxied under LVS. */
+|	"KILL" "TIDB"
+	{
+		$$ = true
+	}
 
 %%

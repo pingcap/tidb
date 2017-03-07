@@ -197,12 +197,18 @@ func (a *aggPushDownSolver) allFirstRow(aggFuncs []expression.AggregationFunctio
 }
 
 // tryToPushDownAgg tries to push down an aggregate function into a join path. If all aggFuncs are first row, we won't
-// process it temporarily. If not, We will add additional group by columns and first row functions. We make a new aggregation
-// operator.
+// process it temporarily. If not, We will add additional group by columns and first row functions. We make a new aggregation operator.
+// If the pushed aggregation is grouped by unique key, it's no need to push it down.
 func (a *aggPushDownSolver) tryToPushDownAgg(aggFuncs []expression.AggregationFunction, gbyCols []*expression.Column, join *Join, childIdx int) LogicalPlan {
 	child := join.children[childIdx].(LogicalPlan)
 	if a.allFirstRow(aggFuncs) {
 		return child
+	}
+	tmpSchema := expression.NewSchema(gbyCols...)
+	for _, key := range child.Schema().Keys {
+		if tmpSchema.ColumnsIndices(key) != nil {
+			return child
+		}
 	}
 	agg := a.makeNewAgg(aggFuncs, gbyCols)
 	child.SetParents(agg)
@@ -253,7 +259,7 @@ func (a *aggPushDownSolver) makeNewAgg(aggFuncs []expression.AggregationFunction
 	}
 	agg.initIDAndContext(a.ctx)
 	var newAggFuncs []expression.AggregationFunction
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncs))...)
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncs)+len(gbyCols))...)
 	for _, aggFunc := range aggFuncs {
 		var newFuncs []expression.AggregationFunction
 		newFuncs, schema = a.decompose(aggFunc, schema, agg.ID())
@@ -269,6 +275,8 @@ func (a *aggPushDownSolver) makeNewAgg(aggFuncs []expression.AggregationFunction
 	return agg
 }
 
+// pushAggCrossUnion will try to push the agg down to the union. If the new aggregation's group-by columns doesn't contain unique key.
+// We will return the new aggregation. Otherwise we will transform the aggregation to projection.
 func (a *aggPushDownSolver) pushAggCrossUnion(agg *Aggregation, unionSchema *expression.Schema, unionChild LogicalPlan) LogicalPlan {
 	newAgg := &Aggregation{
 		AggFuncs:        make([]expression.AggregationFunction, 0, len(agg.AggFuncs)),
@@ -291,6 +299,17 @@ func (a *aggPushDownSolver) pushAggCrossUnion(agg *Aggregation, unionSchema *exp
 		newAgg.GroupByItems = append(newAgg.GroupByItems, newExpr)
 	}
 	newAgg.collectGroupByColumns()
+	tmpSchema := expression.NewSchema(newAgg.groupByCols...)
+	// e.g. Union distinct will add a aggregation like `select join_agg_0, join_agg_1, join_agg_2 from t group by a, b, c` above UnionAll.
+	// And the pushed agg will be something like `select a, b, c, a, b, c from t group by a, b, c`. So if we just return child as join does,
+	// this will cause error during executor phase.
+	for _, key := range unionChild.Schema().Keys {
+		if tmpSchema.ColumnsIndices(key) != nil {
+			proj := convertAggToProj(newAgg, a.ctx, a.alloc)
+			proj.SetChildren(unionChild)
+			return proj
+		}
+	}
 	newAgg.SetChildren(unionChild)
 	unionChild.SetParents(newAgg)
 	return newAgg

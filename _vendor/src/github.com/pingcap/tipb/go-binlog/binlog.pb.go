@@ -125,14 +125,15 @@ func (BinlogType) EnumDescriptor() ([]byte, []int) { return fileDescriptorBinlog
 // TableMutation contains mutations in a table.
 type TableMutation struct {
 	TableId int64 `protobuf:"varint,1,opt,name=table_id,json=tableId" json:"table_id"`
-	// For inserted rows and updated rows, we save all column values of the row.
+	// The inserted row contains all column values.
 	InsertedRows [][]byte `protobuf:"bytes,2,rep,name=inserted_rows,json=insertedRows" json:"inserted_rows,omitempty"`
-	UpdatedRows  [][]byte `protobuf:"bytes,3,rep,name=updated_rows,json=updatedRows" json:"updated_rows,omitempty"`
-	// If the table PK is handle, we can only save the id of the deleted row.
+	// The updated row contains old values and new values of the row.
+	UpdatedRows [][]byte `protobuf:"bytes,3,rep,name=updated_rows,json=updatedRows" json:"updated_rows,omitempty"`
+	// Obsolete field.
 	DeletedIds []int64 `protobuf:"varint,4,rep,name=deleted_ids,json=deletedIds" json:"deleted_ids,omitempty"`
-	// If the table has PK but PK is not handle, we save the PK of the deleted row.
+	// Obsolete field.
 	DeletedPks [][]byte `protobuf:"bytes,5,rep,name=deleted_pks,json=deletedPks" json:"deleted_pks,omitempty"`
-	// If the table doesn't have PK, we save the row value of the deleted row.
+	// The row value of the deleted row.
 	DeletedRows [][]byte `protobuf:"bytes,6,rep,name=deleted_rows,json=deletedRows" json:"deleted_rows,omitempty"`
 	// Used to apply table mutations in original sequence.
 	Sequence         []MutationType `protobuf:"varint,7,rep,name=sequence,enum=binlog.MutationType" json:"sequence,omitempty"`

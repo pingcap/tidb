@@ -516,7 +516,27 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "select count(c) ,(select count(s.b) from t s where s.a = t.a) from t",
-			plan: "Apply{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)->Selection->Aggr(count(s.b))}->Projection->Projection",
+			plan: "Join{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)}(test.t.a,s.a)->Aggr(firstrow(aggregation_2_col_0),firstrow(test.t.a),count(s.b))->Projection->Projection",
+		},
+		{
+			// Semi-join with agg cannot decorrelate.
+			sql:  "select t.c in (select count(s.b) from t s where s.a = t.a) from t",
+			plan: "Apply{DataScan(t)->DataScan(s)->Selection->Aggr(count(s.b))}->Projection",
+		},
+		{
+			// Theta-join with agg cannot decorrelate.
+			sql:  "select (select count(s.b) k from t s where s.a = t.a having k != 0) from t",
+			plan: "Apply{DataScan(t)->DataScan(s)->Selection->Aggr(count(s.b))}->Projection->Projection",
+		},
+		{
+			// Relation without keys cannot decorrelate.
+			sql:  "select (select count(s.b) k from t s where s.a = t1.a) from t t1, t t2",
+			plan: "Apply{Join{DataScan(t1)->DataScan(t2)}->DataScan(s)->Selection->Aggr(count(s.b))}->Projection->Projection",
+		},
+		{
+			// Aggregate function like count(1) cannot decorrelate.
+			sql:  "select (select count(1) k from t s where s.a = t.a having k != 0) from t",
+			plan: "Apply{DataScan(t)->DataScan(s)->Selection->Aggr(count(1))}->Projection->Projection",
 		},
 		{
 			sql:  "select a from t where a in (select a from t s group by t.b)",
@@ -721,6 +741,22 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 			sql:  "select sum(c1) from (select c c1, d c2 from t a union all select a c1, b c2 from t b union all select b c1, e c2 from t c) x group by c2",
 			best: "UnionAll{DataScan(a)->Aggr(sum(a.c),firstrow(a.d))->DataScan(b)->Aggr(sum(b.a),firstrow(b.b))->DataScan(c)->Aggr(sum(c.b),firstrow(c.e))}->Aggr(sum(join_agg_0))->Projection",
 		},
+		{
+			sql:  "select max(a.b), max(b.b) from t a join t b on a.c = b.c group by a.a",
+			best: "Join{DataScan(a)->DataScan(b)->Aggr(max(b.b),firstrow(b.c))}(a.c,b.c)->Aggr(max(a.b),max(join_agg_0))->Projection",
+		},
+		{
+			sql:  "select max(a.b), max(b.b) from t a join t b on a.a = b.a group by a.c",
+			best: "Join{DataScan(a)->DataScan(b)}(a.a,b.a)->Aggr(max(a.b),max(b.b))->Projection",
+		},
+		{
+			sql:  "select max(c.b) from (select * from t a union all select * from t b) c group by c.a",
+			best: "UnionAll{DataScan(a)->Projection->Projection->DataScan(b)->Projection->Projection}->Aggr(max(join_agg_0))->Projection",
+		},
+		{
+			sql:  "select max(a.c) from t a join t b on a.a=b.a and a.b=b.b group by a.b",
+			best: "Join{DataScan(a)->DataScan(b)}(a.a,b.a)(a.b,b.b)->Aggr(max(a.c))->Projection",
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
@@ -739,7 +775,7 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
-		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagAggPushDown, lp.(LogicalPlan), builder.ctx, builder.allocator)
+		p, err = logicalOptimize(flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagAggPushDown, lp.(LogicalPlan), builder.ctx, builder.allocator)
 		lp.ResolveIndicesAndCorCols()
 		c.Assert(err, IsNil)
 		c.Assert(ToString(lp), Equals, ca.best, Commentf("for %s", ca.sql))

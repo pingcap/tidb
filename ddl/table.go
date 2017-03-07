@@ -272,7 +272,7 @@ func checkTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName
 	if err != nil {
 		if terror.ErrorEqual(err, meta.ErrDBNotExists) {
 			job.State = model.JobCancelled
-			return errors.Trace(infoschema.ErrDatabaseNotExists)
+			return infoschema.ErrDatabaseNotExists.GenByArgs("")
 		}
 		return errors.Trace(err)
 	}

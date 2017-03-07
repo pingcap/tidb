@@ -901,7 +901,7 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 			}
 		} else {
 			var err error
-			row[i], _, err = table.GetColDefaultValue(e.ctx, c.ToInfo())
+			row[i], err = table.GetColDefaultValue(e.ctx, c.ToInfo())
 			if filterErr(err, ignoreErr) != nil {
 				return errors.Trace(err)
 			}

@@ -115,6 +115,11 @@ func (parser *Parser) ParseOneStmt(sql, charset, collation string) (ast.StmtNode
 	return stmts[0], nil
 }
 
+// SetSQLMode sets the SQL mode for parser.
+func (parser *Parser) SetSQLMode(mode mysql.SQLMode) {
+	parser.lexer.SetSQLMode(mode)
+}
+
 // The select statement is not at the end of the whole statement, if the last
 // field text was set from its offset to the end of the src string, update
 // the last field text.
@@ -200,4 +205,14 @@ func toBit(l yyLexer, lval *yySymType, str string) int {
 	}
 	lval.item = b
 	return bitLit
+}
+
+func getUint64FromNUM(num interface{}) uint64 {
+	switch v := num.(type) {
+	case int64:
+		return uint64(v)
+	case uint64:
+		return uint64(v)
+	}
+	return 0
 }

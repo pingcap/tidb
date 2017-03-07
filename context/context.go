@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util"
 )
 
 // Context is an interface for transaction and executive args environment.
@@ -44,6 +45,8 @@ type Context interface {
 	ClearValue(key fmt.Stringer)
 
 	GetSessionVars() *variable.SessionVars
+
+	GetSessionManager() util.SessionManager
 
 	// ActivePendingTxn receives the pending transaction from the transaction channel.
 	// It should be called right before we builds an executor.

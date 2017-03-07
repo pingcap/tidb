@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/localstore"
@@ -91,7 +92,6 @@ func (s *testSessionSuite) TestPrepare(c *C) {
 	c.Assert(err, IsNil)
 	err = se.DropPreparedStmt(id)
 	c.Assert(err, IsNil)
-	mustExecSQL(c, se, dropDBSQL)
 
 	mustExecSQL(c, se, "prepare stmt from 'select 1+?'")
 	mustExecSQL(c, se, "set @v1=100")
@@ -112,6 +112,20 @@ func (s *testSessionSuite) TestPrepare(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r.Data[0].GetFloat64(), Equals, float64(301))
 	mustExecSQL(c, se, "deallocate prepare stmt")
+
+	// Execute prepared statements for more than one time.
+	mustExecSQL(c, se, "create table multiexec (a int, b int)")
+	mustExecSQL(c, se, "insert multiexec values (1, 1), (2, 2)")
+	id, _, _, err = se.PrepareStmt("select a from multiexec where b = ? order by b")
+	c.Assert(err, IsNil)
+	rs, err = se.ExecutePreparedStmt(id, 1)
+	c.Assert(err, IsNil)
+	rs.Close()
+	rs, err = se.ExecutePreparedStmt(id, 2)
+	rs.Close()
+	c.Assert(err, IsNil)
+
+	mustExecSQL(c, se, dropDBSQL)
 }
 
 func (s *testSessionSuite) TestAffectedRows(c *C) {
@@ -2626,4 +2640,31 @@ func (s *testSessionSuite) TestISColumns(c *C) {
 	mustExecSQL(c, se, sql)
 
 	mustExecSQL(c, se, dropDBSQL)
+}
+
+func (s *testSessionSuite) TestRetryCleanTxn(c *C) {
+	defer testleak.AfterTest(c)()
+	dbName := "test_retry_clean_txn"
+	se := newSession(c, s.store, dbName).(*session)
+	se.Execute("create table retrytxn (a int unique, b int)")
+	_, err := se.Execute("insert retrytxn values (1, 1)")
+	c.Assert(err, IsNil)
+	se.Execute("begin")
+	se.Execute("update retrytxn set b = b + 1 where a = 1")
+
+	// Make retryable error.
+	se2 := newSession(c, s.store, dbName)
+	se2.Execute("update retrytxn set b = b + 1 where a = 1")
+
+	// Hijack retry history, add a statement that returns error.
+	history := getHistory(se)
+	stmtNode, err := parser.New().ParseOneStmt("insert retrytxn values (2, 'a')", "", "")
+	c.Assert(err, IsNil)
+	stmt, err := Compile(se, stmtNode)
+	resetStmtCtx(se, stmtNode)
+	history.add(0, stmt, se.sessionVars.StmtCtx)
+	_, err = se.Execute("commit")
+	c.Assert(err, NotNil)
+	c.Assert(se.Txn(), IsNil)
+	c.Assert(se.sessionVars.InTxn(), IsFalse)
 }

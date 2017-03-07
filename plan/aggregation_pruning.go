@@ -13,7 +13,6 @@
 package plan
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -29,13 +28,13 @@ type aggPruner struct {
 func (ap *aggPruner) optimize(lp LogicalPlan, ctx context.Context, allocator *idAllocator) (LogicalPlan, error) {
 	ap.ctx = ctx
 	ap.allocator = allocator
-	return ap.eliminateAggregation(lp)
+	return ap.eliminateAggregation(lp), nil
 }
 
 // eliminateAggregation will eliminate aggregation grouped by unique key.
 // e.g. select min(b) from t group by a. If a is a unique key, then this sql is equal to `select b from t group by a`.
 // For count(expr), sum(expr), avg(expr), count(distinct expr, [expr...]) we may need to rewrite the expr. Details are shown below.
-func (ap *aggPruner) eliminateAggregation(p LogicalPlan) (LogicalPlan, error) {
+func (ap *aggPruner) eliminateAggregation(p LogicalPlan) LogicalPlan {
 	retPlan := p
 	if agg, ok := p.(*Aggregation); ok {
 		schemaByGroupby := expression.NewSchema(agg.groupByCols...)
@@ -48,20 +47,7 @@ func (ap *aggPruner) eliminateAggregation(p LogicalPlan) (LogicalPlan, error) {
 		}
 		if coveredByUniqueKey {
 			// GroupByCols has unique key, so this aggregation can be removed.
-			proj := &Projection{
-				Exprs:           make([]expression.Expression, 0, len(agg.AggFuncs)),
-				baseLogicalPlan: newBaseLogicalPlan(Proj, ap.allocator),
-			}
-			proj.self = proj
-			proj.initIDAndContext(ap.ctx)
-			for _, fun := range agg.AggFuncs {
-				expr, err := ap.rewriteExpr(fun.GetArgs(), fun.GetName())
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				proj.Exprs = append(proj.Exprs, expr)
-			}
-			proj.SetSchema(agg.schema.Clone())
+			proj := convertAggToProj(agg, ap.ctx, ap.allocator)
 			proj.SetParents(p.Parents()...)
 			for _, child := range p.Children() {
 				child.SetParents(proj)
@@ -71,35 +57,41 @@ func (ap *aggPruner) eliminateAggregation(p LogicalPlan) (LogicalPlan, error) {
 	}
 	newChildren := make([]Plan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		newChild, err := ap.eliminateAggregation(child.(LogicalPlan))
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		newChild := ap.eliminateAggregation(child.(LogicalPlan))
 		newChildren = append(newChildren, newChild)
 	}
 	retPlan.SetChildren(newChildren...)
-	return retPlan, nil
+	return retPlan
+}
+
+func convertAggToProj(agg *Aggregation, ctx context.Context, allocator *idAllocator) *Projection {
+	proj := &Projection{
+		Exprs:           make([]expression.Expression, 0, len(agg.AggFuncs)),
+		baseLogicalPlan: newBaseLogicalPlan(Proj, allocator),
+	}
+	proj.self = proj
+	proj.initIDAndContext(ctx)
+	for _, fun := range agg.AggFuncs {
+		expr := rewriteExpr(fun.GetArgs(), fun.GetName(), ctx)
+		proj.Exprs = append(proj.Exprs, expr)
+	}
+	proj.SetSchema(agg.schema.Clone())
+	return proj
 }
 
 // rewriteExpr will rewrite the aggregate function to expression doesn't contain aggregate function.
-func (ap *aggPruner) rewriteExpr(exprs []expression.Expression, funcName string) (newExpr expression.Expression, err error) {
+func rewriteExpr(exprs []expression.Expression, funcName string, ctx context.Context) (newExpr expression.Expression) {
 	switch funcName {
 	case ast.AggFuncCount:
 		// If is count(expr), we will change it to if(isnull(expr), 0, 1).
 		// If is count(distinct x, y, z) we will change it to if(isnull(x) or isnull(y) or isnull(z), 0, 1).
 		isNullExprs := make([]expression.Expression, 0, len(exprs))
 		for _, expr := range exprs {
-			isNullExpr, err := expression.NewFunction(ap.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr.Clone())
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+			isNullExpr, _ := expression.NewFunction(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr.Clone())
 			isNullExprs = append(isNullExprs, isNullExpr)
 		}
-		innerExpr := expression.ComposeDNFCondition(ap.ctx, isNullExprs...)
-		newExpr, err = expression.NewFunction(ap.ctx, ast.If, types.NewFieldType(mysql.TypeLonglong), innerExpr, expression.Zero, expression.One)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		innerExpr := expression.ComposeDNFCondition(ctx, isNullExprs...)
+		newExpr, _ = expression.NewFunction(ctx, ast.If, types.NewFieldType(mysql.TypeLonglong), innerExpr, expression.Zero, expression.One)
 	// See https://dev.mysql.com/doc/refman/5.7/en/group-by-functions.html
 	// The SUM() and AVG() functions return a DECIMAL value for exact-value arguments (integer or DECIMAL),
 	// and a DOUBLE value for approximate-value arguments (FLOAT or DOUBLE).
@@ -108,13 +100,13 @@ func (ap *aggPruner) rewriteExpr(exprs []expression.Expression, funcName string)
 		switch expr.GetType().Tp {
 		// Integer type should be cast to decimal.
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-			newExpr = expression.NewCastFunc(types.NewFieldType(mysql.TypeNewDecimal), expr, ap.ctx)
+			newExpr = expression.NewCastFunc(types.NewFieldType(mysql.TypeNewDecimal), expr, ctx)
 		// Double and Decimal doesn't need to be cast.
 		case mysql.TypeDouble, mysql.TypeNewDecimal:
 			newExpr = expr
 		// Float should be cast to double. And other non-numeric type should be cast to double too.
 		default:
-			newExpr = expression.NewCastFunc(types.NewFieldType(mysql.TypeDouble), expr, ap.ctx)
+			newExpr = expression.NewCastFunc(types.NewFieldType(mysql.TypeDouble), expr, ctx)
 		}
 	default:
 		// Default we do nothing about expr.
