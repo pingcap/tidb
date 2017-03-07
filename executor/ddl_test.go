@@ -15,10 +15,12 @@ package executor_test
 
 import (
 	"fmt"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/types"
 )
 
 func (s *testSuite) TestTruncateTable(c *C) {
@@ -145,7 +147,12 @@ func (s *testSuite) TestAlterTableAddColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists alter_test (c1 int)")
-	tk.MustExec("alter table alter_test add column c2 int")
+	tk.MustExec("insert into alter_test values(1)")
+	now := time.Now().Format(types.TimeFormat)
+	tk.MustExec("alter table alter_test add column c2 timestamp default current_timestamp")
+	time.Sleep(1 * time.Second)
+	rowStr := fmt.Sprintf("%v", now)
+	tk.MustQuery("select c2 from alter_test").Check(testkit.Rows(rowStr))
 }
 
 func (s *testSuite) TestAddNotNullColumnNoDefault(c *C) {
