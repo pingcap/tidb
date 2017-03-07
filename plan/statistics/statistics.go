@@ -395,15 +395,7 @@ func (t *Table) build4SortedColumn(sc *variable.StatementContext, offset int, re
 		Repeats: make([]int64, 1, bucketCount),
 	}
 	var valuesPerBucket, lastNumber, bucketIdx int64 = 1, 0, 0
-	knowCount := true
-	count := atomic.LoadInt64(&t.Count)
-	if count < 0 {
-		count = 0
-		knowCount = false
-	}
-	if knowCount {
-		valuesPerBucket = count/bucketCount + 1
-	}
+	count := int64(0)
 	for {
 		row, err := records.Next()
 		if err != nil {
@@ -426,9 +418,7 @@ func (t *Table) build4SortedColumn(sc *variable.StatementContext, offset int, re
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if !knowCount {
-			count++
-		}
+		count++
 		if cmp == 0 {
 			// The new item has the same value as current bucket value, to ensure that
 			// a same value only stored in a single bucket, we do not increase bucketIdx even if it exceeds
@@ -443,10 +433,10 @@ func (t *Table) build4SortedColumn(sc *variable.StatementContext, offset int, re
 			col.NDV++
 		} else {
 			// All buckets are full, we should merge buckets.
-			if !knowCount && bucketIdx+1 == bucketCount {
+			if bucketIdx+1 == bucketCount {
 				col.mergeBuckets(bucketIdx)
 				valuesPerBucket *= 2
-				bucketIdx = (bucketIdx + 1) / 2
+				bucketIdx = bucketIdx / 2
 				if bucketIdx == 0 {
 					lastNumber = 0
 				} else {
@@ -468,9 +458,7 @@ func (t *Table) build4SortedColumn(sc *variable.StatementContext, offset int, re
 			col.NDV++
 		}
 	}
-	if !knowCount {
-		atomic.StoreInt64(&t.Count, count)
-	}
+	atomic.StoreInt64(&t.Count, count)
 	if isPK {
 		t.Columns[offset] = col
 	} else {
