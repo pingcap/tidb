@@ -106,11 +106,6 @@ func (e *DDLExec) Next() (*Row, error) {
 
 // Close implements the Executor Close interface.
 func (e *DDLExec) Close() error {
-	if pi, ok := e.ctx.(processinfoSetter); ok {
-		if pi != nil {
-			pi.SetProcessInfo("")
-		}
-	}
 	return nil
 }
 
