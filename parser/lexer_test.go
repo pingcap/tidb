@@ -82,8 +82,17 @@ func (s *testLexerSuite) TestSysOrUserVar(c *C) {
 func (s *testLexerSuite) TestUnderscoreCS(c *C) {
 	defer testleak.AfterTest(c)()
 	var v yySymType
-	tok := NewScanner(`_utf8"string"`).Lex(&v)
+	scanner := NewScanner(`_utf8"string"`)
+	tok := scanner.Lex(&v)
 	c.Check(tok, Equals, underscoreCS)
+	tok = scanner.Lex(&v)
+	c.Check(tok, Equals, stringLit)
+
+	scanner.reset("N'string'")
+	tok = scanner.Lex(&v)
+	c.Check(tok, Equals, underscoreCS)
+	tok = scanner.Lex(&v)
+	c.Check(tok, Equals, stringLit)
 }
 
 func (s *testLexerSuite) TestLiteral(c *C) {
@@ -109,6 +118,8 @@ func (s *testLexerSuite) TestLiteral(c *C) {
 		{fmt.Sprintf("t1%c", 0), identifier},
 		{".*", int('.')},
 		{".1_t_1_x", int('.')},
+		{"N'some text'", underscoreCS},
+		{"n'some text'", underscoreCS},
 	}
 	runTest(c, table)
 }
