@@ -50,6 +50,8 @@ type rowHeap struct {
 	err    error
 }
 
+var headSize = 8
+
 func lessThan(sc *variable.StatementContext, i []types.Datum, j []types.Datum, byDesc []bool) (bool, error) {
 	for k := range byDesc {
 		v1 := i[k]
@@ -229,7 +231,7 @@ func (b *Builder) Build() (*FileSorter, error) {
 			rowSize: b.keySize + b.valSize + 1,
 			bufSize: b.bufSize / b.nWorkers,
 			buf:     make([]*comparableRow, 0, b.bufSize/b.nWorkers),
-			head:    make([]byte, 8),
+			head:    make([]byte, headSize),
 		}
 	}
 
@@ -243,7 +245,7 @@ func (b *Builder) Build() (*FileSorter, error) {
 		nWorkers: b.nWorkers,
 		cWorker:  0,
 
-		head:    make([]byte, 8),
+		head:    make([]byte, headSize),
 		dcod:    make([]types.Datum, 0, b.keySize+b.valSize+1),
 		keySize: b.keySize,
 		valSize: b.valSize,
@@ -419,7 +421,7 @@ func (fs *FileSorter) fetchNextRow(index int) (*comparableRow, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if n != 8 {
+	if n != headSize {
 		return nil, errors.New("incorrect header")
 	}
 	rowSize := int(binary.BigEndian.Uint64(fs.head))
@@ -608,11 +610,11 @@ func (w *Worker) flushToFile() {
 			return
 		}
 
-		if len(outputByte)-prevLen-8 > w.rowSize {
-			w.rowSize = len(outputByte) - prevLen - 8
+		if len(outputByte)-prevLen-headSize > w.rowSize {
+			w.rowSize = len(outputByte) - prevLen - headSize
 		}
-		binary.BigEndian.PutUint64(w.head, uint64(len(outputByte)-prevLen-8))
-		for i := 0; i < 8; i++ {
+		binary.BigEndian.PutUint64(w.head, uint64(len(outputByte)-prevLen-headSize))
+		for i := 0; i < headSize; i++ {
 			outputByte[prevLen+i] = w.head[i]
 		}
 	}
