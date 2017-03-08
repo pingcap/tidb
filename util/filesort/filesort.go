@@ -278,15 +278,19 @@ func (fs *FileSorter) appendFileName(fn string) {
 }
 
 func (fs *FileSorter) closeAllFiles() error {
+	var reportErr error
 	for _, fd := range fs.fds {
 		err := fd.Close()
-		if err != nil {
-			return errors.Trace(err)
+		if reportErr == nil {
+			reportErr = err
 		}
 	}
 	err := os.RemoveAll(fs.tmpDir)
-	if err != nil {
-		return errors.Trace(err)
+	if reportErr == nil {
+		reportErr = err
+	}
+	if reportErr != nil {
+		return errors.Trace(reportErr)
 	}
 	return nil
 }
@@ -526,14 +530,14 @@ func (fs *FileSorter) Close() error {
 		return errors.New("FileSorter has been closed")
 	}
 	fs.wg.Wait()
-	err := fs.closeAllFiles()
-	if err != nil {
-		return errors.Trace(err)
-	}
 	for _, w := range fs.workers {
 		w.buf = w.buf[:0]
 	}
 	fs.closed = true
+	err := fs.closeAllFiles()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	return nil
 }
 
