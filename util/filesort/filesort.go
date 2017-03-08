@@ -471,10 +471,7 @@ func (fs *FileSorter) Input(key []types.Datum, val []types.Datum, handle int64) 
 		for i := 0; i < fs.nWorkers; i++ {
 			wid := (fs.cWorker + i) % fs.nWorkers
 			if atomic.LoadInt32(&(fs.workers[wid].busy)) == 0 {
-				err := fs.workers[wid].input(row)
-				if err != nil {
-					return errors.Trace(err)
-				}
+				fs.workers[wid].input(row)
 				assigned = true
 				fs.cWorker = wid
 				break
@@ -551,7 +548,7 @@ func (w *Worker) Less(i, j int) bool {
 	return ret
 }
 
-func (w *Worker) input(row *comparableRow) error {
+func (w *Worker) input(row *comparableRow) {
 	w.buf = append(w.buf, row)
 
 	if len(w.buf) > w.bufSize {
@@ -560,11 +557,6 @@ func (w *Worker) input(row *comparableRow) error {
 		w.ctx.external = true
 		go w.flushToFile()
 	}
-
-	if w.err != nil {
-		return errors.Trace(w.err)
-	}
-	return nil
 }
 
 // Flush the buffer to file if it is full.
