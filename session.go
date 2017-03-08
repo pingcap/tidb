@@ -543,9 +543,6 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		s.stmtState = ph.StartStatement(sql, connID, perfschema.CallerNameSessionExecute, rawStmts[i])
 		s.SetValue(context.QueryString, st.OriginText())
 
-		// Update processinfo, ShowProcess() will use it.
-		s.SetProcessInfo(st.OriginText())
-
 		startTS = time.Now()
 		r, err := runStmt(s, st)
 		ph.EndStatement(s.stmtState)
@@ -637,9 +634,6 @@ func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (ast.R
 	}
 	s.prepareTxnCtx()
 	st := executor.CompileExecutePreparedStmt(s, stmtID, args...)
-
-	// Update processinfo, ShowProcess() will use it.
-	s.SetProcessInfo(st.OriginText())
 
 	r, err := runStmt(s, st)
 	return r, errors.Trace(err)

@@ -317,6 +317,16 @@ func (c *mockPDClient) GetRegion(key []byte) (*metapb.Region, *metapb.Peer, erro
 	return c.client.GetRegion(key)
 }
 
+func (c *mockPDClient) GetRegionByID(regionID uint64) (*metapb.Region, *metapb.Peer, error) {
+	c.RLock()
+	defer c.RUnlock()
+
+	if c.stop {
+		return nil, nil, errors.Trace(errStopped)
+	}
+	return c.client.GetRegionByID(regionID)
+}
+
 func (c *mockPDClient) GetStore(storeID uint64) (*metapb.Store, error) {
 	c.RLock()
 	defer c.RUnlock()

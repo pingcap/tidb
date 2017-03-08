@@ -239,22 +239,31 @@ func CheckNotNull(cols []*Column, row []types.Datum) error {
 	return nil
 }
 
+// GetColOriginDefaultValue gets default value of the column from original default value.
+func GetColOriginDefaultValue(ctx context.Context, col *model.ColumnInfo) (types.Datum, error) {
+	return getColDefaultValue(ctx, col, col.OriginDefaultValue)
+}
+
 // GetColDefaultValue gets default value of the column.
 func GetColDefaultValue(ctx context.Context, col *model.ColumnInfo) (types.Datum, error) {
-	if col.DefaultValue == nil {
+	return getColDefaultValue(ctx, col, col.DefaultValue)
+}
+
+func getColDefaultValue(ctx context.Context, col *model.ColumnInfo, defaultVal interface{}) (types.Datum, error) {
+	if defaultVal == nil {
 		return getColDefaultValueFromNil(ctx, col)
 	}
 
 	// Check and get timestamp/datetime default value.
 	if col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime {
-		value, err := expression.GetTimeValue(ctx, col.DefaultValue, col.Tp, col.Decimal)
+		value, err := expression.GetTimeValue(ctx, defaultVal, col.Tp, col.Decimal)
 		if err != nil {
 			return types.Datum{}, errGetDefaultFailed.Gen("Field '%s' get default value fail - %s",
 				col.Name, errors.Trace(err))
 		}
 		return value, nil
 	}
-	value, err := CastValue(ctx, types.NewDatum(col.DefaultValue), col)
+	value, err := CastValue(ctx, types.NewDatum(defaultVal), col)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}

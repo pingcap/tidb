@@ -35,18 +35,15 @@ func (d *ddl) onCreateForeignKey(t *meta.Meta, job *model.Job) error {
 	}
 	fkInfo.ID = allocateIndexID(tblInfo)
 	tblInfo.ForeignKeys = append(tblInfo.ForeignKeys, &fkInfo)
-	ver, err := updateSchemaVersion(t, job)
-	if err != nil {
-		return errors.Trace(err)
-	}
 
+	originalState := fkInfo.State
 	switch fkInfo.State {
 	case model.StateNone:
 		// We just support record the foreign key, so we just make it public.
 		// none -> public
 		job.SchemaState = model.StatePublic
 		fkInfo.State = model.StatePublic
-		err = t.UpdateTable(schemaID, tblInfo)
+		ver, err := updateTableInfo(t, job, tblInfo, originalState)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -97,18 +94,14 @@ func (d *ddl) onDropForeignKey(t *meta.Meta, job *model.Job) error {
 	}
 	tblInfo.ForeignKeys = nfks
 
-	ver, err := updateSchemaVersion(t, job)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
+	originalState := fkInfo.State
 	switch fkInfo.State {
 	case model.StatePublic:
 		// We just support record the foreign key, so we just make it none.
 		// public -> none
 		job.SchemaState = model.StateNone
 		fkInfo.State = model.StateNone
-		err = t.UpdateTable(schemaID, tblInfo)
+		ver, err := updateTableInfo(t, job, tblInfo, originalState)
 		if err != nil {
 			return errors.Trace(err)
 		}
