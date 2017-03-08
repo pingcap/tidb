@@ -667,6 +667,14 @@ LOOP:
 	c.Assert(i, Equals, int(count))
 	c.Assert(i, LessEqual, num+step)
 	c.Assert(j, Equals, int(count)-step)
+
+	// for modifying columns after adding columns
+	s.tk.MustExec("alter table t2 modify c4 int default 11")
+	for i := num + step; i < num+step+10; i++ {
+		s.mustExec(c, "insert into t2 values (?, ?, ?, ?)", i, i, i, i)
+	}
+	rows = s.mustQuery(c, "select count(c4) from t2 where c4 = -1")
+	matchRows(c, rows, [][]interface{}{{count - int64(step)}})
 }
 
 func (s *testDBSuite) testDropColumn(c *C) {

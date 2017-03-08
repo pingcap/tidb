@@ -19,6 +19,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/pingcap/tidb/mysql"
 )
 
 var _ = yyLexer(&Scanner{})
@@ -40,6 +42,8 @@ type Scanner struct {
 
 	// for scanning such kind of comment: /*! MySQL-specific code */
 	specialComment *specialCommentScanner
+
+	sqlMode mysql.SQLMode
 }
 
 type specialCommentScanner struct {
@@ -104,6 +108,11 @@ func (s *Scanner) Lex(v *yySymType) int {
 			tok = tok1
 		}
 	}
+	if (s.sqlMode&mysql.ModeANSIQuotes) > 0 &&
+		tok == stringLit &&
+		s.r.s[v.offset] == '"' {
+		tok = identifier
+	}
 
 	switch tok {
 	case intLit:
@@ -128,6 +137,11 @@ func (s *Scanner) Lex(v *yySymType) int {
 		return 0
 	}
 	return tok
+}
+
+// SetSQLMode sets the SQL mode for scanner.
+func (s *Scanner) SetSQLMode(mode mysql.SQLMode) {
+	s.sqlMode = mode
 }
 
 // NewScanner returns a new scanner object.
@@ -208,7 +222,21 @@ func startWithXx(s *Scanner) (tok int, pos Pos, lit string) {
 	return
 }
 
-func startWithb(s *Scanner) (tok int, pos Pos, lit string) {
+func startWithNn(s *Scanner) (tok int, pos Pos, lit string) {
+	tok, pos, lit = scanIdentifier(s)
+	// The National Character Set, N'some text' or n'some test'.
+	// See https://dev.mysql.com/doc/refman/5.7/en/string-literals.html
+	// and https://dev.mysql.com/doc/refman/5.7/en/charset-national.html
+	if lit == "N" || lit == "n" {
+		if s.r.peek() == '\'' {
+			tok = underscoreCS
+			lit = "utf8"
+		}
+	}
+	return
+}
+
+func startWithBb(s *Scanner) (tok int, pos Pos, lit string) {
 	pos = s.r.pos()
 	s.r.inc()
 	if s.r.peek() == '\'' {
@@ -371,6 +399,10 @@ func startString(s *Scanner) (tok int, pos Pos, lit string) {
 	// Quoted strings placed next to each other are concatenated to a single string.
 	// See http://dev.mysql.com/doc/refman/5.7/en/string-literals.html
 	ch := s.skipWhitespace()
+	if s.sqlMode&mysql.ModeANSIQuotes > 0 &&
+		ch == '"' || s.r.s[pos.Offset] == '"' {
+		return
+	}
 	for ch == '\'' || ch == '"' {
 		_, _, lit1 := s.scanString()
 		lit = lit + lit1

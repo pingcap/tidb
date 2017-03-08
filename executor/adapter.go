@@ -27,12 +27,17 @@ import (
 	"github.com/pingcap/tidb/plan"
 )
 
+type processinfoSetter interface {
+	SetProcessInfo(string)
+}
+
 // recordSet wraps an executor, implements ast.RecordSet interface
 type recordSet struct {
-	fields   []*ast.ResultField
-	executor Executor
-	stmt     *statement
-	err      error
+	fields      []*ast.ResultField
+	executor    Executor
+	stmt        *statement
+	processinfo processinfoSetter
+	err         error
 }
 
 func (a *recordSet) Fields() ([]*ast.ResultField, error) {
@@ -64,6 +69,9 @@ func (a *recordSet) Next() (*ast.Row, error) {
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
 	a.stmt.logSlowQuery()
+	if a.processinfo != nil {
+		a.processinfo.SetProcessInfo("")
+	}
 	return errors.Trace(err)
 }
 
@@ -121,6 +129,13 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 		e = executorExec.StmtExec
 	}
 
+	var pi processinfoSetter
+	if raw, ok := ctx.(processinfoSetter); ok {
+		pi = raw
+		// Update processinfo, ShowProcess() will use it.
+		pi.SetProcessInfo(a.OriginText())
+	}
+
 	// Fields or Schema are only used for statements that return result set.
 	if e.Schema().Len() == 0 {
 		// Check if "tidb_snapshot" is set for the write executors.
@@ -134,6 +149,9 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 		}
 
 		defer func() {
+			if pi != nil {
+				pi.SetProcessInfo("")
+			}
 			e.Close()
 			a.logSlowQuery()
 		}()
@@ -151,9 +169,11 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 			}
 		}
 	}
+
 	return &recordSet{
-		executor: e,
-		stmt:     a,
+		executor:    e,
+		stmt:        a,
+		processinfo: pi,
 	}, nil
 }
 

@@ -24,6 +24,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
@@ -45,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-binlog"
 )
@@ -66,10 +68,12 @@ type Session interface {
 	DropPreparedStmt(stmtID uint32) error
 	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
+	SetSessionManager(util.SessionManager)
 	Close() error
 	Auth(user string, auth []byte, salt []byte) bool
 	// Cancel the execution of current transaction.
 	Cancel()
+	ShowProcess() util.ProcessInfo
 }
 
 var (
@@ -78,27 +82,31 @@ var (
 )
 
 type stmtRecord struct {
-	stmtID uint32
-	st     ast.Statement
-	params []interface{}
+	stmtID  uint32
+	st      ast.Statement
+	stmtCtx *variable.StatementContext
+	params  []interface{}
 }
 
 type stmtHistory struct {
 	history []*stmtRecord
 }
 
-func (h *stmtHistory) add(stmtID uint32, st ast.Statement, params ...interface{}) {
+func (h *stmtHistory) add(stmtID uint32, st ast.Statement, stmtCtx *variable.StatementContext, params ...interface{}) {
 	s := &stmtRecord{
-		stmtID: stmtID,
-		st:     st,
-		params: append(([]interface{})(nil), params...),
+		stmtID:  stmtID,
+		st:      st,
+		stmtCtx: stmtCtx,
+		params:  append(([]interface{})(nil), params...),
 	}
 	h.history = append(h.history, s)
 }
 
 type session struct {
-	txn   kv.Transaction // current transaction
-	txnCh chan *txnWithErr
+	// It's used by ShowProcess(), and should be modified atomically.
+	processInfo atomic.Value
+	txn         kv.Transaction // current transaction
+	txnCh       chan *txnWithErr
 	// For cancel the execution of current transaction.
 	goCtx      goctx.Context
 	cancelFunc goctx.CancelFunc
@@ -113,7 +121,8 @@ type session struct {
 	stmtState *perfschema.StatementState
 	parser    *parser.Parser
 
-	sessionVars *variable.SessionVars
+	sessionVars    *variable.SessionVars
+	sessionManager util.SessionManager
 }
 
 // Cancel cancels the execution of current transaction.
@@ -156,6 +165,14 @@ func (s *session) SetClientCapability(capability uint32) {
 
 func (s *session) SetConnectionID(connectionID uint64) {
 	s.sessionVars.ConnectionID = connectionID
+}
+
+func (s *session) SetSessionManager(sm util.SessionManager) {
+	s.sessionManager = sm
+}
+
+func (s *session) GetSessionManager() util.SessionManager {
+	return s.sessionManager
 }
 
 type schemaLeaseChecker struct {
@@ -316,6 +333,8 @@ func (s *session) retry(maxCnt int) error {
 	defer func() {
 		s.sessionVars.RetryInfo.Retrying = false
 		sessionRetry.Observe(float64(retryCnt))
+		s.txn = nil
+		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}()
 	nh := getHistory(s)
 	var err error
@@ -326,6 +345,7 @@ func (s *session) retry(maxCnt int) error {
 			st := sr.st
 			txt := st.OriginText()
 			log.Warnf("[%d] Retry %s", connID, sqlForLog(txt))
+			s.sessionVars.StmtCtx = sr.stmtCtx
 			_, err = st.Exec(s)
 			if err != nil {
 				break
@@ -471,12 +491,31 @@ func (s *session) SetGlobalSysVar(name string, value string) error {
 }
 
 func (s *session) ParseSQL(sql, charset, collation string) ([]ast.StmtNode, error) {
+	s.parser.SetSQLMode(s.sessionVars.SQLMode)
 	return s.parser.Parse(sql, charset, collation)
+}
+
+func (s *session) SetProcessInfo(sql string) {
+	pi := util.ProcessInfo{
+		ID:      s.sessionVars.ConnectionID,
+		DB:      s.sessionVars.CurrentDB,
+		Command: "Query",
+		Time:    time.Now(),
+		State:   s.Status(),
+		Info:    sql,
+	}
+	strs := strings.Split(s.sessionVars.User, "@")
+	if len(strs) == 2 {
+		pi.User = strs[0]
+		pi.Host = strs[1]
+	}
+	s.processInfo.Store(pi)
 }
 
 func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 	s.prepareTxnCtx()
 	startTS := time.Now()
+
 	charset, collation := s.sessionVars.GetCharsetInfo()
 	connID := s.sessionVars.ConnectionID
 	rawStmts, err := s.ParseSQL(sql, charset, collation)
@@ -595,6 +634,7 @@ func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (ast.R
 	}
 	s.prepareTxnCtx()
 	st := executor.CompileExecutePreparedStmt(s, stmtID, args...)
+
 	r, err := runStmt(s, st)
 	return r, errors.Trace(err)
 }
@@ -943,7 +983,7 @@ func (s *session) prepareTxnCtx() {
 	}
 }
 
-// ActivePendingTxn implements Session.ActivePendingTxn interface.
+// ActivePendingTxn implements Context.ActivePendingTxn interface.
 func (s *session) ActivePendingTxn() error {
 	if s.txn != nil && s.txn.Valid() {
 		return nil
@@ -984,4 +1024,13 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+func (s *session) ShowProcess() util.ProcessInfo {
+	var pi util.ProcessInfo
+	tmp := s.processInfo.Load()
+	if tmp != nil {
+		pi = tmp.(util.ProcessInfo)
+	}
+	return pi
 }

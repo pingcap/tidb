@@ -199,7 +199,7 @@ func (s *RegionRequestSender) onRegionError(ctx *RPCContext, regionErr *errorpb.
 		return false, errors.Trace(err)
 	}
 	if regionErr.GetServerIsBusy() != nil {
-		log.Debugf("tikv reports `ServerIsBusy`, ctx: %s, retry later", ctx.KVCtx)
+		log.Warnf("tikv reports `ServerIsBusy`, ctx: %s, retry later", ctx.KVCtx)
 		err = s.bo.Backoff(boServerBusy, errors.Errorf("server is busy, ctx: %s", ctx.KVCtx))
 		if err != nil {
 			return false, errors.Trace(err)
@@ -211,6 +211,7 @@ func (s *RegionRequestSender) onRegionError(ctx *RPCContext, regionErr *errorpb.
 		return true, nil
 	}
 	if regionErr.GetRaftEntryTooLarge() != nil {
+		log.Warnf("tikv reports `RaftEntryTooLarge`, ctx: %s", ctx.KVCtx)
 		return false, errors.New(regionErr.String())
 	}
 	// For other errors, we only drop cache here.

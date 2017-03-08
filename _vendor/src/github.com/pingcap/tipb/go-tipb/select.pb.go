@@ -101,12 +101,12 @@ type SelectRequest struct {
 	// time zone offset in seconds
 	TimeZoneOffset int64 `protobuf:"varint,14,opt,name=time_zone_offset,json=timeZoneOffset" json:"time_zone_offset"`
 	// flags is used to store flags that change the execution mode, it contains:
-	// ignore_truncate = 1
-	// truncate error should be ignore if set.
-	// truncate_as_warning = 1 << 1
-	// when ignored_truncate is not set, return warning instead of error if this flag is set.
-	// ...
-	// add more when needed.
+	// 	ignore_truncate = 1
+	// 		truncate error should be ignore if set.
+	// 	truncate_as_warning = 1 << 1
+	// 		when ignored_truncate is not set, return warning instead of error if this flag is set.
+	// 	...
+	// 	add more when needed.
 	Flags            uint64 `protobuf:"varint,15,opt,name=flags" json:"flags"`
 	XXX_unrecognized []byte `json:"-"`
 }

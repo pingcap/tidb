@@ -21,6 +21,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -89,7 +90,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache", "action", "round",
 		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest", "least",
 		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events", "less", "than", "timediff",
-		"ln", "log", "log2", "log10", "timestampdiff",
+		"ln", "log", "log2", "log10", "timestampdiff", "pi",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -482,6 +483,8 @@ func (s *testParserSuite) TestExpression(c *C) {
 		{`select """a""";`, true},
 		{`select _utf8"string";`, true},
 		{`select _binary"string";`, true},
+		{"select N'string'", true},
+		{"select n'string'", true},
 		// for comparison
 		{"select 1 <=> 0, 1 <=> null, 1 = null", true},
 	}
@@ -1242,6 +1245,7 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []testCase{
 		// for create user
+		{`CREATE USER 'test'`, true},
 		{`CREATE USER IF NOT EXISTS 'root'@'localhost' IDENTIFIED BY 'new-password'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY PASSWORD 'hashstring'`, true},
@@ -1267,6 +1271,7 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 		{"GRANT SELECT, INSERT ON mydb.mytbl TO 'someuser'@'somehost';", true},
 		{"GRANT SELECT (col1), INSERT (col1,col2) ON mydb.mytbl TO 'someuser'@'somehost';", true},
 		{"grant all privileges on zabbix.* to 'zabbix'@'localhost' identified by 'password';", true},
+		{"GRANT SELECT ON test.* to 'test'", true}, // For issue 2654.
 
 		// for revoke statement
 		{"REVOKE ALL ON db1.* FROM 'jeffrey'@'localhost';", true},
@@ -1467,6 +1472,20 @@ func (s *testParserSuite) TestSessionManage(c *C) {
 		{"kill tidb 23123", true},
 		{"kill tidb connection 23123", true},
 		{"kill tidb query 23123", true},
+		{"show processlist", true},
 	}
 	s.RunTest(c, table)
+}
+
+func (s *testParserSuite) TestSQLModeANSIQuotes(c *C) {
+	parser := New()
+	parser.SetSQLMode(mysql.ModeANSIQuotes)
+	tests := []string{
+		`CREATE TABLE "table" ("id" int)`,
+		`select * from t "tt"`,
+	}
+	for _, test := range tests {
+		_, err := parser.Parse(test, "", "")
+		c.Assert(err, IsNil)
+	}
 }

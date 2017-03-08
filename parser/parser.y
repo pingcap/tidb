@@ -181,7 +181,7 @@ import (
 	repeat			"REPEAT"
 	replace			"REPLACE"
 	restrict		"RESTRICT"
-	revoke		"REVOKE"
+	revoke			"REVOKE"
 	right			"RIGHT"
 	rlike			"RLIKE"
 	schema			"SCHEMA"
@@ -397,6 +397,7 @@ import (
 	releaseAllLocks			"RELEASE_ALL_LOCKS"
 	uuid				"UUID"
 	uuidShort			"UUID_SHORT"
+	underscoreCS			"UNDERSCORE_CHARSET"
 
 	/* the following tokens belong to UnReservedKeyword*/
 	action		"ACTION"
@@ -534,7 +535,6 @@ import (
 	placeholder	"PLACEHOLDER"
 	rsh		">>"
 	sysVar		"SYS_VAR"
-	underscoreCS	"UNDERSCORE_CHARSET"
 	userVar		"USER_VAR"
 
 %type   <item>
@@ -2278,7 +2278,7 @@ NotKeywordToken:
 	"ABS" | "ACOS" | "ADDTIME" | "ADDDATE" | "ADMIN" | "ASIN" | "ATAN" | "ATAN2" | "BENCHMARK" | "BIN" | "COALESCE" | "COERCIBILITY" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CONVERT_TZ" | "CUR_TIME"| "COS" | "COT" | "COUNT" | "DAY"
 |	"DATEDIFF" | "DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "DEGREES" | "ELT" | "EXP" | "EXPORT_SET" | "FROM_DAYS" | "FROM_BASE64" | "FIND_IN_SET" | "FOUND_ROWS"
 |	"GROUP_CONCAT"| "GREATEST" | "LEAST" | "HOUR" | "HEX" | "UNHEX" | "IFNULL" | "INSTR" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOAD_FILE" | "LOCATE" | "LOWER" | "LPAD" | "LTRIM"
-|	"MAKE_SET" | "MAX" | "MAKEDATE" | "MAKETIME" | "MICROSECOND" | "MID" | "MIN" |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" |  "OCT" | "OCTET_LENGTH" | "ORD" | "POSITION" | "PERIOD_ADD" | "PERIOD_DIFF" | "POW" | "POWER" | "RAND" | "RADIANS" | "ROW_COUNT"
+|	"MAKE_SET" | "MAX" | "MAKEDATE" | "MAKETIME" | "MICROSECOND" | "MID" | "MIN" |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" |  "OCT" | "OCTET_LENGTH" | "ORD" | "POSITION" | "PERIOD_ADD" | "PERIOD_DIFF" | "PI" | "POW" | "POWER" | "RAND" | "RADIANS" | "ROW_COUNT"
 	"QUOTE" | "SEC_TO_TIME" | "SECOND" | "SIGN" | "SIN" | "SLEEP" | "SQRT" | "SQL_CALC_FOUND_ROWS" | "STR_TO_DATE" | "SUBTIME" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen |
 	"SESSION_USER" | "SUBSTRING_INDEX" | "SUM" | "SYSTEM_USER" | "TAN" | "TIME_FORMAT" | "TIME_TO_SEC" | "TIMESTAMPADD" | "TO_DAYS" | "TO_SECONDS" | "TRIM" | "RTRIM" | "UCASE" | "UTC_TIME" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
 |	"STATS_PERSISTENT" | "GET_LOCK" | "RELEASE_LOCK" | "CEIL" | "CEILING" | "FLOOR" | "FROM_UNIXTIME" | "TIMEDIFF" | "LN" | "LOG" | "LOG2" | "LOG10" | "FIELD_KWD"
@@ -2461,7 +2461,7 @@ Literal:
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/charset-literal.html
 		tp := types.NewFieldType(mysql.TypeString)
-		tp.Charset = $1.(string)
+		tp.Charset = $1
 		co, err := charset.GetDefaultCollation(tp.Charset)
 		if err != nil {
 			yylex.Errorf("Get collation error for charset: %s", tp.Charset)
@@ -5064,7 +5064,11 @@ UserVariable:
 	}
 
 Username:
-	stringLit "AT" stringLit
+	stringLit
+	{
+		$$ = $1 + "@%"
+	}
+|	stringLit "AT" stringLit
 	{
 		$$ = $1 + "@" + $3
 	}
