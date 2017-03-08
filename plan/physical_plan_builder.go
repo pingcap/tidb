@@ -807,18 +807,19 @@ func (p *Selection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanI
 			info = infoEnforce
 		}
 	}
-	if ds, ok := p.children[0].(*DataSource); !ok {
-		info = p.matchProperty(prop, info)
-	} else {
-		client := p.ctx.GetClient()
-		memDB := infoschema.IsMemoryDB(ds.DBName.L)
-		isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeSelect, 0)
-		if !isDistReq {
-			info = p.matchProperty(prop, info)
-		}
-	}
+	info = p.matchProperty(prop, info)
 	p.storePlanInfo(prop, info)
 	return info, nil
+}
+
+func (p *Selection) appendSelToInfo(info *physicalPlanInfo) *physicalPlanInfo {
+	np := *p
+	np.SetChildren(info.p)
+	return &physicalPlanInfo{
+		p:     &np,
+		cost:  info.cost,
+		count: uint64(float64(info.count) * selectionFactor),
+	}
 }
 
 func (p *Selection) convert2PhysicalPlanPushOrder(prop *requiredProperty) (*physicalPlanInfo, error) {
@@ -838,7 +839,17 @@ func (p *Selection) convert2PhysicalPlanPushOrder(prop *requiredProperty) (*phys
 				info = enforceProperty(&requiredProperty{limit: limit}, info)
 			}
 		} else {
-			info = enforceProperty(&requiredProperty{limit: limit}, info)
+			info = enforceProperty(&requiredProperty{limit: limit}, p.appendSelToInfo(info))
+		}
+	} else if ds, ok := p.children[0].(*DataSource); !ok {
+		// TODO: It's tooooooo tricky here, we will remove all these logic after implementing DAG push down.
+		info = p.appendSelToInfo(info)
+	} else {
+		client := p.ctx.GetClient()
+		memDB := infoschema.IsMemoryDB(ds.DBName.L)
+		isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeSelect, 0)
+		if !isDistReq {
+			info = p.appendSelToInfo(info)
 		}
 	}
 	return info, nil
@@ -855,6 +866,8 @@ func (p *Selection) convert2PhysicalPlanEnforce(prop *requiredProperty) (*physic
 	if prop.limit != nil && len(prop.props) > 0 {
 		if t, ok := info.p.(physicalDistSQLPlan); ok {
 			t.addTopN(p.ctx, prop)
+		} else if _, ok := info.p.(*Selection); !ok {
+			info = p.appendSelToInfo(info)
 		}
 		info = enforceProperty(prop, info)
 	} else if len(prop.props) != 0 {
