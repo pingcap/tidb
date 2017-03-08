@@ -202,7 +202,7 @@ func (s *testRegionCacheSuite) TestSplit(c *C) {
 }
 
 func (s *testRegionCacheSuite) TestMerge(c *C) {
-	// ['' - 'm' - 'z']
+	// key range: ['' - 'm' - 'z']
 	region2 := s.cluster.AllocID()
 	newPeers := s.cluster.AllocIDs(2)
 	s.cluster.Split(s.region1, region2, []byte("m"), newPeers, newPeers[0])
@@ -252,6 +252,31 @@ func (s *testRegionCacheSuite) TestRequestFail(c *C) {
 	region = s.getRegion(c, []byte("a"))
 	// Out of range of Peers, so get Region again and pick Stores[0] as leader.
 	c.Assert(region.unreachableStores, HasLen, 0)
+}
+
+func (s *testRegionCacheSuite) TestRequestFail2(c *C) {
+	// key range: ['' - 'm' - 'z']
+	region2 := s.cluster.AllocID()
+	newPeers := s.cluster.AllocIDs(2)
+	s.cluster.Split(s.region1, region2, []byte("m"), newPeers, newPeers[0])
+
+	// Check the two regions.
+	loc1, err := s.cache.LocateKey(s.bo, []byte("a"))
+	c.Assert(err, IsNil)
+	c.Assert(loc1.Region.id, Equals, s.region1)
+	loc2, err := s.cache.LocateKey(s.bo, []byte("x"))
+	c.Assert(err, IsNil)
+	c.Assert(loc2.Region.id, Equals, region2)
+
+	// Request should fail on region1.
+	ctx, _ := s.cache.GetRPCContext(s.bo, loc1.Region)
+	c.Assert(s.cache.storeMu.stores, HasLen, 1)
+	s.checkCache(c, 2)
+	s.cache.OnRequestFail(ctx)
+	// Both region2 and store should be dropped from cache.
+	c.Assert(s.cache.storeMu.stores, HasLen, 0)
+	c.Assert(s.cache.getRegionFromCache([]byte("x")), IsNil)
+	s.checkCache(c, 1)
 }
 
 func (s *testRegionCacheSuite) TestUpdateStoreAddr(c *C) {

@@ -404,6 +404,8 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
 		tp.Flen = 40
+	case ast.Coalesce:
+		tp = aggArgsType(x.Args)
 	default:
 		tp = types.NewFieldType(mysql.TypeUnspecified)
 	}
@@ -531,4 +533,41 @@ func (v *typeInferrer) convertValueToColumnTypeIfNeeded(x *ast.PatternInExpr) {
 			v.err = nil
 		}
 	}
+}
+
+func aggArgsType(args []ast.ExprNode) *types.FieldType {
+	var tpClass = types.ClassString
+	var unsigned bool
+	var gotFirst bool
+	for _, arg := range args {
+		argFieldType := arg.GetType()
+		if argFieldType.Tp == mysql.TypeNull {
+			continue
+		}
+		if !gotFirst {
+			gotFirst = true
+			tpClass = argFieldType.ToClass()
+			unsigned = mysql.HasUnsignedFlag(argFieldType.Flag)
+		} else {
+			tpClass = mergeTypeClass(tpClass, argFieldType.ToClass(), unsigned, mysql.HasUnsignedFlag(argFieldType.Flag))
+			unsigned = unsigned && mysql.HasUnsignedFlag(argFieldType.Flag)
+		}
+	}
+	ft := types.NewFieldType(tpClass.ToType())
+	if unsigned {
+		ft.Flag |= mysql.UnsignedFlag
+	}
+	ft.Charset, ft.Collate = types.DefaultCharsetForType(ft.Tp)
+	return ft
+}
+
+func mergeTypeClass(a, b types.TypeClass, aUnsigned, bUnsigned bool) types.TypeClass {
+	if a == types.ClassString || b == types.ClassString {
+		return types.ClassString
+	} else if a == types.ClassReal || b == types.ClassReal {
+		return types.ClassReal
+	} else if a == types.ClassDecimal || b == types.ClassDecimal || aUnsigned != bUnsigned {
+		return types.ClassDecimal
+	}
+	return types.ClassInt
 }
