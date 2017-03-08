@@ -169,14 +169,22 @@ func (e *HashJoinExec) fetchBigExec() {
 			}
 			result.rows = append(result.rows, row)
 			if len(result.rows) >= batchSize {
-				e.bigTableResultCh[idx] <- result
-				result = &execResult{rows: make([]*Row, 0, batchSize)}
+				select {
+				case <-e.ctx.Done():
+					return
+				case e.bigTableResultCh[idx] <- result:
+					result = &execResult{rows: make([]*Row, 0, batchSize)}
+				}
 			}
 		}
 		cnt++
 		if done {
 			if len(result.rows) > 0 && len(result.rows) < batchSize {
-				e.bigTableResultCh[idx] <- result
+				select {
+				case <-e.ctx.Done():
+					return
+				case e.bigTableResultCh[idx] <- result:
+				}
 			}
 			break
 		}
@@ -261,10 +269,21 @@ func (e *HashJoinExec) runJoinWorker(idx int) {
 	maxRowsCnt := 1000
 	result := &execResult{rows: make([]*Row, 0, maxRowsCnt)}
 	for {
-		bigTableResult, ok := <-e.bigTableResultCh[idx]
-		if !ok || e.finished.Load().(bool) {
+		var bigTableResult *execResult
+		var exit bool
+		select {
+		case <-e.ctx.Done():
+			exit = true
+		case tmp, ok := <-e.bigTableResultCh[idx]:
+			if !ok {
+				exit = true
+			}
+			bigTableResult = tmp
+		}
+		if exit || e.finished.Load().(bool) {
 			break
 		}
+
 		if bigTableResult.err != nil {
 			e.resultCh <- &execResult{err: errors.Trace(bigTableResult.err)}
 			break
@@ -380,13 +399,19 @@ func (e *HashJoinExec) Next() (*Row, error) {
 		}
 	}
 	if e.cursor >= len(e.rows) {
-		result, ok := <-e.resultCh
-		if !ok {
+		var result *execResult
+		select {
+		case tmp, ok := <-e.resultCh:
+			if !ok {
+				return nil, nil
+			}
+			result = tmp
+			if result.err != nil {
+				e.finished.Store(true)
+				return nil, errors.Trace(result.err)
+			}
+		case <-e.ctx.Done():
 			return nil, nil
-		}
-		if result.err != nil {
-			e.finished.Store(true)
-			return nil, errors.Trace(result.err)
 		}
 		if len(result.rows) == 0 {
 			return nil, nil

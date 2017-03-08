@@ -129,6 +129,13 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 		e = executorExec.StmtExec
 	}
 
+	var pi processinfoSetter
+	if raw, ok := ctx.(processinfoSetter); ok {
+		pi = raw
+		// Update processinfo, ShowProcess() will use it.
+		pi.SetProcessInfo(a.OriginText())
+	}
+
 	// Fields or Schema are only used for statements that return result set.
 	if e.Schema().Len() == 0 {
 		// Check if "tidb_snapshot" is set for the write executors.
@@ -142,6 +149,9 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 		}
 
 		defer func() {
+			if pi != nil {
+				pi.SetProcessInfo("")
+			}
 			e.Close()
 			a.logSlowQuery()
 		}()
@@ -159,10 +169,7 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 			}
 		}
 	}
-	var pi processinfoSetter
-	if raw, ok := ctx.(processinfoSetter); ok {
-		pi = raw
-	}
+
 	return &recordSet{
 		executor:    e,
 		stmt:        a,
