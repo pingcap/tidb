@@ -543,7 +543,7 @@ func (b *Builder) splitAndConcurrentBuild(t *Table, offsets []int, isSorted bool
 			err = errc
 		}
 	}
-	return err
+	return errors.Trace(err)
 }
 
 // NewTable creates a table statistics.
