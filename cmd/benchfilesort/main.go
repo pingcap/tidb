@@ -49,6 +49,7 @@ var (
 	valSize     int
 	bufSize     int
 	scale       int
+	nWorkers    int
 	inputRatio  int
 	outputRatio int
 )
@@ -292,6 +293,9 @@ func driveRunCmd() {
 	if bufSize <= 0 {
 		log.Fatal(errors.New("buffer size must be positive"))
 	}
+	if nWorkers <= 0 {
+		log.Fatal(errors.New("the number of workers must be postive"))
+	}
 	if inputRatio < 0 || inputRatio > 100 {
 		log.Fatal(errors.New("input ratio must between 0 and 100 (inclusive)"))
 	}
@@ -331,7 +335,7 @@ func driveRunCmd() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fs, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetDesc(byDesc).SetDir(dir).Build()
+	fs, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetWorkers(nWorkers).SetDesc(byDesc).SetDir(dir).Build()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -403,6 +407,7 @@ func init() {
 
 	runCmd.StringVar(&tmpDir, "dir", cwd, "where to load the generated rows")
 	runCmd.IntVar(&bufSize, "bufSize", 500000, "how many rows held in memory at a time")
+	runCmd.IntVar(&nWorkers, "nWorkers", 1, "how many workers used in async sorting")
 	runCmd.IntVar(&inputRatio, "inputRatio", 100, "input percentage")
 	runCmd.IntVar(&outputRatio, "outputRatio", 100, "output percentage")
 	runCmd.StringVar(&cpuprofile, "cpuprofile", "", "write cpu profile to file")
