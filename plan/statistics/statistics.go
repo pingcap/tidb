@@ -536,13 +536,14 @@ func (b *Builder) splitAndConcurrentBuild(t *Table, offsets []int, isSorted bool
 	for i, offsets := range splittedOffsets {
 		go b.buildMultiColumns(t, offsets, i*groupSize, isSorted, doneCh)
 	}
+	var err error
 	for range splittedOffsets {
-		err := <-doneCh
-		if err != nil {
-			return errors.Trace(err)
+		errc := <-doneCh
+		if errc != nil && err == nil {
+			err = errc
 		}
 	}
-	return nil
+	return err
 }
 
 // NewTable creates a table statistics.
