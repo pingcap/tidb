@@ -33,15 +33,23 @@ var (
 			Name:      "statement_node_total",
 			Help:      "Counter of StmtNode.",
 		}, []string{"type"})
+	expensiveQueryCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "executor",
+			Name:      "expensive_query_total",
+			Help:      "Counter of expensive query.",
+		}, []string{"type"})
 )
 
 func init() {
 	prometheus.MustRegister(stmtNodeCounter)
+	prometheus.MustRegister(expensiveQueryCounter)
 }
 
 func stmtCount(node ast.StmtNode, p plan.Plan) {
-	if stmtLable := StatementLabel(node, p); stmtLable != IGNORE {
-		stmtNodeCounter.WithLabelValues(stmtLable).Inc()
+	if stmtLabel := StatementLabel(node, p); stmtLabel != IGNORE {
+		stmtNodeCounter.WithLabelValues(stmtLabel).Inc()
 	}
 }
 
@@ -160,24 +168,27 @@ func getSelectStmtLabel(stmt *ast.SelectStmt, p plan.Plan) string {
 	var attributes stmtAttributes
 	attributes.fromSelectStmt(stmt)
 	attributes.fromPlan(p)
-	attributes.logExpensiveStmt(stmt.Text())
-	return Select + attributes.toLabel()
+	stmtLabel := Select + attributes.toLabel()
+	attributes.logExpensiveStmt(stmtLabel, stmt.Text())
+	return stmtLabel
 }
 
 func getDeleteStmtLabel(stmt *ast.DeleteStmt, p plan.Plan) string {
 	var attributes stmtAttributes
 	attributes.fromDeleteStmt(stmt)
 	attributes.fromPlan(p)
-	attributes.logExpensiveStmt(stmt.Text())
-	return Delete + attributes.toLabel()
+	stmtLabel := Delete + attributes.toLabel()
+	attributes.logExpensiveStmt(stmtLabel, stmt.Text())
+	return stmtLabel
 }
 
 func getUpdateStmtLabel(stmt *ast.UpdateStmt, p plan.Plan) string {
 	var attributes stmtAttributes
 	attributes.fromUpdateStmt(stmt)
 	attributes.fromPlan(p)
-	attributes.logExpensiveStmt(stmt.Text())
-	return Update + attributes.toLabel()
+	stmtLabel := Update + attributes.toLabel()
+	attributes.logExpensiveStmt(stmtLabel, stmt.Text())
+	return stmtLabel
 }
 
 type stmtAttributes struct {
@@ -308,16 +319,23 @@ func (pa *stmtAttributes) toLabel() string {
 	return strings.Join(attrs, "")
 }
 
-func (pa *stmtAttributes) logExpensiveStmt(sql string) {
+func (pa *stmtAttributes) isExpensiveStmt() bool {
 	if pa.hasRange || pa.hasLimit || pa.isSystemTable {
-		return
+		return false
 	}
 	if !pa.hasIndexScan && !pa.hasTableScan && !pa.hasIndexDouble {
-		return
+		return false
 	}
-	const logSQLLen = 1024
-	if len(sql) > logSQLLen {
-		sql = sql[:logSQLLen] + fmt.Sprintf("len(%d)", len(sql))
+	return true
+}
+
+func (pa *stmtAttributes) logExpensiveStmt(stmtLabel string, sql string) {
+	if pa.isExpensiveStmt() {
+		const logSQLLen = 1024
+		if len(sql) > logSQLLen {
+			sql = sql[:logSQLLen] + fmt.Sprintf("len(%d)", len(sql))
+		}
+		log.Warnf("[EXPENSIVE_QUERY] %s", sql)
+		expensiveQueryCounter.WithLabelValues(stmtLabel).Inc()
 	}
-	log.Warnf("[EXPENSIVE_QUERY] %s", sql)
 }
