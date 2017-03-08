@@ -483,6 +483,8 @@ func (s *testParserSuite) TestExpression(c *C) {
 		{`select """a""";`, true},
 		{`select _utf8"string";`, true},
 		{`select _binary"string";`, true},
+		{"select N'string'", true},
+		{"select n'string'", true},
 		// for comparison
 		{"select 1 <=> 0, 1 <=> null, 1 = null", true},
 	}
@@ -1470,6 +1472,7 @@ func (s *testParserSuite) TestSessionManage(c *C) {
 		{"kill tidb 23123", true},
 		{"kill tidb connection 23123", true},
 		{"kill tidb query 23123", true},
+		{"show processlist", true},
 	}
 	s.RunTest(c, table)
 }

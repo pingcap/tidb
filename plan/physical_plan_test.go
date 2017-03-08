@@ -418,6 +418,14 @@ func (s *testPlanSuite) TestCBO(c *C) {
 			best: "LeftHashJoin{Table(t)->Table(t)}(a.c,b.c)->HashAgg->Sort->Trim",
 		},
 		{
+			sql:  "select * from t t1 left outer join t t2 on true where least(1,2,3,t1.a,t2.b) > 0 order by t2.a limit 10",
+			best: "LeftHashJoin{Table(t)->Table(t)}->Selection->Sort + Limit(10) + Offset(0)",
+		},
+		{
+			sql:  "select * from t t1 left outer join t t2 on true where least(1,2,3,t1.a,t2.b) > 0 limit 10",
+			best: "LeftHashJoin{Table(t)->Table(t)}->Selection->Limit",
+		},
+		{
 			sql:  "select count(*) from t where concat(a,b) = 'abc' group by c",
 			best: "Index(t.c_d_e)[[<nil>,+inf]]->Selection->StreamAgg",
 		},

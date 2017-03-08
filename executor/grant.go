@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -74,7 +75,21 @@ func (e *GrantExec) Next() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		if !exists {
-			return nil, errors.Errorf("Unknown user: %s", user.User)
+			pwd := ""
+			if user.AuthOpt != nil {
+				if user.AuthOpt.ByAuthString {
+					pwd = util.EncodePassword(user.AuthOpt.AuthString)
+				} else {
+					pwd = util.EncodePassword(user.AuthOpt.HashString)
+				}
+			}
+
+			user := fmt.Sprintf(`("%s", "%s", "%s")`, host, userName, pwd)
+			sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password) VALUES %s;`, mysql.SystemDB, mysql.UserTable, user)
+			_, err := e.ctx.(sqlexec.SQLExecutor).Execute(sql)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 
 		// If there is no privilege entry in corresponding table, insert a new one.

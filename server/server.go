@@ -223,6 +223,18 @@ func (s *Server) ShowProcessList() []util.ProcessInfo {
 
 // Kill implements the SessionManager interface.
 func (s *Server) Kill(connectionID uint64, query bool) {
+	s.rwlock.Lock()
+	defer s.rwlock.Unlock()
+
+	conn, ok := s.clients[uint32(connectionID)]
+	if !ok {
+		return
+	}
+
+	conn.ctx.Cancel()
+	if !query {
+		conn.killed = true
+	}
 }
 
 var once sync.Once
