@@ -14,6 +14,10 @@
 package expression
 
 import (
+	"crypto/md5"
+	"crypto/sha1"
+	"fmt"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/util/encrypt"
@@ -102,16 +106,22 @@ type builtinAesDecryptSig struct {
 func (b *builtinAesDecryptSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	for _, arg := range args {
 		// If either function argument is NULL, the function returns NULL.
 		if arg.IsNull() {
-			return
+			return d, nil
 		}
 	}
-	cryptStr := args[0].GetBytes()
-	key := args[1].GetBytes()
+	cryptStr, err := args[0].ToBytes()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	key, err := args[1].ToBytes()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
 	key = handleAESKey(key, aes128ecb)
 	// By default these functions implement AES with a 128-bit key length.
 	// TODO: We only support aes-128-ecb now. We should support other mode latter.
@@ -120,7 +130,7 @@ func (b *builtinAesDecryptSig) eval(row []types.Datum) (d types.Datum, err error
 		return d, errors.Trace(err)
 	}
 	d.SetString(string(data))
-	return
+	return d, nil
 }
 
 type aesEncryptFunctionClass struct {
@@ -151,8 +161,14 @@ func (b *builtinAesEncryptSig) eval(row []types.Datum) (d types.Datum, err error
 			return
 		}
 	}
-	str := args[0].GetBytes()
-	key := args[1].GetBytes()
+	str, err := args[0].ToBytes()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	key, err := args[1].ToBytes()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
 	key = handleAESKey(key, aes128ecb)
 	crypted, err := encrypt.AESEncryptWithECB(str, key)
 	if err != nil {
@@ -447,7 +463,23 @@ type builtinMD5Sig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_md5
 func (b *builtinMD5Sig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("MD5")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	// This function takes one argument.
+	arg := args[0]
+	if arg.IsNull() {
+		return
+	}
+	bin, err := arg.ToBytes()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	sum := md5.Sum(bin)
+	hexStr := fmt.Sprintf("%x", sum)
+	d.SetString(hexStr)
+	return d, nil
 }
 
 type oldPasswordFunctionClass struct {
@@ -514,8 +546,26 @@ type builtinSHA1Sig struct {
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_sha1
+// The value is returned as a string of 40 hexadecimal digits, or NULL if the argument was NULL.
 func (b *builtinSHA1Sig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("SHA1")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	// SHA/SHA1 function only accept 1 parameter
+	arg := args[0]
+	if arg.IsNull() {
+		return d, nil
+	}
+	bin, err := arg.ToBytes()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	hasher := sha1.New()
+	hasher.Write(bin)
+	data := fmt.Sprintf("%x", hasher.Sum(nil))
+	d.SetString(data)
+	return d, nil
 }
 
 type sha2FunctionClass struct {

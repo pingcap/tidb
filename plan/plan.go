@@ -130,6 +130,19 @@ func (p *requiredProperty) getHashKey() ([]byte, error) {
 	return bytes, errors.Trace(err)
 }
 
+// String implements fmt.Stringer interface. Just for test.
+func (p *requiredProperty) String() string {
+	ret := "Prop{"
+	for _, colProp := range p.props {
+		ret += fmt.Sprintf("col: %s, desc %v, ", colProp.col, colProp.desc)
+	}
+	ret += fmt.Sprintf("}, Len: %d", p.sortKeyLen)
+	if p.limit != nil {
+		ret += fmt.Sprintf(", Limit: %d,%d", p.limit.Offset, p.limit.Count)
+	}
+	return ret
+}
+
 type physicalPlanInfo struct {
 	p     PhysicalPlan
 	cost  float64

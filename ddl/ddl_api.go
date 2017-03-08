@@ -20,6 +20,7 @@ package ddl
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -798,6 +799,14 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if col.DefaultValue == nil && mysql.HasNotNullFlag(col.Flag) {
+		col.DefaultValue = table.GetZeroValue(col.ToInfo())
+	}
+	col.OriginDefaultValue = col.DefaultValue
+	if col.OriginDefaultValue == expression.CurrentTimestamp &&
+		(col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime) {
+		col.OriginDefaultValue = time.Now().Format(types.TimeFormat)
+	}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -920,11 +929,7 @@ func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast
 		return nil
 	}
 
-	var (
-		hasDefaultValue bool
-		hasNotNull      bool
-		setOnUpdateNow  bool
-	)
+	var hasDefaultValue, setOnUpdateNow bool
 	for _, opt := range options {
 		switch opt.Tp {
 		case ast.ColumnOptionDefaultValue:
@@ -941,7 +946,6 @@ func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast
 			}
 		case ast.ColumnOptionNotNull:
 			col.Flag |= mysql.NotNullFlag
-			hasNotNull = true
 		case ast.ColumnOptionNull:
 			col.Flag &= ^uint(mysql.NotNullFlag)
 		case ast.ColumnOptionOnUpdate:
@@ -959,10 +963,6 @@ func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast
 	}
 
 	setTimestampDefaultValue(col, hasDefaultValue, setOnUpdateNow)
-	if col.Tp == mysql.TypeTimestamp && hasNotNull {
-		return errors.Trace(errInvalidUseOfNull)
-	}
-
 	if hasDefaultValue {
 		return errors.Trace(checkDefaultValue(ctx, col, true))
 	}
@@ -993,10 +993,11 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 	}
 
 	newCol := &table.Column{
-		ID:        col.ID,
-		Offset:    col.Offset,
-		State:     col.State,
-		FieldType: *spec.NewColumn.Tp,
+		ID:                 col.ID,
+		Offset:             col.Offset,
+		State:              col.State,
+		OriginDefaultValue: col.OriginDefaultValue,
+		FieldType:          *spec.NewColumn.Tp,
 	}
 	setCharsetCollationFlenDecimal(&newCol.FieldType)
 	if !modifiable(&col.FieldType, &newCol.FieldType) {

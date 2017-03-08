@@ -282,6 +282,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 	if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
 		log.Warnf("buildCopTasks takes too much time (%v), range len %v, task len %v", elapsed, rangesLen, len(tasks))
 	}
+	txnRegionsNumHistogram.WithLabelValues("coprocessor").Observe(float64(len(tasks)))
 	return tasks, nil
 }
 
@@ -307,7 +308,7 @@ type copIterator struct {
 	errChan  chan error
 }
 
-const minLogCopTaskTime = 50 * time.Millisecond
+const minLogCopTaskTime = 300 * time.Millisecond
 
 // Pick the next new copTask and send request to tikv-server.
 func (it *copIterator) work(ctx goctx.Context) {

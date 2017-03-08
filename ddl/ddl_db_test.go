@@ -667,6 +667,14 @@ LOOP:
 	c.Assert(i, Equals, int(count))
 	c.Assert(i, LessEqual, num+step)
 	c.Assert(j, Equals, int(count)-step)
+
+	// for modifying columns after adding columns
+	s.tk.MustExec("alter table t2 modify c4 int default 11")
+	for i := num + step; i < num+step+10; i++ {
+		s.mustExec(c, "insert into t2 values (?, ?, ?, ?)", i, i, i, i)
+	}
+	rows = s.mustQuery(c, "select count(c4) from t2 where c4 = -1")
+	matchRows(c, rows, [][]interface{}{{count - int64(step)}})
 }
 
 func (s *testDBSuite) testDropColumn(c *C) {
@@ -753,20 +761,18 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	s.tk.MustQuery("select b from t3").Check(testkit.Rows(rowStr, rowStr1, rowStr2))
 	// for timestamp
 	s.mustExec(c, "alter table t3 add column c timestamp not null")
-	s.mustExec(c, "alter table t3 change c c timestamp default '2017-02-11' comment 'col c comment' on update current_timestamp")
+	s.mustExec(c, "alter table t3 change c c timestamp not null default '2017-02-11' comment 'col c comment' on update current_timestamp")
 	is = sessionctx.GetDomain(ctx).InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("t3"))
 	c.Assert(err, IsNil)
 	tblInfo = tbl.Meta()
 	colC := tblInfo.Columns[2]
 	c.Assert(colC.Comment, Equals, "col c comment")
+	hasNotNull = tmysql.HasNotNullFlag(colC.Flag)
+	c.Assert(hasNotNull, IsTrue)
 
 	// for failing tests
-	sql := "alter table t3 change c c timestamp not null"
-	s.testErrorCode(c, sql, tmysql.ErrInvalidUseOfNull)
-	sql = "alter table t3 change c c timestamp not null null"
-	s.testErrorCode(c, sql, tmysql.ErrInvalidUseOfNull)
-	sql = "alter table t3 change aa a bigint default ''"
+	sql := "alter table t3 change aa a bigint default ''"
 	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
 	sql = "alter table t3 change a testx.t3.aa bigint"
 	s.testErrorCode(c, sql, tmysql.ErrWrongDBName)

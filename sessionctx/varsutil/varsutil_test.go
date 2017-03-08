@@ -18,6 +18,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -103,4 +104,14 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(t2.Sub(t1), Equals, 10*time.Hour)
 	SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum("-6:00"))
 	c.Assert(v.TimeZone.String(), Equals, "UTC")
+
+	// Test case for sql mode.
+	for str, mode := range mysql.Str2SQLMode {
+		SetSessionSystemVar(v, "sql_mode", types.NewStringDatum(str))
+		c.Assert(v.SQLMode, Equals, mode)
+	}
+
+	// Combined sql_mode
+	SetSessionSystemVar(v, "sql_mode", types.NewStringDatum("REAL_AS_FLOAT,ANSI_QUOTES"))
+	c.Assert(v.SQLMode, Equals, mysql.ModeRealAsFloat|mysql.ModeANSIQuotes)
 }
