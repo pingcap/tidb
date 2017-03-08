@@ -414,11 +414,7 @@ func (fs *FileSorter) openAllFiles() error {
 
 // Fetch the next row given the source file index.
 func (fs *FileSorter) fetchNextRow(index int) (*comparableRow, error) {
-	var (
-		err error
-		n   int
-	)
-	n, err = fs.fds[index].Read(fs.head)
+	n, err := fs.fds[index].Read(fs.head)
 	if err == io.EOF {
 		return nil, nil
 	}
@@ -527,7 +523,7 @@ func (fs *FileSorter) Output() ([]types.Datum, []types.Datum, int64, error) {
 // Close terminates the input or output process and discards all remaining data.
 func (fs *FileSorter) Close() error {
 	if fs.closed {
-		return errors.New("FileSorter has been closed")
+		return nil
 	}
 	fs.wg.Wait()
 	for _, w := range fs.workers {
@@ -550,7 +546,7 @@ func (w *Worker) Less(i, j int) bool {
 	r := w.buf[j].key
 	ret, err := lessThan(w.ctx.sc, l, r, w.ctx.byDesc)
 	if w.err == nil {
-		w.err = err
+		w.err = errors.Trace(err)
 	}
 	return ret
 }
@@ -575,8 +571,6 @@ func (w *Worker) input(row *comparableRow) error {
 func (w *Worker) flushToFile() {
 	defer w.ctx.wg.Done()
 	var (
-		err        error
-		outputFile *os.File
 		outputByte []byte
 		prevLen    int
 	)
@@ -588,9 +582,9 @@ func (w *Worker) flushToFile() {
 
 	fileName := w.ctx.getUniqueFileName()
 
-	outputFile, err = os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	outputFile, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
-		w.err = err
+		w.err = errors.Trace(err)
 		return
 	}
 	defer outputFile.Close()
@@ -600,17 +594,17 @@ func (w *Worker) flushToFile() {
 		outputByte = append(outputByte, w.head...)
 		outputByte, err = codec.EncodeKey(outputByte, row.key...)
 		if err != nil {
-			w.err = err
+			w.err = errors.Trace(err)
 			return
 		}
 		outputByte, err = codec.EncodeKey(outputByte, row.val...)
 		if err != nil {
-			w.err = err
+			w.err = errors.Trace(err)
 			return
 		}
 		outputByte, err = codec.EncodeKey(outputByte, types.NewIntDatum(row.handle))
 		if err != nil {
-			w.err = err
+			w.err = errors.Trace(err)
 			return
 		}
 
@@ -625,7 +619,7 @@ func (w *Worker) flushToFile() {
 
 	_, err = outputFile.Write(outputByte)
 	if err != nil {
-		w.err = err
+		w.err = errors.Trace(err)
 		return
 	}
 

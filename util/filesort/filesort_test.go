@@ -133,6 +133,7 @@ func (s *testFileSortSuite) TestInMemory(c *C) {
 	fsBuilder := new(Builder)
 	fs, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetWorkers(1).SetDesc(byDesc).SetDir(tmpDir).Build()
 	c.Assert(err, IsNil)
+	defer fs.Close()
 
 	nRows := r.Intn(bufSize-1) + 1 // random int in range [1, bufSize - 1]
 	for i := 1; i <= nRows; i++ {
@@ -182,6 +183,7 @@ func (s *testFileSortSuite) TestMultipleFiles(c *C) {
 	fsBuilder := new(Builder)
 	fs, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetWorkers(1).SetDesc(byDesc).SetDir(tmpDir).Build()
 	c.Assert(err, IsNil)
+	defer fs.Close()
 
 	nRows := (r.Intn(bufSize) + 1) * (r.Intn(10) + 2)
 	for i := 1; i <= nRows; i++ {
@@ -231,6 +233,7 @@ func (s *testFileSortSuite) TestMultipleWorkers(c *C) {
 	fsBuilder := new(Builder)
 	fs, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetWorkers(4).SetDesc(byDesc).SetDir(tmpDir).Build()
 	c.Assert(err, IsNil)
+	defer fs.Close()
 
 	nRows := (r.Intn(bufSize) + 1) * (r.Intn(10) + 2)
 	for i := 1; i <= nRows; i++ {
@@ -277,11 +280,13 @@ func (s *testFileSortSuite) TestClose(c *C) {
 	c.Assert(err, IsNil)
 	fs0, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetWorkers(1).SetDesc(byDesc).SetDir(tmpDir0).Build()
 	c.Assert(err, IsNil)
+	defer fs0.Close()
 
 	tmpDir1, err = ioutil.TempDir("", "util_filesort_test")
 	c.Assert(err, IsNil)
 	fs1, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetWorkers(1).SetDesc(byDesc).SetDir(tmpDir1).Build()
 	c.Assert(err, IsNil)
+	defer fs1.Close()
 
 	// 1. Close after some Input
 	err = fs0.Input(nextRow(r, keySize, valSize))
@@ -300,7 +305,7 @@ func (s *testFileSortSuite) TestClose(c *C) {
 	c.Assert(err, ErrorMatches, errmsg)
 
 	err = fs0.Close()
-	c.Assert(err, ErrorMatches, errmsg)
+	c.Assert(err, IsNil)
 
 	// 2. Close after some Output
 	err = fs1.Input(nextRow(r, keySize, valSize))
@@ -324,7 +329,7 @@ func (s *testFileSortSuite) TestClose(c *C) {
 	c.Assert(err, ErrorMatches, errmsg)
 
 	err = fs1.Close()
-	c.Assert(err, ErrorMatches, errmsg)
+	c.Assert(err, IsNil)
 }
 
 func (s *testFileSortSuite) TestMismatchedUsage(c *C) {
@@ -354,11 +359,13 @@ func (s *testFileSortSuite) TestMismatchedUsage(c *C) {
 	c.Assert(err, IsNil)
 	fs0, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetWorkers(1).SetDesc(byDesc).SetDir(tmpDir).Build()
 	c.Assert(err, IsNil)
+	defer fs0.Close()
 
 	tmpDir, err = ioutil.TempDir("", "util_filesort_test")
 	c.Assert(err, IsNil)
 	fs1, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetWorkers(1).SetDesc(byDesc).SetDir(tmpDir).Build()
 	c.Assert(err, IsNil)
+	defer fs1.Close()
 
 	// 1. call Output after fetched all rows
 	err = fs0.Input(nextRow(r, keySize, valSize))
