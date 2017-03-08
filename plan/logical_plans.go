@@ -204,11 +204,6 @@ type DataSource struct {
 	statisticTable *statistics.Table
 }
 
-// Trim trims extra columns in src rows.
-type Trim struct {
-	baseLogicalPlan
-}
-
 // Union represents Union plan.
 type Union struct {
 	baseLogicalPlan
