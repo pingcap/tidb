@@ -1512,6 +1512,54 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 				{mysql.IndexPriv, "test", "t", ""},
 			},
 		},
+		{
+			sql: `create user 'test'@'%' identified by '123456'`,
+			ans: []visitInfo{
+				{mysql.CreateUserPriv, "", "", ""},
+			},
+		},
+		{
+			sql: `drop user 'test'@'%'`,
+			ans: []visitInfo{
+				{mysql.CreateUserPriv, "", "", ""},
+			},
+		},
+		{
+			sql: `grant all privileges on test.* to 'test'@'%'`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "", ""},
+				{mysql.InsertPriv, "test", "", ""},
+				{mysql.UpdatePriv, "test", "", ""},
+				{mysql.DeletePriv, "test", "", ""},
+				{mysql.CreatePriv, "test", "", ""},
+				{mysql.DropPriv, "test", "", ""},
+				{mysql.GrantPriv, "test", "", ""},
+				{mysql.AlterPriv, "test", "", ""},
+				{mysql.ExecutePriv, "test", "", ""},
+				{mysql.IndexPriv, "test", "", ""},
+			},
+		},
+		{
+			sql: `grant select on test.ttt to 'test'@'%'`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "ttt", ""},
+				{mysql.GrantPriv, "test", "ttt", ""},
+			},
+		},
+		{
+			sql: `revoke all privileges on *.* from 'test'@'%'`,
+			ans: []visitInfo{
+				// TODO: This should be SUPER privilege.
+				{mysql.CreateUserPriv, "", "", ""},
+			},
+		},
+		{
+			sql: `set password for 'root'@'%' = 'xxxxx'`,
+			ans: []visitInfo{
+				// TODO: This should be SUPER privilege.
+				{mysql.CreateUserPriv, "", "", ""},
+			},
+		},
 	}
 
 	for _, ca := range cases {
