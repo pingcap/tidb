@@ -240,8 +240,8 @@ func (s *SessionVars) GetBuildStatsConcurrency() int {
 	return s.BuildStatsConcurrencyVar
 }
 
-// GetBuildStatsConcurrency sets the build stats concurrency.
-func (s *SessionVars) SettBuildStatsConcurrency(c int) {
+// SetBuildStatsConcurrency sets the build stats concurrency.
+func (s *SessionVars) SetBuildStatsConcurrency(c int) {
 	s.BuildStatsConcurrencyVar = c
 }
 
