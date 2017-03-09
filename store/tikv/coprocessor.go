@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
@@ -85,10 +85,12 @@ func (c *CopClient) Send(ctx goctx.Context, req *kv.Request) kv.Response {
 		store:       c.store,
 		req:         req,
 		concurrency: req.Concurrency,
+		finished:    make(chan struct{}),
 	}
-	it.mu.tasks = tasks
-	if it.concurrency > len(tasks) {
-		it.concurrency = len(tasks)
+	it.tasks = tasks
+	length := listLength(tasks)
+	if it.concurrency > length {
+		it.concurrency = length
 	}
 	if it.concurrency < 1 {
 		// Make sure that there is at least one worker.
@@ -97,29 +99,29 @@ func (c *CopClient) Send(ctx goctx.Context, req *kv.Request) kv.Response {
 	if !it.req.KeepOrder {
 		it.respChan = make(chan *coprocessor.Response, it.concurrency)
 	}
+	it.taskCh = make(chan *copTask, req.Concurrency)
 	it.errChan = make(chan error, it.concurrency)
-	if len(it.mu.tasks) == 0 {
-		it.Close()
-	}
 	it.run(ctx)
 	return it
 }
 
-const (
-	taskNew int = iota
-	taskRunning
-	taskDone
-)
+func listLength(t *copTask) int {
+	var count int
+	for ; t != nil; t = t.next {
+		count++
+	}
+	return count
+}
 
 // copTask contains a related Region and KeyRange for a kv.Request.
 type copTask struct {
 	region RegionVerID
 	ranges *copRanges
 
-	status    int
-	idx       int // Index of task in the tasks slice.
 	respChan  chan *coprocessor.Response
 	storeAddr string
+
+	next *copTask // Link copTask together to make a list.
 }
 
 func (r *copTask) String() string {
@@ -217,21 +219,26 @@ func (r *copRanges) toPBRanges() []*coprocessor.KeyRange {
 	return ranges
 }
 
-func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bool) ([]*copTask, error) {
+func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bool) (*copTask, error) {
 	coprocessorCounter.WithLabelValues("build_task").Inc()
 
 	start := time.Now()
 	rangesLen := ranges.len()
 
-	var tasks []*copTask
+	var (
+		head   copTask
+		length int
+	)
+	tail := &head
 	appendTask := func(region RegionVerID, ranges *copRanges) {
-		tasks = append(tasks, &copTask{
-			idx:      len(tasks),
+		newTask := &copTask{
 			region:   region,
-			status:   taskNew,
 			ranges:   ranges,
 			respChan: make(chan *coprocessor.Response, 1),
-		})
+		}
+		tail.next = newTask
+		tail = newTask
+		length++
 	}
 
 	for ranges.len() > 0 {
@@ -276,62 +283,55 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 		}
 	}
 
+	var tasks *copTask
 	if desc {
-		reverseTasks(tasks)
+		tasks = reverseTasks(&head)
+	} else {
+		tasks = head.next
 	}
 	if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
-		log.Warnf("buildCopTasks takes too much time (%v), range len %v, task len %v", elapsed, rangesLen, len(tasks))
+		log.Warnf("buildCopTasks takes too much time (%v), range len %v, task len %v", elapsed, rangesLen, length)
 	}
-	txnRegionsNumHistogram.WithLabelValues("coprocessor").Observe(float64(len(tasks)))
+	txnRegionsNumHistogram.WithLabelValues("coprocessor").Observe(float64(length))
 	return tasks, nil
 }
 
-func reverseTasks(tasks []*copTask) {
-	for i := 0; i < len(tasks)/2; i++ {
-		j := len(tasks) - i - 1
-		tasks[i], tasks[j] = tasks[j], tasks[i]
-		tasks[i].idx, tasks[j].idx = tasks[j].idx, tasks[i].idx
+func reverseTasks(head *copTask) *copTask {
+	// reverse a list, head is a dummy head node.
+	p := head.next
+	head.next = nil
+	// iterator the real list and insert each node after head.
+	for p != nil {
+		save := p.next
+		p.next = head.next
+		head.next = p
+		p = save
 	}
+	return head.next
 }
 
 type copIterator struct {
 	store       *tikvStore
 	req         *kv.Request
 	concurrency int
-	mu          struct {
-		sync.RWMutex
-		tasks    []*copTask
-		respGot  int
-		finished bool
-	}
+	finished    chan struct{}
+	taskCh      chan *copTask
+
+	// If keepOrder, result is stored in copTask.respChan, tasks is a list, read them out one by one.
+	tasks *copTask
+
+	// Otherwise, result is stored in respChan.
 	respChan chan *coprocessor.Response
 	errChan  chan error
+	pending  int64
 }
 
 const minLogCopTaskTime = 300 * time.Millisecond
 
-// Pick the next new copTask and send request to tikv-server.
-func (it *copIterator) work(ctx goctx.Context) {
-	for {
-		it.mu.Lock()
-		if it.mu.finished {
-			it.mu.Unlock()
-			break
-		}
-		// Find the next task to send.
-		var task *copTask
-		for _, t := range it.mu.tasks {
-			if t.status == taskNew {
-				task = t
-				break
-			}
-		}
-		if task == nil {
-			it.mu.Unlock()
-			break
-		}
-		task.status = taskRunning
-		it.mu.Unlock()
+// The worker function that get a copTask from channel, handle it and
+// send the result back.
+func (it *copIterator) work(ctx goctx.Context, taskCh <-chan *copTask) {
+	for task := range taskCh {
 		bo := NewBackoffer(copNextMaxBackoff, ctx)
 		startTime := time.Now()
 		resp, err := it.handleTask(bo, task)
@@ -357,27 +357,32 @@ func (it *copIterator) work(ctx goctx.Context) {
 		case ch <- resp:
 		case <-ctx.Done():
 			return
+		case <-it.finished:
+			return
 		}
 	}
 }
 
 func (it *copIterator) run(ctx goctx.Context) {
+	for t := it.tasks; t != nil; t = t.next {
+		it.addTask(t)
+	}
+
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
-		go it.work(ctx)
+		go it.work(ctx, it.taskCh)
 	}
+}
+
+func (it *copIterator) addTask(t *copTask) {
+	atomic.AddInt64(&it.pending, 1)
+	it.taskCh <- t
 }
 
 // Return next coprocessor result.
 func (it *copIterator) Next() (io.ReadCloser, error) {
 	coprocessorCounter.WithLabelValues("next").Inc()
 
-	it.mu.RLock()
-	if it.mu.finished {
-		it.mu.RUnlock()
-		return nil, nil
-	}
-	it.mu.RUnlock()
 	var (
 		resp *coprocessor.Response
 		err  error
@@ -385,49 +390,33 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 	// If data order matters, response should be returned in the same order as copTask slice.
 	// Otherwise all responses are returned from a single channel.
 	if !it.req.KeepOrder {
+		if atomic.LoadInt64(&it.pending) == 0 {
+			close(it.taskCh)
+			return nil, nil
+		}
+
 		// Get next fetched resp from chan
 		select {
 		case resp = <-it.respChan:
 		case err = <-it.errChan:
 		}
+		atomic.AddInt64(&it.pending, -1)
 	} else {
-		var task *copTask
-		it.mu.Lock()
-		for _, t := range it.mu.tasks {
-			if t.status != taskDone {
-				task = t
-				break
-			}
-		}
-		it.mu.Unlock()
-		if task == nil {
-			it.Close()
-		}
-		if task == nil {
+		if it.tasks == nil {
+			// resp will be nil if iterator is finished.
+			close(it.taskCh)
 			return nil, nil
 		}
+
 		select {
-		case resp = <-task.respChan:
+		case resp = <-it.tasks.respChan:
 		case err = <-it.errChan:
 		}
-		it.mu.Lock()
-		task.status = taskDone
-		it.mu.Unlock()
+		it.tasks = it.tasks.next
 	}
 
-	it.mu.Lock()
-	defer it.mu.Unlock()
 	if err != nil {
-		it.mu.finished = true
 		return nil, errors.Trace(err)
-	}
-	if it.mu.finished {
-		// resp will be nil if iterator is finished.
-		return nil, nil
-	}
-	it.mu.respGot++
-	if it.mu.respGot == len(it.mu.tasks) {
-		it.mu.finished = true
 	}
 	return ioutil.NopCloser(bytes.NewBuffer(resp.Data)), nil
 }
@@ -437,12 +426,11 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) (*coprocessor.Re
 	coprocessorCounter.WithLabelValues("handle_task").Inc()
 	sender := NewRegionRequestSender(bo, it.store.regionCache, it.store.client)
 	for {
-		it.mu.RLock()
-		if it.mu.finished {
-			it.mu.RUnlock()
+		select {
+		case <-it.finished:
 			return nil, nil
+		default:
 		}
-		it.mu.RUnlock()
 
 		req := &coprocessor.Request{
 			Tp:     it.req.Tp,
@@ -496,31 +484,42 @@ func (it *copIterator) rebuildCurrentTask(bo *Backoffer, task *copTask) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if len(newTasks) == 0 {
+	if newTasks == nil {
 		// TODO: check this, this should never happen.
 		return nil
 	}
-	it.mu.Lock()
-	defer it.mu.Unlock()
+
+	// Don't forget to put the new task into task channel.
+	for t := newTasks.next; t != nil; t = t.next {
+		it.addTask(t)
+	}
+
 	// We should put the original task back to the original place in the task list.
 	// So the tasks can be handled in order.
-	t := newTasks[0]
-	task.region = t.region
-	task.ranges = t.ranges
-	close(t.respChan)
-	newTasks[0] = task
-	it.mu.tasks = append(it.mu.tasks[:task.idx], append(newTasks, it.mu.tasks[task.idx+1:]...)...)
-	// Update index.
-	for i := task.idx; i < len(it.mu.tasks); i++ {
-		it.mu.tasks[i].idx = i
-	}
+	// This is simple, just replace the old task node with the new task list.
+	replaceNodeWithList(task, newTasks)
 	return nil
 }
 
+func replaceNodeWithList(node *copTask, list *copTask) {
+	save := node.next
+
+	// replace the node with the list head.
+	node.region = list.region
+	node.ranges = list.ranges
+	node.storeAddr = list.storeAddr
+	node.next = list.next
+
+	// append the old list.
+	tail := node
+	for tail.next != nil {
+		tail = tail.next
+	}
+	tail.next = save
+}
+
 func (it *copIterator) Close() error {
-	it.mu.Lock()
-	it.mu.finished = true
-	it.mu.Unlock()
+	close(it.finished)
 	return nil
 }
 
