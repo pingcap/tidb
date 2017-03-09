@@ -50,7 +50,6 @@ var (
 	_ Executor = &TableDualExec{}
 	_ Executor = &TableScanExec{}
 	_ Executor = &TopnExec{}
-	_ Executor = &TrimExec{}
 	_ Executor = &UnionExec{}
 )
 
@@ -709,39 +708,6 @@ func (e *MaxOneRowExec) Next() (*Row, error) {
 		return srcRow, nil
 	}
 	return nil, nil
-}
-
-// TrimExec truncates extra columns in the Src rows.
-// Some columns in src rows are not needed in the result.
-// For example, in the 'SELECT a from t order by b' statement,
-// 'b' is needed for ordering, but not needed in the result.
-type TrimExec struct {
-	schema *expression.Schema
-	Src    Executor
-	len    int
-}
-
-// Schema implements the Executor Schema interface.
-func (e *TrimExec) Schema() *expression.Schema {
-	return e.schema
-}
-
-// Close implements the Executor Close interface.
-func (e *TrimExec) Close() error {
-	return e.Src.Close()
-}
-
-// Next implements the Executor Next interface.
-func (e *TrimExec) Next() (*Row, error) {
-	row, err := e.Src.Next()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if row == nil {
-		return nil, nil
-	}
-	row.Data = row.Data[:e.len]
-	return row, nil
 }
 
 // UnionExec represents union executor.

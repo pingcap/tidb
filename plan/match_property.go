@@ -281,11 +281,6 @@ func (p *Exists) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *phy
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
-func (p *Trim) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *physicalPlanInfo {
-	panic("You can't call this function!")
-}
-
-// matchProperty implements PhysicalPlan matchProperty interface.
 func (p *PhysicalAggregation) matchProperty(prop *requiredProperty, _ ...*physicalPlanInfo) *physicalPlanInfo {
 	panic("You can't call this function!")
 }
