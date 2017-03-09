@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -44,13 +45,6 @@ type GCWorker struct {
 
 // NewGCWorker creates a GCWorker instance.
 func NewGCWorker(store kv.Storage) (*GCWorker, error) {
-	session, err := tidb.CreateSession(store)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	// Disable privilege check for gc worker session.
-	privilege.BindPrivilegeChecker(session, nil)
-
 	ver, err := store.CurrentVersion()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -63,7 +57,6 @@ func NewGCWorker(store kv.Storage) (*GCWorker, error) {
 		uuid:        strconv.FormatUint(ver.Ver, 16),
 		desc:        fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
 		store:       store.(*tikvStore),
-		session:     session,
 		gcIsRunning: false,
 		lastFinish:  time.Now(),
 		quit:        make(chan struct{}),
@@ -113,6 +106,20 @@ func (w *GCWorker) start() {
 	for {
 		select {
 		case <-ticker.C:
+			if w.session == nil {
+				if !w.storeIsBootstrapped() {
+					break
+				}
+				var err error
+				w.session, err = tidb.CreateSession(w.store)
+				if err != nil {
+					log.Warnf("[gc worker] create session err: %v", err)
+					break
+				}
+				// Disable privilege check for gc worker session.
+				privilege.BindPrivilegeChecker(w.session, nil)
+			}
+
 			isLeader, err := w.checkLeader()
 			if err != nil {
 				log.Warnf("[gc worker] check leader err: %v", err)
@@ -140,6 +147,23 @@ func (w *GCWorker) start() {
 			return
 		}
 	}
+}
+
+const notBootstrappedVer = 0
+
+func (w *GCWorker) storeIsBootstrapped() bool {
+	var ver int64
+	err := kv.RunInNewTxn(w.store, false, func(txn kv.Transaction) error {
+		var err error
+		t := meta.NewMeta(txn)
+		ver, err = t.GetBootstrapVersion()
+		return errors.Trace(err)
+	})
+	if err != nil {
+		log.Errorf("[gc worker] check bootstrapped error %v", err)
+		return false
+	}
+	return ver > notBootstrappedVer
 }
 
 // Leader of GC worker checks if it should start a GC job every tick.

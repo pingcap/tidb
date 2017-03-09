@@ -1055,28 +1055,27 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 			sql: "select (select count(a) from t where b = k.a) from t k",
 			ans: map[string][]string{
 				"TableScan_1": {"a"},
-				"TableScan_2": {"a", "b"},
+				"TableScan_3": {"a", "b"},
 			},
 		},
 		{
 			sql: "select exists (select count(*) from t where b = k.a) from t k",
 			ans: map[string][]string{
-				"TableScan_1": {"a"},
-				"TableScan_2": {"b"},
+				"TableScan_1": {},
 			},
 		},
 		{
 			sql: "select b = (select count(*) from t where b = k.a) from t k",
 			ans: map[string][]string{
 				"TableScan_1": {"a", "b"},
-				"TableScan_2": {"b"},
+				"TableScan_3": {"b"},
 			},
 		},
 		{
-			sql: "select exists (select count(a) from t where b = k.a) from t k",
+			sql: "select exists (select count(a) from t where b = k.a group by b) from t k",
 			ans: map[string][]string{
 				"TableScan_1": {"a"},
-				"TableScan_2": {"b"},
+				"TableScan_3": {"b"},
 			},
 		},
 		{
@@ -1089,28 +1088,28 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 			sql: "select a from t where b < any (select c from t)",
 			ans: map[string][]string{
 				"TableScan_1": {"a", "b"},
-				"TableScan_2": {"c"},
+				"TableScan_3": {"c"},
 			},
 		},
 		{
 			sql: "select a from t where (b,a) != all (select c,d from t)",
 			ans: map[string][]string{
 				"TableScan_1": {"a", "b"},
-				"TableScan_2": {"c", "d"},
+				"TableScan_3": {"c", "d"},
 			},
 		},
 		{
 			sql: "select a from t where (b,a) in (select c,d from t)",
 			ans: map[string][]string{
 				"TableScan_1": {"a", "b"},
-				"TableScan_2": {"c", "d"},
+				"TableScan_3": {"c", "d"},
 			},
 		},
 		{
 			sql: "select a from t where a in (select a from t s group by t.b)",
 			ans: map[string][]string{
 				"TableScan_1": {"a"},
-				"TableScan_2": {"a"},
+				"TableScan_3": {"a"},
 			},
 		},
 	}
@@ -1120,7 +1119,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 		c.Assert(err, IsNil, comment)
 
 		is, err := mockResolve(stmt)
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, comment)
 
 		builder := &planBuilder{
 			colMapper: make(map[*ast.ColumnNameExpr]int),
@@ -1148,7 +1147,7 @@ func (s *testPlanSuite) TestAllocID(c *C) {
 
 func checkDataSourceCols(p Plan, c *C, ans map[string][]string, comment CommentInterface) {
 	switch p.(type) {
-	case *PhysicalTableScan:
+	case *DataSource:
 		colList, ok := ans[p.ID()]
 		c.Assert(ok, IsTrue, comment)
 		for i, colName := range colList {
@@ -1510,6 +1509,54 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			sql: "drop index e on t",
 			ans: []visitInfo{
 				{mysql.IndexPriv, "test", "t", ""},
+			},
+		},
+		{
+			sql: `create user 'test'@'%' identified by '123456'`,
+			ans: []visitInfo{
+				{mysql.CreateUserPriv, "", "", ""},
+			},
+		},
+		{
+			sql: `drop user 'test'@'%'`,
+			ans: []visitInfo{
+				{mysql.CreateUserPriv, "", "", ""},
+			},
+		},
+		{
+			sql: `grant all privileges on test.* to 'test'@'%'`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "", ""},
+				{mysql.InsertPriv, "test", "", ""},
+				{mysql.UpdatePriv, "test", "", ""},
+				{mysql.DeletePriv, "test", "", ""},
+				{mysql.CreatePriv, "test", "", ""},
+				{mysql.DropPriv, "test", "", ""},
+				{mysql.GrantPriv, "test", "", ""},
+				{mysql.AlterPriv, "test", "", ""},
+				{mysql.ExecutePriv, "test", "", ""},
+				{mysql.IndexPriv, "test", "", ""},
+			},
+		},
+		{
+			sql: `grant select on test.ttt to 'test'@'%'`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "ttt", ""},
+				{mysql.GrantPriv, "test", "ttt", ""},
+			},
+		},
+		{
+			sql: `revoke all privileges on *.* from 'test'@'%'`,
+			ans: []visitInfo{
+				// TODO: This should be SUPER privilege.
+				{mysql.CreateUserPriv, "", "", ""},
+			},
+		},
+		{
+			sql: `set password for 'root'@'%' = 'xxxxx'`,
+			ans: []visitInfo{
+				// TODO: This should be SUPER privilege.
+				{mysql.CreateUserPriv, "", "", ""},
 			},
 		},
 	}
