@@ -152,6 +152,7 @@ const (
 	// Const for TiDB server version 2.
 	version2 = 2
 	version3 = 3
+	version4 = 4
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -221,6 +222,9 @@ func upgrade(s Session) {
 	if ver < version3 {
 		upgradeToVer3(s)
 	}
+	if ver < version4 {
+		upgradeToVer4(s)
+	}
 
 	updateBootstrapVer(s)
 	_, err = s.Execute("COMMIT")
@@ -266,6 +270,12 @@ func upgradeToVer3(s Session) {
 	// Version 3 fix tx_read_only variable value.
 	sql := fmt.Sprintf("UPDATE %s.%s set variable_value = '0' where variable_name = 'tx_read_only';",
 		mysql.SystemDB, mysql.GlobalVariablesTable)
+	mustExecute(s, sql)
+}
+
+// Update to version 4.
+func upgradeToVer4(s Session) {
+	sql := CreateStatsMetaTable
 	mustExecute(s, sql)
 }
 
