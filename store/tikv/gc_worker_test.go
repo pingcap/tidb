@@ -63,6 +63,9 @@ func (s *testGCWorkerSuite) TestGetOracleTime(c *C) {
 func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	now, err := s.gcWorker.getOracleTime()
 	c.Assert(err, IsNil)
+	session, err := tidb.CreateSession(s.store)
+	c.Check(err, IsNil)
+	s.gcWorker.session = session
 	ok, _, err := s.gcWorker.prepare()
 	c.Assert(err, IsNil)
 	c.Assert(ok, IsTrue)
