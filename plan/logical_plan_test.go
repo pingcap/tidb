@@ -687,7 +687,7 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 		},
 		{
 			sql:  "select sum(t.a + t.b), sum(t.a + t.c), sum(t.a + t.b), count(t.a) from t having sum(t.a + t.b) > 0 order by sum(t.a + t.c)",
-			best: "DataScan(t)->Aggr(sum(plus(test.t.a, test.t.b)),sum(plus(test.t.a, test.t.c)),count(test.t.a))->Selection->Projection->Sort->Trim",
+			best: "DataScan(t)->Aggr(sum(plus(test.t.a, test.t.b)),sum(plus(test.t.a, test.t.c)),count(test.t.a))->Selection->Projection->Sort->Projection",
 		},
 		{
 			sql:  "select sum(a.a) from t a, t b where a.c = b.c",
@@ -1055,28 +1055,27 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 			sql: "select (select count(a) from t where b = k.a) from t k",
 			ans: map[string][]string{
 				"TableScan_1": {"a"},
-				"TableScan_2": {"a", "b"},
+				"TableScan_3": {"a", "b"},
 			},
 		},
 		{
 			sql: "select exists (select count(*) from t where b = k.a) from t k",
 			ans: map[string][]string{
-				"TableScan_1": {"a"},
-				"TableScan_2": {"b"},
+				"TableScan_1": {},
 			},
 		},
 		{
 			sql: "select b = (select count(*) from t where b = k.a) from t k",
 			ans: map[string][]string{
 				"TableScan_1": {"a", "b"},
-				"TableScan_2": {"b"},
+				"TableScan_3": {"b"},
 			},
 		},
 		{
-			sql: "select exists (select count(a) from t where b = k.a) from t k",
+			sql: "select exists (select count(a) from t where b = k.a group by b) from t k",
 			ans: map[string][]string{
 				"TableScan_1": {"a"},
-				"TableScan_2": {"b"},
+				"TableScan_3": {"b"},
 			},
 		},
 		{
@@ -1089,28 +1088,28 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 			sql: "select a from t where b < any (select c from t)",
 			ans: map[string][]string{
 				"TableScan_1": {"a", "b"},
-				"TableScan_2": {"c"},
+				"TableScan_3": {"c"},
 			},
 		},
 		{
 			sql: "select a from t where (b,a) != all (select c,d from t)",
 			ans: map[string][]string{
 				"TableScan_1": {"a", "b"},
-				"TableScan_2": {"c", "d"},
+				"TableScan_3": {"c", "d"},
 			},
 		},
 		{
 			sql: "select a from t where (b,a) in (select c,d from t)",
 			ans: map[string][]string{
 				"TableScan_1": {"a", "b"},
-				"TableScan_2": {"c", "d"},
+				"TableScan_3": {"c", "d"},
 			},
 		},
 		{
 			sql: "select a from t where a in (select a from t s group by t.b)",
 			ans: map[string][]string{
 				"TableScan_1": {"a"},
-				"TableScan_2": {"a"},
+				"TableScan_3": {"a"},
 			},
 		},
 	}
@@ -1120,7 +1119,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 		c.Assert(err, IsNil, comment)
 
 		is, err := mockResolve(stmt)
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, comment)
 
 		builder := &planBuilder{
 			colMapper: make(map[*ast.ColumnNameExpr]int),
@@ -1148,7 +1147,7 @@ func (s *testPlanSuite) TestAllocID(c *C) {
 
 func checkDataSourceCols(p Plan, c *C, ans map[string][]string, comment CommentInterface) {
 	switch p.(type) {
-	case *PhysicalTableScan:
+	case *DataSource:
 		colList, ok := ans[p.ID()]
 		c.Assert(ok, IsTrue, comment)
 		for i, colName := range colList {
@@ -1338,7 +1337,7 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 				"Aggregation_2": {{"test.t.f"}},
 				"Selection_6":   {{"test.t.f"}},
 				"Projection_3":  {{"f"}},
-				"Trim_5":        {{"f"}},
+				"Projection_5":  {{"f"}},
 			},
 		},
 		{

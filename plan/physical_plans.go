@@ -745,12 +745,6 @@ func (p *TableDual) Copy() PhysicalPlan {
 }
 
 // Copy implements the PhysicalPlan Copy interface.
-func (p *Trim) Copy() PhysicalPlan {
-	np := *p
-	return &np
-}
-
-// Copy implements the PhysicalPlan Copy interface.
 func (p *SelectLock) Copy() PhysicalPlan {
 	np := *p
 	return &np
