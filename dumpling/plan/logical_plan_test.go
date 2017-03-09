@@ -687,7 +687,7 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 		},
 		{
 			sql:  "select sum(t.a + t.b), sum(t.a + t.c), sum(t.a + t.b), count(t.a) from t having sum(t.a + t.b) > 0 order by sum(t.a + t.c)",
-			best: "DataScan(t)->Aggr(sum(plus(test.t.a, test.t.b)),sum(plus(test.t.a, test.t.c)),count(test.t.a))->Selection->Projection->Sort->Trim",
+			best: "DataScan(t)->Aggr(sum(plus(test.t.a, test.t.b)),sum(plus(test.t.a, test.t.c)),count(test.t.a))->Selection->Projection->Sort->Projection",
 		},
 		{
 			sql:  "select sum(a.a) from t a, t b where a.c = b.c",
@@ -1337,7 +1337,7 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 				"Aggregation_2": {{"test.t.f"}},
 				"Selection_6":   {{"test.t.f"}},
 				"Projection_3":  {{"f"}},
-				"Trim_5":        {{"f"}},
+				"Projection_5":  {{"f"}},
 			},
 		},
 		{

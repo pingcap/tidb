@@ -111,8 +111,6 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildExists(v)
 	case *plan.MaxOneRow:
 		return b.buildMaxOneRow(v)
-	case *plan.Trim:
-		return b.buildTrim(v)
 	case *plan.PhysicalDummyScan:
 		return b.buildDummyScan(v)
 	case *plan.Cache:
@@ -644,14 +642,6 @@ func (b *executorBuilder) buildMaxOneRow(v *plan.MaxOneRow) Executor {
 	return &MaxOneRowExec{
 		schema: v.Schema(),
 		Src:    b.build(v.Children()[0]),
-	}
-}
-
-func (b *executorBuilder) buildTrim(v *plan.Trim) Executor {
-	return &TrimExec{
-		schema: v.Schema(),
-		Src:    b.build(v.Children()[0]),
-		len:    v.Schema().Len(),
 	}
 }
 

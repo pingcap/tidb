@@ -138,8 +138,6 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			}
 		}
 		str += ")"
-	case *Trim:
-		str = "Trim"
 	case *Cache:
 		str = "Cache"
 	default:
