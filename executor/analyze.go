@@ -99,7 +99,7 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]types.Datum, idxRS []ast.RecordSet, pkRS ast.RecordSet) error {
 	txn := e.ctx.Txn()
 	statBuilder := &statistics.Builder{
-		Sc:            e.ctx.GetSessionVars().StmtCtx,
+		Sv:            e.ctx.GetSessionVars(),
 		TblInfo:       e.tblInfo,
 		StartTS:       int64(txn.StartTS()),
 		Count:         count,

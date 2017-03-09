@@ -156,9 +156,8 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	tblInfo.Indices = indices
 	timestamp := int64(10)
 	bucketCount := int64(256)
-	sc := new(variable.StatementContext)
 	builder := &Builder{
-		Sc:            sc,
+		Sv:            variable.NewSessionVars(),
 		TblInfo:       tblInfo,
 		StartTS:       timestamp,
 		Count:         s.count,
@@ -170,6 +169,7 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 		PkRecords:     ast.RecordSet(s.pk),
 		PkOffset:      2,
 	}
+	sc := builder.Sv.StmtCtx
 	t, err := builder.NewTable()
 	c.Check(err, IsNil)
 

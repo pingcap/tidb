@@ -490,26 +490,26 @@ func copyFromIndexColumns(ind *Column, id, numBuckets int64) (*Column, error) {
 
 // Builder describes information needed by NewTable
 type Builder struct {
-	Sc            *variable.StatementContext // Sc is the statement context.
-	TblInfo       *model.TableInfo           // TblInfo is the table info of the table.
-	StartTS       int64                      // StartTS is the start timestamp of the statistics table builder.
-	Count         int64                      // Count is the total rows in the table.
-	NumBuckets    int64                      // NumBuckets is the number of buckets a column histogram has.
-	ColumnSamples [][]types.Datum            // ColumnSamples is the sample of columns.
-	ColOffsets    []int                      // ColOffsets is the offset of columns in the table.
-	IdxRecords    []ast.RecordSet            // IdxRecords is the record set of index columns.
-	IdxOffsets    []int                      // IdxOffsets is the offset of indices in the table.
-	PkRecords     ast.RecordSet              // PkRecords is the record set of primary key of integer type.
-	PkOffset      int                        // PkOffset is the offset of primary key of integer type in the table.
+	Sv            *variable.SessionVars // Sv is the session variables.
+	TblInfo       *model.TableInfo      // TblInfo is the table info of the table.
+	StartTS       int64                 // StartTS is the start timestamp of the statistics table builder.
+	Count         int64                 // Count is the total rows in the table.
+	NumBuckets    int64                 // NumBuckets is the number of buckets a column histogram has.
+	ColumnSamples [][]types.Datum       // ColumnSamples is the sample of columns.
+	ColOffsets    []int                 // ColOffsets is the offset of columns in the table.
+	IdxRecords    []ast.RecordSet       // IdxRecords is the record set of index columns.
+	IdxOffsets    []int                 // IdxOffsets is the offset of indices in the table.
+	PkRecords     ast.RecordSet         // PkRecords is the record set of primary key of integer type.
+	PkOffset      int                   // PkOffset is the offset of primary key of integer type in the table.
 }
 
 func (b *Builder) buildMultiColumns(t *Table, offsets []int, baseOffset int, isSorted bool, done chan error) {
 	for i, offset := range offsets {
 		var err error
 		if isSorted {
-			err = t.build4SortedColumn(b.Sc, offset, b.IdxRecords[i+baseOffset], b.NumBuckets, false)
+			err = t.build4SortedColumn(b.Sv.StmtCtx, offset, b.IdxRecords[i+baseOffset], b.NumBuckets, false)
 		} else {
-			err = t.buildColumn(b.Sc, offset, b.ColumnSamples[i+baseOffset], b.NumBuckets)
+			err = t.buildColumn(b.Sv.StmtCtx, offset, b.ColumnSamples[i+baseOffset], b.NumBuckets)
 		}
 		if err != nil {
 			done <- err
@@ -519,12 +519,11 @@ func (b *Builder) buildMultiColumns(t *Table, offsets []int, baseOffset int, isS
 	done <- nil
 }
 
-const buildColumnConcurrency = 8
-
 func (b *Builder) splitAndConcurrentBuild(t *Table, offsets []int, isSorted bool) error {
 	offsetCnt := len(offsets)
-	groupSize := (offsetCnt + buildColumnConcurrency - 1) / buildColumnConcurrency
-	splittedOffsets := make([][]int, 0, buildColumnConcurrency)
+	concurrency := b.Sv.GetBuildStatsConcurrency()
+	groupSize := (offsetCnt + concurrency - 1) / concurrency
+	splittedOffsets := make([][]int, 0, concurrency)
 	for i := 0; i < offsetCnt; i += groupSize {
 		end := i + groupSize
 		if end > offsetCnt {
@@ -563,7 +562,7 @@ func (b *Builder) NewTable() (*Table, error) {
 		return nil, errors.Trace(err)
 	}
 	if b.PkOffset != -1 {
-		err := t.build4SortedColumn(b.Sc, b.PkOffset, b.PkRecords, b.NumBuckets, true)
+		err := t.build4SortedColumn(b.Sv.StmtCtx, b.PkOffset, b.PkRecords, b.NumBuckets, true)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
