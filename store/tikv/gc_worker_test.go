@@ -103,3 +103,14 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	c.Assert(err, IsNil)
 	s.timeEqual(c, safePoint.Add(time.Minute*30), now, time.Second)
 }
+
+func (s *testGCWorkerSuite) TestBootstrapped(c *C) {
+	store := newTestStore(c)
+	store.oracle = &mockOracle{}
+	gcWorker, err := NewGCWorker(store)
+	c.Assert(err, IsNil)
+	c.Assert(gcWorker.storeIsBootstrapped(), IsFalse)
+	_, err = tidb.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	c.Assert(gcWorker.storeIsBootstrapped(), IsTrue)
+}
