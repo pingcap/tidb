@@ -133,7 +133,7 @@ func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]
 	if err != nil {
 		return errors.Trace(err)
 	}
-	insertSQL := fmt.Sprintf("insert into mysql.stats_meta (version, table_id) values(%d, %d)", version, e.tblInfo.ID)
+	insertSQL := fmt.Sprintf("insert into mysql.stats_meta (version, table_id) values (%d, %d)", version, e.tblInfo.ID)
 	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, insertSQL)
 	if err != nil {
 		return errors.Trace(err)
