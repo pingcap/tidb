@@ -16,6 +16,7 @@ package statistics
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 
@@ -520,9 +521,22 @@ func (b *Builder) buildMultiColumns(t *Table, offsets []int, baseOffset int, isS
 	done <- nil
 }
 
+func (b *Builder) getBuildStatsConcurrency() (int, error) {
+	sessionVars := b.Ctx.GetSessionVars()
+	concurrency, err := sessionVars.GetTiDBSystemVar(variable.BuildStatsConcurrencyVar)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	c, err := strconv.ParseInt(concurrency, 10, 64)
+	return int(c), errors.Trace(err)
+}
+
 func (b *Builder) splitAndConcurrentBuild(t *Table, offsets []int, isSorted bool) error {
 	offsetCnt := len(offsets)
-	concurrency := b.Ctx.GetSessionVars().BuildStatsConcurrencyVar
+	concurrency, err := b.getBuildStatsConcurrency()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	groupSize := (offsetCnt + concurrency - 1) / concurrency
 	splittedOffsets := make([][]int, 0, concurrency)
 	for i := 0; i < offsetCnt; i += groupSize {
@@ -536,7 +550,6 @@ func (b *Builder) splitAndConcurrentBuild(t *Table, offsets []int, isSorted bool
 	for i, offsets := range splittedOffsets {
 		go b.buildMultiColumns(t, offsets, i*groupSize, isSorted, doneCh)
 	}
-	var err error
 	for range splittedOffsets {
 		errc := <-doneCh
 		if errc != nil && err == nil {
