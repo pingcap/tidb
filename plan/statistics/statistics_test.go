@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -157,7 +158,7 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	timestamp := int64(10)
 	bucketCount := int64(256)
 	builder := &Builder{
-		Sv:            variable.NewSessionVars(),
+		Ctx:           mock.NewContext(),
 		TblInfo:       tblInfo,
 		StartTS:       timestamp,
 		Count:         s.count,
@@ -169,7 +170,7 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 		PkRecords:     ast.RecordSet(s.pk),
 		PkOffset:      2,
 	}
-	sc := builder.Sv.StmtCtx
+	sc := builder.Ctx.GetSessionVars().StmtCtx
 	t, err := builder.NewTable()
 	c.Check(err, IsNil)
 
