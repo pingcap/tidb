@@ -316,6 +316,9 @@ func (a *aggPushDownSolver) pushAggCrossUnion(agg *Aggregation, unionSchema *exp
 }
 
 func (a *aggPushDownSolver) optimize(p LogicalPlan, ctx context.Context, alloc *idAllocator) (LogicalPlan, error) {
+	if !ctx.GetSessionVars().AllowAggPushDown {
+		return p, nil
+	}
 	a.ctx = ctx
 	a.alloc = alloc
 	a.aggPushDown(p)
