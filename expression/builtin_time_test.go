@@ -43,11 +43,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		c.Assert(err, IsNil)
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		if v.Kind() != types.KindMysqlTime {
-			c.Assert(v, testutil.DatumEquals, t["Expect"][0])
-		} else {
-			c.Assert(v.GetMysqlTime().String(), Equals, t["Expect"][0].GetString())
-		}
+		c.Assert(v, testutil.DatumEquals, t["Expect"][0])
 	}
 
 	// test year, month and day
