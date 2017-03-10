@@ -27,11 +27,9 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
@@ -40,31 +38,34 @@ import (
 
 // RegionsHTTPRequest is for regions http request.
 type RegionsHTTPRequest struct {
-	resp      http.ResponseWriter
-	req       *http.Request
-	server    *Server
-	params    map[string]string
-	RequestID string
+	resp        http.ResponseWriter
+	req         *http.Request
+	server      *Server
+	params      map[string]string
+	reqID       string
+	regionCache *tikv.RegionCache
 }
 
 // NewRegionsHTTPRequest create a RegionsHTTPRequest
-func NewRegionsHTTPRequest(s *Server, w http.ResponseWriter, req *http.Request) *RegionsHTTPRequest {
+func NewRegionsHTTPRequest(s *Server, w http.ResponseWriter, req *http.Request, regionCache *tikv.RegionCache) *RegionsHTTPRequest {
+	regionCache.EmptyRegions()
 	return &RegionsHTTPRequest{
-		server: s,
-		req:    req,
-		resp:   w,
-		params: mux.Vars(req),
+		server:      s,
+		req:         req,
+		resp:        w,
+		params:      mux.Vars(req),
+		regionCache: regionCache,
 		//TODO genuuid
-		RequestID: fmt.Sprintf("http_%d", time.Now().UnixNano()),
+		reqID: fmt.Sprintf("http_%d", time.Now().UnixNano()),
 	}
 }
 
 func (req *RegionsHTTPRequest) writeResponse(data interface{}, err error) {
 	var retItem *RegionsResponse
 	if err != nil {
-		retItem = NewRegionsResponseWithError(req.RequestID, err)
+		retItem = NewRegionsResponseWithError(req.reqID, err)
 	} else {
-		retItem = NewRegionsResponseWithData(req.RequestID, data)
+		retItem = NewRegionsResponseWithData(req.reqID, data)
 	}
 	js, err := json.Marshal(retItem)
 	if err != nil {
@@ -102,9 +103,24 @@ func (req *RegionsHTTPRequest) HandleGetRegionByID() {
 	req.writeResponse(data, err)
 }
 
-func (req *RegionsHTTPRequest) listTableRegions(dbName, tableName string) (data *TableRegions, err error) {
+// prepare creates a Backoffer,Domain when store is tikv.
+func (req *RegionsHTTPRequest) prepare() (bo *tikv.Backoffer, domain *domain.Domain, err error) {
+	if req.server.cfg.Store != "tikv" {
+		err = fmt.Errorf("only store tikv support,current store:%s", req.server.cfg.Store)
+		return
+	}
+	var session tidb.Session
+	session, err = tidb.CreateSession(req.server.driver.(*TiDBDriver).store)
+	if err != nil {
+		return
+	}
+	bo = tikv.NewBackoffer(5000, goctx.Background())
+	dom := sessionctx.GetDomain(session.(context.Context))
+	return bo, dom, err
+}
 
-	regionCache, bo, dom, err := req.server.prepareForRegionRequest()
+func (req *RegionsHTTPRequest) listTableRegions(dbName, tableName string) (data *TableRegions, err error) {
+	bo, dom, err := req.prepare()
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +145,7 @@ func (req *RegionsHTTPRequest) listTableRegions(dbName, tableName string) (data 
 
 	// for primary
 	startKey, endKey := getTableHandleKeyRange(tableID)
-	data.RowRegions, err = regionCache.ListRegionIDsInKeyRange(bo, startKey, endKey)
+	data.RowRegions, err = req.regionCache.ListRegionIDsInKeyRange(bo, startKey, endKey)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +156,7 @@ func (req *RegionsHTTPRequest) listTableRegions(dbName, tableName string) (data 
 		data.Indices[id].Name = index.Meta().Name.String()
 		data.Indices[id].ID = indexID
 		startKey, endKey := getTableIndexKeyRange(tableID, indexID)
-		data.Indices[id].Regions, err = regionCache.ListRegionIDsInKeyRange(bo, startKey, endKey)
+		data.Indices[id].Regions, err = req.regionCache.ListRegionIDsInKeyRange(bo, startKey, endKey)
 		if err != nil {
 			return nil, err
 		}
@@ -149,11 +165,11 @@ func (req *RegionsHTTPRequest) listTableRegions(dbName, tableName string) (data 
 }
 
 func (req *RegionsHTTPRequest) getRegionWithRegionID(regionID uint64) (*RegionItem, error) {
-	regionCache, bo, dom, err := req.server.prepareForRegionRequest()
+	bo, dom, err := req.prepare()
 	if err != nil {
 		return nil, err
 	}
-	region, err := regionCache.LocateRegionByID(bo, regionID)
+	region, err := req.regionCache.LocateRegionByID(bo, regionID)
 	if err != nil {
 		return nil, err
 	}
@@ -189,7 +205,6 @@ func (req *RegionsHTTPRequest) getRegionWithRegionID(regionID uint64) (*RegionIt
 		}
 	}
 	return regionItem, nil
-
 }
 
 // RegionsResponse is the response struct for regions.
@@ -475,49 +490,4 @@ type IndexItem struct {
 	TableID   int64  `json:"table_id"`
 	IndexName string `json:"index_name"`
 	IndexID   int64  `json:"index_id"`
-}
-
-func mockRegionCacheAndSession() (regionCache *tikv.RegionCache, session tidb.Session, err error) {
-	cluster := mocktikv.NewCluster()
-	var store kv.Storage
-	store, err = tikv.NewMockTikvStoreWithCluster(cluster)
-	if err != nil {
-		return
-	}
-	pdCli := mocktikv.NewPDClient(cluster)
-	regionCache = tikv.NewRegionCache(pdCli)
-	session, err = tidb.CreateSession(store)
-	return
-}
-
-func (s *Server) newRegionCacheAndSession() (regionCache *tikv.RegionCache, session tidb.Session, err error) {
-	storePath := fmt.Sprintf("%s://%s", s.cfg.Store, s.cfg.StorePath)
-	regionCache, err = tikv.NewRegionCacheFromStorePath(storePath)
-	if err != nil {
-		return
-	}
-	// prepare table structure
-	session, err = tidb.CreateSession(s.driver.(*TiDBDriver).store)
-	return
-}
-
-// prepareForRegionRequest create a RegionCache,Backoffer,Domain when store is tikv.
-func (s *Server) prepareForRegionRequest() (regionCache *tikv.RegionCache, bo *tikv.Backoffer, domain *domain.Domain, err error) {
-	if s.cfg.Store != "tikv" {
-		err = fmt.Errorf("only store tikv support,current store:%s", s.cfg.Store)
-		return
-	}
-	var session tidb.Session
-	// create regionCache
-	if len(s.cfg.StorePath) == 0 {
-		regionCache, session, err = mockRegionCacheAndSession()
-	} else {
-		regionCache, session, err = s.newRegionCacheAndSession()
-	}
-	if err != nil {
-		return
-	}
-	bo = tikv.NewBackoffer(5000, goctx.Background())
-	dom := sessionctx.GetDomain(session.(context.Context))
-	return regionCache, bo, dom, err
 }

@@ -396,6 +396,14 @@ func (c *RegionCache) ClearStoreByID(id uint64) {
 	delete(c.storeMu.stores, id)
 }
 
+// EmptyRegions clears all regions in cache.
+func (c *RegionCache) EmptyRegions() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.mu.regions = make(map[RegionVerID]*Region)
+	c.mu.sorted = llrb.New()
+}
+
 func (c *RegionCache) loadStoreAddr(bo *Backoffer, id uint64) (string, error) {
 	for {
 		store, err := c.pdClient.GetStore(id)

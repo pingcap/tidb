@@ -20,10 +20,10 @@ import (
 	"math"
 	"net/http"
 
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 )
@@ -213,9 +213,11 @@ func (ts *TidbRegionHandlerTestSuite) TestGetRegionByIDWithError(c *C) {
 }
 
 func (ts *TidbRegionHandlerTestSuite) startServer(c *C) {
-	log.SetLevelByString("error")
-	store, err := tidb.NewStore("memory:///tmp/tidb")
+	cluster := mocktikv.NewCluster()
+	store, err := tikv.NewMockTikvStoreWithCluster(cluster)
 	c.Assert(err, IsNil)
+	pdCli := mocktikv.NewPDClient(cluster)
+	regionCache := tikv.NewRegionCache(pdCli)
 	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	tidbdrv := NewTiDBDriver(store)
@@ -229,7 +231,9 @@ func (ts *TidbRegionHandlerTestSuite) startServer(c *C) {
 	server, err := NewServer(cfg, tidbdrv)
 	c.Assert(err, IsNil)
 	ts.server = server
-	go ts.server.startStatusHTTP()
+	once.Do(func() {
+		go server.startHTTPServer(regionCache)
+	})
 	waitUntilServerOnline()
 }
 

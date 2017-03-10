@@ -152,7 +152,6 @@ func (s *Server) Run() error {
 
 	// Start http api to report tidb info such as tps.
 	if s.cfg.ReportStatus {
-
 		s.startStatusHTTP()
 	}
 
