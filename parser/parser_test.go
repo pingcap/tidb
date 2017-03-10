@@ -165,6 +165,11 @@ func (s *testParserSuite) TestSimple(c *C) {
 	c.Assert(cs.Cols, HasLen, 1)
 	c.Assert(cs.Cols[0].Options, HasLen, 1)
 	c.Assert(cs.Cols[0].Options[0].Tp, Equals, ast.ColumnOptionPrimaryKey)
+
+	// for issue 2803
+	src = "use quote;"
+	_, err = parser.ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
 }
 
 type testCase struct {
