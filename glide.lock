@@ -1,5 +1,5 @@
-hash: 981ddc746ada183fae2f73722c7eca2d8914100880b1ca38c6ee0101ac1194a3
-updated: 2017-03-08T20:29:28.30329635+08:00
+hash: 9cbdf31f25e477b9806f4704bad58c77c3eeafa199109c221558d73fccc98de5
+updated: 2017-03-10T13:43:43.581213487+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -46,7 +46,7 @@ imports:
 - name: github.com/go-sql-driver/mysql
   version: 3dd7008ac1529aca1bcd8a9db75228a71ba23cac
 - name: github.com/gogo/protobuf
-  version: 909568be09de550ed094403c2bf8a261b5bb730a
+  version: 100ba4e885062801d56799d78530b73b178a78f3
   subpackages:
   - proto
 - name: github.com/golang/protobuf
@@ -125,10 +125,11 @@ imports:
   - pkg/rpcutil
   - pkg/typeutil
 - name: github.com/pingcap/tipb
-  version: 05a4d27c130a965745196e4da8ca395a15d7928f
+  version: 1043caee48da56ffc3521406a041db8e5feac9a8
   subpackages:
   - go-binlog
   - go-tipb
+  - sharedbytes
 - name: github.com/prometheus/client_golang
   version: c5b7fccd204277076155f10851dad72b76a49317
   subpackages:
