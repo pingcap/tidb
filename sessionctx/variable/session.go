@@ -235,16 +235,6 @@ func (s *SessionVars) GetNextPreparedStmtID() uint32 {
 	return s.preparedStmtID
 }
 
-// GetBuildStatsConcurrency returns the build stats concurrency.
-func (s *SessionVars) GetBuildStatsConcurrency() int {
-	return s.BuildStatsConcurrencyVar
-}
-
-// SetBuildStatsConcurrency sets the build stats concurrency.
-func (s *SessionVars) SetBuildStatsConcurrency(c int) {
-	s.BuildStatsConcurrencyVar = c
-}
-
 // special session variables.
 const (
 	SQLModeVar          = "sql_mode"

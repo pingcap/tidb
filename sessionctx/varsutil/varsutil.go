@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
+	"strconv"
 )
 
 // GetSessionSystemVar gets a system variable.
@@ -117,6 +118,11 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		vars.SkipConstraintCheck = (sVal == "1")
 	case variable.TiDBSkipDDLWait:
 		vars.SkipDDLWait = (sVal == "1")
+	case variable.BuildStatsConcurrencyVar:
+		vars.BuildStatsConcurrencyVar, err = strconv.Atoi(sVal)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	vars.Systems[name] = sVal
 	return nil

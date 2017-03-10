@@ -521,7 +521,7 @@ func (b *Builder) buildMultiColumns(t *Table, offsets []int, baseOffset int, isS
 
 func (b *Builder) splitAndConcurrentBuild(t *Table, offsets []int, isSorted bool) error {
 	offsetCnt := len(offsets)
-	concurrency := b.Sv.GetBuildStatsConcurrency()
+	concurrency := b.Sv.BuildStatsConcurrencyVar
 	groupSize := (offsetCnt + concurrency - 1) / concurrency
 	splittedOffsets := make([][]int, 0, concurrency)
 	for i := 0; i < offsetCnt; i += groupSize {
