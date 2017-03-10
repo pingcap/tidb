@@ -147,6 +147,9 @@ type SessionVars struct {
 	// StmtCtx holds variables for current executing statement.
 	StmtCtx *StatementContext
 
+	// AllowAggPushDown can be set to false to forbid aggregation push down.
+	AllowAggPushDown bool
+
 	// CurrInsertValues is used to record current ValuesExpr's values.
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	CurrInsertValues interface{}
@@ -170,6 +173,7 @@ func NewSessionVars() *SessionVars {
 		StrictSQLMode:        true,
 		Status:               mysql.ServerStatusAutocommit,
 		StmtCtx:              new(StatementContext),
+		AllowAggPushDown:     true,
 	}
 }
 
