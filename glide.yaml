@@ -143,10 +143,11 @@ import:
 - package: github.com/pingcap/pd
   version: 174171b2b15c871c480959397d9b8047175559e7
 - package: github.com/pingcap/tipb
-  version: 05a4d27c130a965745196e4da8ca395a15d7928f
+  version: 1043caee48da56ffc3521406a041db8e5feac9a8
   subpackages:
   - go-binlog
   - go-tipb
+  - sharedbytes
 - package: github.com/pingcap/kvproto
   version: 854b7eeb43e436a692463a18f03dabfe917ebe2b
 - package: github.com/gogo/protobuf
