@@ -123,6 +123,16 @@ func NewMockTikvStore() (kv.Storage, error) {
 	return newTikvStore(uuid, pdCli, client, false)
 }
 
+// NewMockTikvStoreWithCluster creates a mocked tikv store with cluster.
+func NewMockTikvStoreWithCluster(cluster *mocktikv.Cluster) (kv.Storage, error) {
+	mocktikv.BootstrapWithSingleStore(cluster)
+	mvccStore := mocktikv.NewMvccStore()
+	client := mocktikv.NewRPCClient(cluster, mvccStore)
+	uuid := fmt.Sprintf("mock-tikv-store-:%v", time.Now().Unix())
+	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
+	return newTikvStore(uuid, pdCli, client, false)
+}
+
 // GetMockTiKVClient gets the *mocktikv.RPCClient from a mocktikv store.
 // Used for test.
 func GetMockTiKVClient(store kv.Storage) *mocktikv.RPCClient {
