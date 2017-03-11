@@ -714,6 +714,7 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 	}
 
 	if len(validSpecs) != 1 {
+		// TODO: Hanlde len(validSpecs) == 0.
 		// Now we only allow one schema changing at the same time.
 		return errRunMultiSchemaChanges
 	}
