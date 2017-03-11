@@ -1016,6 +1016,10 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 	if err := setDefaultAndComment(ctx, newCol, spec.NewColumn.Options); err != nil {
 		return nil, errors.Trace(err)
 	}
+	// We don't support modifying the type definitions from 'null' to 'not null' now.
+	if !mysql.HasNotNullFlag(col.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
+		return nil, errors.Trace(errUnsupportedModifyColumn)
+	}
 
 	newCol.Name = spec.NewColumn.Name.Name
 	job := &model.Job{
