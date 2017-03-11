@@ -463,6 +463,7 @@ import (
 	names		"NAMES"
 	national	"NATIONAL"
 	no		"NO"
+	none		"NONE"
 	offset		"OFFSET"
 	only		"ONLY"
 	password	"PASSWORD"
@@ -1010,6 +1011,12 @@ AlterTableSpec:
 		$$ = &ast.AlterTableSpec{
 			Tp:    		ast.AlterTableRenameTable,
 			NewTable:      $3.(*ast.TableName),
+		}
+	}
+|	"LOCK" eq "NONE"
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:    		ast.AlterTableLock,
 		}
 	}
 
@@ -2247,7 +2254,7 @@ UnReservedKeyword:
 | "MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION"
 | "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
-| "TIMESTAMPDIFF"
+| "TIMESTAMPDIFF" | "NONE"
 
 ReservedKeyword:
 "ADD" | "ALL" | "ALTER" | "ANALYZE" | "AND" | "AS" | "ASC" | "BETWEEN" | "BIGINT"

@@ -286,6 +286,13 @@ func (s *testDBSuite) testAddAnonymousIndex(c *C) {
 	s.mustExec(c, "alter table t_anonymous_index drop index C3")
 }
 
+func (s *testDBSuite) testAlterLock(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.mustExec(c, "create table t_index_lock (c1 int, c2 int, C3 int)")
+	s.mustExec(c, "alter table t_indx_lock add index (c1, c2), lock=none")
+}
+
 func (s *testDBSuite) testAddIndex(c *C) {
 	done := make(chan error, 1)
 	num := defaultBatchSize + 10
