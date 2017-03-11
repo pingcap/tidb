@@ -348,6 +348,7 @@ var tokenMap = map[string]int{
 	"MONTHNAME":                  monthname,
 	"NAMES":                      names,
 	"NATIONAL":                   national,
+	"NONE":                       none,
 	"NOT":                        not,
 	"NO_WRITE_TO_BINLOG":         noWriteToBinLog,
 	"NULL":                       null,
