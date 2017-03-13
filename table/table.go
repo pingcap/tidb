@@ -159,10 +159,11 @@ func (s Slice) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
 
 func init() {
 	tableMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeColumnCantNull:  mysql.ErrBadNull,
-		codeUnknownColumn:   mysql.ErrBadField,
-		codeDuplicateColumn: mysql.ErrFieldSpecifiedTwice,
-		codeNoDefaultValue:  mysql.ErrNoDefaultForField,
+		codeColumnCantNull:     mysql.ErrBadNull,
+		codeUnknownColumn:      mysql.ErrBadField,
+		codeDuplicateColumn:    mysql.ErrFieldSpecifiedTwice,
+		codeNoDefaultValue:     mysql.ErrNoDefaultForField,
+		codeTruncateWrongValue: mysql.ErrTruncatedWrongValueForField,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassTable] = tableMySQLErrCodes
 }

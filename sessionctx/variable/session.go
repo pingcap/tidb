@@ -345,7 +345,7 @@ func (sc *StatementContext) AppendWarning(warn error) {
 	sc.mu.Unlock()
 }
 
-// HandleTruncate ignore or return the error based on the StatementContext state.
+// HandleTruncate ignores or returns the error based on the StatementContext state.
 func (sc *StatementContext) HandleTruncate(err error) error {
 	if err == nil {
 		return nil
