@@ -30,7 +30,7 @@ var _ = Suite(&testBytesPoolSuite{})
 type testBytesPoolSuite struct{}
 
 func (s *testBytesPoolSuite) TestBytesPool(c *C) {
-	testCases := []struct {
+	poolTests := []struct {
 		size      int
 		allocSize int
 		freeIdx   int
@@ -42,12 +42,12 @@ func (s *testBytesPoolSuite) TestBytesPool(c *C) {
 		{128 * mega, 128 * mega, 17},
 	}
 	bp := NewBytesPool()
-	for _, tc := range testCases {
-		origin, data := bp.Alloc(tc.size)
-		c.Assert(len(data), Equals, tc.size)
-		c.Assert(len(origin), Equals, tc.allocSize)
+	for _, tt := range poolTests {
+		origin, data := bp.Alloc(tt.size)
+		c.Assert(len(data), Equals, tt.size)
+		c.Assert(len(origin), Equals, tt.allocSize)
 		idx := bp.Free(origin)
-		c.Assert(idx, Equals, tc.freeIdx)
+		c.Assert(idx, Equals, tt.freeIdx)
 	}
 	c.Assert(bp.Free(make([]byte, 100)), Equals, -1)
 	c.Assert(bp.Free(make([]byte, kilo+1)), Equals, -1)
