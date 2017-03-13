@@ -704,12 +704,22 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) {
 }
 
 func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.AlterTableSpec) (err error) {
-	// Now we only allow one schema changing at the same time.
-	if len(specs) != 1 {
+	// Only handle valid specs, AlterTableLock is ignored.
+	validSpecs := make([]*ast.AlterTableSpec, 0, len(specs))
+	for _, spec := range specs {
+		if spec.Tp == ast.AlterTableLock {
+			continue
+		}
+		validSpecs = append(validSpecs, spec)
+	}
+
+	if len(validSpecs) != 1 {
+		// TODO: Hanlde len(validSpecs) == 0.
+		// Now we only allow one schema changing at the same time.
 		return errRunMultiSchemaChanges
 	}
 
-	for _, spec := range specs {
+	for _, spec := range validSpecs {
 		switch spec.Tp {
 		case ast.AlterTableAddColumn:
 			err = d.AddColumn(ctx, ident, spec)
@@ -1005,6 +1015,10 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 	}
 	if err := setDefaultAndComment(ctx, newCol, spec.NewColumn.Options); err != nil {
 		return nil, errors.Trace(err)
+	}
+	// We don't support modifying the type definitions from 'null' to 'not null' now.
+	if !mysql.HasNotNullFlag(col.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
+		return nil, errors.Trace(errUnsupportedModifyColumn)
 	}
 
 	newCol.Name = spec.NewColumn.Name.Name
