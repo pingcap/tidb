@@ -335,6 +335,9 @@ func (cc *clientConn) Run() {
 			if stackSize > size {
 				stackSize = size
 			}
+			if stackSize < 0 {
+				stackSize = 0
+			}
 			buf = buf[:stackSize]
 			log.Errorf("lastCmd %s, %v, %s", cc.lastCmd, r, buf)
 		}
