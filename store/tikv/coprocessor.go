@@ -216,12 +216,11 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 
 	var tasks []*copTask
 	appendTask := func(region RegionVerID, ranges *copRanges) {
-		newTask := &copTask{
+		tasks = append(tasks, &copTask{
 			region:   region,
 			ranges:   ranges,
 			respChan: make(chan *coprocessor.Response, 1),
-		}
-		tasks = append(tasks, newTask)
+		})
 	}
 
 	for ranges.len() > 0 {
@@ -362,7 +361,7 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 		resp *coprocessor.Response
 		err  error
 	)
-	// If data order matters, response should be returned in the same order as copTask list.
+	// If data order matters, response should be returned in the same order as copTask slice.
 	// Otherwise all responses are returned from a single channel.
 	if !it.req.KeepOrder {
 		if atomic.LoadInt64(&it.pending) == 0 {
