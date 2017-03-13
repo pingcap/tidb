@@ -173,8 +173,8 @@ func (pr *partialResult) fetch() {
 	pr.resp = new(tipb.SelectResponse)
 	var b []byte
 	var err error
-	if bpReader, ok := pr.reader.(*bytespool.ReadCloser); ok {
-		b = bpReader.SharedBytes()
+	if rc, ok := pr.reader.(*bytespool.ReadCloser); ok {
+		b = rc.SharedBytes()
 	} else {
 		b, err = ioutil.ReadAll(pr.reader)
 		if err != nil {
