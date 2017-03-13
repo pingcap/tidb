@@ -96,10 +96,9 @@ func (c *CopClient) Send(ctx goctx.Context, req *kv.Request) kv.Response {
 		it.concurrency = 1
 	}
 	if !it.req.KeepOrder {
-		it.respChan = make(chan *coprocessor.Response, it.concurrency)
+		it.respChan = make(chan copResponse, it.concurrency)
 	}
 	it.taskCh = make(chan *copTask, req.Concurrency)
-	it.errChan = make(chan error, it.concurrency)
 	it.run(ctx)
 	return it
 }
@@ -109,7 +108,7 @@ type copTask struct {
 	region RegionVerID
 	ranges *copRanges
 
-	respChan  chan *coprocessor.Response
+	respChan  chan copResponse
 	storeAddr string
 }
 
@@ -219,7 +218,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 		tasks = append(tasks, &copTask{
 			region:   region,
 			ranges:   ranges,
-			respChan: make(chan *coprocessor.Response, 1),
+			respChan: make(chan copResponse, 1),
 		})
 	}
 
@@ -294,9 +293,13 @@ type copIterator struct {
 	curr  int
 
 	// Otherwise, result is stored in respChan.
-	respChan chan *coprocessor.Response
-	errChan  chan error
+	respChan chan copResponse
 	wg       sync.WaitGroup
+}
+
+type copResponse struct {
+	*coprocessor.Response
+	err error
 }
 
 const minLogCopTaskTime = 300 * time.Millisecond
@@ -308,7 +311,7 @@ func (it *copIterator) work(ctx goctx.Context, taskCh <-chan *copTask) {
 	for task := range taskCh {
 		bo := NewBackoffer(copNextMaxBackoff, ctx)
 		startTime := time.Now()
-		resps, err := it.handleTask(bo, task)
+		resps := it.handleTask(bo, task)
 		costTime := time.Since(startTime)
 		if costTime > minLogCopTaskTime {
 			log.Infof("[TIME_COP_TASK] %s%s %s", costTime, bo, task)
@@ -317,11 +320,7 @@ func (it *copIterator) work(ctx goctx.Context, taskCh <-chan *copTask) {
 		if bo.totalSleep > 0 {
 			backoffHistogram.Observe(float64(bo.totalSleep) / 1000)
 		}
-		if err != nil {
-			it.errChan <- err
-			break
-		}
-		var ch chan *coprocessor.Response
+		var ch chan copResponse
 		if !it.req.KeepOrder {
 			ch = it.respChan
 		} else {
@@ -336,6 +335,9 @@ func (it *copIterator) work(ctx goctx.Context, taskCh <-chan *copTask) {
 			case <-it.finished:
 				return
 			}
+		}
+		if it.req.KeepOrder {
+			close(ch)
 		}
 	}
 }
@@ -384,49 +386,47 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 	coprocessorCounter.WithLabelValues("next").Inc()
 
 	var (
-		resp *coprocessor.Response
-		err  error
+		resp copResponse
 		ok   bool
 	)
 	// If data order matters, response should be returned in the same order as copTask slice.
 	// Otherwise all responses are returned from a single channel.
 	if !it.req.KeepOrder {
 		// Get next fetched resp from chan
-		select {
-		case resp, ok = <-it.respChan:
-			if !ok {
-				return nil, nil
-			}
-		case err = <-it.errChan:
-		}
-	} else {
-		if it.curr == len(it.tasks) {
-			// resp will be nil if iterator is finished.
+		resp, ok = <-it.respChan
+		if !ok {
 			return nil, nil
 		}
-		task := it.tasks[it.curr]
-
-		select {
-		case resp = <-task.respChan:
-		case err = <-it.errChan:
+	} else {
+		for {
+			if it.curr >= len(it.tasks) {
+				// Resp will be nil if iterator is finished.
+				return nil, nil
+			}
+			task := it.tasks[it.curr]
+			resp, ok = <-task.respChan
+			if ok {
+				break
+			}
+			// Switch to next task.
+			it.curr++
 		}
-		it.curr++
 	}
 
-	if err != nil {
-		return nil, errors.Trace(err)
+	if resp.err != nil {
+		return nil, errors.Trace(resp.err)
 	}
 	return ioutil.NopCloser(bytes.NewBuffer(resp.Data)), nil
 }
 
 // Handle single copTask.
-func (it *copIterator) handleTask(bo *Backoffer, task *copTask) ([]*coprocessor.Response, error) {
+func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
 	coprocessorCounter.WithLabelValues("handle_task").Inc()
 	sender := NewRegionRequestSender(bo, it.store.regionCache, it.store.client)
 	for {
 		select {
 		case <-it.finished:
-			return nil, nil
+			return nil
 		default:
 		}
 
@@ -437,29 +437,25 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) ([]*coprocessor.
 		}
 		resp, err := sender.SendCopReq(req, task.region, readTimeoutMedium)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return []copResponse{{err: errors.Trace(err)}}
 		}
 		if regionErr := resp.GetRegionError(); regionErr != nil {
 			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
-				return nil, errors.Trace(err)
+				return []copResponse{{err: errors.Trace(err)}}
 			}
-			ret, err := it.rebuildCurrentTask(bo, task)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			return ret, nil
+			return it.rebuildCurrentTask(bo, task)
 		}
 		if e := resp.GetLocked(); e != nil {
 			log.Debugf("coprocessor encounters lock: %v", e)
 			ok, err1 := it.store.lockResolver.ResolveLocks(bo, []*Lock{newLock(e)})
 			if err1 != nil {
-				return nil, errors.Trace(err1)
+				return []copResponse{{err: errors.Trace(err1)}}
 			}
 			if !ok {
 				err = bo.Backoff(boTxnLockFast, errors.New(e.String()))
 				if err != nil {
-					return nil, errors.Trace(err)
+					return []copResponse{{err: errors.Trace(err)}}
 				}
 			}
 			continue
@@ -467,35 +463,32 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) ([]*coprocessor.
 		if e := resp.GetOtherError(); e != "" {
 			err = errors.Errorf("other error: %s", e)
 			log.Warnf("coprocessor err: %v", err)
-			return nil, errors.Trace(err)
+			return []copResponse{{err: errors.Trace(err)}}
 		}
 		task.storeAddr = sender.storeAddr
-		return []*coprocessor.Response{resp}, nil
+		return []copResponse{{Response: resp}}
 	}
 }
 
 // Rebuild and handle current task. It may be split into multiple tasks (in region split scenario).
-func (it *copIterator) rebuildCurrentTask(bo *Backoffer, task *copTask) ([]*coprocessor.Response, error) {
+func (it *copIterator) rebuildCurrentTask(bo *Backoffer, task *copTask) []copResponse {
 	coprocessorCounter.WithLabelValues("rebuild_task").Inc()
 
 	newTasks, err := buildCopTasks(bo, it.store.regionCache, task.ranges, it.req.Desc)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return []copResponse{{err: errors.Trace(err)}}
 	}
 	if newTasks == nil {
 		// TODO: check this, this should never happen.
-		return nil, nil
+		return nil
 	}
 
-	var ret []*coprocessor.Response
+	var ret []copResponse
 	for _, t := range newTasks {
-		resp, err := it.handleTask(bo, t)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		resp := it.handleTask(bo, t)
 		ret = append(ret, resp...)
 	}
-	return ret, nil
+	return ret
 }
 
 func (it *copIterator) Close() error {
