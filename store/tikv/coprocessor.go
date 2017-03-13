@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"sync/atomic"
+	"sync"
 	"time"
 
 	"github.com/juju/errors"
@@ -296,7 +296,7 @@ type copIterator struct {
 	// Otherwise, result is stored in respChan.
 	respChan chan *coprocessor.Response
 	errChan  chan error
-	pending  int64
+	wg       sync.WaitGroup
 }
 
 const minLogCopTaskTime = 300 * time.Millisecond
@@ -304,6 +304,7 @@ const minLogCopTaskTime = 300 * time.Millisecond
 // The worker function that get a copTask from channel, handle it and
 // send the result back.
 func (it *copIterator) work(ctx goctx.Context, taskCh <-chan *copTask) {
+	defer it.wg.Done()
 	for task := range taskCh {
 		bo := NewBackoffer(copNextMaxBackoff, ctx)
 		startTime := time.Now()
@@ -340,15 +341,29 @@ func (it *copIterator) work(ctx goctx.Context, taskCh <-chan *copTask) {
 }
 
 func (it *copIterator) run(ctx goctx.Context) {
+	it.wg.Add(it.concurrency)
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
 		go it.work(ctx, it.taskCh)
 	}
 
-	atomic.AddInt64(&it.pending, int64(len(it.tasks)))
 	go func() {
+		// Send tasks to feed the worker goroutines.
 		for _, t := range it.tasks {
-			it.taskCh <- t
+			select {
+			case it.taskCh <- t:
+			case <-it.finished:
+				return
+			case <-ctx.Done():
+				return
+			}
+		}
+		close(it.taskCh)
+
+		// Wait for worker goroutines to exit.
+		it.wg.Wait()
+		if !it.req.KeepOrder {
+			close(it.respChan)
 		}
 	}()
 }
@@ -360,25 +375,22 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 	var (
 		resp *coprocessor.Response
 		err  error
+		ok   bool
 	)
 	// If data order matters, response should be returned in the same order as copTask slice.
 	// Otherwise all responses are returned from a single channel.
 	if !it.req.KeepOrder {
-		if atomic.LoadInt64(&it.pending) == 0 {
-			close(it.taskCh)
-			return nil, nil
-		}
-
 		// Get next fetched resp from chan
 		select {
-		case resp = <-it.respChan:
+		case resp, ok = <-it.respChan:
+			if !ok {
+				return nil, nil
+			}
 		case err = <-it.errChan:
 		}
-		atomic.AddInt64(&it.pending, -1)
 	} else {
 		if it.curr == len(it.tasks) {
 			// resp will be nil if iterator is finished.
-			close(it.taskCh)
 			return nil, nil
 		}
 		task := it.tasks[it.curr]
