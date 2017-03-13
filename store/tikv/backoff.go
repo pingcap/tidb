@@ -172,6 +172,7 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 
 	b.totalSleep += f()
 	b.types = append(b.types, typ)
+
 	log.Debugf("%v, retry later(totalSleep %dms, maxSleep %dms)", err, b.totalSleep, b.maxSleep)
 	b.errors = append(b.errors, err)
 	if b.maxSleep > 0 && b.totalSleep >= b.maxSleep {
