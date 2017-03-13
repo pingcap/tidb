@@ -350,12 +350,12 @@ func (it *copIterator) run(ctx goctx.Context) {
 	go func() {
 		// Send tasks to feed the worker goroutines.
 		for _, t := range it.tasks {
-			select {
-			case it.taskCh <- t:
-			case <-it.finished:
+			finished, canceled := it.sendToTaskCh(ctx, t)
+			if finished {
 				return
-			case <-ctx.Done():
-				return
+			}
+			if canceled {
+				break
 			}
 		}
 		close(it.taskCh)
@@ -366,6 +366,17 @@ func (it *copIterator) run(ctx goctx.Context) {
 			close(it.respChan)
 		}
 	}()
+}
+
+func (it *copIterator) sendToTaskCh(ctx goctx.Context, t *copTask) (finished bool, canceled bool) {
+	select {
+	case it.taskCh <- t:
+	case <-it.finished:
+		finished = true
+	case <-ctx.Done():
+		canceled = true
+	}
+	return
 }
 
 // Return next coprocessor result.
