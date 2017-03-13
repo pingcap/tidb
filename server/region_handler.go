@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/juju/errors"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
@@ -33,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/reborndb/go/errors"
 	goctx "golang.org/x/net/context"
 )
 
@@ -265,6 +265,26 @@ func NewIndexInfoFromKey(key []byte) (info *IndexInfo, err error) {
 	}
 	info = &IndexInfo{}
 	info.tableID, info.indexID, info.isRecordKey, err = tablecodec.DecodeKeyHead(key)
+	if err == nil || bytes.HasPrefix(key, tablecodec.TablePrefix()) {
+		return
+	}
+
+	// key start with tablePrefix must be either record key or index key
+	// That's means table's record key and index key are always together
+	// in the continuous interval. And for key with prefix smaller than
+	// tablePrefix, is smaller than all tables. While for key with prefix
+	// bigger than tablePrefix, means is bigger than all tables.
+	err = nil
+	if bytes.Compare(key, tablecodec.TablePrefix()) < 0 {
+		info.tableID = math.MinInt64
+		info.indexID = math.MinInt64
+		info.isRecordKey = false
+		return
+	}
+
+	info.tableID = math.MaxInt64
+	info.tableID = math.MaxInt64
+	info.isRecordKey = true
 	return
 }
 
@@ -292,7 +312,9 @@ func (ir *RegionIndexRange) initFirstIndexRange() {
 		ir.first = first
 		return
 	}
-	// if start_key is not a legal key,try to binary search first table
+
+	// if start_key start with tablePrefix but is
+	// not a legal key ,try to binary search first table
 	ir.first = &IndexInfo{
 		tableID:     int64(math.MaxInt64),
 		indexID:     int64(math.MaxInt64),
@@ -336,7 +358,8 @@ func (ir *RegionIndexRange) initLastIndexRange() {
 		ir.last = last
 		return
 	}
-	// if end_key is not a legal index,binary search end index
+	// if end_key start with tablePrefix but
+	// is not a legal index,binary search end index
 	ir.last = &IndexInfo{
 		tableID:     int64(math.MinInt64),
 		indexID:     int64(math.MinInt64),

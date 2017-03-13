@@ -84,7 +84,7 @@ func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRangeWithEndNoLimit(c *C) {
 }
 
 func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRangeWithStartNoLimit(c *C) {
-	sTableID := int64(0)
+	sTableID := int64(math.MinInt64)
 	sIndexID := int64(math.MinInt64)
 	eTableID := int64(9)
 	startKey := codec.EncodeBytes(nil, []byte("m_aaaaafdfd"))
