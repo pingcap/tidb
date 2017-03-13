@@ -48,10 +48,6 @@ const (
 	Lim = "Limit"
 	// App is the type of Apply.
 	App = "Apply"
-	// Dis is the type of Distinct.
-	Dis = "Distinct"
-	// Trm is the type of Trim.
-	Trm = "Trim"
 	// MOR is the type of MaxOneRow.
 	MOR = "MaxOneRow"
 	// Ext is the type of Exists.
@@ -245,7 +241,7 @@ func (p *baseLogicalPlan) buildKeyInfo() {
 	}
 	if len(p.children) == 1 {
 		switch p.self.(type) {
-		case *Exists, *Aggregation, *Projection, *Trim:
+		case *Exists, *Aggregation, *Projection:
 			p.schema.Keys = nil
 		case *SelectLock:
 			p.schema.Keys = p.children[0].Schema().Keys

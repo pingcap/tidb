@@ -351,10 +351,23 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 		u.children[i] = b.buildSelect(sel)
 	}
 	firstSchema := u.children[0].Schema().Clone()
-	for _, sel := range u.children {
+	for i, sel := range u.children {
 		if firstSchema.Len() != sel.Schema().Len() {
 			b.err = errors.New("The used SELECT statements have a different number of columns")
 			return nil
+		}
+		if _, ok := sel.(*Projection); !ok {
+			proj := &Projection{
+				baseLogicalPlan: newBaseLogicalPlan(Proj, b.allocator),
+				Exprs:           expression.Column2Exprs(sel.Schema().Columns),
+			}
+			proj.initIDAndContext(b.ctx)
+			proj.self = proj
+			proj.SetSchema(sel.Schema().Clone())
+			sel.SetParents(proj)
+			proj.SetChildren(sel)
+			sel = proj
+			u.children[i] = proj
 		}
 		for i, col := range sel.Schema().Columns {
 			/*
@@ -895,19 +908,17 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 	}
 	sel.Fields.Fields = originalFields
 	if oldLen != p.Schema().Len() {
-		return b.buildTrim(p, oldLen)
+		proj := &Projection{
+			baseLogicalPlan: newBaseLogicalPlan(Proj, b.allocator),
+			Exprs:           expression.Column2Exprs(p.Schema().Columns[:oldLen]),
+		}
+		proj.initIDAndContext(b.ctx)
+		proj.self = proj
+		addChild(proj, p)
+		proj.SetSchema(expression.NewSchema(p.Schema().Columns[:oldLen]...))
+		return proj
 	}
 	return p
-}
-
-func (b *planBuilder) buildTrim(p LogicalPlan, len int) LogicalPlan {
-	trim := &Trim{baseLogicalPlan: newBaseLogicalPlan(Trm, b.allocator)}
-	trim.self = trim
-	trim.initIDAndContext(b.ctx)
-	addChild(trim, p)
-	schema := expression.NewSchema(p.Schema().Clone().Columns[:len]...)
-	trim.SetSchema(schema)
-	return trim
 }
 
 func (b *planBuilder) buildTableDual() LogicalPlan {
@@ -1025,7 +1036,7 @@ out:
 		switch plan := p.(type) {
 		// This can be removed when in exists clause,
 		// e.g. exists(select count(*) from t order by a) is equal to exists t.
-		case *Trim, *Projection, *Sort:
+		case *Projection, *Sort:
 			p = p.Children()[0].(LogicalPlan)
 			p.SetParents()
 		case *Aggregation:

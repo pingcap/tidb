@@ -877,44 +877,40 @@ func (d *Datum) convertToMysqlTime(sc *variable.StatementContext, target *FieldT
 	if target.Decimal != UnspecifiedLength {
 		fsp = target.Decimal
 	}
-	var ret Datum
+	var (
+		ret Datum
+		t   Time
+		err error
+	)
 	switch d.k {
 	case KindMysqlTime:
-		t, err := d.GetMysqlTime().Convert(tp)
+		t, err = d.GetMysqlTime().Convert(tp)
 		if err != nil {
 			ret.SetValue(t)
 			return ret, errors.Trace(err)
 		}
 		t, err = t.roundFrac(fsp)
-		ret.SetValue(t)
-		if err != nil {
-			return ret, errors.Trace(err)
-		}
 	case KindMysqlDuration:
-		t, err := d.GetMysqlDuration().ConvertToTime(tp)
+		t, err = d.GetMysqlDuration().ConvertToTime(tp)
 		if err != nil {
 			ret.SetValue(t)
 			return ret, errors.Trace(err)
 		}
 		t, err = t.roundFrac(fsp)
-		ret.SetValue(t)
-		if err != nil {
-			return ret, errors.Trace(err)
-		}
 	case KindString, KindBytes:
-		t, err := ParseTime(d.GetString(), tp, fsp)
-		ret.SetValue(t)
-		if err != nil {
-			return ret, errors.Trace(err)
-		}
+		t, err = ParseTime(d.GetString(), tp, fsp)
 	case KindInt64:
-		t, err := ParseTimeFromNum(d.GetInt64(), tp, fsp)
-		ret.SetValue(t)
-		if err != nil {
-			return ret, errors.Trace(err)
-		}
+		t, err = ParseTimeFromNum(d.GetInt64(), tp, fsp)
 	default:
 		return invalidConv(d, tp)
+	}
+	if tp == mysql.TypeDate {
+		// Truncate hh:mm:ss part if the type is Date.
+		t.Time = FromDate(t.Time.Year(), t.Time.Month(), t.Time.Day(), 0, 0, 0, 0)
+	}
+	ret.SetValue(t)
+	if err != nil {
+		return ret, errors.Trace(err)
 	}
 	return ret, nil
 }

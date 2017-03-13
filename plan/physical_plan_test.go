@@ -355,7 +355,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select a from t where a between 1 and 2 order by c",
-			best: "Table(t)->Sort->Trim",
+			best: "Table(t)->Sort->Projection",
 		},
 		{
 			sql:  "select * from t t1 use index(c_d_e)",
@@ -367,7 +367,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select sum(t.a) from t where t.c in (1,2) and t.d in (1,3) group by t.d order by t.d",
-			best: "Index(t.c_d_e)[[1 1,1 1] [1 3,1 3] [2 1,2 1] [2 3,2 3]]->HashAgg->Sort->Trim",
+			best: "Index(t.c_d_e)[[1 1,1 1] [1 3,1 3] [2 1,2 1] [2 3,2 3]]->HashAgg->Sort->Projection",
 		},
 		{
 			sql:  "select * from t where t.c = 1 and t.e = 1 order by t.a limit 1",
@@ -415,7 +415,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select sum(a.b), sum(b.b) from t a join t b on a.c = b.c group by a.d order by a.d",
-			best: "LeftHashJoin{Table(t)->Table(t)}(a.c,b.c)->HashAgg->Sort->Trim",
+			best: "LeftHashJoin{Table(t)->Table(t)}(a.c,b.c)->HashAgg->Sort->Projection",
 		},
 		{
 			sql:  "select * from t t1 left outer join t t2 on true where least(1,2,3,t1.a,t2.b) > 0 order by t2.a limit 10",
@@ -435,7 +435,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select count(*) from t group by e order by d limit 1",
-			best: "Table(t)->HashAgg->Sort + Limit(1) + Offset(0)->Trim",
+			best: "Table(t)->HashAgg->Sort + Limit(1) + Offset(0)->Projection",
 		},
 		{
 			sql:  "select count(*) from t where concat(a,b) = 'abc' group by a",
@@ -443,7 +443,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select count(*) from t where concat(a,b) = 'abc' group by a order by a",
-			best: "Table(t)->Selection->StreamAgg->Trim",
+			best: "Table(t)->Selection->StreamAgg->Projection",
 		},
 		{
 			sql:  "select count(distinct e) from t where c = 1 and concat(c,d) = 'abc' group by d",
@@ -504,7 +504,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select exists(select * from t b where a.a = b.a and b.c = 1) from t a order by a.c limit 3",
-			best: "SemiJoinWithAux{Index(t.c_d_e)[[<nil>,+inf]]->Limit->Index(t.c_d_e)[[1,1]]}->Projection->Trim",
+			best: "SemiJoinWithAux{Index(t.c_d_e)[[<nil>,+inf]]->Limit->Index(t.c_d_e)[[1,1]]}->Projection->Projection",
 		},
 		{
 			sql:  "select * from (select t.a from t union select t.d from t where t.c = 1 union select t.c from t) k order by a limit 1",
