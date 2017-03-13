@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"net"
 	"time"
 
 	"github.com/juju/errors"
@@ -57,12 +58,6 @@ func NewRegionRequestSender(bo *Backoffer, regionCache *RegionCache, client Clie
 // SendKVReq sends a KV request to tikv server.
 func (s *RegionRequestSender) SendKVReq(req *kvrpcpb.Request, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.Response, error) {
 	for {
-		select {
-		case <-s.bo.ctx.Done():
-			return nil, errors.Trace(s.bo.ctx.Err())
-		default:
-		}
-
 		ctx, err := s.regionCache.GetRPCContext(s.bo, regionID)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -167,7 +162,12 @@ func (s *RegionRequestSender) sendCopReqToRegion(ctx *RPCContext, req *coprocess
 
 func (s *RegionRequestSender) onSendFail(ctx *RPCContext, err error) error {
 	s.regionCache.OnRequestFail(ctx)
-	err = s.bo.Backoff(boTiKVRPC, errors.Errorf("send tikv request error: %v, ctx: %s, try next peer later", err, ctx.KVCtx))
+
+	if netErr, ok := errors.Cause(err).(net.Error); ok {
+		if netErr.Temporary() {
+			err = s.bo.Backoff(boTiKVRPC, errors.Errorf("send tikv request error: %v, ctx: %s, try next peer later", err, ctx.KVCtx))
+		}
+	}
 	return errors.Trace(err)
 }
 
@@ -199,7 +199,7 @@ func (s *RegionRequestSender) onRegionError(ctx *RPCContext, regionErr *errorpb.
 		return false, errors.Trace(err)
 	}
 	if regionErr.GetServerIsBusy() != nil {
-		log.Debugf("tikv reports `ServerIsBusy`, ctx: %s, retry later", ctx.KVCtx)
+		log.Warnf("tikv reports `ServerIsBusy`, ctx: %s, retry later", ctx.KVCtx)
 		err = s.bo.Backoff(boServerBusy, errors.Errorf("server is busy, ctx: %s", ctx.KVCtx))
 		if err != nil {
 			return false, errors.Trace(err)
@@ -211,6 +211,7 @@ func (s *RegionRequestSender) onRegionError(ctx *RPCContext, regionErr *errorpb.
 		return true, nil
 	}
 	if regionErr.GetRaftEntryTooLarge() != nil {
+		log.Warnf("tikv reports `RaftEntryTooLarge`, ctx: %s", ctx.KVCtx)
 		return false, errors.New(regionErr.String())
 	}
 	// For other errors, we only drop cache here.

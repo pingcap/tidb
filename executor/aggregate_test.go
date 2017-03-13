@@ -401,3 +401,19 @@ func (s *testSuite) TestSelectDistinct(c *C) {
 	tk.MustExec("commit")
 
 }
+
+func (s *testSuite) TestAggPushDown(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, tt")
+	tk.MustExec("create table t(a int primary key, b int, c int)")
+	tk.MustExec("create table tt(a int primary key, b int, c int)")
+	tk.MustExec("insert into t values(1, 1, 1), (2, 1, 1)")
+	tk.MustExec("insert into tt values(1, 2, 1)")
+	tk.MustQuery("select max(a.b), max(b.b) from t a join tt b on a.a = b.a group by a.c").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select a, count(b) from (select * from t union all select * from tt) k group by a").Check(testkit.Rows("1 2", "2 1"))
+}

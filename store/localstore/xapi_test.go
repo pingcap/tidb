@@ -85,7 +85,7 @@ func (s *testXAPISuite) TestSelect(c *C) {
 		var expectedEncoded []byte
 		expectedEncoded, err = codec.EncodeValue(nil, expectedDatums...)
 		c.Assert(err, IsNil)
-		c.Assert(chunk.RowsData[dataOffset:dataOffset+rowMeta.Length], BytesEquals, expectedEncoded)
+		c.Assert([]byte(chunk.RowsData[dataOffset:dataOffset+rowMeta.Length]), BytesEquals, expectedEncoded)
 		dataOffset += rowMeta.Length
 	}
 	txn.Commit()

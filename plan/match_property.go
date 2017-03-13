@@ -231,10 +231,7 @@ func (p *Selection) matchProperty(prop *requiredProperty, childPlanInfo ...*phys
 		res.count = uint64(float64(res.count) * selectionFactor)
 		return res
 	}
-	np := *p
-	np.SetChildren(childPlanInfo[0].p)
-	count := uint64(float64(childPlanInfo[0].count) * selectionFactor)
-	return &physicalPlanInfo{p: &np, cost: childPlanInfo[0].cost, count: count}
+	return childPlanInfo[0]
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
@@ -280,11 +277,6 @@ func (p *MaxOneRow) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *
 
 // matchProperty implements PhysicalPlan matchProperty interface.
 func (p *Exists) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *physicalPlanInfo {
-	panic("You can't call this function!")
-}
-
-// matchProperty implements PhysicalPlan matchProperty interface.
-func (p *Trim) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *physicalPlanInfo {
 	panic("You can't call this function!")
 }
 

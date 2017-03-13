@@ -18,6 +18,7 @@ import (
 	"unicode"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -81,8 +82,17 @@ func (s *testLexerSuite) TestSysOrUserVar(c *C) {
 func (s *testLexerSuite) TestUnderscoreCS(c *C) {
 	defer testleak.AfterTest(c)()
 	var v yySymType
-	tok := NewScanner(`_utf8"string"`).Lex(&v)
+	scanner := NewScanner(`_utf8"string"`)
+	tok := scanner.Lex(&v)
 	c.Check(tok, Equals, underscoreCS)
+	tok = scanner.Lex(&v)
+	c.Check(tok, Equals, stringLit)
+
+	scanner.reset("N'string'")
+	tok = scanner.Lex(&v)
+	c.Check(tok, Equals, underscoreCS)
+	tok = scanner.Lex(&v)
+	c.Check(tok, Equals, stringLit)
 }
 
 func (s *testLexerSuite) TestLiteral(c *C) {
@@ -108,6 +118,8 @@ func (s *testLexerSuite) TestLiteral(c *C) {
 		{fmt.Sprintf("t1%c", 0), identifier},
 		{".*", int('.')},
 		{".1_t_1_x", int('.')},
+		{"N'some text'", underscoreCS},
+		{"n'some text'", underscoreCS},
 	}
 	runTest(c, table)
 }
@@ -249,5 +261,30 @@ func (s *testLexerSuite) TestInt(c *C) {
 		default:
 			c.Fail()
 		}
+	}
+}
+
+func (s *testLexerSuite) TestSQLModeANSIQuotes(c *C) {
+	tests := []struct {
+		input string
+		tok   int
+		ident string
+	}{
+		{`"identifier"`, identifier, "identifier"},
+		{"`identifier`", identifier, "identifier"},
+		{`"identifier""and"`, identifier, `identifier"and`},
+		{`'string''string'`, stringLit, "string'string"},
+		{`'string' 'string'`, stringLit, "stringstring"},
+		{`"identifier"'and'`, identifier, "identifier"},
+		{`'string'"identifier"`, stringLit, "string"},
+	}
+	scanner := NewScanner("")
+	scanner.SetSQLMode(mysql.ModeANSIQuotes)
+	for _, t := range tests {
+		var v yySymType
+		scanner.reset(t.input)
+		tok := scanner.Lex(&v)
+		c.Assert(tok, Equals, t.tok)
+		c.Assert(v.ident, Equals, t.ident)
 	}
 }
