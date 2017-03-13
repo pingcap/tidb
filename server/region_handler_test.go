@@ -217,7 +217,6 @@ func (ts *TidbRegionHandlerTestSuite) startServer(c *C) {
 	store, err := tikv.NewMockTikvStoreWithCluster(cluster)
 	c.Assert(err, IsNil)
 	pdCli := mocktikv.NewPDClient(cluster)
-	regionCache := tikv.NewRegionCache(pdCli)
 	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	tidbdrv := NewTiDBDriver(store)
@@ -232,7 +231,7 @@ func (ts *TidbRegionHandlerTestSuite) startServer(c *C) {
 	c.Assert(err, IsNil)
 	ts.server = server
 	once.Do(func() {
-		go server.startHTTPServer(regionCache)
+		go server.startHTTPServer(&pdCli)
 	})
 	waitUntilServerOnline()
 }

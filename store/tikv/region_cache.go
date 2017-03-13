@@ -51,21 +51,6 @@ func NewRegionCache(pdClient pd.Client) *RegionCache {
 	return c
 }
 
-// NewRegionCacheFromStorePath create a region cache with store's path.
-func NewRegionCacheFromStorePath(path string) (*RegionCache, error) {
-	etcdAddrs, _, err := parsePath(path)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	pdCli, err := pd.NewClient(etcdAddrs)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	return NewRegionCache(pdCli), nil
-}
-
 // RPCContext contains data that is needed to send RPC to a region.
 type RPCContext struct {
 	goctx.Context
@@ -394,14 +379,6 @@ func (c *RegionCache) ClearStoreByID(id uint64) {
 	c.storeMu.Lock()
 	defer c.storeMu.Unlock()
 	delete(c.storeMu.stores, id)
-}
-
-// EmptyRegions clears all regions in cache.
-func (c *RegionCache) EmptyRegions() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.mu.regions = make(map[RegionVerID]*Region)
-	c.mu.sorted = llrb.New()
 }
 
 func (c *RegionCache) loadStoreAddr(bo *Backoffer, id uint64) (string, error) {

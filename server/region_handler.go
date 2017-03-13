@@ -23,16 +23,17 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/reborndb/go/errors"
 	goctx "golang.org/x/net/context"
 )
 
@@ -44,20 +45,23 @@ type RegionsHTTPRequest struct {
 	params      map[string]string
 	reqID       string
 	regionCache *tikv.RegionCache
+	bo          *tikv.Backoffer
+	domain      *domain.Domain
 }
 
 // NewRegionsHTTPRequest create a RegionsHTTPRequest
-func NewRegionsHTTPRequest(s *Server, w http.ResponseWriter, req *http.Request, regionCache *tikv.RegionCache) *RegionsHTTPRequest {
-	regionCache.EmptyRegions()
-	return &RegionsHTTPRequest{
-		server:      s,
-		req:         req,
-		resp:        w,
-		params:      mux.Vars(req),
-		regionCache: regionCache,
+func NewRegionsHTTPRequest(s *Server, w http.ResponseWriter, req *http.Request,
+	pdClient *pd.Client) (regionReq *RegionsHTTPRequest, err error) {
+	regionReq = &RegionsHTTPRequest{
+		server: s,
+		req:    req,
+		resp:   w,
+		params: mux.Vars(req),
 		//TODO genuuid
 		reqID: fmt.Sprintf("http_%d", time.Now().UnixNano()),
 	}
+	err = regionReq.init(pdClient)
+	return regionReq, errors.Trace(err)
 }
 
 func (req *RegionsHTTPRequest) writeResponse(data interface{}, err error) {
@@ -91,7 +95,7 @@ func (req *RegionsHTTPRequest) HandleListRegions() {
 	req.writeResponse(data, err)
 }
 
-// HandleGetRegionByID handles request for get region by ID
+// HandleGetRegionByID handles request for get region by ID.
 func (req *RegionsHTTPRequest) HandleGetRegionByID() {
 	regionIDStr, _ := req.params["regionID"]
 	regionID, err := strconv.ParseInt(regionIDStr, 0, 64)
@@ -99,79 +103,75 @@ func (req *RegionsHTTPRequest) HandleGetRegionByID() {
 		req.writeResponse(nil, err)
 		return
 	}
-	data, err := req.getRegionWithRegionID(uint64(regionID))
+	data, err := req.getRegionByID(uint64(regionID))
 	req.writeResponse(data, err)
 }
 
-// prepare creates a Backoffer,Domain when store is tikv.
-func (req *RegionsHTTPRequest) prepare() (bo *tikv.Backoffer, domain *domain.Domain, err error) {
+// init check and creates a Backoffer, Domain when store is tikv.
+func (req *RegionsHTTPRequest) init(pdClient *pd.Client) (err error) {
+	defer func() {
+		if err != nil {
+			req.writeResponse(nil, err)
+		}
+	}()
 	if req.server.cfg.Store != "tikv" {
 		err = fmt.Errorf("only store tikv support,current store:%s", req.server.cfg.Store)
 		return
 	}
+	if pdClient == nil {
+		err = fmt.Errorf("Invalid PdClient: nil")
+		return
+	}
+
+	req.regionCache = tikv.NewRegionCache(*pdClient)
 	var session tidb.Session
 	session, err = tidb.CreateSession(req.server.driver.(*TiDBDriver).store)
 	if err != nil {
 		return
 	}
-	bo = tikv.NewBackoffer(5000, goctx.Background())
-	dom := sessionctx.GetDomain(session.(context.Context))
-	return bo, dom, err
+	req.bo = tikv.NewBackoffer(5000, goctx.Background())
+	req.domain = sessionctx.GetDomain(session.(context.Context))
+	return err
 }
 
-func (req *RegionsHTTPRequest) listTableRegions(dbName, tableName string) (data *TableRegions, err error) {
-	bo, dom, err := req.prepare()
+func (req *RegionsHTTPRequest) listTableRegions(dbName, tableName string) (tableRegions *TableRegions, err error) {
+	table, err := req.domain.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
 	if err != nil {
-		return nil, err
-	}
-	table, err := dom.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
-	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	tableID := table.Meta().ID
 
-	// create regionCache
-
-	if err != nil {
-		return nil, err
-	}
-
-	data = &TableRegions{
-		TableName:  tableName,
-		TableID:    tableID,
-		RowRegions: nil,
-		Indices:    make([]IndexRegions, len(table.Indices())),
+	tableRegions = &TableRegions{
+		TableName: tableName,
+		TableID:   tableID,
+		Indices:   make([]IndexRegions, len(table.Indices())),
 	}
 
 	// for primary
 	startKey, endKey := getTableHandleKeyRange(tableID)
-	data.RowRegions, err = req.regionCache.ListRegionIDsInKeyRange(bo, startKey, endKey)
+	tableRegions.RowRegions, err = req.regionCache.ListRegionIDsInKeyRange(req.bo, startKey, endKey)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	// for indexes
-	for id, index := range table.Indices() {
+	for i, index := range table.Indices() {
 		indexID := index.Meta().ID
-		data.Indices[id].Name = index.Meta().Name.String()
-		data.Indices[id].ID = indexID
+		tableRegions.Indices[i].Name = index.Meta().Name.String()
+		tableRegions.Indices[i].ID = indexID
 		startKey, endKey := getTableIndexKeyRange(tableID, indexID)
-		data.Indices[id].Regions, err = req.regionCache.ListRegionIDsInKeyRange(bo, startKey, endKey)
+		tableRegions.Indices[i].Regions, err = req.regionCache.ListRegionIDsInKeyRange(req.bo, startKey, endKey)
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 	}
-	return data, nil
+	return tableRegions, nil
 }
 
-func (req *RegionsHTTPRequest) getRegionWithRegionID(regionID uint64) (*RegionItem, error) {
-	bo, dom, err := req.prepare()
+func (req *RegionsHTTPRequest) getRegionByID(regionID uint64) (*RegionItem, error) {
+	region, err := req.regionCache.LocateRegionByID(req.bo, regionID)
 	if err != nil {
-		return nil, err
-	}
-	region, err := req.regionCache.LocateRegionByID(bo, regionID)
-	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	indexRange := NewRegionIndexRange(region)
@@ -186,7 +186,7 @@ func (req *RegionsHTTPRequest) getRegionWithRegionID(regionID uint64) (*RegionIt
 	// table's number is smaller than 1000, iterate table ID in index range.
 	if indexRange.lastTableID()-indexRange.firstTableID() <= 1000 {
 		for tableID := indexRange.firstTableID(); tableID <= indexRange.lastTableID(); tableID++ {
-			curTable, exist := dom.InfoSchema().TableByID(tableID)
+			curTable, exist := req.domain.InfoSchema().TableByID(tableID)
 			if exist {
 				start, end := indexRange.getLastInxIDRange()
 				regionItem.addTableIndicesInRange(curTable, start, end)
@@ -195,9 +195,9 @@ func (req *RegionsHTTPRequest) getRegionWithRegionID(regionID uint64) (*RegionIt
 		return regionItem, nil
 	}
 
-	for _, db := range dom.InfoSchema().AllSchemaNames() {
-		for _, table := range dom.InfoSchema().SchemaTables(model.NewCIStr(db)) {
-			curTable, exist := dom.InfoSchema().TableByID(table.Meta().ID)
+	for _, db := range req.domain.InfoSchema().AllSchemaNames() {
+		for _, table := range req.domain.InfoSchema().SchemaTables(model.NewCIStr(db)) {
+			curTable, exist := req.domain.InfoSchema().TableByID(table.Meta().ID)
 			if exist {
 				start, end := indexRange.getLastInxIDRange()
 				regionItem.addTableIndicesInRange(curTable, start, end)
@@ -221,7 +221,6 @@ func NewRegionsResponseWithError(reqID string, err error) *RegionsResponse {
 		Success:   false,
 		Msg:       err.Error(),
 		RequestID: reqID,
-		Data:      nil,
 	}
 }
 
@@ -274,15 +273,12 @@ type RegionIndexRange struct {
 	first  *IndexInfo
 	last   *IndexInfo
 	region *tikv.KeyLocation
-	is     infoschema.InfoSchema
 }
 
 // NewRegionIndexRange init a RegionIndexRange with region info.
 func NewRegionIndexRange(region *tikv.KeyLocation) *RegionIndexRange {
 	idxRange := &RegionIndexRange{
 		region: region,
-		first:  nil,
-		last:   nil,
 	}
 	idxRange.initFirstIndexRange()
 	idxRange.initLastIndexRange()

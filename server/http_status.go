@@ -1,3 +1,16 @@
+// Copyright 2017 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package server
 
 import (
@@ -7,7 +20,9 @@ import (
 	"sync"
 
 	"github.com/gorilla/mux"
+	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/printer"
@@ -20,33 +35,51 @@ const defaultStatusAddr = ":10080"
 
 func (s *Server) startStatusHTTP() {
 	// prepare region cache for region http server
-	var regionCache *tikv.RegionCache
-	if s.cfg.Store == "tikv" {
-		var err error
-		regionCache, err = tikv.NewRegionCacheFromStorePath(fmt.Sprintf("%s://%s", s.cfg.Store, s.cfg.StorePath))
-		if err != nil {
-			log.Fatal(err)
-		}
+	pdClient, err := s.getPdClient()
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	once.Do(func() {
-		go s.startHTTPServer(regionCache)
+		go s.startHTTPServer(pdClient)
 	})
 }
 
-func (s *Server) startHTTPServer(regionCache *tikv.RegionCache) {
+func (s *Server) getPdClient() (*pd.Client, error) {
+	if s.cfg.Store != "tikv" {
+		return nil, nil
+	}
+	path := fmt.Sprintf("%s://%s", s.cfg.Store, s.cfg.StorePath)
+	etcdAddrs, _, err := tikv.ParsePath(path)
+	if err != nil {
+		return nil, err
+	}
+	client, err := pd.NewClient(etcdAddrs)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &client, nil
+}
+
+func (s *Server) startHTTPServer(pdClient *pd.Client) {
 	router := mux.NewRouter()
 	router.HandleFunc("/status", s.handleStatus)
 	// HTTP path for prometheus.
 	router.Handle("/metrics", prometheus.Handler())
 
 	router.HandleFunc("/tables/{db}/{table}/regions", func(w http.ResponseWriter, req *http.Request) {
-		request := NewRegionsHTTPRequest(s, w, req, regionCache)
+		request, err := NewRegionsHTTPRequest(s, w, req, pdClient)
+		if err != nil {
+			return
+		}
 		request.HandleListRegions()
 	})
 
 	router.HandleFunc("/regions/{regionID}", func(w http.ResponseWriter, req *http.Request) {
-		request := NewRegionsHTTPRequest(s, w, req, regionCache)
+		request, err := NewRegionsHTTPRequest(s, w, req, pdClient)
+		if err != nil {
+			return
+		}
 		request.HandleGetRegionByID()
 	})
 	addr := s.cfg.StatusAddr
