@@ -452,7 +452,7 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) ([]*coprocessor.
 	}
 }
 
-// Rebuild current task. It may be split into multiple tasks (in region split scenario).
+// Rebuild and handle current task. It may be split into multiple tasks (in region split scenario).
 func (it *copIterator) rebuildCurrentTask(bo *Backoffer, task *copTask) ([]*coprocessor.Response, error) {
 	coprocessorCounter.WithLabelValues("rebuild_task").Inc()
 
