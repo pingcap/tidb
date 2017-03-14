@@ -1394,7 +1394,7 @@ type builtinMakeSetSig struct {
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_make-set
-func (b *builtinMakeSetSig) eval(row []types.Datum) (d types.Datum, err error) {
+func (b *builtinMakeSetSig) eval(row []types.Datum) (d string, err error) {
 	var bitMask int
 	var s []string
 
