@@ -34,6 +34,9 @@ type rpcHandler struct {
 	storeID   uint64
 	startKey  []byte
 	endKey    []byte
+
+	rawStartKey []byte
+	rawEndKey   []byte
 }
 
 func newRPCHandler(cluster *Cluster, mvccStore *MvccStore, storeID uint64) *rpcHandler {
@@ -158,6 +161,8 @@ func (h *rpcHandler) checkContext(ctx *kvrpcpb.Context) *errorpb.Error {
 		}
 	}
 	h.startKey, h.endKey = region.StartKey, region.EndKey
+	h.rawStartKey = MvccKey(h.startKey).Raw()
+	h.rawEndKey = MvccKey(h.endKey).Raw()
 	return nil
 }
 
