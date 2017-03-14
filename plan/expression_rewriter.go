@@ -487,6 +487,9 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		er.err = ErrOperandColumns.GenByArgs(lLen)
 		return v, true
 	}
+	// Sometimes we can unfold the in subquery. For example, a in (select * from t) can rewrite to `a in (1,2,3,4)`.
+	// TODO: Now we cannot add it to CBO framework. Instead, user can set a session variable to open this optimization.
+	// We will improve our CBO framework in future.
 	if lLen == 1 && asScalar && er.ctx.GetSessionVars().AllowInSubqueryUnFolding {
 		if len(np.extractCorrelatedCols()) == 0 {
 			physicalPlan, err := doOptimize(er.b.optFlag, np, er.b.ctx, er.b.allocator)
