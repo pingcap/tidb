@@ -490,36 +490,47 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 	// Sometimes we can unfold the in subquery. For example, a in (select * from t) can rewrite to `a in (1,2,3,4)`.
 	// TODO: Now we cannot add it to CBO framework. Instead, user can set a session variable to open this optimization.
 	// We will improve our CBO framework in future.
-	if lLen == 1 && asScalar && er.ctx.GetSessionVars().AllowInSubqueryUnFolding {
-		if len(np.extractCorrelatedCols()) == 0 {
-			physicalPlan, err := doOptimize(er.b.optFlag, np, er.b.ctx, er.b.allocator)
-			if err != nil {
-				er.err = errors.Trace(err)
-				return v, true
-			}
-			rows, err := EvalSubquery(physicalPlan, er.b.is, er.b.ctx)
-			if err != nil {
-				er.err = errors.Trace(err)
-				return v, true
-			}
-			for _, row := range rows {
-				con := &expression.Constant{
-					Value:   row[0],
-					RetType: np.Schema().Columns[0].GetType(),
-				}
-				er.ctxStack = append(er.ctxStack, con)
-			}
-			listLen := len(rows)
-			if listLen == 0 {
-				er.ctxStack[len(er.ctxStack)-1] = &expression.Constant{
-					Value:   types.NewDatum(false),
-					RetType: types.NewFieldType(mysql.TypeTiny),
-				}
-				return v, true
-			}
-			er.inToExpression(listLen, v.Not, &v.Type)
+	if lLen == 1 && er.ctx.GetSessionVars().AllowInSubqueryUnFolding && len(np.extractCorrelatedCols()) == 0 {
+		physicalPlan, err := doOptimize(er.b.optFlag, np, er.b.ctx, er.b.allocator)
+		if err != nil {
+			er.err = errors.Trace(err)
 			return v, true
 		}
+		rows, err := EvalSubquery(physicalPlan, er.b.is, er.b.ctx)
+		if err != nil {
+			er.err = errors.Trace(err)
+			return v, true
+		}
+		for _, row := range rows {
+			con := &expression.Constant{
+				Value:   row[0],
+				RetType: np.Schema().Columns[0].GetType(),
+			}
+			er.ctxStack = append(er.ctxStack, con)
+		}
+		listLen := len(rows)
+		if listLen == 0 {
+			er.ctxStack[len(er.ctxStack)-1] = &expression.Constant{
+				Value:   types.NewDatum(false),
+				RetType: types.NewFieldType(mysql.TypeTiny),
+			}
+			return v, true
+		}
+		er.inToExpression(listLen, v.Not, &v.Type)
+		if !asScalar {
+			inFunc := er.ctxStack[len(er.ctxStack)-1].Clone()
+			er.ctxStack = er.ctxStack[:len(er.ctxStack)-1]
+			sel := &Selection{
+				baseLogicalPlan: newBaseLogicalPlan(Sel, er.b.allocator),
+				Conditions:      []expression.Expression{inFunc},
+			}
+			sel.initIDAndContext(er.ctx)
+			sel.self = sel
+			sel.SetSchema(er.p.Schema().Clone())
+			addChild(sel, er.p)
+			er.p = sel
+		}
+		return v, true
 	}
 	var rexpr expression.Expression
 	if np.Schema().Len() == 1 {

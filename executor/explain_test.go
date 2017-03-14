@@ -514,6 +514,27 @@ func (s *testSuite) TestExplain(c *C) {
 }`,
 			},
 		},
+		{
+			"select c1 from t1 where c1 in (select c2 from t2)",
+			[]string{"TableScan_8"},
+			[]string{""},
+			[]string{
+				`{
+    "db": "test",
+    "table": "t1",
+    "desc": false,
+    "keep order": false,
+    "push down info": {
+        "limit": 0,
+        "access conditions": [
+            "in(test.t1.c1, 0, 1)"
+        ],
+        "index filter conditions": null,
+        "table filter conditions": null
+    }
+}`,
+			},
+		},
 	}
 	tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 1")
 	for _, ca := range cases {
