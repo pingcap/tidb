@@ -1394,6 +1394,10 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 			sql:  "select tt.a, sum(tt.b) from (select a, b from t) tt group by tt.a",
 			best: "DataScan(t)->Projection->Projection->Projection",
 		},
+		{
+			sql:  "select count(1) from (select count(1), a as b from t group by a) tt group by b",
+			best: "DataScan(t)->Projection->Projection->Projection->Projection",
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)

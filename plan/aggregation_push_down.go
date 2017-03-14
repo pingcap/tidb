@@ -330,63 +330,64 @@ func (a *aggregationOptimizer) aggPushDown(p LogicalPlan) LogicalPlan {
 	if agg, ok := p.(*Aggregation); ok {
 		proj := a.tryToEliminateAggregation(agg)
 		if proj != nil {
-			return proj
-		}
-		child := agg.children[0]
-		if join, ok1 := child.(*Join); ok1 && a.checkValidJoin(join) {
-			if valid, leftAggFuncs, rightAggFuncs, leftGbyCols, rightGbyCols := a.splitAggFuncsAndGbyCols(agg, join); valid {
-				var lChild, rChild LogicalPlan
-				// If there exist count or sum functions in left join path, we can't push any
-				// aggregate function into right join path.
-				rightInvalid := a.checkAnyCountAndSum(leftAggFuncs)
-				leftInvalid := a.checkAnyCountAndSum(rightAggFuncs)
-				if rightInvalid {
-					rChild = join.children[1].(LogicalPlan)
-				} else {
-					rChild = a.tryToPushDownAgg(rightAggFuncs, rightGbyCols, join, 1)
+			p = proj
+		} else {
+			child := agg.children[0]
+			if join, ok1 := child.(*Join); ok1 && a.checkValidJoin(join) {
+				if valid, leftAggFuncs, rightAggFuncs, leftGbyCols, rightGbyCols := a.splitAggFuncsAndGbyCols(agg, join); valid {
+					var lChild, rChild LogicalPlan
+					// If there exist count or sum functions in left join path, we can't push any
+					// aggregate function into right join path.
+					rightInvalid := a.checkAnyCountAndSum(leftAggFuncs)
+					leftInvalid := a.checkAnyCountAndSum(rightAggFuncs)
+					if rightInvalid {
+						rChild = join.children[1].(LogicalPlan)
+					} else {
+						rChild = a.tryToPushDownAgg(rightAggFuncs, rightGbyCols, join, 1)
+					}
+					if leftInvalid {
+						lChild = join.children[0].(LogicalPlan)
+					} else {
+						lChild = a.tryToPushDownAgg(leftAggFuncs, leftGbyCols, join, 0)
+					}
+					join.SetChildren(lChild, rChild)
+					lChild.SetParents(join)
+					rChild.SetParents(join)
+					join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
+					join.buildKeyInfo()
+					proj := a.tryToEliminateAggregation(agg)
+					if proj != nil {
+						p = proj
+					}
 				}
-				if leftInvalid {
-					lChild = join.children[0].(LogicalPlan)
-				} else {
-					lChild = a.tryToPushDownAgg(leftAggFuncs, leftGbyCols, join, 0)
+			} else if proj, ok1 := child.(*Projection); ok1 {
+				// TODO: This optimization is not always reasonable. We have not supported pushing projection to kv layer yet,
+				// so we must do this optimization.
+				for i, gbyItem := range agg.GroupByItems {
+					agg.GroupByItems[i] = expression.ColumnSubstitute(gbyItem, proj.schema, proj.Exprs)
 				}
-				join.SetChildren(lChild, rChild)
-				lChild.SetParents(join)
-				rChild.SetParents(join)
-				join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
-				join.buildKeyInfo()
-				proj := a.tryToEliminateAggregation(agg)
-				if proj != nil {
-					return proj
+				agg.collectGroupByColumns()
+				for _, aggFunc := range agg.AggFuncs {
+					newArgs := make([]expression.Expression, 0, len(aggFunc.GetArgs()))
+					for _, arg := range aggFunc.GetArgs() {
+						newArgs = append(newArgs, expression.ColumnSubstitute(arg, proj.schema, proj.Exprs))
+					}
+					aggFunc.SetArgs(newArgs)
 				}
-			}
-		} else if proj, ok1 := child.(*Projection); ok1 {
-			// TODO: This optimization is not always reasonable. We have not supported pushing projection to kv layer yet,
-			// so we must do this optimization.
-			for i, gbyItem := range agg.GroupByItems {
-				agg.GroupByItems[i] = expression.ColumnSubstitute(gbyItem, proj.schema, proj.Exprs)
-			}
-			agg.collectGroupByColumns()
-			for _, aggFunc := range agg.AggFuncs {
-				newArgs := make([]expression.Expression, 0, len(aggFunc.GetArgs()))
-				for _, arg := range aggFunc.GetArgs() {
-					newArgs = append(newArgs, expression.ColumnSubstitute(arg, proj.schema, proj.Exprs))
+				projChild := proj.children[0]
+				agg.SetChildren(projChild)
+				projChild.SetParents(agg)
+			} else if union, ok1 := child.(*Union); ok1 {
+				pushedAgg := a.makeNewAgg(agg.AggFuncs, agg.groupByCols)
+				newChildren := make([]Plan, 0, len(union.children))
+				for _, child := range union.children {
+					newChild := a.pushAggCrossUnion(pushedAgg, union.schema, child.(LogicalPlan))
+					newChildren = append(newChildren, newChild)
+					newChild.SetParents(union)
 				}
-				aggFunc.SetArgs(newArgs)
+				union.SetChildren(newChildren...)
+				union.SetSchema(pushedAgg.schema)
 			}
-			projChild := proj.children[0]
-			agg.SetChildren(projChild)
-			projChild.SetParents(agg)
-		} else if union, ok1 := child.(*Union); ok1 {
-			pushedAgg := a.makeNewAgg(agg.AggFuncs, agg.groupByCols)
-			newChildren := make([]Plan, 0, len(union.children))
-			for _, child := range union.children {
-				newChild := a.pushAggCrossUnion(pushedAgg, union.schema, child.(LogicalPlan))
-				newChildren = append(newChildren, newChild)
-				newChild.SetParents(union)
-			}
-			union.SetChildren(newChildren...)
-			union.SetSchema(pushedAgg.schema)
 		}
 	}
 	newChildren := make([]Plan, 0, len(p.Children()))
