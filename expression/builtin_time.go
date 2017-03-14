@@ -1454,102 +1454,62 @@ func (b *builtinTimeArithSig) eval(row []types.Datum) (types.Datum, error) {
 
 func timeArithFuncFactory(op ast.TimeArithType) BuiltinFunc {
 	return func(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-		// args[0] -> DateTime, Time
-		// args[1] -> Time
-		// health check for date and interval
+		// args[0] -> DateTime, Time.
+		// args[1] -> Time.
+		// result type equals to args[0] type.
 		if args[0].IsNull() || args[1].IsNull() {
 			return d, nil
 		}
 
-		nodeDate := args[0]
-		nodeTime := args[1]
-		d, err := convertDatumToTime(ctx.GetSessionVars().StmtCtx, nodeDate)
-		if err {
-			d,
-		} else {
-
-		}
-		d, err := convertToDuration(ctx.GetSessionVars().StmtCtx, args[0], types.MaxFsp)
-
-		types.co
-		self.convertToDuration()
-		// parse date
-		fieldType := mysql.TypeDate
-		var resultField *types.FieldType
-		switch nodeDate.Kind() {
-		case types.KindMysqlDuration:
-			x := nodeDate.GetMysqlDuration()
-			fieldType = mysql.TypeDuration
-		case types.KindMysqlTime:
-			x := nodeDate.GetMysqlTime()
-			if (x.Type == mysql.TypeDatetime) {
-				fieldType = mysql.TypeDatetime
-			}
-		case types.KindString:
-			x := nodeDate.GetString()
-			if !types.IsDateFormat(x) {
-				fieldType = mysql.TypeDatetime
-			}
-		case types.KindInt64:
-			x := nodeDate.GetInt64()
-			if t, err1 := types.ParseTimeFromInt64(x); err1 == nil {
-				if (t.Type == mysql.TypeDatetime) || (t.Type == mysql.TypeTimestamp) {
-					fieldType = mysql.TypeDatetime
-				}
-			}
-		}
-
-		resultField = types.NewFieldType(fieldType)
-		resultField.Decimal = types.MaxFsp
-		value, err := nodeDate.ConvertTo(ctx.GetSessionVars().StmtCtx, resultField)
+		//todo fsp
+		bd1, err := convertToDuration(ctx.GetSessionVars().StmtCtx, args[1], types.MaxFsp)
 		if err != nil {
-			return d, errInvalidOperation.Gen("TimeArith invalid args, need date but get %T", nodeDate)
+			return d, nil
 		}
-		if value.IsNull() {
-			return d, errInvalidOperation.Gen("TimeArith invalid args, need date but get %v", value.GetValue())
-		}
-		if value.Kind() != types.KindMysqlTime {
-			return d, errInvalidOperation.Gen("TimeArith need time type, but got %T", value.GetValue())
-		}
-		result := value.GetMysqlTime()
-		// parse interval
-		var interval string
-		if strings.ToLower(nodeIntervalUnit) == "day" {
-			day, err1 := parseDayInterval(sc, nodeIntervalValue)
-			if err1 != nil {
-				return d, errInvalidOperation.Gen("DateArith invalid day interval, need int but got %T", nodeIntervalValue.GetString())
+		b1 := bd1.GetMysqlDuration()
+
+		a1, err := convertDatumToTime(ctx.GetSessionVars().StmtCtx, args[0])
+		if err != nil {
+			ad1, err := convertToDuration(ctx.GetSessionVars().StmtCtx, args[0], types.MaxFsp)
+			if err != nil {
+				return d, nil
 			}
-			interval = fmt.Sprintf("%d", day)
-		} else {
-			if nodeIntervalValue.Kind() == types.KindString {
-				interval = fmt.Sprintf("%v", nodeIntervalValue.GetString())
+			a1 := ad1.GetMysqlDuration()
+			//args[0] is Duration case, result will be Duration too.
+
+			var r time.Duration
+
+			if op == ast.TimeArithAdd {
+				if a1.Duration-b1.Duration > types.MaxTime {
+					r = types.MaxTime
+				} else {
+					r = a1.Duration + b1.Duration
+				}
 			} else {
-				ii, err1 := nodeIntervalValue.ToInt64(sc)
-				if err1 != nil {
-					return d, errors.Trace(err1)
+				if a1.Duration-b1.Duration < types.MinTime {
+					r = types.MinTime
+				} else {
+					r = a1.Duration - b1.Duration
 				}
-				interval = fmt.Sprintf("%v", ii)
 			}
+			dr := types.Duration{
+				Duration: r,
+				Fsp:      types.UnspecifiedFsp}
+			d.SetMysqlDuration(dr)
+			return d, nil
 		}
-		year, month, day, duration, err := types.ExtractTimeValue(nodeIntervalUnit, interval)
-		if err != nil {
-			return d, errors.Trace(err)
+		//args[0] is Time case, result will be Time too.
+		var r time.Time
+		if op == ast.TimeArithAdd {
+			r = time.Date(a1.Time.Year(), time.Month(a1.Time.Month()), a1.Time.Day(), a1.Time.Hour()+b1.Hour(), a1.Time.Minute()+b1.Minute(), a1.Time.Second()+b1.Second(), 1000 * (a1.Time.Microsecond()+b1.MicroSecond()), getTimeZone(ctx))
+		} else {
+			r = time.Date(a1.Time.Year(), time.Month(a1.Time.Month()), a1.Time.Day(), a1.Time.Hour()-b1.Hour(), a1.Time.Minute()-b1.Minute(), a1.Time.Second()-b1.Second(), 1000 * (a1.Time.Microsecond()-b1.MicroSecond()), getTimeZone(ctx))
 		}
-		if op == ast.DateArithSub {
-			year, month, day, duration = -year, -month, -day, -duration
-		}
-		// TODO: Consider time_zone variable.
-		t, err := result.Time.GoTime(time.Local)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		t = t.Add(duration)
-		t = t.AddDate(int(year), int(month), int(day))
-		if t.Nanosecond() == 0 {
-			result.Fsp = 0
-		}
-		result.Time = types.FromGoTime(t)
-		d.SetMysqlTime(result)
+		rt := types.Time{
+			Time: r,
+			Type: mysql.TypeDatetime,
+			Fsp:  types.UnspecifiedFsp}
+		d.SetMysqlTime(rt)
 		return d, nil
 	}
 }

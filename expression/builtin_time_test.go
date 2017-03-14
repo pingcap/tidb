@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"fmt"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/util/mock"
@@ -652,4 +653,59 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 	v, err = dateSub(args, s.ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v.IsNull(), IsTrue)
+}
+
+func (s *testEvaluatorSuite) TestTimeArithFuncFactory(c *C) {
+	fmt.Printf("timeArithFuncFactory")
+
+	defer testleak.AfterTest(c)()
+
+	testsDateTimeStrings := []struct {
+		t1        string
+		t2        string
+		expectAdd string
+		expectSub string
+	}{
+		{"2007-12-31 23:59:59.999999", "23:59:59.999999", "2008-01-01 23:59:59.999798", "2007-12-31 00:00:00.000200"},
+	}
+
+	testsDurationStrings := []struct {
+		t1        string
+		t2        string
+		expectAdd string
+		expectSub string
+	}{
+		{"23:59:59.999999", "22:59:59.999999", "46:59:59.999998", "01:00:00"},
+	}
+
+	timeAdd := timeArithFuncFactory(ast.TimeArithAdd)
+	timeSub := timeArithFuncFactory(ast.TimeArithSub)
+
+	for _, test := range testsDateTimeStrings {
+		t1 := types.NewStringDatum(test.t1)
+		t2 := types.NewStringDatum(test.t2)
+		fmt.Printf("testsDateTimeStrings %v %v", t1.GetString(), t2.GetString())
+		result1, err := timeAdd([]types.Datum{t1, t2}, s.ctx)
+		c.Assert(err, IsNil)
+
+		result2, err := timeSub([]types.Datum{t1, t2}, s.ctx)
+		c.Assert(err, IsNil)
+
+		c.Assert(result1.GetMysqlTime().String(), Equals, test.expectAdd)
+		c.Assert(result2.GetMysqlTime().String(), Equals, test.expectSub)
+	}
+
+	for _, test := range testsDurationStrings {
+		t1 := types.NewStringDatum(test.t1)
+		t2 := types.NewStringDatum(test.t2)
+
+		result1, err := timeAdd([]types.Datum{t1, t2}, s.ctx)
+		c.Assert(err, IsNil)
+
+		result2, err := timeSub([]types.Datum{t1, t2}, s.ctx)
+		c.Assert(err, IsNil)
+
+		c.Assert(result1.GetMysqlDuration().String(), Equals, test.expectAdd)
+		c.Assert(result2.GetMysqlDuration().String(), Equals, test.expectSub)
+	}
 }
