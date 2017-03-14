@@ -994,6 +994,8 @@ func (s *testEvaluatorSuite) TestTimestamp(c *C) {
 	d, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.Kind(), Equals, types.KindNull)
+}
+
 func (s *testEvaluatorSuite) TestTimeArithFuncFactory(c *C) {
 	fmt.Printf("timeArithFuncFactory")
 
