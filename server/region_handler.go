@@ -77,8 +77,8 @@ type FrameItem struct {
 	TableName string `json:"table_name"`
 	TableID   int64  `json:"table_id"`
 	IsRecord  bool   `json:"is_record"`
-	IndexName string `json:"omitempty,index_name"`
-	IndexID   int64  `json:"omitempty,index_id"`
+	IndexName string `json:"index_name,omitempty"`
+	IndexID   int64  `json:"index_id,omitempty"`
 }
 
 // RegionFrameRange contains a frame range info which the region covered.
@@ -417,6 +417,7 @@ func (ir RegionFrameRange) lastTableID() int64 {
 // addIndex insert a index into RegionDetail.
 func (rt *RegionDetail) addIndex(dbName, tName string, tID int64, indexName string, indexID int64) {
 	rt.Frames = append(rt.Frames, FrameItem{
+		DBName:    dbName,
 		TableName: tName,
 		TableID:   tID,
 		IndexName: indexName,
@@ -428,6 +429,7 @@ func (rt *RegionDetail) addIndex(dbName, tName string, tID int64, indexName stri
 // addRecord insert a table's record into RegionDetail.
 func (rt *RegionDetail) addRecord(dbName, tName string, tID int64) {
 	rt.Frames = append(rt.Frames, FrameItem{
+		DBName:    dbName,
 		TableName: tName,
 		TableID:   tID,
 		IsRecord:  true,
