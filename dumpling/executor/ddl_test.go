@@ -18,6 +18,8 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -171,8 +173,15 @@ func (s *testSuite) TestAddNotNullColumnNoDefault(c *C) {
 	tk.MustExec("create table nn (c1 int)")
 	tk.MustExec("insert nn values (1), (2)")
 	tk.MustExec("alter table nn add column c2 int not null")
+
+	tbl, err := sessionctx.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("nn"))
+	c.Assert(err, IsNil)
+	col2 := tbl.Meta().Columns[1]
+	c.Assert(col2.DefaultValue, IsNil)
+	c.Assert(col2.OriginDefaultValue, Equals, "0")
+
 	tk.MustQuery("select * from nn").Check(testkit.Rows("1 0", "2 0"))
-	_, err := tk.Exec("insert nn (c1) values (3)")
+	_, err = tk.Exec("insert nn (c1) values (3)")
 	c.Check(err, NotNil)
 	tk.MustExec("set sql_mode=''")
 	tk.MustExec("insert nn (c1) values (3)")
