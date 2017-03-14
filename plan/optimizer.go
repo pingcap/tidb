@@ -103,7 +103,6 @@ func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context, allocator *
 		return nil, errors.Trace(ErrCartesianProductUnsupported)
 	}
 	logic.ResolveIndicesAndCorCols()
-	log.Warnf("PLAN %s", ToString(logic))
 	return physicalOptimize(flag, logic, allocator)
 }
 
