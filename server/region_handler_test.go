@@ -46,12 +46,13 @@ func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRange(c *C) {
 		startKey,
 		endKey,
 	}
-	indexRange := NewRegionIndexRange(region)
+	indexRange, err := NewRegionFrameRange(region)
+	c.Assert(err, IsNil)
 	c.Assert(indexRange.firstTableID(), Equals, sTableID)
 	c.Assert(indexRange.lastTableID(), Equals, eTableID)
-	c.Assert(indexRange.first.indexID, Equals, sIndex)
-	c.Assert(indexRange.first.isRecordKey, IsFalse)
-	c.Assert(indexRange.last.isRecordKey, IsTrue)
+	c.Assert(indexRange.first.IndexID, Equals, sIndex)
+	c.Assert(indexRange.first.IsRecord, IsFalse)
+	c.Assert(indexRange.last.IsRecord, IsTrue)
 	start, end := indexRange.getIndexRangeForTable(sTableID)
 	c.Assert(start, Equals, sIndex)
 	c.Assert(end, Equals, int64(math.MaxInt64))
@@ -70,11 +71,12 @@ func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRangeWithEndNoLimit(c *C) {
 		startKey,
 		endKey,
 	}
-	indexRange := NewRegionIndexRange(region)
+	indexRange, err := NewRegionFrameRange(region)
+	c.Assert(err, IsNil)
 	c.Assert(indexRange.firstTableID(), Equals, sTableID)
 	c.Assert(indexRange.lastTableID(), Equals, eTableID)
-	c.Assert(indexRange.first.isRecordKey, IsTrue)
-	c.Assert(indexRange.last.isRecordKey, IsTrue)
+	c.Assert(indexRange.first.IsRecord, IsTrue)
+	c.Assert(indexRange.last.IsRecord, IsTrue)
 	start, end := indexRange.getIndexRangeForTable(sTableID)
 	c.Assert(start, Equals, int64(math.MaxInt64))
 	c.Assert(end, Equals, int64(math.MaxInt64))
@@ -94,37 +96,15 @@ func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRangeWithStartNoLimit(c *C)
 		startKey,
 		endKey,
 	}
-	indexRange := NewRegionIndexRange(region)
+	indexRange, err := NewRegionFrameRange(region)
+	c.Assert(err, IsNil)
 	c.Assert(indexRange.firstTableID(), Equals, sTableID)
 	c.Assert(indexRange.lastTableID(), Equals, eTableID)
-	c.Assert(indexRange.first.indexID, Equals, sIndexID)
-	c.Assert(indexRange.first.isRecordKey, IsFalse)
-	c.Assert(indexRange.last.isRecordKey, IsTrue)
+	c.Assert(indexRange.first.IndexID, Equals, sIndexID)
+	c.Assert(indexRange.first.IsRecord, IsFalse)
+	c.Assert(indexRange.last.IsRecord, IsTrue)
 	start, end := indexRange.getIndexRangeForTable(sTableID)
 	c.Assert(start, Equals, sIndexID)
-	c.Assert(end, Equals, int64(math.MaxInt64))
-	start, end = indexRange.getIndexRangeForTable(eTableID)
-	c.Assert(start, Equals, int64(math.MinInt64))
-	c.Assert(end, Equals, int64(math.MaxInt64))
-}
-
-func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRangeWithBinarySearch(c *C) {
-	sTableID := int64(5)
-	eTableID := int64(1000)
-	startKey := codec.EncodeBytes(nil, append(tablecodec.EncodeTablePrefix(sTableID-1), []byte("_xxxx")...))
-	endKey := codec.EncodeBytes(nil, append(tablecodec.EncodeTablePrefix(eTableID+1), []byte("_aaa")...))
-	region := &tikv.KeyLocation{
-		tikv.RegionVerID{},
-		startKey,
-		endKey,
-	}
-	indexRange := NewRegionIndexRange(region)
-	c.Assert(indexRange.firstTableID(), Equals, sTableID)
-	c.Assert(indexRange.lastTableID(), Equals, eTableID)
-	c.Assert(indexRange.first.isRecordKey, IsFalse)
-	c.Assert(indexRange.last.isRecordKey, IsTrue)
-	start, end := indexRange.getIndexRangeForTable(sTableID)
-	c.Assert(start, Equals, int64(math.MinInt64))
 	c.Assert(end, Equals, int64(math.MaxInt64))
 	start, end = indexRange.getIndexRangeForTable(eTableID)
 	c.Assert(start, Equals, int64(math.MinInt64))
@@ -140,42 +120,27 @@ func (ts *TidbRegionHandlerTestSuite) TestRegionsAPI(c *C) {
 	//c.Assert(resp.StatusCode,Equals,http.StatusOK)
 	defer resp.Body.Close()
 	decoder := json.NewDecoder(resp.Body)
-	type TableRegionsResponse struct {
-		Success   bool          `json:"status"`
-		Msg       string        `json:"message,omitempty"`
-		RequestID string        `json:"request_id"`
-		Data      *TableRegions `json:"data,omitempty"`
-	}
-	var data TableRegionsResponse
+
+	var data TableRegions
 	err = decoder.Decode(&data)
-	fmt.Printf("%+v", data)
 	c.Assert(err, IsNil)
 
-	c.Assert(len(data.Data.RowRegions) > 0, IsTrue)
-	regionID := data.Data.RowRegions[0]
-
+	c.Assert(len(data.RowRegions) > 0, IsTrue)
+	regionID := data.RowRegions[0]
 	// list region
-	c.Assert(regionContainsTable(c, regionID, data.Data.TableID), IsTrue)
+	c.Assert(regionContainsTable(c, regionID, data.TableID), IsTrue)
 }
 
 func regionContainsTable(c *C, regionID uint64, tableID int64) bool {
-	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:10090/regions/%v", regionID))
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:10090/regions/%d", regionID))
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	defer resp.Body.Close()
 	decoder := json.NewDecoder(resp.Body)
-	type RegionsResponse struct {
-		Success   bool        `json:"status"`
-		Msg       string      `json:"message,omitempty"`
-		RequestID string      `json:"request_id"`
-		Data      *RegionItem `json:"data,omitempty"`
-	}
-	var data RegionsResponse
+	var data RegionDetail
 	err = decoder.Decode(&data)
 	c.Assert(err, IsNil)
-	c.Assert(data.Success, IsTrue)
-	ret := data.Data
-	for _, index := range ret.Indices {
+	for _, index := range data.Frames {
 		if index.TableID == tableID {
 			return true
 		}
@@ -187,15 +152,9 @@ func (ts *TidbRegionHandlerTestSuite) TestListTableRegionsWithError(c *C) {
 	ts.startServer(c)
 	defer ts.stopServer(c)
 	resp, err := http.Get("http://127.0.0.1:10090/tables/fdsfds/aaa/regions")
+	defer resp.Body.Close()
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
-	decoder := json.NewDecoder(resp.Body)
-	var data RegionsResponse
-	err = decoder.Decode(&data)
-	c.Assert(err, IsNil)
-	c.Assert(data.Success, IsFalse)
-	//c.Assert(resp.StatusCode,Equals,http.StatusOK)
-	defer resp.Body.Close()
 }
 
 func (ts *TidbRegionHandlerTestSuite) TestGetRegionByIDWithError(c *C) {
@@ -205,11 +164,6 @@ func (ts *TidbRegionHandlerTestSuite) TestGetRegionByIDWithError(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
 	defer resp.Body.Close()
-	decoder := json.NewDecoder(resp.Body)
-	var data RegionsResponse
-	err = decoder.Decode(&data)
-	c.Assert(err, IsNil)
-	c.Assert(data.Success, IsFalse)
 }
 
 func (ts *TidbRegionHandlerTestSuite) startServer(c *C) {

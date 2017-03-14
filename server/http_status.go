@@ -67,21 +67,10 @@ func (s *Server) startHTTPServer(pdClient *pd.Client) {
 	// HTTP path for prometheus.
 	router.Handle("/metrics", prometheus.Handler())
 
-	router.HandleFunc("/tables/{db}/{table}/regions", func(w http.ResponseWriter, req *http.Request) {
-		request, err := NewRegionsHTTPRequest(s, w, req, pdClient)
-		if err != nil {
-			return
-		}
-		request.HandleListRegions()
-	})
+	// HTTP path for regions
+	router.Handle("/tables/{db}/{table}/regions", s.newHTTPListTableRegionsHandler(pdClient))
+	router.Handle("/regions/{regionID}", s.newHTTPGetRegionByIDHandler(pdClient))
 
-	router.HandleFunc("/regions/{regionID}", func(w http.ResponseWriter, req *http.Request) {
-		request, err := NewRegionsHTTPRequest(s, w, req, pdClient)
-		if err != nil {
-			return
-		}
-		request.HandleGetRegionByID()
-	})
 	addr := s.cfg.StatusAddr
 	if len(addr) == 0 {
 		addr = defaultStatusAddr
@@ -102,6 +91,7 @@ type status struct {
 
 func (s *Server) handleStatus(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+
 	st := status{
 		Connections: s.ConnectionCount(),
 		Version:     mysql.ServerVersion,
@@ -114,5 +104,4 @@ func (s *Server) handleStatus(w http.ResponseWriter, req *http.Request) {
 	} else {
 		w.Write(js)
 	}
-
 }

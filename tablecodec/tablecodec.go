@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
+	"math"
 )
 
 var (
@@ -470,6 +471,24 @@ func TruncateToRowKeyLen(key kv.Key) kv.Key {
 		return key[:recordRowKeyLen]
 	}
 	return key
+}
+
+// GetTableHandleKeyRange returns table handle's key range with tableID.
+func GetTableHandleKeyRange(tableID int64) (startKey, endKey []byte) {
+	tableStartKey := EncodeRowKeyWithHandle(tableID, math.MinInt64)
+	tableEndKey := EncodeRowKeyWithHandle(tableID, math.MaxInt64)
+	startKey = codec.EncodeBytes(nil, tableStartKey)
+	endKey = codec.EncodeBytes(nil, tableEndKey)
+	return
+}
+
+// GetTableIndexKeyRange returns table index's key range with tableID and indexID.
+func GetTableIndexKeyRange(tableID, indexID int64) (startKey, endKey []byte) {
+	start := EncodeIndexSeekKey(tableID, indexID, nil)
+	end := EncodeIndexSeekKey(tableID, indexID, []byte{255})
+	startKey = codec.EncodeBytes(nil, start)
+	endKey = codec.EncodeBytes(nil, end)
+	return
 }
 
 type keyRangeSorter struct {
