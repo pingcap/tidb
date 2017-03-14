@@ -68,7 +68,7 @@ func taskGoroutineExists() bool {
 	return strings.Contains(str, "pickAndExecTask")
 }
 
-func (s *testSuite) TestCopCliendSend(c *C) {
+func (s *testSuite) TestCopClientSend(c *C) {
 	if _, ok := s.store.GetClient().(*tikv.CopClient); !ok {
 		// Make sure the store is tikv store.
 		return

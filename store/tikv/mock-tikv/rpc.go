@@ -32,9 +32,11 @@ type rpcHandler struct {
 	cluster   *Cluster
 	mvccStore *MvccStore
 	storeID   uint64
-	startKey  []byte
-	endKey    []byte
+	// Used for handling normal request.
+	startKey []byte
+	endKey   []byte
 
+	// Used for handling coprocessor request.
 	rawStartKey []byte
 	rawEndKey   []byte
 }
