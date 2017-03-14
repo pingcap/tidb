@@ -97,22 +97,17 @@ type RegionFrameRange struct {
 	region *tikv.KeyLocation // the region
 }
 
-// HTTPRegionHandler is the common field for http region handler. It contains
-// some common functions which would be used in HTTPListTableRegionsHandler and
+// RegionHandler is the common field for http region handler. It contains
+// some common functions which would be used in TableRegionsHandler and
 // HTTPGetRegionByIDHandler.
-type HTTPRegionHandler struct {
+type RegionHandler struct {
 	pdClient pd.Client
 	server   *Server
 }
 
-// HTTPListTableRegionsHandler is the handler for list table's regions.
-type HTTPListTableRegionsHandler struct {
-	HTTPRegionHandler
-}
-
-// HTTPGetRegionByIDHandler is the handler for get region by ID.
-type HTTPGetRegionByIDHandler struct {
-	HTTPRegionHandler
+// TableRegionsHandler is the handler for list table's regions.
+type TableRegionsHandler struct {
+	RegionHandler
 }
 
 // regionHandlerTool contains some common tool which
@@ -123,20 +118,20 @@ type regionHandlerTool struct {
 	regionCache *tikv.RegionCache
 }
 
-func (s *Server) newHTTPRegionHandler(pdClient pd.Client) HTTPRegionHandler {
-	return HTTPRegionHandler{
+func (s *Server) newRegionHandler(pdClient pd.Client) RegionHandler {
+	return RegionHandler{
 		pdClient: pdClient,
 		server:   s,
 	}
 }
 
-func (s *Server) newHTTPListTableRegionsHandler(pdClient pd.Client) http.Handler {
-	return HTTPListTableRegionsHandler{
-		s.newHTTPRegionHandler(pdClient),
+func (s *Server) newTableRegionsHandler(pdClient pd.Client) http.Handler {
+	return TableRegionsHandler{
+		s.newRegionHandler(pdClient),
 	}
 }
 
-func (rh HTTPListTableRegionsHandler) getRegionsMetaWithRegionIds(rIDs []uint64) ([]RegionMeta, error) {
+func (rh TableRegionsHandler) getRegionsMetaWithRegionIds(rIDs []uint64) ([]RegionMeta, error) {
 	regions := make([]RegionMeta, len(rIDs))
 	for i, regionID := range rIDs {
 		meta, leader, err := rh.pdClient.GetRegionByID(regionID)
@@ -155,7 +150,7 @@ func (rh HTTPListTableRegionsHandler) getRegionsMetaWithRegionIds(rIDs []uint64)
 }
 
 // ServeHTTP handles request of list a table's regions.
-func (rh HTTPListTableRegionsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (rh TableRegionsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// parse params
 	params := mux.Vars(req)
 	dbName := params[pDBName]
@@ -216,14 +211,8 @@ func (rh HTTPListTableRegionsHandler) ServeHTTP(w http.ResponseWriter, req *http
 	rh.writeData(w, tableRegions)
 }
 
-func (s *Server) newHTTPGetRegionByIDHandler(pdClient pd.Client) http.Handler {
-	return HTTPGetRegionByIDHandler{
-		s.newHTTPRegionHandler(pdClient),
-	}
-}
-
 // ServeHTTP handles request of get region by ID.
-func (rh HTTPGetRegionByIDHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (rh RegionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// parse and check params
 	params := mux.Vars(req)
 	regionIDInt, err := strconv.ParseInt(params[pRegionID], 0, 64)
@@ -275,7 +264,7 @@ func (rh HTTPGetRegionByIDHandler) ServeHTTP(w http.ResponseWriter, req *http.Re
 // prepare checks and prepares for region request. It returns
 // regionHandlerTool on success while return an err on any
 // error happens.
-func (rh *HTTPRegionHandler) prepare() (tool *regionHandlerTool, err error) {
+func (rh *RegionHandler) prepare() (tool *regionHandlerTool, err error) {
 	// check store
 	if rh.server.cfg.Store != "tikv" {
 		err = fmt.Errorf("only store tikv support,current store:%s", rh.server.cfg.Store)
@@ -307,12 +296,12 @@ func (rh *HTTPRegionHandler) prepare() (tool *regionHandlerTool, err error) {
 	return
 }
 
-func (rh *HTTPRegionHandler) writeError(w http.ResponseWriter, err error) {
+func (rh *RegionHandler) writeError(w http.ResponseWriter, err error) {
 	w.WriteHeader(http.StatusBadRequest)
 	w.Write([]byte(err.Error()))
 }
 
-func (rh *HTTPRegionHandler) writeData(w http.ResponseWriter, data interface{}) {
+func (rh *RegionHandler) writeData(w http.ResponseWriter, data interface{}) {
 	js, err := json.Marshal(data)
 	if err != nil {
 		rh.writeError(w, err)

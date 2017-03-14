@@ -68,8 +68,8 @@ func (s *Server) startHTTPServer(pdClient pd.Client) {
 	router.Handle("/metrics", prometheus.Handler())
 
 	// HTTP path for regions
-	router.Handle("/tables/{db}/{table}/regions", s.newHTTPListTableRegionsHandler(pdClient))
-	router.Handle("/regions/{regionID}", s.newHTTPGetRegionByIDHandler(pdClient))
+	router.Handle("/tables/{db}/{table}/regions", s.newTableRegionsHandler(pdClient))
+	router.Handle("/regions/{regionID}", s.newRegionHandler(pdClient))
 
 	addr := s.cfg.StatusAddr
 	if len(addr) == 0 {
