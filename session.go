@@ -123,9 +123,6 @@ type session struct {
 
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
-
-	// sysSessionPool stores sessions for execute restricted sql for every domain.
-	sysSessionPool *sync.Pool
 }
 
 // Cancel cancels the execution of current transaction.
@@ -381,6 +378,10 @@ func sqlForLog(sql string) string {
 	return sql
 }
 
+func (s *session) sysSessionPool() *sync.Pool {
+	return sessionctx.GetDomain(s).SysSessionPool()
+}
+
 // ExecRestrictedSQL implements RestrictedSQLExecutor interface.
 // This is used for executing some restricted sql statements, usually executed during a normal statement execution.
 // Unlike normal Exec, it doesn't reset statement status, doesn't commit or rollback the current transaction
@@ -388,7 +389,7 @@ func sqlForLog(sql string) string {
 func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) ([]*ast.Row, []*ast.ResultField, error) {
 	// Use special session to execute the sql.
 	var se *session
-	tmp := s.sysSessionPool.Get()
+	tmp := s.sysSessionPool().Get()
 	if tmp != nil {
 		se = tmp.(*session)
 	} else {
@@ -401,7 +402,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) ([]*ast.Row
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
 	}
-	defer s.sysSessionPool.Put(se)
+	defer s.sysSessionPool().Put(se)
 
 	recordSets, err := se.Execute(sql)
 	if err != nil {
@@ -863,11 +864,10 @@ func createSession(store kv.Storage) (*session, error) {
 		return nil, errors.Trace(err)
 	}
 	s := &session{
-		values:         make(map[fmt.Stringer]interface{}),
-		store:          store,
-		parser:         parser.New(),
-		sessionVars:    variable.NewSessionVars(),
-		sysSessionPool: domain.SysSessionPool(),
+		values:      make(map[fmt.Stringer]interface{}),
+		store:       store,
+		parser:      parser.New(),
+		sessionVars: variable.NewSessionVars(),
 	}
 	sessionctx.BindDomain(s, domain)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
