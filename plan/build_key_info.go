@@ -40,6 +40,16 @@ func (p *Aggregation) buildKeyInfo() {
 		}
 		p.schema.Keys = append(p.schema.Keys, newKey)
 	}
+	if len(p.groupByCols) == len(p.GroupByItems) && len(p.GroupByItems) > 0 {
+		indices := p.schema.ColumnsIndices(p.groupByCols)
+		if indices != nil {
+			newKey := make([]*expression.Column, 0, len(indices))
+			for _, i := range indices {
+				newKey = append(newKey, p.schema.Columns[i])
+			}
+			p.schema.Keys = append(p.schema.Keys, newKey)
+		}
+	}
 	if len(p.GroupByItems) == 0 {
 		p.schema.MaxOneRow = true
 	}

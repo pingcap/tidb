@@ -15,6 +15,7 @@ package plan
 
 import (
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -35,8 +36,7 @@ const (
 	flagBuildKeyInfo
 	flagDecorrelate
 	flagPredicatePushDown
-	flagEliminateAgg
-	flagAggPushDown
+	flagAggregationOptimize
 )
 
 var optRuleList = []logicalOptRule{
@@ -44,8 +44,7 @@ var optRuleList = []logicalOptRule{
 	&buildKeySolver{},
 	&decorrelateSolver{},
 	&ppdSolver{},
-	&aggPruner{},
-	&aggPushDownSolver{},
+	&aggregationOptimizer{},
 }
 
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
@@ -104,6 +103,7 @@ func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context, allocator *
 		return nil, errors.Trace(ErrCartesianProductUnsupported)
 	}
 	logic.ResolveIndicesAndCorCols()
+	log.Warnf("PLAN %s", ToString(logic))
 	return physicalOptimize(flag, logic, allocator)
 }
 
