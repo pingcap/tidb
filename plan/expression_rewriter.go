@@ -830,6 +830,8 @@ func (er *expressionRewriter) isTrueToScalarFunc(v *ast.IsTruthExpr) {
 	er.ctxStack = append(er.ctxStack, function)
 }
 
+// inToExpression convert in expression to a scalar function. The argument lLen means the length of in list.
+// The argument not means if the expression is not in. The tp stands for the expression type, which is always bool.
 func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.FieldType) {
 	stkLen := len(er.ctxStack)
 	l := getRowLen(er.ctxStack[stkLen-lLen-1])
