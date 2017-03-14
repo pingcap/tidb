@@ -126,9 +126,11 @@ func (ts *TidbRegionHandlerTestSuite) TestRegionsAPI(c *C) {
 	c.Assert(err, IsNil)
 
 	c.Assert(len(data.RowRegions) > 0, IsTrue)
-	regionID := data.RowRegions[0]
+
 	// list region
-	c.Assert(regionContainsTable(c, regionID, data.TableID), IsTrue)
+	for regionID := range data.RowRegions {
+		c.Assert(regionContainsTable(c, regionID, data.TableID), IsTrue)
+	}
 }
 
 func regionContainsTable(c *C, regionID uint64, tableID int64) bool {

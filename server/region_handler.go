@@ -23,6 +23,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/juju/errors"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
@@ -49,17 +50,23 @@ const (
 // TableRegions is the response data for list table's regions.
 // It contains regions list for record and indices.
 type TableRegions struct {
-	TableName  string         `json:"name"`
-	TableID    int64          `json:"id"`
-	RowRegions []uint64       `json:"row_regions"`
-	Indices    []IndexRegions `json:"indices"`
+	TableName  string                 `json:"name"`
+	TableID    int64                  `json:"id"`
+	RowRegions map[uint64]*RegionMeta `json:"row_regions"`
+	Indices    []IndexRegions         `json:"indices"`
+}
+
+// RegionMeta contains a region's peer detail
+type RegionMeta struct {
+	Leader *metapb.Peer   `json:"leader"`
+	Peers  []*metapb.Peer `json:"peers"`
 }
 
 // IndexRegions is the region info for one index.
 type IndexRegions struct {
-	Name    string   `json:"name"`
-	ID      int64    `json:"id"`
-	Regions []uint64 `json:"regions"`
+	Name    string                 `json:"name"`
+	ID      int64                  `json:"id"`
+	Regions map[uint64]*RegionMeta `json:"regions"`
 }
 
 // RegionDetail is the response data for get region by ID
@@ -127,6 +134,21 @@ func (s *Server) newHTTPListTableRegionsHandler(pdClient *pd.Client) http.Handle
 	}
 }
 
+func (rh HTTPListTableRegionsHandler) getRegionsMetaFromRegionIds(rIDs []uint64) (map[uint64]*RegionMeta, error) {
+	regions := make(map[uint64]*RegionMeta)
+	for _, regionID := range rIDs {
+		meta, leader, err := (*rh.pdClient).GetRegionByID(regionID)
+		if err != nil {
+			return nil, err
+		}
+		regions[regionID] = &RegionMeta{
+			Leader: leader,
+			Peers:  meta.Peers,
+		}
+	}
+	return regions, nil
+}
+
 // ServeHTTP handles request of list a table's regions.
 func (rh HTTPListTableRegionsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// parse params
@@ -149,7 +171,12 @@ func (rh HTTPListTableRegionsHandler) ServeHTTP(w http.ResponseWriter, req *http
 
 	// for record
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(tableID)
-	recordRegions, err := tool.regionCache.ListRegionIDsInKeyRange(tool.bo, startKey, endKey)
+	recordRegionIDs, err := tool.regionCache.ListRegionIDsInKeyRange(tool.bo, startKey, endKey)
+	if err != nil {
+		rh.writeError(w, err)
+		return
+	}
+	recordRegions, err := rh.getRegionsMetaFromRegionIds(recordRegionIDs)
 	if err != nil {
 		rh.writeError(w, err)
 		return
@@ -162,7 +189,12 @@ func (rh HTTPListTableRegionsHandler) ServeHTTP(w http.ResponseWriter, req *http
 		indices[i].Name = index.Meta().Name.String()
 		indices[i].ID = indexID
 		startKey, endKey := tablecodec.GetTableIndexKeyRange(tableID, indexID)
-		indices[i].Regions, err = tool.regionCache.ListRegionIDsInKeyRange(tool.bo, startKey, endKey)
+		rIDs, err := tool.regionCache.ListRegionIDsInKeyRange(tool.bo, startKey, endKey)
+		if err != nil {
+			rh.writeError(w, err)
+			return
+		}
+		indices[i].Regions, err = rh.getRegionsMetaFromRegionIds(rIDs)
 		if err != nil {
 			rh.writeError(w, err)
 			return
