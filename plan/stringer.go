@@ -30,7 +30,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		idxs = append(idxs, len(strs))
 	}
 
-	for _, c := range in.GetChildren() {
+	for _, c := range in.Children() {
 		strs, idxs = toString(c, strs, idxs)
 	}
 
@@ -138,10 +138,6 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			}
 		}
 		str += ")"
-	case *Distinct:
-		str = "Distinct"
-	case *Trim:
-		str = "Trim"
 	case *Cache:
 		str = "Cache"
 	default:

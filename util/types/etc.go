@@ -41,12 +41,13 @@ func IsTypeBlob(tp byte) bool {
 // IsTypeChar returns a boolean indicating
 // whether the tp is the char type like a string type or a varchar type.
 func IsTypeChar(tp byte) bool {
-	switch tp {
-	case mysql.TypeString, mysql.TypeVarchar:
-		return true
-	default:
-		return false
-	}
+	return tp == mysql.TypeString || tp == mysql.TypeVarchar
+}
+
+// IsTypeVarchar returns a boolean indicating
+// whether the tp is the varchar type like a varstring type or a varchar type.
+func IsTypeVarchar(tp byte) bool {
+	return tp == mysql.TypeVarString || tp == mysql.TypeVarchar
 }
 
 // IsTypePrefixable returns a boolean indicating
@@ -66,7 +67,7 @@ var type2Str = map[byte]string{
 	mysql.TypeBlob:       "text",
 	mysql.TypeDate:       "date",
 	mysql.TypeDatetime:   "datetime",
-	mysql.TypeDecimal:    "decimal",
+	mysql.TypeDecimal:    "unspecified",
 	mysql.TypeNewDecimal: "decimal",
 	mysql.TypeDouble:     "double",
 	mysql.TypeEnum:       "enum",

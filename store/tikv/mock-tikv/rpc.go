@@ -14,6 +14,7 @@
 package mocktikv
 
 import (
+	goctx "context"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -73,6 +74,8 @@ func (h *rpcHandler) handleRequest(req *kvrpcpb.Request) *kvrpcpb.Response {
 		resp.CmdResolveLockResp = h.onResolveLock(req.CmdResolveLockReq)
 	case kvrpcpb.MessageType_CmdResolveLock:
 		resp.CmdResolveLockResp = h.onResolveLock(req.CmdResolveLockReq)
+	case kvrpcpb.MessageType_CmdBatchRollback:
+		resp.CmdBatchRollbackResp = h.onBatchRollback(req.CmdBatchRollbackReq)
 
 	case kvrpcpb.MessageType_CmdRawGet:
 		resp.CmdRawGetResp = h.onRawGet(req.CmdRawGetReq)
@@ -273,6 +276,16 @@ func (h *rpcHandler) onResolveLock(req *kvrpcpb.CmdResolveLockRequest) *kvrpcpb.
 	return &kvrpcpb.CmdResolveLockResponse{}
 }
 
+func (h *rpcHandler) onBatchRollback(req *kvrpcpb.CmdBatchRollbackRequest) *kvrpcpb.CmdBatchRollbackResponse {
+	err := h.mvccStore.Rollback(req.Keys, req.StartVersion)
+	if err != nil {
+		return &kvrpcpb.CmdBatchRollbackResponse{
+			Error: convertToKeyError(err),
+		}
+	}
+	return &kvrpcpb.CmdBatchRollbackResponse{}
+}
+
 func (h *rpcHandler) onRawGet(req *kvrpcpb.CmdRawGetRequest) *kvrpcpb.CmdRawGetResponse {
 	return &kvrpcpb.CmdRawGetResponse{
 		Value: h.mvccStore.RawGet(req.GetKey()),
@@ -356,7 +369,13 @@ type RPCClient struct {
 }
 
 // SendKVReq sends a kv request to mock cluster.
-func (c *RPCClient) SendKVReq(addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error) {
+func (c *RPCClient) SendKVReq(ctx goctx.Context, addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
 	store := c.Cluster.GetStoreByAddr(addr)
 	if store == nil {
 		return nil, errors.New("connect fail")
@@ -366,7 +385,13 @@ func (c *RPCClient) SendKVReq(addr string, req *kvrpcpb.Request, timeout time.Du
 }
 
 // SendCopReq sends a coprocessor request to mock cluster.
-func (c *RPCClient) SendCopReq(addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
+func (c *RPCClient) SendCopReq(ctx goctx.Context, addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
 	store := c.Cluster.GetStoreByAddr(addr)
 	if store == nil {
 		return nil, errors.New("connect fail")

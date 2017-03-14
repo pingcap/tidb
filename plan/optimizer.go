@@ -15,17 +15,43 @@ package plan
 
 import (
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/terror"
 )
 
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
 var AllowCartesianProduct = true
+
+// EnableStatistic means whether tidb uses the statistic information to do cost-based optimization.
+var EnableStatistic = false
+
+const (
+	flagPrunColumns uint64 = 1 << iota
+	flagBuildKeyInfo
+	flagDecorrelate
+	flagPredicatePushDown
+	flagEliminateAgg
+	flagAggPushDown
+)
+
+var optRuleList = []logicalOptRule{
+	&columnPruner{},
+	&buildKeySolver{},
+	&decorrelateSolver{},
+	&ppdSolver{},
+	&aggPruner{},
+	&aggPushDownSolver{},
+}
+
+// logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
+type logicalOptRule interface {
+	optimize(LogicalPlan, context.Context, *idAllocator) (LogicalPlan, error)
+}
 
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
@@ -39,46 +65,75 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 		ctx:       ctx,
 		is:        is,
 		colMapper: make(map[*ast.ColumnNameExpr]int),
-		allocator: allocator}
+		allocator: allocator,
+	}
 	p := builder.build(node)
 	if builder.err != nil {
 		return nil, errors.Trace(builder.err)
 	}
+
+	// Maybe it's better to move this to Preprocess, but check privilege need table
+	// information, which is collected into visitInfo during logical plan builder.
+	if checker := privilege.GetPrivilegeChecker(ctx); checker != nil {
+		if !checkPrivilege(checker, builder.visitInfo) {
+			return nil, errors.New("privilege check fail")
+		}
+	}
+
 	if logic, ok := p.(LogicalPlan); ok {
-		return doOptimize(logic, ctx, allocator)
+		return doOptimize(builder.optFlag, logic, ctx, allocator)
 	}
 	return p, nil
 }
 
-func doOptimize(logic LogicalPlan, ctx context.Context, allocator *idAllocator) (PhysicalPlan, error) {
-	var err error
-	_, logic, err = logic.PredicatePushDown(nil)
+func checkPrivilege(checker privilege.Checker, vs []visitInfo) bool {
+	for _, v := range vs {
+		if !checker.RequestVerification(v.db, v.table, v.column, v.privilege) {
+			return false
+		}
+	}
+	return true
+}
+
+func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context, allocator *idAllocator) (PhysicalPlan, error) {
+	logic, err := logicalOptimize(flag, logic, ctx, allocator)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	solver := &aggPushDownSolver{
-		ctx:   ctx,
-		alloc: allocator,
-	}
-	solver.aggPushDown(logic)
-	logic.PruneColumns(logic.GetSchema().Columns)
-	if err != nil {
-		return nil, errors.Trace(err)
+	if !AllowCartesianProduct && existsCartesianProduct(logic) {
+		return nil, errors.Trace(ErrCartesianProductUnsupported)
 	}
 	logic.ResolveIndicesAndCorCols()
-	if !AllowCartesianProduct && existsCartesianProduct(logic) {
-		return nil, ErrCartesianProductUnsupported
+	return physicalOptimize(flag, logic, allocator)
+}
+
+func logicalOptimize(flag uint64, logic LogicalPlan, ctx context.Context, alloc *idAllocator) (LogicalPlan, error) {
+	var err error
+	for i, rule := range optRuleList {
+		// The order of flags is same as the order of optRule in the list.
+		// We use a bitmask to record which opt rules should be used. If the i-th bit is 1, it means we should
+		// apply i-th optimizing rule.
+		if flag&(1<<uint(i)) == 0 {
+			continue
+		}
+		logic, err = rule.optimize(logic, ctx, alloc)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
-	logic.buildKeyInfo()
+	return logic, errors.Trace(err)
+}
+
+func physicalOptimize(flag uint64, logic LogicalPlan, allocator *idAllocator) (PhysicalPlan, error) {
 	info, err := logic.convert2PhysicalPlan(&requiredProperty{})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	pp := info.p
 	pp = EliminateProjection(pp)
-	physicalInitialize(pp)
-	addCachePlan(pp, allocator)
-	log.Debugf("[PLAN] %s", ToString(pp))
+	if flag&(flagDecorrelate) > 0 {
+		addCachePlan(pp, allocator)
+	}
 	return pp, nil
 }
 
@@ -86,7 +141,7 @@ func existsCartesianProduct(p LogicalPlan) bool {
 	if join, ok := p.(*Join); ok && len(join.EqualConditions) == 0 {
 		return join.JoinType == InnerJoin || join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin
 	}
-	for _, child := range p.GetChildren() {
+	for _, child := range p.Children() {
 		if existsCartesianProduct(child.(LogicalPlan)) {
 			return true
 		}

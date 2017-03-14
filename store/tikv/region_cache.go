@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"bytes"
+	goctx "context"
 	"sync"
 
 	"github.com/juju/errors"
@@ -52,6 +53,8 @@ func NewRegionCache(pdClient pd.Client) *RegionCache {
 
 // RPCContext contains data that is needed to send RPC to a region.
 type RPCContext struct {
+	goctx.Context
+
 	Region RegionVerID
 	KVCtx  *kvrpcpb.Context
 	Addr   string
@@ -87,9 +90,10 @@ func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext,
 		return nil, nil
 	}
 	return &RPCContext{
-		Region: id,
-		KVCtx:  kvCtx,
-		Addr:   addr,
+		Context: bo.ctx,
+		Region:  id,
+		KVCtx:   kvCtx,
+		Addr:    addr,
 	}, nil
 }
 
@@ -322,6 +326,14 @@ func (c *RegionCache) OnRequestFail(ctx *RPCContext) {
 	c.storeMu.Lock()
 	delete(c.storeMu.stores, storeID)
 	c.storeMu.Unlock()
+
+	c.mu.Lock()
+	for id, r := range c.mu.regions {
+		if r.peer.GetStoreId() == storeID {
+			c.dropRegionFromCache(id)
+		}
+	}
+	c.mu.Unlock()
 }
 
 // OnRegionStale removes the old region and inserts new regions into the cache.

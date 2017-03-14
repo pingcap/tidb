@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util"
 )
 
 var _ context.Context = (*Context)(nil)
@@ -121,6 +122,35 @@ func (c *Context) ActivePendingTxn() error {
 		}
 		c.txn = txn
 	}
+	return nil
+}
+
+// InitTxnWithStartTS implements the context.Context interface with startTS.
+func (c *Context) InitTxnWithStartTS(startTS uint64) error {
+	if c.txn != nil {
+		return nil
+	}
+	if c.Store != nil {
+		txn, err := c.Store.BeginWithStartTS(startTS)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		c.txn = txn
+	}
+	return nil
+}
+
+// GetSessionManager implements the context.Context interface.
+func (c *Context) GetSessionManager() util.SessionManager {
+	return nil
+}
+
+// Cancel implements the Session interface.
+func (c *Context) Cancel() {
+}
+
+// Done implements the context.Context interface.
+func (c *Context) Done() <-chan struct{} {
 	return nil
 }
 

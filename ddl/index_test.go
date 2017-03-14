@@ -41,12 +41,12 @@ func (s *testIndexSuite) SetUpSuite(c *C) {
 	s.d = newDDL(s.store, nil, nil, testLease)
 
 	s.dbInfo = testSchemaInfo(c, s.d, "test_index")
-	testCreateSchema(c, testNewContext(c, s.d), s.d, s.dbInfo)
+	testCreateSchema(c, testNewContext(s.d), s.d, s.dbInfo)
 }
 
 func (s *testIndexSuite) TearDownSuite(c *C) {
-	testDropSchema(c, testNewContext(c, s.d), s.d, s.dbInfo)
-	s.d.close()
+	testDropSchema(c, testNewContext(s.d), s.d, s.dbInfo)
+	s.d.Stop()
 
 	err := s.store.Close()
 	c.Assert(err, IsNil)
@@ -90,7 +90,7 @@ func testDropIndex(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblI
 func (s *testIndexSuite) TestIndex(c *C) {
 	defer testleak.AfterTest(c)()
 	tblInfo := testTableInfo(c, s.d, "t1", 3)
-	ctx := testNewContext(c, s.d)
+	ctx := testNewContext(s.d)
 
 	testCreateTable(c, ctx, s.d, s.dbInfo, tblInfo)
 
@@ -511,7 +511,7 @@ func (s *testIndexSuite) checkPublicIndex(c *C, ctx context.Context, d *ddl, tbl
 }
 
 func (s *testIndexSuite) checkAddOrDropIndex(c *C, state model.SchemaState, d *ddl, tblInfo *model.TableInfo, handle int64, index table.Index, row []types.Datum, isDropped bool) {
-	ctx := testNewContext(c, d)
+	ctx := testNewContext(d)
 
 	switch state {
 	case model.StateNone:
@@ -531,13 +531,12 @@ func (s *testIndexSuite) TestAddIndex(c *C) {
 	defer testleak.AfterTest(c)()
 	d := newDDL(s.store, nil, nil, testLease)
 	tblInfo := testTableInfo(c, d, "t", 3)
-	ctx := testNewContext(c, d)
+	ctx := testNewContext(d)
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
-
-	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
 	c.Assert(ctx.NewTxn(), IsNil)
 	row := types.MakeDatums(int64(1), int64(2), int64(3))
+	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 	handle, err := t.AddRecord(ctx, row)
 	c.Assert(err, IsNil)
 
@@ -545,7 +544,6 @@ func (s *testIndexSuite) TestAddIndex(c *C) {
 	c.Assert(err, IsNil)
 
 	checkOK := false
-
 	tc := &testDDLCallback{}
 	tc.onJobUpdated = func(job *model.Job) {
 		if checkOK {
@@ -568,9 +566,9 @@ func (s *testIndexSuite) TestAddIndex(c *C) {
 	d.setHook(tc)
 
 	// Use local ddl for callback test.
-	s.d.close()
+	s.d.Stop()
 
-	d.close()
+	d.Stop()
 	d.start()
 
 	job := testCreateIndex(c, ctx, d, s.dbInfo, tblInfo, true, "c1_uni", "c1")
@@ -578,17 +576,15 @@ func (s *testIndexSuite) TestAddIndex(c *C) {
 
 	job = testCreateIndex(c, ctx, d, s.dbInfo, tblInfo, true, "c1", "c1")
 	testCheckJobDone(c, d, job, true)
-
 	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
 
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
-
 	err = ctx.Txn().Commit()
 	c.Assert(err, IsNil)
 
-	d.close()
+	d.Stop()
 	s.d.start()
 }
 
@@ -596,16 +592,15 @@ func (s *testIndexSuite) TestDropIndex(c *C) {
 	defer testleak.AfterTest(c)()
 	d := newDDL(s.store, nil, nil, testLease)
 	tblInfo := testTableInfo(c, d, "t", 3)
-	ctx := testNewContext(c, d)
+	ctx := testNewContext(d)
 
 	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 
-	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-
 	row := types.MakeDatums(int64(1), int64(2), int64(3))
+	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 	handle, err := t.AddRecord(ctx, row)
 	c.Assert(err, IsNil)
 
@@ -617,7 +612,6 @@ func (s *testIndexSuite) TestDropIndex(c *C) {
 
 	checkOK := false
 	oldIndexCol := tables.NewIndex(tblInfo, &model.IndexInfo{})
-
 	tc := &testDDLCallback{}
 	tc.onJobUpdated = func(job *model.Job) {
 		if checkOK {
@@ -641,9 +635,9 @@ func (s *testIndexSuite) TestDropIndex(c *C) {
 	d.hookMu.Unlock()
 
 	// Use local ddl for callback test.
-	s.d.close()
+	s.d.Stop()
 
-	d.close()
+	d.Stop()
 	d.start()
 
 	job = testDropIndex(c, ctx, d, s.dbInfo, tblInfo, "c1_uni")
@@ -654,11 +648,10 @@ func (s *testIndexSuite) TestDropIndex(c *C) {
 
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
-
 	err = ctx.Txn().Commit()
 	c.Assert(err, IsNil)
 
-	d.close()
+	d.Stop()
 	s.d.start()
 }
 
@@ -668,17 +661,16 @@ func (s *testIndexSuite) TestAddIndexWithNullColumn(c *C) {
 	tblInfo := testTableInfo(c, d, "t", 3)
 	// Change c2.DefaultValue to nil
 	tblInfo.Columns[1].DefaultValue = nil
-	ctx := testNewContext(c, d)
+	ctx := testNewContext(d)
 
 	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 
-	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-
 	// c2 is nil, which is not stored in kv.
 	row := types.MakeDatums(int64(1), nil, int(2))
+	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 	handle, err := t.AddRecord(ctx, row)
 	c.Assert(err, IsNil)
 
@@ -686,7 +678,6 @@ func (s *testIndexSuite) TestAddIndexWithNullColumn(c *C) {
 	c.Assert(err, IsNil)
 
 	checkOK := false
-
 	tc := &testDDLCallback{}
 	tc.onJobUpdated = func(job *model.Job) {
 		if checkOK {
@@ -710,8 +701,8 @@ func (s *testIndexSuite) TestAddIndexWithNullColumn(c *C) {
 	d.hookMu.Unlock()
 
 	// Use local ddl for callback test.
-	s.d.close()
-	d.close()
+	s.d.Stop()
+	d.Stop()
 	d.start()
 
 	job := testCreateIndex(c, ctx, d, s.dbInfo, tblInfo, true, "c2", "c2")
@@ -725,6 +716,6 @@ func (s *testIndexSuite) TestAddIndexWithNullColumn(c *C) {
 	err = ctx.Txn().Commit()
 	c.Assert(err, IsNil)
 
-	d.close()
+	d.Stop()
 	s.d.start()
 }

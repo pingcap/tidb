@@ -32,7 +32,15 @@ import (
 // This is implemented in session.go.
 type RestrictedSQLExecutor interface {
 	// ExecRestrictedSQL run sql statement in ctx with some restriction.
-	ExecRestrictedSQL(ctx context.Context, sql string) (ast.RecordSet, error)
+	ExecRestrictedSQL(ctx context.Context, sql string) ([]*ast.Row, []*ast.ResultField, error)
+}
+
+// SQLExecutor is an interface provides executing normal sql statement.
+// Why we need this interface? To break circle dependence of packages.
+// For example, privilege/privileges package need execute SQL, if it use
+// tidb.Session.Execute, then privilege/privileges and tidb would become a circle.
+type SQLExecutor interface {
+	Execute(sql string) ([]ast.RecordSet, error)
 }
 
 // SQLParser is an interface provides parsing sql statement.

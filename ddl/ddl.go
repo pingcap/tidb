@@ -55,15 +55,21 @@ var (
 	errUnsupportedPKHandle     = terror.ClassDDL.New(codeUnsupportedDropPKHandle,
 		"unsupported drop integer primary key")
 
-	errBlobKeyWithoutLength  = terror.ClassDDL.New(codeBlobKeyWithoutLength, "index for BLOB/TEXT column must specificate a key length")
-	errIncorrectPrefixKey    = terror.ClassDDL.New(codeIncorrectPrefixKey, "Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys")
-	errTooLongKey            = terror.ClassDDL.New(codeTooLongKey, fmt.Sprintf("Specified key was too long; max key length is %d bytes", maxPrefixLength))
+	errBlobKeyWithoutLength = terror.ClassDDL.New(codeBlobKeyWithoutLength, "index for BLOB/TEXT column must specificate a key length")
+	errIncorrectPrefixKey   = terror.ClassDDL.New(codeIncorrectPrefixKey, "Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys")
+	errTooLongKey           = terror.ClassDDL.New(codeTooLongKey,
+		fmt.Sprintf("Specified key was too long; max key length is %d bytes", maxPrefixLength))
 	errKeyColumnDoesNotExits = terror.ClassDDL.New(codeKeyColumnDoesNotExits, "this key column doesn't exist in table")
 	errDupKeyName            = terror.ClassDDL.New(codeDupKeyName, "duplicate key name")
 	errWrongDBName           = terror.ClassDDL.New(codeWrongDBName, "Incorrect database name '%s'")
 	errWrongTableName        = terror.ClassDDL.New(codeWrongTableName, "Incorrect table name '%s'")
 	errUnknownTypeLength     = terror.ClassDDL.New(codeUnknownTypeLength, "Unknown length for type tp %d")
 	errUnknownFractionLength = terror.ClassDDL.New(codeUnknownFractionLength, "Unknown Length for type tp %d and fraction %d")
+	errFileNotFound          = terror.ClassDDL.New(codeFileNotFound, "Can't find file: './%s/%s.frm'")
+	errErrorOnRename         = terror.ClassDDL.New(codeErrorOnRename, "Error on rename of './%s/%s' to './%s/%s'")
+	errBadField              = terror.ClassDDL.New(codeBadField, "Unknown column '%s' in '%s'")
+	errInvalidDefault        = terror.ClassDDL.New(codeInvalidDefault, "Invalid default value for '%s'")
+	errInvalidUseOfNull      = terror.ClassDDL.New(codeInvalidUseOfNull, "Invalid use of NULL value")
 
 	// ErrInvalidDBState returns for invalid database state.
 	ErrInvalidDBState = terror.ClassDDL.New(codeInvalidDBState, "invalid database state")
@@ -94,6 +100,7 @@ type DDL interface {
 	DropSchema(ctx context.Context, schema model.CIStr) error
 	CreateTable(ctx context.Context, ident ast.Ident, cols []*ast.ColumnDef,
 		constrs []*ast.Constraint, options []*ast.TableOption) error
+	CreateTableWithLike(ctx context.Context, ident, referIdent ast.Ident) error
 	DropTable(ctx context.Context, tableIdent ast.Ident) (err error)
 	CreateIndex(ctx context.Context, tableIdent ast.Ident, unique bool, indexName model.CIStr,
 		columnNames []*ast.IndexColName) error
@@ -101,6 +108,7 @@ type DDL interface {
 	GetInformationSchema() infoschema.InfoSchema
 	AlterTable(ctx context.Context, tableIdent ast.Ident, spec []*ast.AlterTableSpec) error
 	TruncateTable(ctx context.Context, tableIdent ast.Ident) error
+	RenameTable(ctx context.Context, oldTableIdent, newTableIdent ast.Ident) error
 	// SetLease will reset the lease time for online DDL change,
 	// it's a very dangerous function and you must guarantee that all servers have the same lease time.
 	SetLease(lease time.Duration)
@@ -135,6 +143,8 @@ type ddl struct {
 	// TODO: Now we use goroutine to simulate reorganization jobs, later we may
 	// use a persistent job list.
 	reorgDoneCh chan error
+	// reorgRowCount is for reorganization, it uses to simulate a job's row count.
+	reorgRowCount int64
 
 	quitCh chan struct{}
 	wait   sync.WaitGroup
@@ -164,6 +174,7 @@ func newDDL(store kv.Storage, infoHandle *infoschema.Handle, hook Callback, leas
 	d.start()
 
 	variable.RegisterStatistics(d)
+	log.Infof("start DDL:%s", d.uuid)
 
 	return d
 }
@@ -204,6 +215,7 @@ func (d *ddl) Stop() error {
 		// Background job's owner is me, clean it so other servers can complete it quickly.
 		return t.SetBgJobOwner(&model.Owner{})
 	})
+	log.Infof("stop DDL:%s", d.uuid)
 
 	return errors.Trace(err)
 }
@@ -240,6 +252,7 @@ func (d *ddl) close() {
 	close(d.quitCh)
 
 	d.wait.Wait()
+	log.Infof("close DDL:%s", d.uuid)
 }
 
 func (d *ddl) isClosed() bool {
@@ -309,7 +322,7 @@ func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
 
 	// Notice worker that we push a new job and wait the job done.
 	asyncNotify(d.ddlJobCh)
-	log.Infof("[ddl] start DDL job %s", job)
+	log.Infof("[ddl] start DDL job %s, Query:\n%s", job, job.Query)
 
 	var historyJob *model.Job
 	jobID := job.ID
@@ -368,6 +381,13 @@ func (d *ddl) setHook(h Callback) {
 	d.hook = h
 }
 
+func filterError(err, exceptErr error) error {
+	if terror.ErrorEqual(err, exceptErr) {
+		return nil
+	}
+	return errors.Trace(err)
+}
+
 // DDL error codes.
 const (
 	codeInvalidWorker         terror.ErrCode = 1
@@ -392,9 +412,13 @@ const (
 	codeUnsupportedModifyColumn = 203
 	codeUnsupportedDropPKHandle = 204
 
+	codeFileNotFound          = 1017
+	codeErrorOnRename         = 1025
 	codeBadNull               = 1048
+	codeBadField              = 1054
 	codeTooLongIdent          = 1059
 	codeDupKeyName            = 1061
+	codeInvalidDefault        = 1067
 	codeTooLongKey            = 1071
 	codeKeyColumnDoesNotExits = 1072
 	codeIncorrectPrefixKey    = 1089
@@ -402,6 +426,7 @@ const (
 	codeCantDropFieldOrKey    = 1091
 	codeWrongDBName           = 1102
 	codeWrongTableName        = 1103
+	codeInvalidUseOfNull      = 1138
 	codeBlobKeyWithoutLength  = 1170
 	codeInvalidOnUpdate       = 1294
 )
@@ -420,6 +445,11 @@ func init() {
 		codeDupKeyName:            mysql.ErrDupKeyName,
 		codeWrongDBName:           mysql.ErrWrongDBName,
 		codeWrongTableName:        mysql.ErrWrongTableName,
+		codeFileNotFound:          mysql.ErrFileNotFound,
+		codeErrorOnRename:         mysql.ErrErrorOnRename,
+		codeBadField:              mysql.ErrBadField,
+		codeInvalidDefault:        mysql.ErrInvalidDefault,
+		codeInvalidUseOfNull:      mysql.ErrInvalidUseOfNull,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

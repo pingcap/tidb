@@ -56,18 +56,18 @@ var (
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
-			Name:      "backoff_total",
+			Name:      "backoff_count",
 			Help:      "Counter of backoff.",
 		}, []string{"type"})
 
-	backoffHistogram = prometheus.NewHistogramVec(
+	backoffHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
 			Name:      "backoff_seconds",
-			Help:      "Bucketed histogram of sleep seconds of backoff.",
+			Help:      "total backoff seconds of a single backoffer.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 18),
-		}, []string{"type"})
+		})
 
 	sendReqHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -78,30 +78,22 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 18),
 		}, []string{"type"})
 
-	copBuildTaskHistogram = prometheus.NewHistogram(
-		prometheus.HistogramOpts{
-			Namespace: "tidb",
-			Subsystem: "tikvclient",
-			Name:      "cop_buildtask_seconds",
-			Help:      "Coprocessor buildTask cost time.",
-		})
-
-	copTaskLenHistogram = prometheus.NewHistogram(
-		prometheus.HistogramOpts{
-			Namespace: "tidb",
-			Subsystem: "tikvclient",
-			Name:      "cop_task_len",
-			Help:      "Coprocessor task length.",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 11),
-		})
-
 	coprocessorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
-			Name:      "coprocessor_actions_total",
+			Name:      "cop_count",
 			Help:      "Counter of coprocessor actions.",
 		}, []string{"type"})
+
+	coprocessorHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "cop_seconds",
+			Help:      "Run duration of a single coprocessor task, includes backoff time.",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 18),
+		})
 
 	gcWorkerCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -180,6 +172,15 @@ var (
 			Help:      "Size of key/value to put, in bytes.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 21),
 		}, []string{"type"})
+
+	txnRegionsNumHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "txn_regions_num",
+			Help:      "Number of regions in a transaction.",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 20),
+		}, []string{"type"})
 )
 
 func reportRegionError(e *errorpb.Error) {
@@ -210,9 +211,8 @@ func init() {
 	prometheus.MustRegister(backoffCounter)
 	prometheus.MustRegister(backoffHistogram)
 	prometheus.MustRegister(sendReqHistogram)
-	prometheus.MustRegister(copBuildTaskHistogram)
-	prometheus.MustRegister(copTaskLenHistogram)
 	prometheus.MustRegister(coprocessorCounter)
+	prometheus.MustRegister(coprocessorHistogram)
 	prometheus.MustRegister(gcWorkerCounter)
 	prometheus.MustRegister(gcConfigGauge)
 	prometheus.MustRegister(gcHistogram)
@@ -222,4 +222,5 @@ func init() {
 	prometheus.MustRegister(txnWriteSizeHistogram)
 	prometheus.MustRegister(rawkvCmdHistogram)
 	prometheus.MustRegister(rawkvSizeHistogram)
+	prometheus.MustRegister(txnRegionsNumHistogram)
 }

@@ -30,7 +30,7 @@ func GetSessionSystemVar(s *variable.SessionVars, key string) (string, error) {
 	key = strings.ToLower(key)
 	sysVar := variable.SysVars[key]
 	if sysVar == nil {
-		return "", variable.UnknownSystemVar
+		return "", variable.UnknownSystemVar.GenByArgs(key)
 	}
 	sVal, ok := s.Systems[key]
 	if ok {
@@ -53,7 +53,7 @@ func GetGlobalSystemVar(s *variable.SessionVars, key string) (string, error) {
 	key = strings.ToLower(key)
 	sysVar := variable.SysVars[key]
 	if sysVar == nil {
-		return "", variable.UnknownSystemVar
+		return "", variable.UnknownSystemVar.GenByArgs(key)
 	}
 	if sysVar.Scope == variable.ScopeSession {
 		return "", variable.ErrIncorrectScope
@@ -89,11 +89,19 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		vars.TimeZone = parseTimeZone(sVal)
 	case variable.SQLModeVar:
 		sVal = strings.ToUpper(sVal)
+		// TODO: Remove this latter.
 		if strings.Contains(sVal, "STRICT_TRANS_TABLES") || strings.Contains(sVal, "STRICT_ALL_TABLES") {
 			vars.StrictSQLMode = true
 		} else {
 			vars.StrictSQLMode = false
 		}
+		// Modes is a list of different modes separated by commas.
+		modes := strings.Split(sVal, ",")
+		var sqlMode mysql.SQLMode
+		for _, mode := range modes {
+			sqlMode = sqlMode | mysql.GetSQLMode(mode)
+		}
+		vars.SQLMode = sqlMode
 	case variable.TiDBSnapshot:
 		err = setSnapshotTS(vars, sVal)
 		if err != nil {
@@ -109,6 +117,8 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		vars.SkipConstraintCheck = (sVal == "1")
 	case variable.TiDBSkipDDLWait:
 		vars.SkipDDLWait = (sVal == "1")
+	case variable.TiDBOptAggPushDown:
+		vars.AllowAggPushDown = strings.EqualFold(sVal, "ON") || sVal == "1"
 	}
 	vars.Systems[name] = sVal
 	return nil

@@ -49,11 +49,12 @@ func (s *testIndexChangeSuite) SetUpSuite(c *C) {
 func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 	defer testleak.AfterTest(c)()
 	d := newDDL(s.store, nil, nil, testLease)
+	defer d.Stop()
 	// create table t (c1 int primary key, c2 int);
 	tblInfo := testTableInfo(c, d, "t", 2)
 	tblInfo.Columns[0].Flag = mysql.PriKeyFlag | mysql.NotNullFlag
 	tblInfo.PKIsHandle = true
-	ctx := testNewContext(c, d)
+	ctx := testNewContext(d)
 	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
@@ -83,7 +84,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 		if job.SchemaState == prevState {
 			return
 		}
-		ctx1 := testNewContext(c, d)
+		ctx1 := testNewContext(d)
 		prevState = job.SchemaState
 		var err error
 		switch job.SchemaState {
@@ -102,6 +103,9 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 				checkErr = errors.Trace(err)
 			}
 		case model.StatePublic:
+			if job.GetRowCount() != 3 {
+				checkErr = errors.Errorf("job's row count %d != 3", job.GetRowCount())
+			}
 			publicTable, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
 			if err != nil {
 				checkErr = errors.Trace(err)
@@ -125,7 +129,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 		}
 		prevState = job.SchemaState
 		var err error
-		ctx1 := testNewContext(c, d)
+		ctx1 := testNewContext(d)
 		switch job.SchemaState {
 		case model.StateWriteOnly:
 			writeOnlyTable, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
@@ -146,6 +150,9 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 				checkErr = errors.Trace(err)
 			}
 		case model.StateNone:
+			if job.GetRowCount() != 4 {
+				checkErr = errors.Errorf("job's row count %d != 4", job.GetRowCount())
+			}
 			noneTable, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
 			if err != nil {
 				checkErr = errors.Trace(err)

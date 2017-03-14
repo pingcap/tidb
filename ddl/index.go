@@ -46,8 +46,7 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 	for _, ic := range idxColNames {
 		col := findCol(columns, ic.Column.Name.O)
 		if col == nil {
-			return nil, errors.Trace(errKeyColumnDoesNotExits.Gen("column does not exist: %s",
-				ic.Column.Name))
+			return nil, errKeyColumnDoesNotExits.Gen("column does not exist: %s", ic.Column.Name)
 		}
 
 		// Length must be specified for BLOB and TEXT column indexes.
@@ -87,7 +86,7 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 				if len, ok := mysql.DefaultLengthOfMysqlTypes[col.FieldType.Tp]; ok {
 					sumLength += len
 				} else {
-					return nil, errors.Trace(errUnknownTypeLength.GenByArgs(col.FieldType.Tp))
+					return nil, errUnknownTypeLength.GenByArgs(col.FieldType.Tp)
 				}
 
 				// Special case for time fraction.
@@ -96,7 +95,7 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 					if len, ok := mysql.DefaultLengthOfTimeFraction[col.FieldType.Decimal]; ok {
 						sumLength += len
 					} else {
-						return nil, errors.Trace(errUnknownFractionLength.GenByArgs(col.FieldType.Tp, col.FieldType.Decimal))
+						return nil, errUnknownFractionLength.GenByArgs(col.FieldType.Tp, col.FieldType.Decimal)
 					}
 				}
 			}
@@ -177,7 +176,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 
 	// Handle normal job.
 	schemaID := job.SchemaID
-	tblInfo, err := d.getTableInfo(t, job)
+	tblInfo, err := getTableInfo(t, job, schemaID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -211,32 +210,25 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 		tblInfo.Indices = append(tblInfo.Indices, indexInfo)
 	}
 
-	ver, err := updateSchemaVersion(t, job)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
+	originalState := indexInfo.State
 	switch indexInfo.State {
 	case model.StateNone:
 		// none -> delete only
 		job.SchemaState = model.StateDeleteOnly
 		indexInfo.State = model.StateDeleteOnly
-		err = t.UpdateTable(schemaID, tblInfo)
-		return errors.Trace(err)
+		_, err = updateTableInfo(t, job, tblInfo, originalState)
 	case model.StateDeleteOnly:
 		// delete only -> write only
 		job.SchemaState = model.StateWriteOnly
 		indexInfo.State = model.StateWriteOnly
-		err = t.UpdateTable(schemaID, tblInfo)
-		return errors.Trace(err)
+		_, err = updateTableInfo(t, job, tblInfo, originalState)
 	case model.StateWriteOnly:
 		// write only -> reorganization
 		job.SchemaState = model.StateWriteReorganization
 		indexInfo.State = model.StateWriteReorganization
 		// Initialize SnapshotVer to 0 for later reorganization check.
 		job.SnapshotVer = 0
-		err = t.UpdateTable(schemaID, tblInfo)
-		return errors.Trace(err)
+		_, err = updateTableInfo(t, job, tblInfo, originalState)
 	case model.StateWriteReorganization:
 		// reorganization -> public
 		reorgInfo, err := d.getReorgInfo(t, job)
@@ -252,14 +244,14 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 			return errors.Trace(err)
 		}
 
-		err = d.runReorgJob(func() error {
+		err = d.runReorgJob(job, func() error {
 			return d.addTableIndex(tbl, indexInfo, reorgInfo, job)
 		})
-		if terror.ErrorEqual(err, errWaitReorgTimeout) {
-			// if timeout, we should return, check for the owner and re-wait job done.
-			return nil
-		}
 		if err != nil {
+			if terror.ErrorEqual(err, errWaitReorgTimeout) {
+				// if timeout, we should return, check for the owner and re-wait job done.
+				return nil
+			}
 			if terror.ErrorEqual(err, kv.ErrKeyExists) {
 				log.Warnf("[ddl] run DDL job %v err %v, convert job to rollback job", job, err)
 				err = d.convert2RollbackJob(t, job, tblInfo, indexInfo)
@@ -270,18 +262,21 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 		indexInfo.State = model.StatePublic
 		// Set column index flag.
 		addIndexColumnFlag(tblInfo, indexInfo)
-		if err = t.UpdateTable(schemaID, tblInfo); err != nil {
+
+		job.SchemaState = model.StatePublic
+		ver, err := updateTableInfo(t, job, tblInfo, originalState)
+		if err != nil {
 			return errors.Trace(err)
 		}
 
 		// Finish this job.
-		job.SchemaState = model.StatePublic
 		job.State = model.JobDone
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
-		return nil
 	default:
-		return ErrInvalidIndexState.Gen("invalid index state %v", tblInfo.State)
+		err = ErrInvalidIndexState.Gen("invalid index state %v", tblInfo.State)
 	}
+
+	return errors.Trace(err)
 }
 
 func (d *ddl) convert2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
@@ -292,18 +287,18 @@ func (d *ddl) convert2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.T
 	// The write reorganization state in add index job that likes write only state in drop index job.
 	// So the next state is delete only state.
 	indexInfo.State = model.StateDeleteOnly
+	originalState := indexInfo.State
 	job.SchemaState = model.StateDeleteOnly
-	err := t.UpdateTable(job.SchemaID, tblInfo)
+	_, err := updateTableInfo(t, job, tblInfo, originalState)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = kv.ErrKeyExists.Gen("Duplicate for key %s", indexInfo.Name.O)
-	return errors.Trace(err)
+	return kv.ErrKeyExists.Gen("Duplicate for key %s", indexInfo.Name.O)
 }
 
 func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
-	tblInfo, err := d.getTableInfo(t, job)
+	tblInfo, err := getTableInfo(t, job, schemaID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -320,39 +315,32 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 		return ErrCantDropFieldOrKey.Gen("index %s doesn't exist", indexName)
 	}
 
-	ver, err := updateSchemaVersion(t, job)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
+	originalState := indexInfo.State
 	switch indexInfo.State {
 	case model.StatePublic:
 		// public -> write only
 		job.SchemaState = model.StateWriteOnly
 		indexInfo.State = model.StateWriteOnly
-		err = t.UpdateTable(schemaID, tblInfo)
+		_, err = updateTableInfo(t, job, tblInfo, originalState)
 	case model.StateWriteOnly:
 		// write only -> delete only
 		job.SchemaState = model.StateDeleteOnly
 		indexInfo.State = model.StateDeleteOnly
-		err = t.UpdateTable(schemaID, tblInfo)
+		_, err = updateTableInfo(t, job, tblInfo, originalState)
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
 		job.SchemaState = model.StateDeleteReorganization
 		indexInfo.State = model.StateDeleteReorganization
-		err = t.UpdateTable(schemaID, tblInfo)
+		_, err = updateTableInfo(t, job, tblInfo, originalState)
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
-		err = d.runReorgJob(func() error {
+		err = d.runReorgJob(job, func() error {
 			return d.dropTableIndex(indexInfo, job)
 		})
-		if terror.ErrorEqual(err, errWaitReorgTimeout) {
+		if err != nil {
 			// If the timeout happens, we should return.
 			// Then check for the owner and re-wait job to finish.
-			return nil
-		}
-		if err != nil {
-			return errors.Trace(err)
+			return errors.Trace(filterError(err, errWaitReorgTimeout))
 		}
 
 		// All reorganization jobs are done, drop this index.
@@ -365,12 +353,14 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 		tblInfo.Indices = newIndices
 		// Set column index flag.
 		dropIndexColumnFlag(tblInfo, indexInfo)
-		if err = t.UpdateTable(schemaID, tblInfo); err != nil {
+
+		job.SchemaState = model.StateNone
+		ver, err := updateTableInfo(t, job, tblInfo, originalState)
+		if err != nil {
 			return errors.Trace(err)
 		}
 
 		// Finish this job.
-		job.SchemaState = model.StateNone
 		if job.State == model.JobRollback {
 			job.State = model.JobRollbackDone
 		} else {
@@ -547,7 +537,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 				addedCount, taskAddedCount, sub)
 			return errors.Trace(err)
 		}
-		job.SetRowCount(addedCount)
+		d.setReorgRowCount(addedCount)
 		batchHandleDataHistogram.WithLabelValues(batchAddIdx).Observe(sub)
 		log.Infof("[ddl] total added index for %d rows, this task added index for %d rows, take time %v",
 			addedCount, taskAddedCount, sub)
@@ -711,9 +701,10 @@ func (d *ddl) iterateSnapshotRows(t table.Table, version uint64, seekHandle int6
 		}
 
 		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
-		if terror.ErrorEqual(err, kv.ErrNotExist) {
-			break
-		} else if err != nil {
+		if err != nil {
+			if terror.ErrorEqual(err, kv.ErrNotExist) {
+				break
+			}
 			return errors.Trace(err)
 		}
 	}

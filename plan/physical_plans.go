@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -37,14 +38,13 @@ var (
 
 // PhysicalIndexScan represents an index scan plan.
 type PhysicalIndexScan struct {
-	basePlan
 	physicalTableSource
 
 	Table      *model.TableInfo
 	Index      *model.IndexInfo
 	Ranges     []*IndexRange
 	Columns    []*model.ColumnInfo
-	DBName     *model.CIStr
+	DBName     model.CIStr
 	Desc       bool
 	OutOfOrder bool
 	// DoubleRead means if the index executor will read kv two times.
@@ -63,7 +63,7 @@ type PhysicalIndexScan struct {
 type PhysicalMemTable struct {
 	basePlan
 
-	DBName      *model.CIStr
+	DBName      model.CIStr
 	Table       *model.TableInfo
 	Columns     []*model.ColumnInfo
 	Ranges      []TableRange
@@ -78,7 +78,7 @@ func (p *PhysicalMemTable) Copy() PhysicalPlan {
 // physicalDistSQLPlan means the plan that can be executed distributively.
 // We can push down other plan like selection, limit, aggregation, topn into this plan.
 type physicalDistSQLPlan interface {
-	addAggregation(ctx context.Context, agg *PhysicalAggregation) expression.Schema
+	addAggregation(ctx context.Context, agg *PhysicalAggregation) *expression.Schema
 	addTopN(ctx context.Context, prop *requiredProperty) bool
 	addLimit(limit *Limit)
 	// scanCount means the original row count that need to be scanned and resultCount means the row count after scanning.
@@ -114,6 +114,8 @@ func (p *PhysicalTableScan) calculateCost(resultCount uint64, scanCount uint64) 
 }
 
 type physicalTableSource struct {
+	basePlan
+
 	client kv.Client
 
 	Aggregated bool
@@ -218,10 +220,10 @@ func (p *physicalTableSource) tryToAddUnionScan(resultPlan PhysicalPlan) Physica
 	}
 	conditions := append(p.indexFilterConditions, p.tableFilterConditions...)
 	us := &PhysicalUnionScan{
-		Condition: expression.ComposeCNFCondition(append(conditions, p.AccessCondition...)),
+		Condition: expression.ComposeCNFCondition(p.ctx, append(conditions, p.AccessCondition...)...),
 	}
 	us.SetChildren(resultPlan)
-	us.SetSchema(resultPlan.GetSchema())
+	us.SetSchema(resultPlan.Schema())
 	return us
 }
 
@@ -259,9 +261,9 @@ func (p *physicalTableSource) addTopN(ctx context.Context, prop *requiredPropert
 	return true
 }
 
-func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalAggregation) expression.Schema {
+func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalAggregation) *expression.Schema {
 	if p.client == nil {
-		return expression.NewSchema(nil)
+		return expression.NewSchema()
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	for _, f := range agg.AggFuncs {
@@ -269,7 +271,7 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 		if pb == nil {
 			// When we fail to convert any agg function to PB struct, we should clear the environments.
 			p.clearForAggPushDown()
-			return expression.NewSchema(nil)
+			return expression.NewSchema()
 		}
 		p.AggFuncsPB = append(p.AggFuncsPB, pb)
 		p.aggFuncs = append(p.aggFuncs, f.Clone())
@@ -279,7 +281,7 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 		if pb == nil {
 			// When we fail to convert any group-by item to PB struct, we should clear the environments.
 			p.clearForAggPushDown()
-			return expression.NewSchema(nil)
+			return expression.NewSchema()
 		}
 		p.GbyItemsPB = append(p.GbyItemsPB, pb)
 		p.gbyItems = append(p.gbyItems, item.Clone())
@@ -289,7 +291,7 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 	gk.Charset = charset.CharsetBin
 	gk.Collate = charset.CollationBin
 	p.AggFields = append(p.AggFields, gk)
-	schema := expression.NewSchema(nil)
+	schema := expression.NewSchema()
 	cursor := 0
 	schema.Append(&expression.Column{Index: cursor, ColName: model.NewCIStr(fmt.Sprint(agg.GroupByItems))})
 	agg.GroupByItems = []expression.Expression{schema.Columns[cursor]}
@@ -324,12 +326,11 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 
 // PhysicalTableScan represents a table scan plan.
 type PhysicalTableScan struct {
-	basePlan
 	physicalTableSource
 
 	Table   *model.TableInfo
 	Columns []*model.ColumnInfo
-	DBName  *model.CIStr
+	DBName  model.CIStr
 	Desc    bool
 	Ranges  []TableRange
 	pkCol   *expression.Column
@@ -349,8 +350,8 @@ type PhysicalDummyScan struct {
 type PhysicalApply struct {
 	basePlan
 
-	OuterSchema []*expression.CorrelatedColumn
-	Checker     *ApplyConditionChecker
+	PhysicalJoin PhysicalPlan
+	OuterSchema  []*expression.CorrelatedColumn
 }
 
 // PhysicalHashJoin represents hash join for inner/ outer join.
@@ -452,8 +453,11 @@ func (p *PhysicalHashSemiJoin) extractCorrelatedCols() []*expression.CorrelatedC
 
 func (p *PhysicalApply) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := p.basePlan.extractCorrelatedCols()
-	if p.Checker != nil {
-		corCols = append(corCols, extractCorColumns(p.Checker.Condition)...)
+	corCols = append(corCols, p.PhysicalJoin.extractCorrelatedCols()...)
+	for i := len(corCols) - 1; i >= 0; i-- {
+		if p.PhysicalJoin.Children()[0].Schema().Contains(&corCols[i].Column) {
+			corCols = append(corCols[:i], corCols[i+1:]...)
+		}
 	}
 	return corCols
 }
@@ -497,6 +501,14 @@ func (p *PhysicalIndexScan) MarshalJSON() ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
+// IsPointGetByUniqueKey checks whether is a point get by unique key.
+func (p *PhysicalIndexScan) IsPointGetByUniqueKey(sc *variable.StatementContext) bool {
+	return len(p.Ranges) == 1 &&
+		p.Index.Unique &&
+		len(p.Ranges[0].LowVal) == len(p.Index.Columns) &&
+		p.Ranges[0].IsPoint(sc)
+}
+
 // Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalTableScan) Copy() PhysicalPlan {
 	np := *p
@@ -528,7 +540,7 @@ func (p *PhysicalApply) Copy() PhysicalPlan {
 
 // MarshalJSON implements json.Marshaler interface.
 func (p *PhysicalApply) MarshalJSON() ([]byte, error) {
-	checker, err := json.Marshal(p.Checker)
+	join, err := json.Marshal(p.PhysicalJoin)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -536,20 +548,8 @@ func (p *PhysicalApply) MarshalJSON() ([]byte, error) {
 	buffer.WriteString(fmt.Sprintf(
 		"\"innerPlan\": \"%s\",\n "+
 			"\"outerPlan\": \"%s\",\n "+
-			"\"condition\": %s\n}", p.children[1].GetID(), p.children[0].GetID(), checker))
+			"\"join\": %s\n}", p.children[1].ID(), p.children[0].ID(), join))
 	return buffer.Bytes(), nil
-}
-
-// SetCorrelated implements Plan interface.
-func (p *PhysicalApply) SetCorrelated() {
-	corColumns := p.GetChildren()[1].extractCorrelatedCols()
-	p.correlated = p.GetChildren()[0].IsCorrelated()
-	for _, corCol := range corColumns {
-		if idx := p.GetChildren()[0].GetSchema().GetColumnIndex(&corCol.Column); idx == -1 {
-			p.correlated = true
-			break
-		}
-	}
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -589,25 +589,8 @@ func (p *PhysicalHashSemiJoin) MarshalJSON() ([]byte, error) {
 			"\"leftPlan\": \"%s\",\n "+
 			"\"rightPlan\": \"%s\""+
 			"}",
-		p.WithAux, p.Anti, eqConds, leftConds, rightConds, otherConds, leftChild.GetID(), rightChild.GetID()))
+		p.WithAux, p.Anti, eqConds, leftConds, rightConds, otherConds, leftChild.ID(), rightChild.ID()))
 	return buffer.Bytes(), nil
-}
-
-// SetCorrelated implements Plan interface.
-func (p *PhysicalHashSemiJoin) SetCorrelated() {
-	p.basePlan.SetCorrelated()
-	for _, cond := range p.EqualConditions {
-		p.correlated = p.correlated || cond.IsCorrelated()
-	}
-	for _, cond := range p.LeftConditions {
-		p.correlated = p.correlated || cond.IsCorrelated()
-	}
-	for _, cond := range p.RightConditions {
-		p.correlated = p.correlated || cond.IsCorrelated()
-	}
-	for _, cond := range p.OtherConditions {
-		p.correlated = p.correlated || cond.IsCorrelated()
-	}
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -645,31 +628,8 @@ func (p *PhysicalHashJoin) MarshalJSON() ([]byte, error) {
 			"\"leftPlan\": \"%s\",\n "+
 			"\"rightPlan\": \"%s\""+
 			"}",
-		eqConds, leftConds, rightConds, otherConds, leftChild.GetID(), rightChild.GetID()))
+		eqConds, leftConds, rightConds, otherConds, leftChild.ID(), rightChild.ID()))
 	return buffer.Bytes(), nil
-}
-
-// SetCorrelated implements Plan interface.
-func (p *PhysicalHashJoin) SetCorrelated() {
-	p.basePlan.SetCorrelated()
-	for _, cond := range p.EqualConditions {
-		p.correlated = p.correlated || cond.IsCorrelated()
-	}
-	for _, cond := range p.LeftConditions {
-		p.correlated = p.correlated || cond.IsCorrelated()
-	}
-	for _, cond := range p.RightConditions {
-		p.correlated = p.correlated || cond.IsCorrelated()
-	}
-	for _, cond := range p.OtherConditions {
-		p.correlated = p.correlated || cond.IsCorrelated()
-	}
-}
-
-// Copy implements the PhysicalPlan Copy interface.
-func (p *Distinct) Copy() PhysicalPlan {
-	np := *p
-	return &np
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -687,7 +647,7 @@ func (p *Selection) MarshalJSON() ([]byte, error) {
 	buffer := bytes.NewBufferString("{")
 	buffer.WriteString(fmt.Sprintf(""+
 		" \"condition\": %s,\n"+
-		" \"child\": \"%s\"\n}", conds, p.children[0].GetID()))
+		" \"child\": \"%s\"\n}", conds, p.children[0].ID()))
 	return buffer.Bytes(), nil
 }
 
@@ -706,7 +666,7 @@ func (p *Projection) MarshalJSON() ([]byte, error) {
 	buffer := bytes.NewBufferString("{")
 	buffer.WriteString(fmt.Sprintf(
 		" \"exprs\": %s,\n"+
-			" \"child\": \"%s\"\n}", exprs, p.children[0].GetID()))
+			" \"child\": \"%s\"\n}", exprs, p.children[0].ID()))
 	return buffer.Bytes(), nil
 }
 
@@ -741,7 +701,7 @@ func (p *Limit) MarshalJSON() ([]byte, error) {
 	buffer.WriteString(fmt.Sprintf(
 		" \"limit\": %d,\n"+
 			" \"offset\": %d,\n"+
-			" \"child\": \"%s\"}", p.Count, p.Offset, child.GetID()))
+			" \"child\": \"%s\"}", p.Count, p.Offset, child.ID()))
 	return buffer.Bytes(), nil
 }
 
@@ -774,18 +734,12 @@ func (p *Sort) MarshalJSON() ([]byte, error) {
 	buffer.WriteString(fmt.Sprintf(
 		" \"exprs\": %s,\n"+
 			" \"limit\": %s,\n"+
-			" \"child\": \"%s\"}", exprs, limitCount, p.children[0].GetID()))
+			" \"child\": \"%s\"}", exprs, limitCount, p.children[0].ID()))
 	return buffer.Bytes(), nil
 }
 
 // Copy implements the PhysicalPlan Copy interface.
 func (p *TableDual) Copy() PhysicalPlan {
-	np := *p
-	return &np
-}
-
-// Copy implements the PhysicalPlan Copy interface.
-func (p *Trim) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }
@@ -816,21 +770,8 @@ func (p *PhysicalAggregation) MarshalJSON() ([]byte, error) {
 	buffer.WriteString(fmt.Sprintf(
 		"\"AggFuncs\": %s,\n"+
 			"\"GroupByItems\": %s,\n"+
-			"\"child\": \"%s\"}", aggFuncs, gbyExprs, p.children[0].GetID()))
+			"\"child\": \"%s\"}", aggFuncs, gbyExprs, p.children[0].ID()))
 	return buffer.Bytes(), nil
-}
-
-// SetCorrelated implements Plan interface.
-func (p *PhysicalAggregation) SetCorrelated() {
-	p.basePlan.SetCorrelated()
-	for _, item := range p.GroupByItems {
-		p.correlated = p.correlated || item.IsCorrelated()
-	}
-	for _, fun := range p.AggFuncs {
-		for _, arg := range fun.GetArgs() {
-			p.correlated = p.correlated || arg.IsCorrelated()
-		}
-	}
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -865,6 +806,12 @@ func (p *PhysicalUnionScan) Copy() PhysicalPlan {
 
 // Copy implements the PhysicalPlan Copy interface.
 func (p *Cache) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
+// Copy implements the Analyze Copy interface.
+func (p *Analyze) Copy() PhysicalPlan {
 	np := *p
 	return &np
 }

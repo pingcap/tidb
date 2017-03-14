@@ -15,9 +15,11 @@ package context
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util"
 )
 
 // Context is an interface for transaction and executive args environment.
@@ -44,9 +46,39 @@ type Context interface {
 
 	GetSessionVars() *variable.SessionVars
 
+	GetSessionManager() util.SessionManager
+
 	// ActivePendingTxn receives the pending transaction from the transaction channel.
 	// It should be called right before we builds an executor.
 	ActivePendingTxn() error
+
+	// InitTxnWithStartTS initializes a transaction with startTS.
+	// It should be called right before we builds an executor.
+	InitTxnWithStartTS(startTS uint64) error
+
+	// Done returns a channel for cancelation, the same as standard context.Context.
+	// See https://godoc.org/context for more examples of how to use it.
+	Done() <-chan struct{}
+}
+
+// CtxForCancel implements the standard Go context.Context interface.
+type CtxForCancel struct {
+	Context
+}
+
+// Value implements the standard Go context.Context interface.
+func (ctx CtxForCancel) Value(interface{}) interface{} {
+	return nil
+}
+
+// Deadline implements the standard Go context.Context interface.
+func (ctx CtxForCancel) Deadline() (deadline time.Time, ok bool) {
+	return
+}
+
+// Err implements the standard Go context.Context interface.
+func (ctx CtxForCancel) Err() error {
+	return nil
 }
 
 type basicCtxType int

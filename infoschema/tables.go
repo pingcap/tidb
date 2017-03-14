@@ -45,6 +45,8 @@ const (
 	tableReferConst    = "REFERENTIAL_CONSTRAINTS"
 	tableSessionVar    = "SESSION_VARIABLES"
 	tablePlugins       = "PLUGINS"
+	tableConstraints   = "TABLE_CONSTRAINTS"
+	tableTriggers      = "TRIGGERS"
 )
 
 type columnInfo struct {
@@ -284,6 +286,40 @@ var partitionsCols = []columnInfo{
 	{"PARTITION_COMMENT", mysql.TypeVarchar, 80, 0, nil, nil},
 	{"NODEGROUP", mysql.TypeVarchar, 12, 0, nil, nil},
 	{"TABLESPACE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+}
+
+var tableConstraintsCols = []columnInfo{
+	{"CONSTRAINT_CATALOG", mysql.TypeVarchar, 512, 0, nil, nil},
+	{"CONSTRAINT_SCHEMA", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"CONSTRAINT_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TABLE_SCHEMA", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"CONSTRAINT_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
+}
+
+var tableTriggersCols = []columnInfo{
+	{"TRIGGER_CATALOG", mysql.TypeVarchar, 512, 0, nil, nil},
+	{"TRIGGER_SCHEMA", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TRIGGER_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"EVENT_MANIPULATION", mysql.TypeVarchar, 6, 0, nil, nil},
+	{"EVENT_OBJECT_CATALOG", mysql.TypeVarchar, 512, 0, nil, nil},
+	{"EVENT_OBJECT_SCHEMA", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"EVENT_OBJECT_TABLE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"ACTION_ORDER", mysql.TypeLonglong, 4, 0, nil, nil},
+	{"ACTION_CONDITION", mysql.TypeBlob, -1, 0, nil, nil},
+	{"ACTION_STATEMENT", mysql.TypeBlob, -1, 0, nil, nil},
+	{"ACTION_ORIENTATION", mysql.TypeVarchar, 9, 0, nil, nil},
+	{"ACTION_TIMING", mysql.TypeVarchar, 6, 0, nil, nil},
+	{"ACTION_REFERENCE_OLD_TABLE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"ACTION_REFERENCE_NEW_TABLE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"ACTION_REFERENCE_OLD_ROW", mysql.TypeVarchar, 3, 0, nil, nil},
+	{"ACTION_REFERENCE_NEW_ROW", mysql.TypeVarchar, 3, 0, nil, nil},
+	{"CREATED", mysql.TypeDatetime, 2, 0, nil, nil},
+	{"SQL_MODE", mysql.TypeVarchar, 8192, 0, nil, nil},
+	{"DEFINER", mysql.TypeVarchar, 77, 0, nil, nil},
+	{"CHARACTER_SET_CLIENT", mysql.TypeVarchar, 32, 0, nil, nil},
+	{"COLLATION_CONNECTION", mysql.TypeVarchar, 32, 0, nil, nil},
+	{"DATABASE_COLLATION", mysql.TypeVarchar, 32, 0, nil, nil},
 }
 
 func dataForCharacterSets() (records [][]types.Datum) {
@@ -544,6 +580,55 @@ func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]
 	return rows
 }
 
+const (
+	primaryKeyType = "PRIMARY KEY"
+	uniqueKeyType  = "UNIQUE"
+)
+
+// See https://dev.mysql.com/doc/refman/5.7/en/table-constraints-table.html
+func dataForTableConstraints(schemas []*model.DBInfo) [][]types.Datum {
+	rows := [][]types.Datum{}
+	for _, schema := range schemas {
+		for _, tbl := range schema.Tables {
+			if tbl.PKIsHandle {
+				record := types.MakeDatums(
+					catalogVal,           // CONSTRAINT_CATALOG
+					schema.Name.O,        // CONSTRAINT_SCHEMA
+					table.PrimaryKeyName, // CONSTRAINT_NAME
+					schema.Name.O,        // TABLE_SCHEMA
+					tbl.Name.O,           // TABLE_NAME
+					primaryKeyType,       // CONSTRAINT_TYPE
+				)
+				rows = append(rows, record)
+			}
+
+			for _, idx := range tbl.Indices {
+				var cname, ctype string
+				if idx.Primary {
+					cname = table.PrimaryKeyName
+					ctype = primaryKeyType
+				} else if idx.Unique {
+					cname = idx.Name.O
+					ctype = uniqueKeyType
+				} else {
+					// The index has no constriant.
+					continue
+				}
+				record := types.MakeDatums(
+					catalogVal,    // CONSTRAINT_CATALOG
+					schema.Name.O, // CONSTRAINT_SCHEMA
+					cname,         // CONSTRAINT_NAME
+					schema.Name.O, // TABLE_SCHEMA
+					tbl.Name.O,    // TABLE_NAME
+					ctype,         // CONSTRAINT_TYPE
+				)
+				rows = append(rows, record)
+			}
+		}
+	}
+	return rows
+}
+
 var tableNameToColumns = map[string]([]columnInfo){
 	tableSchemata:      schemataCols,
 	tableTables:        tablesCols,
@@ -558,6 +643,8 @@ var tableNameToColumns = map[string]([]columnInfo){
 	tableReferConst:    referConstCols,
 	tableSessionVar:    sessionVarCols,
 	tablePlugins:       pluginsCols,
+	tableConstraints:   tableConstraintsCols,
+	tableTriggers:      tableTriggersCols,
 }
 
 func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
@@ -613,12 +700,14 @@ func (it *infoschemaTable) getRows(ctx context.Context, cols []*table.Column) (f
 		fullRows = dataForColltions()
 	case tableSessionVar:
 		fullRows, err = dataForSessionVar(ctx)
+	case tableConstraints:
+		fullRows = dataForTableConstraints(dbs)
 	case tableFiles:
 	case tableProfiling:
 	case tablePartitions:
 	case tableKeyColumm:
 	case tableReferConst:
-	case tablePlugins:
+	case tablePlugins, tableTriggers:
 	}
 	if err != nil {
 		return nil, errors.Trace(err)

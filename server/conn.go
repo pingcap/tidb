@@ -41,12 +41,14 @@ import (
 	"io"
 	"net"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
@@ -75,6 +77,7 @@ type clientConn struct {
 	lastCmd      string            // latest sql query string, currently used for logging error.
 	ctx          QueryCtx          // an interface to execute sql statements.
 	attrs        map[string]string // attributes parsed from client handshake response, not used for now.
+	killed       bool
 }
 
 func (cc *clientConn) String() string {
@@ -251,7 +254,8 @@ func handshakeResponseFromData(packet *handshakeResponse41, data []byte) (err er
 			kv := data[pos : pos+int(num)]
 			attrs, err := parseAttrs(kv)
 			if err != nil {
-				return errors.Trace(err)
+				log.Warn("parse attrs error:", errors.ErrorStack(err))
+				return nil
 			}
 			packet.Attrs = attrs
 			pos += int(num)
@@ -314,6 +318,7 @@ func (cc *clientConn) readHandshakeResponse() error {
 			return errors.Trace(mysql.NewErr(mysql.ErrAccessDenied, cc.user, host, "Yes"))
 		}
 	}
+	cc.ctx.SetSessionManager(cc.server)
 	return nil
 }
 
@@ -332,7 +337,7 @@ func (cc *clientConn) Run() {
 		cc.Close()
 	}()
 
-	for {
+	for !cc.killed {
 		cc.alloc.Reset()
 		data, err := cc.readPacket()
 		if err != nil {
@@ -342,21 +347,73 @@ func (cc *clientConn) Run() {
 			return
 		}
 
-		if err := cc.dispatch(data); err != nil {
+		startTime := time.Now()
+		if err = cc.dispatch(data); err != nil {
 			if terror.ErrorEqual(err, io.EOF) {
+				cc.addMetrics(data[0], startTime, nil)
 				return
 			}
-			cmd := string(data[1:])
-			if len(cmd) > size {
-				log.Warnf("[%d] dispatch error:\n%s\n%s\n%s (len %d)", cc.connectionID, cc, cmd[:size], errors.ErrorStack(err), len(cmd))
-			} else {
-				log.Warnf("[%d] dispatch error:\n%s\n%s\n%s", cc.connectionID, cc, cmd, errors.ErrorStack(err))
-			}
+			log.Warnf("[%d] dispatch error:\n%s\n%s\n%s",
+				cc.connectionID, cc, queryStrForLog(string(data[1:])), errStrForLog(err))
 			cc.writeError(err)
 		}
-
+		cc.addMetrics(data[0], startTime, err)
 		cc.pkt.sequence = 0
 	}
+}
+
+func queryStrForLog(query string) string {
+	const size = 4096
+	if len(query) > size {
+		return query[:size] + fmt.Sprintf("(len: %d)", len(query))
+	}
+	return query
+}
+
+func errStrForLog(err error) string {
+	if kv.ErrKeyExists.Equal(err) {
+		// Do not log stack for duplicated entry error.
+		return err.Error()
+	}
+	return errors.ErrorStack(err)
+}
+
+func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
+	var label string
+	switch cmd {
+	case mysql.ComSleep:
+		label = "Sleep"
+	case mysql.ComQuit:
+		label = "Quit"
+	case mysql.ComQuery:
+		label = "Query"
+	case mysql.ComPing:
+		label = "Ping"
+	case mysql.ComInitDB:
+		label = "InitDB"
+	case mysql.ComFieldList:
+		label = "FieldList"
+	case mysql.ComStmtPrepare:
+		label = "StmtPrepare"
+	case mysql.ComStmtExecute:
+		label = "StmtExecute"
+	case mysql.ComStmtClose:
+		label = "StmtClose"
+	case mysql.ComStmtSendLongData:
+		label = "StmtSendLongData"
+	case mysql.ComStmtReset:
+		label = "StmtReset"
+	case mysql.ComSetOption:
+		label = "SetOption"
+	default:
+		label = strconv.Itoa(int(cmd))
+	}
+	if err != nil {
+		queryCounter.WithLabelValues(label, "Error").Inc()
+	} else {
+		queryCounter.WithLabelValues(label, "OK").Inc()
+	}
+	queryHistogram.Observe(time.Since(startTime).Seconds())
 }
 
 // dispatch handles client request based on command which is the first byte of the data.
@@ -366,13 +423,9 @@ func (cc *clientConn) dispatch(data []byte) error {
 	cmd := data[0]
 	data = data[1:]
 	cc.lastCmd = hack.String(data)
-
 	token := cc.server.getToken()
-
-	startTS := time.Now()
 	defer func() {
 		cc.server.releaseToken(token)
-		log.Debugf("[TIME_CMD] %v %d", time.Since(startTS), cmd)
 	}()
 
 	switch cmd {
@@ -395,7 +448,6 @@ func (cc *clientConn) dispatch(data []byte) error {
 	case mysql.ComPing:
 		return cc.writeOK()
 	case mysql.ComInitDB:
-		log.Debug("init db", hack.String(data))
 		if err := cc.useDB(hack.String(data)); err != nil {
 			return errors.Trace(err)
 		}
@@ -517,7 +569,7 @@ func (cc *clientConn) writeReq(filePath string) error {
 	return errors.Trace(cc.flush())
 }
 
-var defaultLoadDataBatchCnt = 200000
+var defaultLoadDataBatchCnt = 20000
 
 func insertDataWithCommit(prevData, curData []byte, loadDataInfo *executor.LoadDataInfo) ([]byte, error) {
 	var err error
@@ -600,23 +652,10 @@ func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error 
 	return errors.Trace(txn.Commit())
 }
 
-const queryLogMaxLen = 2048
-
 // handleQuery executes the sql query string and writes result set or result ok to the client.
 // As the execution time of this function represents the performance of TiDB, we do time log and metrics here.
 // There is a special query `load data` that does not return result, which is handled differently.
 func (cc *clientConn) handleQuery(sql string) (err error) {
-	startTS := time.Now()
-	defer func() {
-		// Add metrics
-		queryHistogram.Observe(time.Since(startTS).Seconds())
-		label := querySucc
-		if err != nil {
-			label = queryFailed
-		}
-		queryCounter.WithLabelValues(label).Inc()
-	}()
-
 	rs, err := cc.ctx.Execute(sql)
 	if err != nil {
 		executeErrorCounter.WithLabelValues(executeErrorToLabel(err)).Inc()
@@ -637,15 +676,6 @@ func (cc *clientConn) handleQuery(sql string) (err error) {
 			}
 		}
 		err = cc.writeOK()
-	}
-	costTime := time.Since(startTS)
-	if len(sql) > queryLogMaxLen {
-		sql = sql[:queryLogMaxLen] + fmt.Sprintf("(len:%d)", len(sql))
-	}
-	if costTime < time.Second {
-		log.Debugf("[%d][TIME_QUERY] %v\n%s", cc.connectionID, costTime, sql)
-	} else {
-		log.Warnf("[%d][TIME_QUERY] %v\n%s", cc.connectionID, costTime, sql)
 	}
 	return errors.Trace(err)
 }
@@ -689,6 +719,7 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	columnLen := dumpLengthEncodedInt(uint64(len(columns)))
 	data := cc.alloc.AllocWithLen(4, 1024)
 	data = append(data, columnLen...)

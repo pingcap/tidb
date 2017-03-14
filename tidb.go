@@ -73,6 +73,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		return nil, errors.Trace(err)
 	}
 	dm.domains[key] = d
+
 	return
 }
 
@@ -97,6 +98,9 @@ var (
 	// but you must know that too little may cause badly performance degradation.
 	// For production, you should set a big schema lease, like 300s+.
 	schemaLease = 1 * time.Second
+
+	// The maximum number of retries to recover from retryable errors.
+	commitRetryLimit = 10
 )
 
 // SetSchemaLease changes the default schema lease time for DDL.
@@ -106,11 +110,22 @@ func SetSchemaLease(lease time.Duration) {
 	schemaLease = lease
 }
 
+// SetCommitRetryLimit setups the maximum number of retries when trying to recover
+// from retryable errors.
+// Retryable errors are generally refer to temporary errors that are expected to be
+// reinstated by retry, including network interruption, transaction conflicts, and
+// so on.
+func SetCommitRetryLimit(limit int) {
+	commitRetryLimit = limit
+}
+
 // Parse parses a query string to raw ast.StmtNode.
 func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
 	log.Debug("compiling", src)
 	charset, collation := ctx.GetSessionVars().GetCharsetInfo()
-	stmts, err := parser.New().Parse(src, charset, collation)
+	p := parser.New()
+	p.SetSQLMode(ctx.GetSessionVars().SQLMode)
+	stmts, err := p.Parse(src, charset, collation)
 	if err != nil {
 		log.Warnf("compiling %s, error: %v", src, err)
 		return nil, errors.Trace(err)
@@ -129,10 +144,15 @@ func resetStmtCtx(ctx context.Context, s ast.StmtNode) {
 		if _, ok := s.(*ast.InsertStmt); !ok {
 			sc.InUpdateOrDeleteStmt = true
 		}
+	case *ast.CreateTableStmt, *ast.AlterTableStmt:
+		// Make sure the sql_mode is strict when checking column default value.
+		sc.IgnoreTruncate = false
+		sc.TruncateAsWarning = false
 	default:
 		sc.IgnoreTruncate = true
 		if show, ok := s.(*ast.ShowStmt); ok {
 			if show.Tp == ast.ShowWarnings {
+				sc.InShowWarning = true
 				sc.SetWarnings(sessVars.StmtCtx.GetWarnings())
 			}
 		}
@@ -157,7 +177,7 @@ func runStmt(ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
 	se := ctx.(*session)
 	rs, err = s.Exec(ctx)
 	// All the history should be added here.
-	getHistory(ctx).add(0, s)
+	getHistory(ctx).add(0, s, se.sessionVars.StmtCtx)
 	if !se.sessionVars.InTxn() {
 		if err != nil {
 			log.Info("RollbackTxn for ddl/autocommit error.")

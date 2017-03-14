@@ -14,10 +14,12 @@
 package plan_test
 
 import (
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
@@ -34,26 +36,46 @@ type testTypeInferrerSuite struct {
 }
 
 func (ts *testTypeInferrerSuite) TestInferType(c *C) {
-	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
+	store, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	defer store.Close()
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
-	testKit.MustExec("create table t (c1 int, c2 double, c3 text)")
+	sql := `create table t (
+		c_int int,
+		c_bigint bigint,
+		c_double double,
+		c_decimal decimal,
+		c_datetime datetime,
+		c_time time,
+		c_timestamp timestamp,
+		c_char char,
+		c_varchar varchar(20),
+		c_text text,
+		c_binary binary,
+		c_varbinary varbinary(20),
+		c_blob blob,
+		c_set set('a', 'b', 'c'),
+		c_enum enum('a', 'b', 'c'))`
+	testKit.MustExec(sql)
 	cases := []struct {
 		expr string
 		tp   byte
 		chs  string
 	}{
-		{"c1", mysql.TypeLong, charset.CharsetBin},
+		{"c_int", mysql.TypeLong, charset.CharsetBin},
 		{"+1", mysql.TypeLonglong, charset.CharsetBin},
 		{"-1", mysql.TypeLonglong, charset.CharsetBin},
 		{"-'1'", mysql.TypeDouble, charset.CharsetBin},
+		{"-curtime()", mysql.TypeDouble, charset.CharsetBin},
+		{"-now()", mysql.TypeDouble, charset.CharsetBin},
 		{"~1", mysql.TypeLonglong, charset.CharsetBin},
+		{"1e0", mysql.TypeDouble, charset.CharsetBin},
+		{"1.0", mysql.TypeNewDecimal, charset.CharsetBin},
 		{"!true", mysql.TypeLonglong, charset.CharsetBin},
 
-		{"c1 is true", mysql.TypeLonglong, charset.CharsetBin},
-		{"c2 is null", mysql.TypeLonglong, charset.CharsetBin},
+		{"c_int is true", mysql.TypeLonglong, charset.CharsetBin},
+		{"c_double is null", mysql.TypeLonglong, charset.CharsetBin},
 		{"isnull(1/0)", mysql.TypeLonglong, charset.CharsetBin},
 		{"cast(1 as decimal)", mysql.TypeNewDecimal, charset.CharsetBin},
 
@@ -69,6 +91,22 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 
 		{"1 + '1'", mysql.TypeDouble, charset.CharsetBin},
 		{"1 + 1.1", mysql.TypeNewDecimal, charset.CharsetBin},
+		{"now() + 0", mysql.TypeLonglong, charset.CharsetBin},
+		{"curtime() + 0", mysql.TypeLonglong, charset.CharsetBin},
+		{"now(0) + 0", mysql.TypeLonglong, charset.CharsetBin},
+		{"now(2) + 0", mysql.TypeNewDecimal, charset.CharsetBin},
+		{"now() + 1.1", mysql.TypeNewDecimal, charset.CharsetBin},
+		{"now() + '1'", mysql.TypeDouble, charset.CharsetBin},
+		{"now(2) + '1'", mysql.TypeDouble, charset.CharsetBin},
+		{"now() + curtime()", mysql.TypeLonglong, charset.CharsetBin},
+		{"now() + now()", mysql.TypeLonglong, charset.CharsetBin},
+		{"now() + now(2)", mysql.TypeNewDecimal, charset.CharsetBin},
+		{"c_double + now()", mysql.TypeDouble, charset.CharsetBin},
+		{"c_timestamp + 1", mysql.TypeLonglong, charset.CharsetBin},
+		{"c_timestamp + 1.1", mysql.TypeNewDecimal, charset.CharsetBin},
+		{"c_timestamp + '1.1'", mysql.TypeDouble, charset.CharsetBin},
+		{"1.1 + now()", mysql.TypeNewDecimal, charset.CharsetBin},
+		{"1 + now()", mysql.TypeLonglong, charset.CharsetBin},
 		{"1 div 2", mysql.TypeLonglong, charset.CharsetBin},
 		{"1 / 2", mysql.TypeNewDecimal, charset.CharsetBin},
 
@@ -81,7 +119,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 
 		// Functions
 		{"version()", mysql.TypeVarString, "utf8"},
-		{"count(c1)", mysql.TypeLonglong, charset.CharsetBin},
+		{"count(c_int)", mysql.TypeLonglong, charset.CharsetBin},
 		{"abs(1)", mysql.TypeLonglong, charset.CharsetBin},
 		{"abs(1.1)", mysql.TypeNewDecimal, charset.CharsetBin},
 		{"abs(cast(\"20150817015609\" as DATETIME))", mysql.TypeDouble, charset.CharsetBin},
@@ -94,6 +132,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"LOG(3, 10)", mysql.TypeDouble, charset.CharsetBin},
 		{"LOG2(3)", mysql.TypeDouble, charset.CharsetBin},
 		{"LOG10(3)", mysql.TypeDouble, charset.CharsetBin},
+		{"SQRT(3)", mysql.TypeDouble, charset.CharsetBin},
 		{"rand()", mysql.TypeDouble, charset.CharsetBin},
 		{"curdate()", mysql.TypeDate, charset.CharsetBin},
 		{"current_date()", mysql.TypeDate, charset.CharsetBin},
@@ -101,7 +140,9 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"curtime()", mysql.TypeDuration, charset.CharsetBin},
 		{"current_time()", mysql.TypeDuration, charset.CharsetBin},
 		{"curtime()", mysql.TypeDuration, charset.CharsetBin},
+		{"curtime(2)", mysql.TypeDuration, charset.CharsetBin},
 		{"current_timestamp()", mysql.TypeDatetime, charset.CharsetBin},
+		{"utc_timestamp()", mysql.TypeDatetime, charset.CharsetBin},
 		{"microsecond('2009-12-31 23:59:59.000010')", mysql.TypeLonglong, charset.CharsetBin},
 		{"second('2009-12-31 23:59:59.000010')", mysql.TypeLonglong, charset.CharsetBin},
 		{"minute('2009-12-31 23:59:59.000010')", mysql.TypeLonglong, charset.CharsetBin},
@@ -142,19 +183,31 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"rtrim('TiDB ')", mysql.TypeVarString, "utf8"},
 		{"connection_id()", mysql.TypeLonglong, charset.CharsetBin},
 		{"if(1>2, 2, 3)", mysql.TypeLonglong, charset.CharsetBin},
-		{"case c1 when null then 2 when 2 then 1.1 else 1 END", mysql.TypeNewDecimal, charset.CharsetBin},
-		{"case c1 when null then 2 when 2 then 'tidb' else 1.1 END", mysql.TypeVarchar, "utf8"},
-		{"greatest(1, 2, 3)", mysql.TypeLonglong, charset.CharsetBin},
+		{"case c_int when null then 2 when 2 then 1.1 else 1 END", mysql.TypeNewDecimal, charset.CharsetBin},
+		{"case c_int when null then 2 when 2 then 'tidb' else 1.1 END", mysql.TypeVarchar, "utf8"},
+		// least() is the same as greatest()
 		{"greatest('TiDB', 'D', 'd')", mysql.TypeVarString, "utf8"},
 		{"greatest(1.1, 2.2)", mysql.TypeNewDecimal, charset.CharsetBin},
-		{"greatest('TiDB', 3)", mysql.TypeVarString, "utf8"},
-		{"least(1, 2, 3)", mysql.TypeLonglong, charset.CharsetBin},
-		{"least('TiDB', 'D', 'd')", mysql.TypeVarString, "utf8"},
-		{"least(1.1, 2.2)", mysql.TypeNewDecimal, charset.CharsetBin},
-		{"least('TiDB', 3)", mysql.TypeVarString, "utf8"},
+		{"greatest('TiDB', 3)", mysql.TypeVarString, charset.CharsetBin},
+		{"greatest(c_decimal, c_double)", mysql.TypeDouble, charset.CharsetBin},
+		{"greatest(c_int, c_int)", mysql.TypeLong, charset.CharsetBin},
+		{"greatest(c_int, c_double)", mysql.TypeDouble, charset.CharsetBin},
+		{"greatest(c_bigint, c_int, c_int)", mysql.TypeLonglong, charset.CharsetBin},
+		{"greatest(c_varchar, c_text)", mysql.TypeBlob, "utf8"},
+		{"greatest(c_binary, c_text)", mysql.TypeBlob, charset.CharsetBin},
+		{"greatest(c_varchar, c_varbinary)", mysql.TypeVarString, charset.CharsetBin},
+		{"greatest(c_enum, c_int)", mysql.TypeString, charset.CharsetBin},
+		{"greatest(c_set, c_int)", mysql.TypeString, charset.CharsetBin},
+		{"greatest(c_enum, c_set)", mysql.TypeString, "utf8"},
 		{"interval(1, 2, 3)", mysql.TypeLonglong, charset.CharsetBin},
 		{"interval(1.0, 2.0, 3.0)", mysql.TypeLonglong, charset.CharsetBin},
 		{"interval('1', '2', '3')", mysql.TypeLonglong, charset.CharsetBin},
+		{"round(null, 2)", mysql.TypeDouble, charset.CharsetBin},
+		{"round('1.2', 2)", mysql.TypeDouble, charset.CharsetBin},
+		{"round(1e2, 2)", mysql.TypeDouble, charset.CharsetBin},
+		{"round(1.2, 2)", mysql.TypeNewDecimal, charset.CharsetBin},
+		{"round(true, 2)", mysql.TypeLonglong, charset.CharsetBin},
+		{"round(1000, 2)", mysql.TypeLonglong, charset.CharsetBin},
 		{"hex('TiDB')", mysql.TypeVarString, "utf8"},
 		{"hex(12)", mysql.TypeVarString, "utf8"},
 		{"unhex('TiDB')", mysql.TypeVarString, "utf8"},
@@ -167,12 +220,27 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"character_length('TiDB')", mysql.TypeLonglong, charset.CharsetBin},
 		{"crc32('TiDB')", mysql.TypeLonglong, charset.CharsetBin},
 		{"timestampdiff(MINUTE,'2003-02-01','2003-05-01 12:05:55')", mysql.TypeLonglong, charset.CharsetBin},
+		{"sign(0)", mysql.TypeLonglong, charset.CharsetBin},
+		{"sign(null)", mysql.TypeLonglong, charset.CharsetBin},
 		{"unix_timestamp()", mysql.TypeLonglong, charset.CharsetBin},
 		{"unix_timestamp('2015-11-13 10:20:19')", mysql.TypeLonglong, charset.CharsetBin},
+		{"floor(1.23)", mysql.TypeLonglong, charset.CharsetBin},
+		{"field('foo', null)", mysql.TypeLonglong, charset.CharsetBin},
 		{"find_in_set('foo', 'foo,bar')", mysql.TypeLonglong, charset.CharsetBin},
 		{"find_in_set('foo', null)", mysql.TypeLonglong, charset.CharsetBin},
 		{"find_in_set(null, 'bar')", mysql.TypeLonglong, charset.CharsetBin},
 		{"conv('TiDB',36,10)", mysql.TypeVarString, charset.CharsetUTF8},
+		{"timestamp('2003-12-31 12:00:00')", mysql.TypeDatetime, charset.CharsetBin},
+		{"timestamp('2003-12-31 12:00:00','12:00:00')", mysql.TypeDatetime, charset.CharsetBin},
+		{`aes_encrypt("pingcap", "fit2cloud@2014")`, mysql.TypeVarString, "utf8"},
+		{`aes_decrypt("pingcap", "fit2cloud@2014")`, mysql.TypeVarString, "utf8"},
+		{`md5(123)`, mysql.TypeVarString, "utf8"},
+		{`sha1(123)`, mysql.TypeVarString, "utf8"},
+		{`sha(123)`, mysql.TypeVarString, "utf8"},
+		{`coalesce(null, 0)`, mysql.TypeLonglong, charset.CharsetBin},
+		{`coalesce(null, 0.1)`, mysql.TypeNewDecimal, charset.CharsetBin},
+		{`coalesce(1, "1" + 1)`, mysql.TypeDouble, charset.CharsetBin},
+		{`coalesce(1, "abc")`, mysql.TypeVarString, charset.CharsetUTF8},
 	}
 	for _, ca := range cases {
 		ctx := testKit.Se.(context.Context)
@@ -193,7 +261,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 
 func (s *testTypeInferrerSuite) TestColumnInfoModified(c *C) {
 	defer testleak.AfterTest(c)()
-	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
+	store, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	defer store.Close()
 	testKit := testkit.NewTestKit(c, store)
@@ -206,4 +274,13 @@ func (s *testTypeInferrerSuite) TestColumnInfoModified(c *C) {
 	tbl, _ := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tab0"))
 	col := table.FindCol(tbl.Cols(), "col1")
 	c.Assert(col.Tp, Equals, mysql.TypeLong)
+}
+
+func newStoreWithBootstrap() (kv.Storage, error) {
+	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	_, err = tidb.BootstrapSession(store)
+	return store, errors.Trace(err)
 }

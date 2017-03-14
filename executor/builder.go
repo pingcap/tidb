@@ -57,8 +57,6 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildDeallocate(v)
 	case *plan.Delete:
 		return b.buildDelete(v)
-	case *plan.Distinct:
-		return b.buildDistinct(v)
 	case *plan.Execute:
 		return b.buildExecute(v)
 	case *plan.Explain:
@@ -113,12 +111,12 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildExists(v)
 	case *plan.MaxOneRow:
 		return b.buildMaxOneRow(v)
-	case *plan.Trim:
-		return b.buildTrim(v)
 	case *plan.PhysicalDummyScan:
 		return b.buildDummyScan(v)
 	case *plan.Cache:
 		return b.buildCache(v)
+	case *plan.Analyze:
+		return b.buildAnalyze(v)
 	default:
 		b.err = ErrUnknownPlan.Gen("Unknown Plan %T", p)
 		return nil
@@ -131,7 +129,7 @@ func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
 	// We need the transaction to get DDLInfo.
 	e := &ShowDDLExec{
 		ctx:    b.ctx,
-		schema: v.GetSchema(),
+		schema: v.Schema(),
 	}
 	ddlInfo, err := inspectkv.GetDDLInfo(e.ctx.Txn())
 	if err != nil {
@@ -164,7 +162,7 @@ func (b *executorBuilder) buildDeallocate(v *plan.Deallocate) Executor {
 }
 
 func (b *executorBuilder) buildSelectLock(v *plan.SelectLock) Executor {
-	src := b.build(v.GetChildByIndex(0))
+	src := b.build(v.Children()[0])
 	if !b.ctx.GetSessionVars().InTxn() {
 		// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
 		// is disabled (either by beginning transaction with START TRANSACTION or by setting
@@ -176,24 +174,20 @@ func (b *executorBuilder) buildSelectLock(v *plan.SelectLock) Executor {
 		Src:    src,
 		Lock:   v.Lock,
 		ctx:    b.ctx,
-		schema: v.GetSchema(),
+		schema: v.Schema(),
 	}
 	return e
 }
 
 func (b *executorBuilder) buildLimit(v *plan.Limit) Executor {
-	src := b.build(v.GetChildByIndex(0))
+	src := b.build(v.Children()[0])
 	e := &LimitExec{
 		Src:    src,
 		Offset: v.Offset,
 		Count:  v.Count,
-		schema: v.GetSchema(),
+		schema: v.Schema(),
 	}
 	return e
-}
-
-func (b *executorBuilder) buildDistinct(v *plan.Distinct) Executor {
-	return &DistinctExec{Src: b.build(v.GetChildByIndex(0)), schema: v.GetSchema()}
 }
 
 func (b *executorBuilder) buildPrepare(v *plan.Prepare) Executor {
@@ -211,7 +205,7 @@ func (b *executorBuilder) buildExecute(v *plan.Execute) Executor {
 		IS:        b.is,
 		Name:      v.Name,
 		UsingVars: v.UsingVars,
-		ID:        v.ID,
+		ID:        v.ExecID,
 	}
 }
 
@@ -227,7 +221,7 @@ func (b *executorBuilder) buildShow(v *plan.Show) Executor {
 		GlobalScope: v.GlobalScope,
 		ctx:         b.ctx,
 		is:          b.is,
-		schema:      v.GetSchema(),
+		schema:      v.Schema(),
 	}
 	if e.Tp == ast.ShowGrants && len(e.User) == 0 {
 		e.User = e.ctx.GetSessionVars().User
@@ -239,6 +233,8 @@ func (b *executorBuilder) buildSimple(v *plan.Simple) Executor {
 	switch s := v.Statement.(type) {
 	case *ast.GrantStmt:
 		return b.buildGrant(s)
+	case *ast.RevokeStmt:
+		return b.buildRevoke(s)
 	}
 	return &SimpleExec{Statement: v.Statement, ctx: b.ctx, is: b.is}
 }
@@ -257,8 +253,8 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 		Lists:   v.Lists,
 		Setlist: v.Setlist,
 	}
-	if len(v.GetChildren()) > 0 {
-		ivs.SelectExec = b.build(v.GetChildByIndex(0))
+	if len(v.Children()) > 0 {
+		ivs.SelectExec = b.build(v.Children()[0])
 	}
 	ivs.Table = v.Table
 	if v.IsReplace {
@@ -307,6 +303,18 @@ func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {
 		ObjectType: grant.ObjectType,
 		Level:      grant.Level,
 		Users:      grant.Users,
+		WithGrant:  grant.WithGrant,
+		is:         b.is,
+	}
+}
+
+func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) Executor {
+	return &RevokeExec{
+		ctx:        b.ctx,
+		Privs:      revoke.Privs,
+		ObjectType: revoke.ObjectType,
+		Level:      revoke.Level,
+		Users:      revoke.Users,
 		is:         b.is,
 	}
 }
@@ -318,16 +326,16 @@ func (b *executorBuilder) buildDDL(v *plan.DDL) Executor {
 func (b *executorBuilder) buildExplain(v *plan.Explain) Executor {
 	return &ExplainExec{
 		StmtPlan: v.StmtPlan,
-		schema:   v.GetSchema(),
+		schema:   v.Schema(),
 	}
 }
 
 func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor {
-	src := b.build(v.GetChildByIndex(0))
+	src := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
 	}
-	us := &UnionScanExec{ctx: b.ctx, Src: src, schema: v.GetSchema()}
+	us := &UnionScanExec{ctx: b.ctx, Src: src, schema: v.Schema()}
 	switch x := src.(type) {
 	case *XSelectTableExec:
 		us.desc = x.desc
@@ -337,7 +345,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 	case *XSelectIndexExec:
 		us.desc = x.indexPlan.Desc
 		for _, ic := range x.indexPlan.Index.Columns {
-			for i, col := range x.indexPlan.GetSchema().Columns {
+			for i, col := range x.indexPlan.Schema().Columns {
 				if col.ColName.L == ic.Name.L {
 					us.usedIndex = append(us.usedIndex, i)
 					break
@@ -365,8 +373,8 @@ func (b *executorBuilder) buildJoin(v *plan.PhysicalHashJoin) Executor {
 		targetTypes = append(targetTypes, types.NewFieldType(types.MergeFieldType(ln.GetType().Tp, rn.GetType().Tp)))
 	}
 	e := &HashJoinExec{
-		schema:        v.GetSchema(),
-		otherFilter:   expression.ComposeCNFCondition(v.OtherConditions),
+		schema:        v.Schema(),
+		otherFilter:   expression.ComposeCNFCondition(b.ctx, v.OtherConditions...),
 		prepared:      false,
 		ctx:           b.ctx,
 		targetTypes:   targetTypes,
@@ -374,15 +382,15 @@ func (b *executorBuilder) buildJoin(v *plan.PhysicalHashJoin) Executor {
 		defaultValues: v.DefaultValues,
 	}
 	if v.SmallTable == 1 {
-		e.smallFilter = expression.ComposeCNFCondition(v.RightConditions)
-		e.bigFilter = expression.ComposeCNFCondition(v.LeftConditions)
+		e.smallFilter = expression.ComposeCNFCondition(b.ctx, v.RightConditions...)
+		e.bigFilter = expression.ComposeCNFCondition(b.ctx, v.LeftConditions...)
 		e.smallHashKey = rightHashKey
 		e.bigHashKey = leftHashKey
 		e.leftSmall = false
 	} else {
 		e.leftSmall = true
-		e.smallFilter = expression.ComposeCNFCondition(v.LeftConditions)
-		e.bigFilter = expression.ComposeCNFCondition(v.RightConditions)
+		e.smallFilter = expression.ComposeCNFCondition(b.ctx, v.LeftConditions...)
+		e.bigFilter = expression.ComposeCNFCondition(b.ctx, v.RightConditions...)
 		e.smallHashKey = leftHashKey
 		e.bigHashKey = rightHashKey
 	}
@@ -390,11 +398,11 @@ func (b *executorBuilder) buildJoin(v *plan.PhysicalHashJoin) Executor {
 		e.outer = true
 	}
 	if e.leftSmall {
-		e.smallExec = b.build(v.GetChildByIndex(0))
-		e.bigExec = b.build(v.GetChildByIndex(1))
+		e.smallExec = b.build(v.Children()[0])
+		e.bigExec = b.build(v.Children()[1])
 	} else {
-		e.smallExec = b.build(v.GetChildByIndex(1))
-		e.bigExec = b.build(v.GetChildByIndex(0))
+		e.smallExec = b.build(v.Children()[1])
+		e.bigExec = b.build(v.Children()[0])
 	}
 	for i := 0; i < e.concurrency; i++ {
 		ctx := &hashJoinCtx{}
@@ -411,7 +419,7 @@ func (b *executorBuilder) buildJoin(v *plan.PhysicalHashJoin) Executor {
 	return e
 }
 
-func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) Executor {
+func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) *HashSemiJoinExec {
 	var leftHashKey, rightHashKey []*expression.Column
 	var targetTypes []*types.FieldType
 	for _, eqCond := range v.EqualConditions {
@@ -422,12 +430,12 @@ func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) Executor {
 		targetTypes = append(targetTypes, types.NewFieldType(types.MergeFieldType(ln.GetType().Tp, rn.GetType().Tp)))
 	}
 	e := &HashSemiJoinExec{
-		schema:       v.GetSchema(),
-		otherFilter:  expression.ComposeCNFCondition(v.OtherConditions),
-		bigFilter:    expression.ComposeCNFCondition(v.LeftConditions),
-		smallFilter:  expression.ComposeCNFCondition(v.RightConditions),
-		bigExec:      b.build(v.GetChildByIndex(0)),
-		smallExec:    b.build(v.GetChildByIndex(1)),
+		schema:       v.Schema(),
+		otherFilter:  expression.ComposeCNFCondition(b.ctx, v.OtherConditions...),
+		bigFilter:    expression.ComposeCNFCondition(b.ctx, v.LeftConditions...),
+		smallFilter:  expression.ComposeCNFCondition(b.ctx, v.RightConditions...),
+		bigExec:      b.build(v.Children()[0]),
+		smallExec:    b.build(v.Children()[1]),
 		prepared:     false,
 		ctx:          b.ctx,
 		bigHashKey:   leftHashKey,
@@ -440,11 +448,11 @@ func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) Executor {
 }
 
 func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor {
-	src := b.build(v.GetChildByIndex(0))
+	src := b.build(v.Children()[0])
 	if v.AggType == plan.StreamedAgg {
 		return &StreamAggExec{
 			Src:          src,
-			schema:       v.GetSchema(),
+			schema:       v.Schema(),
 			Ctx:          b.ctx,
 			AggFuncs:     v.AggFuncs,
 			GroupByItems: v.GroupByItems,
@@ -452,7 +460,7 @@ func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor
 	}
 	return &HashAggExec{
 		Src:          src,
-		schema:       v.GetSchema(),
+		schema:       v.Schema(),
 		ctx:          b.ctx,
 		AggFuncs:     v.AggFuncs,
 		GroupByItems: v.GroupByItems,
@@ -463,9 +471,9 @@ func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor
 
 func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
 	exec := &SelectionExec{
-		Src:       b.build(v.GetChildByIndex(0)),
-		Condition: expression.ComposeCNFCondition(v.Conditions),
-		schema:    v.GetSchema(),
+		Src:       b.build(v.Children()[0]),
+		Condition: expression.ComposeCNFCondition(b.ctx, v.Conditions...),
+		schema:    v.Schema(),
 		ctx:       b.ctx,
 	}
 	return exec
@@ -473,15 +481,15 @@ func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
 
 func (b *executorBuilder) buildProjection(v *plan.Projection) Executor {
 	return &ProjectionExec{
-		Src:    b.build(v.GetChildByIndex(0)),
+		Src:    b.build(v.Children()[0]),
 		ctx:    b.ctx,
 		exprs:  v.Exprs,
-		schema: v.GetSchema(),
+		schema: v.Schema(),
 	}
 }
 
 func (b *executorBuilder) buildTableDual(v *plan.TableDual) Executor {
-	return &TableDualExec{schema: v.GetSchema()}
+	return &TableDualExec{schema: v.Schema()}
 }
 
 func (b *executorBuilder) getStartTS() uint64 {
@@ -499,7 +507,7 @@ func (b *executorBuilder) buildMemTable(v *plan.PhysicalMemTable) Executor {
 		asName:       v.TableAsName,
 		ctx:          b.ctx,
 		columns:      v.Columns,
-		schema:       v.GetSchema(),
+		schema:       v.Schema(),
 		seekHandle:   math.MinInt64,
 		ranges:       v.Ranges,
 		isInfoSchema: strings.EqualFold(v.DBName.L, infoschema.Name),
@@ -522,7 +530,7 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 		supportDesc: supportDesc,
 		asName:      v.TableAsName,
 		table:       table,
-		schema:      v.GetSchema(),
+		schema:      v.Schema(),
 		Columns:     v.Columns,
 		ranges:      v.Ranges,
 		desc:        v.Desc,
@@ -567,14 +575,14 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 }
 
 func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
-	src := b.build(v.GetChildByIndex(0))
+	src := b.build(v.Children()[0])
 	if v.ExecLimit != nil {
 		return &TopnExec{
 			SortExec: SortExec{
 				Src:     src,
 				ByItems: v.ByItems,
 				ctx:     b.ctx,
-				schema:  v.GetSchema()},
+				schema:  v.Schema()},
 			limit: v.ExecLimit,
 		}
 	}
@@ -582,58 +590,68 @@ func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
 		Src:     src,
 		ByItems: v.ByItems,
 		ctx:     b.ctx,
-		schema:  v.GetSchema(),
+		schema:  v.Schema(),
+	}
+}
+
+func (b *executorBuilder) buildNestedLoopJoin(v *plan.PhysicalHashJoin) *NestedLoopJoinExec {
+	bigExec := b.build(v.Children()[0])
+	smallExec := b.build(v.Children()[1])
+	return &NestedLoopJoinExec{
+		SmallExec:   smallExec,
+		BigExec:     bigExec,
+		Ctx:         b.ctx,
+		BigFilter:   expression.ComposeCNFCondition(b.ctx, v.LeftConditions...),
+		SmallFilter: expression.ComposeCNFCondition(b.ctx, v.RightConditions...),
+		OtherFilter: expression.ComposeCNFCondition(b.ctx, append(expression.ScalarFuncs2Exprs(v.EqualConditions), v.OtherConditions...)...),
+		schema:      v.Schema(),
+		outer:       v.JoinType != plan.InnerJoin,
 	}
 }
 
 func (b *executorBuilder) buildApply(v *plan.PhysicalApply) Executor {
-	src := b.build(v.GetChildByIndex(0))
-	apply := &ApplyExec{
-		schema:      v.GetSchema(),
-		innerExec:   b.build(v.GetChildByIndex(1)),
-		outerSchema: v.OuterSchema,
-		Src:         src,
-	}
-	if v.Checker != nil {
-		apply.checker = &conditionChecker{
-			all:     v.Checker.All,
-			cond:    v.Checker.Condition,
-			trimLen: src.Schema().Len(),
-			ctx:     b.ctx,
+	var join joinExec
+	switch x := v.PhysicalJoin.(type) {
+	case *plan.PhysicalHashSemiJoin:
+		join = b.buildSemiJoin(x)
+	case *plan.PhysicalHashJoin:
+		if x.JoinType == plan.InnerJoin || x.JoinType == plan.LeftOuterJoin {
+			join = b.buildNestedLoopJoin(x)
+		} else {
+			b.err = errors.Errorf("Unsupported join type %v in nested loop join", x.JoinType)
 		}
+	default:
+		b.err = errors.Errorf("Unsupported plan type %T in apply", v)
+	}
+	apply := &ApplyJoinExec{
+		join:        join,
+		outerSchema: v.OuterSchema,
+		schema:      v.Schema(),
 	}
 	return apply
 }
 
 func (b *executorBuilder) buildExists(v *plan.Exists) Executor {
 	return &ExistsExec{
-		schema: v.GetSchema(),
-		Src:    b.build(v.GetChildByIndex(0)),
+		schema: v.Schema(),
+		Src:    b.build(v.Children()[0]),
 	}
 }
 
 func (b *executorBuilder) buildMaxOneRow(v *plan.MaxOneRow) Executor {
 	return &MaxOneRowExec{
-		schema: v.GetSchema(),
-		Src:    b.build(v.GetChildByIndex(0)),
-	}
-}
-
-func (b *executorBuilder) buildTrim(v *plan.Trim) Executor {
-	return &TrimExec{
-		schema: v.GetSchema(),
-		Src:    b.build(v.GetChildByIndex(0)),
-		len:    v.GetSchema().Len(),
+		schema: v.Schema(),
+		Src:    b.build(v.Children()[0]),
 	}
 }
 
 func (b *executorBuilder) buildUnion(v *plan.Union) Executor {
 	e := &UnionExec{
-		schema: v.GetSchema(),
-		Srcs:   make([]Executor, len(v.GetChildren())),
+		schema: v.Schema(),
+		Srcs:   make([]Executor, len(v.Children())),
 		ctx:    b.ctx,
 	}
-	for i, sel := range v.GetChildren() {
+	for i, sel := range v.Children() {
 		selExec := b.build(sel)
 		e.Srcs[i] = selExec
 	}
@@ -641,18 +659,18 @@ func (b *executorBuilder) buildUnion(v *plan.Union) Executor {
 }
 
 func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
-	selExec := b.build(v.GetChildByIndex(0))
+	selExec := b.build(v.Children()[0])
 	return &UpdateExec{ctx: b.ctx, SelectExec: selExec, OrderedList: v.OrderedList}
 }
 
 func (b *executorBuilder) buildDummyScan(v *plan.PhysicalDummyScan) Executor {
 	return &DummyScanExec{
-		schema: v.GetSchema(),
+		schema: v.Schema(),
 	}
 }
 
 func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
-	selExec := b.build(v.GetChildByIndex(0))
+	selExec := b.build(v.Children()[0])
 	return &DeleteExec{
 		ctx:          b.ctx,
 		SelectExec:   selExec,
@@ -662,9 +680,30 @@ func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
 }
 
 func (b *executorBuilder) buildCache(v *plan.Cache) Executor {
-	src := b.build(v.GetChildByIndex(0))
+	src := b.build(v.Children()[0])
 	return &CacheExec{
-		schema: v.GetSchema(),
+		schema: v.Schema(),
 		Src:    src,
 	}
+}
+
+func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
+	var tblInfo *model.TableInfo
+	if v.Table != nil {
+		tblInfo = v.Table.TableInfo
+	}
+	e := &AnalyzeExec{
+		schema:     v.Schema(),
+		tblInfo:    tblInfo,
+		ctx:        b.ctx,
+		idxOffsets: v.IdxOffsets,
+		colOffsets: v.ColOffsets,
+		pkOffset:   v.PkOffset,
+		Srcs:       make([]Executor, len(v.Children())),
+	}
+	for i, child := range v.Children() {
+		childExec := b.build(child)
+		e.Srcs[i] = childExec
+	}
+	return e
 }

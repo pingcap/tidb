@@ -14,6 +14,7 @@
 package variable
 
 import (
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -36,9 +37,10 @@ var (
 
 // RetryInfo saves retry information.
 type RetryInfo struct {
-	Retrying         bool
-	currRetryOff     int
-	autoIncrementIDs []int64
+	Retrying               bool
+	DroppedPreparedStmtIDs []uint32
+	currRetryOff           int
+	autoIncrementIDs       []int64
 }
 
 // Clean does some clean work.
@@ -46,6 +48,9 @@ func (r *RetryInfo) Clean() {
 	r.currRetryOff = 0
 	if len(r.autoIncrementIDs) > 0 {
 		r.autoIncrementIDs = r.autoIncrementIDs[:0]
+	}
+	if len(r.DroppedPreparedStmtIDs) > 0 {
+		r.DroppedPreparedStmtIDs = r.DroppedPreparedStmtIDs[:0]
 	}
 }
 
@@ -142,6 +147,9 @@ type SessionVars struct {
 	// StmtCtx holds variables for current executing statement.
 	StmtCtx *StatementContext
 
+	// AllowAggPushDown can be set to false to forbid aggregation push down.
+	AllowAggPushDown bool
+
 	// CurrInsertValues is used to record current ValuesExpr's values.
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	CurrInsertValues interface{}
@@ -149,6 +157,8 @@ type SessionVars struct {
 	// Per-connection time zones. Each client that connects has its own time zone setting, given by the session time_zone variable.
 	// See https://dev.mysql.com/doc/refman/5.7/en/time-zone-support.html
 	TimeZone *time.Location
+
+	SQLMode mysql.SQLMode
 }
 
 // NewSessionVars creates a session vars object.
@@ -163,6 +173,7 @@ func NewSessionVars() *SessionVars {
 		StrictSQLMode:        true,
 		Status:               mysql.ServerStatusAutocommit,
 		StmtCtx:              new(StatementContext),
+		AllowAggPushDown:     true,
 	}
 }
 
@@ -229,6 +240,7 @@ const (
 	SQLModeVar          = "sql_mode"
 	AutocommitVar       = "autocommit"
 	CharacterSetResults = "character_set_results"
+	MaxAllowedPacket    = "max_allowed_packet"
 	TimeZone            = "time_zone"
 )
 
@@ -256,6 +268,7 @@ type StatementContext struct {
 	InUpdateOrDeleteStmt bool
 	IgnoreTruncate       bool
 	TruncateAsWarning    bool
+	InShowWarning        bool
 
 	/* Variables that changes during execution. */
 	mu struct {
@@ -305,6 +318,17 @@ func (sc *StatementContext) GetWarnings() []error {
 	return warns
 }
 
+// WarningCount gets warning count.
+func (sc *StatementContext) WarningCount() uint16 {
+	if sc.InShowWarning {
+		return 0
+	}
+	sc.mu.Lock()
+	wc := uint16(len(sc.mu.warnings))
+	sc.mu.Unlock()
+	return wc
+}
+
 // SetWarnings sets warnings.
 func (sc *StatementContext) SetWarnings(warns []error) {
 	sc.mu.Lock()
@@ -315,6 +339,8 @@ func (sc *StatementContext) SetWarnings(warns []error) {
 // AppendWarning appends a warning.
 func (sc *StatementContext) AppendWarning(warn error) {
 	sc.mu.Lock()
-	sc.mu.warnings = append(sc.mu.warnings, warn)
+	if len(sc.mu.warnings) < math.MaxUint16 {
+		sc.mu.warnings = append(sc.mu.warnings, warn)
+	}
 	sc.mu.Unlock()
 }

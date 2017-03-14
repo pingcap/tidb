@@ -37,7 +37,7 @@ func (col *CorrelatedColumn) Clone() Expression {
 }
 
 // Eval implements Expression interface.
-func (col *CorrelatedColumn) Eval(row []types.Datum, _ context.Context) (types.Datum, error) {
+func (col *CorrelatedColumn) Eval(row []types.Datum) (types.Datum, error) {
 	return *col.Data, nil
 }
 
@@ -55,15 +55,15 @@ func (col *CorrelatedColumn) IsCorrelated() bool {
 }
 
 // Decorrelate implements Expression interface.
-func (col *CorrelatedColumn) Decorrelate(schema Schema) Expression {
-	if schema.GetColumnIndex(&col.Column) == -1 {
+func (col *CorrelatedColumn) Decorrelate(schema *Schema) Expression {
+	if !schema.Contains(&col.Column) {
 		return col
 	}
 	return &col.Column
 }
 
 // ResolveIndices implements Expression interface.
-func (col *CorrelatedColumn) ResolveIndices(_ Schema) {
+func (col *CorrelatedColumn) ResolveIndices(_ *Schema) {
 }
 
 // Column represents a column.
@@ -120,7 +120,7 @@ func (col *Column) GetType() *types.FieldType {
 }
 
 // Eval implements Expression interface.
-func (col *Column) Eval(row []types.Datum, _ context.Context) (types.Datum, error) {
+func (col *Column) Eval(row []types.Datum) (types.Datum, error) {
 	return row[col.Index], nil
 }
 
@@ -136,7 +136,7 @@ func (col *Column) IsCorrelated() bool {
 }
 
 // Decorrelate implements Expression interface.
-func (col *Column) Decorrelate(_ Schema) Expression {
+func (col *Column) Decorrelate(_ *Schema) Expression {
 	return col
 }
 
@@ -150,8 +150,8 @@ func (col *Column) HashCode() []byte {
 }
 
 // ResolveIndices implements Expression interface.
-func (col *Column) ResolveIndices(schema Schema) {
-	col.Index = schema.GetColumnIndex(col)
+func (col *Column) ResolveIndices(schema *Schema) {
+	col.Index = schema.ColumnIndex(col)
 	// If col's index equals to -1, it means a internal logic error happens.
 	if col.Index == -1 {
 		log.Errorf("Can't find column %s in schema %s", col, schema)

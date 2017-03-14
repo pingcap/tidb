@@ -88,6 +88,7 @@ func init() {
 	tidbSysVars[TiDBSnapshot] = true
 	tidbSysVars[TiDBSkipConstraintCheck] = true
 	tidbSysVars[TiDBSkipDDLWait] = true
+	tidbSysVars[TiDBOptAggPushDown] = true
 }
 
 // we only support MySQL now
@@ -564,7 +565,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "ndbinfo_show_hidden", ""},
 	{ScopeGlobal | ScopeSession, "net_read_timeout", "30"},
 	{ScopeNone, "innodb_page_size", "16384"},
-	{ScopeGlobal, "max_allowed_packet", "4194304"},
+	{ScopeGlobal, MaxAllowedPacket, "67108864"},
 	{ScopeNone, "innodb_log_file_size", "50331648"},
 	{ScopeGlobal, "sync_relay_log_info", "10000"},
 	{ScopeGlobal | ScopeSession, "optimizer_trace_limit", "1"},
@@ -596,6 +597,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, DistSQLJoinConcurrencyVar, "5"},
 	{ScopeSession, TiDBSkipConstraintCheck, "0"},
 	{ScopeSession, TiDBSkipDDLWait, "0"},
+	{ScopeSession, TiDBOptAggPushDown, "ON"},
 }
 
 // TiDB system variables
@@ -605,6 +607,7 @@ const (
 	DistSQLJoinConcurrencyVar = "tidb_distsql_join_concurrency"
 	TiDBSkipConstraintCheck   = "tidb_skip_constraint_check"
 	TiDBSkipDDLWait           = "tidb_skip_ddl_wait"
+	TiDBOptAggPushDown        = "tidb_opt_agg_push_down"
 )
 
 // SetNamesVariables is the system variable names related to set names statements.

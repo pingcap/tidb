@@ -14,6 +14,7 @@
 package localstore
 
 import (
+	goctx "context"
 	"fmt"
 	"io/ioutil"
 	"math"
@@ -58,13 +59,15 @@ func (s *testXAPISuite) TestSelect(c *C) {
 	err := prepareTableData(store, tbInfo, count, genValues)
 	c.Check(err, IsNil)
 
+	mockCtx := goctx.Background()
+
 	// Select Table request.
 	txn, err := store.Begin()
 	c.Check(err, IsNil)
 	client := store.GetClient()
 	req, err := prepareSelectRequest(tbInfo, txn.StartTS())
 	c.Check(err, IsNil)
-	resp := client.Send(req)
+	resp := client.Send(mockCtx, req)
 	subResp, err := resp.Next()
 	c.Check(err, IsNil)
 	data, err := ioutil.ReadAll(subResp)
@@ -82,7 +85,7 @@ func (s *testXAPISuite) TestSelect(c *C) {
 		var expectedEncoded []byte
 		expectedEncoded, err = codec.EncodeValue(nil, expectedDatums...)
 		c.Assert(err, IsNil)
-		c.Assert(chunk.RowsData[dataOffset:dataOffset+rowMeta.Length], BytesEquals, expectedEncoded)
+		c.Assert([]byte(chunk.RowsData[dataOffset:dataOffset+rowMeta.Length]), BytesEquals, expectedEncoded)
 		dataOffset += rowMeta.Length
 	}
 	txn.Commit()
@@ -93,7 +96,7 @@ func (s *testXAPISuite) TestSelect(c *C) {
 	client = store.GetClient()
 	req, err = prepareIndexRequest(tbInfo, txn.StartTS())
 	c.Check(err, IsNil)
-	resp = client.Send(req)
+	resp = client.Send(mockCtx, req)
 	subResp, err = resp.Next()
 	c.Check(err, IsNil)
 	data, err = ioutil.ReadAll(subResp)

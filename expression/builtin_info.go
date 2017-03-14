@@ -32,6 +32,11 @@ var (
 	_ functionClass = &connectionIDFunctionClass{}
 	_ functionClass = &lastInsertIDFunctionClass{}
 	_ functionClass = &versionFunctionClass{}
+	_ functionClass = &benchmarkFunctionClass{}
+	_ functionClass = &charsetFunctionClass{}
+	_ functionClass = &coercibilityFunctionClass{}
+	_ functionClass = &collationFunctionClass{}
+	_ functionClass = &rowCountFunctionClass{}
 )
 
 var (
@@ -42,6 +47,11 @@ var (
 	_ builtinFunc = &builtinConnectionIDSig{}
 	_ builtinFunc = &builtinLastInsertIDSig{}
 	_ builtinFunc = &builtinVersionSig{}
+	_ builtinFunc = &builtinBenchmarkSig{}
+	_ builtinFunc = &builtinCharsetSig{}
+	_ builtinFunc = &builtinCoercibilitySig{}
+	_ builtinFunc = &builtinCollationSig{}
+	_ builtinFunc = &builtinRowCountSig{}
 )
 
 type databaseFunctionClass struct {
@@ -49,28 +59,19 @@ type databaseFunctionClass struct {
 }
 
 func (c *databaseFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinDatabaseSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	err := errors.Trace(c.verifyArgs(args))
+	bt := &builtinDatabaseSig{newBaseBuiltinFunc(args, ctx)}
+	bt.deterministic = false
+	return bt, errors.Trace(err)
 }
 
 type builtinDatabaseSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinDatabaseSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	return builtinDatabase(args, b.ctx)
-}
-
-func (b *builtinDatabaseSig) isDeterministic() bool {
-	return false
-}
-
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html
-func builtinDatabase(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	currentDB := ctx.GetSessionVars().CurrentDB
+func (b *builtinDatabaseSig) eval(_ []types.Datum) (d types.Datum, err error) {
+	currentDB := b.ctx.GetSessionVars().CurrentDB
 	if currentDB == "" {
 		return d, nil
 	}
@@ -83,27 +84,19 @@ type foundRowsFunctionClass struct {
 }
 
 func (c *foundRowsFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinFoundRowsSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	err := errors.Trace(c.verifyArgs(args))
+	bt := &builtinFoundRowsSig{newBaseBuiltinFunc(args, ctx)}
+	bt.deterministic = false
+	return bt, errors.Trace(err)
 }
 
 type builtinFoundRowsSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinFoundRowsSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	return builtinFoundRows(args, b.ctx)
-}
-
-func (b *builtinFoundRowsSig) isDeterministic() bool {
-	return false
-}
-
-func builtinFoundRows(arg []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	data := ctx.GetSessionVars()
+// See https://dev.mysql.com/doc/refman/5.6/en/information-functions.html#function_found-rows
+func (b *builtinFoundRowsSig) eval(_ []types.Datum) (d types.Datum, err error) {
+	data := b.ctx.GetSessionVars()
 	if data == nil {
 		return d, errors.Errorf("Missing session variable when evalue builtin")
 	}
@@ -117,29 +110,20 @@ type currentUserFunctionClass struct {
 }
 
 func (c *currentUserFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinCurrentUserSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	err := errors.Trace(c.verifyArgs(args))
+	bt := &builtinCurrentUserSig{newBaseBuiltinFunc(args, ctx)}
+	bt.deterministic = false
+	return bt, errors.Trace(err)
 }
 
 type builtinCurrentUserSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinCurrentUserSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	return builtinCurrentUser(args, b.ctx)
-}
-
-func (b *builtinCurrentUserSig) isDeterministic() bool {
-	return false
-}
-
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
 // TODO: The value of CURRENT_USER() can differ from the value of USER(). We will finish this after we support grant tables.
-func builtinCurrentUser(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	data := ctx.GetSessionVars()
+func (b *builtinCurrentUserSig) eval(_ []types.Datum) (d types.Datum, err error) {
+	data := b.ctx.GetSessionVars()
 	if data == nil {
 		return d, errors.Errorf("Missing session variable when evalue builtin")
 	}
@@ -153,27 +137,19 @@ type userFunctionClass struct {
 }
 
 func (c *userFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinUserSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	err := errors.Trace(c.verifyArgs(args))
+	bt := &builtinUserSig{newBaseBuiltinFunc(args, ctx)}
+	bt.deterministic = false
+	return bt, errors.Trace(err)
 }
 
 type builtinUserSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinUserSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	return builtinUser(args, b.ctx)
-}
-
-func (b *builtinUserSig) isDeterministic() bool {
-	return false
-}
-
-func builtinUser(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	data := ctx.GetSessionVars()
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_user
+func (b *builtinUserSig) eval(_ []types.Datum) (d types.Datum, err error) {
+	data := b.ctx.GetSessionVars()
 	if data == nil {
 		return d, errors.Errorf("Missing session variable when evalue builtin")
 	}
@@ -187,27 +163,18 @@ type connectionIDFunctionClass struct {
 }
 
 func (c *connectionIDFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinConnectionIDSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	err := errors.Trace(c.verifyArgs(args))
+	bt := &builtinConnectionIDSig{newBaseBuiltinFunc(args, ctx)}
+	bt.deterministic = false
+	return bt, errors.Trace(err)
 }
 
 type builtinConnectionIDSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinConnectionIDSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	return builtinConnectionID(args, b.ctx)
-}
-
-func (b *builtinConnectionIDSig) isDeterministic() bool {
-	return false
-}
-
-func builtinConnectionID(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-	data := ctx.GetSessionVars()
+func (b *builtinConnectionIDSig) eval(_ []types.Datum) (d types.Datum, err error) {
+	data := b.ctx.GetSessionVars()
 	if data == nil {
 		return d, errors.Errorf("Missing session variable when evalue builtin")
 	}
@@ -221,36 +188,31 @@ type lastInsertIDFunctionClass struct {
 }
 
 func (c *lastInsertIDFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinLastInsertIDSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	err := errors.Trace(c.verifyArgs(args))
+	bt := &builtinLastInsertIDSig{newBaseBuiltinFunc(args, ctx)}
+	bt.deterministic = false
+	return bt, errors.Trace(err)
 }
 
 type builtinLastInsertIDSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinLastInsertIDSig) eval(row []types.Datum) (types.Datum, error) {
+// See http://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_last-insert-id
+func (b *builtinLastInsertIDSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	return builtinLastInsertID(args, b.ctx)
-}
-
-func (b *builtinLastInsertIDSig) isDeterministic() bool {
-	return false
-}
-
-// See http://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_last-insert-id
-func builtinLastInsertID(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	if len(args) == 1 {
-		id, err := args[0].ToInt64(ctx.GetSessionVars().StmtCtx)
+		id, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
 		if err != nil {
 			return d, errors.Trace(err)
 		}
-		ctx.GetSessionVars().SetLastInsertID(uint64(id))
+		b.ctx.GetSessionVars().SetLastInsertID(uint64(id))
 	}
 
-	d.SetUint64(ctx.GetSessionVars().LastInsertID)
+	d.SetUint64(b.ctx.GetSessionVars().LastInsertID)
 	return
 }
 
@@ -259,26 +221,106 @@ type versionFunctionClass struct {
 }
 
 func (c *versionFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinVersionSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	err := errors.Trace(c.verifyArgs(args))
+	bt := &builtinVersionSig{newBaseBuiltinFunc(args, ctx)}
+	bt.deterministic = false
+	return bt, errors.Trace(err)
 }
 
 type builtinVersionSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinVersionSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	return builtinVersion(args, b.ctx)
-}
-
-func (b *builtinVersionSig) isDeterministic() bool {
-	return false
-}
-
-func builtinVersion(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_version
+func (b *builtinVersionSig) eval(_ []types.Datum) (d types.Datum, err error) {
 	d.SetString(mysql.ServerVersion)
 	return d, nil
+}
+
+type benchmarkFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *benchmarkFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinBenchmarkSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinBenchmarkSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_benchmark
+func (b *builtinBenchmarkSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("BENCHMARK")
+}
+
+type charsetFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *charsetFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinCharsetSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinCharsetSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_charset
+func (b *builtinCharsetSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("CHARSET")
+}
+
+type coercibilityFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *coercibilityFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinCoercibilitySig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinCoercibilitySig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_coercibility
+func (b *builtinCoercibilitySig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("COERCIBILITY")
+}
+
+type collationFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *collationFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinCollationSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinCollationSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_collation
+func (b *builtinCollationSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("COLLATION")
+}
+
+type rowCountFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *rowCountFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	err := errors.Trace(c.verifyArgs(args))
+	bt := &builtinRowCountSig{newBaseBuiltinFunc(args, ctx)}
+	bt.deterministic = false
+	return bt, errors.Trace(err)
+}
+
+type builtinRowCountSig struct {
+	baseBuiltinFunc
+}
+
+// https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_row-count
+func (b *builtinRowCountSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("ROW_COUNT")
 }

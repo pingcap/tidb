@@ -471,6 +471,14 @@ func (t *Time) Sub(t1 *Time) Duration {
 	}
 }
 
+// Add adds d to t, returns a duration value.
+// Note that add should not be done on different time types.
+func (t *Time) Add(d *Duration) Duration {
+	d.Duration = gotime.Duration(-int64(d.Duration))
+	t2, _ := d.ConvertToTime(t.Type)
+	return t.Sub(&t2)
+}
+
 // TimestampDiff returns t2 - t1 where t1 and t2 are date or datetime expressions.
 // The unit for the result (an integer) is given by the unit argument.
 // The legal values for unit are "YEAR" "QUARTER" "MONTH" "DAY" "HOUR" "SECOND" and so on.
@@ -876,7 +884,10 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 			hour, err = strconv.Atoi(seps[0])
 		} else {
 			// No delimiter.
-			if len(str) == 6 {
+			if len(str) == 7 {
+				// HHHMMSS
+				_, err = fmt.Sscanf(str, "%3d%2d%2d", &hour, &minute, &second)
+			} else if len(str) == 6 {
 				// HHMMSS
 				_, err = fmt.Sscanf(str, "%2d%2d%2d", &hour, &minute, &second)
 			} else if len(str) == 4 {
@@ -1134,6 +1145,24 @@ func ParseTimestampFromNum(num int64) (Time, error) {
 func ParseDateFromNum(num int64) (Time, error) {
 	// date has no fractional seconds precision
 	return ParseTimeFromNum(num, mysql.TypeDate, MinFsp)
+}
+
+// TimeFromDays Converts a day number to a date.
+func TimeFromDays(num int64) Time {
+	if num < 0 {
+		return Time{
+			Time: FromDate(0, 0, 0, 0, 0, 0, 0),
+			Type: mysql.TypeDate,
+			Fsp:  0,
+		}
+	}
+	year, month, day := getDateFromDaynr(uint(num))
+
+	return Time{
+		Time: FromDate(int(year), int(month), int(day), 0, 0, 0, 0),
+		Type: mysql.TypeDate,
+		Fsp:  0,
+	}
 }
 
 func checkDateType(t TimeInternal) error {
@@ -1748,14 +1777,14 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 	case 'X':
 		year, _ := t.Time.YearWeek(2)
 		if year < 0 {
-			fmt.Fprintf(buf, "%v", math.MaxUint32)
+			fmt.Fprintf(buf, "%v", uint64(math.MaxUint32))
 		} else {
 			fmt.Fprintf(buf, "%04d", year)
 		}
 	case 'x':
 		year, _ := t.Time.YearWeek(3)
 		if year < 0 {
-			fmt.Fprintf(buf, "%v", math.MaxUint32)
+			fmt.Fprintf(buf, "%v", uint64(math.MaxUint32))
 		} else {
 			fmt.Fprintf(buf, "%04d", year)
 		}

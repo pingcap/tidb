@@ -39,6 +39,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) error {
 		b.applyDropSchema(diff.SchemaID)
 		return nil
 	}
+
 	roDBInfo, ok := b.is.SchemaByID(diff.SchemaID)
 	if !ok {
 		return ErrDatabaseNotExists
@@ -65,7 +66,15 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) error {
 		if oldTableID == newTableID {
 			alloc, _ = b.is.AllocByID(oldTableID)
 		}
-		b.applyDropTable(roDBInfo, oldTableID)
+		if diff.Type == model.ActionRenameTable {
+			oldRoDBInfo, ok := b.is.SchemaByID(diff.OldSchemaID)
+			if !ok {
+				return ErrDatabaseNotExists
+			}
+			b.applyDropTable(oldRoDBInfo, oldTableID)
+		} else {
+			b.applyDropTable(roDBInfo, oldTableID)
+		}
 	}
 	if tableIDIsValid(newTableID) {
 		// All types except DropTable.
@@ -74,8 +83,6 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) error {
 			return errors.Trace(err)
 		}
 	}
-	// The old DBInfo still holds a reference to old table info, we need to update it.
-	b.updateDBInfo(roDBInfo, oldTableID, newTableID)
 	return nil
 }
 
@@ -95,24 +102,6 @@ func (b *Builder) copySortedTables(oldTableID, newTableID int64) {
 		copy(newSortedTables, oldSortedTables)
 		buckets[tableBucketIdx(newTableID)] = newSortedTables
 	}
-}
-
-// updateDBInfo clones a new DBInfo from old DBInfo, and update on the new one.
-func (b *Builder) updateDBInfo(roDBInfo *model.DBInfo, oldTableID, newTableID int64) {
-	newDbInfo := *roDBInfo
-	newDbInfo.Tables = make([]*model.TableInfo, 0, len(roDBInfo.Tables))
-	if tableIDIsValid(newTableID) {
-		// All types except DropTable.
-		if newTbl, ok := b.is.TableByID(newTableID); ok {
-			newDbInfo.Tables = append(newDbInfo.Tables, newTbl.Meta())
-		}
-	}
-	for _, tblInfo := range roDBInfo.Tables {
-		if tblInfo.ID != oldTableID && tblInfo.ID != newTableID {
-			newDbInfo.Tables = append(newDbInfo.Tables, tblInfo)
-		}
-	}
-	b.is.schemaMap[roDBInfo.Name.L].dbInfo = &newDbInfo
 }
 
 func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff) error {
@@ -151,7 +140,11 @@ func (b *Builder) applyCreateTable(m *meta.Meta, roDBInfo *model.DBInfo, tableID
 		return ErrTableNotExists
 	}
 	if alloc == nil {
-		alloc = autoid.NewAllocator(b.handle.store, roDBInfo.ID)
+		schemaID := roDBInfo.ID
+		if tblInfo.OldSchemaID != 0 {
+			schemaID = tblInfo.OldSchemaID
+		}
+		alloc = autoid.NewAllocator(b.handle.store, schemaID)
 	}
 	tbl, err := tables.TableFromMeta(alloc, tblInfo)
 	if err != nil {
@@ -164,21 +157,38 @@ func (b *Builder) applyCreateTable(m *meta.Meta, roDBInfo *model.DBInfo, tableID
 	sortedTables = append(sortedTables, tbl)
 	sort.Sort(sortedTables)
 	b.is.sortedTablesBuckets[bucketIdx] = sortedTables
+
+	newTbl, ok := b.is.TableByID(tableID)
+	if ok {
+		roDBInfo.Tables = append(roDBInfo.Tables, newTbl.Meta())
+	}
 	return nil
 }
 
-func (b *Builder) applyDropTable(di *model.DBInfo, tableID int64) {
+func (b *Builder) applyDropTable(roDBInfo *model.DBInfo, tableID int64) {
 	bucketIdx := tableBucketIdx(tableID)
 	sortedTables := b.is.sortedTablesBuckets[bucketIdx]
 	idx := sortedTables.searchTable(tableID)
 	if idx == -1 {
 		return
 	}
-	if tableNames, ok := b.is.schemaMap[di.Name.L]; ok {
+	if tableNames, ok := b.is.schemaMap[roDBInfo.Name.L]; ok {
 		delete(tableNames.tables, sortedTables[idx].Meta().Name.L)
 	}
 	// Remove the table in sorted table slice.
 	b.is.sortedTablesBuckets[bucketIdx] = append(sortedTables[0:idx], sortedTables[idx+1:]...)
+
+	// The old DBInfo still holds a reference to old table info, we need to remove it.
+	for i, tblInfo := range roDBInfo.Tables {
+		if tblInfo.ID == tableID {
+			if i == len(roDBInfo.Tables)-1 {
+				roDBInfo.Tables = roDBInfo.Tables[:i]
+			} else {
+				roDBInfo.Tables = append(roDBInfo.Tables[:i], roDBInfo.Tables[i+1:]...)
+			}
+			break
+		}
+	}
 }
 
 // InitWithOldInfoSchema initializes an empty new InfoSchema by copies all the data from old InfoSchema.
@@ -235,7 +245,11 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo) error {
 	}
 	b.is.schemaMap[di.Name.L] = schTbls
 	for _, t := range di.Tables {
-		alloc := autoid.NewAllocator(b.handle.store, di.ID)
+		schemaID := di.ID
+		if t.OldSchemaID != 0 {
+			schemaID = t.OldSchemaID
+		}
+		alloc := autoid.NewAllocator(b.handle.store, schemaID)
 		var tbl table.Table
 		tbl, err := tables.TableFromMeta(alloc, t)
 		if err != nil {

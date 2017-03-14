@@ -17,12 +17,15 @@ import (
 	"bytes"
 	"math"
 	"sync"
+	"time"
 
+	"github.com/coreos/etcd/pkg/monotime"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tipb/go-binlog"
 	"golang.org/x/net/context"
 )
@@ -47,6 +50,11 @@ func (ca twoPhaseCommitAction) String() string {
 	return "unknown"
 }
 
+// MetricsTag returns detail tag for metrics.
+func (ca twoPhaseCommitAction) MetricsTag() string {
+	return "2pc_" + ca.String()
+}
+
 // twoPhaseCommitter executes a two-phase commit protocol.
 type twoPhaseCommitter struct {
 	store     *tikvStore
@@ -65,8 +73,13 @@ type twoPhaseCommitter struct {
 
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
 func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
-	var keys [][]byte
-	var size int
+	var (
+		keys    [][]byte
+		size    int
+		putCnt  int
+		delCnt  int
+		lockCnt int
+	)
 	mutations := make(map[string]*pb.Mutation)
 	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
 		if len(v) > 0 {
@@ -75,14 +88,20 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 				Key:   k,
 				Value: v,
 			}
+			putCnt++
 		} else {
 			mutations[string(k)] = &pb.Mutation{
 				Op:  pb.Op_Del,
 				Key: k,
 			}
+			delCnt++
 		}
 		keys = append(keys, k)
-		size += len(k) + len(v)
+		entrySize := len(k) + len(v)
+		if entrySize > kv.TxnEntrySizeLimit {
+			return kv.ErrEntryTooLarge
+		}
+		size += entrySize
 		return nil
 	})
 	if err != nil {
@@ -99,28 +118,28 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 				Op:  pb.Op_Lock,
 				Key: lockKey,
 			}
+			lockCnt++
 			keys = append(keys, lockKey)
 			size += len(lockKey)
 		}
 	}
+	if len(keys) > kv.TxnEntryCountLimit || size > kv.TxnTotalSizeLimit {
+		return nil, kv.ErrTxnTooLarge
+	}
+	const logEntryCount = 10000
+	const logSize = 4 * 1024 * 1024 // 4MB
+	if len(keys) > logEntryCount || size > logSize {
+		tableID := tablecodec.DecodeTableID(keys[0])
+		log.Infof("[BIG_TXN] table id:%d size:%d, keys:%d, puts:%d, dels:%d, locks:%d, startTS:%d",
+			tableID, size, len(keys), putCnt, delCnt, lockCnt, txn.startTS)
+	}
+
 	txnWriteKVCountHistogram.Observe(float64(len(keys)))
 	txnWriteSizeHistogram.Observe(float64(size / 1024))
 
-	// Increase lockTTL for large transactions.
-	// The formula is `ttl = ttlFactor * sqrt(sizeInMiB)`.
-	// When writeSize <= 256K, ttl is defaultTTL (3s);
-	// When writeSize is 1MiB, 100MiB, or 400MiB, ttl is 6s, 60s, 120s correspondingly;
-	// When writeSize >= 400MiB, we return kv.ErrTxnTooLarge.
-	var lockTTL uint64
-	if size > txnCommitBatchSize {
-		sizeMiB := float64(size) / 1024 / 1024
-		lockTTL = uint64(float64(ttlFactor) * math.Sqrt(float64(sizeMiB)))
-		if lockTTL < defaultLockTTL {
-			lockTTL = defaultLockTTL
-		}
-		if lockTTL > maxLockTTL {
-			return nil, kv.ErrTxnTooLarge
-		}
+	lockTTL, err := txnLockTTL(txn.startTime, size)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	return &twoPhaseCommitter{
@@ -137,6 +156,33 @@ func (c *twoPhaseCommitter) primary() []byte {
 	return c.keys[0]
 }
 
+const bytesPerMiB = 1024 * 1024
+
+func txnLockTTL(startTime monotime.Time, txnSize int) (uint64, error) {
+	// Increase lockTTL for large transactions.
+	// The formula is `ttl = ttlFactor * sqrt(sizeInMiB)`.
+	// When writeSize <= 256K, ttl is defaultTTL (3s);
+	// When writeSize is 1MiB, 100MiB, or 400MiB, ttl is 6s, 60s, 120s correspondingly;
+	// When writeSize >= 400MiB, we return kv.ErrTxnTooLarge.
+	var lockTTL uint64
+	if txnSize > txnCommitBatchSize {
+		sizeMiB := float64(txnSize) / bytesPerMiB
+		lockTTL = uint64(float64(ttlFactor) * math.Sqrt(float64(sizeMiB)))
+		if lockTTL < defaultLockTTL {
+			lockTTL = defaultLockTTL
+		}
+		if lockTTL > maxLockTTL {
+			lockTTL = maxLockTTL
+		}
+	}
+
+	// Increase lockTTL by the transaction's read time.
+	// When resolving a lock, we compare current ts and startTS+lockTTL to decide whether to clean up. If a txn
+	// takes a long time to read, increasing its TTL will help to prevent it from been aborted soon after prewrite.
+	elapsed := time.Duration(monotime.Now()-startTime) / time.Millisecond
+	return lockTTL + uint64(elapsed), nil
+}
+
 // doActionOnKeys groups keys into primary batch and secondary batches, if primary batch exists in the key,
 // it does action on primary batch first, then on secondary batches. If action is commit, secondary batches
 // is done in background goroutine.
@@ -148,6 +194,8 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	txnRegionsNumHistogram.WithLabelValues(action.MetricsTag()).Observe(float64(len(groups)))
 
 	var batches []batchKeys
 	var sizeFunc = c.keySize
@@ -222,12 +270,13 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 	for i := 0; i < len(batches); i++ {
 		if e := <-ch; e != nil {
 			log.Debugf("2PC doActionOnBatches %s failed: %v, tid: %d", action, e, c.startTS)
+			// Cancel other requests and return the first error.
 			if cancel != nil {
-				// Cancel other requests and return the first error.
 				cancel()
-				return errors.Trace(e)
 			}
-			err = e
+			if err == nil {
+				err = e
+			}
 		}
 	}
 	return errors.Trace(err)

@@ -14,13 +14,16 @@
 package tikv
 
 import (
+	goctx "context"
 	"math/rand"
 	"strings"
+	"time"
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
-	"golang.org/x/net/context"
 )
 
 type testCommitterSuite struct {
@@ -112,7 +115,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 		"b": "b0",
 	})
 
-	ctx := context.Background()
+	ctx := goctx.Background()
 	txn1 := s.begin(c)
 	err := txn1.Set([]byte("a"), []byte("a1"))
 	c.Assert(err, IsNil)
@@ -161,11 +164,11 @@ func (s *testCommitterSuite) TestContextCancel(c *C) {
 	committer, err := newTwoPhaseCommitter(txn1)
 	c.Assert(err, IsNil)
 
-	bo := NewBackoffer(prewriteMaxBackoff, context.Background())
+	bo := NewBackoffer(prewriteMaxBackoff, goctx.Background())
 	cancel := bo.WithCancel()
 	cancel() // cancel the context
 	err = committer.prewriteKeys(bo, committer.keys)
-	c.Assert(errors.Cause(err), Equals, context.Canceled)
+	c.Assert(errors.Cause(err), Equals, goctx.Canceled)
 }
 
 func (s *testCommitterSuite) TestContextCancelRetryable(c *C) {
@@ -175,7 +178,7 @@ func (s *testCommitterSuite) TestContextCancelRetryable(c *C) {
 	c.Assert(err, IsNil)
 	committer, err := newTwoPhaseCommitter(txn1)
 	c.Assert(err, IsNil)
-	err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff, context.Background()), committer.keys)
+	err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff, goctx.Background()), committer.keys)
 	c.Assert(err, IsNil)
 	// txn3 writes "c"
 	err = txn3.Set([]byte("c"), []byte("c3"))
@@ -194,4 +197,92 @@ func (s *testCommitterSuite) TestContextCancelRetryable(c *C) {
 	err = txn2.Commit()
 	c.Assert(err, NotNil)
 	c.Assert(strings.Contains(err.Error(), txnRetryableMark), IsTrue)
+}
+
+func (s *testCommitterSuite) mustGetRegionID(c *C, key []byte) uint64 {
+	loc, err := s.store.regionCache.LocateKey(NewBackoffer(getMaxBackoff, goctx.Background()), key)
+	c.Assert(err, IsNil)
+	return loc.Region.id
+}
+
+func (s *testCommitterSuite) isKeyLocked(c *C, key []byte) bool {
+	ver, err := s.store.CurrentVersion()
+	c.Assert(err, IsNil)
+	bo := NewBackoffer(getMaxBackoff, goctx.Background())
+	req := &kvrpcpb.Request{
+		Type: kvrpcpb.MessageType_CmdGet,
+		CmdGetReq: &kvrpcpb.CmdGetRequest{
+			Key:     key,
+			Version: ver.Ver,
+		},
+	}
+	loc, err := s.store.regionCache.LocateKey(bo, key)
+	c.Assert(err, IsNil)
+	resp, err := s.store.SendKVReq(bo, req, loc.Region, readTimeoutShort)
+	c.Assert(err, IsNil)
+	cmdGetResp := resp.GetCmdGetResp()
+	c.Assert(cmdGetResp, NotNil)
+	keyErr := cmdGetResp.GetError()
+	return keyErr.GetLocked() != nil
+}
+
+func (s *testCommitterSuite) TestPrewriteCancel(c *C) {
+	// Setup region delays for key "b" and "c".
+	delays := map[uint64]time.Duration{
+		s.mustGetRegionID(c, []byte("b")): time.Millisecond * 10,
+		s.mustGetRegionID(c, []byte("c")): time.Millisecond * 20,
+	}
+	s.store.client = &slowClient{
+		Client:       s.store.client,
+		regionDelays: delays,
+	}
+
+	txn1, txn2 := s.begin(c), s.begin(c)
+	// txn2 writes "b"
+	err := txn2.Set([]byte("b"), []byte("b2"))
+	c.Assert(err, IsNil)
+	err = txn2.Commit()
+	c.Assert(err, IsNil)
+	// txn1 writes "a"(PK), "b", "c" on different regions.
+	// "b" will return an error and cancel commit.
+	err = txn1.Set([]byte("a"), []byte("a1"))
+	c.Assert(err, IsNil)
+	err = txn1.Set([]byte("b"), []byte("b1"))
+	c.Assert(err, IsNil)
+	err = txn1.Set([]byte("c"), []byte("c1"))
+	c.Assert(err, IsNil)
+	err = txn1.Commit()
+	c.Assert(err, NotNil)
+	// "c" should be cleaned up in reasonable time.
+	for i := 0; i < 50; i++ {
+		if !s.isKeyLocked(c, []byte("c")) {
+			return
+		}
+		time.Sleep(time.Millisecond * 10)
+	}
+	c.Fail()
+}
+
+// slowClient wraps rpcClient and makes some regions respond with delay.
+type slowClient struct {
+	Client
+	regionDelays map[uint64]time.Duration
+}
+
+func (c *slowClient) SendKVReq(ctx goctx.Context, addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error) {
+	for id, delay := range c.regionDelays {
+		if req.GetContext().GetRegionId() == id {
+			time.Sleep(delay)
+		}
+	}
+	return c.Client.SendKVReq(ctx, addr, req, timeout)
+}
+
+func (c *slowClient) SendCopReq(ctx goctx.Context, addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
+	for id, delay := range c.regionDelays {
+		if req.GetContext().GetRegionId() == id {
+			time.Sleep(delay)
+		}
+	}
+	return c.Client.SendCopReq(ctx, addr, req, timeout)
 }

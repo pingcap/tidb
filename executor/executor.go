@@ -14,8 +14,6 @@
 package executor
 
 import (
-	"container/heap"
-	"sort"
 	"sync"
 	"sync/atomic"
 
@@ -32,14 +30,11 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/distinct"
 	"github.com/pingcap/tidb/util/types"
 )
 
 var (
-	_ Executor = &ApplyExec{}
 	_ Executor = &CheckTableExec{}
-	_ Executor = &DistinctExec{}
 	_ Executor = &DummyScanExec{}
 	_ Executor = &ExistsExec{}
 	_ Executor = &HashAggExec{}
@@ -55,7 +50,6 @@ var (
 	_ Executor = &TableDualExec{}
 	_ Executor = &TableScanExec{}
 	_ Executor = &TopnExec{}
-	_ Executor = &TrimExec{}
 	_ Executor = &UnionExec{}
 )
 
@@ -107,12 +101,12 @@ type RowKeyEntry struct {
 type Executor interface {
 	Next() (*Row, error)
 	Close() error
-	Schema() expression.Schema
+	Schema() *expression.Schema
 }
 
 // ShowDDLExec represents a show DDL executor.
 type ShowDDLExec struct {
-	schema  expression.Schema
+	schema  *expression.Schema
 	ctx     context.Context
 	ddlInfo *inspectkv.DDLInfo
 	bgInfo  *inspectkv.DDLInfo
@@ -120,7 +114,7 @@ type ShowDDLExec struct {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *ShowDDLExec) Schema() expression.Schema {
+func (e *ShowDDLExec) Schema() *expression.Schema {
 	return e.schema
 }
 
@@ -175,8 +169,8 @@ type CheckTableExec struct {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *CheckTableExec) Schema() expression.Schema {
-	return expression.NewSchema(nil)
+func (e *CheckTableExec) Schema() *expression.Schema {
+	return expression.NewSchema()
 }
 
 // Next implements the Executor Next interface.
@@ -220,11 +214,11 @@ type SelectLockExec struct {
 	Src    Executor
 	Lock   ast.SelectLockType
 	ctx    context.Context
-	schema expression.Schema
+	schema *expression.Schema
 }
 
 // Schema implements the Executor Schema interface.
-func (e *SelectLockExec) Schema() expression.Schema {
+func (e *SelectLockExec) Schema() *expression.Schema {
 	return e.schema
 }
 
@@ -263,11 +257,11 @@ type LimitExec struct {
 	Offset uint64
 	Count  uint64
 	Idx    uint64
-	schema expression.Schema
+	schema *expression.Schema
 }
 
 // Schema implements the Executor Schema interface.
-func (e *LimitExec) Schema() expression.Schema {
+func (e *LimitExec) Schema() *expression.Schema {
 	return e.schema
 }
 
@@ -309,50 +303,6 @@ type orderByRow struct {
 	row *Row
 }
 
-// DistinctExec represents Distinct executor.
-// It ignores duplicate rows from source Executor by using a *distinct.Checker which maintains
-// a map to check duplication.
-// Because every distinct row will be added to the map, the memory usage might be very high.
-type DistinctExec struct {
-	Src     Executor
-	checker *distinct.Checker
-	schema  expression.Schema
-}
-
-// Schema implements the Executor Schema interface.
-func (e *DistinctExec) Schema() expression.Schema {
-	return e.schema
-}
-
-// Next implements the Executor Next interface.
-func (e *DistinctExec) Next() (*Row, error) {
-	if e.checker == nil {
-		e.checker = distinct.CreateDistinctChecker()
-	}
-	for {
-		row, err := e.Src.Next()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if row == nil {
-			return nil, nil
-		}
-		ok, err := e.checker.Check(types.DatumsToInterfaces(row.Data))
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if !ok {
-			continue
-		}
-		return row, nil
-	}
-}
-
-// Close implements the Executor Close interface.
-func (e *DistinctExec) Close() error {
-	return e.Src.Close()
-}
-
 // ReverseExec produces reverse ordered result, it is used to wrap executors that do not support reverse scan.
 type ReverseExec struct {
 	Src    Executor
@@ -362,7 +312,7 @@ type ReverseExec struct {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *ReverseExec) Schema() expression.Schema {
+func (e *ReverseExec) Schema() *expression.Schema {
 	return e.Src.Schema()
 }
 
@@ -406,6 +356,9 @@ func init() {
 		}
 		e := &executorBuilder{is: is, ctx: ctx}
 		exec := e.build(p)
+		if e.err != nil {
+			return d, errors.Trace(err)
+		}
 		row, err := exec.Next()
 		if err != nil {
 			return d, errors.Trace(err)
@@ -425,14 +378,14 @@ func init() {
 // ProjectionExec represents a select fields executor.
 type ProjectionExec struct {
 	Src      Executor
-	schema   expression.Schema
+	schema   *expression.Schema
 	executed bool
 	ctx      context.Context
 	exprs    []expression.Expression
 }
 
 // Schema implements the Executor Schema interface.
-func (e *ProjectionExec) Schema() expression.Schema {
+func (e *ProjectionExec) Schema() *expression.Schema {
 	return e.schema
 }
 
@@ -461,7 +414,7 @@ func (e *ProjectionExec) Next() (retRow *Row, err error) {
 		Data:    make([]types.Datum, 0, len(e.exprs)),
 	}
 	for _, expr := range e.exprs {
-		val, err := expr.Eval(srcRow.Data, e.ctx)
+		val, err := expr.Eval(srcRow.Data)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -480,7 +433,7 @@ func (e *ProjectionExec) Close() error {
 
 // TableDualExec represents a dual table executor.
 type TableDualExec struct {
-	schema   expression.Schema
+	schema   *expression.Schema
 	executed bool
 }
 
@@ -490,7 +443,7 @@ func (e *TableDualExec) Init() {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *TableDualExec) Schema() expression.Schema {
+func (e *TableDualExec) Schema() *expression.Schema {
 	return e.schema
 }
 
@@ -513,11 +466,11 @@ type SelectionExec struct {
 	Src       Executor
 	Condition expression.Expression
 	ctx       context.Context
-	schema    expression.Schema
+	schema    *expression.Schema
 }
 
 // Schema implements the Executor Schema interface.
-func (e *SelectionExec) Schema() expression.Schema {
+func (e *SelectionExec) Schema() *expression.Schema {
 	return e.schema
 }
 
@@ -555,7 +508,7 @@ type TableScanExec struct {
 	seekHandle int64
 	iter       kv.Iterator
 	cursor     int
-	schema     expression.Schema
+	schema     *expression.Schema
 	columns    []*model.ColumnInfo
 
 	isInfoSchema     bool
@@ -564,7 +517,7 @@ type TableScanExec struct {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *TableScanExec) Schema() expression.Schema {
+func (e *TableScanExec) Schema() *expression.Schema {
 	return e.schema
 }
 
@@ -683,222 +636,15 @@ func (e *TableScanExec) Close() error {
 	return nil
 }
 
-// SortExec represents sorting executor.
-type SortExec struct {
-	Src     Executor
-	ByItems []*plan.ByItems
-	Rows    []*orderByRow
-	ctx     context.Context
-	Idx     int
-	fetched bool
-	err     error
-	schema  expression.Schema
-}
-
-// Close implements the Executor Close interface.
-func (e *SortExec) Close() error {
-	e.fetched = false
-	e.Rows = nil
-	return e.Src.Close()
-}
-
-// Schema implements the Executor Schema interface.
-func (e *SortExec) Schema() expression.Schema {
-	return e.schema
-}
-
-// Len returns the number of rows.
-func (e *SortExec) Len() int {
-	return len(e.Rows)
-}
-
-// Swap implements sort.Interface Swap interface.
-func (e *SortExec) Swap(i, j int) {
-	e.Rows[i], e.Rows[j] = e.Rows[j], e.Rows[i]
-}
-
-// Less implements sort.Interface Less interface.
-func (e *SortExec) Less(i, j int) bool {
-	sc := e.ctx.GetSessionVars().StmtCtx
-	for index, by := range e.ByItems {
-		v1 := e.Rows[i].key[index]
-		v2 := e.Rows[j].key[index]
-
-		ret, err := v1.CompareDatum(sc, v2)
-		if err != nil {
-			e.err = errors.Trace(err)
-			return true
-		}
-
-		if by.Desc {
-			ret = -ret
-		}
-
-		if ret < 0 {
-			return true
-		} else if ret > 0 {
-			return false
-		}
-	}
-
-	return false
-}
-
-// Next implements the Executor Next interface.
-func (e *SortExec) Next() (*Row, error) {
-	if !e.fetched {
-		for {
-			srcRow, err := e.Src.Next()
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if srcRow == nil {
-				break
-			}
-			orderRow := &orderByRow{
-				row: srcRow,
-				key: make([]types.Datum, len(e.ByItems)),
-			}
-			for i, byItem := range e.ByItems {
-				orderRow.key[i], err = byItem.Expr.Eval(srcRow.Data, e.ctx)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-			}
-			e.Rows = append(e.Rows, orderRow)
-		}
-		sort.Sort(e)
-		e.fetched = true
-	}
-	if e.err != nil {
-		return nil, errors.Trace(e.err)
-	}
-	if e.Idx >= len(e.Rows) {
-		return nil, nil
-	}
-	row := e.Rows[e.Idx].row
-	e.Idx++
-	return row, nil
-}
-
-// TopnExec implements a Top-N algorithm and it is built from a SELECT statement with ORDER BY and LIMIT.
-// Instead of sorting all the rows fetched from the table, it keeps the Top-N elements only in a heap to reduce memory usage.
-type TopnExec struct {
-	SortExec
-	limit      *plan.Limit
-	totalCount int
-	heapSize   int
-}
-
-// Less implements heap.Interface Less interface.
-func (e *TopnExec) Less(i, j int) bool {
-	sc := e.ctx.GetSessionVars().StmtCtx
-	for index, by := range e.ByItems {
-		v1 := e.Rows[i].key[index]
-		v2 := e.Rows[j].key[index]
-
-		ret, err := v1.CompareDatum(sc, v2)
-		if err != nil {
-			e.err = errors.Trace(err)
-			return true
-		}
-
-		if by.Desc {
-			ret = -ret
-		}
-
-		if ret > 0 {
-			return true
-		} else if ret < 0 {
-			return false
-		}
-	}
-
-	return false
-}
-
-// Len implements heap.Interface Len interface.
-func (e *TopnExec) Len() int {
-	return e.heapSize
-}
-
-// Push implements heap.Interface Push interface.
-func (e *TopnExec) Push(x interface{}) {
-	e.Rows = append(e.Rows, x.(*orderByRow))
-	e.heapSize++
-}
-
-// Pop implements heap.Interface Pop interface.
-func (e *TopnExec) Pop() interface{} {
-	e.heapSize--
-	return nil
-}
-
-// Next implements the Executor Next interface.
-func (e *TopnExec) Next() (*Row, error) {
-	if !e.fetched {
-		e.Idx = int(e.limit.Offset)
-		e.totalCount = int(e.limit.Offset + e.limit.Count)
-		e.Rows = make([]*orderByRow, 0, e.totalCount+1)
-		e.heapSize = 0
-		for {
-			srcRow, err := e.Src.Next()
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if srcRow == nil {
-				break
-			}
-			// build orderRow from srcRow.
-			orderRow := &orderByRow{
-				row: srcRow,
-				key: make([]types.Datum, len(e.ByItems)),
-			}
-			for i, byItem := range e.ByItems {
-				orderRow.key[i], err = byItem.Expr.Eval(srcRow.Data, e.ctx)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-			}
-			if e.totalCount == e.heapSize {
-				// An equivalent of Push and Pop. We don't use the standard Push and Pop
-				// to reduce the number of comparisons.
-				e.Rows = append(e.Rows, orderRow)
-				if e.Less(0, e.heapSize) {
-					e.Swap(0, e.heapSize)
-					heap.Fix(e, 0)
-				}
-				e.Rows = e.Rows[:e.heapSize]
-			} else {
-				heap.Push(e, orderRow)
-			}
-		}
-		if e.limit.Offset == 0 {
-			sort.Sort(&e.SortExec)
-		} else {
-			for i := 0; i < int(e.limit.Count) && e.Len() > 0; i++ {
-				heap.Pop(e)
-			}
-		}
-		e.fetched = true
-	}
-	if e.Idx >= len(e.Rows) {
-		return nil, nil
-	}
-	row := e.Rows[e.Idx].row
-	e.Idx++
-	return row, nil
-}
-
 // ExistsExec represents exists executor.
 type ExistsExec struct {
-	schema    expression.Schema
+	schema    *expression.Schema
 	Src       Executor
 	evaluated bool
 }
 
 // Schema implements the Executor Schema interface.
-func (e *ExistsExec) Schema() expression.Schema {
+func (e *ExistsExec) Schema() *expression.Schema {
 	return e.schema
 }
 
@@ -925,13 +671,13 @@ func (e *ExistsExec) Next() (*Row, error) {
 // MaxOneRowExec checks if the number of rows that a query returns is at maximum one.
 // It's built from subquery expression.
 type MaxOneRowExec struct {
-	schema    expression.Schema
+	schema    *expression.Schema
 	Src       Executor
 	evaluated bool
 }
 
 // Schema implements the Executor Schema interface.
-func (e *MaxOneRowExec) Schema() expression.Schema {
+func (e *MaxOneRowExec) Schema() *expression.Schema {
 	return e.schema
 }
 
@@ -964,71 +710,45 @@ func (e *MaxOneRowExec) Next() (*Row, error) {
 	return nil, nil
 }
 
-// TrimExec truncates extra columns in the Src rows.
-// Some columns in src rows are not needed in the result.
-// For example, in the 'SELECT a from t order by b' statement,
-// 'b' is needed for ordering, but not needed in the result.
-type TrimExec struct {
-	schema expression.Schema
-	Src    Executor
-	len    int
-}
-
-// Schema implements the Executor Schema interface.
-func (e *TrimExec) Schema() expression.Schema {
-	return e.schema
-}
-
-// Close implements the Executor Close interface.
-func (e *TrimExec) Close() error {
-	return e.Src.Close()
-}
-
-// Next implements the Executor Next interface.
-func (e *TrimExec) Next() (*Row, error) {
-	row, err := e.Src.Next()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if row == nil {
-		return nil, nil
-	}
-	row.Data = row.Data[:e.len]
-	return row, nil
-}
-
 // UnionExec represents union executor.
 // UnionExec has multiple source Executors, it executes them sequentially, and do conversion to the same type
 // as source Executors may has different field type, we need to do conversion.
 type UnionExec struct {
-	schema   expression.Schema
+	schema   *expression.Schema
 	Srcs     []Executor
 	ctx      context.Context
 	inited   bool
 	finished atomic.Value
-	rowsCh   chan []*Row
+	resultCh chan *execResult
 	rows     []*Row
 	cursor   int
 	wg       sync.WaitGroup
 	closedCh chan struct{}
-	errCh    chan error
+}
+
+type execResult struct {
+	rows []*Row
+	err  error
 }
 
 // Schema implements the Executor Schema interface.
-func (e *UnionExec) Schema() expression.Schema {
+func (e *UnionExec) Schema() *expression.Schema {
 	return e.schema
 }
 
 func (e *UnionExec) waitAllFinished() {
 	e.wg.Wait()
-	close(e.rowsCh)
+	close(e.resultCh)
 	close(e.closedCh)
 }
 
 func (e *UnionExec) fetchData(idx int) {
 	defer e.wg.Done()
 	for {
-		rows := make([]*Row, 0, batchSize)
+		result := &execResult{
+			rows: make([]*Row, 0, batchSize),
+			err:  nil,
+		}
 		for i := 0; i < batchSize; i++ {
 			if e.finished.Load().(bool) {
 				return
@@ -1036,31 +756,31 @@ func (e *UnionExec) fetchData(idx int) {
 			row, err := e.Srcs[idx].Next()
 			if err != nil {
 				e.finished.Store(true)
-				e.errCh <- err
+				result.err = err
+				e.resultCh <- result
 				return
 			}
 			if row == nil {
-				if len(rows) > 0 {
-					e.rowsCh <- rows
+				if len(result.rows) > 0 {
+					e.resultCh <- result
 				}
 				return
 			}
-			if idx != 0 {
-				// TODO: Add cast function in plan building phase.
-				for j := range row.Data {
-					col := e.schema.Columns[j]
-					val, err := row.Data[j].ConvertTo(e.ctx.GetSessionVars().StmtCtx, col.RetType)
-					if err != nil {
-						e.finished.Store(true)
-						e.errCh <- err
-						return
-					}
-					row.Data[j] = val
+			// TODO: Add cast function in plan building phase.
+			for j := range row.Data {
+				col := e.schema.Columns[j]
+				val, err := row.Data[j].ConvertTo(e.ctx.GetSessionVars().StmtCtx, col.RetType)
+				if err != nil {
+					e.finished.Store(true)
+					result.err = err
+					e.resultCh <- result
+					return
 				}
+				row.Data[j] = val
 			}
-			rows = append(rows, row)
+			result.rows = append(result.rows, row)
 		}
-		e.rowsCh <- rows
+		e.resultCh <- result
 	}
 }
 
@@ -1068,8 +788,7 @@ func (e *UnionExec) fetchData(idx int) {
 func (e *UnionExec) Next() (*Row, error) {
 	if !e.inited {
 		e.finished.Store(false)
-		e.rowsCh = make(chan []*Row, batchSize*len(e.Srcs))
-		e.errCh = make(chan error, len(e.Srcs))
+		e.resultCh = make(chan *execResult, len(e.Srcs))
 		e.closedCh = make(chan struct{})
 		for i := range e.Srcs {
 			e.wg.Add(1)
@@ -1079,19 +798,17 @@ func (e *UnionExec) Next() (*Row, error) {
 		e.inited = true
 	}
 	if e.cursor >= len(e.rows) {
-		var rows []*Row
-		var err error
-		select {
-		case rows, _ = <-e.rowsCh:
-		case err, _ = <-e.errCh:
-		}
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if rows == nil {
+		result, ok := <-e.resultCh
+		if !ok {
 			return nil, nil
 		}
-		e.rows = rows
+		if result.err != nil {
+			return nil, errors.Trace(result.err)
+		}
+		if len(result.rows) == 0 {
+			return nil, nil
+		}
+		e.rows = result.rows
 		e.cursor = 0
 	}
 	row := e.rows[e.cursor]
@@ -1102,7 +819,9 @@ func (e *UnionExec) Next() (*Row, error) {
 // Close implements the Executor Close interface.
 func (e *UnionExec) Close() error {
 	e.finished.Store(true)
-	<-e.closedCh
+	if e.inited {
+		<-e.closedCh
+	}
 	e.cursor = 0
 	e.inited = false
 	e.rows = nil
@@ -1118,11 +837,11 @@ func (e *UnionExec) Close() error {
 // DummyScanExec returns zero results, when some where condition never match, there won't be any
 // rows to return, so DummyScan is used to avoid real scan on KV.
 type DummyScanExec struct {
-	schema expression.Schema
+	schema *expression.Schema
 }
 
 // Schema implements the Executor Schema interface.
-func (e *DummyScanExec) Schema() expression.Schema {
+func (e *DummyScanExec) Schema() *expression.Schema {
 	return e.schema
 }
 
@@ -1139,7 +858,7 @@ func (e *DummyScanExec) Next() (*Row, error) {
 // CacheExec represents Cache executor.
 // it stores the return values of the executor of its child node.
 type CacheExec struct {
-	schema      expression.Schema
+	schema      *expression.Schema
 	Src         Executor
 	storedRows  []*Row
 	cursor      int
@@ -1147,7 +866,7 @@ type CacheExec struct {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *CacheExec) Schema() expression.Schema {
+func (e *CacheExec) Schema() *expression.Schema {
 	return e.schema
 }
 

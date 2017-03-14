@@ -40,6 +40,8 @@ const (
 	ActionDropForeignKey
 	ActionTruncateTable
 	ActionModifyColumn
+	ActionRenameTable
+	ActionSetDefaultValue
 )
 
 func (action ActionType) String() string {
@@ -68,6 +70,10 @@ func (action ActionType) String() string {
 		return "truncate table"
 	case ActionModifyColumn:
 		return "modify column"
+	case ActionRenameTable:
+		return "rename table"
+	case ActionSetDefaultValue:
+		return "set default value"
 	default:
 		return "none"
 	}
@@ -170,8 +176,8 @@ func (job *Job) DecodeArgs(args ...interface{}) error {
 // String implements fmt.Stringer interface.
 func (job *Job) String() string {
 	rowCount := job.GetRowCount()
-	return fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, Query:\n%s",
-		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), job.Query)
+	return fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d",
+		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args))
 }
 
 // IsFinished returns whether job is finished or not.
@@ -247,4 +253,6 @@ type SchemaDiff struct {
 
 	// OldTableID is the table ID before truncate, only used by truncate table DDL.
 	OldTableID int64 `json:"old_table_id"`
+	// OldSchemaID is the schema ID before rename table, only used by rename table DDL.
+	OldSchemaID int64 `json:"old_schema_id"`
 }
