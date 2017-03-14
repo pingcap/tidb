@@ -45,7 +45,7 @@ func (s *Server) startStatusHTTP() {
 	})
 }
 
-func (s *Server) getPdClient() (*pd.Client, error) {
+func (s *Server) getPdClient() (pd.Client, error) {
 	if s.cfg.Store != "tikv" {
 		return nil, nil
 	}
@@ -58,10 +58,10 @@ func (s *Server) getPdClient() (*pd.Client, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return &client, nil
+	return client, nil
 }
 
-func (s *Server) startHTTPServer(pdClient *pd.Client) {
+func (s *Server) startHTTPServer(pdClient pd.Client) {
 	router := mux.NewRouter()
 	router.HandleFunc("/status", s.handleStatus)
 	// HTTP path for prometheus.

@@ -50,23 +50,25 @@ const (
 // TableRegions is the response data for list table's regions.
 // It contains regions list for record and indices.
 type TableRegions struct {
-	TableName  string                 `json:"name"`
-	TableID    int64                  `json:"id"`
-	RowRegions map[uint64]*RegionMeta `json:"row_regions"`
-	Indices    []IndexRegions         `json:"indices"`
+	TableName     string         `json:"name"`
+	TableID       int64          `json:"id"`
+	RecordRegions []RegionMeta   `json:"record_regions"`
+	Indices       []IndexRegions `json:"indices"`
 }
 
 // RegionMeta contains a region's peer detail
 type RegionMeta struct {
-	Leader *metapb.Peer   `json:"leader"`
-	Peers  []*metapb.Peer `json:"peers"`
+	ID          uint64              `json:"region_id"`
+	Leader      *metapb.Peer        `json:"leader"`
+	Peers       []*metapb.Peer      `json:"peers"`
+	RegionEpoch *metapb.RegionEpoch `json:"region_epoch"`
 }
 
 // IndexRegions is the region info for one index.
 type IndexRegions struct {
-	Name    string                 `json:"name"`
-	ID      int64                  `json:"id"`
-	Regions map[uint64]*RegionMeta `json:"regions"`
+	Name    string       `json:"name"`
+	ID      int64        `json:"id"`
+	Regions []RegionMeta `json:"regions"`
 }
 
 // RegionDetail is the response data for get region by ID
@@ -99,7 +101,7 @@ type RegionFrameRange struct {
 // some common functions which would be used in HTTPListTableRegionsHandler and
 // HTTPGetRegionByIDHandler.
 type HTTPRegionHandler struct {
-	pdClient *pd.Client
+	pdClient pd.Client
 	server   *Server
 }
 
@@ -121,30 +123,33 @@ type regionHandlerTool struct {
 	regionCache *tikv.RegionCache
 }
 
-func (s *Server) newHTTPRegionHandler(pdClient *pd.Client) HTTPRegionHandler {
+func (s *Server) newHTTPRegionHandler(pdClient pd.Client) HTTPRegionHandler {
 	return HTTPRegionHandler{
 		pdClient: pdClient,
 		server:   s,
 	}
 }
 
-func (s *Server) newHTTPListTableRegionsHandler(pdClient *pd.Client) http.Handler {
+func (s *Server) newHTTPListTableRegionsHandler(pdClient pd.Client) http.Handler {
 	return HTTPListTableRegionsHandler{
 		s.newHTTPRegionHandler(pdClient),
 	}
 }
 
-func (rh HTTPListTableRegionsHandler) getRegionsMetaFromRegionIds(rIDs []uint64) (map[uint64]*RegionMeta, error) {
-	regions := make(map[uint64]*RegionMeta)
-	for _, regionID := range rIDs {
-		meta, leader, err := (*rh.pdClient).GetRegionByID(regionID)
+func (rh HTTPListTableRegionsHandler) getRegionsMetaWithRegionIds(rIDs []uint64) ([]RegionMeta, error) {
+	regions := make([]RegionMeta, len(rIDs))
+	for i, regionID := range rIDs {
+		meta, leader, err := rh.pdClient.GetRegionByID(regionID)
 		if err != nil {
 			return nil, err
 		}
-		regions[regionID] = &RegionMeta{
-			Leader: leader,
-			Peers:  meta.Peers,
+		regions[i] = RegionMeta{
+			ID:          regionID,
+			Leader:      leader,
+			Peers:       meta.Peers,
+			RegionEpoch: meta.RegionEpoch,
 		}
+
 	}
 	return regions, nil
 }
@@ -176,7 +181,7 @@ func (rh HTTPListTableRegionsHandler) ServeHTTP(w http.ResponseWriter, req *http
 		rh.writeError(w, err)
 		return
 	}
-	recordRegions, err := rh.getRegionsMetaFromRegionIds(recordRegionIDs)
+	recordRegions, err := rh.getRegionsMetaWithRegionIds(recordRegionIDs)
 	if err != nil {
 		rh.writeError(w, err)
 		return
@@ -194,7 +199,7 @@ func (rh HTTPListTableRegionsHandler) ServeHTTP(w http.ResponseWriter, req *http
 			rh.writeError(w, err)
 			return
 		}
-		indices[i].Regions, err = rh.getRegionsMetaFromRegionIds(rIDs)
+		indices[i].Regions, err = rh.getRegionsMetaWithRegionIds(rIDs)
 		if err != nil {
 			rh.writeError(w, err)
 			return
@@ -202,16 +207,16 @@ func (rh HTTPListTableRegionsHandler) ServeHTTP(w http.ResponseWriter, req *http
 	}
 
 	tableRegions := &TableRegions{
-		TableName:  tableName,
-		TableID:    tableID,
-		Indices:    indices,
-		RowRegions: recordRegions,
+		TableName:     tableName,
+		TableID:       tableID,
+		Indices:       indices,
+		RecordRegions: recordRegions,
 	}
 
 	rh.writeData(w, tableRegions)
 }
 
-func (s *Server) newHTTPGetRegionByIDHandler(pdClient *pd.Client) http.Handler {
+func (s *Server) newHTTPGetRegionByIDHandler(pdClient pd.Client) http.Handler {
 	return HTTPGetRegionByIDHandler{
 		s.newHTTPRegionHandler(pdClient),
 	}
@@ -282,7 +287,7 @@ func (rh *HTTPRegionHandler) prepare() (tool *regionHandlerTool, err error) {
 	}
 
 	// create regionCache.
-	regionCache := tikv.NewRegionCache(*rh.pdClient)
+	regionCache := tikv.NewRegionCache(rh.pdClient)
 	var session tidb.Session
 	session, err = tidb.CreateSession(rh.server.driver.(*TiDBDriver).store)
 	if err != nil {

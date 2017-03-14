@@ -125,11 +125,11 @@ func (ts *TidbRegionHandlerTestSuite) TestRegionsAPI(c *C) {
 	err = decoder.Decode(&data)
 	c.Assert(err, IsNil)
 
-	c.Assert(len(data.RowRegions) > 0, IsTrue)
+	c.Assert(len(data.RecordRegions) > 0, IsTrue)
 
 	// list region
-	for regionID := range data.RowRegions {
-		c.Assert(regionContainsTable(c, regionID, data.TableID), IsTrue)
+	for _, region := range data.RecordRegions {
+		c.Assert(regionContainsTable(c, region.ID, data.TableID), IsTrue)
 	}
 }
 
@@ -187,7 +187,7 @@ func (ts *TidbRegionHandlerTestSuite) startServer(c *C) {
 	c.Assert(err, IsNil)
 	ts.server = server
 	once.Do(func() {
-		go server.startHTTPServer(&pdCli)
+		go server.startHTTPServer(pdCli)
 	})
 	waitUntilServerOnline()
 }
