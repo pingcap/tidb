@@ -809,10 +809,15 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if col.DefaultValue == nil && mysql.HasNotNullFlag(col.Flag) {
-		col.DefaultValue = table.GetZeroValue(col.ToInfo())
-	}
 	col.OriginDefaultValue = col.DefaultValue
+	if col.OriginDefaultValue == nil && mysql.HasNotNullFlag(col.Flag) {
+		zeroVal := table.GetZeroValue(col.ToInfo())
+		col.OriginDefaultValue, err = zeroVal.ToString()
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	if col.OriginDefaultValue == expression.CurrentTimestamp &&
 		(col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime) {
 		col.OriginDefaultValue = time.Now().Format(types.TimeFormat)
