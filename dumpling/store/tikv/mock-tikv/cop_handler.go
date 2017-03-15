@@ -276,16 +276,16 @@ func (h *rpcHandler) getChunksFromSelectReq(ctx *selectContext) ([]tipb.Chunk, e
 func (h *rpcHandler) extractKVRanges(ctx *selectContext) (kvRanges []kv.KeyRange) {
 	for _, kran := range ctx.keyRanges {
 		upperKey := kran.GetEnd()
-		if bytes.Compare(upperKey, h.startKey) <= 0 {
+		if bytes.Compare(upperKey, h.rawStartKey) <= 0 {
 			continue
 		}
 		lowerKey := kran.GetStart()
-		if len(h.endKey) != 0 && bytes.Compare([]byte(lowerKey), h.endKey) >= 0 {
+		if len(h.rawEndKey) != 0 && bytes.Compare([]byte(lowerKey), h.rawEndKey) >= 0 {
 			break
 		}
 		var kvr kv.KeyRange
-		kvr.StartKey = kv.Key(maxStartKey(lowerKey, h.startKey))
-		kvr.EndKey = kv.Key(minEndKey(upperKey, h.endKey))
+		kvr.StartKey = kv.Key(maxStartKey(lowerKey, h.rawStartKey))
+		kvr.EndKey = kv.Key(minEndKey(upperKey, h.rawEndKey))
 		kvRanges = append(kvRanges, kvr)
 	}
 	if ctx.descScan {
@@ -302,8 +302,8 @@ func reverseKVRanges(kvRanges []kv.KeyRange) {
 }
 
 func (h *rpcHandler) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, limit *int64, chunks []tipb.Chunk) ([]tipb.Chunk, error) {
-	startKey := maxStartKey(ran.StartKey, h.startKey)
-	endKey := minEndKey(ran.EndKey, h.endKey)
+	startKey := maxStartKey(ran.StartKey, h.rawStartKey)
+	endKey := minEndKey(ran.EndKey, h.rawEndKey)
 	if (*limit) == 0 || bytes.Compare(startKey, endKey) >= 0 {
 		return chunks, nil
 	}
@@ -544,8 +544,8 @@ func (h *rpcHandler) getChunksFromIndexReq(ctx *selectContext) ([]tipb.Chunk, er
 
 func (h *rpcHandler) getIndexRowFromRange(ctx *selectContext, ran kv.KeyRange, limit *int64, chunks []tipb.Chunk) ([]tipb.Chunk, error) {
 	idxInfo := ctx.sel.IndexInfo
-	startKey := maxStartKey(ran.StartKey, h.startKey)
-	endKey := minEndKey(ran.EndKey, h.endKey)
+	startKey := maxStartKey(ran.StartKey, h.rawStartKey)
+	endKey := minEndKey(ran.EndKey, h.rawEndKey)
 	if (*limit) == 0 || bytes.Compare(startKey, endKey) >= 0 {
 		return nil, nil
 	}
