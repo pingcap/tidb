@@ -964,6 +964,12 @@ func (s *testEvaluatorSuite) TestOct(c *C) {
 		{"100", "144"},
 		{"1024", "2000"},
 		{"2048", "4000"},
+		{1.0, "1"},
+		{9.5, "11"},
+		{13, "15"},
+		{1025, "2001"},
+		{"8a8", "10"},
+		{"abc", "0"},
 	}
 	fc := funcs[ast.Oct]
 	for _, test := range octCases {

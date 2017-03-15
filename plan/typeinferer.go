@@ -406,6 +406,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp.Flen = 40
 	case ast.Oct:
 		tp = types.NewFieldType(mysql.TypeVarString)
+		chs = v.defaultCharset
 	case ast.Coalesce:
 		tp = aggArgsType(x.Args)
 	default:
