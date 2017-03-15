@@ -220,7 +220,6 @@ func detachIndexScanConditions(conditions []expression.Expression, indexScan *Ph
 	var curIndex int
 	for curIndex = indexScan.accessEqualCount; curIndex < len(indexScan.Index.Columns); curIndex++ {
 		checker := &conditionChecker{
-			tableName:    indexScan.Table.Name,
 			idx:          indexScan.Index,
 			columnOffset: curIndex,
 			length:       indexScan.Index.Columns[curIndex].Length,
@@ -264,9 +263,8 @@ func detachTableScanConditions(conditions []expression.Expression, table *model.
 
 	var accessConditions, filterConditions []expression.Expression
 	checker := conditionChecker{
-		tableName: table.Name,
-		pkName:    pkName,
-		length:    types.UnspecifiedLength,
+		pkName: pkName,
+		length: types.UnspecifiedLength,
 	}
 	for _, cond := range conditions {
 		cond = pushDownNot(cond, false, nil)
@@ -305,7 +303,6 @@ func buildTableRange(p *PhysicalTableScan) error {
 
 // conditionChecker checks if this condition can be pushed to index plan.
 type conditionChecker struct {
-	tableName     model.CIStr
 	idx           *model.IndexInfo
 	columnOffset  int // the offset of the indexed column to be checked.
 	pkName        model.CIStr
