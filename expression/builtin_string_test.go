@@ -949,3 +949,36 @@ func (s *testEvaluatorSuite) TestField(c *C) {
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
 	}
 }
+
+func (s *testEvaluatorSuite) TestOct(c *C) {
+	defer testleak.AfterTest(c)()
+	octCases := []struct {
+		origin interface{}
+		ret    string
+	}{
+		{"0", "0"},
+		{"1", "1"},
+		{"8", "10"},
+		{"12", "14"},
+		{"20", "24"},
+		{"100", "144"},
+		{"1024", "2000"},
+		{"2048", "4000"},
+	}
+	fc := funcs[ast.Oct]
+	for _, test := range octCases {
+		in := types.NewDatum(test.origin)
+		f, _ := fc.getFunction(datumsToConstants([]types.Datum{in}), s.ctx)
+		r, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		res, err := r.ToString()
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, test.ret)
+	}
+	// test NULL input for sha
+	var argNull types.Datum
+	f, _ := fc.getFunction(datumsToConstants([]types.Datum{argNull}), s.ctx)
+	r, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(r.IsNull(), IsTrue)
+}
