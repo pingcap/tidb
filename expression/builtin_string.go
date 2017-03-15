@@ -1417,15 +1417,29 @@ func (b *builtinOctSig) eval(row []types.Datum) (d types.Datum, err error) {
 	if err != nil {
 		return d, errors.Trace(err)
 	}
+	var negative bool
 	arg := args[0]
 	if arg.IsNull() {
 		return d, nil
 	}
-	v, err := arg.ToInt64(b.ctx.GetSessionVars().StmtCtx)
+	n, err := arg.ToString()
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	str := strconv.FormatInt(v, 8)
+	n = getValidPrefix(strings.TrimSpace(n), 10)
+	if len(n) == 0 {
+		d.SetString("0")
+		return d, nil
+	}
+	if n[0] == '-' {
+		negative = true
+		n = n[1:]
+	}
+	val, err := strconv.ParseUint(n, 10, 64)
+	if negative {
+		val = -val
+	}
+	str := strconv.FormatUint(val, 8)
 	d.SetString(str)
 	return d, nil
 }
