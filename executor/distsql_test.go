@@ -95,7 +95,6 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	// Split the table.
 	cli := tikv.GetMockTiKVClient(s.store)
 	cli.Cluster.SplitTable(cli.MvccStore, tblID, 100)
-	tikv.ClearRegionCache(s.store)
 
 	// Send coprocessor request when the table split.
 	rss, err := tk.Se.Execute("select sum(id) from copclient")
