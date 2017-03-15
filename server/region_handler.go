@@ -285,7 +285,7 @@ func (rh *RegionHandler) prepare() (tool *regionHandlerTool, err error) {
 	}
 
 	// init backOffer && infoSchema.
-	backOffer := tikv.NewBackoffer(5000, goctx.Background())
+	backOffer := tikv.NewBackoffer(500, goctx.Background())
 	infoSchema := sessionctx.GetDomain(session.(context.Context)).InfoSchema()
 
 	tool = &regionHandlerTool{

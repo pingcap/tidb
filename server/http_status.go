@@ -76,7 +76,8 @@ func (s *Server) startHTTPServer(pdClient pd.Client) {
 		addr = defaultStatusAddr
 	}
 	log.Infof("Listening on %v for status and metrics report.", addr)
-	err := http.ListenAndServe(addr, router)
+	http.Handle("/", router)
+	err := http.ListenAndServe(addr, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
