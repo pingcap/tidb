@@ -331,7 +331,14 @@ func (cc *clientConn) Run() {
 		r := recover()
 		if r != nil {
 			buf := make([]byte, size)
-			buf = buf[:runtime.Stack(buf, false)]
+			stackSize := runtime.Stack(buf, false)
+			if stackSize > size {
+				stackSize = size
+			}
+			if stackSize < 0 {
+				stackSize = 0
+			}
+			buf = buf[:stackSize]
 			log.Errorf("lastCmd %s, %v, %s", cc.lastCmd, r, buf)
 		}
 		cc.Close()
@@ -441,7 +448,7 @@ func (cc *clientConn) dispatch(data []byte) error {
 		// Input payload may end with byte '\0', we didn't find related mysql document about it, but mysql
 		// implementation accept that case. So trim the last '\0' here as if the payload an EOF string.
 		// See http://dev.mysql.com/doc/internals/en/com-query.html
-		if data[len(data)-1] == 0 {
+		if len(data) > 0 && data[len(data)-1] == 0 {
 			data = data[:len(data)-1]
 		}
 		return cc.handleQuery(hack.String(data))
