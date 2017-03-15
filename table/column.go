@@ -121,7 +121,7 @@ func CastValue(ctx context.Context, val types.Datum, col *model.ColumnInfo) (cas
 	if err != nil {
 		return casted, errors.Trace(err)
 	}
-	if mysql.IsUTF8Charset(col.Charset) {
+	if !mysql.IsUTF8Charset(col.Charset) {
 		return casted, nil
 	}
 	str := casted.GetString()
