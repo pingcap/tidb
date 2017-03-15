@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/ngaut/log"
 )
 
 // executorBuilder builds an Executor from a Plan.
@@ -472,12 +472,12 @@ func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor
 
 func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
 	exec := &SelectionExec{
-		Src:       b.build(v.Children()[0]),
-		Condition: expression.ComposeCNFCondition(b.ctx, v.Conditions...),
-		schema:    v.Schema(),
-		ctx:       b.ctx,
-		scanController: v.ScanController,
-		accessConditions: v.AccessConditions,
+		Src:                 b.build(v.Children()[0]),
+		Condition:           expression.ComposeCNFCondition(b.ctx, v.Conditions...),
+		schema:              v.Schema(),
+		ctx:                 b.ctx,
+		scanController:      v.ScanController,
+		accessConditions:    v.AccessConditions,
 		idxFilterConditions: v.IdxConditions,
 		tblFilterConditions: v.TblConditions,
 	}

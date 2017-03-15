@@ -788,10 +788,10 @@ func (p *Union) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 func buildTableScanByKeyAndCorCol(p *DataSource, pkName model.CIStr, fakeConds []expression.Expression, origConds []expression.Expression) (*physicalPlanInfo, []expression.Expression, []expression.Expression) {
 	client := p.ctx.GetClient()
 	ts := &PhysicalTableScan{
-		Table: p.tableInfo,
-		Columns: p.Columns,
-		TableAsName: p.TableAsName,
-		DBName: p.DBName,
+		Table:               p.tableInfo,
+		Columns:             p.Columns,
+		TableAsName:         p.TableAsName,
+		DBName:              p.DBName,
 		physicalTableSource: physicalTableSource{client: client},
 	}
 	ts.tp = Tbl
@@ -817,7 +817,7 @@ func buildTableScanByKeyAndCorCol(p *DataSource, pkName model.CIStr, fakeConds [
 		accessConditions = append(accessConditions, origConds[id])
 		// TODO: it will lead to repeated computation cost.
 		if checker.shouldReserve {
-			filterConditions= append(filterConditions, origConds[id])
+			filterConditions = append(filterConditions, origConds[id])
 			checker.shouldReserve = false
 		}
 	}
@@ -831,12 +831,12 @@ func buildIndexScanByKeyAndCorCol(p *DataSource, idx *model.IndexInfo, fakeConds
 	[]expression.Expression, []expression.Expression, []expression.Expression) {
 	client := p.ctx.GetClient()
 	is := &PhysicalIndexScan{
-		Index: idx,
-		Table: p.tableInfo,
-		Columns: p.Columns,
-		TableAsName: p.TableAsName,
-		OutOfOrder: true,
-		DBName: p.DBName,
+		Index:               idx,
+		Table:               p.tableInfo,
+		Columns:             p.Columns,
+		TableAsName:         p.TableAsName,
+		OutOfOrder:          true,
+		DBName:              p.DBName,
 		physicalTableSource: physicalTableSource{client: p.ctx.GetClient()},
 	}
 	is.tp = Idx
@@ -904,8 +904,61 @@ func convertCorCol2Constant(cond expression.Expression) expression.Expression {
 	}
 }
 
+func (p *Selection) getUsableIndicesAndPk(ds *DataSource) ([]*model.IndexInfo, model.CIStr) {
+	indices, _ := availableIndices(ds.indexHints, ds.tableInfo)
+	var usableIdxs []*model.IndexInfo
+	for _, idx := range indices {
+		// Currently we don't consider composite index.
+		if len(idx.Columns) > 1 {
+			continue
+		}
+		var idxCol *expression.Column
+		for _, col := range ds.schema.Columns {
+			if idx.Columns[0].Name.L == col.ColName.L {
+				idxCol = col
+			}
+		}
+		// This idx column should occur in one condition which contains both column and correlated column.
+		var usable bool
+		for _, cond := range p.Conditions {
+			cols := expression.ExtractColumns(cond)
+			if len(cols) != 1 || !cond.IsCorrelated() || !cols[0].Equal(idxCol, p.ctx) {
+				continue
+			}
+			usable = true
+		}
+		if usable {
+			usableIdxs = append(usableIdxs, idx)
+		}
+	}
+	var pkName model.CIStr
+	if ds.tableInfo.PKIsHandle {
+		var pkCol *expression.Column
+		for i, col := range ds.Columns {
+			if mysql.HasPriKeyFlag(col.Flag) {
+				pkCol = ds.schema.Columns[i]
+			}
+		}
+		// Pk should satisfies the same property.
+		var usable bool
+		for _, cond := range p.Conditions {
+			cols := expression.ExtractColumns(cond)
+			if !cond.IsCorrelated() || !cols[0].Equal(pkCol, p.ctx) {
+				continue
+			}
+			usable = true
+		}
+		if usable {
+			pkName = pkCol.ColName
+		}
+	}
+	return usableIdxs, pkName
+}
+
 // tryToBuildIndexScan will check the conditions contain correlated columns whether it can make indexScan.
 func (p *Selection) tryToBuildScanByKey(prop *requiredProperty) *physicalPlanInfo {
+	log.Warnf("cond: %v", p.Conditions)
+	log.Warnf("magic: %T %v", p.children[0], len(p.extractCorrelatedCols()))
 	if ds, ok := p.children[0].(*DataSource); ok && len(p.extractCorrelatedCols()) > 0 {
 		conds := make([]expression.Expression, 0, len(p.Conditions))
 		for _, cond := range p.Conditions {
@@ -913,58 +966,39 @@ func (p *Selection) tryToBuildScanByKey(prop *requiredProperty) *physicalPlanInf
 			// In this way, we could use the code of refiner.go.
 			conds = append(conds, convertCorCol2Constant(cond))
 		}
-		indices, _ := availableIndices(ds.indexHints, ds.tableInfo)
-		var usableIdxs []*model.IndexInfo
-		for _, idx := range indices {
-			// Currently we don't consider composite index.
-			if len(idx.Columns) > 1 {
-				continue
-			}
-			usableIdxs = append(usableIdxs, idx)
-		}
-		var pkName model.CIStr
-		if ds.tableInfo.PKIsHandle {
-			for _, col := range ds.Columns {
-				if mysql.HasPriKeyFlag(col.Flag) {
-					pkName = col.Name
-				}
-			}
-		}
+		indices, pkName := p.getUsableIndicesAndPk(ds)
+
 		// If pk is handle, we will try to build TableScan by pk, otherwise we will try to build IndexScan by index.
 		if pkName.L == "" {
 			var finalInfo *physicalPlanInfo
-			for _, idx := range usableIdxs {
+			for _, idx := range indices {
 				info, accessConds, idxConds, tblConds := buildIndexScanByKeyAndCorCol(ds, idx, conds, p.Conditions)
 				if info == nil {
 					continue
 				}
-				p.ScanController = true
-				p.AccessConditions = accessConds
-				p.IdxConditions = idxConds
-				p.TblConditions = tblConds
 				if finalInfo == nil || finalInfo.cost > info.cost {
+					p.onTable = true
+					p.ScanController = true
+					p.AccessConditions = accessConds
+					p.IdxConditions = idxConds
+					p.TblConditions = tblConds
 					finalInfo = info
 				}
-				return info
 			}
 			if finalInfo == nil {
 				return nil
 			}
-			finalInfo = p.matchProperty(prop, finalInfo)
-			return finalInfo
-		} else {
-			info, accessCondition, filterCondition := buildTableScanByKeyAndCorCol(ds, pkName, conds, p.Conditions)
-			if info == nil {
-				return nil
-			}
-			p.ScanController = true
-			p.AccessConditions = accessCondition
-			p.TblConditions = filterCondition
-			info = p.matchProperty(prop, info)
-			return info
+			return p.appendSelToInfo(finalInfo)
 		}
-	} else {
-		return nil
+		info, accessCondition, filterCondition := buildTableScanByKeyAndCorCol(ds, pkName, conds, p.Conditions)
+		if info == nil {
+			return nil
+		}
+		p.onTable = true
+		p.ScanController = true
+		p.AccessConditions = accessCondition
+		p.TblConditions = filterCondition
+		return p.appendSelToInfo(info)
 	}
 	return nil
 }
@@ -979,7 +1013,9 @@ func (p *Selection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanI
 		return info, nil
 	}
 	info = p.tryToBuildScanByKey(prop)
+	log.Warnf("info type: %T", info)
 	if info != nil {
+		log.Warnf("info p type: %T", info.p)
 		p.storePlanInfo(prop, info)
 		return info, nil
 	}

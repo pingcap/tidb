@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/ngaut/log"
 )
 
 var (
@@ -462,7 +462,7 @@ func (e *TableDualExec) Close() error {
 	return nil
 }
 
-func convertCorCol2Constant(expr expression.Expression) (expression.Expression, error){
+func convertCorCol2Constant(expr expression.Expression) (expression.Expression, error) {
 	switch x := expr.(type) {
 	case *expression.ScalarFunction:
 		newArgs := make([]expression.Expression, 0, len(x.GetArgs()))
@@ -493,9 +493,9 @@ type SelectionExec struct {
 	ctx       context.Context
 	schema    *expression.Schema
 
-	scanController bool
-	controllerInit bool
-	accessConditions []expression.Expression
+	scanController      bool
+	controllerInit      bool
+	accessConditions    []expression.Expression
 	idxFilterConditions []expression.Expression
 	tblFilterConditions []expression.Expression
 }

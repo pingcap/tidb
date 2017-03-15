@@ -149,10 +149,10 @@ type Selection struct {
 
 	// If ScanController is true, then the child of this selection is a scan,
 	// which use pk or index
-	ScanController bool
+	ScanController   bool
 	AccessConditions []expression.Expression
-	IdxConditions []expression.Expression
-	TblConditions []expression.Expression
+	IdxConditions    []expression.Expression
+	TblConditions    []expression.Expression
 }
 
 func (p *Selection) extractCorrelatedCols() []*expression.CorrelatedColumn {
