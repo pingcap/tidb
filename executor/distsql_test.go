@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -75,9 +76,9 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	}
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("create table copclient (id int)")
+	tk.MustExec("create table copclient (id int primary key)")
 
-	// Insert 100 rows.
+	// Insert 1000 rows.
 	var values []string
 	for i := 0; i < 1000; i++ {
 		values = append(values, fmt.Sprintf("(%d)", i))
@@ -97,11 +98,26 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	tikv.ClearRegionCache(s.store)
 
 	// Send coprocessor request when the table split.
-	rss, err := tk.Se.Execute("select count(*) from copclient")
+	rss, err := tk.Se.Execute("select sum(id) from copclient")
 	c.Assert(err, IsNil)
 	rs := rss[0]
 	defer rs.Close()
 	row, err := rs.Next()
 	c.Assert(err, IsNil)
-	c.Assert(row.Data[0].GetInt64(), Equals, int64(1000))
+	c.Assert(row.Data[0].GetInt64(), Equals, int64(499500))
+
+	// Split one region.
+	key := tablecodec.EncodeRowKeyWithHandle(tblID, 500)
+	region, _ := cli.Cluster.GetRegionByKey([]byte(key))
+	peerID := cli.Cluster.AllocID()
+	cli.Cluster.Split(region.GetId(), cli.Cluster.AllocID(), key, []uint64{peerID}, peerID)
+
+	// Check again.
+	rss, err = tk.Se.Execute("select sum(id) from copclient")
+	c.Assert(err, IsNil)
+	rs = rss[0]
+	defer rs.Close()
+	row, err = rs.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row.Data[0].GetInt64(), Equals, int64(499500))
 }
