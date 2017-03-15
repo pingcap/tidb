@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/ngaut/log"
 )
 
 var (
@@ -462,12 +463,42 @@ func (e *TableDualExec) Close() error {
 	return nil
 }
 
+func convertCorCol2Constant(expr expression.Expression) (expression.Expression, error){
+	switch x := expr.(type) {
+	case *expression.ScalarFunction:
+		newArgs := make([]expression.Expression, 0, len(x.GetArgs()))
+		for _, arg := range x.GetArgs() {
+			newArg, err := convertCorCol2Constant(arg)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			newArgs = append(newArgs, newArg)
+		}
+		newSf, _ := expression.NewFunction(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
+		return newSf, nil
+	case *expression.CorrelatedColumn:
+		val, err := x.Eval(nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &expression.Constant{Value: val, RetType: x.GetType()}, nil
+	default:
+		return x.Clone(), nil
+	}
+}
+
 // SelectionExec represents a filter executor.
 type SelectionExec struct {
 	Src       Executor
 	Condition expression.Expression
 	ctx       context.Context
 	schema    *expression.Schema
+
+	scanController bool
+	controllerInit bool
+	accessConditions []expression.Expression
+	idxFilterConditions []expression.Expression
+	tblFilterConditions []expression.Expression
 }
 
 // Schema implements the Executor Schema interface.
@@ -475,8 +506,62 @@ func (e *SelectionExec) Schema() *expression.Schema {
 	return e.schema
 }
 
+func (e *SelectionExec) initController() error {
+	sc := e.ctx.GetSessionVars().StmtCtx
+	client := e.ctx.GetClient()
+	accesses := make([]expression.Expression, 0, len(e.accessConditions))
+	log.Warnf("access Conditions: %v", e.accessConditions)
+	for _, cond := range e.accessConditions {
+		newCond, err := convertCorCol2Constant(cond)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		accesses = append(accesses, newCond)
+	}
+	tblFilters := make([]expression.Expression, 0, len(e.tblFilterConditions))
+	for _, cond := range e.tblFilterConditions {
+		newCond, err := convertCorCol2Constant(cond)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tblFilters = append(tblFilters, newCond)
+	}
+	switch x := e.Src.(type) {
+	case *XSelectTableExec:
+		log.Warnf("access Conditions: %v", accesses)
+		ranges, err := plan.BuildTableRange(accesses, sc)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		x.ranges = ranges
+		var conds []expression.Expression
+		x.where, _, conds = plan.ExpressionsToPB(sc, tblFilters, client)
+		e.Condition = expression.ComposeCNFCondition(e.ctx, conds...)
+		return nil
+	case *XSelectIndexExec:
+		err := plan.BuildIndexRange(sc, x.indexPlan)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		var idxConds, tblConds []expression.Expression
+		x.indexPlan.IndexConditionPBExpr, _, idxConds = plan.ExpressionsToPB(sc, e.idxFilterConditions, client)
+		x.indexPlan.TableConditionPBExpr, _, tblConds = plan.ExpressionsToPB(sc, e.tblFilterConditions, client)
+		e.Condition = expression.ComposeCNFCondition(e.ctx, append(idxConds, tblConds...)...)
+		return nil
+	default:
+		return errors.New("Error type of PhysicalPlan")
+	}
+}
+
 // Next implements the Executor Next interface.
 func (e *SelectionExec) Next() (*Row, error) {
+	if e.scanController && !e.controllerInit {
+		err := e.initController()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		e.controllerInit = true
+	}
 	for {
 		srcRow, err := e.Src.Next()
 		if err != nil {
@@ -484,6 +569,9 @@ func (e *SelectionExec) Next() (*Row, error) {
 		}
 		if srcRow == nil {
 			return nil, nil
+		}
+		if e.Condition == nil {
+			return srcRow, nil
 		}
 		match, err := expression.EvalBool(e.Condition, srcRow.Data, e.ctx)
 		if err != nil {
@@ -497,6 +585,9 @@ func (e *SelectionExec) Next() (*Row, error) {
 
 // Close implements the Executor Close interface.
 func (e *SelectionExec) Close() error {
+	if e.scanController {
+		e.controllerInit = false
+	}
 	return e.Src.Close()
 }
 

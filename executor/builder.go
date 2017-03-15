@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/ngaut/log"
 )
 
 // executorBuilder builds an Executor from a Plan.
@@ -477,7 +478,12 @@ func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
 		Condition: expression.ComposeCNFCondition(b.ctx, v.Conditions...),
 		schema:    v.Schema(),
 		ctx:       b.ctx,
+		scanController: v.ScanController,
+		accessConditions: v.AccessConditions,
+		idxFilterConditions: v.IdxConditions,
+		tblFilterConditions: v.TblConditions,
 	}
+	log.Warnf("child type: %T", exec.Src)
 	return exec
 }
 

@@ -31,7 +31,8 @@ var fullRange = []rangePoint{
 	{value: types.MaxValueDatum()},
 }
 
-func buildIndexRange(sc *variable.StatementContext, p *PhysicalIndexScan) error {
+// BuildIndexRange will build range of index for PhysicalIndexScan
+func BuildIndexRange(sc *variable.StatementContext, p *PhysicalIndexScan) error {
 	rb := rangeBuilder{sc: sc}
 	for i := 0; i < p.accessInAndEqCount; i++ {
 		// Build ranges for equal or in access conditions.
@@ -285,22 +286,25 @@ func detachTableScanConditions(conditions []expression.Expression, table *model.
 	return accessConditions, filterConditions
 }
 
-func buildTableRange(p *PhysicalTableScan) error {
-	if len(p.AccessCondition) == 0 {
-		p.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
-		return nil
+// BuildTableRange will build range of pk for PhysicalTableScan
+func BuildTableRange(accessConditions []expression.Expression, sc *variable.StatementContext) ([]TableRange, error) {
+	if len(accessConditions) == 0 {
+		return []TableRange{{math.MinInt64, math.MaxInt64}}, nil
 	}
 
-	rb := rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
+	rb := rangeBuilder{sc: sc}
 	rangePoints := fullRange
-	for _, cond := range p.AccessCondition {
+	for _, cond := range accessConditions {
 		rangePoints = rb.intersection(rangePoints, rb.build(cond))
 		if rb.err != nil {
-			return errors.Trace(rb.err)
+			return nil, errors.Trace(rb.err)
 		}
 	}
-	p.Ranges = rb.buildTableRanges(rangePoints)
-	return errors.Trace(rb.err)
+	ranges := rb.buildTableRanges(rangePoints)
+	if rb.err != nil {
+		return nil, errors.Trace(rb.err)
+	}
+	return ranges, nil
 }
 
 // conditionChecker checks if this condition can be pushed to index plan.

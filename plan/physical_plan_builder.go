@@ -71,11 +71,12 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 		}
 		ts.AccessCondition, newSel.Conditions = detachTableScanConditions(conds, table)
 		ts.TableConditionPBExpr, ts.tableFilterConditions, newSel.Conditions =
-			expressionsToPB(sc, newSel.Conditions, client)
-		err := buildTableRange(ts)
+			ExpressionsToPB(sc, newSel.Conditions, client)
+		ranges, err := BuildTableRange(ts.AccessCondition, sc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		ts.Ranges = ranges
 		if len(newSel.Conditions) > 0 {
 			newSel.SetChildren(ts)
 			newSel.onTable = true
@@ -113,6 +114,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 }
 
 func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.IndexInfo) (*physicalPlanInfo, error) {
+	log.Warnf("begin conver idxScan")
 	client := p.ctx.GetClient()
 	is := &PhysicalIndexScan{
 		Index:               index,
@@ -149,11 +151,11 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeIndex, 0)
 		if isDistReq {
 			idxConds, tblConds := detachIndexFilterConditions(newSel.Conditions, is.Index.Columns, is.Table)
-			is.IndexConditionPBExpr, is.indexFilterConditions, idxConds = expressionsToPB(sc, idxConds, client)
-			is.TableConditionPBExpr, is.tableFilterConditions, tblConds = expressionsToPB(sc, tblConds, client)
+			is.IndexConditionPBExpr, is.indexFilterConditions, idxConds = ExpressionsToPB(sc, idxConds, client)
+			is.TableConditionPBExpr, is.tableFilterConditions, tblConds = ExpressionsToPB(sc, tblConds, client)
 			newSel.Conditions = append(idxConds, tblConds...)
 		}
-		err := buildIndexRange(p.ctx.GetSessionVars().StmtCtx, is)
+		err := BuildIndexRange(p.ctx.GetSessionVars().StmtCtx, is)
 		if err != nil {
 			if !terror.ErrorEqual(err, types.ErrTruncated) {
 				return nil, errors.Trace(err)
@@ -783,6 +785,191 @@ func (p *Union) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	return info, nil
 }
 
+func buildTableScanByKeyAndCorCol(p *DataSource, pkName model.CIStr, fakeConds []expression.Expression, origConds []expression.Expression) (*physicalPlanInfo, []expression.Expression, []expression.Expression) {
+	client := p.ctx.GetClient()
+	ts := &PhysicalTableScan{
+		Table: p.tableInfo,
+		Columns: p.Columns,
+		TableAsName: p.TableAsName,
+		DBName: p.DBName,
+		physicalTableSource: physicalTableSource{client: client},
+	}
+	ts.tp = Tbl
+	ts.allocator = p.allocator
+	ts.SetSchema(p.Schema())
+	ts.initIDAndContext(p.ctx)
+	if p.ctx.Txn() != nil {
+		ts.readOnly = p.ctx.Txn().IsReadOnly()
+	} else {
+		ts.readOnly = true
+	}
+	ts.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
+	var accessConditions, filterConditions []expression.Expression
+	checker := conditionChecker{
+		tableName: p.tableInfo.Name,
+		pkName: pkName,
+		length: types.UnspecifiedLength,
+	}
+	for id, cond := range fakeConds {
+		if !checker.check(cond) {
+			filterConditions = append(filterConditions, origConds[id])
+			continue
+		}
+		accessConditions = append(accessConditions, origConds[id])
+		// TODO: it will lead to repeated computation cost.
+		if checker.shouldReserve {
+			filterConditions= append(filterConditions, origConds[id])
+			checker.shouldReserve = false
+		}
+	}
+	rowCount := uint64(p.statisticTable.Count)
+	ts.AccessCondition = accessConditions
+	ts.tableFilterConditions = filterConditions
+	return ts.matchProperty(&requiredProperty{}, &physicalPlanInfo{count: rowCount}), accessConditions, filterConditions
+}
+
+func buildIndexScanByKeyAndCorCol(p *DataSource, idx *model.IndexInfo, fakeConds []expression.Expression, origConds []expression.Expression) (*physicalPlanInfo,
+	[]expression.Expression, []expression.Expression, []expression.Expression) {
+	client := p.ctx.GetClient()
+	is := &PhysicalIndexScan{
+		Index: idx,
+		Table: p.tableInfo,
+		Columns: p.Columns,
+		TableAsName: p.TableAsName,
+		OutOfOrder: true,
+		DBName: p.DBName,
+		physicalTableSource: physicalTableSource{client: p.ctx.GetClient()},
+	}
+	is.tp = Idx
+	is.allocator = p.allocator
+	is.initIDAndContext(p.ctx)
+	is.SetSchema(p.schema)
+	if p.ctx.Txn() != nil {
+		is.readOnly = p.ctx.Txn().IsReadOnly()
+	} else {
+		is.readOnly = true
+	}
+
+	fakeAccessConditions, restFakeConds := detachIndexScanConditions(fakeConds, is)
+	accessConditions := make([]expression.Expression, 0, len(fakeAccessConditions))
+	restOrigConds := make([]expression.Expression, 0, len(restFakeConds))
+	for i, j := 0, 0; i < len(fakeConds); {
+		if fakeConds[i].Equal(fakeAccessConditions[j], p.ctx) {
+			accessConditions = append(accessConditions, origConds[i])
+			i, j = i+1, j+1
+		} else {
+			restOrigConds = append(restOrigConds, origConds[i])
+			i++
+		}
+	}
+	memDB := infoschema.IsMemoryDB(p.DBName.L)
+	isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeIndex, 0)
+	var idxConds, tblConds []expression.Expression
+	if isDistReq {
+		fakeIdxConds, fakeTblConds := detachIndexFilterConditions(restFakeConds, is.Index.Columns, is.Table)
+		idxConds = make([]expression.Expression, 0, len(fakeIdxConds))
+		tblConds = make([]expression.Expression, 0, len(fakeTblConds))
+		for i, j := 0, 0; i < len(restFakeConds); {
+			if restFakeConds[i].Equal(fakeIdxConds[j], p.ctx) {
+				idxConds = append(idxConds, restOrigConds[i])
+				i, j = i+1, j+1
+			} else {
+				tblConds = append(tblConds, restOrigConds[i])
+				i++
+			}
+		}
+	}
+
+	rb := rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
+	is.Ranges = rb.buildIndexRanges(fullRange, types.NewFieldType(mysql.TypeNull))
+	is.DoubleRead = !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
+	is.AccessCondition = accessConditions
+	is.indexFilterConditions = idxConds
+	is.tableFilterConditions = tblConds
+	return is.matchProperty(&requiredProperty{}, &physicalPlanInfo{count: uint64(p.statisticTable.Count)}), accessConditions, idxConds, tblConds
+}
+
+func convertCorCol2Constant(cond expression.Expression) expression.Expression {
+	switch x := cond.(type) {
+	case *expression.ScalarFunction:
+		newArgs := make([]expression.Expression, 0, len(x.GetArgs()))
+		for _, arg := range x.GetArgs() {
+			newArgs = append(newArgs, convertCorCol2Constant(arg))
+		}
+		newSf, _ := expression.NewFunction(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
+		return newSf
+	case *expression.CorrelatedColumn:
+		return expression.One
+	default:
+		return x.Clone()
+	}
+}
+
+// tryToBuildIndexScan will check the conditions contain correlated columns whether it can make indexScan.
+func (p *Selection) tryToBuildScanByKey(prop *requiredProperty) *physicalPlanInfo {
+	if ds, ok := p.children[0].(*DataSource); ok && len(p.extractCorrelatedCols()) > 0 {
+		conds := make([]expression.Expression, 0, len(p.Conditions))
+		for _, cond := range p.Conditions {
+			cond = pushDownNot(cond.Clone(), false, nil)
+			// In this way, we could use the code of refiner.go.
+			conds = append(conds, convertCorCol2Constant(cond))
+		}
+		indices, _ := availableIndices(ds.indexHints, ds.tableInfo)
+		var usableIdxs []*model.IndexInfo
+		for _, idx := range indices {
+			// Currently we don't consider composite index.
+			if len(idx.Columns) > 1 {
+				continue
+			}
+			usableIdxs = append(usableIdxs, idx)
+		}
+		var pkName model.CIStr
+		if ds.tableInfo.PKIsHandle {
+			for _, col := range ds.Columns {
+				if mysql.HasPriKeyFlag(col.Flag) {
+					pkName = col.Name
+				}
+			}
+		}
+		// If pk is handle, we will try to build TableScan by pk, otherwise we will try to build IndexScan by index.
+		if pkName.L == "" {
+			var finalInfo *physicalPlanInfo
+			for _, idx := range usableIdxs {
+				info, accessConds, idxConds, tblConds := buildIndexScanByKeyAndCorCol(ds, idx, conds, p.Conditions)
+				if info == nil {
+					continue
+				}
+				p.ScanController = true
+				p.AccessConditions = accessConds
+				p.IdxConditions = idxConds
+				p.TblConditions = tblConds
+				if finalInfo == nil || finalInfo.cost > info.cost {
+					finalInfo = info
+				}
+				return info
+			}
+			if finalInfo == nil {
+				return nil
+			}
+			finalInfo = p.matchProperty(prop, finalInfo)
+			return finalInfo
+		} else {
+			info, accessCondition, filterCondition := buildTableScanByKeyAndCorCol(ds, pkName, conds, p.Conditions)
+			if info == nil {
+				return nil
+			}
+			p.ScanController = true
+			p.AccessConditions = accessCondition
+			p.TblConditions = filterCondition
+			info = p.matchProperty(prop, info)
+			return info
+		}
+	} else {
+		return nil
+	}
+	return nil
+}
+
 // convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
 func (p *Selection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	info, err := p.getPlanInfo(prop)
@@ -790,6 +977,11 @@ func (p *Selection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanI
 		return nil, errors.Trace(err)
 	}
 	if info != nil {
+		return info, nil
+	}
+	info = p.tryToBuildScanByKey(prop)
+	if info != nil {
+		p.storePlanInfo(prop, info)
 		return info, nil
 	}
 	// Firstly, we try to push order.
@@ -1121,7 +1313,8 @@ func addCachePlan(p PhysicalPlan, allocator *idAllocator) []*expression.Correlat
 	newChildren := make([]Plan, 0, len(p.Children()))
 	for _, child := range p.Children() {
 		childCorCols := addCachePlan(child.(PhysicalPlan), allocator)
-		if len(selfCorCols) > 0 && len(childCorCols) == 0 {
+		// If p is a Selection and controls the access condition of below scan plan, there shouldn't have a cache plan.
+		if sel, ok := p.(*Selection); len(selfCorCols) > 0 && len(childCorCols) == 0 && (!ok || !sel.ScanController) {
 			newChild := &Cache{}
 			newChild.tp = "Cache"
 			newChild.allocator = allocator

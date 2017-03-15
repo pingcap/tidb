@@ -146,6 +146,13 @@ type Selection struct {
 
 	// onTable means if this selection's child is a table scan or index scan.
 	onTable bool
+
+	// If ScanController is true, then the child of this selection is a scan,
+	// which use pk or index
+	ScanController bool
+	AccessConditions []expression.Expression
+	IdxConditions []expression.Expression
+	TblConditions []expression.Expression
 }
 
 func (p *Selection) extractCorrelatedCols() []*expression.CorrelatedColumn {
