@@ -280,10 +280,10 @@ func (s *testSuite) TestExplain(c *C) {
 		{
 			"select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1",
 			[]string{
-				"TableScan_10", "TableScan_11", "HashAgg_12", "HashLeftJoin_9", "HashAgg_17",
+				"TableScan_11", "TableScan_12", "HashAgg_13", "HashLeftJoin_10", "Projection_9",
 			},
 			[]string{
-				"HashLeftJoin_9", "HashAgg_12", "HashLeftJoin_9", "HashAgg_17", "",
+				"HashLeftJoin_10", "HashAgg_13", "HashLeftJoin_10", "Projection_9", "",
 			},
 			[]string{`{
     "db": "test",
@@ -325,7 +325,7 @@ func (s *testSuite) TestExplain(c *C) {
     "GroupByItems": [
         "[b.c2]"
     ],
-    "child": "TableScan_11"
+    "child": "TableScan_12"
 }`,
 				`{
     "eqCond": [
@@ -334,17 +334,14 @@ func (s *testSuite) TestExplain(c *C) {
     "leftCond": null,
     "rightCond": null,
     "otherCond": null,
-    "leftPlan": "TableScan_10",
-    "rightPlan": "HashAgg_12"
+    "leftPlan": "TableScan_11",
+    "rightPlan": "HashAgg_13"
 }`,
 				`{
-    "AggFuncs": [
-        "count(join_agg_0)"
+    "exprs": [
+        "cast(join_agg_0)"
     ],
-    "GroupByItems": [
-        "a.c1"
-    ],
-    "child": "HashLeftJoin_9"
+    "child": "HashLeftJoin_10"
 }`,
 			},
 		},
