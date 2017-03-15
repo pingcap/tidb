@@ -40,6 +40,16 @@ func (p *Aggregation) buildKeyInfo() {
 		}
 		p.schema.Keys = append(p.schema.Keys, newKey)
 	}
+	if len(p.groupByCols) == len(p.GroupByItems) && len(p.GroupByItems) > 0 {
+		indices := p.schema.ColumnsIndices(p.groupByCols)
+		if indices != nil {
+			newKey := make([]*expression.Column, 0, len(indices))
+			for _, i := range indices {
+				newKey = append(newKey, p.schema.Columns[i])
+			}
+			p.schema.Keys = append(p.schema.Keys, newKey)
+		}
+	}
 	if len(p.GroupByItems) == 0 {
 		p.schema.MaxOneRow = true
 	}
@@ -106,26 +116,6 @@ func (p *Projection) buildKeyInfo() {
 			newKey = append(newKey, p.schema.Columns[i])
 		}
 		p.schema.Keys = append(p.schema.Keys, newKey)
-	}
-}
-
-func (p *Trim) buildKeyInfo() {
-	p.baseLogicalPlan.buildKeyInfo()
-	p.schema.MaxOneRow = p.children[0].Schema().MaxOneRow
-	for _, key := range p.children[0].Schema().Keys {
-		ok := true
-		newKey := make([]*expression.Column, 0, len(key))
-		for _, col := range key {
-			pos := p.schema.ColumnIndex(col)
-			if pos == -1 {
-				ok = false
-				break
-			}
-			newKey = append(newKey, p.schema.Columns[pos])
-		}
-		if ok {
-			p.schema.Keys = append(p.schema.Keys, newKey)
-		}
 	}
 }
 

@@ -525,7 +525,49 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 func (b *planBuilder) buildSimple(node ast.StmtNode) Plan {
 	p := &Simple{Statement: node}
 	p.SetSchema(expression.NewSchema())
+
+	switch raw := node.(type) {
+	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt:
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "")
+	case *ast.GrantStmt:
+		b.visitInfo = collectVisitInfoFromGrantStmt(b.visitInfo, raw)
+	case *ast.SetPwdStmt, *ast.RevokeStmt:
+		// TODO: Require SUPER privilege, it's a temporary solution here.
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "")
+	}
 	return p
+}
+
+func collectVisitInfoFromGrantStmt(vi []visitInfo, stmt *ast.GrantStmt) []visitInfo {
+	// To use GRANT, you must have the GRANT OPTION privilege,
+	// and you must have the privileges that you are granting.
+	dbName := stmt.Level.DBName
+	tableName := stmt.Level.TableName
+	vi = appendVisitInfo(vi, mysql.GrantPriv, dbName, tableName, "")
+
+	var allPrivs []mysql.PrivilegeType
+	for _, item := range stmt.Privs {
+		if item.Priv == mysql.AllPriv {
+			switch stmt.Level.Level {
+			case ast.GrantLevelGlobal:
+				allPrivs = mysql.AllGlobalPrivs
+			case ast.GrantLevelDB:
+				allPrivs = mysql.AllDBPrivs
+			case ast.GrantLevelTable:
+				allPrivs = mysql.AllTablePrivs
+			}
+			break
+		}
+		vi = appendVisitInfo(vi, item.Priv, dbName, tableName, "")
+	}
+
+	if allPrivs != nil {
+		for _, priv := range allPrivs {
+			vi = appendVisitInfo(vi, priv, dbName, tableName, "")
+		}
+	}
+
+	return vi
 }
 
 func (b *planBuilder) getDefaultValue(col *table.Column) (*expression.Constant, error) {

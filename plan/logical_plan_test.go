@@ -687,7 +687,7 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 		},
 		{
 			sql:  "select sum(t.a + t.b), sum(t.a + t.c), sum(t.a + t.b), count(t.a) from t having sum(t.a + t.b) > 0 order by sum(t.a + t.c)",
-			best: "DataScan(t)->Aggr(sum(plus(test.t.a, test.t.b)),sum(plus(test.t.a, test.t.c)),count(test.t.a))->Selection->Projection->Sort->Trim",
+			best: "DataScan(t)->Aggr(sum(plus(test.t.a, test.t.b)),sum(plus(test.t.a, test.t.c)),count(test.t.a))->Selection->Projection->Sort->Projection",
 		},
 		{
 			sql:  "select sum(a.a) from t a, t b where a.c = b.c",
@@ -743,7 +743,7 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 		},
 		{
 			sql:  "select max(a.b), max(b.b) from t a join t b on a.c = b.c group by a.a",
-			best: "Join{DataScan(a)->DataScan(b)->Aggr(max(b.b),firstrow(b.c))}(a.c,b.c)->Aggr(max(a.b),max(join_agg_0))->Projection",
+			best: "Join{DataScan(a)->DataScan(b)->Aggr(max(b.b),firstrow(b.c))}(a.c,b.c)->Projection->Projection",
 		},
 		{
 			sql:  "select max(a.b), max(b.b) from t a join t b on a.a = b.a group by a.c",
@@ -775,7 +775,7 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
-		p, err = logicalOptimize(flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagAggPushDown, lp.(LogicalPlan), builder.ctx, builder.allocator)
+		p, err = logicalOptimize(flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagAggregationOptimize, lp.(LogicalPlan), builder.ctx, builder.allocator)
 		lp.ResolveIndicesAndCorCols()
 		c.Assert(err, IsNil)
 		c.Assert(ToString(lp), Equals, ca.best, Commentf("for %s", ca.sql))
@@ -1055,28 +1055,27 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 			sql: "select (select count(a) from t where b = k.a) from t k",
 			ans: map[string][]string{
 				"TableScan_1": {"a"},
-				"TableScan_2": {"a", "b"},
+				"TableScan_3": {"a", "b"},
 			},
 		},
 		{
 			sql: "select exists (select count(*) from t where b = k.a) from t k",
 			ans: map[string][]string{
-				"TableScan_1": {"a"},
-				"TableScan_2": {"b"},
+				"TableScan_1": {},
 			},
 		},
 		{
 			sql: "select b = (select count(*) from t where b = k.a) from t k",
 			ans: map[string][]string{
 				"TableScan_1": {"a", "b"},
-				"TableScan_2": {"b"},
+				"TableScan_3": {"b"},
 			},
 		},
 		{
-			sql: "select exists (select count(a) from t where b = k.a) from t k",
+			sql: "select exists (select count(a) from t where b = k.a group by b) from t k",
 			ans: map[string][]string{
 				"TableScan_1": {"a"},
-				"TableScan_2": {"b"},
+				"TableScan_3": {"b"},
 			},
 		},
 		{
@@ -1089,28 +1088,28 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 			sql: "select a from t where b < any (select c from t)",
 			ans: map[string][]string{
 				"TableScan_1": {"a", "b"},
-				"TableScan_2": {"c"},
+				"TableScan_3": {"c"},
 			},
 		},
 		{
 			sql: "select a from t where (b,a) != all (select c,d from t)",
 			ans: map[string][]string{
 				"TableScan_1": {"a", "b"},
-				"TableScan_2": {"c", "d"},
+				"TableScan_3": {"c", "d"},
 			},
 		},
 		{
 			sql: "select a from t where (b,a) in (select c,d from t)",
 			ans: map[string][]string{
 				"TableScan_1": {"a", "b"},
-				"TableScan_2": {"c", "d"},
+				"TableScan_3": {"c", "d"},
 			},
 		},
 		{
 			sql: "select a from t where a in (select a from t s group by t.b)",
 			ans: map[string][]string{
 				"TableScan_1": {"a"},
-				"TableScan_2": {"a"},
+				"TableScan_3": {"a"},
 			},
 		},
 	}
@@ -1120,7 +1119,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 		c.Assert(err, IsNil, comment)
 
 		is, err := mockResolve(stmt)
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, comment)
 
 		builder := &planBuilder{
 			colMapper: make(map[*ast.ColumnNameExpr]int),
@@ -1148,7 +1147,7 @@ func (s *testPlanSuite) TestAllocID(c *C) {
 
 func checkDataSourceCols(p Plan, c *C, ans map[string][]string, comment CommentInterface) {
 	switch p.(type) {
-	case *PhysicalTableScan:
+	case *DataSource:
 		colList, ok := ans[p.ID()]
 		c.Assert(ok, IsTrue, comment)
 		for i, colName := range colList {
@@ -1291,7 +1290,7 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 		ans map[string][][]string
 	}{
 		{
-			sql: "select a, sum(e) from t group by a",
+			sql: "select a, sum(e) from t group by b",
 			ans: map[string][][]string{
 				"TableScan_1":   {{"test.t.a"}},
 				"Aggregation_2": {{"test.t.a"}},
@@ -1299,23 +1298,23 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 			},
 		},
 		{
-			sql: "select a, sum(f) from t group by a",
+			sql: "select a, b, sum(f) from t group by b",
 			ans: map[string][][]string{
 				"TableScan_1":   {{"test.t.f"}, {"test.t.a"}},
-				"Aggregation_2": {{"test.t.a"}},
-				"Projection_3":  {{"a"}},
+				"Aggregation_2": {{"test.t.a"}, {"test.t.b"}},
+				"Projection_3":  {{"a"}, {"b"}},
 			},
 		},
 		{
 			sql: "select c, d, e, sum(a) from t group by c, d, e",
 			ans: map[string][][]string{
 				"TableScan_1":   {{"test.t.a"}},
-				"Aggregation_2": nil,
-				"Projection_3":  nil,
+				"Aggregation_2": {{"test.t.c", "test.t.d", "test.t.e"}},
+				"Projection_3":  {{"c", "d", "e"}},
 			},
 		},
 		{
-			sql: "select f, g, sum(a) from t group by f, g",
+			sql: "select f, g, sum(a) from t",
 			ans: map[string][][]string{
 				"TableScan_1":   {{"test.t.f"}, {"test.t.g"}, {"test.t.f", "test.t.g"}, {"test.t.a"}},
 				"Aggregation_2": {{"test.t.f"}, {"test.t.g"}, {"test.t.f", "test.t.g"}},
@@ -1338,7 +1337,7 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 				"Aggregation_2": {{"test.t.f"}},
 				"Selection_6":   {{"test.t.f"}},
 				"Projection_3":  {{"f"}},
-				"Trim_5":        {{"f"}},
+				"Projection_5":  {{"f"}},
 			},
 		},
 		{
@@ -1395,6 +1394,10 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 			sql:  "select tt.a, sum(tt.b) from (select a, b from t) tt group by tt.a",
 			best: "DataScan(t)->Projection->Projection->Projection",
 		},
+		{
+			sql:  "select count(1) from (select count(1), a as b from t group by a) tt group by b",
+			best: "DataScan(t)->Projection->Projection->Projection->Projection",
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
@@ -1411,7 +1414,7 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 		}
 		p := builder.build(stmt).(LogicalPlan)
 		c.Assert(builder.err, IsNil)
-		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo|flagEliminateAgg, p.(LogicalPlan), builder.ctx, builder.allocator)
+		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo|flagAggregationOptimize, p.(LogicalPlan), builder.ctx, builder.allocator)
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, ca.best, comment)
 	}
@@ -1510,6 +1513,54 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			sql: "drop index e on t",
 			ans: []visitInfo{
 				{mysql.IndexPriv, "test", "t", ""},
+			},
+		},
+		{
+			sql: `create user 'test'@'%' identified by '123456'`,
+			ans: []visitInfo{
+				{mysql.CreateUserPriv, "", "", ""},
+			},
+		},
+		{
+			sql: `drop user 'test'@'%'`,
+			ans: []visitInfo{
+				{mysql.CreateUserPriv, "", "", ""},
+			},
+		},
+		{
+			sql: `grant all privileges on test.* to 'test'@'%'`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "", ""},
+				{mysql.InsertPriv, "test", "", ""},
+				{mysql.UpdatePriv, "test", "", ""},
+				{mysql.DeletePriv, "test", "", ""},
+				{mysql.CreatePriv, "test", "", ""},
+				{mysql.DropPriv, "test", "", ""},
+				{mysql.GrantPriv, "test", "", ""},
+				{mysql.AlterPriv, "test", "", ""},
+				{mysql.ExecutePriv, "test", "", ""},
+				{mysql.IndexPriv, "test", "", ""},
+			},
+		},
+		{
+			sql: `grant select on test.ttt to 'test'@'%'`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "ttt", ""},
+				{mysql.GrantPriv, "test", "ttt", ""},
+			},
+		},
+		{
+			sql: `revoke all privileges on *.* from 'test'@'%'`,
+			ans: []visitInfo{
+				// TODO: This should be SUPER privilege.
+				{mysql.CreateUserPriv, "", "", ""},
+			},
+		},
+		{
+			sql: `set password for 'root'@'%' = 'xxxxx'`,
+			ans: []visitInfo{
+				// TODO: This should be SUPER privilege.
+				{mysql.CreateUserPriv, "", "", ""},
 			},
 		},
 	}

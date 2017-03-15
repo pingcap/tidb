@@ -333,6 +333,14 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	r.Check(testkit.Rows("0", "-1", "-2"))
 	r = tk.MustQuery("select t.d from t order by d;")
 	r.Check(testkit.Rows("1", "2", "3"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int)")
+	tk.MustExec("insert t values (1, 2, 3)")
+	r = tk.MustQuery("select b from (select a,b from t order by a,c) t")
+	r.Check(testkit.Rows("2"))
+	r = tk.MustQuery("select b from (select a,b from t order by a,c limit 1) t")
+	r.Check(testkit.Rows("2"))
 }
 
 func (s *testSuite) TestSelectErrorRow(c *C) {
@@ -542,6 +550,11 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("INSERT INTO t VALUES ('1978-11-26')")
 	r = tk.MustQuery("SELECT f1+0 FROM t UNION SELECT f1+0 FROM t")
 	r.Check(testkit.Rows("19781126"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (a int, b int)")
+	tk.MustExec("INSERT INTO t VALUES ('1', '1')")
+	r = tk.MustQuery("select b from (SELECT * FROM t UNION ALL SELECT a, b FROM t order by a) t")
 }
 
 func (s *testSuite) TestIn(c *C) {

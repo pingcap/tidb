@@ -48,10 +48,6 @@ const (
 	Lim = "Limit"
 	// App is the type of Apply.
 	App = "Apply"
-	// Dis is the type of Distinct.
-	Dis = "Distinct"
-	// Trm is the type of Trim.
-	Trm = "Trim"
 	// MOR is the type of MaxOneRow.
 	MOR = "MaxOneRow"
 	// Ext is the type of Exists.
@@ -128,6 +124,19 @@ func (p *requiredProperty) getHashKey() ([]byte, error) {
 	}
 	bytes, err := codec.EncodeValue(nil, datums...)
 	return bytes, errors.Trace(err)
+}
+
+// String implements fmt.Stringer interface. Just for test.
+func (p *requiredProperty) String() string {
+	ret := "Prop{"
+	for _, colProp := range p.props {
+		ret += fmt.Sprintf("col: %s, desc %v, ", colProp.col, colProp.desc)
+	}
+	ret += fmt.Sprintf("}, Len: %d", p.sortKeyLen)
+	if p.limit != nil {
+		ret += fmt.Sprintf(", Limit: %d,%d", p.limit.Offset, p.limit.Count)
+	}
+	return ret
 }
 
 type physicalPlanInfo struct {
@@ -232,7 +241,7 @@ func (p *baseLogicalPlan) buildKeyInfo() {
 	}
 	if len(p.children) == 1 {
 		switch p.self.(type) {
-		case *Exists, *Aggregation, *Projection, *Trim:
+		case *Exists, *Aggregation, *Projection:
 			p.schema.Keys = nil
 		case *SelectLock:
 			p.schema.Keys = p.children[0].Schema().Keys

@@ -90,7 +90,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache", "action", "round",
 		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest", "least",
 		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events", "less", "than", "timediff",
-		"ln", "log", "log2", "log10", "timestampdiff", "pi",
+		"ln", "log", "log2", "log10", "timestampdiff", "pi", "quote", "none",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -165,6 +165,11 @@ func (s *testParserSuite) TestSimple(c *C) {
 	c.Assert(cs.Cols, HasLen, 1)
 	c.Assert(cs.Cols[0].Options, HasLen, 1)
 	c.Assert(cs.Cols[0].Options[0].Tp, Equals, ast.ColumnOptionPrimaryKey)
+
+	// for issue 2803
+	src = "use quote;"
+	_, err = parser.ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
 }
 
 type testCase struct {
@@ -483,6 +488,8 @@ func (s *testParserSuite) TestExpression(c *C) {
 		{`select """a""";`, true},
 		{`select _utf8"string";`, true},
 		{`select _binary"string";`, true},
+		{"select N'string'", true},
+		{"select n'string'", true},
 		// for comparison
 		{"select 1 <=> 0, 1 <=> null, 1 = null", true},
 	}
@@ -1188,6 +1195,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t ALTER COLUMN a SET DEFAULT 1+1", false},
 		{"ALTER TABLE t ALTER COLUMN a DROP DEFAULT", true},
 		{"ALTER TABLE t ALTER a DROP DEFAULT", true},
+		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED, lock=none", true},
 
 		// for rename table statement
 		{"RENAME TABLE t TO t1", true},
@@ -1470,6 +1478,7 @@ func (s *testParserSuite) TestSessionManage(c *C) {
 		{"kill tidb 23123", true},
 		{"kill tidb connection 23123", true},
 		{"kill tidb query 23123", true},
+		{"show processlist", true},
 	}
 	s.RunTest(c, table)
 }

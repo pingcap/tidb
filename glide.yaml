@@ -84,7 +84,7 @@ import:
   - encoding/unicode
   - transform
 - package: google.golang.org/grpc
-  version: 02fca896ff5f50c6bbbee0860345a49344b37a03
+  version: v1.0.4
   subpackages:
   - codes
   - credentials
@@ -141,14 +141,15 @@ import:
   subpackages:
   - lex
 - package: github.com/pingcap/pd
-  version: 3d5bb2b3a056925b656d29b88a5b216f6f309368
+  version: 174171b2b15c871c480959397d9b8047175559e7
 - package: github.com/pingcap/tipb
-  version: 979fbca78d449e3c52de37b6fdd1dfbf0977b462
+  version: 1043caee48da56ffc3521406a041db8e5feac9a8
   subpackages:
   - go-binlog
   - go-tipb
+  - sharedbytes
 - package: github.com/pingcap/kvproto
-  version: b66543960fb3508671152f6c9f4a09ee9d7a2322
+  version: 55b670bb63ef8f6c317003273acfce1127df5721
 - package: github.com/gogo/protobuf
   version: ^0.3.0
   subpackages:
@@ -162,3 +163,5 @@ import:
   - rate
 - package: golang.org/x/sys
   version: 8d1157a435470616f975ff9bb013bea8d0962067
+- package: github.com/gorilla/mux
+  version: 599cba5e7b6137d46ddf58fb1765f5d928e69604
