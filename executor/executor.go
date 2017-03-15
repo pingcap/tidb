@@ -18,7 +18,6 @@ import (
 	"sync/atomic"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -509,7 +508,6 @@ func (e *SelectionExec) initController() error {
 	sc := e.ctx.GetSessionVars().StmtCtx
 	client := e.ctx.GetClient()
 	accesses := make([]expression.Expression, 0, len(e.accessConditions))
-	log.Warnf("access Conditions: %v", e.accessConditions)
 	for _, cond := range e.accessConditions {
 		newCond, err := convertCorCol2Constant(cond)
 		if err != nil {
@@ -527,7 +525,6 @@ func (e *SelectionExec) initController() error {
 	}
 	switch x := e.Src.(type) {
 	case *XSelectTableExec:
-		log.Warnf("access Conditions: %v", accesses)
 		ranges, err := plan.BuildTableRange(accesses, sc)
 		if err != nil {
 			return errors.Trace(err)

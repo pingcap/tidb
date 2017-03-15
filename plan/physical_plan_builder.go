@@ -114,7 +114,6 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 }
 
 func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.IndexInfo) (*physicalPlanInfo, error) {
-	log.Warnf("begin conver idxScan")
 	client := p.ctx.GetClient()
 	is := &PhysicalIndexScan{
 		Index:               index,
@@ -1013,9 +1012,7 @@ func (p *Selection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanI
 		return info, nil
 	}
 	info = p.tryToBuildScanByKey(prop)
-	log.Warnf("info type: %T", info)
 	if info != nil {
-		log.Warnf("info p type: %T", info.p)
 		p.storePlanInfo(prop, info)
 		return info, nil
 	}

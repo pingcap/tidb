@@ -18,7 +18,6 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -481,7 +480,6 @@ func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
 		idxFilterConditions: v.IdxConditions,
 		tblFilterConditions: v.TblConditions,
 	}
-	log.Warnf("child type: %T", exec.Src)
 	return exec
 }
 
