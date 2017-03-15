@@ -759,7 +759,21 @@ type builtinCosSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_cos
 func (b *builtinCosSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("cos")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	arg := args[0]
+	if arg.IsNull() {
+		return d, nil
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	x, err := arg.ToFloat64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d.SetFloat64(math.Cos(x))
+	return d, nil
 }
 
 type cotFunctionClass struct {
@@ -776,21 +790,7 @@ type builtinCotSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_cot
 func (b *builtinCotSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	arg := args[0]
-	if arg.IsNull() {
-		return d, nil
-	}
-	sc := b.ctx.GetSessionVars().StmtCtx
-	x, err := arg.ToFloat64(sc)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	d.SetFloat64(math.Cos(x)
-	return d, nil
+	return d, errFunctionNotExists.GenByArgs("cot")
 }
 
 type degreesFunctionClass struct {
@@ -888,7 +888,7 @@ func (b *builtinSinSig) eval(row []types.Datum) (d types.Datum, err error) {
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	d.SetFloat64(math.Sin(x)
+	d.SetFloat64(math.Sin(x))
 	return d, nil
 }
 
@@ -919,7 +919,7 @@ func (b *builtinTanSig) eval(row []types.Datum) (d types.Datum, err error) {
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	d.SetFloat64(math.Tan(x)
+	d.SetFloat64(math.Tan(x))
 	return d, nil
 }
 

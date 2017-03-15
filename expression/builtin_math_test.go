@@ -368,7 +368,7 @@ func (s *testEvaluatorSuite) TestSin(c *C) {
 	}
 
 	for _, test := range testCase {
-		fc := funcs[ast.Sqrt]
+		fc := funcs[ast.Sin]
 		f, err := fc.getFunction(datumsToConstants(test["arg"]), s.ctx)
 		c.Assert(err, IsNil)
 		v, err := f.eval(nil)
@@ -392,7 +392,7 @@ func (s *testEvaluatorSuite) TestTan(c *C) {
 	}
 
 	for _, test := range testCase {
-		fc := funcs[ast.Sqrt]
+		fc := funcs[ast.Tan]
 		f, err := fc.getFunction(datumsToConstants(test["arg"]), s.ctx)
 		c.Assert(err, IsNil)
 		v, err := f.eval(nil)
@@ -416,12 +416,11 @@ func (s *testEvaluatorSuite) TestCos(c *C) {
 	}
 
 	for _, test := range testCase {
-		fc := funcs[ast.Sqrt]
+		fc := funcs[ast.Cos]
 		f, err := fc.getFunction(datumsToConstants(test["arg"]), s.ctx)
 		c.Assert(err, IsNil)
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, DeepEquals, test["ret"][0], Commentf("arg:%v", t["arg"]))
 	}
-
 }
