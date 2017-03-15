@@ -420,16 +420,17 @@ func (ir *RegionFrameRange) getLastInxIDRange() (start, end int64) {
 // getIndexRangeForTable return the legal index range for table with tableID.
 // end=math.MaxInt64 means record key index is included.
 func (ir *RegionFrameRange) getIndexRangeForTable(tableID int64) (start, end int64) {
-	start = int64(math.MinInt64)
-	end = int64(math.MaxInt64)
 	switch tableID {
 	case ir.firstTableID():
 		return ir.getFirstIdxIDRange()
 	case ir.lastTableID():
 		return ir.getLastInxIDRange()
 	default:
-		return
+		if tableID < ir.lastTableID() && tableID > ir.firstTableID() {
+			return int64(math.MinInt64), int64(math.MaxInt64)
+		}
 	}
+	return int64(math.MaxInt64), int64(math.MinInt64)
 }
 
 func (ir RegionFrameRange) firstTableID() int64 {
