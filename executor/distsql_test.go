@@ -22,7 +22,10 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -64,4 +67,57 @@ func taskGoroutineExists() bool {
 	profile.WriteTo(buf, 1)
 	str := buf.String()
 	return strings.Contains(str, "pickAndExecTask")
+}
+
+func (s *testSuite) TestCopClientSend(c *C) {
+	if _, ok := s.store.GetClient().(*tikv.CopClient); !ok {
+		// Make sure the store is tikv store.
+		return
+	}
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table copclient (id int primary key)")
+
+	// Insert 1000 rows.
+	var values []string
+	for i := 0; i < 1000; i++ {
+		values = append(values, fmt.Sprintf("(%d)", i))
+	}
+	tk.MustExec("insert copclient values " + strings.Join(values, ","))
+
+	// Get table ID for split.
+	dom := sessionctx.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("copclient"))
+	c.Assert(err, IsNil)
+	tblID := tbl.Meta().ID
+
+	// Split the table.
+	cli := tikv.GetMockTiKVClient(s.store)
+	cli.Cluster.SplitTable(cli.MvccStore, tblID, 100)
+	tikv.ClearRegionCache(s.store)
+
+	// Send coprocessor request when the table split.
+	rss, err := tk.Se.Execute("select sum(id) from copclient")
+	c.Assert(err, IsNil)
+	rs := rss[0]
+	defer rs.Close()
+	row, err := rs.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row.Data[0].GetMysqlDecimal().String(), Equals, "499500")
+
+	// Split one region.
+	key := tablecodec.EncodeRowKeyWithHandle(tblID, 500)
+	region, _ := cli.Cluster.GetRegionByKey([]byte(key))
+	peerID := cli.Cluster.AllocID()
+	cli.Cluster.Split(region.GetId(), cli.Cluster.AllocID(), key, []uint64{peerID}, peerID)
+
+	// Check again.
+	rss, err = tk.Se.Execute("select sum(id) from copclient")
+	c.Assert(err, IsNil)
+	rs = rss[0]
+	defer rs.Close()
+	row, err = rs.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row.Data[0].GetMysqlDecimal().String(), Equals, "499500")
 }
