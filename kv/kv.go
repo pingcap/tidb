@@ -153,6 +153,7 @@ type Request struct {
 type Response interface {
 	// Next returns a resultSubset from a single storage unit.
 	// When full result set is returned, nil is returned.
+	// TODO: Find a better interface for resultSubset that can avoid allocation and reuse bytes.
 	Next() (resultSubset io.ReadCloser, err error)
 	// Close response.
 	Close() error
