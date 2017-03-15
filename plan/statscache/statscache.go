@@ -54,7 +54,7 @@ func (h *Handle) Update(m *meta.Meta, is infoschema.InfoSchema) error {
 		version, tableID := row.Data[0].GetUint64(), row.Data[1].GetInt64()
 		table, ok := is.TableByID(tableID)
 		if !ok {
-			log.Warnf("Unknown table ID %d in stats meta table, maybe it has been dropped", tableID)
+			log.Debugf("Unknown table ID %d in stats meta table, maybe it has been dropped", tableID)
 			continue
 		}
 		tableInfo := table.Meta()

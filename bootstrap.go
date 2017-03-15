@@ -120,7 +120,7 @@ const (
 	CreateStatsMetaTable = `CREATE TABLE if not exists mysql.stats_meta (
 		version bigint(64) unsigned NOT NULL,
 		table_id bigint(64) NOT NULL,
-		distinct_ratio double unsigned NOT NULL DEFAULT 0,
+		modify_count bigint(64) NOT NULL DEFAULT 0,
 		count bigint(64) unsigned NOT NULL DEFAULT 0,
 		index idx_ver(version)
 	);`

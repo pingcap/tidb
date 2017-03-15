@@ -14,9 +14,9 @@
 package executor
 
 import (
+	"fmt"
 	"math/rand"
 
-	"fmt"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -128,12 +128,7 @@ func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]
 	if err != nil {
 		return errors.Trace(err)
 	}
-	delSQL := fmt.Sprintf("delete from mysql.stats_meta where table_id = %d", e.tblInfo.ID)
-	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, delSQL)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	insertSQL := fmt.Sprintf("insert into mysql.stats_meta (version, table_id) values (%d, %d)", version, e.tblInfo.ID)
+	insertSQL := fmt.Sprintf("insert into mysql.stats_meta (version, table_id) values (%d, %d) on duplicate key update version = %d", version, e.tblInfo.ID, version)
 	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, insertSQL)
 	if err != nil {
 		return errors.Trace(err)
