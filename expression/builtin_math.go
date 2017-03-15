@@ -498,6 +498,7 @@ func (b *builtinConvSig) eval(row []types.Datum) (d types.Datum, err error) {
 	}
 	n = getValidPrefix(strings.TrimSpace(n), fromBase)
 	if len(n) == 0 {
+		d.SetString("0")
 		return d, nil
 	}
 	if n[0] == '-' {
