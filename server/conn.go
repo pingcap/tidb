@@ -332,12 +332,6 @@ func (cc *clientConn) Run() {
 		if r != nil {
 			buf := make([]byte, size)
 			stackSize := runtime.Stack(buf, false)
-			if stackSize > size {
-				stackSize = size
-			}
-			if stackSize < 0 {
-				stackSize = 0
-			}
 			buf = buf[:stackSize]
 			log.Errorf("lastCmd %s, %v, %s", cc.lastCmd, r, buf)
 		}
