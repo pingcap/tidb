@@ -214,6 +214,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"unhex(12)", mysql.TypeVarString, "utf8"},
 		{"DATE_FORMAT('2009-10-04 22:23:00', '%W %M %Y')", mysql.TypeVarString, "utf8"},
 		{"rpad('TiDB', 12, 'go')", mysql.TypeVarString, charset.CharsetUTF8},
+		{"lpad('TiDB', 12, 'go')", mysql.TypeVarString, charset.CharsetUTF8},
 		{"bit_length('TiDB')", mysql.TypeLonglong, charset.CharsetBin},
 		{"char(66)", mysql.TypeVarString, charset.CharsetUTF8},
 		{"char_length('TiDB')", mysql.TypeLonglong, charset.CharsetBin},
