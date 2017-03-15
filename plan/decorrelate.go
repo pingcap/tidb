@@ -153,6 +153,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 				np, _ := s.optimize(p, nil, nil)
 				agg.SetChildren(np)
 				np.SetParents(agg)
+				agg.collectGroupByColumns()
 				return agg, nil
 			}
 		}
