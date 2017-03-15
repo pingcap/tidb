@@ -288,11 +288,11 @@ type copIterator struct {
 	finished    chan struct{}
 	taskCh      chan *copTask
 
-	// If keepOrder, result is stored in copTask.respChan, read them out one by one.
+	// If keepOrder, results are stored in copTask.respChan, read them out one by one.
 	tasks []*copTask
 	curr  int
 
-	// Otherwise, result is stored in respChan.
+	// Otherwise, results are stored in respChan.
 	respChan chan copResponse
 	wg       sync.WaitGroup
 }
