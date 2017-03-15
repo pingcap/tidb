@@ -60,10 +60,7 @@ func (bp *BytesPool) Alloc(size int) (origin, data []byte) {
 	if size > maxSize {
 		return nil, make([]byte, size)
 	}
-	var i uint
-	for size > (baseSize << i) {
-		i++
-	}
+	i := bucketIdx(size)
 	origin = bp.buckets[i].Get().([]byte)
 	data = origin[:size]
 	return
@@ -76,16 +73,21 @@ func (bp *BytesPool) Free(origin []byte) int {
 	if originLen > maxSize || originLen < baseSize || !isPowerOfTwo(originLen) {
 		return -1
 	}
-	var i uint
-	for originLen > (baseSize << i) {
-		i++
-	}
+	i := bucketIdx(originLen)
 	bp.buckets[i].Put(origin)
-	return int(i)
+	return i
 }
 
 func isPowerOfTwo(x int) bool {
 	return x&(x-1) == 0
+}
+
+func bucketIdx(size int) (i int) {
+	for size > baseSize {
+		size = (size + 1) >> 1
+		i++
+	}
+	return
 }
 
 // ReadCloser frees the origin bytes when Close is called.

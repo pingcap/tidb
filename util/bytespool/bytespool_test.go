@@ -14,11 +14,11 @@
 package bytespool
 
 import (
+	"io/ioutil"
+	"math/rand"
 	"testing"
 
 	. "github.com/pingcap/check"
-	"io/ioutil"
-	"math/rand"
 )
 
 func TestT(t *testing.T) {
