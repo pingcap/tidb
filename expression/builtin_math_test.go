@@ -357,7 +357,7 @@ func (s *testEvaluatorSuite) TestSqrt(c *C) {
 func (s *testEvaluatorSuite) TestSin(c *C) {
 	defer testleak.AfterTest(c)()
 
-	testCase := []struct {
+	tbl := []struct {
 		arg interface{}
 		ret interface{}
 	}{
@@ -367,7 +367,9 @@ func (s *testEvaluatorSuite) TestSin(c *C) {
 		{float64(1), float64(0.8414709848078965)},
 	}
 
-	for _, test := range testCase {
+	Dtbl := tblToDtbl(tbl)
+
+	for _, test := range Dtbl {
 		fc := funcs[ast.Sin]
 		f, err := fc.getFunction(datumsToConstants(test["arg"]), s.ctx)
 		c.Assert(err, IsNil)
@@ -381,7 +383,7 @@ func (s *testEvaluatorSuite) TestSin(c *C) {
 func (s *testEvaluatorSuite) TestTan(c *C) {
 	defer testleak.AfterTest(c)()
 
-	testCase := []struct {
+	tbl := []struct {
 		arg interface{}
 		ret interface{}
 	}{
@@ -391,7 +393,9 @@ func (s *testEvaluatorSuite) TestTan(c *C) {
 		{float64(1), float64(1.557407724654902)},
 	}
 
-	for _, test := range testCase {
+	Dtbl := tblToDtbl(tbl)
+
+	for _, test := range Dtbl {
 		fc := funcs[ast.Tan]
 		f, err := fc.getFunction(datumsToConstants(test["arg"]), s.ctx)
 		c.Assert(err, IsNil)
@@ -405,7 +409,7 @@ func (s *testEvaluatorSuite) TestTan(c *C) {
 func (s *testEvaluatorSuite) TestCos(c *C) {
 	defer testleak.AfterTest(c)()
 
-	testCase := []struct {
+	tbl := []struct {
 		arg interface{}
 		ret interface{}
 	}{
@@ -415,7 +419,9 @@ func (s *testEvaluatorSuite) TestCos(c *C) {
 		{float64(1), float64(0.5403023058681398)},
 	}
 
-	for _, test := range testCase {
+	Dtbl := tblToDtbl(tbl)
+
+	for _, test := range Dtbl {
 		fc := funcs[ast.Cos]
 		f, err := fc.getFunction(datumsToConstants(test["arg"]), s.ctx)
 		c.Assert(err, IsNil)
