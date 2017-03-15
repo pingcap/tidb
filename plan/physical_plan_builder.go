@@ -806,7 +806,6 @@ func buildTableScanByKeyAndCorCol(p *DataSource, pkName model.CIStr, fakeConds [
 	ts.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
 	var accessConditions, filterConditions []expression.Expression
 	checker := conditionChecker{
-		tableName: p.tableInfo.Name,
 		pkName: pkName,
 		length: types.UnspecifiedLength,
 	}
