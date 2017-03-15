@@ -740,6 +740,26 @@ func (s *testEvaluatorSuite) TestHexFunc(c *C) {
 
 	}
 }
+func (s *testEvaluatorSuite) TestBinFunc(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Input  interface{}
+		Expect string
+	}{
+		{112, "10000000"},
+	}
+
+	dtbl := tblToDtbl(tbl)
+	fc := funcs[ast.Bin]
+	for _, t := range dtbl {
+		f, err := fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
+
+	}
+}
 func (s *testEvaluatorSuite) TestUnhexFunc(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
