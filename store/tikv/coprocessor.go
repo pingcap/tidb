@@ -444,7 +444,7 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
 			if err != nil {
 				return []copResponse{{err: errors.Trace(err)}}
 			}
-			return it.rebuildCurrentTask(bo, task)
+			return it.handleRegionErrorTask(bo, task)
 		}
 		if e := resp.GetLocked(); e != nil {
 			log.Debugf("coprocessor encounters lock: %v", e)
@@ -471,7 +471,7 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
 }
 
 // Rebuild and handle current task. It may be split into multiple tasks (in region split scenario).
-func (it *copIterator) rebuildCurrentTask(bo *Backoffer, task *copTask) []copResponse {
+func (it *copIterator) handleRegionErrorTask(bo *Backoffer, task *copTask) []copResponse {
 	coprocessorCounter.WithLabelValues("rebuild_task").Inc()
 
 	newTasks, err := buildCopTasks(bo, it.store.regionCache, task.ranges, it.req.Desc)
