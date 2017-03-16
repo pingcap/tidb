@@ -308,12 +308,12 @@ func (s *testRegionCacheSuite) TestListRegionIDsInCache(c *C) {
 
 	regionIDs, err := s.cache.ListRegionIDsInKeyRange(s.bo, []byte("a"), []byte("z"))
 	c.Assert(err, IsNil)
-	c.Assert(len(regionIDs), Equals, 2)
+	c.Assert(regionIDs, DeepEquals, []uint64{s.region1, region2})
 	regionIDs, err = s.cache.ListRegionIDsInKeyRange(s.bo, []byte("m"), []byte("z"))
 	c.Assert(err, IsNil)
-	c.Assert(len(regionIDs), Equals, 1)
+	c.Assert(regionIDs, DeepEquals, []uint64{region2})
 
 	regionIDs, err = s.cache.ListRegionIDsInKeyRange(s.bo, []byte("a"), []byte("m"))
 	c.Assert(err, IsNil)
-	c.Assert(len(regionIDs), Equals, 2)
+	c.Assert(regionIDs, DeepEquals, []uint64{s.region1, region2})
 }

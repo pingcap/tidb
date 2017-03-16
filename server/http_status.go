@@ -50,7 +50,7 @@ func (s *Server) getPdClient() (pd.Client, error) {
 		return nil, nil
 	}
 	path := fmt.Sprintf("%s://%s", s.cfg.Store, s.cfg.StorePath)
-	etcdAddrs, _, err := tikv.ParsePath(path)
+	etcdAddrs, err := tikv.ParseEtcdAddr(path)
 	if err != nil {
 		return nil, err
 	}

@@ -15,6 +15,7 @@ package tablecodec
 
 import (
 	"bytes"
+	"math"
 	"time"
 
 	"github.com/juju/errors"
@@ -23,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
-	"math"
 )
 
 var (

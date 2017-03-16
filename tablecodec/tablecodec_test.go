@@ -14,6 +14,7 @@
 package tablecodec
 
 import (
+	"math"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -22,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
-	"math"
 )
 
 func TestT(t *testing.T) {

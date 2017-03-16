@@ -218,9 +218,10 @@ func (s *tikvStore) SendKVReq(bo *Backoffer, req *pb.Request, regionID RegionVer
 	return sender.SendKVReq(req, regionID, timeout)
 }
 
-// ParsePath parses path to etcd address list
-func ParsePath(path string) (etcdAddrs []string, disableGC bool, err error) {
-	return parsePath(path)
+// ParseEtcdAddr parses path to etcd address list
+func ParseEtcdAddr(path string) (etcdAddrs []string, err error) {
+	etcdAddrs, _, err = parsePath(path)
+	return
 }
 
 func parsePath(path string) (etcdAddrs []string, disableGC bool, err error) {
