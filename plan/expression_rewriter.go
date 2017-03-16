@@ -511,12 +511,12 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		listLen := len(rows)
 		if listLen == 0 {
 			er.ctxStack[len(er.ctxStack)-1] = &expression.Constant{
-				Value:   types.NewDatum(false),
+				Value:   types.NewDatum(v.Not),
 				RetType: types.NewFieldType(mysql.TypeTiny),
 			}
-			return v, true
+		} else {
+			er.inToExpression(listLen, v.Not, &v.Type)
 		}
-		er.inToExpression(listLen, v.Not, &v.Type)
 		if !asScalar {
 			inFunc := er.ctxStack[len(er.ctxStack)-1].Clone()
 			er.ctxStack = er.ctxStack[:len(er.ctxStack)-1]
