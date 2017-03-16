@@ -257,6 +257,7 @@ type Table struct {
 	Columns []*Column
 	Indices []*Column
 	Count   int64 // Total row count in a table.
+	Pseudo  bool
 }
 
 // String implements Stringer interface.
@@ -615,7 +616,7 @@ func TableFromPB(ti *model.TableInfo, tpb *TablePB) (*Table, error) {
 
 // PseudoTable creates a pseudo table statistics when statistic can not be found in KV store.
 func PseudoTable(ti *model.TableInfo) *Table {
-	t := &Table{Info: ti}
+	t := &Table{Info: ti, Pseudo: true}
 	t.TS = pseudoTimestamp
 	t.Count = pseudoRowCount
 	t.Columns = make([]*Column, len(ti.Columns))
