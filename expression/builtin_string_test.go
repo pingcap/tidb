@@ -1007,6 +1007,9 @@ func (s *testEvaluatorSuite) TestOct(c *C) {
 		{1025, "2001"},
 		{"8a8", "10"},
 		{"abc", "0"},
+		//overflow uint64
+		{9999999999999999999999999, "1777777777777777777777"},
+		{-9999999999999999999999999, "1777777777777777777777"},
 	}
 	fc := funcs[ast.Oct]
 	for _, test := range octCases {
