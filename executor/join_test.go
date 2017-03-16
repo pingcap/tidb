@@ -467,6 +467,26 @@ func (s *testSuite) TestInSubquery(c *C) {
 	tk.MustExec("insert into t2 values (1),(2),(3),(4),(5),(6),(7),(8),(9),(10)")
 	result = tk.MustQuery("select a from t1 where (1,1) in (select * from t2 s , t2 t where t1.a = s.a and s.a = t.a limit 1)")
 	result.Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("create table t2 (a int)")
+	tk.MustExec("insert into t1 values (1),(2)")
+	tk.MustExec("insert into t2 values (1),(2)")
+	tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 1")
+	result = tk.MustQuery("select * from t1 where a in (select * from t2)")
+	result.Check(testkit.Rows("1", "2"))
+	result = tk.MustQuery("select * from t1 where a in (select * from t2 where false)")
+	result.Check(testkit.Rows())
+	result = tk.MustQuery("select * from t1 where a not in (select * from t2 where false)")
+	result.Check(testkit.Rows("1", "2"))
+	tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 0")
+	result = tk.MustQuery("select * from t1 where a in (select * from t2)")
+	result.Check(testkit.Rows("1", "2"))
+	result = tk.MustQuery("select * from t1 where a in (select * from t2 where false)")
+	result.Check(testkit.Rows())
+	result = tk.MustQuery("select * from t1 where a not in (select * from t2 where false)")
+	result.Check(testkit.Rows("1", "2"))
 }
 
 func (s *testSuite) TestJoinLeak(c *C) {

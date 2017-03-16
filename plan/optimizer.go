@@ -35,8 +35,7 @@ const (
 	flagBuildKeyInfo
 	flagDecorrelate
 	flagPredicatePushDown
-	flagEliminateAgg
-	flagAggPushDown
+	flagAggregationOptimize
 )
 
 var optRuleList = []logicalOptRule{
@@ -44,8 +43,7 @@ var optRuleList = []logicalOptRule{
 	&buildKeySolver{},
 	&decorrelateSolver{},
 	&ppdSolver{},
-	&aggPruner{},
-	&aggPushDownSolver{},
+	&aggregationOptimizer{},
 }
 
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.

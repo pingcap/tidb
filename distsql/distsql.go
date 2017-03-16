@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/bytespool"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -170,12 +171,16 @@ type partialResult struct {
 func (pr *partialResult) fetch() {
 	defer close(pr.done)
 	pr.resp = new(tipb.SelectResponse)
-
-	b, err := ioutil.ReadAll(pr.reader)
-	pr.reader.Close()
-	if err != nil {
-		pr.done <- errors.Trace(err)
-		return
+	var b []byte
+	var err error
+	if rc, ok := pr.reader.(*bytespool.ReadCloser); ok {
+		b = rc.SharedBytes()
+	} else {
+		b, err = ioutil.ReadAll(pr.reader)
+		if err != nil {
+			pr.done <- errors.Trace(err)
+			return
+		}
 	}
 
 	err = pr.resp.Unmarshal(b)
@@ -274,7 +279,7 @@ func (pr *partialResult) getChunk() *tipb.Chunk {
 
 // Close closes the sub result.
 func (pr *partialResult) Close() error {
-	return nil
+	return pr.reader.Close()
 }
 
 // Select do a select request, returns SelectResult.

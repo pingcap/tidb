@@ -19,6 +19,7 @@ package table
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -113,15 +114,26 @@ func CastValues(ctx context.Context, rec []types.Datum, cols []*Column, ignoreEr
 
 // CastValue casts a value based on column type.
 func CastValue(ctx context.Context, val types.Datum, col *model.ColumnInfo) (casted types.Datum, err error) {
-	casted, err = val.ConvertTo(ctx.GetSessionVars().StmtCtx, &col.FieldType)
+	sc := ctx.GetSessionVars().StmtCtx
+	casted, err = val.ConvertTo(sc, &col.FieldType)
+	// TODO: make sure all truncate errors are handled by ConvertTo.
+	err = sc.HandleTruncate(err)
 	if err != nil {
-		if ctx.GetSessionVars().StrictSQLMode {
-			return casted, errors.Trace(err)
-		}
-		// TODO: add warnings.
-		log.Warnf("cast value error %v", err)
+		return casted, errors.Trace(err)
 	}
-	return casted, nil
+	if !mysql.IsUTF8Charset(col.Charset) {
+		return casted, nil
+	}
+	str := casted.GetString()
+	for i, r := range str {
+		if r == utf8.RuneError {
+			// Truncate to valid utf8 string.
+			casted = types.NewStringDatum(str[:i])
+			err = sc.HandleTruncate(ErrTruncateWrongValue)
+			break
+		}
+	}
+	return casted, errors.Trace(err)
 }
 
 // ColDesc describes column information like MySQL desc and show columns do.
