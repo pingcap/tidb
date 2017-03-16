@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
-	"fmt"
 )
 
 const (
@@ -598,7 +597,7 @@ func constructPropertyByJoin(join * Join) (error, [][]*requiredProperty) {
 }
 
 
-// convert2PhysicalPlanRight converts the right join to *physicalPlanInfo.
+// convert2PhysicalMergeJoin converts the merge join to *physicalPlanInfo.
 // TODO: Refactory and merge with hash join
 func (p *Join) convert2PhysicalMergeJoin(parentProp *requiredProperty, lProp *requiredProperty, rProp *requiredProperty, joinType JoinType) (*physicalPlanInfo, error) {
 	lChild := p.children[0].(LogicalPlan)
@@ -613,7 +612,7 @@ func (p *Join) convert2PhysicalMergeJoin(parentProp *requiredProperty, lProp *re
 		// Assume order for both side are the same
 		Desc:            lProp.props[0].desc,
 	}
-	join.tp = "SortMergeJoin"
+	join.tp = "MergeJoin"
 	join.allocator = p.allocator
 	join.initIDAndContext(p.ctx)
 	join.SetSchema(p.schema)
@@ -623,7 +622,6 @@ func (p *Join) convert2PhysicalMergeJoin(parentProp *requiredProperty, lProp *re
 	var rInfo *physicalPlanInfo
 
 	// Try no sort first
-	lProp = replaceColsInPropBySchema(lProp, lChild.Schema())
 	lInfoEnforceSort, err := lChild.convert2PhysicalPlan(&requiredProperty{})
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -642,7 +640,6 @@ func (p *Join) convert2PhysicalMergeJoin(parentProp *requiredProperty, lProp *re
 		lInfo = lInfoEnforceSort
 	}
 
-	rProp = replaceColsInPropBySchema(rProp, rChild.Schema())
 	rInfoEnforceSort, err := rChild.convert2PhysicalPlan(&requiredProperty{})
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -660,7 +657,6 @@ func (p *Join) convert2PhysicalMergeJoin(parentProp *requiredProperty, lProp *re
 		rInfo = rInfoNoSorted
 	}
 
-	parentProp = replaceColsInPropBySchema(parentProp, p.schema)
 	resultInfo := join.matchProperty(parentProp, lInfo, rInfo)
 	// TODO: Considering keeping order in join to remove at least
 	// one ordering property
