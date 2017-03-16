@@ -869,7 +869,23 @@ type builtinExpSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_exp
 func (b *builtinExpSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("exp")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	arg := args[0]
+	if arg.IsNull() {
+		return d, nil
+	}
+
+	num, err := arg.ToFloat64(b.ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	d.SetFloat64(math.Exp(num))
+	return d, nil
 }
 
 type piFunctionClass struct {
