@@ -867,7 +867,7 @@ func (b *builtinDegreesSig) eval(row []types.Datum) (d types.Datum, err error) {
 	tmpIT := sc.IgnoreTruncate
 	sc.IgnoreTruncate = true
 	x, err := args[0].ToFloat64(sc)
-    sc.IgnoreTruncate = tmpIT
+	sc.IgnoreTruncate = tmpIT
 	if err != nil {
 		return d, errors.Trace(err)
 	}
