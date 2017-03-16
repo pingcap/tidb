@@ -983,3 +983,31 @@ func (s *testEvaluatorSuite) TestLpad(c *C) {
 		}
 	}
 }
+
+func (s *testEvaluatorSuite) TestInsert(c *C) {
+	tests := []struct {
+		args   []interface{}
+		expect interface{}
+	}{
+		{[]interface{}{"Quadratic", 3, 4, "What"}, "QuWhattic"},
+		{[]interface{}{"Quadratic", -1, 4, "What"}, "Quadratic"},
+		{[]interface{}{"Quadratic", 3, 100, "What"}, "QuWhat"},
+		{[]interface{}{nil, 3, 100, "What"}, nil},
+		{[]interface{}{"Quadratic", nil, 4, "What"}, nil},
+		{[]interface{}{"Quadratic", 3, nil, "What"}, nil},
+		{[]interface{}{"Quadratic", 3, 4, nil}, nil},
+	}
+	fc := funcs[ast.InsertFunc]
+	for _, test := range tests {
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(test.args...)), s.ctx)
+		c.Assert(err, IsNil)
+		result, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		if test.expect == nil {
+			c.Assert(result.Kind(), Equals, types.KindNull)
+		} else {
+			expect, _ := test.expect.(string)
+			c.Assert(result.GetString(), Equals, expect)
+		}
+	}
+}
