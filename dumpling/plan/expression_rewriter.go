@@ -29,7 +29,7 @@ import (
 )
 
 // EvalSubquery evaluates incorrelated subqueries once.
-var EvalSubquery func(p PhysicalPlan, is infoschema.InfoSchema, ctx context.Context) ([]types.Datum, error)
+var EvalSubquery func(p PhysicalPlan, is infoschema.InfoSchema, ctx context.Context) ([][]types.Datum, error)
 
 // evalAstExpr evaluates ast expression directly.
 func evalAstExpr(expr ast.ExprNode, ctx context.Context) (types.Datum, error) {
@@ -453,13 +453,13 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 		er.ctxStack = append(er.ctxStack, er.p.Schema().Columns[er.p.Schema().Len()-1])
 	} else {
 		physicalPlan, err := doOptimize(er.b.optFlag, np, er.b.ctx, er.b.allocator)
-		d, err := EvalSubquery(physicalPlan, er.b.is, er.b.ctx)
+		rows, err := EvalSubquery(physicalPlan, er.b.is, er.b.ctx)
 		if err != nil {
 			er.err = errors.Trace(err)
 			return v, true
 		}
 		er.ctxStack = append(er.ctxStack, &expression.Constant{
-			Value:   d[0],
+			Value:   rows[0][0],
 			RetType: types.NewFieldType(mysql.TypeTiny)})
 	}
 	return v, true
@@ -485,6 +485,38 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 	lLen := getRowLen(lexpr)
 	if lLen != np.Schema().Len() {
 		er.err = ErrOperandColumns.GenByArgs(lLen)
+		return v, true
+	}
+	// Sometimes we can unfold the in subquery. For example, a in (select * from t) can rewrite to `a in (1,2,3,4)`.
+	// TODO: Now we cannot add it to CBO framework. Instead, user can set a session variable to open this optimization.
+	// We will improve our CBO framework in future.
+	if lLen == 1 && er.ctx.GetSessionVars().AllowInSubqueryUnFolding && len(np.extractCorrelatedCols()) == 0 {
+		physicalPlan, err := doOptimize(er.b.optFlag, np, er.b.ctx, er.b.allocator)
+		if err != nil {
+			er.err = errors.Trace(err)
+			return v, true
+		}
+		rows, err := EvalSubquery(physicalPlan, er.b.is, er.b.ctx)
+		if err != nil {
+			er.err = errors.Trace(err)
+			return v, true
+		}
+		for _, row := range rows {
+			con := &expression.Constant{
+				Value:   row[0],
+				RetType: np.Schema().Columns[0].GetType(),
+			}
+			er.ctxStack = append(er.ctxStack, con)
+		}
+		listLen := len(rows)
+		if listLen == 0 {
+			er.ctxStack[len(er.ctxStack)-1] = &expression.Constant{
+				Value:   types.NewDatum(v.Not),
+				RetType: types.NewFieldType(mysql.TypeTiny),
+			}
+		} else {
+			er.inToExpression(listLen, v.Not, &v.Type)
+		}
 		return v, true
 	}
 	var rexpr expression.Expression
@@ -547,14 +579,14 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 		er.err = errors.Trace(err)
 		return v, true
 	}
-	d, err := EvalSubquery(physicalPlan, er.b.is, er.b.ctx)
+	rows, err := EvalSubquery(physicalPlan, er.b.is, er.b.ctx)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return v, true
 	}
 	if np.Schema().Len() > 1 {
 		newCols := make([]expression.Expression, 0, np.Schema().Len())
-		for i, data := range d {
+		for i, data := range rows[0] {
 			newCols = append(newCols, &expression.Constant{
 				Value:   data,
 				RetType: np.Schema().Columns[i].GetType()})
@@ -567,7 +599,7 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 		er.ctxStack = append(er.ctxStack, expr)
 	} else {
 		er.ctxStack = append(er.ctxStack, &expression.Constant{
-			Value:   d[0],
+			Value:   rows[0][0],
 			RetType: np.Schema().Columns[0].GetType(),
 		})
 	}
@@ -617,7 +649,9 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 	case *ast.RowExpr:
 		er.rowToScalarFunc(v)
 	case *ast.PatternInExpr:
-		er.inToExpression(v)
+		if v.Sel == nil {
+			er.inToExpression(len(v.List), v.Not, &v.Type)
+		}
 	case *ast.PositionExpr:
 		er.positionToScalarFunc(v)
 	case *ast.IsNullExpr:
@@ -794,20 +828,18 @@ func (er *expressionRewriter) isTrueToScalarFunc(v *ast.IsTruthExpr) {
 	er.ctxStack = append(er.ctxStack, function)
 }
 
-func (er *expressionRewriter) inToExpression(v *ast.PatternInExpr) {
-	if v.Sel != nil {
-		return
-	}
+// inToExpression convert in expression to a scalar function. The argument lLen means the length of in list.
+// The argument not means if the expression is not in. The tp stands for the expression type, which is always bool.
+func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.FieldType) {
 	stkLen := len(er.ctxStack)
-	lLen := len(v.List)
+	l := getRowLen(er.ctxStack[stkLen-lLen-1])
 	for i := 0; i < lLen; i++ {
-		l := getRowLen(er.ctxStack[stkLen-lLen-1])
 		if l != getRowLen(er.ctxStack[stkLen-lLen+i]) {
 			er.err = ErrOperandColumns.GenByArgs(l)
 			return
 		}
 	}
-	function := er.notToExpression(v.Not, ast.In, &v.Type, er.ctxStack[stkLen-lLen-1:stkLen]...)
+	function := er.notToExpression(not, ast.In, tp, er.ctxStack[stkLen-lLen-1:]...)
 	er.ctxStack = er.ctxStack[:stkLen-lLen-1]
 	er.ctxStack = append(er.ctxStack, function)
 }

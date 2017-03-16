@@ -272,6 +272,19 @@ func (s *testSuite) TestAggregation(c *C) {
 	// When adding new memory table in information_schema, please update this variable.
 	columnCountOfAllInformationSchemaTables := "557"
 	result.Check(testkit.Rows(columnCountOfAllInformationSchemaTables))
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1 (c1 int)")
+	tk.MustExec("create table t2 (c1 int)")
+	tk.MustExec("insert into t1 values(3), (2)")
+	tk.MustExec("insert into t2 values(1), (2)")
+	tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 1")
+	result = tk.MustQuery("select sum(c1 in (select * from t2)) from t1")
+	result.Check(testkit.Rows("1"))
+	tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 0")
+	result = tk.MustQuery("select sum(c1 in (select * from t2)) from t1")
+	result.Check(testkit.Rows("1"))
 }
 
 func (s *testSuite) TestStreamAgg(c *C) {
