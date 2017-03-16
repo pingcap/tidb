@@ -1440,12 +1440,17 @@ func (b *builtinOctSig) eval(row []types.Datum) (d types.Datum, err error) {
 	}
 	val, err := strconv.ParseUint(n, 10, 64)
 	if err != nil {
-		if err.(*strconv.NumError).Err == strconv.ErrRange {
-			overflow = true
+		if numError, ok := err.(*strconv.NumError); ok {
+			if numError.Err == strconv.ErrRange {
+				overflow = true
+			} else {
+				return d, errors.Trace(err)
+			}
 		} else {
 			return d, errors.Trace(err)
 		}
 	}
+
 	if negative && !overflow {
 		val = -val
 	}
