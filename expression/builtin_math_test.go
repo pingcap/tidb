@@ -271,7 +271,7 @@ func (s *testEvaluatorSuite) TestConv(c *C) {
 		{[]interface{}{"TIDB", 10, 8}, "0"},
 		{[]interface{}{"aa", 10, 2}, "0"},
 		{[]interface{}{" A", -10, 16}, "0"},
-		{[]interface{}{"6E", 10, 8}, "0"},
+		{[]interface{}{"a6a", 10, 8}, "0"},
 	}
 
 	Dtbl := tblToDtbl(tbl)
