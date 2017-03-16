@@ -689,3 +689,27 @@ func (n *AnalyzeTableStmt) Accept(v Visitor) (Node, bool) {
 	}
 	return v.Leave(n)
 }
+
+type SelectStmtOpts struct {
+	Distinct		bool
+	SQLCache		bool
+	CalcFoundRows	bool
+	TableHints		[]*TableOptimizerHint
+}
+
+type TableOptimizerHint struct {
+	node
+	// Table hints has no schema info
+	// It allows only table name or alias (if table has an alias)
+	HintName	model.CIStr
+	Tables		[]model.CIStr
+}
+
+func (n *TableOptimizerHint) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*TableOptimizerHint)
+	return v.Leave(n)
+}

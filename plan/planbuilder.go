@@ -63,22 +63,41 @@ type visitInfo struct {
 	column    string
 }
 
+type tableHintInfo struct {
+	sortMergeJoinTables []model.CIStr
+}
+
+func (info* tableHintInfo) ifPreferMergeJoin(tableNames ...*model.CIStr) bool {
+	for _, tableName := range tableNames {
+		if tableName == nil {
+			continue
+		}
+		for _, curEntry := range info.sortMergeJoinTables {
+			if curEntry.L == tableName.L {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // planBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
 type planBuilder struct {
-	err          error
-	hasAgg       bool
-	obj          interface{}
-	allocator    *idAllocator
-	ctx          context.Context
-	is           infoschema.InfoSchema
-	outerSchemas []*expression.Schema
-	inUpdateStmt bool
+	err            error
+	hasAgg         bool
+	obj            interface{}
+	allocator      *idAllocator
+	ctx             context.Context
+	is             infoschema.InfoSchema
+	outerSchemas   []*expression.Schema
+	inUpdateStmt   bool
 	// colMapper stores the column that must be pre-resolved.
-	colMapper map[*ast.ColumnNameExpr]int
+	colMapper      map[*ast.ColumnNameExpr]int
 	// Collect the visit information for privilege check.
-	visitInfo []visitInfo
-	optFlag   uint64
+	visitInfo      []visitInfo
+	tableHintInfo  []tableHintInfo
+	optFlag        uint64
 }
 
 func (b *planBuilder) build(node ast.Node) Plan {

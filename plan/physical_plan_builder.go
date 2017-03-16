@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
+	"fmt"
 )
 
 const (
@@ -312,6 +313,7 @@ func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPl
 		}
 		sort.SetSchema(info.p.Schema())
 		info = addPlanToResponse(sort, info)
+
 		count := info.count
 		if prop.limit != nil {
 			count = prop.limit.Offset + prop.limit.Count
@@ -453,6 +455,7 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 		Concurrency:   JoinConcurrency,
 		DefaultValues: p.DefaultValues,
 	}
+	printArguments("physical_pre_left", p.EqualConditions)
 	join.tp = "HashLeftJoin"
 	join.allocator = p.allocator
 	join.initIDAndContext(lChild.context())
@@ -486,6 +489,7 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 	} else {
 		resultInfo = enforceProperty(limitProperty(prop.limit), resultInfo)
 	}
+	printArguments("physical_after_left", p.EqualConditions)
 	return resultInfo, nil
 }
 
@@ -516,6 +520,7 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 			allRight = false
 		}
 	}
+	printArguments("physical_right before", p.EqualConditions)
 	join := &PhysicalHashJoin{
 		EqualConditions: p.EqualConditions,
 		LeftConditions:  p.LeftConditions,
@@ -559,7 +564,151 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 	} else {
 		resultInfo = enforceProperty(limitProperty(prop.limit), resultInfo)
 	}
+	printArguments("physical_right after", p.EqualConditions)
 	return resultInfo, nil
+}
+
+func generateJoinProp(column *expression.Column, desc bool) *requiredProperty {
+	return &requiredProperty{
+		props: []*columnProp{&columnProp{column, desc}},
+		sortKeyLen: 1,
+	}
+}
+
+// Generate all possible combinations from join conditions for cost evaluation
+// It will try all keys in join conditions
+func constructPropertyByJoin(join * Join) (error, [][]*requiredProperty) {
+	result := make([][]*requiredProperty, 0)
+	printArguments("constructPropertyByJoin", join.EqualConditions)
+	for _, cond := range join.EqualConditions {
+		if len(cond.GetArgs()) != 2 {
+			return errors.New("Unexpected argument count for equal expression."), nil
+		}
+		lExpr, rExpr := cond.GetArgs()[0], cond.GetArgs()[1]
+		// Only consider raw column reference and cowardly ignore calculations
+		// since we don't know if the function call preserve order
+		lColumn, lOK := lExpr.(*expression.Column)
+		rColumn, rOK := rExpr.(*expression.Column)
+		if lOK && rOK {
+			result = append(result, []*requiredProperty{generateJoinProp(lColumn, false),
+				generateJoinProp(rColumn, false)})
+
+			result = append(result, []*requiredProperty{generateJoinProp(lColumn, true),
+				generateJoinProp(rColumn, true)})
+		} else {
+			continue
+		}
+	}
+	return nil, result
+}
+
+
+// convert2PhysicalPlanRight converts the right join to *physicalPlanInfo.
+// TODO: Refactory and merge with hash join
+func (p *Join) convert2PhysicalMergeJoin(parentProp *requiredProperty, lProp *requiredProperty, rProp *requiredProperty, joinType JoinType) (*physicalPlanInfo, error) {
+	lChild := p.children[0].(LogicalPlan)
+	rChild := p.children[1].(LogicalPlan)
+
+	printArguments("convert2PhysicalMergeJoin before", p.EqualConditions)
+	join := &PhysicalMergeJoin{
+		EqualConditions: p.EqualConditions,
+		LeftConditions:  p.LeftConditions,
+		RightConditions: p.RightConditions,
+		OtherConditions: p.OtherConditions,
+		DefaultValues:   p.DefaultValues,
+		// Assume order for both side are the same
+		Desc:            lProp.props[0].desc,
+	}
+	join.tp = "SortMergeJoin"
+	join.allocator = p.allocator
+	join.initIDAndContext(p.ctx)
+	join.SetSchema(p.schema)
+	join.JoinType = joinType
+
+	var lInfo *physicalPlanInfo
+	var rInfo *physicalPlanInfo
+
+	// Try no sort first
+	lProp = replaceColsInPropBySchema(lProp, lChild.Schema())
+	lInfoEnforceSort, err := lChild.convert2PhysicalPlan(&requiredProperty{})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	lInfoEnforceSort = enforceProperty(lProp, lInfoEnforceSort)
+
+	lInfoNoSorted, err := lChild.convert2PhysicalPlan(lProp)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if lInfoNoSorted.cost < lInfoEnforceSort.cost {
+		lInfo = lInfoNoSorted
+	} else {
+		lInfo = lInfoEnforceSort
+	}
+
+	rProp = replaceColsInPropBySchema(rProp, rChild.Schema())
+	rInfoEnforceSort, err := rChild.convert2PhysicalPlan(&requiredProperty{})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	rInfoEnforceSort = enforceProperty(rProp, rInfoEnforceSort)
+
+	rInfoNoSorted, err := rChild.convert2PhysicalPlan(rProp)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if rInfoEnforceSort.cost < rInfoNoSorted.cost {
+		rInfo = rInfoEnforceSort
+	} else {
+		rInfo = rInfoNoSorted
+	}
+
+	parentProp = replaceColsInPropBySchema(parentProp, p.schema)
+	resultInfo := join.matchProperty(parentProp, lInfo, rInfo)
+	// TODO: Considering keeping order in join to remove at least
+	// one ordering property
+	resultInfo = enforceProperty(parentProp, resultInfo)
+	return resultInfo, nil
+}
+
+func (p *Join) convert2PhysicalMergeJoinOnCost(prop *requiredProperty) (*physicalPlanInfo, error) {
+	var info *physicalPlanInfo
+	err, reqPropPairs := constructPropertyByJoin(p)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	minCost := math.MaxFloat64
+	var minInfo *physicalPlanInfo = nil
+	for _, reqPropPair := range reqPropPairs {
+		info, err = p.convert2PhysicalMergeJoin(prop, reqPropPair[0], reqPropPair[1], p.JoinType)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// Force to choose first instead of nil if all Inf cost
+		// TODO: Consider cost instead of force merge
+		if minInfo == nil {
+			minInfo = info
+			minCost = info.cost
+		} else {
+			if info.cost <= minCost {
+				minInfo = info
+				minCost = info.cost
+			}
+		}
+	}
+	return minInfo, nil
+}
+
+func (p *Join) ifValidForMergeJoin() bool {
+	// rule out non-equal join
+	if len(p.EqualConditions) == 0 {
+		return false
+	}
+
+	return true
 }
 
 // convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
@@ -578,28 +727,55 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 			return nil, errors.Trace(err)
 		}
 	case LeftOuterJoin:
+		if p.preferMergeJoin && p.ifValidForMergeJoin() {
+			info, err = p.convert2PhysicalMergeJoinOnCost(prop)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if info != nil {
+				break
+			}
+			// Otherwise fall into hash join
+		}
 		info, err = p.convert2PhysicalPlanLeft(prop, false)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	case RightOuterJoin:
+		if p.preferMergeJoin && p.ifValidForMergeJoin() {
+			info, err = p.convert2PhysicalMergeJoinOnCost(prop)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if info != nil {
+				break
+			}
+		}
 		info, err = p.convert2PhysicalPlanRight(prop, false)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	default:
-		lInfo, err := p.convert2PhysicalPlanLeft(prop, true)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		rInfo, err := p.convert2PhysicalPlanRight(prop, true)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if rInfo.cost < lInfo.cost {
-			info = rInfo
+		// Inner Join
+		if p.preferMergeJoin && p.ifValidForMergeJoin() {
+			info, err = p.convert2PhysicalMergeJoinOnCost(prop)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 		} else {
-			info = lInfo
+			lInfo, err := p.convert2PhysicalPlanLeft(prop, true)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			rInfo, err := p.convert2PhysicalPlanRight(prop, true)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if rInfo.cost < lInfo.cost {
+				info = rInfo
+			} else {
+				info = lInfo
+			}
 		}
 	}
 	p.storePlanInfo(prop, info)
@@ -1138,4 +1314,41 @@ func addCachePlan(p PhysicalPlan, allocator *idAllocator) []*expression.Correlat
 	}
 	p.SetChildren(newChildren...)
 	return selfCorCols
+}
+
+/*
+
+func printProp(prop *requiredProperty) {
+	fmt.Printf("ColumnProps: ")
+	for _, colProp := range prop.props {
+		table := colProp.col.TblName.L
+		column := colProp.col.ColName.L
+		index := colProp.col.Index
+		fmt.Printf("   %s.%s - %d, pos: %d - %s\n", table, column, index, colProp.col.Position, colProp.col.FromID)
+	}
+}
+
+
+func printSchema(schema *expression.Schema) {
+	fmt.Printf("schema: ")
+	for _, colProp := range schema.Columns {
+		fmt.Printf("   %s.%s - %d, pos: %d - %s\n", colProp.TblName.L, colProp.ColName.L, colProp.Index, colProp.Position, colProp.FromID)
+	}
+}
+
+*/
+
+func printArguments(env string, exprs [] *expression.ScalarFunction) {
+	if exprs == nil || len(exprs) == 0 {
+		return
+	}
+	expr := exprs[0]
+	fmt.Printf("%s EQ: %s.%s.%d ==  %s.%s.%d\n", env,
+		expr.GetArgs()[0].(*expression.Column).FromID,
+		expr.GetArgs()[0].(*expression.Column).ColName.L,
+		expr.GetArgs()[0].(*expression.Column).Index,
+		expr.GetArgs()[1].(*expression.Column).FromID,
+		expr.GetArgs()[1].(*expression.Column).ColName.L,
+		expr.GetArgs()[1].(*expression.Column).Index,
+	)
 }

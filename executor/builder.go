@@ -88,7 +88,9 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 	case *plan.PhysicalUnionScan:
 		return b.buildUnionScanExec(v)
 	case *plan.PhysicalHashJoin:
-		return b.buildJoin(v)
+		return b.buildHashJoin(v)
+	case *plan.PhysicalMergeJoin:
+		return b.buildMergeJoin(v)
 	case *plan.PhysicalHashSemiJoin:
 		return b.buildSemiJoin(v)
 	case *plan.Selection:
@@ -364,7 +366,34 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 	return us
 }
 
-func (b *executorBuilder) buildJoin(v *plan.PhysicalHashJoin) Executor {
+// TODO: Refactor against different join strategy by extracting common code base
+func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
+	var leftJoinKeys, rightJoinKeys []*expression.Column
+	var targetTypes []*types.FieldType
+	for _, eqCond := range v.EqualConditions {
+		lKey, _ := eqCond.GetArgs()[0].(*expression.Column)
+		rKey, _ := eqCond.GetArgs()[1].(*expression.Column)
+		leftJoinKeys = append(leftJoinKeys, lKey)
+		rightJoinKeys = append(rightJoinKeys, rKey)
+		targetTypes = append(targetTypes, types.NewFieldType(types.MergeFieldType(lKey.GetType().Tp, rKey.GetType().Tp)))
+	}
+
+	exec := NewMergeJoinExec(
+		b.ctx, leftJoinKeys, rightJoinKeys,
+		b.build(v.Children()[0]),
+		b.build(v.Children()[1]),
+		expression.ComposeCNFCondition(b.ctx, v.LeftConditions...),
+		expression.ComposeCNFCondition(b.ctx, v.RightConditions...),
+		expression.ComposeCNFCondition(b.ctx, v.OtherConditions...),
+		v.Schema(), v.JoinType,
+		v.Desc,
+		v.DefaultValues,
+	)
+
+	return exec
+}
+
+func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 	var leftHashKey, rightHashKey []*expression.Column
 	var targetTypes []*types.FieldType
 	for _, eqCond := range v.EqualConditions {
