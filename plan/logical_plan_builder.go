@@ -53,7 +53,6 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 		baseLogicalPlan: newBaseLogicalPlan(Agg, b.allocator)}
 	agg.self = agg
 	agg.initIDAndContext(b.ctx)
-	addChild(agg, p)
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncList)+p.Schema().Len())...)
 	// aggIdxMap maps the old index to new index after applying common aggregation functions elimination.
 	aggIndexMap := make(map[int]int)
@@ -94,6 +93,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 		agg.AggFuncs = append(agg.AggFuncs, newFunc)
 		schema.Append(col.Clone().(*expression.Column))
 	}
+	addChild(agg, p)
 	agg.GroupByItems = gbyItems
 	agg.SetSchema(schema)
 	agg.collectGroupByColumns()
