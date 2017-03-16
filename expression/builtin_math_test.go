@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"math"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/util/testleak"
@@ -349,5 +351,82 @@ func (s *testEvaluatorSuite) TestSqrt(c *C) {
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("arg:%v", t["Arg"]))
+	}
+}
+
+func (s *testEvaluatorSuite) TestSin(c *C) {
+	defer testleak.AfterTest(c)()
+
+	tbl := []struct {
+		arg interface{}
+		ret interface{}
+	}{
+		{math.Pi / 2, float64(1)},
+		{math.Pi, float64(1.2246467991473515e-16)},
+		{math.Pi / 3, float64(0.8660254037844387)},
+		{float64(1), float64(0.8414709848078965)},
+	}
+
+	Dtbl := tblToDtbl(tbl)
+
+	for _, test := range Dtbl {
+		fc := funcs[ast.Sin]
+		f, err := fc.getFunction(datumsToConstants(test["arg"]), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, DeepEquals, test["ret"][0], Commentf("arg:%v", t["arg"]))
+	}
+
+}
+
+func (s *testEvaluatorSuite) TestTan(c *C) {
+	defer testleak.AfterTest(c)()
+
+	tbl := []struct {
+		arg interface{}
+		ret interface{}
+	}{
+		{math.Pi / 2, float64(1.6331239353195392e+16)},
+		{math.Pi, float64(-1.2246467991473515e-16)},
+		{math.Pi / 3, float64(1.7320508075688774)},
+		{float64(1), float64(1.557407724654902)},
+	}
+
+	Dtbl := tblToDtbl(tbl)
+
+	for _, test := range Dtbl {
+		fc := funcs[ast.Tan]
+		f, err := fc.getFunction(datumsToConstants(test["arg"]), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, DeepEquals, test["ret"][0], Commentf("arg:%v", t["arg"]))
+	}
+
+}
+
+func (s *testEvaluatorSuite) TestCos(c *C) {
+	defer testleak.AfterTest(c)()
+
+	tbl := []struct {
+		arg interface{}
+		ret interface{}
+	}{
+		{math.Pi / 2, float64(6.123233995736757e-17)},
+		{math.Pi, float64(-1)},
+		{math.Pi / 3, float64(0.49999999999999994)},
+		{float64(1), float64(0.5403023058681398)},
+	}
+
+	Dtbl := tblToDtbl(tbl)
+
+	for _, test := range Dtbl {
+		fc := funcs[ast.Cos]
+		f, err := fc.getFunction(datumsToConstants(test["arg"]), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, DeepEquals, test["ret"][0], Commentf("arg:%v", t["arg"]))
 	}
 }
