@@ -516,7 +516,7 @@ func (s *testSuite) TestExplain(c *C) {
 		},
 		{
 			"select c1 from t1 where c1 in (select c2 from t2)",
-			[]string{"TableScan_8"},
+			[]string{"TableScan_7"},
 			[]string{""},
 			[]string{
 				`{

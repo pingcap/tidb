@@ -517,19 +517,6 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		} else {
 			er.inToExpression(listLen, v.Not, &v.Type)
 		}
-		if !asScalar {
-			inFunc := er.ctxStack[len(er.ctxStack)-1].Clone()
-			er.ctxStack = er.ctxStack[:len(er.ctxStack)-1]
-			sel := &Selection{
-				baseLogicalPlan: newBaseLogicalPlan(Sel, er.b.allocator),
-				Conditions:      []expression.Expression{inFunc},
-			}
-			sel.initIDAndContext(er.ctx)
-			sel.self = sel
-			sel.SetSchema(er.p.Schema().Clone())
-			addChild(sel, er.p)
-			er.p = sel
-		}
 		return v, true
 	}
 	var rexpr expression.Expression
