@@ -14,89 +14,109 @@
 package statscache
 
 import (
+	"fmt"
 	"sync"
-	"time"
 
+	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan/statistics"
-	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 type statsInfo struct {
-	tbl      *statistics.Table
-	loadTime int64
+	tbl     *statistics.Table
+	version uint64
+}
+
+// Handle can update stats info periodically.
+type Handle struct {
+	ctx         context.Context
+	lastVersion uint64
+}
+
+// NewHandle creates a Handle for update stats.
+func NewHandle(ctx context.Context) *Handle {
+	return &Handle{ctx: ctx}
+}
+
+// Update reads stats meta from store and updates the stats map.
+func (h *Handle) Update(m *meta.Meta, is infoschema.InfoSchema) error {
+	sql := fmt.Sprintf("SELECT version, table_id from mysql.stats_meta where version > %d order by version", h.lastVersion)
+	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, row := range rows {
+		version, tableID := row.Data[0].GetUint64(), row.Data[1].GetInt64()
+		table, ok := is.TableByID(tableID)
+		if !ok {
+			log.Debugf("Unknown table ID %d in stats meta table, maybe it has been dropped", tableID)
+			continue
+		}
+		tableInfo := table.Meta()
+		tpb, err := m.GetTableStats(tableID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		var tbl *statistics.Table
+		if tpb != nil {
+			tbl, err = statistics.TableFromPB(tableInfo, tpb)
+			// Error is not nil may mean that there are some ddl changes on this table, so the origin
+			// statistics can not be used any more, we give it a nil one.
+			if err != nil {
+				log.Errorf("Error occured when convert pb table for table id %d", tableID)
+			}
+			SetStatisticsTableCache(tableID, tbl, version)
+		}
+		h.lastVersion = version
+	}
+	return nil
 }
 
 type statsCache struct {
+	cache map[int64]*statsInfo
 	m     sync.RWMutex
-	cache map[int64]statsInfo
 }
 
-var statsTblCache = statsCache{cache: map[int64]statsInfo{}}
+var statsTblCache = statsCache{cache: map[int64]*statsInfo{}}
 
-// expireDuration is 1 hour.
-var expireDuration int64 = 60 * 60 * 1000
-
-func tableCacheExpired(si statsInfo) bool {
-	duration := oracle.GetPhysical(time.Now()) - si.loadTime
-	if duration >= expireDuration {
-		return true
-	}
-	return false
-}
-
-// GetStatisticsTableCache retrieves the statistics table from cache, and will refill cache if necessary.
-func GetStatisticsTableCache(ctx context.Context, tblInfo *model.TableInfo) *statistics.Table {
+// GetStatisticsTableCache retrieves the statistics table from cache, and the cache will be updated by a goroutine.
+func GetStatisticsTableCache(tblInfo *model.TableInfo) *statistics.Table {
 	statsTblCache.m.RLock()
-	si, ok := statsTblCache.cache[tblInfo.ID]
-	statsTblCache.m.RUnlock()
-	// Here we check the TableInfo because there may be some ddl changes in the duration period.
-	// Also, we rely on the fact that TableInfo will not be same if and only if there are ddl changes.
-	if ok && tblInfo == si.tbl.Info && !tableCacheExpired(si) {
-		return si.tbl
-	}
-	txn := ctx.Txn()
-	if txn == nil {
-		err := ctx.ActivePendingTxn()
-		if err != nil || ctx.Txn() == nil {
-			return statistics.PseudoTable(tblInfo)
-		}
-		txn = ctx.Txn()
-	}
-	m := meta.NewMeta(txn)
-	tpb, err := m.GetTableStats(tblInfo.ID)
-	if err != nil {
+	defer statsTblCache.m.RUnlock()
+	stats, ok := statsTblCache.cache[tblInfo.ID]
+	if !ok || stats == nil {
 		return statistics.PseudoTable(tblInfo)
 	}
-	// This table has no statistics table, we give it a pseudo one and save in cache.
-	if tpb == nil {
-		tbl := statistics.PseudoTable(tblInfo)
-		SetStatisticsTableCache(tblInfo.ID, tbl)
+	tbl := stats.tbl
+	// Here we check the TableInfo because there may be some ddl changes in the duration period.
+	// Also, we rely on the fact that TableInfo will not be same if and only if there are ddl changes.
+	if tblInfo == tbl.Info {
 		return tbl
 	}
-	tbl, err := statistics.TableFromPB(tblInfo, tpb)
-	// Error is not nil may mean that there are some ddl changes on this table, so the origin
-	// statistics can not be used any more, we give it a pseudo one and save in cache.
-	if err != nil {
-		log.Errorf("Error occured when convert pb table for %s", tblInfo.Name.O)
-		tbl = statistics.PseudoTable(tblInfo)
-		SetStatisticsTableCache(tblInfo.ID, tbl)
-		return tbl
-	}
-	SetStatisticsTableCache(tblInfo.ID, tbl)
-	return tbl
+	return statistics.PseudoTable(tblInfo)
 }
 
 // SetStatisticsTableCache sets the statistics table cache.
-func SetStatisticsTableCache(id int64, statsTbl *statistics.Table) {
-	si := statsInfo{
-		tbl:      statsTbl,
-		loadTime: oracle.GetPhysical(time.Now()),
-	}
+func SetStatisticsTableCache(id int64, statsTbl *statistics.Table, version uint64) {
 	statsTblCache.m.Lock()
-	statsTblCache.cache[id] = si
-	statsTblCache.m.Unlock()
+	defer statsTblCache.m.Unlock()
+	stats, ok := statsTblCache.cache[id]
+	if !ok {
+		si := &statsInfo{
+			tbl:     statsTbl,
+			version: version,
+		}
+		statsTblCache.cache[id] = si
+		return
+	}
+	if stats.version >= version {
+		return
+	}
+	stats.tbl = statsTbl
+	stats.version = version
 }
