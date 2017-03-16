@@ -117,6 +117,8 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		vars.SkipConstraintCheck = (sVal == "1")
 	case variable.TiDBSkipDDLWait:
 		vars.SkipDDLWait = (sVal == "1")
+	case variable.TiDBOptAggPushDown:
+		vars.AllowAggPushDown = strings.EqualFold(sVal, "ON") || sVal == "1"
 	}
 	vars.Systems[name] = sVal
 	return nil

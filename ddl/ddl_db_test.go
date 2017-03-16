@@ -286,6 +286,13 @@ func (s *testDBSuite) testAddAnonymousIndex(c *C) {
 	s.mustExec(c, "alter table t_anonymous_index drop index C3")
 }
 
+func (s *testDBSuite) testAlterLock(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.mustExec(c, "create table t_index_lock (c1 int, c2 int, C3 int)")
+	s.mustExec(c, "alter table t_indx_lock add index (c1, c2), lock=none")
+}
+
 func (s *testDBSuite) testAddIndex(c *C) {
 	done := make(chan error, 1)
 	num := defaultBatchSize + 10
@@ -667,6 +674,14 @@ LOOP:
 	c.Assert(i, Equals, int(count))
 	c.Assert(i, LessEqual, num+step)
 	c.Assert(j, Equals, int(count)-step)
+
+	// for modifying columns after adding columns
+	s.tk.MustExec("alter table t2 modify c4 int default 11")
+	for i := num + step; i < num+step+10; i++ {
+		s.mustExec(c, "insert into t2 values (?, ?, ?, ?)", i, i, i, i)
+	}
+	rows = s.mustQuery(c, "select count(c4) from t2 where c4 = -1")
+	matchRows(c, rows, [][]interface{}{{count - int64(step)}})
 }
 
 func (s *testDBSuite) testDropColumn(c *C) {
@@ -736,7 +751,7 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	rowStr := fmt.Sprintf("%v", nil)
 	s.tk.MustQuery("select aa from t3").Check(testkit.Rows("0", rowStr))
 	// for the following definitions: 'not null', 'null', 'default value' and 'comment'
-	s.mustExec(c, "alter table t3 change b b varchar(20) not null default 'c' comment 'my comment'")
+	s.mustExec(c, "alter table t3 change b b varchar(20) null default 'c' comment 'my comment'")
 	ctx := s.tk.Se.(context.Context)
 	is := sessionctx.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("t3"))
@@ -745,7 +760,7 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	colB := tblInfo.Columns[1]
 	c.Assert(colB.Comment, Equals, "my comment")
 	hasNotNull := tmysql.HasNotNullFlag(colB.Flag)
-	c.Assert(hasNotNull, IsTrue)
+	c.Assert(hasNotNull, IsFalse)
 	s.mustExec(c, "insert into t3 set aa = 3")
 	rowStr = fmt.Sprintf("%v", []byte("a"))
 	rowStr1 := fmt.Sprintf("%v", []byte("b"))
@@ -753,7 +768,7 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	s.tk.MustQuery("select b from t3").Check(testkit.Rows(rowStr, rowStr1, rowStr2))
 	// for timestamp
 	s.mustExec(c, "alter table t3 add column c timestamp not null")
-	s.mustExec(c, "alter table t3 change c c timestamp not null default '2017-02-11' comment 'col c comment' on update current_timestamp")
+	s.mustExec(c, "alter table t3 change c c timestamp null default '2017-02-11' comment 'col c comment' on update current_timestamp")
 	is = sessionctx.GetDomain(ctx).InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("t3"))
 	c.Assert(err, IsNil)
@@ -761,7 +776,7 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	colC := tblInfo.Columns[2]
 	c.Assert(colC.Comment, Equals, "col c comment")
 	hasNotNull = tmysql.HasNotNullFlag(colC.Flag)
-	c.Assert(hasNotNull, IsTrue)
+	c.Assert(hasNotNull, IsFalse)
 
 	// for failing tests
 	sql := "alter table t3 change aa a bigint default ''"
@@ -770,6 +785,8 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrWrongDBName)
 	sql = "alter table t3 change t.a aa bigint"
 	s.testErrorCode(c, sql, tmysql.ErrWrongTableName)
+	sql = "alter table t3 change aa a bigint not null"
+	s.testErrorCode(c, sql, tmysql.ErrUnknown)
 }
 
 func (s *testDBSuite) TestAlterColumn(c *C) {

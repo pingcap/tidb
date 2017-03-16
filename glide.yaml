@@ -143,12 +143,13 @@ import:
 - package: github.com/pingcap/pd
   version: 174171b2b15c871c480959397d9b8047175559e7
 - package: github.com/pingcap/tipb
-  version: 05a4d27c130a965745196e4da8ca395a15d7928f
+  version: 1043caee48da56ffc3521406a041db8e5feac9a8
   subpackages:
   - go-binlog
   - go-tipb
+  - sharedbytes
 - package: github.com/pingcap/kvproto
-  version: 854b7eeb43e436a692463a18f03dabfe917ebe2b
+  version: 55b670bb63ef8f6c317003273acfce1127df5721
 - package: github.com/gogo/protobuf
   version: ^0.3.0
   subpackages:
@@ -162,3 +163,5 @@ import:
   - rate
 - package: golang.org/x/sys
   version: 8d1157a435470616f975ff9bb013bea8d0962067
+- package: github.com/gorilla/mux
+  version: 599cba5e7b6137d46ddf58fb1765f5d928e69604
