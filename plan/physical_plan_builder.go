@@ -955,7 +955,7 @@ func (p *Selection) getUsableIndicesAndPk(ds *DataSource) ([]*model.IndexInfo, m
 }
 
 // tryToBuildIndexScan will check the conditions contain correlated columns whether it can make indexScan.
-func (p *Selection) tryToBuildScanByKey() *physicalPlanInfo {
+func (p *Selection) tryToBuildScanByKeyAndCorCol() *physicalPlanInfo {
 	if ds, ok := p.children[0].(*DataSource); ok && len(p.extractCorrelatedCols()) > 0 {
 		conds := make([]expression.Expression, 0, len(p.Conditions))
 		for _, cond := range p.Conditions {
@@ -974,7 +974,6 @@ func (p *Selection) tryToBuildScanByKey() *physicalPlanInfo {
 					continue
 				}
 				if finalInfo == nil || finalInfo.cost > info.cost {
-					p.onTable = true
 					p.ScanController = true
 					p.AccessConditions = accessConds
 					p.IdxConditions = idxConds
@@ -991,7 +990,6 @@ func (p *Selection) tryToBuildScanByKey() *physicalPlanInfo {
 		if info == nil {
 			return nil
 		}
-		p.onTable = true
 		p.ScanController = true
 		p.AccessConditions = accessCondition
 		p.TblConditions = filterCondition
@@ -1009,7 +1007,7 @@ func (p *Selection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanI
 	if info != nil {
 		return info, nil
 	}
-	info = p.tryToBuildScanByKey()
+	info = p.tryToBuildScanByKeyAndCorCol()
 	if info != nil {
 		p.storePlanInfo(prop, info)
 		return info, nil

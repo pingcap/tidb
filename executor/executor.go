@@ -515,14 +515,6 @@ func (e *SelectionExec) initController() error {
 		}
 		accesses = append(accesses, newCond)
 	}
-	tblFilters := make([]expression.Expression, 0, len(e.tblFilterConditions))
-	for _, cond := range e.tblFilterConditions {
-		newCond, err := convertCorCol2Constant(cond)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		tblFilters = append(tblFilters, newCond)
-	}
 	switch x := e.Src.(type) {
 	case *XSelectTableExec:
 		ranges, err := plan.BuildTableRange(accesses, sc)
@@ -530,11 +522,20 @@ func (e *SelectionExec) initController() error {
 			return errors.Trace(err)
 		}
 		x.ranges = ranges
+		tblFilters := make([]expression.Expression, 0, len(e.tblFilterConditions))
+		for _, cond := range e.tblFilterConditions {
+			newCond, err := convertCorCol2Constant(cond)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			tblFilters = append(tblFilters, newCond)
+		}
 		var conds []expression.Expression
 		x.where, _, conds = plan.ExpressionsToPB(sc, tblFilters, client)
 		e.Condition = expression.ComposeCNFCondition(e.ctx, conds...)
 		return nil
 	case *XSelectIndexExec:
+		x.indexPlan.AccessCondition = accesses
 		err := plan.BuildIndexRange(sc, x.indexPlan)
 		if err != nil {
 			return errors.Trace(err)
