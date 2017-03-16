@@ -440,7 +440,7 @@ func (s *testSuite) TestUpdate(c *C) {
 	r.Check(testkit.Rows("2"))
 	tk.MustExec("commit")
 
-	// Test that in a transactio, when a constrain failed in an update statement, the record is not inserted.
+	// Test that in a transaction, when a constraint failed in an update statement, the record is not inserted.
 	tk.MustExec("create table update_unique (id int primary key, name int unique)")
 	tk.MustExec("insert update_unique values (1, 1), (2, 2);")
 	tk.MustExec("begin")
