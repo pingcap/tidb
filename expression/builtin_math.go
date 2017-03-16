@@ -801,16 +801,19 @@ func (b *builtinDegreesSig) eval(row []types.Datum) (d types.Datum, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 
 	if args[0].IsNull() {
-		return args[0], nil
+		d.SetNull()
+		return d, nil
 	}
 
+	tmpIT := sc.IgnoreTruncate
+	sc.IgnoreTruncate = true
 	x, err := args[0].ToFloat64(sc)
 	if err != nil {
+		sc.IgnoreTruncate = tmpIT
 		return d, errors.Trace(err)
 	}
-
+	sc.IgnoreTruncate = tmpIT
 	d.SetFloat64(x * 180 / math.Pi)
-
 	return d, nil
 }
 
