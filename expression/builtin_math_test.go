@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"math"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/util/testleak"
@@ -70,6 +72,34 @@ func (s *testEvaluatorSuite) TestCeil(c *C) {
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("arg:%v", t["Arg"]))
+	}
+}
+
+func (s *testEvaluatorSuite) TestExp(c *C) {
+	defer testleak.AfterTest(c)()
+	for _, t := range []struct {
+		num interface{}
+		ret interface{}
+		err Checker
+	}{
+		{int64(1), float64(2.718281828459045), IsNil},
+		{float64(1.23), float64(3.4212295362896734), IsNil},
+		{float64(-1.23), float64(0.2922925776808594), IsNil},
+		{float64(-1), float64(0.36787944117144233), IsNil},
+		{float64(0), float64(1), IsNil},
+		{"1.23", float64(3.4212295362896734), IsNil},
+		{"-1.23", float64(0.2922925776808594), IsNil},
+		{"0", float64(1), IsNil},
+		{nil, nil, IsNil},
+		{"abce", nil, NotNil},
+		{"", nil, NotNil},
+	} {
+		fc := funcs[ast.Exp]
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.num)), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
+		c.Assert(err, t.err)
+		c.Assert(v, testutil.DatumEquals, types.NewDatum(t.ret))
 	}
 }
 
@@ -349,5 +379,80 @@ func (s *testEvaluatorSuite) TestSqrt(c *C) {
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("arg:%v", t["Arg"]))
+	}
+}
+
+func (s *testEvaluatorSuite) TestAcos(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Arg interface{}
+		Ret interface{}
+	}{
+		{nil, nil},
+		{int64(1), float64(0)},
+		{float64(1.0001), nil},
+		{"1", float64(0)},
+	}
+
+	Dtbl := tblToDtbl(tbl)
+
+	for _, t := range Dtbl {
+		fc := funcs[ast.Acos]
+		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("arg:%v", t["Arg"]))
+	}
+}
+
+func (s *testEvaluatorSuite) TestAsin(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Arg interface{}
+		Ret interface{}
+	}{
+		{nil, nil},
+		{int64(0), float64(0)},
+		{float64(1.0001), nil},
+		{"0", float64(0)},
+		{"1.0", math.Pi / 2},
+	}
+
+	Dtbl := tblToDtbl(tbl)
+
+	for _, t := range Dtbl {
+		fc := funcs[ast.Asin]
+		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("arg:%v", t["Arg"]))
+	}
+}
+
+func (s *testEvaluatorSuite) TestAtan(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Arg []interface{}
+		Ret interface{}
+	}{
+		{[]interface{}{nil}, nil},
+		{[]interface{}{nil, nil}, nil},
+		{[]interface{}{int64(0), "aaa"}, float64(0)},
+		{[]interface{}{int64(0)}, float64(0)},
+		{[]interface{}{"0", "1"}, float64(0)},
+		{[]interface{}{"0.0", "-2.0"}, float64(math.Pi)},
+	}
+
+	Dtbl := tblToDtbl(tbl)
+
+	for idx, t := range Dtbl {
+		fc := funcs[ast.Atan]
+		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("[%v] - arg:%v", idx, t["Arg"]))
 	}
 }

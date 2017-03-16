@@ -255,6 +255,7 @@ func (s *session) doCommitWithRetry() error {
 	err := s.doCommit()
 	if err != nil {
 		if s.isRetryableError(err) {
+			log.Warnf("[%d] retryable error: %v, txn: %v", s.sessionVars.ConnectionID, err, s.txn)
 			// Transactions will retry 2 ~ commitRetryLimit times.
 			// We make larger transactions retry less times to prevent cluster resource outage.
 			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
@@ -363,9 +364,10 @@ func (s *session) retry(maxCnt int) error {
 		}
 		retryCnt++
 		if !s.unlimitedRetryCount && (retryCnt >= maxCnt) {
-			log.Warnf("[%id] Retry reached max count %d", connID, retryCnt)
+			log.Warnf("[%d] Retry reached max count %d", connID, retryCnt)
 			return errors.Trace(err)
 		}
+		log.Warnf("[%d] retryable error: %v, txn: %v", connID, err, s.txn)
 		kv.BackOff(retryCnt)
 	}
 	return err
@@ -378,7 +380,9 @@ func sqlForLog(sql string) string {
 	return sql
 }
 
-var sysSessionPool = sync.Pool{}
+func (s *session) sysSessionPool() *sync.Pool {
+	return sessionctx.GetDomain(s).SysSessionPool()
+}
 
 // ExecRestrictedSQL implements RestrictedSQLExecutor interface.
 // This is used for executing some restricted sql statements, usually executed during a normal statement execution.
@@ -387,7 +391,7 @@ var sysSessionPool = sync.Pool{}
 func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) ([]*ast.Row, []*ast.ResultField, error) {
 	// Use special session to execute the sql.
 	var se *session
-	tmp := sysSessionPool.Get()
+	tmp := s.sysSessionPool().Get()
 	if tmp != nil {
 		se = tmp.(*session)
 	} else {
@@ -400,7 +404,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) ([]*ast.Row
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
 	}
-	defer sysSessionPool.Put(se)
+	defer s.sysSessionPool().Put(se)
 
 	recordSets, err := se.Execute(sql)
 	if err != nil {
@@ -823,7 +827,10 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	}
 	dom := sessionctx.GetDomain(se)
 	err = dom.LoadPrivilegeLoop(se)
-
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	err = dom.LoadTableStatsLoop(se)
 	return dom, errors.Trace(err)
 }
 
@@ -854,15 +861,15 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
 }
 
 func createSession(store kv.Storage) (*session, error) {
+	domain, err := domap.Get(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	s := &session{
 		values:      make(map[fmt.Stringer]interface{}),
 		store:       store,
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
-	}
-	domain, err := domap.Get(store)
-	if err != nil {
-		return nil, errors.Trace(err)
 	}
 	sessionctx.BindDomain(s, domain)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
@@ -873,7 +880,7 @@ func createSession(store kv.Storage) (*session, error) {
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 3
+	currentBootstrapVersion = 4
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
