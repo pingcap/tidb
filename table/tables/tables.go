@@ -199,10 +199,10 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum
 	// Set new row data into KV.
 	key := t.RecordKey(h)
 	value, err := tablecodec.EncodeRow(currentData, colIDs)
-	if err = txn.Set(key, value); err != nil {
+	if err != nil {
 		return errors.Trace(err)
 	}
-	if err = bs.SaveTo(txn); err != nil {
+	if err = bs.Set(key, value); err != nil {
 		return errors.Trace(err)
 	}
 

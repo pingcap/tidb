@@ -743,7 +743,7 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 		},
 		{
 			sql:  "select max(a.b), max(b.b) from t a join t b on a.c = b.c group by a.a",
-			best: "Join{DataScan(a)->DataScan(b)->Aggr(max(b.b),firstrow(b.c))}(a.c,b.c)->Aggr(max(a.b),max(join_agg_0))->Projection",
+			best: "Join{DataScan(a)->DataScan(b)->Aggr(max(b.b),firstrow(b.c))}(a.c,b.c)->Projection->Projection",
 		},
 		{
 			sql:  "select max(a.b), max(b.b) from t a join t b on a.a = b.a group by a.c",
@@ -775,7 +775,7 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
-		p, err = logicalOptimize(flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagAggPushDown, lp.(LogicalPlan), builder.ctx, builder.allocator)
+		p, err = logicalOptimize(flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagAggregationOptimize, lp.(LogicalPlan), builder.ctx, builder.allocator)
 		lp.ResolveIndicesAndCorCols()
 		c.Assert(err, IsNil)
 		c.Assert(ToString(lp), Equals, ca.best, Commentf("for %s", ca.sql))
@@ -1290,7 +1290,7 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 		ans map[string][][]string
 	}{
 		{
-			sql: "select a, sum(e) from t group by a",
+			sql: "select a, sum(e) from t group by b",
 			ans: map[string][][]string{
 				"TableScan_1":   {{"test.t.a"}},
 				"Aggregation_2": {{"test.t.a"}},
@@ -1298,23 +1298,23 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 			},
 		},
 		{
-			sql: "select a, sum(f) from t group by a",
+			sql: "select a, b, sum(f) from t group by b",
 			ans: map[string][][]string{
 				"TableScan_1":   {{"test.t.f"}, {"test.t.a"}},
-				"Aggregation_2": {{"test.t.a"}},
-				"Projection_3":  {{"a"}},
+				"Aggregation_2": {{"test.t.a"}, {"test.t.b"}},
+				"Projection_3":  {{"a"}, {"b"}},
 			},
 		},
 		{
 			sql: "select c, d, e, sum(a) from t group by c, d, e",
 			ans: map[string][][]string{
 				"TableScan_1":   {{"test.t.a"}},
-				"Aggregation_2": nil,
-				"Projection_3":  nil,
+				"Aggregation_2": {{"test.t.c", "test.t.d", "test.t.e"}},
+				"Projection_3":  {{"c", "d", "e"}},
 			},
 		},
 		{
-			sql: "select f, g, sum(a) from t group by f, g",
+			sql: "select f, g, sum(a) from t",
 			ans: map[string][][]string{
 				"TableScan_1":   {{"test.t.f"}, {"test.t.g"}, {"test.t.f", "test.t.g"}, {"test.t.a"}},
 				"Aggregation_2": {{"test.t.f"}, {"test.t.g"}, {"test.t.f", "test.t.g"}},
@@ -1394,6 +1394,10 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 			sql:  "select tt.a, sum(tt.b) from (select a, b from t) tt group by tt.a",
 			best: "DataScan(t)->Projection->Projection->Projection",
 		},
+		{
+			sql:  "select count(1) from (select count(1), a as b from t group by a) tt group by b",
+			best: "DataScan(t)->Projection->Projection->Projection->Projection",
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
@@ -1410,7 +1414,7 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 		}
 		p := builder.build(stmt).(LogicalPlan)
 		c.Assert(builder.err, IsNil)
-		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo|flagEliminateAgg, p.(LogicalPlan), builder.ctx, builder.allocator)
+		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo|flagAggregationOptimize, p.(LogicalPlan), builder.ctx, builder.allocator)
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, ca.best, comment)
 	}

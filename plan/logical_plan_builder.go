@@ -47,8 +47,7 @@ func (p *Aggregation) collectGroupByColumns() {
 
 func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gbyItems []expression.Expression) (LogicalPlan, map[int]int) {
 	b.optFlag = b.optFlag | flagBuildKeyInfo
-	b.optFlag = b.optFlag | flagEliminateAgg
-	b.optFlag = b.optFlag | flagAggPushDown
+	b.optFlag = b.optFlag | flagAggregationOptimize
 	agg := &Aggregation{
 		AggFuncs:        make([]expression.AggregationFunction, 0, len(aggFuncList)),
 		baseLogicalPlan: newBaseLogicalPlan(Agg, b.allocator)}
@@ -325,8 +324,7 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 
 func (b *planBuilder) buildDistinct(child LogicalPlan, length int) LogicalPlan {
 	b.optFlag = b.optFlag | flagBuildKeyInfo
-	b.optFlag = b.optFlag | flagEliminateAgg
-	b.optFlag = b.optFlag | flagAggPushDown
+	b.optFlag = b.optFlag | flagAggregationOptimize
 	agg := &Aggregation{
 		baseLogicalPlan: newBaseLogicalPlan(Agg, b.allocator),
 		AggFuncs:        make([]expression.AggregationFunction, 0, child.Schema().Len()),
