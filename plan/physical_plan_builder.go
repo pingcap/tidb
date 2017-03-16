@@ -565,18 +565,18 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 
 func generateJoinProp(column *expression.Column, desc bool) *requiredProperty {
 	return &requiredProperty{
-		props: []*columnProp{&columnProp{column, desc}},
+		props:      []*columnProp{{column, desc}},
 		sortKeyLen: 1,
 	}
 }
 
 // Generate all possible combinations from join conditions for cost evaluation
 // It will try all keys in join conditions
-func constructPropertyByJoin(join * Join) (error, [][]*requiredProperty) {
+func constructPropertyByJoin(join *Join) ([][]*requiredProperty, error) {
 	result := make([][]*requiredProperty, 0)
 	for _, cond := range join.EqualConditions {
 		if len(cond.GetArgs()) != 2 {
-			return errors.New("Unexpected argument count for equal expression."), nil
+			return nil, errors.New("unexpected argument count for equal expression")
 		}
 		lExpr, rExpr := cond.GetArgs()[0], cond.GetArgs()[1]
 		// Only consider raw column reference and cowardly ignore calculations
@@ -593,9 +593,8 @@ func constructPropertyByJoin(join * Join) (error, [][]*requiredProperty) {
 			continue
 		}
 	}
-	return nil, result
+	return result, nil
 }
-
 
 // convert2PhysicalMergeJoin converts the merge join to *physicalPlanInfo.
 // TODO: Refactory and merge with hash join
@@ -610,7 +609,7 @@ func (p *Join) convert2PhysicalMergeJoin(parentProp *requiredProperty, lProp *re
 		OtherConditions: p.OtherConditions,
 		DefaultValues:   p.DefaultValues,
 		// Assume order for both side are the same
-		Desc:            lProp.props[0].desc,
+		Desc: lProp.props[0].desc,
 	}
 	join.tp = "MergeJoin"
 	join.allocator = p.allocator
@@ -666,12 +665,12 @@ func (p *Join) convert2PhysicalMergeJoin(parentProp *requiredProperty, lProp *re
 
 func (p *Join) convert2PhysicalMergeJoinOnCost(prop *requiredProperty) (*physicalPlanInfo, error) {
 	var info *physicalPlanInfo
-	err, reqPropPairs := constructPropertyByJoin(p)
+	reqPropPairs, err := constructPropertyByJoin(p)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	minCost := math.MaxFloat64
-	var minInfo *physicalPlanInfo = nil
+	var minInfo *physicalPlanInfo
 	for _, reqPropPair := range reqPropPairs {
 		info, err = p.convert2PhysicalMergeJoin(prop, reqPropPair[0], reqPropPair[1], p.JoinType)
 		if err != nil {

@@ -86,7 +86,6 @@ func (s *testSuite) TestNestedLoopJoin(c *C) {
 	c.Check(row, IsNil)
 }
 
-
 func (s *testSuite) TestMergeJoin(c *C) {
 	defer func() {
 		s.cleanEnv(c)
@@ -151,16 +150,6 @@ func (s *testSuite) TestMergeJoin(c *C) {
 	result = tk.MustQuery("select/*! TIDB_SMJ(t) */  * from t1 a join t1 b on a.c1 = b.c1;")
 	result.Check(testkit.Rows("1 1", "1 1", "1 1", "1 1", "1 1", "1 1", "1 1", "1 1", "1 1"))
 
-	// TODO: Support tupple wise join
-	//tk.MustExec("drop table if exists t")
-	//tk.MustExec("drop table if exists t1")
-	//tk.MustExec("create table t(c1 int,c2 double)")
-	//tk.MustExec("create table t1(c1 double,c2 int)")
-	//tk.MustExec("insert into t values (1, 2), (1, NULL)")
-	//tk.MustExec("insert into t1 values (1, 2), (1, NULL)")
-	//result = tk.MustQuery("select /*! TIDB_SMJ(a,b) */ * from t a , t1 b where (a.c1, a.c2) = (b.c1, b.c2);")
-	//result.Check(testkit.Rows("1 2 1 2"))
-
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t(c1 int, index k(c1))")
@@ -192,7 +181,6 @@ func (s *testSuite) TestMergeJoin(c *C) {
 	result = tk.MustQuery("select /*! TIDB_SMJ(t,t1) */ t.c1 from t , t1 where t.c1 = t1.c1")
 	result.Check(testkit.Rows("1"))
 }
-
 
 func (s *testSuite) TestJoinPanic(c *C) {
 	defer func() {

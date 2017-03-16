@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2017 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,17 +14,17 @@
 package executor
 
 import (
-	"sync/atomic"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/plan"
+	"sync/atomic"
 )
 
 // MergeJoinExec implements the merge join algorithm.
-// This operator assumes that two iterator of both sides
+// This operator assumes that two iterators of both sides
 // will provide required order on join condition:
 // 1. For equal-join, one of the join key from each side
 // matches the order given.
@@ -32,47 +32,48 @@ import (
 // will throw error.
 type MergeJoinExec struct {
 	// Left is always the driver side
-	ctx				context.Context
-	stmtCtx 		*variable.StatementContext
-	leftJoinKeys	[]*expression.Column
-	rightJoinKeys	[]*expression.Column
-	prepared		bool
-	leftFilter		expression.Expression
-	rightFilter		expression.Expression
-	otherFilter   	expression.Expression
-	schema        	*expression.Schema
-	preserveLeft	bool
-	preserveRight	bool
-	cursor			int
-	defaultValues 	[]types.Datum
+	ctx           context.Context
+	stmtCtx       *variable.StatementContext
+	leftJoinKeys  []*expression.Column
+	rightJoinKeys []*expression.Column
+	prepared      bool
+	leftFilter    expression.Expression
+	rightFilter   expression.Expression
+	otherFilter   expression.Expression
+	schema        *expression.Schema
+	preserveLeft  bool
+	preserveRight bool
+	cursor        int
+	defaultValues []types.Datum
 	// Default for both side in case full join
-	defaultLeftRow	*Row
-	defaultRightRow	*Row
-	outputBuf		[]*Row
-	finished		atomic.Value
+	defaultLeftRow  *Row
+	defaultRightRow *Row
+	outputBuf       []*Row
+	finished        atomic.Value
 
-	leftRowBlock	rowBlockIterator
-	rightRowBlock	rowBlockIterator
-	leftRows		[]*Row
-	rightRows		[]*Row
-	desc			bool
+	leftRowBlock  rowBlockIterator
+	rightRowBlock rowBlockIterator
+	leftRows      []*Row
+	rightRows     []*Row
+	desc          bool
 }
 
 const rowBufferSize = 4096
 
+// NewMergeJoinExec is the Constructor for mergeJoinExec
 func NewMergeJoinExec(
-ctx				context.Context,
-leftJoinKeys	[]*expression.Column,
-rightJoinKeys	[]*expression.Column,
-leftReader		Executor,
-rightReader		Executor,
-leftFilter		expression.Expression,
-rightFilter		expression.Expression,
-otherFilter   	expression.Expression,
-schema        	*expression.Schema,
-joinType		plan.JoinType,
-desc			bool,
-defaultValues 	[]types.Datum) (* MergeJoinExec) {
+	ctx context.Context,
+	leftJoinKeys []*expression.Column,
+	rightJoinKeys []*expression.Column,
+	leftReader Executor,
+	rightReader Executor,
+	leftFilter expression.Expression,
+	rightFilter expression.Expression,
+	otherFilter expression.Expression,
+	schema *expression.Schema,
+	joinType plan.JoinType,
+	desc bool,
+	defaultValues []types.Datum) *MergeJoinExec {
 	exec := new(MergeJoinExec)
 	exec.ctx = ctx
 	exec.leftJoinKeys = leftJoinKeys
@@ -82,9 +83,9 @@ defaultValues 	[]types.Datum) (* MergeJoinExec) {
 	exec.desc = desc
 
 	exec.leftRowBlock = rowBlockIterator{
-		ctx: ctx,
-		reader: leftReader,
-		filter: leftFilter,
+		ctx:      ctx,
+		reader:   leftReader,
+		filter:   leftFilter,
 		joinKeys: leftJoinKeys,
 	}
 	if joinType == plan.LeftOuterJoin {
@@ -93,9 +94,9 @@ defaultValues 	[]types.Datum) (* MergeJoinExec) {
 	}
 
 	exec.rightRowBlock = rowBlockIterator{
-		ctx: ctx,
-		reader: rightReader,
-		filter: rightFilter,
+		ctx:      ctx,
+		reader:   rightReader,
+		filter:   rightFilter,
 		joinKeys: rightJoinKeys,
 	}
 	if joinType == plan.RightOuterJoin {
@@ -119,19 +120,18 @@ defaultValues 	[]types.Datum) (* MergeJoinExec) {
 		exec.preserveLeft = true
 		exec.preserveRight = true
 		panic("Full Join not implemented for Merge Join Strategy.")
-		return nil
 	}
 	return exec
 }
 
 // Represent a row block with the same join keys
 type rowBlockIterator struct {
-	stmtCtx			*variable.StatementContext
-	ctx				context.Context
-	reader			Executor
-	filter			expression.Expression
-	joinKeys		[]*expression.Column
-	peekedRow		*Row
+	stmtCtx   *variable.StatementContext
+	ctx       context.Context
+	reader    Executor
+	filter    expression.Expression
+	joinKeys  []*expression.Column
+	peekedRow *Row
 }
 
 func (rb *rowBlockIterator) init() (bool, error) {
@@ -210,7 +210,12 @@ func (e *MergeJoinExec) Close() error {
 	e.cursor = 0
 	e.outputBuf = nil
 
-	return e.rightRowBlock.reader.Close()
+	lErr := e.leftRowBlock.reader.Close()
+	rErr := e.rightRowBlock.reader.Close()
+	if lErr != nil {
+		return lErr
+	}
+	return rErr
 }
 
 // Schema implements the Executor Schema interface.
@@ -219,8 +224,8 @@ func (e *MergeJoinExec) Schema() *expression.Schema {
 }
 
 func compareKeys(stmtCtx *variable.StatementContext,
-				 leftRow *Row, leftKeys []*expression.Column,
-				 rightRow *Row, rightKeys []*expression.Column) (int, error) {
+	leftRow *Row, leftKeys []*expression.Column,
+	rightRow *Row, rightKeys []*expression.Column) (int, error) {
 	for i, leftKey := range leftKeys {
 		lVal, err := leftKey.Eval(leftRow.Data)
 		if err != nil {
@@ -244,8 +249,8 @@ func compareKeys(stmtCtx *variable.StatementContext,
 	return 0, nil
 }
 
-func (e *MergeJoinExec) outputJoinRow(leftRow *Row, rightRow *Row) (error) {
-	var err error = nil
+func (e *MergeJoinExec) outputJoinRow(leftRow *Row, rightRow *Row) error {
+	var err error
 	joinedRow := makeJoinRow(leftRow, rightRow)
 	if e.otherFilter != nil {
 		matched, err := expression.EvalBool(e.otherFilter, joinedRow.Data, e.ctx)
@@ -365,7 +370,6 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 			return true, nil
 		}
 	}
-	return true, nil
 }
 
 func (e *MergeJoinExec) prepare() error {
@@ -413,17 +417,3 @@ func (e *MergeJoinExec) Next() (*Row, error) {
 	e.cursor++
 	return row, nil
 }
-
-/*
-func printRow(msg string, row *Row) {
-	if row == nil {
-		fmt.Println(msg, "null")
-		return
-	}
-	fmt.Print(msg, " ")
-	for _, data := range row.Data {
-		fmt.Print(data.GetInt64(), " ")
-	}
-	fmt.Print("\n")
-}
-*/

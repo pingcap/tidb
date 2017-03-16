@@ -26,6 +26,11 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+const (
+	// TiDBMergeJoin is hint enforce merge join
+	TiDBMergeJoin = "tidb_smj"
+)
+
 type idAllocator struct {
 	id int
 }
@@ -196,9 +201,8 @@ func extractTableAlias(p LogicalPlan) *model.CIStr {
 	if dataSource, ok := p.(*DataSource); ok {
 		if dataSource.TableAsName.L != "" {
 			return dataSource.TableAsName
-		} else {
-			return &dataSource.tableInfo.Name
 		}
+		return &dataSource.tableInfo.Name
 	}
 	return nil
 }
@@ -839,12 +843,11 @@ func (b *planBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 	return
 }
 
-
 func (b *planBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
 	sortMergeTables := make([]model.CIStr, 0)
 	for _, hint := range hints {
 		switch hint.HintName.L {
-		case "tidb_smj":
+		case TiDBMergeJoin:
 			sortMergeTables = append(sortMergeTables, hint.Tables...)
 		default:
 			// ignore hints that not implemented
@@ -865,7 +868,7 @@ func (b *planBuilder) TableHints() *tableHintInfo {
 	if b.tableHintInfo == nil || len(b.tableHintInfo) == 0 {
 		return nil
 	}
-	return &(b.tableHintInfo[len(b.tableHintInfo) - 1])
+	return &(b.tableHintInfo[len(b.tableHintInfo)-1])
 }
 
 func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {

@@ -690,21 +690,24 @@ func (n *AnalyzeTableStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// SelectStmtOpts wrap around select hints and switches
 type SelectStmtOpts struct {
-	Distinct		bool
-	SQLCache		bool
-	CalcFoundRows	bool
-	TableHints		[]*TableOptimizerHint
+	Distinct      bool
+	SQLCache      bool
+	CalcFoundRows bool
+	TableHints    []*TableOptimizerHint
 }
 
+// TableOptimizerHint is Table level optimizer hint
 type TableOptimizerHint struct {
 	node
 	// Table hints has no schema info
 	// It allows only table name or alias (if table has an alias)
-	HintName	model.CIStr
-	Tables		[]model.CIStr
+	HintName model.CIStr
+	Tables   []model.CIStr
 }
 
+// Accept implements Node Accept interface.
 func (n *TableOptimizerHint) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
 	if skipChildren {

@@ -370,7 +370,6 @@ type PhysicalHashJoin struct {
 	DefaultValues []types.Datum
 }
 
-
 // PhysicalMergeJoin represents merge join for inner/ outer join.
 type PhysicalMergeJoin struct {
 	basePlan
@@ -383,7 +382,7 @@ type PhysicalMergeJoin struct {
 	OtherConditions []expression.Expression
 
 	DefaultValues []types.Datum
-	Desc			bool
+	Desc          bool
 }
 
 // PhysicalHashSemiJoin represents hash join for semi join.
@@ -654,7 +653,6 @@ func (p *PhysicalHashJoin) MarshalJSON() ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-
 // MarshalJSON implements json.Marshaler interface.
 func (p *PhysicalMergeJoin) MarshalJSON() ([]byte, error) {
 	leftChild := p.children[0].(PhysicalPlan)
@@ -677,10 +675,10 @@ func (p *PhysicalMergeJoin) MarshalJSON() ([]byte, error) {
 	}
 	buffer := bytes.NewBufferString("{")
 	buffer.WriteString(fmt.Sprintf(
-		"\"eqCond\": %s,\n " +
-			"\"leftCond\": %s,\n" +
-			"\"rightCond\": %s,\n" +
-			"\"otherCond\": %s,\n" +
+		"\"eqCond\": %s,\n "+
+			"\"leftCond\": %s,\n"+
+			"\"rightCond\": %s,\n"+
+			"\"otherCond\": %s,\n"+
 			"\"leftPlan\": \"%s\",\n "+
 			"\"rightPlan\": \"%s\",\n"+
 			"\"desc\": \"%v\""+
