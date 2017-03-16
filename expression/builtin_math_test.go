@@ -458,4 +458,3 @@ func (s *testEvaluatorSuite) TestAtan(c *C) {
 		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("[%v] - arg:%v", idx, t["Arg"]))
 	}
 }
-
