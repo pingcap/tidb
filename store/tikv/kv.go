@@ -130,12 +130,6 @@ func GetMockTiKVClient(store kv.Storage) *mocktikv.RPCClient {
 	return s.client.(*mocktikv.RPCClient)
 }
 
-// ClearRegionCache clears the region cache in the store.
-func ClearRegionCache(store kv.Storage) {
-	s := store.(*tikvStore)
-	s.regionCache = NewRegionCache(s.regionCache.pdClient)
-}
-
 func (s *tikvStore) Begin() (kv.Transaction, error) {
 	txn, err := newTiKVTxn(s)
 	if err != nil {
