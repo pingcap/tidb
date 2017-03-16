@@ -115,15 +115,13 @@ func (ts *TidbRegionHandlerTestSuite) TestRegionsAPI(c *C) {
 	defer ts.stopServer(c)
 	resp, err := http.Get("http://127.0.0.1:10090/tables/information_schema/SCHEMATA/regions")
 	c.Assert(err, IsNil)
-
-	//c.Assert(resp.StatusCode,Equals,http.StatusOK)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	defer resp.Body.Close()
 	decoder := json.NewDecoder(resp.Body)
 
 	var data TableRegions
 	err = decoder.Decode(&data)
 	c.Assert(err, IsNil)
-
 	c.Assert(len(data.RecordRegions) > 0, IsTrue)
 
 	// list region
