@@ -461,27 +461,19 @@ func (e *TableDualExec) Close() error {
 	return nil
 }
 
-func convertCorCol2Constant(expr expression.Expression) (expression.Expression, error) {
+func substituteCorCol2Constant(expr expression.Expression) (expression.Expression) {
 	switch x := expr.(type) {
 	case *expression.ScalarFunction:
 		newArgs := make([]expression.Expression, 0, len(x.GetArgs()))
 		for _, arg := range x.GetArgs() {
-			newArg, err := convertCorCol2Constant(arg)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			newArgs = append(newArgs, newArg)
+			newArgs = append(newArgs, substituteCorCol2Constant(arg))
 		}
 		newSf, _ := expression.NewFunction(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
 		return newSf, nil
 	case *expression.CorrelatedColumn:
-		val, err := x.Eval(nil)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return &expression.Constant{Value: val, RetType: x.GetType()}, nil
+		return &expression.Constant{Value: x.Data, RetType: x.GetType()}
 	default:
-		return x.Clone(), nil
+		return x.Clone()
 	}
 }
 
@@ -492,6 +484,8 @@ type SelectionExec struct {
 	ctx       context.Context
 	schema    *expression.Schema
 
+	// scanController will tell whether this selection need to
+	// control the condition of below scan executor.
 	scanController      bool
 	controllerInit      bool
 	accessConditions    []expression.Expression
@@ -504,15 +498,13 @@ func (e *SelectionExec) Schema() *expression.Schema {
 	return e.schema
 }
 
+// initController will init the conditions of the below scan executor.
 func (e *SelectionExec) initController() error {
 	sc := e.ctx.GetSessionVars().StmtCtx
 	client := e.ctx.GetClient()
 	accesses := make([]expression.Expression, 0, len(e.accessConditions))
 	for _, cond := range e.accessConditions {
-		newCond, err := convertCorCol2Constant(cond)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		newCond := substituteCorCol2Constant(cond)
 		accesses = append(accesses, newCond)
 	}
 	switch x := e.Src.(type) {
@@ -524,10 +516,7 @@ func (e *SelectionExec) initController() error {
 		x.ranges = ranges
 		tblFilters := make([]expression.Expression, 0, len(e.tblFilterConditions))
 		for _, cond := range e.tblFilterConditions {
-			newCond, err := convertCorCol2Constant(cond)
-			if err != nil {
-				return errors.Trace(err)
-			}
+			newCond := substituteCorCol2Constant(cond)
 			tblFilters = append(tblFilters, newCond)
 		}
 		var conds []expression.Expression
@@ -540,10 +529,8 @@ func (e *SelectionExec) initController() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		var idxConds, tblConds []expression.Expression
-		x.indexPlan.IndexConditionPBExpr, _, idxConds = plan.ExpressionsToPB(sc, e.idxFilterConditions, client)
-		x.indexPlan.TableConditionPBExpr, _, tblConds = plan.ExpressionsToPB(sc, e.tblFilterConditions, client)
-		e.Condition = expression.ComposeCNFCondition(e.ctx, append(idxConds, tblConds...)...)
+		x.indexPlan.IndexConditionPBExpr, _, _ = plan.ExpressionsToPB(sc, e.idxFilterConditions, client)
+		x.indexPlan.TableConditionPBExpr, _, _ = plan.ExpressionsToPB(sc, e.tblFilterConditions, client)
 		return nil
 	default:
 		return errors.New("Error type of PhysicalPlan")
