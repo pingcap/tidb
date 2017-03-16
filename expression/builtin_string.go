@@ -1436,6 +1436,9 @@ func (b *builtinOctSig) eval(row []types.Datum) (d types.Datum, err error) {
 		n = n[1:]
 	}
 	val, err := strconv.ParseUint(n, 10, 64)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
 	if negative {
 		val = -val
 	}
