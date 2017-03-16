@@ -1216,7 +1216,6 @@ func (b *builtinRpadSig) eval(row []types.Datum) (d types.Datum, err error) {
 	}
 
 	if l < 0 || (len(str) < l && padStr == "") {
-		d.SetNull()
 		return d, nil
 	}
 
