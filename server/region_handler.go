@@ -80,6 +80,50 @@ type RegionDetail struct {
 	Frames   []FrameItem `json:"frames"`
 }
 
+// addIndex insert a index into RegionDetail.
+func (rt *RegionDetail) addIndex(dbName, tName string, tID int64, indexName string, indexID int64) {
+	rt.Frames = append(rt.Frames, FrameItem{
+		DBName:    dbName,
+		TableName: tName,
+		TableID:   tID,
+		IndexName: indexName,
+		IndexID:   indexID,
+		IsRecord:  false,
+	})
+}
+
+// addRecord insert a table's record into RegionDetail.
+func (rt *RegionDetail) addRecord(dbName, tName string, tID int64) {
+	rt.Frames = append(rt.Frames, FrameItem{
+		DBName:    dbName,
+		TableName: tName,
+		TableID:   tID,
+		IsRecord:  true,
+	})
+}
+
+// addTableInRange insert a table into RegionDetail
+// with index's id in range [startID,endID]. Table's
+// record would be included when endID is MaxInt64.
+func (rt *RegionDetail) addTableInRange(dbName string, curTable *model.TableInfo, startID, endID int64) {
+	tName := curTable.Name.String()
+	tID := curTable.ID
+
+	for _, index := range curTable.Indices {
+		if index.ID >= startID && index.ID <= endID {
+			rt.addIndex(
+				dbName,
+				tName,
+				tID,
+				index.Name.String(),
+				index.ID)
+		}
+	}
+	if endID == math.MaxInt64 {
+		rt.addRecord(dbName, tName, tID)
+	}
+}
+
 // FrameItem includes a index's or record's meta data with table's info.
 type FrameItem struct {
 	DBName    string `json:"db_name"`
@@ -131,9 +175,9 @@ func (s *Server) newTableRegionsHandler(pdClient pd.Client) http.Handler {
 	}
 }
 
-func (rh TableRegionsHandler) getRegionsMetaWithRegionIds(rIDs []uint64) ([]RegionMeta, error) {
-	regions := make([]RegionMeta, len(rIDs))
-	for i, regionID := range rIDs {
+func (rh TableRegionsHandler) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, error) {
+	regions := make([]RegionMeta, len(regionIDs))
+	for i, regionID := range regionIDs {
 		meta, leader, err := rh.pdClient.GetRegionByID(regionID)
 		if err != nil {
 			return nil, err
@@ -176,7 +220,7 @@ func (rh TableRegionsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		rh.writeError(w, err)
 		return
 	}
-	recordRegions, err := rh.getRegionsMetaWithRegionIds(recordRegionIDs)
+	recordRegions, err := rh.getRegionsMeta(recordRegionIDs)
 	if err != nil {
 		rh.writeError(w, err)
 		return
@@ -194,7 +238,7 @@ func (rh TableRegionsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 			rh.writeError(w, err)
 			return
 		}
-		indices[i].Regions, err = rh.getRegionsMetaWithRegionIds(rIDs)
+		indices[i].Regions, err = rh.getRegionsMeta(rIDs)
 		if err != nil {
 			rh.writeError(w, err)
 			return
@@ -268,10 +312,6 @@ func (rh *RegionHandler) prepare() (tool *regionHandlerTool, err error) {
 	// check store
 	if rh.server.cfg.Store != "tikv" {
 		err = fmt.Errorf("only store tikv support,current store:%s", rh.server.cfg.Store)
-		return
-	}
-	if rh.pdClient == nil {
-		err = fmt.Errorf("Invalid PdClient: nil")
 		return
 	}
 
@@ -439,48 +479,4 @@ func (ir RegionFrameRange) firstTableID() int64 {
 
 func (ir RegionFrameRange) lastTableID() int64 {
 	return ir.last.TableID
-}
-
-// addIndex insert a index into RegionDetail.
-func (rt *RegionDetail) addIndex(dbName, tName string, tID int64, indexName string, indexID int64) {
-	rt.Frames = append(rt.Frames, FrameItem{
-		DBName:    dbName,
-		TableName: tName,
-		TableID:   tID,
-		IndexName: indexName,
-		IndexID:   indexID,
-		IsRecord:  false,
-	})
-}
-
-// addRecord insert a table's record into RegionDetail.
-func (rt *RegionDetail) addRecord(dbName, tName string, tID int64) {
-	rt.Frames = append(rt.Frames, FrameItem{
-		DBName:    dbName,
-		TableName: tName,
-		TableID:   tID,
-		IsRecord:  true,
-	})
-}
-
-// addTableInRange insert a table into RegionDetail
-// with index's id in range [startID,endID]. Table's
-// record would be included when endID is MaxInt64.
-func (rt *RegionDetail) addTableInRange(dbName string, curTable *model.TableInfo, startID, endID int64) {
-	tName := curTable.Name.String()
-	tID := curTable.ID
-
-	for _, index := range curTable.Indices {
-		if index.ID >= startID && index.ID <= endID {
-			rt.addIndex(
-				dbName,
-				tName,
-				tID,
-				index.Name.String(),
-				index.ID)
-		}
-	}
-	if endID == math.MaxInt64 {
-		rt.addRecord(dbName, tName, tID)
-	}
 }

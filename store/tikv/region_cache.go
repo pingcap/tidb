@@ -194,10 +194,10 @@ func (c *RegionCache) GroupKeysByRegion(bo *Backoffer, keys [][]byte) (map[Regio
 
 // ListRegionIDsInKeyRange lists ids of regions in [start_key,end_key].
 func (c *RegionCache) ListRegionIDsInKeyRange(bo *Backoffer, startKey, endKey []byte) (regionIDs []uint64, err error) {
-	for err == nil {
-		curRegion, curErr := c.LocateKey(bo, startKey)
-		if curErr != nil {
-			return nil, errors.Trace(curErr)
+	for {
+		curRegion, err := c.LocateKey(bo, startKey)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 		regionIDs = append(regionIDs, curRegion.Region.id)
 		if curRegion.Contains(endKey) {
@@ -205,7 +205,7 @@ func (c *RegionCache) ListRegionIDsInKeyRange(bo *Backoffer, startKey, endKey []
 		}
 		startKey = curRegion.EndKey
 	}
-	return regionIDs, err
+	return regionIDs, nil
 }
 
 // DropRegion removes a cached Region.
