@@ -1471,14 +1471,14 @@ func (b *builtinBinSig) eval(row []types.Datum) (d types.Datum, err error) {
 	if arg.IsNull() {
 		return d, nil
 	}
-	bin, err := arg.ToBytes()
+	bin, err := strconv.Atoi(arg)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
 	var str string
 	var a byte = 0x80
 	for i:=0; i<8; i++ {
-		switch a&data{
+		switch a&bin{
 			case 0: str += "0"
 			default: str += "1"
 		}
