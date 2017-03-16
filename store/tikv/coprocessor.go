@@ -18,7 +18,6 @@ import (
 	goctx "context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"sync"
 	"time"
 
@@ -26,6 +25,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/bytespool"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -416,7 +416,7 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 	if resp.err != nil {
 		return nil, errors.Trace(resp.err)
 	}
-	return ioutil.NopCloser(bytes.NewBuffer(resp.Data)), nil
+	return bytespool.NewReadCloser(bytespool.DefaultPool, nil, resp.Data), nil
 }
 
 // Handle single copTask.
