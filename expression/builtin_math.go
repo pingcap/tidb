@@ -614,7 +614,7 @@ type builtinSqrtSig struct {
 func (b *builtinSqrtSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	if args[0].IsNull() {
 		return args[0], nil
@@ -629,7 +629,6 @@ func (b *builtinSqrtSig) eval(row []types.Datum) (d types.Datum, err error) {
 	// negative value does not have any square root in rational number
 	// Need return null directly.
 	if f < 0 {
-		d.SetNull()
 		return d, nil
 	}
 
@@ -708,7 +707,24 @@ type builtinAcosSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_acos
 func (b *builtinAcosSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("acos")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if args[0].IsNull() {
+		return args[0], nil
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	f, err := args[0].ToFloat64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if f < -1 || f > 1 {
+		return d, nil
+	}
+
+	d.SetFloat64(math.Acos(f))
+	return
 }
 
 type asinFunctionClass struct {
@@ -725,7 +741,24 @@ type builtinAsinSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_asin
 func (b *builtinAsinSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("asin")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if args[0].IsNull() {
+		return args[0], nil
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	f, err := args[0].ToFloat64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if f < -1 || f > 1 {
+		return d, nil
+	}
+
+	d.SetFloat64(math.Asin(f))
+	return
 }
 
 type atanFunctionClass struct {
@@ -742,7 +775,33 @@ type builtinAtanSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_atan
 func (b *builtinAtanSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("atan")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	if args[0].IsNull() {
+		return args[0], nil
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	y, err := args[0].ToFloat64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if len(args) == 2 {
+		x, err := args[1].ToFloat64(sc)
+		if err != nil {
+			d.SetFloat64(math.Atan(y))
+			// FIXME: Trigger a warning perhaps.
+			err = nil
+		} else {
+			d.SetFloat64(math.Atan2(y, x))
+		}
+	} else {
+		d.SetFloat64(math.Atan(y))
+	}
+
+	return
 }
 
 type cosFunctionClass struct {
