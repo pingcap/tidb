@@ -14,9 +14,12 @@
 package binloginfo
 
 import (
+	"time"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tipb/go-binlog"
 	goctx "golang.org/x/net/context"
 	grpc "google.golang.org/grpc"
@@ -46,11 +49,21 @@ func GetPrewriteValue(ctx context.Context, createIfNotExists bool) *binlog.Prewr
 func WriteBinlog(bin *binlog.Binlog, clusterID uint64) error {
 	commitData, _ := bin.Marshal()
 	req := &binlog.WriteBinlogReq{ClusterID: clusterID, Payload: commitData}
-	resp, err := PumpClient.WriteBinlog(goctx.Background(), req)
-	if err == nil && resp.Errmsg != "" {
-		err = errors.New(resp.Errmsg)
+
+	// Retry 3 times because we may raise CRITICAL error here.
+	var err error
+	for i := 0; i < 3; i++ {
+		var resp *binlog.WriteBinlogResp
+		resp, err = PumpClient.WriteBinlog(goctx.Background(), req)
+		if err == nil && resp.Errmsg != "" {
+			err = errors.New(resp.Errmsg)
+		}
+		if err == nil {
+			return nil
+		}
+		time.Sleep(300 * time.Millisecond)
 	}
-	return errors.Trace(err)
+	return terror.ErrCritical.GenByArgs(err)
 }
 
 // SetDDLBinlog sets DDL binlog in the kv.Transaction.

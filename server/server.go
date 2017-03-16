@@ -70,6 +70,11 @@ type Server struct {
 	rwlock            *sync.RWMutex
 	concurrentLimiter *TokenLimiter
 	clients           map[uint32]*clientConn
+
+	// When a critical error occurred, we don't want to exit the process, because there may be
+	// a supervisor automatically restart it, then new client connection will be created, but we can't server it.
+	// So we just stop the listener and store to force clients to chose other TiDB servers.
+	stopListenerCh chan struct{}
 }
 
 // ConnectionCount gets current connection count.
@@ -132,6 +137,7 @@ func NewServer(cfg *Config, driver IDriver) (*Server, error) {
 		concurrentLimiter: NewTokenLimiter(tokenLimit),
 		rwlock:            &sync.RWMutex{},
 		clients:           make(map[uint32]*clientConn),
+		stopListenerCh:    make(chan struct{}, 1),
 	}
 
 	var err error
@@ -158,7 +164,7 @@ func (s *Server) Run() error {
 	if s.cfg.ReportStatus {
 		s.startStatusHTTP()
 	}
-
+out:
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
@@ -171,7 +177,20 @@ func (s *Server) Run() error {
 			return errors.Trace(err)
 		}
 
+		select {
+		case <-s.stopListenerCh:
+			conn.Close()
+			break out
+		default:
+		}
+
 		go s.onConn(conn)
+	}
+	s.listener.Close()
+	s.listener = nil
+	for {
+		log.Errorf("listener stopped, waiting for manual kill.")
+		time.Sleep(time.Minute)
 	}
 }
 

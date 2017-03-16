@@ -353,6 +353,14 @@ func (cc *clientConn) Run() {
 			if terror.ErrorEqual(err, io.EOF) {
 				cc.addMetrics(data[0], startTime, nil)
 				return
+			} else if terror.ErrorEqual(err, terror.ErrCritical) {
+				log.Errorf("[%d] critical error, stop the server listener %s",
+					cc.connectionID, errors.ErrorStack(err))
+				select {
+				case cc.server.stopListenerCh <- struct{}{}:
+				default:
+				}
+				return
 			}
 			log.Warnf("[%d] dispatch error:\n%s\n%s\n%s",
 				cc.connectionID, cc, queryStrForLog(string(data[1:])), errStrForLog(err))
