@@ -455,7 +455,6 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 		Concurrency:   JoinConcurrency,
 		DefaultValues: p.DefaultValues,
 	}
-	printArguments("physical_pre_left", p.EqualConditions)
 	join.tp = "HashLeftJoin"
 	join.allocator = p.allocator
 	join.initIDAndContext(lChild.context())
@@ -489,7 +488,6 @@ func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) 
 	} else {
 		resultInfo = enforceProperty(limitProperty(prop.limit), resultInfo)
 	}
-	printArguments("physical_after_left", p.EqualConditions)
 	return resultInfo, nil
 }
 
@@ -520,7 +518,6 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 			allRight = false
 		}
 	}
-	printArguments("physical_right before", p.EqualConditions)
 	join := &PhysicalHashJoin{
 		EqualConditions: p.EqualConditions,
 		LeftConditions:  p.LeftConditions,
@@ -564,7 +561,6 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 	} else {
 		resultInfo = enforceProperty(limitProperty(prop.limit), resultInfo)
 	}
-	printArguments("physical_right after", p.EqualConditions)
 	return resultInfo, nil
 }
 
@@ -579,7 +575,6 @@ func generateJoinProp(column *expression.Column, desc bool) *requiredProperty {
 // It will try all keys in join conditions
 func constructPropertyByJoin(join * Join) (error, [][]*requiredProperty) {
 	result := make([][]*requiredProperty, 0)
-	printArguments("constructPropertyByJoin", join.EqualConditions)
 	for _, cond := range join.EqualConditions {
 		if len(cond.GetArgs()) != 2 {
 			return errors.New("Unexpected argument count for equal expression."), nil
@@ -609,7 +604,6 @@ func (p *Join) convert2PhysicalMergeJoin(parentProp *requiredProperty, lProp *re
 	lChild := p.children[0].(LogicalPlan)
 	rChild := p.children[1].(LogicalPlan)
 
-	printArguments("convert2PhysicalMergeJoin before", p.EqualConditions)
 	join := &PhysicalMergeJoin{
 		EqualConditions: p.EqualConditions,
 		LeftConditions:  p.LeftConditions,
@@ -1327,41 +1321,4 @@ func addCachePlan(p PhysicalPlan, allocator *idAllocator) []*expression.Correlat
 	}
 	p.SetChildren(newChildren...)
 	return selfCorCols
-}
-
-/*
-
-func printProp(prop *requiredProperty) {
-	fmt.Printf("ColumnProps: ")
-	for _, colProp := range prop.props {
-		table := colProp.col.TblName.L
-		column := colProp.col.ColName.L
-		index := colProp.col.Index
-		fmt.Printf("   %s.%s - %d, pos: %d - %s\n", table, column, index, colProp.col.Position, colProp.col.FromID)
-	}
-}
-
-
-func printSchema(schema *expression.Schema) {
-	fmt.Printf("schema: ")
-	for _, colProp := range schema.Columns {
-		fmt.Printf("   %s.%s - %d, pos: %d - %s\n", colProp.TblName.L, colProp.ColName.L, colProp.Index, colProp.Position, colProp.FromID)
-	}
-}
-
-*/
-
-func printArguments(env string, exprs [] *expression.ScalarFunction) {
-	if exprs == nil || len(exprs) == 0 {
-		return
-	}
-	expr := exprs[0]
-	fmt.Printf("%s EQ: %s.%s.%d ==  %s.%s.%d\n", env,
-		expr.GetArgs()[0].(*expression.Column).FromID,
-		expr.GetArgs()[0].(*expression.Column).ColName.L,
-		expr.GetArgs()[0].(*expression.Column).Index,
-		expr.GetArgs()[1].(*expression.Column).FromID,
-		expr.GetArgs()[1].(*expression.Column).ColName.L,
-		expr.GetArgs()[1].(*expression.Column).Index,
-	)
 }
