@@ -1625,7 +1625,7 @@ func (b *builtinInstrSig) eval(row []types.Datum) (d types.Datum, err error) {
 	}
 	c := 1
 	// Counting utf8 characters.
-	// See: 'http://stackoverflow.com/questions/3911536/utf-8-unicode-whats-with-0xc0-and-0x80' for detais.
+	// See: 'http://stackoverflow.com/questions/3911536/utf-8-unicode-whats-with-0xc0-and-0x80' for details.
 	for i := 0; i < pos; i++ {
 		if (s[i] & 0xc0) != 0x80 {
 			c++
