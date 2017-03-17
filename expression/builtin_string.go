@@ -1565,7 +1565,29 @@ type builtinInstrSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_instr
 func (b *builtinInstrSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("instr")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	// INSTR(str, substr)
+	if args[0].IsNull() {
+		return d, nil
+	}
+	if args[1].IsNull() {
+		return d, nil
+	}
+
+	var str string
+	var substr string
+	if str, err = args[0].ToString(); err != nil {
+		return d, errors.Trace(err)
+	}
+	if substr, err = args[1].ToString(); err != nil {
+		return d, errors.Trace(err)
+	}
+	pos := strings.Index(str, substr) + 1 // index starts from 1
+	d.SetInt64(int64(pos))
+	return d, nil
 }
 
 type loadFileFunctionClass struct {
