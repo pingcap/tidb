@@ -380,7 +380,9 @@ func sqlForLog(sql string) string {
 	return sql
 }
 
-var sysSessionPool = sync.Pool{}
+func (s *session) sysSessionPool() *sync.Pool {
+	return sessionctx.GetDomain(s).SysSessionPool()
+}
 
 // ExecRestrictedSQL implements RestrictedSQLExecutor interface.
 // This is used for executing some restricted sql statements, usually executed during a normal statement execution.
@@ -389,7 +391,7 @@ var sysSessionPool = sync.Pool{}
 func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) ([]*ast.Row, []*ast.ResultField, error) {
 	// Use special session to execute the sql.
 	var se *session
-	tmp := sysSessionPool.Get()
+	tmp := s.sysSessionPool().Get()
 	if tmp != nil {
 		se = tmp.(*session)
 	} else {
@@ -402,7 +404,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) ([]*ast.Row
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
 	}
-	defer sysSessionPool.Put(se)
+	defer s.sysSessionPool().Put(se)
 
 	recordSets, err := se.Execute(sql)
 	if err != nil {
@@ -457,7 +459,7 @@ func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
 		return "", errors.Trace(err)
 	}
 	if len(rows) == 0 {
-		return "", terror.ExecResultIsEmpty
+		return "", executor.ErrResultIsEmpty
 	}
 	value, err := types.ToString(rows[0].Data[0].GetValue())
 	if err != nil {
@@ -476,7 +478,7 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 		mysql.SystemDB, mysql.GlobalVariablesTable, name)
 	sysVar, err := s.getExecRet(s, sql)
 	if err != nil {
-		if terror.ExecResultIsEmpty.Equal(err) {
+		if executor.ErrResultIsEmpty.Equal(err) {
 			return "", variable.UnknownSystemVar.GenByArgs(name)
 		}
 		return "", errors.Trace(err)
@@ -732,7 +734,7 @@ func (s *session) getPassword(name, host string) (string, error) {
 	pwd, err := s.getExecRet(s, authSQL)
 	if err == nil {
 		return pwd, nil
-	} else if !terror.ExecResultIsEmpty.Equal(err) {
+	} else if !executor.ErrResultIsEmpty.Equal(err) {
 		return "", errors.Trace(err)
 	}
 	//Try to get user password for name with any host(%).
@@ -825,7 +827,10 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	}
 	dom := sessionctx.GetDomain(se)
 	err = dom.LoadPrivilegeLoop(se)
-
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	err = dom.LoadTableStatsLoop(se)
 	return dom, errors.Trace(err)
 }
 
@@ -856,15 +861,15 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
 }
 
 func createSession(store kv.Storage) (*session, error) {
+	domain, err := domap.Get(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	s := &session{
 		values:      make(map[fmt.Stringer]interface{}),
 		store:       store,
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
-	}
-	domain, err := domap.Get(store)
-	if err != nil {
-		return nil, errors.Trace(err)
 	}
 	sessionctx.BindDomain(s, domain)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
@@ -875,7 +880,7 @@ func createSession(store kv.Storage) (*session, error) {
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 3
+	currentBootstrapVersion = 4
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
