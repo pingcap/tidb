@@ -476,3 +476,27 @@ func (s *testEvaluatorSuite) TestSin(c *C) {
 		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("[%v] - arg:%v", idx, t["Arg"]))
 	}
 }
+
+func (s *testEvaluatorSuite) TestRadians(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Arg []interface{}
+		Ret interface{}
+	}{
+		{[]interface{}{nil}, nil},
+		{[]interface{}{int64(0)}, float64(0)},
+		{[]interface{}{float64(90)}, float64(math.Pi / 2)},
+		{[]interface{}{"0"}, float64(0)},
+		{[]interface{}{"0.0"}, float64(0)},
+	}
+
+	Dtbl := tblToDtbl(tbl)
+	for idx, t := range Dtbl {
+		fc := funcs[ast.Radians]
+		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("[%v] - arg:%v", idx, t["Arg"]))
+	}
+}
