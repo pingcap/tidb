@@ -1009,3 +1009,48 @@ func (s *testEvaluatorSuite) TestMakeSet(c *C) {
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
 	}
 }
+
+func (s *testEvaluatorSuite) TestOct(c *C) {
+	defer testleak.AfterTest(c)()
+	octCases := []struct {
+		origin interface{}
+		ret    string
+	}{
+		{"-2.7", "1777777777777777777776"},
+		{-1.5, "1777777777777777777777"},
+		{-1, "1777777777777777777777"},
+		{"0", "0"},
+		{"1", "1"},
+		{"8", "10"},
+		{"12", "14"},
+		{"20", "24"},
+		{"100", "144"},
+		{"1024", "2000"},
+		{"2048", "4000"},
+		{1.0, "1"},
+		{9.5, "11"},
+		{13, "15"},
+		{1025, "2001"},
+		{"8a8", "10"},
+		{"abc", "0"},
+		//overflow uint64
+		{"9999999999999999999999999", "1777777777777777777777"},
+		{"-9999999999999999999999999", "1777777777777777777777"},
+	}
+	fc := funcs[ast.Oct]
+	for _, test := range octCases {
+		in := types.NewDatum(test.origin)
+		f, _ := fc.getFunction(datumsToConstants([]types.Datum{in}), s.ctx)
+		r, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		res, err := r.ToString()
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, test.ret)
+	}
+	// test NULL input for sha
+	var argNull types.Datum
+	f, _ := fc.getFunction(datumsToConstants([]types.Datum{argNull}), s.ctx)
+	r, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(r.IsNull(), IsTrue)
+}
