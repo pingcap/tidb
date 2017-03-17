@@ -18,6 +18,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/ast"
 )
 
 const (
@@ -888,12 +888,21 @@ func buildIndexScanByKeyAndCorCol(p *DataSource, idx *model.IndexInfo, fakeConds
 	return is.matchProperty(&requiredProperty{}, &physicalPlanInfo{count: uint64(p.statisticTable.Count)}), accessConditions, idxConds, tblConds
 }
 
-func convertCorCol2Constant(cond expression.Expression) expression.Expression {
+// The first return value is the new expression, the second is a bool value tell whether the below expression is all constant.
+// The Second is used for simplify the scalar function.
+// If the args of one scalar function are all constant, we will substitute it to constant.
+func substituteCorCol2Constant(cond expression.Expression) (expression.Expression, bool) {
 	switch x := cond.(type) {
 	case *expression.ScalarFunction:
 		newArgs := make([]expression.Expression, 0, len(x.GetArgs()))
+		allConstant := true
 		for _, arg := range x.GetArgs() {
-			newArgs = append(newArgs, convertCorCol2Constant(arg))
+			newArg, ok := substituteCorCol2Constant(arg)
+			allConstant = allConstant && ok
+			newArgs = append(newArgs, newArg)
+		}
+		if allConstant {
+			return expression.One, true
 		}
 		var newSf expression.Expression
 		if x.FuncName.L == ast.Cast {
@@ -901,14 +910,18 @@ func convertCorCol2Constant(cond expression.Expression) expression.Expression {
 		} else {
 			newSf, _ = expression.NewFunction(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
 		}
-		return newSf
+		return newSf, false
 	case *expression.CorrelatedColumn:
-		return expression.One
+		return expression.One, true
+	case *expression.Constant:
+		return x.Clone(), true
 	default:
-		return x.Clone()
+		return x.Clone(), false
 	}
 }
 
+// getUsableIndicesAndPk will simply check whether the pk or one index could used in this situation by
+// checking whether this index or pk is contained in one condition that has correlated column.
 func (p *Selection) getUsableIndicesAndPk(ds *DataSource) ([]*model.IndexInfo, model.CIStr) {
 	indices, _ := availableIndices(ds.indexHints, ds.tableInfo)
 	var usableIdxs []*model.IndexInfo
@@ -967,7 +980,8 @@ func (p *Selection) tryToBuildScanByKeyAndCorCol() *physicalPlanInfo {
 		for _, cond := range p.Conditions {
 			cond = pushDownNot(cond.Clone(), false, nil)
 			// In this way, we could use the code of refiner.go.
-			conds = append(conds, convertCorCol2Constant(cond))
+			newCond, _ := substituteCorCol2Constant(cond)
+			conds = append(conds, newCond)
 		}
 		indices, pkName := p.getUsableIndicesAndPk(ds)
 

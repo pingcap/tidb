@@ -461,19 +461,33 @@ func (e *TableDualExec) Close() error {
 	return nil
 }
 
-func substituteCorCol2Constant(expr expression.Expression) (expression.Expression) {
+func substituteCorCol2Constant(expr expression.Expression) (expression.Expression, bool) {
 	switch x := expr.(type) {
 	case *expression.ScalarFunction:
+		allConstant := true
 		newArgs := make([]expression.Expression, 0, len(x.GetArgs()))
 		for _, arg := range x.GetArgs() {
-			newArgs = append(newArgs, substituteCorCol2Constant(arg))
+			newArg, ok := substituteCorCol2Constant(arg)
+			newArgs = append(newArgs, newArg)
+			allConstant = allConstant && ok
 		}
-		newSf, _ := expression.NewFunction(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
-		return newSf
+		if allConstant {
+			val, _ := x.Eval(nil)
+			return &expression.Constant{Value: val}, true
+		}
+		var newSf expression.Expression
+		if x.FuncName.L == ast.Cast {
+			newSf = expression.NewCastFunc(x.RetType, newArgs[0], x.GetCtx())
+		} else {
+			newSf, _ = expression.NewFunction(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
+		}
+		return newSf, false
 	case *expression.CorrelatedColumn:
-		return &expression.Constant{Value: *x.Data, RetType: x.GetType()}
+		return &expression.Constant{Value: *x.Data, RetType: x.GetType()}, true
+	case *expression.Constant:
+		return x.Clone(), true
 	default:
-		return x.Clone()
+		return x.Clone(), false
 	}
 }
 
@@ -499,12 +513,13 @@ func (e *SelectionExec) Schema() *expression.Schema {
 }
 
 // initController will init the conditions of the below scan executor.
+// It will first substitute the correlated column to constant, then calc the range by new condition.
 func (e *SelectionExec) initController() error {
 	sc := e.ctx.GetSessionVars().StmtCtx
 	client := e.ctx.GetClient()
 	accesses := make([]expression.Expression, 0, len(e.accessConditions))
 	for _, cond := range e.accessConditions {
-		newCond := substituteCorCol2Constant(cond)
+		newCond, _ := substituteCorCol2Constant(cond)
 		accesses = append(accesses, newCond)
 	}
 	switch x := e.Src.(type) {
@@ -516,7 +531,7 @@ func (e *SelectionExec) initController() error {
 		x.ranges = ranges
 		tblFilters := make([]expression.Expression, 0, len(e.tblFilterConditions))
 		for _, cond := range e.tblFilterConditions {
-			newCond := substituteCorCol2Constant(cond)
+			newCond, _ := substituteCorCol2Constant(cond)
 			tblFilters = append(tblFilters, newCond)
 		}
 		x.where, _, _ = plan.ExpressionsToPB(sc, tblFilters, client)
