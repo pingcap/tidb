@@ -1570,10 +1570,7 @@ func (b *builtinInstrSig) eval(row []types.Datum) (d types.Datum, err error) {
 		return d, errors.Trace(err)
 	}
 	// INSTR(str, substr)
-	if args[0].IsNull() {
-		return d, nil
-	}
-	if args[1].IsNull() {
+	if args[0].IsNull() || args[1].IsNull() {
 		return d, nil
 	}
 
