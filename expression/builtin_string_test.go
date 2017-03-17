@@ -1005,7 +1005,7 @@ func (s *testEvaluatorSuite) TestInstr(c *C) {
 		result, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
-  }
+	}
 }
 
 func (s *testEvaluatorSuite) TestMakeSet(c *C) {
