@@ -23,6 +23,7 @@ import (
 	"regexp"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
@@ -250,8 +251,8 @@ func runTestLoadData(c *C) {
 	}()
 	_, err = fp.WriteString(`
 xxx row1_col1	- row1_col2	1abc
-xxx row2_col1	- row2_col2	
-xxxy row3_col1	- row3_col2	
+xxx row2_col1	- row2_col2
+xxxy row3_col1	- row3_col2
 xxx row4_col1	- 		900
 xxx row5_col1	- 	row5_col3`)
 	c.Assert(err, IsNil)
@@ -600,4 +601,15 @@ func getStmtCnt(content string) (stmtCnt map[string]int) {
 		stmtCnt[v[1]] = cnt
 	}
 	return stmtCnt
+}
+
+func waitUntilServerOnline() {
+	for {
+		time.Sleep(time.Millisecond * 10)
+		db, err := sql.Open("mysql", dsn)
+		if err == nil {
+			db.Close()
+			break
+		}
+	}
 }

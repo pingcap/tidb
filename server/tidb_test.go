@@ -54,17 +54,6 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	defaultLoadDataBatchCnt = 3
 }
 
-func waitUntilServerOnline() {
-	for {
-		time.Sleep(time.Millisecond * 10)
-		db, err := sql.Open("mysql", dsn)
-		if err == nil {
-			db.Close()
-			break
-		}
-	}
-}
-
 func (ts *TidbTestSuite) TearDownSuite(c *C) {
 	if ts.server != nil {
 		ts.server.Close()

@@ -14,12 +14,10 @@
 package server
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
@@ -188,15 +186,7 @@ func (ts *TidbRegionHandlerTestSuite) startServer(c *C) {
 	once.Do(func() {
 		go server.startHTTPServer(pdCli)
 	})
-	// wait until server online
-	for {
-		time.Sleep(time.Millisecond * 10)
-		db, err := sql.Open("mysql", dsn)
-		if err == nil {
-			db.Close()
-			break
-		}
-	}
+	waitUntilServerOnline()
 }
 
 func (ts *TidbRegionHandlerTestSuite) stopServer(c *C) {
