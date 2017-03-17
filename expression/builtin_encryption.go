@@ -307,7 +307,6 @@ func (b *builtinCompressSig) eval(row []types.Datum) (d types.Datum, err error) 
 	}
 
 	compressStr, err := args[0].ToBytes()
-
 	if err != nil {
 		return d, errors.Trace(err)
 	}
