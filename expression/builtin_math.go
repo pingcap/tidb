@@ -902,7 +902,8 @@ type builtinPISig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_pi
 func (b *builtinPISig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("pi")
+	d.SetFloat64(math.Pi)
+	return d, nil
 }
 
 type radiansFunctionClass struct {

@@ -382,6 +382,15 @@ func (s *testEvaluatorSuite) TestSqrt(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestPi(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.PI]
+	f, _ := fc.getFunction(nil, s.ctx)
+	pi, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(pi, testutil.DatumEquals, types.NewDatum(math.Pi))
+}
+
 func (s *testEvaluatorSuite) TestAcos(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
