@@ -1550,16 +1550,10 @@ type builtinInsertFuncSig struct {
 func (b *builtinInsertFuncSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 
-	// INSERT(str,pos,len,newstr)
-
-	if len(args) != 4 {
-		return types.Datum{}, errors.Trace(err)
-	}
-
-	// Returns NULL if any argument is NULL
+	// Returns NULL if any argument is NULL.
 	if args[0].IsNull() || args[1].IsNull() || args[2].IsNull() || args[3].IsNull() {
 		return
 	}
@@ -1568,6 +1562,7 @@ func (b *builtinInsertFuncSig) eval(row []types.Datum) (d types.Datum, err error
 	if err != nil {
 		return d, errors.Trace(err)
 	}
+	strLen := len(str)
 
 	posInt64, err := args[1].ToInt64(b.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
@@ -1586,25 +1581,15 @@ func (b *builtinInsertFuncSig) eval(row []types.Datum) (d types.Datum, err error
 		return d, errors.Trace(err)
 	}
 
-	strLen := len(str)
-
-	// Returns the original string if pos is not within the length of the string
+	var s string
 	if pos < 1 || pos > strLen {
-		d.SetString(str)
-		return d, nil
+		s = str
+	} else if length > strLen-pos+1 || length < 0 {
+		s = str[0:pos-1] + newstr
+	} else {
+		s = str[0:pos-1] + newstr + str[pos+length-1:]
 	}
 
-	// Replaces the rest of the string from position pos if len is not within
-	// the length of the rest of the string
-	if length > strLen-pos+1 {
-		s := str[0:pos-1] + newstr
-		d.SetString(s)
-		return d, nil
-	}
-
-	// Returns the string str, with the substring beginning at position pos
-	// and len characters long replaced by the string newstr
-	s := str[0:pos-1] + newstr[0:length] + str[pos+length-1:]
 	d.SetString(s)
 	return d, nil
 }

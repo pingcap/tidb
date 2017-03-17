@@ -996,6 +996,8 @@ func (s *testEvaluatorSuite) TestInsert(c *C) {
 		{[]interface{}{"Quadratic", nil, 4, "What"}, nil},
 		{[]interface{}{"Quadratic", 3, nil, "What"}, nil},
 		{[]interface{}{"Quadratic", 3, 4, nil}, nil},
+		{[]interface{}{"Quadratic", 3, -1, "What"}, "QuWhat"},
+		{[]interface{}{"Quadratic", 3, 1, "What"}, "QuWhatdratic"},
 	}
 	fc := funcs[ast.InsertFunc]
 	for _, test := range tests {
