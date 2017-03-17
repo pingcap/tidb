@@ -247,6 +247,9 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`coalesce(1, "1" + 1)`, mysql.TypeDouble, charset.CharsetBin},
 		{`coalesce(1, "abc")`, mysql.TypeVarString, charset.CharsetUTF8},
 		{`degrees(1)`, mysql.TypeDouble, charset.CharsetBin},
+		{`exp(1)`, mysql.TypeDouble, charset.CharsetBin},
+		{`exp(1.23)`, mysql.TypeDouble, charset.CharsetBin},
+		{`exp('1.23')`, mysql.TypeDouble, charset.CharsetBin},
 	}
 	for _, ca := range cases {
 		ctx := testKit.Se.(context.Context)
