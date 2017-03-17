@@ -469,9 +469,9 @@ func substituteCorCol2Constant(expr expression.Expression) (expression.Expressio
 			newArgs = append(newArgs, substituteCorCol2Constant(arg))
 		}
 		newSf, _ := expression.NewFunction(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
-		return newSf, nil
+		return newSf
 	case *expression.CorrelatedColumn:
-		return &expression.Constant{Value: x.Data, RetType: x.GetType()}
+		return &expression.Constant{Value: *x.Data, RetType: x.GetType()}
 	default:
 		return x.Clone()
 	}
@@ -519,9 +519,7 @@ func (e *SelectionExec) initController() error {
 			newCond := substituteCorCol2Constant(cond)
 			tblFilters = append(tblFilters, newCond)
 		}
-		var conds []expression.Expression
-		x.where, _, conds = plan.ExpressionsToPB(sc, tblFilters, client)
-		e.Condition = expression.ComposeCNFCondition(e.ctx, conds...)
+		x.where, _, _ = plan.ExpressionsToPB(sc, tblFilters, client)
 		return nil
 	case *XSelectIndexExec:
 		x.indexPlan.AccessCondition = accesses

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/ast"
 )
 
 const (
@@ -852,7 +853,7 @@ func buildIndexScanByKeyAndCorCol(p *DataSource, idx *model.IndexInfo, fakeConds
 	accessConditions := make([]expression.Expression, 0, len(fakeAccessConditions))
 	restOrigConds := make([]expression.Expression, 0, len(restFakeConds))
 	for i, j := 0, 0; i < len(fakeConds); {
-		if fakeConds[i].Equal(fakeAccessConditions[j], p.ctx) {
+		if j < len(fakeAccessConditions) && fakeConds[i].Equal(fakeAccessConditions[j], p.ctx) {
 			accessConditions = append(accessConditions, origConds[i])
 			i, j = i+1, j+1
 		} else {
@@ -868,7 +869,7 @@ func buildIndexScanByKeyAndCorCol(p *DataSource, idx *model.IndexInfo, fakeConds
 		idxConds = make([]expression.Expression, 0, len(fakeIdxConds))
 		tblConds = make([]expression.Expression, 0, len(fakeTblConds))
 		for i, j := 0, 0; i < len(restFakeConds); {
-			if restFakeConds[i].Equal(fakeIdxConds[j], p.ctx) {
+			if j < len(fakeIdxConds) && restFakeConds[i].Equal(fakeIdxConds[j], p.ctx) {
 				idxConds = append(idxConds, restOrigConds[i])
 				i, j = i+1, j+1
 			} else {
@@ -894,7 +895,12 @@ func convertCorCol2Constant(cond expression.Expression) expression.Expression {
 		for _, arg := range x.GetArgs() {
 			newArgs = append(newArgs, convertCorCol2Constant(arg))
 		}
-		newSf, _ := expression.NewFunction(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
+		var newSf expression.Expression
+		if x.FuncName.L == ast.Cast {
+			newSf = expression.NewCastFunc(x.RetType, newArgs[0], x.GetCtx())
+		} else {
+			newSf, _ = expression.NewFunction(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
+		}
 		return newSf
 	case *expression.CorrelatedColumn:
 		return expression.One
