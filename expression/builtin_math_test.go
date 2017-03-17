@@ -298,6 +298,10 @@ func (s *testEvaluatorSuite) TestConv(c *C) {
 		{[]interface{}{"18446744073709551615", -10, 16}, "7FFFFFFFFFFFFFFF"},
 		{[]interface{}{"12F", -10, 16}, "C"},
 		{[]interface{}{"  FF ", 16, 10}, "255"},
+		{[]interface{}{"TIDB", 10, 8}, "0"},
+		{[]interface{}{"aa", 10, 2}, "0"},
+		{[]interface{}{" A", -10, 16}, "0"},
+		{[]interface{}{"a6a", 10, 8}, "0"},
 	}
 
 	Dtbl := tblToDtbl(tbl)
@@ -380,6 +384,15 @@ func (s *testEvaluatorSuite) TestSqrt(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("arg:%v", t["Arg"]))
 	}
+}
+
+func (s *testEvaluatorSuite) TestPi(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.PI]
+	f, _ := fc.getFunction(nil, s.ctx)
+	pi, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(pi, testutil.DatumEquals, types.NewDatum(math.Pi))
 }
 
 func (s *testEvaluatorSuite) TestAcos(c *C) {

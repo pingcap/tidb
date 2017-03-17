@@ -299,3 +299,21 @@ func (s *testRegionCacheSuite) TestUpdateStoreAddr(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(getVal, BytesEquals, testValue)
 }
+
+func (s *testRegionCacheSuite) TestListRegionIDsInCache(c *C) {
+	// ['' - 'm' - 'z']
+	region2 := s.cluster.AllocID()
+	newPeers := s.cluster.AllocIDs(2)
+	s.cluster.Split(s.region1, region2, []byte("m"), newPeers, newPeers[0])
+
+	regionIDs, err := s.cache.ListRegionIDsInKeyRange(s.bo, []byte("a"), []byte("z"))
+	c.Assert(err, IsNil)
+	c.Assert(regionIDs, DeepEquals, []uint64{s.region1, region2})
+	regionIDs, err = s.cache.ListRegionIDsInKeyRange(s.bo, []byte("m"), []byte("z"))
+	c.Assert(err, IsNil)
+	c.Assert(regionIDs, DeepEquals, []uint64{region2})
+
+	regionIDs, err = s.cache.ListRegionIDsInKeyRange(s.bo, []byte("a"), []byte("m"))
+	c.Assert(err, IsNil)
+	c.Assert(regionIDs, DeepEquals, []uint64{s.region1, region2})
+}
