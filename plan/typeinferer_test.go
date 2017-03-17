@@ -133,6 +133,8 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"LOG2(3)", mysql.TypeDouble, charset.CharsetBin},
 		{"LOG10(3)", mysql.TypeDouble, charset.CharsetBin},
 		{"SQRT(3)", mysql.TypeDouble, charset.CharsetBin},
+		{"PI()", mysql.TypeDouble, charset.CharsetBin},
+		{"PI() + 0.000000000000000000", mysql.TypeDouble, charset.CharsetBin},
 		{"ACOS(1)", mysql.TypeDouble, charset.CharsetBin},
 		{"ASIN(1)", mysql.TypeDouble, charset.CharsetBin},
 		{"ATAN(1)", mysql.TypeDouble, charset.CharsetBin},
@@ -246,6 +248,9 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`coalesce(null, 0.1)`, mysql.TypeNewDecimal, charset.CharsetBin},
 		{`coalesce(1, "1" + 1)`, mysql.TypeDouble, charset.CharsetBin},
 		{`coalesce(1, "abc")`, mysql.TypeVarString, charset.CharsetUTF8},
+		{`exp(1)`, mysql.TypeDouble, charset.CharsetBin},
+		{`exp(1.23)`, mysql.TypeDouble, charset.CharsetBin},
+		{`exp('1.23')`, mysql.TypeDouble, charset.CharsetBin},
 	}
 	for _, ca := range cases {
 		ctx := testKit.Se.(context.Context)
