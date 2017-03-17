@@ -14,6 +14,7 @@
 package tablecodec
 
 import (
+	"math"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -197,4 +198,24 @@ func (s *testTableCodecSuite) TestCutKey(c *C) {
 	}
 	_, handleVal, _ := codec.DecodeOne(handleBytes)
 	c.Assert(handleVal, DeepEquals, types.NewIntDatum(100))
+}
+
+func (s *testTableCodecSuite) TestIndexKey(c *C) {
+	tableID := int64(4)
+	indexID := int64(5)
+	indexKey := EncodeIndexSeekKey(tableID, indexID, []byte{})
+	tTableID, tIndexID, isRecordKey, err := DecodeKeyHead(indexKey)
+	c.Assert(err, IsNil)
+	c.Assert(tTableID, Equals, tableID)
+	c.Assert(tIndexID, Equals, indexID)
+	c.Assert(isRecordKey, IsFalse)
+}
+
+func (s *testTableCodecSuite) TestRecordKey(c *C) {
+	tableID := int64(55)
+	tableKey := EncodeRowKeyWithHandle(tableID, math.MaxUint32)
+	tTableID, _, isRecordKey, err := DecodeKeyHead(tableKey)
+	c.Assert(err, IsNil)
+	c.Assert(tTableID, Equals, tableID)
+	c.Assert(isRecordKey, IsTrue)
 }
