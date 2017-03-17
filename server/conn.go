@@ -356,6 +356,7 @@ func (cc *clientConn) Run() {
 			} else if terror.ErrorEqual(err, terror.ErrCritical) {
 				log.Errorf("[%d] critical error, stop the server listener %s",
 					cc.connectionID, errors.ErrorStack(err))
+				criticalErrorCounter.Add(1)
 				select {
 				case cc.server.stopListenerCh <- struct{}{}:
 				default:

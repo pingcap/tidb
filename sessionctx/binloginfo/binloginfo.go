@@ -50,9 +50,9 @@ func WriteBinlog(bin *binlog.Binlog, clusterID uint64) error {
 	commitData, _ := bin.Marshal()
 	req := &binlog.WriteBinlogReq{ClusterID: clusterID, Payload: commitData}
 
-	// Retry 3 times because we may raise CRITICAL error here.
+	// Retry many times because we may raise CRITICAL error here.
 	var err error
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 20; i++ {
 		var resp *binlog.WriteBinlogResp
 		resp, err = PumpClient.WriteBinlog(goctx.Background(), req)
 		if err == nil && resp.Errmsg != "" {
@@ -61,7 +61,7 @@ func WriteBinlog(bin *binlog.Binlog, clusterID uint64) error {
 		if err == nil {
 			return nil
 		}
-		time.Sleep(300 * time.Millisecond)
+		time.Sleep(time.Second)
 	}
 	return terror.ErrCritical.GenByArgs(err)
 }

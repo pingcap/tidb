@@ -164,7 +164,6 @@ func (s *Server) Run() error {
 	if s.cfg.ReportStatus {
 		s.startStatusHTTP()
 	}
-out:
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
@@ -176,14 +175,10 @@ out:
 			log.Errorf("accept error %s", err.Error())
 			return errors.Trace(err)
 		}
-
-		select {
-		case <-s.stopListenerCh:
+		if s.shouldStopListener() {
 			conn.Close()
-			break out
-		default:
+			break
 		}
-
 		go s.onConn(conn)
 	}
 	s.listener.Close()
@@ -191,6 +186,15 @@ out:
 	for {
 		log.Errorf("listener stopped, waiting for manual kill.")
 		time.Sleep(time.Minute)
+	}
+}
+
+func (s *Server) shouldStopListener() bool {
+	select {
+	case <-s.stopListenerCh:
+		return true
+	default:
+		return false
 	}
 }
 
