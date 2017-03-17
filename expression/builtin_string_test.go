@@ -983,3 +983,27 @@ func (s *testEvaluatorSuite) TestLpad(c *C) {
 		}
 	}
 }
+
+func (s *testEvaluatorSuite) TestInstr(c *C) {
+	tests := []struct {
+		str    interface{}
+		substr interface{}
+		expect interface{}
+	}{
+		{"foobarbar", "bar", 4},
+		{"xbar", "foobar", 0},
+		{nil, "foobar", nil},
+		{"foobarbar", nil, nil},
+		{"分布式数据库", "式数据", 3},
+		{"你好Hello世界", "世界", 8},
+		{"测试String", "测试String", 1},
+	}
+	fc := funcs[ast.Instr]
+	for _, test := range tests {
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(test.str, test.substr)), s.ctx)
+		c.Assert(err, IsNil)
+		result, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
+	}
+}
