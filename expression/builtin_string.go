@@ -1491,8 +1491,28 @@ func (b *builtinQuoteSig) eval(row []types.Datum) (d types.Datum, err error) {
 		buffer bytes.Buffer
 	)
 	str, err = args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	runes := []rune(str)
 	buffer.WriteRune('\'')
-	buffer.WriteString(str)
+	for i := 0; i < len(runes); i++ {
+		switch runes[i] {
+		case 0:
+			buffer.WriteRune('0')
+		case '\032':
+			buffer.WriteRune('Z')
+		case '\'':
+			if i == 0 || runes[i-1] != '\\' {
+				buffer.WriteRune('\\')
+			}
+			buffer.WriteRune(runes[i])
+		case '\\':
+			buffer.WriteRune(runes[i])
+		default:
+			buffer.WriteRune(runes[i])
+		}
+	}
 	buffer.WriteRune('\'')
 	d.SetString(buffer.String())
 	return d, errors.Trace(err)

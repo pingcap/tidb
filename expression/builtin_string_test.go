@@ -992,7 +992,7 @@ func (s *testEvaluatorSuite) TestQuote(c *C) {
 		ret interface{}
 	}{
 		{`Don\'t!`, `'Don\'t!'`},
-		{`Don't`, `'Don't'`},
+		{`Don't`, `'Don\'t'`},
 		{`Don"`, `'Don"'`},
 		{`Don\"`, `'Don\"'`},
 		{"萌萌哒(๑•ᴗ•๑)😊", `'萌萌哒(๑•ᴗ•๑)😊'`},
