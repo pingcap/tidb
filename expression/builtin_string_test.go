@@ -983,3 +983,27 @@ func (s *testEvaluatorSuite) TestLpad(c *C) {
 		}
 	}
 }
+
+func (s *testEvaluatorSuite) TestQuote(c *C) {
+	defer testleak.AfterTest(c)()
+
+	tbl := []struct {
+		arg interface{}
+		ret interface{}
+	}{
+		{"Don\\'t!", `'Don\'t!'`},
+		{`Don\'t!`, `'Don\'t!'`},
+		{"萌萌哒(๑•ᴗ•๑)😊", `'萌萌哒(๑•ᴗ•๑)😊'`},
+		{"㍿㌍㍑㌫", `'㍿㌍㍑㌫'`},
+		{nil, nil},
+	}
+
+	for _, t := range tbl {
+		fc := funcs[ast.Quote]
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.arg)), s.ctx)
+		c.Assert(err, IsNil)
+		r, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
+	}
+}
