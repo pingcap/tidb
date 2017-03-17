@@ -249,6 +249,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`coalesce(1, "1" + 1)`, mysql.TypeDouble, charset.CharsetBin},
 		{`coalesce(1, "abc")`, mysql.TypeVarString, charset.CharsetUTF8},
 		{`make_set(1 | 3, "hello", "nice", null, "world")`, mysql.TypeVarString, charset.CharsetUTF8},
+		{`oct(12)`, mysql.TypeVarString, charset.CharsetUTF8},
 		{`exp(1)`, mysql.TypeDouble, charset.CharsetBin},
 		{`exp(1.23)`, mysql.TypeDouble, charset.CharsetBin},
 		{`exp('1.23')`, mysql.TypeDouble, charset.CharsetBin},

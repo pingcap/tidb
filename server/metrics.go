@@ -54,12 +54,21 @@ var (
 			Name:      "execute_error",
 			Help:      "Counter of execute errors.",
 		}, []string{"type"})
+
+	criticalErrorCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "critical_error",
+			Help:      "Counter of critical errors.",
+		})
 )
 
 func init() {
 	prometheus.MustRegister(queryHistogram)
 	prometheus.MustRegister(queryCounter)
 	prometheus.MustRegister(connGauge)
+	prometheus.MustRegister(criticalErrorCounter)
 }
 
 func executeErrorToLabel(err error) string {
