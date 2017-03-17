@@ -11,3 +11,35 @@
 // limitations under the License.
 
 package expression
+
+import (
+	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/util/types"
+)
+
+func (s *testEvaluatorSuite) TestIsIPv4(c *C) {
+	tests := []struct {
+		ip     string
+		expect interface{}
+	}{
+		{"192.168.1.1", 1},
+		{"255.255.255.255", 1},
+		{"10.t.255.255", 0},
+		{"10.1.2.3.4", 0},
+	}
+	fc := funcs[ast.IsIPv4]
+	for _, test := range tests {
+		ip := types.NewStringDatum(test.ip)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{ip}), s.ctx)
+		c.Assert(err, IsNil)
+		result, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		if test.expect == nil {
+			c.Assert(result.Kind(), Equals, types.KindNull)
+		} else {
+			expect, _ := test.expect.(string)
+			c.Assert(result.GetString(), Equals, expect)
+		}
+	}
+}

@@ -288,7 +288,42 @@ type builtinIsIPv4Sig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4
 func (b *builtinIsIPv4Sig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("IS_IPV4")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	// isIPv4(str)
+	// args[0] string
+	ip, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	dots := 0
+	acc := 0
+	for _, c := range ip {
+		switch {
+		case '0' <= c && c <= '9':
+			acc = acc*10 + int(c-'0')
+			break
+		case c == '.':
+			dots++
+			if dots > 3 || acc > 255 {
+				d.SetInt64(0)
+				return d, nil
+			}
+			acc = 0
+			break
+		default:
+			d.SetInt64(0)
+			return d, nil
+		}
+	}
+	if acc > 255 {
+		d.SetInt64(0)
+		return d, nil
+	}
+	d.SetInt64(1)
+	return d, nil
 }
 
 type isIPv4CompatFunctionClass struct {
