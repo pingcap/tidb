@@ -760,7 +760,7 @@ func (s *testIndexSuite) TestDropIndex(c *C) {
 			return
 		}
 
-		t, err := testGetTableWithError(c, d, s.dbInfo.ID, tblInfo.ID)
+		t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 		if err != nil && checkErr == nil {
 			checkErr = errors.Trace(err)
 			return
@@ -841,7 +841,7 @@ func (s *testIndexSuite) TestAddIndexWithNullColumn(c *C) {
 			return
 		}
 
-		t, err := testGetTableWithError(c, d, s.dbInfo.ID, tblInfo.ID)
+		t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 		if err != nil && checkErr == nil {
 			checkErr = errors.Trace(err)
 			return
