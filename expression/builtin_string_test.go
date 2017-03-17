@@ -991,8 +991,10 @@ func (s *testEvaluatorSuite) TestQuote(c *C) {
 		arg interface{}
 		ret interface{}
 	}{
-		{"Don\\'t!", `'Don\'t!'`},
 		{`Don\'t!`, `'Don\'t!'`},
+		{`Don't`, `'Don't'`},
+		{`Don"`, `'Don"'`},
+		{`Don\"`, `'Don\"'`},
 		{"萌萌哒(๑•ᴗ•๑)😊", `'萌萌哒(๑•ᴗ•๑)😊'`},
 		{"㍿㌍㍑㌫", `'㍿㌍㍑㌫'`},
 		{nil, nil},
@@ -1001,6 +1003,31 @@ func (s *testEvaluatorSuite) TestQuote(c *C) {
 	for _, t := range tbl {
 		fc := funcs[ast.Quote]
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.arg)), s.ctx)
+		c.Assert(err, IsNil)
+		r, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
+	}
+}
+func (s *testEvaluatorSuite) TestMakeSet(c *C) {
+	defer testleak.AfterTest(c)()
+
+	tbl := []struct {
+		argList []interface{}
+		ret     interface{}
+	}{
+		{[]interface{}{1, "a", "b", "c"}, "a"},
+		{[]interface{}{1 | 4, "hello", "nice", "world"}, "hello,world"},
+		{[]interface{}{1 | 4, "hello", "nice", nil, "world"}, "hello"},
+		{[]interface{}{0, "a", "b", "c"}, ""},
+		{[]interface{}{nil, "a", "b", "c"}, nil},
+		{[]interface{}{-100 | 4, "hello", "nice", "abc", "world"}, "abc,world"},
+		{[]interface{}{-1, "hello", "nice", "abc", "world"}, "hello,nice,abc,world"},
+	}
+
+	for _, t := range tbl {
+		fc := funcs[ast.MakeSet]
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.argList...)), s.ctx)
 		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
