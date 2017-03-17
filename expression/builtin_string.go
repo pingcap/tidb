@@ -1816,6 +1816,7 @@ func (b *builtinEltSig) eval(row []types.Datum) (d types.Datum, err error) {
 
 	argsLength := int64(len(args))
 	if index < 1 || index > (argsLength-1) {
+
 		return d, nil
 	}
 
