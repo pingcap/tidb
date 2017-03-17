@@ -428,3 +428,27 @@ func (s *testEvaluatorSuite) TestAtan(c *C) {
 		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("[%v] - arg:%v", idx, t["Arg"]))
 	}
 }
+
+func (s *testEvaluatorSuite) TestDegrees(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Arg []interface{}
+		Ret interface{}
+	}{
+		{[]interface{}{nil}, nil},
+		{[]interface{}{int64(0)}, float64(0)},
+		{[]interface{}{float64(math.Pi)}, float64(180)},
+		{[]interface{}{"0"}, float64(0)},
+		{[]interface{}{"0.0"}, float64(0)},
+	}
+
+	Dtbl := tblToDtbl(tbl)
+	for idx, t := range Dtbl {
+		fc := funcs[ast.Degrees]
+		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("[%v] - arg:%v", idx, t["Arg"]))
+	}
+}
