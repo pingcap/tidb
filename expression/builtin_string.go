@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -1582,7 +1583,30 @@ func (b *builtinInstrSig) eval(row []types.Datum) (d types.Datum, err error) {
 	if substr, err = args[1].ToString(); err != nil {
 		return d, errors.Trace(err)
 	}
-	pos := strings.Index(str, substr) + 1 // index starts from 1
+
+	var caseSensitive bool
+	// INSTR performs case **insensitive** search by default
+	// While at least one argument is binary string we do case sensitive search
+	if args[0].Kind() == types.KindBytes || args[1].Kind() == types.KindBytes {
+		caseSensitive = true
+	}
+
+	var pos int
+	var idx int
+	if caseSensitive {
+		idx = strings.Index(str, substr)
+	} else {
+		idx = strings.Index(strings.ToLower(str), strings.ToLower(substr))
+	}
+	if idx == -1 {
+		pos = 0
+	} else {
+		if caseSensitive {
+			pos = idx + 1
+		} else {
+			pos = utf8.RuneCountInString(str[:idx]) + 1
+		}
+	}
 	d.SetInt64(int64(pos))
 	return d, nil
 }
