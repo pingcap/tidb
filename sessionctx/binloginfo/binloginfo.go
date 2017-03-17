@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/terror"
@@ -61,6 +62,7 @@ func WriteBinlog(bin *binlog.Binlog, clusterID uint64) error {
 		if err == nil {
 			return nil
 		}
+		log.Errorf("write binlog error %v", err)
 		time.Sleep(time.Second)
 	}
 	return terror.ErrCritical.GenByArgs(err)
