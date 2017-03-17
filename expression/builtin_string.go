@@ -1394,8 +1394,29 @@ type builtinMakeSetSig struct {
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_make-set
-func (b *builtinMakeSetSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("make_set")
+func (b *builtinMakeSetSig) eval(row []types.Datum) (d string, err error) {
+	var bitMask int
+	var s []string
+
+	switch maskValue := row[0].(type) {
+	case int:
+		bitMask = maskValue
+	default:
+		fmt.Println("row[0] must be a 'int'")
+		return "", errors.New("row[0] must be a 'int'")
+	}
+
+	for index, value := range row[1:] {
+		switch valueValue := value.(type) {
+		case string:
+			if (value != "") && (index&bitMask != 0) {
+				s = append(s, valueValue)
+			}
+		}
+	}
+	
+	d = strings.Join(s, ",")
+	return
 }
 
 type octFunctionClass struct {
