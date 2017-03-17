@@ -498,6 +498,7 @@ func (b *builtinConvSig) eval(row []types.Datum) (d types.Datum, err error) {
 	}
 	n = getValidPrefix(strings.TrimSpace(n), fromBase)
 	if len(n) == 0 {
+		d.SetString("0")
 		return d, nil
 	}
 	if n[0] == '-' {
@@ -902,7 +903,8 @@ type builtinPISig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_pi
 func (b *builtinPISig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("pi")
+	d.SetFloat64(math.Pi)
+	return d, nil
 }
 
 type radiansFunctionClass struct {
