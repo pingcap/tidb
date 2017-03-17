@@ -342,7 +342,9 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		} else {
 			tp = types.NewFieldType(mysql.TypeLonglong)
 		}
-	case "ln", "log", "log2", "log10", "sqrt", "pi":
+	case "ln", "log", "log2", "log10", "sqrt", "pi", ast.Exp:
+		tp = types.NewFieldType(mysql.TypeDouble)
+	case "acos", "asin", "atan":
 		tp = types.NewFieldType(mysql.TypeDouble)
 	case "pow", "power", "rand":
 		tp = types.NewFieldType(mysql.TypeDouble)
@@ -372,7 +374,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	case "dayname", "version", "database", "user", "current_user", "schema",
 		"concat", "concat_ws", "left", "lcase", "lower", "repeat",
 		"replace", "ucase", "upper", "convert", "substring",
-		"substring_index", "trim", "ltrim", "rtrim", "reverse", "hex", "unhex", "date_format", "rpad", "char_func", "conv":
+		"substring_index", "trim", "ltrim", "rtrim", "reverse", "hex", "unhex", "date_format", "rpad", "lpad", "char_func", "conv":
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
 	case "strcmp", "isnull", "bit_length", "char_length", "character_length", "crc32", "timestampdiff", "sign":

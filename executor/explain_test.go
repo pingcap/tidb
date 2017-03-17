@@ -20,15 +20,17 @@ import (
 )
 
 func (s *testSuite) TestExplain(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
+		tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 0")
 	}()
-	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1 (c1 int primary key, c2 int, c3 int, index c2 (c2))")
 	tk.MustExec("create table t2 (c1 int unique, c2 int)")
+	tk.MustExec("insert into t2 values(1, 0), (2, 1)")
 
 	cases := []struct {
 		sql       string
@@ -443,7 +445,95 @@ func (s *testSuite) TestExplain(c *C) {
 }`,
 			},
 		},
+		{
+			"select sum(t1.c1 in (select c1 from t2)) from t1",
+			[]string{"TableScan_7", "HashAgg_8"},
+			[]string{"HashAgg_8", ""},
+			[]string{
+				`{
+    "db": "test",
+    "table": "t1",
+    "desc": false,
+    "keep order": false,
+    "push down info": {
+        "limit": 0,
+        "aggregated push down": true,
+        "gby items": null,
+        "agg funcs": [
+            "sum(in(test.t1.c1, 1, 2))"
+        ],
+        "access conditions": null,
+        "index filter conditions": null,
+        "table filter conditions": null
+    }
+}`,
+				`{
+    "AggFuncs": [
+        "sum([in(test.t1.c1, 1, 2)])"
+    ],
+    "GroupByItems": [
+        "[]"
+    ],
+    "child": "TableScan_7"
+}`,
+			},
+		},
+		{
+			"select sum(t1.c1 in (select c1 from t2 where false)) from t1",
+			[]string{"TableScan_8", "HashAgg_9"},
+			[]string{"HashAgg_9", ""},
+			[]string{
+				`{
+    "db": "test",
+    "table": "t1",
+    "desc": false,
+    "keep order": false,
+    "push down info": {
+        "limit": 0,
+        "aggregated push down": true,
+        "gby items": null,
+        "agg funcs": [
+            "sum(0)"
+        ],
+        "access conditions": null,
+        "index filter conditions": null,
+        "table filter conditions": null
+    }
+}`,
+				`{
+    "AggFuncs": [
+        "sum([0])"
+    ],
+    "GroupByItems": [
+        "[]"
+    ],
+    "child": "TableScan_8"
+}`,
+			},
+		},
+		{
+			"select c1 from t1 where c1 in (select c2 from t2)",
+			[]string{"TableScan_7"},
+			[]string{""},
+			[]string{
+				`{
+    "db": "test",
+    "table": "t1",
+    "desc": false,
+    "keep order": false,
+    "push down info": {
+        "limit": 0,
+        "access conditions": [
+            "in(test.t1.c1, 0, 1)"
+        ],
+        "index filter conditions": null,
+        "table filter conditions": null
+    }
+}`,
+			},
+		},
 	}
+	tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 1")
 	for _, ca := range cases {
 		result := tk.MustQuery("explain " + ca.sql)
 		var resultList []string
