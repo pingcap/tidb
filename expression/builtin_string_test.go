@@ -1059,23 +1059,22 @@ func (s *testEvaluatorSuite) TestOrd(c *C) {
 	defer testleak.AfterTest(c)()
 	ordCases := []struct {
 		origin interface{}
-		ret    interface{}
+		ret    int64
 	}{
 		// ASCII test cases
 		{"", 0},
 		{"A", 65},
-		{"你好", 228},
+		{"你好", 14990752},
 		{1, 49},
 		{1.2, 49},
 		{true, 49},
 		{false, 48},
 
-		{nil, nil},
 		{2, 50},
 		{-1, 45},
 		{"-1", 45},
 		{"2", 50},
-		{"PingCap", 70},
+		{"PingCap", 80},
 		{"中国", 14989485},
 		{"にほん", 14909867},
 		{"한국", 15570332},

@@ -1530,7 +1530,7 @@ func (b *builtinOrdSig) eval(row []types.Datum) (d types.Datum, err error) {
 	bytes := []byte(leftMost)
 	var result int64
 	var factor int64 = 1
-	for i := len(bytes)-1; i >= 0; i-- {
+	for i := len(bytes) - 1; i >= 0; i-- {
 		result += int64(bytes[i]) * factor
 		factor *= 256
 	}
