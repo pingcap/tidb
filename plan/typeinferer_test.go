@@ -254,6 +254,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`exp(1)`, mysql.TypeDouble, charset.CharsetBin},
 		{`exp(1.23)`, mysql.TypeDouble, charset.CharsetBin},
 		{`exp('1.23')`, mysql.TypeDouble, charset.CharsetBin},
+		{`is_ipv4_mapped('::ffff:1.2.3.4')`, mysql.TypeDouble, charset.CharsetBin},
 	}
 	for _, ca := range cases {
 		ctx := testKit.Se.(context.Context)
