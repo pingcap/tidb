@@ -23,6 +23,7 @@ import (
 	"regexp"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
@@ -600,4 +601,15 @@ func getStmtCnt(content string) (stmtCnt map[string]int) {
 		stmtCnt[v[1]] = cnt
 	}
 	return stmtCnt
+}
+
+func waitUntilServerOnline() {
+	for {
+		time.Sleep(time.Millisecond * 10)
+		db, err := sql.Open("mysql", dsn)
+		if err == nil {
+			db.Close()
+			break
+		}
+	}
 }
