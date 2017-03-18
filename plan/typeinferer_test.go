@@ -259,6 +259,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`ord(true)`, mysql.TypeLonglong, charset.CharsetBin},
 		{`ord(null)`, mysql.TypeLonglong, charset.CharsetBin},
 		{`is_ipv6('FE80::AAAA:0000:00C2:0002')`, mysql.TypeLonglong, charset.CharsetBin},
+		{`ord('2')`, mysql.TypeLonglong, charset.CharsetBin},
 	}
 	for _, ca := range cases {
 		ctx := testKit.Se.(context.Context)
