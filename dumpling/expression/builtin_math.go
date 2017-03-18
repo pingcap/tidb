@@ -921,7 +921,20 @@ type builtinRadiansSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_radians
 func (b *builtinRadiansSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("radians")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	arg := args[0]
+	if arg.IsNull() {
+		return d, nil
+	}
+	degree, err := arg.ToFloat64(b.ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d.SetFloat64(degree * math.Pi / 180)
+	return d, nil
 }
 
 type sinFunctionClass struct {
