@@ -411,6 +411,8 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp.Flen = 40
 	case ast.Coalesce:
 		tp = aggArgsType(x.Args)
+	case ast.Ord:
+		tp = types.NewFieldType(mysql.TypeLonglong)
 	default:
 		tp = types.NewFieldType(mysql.TypeUnspecified)
 	}
