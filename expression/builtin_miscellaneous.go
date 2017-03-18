@@ -16,6 +16,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/util/types"
+	"net"
 	"time"
 )
 
@@ -294,35 +295,16 @@ func (b *builtinIsIPv4Sig) eval(row []types.Datum) (d types.Datum, err error) {
 	}
 	// isIPv4(str)
 	// args[0] string
-	ip, err := args[0].ToString()
+	s, err := args[0].ToString()
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	dots := 0
-	acc := 0
-	for _, c := range ip {
-		switch {
-		case '0' <= c && c <= '9':
-			acc = acc*10 + int(c-'0')
-			break
-		case c == '.':
-			dots++
-			if dots > 3 || acc > 255 {
-				d.SetInt64(0)
-				return d, nil
-			}
-			acc = 0
-			break
-		default:
-			d.SetInt64(0)
-			return d, nil
-		}
-	}
-	if acc > 255 {
+	ip := net.ParseIP(s)
+	if ip != nil && ip.To4() != nil {
+		d.SetInt64(1)
+	} else {
 		d.SetInt64(0)
-		return d, nil
 	}
-	d.SetInt64(1)
 	return d, nil
 }
 
