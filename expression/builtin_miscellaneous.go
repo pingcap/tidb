@@ -16,6 +16,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/twinj/uuid"
 	"time"
 )
 
@@ -423,8 +424,9 @@ type builtinUUIDSig struct {
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_uuid
-func (b *builtinUUIDSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("UUID")
+func (b *builtinUUIDSig) eval(_ []types.Datum) (d types.Datum, err error) {
+	d.SetString(uuid.NewV1().String())
+	return
 }
 
 type uuidShortFunctionClass struct {

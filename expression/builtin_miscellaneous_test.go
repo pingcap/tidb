@@ -11,3 +11,41 @@
 // limitations under the License.
 
 package expression
+
+import (
+	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/types"
+	"strings"
+)
+
+func (s *testEvaluatorSuite) TestUUID(c *C) {
+	defer testleak.AfterTest(c)()
+
+	tbl := []struct {
+	}{
+		{},
+		{},
+		{},
+	}
+
+	for range tbl {
+		fc := funcs[ast.UUID]
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums()), s.ctx)
+		r, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		parts := strings.Split(r.GetString(), "-")
+		c.Assert(len(parts), Equals, 5)
+		for i, p := range parts {
+			switch {
+			case i == 0:
+				c.Assert(len(p), Equals, 8)
+			case 1 <= i && 3 >= i:
+				c.Assert(len(p), Equals, 4)
+			case i == 5:
+				c.Assert(len(p), Equals, 12)
+			}
+		}
+	}
+}
