@@ -15,6 +15,7 @@ package expression
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -36,11 +37,12 @@ func (s *testEvaluatorSuite) TestIsIPv4(c *C) {
 		c.Assert(err, IsNil)
 		result, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		if test.expect == nil {
-			c.Assert(result.Kind(), Equals, types.KindNull)
-		} else {
-			expect, _ := test.expect.(string)
-			c.Assert(result.GetString(), Equals, expect)
-		}
+		c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
 	}
+	// test NULL input for is_ipv6
+	var argNull types.Datum
+	f, _ := fc.getFunction(datumsToConstants([]types.Datum{argNull}), s.ctx)
+	r, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(r, testutil.DatumEquals, types.NewDatum(0))
 }
