@@ -1059,7 +1059,7 @@ func (s *testEvaluatorSuite) TestOrd(c *C) {
 	defer testleak.AfterTest(c)()
 	ordCases := []struct {
 		origin interface{}
-		ret    int
+		ret    interface{}
 	}{
 		// ASCII test cases
 		{"", 0},
@@ -1070,6 +1070,7 @@ func (s *testEvaluatorSuite) TestOrd(c *C) {
 		{true, 49},
 		{false, 48},
 
+		{nil, nil},
 		{2, 50},
 		{-1, 45},
 		{"-1", 45},
