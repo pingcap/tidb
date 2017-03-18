@@ -13,10 +13,13 @@
 package expression
 
 import (
+	"net"
+	"strings"
+	"time"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/util/types"
-	"time"
 )
 
 var (
@@ -322,7 +325,30 @@ type builtinIsIPv4MappedSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-mapped
 func (b *builtinIsIPv4MappedSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("IS_IPV4_MAPPED")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+
+	arg := args[0]
+	if arg.IsNull() {
+		d.SetInt64(0)
+		return d, nil
+	}
+
+	ips, err := arg.ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	ip := net.ParseIP(ips)
+	if strings.Contains(ips, "::ffff:") && ip != nil && ip.To4() != nil {
+		d.SetInt64(1)
+	} else {
+		d.SetInt64(0)
+	}
+
+	return d, nil
 }
 
 type isIPv6FunctionClass struct {
