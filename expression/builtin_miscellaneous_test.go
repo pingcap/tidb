@@ -19,7 +19,7 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-func (s *testEvaluatorSuite) TestIsIPv6(c *C) {
+func (s *testEvaluatorSuite) TestIsIPv4Mapped(c *C) {
 	tests := []struct {
 		ip     string
 		expect interface{}

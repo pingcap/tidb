@@ -332,6 +332,7 @@ func (b *builtinIsIPv4MappedSig) eval(row []types.Datum) (d types.Datum, err err
 
 	arg := args[0]
 	if arg.IsNull() {
+		d.SetInt64(0)
 		return d, nil
 	}
 
