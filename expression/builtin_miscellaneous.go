@@ -13,10 +13,13 @@
 package expression
 
 import (
+	"encoding/binary"
+	"net"
+	"time"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/util/types"
-	"time"
 )
 
 var (
@@ -203,7 +206,38 @@ type builtinInetAtonSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet-aton
 func (b *builtinInetAtonSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("INET_ATON")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+
+	arg := args[0]
+	if arg.IsNull() {
+		d.SetNull()
+		return d, nil
+	}
+
+	ips, err := arg.ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	ip := net.ParseIP(ips)
+	if ip == nil {
+		//Not an IP address,return NULL
+		d.SetNull()
+		return d, nil
+	}
+
+	ipv4 := ip.To4()
+	if ipv4 == nil {
+		//Not ipv4
+		d.SetNull()
+		return d, nil
+	}
+
+	d.SetUint64(uint64(binary.BigEndian.Uint32(ipv4)))
+	return d, nil
 }
 
 type inetNtoaFunctionClass struct {
