@@ -29,12 +29,16 @@ func (s *testEvaluatorSuite) TestUUID(c *C) {
 	parts := strings.Split(r.GetString(), "-")
 	c.Assert(len(parts), Equals, 5)
 	for i, p := range parts {
-		switch {
-		case i == 0:
+		switch i {
+		case 0:
 			c.Assert(len(p), Equals, 8)
-		case 1 <= i && 3 >= i:
+		case 1:
+			fallthrough
+		case 2:
+			fallthrough
+		case 3:
 			c.Assert(len(p), Equals, 4)
-		case i == 5:
+		case 4:
 			c.Assert(len(p), Equals, 12)
 		}
 	}
