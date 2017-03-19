@@ -1642,7 +1642,41 @@ type builtinInstrSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_instr
 func (b *builtinInstrSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("instr")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	if args[0].IsNull() || args[1].IsNull() {
+		d.SetNull()
+		return d, nil
+	}
+	// The meaning of the elements of args.
+	// arg[0] -> str
+	// arg[1] -> substr
+	s, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Errorf("Instr invalid str args, need string but get %T", args[0].GetValue())
+	}
+	p, err := args[1].ToString()
+	if err != nil {
+		return d, errors.Errorf("Instr invalid substr args, need string but get %T", args[0].GetValue())
+	}
+	pos := strings.Index(s, p)
+	// Not found.
+	if pos == -1 {
+		d.SetInt64(0)
+		return d, nil
+	}
+	c := 1
+	// Counting utf8 characters.
+	// See: 'http://stackoverflow.com/questions/3911536/utf-8-unicode-whats-with-0xc0-and-0x80' for details.
+	for i := 0; i < pos; i++ {
+		if (s[i] & 0xc0) != 0x80 {
+			c++
+		}
+	}
+	d.SetInt64(int64(c))
+	return d, nil
 }
 
 type loadFileFunctionClass struct {
