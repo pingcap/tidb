@@ -134,6 +134,8 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"LOG10(3)", mysql.TypeDouble, charset.CharsetBin},
 		{"SQRT(3)", mysql.TypeDouble, charset.CharsetBin},
 		{"PI()", mysql.TypeDouble, charset.CharsetBin},
+		{"Degrees(2)", mysql.TypeDouble, charset.CharsetBin},
+		{"Truncate(1, 1)", mysql.TypeDouble, charset.CharsetBin},
 		{"PI() + 0.000000000000000000", mysql.TypeDouble, charset.CharsetBin},
 		{"ACOS(1)", mysql.TypeDouble, charset.CharsetBin},
 		{"ASIN(1)", mysql.TypeDouble, charset.CharsetBin},

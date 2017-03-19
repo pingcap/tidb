@@ -499,3 +499,54 @@ func (s *testEvaluatorSuite) TestAtan(c *C) {
 		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("[%v] - arg:%v", idx, t["Arg"]))
 	}
 }
+
+func (s *testEvaluatorSuite) TestTruncate(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Arg []interface{}
+		Ret interface{}
+	}{
+		{[]interface{}{1.223, 1}, 1.2},
+		{[]interface{}{1.999, 1}, 1.9},
+		{[]interface{}{1.999, 0}, 1},
+		{[]interface{}{-1.999, 1}, -1.9},
+		{[]interface{}{122, -2}, 100},
+		{[]interface{}{10.28 * 100, 0}, 1028},
+	}
+
+	Dtbl := tblToDtbl(tbl)
+
+	for _, t := range Dtbl {
+		fc := funcs[ast.Truncate]
+		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
+	}
+
+}
+
+func (s *testEvaluatorSuite) TestDegrees(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Arg interface{}
+		Ret interface{}
+	}{
+		{math.Pi / 2, float64(90)},
+		{math.Pi, float64(180)},
+		{0, float64(0)},
+	}
+
+	Dtbl := tblToDtbl(tbl)
+
+	for _, t := range Dtbl {
+		fc := funcs[ast.Degrees]
+		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
+	}
+
+}
