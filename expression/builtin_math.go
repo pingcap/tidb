@@ -963,7 +963,7 @@ func (b *builtinSinSig) eval(row []types.Datum) (d types.Datum, err error) {
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-
+	// Set the result to be of type float64
 	d.SetFloat64(math.Sin(theta))
 	return
 }

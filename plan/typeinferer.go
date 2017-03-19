@@ -344,7 +344,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		}
 	case "ln", "log", "log2", "log10", "sqrt", "pi", "exp":
 		tp = types.NewFieldType(mysql.TypeDouble)
-	case ast.Sin:
+	case ast.Sin: // ast.Cos, ast.Tan to be added here
 		tp = types.NewFieldType(mysql.TypeDouble)
 	case "acos", "asin", "atan":
 		tp = types.NewFieldType(mysql.TypeDouble)
