@@ -185,6 +185,7 @@ func createBinlogClient() {
 		log.Fatal(errors.ErrorStack(err))
 	}
 	binloginfo.PumpClient = binlog.NewPumpClient(clientCon)
+	log.Infof("created binlog client at %s", *binlogSocket)
 }
 
 // Prometheus push.

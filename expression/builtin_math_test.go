@@ -298,6 +298,10 @@ func (s *testEvaluatorSuite) TestConv(c *C) {
 		{[]interface{}{"18446744073709551615", -10, 16}, "7FFFFFFFFFFFFFFF"},
 		{[]interface{}{"12F", -10, 16}, "C"},
 		{[]interface{}{"  FF ", 16, 10}, "255"},
+		{[]interface{}{"TIDB", 10, 8}, "0"},
+		{[]interface{}{"aa", 10, 2}, "0"},
+		{[]interface{}{" A", -10, 16}, "0"},
+		{[]interface{}{"a6a", 10, 8}, "0"},
 	}
 
 	Dtbl := tblToDtbl(tbl)
@@ -391,6 +395,37 @@ func (s *testEvaluatorSuite) TestPi(c *C) {
 	c.Assert(pi, testutil.DatumEquals, types.NewDatum(math.Pi))
 }
 
+func (s *testEvaluatorSuite) TestRadians(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Arg interface{}
+		Ret interface{}
+	}{
+		{nil, nil},
+		{0, float64(0)},
+		{float64(180), float64(math.Pi)},
+		{-360, -2 * float64(math.Pi)},
+		{"180", float64(math.Pi)},
+	}
+
+	Dtbl := tblToDtbl(tbl)
+	for _, t := range Dtbl {
+		fc := funcs[ast.Radians]
+		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
+	}
+
+	invalidArg := "notNum"
+	fc := funcs[ast.Radians]
+	f, err := fc.getFunction(datumsToConstants([]types.Datum{types.NewDatum(invalidArg)}), s.ctx)
+	c.Assert(err, IsNil)
+	_, err = f.eval(nil)
+	c.Assert(err, NotNil)
+}
+
 func (s *testEvaluatorSuite) TestAcos(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
@@ -404,14 +439,13 @@ func (s *testEvaluatorSuite) TestAcos(c *C) {
 	}
 
 	Dtbl := tblToDtbl(tbl)
-
 	for _, t := range Dtbl {
 		fc := funcs[ast.Acos]
 		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
 		c.Assert(err, IsNil)
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("arg:%v", t["Arg"]))
+		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
 }
 
