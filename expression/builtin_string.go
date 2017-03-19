@@ -1589,9 +1589,81 @@ type builtinFormatSig struct {
 	baseBuiltinFunc
 }
 
+type formatFunc func(float64, int64) string
+
 // See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_format
 func (b *builtinFormatSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("format")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg0, err := args[0].ToDecimal(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	arg1, err := args[1].ToInt64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	var arg2 string
+
+	// TODO: Neet to be moved away.
+	supportedFormat := map[string]formatFunc{
+		"en-US": _formatENUS,
+		"zh-CN": _formatZHCN,
+	}
+	if len(args) == 3 {
+		arg2, err = args[2].ToString()
+	}
+	_, exist := supportedFormat[arg2]
+	if !exist {
+		arg2 = "en-US"
+	}
+	number, err := arg0.ToFloat64()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	d.SetString(supportedFormat[arg2](number, arg1))
+	return d, errors.Trace(err)
+}
+
+// TODO: use go:generate generate those functions instead
+func _formatENUS(number float64, precision int64) string {
+	var buffer bytes.Buffer
+	if number < 0 {
+		buffer.Write([]byte{'-'})
+		number = 0 - number
+	}
+	comma := []byte{','}
+	parts := strings.Split(strconv.FormatFloat(number, 'f', -1, 64), ".")
+	pos := 0
+	if len(parts[0])%3 != 0 {
+		pos += len(parts[0]) % 3
+		buffer.WriteString(parts[0][:pos])
+		buffer.Write(comma)
+	}
+	for ; pos < len(parts[0]); pos += 3 {
+		buffer.WriteString(parts[0][pos : pos+3])
+		buffer.Write(comma)
+	}
+	buffer.Truncate(buffer.Len() - 1)
+	if precision > 0 {
+		buffer.Write([]byte{'.'})
+		if len(parts[1]) >= int(precision) {
+			buffer.WriteString(parts[1][:precision])
+		} else {
+			buffer.WriteString(parts[1])
+			buffer.WriteString(strings.Repeat("0", int(precision)-len(parts[1])))
+		}
+	}
+	return buffer.String()
+}
+
+func _formatZHCN(number float64, precision int64) string {
+	// TODO
+	return _formatENUS(number, precision)
 }
 
 type fromBase64FunctionClass struct {

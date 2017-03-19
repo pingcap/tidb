@@ -1054,3 +1054,47 @@ func (s *testEvaluatorSuite) TestOct(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r.IsNull(), IsTrue)
 }
+
+func (s *testEvaluatorSuite) TestFormat(c *C) {
+	defer testleak.AfterTest(c)()
+	formatCases := []struct {
+		number    interface{}
+		precision interface{}
+		locale    string
+		ret       string
+	}{
+		{12332.123456, 4, "en-US", "12,332.1234"},
+		{-12332.123456, -4, "zh-CN", "-12,332"},
+		{"-12332.123456", "4", "de-GE", "-12,332.1234"},
+	}
+	formatCases1 := []struct {
+		number    interface{}
+		precision interface{}
+		ret       string
+	}{
+		{12332.123456, 4, "12,332.1234"},
+		{12332.123456, 0, "12,332"},
+		{12332.123456, -4, "12,332"},
+		{-12332.123456, 4, "-12,332.1234"},
+		{-12332.123456, 0, "-12,332"},
+		{-12332.123456, -4, "-12,332"},
+		{"-12332.123456", "4", "-12,332.1234"},
+	}
+	for _, t := range formatCases {
+		fc := funcs[ast.Format]
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.number, t.precision, t.locale)), s.ctx)
+		c.Assert(err, IsNil)
+		r, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
+	}
+
+	for _, t := range formatCases1 {
+		fc := funcs[ast.Format]
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.number, t.precision)), s.ctx)
+		c.Assert(err, IsNil)
+		r, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
+	}
+}
