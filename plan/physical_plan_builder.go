@@ -563,9 +563,9 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 	return resultInfo, nil
 }
 
-func generateJoinProp(column *expression.Column, desc bool) *requiredProperty {
+func generateJoinProp(column *expression.Column) *requiredProperty {
 	return &requiredProperty{
-		props:      []*columnProp{{column, desc}},
+		props:      []*columnProp{{column, false}},
 		sortKeyLen: 1,
 	}
 }
@@ -584,11 +584,7 @@ func constructPropertyByJoin(join *Join) ([][]*requiredProperty, error) {
 		lColumn, lOK := lExpr.(*expression.Column)
 		rColumn, rOK := rExpr.(*expression.Column)
 		if lOK && rOK {
-			result = append(result, []*requiredProperty{generateJoinProp(lColumn, false),
-				generateJoinProp(rColumn, false)})
-
-			result = append(result, []*requiredProperty{generateJoinProp(lColumn, true),
-				generateJoinProp(rColumn, true)})
+			result = append(result, []*requiredProperty{generateJoinProp(lColumn), generateJoinProp(rColumn)})
 		} else {
 			continue
 		}
