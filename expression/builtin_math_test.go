@@ -434,13 +434,13 @@ func (s *testEvaluatorSuite) TestSin(c *C) {
 	}{
 		{nil, nil},
 		{int64(0), float64(0)},
-		{math.Pi, math.Sin(math.Pi)}, // Pie ==> 0
-		{-math.Pi, math.Sin(-math.Pi)},
-		{math.Pi/2, math.Sin(math.Pi/2)}, // Pie/2 ==> 1
-		{-math.Pi/2, math.Sin(-math.Pi/2)},
-		{math.Pi/6, math.Sin(math.Pi/6)}, // Pie/6(30 degrees) ==> 0.5
-		{-math.Pi/6, math.Sin(-math.Pi/6)},
-		{math.Pi*2, math.Sin(math.Pi*2)},
+		{math.Pi, float64(math.Sin(math.Pi))}, // Pie ==> 0
+		{-math.Pi, float64(math.Sin(-math.Pi))},
+		{math.Pi/2, float64(math.Sin(math.Pi/2))}, // Pie/2 ==> 1
+		{-math.Pi/2, float64(math.Sin(-math.Pi/2))},
+		{math.Pi/6, float64(math.Sin(math.Pi/6))}, // Pie/6(30 degrees) ==> 0.5
+		{-math.Pi/6, float64(math.Sin(-math.Pi/6))},
+		{math.Pi*2, float64(math.Sin(math.Pi*2))},
 		{"0.000", float64(0)}, // string value case
 	}
 
@@ -452,6 +452,8 @@ func (s *testEvaluatorSuite) TestSin(c *C) {
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
+		func () {
+		}
 	}
 }
 
