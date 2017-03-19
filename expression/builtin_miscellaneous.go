@@ -303,13 +303,38 @@ func (b *builtinIsIPv4Sig) eval(row []types.Datum) (d types.Datum, err error) {
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	ip := net.ParseIP(s)
-	if ip != nil && ip.To4() != nil {
+	if mysqlIsIPv4(s) {
 		d.SetInt64(1)
 	} else {
 		d.SetInt64(0)
 	}
 	return d, nil
+}
+
+// mysql is_ipv4 don't accesp IPv6 expressed IPv4 format
+func mysqlIsIPv4(ip string) bool {
+	dots := 0
+	acc := 0
+	for _, c := range ip {
+		switch {
+		case '0' <= c && c <= '9':
+			acc = acc*10 + int(c-'0')
+			break
+		case c == '.':
+			dots++
+			if dots > 3 || acc > 255 {
+				return false
+			}
+			acc = 0
+			break
+		default:
+			return false
+		}
+	}
+	if acc > 255 {
+		return false
+	}
+	return true
 }
 
 type isIPv4CompatFunctionClass struct {
@@ -375,7 +400,7 @@ func (b *builtinIsIPv6Sig) eval(row []types.Datum) (d types.Datum, err error) {
 		return d, errors.Trace(err)
 	}
 	ip := net.ParseIP(s)
-	if ip != nil && ip.To4() == nil {
+	if ip != nil && !mysqlIsIPv4(s) {
 		d.SetInt64(1)
 	} else {
 		d.SetInt64(0)
