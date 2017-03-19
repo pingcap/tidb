@@ -426,6 +426,34 @@ func (s *testEvaluatorSuite) TestRadians(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testEvaluatorSuite) TestSin(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Arg interface{}
+		Ret interface{}
+	}{
+		{nil, nil},
+		{int64(0), float64(0)},
+		{math.Pi(), float64(0)},
+		{-math.Pi(), float64(0)},
+		{math.Pi()/2, float64(1)},
+		{-math.Pi()/2, float64(-1)},
+		{math.Pi()/6, float64(0.5)},
+		{math.Pi()/6, float64(0.5)},
+		{"0.000", float64(0)},
+	}
+
+	Dtbl := tblToDtbl(tbl)
+	for _, t := range Dtbl {
+		fc := funcs[ast.Sin]
+		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
+	}
+}
+
 func (s *testEvaluatorSuite) TestAcos(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
