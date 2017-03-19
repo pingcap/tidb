@@ -97,6 +97,8 @@ func main() {
 		StatusAddr:   fmt.Sprintf(":%s", *statusPort),
 		Socket:       *socket,
 		ReportStatus: *reportStatus,
+		Store:        *store,
+		StorePath:    *storePath,
 	}
 
 	// set log options
@@ -183,6 +185,7 @@ func createBinlogClient() {
 		log.Fatal(errors.ErrorStack(err))
 	}
 	binloginfo.PumpClient = binlog.NewPumpClient(clientCon)
+	log.Infof("created binlog client at %s", *binlogSocket)
 }
 
 // Prometheus push.

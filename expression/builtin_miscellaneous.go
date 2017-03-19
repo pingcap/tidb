@@ -16,6 +16,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/util/types"
+	"net"
 	"time"
 )
 
@@ -339,7 +340,27 @@ type builtinIsIPv6Sig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv6
 func (b *builtinIsIPv6Sig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("IS_IPV6")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	// isIPv6(str)
+	// args[0] string
+	if args[0].IsNull() {
+		d.SetInt64(0)
+		return d, nil
+	}
+	s, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	ip := net.ParseIP(s)
+	if ip != nil && ip.To4() == nil {
+		d.SetInt64(1)
+	} else {
+		d.SetInt64(0)
+	}
+	return d, nil
 }
 
 type isUsedLockFunctionClass struct {
