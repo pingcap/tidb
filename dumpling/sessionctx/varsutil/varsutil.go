@@ -108,22 +108,27 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 			return errors.Trace(err)
 		}
 	case variable.AutocommitVar:
-		isAutocommit := strings.EqualFold(sVal, "ON") || sVal == "1"
+		isAutocommit := tidbOptOn(sVal)
 		vars.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
 		if isAutocommit {
 			vars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 		}
 	case variable.TiDBSkipConstraintCheck:
-		vars.SkipConstraintCheck = (sVal == "1")
+		vars.SkipConstraintCheck = tidbOptOn(sVal)
 	case variable.TiDBSkipDDLWait:
-		vars.SkipDDLWait = (sVal == "1")
+		vars.SkipDDLWait = tidbOptOn(sVal)
 	case variable.TiDBOptAggPushDown:
-		vars.AllowAggPushDown = strings.EqualFold(sVal, "ON") || sVal == "1"
+		vars.AllowAggPushDown = tidbOptOn(sVal)
 	case variable.TiDBOptInSubqUnFolding:
-		vars.AllowInSubqueryUnFolding = strings.EqualFold(sVal, "ON") || sVal == "1"
+		vars.AllowInSubqueryUnFolding = tidbOptOn(sVal)
 	}
 	vars.Systems[name] = sVal
 	return nil
+}
+
+// For all tidb session variable options, we use "ON"/1 to turn on the options.
+func tidbOptOn(opt string) bool {
+	return strings.EqualFold(opt, "ON") || opt == "1"
 }
 
 func parseTimeZone(s string) *time.Location {
