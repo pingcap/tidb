@@ -88,10 +88,6 @@ func NewMergeJoinExec(
 		filter:   leftFilter,
 		joinKeys: leftJoinKeys,
 	}
-	if joinType == plan.LeftOuterJoin {
-		exec.leftRowBlock.filter = nil
-		exec.leftFilter = leftFilter
-	}
 
 	exec.rightRowBlock = rowBlockIterator{
 		ctx:      ctx,
@@ -99,18 +95,18 @@ func NewMergeJoinExec(
 		filter:   rightFilter,
 		joinKeys: rightJoinKeys,
 	}
-	if joinType == plan.RightOuterJoin {
-		exec.rightRowBlock.filter = nil
-		exec.rightFilter = rightFilter
-	}
 
 	exec.preserveLeft = false
 	exec.preserveRight = false
 	switch joinType {
 	case plan.LeftOuterJoin:
+		exec.leftRowBlock.filter = nil
+		exec.leftFilter = leftFilter
 		exec.preserveLeft = true
 		exec.defaultRightRow = &Row{Data: defaultValues}
 	case plan.RightOuterJoin:
+		exec.rightRowBlock.filter = nil
+		exec.rightFilter = rightFilter
 		exec.preserveRight = true
 		exec.defaultLeftRow = &Row{Data: defaultValues}
 	case plan.InnerJoin:
@@ -264,7 +260,7 @@ func (e *MergeJoinExec) outputJoinRow(leftRow *Row, rightRow *Row) error {
 }
 
 func (e *MergeJoinExec) computeJoin() (bool, error) {
-	e.outputBuf = make([]*Row, 0, rowBufferSize)
+	e.outputBuf = e.outputBuf[0 : 0 : rowBufferSize]
 
 	for {
 		var compareResult int
