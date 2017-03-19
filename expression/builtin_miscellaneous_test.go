@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/util/types"
 )
 
 func (s *testEvaluatorSuite) TestInetAton(c *C) {
@@ -54,7 +55,7 @@ func (s *testEvaluatorSuite) TestInetAton(c *C) {
 		c.Assert(d, testutil.DatumEquals, t["Expected"][0])
 	}
 }
-  
+
 func (s *testEvaluatorSuite) TestIsIPv6(c *C) {
 	tests := []struct {
 		ip     string
