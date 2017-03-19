@@ -24,6 +24,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -1526,8 +1527,9 @@ func (b *builtinOrdSig) eval(row []types.Datum) (d types.Datum, err error) {
 		return d, nil
 	}
 
-	leftMost := string([]rune(str)[0])
-	bytes := []byte(leftMost)
+	leftMost, _ := utf8.DecodeRuneInString(str)
+
+	bytes := []byte(string(leftMost))
 	var result int64
 	var factor int64 = 1
 	for i := len(bytes) - 1; i >= 0; i-- {
