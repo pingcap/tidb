@@ -11,3 +11,46 @@
 // limitations under the License.
 
 package expression
+
+import (
+	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testutil"
+)
+
+func (s *testEvaluatorSuite) TestInetAton(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Input    interface{}
+		Expected interface{}
+	}{
+		{"", nil},
+		{nil, nil},
+		{"255.255.255.255", 4294967295},
+		{"0.0.0.0", 0},
+		{"127.0.0.1", 2130706433},
+		{"0.0.0.256", nil},
+		{"113.14.22.3", 1896748547},
+		{"127", 127},
+		{"127.255", 2130706687},
+		{"127,256", nil},
+		{"127.2.1", 2130837505},
+		{"123.2.1.", nil},
+		{"127.0.0.1.1", 545460846849}, // test in mysql, it not returns NULL
+		{"127.0.0.1.1.1", 139637976793345},
+		{"127.0.0.1.1.1.1", 35747322059096321},
+		{"127.0.0.1.1.1.1.1", 9151314447128658177},
+		{"127.0.0.1.1.1.1.1.1", 1103823438081}, // test in mysql, it just let it overflow
+	}
+
+	dtbl := tblToDtbl(tbl)
+	fc := funcs[ast.InetAton]
+	for _, t := range dtbl {
+		f, err := fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(d, testutil.DatumEquals, t["Expected"][0])
+	}
+}

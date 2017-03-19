@@ -411,6 +411,9 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp.Flen = 40
 	case ast.Coalesce:
 		tp = aggArgsType(x.Args)
+	case ast.InetAton:
+		tp = types.NewFieldType(mysql.TypeLonglong)
+		tp.Flag |= mysql.UnsignedFlag
 	default:
 		tp = types.NewFieldType(mysql.TypeUnspecified)
 	}

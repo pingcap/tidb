@@ -254,6 +254,8 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`exp(1)`, mysql.TypeDouble, charset.CharsetBin},
 		{`exp(1.23)`, mysql.TypeDouble, charset.CharsetBin},
 		{`exp('1.23')`, mysql.TypeDouble, charset.CharsetBin},
+		{`inet_aton('255.255.255.255')`, mysql.TypeLonglong, charset.CharsetBin},
+		{`inet_aton('')`, mysql.TypeLonglong, charset.CharsetBin},
 	}
 	for _, ca := range cases {
 		ctx := testKit.Se.(context.Context)
