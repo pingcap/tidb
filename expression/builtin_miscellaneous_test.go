@@ -13,6 +13,8 @@
 package expression
 
 import (
+	"fmt"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/util/testutil"
@@ -44,4 +46,32 @@ func (s *testEvaluatorSuite) TestIsIPv6(c *C) {
 	r, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(r, testutil.DatumEquals, types.NewDatum(0))
+}
+
+func (s *testEvaluatorSuite) TestInetNtoa(c *C) {
+	tests := []struct {
+		ip     int
+		expect interface{}
+	}{
+		{167773449, "10.0.5.9"},
+		{2063728641, "123.2.0.1"},
+		{0, "0.0.0.0"},
+		{545460846593, nil},
+	}
+	fc := funcs[ast.InetNtoa]
+	for _, test := range tests {
+		ip := types.NewDatum(test.ip)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{ip}), s.ctx)
+		c.Assert(err, IsNil)
+		result, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		fmt.Println(test.ip)
+		c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
+	}
+
+	var argNull types.Datum
+	f, _ := fc.getFunction(datumsToConstants([]types.Datum{argNull}), s.ctx)
+	r, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(r.IsNull(), IsTrue)
 }

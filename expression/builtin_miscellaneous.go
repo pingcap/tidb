@@ -13,11 +13,14 @@
 package expression
 
 import (
+	"encoding/binary"
+	"fmt"
+	"net"
+	"time"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/util/types"
-	"net"
-	"time"
 )
 
 var (
@@ -221,7 +224,39 @@ type builtinInetNtoaSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet-ntoa
 func (b *builtinInetNtoaSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("INET_NTOA")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+
+	arg := args[0]
+	if arg.IsNull() {
+		d.SetNull()
+		return d, nil
+	}
+
+	ipArg, err := arg.ToInt64(b.ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	d.SetNull()
+	uIPArg := uint64(ipArg)
+	if uIPArg > 0xffffffff {
+		//not an IPv4 address
+		return d, nil
+	}
+	fmt.Println("uIPArg", uIPArg, "uint32", uint32(uIPArg))
+	ip := make(net.IP, net.IPv4len)
+	binary.BigEndian.PutUint32(ip, uint32(uIPArg))
+	ipv4 := ip.To4()
+	if ipv4 == nil {
+		//Not a vaild ipv4 address
+		return d, nil
+	}
+
+	d.SetString(ipv4.String())
+	return d, nil
 }
 
 type inet6AtonFunctionClass struct {
