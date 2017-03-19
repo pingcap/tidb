@@ -13,11 +13,11 @@
 package expression
 
 import (
-	"time"
-  "net"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/util/types"
+	"net"
+	"time"
 )
 
 var (
