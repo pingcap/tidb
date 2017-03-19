@@ -452,8 +452,6 @@ func (s *testEvaluatorSuite) TestSin(c *C) {
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
-		func () {
-		}
 	}
 }
 
