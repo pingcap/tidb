@@ -52,6 +52,7 @@ func (s *testEvaluatorSuite) TestInetAton(c *C) {
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, t["Expected"][0])
+	}
 }
   
 func (s *testEvaluatorSuite) TestIsIPv6(c *C) {
