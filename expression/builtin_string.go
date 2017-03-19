@@ -22,6 +22,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/juju/errors"
@@ -1445,7 +1446,50 @@ type builtinOctSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_oct
 func (b *builtinOctSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("oct")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	var (
+		negative bool
+		overflow bool
+	)
+	arg := args[0]
+	if arg.IsNull() {
+		return d, nil
+	}
+	n, err := arg.ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	n = getValidPrefix(strings.TrimSpace(n), 10)
+	if len(n) == 0 {
+		d.SetString("0")
+		return d, nil
+	}
+	if n[0] == '-' {
+		negative = true
+		n = n[1:]
+	}
+	val, err := strconv.ParseUint(n, 10, 64)
+	if err != nil {
+		if numError, ok := err.(*strconv.NumError); ok {
+			if numError.Err == strconv.ErrRange {
+				overflow = true
+			} else {
+				return d, errors.Trace(err)
+			}
+		} else {
+			return d, errors.Trace(err)
+		}
+	}
+
+	if negative && !overflow {
+		val = -val
+	}
+	str := strconv.FormatUint(val, 8)
+	d.SetString(str)
+	return d, nil
 }
 
 type ordFunctionClass struct {

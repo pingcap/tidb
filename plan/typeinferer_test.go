@@ -249,10 +249,13 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`coalesce(null, 0.1)`, mysql.TypeNewDecimal, charset.CharsetBin},
 		{`coalesce(1, "1" + 1)`, mysql.TypeDouble, charset.CharsetBin},
 		{`coalesce(1, "abc")`, mysql.TypeVarString, charset.CharsetUTF8},
+		{`radians(90)`, mysql.TypeDouble, charset.CharsetBin},
 		{`make_set(1 | 3, "hello", "nice", null, "world")`, mysql.TypeVarString, charset.CharsetUTF8},
+		{`oct(12)`, mysql.TypeVarString, charset.CharsetUTF8},
 		{`exp(1)`, mysql.TypeDouble, charset.CharsetBin},
 		{`exp(1.23)`, mysql.TypeDouble, charset.CharsetBin},
 		{`exp('1.23')`, mysql.TypeDouble, charset.CharsetBin},
+		{`is_ipv6('FE80::AAAA:0000:00C2:0002')`, mysql.TypeLonglong, charset.CharsetBin},
 	}
 	for _, ca := range cases {
 		ctx := testKit.Se.(context.Context)
