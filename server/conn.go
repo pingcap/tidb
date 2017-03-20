@@ -332,12 +332,6 @@ func (cc *clientConn) Run() {
 		if r != nil {
 			buf := make([]byte, size)
 			stackSize := runtime.Stack(buf, false)
-			if stackSize > size {
-				stackSize = size
-			}
-			if stackSize < 0 {
-				stackSize = 0
-			}
 			buf = buf[:stackSize]
 			log.Errorf("lastCmd %s, %v, %s", cc.lastCmd, r, buf)
 		}
@@ -358,6 +352,15 @@ func (cc *clientConn) Run() {
 		if err = cc.dispatch(data); err != nil {
 			if terror.ErrorEqual(err, io.EOF) {
 				cc.addMetrics(data[0], startTime, nil)
+				return
+			} else if terror.ErrorEqual(err, terror.ErrCritical) {
+				log.Errorf("[%d] critical error, stop the server listener %s",
+					cc.connectionID, errors.ErrorStack(err))
+				criticalErrorCounter.Add(1)
+				select {
+				case cc.server.stopListenerCh <- struct{}{}:
+				default:
+				}
 				return
 			}
 			log.Warnf("[%d] dispatch error:\n%s\n%s\n%s",

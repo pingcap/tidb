@@ -439,6 +439,15 @@ func (s *testSuite) TestUpdate(c *C) {
 	r = tk.MustQuery("select * from update_test;")
 	r.Check(testkit.Rows("2"))
 	tk.MustExec("commit")
+
+	// Test that in a transaction, when a constraint failed in an update statement, the record is not inserted.
+	tk.MustExec("create table update_unique (id int primary key, name int unique)")
+	tk.MustExec("insert update_unique values (1, 1), (2, 2);")
+	tk.MustExec("begin")
+	_, err = tk.Exec("update update_unique set name = 1 where id = 2")
+	c.Assert(err, NotNil)
+	tk.MustExec("commit")
+	tk.MustQuery("select * from update_unique").Check(testkit.Rows("1 1", "2 2"))
 }
 
 func (s *testSuite) fillMultiTableForUpdate(tk *testkit.TestKit) {
