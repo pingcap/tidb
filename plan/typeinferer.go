@@ -381,7 +381,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
 	case "strcmp", "isnull", "bit_length", "char_length", "character_length", "crc32", "timestampdiff", "sign",
-		"is_ipv6":
+		"is_ipv6", "ord":
 		tp = types.NewFieldType(mysql.TypeLonglong)
 	case "connection_id":
 		tp = types.NewFieldType(mysql.TypeLonglong)
@@ -412,8 +412,6 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp.Flen = 40
 	case ast.Coalesce:
 		tp = aggArgsType(x.Args)
-	case ast.Ord:
-		tp = types.NewFieldType(mysql.TypeLonglong)
 	default:
 		tp = types.NewFieldType(mysql.TypeUnspecified)
 	}
