@@ -1557,7 +1557,28 @@ type builtinEltSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_elt
 func (b *builtinEltSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("elt")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	index, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	argsLength := int64(len(args))
+	if index < 1 || index > (argsLength-1) {
+		return d, nil
+	}
+
+	result, err := args[index].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d.SetString(result)
+
+	return d, nil
 }
 
 type exportSetFunctionClass struct {

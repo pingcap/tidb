@@ -14,7 +14,6 @@
 package distsql
 
 import (
-	goctx "context"
 	"io"
 	"io/ioutil"
 	"time"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
+	goctx "golang.org/x/net/context"
 )
 
 var (

@@ -14,8 +14,9 @@
 package kv
 
 import (
-	goctx "context"
 	"io"
+
+	goctx "golang.org/x/net/context"
 )
 
 // Transaction options
