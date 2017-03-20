@@ -880,7 +880,7 @@ func createSession(store kv.Storage) (*session, error) {
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 5
+	currentBootstrapVersion = 4
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {

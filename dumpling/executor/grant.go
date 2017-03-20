@@ -84,8 +84,8 @@ func (e *GrantExec) Next() (*Row, error) {
 				}
 			}
 
-			item := fmt.Sprintf(`("%s", "%s", "%s", "", "", "")`, host, userName, pwd)
-			sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password, ssl_cipher, x509_issuer, x509_subject) VALUES %s;`, mysql.SystemDB, mysql.UserTable, item)
+			user := fmt.Sprintf(`("%s", "%s", "%s")`, host, userName, pwd)
+			sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password) VALUES %s;`, mysql.SystemDB, mysql.UserTable, user)
 			_, err := e.ctx.(sqlexec.SQLExecutor).Execute(sql)
 			if err != nil {
 				return nil, errors.Trace(err)
