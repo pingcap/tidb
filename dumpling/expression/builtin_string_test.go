@@ -1055,6 +1055,48 @@ func (s *testEvaluatorSuite) TestOct(c *C) {
 	c.Assert(r.IsNull(), IsTrue)
 }
 
+func (s *testEvaluatorSuite) TestOrd(c *C) {
+	defer testleak.AfterTest(c)()
+	ordCases := []struct {
+		origin interface{}
+		ret    int64
+	}{
+		// ASCII test cases
+		{"", 0},
+		{"A", 65},
+		{"你好", 14990752},
+		{1, 49},
+		{1.2, 49},
+		{true, 49},
+		{false, 48},
+
+		{2, 50},
+		{-1, 45},
+		{"-1", 45},
+		{"2", 50},
+		{"PingCap", 80},
+		{"中国", 14989485},
+		{"にほん", 14909867},
+		{"한국", 15570332},
+	}
+
+	fc := funcs[ast.Ord]
+	for _, testcase := range ordCases {
+		in := types.NewDatum(testcase.origin)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{in}), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(v.GetInt64(), Equals, testcase.ret)
+	}
+	// test NULL input for sha
+	var argNull types.Datum
+	f, err := fc.getFunction(datumsToConstants([]types.Datum{argNull}), s.ctx)
+	c.Assert(err, IsNil)
+	r, err := f.eval(nil)
+	c.Assert(r.IsNull(), IsTrue)
+}
+
 func (s *testEvaluatorSuite) TestElt(c *C) {
 	defer testleak.AfterTest(c)()
 
