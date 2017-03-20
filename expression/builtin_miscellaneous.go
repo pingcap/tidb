@@ -297,7 +297,7 @@ type builtinIsIPv4Sig struct {
 func (b *builtinIsIPv4Sig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	if args[0].IsNull() {
 		d.SetInt64(0)
@@ -317,27 +317,30 @@ func (b *builtinIsIPv4Sig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, nil
 }
 
-// mysql is_ipv4 don't accesp IPv6 expressed IPv4 format
+// mysql 'is_ipv4' don't accept:
+//   1. mapped IPv6 address such as '::ffff:1.2.3.4', while 'IP.To4' in pcakge 'net' do
+//   2. number-skipped IPv4 address such as '192..1.1', while system call 'inet_aton' do
 func mysqlIsIPv4(ip string) bool {
 	dots := 0
 	acc := 0
+	pd := true
 	for _, c := range ip {
 		switch {
 		case '0' <= c && c <= '9':
 			acc = acc*10 + int(c-'0')
-			break
+			pd = false
 		case c == '.':
 			dots++
-			if dots > 3 || acc > 255 {
+			if dots > 3 || acc > 255 || pd {
 				return false
 			}
 			acc = 0
-			break
+			pd = true
 		default:
 			return false
 		}
 	}
-	if acc > 255 {
+	if acc > 255 || pd {
 		return false
 	}
 	return true
@@ -393,7 +396,7 @@ type builtinIsIPv6Sig struct {
 func (b *builtinIsIPv6Sig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	// isIPv6(str)
 	// args[0] string
