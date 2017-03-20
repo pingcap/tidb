@@ -148,7 +148,8 @@ type Selection struct {
 	onTable bool
 
 	// If ScanController is true, then the child of this selection is a scan,
-	// which use pk or index
+	// which use pk or index. we will record the accessConditions, idxConditions,
+	// and tblConditions to control the below plan.
 	ScanController   bool
 	AccessConditions []expression.Expression
 	IdxConditions    []expression.Expression

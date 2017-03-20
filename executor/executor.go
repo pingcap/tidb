@@ -461,19 +461,25 @@ func (e *TableDualExec) Close() error {
 	return nil
 }
 
-func substituteCorCol2Constant(expr expression.Expression) (expression.Expression, bool) {
+func substituteCorCol2Constant(expr expression.Expression) (expression.Expression, bool, error) {
 	switch x := expr.(type) {
 	case *expression.ScalarFunction:
 		allConstant := true
 		newArgs := make([]expression.Expression, 0, len(x.GetArgs()))
 		for _, arg := range x.GetArgs() {
-			newArg, ok := substituteCorCol2Constant(arg)
+			newArg, ok, err := substituteCorCol2Constant(arg)
+			if err != nil {
+				return nil, false, errors.Trace(err)
+			}
 			newArgs = append(newArgs, newArg)
 			allConstant = allConstant && ok
 		}
 		if allConstant {
-			val, _ := x.Eval(nil)
-			return &expression.Constant{Value: val}, true
+			val, err := x.Eval(nil)
+			if err != nil {
+				return nil, false, errors.Trace(err)
+			}
+			return &expression.Constant{Value: val}, true, nil
 		}
 		var newSf expression.Expression
 		if x.FuncName.L == ast.Cast {
@@ -481,13 +487,13 @@ func substituteCorCol2Constant(expr expression.Expression) (expression.Expressio
 		} else {
 			newSf, _ = expression.NewFunction(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
 		}
-		return newSf, false
+		return newSf, false, nil
 	case *expression.CorrelatedColumn:
-		return &expression.Constant{Value: *x.Data, RetType: x.GetType()}, true
+		return &expression.Constant{Value: *x.Data, RetType: x.GetType()}, true, nil
 	case *expression.Constant:
-		return x.Clone(), true
+		return x.Clone(), true, nil
 	default:
-		return x.Clone(), false
+		return x.Clone(), false, nil
 	}
 }
 
@@ -519,7 +525,10 @@ func (e *SelectionExec) initController() error {
 	client := e.ctx.GetClient()
 	accesses := make([]expression.Expression, 0, len(e.accessConditions))
 	for _, cond := range e.accessConditions {
-		newCond, _ := substituteCorCol2Constant(cond)
+		newCond, _, err := substituteCorCol2Constant(cond)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		accesses = append(accesses, newCond)
 	}
 	switch x := e.Src.(type) {
@@ -531,7 +540,10 @@ func (e *SelectionExec) initController() error {
 		x.ranges = ranges
 		tblFilters := make([]expression.Expression, 0, len(e.tblFilterConditions))
 		for _, cond := range e.tblFilterConditions {
-			newCond, _ := substituteCorCol2Constant(cond)
+			newCond, _, err := substituteCorCol2Constant(cond)
+			if err != nil {
+				return errors.Trace(err)
+			}
 			tblFilters = append(tblFilters, newCond)
 		}
 		x.where, _, _ = plan.ExpressionsToPB(sc, tblFilters, client)
@@ -566,9 +578,6 @@ func (e *SelectionExec) Next() (*Row, error) {
 		}
 		if srcRow == nil {
 			return nil, nil
-		}
-		if e.Condition == nil {
-			return srcRow, nil
 		}
 		match, err := expression.EvalBool(e.Condition, srcRow.Data, e.ctx)
 		if err != nil {
