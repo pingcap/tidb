@@ -1682,10 +1682,12 @@ func (b *builtinMakeTimeSig) eval(row []types.Datum) (d types.Datum, err error) 
 		return d, nil
 	}
 
-	var hour int64
-	var minute int64
-	var second float64
-	var overflow bool
+	var (
+		hour     int64
+		minute   int64
+		second   float64
+		overflow bool
+	)
 	sc := b.ctx.GetSessionVars().StmtCtx
 	hour, _ = args[0].ToInt64(sc)
 	// MySQL TIME datatype: https://dev.mysql.com/doc/refman/5.7/en/time.html
