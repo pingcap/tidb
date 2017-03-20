@@ -618,7 +618,7 @@ func waitUntilServerOnline(statusAddr string) {
 		}
 	}
 	if retry == retryTime {
-		log.Fatalf("Failed to connect db for %d retries in every %v ms", retryTime, time.Millisecond*10)
+		log.Fatalf("Failed to connect db for %d retries in every 10 ms", retryTime)
 	}
 	// connect http status
 	statusURL := fmt.Sprintf("http://127.0.0.1%s/status", statusAddr)
@@ -632,6 +632,6 @@ func waitUntilServerOnline(statusAddr string) {
 		time.Sleep(time.Millisecond * 10)
 	}
 	if retry == retryTime {
-		log.Fatalf("Failed to connect http status for %d retries in every %v ms", retryTime, time.Millisecond*10)
+		log.Fatalf("Failed to connect http status for %d retries in every 10 ms", retryTime)
 	}
 }
