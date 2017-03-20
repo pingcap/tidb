@@ -21,8 +21,6 @@ import (
 	"testing"
 	"time"
 
-	goctx "golang.org/x/net/context"
-
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
@@ -33,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
+	goctx "golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {

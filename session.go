@@ -26,8 +26,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	goctx "golang.org/x/net/context"
-
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
@@ -50,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-binlog"
+	goctx "golang.org/x/net/context"
 )
 
 // Session context

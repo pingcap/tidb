@@ -21,8 +21,6 @@ import (
 	"sync"
 	"time"
 
-	goctx "golang.org/x/net/context"
-
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -31,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
+	goctx "golang.org/x/net/context"
 )
 
 type storeCache struct {

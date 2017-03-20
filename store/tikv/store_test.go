@@ -17,8 +17,6 @@ import (
 	"sync"
 	"time"
 
-	goctx "golang.org/x/net/context"
-
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -29,6 +27,7 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	goctx "golang.org/x/net/context"
 )
 
 type testStoreSuite struct {

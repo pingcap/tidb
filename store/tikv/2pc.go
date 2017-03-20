@@ -19,16 +19,15 @@ import (
 	"sync"
 	"time"
 
-	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	goctx "golang.org/x/net/context"
-
 	"github.com/coreos/etcd/pkg/monotime"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tipb/go-binlog"
+	goctx "golang.org/x/net/context"
 )
 
 type twoPhaseCommitAction int

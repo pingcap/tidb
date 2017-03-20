@@ -17,13 +17,12 @@ import (
 	"net"
 	"testing"
 
-	goctx "golang.org/x/net/context"
-
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/msgpb"
 	"github.com/pingcap/kvproto/pkg/util"
+	goctx "golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
