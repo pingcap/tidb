@@ -15,9 +15,32 @@ package expression
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
 )
+
+func (s *testEvaluatorSuite) TestAnyValue(c *C) {
+	defer testleak.AfterTest(c)()
+
+	tbl := []struct {
+		arg interface{}
+		ret interface{}
+	}{
+		{nil, nil},
+		{1234, 1234},
+		{-0x99, -0x99},
+		{3.1415926, 3.1415926},
+		{"Hello, World", "Hello, World"},
+	}
+	for _, t := range tbl {
+		fc := funcs[ast.AnyValue]
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.arg)), s.ctx)
+		c.Assert(err, IsNil)
+		r, err := f.eval(nil)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
+	}
+}
 
 func (s *testEvaluatorSuite) TestIsIPv6(c *C) {
 	tests := []struct {
