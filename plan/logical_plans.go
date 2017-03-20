@@ -154,6 +154,13 @@ type Selection struct {
 	AccessConditions []expression.Expression
 	IdxConditions    []expression.Expression
 	TblConditions    []expression.Expression
+
+	// Since one selection may call convert2PhysicalScan many times. We extract the PkName and indices
+	// used for scanController only once and store them to judge whether this selection can convert to
+	// scanController mode.
+	usefulPkName         model.CIStr
+	usefulIndices        []*model.IndexInfo
+	extractedUsefulThing bool
 }
 
 func (p *Selection) extractCorrelatedCols() []*expression.CorrelatedColumn {

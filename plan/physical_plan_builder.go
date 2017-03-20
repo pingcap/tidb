@@ -891,7 +891,7 @@ func buildIndexScanByKeyAndCorCol(p *DataSource, idx *model.IndexInfo, fakeConds
 // The first return value is the new expression, the second is a bool value tell whether the below expression is all constant.
 // The Second is used for simplify the scalar function.
 // If the args of one scalar function are all constant, we will substitute it to constant.
-func substituteCorCol2Constant(cond expression.Expression) (expression.Expression) {
+func substituteCorCol2Constant(cond expression.Expression) expression.Expression {
 	switch x := cond.(type) {
 	case *expression.ScalarFunction:
 		newArgs := make([]expression.Expression, 0, len(x.GetArgs()))
@@ -922,29 +922,35 @@ func substituteCorCol2Constant(cond expression.Expression) (expression.Expressio
 }
 
 // getUsableIndicesAndPk will simply check whether the pk or one index could used in this situation by
-// checking whether this index or pk is contained in one condition that has correlated column.
+// checking whether this index or pk is contained in one condition that has correlated column,
+// and whether this condition can be used as an access condition.
 func (p *Selection) getUsableIndicesAndPk(ds *DataSource) ([]*model.IndexInfo, model.CIStr) {
 	indices, _ := availableIndices(ds.indexHints, ds.tableInfo)
 	var usableIdxs []*model.IndexInfo
 	for _, idx := range indices {
-		// Currently we don't consider composite index.
+		// TODO: Currently we don't consider composite index.
 		if len(idx.Columns) > 1 {
 			continue
 		}
-		var idxCol *expression.Column
-		for _, col := range ds.schema.Columns {
-			if idx.Columns[0].Name.L == col.ColName.L {
-				idxCol = col
-			}
+		checker := &conditionChecker{
+			idx:          idx,
+			columnOffset: 0,
+			length:       idx.Columns[0].Length,
 		}
 		// This idx column should occur in one condition which contains both column and correlated column.
+		// And conditionChecker.check(this condition) should be true.
 		var usable bool
-		for _, cond := range p.Conditions {
-			cols := expression.ExtractColumns(cond)
-			if len(cols) != 1 || !cond.IsCorrelated() || !cols[0].Equal(idxCol, p.ctx) {
+		for _, expr := range p.Conditions {
+			cond := pushDownNot(expr.Clone(), false, nil)
+			if !cond.IsCorrelated() {
 				continue
 			}
-			usable = true
+			newCond := substituteCorCol2Constant(cond)
+			// If one cond is ok, then this index is useful.
+			if checker.check(newCond) {
+				usable = true
+				break
+			}
 		}
 		if usable {
 			usableIdxs = append(usableIdxs, idx)
@@ -958,12 +964,22 @@ func (p *Selection) getUsableIndicesAndPk(ds *DataSource) ([]*model.IndexInfo, m
 				pkCol = ds.schema.Columns[i]
 			}
 		}
-		// Pk should satisfies the same property.
+		checker := conditionChecker{
+			pkName: pkCol.ColName,
+			length: types.UnspecifiedLength,
+		}
+		// Pk should satisfies the same property as the index.
 		var usable bool
-		for _, cond := range p.Conditions {
-			cols := expression.ExtractColumns(cond)
-			if !cond.IsCorrelated() || !cols[0].Equal(pkCol, p.ctx) {
+		for _, expr := range p.Conditions {
+			cond := pushDownNot(expr.Clone(), false, nil)
+			if !cond.IsCorrelated() {
 				continue
+			}
+			newCond := substituteCorCol2Constant(cond)
+			// If one cond is ok, then this index is useful.
+			if checker.check(newCond) {
+				usable = true
+				break
 			}
 			usable = true
 		}
@@ -974,49 +990,40 @@ func (p *Selection) getUsableIndicesAndPk(ds *DataSource) ([]*model.IndexInfo, m
 	return usableIdxs, pkName
 }
 
-// tryToBuildIndexScan will check the conditions contain correlated columns whether it can make indexScan.
-func (p *Selection) tryToBuildScanByKeyAndCorCol() *physicalPlanInfo {
-	if ds, ok := p.children[0].(*DataSource); ok && len(p.extractCorrelatedCols()) > 0 {
-		conds := make([]expression.Expression, 0, len(p.Conditions))
-		for _, cond := range p.Conditions {
-			cond = pushDownNot(cond.Clone(), false, nil)
-			// In this way, we could use the code of refiner.go.
-			newCond := substituteCorCol2Constant(cond)
-			conds = append(conds, newCond)
-		}
-		indices, pkName := p.getUsableIndicesAndPk(ds)
-
-		// If pk is handle, we will try to build TableScan by pk, otherwise we will try to build IndexScan by index.
-		if pkName.L == "" {
-			var finalInfo *physicalPlanInfo
-			for _, idx := range indices {
-				info, accessConds, idxConds, tblConds := buildIndexScanByKeyAndCorCol(ds, idx, conds, p.Conditions)
-				if info == nil {
-					continue
-				}
-				if finalInfo == nil || finalInfo.cost > info.cost {
-					p.ScanController = true
-					p.AccessConditions = accessConds
-					p.IdxConditions = idxConds
-					p.TblConditions = tblConds
-					finalInfo = info
-				}
-			}
-			if finalInfo == nil {
-				return nil
-			}
-			return p.appendSelToInfo(finalInfo)
-		}
-		info, accessCondition, filterCondition := buildTableScanByKeyAndCorCol(ds, pkName, conds, p.Conditions)
-		if info == nil {
-			return nil
-		}
-		p.ScanController = true
-		p.AccessConditions = accessCondition
-		p.TblConditions = filterCondition
-		return p.appendSelToInfo(info)
+// buildScanByKeyAndCorCol will build a scan which the condition is controlled by this selection.
+func (p *Selection) buildScanByKeyAndCorCol() *physicalPlanInfo {
+	ds := p.children[0].(*DataSource)
+	conds := make([]expression.Expression, 0, len(p.Conditions))
+	for _, expr := range p.Conditions {
+		cond := pushDownNot(expr.Clone(), false, nil)
+		// In this way, we could use the code of refiner.go.
+		newCond := substituteCorCol2Constant(cond)
+		conds = append(conds, newCond)
 	}
-	return nil
+
+	// If pk is handle, we will try to build TableScan by pk, otherwise we will try to build IndexScan by index.
+	if p.usefulPkName.L == "" {
+		var finalInfo *physicalPlanInfo
+		for _, idx := range p.usefulIndices {
+			info, accessConds, idxConds, tblConds := buildIndexScanByKeyAndCorCol(ds, idx, conds, p.Conditions)
+			if info == nil {
+				continue
+			}
+			if finalInfo == nil || finalInfo.cost > info.cost {
+				p.ScanController = true
+				p.AccessConditions = accessConds
+				p.IdxConditions = idxConds
+				p.TblConditions = tblConds
+				finalInfo = info
+			}
+		}
+		return p.appendSelToInfo(finalInfo)
+	}
+	info, accessCondition, filterCondition := buildTableScanByKeyAndCorCol(ds, p.usefulPkName, conds, p.Conditions)
+	p.ScanController = true
+	p.AccessConditions = accessCondition
+	p.TblConditions = filterCondition
+	return p.appendSelToInfo(info)
 }
 
 // convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
@@ -1028,8 +1035,14 @@ func (p *Selection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanI
 	if info != nil {
 		return info, nil
 	}
-	info = p.tryToBuildScanByKeyAndCorCol()
-	if info != nil {
+	if !p.extractedUsefulThing {
+		if ds, ok := p.children[0].(*DataSource); ok {
+			p.getUsableIndicesAndPk(ds)
+		}
+		p.extractedUsefulThing = true
+	}
+	if p.usefulPkName.L != "" || len(p.usefulIndices) > 0 {
+		info = p.buildScanByKeyAndCorCol()
 		p.storePlanInfo(prop, info)
 		return info, nil
 	}
