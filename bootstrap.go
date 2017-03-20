@@ -246,19 +246,15 @@ func upgrade(s Session) {
 	// Do upgrade works then update bootstrap version.
 	if ver < version2 {
 		upgradeToVer2(s)
-		ver = version2
 	}
 	if ver < version3 {
 		upgradeToVer3(s)
-		ver = version3
 	}
 	if ver < version4 {
 		upgradeToVer4(s)
-		ver = version4
 	}
 	if ver < version5 {
 		upgradeToVer5(s)
-		ver = version5
 	}
 
 	updateBootstrapVer(s)
