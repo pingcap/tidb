@@ -173,7 +173,7 @@ type builtinAnyValueSig struct {
 func (b *builtinAnyValueSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	d = args[0]
 	return d, nil
