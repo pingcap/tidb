@@ -363,6 +363,13 @@ func (s *testEvaluatorSuite) TestSign(c *C) {
 func (s *testEvaluatorSuite) TestDegrees(c *C) {
 	defer testleak.AfterTest(c)()
 
+	sc := s.ctx.GetSessionVars().StmtCtx
+	tmpIT := sc.IgnoreTruncate
+	sc.IgnoreTruncate = true
+	defer func() {
+		sc.IgnoreTruncate = tmpIT
+	}()
+
 	tbl := []struct {
 		Arg interface{}
 		Ret interface{}
@@ -373,6 +380,7 @@ func (s *testEvaluatorSuite) TestDegrees(c *C) {
 		{float64(1), float64(57.29577951308232)},
 		{float64(math.Pi), float64(180)},
 		{float64(-math.Pi / 2), float64(-90)},
+		{"", float64(0)},
 		{"-2", float64(-114.59155902616465)},
 		{"abc", float64(0)},
 		{"+1abc", float64(57.29577951308232)},
