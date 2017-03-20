@@ -125,10 +125,10 @@ func CastValue(ctx context.Context, val types.Datum, col *model.ColumnInfo) (cas
 		return casted, nil
 	}
 	str := casted.GetString()
-	for i, r := range str {
+	for _, r := range str {
 		if r == utf8.RuneError {
 			// Truncate to valid utf8 string.
-			casted = types.NewStringDatum(str[:i])
+			// casted = types.NewStringDatum(str[:i])
 			err = sc.HandleTruncate(ErrTruncateWrongValue)
 			break
 		}
