@@ -14,10 +14,11 @@
 package distsql
 
 import (
-	goctx "context"
 	"io"
 	"io/ioutil"
 	"time"
+
+	goctx "golang.org/x/net/context"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"

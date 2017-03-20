@@ -19,15 +19,16 @@ import (
 	"sync"
 	"time"
 
+	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	goctx "golang.org/x/net/context"
+
 	"github.com/coreos/etcd/pkg/monotime"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tipb/go-binlog"
-	"golang.org/x/net/context"
 )
 
 type twoPhaseCommitAction int
@@ -254,7 +255,7 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 	}
 
 	// For prewrite, stop sending other requests after receiving first error.
-	var cancel context.CancelFunc
+	var cancel goctx.CancelFunc
 	if action == actionPrewrite {
 		cancel = bo.WithCancel()
 	}
@@ -469,7 +470,7 @@ const maxTxnTimeUse = 590000
 
 // execute executes the two-phase commit protocol.
 func (c *twoPhaseCommitter) execute() error {
-	ctx := context.Background()
+	ctx := goctx.Background()
 	defer func() {
 		// Always clean up all written keys if the txn does not commit.
 		c.mu.RLock()

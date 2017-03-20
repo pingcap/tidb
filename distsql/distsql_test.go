@@ -15,13 +15,14 @@ package distsql
 
 import (
 	"bytes"
-	goctx "context"
 	"errors"
 	"io"
 	"io/ioutil"
 	"runtime"
 	"testing"
 	"time"
+
+	goctx "golang.org/x/net/context"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"

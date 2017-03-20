@@ -14,9 +14,10 @@
 package plan
 
 import (
-	goctx "context"
 	"sort"
 	"testing"
+
+	goctx "golang.org/x/net/context"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"

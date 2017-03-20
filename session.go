@@ -18,7 +18,6 @@
 package tidb
 
 import (
-	goctx "context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -26,6 +25,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	goctx "golang.org/x/net/context"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"

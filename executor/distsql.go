@@ -14,12 +14,13 @@
 package executor
 
 import (
-	goctx "context"
 	"fmt"
 	"math"
 	"sort"
 	"strconv"
 	"time"
+
+	goctx "golang.org/x/net/context"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"

@@ -15,8 +15,9 @@ package tikv
 
 import (
 	"bytes"
-	goctx "context"
 	"sync"
+
+	goctx "golang.org/x/net/context"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"

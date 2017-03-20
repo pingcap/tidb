@@ -14,8 +14,9 @@
 package mocktikv
 
 import (
-	goctx "context"
 	"time"
+
+	goctx "golang.org/x/net/context"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"

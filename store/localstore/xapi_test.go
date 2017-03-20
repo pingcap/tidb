@@ -14,13 +14,14 @@
 package localstore
 
 import (
-	goctx "context"
 	"fmt"
 	"io/ioutil"
 	"math"
 	"sort"
 	"testing"
 	"time"
+
+	goctx "golang.org/x/net/context"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"

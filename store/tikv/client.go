@@ -15,9 +15,10 @@
 package tikv
 
 import (
-	goctx "context"
 	"sync/atomic"
 	"time"
+
+	goctx "golang.org/x/net/context"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"

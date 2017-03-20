@@ -1,8 +1,9 @@
 package localstore
 
 import (
-	goctx "context"
 	"io"
+
+	goctx "golang.org/x/net/context"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"

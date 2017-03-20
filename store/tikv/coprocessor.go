@@ -15,11 +15,12 @@ package tikv
 
 import (
 	"bytes"
-	goctx "context"
 	"fmt"
 	"io"
 	"sync"
 	"time"
+
+	goctx "golang.org/x/net/context"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"

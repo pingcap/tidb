@@ -14,10 +14,11 @@
 package tikv
 
 import (
-	goctx "context"
 	"math/rand"
 	"strings"
 	"time"
+
+	goctx "golang.org/x/net/context"
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"

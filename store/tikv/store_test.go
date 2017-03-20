@@ -14,9 +14,10 @@
 package tikv
 
 import (
-	goctx "context"
 	"sync"
 	"time"
+
+	goctx "golang.org/x/net/context"
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"

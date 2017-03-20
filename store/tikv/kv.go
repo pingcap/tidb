@@ -14,13 +14,14 @@
 package tikv
 
 import (
-	goctx "context"
 	"fmt"
 	"math/rand"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
+
+	goctx "golang.org/x/net/context"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"

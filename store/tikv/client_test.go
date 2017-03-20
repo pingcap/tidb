@@ -14,9 +14,10 @@
 package tikv
 
 import (
-	goctx "context"
 	"net"
 	"testing"
+
+	goctx "golang.org/x/net/context"
 
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
