@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
-	"sync/atomic"
 )
 
 // MergeJoinExec implements the merge join algorithm.
@@ -41,15 +40,14 @@ type MergeJoinExec struct {
 	rightFilter   expression.Expression
 	otherFilter   expression.Expression
 	schema        *expression.Schema
-	preserveLeft  bool
-	preserveRight bool
+	preserveLeft  bool // To perserve left side of the relation as in left outer join
+	preserveRight bool // To perserve left side of the relation as in right outer join
 	cursor        int
 	defaultValues []types.Datum
 	// Default for both side in case full join
 	defaultLeftRow  *Row
 	defaultRightRow *Row
 	outputBuf       []*Row
-	finished        atomic.Value
 
 	leftRowBlock  rowBlockIterator
 	rightRowBlock rowBlockIterator
@@ -60,18 +58,17 @@ type MergeJoinExec struct {
 
 const rowBufferSize = 4096
 
-
 type joinBuilder struct {
-	context			context.Context
-	leftChild		Executor
-	rightChild		Executor
-	eqConditions	[]*expression.ScalarFunction
-	leftFilter		expression.Expression
-	rightFilter		expression.Expression
-	otherFilter		expression.Expression
-	schema			*expression.Schema
-	joinType		plan.JoinType
-	defaultValues	[]types.Datum
+	context       context.Context
+	leftChild     Executor
+	rightChild    Executor
+	eqConditions  []*expression.ScalarFunction
+	leftFilter    expression.Expression
+	rightFilter   expression.Expression
+	otherFilter   expression.Expression
+	schema        *expression.Schema
+	joinType      plan.JoinType
+	defaultValues []types.Datum
 }
 
 func (b *joinBuilder) Context(context context.Context) *joinBuilder {
@@ -79,7 +76,7 @@ func (b *joinBuilder) Context(context context.Context) *joinBuilder {
 	return b
 }
 
-func (b *joinBuilder) EqualConditions(conds	[]*expression.ScalarFunction) *joinBuilder {
+func (b *joinBuilder) EqualConditions(conds []*expression.ScalarFunction) *joinBuilder {
 	b.eqConditions = conds
 	return b
 }
@@ -186,6 +183,7 @@ type rowBlockIterator struct {
 	filter    expression.Expression
 	joinKeys  []*expression.Column
 	peekedRow *Row
+	rowCache  []*Row
 }
 
 func (rb *rowBlockIterator) init() (bool, error) {
@@ -198,6 +196,7 @@ func (rb *rowBlockIterator) init() (bool, error) {
 	if err != nil {
 		return false, errors.Trace(err)
 	}
+	rb.rowCache = make([]*Row, 0, rowBufferSize)
 
 	return rb.peekedRow == nil, nil
 }
@@ -233,7 +232,8 @@ func (rb *rowBlockIterator) nextBlock() ([]*Row, error) {
 	if peekedRow == nil {
 		return nil, nil
 	}
-	rowCache := []*Row{peekedRow}
+	rowCache := rb.rowCache[0:0:rowBufferSize]
+	rowCache = append(rowCache, peekedRow)
 	for {
 		curRow, err = rb.nextRow()
 		if err != nil {
@@ -258,8 +258,6 @@ func (rb *rowBlockIterator) nextBlock() ([]*Row, error) {
 
 // Close implements the Executor Close interface.
 func (e *MergeJoinExec) Close() error {
-	e.finished.Store(true)
-
 	e.prepared = false
 	e.cursor = 0
 	e.outputBuf = nil
@@ -318,7 +316,7 @@ func (e *MergeJoinExec) outputJoinRow(leftRow *Row, rightRow *Row) error {
 }
 
 func (e *MergeJoinExec) computeJoin() (bool, error) {
-	e.outputBuf = e.outputBuf[0 : 0 : rowBufferSize]
+	e.outputBuf = e.outputBuf[0:0:rowBufferSize]
 
 	for {
 		var compareResult int
@@ -346,7 +344,7 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 
 		// Before moving on, in case of outer join, output the side of the row
 		if compareResult > 0 {
-			needReturn := false
+			initLen := len(e.outputBuf)
 			if e.preserveRight {
 				for _, rRow := range e.rightRows {
 					err = e.outputJoinRow(e.defaultLeftRow, rRow)
@@ -354,18 +352,17 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 						return false, err
 					}
 				}
-				needReturn = true
 			}
 			e.rightRows, err = e.rightRowBlock.nextBlock()
 			if err != nil {
 				return false, errors.Trace(err)
 			}
-			if needReturn {
+			if initLen < len(e.outputBuf) {
 				return true, nil
 			}
 			continue
 		} else if compareResult < 0 {
-			needReturn := false
+			initLen := len(e.outputBuf)
 			if e.preserveLeft {
 				for _, lRow := range e.leftRows {
 					err = e.outputJoinRow(lRow, e.defaultRightRow)
@@ -373,13 +370,12 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 						return false, err
 					}
 				}
-				needReturn = true
 			}
 			e.leftRows, err = e.leftRowBlock.nextBlock()
 			if err != nil {
 				return false, errors.Trace(err)
 			}
-			if needReturn {
+			if initLen < len(e.outputBuf) {
 				return true, nil
 			}
 			continue
@@ -427,7 +423,6 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 }
 
 func (e *MergeJoinExec) prepare() error {
-	e.finished.Store(false)
 	e.stmtCtx = e.ctx.GetSessionVars().StmtCtx
 	e.leftRowBlock.init()
 	e.rightRowBlock.init()
@@ -459,7 +454,6 @@ func (e *MergeJoinExec) Next() (*Row, error) {
 	if e.cursor >= len(e.outputBuf) {
 		hasMore, err = e.computeJoin()
 		if err != nil {
-			e.finished.Store(true)
 			return nil, errors.Trace(err)
 		}
 		if !hasMore {

@@ -203,6 +203,10 @@ func extractTableAlias(p LogicalPlan) *model.CIStr {
 			return dataSource.TableAsName
 		}
 		return &dataSource.tableInfo.Name
+	} else if len(p.Schema().Columns) > 0 {
+		if p.Schema().Columns[0].TblName.L != "" {
+			return &(p.Schema().Columns[0].TblName)
+		}
 	}
 	return nil
 }

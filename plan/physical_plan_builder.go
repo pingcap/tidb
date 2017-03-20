@@ -570,6 +570,17 @@ func generateJoinProp(column *expression.Column) *requiredProperty {
 	}
 }
 
+func compareTypeForOrder(lhs *types.FieldType, rhs *types.FieldType) bool {
+	if lhs.Tp != rhs.Tp {
+		return false
+	}
+	if lhs.ToClass() == types.ClassString &&
+		(lhs.Charset != rhs.Charset || lhs.Collate != rhs.Collate) {
+		return false
+	}
+	return true
+}
+
 // Generate all possible combinations from join conditions for cost evaluation
 // It will try all keys in join conditions
 func constructPropertyByJoin(join *Join) ([][]*requiredProperty, error) {
@@ -583,7 +594,7 @@ func constructPropertyByJoin(join *Join) ([][]*requiredProperty, error) {
 		// since we don't know if the function call preserve order
 		lColumn, lOK := lExpr.(*expression.Column)
 		rColumn, rOK := rExpr.(*expression.Column)
-		if lOK && rOK {
+		if lOK && rOK && compareTypeForOrder(lColumn.RetType, rColumn.RetType) {
 			result = append(result, []*requiredProperty{generateJoinProp(lColumn), generateJoinProp(rColumn)})
 		} else {
 			continue
