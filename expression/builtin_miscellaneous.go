@@ -217,7 +217,7 @@ func (b *builtinInetAtonSig) eval(row []types.Datum) (d types.Datum, err error) 
 		return d, errors.Trace(err)
 	}
 
-	// ip address should not end with '.'
+	// ip address should not end with '.'.
 	if len(s) == 0 || s[len(s)-1] == '.' {
 		return d, nil
 	}
