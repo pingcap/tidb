@@ -14,7 +14,6 @@ package expression
 
 import (
 	"encoding/binary"
-	"fmt"
 	"net"
 	"time"
 
@@ -68,6 +67,9 @@ var (
 	_ builtinFunc = &builtinUUIDSig{}
 	_ builtinFunc = &builtinUUIDShortSig{}
 )
+
+//MaxUint32 define the max value of uint32
+const MaxUint32 uint64 = 0xffffffff
 
 type sleepFunctionClass struct {
 	baseFunctionClass
@@ -226,29 +228,24 @@ type builtinInetNtoaSig struct {
 func (b *builtinInetNtoaSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 
-	arg := args[0]
-	if arg.IsNull() {
-		d.SetNull()
+	if args[0].IsNull() {
 		return d, nil
 	}
 
-	ipArg, err := arg.ToInt64(b.ctx.GetSessionVars().StmtCtx)
+	ipArg, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
 
-	d.SetNull()
-	uIPArg := uint64(ipArg)
-	if uIPArg > 0xffffffff {
+	if uint64(ipArg) > MaxUint32 {
 		//not an IPv4 address
 		return d, nil
 	}
-	fmt.Println("uIPArg", uIPArg, "uint32", uint32(uIPArg))
 	ip := make(net.IP, net.IPv4len)
-	binary.BigEndian.PutUint32(ip, uint32(uIPArg))
+	binary.BigEndian.PutUint32(ip, uint32(ipArg))
 	ipv4 := ip.To4()
 	if ipv4 == nil {
 		//Not a vaild ipv4 address
