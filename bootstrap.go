@@ -44,12 +44,40 @@ const (
 		Delete_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
 		Create_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
 		Drop_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
+		Reload_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
+		Shutdown_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
+		Process_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
+		File_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
 		Grant_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
+		References_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
+		Index_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
 		Alter_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
 		Show_db_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
+		Super_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
+		Create_tmp_table_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
+		Lock_tables_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
 		Execute_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
-		Index_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
+		Repl_slave_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
+		Repl_client_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
+		Create_view_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
+		Show_view_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
+		Create_routine_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
+		Alter_routine_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
 		Create_user_priv	ENUM('N','Y') NOT NULL  DEFAULT 'N',
+		Event_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
+		Trigger_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
+		Create_tablespace_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
+		ssl_type enum('','ANY','X509','SPECIFIED') CHARACTER SET utf8 NOT NULL DEFAULT '',
+		ssl_cipher blob NOT NULL DEFAULT "ssl_cipher",
+		x509_issuer blob NOT NULL DEFAULT "x509_issuer",
+		x509_subject blob NOT NULL DEFAULT "x509_subject",
+		max_questions int(11) unsigned NOT NULL DEFAULT '0',
+		max_updates int(11) unsigned NOT NULL DEFAULT '0',
+		max_connections int(11) unsigned NOT NULL DEFAULT '0',
+		max_user_connections int(11) unsigned NOT NULL DEFAULT '0',
+		plugin char(64) COLLATE utf8_bin DEFAULT 'mysql_native_password',
+		authentication_string text COLLATE utf8_bin,
+		password_expired enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
 		PRIMARY KEY (Host, User));`
 	// CreateDBPrivTable is the SQL statement creates DB scope privilege table in system db.
 	CreateDBPrivTable = `CREATE TABLE if not exists mysql.db (
@@ -153,6 +181,7 @@ const (
 	version2 = 2
 	version3 = 3
 	version4 = 4
+	version5 = 5
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -217,13 +246,15 @@ func upgrade(s Session) {
 	// Do upgrade works then update bootstrap version.
 	if ver < version2 {
 		upgradeToVer2(s)
-		ver = version2
 	}
 	if ver < version3 {
 		upgradeToVer3(s)
 	}
 	if ver < version4 {
 		upgradeToVer4(s)
+	}
+	if ver < version5 {
+		upgradeToVer5(s)
 	}
 
 	updateBootstrapVer(s)
@@ -279,6 +310,42 @@ func upgradeToVer4(s Session) {
 	mustExecute(s, sql)
 }
 
+// Update to version 5.
+func upgradeToVer5(s Session) {
+	s.Execute("ALTER TABLE mysql.user ADD COLUMN `Reload_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N'")
+	s.Execute("ALTER TABLE mysql.user ADD COLUMN `Shutdown_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N'")
+	s.Execute("ALTER TABLE mysql.user ADD COLUMN `Process_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N'")
+	s.Execute("ALTER TABLE mysql.user ADD COLUMN `File_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N'")
+	s.Execute("ALTER TABLE mysql.user ADD COLUMN `References_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N'")
+	s.Execute("ALTER TABLE mysql.user ADD COLUMN `Super_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N'")
+	s.Execute("ALTER TABLE mysql.user ADD COLUMN `Create_tmp_table_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N'")
+	s.Execute("ALTER TABLE mysql.user ADD COLUMN `Lock_tables_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N'")
+	s.Execute("ALTER TABLE mysql.user ADD COLUMN `Execute_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N'")
+	s.Execute("ALTER TABLE mysql.user ADD COLUMN `Repl_slave_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N'")
+	s.Execute("ALTER TABLE mysql.user ADD COLUMN `Repl_client_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N'")
+	s.Execute("ALTER TABLE mysql.user ADD COLUMN `Create_view_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N'")
+	s.Execute("ALTER TABLE mysql.user ADD COLUMN `Show_view_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N'")
+	s.Execute("ALTER TABLE mysql.user ADD COLUMN `Create_routine_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N'")
+	s.Execute("ALTER TABLE mysql.user ADD COLUMN `Alter_routine_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N'")
+	s.Execute("ALTER TABLE mysql.user ADD COLUMN `Event_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N'")
+	s.Execute("ALTER TABLE mysql.user ADD COLUMN `Trigger_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N'")
+	s.Execute("ALTER TABLE mysql.user ADD COLUMN `Create_tablespace_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N'")
+	s.Execute("ALTER TABLE mysql.user ADD COLUMN `ssl_type` enum('','ANY','X509','SPECIFIED') CHARACTER SET utf8 NOT NULL DEFAULT ''")
+	s.Execute("ALTER TABLE mysql.user ADD COLUMN `ssl_cipher` blob NOT NULL")
+	s.Execute("ALTER TABLE mysql.user ADD COLUMN `x509_issuer` blob NOT NULL")
+	s.Execute("ALTER TABLE mysql.user ADD COLUMN `x509_subject` blob NOT NULL")
+	s.Execute("ALTER TABLE mysql.user ADD COLUMN `max_questions` int(11) unsigned NOT NULL DEFAULT '0'")
+	s.Execute("ALTER TABLE mysql.user ADD COLUMN `max_updates` int(11) unsigned NOT NULL DEFAULT '0'")
+	s.Execute("ALTER TABLE mysql.user ADD COLUMN `max_connections` int(11) unsigned NOT NULL DEFAULT '0'")
+	s.Execute("ALTER TABLE mysql.user ADD COLUMN `max_user_connections` int(11) unsigned NOT NULL DEFAULT '0'")
+	s.Execute("ALTER TABLE mysql.user ADD COLUMN `plugin` char(64) COLLATE utf8_bin DEFAULT 'mysql_native_password'")
+	s.Execute("ALTER TABLE mysql.user ADD COLUMN `authentication_string` text COLLATE utf8_bin")
+	s.Execute("ALTER TABLE mysql.user ADD COLUMN `password_expired` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N'")
+
+	// For reasons of compatibility, set the non-exists privilege column value to 'Y', as TiDB doesn't check them in older versions.
+	s.Execute("UPDATE mysql.user SET Reload_priv='Y', Shutdown_priv='Y', Process_priv='Y', File_priv='Y', References_priv='Y', Super_priv='Y', Create_tmp_table_priv='Y', Lock_tables_priv='Y', Execute_priv='Y', Repl_slave_priv='Y', Repl_client_priv='Y', Create_view_priv='Y', Show_view_priv='Y', Create_routine_priv='Y', Alter_routine_priv='Y', Event_priv='Y', Trigger_priv='Y', Create_tablespace_priv='Y'")
+}
+
 // Update boostrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -327,8 +394,7 @@ func doDMLWorks(s Session) {
 	mustExecute(s, "BEGIN")
 
 	// Insert a default user with empty password.
-	mustExecute(s, `INSERT INTO mysql.user VALUES
-		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+	mustExecute(s, `INSERT INTO mysql.user VALUES ("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "", "", "", "", 0, 0, 0, 0, "mysql_native_password", "", "N")`)
 
 	// Init global system variables table.
 	values := make([]string, 0, len(variable.SysVars))
