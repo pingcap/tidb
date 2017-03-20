@@ -1559,7 +1559,7 @@ type builtinEltSig struct {
 func (b *builtinEltSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 
 	index, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
