@@ -364,27 +364,30 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 	return us
 }
 
+
 // TODO: Refactor against different join strategies by extracting common code base
 func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
-	var leftJoinKeys, rightJoinKeys []*expression.Column
-	for _, eqCond := range v.EqualConditions {
-		lKey, _ := eqCond.GetArgs()[0].(*expression.Column)
-		rKey, _ := eqCond.GetArgs()[1].(*expression.Column)
-		leftJoinKeys = append(leftJoinKeys, lKey)
-		rightJoinKeys = append(rightJoinKeys, rKey)
-	}
+	joinBuilder := &joinBuilder{}
+	exec, err := joinBuilder.Context(b.ctx).
+		LeftChild(b.build(v.Children()[0])).
+		RightChild(b.build(v.Children()[1])).
+		EqualConditions(v.EqualConditions).
+		LeftFilter(expression.ComposeCNFCondition(b.ctx, v.LeftConditions...)).
+		RightFilter(expression.ComposeCNFCondition(b.ctx, v.RightConditions...)).
+		OtherFilter(expression.ComposeCNFCondition(b.ctx, v.OtherConditions...)).
+		Schema(v.Schema()).
+		JoinType(v.JoinType).
+		DefaultVals(v.DefaultValues).
+		BuildMergeJoin(v.Desc)
 
-	exec := NewMergeJoinExec(
-		b.ctx, leftJoinKeys, rightJoinKeys,
-		b.build(v.Children()[0]),
-		b.build(v.Children()[1]),
-		expression.ComposeCNFCondition(b.ctx, v.LeftConditions...),
-		expression.ComposeCNFCondition(b.ctx, v.RightConditions...),
-		expression.ComposeCNFCondition(b.ctx, v.OtherConditions...),
-		v.Schema(), v.JoinType,
-		v.Desc,
-		v.DefaultValues,
-	)
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	if exec == nil {
+		b.err = ErrBuildExecutor.Gen("failed to generate merge join executor: %s", v.ID())
+		return nil
+	}
 
 	return exec
 }

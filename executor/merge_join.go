@@ -60,55 +60,113 @@ type MergeJoinExec struct {
 
 const rowBufferSize = 4096
 
-// NewMergeJoinExec is the Constructor for mergeJoinExec
-func NewMergeJoinExec(
-	ctx context.Context,
-	leftJoinKeys []*expression.Column,
-	rightJoinKeys []*expression.Column,
-	leftReader Executor,
-	rightReader Executor,
-	leftFilter expression.Expression,
-	rightFilter expression.Expression,
-	otherFilter expression.Expression,
-	schema *expression.Schema,
-	joinType plan.JoinType,
-	desc bool,
-	defaultValues []types.Datum) *MergeJoinExec {
+
+type joinBuilder struct {
+	context			context.Context
+	leftChild		Executor
+	rightChild		Executor
+	eqConditions	[]*expression.ScalarFunction
+	leftFilter		expression.Expression
+	rightFilter		expression.Expression
+	otherFilter		expression.Expression
+	schema			*expression.Schema
+	joinType		plan.JoinType
+	defaultValues	[]types.Datum
+}
+
+func (b *joinBuilder) Context(context context.Context) *joinBuilder {
+	b.context = context
+	return b
+}
+
+func (b *joinBuilder) EqualConditions(conds	[]*expression.ScalarFunction) *joinBuilder {
+	b.eqConditions = conds
+	return b
+}
+
+func (b *joinBuilder) LeftChild(exec Executor) *joinBuilder {
+	b.leftChild = exec
+	return b
+}
+
+func (b *joinBuilder) RightChild(exec Executor) *joinBuilder {
+	b.rightChild = exec
+	return b
+}
+
+func (b *joinBuilder) LeftFilter(expr expression.Expression) *joinBuilder {
+	b.leftFilter = expr
+	return b
+}
+
+func (b *joinBuilder) RightFilter(expr expression.Expression) *joinBuilder {
+	b.rightFilter = expr
+	return b
+}
+
+func (b *joinBuilder) OtherFilter(expr expression.Expression) *joinBuilder {
+	b.otherFilter = expr
+	return b
+}
+
+func (b *joinBuilder) Schema(schema *expression.Schema) *joinBuilder {
+	b.schema = schema
+	return b
+}
+
+func (b *joinBuilder) JoinType(joinType plan.JoinType) *joinBuilder {
+	b.joinType = joinType
+	return b
+}
+
+func (b *joinBuilder) DefaultVals(defaultValues []types.Datum) *joinBuilder {
+	b.defaultValues = defaultValues
+	return b
+}
+
+func (b *joinBuilder) BuildMergeJoin(assumeSortedDesc bool) (*MergeJoinExec, error) {
+	var leftJoinKeys, rightJoinKeys []*expression.Column
+	for _, eqCond := range b.eqConditions {
+		lKey, _ := eqCond.GetArgs()[0].(*expression.Column)
+		rKey, _ := eqCond.GetArgs()[1].(*expression.Column)
+		leftJoinKeys = append(leftJoinKeys, lKey)
+		rightJoinKeys = append(rightJoinKeys, rKey)
+	}
 	exec := new(MergeJoinExec)
-	exec.ctx = ctx
+	exec.ctx = b.context
 	exec.leftJoinKeys = leftJoinKeys
 	exec.rightJoinKeys = rightJoinKeys
-	exec.otherFilter = otherFilter
-	exec.schema = schema
-	exec.desc = desc
+	exec.otherFilter = b.otherFilter
+	exec.schema = b.schema
+	exec.desc = assumeSortedDesc
 
 	exec.leftRowBlock = rowBlockIterator{
-		ctx:      ctx,
-		reader:   leftReader,
-		filter:   leftFilter,
+		ctx:      b.context,
+		reader:   b.leftChild,
+		filter:   b.leftFilter,
 		joinKeys: leftJoinKeys,
 	}
 
 	exec.rightRowBlock = rowBlockIterator{
-		ctx:      ctx,
-		reader:   rightReader,
-		filter:   rightFilter,
+		ctx:      b.context,
+		reader:   b.rightChild,
+		filter:   b.rightFilter,
 		joinKeys: rightJoinKeys,
 	}
 
 	exec.preserveLeft = false
 	exec.preserveRight = false
-	switch joinType {
+	switch b.joinType {
 	case plan.LeftOuterJoin:
 		exec.leftRowBlock.filter = nil
-		exec.leftFilter = leftFilter
+		exec.leftFilter = b.leftFilter
 		exec.preserveLeft = true
-		exec.defaultRightRow = &Row{Data: defaultValues}
+		exec.defaultRightRow = &Row{Data: b.defaultValues}
 	case plan.RightOuterJoin:
 		exec.rightRowBlock.filter = nil
-		exec.rightFilter = rightFilter
+		exec.rightFilter = b.rightFilter
 		exec.preserveRight = true
-		exec.defaultLeftRow = &Row{Data: defaultValues}
+		exec.defaultLeftRow = &Row{Data: b.defaultValues}
 	case plan.InnerJoin:
 		exec.preserveLeft = false
 		exec.preserveRight = false
@@ -117,7 +175,7 @@ func NewMergeJoinExec(
 		exec.preserveRight = true
 		panic("Full Join not implemented for Merge Join Strategy.")
 	}
-	return exec
+	return exec, nil
 }
 
 // Represent a row block with the same join keys
