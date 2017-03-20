@@ -13,6 +13,9 @@
 package expression
 
 import (
+	"net"
+	"time"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/util/types"

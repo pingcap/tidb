@@ -14,7 +14,6 @@
 package tikv
 
 import (
-	goctx "context"
 	"math/rand"
 	"strings"
 	"time"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
+	goctx "golang.org/x/net/context"
 )
 
 type testCommitterSuite struct {
