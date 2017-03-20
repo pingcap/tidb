@@ -852,6 +852,16 @@ func buildIndexScanByKeyAndCorCol(p *DataSource, idx *model.IndexInfo, fakeConds
 	fakeAccessConditions, restFakeConds := detachIndexScanConditions(fakeConds, is)
 	accessConditions := make([]expression.Expression, 0, len(fakeAccessConditions))
 	restOrigConds := make([]expression.Expression, 0, len(restFakeConds))
+	// accessConditions is not in original order. So we could only use brute force there.
+	for i := 0; i < len(fakeConds); i++ {
+		for _, cond := range fakeAccessConditions {
+			if fakeConds[i].Equal(cond, p.ctx) {
+				accessConditions = append(accessConditions, origConds[i])
+			} else {
+				restOrigConds = append(restOrigConds, origConds[i])
+			}
+		}
+	}
 	for i, j := 0, 0; i < len(fakeConds); {
 		if j < len(fakeAccessConditions) && fakeConds[i].Equal(fakeAccessConditions[j], p.ctx) {
 			accessConditions = append(accessConditions, origConds[i])
@@ -962,7 +972,11 @@ func (p *Selection) getUsableIndicesAndPk(ds *DataSource) ([]*model.IndexInfo, m
 		for i, col := range ds.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
 				pkCol = ds.schema.Columns[i]
+				break
 			}
+		}
+		if pkCol == nil {
+			return usableIdxs, pkName
 		}
 		checker := conditionChecker{
 			pkName: pkCol.ColName,
