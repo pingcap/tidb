@@ -625,6 +625,7 @@ func waitUntilServerOnline(statusAddr string) {
 	for retry = 0; retry < retryTime; retry++ {
 		resp, err := http.Get(statusURL)
 		if err == nil {
+			ioutil.ReadAll(resp.Body)
 			resp.Body.Close()
 			break
 		}
