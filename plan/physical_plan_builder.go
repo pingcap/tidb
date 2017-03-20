@@ -837,7 +837,7 @@ func buildIndexScanByKeyAndCorCol(p *DataSource, idx *model.IndexInfo, fakeConds
 		TableAsName:         p.TableAsName,
 		OutOfOrder:          true,
 		DBName:              p.DBName,
-		physicalTableSource: physicalTableSource{client: p.ctx.GetClient()},
+		physicalTableSource: physicalTableSource{client: client},
 	}
 	is.tp = Idx
 	is.allocator = p.allocator
@@ -891,18 +891,19 @@ func buildIndexScanByKeyAndCorCol(p *DataSource, idx *model.IndexInfo, fakeConds
 // The first return value is the new expression, the second is a bool value tell whether the below expression is all constant.
 // The Second is used for simplify the scalar function.
 // If the args of one scalar function are all constant, we will substitute it to constant.
-func substituteCorCol2Constant(cond expression.Expression) (expression.Expression, bool) {
+func substituteCorCol2Constant(cond expression.Expression) (expression.Expression) {
 	switch x := cond.(type) {
 	case *expression.ScalarFunction:
 		newArgs := make([]expression.Expression, 0, len(x.GetArgs()))
 		allConstant := true
 		for _, arg := range x.GetArgs() {
-			newArg, ok := substituteCorCol2Constant(arg)
+			newArg := substituteCorCol2Constant(arg)
+			_, ok := newArg.(*expression.Constant)
 			allConstant = allConstant && ok
 			newArgs = append(newArgs, newArg)
 		}
 		if allConstant {
-			return expression.One, true
+			return expression.One
 		}
 		var newSf expression.Expression
 		if x.FuncName.L == ast.Cast {
@@ -910,13 +911,13 @@ func substituteCorCol2Constant(cond expression.Expression) (expression.Expressio
 		} else {
 			newSf, _ = expression.NewFunction(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
 		}
-		return newSf, false
+		return newSf
 	case *expression.CorrelatedColumn:
-		return expression.One, true
+		return expression.One
 	case *expression.Constant:
-		return x.Clone(), true
+		return x.Clone()
 	default:
-		return x.Clone(), false
+		return x.Clone()
 	}
 }
 
@@ -980,7 +981,7 @@ func (p *Selection) tryToBuildScanByKeyAndCorCol() *physicalPlanInfo {
 		for _, cond := range p.Conditions {
 			cond = pushDownNot(cond.Clone(), false, nil)
 			// In this way, we could use the code of refiner.go.
-			newCond, _ := substituteCorCol2Constant(cond)
+			newCond := substituteCorCol2Constant(cond)
 			conds = append(conds, newCond)
 		}
 		indices, pkName := p.getUsableIndicesAndPk(ds)

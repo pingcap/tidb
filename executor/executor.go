@@ -461,15 +461,16 @@ func (e *TableDualExec) Close() error {
 	return nil
 }
 
-func substituteCorCol2Constant(expr expression.Expression) (expression.Expression, bool, error) {
+func substituteCorCol2Constant(expr expression.Expression) (expression.Expression, error) {
 	switch x := expr.(type) {
 	case *expression.ScalarFunction:
 		allConstant := true
 		newArgs := make([]expression.Expression, 0, len(x.GetArgs()))
 		for _, arg := range x.GetArgs() {
-			newArg, ok, err := substituteCorCol2Constant(arg)
+			newArg, err := substituteCorCol2Constant(arg)
+			_, ok := newArg.(*expression.Constant)
 			if err != nil {
-				return nil, false, errors.Trace(err)
+				return nil, errors.Trace(err)
 			}
 			newArgs = append(newArgs, newArg)
 			allConstant = allConstant && ok
@@ -477,9 +478,9 @@ func substituteCorCol2Constant(expr expression.Expression) (expression.Expressio
 		if allConstant {
 			val, err := x.Eval(nil)
 			if err != nil {
-				return nil, false, errors.Trace(err)
+				return nil, errors.Trace(err)
 			}
-			return &expression.Constant{Value: val}, true, nil
+			return &expression.Constant{Value: val}, nil
 		}
 		var newSf expression.Expression
 		if x.FuncName.L == ast.Cast {
@@ -487,13 +488,13 @@ func substituteCorCol2Constant(expr expression.Expression) (expression.Expressio
 		} else {
 			newSf, _ = expression.NewFunction(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
 		}
-		return newSf, false, nil
+		return newSf, nil
 	case *expression.CorrelatedColumn:
-		return &expression.Constant{Value: *x.Data, RetType: x.GetType()}, true, nil
+		return &expression.Constant{Value: *x.Data, RetType: x.GetType()}, nil
 	case *expression.Constant:
-		return x.Clone(), true, nil
+		return x.Clone(), nil
 	default:
-		return x.Clone(), false, nil
+		return x.Clone(), nil
 	}
 }
 
@@ -525,7 +526,7 @@ func (e *SelectionExec) initController() error {
 	client := e.ctx.GetClient()
 	accesses := make([]expression.Expression, 0, len(e.accessConditions))
 	for _, cond := range e.accessConditions {
-		newCond, _, err := substituteCorCol2Constant(cond)
+		newCond, err := substituteCorCol2Constant(cond)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -540,7 +541,7 @@ func (e *SelectionExec) initController() error {
 		x.ranges = ranges
 		tblFilters := make([]expression.Expression, 0, len(e.tblFilterConditions))
 		for _, cond := range e.tblFilterConditions {
-			newCond, _, err := substituteCorCol2Constant(cond)
+			newCond, err := substituteCorCol2Constant(cond)
 			if err != nil {
 				return errors.Trace(err)
 			}
