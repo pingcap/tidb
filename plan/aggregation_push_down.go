@@ -378,7 +378,11 @@ func (a *aggregationOptimizer) aggPushDown(p LogicalPlan) LogicalPlan {
 				agg.SetChildren(projChild)
 				projChild.SetParents(agg)
 			} else if union, ok1 := child.(*Union); ok1 {
-				pushedAgg := a.makeNewAgg(agg.AggFuncs, agg.groupByCols)
+				var gbyCols []*expression.Column
+				for _, gbyExpr := range agg.GroupByItems {
+					gbyCols = append(gbyCols, expression.ExtractColumns(gbyExpr)...)
+				}
+				pushedAgg := a.makeNewAgg(agg.AggFuncs, gbyCols)
 				newChildren := make([]Plan, 0, len(union.children))
 				for _, child := range union.children {
 					newChild := a.pushAggCrossUnion(pushedAgg, union.schema, child.(LogicalPlan))

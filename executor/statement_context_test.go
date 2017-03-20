@@ -14,10 +14,7 @@
 package executor_test
 
 import (
-	"fmt"
-
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -69,14 +66,15 @@ func (s *testSuite) TestStatementContext(c *C) {
 	tk.MustExec("delete from sc where a < '1x'")
 	tk.MustQuery("select * from sc where a > '1x'").Check(testkit.Rows("4"))
 
+	// TODO: enable UTF8 check
 	// Test invalid UTF8
-	tk.MustExec("create table sc2 (a varchar(255))")
-	// Insert an invalid UTF8
-	tk.MustExec("insert sc2 values (unhex('4040ffff'))")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Greater, uint16(0))
-	tk.MustQuery("select * from sc2").Check(testkit.Rows(fmt.Sprintf("%v", []byte("@@"))))
-	tk.MustExec(strictModeSQL)
-	_, err = tk.Exec("insert sc2 values (unhex('4040ffff'))")
-	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, table.ErrTruncateWrongValue), IsTrue)
+	//tk.MustExec("create table sc2 (a varchar(255))")
+	//// Insert an invalid UTF8
+	//tk.MustExec("insert sc2 values (unhex('4040ffff'))")
+	//c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Greater, uint16(0))
+	//tk.MustQuery("select * from sc2").Check(testkit.Rows(fmt.Sprintf("%v", []byte("@@"))))
+	//tk.MustExec(strictModeSQL)
+	//_, err = tk.Exec("insert sc2 values (unhex('4040ffff'))")
+	//c.Assert(err, NotNil)
+	//c.Assert(terror.ErrorEqual(err, table.ErrTruncateWrongValue), IsTrue)
 }
