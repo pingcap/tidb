@@ -14,7 +14,6 @@
 package tikv
 
 import (
-	goctx "context"
 	"fmt"
 	"math/rand"
 	"net/url"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
+	goctx "golang.org/x/net/context"
 )
 
 type storeCache struct {
