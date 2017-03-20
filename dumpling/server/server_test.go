@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/go-sql-driver/mysql"
+	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/executor"
 	tmysql "github.com/pingcap/tidb/mysql"
@@ -603,13 +604,34 @@ func getStmtCnt(content string) (stmtCnt map[string]int) {
 	return stmtCnt
 }
 
-func waitUntilServerOnline() {
-	for {
+const retryTime = 100
+
+func waitUntilServerOnline(statusAddr string) {
+	// connect server
+	retry := 0
+	for ; retry < retryTime; retry++ {
 		time.Sleep(time.Millisecond * 10)
 		db, err := sql.Open("mysql", dsn)
 		if err == nil {
 			db.Close()
 			break
 		}
+	}
+	if retry == retryTime {
+		log.Fatalf("Failed to connect db for %d retries in every 10 ms", retryTime)
+	}
+	// connect http status
+	statusURL := fmt.Sprintf("http://127.0.0.1%s/status", statusAddr)
+	for retry = 0; retry < retryTime; retry++ {
+		resp, err := http.Get(statusURL)
+		if err == nil {
+			ioutil.ReadAll(resp.Body)
+			resp.Body.Close()
+			break
+		}
+		time.Sleep(time.Millisecond * 10)
+	}
+	if retry == retryTime {
+		log.Fatalf("Failed to connect http status for %d retries in every 10 ms", retryTime)
 	}
 }
