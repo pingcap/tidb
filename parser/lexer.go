@@ -297,7 +297,9 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 		// See http://dev.mysql.com/doc/refman/5.7/en/comments.html
 		// Convert "/*!VersionNumber MySQL-specific-code */" to "MySQL-specific-code".
 		comment := s.r.data(&pos)
-		if strings.HasPrefix(comment, "/*!") {
+		// Read hints within /*+ */
+		// TODO: Only recognize optimizer hints inside /*+ */
+		if strings.HasPrefix(comment, "/*!") || strings.HasPrefix(comment, "/*+") {
 			sql := specCodePattern.ReplaceAllStringFunc(comment, trimComment)
 			s.specialComment = &specialCommentScanner{
 				Scanner: NewScanner(sql),
