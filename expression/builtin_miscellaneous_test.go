@@ -16,6 +16,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
 	"strings"
 )
@@ -42,6 +43,7 @@ func (s *testEvaluatorSuite) TestUUID(c *C) {
 			c.Assert(len(p), Equals, 12)
 		}
 	}
+}
 
 func (s *testEvaluatorSuite) TestIsIPv6(c *C) {
 	tests := []struct {
