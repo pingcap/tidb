@@ -1003,3 +1003,35 @@ func (s *testEvaluatorSuite) TestTimestamp(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(d.Kind(), Equals, types.KindNull)
 }
+
+func (s *testEvaluatorSuite) TestUTCTime(c *C) {
+	defer testleak.AfterTest(c)()
+
+	fc := funcs[ast.UTCTime]
+	f, err := fc.getFunction(datumsToConstants(nil), s.ctx)
+	c.Assert(err, IsNil)
+	v, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	d := v.GetMysqlDuration()
+	c.Assert(d.String(), HasLen, 8)
+
+	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(3)), s.ctx)
+	c.Assert(err, IsNil)
+	v, err = f.eval(nil)
+	c.Assert(err, IsNil)
+	d = v.GetMysqlDuration()
+	c.Assert(d.String(), HasLen, 12)
+
+	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(6)), s.ctx)
+	c.Assert(err, IsNil)
+	v, err = f.eval(nil)
+	c.Assert(err, IsNil)
+	d = v.GetMysqlDuration()
+	c.Assert(d.String(), HasLen, 15)
+
+	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(-2)), s.ctx)
+	c.Assert(err, IsNil)
+	_, err = f.eval(nil)
+	c.Assert(err, NotNil)
+
+}

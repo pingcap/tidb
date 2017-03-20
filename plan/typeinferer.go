@@ -361,7 +361,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		"dayofweek", "dayofmonth", "dayofyear", "weekday", "weekofyear", "yearweek", "datediff",
 		"found_rows", "length", "extract", "locate", "unix_timestamp":
 		tp = types.NewFieldType(mysql.TypeLonglong)
-	case "now", "sysdate", "current_timestamp", "utc_timestamp":
+	case "now", "sysdate", "current_timestamp", "utc_timestamp", "utc_time":
 		tp = types.NewFieldType(mysql.TypeDatetime)
 		tp.Decimal = v.getFsp(x)
 	case "from_unixtime":
