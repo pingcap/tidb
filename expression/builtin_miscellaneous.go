@@ -204,7 +204,6 @@ type builtinInetAtonSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet-aton
 func (b *builtinInetAtonSig) eval(row []types.Datum) (d types.Datum, err error) {
-	d.SetNull()
 	args, err := b.evalArgs(row)
 	if err != nil {
 		return d, errors.Trace(err)
@@ -218,15 +217,18 @@ func (b *builtinInetAtonSig) eval(row []types.Datum) (d types.Datum, err error) 
 		return d, errors.Trace(err)
 	}
 
-	c := byte('.') // if len(s) == 0, return NULL
-	n := len(s)
-	byteResult := uint64(0)
-	dotCount := 0
-	result := uint64(0)
-	for i := 0; i < n; i++ {
-		c = s[i]
-		digit := uint64(c - '0')
-		if digit >= 0 && digit <= 9 {
+	// ip address should not end with '.'
+	if len(s) == 0 || s[len(s)-1] == '.' {
+		return d, errors.Trace(err)
+	}
+
+	var (
+		byteResult, result uint64
+		dotCount           int
+	)
+	for _, c := range s {
+		if c >= '0' && c <= '9' {
+			digit := uint64(c - '0')
 			byteResult = byteResult*10 + digit
 			if byteResult > 255 {
 				return d, nil
@@ -236,11 +238,8 @@ func (b *builtinInetAtonSig) eval(row []types.Datum) (d types.Datum, err error) 
 			result = (result << 8) + byteResult
 			byteResult = 0
 		} else {
-			return d, errors.Trace(err)
+			return d, nil
 		}
-	}
-	if c == '.' { // ip address should not end with ','
-		return d, nil
 	}
 	// 127 		-> 0.0.0.127
 	// 127.255 	-> 127.0.0.255
@@ -252,7 +251,6 @@ func (b *builtinInetAtonSig) eval(row []types.Datum) (d types.Datum, err error) 
 		fallthrough
 	case 2:
 		result <<= 8
-		// fallthrough
 	}
 	d.SetUint64((result << 8) + byteResult)
 	return d, nil
