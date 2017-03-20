@@ -135,7 +135,7 @@ func CastValue(ctx context.Context, val types.Datum, col *model.ColumnInfo) (cas
 	}
 	if err != nil {
 		// TODO: enable it when find a better way to handle old incorrect data.
-		log.Errorf("invalid UTF8 value %v for column %s", str, col.Name.O)
+		log.Debugf("invalid UTF8 value %v for column %s", str, col.Name.O)
 	}
 	return casted, nil
 }
