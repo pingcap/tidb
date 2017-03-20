@@ -983,3 +983,139 @@ func (s *testEvaluatorSuite) TestLpad(c *C) {
 		}
 	}
 }
+
+func (s *testEvaluatorSuite) TestMakeSet(c *C) {
+	defer testleak.AfterTest(c)()
+
+	tbl := []struct {
+		argList []interface{}
+		ret     interface{}
+	}{
+		{[]interface{}{1, "a", "b", "c"}, "a"},
+		{[]interface{}{1 | 4, "hello", "nice", "world"}, "hello,world"},
+		{[]interface{}{1 | 4, "hello", "nice", nil, "world"}, "hello"},
+		{[]interface{}{0, "a", "b", "c"}, ""},
+		{[]interface{}{nil, "a", "b", "c"}, nil},
+		{[]interface{}{-100 | 4, "hello", "nice", "abc", "world"}, "abc,world"},
+		{[]interface{}{-1, "hello", "nice", "abc", "world"}, "hello,nice,abc,world"},
+	}
+
+	for _, t := range tbl {
+		fc := funcs[ast.MakeSet]
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.argList...)), s.ctx)
+		c.Assert(err, IsNil)
+		r, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
+	}
+}
+
+func (s *testEvaluatorSuite) TestOct(c *C) {
+	defer testleak.AfterTest(c)()
+	octCases := []struct {
+		origin interface{}
+		ret    string
+	}{
+		{"-2.7", "1777777777777777777776"},
+		{-1.5, "1777777777777777777777"},
+		{-1, "1777777777777777777777"},
+		{"0", "0"},
+		{"1", "1"},
+		{"8", "10"},
+		{"12", "14"},
+		{"20", "24"},
+		{"100", "144"},
+		{"1024", "2000"},
+		{"2048", "4000"},
+		{1.0, "1"},
+		{9.5, "11"},
+		{13, "15"},
+		{1025, "2001"},
+		{"8a8", "10"},
+		{"abc", "0"},
+		//overflow uint64
+		{"9999999999999999999999999", "1777777777777777777777"},
+		{"-9999999999999999999999999", "1777777777777777777777"},
+	}
+	fc := funcs[ast.Oct]
+	for _, test := range octCases {
+		in := types.NewDatum(test.origin)
+		f, _ := fc.getFunction(datumsToConstants([]types.Datum{in}), s.ctx)
+		r, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		res, err := r.ToString()
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, test.ret)
+	}
+	// test NULL input for sha
+	var argNull types.Datum
+	f, _ := fc.getFunction(datumsToConstants([]types.Datum{argNull}), s.ctx)
+	r, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(r.IsNull(), IsTrue)
+}
+
+func (s *testEvaluatorSuite) TestOrd(c *C) {
+	defer testleak.AfterTest(c)()
+	ordCases := []struct {
+		origin interface{}
+		ret    int64
+	}{
+		// ASCII test cases
+		{"", 0},
+		{"A", 65},
+		{"你好", 14990752},
+		{1, 49},
+		{1.2, 49},
+		{true, 49},
+		{false, 48},
+
+		{2, 50},
+		{-1, 45},
+		{"-1", 45},
+		{"2", 50},
+		{"PingCap", 80},
+		{"中国", 14989485},
+		{"にほん", 14909867},
+		{"한국", 15570332},
+	}
+
+	fc := funcs[ast.Ord]
+	for _, testcase := range ordCases {
+		in := types.NewDatum(testcase.origin)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{in}), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(v.GetInt64(), Equals, testcase.ret)
+	}
+	// test NULL input for sha
+	var argNull types.Datum
+	f, err := fc.getFunction(datumsToConstants([]types.Datum{argNull}), s.ctx)
+	c.Assert(err, IsNil)
+	r, err := f.eval(nil)
+	c.Assert(r.IsNull(), IsTrue)
+}
+
+func (s *testEvaluatorSuite) TestElt(c *C) {
+	defer testleak.AfterTest(c)()
+
+	tbl := []struct {
+		argLst []interface{}
+		ret    interface{}
+	}{
+		{[]interface{}{1, "Hej", "ej", "Heja", "hej", "foo"}, "Hej"},
+		{[]interface{}{9, "Hej", "ej", "Heja", "hej", "foo"}, nil},
+		{[]interface{}{-1, "Hej", "ej", "Heja", "ej", "hej", "foo"}, nil},
+		{[]interface{}{0, 2, 3, 11, 1}, nil},
+		{[]interface{}{3, 2, 3, 11, 1}, "11"},
+		{[]interface{}{1.1, "2.1", "3.1", "11.1", "1.1"}, "2.1"},
+	}
+	for _, t := range tbl {
+		fc := funcs[ast.Elt]
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.argLst...)), s.ctx)
+		c.Assert(err, IsNil)
+		r, err := f.eval(nil)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
+	}
+}

@@ -1,12 +1,12 @@
 package localstore
 
 import (
-	goctx "context"
 	"io"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tipb/go-tipb"
+	goctx "golang.org/x/net/context"
 )
 
 type dbClient struct {

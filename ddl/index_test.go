@@ -16,6 +16,7 @@ package ddl
 import (
 	"strings"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -166,365 +167,495 @@ func getIndex(t table.Table, name string) table.Index {
 	return nil
 }
 
-func (s *testIndexSuite) testGetIndex(c *C, t table.Table, name string, isExist bool) {
+func (s *testIndexSuite) testGetIndex(t table.Table, name string, isExist bool) error {
 	index := tables.FindIndexByColName(t, name)
 	if isExist {
-		c.Assert(index, NotNil)
-	} else {
-		c.Assert(index, IsNil)
+		if index == nil {
+			return errors.Errorf("index exist got nil, expected not nil")
+		}
+		return nil
 	}
+	if index != nil {
+		return errors.Errorf("index exist got %v, expected nil", index)
+	}
+	return nil
 }
 
-func (s *testIndexSuite) checkIndexKVExist(c *C, ctx context.Context, t table.Table, handle int64, indexCol table.Index, columnValues []types.Datum, isExist bool) {
-	c.Assert(len(indexCol.Meta().Columns), Equals, len(columnValues))
+func (s *testIndexSuite) checkIndexKVExist(ctx context.Context, t table.Table, handle int64, indexCol table.Index, columnValues []types.Datum, isExist bool) error {
+	idxColsLen := len(indexCol.Meta().Columns)
+	if idxColsLen != len(columnValues) {
+		return errors.Errorf("index columns length got %d, expected %d", idxColsLen, len(columnValues))
+	}
 
 	err := ctx.NewTxn()
-	c.Assert(err, IsNil)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	exist, _, err := indexCol.Exist(ctx.Txn(), columnValues, handle)
-	c.Assert(err, IsNil)
-	c.Assert(exist, Equals, isExist)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if exist != isExist {
+		return errors.Errorf("index exist got %v, expected %v", exist, isExist)
+	}
+	return nil
 }
 
-func (s *testIndexSuite) checkNoneIndex(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, index table.Index, row []types.Datum) {
-	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+func (s *testIndexSuite) checkNoneIndex(ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, index table.Index, row []types.Datum) error {
+	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	columnValues := make([]types.Datum, len(index.Meta().Columns))
 	for i, column := range index.Meta().Columns {
 		columnValues[i] = row[column.Offset]
 	}
 
-	s.checkIndexKVExist(c, ctx, t, handle, index, columnValues, false)
-	s.testGetIndex(c, t, index.Meta().Columns[0].Name.L, false)
+	err = s.checkIndexKVExist(ctx, t, handle, index, columnValues, false)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = s.testGetIndex(t, index.Meta().Columns[0].Name.L, false)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
-func (s *testIndexSuite) checkDeleteOnlyIndex(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, index table.Index, row []types.Datum, isDropped bool) {
-	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-	c.Assert(ctx.NewTxn(), IsNil)
+func (s *testIndexSuite) checkDeleteOnlyIndex(ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, index table.Index, row []types.Datum, isDropped bool) error {
+	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
-	i := int64(0)
-	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-		c.Assert(data, DeepEquals, row)
-		i++
-		return true, nil
-	})
-	c.Assert(err, IsNil)
-	c.Assert(i, Equals, int64(1))
-
+	err = ctx.NewTxn()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = checkResult(ctx, t, t.Cols(), [][]interface{}{datumsToInterfaces(row)})
+	if err != nil {
+		return errors.Trace(err)
+	}
 	columnValues := make([]types.Datum, len(index.Meta().Columns))
 	for i, column := range index.Meta().Columns {
 		columnValues[i] = row[column.Offset]
 	}
-
-	s.checkIndexKVExist(c, ctx, t, handle, index, columnValues, isDropped)
+	err = s.checkIndexKVExist(ctx, t, handle, index, columnValues, isDropped)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	// Test add a new row.
-	c.Assert(ctx.NewTxn(), IsNil)
-
+	err = ctx.NewTxn()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
 	handle, err = t.AddRecord(ctx, newRow)
-	c.Assert(err, IsNil)
-
-	c.Assert(ctx.NewTxn(), IsNil)
-
-	rows := [][]types.Datum{row, newRow}
-
-	i = int64(0)
-	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-		c.Assert(data, DeepEquals, rows[i])
-		i++
-		return true, nil
-	})
-	c.Assert(i, Equals, int64(2))
-
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = ctx.NewTxn()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rows := [][]interface{}{datumsToInterfaces(row), datumsToInterfaces(newRow)}
+	err = checkResult(ctx, t, t.Cols(), rows)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	for i, column := range index.Meta().Columns {
 		columnValues[i] = newRow[column.Offset]
 	}
-
-	s.checkIndexKVExist(c, ctx, t, handle, index, columnValues, false)
+	err = s.checkIndexKVExist(ctx, t, handle, index, columnValues, false)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	// Test update a new row.
-	c.Assert(ctx.NewTxn(), IsNil)
-
+	err = ctx.NewTxn()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	newUpdateRow := types.MakeDatums(int64(44), int64(55), int64(66))
 	touched := map[int]bool{0: true, 1: true, 2: true}
 	err = t.UpdateRecord(ctx, handle, newRow, newUpdateRow, touched)
-	c.Assert(err, IsNil)
-
-	s.checkIndexKVExist(c, ctx, t, handle, index, columnValues, false)
-
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = s.checkIndexKVExist(ctx, t, handle, index, columnValues, false)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	for i, column := range index.Meta().Columns {
 		columnValues[i] = newUpdateRow[column.Offset]
 	}
-
-	s.checkIndexKVExist(c, ctx, t, handle, index, columnValues, false)
+	err = s.checkIndexKVExist(ctx, t, handle, index, columnValues, false)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	// Test remove a row.
-	c.Assert(ctx.NewTxn(), IsNil)
-
+	err = ctx.NewTxn()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	err = t.RemoveRecord(ctx, handle, newUpdateRow)
-	c.Assert(err, IsNil)
-	c.Assert(ctx.NewTxn(), IsNil)
-
-	i = int64(0)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = ctx.NewTxn()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	count := 0
 	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-		i++
+		count++
 		return true, nil
 	})
-	c.Assert(i, Equals, int64(1))
+	if count != 1 {
+		return errors.Errorf("count got %d, expected %d", count, 1)
+	}
 
-	s.checkIndexKVExist(c, ctx, t, handle, index, columnValues, false)
-	s.testGetIndex(c, t, index.Meta().Columns[0].Name.L, false)
+	err = s.checkIndexKVExist(ctx, t, handle, index, columnValues, false)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = s.testGetIndex(t, index.Meta().Columns[0].Name.L, false)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
-func (s *testIndexSuite) checkWriteOnlyIndex(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, index table.Index, row []types.Datum, isDropped bool) {
-	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+func (s *testIndexSuite) checkWriteOnlyIndex(ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, index table.Index, row []types.Datum, isDropped bool) error {
+	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
-	c.Assert(ctx.NewTxn(), IsNil)
-
-	i := int64(0)
-	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-		c.Assert(data, DeepEquals, row)
-		i++
-		return true, nil
-	})
-	c.Assert(err, IsNil)
-	c.Assert(i, Equals, int64(1))
-
+	err = ctx.NewTxn()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = checkResult(ctx, t, t.Cols(), [][]interface{}{datumsToInterfaces(row)})
+	if err != nil {
+		return errors.Trace(err)
+	}
 	columnValues := make([]types.Datum, len(index.Meta().Columns))
 	for i, column := range index.Meta().Columns {
 		columnValues[i] = row[column.Offset]
 	}
-
-	s.checkIndexKVExist(c, ctx, t, handle, index, columnValues, isDropped)
+	err = s.checkIndexKVExist(ctx, t, handle, index, columnValues, isDropped)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	// Test add a new row.
-	c.Assert(ctx.NewTxn(), IsNil)
-
+	err = ctx.NewTxn()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
 	handle, err = t.AddRecord(ctx, newRow)
-	c.Assert(err, IsNil)
-
-	c.Assert(ctx.NewTxn(), IsNil)
-
-	rows := [][]types.Datum{row, newRow}
-
-	i = int64(0)
-	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-		c.Assert(data, DeepEquals, rows[i])
-		i++
-		return true, nil
-	})
-	c.Assert(i, Equals, int64(2))
-
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = ctx.NewTxn()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rows := [][]interface{}{datumsToInterfaces(row), datumsToInterfaces(newRow)}
+	err = checkResult(ctx, t, t.Cols(), rows)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	for i, column := range index.Meta().Columns {
 		columnValues[i] = newRow[column.Offset]
 	}
-
-	s.checkIndexKVExist(c, ctx, t, handle, index, columnValues, true)
+	err = s.checkIndexKVExist(ctx, t, handle, index, columnValues, true)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	// Test update a new row.
 	err = ctx.NewTxn()
-	c.Assert(err, IsNil)
-
+	if err != nil {
+		return errors.Trace(err)
+	}
 	newUpdateRow := types.MakeDatums(int64(44), int64(55), int64(66))
 	touched := map[int]bool{0: true, 1: true, 2: true}
 	err = t.UpdateRecord(ctx, handle, newRow, newUpdateRow, touched)
-	c.Assert(err, IsNil)
-
-	s.checkIndexKVExist(c, ctx, t, handle, index, columnValues, false)
-
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = s.checkIndexKVExist(ctx, t, handle, index, columnValues, false)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	for i, column := range index.Meta().Columns {
 		columnValues[i] = newUpdateRow[column.Offset]
 	}
-
-	s.checkIndexKVExist(c, ctx, t, handle, index, columnValues, true)
+	err = s.checkIndexKVExist(ctx, t, handle, index, columnValues, true)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	// Test remove a row.
 	err = ctx.NewTxn()
-	c.Assert(err, IsNil)
-
+	if err != nil {
+		return errors.Trace(err)
+	}
 	err = t.RemoveRecord(ctx, handle, newUpdateRow)
-	c.Assert(err, IsNil)
-
+	if err != nil {
+		return errors.Trace(err)
+	}
 	err = ctx.NewTxn()
-	c.Assert(err, IsNil)
-
-	i = int64(0)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	count := 0
 	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-		i++
+		count++
 		return true, nil
 	})
-	c.Assert(i, Equals, int64(1))
-
-	s.checkIndexKVExist(c, ctx, t, handle, index, columnValues, false)
-	s.testGetIndex(c, t, index.Meta().Columns[0].Name.L, false)
+	if count != 1 {
+		return errors.Errorf("count got %d, expected %d", count, 1)
+	}
+	err = s.checkIndexKVExist(ctx, t, handle, index, columnValues, false)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = s.testGetIndex(t, index.Meta().Columns[0].Name.L, false)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
-func (s *testIndexSuite) checkReorganizationIndex(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, index table.Index, row []types.Datum, isDropped bool) {
-	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+func (s *testIndexSuite) checkReorganizationIndex(ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, index table.Index, row []types.Datum, isDropped bool) error {
+	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
-	c.Assert(ctx.NewTxn(), IsNil)
-
-	i := int64(0)
-	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-		c.Assert(data, DeepEquals, row)
-		i++
-		return true, nil
-	})
-	c.Assert(err, IsNil)
-	c.Assert(i, Equals, int64(1))
+	err = ctx.NewTxn()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = checkResult(ctx, t, t.Cols(), [][]interface{}{datumsToInterfaces(row)})
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	// Test add a new row.
-	c.Assert(ctx.NewTxn(), IsNil)
-
+	err = ctx.NewTxn()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
 	handle, err = t.AddRecord(ctx, newRow)
-	c.Assert(err, IsNil)
-
-	c.Assert(ctx.NewTxn(), IsNil)
-
-	rows := [][]types.Datum{row, newRow}
-
-	i = int64(0)
-	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-		c.Assert(data, DeepEquals, rows[i])
-		i++
-		return true, nil
-	})
-	c.Assert(i, Equals, int64(2))
-
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = ctx.NewTxn()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rows := [][]interface{}{datumsToInterfaces(row), datumsToInterfaces(newRow)}
+	err = checkResult(ctx, t, t.Cols(), rows)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	columnValues := make([]types.Datum, len(index.Meta().Columns))
 	for i, column := range index.Meta().Columns {
 		columnValues[i] = newRow[column.Offset]
 	}
-
-	s.checkIndexKVExist(c, ctx, t, handle, index, columnValues, !isDropped)
+	err = s.checkIndexKVExist(ctx, t, handle, index, columnValues, !isDropped)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	// Test update a new row.
-	c.Assert(ctx.NewTxn(), IsNil)
-
+	err = ctx.NewTxn()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	newUpdateRow := types.MakeDatums(int64(44), int64(55), int64(66))
 	touched := map[int]bool{0: true, 1: true, 2: true}
 	err = t.UpdateRecord(ctx, handle, newRow, newUpdateRow, touched)
-	c.Assert(err, IsNil)
-
-	s.checkIndexKVExist(c, ctx, t, handle, index, columnValues, false)
-
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = s.checkIndexKVExist(ctx, t, handle, index, columnValues, false)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	for i, column := range index.Meta().Columns {
 		columnValues[i] = newUpdateRow[column.Offset]
 	}
-
-	s.checkIndexKVExist(c, ctx, t, handle, index, columnValues, !isDropped)
+	err = s.checkIndexKVExist(ctx, t, handle, index, columnValues, !isDropped)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	// Test remove a row.
-	c.Assert(ctx.NewTxn(), IsNil)
-	c.Assert(t.RemoveRecord(ctx, handle, newUpdateRow), IsNil)
-
-	c.Assert(ctx.NewTxn(), IsNil)
-
-	i = int64(0)
+	err = ctx.NewTxn()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = t.RemoveRecord(ctx, handle, newUpdateRow)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = ctx.NewTxn()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	count := 0
 	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-		i++
+		count++
 		return true, nil
 	})
-	c.Assert(i, Equals, int64(1))
-
-	s.testGetIndex(c, t, index.Meta().Columns[0].Name.L, false)
+	if count != 1 {
+		return errors.Errorf("count got %d, expected %d", count, 1)
+	}
+	err = s.testGetIndex(t, index.Meta().Columns[0].Name.L, false)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
-func (s *testIndexSuite) checkPublicIndex(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, index table.Index, row []types.Datum) {
-	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+func (s *testIndexSuite) checkPublicIndex(ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, index table.Index, row []types.Datum) error {
+	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
-	c.Assert(ctx.NewTxn(), IsNil)
-
-	i := int64(0)
-	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-		c.Assert(data, DeepEquals, row)
-		i++
-		return true, nil
-	})
-	c.Assert(err, IsNil)
-	c.Assert(i, Equals, int64(1))
-
+	err = ctx.NewTxn()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = checkResult(ctx, t, t.Cols(), [][]interface{}{datumsToInterfaces(row)})
+	if err != nil {
+		return errors.Trace(err)
+	}
 	columnValues := make([]types.Datum, len(index.Meta().Columns))
 	for i, column := range index.Meta().Columns {
 		columnValues[i] = row[column.Offset]
 	}
-
-	s.checkIndexKVExist(c, ctx, t, handle, index, columnValues, true)
+	err = s.checkIndexKVExist(ctx, t, handle, index, columnValues, true)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	// Test add a new row.
 	err = ctx.NewTxn()
-	c.Assert(err, IsNil)
-
+	if err != nil {
+		return errors.Trace(err)
+	}
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
 	handle, err = t.AddRecord(ctx, newRow)
-	c.Assert(err, IsNil)
-
-	c.Assert(ctx.NewTxn(), IsNil)
-
-	rows := [][]types.Datum{row, newRow}
-
-	i = int64(0)
-	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-		c.Assert(data, DeepEquals, rows[i])
-		i++
-		return true, nil
-	})
-	c.Assert(i, Equals, int64(2))
-
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = ctx.NewTxn()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rows := [][]interface{}{datumsToInterfaces(row), datumsToInterfaces(newRow)}
+	err = checkResult(ctx, t, t.Cols(), rows)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	for i, column := range index.Meta().Columns {
 		columnValues[i] = newRow[column.Offset]
 	}
-
-	s.checkIndexKVExist(c, ctx, t, handle, index, columnValues, true)
+	err = s.checkIndexKVExist(ctx, t, handle, index, columnValues, true)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	// Test update a new row.
-
+	err = ctx.NewTxn()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	newUpdateRow := types.MakeDatums(int64(44), int64(55), int64(66))
 	touched := map[int]bool{0: true, 1: true, 2: true}
-	c.Assert(ctx.NewTxn(), IsNil)
-	c.Assert(t.UpdateRecord(ctx, handle, newRow, newUpdateRow, touched), IsNil)
-
-	s.checkIndexKVExist(c, ctx, t, handle, index, columnValues, false)
-
+	err = ctx.NewTxn()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = t.UpdateRecord(ctx, handle, newRow, newUpdateRow, touched)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = s.checkIndexKVExist(ctx, t, handle, index, columnValues, false)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	for i, column := range index.Meta().Columns {
 		columnValues[i] = newUpdateRow[column.Offset]
 	}
-
-	s.checkIndexKVExist(c, ctx, t, handle, index, columnValues, true)
+	err = s.checkIndexKVExist(ctx, t, handle, index, columnValues, true)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	// Test remove a row.
-	c.Assert(ctx.NewTxn(), IsNil)
-	c.Assert(t.RemoveRecord(ctx, handle, newUpdateRow), IsNil)
-
-	c.Assert(ctx.NewTxn(), IsNil)
-	i = int64(0)
+	err = ctx.NewTxn()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = t.RemoveRecord(ctx, handle, newUpdateRow)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = ctx.NewTxn()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	count := 0
 	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-		i++
+		count++
 		return true, nil
 	})
-	c.Assert(i, Equals, int64(1))
-	s.checkIndexKVExist(c, ctx, t, handle, index, columnValues, false)
-	s.testGetIndex(c, t, index.Meta().Columns[0].Name.L, true)
+	if count != 1 {
+		return errors.Errorf("count got %d, expected %d", count, 1)
+	}
+	err = s.checkIndexKVExist(ctx, t, handle, index, columnValues, false)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = s.testGetIndex(t, index.Meta().Columns[0].Name.L, true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
-func (s *testIndexSuite) checkAddOrDropIndex(c *C, state model.SchemaState, d *ddl, tblInfo *model.TableInfo, handle int64, index table.Index, row []types.Datum, isDropped bool) {
+func (s *testIndexSuite) checkAddOrDropIndex(state model.SchemaState, d *ddl, tblInfo *model.TableInfo, handle int64, index table.Index, row []types.Datum, isDropped bool) error {
+	var err error
 	ctx := testNewContext(d)
 
 	switch state {
 	case model.StateNone:
-		s.checkNoneIndex(c, ctx, d, tblInfo, handle, index, row)
+		err = s.checkNoneIndex(ctx, d, tblInfo, handle, index, row)
 	case model.StateDeleteOnly:
-		s.checkDeleteOnlyIndex(c, ctx, d, tblInfo, handle, index, row, isDropped)
+		err = s.checkDeleteOnlyIndex(ctx, d, tblInfo, handle, index, row, isDropped)
 	case model.StateWriteOnly:
-		s.checkWriteOnlyIndex(c, ctx, d, tblInfo, handle, index, row, isDropped)
+		err = s.checkWriteOnlyIndex(ctx, d, tblInfo, handle, index, row, isDropped)
 	case model.StateWriteReorganization, model.StateDeleteReorganization:
-		s.checkReorganizationIndex(c, ctx, d, tblInfo, handle, index, row, isDropped)
+		err = s.checkReorganizationIndex(ctx, d, tblInfo, handle, index, row, isDropped)
 	case model.StatePublic:
-		s.checkPublicIndex(c, ctx, d, tblInfo, handle, index, row)
+		err = s.checkPublicIndex(ctx, d, tblInfo, handle, index, row)
 	}
+
+	return errors.Trace(err)
 }
 
 func (s *testIndexSuite) TestAddIndex(c *C) {
@@ -544,20 +675,28 @@ func (s *testIndexSuite) TestAddIndex(c *C) {
 	c.Assert(err, IsNil)
 
 	checkOK := false
+	var checkErr error
 	tc := &testDDLCallback{}
 	tc.onJobUpdated = func(job *model.Job) {
 		if checkOK {
 			return
 		}
 
-		t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+		t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
+		if err != nil && checkErr == nil {
+			checkErr = errors.Trace(err)
+			return
+		}
 		index := getIndex(t, "c1")
 		if index == nil {
 			return
 		}
 
-		s.checkAddOrDropIndex(c, index.Meta().State, d, tblInfo, handle, index, row, false)
-
+		err = s.checkAddOrDropIndex(index.Meta().State, d, tblInfo, handle, index, row, false)
+		if err != nil && checkErr == nil {
+			checkErr = errors.Trace(err)
+			return
+		}
 		if index.Meta().State == model.StatePublic {
 			checkOK = true
 		}
@@ -572,9 +711,11 @@ func (s *testIndexSuite) TestAddIndex(c *C) {
 	d.start()
 
 	job := testCreateIndex(c, ctx, d, s.dbInfo, tblInfo, true, "c1_uni", "c1")
+	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	testCheckJobDone(c, d, job, true)
 
 	job = testCreateIndex(c, ctx, d, s.dbInfo, tblInfo, true, "c1", "c1")
+	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	testCheckJobDone(c, d, job, true)
 	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
@@ -611,6 +752,7 @@ func (s *testIndexSuite) TestDropIndex(c *C) {
 	testCheckJobDone(c, d, job, true)
 
 	checkOK := false
+	var checkErr error
 	oldIndexCol := tables.NewIndex(tblInfo, &model.IndexInfo{})
 	tc := &testDDLCallback{}
 	tc.onJobUpdated = func(job *model.Job) {
@@ -618,15 +760,27 @@ func (s *testIndexSuite) TestDropIndex(c *C) {
 			return
 		}
 
-		t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+		t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
+		if err != nil && checkErr == nil {
+			checkErr = errors.Trace(err)
+			return
+		}
 		index := getIndex(t, "c1")
 		if index == nil {
-			s.checkAddOrDropIndex(c, model.StateNone, d, tblInfo, handle, oldIndexCol, row, true)
+			err = s.checkAddOrDropIndex(model.StateNone, d, tblInfo, handle, oldIndexCol, row, true)
+			if err != nil && checkErr == nil {
+				checkErr = errors.Trace(err)
+				return
+			}
 			checkOK = true
 			return
 		}
 
-		s.checkAddOrDropIndex(c, index.Meta().State, d, tblInfo, handle, index, row, true)
+		err = s.checkAddOrDropIndex(index.Meta().State, d, tblInfo, handle, index, row, true)
+		if err != nil && checkErr == nil {
+			checkErr = errors.Trace(err)
+			return
+		}
 		oldIndexCol = index
 	}
 
@@ -641,12 +795,14 @@ func (s *testIndexSuite) TestDropIndex(c *C) {
 	d.start()
 
 	job = testDropIndex(c, ctx, d, s.dbInfo, tblInfo, "c1_uni")
+	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	testCheckJobDone(c, d, job, false)
 
 	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
 
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
+	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	testCheckJobDone(c, d, job, false)
 	err = ctx.Txn().Commit()
 	c.Assert(err, IsNil)
@@ -678,19 +834,28 @@ func (s *testIndexSuite) TestAddIndexWithNullColumn(c *C) {
 	c.Assert(err, IsNil)
 
 	checkOK := false
+	var checkErr error
 	tc := &testDDLCallback{}
 	tc.onJobUpdated = func(job *model.Job) {
 		if checkOK {
 			return
 		}
 
-		t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+		t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
+		if err != nil && checkErr == nil {
+			checkErr = errors.Trace(err)
+			return
+		}
 		// Add index on c2.
 		index := getIndex(t, "c2")
 		if index == nil {
 			return
 		}
-		s.checkAddOrDropIndex(c, index.Meta().State, d, tblInfo, handle, index, row, false)
+		err = s.checkAddOrDropIndex(index.Meta().State, d, tblInfo, handle, index, row, false)
+		if err != nil && checkErr == nil {
+			checkErr = errors.Trace(err)
+			return
+		}
 		if index.Meta().State == model.StatePublic {
 			checkOK = true
 		}
@@ -706,11 +871,13 @@ func (s *testIndexSuite) TestAddIndexWithNullColumn(c *C) {
 	d.start()
 
 	job := testCreateIndex(c, ctx, d, s.dbInfo, tblInfo, true, "c2", "c2")
+	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	testCheckJobDone(c, d, job, true)
 
 	c.Assert(ctx.NewTxn(), IsNil)
 
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
+	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	testCheckJobDone(c, d, job, false)
 
 	err = ctx.Txn().Commit()

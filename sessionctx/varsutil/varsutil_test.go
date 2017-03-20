@@ -33,6 +33,28 @@ var _ = Suite(&testVarsutilSuite{})
 type testVarsutilSuite struct {
 }
 
+func (s *testVarsutilSuite) TestTiDBOptOn(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		val string
+		on  bool
+	}{
+		{"ON", true},
+		{"on", true},
+		{"On", true},
+		{"1", true},
+		{"off", false},
+		{"No", false},
+		{"0", false},
+		{"1.1", false},
+		{"", false},
+	}
+	for _, t := range tbl {
+		on := tidbOptOn(t.val)
+		c.Assert(on, Equals, t.on)
+	}
+}
+
 func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	defer testleak.AfterTest(c)()
 	v := variable.NewSessionVars()
