@@ -1054,3 +1054,26 @@ func (s *testEvaluatorSuite) TestOct(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r.IsNull(), IsTrue)
 }
+
+func (s *testEvaluatorSuite) TestElt(c *C) {
+	defer testleak.AfterTest(c)()
+
+	tbl := []struct {
+		argLst []interface{}
+		ret    interface{}
+	}{
+		{[]interface{}{1, "Hej", "ej", "Heja", "hej", "foo"}, "Hej"},
+		{[]interface{}{9, "Hej", "ej", "Heja", "hej", "foo"}, nil},
+		{[]interface{}{-1, "Hej", "ej", "Heja", "ej", "hej", "foo"}, nil},
+		{[]interface{}{0, 2, 3, 11, 1}, nil},
+		{[]interface{}{3, 2, 3, 11, 1}, "11"},
+		{[]interface{}{1.1, "2.1", "3.1", "11.1", "1.1"}, "2.1"},
+	}
+	for _, t := range tbl {
+		fc := funcs[ast.Elt]
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.argLst...)), s.ctx)
+		c.Assert(err, IsNil)
+		r, err := f.eval(nil)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
+	}
+}
