@@ -564,27 +564,3 @@ func (s *testEvaluatorSuite) TestTruncate(c *C) {
 	}
 
 }
-
-func (s *testEvaluatorSuite) TestDegrees(c *C) {
-	defer testleak.AfterTest(c)()
-	tbl := []struct {
-		Arg interface{}
-		Ret interface{}
-	}{
-		{math.Pi / 2, float64(90)},
-		{math.Pi, float64(180)},
-		{0, float64(0)},
-	}
-
-	Dtbl := tblToDtbl(tbl)
-
-	for _, t := range Dtbl {
-		fc := funcs[ast.Degrees]
-		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
-		c.Assert(err, IsNil)
-		v, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
-	}
-
-}
