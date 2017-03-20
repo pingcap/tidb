@@ -1629,7 +1629,7 @@ func (b *builtinFormatSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errors.Trace(err)
 }
 
-// TODO: use go:generate generate those functions instead
+// TODO: Move those functions away
 func _formatENUS(number float64, precision int64) string {
 	var buffer bytes.Buffer
 	if number < 0 {
