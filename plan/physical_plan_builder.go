@@ -70,7 +70,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 		for _, cond := range sel.Conditions {
 			conds = append(conds, cond.Clone())
 		}
-		ts.AccessCondition, newSel.Conditions = detachTableScanConditions(conds, table)
+		ts.AccessCondition, newSel.Conditions = DetachTableScanConditions(conds, table)
 		ts.TableConditionPBExpr, ts.tableFilterConditions, newSel.Conditions =
 			ExpressionsToPB(sc, newSel.Conditions, client)
 		ranges, err := BuildTableRange(ts.AccessCondition, sc)
@@ -146,11 +146,11 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		for _, cond := range sel.Conditions {
 			conds = append(conds, cond.Clone())
 		}
-		is.AccessCondition, newSel.Conditions = detachIndexScanConditions(conds, is)
+		is.AccessCondition, newSel.Conditions = DetachIndexScanConditions(conds, is)
 		memDB := infoschema.IsMemoryDB(p.DBName.L)
 		isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeIndex, 0)
 		if isDistReq {
-			idxConds, tblConds := detachIndexFilterConditions(newSel.Conditions, is.Index.Columns, is.Table)
+			idxConds, tblConds := DetachIndexFilterConditions(newSel.Conditions, is.Index.Columns, is.Table)
 			is.IndexConditionPBExpr, is.indexFilterConditions, idxConds = ExpressionsToPB(sc, idxConds, client)
 			is.TableConditionPBExpr, is.tableFilterConditions, tblConds = ExpressionsToPB(sc, tblConds, client)
 			newSel.Conditions = append(idxConds, tblConds...)
@@ -162,7 +162,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 			}
 			log.Warn("truncate error in buildIndexRange")
 		}
-		rowCount, err = is.getRowCountByIndexRanges(sc, statsTbl)
+		rowCount, err = is.GetRowCountByIndexRanges(sc, statsTbl)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -175,11 +175,12 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		rb := rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
 		is.Ranges = rb.buildIndexRanges(fullRange, types.NewFieldType(mysql.TypeNull))
 	}
-	is.DoubleRead = !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
+	is.DoubleRead = !IsCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
 	return resultPlan.matchProperty(prop, &physicalPlanInfo{count: rowCount}), nil
 }
 
-func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexColumn, pkIsHandle bool) bool {
+// IsCoveringIndex will check whether the pk and index can cover all the column.
+func IsCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexColumn, pkIsHandle bool) bool {
 	for _, colInfo := range columns {
 		if pkIsHandle && mysql.HasPriKeyFlag(colInfo.Flag) {
 			continue
@@ -785,119 +786,6 @@ func (p *Union) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	return info, nil
 }
 
-func buildTableScanByKeyAndCorCol(p *DataSource, pkName model.CIStr, fakeConds []expression.Expression, origConds []expression.Expression) (*physicalPlanInfo, []expression.Expression, []expression.Expression) {
-	client := p.ctx.GetClient()
-	ts := &PhysicalTableScan{
-		Table:               p.tableInfo,
-		Columns:             p.Columns,
-		TableAsName:         p.TableAsName,
-		DBName:              p.DBName,
-		physicalTableSource: physicalTableSource{client: client},
-	}
-	ts.tp = Tbl
-	ts.allocator = p.allocator
-	ts.SetSchema(p.Schema())
-	ts.initIDAndContext(p.ctx)
-	if p.ctx.Txn() != nil {
-		ts.readOnly = p.ctx.Txn().IsReadOnly()
-	} else {
-		ts.readOnly = true
-	}
-	ts.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
-	var accessConditions, filterConditions []expression.Expression
-	checker := conditionChecker{
-		pkName: pkName,
-		length: types.UnspecifiedLength,
-	}
-	for id, cond := range fakeConds {
-		if !checker.check(cond) {
-			filterConditions = append(filterConditions, origConds[id])
-			continue
-		}
-		accessConditions = append(accessConditions, origConds[id])
-		// TODO: it will lead to repeated computation cost.
-		if checker.shouldReserve {
-			filterConditions = append(filterConditions, origConds[id])
-			checker.shouldReserve = false
-		}
-	}
-	rowCount := uint64(p.statisticTable.Count)
-	ts.AccessCondition = accessConditions
-	ts.tableFilterConditions = filterConditions
-	return ts.matchProperty(&requiredProperty{}, &physicalPlanInfo{count: rowCount}), accessConditions, filterConditions
-}
-
-func buildIndexScanByKeyAndCorCol(p *DataSource, idx *model.IndexInfo, fakeConds []expression.Expression, origConds []expression.Expression) (*physicalPlanInfo,
-	[]expression.Expression, []expression.Expression, []expression.Expression) {
-	client := p.ctx.GetClient()
-	is := &PhysicalIndexScan{
-		Index:               idx,
-		Table:               p.tableInfo,
-		Columns:             p.Columns,
-		TableAsName:         p.TableAsName,
-		OutOfOrder:          true,
-		DBName:              p.DBName,
-		physicalTableSource: physicalTableSource{client: client},
-	}
-	is.tp = Idx
-	is.allocator = p.allocator
-	is.initIDAndContext(p.ctx)
-	is.SetSchema(p.schema)
-	if p.ctx.Txn() != nil {
-		is.readOnly = p.ctx.Txn().IsReadOnly()
-	} else {
-		is.readOnly = true
-	}
-
-	fakeAccessConditions, restFakeConds := detachIndexScanConditions(fakeConds, is)
-	accessConditions := make([]expression.Expression, 0, len(fakeAccessConditions))
-	restOrigConds := make([]expression.Expression, 0, len(restFakeConds))
-	// accessConditions is not in original order. So we could only use brute force there.
-	for i := 0; i < len(fakeConds); i++ {
-		for _, cond := range fakeAccessConditions {
-			if fakeConds[i].Equal(cond, p.ctx) {
-				accessConditions = append(accessConditions, origConds[i])
-			} else {
-				restOrigConds = append(restOrigConds, origConds[i])
-			}
-		}
-	}
-	for i, j := 0, 0; i < len(fakeConds); {
-		if j < len(fakeAccessConditions) && fakeConds[i].Equal(fakeAccessConditions[j], p.ctx) {
-			accessConditions = append(accessConditions, origConds[i])
-			i, j = i+1, j+1
-		} else {
-			restOrigConds = append(restOrigConds, origConds[i])
-			i++
-		}
-	}
-	memDB := infoschema.IsMemoryDB(p.DBName.L)
-	isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeIndex, 0)
-	var idxConds, tblConds []expression.Expression
-	if isDistReq {
-		fakeIdxConds, fakeTblConds := detachIndexFilterConditions(restFakeConds, is.Index.Columns, is.Table)
-		idxConds = make([]expression.Expression, 0, len(fakeIdxConds))
-		tblConds = make([]expression.Expression, 0, len(fakeTblConds))
-		for i, j := 0, 0; i < len(restFakeConds); {
-			if j < len(fakeIdxConds) && restFakeConds[i].Equal(fakeIdxConds[j], p.ctx) {
-				idxConds = append(idxConds, restOrigConds[i])
-				i, j = i+1, j+1
-			} else {
-				tblConds = append(tblConds, restOrigConds[i])
-				i++
-			}
-		}
-	}
-
-	rb := rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
-	is.Ranges = rb.buildIndexRanges(fullRange, types.NewFieldType(mysql.TypeNull))
-	is.DoubleRead = !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
-	is.AccessCondition = accessConditions
-	is.indexFilterConditions = idxConds
-	is.tableFilterConditions = tblConds
-	return is.matchProperty(&requiredProperty{}, &physicalPlanInfo{count: uint64(p.statisticTable.Count)}), accessConditions, idxConds, tblConds
-}
-
 // The first return value is the new expression, the second is a bool value tell whether the below expression is all constant.
 // The Second is used for simplify the scalar function.
 // If the args of one scalar function are all constant, we will substitute it to constant.
@@ -937,6 +825,14 @@ func substituteCorCol2Constant(cond expression.Expression) expression.Expression
 func (p *Selection) getUsableIndicesAndPk(ds *DataSource) ([]*model.IndexInfo, model.CIStr) {
 	indices, _ := availableIndices(ds.indexHints, ds.tableInfo)
 	var usableIdxs []*model.IndexInfo
+	var newConds []expression.Expression
+	for _, expr := range p.Conditions {
+		cond := pushDownNot(expr.Clone(), false, nil)
+		if !cond.IsCorrelated() {
+			continue
+		}
+		newConds = append(newConds, substituteCorCol2Constant(cond))
+	}
 	for _, idx := range indices {
 		// TODO: Currently we don't consider composite index.
 		if len(idx.Columns) > 1 {
@@ -950,14 +846,9 @@ func (p *Selection) getUsableIndicesAndPk(ds *DataSource) ([]*model.IndexInfo, m
 		// This idx column should occur in one condition which contains both column and correlated column.
 		// And conditionChecker.check(this condition) should be true.
 		var usable bool
-		for _, expr := range p.Conditions {
-			cond := pushDownNot(expr.Clone(), false, nil)
-			if !cond.IsCorrelated() {
-				continue
-			}
-			newCond := substituteCorCol2Constant(cond)
+		for _, cond := range newConds {
 			// If one cond is ok, then this index is useful.
-			if checker.check(newCond) {
+			if checker.check(cond) {
 				usable = true
 				break
 			}
@@ -984,18 +875,11 @@ func (p *Selection) getUsableIndicesAndPk(ds *DataSource) ([]*model.IndexInfo, m
 		}
 		// Pk should satisfies the same property as the index.
 		var usable bool
-		for _, expr := range p.Conditions {
-			cond := pushDownNot(expr.Clone(), false, nil)
-			if !cond.IsCorrelated() {
-				continue
-			}
-			newCond := substituteCorCol2Constant(cond)
-			// If one cond is ok, then this index is useful.
-			if checker.check(newCond) {
+		for _, cond := range newConds {
+			if checker.check(cond) {
 				usable = true
 				break
 			}
-			usable = true
 		}
 		if usable {
 			pkName = pkCol.ColName
@@ -1004,40 +888,58 @@ func (p *Selection) getUsableIndicesAndPk(ds *DataSource) ([]*model.IndexInfo, m
 	return usableIdxs, pkName
 }
 
-// buildScanByKeyAndCorCol will build a scan which the condition is controlled by this selection.
-func (p *Selection) buildScanByKeyAndCorCol() *physicalPlanInfo {
+func (p *Selection) makeScanController() *physicalPlanInfo {
+	newSel := *p
+	newSel.ScanController = true
+	var child PhysicalPlan
 	ds := p.children[0].(*DataSource)
-	conds := make([]expression.Expression, 0, len(p.Conditions))
-	for _, expr := range p.Conditions {
-		cond := pushDownNot(expr.Clone(), false, nil)
-		// In this way, we could use the code of refiner.go.
-		newCond := substituteCorCol2Constant(cond)
-		conds = append(conds, newCond)
-	}
-
-	// If pk is handle, we will try to build TableScan by pk, otherwise we will try to build IndexScan by index.
-	if p.usefulPkName.L == "" {
-		var finalInfo *physicalPlanInfo
-		for _, idx := range p.usefulIndices {
-			info, accessConds, idxConds, tblConds := buildIndexScanByKeyAndCorCol(ds, idx, conds, p.Conditions)
-			if info == nil {
-				continue
-			}
-			if finalInfo == nil || finalInfo.cost > info.cost {
-				p.ScanController = true
-				p.AccessConditions = accessConds
-				p.IdxConditions = idxConds
-				p.TblConditions = tblConds
-				finalInfo = info
-			}
+	newSel.UsefulTbl = ds.statisticTable
+	if p.usefulPkName.L != "" {
+		ts := &PhysicalTableScan{
+			Table:               ds.tableInfo,
+			Columns:             ds.Columns,
+			TableAsName:         ds.TableAsName,
+			DBName:              ds.DBName,
+			physicalTableSource: physicalTableSource{client: ds.ctx.GetClient()},
 		}
-		return p.appendSelToInfo(finalInfo)
+		ts.tp = Tbl
+		ts.allocator = ds.allocator
+		ts.SetSchema(ds.schema)
+		ts.initIDAndContext(ds.ctx)
+		if ds.ctx.Txn() != nil {
+			ts.readOnly = p.ctx.Txn().IsReadOnly()
+		} else {
+			ts.readOnly = true
+		}
+		child = ts
+	} else {
+		is := &PhysicalIndexScan{
+			Table:               ds.tableInfo,
+			Index:               p.UsefulIndices[0],
+			Columns:             ds.Columns,
+			TableAsName:         ds.TableAsName,
+			OutOfOrder:          true,
+			DBName:              ds.DBName,
+			physicalTableSource: physicalTableSource{client: ds.ctx.GetClient()},
+		}
+		is.tp = Idx
+		is.allocator = ds.allocator
+		is.SetSchema(ds.schema)
+		is.initIDAndContext(ds.ctx)
+		if is.ctx.Txn() != nil {
+			is.readOnly = p.ctx.Txn().IsReadOnly()
+		} else {
+			is.readOnly = true
+		}
+		child = is
 	}
-	info, accessCondition, filterCondition := buildTableScanByKeyAndCorCol(ds, p.usefulPkName, conds, p.Conditions)
-	p.ScanController = true
-	p.AccessConditions = accessCondition
-	p.TblConditions = filterCondition
-	return p.appendSelToInfo(info)
+	newSel.SetChildren(child)
+	info := &physicalPlanInfo{
+		p:     &newSel,
+		count: uint64(ds.statisticTable.Count),
+	}
+	info.cost = float64(info.count) * selectionFactor
+	return info
 }
 
 // convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
@@ -1051,12 +953,12 @@ func (p *Selection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanI
 	}
 	if !p.extractedUsefulThing {
 		if ds, ok := p.children[0].(*DataSource); ok {
-			p.getUsableIndicesAndPk(ds)
+			p.UsefulIndices, p.usefulPkName = p.getUsableIndicesAndPk(ds)
 		}
 		p.extractedUsefulThing = true
 	}
-	if p.usefulPkName.L != "" || len(p.usefulIndices) > 0 {
-		info = p.buildScanByKeyAndCorCol()
+	if p.usefulPkName.L != "" || len(p.UsefulIndices) > 0 {
+		info = p.makeScanController()
 		p.storePlanInfo(prop, info)
 		return info, nil
 	}

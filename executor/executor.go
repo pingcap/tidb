@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/plan/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
@@ -507,11 +508,11 @@ type SelectionExec struct {
 
 	// scanController will tell whether this selection need to
 	// control the condition of below scan executor.
-	scanController      bool
-	controllerInit      bool
-	accessConditions    []expression.Expression
-	idxFilterConditions []expression.Expression
-	tblFilterConditions []expression.Expression
+	scanController bool
+	controllerInit bool
+	Conditions     []expression.Expression
+	usableIndices  []*model.IndexInfo
+	statsTbl       *statistics.Table
 }
 
 // Schema implements the Executor Schema interface.
@@ -520,47 +521,62 @@ func (e *SelectionExec) Schema() *expression.Schema {
 }
 
 // initController will init the conditions of the below scan executor.
-// It will first substitute the correlated column to constant, then calc the range by new condition.
+// It will first substitute the correlated column to constant, then build range and filter by new conditions.
 func (e *SelectionExec) initController() error {
 	sc := e.ctx.GetSessionVars().StmtCtx
 	client := e.ctx.GetClient()
-	accesses := make([]expression.Expression, 0, len(e.accessConditions))
-	for _, cond := range e.accessConditions {
-		newCond, err := substituteCorCol2Constant(cond)
+	newConds := make([]expression.Expression, 0, len(e.Conditions))
+	for _, cond := range e.Conditions {
+		newCond, err := substituteCorCol2Constant(cond.Clone())
 		if err != nil {
 			return errors.Trace(err)
 		}
-		accesses = append(accesses, newCond)
+		newConds = append(newConds, newCond)
 	}
+
 	switch x := e.Src.(type) {
 	case *XSelectTableExec:
-		ranges, err := plan.BuildTableRange(accesses, sc)
+		accessCondition, restCondtion := plan.DetachTableScanConditions(newConds, x.tableInfo)
+		x.where, _, _ = plan.ExpressionsToPB(sc, restCondtion, client)
+		ranges, err := plan.BuildTableRange(accessCondition, sc)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		x.ranges = ranges
-		tblFilters := make([]expression.Expression, 0, len(e.tblFilterConditions))
-		for _, cond := range e.tblFilterConditions {
-			newCond, err := substituteCorCol2Constant(cond)
+	case *XSelectIndexExec:
+		var chosenPlan *plan.PhysicalIndexScan
+		var chosenRowCount uint64
+		for _, idx := range e.usableIndices {
+			is := *x.indexPlan
+			is.Index = idx
+			condsBackUp := make([]expression.Expression, 0, len(newConds))
+			for _, cond := range newConds {
+				condsBackUp = append(condsBackUp, cond.Clone())
+			}
+			is.AccessCondition, condsBackUp = plan.DetachIndexScanConditions(condsBackUp, &is)
+			idxConds, tblConds := plan.DetachIndexFilterConditions(condsBackUp, is.Index.Columns, is.Table)
+			is.IndexConditionPBExpr, _, _ = plan.ExpressionsToPB(sc, idxConds, client)
+			is.TableConditionPBExpr, _, _ = plan.ExpressionsToPB(sc, tblConds, client)
+			err := plan.BuildIndexRange(sc, &is)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			tblFilters = append(tblFilters, newCond)
+			rowCount, err := is.GetRowCountByIndexRanges(sc, e.statsTbl)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if chosenPlan == nil || chosenRowCount > rowCount {
+				chosenPlan = &is
+				chosenRowCount = rowCount
+			}
 		}
-		x.where, _, _ = plan.ExpressionsToPB(sc, tblFilters, client)
-		return nil
-	case *XSelectIndexExec:
-		x.indexPlan.AccessCondition = accesses
-		err := plan.BuildIndexRange(sc, x.indexPlan)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		x.indexPlan.IndexConditionPBExpr, _, _ = plan.ExpressionsToPB(sc, e.idxFilterConditions, client)
-		x.indexPlan.TableConditionPBExpr, _, _ = plan.ExpressionsToPB(sc, e.tblFilterConditions, client)
-		return nil
+		x.indexPlan = chosenPlan
+		x.where = x.indexPlan.TableConditionPBExpr
+		x.singleReadMode = plan.IsCoveringIndex(chosenPlan.Columns, chosenPlan.Index.Columns, chosenPlan.Table.PKIsHandle)
 	default:
 		return errors.New("Error type of PhysicalPlan")
 	}
+	return nil
 }
 
 // Next implements the Executor Next interface.

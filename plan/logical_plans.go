@@ -150,16 +150,15 @@ type Selection struct {
 	// If ScanController is true, then the child of this selection is a scan,
 	// which use pk or index. we will record the accessConditions, idxConditions,
 	// and tblConditions to control the below plan.
-	ScanController   bool
-	AccessConditions []expression.Expression
-	IdxConditions    []expression.Expression
-	TblConditions    []expression.Expression
+	ScanController bool
 
 	// Since one selection may call convert2PhysicalScan many times. We extract the PkName and indices
 	// used for scanController only once and store them to judge whether this selection can convert to
 	// scanController mode.
+	// The usefulTbl is used during execution phase.
 	usefulPkName         model.CIStr
-	usefulIndices        []*model.IndexInfo
+	UsefulIndices        []*model.IndexInfo
+	UsefulTbl            *statistics.Table
 	extractedUsefulThing bool
 }
 

@@ -168,7 +168,8 @@ func checkIndexCondition(condition expression.Expression, indexColumns []*model.
 	return true
 }
 
-func detachIndexFilterConditions(conditions []expression.Expression, indexColumns []*model.IndexColumn, table *model.TableInfo) ([]expression.Expression, []expression.Expression) {
+// DetachIndexFilterConditions will detach the access conditions from other conditions.
+func DetachIndexFilterConditions(conditions []expression.Expression, indexColumns []*model.IndexColumn, table *model.TableInfo) ([]expression.Expression, []expression.Expression) {
 	var pKName model.CIStr
 	if table.PKIsHandle {
 		for _, colInfo := range table.Columns {
@@ -189,7 +190,8 @@ func detachIndexFilterConditions(conditions []expression.Expression, indexColumn
 	return indexConditions, tableConditions
 }
 
-func detachIndexScanConditions(conditions []expression.Expression, indexScan *PhysicalIndexScan) ([]expression.Expression, []expression.Expression) {
+// DetachIndexScanConditions will detach the index filters from table filters.
+func DetachIndexScanConditions(conditions []expression.Expression, indexScan *PhysicalIndexScan) ([]expression.Expression, []expression.Expression) {
 	accessConds := make([]expression.Expression, len(indexScan.Index.Columns))
 	var filterConds []expression.Expression
 	// pushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
@@ -247,8 +249,8 @@ func detachIndexScanConditions(conditions []expression.Expression, indexScan *Ph
 	return accessConds, filterConds
 }
 
-// detachTableScanConditions distinguishes between access conditions and filter conditions from conditions.
-func detachTableScanConditions(conditions []expression.Expression, table *model.TableInfo) ([]expression.Expression, []expression.Expression) {
+// DetachTableScanConditions distinguishes between access conditions and filter conditions from conditions.
+func DetachTableScanConditions(conditions []expression.Expression, table *model.TableInfo) ([]expression.Expression, []expression.Expression) {
 	var pkName model.CIStr
 	if table.PKIsHandle {
 		for _, colInfo := range table.Columns {
