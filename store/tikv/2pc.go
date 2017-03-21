@@ -512,7 +512,7 @@ func (c *twoPhaseCommitter) execute() error {
 		err = errors.Errorf("Invalid transaction tso with start_ts=%v while commit_ts=%v",
 			c.startTS,
 			commitTS)
-		log.Warning(err)
+		log.Error(err)
 		return errors.Trace(err)
 	}
 	c.commitTS = commitTS
