@@ -48,7 +48,7 @@ func (h *rpcHandler) getGroupKey(ctx *selectContext) ([]byte, error) {
 // Update aggregate functions with rows.
 func (h *rpcHandler) aggregate(ctx *selectContext, handle int64, row map[int64][]byte) error {
 	// Put row data into evaluate context for later evaluation.
-	err := h.setColumnValueToCtx(ctx, handle, row, ctx.aggColumns)
+	err := setColumnValueToCtx(ctx.eval, handle, row, ctx.aggColumns)
 	if err != nil {
 		return errors.Trace(err)
 	}
