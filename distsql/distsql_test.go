@@ -15,7 +15,6 @@ package distsql
 
 import (
 	"bytes"
-	goctx "context"
 	"errors"
 	"io"
 	"io/ioutil"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
+	goctx "golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
