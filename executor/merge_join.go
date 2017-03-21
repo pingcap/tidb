@@ -43,7 +43,6 @@ type MergeJoinExec struct {
 	cursor        int
 	defaultValues []types.Datum
 	// Default for both side in case full join
-	defaultLeftRow  *Row
 	defaultRightRow *Row
 	outputBuf       []*Row
 
@@ -313,7 +312,7 @@ func (e *MergeJoinExec) outputJoinRow(leftRow *Row, rightRow *Row, preserve bool
 	} else {
 		joinedRow = makeJoinRow(leftRow, rightRow)
 	}
-	if e.otherFilter != nil && !preserve {
+	if e.otherFilter != nil {
 		matched, err := expression.EvalBool(e.otherFilter, joinedRow.Data, e.ctx)
 		if err != nil {
 			return err
@@ -321,6 +320,12 @@ func (e *MergeJoinExec) outputJoinRow(leftRow *Row, rightRow *Row, preserve bool
 		if matched {
 			e.outputBuf = append(e.outputBuf, joinedRow)
 			return nil
+		} else if preserve {
+			if e.flipSide {
+				joinedRow = makeJoinRow(e.defaultRightRow, leftRow)
+			} else {
+				joinedRow = makeJoinRow(leftRow, e.defaultRightRow)
+			}
 		}
 	}
 	e.outputBuf = append(e.outputBuf, joinedRow)
