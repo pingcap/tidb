@@ -1652,8 +1652,7 @@ func (b *builtinInstrSig) eval(row []types.Datum) (d types.Datum, err error) {
 		return d, nil
 	}
 
-	var str string
-	var substr string
+	var str, substr string
 	if str, err = args[0].ToString(); err != nil {
 		return d, errors.Trace(err)
 	}
@@ -1661,15 +1660,14 @@ func (b *builtinInstrSig) eval(row []types.Datum) (d types.Datum, err error) {
 		return d, errors.Trace(err)
 	}
 
+	// INSTR performs case **insensitive** search by default, while at least one argument is binary string
+	// we do case sensitive search.
 	var caseSensitive bool
-	// INSTR performs case **insensitive** search by default
-	// While at least one argument is binary string we do case sensitive search
 	if args[0].Kind() == types.KindBytes || args[1].Kind() == types.KindBytes {
 		caseSensitive = true
 	}
 
-	var pos int
-	var idx int
+	var pos, idx int
 	if caseSensitive {
 		idx = strings.Index(str, substr)
 	} else {
