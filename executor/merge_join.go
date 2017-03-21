@@ -37,22 +37,22 @@ type MergeJoinExec struct {
 	rightJoinKeys []*expression.Column
 	prepared      bool
 	leftFilter    expression.Expression
-	otherFilter     expression.Expression
-	schema          *expression.Schema
-	preserveLeft    bool // To perserve left side of the relation as in left outer join
-	cursor          int
-	defaultValues   []types.Datum
+	otherFilter   expression.Expression
+	schema        *expression.Schema
+	preserveLeft  bool // To perserve left side of the relation as in left outer join
+	cursor        int
+	defaultValues []types.Datum
 	// Default for both side in case full join
 	defaultLeftRow  *Row
 	defaultRightRow *Row
 	outputBuf       []*Row
 
-	leftRowBlock    rowBlockIterator
-	rightRowBlock   rowBlockIterator
-	leftRows        []*Row
-	rightRows       []*Row
-	desc            bool
-	flipSide        bool
+	leftRowBlock  rowBlockIterator
+	rightRowBlock rowBlockIterator
+	leftRows      []*Row
+	rightRows     []*Row
+	desc          bool
+	flipSide      bool
 }
 
 const rowBufferSize = 4096
@@ -344,7 +344,7 @@ func (e *MergeJoinExec) tryOutputLeftRows() error {
 }
 
 func (e *MergeJoinExec) computeJoin() (bool, error) {
-	e.outputBuf = e.outputBuf[0 : 0 : rowBufferSize]
+	e.outputBuf = e.outputBuf[0:0:rowBufferSize]
 
 	for {
 		var compareResult int
