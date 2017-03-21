@@ -15,7 +15,6 @@ package tikv
 
 import (
 	"bytes"
-	goctx "context"
 	"sync"
 
 	"github.com/juju/errors"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/pd-client"
+	goctx "golang.org/x/net/context"
 )
 
 // RegionCache caches Regions loaded from PD.

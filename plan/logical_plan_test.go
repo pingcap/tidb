@@ -14,7 +14,6 @@
 package plan
 
 import (
-	goctx "context"
 	"sort"
 	"testing"
 
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
+	goctx "golang.org/x/net/context"
 )
 
 var _ = Suite(&testPlanSuite{})

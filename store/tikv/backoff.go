@@ -21,7 +21,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	"golang.org/x/net/context"
+	goctx "golang.org/x/net/context"
 )
 
 const (
@@ -137,12 +137,12 @@ type Backoffer struct {
 	maxSleep   int
 	totalSleep int
 	errors     []error
-	ctx        context.Context
+	ctx        goctx.Context
 	types      []backoffType
 }
 
 // NewBackoffer creates a Backoffer with maximum sleep time(in ms).
-func NewBackoffer(maxSleep int, ctx context.Context) *Backoffer {
+func NewBackoffer(maxSleep int, ctx goctx.Context) *Backoffer {
 	return &Backoffer{
 		maxSleep: maxSleep,
 		ctx:      ctx,
@@ -150,9 +150,9 @@ func NewBackoffer(maxSleep int, ctx context.Context) *Backoffer {
 }
 
 // WithCancel returns a cancel function which, when called, would cancel backoffer's context.
-func (b *Backoffer) WithCancel() context.CancelFunc {
-	var cancel context.CancelFunc
-	b.ctx, cancel = context.WithCancel(b.ctx)
+func (b *Backoffer) WithCancel() goctx.CancelFunc {
+	var cancel goctx.CancelFunc
+	b.ctx, cancel = goctx.WithCancel(b.ctx)
 	return cancel
 }
 

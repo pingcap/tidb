@@ -20,7 +20,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
-	"golang.org/x/net/context"
+	goctx "golang.org/x/net/context"
 )
 
 type testLockSuite struct {
@@ -56,13 +56,13 @@ func (s *testLockSuite) lockKey(c *C, key, value, primaryKey, primaryValue []byt
 	c.Assert(err, IsNil)
 	tpc.keys = [][]byte{primaryKey, key}
 
-	err = tpc.prewriteKeys(NewBackoffer(prewriteMaxBackoff, context.Background()), tpc.keys)
+	err = tpc.prewriteKeys(NewBackoffer(prewriteMaxBackoff, goctx.Background()), tpc.keys)
 	c.Assert(err, IsNil)
 
 	if commitPrimary {
 		tpc.commitTS, err = s.store.oracle.GetTimestamp()
 		c.Assert(err, IsNil)
-		err = tpc.commitKeys(NewBackoffer(commitMaxBackoff, context.Background()), [][]byte{primaryKey})
+		err = tpc.commitKeys(NewBackoffer(commitMaxBackoff, goctx.Background()), [][]byte{primaryKey})
 		c.Assert(err, IsNil)
 	}
 	return txn.startTS, tpc.commitTS
@@ -179,14 +179,14 @@ func (s *testLockSuite) TestGetTxnStatus(c *C) {
 func (s *testLockSuite) prewriteTxn(c *C, txn *tikvTxn) {
 	committer, err := newTwoPhaseCommitter(txn)
 	c.Assert(err, IsNil)
-	err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff, context.Background()), committer.keys)
+	err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff, goctx.Background()), committer.keys)
 	c.Assert(err, IsNil)
 }
 
 func (s *testLockSuite) mustGetLock(c *C, key []byte) *Lock {
 	ver, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
-	bo := NewBackoffer(getMaxBackoff, context.Background())
+	bo := NewBackoffer(getMaxBackoff, goctx.Background())
 	req := &kvrpcpb.Request{
 		Type: kvrpcpb.MessageType_CmdGet,
 		CmdGetReq: &kvrpcpb.CmdGetRequest{

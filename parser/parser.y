@@ -48,6 +48,8 @@ import (
 	/*yy:token "%c"     */	identifier      "identifier"
 	/*yy:token "\"%c\"" */	stringLit       "string literal"
 	invalid		"a special token never used by parser, used by lexer to indicate error"
+	hintBegin	"hintBegin is a virtual token for optimizer hint grammar"
+	hintEnd		"hintEnd is a virtual token for optimizer hint grammar"
 	andand		"&&"
 	oror		"||"
 
@@ -663,6 +665,8 @@ import (
 	OnDuplicateKeyUpdate	"ON DUPLICATE KEY UPDATE value list"
 	Operand			"operand"
 	OptFull			"Full or empty"
+	OptimizerHint		"Optimizer Hint"
+	OptimizerHintOptional	"Optimizer Hint optional"
 	Order			"ORDER BY clause optional collation specification"
 	OrderBy			"ORDER BY clause"
 	ByItem			"BY item"
@@ -6656,5 +6660,16 @@ KillOrKillTiDB:
 	{
 		$$ = true
 	}
+
+OptimizerHintOptional:
+	{
+		$$ = nil
+	}
+|	hintBegin OptimizerHint hintEnd
+	{
+		$$ = $1
+	}
+
+OptimizerHint:{}
 
 %%

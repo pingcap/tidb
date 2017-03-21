@@ -14,7 +14,6 @@
 package localstore
 
 import (
-	goctx "context"
 	"fmt"
 	"io/ioutil"
 	"math"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
+	goctx "golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
