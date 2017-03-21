@@ -249,7 +249,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 func (s *testEvaluatorSuite) TestDateFormat(c *C) {
 	defer testleak.AfterTest(c)()
 
-	// Test case for https://github.com/pingcap/tidb/issues/
+	// Test case for https://github.com/pingcap/tidb/issues/2908
 	// SELECT DATE_FORMAT(null,'%Y-%M-%D')
 	args := []types.Datum{types.NewDatum(nil), types.NewStringDatum("%Y-%M-%D")}
 	fc := funcs[ast.DateFormat]
