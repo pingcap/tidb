@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
+	"os/exec"
 )
 
 // MergeJoinExec implements the merge join algorithm.
@@ -41,7 +42,7 @@ type MergeJoinExec struct {
 	otherFilter   expression.Expression
 	schema        *expression.Schema
 	preserveLeft  bool // To perserve left side of the relation as in left outer join
-	preserveRight bool // To perserve left side of the relation as in right outer join
+	preserveRight bool // To perserve right side of the relation as in right outer join
 	cursor        int
 	defaultValues []types.Datum
 	// Default for both side in case full join
@@ -129,13 +130,14 @@ func (b *joinBuilder) BuildMergeJoin(assumeSortedDesc bool) (*MergeJoinExec, err
 		leftJoinKeys = append(leftJoinKeys, lKey)
 		rightJoinKeys = append(rightJoinKeys, rKey)
 	}
-	exec := new(MergeJoinExec)
-	exec.ctx = b.context
-	exec.leftJoinKeys = leftJoinKeys
-	exec.rightJoinKeys = rightJoinKeys
-	exec.otherFilter = b.otherFilter
-	exec.schema = b.schema
-	exec.desc = assumeSortedDesc
+	exec := &MergeJoinExec{
+		ctx:			b.context,
+		leftJoinKeys:	leftJoinKeys,
+		rightJoinKeys:	rightJoinKeys,
+		otherFilter:	b.otherFilter,
+		schema:			b.schema,
+		desc:			assumeSortedDesc,
+	}
 
 	exec.leftRowBlock = rowBlockIterator{
 		ctx:      b.context,
@@ -151,8 +153,6 @@ func (b *joinBuilder) BuildMergeJoin(assumeSortedDesc bool) (*MergeJoinExec, err
 		joinKeys: rightJoinKeys,
 	}
 
-	exec.preserveLeft = false
-	exec.preserveRight = false
 	switch b.joinType {
 	case plan.LeftOuterJoin:
 		exec.leftRowBlock.filter = nil
@@ -208,12 +208,11 @@ func (rb *rowBlockIterator) nextRow() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		if row == nil {
-			rb.reader.Close()
-			return nil, nil
+			err = rb.reader.Close()
+			return nil, err
 		}
 		if rb.filter != nil {
-			var matched bool
-			matched, err = expression.EvalBool(rb.filter, row.Data, rb.ctx)
+			matched, err := expression.EvalBool(rb.filter, row.Data, rb.ctx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -380,6 +379,7 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 			}
 			continue
 		} else {
+			initLen := len(e.outputBuf)
 			for _, lRow := range e.leftRows {
 				// make up for outer join since we ignored single table conditions previously
 				if e.leftFilter != nil {
@@ -417,7 +417,10 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 			if err != nil {
 				return false, err
 			}
-			return true, nil
+			if initLen < len(e.outputBuf) {
+				return true, nil
+			}
+			return false, nil
 		}
 	}
 }

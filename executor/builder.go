@@ -384,7 +384,7 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 		return nil
 	}
 	if exec == nil {
-		b.err = ErrBuildExecutor.Gen("failed to generate merge join executor: %s", v.ID())
+		b.err = ErrBuildExecutor.GenByArgs("failed to generate merge join executor: ", v.ID())
 		return nil
 	}
 
