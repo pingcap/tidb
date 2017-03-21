@@ -318,12 +318,12 @@ func (b *builtinIsIPv4Sig) eval(row []types.Datum) (d types.Datum, err error) {
 }
 
 // mysql 'is_ipv4' don't accept:
-//   1. mapped IPv6 address such as '::ffff:1.2.3.4', while 'IP.To4' in pcakge 'net' do
-//   2. number-skipped IPv4 address such as '192..1.1', while system call 'inet_aton' do
+//   1. mapped IPv6 address such as '::ffff:1.2.3.4', while 'IP.To4' in pcakge 'net' do.
+//   2. number-skipped IPv4 address such as '192..1.1', while system call 'inet_aton' do.
 func mysqlIsIPv4(ip string) bool {
-	dots := 0
-	acc := 0
-	pd := true
+	// acc: keep the decimal value of each segment under check. should between 0 and 255 for valid IPv4 address.
+	// pd: sentinel for '.'
+	dots, acc, pd := 0, 0, true
 	for _, c := range ip {
 		switch {
 		case '0' <= c && c <= '9':
@@ -334,8 +334,7 @@ func mysqlIsIPv4(ip string) bool {
 			if dots > 3 || acc > 255 || pd {
 				return false
 			}
-			acc = 0
-			pd = true
+			acc, pd = 0, true
 		default:
 			return false
 		}
