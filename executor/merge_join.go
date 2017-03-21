@@ -419,7 +419,7 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 			if initLen < len(e.outputBuf) {
 				return true, nil
 			}
-			return false, nil
+			continue
 		}
 	}
 }
