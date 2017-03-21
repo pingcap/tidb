@@ -47,6 +47,7 @@ const (
 	KindInterface     byte = 15
 	KindMinNotNull    byte = 16
 	KindMaxValue      byte = 17
+	KindRaw           byte = 18
 )
 
 // Datum is a data box holds different kind of data.
@@ -289,6 +290,17 @@ func (d *Datum) GetMysqlTime() Time {
 func (d *Datum) SetMysqlTime(b Time) {
 	d.k = KindMysqlTime
 	d.x = b
+}
+
+// SetRaw sets raw value.
+func (d *Datum) SetRaw(b []byte) {
+	d.k = KindRaw
+	d.b = b
+}
+
+// GetRaw gets raw value.
+func (d *Datum) GetRaw() []byte {
+	return d.b
 }
 
 // GetValue gets the value of the datum of any kind.
@@ -1492,6 +1504,13 @@ func NewDurationDatum(dur Duration) (d Datum) {
 // NewDecimalDatum creates a new Datum form a MyDecimal value.
 func NewDecimalDatum(dec *MyDecimal) (d Datum) {
 	d.SetMysqlDecimal(dec)
+	return d
+}
+
+// NewRawDatum create a new Datum that is not decoded.
+func NewRawDatum(b []byte) (d Datum) {
+	d.k = KindRaw
+	d.b = b
 	return d
 }
 
