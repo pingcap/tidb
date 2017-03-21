@@ -155,7 +155,6 @@ type Selection struct {
 	// Since one selection may call convert2PhysicalScan many times. We extract the PkName and indices
 	// used for scanController only once and store them to judge whether this selection can convert to
 	// scanController mode.
-	// The usefulTbl is used during execution phase.
 	usefulPkName         model.CIStr
 	usefulIndices        []*model.IndexInfo
 	extractedUsefulThing bool

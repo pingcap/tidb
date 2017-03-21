@@ -24,8 +24,7 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-// GetRowCountByIndexRanges will return the row count calculated from ranges.
-func (is *PhysicalIndexScan) GetRowCountByIndexRanges(sc *variable.StatementContext, statsTbl *statistics.Table) (uint64, error) {
+func (is *PhysicalIndexScan) getRowCountByIndexRanges(sc *variable.StatementContext, statsTbl *statistics.Table) (uint64, error) {
 	var offset int
 	for i := range is.Table.Indices {
 		if is.Table.Indices[i].Name.L == is.Index.Name.L {

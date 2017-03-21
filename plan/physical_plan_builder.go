@@ -162,7 +162,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 			}
 			log.Warn("truncate error in buildIndexRange")
 		}
-		rowCount, err = is.GetRowCountByIndexRanges(sc, statsTbl)
+		rowCount, err = is.getRowCountByIndexRanges(sc, statsTbl)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -175,12 +175,11 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		rb := rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
 		is.Ranges = rb.buildIndexRanges(fullRange, types.NewFieldType(mysql.TypeNull))
 	}
-	is.DoubleRead = !IsCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
+	is.DoubleRead = !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
 	return resultPlan.matchProperty(prop, &physicalPlanInfo{count: rowCount}), nil
 }
 
-// IsCoveringIndex will check whether the pk and index can cover all the column.
-func IsCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexColumn, pkIsHandle bool) bool {
+func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexColumn, pkIsHandle bool) bool {
 	for _, colInfo := range columns {
 		if pkIsHandle && mysql.HasPriKeyFlag(colInfo.Flag) {
 			continue
@@ -945,7 +944,7 @@ func (p *Selection) makeScanController() *physicalPlanInfo {
 			if chosenPlan == nil || chosenPlan.accessEqualCount < is.accessEqualCount || chosenPlan.accessInAndEqCount < is.accessInAndEqCount {
 				chosenPlan = is
 			}
-			is.DoubleRead = IsCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
+			is.DoubleRead = isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
 		}
 		child = chosenPlan
 	}

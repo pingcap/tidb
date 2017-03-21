@@ -693,7 +693,7 @@ func (s *testPlanSuite) TestCoveringIndex(c *C) {
 			icl := ca.indexLens[i]
 			indexCols = append(indexCols, &model.IndexColumn{Name: model.NewCIStr(icn), Length: icl})
 		}
-		covering := IsCoveringIndex(columns, indexCols, pkIsHandle)
+		covering := isCoveringIndex(columns, indexCols, pkIsHandle)
 		c.Assert(covering, Equals, ca.isCovering)
 	}
 }

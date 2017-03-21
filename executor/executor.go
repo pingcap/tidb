@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/plan/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
@@ -512,7 +511,6 @@ type SelectionExec struct {
 	controllerInit bool
 	Conditions     []expression.Expression
 	usableIndices  []*model.IndexInfo
-	statsTbl       *statistics.Table
 }
 
 // Schema implements the Executor Schema interface.
