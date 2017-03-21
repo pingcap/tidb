@@ -37,23 +37,22 @@ type MergeJoinExec struct {
 	rightJoinKeys []*expression.Column
 	prepared      bool
 	leftFilter    expression.Expression
-	rightFilter   expression.Expression
-	otherFilter   expression.Expression
-	schema        *expression.Schema
-	preserveLeft  bool // To perserve left side of the relation as in left outer join
-	preserveRight bool // To perserve right side of the relation as in right outer join
-	cursor        int
-	defaultValues []types.Datum
+	otherFilter     expression.Expression
+	schema          *expression.Schema
+	preserveLeft    bool // To perserve left side of the relation as in left outer join
+	cursor          int
+	defaultValues   []types.Datum
 	// Default for both side in case full join
 	defaultLeftRow  *Row
 	defaultRightRow *Row
 	outputBuf       []*Row
 
-	leftRowBlock  rowBlockIterator
-	rightRowBlock rowBlockIterator
-	leftRows      []*Row
-	rightRows     []*Row
-	desc          bool
+	leftRowBlock    rowBlockIterator
+	rightRowBlock   rowBlockIterator
+	leftRows        []*Row
+	rightRows       []*Row
+	desc            bool
+	flipSide        bool
 }
 
 const rowBufferSize = 4096
@@ -129,27 +128,29 @@ func (b *joinBuilder) BuildMergeJoin(assumeSortedDesc bool) (*MergeJoinExec, err
 		leftJoinKeys = append(leftJoinKeys, lKey)
 		rightJoinKeys = append(rightJoinKeys, rKey)
 	}
-	exec := &MergeJoinExec{
-		ctx:           b.context,
-		leftJoinKeys:  leftJoinKeys,
-		rightJoinKeys: rightJoinKeys,
-		otherFilter:   b.otherFilter,
-		schema:        b.schema,
-		desc:          assumeSortedDesc,
-	}
-
-	exec.leftRowBlock = rowBlockIterator{
+	leftRowBlock := rowBlockIterator{
 		ctx:      b.context,
 		reader:   b.leftChild,
 		filter:   b.leftFilter,
 		joinKeys: leftJoinKeys,
 	}
 
-	exec.rightRowBlock = rowBlockIterator{
+	rightRowBlock := rowBlockIterator{
 		ctx:      b.context,
 		reader:   b.rightChild,
 		filter:   b.rightFilter,
 		joinKeys: rightJoinKeys,
+	}
+
+	exec := &MergeJoinExec{
+		ctx:           b.context,
+		leftJoinKeys:  leftJoinKeys,
+		rightJoinKeys: rightJoinKeys,
+		leftRowBlock:  leftRowBlock,
+		rightRowBlock: rightRowBlock,
+		otherFilter:   b.otherFilter,
+		schema:        b.schema,
+		desc:          assumeSortedDesc,
 	}
 
 	switch b.joinType {
@@ -159,16 +160,18 @@ func (b *joinBuilder) BuildMergeJoin(assumeSortedDesc bool) (*MergeJoinExec, err
 		exec.preserveLeft = true
 		exec.defaultRightRow = &Row{Data: b.defaultValues}
 	case plan.RightOuterJoin:
-		exec.rightRowBlock.filter = nil
-		exec.rightFilter = b.rightFilter
-		exec.preserveRight = true
-		exec.defaultLeftRow = &Row{Data: b.defaultValues}
+		exec.leftRowBlock = rightRowBlock
+		exec.rightRowBlock = leftRowBlock
+		exec.leftRowBlock.filter = nil
+		exec.leftFilter = b.leftFilter
+		exec.preserveLeft = true
+		exec.defaultRightRow = &Row{Data: b.defaultValues}
+		exec.flipSide = true
+		exec.leftJoinKeys = rightJoinKeys
+		exec.rightJoinKeys = leftJoinKeys
 	case plan.InnerJoin:
-		exec.preserveLeft = false
-		exec.preserveRight = false
 	default:
 		exec.preserveLeft = true
-		exec.preserveRight = true
 		panic("Full Join not implemented for Merge Join Strategy.")
 	}
 	return exec, nil
@@ -261,10 +264,14 @@ func (e *MergeJoinExec) Close() error {
 	e.outputBuf = nil
 
 	lErr := e.leftRowBlock.reader.Close()
-	rErr := e.rightRowBlock.reader.Close()
 	if lErr != nil {
 		return lErr
 	}
+	rErr := e.rightRowBlock.reader.Close()
+	if rErr != nil {
+		return rErr
+	}
+
 	return rErr
 }
 
@@ -299,37 +306,60 @@ func compareKeys(stmtCtx *variable.StatementContext,
 	return 0, nil
 }
 
-func (e *MergeJoinExec) outputJoinRow(leftRow *Row, rightRow *Row) error {
-	var err error
-	joinedRow := makeJoinRow(leftRow, rightRow)
-	if e.otherFilter != nil {
-		matched, err := expression.EvalBool(e.otherFilter, joinedRow.Data, e.ctx)
-		if err != nil && matched {
-			e.outputBuf = append(e.outputBuf, joinedRow)
-		}
+func (e *MergeJoinExec) outputJoinRow(leftRow *Row, rightRow *Row, preserve bool) error {
+	var joinedRow *Row
+	if e.flipSide {
+		joinedRow = makeJoinRow(rightRow, leftRow)
 	} else {
-		e.outputBuf = append(e.outputBuf, joinedRow)
+		joinedRow = makeJoinRow(leftRow, rightRow)
 	}
-	return err
+	if e.otherFilter != nil && !preserve {
+		matched, err := expression.EvalBool(e.otherFilter, joinedRow.Data, e.ctx)
+		if err != nil {
+			return err
+		}
+		if matched {
+			e.outputBuf = append(e.outputBuf, joinedRow)
+			return nil
+		}
+	}
+	e.outputBuf = append(e.outputBuf, joinedRow)
+	return nil
+}
+
+func (e *MergeJoinExec) tryOutputLeftRows() error {
+	if e.preserveLeft {
+		initLen := len(e.outputBuf)
+		for _, lRow := range e.leftRows {
+			err := e.outputJoinRow(lRow, e.defaultRightRow, true)
+			if err != nil {
+				return err
+			}
+		}
+		if initLen < len(e.outputBuf) {
+			return nil
+		}
+	}
+	return nil
 }
 
 func (e *MergeJoinExec) computeJoin() (bool, error) {
-	e.outputBuf = e.outputBuf[0:0:rowBufferSize]
+	e.outputBuf = e.outputBuf[0 : 0 : rowBufferSize]
 
 	for {
 		var compareResult int
 		var err error
 		if e.leftRows == nil || e.rightRows == nil {
-			if e.leftRows == nil && e.rightRows != nil && e.preserveRight {
-				// right remains and right/full outer join
-				compareResult = 1
-			} else if e.rightRows == nil && e.leftRows != nil && e.preserveLeft {
-				// left remains and left/full outer join
+			if e.leftRows != nil && e.rightRows == nil && e.preserveLeft {
+				// left remains and left outer join
+				// -1 will make loop continue for left
 				compareResult = -1
 			} else {
+				// inner join or left is nil
 				return false, nil
 			}
 		} else {
+			// no nil for either side
 			compareResult, err = compareKeys(e.stmtCtx, e.leftRows[0], e.leftJoinKeys, e.rightRows[0], e.rightJoinKeys)
 
 			if e.desc {
@@ -342,32 +372,16 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 
 		// Before moving on, in case of outer join, output the side of the row
 		if compareResult > 0 {
-			initLen := len(e.outputBuf)
-			if e.preserveRight {
-				for _, rRow := range e.rightRows {
-					err = e.outputJoinRow(e.defaultLeftRow, rRow)
-					if err != nil {
-						return false, err
-					}
-				}
-			}
 			e.rightRows, err = e.rightRowBlock.nextBlock()
 			if err != nil {
 				return false, errors.Trace(err)
 			}
-			if initLen < len(e.outputBuf) {
-				return true, nil
-			}
 			continue
 		} else if compareResult < 0 {
 			initLen := len(e.outputBuf)
-			if e.preserveLeft {
-				for _, lRow := range e.leftRows {
-					err = e.outputJoinRow(lRow, e.defaultRightRow)
-					if err != nil {
-						return false, err
-					}
-				}
+			err := e.tryOutputLeftRows()
+			if err != nil {
+				return false, err
 			}
 			e.leftRows, err = e.leftRowBlock.nextBlock()
 			if err != nil {
@@ -379,6 +393,8 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 			continue
 		} else {
 			initLen := len(e.outputBuf)
+
+			// Compute cross product when both sides matches
 			for _, lRow := range e.leftRows {
 				// make up for outer join since we ignored single table conditions previously
 				if e.leftFilter != nil {
@@ -388,26 +404,32 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 						return false, errors.Trace(err)
 					}
 					if !matched {
+						if e.preserveLeft {
+							err := e.outputJoinRow(lRow, e.defaultRightRow, true)
+							if err != nil {
+								return false, errors.Trace(err)
+							}
+						}
 						continue
 					}
 				}
+				initInnerLen := len(e.outputBuf)
 				for _, rRow := range e.rightRows {
-					if e.rightFilter != nil {
-						var matched bool
-						matched, err = expression.EvalBool(e.rightFilter, rRow.Data, e.ctx)
-						if err != nil {
-							return false, errors.Trace(err)
-						}
-						if !matched {
-							continue
-						}
-					}
-					err = e.outputJoinRow(lRow, rRow)
+					err = e.outputJoinRow(lRow, rRow, false)
 					if err != nil {
 						return false, err
 					}
 				}
+				// Even if caught up for left filter
+				// no matching but it's outer join
+				if initInnerLen == len(e.outputBuf) {
+					err := e.outputJoinRow(lRow, e.defaultRightRow, true)
+					if err != nil {
+						return false, errors.Trace(err)
+					}
+				}
 			}
+
 			e.leftRows, err = e.leftRowBlock.nextBlock()
 			if err != nil {
 				return false, err
