@@ -285,6 +285,8 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 0")
 	result = tk.MustQuery("select sum(c1 in (select * from t2)) from t1")
 	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select sum(c1) k from (select * from t1 union all select * from t2)t group by c1 * 2 order by k")
+	result.Check(testkit.Rows("1", "3", "4"))
 }
 
 func (s *testSuite) TestStreamAgg(c *C) {

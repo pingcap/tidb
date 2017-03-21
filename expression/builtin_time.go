@@ -1506,6 +1506,8 @@ func (b *builtinUnixTimestampSig) eval(row []types.Datum) (d types.Datum, err er
 		}
 	case types.KindMysqlTime:
 		t = args[0].GetMysqlTime()
+	case types.KindNull:
+		return
 	default:
 		return d, errors.Errorf("Unkonwn args type for unix_timestamp %d", args[0].Kind())
 	}

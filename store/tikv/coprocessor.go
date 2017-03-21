@@ -15,7 +15,6 @@ package tikv
 
 import (
 	"bytes"
-	goctx "context"
 	"fmt"
 	"io"
 	"sync"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/bytespool"
 	"github.com/pingcap/tipb/go-tipb"
+	goctx "golang.org/x/net/context"
 )
 
 // CopClient is coprocessor client.
