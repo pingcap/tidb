@@ -183,17 +183,12 @@ func (b *builtinFloorSig) eval(row []types.Datum) (d types.Datum, err error) {
 		return args[0], nil
 	}
 
-	// have to set IgnoreTruncate to true in order to getValidPrefix
 	sc := b.ctx.GetSessionVars().StmtCtx
-	tmpIT := sc.IgnoreTruncate
-	sc.IgnoreTruncate = true
 	f, err := args[0].ToFloat64(sc)
 	if err != nil {
-		sc.IgnoreTruncate = tmpIT
 		return d, errors.Trace(err)
 	}
 
-	sc.IgnoreTruncate = tmpIT
 	d.SetFloat64(math.Floor(f))
 	return
 }
