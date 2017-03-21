@@ -360,6 +360,44 @@ func (s *testEvaluatorSuite) TestSign(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestDegrees(c *C) {
+	defer testleak.AfterTest(c)()
+
+	sc := s.ctx.GetSessionVars().StmtCtx
+	tmpIT := sc.IgnoreTruncate
+	sc.IgnoreTruncate = true
+	defer func() {
+		sc.IgnoreTruncate = tmpIT
+	}()
+
+	tbl := []struct {
+		Arg interface{}
+		Ret interface{}
+	}{
+		{nil, nil},
+		{int64(0), float64(0)},
+		{int64(1), float64(57.29577951308232)},
+		{float64(1), float64(57.29577951308232)},
+		{float64(math.Pi), float64(180)},
+		{float64(-math.Pi / 2), float64(-90)},
+		{"", float64(0)},
+		{"-2", float64(-114.59155902616465)},
+		{"abc", float64(0)},
+		{"+1abc", float64(57.29577951308232)},
+	}
+
+	Dtbl := tblToDtbl(tbl)
+
+	for _, t := range Dtbl {
+		fc := funcs[ast.Degrees]
+		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("arg:%v", t["arg"]))
+	}
+}
+
 func (s *testEvaluatorSuite) TestSqrt(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
@@ -395,6 +433,37 @@ func (s *testEvaluatorSuite) TestPi(c *C) {
 	c.Assert(pi, testutil.DatumEquals, types.NewDatum(math.Pi))
 }
 
+func (s *testEvaluatorSuite) TestRadians(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Arg interface{}
+		Ret interface{}
+	}{
+		{nil, nil},
+		{0, float64(0)},
+		{float64(180), float64(math.Pi)},
+		{-360, -2 * float64(math.Pi)},
+		{"180", float64(math.Pi)},
+	}
+
+	Dtbl := tblToDtbl(tbl)
+	for _, t := range Dtbl {
+		fc := funcs[ast.Radians]
+		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
+	}
+
+	invalidArg := "notNum"
+	fc := funcs[ast.Radians]
+	f, err := fc.getFunction(datumsToConstants([]types.Datum{types.NewDatum(invalidArg)}), s.ctx)
+	c.Assert(err, IsNil)
+	_, err = f.eval(nil)
+	c.Assert(err, NotNil)
+}
+
 func (s *testEvaluatorSuite) TestAcos(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
@@ -408,14 +477,13 @@ func (s *testEvaluatorSuite) TestAcos(c *C) {
 	}
 
 	Dtbl := tblToDtbl(tbl)
-
 	for _, t := range Dtbl {
 		fc := funcs[ast.Acos]
 		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
 		c.Assert(err, IsNil)
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("arg:%v", t["Arg"]))
+		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
 }
 
