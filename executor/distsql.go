@@ -14,7 +14,6 @@
 package executor
 
 import (
-	goctx "context"
 	"fmt"
 	"math"
 	"sort"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
+	goctx "golang.org/x/net/context"
 )
 
 const (

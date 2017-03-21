@@ -342,11 +342,13 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		} else {
 			tp = types.NewFieldType(mysql.TypeLonglong)
 		}
-	case "ln", "log", "log2", "log10", "sqrt", "pi", "exp":
+	case "ln", "log", "log2", "log10", "sqrt", "pi", "exp", "degrees":
 		tp = types.NewFieldType(mysql.TypeDouble)
 	case "acos", "asin", "atan":
 		tp = types.NewFieldType(mysql.TypeDouble)
 	case "pow", "power", "rand":
+		tp = types.NewFieldType(mysql.TypeDouble)
+	case "radians":
 		tp = types.NewFieldType(mysql.TypeDouble)
 	case "curdate", "current_date", "date", "from_days":
 		tp = types.NewFieldType(mysql.TypeDate)
@@ -373,12 +375,13 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = types.NewFieldType(mysql.TypeDatetime)
 	case "dayname", "version", "database", "user", "current_user", "schema",
 		"concat", "concat_ws", "left", "lcase", "lower", "repeat",
-		"replace", "ucase", "upper", "convert", "substring",
+		"replace", "ucase", "upper", "convert", "substring", "elt",
 		"substring_index", "trim", "ltrim", "rtrim", "reverse", "hex", "unhex",
-		"date_format", "rpad", "lpad", "char_func", "conv", "make_set":
+		"date_format", "rpad", "lpad", "char_func", "conv", "make_set", "oct", "uuid":
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
-	case "strcmp", "isnull", "bit_length", "char_length", "character_length", "crc32", "timestampdiff", "sign":
+	case "strcmp", "isnull", "bit_length", "char_length", "character_length", "crc32", "timestampdiff", "sign",
+		"is_ipv6", "ord":
 		tp = types.NewFieldType(mysql.TypeLonglong)
 	case "connection_id":
 		tp = types.NewFieldType(mysql.TypeLonglong)
@@ -409,6 +412,8 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp.Flen = 40
 	case ast.Coalesce:
 		tp = aggArgsType(x.Args)
+	case ast.AnyValue:
+		tp = x.Args[0].GetType()
 	default:
 		tp = types.NewFieldType(mysql.TypeUnspecified)
 	}
