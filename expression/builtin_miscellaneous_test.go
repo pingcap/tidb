@@ -13,8 +13,6 @@
 package expression
 
 import (
-	"fmt"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/util/testutil"
@@ -65,7 +63,6 @@ func (s *testEvaluatorSuite) TestInetNtoa(c *C) {
 		c.Assert(err, IsNil)
 		result, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		fmt.Println(test.ip)
 		c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
 	}
 
