@@ -125,12 +125,19 @@ func (p *Pools) PutConn(c *Conn) {
 
 // Close closes the pool.
 func (p *Pools) Close() {
-	p.m.Lock()
-	defer p.m.Unlock()
+	var pools []*Pool
 
+	p.m.Lock()
 	for _, pool := range p.m.mpools {
-		pool.Close()
+		pools = append(pools, pool)
+	}
+	p.m.Unlock()
+
+	for _, p := range pools {
+		p.Close()
 	}
 
+	p.m.Lock()
 	p.m.mpools = map[string]*Pool{}
+	p.m.Unlock()
 }
