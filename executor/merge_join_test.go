@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 )
 
-
 func checkMergeAndRun(tk *testkit.TestKit, c *C, sql string) *testkit.Result {
 	explainedSql := "explain " + sql
 	result := tk.MustQuery(explainedSql)
@@ -33,7 +32,6 @@ func checkMergeAndRun(tk *testkit.TestKit, c *C, sql string) *testkit.Result {
 	}
 	return tk.MustQuery(sql)
 }
-
 
 func (s *testSuite) TestMergeJoin(c *C) {
 	defer func() {
@@ -113,7 +111,6 @@ func (s *testSuite) TestMergeJoin(c *C) {
 	result = tk.MustQuery("select /*+ TIDB_SMJ(t,t1) */ t.c1 from t , t1 where t.c1 = t1.c1")
 	result.Check(testkit.Rows("1"))
 }
-
 
 func (s *testSuite) TestCornerCasesMergeJoin(c *C) {
 	defer func() {

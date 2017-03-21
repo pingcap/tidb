@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
-	"os/exec"
 )
 
 // MergeJoinExec implements the merge join algorithm.
@@ -131,12 +130,12 @@ func (b *joinBuilder) BuildMergeJoin(assumeSortedDesc bool) (*MergeJoinExec, err
 		rightJoinKeys = append(rightJoinKeys, rKey)
 	}
 	exec := &MergeJoinExec{
-		ctx:			b.context,
-		leftJoinKeys:	leftJoinKeys,
-		rightJoinKeys:	rightJoinKeys,
-		otherFilter:	b.otherFilter,
-		schema:			b.schema,
-		desc:			assumeSortedDesc,
+		ctx:           b.context,
+		leftJoinKeys:  leftJoinKeys,
+		rightJoinKeys: rightJoinKeys,
+		otherFilter:   b.otherFilter,
+		schema:        b.schema,
+		desc:          assumeSortedDesc,
 	}
 
 	exec.leftRowBlock = rowBlockIterator{
