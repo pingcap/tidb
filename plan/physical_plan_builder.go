@@ -1009,9 +1009,9 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 		return info, nil
 	}
 	if p.JoinType == InnerJoin || p.JoinType == LeftOuterJoin {
-		info, err = p.Join.convert2PhysicalPlanLeft(prop, p.JoinType == InnerJoin)
+		info, err = p.Join.convert2PhysicalPlanLeft(&requiredProperty{}, p.JoinType == InnerJoin)
 	} else {
-		info, err = p.Join.convert2PhysicalPlanSemi(prop)
+		info, err = p.Join.convert2PhysicalPlanSemi(&requiredProperty{})
 	}
 	if err != nil {
 		return info, errors.Trace(err)
@@ -1032,6 +1032,7 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 		info.cost = math.MaxFloat64
 		info.p = nil
 	}
+	info = enforceProperty(prop, info)
 	p.storePlanInfo(prop, info)
 	return info, nil
 }
