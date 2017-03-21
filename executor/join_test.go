@@ -426,6 +426,8 @@ func (s *testSuite) TestSubquery(c *C) {
 	result.Check(testkit.Rows("1 0", "2 2"))
 	result = tk.MustQuery("select *, 0 < any (select count(id) from s where id = t.id) from t")
 	result.Check(testkit.Rows("1 0", "2 1"))
+	result = tk.MustQuery("select (select count(*) from t k where t.id = id) from s, t where t.id = s.id limit 1")
+	result.Check(testkit.Rows("1"))
 }
 
 func (s *testSuite) TestInSubquery(c *C) {
