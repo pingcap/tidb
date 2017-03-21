@@ -893,7 +893,6 @@ func (p *Selection) makeScanController() *physicalPlanInfo {
 	newSel.ScanController = true
 	var child PhysicalPlan
 	ds := p.children[0].(*DataSource)
-	newSel.UsefulTbl = ds.statisticTable
 	if p.usefulPkName.L != "" {
 		ts := &PhysicalTableScan{
 			Table:               ds.tableInfo,
@@ -913,25 +912,42 @@ func (p *Selection) makeScanController() *physicalPlanInfo {
 		}
 		child = ts
 	} else {
-		is := &PhysicalIndexScan{
-			Table:               ds.tableInfo,
-			Index:               p.UsefulIndices[0],
-			Columns:             ds.Columns,
-			TableAsName:         ds.TableAsName,
-			OutOfOrder:          true,
-			DBName:              ds.DBName,
-			physicalTableSource: physicalTableSource{client: ds.ctx.GetClient()},
+		var chosenPlan *PhysicalIndexScan
+		sc := ds.ctx.GetSessionVars().StmtCtx
+		client := ds.ctx.GetClient()
+		for _, idx := range p.usefulIndices {
+			condsBackUp := make([]expression.Expression, 0, len(p.Conditions))
+			for _, cond := range p.Conditions {
+				condsBackUp = append(condsBackUp, cond.Clone())
+			}
+			is := &PhysicalIndexScan{
+				Table:               ds.tableInfo,
+				Index:               idx,
+				Columns:             ds.Columns,
+				TableAsName:         ds.TableAsName,
+				OutOfOrder:          true,
+				DBName:              ds.DBName,
+				physicalTableSource: physicalTableSource{client: ds.ctx.GetClient()},
+			}
+			is.tp = Idx
+			is.allocator = ds.allocator
+			is.SetSchema(ds.schema)
+			is.initIDAndContext(ds.ctx)
+			if is.ctx.Txn() != nil {
+				is.readOnly = p.ctx.Txn().IsReadOnly()
+			} else {
+				is.readOnly = true
+			}
+			is.AccessCondition, condsBackUp = DetachIndexScanConditions(condsBackUp, is)
+			idxConds, tblConds := DetachIndexFilterConditions(condsBackUp, idx.Columns, is.Table)
+			is.IndexConditionPBExpr, is.indexFilterConditions, _ = ExpressionsToPB(sc, idxConds, client)
+			is.TableConditionPBExpr, is.tableFilterConditions, _ = ExpressionsToPB(sc, tblConds, client)
+			if chosenPlan == nil || chosenPlan.accessEqualCount < is.accessEqualCount || chosenPlan.accessInAndEqCount < is.accessInAndEqCount {
+				chosenPlan = is
+			}
+			is.DoubleRead = IsCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
 		}
-		is.tp = Idx
-		is.allocator = ds.allocator
-		is.SetSchema(ds.schema)
-		is.initIDAndContext(ds.ctx)
-		if is.ctx.Txn() != nil {
-			is.readOnly = p.ctx.Txn().IsReadOnly()
-		} else {
-			is.readOnly = true
-		}
-		child = is
+		child = chosenPlan
 	}
 	newSel.SetChildren(child)
 	info := &physicalPlanInfo{
@@ -953,11 +969,11 @@ func (p *Selection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanI
 	}
 	if !p.extractedUsefulThing {
 		if ds, ok := p.children[0].(*DataSource); ok {
-			p.UsefulIndices, p.usefulPkName = p.getUsableIndicesAndPk(ds)
+			p.usefulIndices, p.usefulPkName = p.getUsableIndicesAndPk(ds)
 		}
 		p.extractedUsefulThing = true
 	}
-	if p.usefulPkName.L != "" || len(p.UsefulIndices) > 0 {
+	if p.usefulPkName.L != "" || len(p.usefulIndices) > 0 {
 		info = p.makeScanController()
 		p.storePlanInfo(prop, info)
 		return info, nil

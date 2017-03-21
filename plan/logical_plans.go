@@ -157,8 +157,7 @@ type Selection struct {
 	// scanController mode.
 	// The usefulTbl is used during execution phase.
 	usefulPkName         model.CIStr
-	UsefulIndices        []*model.IndexInfo
-	UsefulTbl            *statistics.Table
+	usefulIndices        []*model.IndexInfo
 	extractedUsefulThing bool
 }
 

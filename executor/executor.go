@@ -544,35 +544,15 @@ func (e *SelectionExec) initController() error {
 		}
 		x.ranges = ranges
 	case *XSelectIndexExec:
-		var chosenPlan *plan.PhysicalIndexScan
-		var chosenRowCount uint64
-		for _, idx := range e.usableIndices {
-			is := *x.indexPlan
-			is.Index = idx
-			condsBackUp := make([]expression.Expression, 0, len(newConds))
-			for _, cond := range newConds {
-				condsBackUp = append(condsBackUp, cond.Clone())
-			}
-			is.AccessCondition, condsBackUp = plan.DetachIndexScanConditions(condsBackUp, &is)
-			idxConds, tblConds := plan.DetachIndexFilterConditions(condsBackUp, is.Index.Columns, is.Table)
-			is.IndexConditionPBExpr, _, _ = plan.ExpressionsToPB(sc, idxConds, client)
-			is.TableConditionPBExpr, _, _ = plan.ExpressionsToPB(sc, tblConds, client)
-			err := plan.BuildIndexRange(sc, &is)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			rowCount, err := is.GetRowCountByIndexRanges(sc, e.statsTbl)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if chosenPlan == nil || chosenRowCount > rowCount {
-				chosenPlan = &is
-				chosenRowCount = rowCount
-			}
+		x.indexPlan.AccessCondition, newConds = plan.DetachIndexScanConditions(newConds, x.indexPlan)
+		idxConds, tblConds := plan.DetachIndexFilterConditions(newConds, x.indexPlan.Index.Columns, x.indexPlan.Table)
+		x.indexPlan.IndexConditionPBExpr, _, _ = plan.ExpressionsToPB(sc, idxConds, client)
+		x.indexPlan.TableConditionPBExpr, _, _ = plan.ExpressionsToPB(sc, tblConds, client)
+		err := plan.BuildIndexRange(sc, x.indexPlan)
+		if err != nil {
+			return errors.Trace(err)
 		}
-		x.indexPlan = chosenPlan
 		x.where = x.indexPlan.TableConditionPBExpr
-		x.singleReadMode = plan.IsCoveringIndex(chosenPlan.Columns, chosenPlan.Index.Columns, chosenPlan.Table.PKIsHandle)
 	default:
 		return errors.New("Error type of PhysicalPlan")
 	}
@@ -596,11 +576,18 @@ func (e *SelectionExec) Next() (*Row, error) {
 		if srcRow == nil {
 			return nil, nil
 		}
-		match, err := expression.EvalBool(e.Condition, srcRow.Data, e.ctx)
-		if err != nil {
-			return nil, errors.Trace(err)
+		allMatch := true
+		for _, cond := range e.Conditions {
+			match, err := expression.EvalBool(cond, srcRow.Data, e.ctx)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if !match {
+				allMatch = false
+				break
+			}
 		}
-		if match {
+		if allMatch {
 			return srcRow, nil
 		}
 	}

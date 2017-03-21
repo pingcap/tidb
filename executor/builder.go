@@ -472,13 +472,10 @@ func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor
 func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
 	exec := &SelectionExec{
 		Src:            b.build(v.Children()[0]),
-		Condition:      expression.ComposeCNFCondition(b.ctx, v.Conditions...),
 		schema:         v.Schema(),
 		ctx:            b.ctx,
 		scanController: v.ScanController,
 		Conditions:     v.Conditions,
-		usableIndices:  v.UsefulIndices,
-		statsTbl:       v.UsefulTbl,
 	}
 	return exec
 }
