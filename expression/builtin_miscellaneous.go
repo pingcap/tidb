@@ -309,7 +309,7 @@ func (b *builtinIsIPv4Sig) eval(row []types.Datum) (d types.Datum, err error) {
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	if mysqlIsIPv4(s) {
+	if isIPv4(s) {
 		d.SetInt64(1)
 	} else {
 		d.SetInt64(0)
@@ -317,10 +317,9 @@ func (b *builtinIsIPv4Sig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, nil
 }
 
-// mysql 'is_ipv4' don't accept:
-//   1. mapped IPv6 address such as '::ffff:1.2.3.4', while 'IP.To4' in pcakge 'net' do.
-//   2. number-skipped IPv4 address such as '192..1.1', while system call 'inet_aton' do.
-func mysqlIsIPv4(ip string) bool {
+// isIPv4 checks IPv4 address which satisfying the format A.B.C.D(0<=A/B/C/D<=255).
+// mapped IPv6 address like '::ffff:1.2.3.4' would return false
+func isIPv4(ip string) bool {
 	// acc: keep the decimal value of each segment under check. should between 0 and 255 for valid IPv4 address.
 	// pd: sentinel for '.'
 	dots, acc, pd := 0, 0, true
@@ -408,7 +407,7 @@ func (b *builtinIsIPv6Sig) eval(row []types.Datum) (d types.Datum, err error) {
 		return d, errors.Trace(err)
 	}
 	ip := net.ParseIP(s)
-	if ip != nil && !mysqlIsIPv4(s) {
+	if ip != nil && !isIPv4(s) {
 		d.SetInt64(1)
 	} else {
 		d.SetInt64(0)
