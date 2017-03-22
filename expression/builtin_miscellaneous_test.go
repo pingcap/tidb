@@ -18,7 +18,32 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
+	"strings"
 )
+
+func (s *testEvaluatorSuite) TestUUID(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.UUID]
+	f, err := fc.getFunction(datumsToConstants(types.MakeDatums()), s.ctx)
+	r, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	parts := strings.Split(r.GetString(), "-")
+	c.Assert(len(parts), Equals, 5)
+	for i, p := range parts {
+		switch i {
+		case 0:
+			c.Assert(len(p), Equals, 8)
+		case 1:
+			fallthrough
+		case 2:
+			fallthrough
+		case 3:
+			c.Assert(len(p), Equals, 4)
+		case 4:
+			c.Assert(len(p), Equals, 12)
+		}
+	}
+}
 
 func (s *testEvaluatorSuite) TestAnyValue(c *C) {
 	defer testleak.AfterTest(c)()
