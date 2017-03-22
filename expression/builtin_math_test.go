@@ -105,6 +105,14 @@ func (s *testEvaluatorSuite) TestExp(c *C) {
 
 func (s *testEvaluatorSuite) TestFloor(c *C) {
 	defer testleak.AfterTest(c)()
+
+	sc := s.ctx.GetSessionVars().StmtCtx
+	tmpIT := sc.IgnoreTruncate
+	sc.IgnoreTruncate = true
+	defer func() {
+		sc.IgnoreTruncate = tmpIT
+	}()
+
 	for _, t := range []struct {
 		num interface{}
 		ret interface{}

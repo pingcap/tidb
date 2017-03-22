@@ -14,8 +14,6 @@
 package distsql
 
 import (
-	"io"
-	"io/ioutil"
 	"time"
 
 	"github.com/juju/errors"
@@ -24,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/bytespool"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -101,23 +98,21 @@ func (r *selectResult) fetch(ctx goctx.Context) {
 		queryHistgram.WithLabelValues(label).Observe(duration.Seconds())
 	}()
 	for {
-		reader, err := r.resp.Next()
+		resultSubset, err := r.resp.Next()
 		if err != nil {
 			r.results <- resultWithErr{err: errors.Trace(err)}
 			return
 		}
-		if reader == nil {
+		if resultSubset == nil {
 			return
 		}
 		pr := &partialResult{
 			index:      r.index,
 			fields:     r.fields,
-			reader:     reader,
 			aggregate:  r.aggregate,
 			ignoreData: r.ignoreData,
-			done:       make(chan error, 1),
 		}
-		go pr.fetch()
+		pr.unmarshal(resultSubset)
 
 		select {
 		case r.results <- resultWithErr{result: pr}:
@@ -157,44 +152,25 @@ type partialResult struct {
 	index      bool
 	aggregate  bool
 	fields     []*types.FieldType
-	reader     io.ReadCloser
 	resp       *tipb.SelectResponse
 	chunkIdx   int
 	cursor     int
 	dataOffset int64
 	ignoreData bool
-
-	done    chan error
-	fetched bool
 }
 
-func (pr *partialResult) fetch() {
-	defer close(pr.done)
+func (pr *partialResult) unmarshal(resultSubset []byte) error {
 	pr.resp = new(tipb.SelectResponse)
-	var b []byte
-	var err error
-	if rc, ok := pr.reader.(*bytespool.ReadCloser); ok {
-		b = rc.SharedBytes()
-	} else {
-		b, err = ioutil.ReadAll(pr.reader)
-		if err != nil {
-			pr.done <- errors.Trace(err)
-			return
-		}
-	}
-
-	err = pr.resp.Unmarshal(b)
+	err := pr.resp.Unmarshal(resultSubset)
 	if err != nil {
-		pr.done <- errors.Trace(err)
-		return
+		return errors.Trace(err)
 	}
 
 	if pr.resp.Error != nil {
-		pr.done <- errInvalidResp.Gen("[%d %s]", pr.resp.Error.GetCode(), pr.resp.Error.GetMsg())
-		return
+		return errInvalidResp.Gen("[%d %s]", pr.resp.Error.GetCode(), pr.resp.Error.GetMsg())
 	}
 
-	pr.done <- nil
+	return nil
 }
 
 var dummyData = make([]types.Datum, 0)
@@ -202,13 +178,6 @@ var dummyData = make([]types.Datum, 0)
 // Next returns the next row of the sub result.
 // If no more row to return, data would be nil.
 func (pr *partialResult) Next() (handle int64, data []types.Datum, err error) {
-	if !pr.fetched {
-		err = <-pr.done
-		pr.fetched = true
-		if err != nil {
-			return 0, nil, err
-		}
-	}
 	if len(pr.resp.Chunks) > 0 {
 		// For new resp rows structure.
 		chunk := pr.getChunk()
@@ -279,7 +248,7 @@ func (pr *partialResult) getChunk() *tipb.Chunk {
 
 // Close closes the sub result.
 func (pr *partialResult) Close() error {
-	return pr.reader.Close()
+	return nil
 }
 
 // Select do a select request, returns SelectResult.
@@ -354,11 +323,6 @@ func composeRequest(req *tipb.SelectRequest, keyRanges []kv.KeyRange, concurrenc
 		return nil, errors.Trace(err)
 	}
 	return kvReq, nil
-}
-
-// SupportExpression checks if the expression is supported by the client.
-func SupportExpression(client kv.Client, expr *tipb.Expr) bool {
-	return false
 }
 
 // XAPI error codes.

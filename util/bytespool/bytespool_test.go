@@ -14,8 +14,6 @@
 package bytespool
 
 import (
-	"io/ioutil"
-	"math/rand"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -51,18 +49,4 @@ func (s *testBytesPoolSuite) TestBytesPool(c *C) {
 	}
 	c.Assert(bp.Free(make([]byte, 100)), Equals, -1)
 	c.Assert(bp.Free(make([]byte, kilo+1)), Equals, -1)
-}
-
-func (s *testBytesPoolSuite) TestReadCloser(c *C) {
-	bp := NewBytesPool()
-	origin, data := bp.Alloc(1000)
-	rand.Read(data)
-	r := NewReadCloser(bp, origin, data)
-	data2, _ := ioutil.ReadAll(r)
-	c.Assert(data2, BytesEquals, data)
-	origin, data = bp.Alloc(1000)
-	rand.Read(data)
-	r = NewReadCloser(bp, origin, data)
-	data2 = r.SharedBytes()
-	c.Assert(data2, BytesEquals, data)
 }

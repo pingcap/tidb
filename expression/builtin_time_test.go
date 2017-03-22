@@ -249,6 +249,16 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 func (s *testEvaluatorSuite) TestDateFormat(c *C) {
 	defer testleak.AfterTest(c)()
 
+	// Test case for https://github.com/pingcap/tidb/issues/2908
+	// SELECT DATE_FORMAT(null,'%Y-%M-%D')
+	args := []types.Datum{types.NewDatum(nil), types.NewStringDatum("%Y-%M-%D")}
+	fc := funcs[ast.DateFormat]
+	f, err := fc.getFunction(datumsToConstants(args), s.ctx)
+	c.Assert(err, IsNil)
+	v, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.IsNull(), Equals, true)
+
 	tblDate := []struct {
 		Input  []string
 		Expect interface{}
