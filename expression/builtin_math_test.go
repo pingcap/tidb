@@ -558,12 +558,12 @@ func (s *testEvaluatorSuite) TestCot(c *C) {
 
 	Dtbl := tblToDtbl(tbl)
 
-	for idx, t := range Dtbl {
+	for _, t := range Dtbl {
 		fc := funcs[ast.Atan]
 		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
 		c.Assert(err, IsNil)
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("arg:%v", idx, t["Arg"]))
+		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("arg:%v", t["Arg"]))
 	}
 }
