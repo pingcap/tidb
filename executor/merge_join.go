@@ -122,8 +122,17 @@ func (b *joinBuilder) DefaultVals(defaultValues []types.Datum) *joinBuilder {
 func (b *joinBuilder) BuildMergeJoin(assumeSortedDesc bool) (*MergeJoinExec, error) {
 	var leftJoinKeys, rightJoinKeys []*expression.Column
 	for _, eqCond := range b.eqConditions {
-		lKey, _ := eqCond.GetArgs()[0].(*expression.Column)
-		rKey, _ := eqCond.GetArgs()[1].(*expression.Column)
+		if len(eqCond.GetArgs()) != 2 {
+			return nil, errors.Annotate(ErrBuildExecutor, "invalid join key for equal condition")
+		}
+		lKey, ok := eqCond.GetArgs()[0].(*expression.Column)
+		if !ok {
+			return nil, errors.Annotate(ErrBuildExecutor, "left side of join key must be column for merge join")
+		}
+		rKey, ok := eqCond.GetArgs()[1].(*expression.Column)
+		if !ok {
+			return nil, errors.Annotate(ErrBuildExecutor, "right side of join key must be column for merge join")
+		}
 		leftJoinKeys = append(leftJoinKeys, lKey)
 		rightJoinKeys = append(rightJoinKeys, rKey)
 	}
@@ -208,8 +217,7 @@ func (rb *rowBlockIterator) nextRow() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		if row == nil {
-			err = rb.reader.Close()
-			return nil, errors.Trace(err)
+			return nil, nil
 		}
 		if rb.filter != nil {
 			matched, err := expression.EvalBool(rb.filter, row.Data, rb.ctx)
