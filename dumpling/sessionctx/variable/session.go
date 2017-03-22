@@ -162,21 +162,25 @@ type SessionVars struct {
 	TimeZone *time.Location
 
 	SQLMode mysql.SQLMode
+
+	// BuildStatsConcurrencyVar is used to control statistics building concurrency.
+	BuildStatsConcurrencyVar int
 }
 
 // NewSessionVars creates a session vars object.
 func NewSessionVars() *SessionVars {
 	return &SessionVars{
-		Users:                make(map[string]string),
-		Systems:              make(map[string]string),
-		PreparedStmts:        make(map[uint32]interface{}),
-		PreparedStmtNameToID: make(map[string]uint32),
-		TxnCtx:               &TransactionContext{},
-		RetryInfo:            &RetryInfo{},
-		StrictSQLMode:        true,
-		Status:               mysql.ServerStatusAutocommit,
-		StmtCtx:              new(StatementContext),
-		AllowAggPushDown:     true,
+		Users:                    make(map[string]string),
+		Systems:                  make(map[string]string),
+		PreparedStmts:            make(map[uint32]interface{}),
+		PreparedStmtNameToID:     make(map[string]uint32),
+		TxnCtx:                   &TransactionContext{},
+		RetryInfo:                &RetryInfo{},
+		StrictSQLMode:            true,
+		Status:                   mysql.ServerStatusAutocommit,
+		StmtCtx:                  new(StatementContext),
+		AllowAggPushDown:         true,
+		BuildStatsConcurrencyVar: 4,
 	}
 }
 
