@@ -370,6 +370,21 @@ type PhysicalHashJoin struct {
 	DefaultValues []types.Datum
 }
 
+// PhysicalMergeJoin represents merge join for inner/ outer join.
+type PhysicalMergeJoin struct {
+	basePlan
+
+	JoinType JoinType
+
+	EqualConditions []*expression.ScalarFunction
+	LeftConditions  []expression.Expression
+	RightConditions []expression.Expression
+	OtherConditions []expression.Expression
+
+	DefaultValues []types.Datum
+	Desc          bool
+}
+
 // PhysicalHashSemiJoin represents hash join for semi join.
 type PhysicalHashSemiJoin struct {
 	basePlan
@@ -599,6 +614,12 @@ func (p *PhysicalHashJoin) Copy() PhysicalPlan {
 	return &np
 }
 
+// Copy implements the PhysicalPlan Copy interface.
+func (p *PhysicalMergeJoin) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
 // MarshalJSON implements json.Marshaler interface.
 func (p *PhysicalHashJoin) MarshalJSON() ([]byte, error) {
 	leftChild := p.children[0].(PhysicalPlan)
@@ -629,6 +650,40 @@ func (p *PhysicalHashJoin) MarshalJSON() ([]byte, error) {
 			"\"rightPlan\": \"%s\""+
 			"}",
 		eqConds, leftConds, rightConds, otherConds, leftChild.ID(), rightChild.ID()))
+	return buffer.Bytes(), nil
+}
+
+// MarshalJSON implements json.Marshaler interface.
+func (p *PhysicalMergeJoin) MarshalJSON() ([]byte, error) {
+	leftChild := p.children[0].(PhysicalPlan)
+	rightChild := p.children[1].(PhysicalPlan)
+	eqConds, err := json.Marshal(p.EqualConditions)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	leftConds, err := json.Marshal(p.LeftConditions)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	rightConds, err := json.Marshal(p.RightConditions)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	otherConds, err := json.Marshal(p.OtherConditions)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	buffer := bytes.NewBufferString("{")
+	buffer.WriteString(fmt.Sprintf(
+		"\"eqCond\": %s,\n "+
+			"\"leftCond\": %s,\n"+
+			"\"rightCond\": %s,\n"+
+			"\"otherCond\": %s,\n"+
+			"\"leftPlan\": \"%s\",\n "+
+			"\"rightPlan\": \"%s\",\n"+
+			"\"desc\": \"%v\""+
+			"}",
+		eqConds, leftConds, rightConds, otherConds, leftChild.ID(), rightChild.ID(), p.Desc))
 	return buffer.Bytes(), nil
 }
 
