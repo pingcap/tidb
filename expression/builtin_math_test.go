@@ -546,10 +546,10 @@ func (s *testEvaluatorSuite) TestAtan(c *C) {
 	}
 }
 
-func (s *testEvaluatorSuite) TestCot(c *c) {
+func (s *testEvaluatorSuite) TestCot(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
-		Arg []interface{}
+		Arg interface{}
 		Ret interface{}
 	}{
 		{float64(12), float64(-1.5726734063977)},
