@@ -468,10 +468,10 @@ func substituteCorCol2Constant(expr expression.Expression) (expression.Expressio
 		newArgs := make([]expression.Expression, 0, len(x.GetArgs()))
 		for _, arg := range x.GetArgs() {
 			newArg, err := substituteCorCol2Constant(arg)
-			_, ok := newArg.(*expression.Constant)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			_, ok := newArg.(*expression.Constant)
 			newArgs = append(newArgs, newArg)
 			allConstant = allConstant && ok
 		}
@@ -510,7 +510,6 @@ type SelectionExec struct {
 	scanController bool
 	controllerInit bool
 	Conditions     []expression.Expression
-	usableIndices  []*model.IndexInfo
 }
 
 // Schema implements the Executor Schema interface.
@@ -552,7 +551,7 @@ func (e *SelectionExec) initController() error {
 		}
 		x.where = x.indexPlan.TableConditionPBExpr
 	default:
-		return errors.New("Error type of PhysicalPlan")
+		return errors.Errorf("Error type of Executor: %T", x)
 	}
 	return nil
 }

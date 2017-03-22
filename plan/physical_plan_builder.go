@@ -822,14 +822,14 @@ func substituteCorCol2Constant(cond expression.Expression) expression.Expression
 // checking whether this index or pk is contained in one condition that has correlated column,
 // and whether this condition can be used as an access condition.
 func (p *Selection) getUsableIndicesAndPk(ds *DataSource) ([]*model.IndexInfo, model.CIStr) {
-	indices, _ := availableIndices(ds.indexHints, ds.tableInfo)
+	indices, includeTableScan := availableIndices(ds.indexHints, ds.tableInfo)
 	var usableIdxs []*model.IndexInfo
 	var newConds []expression.Expression
 	for _, expr := range p.Conditions {
-		cond := pushDownNot(expr.Clone(), false, nil)
-		if !cond.IsCorrelated() {
+		if !expr.IsCorrelated() {
 			continue
 		}
+		cond := pushDownNot(expr.Clone(), false, nil)
 		newConds = append(newConds, substituteCorCol2Constant(cond))
 	}
 	for _, idx := range indices {
@@ -857,7 +857,7 @@ func (p *Selection) getUsableIndicesAndPk(ds *DataSource) ([]*model.IndexInfo, m
 		}
 	}
 	var pkName model.CIStr
-	if ds.tableInfo.PKIsHandle {
+	if ds.tableInfo.PKIsHandle && includeTableScan {
 		var pkCol *expression.Column
 		for i, col := range ds.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
