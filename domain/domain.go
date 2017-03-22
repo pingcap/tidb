@@ -407,6 +407,11 @@ func (do *Domain) PrivilegeHandle() *privileges.Handle {
 	return do.privHandle
 }
 
+// StatsHandle returns the statistic handle.
+func (do *Domain) StatsHandle() *statscache.Handle {
+	return do.statsHandle
+}
+
 func (do *Domain) loadTableStats() error {
 	ver, err := do.store.CurrentVersion()
 	if err != nil {

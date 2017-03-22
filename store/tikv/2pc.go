@@ -506,6 +506,15 @@ func (c *twoPhaseCommitter) execute() error {
 		log.Warnf("2PC get commitTS failed: %v, tid: %d", err, c.startTS)
 		return errors.Trace(err)
 	}
+
+	// check commitTS
+	if commitTS <= c.startTS {
+		err = errors.Errorf("Invalid transaction tso with start_ts=%v while commit_ts=%v",
+			c.startTS,
+			commitTS)
+		log.Error(err)
+		return errors.Trace(err)
+	}
 	c.commitTS = commitTS
 	if err := c.checkSchemaValid(); err != nil {
 		return errors.Trace(err)
