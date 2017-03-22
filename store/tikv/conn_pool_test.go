@@ -93,3 +93,42 @@ func (s *testPoolSuite) TestPool(c *C) {
 	_, err = p.GetConn()
 	c.Assert(err, NotNil)
 }
+
+func (s *testPoolSuite) TestPoolsClose(c *C) {
+	count := 0
+	addr := "127.0.0.1:6379"
+	f := func(addr string) (*Conn, error) {
+		count++
+		return &Conn{
+			addr:   addr,
+			closed: false,
+			nc:     &testDummyConn{}}, nil
+	}
+
+	capability := 4
+	pools := NewPools(capability, f)
+
+	conns := make([]*Conn, 0, capability)
+	for i := 0; i < capability; i++ {
+		conn, err := pools.GetConn(addr)
+		c.Assert(err, IsNil)
+		conns = append(conns, conn)
+	}
+
+	c.Assert(count, Equals, capability)
+
+	for i := 0; i < len(conns)-1; i++ {
+		pools.PutConn(conns[i])
+	}
+
+	ch := make(chan struct{})
+	var checkErr error
+	go func() {
+		<-ch
+		_, checkErr = pools.GetConn(addr)
+		pools.PutConn(conns[capability-1])
+	}()
+	close(ch)
+	pools.Close()
+	c.Assert(checkErr, NotNil)
+}

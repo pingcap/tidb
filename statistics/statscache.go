@@ -37,6 +37,12 @@ type Handle struct {
 	lastVersion uint64
 }
 
+// Clear the statsTblCache, only for test.
+func (h *Handle) Clear() {
+	statsTblCache = statsCache{cache: map[int64]*statsInfo{}}
+	h.lastVersion = 0
+}
+
 // NewHandle creates a Handle for update stats.
 func NewHandle(ctx context.Context) *Handle {
 	return &Handle{ctx: ctx}
@@ -44,7 +50,7 @@ func NewHandle(ctx context.Context) *Handle {
 
 // Update reads stats meta from store and updates the stats map.
 func (h *Handle) Update(m *meta.Meta, is infoschema.InfoSchema) error {
-	sql := fmt.Sprintf("SELECT version, table_id from mysql.stats_meta where version > %d order by version", h.lastVersion)
+	sql := fmt.Sprintf("SELECT version, table_id, count from mysql.stats_meta where version > %d order by version", h.lastVersion)
 	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -62,6 +68,7 @@ func (h *Handle) Update(m *meta.Meta, is infoschema.InfoSchema) error {
 		// statistics can not be used any more, we give it a nil one.
 		if err != nil {
 			log.Errorf("Error occured when convert pb table for table id %d", tableID)
+			tbl = PseudoTable(tableInfo)
 		}
 		SetStatisticsTableCache(tableID, tbl, version)
 		h.lastVersion = version
