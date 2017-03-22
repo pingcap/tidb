@@ -984,6 +984,50 @@ func (s *testEvaluatorSuite) TestLpad(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestInstr(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Args []interface{}
+		Want interface{}
+	}{
+		{[]interface{}{"foobarbar", "bar"}, 4},
+		{[]interface{}{"xbar", "foobar"}, 0},
+
+		{[]interface{}{123456234, 234}, 2},
+		{[]interface{}{123456, 567}, 0},
+		{[]interface{}{1e10, 1e2}, 1},
+		{[]interface{}{1.234, ".234"}, 2},
+		{[]interface{}{1.234, ""}, 1},
+		{[]interface{}{"", 123}, 0},
+		{[]interface{}{"", ""}, 1},
+
+		{[]interface{}{"中文美好", "美好"}, 3},
+		{[]interface{}{"中文美好", "世界"}, 0},
+		{[]interface{}{"中文abc", "a"}, 3},
+
+		{[]interface{}{"live LONG and prosper", "long"}, 6},
+
+		{[]interface{}{"not BINARY string", "binary"}, 5},
+		{[]interface{}{[]byte("BINARY string"), []byte("binary")}, 0},
+		{[]interface{}{[]byte("BINARY string"), []byte("BINARY")}, 1},
+		{[]interface{}{[]byte("中文abc"), []byte("abc")}, 7},
+
+		{[]interface{}{"foobar", nil}, nil},
+		{[]interface{}{nil, "foobar"}, nil},
+		{[]interface{}{nil, nil}, nil},
+	}
+
+	Dtbl := tblToDtbl(tbl)
+	instr := funcs[ast.Instr]
+	for i, t := range Dtbl {
+		f, err := instr.getFunction(datumsToConstants(t["Args"]), s.ctx)
+		c.Assert(err, IsNil)
+		got, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
+	}
+}
+
 func (s *testEvaluatorSuite) TestMakeSet(c *C) {
 	defer testleak.AfterTest(c)()
 
