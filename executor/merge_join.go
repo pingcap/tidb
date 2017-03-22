@@ -39,19 +39,19 @@ type MergeJoinExec struct {
 	leftFilter    expression.Expression
 	otherFilter   expression.Expression
 	schema        *expression.Schema
-	preserveLeft  bool // To perserve left side of the relation as in left outer join
+	preserveLeft  bool // To preserve left side of the relation as in left outer join
 	cursor        int
 	defaultValues []types.Datum
+
 	// Default for both side in case full join
 	defaultRightRow *Row
 	outputBuf       []*Row
-
-	leftRowBlock  *rowBlockIterator
-	rightRowBlock *rowBlockIterator
-	leftRows      []*Row
-	rightRows     []*Row
-	desc          bool
-	flipSide      bool
+	leftRowBlock    *rowBlockIterator
+	rightRowBlock   *rowBlockIterator
+	leftRows        []*Row
+	rightRows       []*Row
+	desc            bool
+	flipSide        bool
 }
 
 const rowBufferSize = 4096
@@ -305,28 +305,30 @@ func compareKeys(stmtCtx *variable.StatementContext,
 	return 0, nil
 }
 
-func (e *MergeJoinExec) outputJoinRow(leftRow *Row, rightRow *Row, preserve bool) error {
+func (e *MergeJoinExec) outputJoinRow(leftRow *Row, rightRow *Row) {
 	var joinedRow *Row
 	if e.flipSide {
 		joinedRow = makeJoinRow(rightRow, leftRow)
 	} else {
 		joinedRow = makeJoinRow(leftRow, rightRow)
 	}
+	e.outputBuf = append(e.outputBuf, joinedRow)
+}
+
+func (e *MergeJoinExec) outputFilteredJoinRow(leftRow *Row, rightRow *Row) error {
+	var joinedRow *Row
+	if e.flipSide {
+		joinedRow = makeJoinRow(rightRow, leftRow)
+	} else {
+		joinedRow = makeJoinRow(leftRow, rightRow)
+	}
+
 	if e.otherFilter != nil {
 		matched, err := expression.EvalBool(e.otherFilter, joinedRow.Data, e.ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if matched {
-			e.outputBuf = append(e.outputBuf, joinedRow)
-			return nil
-		} else if preserve {
-			if e.flipSide {
-				joinedRow = makeJoinRow(e.defaultRightRow, leftRow)
-			} else {
-				joinedRow = makeJoinRow(leftRow, e.defaultRightRow)
-			}
-		} else {
+		if !matched {
 			return nil
 		}
 	}
@@ -337,10 +339,7 @@ func (e *MergeJoinExec) outputJoinRow(leftRow *Row, rightRow *Row, preserve bool
 func (e *MergeJoinExec) tryOutputLeftRows() error {
 	if e.preserveLeft {
 		for _, lRow := range e.leftRows {
-			err := e.outputJoinRow(lRow, e.defaultRightRow, true)
-			if err != nil {
-				return errors.Trace(err)
-			}
+			e.outputJoinRow(lRow, e.defaultRightRow)
 		}
 	}
 	return nil
@@ -358,10 +357,7 @@ func (e *MergeJoinExec) computeCrossProduct() error {
 			if !matched {
 				// as all right join converted to left, we only output left side if no match and continue
 				if e.preserveLeft {
-					err := e.outputJoinRow(lRow, e.defaultRightRow, true)
-					if err != nil {
-						return errors.Trace(err)
-					}
+					e.outputJoinRow(lRow, e.defaultRightRow)
 				}
 				continue
 			}
@@ -369,7 +365,7 @@ func (e *MergeJoinExec) computeCrossProduct() error {
 		// Do the real cross product calculation
 		initInnerLen := len(e.outputBuf)
 		for _, rRow := range e.rightRows {
-			err = e.outputJoinRow(lRow, rRow, false)
+			err = e.outputFilteredJoinRow(lRow, rRow)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -377,10 +373,7 @@ func (e *MergeJoinExec) computeCrossProduct() error {
 		// Even if caught up for left filter
 		// no matching but it's outer join
 		if e.preserveLeft && initInnerLen == len(e.outputBuf) {
-			err := e.outputJoinRow(lRow, e.defaultRightRow, true)
-			if err != nil {
-				return errors.Trace(err)
-			}
+			e.outputJoinRow(lRow, e.defaultRightRow)
 		}
 	}
 
@@ -403,14 +396,14 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 				return false, nil
 			}
 		} else {
-			// no nil for either side
+			// no nil for either side, compare by first elements in row buffer since its guaranteed
 			compareResult, err = compareKeys(e.stmtCtx, e.leftRows[0], e.leftJoinKeys, e.rightRows[0], e.rightJoinKeys)
 
-			if e.desc {
-				compareResult = -compareResult
-			}
 			if err != nil {
 				return false, errors.Trace(err)
+			}
+			if e.desc {
+				compareResult = -compareResult
 			}
 		}
 
@@ -433,7 +426,7 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 			if initLen < len(e.outputBuf) {
 				return true, nil
 			}
-		} else {
+		} else { // key matched, try join with other conditions
 			initLen := len(e.outputBuf)
 
 			// Compute cross product when both sides matches
