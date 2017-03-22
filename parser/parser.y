@@ -48,6 +48,8 @@ import (
 	/*yy:token "%c"     */	identifier      "identifier"
 	/*yy:token "\"%c\"" */	stringLit       "string literal"
 	invalid		"a special token never used by parser, used by lexer to indicate error"
+	hintBegin	"hintBegin is a virtual token for optimizer hint grammar"
+	hintEnd		"hintEnd is a virtual token for optimizer hint grammar"
 	andand		"&&"
 	oror		"||"
 
@@ -4792,9 +4794,9 @@ TableOptimizerHints:
 	{
 		$$ = nil
 	}
-|	TableOptimizerHintList
+|	hintBegin TableOptimizerHintList hintEnd
 	{
-		$$ = $1
+		$$ = $2
 	}
 
 HintTableList:

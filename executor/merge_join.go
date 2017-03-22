@@ -44,7 +44,7 @@ type MergeJoinExec struct {
 	defaultValues []types.Datum
 	// Default for both side in case full join
 	defaultRightRow *Row
-	outputBuf     []*Row
+	outputBuf       []*Row
 
 	leftRowBlock  *rowBlockIterator
 	rightRowBlock *rowBlockIterator
@@ -170,7 +170,7 @@ func (b *joinBuilder) BuildMergeJoin(assumeSortedDesc bool) (*MergeJoinExec, err
 		exec.rightJoinKeys = leftJoinKeys
 	case plan.InnerJoin:
 	default:
-		panic("Full Join not implemented for Merge Join Strategy.")
+		return nil, errors.Annotate(ErrBuildExecutor, "unknown join type")
 	}
 	return exec, nil
 }
@@ -209,7 +209,7 @@ func (rb *rowBlockIterator) nextRow() (*Row, error) {
 		}
 		if row == nil {
 			err = rb.reader.Close()
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		if rb.filter != nil {
 			matched, err := expression.EvalBool(rb.filter, row.Data, rb.ctx)
@@ -263,11 +263,12 @@ func (e *MergeJoinExec) Close() error {
 
 	lErr := e.leftRowBlock.reader.Close()
 	if lErr != nil {
-		return lErr
+		e.rightRowBlock.reader.Close()
+		return errors.Trace(lErr)
 	}
 	rErr := e.rightRowBlock.reader.Close()
 	if rErr != nil {
-		return rErr
+		return errors.Trace(rErr)
 	}
 
 	return nil
@@ -314,7 +315,7 @@ func (e *MergeJoinExec) outputJoinRow(leftRow *Row, rightRow *Row, preserve bool
 	if e.otherFilter != nil {
 		matched, err := expression.EvalBool(e.otherFilter, joinedRow.Data, e.ctx)
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
 		if matched {
 			e.outputBuf = append(e.outputBuf, joinedRow)
@@ -335,22 +336,59 @@ func (e *MergeJoinExec) outputJoinRow(leftRow *Row, rightRow *Row, preserve bool
 
 func (e *MergeJoinExec) tryOutputLeftRows() error {
 	if e.preserveLeft {
-		initLen := len(e.outputBuf)
 		for _, lRow := range e.leftRows {
 			err := e.outputJoinRow(lRow, e.defaultRightRow, true)
 			if err != nil {
-				return err
+				return errors.Trace(err)
 			}
-		}
-		if initLen < len(e.outputBuf) {
-			return nil
 		}
 	}
 	return nil
 }
 
+func (e *MergeJoinExec) computeCrossProduct() error {
+	var err error
+	for _, lRow := range e.leftRows {
+		// make up for outer join since we ignored single table conditions previously
+		if e.leftFilter != nil {
+			matched, err := expression.EvalBool(e.leftFilter, lRow.Data, e.ctx)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if !matched {
+				// as all right join converted to left, we only output left side if no match and continue
+				if e.preserveLeft {
+					err := e.outputJoinRow(lRow, e.defaultRightRow, true)
+					if err != nil {
+						return errors.Trace(err)
+					}
+				}
+				continue
+			}
+		}
+		// Do the real cross product calculation
+		initInnerLen := len(e.outputBuf)
+		for _, rRow := range e.rightRows {
+			err = e.outputJoinRow(lRow, rRow, false)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		// Even if caught up for left filter
+		// no matching but it's outer join
+		if e.preserveLeft && initInnerLen == len(e.outputBuf) {
+			err := e.outputJoinRow(lRow, e.defaultRightRow, true)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+
+	return nil
+}
+
 func (e *MergeJoinExec) computeJoin() (bool, error) {
-	e.outputBuf = e.outputBuf[0 : 0 : rowBufferSize]
+	e.outputBuf = e.outputBuf[0:0:rowBufferSize]
 
 	for {
 		var compareResult int
@@ -386,7 +424,7 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 			initLen := len(e.outputBuf)
 			err := e.tryOutputLeftRows()
 			if err != nil {
-				return false, err
+				return false, errors.Trace(err)
 			}
 			e.leftRows, err = e.leftRowBlock.nextBlock()
 			if err != nil {
@@ -399,49 +437,18 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 			initLen := len(e.outputBuf)
 
 			// Compute cross product when both sides matches
-			for _, lRow := range e.leftRows {
-				// make up for outer join since we ignored single table conditions previously
-				if e.leftFilter != nil {
-					var matched bool
-					matched, err = expression.EvalBool(e.leftFilter, lRow.Data, e.ctx)
-					if err != nil {
-						return false, errors.Trace(err)
-					}
-					if !matched {
-						// as all right join converted to left, we only output left side if no match and continue
-						if e.preserveLeft {
-							err := e.outputJoinRow(lRow, e.defaultRightRow, true)
-							if err != nil {
-								return false, errors.Trace(err)
-							}
-						}
-						continue
-					}
-				}
-				initInnerLen := len(e.outputBuf)
-				for _, rRow := range e.rightRows {
-					err = e.outputJoinRow(lRow, rRow, false)
-					if err != nil {
-						return false, err
-					}
-				}
-				// Even if caught up for left filter
-				// no matching but it's outer join
-				if e.preserveLeft && initInnerLen == len(e.outputBuf) {
-					err := e.outputJoinRow(lRow, e.defaultRightRow, true)
-					if err != nil {
-						return false, errors.Trace(err)
-					}
-				}
+			err := e.computeCrossProduct()
+			if err != nil {
+				return false, errors.Trace(err)
 			}
 
 			e.leftRows, err = e.leftRowBlock.nextBlock()
 			if err != nil {
-				return false, err
+				return false, errors.Trace(err)
 			}
 			e.rightRows, err = e.rightRowBlock.nextBlock()
 			if err != nil {
-				return false, err
+				return false, errors.Trace(err)
 			}
 			if initLen < len(e.outputBuf) {
 				return true, nil

@@ -617,7 +617,7 @@ func (p *Join) convert2PhysicalMergeJoin(parentProp *requiredProperty, lProp *re
 	lChild := p.children[0].(LogicalPlan)
 	rChild := p.children[1].(LogicalPlan)
 
-	newEQConds := make([]*expression.ScalarFunction, 0, len(p.EqualConditions) - 1)
+	newEQConds := make([]*expression.ScalarFunction, 0, len(p.EqualConditions)-1)
 	for i, cond := range p.EqualConditions {
 		if i == condIndex {
 			continue
