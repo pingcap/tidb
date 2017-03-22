@@ -66,44 +66,37 @@ type Column struct {
 	Repeats []int64
 }
 
-func (c *Column) SaveToStorage(ctx context.Context, table table.Table, isIndex bool) error {
-	var column_name string
-	var col_index int
+func (c *Column) saveToStorage(ctx context.Context, table table.Table, isIndex bool) error {
+	var colName string
 	if isIndex {
-		column_name = "index_id"
-		col_index = 2
+		colName = "index_id"
 	} else {
-		column_name = "col_id"
-		col_index = 1
+		colName = "col_id"
 	}
 	tableID := table.Meta().ID
-	insertSQL := fmt.Sprintf("insert into mysql.stats_columns (table_id, %s, distinct_count) values (%d, %d, %d)", column_name, tableID, c.ID, c.NDV)
+	insertSQL := fmt.Sprintf("insert into mysql.stats_columns (table_id, %s, distinct_count) values (%d, %d, %d)", colName, tableID, c.ID, c.NDV)
 	_, err := ctx.(sqlexec.SQLExecutor).Execute(insertSQL)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	for i := 0; i < len(c.Numbers); i++ {
-		row := make([]types.Datum, 7)
-		// set table id
-		row[0] = types.NewDatum(tableID)
-		// set column or index id
-		row[col_index] = types.NewDatum(c.ID)
-		// set bucket it
-		row[3] = types.NewDatum(i)
-		// set count
+		var count int64
 		if i == 0 {
-			row[4] = types.NewDatum(c.Numbers[i])
+			count = c.Numbers[i]
 		} else {
-			row[4] = types.NewDatum(c.Numbers[i] - c.Numbers[i-1])
+			count = c.Numbers[i] - c.Numbers[i-1]
 		}
-		// set repeats
-		row[5] = types.NewDatum(c.Repeats[i])
 		// set value
-		row[6], err = c.Values[i].ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeVarString))
+		val, err := c.Values[i].ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
 		if err != nil {
 			return errors.Trace(err)
 		}
-		_, err = table.AddRecord(ctx, row)
+		if isIndex {
+			insertSQL = fmt.Sprintf("insert into mysql.stats_buckets values(%d, NULL, %d, %d, %d, %d, X'%X')", tableID, c.ID, i, count, c.Repeats[i], val.GetBytes())
+		} else {
+			insertSQL = fmt.Sprintf("insert into mysql.stats_buckets values(%d, %d, NULL, %d, %d, %d, X'%X')", tableID, c.ID, i, count, c.Repeats[i], val.GetBytes())
+		}
+		_, err = ctx.(sqlexec.SQLExecutor).Execute(insertSQL)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -265,6 +258,7 @@ type Table struct {
 	Table   table.Table
 }
 
+// SaveToStorage saves stats table to storage.
 func (t *Table) SaveToStorage(ctx context.Context) error {
 	_, err := ctx.(sqlexec.SQLExecutor).Execute("begin")
 	txn := ctx.Txn()
@@ -291,29 +285,33 @@ func (t *Table) SaveToStorage(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	for _, col := range t.Columns {
-		col.SaveToStorage(ctx, t.Table, false)
+		col.saveToStorage(ctx, t.Table, false)
 	}
 	for _, idx := range t.Indices {
-		idx.SaveToStorage(ctx, t.Table, true)
+		idx.saveToStorage(ctx, t.Table, true)
 	}
 	_, err = ctx.(sqlexec.SQLExecutor).Execute("commit")
 	return errors.Trace(err)
 }
 
-func colStatsFromStorage(ctx context.Context, tableId int64, colID int64, tp *types.FieldType, distinct int64, isIndex bool) (*Column, error) {
+func colStatsFromStorage(ctx context.Context, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex bool) (*Column, error) {
 	var column_name string
 	if isIndex {
 		column_name = "index_id"
 	} else {
 		column_name = "col_id"
 	}
-	selSQL := fmt.Sprintf("select bucket_id, count, repeats, value from stats_buckets where table_id = %d and %s = %d", tableId, column_name, colID)
+	selSQL := fmt.Sprintf("select bucket_id, count, repeats, value from mysql.stats_buckets where table_id = %d and %s = %d", tableID, column_name, colID)
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, selSQL)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	bucketSize := len(rows)
+	if bucketSize == 0 {
+		return nil, nil
+	}
 	colStats := &Column{
+		ID:      colID,
 		NDV:     distinct,
 		Numbers: make([]int64, bucketSize),
 		Repeats: make([]int64, bucketSize),
@@ -342,18 +340,19 @@ func colStatsFromStorage(ctx context.Context, tableId int64, colID int64, tp *ty
 	return colStats, nil
 }
 
-func tableStatsFromStorage(ctx context.Context, info *model.TableInfo, count int64) (*Table, error) {
+// TableStatsFromStorage load table stats info from storage.
+func TableStatsFromStorage(ctx context.Context, info *model.TableInfo, count int64) (*Table, error) {
 	table := &Table{
 		Info:  info,
 		Count: count,
 	}
-	selSQL := fmt.Sprintf("select * from stats_columns where table_id = %d", info.ID)
+	selSQL := fmt.Sprintf("select * from mysql.stats_columns where table_id = %d", info.ID)
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, selSQL)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	for _, row := range rows {
-		distinct := row.Data[4].GetInt64()
+		distinct := row.Data[3].GetInt64()
 		if row.Data[1].IsNull() {
 			// process index
 			colID := row.Data[2].GetInt64()

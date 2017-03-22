@@ -63,7 +63,7 @@ func (h *Handle) Update(m *meta.Meta, is infoschema.InfoSchema) error {
 			continue
 		}
 		tableInfo := table.Meta()
-		tbl, err := tableStatsFromStorage(h.ctx, tableInfo, count)
+		tbl, err := TableStatsFromStorage(h.ctx, tableInfo, count)
 		// Error is not nil may mean that there are some ddl changes on this table, so the origin
 		// statistics can not be used any more, we give it a nil one.
 		if err != nil {

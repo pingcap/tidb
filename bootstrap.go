@@ -177,6 +177,7 @@ const (
 	version2 = 2
 	version3 = 3
 	version4 = 4
+	version5 = 5
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -250,6 +251,10 @@ func upgrade(s Session) {
 		upgradeToVer4(s)
 	}
 
+	if ver < version5 {
+		upgradeToVer5(s)
+	}
+
 	updateBootstrapVer(s)
 	_, err = s.Execute("COMMIT")
 
@@ -301,6 +306,11 @@ func upgradeToVer3(s Session) {
 func upgradeToVer4(s Session) {
 	sql := CreateStatsMetaTable
 	mustExecute(s, sql)
+}
+
+func upgradeToVer5(s Session) {
+	mustExecute(s, CreateStatsColsTable)
+	mustExecute(s, CreateStatsBucketsTable)
 }
 
 // Update boostrap version variable in mysql.TiDB table.
