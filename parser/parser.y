@@ -48,6 +48,8 @@ import (
 	/*yy:token "%c"     */	identifier      "identifier"
 	/*yy:token "\"%c\"" */	stringLit       "string literal"
 	invalid		"a special token never used by parser, used by lexer to indicate error"
+	hintBegin	"hintBegin is a virtual token for optimizer hint grammar"
+	hintEnd		"hintEnd is a virtual token for optimizer hint grammar"
 	andand		"&&"
 	oror		"||"
 
@@ -463,6 +465,7 @@ import (
 	names		"NAMES"
 	national	"NATIONAL"
 	no		"NO"
+	none		"NONE"
 	offset		"OFFSET"
 	only		"ONLY"
 	password	"PASSWORD"
@@ -661,6 +664,8 @@ import (
 	OnDuplicateKeyUpdate	"ON DUPLICATE KEY UPDATE value list"
 	Operand			"operand"
 	OptFull			"Full or empty"
+	OptimizerHint		"Optimizer Hint"
+	OptimizerHintOptional	"Optimizer Hint optional"
 	Order			"ORDER BY clause optional collation specification"
 	OrderBy			"ORDER BY clause"
 	ByItem			"BY item"
@@ -1010,6 +1015,12 @@ AlterTableSpec:
 		$$ = &ast.AlterTableSpec{
 			Tp:    		ast.AlterTableRenameTable,
 			NewTable:      $3.(*ast.TableName),
+		}
+	}
+|	"LOCK" eq "NONE"
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:    		ast.AlterTableLock,
 		}
 	}
 
@@ -2247,7 +2258,7 @@ UnReservedKeyword:
 | "MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION"
 | "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
-| "TIMESTAMPDIFF"
+| "TIMESTAMPDIFF" | "NONE"
 
 ReservedKeyword:
 "ADD" | "ALL" | "ALTER" | "ANALYZE" | "AND" | "AS" | "ASC" | "BETWEEN" | "BIGINT"
@@ -6591,5 +6602,16 @@ KillOrKillTiDB:
 	{
 		$$ = true
 	}
+
+OptimizerHintOptional:
+	{
+		$$ = nil
+	}
+|	hintBegin OptimizerHint hintEnd
+	{
+		$$ = $1
+	}
+
+OptimizerHint:{}
 
 %%

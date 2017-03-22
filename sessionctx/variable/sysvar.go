@@ -89,6 +89,7 @@ func init() {
 	tidbSysVars[TiDBSkipConstraintCheck] = true
 	tidbSysVars[TiDBSkipDDLWait] = true
 	tidbSysVars[TiDBOptAggPushDown] = true
+	tidbSysVars[TiDBOptInSubqUnFolding] = true
 	tidbSysVars[BuildStatsConcurrencyVar] = true
 }
 
@@ -599,6 +600,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBSkipConstraintCheck, "0"},
 	{ScopeSession, TiDBSkipDDLWait, "0"},
 	{ScopeSession, TiDBOptAggPushDown, "ON"},
+	{ScopeSession, TiDBOptInSubqUnFolding, "OFF"},
 	{ScopeSession, BuildStatsConcurrencyVar, "4"},
 }
 
@@ -610,6 +612,7 @@ const (
 	TiDBSkipConstraintCheck   = "tidb_skip_constraint_check"
 	TiDBSkipDDLWait           = "tidb_skip_ddl_wait"
 	TiDBOptAggPushDown        = "tidb_opt_agg_push_down"
+	TiDBOptInSubqUnFolding    = "tidb_opt_insubquery_unfold"
 	BuildStatsConcurrencyVar  = "tidb_build_stats_concurrency"
 )
 

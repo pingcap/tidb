@@ -19,6 +19,7 @@ package table
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -113,13 +114,28 @@ func CastValues(ctx context.Context, rec []types.Datum, cols []*Column, ignoreEr
 
 // CastValue casts a value based on column type.
 func CastValue(ctx context.Context, val types.Datum, col *model.ColumnInfo) (casted types.Datum, err error) {
-	casted, err = val.ConvertTo(ctx.GetSessionVars().StmtCtx, &col.FieldType)
+	sc := ctx.GetSessionVars().StmtCtx
+	casted, err = val.ConvertTo(sc, &col.FieldType)
+	// TODO: make sure all truncate errors are handled by ConvertTo.
+	err = sc.HandleTruncate(err)
 	if err != nil {
-		if ctx.GetSessionVars().StrictSQLMode {
-			return casted, errors.Trace(err)
+		return casted, errors.Trace(err)
+	}
+	if !mysql.IsUTF8Charset(col.Charset) {
+		return casted, nil
+	}
+	str := casted.GetString()
+	for _, r := range str {
+		if r == utf8.RuneError {
+			// Truncate to valid utf8 string.
+			// casted = types.NewStringDatum(str[:i])
+			err = sc.HandleTruncate(ErrTruncateWrongValue)
+			break
 		}
-		// TODO: add warnings.
-		log.Warnf("cast value error %v", err)
+	}
+	if err != nil {
+		// TODO: enable it when find a better way to handle old incorrect data.
+		log.Debugf("invalid UTF8 value %v for column %s", str, col.Name.O)
 	}
 	return casted, nil
 }

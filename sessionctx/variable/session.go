@@ -150,6 +150,9 @@ type SessionVars struct {
 	// AllowAggPushDown can be set to false to forbid aggregation push down.
 	AllowAggPushDown bool
 
+	// AllowSubqueryUnFolding can be set to true to fold in subquery
+	AllowInSubqueryUnFolding bool
+
 	// CurrInsertValues is used to record current ValuesExpr's values.
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	CurrInsertValues interface{}
@@ -347,4 +350,19 @@ func (sc *StatementContext) AppendWarning(warn error) {
 		sc.mu.warnings = append(sc.mu.warnings, warn)
 	}
 	sc.mu.Unlock()
+}
+
+// HandleTruncate ignores or returns the error based on the StatementContext state.
+func (sc *StatementContext) HandleTruncate(err error) error {
+	if err == nil {
+		return nil
+	}
+	if sc.IgnoreTruncate {
+		return nil
+	}
+	if sc.TruncateAsWarning {
+		sc.AppendWarning(err)
+		return nil
+	}
+	return err
 }

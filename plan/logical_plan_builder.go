@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan/statistics"
 	"github.com/pingcap/tidb/plan/statscache"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
@@ -47,14 +46,12 @@ func (p *Aggregation) collectGroupByColumns() {
 
 func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gbyItems []expression.Expression) (LogicalPlan, map[int]int) {
 	b.optFlag = b.optFlag | flagBuildKeyInfo
-	b.optFlag = b.optFlag | flagEliminateAgg
-	b.optFlag = b.optFlag | flagAggPushDown
+	b.optFlag = b.optFlag | flagAggregationOptimize
 	agg := &Aggregation{
 		AggFuncs:        make([]expression.AggregationFunction, 0, len(aggFuncList)),
 		baseLogicalPlan: newBaseLogicalPlan(Agg, b.allocator)}
 	agg.self = agg
 	agg.initIDAndContext(b.ctx)
-	addChild(agg, p)
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncList)+p.Schema().Len())...)
 	// aggIdxMap maps the old index to new index after applying common aggregation functions elimination.
 	aggIndexMap := make(map[int]int)
@@ -95,6 +92,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 		agg.AggFuncs = append(agg.AggFuncs, newFunc)
 		schema.Append(col.Clone().(*expression.Column))
 	}
+	addChild(agg, p)
 	agg.GroupByItems = gbyItems
 	agg.SetSchema(schema)
 	agg.collectGroupByColumns()
@@ -325,8 +323,7 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 
 func (b *planBuilder) buildDistinct(child LogicalPlan, length int) LogicalPlan {
 	b.optFlag = b.optFlag | flagBuildKeyInfo
-	b.optFlag = b.optFlag | flagEliminateAgg
-	b.optFlag = b.optFlag | flagAggPushDown
+	b.optFlag = b.optFlag | flagAggregationOptimize
 	agg := &Aggregation{
 		baseLogicalPlan: newBaseLogicalPlan(Agg, b.allocator),
 		AggFuncs:        make([]expression.AggregationFunction, 0, child.Schema().Len()),
@@ -930,12 +927,7 @@ func (b *planBuilder) buildTableDual() LogicalPlan {
 }
 
 func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
-	var statisticTable *statistics.Table
-	if EnableStatistic {
-		statisticTable = statscache.GetStatisticsTableCache(b.ctx, tn.TableInfo)
-	} else {
-		statisticTable = statistics.PseudoTable(tn.TableInfo)
-	}
+	statisticTable := statscache.GetStatisticsTableCache(tn.TableInfo)
 	if b.err != nil {
 		return nil
 	}

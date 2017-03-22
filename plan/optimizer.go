@@ -27,16 +27,12 @@ import (
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
 var AllowCartesianProduct = true
 
-// EnableStatistic means whether tidb uses the statistic information to do cost-based optimization.
-var EnableStatistic = false
-
 const (
 	flagPrunColumns uint64 = 1 << iota
 	flagBuildKeyInfo
 	flagDecorrelate
 	flagPredicatePushDown
-	flagEliminateAgg
-	flagAggPushDown
+	flagAggregationOptimize
 )
 
 var optRuleList = []logicalOptRule{
@@ -44,8 +40,7 @@ var optRuleList = []logicalOptRule{
 	&buildKeySolver{},
 	&decorrelateSolver{},
 	&ppdSolver{},
-	&aggPruner{},
-	&aggPushDownSolver{},
+	&aggregationOptimizer{},
 }
 
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.

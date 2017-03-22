@@ -1,5 +1,5 @@
-hash: 9cbdf31f25e477b9806f4704bad58c77c3eeafa199109c221558d73fccc98de5
-updated: 2017-03-10T13:43:43.581213487+08:00
+hash: ec251e6b490e463cdfaf11025cf81bdad17ff70691e3d6817cc55d2037279464
+updated: 2017-03-20T17:13:37.752873214+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -56,6 +56,8 @@ imports:
   - proto
 - name: github.com/golang/snappy
   version: 723cc1e459b8eea2dea4583200fd60757d40097a
+- name: github.com/gorilla/context
+  version: 08b5f424b9271eedf6f9f0ce86cb9396ed337a42
 - name: github.com/gorilla/mux
   version: 599cba5e7b6137d46ddf58fb1765f5d928e69604
 - name: github.com/grpc-ecosystem/grpc-gateway
@@ -104,7 +106,7 @@ imports:
   - leveldb/table
   - leveldb/util
 - name: github.com/pingcap/kvproto
-  version: 854b7eeb43e436a692463a18f03dabfe917ebe2b
+  version: 55b670bb63ef8f6c317003273acfce1127df5721
   subpackages:
   - pkg/coprocessor
   - pkg/eraftpb
@@ -125,7 +127,7 @@ imports:
   - pkg/rpcutil
   - pkg/typeutil
 - name: github.com/pingcap/tipb
-  version: 1043caee48da56ffc3521406a041db8e5feac9a8
+  version: 9cc6927f2246516ce8a2e9517e3ebdf81554a2d2
   subpackages:
   - go-binlog
   - go-tipb

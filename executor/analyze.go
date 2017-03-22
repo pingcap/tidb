@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"fmt"
 	"math/rand"
 
 	"github.com/juju/errors"
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan/statistics"
 	"github.com/pingcap/tidb/plan/statscache"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -115,13 +117,19 @@ func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]
 	if err != nil {
 		return errors.Trace(err)
 	}
-	statscache.SetStatisticsTableCache(e.tblInfo.ID, t)
+	version := e.ctx.Txn().StartTS()
+	statscache.SetStatisticsTableCache(e.tblInfo.ID, t, version)
 	tpb, err := t.ToPB()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	m := meta.NewMeta(txn)
 	err = m.SetTableStats(e.tblInfo.ID, tpb)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	insertSQL := fmt.Sprintf("insert into mysql.stats_meta (version, table_id) values (%d, %d) on duplicate key update version = %d", version, e.tblInfo.ID, version)
+	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, insertSQL)
 	if err != nil {
 		return errors.Trace(err)
 	}
