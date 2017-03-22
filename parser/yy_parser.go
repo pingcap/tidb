@@ -38,8 +38,8 @@ const (
 )
 
 var (
-	specCodePattern = regexp.MustCompile(`\/\*[!|+](M?[0-9]{5,6})?([^*]|\*+[^*/])*\*+\/`)
-	specCodeStart   = regexp.MustCompile(`^\/\*[!|+](M?[0-9]{5,6} )?[ \t]*`)
+	specCodePattern = regexp.MustCompile(`\/\*!(M?[0-9]{5,6})?([^*]|\*+[^*/])*\*+\/`)
+	specCodeStart   = regexp.MustCompile(`^\/\*!(M?[0-9]{5,6} )?[ \t]*`)
 	specCodeEnd     = regexp.MustCompile(`[ \t]*\*\/$`)
 )
 
