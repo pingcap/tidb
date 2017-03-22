@@ -487,7 +487,7 @@ func (e *SelectionExec) initController() error {
 	client := e.ctx.GetClient()
 	newConds := make([]expression.Expression, 0, len(e.Conditions))
 	for _, cond := range e.Conditions {
-		newCond, err := expression.SubstituteCorCol2Constant(cond.Clone(), true)
+		newCond, err := expression.SubstituteCorCol2Constant(cond.Clone())
 		if err != nil {
 			return errors.Trace(err)
 		}

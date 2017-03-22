@@ -795,8 +795,12 @@ func (p *Selection) getUsableIndicesAndPk(ds *DataSource) ([]*model.IndexInfo, m
 		if !expr.IsCorrelated() {
 			continue
 		}
-		cond := pushDownNot(expr.Clone(), false, nil)
-		newCond, _ := expression.SubstituteCorCol2Constant(cond, false)
+		cond := pushDownNot(expr, false, nil)
+		corCols := extractCorColumns(cond)
+		for _, col := range corCols {
+			*col.Data = expression.One.Value
+		}
+		newCond, _ := expression.SubstituteCorCol2Constant(cond)
 		newConds = append(newConds, newCond)
 	}
 	for _, idx := range indices {
