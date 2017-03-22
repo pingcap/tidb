@@ -195,19 +195,19 @@ type rowBlockIterator struct {
 	rowCache  []*Row
 }
 
-func (rb *rowBlockIterator) init() (bool, error) {
+func (rb *rowBlockIterator) init() error {
 	if rb.reader == nil || rb.joinKeys == nil || len(rb.joinKeys) == 0 || rb.ctx == nil {
-		return false, errors.Errorf("Invalid arguments: Empty arguments detected.")
+		return errors.Errorf("Invalid arguments: Empty arguments detected.")
 	}
 	rb.stmtCtx = rb.ctx.GetSessionVars().StmtCtx
 	var err error
 	rb.peekedRow, err = rb.nextRow()
 	if err != nil {
-		return false, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	rb.rowCache = make([]*Row, 0, rowBufferSize)
 
-	return rb.peekedRow == nil, nil
+	return nil
 }
 
 func (rb *rowBlockIterator) nextRow() (*Row, error) {
@@ -460,11 +460,16 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 
 func (e *MergeJoinExec) prepare() error {
 	e.stmtCtx = e.ctx.GetSessionVars().StmtCtx
-	e.leftRowBlock.init()
-	e.rightRowBlock.init()
+	err := e.leftRowBlock.init()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = e.rightRowBlock.init()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	e.outputBuf = make([]*Row, 0, rowBufferSize)
 
-	var err error
 	e.leftRows, err = e.leftRowBlock.nextBlock()
 	if err != nil {
 		return errors.Trace(err)

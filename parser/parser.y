@@ -788,7 +788,7 @@ import (
 	NUM			"numbers"
 	LengthNum		"Field length num(uint64)"
 	HintTableList		"Table list in optimizer hint"
-	TableOptimizerHintOpt		"Table level optimizer hint"
+	TableOptimizerHintOpt	"Table level optimizer hint"
 	TableOptimizerHints		"Table level optimizer hints"
 	TableOptimizerHintList		"Table level optimizer hint list"
 
