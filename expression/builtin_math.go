@@ -844,7 +844,12 @@ func (b *builtinCotSig) eval(row []types.Datum) (d types.Datum, err error) {
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	d.SetFloat64(1.0 / math.Tan(x))
+	result := (1.0 / math.Tan(x))
+	if math.IsInf(result, 0) == true {
+		d.SetNull()
+	} else {
+		d.SetFloat64(1.0 / math.Tan(x))
+	}
 	return d, nil
 }
 
