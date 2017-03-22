@@ -17,7 +17,9 @@ import (
 	"bytes"
 	"fmt"
 
+	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/codec"
@@ -165,4 +167,51 @@ func Column2Exprs(cols []*Column) []Expression {
 		result = append(result, col.Clone())
 	}
 	return result
+}
+
+// SubstituteCorCol2Constant will substitute correlated column to constant value which it contains.
+// If the args of one scalar function are all constant, we will substitute it to constant.
+// If it's called in plan phase, correlated column will change to expression.One.
+// If in executor phase, correlated column will change to value it contains.
+func SubstituteCorCol2Constant(expr Expression, eval bool) (Expression, error) {
+	switch x := expr.(type) {
+	case *ScalarFunction:
+		allConstant := true
+		newArgs := make([]Expression, 0, len(x.GetArgs()))
+		for _, arg := range x.GetArgs() {
+			newArg, err := SubstituteCorCol2Constant(arg, eval)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			_, ok := newArg.(*Constant)
+			newArgs = append(newArgs, newArg)
+			allConstant = allConstant && ok
+		}
+		if allConstant {
+			if !eval {
+				return One, nil
+			}
+			val, err := x.Eval(nil)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			return &Constant{Value: val}, nil
+		}
+		var newSf Expression
+		if x.FuncName.L == ast.Cast {
+			newSf = NewCastFunc(x.RetType, newArgs[0], x.GetCtx())
+		} else {
+			newSf, _ = NewFunction(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
+		}
+		return newSf, nil
+	case *CorrelatedColumn:
+		if !eval {
+			return One, nil
+		}
+		return &Constant{Value: *x.Data, RetType: x.GetType()}, nil
+	case *Constant:
+		return x.Clone(), nil
+	default:
+		return x.Clone(), nil
+	}
 }

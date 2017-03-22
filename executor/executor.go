@@ -461,43 +461,6 @@ func (e *TableDualExec) Close() error {
 	return nil
 }
 
-func substituteCorCol2Constant(expr expression.Expression) (expression.Expression, error) {
-	switch x := expr.(type) {
-	case *expression.ScalarFunction:
-		allConstant := true
-		newArgs := make([]expression.Expression, 0, len(x.GetArgs()))
-		for _, arg := range x.GetArgs() {
-			newArg, err := substituteCorCol2Constant(arg)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			_, ok := newArg.(*expression.Constant)
-			newArgs = append(newArgs, newArg)
-			allConstant = allConstant && ok
-		}
-		if allConstant {
-			val, err := x.Eval(nil)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			return &expression.Constant{Value: val}, nil
-		}
-		var newSf expression.Expression
-		if x.FuncName.L == ast.Cast {
-			newSf = expression.NewCastFunc(x.RetType, newArgs[0], x.GetCtx())
-		} else {
-			newSf, _ = expression.NewFunction(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
-		}
-		return newSf, nil
-	case *expression.CorrelatedColumn:
-		return &expression.Constant{Value: *x.Data, RetType: x.GetType()}, nil
-	case *expression.Constant:
-		return x.Clone(), nil
-	default:
-		return x.Clone(), nil
-	}
-}
-
 // SelectionExec represents a filter executor.
 type SelectionExec struct {
 	Src       Executor
@@ -524,7 +487,7 @@ func (e *SelectionExec) initController() error {
 	client := e.ctx.GetClient()
 	newConds := make([]expression.Expression, 0, len(e.Conditions))
 	for _, cond := range e.Conditions {
-		newCond, err := substituteCorCol2Constant(cond.Clone())
+		newCond, err := expression.SubstituteCorCol2Constant(cond.Clone(), true)
 		if err != nil {
 			return errors.Trace(err)
 		}

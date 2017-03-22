@@ -18,7 +18,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -785,39 +784,6 @@ func (p *Union) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	return info, nil
 }
 
-// The first return value is the new expression, the second is a bool value tell whether the below expression is all constant.
-// The Second is used for simplify the scalar function.
-// If the args of one scalar function are all constant, we will substitute it to constant.
-func substituteCorCol2Constant(cond expression.Expression) expression.Expression {
-	switch x := cond.(type) {
-	case *expression.ScalarFunction:
-		newArgs := make([]expression.Expression, 0, len(x.GetArgs()))
-		allConstant := true
-		for _, arg := range x.GetArgs() {
-			newArg := substituteCorCol2Constant(arg)
-			_, ok := newArg.(*expression.Constant)
-			allConstant = allConstant && ok
-			newArgs = append(newArgs, newArg)
-		}
-		if allConstant {
-			return expression.One
-		}
-		var newSf expression.Expression
-		if x.FuncName.L == ast.Cast {
-			newSf = expression.NewCastFunc(x.RetType, newArgs[0], x.GetCtx())
-		} else {
-			newSf, _ = expression.NewFunction(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
-		}
-		return newSf
-	case *expression.CorrelatedColumn:
-		return expression.One
-	case *expression.Constant:
-		return x.Clone()
-	default:
-		return x.Clone()
-	}
-}
-
 // getUsableIndicesAndPk will simply check whether the pk or one index could used in this situation by
 // checking whether this index or pk is contained in one condition that has correlated column,
 // and whether this condition can be used as an access condition.
@@ -830,7 +796,8 @@ func (p *Selection) getUsableIndicesAndPk(ds *DataSource) ([]*model.IndexInfo, m
 			continue
 		}
 		cond := pushDownNot(expr.Clone(), false, nil)
-		newConds = append(newConds, substituteCorCol2Constant(cond))
+		newCond, _ := expression.SubstituteCorCol2Constant(cond, false)
+		newConds = append(newConds, newCond)
 	}
 	for _, idx := range indices {
 		// TODO: Currently we don't consider composite index.
@@ -912,8 +879,6 @@ func (p *Selection) makeScanController() *physicalPlanInfo {
 		child = ts
 	} else {
 		var chosenPlan *PhysicalIndexScan
-		sc := ds.ctx.GetSessionVars().StmtCtx
-		client := ds.ctx.GetClient()
 		for _, idx := range p.usefulIndices {
 			condsBackUp := make([]expression.Expression, 0, len(p.Conditions))
 			for _, cond := range p.Conditions {
@@ -938,9 +903,6 @@ func (p *Selection) makeScanController() *physicalPlanInfo {
 				is.readOnly = true
 			}
 			is.AccessCondition, condsBackUp = DetachIndexScanConditions(condsBackUp, is)
-			idxConds, tblConds := DetachIndexFilterConditions(condsBackUp, idx.Columns, is.Table)
-			is.IndexConditionPBExpr, is.indexFilterConditions, _ = ExpressionsToPB(sc, idxConds, client)
-			is.TableConditionPBExpr, is.tableFilterConditions, _ = ExpressionsToPB(sc, tblConds, client)
 			if chosenPlan == nil || chosenPlan.accessEqualCount < is.accessEqualCount || chosenPlan.accessInAndEqCount < is.accessInAndEqCount {
 				chosenPlan = is
 			}
