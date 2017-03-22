@@ -16,11 +16,14 @@ package statistics
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
@@ -395,14 +398,7 @@ func (t *Table) build4SortedColumn(sc *variable.StatementContext, offset int, re
 		Repeats: make([]int64, 1, bucketCount),
 	}
 	var valuesPerBucket, lastNumber, bucketIdx int64 = 1, 0, 0
-	knowCount := true
-	if t.Count < 0 {
-		t.Count = 0
-		knowCount = false
-	}
-	if knowCount {
-		valuesPerBucket = t.Count/bucketCount + 1
-	}
+	count := int64(0)
 	for {
 		row, err := records.Next()
 		if err != nil {
@@ -425,9 +421,7 @@ func (t *Table) build4SortedColumn(sc *variable.StatementContext, offset int, re
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if !knowCount {
-			t.Count++
-		}
+		count++
 		if cmp == 0 {
 			// The new item has the same value as current bucket value, to ensure that
 			// a same value only stored in a single bucket, we do not increase bucketIdx even if it exceeds
@@ -442,10 +436,10 @@ func (t *Table) build4SortedColumn(sc *variable.StatementContext, offset int, re
 			col.NDV++
 		} else {
 			// All buckets are full, we should merge buckets.
-			if !knowCount && bucketIdx+1 == bucketCount {
+			if bucketIdx+1 == bucketCount {
 				col.mergeBuckets(bucketIdx)
 				valuesPerBucket *= 2
-				bucketIdx = (bucketIdx + 1) / 2
+				bucketIdx = bucketIdx / 2
 				if bucketIdx == 0 {
 					lastNumber = 0
 				} else {
@@ -467,6 +461,7 @@ func (t *Table) build4SortedColumn(sc *variable.StatementContext, offset int, re
 			col.NDV++
 		}
 	}
+	atomic.StoreInt64(&t.Count, count)
 	if isPK {
 		t.Columns[offset] = col
 	} else {
@@ -498,17 +493,71 @@ func copyFromIndexColumns(ind *Column, id, numBuckets int64) (*Column, error) {
 
 // Builder describes information needed by NewTable
 type Builder struct {
-	Sc            *variable.StatementContext // Sc is the statement context.
-	TblInfo       *model.TableInfo           // TblInfo is the table info of the table.
-	StartTS       int64                      // StartTS is the start timestamp of the statistics table builder.
-	Count         int64                      // Count is the total rows in the table.
-	NumBuckets    int64                      // NumBuckets is the number of buckets a column histogram has.
-	ColumnSamples [][]types.Datum            // ColumnSamples is the sample of columns.
-	ColOffsets    []int                      // ColOffsets is the offset of columns in the table.
-	IdxRecords    []ast.RecordSet            // IdxRecords is the record set of index columns.
-	IdxOffsets    []int                      // IdxOffsets is the offset of indices in the table.
-	PkRecords     ast.RecordSet              // PkRecords is the record set of primary key of integer type.
-	PkOffset      int                        // PkOffset is the offset of primary key of integer type in the table.
+	Ctx           context.Context  // Ctx is the context.
+	TblInfo       *model.TableInfo // TblInfo is the table info of the table.
+	StartTS       int64            // StartTS is the start timestamp of the statistics table builder.
+	Count         int64            // Count is the total rows in the table.
+	NumBuckets    int64            // NumBuckets is the number of buckets a column histogram has.
+	ColumnSamples [][]types.Datum  // ColumnSamples is the sample of columns.
+	ColOffsets    []int            // ColOffsets is the offset of columns in the table.
+	IdxRecords    []ast.RecordSet  // IdxRecords is the record set of index columns.
+	IdxOffsets    []int            // IdxOffsets is the offset of indices in the table.
+	PkRecords     ast.RecordSet    // PkRecords is the record set of primary key of integer type.
+	PkOffset      int              // PkOffset is the offset of primary key of integer type in the table.
+}
+
+func (b *Builder) buildMultiColumns(t *Table, offsets []int, baseOffset int, isSorted bool, done chan error) {
+	for i, offset := range offsets {
+		var err error
+		if isSorted {
+			err = t.build4SortedColumn(b.Ctx.GetSessionVars().StmtCtx, offset, b.IdxRecords[i+baseOffset], b.NumBuckets, false)
+		} else {
+			err = t.buildColumn(b.Ctx.GetSessionVars().StmtCtx, offset, b.ColumnSamples[i+baseOffset], b.NumBuckets)
+		}
+		if err != nil {
+			done <- err
+			return
+		}
+	}
+	done <- nil
+}
+
+func (b *Builder) getBuildStatsConcurrency() (int, error) {
+	sessionVars := b.Ctx.GetSessionVars()
+	concurrency, err := sessionVars.GetTiDBSystemVar(variable.BuildStatsConcurrencyVar)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	c, err := strconv.ParseInt(concurrency, 10, 64)
+	return int(c), errors.Trace(err)
+}
+
+func (b *Builder) splitAndConcurrentBuild(t *Table, offsets []int, isSorted bool) error {
+	offsetCnt := len(offsets)
+	concurrency, err := b.getBuildStatsConcurrency()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	groupSize := (offsetCnt + concurrency - 1) / concurrency
+	splittedOffsets := make([][]int, 0, concurrency)
+	for i := 0; i < offsetCnt; i += groupSize {
+		end := i + groupSize
+		if end > offsetCnt {
+			end = offsetCnt
+		}
+		splittedOffsets = append(splittedOffsets, offsets[i:end])
+	}
+	doneCh := make(chan error, len(splittedOffsets))
+	for i, offsets := range splittedOffsets {
+		go b.buildMultiColumns(t, offsets, i*groupSize, isSorted, doneCh)
+	}
+	for range splittedOffsets {
+		errc := <-doneCh
+		if errc != nil && err == nil {
+			err = errc
+		}
+	}
+	return errors.Trace(err)
 }
 
 // NewTable creates a table statistics.
@@ -523,23 +572,21 @@ func (b *Builder) NewTable() (*Table, error) {
 		Columns: make([]*Column, len(b.TblInfo.Columns)),
 		Indices: make([]*Column, len(b.TblInfo.Indices)),
 	}
-	for i, offset := range b.ColOffsets {
-		err := t.buildColumn(b.Sc, offset, b.ColumnSamples[i], b.NumBuckets)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+	err := b.splitAndConcurrentBuild(t, b.ColOffsets, false)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	if b.PkOffset != -1 {
-		err := t.build4SortedColumn(b.Sc, b.PkOffset, b.PkRecords, b.NumBuckets, true)
+		err := t.build4SortedColumn(b.Ctx.GetSessionVars().StmtCtx, b.PkOffset, b.PkRecords, b.NumBuckets, true)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	for i, offset := range b.IdxOffsets {
-		err := t.build4SortedColumn(b.Sc, offset, b.IdxRecords[i], b.NumBuckets, false)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+	err = b.splitAndConcurrentBuild(t, b.IdxOffsets, true)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for _, offset := range b.IdxOffsets {
 		if len(b.TblInfo.Indices[offset].Columns) == 1 {
 			for j, col := range b.TblInfo.Columns {
 				if col.Name.L == b.TblInfo.Indices[offset].Columns[0].Name.L && t.Columns[j] == nil {
