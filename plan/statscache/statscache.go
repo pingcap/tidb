@@ -34,8 +34,7 @@ type statsInfo struct {
 
 // Handle can update stats info periodically.
 type Handle struct {
-	ctx context.Context
-	// LastVersion stands for the last time we update stats. We export it only for test.
+	ctx         context.Context
 	lastVersion uint64
 }
 
@@ -123,7 +122,7 @@ func SetStatisticsTableCache(id int64, statsTbl *statistics.Table, version uint6
 		return
 	}
 	if stats.version >= version {
-		//		return
+		return
 	}
 	stats.tbl = statsTbl
 	stats.version = version
