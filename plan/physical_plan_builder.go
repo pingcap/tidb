@@ -784,86 +784,22 @@ func (p *Union) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	return info, nil
 }
 
-// getUsableIndicesAndPk will simply check whether the pk or one index could used in this situation by
-// checking whether this index or pk is contained in one condition that has correlated column,
-// and whether this condition can be used as an access condition.
-func (p *Selection) getUsableIndicesAndPk(ds *DataSource) ([]*model.IndexInfo, model.CIStr) {
+func (p *Selection) makeScanController() *physicalPlanInfo {
+	newSel := *p
+	newSel.ScanController = true
+	var child PhysicalPlan
+	ds := p.children[0].(*DataSource)
 	indices, includeTableScan := availableIndices(ds.indexHints, ds.tableInfo)
-	var usableIdxs []*model.IndexInfo
-	var newConds []expression.Expression
-	for _, expr := range p.Conditions {
-		if !expr.IsCorrelated() {
-			continue
-		}
-		cond := pushDownNot(expr, false, nil)
-		corCols := extractCorColumns(cond)
-		for _, col := range corCols {
-			*col.Data = expression.One.Value
-		}
-		newCond, _ := expression.SubstituteCorCol2Constant(cond)
-		newConds = append(newConds, newCond)
-	}
-	for _, idx := range indices {
-		// TODO: Currently we don't consider composite index.
-		if len(idx.Columns) > 1 {
-			continue
-		}
-		checker := &conditionChecker{
-			idx:          idx,
-			columnOffset: 0,
-			length:       idx.Columns[0].Length,
-		}
-		// This idx column should occur in one condition which contains both column and correlated column.
-		// And conditionChecker.check(this condition) should be true.
-		var usable bool
-		for _, cond := range newConds {
-			// If one cond is ok, then this index is useful.
-			if checker.check(cond) {
-				usable = true
-				break
-			}
-		}
-		if usable {
-			usableIdxs = append(usableIdxs, idx)
-		}
-	}
-	var pkName model.CIStr
+	var pkCol *expression.Column
 	if ds.tableInfo.PKIsHandle && includeTableScan {
-		var pkCol *expression.Column
 		for i, col := range ds.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
 				pkCol = ds.schema.Columns[i]
 				break
 			}
 		}
-		if pkCol == nil {
-			return usableIdxs, pkName
-		}
-		checker := conditionChecker{
-			pkName: pkCol.ColName,
-			length: types.UnspecifiedLength,
-		}
-		// Pk should satisfies the same property as the index.
-		var usable bool
-		for _, cond := range newConds {
-			if checker.check(cond) {
-				usable = true
-				break
-			}
-		}
-		if usable {
-			pkName = pkCol.ColName
-		}
 	}
-	return usableIdxs, pkName
-}
-
-func (p *Selection) makeScanController() *physicalPlanInfo {
-	newSel := *p
-	newSel.ScanController = true
-	var child PhysicalPlan
-	ds := p.children[0].(*DataSource)
-	if p.usefulPkName.L != "" {
+	if pkCol != nil {
 		ts := &PhysicalTableScan{
 			Table:               ds.tableInfo,
 			Columns:             ds.Columns,
@@ -883,9 +819,21 @@ func (p *Selection) makeScanController() *physicalPlanInfo {
 		child = ts
 	} else {
 		var chosenPlan *PhysicalIndexScan
-		for _, idx := range p.usefulIndices {
-			condsBackUp := make([]expression.Expression, 0, len(p.Conditions))
-			for _, cond := range p.Conditions {
+		var corColConds []expression.Expression
+		for _, expr := range p.Conditions {
+			if !expr.IsCorrelated() {
+				continue
+			}
+			cond, _ := expression.SubstituteCorCol2Constant(expr)
+			corColConds = append(corColConds, cond)
+		}
+		for _, idx := range indices {
+			// TODO: Currently we don't consider composite index.
+			if len(idx.Columns) > 1 {
+				continue
+			}
+			condsBackUp := make([]expression.Expression, 0, len(corColConds))
+			for _, cond := range corColConds {
 				condsBackUp = append(condsBackUp, cond.Clone())
 			}
 			is := &PhysicalIndexScan{
@@ -906,11 +854,16 @@ func (p *Selection) makeScanController() *physicalPlanInfo {
 			} else {
 				is.readOnly = true
 			}
-			is.AccessCondition, condsBackUp = DetachIndexScanConditions(condsBackUp, is)
-			if chosenPlan == nil || chosenPlan.accessEqualCount < is.accessEqualCount || chosenPlan.accessInAndEqCount < is.accessInAndEqCount {
+			accessConds, _ := DetachIndexScanConditions(condsBackUp, is)
+			if len(accessConds) == 0 {
+				continue
+			}
+			better := chosenPlan == nil || chosenPlan.accessEqualCount < is.accessEqualCount
+			better = better || (chosenPlan.accessEqualCount == is.accessEqualCount && chosenPlan.accessInAndEqCount < is.accessInAndEqCount)
+			if better {
 				chosenPlan = is
 			}
-			is.DoubleRead = isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
+			is.DoubleRead = !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
 		}
 		child = chosenPlan
 	}
@@ -932,13 +885,7 @@ func (p *Selection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanI
 	if info != nil {
 		return info, nil
 	}
-	if !p.extractedUsefulThing {
-		if ds, ok := p.children[0].(*DataSource); ok {
-			p.usefulIndices, p.usefulPkName = p.getUsableIndicesAndPk(ds)
-		}
-		p.extractedUsefulThing = true
-	}
-	if p.usefulPkName.L != "" || len(p.usefulIndices) > 0 {
+	if p.canControlScan {
 		info = p.makeScanController()
 		p.storePlanInfo(prop, info)
 		return info, nil
