@@ -161,7 +161,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 		}
 	}
 	if sel, ok := p.(*Selection); ok {
-		if ds, ok := p.(*DataSource); ok {
+		if ds, ok := p.Children()[0].(*DataSource); ok {
 			sel.canControlScan = sel.hasUsableIndicesAndPk(ds)
 		}
 	}
