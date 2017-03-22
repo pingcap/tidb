@@ -235,6 +235,9 @@ func (b *builtinInetAtonSig) eval(row []types.Datum) (d types.Datum, err error) 
 			}
 		} else if c == '.' {
 			dotCount++
+			if dotCount > 3 {
+				return d, nil
+			}
 			result = (result << 8) + byteResult
 			byteResult = 0
 		} else {
