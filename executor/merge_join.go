@@ -44,10 +44,10 @@ type MergeJoinExec struct {
 	defaultValues []types.Datum
 	// Default for both side in case full join
 	defaultRightRow *Row
-	outputBuf       []*Row
+	outputBuf     []*Row
 
-	leftRowBlock  rowBlockIterator
-	rightRowBlock rowBlockIterator
+	leftRowBlock  *rowBlockIterator
+	rightRowBlock *rowBlockIterator
 	leftRows      []*Row
 	rightRows     []*Row
 	desc          bool
@@ -127,14 +127,14 @@ func (b *joinBuilder) BuildMergeJoin(assumeSortedDesc bool) (*MergeJoinExec, err
 		leftJoinKeys = append(leftJoinKeys, lKey)
 		rightJoinKeys = append(rightJoinKeys, rKey)
 	}
-	leftRowBlock := rowBlockIterator{
+	leftRowBlock := &rowBlockIterator{
 		ctx:      b.context,
 		reader:   b.leftChild,
 		filter:   b.leftFilter,
 		joinKeys: leftJoinKeys,
 	}
 
-	rightRowBlock := rowBlockIterator{
+	rightRowBlock := &rowBlockIterator{
 		ctx:      b.context,
 		reader:   b.rightChild,
 		filter:   b.rightFilter,
@@ -170,7 +170,6 @@ func (b *joinBuilder) BuildMergeJoin(assumeSortedDesc bool) (*MergeJoinExec, err
 		exec.rightJoinKeys = leftJoinKeys
 	case plan.InnerJoin:
 	default:
-		exec.preserveLeft = true
 		panic("Full Join not implemented for Merge Join Strategy.")
 	}
 	return exec, nil
@@ -271,7 +270,7 @@ func (e *MergeJoinExec) Close() error {
 		return rErr
 	}
 
-	return rErr
+	return nil
 }
 
 // Schema implements the Executor Schema interface.
@@ -326,6 +325,8 @@ func (e *MergeJoinExec) outputJoinRow(leftRow *Row, rightRow *Row, preserve bool
 			} else {
 				joinedRow = makeJoinRow(leftRow, e.defaultRightRow)
 			}
+		} else {
+			return nil
 		}
 	}
 	e.outputBuf = append(e.outputBuf, joinedRow)
@@ -349,7 +350,7 @@ func (e *MergeJoinExec) tryOutputLeftRows() error {
 }
 
 func (e *MergeJoinExec) computeJoin() (bool, error) {
-	e.outputBuf = e.outputBuf[0:0:rowBufferSize]
+	e.outputBuf = e.outputBuf[0 : 0 : rowBufferSize]
 
 	for {
 		var compareResult int
@@ -381,7 +382,6 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 			if err != nil {
 				return false, errors.Trace(err)
 			}
-			continue
 		} else if compareResult < 0 {
 			initLen := len(e.outputBuf)
 			err := e.tryOutputLeftRows()
@@ -395,7 +395,6 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 			if initLen < len(e.outputBuf) {
 				return true, nil
 			}
-			continue
 		} else {
 			initLen := len(e.outputBuf)
 
@@ -409,6 +408,7 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 						return false, errors.Trace(err)
 					}
 					if !matched {
+						// as all right join converted to left, we only output left side if no match and continue
 						if e.preserveLeft {
 							err := e.outputJoinRow(lRow, e.defaultRightRow, true)
 							if err != nil {
@@ -427,7 +427,7 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 				}
 				// Even if caught up for left filter
 				// no matching but it's outer join
-				if initInnerLen == len(e.outputBuf) {
+				if e.preserveLeft && initInnerLen == len(e.outputBuf) {
 					err := e.outputJoinRow(lRow, e.defaultRightRow, true)
 					if err != nil {
 						return false, errors.Trace(err)
@@ -446,7 +446,6 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 			if initLen < len(e.outputBuf) {
 				return true, nil
 			}
-			continue
 		}
 	}
 }

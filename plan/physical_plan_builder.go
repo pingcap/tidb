@@ -583,11 +583,15 @@ func compareTypeForOrder(lhs *types.FieldType, rhs *types.FieldType) bool {
 
 // Generate all possible combinations from join conditions for cost evaluation
 // It will try all keys in join conditions
-func constructPropertyByJoin(join *Join) ([][]*requiredProperty, error) {
+func constructPropertyByJoin(join *Join) ([][]*requiredProperty, []int, error) {
 	result := make([][]*requiredProperty, 0)
-	for _, cond := range join.EqualConditions {
+	condIndex := make([]int, 0)
+	if join.EqualConditions == nil {
+		return nil, nil, nil
+	}
+	for i, cond := range join.EqualConditions {
 		if len(cond.GetArgs()) != 2 {
-			return nil, errors.New("unexpected argument count for equal expression")
+			return nil, nil, errors.New("unexpected argument count for equal expression")
 		}
 		lExpr, rExpr := cond.GetArgs()[0], cond.GetArgs()[1]
 		// Only consider raw column reference and cowardly ignore calculations
@@ -596,24 +600,41 @@ func constructPropertyByJoin(join *Join) ([][]*requiredProperty, error) {
 		rColumn, rOK := rExpr.(*expression.Column)
 		if lOK && rOK && compareTypeForOrder(lColumn.RetType, rColumn.RetType) {
 			result = append(result, []*requiredProperty{generateJoinProp(lColumn), generateJoinProp(rColumn)})
+			condIndex = append(condIndex, i)
 		} else {
 			continue
 		}
 	}
-	return result, nil
+	if len(result) == 0 {
+		return nil, nil, nil
+	}
+	return result, condIndex, nil
 }
 
 // convert2PhysicalMergeJoin converts the merge join to *physicalPlanInfo.
-// TODO: Refactory and merge with hash join
-func (p *Join) convert2PhysicalMergeJoin(parentProp *requiredProperty, lProp *requiredProperty, rProp *requiredProperty, joinType JoinType) (*physicalPlanInfo, error) {
+// TODO: Refactor and merge with hash join
+func (p *Join) convert2PhysicalMergeJoin(parentProp *requiredProperty, lProp *requiredProperty, rProp *requiredProperty, condIndex int, joinType JoinType) (*physicalPlanInfo, error) {
 	lChild := p.children[0].(LogicalPlan)
 	rChild := p.children[1].(LogicalPlan)
 
+	newEQConds := make([]*expression.ScalarFunction, 0, len(p.EqualConditions) - 1)
+	for i, cond := range p.EqualConditions {
+		if i == condIndex {
+			continue
+		}
+		// prevent further index contamination
+		newCond := cond.Clone()
+		newCond.ResolveIndices(p.schema)
+		newEQConds = append(newEQConds, newCond.(*expression.ScalarFunction))
+	}
+
+	otherFilter := append(expression.ScalarFuncs2Exprs(newEQConds), p.OtherConditions...)
+
 	join := &PhysicalMergeJoin{
-		EqualConditions: p.EqualConditions,
+		EqualConditions: []*expression.ScalarFunction{p.EqualConditions[condIndex]},
 		LeftConditions:  p.LeftConditions,
 		RightConditions: p.RightConditions,
-		OtherConditions: p.OtherConditions,
+		OtherConditions: otherFilter,
 		DefaultValues:   p.DefaultValues,
 		// Assume order for both side are the same
 		Desc: lProp.props[0].desc,
@@ -672,14 +693,17 @@ func (p *Join) convert2PhysicalMergeJoin(parentProp *requiredProperty, lProp *re
 
 func (p *Join) convert2PhysicalMergeJoinOnCost(prop *requiredProperty) (*physicalPlanInfo, error) {
 	var info *physicalPlanInfo
-	reqPropPairs, err := constructPropertyByJoin(p)
+	reqPropPairs, condIndex, err := constructPropertyByJoin(p)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if reqPropPairs == nil {
+		return nil, nil
+	}
 	minCost := math.MaxFloat64
 	var minInfo *physicalPlanInfo
-	for _, reqPropPair := range reqPropPairs {
-		info, err = p.convert2PhysicalMergeJoin(prop, reqPropPair[0], reqPropPair[1], p.JoinType)
+	for i, reqPropPair := range reqPropPairs {
+		info, err = p.convert2PhysicalMergeJoin(prop, reqPropPair[0], reqPropPair[1], condIndex[i], p.JoinType)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -758,7 +782,9 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-		} else {
+		}
+		// fall back to hash join
+		if info == nil {
 			lInfo, err := p.convert2PhysicalPlanLeft(prop, true)
 			if err != nil {
 				return nil, errors.Trace(err)

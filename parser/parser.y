@@ -785,10 +785,10 @@ import (
 	OptCollate		"Optional Collate setting"
 	NUM			"numbers"
 	LengthNum		"Field length num(uint64)"
-	HintTableList	"Table list in optimizer hint"
-	TableOptimizerHintOpt	"Table level optimizer hint"
-	TableOptimizerHints	"Table level optimizer hints"
-	TableOptimizerHintList	"Table level optimizer hint list"
+	HintTableList		"Table list in optimizer hint"
+	TableOptimizerHintOpt		"Table level optimizer hint"
+	TableOptimizerHints		"Table level optimizer hints"
+	TableOptimizerHintList		"Table level optimizer hint list"
 
 %type	<ident>
 	KeyOrIndex		"{KEY|INDEX}"
@@ -4471,7 +4471,7 @@ SelectStmt:
 	{
 		opts := $2.(*ast.SelectStmtOpts)
 		st := &ast.SelectStmt{
-			Distinct:   opts.Distinct,
+			Distinct:		opts.Distinct,
 			Fields:		$3.(*ast.FieldList),
 			From:		$5.(*ast.TableRefsClause),
 			LockTp:		$11.(ast.SelectLockType),
