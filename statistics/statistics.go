@@ -18,13 +18,16 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -39,7 +42,6 @@ const (
 	pseudoEqualRate   = 1000
 	pseudoLessRate    = 3
 	pseudoBetweenRate = 40
-	pseudoTimestamp   = 1
 )
 
 // Column represents statistics for a column.
@@ -62,6 +64,51 @@ type Column struct {
 	Numbers []int64
 	Values  []types.Datum
 	Repeats []int64
+}
+
+func (c *Column) SaveToStorage(ctx context.Context, table table.Table, isIndex bool) error {
+	var column_name string
+	var col_index int
+	if isIndex {
+		column_name = "index_id"
+		col_index = 2
+	} else {
+		column_name = "col_id"
+		col_index = 1
+	}
+	tableID := table.Meta().ID
+	insertSQL := fmt.Sprintf("insert into mysql.stats_columns (table_id, %s, distinct_count) values (%d, %d, %d)", column_name, tableID, c.ID, c.NDV)
+	_, err := ctx.(sqlexec.SQLExecutor).Execute(insertSQL)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for i := 0; i < len(c.Numbers); i++ {
+		row := make([]types.Datum, 7)
+		// set table id
+		row[0] = types.NewDatum(tableID)
+		// set column or index id
+		row[col_index] = types.NewDatum(c.ID)
+		// set bucket it
+		row[3] = types.NewDatum(i)
+		// set count
+		if i == 0 {
+			row[4] = types.NewDatum(c.Numbers[i])
+		} else {
+			row[4] = types.NewDatum(c.Numbers[i] - c.Numbers[i-1])
+		}
+		// set repeats
+		row[5] = types.NewDatum(c.Repeats[i])
+		// set value
+		row[6], err = c.Values[i].ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeVarString))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		_, err = table.AddRecord(ctx, row)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 func (c *Column) String() string {
@@ -208,92 +255,143 @@ func (c *Column) mergeBuckets(bucketIdx int64) {
 	return
 }
 
-// columnToPB converts Column to ColumnPB.
-func columnToPB(col *Column) (*ColumnPB, error) {
-	data, err := codec.EncodeValue(nil, col.Values...)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	cpb := &ColumnPB{
-		Id:      proto.Int64(col.ID),
-		Ndv:     proto.Int64(col.NDV),
-		Numbers: col.Numbers,
-		Value:   data,
-		Repeats: col.Repeats,
-	}
-	return cpb, nil
-}
-
-// columnFromPB gets Column from ColumnPB.
-func columnFromPB(cpb *ColumnPB, ft *types.FieldType) (*Column, error) {
-	var values []types.Datum
-	var err error
-	if len(cpb.GetValue()) > 0 {
-		values, err = codec.Decode(cpb.GetValue(), 1)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	c := &Column{
-		ID:      cpb.GetId(),
-		NDV:     cpb.GetNdv(),
-		Numbers: cpb.GetNumbers(),
-		Values:  make([]types.Datum, len(values)),
-		Repeats: cpb.GetRepeats(),
-	}
-	for i, val := range values {
-		c.Values[i], err = tablecodec.Unflatten(val, ft, false)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	return c, nil
-}
-
 // Table represents statistics for a table.
 type Table struct {
 	Info    *model.TableInfo
-	TS      int64 // build timestamp.
 	Columns []*Column
 	Indices []*Column
 	Count   int64 // Total row count in a table.
 	Pseudo  bool
+	Table   table.Table
+}
+
+func (t *Table) SaveToStorage(ctx context.Context) error {
+	_, err := ctx.(sqlexec.SQLExecutor).Execute("begin")
+	txn := ctx.Txn()
+	version := txn.StartTS()
+	SetStatisticsTableCache(t.Info.ID, t, version)
+	deleteSQL := fmt.Sprintf("delete from mysql.stats_meta where table_id = %d", t.Info.ID)
+	_, err = ctx.(sqlexec.SQLExecutor).Execute(deleteSQL)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	insertSQL := fmt.Sprintf("insert into mysql.stats_meta (version, table_id, count) values (%d, %d, %d)", version, t.Info.ID, t.Count)
+	_, err = ctx.(sqlexec.SQLExecutor).Execute(insertSQL)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	deleteSQL = fmt.Sprintf("delete from mysql.stats_columns where table_id = %d", t.Info.ID)
+	_, err = ctx.(sqlexec.SQLExecutor).Execute(deleteSQL)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	deleteSQL = fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d", t.Info.ID)
+	_, err = ctx.(sqlexec.SQLExecutor).Execute(deleteSQL)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, col := range t.Columns {
+		col.SaveToStorage(ctx, t.Table, false)
+	}
+	for _, idx := range t.Indices {
+		idx.SaveToStorage(ctx, t.Table, true)
+	}
+	_, err = ctx.(sqlexec.SQLExecutor).Execute("commit")
+	return errors.Trace(err)
+}
+
+func colStatsFromStorage(ctx context.Context, tableId int64, colID int64, tp *types.FieldType, distinct int64, isIndex bool) (*Column, error) {
+	var column_name string
+	if isIndex {
+		column_name = "index_id"
+	} else {
+		column_name = "col_id"
+	}
+	selSQL := fmt.Sprintf("select bucket_id, count, repeats, value from stats_buckets where table_id = %d and %s = %d", tableId, column_name, colID)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, selSQL)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bucketSize := len(rows)
+	colStats := &Column{
+		NDV:     distinct,
+		Numbers: make([]int64, bucketSize),
+		Repeats: make([]int64, bucketSize),
+		Values:  make([]types.Datum, bucketSize),
+	}
+	for i := 0; i < bucketSize; i++ {
+		bucketID := rows[i].Data[0].GetInt64()
+		count := rows[i].Data[1].GetInt64()
+		repeats := rows[i].Data[2].GetInt64()
+		var value types.Datum
+		if isIndex {
+			value = rows[i].Data[3]
+		} else {
+			value, err = rows[i].Data[3].ConvertTo(ctx.GetSessionVars().StmtCtx, tp)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		colStats.Numbers[bucketID] = count
+		colStats.Repeats[bucketID] = repeats
+		colStats.Values[bucketID] = value
+	}
+	for i := 1; i < bucketSize; i++ {
+		colStats.Numbers[i] += colStats.Numbers[i-1]
+	}
+	return colStats, nil
+}
+
+func tableStatsFromStorage(ctx context.Context, info *model.TableInfo, count int64) (*Table, error) {
+	table := &Table{
+		Info:  info,
+		Count: count,
+	}
+	selSQL := fmt.Sprintf("select * from stats_columns where table_id = %d", info.ID)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, selSQL)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for _, row := range rows {
+		distinct := row.Data[4].GetInt64()
+		if row.Data[1].IsNull() {
+			// process index
+			colID := row.Data[2].GetInt64()
+			col, err := colStatsFromStorage(ctx, info.ID, colID, nil, distinct, true)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			table.Indices = append(table.Indices, col)
+		} else {
+			// process column
+			colID := row.Data[1].GetInt64()
+			var col *Column
+			for _, colInfo := range info.Columns {
+				if colID == colInfo.ID {
+					col, err = colStatsFromStorage(ctx, info.ID, colID, &colInfo.FieldType, distinct, false)
+					if err != nil {
+						return nil, errors.Trace(err)
+					}
+				}
+			}
+			if col != nil {
+				table.Columns = append(table.Columns, col)
+			} else {
+				log.Warnf("We can find column id %d in table %s now. It may be deleted.", colID, info.Name)
+			}
+		}
+	}
+	return table, nil
 }
 
 // String implements Stringer interface.
 func (t *Table) String() string {
 	strs := make([]string, 0, len(t.Columns)+1)
-	strs = append(strs, fmt.Sprintf("Table:%d ts:%d count:%d", t.Info.ID, t.TS, t.Count))
+	strs = append(strs, fmt.Sprintf("Table:%d count:%d", t.Info.ID, t.Count))
 	for _, col := range t.Columns {
 		strs = append(strs, col.String())
 	}
 	return strings.Join(strs, "\n")
-}
-
-// ToPB converts Table to TablePB.
-func (t *Table) ToPB() (*TablePB, error) {
-	tblPB := &TablePB{
-		Id:      proto.Int64(t.Info.ID),
-		Ts:      proto.Int64(t.TS),
-		Count:   proto.Int64(t.Count),
-		Columns: make([]*ColumnPB, len(t.Columns)),
-		Indices: make([]*ColumnPB, len(t.Indices)),
-	}
-	for i, col := range t.Columns {
-		cpb, err := columnToPB(col)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		tblPB.Columns[i] = cpb
-	}
-	for i, col := range t.Indices {
-		cpb, err := columnToPB(col)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		tblPB.Indices[i] = cpb
-	}
-	return tblPB, nil
 }
 
 // buildColumn builds column statistics from samples.
@@ -509,6 +607,7 @@ type Builder struct {
 	IdxOffsets    []int                      // IdxOffsets is the offset of indices in the table.
 	PkRecords     ast.RecordSet              // PkRecords is the record set of primary key of integer type.
 	PkOffset      int                        // PkOffset is the offset of primary key of integer type in the table.
+	Table         table.Table
 }
 
 // NewTable creates a table statistics.
@@ -518,10 +617,10 @@ func (b *Builder) NewTable() (*Table, error) {
 	}
 	t := &Table{
 		Info:    b.TblInfo,
-		TS:      b.StartTS,
 		Count:   b.Count,
 		Columns: make([]*Column, len(b.TblInfo.Columns)),
 		Indices: make([]*Column, len(b.TblInfo.Indices)),
+		Table:   b.Table,
 	}
 	for i, offset := range b.ColOffsets {
 		err := t.buildColumn(b.Sc, offset, b.ColumnSamples[i], b.NumBuckets)
@@ -570,54 +669,9 @@ func (b *Builder) NewTable() (*Table, error) {
 	return t, nil
 }
 
-// TableFromPB creates a table statistics from protobuffer.
-func TableFromPB(ti *model.TableInfo, tpb *TablePB) (*Table, error) {
-	// TODO: The following error may mean that there is a ddl change on this table. Currently, The caller simply drop the statistics table. Maybe we can have better solution.
-	if tpb.GetId() != ti.ID {
-		return nil, errors.Errorf("table id not match, expected %d, got %d", ti.ID, tpb.GetId())
-	}
-	if len(tpb.Columns) != len(ti.Columns) {
-		return nil, errors.Errorf("column count not match, expected %d, got %d", len(ti.Columns), len(tpb.Columns))
-	}
-	if len(tpb.Indices) != len(ti.Indices) {
-		return nil, errors.Errorf("indices count not match, expected %d, got %d", len(ti.Indices), len(tpb.Indices))
-	}
-	for i := range ti.Columns {
-		if ti.Columns[i].ID != tpb.Columns[i].GetId() {
-			return nil, errors.Errorf("column ID not match, expected %d, got %d", ti.Columns[i].ID, tpb.Columns[i].GetId())
-		}
-	}
-	for i := range ti.Indices {
-		if ti.Indices[i].ID != tpb.Indices[i].GetId() {
-			return nil, errors.Errorf("index column ID not match, expected %d, got %d", ti.Indices[i].ID, tpb.Indices[i].GetId())
-		}
-	}
-	t := &Table{Info: ti}
-	t.TS = tpb.GetTs()
-	t.Count = tpb.GetCount()
-	t.Columns = make([]*Column, len(tpb.GetColumns()))
-	t.Indices = make([]*Column, len(tpb.GetIndices()))
-	for i, cInfo := range t.Info.Columns {
-		c, err := columnFromPB(tpb.Columns[i], &cInfo.FieldType)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		t.Columns[i] = c
-	}
-	for i := range t.Info.Indices {
-		c, err := columnFromPB(tpb.Indices[i], types.NewFieldType(types.KindBytes))
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		t.Indices[i] = c
-	}
-	return t, nil
-}
-
 // PseudoTable creates a pseudo table statistics when statistic can not be found in KV store.
 func PseudoTable(ti *model.TableInfo) *Table {
 	t := &Table{Info: ti, Pseudo: true}
-	t.TS = pseudoTimestamp
 	t.Count = pseudoRowCount
 	t.Columns = make([]*Column, len(ti.Columns))
 	t.Indices = make([]*Column, len(ti.Indices))

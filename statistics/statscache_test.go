@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package statscache_test
+package statistics_test
 
 import (
 	"testing"
@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/plan/statscache"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -46,20 +46,20 @@ func (s *testStatsCacheSuite) TestStatsCache(c *C) {
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
-	statsTbl := statscache.GetStatisticsTableCache(tableInfo)
+	statsTbl := statistics.GetStatisticsTableCache(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsTrue)
 	testKit.MustExec("analyze table t")
-	statsTbl = statscache.GetStatisticsTableCache(tableInfo)
+	statsTbl = statistics.GetStatisticsTableCache(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 	testKit.MustExec("create index idx_t on t(c1)")
 	is = do.InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo = tbl.Meta()
-	statsTbl = statscache.GetStatisticsTableCache(tableInfo)
+	statsTbl = statistics.GetStatisticsTableCache(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsTrue)
 	testKit.MustExec("analyze table t")
-	statsTbl = statscache.GetStatisticsTableCache(tableInfo)
+	statsTbl = statistics.GetStatisticsTableCache(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 }
 

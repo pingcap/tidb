@@ -26,9 +26,9 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/perfschema"
-	"github.com/pingcap/tidb/plan/statscache"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
 )
 
@@ -38,7 +38,7 @@ type Domain struct {
 	store           kv.Storage
 	infoHandle      *infoschema.Handle
 	privHandle      *privileges.Handle
-	statsHandle     *statscache.Handle
+	statsHandle     *statistics.Handle
 	ddl             ddl.DDL
 	m               sync.Mutex
 	SchemaValidator SchemaValidator
@@ -424,7 +424,7 @@ func (do *Domain) loadTableStats() error {
 // LoadTableStatsLoop creates a goroutine loads stats info in a loop, it
 // should be called only once in BootstrapSession.
 func (do *Domain) LoadTableStatsLoop(ctx context.Context) error {
-	do.statsHandle = statscache.NewHandle(ctx)
+	do.statsHandle = statistics.NewHandle(ctx)
 	err := do.loadTableStats()
 	if err != nil {
 		return errors.Trace(err)

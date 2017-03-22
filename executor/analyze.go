@@ -14,18 +14,14 @@
 package executor
 
 import (
-	"fmt"
 	"math/rand"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/plan/statistics"
-	"github.com/pingcap/tidb/plan/statscache"
-	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -99,11 +95,14 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 }
 
 func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]types.Datum, idxRS []ast.RecordSet, pkRS ast.RecordSet) error {
-	txn := e.ctx.Txn()
+	is := GetInfoSchema(e.ctx)
+	table, ok := is.TableByID(e.tblInfo.ID)
+	if !ok {
+		return errors.Errorf("Can't find table id %d", e.tblInfo.ID)
+	}
 	statBuilder := &statistics.Builder{
 		Sc:            e.ctx.GetSessionVars().StmtCtx,
 		TblInfo:       e.tblInfo,
-		StartTS:       int64(txn.StartTS()),
 		Count:         count,
 		NumBuckets:    defaultBucketCount,
 		ColumnSamples: columnSamples,
@@ -112,28 +111,14 @@ func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]
 		IdxOffsets:    e.idxOffsets,
 		PkRecords:     pkRS,
 		PkOffset:      e.pkOffset,
+		Table:         table,
 	}
 	t, err := statBuilder.NewTable()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	version := e.ctx.Txn().StartTS()
-	statscache.SetStatisticsTableCache(e.tblInfo.ID, t, version)
-	tpb, err := t.ToPB()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	m := meta.NewMeta(txn)
-	err = m.SetTableStats(e.tblInfo.ID, tpb)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	insertSQL := fmt.Sprintf("insert into mysql.stats_meta (version, table_id) values (%d, %d) on duplicate key update version = %d", version, e.tblInfo.ID, version)
-	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, insertSQL)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
+	err = t.SaveToStorage(e.ctx)
+	return errors.Trace(err)
 }
 
 // collectSamples collects sample from the result set, using Reservoir Sampling algorithm.
