@@ -295,13 +295,13 @@ func (t *Table) SaveToStorage(ctx context.Context) error {
 }
 
 func colStatsFromStorage(ctx context.Context, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex bool) (*Column, error) {
-	var column_name string
+	var colName string
 	if isIndex {
-		column_name = "index_id"
+		colName = "index_id"
 	} else {
-		column_name = "col_id"
+		colName = "col_id"
 	}
-	selSQL := fmt.Sprintf("select bucket_id, count, repeats, value from mysql.stats_buckets where table_id = %d and %s = %d", tableID, column_name, colID)
+	selSQL := fmt.Sprintf("select bucket_id, count, repeats, value from mysql.stats_buckets where table_id = %d and %s = %d", tableID, colName, colID)
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, selSQL)
 	if err != nil {
 		return nil, errors.Trace(err)
