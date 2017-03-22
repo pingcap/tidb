@@ -564,6 +564,6 @@ func (s *testEvaluatorSuite) TestCot(c *C) {
 		c.Assert(err, IsNil)
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DeepEquals, t["Ret"][0], Commentf("arg:%v", t["Arg"]))
+		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
 }
