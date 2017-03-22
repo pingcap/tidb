@@ -170,12 +170,13 @@ func (s *tikvStore) Close() error {
 	defer mc.Unlock()
 
 	delete(mc.cache, s.uuid)
-	if err := s.client.Close(); err != nil {
-		return errors.Trace(err)
-	}
 	s.oracle.Close()
 	if s.gcWorker != nil {
 		s.gcWorker.Close()
+	}
+	// Make sure all connections are put back into the pools.
+	if err := s.client.Close(); err != nil {
+		return errors.Trace(err)
 	}
 	return nil
 }

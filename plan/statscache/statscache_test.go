@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan/statscache"
 	"github.com/pingcap/tidb/util/testkit"
@@ -61,6 +62,21 @@ func (s *testStatsCacheSuite) TestStatsCache(c *C) {
 	testKit.MustExec("analyze table t")
 	statsTbl = statscache.GetStatisticsTableCache(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
+	testKit.MustExec("alter table t drop column c2")
+	is = do.InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo = tbl.Meta()
+
+	ver, err := store.CurrentVersion()
+	c.Assert(err, IsNil)
+	snapshot, err := store.GetSnapshot(ver)
+	c.Assert(err, IsNil)
+	m := meta.NewSnapshotMeta(snapshot)
+	do.StatsHandle().Clear()
+	do.StatsHandle().Update(m, is)
+	statsTbl = statscache.GetStatisticsTableCache(tableInfo)
+	c.Assert(statsTbl.Pseudo, IsTrue)
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
