@@ -112,6 +112,18 @@ func getDefaultCharsetAndCollate() (string, string) {
 	return "utf8", "utf8_bin"
 }
 
+func getDefaultCollateForCharset(str string) string {
+	switch str {
+	case charset.CharsetBin:
+		return charset.CollationBin
+	case charset.CharsetUTF8MB4:
+		return charset.CollationUTF8MB4
+	case charset.CharsetUTF8:
+		return charset.CollationUTF8
+	}
+	return ""
+}
+
 func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constraint) {
 	switch v.Tp {
 	case ast.ConstraintPrimaryKey:
@@ -186,6 +198,8 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType) {
 			tp.Charset = charset.CharsetBin
 			tp.Collate = charset.CharsetBin
 		}
+	} else if len(tp.Collate) == 0 {
+		tp.Collate = getDefaultCollateForCharset(tp.Charset)
 	}
 	// If flen is not assigned, assigned it by type.
 	if tp.Flen == types.UnspecifiedLength {
