@@ -73,7 +73,6 @@ func (s *testStatsCacheSuite) TestStatsCache(c *C) {
 	snapshot, err := store.GetSnapshot(ver)
 	c.Assert(err, IsNil)
 	m := meta.NewSnapshotMeta(snapshot)
-	do.StatsHandle().LastVersion = 0
 	do.StatsHandle().Clear()
 	do.StatsHandle().Update(m, is)
 	statsTbl = statscache.GetStatisticsTableCache(tableInfo)
