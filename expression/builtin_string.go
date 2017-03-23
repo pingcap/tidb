@@ -1642,8 +1642,6 @@ type builtinFormatSig struct {
 	baseBuiltinFunc
 }
 
-type formatFunc func(float64, int64) string
-
 // See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_format
 func (b *builtinFormatSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
