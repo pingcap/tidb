@@ -184,5 +184,8 @@ func (s *testEvaluatorSuite) TestCompress(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(out, DeepEquals, types.NewDatum(test.out))
 	}
-	s.testNullInput(c, ast.Compress)
-}
+	var argNull types.Datum
+	f, _ := fc.getFunction(datumsToConstants([]types.Datum{argNull}), s.ctx)
+	compress, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(compress.IsNull(), IsTrue)
