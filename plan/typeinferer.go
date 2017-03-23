@@ -408,7 +408,6 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp.Flen = 32
 	case ast.Compress:
 		tp = types.NewFieldType(mysql.TypeBlob)
-		chs = v.defaultCharset
 	case ast.SHA, ast.SHA1:
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
