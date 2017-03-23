@@ -14,7 +14,6 @@
 package tikv
 
 import (
-	goctx "context"
 	"fmt"
 	"math/rand"
 	"net/url"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
+	goctx "golang.org/x/net/context"
 )
 
 type storeCache struct {
@@ -170,12 +170,13 @@ func (s *tikvStore) Close() error {
 	defer mc.Unlock()
 
 	delete(mc.cache, s.uuid)
-	if err := s.client.Close(); err != nil {
-		return errors.Trace(err)
-	}
 	s.oracle.Close()
 	if s.gcWorker != nil {
 		s.gcWorker.Close()
+	}
+	// Make sure all connections are put back into the pools.
+	if err := s.client.Close(); err != nil {
+		return errors.Trace(err)
 	}
 	return nil
 }

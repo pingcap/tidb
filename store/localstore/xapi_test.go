@@ -14,9 +14,7 @@
 package localstore
 
 import (
-	goctx "context"
 	"fmt"
-	"io/ioutil"
 	"math"
 	"sort"
 	"testing"
@@ -32,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
+	goctx "golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -68,9 +67,8 @@ func (s *testXAPISuite) TestSelect(c *C) {
 	req, err := prepareSelectRequest(tbInfo, txn.StartTS())
 	c.Check(err, IsNil)
 	resp := client.Send(mockCtx, req)
-	subResp, err := resp.Next()
+	data, err := resp.Next()
 	c.Check(err, IsNil)
-	data, err := ioutil.ReadAll(subResp)
 	c.Check(err, IsNil)
 	selResp := new(tipb.SelectResponse)
 	proto.Unmarshal(data, selResp)
@@ -97,9 +95,7 @@ func (s *testXAPISuite) TestSelect(c *C) {
 	req, err = prepareIndexRequest(tbInfo, txn.StartTS())
 	c.Check(err, IsNil)
 	resp = client.Send(mockCtx, req)
-	subResp, err = resp.Next()
-	c.Check(err, IsNil)
-	data, err = ioutil.ReadAll(subResp)
+	data, err = resp.Next()
 	c.Check(err, IsNil)
 	idxResp := new(tipb.SelectResponse)
 	proto.Unmarshal(data, idxResp)

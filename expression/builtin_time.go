@@ -324,6 +324,9 @@ func builtinDateFormat(args []types.Datum, ctx context.Context) (types.Datum, er
 		return d, errors.Trace(err)
 	}
 
+	if date.IsNull() {
+		return d, nil
+	}
 	t := date.GetMysqlTime()
 	str, err := t.DateFormat(args[1].GetString())
 	if err != nil {

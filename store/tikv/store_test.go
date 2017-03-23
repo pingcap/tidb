@@ -14,7 +14,6 @@
 package tikv
 
 import (
-	goctx "context"
 	"sync"
 	"time"
 
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	goctx "golang.org/x/net/context"
 )
 
 type testStoreSuite struct {

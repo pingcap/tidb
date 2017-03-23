@@ -14,7 +14,6 @@
 package tikv
 
 import (
-	goctx "context"
 	"net"
 	"testing"
 
@@ -23,6 +22,7 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/msgpb"
 	"github.com/pingcap/kvproto/pkg/util"
+	goctx "golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
