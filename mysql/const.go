@@ -408,7 +408,7 @@ func GetLocaleFormatFunction(loc string) FormatFunc {
 	return locale
 }
 
-// Locale2FormatFunction is the string represent of locale format function.
+// locale2FormatFunction is the string represent of locale format function.
 var locale2FormatFunction = map[string]FormatFunc{
 	"en_US": formatENUS,
 	"zh_CN": formatZHCN,
