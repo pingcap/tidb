@@ -70,11 +70,9 @@ func (s *testSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	logLevel := os.Getenv("log_level")
 	log.SetLevelByString(logLevel)
-	executor.BaseLookupTableTaskSize = 2
 }
 
 func (s *testSuite) TearDownSuite(c *C) {
-	executor.BaseLookupTableTaskSize = 512
 	s.store.Close()
 }
 
