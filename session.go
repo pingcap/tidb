@@ -479,6 +479,11 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 	sysVar, err := s.getExecRet(s, sql)
 	if err != nil {
 		if executor.ErrResultIsEmpty.Equal(err) {
+			sv, ok := variable.SysVars[name]
+			isUninitializedGlobalVariable := ok && sv.Scope|variable.ScopeGlobal > 0
+			if isUninitializedGlobalVariable {
+				return sv.Value, nil
+			}
 			return "", variable.UnknownSystemVar.GenByArgs(name)
 		}
 		return "", errors.Trace(err)
@@ -488,8 +493,8 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
 func (s *session) SetGlobalSysVar(name string, value string) error {
-	sql := fmt.Sprintf(`UPDATE  %s.%s SET VARIABLE_VALUE="%s" WHERE VARIABLE_NAME="%s";`,
-		mysql.SystemDB, mysql.GlobalVariablesTable, value, strings.ToLower(name))
+	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
+		mysql.SystemDB, mysql.GlobalVariablesTable, strings.ToLower(name), value)
 	_, _, err := s.ExecRestrictedSQL(s, sql)
 	return errors.Trace(err)
 }
@@ -929,6 +934,7 @@ const loadCommonGlobalVarsSQL = "select * from mysql.global_variables where vari
 	variable.SQLModeVar + "', '" +
 	variable.DistSQLJoinConcurrencyVar + "', '" +
 	variable.MaxAllowedPacket + "', '" +
+	variable.TiDBSkipUTF8Check + "', '" +
 	variable.DistSQLScanConcurrencyVar + "')"
 
 // LoadCommonGlobalVariableIfNeeded loads and applies commonly used global variables for the session.

@@ -599,6 +599,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, DistSQLJoinConcurrencyVar, "5"},
 	{ScopeSession, TiDBSkipConstraintCheck, "0"},
 	{ScopeSession, TiDBSkipDDLWait, "0"},
+	{ScopeGlobal | ScopeSession, TiDBSkipUTF8Check, "0"},
 	{ScopeSession, TiDBOptAggPushDown, "ON"},
 	{ScopeSession, TiDBOptInSubqUnFolding, "OFF"},
 	{ScopeSession, BuildStatsConcurrencyVar, "4"},
@@ -611,6 +612,7 @@ const (
 	DistSQLJoinConcurrencyVar = "tidb_distsql_join_concurrency"
 	TiDBSkipConstraintCheck   = "tidb_skip_constraint_check"
 	TiDBSkipDDLWait           = "tidb_skip_ddl_wait"
+	TiDBSkipUTF8Check         = "tidb_skip_utf8_check"
 	TiDBOptAggPushDown        = "tidb_opt_agg_push_down"
 	TiDBOptInSubqUnFolding    = "tidb_opt_insubquery_unfold"
 	BuildStatsConcurrencyVar  = "tidb_build_stats_concurrency"
