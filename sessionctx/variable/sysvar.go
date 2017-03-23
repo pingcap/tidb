@@ -90,6 +90,7 @@ func init() {
 	tidbSysVars[TiDBSkipDDLWait] = true
 	tidbSysVars[TiDBOptAggPushDown] = true
 	tidbSysVars[TiDBOptInSubqUnFolding] = true
+	tidbSysVars[BuildStatsConcurrencyVar] = true
 }
 
 // we only support MySQL now
@@ -601,6 +602,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBSkipUTF8Check, "0"},
 	{ScopeSession, TiDBOptAggPushDown, "ON"},
 	{ScopeSession, TiDBOptInSubqUnFolding, "OFF"},
+	{ScopeSession, BuildStatsConcurrencyVar, "4"},
 }
 
 // TiDB system variables
@@ -613,6 +615,7 @@ const (
 	TiDBSkipUTF8Check         = "tidb_skip_utf8_check"
 	TiDBOptAggPushDown        = "tidb_opt_agg_push_down"
 	TiDBOptInSubqUnFolding    = "tidb_opt_insubquery_unfold"
+	BuildStatsConcurrencyVar  = "tidb_build_stats_concurrency"
 )
 
 // SetNamesVariables is the system variable names related to set names statements.
