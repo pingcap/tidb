@@ -342,10 +342,16 @@ func (s *session) retry(maxCnt int) error {
 	for {
 		s.prepareTxnCtx()
 		s.sessionVars.RetryInfo.ResetOffset()
-		for _, sr := range nh.history {
+		for i, sr := range nh.history {
 			st := sr.st
 			txt := st.OriginText()
-			log.Warnf("[%d] Retry %s", connID, sqlForLog(txt))
+			if retryCnt == 0 {
+				// We do not have to log the query every time.
+				// We print the queries at the first try only.
+				log.Warnf("[%d] Retry [%d] query [%d] %s", connID, retryCnt, i, sqlForLog(txt))
+			} else {
+				log.Warnf("[%d] Retry [%d] query [%d]", connID, retryCnt, i)
+			}
 			s.sessionVars.StmtCtx = sr.stmtCtx
 			_, err = st.Exec(s)
 			if err != nil {
