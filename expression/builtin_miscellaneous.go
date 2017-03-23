@@ -16,6 +16,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/twinj/uuid"
 	"net"
 	"time"
 )
@@ -170,7 +171,12 @@ type builtinAnyValueSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
 func (b *builtinAnyValueSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("ANY_VALUE")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d = args[0]
+	return d, nil
 }
 
 type defaultFunctionClass struct {
@@ -444,8 +450,9 @@ type builtinUUIDSig struct {
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_uuid
-func (b *builtinUUIDSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("UUID")
+func (b *builtinUUIDSig) eval(_ []types.Datum) (d types.Datum, err error) {
+	d.SetString(uuid.NewV1().String())
+	return
 }
 
 type uuidShortFunctionClass struct {
