@@ -312,6 +312,7 @@ func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPl
 		}
 		sort.SetSchema(info.p.Schema())
 		info = addPlanToResponse(sort, info)
+
 		count := info.count
 		if prop.limit != nil {
 			count = prop.limit.Offset + prop.limit.Count
@@ -562,6 +563,174 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 	return resultInfo, nil
 }
 
+func generateJoinProp(column *expression.Column) *requiredProperty {
+	return &requiredProperty{
+		props:      []*columnProp{{column, false}},
+		sortKeyLen: 1,
+	}
+}
+
+func compareTypeForOrder(lhs *types.FieldType, rhs *types.FieldType) bool {
+	if lhs.Tp != rhs.Tp {
+		return false
+	}
+	if lhs.ToClass() == types.ClassString &&
+		(lhs.Charset != rhs.Charset || lhs.Collate != rhs.Collate) {
+		return false
+	}
+	return true
+}
+
+// Generate all possible combinations from join conditions for cost evaluation
+// It will try all keys in join conditions
+func constructPropertyByJoin(join *Join) ([][]*requiredProperty, []int, error) {
+	result := make([][]*requiredProperty, 0)
+	condIndex := make([]int, 0)
+	if join.EqualConditions == nil {
+		return nil, nil, nil
+	}
+	for i, cond := range join.EqualConditions {
+		if len(cond.GetArgs()) != 2 {
+			return nil, nil, errors.New("unexpected argument count for equal expression")
+		}
+		lExpr, rExpr := cond.GetArgs()[0], cond.GetArgs()[1]
+		// Only consider raw column reference and cowardly ignore calculations
+		// since we don't know if the function call preserve order
+		lColumn, lOK := lExpr.(*expression.Column)
+		rColumn, rOK := rExpr.(*expression.Column)
+		if lOK && rOK && compareTypeForOrder(lColumn.RetType, rColumn.RetType) {
+			result = append(result, []*requiredProperty{generateJoinProp(lColumn), generateJoinProp(rColumn)})
+			condIndex = append(condIndex, i)
+		} else {
+			continue
+		}
+	}
+	if len(result) == 0 {
+		return nil, nil, nil
+	}
+	return result, condIndex, nil
+}
+
+// convert2PhysicalMergeJoin converts the merge join to *physicalPlanInfo.
+// TODO: Refactor and merge with hash join
+func (p *Join) convert2PhysicalMergeJoin(parentProp *requiredProperty, lProp *requiredProperty, rProp *requiredProperty, condIndex int, joinType JoinType) (*physicalPlanInfo, error) {
+	lChild := p.children[0].(LogicalPlan)
+	rChild := p.children[1].(LogicalPlan)
+
+	newEQConds := make([]*expression.ScalarFunction, 0, len(p.EqualConditions)-1)
+	for i, cond := range p.EqualConditions {
+		if i == condIndex {
+			continue
+		}
+		// prevent further index contamination
+		newCond := cond.Clone()
+		newCond.ResolveIndices(p.schema)
+		newEQConds = append(newEQConds, newCond.(*expression.ScalarFunction))
+	}
+
+	otherFilter := append(expression.ScalarFuncs2Exprs(newEQConds), p.OtherConditions...)
+
+	join := &PhysicalMergeJoin{
+		EqualConditions: []*expression.ScalarFunction{p.EqualConditions[condIndex]},
+		LeftConditions:  p.LeftConditions,
+		RightConditions: p.RightConditions,
+		OtherConditions: otherFilter,
+		DefaultValues:   p.DefaultValues,
+		// Assume order for both side are the same
+		Desc: lProp.props[0].desc,
+	}
+	join.tp = "MergeJoin"
+	join.allocator = p.allocator
+	join.initIDAndContext(p.ctx)
+	join.SetSchema(p.schema)
+	join.JoinType = joinType
+
+	var lInfo *physicalPlanInfo
+	var rInfo *physicalPlanInfo
+
+	// Try no sort first
+	lInfoEnforceSort, err := lChild.convert2PhysicalPlan(&requiredProperty{})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	lInfoEnforceSort = enforceProperty(lProp, lInfoEnforceSort)
+
+	lInfoNoSorted, err := lChild.convert2PhysicalPlan(lProp)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if lInfoNoSorted.cost < lInfoEnforceSort.cost {
+		lInfo = lInfoNoSorted
+	} else {
+		lInfo = lInfoEnforceSort
+	}
+
+	rInfoEnforceSort, err := rChild.convert2PhysicalPlan(&requiredProperty{})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	rInfoEnforceSort = enforceProperty(rProp, rInfoEnforceSort)
+
+	rInfoNoSorted, err := rChild.convert2PhysicalPlan(rProp)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if rInfoEnforceSort.cost < rInfoNoSorted.cost {
+		rInfo = rInfoEnforceSort
+	} else {
+		rInfo = rInfoNoSorted
+	}
+
+	resultInfo := join.matchProperty(parentProp, lInfo, rInfo)
+	// TODO: Considering keeping order in join to remove at least
+	// one ordering property
+	resultInfo = enforceProperty(parentProp, resultInfo)
+	return resultInfo, nil
+}
+
+func (p *Join) convert2PhysicalMergeJoinOnCost(prop *requiredProperty) (*physicalPlanInfo, error) {
+	var info *physicalPlanInfo
+	reqPropPairs, condIndex, err := constructPropertyByJoin(p)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if reqPropPairs == nil {
+		return nil, nil
+	}
+	minCost := math.MaxFloat64
+	var minInfo *physicalPlanInfo
+	for i, reqPropPair := range reqPropPairs {
+		info, err = p.convert2PhysicalMergeJoin(prop, reqPropPair[0], reqPropPair[1], condIndex[i], p.JoinType)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// Force to choose first instead of nil if all Inf cost
+		// TODO: Consider cost instead of force merge
+		if minInfo == nil {
+			minInfo = info
+			minCost = info.cost
+		} else {
+			if info.cost <= minCost {
+				minInfo = info
+				minCost = info.cost
+			}
+		}
+	}
+	return minInfo, nil
+}
+
+func (p *Join) ifValidForMergeJoin() bool {
+	// rule out non-equal join
+	if len(p.EqualConditions) == 0 {
+		return false
+	}
+
+	return true
+}
+
 // convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
 func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	info, err := p.getPlanInfo(prop)
@@ -578,28 +747,57 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 			return nil, errors.Trace(err)
 		}
 	case LeftOuterJoin:
+		if p.preferMergeJoin && p.ifValidForMergeJoin() {
+			info, err = p.convert2PhysicalMergeJoinOnCost(prop)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if info != nil {
+				break
+			}
+			// Otherwise fall into hash join
+		}
 		info, err = p.convert2PhysicalPlanLeft(prop, false)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	case RightOuterJoin:
+		if p.preferMergeJoin && p.ifValidForMergeJoin() {
+			info, err = p.convert2PhysicalMergeJoinOnCost(prop)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if info != nil {
+				break
+			}
+		}
 		info, err = p.convert2PhysicalPlanRight(prop, false)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	default:
-		lInfo, err := p.convert2PhysicalPlanLeft(prop, true)
-		if err != nil {
-			return nil, errors.Trace(err)
+		// Inner Join
+		if p.preferMergeJoin && p.ifValidForMergeJoin() {
+			info, err = p.convert2PhysicalMergeJoinOnCost(prop)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
-		rInfo, err := p.convert2PhysicalPlanRight(prop, true)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if rInfo.cost < lInfo.cost {
-			info = rInfo
-		} else {
-			info = lInfo
+		// fall back to hash join
+		if info == nil {
+			lInfo, err := p.convert2PhysicalPlanLeft(prop, true)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			rInfo, err := p.convert2PhysicalPlanRight(prop, true)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if rInfo.cost < lInfo.cost {
+				info = rInfo
+			} else {
+				info = lInfo
+			}
 		}
 	}
 	p.storePlanInfo(prop, info)

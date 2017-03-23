@@ -227,6 +227,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"char_length('TiDB')", mysql.TypeLonglong, charset.CharsetBin},
 		{"character_length('TiDB')", mysql.TypeLonglong, charset.CharsetBin},
 		{"crc32('TiDB')", mysql.TypeLonglong, charset.CharsetBin},
+		{"instr('foobarbar', 'bar')", mysql.TypeLonglong, charset.CharsetBin},
 		{"timestampdiff(MINUTE,'2003-02-01','2003-05-01 12:05:55')", mysql.TypeLonglong, charset.CharsetBin},
 		{"sign(0)", mysql.TypeLonglong, charset.CharsetBin},
 		{"sign(null)", mysql.TypeLonglong, charset.CharsetBin},
