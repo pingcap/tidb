@@ -178,8 +178,6 @@ func (d *distinctChecker) Check(values []interface{}) (bool, error) {
 
 // SubstituteCorCol2Constant will substitute correlated column to constant value which it contains.
 // If the args of one scalar function are all constant, we will substitute it to constant.
-// If it's called in plan phase, correlated column will change to expression.One.
-// If in executor phase, correlated column will change to value it contains.
 func SubstituteCorCol2Constant(expr Expression) (Expression, error) {
 	switch x := expr.(type) {
 	case *ScalarFunction:
