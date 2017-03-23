@@ -170,25 +170,6 @@ func (s *testEvaluatorSuite) TestSha2Encrypt(c *C) {
 			c.Assert(crypt.IsNull(), IsTrue)
 		}
 	}
-	// Corner case 1: NULL input for sha2
-	{
-		var argNull types.Datum
-		f, _ := fc.getFunction(datumsToConstants([]types.Datum{argNull}), s.ctx)
-		crypt, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(crypt.IsNull(), IsTrue)
-	}
-	// Corner case 2: invalid parameter count
-	{
-		str := types.NewDatum("pingcap")
-		hashLength := types.NewDatum(512)
-		redundantArg := types.NewDatum("redundantArg")
-		datums := []types.Datum{str, hashLength, redundantArg}
-		f, _ := fc.getFunction(datumsToConstants(datums), s.ctx)
-		crypt, err := f.eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(crypt.IsNull(), IsTrue)
-	}
 }
 
 type md5Test struct {

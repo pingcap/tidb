@@ -583,7 +583,7 @@ type builtinSHA2Sig struct {
 	baseBuiltinFunc
 }
 
-// Supported hash length as the second argument
+// Supported hash length of SHA-2 family
 const (
 	SHA0   int = 0
 	SHA224 int = 224
@@ -597,10 +597,6 @@ func (b *builtinSHA2Sig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
 		return d, errors.Trace(err)
-	}
-	// SHA2 function accepts 2 parameters
-	if len(args) != 2 {
-		return d, nil
 	}
 	for _, arg := range args {
 		if arg.IsNull() {
