@@ -130,6 +130,8 @@ func CastValue(ctx context.Context, val types.Datum, col *model.ColumnInfo) (cas
 	str := casted.GetString()
 	for i, r := range str {
 		if r == utf8.RuneError {
+			log.Errorf("[%d] incorrect utf8 value: %x for column %s",
+				ctx.GetSessionVars().ConnectionID, []byte(str), col.Name)
 			// Truncate to valid utf8 string.
 			casted = types.NewStringDatum(str[:i])
 			err = sc.HandleTruncate(ErrTruncateWrongValue)
