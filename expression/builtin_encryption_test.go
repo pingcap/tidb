@@ -184,5 +184,5 @@ func (s *testEvaluatorSuite) TestCompress(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(out, DeepEquals, types.NewDatum(test.out))
 	}
-	s.testNullInput(c, ast.AesDecrypt)
+	s.testNullInput(c, ast.Compress)
 }
