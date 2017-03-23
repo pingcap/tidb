@@ -63,6 +63,31 @@ type visitInfo struct {
 	column    string
 }
 
+type tableHintInfo struct {
+	sortMergeJoinTables []model.CIStr
+}
+
+func (info *tableHintInfo) ifPreferMergeJoin(tableNames ...*model.CIStr) bool {
+	// Only need either side matches one on the list.
+	// Even though you can put 2 tables on the list,
+	// it doesn't mean optimizer will reorder to make them
+	// join directly.
+	// Which it joins on with depend on sequence of traverse
+	// and without reorder, user might adjust themselves.
+	// This is similar to MySQL hints.
+	for _, tableName := range tableNames {
+		if tableName == nil {
+			continue
+		}
+		for _, curEntry := range info.sortMergeJoinTables {
+			if curEntry.L == tableName.L {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // planBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
 type planBuilder struct {
@@ -77,8 +102,9 @@ type planBuilder struct {
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
 	// Collect the visit information for privilege check.
-	visitInfo []visitInfo
-	optFlag   uint64
+	visitInfo     []visitInfo
+	tableHintInfo []tableHintInfo
+	optFlag       uint64
 }
 
 func (b *planBuilder) build(node ast.Node) Plan {

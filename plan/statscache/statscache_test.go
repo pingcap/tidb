@@ -11,17 +11,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package statscache
+package statscache_test
 
 import (
 	"testing"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/plan/statscache"
+	"github.com/pingcap/tidb/util/testkit"
 )
 
 func TestT(t *testing.T) {
@@ -33,44 +36,54 @@ var _ = Suite(&testStatsCacheSuite{})
 type testStatsCacheSuite struct{}
 
 func (s *testStatsCacheSuite) TestStatsCache(c *C) {
-	tblInfo := &model.TableInfo{
-		ID: 1,
-	}
-	columns := []*model.ColumnInfo{
-		{
-			ID:        2,
-			FieldType: *types.NewFieldType(mysql.TypeLonglong),
-		},
-	}
-	tblInfo.Columns = columns
-	ctx := mock.NewContext()
-	ctx.Store = kv.NewMockStorage()
-	statsTbl := GetStatisticsTableCache(ctx, tblInfo)
-	c.Check(len(statsTbl.Columns), Equals, 1)
+	store, do, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (c1 int, c2 int)")
+	testKit.MustExec("insert into t values(1, 2)")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	statsTbl := statscache.GetStatisticsTableCache(tableInfo)
+	c.Assert(statsTbl.Pseudo, IsTrue)
+	testKit.MustExec("analyze table t")
+	statsTbl = statscache.GetStatisticsTableCache(tableInfo)
+	c.Assert(statsTbl.Pseudo, IsFalse)
+	testKit.MustExec("create index idx_t on t(c1)")
+	is = do.InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo = tbl.Meta()
+	statsTbl = statscache.GetStatisticsTableCache(tableInfo)
+	c.Assert(statsTbl.Pseudo, IsTrue)
+	testKit.MustExec("analyze table t")
+	statsTbl = statscache.GetStatisticsTableCache(tableInfo)
+	c.Assert(statsTbl.Pseudo, IsFalse)
+	testKit.MustExec("alter table t drop column c2")
+	is = do.InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo = tbl.Meta()
 
-	columns = []*model.ColumnInfo{
-		{
-			ID:        2,
-			FieldType: *types.NewFieldType(mysql.TypeLonglong),
-		},
-		{
-			ID:        3,
-			FieldType: *types.NewFieldType(mysql.TypeLonglong),
-		},
-	}
-	tblInfo = &model.TableInfo{
-		ID: 1,
-	}
-	tblInfo.Columns = columns
-	statsTbl = GetStatisticsTableCache(ctx, tblInfo)
-	c.Check(len(statsTbl.Columns), Equals, 2)
+	ver, err := store.CurrentVersion()
+	c.Assert(err, IsNil)
+	snapshot, err := store.GetSnapshot(ver)
+	c.Assert(err, IsNil)
+	m := meta.NewSnapshotMeta(snapshot)
+	do.StatsHandle().Clear()
+	do.StatsHandle().Update(m, is)
+	statsTbl = statscache.GetStatisticsTableCache(tableInfo)
+	c.Assert(statsTbl.Pseudo, IsTrue)
+}
 
-	si, ok := statsTblCache.cache[tblInfo.ID]
-	c.Assert(ok, IsTrue)
-	oriLoadTime := si.loadTime - expireDuration
-	si.loadTime = oriLoadTime
-	GetStatisticsTableCache(ctx, tblInfo)
-	si, ok = statsTblCache.cache[tblInfo.ID]
-	c.Assert(ok, IsTrue)
-	c.Check(si.loadTime, Greater, oriLoadTime)
+func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
+	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	do, err := tidb.BootstrapSession(store)
+	return store, do, errors.Trace(err)
 }

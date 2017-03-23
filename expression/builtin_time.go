@@ -324,6 +324,9 @@ func builtinDateFormat(args []types.Datum, ctx context.Context) (types.Datum, er
 		return d, errors.Trace(err)
 	}
 
+	if date.IsNull() {
+		return d, nil
+	}
 	t := date.GetMysqlTime()
 	str, err := t.DateFormat(args[1].GetString())
 	if err != nil {
@@ -1506,6 +1509,8 @@ func (b *builtinUnixTimestampSig) eval(row []types.Datum) (d types.Datum, err er
 		}
 	case types.KindMysqlTime:
 		t = args[0].GetMysqlTime()
+	case types.KindNull:
+		return
 	default:
 		return d, errors.Errorf("Unkonwn args type for unix_timestamp %d", args[0].Kind())
 	}

@@ -137,6 +137,9 @@ type SessionVars struct {
 	// SkipConstraintCheck is true when importing data.
 	SkipConstraintCheck bool
 
+	// SkipUTF8 check on input value.
+	SkipUTF8Check bool
+
 	// SkipDDLWait can be set to true to skip 2 lease wait after create/drop/truncate table, create/drop database.
 	// Then if there are multiple TiDB servers, the new table may not be available for other TiDB servers.
 	SkipDDLWait bool
@@ -150,6 +153,9 @@ type SessionVars struct {
 	// AllowAggPushDown can be set to false to forbid aggregation push down.
 	AllowAggPushDown bool
 
+	// AllowSubqueryUnFolding can be set to true to fold in subquery
+	AllowInSubqueryUnFolding bool
+
 	// CurrInsertValues is used to record current ValuesExpr's values.
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	CurrInsertValues interface{}
@@ -159,21 +165,25 @@ type SessionVars struct {
 	TimeZone *time.Location
 
 	SQLMode mysql.SQLMode
+
+	// BuildStatsConcurrencyVar is used to control statistics building concurrency.
+	BuildStatsConcurrencyVar int
 }
 
 // NewSessionVars creates a session vars object.
 func NewSessionVars() *SessionVars {
 	return &SessionVars{
-		Users:                make(map[string]string),
-		Systems:              make(map[string]string),
-		PreparedStmts:        make(map[uint32]interface{}),
-		PreparedStmtNameToID: make(map[string]uint32),
-		TxnCtx:               &TransactionContext{},
-		RetryInfo:            &RetryInfo{},
-		StrictSQLMode:        true,
-		Status:               mysql.ServerStatusAutocommit,
-		StmtCtx:              new(StatementContext),
-		AllowAggPushDown:     true,
+		Users:                    make(map[string]string),
+		Systems:                  make(map[string]string),
+		PreparedStmts:            make(map[uint32]interface{}),
+		PreparedStmtNameToID:     make(map[string]uint32),
+		TxnCtx:                   &TransactionContext{},
+		RetryInfo:                &RetryInfo{},
+		StrictSQLMode:            true,
+		Status:                   mysql.ServerStatusAutocommit,
+		StmtCtx:                  new(StatementContext),
+		AllowAggPushDown:         true,
+		BuildStatsConcurrencyVar: 4,
 	}
 }
 
@@ -343,4 +353,19 @@ func (sc *StatementContext) AppendWarning(warn error) {
 		sc.mu.warnings = append(sc.mu.warnings, warn)
 	}
 	sc.mu.Unlock()
+}
+
+// HandleTruncate ignores or returns the error based on the StatementContext state.
+func (sc *StatementContext) HandleTruncate(err error) error {
+	if err == nil {
+		return nil
+	}
+	if sc.IgnoreTruncate {
+		return nil
+	}
+	if sc.TruncateAsWarning {
+		sc.AppendWarning(err)
+		return nil
+	}
+	return err
 }
