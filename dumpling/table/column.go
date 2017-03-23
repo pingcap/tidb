@@ -121,23 +121,22 @@ func CastValue(ctx context.Context, val types.Datum, col *model.ColumnInfo) (cas
 	if err != nil {
 		return casted, errors.Trace(err)
 	}
+	if ctx.GetSessionVars().SkipUTF8Check {
+		return casted, nil
+	}
 	if !mysql.IsUTF8Charset(col.Charset) {
 		return casted, nil
 	}
 	str := casted.GetString()
-	for _, r := range str {
+	for i, r := range str {
 		if r == utf8.RuneError {
 			// Truncate to valid utf8 string.
-			// casted = types.NewStringDatum(str[:i])
+			casted = types.NewStringDatum(str[:i])
 			err = sc.HandleTruncate(ErrTruncateWrongValue)
 			break
 		}
 	}
-	if err != nil {
-		// TODO: enable it when find a better way to handle old incorrect data.
-		log.Debugf("invalid UTF8 value %v for column %s", str, col.Name.O)
-	}
-	return casted, nil
+	return casted, errors.Trace(err)
 }
 
 // ColDesc describes column information like MySQL desc and show columns do.
