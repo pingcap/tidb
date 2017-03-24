@@ -17,7 +17,6 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -180,7 +179,6 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 // and whether this condition can be used as an access condition.
 func (p *Selection) hasUsableIndicesAndPk(ds *DataSource) bool {
 	indices, includeTableScan := availableIndices(ds.indexHints, ds.tableInfo)
-	var usableIdxs []*model.IndexInfo
 	var newConds []expression.Expression
 	for _, expr := range p.Conditions {
 		if !expr.IsCorrelated() {
@@ -193,6 +191,32 @@ func (p *Selection) hasUsableIndicesAndPk(ds *DataSource) bool {
 		}
 		newCond, _ := expression.SubstituteCorCol2Constant(cond)
 		newConds = append(newConds, newCond)
+	}
+	if ds.tableInfo.PKIsHandle && includeTableScan {
+		var pkCol *expression.Column
+		for i, col := range ds.Columns {
+			if mysql.HasPriKeyFlag(col.Flag) {
+				pkCol = ds.schema.Columns[i]
+				break
+			}
+		}
+		if pkCol != nil {
+			checker := conditionChecker{
+				pkName: pkCol.ColName,
+				length: types.UnspecifiedLength,
+			}
+			// Pk should satisfies the same property as the index.
+			var usable bool
+			for _, cond := range newConds {
+				if checker.check(cond) {
+					usable = true
+					break
+				}
+			}
+			if usable {
+				return true
+			}
+		}
 	}
 	for _, idx := range indices {
 		// TODO: Currently we don't consider composite index.
@@ -215,36 +239,8 @@ func (p *Selection) hasUsableIndicesAndPk(ds *DataSource) bool {
 			}
 		}
 		if usable {
-			usableIdxs = append(usableIdxs, idx)
+			return true
 		}
 	}
-	var pkName model.CIStr
-	if ds.tableInfo.PKIsHandle && includeTableScan {
-		var pkCol *expression.Column
-		for i, col := range ds.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
-				pkCol = ds.schema.Columns[i]
-				break
-			}
-		}
-		if pkCol == nil {
-			return len(usableIdxs) > 0
-		}
-		checker := conditionChecker{
-			pkName: pkCol.ColName,
-			length: types.UnspecifiedLength,
-		}
-		// Pk should satisfies the same property as the index.
-		var usable bool
-		for _, cond := range newConds {
-			if checker.check(cond) {
-				usable = true
-				break
-			}
-		}
-		if usable {
-			pkName = pkCol.ColName
-		}
-	}
-	return len(usableIdxs) > 0 || pkName.L != ""
+	return false
 }

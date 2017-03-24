@@ -208,8 +208,6 @@ func SubstituteCorCol2Constant(expr Expression) (Expression, error) {
 		return newSf, nil
 	case *CorrelatedColumn:
 		return &Constant{Value: *x.Data, RetType: x.GetType()}, nil
-	case *Constant:
-		return x.Clone(), nil
 	default:
 		return x.Clone(), nil
 	}
