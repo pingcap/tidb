@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"math"
 	"sort"
-	"strconv"
 	"time"
 
 	"github.com/juju/errors"
@@ -51,12 +50,6 @@ func resultRowToRow(t table.Table, h int64, data []types.Datum, tableAsName *mod
 	}
 	return &Row{Data: data, RowKeys: []*RowKeyEntry{entry}}
 }
-
-// BaseLookupTableTaskSize represents base number of handles for a lookupTableTask.
-var BaseLookupTableTaskSize = 1024
-
-// MaxLookupTableTaskSize represents max number of handles for a lookupTableTask.
-var MaxLookupTableTaskSize = 20480
 
 // LookupTableTaskChannelSize represents the channel size of the index double read taskChan.
 var LookupTableTaskChannelSize = 50
@@ -532,14 +525,10 @@ func (e *XSelectIndexExec) slowQueryInfo(duration time.Duration) string {
 		e.partialCount, e.scanConcurrency, e.returnedRows, e.handleCount)
 }
 
-const concurrencyLimit int = 30
-
-// addWorker adds a worker for lookupTableTask.
-// It's not thread-safe and should be called in fetchHandles goroutine only.
-func addWorker(e *XSelectIndexExec, ch chan *lookupTableTask, concurrency *int) {
-	if *concurrency <= concurrencyLimit {
-		go e.pickAndExecTask(ch)
-		*concurrency = *concurrency + 1
+func (e *XSelectIndexExec) addWorker(workCh chan *lookupTableTask, concurrency *int, concurrencyLimit int) {
+	if *concurrency < concurrencyLimit {
+		go e.pickAndExecTask(workCh)
+		*concurrency++
 	}
 }
 
@@ -549,8 +538,9 @@ func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<
 	workCh := make(chan *lookupTableTask, 1)
 	defer close(workCh)
 
+	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency
 	var concurrency int
-	addWorker(e, workCh, &concurrency)
+	e.addWorker(workCh, &concurrency, lookupConcurrencyLimit)
 
 	for {
 		handles, finish, err := extractHandlesFromIndexResult(idxResult)
@@ -562,7 +552,7 @@ func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<
 		tasks := e.buildTableTasks(handles)
 		for _, task := range tasks {
 			if concurrency < len(tasks) {
-				addWorker(e, workCh, &concurrency)
+				e.addWorker(workCh, &concurrency, lookupConcurrencyLimit)
 			}
 
 			select {
@@ -570,23 +560,12 @@ func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<
 				return
 			case workCh <- task:
 			default:
-				addWorker(e, workCh, &concurrency)
+				e.addWorker(workCh, &concurrency, lookupConcurrencyLimit)
 				workCh <- task
 			}
 			ch <- task
 		}
 	}
-}
-
-func getScanConcurrency(ctx context.Context) (int, error) {
-	sessionVars := ctx.GetSessionVars()
-	concurrency, err := sessionVars.GetTiDBSystemVar(variable.DistSQLScanConcurrencyVar)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	c, err := strconv.ParseInt(concurrency, 10, 64)
-	log.Debugf("[%d] [DistSQL] Scan with concurrency %d", sessionVars.ConnectionID, c)
-	return int(c), errors.Trace(err)
 }
 
 func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
@@ -634,16 +613,13 @@ func (e *XSelectIndexExec) buildTableTasks(handles []int64) []*lookupTableTask {
 	// Build tasks with increasing batch size.
 	var taskSizes []int
 	total := len(handles)
-	batchSize := BaseLookupTableTaskSize
+	batchSize := e.ctx.GetSessionVars().IndexLookupSize
 	for total > 0 {
 		if batchSize > total {
 			batchSize = total
 		}
 		taskSizes = append(taskSizes, batchSize)
 		total -= batchSize
-		if batchSize < MaxLookupTableTaskSize {
-			batchSize *= 2
-		}
 	}
 
 	var indexOrder map[int64]int
@@ -813,9 +789,8 @@ type XSelectTableExec struct {
 	aggFields []*types.FieldType
 	aggregate bool
 
-	scanConcurrency int
-	execStart       time.Time
-	partialCount    int
+	execStart    time.Time
+	partialCount int
 }
 
 // Schema implements the Executor Schema interface.
@@ -849,7 +824,7 @@ func (e *XSelectTableExec) doRequest() error {
 	selReq.GroupBy = e.byItems
 
 	kvRanges := tableRangesToKVRanges(e.table.Meta().ID, e.ranges)
-	e.result, err = distsql.Select(e.ctx.GetClient(), goctx.Background(), selReq, kvRanges, e.scanConcurrency, e.keepOrder)
+	e.result, err = distsql.Select(e.ctx.GetClient(), goctx.Background(), selReq, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -927,7 +902,8 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 
 func (e *XSelectTableExec) slowQueryInfo(duration time.Duration) string {
 	return fmt.Sprintf("time: %v, table: %s(%d), partials: %d, concurrency: %d, start_ts: %d, rows: %d",
-		duration, e.tableInfo.Name, e.tableInfo.ID, e.partialCount, e.scanConcurrency, e.startTS, e.returnedRows)
+		duration, e.tableInfo.Name, e.tableInfo.ID, e.partialCount, e.ctx.GetSessionVars().DistSQLScanConcurrency,
+		e.startTS, e.returnedRows)
 }
 
 // timeZoneOffset returns the local time zone offset in seconds.

@@ -156,6 +156,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"day('2009-12-31 23:59:59.000010')", mysql.TypeLonglong, charset.CharsetBin},
 		{"week('2009-12-31 23:59:59.000010')", mysql.TypeLonglong, charset.CharsetBin},
 		{"month('2009-12-31 23:59:59.000010')", mysql.TypeLonglong, charset.CharsetBin},
+		{"quarter('2009-12-31 23:59:59.000010')", mysql.TypeLonglong, charset.CharsetBin},
 		{"year('2009-12-31 23:59:59.000010')", mysql.TypeLonglong, charset.CharsetBin},
 		{"dayofweek('2009-12-31 23:59:59.000010')", mysql.TypeLonglong, charset.CharsetBin},
 		{"dayofmonth('2009-12-31 23:59:59.000010')", mysql.TypeLonglong, charset.CharsetBin},
