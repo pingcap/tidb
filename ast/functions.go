@@ -112,8 +112,6 @@ const (
 	Curtime          = "curtime"
 	Date             = "date"
 	DateAdd          = "date_add"
-	AddTime          = "addtime"
-	SubTime          = "subtime"
 	DateFormat       = "date_format"
 	DateSub          = "date_sub"
 	DateDiff         = "datediff"

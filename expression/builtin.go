@@ -123,8 +123,6 @@ type functionClass interface {
 // BuiltinFunc is the function signature for builtin functions
 type BuiltinFunc func([]types.Datum, context.Context) (types.Datum, error)
 
-	ast.AddTime:          {timeArithFuncFactory(ast.TimeArithAdd), 2, 2},
-	ast.SubTime:          {timeArithFuncFactory(ast.TimeArithSub), 2, 2},
 // funcs holds all registered builtin functions.
 var funcs = map[string]functionClass{
 	// common functions
@@ -167,7 +165,6 @@ var funcs = map[string]functionClass{
 
 	// time functions
 	ast.AddDate:          &dateArithFunctionClass{baseFunctionClass{ast.AddDate, 3, 3}, ast.DateArithAdd},
-	ast.AddTime:          &addTimeFunctionClass{baseFunctionClass{ast.AddTime, 2, 2}},
 	ast.ConvertTz:        &convertTzFunctionClass{baseFunctionClass{ast.ConvertTz, 3, 3}},
 	ast.Curdate:          &currentDateFunctionClass{baseFunctionClass{ast.Curdate, 0, 0}},
 	ast.CurrentDate:      &currentDateFunctionClass{baseFunctionClass{ast.CurrentDate, 0, 0}},
@@ -206,7 +203,6 @@ var funcs = map[string]functionClass{
 	ast.Second:           &secondFunctionClass{baseFunctionClass{ast.Second, 1, 1}},
 	ast.StrToDate:        &strToDateFunctionClass{baseFunctionClass{ast.StrToDate, 2, 2}},
 	ast.SubDate:          &dateArithFunctionClass{baseFunctionClass{ast.SubDate, 3, 3}, ast.DateArithSub},
-	ast.SubTime:          &subTimeFunctionClass{baseFunctionClass{ast.SubTime, 2, 2}},
 	ast.Sysdate:          &sysDateFunctionClass{baseFunctionClass{ast.Sysdate, 0, 1}},
 	ast.Time:             &timeFunctionClass{baseFunctionClass{ast.Time, 1, 1}},
 	ast.TimeFormat:       &timeFormatFunctionClass{baseFunctionClass{ast.TimeFormat, 2, 2}},
