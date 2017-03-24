@@ -63,6 +63,8 @@ var (
 	ErrRowKeyCount     = terror.ClassExecutor.New(codeRowKeyCount, "Wrong row key entry count")
 	ErrPrepareDDL      = terror.ClassExecutor.New(codePrepareDDL, "Can not prepare DDL statements")
 	ErrPasswordNoMatch = terror.ClassExecutor.New(CodePasswordNoMatch, "Can't find any matching row in the user table")
+	ErrResultIsEmpty   = terror.ClassExecutor.New(codeResultIsEmpty, "result is empty")
+	ErrBuildExecutor   = terror.ClassExecutor.New(codeErrBuildExec, "Failed to build executor")
 )
 
 // Error codes.
@@ -74,6 +76,8 @@ const (
 	codeWrongParamCount terror.ErrCode = 5
 	codeRowKeyCount     terror.ErrCode = 6
 	codePrepareDDL      terror.ErrCode = 7
+	codeResultIsEmpty   terror.ErrCode = 8
+	codeErrBuildExec    terror.ErrCode = 9
 	// MySQL error code
 	CodePasswordNoMatch terror.ErrCode = 1133
 	CodeCannotUser      terror.ErrCode = 1396
@@ -349,24 +353,26 @@ func init() {
 	// While doing optimization in the plan package, we need to execute uncorrelated subquery,
 	// but the plan package cannot import the executor package because of the dependency cycle.
 	// So we assign a function implemented in the executor package to the plan package to avoid the dependency cycle.
-	plan.EvalSubquery = func(p plan.PhysicalPlan, is infoschema.InfoSchema, ctx context.Context) (d []types.Datum, err error) {
+	plan.EvalSubquery = func(p plan.PhysicalPlan, is infoschema.InfoSchema, ctx context.Context) (rows [][]types.Datum, err error) {
 		err = ctx.ActivePendingTxn()
 		if err != nil {
-			return d, errors.Trace(err)
+			return rows, errors.Trace(err)
 		}
 		e := &executorBuilder{is: is, ctx: ctx}
 		exec := e.build(p)
 		if e.err != nil {
-			return d, errors.Trace(err)
+			return rows, errors.Trace(err)
 		}
-		row, err := exec.Next()
-		if err != nil {
-			return d, errors.Trace(err)
+		for {
+			row, err := exec.Next()
+			if err != nil {
+				return rows, errors.Trace(err)
+			}
+			if row == nil {
+				return rows, nil
+			}
+			rows = append(rows, row.Data)
 		}
-		if row == nil {
-			return
-		}
-		return row.Data, nil
 	}
 	tableMySQLErrCodes := map[terror.ErrCode]uint16{
 		CodeCannotUser:      mysql.ErrCannotUser,

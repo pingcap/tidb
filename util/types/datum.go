@@ -58,7 +58,7 @@ type Datum struct {
 	length    uint32      // length can hold uint32 values.
 	i         int64       // i can hold int64 uint64 float64 values.
 	b         []byte      // b can hold string or []byte values.
-	x         interface{} // f hold all other types.
+	x         interface{} // x hold all other types.
 }
 
 // Kind gets the kind of the datum.

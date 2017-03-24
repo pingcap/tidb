@@ -19,7 +19,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
-	"golang.org/x/net/context"
+	goctx "golang.org/x/net/context"
 )
 
 type testRegionCacheSuite struct {
@@ -45,7 +45,7 @@ func (s *testRegionCacheSuite) SetUpTest(c *C) {
 	s.peer2 = peerIDs[1]
 	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
 	s.cache = NewRegionCache(pdCli)
-	s.bo = NewBackoffer(5000, context.Background())
+	s.bo = NewBackoffer(5000, goctx.Background())
 }
 
 func (s *testRegionCacheSuite) storeAddr(id uint64) string {
@@ -86,7 +86,7 @@ func (s *testRegionCacheSuite) TestSimple(c *C) {
 }
 
 func (s *testRegionCacheSuite) TestDropStore(c *C) {
-	bo := NewBackoffer(100, context.Background())
+	bo := NewBackoffer(100, goctx.Background())
 	s.cluster.RemoveStore(s.store1)
 	loc, err := s.cache.LocateKey(bo, []byte("a"))
 	c.Assert(err, IsNil)
@@ -298,4 +298,22 @@ func (s *testRegionCacheSuite) TestUpdateStoreAddr(c *C) {
 
 	c.Assert(err, IsNil)
 	c.Assert(getVal, BytesEquals, testValue)
+}
+
+func (s *testRegionCacheSuite) TestListRegionIDsInCache(c *C) {
+	// ['' - 'm' - 'z']
+	region2 := s.cluster.AllocID()
+	newPeers := s.cluster.AllocIDs(2)
+	s.cluster.Split(s.region1, region2, []byte("m"), newPeers, newPeers[0])
+
+	regionIDs, err := s.cache.ListRegionIDsInKeyRange(s.bo, []byte("a"), []byte("z"))
+	c.Assert(err, IsNil)
+	c.Assert(regionIDs, DeepEquals, []uint64{s.region1, region2})
+	regionIDs, err = s.cache.ListRegionIDsInKeyRange(s.bo, []byte("m"), []byte("z"))
+	c.Assert(err, IsNil)
+	c.Assert(regionIDs, DeepEquals, []uint64{region2})
+
+	regionIDs, err = s.cache.ListRegionIDsInKeyRange(s.bo, []byte("a"), []byte("m"))
+	c.Assert(err, IsNil)
+	c.Assert(regionIDs, DeepEquals, []uint64{s.region1, region2})
 }
