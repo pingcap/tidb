@@ -46,6 +46,7 @@ type Join struct {
 	anti            bool
 	reordered       bool
 	cartesianJoin   bool
+	preferINLJ      bool
 	preferMergeJoin bool
 
 	EqualConditions []*expression.ScalarFunction

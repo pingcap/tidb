@@ -27,7 +27,7 @@ func tryToGetJoinGroup(j *Join) ([]LogicalPlan, bool) {
 	// 1. already reordered
 	// 2. not inner join
 	// 3. forced merge join
-	if j.reordered || !j.cartesianJoin || j.preferMergeJoin {
+	if j.reordered || !j.cartesianJoin || j.preferMergeJoin || j.preferINLJ {
 		return nil, false
 	}
 	lChild := j.children[0].(LogicalPlan)

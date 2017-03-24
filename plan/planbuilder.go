@@ -64,6 +64,7 @@ type visitInfo struct {
 }
 
 type tableHintInfo struct {
+	INLJTables          []model.CIStr
 	sortMergeJoinTables []model.CIStr
 }
 
@@ -80,6 +81,20 @@ func (info *tableHintInfo) ifPreferMergeJoin(tableNames ...*model.CIStr) bool {
 			continue
 		}
 		for _, curEntry := range info.sortMergeJoinTables {
+			if curEntry.L == tableName.L {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (info *tableHintInfo) ifPreferINLJ(tableNames ...*model.CIStr) bool {
+	for _, tableName := range tableNames {
+		if tableName == nil {
+			continue
+		}
+		for _, curEntry := range info.INLJTables {
 			if curEntry.L == tableName.L {
 				return true
 			}

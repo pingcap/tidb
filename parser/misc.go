@@ -230,6 +230,7 @@ var tokenMap = map[string]int{
 	"DISABLE":                    disable,
 	"DISTINCT":                   distinct,
 	"TIDB_SMJ":                   tidbSMJ,
+	"TIDB_INLJ":                  tidbINLJ,
 	"DIV":                        div,
 	"DO":                         do,
 	"DROP":                       drop,
