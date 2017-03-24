@@ -42,10 +42,11 @@ const (
 type Join struct {
 	baseLogicalPlan
 
-	JoinType      JoinType
-	anti          bool
-	reordered     bool
-	cartesianJoin bool
+	JoinType        JoinType
+	anti            bool
+	reordered       bool
+	cartesianJoin   bool
+	preferMergeJoin bool
 
 	EqualConditions []*expression.ScalarFunction
 	LeftConditions  []expression.Expression

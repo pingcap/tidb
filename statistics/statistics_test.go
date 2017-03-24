@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -155,9 +156,8 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	tblInfo.Indices = indices
 	timestamp := int64(10)
 	bucketCount := int64(256)
-	sc := new(variable.StatementContext)
 	builder := &Builder{
-		Sc:            sc,
+		Ctx:           mock.NewContext(),
 		TblInfo:       tblInfo,
 		StartTS:       timestamp,
 		Count:         s.count,
@@ -169,6 +169,7 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 		PkRecords:     ast.RecordSet(s.pk),
 		PkOffset:      2,
 	}
+	sc := builder.Ctx.GetSessionVars().StmtCtx
 	t, err := builder.NewTable()
 	c.Check(err, IsNil)
 
@@ -189,10 +190,10 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	c.Check(count, Equals, int64(1))
 	count, err = col.LessRowCount(sc, types.NewIntDatum(20000))
 	c.Check(err, IsNil)
-	c.Check(count, Equals, int64(19980))
+	c.Check(count, Equals, int64(19984))
 	count, err = col.BetweenRowCount(sc, types.NewIntDatum(30000), types.NewIntDatum(35000))
 	c.Check(err, IsNil)
-	c.Check(count, Equals, int64(4696))
+	c.Check(count, Equals, int64(4618))
 
 	col = t.Columns[2]
 	count, err = col.EqualRowCount(sc, types.NewIntDatum(10000))
@@ -200,10 +201,10 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	c.Check(count, Equals, int64(1))
 	count, err = col.LessRowCount(sc, types.NewIntDatum(20000))
 	c.Check(err, IsNil)
-	c.Check(count, Equals, int64(20136))
+	c.Check(count, Equals, int64(20224))
 	count, err = col.BetweenRowCount(sc, types.NewIntDatum(30000), types.NewIntDatum(35000))
 	c.Check(err, IsNil)
-	c.Check(count, Equals, int64(5083))
+	c.Check(count, Equals, int64(5120))
 
 	str := t.String()
 	c.Check(len(str), Greater, 0)

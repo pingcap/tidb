@@ -96,7 +96,7 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 
 func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]types.Datum, idxRS []ast.RecordSet, pkRS ast.RecordSet) error {
 	statBuilder := &statistics.Builder{
-		Sc:            e.ctx.GetSessionVars().StmtCtx,
+		Ctx:           e.ctx,
 		TblInfo:       e.tblInfo,
 		Count:         count,
 		NumBuckets:    defaultBucketCount,
