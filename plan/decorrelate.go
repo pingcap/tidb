@@ -17,6 +17,8 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -158,6 +160,11 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 			}
 		}
 	}
+	if sel, ok := p.(*Selection); ok {
+		if ds, ok := p.Children()[0].(*DataSource); ok {
+			sel.canControlScan = sel.hasUsableIndicesAndPk(ds)
+		}
+	}
 	newChildren := make([]Plan, 0, len(p.Children()))
 	for _, child := range p.Children() {
 		np, _ := s.optimize(child.(LogicalPlan), nil, nil)
@@ -166,4 +173,78 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 	}
 	p.SetChildren(newChildren...)
 	return p, nil
+}
+
+// hasUsableIndicesAndPk will simply check whether the pk or one index could used in this situation by
+// checking whether this index or pk is contained in one condition that has correlated column,
+// and whether this condition can be used as an access condition.
+func (p *Selection) hasUsableIndicesAndPk(ds *DataSource) bool {
+	indices, includeTableScan := availableIndices(ds.indexHints, ds.tableInfo)
+	var usableIdxs []*model.IndexInfo
+	var newConds []expression.Expression
+	for _, expr := range p.Conditions {
+		if !expr.IsCorrelated() {
+			continue
+		}
+		cond := pushDownNot(expr, false, nil)
+		corCols := extractCorColumns(cond)
+		for _, col := range corCols {
+			*col.Data = expression.One.Value
+		}
+		newCond, _ := expression.SubstituteCorCol2Constant(cond)
+		newConds = append(newConds, newCond)
+	}
+	for _, idx := range indices {
+		// TODO: Currently we don't consider composite index.
+		if len(idx.Columns) > 1 {
+			continue
+		}
+		checker := &conditionChecker{
+			idx:          idx,
+			columnOffset: 0,
+			length:       idx.Columns[0].Length,
+		}
+		// This idx column should occur in one condition which contains both column and correlated column.
+		// And conditionChecker.check(this condition) should be true.
+		var usable bool
+		for _, cond := range newConds {
+			// If one cond is ok, then this index is useful.
+			if checker.check(cond) {
+				usable = true
+				break
+			}
+		}
+		if usable {
+			usableIdxs = append(usableIdxs, idx)
+		}
+	}
+	var pkName model.CIStr
+	if ds.tableInfo.PKIsHandle && includeTableScan {
+		var pkCol *expression.Column
+		for i, col := range ds.Columns {
+			if mysql.HasPriKeyFlag(col.Flag) {
+				pkCol = ds.schema.Columns[i]
+				break
+			}
+		}
+		if pkCol == nil {
+			return len(usableIdxs) > 0
+		}
+		checker := conditionChecker{
+			pkName: pkCol.ColName,
+			length: types.UnspecifiedLength,
+		}
+		// Pk should satisfies the same property as the index.
+		var usable bool
+		for _, cond := range newConds {
+			if checker.check(cond) {
+				usable = true
+				break
+			}
+		}
+		if usable {
+			pkName = pkCol.ColName
+		}
+	}
+	return len(usableIdxs) > 0 || pkName.L != ""
 }
