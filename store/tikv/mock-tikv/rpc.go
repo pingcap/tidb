@@ -14,7 +14,6 @@
 package mocktikv
 
 import (
-	goctx "context"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/util/codec"
+	goctx "golang.org/x/net/context"
 )
 
 const requestMaxSize = 4 * 1024 * 1024

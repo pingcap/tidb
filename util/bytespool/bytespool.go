@@ -14,7 +14,6 @@
 package bytespool
 
 import (
-	"bytes"
 	"sync"
 )
 
@@ -88,46 +87,4 @@ func bucketIdx(size int) (i int) {
 		i++
 	}
 	return
-}
-
-// ReadCloser frees the origin bytes when Close is called.
-type ReadCloser struct {
-	pool   *BytesPool
-	origin []byte
-	buffer *bytes.Buffer
-	closed bool
-}
-
-// Close implements the io.ReadCloser interface.
-// It frees the origin bytes allocated from the pool
-func (r *ReadCloser) Close() error {
-	if r.closed {
-		return nil
-	}
-	r.pool.Free(r.origin)
-	r.closed = true
-	return nil
-}
-
-// Read implements the io.ReadCloser interface.
-func (r *ReadCloser) Read(b []byte) (n int, err error) {
-	return r.buffer.Read(b)
-}
-
-// SharedBytes returns shared bytes of the underlying buffer.
-// The returned bytes may not be used after Close is called.
-// And it may not be used at the same time with Read.
-func (r *ReadCloser) SharedBytes() []byte {
-	return r.buffer.Bytes()
-}
-
-// NewReadCloser creates a ReadCloser.
-// origin should be allocated from the pool, data can be any slice of the origin.
-func NewReadCloser(pool *BytesPool, origin, data []byte) *ReadCloser {
-	r := &ReadCloser{
-		pool:   pool,
-		origin: origin,
-		buffer: bytes.NewBuffer(data),
-	}
-	return r
 }

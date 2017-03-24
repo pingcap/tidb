@@ -26,6 +26,11 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+const (
+	// TiDBMergeJoin is hint enforce merge join
+	TiDBMergeJoin = "tidb_smj"
+)
+
 type idAllocator struct {
 	id int
 }
@@ -192,6 +197,20 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 	return
 }
 
+func extractTableAlias(p LogicalPlan) *model.CIStr {
+	if dataSource, ok := p.(*DataSource); ok {
+		if dataSource.TableAsName.L != "" {
+			return dataSource.TableAsName
+		}
+		return &dataSource.tableInfo.Name
+	} else if len(p.Schema().Columns) > 0 {
+		if p.Schema().Columns[0].TblName.L != "" {
+			return &(p.Schema().Columns[0].TblName)
+		}
+	}
+	return nil
+}
+
 func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	b.optFlag = b.optFlag | flagPredicatePushDown
 	if join.Right == nil {
@@ -199,6 +218,9 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	}
 	leftPlan := b.buildResultSetNode(join.Left)
 	rightPlan := b.buildResultSetNode(join.Right)
+	leftAlias := extractTableAlias(leftPlan)
+	rightAlias := extractTableAlias(rightPlan)
+
 	newSchema := expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema())
 	joinPlan := &Join{baseLogicalPlan: newBaseLogicalPlan(Jn, b.allocator)}
 	addChild(joinPlan, leftPlan)
@@ -206,6 +228,11 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	joinPlan.self = joinPlan
 	joinPlan.initIDAndContext(b.ctx)
 	joinPlan.SetSchema(newSchema)
+
+	if b.TableHints() != nil {
+		joinPlan.preferMergeJoin = b.TableHints().ifPreferMergeJoin(leftAlias, rightAlias)
+	}
+
 	if join.On != nil {
 		onExpr, _, err := b.rewrite(join.On.Expr, joinPlan, nil, false)
 		if err != nil {
@@ -489,7 +516,7 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 	return li
 }
 
-// colMatch(a,b) means that if a match b, e.g. t.a can match test.t.a bug test.t.a can't match t.a.
+// colMatch(a,b) means that if a match b, e.g. t.a can match test.t.a but test.t.a can't match t.a.
 // Because column a want column from database test exactly.
 func colMatch(a *ast.ColumnName, b *ast.ColumnName) bool {
 	if a.Schema.L == "" || a.Schema.L == b.Schema.L {
@@ -820,7 +847,42 @@ func (b *planBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 	return
 }
 
+func (b *planBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
+	sortMergeTables := make([]model.CIStr, 0)
+	for _, hint := range hints {
+		switch hint.HintName.L {
+		case TiDBMergeJoin:
+			sortMergeTables = append(sortMergeTables, hint.Tables...)
+		default:
+			// ignore hints that not implemented
+		}
+	}
+	if len(sortMergeTables) != 0 {
+		b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{sortMergeTables})
+		return true
+	}
+	return false
+}
+
+func (b *planBuilder) popTableHints() {
+	b.tableHintInfo = b.tableHintInfo[:len(b.tableHintInfo)-1]
+}
+
+func (b *planBuilder) TableHints() *tableHintInfo {
+	if b.tableHintInfo == nil || len(b.tableHintInfo) == 0 {
+		return nil
+	}
+	return &(b.tableHintInfo[len(b.tableHintInfo)-1])
+}
+
 func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
+	if sel.TableHints != nil {
+		// table hints without query block support only visible in current SELECT
+		if b.pushTableHints(sel.TableHints) {
+			defer b.popTableHints()
+		}
+	}
+
 	hasAgg := b.detectSelectAgg(sel)
 	var (
 		p                             LogicalPlan
@@ -915,6 +977,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		proj.SetSchema(expression.NewSchema(p.Schema().Columns[:oldLen]...))
 		return proj
 	}
+
 	return p
 }
 
