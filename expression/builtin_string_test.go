@@ -1171,7 +1171,8 @@ func (s *testEvaluatorSuite) TestQuote(c *C) {
 		Input    interface{}
 		Expected interface{}
 	}{
-		{"abc", "'abc'"},
+		{"", "''"},
+		{`Don\'t`, `'Don\'t'`},
 		{1, "'1'"},
 		{3.14, "'3.14'"},
 		{nil, nil},
@@ -1179,14 +1180,11 @@ func (s *testEvaluatorSuite) TestQuote(c *C) {
 
 	fc := funcs[ast.Quote]
 
-	for _, t := range tbl {
-		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.Input)), s.ctx)
+	dtbl := tblToDtbl(tbl)
+	for _, t := range dtbl {
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t["Input"])), s.ctx)
 		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
-		if t.Input != nil {
-			c.Assert(r, testutil.DatumEquals, types.NewDatum(t.Expected))
-		} else {
-			c.Assert(r.Kind(), Equals, types.KindNull)
-		}
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(t["Expected"][0]))
 	}
 }

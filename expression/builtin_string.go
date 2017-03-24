@@ -1562,11 +1562,13 @@ func (b *builtinQuoteSig) eval(row []types.Datum) (d types.Datum, err error) {
 	arg := args[0]
 
 	if arg.IsNull() {
-		d.SetNull()
 		return d, nil
 	}
 
-	str := arg.GetString()
+	str, err := arg.ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
 	d.SetString(fmt.Sprintf("'%s'", str))
 	return d, nil
 }
