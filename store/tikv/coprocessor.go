@@ -352,7 +352,7 @@ func (it *copIterator) run(ctx goctx.Context) {
 		for _, t := range it.tasks {
 			finished, canceled := it.sendToTaskCh(ctx, t)
 			if finished {
-				return
+				break
 			}
 			if canceled {
 				break
