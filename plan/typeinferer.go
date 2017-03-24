@@ -359,7 +359,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = types.NewFieldType(mysql.TypeDatetime)
 	case "microsecond", "second", "minute", "hour", "day", "week", "month", "year",
 		"dayofweek", "dayofmonth", "dayofyear", "weekday", "weekofyear", "yearweek", "datediff",
-		"found_rows", "length", "extract", "locate", "unix_timestamp":
+		"found_rows", "length", "extract", "locate", "unix_timestamp", "quarter":
 		tp = types.NewFieldType(mysql.TypeLonglong)
 	case "now", "sysdate", "current_timestamp", "utc_timestamp":
 		tp = types.NewFieldType(mysql.TypeDatetime)
@@ -399,7 +399,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = x.Args[1].GetType()
 	case "get_lock", "release_lock":
 		tp = types.NewFieldType(mysql.TypeLonglong)
-	case ast.AesEncrypt, ast.AesDecrypt:
+	case ast.AesEncrypt, ast.AesDecrypt, ast.SHA2:
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
 	case ast.MD5:
