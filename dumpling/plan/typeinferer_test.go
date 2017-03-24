@@ -247,6 +247,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`md5(123)`, mysql.TypeVarString, "utf8"},
 		{`sha1(123)`, mysql.TypeVarString, "utf8"},
 		{`sha(123)`, mysql.TypeVarString, "utf8"},
+		{`sha2(123, 256)`, mysql.TypeVarString, charset.CharsetUTF8},
 		{`uuid()`, mysql.TypeVarString, "utf8"},
 		{`coalesce(null, 0)`, mysql.TypeLonglong, charset.CharsetBin},
 		{`coalesce(null, 0.1)`, mysql.TypeNewDecimal, charset.CharsetBin},
