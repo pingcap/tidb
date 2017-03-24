@@ -39,6 +39,7 @@ func (s *testSuite) TestIndexDoubleReadClose(c *C) {
 	originSize := executor.LookupTableTaskChannelSize
 	executor.LookupTableTaskChannelSize = 1
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_index_lookup_size = '10'")
 	tk.MustExec("use test")
 	tk.MustExec("create table dist (id int primary key, c_idx int, c_col int, index (c_idx))")
 
