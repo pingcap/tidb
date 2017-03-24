@@ -1163,3 +1163,26 @@ func (s *testEvaluatorSuite) TestElt(c *C) {
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
 	}
 }
+
+func (s *testEvaluatorSuite) TestQuote(c *C) {
+	defer testleak.AfterTest(c)()
+
+	tbl := []struct {
+		Input    interface{}
+		Expected interface{}
+	}{
+		{"abc", "'abc'"},
+		{1, "'1'"},
+		{3.14, "'3.14'"},
+		{nil, nil},
+	}
+
+	fc := funcs[ast.Quote]
+
+	for _, t := range tbl {
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.Input)), s.ctx)
+		c.Assert(err, IsNil)
+		r, err := f.eval(nil)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.Expected))
+	}
+}
