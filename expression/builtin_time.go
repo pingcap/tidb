@@ -1729,7 +1729,35 @@ type builtinQuarterSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_quarter
 func (b *builtinQuarterSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("QUARTER")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+
+	d, err = builtinMonth(args, b.ctx)
+	if err != nil || d.IsNull() {
+		return d, errors.Trace(err)
+	}
+
+	mon := int(d.GetInt64())
+	switch mon {
+	case 0:
+		// An undocumented behavior of the mysql implementation
+		d.SetInt64(0)
+	case 1, 2, 3:
+		d.SetInt64(1)
+	case 4, 5, 6:
+		d.SetInt64(2)
+	case 7, 8, 9:
+		d.SetInt64(3)
+	case 10, 11, 12:
+		d.SetInt64(4)
+	default:
+		d.SetNull()
+		return d, errors.Errorf("no quarter for invalid month: %d.", mon)
+	}
+
+	return d, nil
 }
 
 type secToTimeFunctionClass struct {
