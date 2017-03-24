@@ -1183,6 +1183,10 @@ func (s *testEvaluatorSuite) TestQuote(c *C) {
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.Input)), s.ctx)
 		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.Expected))
+		if t.Input != nil {
+			c.Assert(r, testutil.DatumEquals, types.NewDatum(t.Expected))
+		} else {
+			c.Assert(r.Kind(), Equals, types.KindNull)
+		}
 	}
 }
