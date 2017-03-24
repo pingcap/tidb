@@ -411,21 +411,13 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		chs = v.defaultCharset
 		tp.Flen = 40
 	case ast.Coalesce:
-		var gotBinString bool
-		for _, arg := range x.Args {
-			if arg.GetType().ToClass() == types.ClassString && mysql.HasBinaryFlag(arg.GetType().Flag) {
-				gotBinString = true
-			}
-		}
-		tp = aggArgsType(x.Args)
+		tp = aggFieldType(x.Args)
 		if tp.Tp == mysql.TypeVarchar {
 			tp.Tp = mysql.TypeVarString
 		}
-		classType := aggClassType(x.Args, &tp.Flag)
-		if classType == types.ClassString && !gotBinString {
+		classType := aggTypeClass(x.Args, &tp.Flag)
+		if classType == types.ClassString && !mysql.HasBinaryFlag(tp.Flag) {
 			tp.Charset, tp.Collate = types.DefaultCharsetForType(tp.Tp)
-		} else {
-			tp.Flag |= mysql.BinaryFlag
 		}
 	case ast.AnyValue:
 		tp = x.Args[0].GetType()
@@ -453,31 +445,21 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 // If used in a string context, the result is returned as a string.
 // If used in a numeric context, the result is returned as a decimal, real, or integer value.
 func (v *typeInferrer) handleCaseExpr(x *ast.CaseExpr) {
-	var gotBinString = false
-	exprs := make([]ast.ExprNode, len(x.WhenClauses))
-	for i, w := range x.WhenClauses {
-		exprs[i] = w.Result
-		ft := w.Result.GetType()
-		if ft.ToClass() == types.ClassString && mysql.HasBinaryFlag(ft.Flag) {
-			gotBinString = true
-		}
+	exprs := make([]ast.ExprNode, 0, len(x.WhenClauses)+1)
+	for _, w := range x.WhenClauses {
+		exprs = append(exprs, w.Result)
 	}
 	if x.ElseClause != nil {
 		exprs = append(exprs, x.ElseClause)
-		ft := x.ElseClause.GetType()
-		if ft.ToClass() == types.ClassString && mysql.HasBinaryFlag(ft.Flag) {
-			gotBinString = true
-		}
 	}
-	tp := aggArgsType(exprs)
+	tp := aggFieldType(exprs)
 	if tp.Tp == mysql.TypeVarchar {
 		tp.Tp = mysql.TypeVarString
 	}
-	classType := aggClassType(exprs, &tp.Flag)
-	if classType == types.ClassString && !gotBinString {
+	classType := aggTypeClass(exprs, &tp.Flag)
+	if classType == types.ClassString && !mysql.HasBinaryFlag(tp.Flag) {
 		tp.Charset, tp.Collate = types.DefaultCharsetForType(tp.Tp)
 	} else {
-		tp.Flag |= mysql.BinaryFlag
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CollationBin
 	}
@@ -556,7 +538,7 @@ func (v *typeInferrer) convertValueToColumnTypeIfNeeded(x *ast.PatternInExpr) {
 	}
 }
 
-func aggArgsType(args []ast.ExprNode) *types.FieldType {
+func aggFieldType(args []ast.ExprNode) *types.FieldType {
 	var currType types.FieldType
 	for _, arg := range args {
 		t := arg.GetType()
@@ -570,14 +552,20 @@ func aggArgsType(args []ast.ExprNode) *types.FieldType {
 	return &currType
 }
 
-func aggClassType(args []ast.ExprNode, flag *uint) types.TypeClass {
-	var tpClass = types.ClassString
-	var unsigned bool
-	var gotFirst bool
+func aggTypeClass(args []ast.ExprNode, flag *uint) types.TypeClass {
+	var (
+		tpClass      = types.ClassString
+		unsigned     bool
+		gotFirst     bool
+		gotBinString bool
+	)
 	for _, arg := range args {
 		argFieldType := arg.GetType()
 		if argFieldType.Tp == mysql.TypeNull {
 			continue
+		}
+		if argFieldType.ToClass() == types.ClassString && mysql.HasBinaryFlag(argFieldType.Flag) {
+			gotBinString = true
 		}
 		if !gotFirst {
 			gotFirst = true
@@ -590,6 +578,13 @@ func aggClassType(args []ast.ExprNode, flag *uint) types.TypeClass {
 	}
 	if unsigned {
 		*flag |= mysql.UnsignedFlag
+	} else {
+		*flag &= ^uint(mysql.UnsignedFlag)
+	}
+	if tpClass == types.ClassString && !gotBinString {
+		*flag &= ^uint(mysql.BinaryFlag)
+	} else {
+		*flag |= mysql.BinaryFlag
 	}
 	return tpClass
 }
