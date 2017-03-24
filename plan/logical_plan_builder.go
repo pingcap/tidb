@@ -233,9 +233,9 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 
 	if b.TableHints() != nil {
 		joinPlan.preferMergeJoin = b.TableHints().ifPreferMergeJoin(leftAlias, rightAlias)
-		joinPlan.preferINLJ = b.TableHints().ifPreferINLJ(leftAlias, rightAlias)
+		//joinPlan.preferINLJ = b.TableHints().ifPreferINLJ(leftAlias, rightAlias)
 	}
-	//joinPlan.preferINLJ = true
+	joinPlan.preferINLJ = true
 
 	if join.On != nil {
 		onExpr, _, err := b.rewrite(join.On.Expr, joinPlan, nil, false)

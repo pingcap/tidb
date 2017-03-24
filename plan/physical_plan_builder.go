@@ -630,7 +630,6 @@ func (p *Join) convert2IndexNestedLoopJoinLeft(prop *requiredProperty, innerJoin
 	selection.initIDAndContext(p.ctx)
 	selection.SetSchema(rChild.Schema().Clone())
 	selection.SetChildren(rChild)
-	rChild.SetParents(selection)
 	conds := make([]expression.Expression, 0, len(p.EqualConditions)+len(p.RightConditions)+len(p.OtherConditions))
 	for _, cond := range p.EqualConditions {
 		newCond := convertCol2CorCol(cond, corCols, lChild.Schema())
@@ -645,8 +644,11 @@ func (p *Join) convert2IndexNestedLoopJoinLeft(prop *requiredProperty, innerJoin
 		conds = append(conds, newCond)
 	}
 	selection.Conditions = conds
+	selection.canControlScan = selection.hasUsableIndicesAndPk(selection.children[0].(*DataSource))
+	if !selection.canControlScan {
+		return nil, nil
+	}
 	rInfo, err := selection.convert2PhysicalPlan(&requiredProperty{})
-	rChild.SetParents(p)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -725,7 +727,6 @@ func (p *Join) convert2IndexNestedLoopJoinRight(prop *requiredProperty, innerJoi
 	selection.initIDAndContext(p.ctx)
 	selection.SetSchema(lChild.Schema().Clone())
 	selection.SetChildren(lChild)
-	lChild.SetParents(selection)
 	conds := make([]expression.Expression, 0, len(p.EqualConditions)+len(p.LeftConditions)+len(p.OtherConditions))
 	for _, cond := range p.EqualConditions {
 		newCond := convertCol2CorCol(cond, corCols, rChild.Schema())
@@ -740,8 +741,11 @@ func (p *Join) convert2IndexNestedLoopJoinRight(prop *requiredProperty, innerJoi
 		conds = append(conds, newCond)
 	}
 	selection.Conditions = conds
+	selection.canControlScan = selection.hasUsableIndicesAndPk(selection.children[0].(*DataSource))
+	if !selection.canControlScan {
+		return nil, nil
+	}
 	lInfo, err := selection.convert2PhysicalPlan(&requiredProperty{})
-	lChild.SetParents(p)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
