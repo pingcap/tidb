@@ -1017,6 +1017,10 @@ func (s *testPlanSuite) TestScanController(c *C) {
 			sql: "select (select count(1) k from t s where s.b = t.b having k != 0) from t",
 			ans: "Apply{Table(t)->Table(t)->Cache->Selection->StreamAgg}->Projection",
 		},
+		{
+			sql: "select (select count(1) k from t s where s.f = t.f having k != 0) from t",
+			ans: "Apply{Table(t)->Index(t.f)[]->Selection->StreamAgg}->Projection",
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
