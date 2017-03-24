@@ -128,9 +128,8 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	rs = rss[0]
 	_, err = rs.Next()
 	c.Assert(err, IsNil)
-	keyword := "copIterator"
-	c.Check(checkGoroutineExists(keyword), IsTrue)
 	rs.Close()
-	time.Sleep(time.Millisecond * 50)
+	time.Sleep(time.Millisecond * 10)
+	keyword := "copIterator"
 	c.Check(checkGoroutineExists(keyword), IsFalse)
 }
