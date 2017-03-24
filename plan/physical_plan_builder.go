@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/ast"
 )
 
 const (
@@ -562,6 +563,142 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 	return resultInfo, nil
 }
 
+func convertCol2CorCol(cond expression.Expression, corCols []*expression.CorrelatedColumn, outerSchema *expression.Schema) expression.Expression {
+	switch x := cond.(type) {
+	case *expression.ScalarFunction:
+		newArgs := make([]expression.Expression, 0, len(x.GetArgs()))
+		for _, arg := range x.GetArgs() {
+			newArg := convertCol2CorCol(arg, corCols, outerSchema)
+			newArgs = append(newArgs, newArg)
+		}
+		var newSf expression.Expression
+		if x.FuncName.L == ast.Cast {
+			newSf = expression.NewCastFunc(x.RetType, newArgs[0], x.GetCtx())
+		} else {
+			newSf, _ = expression.NewFunction(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
+		}
+		return newSf
+	case *expression.Column:
+		if pos := outerSchema.ColumnIndex(x); pos >= 0 {
+			return corCols[pos]
+		} else {
+			return x
+		}
+	default:
+		return x
+	}
+}
+
+func (p *Join) convert2IndexNestedLoopJoinLeft(prop *requiredProperty, innerJoin bool) (*physicalPlanInfo, error) {
+	lChild := p.children[0].(LogicalPlan)
+	rChild := p.children[1].(LogicalPlan)
+	allLeft := true
+	for _, col := range prop.props {
+		if !lChild.Schema().Contains(col.col) {
+			allLeft = false
+		}
+	}
+	lProp := prop
+	if !allLeft {
+		lProp = &requiredProperty{}
+	} else {
+		lProp = replaceColsInPropBySchema(prop, lChild.Schema())
+	}
+	var lInfo *physicalPlanInfo
+	var err error
+	if innerJoin {
+		lInfo, err = lChild.convert2PhysicalPlan(removeLimit(lProp))
+	} else {
+		lInfo, err = lChild.convert2PhysicalPlan(convertLimitOffsetToCount(lProp))
+	}
+	if lInfo.p == nil {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	corCols := make([]*expression.CorrelatedColumn, 0, rChild.Schema().Len())
+	for _, col := range lChild.Schema().Columns {
+		corCol := &expression.CorrelatedColumn{Column: *col, Data: new(types.Datum)}
+		corCol.Column.ResolveIndices(lChild.Schema())
+		corCols = append(corCols, corCol)
+	}
+	selection := &Selection{baseLogicalPlan: newBaseLogicalPlan(Sel, p.allocator)}
+	selection.self = selection
+	selection.initIDAndContext(p.ctx)
+	selection.SetSchema(rChild.Schema().Clone())
+	selection.SetChildren(rChild)
+	rChild.SetParents(selection)
+	conds := make([]expression.Expression, 0, len(p.EqualConditions)+len(p.RightConditions)+len(p.OtherConditions))
+	for _, cond := range p.EqualConditions {
+		newCond := convertCol2CorCol(cond, corCols, lChild.Schema())
+		conds = append(conds, newCond)
+	}
+	for _, cond := range p.RightConditions {
+		newCond := convertCol2CorCol(cond, corCols, lChild.Schema())
+		conds = append(conds, newCond)
+	}
+	for _, cond := range p.OtherConditions {
+		newCond := convertCol2CorCol(cond, corCols, lChild.Schema())
+		conds = append(conds, newCond)
+	}
+	selection.Conditions = conds
+	rInfo, err := selection.convert2PhysicalPlan(&requiredProperty{})
+	rChild.SetParents(p)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	join := &PhysicalHashJoin{
+		LeftConditions:  p.LeftConditions,
+		// TODO: decide concurrency by data size.
+		Concurrency:   JoinConcurrency,
+		DefaultValues: p.DefaultValues,
+		SmallTable: 1,
+	}
+	join.tp = "NestedLoopJoin"
+	join.allocator = p.allocator
+	join.initIDAndContext(p.ctx)
+	join.SetChildren(lInfo.p, rInfo.p)
+	if innerJoin {
+		join.JoinType = InnerJoin
+	} else {
+		join.JoinType = LeftOuterJoin
+	}
+	join.SetSchema(p.Schema())
+	resultInfo := join.matchProperty(prop, lInfo, rInfo)
+	ap := &PhysicalApply{
+		PhysicalJoin: resultInfo.p,
+		OuterSchema: corCols,
+	}
+	ap.tp = App
+	ap.allocator = p.allocator
+	ap.initIDAndContext(p.ctx)
+	ap.SetChildren(resultInfo.p.Children()...)
+	ap.SetSchema(resultInfo.p.Schema())
+	resultInfo.p = ap
+	if !allLeft {
+		resultInfo = enforceProperty(prop, resultInfo)
+	} else {
+		resultInfo = enforceProperty(limitProperty(prop.limit), resultInfo)
+	}
+	return resultInfo, nil
+}
+
+func (p *Join) convert2IndexNestedLoopJoin(prop *requiredProperty, innerJoin bool) (*physicalPlanInfo, error) {
+	/*
+	if _, ok := p.children[0].(*DataSource); ok {
+	}
+	*/
+	if _, ok := p.children[1].(*DataSource); ok {
+		info, err := p.convert2IndexNestedLoopJoinLeft(prop, innerJoin)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return info, nil
+	}
+	return nil, nil
+}
+
 // convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
 func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	info, err := p.getPlanInfo(prop)
@@ -588,6 +725,14 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 			return nil, errors.Trace(err)
 		}
 	default:
+		nljInfo, err := p.convert2IndexNestedLoopJoin(prop, true)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if nljInfo != nil {
+			info = nljInfo
+			break
+		}
 		lInfo, err := p.convert2PhysicalPlanLeft(prop, true)
 		if err != nil {
 			return nil, errors.Trace(err)

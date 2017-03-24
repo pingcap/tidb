@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/ngaut/log"
 )
 
 var (
@@ -826,9 +827,12 @@ func (e *ApplyJoinExec) Next() (*Row, error) {
 		if bigRow == nil || err != nil {
 			return nil, errors.Trace(err)
 		}
+		log.Warnf("----")
 		for _, col := range e.outerSchema {
 			*col.Data = bigRow.Data[col.Index]
+			log.Warnf("%v: %v", col, col.Data.GetValue())
 		}
+		log.Warnf("-----")
 		err = e.join.prepare()
 		if err != nil {
 			return nil, errors.Trace(err)
