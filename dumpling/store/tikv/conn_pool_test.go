@@ -122,13 +122,10 @@ func (s *testPoolSuite) TestPoolsClose(c *C) {
 	}
 
 	ch := make(chan struct{})
-	var checkErr error
 	go func() {
 		<-ch
-		_, checkErr = pools.GetConn(addr)
 		pools.PutConn(conns[capability-1])
 	}()
 	close(ch)
 	pools.Close()
-	c.Assert(checkErr, NotNil)
 }
