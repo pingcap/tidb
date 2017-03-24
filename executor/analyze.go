@@ -95,11 +95,6 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 }
 
 func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]types.Datum, idxRS []ast.RecordSet, pkRS ast.RecordSet) error {
-	is := GetInfoSchema(e.ctx)
-	table, ok := is.TableByID(e.tblInfo.ID)
-	if !ok {
-		return errors.Errorf("Can't find table id %d", e.tblInfo.ID)
-	}
 	statBuilder := &statistics.Builder{
 		Sc:            e.ctx.GetSessionVars().StmtCtx,
 		TblInfo:       e.tblInfo,
@@ -111,7 +106,6 @@ func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]
 		IdxOffsets:    e.idxOffsets,
 		PkRecords:     pkRS,
 		PkOffset:      e.pkOffset,
-		Table:         table,
 	}
 	t, err := statBuilder.NewTable()
 	if err != nil {

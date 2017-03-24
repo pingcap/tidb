@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
@@ -66,14 +65,13 @@ type Column struct {
 	Repeats []int64
 }
 
-func (c *Column) saveToStorage(ctx context.Context, table table.Table, isIndex bool) error {
+func (c *Column) saveToStorage(ctx context.Context, tableID int64, isIndex bool) error {
 	var colName string
 	if isIndex {
 		colName = "index_id"
 	} else {
 		colName = "col_id"
 	}
-	tableID := table.Meta().ID
 	insertSQL := fmt.Sprintf("insert into mysql.stats_columns (table_id, %s, distinct_count) values (%d, %d, %d)", colName, tableID, c.ID, c.NDV)
 	_, err := ctx.(sqlexec.SQLExecutor).Execute(insertSQL)
 	if err != nil {
@@ -255,7 +253,6 @@ type Table struct {
 	Indices []*Column
 	Count   int64 // Total row count in a table.
 	Pseudo  bool
-	Table   table.Table
 }
 
 // SaveToStorage saves stats table to storage.
@@ -285,10 +282,10 @@ func (t *Table) SaveToStorage(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	for _, col := range t.Columns {
-		col.saveToStorage(ctx, t.Table, false)
+		col.saveToStorage(ctx, t.Info.ID, false)
 	}
 	for _, idx := range t.Indices {
-		idx.saveToStorage(ctx, t.Table, true)
+		idx.saveToStorage(ctx, t.Info.ID, true)
 	}
 	_, err = ctx.(sqlexec.SQLExecutor).Execute("commit")
 	return errors.Trace(err)
@@ -606,7 +603,6 @@ type Builder struct {
 	IdxOffsets    []int                      // IdxOffsets is the offset of indices in the table.
 	PkRecords     ast.RecordSet              // PkRecords is the record set of primary key of integer type.
 	PkOffset      int                        // PkOffset is the offset of primary key of integer type in the table.
-	Table         table.Table
 }
 
 // NewTable creates a table statistics.
@@ -619,7 +615,6 @@ func (b *Builder) NewTable() (*Table, error) {
 		Count:   b.Count,
 		Columns: make([]*Column, len(b.TblInfo.Columns)),
 		Indices: make([]*Column, len(b.TblInfo.Indices)),
-		Table:   b.Table,
 	}
 	for i, offset := range b.ColOffsets {
 		err := t.buildColumn(b.Sc, offset, b.ColumnSamples[i], b.NumBuckets)
