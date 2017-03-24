@@ -206,15 +206,10 @@ func (p *Selection) hasUsableIndicesAndPk(ds *DataSource) bool {
 				length: types.UnspecifiedLength,
 			}
 			// Pk should satisfies the same property as the index.
-			var usable bool
 			for _, cond := range newConds {
 				if checker.check(cond) {
-					usable = true
-					break
+					return true
 				}
-			}
-			if usable {
-				return true
 			}
 		}
 	}
@@ -230,16 +225,11 @@ func (p *Selection) hasUsableIndicesAndPk(ds *DataSource) bool {
 		}
 		// This idx column should occur in one condition which contains both column and correlated column.
 		// And conditionChecker.check(this condition) should be true.
-		var usable bool
 		for _, cond := range newConds {
 			// If one cond is ok, then this index is useful.
 			if checker.check(cond) {
-				usable = true
-				break
+				return true
 			}
-		}
-		if usable {
-			return true
 		}
 	}
 	return false
