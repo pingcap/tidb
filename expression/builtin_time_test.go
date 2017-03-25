@@ -249,6 +249,16 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 func (s *testEvaluatorSuite) TestDateFormat(c *C) {
 	defer testleak.AfterTest(c)()
 
+	// Test case for https://github.com/pingcap/tidb/issues/2908
+	// SELECT DATE_FORMAT(null,'%Y-%M-%D')
+	args := []types.Datum{types.NewDatum(nil), types.NewStringDatum("%Y-%M-%D")}
+	fc := funcs[ast.DateFormat]
+	f, err := fc.getFunction(datumsToConstants(args), s.ctx)
+	c.Assert(err, IsNil)
+	v, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.IsNull(), Equals, true)
+
 	tblDate := []struct {
 		Input  []string
 		Expect interface{}
@@ -886,6 +896,15 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 	c.Assert(d.GetInt64()-time.Now().Unix(), GreaterEqual, int64(-1))
 	c.Assert(d.GetInt64()-time.Now().Unix(), LessEqual, int64(1))
 
+	// Test case for https://github.com/pingcap/tidb/issues/2852
+	// select UNIX_TIMESTAMP(null);
+	args = []types.Datum{types.NewDatum(nil)}
+	f, err = fc.getFunction(datumsToConstants(args), s.ctx)
+	c.Assert(err, IsNil)
+	d, err = f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(d.IsNull(), Equals, true)
+
 	// Set the time_zone variable, because UnixTimestamp() result depends on it.
 	s.ctx.GetSessionVars().TimeZone = time.UTC
 	tests := []struct {
@@ -1066,4 +1085,40 @@ func (s *testEvaluatorSuite) TestMakeTime(c *C) {
 			c.Assert(got.GetMysqlDuration().String(), Equals, want, Commentf("[%v] - args:%v", idx, t["Args"]))
 		}
 	}
+}
+
+func (s *testEvaluatorSuite) TestQuarter(c *C) {
+	tests := []struct {
+		t      string
+		expect int64
+	}{
+		// Test case from https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_quarter
+		{"2008-04-01", 2},
+		// Test case for boundary values
+		{"2008-01-01", 1},
+		{"2008-03-31", 1},
+		{"2008-06-30", 2},
+		{"2008-07-01", 3},
+		{"2008-09-30", 3},
+		{"2008-10-01", 4},
+		{"2008-12-31", 4},
+		// Test case for month 0
+		{"2008-00-01", 0},
+	}
+	fc := funcs["quarter"]
+	for _, test := range tests {
+		arg := types.NewStringDatum(test.t)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{arg}), s.ctx)
+		c.Assert(err, IsNil)
+		result, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(result.GetInt64(), Equals, test.expect)
+	}
+
+	// test invalid input
+	argInvalid := types.NewStringDatum("2008-13-01")
+	f, err := fc.getFunction(datumsToConstants([]types.Datum{argInvalid}), s.ctx)
+	c.Assert(err, IsNil)
+	result, err := f.eval(nil)
+	c.Assert(result.IsNull(), IsTrue)
 }

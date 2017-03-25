@@ -145,7 +145,7 @@ type builtinCeilSig struct {
 func (b *builtinCeilSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	if args[0].IsNull() ||
 		args[0].Kind() == types.KindUint64 || args[0].Kind() == types.KindInt64 {
@@ -176,24 +176,19 @@ type builtinFloorSig struct {
 func (b *builtinFloorSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	if args[0].IsNull() ||
 		args[0].Kind() == types.KindUint64 || args[0].Kind() == types.KindInt64 {
 		return args[0], nil
 	}
 
-	// have to set IgnoreTruncate to true in order to getValidPrefix
 	sc := b.ctx.GetSessionVars().StmtCtx
-	tmpIT := sc.IgnoreTruncate
-	sc.IgnoreTruncate = true
 	f, err := args[0].ToFloat64(sc)
 	if err != nil {
-		sc.IgnoreTruncate = tmpIT
 		return d, errors.Trace(err)
 	}
 
-	sc.IgnoreTruncate = tmpIT
 	d.SetFloat64(math.Floor(f))
 	return
 }
@@ -214,7 +209,7 @@ type builtinLogSig struct {
 func (b *builtinLogSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 
@@ -268,7 +263,7 @@ type builtinLog2Sig struct {
 func (b *builtinLog2Sig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	x, err := args[0].ToFloat64(sc)
@@ -300,7 +295,7 @@ type builtinLog10Sig struct {
 func (b *builtinLog10Sig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	x, err := args[0].ToFloat64(sc)
@@ -336,7 +331,7 @@ type builtinRandSig struct {
 func (b *builtinRandSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	if len(args) == 1 && !args[0].IsNull() {
 		seed, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
@@ -365,7 +360,7 @@ type builtinPowSig struct {
 func (b *builtinPowSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	x, err := args[0].ToFloat64(sc)
@@ -397,7 +392,7 @@ type builtinRoundSig struct {
 func (b *builtinRoundSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	if args[0].IsNull() {
 		return
@@ -459,7 +454,7 @@ type builtinConvSig struct {
 func (b *builtinConvSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	var (
 		signed     bool
@@ -498,6 +493,7 @@ func (b *builtinConvSig) eval(row []types.Datum) (d types.Datum, err error) {
 	}
 	n = getValidPrefix(strings.TrimSpace(n), fromBase)
 	if len(n) == 0 {
+		d.SetString("0")
 		return d, nil
 	}
 	if n[0] == '-' {
@@ -555,7 +551,7 @@ type builtinCRC32Sig struct {
 func (b *builtinCRC32Sig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	if args[0].IsNull() {
 		return d, nil
@@ -585,7 +581,7 @@ type builtinSignSig struct {
 func (b *builtinSignSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	if args[0].IsNull() {
 		return d, nil
@@ -617,7 +613,7 @@ func (b *builtinSqrtSig) eval(row []types.Datum) (d types.Datum, err error) {
 		return d, errors.Trace(err)
 	}
 	if args[0].IsNull() {
-		return args[0], nil
+		return d, nil
 	}
 
 	sc := b.ctx.GetSessionVars().StmtCtx
@@ -655,7 +651,7 @@ type builtinArithmeticSig struct {
 func (s *builtinArithmeticSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := s.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	sc := s.ctx.GetSessionVars().StmtCtx
 	a, err := types.CoerceArithmetic(sc, args[0])
@@ -746,7 +742,7 @@ func (b *builtinAsinSig) eval(row []types.Datum) (d types.Datum, err error) {
 		return d, errors.Trace(err)
 	}
 	if args[0].IsNull() {
-		return args[0], nil
+		return d, nil
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	f, err := args[0].ToFloat64(sc)
@@ -777,10 +773,10 @@ type builtinAtanSig struct {
 func (b *builtinAtanSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	if args[0].IsNull() {
-		return args[0], nil
+		return d, nil
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	y, err := args[0].ToFloat64(sc)
@@ -852,7 +848,24 @@ type builtinDegreesSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_degrees
 func (b *builtinDegreesSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("degrees")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+
+	if args[0].IsNull() {
+		d.SetNull()
+		return d, nil
+	}
+
+	sc := b.ctx.GetSessionVars().StmtCtx
+	x, err := args[0].ToFloat64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	d.SetFloat64(x * 180 / math.Pi)
+	return d, nil
 }
 
 type expFunctionClass struct {
@@ -902,7 +915,8 @@ type builtinPISig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_pi
 func (b *builtinPISig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("pi")
+	d.SetFloat64(math.Pi)
+	return d, nil
 }
 
 type radiansFunctionClass struct {
@@ -919,7 +933,20 @@ type builtinRadiansSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_radians
 func (b *builtinRadiansSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("radians")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	arg := args[0]
+	if arg.IsNull() {
+		return d, nil
+	}
+	degree, err := arg.ToFloat64(b.ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d.SetFloat64(degree * math.Pi / 180)
+	return d, nil
 }
 
 type sinFunctionClass struct {

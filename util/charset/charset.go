@@ -152,11 +152,11 @@ const (
 	// CharsetUTF8 is the default charset for string types.
 	CharsetUTF8 = "utf8"
 	// CollationUTF8 is the default collation for CharsetUTF8.
-	CollationUTF8 = "utf8_general_ci"
+	CollationUTF8 = "utf8_bin"
 	// CharsetUTF8MB4 represents 4 bytes utf8, which works the same way as utf8 in Go.
 	CharsetUTF8MB4 = "utf8mb4"
 	// CollationUTF8MB4 is the default collation for CharsetUTF8MB4.
-	CollationUTF8MB4 = "utf8mb4_general_ci"
+	CollationUTF8MB4 = "utf8mb4_bin"
 )
 
 var collations = []*Collation{

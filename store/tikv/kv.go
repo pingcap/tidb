@@ -14,7 +14,6 @@
 package tikv
 
 import (
-	goctx "context"
 	"fmt"
 	"math/rand"
 	"net/url"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
+	goctx "golang.org/x/net/context"
 )
 
 type storeCache struct {
@@ -123,6 +123,16 @@ func NewMockTikvStore() (kv.Storage, error) {
 	return newTikvStore(uuid, pdCli, client, false)
 }
 
+// NewMockTikvStoreWithCluster creates a mocked tikv store with cluster.
+func NewMockTikvStoreWithCluster(cluster *mocktikv.Cluster) (kv.Storage, error) {
+	mocktikv.BootstrapWithSingleStore(cluster)
+	mvccStore := mocktikv.NewMvccStore()
+	client := mocktikv.NewRPCClient(cluster, mvccStore)
+	uuid := fmt.Sprintf("mock-tikv-store-:%v", time.Now().Unix())
+	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
+	return newTikvStore(uuid, pdCli, client, false)
+}
+
 // GetMockTiKVClient gets the *mocktikv.RPCClient from a mocktikv store.
 // Used for test.
 func GetMockTiKVClient(store kv.Storage) *mocktikv.RPCClient {
@@ -160,12 +170,13 @@ func (s *tikvStore) Close() error {
 	defer mc.Unlock()
 
 	delete(mc.cache, s.uuid)
-	if err := s.client.Close(); err != nil {
-		return errors.Trace(err)
-	}
 	s.oracle.Close()
 	if s.gcWorker != nil {
 		s.gcWorker.Close()
+	}
+	// Make sure all connections are put back into the pools.
+	if err := s.client.Close(); err != nil {
+		return errors.Trace(err)
 	}
 	return nil
 }
@@ -206,6 +217,12 @@ func (s *tikvStore) GetClient() kv.Client {
 func (s *tikvStore) SendKVReq(bo *Backoffer, req *pb.Request, regionID RegionVerID, timeout time.Duration) (*pb.Response, error) {
 	sender := NewRegionRequestSender(bo, s.regionCache, s.client)
 	return sender.SendKVReq(req, regionID, timeout)
+}
+
+// ParseEtcdAddr parses path to etcd address list
+func ParseEtcdAddr(path string) (etcdAddrs []string, err error) {
+	etcdAddrs, _, err = parsePath(path)
+	return
 }
 
 func parsePath(path string) (etcdAddrs []string, disableGC bool, err error) {

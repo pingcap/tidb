@@ -14,6 +14,7 @@
 package varsutil
 
 import (
+	"strconv"
 	"strings"
 	"time"
 
@@ -108,22 +109,43 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 			return errors.Trace(err)
 		}
 	case variable.AutocommitVar:
-		isAutocommit := strings.EqualFold(sVal, "ON") || sVal == "1"
+		isAutocommit := tidbOptOn(sVal)
 		vars.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
 		if isAutocommit {
 			vars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 		}
 	case variable.TiDBSkipConstraintCheck:
-		vars.SkipConstraintCheck = (sVal == "1")
+		vars.SkipConstraintCheck = tidbOptOn(sVal)
+	case variable.TiDBSkipUTF8Check:
+		vars.SkipUTF8Check = tidbOptOn(sVal)
 	case variable.TiDBSkipDDLWait:
-		vars.SkipDDLWait = (sVal == "1")
+		vars.SkipDDLWait = tidbOptOn(sVal)
 	case variable.TiDBOptAggPushDown:
-		vars.AllowAggPushDown = strings.EqualFold(sVal, "ON") || sVal == "1"
+		vars.AllowAggPushDown = tidbOptOn(sVal)
 	case variable.TiDBOptInSubqUnFolding:
-		vars.AllowInSubqueryUnFolding = strings.EqualFold(sVal, "ON") || sVal == "1"
+		vars.AllowInSubqueryUnFolding = tidbOptOn(sVal)
+	case variable.TiDBIndexLookupConcurrency:
+		vars.IndexLookupConcurrency = tidbOptPositiveInt(sVal, variable.DefIndexLookupConcurrency)
+	case variable.TiDBIndexLookupSize:
+		vars.IndexLookupSize = tidbOptPositiveInt(sVal, variable.DefIndexLookupSize)
+	case variable.TiDBDistSQLScanConcurrency:
+		vars.DistSQLScanConcurrency = tidbOptPositiveInt(sVal, variable.DefDistSQLScanConcurrency)
 	}
 	vars.Systems[name] = sVal
 	return nil
+}
+
+// For all tidb session variable options, we use "ON"/1 to turn on the options.
+func tidbOptOn(opt string) bool {
+	return strings.EqualFold(opt, "ON") || opt == "1"
+}
+
+func tidbOptPositiveInt(opt string, defaultVal int) int {
+	val, err := strconv.Atoi(opt)
+	if err != nil || val <= 0 {
+		return defaultVal
+	}
+	return val
 }
 
 func parseTimeZone(s string) *time.Location {

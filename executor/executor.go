@@ -63,6 +63,8 @@ var (
 	ErrRowKeyCount     = terror.ClassExecutor.New(codeRowKeyCount, "Wrong row key entry count")
 	ErrPrepareDDL      = terror.ClassExecutor.New(codePrepareDDL, "Can not prepare DDL statements")
 	ErrPasswordNoMatch = terror.ClassExecutor.New(CodePasswordNoMatch, "Can't find any matching row in the user table")
+	ErrResultIsEmpty   = terror.ClassExecutor.New(codeResultIsEmpty, "result is empty")
+	ErrBuildExecutor   = terror.ClassExecutor.New(codeErrBuildExec, "Failed to build executor")
 )
 
 // Error codes.
@@ -74,6 +76,8 @@ const (
 	codeWrongParamCount terror.ErrCode = 5
 	codeRowKeyCount     terror.ErrCode = 6
 	codePrepareDDL      terror.ErrCode = 7
+	codeResultIsEmpty   terror.ErrCode = 8
+	codeErrBuildExec    terror.ErrCode = 9
 	// MySQL error code
 	CodePasswordNoMatch terror.ErrCode = 1133
 	CodeCannotUser      terror.ErrCode = 1396

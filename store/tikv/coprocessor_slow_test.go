@@ -16,12 +16,11 @@
 package tikv
 
 import (
-	"context"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	mocktikv "github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/util/codec"
+	goctx "golang.org/x/net/context"
 )
 
 // The test takes too long under the race detector.
@@ -33,7 +32,7 @@ func (s *testCoprocessorSuite) TestBuildHugeTasks(c *C) {
 	}
 	mocktikv.BootstrapWithMultiRegions(cluster, splitKeys...)
 
-	bo := NewBackoffer(3000, context.Background())
+	bo := NewBackoffer(3000, goctx.Background())
 	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
 	cache := NewRegionCache(pdCli)
 

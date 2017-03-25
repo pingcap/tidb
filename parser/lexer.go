@@ -40,15 +40,47 @@ type Scanner struct {
 	errs         []error
 	stmtStartPos int
 
-	// for scanning such kind of comment: /*! MySQL-specific code */
-	specialComment *specialCommentScanner
+	// For scanning such kind of comment: /*! MySQL-specific code */ or /*+ optimizer hint */
+	specialComment specialCommentScanner
 
 	sqlMode mysql.SQLMode
 }
 
-type specialCommentScanner struct {
+type specialCommentScanner interface {
+	scan() (tok int, pos Pos, lit string)
+}
+
+type mysqlSpecificCodeScanner struct {
 	*Scanner
 	Pos
+}
+
+func (s *mysqlSpecificCodeScanner) scan() (tok int, pos Pos, lit string) {
+	tok, pos, lit = s.Scanner.scan()
+	pos.Line += s.Pos.Line
+	pos.Col += s.Pos.Col
+	pos.Offset += s.Pos.Offset
+	return
+}
+
+type optimizerHintScanner struct {
+	*Scanner
+	Pos
+	end bool
+}
+
+func (s *optimizerHintScanner) scan() (tok int, pos Pos, lit string) {
+	tok, pos, lit = s.Scanner.scan()
+	pos.Line += s.Pos.Line
+	pos.Col += s.Pos.Col
+	pos.Offset += s.Pos.Offset
+	if tok == 0 {
+		if !s.end {
+			tok = hintEnd
+			s.end = true
+		}
+	}
+	return
 }
 
 // Errors returns the errors during a scan.
@@ -155,15 +187,12 @@ func (s *Scanner) skipWhitespace() rune {
 
 func (s *Scanner) scan() (tok int, pos Pos, lit string) {
 	if s.specialComment != nil {
-		// enter specialComment scan mode.
+		// Enter specialComment scan mode.
 		// for scanning such kind of comment: /*! MySQL-specific code */
 		specialComment := s.specialComment
 		tok, pos, lit = specialComment.scan()
 		if tok != 0 {
 			// return the specialComment scan result as the result
-			pos.Line += s.specialComment.Line
-			pos.Col += s.specialComment.Col
-			pos.Offset += s.specialComment.Offset
 			return
 		}
 		// leave specialComment scan mode after all stream consumed.
@@ -294,12 +323,31 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 			}
 		}
 
+		comment := s.r.data(&pos)
+
+		// See https://dev.mysql.com/doc/refman/5.7/en/optimizer-hints.html
+		if strings.HasPrefix(comment, "/*+") {
+			begin := sqlOffsetInComment(comment)
+			end := len(comment) - 2
+			sql := comment[begin:end]
+			s.specialComment = &optimizerHintScanner{
+				Scanner: NewScanner(sql),
+				Pos: Pos{
+					pos.Line,
+					pos.Col,
+					pos.Offset + begin,
+				},
+			}
+
+			tok = hintBegin
+			return
+		}
+
 		// See http://dev.mysql.com/doc/refman/5.7/en/comments.html
 		// Convert "/*!VersionNumber MySQL-specific-code */" to "MySQL-specific-code".
-		comment := s.r.data(&pos)
 		if strings.HasPrefix(comment, "/*!") {
 			sql := specCodePattern.ReplaceAllStringFunc(comment, trimComment)
-			s.specialComment = &specialCommentScanner{
+			s.specialComment = &mysqlSpecificCodeScanner{
 				Scanner: NewScanner(sql),
 				Pos: Pos{
 					pos.Line,
