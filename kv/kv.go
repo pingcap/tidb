@@ -14,8 +14,7 @@
 package kv
 
 import (
-	goctx "context"
-	"io"
+	goctx "golang.org/x/net/context"
 )
 
 // Transaction options
@@ -154,7 +153,7 @@ type Response interface {
 	// Next returns a resultSubset from a single storage unit.
 	// When full result set is returned, nil is returned.
 	// TODO: Find a better interface for resultSubset that can avoid allocation and reuse bytes.
-	Next() (resultSubset io.ReadCloser, err error)
+	Next() (resultSubset []byte, err error)
 	// Close response.
 	Close() error
 }

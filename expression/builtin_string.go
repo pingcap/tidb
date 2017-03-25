@@ -24,6 +24,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -1506,7 +1507,38 @@ type builtinOrdSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ord
 func (b *builtinOrdSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("ord")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+
+	arg := args[0]
+	if arg.IsNull() {
+		return d, nil
+	}
+
+	str, err := arg.ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if len(str) == 0 {
+		d.SetInt64(0)
+		return d, nil
+	}
+
+	_, size := utf8.DecodeRuneInString(str)
+	leftMost := str[:size]
+
+	var result int64
+	var factor int64 = 1
+	for i := len(leftMost) - 1; i >= 0; i-- {
+		result += int64(leftMost[i]) * factor
+		factor *= 256
+	}
+	d.SetInt64(result)
+
+	return d, nil
 }
 
 type quoteFunctionClass struct {
@@ -1557,7 +1589,28 @@ type builtinEltSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_elt
 func (b *builtinEltSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("elt")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	index, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	argsLength := int64(len(args))
+	if index < 1 || index > (argsLength-1) {
+		return d, nil
+	}
+
+	result, err := args[index].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d.SetString(result)
+
+	return d, nil
 }
 
 type exportSetFunctionClass struct {
@@ -1625,7 +1678,51 @@ type builtinInsertFuncSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_insert
 func (b *builtinInsertFuncSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("insert")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	// Returns NULL if any argument is NULL.
+	if args[0].IsNull() || args[1].IsNull() || args[2].IsNull() || args[3].IsNull() {
+		return
+	}
+
+	str0, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	str := []rune(str0)
+	strLen := len(str)
+
+	posInt64, err := args[1].ToInt64(b.ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	pos := int(posInt64)
+
+	lenInt64, err := args[2].ToInt64(b.ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	length := int(lenInt64)
+
+	newstr, err := args[3].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	var s string
+	if pos < 1 || pos > strLen {
+		s = str0
+	} else if length > strLen-pos+1 || length < 0 {
+		s = string(str[0:pos-1]) + newstr
+	} else {
+		s = string(str[0:pos-1]) + newstr + string(str[pos+length-1:])
+	}
+
+	d.SetString(s)
+	return d, nil
 }
 
 type instrFunctionClass struct {
@@ -1642,7 +1739,47 @@ type builtinInstrSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_instr
 func (b *builtinInstrSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("instr")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	// INSTR(str, substr)
+	if args[0].IsNull() || args[1].IsNull() {
+		return d, nil
+	}
+
+	var str, substr string
+	if str, err = args[0].ToString(); err != nil {
+		return d, errors.Trace(err)
+	}
+	if substr, err = args[1].ToString(); err != nil {
+		return d, errors.Trace(err)
+	}
+
+	// INSTR performs case **insensitive** search by default, while at least one argument is binary string
+	// we do case sensitive search.
+	var caseSensitive bool
+	if args[0].Kind() == types.KindBytes || args[1].Kind() == types.KindBytes {
+		caseSensitive = true
+	}
+
+	var pos, idx int
+	if caseSensitive {
+		idx = strings.Index(str, substr)
+	} else {
+		idx = strings.Index(strings.ToLower(str), strings.ToLower(substr))
+	}
+	if idx == -1 {
+		pos = 0
+	} else {
+		if caseSensitive {
+			pos = idx + 1
+		} else {
+			pos = utf8.RuneCountInString(str[:idx]) + 1
+		}
+	}
+	d.SetInt64(int64(pos))
+	return d, nil
 }
 
 type loadFileFunctionClass struct {

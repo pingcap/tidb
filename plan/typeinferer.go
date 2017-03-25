@@ -342,7 +342,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		} else {
 			tp = types.NewFieldType(mysql.TypeLonglong)
 		}
-	case "ln", "log", "log2", "log10", "sqrt", "pi", "exp":
+	case "ln", "log", "log2", "log10", "sqrt", "pi", "exp", "degrees":
 		tp = types.NewFieldType(mysql.TypeDouble)
 	case "sin": // ast.Cos, ast.Tan to be added here
 		tp = types.NewFieldType(mysql.TypeDouble)
@@ -361,7 +361,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = types.NewFieldType(mysql.TypeDatetime)
 	case "microsecond", "second", "minute", "hour", "day", "week", "month", "year",
 		"dayofweek", "dayofmonth", "dayofyear", "weekday", "weekofyear", "yearweek", "datediff",
-		"found_rows", "length", "extract", "locate", "unix_timestamp":
+		"found_rows", "length", "extract", "locate", "unix_timestamp", "quarter":
 		tp = types.NewFieldType(mysql.TypeLonglong)
 	case "now", "sysdate", "current_timestamp", "utc_timestamp":
 		tp = types.NewFieldType(mysql.TypeDatetime)
@@ -377,13 +377,14 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = types.NewFieldType(mysql.TypeDatetime)
 	case "dayname", "version", "database", "user", "current_user", "schema",
 		"concat", "concat_ws", "left", "lcase", "lower", "repeat",
-		"replace", "ucase", "upper", "convert", "substring",
+		"replace", "ucase", "upper", "convert", "substring", "elt",
 		"substring_index", "trim", "ltrim", "rtrim", "reverse", "hex", "unhex",
-		"date_format", "rpad", "lpad", "char_func", "conv", "make_set", "oct":
+		"date_format", "rpad", "lpad", "char_func", "conv", "make_set", "oct", "uuid",
+		"insert_func":
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
-	case "strcmp", "isnull", "bit_length", "char_length", "character_length", "crc32", "timestampdiff", "sign",
-		"is_ipv6":
+	case "strcmp", "isnull", "bit_length", "char_length", "character_length", "crc32", "timestampdiff",
+		"sign", "is_ipv6", "ord", "instr":
 		tp = types.NewFieldType(mysql.TypeLonglong)
 	case "connection_id":
 		tp = types.NewFieldType(mysql.TypeLonglong)
@@ -401,7 +402,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = x.Args[1].GetType()
 	case "get_lock", "release_lock":
 		tp = types.NewFieldType(mysql.TypeLonglong)
-	case ast.AesEncrypt, ast.AesDecrypt:
+	case ast.AesEncrypt, ast.AesDecrypt, ast.SHA2:
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
 	case ast.MD5:
@@ -414,6 +415,8 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp.Flen = 40
 	case ast.Coalesce:
 		tp = aggArgsType(x.Args)
+	case ast.AnyValue:
+		tp = x.Args[0].GetType()
 	default:
 		tp = types.NewFieldType(mysql.TypeUnspecified)
 	}

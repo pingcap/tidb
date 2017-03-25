@@ -38,6 +38,12 @@ type Handle struct {
 	lastVersion uint64
 }
 
+// Clear the statsTblCache, only for test.
+func (h *Handle) Clear() {
+	statsTblCache = statsCache{cache: map[int64]*statsInfo{}}
+	h.lastVersion = 0
+}
+
 // NewHandle creates a Handle for update stats.
 func NewHandle(ctx context.Context) *Handle {
 	return &Handle{ctx: ctx}
@@ -66,9 +72,10 @@ func (h *Handle) Update(m *meta.Meta, is infoschema.InfoSchema) error {
 		if tpb != nil {
 			tbl, err = statistics.TableFromPB(tableInfo, tpb)
 			// Error is not nil may mean that there are some ddl changes on this table, so the origin
-			// statistics can not be used any more, we give it a nil one.
+			// statistics can not be used any more, we give it a pseudo one.
 			if err != nil {
-				log.Errorf("Error occured when convert pb table for table id %d", tableID)
+				log.Errorf("Error occured when convert pb table for table id %d, may be the table struct has changed", tableID)
+				tbl = statistics.PseudoTable(tableInfo)
 			}
 			SetStatisticsTableCache(tableID, tbl, version)
 		}
@@ -89,7 +96,7 @@ func GetStatisticsTableCache(tblInfo *model.TableInfo) *statistics.Table {
 	statsTblCache.m.RLock()
 	defer statsTblCache.m.RUnlock()
 	stats, ok := statsTblCache.cache[tblInfo.ID]
-	if !ok || stats == nil {
+	if !ok || stats == nil || stats.tbl == nil {
 		return statistics.PseudoTable(tblInfo)
 	}
 	tbl := stats.tbl
