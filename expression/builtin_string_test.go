@@ -1069,6 +1069,16 @@ func (s *testEvaluatorSuite) TestInsert(c *C) {
 		{[]interface{}{"Quadratic", 3, 4, nil}, nil},
 		{[]interface{}{"Quadratic", 3, -1, "What"}, "QuWhat"},
 		{[]interface{}{"Quadratic", 3, 1, "What"}, "QuWhatdratic"},
+
+		{[]interface{}{"我叫小雨呀", 3, 2, "王雨叶"}, "我叫王雨叶呀"},
+		{[]interface{}{"我叫小雨呀", -1, 2, "王雨叶"}, "我叫小雨呀"},
+		{[]interface{}{"我叫小雨呀", 3, 100, "王雨叶"}, "我叫王雨叶"},
+		{[]interface{}{nil, 3, 100, "王雨叶"}, nil},
+		{[]interface{}{"我叫小雨呀", nil, 4, "王雨叶"}, nil},
+		{[]interface{}{"我叫小雨呀", 3, nil, "王雨叶"}, nil},
+		{[]interface{}{"我叫小雨呀", 3, 4, nil}, nil},
+		{[]interface{}{"我叫小雨呀", 3, -1, "王雨叶"}, "我叫王雨叶"},
+		{[]interface{}{"我叫小雨呀", 3, 1, "王雨叶"}, "我叫王雨叶雨呀"},
 	}
 	fc := funcs[ast.InsertFunc]
 	for _, test := range tests {

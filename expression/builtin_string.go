@@ -1635,10 +1635,11 @@ func (b *builtinInsertFuncSig) eval(row []types.Datum) (d types.Datum, err error
 		return
 	}
 
-	str, err := args[0].ToString()
+	str0, err := args[0].ToString()
 	if err != nil {
 		return d, errors.Trace(err)
 	}
+	str := []rune(str0)
 	strLen := len(str)
 
 	posInt64, err := args[1].ToInt64(b.ctx.GetSessionVars().StmtCtx)
@@ -1660,11 +1661,11 @@ func (b *builtinInsertFuncSig) eval(row []types.Datum) (d types.Datum, err error
 
 	var s string
 	if pos < 1 || pos > strLen {
-		s = str
+		s = str0
 	} else if length > strLen-pos+1 || length < 0 {
-		s = str[0:pos-1] + newstr
+		s = string(str[0:pos-1]) + newstr
 	} else {
-		s = str[0:pos-1] + newstr + str[pos+length-1:]
+		s = string(str[0:pos-1]) + newstr + string(str[pos+length-1:])
 	}
 
 	d.SetString(s)
