@@ -244,7 +244,7 @@ func (b *builtinInetNtoaSig) eval(row []types.Datum) (d types.Datum, err error) 
 		return d, errors.Trace(err)
 	}
 
-	if uint64(ipArg) > math.MaxInt32 {
+	if ipArg < 0 || uint64(ipArg) > math.MaxUint32 {
 		//not an IPv4 address.
 		return d, nil
 	}

@@ -13,12 +13,14 @@
 package expression
 
 import (
+	"math"
+	"strings"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
-	"strings"
 )
 
 func (s *testEvaluatorSuite) TestUUID(c *C) {
@@ -103,6 +105,8 @@ func (s *testEvaluatorSuite) TestInetNtoa(c *C) {
 		{2063728641, "123.2.0.1"},
 		{0, "0.0.0.0"},
 		{545460846593, nil},
+		{-1, nil},
+		{math.MaxUint32, "255.255.255.255"},
 	}
 	fc := funcs[ast.InetNtoa]
 	for _, test := range tests {
