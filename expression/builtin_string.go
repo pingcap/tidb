@@ -1569,7 +1569,36 @@ func (b *builtinQuoteSig) eval(row []types.Datum) (d types.Datum, err error) {
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	d.SetString(fmt.Sprintf("'%s'", str))
+
+	var result []byte
+	var escapes = []byte{'\'', '\\'}
+	var statusNormal = 0
+	var statusEscape = 1
+	var status int
+
+	inByteSlice := func(stack []byte, needle byte) bool {
+		for i := 0; i < len(stack); i++ {
+			if needle == stack[i] {
+				return true
+			}
+		}
+		return false
+	}
+
+	for _, b := range []byte(str) {
+		if status != statusEscape && b == '\\' {
+			status = statusEscape
+			continue
+		}
+		if inByteSlice(escapes, b) {
+			result = append(result, '\\', b)
+		} else {
+			result = append(result, b)
+		}
+		status = statusNormal
+	}
+
+	d.SetString(fmt.Sprintf("'%s'", string(result)))
 	return d, nil
 }
 
