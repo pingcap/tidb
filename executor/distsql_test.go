@@ -55,19 +55,20 @@ func (s *testSuite) TestIndexDoubleReadClose(c *C) {
 	rs := rss[0]
 	_, err = rs.Next()
 	c.Assert(err, IsNil)
-	c.Check(taskGoroutineExists(), IsTrue)
+	keyword := "pickAndExecTask"
+	c.Check(checkGoroutineExists(keyword), IsTrue)
 	rs.Close()
 	time.Sleep(time.Millisecond * 50)
-	c.Check(taskGoroutineExists(), IsFalse)
+	c.Check(checkGoroutineExists(keyword), IsFalse)
 	executor.LookupTableTaskChannelSize = originSize
 }
 
-func taskGoroutineExists() bool {
+func checkGoroutineExists(keyword string) bool {
 	buf := new(bytes.Buffer)
 	profile := pprof.Lookup("goroutine")
 	profile.WriteTo(buf, 1)
 	str := buf.String()
-	return strings.Contains(str, "pickAndExecTask")
+	return strings.Contains(str, keyword)
 }
 
 func (s *testSuite) TestCopClientSend(c *C) {
@@ -116,8 +117,19 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	rss, err = tk.Se.Execute("select sum(id) from copclient")
 	c.Assert(err, IsNil)
 	rs = rss[0]
-	defer rs.Close()
 	row, err = rs.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row.Data[0].GetMysqlDecimal().String(), Equals, "499500")
+	rs.Close()
+
+	// Check there is no goroutine leak.
+	rss, err = tk.Se.Execute("select * from copclient order by id")
+	c.Assert(err, IsNil)
+	rs = rss[0]
+	_, err = rs.Next()
+	c.Assert(err, IsNil)
+	rs.Close()
+	time.Sleep(time.Millisecond * 10)
+	keyword := "copIterator"
+	c.Check(checkGoroutineExists(keyword), IsFalse)
 }
