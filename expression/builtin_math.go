@@ -977,7 +977,7 @@ func (b *builtinSinSig) eval(row []types.Datum) (d types.Datum, err error) {
 	}
 	// Set the result to be of type float64
 	d.SetFloat64(math.Sin(theta))
-	return
+	return d, nil
 }
 
 type tanFunctionClass struct {
