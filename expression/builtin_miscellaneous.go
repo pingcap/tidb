@@ -318,9 +318,9 @@ func (b *builtinIsIPv4Sig) eval(row []types.Datum) (d types.Datum, err error) {
 }
 
 // isIPv4 checks IPv4 address which satisfying the format A.B.C.D(0<=A/B/C/D<=255).
-// mapped IPv6 address like '::ffff:1.2.3.4' would return false
+// Mapped IPv6 address like '::ffff:1.2.3.4' would return false.
 func isIPv4(ip string) bool {
-	// acc: keep the decimal value of each segment under check. should between 0 and 255 for valid IPv4 address.
+	// acc: keep the decimal value of each segment under check, which should between 0 and 255 for valid IPv4 address.
 	// pd: sentinel for '.'
 	dots, acc, pd := 0, 0, true
 	for _, c := range ip {
