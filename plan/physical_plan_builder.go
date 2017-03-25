@@ -584,8 +584,8 @@ func compareTypeForOrder(lhs *types.FieldType, rhs *types.FieldType) bool {
 // Generate all possible combinations from join conditions for cost evaluation
 // It will try all keys in join conditions
 func constructPropertyByJoin(join *Join) ([][]*requiredProperty, []int, error) {
-	result := make([][]*requiredProperty, 0)
-	condIndex := make([]int, 0)
+	var result [][]*requiredProperty
+	var condIndex []int
 	if join.EqualConditions == nil {
 		return nil, nil, nil
 	}

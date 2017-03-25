@@ -848,7 +848,7 @@ func (b *planBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 }
 
 func (b *planBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
-	sortMergeTables := make([]model.CIStr, 0)
+	var sortMergeTables []model.CIStr
 	for _, hint := range hints {
 		switch hint.HintName.L {
 		case TiDBMergeJoin:

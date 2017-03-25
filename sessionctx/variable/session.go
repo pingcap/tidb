@@ -177,6 +177,9 @@ type SessionVars struct {
 
 	// The number of concurrent dist SQL scan worker.
 	DistSQLScanConcurrency int
+
+	// The number of concurrent index serial scan worker.
+	IndexSerialScanConcurrency int
 }
 
 // NewSessionVars creates a session vars object.
