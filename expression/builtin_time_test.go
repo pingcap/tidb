@@ -249,6 +249,16 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 func (s *testEvaluatorSuite) TestDateFormat(c *C) {
 	defer testleak.AfterTest(c)()
 
+	// Test case for https://github.com/pingcap/tidb/issues/2908
+	// SELECT DATE_FORMAT(null,'%Y-%M-%D')
+	args := []types.Datum{types.NewDatum(nil), types.NewStringDatum("%Y-%M-%D")}
+	fc := funcs[ast.DateFormat]
+	f, err := fc.getFunction(datumsToConstants(args), s.ctx)
+	c.Assert(err, IsNil)
+	v, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.IsNull(), Equals, true)
+
 	tblDate := []struct {
 		Input  []string
 		Expect interface{}
@@ -1002,4 +1012,40 @@ func (s *testEvaluatorSuite) TestTimestamp(c *C) {
 	d, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.Kind(), Equals, types.KindNull)
+}
+
+func (s *testEvaluatorSuite) TestQuarter(c *C) {
+	tests := []struct {
+		t      string
+		expect int64
+	}{
+		// Test case from https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_quarter
+		{"2008-04-01", 2},
+		// Test case for boundary values
+		{"2008-01-01", 1},
+		{"2008-03-31", 1},
+		{"2008-06-30", 2},
+		{"2008-07-01", 3},
+		{"2008-09-30", 3},
+		{"2008-10-01", 4},
+		{"2008-12-31", 4},
+		// Test case for month 0
+		{"2008-00-01", 0},
+	}
+	fc := funcs["quarter"]
+	for _, test := range tests {
+		arg := types.NewStringDatum(test.t)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{arg}), s.ctx)
+		c.Assert(err, IsNil)
+		result, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(result.GetInt64(), Equals, test.expect)
+	}
+
+	// test invalid input
+	argInvalid := types.NewStringDatum("2008-13-01")
+	f, err := fc.getFunction(datumsToConstants([]types.Datum{argInvalid}), s.ctx)
+	c.Assert(err, IsNil)
+	result, err := f.eval(nil)
+	c.Assert(result.IsNull(), IsTrue)
 }

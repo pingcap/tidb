@@ -23,7 +23,11 @@ import (
 
 // tryToGetJoinGroup tries to fetch a whole join group, which all joins is cartesian join.
 func tryToGetJoinGroup(j *Join) ([]LogicalPlan, bool) {
-	if j.reordered || !j.cartesianJoin {
+	// Ignore reorder if:
+	// 1. already reordered
+	// 2. not inner join
+	// 3. forced merge join
+	if j.reordered || !j.cartesianJoin || j.preferMergeJoin {
 		return nil, false
 	}
 	lChild := j.children[0].(LogicalPlan)

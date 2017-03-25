@@ -79,4 +79,9 @@ func (s *testSuite) TestStatementContext(c *C) {
 	_, err = tk.Exec("insert sc2 values (unhex('4040ffff'))")
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, table.ErrTruncateWrongValue), IsTrue)
+
+	tk.MustExec("set @@tidb_skip_utf8_check = '1'")
+	_, err = tk.Exec("insert sc2 values (unhex('4040ffff'))")
+	c.Assert(err, IsNil)
+	tk.MustQuery("select length(a) from sc2").Check(testkit.Rows("2", "4"))
 }

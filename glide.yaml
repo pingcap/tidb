@@ -108,6 +108,8 @@ import:
   version: 1eb03e3cc9d345307a45ec82bd3016cde4bd4464
 - package: github.com/cznic/y
   version: 9fdf92d4aac058959f814606bb729ed50f5e4240
+- package: github.com/dustin/go-humanize
+  version: 8929fe90cee4b2cb9deb468b51fb34eba64d1bf0
 - package: github.com/grpc-ecosystem/grpc-gateway
   version: c8ec92d0481dd77d9b8c1808eb6476d190aa039a
   subpackages:
@@ -143,7 +145,7 @@ import:
 - package: github.com/pingcap/pd
   version: 174171b2b15c871c480959397d9b8047175559e7
 - package: github.com/pingcap/tipb
-  version: 1043caee48da56ffc3521406a041db8e5feac9a8
+  version: 9cc6927f2246516ce8a2e9517e3ebdf81554a2d2
   subpackages:
   - go-binlog
   - go-tipb
