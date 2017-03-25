@@ -254,7 +254,7 @@ func upgrade(s Session) {
 func upgradeToVer2(s Session) {
 	// Version 2 add two system variable for DistSQL concurrency controlling.
 	// Insert distsql related system variable.
-	distSQLVars := []string{variable.DistSQLScanConcurrencyVar, variable.DistSQLJoinConcurrencyVar}
+	distSQLVars := []string{variable.TiDBDistSQLScanConcurrency}
 	values := make([]string, 0, len(distSQLVars))
 	for _, v := range distSQLVars {
 		value := fmt.Sprintf(`("%s", "%s")`, v, variable.SysVars[v].Value)

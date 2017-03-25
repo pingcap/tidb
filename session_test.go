@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/table/tables"
@@ -2076,6 +2077,29 @@ func (s *testSessionSuite) TestSessionAuth(c *C) {
 	defer se.Close()
 	c.Assert(se.Auth("Any not exist username with zero password! @anyhost", []byte(""), []byte("")), IsFalse)
 
+	mustExecSQL(c, se, dropDBSQL)
+}
+
+func (s *testSessionSuite) TestSkipWithGrant(c *C) {
+	defer testleak.AfterTest(c)()
+	dbName := "test_skip_with_grant"
+	se := newSession(c, s.store, dbName)
+	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
+
+	save1 := privileges.Enable
+	save2 := privileges.SkipWithGrant
+
+	privileges.Enable = true
+	privileges.SkipWithGrant = false
+	c.Assert(se.Auth("user_not_exist", []byte("yyy"), []byte("zzz")), IsFalse)
+
+	privileges.SkipWithGrant = true
+	c.Assert(se.Auth(`xxx@%`, []byte("yyy"), []byte("zzz")), IsTrue)
+	c.Assert(se.Auth(`root@%`, []byte(""), []byte("")), IsTrue)
+	mustExecSQL(c, se, "create table t (id int)")
+
+	privileges.Enable = save1
+	privileges.SkipWithGrant = save2
 	mustExecSQL(c, se, dropDBSQL)
 }
 
