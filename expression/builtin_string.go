@@ -1652,12 +1652,11 @@ func (b *builtinFormatSig) eval(row []types.Datum) (d types.Datum, err error) {
 		d.SetNull()
 		return
 	}
-	sc := b.ctx.GetSessionVars().StmtCtx
 	arg0, err := args[0].ToString()
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	arg1, err := args[1].ToInt64(sc)
+	arg1, err := args[1].ToString()
 	if err != nil {
 		return d, errors.Trace(err)
 	}

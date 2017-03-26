@@ -397,7 +397,7 @@ var Str2SQLMode = map[string]SQLMode{
 }
 
 // FormatFunc is the locale format function signature.
-type FormatFunc func(string, int64) (string, error)
+type FormatFunc func(string, string) (string, error)
 
 // GetLocaleFormatFunction get the format function for sepcific locale.
 func GetLocaleFormatFunction(loc string) FormatFunc {
