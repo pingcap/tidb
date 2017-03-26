@@ -1434,7 +1434,7 @@ func timeArithFuncFactory(op ast.TimeArithType) BuiltinFunc {
 		//todo fsp
 		bd1, err := convertToDuration(ctx.GetSessionVars().StmtCtx, args[1], types.MaxFsp)
 		if err != nil {
-			return d, nil
+			return d, errors.Trace(err)
 		}
 		b1 := bd1.GetMysqlDuration()
 
@@ -1442,43 +1442,66 @@ func timeArithFuncFactory(op ast.TimeArithType) BuiltinFunc {
 		if err != nil {
 			ad1, err := convertToDuration(ctx.GetSessionVars().StmtCtx, args[0], types.MaxFsp)
 			if err != nil {
-				return d, nil
+				return d, errors.Trace(err)
 			}
 			a1 := ad1.GetMysqlDuration()
 			//args[0] is Duration case, result will be Duration too.
-
 			var r time.Duration
 
 			if op == ast.TimeArithAdd {
-				if a1.Duration-b1.Duration > types.MaxTime {
+				if a1.Duration + b1.Duration > types.MaxTime {
 					r = types.MaxTime
+				} else if a1.Duration + b1.Duration < types.MinTime {
+					r = types.MinTime
 				} else {
 					r = a1.Duration + b1.Duration
 				}
 			} else {
-				if a1.Duration-b1.Duration < types.MinTime {
+				if a1.Duration - b1.Duration > types.MaxTime {
+					r = types.MaxTime
+				} else if a1.Duration - b1.Duration < types.MinTime {
 					r = types.MinTime
 				} else {
 					r = a1.Duration - b1.Duration
 				}
 			}
+
+			var fsp int
+
+			milliseconds := (r.Nanoseconds() % int64(time.Second) / 1000)
+			if milliseconds == 0 {
+				fsp = types.DefaultFsp
+			} else {
+				fsp = types.MaxFsp
+			}
 			dr := types.Duration{
 				Duration: r,
-				Fsp:      types.UnspecifiedFsp}
+				Fsp:      fsp}
 			d.SetMysqlDuration(dr)
 			return d, nil
 		}
 		//args[0] is Time case, result will be Time too.
 		var r time.Time
-		if op == ast.TimeArithAdd {
-			r = time.Date(a1.Time.Year(), time.Month(a1.Time.Month()), a1.Time.Day(), a1.Time.Hour()+b1.Hour(), a1.Time.Minute()+b1.Minute(), a1.Time.Second()+b1.Second(), 1000 * (a1.Time.Microsecond()+b1.MicroSecond()), getTimeZone(ctx))
+		sign := b1.Duration > 0
+		if (op == ast.TimeArithAdd && sign) || (op == ast.TimeArithSub && !sign) {
+			r = time.Date(a1.Time.Year(), time.Month(a1.Time.Month()), a1.Time.Day(), a1.Time.Hour()+b1.Hour(), a1.Time.Minute()+b1.Minute(), a1.Time.Second()+b1.Second(), 1000*(a1.Time.Microsecond()+b1.MicroSecond()), getTimeZone(ctx))
 		} else {
-			r = time.Date(a1.Time.Year(), time.Month(a1.Time.Month()), a1.Time.Day(), a1.Time.Hour()-b1.Hour(), a1.Time.Minute()-b1.Minute(), a1.Time.Second()-b1.Second(), 1000 * (a1.Time.Microsecond()-b1.MicroSecond()), getTimeZone(ctx))
+			r = time.Date(a1.Time.Year(), time.Month(a1.Time.Month()), a1.Time.Day(), a1.Time.Hour()-b1.Hour(), a1.Time.Minute()-b1.Minute(), a1.Time.Second()-b1.Second(), 1000*(a1.Time.Microsecond()-b1.MicroSecond()), getTimeZone(ctx))
+		}
+
+		var fsp int
+		milliseconds := r.Nanosecond() / 1000
+
+		if milliseconds == 0 {
+			fsp = types.DefaultFsp
+		} else {
+			fsp = types.MaxFsp
 		}
 		rt := types.Time{
-			Time: r,
+			Time: types.FromDate(r.Year(), int(r.Month()), r.Day(), r.Hour(), r.Minute(), r.Second(), milliseconds),
 			Type: mysql.TypeDatetime,
-			Fsp:  types.UnspecifiedFsp}
+			Fsp:  fsp}
+
 		d.SetMysqlTime(rt)
 		return d, nil
 	}
