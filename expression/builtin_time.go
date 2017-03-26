@@ -1678,7 +1678,69 @@ type builtinMakeTimeSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_maketime
 func (b *builtinMakeTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("MAKETIME")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	// MAKETIME(hour, minute, second)
+	if args[0].IsNull() || args[1].IsNull() || args[2].IsNull() {
+		return d, nil
+	}
+
+	var (
+		hour     int64
+		minute   int64
+		second   float64
+		overflow bool
+	)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	hour, _ = args[0].ToInt64(sc)
+	// MySQL TIME datatype: https://dev.mysql.com/doc/refman/5.7/en/time.html
+	// ranges from '-838:59:59.000000' to '838:59:59.000000'
+	if hour < -838 {
+		hour = -838
+		overflow = true
+	} else if hour > 838 {
+		hour = 838
+		overflow = true
+	}
+
+	minute, _ = args[1].ToInt64(sc)
+	if minute < 0 || minute >= 60 {
+		return d, nil
+	}
+
+	second, _ = args[2].ToFloat64(sc)
+	if second < 0 || second >= 60 {
+		return d, nil
+	}
+	if hour == -838 || hour == 838 {
+		if second > 59 {
+			second = 59
+		}
+	}
+	if overflow {
+		minute = 59
+		second = 59
+	}
+
+	var dur types.Duration
+	fsp := types.MaxFsp
+	if args[2].Kind() != types.KindString {
+		sec, _ := args[2].ToString()
+		secs := strings.Split(sec, ".")
+		if len(secs) <= 1 {
+			fsp = 0
+		} else if len(secs[1]) < fsp {
+			fsp = len(secs[1])
+		}
+	}
+	dur, err = types.ParseDuration(fmt.Sprintf("%02d:%02d:%v", hour, minute, second), fsp)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d.SetMysqlDuration(dur)
+	return d, nil
 }
 
 type periodAddFunctionClass struct {
