@@ -1449,17 +1449,17 @@ func timeArithFuncFactory(op ast.TimeArithType) BuiltinFunc {
 			var r time.Duration
 
 			if op == ast.TimeArithAdd {
-				if a1.Duration + b1.Duration > types.MaxTime {
+				if a1.Duration+b1.Duration > types.MaxTime {
 					r = types.MaxTime
-				} else if a1.Duration + b1.Duration < types.MinTime {
+				} else if a1.Duration+b1.Duration < types.MinTime {
 					r = types.MinTime
 				} else {
 					r = a1.Duration + b1.Duration
 				}
 			} else {
-				if a1.Duration - b1.Duration > types.MaxTime {
+				if a1.Duration-b1.Duration > types.MaxTime {
 					r = types.MaxTime
-				} else if a1.Duration - b1.Duration < types.MinTime {
+				} else if a1.Duration-b1.Duration < types.MinTime {
 					r = types.MinTime
 				} else {
 					r = a1.Duration - b1.Duration
