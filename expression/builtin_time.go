@@ -1449,25 +1449,19 @@ func timeArithFuncFactory(op ast.TimeArithType) BuiltinFunc {
 			var r time.Duration
 
 			if op == ast.TimeArithAdd {
-				if a1.Duration+b1.Duration > types.MaxTime {
-					r = types.MaxTime
-				} else if a1.Duration+b1.Duration < types.MinTime {
-					r = types.MinTime
-				} else {
-					r = a1.Duration + b1.Duration
-				}
+				r = a1.Duration + b1.Duration
 			} else {
-				if a1.Duration-b1.Duration > types.MaxTime {
-					r = types.MaxTime
-				} else if a1.Duration-b1.Duration < types.MinTime {
-					r = types.MinTime
-				} else {
-					r = a1.Duration - b1.Duration
-				}
+				r = a1.Duration - b1.Duration
 			}
 
-			var fsp int
+			if r > types.MaxTime {
+				r = types.MaxTime
+			} else if r < types.MinTime {
+				r = types.MinTime
+			}
 
+			// Calculate fsp like mysql does.
+			var fsp int
 			milliseconds := (r.Nanoseconds() % int64(time.Second) / 1000)
 			if milliseconds == 0 {
 				fsp = types.DefaultFsp
@@ -1489,6 +1483,7 @@ func timeArithFuncFactory(op ast.TimeArithType) BuiltinFunc {
 			r = time.Date(a1.Time.Year(), time.Month(a1.Time.Month()), a1.Time.Day(), a1.Time.Hour()-b1.Hour(), a1.Time.Minute()-b1.Minute(), a1.Time.Second()-b1.Second(), 1000*(a1.Time.Microsecond()-b1.MicroSecond()), getTimeZone(ctx))
 		}
 
+		// Calculate fsp like mysql does.
 		var fsp int
 		milliseconds := r.Nanosecond() / 1000
 
