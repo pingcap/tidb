@@ -1007,7 +1007,9 @@ func (s *testEvaluatorSuite) TestTimeArithFuncFactory(c *C) {
 		expectAdd string
 		expectSub string
 	}{
-		{"2007-12-31 23:59:59.999999", "23:59:59.999999", "2008-01-01 23:59:59.999798", "2007-12-31 00:00:00.000200"},
+		{"2007-12-31 23:59:59.999999", "23:59:59.999999", "2008-01-01 23:59:59.999998", "2007-12-31 00:00:00"},
+		{"9207-12-31 23:59:59.1", "-120:44:33", "9207-12-26 23:15:26.100000", "9208-01-06 00:44:32.100000"},
+		{"9207-12-31 23:59:59", "120:44:33.1", "9208-01-06 00:44:32.100000", "9207-12-26 23:15:25.900000"},
 	}
 
 	testsDurationStrings := []struct {
@@ -1017,6 +1019,9 @@ func (s *testEvaluatorSuite) TestTimeArithFuncFactory(c *C) {
 		expectSub string
 	}{
 		{"23:59:59.999999", "22:59:59.999999", "46:59:59.999998", "01:00:00"},
+		{"22 23:59:59.999999", "-9 22:59:59.999999", "313:00:00", "790:59:59.999998"},
+		{"-22 23:59:59.999999", "-19 22:59:59.999999", "-838:59:59", "-73:00:00"},
+		{"22 23:59:59.999999", "19 22:59:59.999999", "838:59:59", "73:00:00"},
 	}
 
 	timeAdd := timeArithFuncFactory(ast.TimeArithAdd)
@@ -1025,7 +1030,7 @@ func (s *testEvaluatorSuite) TestTimeArithFuncFactory(c *C) {
 	for _, test := range testsDateTimeStrings {
 		t1 := types.NewStringDatum(test.t1)
 		t2 := types.NewStringDatum(test.t2)
-		fmt.Printf("testsDateTimeStrings %v %v", t1.GetString(), t2.GetString())
+		fmt.Println("timestamps", t1.GetString(), t2.GetString())
 		result1, err := timeAdd([]types.Datum{t1, t2}, s.ctx)
 		c.Assert(err, IsNil)
 
@@ -1039,6 +1044,7 @@ func (s *testEvaluatorSuite) TestTimeArithFuncFactory(c *C) {
 	for _, test := range testsDurationStrings {
 		t1 := types.NewStringDatum(test.t1)
 		t2 := types.NewStringDatum(test.t2)
+		fmt.Println("durations", t1.GetString(), t2.GetString())
 
 		result1, err := timeAdd([]types.Datum{t1, t2}, s.ctx)
 		c.Assert(err, IsNil)
