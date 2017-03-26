@@ -411,6 +411,8 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
 		tp.Flen = 40
+	case ast.RandomBytes:
+		tp = types.NewFieldType(mysql.TypeInt24)
 	case ast.Coalesce:
 		tp = aggArgsType(x.Args)
 	case ast.AnyValue:
