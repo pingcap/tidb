@@ -70,7 +70,7 @@ const (
 	// Set this value higher may reduce the latency but consumes more system resource.
 	TiDBIndexLookupConcurrency = "tidb_index_lookup_concurrency"
 
-	// tidb_index_serial_scan_concurrency is user for controling the concurrency of index scan operation
+	// tidb_index_serial_scan_concurrency is used for controling the concurrency of index scan operation
 	// when we need to keep the data output order the same as the order of index data.
 	TiDBIndexSerialScanConcurrency = "tidb_index_serial_scan_concurrency"
 
