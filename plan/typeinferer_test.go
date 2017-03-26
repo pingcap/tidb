@@ -266,6 +266,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`exp('1.23')`, mysql.TypeDouble, charset.CharsetBin},
 		{`insert("Titanium", 3, 6, "DB")`, mysql.TypeVarString, charset.CharsetUTF8},
 		{`is_ipv6('FE80::AAAA:0000:00C2:0002')`, mysql.TypeLonglong, charset.CharsetBin},
+		{"inet_ntoa(1)", mysql.TypeVarString, charset.CharsetUTF8},
 		{`ord('2')`, mysql.TypeLonglong, charset.CharsetBin},
 		{`ord(2)`, mysql.TypeLonglong, charset.CharsetBin},
 		{`ord(true)`, mysql.TypeLonglong, charset.CharsetBin},
