@@ -421,22 +421,23 @@ func (do *Domain) LoadTableStatsLoop(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	lease := do.DDL().GetLease()
-	if lease > 0 {
-		go func(do *Domain) {
-			ticker := time.NewTicker(lease)
-			for {
-				select {
-				case <-ticker.C:
-					err := do.statsHandle.Update(do.InfoSchema())
-					if err != nil {
-						log.Error(errors.ErrorStack(err))
-					}
-				case <-do.exit:
-					return
-				}
-			}
-		}(do)
+	if lease <= 0 {
+		return nil
 	}
+	go func(do *Domain) {
+		ticker := time.NewTicker(lease)
+		for {
+			select {
+			case <-ticker.C:
+				err := do.statsHandle.Update(do.InfoSchema())
+				if err != nil {
+					log.Error(errors.ErrorStack(err))
+				}
+			case <-do.exit:
+				return
+			}
+		}
+	}(do)
 	return nil
 }
 
