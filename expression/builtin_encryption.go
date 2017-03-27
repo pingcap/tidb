@@ -24,6 +24,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/encrypt"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -544,7 +545,7 @@ func (b *builtinRandomBytesSig) eval(row []types.Datum) (d types.Datum, err erro
 	}
 	size := arg.GetInt64()
 	if size < 1 || size > 1024 {
-		return d, errors.New("permitted values of len range from 1 to 1024")
+		return d, mysql.NewErr(mysql.ErrDataOutOfRange, "length", "random_bytes")
 	}
 	buf := make([]byte, size)
 	if n, err := rand.Read(buf); err != nil {
