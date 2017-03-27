@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 )
 
-const plan1 = `[[TableScan_11 {
+const plan1 = `[[TableScan_12 {
     "db": "test",
     "table": "t1",
     "desc": false,
@@ -34,7 +34,7 @@ const plan1 = `[[TableScan_11 {
         "index filter conditions": null,
         "table filter conditions": null
     }
-} MergeJoin_14] [TableScan_13 {
+} MergeJoin_17] [TableScan_15 {
     "db": "test",
     "table": "t2",
     "desc": false,
@@ -45,17 +45,17 @@ const plan1 = `[[TableScan_11 {
         "index filter conditions": null,
         "table filter conditions": null
     }
-} MergeJoin_14] [MergeJoin_14 {
+} MergeJoin_17] [MergeJoin_17 {
     "eqCond": [
         "eq(test.t1.c1, test.t2.c1)"
     ],
     "leftCond": null,
     "rightCond": null,
     "otherCond": [],
-    "leftPlan": "TableScan_11",
-    "rightPlan": "TableScan_13",
+    "leftPlan": "TableScan_12",
+    "rightPlan": "TableScan_15",
     "desc": "false"
-} MergeJoin_8] [TableScan_16 {
+} MergeJoin_8] [TableScan_22 {
     "db": "test",
     "table": "t3",
     "desc": false,
@@ -73,10 +73,10 @@ const plan1 = `[[TableScan_11 {
     "leftCond": null,
     "rightCond": null,
     "otherCond": [],
-    "leftPlan": "MergeJoin_14",
-    "rightPlan": "TableScan_16",
+    "leftPlan": "MergeJoin_17",
+    "rightPlan": "TableScan_22",
     "desc": "false"
-} ] [ {
+} Sort_23] [Sort_23 {
     "exprs": [
         {
             "Expr": "test.t1.c1",
@@ -87,7 +87,7 @@ const plan1 = `[[TableScan_11 {
     "child": "MergeJoin_8"
 } ]]`
 
-const plan2 = `[[TableScan_11 {
+const plan2 = `[[TableScan_12 {
     "db": "test",
     "table": "t1",
     "desc": false,
@@ -98,7 +98,7 @@ const plan2 = `[[TableScan_11 {
         "index filter conditions": null,
         "table filter conditions": null
     }
-} MergeJoin_14] [TableScan_13 {
+} MergeJoin_17] [TableScan_15 {
     "db": "test",
     "table": "t2",
     "desc": false,
@@ -109,17 +109,17 @@ const plan2 = `[[TableScan_11 {
         "index filter conditions": null,
         "table filter conditions": null
     }
-} MergeJoin_14] [MergeJoin_14 {
+} MergeJoin_17] [MergeJoin_17 {
     "eqCond": [
         "eq(test.t1.c1, test.t2.c1)"
     ],
     "leftCond": null,
     "rightCond": null,
     "otherCond": [],
-    "leftPlan": "TableScan_11",
-    "rightPlan": "TableScan_13",
+    "leftPlan": "TableScan_12",
+    "rightPlan": "TableScan_15",
     "desc": "false"
-} MergeJoin_8] [TableScan_16 {
+} MergeJoin_8] [TableScan_22 {
     "db": "test",
     "table": "t3",
     "desc": false,
@@ -137,10 +137,10 @@ const plan2 = `[[TableScan_11 {
     "leftCond": null,
     "rightCond": null,
     "otherCond": [],
-    "leftPlan": "MergeJoin_14",
-    "rightPlan": "TableScan_16",
+    "leftPlan": "MergeJoin_17",
+    "rightPlan": "TableScan_22",
     "desc": "false"
-} ] [ {
+} Sort_23] [Sort_23 {
     "exprs": [
         {
             "Expr": "test.t1.c1",
@@ -151,7 +151,7 @@ const plan2 = `[[TableScan_11 {
     "child": "MergeJoin_8"
 } ]]`
 
-const plan3 = `[[TableScan_11 {
+const plan3 = `[[TableScan_12 {
     "db": "test",
     "table": "t1",
     "desc": false,
@@ -162,7 +162,7 @@ const plan3 = `[[TableScan_11 {
         "index filter conditions": null,
         "table filter conditions": null
     }
-} MergeJoin_9] [TableScan_13 {
+} MergeJoin_9] [TableScan_15 {
     "db": "test",
     "table": "t2",
     "desc": false,
@@ -180,10 +180,10 @@ const plan3 = `[[TableScan_11 {
     "leftCond": null,
     "rightCond": null,
     "otherCond": [],
-    "leftPlan": "TableScan_11",
-    "rightPlan": "TableScan_13",
+    "leftPlan": "TableScan_12",
+    "rightPlan": "TableScan_15",
     "desc": "false"
-} ] [ {
+} Sort_16] [Sort_16 {
     "exprs": [
         {
             "Expr": "test.t1.c1",
@@ -192,7 +192,7 @@ const plan3 = `[[TableScan_11 {
     ],
     "limit": null,
     "child": "MergeJoin_9"
-} MergeJoin_8] [TableScan_16 {
+} MergeJoin_8] [TableScan_23 {
     "db": "test",
     "table": "t3",
     "desc": false,
@@ -210,8 +210,8 @@ const plan3 = `[[TableScan_11 {
     "leftCond": null,
     "rightCond": null,
     "otherCond": [],
-    "leftPlan": "",
-    "rightPlan": "TableScan_16",
+    "leftPlan": "Sort_16",
+    "rightPlan": "TableScan_23",
     "desc": "false"
 } ]]`
 
