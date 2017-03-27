@@ -130,6 +130,8 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		vars.IndexLookupSize = tidbOptPositiveInt(sVal, variable.DefIndexLookupSize)
 	case variable.TiDBDistSQLScanConcurrency:
 		vars.DistSQLScanConcurrency = tidbOptPositiveInt(sVal, variable.DefDistSQLScanConcurrency)
+	case variable.TiDBIndexSerialScanConcurrency:
+		vars.IndexSerialScanConcurrency = tidbOptPositiveInt(sVal, variable.DefIndexSerialScanConcurrency)
 	}
 	vars.Systems[name] = sVal
 	return nil
