@@ -54,6 +54,7 @@ var (
 	_ functionClass = &yearFunctionClass{}
 	_ functionClass = &yearWeekFunctionClass{}
 	_ functionClass = &fromUnixTimeFunctionClass{}
+	_ functionClass = &getFormatFunctionClass{}
 	_ functionClass = &strToDateFunctionClass{}
 	_ functionClass = &sysDateFunctionClass{}
 	_ functionClass = &currentDateFunctionClass{}
@@ -104,6 +105,7 @@ var (
 	_ builtinFunc = &builtinYearSig{}
 	_ builtinFunc = &builtinYearWeekSig{}
 	_ builtinFunc = &builtinFromUnixTimeSig{}
+	_ builtinFunc = &builtinGetFormatSig{}
 	_ builtinFunc = &builtinStrToDateSig{}
 	_ builtinFunc = &builtinSysDateSig{}
 	_ builtinFunc = &builtinCurrentDateSig{}
@@ -1008,6 +1010,68 @@ func (b *builtinFromUnixTimeSig) eval(row []types.Datum) (d types.Datum, err err
 		return
 	}
 	return builtinDateFormat([]types.Datum{d, args[1]}, b.ctx)
+}
+
+// See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_from-unixtime
+type getFormatFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *getFormatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinGetFormatSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinGetFormatSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinGetFormatSig) eval(row []types.Datum) (d types.Datum, err error) {
+	args, err := b.evalArgs(row)
+	t := args[0].GetString()
+	l := args[1].GetString()
+	switch t {
+	case "DATE":
+		switch l {
+		case "USA":
+			d.SetString("%m.%d.%Y")
+		case "JIS":
+			d.SetString("%Y-%m-%d")
+		case "ISO":
+			d.SetString("%Y-%m-%d")
+		case "EUR":
+			d.SetString("%d.%m.%Y")
+		case "INTERNAL":
+			d.SetString("%Y%m%d")
+		}
+	case "DATETIME":
+		switch l {
+		case "USA":
+			d.SetString("%Y-%m-%d %H.%i.%s")
+		case "JIS":
+			d.SetString("%Y-%m-%d %H:%i:%s")
+		case "ISO":
+			d.SetString("%Y-%m-%d %H:%i:%s")
+		case "EUR":
+			d.SetString("%Y-%m-%d %H.%i.%s")
+		case "INTERNAL":
+			d.SetString("%Y%m%d%H%i%s")
+		}
+	case "TIME":
+		switch l {
+		case "USA":
+			d.SetString("%h:%i:%s %p")
+		case "JIS":
+			d.SetString("%H:%i:%s")
+		case "ISO":
+			d.SetString("%H:%i:%s")
+		case "EUR":
+			d.SetString("%H.%i.%s")
+		case "INTERNAL":
+			d.SetString("%H%i%s")
+		}
+	}
+
+	return d, nil
 }
 
 type strToDateFunctionClass struct {

@@ -185,6 +185,7 @@ var funcs = map[string]functionClass{
 	ast.Extract:          &extractFunctionClass{baseFunctionClass{ast.Extract, 2, 2}},
 	ast.FromDays:         &fromDaysFunctionClass{baseFunctionClass{ast.FromDays, 1, 1}},
 	ast.FromUnixTime:     &fromUnixTimeFunctionClass{baseFunctionClass{ast.FromUnixTime, 1, 2}},
+	ast.GetFormat:        &getFormatFunctionClass{baseFunctionClass{ast.GetFormat, 2, 2}},
 	ast.Hour:             &hourFunctionClass{baseFunctionClass{ast.Hour, 1, 1}},
 	ast.LocalTime:        &nowFunctionClass{baseFunctionClass{ast.LocalTime, 0, 1}},
 	ast.LocalTimestamp:   &nowFunctionClass{baseFunctionClass{ast.LocalTimestamp, 0, 1}},
