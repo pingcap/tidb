@@ -16,7 +16,7 @@ package plan
 import "github.com/pingcap/tidb/expression"
 
 // taskProfile is a new version of `PhysicalPlanInfo`. It stores cost information for a task.
-// A task may be KVTask, SingletonTask, MPPTask or a ParallelTask.
+// A task may be CopTask, RootTask, MPPTask or a ParallelTask.
 type taskProfile interface {
 	attachPlan(p PhysicalPlan) taskProfile
 	setCount(cnt uint64)
@@ -26,9 +26,9 @@ type taskProfile interface {
 	copy() taskProfile
 }
 
-// TODO: In future, we should split kvTask to indexTask and tableTask.
-// kvTaskProfile is a profile for a task running a distributed kv store.
-type kvTaskProfile struct {
+// TODO: In future, we should split copTask to indexTask and tableTask.
+// copTaskProfile is a profile for a task running a distributed kv store.
+type copTaskProfile struct {
 	indexPlan     PhysicalPlan
 	tablePlan     PhysicalPlan
 	cst           float64
@@ -36,24 +36,24 @@ type kvTaskProfile struct {
 	addPlan2Index bool
 }
 
-func (t *kvTaskProfile) setCount(cnt uint64) {
+func (t *copTaskProfile) setCount(cnt uint64) {
 	t.cnt = cnt
 }
 
-func (t *kvTaskProfile) count() uint64 {
+func (t *copTaskProfile) count() uint64 {
 	return t.cnt
 }
 
-func (t *kvTaskProfile) setCost(cst float64) {
+func (t *copTaskProfile) setCost(cst float64) {
 	t.cst = cst
 }
 
-func (t *kvTaskProfile) cost() float64 {
+func (t *copTaskProfile) cost() float64 {
 	return t.cst
 }
 
-func (t *kvTaskProfile) copy() taskProfile {
-	return &kvTaskProfile{
+func (t *copTaskProfile) copy() taskProfile {
+	return &copTaskProfile{
 		indexPlan:     t.indexPlan,
 		tablePlan:     t.tablePlan,
 		cst:           t.cst,
@@ -62,8 +62,8 @@ func (t *kvTaskProfile) copy() taskProfile {
 	}
 }
 
-func (t *kvTaskProfile) attachPlan(p PhysicalPlan) taskProfile {
-	nt := t.copy().(*kvTaskProfile)
+func (t *copTaskProfile) attachPlan(p PhysicalPlan) taskProfile {
+	nt := t.copy().(*copTaskProfile)
 	if nt.addPlan2Index {
 		p.SetChildren(nt.indexPlan)
 		nt.indexPlan = p
@@ -74,48 +74,48 @@ func (t *kvTaskProfile) attachPlan(p PhysicalPlan) taskProfile {
 	return nt
 }
 
-func (t *kvTaskProfile) finishTask() {
+func (t *copTaskProfile) finishTask() {
 	t.cst += float64(t.cnt) * netWorkFactor
 	if t.tablePlan != nil && t.indexPlan != nil {
 		t.cst += float64(t.cnt) * netWorkFactor
 	}
 }
 
-// singletonTaskProfile is a profile running on tidb with single goroutine.
-type singletonTaskProfile struct {
+// rootTaskProfile is a profile running on tidb with single goroutine.
+type rootTaskProfile struct {
 	plan PhysicalPlan
 	cst  float64
 	cnt  uint64
 }
 
-func (t *singletonTaskProfile) copy() taskProfile {
-	return &singletonTaskProfile{
+func (t *rootTaskProfile) copy() taskProfile {
+	return &rootTaskProfile{
 		plan: t.plan,
 		cst:  t.cst,
 		cnt:  t.cnt,
 	}
 }
 
-func (t *singletonTaskProfile) attachPlan(p PhysicalPlan) taskProfile {
-	nt := t.copy().(*singletonTaskProfile)
+func (t *rootTaskProfile) attachPlan(p PhysicalPlan) taskProfile {
+	nt := t.copy().(*rootTaskProfile)
 	p.SetChildren(nt.plan)
 	nt.plan = p
 	return nt
 }
 
-func (t *singletonTaskProfile) setCount(cnt uint64) {
+func (t *rootTaskProfile) setCount(cnt uint64) {
 	t.cnt = cnt
 }
 
-func (t *singletonTaskProfile) count() uint64 {
+func (t *rootTaskProfile) count() uint64 {
 	return t.cnt
 }
 
-func (t *singletonTaskProfile) setCost(cst float64) {
+func (t *rootTaskProfile) setCost(cst float64) {
 	t.cst = cst
 }
 
-func (t *singletonTaskProfile) cost() float64 {
+func (t *rootTaskProfile) cost() float64 {
 	return t.cst
 }
 
@@ -128,7 +128,7 @@ func (limit *Limit) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 func (sel *Selection) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 	profile := profiles[0].copy()
 	switch t := profile.(type) {
-	case *kvTaskProfile:
+	case *copTaskProfile:
 		if t.addPlan2Index {
 			var indexSel, tableSel *Selection
 			if t.tablePlan != nil {
@@ -153,7 +153,7 @@ func (sel *Selection) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 			t.cst += float64(t.cnt) * cpuFactor
 		}
 		t.cnt = uint64(float64(t.cnt) * selectionFactor)
-	case *singletonTaskProfile:
+	case *rootTaskProfile:
 		t.cst += float64(t.cnt) * cpuFactor
 		t.cnt = uint64(float64(t.cnt) * selectionFactor)
 	}
