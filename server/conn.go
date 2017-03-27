@@ -654,8 +654,10 @@ func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error 
 
 	txn := loadDataInfo.Ctx.Txn()
 	if err != nil {
-		if err1 := txn.Rollback(); err1 != nil {
-			log.Errorf("load data rollback failed: %v", err1)
+		if txn.Valid() {
+			if err1 := txn.Rollback(); err1 != nil {
+				log.Errorf("load data rollback failed: %v", err1)
+			}
 		}
 		return errors.Trace(err)
 	}
