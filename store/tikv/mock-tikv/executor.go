@@ -50,11 +50,6 @@ func (e *tableScanExec) SetSrcExec(exec executor) {
 	e.src = exec
 }
 
-func (e *tableScanExec) Close() error {
-	e.cursor = 0
-	return nil
-}
-
 func (e *tableScanExec) Next() (int64, map[int64][]byte, error) {
 	for e.cursor < len(e.kvRanges) {
 		ran := e.kvRanges[e.cursor]
