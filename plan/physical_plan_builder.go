@@ -310,6 +310,9 @@ func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPl
 			ByItems:   items,
 			ExecLimit: prop.limit,
 		}
+		sort.tp = Srt
+		sort.allocator = info.p.Allocator()
+		sort.initIDAndContext(info.p.context())
 		sort.SetSchema(info.p.Schema())
 		info = addPlanToResponse(sort, info)
 
