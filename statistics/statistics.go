@@ -288,6 +288,9 @@ type Table struct {
 // SaveToStorage saves stats table to storage.
 func (t *Table) SaveToStorage(ctx context.Context) error {
 	_, err := ctx.(sqlexec.SQLExecutor).Execute("begin")
+	if err != nil {
+		return errors.Trace(err)
+	}
 	txn := ctx.Txn()
 	version := txn.StartTS()
 	SetStatisticsTableCache(t.Info.ID, t, version)
