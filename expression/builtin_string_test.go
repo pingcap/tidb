@@ -984,6 +984,50 @@ func (s *testEvaluatorSuite) TestLpad(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestInstr(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Args []interface{}
+		Want interface{}
+	}{
+		{[]interface{}{"foobarbar", "bar"}, 4},
+		{[]interface{}{"xbar", "foobar"}, 0},
+
+		{[]interface{}{123456234, 234}, 2},
+		{[]interface{}{123456, 567}, 0},
+		{[]interface{}{1e10, 1e2}, 1},
+		{[]interface{}{1.234, ".234"}, 2},
+		{[]interface{}{1.234, ""}, 1},
+		{[]interface{}{"", 123}, 0},
+		{[]interface{}{"", ""}, 1},
+
+		{[]interface{}{"中文美好", "美好"}, 3},
+		{[]interface{}{"中文美好", "世界"}, 0},
+		{[]interface{}{"中文abc", "a"}, 3},
+
+		{[]interface{}{"live LONG and prosper", "long"}, 6},
+
+		{[]interface{}{"not BINARY string", "binary"}, 5},
+		{[]interface{}{[]byte("BINARY string"), []byte("binary")}, 0},
+		{[]interface{}{[]byte("BINARY string"), []byte("BINARY")}, 1},
+		{[]interface{}{[]byte("中文abc"), []byte("abc")}, 7},
+
+		{[]interface{}{"foobar", nil}, nil},
+		{[]interface{}{nil, "foobar"}, nil},
+		{[]interface{}{nil, nil}, nil},
+	}
+
+	Dtbl := tblToDtbl(tbl)
+	instr := funcs[ast.Instr]
+	for i, t := range Dtbl {
+		f, err := instr.getFunction(datumsToConstants(t["Args"]), s.ctx)
+		c.Assert(err, IsNil)
+		got, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
+	}
+}
+
 func (s *testEvaluatorSuite) TestMakeSet(c *C) {
 	defer testleak.AfterTest(c)()
 
@@ -1053,6 +1097,46 @@ func (s *testEvaluatorSuite) TestOct(c *C) {
 	r, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(r.IsNull(), IsTrue)
+}
+
+func (s *testEvaluatorSuite) TestInsert(c *C) {
+	tests := []struct {
+		args   []interface{}
+		expect interface{}
+	}{
+		{[]interface{}{"Quadratic", 3, 4, "What"}, "QuWhattic"},
+		{[]interface{}{"Quadratic", -1, 4, "What"}, "Quadratic"},
+		{[]interface{}{"Quadratic", 3, 100, "What"}, "QuWhat"},
+		{[]interface{}{nil, 3, 100, "What"}, nil},
+		{[]interface{}{"Quadratic", nil, 4, "What"}, nil},
+		{[]interface{}{"Quadratic", 3, nil, "What"}, nil},
+		{[]interface{}{"Quadratic", 3, 4, nil}, nil},
+		{[]interface{}{"Quadratic", 3, -1, "What"}, "QuWhat"},
+		{[]interface{}{"Quadratic", 3, 1, "What"}, "QuWhatdratic"},
+
+		{[]interface{}{"我叫小雨呀", 3, 2, "王雨叶"}, "我叫王雨叶呀"},
+		{[]interface{}{"我叫小雨呀", -1, 2, "王雨叶"}, "我叫小雨呀"},
+		{[]interface{}{"我叫小雨呀", 3, 100, "王雨叶"}, "我叫王雨叶"},
+		{[]interface{}{nil, 3, 100, "王雨叶"}, nil},
+		{[]interface{}{"我叫小雨呀", nil, 4, "王雨叶"}, nil},
+		{[]interface{}{"我叫小雨呀", 3, nil, "王雨叶"}, nil},
+		{[]interface{}{"我叫小雨呀", 3, 4, nil}, nil},
+		{[]interface{}{"我叫小雨呀", 3, -1, "王雨叶"}, "我叫王雨叶"},
+		{[]interface{}{"我叫小雨呀", 3, 1, "王雨叶"}, "我叫王雨叶雨呀"},
+	}
+	fc := funcs[ast.InsertFunc]
+	for _, test := range tests {
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(test.args...)), s.ctx)
+		c.Assert(err, IsNil)
+		result, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		if test.expect == nil {
+			c.Assert(result.Kind(), Equals, types.KindNull)
+		} else {
+			expect, _ := test.expect.(string)
+			c.Assert(result.GetString(), Equals, expect)
+		}
+	}
 }
 
 func (s *testEvaluatorSuite) TestOrd(c *C) {

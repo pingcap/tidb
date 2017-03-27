@@ -34,6 +34,9 @@ import (
 // Enable enables the new privilege check feature.
 var Enable = false
 
+// SkipWithGrant causes the server to start without using the privilege system at all.
+var SkipWithGrant = false
+
 // privilege error codes.
 const (
 	codeInvalidPrivilegeType  terror.ErrCode = 1
@@ -182,7 +185,7 @@ type UserPrivileges struct {
 
 // RequestVerification implements the Checker interface.
 func (p *UserPrivileges) RequestVerification(db, table, column string, priv mysql.PrivilegeType) bool {
-	if !Enable {
+	if !Enable || SkipWithGrant {
 		return true
 	}
 
@@ -212,6 +215,11 @@ const PWDHashLen = 40
 
 // ConnectionVerification implements the Checker interface.
 func (p *UserPrivileges) ConnectionVerification(user, host string, auth, salt []byte) bool {
+	if SkipWithGrant {
+		p.User = user + "@" + host
+		return true
+	}
+
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.connectionVerification(user, host)
 	if record == nil {
