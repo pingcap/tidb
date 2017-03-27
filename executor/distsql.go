@@ -595,7 +595,7 @@ func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 	} else if !e.indexPlan.OutOfOrder {
 		// The cost of index scan double-read is higher than single-read. Usually ordered index scan has a limit
 		// which may not have been pushed down, so we set concurrency to 1 to avoid fetching unnecessary data.
-		e.scanConcurrency = 1
+		e.scanConcurrency = e.ctx.GetSessionVars().IndexSerialScanConcurrency
 	}
 	fieldTypes := make([]*types.FieldType, len(e.indexPlan.Index.Columns))
 	for i, v := range e.indexPlan.Index.Columns {
