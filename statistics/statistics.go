@@ -85,7 +85,6 @@ func (c *Column) saveToStorage(ctx context.Context, tableID int64, isIndex bool)
 		} else {
 			count = c.Numbers[i] - c.Numbers[i-1]
 		}
-		// set value
 		val, err := c.Values[i].ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
 		if err != nil {
 			return errors.Trace(err)
@@ -402,10 +401,10 @@ func TableStatsFromStorage(ctx context.Context, info *model.TableInfo, count int
 		}
 	}
 	if indexCount != len(info.Indices) {
-		return nil, errors.New("The number of indices doesn't match with the schema")
+		return nil, errors.New("The number of indices doesn't match with the schema.")
 	}
 	if columnCount != len(info.Columns) {
-		return nil, errors.New("The number of columns doesn't match with the schema")
+		return nil, errors.New("The number of columns doesn't match with the schema.")
 	}
 	return table, nil
 }
