@@ -99,8 +99,6 @@ type Plan interface {
 
 	context() context.Context
 
-
-
 	extractCorrelatedCols() []*expression.CorrelatedColumn
 }
 
