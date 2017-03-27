@@ -230,6 +230,9 @@ func (p *DataSource) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlan
 			Columns:     p.Columns,
 			TableAsName: p.TableAsName,
 		}
+		memTable.tp = "MemTableScan"
+		memTable.allocator = p.allocator
+		memTable.initIDAndContext(p.ctx)
 		memTable.SetSchema(p.schema)
 		rb := &rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
 		memTable.Ranges = rb.buildTableRanges(fullRange)
