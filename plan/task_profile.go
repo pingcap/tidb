@@ -18,11 +18,12 @@ import "github.com/pingcap/tidb/expression"
 // taskProfile is a new version of `PhysicalPlanInfo`. It stores cost information for a task.
 // A task may be KVTask, SingletonTask, MPPTask or a ParallelTask.
 type taskProfile interface {
-	attachPlan(p PhysicalPlan)
+	attachPlan(p PhysicalPlan) taskProfile
 	setCount(cnt uint64)
 	count() uint64
 	setCost(cost float64)
 	cost() float64
+	copy() taskProfile
 }
 
 // TODO: In future, we should split kvTask to indexTask and tableTask.
@@ -51,14 +52,26 @@ func (t *kvTaskProfile) cost() float64 {
 	return t.cst
 }
 
-func (t *kvTaskProfile) attachPlan(p PhysicalPlan) {
-	if t.addPlan2Index {
-		p.SetChildren(t.indexPlan)
-		t.indexPlan = p
-	} else {
-		p.SetChildren(t.tablePlan)
-		t.tablePlan = p
+func (t *kvTaskProfile) copy() taskProfile {
+	return &kvTaskProfile{
+		indexPlan:     t.indexPlan,
+		tablePlan:     t.tablePlan,
+		cst:           t.cst,
+		cnt:           t.cnt,
+		addPlan2Index: t.addPlan2Index,
 	}
+}
+
+func (t *kvTaskProfile) attachPlan(p PhysicalPlan) taskProfile {
+	nt := t.copy().(*kvTaskProfile)
+	if nt.addPlan2Index {
+		p.SetChildren(nt.indexPlan)
+		nt.indexPlan = p
+	} else {
+		p.SetChildren(nt.tablePlan)
+		nt.tablePlan = p
+	}
+	return nt
 }
 
 func (t *kvTaskProfile) finishTask() {
@@ -70,15 +83,24 @@ func (t *kvTaskProfile) finishTask() {
 
 // singletonTaskProfile is a profile running on tidb with single goroutine.
 type singletonTaskProfile struct {
-	plan   PhysicalPlan
-	cst    float64
-	cnt    uint64
-	kvTask *kvTaskProfile
+	plan PhysicalPlan
+	cst  float64
+	cnt  uint64
 }
 
-func (t *singletonTaskProfile) attachPlan(p PhysicalPlan) {
-	p.SetChildren(t.plan)
-	t.plan = p
+func (t *singletonTaskProfile) copy() taskProfile {
+	return &singletonTaskProfile{
+		plan: t.plan,
+		cst:  t.cst,
+		cnt:  t.cnt,
+	}
+}
+
+func (t *singletonTaskProfile) attachPlan(p PhysicalPlan) taskProfile {
+	nt := t.copy().(*singletonTaskProfile)
+	p.SetChildren(nt.plan)
+	nt.plan = p
+	return nt
 }
 
 func (t *singletonTaskProfile) setCount(cnt uint64) {
@@ -97,33 +119,14 @@ func (t *singletonTaskProfile) cost() float64 {
 	return t.cst
 }
 
-func (sort *Sort) attach2TaskProfile(profile taskProfile) {
-	// TODO: If index plan contains all the columns that topn needs, push it to index plan.
-	profile.attachPlan(sort)
-	profile.setCost(float64(profile.count()) * cpuFactor)
-	profile.setCount(sort.ExecLimit.Count)
-}
-
-func (limit *Limit) attach2TaskProfile(profile taskProfile) {
-	profile.attachPlan(limit)
+func (limit *Limit) attach2TaskProfile(profiles ...taskProfile) taskProfile {
+	profile := profiles[0].attachPlan(limit)
 	profile.setCount(limit.Count)
+	return profile
 }
 
-func (agg *PhysicalAggregation) attach2TaskProfile(profile taskProfile) {
-	switch t := profile.(type) {
-	case *kvTaskProfile:
-		t.attachPlan(agg)
-		t.cst += float64(t.cnt) * cpuFactor
-		if len(agg.GroupByItems) == 0 {
-			t.cnt = 1
-			return
-		}
-		// The count should be distinct count, now we can't estimate it.
-		t.cnt = uint64(float64(t.cnt) * aggFactor)
-	}
-}
-
-func (sel *Selection) attach2TaskProfile(profile taskProfile) {
+func (sel *Selection) attach2TaskProfile(profiles ...taskProfile) taskProfile {
+	profile := profiles[0].copy()
 	switch t := profile.(type) {
 	case *kvTaskProfile:
 		if t.addPlan2Index {
@@ -154,6 +157,7 @@ func (sel *Selection) attach2TaskProfile(profile taskProfile) {
 		t.cst += float64(t.cnt) * cpuFactor
 		t.cnt = uint64(float64(t.cnt) * selectionFactor)
 	}
+	return profile
 }
 
 func (sel *Selection) splitSelectionByIndexColumns(schema *expression.Schema) (indexSel *Selection, tableSel *Selection) {
