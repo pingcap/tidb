@@ -379,7 +379,6 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		"concat", "concat_ws", "left", "lcase", "lower", "repeat",
 		"replace", "ucase", "upper", "convert", "substring", "elt",
 		"substring_index", "trim", "ltrim", "rtrim", "reverse", "hex", "unhex",
-		"date_format", "rpad", "lpad", "char_func", "conv", "make_set", "oct", "uuid", "bin":
 		"date_format", "rpad", "lpad", "char_func", "conv", "make_set", "oct", "uuid", "bin",
 		"insert_func":
 		tp = types.NewFieldType(mysql.TypeVarString)
