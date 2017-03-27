@@ -564,29 +564,30 @@ func aggTypeClass(args []ast.ExprNode, flag *uint) types.TypeClass {
 		if argFieldType.Tp == mysql.TypeNull {
 			continue
 		}
-		if argFieldType.ToClass() == types.ClassString && mysql.HasBinaryFlag(argFieldType.Flag) {
+		argTypeClass := argFieldType.ToClass()
+		if argTypeClass == types.ClassString && mysql.HasBinaryFlag(argFieldType.Flag) {
 			gotBinString = true
 		}
 		if !gotFirst {
 			gotFirst = true
-			tpClass = argFieldType.ToClass()
+			tpClass = argTypeClass
 			unsigned = mysql.HasUnsignedFlag(argFieldType.Flag)
 		} else {
-			tpClass = mergeTypeClass(tpClass, argFieldType.ToClass(), unsigned, mysql.HasUnsignedFlag(argFieldType.Flag))
+			tpClass = mergeTypeClass(tpClass, argTypeClass, unsigned, mysql.HasUnsignedFlag(argFieldType.Flag))
 			unsigned = unsigned && mysql.HasUnsignedFlag(argFieldType.Flag)
 		}
 	}
-	if unsigned {
-		*flag |= mysql.UnsignedFlag
-	} else {
-		*flag &= ^uint(mysql.UnsignedFlag)
-	}
-	if tpClass == types.ClassString && !gotBinString {
-		*flag &= ^uint(mysql.BinaryFlag)
-	} else {
-		*flag |= mysql.BinaryFlag
-	}
+	setTypeFlag(flag, uint(mysql.UnsignedFlag), unsigned)
+	setTypeFlag(flag, uint(mysql.BinaryFlag), tpClass != types.ClassString || gotBinString)
 	return tpClass
+}
+
+func setTypeFlag(flag *uint, flagItem uint, on bool) {
+	if on {
+		*flag |= flagItem
+	} else {
+		*flag &= ^flagItem
+	}
 }
 
 func mergeTypeClass(a, b types.TypeClass, aUnsigned, bUnsigned bool) types.TypeClass {
