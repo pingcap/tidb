@@ -627,26 +627,28 @@ func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
 func (b *executorBuilder) buildNestedLoopJoin(v *plan.PhysicalHashJoin) *NestedLoopJoinExec {
 	if v.SmallTable == 1 {
 		return &NestedLoopJoinExec{
-			SmallExec:   b.build(v.Children()[1]),
-			BigExec:     b.build(v.Children()[0]),
-			Ctx:         b.ctx,
-			BigFilter:   expression.ComposeCNFCondition(b.ctx, v.LeftConditions...),
-			SmallFilter: expression.ComposeCNFCondition(b.ctx, v.RightConditions...),
-			OtherFilter: expression.ComposeCNFCondition(b.ctx, append(expression.ScalarFuncs2Exprs(v.EqualConditions), v.OtherConditions...)...),
-			schema:      v.Schema(),
-			outer:       v.JoinType != plan.InnerJoin,
+			SmallExec:     b.build(v.Children()[1]),
+			BigExec:       b.build(v.Children()[0]),
+			Ctx:           b.ctx,
+			BigFilter:     expression.ComposeCNFCondition(b.ctx, v.LeftConditions...),
+			SmallFilter:   expression.ComposeCNFCondition(b.ctx, v.RightConditions...),
+			OtherFilter:   expression.ComposeCNFCondition(b.ctx, append(expression.ScalarFuncs2Exprs(v.EqualConditions), v.OtherConditions...)...),
+			schema:        v.Schema(),
+			outer:         v.JoinType != plan.InnerJoin,
+			defaultValues: v.DefaultValues,
 		}
-	} else {
-		return &NestedLoopJoinExec{
-			SmallExec:   b.build(v.Children()[0]),
-			BigExec:     b.build(v.Children()[1]),
-			Ctx:         b.ctx,
-			BigFilter:   expression.ComposeCNFCondition(b.ctx, v.RightConditions...),
-			SmallFilter: expression.ComposeCNFCondition(b.ctx, v.LeftConditions...),
-			OtherFilter: expression.ComposeCNFCondition(b.ctx, append(expression.ScalarFuncs2Exprs(v.EqualConditions), v.OtherConditions...)...),
-			schema:      v.Schema(),
-			outer:       v.JoinType != plan.InnerJoin,
-		}
+	}
+	return &NestedLoopJoinExec{
+		SmallExec:     b.build(v.Children()[0]),
+		BigExec:       b.build(v.Children()[1]),
+		leftSmall:     true,
+		Ctx:           b.ctx,
+		BigFilter:     expression.ComposeCNFCondition(b.ctx, v.RightConditions...),
+		SmallFilter:   expression.ComposeCNFCondition(b.ctx, v.LeftConditions...),
+		OtherFilter:   expression.ComposeCNFCondition(b.ctx, append(expression.ScalarFuncs2Exprs(v.EqualConditions), v.OtherConditions...)...),
+		schema:        v.Schema(),
+		outer:         v.JoinType != plan.InnerJoin,
+		defaultValues: v.DefaultValues,
 	}
 }
 
