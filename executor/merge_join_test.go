@@ -16,6 +16,7 @@ package executor_test
 import (
 	"fmt"
 	"strings"
+	"io/ioutil"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/plan"
@@ -23,12 +24,162 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 )
 
+const plan1 = `[[TableScan_11 {
+    "db": "test",
+    "table": "t1",
+    "desc": false,
+    "keep order": true,
+    "push down info": {
+        "limit": 0,
+        "access conditions": null,
+        "index filter conditions": null,
+        "table filter conditions": null
+    }
+} MergeJoin_14] [TableScan_13 {
+    "db": "test",
+    "table": "t2",
+    "desc": false,
+    "keep order": true,
+    "push down info": {
+        "limit": 0,
+        "access conditions": null,
+        "index filter conditions": null,
+        "table filter conditions": null
+    }
+} MergeJoin_14] [MergeJoin_14 {
+    "eqCond": [
+        "eq(test.t1.c1, test.t2.c1)"
+    ],
+    "leftCond": null,
+    "rightCond": null,
+    "otherCond": [],
+    "leftPlan": "TableScan_11",
+    "rightPlan": "TableScan_13",
+    "desc": "false"
+} MergeJoin_8] [TableScan_16 {
+    "db": "test",
+    "table": "t3",
+    "desc": false,
+    "keep order": true,
+    "push down info": {
+        "limit": 0,
+        "access conditions": null,
+        "index filter conditions": null,
+        "table filter conditions": null
+    }
+} MergeJoin_8] [MergeJoin_8 {
+    "eqCond": [
+        "eq(test.t2.c1, test.t3.c1)"
+    ],
+    "leftCond": null,
+    "rightCond": null,
+    "otherCond": [],
+    "leftPlan": "MergeJoin_14",
+    "rightPlan": "TableScan_16",
+    "desc": "false"
+} ] [ {
+    "exprs": [
+        {
+            "Expr": "test.t1.c1",
+            "Desc": false
+        }
+    ],
+    "limit": null,
+    "child": "MergeJoin_8"
+} ]]`
+
+const plan2 = `[[TableScan_11 {
+    "db": "test",
+    "table": "t1",
+    "desc": false,
+    "keep order": true,
+    "push down info": {
+        "limit": 0,
+        "access conditions": null,
+        "index filter conditions": null,
+        "table filter conditions": null
+    }
+} MergeJoin_14] [TableScan_13 {
+    "db": "test",
+    "table": "t2",
+    "desc": false,
+    "keep order": true,
+    "push down info": {
+        "limit": 0,
+        "access conditions": null,
+        "index filter conditions": null,
+        "table filter conditions": null
+    }
+} MergeJoin_14] [MergeJoin_14 {
+    "eqCond": [
+        "eq(test.t1.c1, test.t2.c1)"
+    ],
+    "leftCond": null,
+    "rightCond": null,
+    "otherCond": [],
+    "leftPlan": "TableScan_11",
+    "rightPlan": "TableScan_13",
+    "desc": "false"
+} MergeJoin_8] [TableScan_16 {
+    "db": "test",
+    "table": "t3",
+    "desc": false,
+    "keep order": true,
+    "push down info": {
+        "limit": 0,
+        "access conditions": null,
+        "index filter conditions": null,
+        "table filter conditions": null
+    }
+} MergeJoin_8] [MergeJoin_8 {
+    "eqCond": [
+        "eq(test.t2.c1, test.t3.c1)"
+    ],
+    "leftCond": null,
+    "rightCond": null,
+    "otherCond": [],
+    "leftPlan": "MergeJoin_14",
+    "rightPlan": "TableScan_16",
+    "desc": "false"
+} ] [ {
+    "exprs": [
+        {
+            "Expr": "test.t1.c1",
+            "Desc": false
+        }
+    ],
+    "limit": null,
+    "child": "MergeJoin_8"
+} ]]`
+
 func checkMergeAndRun(tk *testkit.TestKit, c *C, sql string) *testkit.Result {
 	explainedSql := "explain " + sql
 	result := tk.MustQuery(explainedSql)
 	resultStr := fmt.Sprintf("%v", result.Rows())
 	if !strings.ContainsAny(resultStr, "MergeJoin") {
 		c.Error("Expected MergeJoin in plan.")
+	}
+	return tk.MustQuery(sql)
+}
+
+func checkPlanAndRun1(tk *testkit.TestKit, c *C, sql string) *testkit.Result {
+	explainedSql := "explain " + sql
+	result := tk.MustQuery(explainedSql)
+	resultStr := fmt.Sprintf("%v", result.Rows())
+	ioutil.WriteFile("/tmp/plan2", []byte(resultStr), 0644)
+	if !strings.ContainsAny(resultStr, "MergeJoin") {
+		c.Error("Expected MergeJoin in plan.")
+	}
+	return tk.MustQuery(sql)
+}
+
+func checkPlanAndRun(tk *testkit.TestKit, c *C, plan string, sql string) *testkit.Result {
+	explainedSql := "explain " + sql
+	result := tk.MustQuery(explainedSql)
+	resultStr := fmt.Sprintf("%v", result.Rows())
+	ioutil.WriteFile("/tmp/plan1", []byte(resultStr), 0644)
+	if plan != resultStr {
+		c.Errorf("Plan not match. Obtained:\n %s\nExpected:\n %s\n", resultStr, plan)
 	}
 	return tk.MustQuery(sql)
 }
@@ -110,4 +261,28 @@ func (s *testSuite) TestMergeJoin(c *C) {
 	fmt.Println("4")
 	result = tk.MustQuery("select /*+ TIDB_SMJ(t,t1) */ t.c1 from t , t1 where t.c1 = t1.c1")
 	result.Check(testkit.Rows("1"))
+}
+
+func (s *testSuite) Test3WaysMergeJoin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec("create table t1(c1 int, c2 int, PRIMARY KEY (c1))")
+	tk.MustExec("create table t2(c1 int, c2 int, PRIMARY KEY (c1))")
+	tk.MustExec("create table t3(c1 int, c2 int, PRIMARY KEY (c1))")
+	tk.MustExec("insert into t1 values(1,1),(2,2),(3,3)")
+	tk.MustExec("insert into t2 values(2,3),(3,4),(4,5)")
+	tk.MustExec("insert into t3 values(1,2),(2,4),(3,10)")
+	result := checkPlanAndRun(tk, c, plan1, "select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 join t2 on t1.c1 = t2.c1 join t3 on t2.c1 = t3.c1 order by 1")
+	result.Check(testkit.Rows("2 2 2 3 2 4", "3 3 3 4 3 10"))
+
+	result = checkPlanAndRun(tk, c, plan2, "select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t2.c1 = t3.c1 order by 1")
+	result.Check(testkit.Rows("2 2 2 3 2 4", "3 3 3 4 3 10"))
 }
