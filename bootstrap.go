@@ -129,25 +129,25 @@ const (
 	// CreateStatsColsTable stores the statistics of table columns.
 	CreateStatsColsTable = `CREATE TABLE if not exists mysql.stats_columns (
 		table_id bigint(64) NOT NULL,
-		col_id bigint(64),
-		index_id bigint(64),
+		is_index tinyint(2) NOT NULL,
+		hist_id bigint(64) NOT NULL,
 		distinct_count bigint(64) NOT NULL,
 		distinct_ratio double(64) NOT NULL DEFAULT 0,
 		use_count_to_estimate tinyint(2) NOT NULL DEFAULT 0,
 		version bigint(64) unsigned NOT NULL DEFAULT 0,
-		unique index tbl(table_id, col_id, index_id)
+		unique index tbl(table_id, is_index, hist_id)
 	);`
 
 	// CreateStatsBucketsTable stores the histogram info for every table columns.
 	CreateStatsBucketsTable = `CREATE TABLE if not exists mysql.stats_buckets (
 		table_id bigint(64) NOT NULL,
-		col_id bigint(64),
-		index_id bigint(64),
+		is_index tinyint(2) NOT NULL,
+		hist_id bigint(64) NOT NULL,
 		bucket_id bigint(64) NOT NULL,
 		count bigint(64) NOT NULL,
 		repeats bigint(64) NOT NULL,
 		value blob NOT NULL,
-		unique index tbl(table_id, col_id, index_id, bucket_id)
+		unique index tbl(table_id, is_index, hist_id, bucket_id)
 	);`
 )
 

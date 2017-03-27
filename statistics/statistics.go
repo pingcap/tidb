@@ -66,14 +66,8 @@ type Column struct {
 	Repeats []int64
 }
 
-func (c *Column) saveToStorage(ctx context.Context, tableID int64, isIndex bool) error {
-	var colName string
-	if isIndex {
-		colName = "index_id"
-	} else {
-		colName = "col_id"
-	}
-	insertSQL := fmt.Sprintf("insert into mysql.stats_columns (table_id, %s, distinct_count) values (%d, %d, %d)", colName, tableID, c.ID, c.NDV)
+func (c *Column) saveToStorage(ctx context.Context, tableID int64, isIndex int) error {
+	insertSQL := fmt.Sprintf("insert into mysql.stats_columns (table_id, is_index, hist_id, distinct_count) values (%d, %d, %d, %d)", tableID, isIndex, c.ID, c.NDV)
 	_, err := ctx.(sqlexec.SQLExecutor).Execute(insertSQL)
 	if err != nil {
 		return errors.Trace(err)
@@ -89,11 +83,7 @@ func (c *Column) saveToStorage(ctx context.Context, tableID int64, isIndex bool)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if isIndex {
-			insertSQL = fmt.Sprintf("insert into mysql.stats_buckets values(%d, NULL, %d, %d, %d, %d, X'%X')", tableID, c.ID, i, count, c.Repeats[i], val.GetBytes())
-		} else {
-			insertSQL = fmt.Sprintf("insert into mysql.stats_buckets values(%d, %d, NULL, %d, %d, %d, X'%X')", tableID, c.ID, i, count, c.Repeats[i], val.GetBytes())
-		}
+		insertSQL = fmt.Sprintf("insert into mysql.stats_buckets values(%d, %d, %d, %d, %d, %d, X'%X')", tableID, isIndex, c.ID, i, count, c.Repeats[i], val.GetBytes())
 		_, err = ctx.(sqlexec.SQLExecutor).Execute(insertSQL)
 		if err != nil {
 			return errors.Trace(err)
@@ -102,14 +92,8 @@ func (c *Column) saveToStorage(ctx context.Context, tableID int64, isIndex bool)
 	return nil
 }
 
-func colStatsFromStorage(ctx context.Context, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex bool) (*Column, error) {
-	var colName string
-	if isIndex {
-		colName = "index_id"
-	} else {
-		colName = "col_id"
-	}
-	selSQL := fmt.Sprintf("select bucket_id, count, repeats, value from mysql.stats_buckets where table_id = %d and %s = %d", tableID, colName, colID)
+func colStatsFromStorage(ctx context.Context, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int) (*Column, error) {
+	selSQL := fmt.Sprintf("select bucket_id, count, repeats, value from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, colID)
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, selSQL)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -130,7 +114,7 @@ func colStatsFromStorage(ctx context.Context, tableID int64, colID int64, tp *ty
 		count := rows[i].Data[1].GetInt64()
 		repeats := rows[i].Data[2].GetInt64()
 		var value types.Datum
-		if isIndex {
+		if isIndex == 1 {
 			value = rows[i].Data[3]
 		} else {
 			value, err = rows[i].Data[3].ConvertTo(ctx.GetSessionVars().StmtCtx, tp)
@@ -328,13 +312,13 @@ func (t *Table) SaveToStorage(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	for _, col := range t.Columns {
-		err = col.saveToStorage(ctx, t.Info.ID, false)
+		err = col.saveToStorage(ctx, t.Info.ID, 0)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	for _, idx := range t.Indices {
-		err = idx.saveToStorage(ctx, t.Info.ID, true)
+		err = idx.saveToStorage(ctx, t.Info.ID, 1)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -349,7 +333,7 @@ func TableStatsFromStorage(ctx context.Context, info *model.TableInfo, count int
 		Info:  info,
 		Count: count,
 	}
-	selSQL := fmt.Sprintf("select * from mysql.stats_columns where table_id = %d", info.ID)
+	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count from mysql.stats_columns where table_id = %d", info.ID)
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, selSQL)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -360,13 +344,13 @@ func TableStatsFromStorage(ctx context.Context, info *model.TableInfo, count int
 	indexCount, columnCount := 0, 0
 	for _, row := range rows {
 		distinct := row.Data[3].GetInt64()
-		if row.Data[1].IsNull() {
+		histID := row.Data[2].GetInt64()
+		if row.Data[1].GetInt64() > 0 {
 			// process index
-			idxID := row.Data[2].GetInt64()
 			var col *Column
 			for _, idxInfo := range info.Indices {
-				if idxID == idxInfo.ID {
-					col, err = colStatsFromStorage(ctx, info.ID, idxID, nil, distinct, true)
+				if histID == idxInfo.ID {
+					col, err = colStatsFromStorage(ctx, info.ID, histID, nil, distinct, 1)
 					if err != nil {
 						return nil, errors.Trace(err)
 					}
@@ -377,15 +361,14 @@ func TableStatsFromStorage(ctx context.Context, info *model.TableInfo, count int
 				table.Indices = append(table.Indices, col)
 				indexCount++
 			} else {
-				log.Warnf("We cannot find index id %d in table %s now. It may be deleted.", idxID, info.Name)
+				log.Warnf("We cannot find index id %d in table %s now. It may be deleted.", histID, info.Name)
 			}
 		} else {
 			// process column
-			colID := row.Data[1].GetInt64()
 			var col *Column
 			for _, colInfo := range info.Columns {
-				if colID == colInfo.ID {
-					col, err = colStatsFromStorage(ctx, info.ID, colID, &colInfo.FieldType, distinct, false)
+				if histID == colInfo.ID {
+					col, err = colStatsFromStorage(ctx, info.ID, histID, &colInfo.FieldType, distinct, 0)
 					if err != nil {
 						return nil, errors.Trace(err)
 					}
@@ -396,7 +379,7 @@ func TableStatsFromStorage(ctx context.Context, info *model.TableInfo, count int
 				table.Columns = append(table.Columns, col)
 				columnCount++
 			} else {
-				log.Warnf("We cannot find column id %d in table %s now. It may be deleted.", colID, info.Name)
+				log.Warnf("We cannot find column id %d in table %s now. It may be deleted.", histID, info.Name)
 			}
 		}
 	}
