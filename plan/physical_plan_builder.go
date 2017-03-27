@@ -982,13 +982,29 @@ func (p *Union) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	return info, nil
 }
 
-func (p *Selection) makeScanController() *physicalPlanInfo {
-	newSel := *p
-	newSel.ScanController = true
-	var child PhysicalPlan
+// makeScanController will try to build a selection that controls the below scan's filter condition,
+// and return a physicalPlanInfo. If the onlyJudge is true, it will only check whether this selection
+// can become a scan controller without building the physical plan.
+func (p *Selection) makeScanController(onlyJudge bool) (*physicalPlanInfo, bool) {
+	var (
+		child       PhysicalPlan
+		corColConds []expression.Expression
+		pkCol       *expression.Column
+	)
 	ds := p.children[0].(*DataSource)
 	indices, includeTableScan := availableIndices(ds.indexHints, ds.tableInfo)
-	var pkCol *expression.Column
+	for _, expr := range p.Conditions {
+		if !expr.IsCorrelated() {
+			continue
+		}
+		cond := pushDownNot(expr, false, nil)
+		corCols := extractCorColumns(cond)
+		for _, col := range corCols {
+			*col.Data = expression.One.Value
+		}
+		newCond, _ := expression.SubstituteCorCol2Constant(cond)
+		corColConds = append(corColConds, newCond)
+	}
 	if ds.tableInfo.PKIsHandle && includeTableScan {
 		for i, col := range ds.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
@@ -998,6 +1014,19 @@ func (p *Selection) makeScanController() *physicalPlanInfo {
 		}
 	}
 	if pkCol != nil {
+		if onlyJudge {
+			checker := conditionChecker{
+				pkName: pkCol.ColName,
+				length: types.UnspecifiedLength,
+			}
+			// Pk should satisfies the same property as the index.
+			for _, cond := range corColConds {
+				if checker.check(cond) {
+					return nil, true
+				}
+			}
+			return nil, false
+		}
 		ts := &PhysicalTableScan{
 			Table:               ds.tableInfo,
 			Columns:             ds.Columns,
@@ -1017,7 +1046,6 @@ func (p *Selection) makeScanController() *physicalPlanInfo {
 		child = ts
 	} else {
 		var chosenPlan *PhysicalIndexScan
-		var corColConds []expression.Expression
 		for _, expr := range p.Conditions {
 			if !expr.IsCorrelated() {
 				continue
@@ -1026,10 +1054,6 @@ func (p *Selection) makeScanController() *physicalPlanInfo {
 			corColConds = append(corColConds, cond)
 		}
 		for _, idx := range indices {
-			// TODO: Currently we don't consider composite index.
-			if len(idx.Columns) > 1 {
-				continue
-			}
 			condsBackUp := make([]expression.Expression, 0, len(corColConds))
 			for _, cond := range corColConds {
 				condsBackUp = append(condsBackUp, cond.Clone())
@@ -1056,6 +1080,9 @@ func (p *Selection) makeScanController() *physicalPlanInfo {
 			if len(accessConds) == 0 {
 				continue
 			}
+			if onlyJudge {
+				return nil, true
+			}
 			better := chosenPlan == nil || chosenPlan.accessEqualCount < is.accessEqualCount
 			better = better || (chosenPlan.accessEqualCount == is.accessEqualCount && chosenPlan.accessInAndEqCount < is.accessInAndEqCount)
 			if better {
@@ -1063,15 +1090,20 @@ func (p *Selection) makeScanController() *physicalPlanInfo {
 			}
 			is.DoubleRead = !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
 		}
+		if chosenPlan == nil && onlyJudge {
+			return nil, false
+		}
 		child = chosenPlan
 	}
+	newSel := *p
+	newSel.ScanController = true
 	newSel.SetChildren(child)
 	info := &physicalPlanInfo{
 		p:     &newSel,
 		count: uint64(ds.statisticTable.Count),
 	}
 	info.cost = float64(info.count) * selectionFactor
-	return info
+	return info, true
 }
 
 // convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
@@ -1084,7 +1116,7 @@ func (p *Selection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanI
 		return info, nil
 	}
 	if p.canControlScan {
-		info = p.makeScanController()
+		info, _ = p.makeScanController(false)
 		p.storePlanInfo(prop, info)
 		return info, nil
 	}
