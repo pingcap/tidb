@@ -42,7 +42,6 @@ func NewPool(addr string, capability int, f createConnFunc) *Pool {
 		}
 		return r, errors.Trace(err)
 	}
-
 	p := new(Pool)
 	p.p = pools.NewResourcePool(poolFunc, capability, capability, poolIdleTimeoutSeconds*time.Second)
 	return p

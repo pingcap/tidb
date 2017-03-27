@@ -265,18 +265,14 @@ func (s *testSuite) TestDAG(c *C) {
 	tk.MustExec("insert INTO select_dag VALUES (3, \"hello\");")
 	tk.CheckExecResult(1, 0)
 
-	tk.MustExec("begin")
 	r := tk.MustQuery("select * from select_dag;")
 	rowStr1 := fmt.Sprintf("%v %v", 1, []byte("hello"))
 	rowStr2 := fmt.Sprintf("%v %v", 2, []byte("hello"))
 	rowStr3 := fmt.Sprintf("%v %v", 3, []byte("hello"))
 	r.Check(testkit.Rows(rowStr1, rowStr2, rowStr3))
-	tk.MustExec("commit")
 
-	tk.MustExec("begin")
 	r = tk.MustQuery("select * from select_dag where id > 1;")
 	r.Check(testkit.Rows(rowStr2, rowStr3))
-	tk.MustExec("commit")
 }
 
 func (s *testSuite) TestSelectOrderBy(c *C) {

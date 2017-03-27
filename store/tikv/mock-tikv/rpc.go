@@ -403,10 +403,8 @@ func (c *RPCClient) SendCopReq(ctx goctx.Context, addr string, req *coprocessor.
 
 	if *MockDAGRequest {
 		if req.GetTp() == kv.ReqTypeSelect || req.GetTp() == kv.ReqTypeIndex {
-			resp, isContinue, err := c.SendCopReqNew(addr, req, timeout)
-			if !isContinue {
-				return resp, errors.Trace(err)
-			}
+			resp, err := c.SendCopReqNew(addr, req, timeout)
+			return resp, errors.Trace(err)
 		}
 	}
 
@@ -420,11 +418,11 @@ func (c *RPCClient) SendCopReq(ctx goctx.Context, addr string, req *coprocessor.
 }
 
 // SendCopReqNew sends a coprocessor request to mock cluster.
-func (c *RPCClient) SendCopReqNew(addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, bool, error) {
+func (c *RPCClient) SendCopReqNew(addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
 	sel := new(tipb.SelectRequest)
 	err := proto.Unmarshal(req.Data, sel)
 	if err != nil {
-		return nil, false, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	var executors []*tipb.Executor
@@ -468,16 +466,16 @@ func (c *RPCClient) SendCopReqNew(addr string, req *coprocessor.Request, timeout
 	}
 	req.Data, err = dag.Marshal()
 	if err != nil {
-		return nil, false, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	store := c.Cluster.GetStoreByAddr(addr)
 	if store == nil {
-		return nil, false, errors.New("connect fail")
+		return nil, errors.New("connect fail")
 	}
 	handler := newRPCHandler(c.Cluster, c.MvccStore, store.GetId())
 	resp, err := handler.handleCopDAGRequest(req)
-	return resp, false, errors.Trace(err)
+	return resp, errors.Trace(err)
 }
 
 // Close closes the client.
