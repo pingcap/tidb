@@ -440,7 +440,10 @@ func (p *PhysicalMergeJoin) tryConsumeOrder(prop *requiredProperty, eqCond *expr
 	}
 
 	reqSortedColumn := prop.props[0].col
-	sortDesc := prop.props[0].desc
+	if prop.props[0].desc {
+		return prop
+	}
+
 	// Compare either sides of the equal function to see if matches required property
 	// If so, we don't have to sort once more
 	switch p.JoinType {
@@ -448,23 +451,21 @@ func (p *PhysicalMergeJoin) tryConsumeOrder(prop *requiredProperty, eqCond *expr
 		// In case of inner join, both sides' orders are kept
 		lColumn, lOk := eqCond.GetArgs()[0].(*expression.Column)
 		rColumn, rOk := eqCond.GetArgs()[1].(*expression.Column)
-		if (lOk && lColumn.Equal(reqSortedColumn, p.ctx) && !sortDesc) ||
-			(rOk && rColumn.Equal(reqSortedColumn, p.ctx) && !sortDesc) {
+		if (lOk && lColumn.Equal(reqSortedColumn, p.ctx)) ||
+			(rOk && rColumn.Equal(reqSortedColumn, p.ctx)) {
 			return removeSortOrder(prop)
 		}
 	// In case of left/right outer join, driver side's order will be kept
 	case LeftOuterJoin:
 		lColumn, lOk := eqCond.GetArgs()[0].(*expression.Column)
-		if lOk && lColumn.Equal(reqSortedColumn, p.ctx) && !sortDesc {
+		if lOk && lColumn.Equal(reqSortedColumn, p.ctx) {
 			return removeSortOrder(prop)
 		}
 	case RightOuterJoin:
 		rColumn, rOk := eqCond.GetArgs()[1].(*expression.Column)
-		if rOk && rColumn.Equal(reqSortedColumn, p.ctx) && !sortDesc {
+		if rOk && rColumn.Equal(reqSortedColumn, p.ctx) {
 			return removeSortOrder(prop)
 		}
-	default:
-		return prop
 	}
 	return prop
 }
