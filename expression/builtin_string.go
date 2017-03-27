@@ -1578,7 +1578,7 @@ func (b *builtinBinSig) eval(row []types.Datum) (d types.Datum, err error) {
 	}
 	arg := args[0]
 	sc := b.ctx.GetSessionVars().StmtCtx
-	if arg.IsNull() || arg.Kind() == types.KindString && arg.GetString() == "" {
+	if arg.IsNull() || (arg.Kind() == types.KindString && arg.GetString() == "") {
 		return d, nil
 	}
 
