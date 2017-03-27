@@ -348,7 +348,7 @@ func removeLimit(prop *requiredProperty) *requiredProperty {
 
 func removeSortOrder(prop *requiredProperty) *requiredProperty {
 	ret := &requiredProperty{
-		limit:prop.limit,
+		limit: prop.limit,
 	}
 	return ret
 }
