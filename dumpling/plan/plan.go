@@ -90,8 +90,6 @@ type Plan interface {
 	Schema() *expression.Schema
 	// Get the ID.
 	ID() string
-	// Get id allocator
-	Allocator() *idAllocator
 	// SetParents sets the parents for the plan.
 	SetParents(...Plan)
 	// SetParents sets the children for the plan.
@@ -290,10 +288,6 @@ func (p *basePlan) extractCorrelatedCols() []*expression.CorrelatedColumn {
 		corCols = append(corCols, child.extractCorrelatedCols()...)
 	}
 	return corCols
-}
-
-func (p *basePlan) Allocator() *idAllocator {
-	return p.allocator
 }
 
 // ResolveIndicesAndCorCols implements LogicalPlan interface.
