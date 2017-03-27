@@ -21,7 +21,6 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -49,7 +48,7 @@ func NewHandle(ctx context.Context) *Handle {
 }
 
 // Update reads stats meta from store and updates the stats map.
-func (h *Handle) Update(m *meta.Meta, is infoschema.InfoSchema) error {
+func (h *Handle) Update(is infoschema.InfoSchema) error {
 	sql := fmt.Sprintf("SELECT version, table_id, count from mysql.stats_meta where version > %d order by version", h.lastVersion)
 	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
 	if err != nil {
@@ -65,9 +64,9 @@ func (h *Handle) Update(m *meta.Meta, is infoschema.InfoSchema) error {
 		tableInfo := table.Meta()
 		tbl, err := TableStatsFromStorage(h.ctx, tableInfo, count)
 		// Error is not nil may mean that there are some ddl changes on this table, so the origin
-		// statistics can not be used any more, we give it a nil one.
+		// statistics can not be used any more, we give it a pseudo one.
 		if err != nil {
-			log.Errorf("Error occured when convert pb table for table id %d", tableID)
+			log.Errorf("Error occured when read table stats for table id %d. The error message is %s.", tableID, err.Error())
 			tbl = PseudoTable(tableInfo)
 		}
 		SetStatisticsTableCache(tableID, tbl, version)

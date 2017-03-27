@@ -412,25 +412,11 @@ func (do *Domain) StatsHandle() *statistics.Handle {
 	return do.statsHandle
 }
 
-func (do *Domain) loadTableStats() error {
-	ver, err := do.store.CurrentVersion()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	snapshot, err := do.store.GetSnapshot(kv.NewVersion(ver.Ver))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	m := meta.NewSnapshotMeta(snapshot)
-	err = do.statsHandle.Update(m, do.InfoSchema())
-	return errors.Trace(err)
-}
-
 // LoadTableStatsLoop creates a goroutine loads stats info in a loop, it
 // should be called only once in BootstrapSession.
 func (do *Domain) LoadTableStatsLoop(ctx context.Context) error {
 	do.statsHandle = statistics.NewHandle(ctx)
-	err := do.loadTableStats()
+	err := do.statsHandle.Update(do.InfoSchema())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -441,7 +427,7 @@ func (do *Domain) LoadTableStatsLoop(ctx context.Context) error {
 			for {
 				select {
 				case <-ticker.C:
-					err := do.loadTableStats()
+					err := do.statsHandle.Update(do.InfoSchema())
 					if err != nil {
 						log.Error(errors.ErrorStack(err))
 					}

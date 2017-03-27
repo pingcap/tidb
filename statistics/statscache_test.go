@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/testkit"
@@ -62,21 +61,29 @@ func (s *testStatsCacheSuite) TestStatsCache(c *C) {
 	testKit.MustExec("analyze table t")
 	statsTbl = statistics.GetStatisticsTableCache(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
+	// If the new schema drop a column, the table stats can still work.
 	testKit.MustExec("alter table t drop column c2")
 	is = do.InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo = tbl.Meta()
 
-	ver, err := store.CurrentVersion()
-	c.Assert(err, IsNil)
-	snapshot, err := store.GetSnapshot(ver)
-	c.Assert(err, IsNil)
-	m := meta.NewSnapshotMeta(snapshot)
 	do.StatsHandle().Clear()
-	do.StatsHandle().Update(m, is)
+	do.StatsHandle().Update(is)
 	statsTbl = statistics.GetStatisticsTableCache(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
+
+	// If the new schema add a column, the table stats cannot work.
+	testKit.MustExec("alter table t add column c10 int")
+	is = do.InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo = tbl.Meta()
+
+	do.StatsHandle().Clear()
+	do.StatsHandle().Update(is)
+	statsTbl = statistics.GetStatisticsTableCache(tableInfo)
+	c.Assert(statsTbl.Pseudo, IsTrue)
 }
 
 func compareTwoColumnsStatsSlice(cols0 []*statistics.Column, cols1 []*statistics.Column, c *C) {

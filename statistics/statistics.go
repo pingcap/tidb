@@ -60,9 +60,7 @@ type Column struct {
 	//
 	// Repeat is the number of repeats of the bucket value, it can be used to find popular values.
 	//
-	// We could have make a bucket struct contains number, value and repeat, but that would be harder to
-	// serialize, so we store every bucket field in its own slice instead. those slices all have
-	// the bucket count length.
+	// TODO: We could have make a bucket struct contains number, value and repeats.
 	Numbers []int64
 	Values  []types.Datum
 	Repeats []int64
@@ -103,6 +101,52 @@ func (c *Column) saveToStorage(ctx context.Context, tableID int64, isIndex bool)
 		}
 	}
 	return nil
+}
+
+func colStatsFromStorage(ctx context.Context, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex bool) (*Column, error) {
+	var colName string
+	if isIndex {
+		colName = "index_id"
+	} else {
+		colName = "col_id"
+	}
+	selSQL := fmt.Sprintf("select bucket_id, count, repeats, value from mysql.stats_buckets where table_id = %d and %s = %d", tableID, colName, colID)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, selSQL)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bucketSize := len(rows)
+	if bucketSize == 0 {
+		return nil, nil
+	}
+	colStats := &Column{
+		ID:      colID,
+		NDV:     distinct,
+		Numbers: make([]int64, bucketSize),
+		Repeats: make([]int64, bucketSize),
+		Values:  make([]types.Datum, bucketSize),
+	}
+	for i := 0; i < bucketSize; i++ {
+		bucketID := rows[i].Data[0].GetInt64()
+		count := rows[i].Data[1].GetInt64()
+		repeats := rows[i].Data[2].GetInt64()
+		var value types.Datum
+		if isIndex {
+			value = rows[i].Data[3]
+		} else {
+			value, err = rows[i].Data[3].ConvertTo(ctx.GetSessionVars().StmtCtx, tp)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		colStats.Numbers[bucketID] = count
+		colStats.Repeats[bucketID] = repeats
+		colStats.Values[bucketID] = value
+	}
+	for i := 1; i < bucketSize; i++ {
+		colStats.Numbers[i] += colStats.Numbers[i-1]
+	}
+	return colStats, nil
 }
 
 func (c *Column) String() string {
@@ -285,59 +329,19 @@ func (t *Table) SaveToStorage(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	for _, col := range t.Columns {
-		col.saveToStorage(ctx, t.Info.ID, false)
+		err = col.saveToStorage(ctx, t.Info.ID, false)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	for _, idx := range t.Indices {
-		idx.saveToStorage(ctx, t.Info.ID, true)
+		err = idx.saveToStorage(ctx, t.Info.ID, true)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	_, err = ctx.(sqlexec.SQLExecutor).Execute("commit")
 	return errors.Trace(err)
-}
-
-func colStatsFromStorage(ctx context.Context, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex bool) (*Column, error) {
-	var colName string
-	if isIndex {
-		colName = "index_id"
-	} else {
-		colName = "col_id"
-	}
-	selSQL := fmt.Sprintf("select bucket_id, count, repeats, value from mysql.stats_buckets where table_id = %d and %s = %d", tableID, colName, colID)
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, selSQL)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	bucketSize := len(rows)
-	if bucketSize == 0 {
-		return nil, nil
-	}
-	colStats := &Column{
-		ID:      colID,
-		NDV:     distinct,
-		Numbers: make([]int64, bucketSize),
-		Repeats: make([]int64, bucketSize),
-		Values:  make([]types.Datum, bucketSize),
-	}
-	for i := 0; i < bucketSize; i++ {
-		bucketID := rows[i].Data[0].GetInt64()
-		count := rows[i].Data[1].GetInt64()
-		repeats := rows[i].Data[2].GetInt64()
-		var value types.Datum
-		if isIndex {
-			value = rows[i].Data[3]
-		} else {
-			value, err = rows[i].Data[3].ConvertTo(ctx.GetSessionVars().StmtCtx, tp)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
-		colStats.Numbers[bucketID] = count
-		colStats.Repeats[bucketID] = repeats
-		colStats.Values[bucketID] = value
-	}
-	for i := 1; i < bucketSize; i++ {
-		colStats.Numbers[i] += colStats.Numbers[i-1]
-	}
-	return colStats, nil
 }
 
 // TableStatsFromStorage load table stats info from storage.
@@ -351,16 +355,31 @@ func TableStatsFromStorage(ctx context.Context, info *model.TableInfo, count int
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	// indexCount and columnCount records the number of indices and columns in table stats. If the number don't match with
+	// tableInfo, we will return pseudo table.
+	// TODO: In fact, we can return pseudo column.
+	indexCount, columnCount := 0, 0
 	for _, row := range rows {
 		distinct := row.Data[3].GetInt64()
 		if row.Data[1].IsNull() {
 			// process index
-			colID := row.Data[2].GetInt64()
-			col, err := colStatsFromStorage(ctx, info.ID, colID, nil, distinct, true)
-			if err != nil {
-				return nil, errors.Trace(err)
+			idxID := row.Data[2].GetInt64()
+			var col *Column
+			for _, idxInfo := range info.Indices {
+				if idxID == idxInfo.ID {
+					col, err = colStatsFromStorage(ctx, info.ID, idxID, nil, distinct, true)
+					if err != nil {
+						return nil, errors.Trace(err)
+					}
+					break
+				}
 			}
-			table.Indices = append(table.Indices, col)
+			if col != nil {
+				table.Indices = append(table.Indices, col)
+				indexCount++
+			} else {
+				log.Warnf("We cannot find index id %d in table %s now. It may be deleted.", idxID, info.Name)
+			}
 		} else {
 			// process column
 			colID := row.Data[1].GetInt64()
@@ -371,14 +390,22 @@ func TableStatsFromStorage(ctx context.Context, info *model.TableInfo, count int
 					if err != nil {
 						return nil, errors.Trace(err)
 					}
+					break
 				}
 			}
 			if col != nil {
 				table.Columns = append(table.Columns, col)
+				columnCount++
 			} else {
-				log.Warnf("We can find column id %d in table %s now. It may be deleted.", colID, info.Name)
+				log.Warnf("We cannot find column id %d in table %s now. It may be deleted.", colID, info.Name)
 			}
 		}
+	}
+	if indexCount != len(info.Indices) {
+		return nil, errors.New("The number of indices doesn't match with the schema")
+	}
+	if columnCount != len(info.Columns) {
+		return nil, errors.New("The number of columns doesn't match with the schema")
 	}
 	return table, nil
 }
