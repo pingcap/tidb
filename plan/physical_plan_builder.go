@@ -671,7 +671,6 @@ func (p *Join) convert2IndexNestedLoopJoinLeft(prop *requiredProperty, innerJoin
 		return nil, nil
 	}
 	selection, corCols := p.buildSelectionWithConds(true)
-	log.Warnf("left, sel schema: %v", selection.schema)
 	if !selection.canControlScan {
 		return nil, nil
 	}
@@ -690,7 +689,6 @@ func (p *Join) convert2IndexNestedLoopJoinLeft(prop *requiredProperty, innerJoin
 	join.allocator = p.allocator
 	join.initIDAndContext(p.ctx)
 	join.SetChildren(lInfo.p, rInfo.p)
-	log.Warnf("join lchild: %v, rchild: %v", join.children[0].ID(), join.children[1].ID())
 	if innerJoin {
 		join.JoinType = InnerJoin
 	} else {
@@ -747,7 +745,6 @@ func (p *Join) convert2IndexNestedLoopJoinRight(prop *requiredProperty, innerJoi
 		return nil, nil
 	}
 	selection, corCols := p.buildSelectionWithConds(false)
-	log.Warnf("right, sel schema: %v", selection.schema)
 	if !selection.canControlScan {
 		return nil, nil
 	}
@@ -765,7 +762,6 @@ func (p *Join) convert2IndexNestedLoopJoinRight(prop *requiredProperty, innerJoi
 	join.allocator = p.allocator
 	join.initIDAndContext(p.ctx)
 	join.SetChildren(lInfo.p, rInfo.p)
-	log.Warnf("join lchild: %v, rchild: %v", join.children[0].ID(), join.children[1].ID())
 	if innerJoin {
 		join.JoinType = InnerJoin
 	} else {
@@ -781,7 +777,6 @@ func (p *Join) convert2IndexNestedLoopJoinRight(prop *requiredProperty, innerJoi
 	ap.allocator = p.allocator
 	ap.initIDAndContext(p.ctx)
 	ap.SetChildren(resultInfo.p.Children()...)
-	log.Warnf("apply lchild: %v, rchild: %v", ap.children[0].ID(), ap.children[1].ID())
 	ap.SetSchema(resultInfo.p.Schema())
 	resultInfo.p = ap
 	if !allRight {
