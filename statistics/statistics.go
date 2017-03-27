@@ -343,7 +343,7 @@ func (t *Table) SaveToStorage(ctx context.Context) error {
 	return errors.Trace(err)
 }
 
-// TableStatsFromStorage load table stats info from storage.
+// TableStatsFromStorage loads table stats info from storage.
 func TableStatsFromStorage(ctx context.Context, info *model.TableInfo, count int64) (*Table, error) {
 	table := &Table{
 		Info:  info,
@@ -354,7 +354,7 @@ func TableStatsFromStorage(ctx context.Context, info *model.TableInfo, count int
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// indexCount and columnCount records the number of indices and columns in table stats. If the number don't match with
+	// indexCount and columnCount record the number of indices and columns in table stats. If the number don't match with
 	// tableInfo, we will return pseudo table.
 	// TODO: In fact, we can return pseudo column.
 	indexCount, columnCount := 0, 0

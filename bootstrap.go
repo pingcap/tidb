@@ -122,7 +122,8 @@ const (
 		table_id bigint(64) NOT NULL,
 		modify_count bigint(64) NOT NULL DEFAULT 0,
 		count bigint(64) unsigned NOT NULL DEFAULT 0,
-		index idx_ver(version)
+		index idx_ver(version),
+		unique index tbl(table_id)
 	);`
 
 	// CreateStatsColsTable stores the statistics of table columns.
@@ -134,7 +135,7 @@ const (
 		distinct_ratio double(64) NOT NULL DEFAULT 0,
 		use_count_to_estimate tinyint(2) NOT NULL DEFAULT 0,
 		version bigint(64) unsigned NOT NULL DEFAULT 0,
-		index tbl(table_id)
+		unique index tbl(table_id, col_id, index_id)
 	);`
 
 	// CreateStatsBucketsTable stores the histogram info for every table columns.
@@ -146,7 +147,7 @@ const (
 		count bigint(64) NOT NULL,
 		repeats bigint(64) NOT NULL,
 		value blob NOT NULL,
-		index tbl(table_id, col_id, index_id, bucket_id)
+		unique index tbl(table_id, col_id, index_id, bucket_id)
 	);`
 )
 

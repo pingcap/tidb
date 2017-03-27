@@ -114,7 +114,8 @@ func (s *testStatsCacheSuite) TestStatsStoreAndLoad(c *C) {
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
-	for i := 0; i < 100000; i++ {
+	recordCount := 1000
+	for i := 0; i < recordCount; i++ {
 		testKit.MustExec("insert into t values (?, ?)", i, i+1)
 	}
 	testKit.MustExec("create index idx_t on t(c2)")
@@ -126,10 +127,11 @@ func (s *testStatsCacheSuite) TestStatsStoreAndLoad(c *C) {
 	testKit.MustExec("analyze table t")
 	statsTbl1 := statistics.GetStatisticsTableCache(tableInfo)
 
-	se, err := tidb.CreateSession(store)
-	c.Assert(err, IsNil)
-	statsTbl2, err := statistics.TableStatsFromStorage(se, tableInfo, 100000)
-	c.Assert(err, IsNil)
+	do.StatsHandle().Clear()
+	do.StatsHandle().Update(is)
+	statsTbl2 := statistics.GetStatisticsTableCache(tableInfo)
+	c.Assert(statsTbl2.Pseudo, IsFalse)
+	c.Assert(statsTbl2.Count, Equals, int64(recordCount))
 
 	compareTwoColumnsStatsSlice(statsTbl1.Columns, statsTbl2.Columns, c)
 	compareTwoColumnsStatsSlice(statsTbl1.Indices, statsTbl2.Indices, c)
