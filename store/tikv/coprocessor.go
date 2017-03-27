@@ -488,6 +488,7 @@ func (it *copIterator) handleRegionErrorTask(bo *Backoffer, task *copTask) []cop
 
 func (it *copIterator) Close() error {
 	close(it.finished)
+	it.wg.Wait()
 	return nil
 }
 
