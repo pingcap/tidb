@@ -15,7 +15,6 @@ package executor_test
 
 import (
 	"fmt"
-	"io/ioutil"
 	"strings"
 
 	. "github.com/pingcap/check"
@@ -230,7 +229,6 @@ func checkPlanAndRun(tk *testkit.TestKit, c *C, plan string, sql string) *testki
 	explainedSql := "explain " + sql
 	result := tk.MustQuery(explainedSql)
 	resultStr := fmt.Sprintf("%v", result.Rows())
-	ioutil.WriteFile("/tmp/plan1", []byte(resultStr), 0644)
 	if plan != resultStr {
 		c.Errorf("Plan not match. Obtained:\n %s\nExpected:\n %s\n", resultStr, plan)
 	}
