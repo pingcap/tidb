@@ -401,10 +401,10 @@ func TableStatsFromStorage(ctx context.Context, info *model.TableInfo, count int
 		}
 	}
 	if indexCount != len(info.Indices) {
-		return nil, errors.New("The number of indices doesn't match with the schema.")
+		return nil, errors.New("The number of indices doesn't match with the schema")
 	}
 	if columnCount != len(info.Columns) {
-		return nil, errors.New("The number of columns doesn't match with the schema.")
+		return nil, errors.New("The number of columns doesn't match with the schema")
 	}
 	return table, nil
 }
