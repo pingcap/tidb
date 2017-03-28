@@ -134,6 +134,7 @@ const (
 		distinct_count bigint(64) NOT NULL,
 		distinct_ratio double(64) NOT NULL DEFAULT 0,
 		use_count_to_estimate tinyint(2) NOT NULL DEFAULT 0,
+		modify_count bigint(64) NOT NULL DEFAULT 0,
 		version bigint(64) unsigned NOT NULL DEFAULT 0,
 		unique index tbl(table_id, is_index, hist_id)
 	);`
