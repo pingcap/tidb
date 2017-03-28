@@ -246,6 +246,31 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, auth, salt []
 	return true
 }
 
+// DBIsVisible implements the Checker interface.
+func (p *UserPrivileges) DBIsVisible(db string) bool {
+	if !Enable || SkipWithGrant {
+		return true
+	}
+
+	if p.User == "" {
+		return true
+	}
+
+	mysqlPriv := p.Handle.Get()
+
+	// TODO: Store it to UserPrivileges and avoid do it everytime.
+	strs := strings.Split(p.User, "@")
+	if len(strs) != 2 {
+		log.Warnf("Invalid format for user: %s", p.User)
+		return false
+	}
+	// Get user password.
+	user := strs[0]
+	host := strs[1]
+
+	return mysqlPriv.DBIsVisible(user, host, db)
+}
+
 // Check implements Checker.Check interface.
 func (p *UserPrivileges) Check(ctx context.Context, db *model.DBInfo, tbl *model.TableInfo, privilege mysql.PrivilegeType) (bool, error) {
 	if p.privs == nil {
