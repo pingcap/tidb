@@ -1572,7 +1572,29 @@ type builtinBinSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_bin
 func (b *builtinBinSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("bin")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	arg := args[0]
+	if arg.IsNull() {
+		return d, nil
+	}
+	bin, err := strconv.Atoi(arg)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	var str string
+	var a byte = 0x80
+	for i:=0; i<8; i++ {
+		switch a&bin{
+			case 0: str += "0"
+			default: str += "1"
+		}
+		a >>= 1
+	}
+	d.SetString(str)
+	return d, nil
 }
 
 type eltFunctionClass struct {
