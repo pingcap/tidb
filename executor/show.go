@@ -187,8 +187,9 @@ func (e *ShowExec) fetchShowTables() error {
 	// sort for tables
 	var tableNames []string
 	for _, v := range e.is.SchemaTables(e.DBName) {
+		// Test with mysql.AllPrivMask means any privilege would be OK.
 		// TODO: Should consider column privileges, which also make a table visible.
-		if checker != nil && !checker.RequestVerification(e.DBName.O, v.Meta().Name.O, "", mysql.AllPriv-1) {
+		if checker != nil && !checker.RequestVerification(e.DBName.O, v.Meta().Name.O, "", mysql.AllPrivMask) {
 			continue
 		}
 		tableNames = append(tableNames, v.Meta().Name.O)
