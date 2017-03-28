@@ -15,7 +15,11 @@ package expression
 
 import (
 	"github.com/pingcap/check"
+	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var _ = check.Suite(&testUtilSuite{})
@@ -42,4 +46,21 @@ func (s *testUtilSuite) TestDistinct(c *check.C) {
 		c.Assert(err, check.IsNil)
 		c.Assert(d, check.Equals, t.expect)
 	}
+}
+
+func (s *testUtilSuite) TestSubstituteCorCol2Constant(c *check.C) {
+	defer testleak.AfterTest(c)()
+	ctx := mock.NewContext()
+	corCol1 := &CorrelatedColumn{Data: &One.Value}
+	corCol2 := &CorrelatedColumn{Data: &One.Value}
+	cast := NewCastFunc(types.NewFieldType(mysql.TypeLonglong), corCol1, ctx)
+	plus := newFunction(ast.Plus, cast, corCol2)
+	plus2 := newFunction(ast.Plus, plus, One)
+	ans := &Constant{Value: types.NewIntDatum(3)}
+	ret, err := SubstituteCorCol2Constant(plus2)
+	c.Assert(err, check.IsNil)
+	c.Assert(ret.Equal(ans, ctx), check.IsTrue)
+	col1 := &Column{Index: 1}
+	newCol, err := SubstituteCorCol2Constant(col1)
+	c.Assert(newCol.Equal(col1, ctx), check.IsTrue)
 }

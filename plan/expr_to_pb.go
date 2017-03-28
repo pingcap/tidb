@@ -25,7 +25,8 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-func expressionsToPB(sc *variable.StatementContext, exprs []expression.Expression, client kv.Client) (pbExpr *tipb.Expr, pushed []expression.Expression, remained []expression.Expression) {
+// ExpressionsToPB converts expression to tipb.Expr.
+func ExpressionsToPB(sc *variable.StatementContext, exprs []expression.Expression, client kv.Client) (pbExpr *tipb.Expr, pushed []expression.Expression, remained []expression.Expression) {
 	pc := pbConverter{client: client, sc: sc}
 	for _, expr := range exprs {
 		v := pc.exprToPB(expr)
