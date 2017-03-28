@@ -213,7 +213,7 @@ func (s *testSuite) TestJoin(c *C) {
 	tk.MustExec("create table t1(a int, b int)")
 	tk.MustExec("insert into t values(1, 1), (2, 2), (3, 3)")
 	tk.MustExec("insert into t1 values(1, 2), (1, 3), (3, 4), (4, 5)")
-	// This physical plans of the two sql are tested at physical_plan_test.go
+	// The physical plans of the two sql are tested at physical_plan_test.go
 	tk.MustQuery("select /*+ TIDB_INLJ(t, t1) */ * from t join t1 on t.a=t1.a").Check(testkit.Rows("1 1 1 2", "1 1 1 3", "3 3 3 4"))
 	tk.MustQuery("select /*+ TIDB_INLJ(t, t1) */ * from t right outer join t1 on t.a=t1.a").Check(testkit.Rows("1 1 1 2", "1 1 1 3", "3 3 3 4", "<nil> <nil> 4 5"))
 
