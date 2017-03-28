@@ -35,6 +35,8 @@ func (s *testEvaluatorSuite) TestIsIPv4(c *C) {
 		{"1...1", 0},
 		{"192.168.1.", 0},
 		{".168.1.2", 0},
+		{"168.1.2", 0},
+		{"1.2.3.4.5", 0},
 	}
 	fc := funcs[ast.IsIPv4]
 	for _, test := range tests {

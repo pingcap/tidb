@@ -338,7 +338,7 @@ func isIPv4(ip string) bool {
 			return false
 		}
 	}
-	if acc > 255 || pd {
+	if dots != 3 || acc > 255 || pd {
 		return false
 	}
 	return true
