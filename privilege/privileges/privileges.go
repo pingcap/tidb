@@ -268,7 +268,7 @@ func (p *UserPrivileges) DBIsVisible(db string) bool {
 	user := strs[0]
 	host := strs[1]
 
-	return mysqlPriv.ShowDatabase(user, host, db)
+	return mysqlPriv.DBIsVisible(user, host, db)
 }
 
 // Check implements Checker.Check interface.

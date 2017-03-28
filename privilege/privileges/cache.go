@@ -418,8 +418,8 @@ func (p *MySQLPrivilege) RequestVerification(user, host, db, table, column strin
 	return false
 }
 
-// ShowDatabase checks whether the user can see the db.
-func (p *MySQLPrivilege) ShowDatabase(user, host, db string) bool {
+// DBIsVisible checks whether the user can see the db.
+func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
 	if record := p.matchUser(user, host); record != nil {
 		if record.Privileges&mysql.ShowDBPriv > 0 {
 			return true

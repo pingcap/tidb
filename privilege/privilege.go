@@ -39,7 +39,7 @@ type Checker interface {
 	// ConnectionVerification verifies user privilege for connection.
 	ConnectionVerification(host, user string, auth, salt []byte) bool
 
-	// ShowDatabase returns true is the database is visible to current user.
+	// DBIsVisible returns true is the database is visible to current user.
 	DBIsVisible(db string) bool
 }
 
