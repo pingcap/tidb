@@ -247,7 +247,7 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, auth, salt []
 }
 
 // ShowDatabase implements the Checker interface.
-func (p *UserPrivileges) ShowDatabase(db string) bool {
+func (p *UserPrivileges) DBVisible(db string) bool {
 	if !Enable || SkipWithGrant {
 		return true
 	}
