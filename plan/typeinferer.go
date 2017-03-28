@@ -344,6 +344,8 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		}
 	case "ln", "log", "log2", "log10", "sqrt", "pi", "exp", "degrees":
 		tp = types.NewFieldType(mysql.TypeDouble)
+	case "sin":
+		tp = types.NewFieldType(mysql.TypeDouble)
 	case "acos", "asin", "atan":
 		tp = types.NewFieldType(mysql.TypeDouble)
 	case "pow", "power", "rand":
@@ -400,7 +402,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = x.Args[1].GetType()
 	case "get_lock", "release_lock":
 		tp = types.NewFieldType(mysql.TypeLonglong)
-	case ast.AesEncrypt, ast.AesDecrypt, ast.SHA2:
+	case ast.AesEncrypt, ast.AesDecrypt, ast.SHA2, ast.InetNtoa:
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
 	case ast.MD5:
