@@ -350,10 +350,10 @@ func (s *testSuite) TestExplain(c *C) {
 		{
 			"select * from t2 order by t2.c2 limit 0, 1",
 			[]string{
-				"TableScan_5", "",
+				"TableScan_5", "Sort_6",
 			},
 			[]string{
-				"", "",
+				"Sort_6", "",
 			},
 			[]string{
 				`{
