@@ -350,8 +350,6 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = types.NewFieldType(mysql.TypeDouble)
 	case "pow", "power", "rand":
 		tp = types.NewFieldType(mysql.TypeDouble)
-	case "radians":
-		tp = types.NewFieldType(mysql.TypeDouble)
 	case "curdate", "current_date", "date", "from_days":
 		tp = types.NewFieldType(mysql.TypeDate)
 	case "curtime", "current_time", "timediff", "maketime":
@@ -409,6 +407,9 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
 		tp.Flen = 32
+	case ast.Compress:
+		tp = types.NewFieldType(mysql.TypeVarString)
+		chs = v.defaultCharset
 	case ast.SHA, ast.SHA1:
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
