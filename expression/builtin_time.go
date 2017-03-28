@@ -1560,9 +1560,9 @@ func (b *builtinTimestampSig) eval(row []types.Datum) (d types.Datum, err error)
 			return d, errors.Trace(err)
 		}
 	case types.KindString, types.KindBytes, types.KindMysqlDecimal, types.KindFloat32, types.KindFloat64:
-		s, err := args[0].ToString()
-		if err != nil {
-			return d, errors.Trace(err)
+		s, err1 := args[0].ToString()
+		if err1 != nil {
+			return d, errors.Trace(err1)
 		}
 		arg0, err = types.ParseTime(s, mysql.TypeDatetime, getFsp(s))
 		if err != nil {
@@ -1678,7 +1678,69 @@ type builtinMakeTimeSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_maketime
 func (b *builtinMakeTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("MAKETIME")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	// MAKETIME(hour, minute, second)
+	if args[0].IsNull() || args[1].IsNull() || args[2].IsNull() {
+		return d, nil
+	}
+
+	var (
+		hour     int64
+		minute   int64
+		second   float64
+		overflow bool
+	)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	hour, _ = args[0].ToInt64(sc)
+	// MySQL TIME datatype: https://dev.mysql.com/doc/refman/5.7/en/time.html
+	// ranges from '-838:59:59.000000' to '838:59:59.000000'
+	if hour < -838 {
+		hour = -838
+		overflow = true
+	} else if hour > 838 {
+		hour = 838
+		overflow = true
+	}
+
+	minute, _ = args[1].ToInt64(sc)
+	if minute < 0 || minute >= 60 {
+		return d, nil
+	}
+
+	second, _ = args[2].ToFloat64(sc)
+	if second < 0 || second >= 60 {
+		return d, nil
+	}
+	if hour == -838 || hour == 838 {
+		if second > 59 {
+			second = 59
+		}
+	}
+	if overflow {
+		minute = 59
+		second = 59
+	}
+
+	var dur types.Duration
+	fsp := types.MaxFsp
+	if args[2].Kind() != types.KindString {
+		sec, _ := args[2].ToString()
+		secs := strings.Split(sec, ".")
+		if len(secs) <= 1 {
+			fsp = 0
+		} else if len(secs[1]) < fsp {
+			fsp = len(secs[1])
+		}
+	}
+	dur, err = types.ParseDuration(fmt.Sprintf("%02d:%02d:%v", hour, minute, second), fsp)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d.SetMysqlDuration(dur)
+	return d, nil
 }
 
 type periodAddFunctionClass struct {
@@ -1729,7 +1791,35 @@ type builtinQuarterSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_quarter
 func (b *builtinQuarterSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("QUARTER")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+
+	d, err = builtinMonth(args, b.ctx)
+	if err != nil || d.IsNull() {
+		return d, errors.Trace(err)
+	}
+
+	mon := int(d.GetInt64())
+	switch mon {
+	case 0:
+		// An undocumented behavior of the mysql implementation
+		d.SetInt64(0)
+	case 1, 2, 3:
+		d.SetInt64(1)
+	case 4, 5, 6:
+		d.SetInt64(2)
+	case 7, 8, 9:
+		d.SetInt64(3)
+	case 10, 11, 12:
+		d.SetInt64(4)
+	default:
+		d.SetNull()
+		return d, errors.Errorf("no quarter for invalid month: %d.", mon)
+	}
+
+	return d, nil
 }
 
 type secToTimeFunctionClass struct {
