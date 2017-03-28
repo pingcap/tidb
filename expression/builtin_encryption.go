@@ -365,10 +365,10 @@ type builtinCreateDigestSig struct {
 
 // Supported digest type name
 const (
-	SHA224NAME string = "SHA224"
-	SHA256NAME string = "SHA256"
-	SHA384NAME string = "SHA384"
-	SHA512NAME string = "SHA512"
+	SHA224Name string = "SHA224"
+	SHA256Name string = "SHA256"
+	SHA384Name string = "SHA384"
+	SHA512Name string = "SHA512"
 )
 
 // See https://dev.mysql.com/doc/refman/5.7/en/enterprise-encryption-functions.html#function_create-digest
@@ -398,13 +398,13 @@ func (b *builtinCreateDigestSig) eval(row []types.Datum) (d types.Datum, err err
 
 	var hasher hash.Hash
 	switch digestType {
-	case SHA224NAME:
+	case SHA224Name:
 		hasher = sha256.New224()
-	case SHA256NAME:
+	case SHA256Name:
 		hasher = sha256.New()
-	case SHA384NAME:
+	case SHA384Name:
 		hasher = sha512.New384()
-	case SHA512NAME:
+	case SHA512Name:
 		hasher = sha512.New()
 	}
 
