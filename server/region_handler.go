@@ -178,7 +178,7 @@ func (s *Server) newTableRegionsHandler(pdClient pd.Client) http.Handler {
 func (rh TableRegionsHandler) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, error) {
 	regions := make([]RegionMeta, len(regionIDs))
 	for i, regionID := range regionIDs {
-		meta, leader, err := rh.pdClient.GetRegionByID(regionID)
+		meta, leader, err := rh.pdClient.GetRegionByID(goctx.TODO(), regionID)
 		if err != nil {
 			return nil, err
 		}
