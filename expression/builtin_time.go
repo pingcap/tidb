@@ -32,6 +32,20 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+const ( // GET_FORMAT first argument.
+	dateFormat     = "DATE"
+	datetimeFormat = "DATETIME"
+	timeFormat     = "TIME"
+)
+
+const ( // GET_FORMAT location.
+	usaLocation      = "USA"
+	jisLocation      = "JIS"
+	isoLocation      = "ISO"
+	eurLocation      = "EUR"
+	internalLocation = "INTERNAL"
+)
+
 var (
 	_ functionClass = &dateFunctionClass{}
 	_ functionClass = &dateDiffFunctionClass{}
@@ -1012,7 +1026,7 @@ func (b *builtinFromUnixTimeSig) eval(row []types.Datum) (d types.Datum, err err
 	return builtinDateFormat([]types.Datum{d, args[1]}, b.ctx)
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_from-unixtime
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_get-format
 type getFormatFunctionClass struct {
 	baseFunctionClass
 }
@@ -1030,43 +1044,43 @@ func (b *builtinGetFormatSig) eval(row []types.Datum) (d types.Datum, err error)
 	t := args[0].GetString()
 	l := args[1].GetString()
 	switch t {
-	case "DATE":
+	case dateFormat:
 		switch l {
-		case "USA":
+		case usaLocation:
 			d.SetString("%m.%d.%Y")
-		case "JIS":
+		case jisLocation:
 			d.SetString("%Y-%m-%d")
-		case "ISO":
+		case isoLocation:
 			d.SetString("%Y-%m-%d")
-		case "EUR":
+		case eurLocation:
 			d.SetString("%d.%m.%Y")
-		case "INTERNAL":
+		case internalLocation:
 			d.SetString("%Y%m%d")
 		}
-	case "DATETIME":
+	case datetimeFormat:
 		switch l {
-		case "USA":
+		case usaLocation:
 			d.SetString("%Y-%m-%d %H.%i.%s")
-		case "JIS":
+		case jisLocation:
 			d.SetString("%Y-%m-%d %H:%i:%s")
-		case "ISO":
+		case isoLocation:
 			d.SetString("%Y-%m-%d %H:%i:%s")
-		case "EUR":
+		case eurLocation:
 			d.SetString("%Y-%m-%d %H.%i.%s")
-		case "INTERNAL":
+		case internalLocation:
 			d.SetString("%Y%m%d%H%i%s")
 		}
-	case "TIME":
+	case timeFormat:
 		switch l {
-		case "USA":
+		case usaLocation:
 			d.SetString("%h:%i:%s %p")
-		case "JIS":
+		case jisLocation:
 			d.SetString("%H:%i:%s")
-		case "ISO":
+		case isoLocation:
 			d.SetString("%H:%i:%s")
-		case "EUR":
+		case eurLocation:
 			d.SetString("%H.%i.%s")
-		case "INTERNAL":
+		case internalLocation:
 			d.SetString("%H%i%s")
 		}
 	}

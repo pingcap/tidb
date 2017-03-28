@@ -815,7 +815,7 @@ import (
 	logAnd			"logical and operator"
 	logOr			"logical or operator"
 	FieldsOrColumns 	"Fields or columns"
-	GetFormatSelector "{DATE|DATETIME|TIME}"
+	GetFormatSelector	"{DATE|DATETIME|TIME}"
 
 %type	<ident>
 	Identifier			"identifier or unreserved keyword"
@@ -3090,9 +3090,9 @@ FunctionCallNonKeyword:
 |	"GET_FORMAT" '(' GetFormatSelector ','  Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
-            FnName: model.NewCIStr($1),
-       		Args: []ast.ExprNode{ast.NewValueExpr($3), $5.(ast.ExprNode)},
-       	}
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{ast.NewValueExpr($3), $5.(ast.ExprNode)},
+		}
 	}
 |	"GREATEST" '(' ExpressionList ')'
 	{
