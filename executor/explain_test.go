@@ -532,6 +532,17 @@ func (s *testSuite) TestExplain(c *C) {
 }`,
 			},
 		},
+		{
+			"select * from information_schema.columns",
+			[]string{"MemTableScan_3"},
+			[]string{""},
+			[]string{
+				`{
+    "db": "information_schema",
+    "table": "COLUMNS"
+}`,
+			},
+		},
 	}
 	tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 1")
 	for _, ca := range cases {

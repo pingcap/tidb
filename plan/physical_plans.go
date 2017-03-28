@@ -588,6 +588,15 @@ func (p *PhysicalTableScan) MarshalJSON() ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
+// MarshalJSON implements json.Marshaler interface.
+func (p *PhysicalMemTable) MarshalJSON() ([]byte, error) {
+	buffer := bytes.NewBufferString("{")
+	buffer.WriteString(fmt.Sprintf(
+		" \"db\": \"%s\",\n \"table\": \"%s\"}",
+		p.DBName.O, p.Table.Name.O))
+	return buffer.Bytes(), nil
+}
+
 // Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalApply) Copy() PhysicalPlan {
 	np := *p
