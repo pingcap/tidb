@@ -1126,6 +1126,7 @@ func (p *Selection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanI
 	}
 	if p.canControlScan {
 		info, _ = p.makeScanController(false)
+		info = enforceProperty(prop, info)
 		p.storePlanInfo(prop, info)
 		return info, nil
 	}
