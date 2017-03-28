@@ -426,6 +426,8 @@ func (do *Domain) LoadTableStatsLoop(ctx context.Context) error {
 	}
 	go func(do *Domain) {
 		ticker := time.NewTicker(lease)
+		defer ticker.Stop()
+
 		for {
 			select {
 			case <-ticker.C:
