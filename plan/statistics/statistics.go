@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
@@ -524,7 +525,7 @@ func (b *Builder) buildMultiColumns(t *Table, offsets []int, baseOffset int, isS
 
 func (b *Builder) getBuildStatsConcurrency() (int, error) {
 	sessionVars := b.Ctx.GetSessionVars()
-	concurrency, err := sessionVars.GetTiDBSystemVar(variable.BuildStatsConcurrencyVar)
+	concurrency, err := varsutil.GetSessionSystemVar(sessionVars, variable.TiDBBuildStatsConcurrency)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

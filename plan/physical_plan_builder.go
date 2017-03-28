@@ -347,6 +347,13 @@ func removeLimit(prop *requiredProperty) *requiredProperty {
 	return ret
 }
 
+func removeSortOrder(prop *requiredProperty) *requiredProperty {
+	ret := &requiredProperty{
+		limit: prop.limit,
+	}
+	return ret
+}
+
 // convertLimitOffsetToCount changes the limit(offset, count) in prop to limit(0, offset + count).
 func convertLimitOffsetToCount(prop *requiredProperty) *requiredProperty {
 	ret := &requiredProperty{
@@ -585,8 +592,8 @@ func compareTypeForOrder(lhs *types.FieldType, rhs *types.FieldType) bool {
 // Generate all possible combinations from join conditions for cost evaluation
 // It will try all keys in join conditions
 func constructPropertyByJoin(join *Join) ([][]*requiredProperty, []int, error) {
-	result := make([][]*requiredProperty, 0)
-	condIndex := make([]int, 0)
+	var result [][]*requiredProperty
+	var condIndex []int
 	if join.EqualConditions == nil {
 		return nil, nil, nil
 	}
@@ -628,11 +635,12 @@ func (p *Join) convert2PhysicalMergeJoin(parentProp *requiredProperty, lProp *re
 		newCond.ResolveIndices(p.schema)
 		newEQConds = append(newEQConds, newCond.(*expression.ScalarFunction))
 	}
+	eqCond := p.EqualConditions[condIndex]
 
 	otherFilter := append(expression.ScalarFuncs2Exprs(newEQConds), p.OtherConditions...)
 
 	join := &PhysicalMergeJoin{
-		EqualConditions: []*expression.ScalarFunction{p.EqualConditions[condIndex]},
+		EqualConditions: []*expression.ScalarFunction{eqCond},
 		LeftConditions:  p.LeftConditions,
 		RightConditions: p.RightConditions,
 		OtherConditions: otherFilter,
@@ -684,6 +692,7 @@ func (p *Join) convert2PhysicalMergeJoin(parentProp *requiredProperty, lProp *re
 	} else {
 		rInfo = rInfoNoSorted
 	}
+	parentProp = join.tryConsumeOrder(parentProp, eqCond)
 
 	resultInfo := join.matchProperty(parentProp, lInfo, rInfo)
 	// TODO: Considering keeping order in join to remove at least

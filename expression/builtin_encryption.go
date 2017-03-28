@@ -16,7 +16,10 @@ package expression
 import (
 	"crypto/md5"
 	"crypto/sha1"
+	"crypto/sha256"
+	"crypto/sha512"
 	"fmt"
+	"hash"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
@@ -580,9 +583,54 @@ type builtinSHA2Sig struct {
 	baseBuiltinFunc
 }
 
+// Supported hash length of SHA-2 family
+const (
+	SHA0   int = 0
+	SHA224 int = 224
+	SHA256 int = 256
+	SHA384 int = 384
+	SHA512 int = 512
+)
+
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_sha2
 func (b *builtinSHA2Sig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("SHA2")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	for _, arg := range args {
+		if arg.IsNull() {
+			return d, nil
+		}
+	}
+	// Meaning of each argument:
+	// args[0]: the cleartext string to be hashed
+	// args[1]: desired bit length of result
+	bin, err := args[0].ToBytes()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	hashLength, err := args[1].ToInt64(b.ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	var hasher hash.Hash
+	switch int(hashLength) {
+	case SHA0, SHA256:
+		hasher = sha256.New()
+	case SHA224:
+		hasher = sha256.New224()
+	case SHA384:
+		hasher = sha512.New384()
+	case SHA512:
+		hasher = sha512.New()
+	}
+	if hasher != nil {
+		hasher.Write(bin)
+		data := fmt.Sprintf("%x", hasher.Sum(nil))
+		d.SetString(data)
+	}
+	return d, nil
 }
 
 type uncompressFunctionClass struct {
