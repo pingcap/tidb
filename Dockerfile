@@ -1,4 +1,4 @@
-FROM golang:1.6
+FROM golang:1.7
 
 COPY . /go/src/github.com/pingcap/tidb
 

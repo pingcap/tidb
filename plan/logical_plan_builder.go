@@ -21,10 +21,14 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan/statistics"
 	"github.com/pingcap/tidb/plan/statscache"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
+)
+
+const (
+	// TiDBMergeJoin is hint enforce merge join
+	TiDBMergeJoin = "tidb_smj"
 )
 
 type idAllocator struct {
@@ -47,14 +51,12 @@ func (p *Aggregation) collectGroupByColumns() {
 
 func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gbyItems []expression.Expression) (LogicalPlan, map[int]int) {
 	b.optFlag = b.optFlag | flagBuildKeyInfo
-	b.optFlag = b.optFlag | flagEliminateAgg
-	b.optFlag = b.optFlag | flagAggPushDown
+	b.optFlag = b.optFlag | flagAggregationOptimize
 	agg := &Aggregation{
 		AggFuncs:        make([]expression.AggregationFunction, 0, len(aggFuncList)),
 		baseLogicalPlan: newBaseLogicalPlan(Agg, b.allocator)}
 	agg.self = agg
 	agg.initIDAndContext(b.ctx)
-	addChild(agg, p)
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncList)+p.Schema().Len())...)
 	// aggIdxMap maps the old index to new index after applying common aggregation functions elimination.
 	aggIndexMap := make(map[int]int)
@@ -95,6 +97,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 		agg.AggFuncs = append(agg.AggFuncs, newFunc)
 		schema.Append(col.Clone().(*expression.Column))
 	}
+	addChild(agg, p)
 	agg.GroupByItems = gbyItems
 	agg.SetSchema(schema)
 	agg.collectGroupByColumns()
@@ -194,6 +197,20 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 	return
 }
 
+func extractTableAlias(p LogicalPlan) *model.CIStr {
+	if dataSource, ok := p.(*DataSource); ok {
+		if dataSource.TableAsName.L != "" {
+			return dataSource.TableAsName
+		}
+		return &dataSource.tableInfo.Name
+	} else if len(p.Schema().Columns) > 0 {
+		if p.Schema().Columns[0].TblName.L != "" {
+			return &(p.Schema().Columns[0].TblName)
+		}
+	}
+	return nil
+}
+
 func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	b.optFlag = b.optFlag | flagPredicatePushDown
 	if join.Right == nil {
@@ -201,6 +218,9 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	}
 	leftPlan := b.buildResultSetNode(join.Left)
 	rightPlan := b.buildResultSetNode(join.Right)
+	leftAlias := extractTableAlias(leftPlan)
+	rightAlias := extractTableAlias(rightPlan)
+
 	newSchema := expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema())
 	joinPlan := &Join{baseLogicalPlan: newBaseLogicalPlan(Jn, b.allocator)}
 	addChild(joinPlan, leftPlan)
@@ -208,6 +228,11 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	joinPlan.self = joinPlan
 	joinPlan.initIDAndContext(b.ctx)
 	joinPlan.SetSchema(newSchema)
+
+	if b.TableHints() != nil {
+		joinPlan.preferMergeJoin = b.TableHints().ifPreferMergeJoin(leftAlias, rightAlias)
+	}
+
 	if join.On != nil {
 		onExpr, _, err := b.rewrite(join.On.Expr, joinPlan, nil, false)
 		if err != nil {
@@ -325,8 +350,7 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 
 func (b *planBuilder) buildDistinct(child LogicalPlan, length int) LogicalPlan {
 	b.optFlag = b.optFlag | flagBuildKeyInfo
-	b.optFlag = b.optFlag | flagEliminateAgg
-	b.optFlag = b.optFlag | flagAggPushDown
+	b.optFlag = b.optFlag | flagAggregationOptimize
 	agg := &Aggregation{
 		baseLogicalPlan: newBaseLogicalPlan(Agg, b.allocator),
 		AggFuncs:        make([]expression.AggregationFunction, 0, child.Schema().Len()),
@@ -492,7 +516,7 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 	return li
 }
 
-// colMatch(a,b) means that if a match b, e.g. t.a can match test.t.a bug test.t.a can't match t.a.
+// colMatch(a,b) means that if a match b, e.g. t.a can match test.t.a but test.t.a can't match t.a.
 // Because column a want column from database test exactly.
 func colMatch(a *ast.ColumnName, b *ast.ColumnName) bool {
 	if a.Schema.L == "" || a.Schema.L == b.Schema.L {
@@ -823,7 +847,42 @@ func (b *planBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 	return
 }
 
+func (b *planBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
+	var sortMergeTables []model.CIStr
+	for _, hint := range hints {
+		switch hint.HintName.L {
+		case TiDBMergeJoin:
+			sortMergeTables = append(sortMergeTables, hint.Tables...)
+		default:
+			// ignore hints that not implemented
+		}
+	}
+	if len(sortMergeTables) != 0 {
+		b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{sortMergeTables})
+		return true
+	}
+	return false
+}
+
+func (b *planBuilder) popTableHints() {
+	b.tableHintInfo = b.tableHintInfo[:len(b.tableHintInfo)-1]
+}
+
+func (b *planBuilder) TableHints() *tableHintInfo {
+	if b.tableHintInfo == nil || len(b.tableHintInfo) == 0 {
+		return nil
+	}
+	return &(b.tableHintInfo[len(b.tableHintInfo)-1])
+}
+
 func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
+	if sel.TableHints != nil {
+		// table hints without query block support only visible in current SELECT
+		if b.pushTableHints(sel.TableHints) {
+			defer b.popTableHints()
+		}
+	}
+
 	hasAgg := b.detectSelectAgg(sel)
 	var (
 		p                             LogicalPlan
@@ -918,6 +977,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		proj.SetSchema(expression.NewSchema(p.Schema().Columns[:oldLen]...))
 		return proj
 	}
+
 	return p
 }
 
@@ -930,12 +990,7 @@ func (b *planBuilder) buildTableDual() LogicalPlan {
 }
 
 func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
-	var statisticTable *statistics.Table
-	if EnableStatistic {
-		statisticTable = statscache.GetStatisticsTableCache(b.ctx, tn.TableInfo)
-	} else {
-		statisticTable = statistics.PseudoTable(tn.TableInfo)
-	}
+	statisticTable := statscache.GetStatisticsTableCache(tn.TableInfo)
 	if b.err != nil {
 		return nil
 	}

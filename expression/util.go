@@ -175,3 +175,40 @@ func (d *distinctChecker) Check(values []interface{}) (bool, error) {
 	d.existingKeys[key] = true
 	return true, nil
 }
+
+// SubstituteCorCol2Constant will substitute correlated column to constant value which it contains.
+// If the args of one scalar function are all constant, we will substitute it to constant.
+func SubstituteCorCol2Constant(expr Expression) (Expression, error) {
+	switch x := expr.(type) {
+	case *ScalarFunction:
+		allConstant := true
+		newArgs := make([]Expression, 0, len(x.GetArgs()))
+		for _, arg := range x.GetArgs() {
+			newArg, err := SubstituteCorCol2Constant(arg)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			_, ok := newArg.(*Constant)
+			newArgs = append(newArgs, newArg)
+			allConstant = allConstant && ok
+		}
+		if allConstant {
+			val, err := x.Eval(nil)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			return &Constant{Value: val}, nil
+		}
+		var newSf Expression
+		if x.FuncName.L == ast.Cast {
+			newSf = NewCastFunc(x.RetType, newArgs[0], x.GetCtx())
+		} else {
+			newSf, _ = NewFunction(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
+		}
+		return newSf, nil
+	case *CorrelatedColumn:
+		return &Constant{Value: *x.Data, RetType: x.GetType()}, nil
+	default:
+		return x.Clone(), nil
+	}
+}
