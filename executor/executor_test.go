@@ -116,7 +116,6 @@ func (s *testSuite) TestAdmin(c *C) {
 	rowOwnerInfos = strings.Split(row.Data[4].GetString(), ",")
 	ownerInfos = strings.Split(bgInfo.Owner.String(), ",")
 	c.Assert(rowOwnerInfos[0], Equals, ownerInfos[0])
-	c.Assert(row.Data[5].GetString(), Equals, "")
 	row, err = r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, IsNil)
