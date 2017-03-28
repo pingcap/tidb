@@ -13,10 +13,15 @@
 package expression
 
 import (
+	"encoding/binary"
+	"math"
+	"net"
+	"time"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/util/types"
-	"time"
+	"github.com/twinj/uuid"
 )
 
 var (
@@ -169,7 +174,12 @@ type builtinAnyValueSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
 func (b *builtinAnyValueSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("ANY_VALUE")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d = args[0]
+	return d, nil
 }
 
 type defaultFunctionClass struct {
@@ -220,7 +230,34 @@ type builtinInetNtoaSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet-ntoa
 func (b *builtinInetNtoaSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("INET_NTOA")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if args[0].IsNull() {
+		return d, nil
+	}
+
+	ipArg, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if ipArg < 0 || uint64(ipArg) > math.MaxUint32 {
+		//not an IPv4 address.
+		return d, nil
+	}
+	ip := make(net.IP, net.IPv4len)
+	binary.BigEndian.PutUint32(ip, uint32(ipArg))
+	ipv4 := ip.To4()
+	if ipv4 == nil {
+		//Not a vaild ipv4 address.
+		return d, nil
+	}
+
+	d.SetString(ipv4.String())
+	return d, nil
 }
 
 type inet6AtonFunctionClass struct {
@@ -339,7 +376,27 @@ type builtinIsIPv6Sig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv6
 func (b *builtinIsIPv6Sig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("IS_IPV6")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	// isIPv6(str)
+	// args[0] string
+	if args[0].IsNull() {
+		d.SetInt64(0)
+		return d, nil
+	}
+	s, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	ip := net.ParseIP(s)
+	if ip != nil && ip.To4() == nil {
+		d.SetInt64(1)
+	} else {
+		d.SetInt64(0)
+	}
+	return d, nil
 }
 
 type isUsedLockFunctionClass struct {
@@ -423,8 +480,9 @@ type builtinUUIDSig struct {
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_uuid
-func (b *builtinUUIDSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("UUID")
+func (b *builtinUUIDSig) eval(_ []types.Datum) (d types.Datum, err error) {
+	d.SetString(uuid.NewV1().String())
+	return
 }
 
 type uuidShortFunctionClass struct {

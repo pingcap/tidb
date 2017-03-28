@@ -90,7 +90,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache", "action", "round",
 		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest", "least",
 		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events", "less", "than", "timediff",
-		"ln", "log", "log2", "log10", "timestampdiff", "pi", "quote",
+		"ln", "log", "log2", "log10", "timestampdiff", "pi", "quote", "none",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -1197,6 +1197,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t ALTER COLUMN a SET DEFAULT 1+1", false},
 		{"ALTER TABLE t ALTER COLUMN a DROP DEFAULT", true},
 		{"ALTER TABLE t ALTER a DROP DEFAULT", true},
+		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED, lock=none", true},
 
 		// for rename table statement
 		{"RENAME TABLE t TO t1", true},
@@ -1207,6 +1208,26 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"TRUNCATE t1", true},
 	}
 	s.RunTest(c, table)
+}
+
+func (s *testParserSuite) TestOptimizerHints(c *C) {
+	parser := New()
+	stmt, err := parser.Parse("select /*+ tidb_SMJ(T1,t2) tidb_smj(T3,t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	c.Assert(err, IsNil)
+	selectStmt := stmt[0].(*ast.SelectStmt)
+
+	hints := selectStmt.TableHints
+	c.Assert(len(hints), Equals, 2)
+	c.Assert(hints[0].HintName.L, Equals, "tidb_smj")
+	c.Assert(len(hints[0].Tables), Equals, 2)
+	c.Assert(hints[0].Tables[0].L, Equals, "t1")
+	c.Assert(hints[0].Tables[1].L, Equals, "t2")
+
+	c.Assert(hints[1].HintName.L, Equals, "tidb_smj")
+	c.Assert(hints[1].Tables[0].L, Equals, "t3")
+	c.Assert(hints[1].Tables[1].L, Equals, "t4")
+
+	c.Assert(len(selectStmt.TableHints), Equals, 2)
 }
 
 func (s *testParserSuite) TestType(c *C) {

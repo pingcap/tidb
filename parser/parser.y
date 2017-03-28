@@ -48,6 +48,8 @@ import (
 	/*yy:token "%c"     */	identifier      "identifier"
 	/*yy:token "\"%c\"" */	stringLit       "string literal"
 	invalid		"a special token never used by parser, used by lexer to indicate error"
+	hintBegin	"hintBegin is a virtual token for optimizer hint grammar"
+	hintEnd		"hintEnd is a virtual token for optimizer hint grammar"
 	andand		"&&"
 	oror		"||"
 
@@ -94,6 +96,7 @@ import (
 	desc			"DESC"
 	describe		"DESCRIBE"
 	distinct		"DISTINCT"
+	tidbSMJ			"TIDB_SMJ"
 	div 			"DIV"
 	doubleType		"DOUBLE"
 	drop			"DROP"
@@ -463,6 +466,7 @@ import (
 	names		"NAMES"
 	national	"NATIONAL"
 	no		"NO"
+	none		"NONE"
 	offset		"OFFSET"
 	only		"ONLY"
 	password	"PASSWORD"
@@ -783,6 +787,10 @@ import (
 	OptCollate		"Optional Collate setting"
 	NUM			"numbers"
 	LengthNum		"Field length num(uint64)"
+	HintTableList		"Table list in optimizer hint"
+	TableOptimizerHintOpt	"Table level optimizer hint"
+	TableOptimizerHints	"Table level optimizer hints"
+	TableOptimizerHintList	"Table level optimizer hint list"
 
 %type	<ident>
 	KeyOrIndex		"{KEY|INDEX}"
@@ -1011,6 +1019,12 @@ AlterTableSpec:
 		$$ = &ast.AlterTableSpec{
 			Tp:    		ast.AlterTableRenameTable,
 			NewTable:      $3.(*ast.TableName),
+		}
+	}
+|	"LOCK" eq "NONE"
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:    		ast.AlterTableLock,
 		}
 	}
 
@@ -2248,7 +2262,7 @@ UnReservedKeyword:
 | "MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION"
 | "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
-| "TIMESTAMPDIFF"
+| "TIMESTAMPDIFF" | "NONE"
 
 ReservedKeyword:
 "ADD" | "ALL" | "ALTER" | "ANALYZE" | "AND" | "AS" | "ASC" | "BETWEEN" | "BIGINT"
@@ -4414,7 +4428,7 @@ SelectStmt:
 	"SELECT" SelectStmtOpts SelectStmtFieldList SelectStmtLimit SelectLockOpt
 	{
 		st := &ast.SelectStmt {
-			Distinct:      $2.(bool),
+			Distinct:      $2.(*ast.SelectStmtOpts).Distinct,
 			Fields:        $3.(*ast.FieldList),
 			LockTp:	       $5.(ast.SelectLockType),
 		}
@@ -4442,7 +4456,7 @@ SelectStmt:
 |	"SELECT" SelectStmtOpts SelectStmtFieldList FromDual WhereClauseOptional SelectStmtLimit SelectLockOpt
 	{
 		st := &ast.SelectStmt {
-			Distinct:      $2.(bool),
+			Distinct:      $2.(*ast.SelectStmtOpts).Distinct,
 			Fields:        $3.(*ast.FieldList),
 			LockTp:	       $7.(ast.SelectLockType),
 		}
@@ -4463,11 +4477,15 @@ SelectStmt:
 	TableRefsClause WhereClauseOptional SelectStmtGroup HavingClause OrderByOptional
 	SelectStmtLimit SelectLockOpt
 	{
+		opts := $2.(*ast.SelectStmtOpts)
 		st := &ast.SelectStmt{
-			Distinct:	$2.(bool),
+			Distinct:		opts.Distinct,
 			Fields:		$3.(*ast.FieldList),
 			From:		$5.(*ast.TableRefsClause),
 			LockTp:		$11.(ast.SelectLockType),
+		}
+		if opts.TableHints != nil {
+			st.TableHints = opts.TableHints
 		}
 
 		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
@@ -4758,10 +4776,59 @@ SelectStmtDistinct:
 	}
 
 SelectStmtOpts:
-	SelectStmtDistinct SelectStmtSQLCache SelectStmtCalcFoundRows
+	TableOptimizerHints SelectStmtDistinct SelectStmtSQLCache SelectStmtCalcFoundRows
 	{
-		// TODO: return calc_found_rows opt and support more other options
-		$$ = $1
+		opt := &ast.SelectStmtOpts{}
+		if $1 != nil {
+		    opt.TableHints = $1.([]*ast.TableOptimizerHint)
+		}
+		if $2 != nil {
+		    opt.Distinct = $2.(bool)
+		}
+		if $3 != nil {
+		    opt.SQLCache = $3.(bool)
+		}
+		if $4 != nil {
+		    opt.CalcFoundRows = $4.(bool)
+		}
+
+		$$ = opt
+	}
+
+TableOptimizerHints:
+    /* empty */
+	{
+		$$ = nil
+	}
+|	hintBegin TableOptimizerHintList hintEnd
+	{
+		$$ = $2
+	}
+
+HintTableList:
+	Identifier
+	{
+		$$ = []model.CIStr{model.NewCIStr($1)}
+	}
+|	HintTableList ',' Identifier
+	{
+		$$ = append($1.([]model.CIStr), model.NewCIStr($3))
+	}
+
+TableOptimizerHintList:
+	TableOptimizerHintOpt
+	{
+		$$ = []*ast.TableOptimizerHint{$1.(*ast.TableOptimizerHint)}
+	}
+|	TableOptimizerHintList TableOptimizerHintOpt
+	{
+		$$ = append($1.([]*ast.TableOptimizerHint), $2.(*ast.TableOptimizerHint))
+	}
+
+TableOptimizerHintOpt:
+	tidbSMJ '(' HintTableList ')'
+	{
+		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), Tables: $3.([]model.CIStr)}
 	}
 
 SelectStmtCalcFoundRows:

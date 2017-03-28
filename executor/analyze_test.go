@@ -18,16 +18,13 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
 func (s *testSuite) TestAnalyzeTable(c *C) {
-	plan.EnableStatistic = true
 	defer func() {
 		testleak.AfterTest(c)()
-		plan.EnableStatistic = false
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

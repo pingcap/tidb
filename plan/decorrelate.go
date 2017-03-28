@@ -153,8 +153,14 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 				np, _ := s.optimize(p, nil, nil)
 				agg.SetChildren(np)
 				np.SetParents(agg)
+				agg.collectGroupByColumns()
 				return agg, nil
 			}
+		}
+	}
+	if sel, ok := p.(*Selection); ok {
+		if _, ok := p.Children()[0].(*DataSource); ok {
+			_, sel.canControlScan = sel.makeScanController(true)
 		}
 	}
 	newChildren := make([]Plan, 0, len(p.Children()))

@@ -115,6 +115,15 @@ const (
   		PRIMARY KEY (help_topic_id),
   		UNIQUE KEY name (name)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8 STATS_PERSISTENT=0 COMMENT='help topics';`
+
+	// CreateStatsMetaTable store's the meta of table statistics.
+	CreateStatsMetaTable = `CREATE TABLE if not exists mysql.stats_meta (
+		version bigint(64) unsigned NOT NULL,
+		table_id bigint(64) NOT NULL,
+		modify_count bigint(64) NOT NULL DEFAULT 0,
+		count bigint(64) unsigned NOT NULL DEFAULT 0,
+		index idx_ver(version)
+	);`
 )
 
 // Bootstrap initiates system DB for a store.
@@ -143,6 +152,7 @@ const (
 	// Const for TiDB server version 2.
 	version2 = 2
 	version3 = 3
+	version4 = 4
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -212,6 +222,9 @@ func upgrade(s Session) {
 	if ver < version3 {
 		upgradeToVer3(s)
 	}
+	if ver < version4 {
+		upgradeToVer4(s)
+	}
 
 	updateBootstrapVer(s)
 	_, err = s.Execute("COMMIT")
@@ -241,7 +254,7 @@ func upgrade(s Session) {
 func upgradeToVer2(s Session) {
 	// Version 2 add two system variable for DistSQL concurrency controlling.
 	// Insert distsql related system variable.
-	distSQLVars := []string{variable.DistSQLScanConcurrencyVar, variable.DistSQLJoinConcurrencyVar}
+	distSQLVars := []string{variable.TiDBDistSQLScanConcurrency}
 	values := make([]string, 0, len(distSQLVars))
 	for _, v := range distSQLVars {
 		value := fmt.Sprintf(`("%s", "%s")`, v, variable.SysVars[v].Value)
@@ -257,6 +270,12 @@ func upgradeToVer3(s Session) {
 	// Version 3 fix tx_read_only variable value.
 	sql := fmt.Sprintf("UPDATE %s.%s set variable_value = '0' where variable_name = 'tx_read_only';",
 		mysql.SystemDB, mysql.GlobalVariablesTable)
+	mustExecute(s, sql)
+}
+
+// Update to version 4.
+func upgradeToVer4(s Session) {
+	sql := CreateStatsMetaTable
 	mustExecute(s, sql)
 }
 
@@ -298,6 +317,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateTiDBTable)
 	// Create help table.
 	mustExecute(s, CreateHelpTopic)
+	// Create stats_meta table.
+	mustExecute(s, CreateStatsMetaTable)
 }
 
 // Execute DML statements in bootstrap stage.

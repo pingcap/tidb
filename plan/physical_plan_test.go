@@ -85,7 +85,7 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
 		lp.PruneColumns(lp.Schema().Columns)
-		solver := &aggPushDownSolver{builder.allocator, builder.ctx}
+		solver := &aggregationOptimizer{builder.allocator, builder.ctx}
 		solver.aggPushDown(lp)
 		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
@@ -438,12 +438,12 @@ func (s *testPlanSuite) TestCBO(c *C) {
 			best: "Table(t)->HashAgg->Sort + Limit(1) + Offset(0)->Projection",
 		},
 		{
-			sql:  "select count(*) from t where concat(a,b) = 'abc' group by a",
-			best: "Table(t)->Selection->StreamAgg",
+			sql:  "select count(*) from t where concat(a,b) = 'abc' group by c",
+			best: "Index(t.c_d_e)[[<nil>,+inf]]->Selection->StreamAgg",
 		},
 		{
 			sql:  "select count(*) from t where concat(a,b) = 'abc' group by a order by a",
-			best: "Table(t)->Selection->StreamAgg->Projection",
+			best: "Table(t)->Selection->Projection->Projection",
 		},
 		{
 			sql:  "select count(distinct e) from t where c = 1 and concat(c,d) = 'abc' group by d",
@@ -508,7 +508,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from (select t.a from t union select t.d from t where t.c = 1 union select t.c from t) k order by a limit 1",
-			best: "UnionAll{Table(t)->HashAgg->Index(t.c_d_e)[[1,1]]->HashAgg->Table(t)->HashAgg}->HashAgg->Sort + Limit(1) + Offset(0)",
+			best: "UnionAll{Table(t)->Projection->Index(t.c_d_e)[[1,1]]->HashAgg->Table(t)->HashAgg}->HashAgg->Sort + Limit(1) + Offset(0)",
 		},
 		{
 			sql:  "select * from (select t.a from t union all select t.d from t where t.c = 1 union all select t.c from t) k order by a limit 1",
@@ -516,7 +516,11 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from (select t.a from t union select t.d from t union select t.c from t) k order by a limit 1",
-			best: "UnionAll{Table(t)->HashAgg->Table(t)->HashAgg->Table(t)->HashAgg}->HashAgg->Sort + Limit(1) + Offset(0)",
+			best: "UnionAll{Table(t)->Projection->Table(t)->HashAgg->Table(t)->HashAgg}->HashAgg->Sort + Limit(1) + Offset(0)",
+		},
+		{
+			sql:  "select t.c from t where 0 = (select count(b) from t t1 where t.a = t1.b)",
+			best: "LeftHashJoin{Table(t)->Table(t)->HashAgg}(test.t.a,t1.b)->Projection->Selection->Projection",
 		},
 	}
 	for _, ca := range cases {
@@ -536,7 +540,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
-		lp, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagAggPushDown|flagDecorrelate, lp, builder.ctx, builder.allocator)
+		lp, err = logicalOptimize(flagPredicatePushDown|flagBuildKeyInfo|flagPrunColumns|flagAggregationOptimize|flagDecorrelate, lp, builder.ctx, builder.allocator)
 		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
@@ -996,5 +1000,57 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 		c.Assert(rb.err, IsNil)
 		got := fmt.Sprintf("%v", result)
 		c.Assert(got, Equals, ca.resultStr, Commentf("different for expr %s", ca.exprStr))
+	}
+}
+
+func (s *testPlanSuite) TestScanController(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		sql string
+		ans string
+	}{
+		{
+			sql: "select (select count(1) k from t s where s.a = t.a having k != 0) from t",
+			ans: "Apply{Table(t)->Table(t)->Selection->StreamAgg}->Projection",
+		},
+		{
+			sql: "select (select count(1) k from t s where s.b = t.b having k != 0) from t",
+			ans: "Apply{Table(t)->Table(t)->Cache->Selection->StreamAgg}->Projection",
+		},
+		{
+			sql: "select (select count(1) k from t s where s.f = t.f having k != 0) from t",
+			ans: "Apply{Table(t)->Index(t.f)[]->Selection->StreamAgg}->Projection",
+		},
+	}
+	for _, ca := range cases {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		ast.SetFlag(stmt)
+
+		is, err := mockResolve(stmt)
+		c.Assert(err, IsNil)
+
+		builder := &planBuilder{
+			allocator: new(idAllocator),
+			ctx:       mockContext(),
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+			is:        is,
+		}
+		p := builder.build(stmt)
+		c.Assert(builder.err, IsNil)
+		lp := p.(LogicalPlan)
+		_, lp, err = lp.PredicatePushDown(nil)
+		c.Assert(err, IsNil)
+		lp.PruneColumns(lp.Schema().Columns)
+		dSolver := &decorrelateSolver{}
+		lp, err = dSolver.optimize(lp, mockContext(), new(idAllocator))
+		c.Assert(err, IsNil)
+		lp.ResolveIndicesAndCorCols()
+		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
+		pp := info.p
+		pp = EliminateProjection(pp)
+		addCachePlan(pp, builder.allocator)
+		c.Assert(ToString(pp), Equals, ca.ans, Commentf("for %s", ca.sql))
 	}
 }

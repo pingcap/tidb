@@ -132,6 +132,46 @@ func (s *testEvaluatorSuite) TestShaEncrypt(c *C) {
 	c.Assert(crypt.IsNull(), IsTrue)
 }
 
+var sha2Cases = []struct {
+	origin     interface{}
+	hashLength interface{}
+	crypt      interface{}
+	validCase  bool
+}{
+	{"pingcap", 0, "2871823be240f8ecd1d72f24c99eaa2e58af18b4b8ba99a4fc2823ba5c43930a", true},
+	{"pingcap", 224, "cd036dc9bec69e758401379c522454ea24a6327b48724b449b40c6b7", true},
+	{"pingcap", 256, "2871823be240f8ecd1d72f24c99eaa2e58af18b4b8ba99a4fc2823ba5c43930a", true},
+	{"pingcap", 384, "c50955b6b0c7b9919740d956849eedcb0f0f90bf8a34e8c1f4e071e3773f53bd6f8f16c04425ff728bed04de1b63db51", true},
+	{"pingcap", 512, "ea903c574370774c4844a83b7122105a106e04211673810e1baae7c2ae7aba2cf07465e02f6c413126111ef74a417232683ce7ba210052e63c15fc82204aad80", true},
+	{13572468, 0, "1c91ab1c162fd0cae60a5bb9880f3e7d5a133a65b6057a644b26973d9c55dcfe", true},
+	{13572468, 224, "8ad67735bbf49576219f364f4640d595357a440358d15bf6815a16e4", true},
+	{13572468, 256, "1c91ab1c162fd0cae60a5bb9880f3e7d5a133a65b6057a644b26973d9c55dcfe", true},
+	{13572468.123, 384, "3b4ee302435dc1e15251efd9f3982b1ca6fe4ac778d3260b7bbf3bea613849677eda830239420e448e4c6dc7c2649d89", true},
+	{13572468.123, 512, "4820aa3f2760836557dc1f2d44a0ba7596333fdb60c8a1909481862f4ab0921c00abb23d57b7e67a970363cc3fcb78b25b6a0d45cdcac0e87aa0c96bc51f7f96", true},
+	{nil, 224, nil, false},
+	{"pingcap", nil, nil, false},
+	{"pingcap", 123, nil, false},
+}
+
+func (s *testEvaluatorSuite) TestSha2Encrypt(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.SHA2]
+	for _, test := range sha2Cases {
+		str := types.NewDatum(test.origin)
+		hashLength := types.NewDatum(test.hashLength)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{str, hashLength}), s.ctx)
+		crypt, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		if test.validCase {
+			res, err := crypt.ToString()
+			c.Assert(err, IsNil)
+			c.Assert(res, Equals, test.crypt)
+		} else {
+			c.Assert(crypt.IsNull(), IsTrue)
+		}
+	}
+}
+
 type md5Test struct {
 	out interface{}
 	in  interface{}
@@ -160,4 +200,33 @@ func (s *testEvaluatorSuite) TestMD5(c *C) {
 		c.Assert(out, DeepEquals, types.NewDatum(test.out))
 	}
 	s.testNullInput(c, ast.AesDecrypt)
+}
+
+func (s *testEvaluatorSuite) TestRandomBytes(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.RandomBytes]
+	f, err := fc.getFunction(datumsToConstants([]types.Datum{types.NewDatum(32)}), s.ctx)
+	c.Assert(err, IsNil)
+	out, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(len(out.GetBytes()), Equals, 32)
+
+	f, err = fc.getFunction(datumsToConstants([]types.Datum{types.NewDatum(1025)}), s.ctx)
+	c.Assert(err, IsNil)
+	_, err = f.eval(nil)
+	c.Assert(err, NotNil)
+	f, err = fc.getFunction(datumsToConstants([]types.Datum{types.NewDatum(-32)}), s.ctx)
+	c.Assert(err, IsNil)
+	_, err = f.eval(nil)
+	c.Assert(err, NotNil)
+	f, err = fc.getFunction(datumsToConstants([]types.Datum{types.NewDatum(0)}), s.ctx)
+	c.Assert(err, IsNil)
+	_, err = f.eval(nil)
+	c.Assert(err, NotNil)
+
+	f, err = fc.getFunction(datumsToConstants([]types.Datum{types.NewDatum(nil)}), s.ctx)
+	c.Assert(err, IsNil)
+	out, err = f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(len(out.GetBytes()), Equals, 0)
 }
