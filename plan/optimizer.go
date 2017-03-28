@@ -108,9 +108,6 @@ func logicalOptimize(flag uint64, logic LogicalPlan, ctx context.Context, alloc 
 		// The order of flags is same as the order of optRule in the list.
 		// We use a bitmask to record which opt rules should be used. If the i-th bit is 1, it means we should
 		// apply i-th optimizing rule.
-		if (1 << uint(i)) == flagDecorrelate {
-			continue
-		}
 		if flag&(1<<uint(i)) == 0 {
 			continue
 		}

@@ -643,7 +643,7 @@ func (p *Join) buildSelectionWithConds(left bool) (*Selection, []*expression.Cor
 		conds = append(conds, newCond)
 	}
 	selection.Conditions = conds
-	_, selection.canControlScan = selection.makeScanController(false)
+	_, selection.canControlScan = selection.makeScanController(true)
 	return selection, corCols
 }
 
@@ -681,7 +681,7 @@ func (p *Join) convert2IndexNestedLoopJoinLeft(prop *requiredProperty, innerJoin
 	if !selection.canControlScan {
 		return nil, nil
 	}
-	rInfo, err := selection.convert2PhysicalPlan(&requiredProperty{})
+	rInfo, _ := selection.makeScanController(false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -755,7 +755,7 @@ func (p *Join) convert2IndexNestedLoopJoinRight(prop *requiredProperty, innerJoi
 	if !selection.canControlScan {
 		return nil, nil
 	}
-	lInfo, err := selection.convert2PhysicalPlan(&requiredProperty{})
+	lInfo, _ := selection.makeScanController(false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -955,7 +955,7 @@ func (p *Join) convert2PhysicalMergeJoinOnCost(prop *requiredProperty) (*physica
 	return minInfo, nil
 }
 
-func (p *Join) ifValidForMergeJoin() bool {
+func (p *Join) hasEqualConds() bool {
 	// rule out non-equal join
 	if len(p.EqualConditions) == 0 {
 		return false
@@ -980,7 +980,7 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 			return nil, errors.Trace(err)
 		}
 	case LeftOuterJoin:
-		if p.preferMergeJoin && p.ifValidForMergeJoin() {
+		if p.preferMergeJoin && p.hasEqualConds() {
 			info, err = p.convert2PhysicalMergeJoinOnCost(prop)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -989,7 +989,7 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 				break
 			}
 		}
-		if p.preferINLJ {
+		if p.preferINLJ && p.hasEqualConds() {
 			nljInfo, err := p.convert2IndexNestedLoopJoinLeft(prop, false)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -1005,7 +1005,7 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 			return nil, errors.Trace(err)
 		}
 	case RightOuterJoin:
-		if p.preferMergeJoin && p.ifValidForMergeJoin() {
+		if p.preferMergeJoin && p.hasEqualConds() {
 			info, err = p.convert2PhysicalMergeJoinOnCost(prop)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -1014,7 +1014,7 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 				break
 			}
 		}
-		if p.preferINLJ {
+		if p.preferINLJ && p.hasEqualConds() {
 			nljInfo, err := p.convert2IndexNestedLoopJoinRight(prop, false)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -1030,14 +1030,14 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 		}
 	default:
 		// Inner Join
-		if p.preferMergeJoin && p.ifValidForMergeJoin() {
+		if p.preferMergeJoin && p.hasEqualConds() {
 			info, err = p.convert2PhysicalMergeJoinOnCost(prop)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			break
 		}
-		if p.preferINLJ {
+		if p.preferINLJ && p.hasEqualConds() {
 			if _, ok := p.children[0].(*DataSource); ok {
 				lNLJInfo, err := p.convert2IndexNestedLoopJoinRight(prop, true)
 				if err != nil {
@@ -1740,6 +1740,7 @@ func addCachePlan(p PhysicalPlan, allocator *idAllocator) []*expression.Correlat
 		childCorCols := addCachePlan(child.(PhysicalPlan), allocator)
 		// If p is a Selection and controls the access condition of below scan plan, there shouldn't have a cache plan.
 		if sel, ok := p.(*Selection); len(selfCorCols) > 0 && len(childCorCols) == 0 && (!ok || !sel.ScanController) {
+			log.Warnf("child: %v", child.ID())
 			newChild := &Cache{}
 			newChild.tp = "Cache"
 			newChild.allocator = allocator

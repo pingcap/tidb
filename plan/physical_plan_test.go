@@ -1054,3 +1054,71 @@ func (s *testPlanSuite) TestScanController(c *C) {
 		c.Assert(ToString(pp), Equals, ca.ans, Commentf("for %s", ca.sql))
 	}
 }
+
+func (s *testPlanSuite) TestJoinAlgorithm(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		sql string
+		ans string
+	}{
+		{
+			sql: "select * from t t1 join t t2 on t1.a = t2.a",
+			ans: "LeftHashJoin{Table(t)->Table(t)}(t1.a,t2.a)",
+		},
+		{
+			sql: "select /*+ tidb_smj(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a",
+			ans: "MergeJoin{Table(t)->Table(t)}(t1.a,t2.a)",
+		},
+		{
+			sql: "select /*+ tidb_inlj(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a",
+			ans: "Apply{Table(t)->Selection->Table(t)->Cache}",
+		},
+		{
+			sql: "select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 on t1.a > t2.a",
+			ans: "LeftHashJoin{Table(t)->Table(t)}",
+		},
+		{
+			sql: "select /*+ TIDB_INLJ(t1, t2) */ * from t t1 join t t2 on t1.a > t2.a",
+			ans: "LeftHashJoin{Table(t)->Table(t)}",
+		},
+		{
+			sql: "select /*+ tidb_inlj(t2, t2) */ * from t t1 right outer join t t2 on t1.a = t2.c",
+			ans: "Apply{Table(t)->Selection->Table(t)->Cache}",
+		},
+		{
+			sql: "select /*+ tidb_inlj(t2, t2) */ * from t t1 left outer join t t2 on t1.a = t2.c",
+			ans: "LeftHashJoin{Table(t)->Table(t)}(t1.a,t2.c)",
+		},
+	}
+	for _, ca := range cases {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		ast.SetFlag(stmt)
+
+		is, err := mockResolve(stmt)
+		c.Assert(err, IsNil)
+
+		builder := &planBuilder{
+			allocator: new(idAllocator),
+			ctx:       mockContext(),
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+			is:        is,
+		}
+		p := builder.build(stmt)
+		c.Assert(builder.err, IsNil)
+		lp := p.(LogicalPlan)
+		_, lp, err = lp.PredicatePushDown(nil)
+		c.Assert(err, IsNil)
+		lp.PruneColumns(lp.Schema().Columns)
+		dSolver := &decorrelateSolver{}
+		lp, err = dSolver.optimize(lp, mockContext(), new(idAllocator))
+		c.Assert(err, IsNil)
+		lp.ResolveIndicesAndCorCols()
+		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
+		pp := info.p
+		pp = EliminateProjection(pp)
+		addCachePlan(pp, builder.allocator)
+		c.Assert(ToString(pp), Equals, ca.ans, Commentf("for %s", ca.sql))
+	}
+}
