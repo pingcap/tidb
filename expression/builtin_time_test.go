@@ -18,13 +18,13 @@ import (
 	"strings"
 	"time"
 
-	"fmt"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
+	"fmt"
 )
 
 func (s *testEvaluatorSuite) TestDate(c *C) {
@@ -997,8 +997,6 @@ func (s *testEvaluatorSuite) TestTimestamp(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestTimeArithFuncFactory(c *C) {
-	fmt.Printf("timeArithFuncFactory")
-
 	defer testleak.AfterTest(c)()
 
 	testsDateTimeStrings := []struct {
@@ -1030,7 +1028,6 @@ func (s *testEvaluatorSuite) TestTimeArithFuncFactory(c *C) {
 	for _, test := range testsDateTimeStrings {
 		t1 := types.NewStringDatum(test.t1)
 		t2 := types.NewStringDatum(test.t2)
-		fmt.Println("timestamps", t1.GetString(), t2.GetString())
 		result1, err := timeAdd([]types.Datum{t1, t2}, s.ctx)
 		c.Assert(err, IsNil)
 
@@ -1044,7 +1041,6 @@ func (s *testEvaluatorSuite) TestTimeArithFuncFactory(c *C) {
 	for _, test := range testsDurationStrings {
 		t1 := types.NewStringDatum(test.t1)
 		t2 := types.NewStringDatum(test.t2)
-		fmt.Println("durations", t1.GetString(), t2.GetString())
 
 		result1, err := timeAdd([]types.Datum{t1, t2}, s.ctx)
 		c.Assert(err, IsNil)
