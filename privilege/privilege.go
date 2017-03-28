@@ -40,7 +40,7 @@ type Checker interface {
 	ConnectionVerification(host, user string, auth, salt []byte) bool
 
 	// ShowDatabase returns true is the database is visible to current user.
-	DBVisible(db string) bool
+	DBIsVisible(db string) bool
 }
 
 const key keyType = 0

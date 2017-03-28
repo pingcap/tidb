@@ -142,7 +142,7 @@ func (e *ShowExec) fetchShowDatabases() error {
 	// TODO: let information_schema be the first database
 	sort.Strings(dbs)
 	for _, d := range dbs {
-		if checker != nil && !checker.DBVisible(d) {
+		if checker != nil && !checker.DBIsVisible(d) {
 			continue
 		}
 		e.rows = append(e.rows, &Row{Data: types.MakeDatums(d)})
