@@ -21,6 +21,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"golang.org/x/net/context"
 )
 
 var _ oracle.Oracle = &pdOracle{}
@@ -73,7 +74,7 @@ func (o *pdOracle) GetTimestamp() (uint64, error) {
 
 func (o *pdOracle) getTimestamp() (uint64, error) {
 	now := time.Now()
-	physical, logical, err := o.c.GetTS()
+	physical, logical, err := o.c.GetTS(context.TODO())
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

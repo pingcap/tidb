@@ -1560,9 +1560,9 @@ func (b *builtinTimestampSig) eval(row []types.Datum) (d types.Datum, err error)
 			return d, errors.Trace(err)
 		}
 	case types.KindString, types.KindBytes, types.KindMysqlDecimal, types.KindFloat32, types.KindFloat64:
-		s, err := args[0].ToString()
-		if err != nil {
-			return d, errors.Trace(err)
+		s, err1 := args[0].ToString()
+		if err1 != nil {
+			return d, errors.Trace(err1)
 		}
 		arg0, err = types.ParseTime(s, mysql.TypeDatetime, getFsp(s))
 		if err != nil {

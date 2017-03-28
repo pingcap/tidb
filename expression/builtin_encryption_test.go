@@ -201,3 +201,32 @@ func (s *testEvaluatorSuite) TestMD5(c *C) {
 	}
 	s.testNullInput(c, ast.AesDecrypt)
 }
+
+func (s *testEvaluatorSuite) TestRandomBytes(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.RandomBytes]
+	f, err := fc.getFunction(datumsToConstants([]types.Datum{types.NewDatum(32)}), s.ctx)
+	c.Assert(err, IsNil)
+	out, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(len(out.GetBytes()), Equals, 32)
+
+	f, err = fc.getFunction(datumsToConstants([]types.Datum{types.NewDatum(1025)}), s.ctx)
+	c.Assert(err, IsNil)
+	_, err = f.eval(nil)
+	c.Assert(err, NotNil)
+	f, err = fc.getFunction(datumsToConstants([]types.Datum{types.NewDatum(-32)}), s.ctx)
+	c.Assert(err, IsNil)
+	_, err = f.eval(nil)
+	c.Assert(err, NotNil)
+	f, err = fc.getFunction(datumsToConstants([]types.Datum{types.NewDatum(0)}), s.ctx)
+	c.Assert(err, IsNil)
+	_, err = f.eval(nil)
+	c.Assert(err, NotNil)
+
+	f, err = fc.getFunction(datumsToConstants([]types.Datum{types.NewDatum(nil)}), s.ctx)
+	c.Assert(err, IsNil)
+	out, err = f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(len(out.GetBytes()), Equals, 0)
+}

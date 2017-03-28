@@ -69,13 +69,14 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 		for _, cond := range sel.Conditions {
 			conds = append(conds, cond.Clone())
 		}
-		ts.AccessCondition, newSel.Conditions = detachTableScanConditions(conds, table)
+		ts.AccessCondition, newSel.Conditions = DetachTableScanConditions(conds, table)
 		ts.TableConditionPBExpr, ts.tableFilterConditions, newSel.Conditions =
-			expressionsToPB(sc, newSel.Conditions, client)
-		err := buildTableRange(ts)
+			ExpressionsToPB(sc, newSel.Conditions, client)
+		ranges, err := BuildTableRange(ts.AccessCondition, sc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		ts.Ranges = ranges
 		if len(newSel.Conditions) > 0 {
 			newSel.SetChildren(ts)
 			newSel.onTable = true
@@ -144,16 +145,16 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		for _, cond := range sel.Conditions {
 			conds = append(conds, cond.Clone())
 		}
-		is.AccessCondition, newSel.Conditions = detachIndexScanConditions(conds, is)
+		is.AccessCondition, newSel.Conditions = DetachIndexScanConditions(conds, is)
 		memDB := infoschema.IsMemoryDB(p.DBName.L)
 		isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeIndex, 0)
 		if isDistReq {
-			idxConds, tblConds := detachIndexFilterConditions(newSel.Conditions, is.Index.Columns, is.Table)
-			is.IndexConditionPBExpr, is.indexFilterConditions, idxConds = expressionsToPB(sc, idxConds, client)
-			is.TableConditionPBExpr, is.tableFilterConditions, tblConds = expressionsToPB(sc, tblConds, client)
+			idxConds, tblConds := DetachIndexFilterConditions(newSel.Conditions, is.Index.Columns, is.Table)
+			is.IndexConditionPBExpr, is.indexFilterConditions, idxConds = ExpressionsToPB(sc, idxConds, client)
+			is.TableConditionPBExpr, is.tableFilterConditions, tblConds = ExpressionsToPB(sc, tblConds, client)
 			newSel.Conditions = append(idxConds, tblConds...)
 		}
-		err := buildIndexRange(p.ctx.GetSessionVars().StmtCtx, is)
+		err := BuildIndexRange(p.ctx.GetSessionVars().StmtCtx, is)
 		if err != nil {
 			if !terror.ErrorEqual(err, types.ErrTruncated) {
 				return nil, errors.Trace(err)
@@ -342,6 +343,13 @@ func removeLimit(prop *requiredProperty) *requiredProperty {
 	ret := &requiredProperty{
 		props:      prop.props,
 		sortKeyLen: prop.sortKeyLen,
+	}
+	return ret
+}
+
+func removeSortOrder(prop *requiredProperty) *requiredProperty {
+	ret := &requiredProperty{
+		limit: prop.limit,
 	}
 	return ret
 }
@@ -627,11 +635,12 @@ func (p *Join) convert2PhysicalMergeJoin(parentProp *requiredProperty, lProp *re
 		newCond.ResolveIndices(p.schema)
 		newEQConds = append(newEQConds, newCond.(*expression.ScalarFunction))
 	}
+	eqCond := p.EqualConditions[condIndex]
 
 	otherFilter := append(expression.ScalarFuncs2Exprs(newEQConds), p.OtherConditions...)
 
 	join := &PhysicalMergeJoin{
-		EqualConditions: []*expression.ScalarFunction{p.EqualConditions[condIndex]},
+		EqualConditions: []*expression.ScalarFunction{eqCond},
 		LeftConditions:  p.LeftConditions,
 		RightConditions: p.RightConditions,
 		OtherConditions: otherFilter,
@@ -683,6 +692,7 @@ func (p *Join) convert2PhysicalMergeJoin(parentProp *requiredProperty, lProp *re
 	} else {
 		rInfo = rInfoNoSorted
 	}
+	parentProp = join.tryConsumeOrder(parentProp, eqCond)
 
 	resultInfo := join.matchProperty(parentProp, lInfo, rInfo)
 	// TODO: Considering keeping order in join to remove at least
@@ -981,6 +991,130 @@ func (p *Union) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 	return info, nil
 }
 
+// makeScanController will try to build a selection that controls the below scan's filter condition,
+// and return a physicalPlanInfo. If the onlyJudge is true, it will only check whether this selection
+// can become a scan controller without building the physical plan.
+func (p *Selection) makeScanController(onlyJudge bool) (*physicalPlanInfo, bool) {
+	var (
+		child       PhysicalPlan
+		corColConds []expression.Expression
+		pkCol       *expression.Column
+	)
+	ds := p.children[0].(*DataSource)
+	indices, includeTableScan := availableIndices(ds.indexHints, ds.tableInfo)
+	for _, expr := range p.Conditions {
+		if !expr.IsCorrelated() {
+			continue
+		}
+		cond := pushDownNot(expr, false, nil)
+		corCols := extractCorColumns(cond)
+		for _, col := range corCols {
+			*col.Data = expression.One.Value
+		}
+		newCond, _ := expression.SubstituteCorCol2Constant(cond)
+		corColConds = append(corColConds, newCond)
+	}
+	if ds.tableInfo.PKIsHandle && includeTableScan {
+		for i, col := range ds.Columns {
+			if mysql.HasPriKeyFlag(col.Flag) {
+				pkCol = ds.schema.Columns[i]
+				break
+			}
+		}
+	}
+	if pkCol != nil {
+		if onlyJudge {
+			checker := conditionChecker{
+				pkName: pkCol.ColName,
+				length: types.UnspecifiedLength,
+			}
+			// Pk should satisfies the same property as the index.
+			for _, cond := range corColConds {
+				if checker.check(cond) {
+					return nil, true
+				}
+			}
+			return nil, false
+		}
+		ts := &PhysicalTableScan{
+			Table:               ds.tableInfo,
+			Columns:             ds.Columns,
+			TableAsName:         ds.TableAsName,
+			DBName:              ds.DBName,
+			physicalTableSource: physicalTableSource{client: ds.ctx.GetClient()},
+		}
+		ts.tp = Tbl
+		ts.allocator = ds.allocator
+		ts.SetSchema(ds.schema)
+		ts.initIDAndContext(ds.ctx)
+		if ds.ctx.Txn() != nil {
+			ts.readOnly = p.ctx.Txn().IsReadOnly()
+		} else {
+			ts.readOnly = true
+		}
+		child = ts
+	} else {
+		var chosenPlan *PhysicalIndexScan
+		for _, expr := range p.Conditions {
+			if !expr.IsCorrelated() {
+				continue
+			}
+			cond, _ := expression.SubstituteCorCol2Constant(expr)
+			corColConds = append(corColConds, cond)
+		}
+		for _, idx := range indices {
+			condsBackUp := make([]expression.Expression, 0, len(corColConds))
+			for _, cond := range corColConds {
+				condsBackUp = append(condsBackUp, cond.Clone())
+			}
+			is := &PhysicalIndexScan{
+				Table:               ds.tableInfo,
+				Index:               idx,
+				Columns:             ds.Columns,
+				TableAsName:         ds.TableAsName,
+				OutOfOrder:          true,
+				DBName:              ds.DBName,
+				physicalTableSource: physicalTableSource{client: ds.ctx.GetClient()},
+			}
+			is.tp = Idx
+			is.allocator = ds.allocator
+			is.SetSchema(ds.schema)
+			is.initIDAndContext(ds.ctx)
+			if is.ctx.Txn() != nil {
+				is.readOnly = p.ctx.Txn().IsReadOnly()
+			} else {
+				is.readOnly = true
+			}
+			accessConds, _ := DetachIndexScanConditions(condsBackUp, is)
+			if len(accessConds) == 0 {
+				continue
+			}
+			if onlyJudge {
+				return nil, true
+			}
+			better := chosenPlan == nil || chosenPlan.accessEqualCount < is.accessEqualCount
+			better = better || (chosenPlan.accessEqualCount == is.accessEqualCount && chosenPlan.accessInAndEqCount < is.accessInAndEqCount)
+			if better {
+				chosenPlan = is
+			}
+			is.DoubleRead = !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
+		}
+		if chosenPlan == nil && onlyJudge {
+			return nil, false
+		}
+		child = chosenPlan
+	}
+	newSel := *p
+	newSel.ScanController = true
+	newSel.SetChildren(child)
+	info := &physicalPlanInfo{
+		p:     &newSel,
+		count: uint64(ds.statisticTable.Count),
+	}
+	info.cost = float64(info.count) * selectionFactor
+	return info, true
+}
+
 // convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
 func (p *Selection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	info, err := p.getPlanInfo(prop)
@@ -988,6 +1122,12 @@ func (p *Selection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanI
 		return nil, errors.Trace(err)
 	}
 	if info != nil {
+		return info, nil
+	}
+	if p.canControlScan {
+		info, _ = p.makeScanController(false)
+		info = enforceProperty(prop, info)
+		p.storePlanInfo(prop, info)
 		return info, nil
 	}
 	// Firstly, we try to push order.
@@ -1333,7 +1473,8 @@ func addCachePlan(p PhysicalPlan, allocator *idAllocator) []*expression.Correlat
 	newChildren := make([]Plan, 0, len(p.Children()))
 	for _, child := range p.Children() {
 		childCorCols := addCachePlan(child.(PhysicalPlan), allocator)
-		if len(selfCorCols) > 0 && len(childCorCols) == 0 {
+		// If p is a Selection and controls the access condition of below scan plan, there shouldn't have a cache plan.
+		if sel, ok := p.(*Selection); len(selfCorCols) > 0 && len(childCorCols) == 0 && (!ok || !sel.ScanController) {
 			newChild := &Cache{}
 			newChild.tp = "Cache"
 			newChild.allocator = allocator
