@@ -404,7 +404,7 @@ func (h *rpcHandler) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, limit
 //	2. Checks if it fit where condition.
 //	3. Update aggregate functions.
 func (h *rpcHandler) handleRowData(ctx *selectContext, handle int64, value []byte) ([]byte, error) {
-	values, err := HandleRowData(ctx.sel.TableInfo.Columns, ctx.colTps, handle, value)
+	values, err := handleRowData(ctx.sel.TableInfo.Columns, ctx.colTps, handle, value)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

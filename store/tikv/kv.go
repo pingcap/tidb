@@ -32,9 +32,6 @@ import (
 	goctx "golang.org/x/net/context"
 )
 
-// MockDAGRequest is used for testing now.
-var MockDAGRequest bool
-
 type storeCache struct {
 	sync.Mutex
 	cache map[string]*tikvStore
@@ -123,7 +120,6 @@ func NewMockTikvStore() (kv.Storage, error) {
 	client := mocktikv.NewRPCClient(cluster, mvccStore)
 	uuid := fmt.Sprintf("mock-tikv-store-:%v", time.Now().Unix())
 	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
-	mocktikv.MockDAGRequest = &MockDAGRequest
 	return newTikvStore(uuid, pdCli, client, false)
 }
 

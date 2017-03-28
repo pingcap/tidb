@@ -124,6 +124,7 @@ type Client interface {
 const (
 	ReqTypeSelect = 101
 	ReqTypeIndex  = 102
+	ReqTypeDAG    = 103
 
 	ReqSubTypeBasic   = 0
 	ReqSubTypeDesc    = 10000

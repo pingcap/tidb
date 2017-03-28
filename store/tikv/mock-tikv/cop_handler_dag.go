@@ -26,7 +26,7 @@ import (
 )
 
 // MockDAGRequest is used for testing now.
-var MockDAGRequest *bool
+var MockDAGRequest bool
 
 type dagContext struct {
 	dagReq    *tipb.DAGRequest
@@ -46,7 +46,7 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor
 	if len(req.Ranges) == 0 {
 		return resp, nil
 	}
-	if req.GetTp() != kv.ReqTypeSelect && req.GetTp() != kv.ReqTypeIndex {
+	if req.GetTp() != kv.ReqTypeDAG {
 		return resp, nil
 	}
 	if err := h.checkContext(req.GetContext()); err != nil {
@@ -103,12 +103,13 @@ func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 		}
 		ranges := h.extractKVRanges(ctx.keyRanges, *curr.TblScan.Desc)
 		currExec = &tableScanExec{
-			TableScan: curr.TblScan,
-			kvRanges:  ranges,
-			colTps:    colTps,
-			startTS:   ctx.dagReq.GetStartTs(),
-			mvccStore: h.mvccStore,
-			newRange:  true,
+			TableScan:   curr.TblScan,
+			kvRanges:    ranges,
+			colTps:      colTps,
+			startTS:     ctx.dagReq.GetStartTs(),
+			mvccStore:   h.mvccStore,
+			rawStartKey: h.rawStartKey,
+			rawEndKey:   h.rawEndKey,
 		}
 	case tipb.ExecType_TypeIndexScan:
 		columns := curr.IdxScan.Columns
@@ -124,12 +125,13 @@ func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 		}
 		ranges := h.extractKVRanges(ctx.keyRanges, *curr.IdxScan.Desc)
 		currExec = &indexScanExec{
-			IndexScan: curr.IdxScan,
-			kvRanges:  ranges,
-			ids:       ids,
-			startTS:   ctx.dagReq.GetStartTs(),
-			mvccStore: h.mvccStore,
-			newRange:  true,
+			IndexScan:   curr.IdxScan,
+			kvRanges:    ranges,
+			ids:         ids,
+			startTS:     ctx.dagReq.GetStartTs(),
+			mvccStore:   h.mvccStore,
+			rawStartKey: h.rawStartKey,
+			rawEndKey:   h.rawEndKey,
 		}
 	case tipb.ExecType_TypeSelection:
 		var cond *tipb.Expr
@@ -149,7 +151,7 @@ func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 			sc:        ctx.sc,
 		}
 	default:
-		// TODO: support other types.
+		// TODO: Support other types.
 	}
 
 	return currExec, nil
@@ -166,9 +168,4 @@ func (h *rpcHandler) buildDAG(ctx *dagContext, executors []*tipb.Executor) (exec
 		src = curr
 	}
 	return src, nil
-}
-
-func init() {
-	mock := false
-	MockDAGRequest = &mock
 }

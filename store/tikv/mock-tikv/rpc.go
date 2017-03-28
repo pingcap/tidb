@@ -401,8 +401,9 @@ func (c *RPCClient) SendCopReq(ctx goctx.Context, addr string, req *coprocessor.
 	default:
 	}
 
-	if *MockDAGRequest {
+	if MockDAGRequest {
 		if req.GetTp() == kv.ReqTypeSelect || req.GetTp() == kv.ReqTypeIndex {
+			req.Tp = kv.ReqTypeDAG
 			resp, err := c.SendCopReqNew(addr, req, timeout)
 			return resp, errors.Trace(err)
 		}
