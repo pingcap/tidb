@@ -20,6 +20,7 @@ import (
 	"crypto/sha512"
 	"fmt"
 	"hash"
+	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
@@ -362,6 +363,14 @@ type builtinCreateDigestSig struct {
 	baseBuiltinFunc
 }
 
+// Supported digest type name
+const (
+	SHA224NAME string = "SHA224"
+	SHA256NAME string = "SHA256"
+	SHA384NAME string = "SHA384"
+	SHA512NAME string = "SHA512"
+)
+
 // See https://dev.mysql.com/doc/refman/5.7/en/enterprise-encryption-functions.html#function_create-digest
 func (b *builtinCreateDigestSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -380,6 +389,7 @@ func (b *builtinCreateDigestSig) eval(row []types.Datum) (d types.Datum, err err
 	if err != nil {
 		return d, errors.Trace(err)
 	}
+	digestType = strings.ToUpper(digestType)
 
 	bin, err := args[1].ToBytes()
 	if err != nil {
@@ -388,13 +398,13 @@ func (b *builtinCreateDigestSig) eval(row []types.Datum) (d types.Datum, err err
 
 	var hasher hash.Hash
 	switch digestType {
-	case "SHA224":
+	case SHA224NAME:
 		hasher = sha256.New224()
-	case "SHA256":
+	case SHA256NAME:
 		hasher = sha256.New()
-	case "SHA384":
+	case SHA384NAME:
 		hasher = sha512.New384()
-	case "SHA512":
+	case SHA512NAME:
 		hasher = sha512.New()
 	}
 
