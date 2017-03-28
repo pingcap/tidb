@@ -70,11 +70,9 @@ func (s *testSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	logLevel := os.Getenv("log_level")
 	log.SetLevelByString(logLevel)
-	executor.BaseLookupTableTaskSize = 2
 }
 
 func (s *testSuite) TearDownSuite(c *C) {
-	executor.BaseLookupTableTaskSize = 512
 	s.store.Close()
 }
 
@@ -118,7 +116,6 @@ func (s *testSuite) TestAdmin(c *C) {
 	rowOwnerInfos = strings.Split(row.Data[4].GetString(), ",")
 	ownerInfos = strings.Split(bgInfo.Owner.String(), ",")
 	c.Assert(rowOwnerInfos[0], Equals, ownerInfos[0])
-	c.Assert(row.Data[5].GetString(), Equals, "")
 	row, err = r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, IsNil)
@@ -1279,4 +1276,17 @@ func (s *testSuite) TestHistoryRead(c *C) {
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2", "4"))
 	tk.MustExec("set @@tidb_snapshot = ''")
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2 <nil>", "4 <nil>", "8 8", "9 9"))
+}
+
+func (s *testSuite) TestScanControlSelection(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int, c int, index idx_b(b))")
+	tk.MustExec("insert into t values (1, 1, 1), (2, 1, 1), (3, 1, 2), (4, 2, 3)")
+	tk.MustQuery("select (select count(1) k from t s where s.b = t1.c) from t t1").Check(testkit.Rows("3", "3", "1", "0"))
 }

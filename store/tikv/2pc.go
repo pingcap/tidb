@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tipb/go-binlog"
-	"golang.org/x/net/context"
+	goctx "golang.org/x/net/context"
 )
 
 type twoPhaseCommitAction int
@@ -254,7 +254,7 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 	}
 
 	// For prewrite, stop sending other requests after receiving first error.
-	var cancel context.CancelFunc
+	var cancel goctx.CancelFunc
 	if action == actionPrewrite {
 		cancel = bo.WithCancel()
 	}
@@ -469,7 +469,7 @@ const maxTxnTimeUse = 590000
 
 // execute executes the two-phase commit protocol.
 func (c *twoPhaseCommitter) execute() error {
-	ctx := context.Background()
+	ctx := goctx.Background()
 	defer func() {
 		// Always clean up all written keys if the txn does not commit.
 		c.mu.RLock()
@@ -504,6 +504,15 @@ func (c *twoPhaseCommitter) execute() error {
 	commitTS, err := c.store.getTimestampWithRetry(NewBackoffer(tsoMaxBackoff, ctx))
 	if err != nil {
 		log.Warnf("2PC get commitTS failed: %v, tid: %d", err, c.startTS)
+		return errors.Trace(err)
+	}
+
+	// check commitTS
+	if commitTS <= c.startTS {
+		err = errors.Errorf("Invalid transaction tso with start_ts=%v while commit_ts=%v",
+			c.startTS,
+			commitTS)
+		log.Error(err)
 		return errors.Trace(err)
 	}
 	c.commitTS = commitTS

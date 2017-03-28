@@ -88,7 +88,9 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 	case *plan.PhysicalUnionScan:
 		return b.buildUnionScanExec(v)
 	case *plan.PhysicalHashJoin:
-		return b.buildJoin(v)
+		return b.buildHashJoin(v)
+	case *plan.PhysicalMergeJoin:
+		return b.buildMergeJoin(v)
 	case *plan.PhysicalHashSemiJoin:
 		return b.buildSemiJoin(v)
 	case *plan.Selection:
@@ -362,7 +364,34 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 	return us
 }
 
-func (b *executorBuilder) buildJoin(v *plan.PhysicalHashJoin) Executor {
+// TODO: Refactor against different join strategies by extracting common code base
+func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
+	joinBuilder := &joinBuilder{}
+	exec, err := joinBuilder.Context(b.ctx).
+		LeftChild(b.build(v.Children()[0])).
+		RightChild(b.build(v.Children()[1])).
+		EqualConditions(v.EqualConditions).
+		LeftFilter(expression.ComposeCNFCondition(b.ctx, v.LeftConditions...)).
+		RightFilter(expression.ComposeCNFCondition(b.ctx, v.RightConditions...)).
+		OtherFilter(expression.ComposeCNFCondition(b.ctx, v.OtherConditions...)).
+		Schema(v.Schema()).
+		JoinType(v.JoinType).
+		DefaultVals(v.DefaultValues).
+		BuildMergeJoin(v.Desc)
+
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	if exec == nil {
+		b.err = ErrBuildExecutor.GenByArgs("failed to generate merge join executor: ", v.ID())
+		return nil
+	}
+
+	return exec
+}
+
+func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 	var leftHashKey, rightHashKey []*expression.Column
 	var targetTypes []*types.FieldType
 	for _, eqCond := range v.EqualConditions {
@@ -471,10 +500,11 @@ func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor
 
 func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
 	exec := &SelectionExec{
-		Src:       b.build(v.Children()[0]),
-		Condition: expression.ComposeCNFCondition(b.ctx, v.Conditions...),
-		schema:    v.Schema(),
-		ctx:       b.ctx,
+		Src:            b.build(v.Children()[0]),
+		schema:         v.Schema(),
+		ctx:            b.ctx,
+		scanController: v.ScanController,
+		Conditions:     v.Conditions,
 	}
 	return exec
 }
@@ -543,7 +573,6 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 		byItems:     v.GbyItemsPB,
 		orderByList: v.SortItemsPB,
 	}
-	st.scanConcurrency, b.err = getScanConcurrency(b.ctx)
 	return st
 }
 
@@ -570,7 +599,6 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 		aggFields:      v.AggFields,
 		byItems:        v.GbyItemsPB,
 	}
-	st.scanConcurrency, b.err = getScanConcurrency(b.ctx)
 	return st
 }
 

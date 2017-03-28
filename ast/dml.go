@@ -461,6 +461,8 @@ type SelectStmt struct {
 	Limit *Limit
 	// Lock is the lock type
 	LockTp SelectLockType
+	// Table Level Optimizer Hint
+	TableHints []*TableOptimizerHint
 }
 
 // Accept implements Node Accept interface.
@@ -471,6 +473,18 @@ func (n *SelectStmt) Accept(v Visitor) (Node, bool) {
 	}
 
 	n = newNode.(*SelectStmt)
+	if n.TableHints != nil && len(n.TableHints) != 0 {
+		newHints := make([]*TableOptimizerHint, len(n.TableHints))
+		for i, hint := range n.TableHints {
+			node, ok := hint.Accept(v)
+			if !ok {
+				return n, false
+			}
+			newHints[i] = node.(*TableOptimizerHint)
+		}
+		n.TableHints = newHints
+	}
+
 	if n.From != nil {
 		node, ok := n.From.Accept(v)
 		if !ok {
