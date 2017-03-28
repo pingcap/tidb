@@ -236,6 +236,7 @@ func (s *testEvaluatorSuite) TestCreateDigest(c *C) {
 			c.Assert(digest.IsNull(), IsTrue)
 		}
 	}
+}
 
 func (s *testEvaluatorSuite) TestRandomBytes(c *C) {
 	defer testleak.AfterTest(c)()
