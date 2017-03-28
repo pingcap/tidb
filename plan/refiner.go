@@ -31,7 +31,8 @@ var fullRange = []rangePoint{
 	{value: types.MaxValueDatum()},
 }
 
-func buildIndexRange(sc *variable.StatementContext, p *PhysicalIndexScan) error {
+// BuildIndexRange will build range of index for PhysicalIndexScan
+func BuildIndexRange(sc *variable.StatementContext, p *PhysicalIndexScan) error {
 	rb := rangeBuilder{sc: sc}
 	for i := 0; i < p.accessInAndEqCount; i++ {
 		// Build ranges for equal or in access conditions.
@@ -167,7 +168,8 @@ func checkIndexCondition(condition expression.Expression, indexColumns []*model.
 	return true
 }
 
-func detachIndexFilterConditions(conditions []expression.Expression, indexColumns []*model.IndexColumn, table *model.TableInfo) ([]expression.Expression, []expression.Expression) {
+// DetachIndexFilterConditions will detach the access conditions from other conditions.
+func DetachIndexFilterConditions(conditions []expression.Expression, indexColumns []*model.IndexColumn, table *model.TableInfo) ([]expression.Expression, []expression.Expression) {
 	var pKName model.CIStr
 	if table.PKIsHandle {
 		for _, colInfo := range table.Columns {
@@ -188,7 +190,8 @@ func detachIndexFilterConditions(conditions []expression.Expression, indexColumn
 	return indexConditions, tableConditions
 }
 
-func detachIndexScanConditions(conditions []expression.Expression, indexScan *PhysicalIndexScan) ([]expression.Expression, []expression.Expression) {
+// DetachIndexScanConditions will detach the index filters from table filters.
+func DetachIndexScanConditions(conditions []expression.Expression, indexScan *PhysicalIndexScan) ([]expression.Expression, []expression.Expression) {
 	accessConds := make([]expression.Expression, len(indexScan.Index.Columns))
 	var filterConds []expression.Expression
 	// pushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
@@ -246,8 +249,8 @@ func detachIndexScanConditions(conditions []expression.Expression, indexScan *Ph
 	return accessConds, filterConds
 }
 
-// detachTableScanConditions distinguishes between access conditions and filter conditions from conditions.
-func detachTableScanConditions(conditions []expression.Expression, table *model.TableInfo) ([]expression.Expression, []expression.Expression) {
+// DetachTableScanConditions distinguishes between access conditions and filter conditions from conditions.
+func DetachTableScanConditions(conditions []expression.Expression, table *model.TableInfo) ([]expression.Expression, []expression.Expression) {
 	var pkName model.CIStr
 	if table.PKIsHandle {
 		for _, colInfo := range table.Columns {
@@ -283,22 +286,25 @@ func detachTableScanConditions(conditions []expression.Expression, table *model.
 	return accessConditions, filterConditions
 }
 
-func buildTableRange(p *PhysicalTableScan) error {
-	if len(p.AccessCondition) == 0 {
-		p.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
-		return nil
+// BuildTableRange will build range of pk for PhysicalTableScan
+func BuildTableRange(accessConditions []expression.Expression, sc *variable.StatementContext) ([]TableRange, error) {
+	if len(accessConditions) == 0 {
+		return []TableRange{{math.MinInt64, math.MaxInt64}}, nil
 	}
 
-	rb := rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
+	rb := rangeBuilder{sc: sc}
 	rangePoints := fullRange
-	for _, cond := range p.AccessCondition {
+	for _, cond := range accessConditions {
 		rangePoints = rb.intersection(rangePoints, rb.build(cond))
 		if rb.err != nil {
-			return errors.Trace(rb.err)
+			return nil, errors.Trace(rb.err)
 		}
 	}
-	p.Ranges = rb.buildTableRanges(rangePoints)
-	return errors.Trace(rb.err)
+	ranges := rb.buildTableRanges(rangePoints)
+	if rb.err != nil {
+		return nil, errors.Trace(rb.err)
+	}
+	return ranges, nil
 }
 
 // conditionChecker checks if this condition can be pushed to index plan.

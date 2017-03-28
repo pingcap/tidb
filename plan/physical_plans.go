@@ -740,7 +740,8 @@ func (p *Selection) MarshalJSON() ([]byte, error) {
 	buffer := bytes.NewBufferString("{")
 	buffer.WriteString(fmt.Sprintf(""+
 		" \"condition\": %s,\n"+
-		" \"child\": \"%s\"\n}", conds, p.children[0].ID()))
+		" \"scanController\": %v,"+
+		" \"child\": \"%s\"\n}", conds, p.ScanController, p.children[0].ID()))
 	return buffer.Bytes(), nil
 }
 
