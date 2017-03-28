@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/distsql/xeval"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
@@ -458,33 +457,11 @@ func getRowData(value []byte, colTps map[int64]*types.FieldType) (map[int64][]by
 	return res, nil
 }
 
-// Put column values into ctx, the values will be used for expr evaluation.
-func setColumnValueToCtx(eval *xeval.Evaluator, handle int64, row map[int64][]byte, cols map[int64]*tipb.ColumnInfo) error {
-	for colID, col := range cols {
-		if col.GetPkHandle() {
-			if mysql.HasUnsignedFlag(uint(col.GetFlag())) {
-				eval.Row[colID] = types.NewUintDatum(uint64(handle))
-			} else {
-				eval.Row[colID] = types.NewIntDatum(handle)
-			}
-		} else {
-			data := row[colID]
-			ft := distsql.FieldTypeFromPBColumn(col)
-			datum, err := tablecodec.DecodeColumnValue(data, ft)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			eval.Row[colID] = datum
-		}
-	}
-	return nil
-}
-
 func (h *rpcHandler) evalWhereForRow(ctx *selectContext, handle int64, row map[int64][]byte) (bool, error) {
 	if ctx.sel.Where == nil {
 		return true, nil
 	}
-	err := setColumnValueToCtx(ctx.eval, handle, row, ctx.whereColumns)
+	err := setColumnValueToEval(ctx.eval, handle, row, ctx.whereColumns)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
