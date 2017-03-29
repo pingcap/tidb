@@ -222,6 +222,9 @@ func (p *physicalTableSource) tryToAddUnionScan(resultPlan PhysicalPlan) Physica
 	us := &PhysicalUnionScan{
 		Condition: expression.ComposeCNFCondition(p.ctx, append(conditions, p.AccessCondition...)...),
 	}
+	us.tp = "UnionScan"
+	us.allocator = p.allocator
+	us.initIDAndContext(p.ctx)
 	us.SetChildren(resultPlan)
 	us.SetSchema(resultPlan.Schema())
 	return us
@@ -582,6 +585,15 @@ func (p *PhysicalTableScan) MarshalJSON() ([]byte, error) {
 			"\n \"keep order\": %v,"+
 			"\n \"push down info\": %s}",
 		p.DBName.O, p.Table.Name.O, p.Desc, p.KeepOrder, pushDownInfo))
+	return buffer.Bytes(), nil
+}
+
+// MarshalJSON implements json.Marshaler interface.
+func (p *PhysicalMemTable) MarshalJSON() ([]byte, error) {
+	buffer := bytes.NewBufferString("{")
+	buffer.WriteString(fmt.Sprintf(
+		" \"db\": \"%s\",\n \"table\": \"%s\"}",
+		p.DBName.O, p.Table.Name.O))
 	return buffer.Bytes(), nil
 }
 
