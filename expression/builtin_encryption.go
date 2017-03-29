@@ -21,6 +21,7 @@ import (
 	"crypto/sha512"
 	"fmt"
 	"hash"
+	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
@@ -364,9 +365,61 @@ type builtinCreateDigestSig struct {
 	baseBuiltinFunc
 }
 
+// Supported digest type name
+const (
+	SHA224Name string = "SHA224"
+	SHA256Name string = "SHA256"
+	SHA384Name string = "SHA384"
+	SHA512Name string = "SHA512"
+)
+
 // See https://dev.mysql.com/doc/refman/5.7/en/enterprise-encryption-functions.html#function_create-digest
 func (b *builtinCreateDigestSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("CREATE_DIGEST")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	for _, arg := range args {
+		if arg.IsNull() {
+			return d, nil
+		}
+	}
+	// Meaning of each argument:
+	// args[0]: digest type Supported digest_type values: 'SHA224', 'SHA256', 'SHA384', 'SHA512'
+	// args[1]: the string to be digest
+	digestType, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	digestType = strings.ToUpper(digestType)
+
+	bin, err := args[1].ToBytes()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	var hasher hash.Hash
+	switch digestType {
+	case SHA224Name:
+		hasher = sha256.New224()
+	case SHA256Name:
+		hasher = sha256.New()
+	case SHA384Name:
+		hasher = sha512.New384()
+	case SHA512Name:
+		hasher = sha512.New()
+	}
+
+	if hasher != nil {
+		hasher.Write(bin)
+		// generate binary string
+		var binString string
+		for _, c := range string(hasher.Sum(nil)) {
+			binString = fmt.Sprintf("%s%b", binString, c)
+		}
+		d.SetString(binString)
+	}
+	return d, nil
 }
 
 type decodeFunctionClass struct {
