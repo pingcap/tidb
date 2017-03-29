@@ -319,7 +319,7 @@ func closeAll(objs ...Closeable) error {
 // by kv.Client, we only need to pass the concurrency parameter.
 //
 // We also make a higher level of concurrency by doing index request in a background goroutine. The index goroutine
-// starts multple worker goroutines and fetches handles from each index partial request, builds lookup table tasks
+// starts multiple worker goroutines and fetches handles from each index partial request, builds lookup table tasks
 // and sends the task to 'workerCh'.
 //
 // Each worker goroutine receives tasks through the 'workerCh', then executes the task.
