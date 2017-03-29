@@ -273,6 +273,7 @@ var tokenMap = map[string]int{
 	"FUNCTION":                   function,
 	"FLOOR":                      floor,
 	"FLUSH":                      flush,
+	"GET_FORMAT":                 getFormat,
 	"GET_LOCK":                   getLock,
 	"GLOBAL":                     global,
 	"GRANT":                      grant,

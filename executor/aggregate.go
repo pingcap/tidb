@@ -150,7 +150,7 @@ func (e *HashAggExec) innerNext() (ret bool, err error) {
 }
 
 // StreamAggExec deals with all the aggregate functions.
-// It assumes all the input datas is sorted by group by key.
+// It assumes all the input data is sorted by group by key.
 // When Next() is called, it will return a result for the same group.
 type StreamAggExec struct {
 	Src                Executor
