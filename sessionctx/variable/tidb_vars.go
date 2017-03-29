@@ -84,6 +84,8 @@ const (
 	// the input string values are valid, we can skip the check.
 	TiDBSkipUTF8Check = "tidb_skip_utf8_check"
 
+	// tidb_batch_insert is used to enable/disable auto-split insert data. If set this option on, insert executor will automatically
+	// insert data into multiple batches and use a single txn for each batch. This will be helpful when inserting large data.
 	TiDBBatchInsert = "tidb_batch_insert"
 )
 

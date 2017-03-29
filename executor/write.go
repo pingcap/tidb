@@ -598,7 +598,9 @@ func (e *InsertExec) Schema() *expression.Schema {
 	return expression.NewSchema()
 }
 
-const batchInsertSize = 20000
+// BatchInsertSize is the batch size of auto-splitted insert data.
+// This will be used when tidb_batch_insert is set to ON.
+var BatchInsertSize = 20000
 
 // Next implements the Executor Next interface.
 func (e *InsertExec) Next() (*Row, error) {
@@ -631,7 +633,7 @@ func (e *InsertExec) Next() (*Row, error) {
 	rowCount := 0
 	batchInsert := e.ctx.GetSessionVars().BatchInsert
 	for _, row := range rows {
-		if batchInsert && rowCount >= batchInsertSize {
+		if batchInsert && rowCount >= BatchInsertSize {
 			err = e.ctx.NewTxn()
 			if err != nil {
 				return nil, errors.Trace(err)
