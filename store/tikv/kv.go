@@ -63,7 +63,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	}
 
 	// FIXME: uuid will be a very long and ugly string, simplify it.
-	uuid := fmt.Sprintf("tikv-%v", pdCli.GetClusterID())
+	uuid := fmt.Sprintf("tikv-%v", pdCli.GetClusterID(goctx.TODO()))
 	if store, ok := mc.cache[uuid]; ok {
 		return store, nil
 	}
@@ -96,7 +96,7 @@ func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool)
 	}
 
 	store := &tikvStore{
-		clusterID:   pdClient.GetClusterID(),
+		clusterID:   pdClient.GetClusterID(goctx.TODO()),
 		uuid:        uuid,
 		oracle:      oracle,
 		client:      client,
@@ -170,12 +170,13 @@ func (s *tikvStore) Close() error {
 	defer mc.Unlock()
 
 	delete(mc.cache, s.uuid)
-	if err := s.client.Close(); err != nil {
-		return errors.Trace(err)
-	}
 	s.oracle.Close()
 	if s.gcWorker != nil {
 		s.gcWorker.Close()
+	}
+	// Make sure all connections are put back into the pools.
+	if err := s.client.Close(); err != nil {
+		return errors.Trace(err)
 	}
 	return nil
 }

@@ -58,6 +58,7 @@ func (s *testVarsutilSuite) TestTiDBOptOn(c *C) {
 func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	defer testleak.AfterTest(c)()
 	v := variable.NewSessionVars()
+	v.GlobalVarsAccessor = newMockGlobalAccessor()
 
 	SetSessionSystemVar(v, "autocommit", types.NewStringDatum("1"))
 	val, err := GetSessionSystemVar(v, "autocommit")
@@ -136,4 +137,32 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	// Combined sql_mode
 	SetSessionSystemVar(v, "sql_mode", types.NewStringDatum("REAL_AS_FLOAT,ANSI_QUOTES"))
 	c.Assert(v.SQLMode, Equals, mysql.ModeRealAsFloat|mysql.ModeANSIQuotes)
+
+	// Test case for tidb_index_serial_scan_concurrency.
+	c.Assert(v.IndexSerialScanConcurrency, Equals, 1)
+	SetSessionSystemVar(v, variable.TiDBIndexSerialScanConcurrency, types.NewStringDatum("4"))
+	c.Assert(v.IndexSerialScanConcurrency, Equals, 4)
+}
+
+type mockGlobalAccessor struct {
+	vars map[string]string
+}
+
+func newMockGlobalAccessor() *mockGlobalAccessor {
+	m := &mockGlobalAccessor{
+		vars: make(map[string]string),
+	}
+	for name, val := range variable.SysVars {
+		m.vars[name] = val.Value
+	}
+	return m
+}
+
+func (m *mockGlobalAccessor) GetGlobalSysVar(name string) (string, error) {
+	return m.vars[name], nil
+}
+
+func (m *mockGlobalAccessor) SetGlobalSysVar(name string, value string) error {
+	m.vars[name] = value
+	return nil
 }

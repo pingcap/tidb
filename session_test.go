@@ -2692,3 +2692,22 @@ func (s *testSessionSuite) TestRetryCleanTxn(c *C) {
 	c.Assert(se.Txn(), IsNil)
 	c.Assert(se.sessionVars.InTxn(), IsFalse)
 }
+
+func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {
+	defer testleak.AfterTest(c)()
+	dbName := "test_retry_reset_stmtctx"
+	se := newSession(c, s.store, dbName).(*session)
+	se.Execute("create table retrytxn (a int unique, b int)")
+	_, err := se.Execute("insert retrytxn values (1, 1)")
+	c.Assert(err, IsNil)
+	se.Execute("begin")
+	se.Execute("update retrytxn set b = b + 1 where a = 1")
+
+	// Make retryable error.
+	se2 := newSession(c, s.store, dbName)
+	se2.Execute("update retrytxn set b = b + 1 where a = 1")
+
+	err = se.CommitTxn()
+	c.Assert(err, IsNil)
+	c.Assert(se.AffectedRows(), Equals, uint64(1))
+}

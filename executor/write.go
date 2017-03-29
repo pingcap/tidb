@@ -37,8 +37,8 @@ var (
 	_ Executor = &LoadData{}
 )
 
-func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, assignFlag []bool, t table.Table, offset int, onDuplicateUpdate bool) error {
-	cols := t.Cols()
+func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, assignFlag []bool, t table.Table, onDuplicateUpdate bool) error {
+	cols := t.WritableCols()
 	touched := make(map[int]bool, len(cols))
 	assignExists := false
 	sc := ctx.GetSessionVars().StmtCtx
@@ -50,13 +50,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 			}
 			continue
 		}
-		if i < offset || i >= offset+len(cols) {
-			// The assign expression is for another table, not this.
-			continue
-		}
-
-		colIndex := i - offset
-		col := cols[colIndex]
+		col := cols[i]
 		if col.IsPKHandleColumn(t.Meta()) {
 			newHandle = newData[i]
 		}
@@ -70,19 +64,18 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 			}
 			t.RebaseAutoID(val, true)
 		}
-
-		touched[colIndex] = true
+		casted, err := table.CastValue(ctx, newData[i], col.ToInfo())
+		if err != nil {
+			return errors.Trace(err)
+		}
+		newData[i] = casted
+		touched[i] = true
 		assignExists = true
 	}
 
 	// If no assign list for this table, no need to update.
 	if !assignExists {
 		return nil
-	}
-
-	// Check whether new value is valid.
-	if err := table.CastValues(ctx, newData, cols, false); err != nil {
-		return errors.Trace(err)
 	}
 
 	if err := table.CheckNotNull(cols, newData); err != nil {
@@ -949,7 +942,7 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]
 			assignFlag[i] = false
 		}
 	}
-	if err = updateRecord(e.ctx, h, data, newData, assignFlag, e.Table, 0, true); err != nil {
+	if err = updateRecord(e.ctx, h, data, newData, assignFlag, e.Table, true); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -1128,16 +1121,18 @@ func (e *UpdateExec) Next() (*Row, error) {
 			e.updatedRowKeys[tbl] = make(map[int64]struct{})
 		}
 		offset := getTableOffset(e.SelectExec.Schema(), entry)
+		end := offset + len(tbl.WritableCols())
 		handle := entry.Handle
-		oldData := row.Data[offset : offset+len(tbl.WritableCols())]
-		newTableData := newData[offset : offset+len(tbl.WritableCols())]
+		oldData := row.Data[offset:end]
+		newTableData := newData[offset:end]
+		flags := assignFlag[offset:end]
 		_, ok := e.updatedRowKeys[tbl][handle]
 		if ok {
 			// Each matched row is updated once, even if it matches the conditions multiple times.
 			continue
 		}
 		// Update row
-		err1 := updateRecord(e.ctx, handle, oldData, newTableData, assignFlag, tbl, offset, false)
+		err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false)
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}

@@ -189,6 +189,17 @@ func estimateJoinCount(lc uint64, rc uint64) uint64 {
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
+func (p *PhysicalMergeJoin) matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
+	lRes, rRes := childPlanInfo[0], childPlanInfo[1]
+	np := *p
+	np.SetChildren(lRes.p, rRes.p)
+
+	cost := lRes.cost + rRes.cost
+
+	return &physicalPlanInfo{p: &np, cost: cost, count: estimateJoinCount(lRes.count, rRes.count)}
+}
+
+// matchProperty implements PhysicalPlan matchProperty interface.
 func (p *PhysicalHashJoin) matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
 	lRes, rRes := childPlanInfo[0], childPlanInfo[1]
 	lCount, rCount := float64(lRes.count), float64(rRes.count)

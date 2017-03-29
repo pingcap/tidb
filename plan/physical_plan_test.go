@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/types"
 )
 
 func (s *testPlanSuite) TestPushDownAggregation(c *C) {
@@ -60,7 +61,7 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 			sql:       "select max(b + c), min(case when b then 1 else 2 end) from t group by d + e, a",
 			best:      "Table(t)->HashAgg->Projection",
 			aggFuns:   "[max(plus(test.t.b, test.t.c)) min(case(test.t.b, 1, 2))]",
-			aggFields: "[blob bigint bigint]",
+			aggFields: "[blob bigint bigint BINARY]",
 			gbyItems:  "[plus(test.t.d, test.t.e) test.t.a]",
 		},
 	}
@@ -103,7 +104,11 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 			if ts != nil {
 				c.Assert(fmt.Sprintf("%s", ts.aggFuncs), Equals, ca.aggFuns, Commentf("for %s", ca.sql))
 				c.Assert(fmt.Sprintf("%s", ts.gbyItems), Equals, ca.gbyItems, Commentf("for %s", ca.sql))
-				c.Assert(fmt.Sprintf("%s", ts.AggFields), Equals, ca.aggFields, Commentf("for %s", ca.sql))
+				fields := make([]*types.FieldType, ts.schema.Len())
+				for i, col := range ts.schema.Columns {
+					fields[i] = col.RetType
+				}
+				c.Assert(fmt.Sprintf("%s", fields), Equals, ca.aggFields, Commentf("for %s", ca.sql))
 				break
 			}
 			p = p.Children()[0]
@@ -1000,5 +1005,57 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 		c.Assert(rb.err, IsNil)
 		got := fmt.Sprintf("%v", result)
 		c.Assert(got, Equals, ca.resultStr, Commentf("different for expr %s", ca.exprStr))
+	}
+}
+
+func (s *testPlanSuite) TestScanController(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		sql string
+		ans string
+	}{
+		{
+			sql: "select (select count(1) k from t s where s.a = t.a having k != 0) from t",
+			ans: "Apply{Table(t)->Table(t)->Selection->StreamAgg}->Projection",
+		},
+		{
+			sql: "select (select count(1) k from t s where s.b = t.b having k != 0) from t",
+			ans: "Apply{Table(t)->Table(t)->Cache->Selection->StreamAgg}->Projection",
+		},
+		{
+			sql: "select (select count(1) k from t s where s.f = t.f having k != 0) from t",
+			ans: "Apply{Table(t)->Index(t.f)[]->Selection->StreamAgg}->Projection",
+		},
+	}
+	for _, ca := range cases {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		ast.SetFlag(stmt)
+
+		is, err := mockResolve(stmt)
+		c.Assert(err, IsNil)
+
+		builder := &planBuilder{
+			allocator: new(idAllocator),
+			ctx:       mockContext(),
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+			is:        is,
+		}
+		p := builder.build(stmt)
+		c.Assert(builder.err, IsNil)
+		lp := p.(LogicalPlan)
+		_, lp, err = lp.PredicatePushDown(nil)
+		c.Assert(err, IsNil)
+		lp.PruneColumns(lp.Schema().Columns)
+		dSolver := &decorrelateSolver{}
+		lp, err = dSolver.optimize(lp, mockContext(), new(idAllocator))
+		c.Assert(err, IsNil)
+		lp.ResolveIndicesAndCorCols()
+		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
+		pp := info.p
+		pp = EliminateProjection(pp)
+		addCachePlan(pp, builder.allocator)
+		c.Assert(ToString(pp), Equals, ca.ans, Commentf("for %s", ca.sql))
 	}
 }
