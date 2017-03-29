@@ -600,6 +600,7 @@ func compareTypeForOrder(lhs *types.FieldType, rhs *types.FieldType) bool {
 func constructPropertyByJoin(join *Join) ([][]*requiredProperty, []int, error) {
 	var result [][]*requiredProperty
 	var condIndex []int
+
 	if join.EqualConditions == nil {
 		return nil, nil, nil
 	}
