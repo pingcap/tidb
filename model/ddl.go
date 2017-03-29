@@ -203,7 +203,7 @@ type JobState byte
 const (
 	JobNone JobState = iota
 	JobRunning
-	// When DDL encouterred an unrecoverable error at reorganization state,
+	// When DDL encountered an unrecoverable error at reorganization state,
 	// some keys has been added already, we need to remove them.
 	// JobRollback is the state to do rollback work.
 	JobRollback

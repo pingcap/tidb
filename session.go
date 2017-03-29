@@ -891,7 +891,7 @@ func createSession(store kv.Storage) (*session, error) {
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 4
+	currentBootstrapVersion = 5
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -945,6 +945,7 @@ const loadCommonGlobalVarsSQL = "select * from mysql.global_variables where vari
 	variable.TiDBSkipDDLWait + quoteCommaQuote +
 	variable.TiDBIndexLookupSize + quoteCommaQuote +
 	variable.TiDBIndexLookupConcurrency + quoteCommaQuote +
+	variable.TiDBIndexSerialScanConcurrency + quoteCommaQuote +
 	variable.TiDBDistSQLScanConcurrency + "')"
 
 // LoadCommonGlobalVariableIfNeeded loads and applies commonly used global variables for the session.

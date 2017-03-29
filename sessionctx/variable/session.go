@@ -177,25 +177,29 @@ type SessionVars struct {
 
 	// The number of concurrent dist SQL scan worker.
 	DistSQLScanConcurrency int
+
+	// The number of concurrent index serial scan worker.
+	IndexSerialScanConcurrency int
 }
 
 // NewSessionVars creates a session vars object.
 func NewSessionVars() *SessionVars {
 	return &SessionVars{
-		Users:                    make(map[string]string),
-		Systems:                  make(map[string]string),
-		PreparedStmts:            make(map[uint32]interface{}),
-		PreparedStmtNameToID:     make(map[string]uint32),
-		TxnCtx:                   &TransactionContext{},
-		RetryInfo:                &RetryInfo{},
-		StrictSQLMode:            true,
-		Status:                   mysql.ServerStatusAutocommit,
-		StmtCtx:                  new(StatementContext),
-		AllowAggPushDown:         true,
-		BuildStatsConcurrencyVar: DefBuildStatsConcurrency,
-		IndexLookupSize:          DefIndexLookupSize,
-		IndexLookupConcurrency:   DefIndexLookupConcurrency,
-		DistSQLScanConcurrency:   DefDistSQLScanConcurrency,
+		Users:                      make(map[string]string),
+		Systems:                    make(map[string]string),
+		PreparedStmts:              make(map[uint32]interface{}),
+		PreparedStmtNameToID:       make(map[string]uint32),
+		TxnCtx:                     &TransactionContext{},
+		RetryInfo:                  &RetryInfo{},
+		StrictSQLMode:              true,
+		Status:                     mysql.ServerStatusAutocommit,
+		StmtCtx:                    new(StatementContext),
+		AllowAggPushDown:           true,
+		BuildStatsConcurrencyVar:   DefBuildStatsConcurrency,
+		IndexLookupSize:            DefIndexLookupSize,
+		IndexLookupConcurrency:     DefIndexLookupConcurrency,
+		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
+		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
 	}
 }
 

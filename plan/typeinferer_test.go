@@ -250,6 +250,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`sha1(123)`, mysql.TypeVarString, "utf8"},
 		{`sha(123)`, mysql.TypeVarString, "utf8"},
 		{`sha2(123, 256)`, mysql.TypeVarString, charset.CharsetUTF8},
+		{`random_bytes(32)`, mysql.TypeVarString, charset.CharsetBin},
 		{`uuid()`, mysql.TypeVarString, "utf8"},
 		{`coalesce(null, 0)`, mysql.TypeLonglong, charset.CharsetBin},
 		{`coalesce(null, 0.1)`, mysql.TypeNewDecimal, charset.CharsetBin},
@@ -273,6 +274,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`ord(2)`, mysql.TypeLonglong, charset.CharsetBin},
 		{`ord(true)`, mysql.TypeLonglong, charset.CharsetBin},
 		{`ord(null)`, mysql.TypeLonglong, charset.CharsetBin},
+		{`bin(1)`, mysql.TypeVarString, charset.CharsetUTF8},
 	}
 	for _, ca := range cases {
 		ctx := testKit.Se.(context.Context)

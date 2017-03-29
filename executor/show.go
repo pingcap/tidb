@@ -138,9 +138,13 @@ func (e *ShowExec) fetchShowEngines() error {
 
 func (e *ShowExec) fetchShowDatabases() error {
 	dbs := e.is.AllSchemaNames()
+	checker := privilege.GetPrivilegeChecker(e.ctx)
 	// TODO: let information_schema be the first database
 	sort.Strings(dbs)
 	for _, d := range dbs {
+		if checker != nil && !checker.DBIsVisible(d) {
+			continue
+		}
 		e.rows = append(e.rows, &Row{Data: types.MakeDatums(d)})
 	}
 	return nil
@@ -179,9 +183,15 @@ func (e *ShowExec) fetchShowTables() error {
 	if !e.is.SchemaExists(e.DBName) {
 		return errors.Errorf("Can not find DB: %s", e.DBName)
 	}
+	checker := privilege.GetPrivilegeChecker(e.ctx)
 	// sort for tables
 	var tableNames []string
 	for _, v := range e.is.SchemaTables(e.DBName) {
+		// Test with mysql.AllPrivMask means any privilege would be OK.
+		// TODO: Should consider column privileges, which also make a table visible.
+		if checker != nil && !checker.RequestVerification(e.DBName.O, v.Meta().Name.O, "", mysql.AllPrivMask) {
+			continue
+		}
 		tableNames = append(tableNames, v.Meta().Name.O)
 	}
 	sort.Strings(tableNames)

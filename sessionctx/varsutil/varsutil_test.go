@@ -137,6 +137,11 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	// Combined sql_mode
 	SetSessionSystemVar(v, "sql_mode", types.NewStringDatum("REAL_AS_FLOAT,ANSI_QUOTES"))
 	c.Assert(v.SQLMode, Equals, mysql.ModeRealAsFloat|mysql.ModeANSIQuotes)
+
+	// Test case for tidb_index_serial_scan_concurrency.
+	c.Assert(v.IndexSerialScanConcurrency, Equals, 1)
+	SetSessionSystemVar(v, variable.TiDBIndexSerialScanConcurrency, types.NewStringDatum("4"))
+	c.Assert(v.IndexSerialScanConcurrency, Equals, 4)
 }
 
 type mockGlobalAccessor struct {
