@@ -14,7 +14,6 @@
 package tikv
 
 import (
-	"context"
 	"time"
 
 	"github.com/juju/errors"
@@ -22,6 +21,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	goctx "golang.org/x/net/context"
 )
 
 // RegionRequestSender sends KV/Cop requests to tikv server. It handles network
@@ -167,7 +167,7 @@ func (s *RegionRequestSender) onSendFail(ctx *RPCContext, err error) error {
 	// When a store is not available, the leader of related region should be elected quickly.
 	// TODO: the number of retry time should be limited:since region may do not available
 	// when some unrecoverable disaster happened.
-	if errors.Cause(err) != context.Canceled {
+	if errors.Cause(err) != goctx.Canceled {
 		err = s.bo.Backoff(boTiKVRPC, errors.Errorf("send tikv request error: %v, ctx: %s, try next peer later", err, ctx.KVCtx))
 	}
 	return errors.Trace(err)
