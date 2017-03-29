@@ -23,6 +23,40 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+func (s *testEvaluatorSuite) TestIsIPv4(c *C) {
+	tests := []struct {
+		ip     string
+		expect interface{}
+	}{
+		{"192.168.1.1", 1},
+		{"255.255.255.255", 1},
+		{"10.t.255.255", 0},
+		{"10.1.2.3.4", 0},
+		{"2001:250:207:0:0:eef2::1", 0},
+		{"::ffff:1.2.3.4", 0},
+		{"1...1", 0},
+		{"192.168.1.", 0},
+		{".168.1.2", 0},
+		{"168.1.2", 0},
+		{"1.2.3.4.5", 0},
+	}
+	fc := funcs[ast.IsIPv4]
+	for _, test := range tests {
+		ip := types.NewStringDatum(test.ip)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{ip}), s.ctx)
+		c.Assert(err, IsNil)
+		result, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
+	}
+	// test NULL input for is_ipv4
+	var argNull types.Datum
+	f, _ := fc.getFunction(datumsToConstants([]types.Datum{argNull}), s.ctx)
+	r, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(r, testutil.DatumEquals, types.NewDatum(0))
+}
+
 func (s *testEvaluatorSuite) TestUUID(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.UUID]
@@ -78,6 +112,7 @@ func (s *testEvaluatorSuite) TestIsIPv6(c *C) {
 		{"2001:0250:0207:0001:0000:0000:0000:ff02", 1},
 		{"2001:250:207::eff2::1，", 0},
 		{"192.168.1.1", 0},
+		{"::ffff:1.2.3.4", 1},
 	}
 	fc := funcs[ast.IsIPv6]
 	for _, test := range tests {
