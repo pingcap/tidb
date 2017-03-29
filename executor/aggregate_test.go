@@ -272,6 +272,12 @@ func (s *testSuite) TestAggregation(c *C) {
 	// When adding new memory table in information_schema, please update this variable.
 	columnCountOfAllInformationSchemaTables := "557"
 	result.Check(testkit.Rows(columnCountOfAllInformationSchemaTables))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int)")
+	tk.MustExec("insert into t values(1, 2, 3), (1, 2, 4)")
+	result = tk.MustQuery("select count(distinct c), count(distinct a,b) from t")
+	result.Check(testkit.Rows("2 1"))
 }
 
 func (s *testSuite) TestStreamAgg(c *C) {
