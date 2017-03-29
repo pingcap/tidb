@@ -208,7 +208,7 @@ func Select(client kv.Client, ctx goctx.Context, req *tipb.SelectRequest, keyRan
 	}
 	// If Aggregates is not nil, we should set result fields latter.
 	if len(req.Aggregates) == 0 && len(req.GroupBy) == 0 {
-		if req.TableInfo == nil {
+		if req.TableInfo != nil {
 			result.label = "table"
 		} else {
 			result.label = "index"
