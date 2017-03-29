@@ -629,13 +629,15 @@ func (e *InsertExec) Next() (*Row, error) {
 	}
 
 	rowCount := 0
+	batchInsert := e.ctx.GetSessionVars().BatchInsert
 	for _, row := range rows {
-		if rowCount%batchInsertSize == 0 && rowCount > 0 {
+		if batchInsert && rowCount >= batchInsertSize {
 			err = e.ctx.NewTxn()
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			txn = e.ctx.Txn()
+			rowCount = 0
 		}
 		if len(e.OnDuplicate) == 0 && !e.Ignore {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
