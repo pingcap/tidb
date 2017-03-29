@@ -26,9 +26,9 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/perfschema"
-	"github.com/pingcap/tidb/plan/statscache"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
 )
 
@@ -38,7 +38,7 @@ type Domain struct {
 	store           kv.Storage
 	infoHandle      *infoschema.Handle
 	privHandle      *privileges.Handle
-	statsHandle     *statscache.Handle
+	statsHandle     *statistics.Handle
 	ddl             ddl.DDL
 	m               sync.Mutex
 	SchemaValidator SchemaValidator
@@ -408,49 +408,38 @@ func (do *Domain) PrivilegeHandle() *privileges.Handle {
 }
 
 // StatsHandle returns the statistic handle.
-func (do *Domain) StatsHandle() *statscache.Handle {
+func (do *Domain) StatsHandle() *statistics.Handle {
 	return do.statsHandle
-}
-
-func (do *Domain) loadTableStats() error {
-	ver, err := do.store.CurrentVersion()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	snapshot, err := do.store.GetSnapshot(kv.NewVersion(ver.Ver))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	m := meta.NewSnapshotMeta(snapshot)
-	err = do.statsHandle.Update(m, do.InfoSchema())
-	return errors.Trace(err)
 }
 
 // LoadTableStatsLoop creates a goroutine loads stats info in a loop, it
 // should be called only once in BootstrapSession.
 func (do *Domain) LoadTableStatsLoop(ctx context.Context) error {
-	do.statsHandle = statscache.NewHandle(ctx)
-	err := do.loadTableStats()
+	do.statsHandle = statistics.NewHandle(ctx)
+	err := do.statsHandle.Update(do.InfoSchema())
 	if err != nil {
 		return errors.Trace(err)
 	}
 	lease := do.DDL().GetLease()
-	if lease > 0 {
-		go func(do *Domain) {
-			ticker := time.NewTicker(lease)
-			for {
-				select {
-				case <-ticker.C:
-					err := do.loadTableStats()
-					if err != nil {
-						log.Error(errors.ErrorStack(err))
-					}
-				case <-do.exit:
-					return
-				}
-			}
-		}(do)
+	if lease <= 0 {
+		return nil
 	}
+	go func(do *Domain) {
+		ticker := time.NewTicker(lease)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				err := do.statsHandle.Update(do.InfoSchema())
+				if err != nil {
+					log.Error(errors.ErrorStack(err))
+				}
+			case <-do.exit:
+				return
+			}
+		}
+	}(do)
 	return nil
 }
 
