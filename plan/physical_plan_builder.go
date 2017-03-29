@@ -593,12 +593,12 @@ func convertCol2CorCol(cond expression.Expression, corCols []*expression.Correla
 		if pos := outerSchema.ColumnIndex(x); pos >= 0 {
 			return corCols[pos]
 		}
-		return x
-	default:
-		return x
 	}
+	return cond
 }
 
+// buildSelectionWithConds will build a selection use the conditions of join and convert one side's column to correlated column.
+// This is called when build nested loop join.
 func (p *Join) buildSelectionWithConds(left bool) (*Selection, []*expression.CorrelatedColumn) {
 	var (
 		outerSchema *expression.Schema
@@ -1742,7 +1742,6 @@ func addCachePlan(p PhysicalPlan, allocator *idAllocator) []*expression.Correlat
 		childCorCols := addCachePlan(child.(PhysicalPlan), allocator)
 		// If p is a Selection and controls the access condition of below scan plan, there shouldn't have a cache plan.
 		if sel, ok := p.(*Selection); len(selfCorCols) > 0 && len(childCorCols) == 0 && (!ok || !sel.ScanController) {
-			log.Warnf("child: %v", child.ID())
 			newChild := &Cache{}
 			newChild.tp = "Cache"
 			newChild.allocator = allocator

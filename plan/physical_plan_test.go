@@ -1070,7 +1070,15 @@ func (s *testPlanSuite) TestJoinAlgorithm(c *C) {
 			ans: "MergeJoin{Table(t)->Table(t)}(t1.a,t2.a)",
 		},
 		{
+			sql: "select /*+ tidb_smj(t1) */ * from t t1 join t t2 on t1.a = t2.a",
+			ans: "MergeJoin{Table(t)->Table(t)}(t1.a,t2.a)",
+		},
+		{
 			sql: "select /*+ tidb_inlj(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a",
+			ans: "Apply{Table(t)->Selection->Table(t)->Cache}",
+		},
+		{
+			sql: "select /*+ tidb_inlj(t1) */ * from t t1 join t t2 on t1.a = t2.a",
 			ans: "Apply{Table(t)->Selection->Table(t)->Cache}",
 		},
 		{
