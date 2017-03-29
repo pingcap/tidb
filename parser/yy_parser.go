@@ -145,6 +145,10 @@ func (parser *Parser) endOffset(v *yySymType) int {
 func toInt(l yyLexer, lval *yySymType, str string) int {
 	n, err := strconv.ParseUint(str, 10, 64)
 	if err != nil {
+		e := err.(*strconv.NumError)
+		if e.Err == strconv.ErrRange {
+			return toDecimal(l, lval, str)
+		}
 		l.Errorf("integer literal: %v", err)
 		return int(unicode.ReplacementChar)
 	}
