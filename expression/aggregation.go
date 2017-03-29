@@ -149,7 +149,7 @@ func (af *aggFunction) Equal(b AggregationFunction, ctx context.Context) bool {
 			}
 		}
 	}
-	return true
+	return false
 }
 
 // String implements fmt.Stringer interface.
