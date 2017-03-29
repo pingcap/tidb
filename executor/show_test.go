@@ -17,6 +17,8 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -129,6 +131,49 @@ func (s *testSuite) TestShow(c *C) {
 	tk.MustExec("use show_test_DB")
 	result = tk.MustQuery("SHOW index from show_index from test where Column_name = 'c'")
 	c.Check(result.Rows(), HasLen, 1)
+}
+
+func (s *testSuite) TestShowVisibility(c *C) {
+	save := privileges.Enable
+	privileges.Enable = true
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database showdatabase")
+	tk.MustExec("use showdatabase")
+	tk.MustExec("create table t1 (id int)")
+	tk.MustExec("create table t2 (id int)")
+	tk.MustExec(`create user 'show'@'%'`)
+
+	se, err := tidb.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(`show@%`, nil, nil), IsTrue)
+
+	// No ShowDatabases privilege, this user would see nothing.
+	rs, err := se.Execute("show databases")
+	c.Assert(err, IsNil)
+	rows, err := tidb.GetRows(rs[0])
+	c.Assert(err, IsNil)
+	c.Assert(rows, HasLen, 0)
+
+	// After grant, the user can see the database.
+	tk.MustExec(`grant select on showdatabase.t1 to 'show'@'%'`)
+	rs, err = se.Execute("show databases")
+	c.Assert(err, IsNil)
+	rows, err = tidb.GetRows(rs[0])
+	c.Assert(err, IsNil)
+	c.Assert(rows, HasLen, 1)
+
+	_, err = se.Execute("use showdatabase")
+	c.Assert(err, IsNil)
+	rs, err = se.Execute("show tables")
+	c.Assert(err, IsNil)
+	rows, err = tidb.GetRows(rs[0])
+	c.Assert(err, IsNil)
+	// The user can see t2 but not t1.
+	c.Assert(rows, HasLen, 1)
+
+	privileges.Enable = save
+	tk.MustExec(`drop user 'show'@'%'`)
+	tk.MustExec("drop database showdatabase")
 }
 
 type stats struct {

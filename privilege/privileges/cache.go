@@ -418,6 +418,43 @@ func (p *MySQLPrivilege) RequestVerification(user, host, db, table, column strin
 	return false
 }
 
+// DBIsVisible checks whether the user can see the db.
+func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
+	if record := p.matchUser(user, host); record != nil {
+		if record.Privileges&mysql.ShowDBPriv > 0 {
+			return true
+		}
+	}
+
+	if record := p.matchDB(user, host, db); record != nil {
+		if record.Privileges > 0 {
+			return true
+		}
+	}
+
+	for _, record := range p.TablesPriv {
+		if record.User == user &&
+			patternMatch(host, record.patChars, record.patTypes) &&
+			strings.EqualFold(record.DB, db) {
+			if record.TablePriv != 0 || record.ColumnPriv != 0 {
+				return true
+			}
+		}
+	}
+
+	for _, record := range p.ColumnsPriv {
+		if record.User == user &&
+			patternMatch(host, record.patChars, record.patTypes) &&
+			strings.EqualFold(record.DB, db) {
+			if record.ColumnPriv != 0 {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 // Handle wraps MySQLPrivilege providing thread safe access.
 type Handle struct {
 	ctx  context.Context

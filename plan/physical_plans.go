@@ -222,6 +222,9 @@ func (p *physicalTableSource) tryToAddUnionScan(resultPlan PhysicalPlan) Physica
 	us := &PhysicalUnionScan{
 		Condition: expression.ComposeCNFCondition(p.ctx, append(conditions, p.AccessCondition...)...),
 	}
+	us.tp = "UnionScan"
+	us.allocator = p.allocator
+	us.initIDAndContext(p.ctx)
 	us.SetChildren(resultPlan)
 	us.SetSchema(resultPlan.Schema())
 	return us
@@ -432,6 +435,44 @@ type Cache struct {
 	basePlan
 }
 
+func (p *PhysicalMergeJoin) tryConsumeOrder(prop *requiredProperty, eqCond *expression.ScalarFunction) *requiredProperty {
+	// TODO: We still can consume a partial sorted results somehow if main key matched.
+	// To do that, we need a Sort operator being able to do a secondary sort
+	if len(prop.props) != 1 || len(eqCond.GetArgs()) != 2 {
+		return prop
+	}
+
+	reqSortedColumn := prop.props[0].col
+	if prop.props[0].desc {
+		return prop
+	}
+
+	// Compare either sides of the equal function to see if matches required property
+	// If so, we don't have to sort once more
+	switch p.JoinType {
+	case InnerJoin:
+		// In case of inner join, both sides' orders are kept
+		lColumn, lOk := eqCond.GetArgs()[0].(*expression.Column)
+		rColumn, rOk := eqCond.GetArgs()[1].(*expression.Column)
+		if (lOk && lColumn.Equal(reqSortedColumn, p.ctx)) ||
+			(rOk && rColumn.Equal(reqSortedColumn, p.ctx)) {
+			return removeSortOrder(prop)
+		}
+	// In case of left/right outer join, driver side's order will be kept
+	case LeftOuterJoin:
+		lColumn, lOk := eqCond.GetArgs()[0].(*expression.Column)
+		if lOk && lColumn.Equal(reqSortedColumn, p.ctx) {
+			return removeSortOrder(prop)
+		}
+	case RightOuterJoin:
+		rColumn, rOk := eqCond.GetArgs()[1].(*expression.Column)
+		if rOk && rColumn.Equal(reqSortedColumn, p.ctx) {
+			return removeSortOrder(prop)
+		}
+	}
+	return prop
+}
+
 func (p *PhysicalHashJoin) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := p.basePlan.extractCorrelatedCols()
 	for _, fun := range p.EqualConditions {
@@ -544,6 +585,15 @@ func (p *PhysicalTableScan) MarshalJSON() ([]byte, error) {
 			"\n \"keep order\": %v,"+
 			"\n \"push down info\": %s}",
 		p.DBName.O, p.Table.Name.O, p.Desc, p.KeepOrder, pushDownInfo))
+	return buffer.Bytes(), nil
+}
+
+// MarshalJSON implements json.Marshaler interface.
+func (p *PhysicalMemTable) MarshalJSON() ([]byte, error) {
+	buffer := bytes.NewBufferString("{")
+	buffer.WriteString(fmt.Sprintf(
+		" \"db\": \"%s\",\n \"table\": \"%s\"}",
+		p.DBName.O, p.Table.Name.O))
 	return buffer.Bytes(), nil
 }
 
@@ -702,7 +752,8 @@ func (p *Selection) MarshalJSON() ([]byte, error) {
 	buffer := bytes.NewBufferString("{")
 	buffer.WriteString(fmt.Sprintf(""+
 		" \"condition\": %s,\n"+
-		" \"child\": \"%s\"\n}", conds, p.children[0].ID()))
+		" \"scanController\": %v,"+
+		" \"child\": \"%s\"\n}", conds, p.ScanController, p.children[0].ID()))
 	return buffer.Bytes(), nil
 }
 

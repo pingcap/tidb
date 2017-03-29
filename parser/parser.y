@@ -271,6 +271,7 @@ import (
 	foundRows			"FOUND_ROWS"
 	fromUnixTime			"FROM_UNIXTIME"
 	fromBase64			"FROM_BASE64"
+	getFormat			"GET_FORMAT"
 	grant				"GRANT"
 	groupConcat			"GROUP_CONCAT"
 	greatest			"GREATEST"
@@ -822,6 +823,7 @@ import (
 	logAnd			"logical and operator"
 	logOr			"logical or operator"
 	FieldsOrColumns 	"Fields or columns"
+	GetFormatSelector	"{DATE|DATETIME|TIME}"
 
 %type	<ident>
 	Identifier			"identifier or unreserved keyword"
@@ -2291,7 +2293,7 @@ ReservedKeyword:
 NotKeywordToken:
 	"ABS" | "ACOS" | "ADDTIME" | "ADDDATE" | "ADMIN" | "ASIN" | "ATAN" | "ATAN2" | "BENCHMARK" | "BIN" | "COALESCE" | "COERCIBILITY" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CONVERT_TZ" | "CUR_TIME"| "COS" | "COT" | "COUNT" | "DAY"
 |	"DATEDIFF" | "DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "DEGREES" | "ELT" | "EXP" | "EXPORT_SET" | "FROM_DAYS" | "FROM_BASE64" | "FIND_IN_SET" | "FOUND_ROWS"
-|	"GROUP_CONCAT"| "GREATEST" | "LEAST" | "HOUR" | "HEX" | "UNHEX" | "IFNULL" | "INSTR" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOAD_FILE" | "LOCATE" | "LOWER" | "LPAD" | "LTRIM"
+|	"GET_FORMAT" | "GROUP_CONCAT" | "GREATEST" | "LEAST" | "HOUR" | "HEX" | "UNHEX" | "IFNULL" | "INSTR" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOAD_FILE" | "LOCATE" | "LOWER" | "LPAD" | "LTRIM"
 |	"MAKE_SET" | "MAX" | "MAKEDATE" | "MAKETIME" | "MICROSECOND" | "MID" | "MIN" |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" |  "OCT" | "OCTET_LENGTH" | "ORD" | "POSITION" | "PERIOD_ADD" | "PERIOD_DIFF" | "PI" | "POW" | "POWER" | "RAND" | "RADIANS" | "ROW_COUNT"
 	"QUOTE" | "SEC_TO_TIME" | "SECOND" | "SIGN" | "SIN" | "SLEEP" | "SQRT" | "SQL_CALC_FOUND_ROWS" | "STR_TO_DATE" | "SUBTIME" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen |
 	"SESSION_USER" | "SUBSTRING_INDEX" | "SUM" | "SYSTEM_USER" | "TAN" | "TIME_FORMAT" | "TIME_TO_SEC" | "TIMESTAMPADD" | "TO_DAYS" | "TO_SECONDS" | "TRIM" | "RTRIM" | "UCASE" | "UTC_TIME" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
@@ -3097,6 +3099,13 @@ FunctionCallNonKeyword:
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
+		}
+	}
+|	"GET_FORMAT" '(' GetFormatSelector ','  Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{ast.NewValueExpr($3), $5.(ast.ExprNode)},
 		}
 	}
 |	"GREATEST" '(' ExpressionList ')'
@@ -3959,6 +3968,20 @@ FunctionCallNonKeyword:
 			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$3.(ast.ExprNode)},
 		}
+	}
+
+GetFormatSelector:
+	"DATE"
+	{
+		$$ = strings.ToUpper($1)
+	}
+| 	"DATETIME"
+	{
+		$$ = strings.ToUpper($1)
+	}
+|	"TIME"
+	{
+		$$ = strings.ToUpper($1)
 	}
 
 FunctionNameDateArith:
