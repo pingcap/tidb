@@ -344,6 +344,8 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		}
 	case "ln", "log", "log2", "log10", "sqrt", "pi", "exp", "degrees":
 		tp = types.NewFieldType(mysql.TypeDouble)
+	case "sin":
+		tp = types.NewFieldType(mysql.TypeDouble)
 	case "acos", "asin", "atan":
 		tp = types.NewFieldType(mysql.TypeDouble)
 	case "pow", "power", "rand":
@@ -352,7 +354,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = types.NewFieldType(mysql.TypeDouble)
 	case "curdate", "current_date", "date", "from_days":
 		tp = types.NewFieldType(mysql.TypeDate)
-	case "curtime", "current_time", "timediff":
+	case "curtime", "current_time", "timediff", "maketime":
 		tp = types.NewFieldType(mysql.TypeDuration)
 		tp.Decimal = v.getFsp(x)
 	case "date_add", "date_sub", "adddate", "subdate", "timestamp":
@@ -377,7 +379,8 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		"concat", "concat_ws", "left", "lcase", "lower", "repeat",
 		"replace", "ucase", "upper", "convert", "substring", "elt",
 		"substring_index", "trim", "ltrim", "rtrim", "reverse", "hex", "unhex",
-		"date_format", "rpad", "lpad", "char_func", "conv", "make_set", "oct", "uuid":
+		"date_format", "rpad", "lpad", "char_func", "conv", "make_set", "oct", "uuid",
+		"insert_func", "bin":
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
 	case "strcmp", "isnull", "bit_length", "char_length", "character_length", "crc32", "timestampdiff",
@@ -399,7 +402,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = x.Args[1].GetType()
 	case "get_lock", "release_lock":
 		tp = types.NewFieldType(mysql.TypeLonglong)
-	case ast.AesEncrypt, ast.AesDecrypt, ast.SHA2:
+	case ast.AesEncrypt, ast.AesDecrypt, ast.SHA2, ast.InetNtoa:
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
 	case ast.MD5:
@@ -410,6 +413,8 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
 		tp.Flen = 40
+	case ast.RandomBytes:
+		tp = types.NewFieldType(mysql.TypeVarString)
 	case ast.Coalesce:
 		tp = aggArgsType(x.Args)
 	case ast.AnyValue:

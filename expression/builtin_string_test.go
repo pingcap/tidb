@@ -563,7 +563,7 @@ func (s *testEvaluatorSuite) TestSpace(c *C) {
 		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
 	}
 
-	// TODO: the error depends on statement context, add those back when statemen context is supported.
+	// TODO: the error depends on statement context, add those back when statement context is supported.
 	//wrong := []struct {
 	//	Input string
 	//}{
@@ -1099,6 +1099,46 @@ func (s *testEvaluatorSuite) TestOct(c *C) {
 	c.Assert(r.IsNull(), IsTrue)
 }
 
+func (s *testEvaluatorSuite) TestInsert(c *C) {
+	tests := []struct {
+		args   []interface{}
+		expect interface{}
+	}{
+		{[]interface{}{"Quadratic", 3, 4, "What"}, "QuWhattic"},
+		{[]interface{}{"Quadratic", -1, 4, "What"}, "Quadratic"},
+		{[]interface{}{"Quadratic", 3, 100, "What"}, "QuWhat"},
+		{[]interface{}{nil, 3, 100, "What"}, nil},
+		{[]interface{}{"Quadratic", nil, 4, "What"}, nil},
+		{[]interface{}{"Quadratic", 3, nil, "What"}, nil},
+		{[]interface{}{"Quadratic", 3, 4, nil}, nil},
+		{[]interface{}{"Quadratic", 3, -1, "What"}, "QuWhat"},
+		{[]interface{}{"Quadratic", 3, 1, "What"}, "QuWhatdratic"},
+
+		{[]interface{}{"我叫小雨呀", 3, 2, "王雨叶"}, "我叫王雨叶呀"},
+		{[]interface{}{"我叫小雨呀", -1, 2, "王雨叶"}, "我叫小雨呀"},
+		{[]interface{}{"我叫小雨呀", 3, 100, "王雨叶"}, "我叫王雨叶"},
+		{[]interface{}{nil, 3, 100, "王雨叶"}, nil},
+		{[]interface{}{"我叫小雨呀", nil, 4, "王雨叶"}, nil},
+		{[]interface{}{"我叫小雨呀", 3, nil, "王雨叶"}, nil},
+		{[]interface{}{"我叫小雨呀", 3, 4, nil}, nil},
+		{[]interface{}{"我叫小雨呀", 3, -1, "王雨叶"}, "我叫王雨叶"},
+		{[]interface{}{"我叫小雨呀", 3, 1, "王雨叶"}, "我叫王雨叶雨呀"},
+	}
+	fc := funcs[ast.InsertFunc]
+	for _, test := range tests {
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(test.args...)), s.ctx)
+		c.Assert(err, IsNil)
+		result, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		if test.expect == nil {
+			c.Assert(result.Kind(), Equals, types.KindNull)
+		} else {
+			expect, _ := test.expect.(string)
+			c.Assert(result.GetString(), Equals, expect)
+		}
+	}
+}
+
 func (s *testEvaluatorSuite) TestOrd(c *C) {
 	defer testleak.AfterTest(c)()
 	ordCases := []struct {
@@ -1162,4 +1202,34 @@ func (s *testEvaluatorSuite) TestElt(c *C) {
 		r, err := f.eval(nil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
 	}
+}
+
+func (s *testEvaluatorSuite) TestBin(c *C) {
+	defer testleak.AfterTest(c)()
+
+	tbl := []struct {
+		Input    interface{}
+		Expected interface{}
+	}{
+		{"10", "1010"},
+		{"10.2", "1010"},
+		{"10aa", "1010"},
+		{"10.2aa", "1010"},
+		{"aaa", "0"},
+		{"", nil},
+		{10, "1010"},
+		{10.0, "1010"},
+		{-1, "1111111111111111111111111111111111111111111111111111111111111111"},
+		{"-1", "1111111111111111111111111111111111111111111111111111111111111111"},
+		{nil, nil},
+	}
+	fc := funcs[ast.Bin]
+	dtbl := tblToDtbl(tbl)
+	for _, t := range dtbl {
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t["Input"])), s.ctx)
+		c.Assert(err, IsNil)
+		r, err := f.eval(nil)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(t["Expected"][0]))
+	}
+
 }

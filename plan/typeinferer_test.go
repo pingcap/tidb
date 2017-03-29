@@ -135,6 +135,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"SQRT(3)", mysql.TypeDouble, charset.CharsetBin},
 		{"PI()", mysql.TypeDouble, charset.CharsetBin},
 		{"PI() + 0.000000000000000000", mysql.TypeDouble, charset.CharsetBin},
+		{"SIN(0)", mysql.TypeDouble, charset.CharsetBin},
 		{"ACOS(1)", mysql.TypeDouble, charset.CharsetBin},
 		{"ASIN(1)", mysql.TypeDouble, charset.CharsetBin},
 		{"ATAN(1)", mysql.TypeDouble, charset.CharsetBin},
@@ -147,6 +148,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"current_time()", mysql.TypeDuration, charset.CharsetBin},
 		{"curtime()", mysql.TypeDuration, charset.CharsetBin},
 		{"curtime(2)", mysql.TypeDuration, charset.CharsetBin},
+		{"maketime(12, 15, 30)", mysql.TypeDuration, charset.CharsetBin},
 		{"current_timestamp()", mysql.TypeDatetime, charset.CharsetBin},
 		{"utc_timestamp()", mysql.TypeDatetime, charset.CharsetBin},
 		{"microsecond('2009-12-31 23:59:59.000010')", mysql.TypeLonglong, charset.CharsetBin},
@@ -249,6 +251,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`sha1(123)`, mysql.TypeVarString, "utf8"},
 		{`sha(123)`, mysql.TypeVarString, "utf8"},
 		{`sha2(123, 256)`, mysql.TypeVarString, charset.CharsetUTF8},
+		{`random_bytes(32)`, mysql.TypeVarString, charset.CharsetBin},
 		{`uuid()`, mysql.TypeVarString, "utf8"},
 		{`coalesce(null, 0)`, mysql.TypeLonglong, charset.CharsetBin},
 		{`coalesce(null, 0.1)`, mysql.TypeNewDecimal, charset.CharsetBin},
@@ -264,11 +267,14 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`exp(1)`, mysql.TypeDouble, charset.CharsetBin},
 		{`exp(1.23)`, mysql.TypeDouble, charset.CharsetBin},
 		{`exp('1.23')`, mysql.TypeDouble, charset.CharsetBin},
+		{`insert("Titanium", 3, 6, "DB")`, mysql.TypeVarString, charset.CharsetUTF8},
 		{`is_ipv6('FE80::AAAA:0000:00C2:0002')`, mysql.TypeLonglong, charset.CharsetBin},
+		{"inet_ntoa(1)", mysql.TypeVarString, charset.CharsetUTF8},
 		{`ord('2')`, mysql.TypeLonglong, charset.CharsetBin},
 		{`ord(2)`, mysql.TypeLonglong, charset.CharsetBin},
 		{`ord(true)`, mysql.TypeLonglong, charset.CharsetBin},
 		{`ord(null)`, mysql.TypeLonglong, charset.CharsetBin},
+		{`bin(1)`, mysql.TypeVarString, charset.CharsetUTF8},
 	}
 	for _, ca := range cases {
 		ctx := testKit.Se.(context.Context)

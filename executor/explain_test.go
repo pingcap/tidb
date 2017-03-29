@@ -350,10 +350,10 @@ func (s *testSuite) TestExplain(c *C) {
 		{
 			"select * from t2 order by t2.c2 limit 0, 1",
 			[]string{
-				"TableScan_5", "",
+				"TableScan_5", "Sort_6",
 			},
 			[]string{
-				"", "",
+				"Sort_6", "",
 			},
 			[]string{
 				`{
@@ -529,6 +529,91 @@ func (s *testSuite) TestExplain(c *C) {
         "index filter conditions": null,
         "table filter conditions": null
     }
+}`,
+			},
+		},
+		{
+			"select (select count(1) k from t1 s where s.c1 = t1.c1 having k != 0) from t1",
+			[]string{
+				"TableScan_12", "TableScan_13", "Selection_4", "StreamAgg_15", "Selection_10", "Apply_16", "Projection_2",
+			},
+			[]string{
+				"Apply_16", "Selection_4", "StreamAgg_15", "Selection_10", "Apply_16", "Projection_2", "",
+			},
+			[]string{
+				`{
+    "db": "test",
+    "table": "t1",
+    "desc": false,
+    "keep order": false,
+    "push down info": {
+        "limit": 0,
+        "access conditions": null,
+        "index filter conditions": null,
+        "table filter conditions": null
+    }
+}`,
+				`{
+    "db": "test",
+    "table": "t1",
+    "desc": false,
+    "keep order": false,
+    "push down info": {
+        "limit": 0,
+        "access conditions": null,
+        "index filter conditions": null,
+        "table filter conditions": null
+    }
+}`,
+				`{
+    "condition": [
+        "eq(s.c1, test.t1.c1)"
+    ],
+    "scanController": true,
+    "child": "TableScan_13"
+}`,
+				`{
+    "AggFuncs": [
+        "count(1)"
+    ],
+    "GroupByItems": null,
+    "child": "Selection_4"
+}`,
+				`{
+    "condition": [
+        "ne(aggregation_5_col_0, 0)"
+    ],
+    "scanController": false,
+    "child": "StreamAgg_15"
+}`,
+				`{
+    "innerPlan": "Selection_10",
+    "outerPlan": "TableScan_12",
+    "join": {
+        "eqCond": null,
+        "leftCond": null,
+        "rightCond": null,
+        "otherCond": null,
+        "leftPlan": "TableScan_12",
+        "rightPlan": "Selection_10"
+    }
+}`,
+				`{
+    "exprs": [
+        "k"
+    ],
+    "child": "Apply_16"
+}`,
+			},
+		},
+		{
+			"select * from information_schema.columns",
+			[]string{"MemTableScan_3"},
+			[]string{""},
+			[]string{
+				`{
+    "db": "information_schema",
+    "table": "COLUMNS"
 }`,
 			},
 		},
