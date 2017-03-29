@@ -1421,9 +1421,9 @@ func (b *builtinMakeSetSig) eval(row []types.Datum) (d types.Datum, err error) {
 			continue
 		}
 		if arg0&(1<<uint(i-1)) > 0 {
-			str, err := args[i].ToString()
-			if err != nil {
-				return d, errors.Trace(err)
+			str, err1 := args[i].ToString()
+			if err1 != nil {
+				return d, errors.Trace(err1)
 			}
 			sets = append(sets, str)
 		}
@@ -1616,7 +1616,23 @@ type builtinBinSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_bin
 func (b *builtinBinSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("bin")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	arg := args[0]
+	sc := b.ctx.GetSessionVars().StmtCtx
+	if arg.IsNull() || (arg.Kind() == types.KindString && arg.GetString() == "") {
+		return d, nil
+	}
+
+	num, err := arg.ToInt64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	bits := fmt.Sprintf("%b", uint64(num))
+	d.SetString(bits)
+	return d, nil
 }
 
 type eltFunctionClass struct {

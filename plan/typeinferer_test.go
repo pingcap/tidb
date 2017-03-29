@@ -135,6 +135,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"SQRT(3)", mysql.TypeDouble, charset.CharsetBin},
 		{"PI()", mysql.TypeDouble, charset.CharsetBin},
 		{"PI() + 0.000000000000000000", mysql.TypeDouble, charset.CharsetBin},
+		{"SIN(0)", mysql.TypeDouble, charset.CharsetBin},
 		{"ACOS(1)", mysql.TypeDouble, charset.CharsetBin},
 		{"ASIN(1)", mysql.TypeDouble, charset.CharsetBin},
 		{"ATAN(1)", mysql.TypeDouble, charset.CharsetBin},
@@ -249,6 +250,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`sha1(123)`, mysql.TypeVarString, "utf8"},
 		{`sha(123)`, mysql.TypeVarString, "utf8"},
 		{`sha2(123, 256)`, mysql.TypeVarString, charset.CharsetUTF8},
+		{`random_bytes(32)`, mysql.TypeVarString, charset.CharsetBin},
 		{`uuid()`, mysql.TypeVarString, "utf8"},
 		{`coalesce(null, 0)`, mysql.TypeLonglong, charset.CharsetBin},
 		{`coalesce(null, 0.1)`, mysql.TypeNewDecimal, charset.CharsetBin},
@@ -272,6 +274,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`ord(true)`, mysql.TypeLonglong, charset.CharsetBin},
 		{`ord(null)`, mysql.TypeLonglong, charset.CharsetBin},
 		{`quote('hi')`, mysql.TypeVarString, charset.CharsetUTF8},
+		{`bin(1)`, mysql.TypeVarString, charset.CharsetUTF8},
 	}
 	for _, ca := range cases {
 		ctx := testKit.Se.(context.Context)

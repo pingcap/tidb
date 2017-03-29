@@ -70,6 +70,10 @@ const (
 	// Set this value higher may reduce the latency but consumes more system resource.
 	TiDBIndexLookupConcurrency = "tidb_index_lookup_concurrency"
 
+	// tidb_index_serial_scan_concurrency is used for controling the concurrency of index scan operation
+	// when we need to keep the data output order the same as the order of index data.
+	TiDBIndexSerialScanConcurrency = "tidb_index_serial_scan_concurrency"
+
 	// tidb_skip_ddl_wait skips the wait tiem of two lease after executing CREATE TABLE statement.
 	// When we have multiple TiDB servers in a cluster, the newly created table may not be available on all TiDB server
 	// until two lease time later, set this value to true will reduce the time to create a table, with the risk that
@@ -83,12 +87,13 @@ const (
 
 // Default TiDB system variable values.
 const (
-	DefIndexLookupConcurrency = 4
-	DefIndexLookupSize        = 20000
-	DefDistSQLScanConcurrency = 10
-	DefBuildStatsConcurrency  = 4
-	DefSkipDDLWait            = false
-	DefSkipUTF8Check          = false
-	DefOptAggPushDown         = true
-	DefOptInSubqUnfolding     = false
+	DefIndexLookupConcurrency     = 4
+	DefIndexSerialScanConcurrency = 1
+	DefIndexLookupSize            = 20000
+	DefDistSQLScanConcurrency     = 10
+	DefBuildStatsConcurrency      = 4
+	DefSkipDDLWait                = false
+	DefSkipUTF8Check              = false
+	DefOptAggPushDown             = true
+	DefOptInSubqUnfolding         = false
 )

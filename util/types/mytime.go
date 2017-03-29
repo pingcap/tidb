@@ -212,7 +212,7 @@ const (
 	// If set, Sunday is first day of week, otherwise Monday is first day of week.
 	weekBehaviourMondayFirst weekBehaviour = 1 << iota
 	// If set, Week is in range 1-53, otherwise Week is in range 0-53.
-	// Note that this flag is only releveant if WEEK_JANUARY is not set.
+	// Note that this flag is only relevant if WEEK_JANUARY is not set.
 	weekBehaviourYear
 	// If not set, Weeks are numbered according to ISO 8601:1988.
 	// If set, the week that contains the first 'first-day-of-week' is week 1.

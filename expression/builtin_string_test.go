@@ -563,7 +563,7 @@ func (s *testEvaluatorSuite) TestSpace(c *C) {
 		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
 	}
 
-	// TODO: the error depends on statement context, add those back when statemen context is supported.
+	// TODO: the error depends on statement context, add those back when statement context is supported.
 	//wrong := []struct {
 	//	Input string
 	//}{
@@ -1201,6 +1201,35 @@ func (s *testEvaluatorSuite) TestElt(c *C) {
 		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
+	}
+}
+
+func (s *testEvaluatorSuite) TestBin(c *C) {
+	defer testleak.AfterTest(c)()
+
+	tbl := []struct {
+		Input    interface{}
+		Expected interface{}
+	}{
+		{"10", "1010"},
+		{"10.2", "1010"},
+		{"10aa", "1010"},
+		{"10.2aa", "1010"},
+		{"aaa", "0"},
+		{"", nil},
+		{10, "1010"},
+		{10.0, "1010"},
+		{-1, "1111111111111111111111111111111111111111111111111111111111111111"},
+		{"-1", "1111111111111111111111111111111111111111111111111111111111111111"},
+		{nil, nil},
+	}
+	fc := funcs[ast.Bin]
+	dtbl := tblToDtbl(tbl)
+	for _, t := range dtbl {
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t["Input"])), s.ctx)
+		c.Assert(err, IsNil)
+		r, err := f.eval(nil)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(t["Expected"][0]))
 	}
 }
 
