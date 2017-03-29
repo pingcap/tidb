@@ -36,6 +36,7 @@ func (s *FMSketch) insertHashValue(hash uint64, maxSize int) {
 	if (hash & mask) != 0 {
 		return
 	}
+	s.hashset[hash] = true
 	if len(s.hashset) == maxSize {
 		mask = mask*2 + 1
 		s.level++
@@ -44,16 +45,14 @@ func (s *FMSketch) insertHashValue(hash uint64, maxSize int) {
 				delete(s.hashset, key)
 			}
 		}
-	} else {
-		s.hashset[hash] = true
 	}
 }
 
-func buildFMSketch(rows []types.Datum, maxSize int) (*FMSketch, int64, error) {
+func buildFMSketch(values []types.Datum, maxSize int) (*FMSketch, int64, error) {
 	s := newFMSketch()
 	h := fnv.New64a()
-	for _, row := range rows {
-		bytes, err := codec.EncodeValue(nil, row)
+	for _, value := range values {
+		bytes, err := codec.EncodeValue(nil, value)
 		if err != nil {
 			return nil, 0, errors.Trace(err)
 		}

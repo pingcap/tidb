@@ -21,20 +21,20 @@ func (s *testStatisticsSuite) TestSketch(c *C) {
 	maxSize := 1000
 	sampleSketch, ndv, err := buildFMSketch(s.samples, maxSize)
 	c.Check(err, IsNil)
-	c.Check(ndv, Equals, int64(6616))
+	c.Check(ndv, Equals, int64(6624))
 
 	rcSketch, ndv, err := buildFMSketch(s.rc.(*recordSet).data, maxSize)
 	c.Check(err, IsNil)
-	c.Check(ndv, Equals, int64(74112))
+	c.Check(ndv, Equals, int64(74240))
 
 	pkSketch, ndv, err := buildFMSketch(s.pk.(*recordSet).data, maxSize)
 	c.Check(err, IsNil)
-	c.Check(ndv, Equals, int64(99840))
+	c.Check(ndv, Equals, int64(99968))
 
 	var sketches []*FMSketch
 	sketches = append(sketches, sampleSketch)
 	sketches = append(sketches, pkSketch)
 	sketches = append(sketches, rcSketch)
 	_, ndv = mergeFMSketches(sketches, maxSize)
-	c.Check(ndv, Equals, int64(99840))
+	c.Check(ndv, Equals, int64(99968))
 }
