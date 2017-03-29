@@ -127,7 +127,7 @@ const (
 	);`
 
 	// CreateStatsColsTable stores the statistics of table columns.
-	CreateStatsColsTable = `CREATE TABLE if not exists mysql.stats_columns (
+	CreateStatsColsTable = `CREATE TABLE if not exists mysql.stats_histograms (
 		table_id bigint(64) NOT NULL,
 		is_index tinyint(2) NOT NULL,
 		hist_id bigint(64) NOT NULL,

@@ -67,7 +67,7 @@ type Column struct {
 }
 
 func (c *Column) saveToStorage(ctx context.Context, tableID int64, isIndex int) error {
-	insertSQL := fmt.Sprintf("insert into mysql.stats_columns (table_id, is_index, hist_id, distinct_count) values (%d, %d, %d, %d)", tableID, isIndex, c.ID, c.NDV)
+	insertSQL := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count) values (%d, %d, %d, %d)", tableID, isIndex, c.ID, c.NDV)
 	_, err := ctx.(sqlexec.SQLExecutor).Execute(insertSQL)
 	if err != nil {
 		return errors.Trace(err)
@@ -304,7 +304,7 @@ func (t *Table) SaveToStorage(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	deleteSQL = fmt.Sprintf("delete from mysql.stats_columns where table_id = %d", t.Info.ID)
+	deleteSQL = fmt.Sprintf("delete from mysql.stats_histograms where table_id = %d", t.Info.ID)
 	_, err = ctx.(sqlexec.SQLExecutor).Execute(deleteSQL)
 	if err != nil {
 		return errors.Trace(err)
@@ -336,7 +336,7 @@ func TableStatsFromStorage(ctx context.Context, info *model.TableInfo, count int
 		Info:  info,
 		Count: count,
 	}
-	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count from mysql.stats_columns where table_id = %d", info.ID)
+	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count from mysql.stats_histograms where table_id = %d", info.ID)
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, selSQL)
 	if err != nil {
 		return nil, errors.Trace(err)
