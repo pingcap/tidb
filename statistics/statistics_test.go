@@ -16,7 +16,6 @@ package statistics
 import (
 	"testing"
 
-	"github.com/golang/protobuf/proto"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
@@ -210,16 +209,6 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	str := t.String()
 	c.Check(len(str), Greater, 0)
 
-	tpb, err := t.ToPB()
-	c.Check(err, IsNil)
-	data, err := proto.Marshal(tpb)
-	c.Check(err, IsNil)
-	ntpb := &TablePB{}
-	err = proto.Unmarshal(data, ntpb)
-	c.Check(err, IsNil)
-	nt, err := TableFromPB(tblInfo, ntpb)
-	c.Check(err, IsNil)
-	c.Check(nt.String(), Equals, str)
 }
 
 func (s *testStatisticsSuite) TestPseudoTable(c *C) {
@@ -230,7 +219,6 @@ func (s *testStatisticsSuite) TestPseudoTable(c *C) {
 	})
 	tbl := PseudoTable(ti)
 	c.Assert(tbl.Count, Greater, int64(0))
-	c.Assert(tbl.TS, Greater, int64(0))
 	col := tbl.Columns[0]
 	c.Assert(col.ID, Greater, int64(0))
 	c.Assert(col.NDV, Greater, int64(0))
