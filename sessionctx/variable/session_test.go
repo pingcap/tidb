@@ -48,5 +48,5 @@ func (*testSessionSuite) TestSession(c *C) {
 	ss.ResetForRetry()
 	c.Assert(ss.AffectedRows(), Equals, uint64(0))
 	c.Assert(ss.FoundRows(), Equals, uint64(0))
-	c.Assert(ss.WarningCount(), Equals, 0)
+	c.Assert(ss.WarningCount(), Equals, uint16(0))
 }
