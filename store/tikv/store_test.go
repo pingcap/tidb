@@ -293,48 +293,48 @@ func (c *mockPDClient) disable() {
 	c.stop = true
 }
 
-func (c *mockPDClient) GetClusterID() uint64 {
+func (c *mockPDClient) GetClusterID(goctx.Context) uint64 {
 	return 1
 }
 
-func (c *mockPDClient) GetTS() (int64, int64, error) {
+func (c *mockPDClient) GetTS(ctx goctx.Context) (int64, int64, error) {
 	c.RLock()
 	defer c.RUnlock()
 
 	if c.stop {
 		return 0, 0, errors.Trace(errStopped)
 	}
-	return c.client.GetTS()
+	return c.client.GetTS(ctx)
 }
 
-func (c *mockPDClient) GetRegion(key []byte) (*metapb.Region, *metapb.Peer, error) {
+func (c *mockPDClient) GetRegion(ctx goctx.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
 	c.RLock()
 	defer c.RUnlock()
 
 	if c.stop {
 		return nil, nil, errors.Trace(errStopped)
 	}
-	return c.client.GetRegion(key)
+	return c.client.GetRegion(ctx, key)
 }
 
-func (c *mockPDClient) GetRegionByID(regionID uint64) (*metapb.Region, *metapb.Peer, error) {
+func (c *mockPDClient) GetRegionByID(ctx goctx.Context, regionID uint64) (*metapb.Region, *metapb.Peer, error) {
 	c.RLock()
 	defer c.RUnlock()
 
 	if c.stop {
 		return nil, nil, errors.Trace(errStopped)
 	}
-	return c.client.GetRegionByID(regionID)
+	return c.client.GetRegionByID(ctx, regionID)
 }
 
-func (c *mockPDClient) GetStore(storeID uint64) (*metapb.Store, error) {
+func (c *mockPDClient) GetStore(ctx goctx.Context, storeID uint64) (*metapb.Store, error) {
 	c.RLock()
 	defer c.RUnlock()
 
 	if c.stop {
 		return nil, errors.Trace(errStopped)
 	}
-	return c.client.GetStore(storeID)
+	return c.client.GetStore(ctx, storeID)
 }
 
 func (c *mockPDClient) Close() {}

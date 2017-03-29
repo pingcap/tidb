@@ -563,7 +563,7 @@ func (s *testEvaluatorSuite) TestSpace(c *C) {
 		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
 	}
 
-	// TODO: the error depends on statement context, add those back when statemen context is supported.
+	// TODO: the error depends on statement context, add those back when statement context is supported.
 	//wrong := []struct {
 	//	Input string
 	//}{

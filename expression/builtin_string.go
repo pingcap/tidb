@@ -1421,9 +1421,9 @@ func (b *builtinMakeSetSig) eval(row []types.Datum) (d types.Datum, err error) {
 			continue
 		}
 		if arg0&(1<<uint(i-1)) > 0 {
-			str, err := args[i].ToString()
-			if err != nil {
-				return d, errors.Trace(err)
+			str, err1 := args[i].ToString()
+			if err1 != nil {
+				return d, errors.Trace(err1)
 			}
 			sets = append(sets, str)
 		}
