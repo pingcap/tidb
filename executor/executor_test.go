@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -246,6 +247,32 @@ func (s *testSuite) TestSelectLimit(c *C) {
 	_, err := tk.Exec("select * from select_limit limit 18446744073709551616 offset 3;")
 	c.Assert(err, NotNil)
 	tk.MustExec("rollback")
+}
+
+func (s *testSuite) TestDAG(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	mocktikv.MockDAGRequest = true
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+		mocktikv.MockDAGRequest = false
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("create table select_dag(id int not null default 1, name varchar(255));")
+
+	tk.MustExec("insert INTO select_dag VALUES (1, \"hello\");")
+	tk.MustExec("insert INTO select_dag VALUES (2, \"hello\");")
+	tk.MustExec("insert INTO select_dag VALUES (3, \"hello\");")
+	tk.CheckExecResult(1, 0)
+
+	r := tk.MustQuery("select * from select_dag;")
+	rowStr1 := fmt.Sprintf("%v %v", 1, []byte("hello"))
+	rowStr2 := fmt.Sprintf("%v %v", 2, []byte("hello"))
+	rowStr3 := fmt.Sprintf("%v %v", 3, []byte("hello"))
+	r.Check(testkit.Rows(rowStr1, rowStr2, rowStr3))
+
+	r = tk.MustQuery("select * from select_dag where id > 1;")
+	r.Check(testkit.Rows(rowStr2, rowStr3))
 }
 
 func (s *testSuite) TestSelectOrderBy(c *C) {
@@ -555,9 +582,11 @@ func (s *testSuite) TestUnion(c *C) {
 }
 
 func (s *testSuite) TestIn(c *C) {
+	mocktikv.MockDAGRequest = true
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
+		mocktikv.MockDAGRequest = false
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -641,9 +670,11 @@ func (s *testSuite) TestTablePKisHandleScan(c *C) {
 }
 
 func (s *testSuite) TestIndexScan(c *C) {
+	mocktikv.MockDAGRequest = true
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
+		mocktikv.MockDAGRequest = false
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -951,9 +982,11 @@ func (s *testSuite) TestBuiltin(c *C) {
 }
 
 func (s *testSuite) TestToPBExpr(c *C) {
+	mocktikv.MockDAGRequest = true
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
+		mocktikv.MockDAGRequest = false
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
