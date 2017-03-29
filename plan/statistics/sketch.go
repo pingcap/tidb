@@ -38,7 +38,7 @@ func (s *Sketch) insertHashValue(hash uint64, maxSize int) {
 	}
 	if len(s.hashset) == maxSize {
 		mask = mask*2 + 1
-		s.level += 1
+		s.level++
 		for key := range s.hashset {
 			if (key & mask) != 0 {
 				delete(s.hashset, key)
