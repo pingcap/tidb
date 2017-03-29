@@ -142,14 +142,15 @@ func (af *aggFunction) Equal(b AggregationFunction, ctx context.Context) bool {
 	if af.Distinct != b.IsDistinct() {
 		return false
 	}
-	if len(af.GetArgs()) == len(b.GetArgs()) {
-		for i, argA := range af.GetArgs() {
-			if !argA.Equal(b.GetArgs()[i], ctx) {
-				return false
-			}
+	if len(af.GetArgs()) != len(b.GetArgs()) {
+		return false
+	}
+	for i, argA := range af.GetArgs() {
+		if !argA.Equal(b.GetArgs()[i], ctx) {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 // String implements fmt.Stringer interface.
