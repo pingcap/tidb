@@ -21,17 +21,17 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-// Sketch is used to count the number of distinct elements in a set.
-type Sketch struct {
+// FMSketch is used to count the number of distinct elements in a set.
+type FMSketch struct {
 	hashset map[uint64]bool
 	level   uint
 }
 
-func newSketch() *Sketch {
-	return &Sketch{hashset: make(map[uint64]bool)}
+func newFMSketch() *FMSketch {
+	return &FMSketch{hashset: make(map[uint64]bool)}
 }
 
-func (s *Sketch) insertHashValue(hash uint64, maxSize int) {
+func (s *FMSketch) insertHashValue(hash uint64, maxSize int) {
 	mask := (1 << s.level) - uint64(1)
 	if (hash & mask) != 0 {
 		return
@@ -49,8 +49,8 @@ func (s *Sketch) insertHashValue(hash uint64, maxSize int) {
 	}
 }
 
-func buildSketch(rows []types.Datum, maxSize int) (*Sketch, int64, error) {
-	s := newSketch()
+func buildFMSketch(rows []types.Datum, maxSize int) (*FMSketch, int64, error) {
+	s := newFMSketch()
 	h := fnv.New64a()
 	for _, row := range rows {
 		bytes, err := codec.EncodeValue(nil, row)
@@ -68,8 +68,8 @@ func buildSketch(rows []types.Datum, maxSize int) (*Sketch, int64, error) {
 	return s, ndv, nil
 }
 
-func mergeSketches(sketches []*Sketch, maxSize int) (*Sketch, int64) {
-	s := newSketch()
+func mergeFMSketches(sketches []*FMSketch, maxSize int) (*FMSketch, int64) {
+	s := newFMSketch()
 	for _, sketch := range sketches {
 		if s.level < sketch.level {
 			s.level = sketch.level

@@ -19,22 +19,22 @@ import (
 
 func (s *testStatisticsSuite) TestSketch(c *C) {
 	maxSize := 1000
-	sampleSketch, ndv, err := buildSketch(s.samples, maxSize)
+	sampleSketch, ndv, err := buildFMSketch(s.samples, maxSize)
 	c.Check(err, IsNil)
 	c.Check(ndv, Equals, int64(6616))
 
-	rcSketch, ndv, err := buildSketch(s.rc.(*recordSet).data, maxSize)
+	rcSketch, ndv, err := buildFMSketch(s.rc.(*recordSet).data, maxSize)
 	c.Check(err, IsNil)
 	c.Check(ndv, Equals, int64(74112))
 
-	pkSketch, ndv, err := buildSketch(s.pk.(*recordSet).data, maxSize)
+	pkSketch, ndv, err := buildFMSketch(s.pk.(*recordSet).data, maxSize)
 	c.Check(err, IsNil)
 	c.Check(ndv, Equals, int64(99840))
 
-	var sketches []*Sketch
+	var sketches []*FMSketch
 	sketches = append(sketches, sampleSketch)
 	sketches = append(sketches, pkSketch)
 	sketches = append(sketches, rcSketch)
-	_, ndv = mergeSketches(sketches, maxSize)
+	_, ndv = mergeFMSketches(sketches, maxSize)
 	c.Check(ndv, Equals, int64(99840))
 }
