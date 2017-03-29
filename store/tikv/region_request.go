@@ -162,6 +162,8 @@ func (s *RegionRequestSender) sendCopReqToRegion(ctx *RPCContext, req *coprocess
 
 func (s *RegionRequestSender) onSendFail(ctx *RPCContext, err error) error {
 	s.regionCache.OnRequestFail(ctx)
+
+	// do retry on request failed except Cancelled Error.
 	// if a store is available, the leader of related region should be elected quickly.
 	// TODO: the number of retry time should be limited:since region may do not available
 	// when some unrecoverable disaster happened.
