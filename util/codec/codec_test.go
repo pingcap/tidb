@@ -819,3 +819,18 @@ func (s *testCodecSuite) TestCut(c *C) {
 		c.Assert(b, HasLen, 0)
 	}
 }
+
+func (s *testCodecSuite) TestSetRawValues(c *C) {
+	datums := types.MakeDatums(1, "abc", 1.1, []byte("def"))
+	rowData, err := EncodeValue(nil, datums...)
+	c.Assert(err, IsNil)
+	values := make([]types.Datum, 4)
+	err = SetRawValues(rowData, values)
+	c.Assert(err, IsNil)
+	for i, rawVal := range values {
+		c.Assert(rawVal.Kind(), Equals, types.KindRaw)
+		encoded, err1 := EncodeValue(nil, datums[i])
+		c.Assert(err1, IsNil)
+		c.Assert(encoded, BytesEquals, rawVal.GetBytes())
+	}
+}

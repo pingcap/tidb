@@ -325,7 +325,53 @@ type builtinIsIPv4Sig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4
 func (b *builtinIsIPv4Sig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("IS_IPV4")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if args[0].IsNull() {
+		d.SetInt64(0)
+		return d, nil
+	}
+	// isIPv4(str)
+	// args[0] string
+	s, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if isIPv4(s) {
+		d.SetInt64(1)
+	} else {
+		d.SetInt64(0)
+	}
+	return d, nil
+}
+
+// isIPv4 checks IPv4 address which satisfying the format A.B.C.D(0<=A/B/C/D<=255).
+// Mapped IPv6 address like '::ffff:1.2.3.4' would return false.
+func isIPv4(ip string) bool {
+	// acc: keep the decimal value of each segment under check, which should between 0 and 255 for valid IPv4 address.
+	// pd: sentinel for '.'
+	dots, acc, pd := 0, 0, true
+	for _, c := range ip {
+		switch {
+		case '0' <= c && c <= '9':
+			acc = acc*10 + int(c-'0')
+			pd = false
+		case c == '.':
+			dots++
+			if dots > 3 || acc > 255 || pd {
+				return false
+			}
+			acc, pd = 0, true
+		default:
+			return false
+		}
+	}
+	if dots != 3 || acc > 255 || pd {
+		return false
+	}
+	return true
 }
 
 type isIPv4CompatFunctionClass struct {
@@ -378,7 +424,7 @@ type builtinIsIPv6Sig struct {
 func (b *builtinIsIPv6Sig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	// isIPv6(str)
 	// args[0] string
@@ -391,7 +437,7 @@ func (b *builtinIsIPv6Sig) eval(row []types.Datum) (d types.Datum, err error) {
 		return d, errors.Trace(err)
 	}
 	ip := net.ParseIP(s)
-	if ip != nil && ip.To4() == nil {
+	if ip != nil && !isIPv4(s) {
 		d.SetInt64(1)
 	} else {
 		d.SetInt64(0)
