@@ -37,7 +37,7 @@ func (s *FMSketch) insertHashValue(hash uint64, maxSize int) {
 		return
 	}
 	s.hashset[hash] = true
-	if len(s.hashset) == maxSize {
+	if len(s.hashset) >= maxSize {
 		mask = mask*2 + 1
 		s.level++
 		for key := range s.hashset {
