@@ -156,9 +156,9 @@ func (*testSuite) TestConcurrentAlloc(c *C) {
 	allocIDs := func() {
 		alloc := NewAllocator(store, dbID)
 		for j := 0; j < int(step)+5; j++ {
-			id, err := alloc.Alloc(tblID)
-			if err != nil {
-				errCh <- err
+			id, err1 := alloc.Alloc(tblID)
+			if err1 != nil {
+				errCh <- err1
 				break
 			}
 

@@ -473,6 +473,12 @@ type SelectionExec struct {
 	Condition expression.Expression
 	ctx       context.Context
 	schema    *expression.Schema
+
+	// scanController will tell whether this selection need to
+	// control the condition of below scan executor.
+	scanController bool
+	controllerInit bool
+	Conditions     []expression.Expression
 }
 
 // Schema implements the Executor Schema interface.
@@ -480,8 +486,54 @@ func (e *SelectionExec) Schema() *expression.Schema {
 	return e.schema
 }
 
+// initController will init the conditions of the below scan executor.
+// It will first substitute the correlated column to constant, then build range and filter by new conditions.
+func (e *SelectionExec) initController() error {
+	sc := e.ctx.GetSessionVars().StmtCtx
+	client := e.ctx.GetClient()
+	newConds := make([]expression.Expression, 0, len(e.Conditions))
+	for _, cond := range e.Conditions {
+		newCond, err := expression.SubstituteCorCol2Constant(cond.Clone())
+		if err != nil {
+			return errors.Trace(err)
+		}
+		newConds = append(newConds, newCond)
+	}
+
+	switch x := e.Src.(type) {
+	case *XSelectTableExec:
+		accessCondition, restCondtion := plan.DetachTableScanConditions(newConds, x.tableInfo)
+		x.where, _, _ = plan.ExpressionsToPB(sc, restCondtion, client)
+		ranges, err := plan.BuildTableRange(accessCondition, sc)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		x.ranges = ranges
+	case *XSelectIndexExec:
+		x.indexPlan.AccessCondition, newConds = plan.DetachIndexScanConditions(newConds, x.indexPlan)
+		idxConds, tblConds := plan.DetachIndexFilterConditions(newConds, x.indexPlan.Index.Columns, x.indexPlan.Table)
+		x.indexPlan.IndexConditionPBExpr, _, _ = plan.ExpressionsToPB(sc, idxConds, client)
+		x.indexPlan.TableConditionPBExpr, _, _ = plan.ExpressionsToPB(sc, tblConds, client)
+		err := plan.BuildIndexRange(sc, x.indexPlan)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		x.where = x.indexPlan.TableConditionPBExpr
+	default:
+		return errors.Errorf("Error type of Executor: %T", x)
+	}
+	return nil
+}
+
 // Next implements the Executor Next interface.
 func (e *SelectionExec) Next() (*Row, error) {
+	if e.scanController && !e.controllerInit {
+		err := e.initController()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		e.controllerInit = true
+	}
 	for {
 		srcRow, err := e.Src.Next()
 		if err != nil {
@@ -490,11 +542,18 @@ func (e *SelectionExec) Next() (*Row, error) {
 		if srcRow == nil {
 			return nil, nil
 		}
-		match, err := expression.EvalBool(e.Condition, srcRow.Data, e.ctx)
-		if err != nil {
-			return nil, errors.Trace(err)
+		allMatch := true
+		for _, cond := range e.Conditions {
+			match, err := expression.EvalBool(cond, srcRow.Data, e.ctx)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if !match {
+				allMatch = false
+				break
+			}
 		}
-		if match {
+		if allMatch {
 			return srcRow, nil
 		}
 	}
@@ -502,6 +561,9 @@ func (e *SelectionExec) Next() (*Row, error) {
 
 // Close implements the Executor Close interface.
 func (e *SelectionExec) Close() error {
+	if e.scanController {
+		e.controllerInit = false
+	}
 	return e.Src.Close()
 }
 

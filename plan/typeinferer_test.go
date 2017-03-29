@@ -169,6 +169,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"yearweek('2009-12-31 23:59:59.000010')", mysql.TypeLonglong, charset.CharsetBin},
 		{"found_rows()", mysql.TypeLonglong, charset.CharsetBin},
 		{"length('tidb')", mysql.TypeLonglong, charset.CharsetBin},
+		{"is_ipv4('192.168.1.1')", mysql.TypeLonglong, charset.CharsetBin},
 		{"now()", mysql.TypeDatetime, charset.CharsetBin},
 		{"from_unixtime(1447430881)", mysql.TypeDatetime, charset.CharsetBin},
 		{"from_unixtime(1447430881, '%Y %D %M %h:%i:%s %x')", mysql.TypeVarString, charset.CharsetUTF8},
@@ -254,6 +255,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`sha(123)`, mysql.TypeVarString, charset.CharsetUTF8},
 		{`sha2(123, 256)`, mysql.TypeVarString, charset.CharsetUTF8},
 		{`uuid()`, mysql.TypeVarString, charset.CharsetUTF8},
+		{`random_bytes(32)`, mysql.TypeVarString, charset.CharsetBin},
 		{`coalesce(null, 0)`, mysql.TypeLonglong, charset.CharsetBin},
 		{`coalesce(null, 0.1)`, mysql.TypeNewDecimal, charset.CharsetBin},
 		{`coalesce(1, "1" + 1)`, mysql.TypeDouble, charset.CharsetBin},
@@ -278,6 +280,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`ord(2)`, mysql.TypeLonglong, charset.CharsetBin},
 		{`ord(true)`, mysql.TypeLonglong, charset.CharsetBin},
 		{`ord(null)`, mysql.TypeLonglong, charset.CharsetBin},
+		{`bin(1)`, mysql.TypeVarString, charset.CharsetUTF8},
 	}
 	for _, ca := range cases {
 		ctx := testKit.Se.(context.Context)

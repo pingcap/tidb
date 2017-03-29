@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/plan/statistics"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -147,6 +147,14 @@ type Selection struct {
 
 	// onTable means if this selection's child is a table scan or index scan.
 	onTable bool
+
+	// If ScanController is true, then the child of this selection is a scan,
+	// which use pk or index. we will record the accessConditions, idxConditions,
+	// and tblConditions to control the below plan.
+	ScanController bool
+
+	// We will check this at decorrelate phase.
+	canControlScan bool
 }
 
 func (p *Selection) extractCorrelatedCols() []*expression.CorrelatedColumn {
