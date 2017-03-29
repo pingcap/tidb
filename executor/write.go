@@ -598,6 +598,8 @@ func (e *InsertExec) Schema() *expression.Schema {
 	return expression.NewSchema()
 }
 
+const batchInsertSize = 20000
+
 // Next implements the Executor Next interface.
 func (e *InsertExec) Next() (*Row, error) {
 	if e.finished {
@@ -626,7 +628,15 @@ func (e *InsertExec) Next() (*Row, error) {
 		return nil, errors.Trace(err)
 	}
 
+	rowCount := 0
 	for _, row := range rows {
+		if rowCount%batchInsertSize == 0 && rowCount > 0 {
+			err = e.ctx.NewTxn()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			txn = e.ctx.Txn()
+		}
 		if len(e.OnDuplicate) == 0 && !e.Ignore {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
 		}
@@ -634,6 +644,7 @@ func (e *InsertExec) Next() (*Row, error) {
 		txn.DelOption(kv.PresumeKeyNotExists)
 		if err == nil {
 			getDirtyDB(e.ctx).addRow(e.Table.Meta().ID, h, row)
+			rowCount++
 			continue
 		}
 
