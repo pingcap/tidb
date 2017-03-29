@@ -583,46 +583,59 @@ func (s *testEvaluatorSuite) TestSpace(c *C) {
 func (s *testEvaluatorSuite) TestLocate(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
-		subStr string
-		Str    string
-		result int64
+		Args []interface{}
+		Want interface{}
 	}{
-		{"bar", "foobarbar", 4},
-		{"xbar", "foobar", 0},
-		{"", "foobar", 1},
-		{"foobar", "", 0},
-		{"", "", 1},
+		{[]interface{}{"bar", "foobarbar"}, 4},
+		{[]interface{}{"xbar", "foobar"}, 0},
+		{[]interface{}{"", "foobar"}, 1},
+		{[]interface{}{"foobar", ""}, 0},
+		{[]interface{}{"", ""}, 1},
+		{[]interface{}{"好世", "你好世界"}, 2},
+		{[]interface{}{"界面", "你好世界"}, 0},
+		{[]interface{}{"b", "中a英b文"}, 4},
+		{[]interface{}{"BaR", "foobArbar"}, 4},
+		{[]interface{}{[]byte("BaR"), "foobArbar"}, 0},
+		{[]interface{}{"BaR", []byte("foobArbar")}, 0},
+		{[]interface{}{nil, "foobar"}, nil},
+		{[]interface{}{"bar", nil}, nil},
 	}
-	for _, v := range tbl {
-		fc := funcs[ast.Locate]
-		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(v.subStr, v.Str)), s.ctx)
+
+	Dtbl := tblToDtbl(tbl)
+	instr := funcs[ast.Locate]
+	for i, t := range Dtbl {
+		f, err := instr.getFunction(datumsToConstants(t["Args"]), s.ctx)
 		c.Assert(err, IsNil)
-		r, err := f.eval(nil)
+		got, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		c.Assert(r.Kind(), Equals, types.KindInt64)
-		c.Assert(r.GetInt64(), Equals, v.result)
+		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
 	}
 
 	tbl2 := []struct {
-		subStr string
-		Str    string
-		pos    int64
-		result int64
+		Args []interface{}
+		Want interface{}
 	}{
-		{"bar", "foobarbar", 5, 7},
-		{"xbar", "foobar", 1, 0},
-		{"", "foobar", 2, 2},
-		{"foobar", "", 1, 0},
-		{"", "", 2, 0},
+		{[]interface{}{"bar", "foobarbar", 5}, 7},
+		{[]interface{}{"xbar", "foobar", 1}, 0},
+		{[]interface{}{"", "foobar", 2}, 2},
+		{[]interface{}{"foobar", "", 1}, 0},
+		{[]interface{}{"", "", 2}, 0},
+		{[]interface{}{"A", "大A写的A", 0}, 0},
+		{[]interface{}{"A", "大A写的A", 1}, 2},
+		{[]interface{}{"A", "大A写的A", 2}, 2},
+		{[]interface{}{"A", "大A写的A", 3}, 5},
+		{[]interface{}{"bAr", "foobarBaR", 5}, 7},
+		{[]interface{}{[]byte("bAr"), "foobarBaR", 5}, 0},
+		{[]interface{}{"bAr", []byte("foobarBaR"), 5}, 0},
+		{[]interface{}{"bAr", []byte("foobarbAr"), 5}, 7},
 	}
-	for _, v := range tbl2 {
-		fc := funcs[ast.Locate]
-		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(v.subStr, v.Str, v.pos)), s.ctx)
+	Dtbl2 := tblToDtbl(tbl2)
+	for i, t := range Dtbl2 {
+		f, err := instr.getFunction(datumsToConstants(t["Args"]), s.ctx)
 		c.Assert(err, IsNil)
-		r, err := f.eval(nil)
+		got, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		c.Assert(r.Kind(), Equals, types.KindInt64)
-		c.Assert(r.GetInt64(), Equals, v.result)
+		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
 	}
 
 	errTbl := []struct {

@@ -756,6 +756,7 @@ func (b *builtinLocateSig) eval(row []types.Datum) (d types.Datum, err error) {
 	// args[0] -> SubStr
 	// args[1] -> Str
 	// args[2] -> Pos
+
 	// eval str
 	if args[1].IsNull() {
 		return d, nil
@@ -780,25 +781,45 @@ func (b *builtinLocateSig) eval(row []types.Datum) (d types.Datum, err error) {
 			return d, errors.Trace(err)
 		}
 		pos = p - 1
-		if pos < 0 || pos > int64(len(str)) {
+	}
+	var ret int64
+	var idx int
+	caseSensitive := false
+	if args[0].Kind() == types.KindBytes || args[1].Kind() == types.KindBytes {
+		caseSensitive = true
+	}
+	if caseSensitive {
+		if pos < 0 || pos > int64(len(str)-len(subStr)) {
 			d.SetInt64(0)
 			return d, nil
-		}
-		if pos > int64(len(str)-len(subStr)) {
-			d.SetInt64(0)
+		} else if len(subStr) == 0 {
+			d.SetInt64(pos + 1)
 			return d, nil
 		}
+		idx = strings.Index(str[pos:], subStr)
+		if idx == -1 {
+			ret = 0
+		} else {
+			ret = pos + int64(idx) + 1
+		}
+	} else {
+		rStr, subStrLen := []rune(strings.ToLower(str)), len([]rune(subStr))
+		if pos < 0 || pos > int64(len(rStr)-subStrLen) {
+			d.SetInt64(0)
+			return d, nil
+		} else if subStrLen == 0 {
+			d.SetInt64(pos + 1)
+			return d, nil
+		}
+		s := string(rStr[pos:])
+		idx = strings.Index(s, strings.ToLower(subStr))
+		if idx == -1 {
+			ret = 0
+		} else {
+			ret = pos + int64(utf8.RuneCountInString(s[:idx])) + 1
+		}
 	}
-	if len(subStr) == 0 {
-		d.SetInt64(pos + 1)
-		return d, nil
-	}
-	i := strings.Index(str[pos:], subStr)
-	if i == -1 {
-		d.SetInt64(0)
-		return d, nil
-	}
-	d.SetInt64(int64(i) + pos + 1)
+	d.SetInt64(ret)
 	return d, nil
 }
 
