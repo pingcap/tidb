@@ -110,7 +110,7 @@ func calculateSum(sc *variable.StatementContext, sum, v types.Datum) (data types
 	}
 }
 
-// getValidPrefix gets a prefix of string which can parsed to a number with base. the minimun base is 2 and the maximum is 36.
+// getValidPrefix gets a prefix of string which can parsed to a number with base. the minimum base is 2 and the maximum is 36.
 func getValidPrefix(s string, base int64) string {
 	var (
 		validLen int
