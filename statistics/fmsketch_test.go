@@ -37,4 +37,12 @@ func (s *testStatisticsSuite) TestSketch(c *C) {
 	sketches = append(sketches, rcSketch)
 	_, ndv = mergeFMSketches(sketches, maxSize)
 	c.Check(ndv, Equals, int64(99968))
+
+	maxSize = 2
+	sketch := newFMSketch()
+	sketch.insertHashValue(1, maxSize)
+	sketch.insertHashValue(2, maxSize)
+	c.Check(len(sketch.hashset), Equals, maxSize)
+	sketch.insertHashValue(4, maxSize)
+	c.Check(len(sketch.hashset), LessEqual, maxSize)
 }
