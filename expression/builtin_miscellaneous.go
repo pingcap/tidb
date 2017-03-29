@@ -13,12 +13,15 @@
 package expression
 
 import (
+	"encoding/binary"
+	"math"
+	"net"
+	"time"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/twinj/uuid"
-	"net"
-	"time"
 )
 
 var (
@@ -227,7 +230,34 @@ type builtinInetNtoaSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet-ntoa
 func (b *builtinInetNtoaSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("INET_NTOA")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if args[0].IsNull() {
+		return d, nil
+	}
+
+	ipArg, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if ipArg < 0 || uint64(ipArg) > math.MaxUint32 {
+		//not an IPv4 address.
+		return d, nil
+	}
+	ip := make(net.IP, net.IPv4len)
+	binary.BigEndian.PutUint32(ip, uint32(ipArg))
+	ipv4 := ip.To4()
+	if ipv4 == nil {
+		//Not a vaild ipv4 address.
+		return d, nil
+	}
+
+	d.SetString(ipv4.String())
+	return d, nil
 }
 
 type inet6AtonFunctionClass struct {

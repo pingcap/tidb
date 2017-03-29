@@ -1013,3 +1013,112 @@ func (s *testEvaluatorSuite) TestTimestamp(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(d.Kind(), Equals, types.KindNull)
 }
+
+func (s *testEvaluatorSuite) TestMakeTime(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Args []interface{}
+		Want interface{}
+	}{
+		{[]interface{}{12, 15, 30}, "12:15:30"},
+		{[]interface{}{25, 15, 30}, "25:15:30"},
+		{[]interface{}{-25, 15, 30}, "-25:15:30"},
+		{[]interface{}{12, -15, 30}, nil},
+		{[]interface{}{12, 15, -30}, nil},
+
+		{[]interface{}{12, 15, "30.10"}, "12:15:30.100000"},
+		{[]interface{}{12, 15, "30.00"}, "12:15:30.000000"},
+		{[]interface{}{12, 15, 30.0000001}, "12:15:30.000000"},
+		{[]interface{}{12, 15, 30.0000005}, "12:15:30.000001"},
+		{[]interface{}{"12", "15", 30.1}, "12:15:30.1"},
+
+		{[]interface{}{0, 58.4, 0}, "00:58:00"},
+		{[]interface{}{0, "58.4", 0}, "00:58:00"},
+		{[]interface{}{0, 58.5, 1}, "00:59:01"},
+		{[]interface{}{0, "58.5", 1}, "00:58:01"},
+		{[]interface{}{0, 59.5, 1}, nil},
+		{[]interface{}{0, "59.5", 1}, "00:59:01"},
+		{[]interface{}{0, 1, 59.1}, "00:01:59.1"},
+		{[]interface{}{0, 1, "59.1"}, "00:01:59.100000"},
+		{[]interface{}{0, 1, 59.5}, "00:01:59.5"},
+		{[]interface{}{0, 1, "59.5"}, "00:01:59.500000"},
+		{[]interface{}{23.5, 1, 10}, "24:01:10"},
+		{[]interface{}{"23.5", 1, 10}, "23:01:10"},
+
+		{[]interface{}{0, 0, 0}, "00:00:00"},
+		{[]interface{}{"", "", ""}, "00:00:00.000000"},
+		{[]interface{}{"h", "m", "s"}, "00:00:00.000000"},
+
+		{[]interface{}{837, 59, 59.1}, "837:59:59.1"},
+		{[]interface{}{838, 59, 59.1}, "838:59:59.0"},
+		{[]interface{}{-838, 59, 59.1}, "-838:59:59.0"},
+		{[]interface{}{1000, 1, 1}, "838:59:59"},
+		{[]interface{}{-1000, 1, 1.23}, "-838:59:59.00"},
+		{[]interface{}{1000, 59.1, 1}, "838:59:59"},
+		{[]interface{}{1000, 59.5, 1}, nil},
+		{[]interface{}{1000, 1, 59.1}, "838:59:59.0"},
+		{[]interface{}{1000, 1, 59.5}, "838:59:59.0"},
+
+		{[]interface{}{12, 15, 60}, nil},
+		{[]interface{}{12, 15, "60"}, nil},
+		{[]interface{}{12, 60, 0}, nil},
+		{[]interface{}{12, "60", 0}, nil},
+
+		{[]interface{}{12, 15, nil}, nil},
+		{[]interface{}{12, nil, 0}, nil},
+		{[]interface{}{nil, 15, 0}, nil},
+		{[]interface{}{nil, nil, nil}, nil},
+	}
+
+	Dtbl := tblToDtbl(tbl)
+	maketime := funcs[ast.MakeTime]
+	for idx, t := range Dtbl {
+		f, err := maketime.getFunction(datumsToConstants(t["Args"]), s.ctx)
+		c.Assert(err, IsNil)
+		got, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		if t["Want"][0].Kind() == types.KindNull {
+			c.Assert(got.Kind(), Equals, types.KindNull, Commentf("[%v] - args:%v", idx, t["Args"]))
+		} else {
+			want, err := t["Want"][0].ToString()
+			c.Assert(err, IsNil)
+			c.Assert(got.GetMysqlDuration().String(), Equals, want, Commentf("[%v] - args:%v", idx, t["Args"]))
+		}
+	}
+}
+
+func (s *testEvaluatorSuite) TestQuarter(c *C) {
+	tests := []struct {
+		t      string
+		expect int64
+	}{
+		// Test case from https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_quarter
+		{"2008-04-01", 2},
+		// Test case for boundary values
+		{"2008-01-01", 1},
+		{"2008-03-31", 1},
+		{"2008-06-30", 2},
+		{"2008-07-01", 3},
+		{"2008-09-30", 3},
+		{"2008-10-01", 4},
+		{"2008-12-31", 4},
+		// Test case for month 0
+		{"2008-00-01", 0},
+	}
+	fc := funcs["quarter"]
+	for _, test := range tests {
+		arg := types.NewStringDatum(test.t)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{arg}), s.ctx)
+		c.Assert(err, IsNil)
+		result, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(result.GetInt64(), Equals, test.expect)
+	}
+
+	// test invalid input
+	argInvalid := types.NewStringDatum("2008-13-01")
+	f, err := fc.getFunction(datumsToConstants([]types.Datum{argInvalid}), s.ctx)
+	c.Assert(err, IsNil)
+	result, err := f.eval(nil)
+	c.Assert(result.IsNull(), IsTrue)
+}

@@ -193,8 +193,8 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	err = txn.Commit()
 	c.Assert(err, IsNil)
 	mustExecSQL(c, se1, `delete from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
-	mustExecSQL(c, se1, fmt.Sprintf(`delete from mysql.global_variables where VARIABLE_NAME="%s" or VARIABLE_NAME="%s";`,
-		variable.DistSQLScanConcurrencyVar, variable.DistSQLJoinConcurrencyVar))
+	mustExecSQL(c, se1, fmt.Sprintf(`delete from mysql.global_variables where VARIABLE_NAME="%s";`,
+		variable.TiDBDistSQLScanConcurrency))
 	mustExecSQL(c, se1, `commit;`)
 	delete(storeBootstrapped, store.UUID())
 	// Make sure the version is downgraded.

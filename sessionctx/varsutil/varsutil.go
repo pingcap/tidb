@@ -14,6 +14,7 @@
 package varsutil
 
 import (
+	"strconv"
 	"strings"
 	"time"
 
@@ -123,6 +124,14 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		vars.AllowAggPushDown = tidbOptOn(sVal)
 	case variable.TiDBOptInSubqUnFolding:
 		vars.AllowInSubqueryUnFolding = tidbOptOn(sVal)
+	case variable.TiDBIndexLookupConcurrency:
+		vars.IndexLookupConcurrency = tidbOptPositiveInt(sVal, variable.DefIndexLookupConcurrency)
+	case variable.TiDBIndexLookupSize:
+		vars.IndexLookupSize = tidbOptPositiveInt(sVal, variable.DefIndexLookupSize)
+	case variable.TiDBDistSQLScanConcurrency:
+		vars.DistSQLScanConcurrency = tidbOptPositiveInt(sVal, variable.DefDistSQLScanConcurrency)
+	case variable.TiDBIndexSerialScanConcurrency:
+		vars.IndexSerialScanConcurrency = tidbOptPositiveInt(sVal, variable.DefIndexSerialScanConcurrency)
 	}
 	vars.Systems[name] = sVal
 	return nil
@@ -131,6 +140,14 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 // For all tidb session variable options, we use "ON"/1 to turn on the options.
 func tidbOptOn(opt string) bool {
 	return strings.EqualFold(opt, "ON") || opt == "1"
+}
+
+func tidbOptPositiveInt(opt string, defaultVal int) int {
+	val, err := strconv.Atoi(opt)
+	if err != nil || val <= 0 {
+		return defaultVal
+	}
+	return val
 }
 
 func parseTimeZone(s string) *time.Location {

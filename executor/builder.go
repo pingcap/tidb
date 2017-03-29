@@ -572,7 +572,6 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 		byItems:     v.GbyItemsPB,
 		orderByList: v.SortItemsPB,
 	}
-	st.scanConcurrency, b.err = getScanConcurrency(b.ctx)
 	return st
 }
 
@@ -599,7 +598,6 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 		aggFields:      v.AggFields,
 		byItems:        v.GbyItemsPB,
 	}
-	st.scanConcurrency, b.err = getScanConcurrency(b.ctx)
 	return st
 }
 

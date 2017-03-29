@@ -342,10 +342,16 @@ func (s *session) retry(maxCnt int) error {
 	for {
 		s.prepareTxnCtx()
 		s.sessionVars.RetryInfo.ResetOffset()
-		for _, sr := range nh.history {
+		for i, sr := range nh.history {
 			st := sr.st
 			txt := st.OriginText()
-			log.Warnf("[%d] Retry %s", connID, sqlForLog(txt))
+			if retryCnt == 0 {
+				// We do not have to log the query every time.
+				// We print the queries at the first try only.
+				log.Warnf("[%d] Retry [%d] query [%d] %s", connID, retryCnt, i, sqlForLog(txt))
+			} else {
+				log.Warnf("[%d] Retry [%d] query [%d]", connID, retryCnt, i)
+			}
 			s.sessionVars.StmtCtx = sr.stmtCtx
 			_, err = st.Exec(s)
 			if err != nil {
@@ -929,13 +935,18 @@ func finishBootstrap(store kv.Storage) {
 	}
 }
 
+const quoteCommaQuote = "', '"
 const loadCommonGlobalVarsSQL = "select * from mysql.global_variables where variable_name in ('" +
-	variable.AutocommitVar + "', '" +
-	variable.SQLModeVar + "', '" +
-	variable.DistSQLJoinConcurrencyVar + "', '" +
-	variable.MaxAllowedPacket + "', '" +
-	variable.TiDBSkipUTF8Check + "', '" +
-	variable.DistSQLScanConcurrencyVar + "')"
+	variable.AutocommitVar + quoteCommaQuote +
+	variable.SQLModeVar + quoteCommaQuote +
+	variable.MaxAllowedPacket + quoteCommaQuote +
+	/* TiDB specific global variables: */
+	variable.TiDBSkipUTF8Check + quoteCommaQuote +
+	variable.TiDBSkipDDLWait + quoteCommaQuote +
+	variable.TiDBIndexLookupSize + quoteCommaQuote +
+	variable.TiDBIndexLookupConcurrency + quoteCommaQuote +
+	variable.TiDBIndexSerialScanConcurrency + quoteCommaQuote +
+	variable.TiDBDistSQLScanConcurrency + "')"
 
 // LoadCommonGlobalVariableIfNeeded loads and applies commonly used global variables for the session.
 func (s *session) loadCommonGlobalVariablesIfNeeded() error {
