@@ -97,7 +97,7 @@ import (
 	describe		"DESCRIBE"
 	distinct		"DISTINCT"
 	tidbSMJ			"TIDB_SMJ"
-	tidbINLJ        "TIDB_INLJ"
+	tidbINLJ		"TIDB_INLJ"
 	div 			"DIV"
 	doubleType		"DOUBLE"
 	drop			"DROP"
