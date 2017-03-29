@@ -213,23 +213,24 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 
 func (s *testStatisticsSuite) TestPseudoTable(c *C) {
 	ti := &model.TableInfo{}
-	ti.Columns = append(ti.Columns, &model.ColumnInfo{
+	colInfo := &model.ColumnInfo{
 		ID:        1,
 		FieldType: *types.NewFieldType(mysql.TypeLonglong),
-	})
+	}
+	ti.Columns = append(ti.Columns, colInfo)
 	tbl := PseudoTable(ti)
 	c.Assert(tbl.Count, Greater, int64(0))
 	col := tbl.Columns[0]
 	c.Assert(col.ID, Greater, int64(0))
 	c.Assert(col.NDV, Greater, int64(0))
 	sc := new(variable.StatementContext)
-	count, err := col.LessRowCount(sc, types.NewIntDatum(100))
+	count, err := tbl.ColumnLessRowCount(sc, types.NewIntDatum(100), colInfo)
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, int64(3333333))
-	count, err = col.EqualRowCount(sc, types.NewIntDatum(1000))
+	count, err = tbl.ColumnEqualRowCount(sc, types.NewIntDatum(1000), colInfo)
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, int64(10000))
-	count, err = col.BetweenRowCount(sc, types.NewIntDatum(1000), types.NewIntDatum(5000))
+	count, err = tbl.ColumnBetweenRowCount(sc, types.NewIntDatum(1000), types.NewIntDatum(5000), colInfo)
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, int64(250000))
 }

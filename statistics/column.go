@@ -79,9 +79,6 @@ func colStatsFromStorage(ctx context.Context, tableID int64, colID int64, tp *ty
 		return nil, errors.Trace(err)
 	}
 	bucketSize := len(rows)
-	if bucketSize == 0 {
-		return nil, nil
-	}
 	colStats := &Column{
 		ID:      colID,
 		NDV:     distinct,
@@ -152,6 +149,9 @@ func (c *Column) GreaterRowCount(sc *variable.StatementContext, value types.Datu
 	}
 	if index == 0 {
 		return c.totalRowCount(), nil
+	}
+	if index >= len(c.Numbers) {
+		return 0, nil
 	}
 	number := c.Numbers[index]
 	nextNumber := int64(0)
