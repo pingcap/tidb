@@ -623,6 +623,10 @@ func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
 }
 
 func (b *executorBuilder) buildNestedLoopJoin(v *plan.PhysicalHashJoin) *NestedLoopJoinExec {
+	for _, cond := range v.EqualConditions {
+		cond.GetArgs()[0].(*expression.Column).ResolveIndices(v.Schema())
+		cond.GetArgs()[1].(*expression.Column).ResolveIndices(v.Schema())
+	}
 	if v.SmallTable == 1 {
 		return &NestedLoopJoinExec{
 			SmallExec:     b.build(v.Children()[1]),

@@ -572,6 +572,8 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 	return resultInfo, nil
 }
 
+// convertCol2CorCol will convert the column in the condition which can be found in outerSchema to a correlated column whose
+// Column is this column. And please make sure the outerSchema.Columns[i].Equal(corCols[i].Column)) holds when you call this.
 func convertCol2CorCol(cond expression.Expression, corCols []*expression.CorrelatedColumn, outerSchema *expression.Schema) expression.Expression {
 	switch x := cond.(type) {
 	case *expression.ScalarFunction:
