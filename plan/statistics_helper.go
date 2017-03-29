@@ -17,7 +17,6 @@ import (
 	"math"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -34,7 +33,6 @@ func (is *PhysicalIndexScan) getRowCountByIndexRanges(sc *variable.StatementCont
 			break
 		}
 	}
-	log.Warnf("pseudo %v", statsTbl.Pseudo)
 	if statsTbl.Pseudo {
 		return getPseudoRowCountByIndexRanges(sc, statsTbl, is.Ranges, is.Index, is.accessInAndEqCount)
 	}

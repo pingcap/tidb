@@ -15,6 +15,7 @@ package statistics
 
 import (
 	"strconv"
+	"sync/atomic"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
-	"sync/atomic"
 )
 
 // Builder describes information needed by NewTable
