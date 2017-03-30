@@ -572,31 +572,6 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 	return resultInfo, nil
 }
 
-// convertCol2CorCol will convert the column in the condition which can be found in outerSchema to a correlated column whose
-// Column is this column. And please make sure the outerSchema.Columns[i].Equal(corCols[i].Column)) holds when you call this.
-func convertCol2CorCol(cond expression.Expression, corCols []*expression.CorrelatedColumn, outerSchema *expression.Schema) expression.Expression {
-	switch x := cond.(type) {
-	case *expression.ScalarFunction:
-		newArgs := make([]expression.Expression, 0, len(x.GetArgs()))
-		for _, arg := range x.GetArgs() {
-			newArg := convertCol2CorCol(arg, corCols, outerSchema)
-			newArgs = append(newArgs, newArg)
-		}
-		var newSf expression.Expression
-		if x.FuncName.L == ast.Cast {
-			newSf = expression.NewCastFunc(x.RetType, newArgs[0], x.GetCtx())
-		} else {
-			newSf, _ = expression.NewFunction(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
-		}
-		return newSf
-	case *expression.Column:
-		if pos := outerSchema.ColumnIndex(x); pos >= 0 {
-			return corCols[pos]
-		}
-	}
-	return cond
-}
-
 // buildSelectionWithConds will build a selection use the conditions of join and convert one side's column to correlated column.
 // This is called when build nested loop join.
 func (p *Join) buildSelectionWithConds(left bool) (*Selection, []*expression.CorrelatedColumn) {
@@ -626,22 +601,22 @@ func (p *Join) buildSelectionWithConds(left bool) (*Selection, []*expression.Cor
 	if left {
 		conds = make([]expression.Expression, 0, len(p.EqualConditions)+len(p.RightConditions)+len(p.OtherConditions))
 		for _, cond := range p.RightConditions {
-			newCond := convertCol2CorCol(cond, corCols, outerSchema)
+			newCond := expression.ConvertCol2CorCol(cond, corCols, outerSchema)
 			conds = append(conds, newCond)
 		}
 	} else {
 		conds = make([]expression.Expression, 0, len(p.EqualConditions)+len(p.LeftConditions)+len(p.OtherConditions))
 		for _, cond := range p.LeftConditions {
-			newCond := convertCol2CorCol(cond, corCols, outerSchema)
+			newCond := expression.ConvertCol2CorCol(cond, corCols, outerSchema)
 			conds = append(conds, newCond)
 		}
 	}
 	for _, cond := range p.EqualConditions {
-		newCond := convertCol2CorCol(cond, corCols, outerSchema)
+		newCond := expression.ConvertCol2CorCol(cond, corCols, outerSchema)
 		conds = append(conds, newCond)
 	}
 	for _, cond := range p.OtherConditions {
-		newCond := convertCol2CorCol(cond, corCols, outerSchema)
+		newCond := expression.ConvertCol2CorCol(cond, corCols, outerSchema)
 		conds = append(conds, newCond)
 	}
 	selection.Conditions = conds
