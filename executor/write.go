@@ -633,22 +633,16 @@ func (e *InsertExec) Next() (*Row, error) {
 	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
 	batchInsert := e.ctx.GetSessionVars().BatchInsert && !e.ctx.GetSessionVars().InTxn()
 	rowCount := 0
-	firstBatch := true
 
 	for _, row := range rows {
 		if batchInsert && rowCount >= BatchInsertSize {
 			err = e.ctx.NewTxn()
 			if err != nil {
-				if firstBatch {
-					return nil, errors.Trace(err)
-				}
-				// If it is not the first batch, we should not return retriable error. Or the session will
-				// retry the whole statement.
-				return nil, ErrBatchInsertFail.Gen("BatchInsert failed, please clean the table and try again.")
+				// We should return a special error for batch insert.
+				return nil, ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)
 			}
 			txn = e.ctx.Txn()
 			rowCount = 0
-			firstBatch = false
 		}
 		if len(e.OnDuplicate) == 0 && !e.Ignore {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
