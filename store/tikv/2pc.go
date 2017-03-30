@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"math"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coreos/etcd/pkg/monotime"
@@ -123,7 +124,8 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 			size += len(lockKey)
 		}
 	}
-	if len(keys) > kv.TxnEntryCountLimit || size > kv.TxnTotalSizeLimit {
+	entrylimit := atomic.LoadUint64(&kv.TxnEntryCountLimit)
+	if len(keys) > int(entrylimit) || size > kv.TxnTotalSizeLimit {
 		return nil, kv.ErrTxnTooLarge
 	}
 	const logEntryCount = 10000
