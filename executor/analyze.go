@@ -66,11 +66,11 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 		ae := src.(*AnalyzeExec)
 		var count int64 = -1
 		var sampleRows []*ast.Row
-		var ndvs []int64
+		var colNDVs []int64
 		if ae.colOffsets != nil {
 			rs := &recordSet{executor: ae.Srcs[len(ae.Srcs)-1]}
 			var err error
-			count, sampleRows, ndvs, err = collectSamplesAndEstimateNDVs(rs, len(ae.colOffsets))
+			count, sampleRows, colNDVs, err = collectSamplesAndEstimateNDVs(rs, len(ae.colOffsets))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -88,7 +88,7 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 		for i := range ae.idxOffsets {
 			idxRS = append(idxRS, &recordSet{executor: ae.Srcs[i]})
 		}
-		err := ae.buildStatisticsAndSaveToKV(count, columnSamples, ndvs, idxRS, pkRS)
+		err := ae.buildStatisticsAndSaveToKV(count, columnSamples, colNDVs, idxRS, pkRS)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -96,7 +96,7 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 	return nil, nil
 }
 
-func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]types.Datum, ndvs []int64, idxRS []ast.RecordSet, pkRS ast.RecordSet) error {
+func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]types.Datum, colNDVs []int64, idxRS []ast.RecordSet, pkRS ast.RecordSet) error {
 	statBuilder := &statistics.Builder{
 		Ctx:           e.ctx,
 		TblInfo:       e.tblInfo,
@@ -104,7 +104,7 @@ func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]
 		NumBuckets:    defaultBucketCount,
 		ColumnSamples: columnSamples,
 		ColOffsets:    e.colOffsets,
-		ColNDVs:       ndvs,
+		ColNDVs:       colNDVs,
 		IdxRecords:    idxRS,
 		IdxOffsets:    e.idxOffsets,
 		PkRecords:     pkRS,
