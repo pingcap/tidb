@@ -14,6 +14,7 @@
 package privileges
 
 import (
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -471,6 +472,7 @@ func appendUserPrivilegesTableRow(rows [][]types.Datum, user userRecord) [][]typ
 	} else {
 		isGrantable = "NO"
 	}
+	gurantee := fmt.Sprintf("'%s'@'%s'", user.User, user.Host)
 
 	for _, priv := range mysql.AllGlobalPrivs {
 		if priv == mysql.GrantPriv {
@@ -482,7 +484,7 @@ func appendUserPrivilegesTableRow(rows [][]types.Datum, user userRecord) [][]typ
 			// | GRANTEE                   | TABLE_CATALOG | PRIVILEGE_TYPE          | IS_GRANTABLE |
 			// +---------------------------+---------------+-------------------------+--------------+
 			// | 'root'@'localhost'        | def           | SELECT                  | YES          |
-			record := types.MakeDatums(user.User, "def", privilegeType, isGrantable)
+			record := types.MakeDatums(gurantee, "def", privilegeType, isGrantable)
 			rows = append(rows, record)
 		}
 	}
