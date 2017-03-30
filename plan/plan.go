@@ -78,7 +78,7 @@ const (
 	TypeDual = "TableDual"
 	// TypeLock is the type of SelectLock.
 	TypeLock = "SelectLock"
-	// TypeIns is the type of Insert
+	// TypeInsert is the type of Insert
 	TypeInsert = "Insert"
 	// TypeUpate is the type of Update.
 	TypeUpate = "Update"
