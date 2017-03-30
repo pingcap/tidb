@@ -641,11 +641,10 @@ func (e *InsertExec) Next() (*Row, error) {
 			if err != nil {
 				if firstBatch {
 					return nil, errors.Trace(err)
-				} else {
-					// If it is not the first batch, we should not return retriable error. Or the session will
-					// retry the whole statement.
-					return nil, ErrBatchInsertFail.Gen("BatchInsert failed, please clean the table and try again.")
 				}
+				// If it is not the first batch, we should not return retriable error. Or the session will
+				// retry the whole statement.
+				return nil, ErrBatchInsertFail.Gen("BatchInsert failed, please clean the table and try again.")
 			}
 			txn = e.ctx.Txn()
 			rowCount = 0
