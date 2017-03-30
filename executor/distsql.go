@@ -453,7 +453,10 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 			schema = e.idxColsSchema
 		}
 		values := make([]types.Datum, schema.Len())
-		codec.SetRawValues(rowData, values)
+		err = codec.SetRawValues(rowData, values)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		err = decodeRawValues(values, schema)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -735,8 +738,11 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 		if rowData == nil {
 			break
 		}
-		values := make([]types.Datum, len(e.indexPlan.Columns))
-		codec.SetRawValues(rowData, values)
+		values := make([]types.Datum, e.Schema().Len())
+		err = codec.SetRawValues(rowData, values)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		err = decodeRawValues(values, e.Schema())
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -916,7 +922,10 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 		}
 		e.returnedRows++
 		values := make([]types.Datum, e.schema.Len())
-		codec.SetRawValues(rowData, values)
+		err = codec.SetRawValues(rowData, values)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		err = decodeRawValues(values, e.schema)
 		if err != nil {
 			return nil, errors.Trace(err)
