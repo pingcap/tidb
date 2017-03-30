@@ -70,7 +70,7 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 		if ae.colOffsets != nil {
 			rs := &recordSet{executor: ae.Srcs[len(ae.Srcs)-1]}
 			var err error
-			count, sampleRows, colNDVs, err = collectSamplesAndEstimateNDVs(rs, len(ae.colOffsets))
+			count, sampleRows, colNDVs, err = CollectSamplesAndEstimateNDVs(rs, len(ae.colOffsets))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -118,10 +118,11 @@ func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]
 	return errors.Trace(err)
 }
 
-// collectSamplesAndEstimateNDVs collects sample from the result set using Reservoir Sampling algorithm,
+// CollectSamplesAndEstimateNDVs collects sample from the result set using Reservoir Sampling algorithm,
 // and estimates NDVs using FM Sketch during the collecting process.
 // See https://en.wikipedia.org/wiki/Reservoir_sampling
-func collectSamplesAndEstimateNDVs(e ast.RecordSet, numCols int) (count int64, samples []*ast.Row, ndvs []int64, err error) {
+// Exported for test.
+func CollectSamplesAndEstimateNDVs(e ast.RecordSet, numCols int) (count int64, samples []*ast.Row, ndvs []int64, err error) {
 	var sketches []*statistics.FMSketch
 	for i := 0; i < numCols; i++ {
 		sketches = append(sketches, statistics.NewFMSketch(maxSketchSize))
