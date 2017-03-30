@@ -25,14 +25,13 @@ import (
 
 var singleGroup = []byte("SingleGroup")
 
-func (h *rpcHandler) getGroupKey(ctx *selectContext) ([]byte, error) {
-	items := ctx.sel.GetGroupBy()
-	if len(items) == 0 {
+func getGroupKey(ctx *aggContext, exprs []*tipb.Expr) ([]byte, error) {
+	if len(exprs) == 0 {
 		return singleGroup, nil
 	}
-	vals := make([]types.Datum, 0, len(items))
-	for _, item := range items {
-		v, err := ctx.eval.Eval(item.Expr)
+	vals := make([]types.Datum, 0, len(exprs))
+	for _, expr := range exprs {
+		v, err := ctx.eval.Eval(expr)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -45,24 +44,24 @@ func (h *rpcHandler) getGroupKey(ctx *selectContext) ([]byte, error) {
 	return bs, nil
 }
 
-// Update aggregate functions with rows.
-func (h *rpcHandler) aggregate(ctx *selectContext, handle int64, row map[int64][]byte) error {
+// aggregate updates aggregate functions with rows.
+func aggregate(ctx *aggContext, groupByExprs []*tipb.Expr, handle int64, row map[int64][]byte) error {
 	// Put row data into evaluate for later evaluation.
-	err := setColumnValueToEval(ctx.eval, handle, row, ctx.aggColumns)
+	err := setColumnValueToEval(ctx.eval, handle, row, ctx.columns)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// Get group key.
-	gk, err := h.getGroupKey(ctx)
+	gk, err := getGroupKey(ctx, groupByExprs)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if _, ok := ctx.groups[string(gk)]; !ok {
-		ctx.groups[string(gk)] = true
+		ctx.groups[string(gk)] = struct{}{}
 		ctx.groupKeys = append(ctx.groupKeys, gk)
 	}
 	// Update aggregate funcs.
-	for _, agg := range ctx.aggregates {
+	for _, agg := range ctx.aggFuncs {
 		agg.currentGroup = gk
 		args := make([]types.Datum, 0, len(agg.expr.Children))
 		// Evaluate arguments.
@@ -106,7 +105,7 @@ func (n *aggregateFuncExpr) clear() {
 }
 
 // Update is used for update aggregate context.
-func (n *aggregateFuncExpr) update(ctx *selectContext, args []types.Datum) error {
+func (n *aggregateFuncExpr) update(ctx *aggContext, args []types.Datum) error {
 	switch n.expr.GetTp() {
 	case tipb.ExprType_Count:
 		return n.updateCount(ctx, args)
@@ -122,7 +121,7 @@ func (n *aggregateFuncExpr) update(ctx *selectContext, args []types.Datum) error
 	return errors.Errorf("Unknown AggExpr: %v", n.expr.GetTp())
 }
 
-func (n *aggregateFuncExpr) toDatums(ctx *selectContext) (ds []types.Datum, err error) {
+func (n *aggregateFuncExpr) toDatums(ctx *aggContext) (ds []types.Datum, err error) {
 	switch n.expr.GetTp() {
 	case tipb.ExprType_Count:
 		ds = n.getCountDatum()
@@ -146,12 +145,12 @@ func (n *aggregateFuncExpr) toDatums(ctx *selectContext) (ds []types.Datum, err 
 	return
 }
 
-func getSumValue(ctx *selectContext, item *aggItem) (types.Datum, error) {
+func getSumValue(ctx *aggContext, item *aggItem) (types.Datum, error) {
 	v := item.value
 	var d types.Datum
 	if !v.IsNull() {
 		// For sum result, we should convert it to decimal.
-		de, err1 := v.ToDecimal(ctx.sc)
+		de, err1 := v.ToDecimal(ctx.eval.StatementCtx)
 		if err1 != nil {
 			return d, errors.Trace(err1)
 		}
@@ -189,7 +188,7 @@ func (n *aggregateFuncExpr) getAggItem() *aggItem {
 	return n.contextPerGroupMap[string(n.currentGroup)]
 }
 
-func (n *aggregateFuncExpr) updateCount(ctx *selectContext, args []types.Datum) error {
+func (n *aggregateFuncExpr) updateCount(ctx *aggContext, args []types.Datum) error {
 	for _, a := range args {
 		if a.IsNull() {
 			return nil
@@ -200,7 +199,7 @@ func (n *aggregateFuncExpr) updateCount(ctx *selectContext, args []types.Datum) 
 	return nil
 }
 
-func (n *aggregateFuncExpr) updateFirst(ctx *selectContext, args []types.Datum) error {
+func (n *aggregateFuncExpr) updateFirst(ctx *aggContext, args []types.Datum) error {
 	aggItem := n.getAggItem()
 	if aggItem.gotFirstRow {
 		return nil
@@ -213,7 +212,7 @@ func (n *aggregateFuncExpr) updateFirst(ctx *selectContext, args []types.Datum) 
 	return nil
 }
 
-func (n *aggregateFuncExpr) updateSum(ctx *selectContext, args []types.Datum) error {
+func (n *aggregateFuncExpr) updateSum(ctx *aggContext, args []types.Datum) error {
 	if len(args) != 1 {
 		// This should not happen. The length of argument list is already checked in the early stage.
 		// This is just in case of error.
@@ -230,7 +229,7 @@ func (n *aggregateFuncExpr) updateSum(ctx *selectContext, args []types.Datum) er
 		return nil
 	}
 	var err error
-	aggItem.value, err = xeval.ComputeArithmetic(ctx.sc, tipb.ExprType_Plus, arg, aggItem.value)
+	aggItem.value, err = xeval.ComputeArithmetic(ctx.eval.StatementCtx, tipb.ExprType_Plus, arg, aggItem.value)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -238,7 +237,7 @@ func (n *aggregateFuncExpr) updateSum(ctx *selectContext, args []types.Datum) er
 	return nil
 }
 
-func (n *aggregateFuncExpr) updateMaxMin(ctx *selectContext, args []types.Datum, max bool) error {
+func (n *aggregateFuncExpr) updateMaxMin(ctx *aggContext, args []types.Datum, max bool) error {
 	if len(args) != 1 {
 		// This should not happen. The length of argument list is already checked in the early stage.
 		// This is just in case of error.
@@ -257,7 +256,7 @@ func (n *aggregateFuncExpr) updateMaxMin(ctx *selectContext, args []types.Datum,
 		aggItem.value = arg
 		return nil
 	}
-	c, err := aggItem.value.CompareDatum(ctx.sc, arg)
+	c, err := aggItem.value.CompareDatum(ctx.eval.StatementCtx, arg)
 	if err != nil {
 		return errors.Trace(err)
 	}

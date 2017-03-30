@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/distsql/xeval"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -32,7 +31,6 @@ type dagContext struct {
 	dagReq    *tipb.DAGRequest
 	keyRanges []*coprocessor.KeyRange
 	eval      *xeval.Evaluator
-	sc        *variable.StatementContext
 	columns   []*tipb.ColumnInfo
 }
 
@@ -63,7 +61,6 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor
 	ctx := &dagContext{
 		dagReq:    dagReq,
 		keyRanges: req.Ranges,
-		sc:        sc,
 		eval:      xeval.NewEvaluator(sc),
 	}
 	e, err := h.buildDAG(ctx, dagReq.Executors)
@@ -76,85 +73,13 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if row == nil {
+		if row.isNull() {
 			break
 		}
-		data := dummySlice
-		for _, col := range ctx.columns {
-			data = append(data, row[col.GetColumnId()]...)
-		}
+		data := e.BuildData(ctx.columns, row)
 		chunks = appendRow(chunks, handle, data)
 	}
 	return buildResp(chunks, err)
-}
-
-func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, error) {
-	var currExec executor
-	switch curr.GetTp() {
-	case tipb.ExecType_TypeTableScan:
-		columns := curr.TblScan.Columns
-		ctx.setColumns(columns)
-		colTps := make(map[int64]*types.FieldType, len(columns))
-		for _, col := range columns {
-			if col.GetPkHandle() {
-				continue
-			}
-			colTps[col.GetColumnId()] = distsql.FieldTypeFromPBColumn(col)
-		}
-		ranges := h.extractKVRanges(ctx.keyRanges, *curr.TblScan.Desc)
-		currExec = &tableScanExec{
-			TableScan:   curr.TblScan,
-			kvRanges:    ranges,
-			colTps:      colTps,
-			startTS:     ctx.dagReq.GetStartTs(),
-			mvccStore:   h.mvccStore,
-			rawStartKey: h.rawStartKey,
-			rawEndKey:   h.rawEndKey,
-		}
-	case tipb.ExecType_TypeIndexScan:
-		columns := curr.IdxScan.Columns
-		ctx.setColumns(columns)
-		length := len(columns)
-		// The PKHandle column info has been collected in ctx.
-		if columns[length-1].GetPkHandle() {
-			columns = columns[:length-1]
-		}
-		ids := make([]int64, 0, len(columns))
-		for _, col := range columns {
-			ids = append(ids, col.GetColumnId())
-		}
-		ranges := h.extractKVRanges(ctx.keyRanges, *curr.IdxScan.Desc)
-		currExec = &indexScanExec{
-			IndexScan:   curr.IdxScan,
-			kvRanges:    ranges,
-			ids:         ids,
-			startTS:     ctx.dagReq.GetStartTs(),
-			mvccStore:   h.mvccStore,
-			rawStartKey: h.rawStartKey,
-			rawEndKey:   h.rawEndKey,
-		}
-	case tipb.ExecType_TypeSelection:
-		var cond *tipb.Expr
-		// TODO: Now len(Conditions) is 1.
-		if len(curr.Selection.Conditions) > 0 {
-			cond = curr.Selection.Conditions[0]
-		}
-		cols := make(map[int64]*tipb.ColumnInfo)
-		err := extractColumnsInExpr(cond, ctx.columns, cols)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		currExec = &selectionExec{
-			Selection: curr.Selection,
-			eval:      ctx.eval,
-			columns:   cols,
-			sc:        ctx.sc,
-		}
-	default:
-		// TODO: Support other types.
-	}
-
-	return currExec, nil
 }
 
 func (h *rpcHandler) buildDAG(ctx *dagContext, executors []*tipb.Executor) (executor, error) {
@@ -168,4 +93,122 @@ func (h *rpcHandler) buildDAG(ctx *dagContext, executors []*tipb.Executor) (exec
 		src = curr
 	}
 	return src, nil
+}
+
+func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, error) {
+	var currExec executor
+	var err error
+	switch curr.GetTp() {
+	case tipb.ExecType_TypeTableScan:
+		currExec = h.buildTableScan(ctx, curr)
+	case tipb.ExecType_TypeIndexScan:
+		currExec = h.buildIndexScan(ctx, curr)
+	case tipb.ExecType_TypeSelection:
+		currExec, err = h.buildSelection(ctx, curr)
+	case tipb.ExecType_TypeAggregation:
+		currExec, err = h.buildAggregation(ctx, curr)
+	default:
+		// TODO: Support other types.
+		err = errors.Errorf("this exec type %v doesn't support yet.", curr.GetTp())
+	}
+
+	return currExec, errors.Trace(err)
+}
+
+func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) *tableScanExec {
+	columns := executor.TblScan.Columns
+	ctx.setColumns(columns)
+	colTps := make(map[int64]*types.FieldType, len(columns))
+	for _, col := range columns {
+		if col.GetPkHandle() {
+			continue
+		}
+		colTps[col.GetColumnId()] = distsql.FieldTypeFromPBColumn(col)
+	}
+	ranges := h.extractKVRanges(ctx.keyRanges, *executor.TblScan.Desc)
+
+	return &tableScanExec{
+		TableScan:   executor.TblScan,
+		kvRanges:    ranges,
+		colTps:      colTps,
+		startTS:     ctx.dagReq.GetStartTs(),
+		mvccStore:   h.mvccStore,
+		rawStartKey: h.rawStartKey,
+		rawEndKey:   h.rawEndKey,
+	}
+}
+
+func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) *indexScanExec {
+	columns := executor.IdxScan.Columns
+	ctx.setColumns(columns)
+	length := len(columns)
+	// The PKHandle column info has been collected in ctx.
+	if columns[length-1].GetPkHandle() {
+		columns = columns[:length-1]
+	}
+	ids := make([]int64, 0, len(columns))
+	for _, col := range columns {
+		ids = append(ids, col.GetColumnId())
+	}
+	ranges := h.extractKVRanges(ctx.keyRanges, *executor.IdxScan.Desc)
+
+	return &indexScanExec{
+		IndexScan:   executor.IdxScan,
+		kvRanges:    ranges,
+		ids:         ids,
+		startTS:     ctx.dagReq.GetStartTs(),
+		mvccStore:   h.mvccStore,
+		rawStartKey: h.rawStartKey,
+		rawEndKey:   h.rawEndKey,
+	}
+}
+
+func (h *rpcHandler) buildSelection(ctx *dagContext, executor *tipb.Executor) (*selectionExec, error) {
+	var cond *tipb.Expr
+	// TODO: Now len(Conditions) is 1.
+	if len(executor.Selection.Conditions) > 0 {
+		cond = executor.Selection.Conditions[0]
+	}
+	cols := make(map[int64]*tipb.ColumnInfo)
+	err := extractColumnsInExpr(cond, ctx.columns, cols)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return &selectionExec{
+		Selection: executor.Selection,
+		eval:      ctx.eval,
+		columns:   cols,
+	}, nil
+}
+
+func (h *rpcHandler) buildAggregation(ctx *dagContext, executor *tipb.Executor) (*aggregateExec, error) {
+	aggs := make([]*aggregateFuncExpr, 0, len(executor.Aggregation.AggFunc))
+	cols := make(map[int64]*tipb.ColumnInfo)
+	for _, agg := range executor.Aggregation.AggFunc {
+		aggExpr := &aggregateFuncExpr{expr: agg}
+		aggs = append(aggs, aggExpr)
+		err := extractColumnsInExpr(agg, ctx.columns, cols)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	for _, item := range executor.Aggregation.GroupBy {
+		err := extractColumnsInExpr(item, ctx.columns, cols)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	aggCtx := &aggContext{
+		eval:      ctx.eval,
+		columns:   cols,
+		aggFuncs:  aggs,
+		groups:    make(map[string]struct{}),
+		groupKeys: make([][]byte, 0),
+	}
+	return &aggregateExec{
+		Aggregation: executor.Aggregation,
+		aggContext:  aggCtx,
+	}, nil
 }
