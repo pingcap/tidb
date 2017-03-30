@@ -176,6 +176,26 @@ func (s *testStatsCacheSuite) TestDDLAfterLoad(c *C) {
 	c.Assert(count, Equals, int64(333))
 }
 
+func (s *testStatsCacheSuite) TestEmptyTable(c *C) {
+	store, do, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (c1 int, c2 int, key cc1(c1), key cc2(c2))")
+	testKit.MustExec("analyze table t")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	statsTbl := statistics.GetStatisticsTableCache(tableInfo)
+	sc := new(variable.StatementContext)
+	count, err := statsTbl.ColumnGreaterRowCount(sc, types.NewDatum(1), tableInfo.Columns[0])
+	c.Assert(err, IsNil)
+	// FIXME: The result should be zero.
+	c.Assert(count, Equals, int64(3333333))
+}
+
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
 	if err != nil {

@@ -140,6 +140,15 @@ func (b *Builder) NewTable() (*Table, error) {
 			}
 		}
 	}
+	if t.Count == 0 {
+		for i := range t.Columns {
+			t.Columns[i] = &Column{ID: b.TblInfo.Columns[i].ID}
+		}
+		for i := range t.Indices {
+			t.Indices[i] = &Column{ID: b.TblInfo.Indices[i].ID}
+		}
+		return t, nil
+	}
 	return t, nil
 }
 
