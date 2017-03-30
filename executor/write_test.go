@@ -851,3 +851,63 @@ func makeLoadDataInfo(column int, ctx context.Context, c *C) (ld *executor.LoadD
 	ld.LinesInfo = lines
 	return
 }
+
+func (s *testSuite) TestBatchInsert(c *C) {
+	originLimit := kv.TxnEntryCountLimit
+	originBatch := executor.BatchInsertSize
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+		kv.TxnEntryCountLimit = originLimit
+		executor.BatchInsertSize = originBatch
+	}()
+	// Set the limitation to a small value, make it easier to reach the limitation.
+	kv.TxnEntryCountLimit = 100
+	executor.BatchInsertSize = 50
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists batch_insert")
+	tk.MustExec("create table batch_insert (c int)")
+	// Insert 10 rows.
+	tk.MustExec("insert into batch_insert values (1),(1),(1),(1),(1),(1),(1),(1),(1),(1)")
+	r := tk.MustQuery("select count(*) from batch_insert;")
+	r.Check(testkit.Rows("10"))
+	// Insert 10 rows.
+	tk.MustExec("insert into batch_insert (c) select * from batch_insert;")
+	r = tk.MustQuery("select count(*) from batch_insert;")
+	r.Check(testkit.Rows("20"))
+	// Insert 20 rows.
+	tk.MustExec("insert into batch_insert (c) select * from batch_insert;")
+	r = tk.MustQuery("select count(*) from batch_insert;")
+	r.Check(testkit.Rows("40"))
+	// Insert 40 rows.
+	tk.MustExec("insert into batch_insert (c) select * from batch_insert;")
+	r = tk.MustQuery("select count(*) from batch_insert;")
+	r.Check(testkit.Rows("80"))
+	// Insert 80 rows.
+	tk.MustExec("insert into batch_insert (c) select * from batch_insert;")
+	r = tk.MustQuery("select count(*) from batch_insert;")
+	r.Check(testkit.Rows("160"))
+
+	// This will meet txn too large error.
+	_, err := tk.Exec("insert into batch_insert (c) select * from batch_insert;")
+	c.Assert(err, NotNil)
+	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
+	r = tk.MustQuery("select count(*) from batch_insert;")
+	r.Check(testkit.Rows("160"))
+
+	// Change to batch inset mode.
+	tk.MustExec("set @@session.tidb_batch_insert=1;")
+	tk.MustExec("insert into batch_insert (c) select * from batch_insert;")
+	r = tk.MustQuery("select count(*) from batch_insert;")
+	r.Check(testkit.Rows("320"))
+
+	// Disable BachInsert mode in transation.
+	tk.MustExec("begin;")
+	_, err = tk.Exec("insert into batch_insert (c) select * from batch_insert;")
+	c.Assert(err, NotNil)
+	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
+	tk.MustExec("rollback;")
+	r = tk.MustQuery("select count(*) from batch_insert;")
+	r.Check(testkit.Rows("320"))
+}
