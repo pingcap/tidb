@@ -165,6 +165,7 @@ var funcs = map[string]functionClass{
 
 	// time functions
 	ast.AddDate:          &dateArithFunctionClass{baseFunctionClass{ast.AddDate, 3, 3}, ast.DateArithAdd},
+	ast.AddTime:          &timeArithFunctionClass{baseFunctionClass{ast.AddTime, 2, 2}, ast.TimeArithAdd},
 	ast.ConvertTz:        &convertTzFunctionClass{baseFunctionClass{ast.ConvertTz, 3, 3}},
 	ast.Curdate:          &currentDateFunctionClass{baseFunctionClass{ast.Curdate, 0, 0}},
 	ast.CurrentDate:      &currentDateFunctionClass{baseFunctionClass{ast.CurrentDate, 0, 0}},
@@ -173,8 +174,6 @@ var funcs = map[string]functionClass{
 	ast.Curtime:          &currentTimeFunctionClass{baseFunctionClass{ast.Curtime, 0, 1}},
 	ast.Date:             &dateFunctionClass{baseFunctionClass{ast.Date, 1, 1}},
 	ast.DateAdd:          &dateArithFunctionClass{baseFunctionClass{ast.DateAdd, 3, 3}, ast.DateArithAdd},
-	ast.AddTime:          &timeArithFunctionClass{baseFunctionClass{ast.AddTime, 2, 2}, ast.TimeArithAdd},
-	ast.SubTime:          &timeArithFunctionClass{baseFunctionClass{ast.SubTime, 2, 2}, ast.TimeArithSub},
 	ast.DateFormat:       &dateFormatFunctionClass{baseFunctionClass{ast.DateFormat, 2, 2}},
 	ast.DateSub:          &dateArithFunctionClass{baseFunctionClass{ast.DateSub, 3, 3}, ast.DateArithSub},
 	ast.DateDiff:         &dateDiffFunctionClass{baseFunctionClass{ast.DateDiff, 2, 2}},
@@ -203,6 +202,7 @@ var funcs = map[string]functionClass{
 	ast.Second:           &secondFunctionClass{baseFunctionClass{ast.Second, 1, 1}},
 	ast.StrToDate:        &strToDateFunctionClass{baseFunctionClass{ast.StrToDate, 2, 2}},
 	ast.SubDate:          &dateArithFunctionClass{baseFunctionClass{ast.SubDate, 3, 3}, ast.DateArithSub},
+	ast.SubTime:          &timeArithFunctionClass{baseFunctionClass{ast.SubTime, 2, 2}, ast.TimeArithSub},
 	ast.Sysdate:          &sysDateFunctionClass{baseFunctionClass{ast.Sysdate, 0, 1}},
 	ast.Time:             &timeFunctionClass{baseFunctionClass{ast.Time, 1, 1}},
 	ast.TimeFormat:       &timeFormatFunctionClass{baseFunctionClass{ast.TimeFormat, 2, 2}},
