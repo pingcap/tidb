@@ -48,14 +48,17 @@ const (
 
 // Evaluator evaluates tipb.Expr.
 type Evaluator struct {
-	Row        map[int64]types.Datum // column values.
-	valueLists map[*tipb.Expr]*decodedValueList
-	sc         *variable.StatementContext
+	Row          map[int64]types.Datum // column values.
+	valueLists   map[*tipb.Expr]*decodedValueList
+	StatementCtx *variable.StatementContext
 }
 
 // NewEvaluator creates a new Evaluator instance.
 func NewEvaluator(sc *variable.StatementContext) *Evaluator {
-	return &Evaluator{Row: make(map[int64]types.Datum), sc: sc}
+	return &Evaluator{
+		Row:          make(map[int64]types.Datum),
+		StatementCtx: sc,
+	}
 }
 
 type decodedValueList struct {

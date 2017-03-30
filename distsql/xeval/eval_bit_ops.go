@@ -31,17 +31,17 @@ func (e *Evaluator) evalBitOps(expr *tipb.Expr) (types.Datum, error) {
 		if err != nil {
 			return types.Datum{}, errors.Trace(err)
 		}
-		a, err := types.CoerceArithmetic(e.sc, operand)
+		a, err := types.CoerceArithmetic(e.StatementCtx, operand)
 		if err != nil {
 			return result, errors.Trace(err)
 		}
-		return types.ComputeBitNeg(e.sc, a)
+		return types.ComputeBitNeg(e.StatementCtx, a)
 	}
 	left, right, err := e.evalTwoChildren(expr)
 	if err != nil {
 		return result, errors.Trace(err)
 	}
-	return ComputeBit(e.sc, expr.GetTp(), left, right)
+	return ComputeBit(e.StatementCtx, expr.GetTp(), left, right)
 }
 
 // ComputeBit computes the bitwise operation on two datums.

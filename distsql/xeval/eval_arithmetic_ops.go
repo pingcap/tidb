@@ -26,7 +26,7 @@ func (e *Evaluator) evalArithmeticOps(expr *tipb.Expr) (types.Datum, error) {
 	if err != nil {
 		return result, errors.Trace(err)
 	}
-	return ComputeArithmetic(e.sc, expr.GetTp(), left, right)
+	return ComputeArithmetic(e.StatementCtx, expr.GetTp(), left, right)
 }
 
 // ComputeArithmetic computes the arithmetic operation on two datums.
