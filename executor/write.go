@@ -639,7 +639,7 @@ func (e *InsertExec) Next() (*Row, error) {
 		if batchInsert && rowCount >= BatchInsertSize {
 			err = e.ctx.NewTxn()
 			if err != nil {
-				if firstBacth {
+				if firstBatch {
 					return nil, errors.Trace(err)
 				} else {
 					// If it is not the first batch, we should not return retriable error. Or the session will
@@ -649,7 +649,7 @@ func (e *InsertExec) Next() (*Row, error) {
 			}
 			txn = e.ctx.Txn()
 			rowCount = 0
-			firstBacth = false
+			firstBatch = false
 		}
 		if len(e.OnDuplicate) == 0 && !e.Ignore {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
