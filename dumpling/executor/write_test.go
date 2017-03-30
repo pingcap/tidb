@@ -16,6 +16,7 @@ package executor_test
 import (
 	"errors"
 	"fmt"
+	"sync/atomic"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
@@ -853,16 +854,16 @@ func makeLoadDataInfo(column int, ctx context.Context, c *C) (ld *executor.LoadD
 }
 
 func (s *testSuite) TestBatchInsert(c *C) {
-	originLimit := kv.TxnEntryCountLimit
+	originLimit := atomic.LoadUint64(&kv.TxnEntryCountLimit)
 	originBatch := executor.BatchInsertSize
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
-		kv.TxnEntryCountLimit = originLimit
+		atomic.StoreUint64(&kv.TxnEntryCountLimit, originLimit)
 		executor.BatchInsertSize = originBatch
 	}()
 	// Set the limitation to a small value, make it easier to reach the limitation.
-	kv.TxnEntryCountLimit = 100
+	atomic.StoreUint64(&kv.TxnEntryCountLimit, 100)
 	executor.BatchInsertSize = 50
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
