@@ -327,6 +327,9 @@ func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPl
 		info.cost += sortCost(count)
 	} else if prop.limit != nil {
 		limit := prop.limit.Copy().(*Limit)
+		limit.tp = Lim
+		limit.allocator = info.p.Allocator()
+		limit.initIDAndContext(info.p.context())
 		limit.SetSchema(info.p.Schema())
 		info = addPlanToResponse(limit, info)
 	}

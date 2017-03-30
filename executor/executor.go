@@ -65,6 +65,7 @@ var (
 	ErrPasswordNoMatch = terror.ClassExecutor.New(CodePasswordNoMatch, "Can't find any matching row in the user table")
 	ErrResultIsEmpty   = terror.ClassExecutor.New(codeResultIsEmpty, "result is empty")
 	ErrBuildExecutor   = terror.ClassExecutor.New(codeErrBuildExec, "Failed to build executor")
+	ErrBatchInsertFail = terror.ClassExecutor.New(codeBatchInsertFail, "Batch insert failed, please clean the table and try again.")
 )
 
 // Error codes.
@@ -78,6 +79,7 @@ const (
 	codePrepareDDL      terror.ErrCode = 7
 	codeResultIsEmpty   terror.ErrCode = 8
 	codeErrBuildExec    terror.ErrCode = 9
+	codeBatchInsertFail terror.ErrCode = 10
 	// MySQL error code
 	CodePasswordNoMatch terror.ErrCode = 1133
 	CodeCannotUser      terror.ErrCode = 1396
