@@ -202,7 +202,6 @@ func (s *testEvaluatorSuite) TestMD5(c *C) {
 	s.testNullInput(c, ast.AesDecrypt)
 }
 
-
 type compressTest struct {
 	in  interface{}
 	out interface{}
@@ -225,6 +224,7 @@ func (s *testEvaluatorSuite) TestCompress(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(out, DeepEquals, types.NewDatum(test.out))
 	}
+}
 
 func (s *testEvaluatorSuite) TestRandomBytes(c *C) {
 	defer testleak.AfterTest(c)()
@@ -253,5 +253,4 @@ func (s *testEvaluatorSuite) TestRandomBytes(c *C) {
 	out, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(len(out.GetBytes()), Equals, 0)
-
 }
