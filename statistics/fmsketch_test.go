@@ -39,10 +39,10 @@ func (s *testStatisticsSuite) TestSketch(c *C) {
 	c.Check(ndv, Equals, int64(99968))
 
 	maxSize = 2
-	sketch := newFMSketch()
-	sketch.insertHashValue(1, maxSize)
-	sketch.insertHashValue(2, maxSize)
+	sketch := newFMSketch(maxSize)
+	sketch.insertHashValue(1)
+	sketch.insertHashValue(2)
 	c.Check(len(sketch.hashset), Equals, maxSize)
-	sketch.insertHashValue(4, maxSize)
+	sketch.insertHashValue(4)
 	c.Check(len(sketch.hashset), LessEqual, maxSize)
 }

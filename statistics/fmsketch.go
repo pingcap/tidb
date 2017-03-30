@@ -24,24 +24,26 @@ import (
 // FMSketch is used to count the number of distinct elements in a set.
 type FMSketch struct {
 	hashset map[uint64]bool
-	level   uint
+	mask    uint64
+	maxSize int
 }
 
-func newFMSketch() *FMSketch {
-	return &FMSketch{hashset: make(map[uint64]bool)}
+func newFMSketch(maxSize int) *FMSketch {
+	return &FMSketch{
+		hashset: make(map[uint64]bool),
+		maxSize: maxSize,
+	}
 }
 
-func (s *FMSketch) insertHashValue(hash uint64, maxSize int) {
-	mask := (1 << s.level) - uint64(1)
-	if (hash & mask) != 0 {
+func (s *FMSketch) insertHashValue(hashVal uint64) {
+	if (hashVal & s.mask) != 0 {
 		return
 	}
-	s.hashset[hash] = true
-	if len(s.hashset) > maxSize {
-		mask = mask*2 + 1
-		s.level++
+	s.hashset[hashVal] = true
+	if len(s.hashset) > s.maxSize {
+		s.mask = s.mask*2 + 1
 		for key := range s.hashset {
-			if (key & mask) != 0 {
+			if (key & s.mask) != 0 {
 				delete(s.hashset, key)
 			}
 		}
@@ -49,7 +51,7 @@ func (s *FMSketch) insertHashValue(hash uint64, maxSize int) {
 }
 
 func buildFMSketch(values []types.Datum, maxSize int) (*FMSketch, int64, error) {
-	s := newFMSketch()
+	s := newFMSketch(maxSize)
 	h := fnv.New64a()
 	for _, value := range values {
 		bytes, err := codec.EncodeValue(nil, value)
@@ -61,24 +63,24 @@ func buildFMSketch(values []types.Datum, maxSize int) (*FMSketch, int64, error) 
 		if err != nil {
 			return nil, 0, errors.Trace(err)
 		}
-		s.insertHashValue(h.Sum64(), maxSize)
+		s.insertHashValue(h.Sum64())
 	}
-	ndv := (1 << s.level) * int64(len(s.hashset))
+	ndv := int64((s.mask + 1)) * int64(len(s.hashset))
 	return s, ndv, nil
 }
 
 func mergeFMSketches(sketches []*FMSketch, maxSize int) (*FMSketch, int64) {
-	s := newFMSketch()
+	s := newFMSketch(maxSize)
 	for _, sketch := range sketches {
-		if s.level < sketch.level {
-			s.level = sketch.level
+		if s.mask < sketch.mask {
+			s.mask = sketch.mask
 		}
 	}
 	for _, sketch := range sketches {
 		for key := range sketch.hashset {
-			s.insertHashValue(key, maxSize)
+			s.insertHashValue(key)
 		}
 	}
-	ndv := (1 << s.level) * int64(len(s.hashset))
+	ndv := int64((s.mask + 1)) * int64(len(s.hashset))
 	return s, ndv
 }
