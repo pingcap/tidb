@@ -155,7 +155,7 @@ type Selection struct {
 	ScanController bool
 
 	// We will check this at decorrelate phase.
-	canControlScan bool
+	controllerStatus int
 }
 
 func (p *Selection) extractCorrelatedCols() []*expression.CorrelatedColumn {

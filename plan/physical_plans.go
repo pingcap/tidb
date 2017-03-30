@@ -36,6 +36,12 @@ var (
 	_ physicalDistSQLPlan = &PhysicalIndexScan{}
 )
 
+const (
+	notController = iota
+	controlTableScan
+	controlIndexScan
+)
+
 // PhysicalIndexScan represents an index scan plan.
 type PhysicalIndexScan struct {
 	physicalTableSource
@@ -748,7 +754,7 @@ func (p *Selection) MarshalJSON() ([]byte, error) {
 	buffer.WriteString(fmt.Sprintf(""+
 		" \"condition\": %s,\n"+
 		" \"scanController\": %v,"+
-		" \"child\": \"%s\"\n}", conds, p.ScanController, p.children[0].ID()))
+		" \"child\": \"%s\"\n}", conds, p.controllerStatus != notController, p.children[0].ID()))
 	return buffer.Bytes(), nil
 }
 
