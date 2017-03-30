@@ -292,6 +292,10 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("insert into t values(1, 2, 3), (1, 2, 4)")
 	result = tk.MustQuery("select count(distinct c), count(distinct a,b) from t")
 	result.Check(testkit.Rows("2 1"))
+
+	tk.MustExec("create table idx_agg (a int, b int, index (b))")
+	tk.MustExec("insert idx_agg values (1, 1), (1, 2), (2, 2)")
+	tk.MustQuery("select sum(a), sum(b) from idx_agg where b > 0 and b < 10")
 }
 
 func (s *testSuite) TestStreamAgg(c *C) {

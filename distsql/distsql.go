@@ -139,6 +139,8 @@ func (pr *partialResult) unmarshal(resultSubset []byte) error {
 	return nil
 }
 
+var zeroLenData = make([]byte, 0)
+
 // Next returns the next row of the sub result.
 // If no more row to return, data would be nil.
 func (pr *partialResult) Next() (handle int64, data []byte, err error) {
@@ -148,6 +150,10 @@ func (pr *partialResult) Next() (handle int64, data []byte, err error) {
 	}
 	rowMeta := chunk.RowsMeta[pr.cursor]
 	data = chunk.RowsData[pr.dataOffset : pr.dataOffset+rowMeta.Length]
+	if data == nil {
+		// The caller checks if data is nil to determine finished.
+		data = zeroLenData
+	}
 	pr.dataOffset += rowMeta.Length
 	handle = rowMeta.Handle
 	pr.cursor++
