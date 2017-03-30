@@ -100,7 +100,7 @@ type RowKeyEntry struct {
 	// Row key.
 	Handle int64
 	// Table alias name.
-	TableAsName *model.CIStr
+	TableName string
 }
 
 // Executor executes a query.
@@ -691,9 +691,13 @@ func (e *TableScanExec) getRow(handle int64) (*Row, error) {
 
 	// Put rowKey to the tail of record row.
 	rke := &RowKeyEntry{
-		Tbl:         e.t,
-		Handle:      handle,
-		TableAsName: e.asName,
+		Tbl:    e.t,
+		Handle: handle,
+	}
+	if e.asName != nil && e.asName.L != "" {
+		rke.TableName = e.asName.L
+	} else {
+		rke.TableName = e.t.Meta().Name.L
 	}
 	row.RowKeys = append(row.RowKeys, rke)
 	return row, nil
