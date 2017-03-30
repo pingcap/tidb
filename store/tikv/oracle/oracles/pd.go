@@ -14,6 +14,7 @@
 package oracles
 
 import (
+	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -58,7 +59,7 @@ func NewPdOracle(pdClient pd.Client, updateInterval time.Duration) (oracle.Oracl
 // IsExpired returns whether lockTS+TTL is expired, both are ms. It uses `lastTS`
 // to compare, may return false negative result temporarily.
 func (o *pdOracle) IsExpired(lockTS, TTL uint64) bool {
-	lastTS := atomic.LoadUint64(&o.lastTS)
+	lastTS := o.getLastTS()
 	return oracle.ExtractPhysical(lastTS) >= oracle.ExtractPhysical(lockTS)+int64(TTL)
 }
 
@@ -66,6 +67,12 @@ func (o *pdOracle) IsExpired(lockTS, TTL uint64) bool {
 func (o *pdOracle) GetTimestamp() (uint64, error) {
 	ts, err := o.getTimestamp()
 	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	lastTs := o.getLastTS()
+	if lastTs >= ts {
+		err = fmt.Errorf("Invalid pdOracle with last_ts=%v while current ts=%v", lastTs, ts)
+		log.Warn(err)
 		return 0, errors.Trace(err)
 	}
 	o.setLastTS(ts)
@@ -90,6 +97,10 @@ func (o *pdOracle) setLastTS(ts uint64) {
 	if ts > lastTS {
 		atomic.CompareAndSwapUint64(&o.lastTS, lastTS, ts)
 	}
+}
+
+func (o *pdOracle) getLastTS() uint64 {
+	return atomic.LoadUint64(&o.lastTS)
 }
 
 func (o *pdOracle) updateTS(interval time.Duration) {
