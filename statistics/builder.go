@@ -140,6 +140,8 @@ func (b *Builder) NewTable() (*Table, error) {
 			}
 		}
 	}
+	// There may be cases that we have no columnSamples, and only after we build the index columns that we can know it is 0,
+	// so we should also checked it here.
 	if t.Count == 0 {
 		for i := range t.Columns {
 			t.Columns[i] = &Column{ID: b.TblInfo.Columns[i].ID}
@@ -147,7 +149,6 @@ func (b *Builder) NewTable() (*Table, error) {
 		for i := range t.Indices {
 			t.Indices[i] = &Column{ID: b.TblInfo.Indices[i].ID}
 		}
-		return t, nil
 	}
 	return t, nil
 }
