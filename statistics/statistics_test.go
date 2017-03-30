@@ -113,13 +113,6 @@ func (s *testStatisticsSuite) SetUpSuite(c *C) {
 	s.pk = pk
 }
 
-func (s *testStatisticsSuite) TestEstimateNDV(c *C) {
-	sc := new(variable.StatementContext)
-	ndv, err := estimateNDV(sc, s.count, s.samples)
-	c.Check(err, IsNil)
-	c.Check(ndv, Equals, int64(49792))
-}
-
 func (s *testStatisticsSuite) TestTable(c *C) {
 	tblInfo := &model.TableInfo{
 		ID: 1,
@@ -156,6 +149,7 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	tblInfo.Indices = indices
 	timestamp := int64(10)
 	bucketCount := int64(256)
+	_, ndv, _ := buildFMSketch(s.rc.(*recordSet).data, 1000)
 	builder := &Builder{
 		Ctx:           mock.NewContext(),
 		TblInfo:       tblInfo,
@@ -164,6 +158,7 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 		NumBuckets:    bucketCount,
 		ColumnSamples: [][]types.Datum{s.samples},
 		ColOffsets:    []int{0},
+		ColNDVs:       []int64{ndv},
 		IdxRecords:    []ast.RecordSet{s.rc},
 		IdxOffsets:    []int{0},
 		PkRecords:     ast.RecordSet(s.pk),
@@ -176,7 +171,7 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	col := t.Columns[0]
 	count, err := col.EqualRowCount(sc, types.NewIntDatum(1000))
 	c.Check(err, IsNil)
-	c.Check(count, Equals, int64(2))
+	c.Check(count, Equals, int64(1))
 	count, err = col.LessRowCount(sc, types.NewIntDatum(2000))
 	c.Check(err, IsNil)
 	c.Check(count, Equals, int64(19955))
