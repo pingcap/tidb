@@ -277,17 +277,8 @@ func EvaluateExprWithNull(ctx context.Context, schema *Schema, expr Expression) 
 
 // TableInfo2Schema converts table info to schema.
 func TableInfo2Schema(tbl *model.TableInfo) *Schema {
-	cols := make([]*Column, 0, len(tbl.Columns))
+	cols := ColumnInfos2Columns(tbl.Name, tbl.Columns)
 	keys := make([]KeyInfo, 0, len(tbl.Indices)+1)
-	for i, col := range tbl.Columns {
-		newCol := &Column{
-			ColName:  col.Name,
-			TblName:  tbl.Name,
-			RetType:  &col.FieldType,
-			Position: i,
-		}
-		cols = append(cols, newCol)
-	}
 	for _, idx := range tbl.Indices {
 		if !idx.Unique || idx.State != model.StatePublic {
 			continue
@@ -326,6 +317,21 @@ func TableInfo2Schema(tbl *model.TableInfo) *Schema {
 	schema := NewSchema(cols...)
 	schema.SetUniqueKeys(keys)
 	return schema
+}
+
+// ColumnInfos2Columns converts a slice of ColumnInfo to a slice of Column.
+func ColumnInfos2Columns(tblName model.CIStr, colInfos []*model.ColumnInfo) []*Column {
+	columns := make([]*Column, 0, len(colInfos))
+	for i, col := range colInfos {
+		newCol := &Column{
+			ColName:  col.Name,
+			TblName:  tblName,
+			RetType:  &col.FieldType,
+			Position: i,
+		}
+		columns = append(columns, newCol)
+	}
+	return columns
 }
 
 // NewCastFunc creates a new cast function.

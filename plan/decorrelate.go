@@ -158,6 +158,11 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 			}
 		}
 	}
+	if sel, ok := p.(*Selection); ok {
+		if _, ok := p.Children()[0].(*DataSource); ok {
+			_, sel.canControlScan = sel.makeScanController(true)
+		}
+	}
 	newChildren := make([]Plan, 0, len(p.Children()))
 	for _, child := range p.Children() {
 		np, _ := s.optimize(child.(LogicalPlan), nil, nil)

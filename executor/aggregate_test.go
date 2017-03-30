@@ -270,7 +270,7 @@ func (s *testSuite) TestAggregation(c *C) {
 
 	result = tk.MustQuery("select count(*) from information_schema.columns")
 	// When adding new memory table in information_schema, please update this variable.
-	columnCountOfAllInformationSchemaTables := "561"
+	columnCountOfAllInformationSchemaTables := "576"
 	result.Check(testkit.Rows(columnCountOfAllInformationSchemaTables))
 
 	tk.MustExec("drop table if exists t1")
@@ -287,6 +287,15 @@ func (s *testSuite) TestAggregation(c *C) {
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select sum(c1) k from (select * from t1 union all select * from t2)t group by c1 * 2 order by k")
 	result.Check(testkit.Rows("1", "3", "4"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int)")
+	tk.MustExec("insert into t values(1, 2, 3), (1, 2, 4)")
+	result = tk.MustQuery("select count(distinct c), count(distinct a,b) from t")
+	result.Check(testkit.Rows("2 1"))
+
+	tk.MustExec("create table idx_agg (a int, b int, index (b))")
+	tk.MustExec("insert idx_agg values (1, 1), (1, 2), (2, 2)")
+	tk.MustQuery("select sum(a), sum(b) from idx_agg where b > 0 and b < 10")
 }
 
 func (s *testSuite) TestStreamAgg(c *C) {

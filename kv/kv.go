@@ -36,7 +36,7 @@ const (
 )
 
 // Those limits is enforced to make sure the transaction can be well handled by TiKV.
-const (
+var (
 	// The limit of single entry size (len(key) + len(value)).
 	TxnEntrySizeLimit = 6 * 1024 * 1024
 	// The limit of number of entries in the MemBuffer.
@@ -124,6 +124,7 @@ type Client interface {
 const (
 	ReqTypeSelect = 101
 	ReqTypeIndex  = 102
+	ReqTypeDAG    = 103
 
 	ReqSubTypeBasic   = 0
 	ReqSubTypeDesc    = 10000

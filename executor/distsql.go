@@ -261,6 +261,7 @@ func extractHandlesFromIndexResult(idxResult distsql.SelectResult) (handles []in
 }
 
 func extractHandlesFromIndexSubResult(subResult distsql.PartialResult) ([]int64, error) {
+	defer subResult.Close()
 	var handles []int64
 	for {
 		h, data, err := subResult.Next()
@@ -318,7 +319,7 @@ func closeAll(objs ...Closeable) error {
 // by kv.Client, we only need to pass the concurrency parameter.
 //
 // We also make a higher level of concurrency by doing index request in a background goroutine. The index goroutine
-// starts multple worker goroutines and fetches handles from each index partial request, builds lookup table tasks
+// starts multiple worker goroutines and fetches handles from each index partial request, builds lookup table tasks
 // and sends the task to 'workerCh'.
 //
 // Each worker goroutine receives tasks through the 'workerCh', then executes the task.
@@ -338,13 +339,13 @@ type XSelectIndexExec struct {
 	// Variables only used for single read.
 	result        distsql.SelectResult
 	partialResult distsql.PartialResult
+	idxColsSchema *expression.Schema
 
 	// Variables only used for double read.
-	doubleReadIdxResult distsql.SelectResult
-	taskChan            chan *lookupTableTask
-	tasksErr            error // not nil if tasks closed due to error.
-	taskCurr            *lookupTableTask
-	handleCount         uint64 // returned handle count in double read.
+	taskChan    chan *lookupTableTask
+	tasksErr    error // not nil if tasks closed due to error.
+	taskCurr    *lookupTableTask
+	handleCount uint64 // returned handle count in double read.
 
 	where        *tipb.Expr
 	startTS      uint64
@@ -354,13 +355,11 @@ type XSelectIndexExec struct {
 	   The following attributes are used for aggregation push down.
 	   aggFuncs is the aggregation functions in protobuf format. They will be added to distsql request msg.
 	   byItem is the groupby items in protobuf format. They will be added to distsql request msg.
-	   aggFields is used to decode returned rows from distsql.
 	   aggregate indicates of the executor is handling aggregate result.
 	   It is more convenient to use a single variable than use a long condition.
 	*/
 	aggFuncs  []*tipb.Expr
 	byItems   []*tipb.ByItem
-	aggFields []*types.FieldType
 	aggregate bool
 
 	scanConcurrency int
@@ -375,10 +374,9 @@ func (e *XSelectIndexExec) Schema() *expression.Schema {
 
 // Close implements Exec Close interface.
 func (e *XSelectIndexExec) Close() error {
-	err := closeAll(e.result, e.partialResult, e.doubleReadIdxResult)
+	err := closeAll(e.result, e.partialResult)
 	e.result = nil
 	e.partialResult = nil
-	e.doubleReadIdxResult = nil
 
 	e.taskCurr = nil
 	if e.taskChan != nil {
@@ -412,10 +410,6 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if e.aggregate {
-			// The returned rows should be aggregate partial result.
-			e.result.SetFields(e.aggFields)
-		}
 		e.result.Fetch(context.CtxForCancel{e.ctx})
 	}
 	for {
@@ -444,15 +438,44 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 		}
 		if rowData == nil {
 			// Finish current partial result and get the next one.
+			e.partialResult.Close()
 			e.partialResult = nil
 			continue
 		}
+		var schema *expression.Schema
 		if e.aggregate {
-			return &Row{Data: rowData}, nil
+			schema = e.Schema()
+		} else {
+			schema = e.idxColsSchema
 		}
-		rowData = e.indexRowToTableRow(h, rowData)
-		return resultRowToRow(e.table, h, rowData, e.asName), nil
+		values := make([]types.Datum, schema.Len())
+		err = codec.SetRawValues(rowData, values)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		err = decodeRawValues(values, schema)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if e.aggregate {
+			return &Row{Data: values}, nil
+		}
+		values = e.indexRowToTableRow(h, values)
+		return resultRowToRow(e.table, h, values, e.asName), nil
 	}
+}
+
+func decodeRawValues(values []types.Datum, schema *expression.Schema) error {
+	var err error
+	for i := 0; i < schema.Len(); i++ {
+		if values[i].Kind() == types.KindRaw {
+			values[i], err = tablecodec.DecodeColumnValue(values[i].GetRaw(), schema.Columns[i].RetType)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+	return nil
 }
 
 func (e *XSelectIndexExec) indexRowToTableRow(handle int64, indexRow []types.Datum) []types.Datum {
@@ -483,8 +506,6 @@ func (e *XSelectIndexExec) nextForDoubleRead() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		e.doubleReadIdxResult = idxResult
-		idxResult.IgnoreData()
 		idxResult.Fetch(context.CtxForCancel{e.ctx})
 
 		// Use a background goroutine to fetch index and put the result in e.taskChan.
@@ -533,10 +554,12 @@ func (e *XSelectIndexExec) addWorker(workCh chan *lookupTableTask, concurrency *
 }
 
 func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<- *lookupTableTask) {
-	defer close(ch)
-
 	workCh := make(chan *lookupTableTask, 1)
-	defer close(workCh)
+	defer func() {
+		close(ch)
+		close(workCh)
+		idxResult.Close()
+	}()
 
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency
 	var concurrency int
@@ -681,6 +704,7 @@ func (e *XSelectIndexExec) executeTask(task *lookupTableTask) error {
 }
 
 func (e *XSelectIndexExec) extractRowsFromTableResult(t table.Table, tblResult distsql.SelectResult) ([]*Row, error) {
+	defer tblResult.Close()
 	var rows []*Row
 	for {
 		partialResult, err := tblResult.Next()
@@ -700,6 +724,7 @@ func (e *XSelectIndexExec) extractRowsFromTableResult(t table.Table, tblResult d
 }
 
 func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialResult distsql.PartialResult) ([]*Row, error) {
+	defer partialResult.Close()
 	var rows []*Row
 	for {
 		h, rowData, err := partialResult.Next()
@@ -709,7 +734,16 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 		if rowData == nil {
 			break
 		}
-		row := resultRowToRow(t, h, rowData, e.indexPlan.TableAsName)
+		values := make([]types.Datum, e.Schema().Len())
+		err = codec.SetRawValues(rowData, values)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		err = decodeRawValues(values, e.Schema())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		row := resultRowToRow(t, h, values, e.indexPlan.TableAsName)
 		rows = append(rows, row)
 	}
 	return rows, nil
@@ -742,10 +776,6 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 	resp, err := distsql.Select(e.ctx.GetClient(), goctx.Background(), selTableReq, keyRanges, e.scanConcurrency, false)
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-	if e.aggregate {
-		// The returned rows should be aggregate partial result.
-		resp.SetFields(e.aggFields)
 	}
 	resp.Fetch(context.CtxForCancel{e.ctx})
 	return resp, nil
@@ -786,7 +816,6 @@ type XSelectTableExec struct {
 	*/
 	aggFuncs  []*tipb.Expr
 	byItems   []*tipb.ByItem
-	aggFields []*types.FieldType
 	aggregate bool
 
 	execStart    time.Time
@@ -827,11 +856,6 @@ func (e *XSelectTableExec) doRequest() error {
 	e.result, err = distsql.Select(e.ctx.GetClient(), goctx.Background(), selReq, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder)
 	if err != nil {
 		return errors.Trace(err)
-	}
-	//if len(selReq.Aggregates) > 0 || len(selReq.GroupBy) > 0 {
-	if e.aggregate {
-		// The returned rows should be aggregate partial result.
-		e.result.SetFields(e.aggFields)
 	}
 	e.result.Fetch(context.CtxForCancel{e.ctx})
 	return nil
@@ -888,15 +912,25 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 		}
 		if rowData == nil {
 			// Finish the current partial result and get the next one.
+			e.partialResult.Close()
 			e.partialResult = nil
 			continue
 		}
 		e.returnedRows++
-		if e.aggregate {
-			// compose aggreagte row
-			return &Row{Data: rowData}, nil
+		values := make([]types.Datum, e.schema.Len())
+		err = codec.SetRawValues(rowData, values)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
-		return resultRowToRow(e.table, h, rowData, e.asName), nil
+		err = decodeRawValues(values, e.schema)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if e.aggregate {
+			// compose aggregate row
+			return &Row{Data: values}, nil
+		}
+		return resultRowToRow(e.table, h, values, e.asName), nil
 	}
 }
 

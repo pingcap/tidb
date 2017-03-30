@@ -590,7 +590,7 @@ func parseDatetime(str string, fsp int) (Time, error) {
 
 	// If str is sepereated by delimiters, the first one is year, and if the year is 2 digit,
 	// we should adjust it.
-	// TODO: ajust year is very complex, now we only consider the simplest way.
+	// TODO: adjust year is very complex, now we only consider the simplest way.
 	if len(seps[0]) == 2 {
 		year = adjustYear(year)
 	}
@@ -861,7 +861,7 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 
 	var overflow bool
 	if n := strings.IndexByte(str, '.'); n >= 0 {
-		// It has fractional precesion parts.
+		// It has fractional precision parts.
 		fracStr := str[n+1:]
 		frac, overflow, err = parseFrac(fracStr, fsp)
 		if err != nil {

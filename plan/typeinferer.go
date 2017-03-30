@@ -361,7 +361,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = types.NewFieldType(mysql.TypeDatetime)
 	case "microsecond", "second", "minute", "hour", "day", "week", "month", "year",
 		"dayofweek", "dayofmonth", "dayofyear", "weekday", "weekofyear", "yearweek", "datediff",
-		"found_rows", "length", "extract", "locate", "unix_timestamp", "quarter":
+		"found_rows", "length", "extract", "locate", "unix_timestamp", "quarter", "is_ipv4":
 		tp = types.NewFieldType(mysql.TypeLonglong)
 	case "now", "sysdate", "current_timestamp", "utc_timestamp":
 		tp = types.NewFieldType(mysql.TypeDatetime)
@@ -380,7 +380,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		"replace", "ucase", "upper", "convert", "substring", "elt",
 		"substring_index", "trim", "ltrim", "rtrim", "reverse", "hex", "unhex",
 		"date_format", "rpad", "lpad", "char_func", "conv", "make_set", "oct", "uuid",
-		"insert_func":
+		"insert_func", "bin":
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
 	case "strcmp", "isnull", "bit_length", "char_length", "character_length", "crc32", "timestampdiff",
@@ -415,8 +415,17 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
 		tp.Flen = 40
+	case ast.RandomBytes:
+		tp = types.NewFieldType(mysql.TypeVarString)
 	case ast.Coalesce:
-		tp = aggArgsType(x.Args)
+		tp = aggFieldType(x.Args)
+		if tp.Tp == mysql.TypeVarchar {
+			tp.Tp = mysql.TypeVarString
+		}
+		classType := aggTypeClass(x.Args, &tp.Flag)
+		if classType == types.ClassString && !mysql.HasBinaryFlag(tp.Flag) {
+			tp.Charset, tp.Collate = types.DefaultCharsetForType(tp.Tp)
+		}
 	case ast.AnyValue:
 		tp = x.Args[0].GetType()
 	default:
@@ -443,37 +452,25 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 // If used in a string context, the result is returned as a string.
 // If used in a numeric context, the result is returned as a decimal, real, or integer value.
 func (v *typeInferrer) handleCaseExpr(x *ast.CaseExpr) {
-	var currType types.FieldType
+	exprs := make([]ast.ExprNode, 0, len(x.WhenClauses)+1)
 	for _, w := range x.WhenClauses {
-		t := w.Result.GetType()
-		if currType.Tp == mysql.TypeUnspecified {
-			currType = *t
-			continue
-		}
-		mtp := types.MergeFieldType(currType.Tp, t.Tp)
-		if mtp == t.Tp && mtp != currType.Tp {
-			currType.Charset = t.Charset
-			currType.Collate = t.Collate
-		}
-		currType.Tp = mtp
-
+		exprs = append(exprs, w.Result)
 	}
 	if x.ElseClause != nil {
-		t := x.ElseClause.GetType()
-		if currType.Tp == mysql.TypeUnspecified {
-			currType = *t
-		} else {
-			mtp := types.MergeFieldType(currType.Tp, t.Tp)
-			if mtp == t.Tp && mtp != currType.Tp {
-				currType.Charset = t.Charset
-				currType.Collate = t.Collate
-			}
-			currType.Tp = mtp
-		}
+		exprs = append(exprs, x.ElseClause)
 	}
-	x.SetType(&currType)
-	// TODO: We need a better way to set charset/collation
-	x.Type.Charset, x.Type.Collate = types.DefaultCharsetForType(x.Type.Tp)
+	tp := aggFieldType(exprs)
+	if tp.Tp == mysql.TypeVarchar {
+		tp.Tp = mysql.TypeVarString
+	}
+	classType := aggTypeClass(exprs, &tp.Flag)
+	if classType == types.ClassString && !mysql.HasBinaryFlag(tp.Flag) {
+		tp.Charset, tp.Collate = types.DefaultCharsetForType(tp.Tp)
+	} else {
+		tp.Charset = charset.CharsetBin
+		tp.Collate = charset.CollationBin
+	}
+	x.SetType(tp)
 }
 
 // like expression expects the target expression and pattern to be a string, if it's not, we add a cast function.
@@ -548,30 +545,56 @@ func (v *typeInferrer) convertValueToColumnTypeIfNeeded(x *ast.PatternInExpr) {
 	}
 }
 
-func aggArgsType(args []ast.ExprNode) *types.FieldType {
-	var tpClass = types.ClassString
-	var unsigned bool
-	var gotFirst bool
+func aggFieldType(args []ast.ExprNode) *types.FieldType {
+	var currType types.FieldType
+	for _, arg := range args {
+		t := arg.GetType()
+		if currType.Tp == mysql.TypeUnspecified {
+			currType = *t
+			continue
+		}
+		mtp := types.MergeFieldType(currType.Tp, t.Tp)
+		currType.Tp = mtp
+	}
+	return &currType
+}
+
+func aggTypeClass(args []ast.ExprNode, flag *uint) types.TypeClass {
+	var (
+		tpClass      = types.ClassString
+		unsigned     bool
+		gotFirst     bool
+		gotBinString bool
+	)
 	for _, arg := range args {
 		argFieldType := arg.GetType()
 		if argFieldType.Tp == mysql.TypeNull {
 			continue
 		}
+		argTypeClass := argFieldType.ToClass()
+		if argTypeClass == types.ClassString && mysql.HasBinaryFlag(argFieldType.Flag) {
+			gotBinString = true
+		}
 		if !gotFirst {
 			gotFirst = true
-			tpClass = argFieldType.ToClass()
+			tpClass = argTypeClass
 			unsigned = mysql.HasUnsignedFlag(argFieldType.Flag)
 		} else {
-			tpClass = mergeTypeClass(tpClass, argFieldType.ToClass(), unsigned, mysql.HasUnsignedFlag(argFieldType.Flag))
+			tpClass = mergeTypeClass(tpClass, argTypeClass, unsigned, mysql.HasUnsignedFlag(argFieldType.Flag))
 			unsigned = unsigned && mysql.HasUnsignedFlag(argFieldType.Flag)
 		}
 	}
-	ft := types.NewFieldType(tpClass.ToType())
-	if unsigned {
-		ft.Flag |= mysql.UnsignedFlag
+	setTypeFlag(flag, uint(mysql.UnsignedFlag), unsigned)
+	setTypeFlag(flag, uint(mysql.BinaryFlag), tpClass != types.ClassString || gotBinString)
+	return tpClass
+}
+
+func setTypeFlag(flag *uint, flagItem uint, on bool) {
+	if on {
+		*flag |= flagItem
+	} else {
+		*flag &= ^flagItem
 	}
-	ft.Charset, ft.Collate = types.DefaultCharsetForType(ft.Tp)
-	return ft
 }
 
 func mergeTypeClass(a, b types.TypeClass, aUnsigned, bUnsigned bool) types.TypeClass {
