@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/types"
@@ -69,8 +68,9 @@ type HashJoinExec struct {
 	// Channels for output.
 	resultCh chan *execResult
 
-	tableMap   map[int64]table.Table
-	tableNames []string
+	// rowKeyCache is used to store the table and table name from a row.
+	// Because every row has the same table name and table, we can use a single row key cache.
+	rowKeyCache []*RowKeyEntry
 }
 
 // hashJoinCtx holds the variables needed to do a hash join in one of many concurrent goroutines.
@@ -245,7 +245,7 @@ func (e *HashJoinExec) prepare() error {
 			continue
 		}
 		buffer = buffer[:0]
-		buffer, err = e.encodeRow(nil, row)
+		buffer, err = e.encodeRow(buffer, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -265,31 +265,22 @@ func (e *HashJoinExec) prepare() error {
 }
 
 func (e *HashJoinExec) encodeRow(b []byte, row *Row) ([]byte, error) {
-	b = codec.EncodeVarint(b, int64(len(row.RowKeys)))
+	numRowKeys := int64(len(row.RowKeys))
+	b = codec.EncodeVarint(b, numRowKeys)
 	for _, rowKey := range row.RowKeys {
-		// Every rowKey is encoded with handle and idx in tableNames.
-		b = e.encodeRowKey(b, rowKey)
+		b = codec.EncodeVarint(b, rowKey.Handle)
 	}
-	b, err := codec.EncodeValue(b, row.Data...)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return b, nil
-}
-
-func (e *HashJoinExec) encodeRowKey(b []byte, rowKey *RowKeyEntry) []byte {
-	b = codec.EncodeVarint(b, rowKey.Handle)
-	for i, tn := range e.tableNames {
-		if tn == rowKey.TableName {
-			b = codec.EncodeVarint(b, int64(i))
-			return b
+	if numRowKeys > 0 && e.rowKeyCache == nil {
+		e.rowKeyCache = make([]*RowKeyEntry, len(row.RowKeys))
+		for i := 0; i < len(row.RowKeys); i++ {
+			rk := new(RowKeyEntry)
+			rk.Tbl = row.RowKeys[i].Tbl
+			rk.TableName = row.RowKeys[i].TableName
+			e.rowKeyCache[i] = rk
 		}
 	}
-	tblIdx := int64(len(e.tableNames))
-	b = codec.EncodeVarint(b, tblIdx)
-	e.tableMap[tblIdx] = rowKey.Tbl
-	e.tableNames = append(e.tableNames, rowKey.TableName)
-	return b
+	b, err := codec.EncodeValue(b, row.Data...)
+	return b, errors.Trace(err)
 }
 
 func (e *HashJoinExec) decodeRow(data []byte) (*Row, error) {
@@ -299,11 +290,13 @@ func (e *HashJoinExec) decodeRow(data []byte) (*Row, error) {
 		return nil, errors.Trace(err)
 	}
 	for i := 0; i < int(entryLen); i++ {
-		var entry *RowKeyEntry
-		data, entry, err = e.decodeRowKey(data)
+		entry := new(RowKeyEntry)
+		data, entry.Handle, err = codec.DecodeVarint(data)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		entry.Tbl = e.rowKeyCache[i].Tbl
+		entry.TableName = e.rowKeyCache[i].TableName
 		row.RowKeys = append(row.RowKeys, entry)
 	}
 	values := make([]types.Datum, e.smallExec.Schema().Len())
@@ -317,23 +310,6 @@ func (e *HashJoinExec) decodeRow(data []byte) (*Row, error) {
 	}
 	row.Data = values
 	return row, nil
-}
-
-func (e *HashJoinExec) decodeRowKey(data []byte) ([]byte, *RowKeyEntry, error) {
-	entry := new(RowKeyEntry)
-	var err error
-	data, entry.Handle, err = codec.DecodeVarint(data)
-	if err != nil {
-		return data, nil, errors.Trace(err)
-	}
-	var tblIdx int64
-	data, tblIdx, err = codec.DecodeVarint(data)
-	if err != nil {
-		return data, nil, errors.Trace(err)
-	}
-	entry.TableName = e.tableNames[tblIdx]
-	entry.Tbl = e.tableMap[tblIdx]
-	return data, entry, nil
 }
 
 func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {

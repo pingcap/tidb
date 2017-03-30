@@ -56,7 +56,7 @@ const (
 func (ds *dataStore) put(key, value []byte) dataAddr {
 	dataLen := uint32(len(key) + len(value))
 	if ds.sliceLen != 0 && ds.sliceLen+dataLen > maxDataSliceLen {
-		ds.slices = append(ds.slices, make([]byte, 0, maxDataSliceLen))
+		ds.slices = append(ds.slices, make([]byte, 0, max(maxDataSliceLen, int(dataLen))))
 		ds.sliceLen = 0
 		ds.sliceIdx++
 	}
@@ -69,15 +69,25 @@ func (ds *dataStore) put(key, value []byte) dataAddr {
 	return addr
 }
 
-func (ds *dataStore) get(he entry) (key, value []byte) {
-	slice := ds.slices[he.addr.sliceIdx]
-	valOffset := he.addr.offset + he.keyLen
-	return slice[he.addr.offset:valOffset], slice[valOffset : valOffset+he.valLen]
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func (ds *dataStore) get(e entry, key []byte) []byte {
+	slice := ds.slices[e.addr.sliceIdx]
+	valOffset := e.addr.offset + e.keyLen
+	if bytes.Compare(key, slice[e.addr.offset:valOffset]) != 0 {
+		return nil
+	}
+	return slice[valOffset : valOffset+e.valLen]
 }
 
 var nullEntryAddr = entryAddr{}
 
-func (es *entryStore) put(he entry) entryAddr {
+func (es *entryStore) put(e entry) entryAddr {
 	if es.sliceLen == maxEntrySliceLen {
 		es.slices = append(es.slices, make([]entry, 0, maxEntrySliceLen))
 		es.sliceLen = 0
@@ -85,7 +95,7 @@ func (es *entryStore) put(he entry) entryAddr {
 	}
 	addr := entryAddr{sliceIdx: es.sliceIdx, offset: es.sliceLen}
 	slice := es.slices[es.sliceIdx]
-	slice = append(slice, he)
+	slice = append(slice, e)
 	es.slices[es.sliceIdx] = slice
 	es.sliceLen++
 	return addr
@@ -123,13 +133,13 @@ func (m *MVMap) Put(key, value []byte) {
 	hashKey := m.hash(key)
 	oldEntryAddr := m.hashTable[hashKey]
 	dataAddr := m.dataStore.put(key, value)
-	entry := entry{
+	e := entry{
 		addr:   dataAddr,
 		keyLen: uint32(len(key)),
 		valLen: uint32(len(value)),
 		next:   oldEntryAddr,
 	}
-	newEntryPtr := m.entryStore.put(entry)
+	newEntryPtr := m.entryStore.put(e)
 	m.hashTable[hashKey] = newEntryPtr
 }
 
@@ -139,13 +149,13 @@ func (m *MVMap) Get(key []byte) [][]byte {
 	hashKey := m.hash(key)
 	entryAddr := m.hashTable[hashKey]
 	for entryAddr != nullEntryAddr {
-		he := m.entryStore.get(entryAddr)
-		entryAddr = he.next
-		k, v := m.dataStore.get(he)
-		if bytes.Compare(key, k) != 0 {
+		e := m.entryStore.get(entryAddr)
+		entryAddr = e.next
+		val := m.dataStore.get(e, key)
+		if val == nil {
 			continue
 		}
-		values = append(values, v)
+		values = append(values, val)
 	}
 	return values
 }
