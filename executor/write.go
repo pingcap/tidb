@@ -631,7 +631,9 @@ func (e *InsertExec) Next() (*Row, error) {
 	}
 
 	rowCount := 0
-	batchInsert := e.ctx.GetSessionVars().BatchInsert
+	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
+	batchInsert := e.ctx.GetSessionVars().BatchInsert && !e.ctx.GetSessionVars().InTxn()
+
 	for _, row := range rows {
 		if batchInsert && rowCount >= BatchInsertSize {
 			err = e.ctx.NewTxn()

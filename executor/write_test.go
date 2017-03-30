@@ -901,4 +901,13 @@ func (s *testSuite) TestBatchInsert(c *C) {
 	tk.MustExec("insert into batch_insert (c) select * from batch_insert;")
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
+
+	// Disable BachInsert mode in transation.
+	tk.MustExec("begin;")
+	_, err = tk.Exec("insert into batch_insert (c) select * from batch_insert;")
+	c.Assert(err, NotNil)
+	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
+	tk.MustExec("rollback;")
+	r = tk.MustQuery("select count(*) from batch_insert;")
+	r.Check(testkit.Rows("320"))
 }
