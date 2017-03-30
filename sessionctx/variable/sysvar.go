@@ -602,6 +602,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBIndexSerialScanConcurrency, strconv.Itoa(DefIndexSerialScanConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBSkipDDLWait, boolToIntStr(DefSkipDDLWait)},
 	{ScopeGlobal | ScopeSession, TiDBSkipUTF8Check, boolToIntStr(DefSkipUTF8Check)},
+	{ScopeSession, TiDBBatchInsert, boolToIntStr(DefBatchInsert)},
 }
 
 // SetNamesVariables is the system variable names related to set names statements.
