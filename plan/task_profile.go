@@ -29,10 +29,11 @@ type taskProfile interface {
 // TODO: In future, we should split copTask to indexTask and tableTask.
 // copTaskProfile is a profile for a task running a distributed kv store.
 type copTaskProfile struct {
-	indexPlan     PhysicalPlan
-	tablePlan     PhysicalPlan
-	cst           float64
-	cnt           uint64
+	indexPlan PhysicalPlan
+	tablePlan PhysicalPlan
+	cst       float64
+	cnt       uint64
+	// addPlan2Index means we are processing index plan.
 	addPlan2Index bool
 }
 
@@ -74,14 +75,19 @@ func (t *copTaskProfile) attachPlan(p PhysicalPlan) taskProfile {
 	return nt
 }
 
-func (t *copTaskProfile) finishTask() {
+func (t *copTaskProfile) finishIndexPlan() {
 	t.cst += float64(t.cnt) * netWorkFactor
-	if t.tablePlan != nil && t.indexPlan != nil {
-		t.cst += float64(t.cnt) * netWorkFactor
-	}
+	t.addPlan2Index = false
 }
 
-// rootTaskProfile is a profile running on tidb with single goroutine.
+func (t *copTaskProfile) finishTask() {
+	if t.addPlan2Index {
+		t.finishIndexPlan()
+	}
+	t.cst += float64(t.cnt) * netWorkFactor
+}
+
+// rootTaskProfile is the final sink node of a plan graph. It should be a single goroutine on tidb.
 type rootTaskProfile struct {
 	plan PhysicalPlan
 	cst  float64
@@ -139,12 +145,13 @@ func (sel *Selection) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 			if indexSel != nil {
 				indexSel.SetChildren(t.indexPlan)
 				t.indexPlan = indexSel
+				// TODO: Update t.cnt.
 				t.cst += float64(t.cnt) * cpuFactor
 			}
 			if tableSel != nil {
+				t.finishIndexPlan()
 				tableSel.SetChildren(t.tablePlan)
 				t.tablePlan = tableSel
-				t.addPlan2Index = false
 				t.cst += float64(t.cnt) * cpuFactor
 			}
 		} else {
@@ -152,6 +159,7 @@ func (sel *Selection) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 			t.tablePlan = sel
 			t.cst += float64(t.cnt) * cpuFactor
 		}
+		// TODO: Estimate t.cnt by histogram.
 		t.cnt = uint64(float64(t.cnt) * selectionFactor)
 	case *rootTaskProfile:
 		t.cst += float64(t.cnt) * cpuFactor
@@ -160,6 +168,8 @@ func (sel *Selection) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 	return profile
 }
 
+// splitSelectionByIndexColumns splits the selection conditions by index schema. If some condition only contain the index
+// columns, it will be pushed to index plan.
 func (sel *Selection) splitSelectionByIndexColumns(schema *expression.Schema) (indexSel *Selection, tableSel *Selection) {
 	conditions := sel.Conditions
 	var tableConds []expression.Expression
