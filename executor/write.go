@@ -598,6 +598,10 @@ func (e *InsertExec) Schema() *expression.Schema {
 	return expression.NewSchema()
 }
 
+// BatchInsertSize is the batch size of auto-splitted insert data.
+// This will be used when tidb_batch_insert is set to ON.
+var BatchInsertSize = 20000
+
 // Next implements the Executor Next interface.
 func (e *InsertExec) Next() (*Row, error) {
 	if e.finished {
@@ -626,7 +630,20 @@ func (e *InsertExec) Next() (*Row, error) {
 		return nil, errors.Trace(err)
 	}
 
+	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
+	batchInsert := e.ctx.GetSessionVars().BatchInsert && !e.ctx.GetSessionVars().InTxn()
+	rowCount := 0
+
 	for _, row := range rows {
+		if batchInsert && rowCount >= BatchInsertSize {
+			err = e.ctx.NewTxn()
+			if err != nil {
+				// We should return a special error for batch insert.
+				return nil, ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)
+			}
+			txn = e.ctx.Txn()
+			rowCount = 0
+		}
 		if len(e.OnDuplicate) == 0 && !e.Ignore {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
 		}
@@ -634,6 +651,7 @@ func (e *InsertExec) Next() (*Row, error) {
 		txn.DelOption(kv.PresumeKeyNotExists)
 		if err == nil {
 			getDirtyDB(e.ctx).addRow(e.Table.Meta().ID, h, row)
+			rowCount++
 			continue
 		}
 
