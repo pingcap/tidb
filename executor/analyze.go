@@ -118,7 +118,7 @@ func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]
 	return errors.Trace(err)
 }
 
-// collectSamplesAndNDVs collects sample from the result set using Reservoir Sampling algorithm,
+// collectSamplesAndEstimateNDVs collects sample from the result set using Reservoir Sampling algorithm,
 // and estimates NDVs using FM Sketch during the collecting process.
 // See https://en.wikipedia.org/wiki/Reservoir_sampling
 func collectSamplesAndEstimateNDVs(e ast.RecordSet, numCols int) (count int64, samples []*ast.Row, ndvs []int64, err error) {
