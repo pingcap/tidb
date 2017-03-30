@@ -669,7 +669,7 @@ func (d *Datum) ConvertTo(sc *variable.StatementContext, target *FieldType) (Dat
 	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
 		mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString:
 		return d.convertToString(sc, target)
-	case mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDate:
+	case mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDate, mysql.TypeNewDate:
 		return d.convertToMysqlTime(sc, target)
 	case mysql.TypeDuration:
 		return d.convertToMysqlDuration(sc, target)

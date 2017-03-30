@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/types"
 )
 
 type keyType int
@@ -41,6 +42,9 @@ type Checker interface {
 
 	// DBIsVisible returns true is the database is visible to current user.
 	DBIsVisible(db string) bool
+
+	// UserPrivilegesTable provide data for INFORMATION_SCHEMA.USERS_PRIVILEGE table.
+	UserPrivilegesTable() [][]types.Datum
 }
 
 const key keyType = 0
