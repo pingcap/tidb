@@ -38,7 +38,7 @@ func (l *localOracle) IsExpired(lockTS uint64, TTL uint64) bool {
 	return oracle.GetPhysical(time.Now()) >= oracle.ExtractPhysical(lockTS)+int64(TTL)
 }
 
-func (l *localOracle) GetTimestamp(_ context.Context) (uint64, error) {
+func (l *localOracle) GetTimestamp(context.Context) (uint64, error) {
 	l.Lock()
 	defer l.Unlock()
 	physical := oracle.GetPhysical(time.Now())

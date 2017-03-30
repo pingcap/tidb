@@ -14,9 +14,10 @@
 package oracles
 
 import (
-	"golang.org/x/net/context"
 	"testing"
 	"time"
+
+	"golang.org/x/net/context"
 )
 
 func TestLocalOracle(t *testing.T) {
