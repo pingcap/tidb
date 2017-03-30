@@ -195,7 +195,7 @@ func (o *mockOracle) addOffset(d time.Duration) {
 	o.offset += d
 }
 
-func (o *mockOracle) GetTimestamp() (uint64, error) {
+func (o *mockOracle) GetTimestamp(_ goctx.Context) (uint64, error) {
 	o.Lock()
 	defer o.Unlock()
 
