@@ -1009,7 +1009,21 @@ type builtinTanSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_tan
 func (b *builtinTanSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("tan")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if args[0].IsNull() {
+		return args[0], nil
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	theta, err := args[0].ToFloat64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	// Set the result to be of type float64
+	d.SetFloat64(math.Tan(theta))
+	return d, nil
 }
 
 type truncateFunctionClass struct {
