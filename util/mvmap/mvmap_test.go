@@ -27,11 +27,11 @@ func TestMVMap(t *testing.T) {
 	m.Put([]byte("def"), []byte("def1"))
 	m.Put([]byte("def"), []byte("def2"))
 	vals := m.Get([]byte("abc"))
-	if fmt.Sprintf("%s", vals) != "[abc2 abc1]" {
+	if fmt.Sprintf("%s", vals) != "[abc1 abc2]" {
 		t.FailNow()
 	}
 	vals = m.Get([]byte("def"))
-	if fmt.Sprintf("%s", vals) != "[def2 def1]" {
+	if fmt.Sprintf("%s", vals) != "[def1 def2]" {
 		t.FailNow()
 	}
 }
