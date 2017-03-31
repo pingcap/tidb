@@ -17,11 +17,9 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
-	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/distsql/xeval"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -80,8 +78,8 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor
 			break
 		}
 		data := dummySlice
-		for _, col := range ctx.columns {
-			data = append(data, row[col.GetColumnId()]...)
+		for _, val := range row {
+			data = append(data, val...)
 		}
 		chunks = appendRow(chunks, handle, data)
 	}
@@ -94,18 +92,15 @@ func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 	case tipb.ExecType_TypeTableScan:
 		columns := curr.TblScan.Columns
 		ctx.setColumns(columns)
-		colTps := make(map[int64]*types.FieldType, len(columns))
-		for _, col := range columns {
-			if col.GetPkHandle() {
-				continue
-			}
-			colTps[col.GetColumnId()] = distsql.FieldTypeFromPBColumn(col)
+		colIDs := make(map[int64]int)
+		for i, col := range columns {
+			colIDs[col.GetColumnId()] = i
 		}
 		ranges := h.extractKVRanges(ctx.keyRanges, *curr.TblScan.Desc)
 		currExec = &tableScanExec{
 			TableScan:   curr.TblScan,
 			kvRanges:    ranges,
-			colTps:      colTps,
+			schema:      colIDs,
 			startTS:     ctx.dagReq.GetStartTs(),
 			mvccStore:   h.mvccStore,
 			rawStartKey: h.rawStartKey,
@@ -119,15 +114,15 @@ func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 		if columns[length-1].GetPkHandle() {
 			columns = columns[:length-1]
 		}
-		ids := make([]int64, 0, len(columns))
-		for _, col := range columns {
-			ids = append(ids, col.GetColumnId())
+		colIDs := make(map[int64]int)
+		for i, col := range columns {
+			colIDs[col.GetColumnId()] = i
 		}
 		ranges := h.extractKVRanges(ctx.keyRanges, *curr.IdxScan.Desc)
 		currExec = &indexScanExec{
 			IndexScan:   curr.IdxScan,
 			kvRanges:    ranges,
-			ids:         ids,
+			schema:      colIDs,
 			startTS:     ctx.dagReq.GetStartTs(),
 			mvccStore:   h.mvccStore,
 			rawStartKey: h.rawStartKey,
@@ -139,15 +134,16 @@ func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 		if len(curr.Selection.Conditions) > 0 {
 			cond = curr.Selection.Conditions[0]
 		}
-		cols := make(map[int64]*tipb.ColumnInfo)
-		err := extractColumnsInExpr(cond, ctx.columns, cols)
+		colIDs := make(map[int64]int)
+		err := extractSchemaInExpr(cond, ctx.columns, colIDs)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		currExec = &selectionExec{
 			Selection: curr.Selection,
 			eval:      ctx.eval,
-			columns:   cols,
+			columns:   ctx.columns,
+			schema:    colIDs,
 			sc:        ctx.sc,
 		}
 	default:
