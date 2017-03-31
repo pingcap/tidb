@@ -501,6 +501,33 @@ func (s *testEvaluatorSuite) TestSin(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestCos(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Arg interface{}
+		Ret interface{}
+	}{
+		{nil, nil},
+		{int64(0), float64(1)},
+		{math.Pi, float64(-1)}, // Pie ==> 0
+		{-math.Pi, float64(-1)},
+		{math.Pi / 2, float64(math.Cos(math.Pi / 2))}, // Pi/2 is some near 0 (6.123233995736766e-17) but not 0. Even in math it is 0.
+		{-math.Pi / 2, float64(math.Cos(-math.Pi / 2))},
+		{"0.000", float64(1)}, // string value case
+	}
+
+	Dtbl := tblToDtbl(tbl)
+	for _, t := range Dtbl {
+		fc := funcs[ast.Cos]
+		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Log(t)
+		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
+	}
+}
+
 func (s *testEvaluatorSuite) TestAcos(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
