@@ -218,7 +218,7 @@ func (s *testTableCodecSuite) TestCutRow(c *C) {
 	c.Assert(r, NotNil)
 	c.Assert(r, HasLen, 3)
 	// Compare cut row and original row
-	for i, _ := range colIDs {
+	for i := range colIDs {
 		c.Assert(r[i], DeepEquals, data[i])
 	}
 }
