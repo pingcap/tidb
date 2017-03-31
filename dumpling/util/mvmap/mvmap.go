@@ -121,7 +121,7 @@ func NewMVMap() *MVMap {
 	m.hashTable = make(map[uint64]entryAddr)
 	m.hashFunc = fnv.New64()
 	m.entryStore.slices = [][]entry{make([]entry, 0, 64)}
-	// append first empty entry so zero entry pointer an represent null.
+	// Append the first empty entry, so the zero entryAddr can represent null.
 	m.entryStore.put(entry{})
 	m.dataStore.slices = [][]byte{make([]byte, 0, 1024)}
 	return m
@@ -139,8 +139,8 @@ func (m *MVMap) Put(key, value []byte) {
 		valLen: uint32(len(value)),
 		next:   oldEntryAddr,
 	}
-	newEntryPtr := m.entryStore.put(e)
-	m.hashTable[hashKey] = newEntryPtr
+	newEntryAddr := m.entryStore.put(e)
+	m.hashTable[hashKey] = newEntryAddr
 }
 
 // Get gets the values of the key.
@@ -156,6 +156,11 @@ func (m *MVMap) Get(key []byte) [][]byte {
 			continue
 		}
 		values = append(values, val)
+	}
+	// Keep the order of input.
+	for i := 0; i < len(values)/2; i++ {
+		j := len(values) - 1 - i
+		values[i], values[j] = values[j], values[i]
 	}
 	return values
 }
