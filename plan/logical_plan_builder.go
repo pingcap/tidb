@@ -233,7 +233,15 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 
 	if b.TableHints() != nil {
 		joinPlan.preferMergeJoin = b.TableHints().ifPreferMergeJoin(leftAlias, rightAlias)
-		joinPlan.preferINLJ = b.TableHints().ifPreferINLJ(leftAlias, rightAlias)
+		if b.TableHints().ifPreferINLJ(leftAlias) {
+			joinPlan.preferINLJ = joinPlan.preferINLJ | preferLeftAsOuter
+		}
+		if b.TableHints().ifPreferINLJ(rightAlias) {
+			joinPlan.preferINLJ = joinPlan.preferINLJ | preferRightAsOuter
+		}
+		if joinPlan.preferMergeJoin && joinPlan.preferINLJ > 0 {
+			b.err = errors.New("Optimizer Hints is conflict")
+		}
 	}
 
 	if join.On != nil {

@@ -573,13 +573,13 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 
 // buildSelectionWithConds will build a selection use the conditions of join and convert one side's column to correlated column.
 // This is called when build nested loop join.
-func (p *Join) buildSelectionWithConds(left bool) (*Selection, []*expression.CorrelatedColumn) {
+func (p *Join) buildSelectionWithConds(leftAsOuter bool) (*Selection, []*expression.CorrelatedColumn) {
 	var (
 		outerSchema *expression.Schema
 		innerChild  Plan
 		conds       []expression.Expression
 	)
-	if left {
+	if leftAsOuter {
 		outerSchema = p.children[0].Schema()
 		innerChild = p.children[1]
 	} else {
@@ -597,7 +597,7 @@ func (p *Join) buildSelectionWithConds(left bool) (*Selection, []*expression.Cor
 	selection.initIDAndContext(p.ctx)
 	selection.SetSchema(innerChild.Schema().Clone())
 	selection.SetChildren(innerChild)
-	if left {
+	if leftAsOuter {
 		conds = make([]expression.Expression, 0, len(p.EqualConditions)+len(p.RightConditions)+len(p.OtherConditions))
 		for _, cond := range p.RightConditions {
 			newCond := expression.ConvertCol2CorCol(cond, corCols, outerSchema)
@@ -616,6 +616,7 @@ func (p *Join) buildSelectionWithConds(left bool) (*Selection, []*expression.Cor
 	}
 	for _, cond := range p.OtherConditions {
 		newCond := expression.ConvertCol2CorCol(cond, corCols, outerSchema)
+		newCond.ResolveIndices(innerChild.Schema())
 		conds = append(conds, newCond)
 	}
 	selection.Conditions = conds
@@ -965,7 +966,7 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 				break
 			}
 		}
-		if p.preferINLJ && p.hasEqualConds() {
+		if (p.preferINLJ&preferLeftAsOuter) > 0 && p.hasEqualConds() {
 			nljInfo, err := p.convert2IndexNestedLoopJoinLeft(prop, false)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -990,7 +991,7 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 				break
 			}
 		}
-		if p.preferINLJ && p.hasEqualConds() {
+		if (p.preferINLJ&preferRightAsOuter) > 0 && p.hasEqualConds() {
 			nljInfo, err := p.convert2IndexNestedLoopJoinRight(prop, false)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -1013,9 +1014,9 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 			}
 			break
 		}
-		if p.preferINLJ && p.hasEqualConds() {
-			if _, ok := p.children[0].(*DataSource); ok {
-				lNLJInfo, err := p.convert2IndexNestedLoopJoinRight(prop, true)
+		if p.preferINLJ > 0 && p.hasEqualConds() {
+			if _, ok := p.children[1].(*DataSource); ok && (p.preferINLJ&preferLeftAsOuter) > 0 {
+				lNLJInfo, err := p.convert2IndexNestedLoopJoinLeft(prop, true)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -1023,8 +1024,8 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 					info = lNLJInfo
 				}
 			}
-			if _, ok := p.children[1].(*DataSource); ok {
-				rNLJInfo, err := p.convert2IndexNestedLoopJoinLeft(prop, true)
+			if _, ok := p.children[0].(*DataSource); ok && (p.preferINLJ&preferRightAsOuter) > 0 {
+				rNLJInfo, err := p.convert2IndexNestedLoopJoinRight(prop, true)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}

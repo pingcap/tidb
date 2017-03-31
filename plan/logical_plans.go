@@ -38,6 +38,11 @@ const (
 	LeftOuterSemiJoin
 )
 
+const (
+	preferLeftAsOuter = 1 << iota
+	preferRightAsOuter
+)
+
 // Join is the logical join plan.
 type Join struct {
 	baseLogicalPlan
@@ -46,7 +51,7 @@ type Join struct {
 	anti            bool
 	reordered       bool
 	cartesianJoin   bool
-	preferINLJ      bool
+	preferINLJ      int
 	preferMergeJoin bool
 
 	EqualConditions []*expression.ScalarFunction

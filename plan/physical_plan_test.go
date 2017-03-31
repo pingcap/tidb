@@ -1074,11 +1074,7 @@ func (s *testPlanSuite) TestJoinAlgorithm(c *C) {
 			ans: "MergeJoin{Table(t)->Table(t)}(t1.a,t2.a)",
 		},
 		{
-			sql: "select /*+ tidb_inlj(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a",
-			ans: "Apply{Table(t)->Selection->Table(t)->Cache}",
-		},
-		{
-			sql: "select /*+ tidb_inlj(t1) */ * from t t1 join t t2 on t1.a = t2.a",
+			sql: "select /*+ tidb_inlj(t2) */ * from t t1 join t t2 on t1.a = t2.a",
 			ans: "Apply{Table(t)->Selection->Table(t)->Cache}",
 		},
 		{
@@ -1106,7 +1102,7 @@ func (s *testPlanSuite) TestJoinAlgorithm(c *C) {
 			ans: "Apply{Index(t.f)[(1,+inf]]->Index(t.f)[]->Selection}",
 		},
 		{
-			sql: "select /*+ tidb_inlj(t1) */ * from t t1 join t t2 on t1.c=t2.c and t1.d=t2.d and t1.e > t2.e",
+			sql: "select /*+ tidb_inlj(t2) */ * from t t1 join t t2 on t1.c=t2.c and t1.d=t2.d and t1.e > t2.e",
 			ans: "Apply{Index(t.c_d_e)[]->Selection->Table(t)->Cache}",
 		},
 	}
