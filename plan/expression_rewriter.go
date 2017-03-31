@@ -374,7 +374,6 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 	agg := Aggregation{
 		AggFuncs: []expression.AggregationFunction{firstRowFunc, countFunc},
 	}.init(er.b.allocator, er.ctx)
-	agg.self = agg
 	addChild(agg, np)
 	firstRowResultCol := &expression.Column{
 		ColName:  model.NewCIStr("col_firstRow"),
