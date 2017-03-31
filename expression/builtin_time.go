@@ -2015,9 +2015,9 @@ func (b *builtinToDaysSig) eval(row []types.Datum) (d types.Datum, err error) {
 	ret := types.TimestampDiff("DAY", types.ZeroDate, date)
 	if ret == 0 {
 		d.SetNull()
-	} else {
-		d.SetInt64(ret)
+		return d, errorOrWarning(types.ErrInvalidTimeFormat, b.ctx)
 	}
+	d.SetInt64(ret)
 	return d, nil
 }
 
