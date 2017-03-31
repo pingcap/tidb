@@ -217,6 +217,7 @@ func (s *testSuite) TestJoin(c *C) {
 	tk.MustQuery("select /*+ TIDB_INLJ(t, t1) */ * from t join t1 on t.a=t1.a").Check(testkit.Rows("1 1 1 2", "1 1 1 3", "3 3 3 4"))
 	tk.MustQuery("select /*+ TIDB_INLJ(t1) */ * from t1 join t on t.a=t1.a and t.a < t1.b").Check(testkit.Rows("1 2 1 1", "1 3 1 1", "3 4 3 3"))
 	tk.MustQuery("select /*+ TIDB_INLJ(t, t1) */ * from t right outer join t1 on t.a=t1.a").Check(testkit.Rows("1 1 1 2", "1 1 1 3", "3 3 3 4", "<nil> <nil> 4 5"))
+	tk.MustQuery("select /*+ TIDB_INLJ(t, t1) */ avg(t.b) from t right outer join t1 on t.a=t1.a").Check(testkit.Rows("1.6667"))
 
 	_, err = tk.Exec("select /*+ TIDB_INLJ(t) TIDB_SMJ(t) * from t join t1 on t.a=t1.a")
 	c.Assert(err, NotNil)
