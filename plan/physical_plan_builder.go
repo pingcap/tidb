@@ -1244,7 +1244,7 @@ func (p *Union) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 }
 
 // makeScanController will try to build a selection that controls the below scan's filter condition,
-// and return a physicalPlanInfo. If the onlyJudge is true, it will only check whether this selection
+// and return a physicalPlanInfo. If the onlyCheck is true, it will only check whether this selection
 // can become a scan controller without building the physical plan.
 func (p *Selection) makeScanController(onlyCheck bool) (*physicalPlanInfo, int) {
 	var (
@@ -1314,7 +1314,7 @@ func (p *Selection) makeScanController(onlyCheck bool) (*physicalPlanInfo, int) 
 			info.cost = float64(info.count) * selectionFactor
 			return info, controlTableScan
 		}
-		// else will judge whether can build a index scan or just build a index scan.
+		// else will check whether can build a index scan or just build a index scan.
 	}
 	var chosenPlan *PhysicalIndexScan
 	for _, idx := range indices {
