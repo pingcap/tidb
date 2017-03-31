@@ -186,7 +186,7 @@ func (e *joinReOrderSolver) newJoin(lChild, rChild LogicalPlan) *Join {
 	join := &Join{
 		JoinType:        InnerJoin,
 		reordered:       true,
-		baseLogicalPlan: newBaseLogicalPlan(Jn, e.allocator),
+		baseLogicalPlan: newBaseLogicalPlan(TypeJoin, e.allocator),
 	}
 	join.self = join
 	join.initIDAndContext(lChild.context())

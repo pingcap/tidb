@@ -117,7 +117,7 @@ func (w *GCWorker) start() {
 					break
 				}
 				// Disable privilege check for gc worker session.
-				privilege.BindPrivilegeChecker(w.session, nil)
+				privilege.BindPrivilegeManager(w.session, nil)
 			}
 
 			isLeader, err := w.checkLeader()

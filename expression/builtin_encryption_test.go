@@ -202,6 +202,30 @@ func (s *testEvaluatorSuite) TestMD5(c *C) {
 	s.testNullInput(c, ast.AesDecrypt)
 }
 
+type compressTest struct {
+	in  interface{}
+	out interface{}
+}
+
+var compressCases = []compressTest{
+	{[]byte("hello world"), []byte{120, 156, 202, 72, 205, 201, 201, 87, 40, 207, 47, 202, 73, 1, 4, 0, 0, 255, 255, 26, 11, 4, 93}},
+	{[]byte("i love you)"), []byte{120, 156, 202, 84, 200, 201, 47, 75, 85, 168, 204, 47, 213, 4, 4, 0, 0, 255, 255, 23, 142, 3, 230}},
+	{nil, nil},
+}
+
+func (s *testEvaluatorSuite) TestCompress(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.Compress]
+	for _, test := range compressCases {
+		arg := types.NewDatum(test.in)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{arg}), s.ctx)
+		c.Assert(err, IsNil)
+		out, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(out, DeepEquals, types.NewDatum(test.out))
+	}
+}
+
 func (s *testEvaluatorSuite) TestRandomBytes(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.RandomBytes]
