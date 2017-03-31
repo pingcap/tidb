@@ -214,20 +214,12 @@ func (e *DeleteExec) deleteMultiTables() error {
 }
 
 func isMatchTableName(entry *RowKeyEntry, tblMap map[int64][]string) bool {
-	var name string
-	if entry.TableAsName != nil {
-		name = entry.TableAsName.L
-	}
-	if len(name) == 0 {
-		name = entry.Tbl.Meta().Name.L
-	}
-
 	names, ok := tblMap[entry.Tbl.Meta().ID]
 	if !ok {
 		return false
 	}
 	for _, n := range names {
-		if n == name {
+		if n == entry.TableName {
 			return true
 		}
 	}
@@ -1202,16 +1194,9 @@ func (e *UpdateExec) fetchRows() error {
 }
 
 func getTableOffset(schema *expression.Schema, entry *RowKeyEntry) int {
-	t := entry.Tbl
-	var tblName string
-	if entry.TableAsName == nil || len(entry.TableAsName.L) == 0 {
-		tblName = t.Meta().Name.L
-	} else {
-		tblName = entry.TableAsName.L
-	}
 	for i := 0; i < schema.Len(); i++ {
 		s := schema.Columns[i]
-		if s.TblName.L == tblName {
+		if s.TblName.L == entry.TableName {
 			return i
 		}
 	}
