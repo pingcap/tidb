@@ -1555,7 +1555,41 @@ type builtinQuoteSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_quote
 func (b *builtinQuoteSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("quote")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	if args[0].IsNull() {
+		return
+	}
+	var (
+		str    string
+		buffer bytes.Buffer
+	)
+	str, err = args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	runes := []rune(str)
+	buffer.WriteRune('\'')
+	for i := 0; i < len(runes); i++ {
+		switch runes[i] {
+		case '\\', '\'':
+			buffer.WriteRune('\\')
+			buffer.WriteRune(runes[i])
+		case 0:
+			buffer.WriteRune('\\')
+			buffer.WriteRune('0')
+		case '\032':
+			buffer.WriteRune('\\')
+			buffer.WriteRune('Z')
+		default:
+			buffer.WriteRune(runes[i])
+		}
+	}
+	buffer.WriteRune('\'')
+	d.SetString(buffer.String())
+	return d, errors.Trace(err)
 }
 
 type binFunctionClass struct {
@@ -1660,7 +1694,40 @@ type builtinFormatSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_format
 func (b *builtinFormatSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("format")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if args[0].IsNull() {
+		d.SetNull()
+		return
+	}
+	arg0, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	arg1, err := args[1].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	var arg2 string
+
+	if len(args) == 2 {
+		arg2 = "en_US"
+	} else if len(args) == 3 {
+		arg2, err = args[2].ToString()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+	}
+
+	formatString, err := mysql.GetLocaleFormatFunction(arg2)(arg0, arg1)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	d.SetString(formatString)
+	return d, nil
 }
 
 type fromBase64FunctionClass struct {
