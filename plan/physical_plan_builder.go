@@ -327,6 +327,9 @@ func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPl
 		info.cost += sortCost(count)
 	} else if prop.limit != nil {
 		limit := prop.limit.Copy().(*Limit)
+		limit.tp = Lim
+		limit.allocator = info.p.Allocator()
+		limit.initIDAndContext(info.p.context())
 		limit.SetSchema(info.p.Schema())
 		info = addPlanToResponse(limit, info)
 	}
@@ -1392,7 +1395,7 @@ func (p *Analyze) prepareSimpleTableScan(cols []*model.ColumnInfo) *PhysicalTabl
 	}
 	ts.tp = Tbl
 	ts.allocator = p.allocator
-	ts.SetSchema(p.Schema())
+	ts.SetSchema(expression.NewSchema(expression.ColumnInfos2Columns(ts.Table.Name, cols)...))
 	ts.initIDAndContext(p.ctx)
 	ts.readOnly = true
 	ts.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
@@ -1414,7 +1417,7 @@ func (p *Analyze) prepareSimpleIndexScan(idxOffset int, cols []*model.ColumnInfo
 	is.tp = Aly
 	is.allocator = p.allocator
 	is.initIDAndContext(p.ctx)
-	is.SetSchema(p.Schema())
+	is.SetSchema(expression.NewSchema(expression.ColumnInfos2Columns(tblInfo.Name, cols)...))
 	is.readOnly = true
 	rb := rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
 	is.Ranges = rb.buildIndexRanges(fullRange, types.NewFieldType(mysql.TypeNull))

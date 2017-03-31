@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/table"
@@ -31,22 +32,23 @@ import (
 )
 
 const (
-	tableSchemata      = "SCHEMATA"
-	tableTables        = "TABLES"
-	tableColumns       = "COLUMNS"
-	tableStatistics    = "STATISTICS"
-	tableCharacterSets = "CHARACTER_SETS"
-	tableCollations    = "COLLATIONS"
-	tableFiles         = "FILES"
-	catalogVal         = "def"
-	tableProfiling     = "PROFILING"
-	tablePartitions    = "PARTITIONS"
-	tableKeyColumm     = "KEY_COLUMN_USAGE"
-	tableReferConst    = "REFERENTIAL_CONSTRAINTS"
-	tableSessionVar    = "SESSION_VARIABLES"
-	tablePlugins       = "PLUGINS"
-	tableConstraints   = "TABLE_CONSTRAINTS"
-	tableTriggers      = "TRIGGERS"
+	tableSchemata       = "SCHEMATA"
+	tableTables         = "TABLES"
+	tableColumns        = "COLUMNS"
+	tableStatistics     = "STATISTICS"
+	tableCharacterSets  = "CHARACTER_SETS"
+	tableCollations     = "COLLATIONS"
+	tableFiles          = "FILES"
+	catalogVal          = "def"
+	tableProfiling      = "PROFILING"
+	tablePartitions     = "PARTITIONS"
+	tableKeyColumm      = "KEY_COLUMN_USAGE"
+	tableReferConst     = "REFERENTIAL_CONSTRAINTS"
+	tableSessionVar     = "SESSION_VARIABLES"
+	tablePlugins        = "PLUGINS"
+	tableConstraints    = "TABLE_CONSTRAINTS"
+	tableTriggers       = "TRIGGERS"
+	tableUserPrivileges = "USER_PRIVILEGES"
 )
 
 type columnInfo struct {
@@ -322,6 +324,13 @@ var tableTriggersCols = []columnInfo{
 	{"DATABASE_COLLATION", mysql.TypeVarchar, 32, 0, nil, nil},
 }
 
+var tableUserPrivilegesCols = []columnInfo{
+	{"GRANTEE", mysql.TypeVarchar, 81, 0, nil, nil},
+	{"TABLE_CATALOG", mysql.TypeVarchar, 512, 0, nil, nil},
+	{"PRIVILEGE_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"IS_GRANTABLE", mysql.TypeVarchar, 3, 0, nil, nil},
+}
+
 func dataForCharacterSets() (records [][]types.Datum) {
 	records = append(records,
 		types.MakeDatums("ascii", "ascii_general_ci", "US ASCII", 1),
@@ -356,6 +365,11 @@ func dataForSessionVar(ctx context.Context) (records [][]types.Datum, err error)
 		records = append(records, row)
 	}
 	return
+}
+
+func dataForUserPrivileges(ctx context.Context) [][]types.Datum {
+	checker := privilege.GetPrivilegeChecker(ctx)
+	return checker.UserPrivilegesTable()
 }
 
 var filesCols = []columnInfo{
@@ -630,21 +644,22 @@ func dataForTableConstraints(schemas []*model.DBInfo) [][]types.Datum {
 }
 
 var tableNameToColumns = map[string]([]columnInfo){
-	tableSchemata:      schemataCols,
-	tableTables:        tablesCols,
-	tableColumns:       columnsCols,
-	tableStatistics:    statisticsCols,
-	tableCharacterSets: charsetCols,
-	tableCollations:    collationsCols,
-	tableFiles:         filesCols,
-	tableProfiling:     profilingCols,
-	tablePartitions:    partitionsCols,
-	tableKeyColumm:     keyColumnUsageCols,
-	tableReferConst:    referConstCols,
-	tableSessionVar:    sessionVarCols,
-	tablePlugins:       pluginsCols,
-	tableConstraints:   tableConstraintsCols,
-	tableTriggers:      tableTriggersCols,
+	tableSchemata:       schemataCols,
+	tableTables:         tablesCols,
+	tableColumns:        columnsCols,
+	tableStatistics:     statisticsCols,
+	tableCharacterSets:  charsetCols,
+	tableCollations:     collationsCols,
+	tableFiles:          filesCols,
+	tableProfiling:      profilingCols,
+	tablePartitions:     partitionsCols,
+	tableKeyColumm:      keyColumnUsageCols,
+	tableReferConst:     referConstCols,
+	tableSessionVar:     sessionVarCols,
+	tablePlugins:        pluginsCols,
+	tableConstraints:    tableConstraintsCols,
+	tableTriggers:       tableTriggersCols,
+	tableUserPrivileges: tableUserPrivilegesCols,
 }
 
 func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
@@ -708,6 +723,8 @@ func (it *infoschemaTable) getRows(ctx context.Context, cols []*table.Column) (f
 	case tableKeyColumm:
 	case tableReferConst:
 	case tablePlugins, tableTriggers:
+	case tableUserPrivileges:
+		fullRows = dataForUserPrivileges(ctx)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)

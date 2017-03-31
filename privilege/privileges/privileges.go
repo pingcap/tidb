@@ -271,6 +271,12 @@ func (p *UserPrivileges) DBIsVisible(db string) bool {
 	return mysqlPriv.DBIsVisible(user, host, db)
 }
 
+// UserPrivilegesTable implements the Checker interface.
+func (p *UserPrivileges) UserPrivilegesTable() [][]types.Datum {
+	mysqlPriv := p.Handle.Get()
+	return mysqlPriv.UserPrivilegesTable()
+}
+
 // Check implements Checker.Check interface.
 func (p *UserPrivileges) Check(ctx context.Context, db *model.DBInfo, tbl *model.TableInfo, privilege mysql.PrivilegeType) (bool, error) {
 	if p.privs == nil {

@@ -104,6 +104,7 @@ func (s *testLexerSuite) TestLiteral(c *C) {
 		{`\'a\'`, int('\\')},
 		{`\"a\"`, int('\\')},
 		{"0.2314", decLit},
+		{"1234567890123456789012345678901234567890", decLit},
 		{"132.313", decLit},
 		{"132.3e231", floatLit},
 		{"132.3e-231", floatLit},
