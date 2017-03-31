@@ -26,46 +26,66 @@ import (
 )
 
 const (
-	// Sel is the type of Selection.
-	Sel = "Selection"
-	// St is the type of Set.
-	St = "Set"
-	// Proj is the type of Projection.
-	Proj = "Projection"
-	// Agg is the type of Aggregation.
-	Agg = "Aggregation"
-	// Jn is the type of Join.
-	Jn = "Join"
-	// Un is the type of Union.
-	Un = "Union"
-	// Tbl is the type of TableScan.
-	Tbl = "TableScan"
-	// Idx is the type of IndexScan.
-	Idx = "IndexScan"
-	// Srt is the type of Sort.
-	Srt = "Sort"
-	// Lim is the type of Limit.
-	Lim = "Limit"
-	// App is the type of Apply.
-	App = "Apply"
-	// MOR is the type of MaxOneRow.
-	MOR = "MaxOneRow"
-	// Ext is the type of Exists.
-	Ext = "Exists"
-	// Dual is the type of TableDual.
-	Dual = "TableDual"
-	// Lock is the type of SelectLock.
-	Lock = "SelectLock"
-	// Load is the type of LoadData.
-	Load = "LoadData"
-	// Ins is the type of Insert
-	Ins = "Insert"
-	// Up is the type of Update.
-	Up = "Update"
-	// Del is the type of Delete.
-	Del = "Delete"
-	// Aly is the type of Analyze.
-	Aly = "Analyze"
+	// TypeSel is the type of Selection.
+	TypeSel = "Selection"
+	// TypeSet is the type of Set.
+	TypeSet = "Set"
+	// TypeProj is the type of Projection.
+	TypeProj = "Projection"
+	// TypeAgg is the type of Aggregation.
+	TypeAgg = "Aggregation"
+	// TypeStreamAgg is the type of StreamAgg.
+	TypeStreamAgg = "StreamAgg"
+	// TypeHashAgg is the type of HashAgg.
+	TypeHashAgg = "HashAgg"
+	// TypeCache is the type of cache.
+	TypeCache = "Cache"
+	// TypeShow is the type of show.
+	TypeShow = "Show"
+	// TypeJoin is the type of Join.
+	TypeJoin = "Join"
+	// TypeUnion is the type of Union.
+	TypeUnion = "Union"
+	// TypeTableScan is the type of TableScan.
+	TypeTableScan = "TableScan"
+	// TypeMemTableScan is the type of TableScan.
+	TypeMemTableScan = "MemTableScan"
+	// TypeDummy is the type of TableScan.
+	TypeDummy = "Dummy"
+	// TypeUnionScan is the type of UnionScan.
+	TypeUnionScan = "UnionScan"
+	// TypeIdxScan is the type of IndexScan.
+	TypeIdxScan = "IndexScan"
+	// TypeSort is the type of Sort.
+	TypeSort = "Sort"
+	// TypeLimit is the type of Limit.
+	TypeLimit = "Limit"
+	// TypeHashSemiJoin is the type of hash semi join.
+	TypeHashSemiJoin = "HashSemiJoin"
+	// TypeHashLeftJoin is the type of left hash join.
+	TypeHashLeftJoin = "HashLeftJoin"
+	// TypeHashRightJoin is the type of right hash join.
+	TypeHashRightJoin = "HashRightJoin"
+	// TypeMergeJoin is the type of merge join.
+	TypeMergeJoin = "MergeJoin"
+	// TypeApply is the type of Apply.
+	TypeApply = "Apply"
+	// TypeMaxOneRow is the type of MaxOneRow.
+	TypeMaxOneRow = "MaxOneRow"
+	// TypeExists is the type of Exists.
+	TypeExists = "Exists"
+	// TypeDual is the type of TableDual.
+	TypeDual = "TableDual"
+	// TypeLock is the type of SelectLock.
+	TypeLock = "SelectLock"
+	// TypeInsert is the type of Insert
+	TypeInsert = "Insert"
+	// TypeUpate is the type of Update.
+	TypeUpate = "Update"
+	// TypeDelete is the type of Delete.
+	TypeDelete = "Delete"
+	// TypeAnalyze is the type of Analyze.
+	TypeAnalyze = "Analyze"
 )
 
 // Plan is the description of an execution flow.

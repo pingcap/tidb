@@ -220,7 +220,7 @@ func (p *physicalTableSource) tryToAddUnionScan(resultPlan PhysicalPlan) Physica
 	us := &PhysicalUnionScan{
 		Condition: expression.ComposeCNFCondition(p.ctx, append(conditions, p.AccessCondition...)...),
 	}
-	us.tp = "UnionScan"
+	us.tp = TypeUnionScan
 	us.allocator = p.allocator
 	us.initIDAndContext(p.ctx)
 	us.SetChildren(resultPlan)
