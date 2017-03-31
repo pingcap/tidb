@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"bytes"
+	"compress/zlib"
 	"crypto/md5"
 	"crypto/rand"
 	"crypto/sha1"
@@ -119,6 +121,7 @@ func (b *builtinAesDecryptSig) eval(row []types.Datum) (d types.Datum, err error
 			return d, nil
 		}
 	}
+
 	cryptStr, err := args[0].ToBytes()
 	if err != nil {
 		return d, errors.Trace(err)
@@ -298,7 +301,27 @@ type builtinCompressSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_compress
 func (b *builtinCompressSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("COMPRESS")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	arg := args[0]
+	if arg.IsNull() {
+		return d, nil
+	}
+
+	compressStr, err := arg.ToBytes()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	var in bytes.Buffer
+	w := zlib.NewWriter(&in)
+	w.Write(compressStr)
+	w.Close()
+	d.SetBytes(in.Bytes())
+	return d, nil
 }
 
 type createAsymmetricPrivKeyFunctionClass struct {

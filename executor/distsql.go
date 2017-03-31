@@ -44,9 +44,13 @@ const (
 
 func resultRowToRow(t table.Table, h int64, data []types.Datum, tableAsName *model.CIStr) *Row {
 	entry := &RowKeyEntry{
-		Handle:      h,
-		Tbl:         t,
-		TableAsName: tableAsName,
+		Handle: h,
+		Tbl:    t,
+	}
+	if tableAsName != nil && tableAsName.L != "" {
+		entry.TableName = tableAsName.L
+	} else {
+		entry.TableName = t.Meta().Name.L
 	}
 	return &Row{Data: data, RowKeys: []*RowKeyEntry{entry}}
 }
