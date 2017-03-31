@@ -36,6 +36,33 @@ var (
 	_ physicalDistSQLPlan = &PhysicalIndexScan{}
 )
 
+var (
+	_ PhysicalPlan = &Selection{}
+	_ PhysicalPlan = &Projection{}
+	_ PhysicalPlan = &Exists{}
+	_ PhysicalPlan = &MaxOneRow{}
+	_ PhysicalPlan = &TableDual{}
+	_ PhysicalPlan = &Union{}
+	_ PhysicalPlan = &Sort{}
+	_ PhysicalPlan = &Update{}
+	_ PhysicalPlan = &Delete{}
+	_ PhysicalPlan = &SelectLock{}
+	_ PhysicalPlan = &Limit{}
+	_ PhysicalPlan = &Show{}
+	_ PhysicalPlan = &Insert{}
+	_ PhysicalPlan = &Analyze{}
+	_ PhysicalPlan = &PhysicalIndexScan{}
+	_ PhysicalPlan = &PhysicalTableScan{}
+	_ PhysicalPlan = &PhysicalAggregation{}
+	_ PhysicalPlan = &PhysicalApply{}
+	_ PhysicalPlan = &PhysicalDummyScan{}
+	_ PhysicalPlan = &PhysicalHashJoin{}
+	_ PhysicalPlan = &PhysicalHashSemiJoin{}
+	_ PhysicalPlan = &PhysicalMergeJoin{}
+	_ PhysicalPlan = &PhysicalUnionScan{}
+	_ PhysicalPlan = &Cache{}
+)
+
 // PhysicalIndexScan represents an index scan plan.
 type PhysicalIndexScan struct {
 	physicalTableSource
@@ -61,7 +88,8 @@ type PhysicalIndexScan struct {
 
 // PhysicalMemTable reads memory table.
 type PhysicalMemTable struct {
-	basePlan
+	*basePlan
+	basePhysicalPlan
 
 	DBName      model.CIStr
 	Table       *model.TableInfo
@@ -72,7 +100,10 @@ type PhysicalMemTable struct {
 
 // Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalMemTable) Copy() PhysicalPlan {
-	return &(*p)
+	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
+	return &np
 }
 
 // physicalDistSQLPlan means the plan that can be executed distributively.
@@ -114,7 +145,8 @@ func (p *PhysicalTableScan) calculateCost(resultCount uint64, scanCount uint64) 
 }
 
 type physicalTableSource struct {
-	basePlan
+	*basePlan
+	basePhysicalPlan
 
 	client kv.Client
 
@@ -217,12 +249,9 @@ func (p *physicalTableSource) tryToAddUnionScan(resultPlan PhysicalPlan) Physica
 		return resultPlan
 	}
 	conditions := append(p.indexFilterConditions, p.tableFilterConditions...)
-	us := &PhysicalUnionScan{
+	us := PhysicalUnionScan{
 		Condition: expression.ComposeCNFCondition(p.ctx, append(conditions, p.AccessCondition...)...),
-	}
-	us.tp = TypeUnionScan
-	us.allocator = p.allocator
-	us.initIDAndContext(p.ctx)
+	}.init(p.allocator, p.ctx)
 	us.SetChildren(resultPlan)
 	us.SetSchema(resultPlan.Schema())
 	return us
@@ -342,12 +371,14 @@ type PhysicalTableScan struct {
 
 // PhysicalDummyScan is a dummy table that returns nothing.
 type PhysicalDummyScan struct {
-	basePlan
+	*basePlan
+	basePhysicalPlan
 }
 
 // PhysicalApply represents apply plan, only used for subquery.
 type PhysicalApply struct {
-	basePlan
+	*basePlan
+	basePhysicalPlan
 
 	PhysicalJoin PhysicalPlan
 	OuterSchema  []*expression.CorrelatedColumn
@@ -355,7 +386,8 @@ type PhysicalApply struct {
 
 // PhysicalHashJoin represents hash join for inner/ outer join.
 type PhysicalHashJoin struct {
-	basePlan
+	*basePlan
+	basePhysicalPlan
 
 	JoinType JoinType
 
@@ -371,7 +403,8 @@ type PhysicalHashJoin struct {
 
 // PhysicalMergeJoin represents merge join for inner/ outer join.
 type PhysicalMergeJoin struct {
-	basePlan
+	*basePlan
+	basePhysicalPlan
 
 	JoinType JoinType
 
@@ -386,7 +419,8 @@ type PhysicalMergeJoin struct {
 
 // PhysicalHashSemiJoin represents hash join for semi join.
 type PhysicalHashSemiJoin struct {
-	basePlan
+	*basePlan
+	basePhysicalPlan
 
 	WithAux bool
 	Anti    bool
@@ -411,7 +445,8 @@ const (
 
 // PhysicalAggregation is Aggregation's physical plan.
 type PhysicalAggregation struct {
-	basePlan
+	*basePlan
+	basePhysicalPlan
 
 	HasGby       bool
 	AggType      AggregationType
@@ -421,14 +456,16 @@ type PhysicalAggregation struct {
 
 // PhysicalUnionScan represents a union scan operator.
 type PhysicalUnionScan struct {
-	basePlan
+	*basePlan
+	basePhysicalPlan
 
 	Condition expression.Expression
 }
 
 // Cache plan is a physical plan which stores the result of its child node.
 type Cache struct {
-	basePlan
+	*basePlan
+	basePhysicalPlan
 }
 
 func (p *PhysicalMergeJoin) tryConsumeOrder(prop *requiredProperty, eqCond *expression.ScalarFunction) *requiredProperty {
@@ -530,6 +567,8 @@ func (p *PhysicalAggregation) extractCorrelatedCols() []*expression.CorrelatedCo
 // Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalIndexScan) Copy() PhysicalPlan {
 	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }
 
@@ -564,6 +603,8 @@ func (p *PhysicalIndexScan) IsPointGetByUniqueKey(sc *variable.StatementContext)
 // Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalTableScan) Copy() PhysicalPlan {
 	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }
 
@@ -596,6 +637,8 @@ func (p *PhysicalMemTable) MarshalJSON() ([]byte, error) {
 // Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalApply) Copy() PhysicalPlan {
 	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }
 
@@ -616,6 +659,8 @@ func (p *PhysicalApply) MarshalJSON() ([]byte, error) {
 // Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalHashSemiJoin) Copy() PhysicalPlan {
 	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }
 
@@ -657,12 +702,16 @@ func (p *PhysicalHashSemiJoin) MarshalJSON() ([]byte, error) {
 // Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalHashJoin) Copy() PhysicalPlan {
 	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }
 
 // Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalMergeJoin) Copy() PhysicalPlan {
 	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }
 
@@ -736,6 +785,9 @@ func (p *PhysicalMergeJoin) MarshalJSON() ([]byte, error) {
 // Copy implements the PhysicalPlan Copy interface.
 func (p *Selection) Copy() PhysicalPlan {
 	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }
 
@@ -756,6 +808,9 @@ func (p *Selection) MarshalJSON() ([]byte, error) {
 // Copy implements the PhysicalPlan Copy interface.
 func (p *Projection) Copy() PhysicalPlan {
 	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }
 
@@ -775,24 +830,36 @@ func (p *Projection) MarshalJSON() ([]byte, error) {
 // Copy implements the PhysicalPlan Copy interface.
 func (p *Exists) Copy() PhysicalPlan {
 	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }
 
 // Copy implements the PhysicalPlan Copy interface.
 func (p *MaxOneRow) Copy() PhysicalPlan {
 	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }
 
 // Copy implements the PhysicalPlan Copy interface.
 func (p *Insert) Copy() PhysicalPlan {
 	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }
 
 // Copy implements the PhysicalPlan Copy interface.
 func (p *Limit) Copy() PhysicalPlan {
 	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }
 
@@ -810,6 +877,9 @@ func (p *Limit) MarshalJSON() ([]byte, error) {
 // Copy implements the PhysicalPlan Copy interface.
 func (p *Union) Copy() PhysicalPlan {
 	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }
 
@@ -843,18 +913,26 @@ func (p *Sort) MarshalJSON() ([]byte, error) {
 // Copy implements the PhysicalPlan Copy interface.
 func (p *TableDual) Copy() PhysicalPlan {
 	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }
 
 // Copy implements the PhysicalPlan Copy interface.
 func (p *SelectLock) Copy() PhysicalPlan {
 	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }
 
 // Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalAggregation) Copy() PhysicalPlan {
 	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }
 
@@ -879,41 +957,59 @@ func (p *PhysicalAggregation) MarshalJSON() ([]byte, error) {
 // Copy implements the PhysicalPlan Copy interface.
 func (p *Update) Copy() PhysicalPlan {
 	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }
 
 // Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalDummyScan) Copy() PhysicalPlan {
 	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }
 
 // Copy implements the PhysicalPlan Copy interface.
 func (p *Delete) Copy() PhysicalPlan {
 	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }
 
 // Copy implements the PhysicalPlan Copy interface.
 func (p *Show) Copy() PhysicalPlan {
 	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }
 
 // Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalUnionScan) Copy() PhysicalPlan {
 	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }
 
 // Copy implements the PhysicalPlan Copy interface.
 func (p *Cache) Copy() PhysicalPlan {
 	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }
 
 // Copy implements the Analyze Copy interface.
 func (p *Analyze) Copy() PhysicalPlan {
 	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }

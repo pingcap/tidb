@@ -18,6 +18,7 @@ import (
 
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 )
 
@@ -56,6 +57,7 @@ type joinReOrderSolver struct {
 	resultJoin LogicalPlan
 	groupRank  []*rankInfo
 	allocator  *idAllocator
+	ctx        context.Context
 }
 
 type edgeList []*rankInfo
@@ -183,13 +185,10 @@ func (e *joinReOrderSolver) makeBushyJoin(cartesianJoinGroup []LogicalPlan) {
 }
 
 func (e *joinReOrderSolver) newJoin(lChild, rChild LogicalPlan) *Join {
-	join := &Join{
-		JoinType:        InnerJoin,
-		reordered:       true,
-		baseLogicalPlan: newBaseLogicalPlan(TypeJoin, e.allocator),
-	}
-	join.self = join
-	join.initIDAndContext(lChild.context())
+	join := Join{
+		JoinType:  InnerJoin,
+		reordered: true,
+	}.init(e.allocator, e.ctx)
 	join.SetChildren(lChild, rChild)
 	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 	lChild.SetParents(join)
