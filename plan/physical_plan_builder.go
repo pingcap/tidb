@@ -1246,7 +1246,7 @@ func (p *Union) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 // makeScanController will try to build a selection that controls the below scan's filter condition,
 // and return a physicalPlanInfo. If the onlyJudge is true, it will only check whether this selection
 // can become a scan controller without building the physical plan.
-func (p *Selection) makeScanController(onlyJudge bool) (*physicalPlanInfo, int) {
+func (p *Selection) makeScanController(onlyCheck bool) (*physicalPlanInfo, int) {
 	var (
 		child       PhysicalPlan
 		corColConds []expression.Expression
@@ -1275,7 +1275,7 @@ func (p *Selection) makeScanController(onlyJudge bool) (*physicalPlanInfo, int) 
 		}
 	}
 	if pkCol != nil {
-		if onlyJudge {
+		if onlyCheck {
 			checker := conditionChecker{
 				pkName: pkCol.ColName,
 				length: types.UnspecifiedLength,
@@ -1317,13 +1317,6 @@ func (p *Selection) makeScanController(onlyJudge bool) (*physicalPlanInfo, int) 
 		// else will judge whether can build a index scan or just build a index scan.
 	}
 	var chosenPlan *PhysicalIndexScan
-	for _, expr := range p.Conditions {
-		if !expr.IsCorrelated() {
-			continue
-		}
-		cond, _ := expression.SubstituteCorCol2Constant(expr)
-		corColConds = append(corColConds, cond)
-	}
 	for _, idx := range indices {
 		condsBackUp := make([]expression.Expression, 0, len(corColConds))
 		for _, cond := range corColConds {
@@ -1351,7 +1344,7 @@ func (p *Selection) makeScanController(onlyJudge bool) (*physicalPlanInfo, int) 
 		if len(accessConds) == 0 {
 			continue
 		}
-		if onlyJudge {
+		if onlyCheck {
 			return nil, controlIndexScan
 		}
 		better := chosenPlan == nil || chosenPlan.accessEqualCount < is.accessEqualCount
@@ -1361,7 +1354,7 @@ func (p *Selection) makeScanController(onlyJudge bool) (*physicalPlanInfo, int) 
 		}
 		is.DoubleRead = !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
 	}
-	if chosenPlan == nil && onlyJudge {
+	if chosenPlan == nil && onlyCheck {
 		return nil, notController
 	}
 	child = chosenPlan
