@@ -138,7 +138,7 @@ func (e *ShowExec) fetchShowEngines() error {
 
 func (e *ShowExec) fetchShowDatabases() error {
 	dbs := e.is.AllSchemaNames()
-	checker := privilege.GetPrivilegeChecker(e.ctx)
+	checker := privilege.GetPrivilegeManager(e.ctx)
 	// TODO: let information_schema be the first database
 	sort.Strings(dbs)
 	for _, d := range dbs {
@@ -183,7 +183,7 @@ func (e *ShowExec) fetchShowTables() error {
 	if !e.is.SchemaExists(e.DBName) {
 		return errors.Errorf("Can not find DB: %s", e.DBName)
 	}
-	checker := privilege.GetPrivilegeChecker(e.ctx)
+	checker := privilege.GetPrivilegeManager(e.ctx)
 	// sort for tables
 	var tableNames []string
 	for _, v := range e.is.SchemaTables(e.DBName) {
@@ -561,7 +561,7 @@ func (e *ShowExec) fetchShowCollation() error {
 
 func (e *ShowExec) fetchShowGrants() error {
 	// Get checker
-	checker := privilege.GetPrivilegeChecker(e.ctx)
+	checker := privilege.GetPrivilegeManager(e.ctx)
 	if checker == nil {
 		return errors.New("miss privilege checker")
 	}

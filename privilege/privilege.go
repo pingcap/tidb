@@ -26,8 +26,8 @@ func (k keyType) String() string {
 	return "privilege-key"
 }
 
-// Checker is the interface for check privileges.
-type Checker interface {
+// Manager is the interface for providing privilege related operations.
+type Manager interface {
 	// Check checks privilege.
 	// If tbl is nil, only check global/db scope privileges.
 	// If tbl is not nil, check global/db/table scope privileges.
@@ -49,14 +49,14 @@ type Checker interface {
 
 const key keyType = 0
 
-// BindPrivilegeChecker binds Checker to context.
-func BindPrivilegeChecker(ctx context.Context, pc Checker) {
+// BindPrivilegeManager binds Manager to context.
+func BindPrivilegeManager(ctx context.Context, pc Manager) {
 	ctx.SetValue(key, pc)
 }
 
-// GetPrivilegeChecker gets Checker from context.
-func GetPrivilegeChecker(ctx context.Context) Checker {
-	if v, ok := ctx.Value(key).(Checker); ok {
+// GetPrivilegeManager gets Checker from context.
+func GetPrivilegeManager(ctx context.Context) Manager {
+	if v, ok := ctx.Value(key).(Manager); ok {
 		return v
 	}
 	return nil
