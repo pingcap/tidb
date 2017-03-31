@@ -368,8 +368,8 @@ func dataForSessionVar(ctx context.Context) (records [][]types.Datum, err error)
 }
 
 func dataForUserPrivileges(ctx context.Context) [][]types.Datum {
-	checker := privilege.GetPrivilegeChecker(ctx)
-	return checker.UserPrivilegesTable()
+	pm := privilege.GetPrivilegeManager(ctx)
+	return pm.UserPrivilegesTable()
 }
 
 var filesCols = []columnInfo{
