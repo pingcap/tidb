@@ -14,6 +14,7 @@
 package privileges
 
 import (
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -416,6 +417,78 @@ func (p *MySQLPrivilege) RequestVerification(user, host, db, table, column strin
 	}
 
 	return false
+}
+
+// DBIsVisible checks whether the user can see the db.
+func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
+	if record := p.matchUser(user, host); record != nil {
+		if record.Privileges&mysql.ShowDBPriv > 0 {
+			return true
+		}
+	}
+
+	if record := p.matchDB(user, host, db); record != nil {
+		if record.Privileges > 0 {
+			return true
+		}
+	}
+
+	for _, record := range p.TablesPriv {
+		if record.User == user &&
+			patternMatch(host, record.patChars, record.patTypes) &&
+			strings.EqualFold(record.DB, db) {
+			if record.TablePriv != 0 || record.ColumnPriv != 0 {
+				return true
+			}
+		}
+	}
+
+	for _, record := range p.ColumnsPriv {
+		if record.User == user &&
+			patternMatch(host, record.patChars, record.patTypes) &&
+			strings.EqualFold(record.DB, db) {
+			if record.ColumnPriv != 0 {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// UserPrivilegesTable provide data for INFORMATION_SCHEMA.USERS_PRIVILEGE table.
+func (p *MySQLPrivilege) UserPrivilegesTable() [][]types.Datum {
+	var rows [][]types.Datum
+	for _, user := range p.User {
+		rows = appendUserPrivilegesTableRow(rows, user)
+	}
+	return rows
+}
+
+func appendUserPrivilegesTableRow(rows [][]types.Datum, user userRecord) [][]types.Datum {
+	var isGrantable string
+	if user.Privileges&mysql.GrantPriv > 0 {
+		isGrantable = "YES"
+	} else {
+		isGrantable = "NO"
+	}
+	gurantee := fmt.Sprintf("'%s'@'%s'", user.User, user.Host)
+
+	for _, priv := range mysql.AllGlobalPrivs {
+		if priv == mysql.GrantPriv {
+			continue
+		}
+		if user.Privileges&priv > 0 {
+			privilegeType := mysql.Priv2Str[priv]
+			// +---------------------------+---------------+-------------------------+--------------+
+			// | GRANTEE                   | TABLE_CATALOG | PRIVILEGE_TYPE          | IS_GRANTABLE |
+			// +---------------------------+---------------+-------------------------+--------------+
+			// | 'root'@'localhost'        | def           | SELECT                  | YES          |
+			record := types.MakeDatums(gurantee, "def", privilegeType, isGrantable)
+			rows = append(rows, record)
+		}
+	}
+	return rows
 }
 
 // Handle wraps MySQLPrivilege providing thread safe access.

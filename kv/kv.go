@@ -14,8 +14,7 @@
 package kv
 
 import (
-	goctx "context"
-	"io"
+	goctx "golang.org/x/net/context"
 )
 
 // Transaction options
@@ -37,11 +36,11 @@ const (
 )
 
 // Those limits is enforced to make sure the transaction can be well handled by TiKV.
-const (
+var (
 	// The limit of single entry size (len(key) + len(value)).
 	TxnEntrySizeLimit = 6 * 1024 * 1024
 	// The limit of number of entries in the MemBuffer.
-	TxnEntryCountLimit = 300 * 1000
+	TxnEntryCountLimit uint64 = 300 * 1000
 	// The limit of the sum of all entry size.
 	TxnTotalSizeLimit = 100 * 1024 * 1024
 )
@@ -125,6 +124,7 @@ type Client interface {
 const (
 	ReqTypeSelect = 101
 	ReqTypeIndex  = 102
+	ReqTypeDAG    = 103
 
 	ReqSubTypeBasic   = 0
 	ReqSubTypeDesc    = 10000
@@ -154,7 +154,7 @@ type Response interface {
 	// Next returns a resultSubset from a single storage unit.
 	// When full result set is returned, nil is returned.
 	// TODO: Find a better interface for resultSubset that can avoid allocation and reuse bytes.
-	Next() (resultSubset io.ReadCloser, err error)
+	Next() (resultSubset []byte, err error)
 	// Close response.
 	Close() error
 }

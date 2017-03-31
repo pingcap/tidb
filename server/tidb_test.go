@@ -46,7 +46,7 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	ts.server = server
 	go ts.server.Run()
-	waitUntilServerOnline()
+	waitUntilServerOnline(cfg.StatusAddr)
 
 	// Run this test here because parallel would affect the result of it.
 	runTestStmtCount(c)

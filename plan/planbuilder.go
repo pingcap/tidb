@@ -63,6 +63,31 @@ type visitInfo struct {
 	column    string
 }
 
+type tableHintInfo struct {
+	sortMergeJoinTables []model.CIStr
+}
+
+func (info *tableHintInfo) ifPreferMergeJoin(tableNames ...*model.CIStr) bool {
+	// Only need either side matches one on the list.
+	// Even though you can put 2 tables on the list,
+	// it doesn't mean optimizer will reorder to make them
+	// join directly.
+	// Which it joins on with depend on sequence of traverse
+	// and without reorder, user might adjust themselves.
+	// This is similar to MySQL hints.
+	for _, tableName := range tableNames {
+		if tableName == nil {
+			continue
+		}
+		for _, curEntry := range info.sortMergeJoinTables {
+			if curEntry.L == tableName.L {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // planBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
 type planBuilder struct {
@@ -77,8 +102,9 @@ type planBuilder struct {
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
 	// Collect the visit information for privilege check.
-	visitInfo []visitInfo
-	optFlag   uint64
+	visitInfo     []visitInfo
+	tableHintInfo []tableHintInfo
+	optFlag       uint64
 }
 
 func (b *planBuilder) build(node ast.Node) Plan {
@@ -142,7 +168,7 @@ func (b *planBuilder) buildExecute(v *ast.ExecuteStmt) Plan {
 func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 	exprs := make([]expression.Expression, 0, len(v.Exprs))
 	dual := &TableDual{
-		baseLogicalPlan: newBaseLogicalPlan(Dual, b.allocator),
+		baseLogicalPlan: newBaseLogicalPlan(TypeDual, b.allocator),
 	}
 	dual.self = dual
 	for _, astExpr := range v.Exprs {
@@ -156,7 +182,7 @@ func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 	dual.SetSchema(expression.NewSchema())
 	p := &Projection{
 		Exprs:           exprs,
-		baseLogicalPlan: newBaseLogicalPlan(Proj, b.allocator),
+		baseLogicalPlan: newBaseLogicalPlan(TypeProj, b.allocator),
 	}
 	p.initIDAndContext(b.ctx)
 	addChild(p, dual)
@@ -167,7 +193,7 @@ func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 
 func (b *planBuilder) buildSet(v *ast.SetStmt) Plan {
 	p := &Set{}
-	p.tp = St
+	p.tp = TypeSet
 	p.allocator = b.allocator
 	for _, vars := range v.Variables {
 		assign := &expression.VarAssignment{
@@ -297,7 +323,7 @@ func findIndexByName(indices []*model.IndexInfo, name model.CIStr) *model.IndexI
 func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *SelectLock {
 	selectLock := &SelectLock{
 		Lock:            lock,
-		baseLogicalPlan: newBaseLogicalPlan(Lock, b.allocator),
+		baseLogicalPlan: newBaseLogicalPlan(TypeLock, b.allocator),
 	}
 	selectLock.self = selectLock
 	selectLock.initIDAndContext(b.ctx)
@@ -379,13 +405,13 @@ func getColumnOffsets(tn *ast.TableName) (indexOffsets []int, columnOffsets []in
 
 func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) LogicalPlan {
 	p := &Analyze{
-		baseLogicalPlan: newBaseLogicalPlan(Aly, b.allocator),
+		baseLogicalPlan: newBaseLogicalPlan(TypeAnalyze, b.allocator),
 		PkOffset:        -1,
 	}
 	for _, tbl := range as.TableNames {
 		idxOffsets, colOffsets, pkOffset := getColumnOffsets(tbl)
 		result := &Analyze{
-			baseLogicalPlan: newBaseLogicalPlan(Aly, b.allocator),
+			baseLogicalPlan: newBaseLogicalPlan(TypeAnalyze, b.allocator),
 			Table:           tbl,
 			IdxOffsets:      idxOffsets,
 			ColOffsets:      colOffsets,
@@ -468,7 +494,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 		Flag:            show.Flag,
 		Full:            show.Full,
 		User:            show.User,
-		baseLogicalPlan: newBaseLogicalPlan("Show", b.allocator),
+		baseLogicalPlan: newBaseLogicalPlan(TypeShow, b.allocator),
 	}
 	resultPlan = p
 	p.initIDAndContext(b.ctx)
@@ -510,7 +536,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 	}
 	if len(conditions) != 0 {
 		sel := &Selection{
-			baseLogicalPlan: newBaseLogicalPlan(Sel, b.allocator),
+			baseLogicalPlan: newBaseLogicalPlan(TypeSel, b.allocator),
 			Conditions:      conditions,
 		}
 		sel.initIDAndContext(b.ctx)
@@ -612,7 +638,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		IsReplace:       insert.IsReplace,
 		Priority:        insert.Priority,
 		Ignore:          insert.Ignore,
-		baseLogicalPlan: newBaseLogicalPlan(Ins, b.allocator),
+		baseLogicalPlan: newBaseLogicalPlan(TypeInsert, b.allocator),
 	}
 
 	b.visitInfo = append(b.visitInfo, visitInfo{

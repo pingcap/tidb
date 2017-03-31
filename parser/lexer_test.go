@@ -104,6 +104,7 @@ func (s *testLexerSuite) TestLiteral(c *C) {
 		{`\'a\'`, int('\\')},
 		{`\"a\"`, int('\\')},
 		{"0.2314", decLit},
+		{"1234567890123456789012345678901234567890", decLit},
 		{"132.313", decLit},
 		{"132.3e231", floatLit},
 		{"132.3e-231", floatLit},
@@ -139,6 +140,7 @@ func (s *testLexerSuite) TestComment(c *C) {
 	table := []testCaseItem{
 		{"-- select --\n1", intLit},
 		{"/*!40101 SET character_set_client = utf8 */;", set},
+		{"/*+ BKA(t1) */", hintBegin},
 		{"/* SET character_set_client = utf8 */;", int(';')},
 		{"/* some comments */ SELECT ", selectKwd},
 		{`-- comment continues to the end of line
@@ -233,6 +235,31 @@ func (s *testLexerSuite) TestSpecialComment(c *C) {
 	c.Assert(tok, Equals, intLit)
 	c.Assert(lit, Equals, "5")
 	c.Assert(pos, Equals, Pos{1, 1, 16})
+}
+
+func (s *testLexerSuite) TestOptimizerHint(c *C) {
+	l := NewScanner("  /*+ BKA(t1) */")
+	tokens := []struct {
+		tok int
+		lit string
+		pos int
+	}{
+		{hintBegin, "", 2},
+		{identifier, "BKA", 6},
+		{int('('), "(", 9},
+		{identifier, "t1", 10},
+		{int(')'), ")", 12},
+		{hintEnd, "", 14},
+	}
+	for i := 0; ; i++ {
+		tok, pos, lit := l.scan()
+		if tok == 0 {
+			return
+		}
+		c.Assert(tok, Equals, tokens[i].tok, Commentf("%d", i))
+		c.Assert(lit, Equals, tokens[i].lit, Commentf("%d", i))
+		c.Assert(pos.Offset, Equals, tokens[i].pos, Commentf("%d", i))
+	}
 }
 
 func (s *testLexerSuite) TestInt(c *C) {

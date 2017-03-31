@@ -912,6 +912,7 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 		{"text", "blob", false},
 		{"varchar(10)", "varchar(8)", false},
 		{"varchar(10)", "varchar(11)", true},
+		{"varchar(10) character set utf8 collate utf8_bin", "varchar(10) character set utf8", true},
 	}
 	for _, ca := range cases {
 		ftA := s.colDefStrToFieldType(c, ca.origin)
@@ -925,7 +926,7 @@ func (s *testColumnSuite) colDefStrToFieldType(c *C, str string) *types.FieldTyp
 	stmt, err := parser.New().ParseOneStmt(sqlA, "", "")
 	c.Assert(err, IsNil)
 	colDef := stmt.(*ast.AlterTableStmt).Specs[0].NewColumn
-	col, _, err := columnDefToCol(nil, 0, colDef)
+	col, _, err := buildColumnAndConstraint(nil, 0, colDef)
 	c.Assert(err, IsNil)
 	return &col.FieldType
 }

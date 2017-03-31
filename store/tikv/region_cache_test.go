@@ -19,7 +19,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
-	"golang.org/x/net/context"
+	goctx "golang.org/x/net/context"
 )
 
 type testRegionCacheSuite struct {
@@ -45,7 +45,7 @@ func (s *testRegionCacheSuite) SetUpTest(c *C) {
 	s.peer2 = peerIDs[1]
 	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
 	s.cache = NewRegionCache(pdCli)
-	s.bo = NewBackoffer(5000, context.Background())
+	s.bo = NewBackoffer(5000, goctx.Background())
 }
 
 func (s *testRegionCacheSuite) storeAddr(id uint64) string {
@@ -86,7 +86,7 @@ func (s *testRegionCacheSuite) TestSimple(c *C) {
 }
 
 func (s *testRegionCacheSuite) TestDropStore(c *C) {
-	bo := NewBackoffer(100, context.Background())
+	bo := NewBackoffer(100, goctx.Background())
 	s.cluster.RemoveStore(s.store1)
 	loc, err := s.cache.LocateKey(bo, []byte("a"))
 	c.Assert(err, IsNil)

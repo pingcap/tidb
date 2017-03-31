@@ -186,7 +186,7 @@ func (ts *TidbRegionHandlerTestSuite) startServer(c *C) {
 	once.Do(func() {
 		go server.startHTTPServer(pdCli)
 	})
-	waitUntilServerOnline()
+	waitUntilServerOnline(cfg.StatusAddr)
 }
 
 func (ts *TidbRegionHandlerTestSuite) stopServer(c *C) {

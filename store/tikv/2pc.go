@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"math"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coreos/etcd/pkg/monotime"
@@ -27,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tipb/go-binlog"
-	"golang.org/x/net/context"
+	goctx "golang.org/x/net/context"
 )
 
 type twoPhaseCommitAction int
@@ -123,7 +124,8 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 			size += len(lockKey)
 		}
 	}
-	if len(keys) > kv.TxnEntryCountLimit || size > kv.TxnTotalSizeLimit {
+	entrylimit := atomic.LoadUint64(&kv.TxnEntryCountLimit)
+	if len(keys) > int(entrylimit) || size > kv.TxnTotalSizeLimit {
 		return nil, kv.ErrTxnTooLarge
 	}
 	const logEntryCount = 10000
@@ -254,7 +256,7 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 	}
 
 	// For prewrite, stop sending other requests after receiving first error.
-	var cancel context.CancelFunc
+	var cancel goctx.CancelFunc
 	if action == actionPrewrite {
 		cancel = bo.WithCancel()
 	}
@@ -377,7 +379,7 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 	// transaction has been successfully committed.
 	// Under this circumstance,  we can not declare the commit is complete (may lead to data lost), nor can we throw
 	// an error (may lead to the duplicated key error when upper level restarts the transaction). Currently the best
-	// workaround seems to be an infinite retry util server recovers and returns a success or failure response.
+	// workaround seems to be an infinite retry until server recovers and returns a success or failure response.
 	if bytes.Compare(batch.keys[0], c.primary()) == 0 {
 		bo = NewBackoffer(commitPrimaryMaxBackoff, bo.ctx)
 	}
@@ -469,7 +471,7 @@ const maxTxnTimeUse = 590000
 
 // execute executes the two-phase commit protocol.
 func (c *twoPhaseCommitter) execute() error {
-	ctx := context.Background()
+	ctx := goctx.Background()
 	defer func() {
 		// Always clean up all written keys if the txn does not commit.
 		c.mu.RLock()
@@ -504,6 +506,15 @@ func (c *twoPhaseCommitter) execute() error {
 	commitTS, err := c.store.getTimestampWithRetry(NewBackoffer(tsoMaxBackoff, ctx))
 	if err != nil {
 		log.Warnf("2PC get commitTS failed: %v, tid: %d", err, c.startTS)
+		return errors.Trace(err)
+	}
+
+	// check commitTS
+	if commitTS <= c.startTS {
+		err = errors.Errorf("Invalid transaction tso with start_ts=%v while commit_ts=%v",
+			c.startTS,
+			commitTS)
+		log.Error(err)
 		return errors.Trace(err)
 	}
 	c.commitTS = commitTS

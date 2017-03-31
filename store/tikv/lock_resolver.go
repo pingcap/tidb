@@ -22,7 +22,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/pd/pd-client"
-	"golang.org/x/net/context"
+	goctx "golang.org/x/net/context"
 )
 
 const resolvedCacheSize = 512
@@ -53,7 +53,7 @@ func NewLockResolver(etcdAddrs []string) (*LockResolver, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	uuid := fmt.Sprintf("tikv-%v", pdCli.GetClusterID())
+	uuid := fmt.Sprintf("tikv-%v", pdCli.GetClusterID(goctx.TODO()))
 	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, newRPCClient(), false)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -183,7 +183,7 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (ok bool, err
 // To avoid unnecessarily aborting too many txns, it is wiser to wait a few
 // seconds before calling it after Prewrite.
 func (lr *LockResolver) GetTxnStatus(txnID uint64, primary []byte) (TxnStatus, error) {
-	bo := NewBackoffer(cleanupMaxBackoff, context.Background())
+	bo := NewBackoffer(cleanupMaxBackoff, goctx.Background())
 	status, err := lr.getTxnStatus(bo, txnID, primary)
 	return status, errors.Trace(err)
 }

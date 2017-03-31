@@ -29,7 +29,7 @@ func addSelection(p Plan, child LogicalPlan, conditions []expression.Expression,
 	conditions = expression.PropagateConstant(p.context(), conditions)
 	selection := &Selection{
 		Conditions:      conditions,
-		baseLogicalPlan: newBaseLogicalPlan(Sel, allocator)}
+		baseLogicalPlan: newBaseLogicalPlan(TypeSel, allocator)}
 	selection.self = selection
 	selection.initIDAndContext(p.context())
 	selection.SetSchema(child.Schema().Clone())
@@ -145,6 +145,7 @@ func (p *Join) PredicatePushDown(predicates []expression.Expression) (ret []expr
 			return nil, nil, errors.Trace(err2)
 		}
 	}
+	p.mergeSchema()
 	p.buildKeyInfo()
 	return
 }

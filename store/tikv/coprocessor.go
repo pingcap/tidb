@@ -15,9 +15,7 @@ package tikv
 
 import (
 	"bytes"
-	goctx "context"
 	"fmt"
-	"io"
 	"sync"
 	"time"
 
@@ -25,8 +23,8 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/bytespool"
 	"github.com/pingcap/tipb/go-tipb"
+	goctx "golang.org/x/net/context"
 )
 
 // CopClient is coprocessor client.
@@ -353,10 +351,7 @@ func (it *copIterator) run(ctx goctx.Context) {
 		// Send tasks to feed the worker goroutines.
 		for _, t := range it.tasks {
 			finished, canceled := it.sendToTaskCh(ctx, t)
-			if finished {
-				return
-			}
-			if canceled {
+			if finished || canceled {
 				break
 			}
 		}
@@ -382,7 +377,7 @@ func (it *copIterator) sendToTaskCh(ctx goctx.Context, t *copTask) (finished boo
 }
 
 // Return next coprocessor result.
-func (it *copIterator) Next() (io.ReadCloser, error) {
+func (it *copIterator) Next() ([]byte, error) {
 	coprocessorCounter.WithLabelValues("next").Inc()
 
 	var (
@@ -416,7 +411,7 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 	if resp.err != nil {
 		return nil, errors.Trace(resp.err)
 	}
-	return bytespool.NewReadCloser(bytespool.DefaultPool, nil, resp.Data), nil
+	return resp.Data, nil
 }
 
 // Handle single copTask.
@@ -493,13 +488,14 @@ func (it *copIterator) handleRegionErrorTask(bo *Backoffer, task *copTask) []cop
 
 func (it *copIterator) Close() error {
 	close(it.finished)
+	it.wg.Wait()
 	return nil
 }
 
 // copErrorResponse returns error when calling Next()
 type copErrorResponse struct{ error }
 
-func (it copErrorResponse) Next() (io.ReadCloser, error) {
+func (it copErrorResponse) Next() ([]byte, error) {
 	return nil, it.error
 }
 
