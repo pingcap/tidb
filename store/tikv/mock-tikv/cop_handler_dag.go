@@ -114,15 +114,11 @@ func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 		if columns[length-1].GetPkHandle() {
 			columns = columns[:length-1]
 		}
-		colIDs := make(map[int64]int)
-		for i, col := range columns {
-			colIDs[col.GetColumnId()] = i
-		}
 		ranges := h.extractKVRanges(ctx.keyRanges, *curr.IdxScan.Desc)
 		currExec = &indexScanExec{
 			IndexScan:   curr.IdxScan,
 			kvRanges:    ranges,
-			schema:      colIDs,
+			cols:        len(columns),
 			startTS:     ctx.dagReq.GetStartTs(),
 			mvccStore:   h.mvccStore,
 			rawStartKey: h.rawStartKey,

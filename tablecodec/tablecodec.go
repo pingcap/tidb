@@ -465,16 +465,16 @@ func CutIndexKey(key kv.Key, colIDs []int64) (values map[int64][]byte, b []byte,
 // CutIndexKeyNew cuts encoded index key into colIDs to bytes slices.
 // The returned value b is the remaining bytes of the key which would be empty if it is unique index or handle data
 // if it is non-unique index.
-func CutIndexKeyNew(key kv.Key, colIDs map[int64]int) (values [][]byte, b []byte, err error) {
+func CutIndexKeyNew(key kv.Key, length int) (values [][]byte, b []byte, err error) {
 	b = key[prefixLen+idLen:]
-	values = make([][]byte, len(colIDs))
-	for _, offset := range colIDs {
+	values = make([][]byte, 0, length)
+	for i := 0; i < length; i++ {
 		var val []byte
 		val, b, err = codec.CutOne(b)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		values[offset] = val
+		values = append(values, val)
 	}
 	return
 }

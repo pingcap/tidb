@@ -152,7 +152,7 @@ func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 
 type indexScanExec struct {
 	*tipb.IndexScan
-	schema      map[int64]int
+	cols        int
 	kvRanges    []kv.KeyRange
 	startTS     uint64
 	mvccStore   *MvccStore
@@ -228,7 +228,7 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 		e.seekKey = []byte(kv.Key(pair.Key).PrefixNext())
 	}
 
-	values, b, err := tablecodec.CutIndexKeyNew(pair.Key, e.schema)
+	values, b, err := tablecodec.CutIndexKeyNew(pair.Key, e.cols)
 	var handle int64
 	if len(b) > 0 {
 		var handleDatum types.Datum

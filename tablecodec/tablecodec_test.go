@@ -224,10 +224,6 @@ func (s *testTableCodecSuite) TestCutRow(c *C) {
 }
 
 func (s *testTableCodecSuite) TestCutKeyNew(c *C) {
-	colIDs := make(map[int64]int)
-	colIDs[1] = 0
-	colIDs[2] = 1
-	colIDs[3] = 2
 	values := []types.Datum{types.NewIntDatum(1), types.NewBytesDatum([]byte("abc")), types.NewFloat64Datum(5.5)}
 	handle := types.NewIntDatum(100)
 	values = append(values, handle)
@@ -236,13 +232,13 @@ func (s *testTableCodecSuite) TestCutKeyNew(c *C) {
 	tableID := int64(4)
 	indexID := int64(5)
 	indexKey := EncodeIndexSeekKey(tableID, indexID, encodedValue)
-	valuesBytes, handleBytes, err := CutIndexKeyNew(indexKey, colIDs)
+	valuesBytes, handleBytes, err := CutIndexKeyNew(indexKey, 3)
 	c.Assert(err, IsNil)
-	for _, offset := range colIDs {
-		valueBytes := valuesBytes[offset]
+	for i := 0; i < 3; i++ {
+		valueBytes := valuesBytes[i]
 		var val types.Datum
 		_, val, _ = codec.DecodeOne(valueBytes)
-		c.Assert(val, DeepEquals, values[offset])
+		c.Assert(val, DeepEquals, values[i])
 	}
 	_, handleVal, _ := codec.DecodeOne(handleBytes)
 	c.Assert(handleVal, DeepEquals, types.NewIntDatum(100))
