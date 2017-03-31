@@ -14,6 +14,7 @@
 package statistics
 
 import (
+	"hash"
 	"hash/fnv"
 
 	"github.com/juju/errors"
@@ -23,16 +24,18 @@ import (
 
 // FMSketch is used to count the number of distinct elements in a set.
 type FMSketch struct {
-	hashset map[uint64]bool
-	mask    uint64
-	maxSize int
+	hashset  map[uint64]bool
+	mask     uint64
+	maxSize  int
+	hashFunc hash.Hash64
 }
 
 // NewFMSketch returns a new FM sketch.
 func NewFMSketch(maxSize int) *FMSketch {
 	return &FMSketch{
-		hashset: make(map[uint64]bool),
-		maxSize: maxSize,
+		hashset:  make(map[uint64]bool),
+		maxSize:  maxSize,
+		hashFunc: fnv.New64a(),
 	}
 }
 
@@ -62,12 +65,12 @@ func (s *FMSketch) InsertValue(value types.Datum) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	h := fnv.New64a()
-	_, err = h.Write(bytes)
+	s.hashFunc.Reset()
+	_, err = s.hashFunc.Write(bytes)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	s.insertHashValue(h.Sum64())
+	s.insertHashValue(s.hashFunc.Sum64())
 	return nil
 }
 
