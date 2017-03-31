@@ -29,7 +29,7 @@ func addSelection(p Plan, child LogicalPlan, conditions []expression.Expression,
 	conditions = expression.PropagateConstant(p.context(), conditions)
 	selection := &Selection{
 		Conditions:      conditions,
-		baseLogicalPlan: newBaseLogicalPlan(Sel, allocator)}
+		baseLogicalPlan: newBaseLogicalPlan(TypeSel, allocator)}
 	selection.self = selection
 	selection.initIDAndContext(p.context())
 	selection.SetSchema(child.Schema().Clone())

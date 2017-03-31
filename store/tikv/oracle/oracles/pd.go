@@ -45,9 +45,10 @@ func NewPdOracle(pdClient pd.Client, updateInterval time.Duration) (oracle.Oracl
 		c:    pdClient,
 		quit: make(chan struct{}),
 	}
-	go o.updateTS(updateInterval)
+	ctx := context.TODO()
+	go o.updateTS(ctx, updateInterval)
 	// Initialize lastTS by Get.
-	_, err := o.GetTimestamp()
+	_, err := o.GetTimestamp(ctx)
 	if err != nil {
 		o.Close()
 		return nil, errors.Trace(err)
@@ -63,8 +64,8 @@ func (o *pdOracle) IsExpired(lockTS, TTL uint64) bool {
 }
 
 // GetTimestamp gets a new increasing time.
-func (o *pdOracle) GetTimestamp() (uint64, error) {
-	ts, err := o.getTimestamp()
+func (o *pdOracle) GetTimestamp(ctx context.Context) (uint64, error) {
+	ts, err := o.getTimestamp(ctx)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -72,9 +73,9 @@ func (o *pdOracle) GetTimestamp() (uint64, error) {
 	return ts, nil
 }
 
-func (o *pdOracle) getTimestamp() (uint64, error) {
+func (o *pdOracle) getTimestamp(ctx context.Context) (uint64, error) {
 	now := time.Now()
-	physical, logical, err := o.c.GetTS(context.TODO())
+	physical, logical, err := o.c.GetTS(ctx)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -92,12 +93,12 @@ func (o *pdOracle) setLastTS(ts uint64) {
 	}
 }
 
-func (o *pdOracle) updateTS(interval time.Duration) {
+func (o *pdOracle) updateTS(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	for {
 		select {
 		case <-ticker.C:
-			ts, err := o.getTimestamp()
+			ts, err := o.getTimestamp(ctx)
 			if err != nil {
 				log.Errorf("updateTS error: %v", err)
 				break
