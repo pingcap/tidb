@@ -212,7 +212,7 @@ func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
 			return errors.Trace(err)
 		}
 		// Check Privilege
-		privChecker := privilege.GetPrivilegeChecker(e.ctx)
+		privChecker := privilege.GetPrivilegeManager(e.ctx)
 		hasPriv, err := privChecker.Check(e.ctx, schema, tb.Meta(), mysql.DropPriv)
 		if err != nil {
 			return errors.Trace(err)

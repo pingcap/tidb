@@ -48,7 +48,7 @@ var (
 	errInvalidUserNameFormat = terror.ClassPrivilege.New(codeInvalidUserNameFormat, "wrong username format")
 )
 
-var _ privilege.Checker = (*UserPrivileges)(nil)
+var _ privilege.Manager = (*UserPrivileges)(nil)
 
 type privileges struct {
 	Level ast.GrantLevelType
@@ -173,7 +173,7 @@ func (ps *userPrivileges) ShowGrants() []string {
 	return gs
 }
 
-// UserPrivileges implements privilege.Checker interface.
+// UserPrivileges implements privilege.Manager interface.
 // This is used to check privilege for the current user.
 type UserPrivileges struct {
 	// TODO: Clean up the old implementation.
@@ -183,7 +183,7 @@ type UserPrivileges struct {
 	*Handle
 }
 
-// RequestVerification implements the Checker interface.
+// RequestVerification implements the Manager interface.
 func (p *UserPrivileges) RequestVerification(db, table, column string, priv mysql.PrivilegeType) bool {
 	if !Enable || SkipWithGrant {
 		return true
@@ -213,7 +213,7 @@ func (p *UserPrivileges) RequestVerification(db, table, column string, priv mysq
 // PWDHashLen is the length of password's hash.
 const PWDHashLen = 40
 
-// ConnectionVerification implements the Checker interface.
+// ConnectionVerification implements the Manager interface.
 func (p *UserPrivileges) ConnectionVerification(user, host string, auth, salt []byte) bool {
 	if SkipWithGrant {
 		p.User = user + "@" + host
@@ -246,7 +246,7 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, auth, salt []
 	return true
 }
 
-// DBIsVisible implements the Checker interface.
+// DBIsVisible implements the Manager interface.
 func (p *UserPrivileges) DBIsVisible(db string) bool {
 	if !Enable || SkipWithGrant {
 		return true
@@ -271,13 +271,13 @@ func (p *UserPrivileges) DBIsVisible(db string) bool {
 	return mysqlPriv.DBIsVisible(user, host, db)
 }
 
-// UserPrivilegesTable implements the Checker interface.
+// UserPrivilegesTable implements the Manager interface.
 func (p *UserPrivileges) UserPrivilegesTable() [][]types.Datum {
 	mysqlPriv := p.Handle.Get()
 	return mysqlPriv.UserPrivilegesTable()
 }
 
-// Check implements Checker.Check interface.
+// Check implements Manager.Check interface.
 func (p *UserPrivileges) Check(ctx context.Context, db *model.DBInfo, tbl *model.TableInfo, privilege mysql.PrivilegeType) (bool, error) {
 	if p.privs == nil {
 		// Lazy load
@@ -452,7 +452,7 @@ func (p *UserPrivileges) loadTableScopePrivileges(ctx context.Context) error {
 	return nil
 }
 
-// ShowGrants implements privilege.Checker ShowGrants interface.
+// ShowGrants implements privilege.Manager ShowGrants interface.
 func (p *UserPrivileges) ShowGrants(ctx context.Context, user string) ([]string, error) {
 	// If user is current user
 	if user == p.User && p.privs != nil {
