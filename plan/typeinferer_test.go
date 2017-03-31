@@ -257,6 +257,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`sha(123)`, mysql.TypeVarString, "utf8"},
 		{`sha2(123, 256)`, mysql.TypeVarString, charset.CharsetUTF8},
 		{`uuid()`, mysql.TypeVarString, charset.CharsetUTF8},
+		{`from_base64('YWJj')`, mysql.TypeVarString, charset.CharsetUTF8},
 		{`random_bytes(32)`, mysql.TypeVarString, charset.CharsetBin},
 		{`coalesce(null, 0)`, mysql.TypeLonglong, charset.CharsetBin},
 		{`coalesce(null, 0.1)`, mysql.TypeNewDecimal, charset.CharsetBin},
