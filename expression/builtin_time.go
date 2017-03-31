@@ -32,6 +32,20 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+const ( // GET_FORMAT first argument.
+	dateFormat     = "DATE"
+	datetimeFormat = "DATETIME"
+	timeFormat     = "TIME"
+)
+
+const ( // GET_FORMAT location.
+	usaLocation      = "USA"
+	jisLocation      = "JIS"
+	isoLocation      = "ISO"
+	eurLocation      = "EUR"
+	internalLocation = "INTERNAL"
+)
+
 var (
 	_ functionClass = &dateFunctionClass{}
 	_ functionClass = &dateDiffFunctionClass{}
@@ -54,6 +68,7 @@ var (
 	_ functionClass = &yearFunctionClass{}
 	_ functionClass = &yearWeekFunctionClass{}
 	_ functionClass = &fromUnixTimeFunctionClass{}
+	_ functionClass = &getFormatFunctionClass{}
 	_ functionClass = &strToDateFunctionClass{}
 	_ functionClass = &sysDateFunctionClass{}
 	_ functionClass = &currentDateFunctionClass{}
@@ -104,6 +119,7 @@ var (
 	_ builtinFunc = &builtinYearSig{}
 	_ builtinFunc = &builtinYearWeekSig{}
 	_ builtinFunc = &builtinFromUnixTimeSig{}
+	_ builtinFunc = &builtinGetFormatSig{}
 	_ builtinFunc = &builtinStrToDateSig{}
 	_ builtinFunc = &builtinSysDateSig{}
 	_ builtinFunc = &builtinCurrentDateSig{}
@@ -1011,6 +1027,68 @@ func (b *builtinFromUnixTimeSig) eval(row []types.Datum) (d types.Datum, err err
 		return
 	}
 	return builtinDateFormat([]types.Datum{d, args[1]}, b.ctx)
+}
+
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_get-format
+type getFormatFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *getFormatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinGetFormatSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinGetFormatSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinGetFormatSig) eval(row []types.Datum) (d types.Datum, err error) {
+	args, err := b.evalArgs(row)
+	t := args[0].GetString()
+	l := args[1].GetString()
+	switch t {
+	case dateFormat:
+		switch l {
+		case usaLocation:
+			d.SetString("%m.%d.%Y")
+		case jisLocation:
+			d.SetString("%Y-%m-%d")
+		case isoLocation:
+			d.SetString("%Y-%m-%d")
+		case eurLocation:
+			d.SetString("%d.%m.%Y")
+		case internalLocation:
+			d.SetString("%Y%m%d")
+		}
+	case datetimeFormat:
+		switch l {
+		case usaLocation:
+			d.SetString("%Y-%m-%d %H.%i.%s")
+		case jisLocation:
+			d.SetString("%Y-%m-%d %H:%i:%s")
+		case isoLocation:
+			d.SetString("%Y-%m-%d %H:%i:%s")
+		case eurLocation:
+			d.SetString("%Y-%m-%d %H.%i.%s")
+		case internalLocation:
+			d.SetString("%Y%m%d%H%i%s")
+		}
+	case timeFormat:
+		switch l {
+		case usaLocation:
+			d.SetString("%h:%i:%s %p")
+		case jisLocation:
+			d.SetString("%H:%i:%s")
+		case isoLocation:
+			d.SetString("%H:%i:%s")
+		case eurLocation:
+			d.SetString("%H.%i.%s")
+		case internalLocation:
+			d.SetString("%H%i%s")
+		}
+	}
+
+	return d, nil
 }
 
 type strToDateFunctionClass struct {

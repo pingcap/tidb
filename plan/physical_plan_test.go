@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/types"
 )
 
 func (s *testPlanSuite) TestPushDownAggregation(c *C) {
@@ -60,7 +61,7 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 			sql:       "select max(b + c), min(case when b then 1 else 2 end) from t group by d + e, a",
 			best:      "Table(t)->HashAgg->Projection",
 			aggFuns:   "[max(plus(test.t.b, test.t.c)) min(case(test.t.b, 1, 2))]",
-			aggFields: "[blob bigint bigint]",
+			aggFields: "[blob bigint bigint BINARY]",
 			gbyItems:  "[plus(test.t.d, test.t.e) test.t.a]",
 		},
 	}
@@ -103,7 +104,11 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 			if ts != nil {
 				c.Assert(fmt.Sprintf("%s", ts.aggFuncs), Equals, ca.aggFuns, Commentf("for %s", ca.sql))
 				c.Assert(fmt.Sprintf("%s", ts.gbyItems), Equals, ca.gbyItems, Commentf("for %s", ca.sql))
-				c.Assert(fmt.Sprintf("%s", ts.AggFields), Equals, ca.aggFields, Commentf("for %s", ca.sql))
+				fields := make([]*types.FieldType, ts.schema.Len())
+				for i, col := range ts.schema.Columns {
+					fields[i] = col.RetType
+				}
+				c.Assert(fmt.Sprintf("%s", fields), Equals, ca.aggFields, Commentf("for %s", ca.sql))
 				break
 			}
 			p = p.Children()[0]

@@ -553,7 +553,7 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 	table, _ := b.is.TableByID(v.Table.ID)
 	client := b.ctx.GetClient()
 	supportDesc := client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeDesc)
-	st := &XSelectTableExec{
+	e := &XSelectTableExec{
 		tableInfo:   v.Table,
 		ctx:         b.ctx,
 		startTS:     startTS,
@@ -569,11 +569,10 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 		where:       v.TableConditionPBExpr,
 		aggregate:   v.Aggregated,
 		aggFuncs:    v.AggFuncsPB,
-		aggFields:   v.AggFields,
 		byItems:     v.GbyItemsPB,
 		orderByList: v.SortItemsPB,
 	}
-	return st
+	return e
 }
 
 func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
@@ -584,7 +583,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 	table, _ := b.is.TableByID(v.Table.ID)
 	client := b.ctx.GetClient()
 	supportDesc := client.SupportRequestType(kv.ReqTypeIndex, kv.ReqSubTypeDesc)
-	st := &XSelectIndexExec{
+	e := &XSelectIndexExec{
 		tableInfo:      v.Table,
 		ctx:            b.ctx,
 		supportDesc:    supportDesc,
@@ -596,10 +595,22 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 		where:          v.TableConditionPBExpr,
 		aggregate:      v.Aggregated,
 		aggFuncs:       v.AggFuncsPB,
-		aggFields:      v.AggFields,
 		byItems:        v.GbyItemsPB,
 	}
-	return st
+	if !e.aggregate && e.singleReadMode {
+		// Single read index result has the schema of full index columns.
+		schemaColumns := make([]*expression.Column, len(e.indexPlan.Index.Columns))
+		for i, col := range e.indexPlan.Index.Columns {
+			colInfo := e.indexPlan.Table.Columns[col.Offset]
+			schemaColumns[i] = &expression.Column{
+				Index:   i,
+				ColName: col.Name,
+				RetType: &colInfo.FieldType,
+			}
+		}
+		e.idxColsSchema = expression.NewSchema(schemaColumns...)
+	}
+	return e
 }
 
 func (b *executorBuilder) buildSort(v *plan.Sort) Executor {

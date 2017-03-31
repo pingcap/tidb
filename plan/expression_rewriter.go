@@ -289,7 +289,7 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 	}
 	aggFunc := expression.NewAggFunction(funcName, []expression.Expression{rexpr}, false)
 	agg := &Aggregation{
-		baseLogicalPlan: newBaseLogicalPlan(Agg, er.b.allocator),
+		baseLogicalPlan: newBaseLogicalPlan(TypeAgg, er.b.allocator),
 		AggFuncs:        []expression.AggregationFunction{aggFunc},
 	}
 	agg.initIDAndContext(er.b.ctx)
@@ -353,7 +353,7 @@ func (er *expressionRewriter) buildQuantifierPlan(agg *Aggregation, cond, rexpr 
 	er.p = er.b.buildApplyWithJoinType(er.p, agg, InnerJoin)
 	joinSchema := er.p.Schema()
 	proj := &Projection{
-		baseLogicalPlan: newBaseLogicalPlan(Proj, er.b.allocator),
+		baseLogicalPlan: newBaseLogicalPlan(TypeProj, er.b.allocator),
 		Exprs:           expression.Column2Exprs(joinSchema.Clone().Columns[:outerSchemaLen]),
 	}
 	proj.self = proj
@@ -378,7 +378,7 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 	firstRowFunc := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
 	countFunc := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, true)
 	agg := &Aggregation{
-		baseLogicalPlan: newBaseLogicalPlan(Agg, er.b.allocator),
+		baseLogicalPlan: newBaseLogicalPlan(TypeAgg, er.b.allocator),
 		AggFuncs:        []expression.AggregationFunction{firstRowFunc, countFunc},
 	}
 	agg.initIDAndContext(er.b.ctx)
@@ -409,7 +409,7 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 	firstRowFunc := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
 	countFunc := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, true)
 	agg := &Aggregation{
-		baseLogicalPlan: newBaseLogicalPlan(Agg, er.b.allocator),
+		baseLogicalPlan: newBaseLogicalPlan(TypeAgg, er.b.allocator),
 		AggFuncs:        []expression.AggregationFunction{firstRowFunc, countFunc},
 	}
 	agg.initIDAndContext(er.b.ctx)

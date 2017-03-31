@@ -254,7 +254,7 @@ func (a *aggregationOptimizer) checkAnyCountAndSum(aggFuncs []expression.Aggrega
 func (a *aggregationOptimizer) makeNewAgg(aggFuncs []expression.AggregationFunction, gbyCols []*expression.Column) *Aggregation {
 	agg := &Aggregation{
 		GroupByItems:    expression.Column2Exprs(gbyCols),
-		baseLogicalPlan: newBaseLogicalPlan(Agg, a.allocator),
+		baseLogicalPlan: newBaseLogicalPlan(TypeAgg, a.allocator),
 		groupByCols:     gbyCols,
 	}
 	agg.initIDAndContext(a.ctx)
@@ -281,7 +281,7 @@ func (a *aggregationOptimizer) pushAggCrossUnion(agg *Aggregation, unionSchema *
 	newAgg := &Aggregation{
 		AggFuncs:        make([]expression.AggregationFunction, 0, len(agg.AggFuncs)),
 		GroupByItems:    make([]expression.Expression, 0, len(agg.GroupByItems)),
-		baseLogicalPlan: newBaseLogicalPlan(Agg, a.allocator),
+		baseLogicalPlan: newBaseLogicalPlan(TypeAgg, a.allocator),
 	}
 	newAgg.SetSchema(agg.schema.Clone())
 	newAgg.initIDAndContext(a.ctx)
@@ -430,7 +430,7 @@ func (a *aggregationOptimizer) tryToEliminateAggregation(agg *Aggregation) *Proj
 func (a *aggregationOptimizer) convertAggToProj(agg *Aggregation, ctx context.Context, allocator *idAllocator) *Projection {
 	proj := &Projection{
 		Exprs:           make([]expression.Expression, 0, len(agg.AggFuncs)),
-		baseLogicalPlan: newBaseLogicalPlan(Proj, allocator),
+		baseLogicalPlan: newBaseLogicalPlan(TypeProj, allocator),
 	}
 	proj.self = proj
 	proj.initIDAndContext(ctx)

@@ -350,10 +350,10 @@ func (s *testSuite) TestExplain(c *C) {
 		{
 			"select * from t2 order by t2.c2 limit 0, 1",
 			[]string{
-				"TableScan_5", "",
+				"TableScan_5", "Sort_6",
 			},
 			[]string{
-				"", "",
+				"Sort_6", "",
 			},
 			[]string{
 				`{
@@ -603,6 +603,74 @@ func (s *testSuite) TestExplain(c *C) {
         "k"
     ],
     "child": "Apply_16"
+}`,
+			},
+		},
+		{
+			"select * from information_schema.columns",
+			[]string{"MemTableScan_3"},
+			[]string{""},
+			[]string{
+				`{
+    "db": "information_schema",
+    "table": "COLUMNS"
+}`,
+			},
+		},
+		{
+			"select s.c1 from t2 s left outer join t2 t on s.c2 = t.c2 limit 10",
+			[]string{"TableScan_7", "Limit_8", "TableScan_9", "HashLeftJoin_6", "Limit_10", "Projection_4"},
+			[]string{"Limit_8", "HashLeftJoin_6", "HashLeftJoin_6", "Limit_10", "Projection_4", ""},
+			[]string{
+				`{
+    "db": "test",
+    "table": "t2",
+    "desc": false,
+    "keep order": false,
+    "push down info": {
+        "limit": 10,
+        "access conditions": null,
+        "index filter conditions": null,
+        "table filter conditions": null
+    }
+}`,
+				`{
+    "limit": 10,
+    "offset": 0,
+    "child": "TableScan_7"
+}`,
+				`{
+    "db": "test",
+    "table": "t2",
+    "desc": false,
+    "keep order": false,
+    "push down info": {
+        "limit": 0,
+        "access conditions": null,
+        "index filter conditions": null,
+        "table filter conditions": null
+    }
+}`,
+				`{
+    "eqCond": [
+        "eq(s.c2, t.c2)"
+    ],
+    "leftCond": null,
+    "rightCond": null,
+    "otherCond": null,
+    "leftPlan": "Limit_8",
+    "rightPlan": "TableScan_9"
+}`,
+				`{
+    "limit": 10,
+    "offset": 0,
+    "child": "HashLeftJoin_6"
+}`,
+				`{
+    "exprs": [
+        "s.c1"
+    ],
+    "child": "Limit_10"
 }`,
 			},
 		},

@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/pd-client"
+	"golang.org/x/net/context"
 )
 
 // Use global variables to prevent pdClients from creating duplicate timestamps.
@@ -40,11 +41,11 @@ func NewPDClient(cluster *Cluster) pd.Client {
 	}
 }
 
-func (c *pdClient) GetClusterID() uint64 {
+func (c *pdClient) GetClusterID(context.Context) uint64 {
 	return 1
 }
 
-func (c *pdClient) GetTS() (int64, int64, error) {
+func (c *pdClient) GetTS(context.Context) (int64, int64, error) {
 	tsMu.Lock()
 	defer tsMu.Unlock()
 
@@ -58,17 +59,17 @@ func (c *pdClient) GetTS() (int64, int64, error) {
 	return tsMu.physicalTS, tsMu.logicalTS, nil
 }
 
-func (c *pdClient) GetRegion(key []byte) (*metapb.Region, *metapb.Peer, error) {
+func (c *pdClient) GetRegion(ctx context.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
 	region, peer := c.cluster.GetRegionByKey(key)
 	return region, peer, nil
 }
 
-func (c *pdClient) GetRegionByID(regionID uint64) (*metapb.Region, *metapb.Peer, error) {
+func (c *pdClient) GetRegionByID(ctx context.Context, regionID uint64) (*metapb.Region, *metapb.Peer, error) {
 	region, peer := c.cluster.GetRegionByID(regionID)
 	return region, peer, nil
 }
 
-func (c *pdClient) GetStore(storeID uint64) (*metapb.Store, error) {
+func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
 	store := c.cluster.GetStore(storeID)
 	return store, nil
 }

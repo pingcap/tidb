@@ -37,7 +37,7 @@ func NewRawKVClient(pdAddrs []string) (*RawKVClient, error) {
 		return nil, errors.Trace(err)
 	}
 	return &RawKVClient{
-		clusterID:   pdCli.GetClusterID(),
+		clusterID:   pdCli.GetClusterID(goctx.TODO()),
 		regionCache: NewRegionCache(pdCli),
 		rpcClient:   newRPCClient(),
 	}, nil
