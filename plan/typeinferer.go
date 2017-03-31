@@ -425,7 +425,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		classType := aggTypeClass(x.Args, &tp.Flag)
 		if classType == types.ClassString && !mysql.HasBinaryFlag(tp.Flag) {
 			tp.Charset, tp.Collate = types.DefaultCharsetForType(tp.Tp)
-    }
+		}
 	case ast.AnyValue:
 		tp = x.Args[0].GetType()
 	case ast.InetAton:
