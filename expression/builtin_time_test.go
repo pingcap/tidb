@@ -1122,3 +1122,40 @@ func (s *testEvaluatorSuite) TestQuarter(c *C) {
 	result, err := f.eval(nil)
 	c.Assert(result.IsNull(), IsTrue)
 }
+
+func (s *testEvaluatorSuite) TestGetFormat(c *C) {
+	tests := []struct {
+		unit     string
+		location string
+		expect   string
+	}{
+		{"DATE", "USA", "%m.%d.%Y"},
+		{"DATE", "JIS", "%Y-%m-%d"},
+		{"DATE", "ISO", "%Y-%m-%d"},
+		{"DATE", "EUR", "%d.%m.%Y"},
+		{"DATE", "INTERNAL", "%Y%m%d"},
+
+		{"DATETIME", "USA", "%Y-%m-%d %H.%i.%s"},
+		{"DATETIME", "JIS", "%Y-%m-%d %H:%i:%s"},
+		{"DATETIME", "ISO", "%Y-%m-%d %H:%i:%s"},
+		{"DATETIME", "EUR", "%Y-%m-%d %H.%i.%s"},
+		{"DATETIME", "INTERNAL", "%Y%m%d%H%i%s"},
+
+		{"TIME", "USA", "%h:%i:%s %p"},
+		{"TIME", "JIS", "%H:%i:%s"},
+		{"TIME", "ISO", "%H:%i:%s"},
+		{"TIME", "EUR", "%H.%i.%s"},
+		{"TIME", "INTERNAL", "%H%i%s"},
+	}
+
+	fc := funcs[ast.GetFormat]
+	for _, test := range tests {
+		t := []types.Datum{types.NewStringDatum(test.unit), types.NewStringDatum(test.location)}
+		f, err := fc.getFunction(datumsToConstants(t), s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		result, _ := d.ToString()
+		c.Assert(result, Equals, test.expect)
+	}
+}

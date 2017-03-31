@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"math"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coreos/etcd/pkg/monotime"
@@ -123,7 +124,8 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 			size += len(lockKey)
 		}
 	}
-	if len(keys) > kv.TxnEntryCountLimit || size > kv.TxnTotalSizeLimit {
+	entrylimit := atomic.LoadUint64(&kv.TxnEntryCountLimit)
+	if len(keys) > int(entrylimit) || size > kv.TxnTotalSizeLimit {
 		return nil, kv.ErrTxnTooLarge
 	}
 	const logEntryCount = 10000
@@ -377,7 +379,7 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 	// transaction has been successfully committed.
 	// Under this circumstance,  we can not declare the commit is complete (may lead to data lost), nor can we throw
 	// an error (may lead to the duplicated key error when upper level restarts the transaction). Currently the best
-	// workaround seems to be an infinite retry util server recovers and returns a success or failure response.
+	// workaround seems to be an infinite retry until server recovers and returns a success or failure response.
 	if bytes.Compare(batch.keys[0], c.primary()) == 0 {
 		bo = NewBackoffer(commitPrimaryMaxBackoff, bo.ctx)
 	}

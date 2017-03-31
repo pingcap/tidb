@@ -21,8 +21,8 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan/statscache"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -56,7 +56,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 	b.optFlag = b.optFlag | flagAggregationOptimize
 	agg := &Aggregation{
 		AggFuncs:        make([]expression.AggregationFunction, 0, len(aggFuncList)),
-		baseLogicalPlan: newBaseLogicalPlan(Agg, b.allocator)}
+		baseLogicalPlan: newBaseLogicalPlan(TypeAgg, b.allocator)}
 	agg.self = agg
 	agg.initIDAndContext(b.ctx)
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncList)+p.Schema().Len())...)
@@ -224,7 +224,7 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	rightAlias := extractTableAlias(rightPlan)
 
 	newSchema := expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema())
-	joinPlan := &Join{baseLogicalPlan: newBaseLogicalPlan(Jn, b.allocator)}
+	joinPlan := &Join{baseLogicalPlan: newBaseLogicalPlan(TypeJoin, b.allocator)}
 	addChild(joinPlan, leftPlan)
 	addChild(joinPlan, rightPlan)
 	joinPlan.self = joinPlan
@@ -274,7 +274,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 	b.optFlag = b.optFlag | flagPredicatePushDown
 	conditions := splitWhere(where)
 	expressions := make([]expression.Expression, 0, len(conditions))
-	selection := &Selection{baseLogicalPlan: newBaseLogicalPlan(Sel, b.allocator)}
+	selection := &Selection{baseLogicalPlan: newBaseLogicalPlan(TypeSel, b.allocator)}
 	selection.self = selection
 	selection.initIDAndContext(b.ctx)
 	for _, cond := range conditions {
@@ -302,7 +302,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) (LogicalPlan, int) {
 	proj := &Projection{
 		Exprs:           make([]expression.Expression, 0, len(fields)),
-		baseLogicalPlan: newBaseLogicalPlan(Proj, b.allocator),
+		baseLogicalPlan: newBaseLogicalPlan(TypeProj, b.allocator),
 	}
 	proj.self = proj
 	proj.initIDAndContext(b.ctx)
@@ -363,7 +363,7 @@ func (b *planBuilder) buildDistinct(child LogicalPlan, length int) LogicalPlan {
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagAggregationOptimize
 	agg := &Aggregation{
-		baseLogicalPlan: newBaseLogicalPlan(Agg, b.allocator),
+		baseLogicalPlan: newBaseLogicalPlan(TypeAgg, b.allocator),
 		AggFuncs:        make([]expression.AggregationFunction, 0, child.Schema().Len()),
 		GroupByItems:    expression.Column2Exprs(child.Schema().Clone().Columns[:length])}
 	agg.collectGroupByColumns()
@@ -378,7 +378,7 @@ func (b *planBuilder) buildDistinct(child LogicalPlan, length int) LogicalPlan {
 }
 
 func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
-	u := &Union{baseLogicalPlan: newBaseLogicalPlan(Un, b.allocator)}
+	u := &Union{baseLogicalPlan: newBaseLogicalPlan(TypeUnion, b.allocator)}
 	u.self = u
 	u.initIDAndContext(b.ctx)
 	u.children = make([]Plan, len(union.SelectList.Selects))
@@ -393,7 +393,7 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 		}
 		if _, ok := sel.(*Projection); !ok {
 			proj := &Projection{
-				baseLogicalPlan: newBaseLogicalPlan(Proj, b.allocator),
+				baseLogicalPlan: newBaseLogicalPlan(TypeProj, b.allocator),
 				Exprs:           expression.Column2Exprs(sel.Schema().Columns),
 			}
 			proj.initIDAndContext(b.ctx)
@@ -459,7 +459,7 @@ func (by *ByItems) String() string {
 
 func (b *planBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
 	var exprs []*ByItems
-	sort := &Sort{baseLogicalPlan: newBaseLogicalPlan(Srt, b.allocator)}
+	sort := &Sort{baseLogicalPlan: newBaseLogicalPlan(TypeSort, b.allocator)}
 	sort.self = sort
 	sort.initIDAndContext(b.ctx)
 	for _, item := range byItems {
@@ -518,7 +518,7 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 	li := &Limit{
 		Offset:          offset,
 		Count:           count,
-		baseLogicalPlan: newBaseLogicalPlan(Lim, b.allocator),
+		baseLogicalPlan: newBaseLogicalPlan(TypeLimit, b.allocator),
 	}
 	li.self = li
 	li.initIDAndContext(b.ctx)
@@ -984,7 +984,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 	sel.Fields.Fields = originalFields
 	if oldLen != p.Schema().Len() {
 		proj := &Projection{
-			baseLogicalPlan: newBaseLogicalPlan(Proj, b.allocator),
+			baseLogicalPlan: newBaseLogicalPlan(TypeProj, b.allocator),
 			Exprs:           expression.Column2Exprs(p.Schema().Columns[:oldLen]),
 		}
 		proj.initIDAndContext(b.ctx)
@@ -998,7 +998,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 }
 
 func (b *planBuilder) buildTableDual() LogicalPlan {
-	dual := &TableDual{baseLogicalPlan: newBaseLogicalPlan(Dual, b.allocator)}
+	dual := &TableDual{baseLogicalPlan: newBaseLogicalPlan(TypeDual, b.allocator)}
 	dual.self = dual
 	dual.initIDAndContext(b.ctx)
 	dual.SetSchema(expression.NewSchema())
@@ -1006,7 +1006,7 @@ func (b *planBuilder) buildTableDual() LogicalPlan {
 }
 
 func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
-	statisticTable := statscache.GetStatisticsTableCache(tn.TableInfo)
+	statisticTable := statistics.GetStatisticsTableCache(tn.TableInfo)
 	if b.err != nil {
 		return nil
 	}
@@ -1024,7 +1024,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	p := &DataSource{
 		indexHints:      tn.IndexHints,
 		tableInfo:       tableInfo,
-		baseLogicalPlan: newBaseLogicalPlan(Tbl, b.allocator),
+		baseLogicalPlan: newBaseLogicalPlan(TypeTableScan, b.allocator),
 		statisticTable:  statisticTable,
 		DBName:          schemaName,
 	}
@@ -1073,7 +1073,7 @@ func (b *planBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, t
 	b.optFlag = b.optFlag | flagDecorrelate
 	join := &Join{
 		JoinType:        tp,
-		baseLogicalPlan: newBaseLogicalPlan(Jn, b.allocator),
+		baseLogicalPlan: newBaseLogicalPlan(TypeJoin, b.allocator),
 	}
 	ap := &Apply{Join: *join}
 	ap.initIDAndContext(b.ctx)
@@ -1121,7 +1121,7 @@ out:
 			break out
 		}
 	}
-	exists := &Exists{baseLogicalPlan: newBaseLogicalPlan(Ext, b.allocator)}
+	exists := &Exists{baseLogicalPlan: newBaseLogicalPlan(TypeExists, b.allocator)}
 	exists.self = exists
 	exists.initIDAndContext(b.ctx)
 	addChild(exists, p)
@@ -1134,7 +1134,7 @@ out:
 }
 
 func (b *planBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
-	maxOneRow := &MaxOneRow{baseLogicalPlan: newBaseLogicalPlan(MOR, b.allocator)}
+	maxOneRow := &MaxOneRow{baseLogicalPlan: newBaseLogicalPlan(TypeMaxOneRow, b.allocator)}
 	maxOneRow.self = maxOneRow
 	maxOneRow.initIDAndContext(b.ctx)
 	addChild(maxOneRow, p)
@@ -1143,7 +1143,7 @@ func (b *planBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
 }
 
 func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onCondition []expression.Expression, asScalar bool, not bool) *Join {
-	joinPlan := &Join{baseLogicalPlan: newBaseLogicalPlan(Jn, b.allocator)}
+	joinPlan := &Join{baseLogicalPlan: newBaseLogicalPlan(TypeJoin, b.allocator)}
 	joinPlan.self = joinPlan
 	joinPlan.initIDAndContext(b.ctx)
 	for i, expr := range onCondition {
@@ -1213,7 +1213,7 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 		return nil
 	}
 	p = np
-	updt := &Update{OrderedList: orderedList, baseLogicalPlan: newBaseLogicalPlan(Up, b.allocator)}
+	updt := &Update{OrderedList: orderedList, baseLogicalPlan: newBaseLogicalPlan(TypeUpate, b.allocator)}
 	updt.ctx = b.ctx
 	updt.self = updt
 	updt.initIDAndContext(b.ctx)
@@ -1286,7 +1286,7 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 	del := &Delete{
 		Tables:          tables,
 		IsMultiTable:    delete.IsMultiTable,
-		baseLogicalPlan: newBaseLogicalPlan(Del, b.allocator),
+		baseLogicalPlan: newBaseLogicalPlan(TypeDelete, b.allocator),
 	}
 	del.self = del
 	del.initIDAndContext(b.ctx)
