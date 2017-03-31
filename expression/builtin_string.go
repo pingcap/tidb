@@ -1555,7 +1555,51 @@ type builtinQuoteSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_quote
 func (b *builtinQuoteSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("quote")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	arg := args[0]
+
+	if arg.IsNull() {
+		return d, nil
+	}
+
+	str, err := arg.ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	var result []byte
+	var escapes = []byte{'\'', '\\'}
+	var statusNormal = 0
+	var statusEscape = 1
+	var status int
+
+	inByteSlice := func(stack []byte, needle byte) bool {
+		for i := 0; i < len(stack); i++ {
+			if needle == stack[i] {
+				return true
+			}
+		}
+		return false
+	}
+
+	for _, b := range []byte(str) {
+		if status != statusEscape && b == '\\' {
+			status = statusEscape
+			continue
+		}
+		if inByteSlice(escapes, b) {
+			result = append(result, '\\', b)
+		} else {
+			result = append(result, b)
+		}
+		status = statusNormal
+	}
+
+	d.SetString(fmt.Sprintf("'%s'", string(result)))
+	return d, nil
 }
 
 type binFunctionClass struct {

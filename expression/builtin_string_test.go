@@ -1231,5 +1231,34 @@ func (s *testEvaluatorSuite) TestBin(c *C) {
 		r, err := f.eval(nil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t["Expected"][0]))
 	}
+}
 
+func (s *testEvaluatorSuite) TestQuote(c *C) {
+	defer testleak.AfterTest(c)()
+
+	tbl := []struct {
+		Input    interface{}
+		Expected interface{}
+	}{
+		{"", "''"},
+		{`Don\'t`, `'Don\'t'`},
+		{`\test`, `'test'`},
+		{`\'`, `'\''`},
+		{`\\`, `'\\'`},
+		{`'`, `'\''`},
+		{`\\'`, `'\\\''`},
+		{1, "'1'"},
+		{3.14, "'3.14'"},
+		{nil, nil},
+	}
+
+	fc := funcs[ast.Quote]
+
+	dtbl := tblToDtbl(tbl)
+	for _, t := range dtbl {
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t["Input"])), s.ctx)
+		c.Assert(err, IsNil)
+		r, err := f.eval(nil)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(t["Expected"][0]))
+	}
 }

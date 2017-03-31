@@ -280,6 +280,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`ord(2)`, mysql.TypeLonglong, charset.CharsetBin},
 		{`ord(true)`, mysql.TypeLonglong, charset.CharsetBin},
 		{`ord(null)`, mysql.TypeLonglong, charset.CharsetBin},
+		{`quote('hi')`, mysql.TypeVarString, charset.CharsetUTF8},
 		{`bin(1)`, mysql.TypeVarString, charset.CharsetUTF8},
 	}
 	for _, ca := range cases {
