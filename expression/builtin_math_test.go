@@ -509,7 +509,7 @@ func (s *testEvaluatorSuite) TestCos(c *C) {
 	}{
 		{nil, nil},
 		{int64(0), float64(1)},
-		{math.Pi, float64(-1)}, // Pie ==> 0
+		{math.Pi, float64(-1)}, // cos pi equals -1
 		{-math.Pi, float64(-1)},
 		{math.Pi / 2, float64(math.Cos(math.Pi / 2))}, // Pi/2 is some near 0 (6.123233995736766e-17) but not 0. Even in math it is 0.
 		{-math.Pi / 2, float64(math.Cos(-math.Pi / 2))},
