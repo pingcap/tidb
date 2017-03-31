@@ -145,6 +145,7 @@ func (p *Join) PredicatePushDown(predicates []expression.Expression) (ret []expr
 			return nil, nil, errors.Trace(err2)
 		}
 	}
+	p.mergeSchema()
 	p.buildKeyInfo()
 	return
 }

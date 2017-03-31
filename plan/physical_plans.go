@@ -120,7 +120,6 @@ type physicalTableSource struct {
 
 	Aggregated bool
 	readOnly   bool
-	AggFields  []*types.FieldType
 	AggFuncsPB []*tipb.Expr
 	GbyItemsPB []*tipb.ByItem
 
@@ -190,7 +189,6 @@ func (p *physicalTableSource) MarshalJSON() ([]byte, error) {
 }
 
 func (p *physicalTableSource) clearForAggPushDown() {
-	p.AggFields = nil
 	p.AggFuncsPB = nil
 	p.GbyItemsPB = nil
 	p.Aggregated = false
@@ -222,6 +220,9 @@ func (p *physicalTableSource) tryToAddUnionScan(resultPlan PhysicalPlan) Physica
 	us := &PhysicalUnionScan{
 		Condition: expression.ComposeCNFCondition(p.ctx, append(conditions, p.AccessCondition...)...),
 	}
+	us.tp = "UnionScan"
+	us.allocator = p.allocator
+	us.initIDAndContext(p.ctx)
 	us.SetChildren(resultPlan)
 	us.SetSchema(resultPlan.Schema())
 	return us
@@ -287,13 +288,12 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 		p.gbyItems = append(p.gbyItems, item.Clone())
 	}
 	p.Aggregated = true
-	gk := types.NewFieldType(mysql.TypeBlob)
-	gk.Charset = charset.CharsetBin
-	gk.Collate = charset.CollationBin
-	p.AggFields = append(p.AggFields, gk)
+	gkType := types.NewFieldType(mysql.TypeBlob)
+	gkType.Charset = charset.CharsetBin
+	gkType.Collate = charset.CollationBin
 	schema := expression.NewSchema()
 	cursor := 0
-	schema.Append(&expression.Column{Index: cursor, ColName: model.NewCIStr(fmt.Sprint(agg.GroupByItems))})
+	schema.Append(&expression.Column{Index: cursor, ColName: model.NewCIStr(fmt.Sprint(agg.GroupByItems)), RetType: gkType})
 	agg.GroupByItems = []expression.Expression{schema.Columns[cursor]}
 	newAggFuncs := make([]expression.AggregationFunction, len(agg.AggFuncs))
 	for i, aggFun := range agg.AggFuncs {
@@ -302,19 +302,18 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 		colName := model.NewCIStr(fmt.Sprint(aggFun.GetArgs()))
 		if needCount(fun) {
 			cursor++
-			schema.Append(&expression.Column{Index: cursor, ColName: colName})
-			args = append(args, schema.Columns[cursor])
 			ft := types.NewFieldType(mysql.TypeLonglong)
 			ft.Flen = 21
 			ft.Charset = charset.CharsetBin
 			ft.Collate = charset.CollationBin
-			p.AggFields = append(p.AggFields, ft)
+			schema.Append(&expression.Column{Index: cursor, ColName: colName, RetType: ft})
+			args = append(args, schema.Columns[cursor])
 		}
 		if needValue(fun) {
 			cursor++
-			schema.Append(&expression.Column{Index: cursor, ColName: colName})
+			ft := agg.schema.Columns[i].GetType()
+			schema.Append(&expression.Column{Index: cursor, ColName: colName, RetType: ft})
 			args = append(args, schema.Columns[cursor])
-			p.AggFields = append(p.AggFields, agg.schema.Columns[i].GetType())
 		}
 		fun.SetArgs(args)
 		fun.SetMode(expression.FinalMode)
@@ -370,6 +369,21 @@ type PhysicalHashJoin struct {
 	DefaultValues []types.Datum
 }
 
+// PhysicalMergeJoin represents merge join for inner/ outer join.
+type PhysicalMergeJoin struct {
+	basePlan
+
+	JoinType JoinType
+
+	EqualConditions []*expression.ScalarFunction
+	LeftConditions  []expression.Expression
+	RightConditions []expression.Expression
+	OtherConditions []expression.Expression
+
+	DefaultValues []types.Datum
+	Desc          bool
+}
+
 // PhysicalHashSemiJoin represents hash join for semi join.
 type PhysicalHashSemiJoin struct {
 	basePlan
@@ -415,6 +429,44 @@ type PhysicalUnionScan struct {
 // Cache plan is a physical plan which stores the result of its child node.
 type Cache struct {
 	basePlan
+}
+
+func (p *PhysicalMergeJoin) tryConsumeOrder(prop *requiredProperty, eqCond *expression.ScalarFunction) *requiredProperty {
+	// TODO: We still can consume a partial sorted results somehow if main key matched.
+	// To do that, we need a Sort operator being able to do a secondary sort
+	if len(prop.props) != 1 || len(eqCond.GetArgs()) != 2 {
+		return prop
+	}
+
+	reqSortedColumn := prop.props[0].col
+	if prop.props[0].desc {
+		return prop
+	}
+
+	// Compare either sides of the equal function to see if matches required property
+	// If so, we don't have to sort once more
+	switch p.JoinType {
+	case InnerJoin:
+		// In case of inner join, both sides' orders are kept
+		lColumn, lOk := eqCond.GetArgs()[0].(*expression.Column)
+		rColumn, rOk := eqCond.GetArgs()[1].(*expression.Column)
+		if (lOk && lColumn.Equal(reqSortedColumn, p.ctx)) ||
+			(rOk && rColumn.Equal(reqSortedColumn, p.ctx)) {
+			return removeSortOrder(prop)
+		}
+	// In case of left/right outer join, driver side's order will be kept
+	case LeftOuterJoin:
+		lColumn, lOk := eqCond.GetArgs()[0].(*expression.Column)
+		if lOk && lColumn.Equal(reqSortedColumn, p.ctx) {
+			return removeSortOrder(prop)
+		}
+	case RightOuterJoin:
+		rColumn, rOk := eqCond.GetArgs()[1].(*expression.Column)
+		if rOk && rColumn.Equal(reqSortedColumn, p.ctx) {
+			return removeSortOrder(prop)
+		}
+	}
+	return prop
 }
 
 func (p *PhysicalHashJoin) extractCorrelatedCols() []*expression.CorrelatedColumn {
@@ -532,6 +584,15 @@ func (p *PhysicalTableScan) MarshalJSON() ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
+// MarshalJSON implements json.Marshaler interface.
+func (p *PhysicalMemTable) MarshalJSON() ([]byte, error) {
+	buffer := bytes.NewBufferString("{")
+	buffer.WriteString(fmt.Sprintf(
+		" \"db\": \"%s\",\n \"table\": \"%s\"}",
+		p.DBName.O, p.Table.Name.O))
+	return buffer.Bytes(), nil
+}
+
 // Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalApply) Copy() PhysicalPlan {
 	np := *p
@@ -599,6 +660,12 @@ func (p *PhysicalHashJoin) Copy() PhysicalPlan {
 	return &np
 }
 
+// Copy implements the PhysicalPlan Copy interface.
+func (p *PhysicalMergeJoin) Copy() PhysicalPlan {
+	np := *p
+	return &np
+}
+
 // MarshalJSON implements json.Marshaler interface.
 func (p *PhysicalHashJoin) MarshalJSON() ([]byte, error) {
 	leftChild := p.children[0].(PhysicalPlan)
@@ -632,6 +699,40 @@ func (p *PhysicalHashJoin) MarshalJSON() ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
+// MarshalJSON implements json.Marshaler interface.
+func (p *PhysicalMergeJoin) MarshalJSON() ([]byte, error) {
+	leftChild := p.children[0].(PhysicalPlan)
+	rightChild := p.children[1].(PhysicalPlan)
+	eqConds, err := json.Marshal(p.EqualConditions)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	leftConds, err := json.Marshal(p.LeftConditions)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	rightConds, err := json.Marshal(p.RightConditions)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	otherConds, err := json.Marshal(p.OtherConditions)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	buffer := bytes.NewBufferString("{")
+	buffer.WriteString(fmt.Sprintf(
+		"\"eqCond\": %s,\n "+
+			"\"leftCond\": %s,\n"+
+			"\"rightCond\": %s,\n"+
+			"\"otherCond\": %s,\n"+
+			"\"leftPlan\": \"%s\",\n "+
+			"\"rightPlan\": \"%s\",\n"+
+			"\"desc\": \"%v\""+
+			"}",
+		eqConds, leftConds, rightConds, otherConds, leftChild.ID(), rightChild.ID(), p.Desc))
+	return buffer.Bytes(), nil
+}
+
 // Copy implements the PhysicalPlan Copy interface.
 func (p *Selection) Copy() PhysicalPlan {
 	np := *p
@@ -647,7 +748,8 @@ func (p *Selection) MarshalJSON() ([]byte, error) {
 	buffer := bytes.NewBufferString("{")
 	buffer.WriteString(fmt.Sprintf(""+
 		" \"condition\": %s,\n"+
-		" \"child\": \"%s\"\n}", conds, p.children[0].ID()))
+		" \"scanController\": %v,"+
+		" \"child\": \"%s\"\n}", conds, p.ScanController, p.children[0].ID()))
 	return buffer.Bytes(), nil
 }
 

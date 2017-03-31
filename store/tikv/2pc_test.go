@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"math"
 	"math/rand"
 	"strings"
 	"time"
@@ -144,7 +145,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 		err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff, ctx), committer.keys)
 		c.Assert(err, IsNil)
 	}
-	committer.commitTS, err = s.store.oracle.GetTimestamp()
+	committer.commitTS, err = s.store.oracle.GetTimestamp(ctx)
 	c.Assert(err, IsNil)
 	err = committer.commitKeys(NewBackoffer(commitMaxBackoff, ctx), [][]byte{[]byte("a")})
 	c.Assert(err, IsNil)
@@ -285,4 +286,20 @@ func (c *slowClient) SendCopReq(ctx goctx.Context, addr string, req *coprocessor
 		}
 	}
 	return c.Client.SendCopReq(ctx, addr, req, timeout)
+}
+
+func (s *testCommitterSuite) TestIllegalTso(c *C) {
+	txn := s.begin(c)
+	data := map[string]string{
+		"name": "aa",
+		"age":  "12",
+	}
+	for k, v := range data {
+		err := txn.Set([]byte(k), []byte(v))
+		c.Assert(err, IsNil)
+	}
+	// make start ts bigger.
+	txn.startTS = uint64(math.MaxUint64)
+	err := txn.Commit()
+	c.Assert(err, NotNil)
 }
