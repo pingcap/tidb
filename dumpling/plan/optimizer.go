@@ -69,8 +69,8 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 
 	// Maybe it's better to move this to Preprocess, but check privilege need table
 	// information, which is collected into visitInfo during logical plan builder.
-	if checker := privilege.GetPrivilegeChecker(ctx); checker != nil {
-		if !checkPrivilege(checker, builder.visitInfo) {
+	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
+		if !checkPrivilege(pm, builder.visitInfo) {
 			return nil, errors.New("privilege check fail")
 		}
 	}
@@ -81,9 +81,9 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 	return p, nil
 }
 
-func checkPrivilege(checker privilege.Checker, vs []visitInfo) bool {
+func checkPrivilege(pm privilege.Manager, vs []visitInfo) bool {
 	for _, v := range vs {
-		if !checker.RequestVerification(v.db, v.table, v.column, v.privilege) {
+		if !pm.RequestVerification(v.db, v.table, v.column, v.privilege) {
 			return false
 		}
 	}
