@@ -185,7 +185,7 @@ func (sel *Selection) splitSelectionByIndexColumns(schema *expression.Schema) (i
 	}
 	if len(tableConds) != 0 {
 		tableSel = &Selection{
-			baseLogicalPlan: newBaseLogicalPlan(Sel, sel.allocator),
+			baseLogicalPlan: newBaseLogicalPlan(TypeSel, sel.allocator),
 			Conditions:      tableConds,
 		}
 		tableSel.self = tableSel
