@@ -18,7 +18,6 @@ import "github.com/pingcap/tidb/expression"
 // taskProfile is a new version of `PhysicalPlanInfo`. It stores cost information for a task.
 // A task may be CopTask, RootTask, MPPTask or a ParallelTask.
 type taskProfile interface {
-	attachPlan(p PhysicalPlan) taskProfile
 	setCount(cnt uint64)
 	count() uint64
 	setCost(cost float64)
@@ -63,14 +62,21 @@ func (t *copTaskProfile) copy() taskProfile {
 	}
 }
 
-func (t *copTaskProfile) attachPlan(p PhysicalPlan) taskProfile {
-	nt := t.copy().(*copTaskProfile)
-	if nt.addPlan2Index {
-		p.SetChildren(nt.indexPlan)
-		nt.indexPlan = p
-	} else {
-		p.SetChildren(nt.tablePlan)
-		nt.tablePlan = p
+func attachPlan2Task(p PhysicalPlan, t taskProfile) taskProfile {
+	nt := t.copy()
+	switch v := nt.(type) {
+	case *copTaskProfile:
+		if v.addPlan2Index {
+			p.SetChildren(v.indexPlan)
+			v.indexPlan = p
+		} else {
+			p.SetChildren(v.tablePlan)
+			v.tablePlan = p
+		}
+	case *rootTaskProfile:
+		p.SetChildren(v.plan)
+		v.plan = p
+		return nt
 	}
 	return nt
 }
@@ -102,13 +108,6 @@ func (t *rootTaskProfile) copy() taskProfile {
 	}
 }
 
-func (t *rootTaskProfile) attachPlan(p PhysicalPlan) taskProfile {
-	nt := t.copy().(*rootTaskProfile)
-	p.SetChildren(nt.plan)
-	nt.plan = p
-	return nt
-}
-
 func (t *rootTaskProfile) setCount(cnt uint64) {
 	t.cnt = cnt
 }
@@ -126,7 +125,7 @@ func (t *rootTaskProfile) cost() float64 {
 }
 
 func (limit *Limit) attach2TaskProfile(profiles ...taskProfile) taskProfile {
-	profile := profiles[0].attachPlan(limit)
+	profile := attachPlan2Task(limit, profiles[0])
 	profile.setCount(limit.Count)
 	return profile
 }
