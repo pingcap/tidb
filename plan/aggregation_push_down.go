@@ -252,12 +252,10 @@ func (a *aggregationOptimizer) checkAnyCountAndSum(aggFuncs []expression.Aggrega
 }
 
 func (a *aggregationOptimizer) makeNewAgg(aggFuncs []expression.AggregationFunction, gbyCols []*expression.Column) *Aggregation {
-	agg := &Aggregation{
-		GroupByItems:    expression.Column2Exprs(gbyCols),
-		baseLogicalPlan: newBaseLogicalPlan(TypeAgg, a.allocator),
-		groupByCols:     gbyCols,
-	}
-	agg.initIDAndContext(a.ctx)
+	agg := Aggregation{
+		GroupByItems: expression.Column2Exprs(gbyCols),
+		groupByCols:  gbyCols,
+	}.init(a.allocator, a.ctx)
 	var newAggFuncs []expression.AggregationFunction
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncs)+len(gbyCols))...)
 	for _, aggFunc := range aggFuncs {
@@ -278,13 +276,11 @@ func (a *aggregationOptimizer) makeNewAgg(aggFuncs []expression.AggregationFunct
 // pushAggCrossUnion will try to push the agg down to the union. If the new aggregation's group-by columns doesn't contain unique key.
 // We will return the new aggregation. Otherwise we will transform the aggregation to projection.
 func (a *aggregationOptimizer) pushAggCrossUnion(agg *Aggregation, unionSchema *expression.Schema, unionChild LogicalPlan) LogicalPlan {
-	newAgg := &Aggregation{
-		AggFuncs:        make([]expression.AggregationFunction, 0, len(agg.AggFuncs)),
-		GroupByItems:    make([]expression.Expression, 0, len(agg.GroupByItems)),
-		baseLogicalPlan: newBaseLogicalPlan(TypeAgg, a.allocator),
-	}
+	newAgg := Aggregation{
+		AggFuncs:     make([]expression.AggregationFunction, 0, len(agg.AggFuncs)),
+		GroupByItems: make([]expression.Expression, 0, len(agg.GroupByItems)),
+	}.init(a.allocator, a.ctx)
 	newAgg.SetSchema(agg.schema.Clone())
-	newAgg.initIDAndContext(a.ctx)
 	for _, aggFunc := range agg.AggFuncs {
 		newAggFunc := aggFunc.Clone()
 		newArgs := make([]expression.Expression, 0, len(newAggFunc.GetArgs()))
@@ -428,12 +424,9 @@ func (a *aggregationOptimizer) tryToEliminateAggregation(agg *Aggregation) *Proj
 }
 
 func (a *aggregationOptimizer) convertAggToProj(agg *Aggregation, ctx context.Context, allocator *idAllocator) *Projection {
-	proj := &Projection{
-		Exprs:           make([]expression.Expression, 0, len(agg.AggFuncs)),
-		baseLogicalPlan: newBaseLogicalPlan(TypeProj, allocator),
-	}
-	proj.self = proj
-	proj.initIDAndContext(ctx)
+	proj := Projection{
+		Exprs: make([]expression.Expression, 0, len(agg.AggFuncs)),
+	}.init(a.allocator, a.ctx)
 	for _, fun := range agg.AggFuncs {
 		expr := a.rewriteExpr(fun)
 		proj.Exprs = append(proj.Exprs, expr)
