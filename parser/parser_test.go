@@ -935,16 +935,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select AES_ENCRYPT('text',UNHEX('F3229A0B371ED2D9441B830D21A390C3'))`, true},
 		{`select AES_DECRYPT(@crypt_str,@key_str)`, true},
 		{`select AES_DECRYPT(@crypt_str,@key_str,@init_vector);`, true},
-		{`SELECT ASYMMETRIC_DECRYPT(0, 0, 0);`, true},
-		{`SELECT ASYMMETRIC_DERIVE(@pub2, @priv1);`, true},
-		{`SELECT ASYMMETRIC_ENCRYPT('RSA', 'The quick brown fox', @priv);`, true},
-		{`SELECT ASYMMETRIC_SIGN(@algorithm, @digest_str, @priv_key_str, @digest_type);`, true},
-		{`SELECT ASYMMETRIC_VERIFY(@algorithm, @digest_str, @sig_str, @pub_key_str, @digest_type);`, true},
 		{`SELECT COMPRESS('');`, true},
-		{`SELECT CREATE_ASYMMETRIC_PRIV_KEY('DSA', 2048);`, true},
-		{`SELECT CREATE_ASYMMETRIC_PUB_KEY(@algorithm, @priv_key_str);`, true},
-		{`SELECT CREATE_DH_PARAMETERS(1024);`, true},
-		{`SELECT CREATE_DIGEST('SHA512', 'The quick brown fox');`, true},
 		{`SELECT DECODE(@crypt_str, @pass_str);`, true},
 		{`SELECT DES_DECRYPT(@crypt_str), DES_DECRYPT(@crypt_str, @key_str);`, true},
 		{`SELECT DES_ENCRYPT(@str), DES_ENCRYPT(@key_num);`, true},
@@ -1231,6 +1222,21 @@ func (s *testParserSuite) TestOptimizerHints(c *C) {
 	c.Assert(hints[1].Tables[1].L, Equals, "t4")
 
 	c.Assert(len(selectStmt.TableHints), Equals, 2)
+
+	stmt, err = parser.Parse("select /*+ TIDB_INLJ(t1, T2) tidb_inlj(t3, t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	c.Assert(err, IsNil)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	c.Assert(len(hints), Equals, 2)
+	c.Assert(hints[0].HintName.L, Equals, "tidb_inlj")
+	c.Assert(len(hints[0].Tables), Equals, 2)
+	c.Assert(hints[0].Tables[0].L, Equals, "t1")
+	c.Assert(hints[0].Tables[1].L, Equals, "t2")
+
+	c.Assert(hints[1].HintName.L, Equals, "tidb_inlj")
+	c.Assert(hints[1].Tables[0].L, Equals, "t3")
+	c.Assert(hints[1].Tables[1].L, Equals, "t4")
 }
 
 func (s *testParserSuite) TestType(c *C) {

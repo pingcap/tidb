@@ -139,18 +139,13 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 	txnWriteKVCountHistogram.Observe(float64(len(keys)))
 	txnWriteSizeHistogram.Observe(float64(size / 1024))
 
-	lockTTL, err := txnLockTTL(txn.startTime, size)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
 	return &twoPhaseCommitter{
 		store:     txn.store,
 		txn:       txn,
 		startTS:   txn.StartTS(),
 		keys:      keys,
 		mutations: mutations,
-		lockTTL:   lockTTL,
+		lockTTL:   txnLockTTL(txn.startTime, size),
 	}, nil
 }
 
@@ -160,14 +155,13 @@ func (c *twoPhaseCommitter) primary() []byte {
 
 const bytesPerMiB = 1024 * 1024
 
-func txnLockTTL(startTime monotime.Time, txnSize int) (uint64, error) {
+func txnLockTTL(startTime monotime.Time, txnSize int) uint64 {
 	// Increase lockTTL for large transactions.
 	// The formula is `ttl = ttlFactor * sqrt(sizeInMiB)`.
-	// When writeSize <= 256K, ttl is defaultTTL (3s);
+	// When writeSize is less than 256KB, the base ttl is defaultTTL (3s);
 	// When writeSize is 1MiB, 100MiB, or 400MiB, ttl is 6s, 60s, 120s correspondingly;
-	// When writeSize >= 400MiB, we return kv.ErrTxnTooLarge.
-	var lockTTL uint64
-	if txnSize > txnCommitBatchSize {
+	lockTTL := defaultLockTTL
+	if txnSize >= txnCommitBatchSize {
 		sizeMiB := float64(txnSize) / bytesPerMiB
 		lockTTL = uint64(float64(ttlFactor) * math.Sqrt(float64(sizeMiB)))
 		if lockTTL < defaultLockTTL {
@@ -182,7 +176,7 @@ func txnLockTTL(startTime monotime.Time, txnSize int) (uint64, error) {
 	// When resolving a lock, we compare current ts and startTS+lockTTL to decide whether to clean up. If a txn
 	// takes a long time to read, increasing its TTL will help to prevent it from been aborted soon after prewrite.
 	elapsed := time.Duration(monotime.Now()-startTime) / time.Millisecond
-	return lockTTL + uint64(elapsed), nil
+	return lockTTL + uint64(elapsed)
 }
 
 // doActionOnKeys groups keys into primary batch and secondary batches, if primary batch exists in the key,

@@ -380,7 +380,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		"replace", "ucase", "upper", "convert", "substring", "elt",
 		"substring_index", "trim", "ltrim", "rtrim", "reverse", "hex", "unhex",
 		"date_format", "rpad", "lpad", "char_func", "conv", "make_set", "oct", "uuid",
-		"insert_func", "bin":
+		"insert_func", "bin", "quote", "format":
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
 	case "strcmp", "isnull", "bit_length", "char_length", "character_length", "crc32", "timestampdiff",
@@ -409,6 +409,8 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
 		tp.Flen = 32
+	case ast.Compress:
+		tp = types.NewFieldType(mysql.TypeBlob)
 	case ast.SHA, ast.SHA1:
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
