@@ -90,7 +90,7 @@ func (e *tableScanExec) getRowFromPoint(ran kv.KeyRange) (int64, [][]byte, error
 	if err != nil {
 		return 0, nil, errors.Trace(err)
 	}
-	row, err := handleRowData(e.Columns, e.colsID, handle, val)
+	row, err := getRowData(e.Columns, e.colsID, handle, val)
 	if err != nil {
 		return 0, nil, errors.Trace(err)
 	}
@@ -143,7 +143,7 @@ func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 	if err != nil {
 		return 0, nil, errors.Trace(err)
 	}
-	row, err := handleRowData(e.Columns, e.colsID, handle, pair.Value)
+	row, err := getRowData(e.Columns, e.colsID, handle, pair.Value)
 	if err != nil {
 		return 0, nil, errors.Trace(err)
 	}
@@ -293,17 +293,6 @@ func (e *selectionExec) Next() (int64, [][]byte, error) {
 	}
 }
 
-func getRowData(value []byte, colIDs map[int64]int) ([][]byte, error) {
-	res, err := tablecodec.CutRowNew(value, colIDs)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if res == nil {
-		res = make([][]byte, len(colIDs))
-	}
-	return res, nil
-}
-
 func hasColVal(data [][]byte, colIDs map[int64]int, id int64) bool {
 	offset, ok := colIDs[id]
 	if ok && data[offset] != nil {
@@ -312,12 +301,14 @@ func hasColVal(data [][]byte, colIDs map[int64]int, id int64) bool {
 	return false
 }
 
-// handleRowData deals with raw row data:
-//	1. Decodes row from raw byte slice.
-func handleRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle int64, value []byte) ([][]byte, error) {
-	values, err := getRowData(value, colIDs)
+// getRowData decodes raw byte slice to row data.
+func getRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle int64, value []byte) ([][]byte, error) {
+	values, err := tablecodec.CutRowNew(value, colIDs)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if values == nil {
+		values = make([][]byte, len(colIDs))
 	}
 	// Fill the handle and null columns.
 	for _, col := range columns {
