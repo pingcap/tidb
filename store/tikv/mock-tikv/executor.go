@@ -152,7 +152,7 @@ func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 
 type indexScanExec struct {
 	*tipb.IndexScan
-	cols        int
+	colsLen     int
 	kvRanges    []kv.KeyRange
 	startTS     uint64
 	mvccStore   *MvccStore
@@ -228,7 +228,7 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 		e.seekKey = []byte(kv.Key(pair.Key).PrefixNext())
 	}
 
-	values, b, err := tablecodec.CutIndexKeyNew(pair.Key, e.cols)
+	values, b, err := tablecodec.CutIndexKeyNew(pair.Key, e.colsLen)
 	var handle int64
 	if len(b) > 0 {
 		var handleDatum types.Datum
@@ -345,7 +345,7 @@ func handleRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle int6
 			continue
 		}
 		if mysql.HasNotNullFlag(uint(col.GetFlag())) {
-			return nil, errors.New("Miss column")
+			return nil, errors.Errorf("Miss column %d", col.GetColumnId())
 		}
 		values[colIDs[id]] = []byte{codec.NilFlag}
 	}

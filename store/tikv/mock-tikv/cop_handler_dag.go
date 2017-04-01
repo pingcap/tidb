@@ -118,7 +118,7 @@ func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 		currExec = &indexScanExec{
 			IndexScan:   curr.IdxScan,
 			kvRanges:    ranges,
-			cols:        len(columns),
+			colsLen:     len(columns),
 			startTS:     ctx.dagReq.GetStartTs(),
 			mvccStore:   h.mvccStore,
 			rawStartKey: h.rawStartKey,

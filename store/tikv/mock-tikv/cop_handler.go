@@ -435,7 +435,7 @@ func (h *rpcHandler) handleRowData(ctx *selectContext, handle int64, value []byt
 			continue
 		}
 		if mysql.HasNotNullFlag(uint(col.GetFlag())) {
-			return nil, errors.New("Miss column")
+			return nil, errors.Errorf("Miss column %d", col.GetColumnId())
 		}
 		values[col.GetColumnId()] = []byte{codec.NilFlag}
 	}
