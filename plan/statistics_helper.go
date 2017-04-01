@@ -18,6 +18,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/codec"
@@ -32,7 +33,7 @@ func (is *PhysicalIndexScan) getRowCountByIndexRanges(sc *variable.StatementCont
 			break
 		}
 	}
-	if len(statsTbl.Indices[offset].Numbers) == 0 {
+	if statsTbl.Pseudo {
 		return getPseudoRowCountByIndexRanges(sc, statsTbl, is.Ranges, is.Index, is.accessInAndEqCount)
 	}
 	return getRealRowCountByIndexRanges(sc, statsTbl, is.Ranges, is.Index, offset)
@@ -139,22 +140,29 @@ func getPseudoRowCountByIndexRanges(sc *variable.StatementContext, statsTbl *sta
 	return uint64(totalCount), nil
 }
 
-func getRowCountByTableRange(sc *variable.StatementContext, statsTbl *statistics.Table, ranges []TableRange, offset int) (uint64, error) {
+func (p *PhysicalTableScan) rowCount(sc *variable.StatementContext, statsTbl *statistics.Table) (uint64, error) {
+	var col *model.ColumnInfo
+	for _, colInfo := range p.Table.Columns {
+		if mysql.HasPriKeyFlag(colInfo.Flag) {
+			col = colInfo
+			break
+		}
+	}
 	var rowCount uint64
-	for _, rg := range ranges {
+	for _, rg := range p.Ranges {
 		var cnt int64
 		var err error
 		if rg.LowVal == math.MinInt64 && rg.HighVal == math.MaxInt64 {
 			cnt = statsTbl.Count
 		} else if rg.LowVal == math.MinInt64 {
-			cnt, err = statsTbl.Columns[offset].LessRowCount(sc, types.NewDatum(rg.HighVal))
+			cnt, err = statsTbl.ColumnLessRowCount(sc, types.NewDatum(rg.HighVal), col)
 		} else if rg.HighVal == math.MaxInt64 {
-			cnt, err = statsTbl.Columns[offset].GreaterRowCount(sc, types.NewDatum(rg.LowVal))
+			cnt, err = statsTbl.ColumnGreaterRowCount(sc, types.NewDatum(rg.LowVal), col)
 		} else {
 			if rg.LowVal == rg.HighVal {
-				cnt, err = statsTbl.Columns[offset].EqualRowCount(sc, types.NewDatum(rg.LowVal))
+				cnt, err = statsTbl.ColumnEqualRowCount(sc, types.NewDatum(rg.LowVal), col)
 			} else {
-				cnt, err = statsTbl.Columns[offset].BetweenRowCount(sc, types.NewDatum(rg.LowVal), types.NewDatum(rg.HighVal))
+				cnt, err = statsTbl.ColumnBetweenRowCount(sc, types.NewDatum(rg.LowVal), types.NewDatum(rg.HighVal), col)
 			}
 		}
 		if err != nil {

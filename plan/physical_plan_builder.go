@@ -91,15 +91,8 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 				break
 			}
 		}
-		var offset int
-		for _, colInfo := range table.Columns {
-			if mysql.HasPriKeyFlag(colInfo.Flag) {
-				offset = colInfo.Offset
-				break
-			}
-		}
 		var err error
-		rowCount, err = getRowCountByTableRange(sc, statsTbl, ts.Ranges, offset)
+		rowCount, err = ts.rowCount(sc, statsTbl)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

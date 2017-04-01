@@ -98,14 +98,20 @@ func (b *Builder) splitAndConcurrentBuild(t *Table, offsets []int, isSorted bool
 
 // NewTable creates a table statistics.
 func (b *Builder) NewTable() (*Table, error) {
-	if b.Count == 0 {
-		return PseudoTable(b.TblInfo), nil
-	}
 	t := &Table{
 		Info:    b.TblInfo,
 		Count:   b.Count,
 		Columns: make([]*Column, len(b.TblInfo.Columns)),
 		Indices: make([]*Column, len(b.TblInfo.Indices)),
+	}
+	if b.Count == 0 {
+		for i := range t.Columns {
+			t.Columns[i] = &Column{ID: b.TblInfo.Columns[i].ID}
+		}
+		for i := range t.Indices {
+			t.Indices[i] = &Column{ID: b.TblInfo.Indices[i].ID}
+		}
+		return t, nil
 	}
 	err := b.splitAndConcurrentBuild(t, b.ColOffsets, false)
 	if err != nil {
@@ -137,16 +143,11 @@ func (b *Builder) NewTable() (*Table, error) {
 	// There may be cases that we have no columnSamples, and only after we build the index columns that we can know it is 0,
 	// so we should also checked it here.
 	if t.Count == 0 {
-		return PseudoTable(b.TblInfo), nil
-	}
-	// Some Indices may not need to have histograms, here we give them pseudo one to remove edge cases in pb.
-	// However, it should never be used.
-	for i, idx := range b.TblInfo.Indices {
-		if t.Indices[i] == nil {
-			t.Indices[i] = &Column{
-				ID:  idx.ID,
-				NDV: pseudoRowCount / 2,
-			}
+		for i := range t.Columns {
+			t.Columns[i] = &Column{ID: b.TblInfo.Columns[i].ID}
+		}
+		for i := range t.Indices {
+			t.Indices[i] = &Column{ID: b.TblInfo.Indices[i].ID}
 		}
 	}
 	return t, nil
