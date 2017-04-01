@@ -1080,7 +1080,7 @@ func (s *testPlanSuite) TestJoinAlgorithm(c *C) {
 		},
 		{
 			sql: "select /*+ tidb_inlj(t2) */ * from t t1 join t t2 on t1.a = t2.a",
-			ans: "Apply{Table(t)->Selection->Table(t)->Cache}",
+			ans: "Apply{Table(t)->Selection->Table(t)}",
 		},
 		{
 			sql: "select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 on t1.a > t2.a",
@@ -1092,7 +1092,7 @@ func (s *testPlanSuite) TestJoinAlgorithm(c *C) {
 		},
 		{
 			sql: "select /*+ tidb_inlj(t1, t2) */ * from t t1 right outer join t t2 on t1.a = t2.c",
-			ans: "Apply{Table(t)->Selection->Table(t)->Cache}",
+			ans: "Apply{Table(t)->Selection->Table(t)}",
 		},
 		{
 			sql: "select /*+ tidb_inlj(t1, t2) */ * from t t1 left outer join t t2 on t1.a = t2.e",
@@ -1108,7 +1108,7 @@ func (s *testPlanSuite) TestJoinAlgorithm(c *C) {
 		},
 		{
 			sql: "select /*+ tidb_inlj(t2) */ * from t t1 join t t2 on t1.c=t2.c and t1.d=t2.d and t1.e > t2.e",
-			ans: "Apply{Index(t.c_d_e)[]->Selection->Table(t)->Cache}",
+			ans: "Apply{Index(t.c_d_e)[]->Selection->Table(t)}",
 		},
 	}
 	for _, ca := range cases {
@@ -1128,18 +1128,8 @@ func (s *testPlanSuite) TestJoinAlgorithm(c *C) {
 		}
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
-		lp := p.(LogicalPlan)
-		_, lp, err = lp.PredicatePushDown(nil)
+		pp, err := doOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx, builder.allocator)
 		c.Assert(err, IsNil)
-		lp.PruneColumns(lp.Schema().Columns)
-		dSolver := &decorrelateSolver{}
-		lp, err = dSolver.optimize(lp, mockContext(), new(idAllocator))
-		c.Assert(err, IsNil)
-		lp.ResolveIndicesAndCorCols()
-		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
-		pp := info.p
-		pp = EliminateProjection(pp)
-		addCachePlan(pp, builder.allocator)
 		c.Assert(ToString(pp), Equals, ca.ans, Commentf("for %s", ca.sql))
 	}
 }

@@ -145,7 +145,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		for _, cond := range sel.Conditions {
 			conds = append(conds, cond.Clone())
 		}
-		is.AccessCondition, newSel.Conditions = DetachIndexScanConditions(conds, is)
+		is.AccessCondition, newSel.Conditions, is.accessEqualCount, is.accessInAndEqCount = DetachIndexScanConditions(conds, is.Index)
 		memDB := infoschema.IsMemoryDB(p.DBName.L)
 		isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeIndex, 0)
 		if isDistReq {
@@ -584,15 +584,17 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 // This is called when build nested loop join.
 func (p *Join) buildSelectionWithConds(leftAsOuter bool) (*Selection, []*expression.CorrelatedColumn) {
 	var (
-		outerSchema *expression.Schema
-		innerChild  Plan
-		conds       []expression.Expression
+		outerSchema     *expression.Schema
+		innerChild      Plan
+		innerConditions []expression.Expression
 	)
 	if leftAsOuter {
 		outerSchema = p.children[0].Schema()
+		innerConditions = p.RightConditions
 		innerChild = p.children[1]
 	} else {
 		outerSchema = p.children[1].Schema()
+		innerConditions = p.LeftConditions
 		innerChild = p.children[0]
 	}
 	corCols := make([]*expression.CorrelatedColumn, 0, outerSchema.Len())
@@ -606,18 +608,9 @@ func (p *Join) buildSelectionWithConds(leftAsOuter bool) (*Selection, []*express
 	selection.initIDAndContext(p.ctx)
 	selection.SetSchema(innerChild.Schema().Clone())
 	selection.SetChildren(innerChild)
-	if leftAsOuter {
-		conds = make([]expression.Expression, 0, len(p.EqualConditions)+len(p.RightConditions)+len(p.OtherConditions))
-		for _, cond := range p.RightConditions {
-			newCond := expression.ConvertCol2CorCol(cond, corCols, outerSchema)
-			conds = append(conds, newCond)
-		}
-	} else {
-		conds = make([]expression.Expression, 0, len(p.EqualConditions)+len(p.LeftConditions)+len(p.OtherConditions))
-		for _, cond := range p.LeftConditions {
-			newCond := expression.ConvertCol2CorCol(cond, corCols, outerSchema)
-			conds = append(conds, newCond)
-		}
+	conds := make([]expression.Expression, 0, len(p.EqualConditions)+len(innerConditions)+len(p.OtherConditions))
+	for _, cond := range innerConditions {
+		conds = append(conds, cond)
 	}
 	for _, cond := range p.EqualConditions {
 		newCond := expression.ConvertCol2CorCol(cond, corCols, outerSchema)
@@ -629,7 +622,7 @@ func (p *Join) buildSelectionWithConds(leftAsOuter bool) (*Selection, []*express
 		conds = append(conds, newCond)
 	}
 	selection.Conditions = conds
-	_, selection.controllerStatus = selection.makeScanController(true)
+	selection.controllerStatus = selection.checkScanController()
 	return selection, corCols
 }
 
@@ -667,10 +660,7 @@ func (p *Join) convert2IndexNestedLoopJoinLeft(prop *requiredProperty, innerJoin
 	if selection.controllerStatus == notController {
 		return nil, nil
 	}
-	rInfo, _ := selection.makeScanController(false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	rInfo := selection.makeScanController()
 	join := &PhysicalHashJoin{
 		LeftConditions: p.LeftConditions,
 		// TODO: decide concurrency by data size.
@@ -741,10 +731,7 @@ func (p *Join) convert2IndexNestedLoopJoinRight(prop *requiredProperty, innerJoi
 	if selection.controllerStatus == notController {
 		return nil, nil
 	}
-	lInfo, _ := selection.makeScanController(false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	lInfo := selection.makeScanController()
 	join := &PhysicalHashJoin{
 		RightConditions: p.RightConditions,
 		// TODO: decide concurrency by data size.
@@ -1246,14 +1233,13 @@ func (p *Union) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 // makeScanController will try to build a selection that controls the below scan's filter condition,
 // and return a physicalPlanInfo. If the onlyCheck is true, it will only check whether this selection
 // can become a scan controller without building the physical plan.
-func (p *Selection) makeScanController(onlyCheck bool) (*physicalPlanInfo, int) {
+func (p *Selection) makeScanController() *physicalPlanInfo {
 	var (
 		child       PhysicalPlan
 		corColConds []expression.Expression
-		pkCol       *expression.Column
 	)
 	ds := p.children[0].(*DataSource)
-	indices, includeTableScan := availableIndices(ds.indexHints, ds.tableInfo)
+	indices, _ := availableIndices(ds.indexHints, ds.tableInfo)
 	for _, expr := range p.Conditions {
 		if !expr.IsCorrelated() {
 			continue
@@ -1266,98 +1252,63 @@ func (p *Selection) makeScanController(onlyCheck bool) (*physicalPlanInfo, int) 
 		newCond, _ := expression.SubstituteCorCol2Constant(cond)
 		corColConds = append(corColConds, newCond)
 	}
-	if ds.tableInfo.PKIsHandle && includeTableScan {
-		for i, col := range ds.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
-				pkCol = ds.schema.Columns[i]
-				break
-			}
-		}
-	}
-	if pkCol != nil {
-		if onlyCheck {
-			checker := conditionChecker{
-				pkName: pkCol.ColName,
-				length: types.UnspecifiedLength,
-			}
-			// Pk should satisfies the same property as the index.
-			for _, cond := range corColConds {
-				if checker.check(cond) {
-					return nil, controlTableScan
-				}
-			}
-		} else if p.controllerStatus == controlTableScan {
-			ts := &PhysicalTableScan{
-				Table:               ds.tableInfo,
-				Columns:             ds.Columns,
-				TableAsName:         ds.TableAsName,
-				DBName:              ds.DBName,
-				physicalTableSource: physicalTableSource{client: ds.ctx.GetClient()},
-			}
-			ts.tp = TypeTableScan
-			ts.allocator = ds.allocator
-			ts.SetSchema(ds.schema)
-			ts.initIDAndContext(ds.ctx)
-			if ds.ctx.Txn() != nil {
-				ts.readOnly = p.ctx.Txn().IsReadOnly()
-			} else {
-				ts.readOnly = true
-			}
-			child = ts
-			newSel := *p
-			newSel.ScanController = true
-			newSel.SetChildren(child)
-			info := &physicalPlanInfo{
-				p:     &newSel,
-				count: uint64(ds.statisticTable.Count),
-			}
-			info.cost = float64(info.count) * selectionFactor
-			return info, controlTableScan
-		}
-		// else will check whether can build a index scan or just build a index scan.
-	}
-	var chosenPlan *PhysicalIndexScan
-	for _, idx := range indices {
-		condsBackUp := make([]expression.Expression, 0, len(corColConds))
-		for _, cond := range corColConds {
-			condsBackUp = append(condsBackUp, cond.Clone())
-		}
-		is := &PhysicalIndexScan{
+	if p.controllerStatus == controlTableScan {
+		ts := &PhysicalTableScan{
 			Table:               ds.tableInfo,
-			Index:               idx,
 			Columns:             ds.Columns,
 			TableAsName:         ds.TableAsName,
-			OutOfOrder:          true,
 			DBName:              ds.DBName,
 			physicalTableSource: physicalTableSource{client: ds.ctx.GetClient()},
 		}
-		is.tp = TypeIdxScan
-		is.allocator = ds.allocator
-		is.SetSchema(ds.schema)
-		is.initIDAndContext(ds.ctx)
-		if is.ctx.Txn() != nil {
-			is.readOnly = p.ctx.Txn().IsReadOnly()
+		ts.tp = TypeTableScan
+		ts.allocator = ds.allocator
+		ts.SetSchema(ds.schema)
+		ts.initIDAndContext(ds.ctx)
+		if ds.ctx.Txn() != nil {
+			ts.readOnly = p.ctx.Txn().IsReadOnly()
 		} else {
-			is.readOnly = true
+			ts.readOnly = true
 		}
-		accessConds, _ := DetachIndexScanConditions(condsBackUp, is)
-		if len(accessConds) == 0 {
-			continue
+		child = ts
+	} else if p.controllerStatus == controlIndexScan {
+		var chosenPlan *PhysicalIndexScan
+		for _, idx := range indices {
+			condsBackUp := make([]expression.Expression, 0, len(corColConds))
+			for _, cond := range corColConds {
+				condsBackUp = append(condsBackUp, cond.Clone())
+			}
+			is := &PhysicalIndexScan{
+				Table:               ds.tableInfo,
+				Index:               idx,
+				Columns:             ds.Columns,
+				TableAsName:         ds.TableAsName,
+				OutOfOrder:          true,
+				DBName:              ds.DBName,
+				physicalTableSource: physicalTableSource{client: ds.ctx.GetClient()},
+			}
+			is.tp = TypeIdxScan
+			is.allocator = ds.allocator
+			is.SetSchema(ds.schema)
+			is.initIDAndContext(ds.ctx)
+			if is.ctx.Txn() != nil {
+				is.readOnly = p.ctx.Txn().IsReadOnly()
+			} else {
+				is.readOnly = true
+			}
+			var accessConds []expression.Expression
+			accessConds, _, is.accessEqualCount, is.accessInAndEqCount = DetachIndexScanConditions(condsBackUp, is.Index)
+			if len(accessConds) == 0 {
+				continue
+			}
+			better := chosenPlan == nil || chosenPlan.accessEqualCount < is.accessEqualCount
+			better = better || (chosenPlan.accessEqualCount == is.accessEqualCount && chosenPlan.accessInAndEqCount < is.accessInAndEqCount)
+			if better {
+				chosenPlan = is
+			}
+			is.DoubleRead = !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
 		}
-		if onlyCheck {
-			return nil, controlIndexScan
-		}
-		better := chosenPlan == nil || chosenPlan.accessEqualCount < is.accessEqualCount
-		better = better || (chosenPlan.accessEqualCount == is.accessEqualCount && chosenPlan.accessInAndEqCount < is.accessInAndEqCount)
-		if better {
-			chosenPlan = is
-		}
-		is.DoubleRead = !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
+		child = chosenPlan
 	}
-	if chosenPlan == nil && onlyCheck {
-		return nil, notController
-	}
-	child = chosenPlan
 	newSel := *p
 	newSel.ScanController = true
 	newSel.SetChildren(child)
@@ -1366,7 +1317,7 @@ func (p *Selection) makeScanController(onlyCheck bool) (*physicalPlanInfo, int) 
 		count: uint64(ds.statisticTable.Count),
 	}
 	info.cost = float64(info.count) * selectionFactor
-	return info, controlIndexScan
+	return info
 }
 
 // convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
@@ -1379,7 +1330,7 @@ func (p *Selection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanI
 		return info, nil
 	}
 	if p.controllerStatus != notController {
-		info, _ = p.makeScanController(false)
+		info = p.makeScanController()
 		info = enforceProperty(prop, info)
 		p.storePlanInfo(prop, info)
 		return info, nil
