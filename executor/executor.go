@@ -65,6 +65,7 @@ var (
 	ErrPasswordNoMatch = terror.ClassExecutor.New(CodePasswordNoMatch, "Can't find any matching row in the user table")
 	ErrResultIsEmpty   = terror.ClassExecutor.New(codeResultIsEmpty, "result is empty")
 	ErrBuildExecutor   = terror.ClassExecutor.New(codeErrBuildExec, "Failed to build executor")
+	ErrBatchInsertFail = terror.ClassExecutor.New(codeBatchInsertFail, "Batch insert failed, please clean the table and try again.")
 )
 
 // Error codes.
@@ -78,6 +79,7 @@ const (
 	codePrepareDDL      terror.ErrCode = 7
 	codeResultIsEmpty   terror.ErrCode = 8
 	codeErrBuildExec    terror.ErrCode = 9
+	codeBatchInsertFail terror.ErrCode = 10
 	// MySQL error code
 	CodePasswordNoMatch terror.ErrCode = 1133
 	CodeCannotUser      terror.ErrCode = 1396
@@ -98,7 +100,7 @@ type RowKeyEntry struct {
 	// Row key.
 	Handle int64
 	// Table alias name.
-	TableAsName *model.CIStr
+	TableName string
 }
 
 // Executor executes a query.
@@ -689,9 +691,13 @@ func (e *TableScanExec) getRow(handle int64) (*Row, error) {
 
 	// Put rowKey to the tail of record row.
 	rke := &RowKeyEntry{
-		Tbl:         e.t,
-		Handle:      handle,
-		TableAsName: e.asName,
+		Tbl:    e.t,
+		Handle: handle,
+	}
+	if e.asName != nil && e.asName.L != "" {
+		rke.TableName = e.asName.L
+	} else {
+		rke.TableName = e.t.Meta().Name.L
 	}
 	row.RowKeys = append(row.RowKeys, rke)
 	return row, nil

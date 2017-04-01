@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"bytes"
+	"compress/zlib"
 	"crypto/md5"
 	"crypto/rand"
 	"crypto/sha1"
@@ -32,16 +34,7 @@ import (
 var (
 	_ functionClass = &aesDecryptFunctionClass{}
 	_ functionClass = &aesEncryptFunctionClass{}
-	_ functionClass = &asymmetricDecryptFunctionClass{}
-	_ functionClass = &asymmetricDeriveFunctionClass{}
-	_ functionClass = &asymmetricEncryptFunctionClass{}
-	_ functionClass = &asymmetricSignFunctionClass{}
-	_ functionClass = &asymmetricVerifyFunctionClass{}
 	_ functionClass = &compressFunctionClass{}
-	_ functionClass = &createAsymmetricPrivKeyFunctionClass{}
-	_ functionClass = &createAsymmetricPubKeyFunctionClass{}
-	_ functionClass = &createDHParametersFunctionClass{}
-	_ functionClass = &createDigestFunctionClass{}
 	_ functionClass = &decodeFunctionClass{}
 	_ functionClass = &desDecryptFunctionClass{}
 	_ functionClass = &desEncryptFunctionClass{}
@@ -61,16 +54,7 @@ var (
 var (
 	_ builtinFunc = &builtinAesDecryptSig{}
 	_ builtinFunc = &builtinAesEncryptSig{}
-	_ builtinFunc = &builtinAsymmetricDecryptSig{}
-	_ builtinFunc = &builtinAsymmetricDeriveSig{}
-	_ builtinFunc = &builtinAsymmetricEncryptSig{}
-	_ builtinFunc = &builtinAsymmetricSignSig{}
-	_ builtinFunc = &builtinAsymmetricVerifySig{}
 	_ builtinFunc = &builtinCompressSig{}
-	_ builtinFunc = &builtinCreateAsymmetricPrivKeySig{}
-	_ builtinFunc = &builtinCreateAsymmetricPubKeySig{}
-	_ builtinFunc = &builtinCreateDHParametersSig{}
-	_ builtinFunc = &builtinCreateDigestSig{}
 	_ builtinFunc = &builtinDecodeSig{}
 	_ builtinFunc = &builtinDesDecryptSig{}
 	_ builtinFunc = &builtinDesEncryptSig{}
@@ -119,6 +103,7 @@ func (b *builtinAesDecryptSig) eval(row []types.Datum) (d types.Datum, err error
 			return d, nil
 		}
 	}
+
 	cryptStr, err := args[0].ToBytes()
 	if err != nil {
 		return d, errors.Trace(err)
@@ -199,91 +184,6 @@ func handleAESKey(key []byte, mode string) []byte {
 	return rKey
 }
 
-type asymmetricDecryptFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *asymmetricDecryptFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinAsymmetricDecryptSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
-}
-
-type builtinAsymmetricDecryptSig struct {
-	baseBuiltinFunc
-}
-
-// See https://dev.mysql.com/doc/refman/5.7/en/enterprise-encryption-functions.html#function_asymmetric-decrypt
-func (b *builtinAsymmetricDecryptSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("ASYMMETRIC_DECRYPT")
-}
-
-type asymmetricDeriveFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *asymmetricDeriveFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinAsymmetricDeriveSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
-}
-
-type builtinAsymmetricDeriveSig struct {
-	baseBuiltinFunc
-}
-
-// See https://dev.mysql.com/doc/refman/5.7/en/enterprise-encryption-functions.html#function_asymmetric-derive
-func (b *builtinAsymmetricDeriveSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("ASYMMETRIC_DERIVE")
-}
-
-type asymmetricEncryptFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *asymmetricEncryptFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinAsymmetricEncryptSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
-}
-
-type builtinAsymmetricEncryptSig struct {
-	baseBuiltinFunc
-}
-
-// See https://dev.mysql.com/doc/refman/5.7/en/enterprise-encryption-functions.html#function_asymmetric-encrypt
-func (b *builtinAsymmetricEncryptSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("ASYMMETRIC_ENCRYPT")
-}
-
-type asymmetricSignFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *asymmetricSignFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinAsymmetricSignSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
-}
-
-type builtinAsymmetricSignSig struct {
-	baseBuiltinFunc
-}
-
-// See https://dev.mysql.com/doc/refman/5.7/en/enterprise-encryption-functions.html#function_asymmetric-sign
-func (b *builtinAsymmetricSignSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("ASYMMETRIC_SIGN")
-}
-
-type asymmetricVerifyFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *asymmetricVerifyFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinAsymmetricVerifySig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
-}
-
-type builtinAsymmetricVerifySig struct {
-	baseBuiltinFunc
-}
-
-// See https://dev.mysql.com/doc/refman/5.7/en/enterprise-encryption-functions.html#function_asymmetric-verify
-func (b *builtinAsymmetricVerifySig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("ASYMMETRIC_VERIFY")
-}
-
 type compressFunctionClass struct {
 	baseFunctionClass
 }
@@ -298,75 +198,27 @@ type builtinCompressSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_compress
 func (b *builtinCompressSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("COMPRESS")
-}
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
 
-type createAsymmetricPrivKeyFunctionClass struct {
-	baseFunctionClass
-}
+	arg := args[0]
+	if arg.IsNull() {
+		return d, nil
+	}
 
-func (c *createAsymmetricPrivKeyFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinCreateAsymmetricPrivKeySig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
-}
+	compressStr, err := arg.ToBytes()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
 
-type builtinCreateAsymmetricPrivKeySig struct {
-	baseBuiltinFunc
-}
-
-// See https://dev.mysql.com/doc/refman/5.7/en/enterprise-encryption-functions.html#function_create-asymmetric-priv-key
-func (b *builtinCreateAsymmetricPrivKeySig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("CREATE_ASYMMETRIC_PRIV_KEY")
-}
-
-type createAsymmetricPubKeyFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *createAsymmetricPubKeyFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinCreateAsymmetricPubKeySig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
-}
-
-type builtinCreateAsymmetricPubKeySig struct {
-	baseBuiltinFunc
-}
-
-// See https://dev.mysql.com/doc/refman/5.7/en/enterprise-encryption-functions.html#function_create-asymmetric-pub-key
-func (b *builtinCreateAsymmetricPubKeySig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("CREATE_ASYMMETRIC_PUB_KEY")
-}
-
-type createDHParametersFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *createDHParametersFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinCreateDHParametersSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
-}
-
-type builtinCreateDHParametersSig struct {
-	baseBuiltinFunc
-}
-
-// See https://dev.mysql.com/doc/refman/5.7/en/enterprise-encryption-functions.html#function_create-dh-parameters
-func (b *builtinCreateDHParametersSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("CREATE_DH_PARAMETERS")
-}
-
-type createDigestFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *createDigestFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinCreateDigestSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
-}
-
-type builtinCreateDigestSig struct {
-	baseBuiltinFunc
-}
-
-// See https://dev.mysql.com/doc/refman/5.7/en/enterprise-encryption-functions.html#function_create-digest
-func (b *builtinCreateDigestSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("CREATE_DIGEST")
+	var in bytes.Buffer
+	w := zlib.NewWriter(&in)
+	w.Write(compressStr)
+	w.Close()
+	d.SetBytes(in.Bytes())
+	return d, nil
 }
 
 type decodeFunctionClass struct {

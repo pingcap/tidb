@@ -23,9 +23,9 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/pd/pd-client"
+	pd "github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/store/tikv/mock-tikv"
+	mocktikv "github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	goctx "golang.org/x/net/context"
 )
@@ -195,7 +195,7 @@ func (o *mockOracle) addOffset(d time.Duration) {
 	o.offset += d
 }
 
-func (o *mockOracle) GetTimestamp() (uint64, error) {
+func (o *mockOracle) GetTimestamp(goctx.Context) (uint64, error) {
 	o.Lock()
 	defer o.Unlock()
 
