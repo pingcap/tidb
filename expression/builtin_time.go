@@ -2021,7 +2021,6 @@ func (b *builtinToSecondsSig) eval(row []types.Datum) (d types.Datum, err error)
 		return d, errors.Trace(err)
 	}
 	if args[0].IsNull() {
-		d.SetNull()
 		return d, nil
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
@@ -2031,7 +2030,6 @@ func (b *builtinToSecondsSig) eval(row []types.Datum) (d types.Datum, err error)
 	}
 	ret := types.TimestampDiff("SECOND", types.ZeroDate, date)
 	if ret == 0 {
-		d.SetNull()
 		return d, errorOrWarning(types.ErrInvalidTimeFormat, b.ctx)
 	}
 	d.SetInt64(ret)
