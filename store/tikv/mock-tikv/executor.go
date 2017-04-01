@@ -35,7 +35,7 @@ type executor interface {
 
 type tableScanExec struct {
 	*tipb.TableScan
-	schema      map[int64]int
+	colsID      map[int64]int
 	kvRanges    []kv.KeyRange
 	startTS     uint64
 	mvccStore   *MvccStore
@@ -90,7 +90,7 @@ func (e *tableScanExec) getRowFromPoint(ran kv.KeyRange) (int64, [][]byte, error
 	if err != nil {
 		return 0, nil, errors.Trace(err)
 	}
-	row, err := handleRowData(e.Columns, e.schema, handle, val)
+	row, err := handleRowData(e.Columns, e.colsID, handle, val)
 	if err != nil {
 		return 0, nil, errors.Trace(err)
 	}
@@ -143,7 +143,7 @@ func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 	if err != nil {
 		return 0, nil, errors.Trace(err)
 	}
-	row, err := handleRowData(e.Columns, e.schema, handle, pair.Value)
+	row, err := handleRowData(e.Columns, e.colsID, handle, pair.Value)
 	if err != nil {
 		return 0, nil, errors.Trace(err)
 	}
@@ -252,7 +252,7 @@ type selectionExec struct {
 	sc      *variable.StatementContext
 	eval    *xeval.Evaluator
 	columns []*tipb.ColumnInfo
-	schema  map[int64]int
+	colsID  map[int64]int
 
 	src executor
 }
@@ -271,7 +271,7 @@ func (e *selectionExec) Next() (int64, [][]byte, error) {
 			return 0, nil, nil
 		}
 
-		err = setSchemaValueToEval(e.eval, handle, row, e.columns, e.schema)
+		err = setColumnValuesToEval(e.eval, handle, row, e.columns, e.colsID)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
@@ -353,8 +353,8 @@ func handleRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle int6
 	return values, nil
 }
 
-// setSchemaValueToEval puts column values into evaluator, the values will be used for expr evaluation.
-func setSchemaValueToEval(eval *xeval.Evaluator, handle int64, row [][]byte, cols []*tipb.ColumnInfo, colIDs map[int64]int) error {
+// setColumnValuesToEval puts column values into evaluator, the values will be used for expr evaluation.
+func setColumnValuesToEval(eval *xeval.Evaluator, handle int64, row [][]byte, cols []*tipb.ColumnInfo, colIDs map[int64]int) error {
 	for colID, offset := range colIDs {
 		col := cols[offset]
 		if col.GetPkHandle() {
@@ -376,7 +376,7 @@ func setSchemaValueToEval(eval *xeval.Evaluator, handle int64, row [][]byte, col
 	return nil
 }
 
-func extractSchemaInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector map[int64]int) error {
+func extractColIDsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector map[int64]int) error {
 	if expr == nil {
 		return nil
 	}
@@ -394,7 +394,7 @@ func extractSchemaInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector 
 		return xeval.ErrInvalid.Gen("column %d not found", i)
 	}
 	for _, child := range expr.Children {
-		err := extractSchemaInExpr(child, columns, collector)
+		err := extractColIDsInExpr(child, columns, collector)
 		if err != nil {
 			return errors.Trace(err)
 		}

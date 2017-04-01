@@ -100,7 +100,7 @@ func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 		currExec = &tableScanExec{
 			TableScan:   curr.TblScan,
 			kvRanges:    ranges,
-			schema:      colIDs,
+			colsID:      colIDs,
 			startTS:     ctx.dagReq.GetStartTs(),
 			mvccStore:   h.mvccStore,
 			rawStartKey: h.rawStartKey,
@@ -131,7 +131,7 @@ func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 			cond = curr.Selection.Conditions[0]
 		}
 		colIDs := make(map[int64]int)
-		err := extractSchemaInExpr(cond, ctx.columns, colIDs)
+		err := extractColIDsInExpr(cond, ctx.columns, colIDs)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -139,7 +139,7 @@ func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 			Selection: curr.Selection,
 			eval:      ctx.eval,
 			columns:   ctx.columns,
-			schema:    colIDs,
+			colsID:    colIDs,
 			sc:        ctx.sc,
 		}
 	default:
