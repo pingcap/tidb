@@ -207,8 +207,10 @@ func (p *Selection) checkScanController() int {
 			length: types.UnspecifiedLength,
 		}
 		for _, cond := range corColConds {
-			if checker.check(cond) {
-				return controlTableScan
+			if sf, ok := cond.(*expression.ScalarFunction); ok {
+				if sf.FuncName.L == ast.EQ && checker.checkScalarFunction(sf) {
+					return controlTableScan
+				}
 			}
 		}
 	}
@@ -217,9 +219,8 @@ func (p *Selection) checkScanController() int {
 		for _, cond := range corColConds {
 			condsBackUp = append(condsBackUp, cond.Clone())
 		}
-		var accessConds []expression.Expression
-		accessConds, _, _, _ = DetachIndexScanConditions(condsBackUp, idx)
-		if len(accessConds) > 0 {
+		_, _, eqCount, _ := DetachIndexScanConditions(condsBackUp, idx)
+		if eqCount > 0 {
 			return controlIndexScan
 		}
 	}

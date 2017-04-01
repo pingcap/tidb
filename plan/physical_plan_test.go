@@ -1095,6 +1095,10 @@ func (s *testPlanSuite) TestJoinAlgorithm(c *C) {
 			ans: "Apply{Table(t)->Selection->Table(t)}",
 		},
 		{
+			sql: "select /*+ tidb_inlj(t1, t2) */ * from t t1 right outer join t t2 on t1.a > t2.c",
+			ans: "RightHashJoin{Table(t)->Table(t)}",
+		},
+		{
 			sql: "select /*+ tidb_inlj(t1, t2) */ * from t t1 left outer join t t2 on t1.a = t2.e",
 			ans: "LeftHashJoin{Table(t)->Table(t)}(t1.a,t2.e)",
 		},
@@ -1105,6 +1109,10 @@ func (s *testPlanSuite) TestJoinAlgorithm(c *C) {
 		{
 			sql: "select /*+ tidb_inlj(t, tt) */ * from t tt join t on tt.a=t.f and tt.f>1",
 			ans: "Apply{Index(t.f)[(1,+inf]]->Index(t.f)[]->Selection}",
+		},
+		{
+			sql: "select /*+ tidb_inlj(t, tt) */ * from t tt join t on tt.a>t.f",
+			ans: "LeftHashJoin{Table(t)->Table(t)}",
 		},
 		{
 			sql: "select /*+ tidb_inlj(t2) */ * from t t1 join t t2 on t1.c=t2.c and t1.d=t2.d and t1.e > t2.e",
