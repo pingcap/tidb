@@ -214,9 +214,12 @@ type PhysicalPlan interface {
 }
 
 type baseLogicalPlan struct {
-	basePlan
-	planMap map[string]*physicalPlanInfo
-	self    LogicalPlan
+	basePlan *basePlan
+	planMap  map[string]*physicalPlanInfo
+}
+
+type basePhysicalPlan struct {
+	basePlan *basePlan
 }
 
 func (p *baseLogicalPlan) getPlanInfo(prop *requiredProperty) (*physicalPlanInfo, error) {
@@ -235,15 +238,15 @@ func (p *baseLogicalPlan) convert2PhysicalPlan(prop *requiredProperty) (*physica
 	if info != nil {
 		return info, nil
 	}
-	if len(p.children) == 0 {
-		return &physicalPlanInfo{p: p.self.(PhysicalPlan)}, nil
+	if len(p.basePlan.children) == 0 {
+		return &physicalPlanInfo{p: p.basePlan.self.(PhysicalPlan)}, nil
 	}
-	child := p.children[0].(LogicalPlan)
+	child := p.basePlan.children[0].(LogicalPlan)
 	info, err = child.convert2PhysicalPlan(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	info = addPlanToResponse(p.self.(PhysicalPlan), info)
+	info = addPlanToResponse(p.basePlan.self.(PhysicalPlan), info)
 	return info, p.storePlanInfo(prop, info)
 }
 
@@ -258,50 +261,67 @@ func (p *baseLogicalPlan) storePlanInfo(prop *requiredProperty, info *physicalPl
 }
 
 func (p *baseLogicalPlan) buildKeyInfo() {
-	for _, child := range p.Children() {
+	for _, child := range p.basePlan.children {
 		child.(LogicalPlan).buildKeyInfo()
 	}
-	if len(p.children) == 1 {
-		switch p.self.(type) {
+	if len(p.basePlan.children) == 1 {
+		switch p.basePlan.self.(type) {
 		case *Exists, *Aggregation, *Projection:
-			p.schema.Keys = nil
+			p.basePlan.schema.Keys = nil
 		case *SelectLock:
-			p.schema.Keys = p.children[0].Schema().Keys
+			p.basePlan.schema.Keys = p.basePlan.children[0].Schema().Keys
 		default:
-			p.schema.Keys = p.children[0].Schema().Clone().Keys
+			p.basePlan.schema.Keys = p.basePlan.children[0].Schema().Clone().Keys
 		}
 	} else {
-		p.schema.Keys = nil
+		p.basePlan.schema.Keys = nil
 	}
 }
 
-func newBaseLogicalPlan(tp string, a *idAllocator) baseLogicalPlan {
-	return baseLogicalPlan{
-		planMap: make(map[string]*physicalPlanInfo),
-		basePlan: basePlan{
-			tp:        tp,
-			allocator: a,
-		},
+func newBasePlan(tp string, allocator *idAllocator, ctx context.Context, p Plan) *basePlan {
+	return &basePlan{
+		tp:        tp,
+		allocator: allocator,
+		id:        tp + allocator.allocID(),
+		ctx:       ctx,
+		self:      p,
 	}
+}
+
+func newBaseLogicalPlan(basePlan *basePlan) baseLogicalPlan {
+	return baseLogicalPlan{
+		planMap:  make(map[string]*physicalPlanInfo),
+		basePlan: basePlan,
+	}
+}
+
+func newBasePhysicalPlan(basePlan *basePlan) basePhysicalPlan {
+	return basePhysicalPlan{
+		basePlan: basePlan,
+	}
+}
+
+func (p *basePhysicalPlan) matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
+	panic("You can't call this function!")
 }
 
 // PredicatePushDown implements LogicalPlan interface.
 func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
-	if len(p.Children()) == 0 {
-		return predicates, p.self, nil
+	if len(p.basePlan.children) == 0 {
+		return predicates, p.basePlan.self.(LogicalPlan), nil
 	}
-	child := p.children[0].(LogicalPlan)
+	child := p.basePlan.children[0].(LogicalPlan)
 	rest, _, err := child.PredicatePushDown(predicates)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	if len(rest) > 0 {
-		err = addSelection(p, child, rest, p.allocator)
+		err = addSelection(p.basePlan.self, child, rest, p.basePlan.allocator)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
 	}
-	return nil, p.self, nil
+	return nil, p.basePlan.self.(LogicalPlan), nil
 }
 
 func (p *basePlan) extractCorrelatedCols() []*expression.CorrelatedColumn {
@@ -318,24 +338,19 @@ func (p *basePlan) Allocator() *idAllocator {
 
 // ResolveIndicesAndCorCols implements LogicalPlan interface.
 func (p *baseLogicalPlan) ResolveIndicesAndCorCols() {
-	for _, child := range p.children {
+	for _, child := range p.basePlan.children {
 		child.(LogicalPlan).ResolveIndicesAndCorCols()
 	}
 }
 
 // PruneColumns implements LogicalPlan interface.
 func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) {
-	if len(p.children) == 0 {
+	if len(p.basePlan.children) == 0 {
 		return
 	}
-	child := p.children[0].(LogicalPlan)
+	child := p.basePlan.children[0].(LogicalPlan)
 	child.PruneColumns(parentUsedCols)
-	p.SetSchema(child.Schema())
-}
-
-func (p *basePlan) initIDAndContext(ctx context.Context) {
-	p.id = p.tp + p.allocator.allocID()
-	p.ctx = ctx
+	p.basePlan.SetSchema(child.Schema())
 }
 
 // basePlan implements base Plan interface.
@@ -349,6 +364,12 @@ type basePlan struct {
 	id        string
 	allocator *idAllocator
 	ctx       context.Context
+	self      Plan
+}
+
+func (p *basePlan) copy() *basePlan {
+	np := *p
+	return &np
 }
 
 // MarshalJSON implements json.Marshaler interface.

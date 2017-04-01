@@ -167,10 +167,7 @@ func (b *planBuilder) buildExecute(v *ast.ExecuteStmt) Plan {
 
 func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 	exprs := make([]expression.Expression, 0, len(v.Exprs))
-	dual := &TableDual{
-		baseLogicalPlan: newBaseLogicalPlan(TypeDual, b.allocator),
-	}
-	dual.self = dual
+	dual := TableDual{}.init(b.allocator, b.ctx)
 	for _, astExpr := range v.Exprs {
 		expr, _, err := b.rewrite(astExpr, dual, nil, true)
 		if err != nil {
@@ -180,11 +177,7 @@ func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 		exprs = append(exprs, expr)
 	}
 	dual.SetSchema(expression.NewSchema())
-	p := &Projection{
-		Exprs:           exprs,
-		baseLogicalPlan: newBaseLogicalPlan(TypeProj, b.allocator),
-	}
-	p.initIDAndContext(b.ctx)
+	p := Projection{Exprs: exprs}.init(b.allocator, b.ctx)
 	addChild(p, dual)
 	p.self = p
 	p.SetSchema(expression.NewSchema())
@@ -193,8 +186,6 @@ func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 
 func (b *planBuilder) buildSet(v *ast.SetStmt) Plan {
 	p := &Set{}
-	p.tp = TypeSet
-	p.allocator = b.allocator
 	for _, vars := range v.Variables {
 		assign := &expression.VarAssignment{
 			Name:     vars.Name,
@@ -217,7 +208,6 @@ func (b *planBuilder) buildSet(v *ast.SetStmt) Plan {
 		}
 		p.VarAssigns = append(p.VarAssigns, assign)
 	}
-	p.initIDAndContext(b.ctx)
 	p.SetSchema(expression.NewSchema())
 	return p
 }
@@ -321,12 +311,7 @@ func findIndexByName(indices []*model.IndexInfo, name model.CIStr) *model.IndexI
 }
 
 func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *SelectLock {
-	selectLock := &SelectLock{
-		Lock:            lock,
-		baseLogicalPlan: newBaseLogicalPlan(TypeLock, b.allocator),
-	}
-	selectLock.self = selectLock
-	selectLock.initIDAndContext(b.ctx)
+	selectLock := SelectLock{Lock: lock}.init(b.allocator, b.ctx)
 	addChild(selectLock, src)
 	selectLock.SetSchema(src.Schema())
 	return selectLock
@@ -404,26 +389,18 @@ func getColumnOffsets(tn *ast.TableName) (indexOffsets []int, columnOffsets []in
 }
 
 func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) LogicalPlan {
-	p := &Analyze{
-		baseLogicalPlan: newBaseLogicalPlan(TypeAnalyze, b.allocator),
-		PkOffset:        -1,
-	}
+	p := Analyze{PkOffset: -1}.init(b.allocator, b.ctx)
 	for _, tbl := range as.TableNames {
 		idxOffsets, colOffsets, pkOffset := getColumnOffsets(tbl)
-		result := &Analyze{
-			baseLogicalPlan: newBaseLogicalPlan(TypeAnalyze, b.allocator),
-			Table:           tbl,
-			IdxOffsets:      idxOffsets,
-			ColOffsets:      colOffsets,
-			PkOffset:        pkOffset,
-		}
-		result.self = result
-		result.initIDAndContext(b.ctx)
+		result := Analyze{
+			Table:      tbl,
+			IdxOffsets: idxOffsets,
+			ColOffsets: colOffsets,
+			PkOffset:   pkOffset,
+		}.init(b.allocator, b.ctx)
 		result.SetSchema(expression.TableInfo2Schema(tbl.TableInfo))
 		addChild(p, result)
 	}
-	p.self = p
-	p.initIDAndContext(b.ctx)
 	p.SetSchema(&expression.Schema{})
 	return p
 }
@@ -486,19 +463,16 @@ func splitWhere(where ast.ExprNode) []ast.ExprNode {
 
 func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 	var resultPlan Plan
-	p := &Show{
-		Tp:              show.Tp,
-		DBName:          show.DBName,
-		Table:           show.Table,
-		Column:          show.Column,
-		Flag:            show.Flag,
-		Full:            show.Full,
-		User:            show.User,
-		baseLogicalPlan: newBaseLogicalPlan(TypeShow, b.allocator),
-	}
+	p := Show{
+		Tp:     show.Tp,
+		DBName: show.DBName,
+		Table:  show.Table,
+		Column: show.Column,
+		Flag:   show.Flag,
+		Full:   show.Full,
+		User:   show.User,
+	}.init(b.allocator, b.ctx)
 	resultPlan = p
-	p.initIDAndContext(b.ctx)
-	p.self = p
 	switch show.Tp {
 	case ast.ShowProcedureStatus:
 		p.SetSchema(buildShowProcedureSchema())
@@ -535,12 +509,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 		}
 	}
 	if len(conditions) != 0 {
-		sel := &Selection{
-			baseLogicalPlan: newBaseLogicalPlan(TypeSel, b.allocator),
-			Conditions:      conditions,
-		}
-		sel.initIDAndContext(b.ctx)
-		sel.self = sel
+		sel := Selection{Conditions: conditions}.init(b.allocator, b.ctx)
 		addChild(sel, p)
 		sel.SetSchema(p.Schema())
 		resultPlan = sel
@@ -631,15 +600,14 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		b.err = errors.Errorf("Can't get table %s.", tableInfo.Name.O)
 		return nil
 	}
-	insertPlan := &Insert{
-		Table:           table,
-		Columns:         insert.Columns,
-		tableSchema:     schema,
-		IsReplace:       insert.IsReplace,
-		Priority:        insert.Priority,
-		Ignore:          insert.Ignore,
-		baseLogicalPlan: newBaseLogicalPlan(TypeInsert, b.allocator),
-	}
+	insertPlan := Insert{
+		Table:       table,
+		Columns:     insert.Columns,
+		tableSchema: schema,
+		IsReplace:   insert.IsReplace,
+		Priority:    insert.Priority,
+		Ignore:      insert.Ignore,
+	}.init(b.allocator, b.ctx)
 
 	b.visitInfo = append(b.visitInfo, visitInfo{
 		privilege: mysql.InsertPriv,
@@ -696,7 +664,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 			Expr: expr,
 		})
 	}
-	mockTablePlan := &TableDual{}
+	mockTablePlan := TableDual{}.init(b.allocator, b.ctx)
 	mockTablePlan.SetSchema(schema)
 	for _, assign := range insert.OnDuplicate {
 		col, err := schema.FindColumn(assign.Column)
@@ -718,8 +686,6 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 			Expr: expr,
 		})
 	}
-	insertPlan.initIDAndContext(b.ctx)
-	insertPlan.self = insertPlan
 	if insert.Select != nil {
 		selectPlan := b.build(insert.Select)
 		if b.err != nil {
