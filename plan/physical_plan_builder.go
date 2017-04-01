@@ -1272,18 +1272,16 @@ func (p *Selection) makeScanController() *physicalPlanInfo {
 		child = ts
 	} else if p.controllerStatus == controlIndexScan {
 		var (
-			chosenPlan                       *PhysicalIndexScan
-			bestEqualCount, bestInAndEqCount int
+			chosenPlan     *PhysicalIndexScan
+			bestEqualCount int
 		)
 		for _, idx := range indices {
 			condsBackUp := make([]expression.Expression, 0, len(corColConds))
 			for _, cond := range corColConds {
 				condsBackUp = append(condsBackUp, cond.Clone())
 			}
-			_, _, accessEqualCount, accessInAndEqCount := DetachIndexScanConditions(condsBackUp, idx)
-			better := chosenPlan == nil || bestEqualCount < accessEqualCount
-			better = better || (bestEqualCount == accessEqualCount && bestInAndEqCount < accessInAndEqCount)
-			if better {
+			_, _, accessEqualCount, _ := DetachIndexScanConditions(condsBackUp, idx)
+			if chosenPlan == nil || bestEqualCount < accessEqualCount {
 				is := &PhysicalIndexScan{
 					Table:               ds.tableInfo,
 					Index:               idx,
@@ -1303,7 +1301,7 @@ func (p *Selection) makeScanController() *physicalPlanInfo {
 					is.readOnly = true
 				}
 				is.DoubleRead = !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
-				chosenPlan, bestEqualCount, bestInAndEqCount = is, accessEqualCount, accessInAndEqCount
+				chosenPlan, bestEqualCount = is, accessEqualCount
 			}
 		}
 		child = chosenPlan
