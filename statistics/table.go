@@ -168,8 +168,8 @@ func (t *Table) String() string {
 	return strings.Join(strs, "\n")
 }
 
-// ColumnInValid checks if this column is invalid. Exported for test.
-func (t *Table) ColumnInValid(colInfo *model.ColumnInfo) bool {
+// ColumnIsInvalid checks if this column is invalid. Exported for test.
+func (t *Table) ColumnIsInvalid(colInfo *model.ColumnInfo) bool {
 	if t.Pseudo {
 		return true
 	}
@@ -179,7 +179,7 @@ func (t *Table) ColumnInValid(colInfo *model.ColumnInfo) bool {
 
 // ColumnGreaterRowCount estimates the row count where the column greater than value.
 func (t *Table) ColumnGreaterRowCount(sc *variable.StatementContext, value types.Datum, colInfo *model.ColumnInfo) (int64, error) {
-	if t.ColumnInValid(colInfo) {
+	if t.ColumnIsInvalid(colInfo) {
 		return t.Count / pseudoLessRate, nil
 	}
 	return t.Columns[colInfo.Offset].GreaterRowCount(sc, value)
@@ -187,7 +187,7 @@ func (t *Table) ColumnGreaterRowCount(sc *variable.StatementContext, value types
 
 // ColumnLessRowCount estimates the row count where the column less than value.
 func (t *Table) ColumnLessRowCount(sc *variable.StatementContext, value types.Datum, colInfo *model.ColumnInfo) (int64, error) {
-	if t.ColumnInValid(colInfo) {
+	if t.ColumnIsInvalid(colInfo) {
 		return t.Count / pseudoLessRate, nil
 	}
 	return t.Columns[colInfo.Offset].LessRowCount(sc, value)
@@ -195,7 +195,7 @@ func (t *Table) ColumnLessRowCount(sc *variable.StatementContext, value types.Da
 
 // ColumnBetweenRowCount estimates the row count where column greater or equal to a and less than b.
 func (t *Table) ColumnBetweenRowCount(sc *variable.StatementContext, a, b types.Datum, colInfo *model.ColumnInfo) (int64, error) {
-	if t.ColumnInValid(colInfo) {
+	if t.ColumnIsInvalid(colInfo) {
 		return t.Count / pseudoBetweenRate, nil
 	}
 	return t.Columns[colInfo.Offset].BetweenRowCount(sc, a, b)
@@ -203,7 +203,7 @@ func (t *Table) ColumnBetweenRowCount(sc *variable.StatementContext, a, b types.
 
 // ColumnEqualRowCount estimates the row count where the column equals to value.
 func (t *Table) ColumnEqualRowCount(sc *variable.StatementContext, value types.Datum, colInfo *model.ColumnInfo) (int64, error) {
-	if t.ColumnInValid(colInfo) {
+	if t.ColumnIsInvalid(colInfo) {
 		return t.Count / pseudoEqualRate, nil
 	}
 	return t.Columns[colInfo.Offset].EqualRowCount(sc, value)
