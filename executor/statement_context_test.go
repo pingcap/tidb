@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"fmt"
+	"unicode/utf8"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/table"
@@ -84,4 +85,8 @@ func (s *testSuite) TestStatementContext(c *C) {
 	_, err = tk.Exec("insert sc2 values (unhex('4040ffff'))")
 	c.Assert(err, IsNil)
 	tk.MustQuery("select length(a) from sc2").Check(testkit.Rows("2", "4"))
+
+	tk.MustExec("set @@tidb_skip_utf8_check = '0'")
+	runeErrStr := string(utf8.RuneError)
+	tk.MustExec(fmt.Sprintf("insert sc2 values ('%s')", runeErrStr))
 }

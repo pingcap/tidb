@@ -1137,11 +1137,9 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 }
 
 func (s *testPlanSuite) TestAllocID(c *C) {
-	pA := &DataSource{baseLogicalPlan: newBaseLogicalPlan(TypeTableScan, new(idAllocator))}
-	pB := &DataSource{baseLogicalPlan: newBaseLogicalPlan(TypeTableScan, new(idAllocator))}
 	ctx := mockContext()
-	pA.initIDAndContext(ctx)
-	pB.initIDAndContext(ctx)
+	pA := DataSource{}.init(new(idAllocator), ctx)
+	pB := DataSource{}.init(new(idAllocator), ctx)
 	c.Assert(pA.id, Equals, pB.id)
 }
 

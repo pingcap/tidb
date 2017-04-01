@@ -184,12 +184,7 @@ func (sel *Selection) splitSelectionByIndexColumns(schema *expression.Schema) (i
 		indexSel = sel
 	}
 	if len(tableConds) != 0 {
-		tableSel = &Selection{
-			baseLogicalPlan: newBaseLogicalPlan(TypeSel, sel.allocator),
-			Conditions:      tableConds,
-		}
-		tableSel.self = tableSel
-		tableSel.initIDAndContext(sel.ctx)
+		tableSel = Selection{Conditions: tableConds}.init(sel.allocator, sel.ctx)
 	}
 	return
 }
