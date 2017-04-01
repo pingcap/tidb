@@ -64,7 +64,7 @@ func NewEvaluator(sc *variable.StatementContext) *Evaluator {
 	return &Evaluator{Row: make(map[int64]types.Datum), sc: sc}
 }
 
-// SetColsAndFieldTps sets ColumnInfos.
+// SetColumnInfos sets ColumnInfos.
 func (e *Evaluator) SetColumnInfos(cols []*tipb.ColumnInfo) {
 	e.ColumnInfos = make([]*tipb.ColumnInfo, len(cols))
 	copy(e.ColumnInfos, cols)
