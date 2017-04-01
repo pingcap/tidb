@@ -385,12 +385,28 @@ func (c *RPCClient) SendKVReq(ctx goctx.Context, addr string, req *kvrpcpb.Reque
 	default:
 	}
 
-	store := c.Cluster.GetStoreByAddr(addr)
+	store, err := c.getAndCheckStoreByAddr(addr)
+	if err != nil {
+		return nil, err
+	}
+
+	handler := newRPCHandler(c.Cluster, c.MvccStore, store.GetId())
+	return handler.handleRequest(req), nil
+}
+
+func (c *RPCClient) getAndCheckStoreByAddr(addr string) (*metapb.Store, error) {
+	store, err := c.Cluster.GetAndCheckStoreByAddr(addr)
+	if err != nil {
+		return nil, err
+	}
 	if store == nil {
 		return nil, errors.New("connect fail")
 	}
-	handler := newRPCHandler(c.Cluster, c.MvccStore, store.GetId())
-	return handler.handleRequest(req), nil
+	if store.GetState() == metapb.StoreState_Offline ||
+		store.GetState() == metapb.StoreState_Tombstone {
+		return nil, errors.New("connection refused")
+	}
+	return store, nil
 }
 
 // SendCopReq sends a coprocessor request to mock cluster.
@@ -409,10 +425,11 @@ func (c *RPCClient) SendCopReq(ctx goctx.Context, addr string, req *coprocessor.
 		}
 	}
 
-	store := c.Cluster.GetStoreByAddr(addr)
-	if store == nil {
-		return nil, errors.New("connect fail")
+	store, err := c.getAndCheckStoreByAddr(addr)
+	if err != nil {
+		return nil, err
 	}
+
 	handler := newRPCHandler(c.Cluster, c.MvccStore, store.GetId())
 
 	return handler.handleCopRequest(req)

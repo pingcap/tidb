@@ -108,14 +108,18 @@ func (ir *IndexRange) String() string {
 
 // SelectLock represents a select lock plan.
 type SelectLock struct {
+	*basePlan
 	baseLogicalPlan
+	basePhysicalPlan
 
 	Lock ast.SelectLockType
 }
 
 // Limit represents offset and limit plan.
 type Limit struct {
+	*basePlan
 	baseLogicalPlan
+	basePhysicalPlan
 
 	Offset uint64
 	Count  uint64
@@ -147,7 +151,9 @@ type Deallocate struct {
 
 // Show represents a show plan.
 type Show struct {
+	*basePlan
 	baseLogicalPlan
+	basePhysicalPlan
 
 	Tp     ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName string
@@ -177,7 +183,9 @@ type Simple struct {
 
 // Insert represents an insert plan.
 type Insert struct {
+	*basePlan
 	baseLogicalPlan
+	basePhysicalPlan
 
 	Table       table.Table
 	tableSchema *expression.Schema
@@ -193,7 +201,9 @@ type Insert struct {
 
 // Analyze represents an analyze plan
 type Analyze struct {
+	*basePlan
 	baseLogicalPlan
+	basePhysicalPlan
 
 	Table      *ast.TableName
 	IdxOffsets []int
