@@ -59,6 +59,11 @@ const (
 	LeftOuterSemiJoin
 )
 
+const (
+	preferLeftAsOuter = 1 << iota
+	preferRightAsOuter
+)
+
 // LogicalJoin is the logical join plan.
 type LogicalJoin struct {
 	*basePlan
@@ -68,6 +73,7 @@ type LogicalJoin struct {
 	anti            bool
 	reordered       bool
 	cartesianJoin   bool
+	preferINLJ      int
 	preferMergeJoin bool
 
 	EqualConditions []*expression.ScalarFunction
@@ -182,7 +188,7 @@ type Selection struct {
 	ScanController bool
 
 	// We will check this at decorrelate phase.
-	canControlScan bool
+	controllerStatus int
 }
 
 func (p *Selection) extractCorrelatedCols() []*expression.CorrelatedColumn {

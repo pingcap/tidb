@@ -27,8 +27,10 @@ import (
 )
 
 const (
-	// TiDBMergeJoin is hint enforce merge join
+	// TiDBMergeJoin is hint enforce merge join.
 	TiDBMergeJoin = "tidb_smj"
+	// TiDBIndexNestedLoopJoin is hint enforce index nested loop join.
+	TiDBIndexNestedLoopJoin = "tidb_inlj"
 )
 
 type idAllocator struct {
@@ -226,6 +228,15 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 
 	if b.TableHints() != nil {
 		joinPlan.preferMergeJoin = b.TableHints().ifPreferMergeJoin(leftAlias, rightAlias)
+		if b.TableHints().ifPreferINLJ(leftAlias) {
+			joinPlan.preferINLJ = joinPlan.preferINLJ | preferLeftAsOuter
+		}
+		if b.TableHints().ifPreferINLJ(rightAlias) {
+			joinPlan.preferINLJ = joinPlan.preferINLJ | preferRightAsOuter
+		}
+		if joinPlan.preferMergeJoin && joinPlan.preferINLJ > 0 {
+			b.err = errors.New("Optimizer Hints is conflict")
+		}
 	}
 
 	if join.On != nil {
@@ -823,17 +834,22 @@ func (b *planBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 }
 
 func (b *planBuilder) pushTableHints(hints []*ast.TableOptimizerHint) bool {
-	var sortMergeTables []model.CIStr
+	var sortMergeTables, INLJTables []model.CIStr
 	for _, hint := range hints {
 		switch hint.HintName.L {
 		case TiDBMergeJoin:
 			sortMergeTables = append(sortMergeTables, hint.Tables...)
+		case TiDBIndexNestedLoopJoin:
+			INLJTables = append(INLJTables, hint.Tables...)
 		default:
 			// ignore hints that not implemented
 		}
 	}
-	if len(sortMergeTables) != 0 {
-		b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{sortMergeTables})
+	if len(sortMergeTables) != 0 || len(INLJTables) != 0 {
+		b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
+			sortMergeJoinTables: sortMergeTables,
+			INLJTables:          INLJTables,
+		})
 		return true
 	}
 	return false

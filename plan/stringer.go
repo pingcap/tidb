@@ -26,7 +26,7 @@ func ToString(p Plan) string {
 
 func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 	switch in.(type) {
-	case *LogicalJoin, *Union, *PhysicalHashJoin, *PhysicalHashSemiJoin, *LogicalApply, *PhysicalApply:
+	case *LogicalJoin, *Union, *PhysicalHashJoin, *PhysicalHashSemiJoin, *LogicalApply, *PhysicalApply, *PhysicalMergeJoin:
 		idxs = append(idxs, len(strs))
 	}
 
@@ -68,6 +68,18 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			str = "SemiJoinWithAux{" + strings.Join(children, "->") + "}"
 		} else {
 			str = "SemiJoin{" + strings.Join(children, "->") + "}"
+		}
+	case *PhysicalMergeJoin:
+		last := len(idxs) - 1
+		idx := idxs[last]
+		children := strs[idx:]
+		strs = strs[:idx]
+		idxs = idxs[:last]
+		str = "MergeJoin{" + strings.Join(children, "->") + "}"
+		for _, eq := range x.EqualConditions {
+			l := eq.GetArgs()[0].String()
+			r := eq.GetArgs()[1].String()
+			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
 	case *LogicalApply, *PhysicalApply:
 		last := len(idxs) - 1

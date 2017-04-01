@@ -1059,3 +1059,85 @@ func (s *testPlanSuite) TestScanController(c *C) {
 		c.Assert(ToString(pp), Equals, ca.ans, Commentf("for %s", ca.sql))
 	}
 }
+
+func (s *testPlanSuite) TestJoinAlgorithm(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		sql string
+		ans string
+	}{
+		{
+			sql: "select * from t t1 join t t2 on t1.a = t2.a",
+			ans: "LeftHashJoin{Table(t)->Table(t)}(t1.a,t2.a)",
+		},
+		{
+			sql: "select /*+ tidb_smj(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a",
+			ans: "MergeJoin{Table(t)->Table(t)}(t1.a,t2.a)",
+		},
+		{
+			sql: "select /*+ tidb_smj(t1) */ * from t t1 join t t2 on t1.a = t2.a",
+			ans: "MergeJoin{Table(t)->Table(t)}(t1.a,t2.a)",
+		},
+		{
+			sql: "select /*+ tidb_inlj(t2) */ * from t t1 join t t2 on t1.a = t2.a",
+			ans: "Apply{Table(t)->Selection->Table(t)}",
+		},
+		{
+			sql: "select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 on t1.a > t2.a",
+			ans: "LeftHashJoin{Table(t)->Table(t)}",
+		},
+		{
+			sql: "select /*+ TIDB_INLJ(t1, t2) */ * from t t1 join t t2 on t1.a > t2.a",
+			ans: "LeftHashJoin{Table(t)->Table(t)}",
+		},
+		{
+			sql: "select /*+ tidb_inlj(t1, t2) */ * from t t1 right outer join t t2 on t1.a = t2.c",
+			ans: "Apply{Table(t)->Selection->Table(t)}",
+		},
+		{
+			sql: "select /*+ tidb_inlj(t1, t2) */ * from t t1 right outer join t t2 on t1.a > t2.c",
+			ans: "RightHashJoin{Table(t)->Table(t)}",
+		},
+		{
+			sql: "select /*+ tidb_inlj(t1, t2) */ * from t t1 left outer join t t2 on t1.a = t2.e",
+			ans: "LeftHashJoin{Table(t)->Table(t)}(t1.a,t2.e)",
+		},
+		{
+			sql: "select /*+ tidb_inlj(t1, t2) */ * from t t1 left outer join t t2 on t1.a = t2.c",
+			ans: "Apply{Table(t)->Index(t.c_d_e)[]->Selection}",
+		},
+		{
+			sql: "select /*+ tidb_inlj(t, tt) */ * from t tt join t on tt.a=t.f and tt.f>1",
+			ans: "Apply{Index(t.f)[(1,+inf]]->Index(t.f)[]->Selection}",
+		},
+		{
+			sql: "select /*+ tidb_inlj(t, tt) */ * from t tt join t on tt.a>t.f",
+			ans: "LeftHashJoin{Table(t)->Table(t)}",
+		},
+		{
+			sql: "select /*+ tidb_inlj(t2) */ * from t t1 join t t2 on t1.c=t2.c and t1.d=t2.d and t1.e > t2.e",
+			ans: "Apply{Index(t.c_d_e)[]->Selection->Table(t)}",
+		},
+	}
+	for _, ca := range cases {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		ast.SetFlag(stmt)
+
+		is, err := mockResolve(stmt)
+		c.Assert(err, IsNil)
+
+		builder := &planBuilder{
+			allocator: new(idAllocator),
+			ctx:       mockContext(),
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+			is:        is,
+		}
+		p := builder.build(stmt)
+		c.Assert(builder.err, IsNil)
+		pp, err := doOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx, builder.allocator)
+		c.Assert(err, IsNil)
+		c.Assert(ToString(pp), Equals, ca.ans, Commentf("for %s", ca.sql))
+	}
+}
