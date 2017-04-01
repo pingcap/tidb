@@ -59,7 +59,7 @@ const (
 	LeftOuterSemiJoin
 )
 
-// Join is the logical join plan.
+// LogicalJoin is the logical join plan.
 type LogicalJoin struct {
 	*basePlan
 	baseLogicalPlan
@@ -193,7 +193,7 @@ func (p *Selection) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// Apply gets one row from outer executor and gets one row from inner executor according to outer row.
+// LogicalApply gets one row from outer executor and gets one row from inner executor according to outer row.
 type LogicalApply struct {
 	LogicalJoin
 
