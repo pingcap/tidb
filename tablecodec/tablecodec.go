@@ -300,7 +300,7 @@ func DecodeRow(b []byte, cols map[int64]*types.FieldType) (map[int64]types.Datum
 
 // CutRowNew cuts encoded row into byte slices and return columns' byte slice.
 // Row layout: colID1, value1, colID2, value2, .....
-func CutRowNew(data []byte, cols map[int64]int) ([][]byte, error) {
+func CutRowNew(data []byte, colIDs map[int64]int) ([][]byte, error) {
 	if data == nil {
 		return nil, nil
 	}
@@ -313,8 +313,8 @@ func CutRowNew(data []byte, cols map[int64]int) ([][]byte, error) {
 		b   []byte
 		err error
 	)
-	row := make([][]byte, len(cols))
-	for len(data) > 0 && cnt < len(cols) {
+	row := make([][]byte, len(colIDs))
+	for len(data) > 0 && cnt < len(colIDs) {
 		// Get col id.
 		b, data, err = codec.CutOne(data)
 		if err != nil {
@@ -330,7 +330,7 @@ func CutRowNew(data []byte, cols map[int64]int) ([][]byte, error) {
 			return nil, errors.Trace(err)
 		}
 		id := cid.GetInt64()
-		offset, ok := cols[id]
+		offset, ok := colIDs[id]
 		if ok {
 			row[offset] = b
 			cnt++
