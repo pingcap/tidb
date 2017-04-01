@@ -36,6 +36,12 @@ var (
 	_ physicalDistSQLPlan = &PhysicalIndexScan{}
 )
 
+const (
+	notController = iota
+	controlTableScan
+	controlIndexScan
+)
+
 var (
 	_ PhysicalPlan = &Selection{}
 	_ PhysicalPlan = &Projection{}
@@ -649,10 +655,17 @@ func (p *PhysicalApply) MarshalJSON() ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 	buffer := bytes.NewBufferString("{")
-	buffer.WriteString(fmt.Sprintf(
-		"\"innerPlan\": \"%s\",\n "+
-			"\"outerPlan\": \"%s\",\n "+
-			"\"join\": %s\n}", p.children[1].ID(), p.children[0].ID(), join))
+	if p.PhysicalJoin.(*PhysicalHashJoin).SmallTable == 1 {
+		buffer.WriteString(fmt.Sprintf(
+			"\"innerPlan\": \"%s\",\n "+
+				"\"outerPlan\": \"%s\",\n "+
+				"\"join\": %s\n}", p.children[1].ID(), p.children[0].ID(), join))
+	} else {
+		buffer.WriteString(fmt.Sprintf(
+			"\"innerPlan\": \"%s\",\n "+
+				"\"outerPlan\": \"%s\",\n "+
+				"\"join\": %s\n}", p.children[0].ID(), p.children[1].ID(), join))
+	}
 	return buffer.Bytes(), nil
 }
 
@@ -801,7 +814,7 @@ func (p *Selection) MarshalJSON() ([]byte, error) {
 	buffer.WriteString(fmt.Sprintf(""+
 		" \"condition\": %s,\n"+
 		" \"scanController\": %v,"+
-		" \"child\": \"%s\"\n}", conds, p.ScanController, p.children[0].ID()))
+		" \"child\": \"%s\"\n}", conds, p.controllerStatus != notController, p.children[0].ID()))
 	return buffer.Bytes(), nil
 }
 
