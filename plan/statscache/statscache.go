@@ -74,7 +74,7 @@ func (h *Handle) Update(m *meta.Meta, is infoschema.InfoSchema) error {
 			// Error is not nil may mean that there are some ddl changes on this table, so the origin
 			// statistics can not be used any more, we give it a pseudo one.
 			if err != nil {
-				log.Errorf("Error occured when convert pb table for table id %d, may be the table struct has changed", tableID)
+				log.Errorf("Error ooccurred when convert pb table for table id %d, may be the table struct has changed", tableID)
 				tbl = statistics.PseudoTable(tableInfo)
 			}
 			SetStatisticsTableCache(tableID, tbl, version)

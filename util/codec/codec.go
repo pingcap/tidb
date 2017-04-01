@@ -95,8 +95,8 @@ func encodeBytes(b []byte, v []byte, comparable bool) []byte {
 	return b
 }
 
-func encodeSignedInt(b []byte, v int64, comaprable bool) []byte {
-	if comaprable {
+func encodeSignedInt(b []byte, v int64, comparable bool) []byte {
+	if comparable {
 		b = append(b, intFlag)
 		b = EncodeInt(b, v)
 	} else {
