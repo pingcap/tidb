@@ -707,7 +707,6 @@ func (p *LogicalJoin) convert2IndexNestedLoopJoinRight(prop *requiredProperty, i
 		PhysicalJoin: resultInfo.p,
 		OuterSchema:  corCols,
 	}.init(p.allocator, p.ctx)
-	ap.allocator = p.allocator
 	ap.SetChildren(resultInfo.p.Children()...)
 	ap.SetSchema(resultInfo.p.Schema())
 	resultInfo.p = ap
