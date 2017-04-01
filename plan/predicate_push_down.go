@@ -60,7 +60,7 @@ func (p *TableDual) PredicatePushDown(predicates []expression.Expression) ([]exp
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *Join) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan, err error) {
+func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan, err error) {
 	err = outerJoinSimplify(p, predicates)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -147,7 +147,7 @@ func (p *Join) PredicatePushDown(predicates []expression.Expression) (ret []expr
 }
 
 // outerJoinSimplify simplifies outer join.
-func outerJoinSimplify(p *Join, predicates []expression.Expression) error {
+func outerJoinSimplify(p *LogicalJoin, predicates []expression.Expression) error {
 	var innerTable, outerTable LogicalPlan
 	child1 := p.children[0].(LogicalPlan)
 	child2 := p.children[1].(LogicalPlan)
@@ -164,14 +164,14 @@ func outerJoinSimplify(p *Join, predicates []expression.Expression) error {
 	// first simplify embedded outer join.
 	// When trying to simplify an embedded outer join operation in a query,
 	// we must take into account the join condition for the embedding outer join together with the WHERE condition.
-	if innerPlan, ok := innerTable.(*Join); ok {
+	if innerPlan, ok := innerTable.(*LogicalJoin); ok {
 		fullConditions = concatOnAndWhereConds(p, predicates)
 		err := outerJoinSimplify(innerPlan, fullConditions)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-	if outerPlan, ok := outerTable.(*Join); ok {
+	if outerPlan, ok := outerTable.(*LogicalJoin); ok {
 		if fullConditions != nil {
 			fullConditions = concatOnAndWhereConds(p, predicates)
 		}
@@ -225,7 +225,7 @@ func isNullRejected(ctx context.Context, schema *expression.Schema, expr express
 }
 
 // concatOnAndWhereConds concatenate ON conditions with WHERE conditions.
-func concatOnAndWhereConds(join *Join, predicates []expression.Expression) []expression.Expression {
+func concatOnAndWhereConds(join *LogicalJoin, predicates []expression.Expression) []expression.Expression {
 	equalConds, leftConds, rightConds, otherConds := join.EqualConditions, join.LeftConditions, join.RightConditions, join.OtherConditions
 	ans := make([]expression.Expression, 0, len(equalConds)+len(leftConds)+len(rightConds)+len(predicates))
 	for _, v := range equalConds {
@@ -293,12 +293,12 @@ func (p *Union) PredicatePushDown(predicates []expression.Expression) (ret []exp
 }
 
 // getGbyColIndex gets the column's index in the group-by columns.
-func (p *Aggregation) getGbyColIndex(col *expression.Column) int {
+func (p *LogicalAggregation) getGbyColIndex(col *expression.Column) int {
 	return expression.NewSchema(p.groupByCols...).ColumnIndex(col)
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *Aggregation) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan, err error) {
+func (p *LogicalAggregation) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan, err error) {
 	retPlan = p
 	var exprsOriginal []expression.Expression
 	var condsToPush []expression.Expression

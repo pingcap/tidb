@@ -587,11 +587,11 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "do sleep(5)",
-			plan: "*plan.TableDual->Projection",
+			plan: "Dual->Projection",
 		},
 		{
 			sql:  "select substr(\"abc\", 1)",
-			plan: "*plan.TableDual->Projection",
+			plan: "Dual->Projection",
 		},
 		{
 			sql:  "analyze table t, t",

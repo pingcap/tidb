@@ -269,9 +269,9 @@ func (p *DataSource) tryToConvert2DummyScan(prop *requiredProperty) (*physicalPl
 				return nil, errors.Trace(err)
 			}
 			if !result {
-				dummy := PhysicalDummyScan{}.init(p.allocator, p.ctx)
-				dummy.SetSchema(p.schema)
-				info := &physicalPlanInfo{p: dummy}
+				dual := TableDual{}.init(p.allocator, p.ctx)
+				dual.SetSchema(p.schema)
+				info := &physicalPlanInfo{p: dual}
 				p.storePlanInfo(prop, info)
 				return info, nil
 			}
@@ -382,7 +382,7 @@ func (p *Limit) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 }
 
 // convert2PhysicalPlanSemi converts the semi join to *physicalPlanInfo.
-func (p *Join) convert2PhysicalPlanSemi(prop *requiredProperty) (*physicalPlanInfo, error) {
+func (p *LogicalJoin) convert2PhysicalPlanSemi(prop *requiredProperty) (*physicalPlanInfo, error) {
 	lChild := p.children[0].(LogicalPlan)
 	rChild := p.children[1].(LogicalPlan)
 	allLeft := true
@@ -430,7 +430,7 @@ func (p *Join) convert2PhysicalPlanSemi(prop *requiredProperty) (*physicalPlanIn
 }
 
 // convert2PhysicalPlanLeft converts the left join to *physicalPlanInfo.
-func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) (*physicalPlanInfo, error) {
+func (p *LogicalJoin) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) (*physicalPlanInfo, error) {
 	lChild := p.children[0].(LogicalPlan)
 	rChild := p.children[1].(LogicalPlan)
 	allLeft := true
@@ -500,7 +500,7 @@ func replaceColsInPropBySchema(prop *requiredProperty, schema *expression.Schema
 }
 
 // convert2PhysicalPlanRight converts the right join to *physicalPlanInfo.
-func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool) (*physicalPlanInfo, error) {
+func (p *LogicalJoin) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool) (*physicalPlanInfo, error) {
 	lChild := p.children[0].(LogicalPlan)
 	rChild := p.children[1].(LogicalPlan)
 	allRight := true
@@ -572,7 +572,7 @@ func compareTypeForOrder(lhs *types.FieldType, rhs *types.FieldType) bool {
 
 // Generate all possible combinations from join conditions for cost evaluation
 // It will try all keys in join conditions
-func constructPropertyByJoin(join *Join) ([][]*requiredProperty, []int, error) {
+func constructPropertyByJoin(join *LogicalJoin) ([][]*requiredProperty, []int, error) {
 	var result [][]*requiredProperty
 	var condIndex []int
 
@@ -603,7 +603,7 @@ func constructPropertyByJoin(join *Join) ([][]*requiredProperty, []int, error) {
 
 // convert2PhysicalMergeJoin converts the merge join to *physicalPlanInfo.
 // TODO: Refactor and merge with hash join
-func (p *Join) convert2PhysicalMergeJoin(parentProp *requiredProperty, lProp *requiredProperty, rProp *requiredProperty, condIndex int, joinType JoinType) (*physicalPlanInfo, error) {
+func (p *LogicalJoin) convert2PhysicalMergeJoin(parentProp *requiredProperty, lProp *requiredProperty, rProp *requiredProperty, condIndex int, joinType JoinType) (*physicalPlanInfo, error) {
 	lChild := p.children[0].(LogicalPlan)
 	rChild := p.children[1].(LogicalPlan)
 
@@ -680,7 +680,7 @@ func (p *Join) convert2PhysicalMergeJoin(parentProp *requiredProperty, lProp *re
 	return resultInfo, nil
 }
 
-func (p *Join) convert2PhysicalMergeJoinOnCost(prop *requiredProperty) (*physicalPlanInfo, error) {
+func (p *LogicalJoin) convert2PhysicalMergeJoinOnCost(prop *requiredProperty) (*physicalPlanInfo, error) {
 	var info *physicalPlanInfo
 	reqPropPairs, condIndex, err := constructPropertyByJoin(p)
 	if err != nil {
@@ -711,7 +711,7 @@ func (p *Join) convert2PhysicalMergeJoinOnCost(prop *requiredProperty) (*physica
 	return minInfo, nil
 }
 
-func (p *Join) ifValidForMergeJoin() bool {
+func (p *LogicalJoin) ifValidForMergeJoin() bool {
 	// rule out non-equal join
 	if len(p.EqualConditions) == 0 {
 		return false
@@ -721,7 +721,7 @@ func (p *Join) ifValidForMergeJoin() bool {
 }
 
 // convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
-func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
+func (p *LogicalJoin) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	info, err := p.getPlanInfo(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -765,7 +765,7 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 			return nil, errors.Trace(err)
 		}
 	default:
-		// Inner Join
+		// Inner LogicalJoin
 		if p.preferMergeJoin && p.ifValidForMergeJoin() {
 			info, err = p.convert2PhysicalMergeJoinOnCost(prop)
 			if err != nil {
@@ -794,7 +794,7 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 }
 
 // convert2PhysicalPlanStream converts the logical aggregation to the stream aggregation *physicalPlanInfo.
-func (p *Aggregation) convert2PhysicalPlanStream(prop *requiredProperty) (*physicalPlanInfo, error) {
+func (p *LogicalAggregation) convert2PhysicalPlanStream(prop *requiredProperty) (*physicalPlanInfo, error) {
 	for _, aggFunc := range p.AggFuncs {
 		if aggFunc.GetMode() == expression.FinalMode {
 			return &physicalPlanInfo{cost: math.MaxFloat64}, nil
@@ -844,7 +844,7 @@ func (p *Aggregation) convert2PhysicalPlanStream(prop *requiredProperty) (*physi
 }
 
 // convert2PhysicalPlanFinalHash converts the logical aggregation to the final hash aggregation *physicalPlanInfo.
-func (p *Aggregation) convert2PhysicalPlanFinalHash(x physicalDistSQLPlan, childInfo *physicalPlanInfo) *physicalPlanInfo {
+func (p *LogicalAggregation) convert2PhysicalPlanFinalHash(x physicalDistSQLPlan, childInfo *physicalPlanInfo) *physicalPlanInfo {
 	agg := PhysicalAggregation{
 		AggType:      FinalAgg,
 		AggFuncs:     p.AggFuncs,
@@ -865,7 +865,7 @@ func (p *Aggregation) convert2PhysicalPlanFinalHash(x physicalDistSQLPlan, child
 }
 
 // convert2PhysicalPlanCompleteHash converts the logical aggregation to the complete hash aggregation *physicalPlanInfo.
-func (p *Aggregation) convert2PhysicalPlanCompleteHash(childInfo *physicalPlanInfo) *physicalPlanInfo {
+func (p *LogicalAggregation) convert2PhysicalPlanCompleteHash(childInfo *physicalPlanInfo) *physicalPlanInfo {
 	agg := PhysicalAggregation{
 		AggType:      CompleteAgg,
 		AggFuncs:     p.AggFuncs,
@@ -880,7 +880,7 @@ func (p *Aggregation) convert2PhysicalPlanCompleteHash(childInfo *physicalPlanIn
 }
 
 // convert2PhysicalPlanHash converts the logical aggregation to the physical hash aggregation.
-func (p *Aggregation) convert2PhysicalPlanHash() (*physicalPlanInfo, error) {
+func (p *LogicalAggregation) convert2PhysicalPlanHash() (*physicalPlanInfo, error) {
 	childInfo, err := p.children[0].(LogicalPlan).convert2PhysicalPlan(&requiredProperty{})
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -904,7 +904,7 @@ func (p *Aggregation) convert2PhysicalPlanHash() (*physicalPlanInfo, error) {
 }
 
 // convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
-func (p *Aggregation) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
+func (p *LogicalAggregation) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	planInfo, err := p.getPlanInfo(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1302,7 +1302,7 @@ func (p *Sort) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 }
 
 // convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
-func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
+func (p *LogicalApply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	info, err := p.getPlanInfo(prop)
 	if err != nil {
 		return info, errors.Trace(err)
@@ -1311,9 +1311,9 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 		return info, nil
 	}
 	if p.JoinType == InnerJoin || p.JoinType == LeftOuterJoin {
-		info, err = p.Join.convert2PhysicalPlanLeft(&requiredProperty{}, p.JoinType == InnerJoin)
+		info, err = p.LogicalJoin.convert2PhysicalPlanLeft(&requiredProperty{}, p.JoinType == InnerJoin)
 	} else {
-		info, err = p.Join.convert2PhysicalPlanSemi(&requiredProperty{})
+		info, err = p.LogicalJoin.convert2PhysicalPlanSemi(&requiredProperty{})
 	}
 	if err != nil {
 		return info, errors.Trace(err)
