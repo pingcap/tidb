@@ -182,6 +182,9 @@ const (
 	AllPriv
 )
 
+// AllPrivMask is the mask for PrivilegeType with all bits set to 1.
+const AllPrivMask = AllPriv - 1
+
 // Priv2UserCol is the privilege to mysql.user table column name.
 var Priv2UserCol = map[PrivilegeType]string{
 	CreatePriv:     "Create_priv",
@@ -394,4 +397,22 @@ var Str2SQLMode = map[string]SQLMode{
 	"HIGH_NOT_PRECEDENCE":        ModeHighNotPrecedence,
 	"NO_ENGINE_SUBSTITUTION":     ModeNoEngineSubstitution,
 	"PAD_CHAR_TO_FULL_LENGTH":    ModePadCharToFullLength,
+}
+
+// FormatFunc is the locale format function signature.
+type FormatFunc func(string, string) (string, error)
+
+// GetLocaleFormatFunction get the format function for sepcific locale.
+func GetLocaleFormatFunction(loc string) FormatFunc {
+	locale, exist := locale2FormatFunction[loc]
+	if !exist {
+		return formatNotSupport
+	}
+	return locale
+}
+
+// locale2FormatFunction is the string represent of locale format function.
+var locale2FormatFunction = map[string]FormatFunc{
+	"en_US": formatENUS,
+	"zh_CN": formatZHCN,
 }

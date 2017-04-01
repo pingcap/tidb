@@ -16,12 +16,12 @@ package statistics
 import (
 	"testing"
 
-	"github.com/golang/protobuf/proto"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -113,13 +113,6 @@ func (s *testStatisticsSuite) SetUpSuite(c *C) {
 	s.pk = pk
 }
 
-func (s *testStatisticsSuite) TestEstimateNDV(c *C) {
-	sc := new(variable.StatementContext)
-	ndv, err := estimateNDV(sc, s.count, s.samples)
-	c.Check(err, IsNil)
-	c.Check(ndv, Equals, int64(49792))
-}
-
 func (s *testStatisticsSuite) TestTable(c *C) {
 	tblInfo := &model.TableInfo{
 		ID: 1,
@@ -156,27 +149,29 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	tblInfo.Indices = indices
 	timestamp := int64(10)
 	bucketCount := int64(256)
-	sc := new(variable.StatementContext)
+	_, ndv, _ := buildFMSketch(s.rc.(*recordSet).data, 1000)
 	builder := &Builder{
-		Sc:            sc,
+		Ctx:           mock.NewContext(),
 		TblInfo:       tblInfo,
 		StartTS:       timestamp,
 		Count:         s.count,
 		NumBuckets:    bucketCount,
 		ColumnSamples: [][]types.Datum{s.samples},
 		ColOffsets:    []int{0},
+		ColNDVs:       []int64{ndv},
 		IdxRecords:    []ast.RecordSet{s.rc},
 		IdxOffsets:    []int{0},
 		PkRecords:     ast.RecordSet(s.pk),
 		PkOffset:      2,
 	}
+	sc := builder.Ctx.GetSessionVars().StmtCtx
 	t, err := builder.NewTable()
 	c.Check(err, IsNil)
 
 	col := t.Columns[0]
 	count, err := col.EqualRowCount(sc, types.NewIntDatum(1000))
 	c.Check(err, IsNil)
-	c.Check(count, Equals, int64(2))
+	c.Check(count, Equals, int64(1))
 	count, err = col.LessRowCount(sc, types.NewIntDatum(2000))
 	c.Check(err, IsNil)
 	c.Check(count, Equals, int64(19955))
@@ -190,10 +185,10 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	c.Check(count, Equals, int64(1))
 	count, err = col.LessRowCount(sc, types.NewIntDatum(20000))
 	c.Check(err, IsNil)
-	c.Check(count, Equals, int64(19980))
+	c.Check(count, Equals, int64(19984))
 	count, err = col.BetweenRowCount(sc, types.NewIntDatum(30000), types.NewIntDatum(35000))
 	c.Check(err, IsNil)
-	c.Check(count, Equals, int64(4696))
+	c.Check(count, Equals, int64(4618))
 
 	col = t.Columns[2]
 	count, err = col.EqualRowCount(sc, types.NewIntDatum(10000))
@@ -201,46 +196,36 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	c.Check(count, Equals, int64(1))
 	count, err = col.LessRowCount(sc, types.NewIntDatum(20000))
 	c.Check(err, IsNil)
-	c.Check(count, Equals, int64(20136))
+	c.Check(count, Equals, int64(20224))
 	count, err = col.BetweenRowCount(sc, types.NewIntDatum(30000), types.NewIntDatum(35000))
 	c.Check(err, IsNil)
-	c.Check(count, Equals, int64(5083))
+	c.Check(count, Equals, int64(5120))
 
 	str := t.String()
 	c.Check(len(str), Greater, 0)
 
-	tpb, err := t.ToPB()
-	c.Check(err, IsNil)
-	data, err := proto.Marshal(tpb)
-	c.Check(err, IsNil)
-	ntpb := &TablePB{}
-	err = proto.Unmarshal(data, ntpb)
-	c.Check(err, IsNil)
-	nt, err := TableFromPB(tblInfo, ntpb)
-	c.Check(err, IsNil)
-	c.Check(nt.String(), Equals, str)
 }
 
 func (s *testStatisticsSuite) TestPseudoTable(c *C) {
 	ti := &model.TableInfo{}
-	ti.Columns = append(ti.Columns, &model.ColumnInfo{
+	colInfo := &model.ColumnInfo{
 		ID:        1,
 		FieldType: *types.NewFieldType(mysql.TypeLonglong),
-	})
+	}
+	ti.Columns = append(ti.Columns, colInfo)
 	tbl := PseudoTable(ti)
 	c.Assert(tbl.Count, Greater, int64(0))
-	c.Assert(tbl.TS, Greater, int64(0))
 	col := tbl.Columns[0]
 	c.Assert(col.ID, Greater, int64(0))
 	c.Assert(col.NDV, Greater, int64(0))
 	sc := new(variable.StatementContext)
-	count, err := col.LessRowCount(sc, types.NewIntDatum(100))
+	count, err := tbl.ColumnLessRowCount(sc, types.NewIntDatum(100), colInfo)
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, int64(3333333))
-	count, err = col.EqualRowCount(sc, types.NewIntDatum(1000))
+	count, err = tbl.ColumnEqualRowCount(sc, types.NewIntDatum(1000), colInfo)
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, int64(10000))
-	count, err = col.BetweenRowCount(sc, types.NewIntDatum(1000), types.NewIntDatum(5000))
+	count, err = tbl.ColumnBetweenRowCount(sc, types.NewIntDatum(1000), types.NewIntDatum(5000), colInfo)
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, int64(250000))
 }

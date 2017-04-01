@@ -56,13 +56,14 @@ func (s *testLockSuite) lockKey(c *C, key, value, primaryKey, primaryValue []byt
 	c.Assert(err, IsNil)
 	tpc.keys = [][]byte{primaryKey, key}
 
-	err = tpc.prewriteKeys(NewBackoffer(prewriteMaxBackoff, goctx.Background()), tpc.keys)
+	ctx := goctx.Background()
+	err = tpc.prewriteKeys(NewBackoffer(prewriteMaxBackoff, ctx), tpc.keys)
 	c.Assert(err, IsNil)
 
 	if commitPrimary {
-		tpc.commitTS, err = s.store.oracle.GetTimestamp()
+		tpc.commitTS, err = s.store.oracle.GetTimestamp(ctx)
 		c.Assert(err, IsNil)
-		err = tpc.commitKeys(NewBackoffer(commitMaxBackoff, goctx.Background()), [][]byte{primaryKey})
+		err = tpc.commitKeys(NewBackoffer(commitMaxBackoff, ctx), [][]byte{primaryKey})
 		c.Assert(err, IsNil)
 	}
 	return txn.startTS, tpc.commitTS
@@ -215,9 +216,10 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	txn.Set(kv.Key("key"), []byte("value"))
+	time.Sleep(time.Millisecond)
 	s.prewriteTxn(c, txn.(*tikvTxn))
 	l := s.mustGetLock(c, []byte("key"))
-	c.Assert(l.TTL, Equals, defaultLockTTL)
+	c.Assert(l.TTL >= defaultLockTTL, IsTrue)
 
 	// Huge txn has a greater TTL.
 	txn, err = s.store.Begin()

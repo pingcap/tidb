@@ -222,6 +222,19 @@ func CutOne(b []byte) (data []byte, remain []byte, err error) {
 	return b[:l], b[l:], nil
 }
 
+// SetRawValues set raw datum values from a row data.
+func SetRawValues(data []byte, values []types.Datum) error {
+	for i := 0; i < len(values); i++ {
+		l, err := peek(data)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		values[i].SetRaw(data[:l:l])
+		data = data[l:]
+	}
+	return nil
+}
+
 // peeks the first encoded value from b and returns its length.
 func peek(b []byte) (length int, err error) {
 	if len(b) < 1 {

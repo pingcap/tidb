@@ -96,6 +96,8 @@ import (
 	desc			"DESC"
 	describe		"DESCRIBE"
 	distinct		"DISTINCT"
+	tidbSMJ			"TIDB_SMJ"
+	tidbINLJ		"TIDB_INLJ"
 	div 			"DIV"
 	doubleType		"DOUBLE"
 	drop			"DROP"
@@ -270,6 +272,7 @@ import (
 	foundRows			"FOUND_ROWS"
 	fromUnixTime			"FROM_UNIXTIME"
 	fromBase64			"FROM_BASE64"
+	getFormat			"GET_FORMAT"
 	grant				"GRANT"
 	groupConcat			"GROUP_CONCAT"
 	greatest			"GREATEST"
@@ -359,16 +362,7 @@ import (
 	conv				"CONV"
 	bitXor				"BIT_XOR"
 	crc32				"CRC32"
-	asymmetricDecrypt		"ASYMMETRIC_DECRYPT"
-	asymmetricDerive		"ASYMMETRIC_DERIVE"
-	asymmetricEncrypt		"ASYMMETRIC_ENCRYPT"
-	asymmetricSign			"ASYMMETRIC_SIGN"
-	asymmetricVerify		"ASYMMETRIC_VERIFY"
 	compress			"COMPRESS"
-	createAsymmetricPrivKey		"CREATE_ASYMMETRIC_PRIV_KEY"
-	createAsymmetricPubKey		"CREATE_ASYMMETRIC_PUB_KEY"
-	createDHParameters		"CREATE_DH_PARAMETERS"
-	createDigest			"CREATE_DIGEST"
 	decode				"DECODE"
 	desDecrypt			"DES_DECRYPT"
 	desEncrypt			"DES_ENCRYPT"
@@ -664,8 +658,6 @@ import (
 	OnDuplicateKeyUpdate	"ON DUPLICATE KEY UPDATE value list"
 	Operand			"operand"
 	OptFull			"Full or empty"
-	OptimizerHint		"Optimizer Hint"
-	OptimizerHintOptional	"Optimizer Hint optional"
 	Order			"ORDER BY clause optional collation specification"
 	OrderBy			"ORDER BY clause"
 	ByItem			"BY item"
@@ -788,6 +780,10 @@ import (
 	OptCollate		"Optional Collate setting"
 	NUM			"numbers"
 	LengthNum		"Field length num(uint64)"
+	HintTableList		"Table list in optimizer hint"
+	TableOptimizerHintOpt	"Table level optimizer hint"
+	TableOptimizerHints	"Table level optimizer hints"
+	TableOptimizerHintList	"Table level optimizer hint list"
 
 %type	<ident>
 	KeyOrIndex		"{KEY|INDEX}"
@@ -819,6 +815,7 @@ import (
 	logAnd			"logical and operator"
 	logOr			"logical or operator"
 	FieldsOrColumns 	"Fields or columns"
+	GetFormatSelector	"{DATE|DATETIME|TIME}"
 
 %type	<ident>
 	Identifier			"identifier or unreserved keyword"
@@ -2288,14 +2285,14 @@ ReservedKeyword:
 NotKeywordToken:
 	"ABS" | "ACOS" | "ADDTIME" | "ADDDATE" | "ADMIN" | "ASIN" | "ATAN" | "ATAN2" | "BENCHMARK" | "BIN" | "COALESCE" | "COERCIBILITY" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CONVERT_TZ" | "CUR_TIME"| "COS" | "COT" | "COUNT" | "DAY"
 |	"DATEDIFF" | "DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "DEGREES" | "ELT" | "EXP" | "EXPORT_SET" | "FROM_DAYS" | "FROM_BASE64" | "FIND_IN_SET" | "FOUND_ROWS"
-|	"GROUP_CONCAT"| "GREATEST" | "LEAST" | "HOUR" | "HEX" | "UNHEX" | "IFNULL" | "INSTR" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOAD_FILE" | "LOCATE" | "LOWER" | "LPAD" | "LTRIM"
+|	"GET_FORMAT" | "GROUP_CONCAT" | "GREATEST" | "LEAST" | "HOUR" | "HEX" | "UNHEX" | "IFNULL" | "INSTR" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOAD_FILE" | "LOCATE" | "LOWER" | "LPAD" | "LTRIM"
 |	"MAKE_SET" | "MAX" | "MAKEDATE" | "MAKETIME" | "MICROSECOND" | "MID" | "MIN" |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" |  "OCT" | "OCTET_LENGTH" | "ORD" | "POSITION" | "PERIOD_ADD" | "PERIOD_DIFF" | "PI" | "POW" | "POWER" | "RAND" | "RADIANS" | "ROW_COUNT"
 	"QUOTE" | "SEC_TO_TIME" | "SECOND" | "SIGN" | "SIN" | "SLEEP" | "SQRT" | "SQL_CALC_FOUND_ROWS" | "STR_TO_DATE" | "SUBTIME" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen |
 	"SESSION_USER" | "SUBSTRING_INDEX" | "SUM" | "SYSTEM_USER" | "TAN" | "TIME_FORMAT" | "TIME_TO_SEC" | "TIMESTAMPADD" | "TO_DAYS" | "TO_SECONDS" | "TRIM" | "RTRIM" | "UCASE" | "UTC_TIME" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
 |	"STATS_PERSISTENT" | "GET_LOCK" | "RELEASE_LOCK" | "CEIL" | "CEILING" | "FLOOR" | "FROM_UNIXTIME" | "TIMEDIFF" | "LN" | "LOG" | "LOG2" | "LOG10" | "FIELD_KWD"
 |	"AES_DECRYPT" | "AES_ENCRYPT" | "QUOTE"
 |	"ANY_VALUE" | "INET_ATON" | "INET_NTOA" | "INET6_ATON" | "INET6_NTOA" | "IS_FREE_LOCK" | "IS_IPV4" | "IS_IPV4_COMPAT" | "IS_IPV4_MAPPED" | "IS_IPV6" | "IS_USED_LOCK" | "MASTER_POS_WAIT" | "NAME_CONST" | "RELEASE_ALL_LOCKS" | "UUID" | "UUID_SHORT"
-|	"ASYMMETRIC_DECRYPT" | "ASYMMETRIC_DERIVE" | "ASYMMETRIC_ENCRYPT" | "ASYMMETRIC_SIGN" | "ASYMMETRIC_VERIFY" | "COMPRESS" | "CREATE_ASYMMETRIC_PRIV_KEY" | "CREATE_ASYMMETRIC_PUB_KEY" | "CREATE_DH_PARAMETERS" | "CREATE_DIGEST" | "DECODE" | "DES_DECRYPT" | "DES_ENCRYPT" | "ENCODE" | "ENCRYPT" | "MD5" | "OLD_PASSWORD" | "RANDOM_BYTES" | "SHA1" | "SHA" | "SHA2" | "UNCOMPRESS" | "UNCOMPRESSED_LENGTH" | "VALIDATE_PASSWORD_STRENGTH"
+|	"COMPRESS" | "DECODE" | "DES_DECRYPT" | "DES_ENCRYPT" | "ENCODE" | "ENCRYPT" | "MD5" | "OLD_PASSWORD" | "RANDOM_BYTES" | "SHA1" | "SHA" | "SHA2" | "UNCOMPRESS" | "UNCOMPRESSED_LENGTH" | "VALIDATE_PASSWORD_STRENGTH"
 
 /************************************************************************************
  *
@@ -3096,6 +3093,13 @@ FunctionCallNonKeyword:
 			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
 		}
 	}
+|	"GET_FORMAT" '(' GetFormatSelector ','  Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{ast.NewValueExpr($3), $5.(ast.ExprNode)},
+		}
+	}
 |	"GREATEST" '(' ExpressionList ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
@@ -3672,41 +3676,6 @@ FunctionCallNonKeyword:
 			Args: []ast.ExprNode{$3.(ast.ExprNode)},
 		}
 	}
-|	"ASYMMETRIC_DECRYPT" '(' Expression ',' Expression ',' Expression ')'
-	{
-		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1),
-			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)},
-		}
-	}
-|	"ASYMMETRIC_DERIVE" '(' Expression ',' Expression ')'
-	{
-		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1),
-			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
-		}
-	}
-|	"ASYMMETRIC_ENCRYPT" '(' Expression ',' Expression ',' Expression ')'
-	{
-		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1),
-			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)},
-		}
-	}
-|	"ASYMMETRIC_SIGN" '(' Expression ',' Expression ',' Expression ',' Expression ')'
-	{
-		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1),
-			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode), $9.(ast.ExprNode)},
-		}
-	}
-|	"ASYMMETRIC_VERIFY" '(' Expression ',' Expression ',' Expression ',' Expression ',' Expression ')'
-	{
-		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1),
-			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode), $9.(ast.ExprNode), $11.(ast.ExprNode)},
-		}
-	}
 |	"COMPRESS" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
@@ -3721,35 +3690,7 @@ FunctionCallNonKeyword:
 			Args: []ast.ExprNode{$3.(ast.ExprNode)},
 		}
 	}
-|	"CREATE_ASYMMETRIC_PRIV_KEY" '(' Expression ')'
-	{
-		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1),
-			Args: []ast.ExprNode{$3.(ast.ExprNode)},
-		}
-	}
 |	"IS_FREE_LOCK" '(' Expression ')'
-	{
-		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1),
-			Args: []ast.ExprNode{$3.(ast.ExprNode)},
-		}
-	}
-|	"CREATE_ASYMMETRIC_PRIV_KEY" '(' Expression ',' Expression ')'
-	{
-		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1),
-			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
-		}
-	}
-|	"CREATE_ASYMMETRIC_PUB_KEY" '(' Expression ',' Expression ')'
-	{
-		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1),
-			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
-		}
-	}
-|	"CREATE_DH_PARAMETERS" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
@@ -3761,13 +3702,6 @@ FunctionCallNonKeyword:
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$3.(ast.ExprNode)},
-		}
-	}
-|	"CREATE_DIGEST" '(' Expression ',' Expression ')'
-	{
-		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1),
-			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
 		}
 	}
 |	"DECODE" '(' Expression ',' Expression ')'
@@ -3956,6 +3890,20 @@ FunctionCallNonKeyword:
 			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$3.(ast.ExprNode)},
 		}
+	}
+
+GetFormatSelector:
+	"DATE"
+	{
+		$$ = strings.ToUpper($1)
+	}
+| 	"DATETIME"
+	{
+		$$ = strings.ToUpper($1)
+	}
+|	"TIME"
+	{
+		$$ = strings.ToUpper($1)
 	}
 
 FunctionNameDateArith:
@@ -4419,7 +4367,7 @@ SelectStmt:
 	"SELECT" SelectStmtOpts SelectStmtFieldList SelectStmtLimit SelectLockOpt
 	{
 		st := &ast.SelectStmt {
-			Distinct:      $2.(bool),
+			Distinct:      $2.(*ast.SelectStmtOpts).Distinct,
 			Fields:        $3.(*ast.FieldList),
 			LockTp:	       $5.(ast.SelectLockType),
 		}
@@ -4447,7 +4395,7 @@ SelectStmt:
 |	"SELECT" SelectStmtOpts SelectStmtFieldList FromDual WhereClauseOptional SelectStmtLimit SelectLockOpt
 	{
 		st := &ast.SelectStmt {
-			Distinct:      $2.(bool),
+			Distinct:      $2.(*ast.SelectStmtOpts).Distinct,
 			Fields:        $3.(*ast.FieldList),
 			LockTp:	       $7.(ast.SelectLockType),
 		}
@@ -4468,11 +4416,15 @@ SelectStmt:
 	TableRefsClause WhereClauseOptional SelectStmtGroup HavingClause OrderByOptional
 	SelectStmtLimit SelectLockOpt
 	{
+		opts := $2.(*ast.SelectStmtOpts)
 		st := &ast.SelectStmt{
-			Distinct:	$2.(bool),
+			Distinct:		opts.Distinct,
 			Fields:		$3.(*ast.FieldList),
 			From:		$5.(*ast.TableRefsClause),
 			LockTp:		$11.(ast.SelectLockType),
+		}
+		if opts.TableHints != nil {
+			st.TableHints = opts.TableHints
 		}
 
 		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
@@ -4763,10 +4715,63 @@ SelectStmtDistinct:
 	}
 
 SelectStmtOpts:
-	SelectStmtDistinct SelectStmtSQLCache SelectStmtCalcFoundRows
+	TableOptimizerHints SelectStmtDistinct SelectStmtSQLCache SelectStmtCalcFoundRows
 	{
-		// TODO: return calc_found_rows opt and support more other options
-		$$ = $1
+		opt := &ast.SelectStmtOpts{}
+		if $1 != nil {
+		    opt.TableHints = $1.([]*ast.TableOptimizerHint)
+		}
+		if $2 != nil {
+		    opt.Distinct = $2.(bool)
+		}
+		if $3 != nil {
+		    opt.SQLCache = $3.(bool)
+		}
+		if $4 != nil {
+		    opt.CalcFoundRows = $4.(bool)
+		}
+
+		$$ = opt
+	}
+
+TableOptimizerHints:
+    /* empty */
+	{
+		$$ = nil
+	}
+|	hintBegin TableOptimizerHintList hintEnd
+	{
+		$$ = $2
+	}
+
+HintTableList:
+	Identifier
+	{
+		$$ = []model.CIStr{model.NewCIStr($1)}
+	}
+|	HintTableList ',' Identifier
+	{
+		$$ = append($1.([]model.CIStr), model.NewCIStr($3))
+	}
+
+TableOptimizerHintList:
+	TableOptimizerHintOpt
+	{
+		$$ = []*ast.TableOptimizerHint{$1.(*ast.TableOptimizerHint)}
+	}
+|	TableOptimizerHintList TableOptimizerHintOpt
+	{
+		$$ = append($1.([]*ast.TableOptimizerHint), $2.(*ast.TableOptimizerHint))
+	}
+
+TableOptimizerHintOpt:
+	tidbSMJ '(' HintTableList ')'
+	{
+		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), Tables: $3.([]model.CIStr)}
+	}
+|	tidbINLJ '(' HintTableList ')'
+	{
+		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), Tables: $3.([]model.CIStr)}
 	}
 
 SelectStmtCalcFoundRows:
@@ -6602,16 +6607,5 @@ KillOrKillTiDB:
 	{
 		$$ = true
 	}
-
-OptimizerHintOptional:
-	{
-		$$ = nil
-	}
-|	hintBegin OptimizerHint hintEnd
-	{
-		$$ = $1
-	}
-
-OptimizerHint:{}
 
 %%
