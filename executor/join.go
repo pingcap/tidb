@@ -498,18 +498,20 @@ type joinExec interface {
 
 // NestedLoopJoinExec implements nested-loop algorithm for join.
 type NestedLoopJoinExec struct {
-	innerRows   []*Row
-	cursor      int
-	resultRows  []*Row
-	SmallExec   Executor
-	BigExec     Executor
-	prepared    bool
-	Ctx         context.Context
-	SmallFilter expression.Expression
-	BigFilter   expression.Expression
-	OtherFilter expression.Expression
-	schema      *expression.Schema
-	outer       bool
+	innerRows     []*Row
+	cursor        int
+	resultRows    []*Row
+	SmallExec     Executor
+	BigExec       Executor
+	leftSmall     bool
+	prepared      bool
+	Ctx           context.Context
+	SmallFilter   expression.Expression
+	BigFilter     expression.Expression
+	OtherFilter   expression.Expression
+	schema        *expression.Schema
+	outer         bool
+	defaultValues []types.Datum
 }
 
 // Schema implements Executor interface.
@@ -589,24 +591,33 @@ func (e *NestedLoopJoinExec) prepare() error {
 	}
 }
 
-func (e *NestedLoopJoinExec) fillRowWithNullValue(row *Row) *Row {
-	newRow := &Row{
-		RowKeys: row.RowKeys,
-		Data:    make([]types.Datum, len(row.Data)+e.SmallExec.Schema().Len()),
+func (e *NestedLoopJoinExec) fillRowWithDefaultValue(bigRow *Row) (returnRow *Row) {
+	smallRow := &Row{
+		Data: make([]types.Datum, e.SmallExec.Schema().Len()),
 	}
-	copy(newRow.Data, row.Data)
-	return newRow
+	copy(smallRow.Data, e.defaultValues)
+	if e.leftSmall {
+		returnRow = makeJoinRow(smallRow, bigRow)
+	} else {
+		returnRow = makeJoinRow(bigRow, smallRow)
+	}
+	return returnRow
 }
 
 func (e *NestedLoopJoinExec) doJoin(bigRow *Row, match bool) ([]*Row, error) {
 	e.resultRows = e.resultRows[0:0]
 	if !match && e.outer {
-		row := e.fillRowWithNullValue(bigRow)
+		row := e.fillRowWithDefaultValue(bigRow)
 		e.resultRows = append(e.resultRows, row)
 		return e.resultRows, nil
 	}
 	for _, row := range e.innerRows {
-		mergedRow := makeJoinRow(bigRow, row)
+		var mergedRow *Row
+		if e.leftSmall {
+			mergedRow = makeJoinRow(row, bigRow)
+		} else {
+			mergedRow = makeJoinRow(bigRow, row)
+		}
 		if e.OtherFilter != nil {
 			matched, err := expression.EvalBool(e.OtherFilter, mergedRow.Data, e.Ctx)
 			if err != nil {
@@ -619,7 +630,7 @@ func (e *NestedLoopJoinExec) doJoin(bigRow *Row, match bool) ([]*Row, error) {
 		e.resultRows = append(e.resultRows, mergedRow)
 	}
 	if len(e.resultRows) == 0 && e.outer {
-		e.resultRows = append(e.resultRows, e.fillRowWithNullValue(bigRow))
+		e.resultRows = append(e.resultRows, e.fillRowWithDefaultValue(bigRow))
 	}
 	return e.resultRows, nil
 }
