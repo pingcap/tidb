@@ -158,10 +158,10 @@ const bytesPerMiB = 1024 * 1024
 func txnLockTTL(startTime monotime.Time, txnSize int) uint64 {
 	// Increase lockTTL for large transactions.
 	// The formula is `ttl = ttlFactor * sqrt(sizeInMiB)`.
-	// When writeSize is less than 1MiB, the base ttl is defaultTTL (3s);
+	// When writeSize is less than 256KB, the base ttl is defaultTTL (3s);
 	// When writeSize is 1MiB, 100MiB, or 400MiB, ttl is 6s, 60s, 120s correspondingly;
 	lockTTL := defaultLockTTL
-	if txnSize >= bytesPerMiB {
+	if txnSize >= txnCommitBatchSize {
 		sizeMiB := float64(txnSize) / bytesPerMiB
 		lockTTL = uint64(float64(ttlFactor) * math.Sqrt(float64(sizeMiB)))
 		if lockTTL < defaultLockTTL {
