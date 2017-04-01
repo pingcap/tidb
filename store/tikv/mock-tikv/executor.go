@@ -17,7 +17,6 @@ import (
 	"bytes"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/distsql/xeval"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
@@ -249,10 +248,9 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 
 type selectionExec struct {
 	*tipb.Selection
-	sc      *variable.StatementContext
-	eval    *xeval.Evaluator
-	columns []*tipb.ColumnInfo
-	colsID  map[int64]int
+	sc     *variable.StatementContext
+	eval   *xeval.Evaluator
+	colsID map[int64]int
 
 	src executor
 }
@@ -271,7 +269,7 @@ func (e *selectionExec) Next() (int64, [][]byte, error) {
 			return 0, nil, nil
 		}
 
-		err = setColumnValuesToEval(e.eval, handle, row, e.columns, e.colsID)
+		err = e.eval.SetRowValue(handle, row, e.colsID)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
@@ -313,6 +311,7 @@ func getRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle int64, 
 	// Fill the handle and null columns.
 	for _, col := range columns {
 		id := col.GetColumnId()
+		offset := colIDs[id]
 		if col.GetPkHandle() {
 			var handleDatum types.Datum
 			if mysql.HasUnsignedFlag(uint(col.GetFlag())) {
@@ -325,46 +324,23 @@ func getRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle int64, 
 			if err1 != nil {
 				return nil, errors.Trace(err1)
 			}
-			values[colIDs[id]] = handleData
+			values[offset] = handleData
 			continue
 		}
 		if hasColVal(values, colIDs, id) {
 			continue
 		}
 		if len(col.DefaultVal) > 0 {
-			values[colIDs[id]] = col.DefaultVal
+			values[offset] = col.DefaultVal
 			continue
 		}
 		if mysql.HasNotNullFlag(uint(col.GetFlag())) {
-			return nil, errors.Errorf("Miss column %d", col.GetColumnId())
+			return nil, errors.Errorf("Miss column %d", id)
 		}
-		values[colIDs[id]] = []byte{codec.NilFlag}
+		values[offset] = []byte{codec.NilFlag}
 	}
 
 	return values, nil
-}
-
-// setColumnValuesToEval puts column values into evaluator, the values will be used for expr evaluation.
-func setColumnValuesToEval(eval *xeval.Evaluator, handle int64, row [][]byte, cols []*tipb.ColumnInfo, colIDs map[int64]int) error {
-	for colID, offset := range colIDs {
-		col := cols[offset]
-		if col.GetPkHandle() {
-			if mysql.HasUnsignedFlag(uint(col.GetFlag())) {
-				eval.Row[colID] = types.NewUintDatum(uint64(handle))
-			} else {
-				eval.Row[colID] = types.NewIntDatum(handle)
-			}
-		} else {
-			data := row[offset]
-			ft := distsql.FieldTypeFromPBColumn(col)
-			datum, err := tablecodec.DecodeColumnValue(data, ft)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			eval.Row[colID] = datum
-		}
-	}
-	return nil
 }
 
 func extractColIDsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector map[int64]int) error {
