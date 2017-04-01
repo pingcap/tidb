@@ -1271,41 +1271,40 @@ func (p *Selection) makeScanController() *physicalPlanInfo {
 		}
 		child = ts
 	} else if p.controllerStatus == controlIndexScan {
-		var chosenPlan *PhysicalIndexScan
+		var (
+			chosenPlan                       *PhysicalIndexScan
+			bestEqualCount, bestInAndEqCount int
+		)
 		for _, idx := range indices {
 			condsBackUp := make([]expression.Expression, 0, len(corColConds))
 			for _, cond := range corColConds {
 				condsBackUp = append(condsBackUp, cond.Clone())
 			}
-			is := &PhysicalIndexScan{
-				Table:               ds.tableInfo,
-				Index:               idx,
-				Columns:             ds.Columns,
-				TableAsName:         ds.TableAsName,
-				OutOfOrder:          true,
-				DBName:              ds.DBName,
-				physicalTableSource: physicalTableSource{client: ds.ctx.GetClient()},
-			}
-			is.tp = TypeIdxScan
-			is.allocator = ds.allocator
-			is.SetSchema(ds.schema)
-			is.initIDAndContext(ds.ctx)
-			if is.ctx.Txn() != nil {
-				is.readOnly = p.ctx.Txn().IsReadOnly()
-			} else {
-				is.readOnly = true
-			}
-			var accessConds []expression.Expression
-			accessConds, _, is.accessEqualCount, is.accessInAndEqCount = DetachIndexScanConditions(condsBackUp, is.Index)
-			if len(accessConds) == 0 {
-				continue
-			}
-			better := chosenPlan == nil || chosenPlan.accessEqualCount < is.accessEqualCount
-			better = better || (chosenPlan.accessEqualCount == is.accessEqualCount && chosenPlan.accessInAndEqCount < is.accessInAndEqCount)
+			_, _, accessEqualCount, accessInAndEqCount := DetachIndexScanConditions(condsBackUp, idx)
+			better := chosenPlan == nil || bestEqualCount < accessEqualCount
+			better = better || (bestEqualCount == accessEqualCount && bestInAndEqCount < accessInAndEqCount)
 			if better {
-				chosenPlan = is
+				is := &PhysicalIndexScan{
+					Table:               ds.tableInfo,
+					Index:               idx,
+					Columns:             ds.Columns,
+					TableAsName:         ds.TableAsName,
+					OutOfOrder:          true,
+					DBName:              ds.DBName,
+					physicalTableSource: physicalTableSource{client: ds.ctx.GetClient()},
+				}
+				is.tp = TypeIdxScan
+				is.allocator = ds.allocator
+				is.SetSchema(ds.schema)
+				is.initIDAndContext(ds.ctx)
+				if is.ctx.Txn() != nil {
+					is.readOnly = p.ctx.Txn().IsReadOnly()
+				} else {
+					is.readOnly = true
+				}
+				is.DoubleRead = !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
+				chosenPlan, bestEqualCount, bestInAndEqCount = is, accessEqualCount, accessInAndEqCount
 			}
-			is.DoubleRead = !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
 		}
 		child = chosenPlan
 	}
