@@ -1481,6 +1481,10 @@ func (s *testParserSuite) TestTimestampDiffUnit(c *C) {
 	f, ok = expr.(*ast.FuncCallExpr)
 	c.Assert(ok, IsTrue)
 	c.Assert(f.Args[0].GetDatum().GetString(), Equals, "MONTH")
+
+    // Test Illegal TimeUnit for TimestampDiff
+    stmt, err = parser.Parse("SELECT TIMESTAMPDIFF(DAY_SECOND,'2003-02-01','2003-05-01');", "", "")
+    c.Assert(err, NotNil)
 }
 
 func (s *testParserSuite) TestSessionManage(c *C) {

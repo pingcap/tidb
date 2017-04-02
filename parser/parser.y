@@ -796,7 +796,8 @@ import (
 	RegexpSym		"REGEXP or RLIKE"
 	IntoOpt			"INTO or EmptyString"
 	ValueSym		"Value or Values"
-	TimeUnit		"Time unit"
+	TimeUnit		"Time unit for 'DATE_ADD', 'DATE_SUB', 'ADDDATE', 'SUBDATE', 'EXTRACT'"
+	TimeUnit2		"Time unit for 'TIMESTAMPADD' and 'TIMESTAMPDIFF'"
 	DeallocateSym		"Deallocate or drop"
 	OuterOpt		"optional OUTER clause"
 	CrossOpt		"Cross join option"
@@ -3459,7 +3460,7 @@ FunctionCallNonKeyword:
 			Args: []ast.ExprNode{$3.(ast.ExprNode)},
 		}
 	}
-|	"TIMESTAMPADD" '(' TimeUnit ',' Expression ',' Expression ')'
+|	"TIMESTAMPADD" '(' TimeUnit2 ',' Expression ',' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
@@ -3467,7 +3468,7 @@ FunctionCallNonKeyword:
 
 		}
 	}
-|	"TIMESTAMPDIFF" '(' TimeUnit ',' Expression ',' Expression ')'
+|	"TIMESTAMPDIFF" '(' TimeUnit2 ',' Expression ',' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
@@ -4063,6 +4064,44 @@ TimeUnit:
 		$$ = strings.ToUpper($1)
 	}
 |	"YEAR_MONTH"
+	{
+		$$ = strings.ToUpper($1)
+	}
+
+TimeUnit2:
+	"MICROSECOND"
+	{
+		$$ = strings.ToUpper($1)
+	}
+|	"SECOND"
+	{
+		$$ = strings.ToUpper($1)
+	}
+|	"MINUTE"
+	{
+		$$ = strings.ToUpper($1)
+	}
+|	"HOUR"
+	{
+		$$ = strings.ToUpper($1)
+	}
+|	"DAY"
+	{
+		$$ = strings.ToUpper($1)
+	}
+|	"WEEK"
+	{
+		$$ = strings.ToUpper($1)
+	}
+|	"MONTH"
+	{
+		$$ = strings.ToUpper($1)
+	}
+|	"QUARTER"
+	{
+		$$ = strings.ToUpper($1)
+	}
+|	"YEAR"
 	{
 		$$ = strings.ToUpper($1)
 	}
