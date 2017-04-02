@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
+    "github.com/pingcap/tidb/_vendor/src/github.com/ngaut/log"
 )
 
 const ( // GET_FORMAT first argument.
@@ -1982,7 +1983,30 @@ type builtinTimestampAddSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timestampadd
 func (b *builtinTimestampAddSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("TIMESTAMPADD")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+    unit, err := args[0].ToString();
+    if err != nil {
+        return d, errors.Trace(err)
+    }
+    if (args[1].IsNull() || args[2].IsNull()) {
+        return d, nil
+    }
+    interval := args[1].GetInt64()
+    log.Info("TP: ", args[2].Kind())
+	sc := b.ctx.GetSessionVars().StmtCtx
+	date, err := convertDatumToTime(sc, args[2])
+	if err != nil {
+		return d, errorOrWarning(err, b.ctx)
+	}
+    t, err := date.TimeAdd(unit, int(interval))
+    if err != nil {
+        return d, errorOrWarning(err, b.ctx)
+    }
+	d.SetMysqlTime(t)
+	return d, nil
 }
 
 type toDaysFunctionClass struct {

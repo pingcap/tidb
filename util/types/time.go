@@ -479,6 +479,52 @@ func (t *Time) Add(d *Duration) Duration {
 	return t.Sub(&t2)
 }
 
+func (t *Time) TimeAdd(unit string, v int) (r Time, err error) {
+    tm, err := t.Time.GoTime(gotime.Local)
+    if err != nil {
+        return r, errors.Trace(err)
+    }
+    var tb gotime.Time
+    fsp := DefaultFsp
+    tp := mysql.TypeDatetime
+    switch unit {
+    case "MICROSECOND" :
+        tb = tm.Add(gotime.Duration(v) * gotime.Microsecond)
+        fsp = MaxFsp
+    case "SECOND" :
+        tb = tm.Add(gotime.Duration(v) * gotime.Second)
+    case "MINUTE" :
+        tb = tm.Add(gotime.Duration(v) * gotime.Minute)
+    case "HOUR" :
+        tb = tm.Add(gotime.Duration(v) * gotime.Hour)
+    case "DAY" :
+        tb = tm.AddDate(0, 0, v)
+        tp = mysql.TypeDate
+    case "WEEK" :
+        tb = tm.AddDate(0, 0, 7*v)
+        tp = mysql.TypeDate
+    case "MONTH" :
+        tb = tm.AddDate(0, v, 0)
+        tp = mysql.TypeDate
+    case "QUARTER" :
+        tb = tm.AddDate(0, 3*v, 0)
+        tp = mysql.TypeDate
+    case "YEAR" :
+        tb = tm.AddDate(v, 0, 0)
+        tp = mysql.TypeDate
+    default:
+        return r, errors.Trace(ErrInvalidTimeFormat)
+    }
+    log.Info("Origin type: ", t.Type)
+    log.Info("This type: ", tp)
+    r = Time{Time: FromGoTime(tb), Type: mysql.TypeDatetime, Fsp: fsp}
+    err = r.check()
+    if err != nil {
+        return r, errors.Trace(err)
+    }
+    return r, nil
+}
+
 // TimestampDiff returns t2 - t1 where t1 and t2 are date or datetime expressions.
 // The unit for the result (an integer) is given by the unit argument.
 // The legal values for unit are "YEAR" "QUARTER" "MONTH" "DAY" "HOUR" "SECOND" and so on.
