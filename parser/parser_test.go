@@ -1482,9 +1482,21 @@ func (s *testParserSuite) TestTimestampDiffUnit(c *C) {
 	c.Assert(ok, IsTrue)
 	c.Assert(f.Args[0].GetDatum().GetString(), Equals, "MONTH")
 
-    // Test Illegal TimeUnit for TimestampDiff
-    stmt, err = parser.Parse("SELECT TIMESTAMPDIFF(DAY_SECOND,'2003-02-01','2003-05-01');", "", "")
-    c.Assert(err, NotNil)
+	// Test Illegal TimeUnit for TimestampDiff
+	table := []testCase{
+		{"SELECT TIMESTAMPDIFF(SECOND_MICROSECOND,'2003-02-01','2003-05-01')", false},
+		{"SELECT TIMESTAMPDIFF(MINUTE_MICROSECOND,'2003-02-01','2003-05-01')", false},
+		{"SELECT TIMESTAMPDIFF(MINUTE_SECOND,'2003-02-01','2003-05-01')", false},
+		{"SELECT TIMESTAMPDIFF(HOUR_MICROSECOND,'2003-02-01','2003-05-01')", false},
+		{"SELECT TIMESTAMPDIFF(HOUR_SECOND,'2003-02-01','2003-05-01')", false},
+		{"SELECT TIMESTAMPDIFF(HOUR_MINUTE,'2003-02-01','2003-05-01')", false},
+		{"SELECT TIMESTAMPDIFF(DAY_MICROSECOND,'2003-02-01','2003-05-01')", false},
+		{"SELECT TIMESTAMPDIFF(DAY_SECOND,'2003-02-01','2003-05-01')", false},
+		{"SELECT TIMESTAMPDIFF(DAY_MINUTE,'2003-02-01','2003-05-01')", false},
+		{"SELECT TIMESTAMPDIFF(DAY_HOUR,'2003-02-01','2003-05-01')", false},
+		{"SELECT TIMESTAMPDIFF(YEAR_MONTH,'2003-02-01','2003-05-01')", false},
+	}
+	s.RunTest(c, table)
 }
 
 func (s *testParserSuite) TestSessionManage(c *C) {
