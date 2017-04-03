@@ -15,7 +15,10 @@ package xeval
 
 import (
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -48,7 +51,10 @@ const (
 
 // Evaluator evaluates tipb.Expr.
 type Evaluator struct {
-	Row        map[int64]types.Datum // column values.
+	Row         map[int64]types.Datum // column values.
+	ColumnInfos []*tipb.ColumnInfo
+
+	fieldTps   []*types.FieldType
 	valueLists map[*tipb.Expr]*decodedValueList
 	sc         *variable.StatementContext
 }
@@ -56,6 +62,41 @@ type Evaluator struct {
 // NewEvaluator creates a new Evaluator instance.
 func NewEvaluator(sc *variable.StatementContext) *Evaluator {
 	return &Evaluator{Row: make(map[int64]types.Datum), sc: sc}
+}
+
+// SetColumnInfos sets ColumnInfos.
+func (e *Evaluator) SetColumnInfos(cols []*tipb.ColumnInfo) {
+	e.ColumnInfos = make([]*tipb.ColumnInfo, len(cols))
+	copy(e.ColumnInfos, cols)
+
+	e.fieldTps = make([]*types.FieldType, 0, len(e.ColumnInfos))
+	for _, col := range e.ColumnInfos {
+		ft := distsql.FieldTypeFromPBColumn(col)
+		e.fieldTps = append(e.fieldTps, ft)
+	}
+}
+
+// SetRowValue puts row value into evaluator, the values will be used for expr evaluation.
+func (e *Evaluator) SetRowValue(handle int64, row [][]byte, colIDs map[int64]int) error {
+	for colID, offset := range colIDs {
+		col := e.ColumnInfos[offset]
+		if col.GetPkHandle() {
+			if mysql.HasUnsignedFlag(uint(col.GetFlag())) {
+				e.Row[colID] = types.NewUintDatum(uint64(handle))
+			} else {
+				e.Row[colID] = types.NewIntDatum(handle)
+			}
+		} else {
+			data := row[offset]
+			ft := e.fieldTps[offset]
+			datum, err := tablecodec.DecodeColumnValue(data, ft)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			e.Row[colID] = datum
+		}
+	}
+	return nil
 }
 
 type decodedValueList struct {
