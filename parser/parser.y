@@ -97,6 +97,7 @@ import (
 	describe		"DESCRIBE"
 	distinct		"DISTINCT"
 	tidbSMJ			"TIDB_SMJ"
+	tidbINLJ		"TIDB_INLJ"
 	div 			"DIV"
 	doubleType		"DOUBLE"
 	drop			"DROP"
@@ -4804,6 +4805,10 @@ TableOptimizerHintList:
 
 TableOptimizerHintOpt:
 	tidbSMJ '(' HintTableList ')'
+	{
+		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), Tables: $3.([]model.CIStr)}
+	}
+|	tidbINLJ '(' HintTableList ')'
 	{
 		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), Tables: $3.([]model.CIStr)}
 	}

@@ -36,6 +36,7 @@ type Builder struct {
 	NumBuckets    int64            // NumBuckets is the number of buckets a column histogram has.
 	ColumnSamples [][]types.Datum  // ColumnSamples is the sample of columns.
 	ColOffsets    []int            // ColOffsets is the offset of columns in the table.
+	ColNDVs       []int64          // ColNDVs is the NDV of columns.
 	IdxRecords    []ast.RecordSet  // IdxRecords is the record set of index columns.
 	IdxOffsets    []int            // IdxOffsets is the offset of indices in the table.
 	PkRecords     ast.RecordSet    // PkRecords is the record set of primary key of integer type.
@@ -48,7 +49,7 @@ func (b *Builder) buildMultiColumns(t *Table, offsets []int, baseOffset int, isS
 		if isSorted {
 			err = t.build4SortedColumn(b.Ctx.GetSessionVars().StmtCtx, offset, b.IdxRecords[i+baseOffset], b.NumBuckets, false)
 		} else {
-			err = t.buildColumn(b.Ctx.GetSessionVars().StmtCtx, offset, b.ColumnSamples[i+baseOffset], b.NumBuckets)
+			err = t.buildColumn(b.Ctx.GetSessionVars().StmtCtx, offset, b.ColNDVs[i+baseOffset], b.ColumnSamples[i+baseOffset], b.NumBuckets)
 		}
 		if err != nil {
 			done <- err
@@ -98,14 +99,20 @@ func (b *Builder) splitAndConcurrentBuild(t *Table, offsets []int, isSorted bool
 
 // NewTable creates a table statistics.
 func (b *Builder) NewTable() (*Table, error) {
-	if b.Count == 0 {
-		return PseudoTable(b.TblInfo), nil
-	}
 	t := &Table{
 		Info:    b.TblInfo,
 		Count:   b.Count,
 		Columns: make([]*Column, len(b.TblInfo.Columns)),
 		Indices: make([]*Column, len(b.TblInfo.Indices)),
+	}
+	if b.Count == 0 {
+		for i := range t.Columns {
+			t.Columns[i] = &Column{ID: b.TblInfo.Columns[i].ID}
+		}
+		for i := range t.Indices {
+			t.Indices[i] = &Column{ID: b.TblInfo.Indices[i].ID}
+		}
+		return t, nil
 	}
 	err := b.splitAndConcurrentBuild(t, b.ColOffsets, false)
 	if err != nil {
@@ -137,16 +144,11 @@ func (b *Builder) NewTable() (*Table, error) {
 	// There may be cases that we have no columnSamples, and only after we build the index columns that we can know it is 0,
 	// so we should also checked it here.
 	if t.Count == 0 {
-		return PseudoTable(b.TblInfo), nil
-	}
-	// Some Indices may not need to have histograms, here we give them pseudo one to remove edge cases in pb.
-	// However, it should never be used.
-	for i, idx := range b.TblInfo.Indices {
-		if t.Indices[i] == nil {
-			t.Indices[i] = &Column{
-				ID:  idx.ID,
-				NDV: pseudoRowCount / 2,
-			}
+		for i := range t.Columns {
+			t.Columns[i] = &Column{ID: b.TblInfo.Columns[i].ID}
+		}
+		for i := range t.Indices {
+			t.Indices[i] = &Column{ID: b.TblInfo.Indices[i].ID}
 		}
 	}
 	return t, nil
@@ -241,19 +243,15 @@ func (t *Table) build4SortedColumn(sc *variable.StatementContext, offset int, re
 }
 
 // buildColumn builds column statistics from samples.
-func (t *Table) buildColumn(sc *variable.StatementContext, offset int, samples []types.Datum, bucketCount int64) error {
+func (t *Table) buildColumn(sc *variable.StatementContext, offset int, ndv int64, samples []types.Datum, bucketCount int64) error {
 	err := types.SortDatums(sc, samples)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	estimatedNDV, err := estimateNDV(sc, t.Count, samples)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	ci := t.Info.Columns[offset]
 	col := &Column{
 		ID:      ci.ID,
-		NDV:     estimatedNDV,
+		NDV:     ndv,
 		Numbers: make([]int64, 1, bucketCount),
 		Values:  make([]types.Datum, 1, bucketCount),
 		Repeats: make([]int64, 1, bucketCount),
@@ -291,36 +289,6 @@ func (t *Table) buildColumn(sc *variable.StatementContext, offset int, samples [
 	}
 	t.Columns[offset] = col
 	return nil
-}
-
-// estimateNDV estimates the number of distinct value given a count and samples.
-// It implements a simplified Good–Turing frequency estimation algorithm.
-// See https://en.wikipedia.org/wiki/Good%E2%80%93Turing_frequency_estimation
-func estimateNDV(sc *variable.StatementContext, count int64, samples []types.Datum) (int64, error) {
-	lastValue := samples[0]
-	occurrence := 1
-	sampleDistinct := 1
-	occurredOnceCount := 0
-	for i := 1; i < len(samples); i++ {
-		cmp, err := lastValue.CompareDatum(sc, samples[i])
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		if cmp == 0 {
-			occurrence++
-		} else {
-			if occurrence == 1 {
-				occurredOnceCount++
-			}
-			sampleDistinct++
-			occurrence = 1
-		}
-		lastValue = samples[i]
-	}
-	newValueProbability := float64(occurredOnceCount) / float64(len(samples))
-	unsampledCount := float64(count) - float64(len(samples))
-	estimatedDistinct := float64(sampleDistinct) + unsampledCount*newValueProbability
-	return int64(estimatedDistinct), nil
 }
 
 func copyFromIndexColumns(ind *Column, id, numBuckets int64) (*Column, error) {

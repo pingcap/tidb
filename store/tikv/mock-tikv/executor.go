@@ -17,7 +17,6 @@ import (
 	"bytes"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/distsql/xeval"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
@@ -30,12 +29,12 @@ import (
 
 type executor interface {
 	SetSrcExec(executor)
-	Next() (int64, map[int64][]byte, error)
+	Next() (int64, [][]byte, error)
 }
 
 type tableScanExec struct {
 	*tipb.TableScan
-	colTps      map[int64]*types.FieldType
+	colsID      map[int64]int
 	kvRanges    []kv.KeyRange
 	startTS     uint64
 	mvccStore   *MvccStore
@@ -51,7 +50,7 @@ func (e *tableScanExec) SetSrcExec(exec executor) {
 	e.src = exec
 }
 
-func (e *tableScanExec) Next() (int64, map[int64][]byte, error) {
+func (e *tableScanExec) Next() (int64, [][]byte, error) {
 	for e.cursor < len(e.kvRanges) {
 		ran := e.kvRanges[e.cursor]
 		if ran.IsPoint() {
@@ -79,7 +78,7 @@ func (e *tableScanExec) Next() (int64, map[int64][]byte, error) {
 	return 0, nil, nil
 }
 
-func (e *tableScanExec) getRowFromPoint(ran kv.KeyRange) (int64, map[int64][]byte, error) {
+func (e *tableScanExec) getRowFromPoint(ran kv.KeyRange) (int64, [][]byte, error) {
 	val, err := e.mvccStore.Get(ran.StartKey, e.startTS)
 	if len(val) == 0 {
 		return 0, nil, nil
@@ -90,14 +89,14 @@ func (e *tableScanExec) getRowFromPoint(ran kv.KeyRange) (int64, map[int64][]byt
 	if err != nil {
 		return 0, nil, errors.Trace(err)
 	}
-	row, err := handleRowData(e.Columns, e.colTps, handle, val)
+	row, err := getRowData(e.Columns, e.colsID, handle, val)
 	if err != nil {
 		return 0, nil, errors.Trace(err)
 	}
 	return handle, row, nil
 }
 
-func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) (int64, map[int64][]byte, error) {
+func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error) {
 	if e.seekKey == nil {
 		startKey := maxStartKey(ran.StartKey, e.rawStartKey)
 		endKey := minEndKey(ran.EndKey, e.rawEndKey)
@@ -143,7 +142,7 @@ func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) (int64, map[int64][]byt
 	if err != nil {
 		return 0, nil, errors.Trace(err)
 	}
-	row, err := handleRowData(e.Columns, e.colTps, handle, pair.Value)
+	row, err := getRowData(e.Columns, e.colsID, handle, pair.Value)
 	if err != nil {
 		return 0, nil, errors.Trace(err)
 	}
@@ -152,7 +151,7 @@ func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) (int64, map[int64][]byt
 
 type indexScanExec struct {
 	*tipb.IndexScan
-	ids         []int64
+	colsLen     int
 	kvRanges    []kv.KeyRange
 	startTS     uint64
 	mvccStore   *MvccStore
@@ -168,7 +167,7 @@ func (e *indexScanExec) SetSrcExec(exec executor) {
 	e.src = exec
 }
 
-func (e *indexScanExec) Next() (int64, map[int64][]byte, error) {
+func (e *indexScanExec) Next() (int64, [][]byte, error) {
 	for e.cursor < len(e.kvRanges) {
 		ran := e.kvRanges[e.cursor]
 		handle, value, err := e.getRowFromRange(ran)
@@ -186,7 +185,7 @@ func (e *indexScanExec) Next() (int64, map[int64][]byte, error) {
 	return 0, nil, nil
 }
 
-func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, map[int64][]byte, error) {
+func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error) {
 	if e.seekKey == nil {
 		startKey := maxStartKey(ran.StartKey, e.rawStartKey)
 		endKey := minEndKey(ran.EndKey, e.rawEndKey)
@@ -228,7 +227,7 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, map[int64][]byt
 		e.seekKey = []byte(kv.Key(pair.Key).PrefixNext())
 	}
 
-	values, b, err := tablecodec.CutIndexKey(pair.Key, e.ids)
+	values, b, err := tablecodec.CutIndexKeyNew(pair.Key, e.colsLen)
 	var handle int64
 	if len(b) > 0 {
 		var handleDatum types.Datum
@@ -249,9 +248,9 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, map[int64][]byt
 
 type selectionExec struct {
 	*tipb.Selection
-	sc      *variable.StatementContext
-	eval    *xeval.Evaluator
-	columns map[int64]*tipb.ColumnInfo
+	sc     *variable.StatementContext
+	eval   *xeval.Evaluator
+	colsID map[int64]int
 
 	src executor
 }
@@ -260,7 +259,7 @@ func (e *selectionExec) SetSrcExec(exec executor) {
 	e.src = exec
 }
 
-func (e *selectionExec) Next() (int64, map[int64][]byte, error) {
+func (e *selectionExec) Next() (int64, [][]byte, error) {
 	for {
 		handle, row, err := e.src.Next()
 		if err != nil {
@@ -270,7 +269,7 @@ func (e *selectionExec) Next() (int64, map[int64][]byte, error) {
 			return 0, nil, nil
 		}
 
-		err = setColumnValueToEval(e.eval, handle, row, e.columns)
+		err = e.eval.SetRowValue(handle, row, e.colsID)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
@@ -292,15 +291,27 @@ func (e *selectionExec) Next() (int64, map[int64][]byte, error) {
 	}
 }
 
-// handleRowData deals with raw row data:
-//	1. Decodes row from raw byte slice.
-func handleRowData(columns []*tipb.ColumnInfo, colTps map[int64]*types.FieldType, handle int64, value []byte) (map[int64][]byte, error) {
-	values, err := getRowData(value, colTps)
+func hasColVal(data [][]byte, colIDs map[int64]int, id int64) bool {
+	offset, ok := colIDs[id]
+	if ok && data[offset] != nil {
+		return true
+	}
+	return false
+}
+
+// getRowData decodes raw byte slice to row data.
+func getRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle int64, value []byte) ([][]byte, error) {
+	values, err := tablecodec.CutRowNew(value, colIDs)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if values == nil {
+		values = make([][]byte, len(colIDs))
+	}
 	// Fill the handle and null columns.
 	for _, col := range columns {
+		id := col.GetColumnId()
+		offset := colIDs[id]
 		if col.GetPkHandle() {
 			var handleDatum types.Datum
 			if mysql.HasUnsignedFlag(uint(col.GetFlag())) {
@@ -313,43 +324,46 @@ func handleRowData(columns []*tipb.ColumnInfo, colTps map[int64]*types.FieldType
 			if err1 != nil {
 				return nil, errors.Trace(err1)
 			}
-			values[col.GetColumnId()] = handleData
+			values[offset] = handleData
 			continue
 		}
-		_, ok := values[col.GetColumnId()]
-		if ok {
+		if hasColVal(values, colIDs, id) {
 			continue
 		}
 		if len(col.DefaultVal) > 0 {
-			values[col.GetColumnId()] = col.DefaultVal
+			values[offset] = col.DefaultVal
 			continue
 		}
 		if mysql.HasNotNullFlag(uint(col.GetFlag())) {
-			return nil, errors.New("Miss column")
+			return nil, errors.Errorf("Miss column %d", id)
 		}
-		values[col.GetColumnId()] = []byte{codec.NilFlag}
+		values[offset] = []byte{codec.NilFlag}
 	}
 
 	return values, nil
 }
 
-// setColumnValueToEval puts column values into evaluator, the values will be used for expr evaluation.
-func setColumnValueToEval(eval *xeval.Evaluator, handle int64, row map[int64][]byte, cols map[int64]*tipb.ColumnInfo) error {
-	for colID, col := range cols {
-		if col.GetPkHandle() {
-			if mysql.HasUnsignedFlag(uint(col.GetFlag())) {
-				eval.Row[colID] = types.NewUintDatum(uint64(handle))
-			} else {
-				eval.Row[colID] = types.NewIntDatum(handle)
+func extractColIDsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector map[int64]int) error {
+	if expr == nil {
+		return nil
+	}
+	if expr.GetTp() == tipb.ExprType_ColumnRef {
+		_, i, err := codec.DecodeInt(expr.Val)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for idx, c := range columns {
+			if c.GetColumnId() == i {
+				collector[i] = idx
+				return nil
 			}
-		} else {
-			data := row[colID]
-			ft := distsql.FieldTypeFromPBColumn(col)
-			datum, err := tablecodec.DecodeColumnValue(data, ft)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			eval.Row[colID] = datum
+		}
+		return xeval.ErrInvalid.Gen("column %d not found", i)
+	}
+	for _, child := range expr.Children {
+		err := extractColIDsInExpr(child, columns, collector)
+		if err != nil {
+			return errors.Trace(err)
 		}
 	}
 	return nil

@@ -27,11 +27,7 @@ func (s *ppdSolver) optimize(lp LogicalPlan, _ context.Context, _ *idAllocator) 
 
 func addSelection(p Plan, child LogicalPlan, conditions []expression.Expression, allocator *idAllocator) error {
 	conditions = expression.PropagateConstant(p.context(), conditions)
-	selection := &Selection{
-		Conditions:      conditions,
-		baseLogicalPlan: newBaseLogicalPlan(TypeSel, allocator)}
-	selection.self = selection
-	selection.initIDAndContext(p.context())
+	selection := Selection{Conditions: conditions}.init(allocator, p.context())
 	selection.SetSchema(child.Schema().Clone())
 	return InsertPlan(p, child, selection)
 }
@@ -71,7 +67,7 @@ func (p *Join) PredicatePushDown(predicates []expression.Expression) (ret []expr
 	}
 	groups, valid := tryToGetJoinGroup(p)
 	if valid {
-		e := joinReOrderSolver{allocator: p.allocator}
+		e := joinReOrderSolver{allocator: p.allocator, ctx: p.ctx}
 		e.reorderJoin(groups, predicates)
 		newJoin := e.resultJoin
 		parent := p.parents[0]

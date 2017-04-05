@@ -49,6 +49,7 @@ const (
 	tableConstraints    = "TABLE_CONSTRAINTS"
 	tableTriggers       = "TRIGGERS"
 	tableUserPrivileges = "USER_PRIVILEGES"
+	tableEngines        = "ENGINES"
 )
 
 type columnInfo struct {
@@ -331,6 +332,15 @@ var tableUserPrivilegesCols = []columnInfo{
 	{"IS_GRANTABLE", mysql.TypeVarchar, 3, 0, nil, nil},
 }
 
+var tableEnginesCols = []columnInfo{
+	{"ENGINE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"SUPPORT", mysql.TypeVarchar, 8, 0, nil, nil},
+	{"COMMENT", mysql.TypeVarchar, 80, 0, nil, nil},
+	{"TRANSACTIONS", mysql.TypeVarchar, 3, 0, nil, nil},
+	{"XA", mysql.TypeVarchar, 3, 0, nil, nil},
+	{"SAVEPOINTS", mysql.TypeVarchar, 3, 0, nil, nil},
+}
+
 func dataForCharacterSets() (records [][]types.Datum) {
 	records = append(records,
 		types.MakeDatums("ascii", "ascii_general_ci", "US ASCII", 1),
@@ -370,6 +380,21 @@ func dataForSessionVar(ctx context.Context) (records [][]types.Datum, err error)
 func dataForUserPrivileges(ctx context.Context) [][]types.Datum {
 	pm := privilege.GetPrivilegeManager(ctx)
 	return pm.UserPrivilegesTable()
+}
+
+func dataForEngines() (records [][]types.Datum) {
+	records = append(records,
+		types.MakeDatums("InnoDB", "DEFAULT", "Supports transactions, row-level locking, and foreign keys", "YES", "YES", "YES"),
+		types.MakeDatums("CSV", "YES", "CSV storage engine", "NO", "NO", "NO"),
+		types.MakeDatums("MRG_MYISAM", "YES", "Collection of identical MyISAM tables", "NO", "NO", "NO"),
+		types.MakeDatums("BLACKHOLE", "YES", "/dev/null storage engine (anything you write to it disappears)", "NO", "NO", "NO"),
+		types.MakeDatums("MyISAM", "YES", "MyISAM storage engine", "NO", "NO", "NO"),
+		types.MakeDatums("MEMORY", "YES", "Hash based, stored in memory, useful for temporary tables", "NO", "NO", "NO"),
+		types.MakeDatums("ARCHIVE", "YES", "Archive storage engine", "NO", "NO", "NO"),
+		types.MakeDatums("FEDERATED", "NO", "Federated MySQL storage engine", nil, nil, nil),
+		types.MakeDatums("PERFORMANCE_SCHEMA", "YES", "Performance Schema", "NO", "NO", "NO"),
+	)
+	return records
 }
 
 var filesCols = []columnInfo{
@@ -660,6 +685,7 @@ var tableNameToColumns = map[string]([]columnInfo){
 	tableConstraints:    tableConstraintsCols,
 	tableTriggers:       tableTriggersCols,
 	tableUserPrivileges: tableUserPrivilegesCols,
+	tableEngines:        tableEnginesCols,
 }
 
 func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
@@ -725,6 +751,8 @@ func (it *infoschemaTable) getRows(ctx context.Context, cols []*table.Column) (f
 	case tablePlugins, tableTriggers:
 	case tableUserPrivileges:
 		fullRows = dataForUserPrivileges(ctx)
+	case tableEngines:
+		fullRows = dataForEngines()
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
