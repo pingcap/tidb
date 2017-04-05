@@ -19,7 +19,6 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -150,7 +149,7 @@ func (c *Column) GreaterRowCount(sc *variable.StatementContext, value types.Datu
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	eqCount , err := c.EqualRowCount(sc, value)
+	eqCount, err := c.EqualRowCount(sc, value)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -178,7 +177,6 @@ func (c *Column) LessRowCount(sc *variable.StatementContext, value types.Datum) 
 	if index > 0 {
 		prevCount = c.Buckets[index-1].Count
 	}
-	log.Warnf("cur %d prev %d repeat %d match %v", curCount, prevCount, c.Buckets[index].Repeats, match)
 	lessThanBucketValueCount := curCount - c.Buckets[index].Repeats
 	if match {
 		return lessThanBucketValueCount, nil
