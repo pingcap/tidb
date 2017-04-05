@@ -831,7 +831,26 @@ type builtinCotSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_cot
 func (b *builtinCotSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("cot")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	arg := args[0]
+	if arg.IsNull() {
+		return d, nil
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	x, err := arg.ToFloat64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	result := (1.0 / math.Tan(x))
+	if math.IsInf(result, 0) == true {
+		d.SetNull()
+	} else {
+		d.SetFloat64(1.0 / math.Tan(x))
+	}
+	return d, nil
 }
 
 type degreesFunctionClass struct {
