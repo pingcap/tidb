@@ -174,7 +174,7 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	c.Check(count, Equals, int64(1))
 	count, err = col.LessRowCount(sc, types.NewIntDatum(2000))
 	c.Check(err, IsNil)
-	c.Check(count, Equals, int64(19990))
+	c.Check(count, Equals, int64(19999))
 	count, err = col.LessRowCount(sc, types.NewIntDatum(200000000))
 	c.Check(err, IsNil)
 	c.Check(count, Equals, int64(100000))
@@ -183,7 +183,7 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	c.Check(count, Equals, int64(0))
 	count, err = col.BetweenRowCount(sc, types.NewIntDatum(3000), types.NewIntDatum(3500))
 	c.Check(err, IsNil)
-	c.Check(count, Equals, int64(4990))
+	c.Check(count, Equals, int64(4999))
 
 	col = t.Columns[1]
 	count, err = col.EqualRowCount(sc, types.NewIntDatum(10000))

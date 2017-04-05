@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -169,6 +170,7 @@ func (c *Column) LessRowCount(sc *variable.StatementContext, value types.Datum) 
 	if index > 0 {
 		prevCount = c.Buckets[index-1].Count
 	}
+	log.Warnf("cur %d prev %d repeat %d match %v", curCount, prevCount, c.Buckets[index].Repeats, match)
 	lessThanBucketValueCount := curCount - c.Buckets[index].Repeats
 	if match {
 		return lessThanBucketValueCount, nil
@@ -227,15 +229,15 @@ func (c *Column) lowerBound(sc *variable.StatementContext, target types.Datum) (
 func (c *Column) mergeBuckets(bucketIdx int64) {
 	curBuck := 0
 	for i := int64(0); i+1 <= bucketIdx; i += 2 {
-		c.Buckets[curBuck].Count = c.Buckets[i+1].Count
-		c.Buckets[curBuck].Value = c.Buckets[i+1].Value
-		c.Buckets[curBuck].Repeats = c.Buckets[i+1].Repeats
+		c.Buckets[curBuck] = bucket{
+			Count:   c.Buckets[i+1].Count,
+			Value:   c.Buckets[i+1].Value,
+			Repeats: c.Buckets[i+1].Repeats,
+		}
 		curBuck++
 	}
 	if bucketIdx%2 == 0 {
-		c.Buckets[curBuck].Count = c.Buckets[bucketIdx].Count
-		c.Buckets[curBuck].Value = c.Buckets[bucketIdx].Value
-		c.Buckets[curBuck].Repeats = c.Buckets[bucketIdx].Repeats
+		c.Buckets[curBuck] = c.Buckets[bucketIdx]
 		curBuck++
 	}
 	c.Buckets = c.Buckets[:curBuck]

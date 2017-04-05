@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
@@ -258,8 +259,13 @@ func (t *Table) buildColumn(sc *variable.StatementContext, offset int, ndv int64
 
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
 	sampleFactor := t.Count / int64(len(samples))
+	ndvFactor := t.Count / ndv
+	log.Warnf("sample %d ndv %d ndvFact %d", sampleFactor, ndv, ndvFactor)
+	if ndvFactor > sampleFactor {
+		ndvFactor = sampleFactor
+	}
 	bucketIdx := 0
-	var lastNumber int64
+	var lastCount int64
 	for i := int64(0); i < int64(len(samples)); i++ {
 		cmp, err := col.Buckets[bucketIdx].Value.CompareDatum(sc, samples[i])
 		if err != nil {
@@ -270,20 +276,24 @@ func (t *Table) buildColumn(sc *variable.StatementContext, offset int, ndv int64
 			// a same value only stored in a single bucket, we do not increase bucketIdx even if it exceeds
 			// valuesPerBucket.
 			col.Buckets[bucketIdx].Count = (i + 1) * sampleFactor
-			col.Buckets[bucketIdx].Repeats += sampleFactor
-		} else if i*sampleFactor-lastNumber <= valuesPerBucket {
+			if col.Buckets[bucketIdx].Repeats == ndvFactor {
+				col.Buckets[bucketIdx].Repeats = 2 * sampleFactor
+			} else {
+				col.Buckets[bucketIdx].Repeats += sampleFactor
+			}
+		} else if (i+1)*sampleFactor-lastCount <= valuesPerBucket {
 			// TODO: Making sampleFactor as float may be better.
 			// The bucket still have room to store a new item, update the bucket.
 			col.Buckets[bucketIdx].Count = (i + 1) * sampleFactor
 			col.Buckets[bucketIdx].Value = samples[i]
-			col.Buckets[bucketIdx].Repeats = sampleFactor
+			col.Buckets[bucketIdx].Repeats = ndvFactor
 		} else {
 			// The bucket is full, store the item in the next bucket.
 			bucketIdx++
 			col.Buckets = append(col.Buckets, bucket{
 				Count:   (i + 1) * sampleFactor,
 				Value:   samples[i],
-				Repeats: sampleFactor,
+				Repeats: ndvFactor,
 			})
 		}
 	}
