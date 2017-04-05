@@ -1550,15 +1550,13 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: `revoke all privileges on *.* from 'test'@'%'`,
 			ans: []visitInfo{
-				// TODO: This should be SUPER privilege.
-				{mysql.CreateUserPriv, "", "", ""},
+				{mysql.SuperPriv, "", "", ""},
 			},
 		},
 		{
 			sql: `set password for 'root'@'%' = 'xxxxx'`,
 			ans: []visitInfo{
-				// TODO: This should be SUPER privilege.
-				{mysql.CreateUserPriv, "", "", ""},
+				{mysql.SuperPriv, "", "", ""},
 			},
 		},
 	}
