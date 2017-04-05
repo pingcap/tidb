@@ -433,6 +433,7 @@ var tokenMap = map[string]int{
 	"SUBSTRING":                  substring,
 	"SUBSTRING_INDEX":            substringIndex,
 	"SUM":                        sum,
+	"SUPER":                      super,
 	"SYSDATE":                    sysDate,
 	"TIDB":                       tidb,
 	"TABLE":                      tableKwd,

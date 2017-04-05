@@ -95,7 +95,7 @@ func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 		currExec = &tableScanExec{
 			TableScan:   curr.TblScan,
 			kvRanges:    ranges,
-			colsID:      colIDs,
+			colIDs:      colIDs,
 			startTS:     ctx.dagReq.GetStartTs(),
 			mvccStore:   h.mvccStore,
 			rawStartKey: h.rawStartKey,
@@ -133,7 +133,7 @@ func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 		currExec = &selectionExec{
 			Selection: curr.Selection,
 			eval:      ctx.eval,
-			colsID:    colIDs,
+			colIDs:    colIDs,
 			sc:        ctx.sc,
 		}
 	default:
