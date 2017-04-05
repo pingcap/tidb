@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
@@ -220,8 +219,6 @@ func (s *testSuite) TestSetPwd(c *C) {
 func (s *testSuite) TestFlushPrivileges(c *C) {
 	defer testleak.AfterTest(c)()
 	// Global variables is really bad, when the test cases run concurrently.
-	save := privileges.Enable
-	privileges.Enable = true
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec(`CREATE USER 'testflush'@'localhost' IDENTIFIED BY '';`)
@@ -242,6 +239,4 @@ func (s *testSuite) TestFlushPrivileges(c *C) {
 	// After flush.
 	_, err = se.Execute(`SELECT Password FROM mysql.User WHERE User="testflush" and Host="localhost"`)
 	c.Check(err, IsNil)
-
-	privileges.Enable = save
 }

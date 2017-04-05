@@ -2086,10 +2086,7 @@ func (s *testSessionSuite) TestSkipWithGrant(c *C) {
 	se := newSession(c, s.store, dbName)
 	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
 
-	save1 := privileges.Enable
-	save2 := privileges.SkipWithGrant
-
-	privileges.Enable = true
+	save := privileges.SkipWithGrant
 	privileges.SkipWithGrant = false
 	c.Assert(se.Auth("user_not_exist", []byte("yyy"), []byte("zzz")), IsFalse)
 
@@ -2098,8 +2095,7 @@ func (s *testSessionSuite) TestSkipWithGrant(c *C) {
 	c.Assert(se.Auth(`root@%`, []byte(""), []byte("")), IsTrue)
 	mustExecSQL(c, se, "create table t (id int)")
 
-	privileges.Enable = save1
-	privileges.SkipWithGrant = save2
+	privileges.SkipWithGrant = save
 	mustExecSQL(c, se, dropDBSQL)
 }
 

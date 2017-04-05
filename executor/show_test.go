@@ -18,7 +18,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -134,8 +133,6 @@ func (s *testSuite) TestShow(c *C) {
 }
 
 func (s *testSuite) TestShowVisibility(c *C) {
-	save := privileges.Enable
-	privileges.Enable = true
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database showdatabase")
 	tk.MustExec("use showdatabase")
@@ -171,7 +168,6 @@ func (s *testSuite) TestShowVisibility(c *C) {
 	// The user can see t2 but not t1.
 	c.Assert(rows, HasLen, 1)
 
-	privileges.Enable = save
 	tk.MustExec(`drop user 'show'@'%'`)
 	tk.MustExec("drop database showdatabase")
 }

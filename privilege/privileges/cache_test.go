@@ -29,7 +29,6 @@ type testCacheSuite struct {
 }
 
 func (s *testCacheSuite) SetUpSuite(c *C) {
-	privileges.Enable = true
 	store, err := tidb.NewStore("memory://mysql")
 	c.Assert(err, IsNil)
 	_, err = tidb.BootstrapSession(store)
@@ -173,7 +172,6 @@ func (s *testCacheSuite) TestCaseInsensitive(c *C) {
 }
 
 func (s *testCacheSuite) TestAbnormalMySQLTable(c *C) {
-	privileges.Enable = true
 	store, err := tidb.NewStore("memory://sync_mysql_user")
 	c.Assert(err, IsNil)
 	domain, err := tidb.BootstrapSession(store)
