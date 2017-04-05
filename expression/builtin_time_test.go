@@ -1197,5 +1197,4 @@ func (s *testEvaluatorSuite) TestToDays(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(d.IsNull(), IsTrue)
 	}
-
 }
