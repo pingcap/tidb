@@ -53,7 +53,7 @@ const (
 type Evaluator struct {
 	Row map[int64]types.Datum // TODO: Remove this field after refactor cop_handler.
 
-	RowNew      []types.Datum // column values
+	ColVals     []types.Datum
 	ColIDs      map[int64]int
 	ColumnInfos []*tipb.ColumnInfo
 	fieldTps    []*types.FieldType
@@ -75,7 +75,7 @@ func (e *Evaluator) SetColumnInfos(cols []*tipb.ColumnInfo) {
 	e.ColumnInfos = make([]*tipb.ColumnInfo, len(cols))
 	copy(e.ColumnInfos, cols)
 
-	e.RowNew = make([]types.Datum, len(e.ColumnInfos))
+	e.ColVals = make([]types.Datum, len(e.ColumnInfos))
 	for i, col := range e.ColumnInfos {
 		e.ColIDs[col.GetColumnId()] = i
 	}
@@ -88,15 +88,14 @@ func (e *Evaluator) SetColumnInfos(cols []*tipb.ColumnInfo) {
 }
 
 // SetRowValue puts row value into evaluator, the values will be used for expr evaluation.
-func (e *Evaluator) SetRowValue(handle int64, row [][]byte, relatedColIDs []int64) error {
-	for _, id := range relatedColIDs {
-		offset := e.ColIDs[id]
+func (e *Evaluator) SetRowValue(handle int64, row [][]byte, relatedColIDs map[int64]int) error {
+	for _, offset := range relatedColIDs {
 		col := e.ColumnInfos[offset]
 		if col.GetPkHandle() {
 			if mysql.HasUnsignedFlag(uint(col.GetFlag())) {
-				e.RowNew[offset] = types.NewUintDatum(uint64(handle))
+				e.ColVals[offset] = types.NewUintDatum(uint64(handle))
 			} else {
-				e.RowNew[offset] = types.NewIntDatum(handle)
+				e.ColVals[offset] = types.NewIntDatum(handle)
 			}
 		} else {
 			data := row[offset]
@@ -105,7 +104,7 @@ func (e *Evaluator) SetRowValue(handle int64, row [][]byte, relatedColIDs []int6
 			if err != nil {
 				return errors.Trace(err)
 			}
-			e.RowNew[offset] = datum
+			e.ColVals[offset] = datum
 		}
 	}
 	return nil
