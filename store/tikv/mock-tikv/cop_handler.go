@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/distsql/xeval"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
@@ -403,10 +404,42 @@ func (h *rpcHandler) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, limit
 //	2. Checks if it fit where condition.
 //	3. Update aggregate functions.
 func (h *rpcHandler) handleRowData(ctx *selectContext, handle int64, value []byte) ([]byte, error) {
-	values, err := handleRowData(ctx.sel.TableInfo.Columns, ctx.colTps, handle, value)
+	columns := ctx.sel.TableInfo.Columns
+	values, err := getRowVals(value, ctx.colTps)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	// Fill the handle and null columns.
+	for _, col := range columns {
+		if col.GetPkHandle() {
+			var handleDatum types.Datum
+			if mysql.HasUnsignedFlag(uint(col.GetFlag())) {
+				// PK column is Unsigned.
+				handleDatum = types.NewUintDatum(uint64(handle))
+			} else {
+				handleDatum = types.NewIntDatum(handle)
+			}
+			handleData, err1 := codec.EncodeValue(nil, handleDatum)
+			if err1 != nil {
+				return nil, errors.Trace(err1)
+			}
+			values[col.GetColumnId()] = handleData
+			continue
+		}
+		_, ok := values[col.GetColumnId()]
+		if ok {
+			continue
+		}
+		if len(col.DefaultVal) > 0 {
+			values[col.GetColumnId()] = col.DefaultVal
+			continue
+		}
+		if mysql.HasNotNullFlag(uint(col.GetFlag())) {
+			return nil, errors.Errorf("Miss column %d", col.GetColumnId())
+		}
+		values[col.GetColumnId()] = []byte{codec.NilFlag}
+	}
+
 	return h.valuesToRow(ctx, handle, values)
 }
 
@@ -446,7 +479,7 @@ func (h *rpcHandler) valuesToRow(ctx *selectContext, handle int64, values map[in
 	return data, nil
 }
 
-func getRowData(value []byte, colTps map[int64]*types.FieldType) (map[int64][]byte, error) {
+func getRowVals(value []byte, colTps map[int64]*types.FieldType) (map[int64][]byte, error) {
 	res, err := tablecodec.CutRow(value, colTps)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -611,4 +644,26 @@ func decodeHandle(data []byte) (int64, error) {
 	buf := bytes.NewBuffer(data)
 	err := binary.Read(buf, binary.BigEndian, &h)
 	return h, errors.Trace(err)
+}
+
+// setColumnValueToEval puts column values into evaluator, the values will be used for expr evaluation.
+func setColumnValueToEval(eval *xeval.Evaluator, handle int64, row map[int64][]byte, cols map[int64]*tipb.ColumnInfo) error {
+	for colID, col := range cols {
+		if col.GetPkHandle() {
+			if mysql.HasUnsignedFlag(uint(col.GetFlag())) {
+				eval.Row[colID] = types.NewUintDatum(uint64(handle))
+			} else {
+				eval.Row[colID] = types.NewIntDatum(handle)
+			}
+		} else {
+			data := row[colID]
+			ft := distsql.FieldTypeFromPBColumn(col)
+			datum, err := tablecodec.DecodeColumnValue(data, ft)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			eval.Row[colID] = datum
+		}
+	}
+	return nil
 }
