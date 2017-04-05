@@ -144,7 +144,7 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) *i
 	return &indexScanExec{
 		IndexScan:   executor.IdxScan,
 		kvRanges:    ranges,
-		colsLen:     length,
+		colsLen:     len(columns),
 		startTS:     ctx.dagReq.GetStartTs(),
 		mvccStore:   h.mvccStore,
 		rawStartKey: h.rawStartKey,

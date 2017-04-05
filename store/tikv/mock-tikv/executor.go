@@ -344,9 +344,13 @@ func (e *aggregateExec) Next() (int64, [][]byte, error) {
 		return 0, nil, nil
 	}
 	gk := e.aggContext.groupKeys[e.currGroupIdx]
+	gkData, err := codec.EncodeValue(nil, types.NewBytesDatum(gk))
+	if err != nil {
+		return 0, nil, errors.Trace(err)
+	}
 	row := make([][]byte, 0, 1+2*len(e.aggFuncs))
 	// The first column is group key.
-	row = append(row, gk)
+	row = append(row, gkData)
 	for _, agg := range e.aggFuncs {
 		agg.currentGroup = gk
 		ds, err := agg.toDatums(e.aggContext)

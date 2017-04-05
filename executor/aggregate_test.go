@@ -58,14 +58,13 @@ func (m *MockExec) Close() error {
 }
 
 func (s *testSuite) TestAggregation(c *C) {
-	// TODO
-	//mocktikv.MockDAGRequest = true
+	mocktikv.MockDAGRequest = true
 	plan.JoinConcurrency = 1
 	defer func() {
 		plan.JoinConcurrency = 5
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
-		//	mocktikv.MockDAGRequest = false
+		mocktikv.MockDAGRequest = false
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -78,7 +77,9 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("insert t values (1, 1)")
 	tk.MustExec("insert t values (3, 2)")
 	tk.MustExec("insert t values (4, 3)")
-	result := tk.MustQuery("select count(*) from t group by d")
+	result := tk.MustQuery("select count(*) from t")
+	result.Check(testkit.Rows("7"))
+	result = tk.MustQuery("select count(*) from t group by d")
 	result.Check(testkit.Rows("3", "2", "2"))
 	result = tk.MustQuery("select distinct 99 from t group by d having d > 0")
 	result.Check(testkit.Rows("99"))
