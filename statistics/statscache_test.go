@@ -95,11 +95,9 @@ func compareTwoColumnsStatsSlice(cols0 []*statistics.Column, cols1 []*statistics
 		for _, col1 := range cols1 {
 			if col0.ID == col1.ID {
 				c.Assert(col0.NDV, Equals, col1.NDV)
-				c.Assert(len(col0.Numbers), Equals, len(col1.Numbers))
-				for j := 0; j < len(col0.Numbers); j++ {
-					c.Assert(col0.Numbers[j], Equals, col1.Numbers[j])
-					c.Assert(col0.Repeats[j], Equals, col1.Repeats[j])
-					c.Assert(col0.Values[j], DeepEquals, col1.Values[j])
+				c.Assert(len(col0.Buckets), Equals, len(col1.Buckets))
+				for j := 0; j < len(col0.Buckets); j++ {
+					c.Assert(col0.Buckets[j], DeepEquals, col1.Buckets[j])
 				}
 				find = true
 				break
