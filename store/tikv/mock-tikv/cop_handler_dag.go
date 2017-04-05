@@ -123,7 +123,7 @@ func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) *t
 	return &tableScanExec{
 		TableScan:   executor.TblScan,
 		kvRanges:    ranges,
-		colsID:      colIDs,
+		colIDs:      colIDs,
 		startTS:     ctx.dagReq.GetStartTs(),
 		mvccStore:   h.mvccStore,
 		rawStartKey: h.rawStartKey,
@@ -167,7 +167,7 @@ func (h *rpcHandler) buildSelection(ctx *dagContext, executor *tipb.Executor) (*
 	return &selectionExec{
 		Selection: executor.Selection,
 		eval:      ctx.eval,
-		colsID:    colIDs,
+		colIDs:    colIDs,
 	}, nil
 }
 
