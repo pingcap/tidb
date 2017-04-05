@@ -541,9 +541,8 @@ func (b *planBuilder) buildSimple(node ast.StmtNode) Plan {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "")
 	case *ast.GrantStmt:
 		b.visitInfo = collectVisitInfoFromGrantStmt(b.visitInfo, raw)
-	case *ast.SetPwdStmt, *ast.RevokeStmt:
-		// TODO: Require SUPER privilege, it's a temporary solution here.
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "")
+	case *ast.SetPwdStmt, *ast.RevokeStmt, *ast.KillStmt:
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "")
 	}
 	return p
 }
