@@ -145,6 +145,10 @@ type physicalPlanInfo struct {
 	p     PhysicalPlan
 	cost  float64
 	count uint64
+
+	// If the cost is calculated by pseudo table, it's not reliable.
+	// But if we has limit or something else, the cost is reliable.
+	costReliable bool
 }
 
 // LogicalPlan is a tree of logical operators.

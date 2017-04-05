@@ -170,14 +170,15 @@ func (p *PhysicalHashSemiJoin) matchProperty(_ *requiredProperty, childPlanInfo 
 	np := *p
 	np.SetChildren(lRes.p, rRes.p)
 	cost := lRes.cost + rRes.cost
-	return &physicalPlanInfo{p: &np, cost: cost}
+	reliable := lRes.costReliable && rRes.costReliable
+	return &physicalPlanInfo{p: &np, cost: cost, costReliable: reliable}
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
 func (p *PhysicalApply) matchProperty(_ *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
 	np := *p
 	np.SetChildren(childPlanInfo[0].p)
-	return &physicalPlanInfo{p: &np, cost: childPlanInfo[0].cost}
+	return &physicalPlanInfo{p: &np, cost: childPlanInfo[0].cost, costReliable: childPlanInfo[0].costReliable}
 }
 
 func estimateJoinCount(lc uint64, rc uint64) uint64 {
@@ -214,7 +215,8 @@ func (p *PhysicalHashJoin) matchProperty(prop *requiredProperty, childPlanInfo .
 	} else {
 		cost += rCount + memoryFactor*lCount
 	}
-	return &physicalPlanInfo{p: &np, cost: cost, count: estimateJoinCount(lRes.count, rRes.count)}
+	reliable := lRes.costReliable && rRes.costReliable
+	return &physicalPlanInfo{p: &np, cost: cost, count: estimateJoinCount(lRes.count, rRes.count), costReliable: reliable}
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
@@ -223,13 +225,15 @@ func (p *Union) matchProperty(_ *requiredProperty, childPlanInfo ...*physicalPla
 	children := make([]Plan, 0, len(childPlanInfo))
 	cost := float64(0)
 	count := uint64(0)
+	reliable := true
 	for _, res := range childPlanInfo {
 		children = append(children, res.p)
 		cost += res.cost
 		count += res.count
+		reliable = reliable && res.costReliable
 	}
 	np.SetChildren(children...)
-	return &physicalPlanInfo{p: &np, cost: cost, count: count}
+	return &physicalPlanInfo{p: &np, cost: cost, count: count, costReliable: reliable}
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
@@ -254,6 +258,7 @@ func (p *PhysicalUnionScan) matchProperty(prop *requiredProperty, childPlanInfo 
 	res.p = &np
 	if limit != nil {
 		res = addPlanToResponse(limit, res)
+		res.costReliable = true
 	}
 	return res
 }
@@ -262,7 +267,7 @@ func (p *PhysicalUnionScan) matchProperty(prop *requiredProperty, childPlanInfo 
 func (p *Projection) matchProperty(_ *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
 	np := *p
 	np.SetChildren(childPlanInfo[0].p)
-	return &physicalPlanInfo{p: &np, cost: childPlanInfo[0].cost}
+	return &physicalPlanInfo{p: &np, cost: childPlanInfo[0].cost, costReliable: childPlanInfo[0].costReliable}
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.

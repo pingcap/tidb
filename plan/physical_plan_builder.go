@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/ast"
 )
 
 const (
@@ -110,7 +111,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 	if ts.TableConditionPBExpr != nil {
 		rowCount = uint64(float64(rowCount) * selectionFactor)
 	}
-	return resultPlan.matchProperty(prop, &physicalPlanInfo{count: rowCount}), nil
+	return resultPlan.matchProperty(prop, &physicalPlanInfo{count: rowCount, costReliable: !statsTbl.Pseudo}), nil
 }
 
 func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.IndexInfo) (*physicalPlanInfo, error) {
@@ -175,7 +176,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		is.Ranges = rb.buildIndexRanges(fullRange, types.NewFieldType(mysql.TypeNull))
 	}
 	is.DoubleRead = !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
-	return resultPlan.matchProperty(prop, &physicalPlanInfo{count: rowCount}), nil
+	return resultPlan.matchProperty(prop, &physicalPlanInfo{count: rowCount, costReliable: !statsTbl.Pseudo}), nil
 }
 
 func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexColumn, pkIsHandle bool) bool {
@@ -323,12 +324,14 @@ func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPl
 		count := info.count
 		if prop.limit != nil {
 			count = prop.limit.Offset + prop.limit.Count
+			info.costReliable = true
 		}
 		info.cost += sortCost(count)
 	} else if prop.limit != nil {
 		limit := prop.limit.Copy().(*Limit)
 		limit.SetSchema(info.p.Schema())
 		info = addPlanToResponse(limit, info)
+		info.costReliable = true
 	}
 	if prop.limit != nil && prop.limit.Count < info.count {
 		info.count = prop.limit.Count
@@ -1120,6 +1123,39 @@ func (p *Selection) makeScanController(onlyJudge bool) (*physicalPlanInfo, bool)
 	}
 	info.cost = float64(info.count) * selectionFactor
 	return info, true
+}
+
+func isUniqueInCond(cond expression.Expression, schema *expression.Schema) bool {
+	if sf, ok := cond.(*expression.ScalarFunction); ok {
+		if sf.FuncName.L != ast.In {
+			return false
+		}
+		switch x := sf.GetArgs()[0].(type) {
+		// case like a in (1, 2, 3)
+		case *expression.Column:
+			if schema.IsUniqueKey(x) {
+				return true
+			}
+		// case like (a, b) in ((1, 2))
+		case *expression.ScalarFunction:
+			if x.FuncName.L == ast.RowFunc {
+				cols := make([]*expression.Column, 0, len(x.GetArgs()))
+				allIsCol := true
+				for _, arg := range x.GetArgs() {
+					if col, ok := arg.(*expression.Column); ok {
+						cols = append(cols, col)
+					} else {
+						allIsCol = false
+						break
+					}
+				}
+				if allIsCol && schema.IsUniqueKey(cols...) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
