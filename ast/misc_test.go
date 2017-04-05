@@ -109,7 +109,7 @@ func (ts *testMiscSuite) TestDMLVistorCover(c *C) {
 delete t1, t2 from t1 inner join t2 inner join t3 where t1.id=t2.id and t2.id=t3.id;
 select * from t where exists(select * from t k where t.c = k.c having sum(c) = 1);
 insert into t_copy select * from t where t.x > 5;
-(select a from t1 where a=10 and b=1) union (select /*+ TIDB_SMJ(t2) */ a from t2 where a=11 and b=2) order by a limit 10;
+(select /*+ TIDB_INLJ(t1) */ a from t1 where a=10 and b=1) union (select /*+ TIDB_SMJ(t2) */ a from t2 where a=11 and b=2) order by a limit 10;
 update t1 set col1 = col1 + 1, col2 = col1;
 show create table t;
 load data infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b';`
