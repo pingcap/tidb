@@ -587,11 +587,11 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "do sleep(5)",
-			plan: "*plan.TableDual->Projection",
+			plan: "Dual->Projection",
 		},
 		{
 			sql:  "select substr(\"abc\", 1)",
-			plan: "*plan.TableDual->Projection",
+			plan: "Dual->Projection",
 		},
 		{
 			sql:  "analyze table t, t",
@@ -1550,15 +1550,13 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: `revoke all privileges on *.* from 'test'@'%'`,
 			ans: []visitInfo{
-				// TODO: This should be SUPER privilege.
-				{mysql.CreateUserPriv, "", "", ""},
+				{mysql.SuperPriv, "", "", ""},
 			},
 		},
 		{
 			sql: `set password for 'root'@'%' = 'xxxxx'`,
 			ans: []visitInfo{
-				// TODO: This should be SUPER privilege.
-				{mysql.CreateUserPriv, "", "", ""},
+				{mysql.SuperPriv, "", "", ""},
 			},
 		},
 	}

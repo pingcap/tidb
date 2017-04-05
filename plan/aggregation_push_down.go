@@ -73,7 +73,7 @@ func (a *aggregationOptimizer) getAggFuncChildIdx(aggFunc expression.Aggregation
 // collectAggFuncs collects all aggregate functions and splits them into two parts: "leftAggFuncs" and "rightAggFuncs" whose
 // arguments are all from left child or right child separately. If some aggregate functions have the arguments that have
 // columns both from left and right children, the whole aggregation is forbidden to push down.
-func (a *aggregationOptimizer) collectAggFuncs(agg *Aggregation, join *Join) (valid bool, leftAggFuncs, rightAggFuncs []expression.AggregationFunction) {
+func (a *aggregationOptimizer) collectAggFuncs(agg *LogicalAggregation, join *LogicalJoin) (valid bool, leftAggFuncs, rightAggFuncs []expression.AggregationFunction) {
 	valid = true
 	leftChild := join.children[0]
 	for _, aggFunc := range agg.AggFuncs {
@@ -98,7 +98,7 @@ func (a *aggregationOptimizer) collectAggFuncs(agg *Aggregation, join *Join) (va
 // query should be "SELECT SUM(B.agg) FROM A, (SELECT SUM(id) as agg, c1, c2, c3 FROM B GROUP BY id, c1, c2, c3) as B
 // WHERE A.c1 = B.c1 AND A.c2 != B.c2 GROUP BY B.c3". As you see, all the columns appearing in join-conditions should be
 // treated as group by columns in join subquery.
-func (a *aggregationOptimizer) collectGbyCols(agg *Aggregation, join *Join) (leftGbyCols, rightGbyCols []*expression.Column) {
+func (a *aggregationOptimizer) collectGbyCols(agg *LogicalAggregation, join *LogicalJoin) (leftGbyCols, rightGbyCols []*expression.Column) {
 	leftChild := join.children[0]
 	for _, gbyExpr := range agg.GroupByItems {
 		cols := expression.ExtractColumns(gbyExpr)
@@ -136,7 +136,7 @@ func (a *aggregationOptimizer) collectGbyCols(agg *Aggregation, join *Join) (lef
 	return
 }
 
-func (a *aggregationOptimizer) splitAggFuncsAndGbyCols(agg *Aggregation, join *Join) (valid bool,
+func (a *aggregationOptimizer) splitAggFuncsAndGbyCols(agg *LogicalAggregation, join *LogicalJoin) (valid bool,
 	leftAggFuncs, rightAggFuncs []expression.AggregationFunction,
 	leftGbyCols, rightGbyCols []*expression.Column) {
 	valid, leftAggFuncs, rightAggFuncs = a.collectAggFuncs(agg, join)
@@ -165,7 +165,7 @@ func (a *aggregationOptimizer) addGbyCol(gbyCols []*expression.Column, cols ...*
 }
 
 // checkValidJoin checks if this join should be pushed across.
-func (a *aggregationOptimizer) checkValidJoin(join *Join) bool {
+func (a *aggregationOptimizer) checkValidJoin(join *LogicalJoin) bool {
 	return join.JoinType == InnerJoin || join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin
 }
 
@@ -199,7 +199,7 @@ func (a *aggregationOptimizer) allFirstRow(aggFuncs []expression.AggregationFunc
 // tryToPushDownAgg tries to push down an aggregate function into a join path. If all aggFuncs are first row, we won't
 // process it temporarily. If not, We will add additional group by columns and first row functions. We make a new aggregation operator.
 // If the pushed aggregation is grouped by unique key, it's no need to push it down.
-func (a *aggregationOptimizer) tryToPushDownAgg(aggFuncs []expression.AggregationFunction, gbyCols []*expression.Column, join *Join, childIdx int) LogicalPlan {
+func (a *aggregationOptimizer) tryToPushDownAgg(aggFuncs []expression.AggregationFunction, gbyCols []*expression.Column, join *LogicalJoin, childIdx int) LogicalPlan {
 	child := join.children[childIdx].(LogicalPlan)
 	if a.allFirstRow(aggFuncs) {
 		return child
@@ -230,7 +230,7 @@ func (a *aggregationOptimizer) tryToPushDownAgg(aggFuncs []expression.Aggregatio
 	return agg
 }
 
-func (a *aggregationOptimizer) getDefaultValues(agg *Aggregation) ([]types.Datum, bool) {
+func (a *aggregationOptimizer) getDefaultValues(agg *LogicalAggregation) ([]types.Datum, bool) {
 	defaultValues := make([]types.Datum, 0, agg.Schema().Len())
 	for _, aggFunc := range agg.AggFuncs {
 		value, existsDefaultValue := aggFunc.CalculateDefaultValue(agg.children[0].Schema(), a.ctx)
@@ -251,8 +251,8 @@ func (a *aggregationOptimizer) checkAnyCountAndSum(aggFuncs []expression.Aggrega
 	return false
 }
 
-func (a *aggregationOptimizer) makeNewAgg(aggFuncs []expression.AggregationFunction, gbyCols []*expression.Column) *Aggregation {
-	agg := Aggregation{
+func (a *aggregationOptimizer) makeNewAgg(aggFuncs []expression.AggregationFunction, gbyCols []*expression.Column) *LogicalAggregation {
+	agg := LogicalAggregation{
 		GroupByItems: expression.Column2Exprs(gbyCols),
 		groupByCols:  gbyCols,
 	}.init(a.allocator, a.ctx)
@@ -275,8 +275,8 @@ func (a *aggregationOptimizer) makeNewAgg(aggFuncs []expression.AggregationFunct
 
 // pushAggCrossUnion will try to push the agg down to the union. If the new aggregation's group-by columns doesn't contain unique key.
 // We will return the new aggregation. Otherwise we will transform the aggregation to projection.
-func (a *aggregationOptimizer) pushAggCrossUnion(agg *Aggregation, unionSchema *expression.Schema, unionChild LogicalPlan) LogicalPlan {
-	newAgg := Aggregation{
+func (a *aggregationOptimizer) pushAggCrossUnion(agg *LogicalAggregation, unionSchema *expression.Schema, unionChild LogicalPlan) LogicalPlan {
+	newAgg := LogicalAggregation{
 		AggFuncs:     make([]expression.AggregationFunction, 0, len(agg.AggFuncs)),
 		GroupByItems: make([]expression.Expression, 0, len(agg.GroupByItems)),
 	}.init(a.allocator, a.ctx)
@@ -323,13 +323,13 @@ func (a *aggregationOptimizer) optimize(p LogicalPlan, ctx context.Context, allo
 
 // aggPushDown tries to push down aggregate functions to join paths.
 func (a *aggregationOptimizer) aggPushDown(p LogicalPlan) LogicalPlan {
-	if agg, ok := p.(*Aggregation); ok {
+	if agg, ok := p.(*LogicalAggregation); ok {
 		proj := a.tryToEliminateAggregation(agg)
 		if proj != nil {
 			p = proj
 		} else {
 			child := agg.children[0]
-			if join, ok1 := child.(*Join); ok1 && a.checkValidJoin(join) {
+			if join, ok1 := child.(*LogicalJoin); ok1 && a.checkValidJoin(join) {
 				if valid, leftAggFuncs, rightAggFuncs, leftGbyCols, rightGbyCols := a.splitAggFuncsAndGbyCols(agg, join); valid {
 					var lChild, rChild LogicalPlan
 					// If there exist count or sum functions in left join path, we can't push any
@@ -404,7 +404,7 @@ func (a *aggregationOptimizer) aggPushDown(p LogicalPlan) LogicalPlan {
 // e.g. select min(b) from t group by a. If a is a unique key, then this sql is equal to `select b from t group by a`.
 // For count(expr), sum(expr), avg(expr), count(distinct expr, [expr...]) we may need to rewrite the expr. Details are shown below.
 // If we can eliminate agg successful, we return a projection. Else we return a nil pointer.
-func (a *aggregationOptimizer) tryToEliminateAggregation(agg *Aggregation) *Projection {
+func (a *aggregationOptimizer) tryToEliminateAggregation(agg *LogicalAggregation) *Projection {
 	schemaByGroupby := expression.NewSchema(agg.groupByCols...)
 	coveredByUniqueKey := false
 	for _, key := range agg.children[0].Schema().Keys {
@@ -423,7 +423,7 @@ func (a *aggregationOptimizer) tryToEliminateAggregation(agg *Aggregation) *Proj
 	return nil
 }
 
-func (a *aggregationOptimizer) convertAggToProj(agg *Aggregation, ctx context.Context, allocator *idAllocator) *Projection {
+func (a *aggregationOptimizer) convertAggToProj(agg *LogicalAggregation, ctx context.Context, allocator *idAllocator) *Projection {
 	proj := Projection{
 		Exprs: make([]expression.Expression, 0, len(agg.AggFuncs)),
 	}.init(a.allocator, a.ctx)

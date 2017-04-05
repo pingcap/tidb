@@ -288,7 +288,7 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 		funcName = ast.AggFuncMin
 	}
 	aggFunc := expression.NewAggFunction(funcName, []expression.Expression{rexpr}, false)
-	agg := Aggregation{
+	agg := LogicalAggregation{
 		AggFuncs: []expression.AggregationFunction{aggFunc},
 	}.init(er.b.allocator, er.ctx)
 	addChild(agg, np)
@@ -305,7 +305,7 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 }
 
 // buildQuantifierPlan adds extra condition for any / all subquery.
-func (er *expressionRewriter) buildQuantifierPlan(agg *Aggregation, cond, rexpr expression.Expression, all bool) {
+func (er *expressionRewriter) buildQuantifierPlan(agg *LogicalAggregation, cond, rexpr expression.Expression, all bool) {
 	isNullFunc, _ := expression.NewFunction(er.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), rexpr.Clone())
 	sumFunc := expression.NewAggFunction(ast.AggFuncSum, []expression.Expression{isNullFunc}, false)
 	countFuncNull := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{isNullFunc.Clone()}, false)
@@ -341,7 +341,7 @@ func (er *expressionRewriter) buildQuantifierPlan(agg *Aggregation, cond, rexpr 
 		cond = expression.ComposeDNFCondition(er.ctx, cond, nullChecker)
 	}
 	if !er.asScalar {
-		// For Semi Apply without aux column, the result is no matter false or null. So we can add it to join predicate.
+		// For Semi LogicalApply without aux column, the result is no matter false or null. So we can add it to join predicate.
 		er.p = er.b.buildSemiApply(er.p, agg, []expression.Expression{cond}, false, false)
 		return
 	}
@@ -371,7 +371,7 @@ func (er *expressionRewriter) buildQuantifierPlan(agg *Aggregation, cond, rexpr 
 func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np LogicalPlan) {
 	firstRowFunc := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
 	countFunc := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, true)
-	agg := Aggregation{
+	agg := LogicalAggregation{
 		AggFuncs: []expression.AggregationFunction{firstRowFunc, countFunc},
 	}.init(er.b.allocator, er.ctx)
 	addChild(agg, np)
@@ -399,7 +399,7 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np LogicalPlan) {
 	firstRowFunc := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
 	countFunc := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, true)
-	agg := Aggregation{
+	agg := LogicalAggregation{
 		AggFuncs: []expression.AggregationFunction{firstRowFunc, countFunc},
 	}.init(er.b.allocator, er.ctx)
 	addChild(agg, np)

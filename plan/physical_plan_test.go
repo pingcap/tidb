@@ -404,7 +404,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from t t1 where 1 = 0",
-			best: "Dummy",
+			best: "Dual",
 		},
 		{
 			sql:  "select * from t t1 where c in (1,2,3,4,5,6,7,8,9,0)",
@@ -416,7 +416,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select count(*) from t t1 having 1 = 0",
-			best: "Dummy->HashAgg->Selection",
+			best: "Dual->HashAgg->Selection",
 		},
 		{
 			sql:  "select sum(a.b), sum(b.b) from t a join t b on a.c = b.c group by a.d order by a.d",
@@ -590,7 +590,7 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		},
 		{
 			sql: "select a from (select d as a from t where d = 0) k where k.a = 5",
-			ans: "Dummy",
+			ans: "Dual",
 		},
 		{
 			sql: "select t1.a from t t1 where t1.a in (select t2.a from t t2 where t2.a > 1)",
@@ -639,7 +639,7 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		},
 		{
 			sql: "select t1.a from t t1, (select @a:=0, @b:=0) t2",
-			ans: "LeftHashJoin{Table(t)->*plan.TableDual->Projection}->Projection",
+			ans: "LeftHashJoin{Table(t)->Dual->Projection}->Projection",
 		},
 	}
 	for _, ca := range cases {
