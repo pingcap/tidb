@@ -1011,5 +1011,21 @@ type builtinTruncateSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_truncate
 func (b *builtinTruncateSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("truncate")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	x, err := args[0].ToFloat64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	y, err := args[1].ToInt64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	truncated := float64(int(x*math.Pow10(int(y)))) / math.Pow10(int(y))
+	d.SetFloat64(truncated)
+	return d, nil
 }
