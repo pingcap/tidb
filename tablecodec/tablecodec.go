@@ -298,7 +298,48 @@ func DecodeRow(b []byte, cols map[int64]*types.FieldType) (map[int64]types.Datum
 	return row, nil
 }
 
-// CutRow cut encoded row into byte slices and return interested columns' byte slice.
+// CutRowNew cuts encoded row into byte slices and return columns' byte slice.
+// Row layout: colID1, value1, colID2, value2, .....
+func CutRowNew(data []byte, colIDs map[int64]int) ([][]byte, error) {
+	if data == nil {
+		return nil, nil
+	}
+	if len(data) == 1 && data[0] == codec.NilFlag {
+		return nil, nil
+	}
+
+	var (
+		cnt int
+		b   []byte
+		err error
+	)
+	row := make([][]byte, len(colIDs))
+	for len(data) > 0 && cnt < len(colIDs) {
+		// Get col id.
+		b, data, err = codec.CutOne(data)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		_, cid, err := codec.DecodeOne(b)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// Get col value.
+		b, data, err = codec.CutOne(data)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		id := cid.GetInt64()
+		offset, ok := colIDs[id]
+		if ok {
+			row[offset] = b
+			cnt++
+		}
+	}
+	return row, nil
+}
+
+// CutRow cuts encoded row into byte slices and return interested columns' byte slice.
 // Row layout: colID1, value1, colID2, value2, .....
 func CutRow(data []byte, cols map[int64]*types.FieldType) (map[int64][]byte, error) {
 	if data == nil {
@@ -417,6 +458,23 @@ func CutIndexKey(key kv.Key, colIDs []int64) (values map[int64][]byte, b []byte,
 			return nil, nil, errors.Trace(err)
 		}
 		values[id] = val
+	}
+	return
+}
+
+// CutIndexKeyNew cuts encoded index key into colIDs to bytes slices.
+// The returned value b is the remaining bytes of the key which would be empty if it is unique index or handle data
+// if it is non-unique index.
+func CutIndexKeyNew(key kv.Key, length int) (values [][]byte, b []byte, err error) {
+	b = key[prefixLen+idLen:]
+	values = make([][]byte, 0, length)
+	for i := 0; i < length; i++ {
+		var val []byte
+		val, b, err = codec.CutOne(b)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		values = append(values, val)
 	}
 	return
 }

@@ -14,6 +14,7 @@
 package statistics
 
 import (
+	"hash"
 	"hash/fnv"
 
 	"github.com/juju/errors"
@@ -23,16 +24,24 @@ import (
 
 // FMSketch is used to count the number of distinct elements in a set.
 type FMSketch struct {
-	hashset map[uint64]bool
-	mask    uint64
-	maxSize int
+	hashset  map[uint64]bool
+	mask     uint64
+	maxSize  int
+	hashFunc hash.Hash64
 }
 
-func newFMSketch(maxSize int) *FMSketch {
+// NewFMSketch returns a new FM sketch.
+func NewFMSketch(maxSize int) *FMSketch {
 	return &FMSketch{
-		hashset: make(map[uint64]bool),
-		maxSize: maxSize,
+		hashset:  make(map[uint64]bool),
+		maxSize:  maxSize,
+		hashFunc: fnv.New64a(),
 	}
+}
+
+// NDV returns the ndv of the sketch.
+func (s *FMSketch) NDV() int64 {
+	return int64(s.mask+1) * int64(len(s.hashset))
 }
 
 func (s *FMSketch) insertHashValue(hashVal uint64) {
@@ -50,27 +59,34 @@ func (s *FMSketch) insertHashValue(hashVal uint64) {
 	}
 }
 
-func buildFMSketch(values []types.Datum, maxSize int) (*FMSketch, int64, error) {
-	s := newFMSketch(maxSize)
-	h := fnv.New64a()
-	for _, value := range values {
-		bytes, err := codec.EncodeValue(nil, value)
-		if err != nil {
-			return nil, 0, errors.Trace(err)
-		}
-		h.Reset()
-		_, err = h.Write(bytes)
-		if err != nil {
-			return nil, 0, errors.Trace(err)
-		}
-		s.insertHashValue(h.Sum64())
+// InsertValue inserts a value into the FM sketch.
+func (s *FMSketch) InsertValue(value types.Datum) error {
+	bytes, err := codec.EncodeValue(nil, value)
+	if err != nil {
+		return errors.Trace(err)
 	}
-	ndv := int64((s.mask + 1)) * int64(len(s.hashset))
-	return s, ndv, nil
+	s.hashFunc.Reset()
+	_, err = s.hashFunc.Write(bytes)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	s.insertHashValue(s.hashFunc.Sum64())
+	return nil
+}
+
+func buildFMSketch(values []types.Datum, maxSize int) (*FMSketch, int64, error) {
+	s := NewFMSketch(maxSize)
+	for _, value := range values {
+		err := s.InsertValue(value)
+		if err != nil {
+			return nil, 0, errors.Trace(err)
+		}
+	}
+	return s, s.NDV(), nil
 }
 
 func mergeFMSketches(sketches []*FMSketch, maxSize int) (*FMSketch, int64) {
-	s := newFMSketch(maxSize)
+	s := NewFMSketch(maxSize)
 	for _, sketch := range sketches {
 		if s.mask < sketch.mask {
 			s.mask = sketch.mask
@@ -81,6 +97,5 @@ func mergeFMSketches(sketches []*FMSketch, maxSize int) (*FMSketch, int64) {
 			s.insertHashValue(key)
 		}
 	}
-	ndv := int64((s.mask + 1)) * int64(len(s.hashset))
-	return s, ndv
+	return s, s.NDV()
 }
