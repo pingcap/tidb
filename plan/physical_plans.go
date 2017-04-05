@@ -61,7 +61,6 @@ var (
 	_ PhysicalPlan = &PhysicalTableScan{}
 	_ PhysicalPlan = &PhysicalAggregation{}
 	_ PhysicalPlan = &PhysicalApply{}
-	_ PhysicalPlan = &PhysicalDummyScan{}
 	_ PhysicalPlan = &PhysicalHashJoin{}
 	_ PhysicalPlan = &PhysicalHashSemiJoin{}
 	_ PhysicalPlan = &PhysicalMergeJoin{}
@@ -373,12 +372,6 @@ type PhysicalTableScan struct {
 
 	// If sort data by scanning pkcol, KeepOrder should be true.
 	KeepOrder bool
-}
-
-// PhysicalDummyScan is a dummy table that returns nothing.
-type PhysicalDummyScan struct {
-	*basePlan
-	basePhysicalPlan
 }
 
 // PhysicalApply represents apply plan, only used for subquery.
@@ -977,14 +970,6 @@ func (p *Update) Copy() PhysicalPlan {
 }
 
 // Copy implements the PhysicalPlan Copy interface.
-func (p *PhysicalDummyScan) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
-// Copy implements the PhysicalPlan Copy interface.
 func (p *Delete) Copy() PhysicalPlan {
 	np := *p
 	np.basePlan = p.basePlan.copy()
@@ -1018,7 +1003,7 @@ func (p *Cache) Copy() PhysicalPlan {
 	return &np
 }
 
-// Copy implements the Analyze Copy interface.
+// Copy implements the PhysicalPlan Copy interface.
 func (p *Analyze) Copy() PhysicalPlan {
 	np := *p
 	np.basePlan = p.basePlan.copy()

@@ -23,11 +23,11 @@ import (
 )
 
 var (
-	_ LogicalPlan = &Join{}
-	_ LogicalPlan = &Aggregation{}
+	_ LogicalPlan = &LogicalJoin{}
+	_ LogicalPlan = &LogicalAggregation{}
 	_ LogicalPlan = &Projection{}
 	_ LogicalPlan = &Selection{}
-	_ LogicalPlan = &Apply{}
+	_ LogicalPlan = &LogicalApply{}
 	_ LogicalPlan = &Exists{}
 	_ LogicalPlan = &MaxOneRow{}
 	_ LogicalPlan = &TableDual{}
@@ -64,8 +64,8 @@ const (
 	preferRightAsOuter
 )
 
-// Join is the logical join plan.
-type Join struct {
+// LogicalJoin is the logical join plan.
+type LogicalJoin struct {
 	*basePlan
 	baseLogicalPlan
 
@@ -86,7 +86,7 @@ type Join struct {
 	DefaultValues []types.Datum
 }
 
-func (p *Join) columnSubstitute(schema *expression.Schema, exprs []expression.Expression) {
+func (p *LogicalJoin) columnSubstitute(schema *expression.Schema, exprs []expression.Expression) {
 	for i, fun := range p.EqualConditions {
 		p.EqualConditions[i] = expression.ColumnSubstitute(fun, schema, exprs).(*expression.ScalarFunction)
 	}
@@ -101,7 +101,7 @@ func (p *Join) columnSubstitute(schema *expression.Schema, exprs []expression.Ex
 	}
 }
 
-func (p *Join) attachOnConds(onConds []expression.Expression) {
+func (p *LogicalJoin) attachOnConds(onConds []expression.Expression) {
 	eq, left, right, other := extractOnCondition(onConds, p.children[0].(LogicalPlan), p.children[1].(LogicalPlan))
 	p.EqualConditions = append(eq, p.EqualConditions...)
 	p.LeftConditions = append(left, p.LeftConditions...)
@@ -109,7 +109,7 @@ func (p *Join) attachOnConds(onConds []expression.Expression) {
 	p.OtherConditions = append(other, p.OtherConditions...)
 }
 
-func (p *Join) extractCorrelatedCols() []*expression.CorrelatedColumn {
+func (p *LogicalJoin) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := p.basePlan.extractCorrelatedCols()
 	for _, fun := range p.EqualConditions {
 		corCols = append(corCols, extractCorColumns(fun)...)
@@ -143,8 +143,8 @@ func (p *Projection) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// Aggregation represents an aggregate plan.
-type Aggregation struct {
+// LogicalAggregation represents an aggregate plan.
+type LogicalAggregation struct {
 	*basePlan
 	baseLogicalPlan
 
@@ -155,7 +155,7 @@ type Aggregation struct {
 	groupByCols []*expression.Column
 }
 
-func (p *Aggregation) extractCorrelatedCols() []*expression.CorrelatedColumn {
+func (p *LogicalAggregation) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := p.basePlan.extractCorrelatedCols()
 	for _, expr := range p.GroupByItems {
 		corCols = append(corCols, extractCorColumns(expr)...)
@@ -199,15 +199,15 @@ func (p *Selection) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// Apply gets one row from outer executor and gets one row from inner executor according to outer row.
-type Apply struct {
-	Join
+// LogicalApply gets one row from outer executor and gets one row from inner executor according to outer row.
+type LogicalApply struct {
+	LogicalJoin
 
 	corCols []*expression.CorrelatedColumn
 }
 
-func (p *Apply) extractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := p.Join.extractCorrelatedCols()
+func (p *LogicalApply) extractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := p.LogicalJoin.extractCorrelatedCols()
 	for i := len(corCols) - 1; i >= 0; i-- {
 		if p.children[0].Schema().Contains(&corCols[i].Column) {
 			corCols = append(corCols[:i], corCols[i+1:]...)
@@ -235,6 +235,8 @@ type TableDual struct {
 	*basePlan
 	baseLogicalPlan
 	basePhysicalPlan
+
+	RowCount int
 }
 
 // DataSource represents a tablescan without condition push down.
