@@ -18,7 +18,6 @@ import (
 	"sync/atomic"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
@@ -260,7 +259,6 @@ func (t *Table) buildColumn(sc *variable.StatementContext, offset int, ndv int64
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
 	sampleFactor := t.Count / int64(len(samples))
 	ndvFactor := t.Count / ndv
-	log.Warnf("sample %d ndv %d ndvFact %d", sampleFactor, ndv, ndvFactor)
 	if ndvFactor > sampleFactor {
 		ndvFactor = sampleFactor
 	}
