@@ -315,7 +315,7 @@ func upgradeToVer5(s Session) {
 }
 
 func upgradeToVer6(s Session) {
-	s.Execute("ALTER TABLE mysql.user ADD COLUMN `Super_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N'")
+	s.Execute("ALTER TABLE mysql.user ADD COLUMN `Super_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Show_db_priv`")
 	// For reasons of compatibility, set the non-exists privilege column value to 'Y', as TiDB doesn't check them in older versions.
 	s.Execute("UPDATE mysql.user SET Super_priv='Y'")
 }
