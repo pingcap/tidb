@@ -113,8 +113,6 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildExists(v)
 	case *plan.MaxOneRow:
 		return b.buildMaxOneRow(v)
-	case *plan.PhysicalDummyScan:
-		return b.buildDummyScan(v)
 	case *plan.Cache:
 		return b.buildCache(v)
 	case *plan.Analyze:
@@ -519,7 +517,7 @@ func (b *executorBuilder) buildProjection(v *plan.Projection) Executor {
 }
 
 func (b *executorBuilder) buildTableDual(v *plan.TableDual) Executor {
-	return &TableDualExec{schema: v.Schema()}
+	return &TableDualExec{schema: v.Schema(), rowCount: v.RowCount}
 }
 
 func (b *executorBuilder) getStartTS() uint64 {
@@ -717,12 +715,6 @@ func (b *executorBuilder) buildUnion(v *plan.Union) Executor {
 func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 	selExec := b.build(v.Children()[0])
 	return &UpdateExec{ctx: b.ctx, SelectExec: selExec, OrderedList: v.OrderedList}
-}
-
-func (b *executorBuilder) buildDummyScan(v *plan.PhysicalDummyScan) Executor {
-	return &DummyScanExec{
-		schema: v.Schema(),
-	}
 }
 
 func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
