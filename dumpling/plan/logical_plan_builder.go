@@ -42,7 +42,7 @@ func (a *idAllocator) allocID() string {
 	return fmt.Sprintf("_%d", a.id)
 }
 
-func (p *Aggregation) collectGroupByColumns() {
+func (p *LogicalAggregation) collectGroupByColumns() {
 	p.groupByCols = p.groupByCols[:0]
 	for _, item := range p.GroupByItems {
 		if col, ok := item.(*expression.Column); ok {
@@ -55,7 +55,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagAggregationOptimize
 
-	agg := Aggregation{AggFuncs: make([]expression.AggregationFunction, 0, len(aggFuncList))}.init(b.allocator, b.ctx)
+	agg := LogicalAggregation{AggFuncs: make([]expression.AggregationFunction, 0, len(aggFuncList))}.init(b.allocator, b.ctx)
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncList)+p.Schema().Len())...)
 	// aggIdxMap maps the old index to new index after applying common aggregation functions elimination.
 	aggIndexMap := make(map[int]int)
@@ -221,7 +221,7 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	rightAlias := extractTableAlias(rightPlan)
 
 	newSchema := expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema())
-	joinPlan := Join{}.init(b.allocator, b.ctx)
+	joinPlan := LogicalJoin{}.init(b.allocator, b.ctx)
 	addChild(joinPlan, leftPlan)
 	addChild(joinPlan, rightPlan)
 	joinPlan.SetSchema(newSchema)
@@ -350,7 +350,7 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 func (b *planBuilder) buildDistinct(child LogicalPlan, length int) LogicalPlan {
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagAggregationOptimize
-	agg := Aggregation{
+	agg := LogicalAggregation{
 		AggFuncs:     make([]expression.AggregationFunction, 0, child.Schema().Len()),
 		GroupByItems: expression.Column2Exprs(child.Schema().Clone().Columns[:length]),
 	}.init(b.allocator, b.ctx)
@@ -968,7 +968,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 }
 
 func (b *planBuilder) buildTableDual() LogicalPlan {
-	dual := TableDual{}.init(b.allocator, b.ctx)
+	dual := TableDual{RowCount: 1}.init(b.allocator, b.ctx)
 	dual.SetSchema(expression.NewSchema())
 	return dual
 }
@@ -1036,7 +1036,7 @@ func (b *planBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, t
 	b.optFlag = b.optFlag | flagPredicatePushDown
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagDecorrelate
-	ap := Apply{Join: Join{JoinType: tp}}.init(b.allocator, b.ctx)
+	ap := LogicalApply{LogicalJoin: LogicalJoin{JoinType: tp}}.init(b.allocator, b.ctx)
 
 	addChild(ap, outerPlan)
 	addChild(ap, innerPlan)
@@ -1053,7 +1053,7 @@ func (b *planBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagDecorrelate
 	join := b.buildSemiJoin(outerPlan, innerPlan, condition, asScalar, not)
-	ap := &Apply{Join: *join}
+	ap := &LogicalApply{LogicalJoin: *join}
 	ap.tp = TypeApply
 	ap.id = ap.tp + ap.allocator.allocID()
 	ap.self = ap
@@ -1071,7 +1071,7 @@ out:
 		case *Projection, *Sort:
 			p = p.Children()[0].(LogicalPlan)
 			p.SetParents()
-		case *Aggregation:
+		case *LogicalAggregation:
 			if len(plan.GroupByItems) == 0 {
 				p = b.buildTableDual()
 				break out
@@ -1099,8 +1099,8 @@ func (b *planBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
 	return maxOneRow
 }
 
-func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onCondition []expression.Expression, asScalar bool, not bool) *Join {
-	joinPlan := Join{}.init(b.allocator, b.ctx)
+func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onCondition []expression.Expression, asScalar bool, not bool) *LogicalJoin {
+	joinPlan := LogicalJoin{}.init(b.allocator, b.ctx)
 	for i, expr := range onCondition {
 		onCondition[i] = expr.Decorrelate(outerPlan.Schema())
 	}
