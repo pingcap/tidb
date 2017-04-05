@@ -19,6 +19,7 @@ package expression
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"math"
@@ -1744,7 +1745,22 @@ type builtinFromBase64Sig struct {
 
 // See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_from-base64
 func (b *builtinFromBase64Sig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("from_base64")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	str, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	result, err := base64.StdEncoding.DecodeString(str)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	// Set the result to be of type []byte
+	d.SetBytes(result)
+	return d, nil
+
 }
 
 type insertFuncFunctionClass struct {
