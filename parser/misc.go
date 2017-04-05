@@ -378,6 +378,7 @@ var tokenMap = map[string]int{
 	"PRIVILEGES":                 privileges,
 	"PROCEDURE":                  procedure,
 	"PROCESSLIST":                processlist,
+	"PROCESS":                    process,
 	"QUARTER":                    quarter,
 	"QUICK":                      quick,
 	"RADIANS":                    radians,
