@@ -365,7 +365,7 @@ func (er *expressionRewriter) buildQuantifierPlan(agg *Aggregation, cond, rexpr 
 	er.p = proj
 }
 
-// handleNEAny handles the case of != any. For exmaple, if the query is t.id != any (select s.id from s), it will be rewrote to
+// handleNEAny handles the case of != any. For example, if the query is t.id != any (select s.id from s), it will be rewrote to
 // t.id != s.id or count(distinct s.id) > 1 or [any checker]. If there are two different values in s.id ,
 // there must exist a s.id that doesn't equal to t.id.
 func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np LogicalPlan) {
