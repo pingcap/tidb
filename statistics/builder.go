@@ -205,7 +205,7 @@ func (t *Table) build4SortedColumn(sc *variable.StatementContext, offset int, re
 			col.Buckets[bucketIdx].Repeats = 1
 			col.NDV++
 		} else {
-			// All Buckets are full, we should merge Buckets.
+			// All buckets are full, we should merge buckets.
 			if bucketIdx+1 == bucketCount {
 				col.mergeBuckets(bucketIdx)
 				valuesPerBucket *= 2
@@ -216,7 +216,7 @@ func (t *Table) build4SortedColumn(sc *variable.StatementContext, offset int, re
 					lastNumber = col.Buckets[bucketIdx-1].Count
 				}
 			}
-			// We may merge Buckets, so we should check it again.
+			// We may merge buckets, so we should check it again.
 			if col.Buckets[bucketIdx].Count+1-lastNumber <= valuesPerBucket {
 				col.Buckets[bucketIdx].Count++
 				col.Buckets[bucketIdx].Value = data
@@ -293,8 +293,9 @@ func (t *Table) buildColumn(sc *variable.StatementContext, offset int, ndv int64
 
 func copyFromIndexColumns(ind *Column, id int64) (*Column, error) {
 	col := &Column{
-		ID:  id,
-		NDV: ind.NDV,
+		ID:      id,
+		NDV:     ind.NDV,
+		Buckets: make([]bucket, 0, len(ind.Buckets)),
 	}
 	for _, b := range ind.Buckets {
 		val := b.Value
