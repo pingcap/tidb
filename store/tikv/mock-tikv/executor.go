@@ -34,7 +34,7 @@ type executor interface {
 
 type tableScanExec struct {
 	*tipb.TableScan
-	colsID      map[int64]int
+	colIDs      map[int64]int
 	kvRanges    []kv.KeyRange
 	startTS     uint64
 	mvccStore   *MvccStore
@@ -89,7 +89,7 @@ func (e *tableScanExec) getRowFromPoint(ran kv.KeyRange) (int64, [][]byte, error
 	if err != nil {
 		return 0, nil, errors.Trace(err)
 	}
-	row, err := getRowData(e.Columns, e.colsID, handle, val)
+	row, err := getRowData(e.Columns, e.colIDs, handle, val)
 	if err != nil {
 		return 0, nil, errors.Trace(err)
 	}
@@ -142,7 +142,7 @@ func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 	if err != nil {
 		return 0, nil, errors.Trace(err)
 	}
-	row, err := getRowData(e.Columns, e.colsID, handle, pair.Value)
+	row, err := getRowData(e.Columns, e.colIDs, handle, pair.Value)
 	if err != nil {
 		return 0, nil, errors.Trace(err)
 	}
@@ -250,7 +250,7 @@ type selectionExec struct {
 	*tipb.Selection
 	sc     *variable.StatementContext
 	eval   *xeval.Evaluator
-	colsID map[int64]int
+	colIDs map[int64]int
 
 	src executor
 }
@@ -269,7 +269,7 @@ func (e *selectionExec) Next() (int64, [][]byte, error) {
 			return 0, nil, nil
 		}
 
-		err = e.eval.SetRowValue(handle, row, e.colsID)
+		err = e.eval.SetRowValue(handle, row, e.colIDs)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
