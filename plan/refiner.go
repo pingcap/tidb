@@ -191,15 +191,15 @@ func DetachIndexFilterConditions(conditions []expression.Expression, indexColumn
 }
 
 // DetachIndexScanConditions will detach the index filters from table filters.
-func DetachIndexScanConditions(conditions []expression.Expression, indexScan *PhysicalIndexScan) ([]expression.Expression, []expression.Expression) {
-	accessConds := make([]expression.Expression, len(indexScan.Index.Columns))
-	var filterConds []expression.Expression
+func DetachIndexScanConditions(conditions []expression.Expression, index *model.IndexInfo) (accessConds []expression.Expression,
+	filterConds []expression.Expression, accessEqualCount int, accessInAndEqCount int) {
+	accessConds = make([]expression.Expression, len(index.Columns))
 	// pushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	for i, cond := range conditions {
 		conditions[i] = pushDownNot(cond, false, nil)
 	}
 	for _, cond := range conditions {
-		offset := getEQFunctionOffset(cond, indexScan.Index.Columns)
+		offset := getEQFunctionOffset(cond, index.Columns)
 		if offset != -1 {
 			accessConds[offset] = cond
 		}
@@ -207,25 +207,25 @@ func DetachIndexScanConditions(conditions []expression.Expression, indexScan *Ph
 	for i, cond := range accessConds {
 		if cond == nil {
 			accessConds = accessConds[:i]
-			indexScan.accessEqualCount = i
+			accessEqualCount = i
 			break
 		}
-		if indexScan.Index.Columns[i].Length != types.UnspecifiedLength {
+		if index.Columns[i].Length != types.UnspecifiedLength {
 			filterConds = append(filterConds, cond)
 		}
 		if i == len(accessConds)-1 {
-			indexScan.accessEqualCount = len(accessConds)
+			accessEqualCount = len(accessConds)
 		}
 	}
-	indexScan.accessInAndEqCount = indexScan.accessEqualCount
+	accessInAndEqCount = accessEqualCount
 	// We should remove all accessConds, so that they will not be added to filter conditions.
 	conditions = removeAccessConditions(conditions, accessConds)
 	var curIndex int
-	for curIndex = indexScan.accessEqualCount; curIndex < len(indexScan.Index.Columns); curIndex++ {
+	for curIndex = accessEqualCount; curIndex < len(index.Columns); curIndex++ {
 		checker := &conditionChecker{
-			idx:          indexScan.Index,
+			idx:          index,
 			columnOffset: curIndex,
-			length:       indexScan.Index.Columns[curIndex].Length,
+			length:       index.Columns[curIndex].Length,
 		}
 		// First of all, we should extract all of in/eq expressions from rest conditions for every continuous index column.
 		// e.g. For index (a,b,c) and conditions a in (1,2) and b < 1 and c in (3,4), we should only extract column a in (1,2).
@@ -235,18 +235,18 @@ func DetachIndexScanConditions(conditions []expression.Expression, indexScan *Ph
 			accessConds, filterConds = checker.extractAccessAndFilterConds(conditions, accessConds, filterConds)
 			break
 		}
-		indexScan.accessInAndEqCount++
+		accessInAndEqCount++
 		accessConds = append(accessConds, conditions[accessIdx])
-		if indexScan.Index.Columns[curIndex].Length != types.UnspecifiedLength {
+		if index.Columns[curIndex].Length != types.UnspecifiedLength {
 			filterConds = append(filterConds, conditions[accessIdx])
 		}
 		conditions = append(conditions[:accessIdx], conditions[accessIdx+1:]...)
 	}
 	// If curIndex equals to len of index columns, it means the rest conditions haven't been appended to filter conditions.
-	if curIndex == len(indexScan.Index.Columns) {
+	if curIndex == len(index.Columns) {
 		filterConds = append(filterConds, conditions...)
 	}
-	return accessConds, filterConds
+	return accessConds, filterConds, accessEqualCount, accessInAndEqCount
 }
 
 // DetachTableScanConditions distinguishes between access conditions and filter conditions from conditions.

@@ -66,7 +66,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		// Error is not nil may mean that there are some ddl changes on this table, so the origin
 		// statistics can not be used any more, we give it a pseudo one.
 		if err != nil {
-			log.Errorf("Error occured when read table stats for table id %d. The error message is %s.", tableID, err.Error())
+			log.Errorf("Error occurred when read table stats for table id %d. The error message is %s.", tableID, err.Error())
 			tbl = PseudoTable(tableInfo)
 		}
 		SetStatisticsTableCache(tableID, tbl, version)

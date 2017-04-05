@@ -208,6 +208,21 @@ func (s *testSuite) TestJoin(c *C) {
 	tk.MustExec("insert into t values(1),(2),(3)")
 	result = tk.MustQuery("select * from t1 , t2 where t2.c1 = t1.c1 and t2.c2 = 0 and t1.c2 in (select * from t)")
 	result.Check(testkit.Rows("1 2 1 0", "2 3 2 0"))
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t(a int primary key, b int)")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("insert into t values(1, 1), (2, 2), (3, 3)")
+	tk.MustExec("insert into t1 values(1, 2), (1, 3), (3, 4), (4, 5)")
+	// The physical plans of the two sql are tested at physical_plan_test.go
+	tk.MustQuery("select /*+ TIDB_INLJ(t, t1) */ * from t join t1 on t.a=t1.a").Check(testkit.Rows("1 1 1 2", "1 1 1 3", "3 3 3 4"))
+	tk.MustQuery("select /*+ TIDB_INLJ(t1) */ * from t1 join t on t.a=t1.a and t.a < t1.b").Check(testkit.Rows("1 2 1 1", "1 3 1 1", "3 4 3 3"))
+	tk.MustQuery("select /*+ TIDB_INLJ(t, t1) */ * from t right outer join t1 on t.a=t1.a").Check(testkit.Rows("1 1 1 2", "1 1 1 3", "3 3 3 4", "<nil> <nil> 4 5"))
+	tk.MustQuery("select /*+ TIDB_INLJ(t, t1) */ avg(t.b) from t right outer join t1 on t.a=t1.a").Check(testkit.Rows("1.6667"))
+
+	// Test that two conflict hints will return error
+	_, err = tk.Exec("select /*+ TIDB_INLJ(t) TIDB_SMJ(t) */ * from t join t1 on t.a=t1.a")
+	c.Assert(err, NotNil)
+
 }
 
 func (s *testSuite) TestMultiJoin(c *C) {
