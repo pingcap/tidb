@@ -28,13 +28,13 @@ func (ts *PhysicalTableScan) matchProperty(prop *requiredProperty, infos ...*phy
 		cost = float64(prop.limit.Count+prop.limit.Offset) * netWorkFactor
 	}
 	if len(prop.props) == 0 {
-		newTS := *ts
+		newTS := ts.Copy().(*PhysicalTableScan)
 		newTS.addLimit(prop.limit)
-		p := newTS.tryToAddUnionScan(&newTS)
+		p := newTS.tryToAddUnionScan(newTS)
 		return enforceProperty(prop, &physicalPlanInfo{p: p, cost: cost, count: infos[0].count})
 	}
 	if len(prop.props) == 1 && ts.pkCol != nil && ts.pkCol.Equal(prop.props[0].col, ts.ctx) {
-		sortedTS := *ts
+		sortedTS := ts.Copy().(*PhysicalTableScan)
 		sortedTS.Desc = prop.props[0].desc
 		sortedTS.KeepOrder = true
 		sortedTS.addLimit(prop.limit)
@@ -42,14 +42,14 @@ func (ts *PhysicalTableScan) matchProperty(prop *requiredProperty, infos ...*phy
 		if len(sortedTS.tableFilterConditions) > 0 {
 			cost += rowCount * cpuFactor
 		}
-		p := sortedTS.tryToAddUnionScan(&sortedTS)
+		p := sortedTS.tryToAddUnionScan(sortedTS)
 		return enforceProperty(&requiredProperty{limit: prop.limit}, &physicalPlanInfo{
 			p:     p,
 			cost:  cost,
 			count: infos[0].count})
 	}
 	if prop.limit != nil {
-		sortedTS := *ts
+		sortedTS := ts.Copy().(*PhysicalTableScan)
 		success := sortedTS.addTopN(ts.ctx, prop)
 		if success {
 			cost += rowCount * cpuFactor
@@ -57,7 +57,7 @@ func (ts *PhysicalTableScan) matchProperty(prop *requiredProperty, infos ...*phy
 			cost = rowCount * netWorkFactor
 		}
 		sortedTS.KeepOrder = true
-		p := sortedTS.tryToAddUnionScan(&sortedTS)
+		p := sortedTS.tryToAddUnionScan(sortedTS)
 		return enforceProperty(prop, &physicalPlanInfo{
 			p:     p,
 			cost:  cost,
@@ -135,11 +135,11 @@ func (is *PhysicalIndexScan) matchProperty(prop *requiredProperty, infos ...*phy
 		}
 		sortedCost := cost + rowCount*cpuFactor
 		if allAsc || allDesc {
-			sortedIS := *is
+			sortedIS := is.Copy().(*PhysicalIndexScan)
 			sortedIS.OutOfOrder = false
 			sortedIS.Desc = allDesc && !allAsc
 			sortedIS.addLimit(prop.limit)
-			p := sortedIS.tryToAddUnionScan(&sortedIS)
+			p := sortedIS.tryToAddUnionScan(sortedIS)
 			return enforceProperty(&requiredProperty{limit: prop.limit}, &physicalPlanInfo{
 				p:     p,
 				cost:  sortedCost,
@@ -147,7 +147,7 @@ func (is *PhysicalIndexScan) matchProperty(prop *requiredProperty, infos ...*phy
 		}
 	}
 	if prop.limit != nil {
-		sortedIS := *is
+		sortedIS := is.Copy().(*PhysicalIndexScan)
 		success := sortedIS.addTopN(is.ctx, prop)
 		if success {
 			cost += float64(infos[0].count) * cpuFactor
@@ -155,7 +155,7 @@ func (is *PhysicalIndexScan) matchProperty(prop *requiredProperty, infos ...*phy
 			cost = float64(infos[0].count) * netWorkFactor
 		}
 		sortedIS.OutOfOrder = true
-		p := sortedIS.tryToAddUnionScan(&sortedIS)
+		p := sortedIS.tryToAddUnionScan(sortedIS)
 		return enforceProperty(prop, &physicalPlanInfo{
 			p:     p,
 			cost:  cost,
@@ -167,17 +167,17 @@ func (is *PhysicalIndexScan) matchProperty(prop *requiredProperty, infos ...*phy
 // matchProperty implements PhysicalPlan matchProperty interface.
 func (p *PhysicalHashSemiJoin) matchProperty(_ *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
 	lRes, rRes := childPlanInfo[0], childPlanInfo[1]
-	np := *p
+	np := p.Copy()
 	np.SetChildren(lRes.p, rRes.p)
 	cost := lRes.cost + rRes.cost
-	return &physicalPlanInfo{p: &np, cost: cost}
+	return &physicalPlanInfo{p: np, cost: cost}
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
 func (p *PhysicalApply) matchProperty(_ *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
-	np := *p
+	np := p.Copy()
 	np.SetChildren(childPlanInfo[0].p)
-	return &physicalPlanInfo{p: &np, cost: childPlanInfo[0].cost}
+	return &physicalPlanInfo{p: np, cost: childPlanInfo[0].cost}
 }
 
 func estimateJoinCount(lc uint64, rc uint64) uint64 {
@@ -191,19 +191,19 @@ func estimateJoinCount(lc uint64, rc uint64) uint64 {
 // matchProperty implements PhysicalPlan matchProperty interface.
 func (p *PhysicalMergeJoin) matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
 	lRes, rRes := childPlanInfo[0], childPlanInfo[1]
-	np := *p
+	np := p.Copy()
 	np.SetChildren(lRes.p, rRes.p)
 
 	cost := lRes.cost + rRes.cost
 
-	return &physicalPlanInfo{p: &np, cost: cost, count: estimateJoinCount(lRes.count, rRes.count)}
+	return &physicalPlanInfo{p: np, cost: cost, count: estimateJoinCount(lRes.count, rRes.count)}
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
 func (p *PhysicalHashJoin) matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
 	lRes, rRes := childPlanInfo[0], childPlanInfo[1]
 	lCount, rCount := float64(lRes.count), float64(rRes.count)
-	np := *p
+	np := p.Copy().(*PhysicalHashJoin)
 	np.SetChildren(lRes.p, rRes.p)
 	if len(prop.props) != 0 {
 		np.Concurrency = 1
@@ -214,12 +214,12 @@ func (p *PhysicalHashJoin) matchProperty(prop *requiredProperty, childPlanInfo .
 	} else {
 		cost += rCount + memoryFactor*lCount
 	}
-	return &physicalPlanInfo{p: &np, cost: cost, count: estimateJoinCount(lRes.count, rRes.count)}
+	return &physicalPlanInfo{p: np, cost: cost, count: estimateJoinCount(lRes.count, rRes.count)}
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
 func (p *Union) matchProperty(_ *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
-	np := *p
+	np := p.Copy()
 	children := make([]Plan, 0, len(childPlanInfo))
 	cost := float64(0)
 	count := uint64(0)
@@ -229,16 +229,16 @@ func (p *Union) matchProperty(_ *requiredProperty, childPlanInfo ...*physicalPla
 		count += res.count
 	}
 	np.SetChildren(children...)
-	return &physicalPlanInfo{p: &np, cost: cost, count: count}
+	return &physicalPlanInfo{p: np, cost: cost, count: count}
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
 func (p *Selection) matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
 	if p.onTable {
 		res := p.children[0].(PhysicalPlan).matchProperty(prop, childPlanInfo...)
-		sel := *p
+		sel := p.Copy()
 		sel.SetChildren(res.p)
-		res.p = &sel
+		res.p = sel
 		res.count = uint64(float64(res.count) * selectionFactor)
 		return res
 	}
@@ -249,9 +249,9 @@ func (p *Selection) matchProperty(prop *requiredProperty, childPlanInfo ...*phys
 func (p *PhysicalUnionScan) matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
 	limit := prop.limit
 	res := p.children[0].(PhysicalPlan).matchProperty(convertLimitOffsetToCount(prop), childPlanInfo...)
-	np := *p
+	np := p.Copy()
 	np.SetChildren(res.p)
-	res.p = &np
+	res.p = np
 	if limit != nil {
 		res = addPlanToResponse(limit, res)
 	}
@@ -260,9 +260,9 @@ func (p *PhysicalUnionScan) matchProperty(prop *requiredProperty, childPlanInfo 
 
 // matchProperty implements PhysicalPlan matchProperty interface.
 func (p *Projection) matchProperty(_ *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
-	np := *p
+	np := p.Copy()
 	np.SetChildren(childPlanInfo[0].p)
-	return &physicalPlanInfo{p: &np, cost: childPlanInfo[0].cost}
+	return &physicalPlanInfo{p: np, cost: childPlanInfo[0].cost}
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
@@ -271,77 +271,7 @@ func (p *Analyze) matchProperty(_ *requiredProperty, childPlanInfo ...*physicalP
 	for _, res := range childPlanInfo {
 		children = append(children, res.p)
 	}
-	np := *p
+	np := p.Copy()
 	np.SetChildren(children...)
-	return &physicalPlanInfo{p: &np}
-}
-
-// matchProperty implements PhysicalPlan matchProperty interface.
-func (p *Cache) matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
-	panic("You can't call this function!")
-}
-
-// matchProperty implements PhysicalPlan matchProperty interface.
-func (p *MaxOneRow) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *physicalPlanInfo {
-	panic("You can't call this function!")
-}
-
-// matchProperty implements PhysicalPlan matchProperty interface.
-func (p *Exists) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *physicalPlanInfo {
-	panic("You can't call this function!")
-}
-
-// matchProperty implements PhysicalPlan matchProperty interface.
-func (p *PhysicalAggregation) matchProperty(prop *requiredProperty, _ ...*physicalPlanInfo) *physicalPlanInfo {
-	panic("You can't call this function!")
-}
-
-// matchProperty implements PhysicalPlan matchProperty interface.
-func (p *Limit) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *physicalPlanInfo {
-	panic("You can't call this function!")
-}
-
-// matchProperty implements PhysicalPlan matchProperty interface.
-func (p *TableDual) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *physicalPlanInfo {
-	panic("You can't call this function!")
-}
-
-// matchProperty implements PhysicalPlan matchProperty interface.
-func (p *Sort) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *physicalPlanInfo {
-	panic("You can't call this function!")
-}
-
-// matchProperty implements PhysicalPlan matchProperty interface.
-func (p *Insert) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *physicalPlanInfo {
-	panic("You can't call this function!")
-}
-
-// matchProperty implements PhysicalPlan matchProperty interface.
-func (p *SelectLock) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *physicalPlanInfo {
-	panic("You can't call this function!")
-}
-
-// matchProperty implements PhysicalPlan matchProperty interface.
-func (p *Update) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *physicalPlanInfo {
-	panic("You can't call this function!")
-}
-
-// matchProperty implements PhysicalPlan matchProperty interface.
-func (p *PhysicalDummyScan) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *physicalPlanInfo {
-	panic("You can't call this function!")
-}
-
-// matchProperty implements PhysicalPlan matchProperty interface.
-func (p *Delete) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *physicalPlanInfo {
-	panic("You can't call this function!")
-}
-
-// matchProperty implements PhysicalPlan matchProperty interface.
-func (p *Show) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *physicalPlanInfo {
-	panic("You can't call this function!")
-}
-
-// matchProperty implements PhysicalPlan matchProperty interface.
-func (p *PhysicalMemTable) matchProperty(_ *requiredProperty, _ ...*physicalPlanInfo) *physicalPlanInfo {
-	panic("You can't call this function!")
+	return &physicalPlanInfo{p: np}
 }
