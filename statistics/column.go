@@ -150,7 +150,15 @@ func (c *Column) GreaterRowCount(sc *variable.StatementContext, value types.Datu
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	return c.totalRowCount() - lessCount, nil
+	eqCount , err := c.EqualRowCount(sc, value)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	gtCount := c.totalRowCount() - lessCount - eqCount
+	if gtCount < 0 {
+		gtCount = 0
+	}
+	return gtCount, nil
 }
 
 // LessRowCount estimates the row count where the column less than value.

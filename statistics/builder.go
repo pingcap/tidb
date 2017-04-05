@@ -288,6 +288,7 @@ func (t *Table) buildColumn(sc *variable.StatementContext, offset int, ndv int64
 			col.Buckets[bucketIdx].Value = samples[i]
 			col.Buckets[bucketIdx].Repeats = ndvFactor
 		} else {
+			lastCount = col.Buckets[bucketIdx].Count
 			// The bucket is full, store the item in the next bucket.
 			bucketIdx++
 			col.Buckets = append(col.Buckets, bucket{
