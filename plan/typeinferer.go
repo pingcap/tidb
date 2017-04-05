@@ -432,6 +432,9 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		}
 	case ast.AnyValue:
 		tp = x.Args[0].GetType()
+	case ast.InetAton:
+		tp = types.NewFieldType(mysql.TypeLonglong)
+		tp.Flag |= mysql.UnsignedFlag
 	default:
 		tp = types.NewFieldType(mysql.TypeUnspecified)
 	}
