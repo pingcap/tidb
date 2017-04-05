@@ -269,20 +269,21 @@ func (t *Table) buildColumn(sc *variable.StatementContext, offset int, ndv int64
 		if err != nil {
 			return errors.Trace(err)
 		}
+		totalCount := (i + 1) * sampleFactor
 		if cmp == 0 {
 			// The new item has the same value as current bucket value, to ensure that
 			// a same value only stored in a single bucket, we do not increase bucketIdx even if it exceeds
 			// valuesPerBucket.
-			col.Buckets[bucketIdx].Count = (i + 1) * sampleFactor
+			col.Buckets[bucketIdx].Count = totalCount
 			if col.Buckets[bucketIdx].Repeats == ndvFactor {
 				col.Buckets[bucketIdx].Repeats = 2 * sampleFactor
 			} else {
 				col.Buckets[bucketIdx].Repeats += sampleFactor
 			}
-		} else if (i+1)*sampleFactor-lastCount <= valuesPerBucket {
+		} else if totalCount-lastCount <= valuesPerBucket {
 			// TODO: Making sampleFactor as float may be better.
 			// The bucket still have room to store a new item, update the bucket.
-			col.Buckets[bucketIdx].Count = (i + 1) * sampleFactor
+			col.Buckets[bucketIdx].Count = totalCount
 			col.Buckets[bucketIdx].Value = samples[i]
 			col.Buckets[bucketIdx].Repeats = ndvFactor
 		} else {
@@ -290,7 +291,7 @@ func (t *Table) buildColumn(sc *variable.StatementContext, offset int, ndv int64
 			// The bucket is full, store the item in the next bucket.
 			bucketIdx++
 			col.Buckets = append(col.Buckets, bucket{
-				Count:   (i + 1) * sampleFactor,
+				Count:   totalCount,
 				Value:   samples[i],
 				Repeats: ndvFactor,
 			})

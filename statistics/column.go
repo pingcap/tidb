@@ -36,7 +36,7 @@ type Column struct {
 
 // bucket is an element of histogram.
 //
-// A bucket number is the number of items stored in all previous buckets and the current bucket.
+// A bucket count is the number of items stored in all previous buckets and the current bucket.
 // bucket numbers are always in increasing order.
 //
 // A bucket value is the greatest item value stored in the bucket.
