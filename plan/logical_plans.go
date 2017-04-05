@@ -18,8 +18,29 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/plan/statistics"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/types"
+)
+
+var (
+	_ LogicalPlan = &Join{}
+	_ LogicalPlan = &Aggregation{}
+	_ LogicalPlan = &Projection{}
+	_ LogicalPlan = &Selection{}
+	_ LogicalPlan = &Apply{}
+	_ LogicalPlan = &Exists{}
+	_ LogicalPlan = &MaxOneRow{}
+	_ LogicalPlan = &TableDual{}
+	_ LogicalPlan = &DataSource{}
+	_ LogicalPlan = &Union{}
+	_ LogicalPlan = &Sort{}
+	_ LogicalPlan = &Update{}
+	_ LogicalPlan = &Delete{}
+	_ LogicalPlan = &SelectLock{}
+	_ LogicalPlan = &Limit{}
+	_ LogicalPlan = &Show{}
+	_ LogicalPlan = &Insert{}
+	_ LogicalPlan = &Analyze{}
 )
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, FullOuterJoin, SemiJoin.
@@ -38,14 +59,21 @@ const (
 	LeftOuterSemiJoin
 )
 
+const (
+	preferLeftAsOuter = 1 << iota
+	preferRightAsOuter
+)
+
 // Join is the logical join plan.
 type Join struct {
+	*basePlan
 	baseLogicalPlan
 
 	JoinType        JoinType
 	anti            bool
 	reordered       bool
 	cartesianJoin   bool
+	preferINLJ      int
 	preferMergeJoin bool
 
 	EqualConditions []*expression.ScalarFunction
@@ -100,7 +128,10 @@ func (p *Join) extractCorrelatedCols() []*expression.CorrelatedColumn {
 
 // Projection represents a select fields plan.
 type Projection struct {
+	*basePlan
 	baseLogicalPlan
+	basePhysicalPlan
+
 	Exprs []expression.Expression
 }
 
@@ -114,6 +145,7 @@ func (p *Projection) extractCorrelatedCols() []*expression.CorrelatedColumn {
 
 // Aggregation represents an aggregate plan.
 type Aggregation struct {
+	*basePlan
 	baseLogicalPlan
 
 	AggFuncs     []expression.AggregationFunction
@@ -138,7 +170,9 @@ func (p *Aggregation) extractCorrelatedCols() []*expression.CorrelatedColumn {
 
 // Selection means a filter.
 type Selection struct {
+	*basePlan
 	baseLogicalPlan
+	basePhysicalPlan
 
 	// Originally the WHERE or ON condition is parsed into a single expression,
 	// but after we converted to CNF(Conjunctive normal form), it can be
@@ -154,7 +188,7 @@ type Selection struct {
 	ScanController bool
 
 	// We will check this at decorrelate phase.
-	canControlScan bool
+	controllerStatus int
 }
 
 func (p *Selection) extractCorrelatedCols() []*expression.CorrelatedColumn {
@@ -184,21 +218,28 @@ func (p *Apply) extractCorrelatedCols() []*expression.CorrelatedColumn {
 
 // Exists checks if a query returns result.
 type Exists struct {
+	*basePlan
 	baseLogicalPlan
+	basePhysicalPlan
 }
 
 // MaxOneRow checks if a query returns no more than one row.
 type MaxOneRow struct {
+	*basePlan
 	baseLogicalPlan
+	basePhysicalPlan
 }
 
 // TableDual represents a dual table plan.
 type TableDual struct {
+	*basePlan
 	baseLogicalPlan
+	basePhysicalPlan
 }
 
 // DataSource represents a tablescan without condition push down.
 type DataSource struct {
+	*basePlan
 	baseLogicalPlan
 
 	indexHints []*ast.IndexHint
@@ -215,12 +256,16 @@ type DataSource struct {
 
 // Union represents Union plan.
 type Union struct {
+	*basePlan
 	baseLogicalPlan
+	basePhysicalPlan
 }
 
 // Sort stands for the order by plan.
 type Sort struct {
+	*basePlan
 	baseLogicalPlan
+	basePhysicalPlan
 
 	ByItems   []*ByItems
 	ExecLimit *Limit
@@ -236,14 +281,18 @@ func (p *Sort) extractCorrelatedCols() []*expression.CorrelatedColumn {
 
 // Update represents Update plan.
 type Update struct {
+	*basePlan
 	baseLogicalPlan
+	basePhysicalPlan
 
 	OrderedList []*expression.Assignment
 }
 
 // Delete represents a delete plan.
 type Delete struct {
+	*basePlan
 	baseLogicalPlan
+	basePhysicalPlan
 
 	Tables       []*ast.TableName
 	IsMultiTable bool

@@ -553,7 +553,7 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 	table, _ := b.is.TableByID(v.Table.ID)
 	client := b.ctx.GetClient()
 	supportDesc := client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeDesc)
-	st := &XSelectTableExec{
+	e := &XSelectTableExec{
 		tableInfo:   v.Table,
 		ctx:         b.ctx,
 		startTS:     startTS,
@@ -569,11 +569,10 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 		where:       v.TableConditionPBExpr,
 		aggregate:   v.Aggregated,
 		aggFuncs:    v.AggFuncsPB,
-		aggFields:   v.AggFields,
 		byItems:     v.GbyItemsPB,
 		orderByList: v.SortItemsPB,
 	}
-	return st
+	return e
 }
 
 func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
@@ -584,7 +583,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 	table, _ := b.is.TableByID(v.Table.ID)
 	client := b.ctx.GetClient()
 	supportDesc := client.SupportRequestType(kv.ReqTypeIndex, kv.ReqSubTypeDesc)
-	st := &XSelectIndexExec{
+	e := &XSelectIndexExec{
 		tableInfo:      v.Table,
 		ctx:            b.ctx,
 		supportDesc:    supportDesc,
@@ -596,10 +595,22 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 		where:          v.TableConditionPBExpr,
 		aggregate:      v.Aggregated,
 		aggFuncs:       v.AggFuncsPB,
-		aggFields:      v.AggFields,
 		byItems:        v.GbyItemsPB,
 	}
-	return st
+	if !e.aggregate && e.singleReadMode {
+		// Single read index result has the schema of full index columns.
+		schemaColumns := make([]*expression.Column, len(e.indexPlan.Index.Columns))
+		for i, col := range e.indexPlan.Index.Columns {
+			colInfo := e.indexPlan.Table.Columns[col.Offset]
+			schemaColumns[i] = &expression.Column{
+				Index:   i,
+				ColName: col.Name,
+				RetType: &colInfo.FieldType,
+			}
+		}
+		e.idxColsSchema = expression.NewSchema(schemaColumns...)
+	}
+	return e
 }
 
 func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
@@ -623,17 +634,34 @@ func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
 }
 
 func (b *executorBuilder) buildNestedLoopJoin(v *plan.PhysicalHashJoin) *NestedLoopJoinExec {
-	bigExec := b.build(v.Children()[0])
-	smallExec := b.build(v.Children()[1])
+	for _, cond := range v.EqualConditions {
+		cond.GetArgs()[0].(*expression.Column).ResolveIndices(v.Schema())
+		cond.GetArgs()[1].(*expression.Column).ResolveIndices(v.Schema())
+	}
+	if v.SmallTable == 1 {
+		return &NestedLoopJoinExec{
+			SmallExec:     b.build(v.Children()[1]),
+			BigExec:       b.build(v.Children()[0]),
+			Ctx:           b.ctx,
+			BigFilter:     expression.ComposeCNFCondition(b.ctx, v.LeftConditions...),
+			SmallFilter:   expression.ComposeCNFCondition(b.ctx, v.RightConditions...),
+			OtherFilter:   expression.ComposeCNFCondition(b.ctx, append(expression.ScalarFuncs2Exprs(v.EqualConditions), v.OtherConditions...)...),
+			schema:        v.Schema(),
+			outer:         v.JoinType != plan.InnerJoin,
+			defaultValues: v.DefaultValues,
+		}
+	}
 	return &NestedLoopJoinExec{
-		SmallExec:   smallExec,
-		BigExec:     bigExec,
-		Ctx:         b.ctx,
-		BigFilter:   expression.ComposeCNFCondition(b.ctx, v.LeftConditions...),
-		SmallFilter: expression.ComposeCNFCondition(b.ctx, v.RightConditions...),
-		OtherFilter: expression.ComposeCNFCondition(b.ctx, append(expression.ScalarFuncs2Exprs(v.EqualConditions), v.OtherConditions...)...),
-		schema:      v.Schema(),
-		outer:       v.JoinType != plan.InnerJoin,
+		SmallExec:     b.build(v.Children()[0]),
+		BigExec:       b.build(v.Children()[1]),
+		leftSmall:     true,
+		Ctx:           b.ctx,
+		BigFilter:     expression.ComposeCNFCondition(b.ctx, v.RightConditions...),
+		SmallFilter:   expression.ComposeCNFCondition(b.ctx, v.LeftConditions...),
+		OtherFilter:   expression.ComposeCNFCondition(b.ctx, append(expression.ScalarFuncs2Exprs(v.EqualConditions), v.OtherConditions...)...),
+		schema:        v.Schema(),
+		outer:         v.JoinType != plan.InnerJoin,
+		defaultValues: v.DefaultValues,
 	}
 }
 
@@ -643,7 +671,7 @@ func (b *executorBuilder) buildApply(v *plan.PhysicalApply) Executor {
 	case *plan.PhysicalHashSemiJoin:
 		join = b.buildSemiJoin(x)
 	case *plan.PhysicalHashJoin:
-		if x.JoinType == plan.InnerJoin || x.JoinType == plan.LeftOuterJoin {
+		if x.JoinType == plan.InnerJoin || x.JoinType == plan.LeftOuterJoin || x.JoinType == plan.RightOuterJoin {
 			join = b.buildNestedLoopJoin(x)
 		} else {
 			b.err = errors.Errorf("Unsupported join type %v in nested loop join", x.JoinType)

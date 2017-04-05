@@ -26,46 +26,66 @@ import (
 )
 
 const (
-	// Sel is the type of Selection.
-	Sel = "Selection"
-	// St is the type of Set.
-	St = "Set"
-	// Proj is the type of Projection.
-	Proj = "Projection"
-	// Agg is the type of Aggregation.
-	Agg = "Aggregation"
-	// Jn is the type of Join.
-	Jn = "Join"
-	// Un is the type of Union.
-	Un = "Union"
-	// Tbl is the type of TableScan.
-	Tbl = "TableScan"
-	// Idx is the type of IndexScan.
-	Idx = "IndexScan"
-	// Srt is the type of Sort.
-	Srt = "Sort"
-	// Lim is the type of Limit.
-	Lim = "Limit"
-	// App is the type of Apply.
-	App = "Apply"
-	// MOR is the type of MaxOneRow.
-	MOR = "MaxOneRow"
-	// Ext is the type of Exists.
-	Ext = "Exists"
-	// Dual is the type of TableDual.
-	Dual = "TableDual"
-	// Lock is the type of SelectLock.
-	Lock = "SelectLock"
-	// Load is the type of LoadData.
-	Load = "LoadData"
-	// Ins is the type of Insert
-	Ins = "Insert"
-	// Up is the type of Update.
-	Up = "Update"
-	// Del is the type of Delete.
-	Del = "Delete"
-	// Aly is the type of Analyze.
-	Aly = "Analyze"
+	// TypeSel is the type of Selection.
+	TypeSel = "Selection"
+	// TypeSet is the type of Set.
+	TypeSet = "Set"
+	// TypeProj is the type of Projection.
+	TypeProj = "Projection"
+	// TypeAgg is the type of Aggregation.
+	TypeAgg = "Aggregation"
+	// TypeStreamAgg is the type of StreamAgg.
+	TypeStreamAgg = "StreamAgg"
+	// TypeHashAgg is the type of HashAgg.
+	TypeHashAgg = "HashAgg"
+	// TypeCache is the type of cache.
+	TypeCache = "Cache"
+	// TypeShow is the type of show.
+	TypeShow = "Show"
+	// TypeJoin is the type of Join.
+	TypeJoin = "Join"
+	// TypeUnion is the type of Union.
+	TypeUnion = "Union"
+	// TypeTableScan is the type of TableScan.
+	TypeTableScan = "TableScan"
+	// TypeMemTableScan is the type of TableScan.
+	TypeMemTableScan = "MemTableScan"
+	// TypeDummy is the type of TableScan.
+	TypeDummy = "Dummy"
+	// TypeUnionScan is the type of UnionScan.
+	TypeUnionScan = "UnionScan"
+	// TypeIdxScan is the type of IndexScan.
+	TypeIdxScan = "IndexScan"
+	// TypeSort is the type of Sort.
+	TypeSort = "Sort"
+	// TypeLimit is the type of Limit.
+	TypeLimit = "Limit"
+	// TypeHashSemiJoin is the type of hash semi join.
+	TypeHashSemiJoin = "HashSemiJoin"
+	// TypeHashLeftJoin is the type of left hash join.
+	TypeHashLeftJoin = "HashLeftJoin"
+	// TypeHashRightJoin is the type of right hash join.
+	TypeHashRightJoin = "HashRightJoin"
+	// TypeMergeJoin is the type of merge join.
+	TypeMergeJoin = "MergeJoin"
+	// TypeApply is the type of Apply.
+	TypeApply = "Apply"
+	// TypeMaxOneRow is the type of MaxOneRow.
+	TypeMaxOneRow = "MaxOneRow"
+	// TypeExists is the type of Exists.
+	TypeExists = "Exists"
+	// TypeDual is the type of TableDual.
+	TypeDual = "TableDual"
+	// TypeLock is the type of SelectLock.
+	TypeLock = "SelectLock"
+	// TypeInsert is the type of Insert
+	TypeInsert = "Insert"
+	// TypeUpate is the type of Update.
+	TypeUpate = "Update"
+	// TypeDelete is the type of Delete.
+	TypeDelete = "Delete"
+	// TypeAnalyze is the type of Analyze.
+	TypeAnalyze = "Analyze"
 )
 
 // Plan is the description of an execution flow.
@@ -198,9 +218,12 @@ type PhysicalPlan interface {
 }
 
 type baseLogicalPlan struct {
-	basePlan
-	planMap map[string]*physicalPlanInfo
-	self    LogicalPlan
+	basePlan *basePlan
+	planMap  map[string]*physicalPlanInfo
+}
+
+type basePhysicalPlan struct {
+	basePlan *basePlan
 }
 
 func (p *baseLogicalPlan) getPlanInfo(prop *requiredProperty) (*physicalPlanInfo, error) {
@@ -219,15 +242,15 @@ func (p *baseLogicalPlan) convert2PhysicalPlan(prop *requiredProperty) (*physica
 	if info != nil {
 		return info, nil
 	}
-	if len(p.children) == 0 {
-		return &physicalPlanInfo{p: p.self.(PhysicalPlan)}, nil
+	if len(p.basePlan.children) == 0 {
+		return &physicalPlanInfo{p: p.basePlan.self.(PhysicalPlan)}, nil
 	}
-	child := p.children[0].(LogicalPlan)
+	child := p.basePlan.children[0].(LogicalPlan)
 	info, err = child.convert2PhysicalPlan(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	info = addPlanToResponse(p.self.(PhysicalPlan), info)
+	info = addPlanToResponse(p.basePlan.self.(PhysicalPlan), info)
 	return info, p.storePlanInfo(prop, info)
 }
 
@@ -242,50 +265,67 @@ func (p *baseLogicalPlan) storePlanInfo(prop *requiredProperty, info *physicalPl
 }
 
 func (p *baseLogicalPlan) buildKeyInfo() {
-	for _, child := range p.Children() {
+	for _, child := range p.basePlan.children {
 		child.(LogicalPlan).buildKeyInfo()
 	}
-	if len(p.children) == 1 {
-		switch p.self.(type) {
+	if len(p.basePlan.children) == 1 {
+		switch p.basePlan.self.(type) {
 		case *Exists, *Aggregation, *Projection:
-			p.schema.Keys = nil
+			p.basePlan.schema.Keys = nil
 		case *SelectLock:
-			p.schema.Keys = p.children[0].Schema().Keys
+			p.basePlan.schema.Keys = p.basePlan.children[0].Schema().Keys
 		default:
-			p.schema.Keys = p.children[0].Schema().Clone().Keys
+			p.basePlan.schema.Keys = p.basePlan.children[0].Schema().Clone().Keys
 		}
 	} else {
-		p.schema.Keys = nil
+		p.basePlan.schema.Keys = nil
 	}
 }
 
-func newBaseLogicalPlan(tp string, a *idAllocator) baseLogicalPlan {
-	return baseLogicalPlan{
-		planMap: make(map[string]*physicalPlanInfo),
-		basePlan: basePlan{
-			tp:        tp,
-			allocator: a,
-		},
+func newBasePlan(tp string, allocator *idAllocator, ctx context.Context, p Plan) *basePlan {
+	return &basePlan{
+		tp:        tp,
+		allocator: allocator,
+		id:        tp + allocator.allocID(),
+		ctx:       ctx,
+		self:      p,
 	}
+}
+
+func newBaseLogicalPlan(basePlan *basePlan) baseLogicalPlan {
+	return baseLogicalPlan{
+		planMap:  make(map[string]*physicalPlanInfo),
+		basePlan: basePlan,
+	}
+}
+
+func newBasePhysicalPlan(basePlan *basePlan) basePhysicalPlan {
+	return basePhysicalPlan{
+		basePlan: basePlan,
+	}
+}
+
+func (p *basePhysicalPlan) matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
+	panic("You can't call this function!")
 }
 
 // PredicatePushDown implements LogicalPlan interface.
 func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
-	if len(p.Children()) == 0 {
-		return predicates, p.self, nil
+	if len(p.basePlan.children) == 0 {
+		return predicates, p.basePlan.self.(LogicalPlan), nil
 	}
-	child := p.children[0].(LogicalPlan)
+	child := p.basePlan.children[0].(LogicalPlan)
 	rest, _, err := child.PredicatePushDown(predicates)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	if len(rest) > 0 {
-		err = addSelection(p, child, rest, p.allocator)
+		err = addSelection(p.basePlan.self, child, rest, p.basePlan.allocator)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
 	}
-	return nil, p.self, nil
+	return nil, p.basePlan.self.(LogicalPlan), nil
 }
 
 func (p *basePlan) extractCorrelatedCols() []*expression.CorrelatedColumn {
@@ -302,24 +342,19 @@ func (p *basePlan) Allocator() *idAllocator {
 
 // ResolveIndicesAndCorCols implements LogicalPlan interface.
 func (p *baseLogicalPlan) ResolveIndicesAndCorCols() {
-	for _, child := range p.children {
+	for _, child := range p.basePlan.children {
 		child.(LogicalPlan).ResolveIndicesAndCorCols()
 	}
 }
 
 // PruneColumns implements LogicalPlan interface.
 func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) {
-	if len(p.children) == 0 {
+	if len(p.basePlan.children) == 0 {
 		return
 	}
-	child := p.children[0].(LogicalPlan)
+	child := p.basePlan.children[0].(LogicalPlan)
 	child.PruneColumns(parentUsedCols)
-	p.SetSchema(child.Schema())
-}
-
-func (p *basePlan) initIDAndContext(ctx context.Context) {
-	p.id = p.tp + p.allocator.allocID()
-	p.ctx = ctx
+	p.basePlan.SetSchema(child.Schema())
 }
 
 // basePlan implements base Plan interface.
@@ -333,6 +368,12 @@ type basePlan struct {
 	id        string
 	allocator *idAllocator
 	ctx       context.Context
+	self      Plan
+}
+
+func (p *basePlan) copy() *basePlan {
+	np := *p
+	return &np
 }
 
 // MarshalJSON implements json.Marshaler interface.

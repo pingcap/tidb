@@ -14,18 +14,14 @@
 package executor
 
 import (
-	"fmt"
 	"math/rand"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/plan/statistics"
-	"github.com/pingcap/tidb/plan/statscache"
-	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -44,6 +40,7 @@ type AnalyzeExec struct {
 
 const (
 	maxSampleCount     = 10000
+	maxSketchSize      = 1000
 	defaultBucketCount = 256
 )
 
@@ -69,10 +66,11 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 		ae := src.(*AnalyzeExec)
 		var count int64 = -1
 		var sampleRows []*ast.Row
+		var colNDVs []int64
 		if ae.colOffsets != nil {
 			rs := &recordSet{executor: ae.Srcs[len(ae.Srcs)-1]}
 			var err error
-			count, sampleRows, err = collectSamples(rs)
+			count, sampleRows, colNDVs, err = CollectSamplesAndEstimateNDVs(rs, len(ae.colOffsets))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -90,7 +88,7 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 		for i := range ae.idxOffsets {
 			idxRS = append(idxRS, &recordSet{executor: ae.Srcs[i]})
 		}
-		err := ae.buildStatisticsAndSaveToKV(count, columnSamples, idxRS, pkRS)
+		err := ae.buildStatisticsAndSaveToKV(count, columnSamples, colNDVs, idxRS, pkRS)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -98,16 +96,15 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 	return nil, nil
 }
 
-func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]types.Datum, idxRS []ast.RecordSet, pkRS ast.RecordSet) error {
-	txn := e.ctx.Txn()
+func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]types.Datum, colNDVs []int64, idxRS []ast.RecordSet, pkRS ast.RecordSet) error {
 	statBuilder := &statistics.Builder{
 		Ctx:           e.ctx,
 		TblInfo:       e.tblInfo,
-		StartTS:       int64(txn.StartTS()),
 		Count:         count,
 		NumBuckets:    defaultBucketCount,
 		ColumnSamples: columnSamples,
 		ColOffsets:    e.colOffsets,
+		ColNDVs:       colNDVs,
 		IdxRecords:    idxRS,
 		IdxOffsets:    e.idxOffsets,
 		PkRecords:     pkRS,
@@ -117,35 +114,32 @@ func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]
 	if err != nil {
 		return errors.Trace(err)
 	}
-	version := e.ctx.Txn().StartTS()
-	statscache.SetStatisticsTableCache(e.tblInfo.ID, t, version)
-	tpb, err := t.ToPB()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	m := meta.NewMeta(txn)
-	err = m.SetTableStats(e.tblInfo.ID, tpb)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	insertSQL := fmt.Sprintf("insert into mysql.stats_meta (version, table_id) values (%d, %d) on duplicate key update version = %d", version, e.tblInfo.ID, version)
-	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, insertSQL)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
+	err = t.SaveToStorage(e.ctx)
+	return errors.Trace(err)
 }
 
-// collectSamples collects sample from the result set, using Reservoir Sampling algorithm.
+// CollectSamplesAndEstimateNDVs collects sample from the result set using Reservoir Sampling algorithm,
+// and estimates NDVs using FM Sketch during the collecting process.
 // See https://en.wikipedia.org/wiki/Reservoir_sampling
-func collectSamples(e ast.RecordSet) (count int64, samples []*ast.Row, err error) {
+// Exported for test.
+func CollectSamplesAndEstimateNDVs(e ast.RecordSet, numCols int) (count int64, samples []*ast.Row, ndvs []int64, err error) {
+	var sketches []*statistics.FMSketch
+	for i := 0; i < numCols; i++ {
+		sketches = append(sketches, statistics.NewFMSketch(maxSketchSize))
+	}
 	for {
 		row, err := e.Next()
 		if err != nil {
-			return count, samples, errors.Trace(err)
+			return count, samples, ndvs, errors.Trace(err)
 		}
 		if row == nil {
 			break
+		}
+		for i, val := range row.Data {
+			err = sketches[i].InsertValue(val)
+			if err != nil {
+				return count, samples, ndvs, errors.Trace(err)
+			}
 		}
 		if len(samples) < maxSampleCount {
 			samples = append(samples, row)
@@ -158,7 +152,10 @@ func collectSamples(e ast.RecordSet) (count int64, samples []*ast.Row, err error
 		}
 		count++
 	}
-	return count, samples, nil
+	for _, sketch := range sketches {
+		ndvs = append(ndvs, sketch.NDV())
+	}
+	return count, samples, ndvs, nil
 }
 
 func rowsToColumnSamples(rows []*ast.Row) [][]types.Datum {

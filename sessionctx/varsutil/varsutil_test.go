@@ -142,6 +142,11 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(v.IndexSerialScanConcurrency, Equals, 1)
 	SetSessionSystemVar(v, variable.TiDBIndexSerialScanConcurrency, types.NewStringDatum("4"))
 	c.Assert(v.IndexSerialScanConcurrency, Equals, 4)
+
+	// Test case for tidb_batch_insert.
+	c.Assert(v.BatchInsert, IsFalse)
+	SetSessionSystemVar(v, variable.TiDBBatchInsert, types.NewStringDatum("1"))
+	c.Assert(v.BatchInsert, IsTrue)
 }
 
 type mockGlobalAccessor struct {
