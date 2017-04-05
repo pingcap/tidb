@@ -797,7 +797,7 @@ import (
 	IntoOpt			"INTO or EmptyString"
 	ValueSym		"Value or Values"
 	TimeUnit		"Time unit for 'DATE_ADD', 'DATE_SUB', 'ADDDATE', 'SUBDATE', 'EXTRACT'"
-	TimeUnit2		"Time unit for 'TIMESTAMPADD' and 'TIMESTAMPDIFF'"
+	TimestampUnit		"Time unit for 'TIMESTAMPADD' and 'TIMESTAMPDIFF'"
 	DeallocateSym		"Deallocate or drop"
 	OuterOpt		"optional OUTER clause"
 	CrossOpt		"Cross join option"
@@ -3460,7 +3460,7 @@ FunctionCallNonKeyword:
 			Args: []ast.ExprNode{$3.(ast.ExprNode)},
 		}
 	}
-|	"TIMESTAMPADD" '(' TimeUnit2 ',' Expression ',' Expression ')'
+|	"TIMESTAMPADD" '(' TimestampUnit ',' Expression ',' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
@@ -3468,7 +3468,7 @@ FunctionCallNonKeyword:
 
 		}
 	}
-|	"TIMESTAMPDIFF" '(' TimeUnit2 ',' Expression ',' Expression ')'
+|	"TIMESTAMPDIFF" '(' TimestampUnit ',' Expression ',' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
@@ -4068,7 +4068,7 @@ TimeUnit:
 		$$ = strings.ToUpper($1)
 	}
 
-TimeUnit2:
+TimestampUnit:
 	"MICROSECOND"
 	{
 		$$ = strings.ToUpper($1)
