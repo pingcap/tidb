@@ -23,7 +23,7 @@ import (
 )
 
 // tryToGetJoinGroup tries to fetch a whole join group, which all joins is cartesian join.
-func tryToGetJoinGroup(j *Join) ([]LogicalPlan, bool) {
+func tryToGetJoinGroup(j *LogicalJoin) ([]LogicalPlan, bool) {
 	// Ignore reorder if:
 	// 1. already reordered
 	// 2. not inner join
@@ -34,7 +34,7 @@ func tryToGetJoinGroup(j *Join) ([]LogicalPlan, bool) {
 	}
 	lChild := j.children[0].(LogicalPlan)
 	rChild := j.children[1].(LogicalPlan)
-	if nj, ok := lChild.(*Join); ok {
+	if nj, ok := lChild.(*LogicalJoin); ok {
 		plans, valid := tryToGetJoinGroup(nj)
 		return append(plans, rChild), valid
 	}
@@ -185,8 +185,8 @@ func (e *joinReOrderSolver) makeBushyJoin(cartesianJoinGroup []LogicalPlan) {
 	e.resultJoin = cartesianJoinGroup[0]
 }
 
-func (e *joinReOrderSolver) newJoin(lChild, rChild LogicalPlan) *Join {
-	join := Join{
+func (e *joinReOrderSolver) newJoin(lChild, rChild LogicalPlan) *LogicalJoin {
+	join := LogicalJoin{
 		JoinType:  InnerJoin,
 		reordered: true,
 	}.init(e.allocator, e.ctx)

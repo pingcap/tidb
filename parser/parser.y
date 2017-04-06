@@ -485,6 +485,7 @@ import (
 	sqlNoCache	"SQL_NO_CACHE"
 	start		"START"
 	status		"STATUS"
+	super		"SUPER"
 	some 		"SOME"
 	global		"GLOBAL"
 	tables		"TABLES"
@@ -2257,7 +2258,7 @@ UnReservedKeyword:
 | "MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION"
 | "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
-| "TIMESTAMPDIFF" | "NONE"
+| "TIMESTAMPDIFF" | "NONE" | "SUPER"
 
 ReservedKeyword:
 "ADD" | "ALL" | "ALTER" | "ANALYZE" | "AND" | "AS" | "ASC" | "BETWEEN" | "BIGINT"
@@ -6392,6 +6393,10 @@ PrivType:
 |	"SELECT"
 	{
 		$$ = mysql.SelectPriv
+	}
+|	"SUPER"
+	{
+		$$ = mysql.SuperPriv
 	}
 |	"SHOW" "DATABASES"
 	{

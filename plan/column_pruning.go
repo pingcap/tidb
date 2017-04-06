@@ -85,7 +85,7 @@ func (p *Selection) PruneColumns(parentUsedCols []*expression.Column) {
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *Aggregation) PruneColumns(parentUsedCols []*expression.Column) {
+func (p *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) {
 	child := p.children[0].(LogicalPlan)
 	used := getUsedList(parentUsedCols, p.schema)
 	for i := len(used) - 1; i >= 0; i-- {
@@ -183,7 +183,7 @@ func (p *Insert) PruneColumns(_ []*expression.Column) {
 	child.PruneColumns(child.Schema().Columns)
 }
 
-func (p *Join) extractUsedCols(parentUsedCols []*expression.Column) (leftCols []*expression.Column, rightCols []*expression.Column) {
+func (p *LogicalJoin) extractUsedCols(parentUsedCols []*expression.Column) (leftCols []*expression.Column, rightCols []*expression.Column) {
 	for _, eqCond := range p.EqualConditions {
 		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(eqCond)...)
 	}
@@ -208,7 +208,7 @@ func (p *Join) extractUsedCols(parentUsedCols []*expression.Column) (leftCols []
 	return leftCols, rightCols
 }
 
-func (p *Join) mergeSchema() {
+func (p *LogicalJoin) mergeSchema() {
 	lChild := p.children[0].(LogicalPlan)
 	rChild := p.children[1].(LogicalPlan)
 	composedSchema := expression.MergeSchema(lChild.Schema(), rChild.Schema())
@@ -224,7 +224,7 @@ func (p *Join) mergeSchema() {
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *Join) PruneColumns(parentUsedCols []*expression.Column) {
+func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column) {
 	leftCols, rightCols := p.extractUsedCols(parentUsedCols)
 	lChild := p.children[0].(LogicalPlan)
 	rChild := p.children[1].(LogicalPlan)
@@ -234,7 +234,7 @@ func (p *Join) PruneColumns(parentUsedCols []*expression.Column) {
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *Apply) PruneColumns(parentUsedCols []*expression.Column) {
+func (p *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) {
 	lChild := p.children[0].(LogicalPlan)
 	rChild := p.children[1].(LogicalPlan)
 	leftCols, rightCols := p.extractUsedCols(parentUsedCols)

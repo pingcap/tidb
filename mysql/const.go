@@ -166,6 +166,8 @@ const (
 	DeletePriv
 	// ShowDBPriv is the privilege to run show databases statement.
 	ShowDBPriv
+	// SuperPriv enables many operations and server behaviors.
+	SuperPriv
 	// CreateUserPriv is the privilege to create user.
 	CreateUserPriv
 	// DropPriv is the privilege to drop schema/table.
@@ -195,6 +197,7 @@ var Priv2UserCol = map[PrivilegeType]string{
 	UpdatePriv:     "Update_priv",
 	DeletePriv:     "Delete_priv",
 	ShowDBPriv:     "Show_db_priv",
+	SuperPriv:      "Super_priv",
 	CreateUserPriv: "Create_user_priv",
 	DropPriv:       "Drop_priv",
 	ProcessPriv:    "Process_priv",
@@ -212,6 +215,7 @@ var Col2PrivType = map[string]PrivilegeType{
 	"Update_priv":      UpdatePriv,
 	"Delete_priv":      DeletePriv,
 	"Show_db_priv":     ShowDBPriv,
+	"Super_priv":       SuperPriv,
 	"Create_user_priv": CreateUserPriv,
 	"Drop_priv":        DropPriv,
 	"Process_priv":     ProcessPriv,
@@ -222,7 +226,7 @@ var Col2PrivType = map[string]PrivilegeType{
 }
 
 // AllGlobalPrivs is all the privileges in global scope.
-var AllGlobalPrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, ProcessPriv, GrantPriv, AlterPriv, ShowDBPriv, ExecutePriv, IndexPriv, CreateUserPriv}
+var AllGlobalPrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, ProcessPriv, GrantPriv, AlterPriv, ShowDBPriv, SuperPriv, ExecutePriv, IndexPriv, CreateUserPriv}
 
 // Priv2Str is the map for privilege to string.
 var Priv2Str = map[PrivilegeType]string{
@@ -232,6 +236,7 @@ var Priv2Str = map[PrivilegeType]string{
 	UpdatePriv:     "Update",
 	DeletePriv:     "Delete",
 	ShowDBPriv:     "Show Databases",
+	SuperPriv:      "Super",
 	CreateUserPriv: "Create User",
 	DropPriv:       "Drop",
 	ProcessPriv:    "Process",
