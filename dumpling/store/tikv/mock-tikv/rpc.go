@@ -475,6 +475,16 @@ func (c *RPCClient) SendCopReqNew(addr string, req *coprocessor.Request, timeout
 		}
 		executors = append(executors, exec)
 	}
+	if sel.Aggregates != nil {
+		exec := &tipb.Executor{
+			Tp: tipb.ExecType_TypeAggregation,
+			Aggregation: &tipb.Aggregation{
+				AggFunc: sel.Aggregates,
+				GroupBy: itemsToExprs(sel.GroupBy),
+			},
+		}
+		executors = append(executors, exec)
+	}
 
 	dag := &tipb.DAGRequest{
 		StartTs:        sel.GetStartTs(),
