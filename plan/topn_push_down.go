@@ -20,8 +20,6 @@ import (
 
 // pushDownTopNSolver pushes down the topN or limit. In future we will remove the limit from `requiredProperty` in CBO phase.
 type pushDownTopNSolver struct {
-	ctx       context.Context
-	allocator *idAllocator
 }
 
 func (s *pushDownTopNSolver) optimize(p LogicalPlan, ctx context.Context, allocator *idAllocator) (LogicalPlan, error) {
