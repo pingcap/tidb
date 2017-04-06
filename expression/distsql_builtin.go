@@ -118,6 +118,17 @@ func PBToExpr(expr *tipb.Expr, colIDs map[int64]int, sc *variable.StatementConte
 	// Then it must be a scalar function.
 	args := make([]Expression, 0, len(expr.Children))
 	for _, child := range expr.Children {
+		if child.Tp == tipb.ExprType_ValueList {
+			results, err := decodeValueList(child.Val)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if len(results) == 0 {
+				return &Constant{Value: types.NewDatum(false)}, nil
+			}
+			args = append(args, results...)
+			continue
+		}
 		arg, err := PBToExpr(child, colIDs, sc)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -125,6 +136,21 @@ func PBToExpr(expr *tipb.Expr, colIDs map[int64]int, sc *variable.StatementConte
 		args = append(args, arg)
 	}
 	return newDistSQLFunction(sc, expr.Tp, args)
+}
+
+func decodeValueList(data []byte) ([]Expression, error) {
+	if len(data) == 0 {
+		return nil, nil
+	}
+	list, err := codec.Decode(data, 1)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	result := make([]Expression, 0, len(list))
+	for _, value := range list {
+		result = append(result, &Constant{Value: value})
+	}
+	return result, nil
 }
 
 func convertInt(val []byte) (*Constant, error) {
