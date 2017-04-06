@@ -435,18 +435,13 @@ func (c *RPCClient) SendCopReq(ctx goctx.Context, addr string, req *coprocessor.
 	return handler.handleCopRequest(req)
 }
 
-// SendCopReqNew sends a coprocessor request to mock cluster.
-func (c *RPCClient) SendCopReqNew(addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
-	sel := new(tipb.SelectRequest)
-	err := proto.Unmarshal(req.Data, sel)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
+// extractExecutors is used for testing.
+func extractExecutors(sel *tipb.SelectRequest) []*tipb.Executor {
 	var executors []*tipb.Executor
-	// TODO: Now the value of desc is false.
-	// And it's used for testing.
-	desc := false
+	var desc bool
+	if sel.OrderBy != nil {
+		desc = sel.OrderBy[0].Desc
+	}
 	var exec *tipb.Executor
 	if sel.TableInfo != nil {
 		exec = &tipb.Executor{
@@ -485,7 +480,25 @@ func (c *RPCClient) SendCopReqNew(addr string, req *coprocessor.Request, timeout
 		}
 		executors = append(executors, exec)
 	}
+	if sel.Limit != nil {
+		exec := &tipb.Executor{
+			Tp:    tipb.ExecType_TypeLimit,
+			Limit: &tipb.Limit{Limit: sel.Limit},
+		}
+		executors = append(executors, exec)
+	}
+	return executors
+}
 
+// SendCopReqNew sends a coprocessor request to mock cluster.
+func (c *RPCClient) SendCopReqNew(addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
+	sel := new(tipb.SelectRequest)
+	err := proto.Unmarshal(req.Data, sel)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	executors := extractExecutors(sel)
 	dag := &tipb.DAGRequest{
 		StartTs:        sel.GetStartTs(),
 		TimeZoneOffset: sel.TimeZoneOffset,
