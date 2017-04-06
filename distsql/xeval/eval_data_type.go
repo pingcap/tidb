@@ -55,11 +55,21 @@ func (e *Evaluator) evalColumnRef(val []byte) (types.Datum, error) {
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	d, ok := e.Row[i]
+
+	// TODO: Remove this case.
+	if e.ColVals == nil {
+		d, ok := e.Row[i]
+		if !ok {
+			return d, ErrInvalid.Gen("column % x not found", val)
+		}
+		return d, nil
+	}
+
+	offset, ok := e.ColIDs[i]
 	if !ok {
 		return d, ErrInvalid.Gen("column % x not found", val)
 	}
-	return d, nil
+	return e.ColVals[offset], nil
 }
 
 func (e *Evaluator) evalInt(val []byte) (types.Datum, error) {
