@@ -25,13 +25,13 @@ import (
 
 var singleGroup = []byte("SingleGroup")
 
-func getGroupKey(ctx *aggContext, exprs []*tipb.Expr) ([]byte, error) {
+func getGroupKey(eval *xeval.Evaluator, exprs []*tipb.Expr) ([]byte, error) {
 	if len(exprs) == 0 {
 		return singleGroup, nil
 	}
 	vals := make([]types.Datum, 0, len(exprs))
 	for _, expr := range exprs {
-		v, err := ctx.eval.Eval(expr)
+		v, err := eval.Eval(expr)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -44,39 +44,6 @@ func getGroupKey(ctx *aggContext, exprs []*tipb.Expr) ([]byte, error) {
 	return bs, nil
 }
 
-// aggregateNew updates aggregate functions with rows.
-func aggregateNew(ctx *aggContext, groupByExprs []*tipb.Expr, handle int64, row [][]byte, colIDs map[int64]int) error {
-	// Put row data into evaluate for later evaluation.
-	err := ctx.eval.SetRowValue(handle, row, colIDs)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// Get group key.
-	gk, err := getGroupKey(ctx, groupByExprs)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if _, ok := ctx.groups[string(gk)]; !ok {
-		ctx.groups[string(gk)] = struct{}{}
-		ctx.groupKeys = append(ctx.groupKeys, gk)
-	}
-	// Update aggregate funcs.
-	for _, agg := range ctx.aggFuncs {
-		agg.currentGroup = gk
-		args := make([]types.Datum, 0, len(agg.expr.Children))
-		// Evaluate arguments.
-		for _, x := range agg.expr.Children {
-			cv, err := ctx.eval.Eval(x)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			args = append(args, cv)
-		}
-		agg.update(ctx, args)
-	}
-	return nil
-}
-
 // aggregate updates aggregate functions with rows.
 func aggregate(ctx *aggContext, groupByExprs []*tipb.Expr, handle int64, row map[int64][]byte) error {
 	// Put row data into evaluate for later evaluation.
@@ -85,7 +52,7 @@ func aggregate(ctx *aggContext, groupByExprs []*tipb.Expr, handle int64, row map
 		return errors.Trace(err)
 	}
 	// Get group key.
-	gk, err := getGroupKey(ctx, groupByExprs)
+	gk, err := getGroupKey(ctx.eval, groupByExprs)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -78,19 +78,6 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor
 	return buildResp(chunks, err)
 }
 
-func (h *rpcHandler) buildDAG(ctx *dagContext, executors []*tipb.Executor) (executor, error) {
-	var src executor
-	for i := 0; i < len(executors); i++ {
-		curr, err := h.buildExec(ctx, executors[i])
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		curr.SetSrcExec(src)
-		src = curr
-	}
-	return src, nil
-}
-
 func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, error) {
 	var currExec executor
 	var err error
@@ -109,6 +96,19 @@ func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 	}
 
 	return currExec, errors.Trace(err)
+}
+
+func (h *rpcHandler) buildDAG(ctx *dagContext, executors []*tipb.Executor) (executor, error) {
+	var src executor
+	for i := 0; i < len(executors); i++ {
+		curr, err := h.buildExec(ctx, executors[i])
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		curr.SetSrcExec(src)
+		src = curr
+	}
+	return src, nil
 }
 
 func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) *tableScanExec {

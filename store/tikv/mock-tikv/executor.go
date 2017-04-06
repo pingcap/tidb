@@ -49,11 +49,11 @@ func (e *tableScanExec) SetSrcExec(exec executor) {
 	e.src = exec
 }
 
-func (e *tableScanExec) Next() (int64, [][]byte, error) {
+func (e *tableScanExec) Next() (handle int64, value [][]byte, err error) {
 	for e.cursor < len(e.kvRanges) {
 		ran := e.kvRanges[e.cursor]
 		if ran.IsPoint() {
-			handle, value, err := e.getRowFromPoint(ran)
+			handle, value, err = e.getRowFromPoint(ran)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
@@ -62,7 +62,7 @@ func (e *tableScanExec) Next() (int64, [][]byte, error) {
 			return handle, value, nil
 		}
 
-		handle, value, err := e.getRowFromRange(ran)
+		handle, value, err = e.getRowFromRange(ran)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
@@ -166,10 +166,10 @@ func (e *indexScanExec) SetSrcExec(exec executor) {
 	e.src = exec
 }
 
-func (e *indexScanExec) Next() (int64, [][]byte, error) {
+func (e *indexScanExec) Next() (handle int64, value [][]byte, err error) {
 	for e.cursor < len(e.kvRanges) {
 		ran := e.kvRanges[e.cursor]
-		handle, value, err := e.getRowFromRange(ran)
+		handle, value, err = e.getRowFromRange(ran)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
@@ -257,17 +257,17 @@ func (e *selectionExec) SetSrcExec(exec executor) {
 	e.src = exec
 }
 
-func (e *selectionExec) Next() (int64, [][]byte, error) {
+func (e *selectionExec) Next() (handle int64, value [][]byte, err error) {
 	for {
-		handle, row, err := e.src.Next()
+		handle, value, err = e.src.Next()
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
-		if row == nil {
+		if value == nil {
 			return 0, nil, nil
 		}
 
-		err = e.eval.SetRowValue(handle, row, e.colIDs)
+		err = e.eval.SetRowValue(handle, value, e.colIDs)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
@@ -284,7 +284,7 @@ func (e *selectionExec) Next() (int64, [][]byte, error) {
 			return 0, nil, errors.Trace(err)
 		}
 		if boolResult == 1 {
-			return handle, row, nil
+			return handle, value, nil
 		}
 	}
 }
@@ -319,14 +319,14 @@ func (e *aggregateExec) innerNext() (bool, error) {
 	if values == nil {
 		return false, nil
 	}
-	err = aggregateNew(e.aggContext, e.GetGroupBy(), handle, values, e.colIDs)
+	err = e.aggregate(handle, values)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
 	return true, nil
 }
 
-func (e *aggregateExec) Next() (int64, [][]byte, error) {
+func (e *aggregateExec) Next() (handle int64, value [][]byte, err error) {
 	if !e.executed {
 		for {
 			hasMore, err := e.innerNext()
@@ -348,9 +348,9 @@ func (e *aggregateExec) Next() (int64, [][]byte, error) {
 	if err != nil {
 		return 0, nil, errors.Trace(err)
 	}
-	row := make([][]byte, 0, 1+2*len(e.aggFuncs))
+	value = make([][]byte, 0, 1+2*len(e.aggFuncs))
 	// The first column is group key.
-	row = append(row, gkData)
+	value = append(value, gkData)
 	for _, agg := range e.aggFuncs {
 		agg.currentGroup = gk
 		ds, err := agg.toDatums(e.aggContext)
@@ -361,11 +361,45 @@ func (e *aggregateExec) Next() (int64, [][]byte, error) {
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
-		row = append(row, data)
+		value = append(value, data)
 	}
 	e.currGroupIdx++
 
-	return 0, row, nil
+	return 0, value, nil
+}
+
+// aggregate updates aggregate functions with row.
+func (e *aggregateExec) aggregate(handle int64, row [][]byte) error {
+	ctx := e.aggContext
+	// Put row data into evaluate for later evaluation.
+	err := ctx.eval.SetRowValue(handle, row, e.colIDs)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// Get group key.
+	gk, err := getGroupKey(ctx.eval, e.GetGroupBy())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if _, ok := ctx.groups[string(gk)]; !ok {
+		ctx.groups[string(gk)] = struct{}{}
+		ctx.groupKeys = append(ctx.groupKeys, gk)
+	}
+	// Update aggregate funcs.
+	for _, agg := range ctx.aggFuncs {
+		agg.currentGroup = gk
+		args := make([]types.Datum, 0, len(agg.expr.Children))
+		// Evaluate arguments.
+		for _, x := range agg.expr.Children {
+			cv, err := ctx.eval.Eval(x)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			args = append(args, cv)
+		}
+		agg.update(ctx, args)
+	}
+	return nil
 }
 
 func hasColVal(data [][]byte, colIDs map[int64]int, id int64) bool {
