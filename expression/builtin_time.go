@@ -1982,7 +1982,59 @@ type builtinTimestampAddSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timestampadd
 func (b *builtinTimestampAddSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("TIMESTAMPADD")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	unit, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if args[1].IsNull() || args[2].IsNull() {
+		return d, nil
+	}
+	v := args[1].GetInt64()
+	sc := b.ctx.GetSessionVars().StmtCtx
+	date, err := convertDatumToTime(sc, args[2])
+	if err != nil {
+		return d, errorOrWarning(err, b.ctx)
+	}
+	tm, err := date.Time.GoTime(time.Local)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	var tb time.Time
+	fsp := types.DefaultFsp
+	switch unit {
+	case "MICROSECOND":
+		tb = tm.Add(time.Duration(v) * time.Microsecond)
+		fsp = types.MaxFsp
+	case "SECOND":
+		tb = tm.Add(time.Duration(v) * time.Second)
+	case "MINUTE":
+		tb = tm.Add(time.Duration(v) * time.Minute)
+	case "HOUR":
+		tb = tm.Add(time.Duration(v) * time.Hour)
+	case "DAY":
+		tb = tm.AddDate(0, 0, int(v))
+	case "WEEK":
+		tb = tm.AddDate(0, 0, 7*int(v))
+	case "MONTH":
+		tb = tm.AddDate(0, int(v), 0)
+	case "QUARTER":
+		tb = tm.AddDate(0, 3*int(v), 0)
+	case "YEAR":
+		tb = tm.AddDate(int(v), 0, 0)
+	default:
+		return d, errors.Trace(types.ErrInvalidTimeFormat)
+	}
+	r := types.Time{Time: types.FromGoTime(tb), Type: mysql.TypeDatetime, Fsp: fsp}
+	err = r.Check()
+	if err != nil {
+		return d, errorOrWarning(err, b.ctx)
+	}
+	d.SetMysqlTime(r)
+	return d, nil
 }
 
 type toDaysFunctionClass struct {

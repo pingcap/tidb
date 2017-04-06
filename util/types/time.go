@@ -444,6 +444,11 @@ func (t *Time) check() error {
 	return nil
 }
 
+// Check if 't' is valid
+func (t *Time) Check() error {
+	return t.check()
+}
+
 // Sub subtracts t1 from t, returns a duration value.
 // Note that sub should not be done on different time types.
 func (t *Time) Sub(t1 *Time) Duration {
