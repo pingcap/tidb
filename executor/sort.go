@@ -89,16 +89,12 @@ func (e *SortExec) Less(i, j int) bool {
 func (e *SortExec) Next() (*Row, error) {
 	if !e.fetched {
 		for {
-			srcRow, err := e.Src.Next()
+			srcRow, err := NextDecodedRow(e.Src)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			if srcRow == nil {
 				break
-			}
-			err = srcRow.DecodeValues(e.Src.Schema())
-			if err != nil {
-				return nil, errors.Trace(err)
 			}
 			orderRow := &orderByRow{
 				row: srcRow,
@@ -187,16 +183,12 @@ func (e *TopnExec) Next() (*Row, error) {
 		e.Rows = make([]*orderByRow, 0, e.totalCount+1)
 		e.heapSize = 0
 		for {
-			srcRow, err := e.Src.Next()
+			srcRow, err := NextDecodedRow(e.Src)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			if srcRow == nil {
 				break
-			}
-			err = srcRow.DecodeValues(e.Src.Schema())
-			if err != nil {
-				return nil, errors.Trace(err)
 			}
 			// build orderRow from srcRow.
 			orderRow := &orderByRow{

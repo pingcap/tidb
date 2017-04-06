@@ -59,12 +59,8 @@ func (a *recordSet) Fields() ([]*ast.ResultField, error) {
 }
 
 func (a *recordSet) Next() (*ast.Row, error) {
-	row, err := a.executor.Next()
+	row, err := NextDecodedRow(a.executor)
 	if err != nil || row == nil {
-		return nil, errors.Trace(err)
-	}
-	err = row.DecodeValues(a.executor.Schema())
-	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return &ast.Row{Data: row.Data}, nil

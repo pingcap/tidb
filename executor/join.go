@@ -161,7 +161,7 @@ func (e *HashJoinExec) fetchBigExec() {
 			if e.finished.Load().(bool) {
 				return
 			}
-			row, err := e.bigExec.Next()
+			row, err := NextDecodedRow(e.bigExec)
 			if err != nil {
 				result.err = errors.Trace(err)
 				e.bigTableResultCh[idx] <- result
@@ -169,13 +169,6 @@ func (e *HashJoinExec) fetchBigExec() {
 				break
 			}
 			if row == nil {
-				done = true
-				break
-			}
-			err = row.DecodeValues(e.bigExec.Schema())
-			if err != nil {
-				result.err = errors.Trace(err)
-				e.bigTableResultCh[idx] <- result
 				done = true
 				break
 			}
@@ -556,16 +549,12 @@ func (e *NestedLoopJoinExec) Close() error {
 
 func (e *NestedLoopJoinExec) fetchBigRow() (*Row, bool, error) {
 	for {
-		bigRow, err := e.BigExec.Next()
+		bigRow, err := NextDecodedRow(e.BigExec)
 		if err != nil {
 			return nil, false, errors.Trace(err)
 		}
 		if bigRow == nil {
 			return nil, false, e.BigExec.Close()
-		}
-		err = bigRow.DecodeValues(e.BigExec.Schema())
-		if err != nil {
-			return nil, false, errors.Trace(err)
 		}
 		matched := true
 		if e.BigFilter != nil {
@@ -592,18 +581,13 @@ func (e *NestedLoopJoinExec) prepare() error {
 	e.innerRows = e.innerRows[:0]
 	e.prepared = true
 	for {
-		row, err := e.SmallExec.Next()
+		row, err := NextDecodedRow(e.SmallExec)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if row == nil {
 			return e.SmallExec.Close()
 		}
-		err = row.DecodeValues(e.SmallExec.Schema())
-		if err != nil {
-			return errors.Trace(err)
-		}
-
 		matched := true
 		if e.SmallFilter != nil {
 			matched, err = expression.EvalBool(e.SmallFilter, row.Data, e.Ctx)

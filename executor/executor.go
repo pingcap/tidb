@@ -348,16 +348,12 @@ func init() {
 			return rows, errors.Trace(err)
 		}
 		for {
-			row, err := exec.Next()
+			row, err := NextDecodedRow(exec)
 			if err != nil {
 				return rows, errors.Trace(err)
 			}
 			if row == nil {
 				return rows, nil
-			}
-			err = row.DecodeValues(exec.Schema())
-			if err != nil {
-				return rows, errors.Trace(err)
 			}
 			rows = append(rows, row.Data)
 		}
@@ -824,7 +820,8 @@ func (e *UnionExec) fetchData(idx int) {
 			if e.finished.Load().(bool) {
 				return
 			}
-			row, err := e.Srcs[idx].Next()
+			// We have to decode values here because union may change the type of the row.
+			row, err := NextDecodedRow(e.Srcs[idx])
 			if err != nil {
 				e.finished.Store(true)
 				result.err = err
@@ -835,14 +832,6 @@ func (e *UnionExec) fetchData(idx int) {
 				if len(result.rows) > 0 {
 					e.resultCh <- result
 				}
-				return
-			}
-			// We have to decode values here because union may change the type of the row.
-			err = row.DecodeValues(e.Srcs[idx].Schema())
-			if err != nil {
-				e.finished.Store(true)
-				result.err = err
-				e.resultCh <- result
 				return
 			}
 			// TODO: Add cast function in plan building phase.
@@ -976,5 +965,21 @@ func (e *CacheExec) Next() (*Row, error) {
 	}
 	row := e.storedRows[e.cursor]
 	e.cursor++
+	return row, nil
+}
+
+// NextDecodedRow returns the next row and decode it.
+func NextDecodedRow(e Executor) (*Row, error) {
+	row, err := e.Next()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if row == nil {
+		return nil, nil
+	}
+	err = row.DecodeValues(e.Schema())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	return row, nil
 }

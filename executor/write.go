@@ -182,16 +182,12 @@ func (e *DeleteExec) deleteMultiTables() error {
 	// Map for unique (Table, Row) pair.
 	tblRowMap := make(map[table.Table]map[int64][]types.Datum)
 	for {
-		joinedRow, err := e.SelectExec.Next()
+		joinedRow, err := NextDecodedRow(e.SelectExec)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if joinedRow == nil {
 			break
-		}
-		err = joinedRow.DecodeValues(e.SelectExec.Schema())
-		if err != nil {
-			return errors.Trace(err)
 		}
 
 		for _, entry := range joinedRow.RowKeys {
@@ -233,16 +229,12 @@ func isMatchTableName(entry *RowKeyEntry, tblMap map[int64][]string) bool {
 
 func (e *DeleteExec) deleteSingleTable() error {
 	for {
-		row, err := e.SelectExec.Next()
+		row, err := NextDecodedRow(e.SelectExec)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if row == nil {
 			break
-		}
-		err = row.DecodeValues(e.SelectExec.Schema())
-		if err != nil {
-			return errors.Trace(err)
 		}
 		rowKey := row.RowKeys[0]
 		err = e.removeRow(e.ctx, rowKey.Tbl, rowKey.Handle, row.Data)
@@ -811,16 +803,12 @@ func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, err
 	}
 	var rows [][]types.Datum
 	for {
-		innerRow, err := e.SelectExec.Next()
+		innerRow, err := NextDecodedRow(e.SelectExec)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if innerRow == nil {
 			break
-		}
-		err = innerRow.DecodeValues(e.SelectExec.Schema())
-		if err != nil {
-			return nil, errors.Trace(err)
 		}
 		e.currRow = int64(len(rows))
 		row, err := e.fillRowData(cols, innerRow.Data, false)
@@ -1178,16 +1166,12 @@ func getUpdateColumns(assignList []*expression.Assignment) ([]bool, error) {
 
 func (e *UpdateExec) fetchRows() error {
 	for {
-		row, err := e.SelectExec.Next()
+		row, err := NextDecodedRow(e.SelectExec)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if row == nil {
 			return nil
-		}
-		err = row.DecodeValues(e.SelectExec.Schema())
-		if err != nil {
-			return errors.Trace(err)
 		}
 		l := len(e.OrderedList)
 		data := make([]types.Datum, l)
