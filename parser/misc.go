@@ -448,6 +448,7 @@ var tokenMap = map[string]int{
 	"THAN":                       than,
 	"THEN":                       then,
 	"TO":                         to,
+	"TO_BASE64":                  toBase64,
 	"TO_DAYS":                    toDays,
 	"TO_SECONDS":                 toSeconds,
 	"TRAILING":                   trailing,

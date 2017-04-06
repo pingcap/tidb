@@ -267,6 +267,7 @@ var funcs = map[string]functionClass{
 	ast.Substring:      &substringFunctionClass{baseFunctionClass{ast.Substring, 2, 3}},
 	ast.Substr:         &substringFunctionClass{baseFunctionClass{ast.Substr, 2, 3}},
 	ast.SubstringIndex: &substringIndexFunctionClass{baseFunctionClass{ast.SubstringIndex, 3, 3}},
+	ast.ToBase64:       &toBase64FunctionClass{baseFunctionClass{ast.ToBase64, 1, 1}},
 	ast.Trim:           &trimFunctionClass{baseFunctionClass{ast.Trim, 1, 3}},
 	ast.Upper:          &upperFunctionClass{baseFunctionClass{ast.Upper, 1, 1}},
 	ast.Ucase:          &upperFunctionClass{baseFunctionClass{ast.Ucase, 1, 1}},

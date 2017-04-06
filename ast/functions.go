@@ -197,6 +197,7 @@ const (
 	Substring      = "substring"
 	Substr         = "substr"
 	SubstringIndex = "substring_index"
+	ToBase64       = "to_base64"
 	Trim           = "trim"
 	Upper          = "upper"
 	Ucase          = "ucase"

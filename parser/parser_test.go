@@ -770,6 +770,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT EXPORT_SET(5,'Y','N'), EXPORT_SET(5,'Y','N',','), EXPORT_SET(5,'Y','N',',',4)`, true},
 		{`SELECT FORMAT(12332.2,2,'de_DE'), FORMAT(12332.123456, 4)`, true},
 		{`SELECT FROM_BASE64('abc')`, true},
+		{`SELECT TO_BASE64('abc')`, true},
 		{`SELECT INSERT('Quadratic', 3, 4, 'What'), INSTR('foobarbar', 'bar')`, true},
 		{`SELECT LOAD_FILE('/tmp/picture')`, true},
 		{`SELECT LPAD('hi',4,'??')`, true},
