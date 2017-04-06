@@ -50,7 +50,7 @@ func (e *Evaluator) evalBool(expr *tipb.Expr) (int64, error) {
 		return compareResultNull, nil
 	}
 
-	return v.ToBool(e.sc)
+	return v.ToBool(e.StatementCtx)
 }
 
 // evalAnd computes result of (X && Y). It works in a short-cut way.
@@ -148,7 +148,7 @@ func (e *Evaluator) evalNot(expr *tipb.Expr) (types.Datum, error) {
 	if d.IsNull() {
 		return d, nil
 	}
-	boolVal, err := d.ToBool(e.sc)
+	boolVal, err := d.ToBool(e.StatementCtx)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
