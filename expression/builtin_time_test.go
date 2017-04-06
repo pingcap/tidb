@@ -1198,3 +1198,27 @@ func (s *testEvaluatorSuite) TestToDays(c *C) {
 		c.Assert(d.IsNull(), IsTrue)
 	}
 }
+
+func (s *testEvaluatorSuite) TestTimestampAdd(c *C) {
+	tests := []struct {
+		unit     string
+		interval int64
+		date     interface{}
+		expect   string
+	}{
+		{"MINUTE", 1, "2003-01-02", "2003-01-02 00:01:00"},
+		{"WEEK", 1, "2003-01-02 23:59:59", "2003-01-09 23:59:59"},
+		{"MICROSECOND", 1, 950501, "1995-05-01 00:00:00.000001"},
+	}
+
+	fc := funcs[ast.TimestampAdd]
+	for _, test := range tests {
+		t := []types.Datum{types.NewStringDatum(test.unit), types.NewIntDatum(test.interval), types.NewDatum(test.date)}
+		f, err := fc.getFunction(datumsToConstants(t), s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		result, _ := d.ToString()
+		c.Assert(result, Equals, test.expect)
+	}
+}
