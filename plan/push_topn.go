@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 )
 
-// pushDownTopNSolver push down the topn or limit. In future we will remove the limit from `requiredProperty` in CBO phase.
+// pushDownTopNSolver pushes down the topN or limit. In future we will remove the limit from `requiredProperty` in CBO phase.
 type pushDownTopNSolver struct {
 	ctx       context.Context
 	allocator *idAllocator
@@ -58,12 +58,12 @@ func (s *Sort) setChild(p LogicalPlan) LogicalPlan {
 		p.SetParents(limit)
 		limit.SetSchema(p.Schema().Clone())
 		return limit
-	} else {
-		s.SetChildren(p)
-		p.SetParents(s)
-		s.SetSchema(p.Schema().Clone())
-		return s
 	}
+	// Then s must be topN.
+	s.SetChildren(p)
+	p.SetParents(s)
+	s.SetSchema(p.Schema().Clone())
+	return s
 }
 
 func (s *Sort) pushDownTopN(topN *Sort) LogicalPlan {
@@ -72,12 +72,11 @@ func (s *Sort) pushDownTopN(topN *Sort) LogicalPlan {
 		// If a Limit is pushed down, the Sort should be converted to topN and be pushed again.
 		return s.children[0].(LogicalPlan).pushDownTopN(s)
 	} else if topN.isEmpty() {
-		// If nothing is pushDowned, just continue to push nothing to its child.
+		// If nothing is pushed down, just continue to push nothing to its child.
 		return s.baseLogicalPlan.pushDownTopN(topN)
-	} else {
-		// If a TopN is pushDowned, this sort is useless.
-		return s.children[0].(LogicalPlan).pushDownTopN(topN)
 	}
+	// If a TopN is pushed down, this sort is useless.
+	return s.children[0].(LogicalPlan).pushDownTopN(topN)
 }
 
 func (p *Limit) pushDownTopN(topN *Sort) LogicalPlan {
