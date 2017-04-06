@@ -361,7 +361,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	case "curtime", "current_time", "timediff", "maketime":
 		tp = types.NewFieldType(mysql.TypeDuration)
 		tp.Decimal = v.getFsp(x)
-	case "date_add", "date_sub", "adddate", "subdate", "timestamp":
+	case "date_add", "date_sub", "adddate", "subdate", "timestamp", "timestampadd":
 		tp = types.NewFieldType(mysql.TypeDatetime)
 	case "microsecond", "second", "minute", "hour", "day", "week", "month", "year",
 		"dayofweek", "dayofmonth", "dayofyear", "weekday", "weekofyear", "yearweek", "datediff",
