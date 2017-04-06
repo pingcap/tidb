@@ -68,6 +68,7 @@ var (
 	_ PhysicalPlan = &Cache{}
 )
 
+// PhysicalTableReader is the table reader in tidb.
 type PhysicalTableReader struct {
 	*basePlan
 	basePhysicalPlan
@@ -83,6 +84,7 @@ func (p *PhysicalTableReader) Copy() PhysicalPlan {
 	return &np
 }
 
+// PhysicalIndexReader is the index reader in tidb.
 type PhysicalIndexReader struct {
 	*basePlan
 	basePhysicalPlan
@@ -98,6 +100,7 @@ func (p *PhysicalIndexReader) Copy() PhysicalPlan {
 	return &np
 }
 
+// PhysicalIndexLookUpReader is the index look up reader in tidb.
 type PhysicalIndexLookUpReader struct {
 	*basePlan
 	basePhysicalPlan
