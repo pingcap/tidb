@@ -31,19 +31,22 @@ type Column struct {
 	ID  int64 // Column ID.
 	NDV int64 // Number of distinct values.
 
-	// Histogram elements.
-	//
-	// A bucket number is the number of items stored in all previous buckets and the current bucket.
-	// bucket numbers are always in increasing order.
-	//
-	// A bucket value is the greatest item value stored in the bucket.
-	//
-	// Repeat is the number of repeats of the bucket value, it can be used to find popular values.
-	//
-	// TODO: We could have make a bucket struct contains number, value and repeats.
-	Numbers []int64
-	Values  []types.Datum
-	Repeats []int64
+	Buckets []bucket
+}
+
+// bucket is an element of histogram.
+//
+// A bucket count is the number of items stored in all previous buckets and the current bucket.
+// bucket numbers are always in increasing order.
+//
+// A bucket value is the greatest item value stored in the bucket.
+//
+// Repeat is the number of repeats of the bucket value, it can be used to find popular values.
+//
+type bucket struct {
+	Count   int64
+	Value   types.Datum
+	Repeats int64
 }
 
 func (c *Column) saveToStorage(ctx context.Context, tableID int64, isIndex int) error {
@@ -52,18 +55,18 @@ func (c *Column) saveToStorage(ctx context.Context, tableID int64, isIndex int) 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	for i := 0; i < len(c.Numbers); i++ {
+	for i, bucket := range c.Buckets {
 		var count int64
 		if i == 0 {
-			count = c.Numbers[i]
+			count = bucket.Count
 		} else {
-			count = c.Numbers[i] - c.Numbers[i-1]
+			count = bucket.Count - c.Buckets[i-1].Count
 		}
-		val, err := c.Values[i].ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
+		val, err := bucket.Value.ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
 		if err != nil {
 			return errors.Trace(err)
 		}
-		insertSQL = fmt.Sprintf("insert into mysql.stats_buckets values(%d, %d, %d, %d, %d, %d, X'%X')", tableID, isIndex, c.ID, i, count, c.Repeats[i], val.GetBytes())
+		insertSQL = fmt.Sprintf("insert into mysql.stats_buckets values(%d, %d, %d, %d, %d, %d, X'%X')", tableID, isIndex, c.ID, i, count, bucket.Repeats, val.GetBytes())
 		_, err = ctx.(sqlexec.SQLExecutor).Execute(insertSQL)
 		if err != nil {
 			return errors.Trace(err)
@@ -82,9 +85,7 @@ func colStatsFromStorage(ctx context.Context, tableID int64, colID int64, tp *ty
 	colStats := &Column{
 		ID:      colID,
 		NDV:     distinct,
-		Numbers: make([]int64, bucketSize),
-		Repeats: make([]int64, bucketSize),
-		Values:  make([]types.Datum, bucketSize),
+		Buckets: make([]bucket, bucketSize),
 	}
 	for i := 0; i < bucketSize; i++ {
 		bucketID := rows[i].Data[0].GetInt64()
@@ -99,99 +100,93 @@ func colStatsFromStorage(ctx context.Context, tableID int64, colID int64, tp *ty
 				return nil, errors.Trace(err)
 			}
 		}
-		colStats.Numbers[bucketID] = count
-		colStats.Repeats[bucketID] = repeats
-		colStats.Values[bucketID] = value
+		colStats.Buckets[bucketID] = bucket{
+			Count:   count,
+			Value:   value,
+			Repeats: repeats,
+		}
 	}
 	for i := 1; i < bucketSize; i++ {
-		colStats.Numbers[i] += colStats.Numbers[i-1]
+		colStats.Buckets[i].Count += colStats.Buckets[i-1].Count
 	}
 	return colStats, nil
 }
 
 func (c *Column) String() string {
-	strs := make([]string, 0, len(c.Numbers)+1)
+	strs := make([]string, 0, len(c.Buckets)+1)
 	strs = append(strs, fmt.Sprintf("column:%d ndv:%d", c.ID, c.NDV))
-	for i := range c.Numbers {
-		strVal, _ := c.Values[i].ToString()
-		strs = append(strs, fmt.Sprintf("num: %d\tvalue: %s\trepeats: %d", c.Numbers[i], strVal, c.Repeats[i]))
+	for _, bucket := range c.Buckets {
+		strVal, _ := bucket.Value.ToString()
+		strs = append(strs, fmt.Sprintf("num: %d\tvalue: %s\trepeats: %d", bucket.Count, strVal, bucket.Repeats))
 	}
 	return strings.Join(strs, "\n")
 }
 
 // EqualRowCount estimates the row count where the column equals to value.
 func (c *Column) EqualRowCount(sc *variable.StatementContext, value types.Datum) (int64, error) {
-	if len(c.Numbers) == 0 {
+	if len(c.Buckets) == 0 {
 		return pseudoRowCount / pseudoEqualRate, nil
 	}
-	index, match, err := c.search(sc, value)
+	index, match, err := c.lowerBound(sc, value)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if index == len(c.Numbers) {
-		return c.Numbers[index-1] + 1, nil
+	if index == len(c.Buckets) {
+		return 0, nil
 	}
 	if match {
-		return c.Repeats[index] + 1, nil
+		return c.Buckets[index].Repeats, nil
 	}
-	totalCount := c.Numbers[len(c.Numbers)-1] + 1
-	return totalCount / c.NDV, nil
+	return c.totalRowCount() / c.NDV, nil
 }
 
 // GreaterRowCount estimates the row count where the column greater than value.
 func (c *Column) GreaterRowCount(sc *variable.StatementContext, value types.Datum) (int64, error) {
-	if len(c.Numbers) == 0 {
+	if len(c.Buckets) == 0 {
 		return pseudoRowCount / pseudoLessRate, nil
 	}
-	index, match, err := c.search(sc, value)
+	lessCount, err := c.LessRowCount(sc, value)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if index == 0 {
-		return c.totalRowCount(), nil
+	eqCount, err := c.EqualRowCount(sc, value)
+	if err != nil {
+		return 0, errors.Trace(err)
 	}
-	if index >= len(c.Numbers) {
-		return 0, nil
+	gtCount := c.totalRowCount() - lessCount - eqCount
+	if gtCount < 0 {
+		gtCount = 0
 	}
-	number := c.Numbers[index]
-	nextNumber := int64(0)
-	if index < len(c.Numbers)-1 {
-		nextNumber = c.Numbers[index+1]
-	}
-	greaterThanBucketValueCount := number - c.Repeats[index]
-	if match {
-		return greaterThanBucketValueCount, nil
-	}
-	return (nextNumber + greaterThanBucketValueCount) / 2, nil
+	return gtCount, nil
 }
 
 // LessRowCount estimates the row count where the column less than value.
 func (c *Column) LessRowCount(sc *variable.StatementContext, value types.Datum) (int64, error) {
-	if len(c.Numbers) == 0 {
+	if len(c.Buckets) == 0 {
 		return pseudoRowCount / pseudoLessRate, nil
 	}
-	index, match, err := c.search(sc, value)
+	index, match, err := c.lowerBound(sc, value)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if index == len(c.Numbers) {
+	if index == len(c.Buckets) {
 		return c.totalRowCount(), nil
 	}
-	number := c.Numbers[index]
-	prevNumber := int64(0)
+	curCount := c.Buckets[index].Count
+	prevCount := int64(0)
 	if index > 0 {
-		prevNumber = c.Numbers[index-1]
+		prevCount = c.Buckets[index-1].Count
 	}
-	lessThanBucketValueCount := number - c.Repeats[index]
+	lessThanBucketValueCount := curCount - c.Buckets[index].Repeats
 	if match {
 		return lessThanBucketValueCount, nil
 	}
-	return (prevNumber + lessThanBucketValueCount) / 2, nil
+	return (prevCount + lessThanBucketValueCount) / 2, nil
 }
 
 // BetweenRowCount estimates the row count where column greater or equal to a and less than b.
 func (c *Column) BetweenRowCount(sc *variable.StatementContext, a, b types.Datum) (int64, error) {
-	if len(c.Numbers) == 0 {
+	if len(c.Buckets) == 0 {
 		return pseudoRowCount / pseudoBetweenRate, nil
 	}
 	lessCountA, err := c.LessRowCount(sc, a)
@@ -209,20 +204,21 @@ func (c *Column) BetweenRowCount(sc *variable.StatementContext, a, b types.Datum
 }
 
 func (c *Column) totalRowCount() int64 {
-	return c.Numbers[len(c.Numbers)-1] + 1
+	return c.Buckets[len(c.Buckets)-1].Count
 }
 
 func (c *Column) bucketRowCount() int64 {
-	return c.totalRowCount() / int64(len(c.Numbers))
+	return c.totalRowCount() / int64(len(c.Buckets))
 }
 
 func (c *Column) inBucketBetweenCount() int64 {
+	// TODO: Make this estimation more accurate using uniform spread assumption.
 	return c.bucketRowCount()/3 + 1
 }
 
-func (c *Column) search(sc *variable.StatementContext, target types.Datum) (index int, match bool, err error) {
-	index = sort.Search(len(c.Values), func(i int) bool {
-		cmp, err1 := c.Values[i].CompareDatum(sc, target)
+func (c *Column) lowerBound(sc *variable.StatementContext, target types.Datum) (index int, match bool, err error) {
+	index = sort.Search(len(c.Buckets), func(i int) bool {
+		cmp, err1 := c.Buckets[i].Value.CompareDatum(sc, target)
 		if err1 != nil {
 			err = errors.Trace(err1)
 			return false
@@ -239,19 +235,17 @@ func (c *Column) search(sc *variable.StatementContext, target types.Datum) (inde
 func (c *Column) mergeBuckets(bucketIdx int64) {
 	curBuck := 0
 	for i := int64(0); i+1 <= bucketIdx; i += 2 {
-		c.Numbers[curBuck] = c.Numbers[i+1]
-		c.Values[curBuck] = c.Values[i+1]
-		c.Repeats[curBuck] = c.Repeats[i+1]
+		c.Buckets[curBuck] = bucket{
+			Count:   c.Buckets[i+1].Count,
+			Value:   c.Buckets[i+1].Value,
+			Repeats: c.Buckets[i+1].Repeats,
+		}
 		curBuck++
 	}
 	if bucketIdx%2 == 0 {
-		c.Numbers[curBuck] = c.Numbers[bucketIdx]
-		c.Values[curBuck] = c.Values[bucketIdx]
-		c.Repeats[curBuck] = c.Repeats[bucketIdx]
+		c.Buckets[curBuck] = c.Buckets[bucketIdx]
 		curBuck++
 	}
-	c.Numbers = c.Numbers[:curBuck]
-	c.Values = c.Values[:curBuck]
-	c.Repeats = c.Repeats[:curBuck]
+	c.Buckets = c.Buckets[:curBuck]
 	return
 }

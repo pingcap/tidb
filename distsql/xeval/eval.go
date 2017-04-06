@@ -53,20 +53,20 @@ const (
 type Evaluator struct {
 	Row map[int64]types.Datum // TODO: Remove this field after refactor cop_handler.
 
-	ColVals     []types.Datum
-	ColIDs      map[int64]int
-	ColumnInfos []*tipb.ColumnInfo
-	fieldTps    []*types.FieldType
-	valueLists  map[*tipb.Expr]*decodedValueList
-	sc          *variable.StatementContext
+	ColVals      []types.Datum
+	ColIDs       map[int64]int
+	ColumnInfos  []*tipb.ColumnInfo
+	fieldTps     []*types.FieldType
+	valueLists   map[*tipb.Expr]*decodedValueList
+	StatementCtx *variable.StatementContext
 }
 
 // NewEvaluator creates a new Evaluator instance.
 func NewEvaluator(sc *variable.StatementContext) *Evaluator {
 	return &Evaluator{
-		Row:    make(map[int64]types.Datum),
-		ColIDs: make(map[int64]int),
-		sc:     sc,
+		Row:          make(map[int64]types.Datum),
+		ColIDs:       make(map[int64]int),
+		StatementCtx: sc,
 	}
 }
 
