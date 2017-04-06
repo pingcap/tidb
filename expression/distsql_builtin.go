@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2017 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,9 +14,14 @@
 package expression
 
 import (
+	"time"
+
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -65,8 +70,8 @@ var distFuncs = map[tipb.ExprType]builtinFunc{
 	tipb.ExprType_Coalesce: &builtinCoalesceSig{},
 }
 
-// NewDistSQLFunction only creates function for mock-tikv.
-func NewDistSQLFunction(sc *variable.StatementContext, exprType tipb.ExprType, args []Expression) (*ScalarFunction, error) {
+// newDistSQLFunction only creates function for mock-tikv.
+func newDistSQLFunction(sc *variable.StatementContext, exprType tipb.ExprType, args []Expression) (*ScalarFunction, error) {
 	f, ok := distFuncs[exprType]
 	if !ok {
 		return nil, errFunctionNotExists.GenByArgs(exprType)
@@ -76,4 +81,106 @@ func NewDistSQLFunction(sc *variable.StatementContext, exprType tipb.ExprType, a
 	ctx.GetSessionVars().StmtCtx = sc
 	f.init(args, ctx)
 	return &ScalarFunction{Function: f}, nil
+}
+
+// PBToExpr converts pb structure to expression.
+func PBToExpr(expr *tipb.Expr, colIDs map[int64]int, sc *variable.StatementContext) (Expression, error) {
+	switch expr.Tp {
+	case tipb.ExprType_ColumnRef:
+		_, id, err := codec.DecodeInt(expr.Val)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		offset, ok := colIDs[id]
+		if !ok {
+			return nil, errors.Errorf("Can't find column id %d", id)
+		}
+		return &Column{Index: offset}, nil
+	case tipb.ExprType_Null:
+		return &Constant{}, nil
+	case tipb.ExprType_Int64:
+		return convertInt(expr.Val)
+	case tipb.ExprType_Uint64:
+		return convertUint(expr.Val)
+	case tipb.ExprType_String:
+		return convertString(expr.Val)
+	case tipb.ExprType_Bytes:
+		return &Constant{Value: types.NewBytesDatum(expr.Val)}, nil
+	case tipb.ExprType_Float32:
+		return convertFloat(expr.Val, true)
+	case tipb.ExprType_Float64:
+		return convertFloat(expr.Val, false)
+	case tipb.ExprType_MysqlDecimal:
+		return convertDecimal(expr.Val)
+	case tipb.ExprType_MysqlDuration:
+		return convertDuration(expr.Val)
+	}
+	// Then it must be a scalar function.
+	args := make([]Expression, 0, len(expr.Children))
+	for _, child := range expr.Children {
+		arg, err := PBToExpr(child, colIDs, sc)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		args = append(args, arg)
+	}
+	return newDistSQLFunction(sc, expr.Tp, args)
+}
+
+func convertInt(val []byte) (*Constant, error) {
+	var d types.Datum
+	_, i, err := codec.DecodeInt(val)
+	if err != nil {
+		return nil, errors.Errorf("invalid int % x", val)
+	}
+	d.SetInt64(i)
+	return &Constant{Value: d}, nil
+}
+
+func convertUint(val []byte) (*Constant, error) {
+	var d types.Datum
+	_, u, err := codec.DecodeUint(val)
+	if err != nil {
+		return nil, errors.Errorf("invalid uint % x", val)
+	}
+	d.SetUint64(u)
+	return &Constant{Value: d}, nil
+}
+
+func convertString(val []byte) (*Constant, error) {
+	var d types.Datum
+	d.SetBytesAsString(val)
+	return &Constant{Value: d}, nil
+}
+
+func convertFloat(val []byte, f32 bool) (*Constant, error) {
+	var d types.Datum
+	_, f, err := codec.DecodeFloat(val)
+	if err != nil {
+		return nil, errors.Errorf("invalid float % x", val)
+	}
+	if f32 {
+		d.SetFloat32(float32(f))
+	} else {
+		d.SetFloat64(f)
+	}
+	return &Constant{Value: d}, nil
+}
+
+func convertDecimal(val []byte) (*Constant, error) {
+	_, dec, err := codec.DecodeDecimal(val)
+	if err != nil {
+		return nil, errors.Errorf("invalid decimal % x", val)
+	}
+	return &Constant{Value: dec}, nil
+}
+
+func convertDuration(val []byte) (*Constant, error) {
+	var d types.Datum
+	_, i, err := codec.DecodeInt(val)
+	if err != nil {
+		return nil, errors.Errorf("invalid duration %d", i)
+	}
+	d.SetMysqlDuration(types.Duration{Duration: time.Duration(i), Fsp: types.MaxFsp})
+	return &Constant{Value: d}, nil
 }
