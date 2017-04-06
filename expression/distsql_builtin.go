@@ -7,7 +7,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 )
 
-var dist_funcs = map[tipb.ExprType]builtinFunc {
+var distFuncs = map[tipb.ExprType]builtinFunc {
 	// compare op
 	tipb.ExprType_LT: &builtinCompareSig{op: opcode.LT},
 	tipb.ExprType_LE: &builtinCompareSig{op: opcode.LE},
@@ -54,7 +54,7 @@ var dist_funcs = map[tipb.ExprType]builtinFunc {
 
 // NewDistSQLFunction only creates function for mock-tikv.
 func NewDistSQLFunction(sc *variable.StatementContext, exprType tipb.ExprType, args []Expression) (*ScalarFunction, error) {
-	f, ok := dist_funcs[exprType]
+	f, ok := distFuncs[exprType]
 	if !ok {
 		return nil, errFunctionNotExists.GenByArgs(exprType)
 	}
