@@ -1650,67 +1650,67 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		},
 		// Test TopN + Agg + Proj .
 		{
-			sql: "select a, count(b) from t group by b order by c limit 5",
+			sql:  "select a, count(b) from t group by b order by c limit 5",
 			best: "DataScan(t)->Aggr(count(test.t.b),firstrow(test.t.a),firstrow(test.t.c))->Sort + Limit(5) + Offset(0)->Projection->Projection",
 		},
 		// Test TopN + Join + Proj.
 		{
-			sql: "select * from t, t s order by t.a limit 5",
+			sql:  "select * from t, t s order by t.a limit 5",
 			best: "Join{DataScan(t)->DataScan(s)}->Sort + Limit(5) + Offset(0)->Projection",
 		},
 		// Test Limit + Join + Proj.
 		{
-			sql: "select * from t, t s limit 5",
+			sql:  "select * from t, t s limit 5",
 			best: "Join{DataScan(t)->DataScan(s)}->Limit->Projection",
 		},
 		// Test TopN + Left Join + Proj.
 		{
-			sql: "select * from t left outer join t s on t.a = s.a order by t.a limit 5",
+			sql:  "select * from t left outer join t s on t.a = s.a order by t.a limit 5",
 			best: "Join{DataScan(t)->Sort + Limit(5) + Offset(0)->DataScan(s)}(test.t.a,s.a)->Sort + Limit(5) + Offset(0)->Projection",
 		},
 		// Test Limit + Left Join + Proj.
 		{
-			sql: "select * from t left outer join t s on t.a = s.a limit 5",
+			sql:  "select * from t left outer join t s on t.a = s.a limit 5",
 			best: "Join{DataScan(t)->Limit->DataScan(s)}(test.t.a,s.a)->Limit->Projection",
 		},
 		// Test Limit + Left Join Apply + Proj.
 		{
-			sql: "select (select s.a from t s where t.a = s.a) from t limit 5",
+			sql:  "select (select s.a from t s where t.a = s.a) from t limit 5",
 			best: "Join{DataScan(t)->Limit->DataScan(s)}(test.t.a,s.a)->Limit->Projection->Projection",
 		},
 		// Test TopN + Left Join Apply + Proj.
 		{
-			sql: "select (select s.a from t s where t.a = s.a) from t order by t.a limit 5",
+			sql:  "select (select s.a from t s where t.a = s.a) from t order by t.a limit 5",
 			best: "Join{DataScan(t)->Sort + Limit(5) + Offset(0)->DataScan(s)}(test.t.a,s.a)->Sort + Limit(5) + Offset(0)->Projection->Projection->Projection",
 		},
 		// Test TopN + Left Semi Join Apply + Proj.
 		{
-			sql: "select exists (select s.a from t s where t.a = s.a) from t order by t.a limit 5",
+			sql:  "select exists (select s.a from t s where t.a = s.a) from t order by t.a limit 5",
 			best: "Join{DataScan(t)->Sort + Limit(5) + Offset(0)->DataScan(s)}(test.t.a,s.a)->Sort + Limit(5) + Offset(0)->Projection->Projection",
 		},
 		// Test TopN + Semi Join Apply + Proj.
 		{
-			sql: "select * from t where exists (select s.a from t s where t.a = s.a) order by t.a limit 5",
+			sql:  "select * from t where exists (select s.a from t s where t.a = s.a) order by t.a limit 5",
 			best: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Sort + Limit(5) + Offset(0)->Projection",
 		},
 		// Test TopN + Right Join + Proj.
 		{
-			sql: "select * from t right outer join t s on t.a = s.a order by s.a limit 5",
+			sql:  "select * from t right outer join t s on t.a = s.a order by s.a limit 5",
 			best: "Join{DataScan(t)->DataScan(s)->Sort + Limit(5) + Offset(0)}(test.t.a,s.a)->Sort + Limit(5) + Offset(0)->Projection",
 		},
 		// Test Limit + Right Join + Proj.
 		{
-			sql: "select * from t right outer join t s on t.a = s.a order by s.a,t.b limit 5",
+			sql:  "select * from t right outer join t s on t.a = s.a order by s.a,t.b limit 5",
 			best: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Sort + Limit(5) + Offset(0)->Projection",
 		},
 		// Test TopN + UA + Proj.
 		{
-			sql: "select * from t union all (select * from t s) order by a,b limit 5",
+			sql:  "select * from t union all (select * from t s) order by a,b limit 5",
 			best: "UnionAll{DataScan(t)->Sort + Limit(5) + Offset(0)->Projection->DataScan(s)->Sort + Limit(5) + Offset(0)->Projection}->Sort + Limit(5) + Offset(0)",
 		},
 		// Test Limit + UA + Proj + Sort.
 		{
-			sql: "select * from t union all (select * from t s order by a) limit 5",
+			sql:  "select * from t union all (select * from t s order by a) limit 5",
 			best: "UnionAll{DataScan(t)->Limit->Projection->DataScan(s)->Sort + Limit(5) + Offset(0)->Projection->Projection}->Limit",
 		},
 	}
