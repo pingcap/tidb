@@ -126,49 +126,49 @@ func (s *testPlanSuite) TestPushDownOrderbyAndLimit(c *C) {
 	}{
 		{
 			sql:          "select * from t order by a limit 5",
-			best:         "Table(t)->Limit->Projection",
+			best:         "Table(t)->Limit",
 			orderByItmes: "[]",
 			limit:        "5",
 		},
 		{
 			sql:          "select * from t where a < 1 limit 1, 1",
-			best:         "Table(t)->Limit->Projection",
+			best:         "Table(t)->Limit",
 			orderByItmes: "[]",
 			limit:        "2",
 		},
 		{
 			sql:          "select * from t limit 5",
-			best:         "Table(t)->Limit->Projection",
+			best:         "Table(t)->Limit",
 			orderByItmes: "[]",
 			limit:        "5",
 		},
 		{
 			sql:          "select * from t order by 1 limit 5",
-			best:         "Table(t)->Limit->Projection",
+			best:         "Table(t)->Limit",
 			orderByItmes: "[]",
 			limit:        "5",
 		},
 		{
 			sql:          "select c from t order by c limit 5",
-			best:         "Index(t.c_d_e)[[<nil>,+inf]]->Limit->Projection",
+			best:         "Index(t.c_d_e)[[<nil>,+inf]]->Limit",
 			orderByItmes: "[]",
 			limit:        "5",
 		},
 		{
 			sql:          "select * from t order by d limit 1",
-			best:         "Table(t)->Sort + Limit(1) + Offset(0)->Projection",
+			best:         "Table(t)->Sort + Limit(1) + Offset(0)",
 			orderByItmes: "[(test.t.d, false)]",
 			limit:        "1",
 		},
 		{
 			sql:          "select * from t where c > 0 order by d limit 1",
-			best:         "Index(t.c_d_e)[(0 +inf,+inf +inf]]->Sort + Limit(1) + Offset(0)->Projection",
+			best:         "Index(t.c_d_e)[(0 +inf,+inf +inf]]->Sort + Limit(1) + Offset(0)",
 			orderByItmes: "[(test.t.d, false)]",
 			limit:        "1",
 		},
 		{
 			sql:          "select * from t a where a.c < 10000 and a.d in (1000, a.e) order by a.b limit 2",
-			best:         "Index(t.c_d_e)[[-inf <nil>,10000 <nil>)]->Selection->Sort + Limit(2) + Offset(0)->Projection",
+			best:         "Index(t.c_d_e)[[-inf <nil>,10000 <nil>)]->Selection->Sort + Limit(2) + Offset(0)",
 			orderByItmes: "[]",
 			limit:        "nil",
 		},
@@ -190,15 +190,9 @@ func (s *testPlanSuite) TestPushDownOrderbyAndLimit(c *C) {
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
-
-		_, lp, err = lp.PredicatePushDown(nil)
+		p, err = doOptimize(builder.optFlag, lp, builder.ctx, builder.allocator)
 		c.Assert(err, IsNil)
-		lp.PruneColumns(lp.Schema().Columns)
-		lp.ResolveIndicesAndCorCols()
-		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
-		c.Assert(err, IsNil)
-		c.Assert(ToString(info.p), Equals, ca.best, Commentf("for %s", ca.sql))
-		p = info.p
+		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
 		for {
 			var ts *physicalTableSource
 			switch x := p.(type) {
@@ -545,7 +539,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
-		lp, err = logicalOptimize(flagPredicatePushDown|flagBuildKeyInfo|flagPrunColumns|flagAggregationOptimize|flagDecorrelate, lp, builder.ctx, builder.allocator)
+		lp, err = logicalOptimize(builder.optFlag, lp, builder.ctx, builder.allocator)
 		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)

@@ -128,6 +128,9 @@ type LogicalPlan interface {
 
 	// buildKeyInfo will collect the information of unique keys into schema.
 	buildKeyInfo()
+
+	// pushDownTopN will push down the topN or limit operator during logical optimization.
+	pushDownTopN(topN *Sort) LogicalPlan
 }
 
 // PhysicalPlan is a tree of the physical operators.
