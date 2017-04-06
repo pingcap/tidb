@@ -165,53 +165,42 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		tp.Tp = mysql.TypeNull
 	case bool, int64, int:
 		tp.Tp = mysql.TypeLonglong
-		tp.Charset = charset.CharsetBin
-		tp.Collate = charset.CharsetBin
+		SetBinChsClnFlag(tp)
 	case uint64:
 		tp.Tp = mysql.TypeLonglong
 		tp.Flag |= mysql.UnsignedFlag
-		tp.Charset = charset.CharsetBin
-		tp.Collate = charset.CharsetBin
+		SetBinChsClnFlag(tp)
 	case string:
 		tp.Tp = mysql.TypeVarString
 		tp.Charset = mysql.DefaultCharset
 		tp.Collate = mysql.DefaultCollationName
 	case float64:
 		tp.Tp = mysql.TypeDouble
-		tp.Charset = charset.CharsetBin
-		tp.Collate = charset.CharsetBin
+		SetBinChsClnFlag(tp)
 	case []byte:
 		tp.Tp = mysql.TypeBlob
-		tp.Charset = charset.CharsetBin
-		tp.Collate = charset.CharsetBin
+		SetBinChsClnFlag(tp)
 	case Bit:
 		tp.Tp = mysql.TypeBit
-		tp.Charset = charset.CharsetBin
-		tp.Collate = charset.CharsetBin
+		SetBinChsClnFlag(tp)
 	case Hex:
 		tp.Tp = mysql.TypeVarchar
-		tp.Charset = charset.CharsetBin
-		tp.Collate = charset.CharsetBin
+		SetBinChsClnFlag(tp)
 	case Time:
 		tp.Tp = x.Type
-		tp.Charset = charset.CharsetBin
-		tp.Collate = charset.CharsetBin
+		SetBinChsClnFlag(tp)
 	case Duration:
 		tp.Tp = mysql.TypeDuration
-		tp.Charset = charset.CharsetBin
-		tp.Collate = charset.CharsetBin
+		SetBinChsClnFlag(tp)
 	case *MyDecimal:
 		tp.Tp = mysql.TypeNewDecimal
-		tp.Charset = charset.CharsetBin
-		tp.Collate = charset.CharsetBin
+		SetBinChsClnFlag(tp)
 	case Enum:
 		tp.Tp = mysql.TypeEnum
-		tp.Charset = charset.CharsetBin
-		tp.Collate = charset.CharsetBin
+		SetBinChsClnFlag(tp)
 	case Set:
 		tp.Tp = mysql.TypeSet
-		tp.Charset = charset.CharsetBin
-		tp.Collate = charset.CharsetBin
+		SetBinChsClnFlag(tp)
 	default:
 		tp.Tp = mysql.TypeUnspecified
 	}
@@ -1092,4 +1081,11 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		//mysql.TypeString       mysql.TypeGeometry
 		mysql.TypeString, mysql.TypeGeometry,
 	},
+}
+
+// SetBinChsClnFlag sets charset, collation as 'binary' and adds binaryFlag to FieldType.
+func SetBinChsClnFlag(ft *FieldType) {
+	ft.Charset = charset.CharsetBin
+	ft.Collate = charset.CollationBin
+	ft.Flag |= mysql.BinaryFlag
 }
