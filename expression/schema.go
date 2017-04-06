@@ -18,7 +18,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/ngaut/log"
 )
 
 // KeyInfo stores the columns of one unique key or primary key.

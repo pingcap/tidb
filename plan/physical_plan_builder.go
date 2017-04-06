@@ -18,6 +18,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/ast"
 )
 
 const (
@@ -101,7 +101,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 	if ts.TableConditionPBExpr != nil {
 		rowCount = uint64(float64(rowCount) * selectionFactor)
 	}
-	return resultPlan.matchProperty(prop, &physicalPlanInfo{count: rowCount, costReliable: !statsTbl.Pseudo}), nil
+	return resultPlan.matchProperty(prop, &physicalPlanInfo{count: rowCount, countReliable: !statsTbl.Pseudo}), nil
 }
 
 func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.IndexInfo) (*physicalPlanInfo, error) {
@@ -163,7 +163,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		is.Ranges = rb.buildIndexRanges(fullRange, types.NewFieldType(mysql.TypeNull))
 	}
 	is.DoubleRead = !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
-	return resultPlan.matchProperty(prop, &physicalPlanInfo{count: rowCount, costReliable: !statsTbl.Pseudo}), nil
+	return resultPlan.matchProperty(prop, &physicalPlanInfo{count: rowCount, countReliable: !statsTbl.Pseudo}), nil
 }
 
 func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexColumn, pkIsHandle bool) bool {
@@ -278,7 +278,12 @@ func (p *DataSource) tryToConvert2DummyScan(prop *requiredProperty) (*physicalPl
 func addPlanToResponse(parent PhysicalPlan, info *physicalPlanInfo) *physicalPlanInfo {
 	np := parent.Copy()
 	np.SetChildren(info.p)
-	return &physicalPlanInfo{p: np, cost: info.cost, count: info.count}
+	ret := &physicalPlanInfo{p: np, cost: info.cost, count: info.count, countReliable: info.countReliable}
+	if _, ok := parent.(*MaxOneRow); ok {
+		ret.count = 1
+		ret.countReliable = true
+	}
+	return ret
 }
 
 // enforceProperty creates a *physicalPlanInfo that satisfies the required property by adding
@@ -302,14 +307,14 @@ func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPl
 		count := info.count
 		if prop.limit != nil {
 			count = prop.limit.Offset + prop.limit.Count
-			info.costReliable = true
+			info.countReliable = true
 		}
 		info.cost += sortCost(count)
 	} else if prop.limit != nil {
 		limit := Limit{Offset: prop.limit.Offset, Count: prop.limit.Count}.init(info.p.Allocator(), info.p.context())
 		limit.SetSchema(info.p.Schema())
 		info = addPlanToResponse(limit, info)
-		info.costReliable = true
+		info.countReliable = true
 	}
 	if prop.limit != nil && prop.limit.Count < info.count {
 		info.count = prop.limit.Count
@@ -1135,6 +1140,7 @@ func (p *Aggregation) convert2PhysicalPlan(prop *requiredProperty) (*physicalPla
 	if planInfo == nil || streamInfo.cost < planInfo.cost {
 		planInfo = streamInfo
 	}
+	planInfo.countReliable = false
 	planInfo = enforceProperty(limitProperty(limit), planInfo)
 	err = p.storePlanInfo(prop, planInfo)
 	return planInfo, errors.Trace(err)
@@ -1322,13 +1328,14 @@ func (p *Selection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanI
 	return info, nil
 }
 
-func (p *Selection) appendSelToInfo(info *physicalPlanInfo) *physicalPlanInfo {
+func (p *Selection) appendSelToInfo(info *physicalPlanInfo, isReliable bool) *physicalPlanInfo {
 	np := p.Copy().(*Selection)
 	np.SetChildren(info.p)
 	return &physicalPlanInfo{
-		p:     np,
-		cost:  info.cost,
-		count: uint64(float64(info.count) * selectionFactor),
+		p:             np,
+		cost:          info.cost,
+		count:         uint64(float64(info.count) * selectionFactor),
+		countReliable: isReliable,
 	}
 }
 
@@ -1338,6 +1345,10 @@ func (p *Selection) convert2PhysicalPlanPushOrder(prop *requiredProperty) (*phys
 	info, err := child.convert2PhysicalPlan(removeLimit(prop))
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	var isReliable bool
+	for _, cond := range p.Conditions {
+		isReliable = isReliable || isUniqueInCond(cond, p.schema)
 	}
 	if limit != nil && info.p != nil {
 		if np, ok := info.p.(physicalDistSQLPlan); ok {
@@ -1349,17 +1360,17 @@ func (p *Selection) convert2PhysicalPlanPushOrder(prop *requiredProperty) (*phys
 				info = enforceProperty(&requiredProperty{limit: limit}, info)
 			}
 		} else {
-			info = enforceProperty(&requiredProperty{limit: limit}, p.appendSelToInfo(info))
+			info = enforceProperty(&requiredProperty{limit: limit}, p.appendSelToInfo(info, isReliable))
 		}
 	} else if ds, ok := p.children[0].(*DataSource); !ok {
 		// TODO: It's tooooooo tricky here, we will remove all these logic after implementing DAG push down.
-		info = p.appendSelToInfo(info)
+		info = p.appendSelToInfo(info, isReliable)
 	} else {
 		client := p.ctx.GetClient()
 		memDB := infoschema.IsMemoryDB(ds.DBName.L)
 		isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeSelect, 0)
 		if !isDistReq {
-			info = p.appendSelToInfo(info)
+			info = p.appendSelToInfo(info, isReliable)
 		}
 	}
 	return info, nil
@@ -1374,10 +1385,11 @@ func (p *Selection) convert2PhysicalPlanEnforce(prop *requiredProperty) (*physic
 		return nil, errors.Trace(err)
 	}
 	if prop.limit != nil && len(prop.props) > 0 {
+		// Since this branch has limit, so cost is always reliable.
 		if t, ok := info.p.(physicalDistSQLPlan); ok {
 			t.addTopN(p.ctx, prop)
 		} else if _, ok := info.p.(*Selection); !ok {
-			info = p.appendSelToInfo(info)
+			info = p.appendSelToInfo(info, true)
 		}
 		info = enforceProperty(prop, info)
 	} else if len(prop.props) != 0 {
