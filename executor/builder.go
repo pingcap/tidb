@@ -509,10 +509,10 @@ func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
 
 func (b *executorBuilder) buildProjection(v *plan.Projection) Executor {
 	e := &ProjectionExec{
-		Src:       b.build(v.Children()[0]),
-		ctx:       b.ctx,
-		exprs:     v.Exprs,
-		schema:    v.Schema(),
+		Src:    b.build(v.Children()[0]),
+		ctx:    b.ctx,
+		exprs:  v.Exprs,
+		schema: v.Schema(),
 	}
 	if e.Src != nil {
 		e.valuesBuf = make([]types.Datum, e.Src.Schema().Len())
