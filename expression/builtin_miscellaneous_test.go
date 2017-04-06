@@ -23,6 +23,38 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+func (s *testEvaluatorSuite) TestInetAton(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Input    interface{}
+		Expected interface{}
+	}{
+		{"", nil},
+		{nil, nil},
+		{"255.255.255.255", 4294967295},
+		{"0.0.0.0", 0},
+		{"127.0.0.1", 2130706433},
+		{"0.0.0.256", nil},
+		{"113.14.22.3", 1896748547},
+		{"127", 127},
+		{"127.255", 2130706687},
+		{"127,256", nil},
+		{"127.2.1", 2130837505},
+		{"123.2.1.", nil},
+		{"127.0.0.1.1", nil},
+	}
+
+	dtbl := tblToDtbl(tbl)
+	fc := funcs[ast.InetAton]
+	for _, t := range dtbl {
+		f, err := fc.getFunction(datumsToConstants(t["Input"]), s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(d, testutil.DatumEquals, t["Expected"][0])
+	}
+}
+
 func (s *testEvaluatorSuite) TestIsIPv4(c *C) {
 	tests := []struct {
 		ip     string

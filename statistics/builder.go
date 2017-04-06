@@ -132,7 +132,7 @@ func (b *Builder) NewTable() (*Table, error) {
 		if len(b.TblInfo.Indices[offset].Columns) == 1 {
 			for j, col := range b.TblInfo.Columns {
 				if col.Name.L == b.TblInfo.Indices[offset].Columns[0].Name.L && t.Columns[j] == nil {
-					t.Columns[j], err = copyFromIndexColumns(t.Indices[offset], col.ID, b.NumBuckets)
+					t.Columns[j], err = copyFromIndexColumns(t.Indices[offset], col.ID)
 					if err != nil {
 						return nil, errors.Trace(err)
 					}
@@ -165,9 +165,7 @@ func (t *Table) build4SortedColumn(sc *variable.StatementContext, offset int, re
 	col := &Column{
 		ID:      id,
 		NDV:     0,
-		Numbers: make([]int64, 1, bucketCount),
-		Values:  make([]types.Datum, 1, bucketCount),
-		Repeats: make([]int64, 1, bucketCount),
+		Buckets: make([]bucket, 1, bucketCount),
 	}
 	var valuesPerBucket, lastNumber, bucketIdx int64 = 1, 0, 0
 	count := int64(0)
@@ -189,7 +187,7 @@ func (t *Table) build4SortedColumn(sc *variable.StatementContext, offset int, re
 			}
 			data = types.NewBytesDatum(bytes)
 		}
-		cmp, err := col.Values[bucketIdx].CompareDatum(sc, data)
+		cmp, err := col.Buckets[bucketIdx].Value.CompareDatum(sc, data)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -198,13 +196,13 @@ func (t *Table) build4SortedColumn(sc *variable.StatementContext, offset int, re
 			// The new item has the same value as current bucket value, to ensure that
 			// a same value only stored in a single bucket, we do not increase bucketIdx even if it exceeds
 			// valuesPerBucket.
-			col.Numbers[bucketIdx]++
-			col.Repeats[bucketIdx]++
-		} else if col.Numbers[bucketIdx]+1-lastNumber <= valuesPerBucket {
+			col.Buckets[bucketIdx].Count++
+			col.Buckets[bucketIdx].Repeats++
+		} else if col.Buckets[bucketIdx].Count+1-lastNumber <= valuesPerBucket {
 			// The bucket still have room to store a new item, update the bucket.
-			col.Numbers[bucketIdx]++
-			col.Values[bucketIdx] = data
-			col.Repeats[bucketIdx] = 0
+			col.Buckets[bucketIdx].Count++
+			col.Buckets[bucketIdx].Value = data
+			col.Buckets[bucketIdx].Repeats = 1
 			col.NDV++
 		} else {
 			// All buckets are full, we should merge buckets.
@@ -215,20 +213,22 @@ func (t *Table) build4SortedColumn(sc *variable.StatementContext, offset int, re
 				if bucketIdx == 0 {
 					lastNumber = 0
 				} else {
-					lastNumber = col.Numbers[bucketIdx-1]
+					lastNumber = col.Buckets[bucketIdx-1].Count
 				}
 			}
 			// We may merge buckets, so we should check it again.
-			if col.Numbers[bucketIdx]+1-lastNumber <= valuesPerBucket {
-				col.Numbers[bucketIdx]++
-				col.Values[bucketIdx] = data
-				col.Repeats[bucketIdx] = 0
+			if col.Buckets[bucketIdx].Count+1-lastNumber <= valuesPerBucket {
+				col.Buckets[bucketIdx].Count++
+				col.Buckets[bucketIdx].Value = data
+				col.Buckets[bucketIdx].Repeats = 1
 			} else {
-				lastNumber = col.Numbers[bucketIdx]
+				lastNumber = col.Buckets[bucketIdx].Count
 				bucketIdx++
-				col.Numbers = append(col.Numbers, lastNumber+1)
-				col.Values = append(col.Values, data)
-				col.Repeats = append(col.Repeats, 0)
+				col.Buckets = append(col.Buckets, bucket{
+					Count:   lastNumber + 1,
+					Value:   data,
+					Repeats: 1,
+				})
 			}
 			col.NDV++
 		}
@@ -252,54 +252,63 @@ func (t *Table) buildColumn(sc *variable.StatementContext, offset int, ndv int64
 	col := &Column{
 		ID:      ci.ID,
 		NDV:     ndv,
-		Numbers: make([]int64, 1, bucketCount),
-		Values:  make([]types.Datum, 1, bucketCount),
-		Repeats: make([]int64, 1, bucketCount),
+		Buckets: make([]bucket, 1, bucketCount),
 	}
 	valuesPerBucket := t.Count/bucketCount + 1
 
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
 	sampleFactor := t.Count / int64(len(samples))
+	ndvFactor := t.Count / ndv
+	if ndvFactor > sampleFactor {
+		ndvFactor = sampleFactor
+	}
 	bucketIdx := 0
-	var lastNumber int64
+	var lastCount int64
 	for i := int64(0); i < int64(len(samples)); i++ {
-		cmp, err := col.Values[bucketIdx].CompareDatum(sc, samples[i])
+		cmp, err := col.Buckets[bucketIdx].Value.CompareDatum(sc, samples[i])
 		if err != nil {
 			return errors.Trace(err)
 		}
+		totalCount := (i + 1) * sampleFactor
 		if cmp == 0 {
 			// The new item has the same value as current bucket value, to ensure that
 			// a same value only stored in a single bucket, we do not increase bucketIdx even if it exceeds
 			// valuesPerBucket.
-			col.Numbers[bucketIdx] = i * sampleFactor
-			col.Repeats[bucketIdx] += sampleFactor
-		} else if i*sampleFactor-lastNumber <= valuesPerBucket {
+			col.Buckets[bucketIdx].Count = totalCount
+			if col.Buckets[bucketIdx].Repeats == ndvFactor {
+				col.Buckets[bucketIdx].Repeats = 2 * sampleFactor
+			} else {
+				col.Buckets[bucketIdx].Repeats += sampleFactor
+			}
+		} else if totalCount-lastCount <= valuesPerBucket {
+			// TODO: Making sampleFactor as float may be better.
 			// The bucket still have room to store a new item, update the bucket.
-			col.Numbers[bucketIdx] = i * sampleFactor
-			col.Values[bucketIdx] = samples[i]
-			col.Repeats[bucketIdx] = 0
+			col.Buckets[bucketIdx].Count = totalCount
+			col.Buckets[bucketIdx].Value = samples[i]
+			col.Buckets[bucketIdx].Repeats = ndvFactor
 		} else {
+			lastCount = col.Buckets[bucketIdx].Count
 			// The bucket is full, store the item in the next bucket.
-			lastNumber = col.Numbers[bucketIdx]
 			bucketIdx++
-			col.Numbers = append(col.Numbers, i*sampleFactor)
-			col.Values = append(col.Values, samples[i])
-			col.Repeats = append(col.Repeats, 0)
+			col.Buckets = append(col.Buckets, bucket{
+				Count:   totalCount,
+				Value:   samples[i],
+				Repeats: ndvFactor,
+			})
 		}
 	}
 	t.Columns[offset] = col
 	return nil
 }
 
-func copyFromIndexColumns(ind *Column, id, numBuckets int64) (*Column, error) {
+func copyFromIndexColumns(ind *Column, id int64) (*Column, error) {
 	col := &Column{
 		ID:      id,
 		NDV:     ind.NDV,
-		Numbers: ind.Numbers,
-		Values:  make([]types.Datum, 0, numBuckets),
-		Repeats: ind.Repeats,
+		Buckets: make([]bucket, 0, len(ind.Buckets)),
 	}
-	for _, val := range ind.Values {
+	for _, b := range ind.Buckets {
+		val := b.Value
 		if val.GetBytes() == nil {
 			break
 		}
@@ -307,7 +316,11 @@ func copyFromIndexColumns(ind *Column, id, numBuckets int64) (*Column, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		col.Values = append(col.Values, data[0])
+		col.Buckets = append(col.Buckets, bucket{
+			Count:   b.Count,
+			Value:   data[0],
+			Repeats: b.Repeats,
+		})
 	}
 	return col, nil
 }
