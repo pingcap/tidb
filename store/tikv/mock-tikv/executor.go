@@ -289,17 +289,13 @@ func (e *selectionExec) Next() (handle int64, value [][]byte, err error) {
 	}
 }
 
-type aggContext struct {
-	eval      *xeval.Evaluator
-	aggFuncs  []*aggregateFuncExpr
-	groups    map[string]struct{}
-	groupKeys [][]byte
-	columns   map[int64]*tipb.ColumnInfo
-}
-
 type aggregateExec struct {
 	*tipb.Aggregation
-	*aggContext
+	eval         *xeval.Evaluator
+	aggFuncs     []*aggregateFuncExpr
+	groups       map[string]struct{}
+	groupKeys    [][]byte
+	columns      map[int64]*tipb.ColumnInfo
 	executed     bool
 	currGroupIdx int
 	colIDs       map[int64]int
@@ -343,7 +339,7 @@ func (e *aggregateExec) Next() (handle int64, value [][]byte, err error) {
 	if e.currGroupIdx >= len(e.groups) {
 		return 0, nil, nil
 	}
-	gk := e.aggContext.groupKeys[e.currGroupIdx]
+	gk := e.groupKeys[e.currGroupIdx]
 	gkData, err := codec.EncodeValue(nil, types.NewBytesDatum(gk))
 	if err != nil {
 		return 0, nil, errors.Trace(err)
@@ -353,7 +349,7 @@ func (e *aggregateExec) Next() (handle int64, value [][]byte, err error) {
 	value = append(value, gkData)
 	for _, agg := range e.aggFuncs {
 		agg.currentGroup = gk
-		ds, err := agg.toDatums(e.aggContext)
+		ds, err := agg.toDatums(e.eval)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
@@ -370,34 +366,33 @@ func (e *aggregateExec) Next() (handle int64, value [][]byte, err error) {
 
 // aggregate updates aggregate functions with row.
 func (e *aggregateExec) aggregate(handle int64, row [][]byte) error {
-	ctx := e.aggContext
 	// Put row data into evaluate for later evaluation.
-	err := ctx.eval.SetRowValue(handle, row, e.colIDs)
+	err := e.eval.SetRowValue(handle, row, e.colIDs)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// Get group key.
-	gk, err := getGroupKey(ctx.eval, e.GetGroupBy())
+	gk, err := getGroupKey(e.eval, e.GetGroupBy())
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if _, ok := ctx.groups[string(gk)]; !ok {
-		ctx.groups[string(gk)] = struct{}{}
-		ctx.groupKeys = append(ctx.groupKeys, gk)
+	if _, ok := e.groups[string(gk)]; !ok {
+		e.groups[string(gk)] = struct{}{}
+		e.groupKeys = append(e.groupKeys, gk)
 	}
 	// Update aggregate funcs.
-	for _, agg := range ctx.aggFuncs {
+	for _, agg := range e.aggFuncs {
 		agg.currentGroup = gk
 		args := make([]types.Datum, 0, len(agg.expr.Children))
 		// Evaluate arguments.
 		for _, x := range agg.expr.Children {
-			cv, err := ctx.eval.Eval(x)
+			cv, err := e.eval.Eval(x)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			args = append(args, cv)
 		}
-		agg.update(ctx, args)
+		agg.update(e.eval, args)
 	}
 	return nil
 }

@@ -37,8 +37,12 @@ type selectContext struct {
 	sel          *tipb.SelectRequest
 	eval         *xeval.Evaluator
 	whereColumns map[int64]*tipb.ColumnInfo
+	aggColumns   map[int64]*tipb.ColumnInfo
 	topnColumns  map[int64]*tipb.ColumnInfo
-	aggCtx       *aggContext
+	groups       map[string]struct{}
+	groupKeys    [][]byte
+	aggregates   []*aggregateFuncExpr
+	aggregate    bool
 	descScan     bool
 	topn         bool
 	topnHeap     *topnHeap
@@ -99,27 +103,25 @@ func (h *rpcHandler) handleCopRequest(req *coprocessor.Request) (*coprocessor.Re
 				}
 			}
 		}
-		aggregate := len(sel.Aggregates) > 0 || len(sel.GetGroupBy()) > 0
-		if aggregate {
-			aggCtx := &aggContext{eval: ctx.eval}
+		ctx.aggregate = len(sel.Aggregates) > 0 || len(sel.GetGroupBy()) > 0
+		if ctx.aggregate {
 			// compose aggregateFuncExpr
-			aggCtx.aggFuncs = make([]*aggregateFuncExpr, 0, len(sel.Aggregates))
-			aggCtx.columns = make(map[int64]*tipb.ColumnInfo)
+			ctx.aggregates = make([]*aggregateFuncExpr, 0, len(sel.Aggregates))
+			ctx.aggColumns = make(map[int64]*tipb.ColumnInfo)
 			for _, agg := range sel.Aggregates {
 				aggExpr := &aggregateFuncExpr{expr: agg}
-				aggCtx.aggFuncs = append(aggCtx.aggFuncs, aggExpr)
-				collectColumnsInExpr(agg, ctx, aggCtx.columns)
+				ctx.aggregates = append(ctx.aggregates, aggExpr)
+				collectColumnsInExpr(agg, ctx, ctx.aggColumns)
 			}
-			aggCtx.groups = make(map[string]struct{})
-			aggCtx.groupKeys = make([][]byte, 0)
+			ctx.groups = make(map[string]struct{})
+			ctx.groupKeys = make([][]byte, 0)
 			for _, item := range ctx.sel.GetGroupBy() {
-				collectColumnsInExpr(item.Expr, ctx, aggCtx.columns)
+				collectColumnsInExpr(item.Expr, ctx, ctx.aggColumns)
 			}
 			for k := range ctx.whereColumns {
 				// It will be handled in where.
-				delete(aggCtx.columns, k)
+				delete(ctx.aggColumns, k)
 			}
-			ctx.aggCtx = aggCtx
 		}
 
 		var chunks []tipb.Chunk
@@ -180,15 +182,15 @@ func (h *rpcHandler) setTopNDataForCtx(ctx *selectContext) []tipb.Chunk {
 }
 
 func (h *rpcHandler) getRowsFromAgg(ctx *selectContext) ([]tipb.Chunk, error) {
-	chunks := make([]tipb.Chunk, 0, len(ctx.aggCtx.groupKeys)/rowsPerChunk+1)
-	for _, gk := range ctx.aggCtx.groupKeys {
+	chunks := make([]tipb.Chunk, 0, len(ctx.groupKeys)/rowsPerChunk+1)
+	for _, gk := range ctx.groupKeys {
 		// Each aggregate partial result will be converted to one or two datums.
-		rowData := make([]types.Datum, 0, 1+2*len(ctx.aggCtx.aggFuncs))
+		rowData := make([]types.Datum, 0, 1+2*len(ctx.aggregates))
 		// The first column is group key.
 		rowData = append(rowData, types.NewBytesDatum(gk))
-		for _, agg := range ctx.aggCtx.aggFuncs {
+		for _, agg := range ctx.aggregates {
 			agg.currentGroup = gk
-			ds, err := agg.toDatums(ctx.aggCtx)
+			ds, err := agg.toDatums(ctx.eval)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -278,7 +280,7 @@ func (h *rpcHandler) getChunksFromSelectReq(ctx *selectContext) ([]tipb.Chunk, e
 			return nil, errors.Trace(err)
 		}
 	}
-	if ctx.aggCtx != nil {
+	if ctx.aggregate {
 		return h.getRowsFromAgg(ctx)
 	}
 	return chunks, nil
@@ -443,14 +445,6 @@ func (h *rpcHandler) handleRowData(ctx *selectContext, handle int64, value []byt
 
 var dummySlice = make([]byte, 0)
 
-func itemsToExprs(items []*tipb.ByItem) []*tipb.Expr {
-	exprs := make([]*tipb.Expr, 0, len(items))
-	for _, item := range items {
-		exprs = append(exprs, item.Expr)
-	}
-	return exprs
-}
-
 func (h *rpcHandler) valuesToRow(ctx *selectContext, handle int64, values map[int64][]byte) ([]byte, error) {
 	var columns []*tipb.ColumnInfo
 	if ctx.sel.TableInfo != nil {
@@ -470,9 +464,9 @@ func (h *rpcHandler) valuesToRow(ctx *selectContext, handle int64, values map[in
 		return nil, errors.Trace(h.evalTopN(ctx, handle, values, columns))
 	}
 	data := dummySlice
-	if ctx.aggCtx != nil {
+	if ctx.aggregate {
 		// Update aggregate functions.
-		err = aggregate(ctx.aggCtx, itemsToExprs(ctx.sel.GroupBy), handle, values)
+		err = aggregate(ctx, handle, values)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -535,7 +529,7 @@ func (h *rpcHandler) getChunksFromIndexReq(ctx *selectContext) ([]tipb.Chunk, er
 			return nil, errors.Trace(err)
 		}
 	}
-	if ctx.aggCtx != nil {
+	if ctx.aggregate {
 		return h.getRowsFromAgg(ctx)
 	}
 	return chunks, nil

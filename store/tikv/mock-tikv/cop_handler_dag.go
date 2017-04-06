@@ -189,15 +189,12 @@ func (h *rpcHandler) buildAggregation(ctx *dagContext, executor *tipb.Executor) 
 		}
 	}
 
-	aggCtx := &aggContext{
-		eval:      ctx.eval,
-		aggFuncs:  aggs,
-		groups:    make(map[string]struct{}),
-		groupKeys: make([][]byte, 0),
-	}
 	return &aggregateExec{
 		Aggregation: executor.Aggregation,
-		aggContext:  aggCtx,
+		eval:        ctx.eval,
+		aggFuncs:    aggs,
+		groups:      make(map[string]struct{}),
+		groupKeys:   make([][]byte, 0),
 		colIDs:      colIDs,
 	}, nil
 }

@@ -44,15 +44,23 @@ func getGroupKey(eval *xeval.Evaluator, exprs []*tipb.Expr) ([]byte, error) {
 	return bs, nil
 }
 
+func itemsToExprs(items []*tipb.ByItem) []*tipb.Expr {
+	exprs := make([]*tipb.Expr, 0, len(items))
+	for _, item := range items {
+		exprs = append(exprs, item.Expr)
+	}
+	return exprs
+}
+
 // aggregate updates aggregate functions with rows.
-func aggregate(ctx *aggContext, groupByExprs []*tipb.Expr, handle int64, row map[int64][]byte) error {
+func aggregate(ctx *selectContext, handle int64, row map[int64][]byte) error {
 	// Put row data into evaluate for later evaluation.
-	err := setColumnValueToEval(ctx.eval, handle, row, ctx.columns)
+	err := setColumnValueToEval(ctx.eval, handle, row, ctx.aggColumns)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// Get group key.
-	gk, err := getGroupKey(ctx.eval, groupByExprs)
+	gk, err := getGroupKey(ctx.eval, itemsToExprs(ctx.sel.GroupBy))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -61,7 +69,7 @@ func aggregate(ctx *aggContext, groupByExprs []*tipb.Expr, handle int64, row map
 		ctx.groupKeys = append(ctx.groupKeys, gk)
 	}
 	// Update aggregate funcs.
-	for _, agg := range ctx.aggFuncs {
+	for _, agg := range ctx.aggregates {
 		agg.currentGroup = gk
 		args := make([]types.Datum, 0, len(agg.expr.Children))
 		// Evaluate arguments.
@@ -72,7 +80,7 @@ func aggregate(ctx *aggContext, groupByExprs []*tipb.Expr, handle int64, row map
 			}
 			args = append(args, cv)
 		}
-		agg.update(ctx, args)
+		agg.update(ctx.eval, args)
 	}
 	return nil
 }
@@ -105,37 +113,37 @@ func (n *aggregateFuncExpr) clear() {
 }
 
 // Update is used for update aggregate context.
-func (n *aggregateFuncExpr) update(ctx *aggContext, args []types.Datum) error {
+func (n *aggregateFuncExpr) update(eval *xeval.Evaluator, args []types.Datum) error {
 	switch n.expr.GetTp() {
 	case tipb.ExprType_Count:
-		return n.updateCount(ctx, args)
+		return n.updateCount(eval, args)
 	case tipb.ExprType_First:
-		return n.updateFirst(ctx, args)
+		return n.updateFirst(eval, args)
 	case tipb.ExprType_Sum, tipb.ExprType_Avg:
-		return n.updateSum(ctx, args)
+		return n.updateSum(eval, args)
 	case tipb.ExprType_Max:
-		return n.updateMaxMin(ctx, args, true)
+		return n.updateMaxMin(eval, args, true)
 	case tipb.ExprType_Min:
-		return n.updateMaxMin(ctx, args, false)
+		return n.updateMaxMin(eval, args, false)
 	}
 	return errors.Errorf("Unknown AggExpr: %v", n.expr.GetTp())
 }
 
-func (n *aggregateFuncExpr) toDatums(ctx *aggContext) (ds []types.Datum, err error) {
+func (n *aggregateFuncExpr) toDatums(eval *xeval.Evaluator) (ds []types.Datum, err error) {
 	switch n.expr.GetTp() {
 	case tipb.ExprType_Count:
 		ds = n.getCountDatum()
 	case tipb.ExprType_First, tipb.ExprType_Max, tipb.ExprType_Min:
 		ds = n.getValueDatum()
 	case tipb.ExprType_Sum:
-		d, err := getSumValue(ctx, n.getAggItem())
+		d, err := getSumValue(eval, n.getAggItem())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		ds = []types.Datum{d}
 	case tipb.ExprType_Avg:
 		item := n.getAggItem()
-		sum, err := getSumValue(ctx, item)
+		sum, err := getSumValue(eval, item)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -145,12 +153,12 @@ func (n *aggregateFuncExpr) toDatums(ctx *aggContext) (ds []types.Datum, err err
 	return
 }
 
-func getSumValue(ctx *aggContext, item *aggItem) (types.Datum, error) {
+func getSumValue(eval *xeval.Evaluator, item *aggItem) (types.Datum, error) {
 	v := item.value
 	var d types.Datum
 	if !v.IsNull() {
 		// For sum result, we should convert it to decimal.
-		de, err1 := v.ToDecimal(ctx.eval.StatementCtx)
+		de, err1 := v.ToDecimal(eval.StatementCtx)
 		if err1 != nil {
 			return d, errors.Trace(err1)
 		}
@@ -188,7 +196,7 @@ func (n *aggregateFuncExpr) getAggItem() *aggItem {
 	return n.contextPerGroupMap[string(n.currentGroup)]
 }
 
-func (n *aggregateFuncExpr) updateCount(ctx *aggContext, args []types.Datum) error {
+func (n *aggregateFuncExpr) updateCount(eval *xeval.Evaluator, args []types.Datum) error {
 	for _, a := range args {
 		if a.IsNull() {
 			return nil
@@ -199,7 +207,7 @@ func (n *aggregateFuncExpr) updateCount(ctx *aggContext, args []types.Datum) err
 	return nil
 }
 
-func (n *aggregateFuncExpr) updateFirst(ctx *aggContext, args []types.Datum) error {
+func (n *aggregateFuncExpr) updateFirst(eval *xeval.Evaluator, args []types.Datum) error {
 	aggItem := n.getAggItem()
 	if aggItem.gotFirstRow {
 		return nil
@@ -212,7 +220,7 @@ func (n *aggregateFuncExpr) updateFirst(ctx *aggContext, args []types.Datum) err
 	return nil
 }
 
-func (n *aggregateFuncExpr) updateSum(ctx *aggContext, args []types.Datum) error {
+func (n *aggregateFuncExpr) updateSum(eval *xeval.Evaluator, args []types.Datum) error {
 	if len(args) != 1 {
 		// This should not happen. The length of argument list is already checked in the early stage.
 		// This is just in case of error.
@@ -229,7 +237,7 @@ func (n *aggregateFuncExpr) updateSum(ctx *aggContext, args []types.Datum) error
 		return nil
 	}
 	var err error
-	aggItem.value, err = xeval.ComputeArithmetic(ctx.eval.StatementCtx, tipb.ExprType_Plus, arg, aggItem.value)
+	aggItem.value, err = xeval.ComputeArithmetic(eval.StatementCtx, tipb.ExprType_Plus, arg, aggItem.value)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -237,7 +245,7 @@ func (n *aggregateFuncExpr) updateSum(ctx *aggContext, args []types.Datum) error
 	return nil
 }
 
-func (n *aggregateFuncExpr) updateMaxMin(ctx *aggContext, args []types.Datum, max bool) error {
+func (n *aggregateFuncExpr) updateMaxMin(eval *xeval.Evaluator, args []types.Datum, max bool) error {
 	if len(args) != 1 {
 		// This should not happen. The length of argument list is already checked in the early stage.
 		// This is just in case of error.
@@ -256,7 +264,7 @@ func (n *aggregateFuncExpr) updateMaxMin(ctx *aggContext, args []types.Datum, ma
 		aggItem.value = arg
 		return nil
 	}
-	c, err := aggItem.value.CompareDatum(ctx.eval.StatementCtx, arg)
+	c, err := aggItem.value.CompareDatum(eval.StatementCtx, arg)
 	if err != nil {
 		return errors.Trace(err)
 	}
