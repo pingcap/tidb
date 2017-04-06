@@ -63,6 +63,10 @@ func (a *recordSet) Next() (*ast.Row, error) {
 	if err != nil || row == nil {
 		return nil, errors.Trace(err)
 	}
+	err = row.DecodeValues(a.executor.Schema())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	return &ast.Row{Data: row.Data}, nil
 }
 

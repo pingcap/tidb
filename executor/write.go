@@ -189,6 +189,10 @@ func (e *DeleteExec) deleteMultiTables() error {
 		if joinedRow == nil {
 			break
 		}
+		err = joinedRow.DecodeValues(e.SelectExec.Schema())
+		if err != nil {
+			return errors.Trace(err)
+		}
 
 		for _, entry := range joinedRow.RowKeys {
 			if !isMatchTableName(entry, tblMap) {
@@ -235,6 +239,10 @@ func (e *DeleteExec) deleteSingleTable() error {
 		}
 		if row == nil {
 			break
+		}
+		err = row.DecodeValues(e.SelectExec.Schema())
+		if err != nil {
+			return errors.Trace(err)
 		}
 		rowKey := row.RowKeys[0]
 		err = e.removeRow(e.ctx, rowKey.Tbl, rowKey.Handle, row.Data)
@@ -810,6 +818,10 @@ func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, err
 		if innerRow == nil {
 			break
 		}
+		err = innerRow.DecodeValues(e.SelectExec.Schema())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		e.currRow = int64(len(rows))
 		row, err := e.fillRowData(cols, innerRow.Data, false)
 		if err != nil {
@@ -1172,6 +1184,10 @@ func (e *UpdateExec) fetchRows() error {
 		}
 		if row == nil {
 			return nil
+		}
+		err = row.DecodeValues(e.SelectExec.Schema())
+		if err != nil {
+			return errors.Trace(err)
 		}
 		l := len(e.OrderedList)
 		data := make([]types.Datum, l)

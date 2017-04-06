@@ -128,6 +128,10 @@ func (e *HashAggExec) innerNext() (ret bool, err error) {
 		if srcRow == nil {
 			return false, nil
 		}
+		err = srcRow.DecodeValues(e.Src.Schema())
+		if err != nil {
+			return false, errors.Trace(err)
+		}
 	} else {
 		// If Src is nil, only one row should be returned.
 		if e.executed {
@@ -196,6 +200,10 @@ func (e *StreamAggExec) Next() (*Row, error) {
 			newGroup = true
 			e.executed = true
 		} else {
+			err = row.DecodeValues(e.Src.Schema())
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			e.hasData = true
 			newGroup, err = e.meetNewGroup(row)
 			if err != nil {

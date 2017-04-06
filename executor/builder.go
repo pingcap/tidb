@@ -439,7 +439,6 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 		if e.otherFilter != nil {
 			ctx.otherFilter = e.otherFilter.Clone()
 		}
-		ctx.datumBuffer = make([]types.Datum, len(e.bigHashKey))
 		ctx.hashKeyBuffer = make([]byte, 0, 10000)
 		e.hashJoinContexts = append(e.hashJoinContexts, ctx)
 	}
@@ -503,17 +502,22 @@ func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
 		ctx:            b.ctx,
 		scanController: v.ScanController,
 		Conditions:     v.Conditions,
+		valuesBuf:      make([]types.Datum, v.Schema().Len()),
 	}
 	return exec
 }
 
 func (b *executorBuilder) buildProjection(v *plan.Projection) Executor {
-	return &ProjectionExec{
-		Src:    b.build(v.Children()[0]),
-		ctx:    b.ctx,
-		exprs:  v.Exprs,
-		schema: v.Schema(),
+	e := &ProjectionExec{
+		Src:       b.build(v.Children()[0]),
+		ctx:       b.ctx,
+		exprs:     v.Exprs,
+		schema:    v.Schema(),
 	}
+	if e.Src != nil {
+		e.valuesBuf = make([]types.Datum, e.Src.Schema().Len())
+	}
+	return e
 }
 
 func (b *executorBuilder) buildTableDual(v *plan.TableDual) Executor {
@@ -607,6 +611,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 			}
 		}
 		e.idxColsSchema = expression.NewSchema(schemaColumns...)
+		e.valuesBuf = make([]types.Datum, e.idxColsSchema.Len())
 	}
 	return e
 }

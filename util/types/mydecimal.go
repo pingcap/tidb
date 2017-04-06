@@ -2068,8 +2068,8 @@ func doDivMod(from1, from2, to, mod *MyDecimal, fracIncr int) error {
 	return err
 }
 
-// DecimalPeak returns the length of the encoded decimal.
-func DecimalPeak(b []byte) (int, error) {
+// DecimalPeek returns the length of the encoded decimal.
+func DecimalPeek(b []byte) (int, error) {
 	if len(b) < 3 {
 		return 0, ErrBadNumber
 	}

@@ -219,6 +219,10 @@ func (rb *rowBlockIterator) nextRow() (*Row, error) {
 		if row == nil {
 			return nil, nil
 		}
+		err = row.DecodeValues(rb.reader.Schema())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		if rb.filter != nil {
 			matched, err := expression.EvalBool(rb.filter, row.Data, rb.ctx)
 			if err != nil {

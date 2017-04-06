@@ -96,6 +96,10 @@ func (e *SortExec) Next() (*Row, error) {
 			if srcRow == nil {
 				break
 			}
+			err = srcRow.DecodeValues(e.Src.Schema())
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			orderRow := &orderByRow{
 				row: srcRow,
 				key: make([]types.Datum, len(e.ByItems)),
@@ -189,6 +193,10 @@ func (e *TopnExec) Next() (*Row, error) {
 			}
 			if srcRow == nil {
 				break
+			}
+			err = srcRow.DecodeValues(e.Src.Schema())
+			if err != nil {
+				return nil, errors.Trace(err)
 			}
 			// build orderRow from srcRow.
 			orderRow := &orderByRow{
