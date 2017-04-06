@@ -19,11 +19,18 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/distsql/xeval"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
 // MockDAGRequest is used for testing now.
 var MockDAGRequest bool
+
+type rowSchema struct {
+	colIDs      map[int64]int
+	columnInfos []*tipb.ColumnInfo
+	fieldTps    []*types.FieldType
+}
 
 type dagContext struct {
 	dagReq    *tipb.DAGRequest
@@ -157,21 +164,26 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) *i
 }
 
 func (h *rpcHandler) buildSelection(ctx *dagContext, executor *tipb.Executor) (*selectionExec, error) {
-	var cond *tipb.Expr
-	// TODO: Now len(Conditions) is 1.
-	if len(executor.Selection.Conditions) > 0 {
-		cond = executor.Selection.Conditions[0]
-	}
+	pbConds := executor.Selection.Conditions
 	colIDs := make(map[int64]int)
-	err := extractColIDsInExpr(cond, ctx.eval.ColumnInfos, colIDs)
+	for _, cond := range pbConds {
+		err := extractColIDsInExpr(cond, ctx.eval.ColumnInfos, colIDs)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	conds, err := convertToExprs(ctx.eval.StatementCtx, colIDs, pbConds)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	return &selectionExec{
-		Selection: executor.Selection,
-		eval:      ctx.eval,
-		colIDs:    colIDs,
+		Selection:  executor.Selection,
+		sc:         ctx.eval.StatementCtx,
+		colIDs:     colIDs,
+		colTps:     ctx.eval.FieldTps,
+		conditions: conds,
+		row:        make([]types.Datum, len(ctx.eval.ColumnInfos)),
 	}, nil
 }
 

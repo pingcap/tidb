@@ -56,7 +56,7 @@ type Evaluator struct {
 	ColVals      []types.Datum
 	ColIDs       map[int64]int
 	ColumnInfos  []*tipb.ColumnInfo
-	fieldTps     []*types.FieldType
+	FieldTps     []*types.FieldType
 	valueLists   map[*tipb.Expr]*decodedValueList
 	StatementCtx *variable.StatementContext
 }
@@ -80,10 +80,10 @@ func (e *Evaluator) SetColumnInfos(cols []*tipb.ColumnInfo) {
 		e.ColIDs[col.GetColumnId()] = i
 	}
 
-	e.fieldTps = make([]*types.FieldType, 0, len(e.ColumnInfos))
+	e.FieldTps = make([]*types.FieldType, 0, len(e.ColumnInfos))
 	for _, col := range e.ColumnInfos {
 		ft := distsql.FieldTypeFromPBColumn(col)
-		e.fieldTps = append(e.fieldTps, ft)
+		e.FieldTps = append(e.FieldTps, ft)
 	}
 }
 
@@ -99,7 +99,7 @@ func (e *Evaluator) SetRowValue(handle int64, row [][]byte, relatedColIDs map[in
 			}
 		} else {
 			data := row[offset]
-			ft := e.fieldTps[offset]
+			ft := e.FieldTps[offset]
 			datum, err := tablecodec.DecodeColumnValue(data, ft)
 			if err != nil {
 				return errors.Trace(err)

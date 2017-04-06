@@ -19,8 +19,10 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/distsql/xeval"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
@@ -248,8 +250,11 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 
 type selectionExec struct {
 	*tipb.Selection
-	eval   *xeval.Evaluator
-	colIDs map[int64]int
+	sc         *variable.StatementContext
+	conditions []expression.Expression
+	colIDs     map[int64]int
+	colTps     []*types.FieldType
+	row        []types.Datum
 
 	src executor
 }
@@ -258,6 +263,24 @@ func (e *selectionExec) SetSrcExec(exec executor) {
 	e.src = exec
 }
 
+// evalBool evaluates expression to a boolean value.
+func evalBool(expr expression.Expression, row []types.Datum, ctx *variable.StatementContext) (bool, error) {
+	data, err := expr.Eval(row)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if data.IsNull() {
+		return false, nil
+	}
+
+	i, err := data.ToBool(ctx)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return i != 0, nil
+}
+
+// One stands for a number 1.
 func (e *selectionExec) Next() (handle int64, value [][]byte, err error) {
 	for {
 		handle, value, err = e.src.Next()
@@ -268,23 +291,24 @@ func (e *selectionExec) Next() (handle int64, value [][]byte, err error) {
 			return 0, nil, nil
 		}
 
-		err = e.eval.SetRowValue(handle, value, e.colIDs)
-		if err != nil {
-			return 0, nil, errors.Trace(err)
+		for _, offset := range e.colIDs {
+			e.row[offset], err = tablecodec.DecodeColumnValue(value[offset], e.colTps[offset])
+			if err != nil {
+				return 0, nil, errors.Trace(err)
+			}
 		}
-		// TODO: Now the conditions length is 1.
-		result, err := e.eval.Eval(e.Conditions[0])
-		if err != nil {
-			return 0, nil, errors.Trace(err)
+		allMatch := true
+		for _, cond := range e.conditions {
+			match, err := evalBool(cond, e.row, e.sc)
+			if err != nil {
+				return 0, nil, errors.Trace(err)
+			}
+			if !match {
+				allMatch = false
+				break
+			}
 		}
-		if result.IsNull() {
-			continue
-		}
-		boolResult, err := result.ToBool(e.eval.StatementCtx)
-		if err != nil {
-			return 0, nil, errors.Trace(err)
-		}
-		if boolResult == 1 {
+		if allMatch {
 			return handle, value, nil
 		}
 	}
@@ -581,4 +605,16 @@ func extractColIDsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector 
 		}
 	}
 	return nil
+}
+
+func convertToExprs(sc *variable.StatementContext, colIDs map[int64]int, pbExprs []*tipb.Expr) ([]expression.Expression, error) {
+	exprs := make([]expression.Expression, 0, len(pbExprs))
+	for _, expr := range pbExprs {
+		e, err := expression.PBToExpr(expr, colIDs, sc)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		exprs = append(exprs, e)
+	}
+	return exprs, nil
 }
