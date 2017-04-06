@@ -307,7 +307,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		flag := stmt.GetResultFields()[0].Column.Flag
 		c.Assert(tp, Equals, ca.tp, Commentf("Tp for %s", ca.expr))
 		c.Assert(chs, Equals, ca.chs, Commentf("Charset for %s", ca.expr))
-		c.Assert(flag ^ uint(ca.flag), Equals, uint(0x0), Commentf("Charset for %s", ca.flag))
+		c.Assert(flag^uint(ca.flag), Equals, uint(0x0), Commentf("Charset for %s", ca.flag))
 	}
 }
 
