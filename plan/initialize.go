@@ -265,3 +265,21 @@ func (p PhysicalUnionScan) init(allocator *idAllocator, ctx context.Context) *Ph
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }
+
+func (p PhysicalIndexLookUpReader) init(allocator *idAllocator, ctx context.Context) *PhysicalIndexLookUpReader {
+	p.basePlan = newBasePlan("IndexLookUp", allocator, ctx, &p)
+	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	return &p
+}
+
+func (p PhysicalTableReader) init(allocator *idAllocator, ctx context.Context) *PhysicalTableReader {
+	p.basePlan = newBasePlan("TableReader", allocator, ctx, &p)
+	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	return &p
+}
+
+func (p PhysicalIndexReader) init(allocator *idAllocator, ctx context.Context) *PhysicalIndexReader {
+	p.basePlan = newBasePlan("IndexReader", allocator, ctx, &p)
+	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	return &p
+}

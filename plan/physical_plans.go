@@ -68,6 +68,52 @@ var (
 	_ PhysicalPlan = &Cache{}
 )
 
+type PhysicalTableReader struct {
+	*basePlan
+	basePhysicalPlan
+
+	copPlan PhysicalPlan
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *PhysicalTableReader) Copy() PhysicalPlan {
+	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
+	return &np
+}
+
+type PhysicalIndexReader struct {
+	*basePlan
+	basePhysicalPlan
+
+	copPlan PhysicalPlan
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *PhysicalIndexReader) Copy() PhysicalPlan {
+	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
+	return &np
+}
+
+type PhysicalIndexLookUpReader struct {
+	*basePlan
+	basePhysicalPlan
+
+	indexPlan PhysicalPlan
+	tablePlan PhysicalPlan
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *PhysicalIndexLookUpReader) Copy() PhysicalPlan {
+	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
+	return &np
+}
+
 // PhysicalIndexScan represents an index scan plan.
 type PhysicalIndexScan struct {
 	physicalTableSource
