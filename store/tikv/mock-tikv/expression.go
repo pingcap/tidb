@@ -1,13 +1,27 @@
+// Copyright 2016 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package mocktikv
 
 import (
+	"time"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
-	"time"
-	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 func pbToExpr(expr *tipb.Expr, colIDs map[int64]int, sc *variable.StatementContext) (expression.Expression, error) {
@@ -25,21 +39,21 @@ func pbToExpr(expr *tipb.Expr, colIDs map[int64]int, sc *variable.StatementConte
 	case tipb.ExprType_Null:
 		return &expression.Constant{}, nil
 	case tipb.ExprType_Int64:
-		return evalInt(expr.Val)
+		return convertInt(expr.Val)
 	case tipb.ExprType_Uint64:
-		return evalUint(expr.Val)
+		return convertUint(expr.Val)
 	case tipb.ExprType_String:
-		return evalString(expr.Val)
+		return convertString(expr.Val)
 	case tipb.ExprType_Bytes:
 		return &expression.Constant{Value: types.NewBytesDatum(expr.Val)}, nil
 	case tipb.ExprType_Float32:
-		return evalFloat(expr.Val, true)
+		return convertFloat(expr.Val, true)
 	case tipb.ExprType_Float64:
-		return evalFloat(expr.Val, false)
+		return convertFloat(expr.Val, false)
 	case tipb.ExprType_MysqlDecimal:
-		return evalDecimal(expr.Val)
+		return convertDecimal(expr.Val)
 	case tipb.ExprType_MysqlDuration:
-		return evalDuration(expr.Val)
+		return convertDuration(expr.Val)
 	}
 	args := make([]expression.Expression, 0, len(expr.Children))
 	for _, child := range expr.Children {
@@ -53,7 +67,7 @@ func pbToExpr(expr *tipb.Expr, colIDs map[int64]int, sc *variable.StatementConte
 	return expression.NewDistSQLFunction(sc, expr.Tp, args)
 }
 
-func evalInt(val []byte) (*expression.Constant, error) {
+func convertInt(val []byte) (*expression.Constant, error) {
 	var d types.Datum
 	_, i, err := codec.DecodeInt(val)
 	if err != nil {
@@ -63,7 +77,7 @@ func evalInt(val []byte) (*expression.Constant, error) {
 	return &expression.Constant{Value: d}, nil
 }
 
-func evalUint(val []byte) (*expression.Constant, error) {
+func convertUint(val []byte) (*expression.Constant, error) {
 	var d types.Datum
 	_, u, err := codec.DecodeUint(val)
 	if err != nil {
@@ -73,13 +87,13 @@ func evalUint(val []byte) (*expression.Constant, error) {
 	return &expression.Constant{Value: d}, nil
 }
 
-func evalString(val []byte) (*expression.Constant, error) {
+func convertString(val []byte) (*expression.Constant, error) {
 	var d types.Datum
 	d.SetBytesAsString(val)
 	return &expression.Constant{Value: d}, nil
 }
 
-func evalFloat(val []byte, f32 bool) (*expression.Constant, error) {
+func convertFloat(val []byte, f32 bool) (*expression.Constant, error) {
 	var d types.Datum
 	_, f, err := codec.DecodeFloat(val)
 	if err != nil {
@@ -93,7 +107,7 @@ func evalFloat(val []byte, f32 bool) (*expression.Constant, error) {
 	return &expression.Constant{Value: d}, nil
 }
 
-func evalDecimal(val []byte) (*expression.Constant, error) {
+func convertDecimal(val []byte) (*expression.Constant, error) {
 	_, dec, err := codec.DecodeDecimal(val)
 	if err != nil {
 		return nil, errors.Errorf("invalid decimal % x", val)
@@ -101,7 +115,7 @@ func evalDecimal(val []byte) (*expression.Constant, error) {
 	return &expression.Constant{Value: dec}, nil
 }
 
-func evalDuration(val []byte) (*expression.Constant, error) {
+func convertDuration(val []byte) (*expression.Constant, error) {
 	var d types.Datum
 	_, i, err := codec.DecodeInt(val)
 	if err != nil {
