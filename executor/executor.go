@@ -441,13 +441,14 @@ func (e *ProjectionExec) Close() error {
 
 // TableDualExec represents a dual table executor.
 type TableDualExec struct {
-	schema   *expression.Schema
-	executed bool
+	schema    *expression.Schema
+	rowCount  int
+	returnCnt int
 }
 
 // Init implements the Executor Init interface.
 func (e *TableDualExec) Init() {
-	e.executed = false
+	e.returnCnt = 0
 }
 
 // Schema implements the Executor Schema interface.
@@ -457,10 +458,10 @@ func (e *TableDualExec) Schema() *expression.Schema {
 
 // Next implements the Executor Next interface.
 func (e *TableDualExec) Next() (*Row, error) {
-	if e.executed {
+	if e.returnCnt >= e.rowCount {
 		return nil, nil
 	}
-	e.executed = true
+	e.returnCnt++
 	return &Row{}, nil
 }
 

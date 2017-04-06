@@ -76,7 +76,6 @@ func attachPlan2Task(p PhysicalPlan, t taskProfile) taskProfile {
 	case *rootTaskProfile:
 		p.SetChildren(v.plan)
 		v.plan = p
-		return nt
 	}
 	return nt
 }
@@ -90,7 +89,9 @@ func (t *copTaskProfile) finishTask() {
 	if t.addPlan2Index {
 		t.finishIndexPlan()
 	}
-	t.cst += float64(t.cnt) * netWorkFactor
+	if t.tablePlan != nil {
+		t.cst += float64(t.cnt) * netWorkFactor
+	}
 }
 
 // rootTaskProfile is the final sink node of a plan graph. It should be a single goroutine on tidb.

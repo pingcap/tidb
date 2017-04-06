@@ -339,6 +339,10 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = types.NewFieldType(mysql.TypeDouble)
 	case "sin":
 		tp = types.NewFieldType(mysql.TypeDouble)
+	case "cos":
+		tp = types.NewFieldType(mysql.TypeDouble)
+	case "tan", "cot":
+		tp = types.NewFieldType(mysql.TypeDouble)
 	case "acos", "asin", "atan":
 		tp = types.NewFieldType(mysql.TypeDouble)
 	case "pow", "power", "rand":
@@ -373,7 +377,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		"replace", "ucase", "upper", "convert", "substring", "elt",
 		"substring_index", "trim", "ltrim", "rtrim", "reverse", "hex", "unhex",
 		"date_format", "rpad", "lpad", "char_func", "conv", "make_set", "oct", "uuid",
-		"insert_func", "bin", "quote", "format":
+		"insert_func", "bin", "quote", "format", "from_base64":
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
 	case "strcmp", "isnull", "bit_length", "char_length", "character_length", "crc32", "timestampdiff",
@@ -421,6 +425,9 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		}
 	case ast.AnyValue:
 		tp = x.Args[0].GetType()
+	case ast.InetAton:
+		tp = types.NewFieldType(mysql.TypeLonglong)
+		tp.Flag |= mysql.UnsignedFlag
 	default:
 		tp = types.NewFieldType(mysql.TypeUnspecified)
 	}

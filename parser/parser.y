@@ -484,6 +484,7 @@ import (
 	sqlNoCache	"SQL_NO_CACHE"
 	start		"START"
 	status		"STATUS"
+	super		"SUPER"
 	some 		"SOME"
 	global		"GLOBAL"
 	tables		"TABLES"
@@ -797,7 +798,8 @@ import (
 	RegexpSym		"REGEXP or RLIKE"
 	IntoOpt			"INTO or EmptyString"
 	ValueSym		"Value or Values"
-	TimeUnit		"Time unit"
+	TimeUnit		"Time unit for 'DATE_ADD', 'DATE_SUB', 'ADDDATE', 'SUBDATE', 'EXTRACT'"
+	TimestampUnit		"Time unit for 'TIMESTAMPADD' and 'TIMESTAMPDIFF'"
 	DeallocateSym		"Deallocate or drop"
 	OuterOpt		"optional OUTER clause"
 	CrossOpt		"Cross join option"
@@ -2255,7 +2257,7 @@ UnReservedKeyword:
 | "MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION"
 | "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
-| "TIMESTAMPDIFF" | "NONE"
+| "TIMESTAMPDIFF" | "NONE" | "SUPER"
 
 ReservedKeyword:
 "ADD" | "ALL" | "ALTER" | "ANALYZE" | "AND" | "AS" | "ASC" | "BETWEEN" | "BIGINT"
@@ -3460,7 +3462,7 @@ FunctionCallNonKeyword:
 			Args: []ast.ExprNode{$3.(ast.ExprNode)},
 		}
 	}
-|	"TIMESTAMPADD" '(' TimeUnit ',' Expression ',' Expression ')'
+|	"TIMESTAMPADD" '(' TimestampUnit ',' Expression ',' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
@@ -3468,7 +3470,7 @@ FunctionCallNonKeyword:
 
 		}
 	}
-|	"TIMESTAMPDIFF" '(' TimeUnit ',' Expression ',' Expression ')'
+|	"TIMESTAMPDIFF" '(' TimestampUnit ',' Expression ',' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
@@ -4064,6 +4066,44 @@ TimeUnit:
 		$$ = strings.ToUpper($1)
 	}
 |	"YEAR_MONTH"
+	{
+		$$ = strings.ToUpper($1)
+	}
+
+TimestampUnit:
+	"MICROSECOND"
+	{
+		$$ = strings.ToUpper($1)
+	}
+|	"SECOND"
+	{
+		$$ = strings.ToUpper($1)
+	}
+|	"MINUTE"
+	{
+		$$ = strings.ToUpper($1)
+	}
+|	"HOUR"
+	{
+		$$ = strings.ToUpper($1)
+	}
+|	"DAY"
+	{
+		$$ = strings.ToUpper($1)
+	}
+|	"WEEK"
+	{
+		$$ = strings.ToUpper($1)
+	}
+|	"MONTH"
+	{
+		$$ = strings.ToUpper($1)
+	}
+|	"QUARTER"
+	{
+		$$ = strings.ToUpper($1)
+	}
+|	"YEAR"
 	{
 		$$ = strings.ToUpper($1)
 	}
@@ -6348,6 +6388,10 @@ PrivType:
 |	"SELECT"
 	{
 		$$ = mysql.SelectPriv
+	}
+|	"SUPER"
+	{
+		$$ = mysql.SuperPriv
 	}
 |	"SHOW" "DATABASES"
 	{
