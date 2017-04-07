@@ -276,9 +276,11 @@ func (s *testSuite) TestDAG(c *C) {
 }
 
 func (s *testSuite) TestSelectOrderBy(c *C) {
+	mocktikv.MockDAGRequest = true
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
+		mocktikv.MockDAGRequest = false
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -290,6 +292,9 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	rowStr := fmt.Sprintf("%v %v", 1, []byte("hello"))
 	r.Check(testkit.Rows(rowStr))
 	tk.MustExec("commit")
+
+	r = tk.MustQuery("select id from select_order_test order by id desc limit 1 ")
+	r.Check(testkit.Rows("2"))
 
 	r = tk.MustQuery("select id from select_order_test order by id + 1 desc limit 1 ")
 	r.Check(testkit.Rows("2"))
