@@ -465,7 +465,6 @@ const maxTxnTimeUse = 590000
 
 // execute executes the two-phase commit protocol.
 func (c *twoPhaseCommitter) execute() error {
-	ctx := goctx.Background()
 	defer func() {
 		// Always clean up all written keys if the txn does not commit.
 		c.mu.RLock()
@@ -474,7 +473,7 @@ func (c *twoPhaseCommitter) execute() error {
 		c.mu.RUnlock()
 		if !committed {
 			go func() {
-				err := c.cleanupKeys(NewBackoffer(cleanupMaxBackoff, ctx), writtenKeys)
+				err := c.cleanupKeys(NewBackoffer(cleanupMaxBackoff, goctx.Background()), writtenKeys)
 				if err != nil {
 					log.Infof("2PC cleanup err: %v, tid: %d", err, c.startTS)
 				} else {
@@ -484,6 +483,7 @@ func (c *twoPhaseCommitter) execute() error {
 		}
 	}()
 
+	ctx := goctx.Background()
 	binlogChan := c.prewriteBinlog()
 	err := c.prewriteKeys(NewBackoffer(prewriteMaxBackoff, ctx), c.keys)
 	if binlogChan != nil {
