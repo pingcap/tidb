@@ -435,11 +435,12 @@ func (c *RPCClient) SendCopReq(ctx goctx.Context, addr string, req *coprocessor.
 	return handler.handleCopRequest(req)
 }
 
-// extractExecutors is used for testing.
+// extractExecutors extracts executors form select request.
+// It's removed when select request is replaced with DAG request.
 func extractExecutors(sel *tipb.SelectRequest) []*tipb.Executor {
 	var executors []*tipb.Executor
 	var desc bool
-	if sel.OrderBy != nil {
+	if len(sel.OrderBy) > 0 && sel.OrderBy[0].Expr == nil {
 		desc = sel.OrderBy[0].Desc
 	}
 	var exec *tipb.Executor
