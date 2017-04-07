@@ -141,9 +141,16 @@ func (t *rootTaskProfile) cost() float64 {
 	return t.cst
 }
 
-func (limit *Limit) attach2TaskProfile(profiles ...taskProfile) taskProfile {
-	profile := attachPlan2Task(limit.Copy(), profiles[0].copy())
-	profile.setCount(limit.Count)
+func (p *Limit) attach2TaskProfile(profiles ...taskProfile) taskProfile {
+	profile := profiles[0].copy()
+	if cop, ok := profile.(*copTaskProfile); ok {
+		pushedDownLimit := Limit{Count: p.Offset + p.Count}.init(p.allocator, p.ctx)
+		cop = attachPlan2Task(pushedDownLimit, cop).(*copTaskProfile)
+		cop.setCount(pushedDownLimit.Count)
+		profile = cop.finishTask(p.ctx, p.allocator)
+	}
+	profile = attachPlan2Task(p.Copy(), profile)
+	profile.setCount(p.Count)
 	return profile
 }
 

@@ -131,3 +131,30 @@ func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) 
 	task = prop.enforceProperty(task, p.ctx, p.allocator)
 	return task, p.storeTaskProfile(prop, task)
 }
+
+func (p *Limit) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) {
+	task, err := p.getTaskProfile(prop)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if task != nil {
+		return task, nil
+	}
+	// enforce branch
+	task, err = p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	task = p.attach2TaskProfile(task)
+	task = prop.enforceProperty(task, p.ctx, p.allocator)
+	if !prop.isEmpty() {
+		orderedTask, err := p.children[0].(LogicalPlan).convert2NewPhysicalPlan(prop)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if orderedTask.cost() < task.cost() {
+			task = orderedTask
+		}
+	}
+	return task, p.storeTaskProfile(prop, task)
+}
