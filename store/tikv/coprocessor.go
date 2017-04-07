@@ -344,13 +344,15 @@ func (it *copIterator) run(ctx goctx.Context) {
 	it.wg.Add(it.concurrency)
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
-		go it.work(ctx, it.taskCh)
+		childCtx, _ := goctx.WithCancel(ctx)
+		go it.work(childCtx, it.taskCh)
 	}
 
+	childCtx, _ := goctx.WithCancel(ctx)
 	go func() {
 		// Send tasks to feed the worker goroutines.
 		for _, t := range it.tasks {
-			finished, canceled := it.sendToTaskCh(ctx, t)
+			finished, canceled := it.sendToTaskCh(childCtx, t)
 			if finished || canceled {
 				break
 			}
