@@ -18,11 +18,11 @@ import (
 	"github.com/pingcap/tidb/expression"
 )
 
-// pushDownTopNSolver pushes down the topN or limit. In future we will remove the limit from `requiredProperty` in CBO phase.
-type pushDownTopNSolver struct {
+// pushDownTopNOptimizer pushes down the topN or limit. In the future we will remove the limit from `requiredProperty` in CBO phase.
+type pushDownTopNOptimizer struct {
 }
 
-func (s *pushDownTopNSolver) optimize(p LogicalPlan, ctx context.Context, allocator *idAllocator) (LogicalPlan, error) {
+func (s *pushDownTopNOptimizer) optimize(p LogicalPlan, ctx context.Context, allocator *idAllocator) (LogicalPlan, error) {
 	return p.pushDownTopN(Sort{}.init(allocator, ctx)), nil
 }
 

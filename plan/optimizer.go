@@ -42,7 +42,7 @@ var optRuleList = []logicalOptRule{
 	&decorrelateSolver{},
 	&ppdSolver{},
 	&aggregationOptimizer{},
-	&pushDownTopNSolver{},
+	&pushDownTopNOptimizer{},
 }
 
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
