@@ -213,7 +213,59 @@ type builtinInetAtonSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet-aton
 func (b *builtinInetAtonSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("INET_ATON")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	arg := args[0]
+	if arg.IsNull() {
+		return d, nil
+	}
+	s, err := arg.ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	// ip address should not end with '.'.
+	if len(s) == 0 || s[len(s)-1] == '.' {
+		return d, nil
+	}
+
+	var (
+		byteResult, result uint64
+		dotCount           int
+	)
+	for _, c := range s {
+		if c >= '0' && c <= '9' {
+			digit := uint64(c - '0')
+			byteResult = byteResult*10 + digit
+			if byteResult > 255 {
+				return d, nil
+			}
+		} else if c == '.' {
+			dotCount++
+			if dotCount > 3 {
+				return d, nil
+			}
+			result = (result << 8) + byteResult
+			byteResult = 0
+		} else {
+			return d, nil
+		}
+	}
+	// 127 		-> 0.0.0.127
+	// 127.255 	-> 127.0.0.255
+	// 127.256	-> NULL
+	// 127.2.1	-> 127.2.0.1
+	switch dotCount {
+	case 1:
+		result <<= 8
+		fallthrough
+	case 2:
+		result <<= 8
+	}
+	d.SetUint64((result << 8) + byteResult)
+	return d, nil
 }
 
 type inetNtoaFunctionClass struct {

@@ -587,11 +587,11 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "do sleep(5)",
-			plan: "*plan.TableDual->Projection",
+			plan: "Dual->Projection",
 		},
 		{
 			sql:  "select substr(\"abc\", 1)",
-			plan: "*plan.TableDual->Projection",
+			plan: "Dual->Projection",
 		},
 		{
 			sql:  "analyze table t, t",
@@ -1137,11 +1137,9 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 }
 
 func (s *testPlanSuite) TestAllocID(c *C) {
-	pA := &DataSource{baseLogicalPlan: newBaseLogicalPlan(TypeTableScan, new(idAllocator))}
-	pB := &DataSource{baseLogicalPlan: newBaseLogicalPlan(TypeTableScan, new(idAllocator))}
 	ctx := mockContext()
-	pA.initIDAndContext(ctx)
-	pB.initIDAndContext(ctx)
+	pA := DataSource{}.init(new(idAllocator), ctx)
+	pB := DataSource{}.init(new(idAllocator), ctx)
 	c.Assert(pA.id, Equals, pB.id)
 }
 
@@ -1552,15 +1550,13 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: `revoke all privileges on *.* from 'test'@'%'`,
 			ans: []visitInfo{
-				// TODO: This should be SUPER privilege.
-				{mysql.CreateUserPriv, "", "", ""},
+				{mysql.SuperPriv, "", "", ""},
 			},
 		},
 		{
 			sql: `set password for 'root'@'%' = 'xxxxx'`,
 			ans: []visitInfo{
-				// TODO: This should be SUPER privilege.
-				{mysql.CreateUserPriv, "", "", ""},
+				{mysql.SuperPriv, "", "", ""},
 			},
 		},
 	}
