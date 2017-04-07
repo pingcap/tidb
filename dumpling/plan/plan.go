@@ -25,6 +25,9 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+// UseDAGPlanBuilder means we should use new planner and dag pb.
+var UseDAGPlanBuilder = false
+
 // Plan is the description of an execution flow.
 // It is created from ast.Node first, then optimized by the optimizer,
 // finally used by the executor to create a Cursor which executes the statement.
@@ -128,6 +131,9 @@ type LogicalPlan interface {
 
 	// buildKeyInfo will collect the information of unique keys into schema.
 	buildKeyInfo()
+
+	// pushDownTopN will push down the topN or limit operator during logical optimization.
+	pushDownTopN(topN *Sort) LogicalPlan
 }
 
 // PhysicalPlan is a tree of the physical operators.
