@@ -602,6 +602,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		// for binary operator
 		{"SELECT binary 'a';", true},
 
+		// for bit_count
+		{`SELECT BIT_COUNT(1);`, true},
+
 		// select time
 		{"select current_timestamp", true},
 		{"select current_timestamp()", true},

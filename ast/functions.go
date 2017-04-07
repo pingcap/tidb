@@ -63,6 +63,7 @@ const (
 	SetVar     = "setvar"
 	GetVar     = "getvar"
 	Values     = "values"
+	BitCount   = "bit_count"
 
 	// common functions
 	Coalesce = "coalesce"

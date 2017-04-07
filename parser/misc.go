@@ -545,6 +545,7 @@ var tokenMap = map[string]int{
 	"PARTITION":                  partition,
 	"PARTITIONS":                 partitions,
 	"RPAD":                       rpad,
+	"BIT_COUNT":                  bitCount,
 	"BIT_LENGTH":                 bitLength,
 	"CHAR_FUNC":                  charFunc,
 	"CHAR_LENGTH":                charLength,
