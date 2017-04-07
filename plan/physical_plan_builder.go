@@ -37,7 +37,7 @@ const (
 	joinFactor      = 0.3
 )
 
-const OuterRowCountOfINLJ = 2000
+const outerRowCountOfINLJ = 5000
 
 // JoinConcurrency means the number of goroutines that participate in joining.
 var JoinConcurrency = 5
@@ -628,7 +628,7 @@ func (p *Join) convert2IndexNestedLoopJoinLeft(prop *requiredProperty, innerJoin
 	if lInfo.p == nil {
 		return nil, nil
 	}
-	if !forced && (!lInfo.countReliable || lInfo.count > OuterRowCountOfINLJ) {
+	if !forced && (!lInfo.countReliable || lInfo.count > outerRowCountOfINLJ) {
 		return nil, nil
 	}
 	selection, corCols := p.buildSelectionWithConds(true)
@@ -696,7 +696,7 @@ func (p *Join) convert2IndexNestedLoopJoinRight(prop *requiredProperty, innerJoi
 	if rInfo.p == nil {
 		return nil, nil
 	}
-	if !forced && (!rInfo.countReliable || rInfo.count > OuterRowCountOfINLJ) {
+	if !forced && (!rInfo.countReliable || rInfo.count > outerRowCountOfINLJ) {
 		return nil, nil
 	}
 	selection, corCols := p.buildSelectionWithConds(false)
@@ -1141,7 +1141,6 @@ func (p *Aggregation) convert2PhysicalPlan(prop *requiredProperty) (*physicalPla
 	if planInfo == nil || streamInfo.cost < planInfo.cost {
 		planInfo = streamInfo
 	}
-	planInfo.countReliable = false
 	planInfo = enforceProperty(limitProperty(limit), planInfo)
 	err = p.storePlanInfo(prop, planInfo)
 	return planInfo, errors.Trace(err)

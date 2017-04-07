@@ -32,9 +32,9 @@ func (ts *PhysicalTableScan) matchProperty(prop *requiredProperty, infos ...*phy
 		newTS.addLimit(prop.limit)
 		p := newTS.tryToAddUnionScan(newTS)
 		return enforceProperty(prop, &physicalPlanInfo{
-			p: p,
-			cost: cost,
-			count: infos[0].count,
+			p:             p,
+			cost:          cost,
+			count:         infos[0].count,
 			countReliable: infos[0].countReliable})
 	}
 	if len(prop.props) == 1 && ts.pkCol != nil && ts.pkCol.Equal(prop.props[0].col, ts.ctx) {
@@ -48,9 +48,9 @@ func (ts *PhysicalTableScan) matchProperty(prop *requiredProperty, infos ...*phy
 		}
 		p := sortedTS.tryToAddUnionScan(sortedTS)
 		return enforceProperty(&requiredProperty{limit: prop.limit}, &physicalPlanInfo{
-			p:     p,
-			cost:  cost,
-			count: infos[0].count,
+			p:             p,
+			cost:          cost,
+			count:         infos[0].count,
 			countReliable: infos[0].countReliable})
 	}
 	if prop.limit != nil {
@@ -64,9 +64,9 @@ func (ts *PhysicalTableScan) matchProperty(prop *requiredProperty, infos ...*phy
 		sortedTS.KeepOrder = true
 		p := sortedTS.tryToAddUnionScan(sortedTS)
 		return enforceProperty(prop, &physicalPlanInfo{
-			p:     p,
-			cost:  cost,
-			count: infos[0].count,
+			p:             p,
+			cost:          cost,
+			count:         infos[0].count,
 			countReliable: infos[0].countReliable})
 	}
 	return &physicalPlanInfo{p: nil, cost: math.MaxFloat64, count: infos[0].count}
