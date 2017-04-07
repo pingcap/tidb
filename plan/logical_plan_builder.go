@@ -212,7 +212,6 @@ func extractTableAlias(p LogicalPlan) *model.CIStr {
 
 func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	b.optFlag = b.optFlag | flagPredicatePushDown
-	b.optFlag = b.optFlag | flagBuildKeyInfo
 	if join.Right == nil {
 		return b.buildResultSetNode(join.Left)
 	}

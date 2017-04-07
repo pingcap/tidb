@@ -102,28 +102,10 @@ func (s *Schema) RetrieveColumn(col *Column) *Column {
 	return nil
 }
 
-// IsUniqueKey checks if these columns is a unique key.
-func (s *Schema) IsUniqueKey(cols ...*Column) bool {
+// IsUniqueKey checks if this column is a unique key.
+func (s *Schema) IsUniqueKey(col *Column) bool {
 	for _, key := range s.Keys {
-		if len(key) != len(cols) {
-			continue
-		}
-		contained := make([]bool, len(cols))
-		for id, col := range cols {
-			for _, keyCol := range key {
-				if col.Equal(keyCol, nil) {
-					contained[id] = true
-				}
-			}
-		}
-		allContained := true
-		for _, ok := range contained {
-			if !ok {
-				allContained = false
-				break
-			}
-		}
-		if allContained {
+		if len(key) == 1 && key[0].Equal(col, nil) {
 			return true
 		}
 	}

@@ -18,7 +18,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -37,6 +36,8 @@ const (
 	aggFactor       = 0.1
 	joinFactor      = 0.3
 )
+
+const OuterRowCountOfINLJ = 2000
 
 // JoinConcurrency means the number of goroutines that participate in joining.
 var JoinConcurrency = 5
@@ -597,7 +598,7 @@ func (p *Join) buildSelectionWithConds(leftAsOuter bool) (*Selection, []*express
 	return selection, corCols
 }
 
-func (p *Join) convert2IndexNestedLoopJoinLeft(prop *requiredProperty, innerJoin bool) (*physicalPlanInfo, error) {
+func (p *Join) convert2IndexNestedLoopJoinLeft(prop *requiredProperty, innerJoin bool, forced bool) (*physicalPlanInfo, error) {
 	lChild := p.children[0].(LogicalPlan)
 	if _, ok := p.children[1].(*DataSource); !ok {
 		return nil, nil
@@ -625,6 +626,9 @@ func (p *Join) convert2IndexNestedLoopJoinLeft(prop *requiredProperty, innerJoin
 		return nil, errors.Trace(err)
 	}
 	if lInfo.p == nil {
+		return nil, nil
+	}
+	if !forced && (!lInfo.countReliable || lInfo.count > OuterRowCountOfINLJ) {
 		return nil, nil
 	}
 	selection, corCols := p.buildSelectionWithConds(true)
@@ -662,7 +666,7 @@ func (p *Join) convert2IndexNestedLoopJoinLeft(prop *requiredProperty, innerJoin
 	return resultInfo, nil
 }
 
-func (p *Join) convert2IndexNestedLoopJoinRight(prop *requiredProperty, innerJoin bool) (*physicalPlanInfo, error) {
+func (p *Join) convert2IndexNestedLoopJoinRight(prop *requiredProperty, innerJoin bool, forced bool) (*physicalPlanInfo, error) {
 	rChild := p.children[1].(LogicalPlan)
 	if _, ok := p.children[0].(*DataSource); !ok {
 		return nil, nil
@@ -690,6 +694,9 @@ func (p *Join) convert2IndexNestedLoopJoinRight(prop *requiredProperty, innerJoi
 		return nil, errors.Trace(err)
 	}
 	if rInfo.p == nil {
+		return nil, nil
+	}
+	if !forced && (!rInfo.countReliable || rInfo.count > OuterRowCountOfINLJ) {
 		return nil, nil
 	}
 	selection, corCols := p.buildSelectionWithConds(false)
@@ -920,15 +927,14 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 				break
 			}
 		}
-		if (p.preferINLJ&preferLeftAsOuter) > 0 && p.hasEqualConds() {
-			nljInfo, err := p.convert2IndexNestedLoopJoinLeft(prop, false)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if nljInfo != nil {
-				info = nljInfo
-				break
-			}
+		forcedINLJ := (p.preferINLJ&preferLeftAsOuter) > 0 && p.hasEqualConds()
+		nljInfo, err := p.convert2IndexNestedLoopJoinLeft(prop, false, forcedINLJ)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if nljInfo != nil {
+			info = nljInfo
+			break
 		}
 		// Otherwise fall into hash join
 		info, err = p.convert2PhysicalPlanLeft(prop, false)
@@ -945,15 +951,14 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 				break
 			}
 		}
-		if (p.preferINLJ&preferRightAsOuter) > 0 && p.hasEqualConds() {
-			nljInfo, err := p.convert2IndexNestedLoopJoinRight(prop, false)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if nljInfo != nil {
-				info = nljInfo
-				break
-			}
+		forcedINLJ := (p.preferINLJ&preferRightAsOuter) > 0 && p.hasEqualConds()
+		nljInfo, err := p.convert2IndexNestedLoopJoinRight(prop, false, forcedINLJ)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if nljInfo != nil {
+			info = nljInfo
+			break
 		}
 		info, err = p.convert2PhysicalPlanRight(prop, false)
 		if err != nil {
@@ -968,28 +973,24 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 			}
 			break
 		}
-		if p.preferINLJ > 0 && p.hasEqualConds() {
-			if _, ok := p.children[1].(*DataSource); ok && (p.preferINLJ&preferLeftAsOuter) > 0 {
-				lNLJInfo, err := p.convert2IndexNestedLoopJoinLeft(prop, true)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				if lNLJInfo != nil {
-					info = lNLJInfo
-				}
-			}
-			if _, ok := p.children[0].(*DataSource); ok && (p.preferINLJ&preferRightAsOuter) > 0 {
-				rNLJInfo, err := p.convert2IndexNestedLoopJoinRight(prop, true)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				if info == nil || (rNLJInfo != nil && info.cost > rNLJInfo.cost) {
-					info = rNLJInfo
-				}
-			}
-			if info != nil {
-				break
-			}
+		lForced := (p.preferINLJ&preferLeftAsOuter) > 0 && p.hasEqualConds()
+		rForced := (p.preferINLJ&preferRightAsOuter) > 0 && p.hasEqualConds()
+		lNLJInfo, err := p.convert2IndexNestedLoopJoinLeft(prop, true, lForced)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		rNLJInfo, err := p.convert2IndexNestedLoopJoinRight(prop, true, rForced)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if lNLJInfo != nil {
+			info = lNLJInfo
+		}
+		if info == nil || (rNLJInfo != nil && info.cost > rNLJInfo.cost) {
+			info = rNLJInfo
+		}
+		if info != nil {
+			break
 		}
 		// fall back to hash join
 		lInfo, err := p.convert2PhysicalPlanLeft(prop, true)
@@ -1260,39 +1261,6 @@ func (p *Selection) makeScanController() *physicalPlanInfo {
 	return info
 }
 
-func isUniqueInCond(cond expression.Expression, schema *expression.Schema) bool {
-	if sf, ok := cond.(*expression.ScalarFunction); ok {
-		if sf.FuncName.L != ast.In {
-			return false
-		}
-		switch x := sf.GetArgs()[0].(type) {
-		// case like a in (1, 2, 3)
-		case *expression.Column:
-			if schema.IsUniqueKey(x) {
-				return true
-			}
-		// case like (a, b) in ((1, 2))
-		case *expression.ScalarFunction:
-			if x.FuncName.L == ast.RowFunc {
-				cols := make([]*expression.Column, 0, len(x.GetArgs()))
-				allIsCol := true
-				for _, arg := range x.GetArgs() {
-					if col, ok := arg.(*expression.Column); ok {
-						cols = append(cols, col)
-					} else {
-						allIsCol = false
-						break
-					}
-				}
-				if allIsCol && schema.IsUniqueKey(cols...) {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
 // convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
 func (p *Selection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	info, err := p.getPlanInfo(prop)
@@ -1328,14 +1296,13 @@ func (p *Selection) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanI
 	return info, nil
 }
 
-func (p *Selection) appendSelToInfo(info *physicalPlanInfo, isReliable bool) *physicalPlanInfo {
+func (p *Selection) appendSelToInfo(info *physicalPlanInfo) *physicalPlanInfo {
 	np := p.Copy().(*Selection)
 	np.SetChildren(info.p)
 	return &physicalPlanInfo{
 		p:             np,
 		cost:          info.cost,
-		count:         uint64(float64(info.count) * selectionFactor),
-		countReliable: isReliable,
+		countReliable: info.countReliable,
 	}
 }
 
@@ -1345,10 +1312,6 @@ func (p *Selection) convert2PhysicalPlanPushOrder(prop *requiredProperty) (*phys
 	info, err := child.convert2PhysicalPlan(removeLimit(prop))
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-	var isReliable bool
-	for _, cond := range p.Conditions {
-		isReliable = isReliable || isUniqueInCond(cond, p.schema)
 	}
 	if limit != nil && info.p != nil {
 		if np, ok := info.p.(physicalDistSQLPlan); ok {
@@ -1360,17 +1323,17 @@ func (p *Selection) convert2PhysicalPlanPushOrder(prop *requiredProperty) (*phys
 				info = enforceProperty(&requiredProperty{limit: limit}, info)
 			}
 		} else {
-			info = enforceProperty(&requiredProperty{limit: limit}, p.appendSelToInfo(info, isReliable))
+			info = enforceProperty(&requiredProperty{limit: limit}, p.appendSelToInfo(info))
 		}
 	} else if ds, ok := p.children[0].(*DataSource); !ok {
 		// TODO: It's tooooooo tricky here, we will remove all these logic after implementing DAG push down.
-		info = p.appendSelToInfo(info, isReliable)
+		info = p.appendSelToInfo(info)
 	} else {
 		client := p.ctx.GetClient()
 		memDB := infoschema.IsMemoryDB(ds.DBName.L)
 		isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeSelect, 0)
 		if !isDistReq {
-			info = p.appendSelToInfo(info, isReliable)
+			info = p.appendSelToInfo(info)
 		}
 	}
 	return info, nil
@@ -1385,11 +1348,10 @@ func (p *Selection) convert2PhysicalPlanEnforce(prop *requiredProperty) (*physic
 		return nil, errors.Trace(err)
 	}
 	if prop.limit != nil && len(prop.props) > 0 {
-		// Since this branch has limit, so cost is always reliable.
 		if t, ok := info.p.(physicalDistSQLPlan); ok {
 			t.addTopN(p.ctx, prop)
 		} else if _, ok := info.p.(*Selection); !ok {
-			info = p.appendSelToInfo(info, true)
+			info = p.appendSelToInfo(info)
 		}
 		info = enforceProperty(prop, info)
 	} else if len(prop.props) != 0 {
