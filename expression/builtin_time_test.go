@@ -1173,7 +1173,7 @@ func (s *testEvaluatorSuite) TestToSeconds(c *C) {
 	}
 
 	fc := funcs[ast.ToSeconds]
-  	for _, test := range tests {
+	for _, test := range tests {
 		t := []types.Datum{types.NewDatum(test.param)}
 		f, err := fc.getFunction(datumsToConstants(t), s.ctx)
 		c.Assert(err, IsNil)
