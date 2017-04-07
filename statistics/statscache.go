@@ -80,7 +80,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 	return nil
 }
 
-// GetStatisticsTableCache retrieves the statistics table from cache, and the cache will be updated by a goroutine.
+// GetStatsTable retrieves the statistics table from cache, and the cache will be updated by a goroutine.
 func (h *Handle) GetStatsTable(tblInfo *model.TableInfo) *Table {
 	h.m.RLock()
 	defer h.m.RUnlock()
@@ -97,7 +97,7 @@ func (h *Handle) GetStatsTable(tblInfo *model.TableInfo) *Table {
 	return PseudoTable(tblInfo)
 }
 
-// SetStatisticsTableCache sets the statistics table cache.
+// SetStatsTable sets the statistics table cache.
 func (h *Handle) SetStatsTable(id int64, statsTbl *Table, version uint64) {
 	h.m.Lock()
 	defer h.m.Unlock()
