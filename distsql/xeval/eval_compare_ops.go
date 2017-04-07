@@ -31,7 +31,7 @@ func (e *Evaluator) evalTwoBoolChildren(expr *tipb.Expr) (leftBool, rightBool in
 	if left.IsNull() {
 		leftBool = compareResultNull
 	} else {
-		leftBool, err = left.ToBool(e.sc)
+		leftBool, err = left.ToBool(e.StatementCtx)
 		if err != nil {
 			return 0, 0, errors.Trace(err)
 		}
@@ -39,7 +39,7 @@ func (e *Evaluator) evalTwoBoolChildren(expr *tipb.Expr) (leftBool, rightBool in
 	if right.IsNull() {
 		rightBool = compareResultNull
 	} else {
-		rightBool, err = right.ToBool(e.sc)
+		rightBool, err = right.ToBool(e.StatementCtx)
 		if err != nil {
 			return 0, 0, errors.Trace(err)
 		}
@@ -90,7 +90,7 @@ func (e *Evaluator) compareTwoChildren(expr *tipb.Expr) (int, error) {
 	if left.IsNull() || right.IsNull() {
 		return compareResultNull, nil
 	}
-	return left.CompareDatum(e.sc, right)
+	return left.CompareDatum(e.StatementCtx, right)
 }
 
 func (e *Evaluator) evalLT(cmp int) (types.Datum, error) {
@@ -140,7 +140,7 @@ func (e *Evaluator) evalNullEQ(expr *tipb.Expr) (types.Datum, error) {
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	cmp, err := left.CompareDatum(e.sc, right)
+	cmp, err := left.CompareDatum(e.StatementCtx, right)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
@@ -267,7 +267,7 @@ func (e *Evaluator) checkIn(target types.Datum, list []types.Datum) (bool, error
 	var outerErr error
 	n := sort.Search(len(list), func(i int) bool {
 		val := list[i]
-		cmp, err := val.CompareDatum(e.sc, target)
+		cmp, err := val.CompareDatum(e.StatementCtx, target)
 		if err != nil {
 			outerErr = errors.Trace(err)
 			return false
@@ -280,7 +280,7 @@ func (e *Evaluator) checkIn(target types.Datum, list []types.Datum) (bool, error
 	if n < 0 || n >= len(list) {
 		return false, nil
 	}
-	cmp, err := list[n].CompareDatum(e.sc, target)
+	cmp, err := list[n].CompareDatum(e.StatementCtx, target)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
