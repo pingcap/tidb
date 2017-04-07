@@ -249,12 +249,11 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 }
 
 type selectionExec struct {
-	*tipb.Selection
 	sc         *variable.StatementContext
 	conditions []expression.Expression
 	colIDs     map[int64]int
-	colTps     []*types.FieldType
 	row        []types.Datum
+	evalCtx    *evalContext
 
 	src executor
 }
@@ -291,11 +290,9 @@ func (e *selectionExec) Next() (handle int64, value [][]byte, err error) {
 			return 0, nil, nil
 		}
 
-		for _, offset := range e.colIDs {
-			e.row[offset], err = tablecodec.DecodeColumnValue(value[offset], e.colTps[offset])
-			if err != nil {
-				return 0, nil, errors.Trace(err)
-			}
+		err = e.evalCtx.decodeColumnVals(e.colIDs, handle, value, e.row)
+		if err != nil {
+			return 0, nil, errors.Trace(err)
 		}
 		allMatch := true
 		for _, cond := range e.conditions {
@@ -422,12 +419,13 @@ func (e *aggregateExec) aggregate(handle int64, row [][]byte) error {
 }
 
 type topNExec struct {
-	*tipb.TopN
-	eval     *xeval.Evaluator
-	heap     *topnHeap
-	colIDs   map[int64]int
-	cursor   int
-	executed bool
+	heap       *topnHeap
+	evalCtx    *evalContext
+	colIDs     map[int64]int
+	conditions []expression.Expression
+	row        []types.Datum
+	cursor     int
+	executed   bool
 
 	src executor
 }
@@ -477,23 +475,24 @@ func (e *topNExec) Next() (handle int64, value [][]byte, err error) {
 
 // evalTopN evaluates the top n elements from the data. The input receives a record including its handle and data.
 // And this function will check if this record can replace one of the old records.
-func (e *topNExec) evalTopN(handle int64, row [][]byte) error {
-	err := e.eval.SetRowValue(handle, row, e.colIDs)
+func (e *topNExec) evalTopN(handle int64, value [][]byte) error {
+	newRow := &sortRow{
+		meta: tipb.RowMeta{Handle: handle},
+		key:  make([]types.Datum, len(value)),
+	}
+	err := e.evalCtx.decodeColumnVals(e.colIDs, handle, value, e.row)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	newRow := &sortRow{
-		meta: tipb.RowMeta{Handle: handle},
-	}
-	for _, item := range e.heap.orderByItems {
-		result, err := e.eval.Eval(item.Expr)
+	for i, expr := range e.conditions {
+		newRow.key[i], err = expr.Eval(e.row)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		newRow.key = append(newRow.key, result)
 	}
+
 	if e.heap.tryToAddRow(newRow) {
-		for _, val := range row {
+		for _, val := range value {
 			newRow.data = append(newRow.data, val...)
 			newRow.meta.Length += int64(len(val))
 		}
@@ -502,7 +501,7 @@ func (e *topNExec) evalTopN(handle int64, row [][]byte) error {
 }
 
 type limitExec struct {
-	*tipb.Limit
+	limit  int64
 	cursor int64
 
 	src executor
@@ -513,7 +512,7 @@ func (e *limitExec) SetSrcExec(src executor) {
 }
 
 func (e *limitExec) Next() (handle int64, value [][]byte, err error) {
-	if e.cursor >= e.GetLimit() {
+	if e.cursor >= e.limit {
 		return 0, nil, nil
 	}
 
