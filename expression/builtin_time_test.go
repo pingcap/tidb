@@ -1159,6 +1159,46 @@ func (s *testEvaluatorSuite) TestGetFormat(c *C) {
 		c.Assert(result, Equals, test.expect)
 	}
 }
+
+func (s *testEvaluatorSuite) TestToDays(c *C) {
+	tests := []struct {
+		param  interface{}
+		expect int64
+	}{
+		{950501, 728779},
+		{"2007-10-07", 733321},
+		{"2008-10-07", 733687},
+		{"08-10-07", 733687},
+		{"0000-01-01", 1},
+		{"2007-10-07 00:00:59", 733321},
+	}
+
+	fc := funcs[ast.ToDays]
+	for _, test := range tests {
+		t := []types.Datum{types.NewDatum(test.param)}
+		f, err := fc.getFunction(datumsToConstants(t), s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(d.GetInt64(), Equals, test.expect)
+	}
+
+	testsNull := []interface{}{
+		"0000-00-00",
+		"1992-13-00",
+		"2007-10-07 23:59:61",
+		123456789}
+
+	for _, i := range testsNull {
+		t := []types.Datum{types.NewDatum(i)}
+		f, err := fc.getFunction(datumsToConstants(t), s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(d.IsNull(), IsTrue)
+	}
+}
+
 func (s *testEvaluatorSuite) TestTimestampAdd(c *C) {
 	tests := []struct {
 		unit     string
