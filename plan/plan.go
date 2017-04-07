@@ -194,7 +194,7 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (taskProfi
 }
 
 func (p *basePhysicalPlan) attach2TaskProfile(tasks ...taskProfile) taskProfile {
-	return attachPlan2Task(p.basePlan.self.(PhysicalPlan).Copy(), tasks[0])
+	return attachPlan2TaskProfile(p.basePlan.self.(PhysicalPlan).Copy(), tasks[0])
 }
 
 func (p *baseLogicalPlan) getTaskProfile(prop *requiredProp) (taskProfile, error) {

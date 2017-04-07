@@ -65,7 +65,7 @@ func (t *copTaskProfile) copy() taskProfile {
 	}
 }
 
-func attachPlan2Task(p PhysicalPlan, t taskProfile) taskProfile {
+func attachPlan2TaskProfile(p PhysicalPlan, t taskProfile) taskProfile {
 	switch v := t.(type) {
 	case *copTaskProfile:
 		if v.addPlan2Index {
@@ -82,6 +82,7 @@ func attachPlan2Task(p PhysicalPlan, t taskProfile) taskProfile {
 	return t
 }
 
+// finishIndexPlan means we no longer add plan to index plan, and compute the network cost for it.
 func (t *copTaskProfile) finishIndexPlan() {
 	if t.addPlan2Index {
 		t.cst += float64(t.cnt) * netWorkFactor
@@ -89,6 +90,7 @@ func (t *copTaskProfile) finishIndexPlan() {
 	}
 }
 
+// finishTask means we close the coprocessor task and create a root task.
 func (t *copTaskProfile) finishTask(ctx context.Context, allocator *idAllocator) taskProfile {
 	if t.addPlan2Index {
 		t.finishIndexPlan()
@@ -147,11 +149,11 @@ func (p *Limit) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 		// If the task is copTask, the Limit can always be pushed down.
 		// When limit be pushed down, it should remove its offset.
 		pushedDownLimit := Limit{Count: p.Offset + p.Count}.init(p.allocator, p.ctx)
-		cop = attachPlan2Task(pushedDownLimit, cop).(*copTaskProfile)
+		cop = attachPlan2TaskProfile(pushedDownLimit, cop).(*copTaskProfile)
 		cop.setCount(pushedDownLimit.Count)
 		profile = cop.finishTask(p.ctx, p.allocator)
 	}
-	profile = attachPlan2Task(p.Copy(), profile)
+	profile = attachPlan2TaskProfile(p.Copy(), profile)
 	profile.setCount(p.Count)
 	return profile
 }
@@ -192,7 +194,7 @@ func (p *Sort) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 		case *copTaskProfile:
 			profile = t.finishTask(p.ctx, p.allocator)
 		}
-		profile = attachPlan2Task(p.Copy(), profile)
+		profile = attachPlan2TaskProfile(p.Copy(), profile)
 		profile.addCost(p.getCost(profile.count()))
 		return profile
 	}
@@ -216,7 +218,7 @@ func (p *Sort) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 	} else if ok {
 		profile = copTask.finishTask(p.ctx, p.allocator)
 	}
-	profile = attachPlan2Task(p.Copy(), profile)
+	profile = attachPlan2TaskProfile(p.Copy(), profile)
 	profile.addCost(p.getCost(profile.count()))
 	profile.setCount(p.ExecLimit.Count)
 	return profile
@@ -228,9 +230,9 @@ func (p *Projection) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 	case *copTaskProfile:
 		// TODO: Support projection push down.
 		task := t.finishTask(p.ctx, p.allocator)
-		return attachPlan2Task(p.Copy(), task)
+		return attachPlan2TaskProfile(p.Copy(), task)
 	case *rootTaskProfile:
-		return attachPlan2Task(p.Copy(), t)
+		return attachPlan2TaskProfile(p.Copy(), t)
 	}
 	return nil
 }
@@ -268,7 +270,7 @@ func (sel *Selection) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 	case *rootTaskProfile:
 		t.cst += float64(t.cnt) * cpuFactor
 		t.cnt = uint64(float64(t.cnt) * selectionFactor)
-		attachPlan2Task(sel.Copy(), t)
+		attachPlan2TaskProfile(sel.Copy(), t)
 	}
 	return nil
 }
