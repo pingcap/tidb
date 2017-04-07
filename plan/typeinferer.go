@@ -428,6 +428,10 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	case ast.InetAton:
 		tp = types.NewFieldType(mysql.TypeLonglong)
 		tp.Flag |= mysql.UnsignedFlag
+	case ast.SHA, ast.SHA1:
+		tp = types.NewFieldType(mysql.TypeVarString)
+		chs = v.defaultCharset
+		tp.Flen = 26
 	default:
 		tp = types.NewFieldType(mysql.TypeUnspecified)
 	}
