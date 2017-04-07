@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
@@ -842,7 +843,11 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	err = dom.LoadTableStatsLoop(se)
+	se1, err := createSession(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	err = dom.LoadTableStatsLoop(se1)
 	return dom, errors.Trace(err)
 }
 
@@ -884,6 +889,7 @@ func createSession(store kv.Storage) (*session, error) {
 		sessionVars: variable.NewSessionVars(),
 	}
 	sessionctx.BindDomain(s, domain)
+	statistics.BindStatsHandle(s, domain.GetOrCreateStatsHandle(s))
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
 

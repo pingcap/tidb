@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
@@ -334,6 +335,7 @@ func (m *mockStore) CurrentVersion() (kv.Version, error) {
 
 func mockContext() context.Context {
 	ctx := mock.NewContext()
+	statistics.BindStatsHandle(ctx, statistics.NewHandle(ctx))
 	ctx.Store = &mockStore{
 		client: &mockClient{},
 	}

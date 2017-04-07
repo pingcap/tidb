@@ -34,17 +34,22 @@ type statsInfo struct {
 type Handle struct {
 	ctx         context.Context
 	lastVersion uint64
+	cache       map[int64]*statsInfo
+	m           sync.RWMutex
 }
 
 // Clear the statsTblCache, only for test.
 func (h *Handle) Clear() {
-	statsTblCache = statsCache{cache: map[int64]*statsInfo{}}
+	h.cache = map[int64]*statsInfo{}
 	h.lastVersion = 0
 }
 
 // NewHandle creates a Handle for update stats.
 func NewHandle(ctx context.Context) *Handle {
-	return &Handle{ctx: ctx}
+	return &Handle{
+		ctx:   ctx,
+		cache: map[int64]*statsInfo{},
+	}
 }
 
 // Update reads stats meta from store and updates the stats map.
@@ -69,24 +74,17 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 			log.Errorf("Error occurred when read table stats for table id %d. The error message is %s.", tableID, err.Error())
 			tbl = PseudoTable(tableInfo)
 		}
-		SetStatisticsTableCache(tableID, tbl, version)
+		h.SetStatsTable(tableID, tbl, version)
 		h.lastVersion = version
 	}
 	return nil
 }
 
-type statsCache struct {
-	cache map[int64]*statsInfo
-	m     sync.RWMutex
-}
-
-var statsTblCache = statsCache{cache: map[int64]*statsInfo{}}
-
 // GetStatisticsTableCache retrieves the statistics table from cache, and the cache will be updated by a goroutine.
-func GetStatisticsTableCache(tblInfo *model.TableInfo) *Table {
-	statsTblCache.m.RLock()
-	defer statsTblCache.m.RUnlock()
-	stats, ok := statsTblCache.cache[tblInfo.ID]
+func (h *Handle) GetStatsTable(tblInfo *model.TableInfo) *Table {
+	h.m.RLock()
+	defer h.m.RUnlock()
+	stats, ok := h.cache[tblInfo.ID]
 	if !ok || stats == nil {
 		return PseudoTable(tblInfo)
 	}
@@ -100,16 +98,16 @@ func GetStatisticsTableCache(tblInfo *model.TableInfo) *Table {
 }
 
 // SetStatisticsTableCache sets the statistics table cache.
-func SetStatisticsTableCache(id int64, statsTbl *Table, version uint64) {
-	statsTblCache.m.Lock()
-	defer statsTblCache.m.Unlock()
-	stats, ok := statsTblCache.cache[id]
+func (h *Handle) SetStatsTable(id int64, statsTbl *Table, version uint64) {
+	h.m.Lock()
+	defer h.m.Unlock()
+	stats, ok := h.cache[id]
 	if !ok {
 		si := &statsInfo{
 			tbl:     statsTbl,
 			version: version,
 		}
-		statsTblCache.cache[id] = si
+		h.cache[id] = si
 		return
 	}
 	if stats.version >= version {
@@ -117,4 +115,25 @@ func SetStatisticsTableCache(id int64, statsTbl *Table, version uint64) {
 	}
 	stats.tbl = statsTbl
 	stats.version = version
+}
+
+type keyType int
+
+func (k keyType) String() string {
+	return "stats-key"
+}
+
+const key keyType = 0
+
+// GetStatsHandle returns the stats handle from ctx.
+func GetStatsHandle(ctx context.Context) *Handle {
+	if v, ok := ctx.Value(key).(*Handle); ok {
+		return v
+	}
+	return nil
+}
+
+// BindStatsHandle binds the stats handle with ctx.
+func BindStatsHandle(ctx context.Context, h *Handle) {
+	ctx.SetValue(key, h)
 }

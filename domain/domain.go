@@ -407,15 +407,17 @@ func (do *Domain) PrivilegeHandle() *privileges.Handle {
 	return do.privHandle
 }
 
-// StatsHandle returns the statistic handle.
-func (do *Domain) StatsHandle() *statistics.Handle {
+// GetOrCreateStatsHandle returns the statistic handle. If the stats handle doesn't exist, it will create a new one.
+func (do *Domain) GetOrCreateStatsHandle(ctx context.Context) *statistics.Handle {
+	if do.statsHandle == nil {
+		do.statsHandle = statistics.NewHandle(ctx)
+	}
 	return do.statsHandle
 }
 
 // LoadTableStatsLoop creates a goroutine loads stats info in a loop, it
 // should be called only once in BootstrapSession.
 func (do *Domain) LoadTableStatsLoop(ctx context.Context) error {
-	do.statsHandle = statistics.NewHandle(ctx)
 	err := do.statsHandle.Update(do.InfoSchema())
 	if err != nil {
 		return errors.Trace(err)

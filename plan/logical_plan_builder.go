@@ -977,7 +977,7 @@ func (b *planBuilder) buildTableDual() LogicalPlan {
 }
 
 func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
-	statisticTable := statistics.GetStatisticsTableCache(tn.TableInfo)
+	statisticTable := statistics.GetStatsHandle(b.ctx).GetStatsTable(tn.TableInfo)
 	if b.err != nil {
 		return nil
 	}
