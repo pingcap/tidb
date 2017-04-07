@@ -192,6 +192,7 @@ const (
 	Repeat         = "repeat"
 	Replace        = "replace"
 	Reverse        = "reverse"
+	Right          = "right"
 	RTrim          = "rtrim"
 	Space          = "space"
 	Strcmp         = "strcmp"

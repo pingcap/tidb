@@ -777,6 +777,8 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT INSERT('Quadratic', 3, 4, 'What'), INSTR('foobarbar', 'bar')`, true},
 		{`SELECT LOAD_FILE('/tmp/picture')`, true},
 		{`SELECT LPAD('hi',4,'??')`, true},
+		{`SELECT LEFT("foobar", 3)`, true},
+		{`SELECT RIGHT("foobar", 3)`, true},
 
 		// repeat
 		{`SELECT REPEAT("a", 10);`, true},

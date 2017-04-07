@@ -247,6 +247,7 @@ var funcs = map[string]functionClass{
 	ast.Instr:          &instrFunctionClass{baseFunctionClass{ast.Instr, 2, 2}},
 	ast.Lcase:          &lowerFunctionClass{baseFunctionClass{ast.Lcase, 1, 1}},
 	ast.Left:           &leftFunctionClass{baseFunctionClass{ast.Left, 2, 2}},
+	ast.Right:          &rightFunctionClass{baseFunctionClass{ast.Right, 2, 2}},
 	ast.Length:         &lengthFunctionClass{baseFunctionClass{ast.Length, 1, 1}},
 	ast.LoadFile:       &loadFileFunctionClass{baseFunctionClass{ast.LoadFile, 1, 1}},
 	ast.Locate:         &locateFunctionClass{baseFunctionClass{ast.Locate, 2, 3}},

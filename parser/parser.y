@@ -2641,6 +2641,7 @@ FunctionNameConflict:
 |	"SCHEMA"
 |	"IF"
 |	"LEFT"
+|	"RIGHT"
 |	"REPEAT"
 |	"CURRENT_USER"
 |	"UTC_DATE"

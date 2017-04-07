@@ -305,6 +305,22 @@ func (b *builtinLeftSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, nil
 }
 
+type rightFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *rightFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinRightSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinRightSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinRightSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("RIGHT")
+}
+
 type repeatFunctionClass struct {
 	baseFunctionClass
 }
