@@ -17,13 +17,14 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
 )
 
 // extractCorColumnsBySchema only extracts the correlated columns that match the outer plan's schema.
 // e.g. If the correlated columns from inner plan are [t1.a, t2.a, t3.a] and outer plan's schema is [t2.a, t2.b, t2.c],
 // only [t2.a] is treated as this apply's correlated column.
-func (a *Apply) extractCorColumnsBySchema() {
+func (a *LogicalApply) extractCorColumnsBySchema() {
 	schema := a.children[0].Schema()
 	corCols := a.children[1].(LogicalPlan).extractCorrelatedCols()
 	resultCorCols := make([]*expression.CorrelatedColumn, schema.Len())
@@ -51,7 +52,7 @@ func (a *Apply) extractCorColumnsBySchema() {
 }
 
 // canPullUpAgg checks if an apply can pull an aggregation up.
-func (a *Apply) canPullUpAgg() bool {
+func (a *LogicalApply) canPullUpAgg() bool {
 	if a.JoinType != InnerJoin && a.JoinType != LeftOuterJoin {
 		return false
 	}
@@ -62,7 +63,7 @@ func (a *Apply) canPullUpAgg() bool {
 }
 
 // canPullUp checks if an aggregation can be pulled up. An aggregate function like count(*) cannot be pulled up.
-func (a *Aggregation) canPullUp() bool {
+func (a *LogicalAggregation) canPullUp() bool {
 	if len(a.GroupByItems) > 0 {
 		return false
 	}
@@ -85,13 +86,13 @@ type decorrelateSolver struct{}
 
 // optimize implements logicalOptRule interface.
 func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllocator) (LogicalPlan, error) {
-	if apply, ok := p.(*Apply); ok {
+	if apply, ok := p.(*LogicalApply); ok {
 		outerPlan := apply.children[0]
 		innerPlan := apply.children[1].(LogicalPlan)
 		apply.extractCorColumnsBySchema()
 		if len(apply.corCols) == 0 {
 			// If the inner plan is non-correlated, the apply will be simplified to join.
-			join := &apply.Join
+			join := &apply.LogicalJoin
 			innerPlan.SetParents(join)
 			outerPlan.SetParents(join)
 			p = join
@@ -133,7 +134,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 				return proj, nil
 			}
 			return s.optimize(p, nil, nil)
-		} else if agg, ok := innerPlan.(*Aggregation); ok {
+		} else if agg, ok := innerPlan.(*LogicalAggregation); ok {
 			if apply.canPullUpAgg() && agg.canPullUp() {
 				innerPlan = agg.children[0].(LogicalPlan)
 				apply.JoinType = LeftOuterJoin
@@ -158,9 +159,9 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 			}
 		}
 	}
-	if sel, ok := p.(*Selection); ok {
+	if sel, ok := p.(*Selection); ok && len(sel.extractCorrelatedCols()) > 0 {
 		if _, ok := p.Children()[0].(*DataSource); ok {
-			_, sel.canControlScan = sel.makeScanController(true)
+			sel.controllerStatus = sel.checkScanController()
 		}
 	}
 	newChildren := make([]Plan, 0, len(p.Children()))
@@ -171,4 +172,57 @@ func (s *decorrelateSolver) optimize(p LogicalPlan, _ context.Context, _ *idAllo
 	}
 	p.SetChildren(newChildren...)
 	return p, nil
+}
+
+func (p *Selection) checkScanController() int {
+	var (
+		corColConds []expression.Expression
+		pkCol       *expression.Column
+	)
+	ds := p.children[0].(*DataSource)
+	indices, includeTableScan := availableIndices(ds.indexHints, ds.tableInfo)
+	for _, expr := range p.Conditions {
+		if !expr.IsCorrelated() {
+			continue
+		}
+		cond := pushDownNot(expr, false, nil)
+		corCols := extractCorColumns(cond)
+		for _, col := range corCols {
+			*col.Data = expression.One.Value
+		}
+		newCond, _ := expression.SubstituteCorCol2Constant(cond)
+		corColConds = append(corColConds, newCond)
+	}
+	if ds.tableInfo.PKIsHandle && includeTableScan {
+		for i, col := range ds.Columns {
+			if mysql.HasPriKeyFlag(col.Flag) {
+				pkCol = ds.schema.Columns[i]
+				break
+			}
+		}
+	}
+	if pkCol != nil {
+		checker := conditionChecker{
+			pkName: pkCol.ColName,
+			length: types.UnspecifiedLength,
+		}
+		for _, cond := range corColConds {
+			if sf, ok := cond.(*expression.ScalarFunction); ok {
+				if sf.FuncName.L == ast.EQ && checker.checkScalarFunction(sf) {
+					return controlTableScan
+				}
+			}
+		}
+	}
+	for _, idx := range indices {
+		condsBackUp := make([]expression.Expression, 0, len(corColConds))
+		for _, cond := range corColConds {
+			condsBackUp = append(condsBackUp, cond.Clone())
+		}
+		_, _, eqCount, _ := DetachIndexScanConditions(condsBackUp, idx)
+		if eqCount > 0 {
+			return controlIndexScan
+		}
+	}
+	return notController
 }

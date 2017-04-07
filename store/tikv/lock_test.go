@@ -216,9 +216,10 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	txn.Set(kv.Key("key"), []byte("value"))
+	time.Sleep(time.Millisecond)
 	s.prewriteTxn(c, txn.(*tikvTxn))
 	l := s.mustGetLock(c, []byte("key"))
-	c.Assert(l.TTL, Equals, defaultLockTTL)
+	c.Assert(l.TTL >= defaultLockTTL, IsTrue)
 
 	// Huge txn has a greater TTL.
 	txn, err = s.store.Begin()

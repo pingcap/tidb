@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2017 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,10 +11,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package xeval
+package expression
 
 import (
-	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -24,20 +23,15 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
-
 var _ = Suite(&testEvalSuite{})
 
 type testEvalSuite struct{}
 
 // TODO: add more tests.
 func (s *testEvalSuite) TestEval(c *C) {
-	colID := int64(1)
-	xevaluator := NewEvaluator(new(variable.StatementContext))
-	xevaluator.Row[colID] = types.NewIntDatum(100)
+	row := []types.Datum{types.NewDatum(100)}
+	colIDs := make(map[int64]int)
+	colIDs[int64(1)] = 0
 	cases := []struct {
 		expr   *tipb.Expr
 		result types.Datum
@@ -273,11 +267,14 @@ func (s *testEvalSuite) TestEval(c *C) {
 			types.NewFloat64Datum(1.1),
 		},
 	}
+	sc := new(variable.StatementContext)
 	for _, ca := range cases {
-		result, err := xevaluator.Eval(ca.expr)
+		expr, err := PBToExpr(ca.expr, colIDs, sc)
+		c.Assert(err, IsNil)
+		result, err := expr.Eval(row)
 		c.Assert(err, IsNil)
 		c.Assert(result.Kind(), Equals, ca.result.Kind())
-		cmp, err := result.CompareDatum(xevaluator.StatementCtx, ca.result)
+		cmp, err := result.CompareDatum(sc, ca.result)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}
@@ -406,9 +403,11 @@ func (s *testEvalSuite) TestLike(c *C) {
 			result: 0,
 		},
 	}
-	ev := NewEvaluator(new(variable.StatementContext))
+	sc := new(variable.StatementContext)
 	for _, ca := range cases {
-		res, err := ev.Eval(ca.expr)
+		expr, err := PBToExpr(ca.expr, nil, sc)
+		c.Check(err, IsNil)
+		res, err := expr.Eval(nil)
 		c.Check(err, IsNil)
 		c.Check(res.GetInt64(), Equals, ca.result)
 	}
@@ -452,9 +451,11 @@ func (s *testEvalSuite) TestWhereIn(c *C) {
 			result: false,
 		},
 	}
-	ev := NewEvaluator(new(variable.StatementContext))
+	sc := new(variable.StatementContext)
 	for _, ca := range cases {
-		res, err := ev.Eval(ca.expr)
+		expr, err := PBToExpr(ca.expr, nil, sc)
+		c.Check(err, IsNil)
+		res, err := expr.Eval(nil)
 		c.Check(err, IsNil)
 		if ca.result == nil {
 			c.Check(res.Kind(), Equals, types.KindNull)
@@ -470,9 +471,6 @@ func (s *testEvalSuite) TestWhereIn(c *C) {
 }
 
 func (s *testEvalSuite) TestEvalIsNull(c *C) {
-	colID := int64(1)
-	xevaluator := NewEvaluator(new(variable.StatementContext))
-	xevaluator.Row[colID] = types.NewIntDatum(100)
 	null, trueAns, falseAns := types.Datum{}, types.NewIntDatum(1), types.NewIntDatum(0)
 	cases := []struct {
 		expr   *tipb.Expr
@@ -491,11 +489,14 @@ func (s *testEvalSuite) TestEvalIsNull(c *C) {
 			result: falseAns,
 		},
 	}
+	sc := new(variable.StatementContext)
 	for _, ca := range cases {
-		result, err := xevaluator.Eval(ca.expr)
+		expr, err := PBToExpr(ca.expr, nil, sc)
+		c.Assert(err, IsNil)
+		result, err := expr.Eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(result.Kind(), Equals, ca.result.Kind())
-		cmp, err := result.CompareDatum(xevaluator.StatementCtx, ca.result)
+		cmp, err := result.CompareDatum(sc, ca.result)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}
