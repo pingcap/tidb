@@ -1632,3 +1632,116 @@ func checkVisitInfo(c *C, v1, v2 []visitInfo, comment CommentInterface) {
 		c.Assert(v1[i], Equals, v2[i], comment)
 	}
 }
+
+func (s *testPlanSuite) TestTopNPushDown(c *C) {
+	UseDAGPlanBuilder = true
+	defer func() {
+		testleak.AfterTest(c)()
+		UseDAGPlanBuilder = false
+	}()
+	cases := []struct {
+		sql  string
+		best string
+	}{
+		// Test TopN + Selection.
+		{
+			sql:  "select * from t where a < 1 order by b limit 5",
+			best: "DataScan(t)->Selection->Sort + Limit(5) + Offset(0)->Projection",
+		},
+		// Test Limit + Selection.
+		{
+			sql:  "select * from t where a < 1 limit 5",
+			best: "DataScan(t)->Selection->Limit->Projection",
+		},
+		// Test Limit + Agg + Proj .
+		{
+			sql:  "select a, count(b) from t group by b limit 5",
+			best: "DataScan(t)->Aggr(count(test.t.b),firstrow(test.t.a))->Limit->Projection",
+		},
+		// Test TopN + Agg + Proj .
+		{
+			sql:  "select a, count(b) from t group by b order by c limit 5",
+			best: "DataScan(t)->Aggr(count(test.t.b),firstrow(test.t.a),firstrow(test.t.c))->Sort + Limit(5) + Offset(0)->Projection->Projection",
+		},
+		// Test TopN + Join + Proj.
+		{
+			sql:  "select * from t, t s order by t.a limit 5",
+			best: "Join{DataScan(t)->DataScan(s)}->Sort + Limit(5) + Offset(0)->Projection",
+		},
+		// Test Limit + Join + Proj.
+		{
+			sql:  "select * from t, t s limit 5",
+			best: "Join{DataScan(t)->DataScan(s)}->Limit->Projection",
+		},
+		// Test TopN + Left Join + Proj.
+		{
+			sql:  "select * from t left outer join t s on t.a = s.a order by t.a limit 5",
+			best: "Join{DataScan(t)->Sort + Limit(5) + Offset(0)->DataScan(s)}(test.t.a,s.a)->Sort + Limit(5) + Offset(0)->Projection",
+		},
+		// Test Limit + Left Join + Proj.
+		{
+			sql:  "select * from t left outer join t s on t.a = s.a limit 5",
+			best: "Join{DataScan(t)->Limit->DataScan(s)}(test.t.a,s.a)->Limit->Projection",
+		},
+		// Test Limit + Left Join Apply + Proj.
+		{
+			sql:  "select (select s.a from t s where t.a = s.a) from t limit 5",
+			best: "Join{DataScan(t)->Limit->DataScan(s)}(test.t.a,s.a)->Limit->Projection->Projection",
+		},
+		// Test TopN + Left Join Apply + Proj.
+		{
+			sql:  "select (select s.a from t s where t.a = s.a) from t order by t.a limit 5",
+			best: "Join{DataScan(t)->Sort + Limit(5) + Offset(0)->DataScan(s)}(test.t.a,s.a)->Sort + Limit(5) + Offset(0)->Projection->Projection->Projection",
+		},
+		// Test TopN + Left Semi Join Apply + Proj.
+		{
+			sql:  "select exists (select s.a from t s where t.a = s.a) from t order by t.a limit 5",
+			best: "Join{DataScan(t)->Sort + Limit(5) + Offset(0)->DataScan(s)}(test.t.a,s.a)->Sort + Limit(5) + Offset(0)->Projection->Projection",
+		},
+		// Test TopN + Semi Join Apply + Proj.
+		{
+			sql:  "select * from t where exists (select s.a from t s where t.a = s.a) order by t.a limit 5",
+			best: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Sort + Limit(5) + Offset(0)->Projection",
+		},
+		// Test TopN + Right Join + Proj.
+		{
+			sql:  "select * from t right outer join t s on t.a = s.a order by s.a limit 5",
+			best: "Join{DataScan(t)->DataScan(s)->Sort + Limit(5) + Offset(0)}(test.t.a,s.a)->Sort + Limit(5) + Offset(0)->Projection",
+		},
+		// Test Limit + Right Join + Proj.
+		{
+			sql:  "select * from t right outer join t s on t.a = s.a order by s.a,t.b limit 5",
+			best: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Sort + Limit(5) + Offset(0)->Projection",
+		},
+		// Test TopN + UA + Proj.
+		{
+			sql:  "select * from t union all (select * from t s) order by a,b limit 5",
+			best: "UnionAll{DataScan(t)->Sort + Limit(5) + Offset(0)->Projection->DataScan(s)->Sort + Limit(5) + Offset(0)->Projection}->Sort + Limit(5) + Offset(0)",
+		},
+		// Test Limit + UA + Proj + Sort.
+		{
+			sql:  "select * from t union all (select * from t s order by a) limit 5",
+			best: "UnionAll{DataScan(t)->Limit->Projection->DataScan(s)->Sort + Limit(5) + Offset(0)->Projection->Projection}->Limit",
+		},
+	}
+	for _, ca := range cases {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+
+		is, err := mockResolve(stmt)
+		c.Assert(err, IsNil)
+
+		builder := &planBuilder{
+			allocator: new(idAllocator),
+			ctx:       mockContext(),
+			is:        is,
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		p := builder.build(stmt).(LogicalPlan)
+		c.Assert(builder.err, IsNil)
+		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx, builder.allocator)
+		c.Assert(err, IsNil)
+		c.Assert(ToString(p), Equals, ca.best, comment)
+	}
+}
