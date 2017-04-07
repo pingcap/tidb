@@ -397,6 +397,33 @@ func (e *aggregateExec) aggregate(handle int64, row [][]byte) error {
 	return nil
 }
 
+type limitExec struct {
+	*tipb.Limit
+	cursor int64
+
+	src executor
+}
+
+func (e *limitExec) SetSrcExec(src executor) {
+	e.src = src
+}
+
+func (e *limitExec) Next() (handle int64, value [][]byte, err error) {
+	if e.cursor >= e.GetLimit() {
+		return 0, nil, nil
+	}
+
+	handle, value, err = e.src.Next()
+	if err != nil {
+		return 0, nil, errors.Trace(err)
+	}
+	if value == nil {
+		return 0, nil, nil
+	}
+	e.cursor++
+	return handle, value, nil
+}
+
 func hasColVal(data [][]byte, colIDs map[int64]int, id int64) bool {
 	offset, ok := colIDs[id]
 	if ok && data[offset] != nil {

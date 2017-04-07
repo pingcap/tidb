@@ -90,6 +90,8 @@ func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 		currExec, err = h.buildSelection(ctx, curr)
 	case tipb.ExecType_TypeAggregation:
 		currExec, err = h.buildAggregation(ctx, curr)
+	case tipb.ExecType_TypeLimit:
+		currExec = &limitExec{Limit: curr.Limit}
 	default:
 		// TODO: Support other types.
 		err = errors.Errorf("this exec type %v doesn't support yet.", curr.GetTp())
