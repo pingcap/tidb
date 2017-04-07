@@ -144,6 +144,8 @@ func (t *rootTaskProfile) cost() float64 {
 func (p *Limit) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 	profile := profiles[0].copy()
 	if cop, ok := profile.(*copTaskProfile); ok {
+		// If the task is copTask, the Limit can always be pushed down.
+		// When limit be pushed down, it should remove its offset.
 		pushedDownLimit := Limit{Count: p.Offset + p.Count}.init(p.allocator, p.ctx)
 		cop = attachPlan2Task(pushedDownLimit, cop).(*copTaskProfile)
 		cop.setCount(pushedDownLimit.Count)
@@ -161,6 +163,7 @@ func (p *Sort) getCost(count uint64) float64 {
 	return float64(count)*cpuFactor + float64(p.ExecLimit.Count)*memoryFactor
 }
 
+// canPushDown check if this topN can be pushed down. If each of the expression can be converted to pb, it can be pushed.
 func (p *Sort) canPushDown() bool {
 	if p.ExecLimit == nil {
 		return false
@@ -183,6 +186,7 @@ func (p *Sort) allColsFromSchema(schema *expression.Schema) bool {
 
 func (p *Sort) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 	profile := profiles[0].copy()
+	// If this is a Sort , we cannot push it down.
 	if p.ExecLimit == nil {
 		switch t := profile.(type) {
 		case *copTaskProfile:
@@ -196,7 +200,10 @@ func (p *Sort) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 	if copTask, ok := profile.(*copTaskProfile); ok && p.canPushDown() {
 		limit := p.ExecLimit
 		pushedDownTopN := p.Copy().(*Sort)
+		// When topN is pushed down, it should remove its offset.
 		pushedDownTopN.ExecLimit = &Limit{Count: limit.Count + limit.Offset}
+		// If all columns in topN are from index plan, we can push it to index plan. Or we finish the index plan and
+		// push it to table plan.
 		if copTask.addPlan2Index && p.allColsFromSchema(copTask.indexPlan.Schema()) {
 			pushedDownTopN.SetChildren(copTask.indexPlan)
 		} else {

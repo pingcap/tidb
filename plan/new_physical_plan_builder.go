@@ -30,6 +30,9 @@ func (p *requiredProp) enforceProperty(task taskProfile, ctx context.Context, al
 	return sort.attach2TaskProfile(task)
 }
 
+// getPushedProp will check if this sort property can be pushed or not.
+// When a sort column will be replaced by scalar function, we refuse it.
+// When a sort column will be replaced by a constant, we just remove it.
 func (p *Projection) getPushedProp(prop *requiredProp) (*requiredProp, bool) {
 	newProp := &requiredProp{}
 	if prop.isEmpty() {
@@ -41,17 +44,22 @@ func (p *Projection) getPushedProp(prop *requiredProp) (*requiredProp, bool) {
 		if idx == -1 {
 			return newProp, false
 		}
-		newCol, ok := p.Exprs[idx].(*expression.Column)
-		if !ok {
-			return newProp, false
+		switch expr := p.Exprs[idx].(type) {
+		case *expression.Column:
+			newCols = append(newCols, expr)
+		case *expression.ScalarFunction:
+			return nil, false
 		}
-		newCols = append(newCols, newCol)
 	}
 	newProp.cols = newCols
 	newProp.desc = prop.desc
 	return newProp, true
 }
 
+// convert2NewPhysicalPlan implements PhysicalPlan interface.
+// If the Projection maps a scalar function to a sort column, it will refuse the prop.
+// TODO: We can analyze the function dependence to propagate the required prop. e.g For a + 1 as b , we can take the order
+// of b to a.
 func (p *Projection) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) {
 	task, err := p.getTaskProfile(prop)
 	if err != nil {
@@ -82,6 +90,8 @@ func (p *Projection) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, e
 	return task, p.storeTaskProfile(prop, task)
 }
 
+// getPushedProp will check if this sort property can be pushed or not. In order to simplify the problem, we only
+// consider the case that all expression are columns and all of them are asc or desc.
 func (p *Sort) getPushedProp() (*requiredProp, bool) {
 	desc := false
 	cols := make([]*expression.Column, len(p.ByItems))
@@ -99,6 +109,9 @@ func (p *Sort) getPushedProp() (*requiredProp, bool) {
 	return &requiredProp{cols, desc}, true
 }
 
+// convert2NewPhysicalPlan implements PhysicalPlan interface.
+// If this sort is a topN plan, we will try to push the sort down and leave the limit.
+// TODO: If this is a sort plan and the coming prop is not nil, this plan is redundant and can be removed.
 func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) {
 	task, err := p.getTaskProfile(prop)
 	if err != nil {
@@ -132,6 +145,7 @@ func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) 
 	return task, p.storeTaskProfile(prop, task)
 }
 
+// TODO: The behavior of Limit may be same with many other plans. Most plans can pass the props or refuse and enforce it.
 func (p *Limit) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) {
 	task, err := p.getTaskProfile(prop)
 	if err != nil {
