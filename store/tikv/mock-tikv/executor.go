@@ -15,6 +15,7 @@ package mocktikv
 
 import (
 	"bytes"
+	"sort"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/distsql/xeval"
@@ -295,7 +296,6 @@ type aggregateExec struct {
 	aggFuncs     []*aggregateFuncExpr
 	groups       map[string]struct{}
 	groupKeys    [][]byte
-	columns      map[int64]*tipb.ColumnInfo
 	executed     bool
 	currGroupIdx int
 	colIDs       map[int64]int
@@ -397,6 +397,86 @@ func (e *aggregateExec) aggregate(handle int64, row [][]byte) error {
 	return nil
 }
 
+type topNExec struct {
+	*tipb.TopN
+	eval     *xeval.Evaluator
+	heap     *topnHeap
+	colIDs   map[int64]int
+	cursor   int
+	executed bool
+
+	src executor
+}
+
+func (e *topNExec) SetSrcExec(src executor) {
+	e.src = src
+}
+
+func (e *topNExec) innerNext() (bool, error) {
+	handle, value, err := e.src.Next()
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if value == nil {
+		return false, nil
+	}
+	err = e.evalTopN(handle, value)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return true, nil
+}
+
+func (e *topNExec) Next() (handle int64, value [][]byte, err error) {
+	if !e.executed {
+		for {
+			hasMore, err := e.innerNext()
+			if err != nil {
+				return 0, nil, errors.Trace(err)
+			}
+			if !hasMore {
+				break
+			}
+		}
+		e.executed = true
+	}
+	if e.cursor >= len(e.heap.rows) {
+		return 0, nil, nil
+	}
+	sort.Sort(&e.heap.topnSorter)
+	row := e.heap.rows[e.cursor]
+	e.cursor++
+	value = [][]byte{row.data}
+
+	return row.meta.Handle, value, nil
+}
+
+// evalTopN evaluates the top n elements from the data. The input receives a record including its handle and data.
+// And this function will check if this record can replace one of the old records.
+func (e *topNExec) evalTopN(handle int64, row [][]byte) error {
+	err := e.eval.SetRowValue(handle, row, e.colIDs)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	newRow := &sortRow{
+		meta: tipb.RowMeta{Handle: handle},
+	}
+	for _, item := range e.heap.orderByItems {
+		result, err := e.eval.Eval(item.Expr)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		newRow.key = append(newRow.key, result)
+	}
+	if e.heap.tryToAddRow(newRow) {
+		for _, val := range row {
+			newRow.data = append(newRow.data, val...)
+			newRow.meta.Length += int64(len(val))
+		}
+	}
+	return errors.Trace(e.heap.err)
+}
+
 type limitExec struct {
 	*tipb.Limit
 	cursor int64
@@ -470,6 +550,7 @@ func getRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle int64, 
 		if mysql.HasNotNullFlag(uint(col.GetFlag())) {
 			return nil, errors.Errorf("Miss column %d", id)
 		}
+
 		values[offset] = []byte{codec.NilFlag}
 	}
 
