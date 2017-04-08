@@ -344,3 +344,12 @@ func (sc *StatementContext) AppendWarning(warn error) {
 	}
 	sc.mu.Unlock()
 }
+
+// ResetForRetry resets the changed states during execution.
+func (sc *StatementContext) ResetForRetry() {
+	sc.mu.Lock()
+	sc.mu.affectedRows = 0
+	sc.mu.foundRows = 0
+	sc.mu.warnings = nil
+	sc.mu.Unlock()
+}
