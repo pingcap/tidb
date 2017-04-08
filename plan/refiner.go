@@ -87,7 +87,7 @@ func BuildIndexRange(sc *variable.StatementContext, p *PhysicalIndexScan) error 
 }
 
 // refineRange changes the IndexRange taking prefix index length into consideration.
-func refineRange(v *IndexRange, idxInfo *model.IndexInfo) {
+func refineRange(v *types.IndexRange, idxInfo *model.IndexInfo) {
 	for i := 0; i < len(v.LowVal); i++ {
 		refineRangeDatum(&v.LowVal[i], idxInfo.Columns[i])
 		v.LowExclude = false
@@ -287,9 +287,9 @@ func DetachTableScanConditions(conditions []expression.Expression, table *model.
 }
 
 // BuildTableRange will build range of pk for PhysicalTableScan
-func BuildTableRange(accessConditions []expression.Expression, sc *variable.StatementContext) ([]TableRange, error) {
+func BuildTableRange(accessConditions []expression.Expression, sc *variable.StatementContext) ([]types.IntColumnRange, error) {
 	if len(accessConditions) == 0 {
-		return []TableRange{{math.MinInt64, math.MaxInt64}}, nil
+		return []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}, nil
 	}
 
 	rb := rangeBuilder{sc: sc}

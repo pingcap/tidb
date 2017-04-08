@@ -447,8 +447,8 @@ func (r *rangeBuilder) merge(a, b []rangePoint, union bool) []rangePoint {
 // buildIndexRanges build index ranges from range points.
 // Only the first column in the index is built, extra column ranges will be appended by
 // appendIndexRanges.
-func (r *rangeBuilder) buildIndexRanges(rangePoints []rangePoint, tp *types.FieldType) []*IndexRange {
-	indexRanges := make([]*IndexRange, 0, len(rangePoints)/2)
+func (r *rangeBuilder) buildIndexRanges(rangePoints []rangePoint, tp *types.FieldType) []*types.IndexRange {
+	indexRanges := make([]*types.IndexRange, 0, len(rangePoints)/2)
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint := r.convertPoint(rangePoints[i], tp)
 		endPoint := r.convertPoint(rangePoints[i+1], tp)
@@ -459,7 +459,7 @@ func (r *rangeBuilder) buildIndexRanges(rangePoints []rangePoint, tp *types.Fiel
 		if !less {
 			continue
 		}
-		ir := &IndexRange{
+		ir := &types.IndexRange{
 			LowVal:      []types.Datum{startPoint.value},
 			LowExclude:  startPoint.excl,
 			HighVal:     []types.Datum{endPoint.value},
@@ -519,8 +519,8 @@ func (r *rangeBuilder) convertPoint(point rangePoint, tp *types.FieldType) range
 // The additional column ranges can only be appended to point ranges.
 // for example we have an index (a, b), if the condition is (a > 1 and b = 2)
 // then we can not build a conjunctive ranges for this index.
-func (r *rangeBuilder) appendIndexRanges(origin []*IndexRange, rangePoints []rangePoint, ft *types.FieldType) []*IndexRange {
-	var newIndexRanges []*IndexRange
+func (r *rangeBuilder) appendIndexRanges(origin []*types.IndexRange, rangePoints []rangePoint, ft *types.FieldType) []*types.IndexRange {
+	var newIndexRanges []*types.IndexRange
 	for i := 0; i < len(origin); i++ {
 		oRange := origin[i]
 		if !oRange.IsPoint(r.sc) {
@@ -532,8 +532,8 @@ func (r *rangeBuilder) appendIndexRanges(origin []*IndexRange, rangePoints []ran
 	return newIndexRanges
 }
 
-func (r *rangeBuilder) appendIndexRange(origin *IndexRange, rangePoints []rangePoint, ft *types.FieldType) []*IndexRange {
-	newRanges := make([]*IndexRange, 0, len(rangePoints)/2)
+func (r *rangeBuilder) appendIndexRange(origin *types.IndexRange, rangePoints []rangePoint, ft *types.FieldType) []*types.IndexRange {
+	newRanges := make([]*types.IndexRange, 0, len(rangePoints)/2)
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint := r.convertPoint(rangePoints[i], ft)
 		endPoint := r.convertPoint(rangePoints[i+1], ft)
@@ -553,7 +553,7 @@ func (r *rangeBuilder) appendIndexRange(origin *IndexRange, rangePoints []rangeP
 		copy(highVal, origin.HighVal)
 		highVal[len(origin.HighVal)] = endPoint.value
 
-		ir := &IndexRange{
+		ir := &types.IndexRange{
 			LowVal:      lowVal,
 			LowExclude:  startPoint.excl,
 			HighVal:     highVal,
@@ -564,8 +564,8 @@ func (r *rangeBuilder) appendIndexRange(origin *IndexRange, rangePoints []rangeP
 	return newRanges
 }
 
-func (r *rangeBuilder) buildTableRanges(rangePoints []rangePoint) []TableRange {
-	tableRanges := make([]TableRange, 0, len(rangePoints)/2)
+func (r *rangeBuilder) buildTableRanges(rangePoints []rangePoint) []types.IntColumnRange {
+	tableRanges := make([]types.IntColumnRange, 0, len(rangePoints)/2)
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint := rangePoints[i]
 		if startPoint.value.IsNull() || startPoint.value.Kind() == types.KindMinNotNull {
@@ -608,7 +608,7 @@ func (r *rangeBuilder) buildTableRanges(rangePoints []rangePoint) []TableRange {
 		if startInt > endInt {
 			continue
 		}
-		tableRanges = append(tableRanges, TableRange{LowVal: startInt, HighVal: endInt})
+		tableRanges = append(tableRanges, types.IntColumnRange{LowVal: startInt, HighVal: endInt})
 	}
 	return tableRanges
 }
