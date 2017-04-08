@@ -80,7 +80,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 			resultPlan = newSel
 		}
 	} else {
-		ts.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
+		ts.Ranges = []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}
 	}
 	statsTbl := p.statisticTable
 	rowCount := uint64(statsTbl.Count)
@@ -1517,7 +1517,7 @@ func (p *Analyze) prepareSimpleTableScan(cols []*model.ColumnInfo) *PhysicalTabl
 	}.init(p.allocator, p.ctx)
 	ts.SetSchema(expression.NewSchema(expression.ColumnInfos2Columns(ts.Table.Name, cols)...))
 	ts.readOnly = true
-	ts.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
+	ts.Ranges = []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}
 	return ts
 }
 
