@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/types"
@@ -205,10 +206,10 @@ type Analyze struct {
 	baseLogicalPlan
 	basePhysicalPlan
 
-	Table      *ast.TableName
-	IdxOffsets []int
-	ColOffsets []int
-	PkOffset   int // Used only when pk is handle.
+	TableInfo   *model.TableInfo
+	IndicesInfo []*model.IndexInfo
+	ColsInfo    []*model.ColumnInfo
+	PkInfo      *model.ColumnInfo // Used only when pk is handle.
 }
 
 // LoadData represents a loaddata plan.

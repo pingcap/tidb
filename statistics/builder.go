@@ -35,21 +35,21 @@ type Builder struct {
 	Count         int64            // Count is the total rows in the table.
 	NumBuckets    int64            // NumBuckets is the number of buckets a column histogram has.
 	ColumnSamples [][]types.Datum  // ColumnSamples is the sample of columns.
-	ColOffsets    []int            // ColOffsets is the offset of columns in the table.
+	ColIDs        []int64          // ColOffsets is the offset of columns in the table.
 	ColNDVs       []int64          // ColNDVs is the NDV of columns.
 	IdxRecords    []ast.RecordSet  // IdxRecords is the record set of index columns.
-	IdxOffsets    []int            // IdxOffsets is the offset of indices in the table.
+	IdxIDs        []int64          // IdxOffsets is the offset of indices in the table.
 	PkRecords     ast.RecordSet    // PkRecords is the record set of primary key of integer type.
-	PkOffset      int              // PkOffset is the offset of primary key of integer type in the table.
+	PkID          int64            // PkOffset is the offset of primary key of integer type in the table.
 }
 
-func (b *Builder) buildMultiColumns(t *Table, offsets []int, baseOffset int, isSorted bool, done chan error) {
-	for i, offset := range offsets {
+func (b *Builder) buildMultiColumns(t *Table, IDs []int64, baseOffset int, isSorted bool, done chan error) {
+	for i, id := range IDs {
 		var err error
 		if isSorted {
-			err = t.build4SortedColumn(b.Ctx.GetSessionVars().StmtCtx, offset, b.IdxRecords[i+baseOffset], b.NumBuckets, false)
+			err = t.build4SortedColumn(b.Ctx.GetSessionVars().StmtCtx, id, b.IdxRecords[i+baseOffset], b.NumBuckets, false)
 		} else {
-			err = t.buildColumn(b.Ctx.GetSessionVars().StmtCtx, offset, b.ColNDVs[i+baseOffset], b.ColumnSamples[i+baseOffset], b.NumBuckets)
+			err = t.buildColumn(b.Ctx.GetSessionVars().StmtCtx, id, b.ColNDVs[i+baseOffset], b.ColumnSamples[i+baseOffset], b.NumBuckets)
 		}
 		if err != nil {
 			done <- err
@@ -69,26 +69,26 @@ func (b *Builder) getBuildStatsConcurrency() (int, error) {
 	return int(c), errors.Trace(err)
 }
 
-func (b *Builder) splitAndConcurrentBuild(t *Table, offsets []int, isSorted bool) error {
-	offsetCnt := len(offsets)
+func (b *Builder) splitAndConcurrentBuild(t *Table, IDs []int64, isSorted bool) error {
+	IDCnt := len(IDs)
 	concurrency, err := b.getBuildStatsConcurrency()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	groupSize := (offsetCnt + concurrency - 1) / concurrency
-	splittedOffsets := make([][]int, 0, concurrency)
-	for i := 0; i < offsetCnt; i += groupSize {
+	groupSize := (IDCnt + concurrency - 1) / concurrency
+	splitIDs := make([][]int64, 0, concurrency)
+	for i := 0; i < IDCnt; i += groupSize {
 		end := i + groupSize
-		if end > offsetCnt {
-			end = offsetCnt
+		if end > IDCnt {
+			end = IDCnt
 		}
-		splittedOffsets = append(splittedOffsets, offsets[i:end])
+		splitIDs = append(splitIDs, IDs[i:end])
 	}
-	doneCh := make(chan error, len(splittedOffsets))
-	for i, offsets := range splittedOffsets {
-		go b.buildMultiColumns(t, offsets, i*groupSize, isSorted, doneCh)
+	doneCh := make(chan error, len(splitIDs))
+	for i, IDs := range splitIDs {
+		go b.buildMultiColumns(t, IDs, i*groupSize, isSorted, doneCh)
 	}
-	for range splittedOffsets {
+	for range splitIDs {
 		errc := <-doneCh
 		if errc != nil && err == nil {
 			err = errc
@@ -102,8 +102,8 @@ func (b *Builder) NewTable() (*Table, error) {
 	t := &Table{
 		Info:    b.TblInfo,
 		Count:   b.Count,
-		Columns: make([]*Column, len(b.TblInfo.Columns)),
-		Indices: make([]*Column, len(b.TblInfo.Indices)),
+		Columns: make(map[int64]*Column, len(b.TblInfo.Columns)),
+		Indices: make(map[int64]*Column, len(b.TblInfo.Indices)),
 	}
 	if b.Count == 0 {
 		for i := range t.Columns {
@@ -114,25 +114,25 @@ func (b *Builder) NewTable() (*Table, error) {
 		}
 		return t, nil
 	}
-	err := b.splitAndConcurrentBuild(t, b.ColOffsets, false)
+	err := b.splitAndConcurrentBuild(t, b.ColIDs, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if b.PkOffset != -1 {
-		err := t.build4SortedColumn(b.Ctx.GetSessionVars().StmtCtx, b.PkOffset, b.PkRecords, b.NumBuckets, true)
+	if b.PkID != -1 {
+		err := t.build4SortedColumn(b.Ctx.GetSessionVars().StmtCtx, b.PkID, b.PkRecords, b.NumBuckets, true)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	err = b.splitAndConcurrentBuild(t, b.IdxOffsets, true)
+	err = b.splitAndConcurrentBuild(t, b.IdxIDs, true)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	for _, offset := range b.IdxOffsets {
-		if len(b.TblInfo.Indices[offset].Columns) == 1 {
-			for j, col := range b.TblInfo.Columns {
-				if col.Name.L == b.TblInfo.Indices[offset].Columns[0].Name.L && t.Columns[j] == nil {
-					t.Columns[j], err = copyFromIndexColumns(t.Indices[offset], col.ID)
+	for _, idx := range b.TblInfo.Indices {
+		if len(idx.Columns) == 1 {
+			for _, col := range b.TblInfo.Columns {
+				if col.Name.L == idx.Columns[0].Name.L && t.Columns[col.ID] == nil {
+					t.Columns[col.ID], err = copyFromIndexColumns(t.Indices[idx.ID], col.ID)
 					if err != nil {
 						return nil, errors.Trace(err)
 					}
@@ -145,23 +145,17 @@ func (b *Builder) NewTable() (*Table, error) {
 	// so we should also checked it here.
 	if t.Count == 0 {
 		for i := range t.Columns {
-			t.Columns[i] = &Column{ID: b.TblInfo.Columns[i].ID}
+			t.Columns[i] = &Column{ID: i}
 		}
 		for i := range t.Indices {
-			t.Indices[i] = &Column{ID: b.TblInfo.Indices[i].ID}
+			t.Indices[i] = &Column{ID: i}
 		}
 	}
 	return t, nil
 }
 
 // build4SortedColumn builds column statistics for sorted columns.
-func (t *Table) build4SortedColumn(sc *variable.StatementContext, offset int, records ast.RecordSet, bucketCount int64, isPK bool) error {
-	var id int64
-	if isPK {
-		id = t.Info.Columns[offset].ID
-	} else {
-		id = t.Info.Indices[offset].ID
-	}
+func (t *Table) build4SortedColumn(sc *variable.StatementContext, id int64, records ast.RecordSet, bucketCount int64, isPK bool) error {
 	col := &Column{
 		ID:      id,
 		NDV:     0,
@@ -234,23 +228,24 @@ func (t *Table) build4SortedColumn(sc *variable.StatementContext, offset int, re
 		}
 	}
 	atomic.StoreInt64(&t.Count, count)
+	t.m.Lock()
+	defer t.m.Unlock()
 	if isPK {
-		t.Columns[offset] = col
+		t.Columns[id] = col
 	} else {
-		t.Indices[offset] = col
+		t.Indices[id] = col
 	}
 	return nil
 }
 
 // buildColumn builds column statistics from samples.
-func (t *Table) buildColumn(sc *variable.StatementContext, offset int, ndv int64, samples []types.Datum, bucketCount int64) error {
+func (t *Table) buildColumn(sc *variable.StatementContext, id int64, ndv int64, samples []types.Datum, bucketCount int64) error {
 	err := types.SortDatums(sc, samples)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	ci := t.Info.Columns[offset]
 	col := &Column{
-		ID:      ci.ID,
+		ID:      id,
 		NDV:     ndv,
 		Buckets: make([]bucket, 1, bucketCount),
 	}
@@ -297,7 +292,9 @@ func (t *Table) buildColumn(sc *variable.StatementContext, offset int, ndv int64
 			})
 		}
 	}
-	t.Columns[offset] = col
+	t.m.Lock()
+	defer t.m.Unlock()
+	t.Columns[id] = col
 	return nil
 }
 
