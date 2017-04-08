@@ -575,7 +575,7 @@ type TableScanExec struct {
 	t          table.Table
 	asName     *model.CIStr
 	ctx        context.Context
-	ranges     []plan.TableRange
+	ranges     []types.IntColumnRange
 	seekHandle int64
 	iter       kv.Iterator
 	cursor     int

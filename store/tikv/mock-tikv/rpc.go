@@ -438,12 +438,12 @@ func (c *RPCClient) SendCopReq(ctx goctx.Context, addr string, req *coprocessor.
 // extractExecutors extracts executors form select request.
 // It's removed when select request is replaced with DAG request.
 func extractExecutors(sel *tipb.SelectRequest) []*tipb.Executor {
-	var executors []*tipb.Executor
 	var desc bool
 	if len(sel.OrderBy) > 0 && sel.OrderBy[0].Expr == nil {
 		desc = sel.OrderBy[0].Desc
 	}
 	var exec *tipb.Executor
+	var executors []*tipb.Executor
 	if sel.TableInfo != nil {
 		exec = &tipb.Executor{
 			Tp: tipb.ExecType_TypeTableScan,
@@ -481,6 +481,16 @@ func extractExecutors(sel *tipb.SelectRequest) []*tipb.Executor {
 		}
 		executors = append(executors, exec)
 	}
+	if len(sel.OrderBy) > 0 && sel.Limit != nil {
+		exec := &tipb.Executor{
+			Tp: tipb.ExecType_TypeTopN,
+			TopN: &tipb.TopN{
+				OrderBy: sel.OrderBy,
+				Limit:   sel.Limit,
+			},
+		}
+		executors = append(executors, exec)
+	}
 	if sel.Limit != nil {
 		exec := &tipb.Executor{
 			Tp:    tipb.ExecType_TypeLimit,
@@ -488,6 +498,7 @@ func extractExecutors(sel *tipb.SelectRequest) []*tipb.Executor {
 		}
 		executors = append(executors, exec)
 	}
+
 	return executors
 }
 
