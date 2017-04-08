@@ -347,6 +347,7 @@ func (s *session) retry(maxCnt int) error {
 			txt := st.OriginText()
 			log.Warnf("[%d] Retry %s", connID, sqlForLog(txt))
 			s.sessionVars.StmtCtx = sr.stmtCtx
+			s.sessionVars.StmtCtx.ResetForRetry()
 			_, err = st.Exec(s)
 			if err != nil {
 				break
