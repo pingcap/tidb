@@ -220,6 +220,7 @@ func (s *testEvaluatorSuite) TestPow(c *C) {
 		{[]interface{}{nil, nil}},
 		{[]interface{}{1, "test"}},
 		{[]interface{}{1, nil}},
+		{[]interface{}{10, 700}}, // added overflow test
 	}
 
 	errDtbl := tblToDtbl(errTbl)
