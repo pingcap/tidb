@@ -35,12 +35,12 @@ type Builder struct {
 	Count         int64            // Count is the total rows in the table.
 	NumBuckets    int64            // NumBuckets is the number of buckets a column histogram has.
 	ColumnSamples [][]types.Datum  // ColumnSamples is the sample of columns.
-	ColIDs        []int64          // ColOffsets is the offset of columns in the table.
+	ColIDs        []int64          // ColIDs is the id of columns in the table.
 	ColNDVs       []int64          // ColNDVs is the NDV of columns.
 	IdxRecords    []ast.RecordSet  // IdxRecords is the record set of index columns.
-	IdxIDs        []int64          // IdxOffsets is the offset of indices in the table.
+	IdxIDs        []int64          // IdxIDs is the id of indices in the table.
 	PkRecords     ast.RecordSet    // PkRecords is the record set of primary key of integer type.
-	PkID          int64            // PkOffset is the offset of primary key of integer type in the table.
+	PkID          int64            // PkID is the id of primary key with integer type in the table.
 }
 
 func (b *Builder) buildMultiColumns(t *Table, IDs []int64, baseOffset int, isSorted bool, done chan error) {
