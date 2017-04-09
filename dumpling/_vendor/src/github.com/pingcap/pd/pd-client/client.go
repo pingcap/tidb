@@ -215,11 +215,14 @@ func (c *client) switchLeader(addrs []string) error {
 func (c *client) leaderLoop() {
 	defer c.wg.Done()
 
+	ctx, cancel := context.WithCancel(c.ctx)
+	defer cancel()
+
 	for {
 		select {
 		case <-c.checkLeaderCh:
 		case <-time.After(time.Minute):
-		case <-c.ctx.Done():
+		case <-ctx.Done():
 			return
 		}
 
@@ -238,6 +241,9 @@ type deadline struct {
 func (c *client) tsCancelLoop() {
 	defer c.wg.Done()
 
+	ctx, cancel := context.WithCancel(c.ctx)
+	defer cancel()
+
 	for {
 		select {
 		case d := <-c.tsDeadlineCh:
@@ -246,10 +252,10 @@ func (c *client) tsCancelLoop() {
 				log.Error("tso request is canceled due to timeout")
 				d.cancel()
 			case <-d.done:
-			case <-c.ctx.Done():
+			case <-ctx.Done():
 				return
 			}
-		case <-c.ctx.Done():
+		case <-ctx.Done():
 			return
 		}
 	}
@@ -257,6 +263,9 @@ func (c *client) tsCancelLoop() {
 
 func (c *client) tsLoop() {
 	defer c.wg.Done()
+
+	loopCtx, loopCancel := context.WithCancel(c.ctx)
+	defer loopCancel()
 
 	var requests []*tsoRequest
 	var stream pdpb.PD_TsoClient
@@ -274,7 +283,7 @@ func (c *client) tsLoop() {
 				cancel()
 				select {
 				case <-time.After(time.Second):
-				case <-c.ctx.Done():
+				case <-loopCtx.Done():
 					return
 				}
 				continue
@@ -296,13 +305,13 @@ func (c *client) tsLoop() {
 			}
 			select {
 			case c.tsDeadlineCh <- dl:
-			case <-c.ctx.Done():
+			case <-loopCtx.Done():
 				return
 			}
 			err = c.processTSORequests(stream, requests)
 			close(done)
 			requests = requests[:0]
-		case <-c.ctx.Done():
+		case <-loopCtx.Done():
 			return
 		}
 
@@ -392,13 +401,19 @@ func (c *client) GetClusterID(context.Context) uint64 {
 	return c.clusterID
 }
 
+var tsoReqPool = sync.Pool{
+	New: func() interface{} {
+		return &tsoRequest{
+			done: make(chan error, 1),
+		}
+	},
+}
+
 func (c *client) GetTS(ctx context.Context) (int64, int64, error) {
 	start := time.Now()
 	defer func() { cmdDuration.WithLabelValues("tso").Observe(time.Since(start).Seconds()) }()
 
-	req := &tsoRequest{
-		done: make(chan error, 1),
-	}
+	req := tsoReqPool.Get().(*tsoRequest)
 	c.tsoRequests <- req
 
 	select {
@@ -407,7 +422,9 @@ func (c *client) GetTS(ctx context.Context) (int64, int64, error) {
 			cmdFailedDuration.WithLabelValues("tso").Observe(time.Since(start).Seconds())
 			return 0, 0, errors.Trace(err)
 		}
-		return req.physical, req.logical, err
+		physical, logical := req.physical, req.logical
+		tsoReqPool.Put(req)
+		return physical, logical, err
 	case <-ctx.Done():
 		return 0, 0, errors.Trace(ctx.Err())
 	}
