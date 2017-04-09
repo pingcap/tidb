@@ -369,7 +369,7 @@ func (sf *sumFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 
 // GetPartialResult implements AggregationFunction interface.
 func (sf *sumFunction) GetPartialResult(groupKey []byte) []types.Datum {
-	return []types.Datum{sf.getContext(groupKey).Value}
+	return []types.Datum{sf.GetGroupResult(groupKey)}
 }
 
 // GetStreamResult implements AggregationFunction interface.
@@ -528,7 +528,7 @@ func (cf *countFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 
 // GetPartialResult implements AggregationFunction interface.
 func (cf *countFunction) GetPartialResult(groupKey []byte) []types.Datum {
-	return []types.Datum{types.NewIntDatum(cf.getContext(groupKey).Count)}
+	return []types.Datum{cf.GetGroupResult(groupKey)}
 }
 
 // GetStreamResult implements AggregationFunction interface.
@@ -750,14 +750,7 @@ func (cf *concatFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 
 // GetPartialResult implements AggregationFunction interface.
 func (cf *concatFunction) GetPartialResult(groupKey []byte) []types.Datum {
-	var d types.Datum
-	ctx := cf.getContext(groupKey)
-	if ctx.Buffer != nil {
-		d.SetString(ctx.Buffer.String())
-	} else {
-		d.SetNull()
-	}
-	return []types.Datum{d}
+	return []types.Datum{cf.GetGroupResult(groupKey)}
 }
 
 // GetStreamResult implements AggregationFunction interface.
@@ -815,7 +808,7 @@ func (mmf *maxMinFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 
 // GetPartialResult implements AggregationFunction interface.
 func (mmf *maxMinFunction) GetPartialResult(groupKey []byte) []types.Datum {
-	return []types.Datum{mmf.getContext(groupKey).Value}
+	return []types.Datum{mmf.GetGroupResult(groupKey)}
 }
 
 // GetStreamResult implements AggregationFunction interface.
@@ -946,7 +939,7 @@ func (ff *firstRowFunction) GetGroupResult(groupKey []byte) types.Datum {
 
 // GetPartialResult implements AggregationFunction interface.
 func (ff *firstRowFunction) GetPartialResult(groupKey []byte) []types.Datum {
-	return []types.Datum{ff.getContext(groupKey).Value}
+	return []types.Datum{ff.GetGroupResult(groupKey)}
 }
 
 // GetStreamResult implements AggregationFunction interface.
