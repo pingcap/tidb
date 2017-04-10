@@ -249,11 +249,11 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 }
 
 type selectionExec struct {
-	sc         *variable.StatementContext
-	conditions []expression.Expression
-	colIDs     map[int64]int
-	row        []types.Datum
-	evalCtx    *evalContext
+	sc                *variable.StatementContext
+	conditions        []expression.Expression
+	relatedColOffsets []int
+	row               []types.Datum
+	evalCtx           *evalContext
 
 	src executor
 }
@@ -289,7 +289,7 @@ func (e *selectionExec) Next() (handle int64, value [][]byte, err error) {
 			return 0, nil, nil
 		}
 
-		err = e.evalCtx.decodeColumnVals(e.colIDs, handle, value, e.row)
+		err = e.evalCtx.decodeRelatedColumnVals(e.relatedColOffsets, handle, value, e.row)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
@@ -418,13 +418,13 @@ func (e *aggregateExec) aggregate(handle int64, row [][]byte) error {
 }
 
 type topNExec struct {
-	heap         *topnHeap
-	evalCtx      *evalContext
-	colIDs       map[int64]int
-	orderByExprs []expression.Expression
-	row          []types.Datum
-	cursor       int
-	executed     bool
+	heap              *topnHeap
+	evalCtx           *evalContext
+	relatedColOffsets []int
+	orderByExprs      []expression.Expression
+	row               []types.Datum
+	cursor            int
+	executed          bool
 
 	src executor
 }
@@ -479,7 +479,7 @@ func (e *topNExec) evalTopN(handle int64, value [][]byte) error {
 		meta: tipb.RowMeta{Handle: handle},
 		key:  make([]types.Datum, len(value)),
 	}
-	err := e.evalCtx.decodeColumnVals(e.colIDs, handle, value, e.row)
+	err := e.evalCtx.decodeRelatedColumnVals(e.relatedColOffsets, handle, value, e.row)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -579,6 +579,7 @@ func getRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle int64, 
 	return values, nil
 }
 
+// TODO: Remove it after replacing evaluator in aggregation.
 func extractColIDsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector map[int64]int) error {
 	if expr == nil {
 		return nil
@@ -603,6 +604,45 @@ func extractColIDsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector 
 		}
 	}
 	return nil
+}
+
+func isDuplicated(offsets []int, offset int) bool {
+	for _, idx := range offsets {
+		if idx == offset {
+			return true
+		}
+	}
+	return false
+}
+
+func extractOffsetsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector []int) ([]int, error) {
+	if expr == nil {
+		return nil, nil
+	}
+	if expr.GetTp() == tipb.ExprType_ColumnRef {
+		_, i, err := codec.DecodeInt(expr.Val)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		for idx, c := range columns {
+			if c.GetColumnId() != i {
+				continue
+			}
+			if !isDuplicated(collector, idx) {
+				collector = append(collector, idx)
+			}
+			return collector, nil
+		}
+		return nil, xeval.ErrInvalid.Gen("column %d not found", i)
+	}
+	var err error
+	for _, child := range expr.Children {
+		collector, err = extractOffsetsInExpr(child, columns, collector)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return collector, nil
 }
 
 func convertToExprs(sc *variable.StatementContext, colIDs map[int64]int, pbExprs []*tipb.Expr) ([]expression.Expression, error) {

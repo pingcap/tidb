@@ -126,16 +126,12 @@ func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) *t
 	columns := executor.TblScan.Columns
 	ctx.eval.SetColumnInfos(columns)
 	ctx.evalCtx.setColumnInfo(columns)
-	colIDs := make(map[int64]int)
-	for i, col := range columns {
-		colIDs[col.GetColumnId()] = i
-	}
 	ranges := h.extractKVRanges(ctx.keyRanges, *executor.TblScan.Desc)
 
 	return &tableScanExec{
 		TableScan:   executor.TblScan,
 		kvRanges:    ranges,
-		colIDs:      colIDs,
+		colIDs:      ctx.eval.ColIDs,
 		startTS:     ctx.dagReq.GetStartTs(),
 		mvccStore:   h.mvccStore,
 		rawStartKey: h.rawStartKey,
@@ -167,23 +163,24 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) *i
 
 func (h *rpcHandler) buildSelection(ctx *dagContext, executor *tipb.Executor) (*selectionExec, error) {
 	pbConds := executor.Selection.Conditions
-	colIDs := make(map[int64]int)
+	var err error
+	var relatedColOffsets []int
 	for _, cond := range pbConds {
-		err := extractColIDsInExpr(cond, ctx.eval.ColumnInfos, colIDs)
+		relatedColOffsets, err = extractOffsetsInExpr(cond, ctx.eval.ColumnInfos, relatedColOffsets)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	conds, err := convertToExprs(ctx.eval.StatementCtx, colIDs, pbConds)
+	conds, err := convertToExprs(ctx.eval.StatementCtx, ctx.evalCtx.colIDs, pbConds)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	return &selectionExec{
-		evalCtx:    ctx.evalCtx,
-		colIDs:     colIDs,
-		conditions: conds,
-		row:        make([]types.Datum, len(ctx.eval.ColumnInfos)),
+		evalCtx:           ctx.evalCtx,
+		relatedColOffsets: relatedColOffsets,
+		conditions:        conds,
+		row:               make([]types.Datum, len(ctx.eval.ColumnInfos)),
 	}, nil
 }
 
@@ -217,10 +214,11 @@ func (h *rpcHandler) buildAggregation(ctx *dagContext, executor *tipb.Executor) 
 
 func (h *rpcHandler) buildTopN(ctx *dagContext, executor *tipb.Executor) (*topNExec, error) {
 	topN := executor.TopN
-	colIDs := make(map[int64]int)
+	var err error
+	var relatedColOffsets []int
 	pbConds := make([]*tipb.Expr, len(topN.OrderBy))
 	for i, item := range topN.OrderBy {
-		err := extractColIDsInExpr(item.Expr, ctx.eval.ColumnInfos, colIDs)
+		relatedColOffsets, err = extractOffsetsInExpr(item.Expr, ctx.eval.ColumnInfos, relatedColOffsets)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -234,21 +232,22 @@ func (h *rpcHandler) buildTopN(ctx *dagContext, executor *tipb.Executor) (*topNE
 		},
 	}
 
-	conds, err := convertToExprs(ctx.eval.StatementCtx, colIDs, pbConds)
+	conds, err := convertToExprs(ctx.eval.StatementCtx, ctx.evalCtx.colIDs, pbConds)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	return &topNExec{
-		heap:         heap,
-		evalCtx:      ctx.evalCtx,
-		colIDs:       colIDs,
-		orderByExprs: conds,
-		row:          make([]types.Datum, len(ctx.eval.ColumnInfos)),
+		heap:              heap,
+		evalCtx:           ctx.evalCtx,
+		relatedColOffsets: relatedColOffsets,
+		orderByExprs:      conds,
+		row:               make([]types.Datum, len(ctx.eval.ColumnInfos)),
 	}, nil
 }
 
 type evalContext struct {
+	colIDs      map[int64]int
 	columnInfos []*tipb.ColumnInfo
 	fieldTps    []*types.FieldType
 	sc          *variable.StatementContext
@@ -258,17 +257,19 @@ func (e *evalContext) setColumnInfo(cols []*tipb.ColumnInfo) {
 	e.columnInfos = make([]*tipb.ColumnInfo, len(cols))
 	copy(e.columnInfos, cols)
 
+	e.colIDs = make(map[int64]int)
 	e.fieldTps = make([]*types.FieldType, 0, len(e.columnInfos))
-	for _, col := range e.columnInfos {
+	for i, col := range e.columnInfos {
 		ft := distsql.FieldTypeFromPBColumn(col)
 		e.fieldTps = append(e.fieldTps, ft)
+		e.colIDs[col.GetColumnId()] = i
 	}
 }
 
-// decodeColumnVals decodes data to Datum slice according to the row information.
-func (e *evalContext) decodeColumnVals(colIDs map[int64]int, handle int64, value [][]byte, row []types.Datum) error {
+// decodeRelatedColumnVals decodes data to Datum slice according to the row information.
+func (e *evalContext) decodeRelatedColumnVals(relatedColOffsets []int, handle int64, value [][]byte, row []types.Datum) error {
 	var err error
-	for _, offset := range colIDs {
+	for _, offset := range relatedColOffsets {
 		col := e.columnInfos[offset]
 		if col.GetPkHandle() {
 			if mysql.HasUnsignedFlag(uint(col.GetFlag())) {
