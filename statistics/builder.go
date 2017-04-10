@@ -51,24 +51,16 @@ type buildStatsTask struct {
 	col   *Column
 }
 
-func (b *Builder) updateTable(t *buildStatsTask) {
-	if t.index {
-		t.t.Indices[t.col.ID] = t.col
-	} else {
-		t.t.Columns[t.col.ID] = t.col
-	}
-}
-
 func (b *Builder) buildMultiColumns(t *Table, IDs []int64, baseOffset int, isSorted bool) {
 	for i, id := range IDs {
 		var err error
+		var col *Column
 		if isSorted {
-			err = b.build4SortedColumn(t, b.Ctx.GetSessionVars().StmtCtx, id, b.IdxRecords[i+baseOffset], b.NumBuckets, false)
+			col, err = b.build4SortedColumn(t, b.Ctx.GetSessionVars().StmtCtx, id, b.IdxRecords[i+baseOffset], b.NumBuckets, false)
+			b.doneCh <- &buildStatsTask{err: err, index: true, t: t, col: col}
 		} else {
-			err = b.buildColumn(t, b.Ctx.GetSessionVars().StmtCtx, id, b.ColNDVs[i+baseOffset], b.ColumnSamples[i+baseOffset], b.NumBuckets)
-		}
-		if err != nil {
-			b.doneCh <- &buildStatsTask{err: err}
+			col, err = b.buildColumn(t, b.Ctx.GetSessionVars().StmtCtx, id, b.ColNDVs[i+baseOffset], b.ColumnSamples[i+baseOffset], b.NumBuckets)
+			b.doneCh <- &buildStatsTask{err: err, t: t, col: col}
 		}
 	}
 }
@@ -106,7 +98,11 @@ func (b *Builder) splitAndConcurrentBuild(t *Table, IDs []int64, isSorted bool) 
 		if task.err != nil {
 			return errors.Trace(task.err)
 		}
-		b.updateTable(task)
+		if task.index {
+			task.t.Indices[task.col.ID] = task.col
+		} else {
+			task.t.Columns[task.col.ID] = task.col
+		}
 	}
 	return nil
 }
@@ -134,15 +130,11 @@ func (b *Builder) NewTable() (*Table, error) {
 		return nil, errors.Trace(err)
 	}
 	if b.PkID != 0 {
-		err := b.build4SortedColumn(t, b.Ctx.GetSessionVars().StmtCtx, b.PkID, b.PkRecords, b.NumBuckets, true)
+		col, err := b.build4SortedColumn(t, b.Ctx.GetSessionVars().StmtCtx, b.PkID, b.PkRecords, b.NumBuckets, true)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		task := <-b.doneCh
-		if task.err != nil {
-			return nil, errors.Trace(task.err)
-		}
-		b.updateTable(task)
+		t.Columns[col.ID] = col
 	}
 	err = b.splitAndConcurrentBuild(t, b.IdxIDs, true)
 	if err != nil {
@@ -175,7 +167,7 @@ func (b *Builder) NewTable() (*Table, error) {
 }
 
 // build4SortedColumn builds column statistics for sorted columns.
-func (b *Builder) build4SortedColumn(t *Table, sc *variable.StatementContext, id int64, records ast.RecordSet, bucketCount int64, isPK bool) error {
+func (b *Builder) build4SortedColumn(t *Table, sc *variable.StatementContext, id int64, records ast.RecordSet, bucketCount int64, isPK bool) (*Column, error) {
 	col := &Column{
 		ID:      id,
 		NDV:     0,
@@ -186,7 +178,7 @@ func (b *Builder) build4SortedColumn(t *Table, sc *variable.StatementContext, id
 	for {
 		row, err := records.Next()
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		if row == nil {
 			break
@@ -197,13 +189,13 @@ func (b *Builder) build4SortedColumn(t *Table, sc *variable.StatementContext, id
 		} else {
 			bytes, err := codec.EncodeKey(nil, row.Data...)
 			if err != nil {
-				return errors.Trace(err)
+				return nil, errors.Trace(err)
 			}
 			data = types.NewBytesDatum(bytes)
 		}
 		cmp, err := col.Buckets[bucketIdx].Value.CompareDatum(sc, data)
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		count++
 		if cmp == 0 {
@@ -248,15 +240,14 @@ func (b *Builder) build4SortedColumn(t *Table, sc *variable.StatementContext, id
 		}
 	}
 	atomic.StoreInt64(&t.Count, count)
-	b.doneCh <- &buildStatsTask{index: !isPK, t: t, col: col}
-	return nil
+	return col, nil
 }
 
 // buildColumn builds column statistics from samples.
-func (b *Builder) buildColumn(t *Table, sc *variable.StatementContext, id int64, ndv int64, samples []types.Datum, bucketCount int64) error {
+func (b *Builder) buildColumn(t *Table, sc *variable.StatementContext, id int64, ndv int64, samples []types.Datum, bucketCount int64) (*Column, error) {
 	err := types.SortDatums(sc, samples)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	col := &Column{
 		ID:      id,
@@ -276,7 +267,7 @@ func (b *Builder) buildColumn(t *Table, sc *variable.StatementContext, id int64,
 	for i := int64(0); i < int64(len(samples)); i++ {
 		cmp, err := col.Buckets[bucketIdx].Value.CompareDatum(sc, samples[i])
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		totalCount := (i + 1) * sampleFactor
 		if cmp == 0 {
@@ -306,8 +297,7 @@ func (b *Builder) buildColumn(t *Table, sc *variable.StatementContext, id int64,
 			})
 		}
 	}
-	b.doneCh <- &buildStatsTask{t: t, col: col}
-	return nil
+	return col, nil
 }
 
 func copyFromIndexColumns(ind *Column, id int64) (*Column, error) {
