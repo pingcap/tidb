@@ -88,7 +88,7 @@ func (s *testStatsCacheSuite) TestStatsCache(c *C) {
 	c.Assert(statsTbl.Pseudo, IsTrue)
 }
 
-func compareTwoColumnsStatsSlice(cols0 []*statistics.Column, cols1 []*statistics.Column, c *C) {
+func compareTwoColumnsStatsSlice(cols0 map[int64]*statistics.Column, cols1 map[int64]*statistics.Column, c *C) {
 	c.Assert(len(cols0), Equals, len(cols1))
 	for _, col0 := range cols0 {
 		find := false
@@ -192,6 +192,40 @@ func (s *testStatsCacheSuite) TestEmptyTable(c *C) {
 	c.Assert(err, IsNil)
 	// FIXME: The result should be zero.
 	c.Assert(count, Equals, int64(3333333))
+}
+
+func (s *testStatsCacheSuite) TestColumnIDs(c *C) {
+	store, do, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (c1 int, c2 int)")
+	testKit.MustExec("insert into t values(1, 2)")
+	testKit.MustExec("analyze table t")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	statsTbl := statistics.GetStatisticsTableCache(tableInfo)
+	sc := new(variable.StatementContext)
+	count, err := statsTbl.ColumnLessRowCount(sc, types.NewDatum(2), tableInfo.Columns[0])
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, int64(1))
+
+	// Drop a column and the offset changed,
+	testKit.MustExec("alter table t drop column c1")
+	is = do.InfoSchema()
+	do.StatsHandle().Clear()
+	do.StatsHandle().Update(is)
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo = tbl.Meta()
+	statsTbl = statistics.GetStatisticsTableCache(tableInfo)
+	// At that time, we should get c2's stats instead of c1's.
+	count, err = statsTbl.ColumnLessRowCount(sc, types.NewDatum(2), tableInfo.Columns[0])
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, int64(0))
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {

@@ -373,15 +373,15 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	case "str_to_date":
 		tp = types.NewFieldType(mysql.TypeDatetime)
 	case "dayname", "version", "database", "user", "current_user", "schema",
-		"concat", "concat_ws", "left", "lcase", "lower", "repeat",
+		"concat", "concat_ws", "left", "right", "lcase", "lower", "repeat",
 		"replace", "ucase", "upper", "convert", "substring", "elt",
 		"substring_index", "trim", "ltrim", "rtrim", "reverse", "hex", "unhex",
 		"date_format", "rpad", "lpad", "char_func", "conv", "make_set", "oct", "uuid",
-		"insert_func", "bin", "quote", "format", "from_base64":
+		"insert_func", "bin", "quote", "format", "from_base64", "to_base64":
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
 	case "strcmp", "isnull", "bit_length", "char_length", "character_length", "crc32", "timestampdiff",
-		"sign", "is_ipv6", "ord", "instr":
+		"sign", "is_ipv6", "ord", "instr", "bit_count":
 		tp = types.NewFieldType(mysql.TypeLonglong)
 	case "connection_id":
 		tp = types.NewFieldType(mysql.TypeLonglong)
