@@ -74,14 +74,14 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 			log.Errorf("Error occurred when read table stats for table id %d. The error message is %s.", tableID, err.Error())
 			tbl = PseudoTable(tableInfo)
 		}
-		h.SetStatsTable(tableID, tbl, version)
+		h.SetTableStats(tableID, tbl, version)
 		h.lastVersion = version
 	}
 	return nil
 }
 
-// GetStatsTable retrieves the statistics table from cache, and the cache will be updated by a goroutine.
-func (h *Handle) GetStatsTable(tblInfo *model.TableInfo) *Table {
+// GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
+func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *Table {
 	h.m.RLock()
 	defer h.m.RUnlock()
 	stats, ok := h.cache[tblInfo.ID]
@@ -97,8 +97,8 @@ func (h *Handle) GetStatsTable(tblInfo *model.TableInfo) *Table {
 	return PseudoTable(tblInfo)
 }
 
-// SetStatsTable sets the statistics table cache.
-func (h *Handle) SetStatsTable(id int64, statsTbl *Table, version uint64) {
+// SetTableStats sets the statistics table cache.
+func (h *Handle) SetTableStats(id int64, statsTbl *Table, version uint64) {
 	h.m.Lock()
 	defer h.m.Unlock()
 	stats, ok := h.cache[id]
