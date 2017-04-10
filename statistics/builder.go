@@ -128,7 +128,7 @@ func (b *Builder) NewTable() (*Table, error) {
 		}
 		return t, nil
 	}
-	b.doneCh = make(chan *buildStatsTask, len(b.ColIDs) + len(b.IdxIDs))
+	b.doneCh = make(chan *buildStatsTask, len(b.ColIDs)+len(b.IdxIDs))
 	err := b.splitAndConcurrentBuild(t, b.ColIDs, false)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -138,7 +138,7 @@ func (b *Builder) NewTable() (*Table, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		task := <- b.doneCh
+		task := <-b.doneCh
 		if task.err != nil {
 			return nil, errors.Trace(task.err)
 		}

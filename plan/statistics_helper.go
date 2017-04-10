@@ -116,14 +116,8 @@ func getPseudoRowCountByIndexRanges(sc *variable.StatementContext, statsTbl *sta
 		}
 		l := indexRange.LowVal[i]
 		r := indexRange.HighVal[i]
-		name := indexInfo.Columns[i].Name
-		var id int64
-		for _, col := range table.Columns {
-			if col.Name.L == name.L {
-				id = col.ID
-				break
-			}
-		}
+		offset := indexInfo.Columns[i].Offset
+		id := table.Columns[offset].ID
 		rowCount, err := getRowCountByRange(sc, statsTbl.Count, statsTbl.Columns[id], l, r)
 		if err != nil {
 			return 0, errors.Trace(err)
