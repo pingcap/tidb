@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -114,7 +115,7 @@ func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = t.SaveToStorage(e.ctx)
+	err = sessionctx.GetDomain(e.ctx).StatsHandle().SaveToStorage(e.ctx, t)
 	return errors.Trace(err)
 }
 
