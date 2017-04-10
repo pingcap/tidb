@@ -998,3 +998,27 @@ func (s *testEvaluatorSuite) TestTimestamp(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(d.Kind(), Equals, types.KindNull)
 }
+
+func (s *testEvaluatorSuite) TestSecToTime(c *C) {
+	// Test cases from https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_sec-to-time
+	tests := []struct {
+		param  interface{}
+		expect string
+	}{
+		{2378, "00:39:38"},
+		{3864000, "838:59:59"},
+		{-3864000, "-838:59:59"},
+		{86401.4, "24:00:01"},
+		{86401.5, "24:00:02"},
+	}
+	fc := funcs[ast.SecToTime]
+	for _, test := range tests {
+		t := []types.Datum{types.NewDatum(test.param)}
+		f, err := fc.getFunction(datumsToConstants(t), s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		result, _ := d.ToString()
+		c.Assert(result, Equals, test.expect)
+	}
+}

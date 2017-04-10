@@ -1741,6 +1741,47 @@ type builtinSecToTimeSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_sec-to-time
 func (b *builtinSecToTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if args[0].IsNull() {
+		return d, nil
+	}
+
+	var (
+		hour     int64
+		minute   int64
+		second   int64
+		negative string
+	)
+
+	sc := b.ctx.GetSessionVars().StmtCtx
+	seconds, _ = args[0].ToInt64(sc)
+
+	if seconds < 0 {
+		negative = "-"
+		seconds = 0 - seconds
+	}
+
+	hour := seconds / 3600
+	if hour > 838 {
+		hour = 838
+		minute = 59
+		second = 59
+	} else {
+		minute = seconds % 3600 / 60
+		second = seconds % 60
+	}
+
+	var dur types.Duration
+	fsp := types.MinFsp
+	dur, err = types.ParseDuration(fmt.Sprintf("%s%02d:%02d:%2d", negative, hour, minute, second), fsp)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d.SetMysqlDuration(dur)
+	return d, nil
 	return d, errFunctionNotExists.GenByArgs("SEC_TO_TIME")
 }
 
