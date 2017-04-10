@@ -1757,14 +1757,14 @@ func (b *builtinSecToTimeSig) eval(row []types.Datum) (d types.Datum, err error)
 	)
 
 	sc := b.ctx.GetSessionVars().StmtCtx
-	seconds, _ = args[0].ToInt64(sc)
+	seconds, _ := args[0].ToInt64(sc)
 
 	if seconds < 0 {
 		negative = "-"
 		seconds = 0 - seconds
 	}
 
-	hour := seconds / 3600
+	hour = seconds / 3600
 	if hour > 838 {
 		hour = 838
 		minute = 59
