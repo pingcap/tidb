@@ -47,6 +47,7 @@ const (
 		Grant_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
 		Alter_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
 		Show_db_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
+		Super_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
 		Execute_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
 		Index_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
 		Create_user_priv	ENUM('N','Y') NOT NULL  DEFAULT 'N',
@@ -115,6 +116,41 @@ const (
   		PRIMARY KEY (help_topic_id),
   		UNIQUE KEY name (name)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8 STATS_PERSISTENT=0 COMMENT='help topics';`
+
+	// CreateStatsMetaTable stores the meta of table statistics.
+	CreateStatsMetaTable = `CREATE TABLE if not exists mysql.stats_meta (
+		version bigint(64) unsigned NOT NULL,
+		table_id bigint(64) NOT NULL,
+		modify_count bigint(64) NOT NULL DEFAULT 0,
+		count bigint(64) unsigned NOT NULL DEFAULT 0,
+		index idx_ver(version),
+		unique index tbl(table_id)
+	);`
+
+	// CreateStatsColsTable stores the statistics of table columns.
+	CreateStatsColsTable = `CREATE TABLE if not exists mysql.stats_histograms (
+		table_id bigint(64) NOT NULL,
+		is_index tinyint(2) NOT NULL,
+		hist_id bigint(64) NOT NULL,
+		distinct_count bigint(64) NOT NULL,
+		distinct_ratio double(64) NOT NULL DEFAULT 0,
+		use_count_to_estimate tinyint(2) NOT NULL DEFAULT 0,
+		modify_count bigint(64) NOT NULL DEFAULT 0,
+		version bigint(64) unsigned NOT NULL DEFAULT 0,
+		unique index tbl(table_id, is_index, hist_id)
+	);`
+
+	// CreateStatsBucketsTable stores the histogram info for every table columns.
+	CreateStatsBucketsTable = `CREATE TABLE if not exists mysql.stats_buckets (
+		table_id bigint(64) NOT NULL,
+		is_index tinyint(2) NOT NULL,
+		hist_id bigint(64) NOT NULL,
+		bucket_id bigint(64) NOT NULL,
+		count bigint(64) NOT NULL,
+		repeats bigint(64) NOT NULL,
+		value blob NOT NULL,
+		unique index tbl(table_id, is_index, hist_id, bucket_id)
+	);`
 )
 
 // Bootstrap initiates system DB for a store.
@@ -143,6 +179,9 @@ const (
 	// Const for TiDB server version 2.
 	version2 = 2
 	version3 = 3
+	version4 = 4
+	version5 = 5
+	version6 = 6
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -182,6 +221,7 @@ func getTiDBVar(s Session, name string) (types.Datum, error) {
 		return types.Datum{}, errors.New("Wrong number of Recordset")
 	}
 	r := rs[0]
+	defer r.Close()
 	row, err := r.Next()
 	if err != nil || row == nil {
 		return types.Datum{}, errors.Trace(err)
@@ -198,10 +238,6 @@ func upgrade(s Session) {
 	}
 	if ver >= currentBootstrapVersion {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
-		if err1 := s.CommitTxn(); err1 != nil {
-			// Make sure that doesn't affect the following operations.
-			log.Fatal(errors.Trace(err1))
-		}
 		return
 	}
 	// Do upgrade works then update bootstrap version.
@@ -211,6 +247,17 @@ func upgrade(s Session) {
 	}
 	if ver < version3 {
 		upgradeToVer3(s)
+	}
+	if ver < version4 {
+		upgradeToVer4(s)
+	}
+
+	if ver < version5 {
+		upgradeToVer5(s)
+	}
+
+	if ver < version6 {
+		upgradeToVer6(s)
 	}
 
 	updateBootstrapVer(s)
@@ -225,10 +272,6 @@ func upgrade(s Session) {
 		}
 		if v >= currentBootstrapVersion {
 			// It is already bootstrapped/upgraded by a higher version TiDB server.
-			if err1 := s.CommitTxn(); err1 != nil {
-				// Make sure that doesn't affect the following operations.
-				log.Fatal(errors.Trace(err1))
-			}
 			return
 		}
 		log.Errorf("[Upgrade] upgrade from %d to %d error", ver, currentBootstrapVersion)
@@ -241,7 +284,7 @@ func upgrade(s Session) {
 func upgradeToVer2(s Session) {
 	// Version 2 add two system variable for DistSQL concurrency controlling.
 	// Insert distsql related system variable.
-	distSQLVars := []string{variable.DistSQLScanConcurrencyVar, variable.DistSQLJoinConcurrencyVar}
+	distSQLVars := []string{variable.TiDBDistSQLScanConcurrency}
 	values := make([]string, 0, len(distSQLVars))
 	for _, v := range distSQLVars {
 		value := fmt.Sprintf(`("%s", "%s")`, v, variable.SysVars[v].Value)
@@ -258,6 +301,23 @@ func upgradeToVer3(s Session) {
 	sql := fmt.Sprintf("UPDATE %s.%s set variable_value = '0' where variable_name = 'tx_read_only';",
 		mysql.SystemDB, mysql.GlobalVariablesTable)
 	mustExecute(s, sql)
+}
+
+// Update to version 4.
+func upgradeToVer4(s Session) {
+	sql := CreateStatsMetaTable
+	mustExecute(s, sql)
+}
+
+func upgradeToVer5(s Session) {
+	mustExecute(s, CreateStatsColsTable)
+	mustExecute(s, CreateStatsBucketsTable)
+}
+
+func upgradeToVer6(s Session) {
+	s.Execute("ALTER TABLE mysql.user ADD COLUMN `Super_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Show_db_priv`")
+	// For reasons of compatibility, set the non-exists privilege column value to 'Y', as TiDB doesn't check them in older versions.
+	s.Execute("UPDATE mysql.user SET Super_priv='Y'")
 }
 
 // Update boostrap version variable in mysql.TiDB table.
@@ -298,6 +358,12 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateTiDBTable)
 	// Create help table.
 	mustExecute(s, CreateHelpTopic)
+	// Create stats_meta table.
+	mustExecute(s, CreateStatsMetaTable)
+	// Create stats_columns table.
+	mustExecute(s, CreateStatsColsTable)
+	// Create stats_buckets table.
+	mustExecute(s, CreateStatsBucketsTable)
 }
 
 // Execute DML statements in bootstrap stage.
@@ -307,7 +373,7 @@ func doDMLWorks(s Session) {
 
 	// Insert a default user with empty password.
 	mustExecute(s, `INSERT INTO mysql.user VALUES
-		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
 
 	// Init global system variables table.
 	values := make([]string, 0, len(variable.SysVars))

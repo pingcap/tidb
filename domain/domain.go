@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
 )
 
@@ -37,9 +38,11 @@ type Domain struct {
 	store           kv.Storage
 	infoHandle      *infoschema.Handle
 	privHandle      *privileges.Handle
+	statsHandle     *statistics.Handle
 	ddl             ddl.DDL
 	m               sync.Mutex
 	SchemaValidator SchemaValidator
+	sysSessionPool  *sync.Pool
 	exit            chan struct{}
 
 	MockReloadFailed MockFailure // It mocks reload failed.
@@ -345,6 +348,7 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 		store:           store,
 		SchemaValidator: newSchemaValidator(lease),
 		exit:            make(chan struct{}),
+		sysSessionPool:  &sync.Pool{},
 	}
 
 	d.infoHandle, err = infoschema.NewHandle(d.store)
@@ -364,6 +368,11 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 	}
 
 	return d, nil
+}
+
+// SysSessionPool returns the system session pool.
+func (do *Domain) SysSessionPool() *sync.Pool {
+	return do.sysSessionPool
 }
 
 // LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it
@@ -396,6 +405,42 @@ func (do *Domain) LoadPrivilegeLoop(ctx context.Context) error {
 // PrivilegeHandle returns the MySQLPrivilege.
 func (do *Domain) PrivilegeHandle() *privileges.Handle {
 	return do.privHandle
+}
+
+// StatsHandle returns the statistic handle.
+func (do *Domain) StatsHandle() *statistics.Handle {
+	return do.statsHandle
+}
+
+// LoadTableStatsLoop creates a goroutine loads stats info in a loop, it
+// should be called only once in BootstrapSession.
+func (do *Domain) LoadTableStatsLoop(ctx context.Context) error {
+	do.statsHandle = statistics.NewHandle(ctx)
+	err := do.statsHandle.Update(do.InfoSchema())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	lease := do.DDL().GetLease()
+	if lease <= 0 {
+		return nil
+	}
+	go func(do *Domain) {
+		ticker := time.NewTicker(lease)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				err := do.statsHandle.Update(do.InfoSchema())
+				if err != nil {
+					log.Error(errors.ErrorStack(err))
+				}
+			case <-do.exit:
+				return
+			}
+		}
+	}(do)
+	return nil
 }
 
 // Domain error codes.

@@ -14,10 +14,9 @@
 package tikv
 
 import (
-	"context"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
+	goctx "golang.org/x/net/context"
 )
 
 type testRawKVSuite struct {
@@ -36,7 +35,7 @@ func (s *testRawKVSuite) SetUpTest(c *C) {
 		regionCache: NewRegionCache(mocktikv.NewPDClient(s.cluster)),
 		rpcClient:   mocktikv.NewRPCClient(s.cluster, mocktikv.NewMvccStore()),
 	}
-	s.bo = NewBackoffer(5000, context.Background())
+	s.bo = NewBackoffer(5000, goctx.Background())
 }
 
 func (s *testRawKVSuite) mustNotExist(c *C, key []byte) {

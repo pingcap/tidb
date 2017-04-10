@@ -128,29 +128,25 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 		}
 	}
 
-	ver, err := updateSchemaVersion(t, job)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
+	originalState := columnInfo.State
 	switch columnInfo.State {
 	case model.StateNone:
 		// none -> delete only
 		job.SchemaState = model.StateDeleteOnly
 		columnInfo.State = model.StateDeleteOnly
-		err = t.UpdateTable(schemaID, tblInfo)
+		_, err = updateTableInfo(t, job, tblInfo, originalState)
 	case model.StateDeleteOnly:
 		// delete only -> write only
 		job.SchemaState = model.StateWriteOnly
 		columnInfo.State = model.StateWriteOnly
-		err = t.UpdateTable(schemaID, tblInfo)
+		_, err = updateTableInfo(t, job, tblInfo, originalState)
 	case model.StateWriteOnly:
 		// write only -> reorganization
 		job.SchemaState = model.StateWriteReorganization
 		columnInfo.State = model.StateWriteReorganization
 		// Initialize SnapshotVer to 0 for later reorganization check.
 		job.SnapshotVer = 0
-		err = t.UpdateTable(schemaID, tblInfo)
+		_, err = updateTableInfo(t, job, tblInfo, originalState)
 	case model.StateWriteReorganization:
 		// reorganization -> public
 		// Get the current version for reorganization if we don't have it.
@@ -161,30 +157,16 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 			return errors.Trace(err)
 		}
 
-		tbl, err := d.getTable(schemaID, tblInfo)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if columnInfo.DefaultValue != nil || mysql.HasNotNullFlag(columnInfo.Flag) {
-			err = d.runReorgJob(job, func() error {
-				return d.addTableColumn(tbl, columnInfo, reorgInfo, job)
-			})
-			if err != nil {
-				// If the timeout happens, we should return.
-				// Then check for the owner and re-wait job to finish.
-				return errors.Trace(filterError(err, errWaitReorgTimeout))
-			}
-		}
-
 		// Adjust column offset.
 		d.adjustColumnOffset(tblInfo.Columns, tblInfo.Indices, offset, true)
 		columnInfo.State = model.StatePublic
-		if err = t.UpdateTable(schemaID, tblInfo); err != nil {
+		job.SchemaState = model.StatePublic
+		ver, err := updateTableInfo(t, job, tblInfo, originalState)
+		if err != nil {
 			return errors.Trace(err)
 		}
 
 		// Finish this job.
-		job.SchemaState = model.StatePublic
 		job.State = model.JobDone
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
 	default:
@@ -226,11 +208,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 		return errCantDropColWithIndex.Gen("can't drop column %s with index covered now", colName)
 	}
 
-	ver, err := updateSchemaVersion(t, job)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
+	originalState := colInfo.State
 	switch colInfo.State {
 	case model.StatePublic:
 		// public -> write only
@@ -238,19 +216,19 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 		colInfo.State = model.StateWriteOnly
 		// Set this column's offset to the last and reset all following columns' offsets.
 		d.adjustColumnOffset(tblInfo.Columns, tblInfo.Indices, colInfo.Offset, false)
-		err = t.UpdateTable(schemaID, tblInfo)
+		_, err = updateTableInfo(t, job, tblInfo, originalState)
 	case model.StateWriteOnly:
 		// write only -> delete only
 		job.SchemaState = model.StateDeleteOnly
 		colInfo.State = model.StateDeleteOnly
-		err = t.UpdateTable(schemaID, tblInfo)
+		_, err = updateTableInfo(t, job, tblInfo, originalState)
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
 		job.SchemaState = model.StateDeleteReorganization
 		colInfo.State = model.StateDeleteReorganization
 		// Initialize SnapshotVer to 0 for later reorganization check.
 		job.SnapshotVer = 0
-		err = t.UpdateTable(schemaID, tblInfo)
+		_, err = updateTableInfo(t, job, tblInfo, originalState)
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
 		reorgInfo, err := d.getReorgInfo(t, job)
@@ -268,12 +246,13 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 			}
 		}
 		tblInfo.Columns = newColumns
-		if err = t.UpdateTable(schemaID, tblInfo); err != nil {
+		job.SchemaState = model.StateNone
+		ver, err := updateTableInfo(t, job, tblInfo, originalState)
+		if err != nil {
 			return errors.Trace(err)
 		}
 
 		// Finish this job.
-		job.SchemaState = model.StateNone
 		job.State = model.JobDone
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
 	default:
@@ -282,6 +261,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 	return errors.Trace(err)
 }
 
+// TODO: Use it when updating the column type or remove it.
 // How to backfill column data in reorganization state?
 //  1. Generate a snapshot with special version.
 //  2. Traverse the snapshot, get every row in the table.
@@ -462,17 +442,15 @@ func (d *ddl) updateColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInf
 		return infoschema.ErrColumnNotExists.GenByArgs(newCol.Name, tblInfo.Name)
 	}
 	*oldCol = *newCol
-	err = t.UpdateTable(job.SchemaID, tblInfo)
+
+	originalState := job.SchemaState
+	job.SchemaState = model.StatePublic
+	ver, err := updateTableInfo(t, job, tblInfo, originalState)
 	if err != nil {
 		job.State = model.JobCancelled
 		return errors.Trace(err)
 	}
 
-	ver, err := updateSchemaVersion(t, job)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	job.SchemaState = model.StatePublic
 	job.State = model.JobDone
 	job.BinlogInfo.AddTableInfo(ver, tblInfo)
 	return nil

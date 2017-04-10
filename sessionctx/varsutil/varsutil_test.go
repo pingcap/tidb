@@ -33,9 +33,32 @@ var _ = Suite(&testVarsutilSuite{})
 type testVarsutilSuite struct {
 }
 
+func (s *testVarsutilSuite) TestTiDBOptOn(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		val string
+		on  bool
+	}{
+		{"ON", true},
+		{"on", true},
+		{"On", true},
+		{"1", true},
+		{"off", false},
+		{"No", false},
+		{"0", false},
+		{"1.1", false},
+		{"", false},
+	}
+	for _, t := range tbl {
+		on := tidbOptOn(t.val)
+		c.Assert(on, Equals, t.on)
+	}
+}
+
 func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	defer testleak.AfterTest(c)()
 	v := variable.NewSessionVars()
+	v.GlobalVarsAccessor = newMockGlobalAccessor()
 
 	SetSessionSystemVar(v, "autocommit", types.NewStringDatum("1"))
 	val, err := GetSessionSystemVar(v, "autocommit")
@@ -114,4 +137,37 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	// Combined sql_mode
 	SetSessionSystemVar(v, "sql_mode", types.NewStringDatum("REAL_AS_FLOAT,ANSI_QUOTES"))
 	c.Assert(v.SQLMode, Equals, mysql.ModeRealAsFloat|mysql.ModeANSIQuotes)
+
+	// Test case for tidb_index_serial_scan_concurrency.
+	c.Assert(v.IndexSerialScanConcurrency, Equals, 1)
+	SetSessionSystemVar(v, variable.TiDBIndexSerialScanConcurrency, types.NewStringDatum("4"))
+	c.Assert(v.IndexSerialScanConcurrency, Equals, 4)
+
+	// Test case for tidb_batch_insert.
+	c.Assert(v.BatchInsert, IsFalse)
+	SetSessionSystemVar(v, variable.TiDBBatchInsert, types.NewStringDatum("1"))
+	c.Assert(v.BatchInsert, IsTrue)
+}
+
+type mockGlobalAccessor struct {
+	vars map[string]string
+}
+
+func newMockGlobalAccessor() *mockGlobalAccessor {
+	m := &mockGlobalAccessor{
+		vars: make(map[string]string),
+	}
+	for name, val := range variable.SysVars {
+		m.vars[name] = val.Value
+	}
+	return m
+}
+
+func (m *mockGlobalAccessor) GetGlobalSysVar(name string) (string, error) {
+	return m.vars[name], nil
+}
+
+func (m *mockGlobalAccessor) SetGlobalSysVar(name string, value string) error {
+	m.vars[name] = value
+	return nil
 }

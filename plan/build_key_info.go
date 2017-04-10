@@ -27,7 +27,7 @@ func (s *buildKeySolver) optimize(lp LogicalPlan, _ context.Context, _ *idAlloca
 	return lp, nil
 }
 
-func (p *Aggregation) buildKeyInfo() {
+func (p *LogicalAggregation) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
 	for _, key := range p.Children()[0].Schema().Keys {
 		indices := p.schema.ColumnsIndices(key)
@@ -39,6 +39,16 @@ func (p *Aggregation) buildKeyInfo() {
 			newKey = append(newKey, p.schema.Columns[i])
 		}
 		p.schema.Keys = append(p.schema.Keys, newKey)
+	}
+	if len(p.groupByCols) == len(p.GroupByItems) && len(p.GroupByItems) > 0 {
+		indices := p.schema.ColumnsIndices(p.groupByCols)
+		if indices != nil {
+			newKey := make([]*expression.Column, 0, len(indices))
+			for _, i := range indices {
+				newKey = append(newKey, p.schema.Columns[i])
+			}
+			p.schema.Keys = append(p.schema.Keys, newKey)
+		}
 	}
 	if len(p.GroupByItems) == 0 {
 		p.schema.MaxOneRow = true
@@ -109,27 +119,7 @@ func (p *Projection) buildKeyInfo() {
 	}
 }
 
-func (p *Trim) buildKeyInfo() {
-	p.baseLogicalPlan.buildKeyInfo()
-	p.schema.MaxOneRow = p.children[0].Schema().MaxOneRow
-	for _, key := range p.children[0].Schema().Keys {
-		ok := true
-		newKey := make([]*expression.Column, 0, len(key))
-		for _, col := range key {
-			pos := p.schema.ColumnIndex(col)
-			if pos == -1 {
-				ok = false
-				break
-			}
-			newKey = append(newKey, p.schema.Columns[pos])
-		}
-		if ok {
-			p.schema.Keys = append(p.schema.Keys, newKey)
-		}
-	}
-}
-
-func (p *Join) buildKeyInfo() {
+func (p *LogicalJoin) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
 	p.schema.MaxOneRow = p.children[0].Schema().MaxOneRow && p.children[1].Schema().MaxOneRow
 	switch p.JoinType {

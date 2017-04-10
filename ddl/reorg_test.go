@@ -71,8 +71,6 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	job := &model.Job{}
 	err = d.runReorgJob(job, f)
 	c.Assert(err, NotNil)
-	c.Assert(job.RowCount, Equals, rowCount)
-	c.Assert(d.reorgRowCount, Equals, rowCount)
 
 	<-done
 	// Make sure the function of f is returned.

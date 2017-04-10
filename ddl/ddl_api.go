@@ -20,6 +20,7 @@ package ddl
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -111,6 +112,18 @@ func getDefaultCharsetAndCollate() (string, string) {
 	return "utf8", "utf8_bin"
 }
 
+func getDefaultCollateForCharset(str string) string {
+	switch str {
+	case charset.CharsetBin:
+		return charset.CollationBin
+	case charset.CharsetUTF8MB4:
+		return charset.CollationUTF8MB4
+	case charset.CharsetUTF8:
+		return charset.CollationUTF8
+	}
+	return ""
+}
+
 func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constraint) {
 	switch v.Tp {
 	case ast.ConstraintPrimaryKey:
@@ -185,6 +198,8 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType) {
 			tp.Charset = charset.CharsetBin
 			tp.Collate = charset.CharsetBin
 		}
+	} else if len(tp.Collate) == 0 {
+		tp.Collate = getDefaultCollateForCharset(tp.Charset)
 	}
 	// If flen is not assigned, assigned it by type.
 	if tp.Flen == types.UnspecifiedLength {
@@ -703,12 +718,22 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) {
 }
 
 func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.AlterTableSpec) (err error) {
-	// Now we only allow one schema changing at the same time.
-	if len(specs) != 1 {
+	// Only handle valid specs, AlterTableLock is ignored.
+	validSpecs := make([]*ast.AlterTableSpec, 0, len(specs))
+	for _, spec := range specs {
+		if spec.Tp == ast.AlterTableLock {
+			continue
+		}
+		validSpecs = append(validSpecs, spec)
+	}
+
+	if len(validSpecs) != 1 {
+		// TODO: Hanlde len(validSpecs) == 0.
+		// Now we only allow one schema changing at the same time.
 		return errRunMultiSchemaChanges
 	}
 
-	for _, spec := range specs {
+	for _, spec := range validSpecs {
 		switch spec.Tp {
 		case ast.AlterTableAddColumn:
 			err = d.AddColumn(ctx, ident, spec)
@@ -797,6 +822,19 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 	col, _, err = buildColumnAndConstraint(ctx, len(t.Cols()), spec.NewColumn)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	col.OriginDefaultValue = col.DefaultValue
+	if col.OriginDefaultValue == nil && mysql.HasNotNullFlag(col.Flag) {
+		zeroVal := table.GetZeroValue(col.ToInfo())
+		col.OriginDefaultValue, err = zeroVal.ToString()
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	if col.OriginDefaultValue == expression.CurrentTimestamp &&
+		(col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime) {
+		col.OriginDefaultValue = time.Now().Format(types.TimeFormat)
 	}
 
 	job := &model.Job{
@@ -984,10 +1022,11 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 	}
 
 	newCol := &table.Column{
-		ID:        col.ID,
-		Offset:    col.Offset,
-		State:     col.State,
-		FieldType: *spec.NewColumn.Tp,
+		ID:                 col.ID,
+		Offset:             col.Offset,
+		State:              col.State,
+		OriginDefaultValue: col.OriginDefaultValue,
+		FieldType:          *spec.NewColumn.Tp,
 	}
 	setCharsetCollationFlenDecimal(&newCol.FieldType)
 	if !modifiable(&col.FieldType, &newCol.FieldType) {
@@ -995,6 +1034,10 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 	}
 	if err := setDefaultAndComment(ctx, newCol, spec.NewColumn.Options); err != nil {
 		return nil, errors.Trace(err)
+	}
+	// We don't support modifying the type definitions from 'null' to 'not null' now.
+	if !mysql.HasNotNullFlag(col.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
+		return nil, errors.Trace(errUnsupportedModifyColumn)
 	}
 
 	newCol.Name = spec.NewColumn.Name.Name

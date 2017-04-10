@@ -15,11 +15,9 @@ package variable
 
 import (
 	"math"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 )
@@ -134,18 +132,17 @@ type SessionVars struct {
 	// version, we load an old version schema for query.
 	SnapshotInfoschema interface{}
 
-	// SkipConstraintCheck is true when importing data.
-	SkipConstraintCheck bool
-
-	// SkipDDLWait can be set to true to skip 2 lease wait after create/drop/truncate table, create/drop database.
-	// Then if there are multiple TiDB servers, the new table may not be available for other TiDB servers.
-	SkipDDLWait bool
-
 	// GlobalAccessor is used to set and get global variables.
 	GlobalVarsAccessor GlobalVarAccessor
 
 	// StmtCtx holds variables for current executing statement.
 	StmtCtx *StatementContext
+
+	// AllowAggPushDown can be set to false to forbid aggregation push down.
+	AllowAggPushDown bool
+
+	// AllowSubqueryUnFolding can be set to true to fold in subquery
+	AllowInSubqueryUnFolding bool
 
 	// CurrInsertValues is used to record current ValuesExpr's values.
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
@@ -156,20 +153,56 @@ type SessionVars struct {
 	TimeZone *time.Location
 
 	SQLMode mysql.SQLMode
+
+	/* TiDB system variables */
+
+	// SkipConstraintCheck is true when importing data.
+	SkipConstraintCheck bool
+
+	// SkipUTF8 check on input value.
+	SkipUTF8Check bool
+
+	// SkipDDLWait can be set to true to skip 2 lease wait after create/drop/truncate table, create/drop database.
+	// Then if there are multiple TiDB servers, the new table may not be available for other TiDB servers.
+	SkipDDLWait bool
+
+	// TiDBBuildStatsConcurrency is used to control statistics building concurrency.
+	BuildStatsConcurrencyVar int
+
+	// The number of handles for a index lookup task in index double read executor.
+	IndexLookupSize int
+
+	// The number of concurrent index lookup worker.
+	IndexLookupConcurrency int
+
+	// The number of concurrent dist SQL scan worker.
+	DistSQLScanConcurrency int
+
+	// The number of concurrent index serial scan worker.
+	IndexSerialScanConcurrency int
+
+	// Should we split insert data into multiple batches.
+	BatchInsert bool
 }
 
 // NewSessionVars creates a session vars object.
 func NewSessionVars() *SessionVars {
 	return &SessionVars{
-		Users:                make(map[string]string),
-		Systems:              make(map[string]string),
-		PreparedStmts:        make(map[uint32]interface{}),
-		PreparedStmtNameToID: make(map[string]uint32),
-		TxnCtx:               &TransactionContext{},
-		RetryInfo:            &RetryInfo{},
-		StrictSQLMode:        true,
-		Status:               mysql.ServerStatusAutocommit,
-		StmtCtx:              new(StatementContext),
+		Users:                      make(map[string]string),
+		Systems:                    make(map[string]string),
+		PreparedStmts:              make(map[uint32]interface{}),
+		PreparedStmtNameToID:       make(map[string]uint32),
+		TxnCtx:                     &TransactionContext{},
+		RetryInfo:                  &RetryInfo{},
+		StrictSQLMode:              true,
+		Status:                     mysql.ServerStatusAutocommit,
+		StmtCtx:                    new(StatementContext),
+		AllowAggPushDown:           true,
+		BuildStatsConcurrencyVar:   DefBuildStatsConcurrency,
+		IndexLookupSize:            DefIndexLookupSize,
+		IndexLookupConcurrency:     DefIndexLookupConcurrency,
+		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
+		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
 	}
 }
 
@@ -239,23 +272,6 @@ const (
 	MaxAllowedPacket    = "max_allowed_packet"
 	TimeZone            = "time_zone"
 )
-
-// GetTiDBSystemVar gets variable value for name.
-// The variable should be a TiDB specific system variable (The vars in tidbSysVars map).
-// We load the variable from session first, if not found, use local defined default variable.
-func (s *SessionVars) GetTiDBSystemVar(name string) (string, error) {
-	key := strings.ToLower(name)
-	_, ok := tidbSysVars[key]
-	if !ok {
-		return "", errors.Errorf("%s is not a TiDB specific system variable.", name)
-	}
-
-	sVal, ok := s.Systems[key]
-	if ok {
-		return sVal, nil
-	}
-	return SysVars[key].Value, nil
-}
 
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
@@ -338,5 +354,29 @@ func (sc *StatementContext) AppendWarning(warn error) {
 	if len(sc.mu.warnings) < math.MaxUint16 {
 		sc.mu.warnings = append(sc.mu.warnings, warn)
 	}
+	sc.mu.Unlock()
+}
+
+// HandleTruncate ignores or returns the error based on the StatementContext state.
+func (sc *StatementContext) HandleTruncate(err error) error {
+	if err == nil {
+		return nil
+	}
+	if sc.IgnoreTruncate {
+		return nil
+	}
+	if sc.TruncateAsWarning {
+		sc.AppendWarning(err)
+		return nil
+	}
+	return err
+}
+
+// ResetForRetry resets the changed states during execution.
+func (sc *StatementContext) ResetForRetry() {
+	sc.mu.Lock()
+	sc.mu.affectedRows = 0
+	sc.mu.foundRows = 0
+	sc.mu.warnings = nil
 	sc.mu.Unlock()
 }

@@ -25,52 +25,8 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-const (
-	// Sel is the type of Selection.
-	Sel = "Selection"
-	// St is the type of Set.
-	St = "Set"
-	// Proj is the type of Projection.
-	Proj = "Projection"
-	// Agg is the type of Aggregation.
-	Agg = "Aggregation"
-	// Jn is the type of Join.
-	Jn = "Join"
-	// Un is the type of Union.
-	Un = "Union"
-	// Tbl is the type of TableScan.
-	Tbl = "TableScan"
-	// Idx is the type of IndexScan.
-	Idx = "IndexScan"
-	// Srt is the type of Sort.
-	Srt = "Sort"
-	// Lim is the type of Limit.
-	Lim = "Limit"
-	// App is the type of Apply.
-	App = "Apply"
-	// Dis is the type of Distinct.
-	Dis = "Distinct"
-	// Trm is the type of Trim.
-	Trm = "Trim"
-	// MOR is the type of MaxOneRow.
-	MOR = "MaxOneRow"
-	// Ext is the type of Exists.
-	Ext = "Exists"
-	// Dual is the type of TableDual.
-	Dual = "TableDual"
-	// Lock is the type of SelectLock.
-	Lock = "SelectLock"
-	// Load is the type of LoadData.
-	Load = "LoadData"
-	// Ins is the type of Insert
-	Ins = "Insert"
-	// Up is the type of Update.
-	Up = "Update"
-	// Del is the type of Delete.
-	Del = "Delete"
-	// Aly is the type of Analyze.
-	Aly = "Analyze"
-)
+// UseDAGPlanBuilder means we should use new planner and dag pb.
+var UseDAGPlanBuilder = false
 
 // Plan is the description of an execution flow.
 // It is created from ast.Node first, then optimized by the optimizer,
@@ -94,6 +50,8 @@ type Plan interface {
 	Schema() *expression.Schema
 	// Get the ID.
 	ID() string
+	// Get id allocator
+	Allocator() *idAllocator
 	// SetParents sets the parents for the plan.
 	SetParents(...Plan)
 	// SetParents sets the children for the plan.
@@ -130,6 +88,19 @@ func (p *requiredProperty) getHashKey() ([]byte, error) {
 	return bytes, errors.Trace(err)
 }
 
+// String implements fmt.Stringer interface. Just for test.
+func (p *requiredProperty) String() string {
+	ret := "Prop{"
+	for _, colProp := range p.props {
+		ret += fmt.Sprintf("col: %s, desc %v, ", colProp.col, colProp.desc)
+	}
+	ret += fmt.Sprintf("}, Len: %d", p.sortKeyLen)
+	if p.limit != nil {
+		ret += fmt.Sprintf(", Limit: %d,%d", p.limit.Offset, p.limit.Count)
+	}
+	return ret
+}
+
 type physicalPlanInfo struct {
 	p     PhysicalPlan
 	cost  float64
@@ -160,6 +131,9 @@ type LogicalPlan interface {
 
 	// buildKeyInfo will collect the information of unique keys into schema.
 	buildKeyInfo()
+
+	// pushDownTopN will push down the topN or limit operator during logical optimization.
+	pushDownTopN(topN *Sort) LogicalPlan
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -183,9 +157,12 @@ type PhysicalPlan interface {
 }
 
 type baseLogicalPlan struct {
-	basePlan
-	planMap map[string]*physicalPlanInfo
-	self    LogicalPlan
+	basePlan *basePlan
+	planMap  map[string]*physicalPlanInfo
+}
+
+type basePhysicalPlan struct {
+	basePlan *basePlan
 }
 
 func (p *baseLogicalPlan) getPlanInfo(prop *requiredProperty) (*physicalPlanInfo, error) {
@@ -204,15 +181,15 @@ func (p *baseLogicalPlan) convert2PhysicalPlan(prop *requiredProperty) (*physica
 	if info != nil {
 		return info, nil
 	}
-	if len(p.children) == 0 {
-		return &physicalPlanInfo{p: p.self.(PhysicalPlan)}, nil
+	if len(p.basePlan.children) == 0 {
+		return &physicalPlanInfo{p: p.basePlan.self.(PhysicalPlan)}, nil
 	}
-	child := p.children[0].(LogicalPlan)
+	child := p.basePlan.children[0].(LogicalPlan)
 	info, err = child.convert2PhysicalPlan(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	info = addPlanToResponse(p.self.(PhysicalPlan), info)
+	info = addPlanToResponse(p.basePlan.self.(PhysicalPlan), info)
 	return info, p.storePlanInfo(prop, info)
 }
 
@@ -227,50 +204,67 @@ func (p *baseLogicalPlan) storePlanInfo(prop *requiredProperty, info *physicalPl
 }
 
 func (p *baseLogicalPlan) buildKeyInfo() {
-	for _, child := range p.Children() {
+	for _, child := range p.basePlan.children {
 		child.(LogicalPlan).buildKeyInfo()
 	}
-	if len(p.children) == 1 {
-		switch p.self.(type) {
-		case *Exists, *Aggregation, *Projection, *Trim:
-			p.schema.Keys = nil
+	if len(p.basePlan.children) == 1 {
+		switch p.basePlan.self.(type) {
+		case *Exists, *LogicalAggregation, *Projection:
+			p.basePlan.schema.Keys = nil
 		case *SelectLock:
-			p.schema.Keys = p.children[0].Schema().Keys
+			p.basePlan.schema.Keys = p.basePlan.children[0].Schema().Keys
 		default:
-			p.schema.Keys = p.children[0].Schema().Clone().Keys
+			p.basePlan.schema.Keys = p.basePlan.children[0].Schema().Clone().Keys
 		}
 	} else {
-		p.schema.Keys = nil
+		p.basePlan.schema.Keys = nil
 	}
 }
 
-func newBaseLogicalPlan(tp string, a *idAllocator) baseLogicalPlan {
-	return baseLogicalPlan{
-		planMap: make(map[string]*physicalPlanInfo),
-		basePlan: basePlan{
-			tp:        tp,
-			allocator: a,
-		},
+func newBasePlan(tp string, allocator *idAllocator, ctx context.Context, p Plan) *basePlan {
+	return &basePlan{
+		tp:        tp,
+		allocator: allocator,
+		id:        tp + allocator.allocID(),
+		ctx:       ctx,
+		self:      p,
 	}
+}
+
+func newBaseLogicalPlan(basePlan *basePlan) baseLogicalPlan {
+	return baseLogicalPlan{
+		planMap:  make(map[string]*physicalPlanInfo),
+		basePlan: basePlan,
+	}
+}
+
+func newBasePhysicalPlan(basePlan *basePlan) basePhysicalPlan {
+	return basePhysicalPlan{
+		basePlan: basePlan,
+	}
+}
+
+func (p *basePhysicalPlan) matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
+	panic("You can't call this function!")
 }
 
 // PredicatePushDown implements LogicalPlan interface.
 func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
-	if len(p.Children()) == 0 {
-		return predicates, p.self, nil
+	if len(p.basePlan.children) == 0 {
+		return predicates, p.basePlan.self.(LogicalPlan), nil
 	}
-	child := p.children[0].(LogicalPlan)
+	child := p.basePlan.children[0].(LogicalPlan)
 	rest, _, err := child.PredicatePushDown(predicates)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	if len(rest) > 0 {
-		err = addSelection(p, child, rest, p.allocator)
+		err = addSelection(p.basePlan.self, child, rest, p.basePlan.allocator)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
 	}
-	return nil, p.self, nil
+	return nil, p.basePlan.self.(LogicalPlan), nil
 }
 
 func (p *basePlan) extractCorrelatedCols() []*expression.CorrelatedColumn {
@@ -281,26 +275,25 @@ func (p *basePlan) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
+func (p *basePlan) Allocator() *idAllocator {
+	return p.allocator
+}
+
 // ResolveIndicesAndCorCols implements LogicalPlan interface.
 func (p *baseLogicalPlan) ResolveIndicesAndCorCols() {
-	for _, child := range p.children {
+	for _, child := range p.basePlan.children {
 		child.(LogicalPlan).ResolveIndicesAndCorCols()
 	}
 }
 
 // PruneColumns implements LogicalPlan interface.
 func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) {
-	if len(p.children) == 0 {
+	if len(p.basePlan.children) == 0 {
 		return
 	}
-	child := p.children[0].(LogicalPlan)
+	child := p.basePlan.children[0].(LogicalPlan)
 	child.PruneColumns(parentUsedCols)
-	p.SetSchema(child.Schema())
-}
-
-func (p *basePlan) initIDAndContext(ctx context.Context) {
-	p.id = p.tp + p.allocator.allocID()
-	p.ctx = ctx
+	p.basePlan.SetSchema(child.Schema())
 }
 
 // basePlan implements base Plan interface.
@@ -314,6 +307,12 @@ type basePlan struct {
 	id        string
 	allocator *idAllocator
 	ctx       context.Context
+	self      Plan
+}
+
+func (p *basePlan) copy() *basePlan {
+	np := *p
+	return &np
 }
 
 // MarshalJSON implements json.Marshaler interface.

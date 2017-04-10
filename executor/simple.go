@@ -305,7 +305,13 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 }
 
 func (e *SimpleExec) executeKillStmt(s *ast.KillStmt) error {
-	// TODO: Implement it.
+	if s.TiDBExtension {
+		sm := e.ctx.GetSessionManager()
+		if sm == nil {
+			return nil
+		}
+		sm.Kill(s.ConnectionID, s.Query)
+	}
 	return nil
 }
 

@@ -15,6 +15,7 @@ package tablecodec
 
 import (
 	"bytes"
+	"math"
 	"time"
 
 	"github.com/juju/errors"
@@ -26,6 +27,7 @@ import (
 )
 
 var (
+	errInvalidKey         = terror.ClassXEval.New(codeInvalidKey, "invalid key")
 	errInvalidRecordKey   = terror.ClassXEval.New(codeInvalidRecordKey, "invalid record key")
 	errInvalidColumnCount = terror.ClassXEval.New(codeInvalidColumnCount, "invalid column count")
 )
@@ -41,6 +43,11 @@ const (
 	prefixLen       = 1 + idLen /*tableID*/ + 2
 	recordRowKeyLen = prefixLen + idLen /*handle*/
 )
+
+// TablePrefix returns table's prefix 't'.
+func TablePrefix() []byte {
+	return tablePrefix
+}
 
 // EncodeRowKey encodes the table id and record handle into a kv.Key
 func EncodeRowKey(tableID int64, encodedHandle []byte) kv.Key {
@@ -88,6 +95,41 @@ func DecodeRecordKey(key kv.Key) (tableID int64, handle int64, err error) {
 	key, handle, err = codec.DecodeInt(key)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
+	}
+	return
+}
+
+// DecodeKeyHead decodes the key's head and gets the tableID, indexID. isRecordKey is true when is a record key.
+func DecodeKeyHead(key kv.Key) (tableID int64, indexID int64, isRecordKey bool, err error) {
+	isRecordKey = false
+	k := key
+	if !key.HasPrefix(tablePrefix) {
+		err = errInvalidKey.Gen("invalid key - %q", k)
+		return
+	}
+
+	key = key[len(tablePrefix):]
+	key, tableID, err = codec.DecodeInt(key)
+	if err != nil {
+		err = errors.Trace(err)
+		return
+	}
+
+	if key.HasPrefix(recordPrefixSep) {
+		isRecordKey = true
+		return
+	}
+	if !key.HasPrefix(indexPrefixSep) {
+		err = errInvalidKey.Gen("invalid key - %q", k)
+		return
+	}
+
+	key = key[len(indexPrefixSep):]
+
+	key, indexID, err = codec.DecodeInt(key)
+	if err != nil {
+		err = errors.Trace(err)
+		return
 	}
 	return
 }
@@ -256,7 +298,48 @@ func DecodeRow(b []byte, cols map[int64]*types.FieldType) (map[int64]types.Datum
 	return row, nil
 }
 
-// CutRow cut encoded row into byte slices and return interested columns' byte slice.
+// CutRowNew cuts encoded row into byte slices and return columns' byte slice.
+// Row layout: colID1, value1, colID2, value2, .....
+func CutRowNew(data []byte, colIDs map[int64]int) ([][]byte, error) {
+	if data == nil {
+		return nil, nil
+	}
+	if len(data) == 1 && data[0] == codec.NilFlag {
+		return nil, nil
+	}
+
+	var (
+		cnt int
+		b   []byte
+		err error
+	)
+	row := make([][]byte, len(colIDs))
+	for len(data) > 0 && cnt < len(colIDs) {
+		// Get col id.
+		b, data, err = codec.CutOne(data)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		_, cid, err := codec.DecodeOne(b)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// Get col value.
+		b, data, err = codec.CutOne(data)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		id := cid.GetInt64()
+		offset, ok := colIDs[id]
+		if ok {
+			row[offset] = b
+			cnt++
+		}
+	}
+	return row, nil
+}
+
+// CutRow cuts encoded row into byte slices and return interested columns' byte slice.
 // Row layout: colID1, value1, colID2, value2, .....
 func CutRow(data []byte, cols map[int64]*types.FieldType) (map[int64][]byte, error) {
 	if data == nil {
@@ -379,6 +462,23 @@ func CutIndexKey(key kv.Key, colIDs []int64) (values map[int64][]byte, b []byte,
 	return
 }
 
+// CutIndexKeyNew cuts encoded index key into colIDs to bytes slices.
+// The returned value b is the remaining bytes of the key which would be empty if it is unique index or handle data
+// if it is non-unique index.
+func CutIndexKeyNew(key kv.Key, length int) (values [][]byte, b []byte, err error) {
+	b = key[prefixLen+idLen:]
+	values = make([][]byte, 0, length)
+	for i := 0; i < length; i++ {
+		var val []byte
+		val, b, err = codec.CutOne(b)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		values = append(values, val)
+	}
+	return
+}
+
 // EncodeTableIndexPrefix encodes index prefix with tableID and idxID.
 func EncodeTableIndexPrefix(tableID, idxID int64) kv.Key {
 	key := make([]byte, 0, prefixLen)
@@ -431,6 +531,24 @@ func TruncateToRowKeyLen(key kv.Key) kv.Key {
 	return key
 }
 
+// GetTableHandleKeyRange returns table handle's key range with tableID.
+func GetTableHandleKeyRange(tableID int64) (startKey, endKey []byte) {
+	tableStartKey := EncodeRowKeyWithHandle(tableID, math.MinInt64)
+	tableEndKey := EncodeRowKeyWithHandle(tableID, math.MaxInt64)
+	startKey = codec.EncodeBytes(nil, tableStartKey)
+	endKey = codec.EncodeBytes(nil, tableEndKey)
+	return
+}
+
+// GetTableIndexKeyRange returns table index's key range with tableID and indexID.
+func GetTableIndexKeyRange(tableID, indexID int64) (startKey, endKey []byte) {
+	start := EncodeIndexSeekKey(tableID, indexID, nil)
+	end := EncodeIndexSeekKey(tableID, indexID, []byte{255})
+	startKey = codec.EncodeBytes(nil, start)
+	endKey = codec.EncodeBytes(nil, end)
+	return
+}
+
 type keyRangeSorter struct {
 	ranges []kv.KeyRange
 }
@@ -453,4 +571,5 @@ func (r *keyRangeSorter) Swap(i, j int) {
 const (
 	codeInvalidRecordKey   = 4
 	codeInvalidColumnCount = 5
+	codeInvalidKey         = 6
 )

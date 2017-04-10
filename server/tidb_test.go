@@ -15,7 +15,6 @@
 package server
 
 import (
-	"database/sql"
 	"time"
 
 	"github.com/ngaut/log"
@@ -47,22 +46,11 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	ts.server = server
 	go ts.server.Run()
-	waitUntilServerOnline()
+	waitUntilServerOnline(cfg.StatusAddr)
 
 	// Run this test here because parallel would affect the result of it.
 	runTestStmtCount(c)
 	defaultLoadDataBatchCnt = 3
-}
-
-func waitUntilServerOnline() {
-	for {
-		time.Sleep(time.Millisecond * 10)
-		db, err := sql.Open("mysql", dsn)
-		if err == nil {
-			db.Close()
-			break
-		}
-	}
 }
 
 func (ts *TidbTestSuite) TearDownSuite(c *C) {

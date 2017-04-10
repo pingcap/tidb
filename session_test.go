@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/table/tables"
@@ -2079,6 +2080,29 @@ func (s *testSessionSuite) TestSessionAuth(c *C) {
 	mustExecSQL(c, se, dropDBSQL)
 }
 
+func (s *testSessionSuite) TestSkipWithGrant(c *C) {
+	defer testleak.AfterTest(c)()
+	dbName := "test_skip_with_grant"
+	se := newSession(c, s.store, dbName)
+	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
+
+	save1 := privileges.Enable
+	save2 := privileges.SkipWithGrant
+
+	privileges.Enable = true
+	privileges.SkipWithGrant = false
+	c.Assert(se.Auth("user_not_exist", []byte("yyy"), []byte("zzz")), IsFalse)
+
+	privileges.SkipWithGrant = true
+	c.Assert(se.Auth(`xxx@%`, []byte("yyy"), []byte("zzz")), IsTrue)
+	c.Assert(se.Auth(`root@%`, []byte(""), []byte("")), IsTrue)
+	mustExecSQL(c, se, "create table t (id int)")
+
+	privileges.Enable = save1
+	privileges.SkipWithGrant = save2
+	mustExecSQL(c, se, dropDBSQL)
+}
+
 func (s *testSessionSuite) TestErrorRollback(c *C) {
 	defer testleak.AfterTest(c)()
 	dbName := "test_error_rollback"
@@ -2667,4 +2691,23 @@ func (s *testSessionSuite) TestRetryCleanTxn(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(se.Txn(), IsNil)
 	c.Assert(se.sessionVars.InTxn(), IsFalse)
+}
+
+func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {
+	defer testleak.AfterTest(c)()
+	dbName := "test_retry_reset_stmtctx"
+	se := newSession(c, s.store, dbName).(*session)
+	se.Execute("create table retrytxn (a int unique, b int)")
+	_, err := se.Execute("insert retrytxn values (1, 1)")
+	c.Assert(err, IsNil)
+	se.Execute("begin")
+	se.Execute("update retrytxn set b = b + 1 where a = 1")
+
+	// Make retryable error.
+	se2 := newSession(c, s.store, dbName)
+	se2.Execute("update retrytxn set b = b + 1 where a = 1")
+
+	err = se.CommitTxn()
+	c.Assert(err, IsNil)
+	c.Assert(se.AffectedRows(), Equals, uint64(1))
 }
