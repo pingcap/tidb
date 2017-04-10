@@ -1678,6 +1678,11 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 			sql:  "select * from t left outer join t s on t.a = s.a order by t.a limit 5",
 			best: "Join{DataScan(t)->Sort + Limit(5) + Offset(0)->DataScan(s)}(test.t.a,s.a)->Sort + Limit(5) + Offset(0)->Projection",
 		},
+		// Test TopN + Left Join + Proj.
+		{
+			sql:  "select * from t left outer join t s on t.a = s.a order by t.a limit 5, 5",
+			best: "Join{DataScan(t)->Sort + Limit(10) + Offset(0)->DataScan(s)}(test.t.a,s.a)->Sort + Limit(5) + Offset(5)->Projection",
+		},
 		// Test Limit + Left Join + Proj.
 		{
 			sql:  "select * from t left outer join t s on t.a = s.a limit 5",
@@ -1717,6 +1722,11 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		{
 			sql:  "select * from t union all (select * from t s) order by a,b limit 5",
 			best: "UnionAll{DataScan(t)->Sort + Limit(5) + Offset(0)->Projection->DataScan(s)->Sort + Limit(5) + Offset(0)->Projection}->Sort + Limit(5) + Offset(0)",
+		},
+		// Test TopN + UA + Proj.
+		{
+			sql:  "select * from t union all (select * from t s) order by a,b limit 5, 5",
+			best: "UnionAll{DataScan(t)->Sort + Limit(10) + Offset(0)->Projection->DataScan(s)->Sort + Limit(10) + Offset(0)->Projection}->Sort + Limit(5) + Offset(5)",
 		},
 		// Test Limit + UA + Proj + Sort.
 		{
