@@ -68,6 +68,7 @@ func (c *columnProp) equal(nc *columnProp, ctx context.Context) bool {
 	return c.col.Equal(nc.col, ctx) && c.desc == nc.desc
 }
 
+// requriedProp stands for the required order property by parents. It will be all asc or desc.
 type requiredProp struct {
 	cols []*expression.Column
 	desc bool
@@ -77,6 +78,7 @@ func (p *requiredProp) isEmpty() bool {
 	return len(p.cols) == 0
 }
 
+// getHashKey encodes prop to a unique key. The key will be stored in the memory table.
 func (p *requiredProp) getHashKey() ([]byte, error) {
 	datums := make([]types.Datum, 0, len(p.cols)*2+1)
 	datums = append(datums, types.NewDatum(p.desc))

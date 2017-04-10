@@ -100,7 +100,7 @@ func (p *PhysicalIndexReader) Copy() PhysicalPlan {
 	return &np
 }
 
-// PhysicalIndexLookUpReader is the index look up reader in tidb.
+// PhysicalIndexLookUpReader is the index look up reader in tidb. It's used in case of double reading.
 type PhysicalIndexLookUpReader struct {
 	*basePlan
 	basePhysicalPlan
