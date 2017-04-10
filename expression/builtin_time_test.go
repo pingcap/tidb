@@ -1223,6 +1223,33 @@ func (s *testEvaluatorSuite) TestTimestampAdd(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestTimeToSec(c *C) {
+	tests := []struct {
+		t      string
+		expect int64
+	}{
+		{"22:23:00", 80580},
+		{"00:39:38", 2378},
+		{"23:00", 82800},
+		{"00:00", 0},
+		{"00:00:00", 0},
+		{"23:59:59", 86399},
+		{"1:0", 3600},
+		{"1:00", 3600},
+		{"1:0:0", 3600},
+		{"-02:00", -7200},
+	}
+	fc := funcs[ast.TimeToSec]
+	for _, test := range tests {
+		arg := types.NewStringDatum(test.t)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{arg}), s.ctx)
+		c.Assert(err, IsNil)
+		result, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(result.GetInt64(), Equals, test.expect)
+	}
+}
+
 func (s *testEvaluatorSuite) TestSecToTime(c *C) {
 	// Test cases from https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_sec-to-time
 	tests := []struct {
