@@ -15,7 +15,6 @@ package statistics
 
 import (
 	"fmt"
-	"sync"
 	"sync/atomic"
 
 	"github.com/juju/errors"
@@ -33,7 +32,6 @@ type Handle struct {
 	ctx         context.Context
 	lastVersion uint64
 	cache       atomic.Value
-	m           sync.Mutex
 }
 
 // Clear the statsTblCache, only for test.
@@ -107,8 +105,6 @@ func (h *Handle) loadFromOldCache() statsCache {
 
 // UpdateTableStats updates the statistics table cache using copy on write.
 func (h *Handle) UpdateTableStats(tables []*Table) {
-	h.m.Lock()
-	defer h.m.Unlock()
 	newCache := h.loadFromOldCache()
 	for _, tbl := range tables {
 		id := tbl.Info.ID
