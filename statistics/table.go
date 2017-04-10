@@ -49,14 +49,14 @@ type Table struct {
 }
 
 // SaveToStorage saves stats table to storage.
-func (t *Table) SaveToStorage(ctx context.Context) error {
+func (t *Table) SaveToStorage(ctx context.Context, h *Handle) error {
 	_, err := ctx.(sqlexec.SQLExecutor).Execute("begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	txn := ctx.Txn()
 	version := txn.StartTS()
-	GetStatsHandle(ctx).SetTableStats(t.Info.ID, t, version)
+	h.SetTableStats(t.Info.ID, t, version)
 	deleteSQL := fmt.Sprintf("delete from mysql.stats_meta where table_id = %d", t.Info.ID)
 	_, err = ctx.(sqlexec.SQLExecutor).Execute(deleteSQL)
 	if err != nil {

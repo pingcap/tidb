@@ -116,24 +116,3 @@ func (h *Handle) SetTableStats(id int64, statsTbl *Table, version uint64) {
 	stats.tbl = statsTbl
 	stats.version = version
 }
-
-type keyType int
-
-func (k keyType) String() string {
-	return "stats-key"
-}
-
-const key keyType = 0
-
-// GetStatsHandle returns the stats handle from ctx.
-func GetStatsHandle(ctx context.Context) *Handle {
-	if v, ok := ctx.Value(key).(*Handle); ok {
-		return v
-	}
-	return nil
-}
-
-// BindStatsHandle binds the stats handle with ctx.
-func BindStatsHandle(ctx context.Context, h *Handle) {
-	ctx.SetValue(key, h)
-}

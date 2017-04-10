@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
@@ -889,7 +888,6 @@ func createSession(store kv.Storage) (*session, error) {
 		sessionVars: variable.NewSessionVars(),
 	}
 	sessionctx.BindDomain(s, domain)
-	statistics.BindStatsHandle(s, domain.StatsHandle(s))
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
 
