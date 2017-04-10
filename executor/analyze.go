@@ -77,7 +77,7 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 		}
 		columnSamples := rowsToColumnSamples(sampleRows)
 		var pkRS ast.RecordSet
-		if ae.pkID != -1 {
+		if ae.pkID != 0 {
 			offset := len(ae.Srcs) - 1
 			if len(ae.colIDs) != 0 {
 				offset--

@@ -118,7 +118,7 @@ func (b *Builder) NewTable() (*Table, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if b.PkID != -1 {
+	if b.PkID != 0 {
 		err := t.build4SortedColumn(b.Ctx.GetSessionVars().StmtCtx, b.PkID, b.PkRecords, b.NumBuckets, true)
 		if err != nil {
 			return nil, errors.Trace(err)

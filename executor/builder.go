@@ -748,9 +748,7 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	for _, col := range v.ColsInfo {
 		e.colIDs = append(e.colIDs, col.ID)
 	}
-	if v.PkInfo == nil {
-		e.pkID = -1
-	} else {
+	if v.PkInfo != nil {
 		e.pkID = v.PkInfo.ID
 	}
 	for i, child := range v.Children() {
