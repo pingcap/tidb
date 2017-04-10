@@ -1782,7 +1782,6 @@ func (b *builtinSecToTimeSig) eval(row []types.Datum) (d types.Datum, err error)
 	}
 	d.SetMysqlDuration(dur)
 	return d, nil
-	return d, errFunctionNotExists.GenByArgs("SEC_TO_TIME")
 }
 
 type subTimeFunctionClass struct {
