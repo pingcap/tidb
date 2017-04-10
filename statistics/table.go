@@ -49,7 +49,7 @@ type Table struct {
 }
 
 // SaveToStorage saves stats table to storage.
-func (t *Table) SaveToStorage(ctx context.Context, h *Handle) error {
+func (h *Handle) SaveToStorage(ctx context.Context, t *Table) error {
 	_, err := ctx.(sqlexec.SQLExecutor).Execute("begin")
 	if err != nil {
 		return errors.Trace(err)
