@@ -889,7 +889,7 @@ func createSession(store kv.Storage) (*session, error) {
 		sessionVars: variable.NewSessionVars(),
 	}
 	sessionctx.BindDomain(s, domain)
-	statistics.BindStatsHandle(s, domain.GetOrCreateStatsHandle(s))
+	statistics.BindStatsHandle(s, domain.StatsHandle(s))
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
 

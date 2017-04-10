@@ -407,8 +407,8 @@ func (do *Domain) PrivilegeHandle() *privileges.Handle {
 	return do.privHandle
 }
 
-// GetOrCreateStatsHandle returns the statistic handle. If the stats handle doesn't exist, it will create a new one.
-func (do *Domain) GetOrCreateStatsHandle(ctx context.Context) *statistics.Handle {
+// StatsHandle returns the statistic handle. If the stats handle doesn't exist, it will create a new one.
+func (do *Domain) StatsHandle(ctx context.Context) *statistics.Handle {
 	if do.statsHandle == nil {
 		do.statsHandle = statistics.NewHandle(ctx)
 	}

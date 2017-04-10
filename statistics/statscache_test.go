@@ -72,8 +72,8 @@ func (s *testStatsCacheSuite) TestStatsCache(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo = tbl.Meta()
 
-	do.GetOrCreateStatsHandle(ctx).Clear()
-	do.GetOrCreateStatsHandle(ctx).Update(is)
+	do.StatsHandle(ctx).Clear()
+	do.StatsHandle(ctx).Update(is)
 	statsTbl = statistics.GetStatsHandle(ctx).GetStatsTable(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 
@@ -84,8 +84,8 @@ func (s *testStatsCacheSuite) TestStatsCache(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo = tbl.Meta()
 
-	do.GetOrCreateStatsHandle(ctx).Clear()
-	do.GetOrCreateStatsHandle(ctx).Update(is)
+	do.StatsHandle(ctx).Clear()
+	do.StatsHandle(ctx).Update(is)
 	statsTbl = statistics.GetStatsHandle(ctx).GetStatsTable(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsTrue)
 }
@@ -131,8 +131,8 @@ func (s *testStatsCacheSuite) TestStatsStoreAndLoad(c *C) {
 	testKit.MustExec("analyze table t")
 	statsTbl1 := statistics.GetStatsHandle(ctx).GetStatsTable(tableInfo)
 
-	do.GetOrCreateStatsHandle(ctx).Clear()
-	do.GetOrCreateStatsHandle(ctx).Update(is)
+	do.StatsHandle(ctx).Clear()
+	do.StatsHandle(ctx).Update(is)
 	statsTbl2 := statistics.GetStatsHandle(ctx).GetStatsTable(tableInfo)
 	c.Assert(statsTbl2.Pseudo, IsFalse)
 	c.Assert(statsTbl2.Count, Equals, int64(recordCount))
