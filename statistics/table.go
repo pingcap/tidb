@@ -49,14 +49,14 @@ type Table struct {
 }
 
 // SaveToStorage saves stats table to storage.
-func (t *Table) SaveToStorage(ctx context.Context) error {
+func (h *Handle) SaveToStorage(ctx context.Context, t *Table) error {
 	_, err := ctx.(sqlexec.SQLExecutor).Execute("begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	txn := ctx.Txn()
 	version := txn.StartTS()
-	SetStatisticsTableCache(t.Info.ID, t, version)
+	h.SetTableStats(t.Info.ID, t, version)
 	deleteSQL := fmt.Sprintf("delete from mysql.stats_meta where table_id = %d", t.Info.ID)
 	_, err = ctx.(sqlexec.SQLExecutor).Execute(deleteSQL)
 	if err != nil {
@@ -94,7 +94,7 @@ func (t *Table) SaveToStorage(ctx context.Context) error {
 }
 
 // TableStatsFromStorage loads table stats info from storage.
-func TableStatsFromStorage(ctx context.Context, info *model.TableInfo, count int64) (*Table, error) {
+func (h *Handle) TableStatsFromStorage(ctx context.Context, info *model.TableInfo, count int64) (*Table, error) {
 	table := &Table{
 		Info:    info,
 		Count:   count,
