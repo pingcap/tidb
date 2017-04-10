@@ -1236,7 +1236,7 @@ func (s *testEvaluatorSuite) TestSecToTime(c *C) {
 		{86401.5, "24:00:02"},
 	}
 	fc := funcs[ast.SecToTime]
-  for _, test := range tests {
+	for _, test := range tests {
 		t := []types.Datum{types.NewDatum(test.param)}
 		f, err := fc.getFunction(datumsToConstants(t), s.ctx)
 		c.Assert(err, IsNil)
