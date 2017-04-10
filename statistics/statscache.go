@@ -16,6 +16,7 @@ package statistics
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -30,26 +31,29 @@ type statsInfo struct {
 	version uint64
 }
 
+type statsCache map[int64]*statsInfo
+
 // Handle can update stats info periodically.
 type Handle struct {
 	ctx         context.Context
 	lastVersion uint64
-	cache       map[int64]*statsInfo
-	m           sync.RWMutex
+	cache       atomic.Value
+	m           sync.Mutex
 }
 
 // Clear the statsTblCache, only for test.
 func (h *Handle) Clear() {
-	h.cache = map[int64]*statsInfo{}
+	h.cache.Store(statsCache{})
 	h.lastVersion = 0
 }
 
 // NewHandle creates a Handle for update stats.
 func NewHandle(ctx context.Context) *Handle {
-	return &Handle{
-		ctx:   ctx,
-		cache: map[int64]*statsInfo{},
+	handle := &Handle{
+		ctx: ctx,
 	}
+	handle.cache.Store(statsCache{})
+	return handle
 }
 
 // Update reads stats meta from store and updates the stats map.
@@ -59,6 +63,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	stats := make([]*statsInfo, 0, len(rows))
 	for _, row := range rows {
 		version, tableID, count := row.Data[0].GetUint64(), row.Data[1].GetInt64(), row.Data[2].GetInt64()
 		table, ok := is.TableByID(tableID)
@@ -72,47 +77,51 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		// statistics can not be used any more, we give it a pseudo one.
 		if err != nil {
 			log.Errorf("Error occurred when read table stats for table id %d. The error message is %s.", tableID, err.Error())
-			tbl = PseudoTable(tableInfo)
+			continue
 		}
-		h.SetTableStats(tableID, tbl, version)
+		stats = append(stats, &statsInfo{tbl, version})
 		h.lastVersion = version
 	}
+	h.UpdateTableStats(stats)
 	return nil
 }
 
 // GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
 func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *Table {
-	h.m.RLock()
-	defer h.m.RUnlock()
-	stats, ok := h.cache[tblInfo.ID]
+	stats, ok := h.cache.Load().(statsCache)[tblInfo.ID]
 	if !ok || stats == nil {
 		return PseudoTable(tblInfo)
 	}
 	tbl := stats.tbl
 	// Here we check the TableInfo because there may be some ddl changes in the duration period.
 	// Also, we rely on the fact that TableInfo will not be same if and only if there are ddl changes.
+	// TODO: Remove this check.
 	if tblInfo == tbl.Info {
 		return tbl
 	}
 	return PseudoTable(tblInfo)
 }
 
-// SetTableStats sets the statistics table cache.
-func (h *Handle) SetTableStats(id int64, statsTbl *Table, version uint64) {
+func (h *Handle) loadFromOldCache() statsCache {
+	newCache := statsCache{}
+	oldCache := h.cache.Load().(statsCache)
+	for k, v := range oldCache {
+		newCache[k] = v
+	}
+	return newCache
+}
+
+// UpdateTableStats updates the statistics table cache using copy on write.
+func (h *Handle) UpdateTableStats(stats []*statsInfo) {
 	h.m.Lock()
 	defer h.m.Unlock()
-	stats, ok := h.cache[id]
-	if !ok {
-		si := &statsInfo{
-			tbl:     statsTbl,
-			version: version,
+	newCache := h.loadFromOldCache()
+	for _, stat := range stats {
+		id := stat.tbl.Info.ID
+		stats, ok := newCache[id]
+		if !ok || stats.version < stat.version {
+			newCache[id] = stat
 		}
-		h.cache[id] = si
-		return
 	}
-	if stats.version >= version {
-		return
-	}
-	stats.tbl = statsTbl
-	stats.version = version
+	h.cache.Store(newCache)
 }
