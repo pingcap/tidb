@@ -149,13 +149,6 @@ func NewBackoffer(maxSleep int, ctx goctx.Context) *Backoffer {
 	}
 }
 
-// WithCancel returns a cancel function which, when called, would cancel backoffer's context.
-func (b *Backoffer) WithCancel() goctx.CancelFunc {
-	var cancel goctx.CancelFunc
-	b.ctx, cancel = goctx.WithCancel(b.ctx)
-	return cancel
-}
-
 // Backoff sleeps a while base on the backoffType and records the error message.
 // It returns a retryable error if total sleep time exceeds maxSleep.
 func (b *Backoffer) Backoff(typ backoffType, err error) error {

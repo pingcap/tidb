@@ -348,9 +348,10 @@ func (it *copIterator) run(ctx goctx.Context) {
 		go it.work(childCtx, it.taskCh)
 	}
 
-	childCtx, _ := goctx.WithCancel(ctx)
 	go func() {
 		// Send tasks to feed the worker goroutines.
+		childCtx, cancel := goctx.WithCancel(ctx)
+		defer cancel()
 		for _, t := range it.tasks {
 			finished, canceled := it.sendToTaskCh(childCtx, t)
 			if finished || canceled {
