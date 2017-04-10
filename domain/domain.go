@@ -17,10 +17,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain/notify"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -44,8 +46,19 @@ type Domain struct {
 	SchemaValidator SchemaValidator
 	sysSessionPool  *sync.Pool
 	exit            chan struct{}
+	etcdClient      *clientv3.Client
 
 	MockReloadFailed MockFailure // It mocks reload failed.
+}
+
+// SetEtcdClient sets the Domain's etcdClient field.
+func (do *Domain) SetEtcdClient(cli *clientv3.Client) {
+	do.etcdClient = cli
+}
+
+// EtcdClient returns the etcd client, maybe nil.
+func (do *Domain) EtcdClient() *clientv3.Client {
+	return do.etcdClient
 }
 
 // loadInfoSchema loads infoschema at startTS into handle, usedSchemaVersion is the currently used
@@ -301,6 +314,9 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 func (do *Domain) Close() {
 	do.ddl.Stop()
 	close(do.exit)
+	if do.etcdClient != nil {
+		do.etcdClient.Close()
+	}
 }
 
 type ddlCallback struct {
@@ -384,20 +400,37 @@ func (do *Domain) LoadPrivilegeLoop(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	go func(do *Domain) {
-		ticker := time.NewTicker(5 * time.Minute)
-		for {
-			select {
-			case <-ticker.C:
-				err := do.privHandle.Update()
-				if err != nil {
-					log.Error(errors.ErrorStack(err))
+	if cli := do.EtcdClient(); cli != nil {
+		go func(do *Domain) {
+			rch := notify.WatchPrivilege(cli)
+			for {
+				select {
+				case <-rch:
+					err := do.privHandle.Update()
+					if err != nil {
+						log.Error(errors.ErrorStack(err))
+					}
+				case <-do.exit:
+					return
 				}
-			case <-do.exit:
-				return
 			}
-		}
-	}(do)
+		}(do)
+	} else {
+		go func(do *Domain) {
+			ticker := time.NewTicker(5 * time.Minute)
+			for {
+				select {
+				case <-ticker.C:
+					err := do.privHandle.Update()
+					if err != nil {
+						log.Error(errors.ErrorStack(err))
+					}
+				case <-do.exit:
+					return
+				}
+			}
+		}(do)
+	}
 
 	return nil
 }

@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -76,10 +75,8 @@ func (e *RevokeExec) Next() (*Row, error) {
 		}
 	}
 	e.done = true
-	// Flush privileges.
-	dom := sessionctx.GetDomain(e.ctx)
-	err := dom.PrivilegeHandle().Update()
-	return nil, errors.Trace(err)
+	notifyUpdatePrivilege(e.ctx)
+	return nil, nil
 }
 
 func (e *RevokeExec) revokeOneUser(user, host string) error {

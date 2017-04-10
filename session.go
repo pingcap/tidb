@@ -26,6 +26,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
@@ -824,6 +825,10 @@ func CreateSession(store kv.Storage) (Session, error) {
 	return s, nil
 }
 
+type etcdBackend interface {
+	EtcdAddrs() []string
+}
+
 // BootstrapSession runs the first time when the TiDB server start.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	ver := getStoreBootstrapVersion(store)
@@ -838,6 +843,18 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, errors.Trace(err)
 	}
 	dom := sessionctx.GetDomain(se)
+	if ebd, ok := store.(etcdBackend); ok {
+		if addrs := ebd.EtcdAddrs(); addrs != nil {
+			cli, err := clientv3.New(clientv3.Config{
+				Endpoints:   addrs,
+				DialTimeout: 5 * time.Second,
+			})
+			if err != nil {
+				return dom, errors.Trace(err)
+			}
+			dom.SetEtcdClient(cli)
+		}
+	}
 	err = dom.LoadPrivilegeLoop(se)
 	if err != nil {
 		return nil, errors.Trace(err)
