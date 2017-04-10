@@ -51,7 +51,7 @@ type buildStatsTask struct {
 	col   *Column
 }
 
-func (t *buildStatsTask) update() {
+func (b *Builder) updateTable(t *buildStatsTask) {
 	if t.index {
 		t.t.Indices[t.col.ID] = t.col
 	} else {
@@ -106,7 +106,7 @@ func (b *Builder) splitAndConcurrentBuild(t *Table, IDs []int64, isSorted bool) 
 		if task.err != nil {
 			return errors.Trace(task.err)
 		}
-		task.update()
+		b.updateTable(task)
 	}
 	return nil
 }
@@ -142,7 +142,7 @@ func (b *Builder) NewTable() (*Table, error) {
 		if task.err != nil {
 			return nil, errors.Trace(task.err)
 		}
-		task.update()
+		b.updateTable(task)
 	}
 	err = b.splitAndConcurrentBuild(t, b.IdxIDs, true)
 	if err != nil {
