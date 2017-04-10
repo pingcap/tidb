@@ -29,34 +29,48 @@ import (
 
 // Builder describes information needed by NewTable
 type Builder struct {
-	Ctx           context.Context  // Ctx is the context.
-	TblInfo       *model.TableInfo // TblInfo is the table info of the table.
-	StartTS       int64            // StartTS is the start timestamp of the statistics table builder.
-	Count         int64            // Count is the total rows in the table.
-	NumBuckets    int64            // NumBuckets is the number of buckets a column histogram has.
-	ColumnSamples [][]types.Datum  // ColumnSamples is the sample of columns.
-	ColIDs        []int64          // ColIDs is the id of columns in the table.
-	ColNDVs       []int64          // ColNDVs is the NDV of columns.
-	IdxRecords    []ast.RecordSet  // IdxRecords is the record set of index columns.
-	IdxIDs        []int64          // IdxIDs is the id of indices in the table.
-	PkRecords     ast.RecordSet    // PkRecords is the record set of primary key of integer type.
-	PkID          int64            // PkID is the id of primary key with integer type in the table.
+	Ctx           context.Context      // Ctx is the context.
+	TblInfo       *model.TableInfo     // TblInfo is the table info of the table.
+	StartTS       int64                // StartTS is the start timestamp of the statistics table builder.
+	Count         int64                // Count is the total rows in the table.
+	NumBuckets    int64                // NumBuckets is the number of buckets a column histogram has.
+	ColumnSamples [][]types.Datum      // ColumnSamples is the sample of columns.
+	ColIDs        []int64              // ColIDs is the id of columns in the table.
+	ColNDVs       []int64              // ColNDVs is the NDV of columns.
+	IdxRecords    []ast.RecordSet      // IdxRecords is the record set of index columns.
+	IdxIDs        []int64              // IdxIDs is the id of indices in the table.
+	PkRecords     ast.RecordSet        // PkRecords is the record set of primary key of integer type.
+	PkID          int64                // PkID is the id of primary key with integer type in the table.
+	doneCh        chan *buildStatsTask // doneCh is the channel that stores stats building task.
 }
 
-func (b *Builder) buildMultiColumns(t *Table, IDs []int64, baseOffset int, isSorted bool, done chan error) {
+type buildStatsTask struct {
+	err   error
+	index bool
+	t     *Table
+	col   *Column
+}
+
+func (t *buildStatsTask) update() {
+	if t.index {
+		t.t.Indices[t.col.ID] = t.col
+	} else {
+		t.t.Columns[t.col.ID] = t.col
+	}
+}
+
+func (b *Builder) buildMultiColumns(t *Table, IDs []int64, baseOffset int, isSorted bool) {
 	for i, id := range IDs {
 		var err error
 		if isSorted {
-			err = t.build4SortedColumn(b.Ctx.GetSessionVars().StmtCtx, id, b.IdxRecords[i+baseOffset], b.NumBuckets, false)
+			err = b.build4SortedColumn(t, b.Ctx.GetSessionVars().StmtCtx, id, b.IdxRecords[i+baseOffset], b.NumBuckets, false)
 		} else {
-			err = t.buildColumn(b.Ctx.GetSessionVars().StmtCtx, id, b.ColNDVs[i+baseOffset], b.ColumnSamples[i+baseOffset], b.NumBuckets)
+			err = b.buildColumn(t, b.Ctx.GetSessionVars().StmtCtx, id, b.ColNDVs[i+baseOffset], b.ColumnSamples[i+baseOffset], b.NumBuckets)
 		}
 		if err != nil {
-			done <- err
-			return
+			b.doneCh <- &buildStatsTask{err: err}
 		}
 	}
-	done <- nil
 }
 
 func (b *Builder) getBuildStatsConcurrency() (int, error) {
@@ -84,17 +98,17 @@ func (b *Builder) splitAndConcurrentBuild(t *Table, IDs []int64, isSorted bool) 
 		}
 		splitIDs = append(splitIDs, IDs[i:end])
 	}
-	doneCh := make(chan error, len(splitIDs))
 	for i, IDs := range splitIDs {
-		go b.buildMultiColumns(t, IDs, i*groupSize, isSorted, doneCh)
+		go b.buildMultiColumns(t, IDs, i*groupSize, isSorted)
 	}
-	for range splitIDs {
-		errc := <-doneCh
-		if errc != nil && err == nil {
-			err = errc
+	for range IDs {
+		task := <-b.doneCh
+		if task.err != nil {
+			return errors.Trace(task.err)
 		}
+		task.update()
 	}
-	return errors.Trace(err)
+	return nil
 }
 
 // NewTable creates a table statistics.
@@ -114,15 +128,21 @@ func (b *Builder) NewTable() (*Table, error) {
 		}
 		return t, nil
 	}
+	b.doneCh = make(chan *buildStatsTask, len(b.ColIDs) + len(b.IdxIDs))
 	err := b.splitAndConcurrentBuild(t, b.ColIDs, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	if b.PkID != 0 {
-		err := t.build4SortedColumn(b.Ctx.GetSessionVars().StmtCtx, b.PkID, b.PkRecords, b.NumBuckets, true)
+		err := b.build4SortedColumn(t, b.Ctx.GetSessionVars().StmtCtx, b.PkID, b.PkRecords, b.NumBuckets, true)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		task := <- b.doneCh
+		if task.err != nil {
+			return nil, errors.Trace(task.err)
+		}
+		task.update()
 	}
 	err = b.splitAndConcurrentBuild(t, b.IdxIDs, true)
 	if err != nil {
@@ -155,7 +175,7 @@ func (b *Builder) NewTable() (*Table, error) {
 }
 
 // build4SortedColumn builds column statistics for sorted columns.
-func (t *Table) build4SortedColumn(sc *variable.StatementContext, id int64, records ast.RecordSet, bucketCount int64, isPK bool) error {
+func (b *Builder) build4SortedColumn(t *Table, sc *variable.StatementContext, id int64, records ast.RecordSet, bucketCount int64, isPK bool) error {
 	col := &Column{
 		ID:      id,
 		NDV:     0,
@@ -228,18 +248,12 @@ func (t *Table) build4SortedColumn(sc *variable.StatementContext, id int64, reco
 		}
 	}
 	atomic.StoreInt64(&t.Count, count)
-	t.m.Lock()
-	defer t.m.Unlock()
-	if isPK {
-		t.Columns[id] = col
-	} else {
-		t.Indices[id] = col
-	}
+	b.doneCh <- &buildStatsTask{index: !isPK, t: t, col: col}
 	return nil
 }
 
 // buildColumn builds column statistics from samples.
-func (t *Table) buildColumn(sc *variable.StatementContext, id int64, ndv int64, samples []types.Datum, bucketCount int64) error {
+func (b *Builder) buildColumn(t *Table, sc *variable.StatementContext, id int64, ndv int64, samples []types.Datum, bucketCount int64) error {
 	err := types.SortDatums(sc, samples)
 	if err != nil {
 		return errors.Trace(err)
@@ -292,9 +306,7 @@ func (t *Table) buildColumn(sc *variable.StatementContext, id int64, ndv int64, 
 			})
 		}
 	}
-	t.m.Lock()
-	defer t.m.Unlock()
-	t.Columns[id] = col
+	b.doneCh <- &buildStatsTask{t: t, col: col}
 	return nil
 }
 

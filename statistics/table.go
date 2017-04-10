@@ -16,7 +16,6 @@ package statistics
 import (
 	"fmt"
 	"strings"
-	"sync"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -43,7 +42,6 @@ const (
 // Table represents statistics for a table.
 type Table struct {
 	Info    *model.TableInfo
-	m       sync.Mutex
 	Columns map[int64]*Column
 	Indices map[int64]*Column
 	Count   int64 // Total row count in a table.
