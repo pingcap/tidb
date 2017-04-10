@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/types"
@@ -977,7 +978,14 @@ func (b *planBuilder) buildTableDual() LogicalPlan {
 }
 
 func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
-	statisticTable := statistics.GetStatisticsTableCache(tn.TableInfo)
+	handle := sessionctx.GetDomain(b.ctx).StatsHandle()
+	var statisticTable *statistics.Table
+	if handle == nil {
+		// When the first session is created, the handle hasn't been initialized.
+		statisticTable = statistics.PseudoTable(tn.TableInfo)
+	} else {
+		statisticTable = handle.GetTableStats(tn.TableInfo)
+	}
 	if b.err != nil {
 		return nil
 	}

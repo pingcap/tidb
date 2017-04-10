@@ -34,17 +34,22 @@ type statsInfo struct {
 type Handle struct {
 	ctx         context.Context
 	lastVersion uint64
+	cache       map[int64]*statsInfo
+	m           sync.RWMutex
 }
 
 // Clear the statsTblCache, only for test.
 func (h *Handle) Clear() {
-	statsTblCache = statsCache{cache: map[int64]*statsInfo{}}
+	h.cache = map[int64]*statsInfo{}
 	h.lastVersion = 0
 }
 
 // NewHandle creates a Handle for update stats.
 func NewHandle(ctx context.Context) *Handle {
-	return &Handle{ctx: ctx}
+	return &Handle{
+		ctx:   ctx,
+		cache: map[int64]*statsInfo{},
+	}
 }
 
 // Update reads stats meta from store and updates the stats map.
@@ -62,31 +67,24 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 			continue
 		}
 		tableInfo := table.Meta()
-		tbl, err := TableStatsFromStorage(h.ctx, tableInfo, count)
+		tbl, err := h.TableStatsFromStorage(h.ctx, tableInfo, count)
 		// Error is not nil may mean that there are some ddl changes on this table, so the origin
 		// statistics can not be used any more, we give it a pseudo one.
 		if err != nil {
 			log.Errorf("Error occurred when read table stats for table id %d. The error message is %s.", tableID, err.Error())
 			tbl = PseudoTable(tableInfo)
 		}
-		SetStatisticsTableCache(tableID, tbl, version)
+		h.SetTableStats(tableID, tbl, version)
 		h.lastVersion = version
 	}
 	return nil
 }
 
-type statsCache struct {
-	cache map[int64]*statsInfo
-	m     sync.RWMutex
-}
-
-var statsTblCache = statsCache{cache: map[int64]*statsInfo{}}
-
-// GetStatisticsTableCache retrieves the statistics table from cache, and the cache will be updated by a goroutine.
-func GetStatisticsTableCache(tblInfo *model.TableInfo) *Table {
-	statsTblCache.m.RLock()
-	defer statsTblCache.m.RUnlock()
-	stats, ok := statsTblCache.cache[tblInfo.ID]
+// GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
+func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *Table {
+	h.m.RLock()
+	defer h.m.RUnlock()
+	stats, ok := h.cache[tblInfo.ID]
 	if !ok || stats == nil {
 		return PseudoTable(tblInfo)
 	}
@@ -99,17 +97,17 @@ func GetStatisticsTableCache(tblInfo *model.TableInfo) *Table {
 	return PseudoTable(tblInfo)
 }
 
-// SetStatisticsTableCache sets the statistics table cache.
-func SetStatisticsTableCache(id int64, statsTbl *Table, version uint64) {
-	statsTblCache.m.Lock()
-	defer statsTblCache.m.Unlock()
-	stats, ok := statsTblCache.cache[id]
+// SetTableStats sets the statistics table cache.
+func (h *Handle) SetTableStats(id int64, statsTbl *Table, version uint64) {
+	h.m.Lock()
+	defer h.m.Unlock()
+	stats, ok := h.cache[id]
 	if !ok {
 		si := &statsInfo{
 			tbl:     statsTbl,
 			version: version,
 		}
-		statsTblCache.cache[id] = si
+		h.cache[id] = si
 		return
 	}
 	if stats.version >= version {

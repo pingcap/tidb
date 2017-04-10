@@ -48,20 +48,20 @@ func (s *testStatsCacheSuite) TestStatsCache(c *C) {
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
-	statsTbl := statistics.GetStatisticsTableCache(tableInfo)
+	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsTrue)
 	testKit.MustExec("analyze table t")
-	statsTbl = statistics.GetStatisticsTableCache(tableInfo)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 	testKit.MustExec("create index idx_t on t(c1)")
 	is = do.InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo = tbl.Meta()
-	statsTbl = statistics.GetStatisticsTableCache(tableInfo)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsTrue)
 	testKit.MustExec("analyze table t")
-	statsTbl = statistics.GetStatisticsTableCache(tableInfo)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 	// If the new schema drop a column, the table stats can still work.
 	testKit.MustExec("alter table t drop column c2")
@@ -72,7 +72,7 @@ func (s *testStatsCacheSuite) TestStatsCache(c *C) {
 
 	do.StatsHandle().Clear()
 	do.StatsHandle().Update(is)
-	statsTbl = statistics.GetStatisticsTableCache(tableInfo)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 
 	// If the new schema add a column, the table stats cannot work.
@@ -84,7 +84,7 @@ func (s *testStatsCacheSuite) TestStatsCache(c *C) {
 
 	do.StatsHandle().Clear()
 	do.StatsHandle().Update(is)
-	statsTbl = statistics.GetStatisticsTableCache(tableInfo)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsTrue)
 }
 
@@ -125,11 +125,11 @@ func (s *testStatsCacheSuite) TestStatsStoreAndLoad(c *C) {
 	tableInfo := tbl.Meta()
 
 	testKit.MustExec("analyze table t")
-	statsTbl1 := statistics.GetStatisticsTableCache(tableInfo)
+	statsTbl1 := do.StatsHandle().GetTableStats(tableInfo)
 
 	do.StatsHandle().Clear()
 	do.StatsHandle().Update(is)
-	statsTbl2 := statistics.GetStatisticsTableCache(tableInfo)
+	statsTbl2 := do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl2.Pseudo, IsFalse)
 	c.Assert(statsTbl2.Count, Equals, int64(recordCount))
 
@@ -149,14 +149,14 @@ func (s *testStatsCacheSuite) TestDDLAfterLoad(c *C) {
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
-	statsTbl := statistics.GetStatisticsTableCache(tableInfo)
+	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 	recordCount := 1000
 	for i := 0; i < recordCount; i++ {
 		testKit.MustExec("insert into t values (?, ?)", i, i+1)
 	}
 	testKit.MustExec("analyze table t")
-	statsTbl = statistics.GetStatisticsTableCache(tableInfo)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 	// add column
 	testKit.MustExec("alter table t add column c10 int")
@@ -186,7 +186,7 @@ func (s *testStatsCacheSuite) TestEmptyTable(c *C) {
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
-	statsTbl := statistics.GetStatisticsTableCache(tableInfo)
+	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
 	sc := new(variable.StatementContext)
 	count, err := statsTbl.ColumnGreaterRowCount(sc, types.NewDatum(1), tableInfo.Columns[0])
 	c.Assert(err, IsNil)
@@ -207,7 +207,7 @@ func (s *testStatsCacheSuite) TestColumnIDs(c *C) {
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
-	statsTbl := statistics.GetStatisticsTableCache(tableInfo)
+	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
 	sc := new(variable.StatementContext)
 	count, err := statsTbl.ColumnLessRowCount(sc, types.NewDatum(2), tableInfo.Columns[0])
 	c.Assert(err, IsNil)
@@ -221,7 +221,7 @@ func (s *testStatsCacheSuite) TestColumnIDs(c *C) {
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo = tbl.Meta()
-	statsTbl = statistics.GetStatisticsTableCache(tableInfo)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	// At that time, we should get c2's stats instead of c1's.
 	count, err = statsTbl.ColumnLessRowCount(sc, types.NewDatum(2), tableInfo.Columns[0])
 	c.Assert(err, IsNil)

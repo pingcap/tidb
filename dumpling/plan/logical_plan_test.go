@@ -20,11 +20,13 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
@@ -337,6 +339,8 @@ func mockContext() context.Context {
 	ctx.Store = &mockStore{
 		client: &mockClient{},
 	}
+	do := &domain.Domain{}
+	sessionctx.BindDomain(ctx, do)
 	return ctx
 }
 
