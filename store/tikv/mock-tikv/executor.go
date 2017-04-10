@@ -279,7 +279,6 @@ func evalBool(expr expression.Expression, row []types.Datum, ctx *variable.State
 	return i != 0, nil
 }
 
-// One stands for a number 1.
 func (e *selectionExec) Next() (handle int64, value [][]byte, err error) {
 	for {
 		handle, value, err = e.src.Next()
@@ -419,13 +418,13 @@ func (e *aggregateExec) aggregate(handle int64, row [][]byte) error {
 }
 
 type topNExec struct {
-	heap       *topnHeap
-	evalCtx    *evalContext
-	colIDs     map[int64]int
-	conditions []expression.Expression
-	row        []types.Datum
-	cursor     int
-	executed   bool
+	heap         *topnHeap
+	evalCtx      *evalContext
+	colIDs       map[int64]int
+	orderByExprs []expression.Expression
+	row          []types.Datum
+	cursor       int
+	executed     bool
 
 	src executor
 }
@@ -484,7 +483,7 @@ func (e *topNExec) evalTopN(handle int64, value [][]byte) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	for i, expr := range e.conditions {
+	for i, expr := range e.orderByExprs {
 		newRow.key[i], err = expr.Eval(e.row)
 		if err != nil {
 			return errors.Trace(err)

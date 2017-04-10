@@ -240,11 +240,11 @@ func (h *rpcHandler) buildTopN(ctx *dagContext, executor *tipb.Executor) (*topNE
 	}
 
 	return &topNExec{
-		heap:       heap,
-		evalCtx:    ctx.evalCtx,
-		colIDs:     colIDs,
-		conditions: conds,
-		row:        make([]types.Datum, len(ctx.eval.ColumnInfos)),
+		heap:         heap,
+		evalCtx:      ctx.evalCtx,
+		colIDs:       colIDs,
+		orderByExprs: conds,
+		row:          make([]types.Datum, len(ctx.eval.ColumnInfos)),
 	}, nil
 }
 
