@@ -207,7 +207,7 @@ func (s *testStatsCacheSuite) TestColumnIDs(c *C) {
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
-	statsTbl := statistics.GetStatisticsTableCache(tableInfo)
+	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
 	sc := new(variable.StatementContext)
 	count, err := statsTbl.ColumnLessRowCount(sc, types.NewDatum(2), tableInfo.Columns[0])
 	c.Assert(err, IsNil)
@@ -221,7 +221,7 @@ func (s *testStatsCacheSuite) TestColumnIDs(c *C) {
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo = tbl.Meta()
-	statsTbl = statistics.GetStatisticsTableCache(tableInfo)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	// At that time, we should get c2's stats instead of c1's.
 	count, err = statsTbl.ColumnLessRowCount(sc, types.NewDatum(2), tableInfo.Columns[0])
 	c.Assert(err, IsNil)
