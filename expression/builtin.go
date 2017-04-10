@@ -42,12 +42,6 @@ func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc 
 	}
 }
 
-func (b *baseBuiltinFunc) init(args []Expression, ctx context.Context) {
-	b.args = args
-	b.argValues = make([]types.Datum, len(args))
-	b.ctx = ctx
-}
-
 func (b *baseBuiltinFunc) evalArgs(row []types.Datum) (_ []types.Datum, err error) {
 	for i, arg := range b.args {
 		b.argValues[i], err = arg.Eval(row)
@@ -103,8 +97,6 @@ type builtinFunc interface {
 	equal(builtinFunc) bool
 	// getCtx returns this function's context.
 	getCtx() context.Context
-
-	init(args []Expression, ctx context.Context)
 }
 
 // baseFunctionClass will be contained in every struct that implement functionClass interface.
@@ -355,7 +347,7 @@ var funcs = map[string]functionClass{
 	ast.In:         &inFunctionClass{baseFunctionClass{ast.In, 1, -1}},
 	ast.IsTruth:    &isTrueOpFunctionClass{baseFunctionClass{ast.IsTruth, 1, 1}, opcode.IsTruth},
 	ast.IsFalsity:  &isTrueOpFunctionClass{baseFunctionClass{ast.IsFalsity, 1, 1}, opcode.IsFalsity},
-	ast.Like:       &likeFunctionClass{baseFunctionClass{ast.Like, 3, 3}},
+	ast.Like:       &likeFunctionClass{baseFunctionClass{ast.Like, 2, 3}},
 	ast.Regexp:     &regexpFunctionClass{baseFunctionClass{ast.Regexp, 2, 2}},
 	ast.Case:       &caseWhenFunctionClass{baseFunctionClass{ast.Case, 1, -1}},
 	ast.RowFunc:    &rowFunctionClass{baseFunctionClass{ast.RowFunc, 2, -1}},
