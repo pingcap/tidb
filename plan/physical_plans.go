@@ -74,7 +74,7 @@ type PhysicalIndexScan struct {
 
 	Table      *model.TableInfo
 	Index      *model.IndexInfo
-	Ranges     []*IndexRange
+	Ranges     []*types.IndexRange
 	Columns    []*model.ColumnInfo
 	DBName     model.CIStr
 	Desc       bool
@@ -99,7 +99,7 @@ type PhysicalMemTable struct {
 	DBName      model.CIStr
 	Table       *model.TableInfo
 	Columns     []*model.ColumnInfo
-	Ranges      []TableRange
+	Ranges      []types.IntColumnRange
 	TableAsName *model.CIStr
 }
 
@@ -365,7 +365,7 @@ type PhysicalTableScan struct {
 	Columns []*model.ColumnInfo
 	DBName  model.CIStr
 	Desc    bool
-	Ranges  []TableRange
+	Ranges  []types.IntColumnRange
 	pkCol   *expression.Column
 
 	TableAsName *model.CIStr

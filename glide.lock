@@ -1,5 +1,5 @@
-hash: 72cdbc4157923a75f6b1ee6b9c367d0eaab696fe614b6b299a195d53bbb9f344
-updated: 2017-03-28T20:20:33.904733747+08:00
+hash: ab51f14e77a696bd94f19d1c7e37daa1f61ea84b83b354739fa0880d5a6112be
+updated: 2017-04-07T19:00:39.285793236+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -57,7 +57,7 @@ imports:
 - name: github.com/golang/snappy
   version: 723cc1e459b8eea2dea4583200fd60757d40097a
 - name: github.com/gorilla/context
-  version: 1ea25387ff6f684839d82767c1733ff4d4d15d0a
+  version: 08b5f424b9271eedf6f9f0ce86cb9396ed337a42
 - name: github.com/gorilla/mux
   version: 599cba5e7b6137d46ddf58fb1765f5d928e69604
 - name: github.com/grpc-ecosystem/grpc-gateway
@@ -119,7 +119,7 @@ imports:
   - pkg/raft_serverpb
   - pkg/util
 - name: github.com/pingcap/pd
-  version: 1441cded9a00260033f33556ff39060423eaa100
+  version: cb3635aa22d90672a84567c80009de1d71552520
   subpackages:
   - pd-client
   - pkg/apiutil
