@@ -94,7 +94,7 @@ func (h *Handle) SaveToStorage(ctx context.Context, t *Table) error {
 }
 
 // TableStatsFromStorage loads table stats info from storage.
-func TableStatsFromStorage(ctx context.Context, info *model.TableInfo, count int64) (*Table, error) {
+func (h *Handle) TableStatsFromStorage(ctx context.Context, info *model.TableInfo, count int64) (*Table, error) {
 	table := &Table{
 		Info:  info,
 		Count: count,
