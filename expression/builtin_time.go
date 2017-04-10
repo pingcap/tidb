@@ -1776,7 +1776,7 @@ func (b *builtinSecToTimeSig) eval(row []types.Datum) (d types.Datum, err error)
 
 	var dur types.Duration
 	fsp := types.MinFsp
-	dur, err = types.ParseDuration(fmt.Sprintf("%s%02d:%02d:%2d", negative, hour, minute, second), fsp)
+	dur, err = types.ParseDuration(fmt.Sprintf("%s%02d:%02d:%02d", negative, hour, minute, second), fsp)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
