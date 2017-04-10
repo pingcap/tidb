@@ -26,12 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-type statsInfo struct {
-	tbl     *Table
-	version uint64
-}
-
-type statsCache map[int64]*statsInfo
+type statsCache map[int64]*Table
 
 // Handle can update stats info periodically.
 type Handle struct {
@@ -63,7 +58,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	stats := make([]*statsInfo, 0, len(rows))
+	tables := make([]*Table, 0, len(rows))
 	for _, row := range rows {
 		version, tableID, count := row.Data[0].GetUint64(), row.Data[1].GetInt64(), row.Data[2].GetInt64()
 		table, ok := is.TableByID(tableID)
@@ -79,20 +74,19 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 			log.Errorf("Error occurred when read table stats for table id %d. The error message is %s.", tableID, err.Error())
 			continue
 		}
-		stats = append(stats, &statsInfo{tbl, version})
+		tables = append(tables, tbl)
 		h.lastVersion = version
 	}
-	h.UpdateTableStats(stats)
+	h.UpdateTableStats(tables)
 	return nil
 }
 
 // GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
 func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *Table {
-	stats, ok := h.cache.Load().(statsCache)[tblInfo.ID]
-	if !ok || stats == nil {
+	tbl, ok := h.cache.Load().(statsCache)[tblInfo.ID]
+	if !ok || tbl == nil {
 		return PseudoTable(tblInfo)
 	}
-	tbl := stats.tbl
 	// Here we check the TableInfo because there may be some ddl changes in the duration period.
 	// Also, we rely on the fact that TableInfo will not be same if and only if there are ddl changes.
 	// TODO: Remove this check.
@@ -112,16 +106,13 @@ func (h *Handle) loadFromOldCache() statsCache {
 }
 
 // UpdateTableStats updates the statistics table cache using copy on write.
-func (h *Handle) UpdateTableStats(stats []*statsInfo) {
+func (h *Handle) UpdateTableStats(tables []*Table) {
 	h.m.Lock()
 	defer h.m.Unlock()
 	newCache := h.loadFromOldCache()
-	for _, stat := range stats {
-		id := stat.tbl.Info.ID
-		stats, ok := newCache[id]
-		if !ok || stats.version < stat.version {
-			newCache[id] = stat
-		}
+	for _, tbl := range tables {
+		id := tbl.Info.ID
+		newCache[id] = tbl
 	}
 	h.cache.Store(newCache)
 }

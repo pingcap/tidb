@@ -116,11 +116,11 @@ func (b *Builder) NewTable() (*Table, error) {
 		Indices: make(map[int64]*Column, len(b.TblInfo.Indices)),
 	}
 	if b.Count == 0 {
-		for i := range t.Columns {
-			t.Columns[i] = &Column{ID: b.TblInfo.Columns[i].ID}
+		for _, col := range b.TblInfo.Columns {
+			t.Columns[col.ID] = &Column{ID: col.ID}
 		}
-		for i := range t.Indices {
-			t.Indices[i] = &Column{ID: b.TblInfo.Indices[i].ID}
+		for _, idx := range t.Indices {
+			t.Indices[idx.ID] = &Column{ID: idx.ID}
 		}
 		return t, nil
 	}
@@ -156,11 +156,11 @@ func (b *Builder) NewTable() (*Table, error) {
 	// There may be cases that we have no columnSamples, and only after we build the index columns that we can know it is 0,
 	// so we should also checked it here.
 	if t.Count == 0 {
-		for i := range t.Columns {
-			t.Columns[i] = &Column{ID: i}
+		for _, col := range b.TblInfo.Columns {
+			t.Columns[col.ID] = &Column{ID: col.ID}
 		}
-		for i := range t.Indices {
-			t.Indices[i] = &Column{ID: i}
+		for _, idx := range t.Indices {
+			t.Indices[idx.ID] = &Column{ID: idx.ID}
 		}
 	}
 	return t, nil
