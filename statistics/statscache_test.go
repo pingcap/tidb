@@ -194,7 +194,7 @@ func (s *testStatsCacheSuite) TestEmptyTable(c *C) {
 	c.Assert(count, Equals, int64(3333333))
 }
 
-func (s *testStatsCacheSuite) TestColumnOffset(c *C) {
+func (s *testStatsCacheSuite) TestColumnIDs(c *C) {
 	store, do, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	defer store.Close()
