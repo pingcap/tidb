@@ -26,17 +26,17 @@ import (
 )
 
 func (is *PhysicalIndexScan) getRowCountByIndexRanges(sc *variable.StatementContext, statsTbl *statistics.Table) (uint64, error) {
-	var offset int
-	for i := range is.Table.Indices {
-		if is.Table.Indices[i].Name.L == is.Index.Name.L {
-			offset = i
+	var id int64
+	for _, idx := range is.Table.Indices {
+		if idx.Name.L == is.Index.Name.L {
+			id = idx.ID
 			break
 		}
 	}
 	if statsTbl.Pseudo {
-		return getPseudoRowCountByIndexRanges(sc, statsTbl, is.Ranges, is.Index, is.accessInAndEqCount)
+		return getPseudoRowCountByIndexRanges(sc, statsTbl, is.Table, is.Ranges, is.Index, is.accessInAndEqCount)
 	}
-	return getRealRowCountByIndexRanges(sc, statsTbl, is.Ranges, is.Index, offset)
+	return getRealRowCountByIndexRanges(sc, statsTbl, is.Ranges, is.Index, id)
 }
 
 func getRowCountByRange(sc *variable.StatementContext, statsTblCount int64, statsCol *statistics.Column, l, r types.Datum) (int64, error) {
@@ -73,7 +73,7 @@ func getRowCountByRange(sc *variable.StatementContext, statsTblCount int64, stat
 	return rowCount, nil
 }
 
-func getRealRowCountByIndexRanges(sc *variable.StatementContext, statsTbl *statistics.Table, indexRanges []*types.IndexRange, indexInfo *model.IndexInfo, offset int) (uint64, error) {
+func getRealRowCountByIndexRanges(sc *variable.StatementContext, statsTbl *statistics.Table, indexRanges []*types.IndexRange, indexInfo *model.IndexInfo, id int64) (uint64, error) {
 	totalCount := int64(0)
 	for _, indexRange := range indexRanges {
 		lv := indexRange.LowVal
@@ -94,7 +94,7 @@ func getRealRowCountByIndexRanges(sc *variable.StatementContext, statsTbl *stati
 		}
 		l := types.NewBytesDatum(lb)
 		r := types.NewBytesDatum(rb)
-		rowCount, err := getRowCountByRange(sc, statsTbl.Count, statsTbl.Indices[offset], l, r)
+		rowCount, err := getRowCountByRange(sc, statsTbl.Count, statsTbl.Indices[id], l, r)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -106,7 +106,7 @@ func getRealRowCountByIndexRanges(sc *variable.StatementContext, statsTbl *stati
 	return uint64(totalCount), nil
 }
 
-func getPseudoRowCountByIndexRanges(sc *variable.StatementContext, statsTbl *statistics.Table, indexRanges []*types.IndexRange, indexInfo *model.IndexInfo, inAndEQCnt int) (uint64, error) {
+func getPseudoRowCountByIndexRanges(sc *variable.StatementContext, statsTbl *statistics.Table, table *model.TableInfo, indexRanges []*types.IndexRange, indexInfo *model.IndexInfo, inAndEQCnt int) (uint64, error) {
 	totalCount := float64(0)
 	for _, indexRange := range indexRanges {
 		count := float64(statsTbl.Count)
@@ -117,7 +117,8 @@ func getPseudoRowCountByIndexRanges(sc *variable.StatementContext, statsTbl *sta
 		l := indexRange.LowVal[i]
 		r := indexRange.HighVal[i]
 		offset := indexInfo.Columns[i].Offset
-		rowCount, err := getRowCountByRange(sc, statsTbl.Count, statsTbl.Columns[offset], l, r)
+		id := table.Columns[offset].ID
+		rowCount, err := getRowCountByRange(sc, statsTbl.Count, statsTbl.Columns[id], l, r)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}

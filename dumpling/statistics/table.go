@@ -42,8 +42,8 @@ const (
 // Table represents statistics for a table.
 type Table struct {
 	Info    *model.TableInfo
-	Columns []*Column
-	Indices []*Column
+	Columns map[int64]*Column
+	Indices map[int64]*Column
 	Count   int64 // Total row count in a table.
 	Pseudo  bool
 }
@@ -96,8 +96,10 @@ func (t *Table) SaveToStorage(ctx context.Context) error {
 // TableStatsFromStorage loads table stats info from storage.
 func TableStatsFromStorage(ctx context.Context, info *model.TableInfo, count int64) (*Table, error) {
 	table := &Table{
-		Info:  info,
-		Count: count,
+		Info:    info,
+		Count:   count,
+		Columns: make(map[int64]*Column, len(info.Columns)),
+		Indices: make(map[int64]*Column, len(info.Indices)),
 	}
 	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count from mysql.stats_histograms where table_id = %d", info.ID)
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, selSQL)
@@ -124,7 +126,7 @@ func TableStatsFromStorage(ctx context.Context, info *model.TableInfo, count int
 				}
 			}
 			if col != nil {
-				table.Indices = append(table.Indices, col)
+				table.Indices[col.ID] = col
 				indexCount++
 			} else {
 				log.Warnf("We cannot find index id %d in table %s now. It may be deleted.", histID, info.Name)
@@ -142,7 +144,7 @@ func TableStatsFromStorage(ctx context.Context, info *model.TableInfo, count int
 				}
 			}
 			if col != nil {
-				table.Columns = append(table.Columns, col)
+				table.Columns[col.ID] = col
 				columnCount++
 			} else {
 				log.Warnf("We cannot find column id %d in table %s now. It may be deleted.", histID, info.Name)
@@ -173,8 +175,8 @@ func (t *Table) ColumnIsInvalid(colInfo *model.ColumnInfo) bool {
 	if t.Pseudo {
 		return true
 	}
-	offset := colInfo.Offset
-	return offset >= len(t.Columns) || t.Columns[offset].ID != colInfo.ID
+	_, ok := t.Columns[colInfo.ID]
+	return !ok
 }
 
 // ColumnGreaterRowCount estimates the row count where the column greater than value.
@@ -182,7 +184,7 @@ func (t *Table) ColumnGreaterRowCount(sc *variable.StatementContext, value types
 	if t.ColumnIsInvalid(colInfo) {
 		return t.Count / pseudoLessRate, nil
 	}
-	return t.Columns[colInfo.Offset].GreaterRowCount(sc, value)
+	return t.Columns[colInfo.ID].GreaterRowCount(sc, value)
 }
 
 // ColumnLessRowCount estimates the row count where the column less than value.
@@ -190,7 +192,7 @@ func (t *Table) ColumnLessRowCount(sc *variable.StatementContext, value types.Da
 	if t.ColumnIsInvalid(colInfo) {
 		return t.Count / pseudoLessRate, nil
 	}
-	return t.Columns[colInfo.Offset].LessRowCount(sc, value)
+	return t.Columns[colInfo.ID].LessRowCount(sc, value)
 }
 
 // ColumnBetweenRowCount estimates the row count where column greater or equal to a and less than b.
@@ -198,7 +200,7 @@ func (t *Table) ColumnBetweenRowCount(sc *variable.StatementContext, a, b types.
 	if t.ColumnIsInvalid(colInfo) {
 		return t.Count / pseudoBetweenRate, nil
 	}
-	return t.Columns[colInfo.Offset].BetweenRowCount(sc, a, b)
+	return t.Columns[colInfo.ID].BetweenRowCount(sc, a, b)
 }
 
 // ColumnEqualRowCount estimates the row count where the column equals to value.
@@ -206,28 +208,28 @@ func (t *Table) ColumnEqualRowCount(sc *variable.StatementContext, value types.D
 	if t.ColumnIsInvalid(colInfo) {
 		return t.Count / pseudoEqualRate, nil
 	}
-	return t.Columns[colInfo.Offset].EqualRowCount(sc, value)
+	return t.Columns[colInfo.ID].EqualRowCount(sc, value)
 }
 
 // PseudoTable creates a pseudo table statistics when statistic can not be found in KV store.
 func PseudoTable(ti *model.TableInfo) *Table {
 	t := &Table{Info: ti, Pseudo: true}
 	t.Count = pseudoRowCount
-	t.Columns = make([]*Column, len(ti.Columns))
-	t.Indices = make([]*Column, len(ti.Indices))
-	for i, v := range ti.Columns {
+	t.Columns = make(map[int64]*Column, len(ti.Columns))
+	t.Indices = make(map[int64]*Column, len(ti.Indices))
+	for _, v := range ti.Columns {
 		c := &Column{
 			ID:  v.ID,
 			NDV: pseudoRowCount / 2,
 		}
-		t.Columns[i] = c
+		t.Columns[v.ID] = c
 	}
-	for i, v := range ti.Indices {
+	for _, v := range ti.Indices {
 		c := &Column{
 			ID:  v.ID,
 			NDV: pseudoRowCount / 2,
 		}
-		t.Indices[i] = c
+		t.Indices[v.ID] = c
 	}
 	return t
 }

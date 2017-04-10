@@ -29,13 +29,13 @@ var _ Executor = &AnalyzeExec{}
 
 // AnalyzeExec represents Analyze executor.
 type AnalyzeExec struct {
-	schema     *expression.Schema
-	tblInfo    *model.TableInfo
-	ctx        context.Context
-	idxOffsets []int
-	colOffsets []int
-	pkOffset   int
-	Srcs       []Executor
+	schema  *expression.Schema
+	tblInfo *model.TableInfo
+	ctx     context.Context
+	idxIDs  []int64
+	colIDs  []int64
+	pkID    int64
+	Srcs    []Executor
 }
 
 const (
@@ -67,25 +67,25 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 		var count int64 = -1
 		var sampleRows []*ast.Row
 		var colNDVs []int64
-		if ae.colOffsets != nil {
+		if len(ae.colIDs) != 0 {
 			rs := &recordSet{executor: ae.Srcs[len(ae.Srcs)-1]}
 			var err error
-			count, sampleRows, colNDVs, err = CollectSamplesAndEstimateNDVs(rs, len(ae.colOffsets))
+			count, sampleRows, colNDVs, err = CollectSamplesAndEstimateNDVs(rs, len(ae.colIDs))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
 		columnSamples := rowsToColumnSamples(sampleRows)
 		var pkRS ast.RecordSet
-		if ae.pkOffset != -1 {
+		if ae.pkID != 0 {
 			offset := len(ae.Srcs) - 1
-			if ae.colOffsets != nil {
+			if len(ae.colIDs) != 0 {
 				offset--
 			}
 			pkRS = &recordSet{executor: ae.Srcs[offset]}
 		}
-		idxRS := make([]ast.RecordSet, 0, len(ae.idxOffsets))
-		for i := range ae.idxOffsets {
+		idxRS := make([]ast.RecordSet, 0, len(ae.idxIDs))
+		for i := range ae.idxIDs {
 			idxRS = append(idxRS, &recordSet{executor: ae.Srcs[i]})
 		}
 		err := ae.buildStatisticsAndSaveToKV(count, columnSamples, colNDVs, idxRS, pkRS)
@@ -103,12 +103,12 @@ func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]
 		Count:         count,
 		NumBuckets:    defaultBucketCount,
 		ColumnSamples: columnSamples,
-		ColOffsets:    e.colOffsets,
+		ColIDs:        e.colIDs,
 		ColNDVs:       colNDVs,
 		IdxRecords:    idxRS,
-		IdxOffsets:    e.idxOffsets,
+		IdxIDs:        e.idxIDs,
 		PkRecords:     pkRS,
-		PkOffset:      e.pkOffset,
+		PkID:          e.pkID,
 	}
 	t, err := statBuilder.NewTable()
 	if err != nil {

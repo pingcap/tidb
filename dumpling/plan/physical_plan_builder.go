@@ -1509,10 +1509,8 @@ func (p *LogicalApply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPl
 
 func (p *Analyze) prepareSimpleTableScan(cols []*model.ColumnInfo) *PhysicalTableScan {
 	ts := PhysicalTableScan{
-		Table:               p.Table.TableInfo,
+		Table:               p.TableInfo,
 		Columns:             cols,
-		TableAsName:         &p.Table.Name,
-		DBName:              p.Table.DBInfo.Name,
 		physicalTableSource: physicalTableSource{client: p.ctx.GetClient()},
 	}.init(p.allocator, p.ctx)
 	ts.SetSchema(expression.NewSchema(expression.ColumnInfos2Columns(ts.Table.Name, cols)...))
@@ -1521,15 +1519,13 @@ func (p *Analyze) prepareSimpleTableScan(cols []*model.ColumnInfo) *PhysicalTabl
 	return ts
 }
 
-func (p *Analyze) prepareSimpleIndexScan(idxOffset int, cols []*model.ColumnInfo) *PhysicalIndexScan {
-	tblInfo := p.Table.TableInfo
+func (p *Analyze) prepareSimpleIndexScan(idxInfo *model.IndexInfo, cols []*model.ColumnInfo) *PhysicalIndexScan {
+	tblInfo := p.TableInfo
 	is := PhysicalIndexScan{
-		Index:               tblInfo.Indices[idxOffset],
+		Index:               idxInfo,
 		Table:               tblInfo,
 		Columns:             cols,
-		TableAsName:         &p.Table.Name,
 		OutOfOrder:          false,
-		DBName:              p.Table.DBInfo.Name,
 		physicalTableSource: physicalTableSource{client: p.ctx.GetClient()},
 		DoubleRead:          false,
 	}.init(p.allocator, p.ctx)
@@ -1550,11 +1546,10 @@ func (p *Analyze) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInf
 		return info, nil
 	}
 	var childInfos []*physicalPlanInfo
-	for _, idx := range p.IdxOffsets {
-		var columns []*model.ColumnInfo
-		tblInfo := p.Table.TableInfo
-		for _, idxCol := range tblInfo.Indices[idx].Columns {
-			for _, col := range tblInfo.Columns {
+	for _, idx := range p.IndicesInfo {
+		columns := make([]*model.ColumnInfo, 0, len(idx.Columns))
+		for _, idxCol := range idx.Columns {
+			for _, col := range p.TableInfo.Columns {
 				if col.Name.L == idxCol.Name.L {
 					columns = append(columns, col)
 					break
@@ -1565,17 +1560,12 @@ func (p *Analyze) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInf
 		childInfos = append(childInfos, is.matchProperty(prop, &physicalPlanInfo{count: 0}))
 	}
 	// TODO: It's inefficient to do table scan two times for massive data.
-	if p.PkOffset != -1 {
-		col := p.Table.TableInfo.Columns[p.PkOffset]
-		ts := p.prepareSimpleTableScan([]*model.ColumnInfo{col})
+	if p.PkInfo != nil {
+		ts := p.prepareSimpleTableScan([]*model.ColumnInfo{p.PkInfo})
 		childInfos = append(childInfos, ts.matchProperty(prop, &physicalPlanInfo{count: 0}))
 	}
-	if p.ColOffsets != nil {
-		cols := make([]*model.ColumnInfo, 0, len(p.ColOffsets))
-		for _, offset := range p.ColOffsets {
-			cols = append(cols, p.Table.TableInfo.Columns[offset])
-		}
-		ts := p.prepareSimpleTableScan(cols)
+	if len(p.ColsInfo) != 0 {
+		ts := p.prepareSimpleTableScan(p.ColsInfo)
 		childInfos = append(childInfos, ts.matchProperty(prop, &physicalPlanInfo{count: 0}))
 	}
 	for _, child := range p.Children() {
