@@ -31,12 +31,12 @@ type statsCache map[int64]*Table
 type Handle struct {
 	ctx         context.Context
 	lastVersion uint64
-	cache       atomic.Value
+	statsCache  atomic.Value
 }
 
-// Clear the statsTblCache, only for test.
+// Clear the statsCache, only for test.
 func (h *Handle) Clear() {
-	h.cache.Store(statsCache{})
+	h.statsCache.Store(statsCache{})
 	h.lastVersion = 0
 }
 
@@ -45,7 +45,7 @@ func NewHandle(ctx context.Context) *Handle {
 	handle := &Handle{
 		ctx: ctx,
 	}
-	handle.cache.Store(statsCache{})
+	handle.statsCache.Store(statsCache{})
 	return handle
 }
 
@@ -66,8 +66,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		}
 		tableInfo := table.Meta()
 		tbl, err := h.TableStatsFromStorage(h.ctx, tableInfo, count)
-		// Error is not nil may mean that there are some ddl changes on this table, so the origin
-		// statistics can not be used any more, we give it a pseudo one.
+		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
 		if err != nil {
 			log.Errorf("Error occurred when read table stats for table id %d. The error message is %s.", tableID, err.Error())
 			continue
@@ -81,7 +80,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 
 // GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
 func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *Table {
-	tbl, ok := h.cache.Load().(statsCache)[tblInfo.ID]
+	tbl, ok := h.statsCache.Load().(statsCache)[tblInfo.ID]
 	if !ok || tbl == nil {
 		return PseudoTable(tblInfo)
 	}
@@ -96,7 +95,7 @@ func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *Table {
 
 func (h *Handle) loadFromOldCache() statsCache {
 	newCache := statsCache{}
-	oldCache := h.cache.Load().(statsCache)
+	oldCache := h.statsCache.Load().(statsCache)
 	for k, v := range oldCache {
 		newCache[k] = v
 	}
@@ -110,5 +109,5 @@ func (h *Handle) UpdateTableStats(tables []*Table) {
 		id := tbl.Info.ID
 		newCache[id] = tbl
 	}
-	h.cache.Store(newCache)
+	h.statsCache.Store(newCache)
 }
