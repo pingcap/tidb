@@ -17,7 +17,6 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
