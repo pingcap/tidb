@@ -42,7 +42,7 @@ func (s *testUtilSuite) TestDistinct(c *check.C) {
 		{[]interface{}{1, nil}, false},
 	}
 	for _, t := range cases {
-		d, err := dc.Check(t.vals)
+		d, err := dc.Check(types.MakeDatums(t.vals...))
 		c.Assert(err, check.IsNil)
 		c.Assert(d, check.Equals, t.expect)
 	}
