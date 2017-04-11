@@ -1696,7 +1696,73 @@ type builtinExportSetSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_export-set
 func (b *builtinExportSetSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("export_set")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if len(args) < 3 {
+		return d, errors.Trace(fmt.Errorf("Number of parameter error"))
+	}
+	for i := range args {
+		if args[i].IsNull() {
+			return d, errors.Trace(fmt.Errorf("parameter cann`t be null"))
+		}
+	}
+	arg0, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	arg1, err := args[1].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	arg2, err := args[2].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	arg3 := ","
+	var arg4 int64 = 64
+	if len(args) > 3 {
+		arg3, err = args[3].ToString()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+	}
+	if len(args) > 4 {
+		arg4, err = args[4].ToInt64(b.ctx.GetSessionVars().StmtCtx)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		if arg4 < 0 || arg4 > 64 {
+			arg4 = 64
+		}
+	}
+	bitsStr := strconv.FormatInt(arg0, 2)
+	on := arg1
+	off := arg2
+	separator := arg3
+	numberOfBits := int(arg4)
+	resSlice := make([]string, 0, numberOfBits)
+	if len(resSlice) < numberOfBits {
+		defaultStr := ""
+		for i := 0; i < numberOfBits-len(bitsStr); i++ {
+			defaultStr += "0"
+		}
+		bitsStr = defaultStr + bitsStr
+	}
+	for i := len(bitsStr) - 1; i >= 0; i-- {
+		if bitsStr[i] == '1' {
+			resSlice = append(resSlice, on)
+		} else {
+			resSlice = append(resSlice, off)
+		}
+		if len(resSlice) == numberOfBits {
+			break
+		}
+	}
+	resStr := strings.Join(resSlice, separator)
+	d.SetString(resStr)
+	return d, nil
 }
 
 type formatFunctionClass struct {
