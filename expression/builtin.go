@@ -42,12 +42,6 @@ func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc 
 	}
 }
 
-func (b *baseBuiltinFunc) init(args []Expression, ctx context.Context) {
-	b.args = args
-	b.argValues = make([]types.Datum, len(args))
-	b.ctx = ctx
-}
-
 func (b *baseBuiltinFunc) evalArgs(row []types.Datum) (_ []types.Datum, err error) {
 	for i, arg := range b.args {
 		b.argValues[i], err = arg.Eval(row)
@@ -103,8 +97,6 @@ type builtinFunc interface {
 	equal(builtinFunc) bool
 	// getCtx returns this function's context.
 	getCtx() context.Context
-
-	init(args []Expression, ctx context.Context)
 }
 
 // baseFunctionClass will be contained in every struct that implement functionClass interface.
@@ -247,6 +239,7 @@ var funcs = map[string]functionClass{
 	ast.Instr:          &instrFunctionClass{baseFunctionClass{ast.Instr, 2, 2}},
 	ast.Lcase:          &lowerFunctionClass{baseFunctionClass{ast.Lcase, 1, 1}},
 	ast.Left:           &leftFunctionClass{baseFunctionClass{ast.Left, 2, 2}},
+	ast.Right:          &rightFunctionClass{baseFunctionClass{ast.Right, 2, 2}},
 	ast.Length:         &lengthFunctionClass{baseFunctionClass{ast.Length, 1, 1}},
 	ast.LoadFile:       &loadFileFunctionClass{baseFunctionClass{ast.LoadFile, 1, 1}},
 	ast.Locate:         &locateFunctionClass{baseFunctionClass{ast.Locate, 2, 3}},
@@ -267,6 +260,7 @@ var funcs = map[string]functionClass{
 	ast.Substring:      &substringFunctionClass{baseFunctionClass{ast.Substring, 2, 3}},
 	ast.Substr:         &substringFunctionClass{baseFunctionClass{ast.Substr, 2, 3}},
 	ast.SubstringIndex: &substringIndexFunctionClass{baseFunctionClass{ast.SubstringIndex, 3, 3}},
+	ast.ToBase64:       &toBase64FunctionClass{baseFunctionClass{ast.ToBase64, 1, 1}},
 	ast.Trim:           &trimFunctionClass{baseFunctionClass{ast.Trim, 1, 3}},
 	ast.Upper:          &upperFunctionClass{baseFunctionClass{ast.Upper, 1, 1}},
 	ast.Ucase:          &upperFunctionClass{baseFunctionClass{ast.Ucase, 1, 1}},
@@ -355,12 +349,13 @@ var funcs = map[string]functionClass{
 	ast.In:         &inFunctionClass{baseFunctionClass{ast.In, 1, -1}},
 	ast.IsTruth:    &isTrueOpFunctionClass{baseFunctionClass{ast.IsTruth, 1, 1}, opcode.IsTruth},
 	ast.IsFalsity:  &isTrueOpFunctionClass{baseFunctionClass{ast.IsFalsity, 1, 1}, opcode.IsFalsity},
-	ast.Like:       &likeFunctionClass{baseFunctionClass{ast.Like, 3, 3}},
+	ast.Like:       &likeFunctionClass{baseFunctionClass{ast.Like, 2, 3}},
 	ast.Regexp:     &regexpFunctionClass{baseFunctionClass{ast.Regexp, 2, 2}},
 	ast.Case:       &caseWhenFunctionClass{baseFunctionClass{ast.Case, 1, -1}},
 	ast.RowFunc:    &rowFunctionClass{baseFunctionClass{ast.RowFunc, 2, -1}},
 	ast.SetVar:     &setVarFunctionClass{baseFunctionClass{ast.SetVar, 2, 2}},
 	ast.GetVar:     &getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}},
+	ast.BitCount:   &bitCountFunctionClass{baseFunctionClass{ast.BitCount, 1, 1}},
 
 	// encryption and compression functions
 	ast.AesDecrypt:               &aesDecryptFunctionClass{baseFunctionClass{ast.AesDecrypt, 2, 3}},

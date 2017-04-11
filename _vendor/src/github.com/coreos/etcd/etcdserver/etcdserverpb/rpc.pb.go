@@ -232,7 +232,8 @@ type RangeRequest struct {
 	// then the range request gets all keys prefixed with key.
 	// If both key and range_end are '\0', then the range request returns all keys.
 	RangeEnd []byte `protobuf:"bytes,2,opt,name=range_end,json=rangeEnd,proto3" json:"range_end,omitempty"`
-	// limit is a limit on the number of keys returned for the request.
+	// limit is a limit on the number of keys returned for the request. When limit is set to 0,
+	// it is treated as no limit.
 	Limit int64 `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
 	// revision is the point-in-time of the key-value store to use for the range.
 	// If revision is less or equal to zero, the range is over the newest key-value store.
@@ -356,12 +357,12 @@ type DeleteRangeRequest struct {
 	Key []byte `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
 	// range_end is the key following the last key to delete for the range [key, range_end).
 	// If range_end is not given, the range is defined to contain only the key argument.
-	// If range_end is one bit larger than the given key, then the range is all
-	// the all keys with the prefix (the given key).
+	// If range_end is one bit larger than the given key, then the range is all the keys
+	// with the prefix (the given key).
 	// If range_end is '\0', the range is all keys greater than or equal to the key argument.
 	RangeEnd []byte `protobuf:"bytes,2,opt,name=range_end,json=rangeEnd,proto3" json:"range_end,omitempty"`
 	// If prev_kv is set, etcd gets the previous key-value pairs before deleting it.
-	// The previous key-value pairs will be returned in the delte response.
+	// The previous key-value pairs will be returned in the delete response.
 	PrevKv bool `protobuf:"varint,3,opt,name=prev_kv,json=prevKv,proto3" json:"prev_kv,omitempty"`
 }
 

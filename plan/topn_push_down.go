@@ -90,7 +90,7 @@ func (p *Union) pushDownTopN(topN *Sort) LogicalPlan {
 			newTopN.ByItems = append(newTopN.ByItems, &ByItems{newExpr, by.Desc})
 		}
 		if !topN.isEmpty() {
-			newTopN.ExecLimit = &Limit{Count: topN.ExecLimit.Count}
+			newTopN.ExecLimit = &Limit{Count: topN.ExecLimit.Count + topN.ExecLimit.Offset}
 		}
 		p.children[i] = child.(LogicalPlan).pushDownTopN(newTopN)
 		p.children[i].SetParents(p)
@@ -120,7 +120,7 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *Sort, idx int) LogicalPlan {
 	newTopN := Sort{}.init(topN.allocator, topN.ctx)
 	if canPush {
 		if !topN.isEmpty() {
-			newTopN.ExecLimit = &Limit{Count: topN.ExecLimit.Count}
+			newTopN.ExecLimit = &Limit{Count: topN.ExecLimit.Count + topN.ExecLimit.Offset}
 		}
 		newTopN.ByItems = make([]*ByItems, len(topN.ByItems))
 		copy(newTopN.ByItems, topN.ByItems)
