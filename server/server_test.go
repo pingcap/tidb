@@ -464,6 +464,7 @@ func checkErrorCode(c *C, e error, code uint16) {
 func runTestAuth(c *C) {
 	runTests(c, dsn, func(dbt *DBTest) {
 		dbt.mustExec(`CREATE USER 'test'@'%' IDENTIFIED BY '123';`)
+		dbt.mustExec(`FLUSH PRIVILEGES;`)
 	})
 	newDsn := "test:123@tcp(localhost:4001)/test?strict=true"
 	runTests(c, newDsn, func(dbt *DBTest) {
@@ -478,6 +479,7 @@ func runTestAuth(c *C) {
 	// Test login use IP that not exists in mysql.user.
 	runTests(c, dsn, func(dbt *DBTest) {
 		dbt.mustExec(`CREATE USER 'xxx'@'localhost' IDENTIFIED BY 'yyy';`)
+		dbt.mustExec(`FLUSH PRIVILEGES;`)
 	})
 	newDsn = "xxx:yyy@tcp(127.0.0.1:4001)/test?strict=true"
 	runTests(c, newDsn, func(dbt *DBTest) {
