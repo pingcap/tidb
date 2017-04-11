@@ -125,7 +125,10 @@ func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]
 	if lease > 0 {
 		time.Sleep(lease * 2)
 	} else {
-		dom.StatsHandle().Update(GetInfoSchema(e.ctx))
+		err = dom.StatsHandle().Update(GetInfoSchema(e.ctx))
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	return nil
 }
