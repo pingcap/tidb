@@ -115,9 +115,9 @@ func histogramFromStorage(ctx context.Context, tableID int64, colID int64, tp *t
 func (hg *Histogram) toString(isIndex bool) string {
 	strs := make([]string, 0, len(hg.Buckets)+1)
 	if isIndex {
-		strs = append(strs, fmt.Sprintf("column:%d ndv:%d", hg.ID, hg.NDV))
-	} else {
 		strs = append(strs, fmt.Sprintf("index:%d ndv:%d", hg.ID, hg.NDV))
+	} else {
+		strs = append(strs, fmt.Sprintf("column:%d ndv:%d", hg.ID, hg.NDV))
 	}
 	for _, bucket := range hg.Buckets {
 		strVal, _ := bucket.Value.ToString()
@@ -263,7 +263,7 @@ func (c *Column) String() string {
 	return c.Histogram.toString(false)
 }
 
-// Index represents an Index histogram.
+// Index represents an index histogram.
 type Index struct {
 	Histogram
 	NumColumns int

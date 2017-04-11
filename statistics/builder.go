@@ -47,20 +47,17 @@ type Builder struct {
 type buildStatsTask struct {
 	err   error
 	index bool
-	t     *Table
 	hg    *Histogram
 }
 
 func (b *Builder) buildMultiHistograms(t *Table, IDs []int64, baseOffset int, isSorted bool) {
 	for i, id := range IDs {
-		var err error
-		var hg *Histogram
 		if isSorted {
-			hg, err = b.build4SortedColumn(t, b.Ctx.GetSessionVars().StmtCtx, id, b.IdxRecords[i+baseOffset], b.NumBuckets, false)
-			b.doneCh <- &buildStatsTask{err: err, index: true, t: t, hg: hg}
+			hg, err := b.buildIndex(t, b.Ctx.GetSessionVars().StmtCtx, id, b.IdxRecords[i+baseOffset], b.NumBuckets, false)
+			b.doneCh <- &buildStatsTask{err: err, index: true, hg: hg}
 		} else {
-			hg, err = b.buildColumn(t, b.Ctx.GetSessionVars().StmtCtx, id, b.ColNDVs[i+baseOffset], b.ColumnSamples[i+baseOffset], b.NumBuckets)
-			b.doneCh <- &buildStatsTask{err: err, t: t, hg: hg}
+			hg, err := b.buildColumn(t, b.Ctx.GetSessionVars().StmtCtx, id, b.ColNDVs[i+baseOffset], b.ColumnSamples[i+baseOffset], b.NumBuckets)
+			b.doneCh <- &buildStatsTask{err: err, hg: hg}
 		}
 	}
 }
@@ -133,7 +130,7 @@ func (b *Builder) NewTable() (*Table, error) {
 		return nil, errors.Trace(err)
 	}
 	if b.PkID != 0 {
-		hg, err := b.build4SortedColumn(t, b.Ctx.GetSessionVars().StmtCtx, b.PkID, b.PkRecords, b.NumBuckets, true)
+		hg, err := b.buildIndex(t, b.Ctx.GetSessionVars().StmtCtx, b.PkID, b.PkRecords, b.NumBuckets, true)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -180,8 +177,8 @@ func indexNumColumnsByID(tblInfo *model.TableInfo, idxID int64) int {
 	return 0
 }
 
-// build4SortedColumn builds column statistics for sorted columns.
-func (b *Builder) build4SortedColumn(t *Table, sc *variable.StatementContext, id int64, records ast.RecordSet, bucketCount int64, isPK bool) (*Histogram, error) {
+// buildIndex builds histogram for index.
+func (b *Builder) buildIndex(t *Table, sc *variable.StatementContext, id int64, records ast.RecordSet, bucketCount int64, isPK bool) (*Histogram, error) {
 	hg := &Histogram{
 		ID:      id,
 		NDV:     0,
@@ -257,7 +254,7 @@ func (b *Builder) build4SortedColumn(t *Table, sc *variable.StatementContext, id
 	return hg, nil
 }
 
-// buildColumn builds column statistics from samples.
+// buildColumn builds histogram from samples for column.
 func (b *Builder) buildColumn(t *Table, sc *variable.StatementContext, id int64, ndv int64, samples []types.Datum, bucketCount int64) (*Histogram, error) {
 	err := types.SortDatums(sc, samples)
 	if err != nil {
@@ -314,7 +311,7 @@ func (b *Builder) buildColumn(t *Table, sc *variable.StatementContext, id int64,
 	return hg, nil
 }
 
-// index histogram is encoded, it need to be decoded to be used as column histogram.
+// Index histogram is encoded, it need to be decoded to be used as column histogram.
 // TODO: use field type to decode the value.
 func copyFromIndexColumns(ind *Index, id int64) (*Column, error) {
 	hg := Histogram{
