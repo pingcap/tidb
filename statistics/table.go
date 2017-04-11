@@ -43,7 +43,7 @@ const (
 type Table struct {
 	Info    *model.TableInfo
 	Columns map[int64]*Column
-	Indices map[int64]*Column
+	Indices map[int64]*Index
 	Count   int64 // Total row count in a table.
 	Pseudo  bool
 }
@@ -99,7 +99,7 @@ func (h *Handle) TableStatsFromStorage(ctx context.Context, info *model.TableInf
 		Info:    info,
 		Count:   count,
 		Columns: make(map[int64]*Column, len(info.Columns)),
-		Indices: make(map[int64]*Column, len(info.Indices)),
+		Indices: make(map[int64]*Index, len(info.Indices)),
 	}
 	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count from mysql.stats_histograms where table_id = %d", info.ID)
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, selSQL)
@@ -115,18 +115,19 @@ func (h *Handle) TableStatsFromStorage(ctx context.Context, info *model.TableInf
 		histID := row.Data[2].GetInt64()
 		if row.Data[1].GetInt64() > 0 {
 			// process index
-			var col *Column
+			var idx *Index
 			for _, idxInfo := range info.Indices {
 				if histID == idxInfo.ID {
-					col, err = colStatsFromStorage(ctx, info.ID, histID, nil, distinct, 1)
-					if err != nil {
-						return nil, errors.Trace(err)
+					hg, err1 := histogramFromStorage(ctx, info.ID, histID, nil, distinct, 1)
+					if err1 != nil {
+						return nil, errors.Trace(err1)
 					}
+					idx = &Index{Histogram: *hg}
 					break
 				}
 			}
-			if col != nil {
-				table.Indices[col.ID] = col
+			if idx != nil {
+				table.Indices[idx.ID] = idx
 				indexCount++
 			} else {
 				log.Warnf("We cannot find index id %d in table %s now. It may be deleted.", histID, info.Name)
@@ -136,10 +137,12 @@ func (h *Handle) TableStatsFromStorage(ctx context.Context, info *model.TableInf
 			var col *Column
 			for _, colInfo := range info.Columns {
 				if histID == colInfo.ID {
-					col, err = colStatsFromStorage(ctx, info.ID, histID, &colInfo.FieldType, distinct, 0)
+					var hg *Histogram
+					hg, err = histogramFromStorage(ctx, info.ID, histID, &colInfo.FieldType, distinct, 0)
 					if err != nil {
 						return nil, errors.Trace(err)
 					}
+					col = &Column{Histogram: *hg}
 					break
 				}
 			}
@@ -216,20 +219,24 @@ func PseudoTable(ti *model.TableInfo) *Table {
 	t := &Table{Info: ti, Pseudo: true}
 	t.Count = pseudoRowCount
 	t.Columns = make(map[int64]*Column, len(ti.Columns))
-	t.Indices = make(map[int64]*Column, len(ti.Indices))
+	t.Indices = make(map[int64]*Index, len(ti.Indices))
 	for _, v := range ti.Columns {
 		c := &Column{
-			ID:  v.ID,
-			NDV: pseudoRowCount / 2,
+			Histogram: Histogram{
+				ID:  v.ID,
+				NDV: pseudoRowCount / 2,
+			},
 		}
 		t.Columns[v.ID] = c
 	}
 	for _, v := range ti.Indices {
-		c := &Column{
-			ID:  v.ID,
-			NDV: pseudoRowCount / 2,
+		idx := &Index{
+			Histogram: Histogram{
+				ID:  v.ID,
+				NDV: pseudoRowCount / 2,
+			},
 		}
-		t.Indices[v.ID] = c
+		t.Indices[v.ID] = idx
 	}
 	return t
 }

@@ -39,7 +39,7 @@ func (is *PhysicalIndexScan) getRowCountByIndexRanges(sc *variable.StatementCont
 	return getRealRowCountByIndexRanges(sc, statsTbl, is.Ranges, is.Index, id)
 }
 
-func getRowCountByRange(sc *variable.StatementContext, statsTblCount int64, statsCol *statistics.Column, l, r types.Datum) (int64, error) {
+func getRowCountByRange(sc *variable.StatementContext, statsTblCount int64, statsCol *statistics.Histogram, l, r types.Datum) (int64, error) {
 	var rowCount int64
 	var err error
 	if l.Kind() == types.KindNull && r.Kind() == types.KindMaxValue {
@@ -76,25 +76,18 @@ func getRowCountByRange(sc *variable.StatementContext, statsTblCount int64, stat
 func getRealRowCountByIndexRanges(sc *variable.StatementContext, statsTbl *statistics.Table, indexRanges []*types.IndexRange, indexInfo *model.IndexInfo, id int64) (uint64, error) {
 	totalCount := int64(0)
 	for _, indexRange := range indexRanges {
-		lv := indexRange.LowVal
-		rv := indexRange.HighVal
-		for i := len(lv); i < len(indexInfo.Columns); i++ {
-			lv = append(lv, types.MinNotNullDatum())
-		}
-		for i := len(rv); i < len(indexInfo.Columns); i++ {
-			rv = append(rv, types.MaxValueDatum())
-		}
-		lb, err := codec.EncodeKey(nil, lv...)
+		indexRange.Align(len(indexInfo.Columns))
+		lb, err := codec.EncodeKey(nil, indexRange.LowVal...)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		rb, err := codec.EncodeKey(nil, rv...)
+		rb, err := codec.EncodeKey(nil, indexRange.HighVal...)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
 		l := types.NewBytesDatum(lb)
 		r := types.NewBytesDatum(rb)
-		rowCount, err := getRowCountByRange(sc, statsTbl.Count, statsTbl.Indices[id], l, r)
+		rowCount, err := getRowCountByRange(sc, statsTbl.Count, &statsTbl.Indices[id].Histogram, l, r)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -118,7 +111,7 @@ func getPseudoRowCountByIndexRanges(sc *variable.StatementContext, statsTbl *sta
 		r := indexRange.HighVal[i]
 		offset := indexInfo.Columns[i].Offset
 		id := table.Columns[offset].ID
-		rowCount, err := getRowCountByRange(sc, statsTbl.Count, statsTbl.Columns[id], l, r)
+		rowCount, err := getRowCountByRange(sc, statsTbl.Count, &statsTbl.Columns[id].Histogram, l, r)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
