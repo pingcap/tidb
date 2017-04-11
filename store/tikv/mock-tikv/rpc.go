@@ -441,6 +441,7 @@ func extractExecutors(sel *tipb.SelectRequest) []*tipb.Executor {
 	var desc bool
 	if len(sel.OrderBy) > 0 && sel.OrderBy[0].Expr == nil {
 		desc = sel.OrderBy[0].Desc
+		sel.OrderBy = nil
 	}
 	var exec *tipb.Executor
 	var executors []*tipb.Executor
