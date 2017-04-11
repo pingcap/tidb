@@ -167,6 +167,7 @@ type aggFunction struct {
 	Distinct     bool
 	resultMapper aggCtxMapper
 	streamCtx    *aggEvaluateContext
+	datumBuf     []types.Datum
 }
 
 // Equal implements AggregationFunction interface.
@@ -295,7 +296,7 @@ func (af *aggFunction) updateSum(row []types.Datum, groupKey []byte, ectx contex
 		return nil
 	}
 	if af.Distinct {
-		d, err1 := ctx.DistinctChecker.Check([]interface{}{value.GetValue()})
+		d, err1 := ctx.DistinctChecker.Check([]types.Datum{value})
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
@@ -322,7 +323,7 @@ func (af *aggFunction) streamUpdateSum(row []types.Datum, ectx context.Context) 
 		return nil
 	}
 	if af.Distinct {
-		d, err1 := ctx.DistinctChecker.Check([]interface{}{value.GetValue()})
+		d, err1 := ctx.DistinctChecker.Check([]types.Datum{value})
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
@@ -454,9 +455,8 @@ func (cf *countFunction) GetType() *types.FieldType {
 // Update implements AggregationFunction interface.
 func (cf *countFunction) Update(row []types.Datum, groupKey []byte, ectx context.Context) error {
 	ctx := cf.getContext(groupKey)
-	var vals []interface{}
 	if cf.Distinct {
-		vals = make([]interface{}, 0, len(cf.Args))
+		cf.datumBuf = cf.datumBuf[:0]
 	}
 	for _, a := range cf.Args {
 		value, err := a.Eval(row)
@@ -470,11 +470,11 @@ func (cf *countFunction) Update(row []types.Datum, groupKey []byte, ectx context
 			ctx.Count += value.GetInt64()
 		}
 		if cf.Distinct {
-			vals = append(vals, value.GetValue())
+			cf.datumBuf = append(cf.datumBuf, value)
 		}
 	}
 	if cf.Distinct {
-		d, err := ctx.DistinctChecker.Check(vals)
+		d, err := ctx.DistinctChecker.Check(cf.datumBuf)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -491,9 +491,8 @@ func (cf *countFunction) Update(row []types.Datum, groupKey []byte, ectx context
 // StreamUpdate implements AggregationFunction interface.
 func (cf *countFunction) StreamUpdate(row []types.Datum, ectx context.Context) error {
 	ctx := cf.getStreamedContext()
-	var vals []interface{}
 	if cf.Distinct {
-		vals = make([]interface{}, 0, len(cf.Args))
+		cf.datumBuf = cf.datumBuf[:0]
 	}
 	for _, a := range cf.Args {
 		value, err := a.Eval(row)
@@ -504,11 +503,11 @@ func (cf *countFunction) StreamUpdate(row []types.Datum, ectx context.Context) e
 			return nil
 		}
 		if cf.Distinct {
-			vals = append(vals, value.GetValue())
+			cf.datumBuf = append(cf.datumBuf, value)
 		}
 	}
 	if cf.Distinct {
-		d, err := ctx.DistinctChecker.Check(vals)
+		d, err := ctx.DistinctChecker.Check(cf.datumBuf)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -575,7 +574,7 @@ func (af *avgFunction) updateAvg(row []types.Datum, groupKey []byte, ectx contex
 		return nil
 	}
 	if af.Distinct {
-		d, err1 := ctx.DistinctChecker.Check([]interface{}{value.GetValue()})
+		d, err1 := ctx.DistinctChecker.Check([]types.Datum{value})
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
@@ -668,7 +667,7 @@ func (cf *concatFunction) GetType() *types.FieldType {
 // Update implements AggregationFunction interface.
 func (cf *concatFunction) Update(row []types.Datum, groupKey []byte, ectx context.Context) error {
 	ctx := cf.getContext(groupKey)
-	vals := make([]interface{}, 0, len(cf.Args))
+	cf.datumBuf = cf.datumBuf[:0]
 	for _, a := range cf.Args {
 		value, err := a.Eval(row)
 		if err != nil {
@@ -677,10 +676,10 @@ func (cf *concatFunction) Update(row []types.Datum, groupKey []byte, ectx contex
 		if value.GetValue() == nil {
 			return nil
 		}
-		vals = append(vals, value.GetValue())
+		cf.datumBuf = append(cf.datumBuf, value)
 	}
 	if cf.Distinct {
-		d, err := ctx.DistinctChecker.Check(vals)
+		d, err := ctx.DistinctChecker.Check(cf.datumBuf)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -694,8 +693,8 @@ func (cf *concatFunction) Update(row []types.Datum, groupKey []byte, ectx contex
 		// now use comma separator
 		ctx.Buffer.WriteString(",")
 	}
-	for _, val := range vals {
-		ctx.Buffer.WriteString(fmt.Sprintf("%v", val))
+	for _, val := range cf.datumBuf {
+		ctx.Buffer.WriteString(fmt.Sprintf("%v", val.GetValue()))
 	}
 	// TODO: if total length is greater than global var group_concat_max_len, truncate it.
 	return nil
@@ -704,7 +703,7 @@ func (cf *concatFunction) Update(row []types.Datum, groupKey []byte, ectx contex
 // StreamUpdate implements AggregationFunction interface.
 func (cf *concatFunction) StreamUpdate(row []types.Datum, ectx context.Context) error {
 	ctx := cf.getStreamedContext()
-	vals := make([]interface{}, 0, len(cf.Args))
+	cf.datumBuf = cf.datumBuf[:0]
 	for _, a := range cf.Args {
 		value, err := a.Eval(row)
 		if err != nil {
@@ -713,10 +712,10 @@ func (cf *concatFunction) StreamUpdate(row []types.Datum, ectx context.Context) 
 		if value.GetValue() == nil {
 			return nil
 		}
-		vals = append(vals, value)
+		cf.datumBuf = append(cf.datumBuf, value)
 	}
 	if cf.Distinct {
-		d, err := ctx.DistinctChecker.Check(vals)
+		d, err := ctx.DistinctChecker.Check(cf.datumBuf)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -730,8 +729,8 @@ func (cf *concatFunction) StreamUpdate(row []types.Datum, ectx context.Context) 
 		// now use comma separator
 		ctx.Buffer.WriteString(",")
 	}
-	for _, val := range vals {
-		ctx.Buffer.WriteString(fmt.Sprintf("%v", val))
+	for _, val := range cf.datumBuf {
+		ctx.Buffer.WriteString(fmt.Sprintf("%v", val.GetValue()))
 	}
 	// TODO: if total length is greater than global var group_concat_max_len, truncate it.
 	return nil
