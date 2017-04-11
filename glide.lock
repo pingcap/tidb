@@ -1,5 +1,5 @@
-hash: ab51f14e77a696bd94f19d1c7e37daa1f61ea84b83b354739fa0880d5a6112be
-updated: 2017-04-07T19:00:39.285793236+08:00
+hash: d46cfd25f0e809896e565ef6b74c6ec7dc7ba633287201aa78e5d199ce44ef08
+updated: 2017-04-11T12:28:16.849649643+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -9,11 +9,15 @@ imports:
   - quantile
 - name: github.com/boltdb/bolt
   version: d97499360d1ecebc492ea66c7447ea948f417620
+- name: github.com/cloudfoundry-incubator/candiedyaml
+  version: 5cef21e2e4f0fd147973b558d4db7395176bcd95
 - name: github.com/coreos/etcd
-  version: 6bef2bddcaced4fc6ed136e7434c4ee72c9e6782
+  version: 9ca7f22e84f58deb40ea0de78b350c0fe3eaf77b
   subpackages:
   - auth/authpb
   - clientv3
+  - etcdserver/api/v3rpc/rpctypes
+  - etcdserver/etcdserverpb
   - mvcc/mvccpb
   - pkg/monotime
   - pkg/tlsutil
@@ -42,7 +46,7 @@ imports:
   - runtime/internal
   - utilities
 - name: github.com/ghodss/yaml
-  version: 1a6f069841556a7bcaff4a397ca6e8328d266c2f
+  version: 73d445a93680fa1a78ae23a5839bad48f32ba1ee
 - name: github.com/go-sql-driver/mysql
   version: 3dd7008ac1529aca1bcd8a9db75228a71ba23cac
 - name: github.com/gogo/protobuf
@@ -50,7 +54,7 @@ imports:
   subpackages:
   - proto
 - name: github.com/golang/protobuf
-  version: 874264fbbb43f4d91e999fecb4b40143ed611400
+  version: 8ee79997227bf9b34611aee7946ae64735e6fd93
   subpackages:
   - jsonpb
   - proto
@@ -60,8 +64,10 @@ imports:
   version: 08b5f424b9271eedf6f9f0ce86cb9396ed337a42
 - name: github.com/gorilla/mux
   version: 599cba5e7b6137d46ddf58fb1765f5d928e69604
+- name: github.com/grpc-ecosystem/go-grpc-prometheus
+  version: 6b7015e65d366bf3f19b2b2a000a831940f0f7e0
 - name: github.com/grpc-ecosystem/grpc-gateway
-  version: c8ec92d0481dd77d9b8c1808eb6476d190aa039a
+  version: 84398b94e188ee336f307779b57b3aa91af7063c
   subpackages:
   - runtime
   - runtime/internal
@@ -149,16 +155,15 @@ imports:
 - name: github.com/twinj/uuid
   version: 70cac2bcd273ef6a371bb96cde363d28b68734c3
 - name: golang.org/x/net
-  version: e90d6d0afc4c315a0d87a568ae68577cc15149a0
+  version: 6acef71eb69611914f7a30939ea9f6e194c78172
   subpackages:
   - context
   - http2
   - http2/hpack
   - internal/timeseries
-  - lex/httplex
   - trace
 - name: golang.org/x/sys
-  version: 8d1157a435470616f975ff9bb013bea8d0962067
+  version: a646d33e2ee3172a661fc09bca23bb4889a41bc8
   subpackages:
   - unix
 - name: golang.org/x/text
