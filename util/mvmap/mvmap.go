@@ -195,8 +195,8 @@ type Iterator struct {
 	entryCur int
 }
 
-// Next return the next key/value pair of the MVMap.
-// It returns nil, nil when there is no more entry to iterate.
+// Next returns the next key/value pair of the MVMap.
+// It returns (nil, nil) when there is no more entries to iterate.
 func (i *Iterator) Next() (key, value []byte) {
 	for {
 		if i.sliceCur >= len(i.m.entryStore.slices) {
