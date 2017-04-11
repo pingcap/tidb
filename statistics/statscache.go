@@ -93,7 +93,7 @@ func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *Table {
 	return PseudoTable(tblInfo)
 }
 
-func (h *Handle) loadFromOldCache() statsCache {
+func (h *Handle) copyFromOldCache() statsCache {
 	newCache := statsCache{}
 	oldCache := h.statsCache.Load().(statsCache)
 	for k, v := range oldCache {
@@ -104,7 +104,7 @@ func (h *Handle) loadFromOldCache() statsCache {
 
 // UpdateTableStats updates the statistics table cache using copy on write.
 func (h *Handle) UpdateTableStats(tables []*Table) {
-	newCache := h.loadFromOldCache()
+	newCache := h.copyFromOldCache()
 	for _, tbl := range tables {
 		id := tbl.Info.ID
 		newCache[id] = tbl

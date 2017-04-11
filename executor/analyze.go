@@ -123,6 +123,7 @@ func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]
 	}
 	lease := dom.DDL().GetLease()
 	if lease > 0 {
+		// We sleep two lease to make sure other tidb node has updated this node.
 		time.Sleep(lease * 2)
 	} else {
 		err = dom.StatsHandle().Update(GetInfoSchema(e.ctx))
