@@ -48,7 +48,7 @@ func (t *copTaskProfile) count() uint64 {
 }
 
 func (t *copTaskProfile) addCost(cst float64) {
-	t.cst = cst
+	t.cst += cst
 }
 
 func (t *copTaskProfile) cost() float64 {
@@ -270,9 +270,9 @@ func (sel *Selection) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 	case *rootTaskProfile:
 		t.cst += float64(t.cnt) * cpuFactor
 		t.cnt = uint64(float64(t.cnt) * selectionFactor)
-		attachPlan2TaskProfile(sel.Copy(), t)
+		profile = attachPlan2TaskProfile(sel.Copy(), t)
 	}
-	return nil
+	return profile
 }
 
 // splitSelectionByIndexColumns splits the selection conditions by index schema. If some condition only contain the index
