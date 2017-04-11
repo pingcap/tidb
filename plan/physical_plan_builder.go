@@ -80,7 +80,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 			resultPlan = newSel
 		}
 	} else {
-		ts.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
+		ts.Ranges = []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}
 	}
 	statsTbl := p.statisticTable
 	rowCount := uint64(statsTbl.Count)
@@ -262,9 +262,9 @@ func (p *DataSource) tryToConvert2DummyScan(prop *requiredProperty) (*physicalPl
 				return nil, errors.Trace(err)
 			}
 			if !result {
-				dummy := PhysicalDummyScan{}.init(p.allocator, p.ctx)
-				dummy.SetSchema(p.schema)
-				info := &physicalPlanInfo{p: dummy}
+				dual := TableDual{}.init(p.allocator, p.ctx)
+				dual.SetSchema(p.schema)
+				info := &physicalPlanInfo{p: dual}
 				p.storePlanInfo(prop, info)
 				return info, nil
 			}
@@ -375,7 +375,7 @@ func (p *Limit) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 }
 
 // convert2PhysicalPlanSemi converts the semi join to *physicalPlanInfo.
-func (p *Join) convert2PhysicalPlanSemi(prop *requiredProperty) (*physicalPlanInfo, error) {
+func (p *LogicalJoin) convert2PhysicalPlanSemi(prop *requiredProperty) (*physicalPlanInfo, error) {
 	lChild := p.children[0].(LogicalPlan)
 	rChild := p.children[1].(LogicalPlan)
 	allLeft := true
@@ -423,7 +423,7 @@ func (p *Join) convert2PhysicalPlanSemi(prop *requiredProperty) (*physicalPlanIn
 }
 
 // convert2PhysicalPlanLeft converts the left join to *physicalPlanInfo.
-func (p *Join) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) (*physicalPlanInfo, error) {
+func (p *LogicalJoin) convert2PhysicalPlanLeft(prop *requiredProperty, innerJoin bool) (*physicalPlanInfo, error) {
 	lChild := p.children[0].(LogicalPlan)
 	rChild := p.children[1].(LogicalPlan)
 	allLeft := true
@@ -493,7 +493,7 @@ func replaceColsInPropBySchema(prop *requiredProperty, schema *expression.Schema
 }
 
 // convert2PhysicalPlanRight converts the right join to *physicalPlanInfo.
-func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool) (*physicalPlanInfo, error) {
+func (p *LogicalJoin) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool) (*physicalPlanInfo, error) {
 	lChild := p.children[0].(LogicalPlan)
 	rChild := p.children[1].(LogicalPlan)
 	allRight := true
@@ -548,7 +548,7 @@ func (p *Join) convert2PhysicalPlanRight(prop *requiredProperty, innerJoin bool)
 // buildSelectionWithConds will build a selection use the conditions of join and convert one side's column to correlated column.
 // If the inner side is one selection then one data source, the inner child should be the data source other than the selection.
 // This is called when build nested loop join.
-func (p *Join) buildSelectionWithConds(leftAsOuter bool) (*Selection, []*expression.CorrelatedColumn) {
+func (p *LogicalJoin) buildSelectionWithConds(leftAsOuter bool) (*Selection, []*expression.CorrelatedColumn) {
 	var (
 		outerSchema     *expression.Schema
 		innerChild      Plan
@@ -600,7 +600,7 @@ func (p *Join) buildSelectionWithConds(leftAsOuter bool) (*Selection, []*express
 	return selection, corCols
 }
 
-func (p *Join) convert2IndexNestedLoopJoinLeft(prop *requiredProperty, innerJoin bool) (*physicalPlanInfo, error) {
+func (p *LogicalJoin) convert2IndexNestedLoopJoinLeft(prop *requiredProperty, innerJoin bool) (*physicalPlanInfo, error) {
 	lChild := p.children[0].(LogicalPlan)
 	switch x := p.children[1].(type) {
 	case *DataSource:
@@ -671,7 +671,7 @@ func (p *Join) convert2IndexNestedLoopJoinLeft(prop *requiredProperty, innerJoin
 	return resultInfo, nil
 }
 
-func (p *Join) convert2IndexNestedLoopJoinRight(prop *requiredProperty, innerJoin bool) (*physicalPlanInfo, error) {
+func (p *LogicalJoin) convert2IndexNestedLoopJoinRight(prop *requiredProperty, innerJoin bool) (*physicalPlanInfo, error) {
 	rChild := p.children[1].(LogicalPlan)
 	switch x := p.children[0].(type) {
 	case *DataSource:
@@ -730,7 +730,6 @@ func (p *Join) convert2IndexNestedLoopJoinRight(prop *requiredProperty, innerJoi
 		PhysicalJoin: resultInfo.p,
 		OuterSchema:  corCols,
 	}.init(p.allocator, p.ctx)
-	ap.allocator = p.allocator
 	ap.SetChildren(resultInfo.p.Children()...)
 	ap.SetSchema(resultInfo.p.Schema())
 	resultInfo.p = ap
@@ -762,7 +761,7 @@ func compareTypeForOrder(lhs *types.FieldType, rhs *types.FieldType) bool {
 
 // Generate all possible combinations from join conditions for cost evaluation
 // It will try all keys in join conditions
-func constructPropertyByJoin(join *Join) ([][]*requiredProperty, []int, error) {
+func constructPropertyByJoin(join *LogicalJoin) ([][]*requiredProperty, []int, error) {
 	var result [][]*requiredProperty
 	var condIndex []int
 
@@ -793,7 +792,7 @@ func constructPropertyByJoin(join *Join) ([][]*requiredProperty, []int, error) {
 
 // convert2PhysicalMergeJoin converts the merge join to *physicalPlanInfo.
 // TODO: Refactor and merge with hash join
-func (p *Join) convert2PhysicalMergeJoin(parentProp *requiredProperty, lProp *requiredProperty, rProp *requiredProperty, condIndex int, joinType JoinType) (*physicalPlanInfo, error) {
+func (p *LogicalJoin) convert2PhysicalMergeJoin(parentProp *requiredProperty, lProp *requiredProperty, rProp *requiredProperty, condIndex int, joinType JoinType) (*physicalPlanInfo, error) {
 	lChild := p.children[0].(LogicalPlan)
 	rChild := p.children[1].(LogicalPlan)
 
@@ -870,7 +869,7 @@ func (p *Join) convert2PhysicalMergeJoin(parentProp *requiredProperty, lProp *re
 	return resultInfo, nil
 }
 
-func (p *Join) convert2PhysicalMergeJoinOnCost(prop *requiredProperty) (*physicalPlanInfo, error) {
+func (p *LogicalJoin) convert2PhysicalMergeJoinOnCost(prop *requiredProperty) (*physicalPlanInfo, error) {
 	var info *physicalPlanInfo
 	reqPropPairs, condIndex, err := constructPropertyByJoin(p)
 	if err != nil {
@@ -901,7 +900,7 @@ func (p *Join) convert2PhysicalMergeJoinOnCost(prop *requiredProperty) (*physica
 	return minInfo, nil
 }
 
-func (p *Join) hasEqualConds() bool {
+func (p *LogicalJoin) hasEqualConds() bool {
 	// rule out non-equal join
 	if len(p.EqualConditions) == 0 {
 		return false
@@ -911,7 +910,7 @@ func (p *Join) hasEqualConds() bool {
 }
 
 // convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
-func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
+func (p *LogicalJoin) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	info, err := p.getPlanInfo(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1026,7 +1025,7 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 }
 
 // convert2PhysicalPlanStream converts the logical aggregation to the stream aggregation *physicalPlanInfo.
-func (p *Aggregation) convert2PhysicalPlanStream(prop *requiredProperty) (*physicalPlanInfo, error) {
+func (p *LogicalAggregation) convert2PhysicalPlanStream(prop *requiredProperty) (*physicalPlanInfo, error) {
 	for _, aggFunc := range p.AggFuncs {
 		if aggFunc.GetMode() == expression.FinalMode {
 			return &physicalPlanInfo{cost: math.MaxFloat64}, nil
@@ -1076,7 +1075,7 @@ func (p *Aggregation) convert2PhysicalPlanStream(prop *requiredProperty) (*physi
 }
 
 // convert2PhysicalPlanFinalHash converts the logical aggregation to the final hash aggregation *physicalPlanInfo.
-func (p *Aggregation) convert2PhysicalPlanFinalHash(x physicalDistSQLPlan, childInfo *physicalPlanInfo) *physicalPlanInfo {
+func (p *LogicalAggregation) convert2PhysicalPlanFinalHash(x physicalDistSQLPlan, childInfo *physicalPlanInfo) *physicalPlanInfo {
 	agg := PhysicalAggregation{
 		AggType:      FinalAgg,
 		AggFuncs:     p.AggFuncs,
@@ -1097,7 +1096,7 @@ func (p *Aggregation) convert2PhysicalPlanFinalHash(x physicalDistSQLPlan, child
 }
 
 // convert2PhysicalPlanCompleteHash converts the logical aggregation to the complete hash aggregation *physicalPlanInfo.
-func (p *Aggregation) convert2PhysicalPlanCompleteHash(childInfo *physicalPlanInfo) *physicalPlanInfo {
+func (p *LogicalAggregation) convert2PhysicalPlanCompleteHash(childInfo *physicalPlanInfo) *physicalPlanInfo {
 	agg := PhysicalAggregation{
 		AggType:      CompleteAgg,
 		AggFuncs:     p.AggFuncs,
@@ -1112,7 +1111,7 @@ func (p *Aggregation) convert2PhysicalPlanCompleteHash(childInfo *physicalPlanIn
 }
 
 // convert2PhysicalPlanHash converts the logical aggregation to the physical hash aggregation.
-func (p *Aggregation) convert2PhysicalPlanHash() (*physicalPlanInfo, error) {
+func (p *LogicalAggregation) convert2PhysicalPlanHash() (*physicalPlanInfo, error) {
 	childInfo, err := p.children[0].(LogicalPlan).convert2PhysicalPlan(&requiredProperty{})
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1136,7 +1135,7 @@ func (p *Aggregation) convert2PhysicalPlanHash() (*physicalPlanInfo, error) {
 }
 
 // convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
-func (p *Aggregation) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
+func (p *LogicalAggregation) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	planInfo, err := p.getPlanInfo(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1497,7 +1496,7 @@ func (p *Sort) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 }
 
 // convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
-func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
+func (p *LogicalApply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
 	info, err := p.getPlanInfo(prop)
 	if err != nil {
 		return info, errors.Trace(err)
@@ -1506,9 +1505,9 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 		return info, nil
 	}
 	if p.JoinType == InnerJoin || p.JoinType == LeftOuterJoin {
-		info, err = p.Join.convert2PhysicalPlanLeft(&requiredProperty{}, p.JoinType == InnerJoin)
+		info, err = p.LogicalJoin.convert2PhysicalPlanLeft(&requiredProperty{}, p.JoinType == InnerJoin)
 	} else {
-		info, err = p.Join.convert2PhysicalPlanSemi(&requiredProperty{})
+		info, err = p.LogicalJoin.convert2PhysicalPlanSemi(&requiredProperty{})
 	}
 	if err != nil {
 		return info, errors.Trace(err)
@@ -1533,27 +1532,23 @@ func (p *Apply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo,
 
 func (p *Analyze) prepareSimpleTableScan(cols []*model.ColumnInfo) *PhysicalTableScan {
 	ts := PhysicalTableScan{
-		Table:               p.Table.TableInfo,
+		Table:               p.TableInfo,
 		Columns:             cols,
-		TableAsName:         &p.Table.Name,
-		DBName:              p.Table.DBInfo.Name,
 		physicalTableSource: physicalTableSource{client: p.ctx.GetClient()},
 	}.init(p.allocator, p.ctx)
 	ts.SetSchema(expression.NewSchema(expression.ColumnInfos2Columns(ts.Table.Name, cols)...))
 	ts.readOnly = true
-	ts.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
+	ts.Ranges = []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}
 	return ts
 }
 
-func (p *Analyze) prepareSimpleIndexScan(idxOffset int, cols []*model.ColumnInfo) *PhysicalIndexScan {
-	tblInfo := p.Table.TableInfo
+func (p *Analyze) prepareSimpleIndexScan(idxInfo *model.IndexInfo, cols []*model.ColumnInfo) *PhysicalIndexScan {
+	tblInfo := p.TableInfo
 	is := PhysicalIndexScan{
-		Index:               tblInfo.Indices[idxOffset],
+		Index:               idxInfo,
 		Table:               tblInfo,
 		Columns:             cols,
-		TableAsName:         &p.Table.Name,
 		OutOfOrder:          false,
-		DBName:              p.Table.DBInfo.Name,
 		physicalTableSource: physicalTableSource{client: p.ctx.GetClient()},
 		DoubleRead:          false,
 	}.init(p.allocator, p.ctx)
@@ -1574,11 +1569,10 @@ func (p *Analyze) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInf
 		return info, nil
 	}
 	var childInfos []*physicalPlanInfo
-	for _, idx := range p.IdxOffsets {
-		var columns []*model.ColumnInfo
-		tblInfo := p.Table.TableInfo
-		for _, idxCol := range tblInfo.Indices[idx].Columns {
-			for _, col := range tblInfo.Columns {
+	for _, idx := range p.IndicesInfo {
+		columns := make([]*model.ColumnInfo, 0, len(idx.Columns))
+		for _, idxCol := range idx.Columns {
+			for _, col := range p.TableInfo.Columns {
 				if col.Name.L == idxCol.Name.L {
 					columns = append(columns, col)
 					break
@@ -1589,17 +1583,12 @@ func (p *Analyze) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInf
 		childInfos = append(childInfos, is.matchProperty(prop, &physicalPlanInfo{count: 0}))
 	}
 	// TODO: It's inefficient to do table scan two times for massive data.
-	if p.PkOffset != -1 {
-		col := p.Table.TableInfo.Columns[p.PkOffset]
-		ts := p.prepareSimpleTableScan([]*model.ColumnInfo{col})
+	if p.PkInfo != nil {
+		ts := p.prepareSimpleTableScan([]*model.ColumnInfo{p.PkInfo})
 		childInfos = append(childInfos, ts.matchProperty(prop, &physicalPlanInfo{count: 0}))
 	}
-	if p.ColOffsets != nil {
-		cols := make([]*model.ColumnInfo, 0, len(p.ColOffsets))
-		for _, offset := range p.ColOffsets {
-			cols = append(cols, p.Table.TableInfo.Columns[offset])
-		}
-		ts := p.prepareSimpleTableScan(cols)
+	if len(p.ColsInfo) != 0 {
+		ts := p.prepareSimpleTableScan(p.ColsInfo)
 		childInfos = append(childInfos, ts.matchProperty(prop, &physicalPlanInfo{count: 0}))
 	}
 	for _, child := range p.Children() {

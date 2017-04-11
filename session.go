@@ -842,7 +842,11 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	err = dom.LoadTableStatsLoop(se)
+	se1, err := createSession(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	err = dom.LoadTableStatsLoop(se1)
 	return dom, errors.Trace(err)
 }
 
@@ -892,7 +896,7 @@ func createSession(store kv.Storage) (*session, error) {
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 5
+	currentBootstrapVersion = 6
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {

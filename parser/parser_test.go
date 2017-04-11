@@ -90,7 +90,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache", "action", "round",
 		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest", "least",
 		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events", "less", "than", "timediff",
-		"ln", "log", "log2", "log10", "timestampdiff", "pi", "quote", "none",
+		"ln", "log", "log2", "log10", "timestampdiff", "pi", "quote", "none", "super",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -602,6 +602,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		// for binary operator
 		{"SELECT binary 'a';", true},
 
+		// for bit_count
+		{`SELECT BIT_COUNT(1);`, true},
+
 		// select time
 		{"select current_timestamp", true},
 		{"select current_timestamp()", true},
@@ -770,9 +773,12 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT EXPORT_SET(5,'Y','N'), EXPORT_SET(5,'Y','N',','), EXPORT_SET(5,'Y','N',',',4)`, true},
 		{`SELECT FORMAT(12332.2,2,'de_DE'), FORMAT(12332.123456, 4)`, true},
 		{`SELECT FROM_BASE64('abc')`, true},
+		{`SELECT TO_BASE64('abc')`, true},
 		{`SELECT INSERT('Quadratic', 3, 4, 'What'), INSTR('foobarbar', 'bar')`, true},
 		{`SELECT LOAD_FILE('/tmp/picture')`, true},
 		{`SELECT LPAD('hi',4,'??')`, true},
+		{`SELECT LEFT("foobar", 3)`, true},
+		{`SELECT RIGHT("foobar", 3)`, true},
 
 		// repeat
 		{`SELECT REPEAT("a", 10);`, true},

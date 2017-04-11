@@ -15,13 +15,80 @@ package plan
 
 import "github.com/pingcap/tidb/context"
 
-func (p Aggregation) init(allocator *idAllocator, ctx context.Context) *Aggregation {
+const (
+	// TypeSel is the type of Selection.
+	TypeSel = "Selection"
+	// TypeSet is the type of Set.
+	TypeSet = "Set"
+	// TypeProj is the type of Projection.
+	TypeProj = "Projection"
+	// TypeAgg is the type of Aggregation.
+	TypeAgg = "Aggregation"
+	// TypeStreamAgg is the type of StreamAgg.
+	TypeStreamAgg = "StreamAgg"
+	// TypeHashAgg is the type of HashAgg.
+	TypeHashAgg = "HashAgg"
+	// TypeCache is the type of cache.
+	TypeCache = "Cache"
+	// TypeShow is the type of show.
+	TypeShow = "Show"
+	// TypeJoin is the type of Join.
+	TypeJoin = "Join"
+	// TypeUnion is the type of Union.
+	TypeUnion = "Union"
+	// TypeTableScan is the type of TableScan.
+	TypeTableScan = "TableScan"
+	// TypeMemTableScan is the type of TableScan.
+	TypeMemTableScan = "MemTableScan"
+	// TypeUnionScan is the type of UnionScan.
+	TypeUnionScan = "UnionScan"
+	// TypeIdxScan is the type of IndexScan.
+	TypeIdxScan = "IndexScan"
+	// TypeSort is the type of Sort.
+	TypeSort = "Sort"
+	// TypeLimit is the type of Limit.
+	TypeLimit = "Limit"
+	// TypeHashSemiJoin is the type of hash semi join.
+	TypeHashSemiJoin = "HashSemiJoin"
+	// TypeHashLeftJoin is the type of left hash join.
+	TypeHashLeftJoin = "HashLeftJoin"
+	// TypeHashRightJoin is the type of right hash join.
+	TypeHashRightJoin = "HashRightJoin"
+	// TypeMergeJoin is the type of merge join.
+	TypeMergeJoin = "MergeJoin"
+	// TypeApply is the type of Apply.
+	TypeApply = "Apply"
+	// TypeMaxOneRow is the type of MaxOneRow.
+	TypeMaxOneRow = "MaxOneRow"
+	// TypeExists is the type of Exists.
+	TypeExists = "Exists"
+	// TypeDual is the type of TableDual.
+	TypeDual = "TableDual"
+	// TypeLock is the type of SelectLock.
+	TypeLock = "SelectLock"
+	// TypeInsert is the type of Insert
+	TypeInsert = "Insert"
+	// TypeUpate is the type of Update.
+	TypeUpate = "Update"
+	// TypeDelete is the type of Delete.
+	TypeDelete = "Delete"
+	// TypeAnalyze is the type of Analyze.
+	TypeAnalyze = "Analyze"
+	// TypeIndexLookUp is the type of IndexLookUp.
+	TypeIndexLookUp = "IndexLookUp"
+	// TypeTableReader is the type of TableReader.
+	TypeTableReader = "TableReader"
+	// TypeIndexReader is the type of IndexReader.
+	TypeIndexReader = "IndexReader"
+)
+
+func (p LogicalAggregation) init(allocator *idAllocator, ctx context.Context) *LogicalAggregation {
 	p.basePlan = newBasePlan(TypeAgg, allocator, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
 	return &p
 }
 
-func (p Join) init(allocator *idAllocator, ctx context.Context) *Join {
+func (p LogicalJoin) init(allocator *idAllocator, ctx context.Context) *LogicalJoin {
 	p.basePlan = newBasePlan(TypeJoin, allocator, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
 	return &p
@@ -33,7 +100,7 @@ func (p DataSource) init(allocator *idAllocator, ctx context.Context) *DataSourc
 	return &p
 }
 
-func (p Apply) init(allocator *idAllocator, ctx context.Context) *Apply {
+func (p LogicalApply) init(allocator *idAllocator, ctx context.Context) *LogicalApply {
 	p.basePlan = newBasePlan(TypeApply, allocator, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
 	return &p
@@ -155,12 +222,6 @@ func (p PhysicalMemTable) init(allocator *idAllocator, ctx context.Context) *Phy
 	return &p
 }
 
-func (p PhysicalDummyScan) init(allocator *idAllocator, ctx context.Context) *PhysicalDummyScan {
-	p.basePlan = newBasePlan(TypeDummy, allocator, ctx, &p)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
-	return &p
-}
-
 func (p PhysicalHashJoin) init(allocator *idAllocator, ctx context.Context) *PhysicalHashJoin {
 	tp := TypeHashRightJoin
 	if p.SmallTable == 1 {
@@ -206,7 +267,25 @@ func (p Cache) init(allocator *idAllocator, ctx context.Context) *Cache {
 }
 
 func (p PhysicalUnionScan) init(allocator *idAllocator, ctx context.Context) *PhysicalUnionScan {
-	p.basePlan = newBasePlan(TypeCache, allocator, ctx, &p)
+	p.basePlan = newBasePlan(TypeUnionScan, allocator, ctx, &p)
+	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	return &p
+}
+
+func (p PhysicalIndexLookUpReader) init(allocator *idAllocator, ctx context.Context) *PhysicalIndexLookUpReader {
+	p.basePlan = newBasePlan(TypeIndexLookUp, allocator, ctx, &p)
+	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	return &p
+}
+
+func (p PhysicalTableReader) init(allocator *idAllocator, ctx context.Context) *PhysicalTableReader {
+	p.basePlan = newBasePlan(TypeTableReader, allocator, ctx, &p)
+	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	return &p
+}
+
+func (p PhysicalIndexReader) init(allocator *idAllocator, ctx context.Context) *PhysicalIndexReader {
+	p.basePlan = newBasePlan(TypeIndexReader, allocator, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }

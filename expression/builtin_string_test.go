@@ -1186,6 +1186,34 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 	c.Assert(r3, testutil.DatumEquals, types.NewDatum(formatCases3.ret))
 }
 
+func (s *testEvaluatorSuite) TestFromBase64(c *C) {
+	tests := []struct {
+		args   interface{}
+		expect interface{}
+	}{
+		{string(""), string("")},
+		{string("YWJj"), string("abc")},
+		{string("cXdlcnR5MTIzNDU2"), string("qwerty123456")},
+		{
+			string("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0NTY3ODkrLw=="),
+			string("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"),
+		},
+	}
+	fc := funcs[ast.FromBase64]
+	for _, test := range tests {
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(test.args)), s.ctx)
+		c.Assert(err, IsNil)
+		result, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		if test.expect == nil {
+			c.Assert(result.Kind(), Equals, types.KindNull)
+		} else {
+			expect, _ := test.expect.(string)
+			c.Assert(result.GetString(), Equals, expect)
+		}
+	}
+}
+
 func (s *testEvaluatorSuite) TestInsert(c *C) {
 	tests := []struct {
 		args   []interface{}

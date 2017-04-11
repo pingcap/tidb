@@ -25,68 +25,8 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-const (
-	// TypeSel is the type of Selection.
-	TypeSel = "Selection"
-	// TypeSet is the type of Set.
-	TypeSet = "Set"
-	// TypeProj is the type of Projection.
-	TypeProj = "Projection"
-	// TypeAgg is the type of Aggregation.
-	TypeAgg = "Aggregation"
-	// TypeStreamAgg is the type of StreamAgg.
-	TypeStreamAgg = "StreamAgg"
-	// TypeHashAgg is the type of HashAgg.
-	TypeHashAgg = "HashAgg"
-	// TypeCache is the type of cache.
-	TypeCache = "Cache"
-	// TypeShow is the type of show.
-	TypeShow = "Show"
-	// TypeJoin is the type of Join.
-	TypeJoin = "Join"
-	// TypeUnion is the type of Union.
-	TypeUnion = "Union"
-	// TypeTableScan is the type of TableScan.
-	TypeTableScan = "TableScan"
-	// TypeMemTableScan is the type of TableScan.
-	TypeMemTableScan = "MemTableScan"
-	// TypeDummy is the type of TableScan.
-	TypeDummy = "Dummy"
-	// TypeUnionScan is the type of UnionScan.
-	TypeUnionScan = "UnionScan"
-	// TypeIdxScan is the type of IndexScan.
-	TypeIdxScan = "IndexScan"
-	// TypeSort is the type of Sort.
-	TypeSort = "Sort"
-	// TypeLimit is the type of Limit.
-	TypeLimit = "Limit"
-	// TypeHashSemiJoin is the type of hash semi join.
-	TypeHashSemiJoin = "HashSemiJoin"
-	// TypeHashLeftJoin is the type of left hash join.
-	TypeHashLeftJoin = "HashLeftJoin"
-	// TypeHashRightJoin is the type of right hash join.
-	TypeHashRightJoin = "HashRightJoin"
-	// TypeMergeJoin is the type of merge join.
-	TypeMergeJoin = "MergeJoin"
-	// TypeApply is the type of Apply.
-	TypeApply = "Apply"
-	// TypeMaxOneRow is the type of MaxOneRow.
-	TypeMaxOneRow = "MaxOneRow"
-	// TypeExists is the type of Exists.
-	TypeExists = "Exists"
-	// TypeDual is the type of TableDual.
-	TypeDual = "TableDual"
-	// TypeLock is the type of SelectLock.
-	TypeLock = "SelectLock"
-	// TypeInsert is the type of Insert
-	TypeInsert = "Insert"
-	// TypeUpate is the type of Update.
-	TypeUpate = "Update"
-	// TypeDelete is the type of Delete.
-	TypeDelete = "Delete"
-	// TypeAnalyze is the type of Analyze.
-	TypeAnalyze = "Analyze"
-)
+// UseDAGPlanBuilder means we should use new planner and dag pb.
+var UseDAGPlanBuilder = false
 
 // Plan is the description of an execution flow.
 // It is created from ast.Node first, then optimized by the optimizer,
@@ -129,6 +69,27 @@ type columnProp struct {
 
 func (c *columnProp) equal(nc *columnProp, ctx context.Context) bool {
 	return c.col.Equal(nc.col, ctx) && c.desc == nc.desc
+}
+
+// requriedProp stands for the required order property by parents. It will be all asc or desc.
+type requiredProp struct {
+	cols []*expression.Column
+	desc bool
+}
+
+func (p *requiredProp) isEmpty() bool {
+	return len(p.cols) == 0
+}
+
+// getHashKey encodes prop to a unique key. The key will be stored in the memory table.
+func (p *requiredProp) getHashKey() ([]byte, error) {
+	datums := make([]types.Datum, 0, len(p.cols)*2+1)
+	datums = append(datums, types.NewDatum(p.desc))
+	for _, c := range p.cols {
+		datums = append(datums, types.NewDatum(c.FromID), types.NewDatum(c.Position))
+	}
+	bytes, err := codec.EncodeValue(nil, datums...)
+	return bytes, errors.Trace(err)
 }
 
 type requiredProperty struct {
@@ -189,8 +150,17 @@ type LogicalPlan interface {
 	// with the lowest cost.
 	convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error)
 
+	// convert2NewPhysicalPlan converts the logical plan to the physical plan. It's a new interface.
+	// It is called recursively from the parent to the children to create the result physical plan.
+	// Some logical plans will convert the children to the physical plans in different ways, and return the one
+	// with the lowest cost.
+	convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error)
+
 	// buildKeyInfo will collect the information of unique keys into schema.
 	buildKeyInfo()
+
+	// pushDownTopN will push down the topN or limit operator during logical optimization.
+	pushDownTopN(topN *Sort) LogicalPlan
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -211,15 +181,36 @@ type PhysicalPlan interface {
 
 	// Copy copies the current plan.
 	Copy() PhysicalPlan
+
+	// attach2TaskProfile makes the current physical plan as the father of task's physicalPlan and updates the cost of
+	// current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
+	attach2TaskProfile(...taskProfile) taskProfile
 }
 
 type baseLogicalPlan struct {
 	basePlan *basePlan
 	planMap  map[string]*physicalPlanInfo
+	taskMap  map[string]taskProfile
 }
 
 type basePhysicalPlan struct {
 	basePlan *basePlan
+}
+
+func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) {
+	panic(fmt.Sprintf("plan %s have not implemented convert2NewPhysicalPlan", p.basePlan.id))
+}
+
+func (p *basePhysicalPlan) attach2TaskProfile(tasks ...taskProfile) taskProfile {
+	return attachPlan2TaskProfile(p.basePlan.self.(PhysicalPlan).Copy(), tasks[0])
+}
+
+func (p *baseLogicalPlan) getTaskProfile(prop *requiredProp) (taskProfile, error) {
+	key, err := prop.getHashKey()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return p.taskMap[string(key)], nil
 }
 
 func (p *baseLogicalPlan) getPlanInfo(prop *requiredProperty) (*physicalPlanInfo, error) {
@@ -250,6 +241,15 @@ func (p *baseLogicalPlan) convert2PhysicalPlan(prop *requiredProperty) (*physica
 	return info, p.storePlanInfo(prop, info)
 }
 
+func (p *baseLogicalPlan) storeTaskProfile(prop *requiredProp, task taskProfile) error {
+	key, err := prop.getHashKey()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	p.taskMap[string(key)] = task
+	return nil
+}
+
 func (p *baseLogicalPlan) storePlanInfo(prop *requiredProperty, info *physicalPlanInfo) error {
 	key, err := prop.getHashKey()
 	if err != nil {
@@ -266,7 +266,7 @@ func (p *baseLogicalPlan) buildKeyInfo() {
 	}
 	if len(p.basePlan.children) == 1 {
 		switch p.basePlan.self.(type) {
-		case *Exists, *Aggregation, *Projection:
+		case *Exists, *LogicalAggregation, *Projection:
 			p.basePlan.schema.Keys = nil
 		case *SelectLock:
 			p.basePlan.schema.Keys = p.basePlan.children[0].Schema().Keys
@@ -291,6 +291,7 @@ func newBasePlan(tp string, allocator *idAllocator, ctx context.Context, p Plan)
 func newBaseLogicalPlan(basePlan *basePlan) baseLogicalPlan {
 	return baseLogicalPlan{
 		planMap:  make(map[string]*physicalPlanInfo),
+		taskMap:  make(map[string]taskProfile),
 		basePlan: basePlan,
 	}
 }

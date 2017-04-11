@@ -33,6 +33,7 @@ const (
 	flagDecorrelate
 	flagPredicatePushDown
 	flagAggregationOptimize
+	flagPushDownTopN
 )
 
 var optRuleList = []logicalOptRule{
@@ -41,6 +42,7 @@ var optRuleList = []logicalOptRule{
 	&decorrelateSolver{},
 	&ppdSolver{},
 	&aggregationOptimizer{},
+	&pushDownTopNOptimizer{},
 }
 
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
@@ -133,7 +135,7 @@ func physicalOptimize(flag uint64, logic LogicalPlan, allocator *idAllocator) (P
 }
 
 func existsCartesianProduct(p LogicalPlan) bool {
-	if join, ok := p.(*Join); ok && len(join.EqualConditions) == 0 {
+	if join, ok := p.(*LogicalJoin); ok && len(join.EqualConditions) == 0 {
 		return join.JoinType == InnerJoin || join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin
 	}
 	for _, child := range p.Children() {
