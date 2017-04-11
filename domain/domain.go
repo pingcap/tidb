@@ -22,7 +22,6 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/domain/notify"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
+	goctx "golang.org/x/net/context"
 )
 
 // Domain represents a storage space. Different domains can use the same database name.
@@ -49,16 +49,6 @@ type Domain struct {
 	etcdClient      *clientv3.Client
 
 	MockReloadFailed MockFailure // It mocks reload failed.
-}
-
-// SetEtcdClient sets the Domain's etcdClient field.
-func (do *Domain) SetEtcdClient(cli *clientv3.Client) {
-	do.etcdClient = cli
-}
-
-// EtcdClient returns the etcd client, maybe nil.
-func (do *Domain) EtcdClient() *clientv3.Client {
-	return do.etcdClient
 }
 
 // loadInfoSchema loads infoschema at startTS into handle, usedSchemaVersion is the currently used
@@ -358,6 +348,10 @@ func (m *MockFailure) getValue() bool {
 	return m.val
 }
 
+type etcdBackend interface {
+	EtcdAddrs() []string
+}
+
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
 func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 	d = &Domain{
@@ -365,6 +359,19 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 		SchemaValidator: newSchemaValidator(lease),
 		exit:            make(chan struct{}),
 		sysSessionPool:  &sync.Pool{},
+	}
+
+	if ebd, ok := store.(etcdBackend); ok {
+		if addrs := ebd.EtcdAddrs(); addrs != nil {
+			cli, err := clientv3.New(clientv3.Config{
+				Endpoints:   addrs,
+				DialTimeout: 5 * time.Second,
+			})
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			d.etcdClient = cli
+		}
 	}
 
 	d.infoHandle, err = infoschema.NewHandle(d.store)
@@ -400,44 +407,28 @@ func (do *Domain) LoadPrivilegeLoop(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	// if etcd is available, notification i
-	if cli := do.EtcdClient(); cli != nil {
-		go loadPrivilegeWatchEtcd(do, cli)
-	} else {
-		go loadPrivilegeUseTicker(do)
+	var watchCh clientv3.WatchChan
+	duration := 5 * time.Minute
+	if do.etcdClient != nil {
+		watchCh = do.etcdClient.Watch(goctx.Background(), privilegeKey)
+		duration = 10 * time.Minute
 	}
 
+	go func() {
+		for {
+			select {
+			case <-do.exit:
+				return
+			case <-watchCh:
+			case <-time.After(duration):
+			}
+			err := do.privHandle.Update()
+			if err != nil {
+				log.Error("load privilege fail:", errors.ErrorStack(err))
+			}
+		}
+	}()
 	return nil
-}
-
-func loadPrivilegeWatchEtcd(do *Domain, cli *clientv3.Client) {
-	rch := notify.WatchPrivilege(cli)
-	for {
-		select {
-		case <-rch:
-			err := do.privHandle.Update()
-			if err != nil {
-				log.Error("load privilege fail:", errors.ErrorStack(err))
-			}
-		case <-do.exit:
-			return
-		}
-	}
-}
-
-func loadPrivilegeUseTicker(do *Domain) {
-	ticker := time.NewTicker(5 * time.Minute)
-	for {
-		select {
-		case <-ticker.C:
-			err := do.privHandle.Update()
-			if err != nil {
-				log.Error("load privilege fail:", errors.ErrorStack(err))
-			}
-		case <-do.exit:
-			return
-		}
-	}
 }
 
 // PrivilegeHandle returns the MySQLPrivilege.
@@ -479,6 +470,20 @@ func (do *Domain) LoadTableStatsLoop(ctx context.Context) error {
 		}
 	}(do)
 	return nil
+}
+
+const privilegeKey = "/tidb/privilege"
+
+// NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches
+// the key will get notification.
+func (do *Domain) NotifyUpdatePrivilege(ctx context.Context) {
+	if do.etcdClient != nil {
+		kv := do.etcdClient.KV
+		_, err := kv.Put(context.CtxForCancel{ctx}, privilegeKey, "")
+		if err != nil {
+			log.Warn("notify update privilege failed:", err)
+		}
+	}
 }
 
 // Domain error codes.

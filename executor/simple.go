@@ -21,7 +21,6 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/domain/notify"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
@@ -173,19 +172,8 @@ func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	notifyUpdatePrivilege(e.ctx)
+	sessionctx.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return errors.Trace(err)
-}
-
-func notifyUpdatePrivilege(ctx context.Context) {
-	// Notify all TiDB to flush privileges.
-	dom := sessionctx.GetDomain(ctx)
-	if cli := dom.EtcdClient(); cli != nil {
-		err := notify.UpdatePrivilege(cli)
-		if err != nil {
-			log.Errorf("notify update privilege failed:", err)
-		}
-	}
 }
 
 func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
@@ -310,7 +298,7 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 	// update mysql.user
 	sql := fmt.Sprintf(`UPDATE %s.%s SET password="%s" WHERE User="%s" AND Host="%s";`, mysql.SystemDB, mysql.UserTable, util.EncodePassword(s.Password), userName, host)
 	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
-	notifyUpdatePrivilege(e.ctx)
+	sessionctx.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return errors.Trace(err)
 }
 

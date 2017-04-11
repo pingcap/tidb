@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -128,7 +129,7 @@ func (e *GrantExec) Next() (*Row, error) {
 		}
 	}
 	e.done = true
-	notifyUpdatePrivilege(e.ctx)
+	sessionctx.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return nil, nil
 }
 
