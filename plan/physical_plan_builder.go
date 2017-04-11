@@ -37,9 +37,6 @@ const (
 	joinFactor      = 0.3
 )
 
-// This const should be removed after the count of inner table of inlj is reliable.
-const maxRowCountForINLJ = 5000
-
 // JoinConcurrency means the number of goroutines that participate in joining.
 var JoinConcurrency = 5
 
@@ -630,9 +627,9 @@ func (p *Join) convert2IndexNestedLoopJoinLeft(prop *requiredProperty, innerJoin
 	if lInfo.p == nil {
 		return nil, nil
 	}
-	// If the outer table's row count is reliable and don't exceed the maxRowCountForINLJ or we use hint to force
-	// choosing index nested loop join. We will continue building. Otherwise we just break and return nil.
-	if !forced && (!lInfo.reliable || lInfo.count > maxRowCountForINLJ) {
+	// If the outer table's row count is reliable and don't exceed the MaxRowCountForINLJ or we use hint to force
+	// choosing index nested loop join, we will continue building. Otherwise we just break and return nil.
+	if !forced && (!lInfo.reliable || lInfo.count > uint64(p.ctx.GetSessionVars().MaxRowCountForINLJ)) {
 		return nil, nil
 	}
 	selection, corCols := p.buildSelectionWithConds(true)
@@ -701,9 +698,9 @@ func (p *Join) convert2IndexNestedLoopJoinRight(prop *requiredProperty, innerJoi
 	if rInfo.p == nil {
 		return nil, nil
 	}
-	// If the outer table's row count is reliable and don't exceed the maxRowCountForINLJ or we use hint to force
-	// choosing index nested loop join. We will continue building. Otherwise we just break and return nil.
-	if !forced && (!rInfo.reliable || rInfo.count > maxRowCountForINLJ) {
+	// If the outer table's row count is reliable and don't exceed the MaxRowCountForINLJ or we use hint to force
+	// choosing index nested loop join, we will continue building. Otherwise we just break and return nil.
+	if !forced && (!rInfo.reliable || rInfo.count > uint64(p.ctx.GetSessionVars().MaxRowCountForINLJ)) {
 		return nil, nil
 	}
 	selection, corCols := p.buildSelectionWithConds(false)

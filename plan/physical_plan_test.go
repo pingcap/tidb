@@ -1149,19 +1149,19 @@ func (s *testPlanSuite) TestAutoJoinChosen(c *C) {
 		ans string
 	}{
 		{
-			sql: "select * from (select * from t limit 0, 5000) t1 join t t2 on t1.a = t2.a",
+			sql: "select * from (select * from t limit 0, 128) t1 join t t2 on t1.a = t2.a",
 			ans: "Apply{Table(t)->Limit->Table(t)->Selection}",
 		},
 		{
-			sql: "select * from (select * from t limit 0, 5001) t1 join t t2 on t1.a = t2.a",
+			sql: "select * from (select * from t limit 0, 129) t1 join t t2 on t1.a = t2.a",
 			ans: "RightHashJoin{Table(t)->Limit->Table(t)}(t1.a,t2.a)",
 		},
 		{
-			sql: "select * from (select * from t limit 0, 200 union select * from t limit 10, 1000) t1 join t t2 on t1.a = t2.a",
+			sql: "select * from (select * from t limit 0, 10 union select * from t limit 10, 100) t1 join t t2 on t1.a = t2.a",
 			ans: "Apply{UnionAll{Table(t)->Limit->Projection->Table(t)->Limit->Projection}->HashAgg->Table(t)->Selection}",
 		},
 		{
-			sql: "select * from (select * from t limit 0, 4000 union all select * from t limit 0, 1001) t1 join t t2 on t1.a = t2.a",
+			sql: "select * from (select * from t limit 0, 29 union all select * from t limit 0, 100) t1 join t t2 on t1.a = t2.a",
 			ans: "RightHashJoin{UnionAll{Table(t)->Limit->Table(t)->Limit}->Table(t)}(t1.a,t2.a)",
 		},
 	}

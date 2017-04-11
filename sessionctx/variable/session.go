@@ -183,6 +183,9 @@ type SessionVars struct {
 
 	// Should we split insert data into multiple batches.
 	BatchInsert bool
+
+	// Max row count that the outer table of index nested loop join could be without force hint.
+	MaxRowCountForINLJ int
 }
 
 // NewSessionVars creates a session vars object.
@@ -203,6 +206,7 @@ func NewSessionVars() *SessionVars {
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
 		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
+		MaxRowCountForINLJ:         DefMaxRowCountForINLJ,
 	}
 }
 
