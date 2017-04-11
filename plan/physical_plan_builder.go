@@ -983,7 +983,7 @@ func (p *LogicalJoin) convert2PhysicalPlan(prop *requiredProperty) (*physicalPla
 			break
 		}
 		if p.preferINLJ > 0 && p.hasEqualConds() {
-			if (p.preferINLJ&preferLeftAsOuter) > 0 {
+			if (p.preferINLJ & preferLeftAsOuter) > 0 {
 				lNLJInfo, err := p.convert2IndexNestedLoopJoinLeft(prop, true)
 				if err != nil {
 					return nil, errors.Trace(err)
@@ -992,7 +992,7 @@ func (p *LogicalJoin) convert2PhysicalPlan(prop *requiredProperty) (*physicalPla
 					info = lNLJInfo
 				}
 			}
-			if (p.preferINLJ&preferRightAsOuter) > 0 {
+			if (p.preferINLJ & preferRightAsOuter) > 0 {
 				rNLJInfo, err := p.convert2IndexNestedLoopJoinRight(prop, true)
 				if err != nil {
 					return nil, errors.Trace(err)
