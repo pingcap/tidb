@@ -47,20 +47,17 @@ type Builder struct {
 type buildStatsTask struct {
 	err   error
 	index bool
-	t     *Table
-	col   *Column
+	hg    *Histogram
 }
 
-func (b *Builder) buildMultiColumns(t *Table, IDs []int64, baseOffset int, isSorted bool) {
+func (b *Builder) buildMultiHistograms(t *Table, IDs []int64, baseOffset int, isSorted bool) {
 	for i, id := range IDs {
-		var err error
-		var col *Column
 		if isSorted {
-			col, err = b.build4SortedColumn(t, b.Ctx.GetSessionVars().StmtCtx, id, b.IdxRecords[i+baseOffset], b.NumBuckets, false)
-			b.doneCh <- &buildStatsTask{err: err, index: true, t: t, col: col}
+			hg, err := b.buildIndex(t, b.Ctx.GetSessionVars().StmtCtx, id, b.IdxRecords[i+baseOffset], b.NumBuckets, false)
+			b.doneCh <- &buildStatsTask{err: err, index: true, hg: hg}
 		} else {
-			col, err = b.buildColumn(t, b.Ctx.GetSessionVars().StmtCtx, id, b.ColNDVs[i+baseOffset], b.ColumnSamples[i+baseOffset], b.NumBuckets)
-			b.doneCh <- &buildStatsTask{err: err, t: t, col: col}
+			hg, err := b.buildColumn(t, b.Ctx.GetSessionVars().StmtCtx, id, b.ColNDVs[i+baseOffset], b.ColumnSamples[i+baseOffset], b.NumBuckets)
+			b.doneCh <- &buildStatsTask{err: err, hg: hg}
 		}
 	}
 }
@@ -91,7 +88,7 @@ func (b *Builder) splitAndConcurrentBuild(t *Table, IDs []int64, isSorted bool) 
 		splitIDs = append(splitIDs, IDs[i:end])
 	}
 	for i, IDs := range splitIDs {
-		go b.buildMultiColumns(t, IDs, i*groupSize, isSorted)
+		go b.buildMultiHistograms(t, IDs, i*groupSize, isSorted)
 	}
 	for range IDs {
 		task := <-b.doneCh
@@ -99,9 +96,9 @@ func (b *Builder) splitAndConcurrentBuild(t *Table, IDs []int64, isSorted bool) 
 			return errors.Trace(task.err)
 		}
 		if task.index {
-			task.t.Indices[task.col.ID] = task.col
+			t.Indices[task.hg.ID] = &Index{Histogram: *task.hg, NumColumns: indexNumColumnsByID(b.TblInfo, task.hg.ID)}
 		} else {
-			task.t.Columns[task.col.ID] = task.col
+			t.Columns[task.hg.ID] = &Column{Histogram: *task.hg}
 		}
 	}
 	return nil
@@ -113,14 +110,17 @@ func (b *Builder) NewTable() (*Table, error) {
 		Info:    b.TblInfo,
 		Count:   b.Count,
 		Columns: make(map[int64]*Column, len(b.TblInfo.Columns)),
-		Indices: make(map[int64]*Column, len(b.TblInfo.Indices)),
+		Indices: make(map[int64]*Index, len(b.TblInfo.Indices)),
 	}
 	if b.Count == 0 {
 		for i := range t.Columns {
-			t.Columns[i] = &Column{ID: b.TblInfo.Columns[i].ID}
+			t.Columns[i] = &Column{Histogram{ID: b.TblInfo.Columns[i].ID}}
 		}
-		for i := range t.Indices {
-			t.Indices[i] = &Column{ID: b.TblInfo.Indices[i].ID}
+		for id := range t.Indices {
+			t.Indices[id] = &Index{
+				Histogram:  Histogram{ID: id},
+				NumColumns: len(t.Info.Indices[id].Columns),
+			}
 		}
 		return t, nil
 	}
@@ -130,45 +130,56 @@ func (b *Builder) NewTable() (*Table, error) {
 		return nil, errors.Trace(err)
 	}
 	if b.PkID != 0 {
-		col, err := b.build4SortedColumn(t, b.Ctx.GetSessionVars().StmtCtx, b.PkID, b.PkRecords, b.NumBuckets, true)
+		hg, err := b.buildIndex(t, b.Ctx.GetSessionVars().StmtCtx, b.PkID, b.PkRecords, b.NumBuckets, true)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		t.Columns[col.ID] = col
+		t.Columns[hg.ID] = &Column{Histogram: *hg}
 	}
 	err = b.splitAndConcurrentBuild(t, b.IdxIDs, true)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	for _, idx := range b.TblInfo.Indices {
-		if len(idx.Columns) == 1 {
-			for _, col := range b.TblInfo.Columns {
-				if col.Name.L == idx.Columns[0].Name.L && t.Columns[col.ID] == nil {
-					t.Columns[col.ID], err = copyFromIndexColumns(t.Indices[idx.ID], col.ID)
-					if err != nil {
-						return nil, errors.Trace(err)
-					}
-					break
-				}
+	// The sorted bucket is more accurate, we replace the sampled column histogram with index histogram if the
+	// index is single column index.
+	for _, idxInfo := range b.TblInfo.Indices {
+		if idxInfo != nil && len(idxInfo.Columns) == 1 {
+			columnOffset := idxInfo.Columns[0].Offset
+			columnID := b.TblInfo.Columns[columnOffset].ID
+			t.Columns[columnID], err = copyFromIndexColumns(t.Indices[idxInfo.ID], columnID)
+			if err != nil {
+				return nil, errors.Trace(err)
 			}
 		}
 	}
 	// There may be cases that we have no columnSamples, and only after we build the index columns that we can know it is 0,
 	// so we should also checked it here.
 	if t.Count == 0 {
-		for i := range t.Columns {
-			t.Columns[i] = &Column{ID: i}
+		for id := range t.Columns {
+			t.Columns[id] = &Column{Histogram{ID: id}}
 		}
-		for i := range t.Indices {
-			t.Indices[i] = &Column{ID: i}
+		for id := range t.Indices {
+			t.Indices[id] = &Index{
+				Histogram:  Histogram{ID: id},
+				NumColumns: indexNumColumnsByID(b.TblInfo, id),
+			}
 		}
 	}
 	return t, nil
 }
 
-// build4SortedColumn builds column statistics for sorted columns.
-func (b *Builder) build4SortedColumn(t *Table, sc *variable.StatementContext, id int64, records ast.RecordSet, bucketCount int64, isPK bool) (*Column, error) {
-	col := &Column{
+func indexNumColumnsByID(tblInfo *model.TableInfo, idxID int64) int {
+	for _, idx := range tblInfo.Indices {
+		if idx.ID == idxID {
+			return len(idx.Columns)
+		}
+	}
+	return 0
+}
+
+// buildIndex builds histogram for index.
+func (b *Builder) buildIndex(t *Table, sc *variable.StatementContext, id int64, records ast.RecordSet, bucketCount int64, isPK bool) (*Histogram, error) {
+	hg := &Histogram{
 		ID:      id,
 		NDV:     0,
 		Buckets: make([]bucket, 1, bucketCount),
@@ -193,7 +204,7 @@ func (b *Builder) build4SortedColumn(t *Table, sc *variable.StatementContext, id
 			}
 			data = types.NewBytesDatum(bytes)
 		}
-		cmp, err := col.Buckets[bucketIdx].Value.CompareDatum(sc, data)
+		cmp, err := hg.Buckets[bucketIdx].Value.CompareDatum(sc, data)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -202,54 +213,54 @@ func (b *Builder) build4SortedColumn(t *Table, sc *variable.StatementContext, id
 			// The new item has the same value as current bucket value, to ensure that
 			// a same value only stored in a single bucket, we do not increase bucketIdx even if it exceeds
 			// valuesPerBucket.
-			col.Buckets[bucketIdx].Count++
-			col.Buckets[bucketIdx].Repeats++
-		} else if col.Buckets[bucketIdx].Count+1-lastNumber <= valuesPerBucket {
+			hg.Buckets[bucketIdx].Count++
+			hg.Buckets[bucketIdx].Repeats++
+		} else if hg.Buckets[bucketIdx].Count+1-lastNumber <= valuesPerBucket {
 			// The bucket still have room to store a new item, update the bucket.
-			col.Buckets[bucketIdx].Count++
-			col.Buckets[bucketIdx].Value = data
-			col.Buckets[bucketIdx].Repeats = 1
-			col.NDV++
+			hg.Buckets[bucketIdx].Count++
+			hg.Buckets[bucketIdx].Value = data
+			hg.Buckets[bucketIdx].Repeats = 1
+			hg.NDV++
 		} else {
 			// All buckets are full, we should merge buckets.
 			if bucketIdx+1 == bucketCount {
-				col.mergeBuckets(bucketIdx)
+				hg.mergeBuckets(bucketIdx)
 				valuesPerBucket *= 2
 				bucketIdx = bucketIdx / 2
 				if bucketIdx == 0 {
 					lastNumber = 0
 				} else {
-					lastNumber = col.Buckets[bucketIdx-1].Count
+					lastNumber = hg.Buckets[bucketIdx-1].Count
 				}
 			}
 			// We may merge buckets, so we should check it again.
-			if col.Buckets[bucketIdx].Count+1-lastNumber <= valuesPerBucket {
-				col.Buckets[bucketIdx].Count++
-				col.Buckets[bucketIdx].Value = data
-				col.Buckets[bucketIdx].Repeats = 1
+			if hg.Buckets[bucketIdx].Count+1-lastNumber <= valuesPerBucket {
+				hg.Buckets[bucketIdx].Count++
+				hg.Buckets[bucketIdx].Value = data
+				hg.Buckets[bucketIdx].Repeats = 1
 			} else {
-				lastNumber = col.Buckets[bucketIdx].Count
+				lastNumber = hg.Buckets[bucketIdx].Count
 				bucketIdx++
-				col.Buckets = append(col.Buckets, bucket{
+				hg.Buckets = append(hg.Buckets, bucket{
 					Count:   lastNumber + 1,
 					Value:   data,
 					Repeats: 1,
 				})
 			}
-			col.NDV++
+			hg.NDV++
 		}
 	}
 	atomic.StoreInt64(&t.Count, count)
-	return col, nil
+	return hg, nil
 }
 
-// buildColumn builds column statistics from samples.
-func (b *Builder) buildColumn(t *Table, sc *variable.StatementContext, id int64, ndv int64, samples []types.Datum, bucketCount int64) (*Column, error) {
+// buildColumn builds histogram from samples for column.
+func (b *Builder) buildColumn(t *Table, sc *variable.StatementContext, id int64, ndv int64, samples []types.Datum, bucketCount int64) (*Histogram, error) {
 	err := types.SortDatums(sc, samples)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	col := &Column{
+	hg := &Histogram{
 		ID:      id,
 		NDV:     ndv,
 		Buckets: make([]bucket, 1, bucketCount),
@@ -265,7 +276,7 @@ func (b *Builder) buildColumn(t *Table, sc *variable.StatementContext, id int64,
 	bucketIdx := 0
 	var lastCount int64
 	for i := int64(0); i < int64(len(samples)); i++ {
-		cmp, err := col.Buckets[bucketIdx].Value.CompareDatum(sc, samples[i])
+		cmp, err := hg.Buckets[bucketIdx].Value.CompareDatum(sc, samples[i])
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -274,34 +285,36 @@ func (b *Builder) buildColumn(t *Table, sc *variable.StatementContext, id int64,
 			// The new item has the same value as current bucket value, to ensure that
 			// a same value only stored in a single bucket, we do not increase bucketIdx even if it exceeds
 			// valuesPerBucket.
-			col.Buckets[bucketIdx].Count = totalCount
-			if col.Buckets[bucketIdx].Repeats == ndvFactor {
-				col.Buckets[bucketIdx].Repeats = 2 * sampleFactor
+			hg.Buckets[bucketIdx].Count = totalCount
+			if hg.Buckets[bucketIdx].Repeats == ndvFactor {
+				hg.Buckets[bucketIdx].Repeats = 2 * sampleFactor
 			} else {
-				col.Buckets[bucketIdx].Repeats += sampleFactor
+				hg.Buckets[bucketIdx].Repeats += sampleFactor
 			}
 		} else if totalCount-lastCount <= valuesPerBucket {
 			// TODO: Making sampleFactor as float may be better.
 			// The bucket still have room to store a new item, update the bucket.
-			col.Buckets[bucketIdx].Count = totalCount
-			col.Buckets[bucketIdx].Value = samples[i]
-			col.Buckets[bucketIdx].Repeats = ndvFactor
+			hg.Buckets[bucketIdx].Count = totalCount
+			hg.Buckets[bucketIdx].Value = samples[i]
+			hg.Buckets[bucketIdx].Repeats = ndvFactor
 		} else {
-			lastCount = col.Buckets[bucketIdx].Count
+			lastCount = hg.Buckets[bucketIdx].Count
 			// The bucket is full, store the item in the next bucket.
 			bucketIdx++
-			col.Buckets = append(col.Buckets, bucket{
+			hg.Buckets = append(hg.Buckets, bucket{
 				Count:   totalCount,
 				Value:   samples[i],
 				Repeats: ndvFactor,
 			})
 		}
 	}
-	return col, nil
+	return hg, nil
 }
 
-func copyFromIndexColumns(ind *Column, id int64) (*Column, error) {
-	col := &Column{
+// Index histogram is encoded, it need to be decoded to be used as column histogram.
+// TODO: use field type to decode the value.
+func copyFromIndexColumns(ind *Index, id int64) (*Column, error) {
+	hg := Histogram{
 		ID:      id,
 		NDV:     ind.NDV,
 		Buckets: make([]bucket, 0, len(ind.Buckets)),
@@ -315,11 +328,11 @@ func copyFromIndexColumns(ind *Column, id int64) (*Column, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		col.Buckets = append(col.Buckets, bucket{
+		hg.Buckets = append(hg.Buckets, bucket{
 			Count:   b.Count,
 			Value:   data[0],
 			Repeats: b.Repeats,
 		})
 	}
-	return col, nil
+	return &Column{Histogram: hg}, nil
 }
