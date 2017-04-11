@@ -263,20 +263,25 @@ func (e *selectionExec) SetSrcExec(exec executor) {
 }
 
 // evalBool evaluates expression to a boolean value.
-func evalBool(expr expression.Expression, row []types.Datum, ctx *variable.StatementContext) (bool, error) {
-	data, err := expr.Eval(row)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	if data.IsNull() {
-		return false, nil
-	}
+func evalBool(exprs []expression.Expression, row []types.Datum, ctx *variable.StatementContext) (bool, error) {
+	for _, expr := range exprs {
+		data, err := expr.Eval(row)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if data.IsNull() {
+			return false, nil
+		}
 
-	i, err := data.ToBool(ctx)
-	if err != nil {
-		return false, errors.Trace(err)
+		isBool, err := data.ToBool(ctx)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if isBool == 0 {
+			return false, nil
+		}
 	}
-	return i != 0, nil
+	return true, nil
 }
 
 func (e *selectionExec) Next() (handle int64, value [][]byte, err error) {
@@ -293,18 +298,11 @@ func (e *selectionExec) Next() (handle int64, value [][]byte, err error) {
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
-		allMatch := true
-		for _, cond := range e.conditions {
-			match, err := evalBool(cond, e.row, e.sc)
-			if err != nil {
-				return 0, nil, errors.Trace(err)
-			}
-			if !match {
-				allMatch = false
-				break
-			}
+		match, err := evalBool(e.conditions, e.row, e.evalCtx.sc)
+		if err != nil {
+			return 0, nil, errors.Trace(err)
 		}
-		if allMatch {
+		if match {
 			return handle, value, nil
 		}
 	}
