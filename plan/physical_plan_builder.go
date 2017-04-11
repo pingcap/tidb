@@ -37,7 +37,8 @@ const (
 	joinFactor      = 0.3
 )
 
-const outerRowCountOfINLJ = 5000
+// This const should be removed after the count of inner table of inlj is reliable.
+const maxRowCountForINLJ = 5000
 
 // JoinConcurrency means the number of goroutines that participate in joining.
 var JoinConcurrency = 5
@@ -102,7 +103,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 	if ts.TableConditionPBExpr != nil {
 		rowCount = uint64(float64(rowCount) * selectionFactor)
 	}
-	return resultPlan.matchProperty(prop, &physicalPlanInfo{count: rowCount, countReliable: !statsTbl.Pseudo}), nil
+	return resultPlan.matchProperty(prop, &physicalPlanInfo{count: rowCount, reliable: !statsTbl.Pseudo}), nil
 }
 
 func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.IndexInfo) (*physicalPlanInfo, error) {
@@ -164,7 +165,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		is.Ranges = rb.buildIndexRanges(fullRange, types.NewFieldType(mysql.TypeNull))
 	}
 	is.DoubleRead = !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
-	return resultPlan.matchProperty(prop, &physicalPlanInfo{count: rowCount, countReliable: !statsTbl.Pseudo}), nil
+	return resultPlan.matchProperty(prop, &physicalPlanInfo{count: rowCount, reliable: !statsTbl.Pseudo}), nil
 }
 
 func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexColumn, pkIsHandle bool) bool {
@@ -279,10 +280,10 @@ func (p *DataSource) tryToConvert2DummyScan(prop *requiredProperty) (*physicalPl
 func addPlanToResponse(parent PhysicalPlan, info *physicalPlanInfo) *physicalPlanInfo {
 	np := parent.Copy()
 	np.SetChildren(info.p)
-	ret := &physicalPlanInfo{p: np, cost: info.cost, count: info.count, countReliable: info.countReliable}
+	ret := &physicalPlanInfo{p: np, cost: info.cost, count: info.count, reliable: info.reliable}
 	if _, ok := parent.(*MaxOneRow); ok {
 		ret.count = 1
-		ret.countReliable = true
+		ret.reliable = true
 	}
 	return ret
 }
@@ -308,14 +309,14 @@ func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPl
 		count := info.count
 		if prop.limit != nil {
 			count = prop.limit.Offset + prop.limit.Count
-			info.countReliable = true
+			info.reliable = true
 		}
 		info.cost += sortCost(count)
 	} else if prop.limit != nil {
 		limit := Limit{Offset: prop.limit.Offset, Count: prop.limit.Count}.init(info.p.Allocator(), info.p.context())
 		limit.SetSchema(info.p.Schema())
 		info = addPlanToResponse(limit, info)
-		info.countReliable = true
+		info.reliable = true
 	}
 	if prop.limit != nil && prop.limit.Count < info.count {
 		info.count = prop.limit.Count
@@ -598,6 +599,7 @@ func (p *Join) buildSelectionWithConds(leftAsOuter bool) (*Selection, []*express
 	return selection, corCols
 }
 
+// `forced` is used when we use hint to force choosing the index nested loop join. At this time, the outer table's row count need not to be reliable.
 func (p *Join) convert2IndexNestedLoopJoinLeft(prop *requiredProperty, innerJoin bool, forced bool) (*physicalPlanInfo, error) {
 	lChild := p.children[0].(LogicalPlan)
 	if _, ok := p.children[1].(*DataSource); !ok {
@@ -628,7 +630,9 @@ func (p *Join) convert2IndexNestedLoopJoinLeft(prop *requiredProperty, innerJoin
 	if lInfo.p == nil {
 		return nil, nil
 	}
-	if !forced && (!lInfo.countReliable || lInfo.count > outerRowCountOfINLJ) {
+	// If the outer table's row count is reliable and don't exceed the maxRowCountForINLJ or we use hint to force
+	// choosing index nested loop join. We will continue building. Otherwise we just break and return nil.
+	if !forced && (!lInfo.reliable || lInfo.count > maxRowCountForINLJ) {
 		return nil, nil
 	}
 	selection, corCols := p.buildSelectionWithConds(true)
@@ -666,6 +670,7 @@ func (p *Join) convert2IndexNestedLoopJoinLeft(prop *requiredProperty, innerJoin
 	return resultInfo, nil
 }
 
+// `forced` is used when we use hint to force choosing the index nested loop join. At this time, the outer table's row count need not to be reliable.
 func (p *Join) convert2IndexNestedLoopJoinRight(prop *requiredProperty, innerJoin bool, forced bool) (*physicalPlanInfo, error) {
 	rChild := p.children[1].(LogicalPlan)
 	if _, ok := p.children[0].(*DataSource); !ok {
@@ -696,7 +701,9 @@ func (p *Join) convert2IndexNestedLoopJoinRight(prop *requiredProperty, innerJoi
 	if rInfo.p == nil {
 		return nil, nil
 	}
-	if !forced && (!rInfo.countReliable || rInfo.count > outerRowCountOfINLJ) {
+	// If the outer table's row count is reliable and don't exceed the maxRowCountForINLJ or we use hint to force
+	// choosing index nested loop join. We will continue building. Otherwise we just break and return nil.
+	if !forced && (!rInfo.reliable || rInfo.count > maxRowCountForINLJ) {
 		return nil, nil
 	}
 	selection, corCols := p.buildSelectionWithConds(false)
@@ -1299,9 +1306,9 @@ func (p *Selection) appendSelToInfo(info *physicalPlanInfo) *physicalPlanInfo {
 	np := p.Copy().(*Selection)
 	np.SetChildren(info.p)
 	return &physicalPlanInfo{
-		p:             np,
-		cost:          info.cost,
-		countReliable: info.countReliable,
+		p:        np,
+		cost:     info.cost,
+		reliable: info.reliable,
 	}
 }
 
