@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
@@ -197,28 +196,19 @@ func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
 	var notExistTables []string
 	for _, tn := range s.Tables {
 		fullti := ast.Ident{Schema: tn.Schema, Name: tn.Name}
-		schema, ok := e.is.SchemaByName(tn.Schema)
+		_, ok := e.is.SchemaByName(tn.Schema)
 		if !ok {
 			// TODO: we should return special error for table not exist, checking "not exist" is not enough,
 			// because some other errors may contain this error string too.
 			notExistTables = append(notExistTables, fullti.String())
 			continue
 		}
-		tb, err := e.is.TableByName(tn.Schema, tn.Name)
+		_, err := e.is.TableByName(tn.Schema, tn.Name)
 		if err != nil && infoschema.ErrTableNotExists.Equal(err) {
 			notExistTables = append(notExistTables, fullti.String())
 			continue
 		} else if err != nil {
 			return errors.Trace(err)
-		}
-		// Check Privilege
-		privChecker := privilege.GetPrivilegeManager(e.ctx)
-		hasPriv, err := privChecker.Check(e.ctx, schema, tb.Meta(), mysql.DropPriv)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if !hasPriv {
-			return errors.Errorf("You do not have the privilege to drop table %s.%s.", tn.Schema, tn.Name)
 		}
 
 		err = sessionctx.GetDomain(e.ctx).DDL().DropTable(e.ctx, fullti)

@@ -1965,7 +1965,25 @@ type builtinTimeToSecSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time-to-sec
 func (b *builtinTimeToSecSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("TIME_TO_SEC")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	d, err = convertToDuration(b.ctx.GetSessionVars().StmtCtx, args[0], 0)
+	if err != nil || d.IsNull() {
+		return d, errors.Trace(err)
+	}
+
+	t := d.GetMysqlDuration()
+	// TODO: select TIME_TO_SEC('-2:-2:-2') not handle well.
+	if t.Compare(types.ZeroDuration) < 0 {
+		d.SetInt64(int64(-1 * (t.Hour()*3600 + t.Minute()*60 + t.Second())))
+	} else {
+		d.SetInt64(int64(t.Hour()*3600 + t.Minute()*60 + t.Second()))
+	}
+
+	return d, nil
 }
 
 type timestampAddFunctionClass struct {
@@ -2051,7 +2069,24 @@ type builtinToDaysSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_to-days
 func (b *builtinToDaysSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("to_days")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if args[0].IsNull() {
+		return d, nil
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	date, err := convertDatumToTime(sc, args[0])
+	if err != nil {
+		return d, errorOrWarning(err, b.ctx)
+	}
+	ret := types.TimestampDiff("DAY", types.ZeroDate, date)
+	if ret == 0 {
+		return d, errorOrWarning(types.ErrInvalidTimeFormat, b.ctx)
+	}
+	d.SetInt64(ret)
+	return d, nil
 }
 
 type toSecondsFunctionClass struct {
