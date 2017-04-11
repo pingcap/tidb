@@ -63,6 +63,7 @@ const (
 	SetVar     = "setvar"
 	GetVar     = "getvar"
 	Values     = "values"
+	BitCount   = "bit_count"
 
 	// common functions
 	Coalesce = "coalesce"
@@ -191,12 +192,14 @@ const (
 	Repeat         = "repeat"
 	Replace        = "replace"
 	Reverse        = "reverse"
+	Right          = "right"
 	RTrim          = "rtrim"
 	Space          = "space"
 	Strcmp         = "strcmp"
 	Substring      = "substring"
 	Substr         = "substr"
 	SubstringIndex = "substring_index"
+	ToBase64       = "to_base64"
 	Trim           = "trim"
 	Upper          = "upper"
 	Ucase          = "ucase"
