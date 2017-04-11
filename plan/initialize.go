@@ -74,6 +74,12 @@ const (
 	TypeDelete = "Delete"
 	// TypeAnalyze is the type of Analyze.
 	TypeAnalyze = "Analyze"
+	// TypeIndexLookUp is the type of IndexLookUp.
+	TypeIndexLookUp = "IndexLookUp"
+	// TypeTableReader is the type of TableReader.
+	TypeTableReader = "TableReader"
+	// TypeIndexReader is the type of IndexReader.
+	TypeIndexReader = "IndexReader"
 )
 
 func (p LogicalAggregation) init(allocator *idAllocator, ctx context.Context) *LogicalAggregation {
@@ -262,6 +268,24 @@ func (p Cache) init(allocator *idAllocator, ctx context.Context) *Cache {
 
 func (p PhysicalUnionScan) init(allocator *idAllocator, ctx context.Context) *PhysicalUnionScan {
 	p.basePlan = newBasePlan(TypeUnionScan, allocator, ctx, &p)
+	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	return &p
+}
+
+func (p PhysicalIndexLookUpReader) init(allocator *idAllocator, ctx context.Context) *PhysicalIndexLookUpReader {
+	p.basePlan = newBasePlan(TypeIndexLookUp, allocator, ctx, &p)
+	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	return &p
+}
+
+func (p PhysicalTableReader) init(allocator *idAllocator, ctx context.Context) *PhysicalTableReader {
+	p.basePlan = newBasePlan(TypeTableReader, allocator, ctx, &p)
+	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	return &p
+}
+
+func (p PhysicalIndexReader) init(allocator *idAllocator, ctx context.Context) *PhysicalIndexReader {
+	p.basePlan = newBasePlan(TypeIndexReader, allocator, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
 }

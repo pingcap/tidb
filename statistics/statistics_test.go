@@ -136,6 +136,7 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	}
 	indices := []*model.IndexInfo{
 		{
+			ID: 1,
 			Columns: []*model.IndexColumn{
 				{
 					Name:   model.NewCIStr("b"),
@@ -157,18 +158,18 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 		Count:         s.count,
 		NumBuckets:    bucketCount,
 		ColumnSamples: [][]types.Datum{s.samples},
-		ColOffsets:    []int{0},
+		ColIDs:        []int64{2},
 		ColNDVs:       []int64{ndv},
 		IdxRecords:    []ast.RecordSet{s.rc},
-		IdxOffsets:    []int{0},
+		IdxIDs:        []int64{1},
 		PkRecords:     ast.RecordSet(s.pk),
-		PkOffset:      2,
+		PkID:          4,
 	}
 	sc := builder.Ctx.GetSessionVars().StmtCtx
 	t, err := builder.NewTable()
 	c.Check(err, IsNil)
 
-	col := t.Columns[0]
+	col := t.Columns[2]
 	c.Check(len(col.Buckets), Equals, 232)
 	count, err := col.EqualRowCount(sc, types.NewIntDatum(1000))
 	c.Check(err, IsNil)
@@ -192,7 +193,7 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	c.Check(err, IsNil)
 	c.Check(count, Equals, int64(5079))
 
-	col = t.Columns[1]
+	col = t.Columns[3]
 	count, err = col.EqualRowCount(sc, types.NewIntDatum(10000))
 	c.Check(err, IsNil)
 	c.Check(count, Equals, int64(1))
@@ -203,7 +204,7 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	c.Check(err, IsNil)
 	c.Check(count, Equals, int64(4618))
 
-	col = t.Columns[2]
+	col = t.Columns[4]
 	count, err = col.EqualRowCount(sc, types.NewIntDatum(10000))
 	c.Check(err, IsNil)
 	c.Check(count, Equals, int64(1))
@@ -228,7 +229,7 @@ func (s *testStatisticsSuite) TestPseudoTable(c *C) {
 	ti.Columns = append(ti.Columns, colInfo)
 	tbl := PseudoTable(ti)
 	c.Assert(tbl.Count, Greater, int64(0))
-	col := tbl.Columns[0]
+	col := tbl.Columns[1]
 	c.Assert(col.ID, Greater, int64(0))
 	c.Assert(col.NDV, Greater, int64(0))
 	sc := new(variable.StatementContext)
