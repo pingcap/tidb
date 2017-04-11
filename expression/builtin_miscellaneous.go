@@ -33,7 +33,7 @@ var (
 	_ functionClass = &inetAtonFunctionClass{}
 	_ functionClass = &inetNtoaFunctionClass{}
 	_ functionClass = &inet6AtonFunctionClass{}
-	_ functionClass = &inet6NtonFunctionClass{}
+	_ functionClass = &inet6NtoaFunctionClass{}
 	_ functionClass = &isFreeLockFunctionClass{}
 	_ functionClass = &isIPv4FunctionClass{}
 	_ functionClass = &isIPv4CompatFunctionClass{}
@@ -56,7 +56,7 @@ var (
 	_ builtinFunc = &builtinInetAtonSig{}
 	_ builtinFunc = &builtinInetNtoaSig{}
 	_ builtinFunc = &builtinInet6AtonSig{}
-	_ builtinFunc = &builtinInet6NtonSig{}
+	_ builtinFunc = &builtinInet6NtoaSig{}
 	_ builtinFunc = &builtinIsFreeLockSig{}
 	_ builtinFunc = &builtinIsIPv4Sig{}
 	_ builtinFunc = &builtinIsIPv4CompatSig{}
@@ -329,21 +329,21 @@ func (b *builtinInet6AtonSig) eval(row []types.Datum) (d types.Datum, err error)
 	return d, errFunctionNotExists.GenByArgs("INET6_ATON")
 }
 
-type inet6NtonFunctionClass struct {
+type inet6NtoaFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *inet6NtonFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinInet6NtonSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+func (c *inet6NtoaFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinInet6NtoaSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
 }
 
-type builtinInet6NtonSig struct {
+type builtinInet6NtoaSig struct {
 	baseBuiltinFunc
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet6-ntoa
-func (b *builtinInet6NtonSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("INET6_NTON")
+func (b *builtinInet6NtoaSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("INET6_NTOA")
 }
 
 type isFreeLockFunctionClass struct {

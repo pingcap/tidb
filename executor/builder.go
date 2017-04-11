@@ -736,18 +736,20 @@ func (b *executorBuilder) buildCache(v *plan.Cache) Executor {
 }
 
 func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
-	var tblInfo *model.TableInfo
-	if v.Table != nil {
-		tblInfo = v.Table.TableInfo
-	}
 	e := &AnalyzeExec{
-		schema:     v.Schema(),
-		tblInfo:    tblInfo,
-		ctx:        b.ctx,
-		idxOffsets: v.IdxOffsets,
-		colOffsets: v.ColOffsets,
-		pkOffset:   v.PkOffset,
-		Srcs:       make([]Executor, len(v.Children())),
+		schema:  v.Schema(),
+		tblInfo: v.TableInfo,
+		ctx:     b.ctx,
+		Srcs:    make([]Executor, len(v.Children())),
+	}
+	for _, idx := range v.IndicesInfo {
+		e.idxIDs = append(e.idxIDs, idx.ID)
+	}
+	for _, col := range v.ColsInfo {
+		e.colIDs = append(e.colIDs, col.ID)
+	}
+	if v.PkInfo != nil {
+		e.pkID = v.PkInfo.ID
 	}
 	for i, child := range v.Children() {
 		childExec := b.build(child)

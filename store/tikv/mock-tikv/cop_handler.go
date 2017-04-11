@@ -39,7 +39,7 @@ type selectContext struct {
 	whereColumns map[int64]*tipb.ColumnInfo
 	aggColumns   map[int64]*tipb.ColumnInfo
 	topnColumns  map[int64]*tipb.ColumnInfo
-	groups       map[string]bool
+	groups       map[string]struct{}
 	groupKeys    [][]byte
 	aggregates   []*aggregateFuncExpr
 	aggregate    bool
@@ -113,7 +113,7 @@ func (h *rpcHandler) handleCopRequest(req *coprocessor.Request) (*coprocessor.Re
 				ctx.aggregates = append(ctx.aggregates, aggExpr)
 				collectColumnsInExpr(agg, ctx, ctx.aggColumns)
 			}
-			ctx.groups = make(map[string]bool)
+			ctx.groups = make(map[string]struct{})
 			ctx.groupKeys = make([][]byte, 0)
 			for _, item := range ctx.sel.GetGroupBy() {
 				collectColumnsInExpr(item.Expr, ctx, ctx.aggColumns)
@@ -190,7 +190,7 @@ func (h *rpcHandler) getRowsFromAgg(ctx *selectContext) ([]tipb.Chunk, error) {
 		rowData = append(rowData, types.NewBytesDatum(gk))
 		for _, agg := range ctx.aggregates {
 			agg.currentGroup = gk
-			ds, err := agg.toDatums(ctx)
+			ds, err := agg.toDatums(ctx.eval)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -466,7 +466,7 @@ func (h *rpcHandler) valuesToRow(ctx *selectContext, handle int64, values map[in
 	data := dummySlice
 	if ctx.aggregate {
 		// Update aggregate functions.
-		err = h.aggregate(ctx, handle, values)
+		err = aggregate(ctx, handle, values)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

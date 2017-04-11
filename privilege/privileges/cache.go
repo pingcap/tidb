@@ -30,12 +30,20 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-const (
-	userTablePrivilegeMask = mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.DeletePriv | mysql.CreatePriv | mysql.DropPriv | mysql.GrantPriv | mysql.IndexPriv | mysql.AlterPriv | mysql.ShowDBPriv | mysql.ExecutePriv | mysql.CreateUserPriv
-	dbTablePrivilegeMask   = mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.DeletePriv | mysql.CreatePriv | mysql.DropPriv | mysql.GrantPriv | mysql.IndexPriv | mysql.AlterPriv
-	tablePrivMask          = mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.DeletePriv | mysql.CreatePriv | mysql.DropPriv | mysql.GrantPriv | mysql.IndexPriv | mysql.AlterPriv
-	columnPrivMask         = mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv
+var (
+	userTablePrivilegeMask = computePrivMask(mysql.AllGlobalPrivs)
+	dbTablePrivilegeMask   = computePrivMask(mysql.AllDBPrivs)
+	tablePrivMask          = computePrivMask(mysql.AllTablePrivs)
+	columnPrivMask         = computePrivMask(mysql.AllColumnPrivs)
 )
+
+func computePrivMask(privs []mysql.PrivilegeType) mysql.PrivilegeType {
+	var mask mysql.PrivilegeType
+	for _, p := range privs {
+		mask |= p
+	}
+	return mask
+}
 
 type userRecord struct {
 	Host       string // max length 60, primary key
@@ -454,6 +462,71 @@ func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
 	}
 
 	return false
+}
+
+func (p *MySQLPrivilege) showGrants(user, host string) []string {
+	var gs []string
+	// Show global grants
+	for _, record := range p.User {
+		if record.User == user && record.Host == host {
+			g := userPrivToString(record.Privileges)
+			s := fmt.Sprintf(`GRANT %s ON *.* TO '%s'@'%s'`, g, record.User, record.Host)
+			gs = append(gs, s)
+			break // it's unique
+		}
+	}
+
+	// Show db scope grants
+	for _, record := range p.DB {
+		if record.User == user && record.Host == host {
+			g := dbPrivToString(record.Privileges)
+			s := fmt.Sprintf(`GRANT %s ON %s.* TO '%s'@'%s'`, g, record.DB, record.User, record.Host)
+			gs = append(gs, s)
+		}
+	}
+
+	// Show table scope grants
+	for _, record := range p.TablesPriv {
+		if record.User == user && record.Host == host {
+			g := tablePrivToString(record.TablePriv)
+			s := fmt.Sprintf(`GRANT %s ON %s.%s TO '%s'@'%s'`, g, record.DB, record.TableName, record.User, record.Host)
+			gs = append(gs, s)
+		}
+	}
+	return gs
+}
+
+func userPrivToString(privs mysql.PrivilegeType) string {
+	if privs == userTablePrivilegeMask {
+		return mysql.AllPrivilegeLiteral
+	}
+	return privToString(privs, mysql.AllGlobalPrivs, mysql.Priv2Str)
+}
+
+func dbPrivToString(privs mysql.PrivilegeType) string {
+	if privs == dbTablePrivilegeMask {
+		return mysql.AllPrivilegeLiteral
+	}
+	return privToString(privs, mysql.AllDBPrivs, mysql.Priv2SetStr)
+}
+
+func tablePrivToString(privs mysql.PrivilegeType) string {
+	if privs == tablePrivMask {
+		return mysql.AllPrivilegeLiteral
+	}
+	return privToString(privs, mysql.AllTablePrivs, mysql.Priv2Str)
+}
+
+func privToString(priv mysql.PrivilegeType, allPrivs []mysql.PrivilegeType, allPrivNames map[mysql.PrivilegeType]string) string {
+	pstrs := make([]string, 0, 20)
+	for _, p := range allPrivs {
+		if priv&p == 0 {
+			continue
+		}
+		s, _ := allPrivNames[p]
+		pstrs = append(pstrs, s)
+	}
+	return strings.Join(pstrs, ",")
 }
 
 // UserPrivilegesTable provide data for INFORMATION_SCHEMA.USERS_PRIVILEGE table.

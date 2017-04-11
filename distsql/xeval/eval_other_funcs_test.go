@@ -48,7 +48,7 @@ func (s *testEvalSuite) TestEvalCoalesce(c *C) {
 		result, err := xevaluator.Eval(ca.expr)
 		c.Assert(err, IsNil)
 		c.Assert(result.Kind(), Equals, ca.result.Kind())
-		cmp, err := result.CompareDatum(xevaluator.sc, ca.result)
+		cmp, err := result.CompareDatum(xevaluator.StatementCtx, ca.result)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}

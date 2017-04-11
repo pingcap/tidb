@@ -602,6 +602,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		// for binary operator
 		{"SELECT binary 'a';", true},
 
+		// for bit_count
+		{`SELECT BIT_COUNT(1);`, true},
+
 		// select time
 		{"select current_timestamp", true},
 		{"select current_timestamp()", true},
@@ -770,9 +773,12 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT EXPORT_SET(5,'Y','N'), EXPORT_SET(5,'Y','N',','), EXPORT_SET(5,'Y','N',',',4)`, true},
 		{`SELECT FORMAT(12332.2,2,'de_DE'), FORMAT(12332.123456, 4)`, true},
 		{`SELECT FROM_BASE64('abc')`, true},
+		{`SELECT TO_BASE64('abc')`, true},
 		{`SELECT INSERT('Quadratic', 3, 4, 'What'), INSTR('foobarbar', 'bar')`, true},
 		{`SELECT LOAD_FILE('/tmp/picture')`, true},
 		{`SELECT LPAD('hi',4,'??')`, true},
+		{`SELECT LEFT("foobar", 3)`, true},
+		{`SELECT RIGHT("foobar", 3)`, true},
 
 		// repeat
 		{`SELECT REPEAT("a", 10);`, true},

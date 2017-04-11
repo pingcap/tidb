@@ -15,7 +15,6 @@ package privilege
 
 import (
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -28,14 +27,12 @@ func (k keyType) String() string {
 
 // Manager is the interface for providing privilege related operations.
 type Manager interface {
-	// Check checks privilege.
-	// If tbl is nil, only check global/db scope privileges.
-	// If tbl is not nil, check global/db/table scope privileges.
-	Check(ctx context.Context, db *model.DBInfo, tbl *model.TableInfo, privilege mysql.PrivilegeType) (bool, error)
 	// Show granted privileges for user.
 	ShowGrants(ctx context.Context, user string) ([]string, error)
 
 	// RequestVerification verifies user privilege for the request.
+	// If table is "", only check global/db scope privileges.
+	// If table is not "", check global/db/table scope privileges.
 	RequestVerification(db, table, column string, priv mysql.PrivilegeType) bool
 	// ConnectionVerification verifies user privilege for connection.
 	ConnectionVerification(host, user string, auth, salt []byte) bool

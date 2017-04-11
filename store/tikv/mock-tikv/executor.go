@@ -15,12 +15,12 @@ package mocktikv
 
 import (
 	"bytes"
+	"sort"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/distsql/xeval"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
@@ -50,11 +50,11 @@ func (e *tableScanExec) SetSrcExec(exec executor) {
 	e.src = exec
 }
 
-func (e *tableScanExec) Next() (int64, [][]byte, error) {
+func (e *tableScanExec) Next() (handle int64, value [][]byte, err error) {
 	for e.cursor < len(e.kvRanges) {
 		ran := e.kvRanges[e.cursor]
 		if ran.IsPoint() {
-			handle, value, err := e.getRowFromPoint(ran)
+			handle, value, err = e.getRowFromPoint(ran)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
@@ -63,7 +63,7 @@ func (e *tableScanExec) Next() (int64, [][]byte, error) {
 			return handle, value, nil
 		}
 
-		handle, value, err := e.getRowFromRange(ran)
+		handle, value, err = e.getRowFromRange(ran)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
@@ -167,10 +167,10 @@ func (e *indexScanExec) SetSrcExec(exec executor) {
 	e.src = exec
 }
 
-func (e *indexScanExec) Next() (int64, [][]byte, error) {
+func (e *indexScanExec) Next() (handle int64, value [][]byte, err error) {
 	for e.cursor < len(e.kvRanges) {
 		ran := e.kvRanges[e.cursor]
-		handle, value, err := e.getRowFromRange(ran)
+		handle, value, err = e.getRowFromRange(ran)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
@@ -248,7 +248,6 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 
 type selectionExec struct {
 	*tipb.Selection
-	sc     *variable.StatementContext
 	eval   *xeval.Evaluator
 	colIDs map[int64]int
 
@@ -259,17 +258,17 @@ func (e *selectionExec) SetSrcExec(exec executor) {
 	e.src = exec
 }
 
-func (e *selectionExec) Next() (int64, [][]byte, error) {
+func (e *selectionExec) Next() (handle int64, value [][]byte, err error) {
 	for {
-		handle, row, err := e.src.Next()
+		handle, value, err = e.src.Next()
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
-		if row == nil {
+		if value == nil {
 			return 0, nil, nil
 		}
 
-		err = e.eval.SetRowValue(handle, row, e.colIDs)
+		err = e.eval.SetRowValue(handle, value, e.colIDs)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
@@ -281,14 +280,228 @@ func (e *selectionExec) Next() (int64, [][]byte, error) {
 		if result.IsNull() {
 			continue
 		}
-		boolResult, err := result.ToBool(e.sc)
+		boolResult, err := result.ToBool(e.eval.StatementCtx)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
 		if boolResult == 1 {
-			return handle, row, nil
+			return handle, value, nil
 		}
 	}
+}
+
+type aggregateExec struct {
+	*tipb.Aggregation
+	eval         *xeval.Evaluator
+	aggFuncs     []*aggregateFuncExpr
+	groups       map[string]struct{}
+	groupKeys    [][]byte
+	executed     bool
+	currGroupIdx int
+	colIDs       map[int64]int
+
+	src executor
+}
+
+func (e *aggregateExec) SetSrcExec(exec executor) {
+	e.src = exec
+}
+
+func (e *aggregateExec) innerNext() (bool, error) {
+	handle, values, err := e.src.Next()
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if values == nil {
+		return false, nil
+	}
+	err = e.aggregate(handle, values)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return true, nil
+}
+
+func (e *aggregateExec) Next() (handle int64, value [][]byte, err error) {
+	if !e.executed {
+		for {
+			hasMore, err := e.innerNext()
+			if err != nil {
+				return 0, nil, errors.Trace(err)
+			}
+			if !hasMore {
+				break
+			}
+		}
+		e.executed = true
+	}
+
+	if e.currGroupIdx >= len(e.groups) {
+		return 0, nil, nil
+	}
+	gk := e.groupKeys[e.currGroupIdx]
+	gkData, err := codec.EncodeValue(nil, types.NewBytesDatum(gk))
+	if err != nil {
+		return 0, nil, errors.Trace(err)
+	}
+	value = make([][]byte, 0, 1+2*len(e.aggFuncs))
+	// The first column is group key.
+	value = append(value, gkData)
+	for _, agg := range e.aggFuncs {
+		agg.currentGroup = gk
+		ds, err := agg.toDatums(e.eval)
+		if err != nil {
+			return 0, nil, errors.Trace(err)
+		}
+		data, err := codec.EncodeValue(nil, ds...)
+		if err != nil {
+			return 0, nil, errors.Trace(err)
+		}
+		value = append(value, data)
+	}
+	e.currGroupIdx++
+
+	return 0, value, nil
+}
+
+// aggregate updates aggregate functions with row.
+func (e *aggregateExec) aggregate(handle int64, row [][]byte) error {
+	// Put row data into evaluate for later evaluation.
+	err := e.eval.SetRowValue(handle, row, e.colIDs)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// Get group key.
+	gk, err := getGroupKey(e.eval, e.GetGroupBy())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if _, ok := e.groups[string(gk)]; !ok {
+		e.groups[string(gk)] = struct{}{}
+		e.groupKeys = append(e.groupKeys, gk)
+	}
+	// Update aggregate funcs.
+	for _, agg := range e.aggFuncs {
+		agg.currentGroup = gk
+		args := make([]types.Datum, 0, len(agg.expr.Children))
+		// Evaluate arguments.
+		for _, x := range agg.expr.Children {
+			cv, err := e.eval.Eval(x)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			args = append(args, cv)
+		}
+		agg.update(e.eval, args)
+	}
+	return nil
+}
+
+type topNExec struct {
+	*tipb.TopN
+	eval     *xeval.Evaluator
+	heap     *topnHeap
+	colIDs   map[int64]int
+	cursor   int
+	executed bool
+
+	src executor
+}
+
+func (e *topNExec) SetSrcExec(src executor) {
+	e.src = src
+}
+
+func (e *topNExec) innerNext() (bool, error) {
+	handle, value, err := e.src.Next()
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if value == nil {
+		return false, nil
+	}
+	err = e.evalTopN(handle, value)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return true, nil
+}
+
+func (e *topNExec) Next() (handle int64, value [][]byte, err error) {
+	if !e.executed {
+		for {
+			hasMore, err := e.innerNext()
+			if err != nil {
+				return 0, nil, errors.Trace(err)
+			}
+			if !hasMore {
+				break
+			}
+		}
+		e.executed = true
+	}
+	if e.cursor >= len(e.heap.rows) {
+		return 0, nil, nil
+	}
+	sort.Sort(&e.heap.topnSorter)
+	row := e.heap.rows[e.cursor]
+	e.cursor++
+	value = [][]byte{row.data}
+
+	return row.meta.Handle, value, nil
+}
+
+// evalTopN evaluates the top n elements from the data. The input receives a record including its handle and data.
+// And this function will check if this record can replace one of the old records.
+func (e *topNExec) evalTopN(handle int64, row [][]byte) error {
+	err := e.eval.SetRowValue(handle, row, e.colIDs)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	newRow := &sortRow{
+		meta: tipb.RowMeta{Handle: handle},
+	}
+	for _, item := range e.heap.orderByItems {
+		result, err := e.eval.Eval(item.Expr)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		newRow.key = append(newRow.key, result)
+	}
+	if e.heap.tryToAddRow(newRow) {
+		for _, val := range row {
+			newRow.data = append(newRow.data, val...)
+			newRow.meta.Length += int64(len(val))
+		}
+	}
+	return errors.Trace(e.heap.err)
+}
+
+type limitExec struct {
+	*tipb.Limit
+	cursor int64
+
+	src executor
+}
+
+func (e *limitExec) SetSrcExec(src executor) {
+	e.src = src
+}
+
+func (e *limitExec) Next() (handle int64, value [][]byte, err error) {
+	if e.cursor >= e.GetLimit() {
+		return 0, nil, nil
+	}
+
+	handle, value, err = e.src.Next()
+	if err != nil {
+		return 0, nil, errors.Trace(err)
+	}
+	if value == nil {
+		return 0, nil, nil
+	}
+	e.cursor++
+	return handle, value, nil
 }
 
 func hasColVal(data [][]byte, colIDs map[int64]int, id int64) bool {
@@ -337,6 +550,7 @@ func getRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle int64, 
 		if mysql.HasNotNullFlag(uint(col.GetFlag())) {
 			return nil, errors.Errorf("Miss column %d", id)
 		}
+
 		values[offset] = []byte{codec.NilFlag}
 	}
 
