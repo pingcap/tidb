@@ -90,6 +90,10 @@ func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 		currExec, err = h.buildSelection(ctx, curr)
 	case tipb.ExecType_TypeAggregation:
 		currExec, err = h.buildAggregation(ctx, curr)
+	case tipb.ExecType_TypeTopN:
+		currExec, err = h.buildTopN(ctx, curr)
+	case tipb.ExecType_TypeLimit:
+		currExec = &limitExec{Limit: curr.Limit}
 	default:
 		// TODO: Support other types.
 		err = errors.Errorf("this exec type %v doesn't support yet.", curr.GetTp())
@@ -196,5 +200,30 @@ func (h *rpcHandler) buildAggregation(ctx *dagContext, executor *tipb.Executor) 
 		groups:      make(map[string]struct{}),
 		groupKeys:   make([][]byte, 0),
 		colIDs:      colIDs,
+	}, nil
+}
+
+func (h *rpcHandler) buildTopN(ctx *dagContext, executor *tipb.Executor) (*topNExec, error) {
+	topN := executor.TopN
+	colIDs := make(map[int64]int)
+	for _, item := range topN.OrderBy {
+		err := extractColIDsInExpr(item.Expr, ctx.eval.ColumnInfos, colIDs)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	heap := &topnHeap{
+		totalCount: int(*topN.Limit),
+		topnSorter: topnSorter{
+			orderByItems: topN.OrderBy,
+			sc:           ctx.eval.StatementCtx,
+		},
+	}
+
+	return &topNExec{
+		TopN:   topN,
+		eval:   ctx.eval,
+		heap:   heap,
+		colIDs: colIDs,
 	}, nil
 }

@@ -361,26 +361,25 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 	return p
 }
 
-// getColumnOffsets returns the offsets of index columns, normal columns and primary key with integer type.
-func getColumnOffsets(tn *ast.TableName) (indexOffsets []int, columnOffsets []int, pkOffset int) {
+// getColsInfo returns the info of index columns, normal columns and primary key.
+func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []*model.ColumnInfo, pkCol *model.ColumnInfo) {
 	tbl := tn.TableInfo
 	// idxNames contains all the normal columns that can be analyzed more effectively, because those columns occur as index
 	// columns or primary key columns with integer type.
 	var idxNames []string
-	pkOffset = -1
 	if tbl.PKIsHandle {
-		for i, col := range tbl.Columns {
+		for _, col := range tbl.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
 				idxNames = append(idxNames, col.Name.L)
-				pkOffset = i
+				pkCol = col
 			}
 		}
 	}
 	indices, _ := availableIndices(tn.IndexHints, tn.TableInfo)
 	for _, index := range indices {
-		for i, idx := range tn.TableInfo.Indices {
+		for _, idx := range tn.TableInfo.Indices {
 			if index.Name.L == idx.Name.L {
-				indexOffsets = append(indexOffsets, i)
+				indicesInfo = append(indicesInfo, idx)
 				break
 			}
 		}
@@ -388,7 +387,7 @@ func getColumnOffsets(tn *ast.TableName) (indexOffsets []int, columnOffsets []in
 			idxNames = append(idxNames, index.Columns[0].Name.L)
 		}
 	}
-	for i, col := range tbl.Columns {
+	for _, col := range tbl.Columns {
 		isIndexCol := false
 		for _, idx := range idxNames {
 			if idx == col.Name.L {
@@ -397,21 +396,21 @@ func getColumnOffsets(tn *ast.TableName) (indexOffsets []int, columnOffsets []in
 			}
 		}
 		if !isIndexCol {
-			columnOffsets = append(columnOffsets, i)
+			colsInfo = append(colsInfo, col)
 		}
 	}
 	return
 }
 
 func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) LogicalPlan {
-	p := Analyze{PkOffset: -1}.init(b.allocator, b.ctx)
+	p := Analyze{}.init(b.allocator, b.ctx)
 	for _, tbl := range as.TableNames {
-		idxOffsets, colOffsets, pkOffset := getColumnOffsets(tbl)
+		idxInfo, colInfo, pkInfo := getColsInfo(tbl)
 		result := Analyze{
-			Table:      tbl,
-			IdxOffsets: idxOffsets,
-			ColOffsets: colOffsets,
-			PkOffset:   pkOffset,
+			TableInfo:   tbl.TableInfo,
+			IndicesInfo: idxInfo,
+			ColsInfo:    colInfo,
+			PkInfo:      pkInfo,
 		}.init(b.allocator, b.ctx)
 		result.SetSchema(expression.TableInfo2Schema(tbl.TableInfo))
 		addChild(p, result)
