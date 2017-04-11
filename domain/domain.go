@@ -400,39 +400,44 @@ func (do *Domain) LoadPrivilegeLoop(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
+	// if etcd is available, notification i
 	if cli := do.EtcdClient(); cli != nil {
-		go func(do *Domain) {
-			rch := notify.WatchPrivilege(cli)
-			for {
-				select {
-				case <-rch:
-					err := do.privHandle.Update()
-					if err != nil {
-						log.Error(errors.ErrorStack(err))
-					}
-				case <-do.exit:
-					return
-				}
-			}
-		}(do)
+		go loadPrivilegeWatchEtcd(do, cli)
 	} else {
-		go func(do *Domain) {
-			ticker := time.NewTicker(5 * time.Minute)
-			for {
-				select {
-				case <-ticker.C:
-					err := do.privHandle.Update()
-					if err != nil {
-						log.Error(errors.ErrorStack(err))
-					}
-				case <-do.exit:
-					return
-				}
-			}
-		}(do)
+		go loadPrivilegeUseTicker(do)
 	}
 
 	return nil
+}
+
+func loadPrivilegeWatchEtcd(do *Domain, cli *clientv3.Client) {
+	rch := notify.WatchPrivilege(cli)
+	for {
+		select {
+		case <-rch:
+			err := do.privHandle.Update()
+			if err != nil {
+				log.Error("load privilege fail:", errors.ErrorStack(err))
+			}
+		case <-do.exit:
+			return
+		}
+	}
+}
+
+func loadPrivilegeUseTicker(do *Domain) {
+	ticker := time.NewTicker(5 * time.Minute)
+	for {
+		select {
+		case <-ticker.C:
+			err := do.privHandle.Update()
+			if err != nil {
+				log.Error("load privilege fail:", errors.ErrorStack(err))
+			}
+		case <-do.exit:
+			return
+		}
+	}
 }
 
 // PrivilegeHandle returns the MySQLPrivilege.
