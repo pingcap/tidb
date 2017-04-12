@@ -1707,59 +1707,49 @@ func (b *builtinExportSetSig) eval(row []types.Datum) (d types.Datum, err error)
 		separator    = ","
 		numberOfBits = 64
 	)
-	arg0, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	bits = strconv.FormatInt(arg0, 2)
-	on, err = args[1].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	off, err = args[2].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
 	switch len(args) {
+	case 5:
+		arg, err := args[4].ToInt64(b.ctx.GetSessionVars().StmtCtx)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		if arg >= 0 && arg < 64 {
+			numberOfBits = int(arg)
+		}
+		fallthrough
 	case 4:
 		separator, err = args[3].ToString()
 		if err != nil {
 			return d, errors.Trace(err)
 		}
-	case 5:
-		separator, err = args[3].ToString()
+		fallthrough
+	case 3:
+		arg, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
 		if err != nil {
 			return d, errors.Trace(err)
 		}
-		arg4, err := args[4].ToInt64(b.ctx.GetSessionVars().StmtCtx)
+		bits = strconv.FormatInt(arg, 2)
+		on, err = args[1].ToString()
 		if err != nil {
 			return d, errors.Trace(err)
 		}
-		if arg4 < 0 || arg4 > 64 {
-			arg4 = 64
+		off, err = args[2].ToString()
+		if err != nil {
+			return d, errors.Trace(err)
 		}
-		numberOfBits = int(arg4)
 	}
-	resSlice := make([]string, 0, numberOfBits)
-	if len(bits) < numberOfBits {
-		complementStr := ""
-		for i := 0; i < numberOfBits-len(bits); i++ {
-			complementStr += "0"
-		}
-		bits = complementStr + bits
+	res := make([]string, 0, numberOfBits)
+	for i, bitsOriginLen := 0, len(bits); i < numberOfBits-bitsOriginLen; i++ {
+		bits = "0" + bits
 	}
-	for i := len(bits) - 1; i >= 0; i-- {
-		if len(resSlice) == numberOfBits {
-			break
-		}
+	for i := len(bits) - 1; i >= len(bits)-numberOfBits; i-- {
 		if bits[i] == '1' {
-			resSlice = append(resSlice, on)
+			res = append(res, on)
 		} else {
-			resSlice = append(resSlice, off)
+			res = append(res, off)
 		}
 	}
-	resStr := strings.Join(resSlice, separator)
-	d.SetString(resStr)
+	d.SetString(strings.Join(res, separator))
 	return d, nil
 }
 

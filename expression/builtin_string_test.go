@@ -1328,6 +1328,7 @@ func (s *testEvaluatorSuite) TestExportSet(c *C) {
 	}{
 		{[]interface{}{5, "Y", "N", ",", 4}, "Y,N,Y,N"},
 		{[]interface{}{5, "Y", "N", ",", 0}, ""},
+		{[]interface{}{5, "Y", "N", ",", 1}, "Y"},
 		{[]interface{}{6, "1", "0", ",", 10}, "0,1,1,0,0,0,0,0,0,0"},
 		{[]interface{}{333333, "Ysss", "sN", "---", 9}, "Ysss---sN---Ysss---sN---Ysss---sN---sN---sN---sN"},
 		{[]interface{}{7, "Y", "N"}, "Y,Y,Y,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N"},
