@@ -143,7 +143,7 @@ func NewDistAggFunc(expr *tipb.Expr, colsID map[int64]int, sc *variable.Statemen
 	case tipb.ExprType_Min:
 		return &maxMinFunction{aggFunction: newAggFunc(ast.AggFuncMin, args, false)}, nil
 	case tipb.ExprType_First:
-		return &maxMinFunction{aggFunction: newAggFunc(ast.AggFuncFirstRow, args, false)}, nil
+		return &firstRowFunction{aggFunction: newAggFunc(ast.AggFuncFirstRow, args, false)}, nil
 	}
 	return nil, errors.Errorf("Unknown aggregate function type %v", expr.Tp)
 }
@@ -632,7 +632,7 @@ func (af *avgFunction) GetGroupResult(groupKey []byte) types.Datum {
 // GetPartialResult implements AggregationFunction interface.
 func (af *avgFunction) GetPartialResult(groupKey []byte) []types.Datum {
 	ctx := af.getContext(groupKey)
-	return []types.Datum{ctx.Value, types.NewIntDatum(ctx.Count)}
+	return []types.Datum{types.NewIntDatum(ctx.Count), ctx.Value}
 }
 
 // GetStreamResult implements AggregationFunction interface.
