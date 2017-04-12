@@ -182,52 +182,52 @@ func (t *Table) columnIsInvalid(colInfo *model.ColumnInfo) bool {
 	return !ok
 }
 
-// columnGreaterRowCount estimates the row count where the column greater than value.
-func (t *Table) columnGreaterRowCount(sc *variable.StatementContext, value types.Datum, colInfo *model.ColumnInfo) (int64, error) {
+// ColumnGreaterRowCount estimates the row count where the column greater than value.
+func (t *Table) ColumnGreaterRowCount(sc *variable.StatementContext, value types.Datum, colInfo *model.ColumnInfo) (float64, error) {
 	if t.columnIsInvalid(colInfo) {
-		return t.Count / pseudoLessRate, nil
+		return float64(t.Count) / pseudoLessRate, nil
 	}
 	return t.Columns[colInfo.ID].greaterRowCount(sc, value)
 }
 
-// columnLessRowCount estimates the row count where the column less than value.
-func (t *Table) columnLessRowCount(sc *variable.StatementContext, value types.Datum, colInfo *model.ColumnInfo) (int64, error) {
+// ColumnLessRowCount estimates the row count where the column less than value.
+func (t *Table) ColumnLessRowCount(sc *variable.StatementContext, value types.Datum, colInfo *model.ColumnInfo) (float64, error) {
 	if t.columnIsInvalid(colInfo) {
-		return t.Count / pseudoLessRate, nil
+		return float64(t.Count) / pseudoLessRate, nil
 	}
 	return t.Columns[colInfo.ID].lessRowCount(sc, value)
 }
 
-// columnBetweenRowCount estimates the row count where column greater or equal to a and less than b.
-func (t *Table) columnBetweenRowCount(sc *variable.StatementContext, a, b types.Datum, colInfo *model.ColumnInfo) (int64, error) {
+// ColumnBetweenRowCount estimates the row count where column greater or equal to a and less than b.
+func (t *Table) ColumnBetweenRowCount(sc *variable.StatementContext, a, b types.Datum, colInfo *model.ColumnInfo) (float64, error) {
 	if t.columnIsInvalid(colInfo) {
-		return t.Count / pseudoBetweenRate, nil
+		return float64(t.Count) / pseudoBetweenRate, nil
 	}
 	return t.Columns[colInfo.ID].betweenRowCount(sc, a, b)
 }
 
-// columnEqualRowCount estimates the row count where the column equals to value.
-func (t *Table) columnEqualRowCount(sc *variable.StatementContext, value types.Datum, colInfo *model.ColumnInfo) (int64, error) {
+// ColumnEqualRowCount estimates the row count where the column equals to value.
+func (t *Table) ColumnEqualRowCount(sc *variable.StatementContext, value types.Datum, colInfo *model.ColumnInfo) (float64, error) {
 	if t.columnIsInvalid(colInfo) {
-		return t.Count / pseudoEqualRate, nil
+		return float64(t.Count) / pseudoEqualRate, nil
 	}
 	return t.Columns[colInfo.ID].equalRowCount(sc, value)
 }
 
 // GetRowCountByIntColumnRanges estimates the row count by a slice of IntColumnRange.
-func (t *Table) GetRowCountByIntColumnRanges(sc *variable.StatementContext, colID int64, intRanges []types.IntColumnRange) (uint64, error) {
+func (t *Table) GetRowCountByIntColumnRanges(sc *variable.StatementContext, colID int64, intRanges []types.IntColumnRange) (float64, error) {
 	c := t.Columns[colID]
 	if t.Pseudo || c == nil || len(c.Buckets) == 0 {
-		return getPseudoRowCountByIntRanges(intRanges, t.Count), nil
+		return getPseudoRowCountByIntRanges(intRanges, float64(t.Count)), nil
 	}
-	return c.getIntColumnRowCount(sc, intRanges, t.Count)
+	return c.getIntColumnRowCount(sc, intRanges, float64(t.Count))
 }
 
 // GetRowCountByIndexRanges estimates the row count by a slice of IndexRange.
-func (t *Table) GetRowCountByIndexRanges(sc *variable.StatementContext, idxID int64, indexRanges []*types.IndexRange, inAndEQCnt int) (uint64, error) {
+func (t *Table) GetRowCountByIndexRanges(sc *variable.StatementContext, idxID int64, indexRanges []*types.IndexRange, inAndEQCnt int) (float64, error) {
 	idx := t.Indices[idxID]
 	if t.Pseudo || idx == nil || len(idx.Buckets) == 0 {
-		return getPseudoRowCountByIndexRanges(sc, indexRanges, inAndEQCnt, t.Count)
+		return getPseudoRowCountByIndexRanges(sc, indexRanges, inAndEQCnt, float64(t.Count))
 	}
 	return idx.getRowCount(sc, indexRanges, inAndEQCnt)
 }
@@ -260,10 +260,10 @@ func PseudoTable(ti *model.TableInfo) *Table {
 }
 
 func getPseudoRowCountByIndexRanges(sc *variable.StatementContext, indexRanges []*types.IndexRange, inAndEQCnt int,
-	tableRowCount int64) (uint64, error) {
-	totalCount := float64(0)
+	tableRowCount float64) (float64, error) {
+	var totalCount float64
 	for _, indexRange := range indexRanges {
-		count := float64(tableRowCount)
+		count := tableRowCount
 		i := len(indexRange.LowVal) - 1
 		if i > inAndEQCnt {
 			i = inAndEQCnt
@@ -286,19 +286,19 @@ func getPseudoRowCountByIndexRanges(sc *variable.StatementContext, indexRanges [
 		// We will not let the row count less than 1000 to avoid collapsing too fast in the future calculation.
 		totalCount = 1000.0
 	}
-	if totalCount > float64(tableRowCount) {
-		totalCount = float64(tableRowCount) / 3.0
+	if totalCount > tableRowCount {
+		totalCount = tableRowCount / 3.0
 	}
-	return uint64(totalCount), nil
+	return totalCount, nil
 }
 
-func getPseudoRowCountByColumnRange(sc *variable.StatementContext, tableRowCount int64, ran types.ColumnRange) (int64, error) {
-	var rowCount int64
+func getPseudoRowCountByColumnRange(sc *variable.StatementContext, tableRowCount float64, ran types.ColumnRange) (float64, error) {
+	var rowCount float64
 	var err error
 	if ran.Low.Kind() == types.KindNull && ran.High.Kind() == types.KindMaxValue {
 		return tableRowCount, nil
 	} else if ran.Low.Kind() == types.KindMinNotNull {
-		var nullCount int64
+		var nullCount float64
 		nullCount = tableRowCount / pseudoEqualRate
 		if ran.High.Kind() == types.KindMaxValue {
 			rowCount = tableRowCount - nullCount
@@ -325,30 +325,30 @@ func getPseudoRowCountByColumnRange(sc *variable.StatementContext, tableRowCount
 	return rowCount, nil
 }
 
-func getPseudoRowCountByIntRanges(intRanges []types.IntColumnRange, totalRowCount int64) uint64 {
-	var rowCount int64
+func getPseudoRowCountByIntRanges(intRanges []types.IntColumnRange, tableRowCount float64) float64 {
+	var rowCount float64
 	for _, rg := range intRanges {
-		var cnt int64
+		var cnt float64
 		if rg.LowVal == math.MinInt64 && rg.HighVal == math.MaxInt64 {
-			cnt = totalRowCount
+			cnt = tableRowCount
 		} else if rg.LowVal == math.MinInt64 {
-			cnt = totalRowCount / pseudoLessRate
+			cnt = tableRowCount / pseudoLessRate
 		} else if rg.HighVal == math.MaxInt64 {
-			cnt = totalRowCount / pseudoLessRate
+			cnt = tableRowCount / pseudoLessRate
 		} else {
 			if rg.LowVal == rg.HighVal {
-				cnt = totalRowCount / pseudoEqualRate
+				cnt = tableRowCount / pseudoEqualRate
 			} else {
-				cnt = totalRowCount / pseudoBetweenRate
+				cnt = tableRowCount / pseudoBetweenRate
 			}
 		}
-		if rg.HighVal-rg.LowVal > 0 && cnt > rg.HighVal-rg.LowVal {
-			cnt = rg.HighVal - rg.LowVal
+		if rg.HighVal-rg.LowVal > 0 && cnt > float64(rg.HighVal-rg.LowVal) {
+			cnt = float64(rg.HighVal - rg.LowVal)
 		}
 		rowCount += cnt
 	}
-	if rowCount > totalRowCount {
-		rowCount = totalRowCount
+	if rowCount > tableRowCount {
+		rowCount = tableRowCount
 	}
-	return uint64(rowCount)
+	return rowCount
 }
