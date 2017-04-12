@@ -113,13 +113,13 @@ func (b *Builder) NewTable() (*Table, error) {
 		Indices: make(map[int64]*Index, len(b.TblInfo.Indices)),
 	}
 	if b.Count == 0 {
-		for i := range t.Columns {
-			t.Columns[i] = &Column{Histogram{ID: b.TblInfo.Columns[i].ID}}
+		for _, col := range b.TblInfo.Columns {
+			t.Columns[col.ID] = &Column{Histogram{ID: col.ID}}
 		}
-		for id := range t.Indices {
-			t.Indices[id] = &Index{
-				Histogram:  Histogram{ID: id},
-				NumColumns: len(t.Info.Indices[id].Columns),
+		for _, idx := range b.TblInfo.Indices {
+			t.Indices[idx.ID] = &Index{
+				Histogram:  Histogram{ID: idx.ID},
+				NumColumns: len(idx.Columns),
 			}
 		}
 		return t, nil
@@ -155,13 +155,13 @@ func (b *Builder) NewTable() (*Table, error) {
 	// There may be cases that we have no columnSamples, and only after we build the index columns that we can know it is 0,
 	// so we should also checked it here.
 	if t.Count == 0 {
-		for id := range t.Columns {
-			t.Columns[id] = &Column{Histogram{ID: id}}
+		for _, col := range b.TblInfo.Columns {
+			t.Columns[col.ID] = &Column{Histogram{ID: col.ID}}
 		}
-		for id := range t.Indices {
-			t.Indices[id] = &Index{
-				Histogram:  Histogram{ID: id},
-				NumColumns: indexNumColumnsByID(b.TblInfo, id),
+		for _, idx := range b.TblInfo.Indices {
+			t.Indices[idx.ID] = &Index{
+				Histogram:  Histogram{ID: idx.ID},
+				NumColumns: len(idx.Columns),
 			}
 		}
 	}
