@@ -329,18 +329,16 @@ func (h *rpcHandler) handleKvRawDelete(req *kvrpcpb.RawDeleteRequest) *kvrpcpb.R
 	return &kvrpcpb.RawDeleteResponse{}
 }
 
-func (h *rpcHandler) handleCopRequestNew(ctx goctx.Context, addr string, req *coprocessor.Request) (*coprocessor.Response, error) {
-	sel := new(tipb.SelectRequest)
-	err := proto.Unmarshal(req.Data, sel)
-	if err != nil {
-		return nil, errors.Trace(err)
+// extractExecutors extracts executors form select request.
+// It's removed when select request is replaced with DAG request.
+func extractExecutors(sel *tipb.SelectRequest) []*tipb.Executor {
+	var desc bool
+	if len(sel.OrderBy) > 0 && sel.OrderBy[0].Expr == nil {
+		desc = sel.OrderBy[0].Desc
+		sel.OrderBy = nil
 	}
-
-	var executors []*tipb.Executor
-	// TODO: Now the value of desc is false.
-	// And it's used for testing.
-	desc := false
 	var exec *tipb.Executor
+	var executors []*tipb.Executor
 	if sel.TableInfo != nil {
 		exec = &tipb.Executor{
 			Tp: tipb.ExecType_TypeTableScan,
@@ -368,7 +366,46 @@ func (h *rpcHandler) handleCopRequestNew(ctx goctx.Context, addr string, req *co
 		}
 		executors = append(executors, exec)
 	}
+	if sel.Aggregates != nil {
+		exec := &tipb.Executor{
+			Tp: tipb.ExecType_TypeAggregation,
+			Aggregation: &tipb.Aggregation{
+				AggFunc: sel.Aggregates,
+				GroupBy: itemsToExprs(sel.GroupBy),
+			},
+		}
+		executors = append(executors, exec)
+	}
+	if len(sel.OrderBy) > 0 && sel.Limit != nil {
+		exec := &tipb.Executor{
+			Tp: tipb.ExecType_TypeTopN,
+			TopN: &tipb.TopN{
+				OrderBy: sel.OrderBy,
+				Limit:   sel.Limit,
+			},
+		}
+		executors = append(executors, exec)
+	}
+	if sel.Limit != nil {
+		exec := &tipb.Executor{
+			Tp:    tipb.ExecType_TypeLimit,
+			Limit: &tipb.Limit{Limit: sel.Limit},
+		}
+		executors = append(executors, exec)
+	}
 
+	return executors
+}
+
+// SendCopReqNew sends a coprocessor request to mock cluster.
+func (h *rpcHandler) handleCopRequestNew(ctx goctx.Context, addr string, req *coprocessor.Request) (*coprocessor.Response, error) {
+	sel := new(tipb.SelectRequest)
+	err := proto.Unmarshal(req.Data, sel)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	executors := extractExecutors(sel)
 	dag := &tipb.DAGRequest{
 		StartTs:        sel.GetStartTs(),
 		TimeZoneOffset: sel.TimeZoneOffset,

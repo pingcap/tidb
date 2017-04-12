@@ -1159,3 +1159,92 @@ func (s *testEvaluatorSuite) TestGetFormat(c *C) {
 		c.Assert(result, Equals, test.expect)
 	}
 }
+
+func (s *testEvaluatorSuite) TestToDays(c *C) {
+	tests := []struct {
+		param  interface{}
+		expect int64
+	}{
+		{950501, 728779},
+		{"2007-10-07", 733321},
+		{"2008-10-07", 733687},
+		{"08-10-07", 733687},
+		{"0000-01-01", 1},
+		{"2007-10-07 00:00:59", 733321},
+	}
+
+	fc := funcs[ast.ToDays]
+	for _, test := range tests {
+		t := []types.Datum{types.NewDatum(test.param)}
+		f, err := fc.getFunction(datumsToConstants(t), s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(d.GetInt64(), Equals, test.expect)
+	}
+
+	testsNull := []interface{}{
+		"0000-00-00",
+		"1992-13-00",
+		"2007-10-07 23:59:61",
+		123456789}
+
+	for _, i := range testsNull {
+		t := []types.Datum{types.NewDatum(i)}
+		f, err := fc.getFunction(datumsToConstants(t), s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(d.IsNull(), IsTrue)
+	}
+}
+
+func (s *testEvaluatorSuite) TestTimestampAdd(c *C) {
+	tests := []struct {
+		unit     string
+		interval int64
+		date     interface{}
+		expect   string
+	}{
+		{"MINUTE", 1, "2003-01-02", "2003-01-02 00:01:00"},
+		{"WEEK", 1, "2003-01-02 23:59:59", "2003-01-09 23:59:59"},
+		{"MICROSECOND", 1, 950501, "1995-05-01 00:00:00.000001"},
+	}
+
+	fc := funcs[ast.TimestampAdd]
+	for _, test := range tests {
+		t := []types.Datum{types.NewStringDatum(test.unit), types.NewIntDatum(test.interval), types.NewDatum(test.date)}
+		f, err := fc.getFunction(datumsToConstants(t), s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		result, _ := d.ToString()
+		c.Assert(result, Equals, test.expect)
+	}
+}
+func (s *testEvaluatorSuite) TestTimeToSec(c *C) {
+	tests := []struct {
+		t      string
+		expect int64
+	}{
+		{"22:23:00", 80580},
+		{"00:39:38", 2378},
+		{"23:00", 82800},
+		{"00:00", 0},
+		{"00:00:00", 0},
+		{"23:59:59", 86399},
+		{"1:0", 3600},
+		{"1:00", 3600},
+		{"1:0:0", 3600},
+		{"-02:00", -7200},
+	}
+	fc := funcs[ast.TimeToSec]
+	for _, test := range tests {
+		arg := types.NewStringDatum(test.t)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{arg}), s.ctx)
+		c.Assert(err, IsNil)
+		result, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(result.GetInt64(), Equals, test.expect)
+	}
+}

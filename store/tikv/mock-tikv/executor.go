@@ -15,9 +15,11 @@ package mocktikv
 
 import (
 	"bytes"
+	"sort"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/distsql/xeval"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -50,11 +52,11 @@ func (e *tableScanExec) SetSrcExec(exec executor) {
 	e.src = exec
 }
 
-func (e *tableScanExec) Next() (int64, [][]byte, error) {
+func (e *tableScanExec) Next() (handle int64, value [][]byte, err error) {
 	for e.cursor < len(e.kvRanges) {
 		ran := e.kvRanges[e.cursor]
 		if ran.IsPoint() {
-			handle, value, err := e.getRowFromPoint(ran)
+			handle, value, err = e.getRowFromPoint(ran)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
@@ -63,7 +65,7 @@ func (e *tableScanExec) Next() (int64, [][]byte, error) {
 			return handle, value, nil
 		}
 
-		handle, value, err := e.getRowFromRange(ran)
+		handle, value, err = e.getRowFromRange(ran)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
@@ -167,10 +169,10 @@ func (e *indexScanExec) SetSrcExec(exec executor) {
 	e.src = exec
 }
 
-func (e *indexScanExec) Next() (int64, [][]byte, error) {
+func (e *indexScanExec) Next() (handle int64, value [][]byte, err error) {
 	for e.cursor < len(e.kvRanges) {
 		ran := e.kvRanges[e.cursor]
-		handle, value, err := e.getRowFromRange(ran)
+		handle, value, err = e.getRowFromRange(ran)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
@@ -247,10 +249,11 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 }
 
 type selectionExec struct {
-	*tipb.Selection
-	sc     *variable.StatementContext
-	eval   *xeval.Evaluator
-	colIDs map[int64]int
+	sc                *variable.StatementContext
+	conditions        []expression.Expression
+	relatedColOffsets []int
+	row               []types.Datum
+	evalCtx           *evalContext
 
 	src executor
 }
@@ -259,36 +262,266 @@ func (e *selectionExec) SetSrcExec(exec executor) {
 	e.src = exec
 }
 
-func (e *selectionExec) Next() (int64, [][]byte, error) {
+// evalBool evaluates expression to a boolean value.
+func evalBool(exprs []expression.Expression, row []types.Datum, ctx *variable.StatementContext) (bool, error) {
+	for _, expr := range exprs {
+		data, err := expr.Eval(row)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if data.IsNull() {
+			return false, nil
+		}
+
+		isBool, err := data.ToBool(ctx)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if isBool == 0 {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func (e *selectionExec) Next() (handle int64, value [][]byte, err error) {
 	for {
-		handle, row, err := e.src.Next()
+		handle, value, err = e.src.Next()
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
-		if row == nil {
+		if value == nil {
 			return 0, nil, nil
 		}
 
-		err = e.eval.SetRowValue(handle, row, e.colIDs)
+		err = e.evalCtx.decodeRelatedColumnVals(e.relatedColOffsets, handle, value, e.row)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
-		// TODO: Now the conditions length is 1.
-		result, err := e.eval.Eval(e.Conditions[0])
+		match, err := evalBool(e.conditions, e.row, e.evalCtx.sc)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
-		if result.IsNull() {
-			continue
-		}
-		boolResult, err := result.ToBool(e.sc)
-		if err != nil {
-			return 0, nil, errors.Trace(err)
-		}
-		if boolResult == 1 {
-			return handle, row, nil
+		if match {
+			return handle, value, nil
 		}
 	}
+}
+
+type aggregateExec struct {
+	*tipb.Aggregation
+	eval         *xeval.Evaluator
+	aggFuncs     []*aggregateFuncExpr
+	groups       map[string]struct{}
+	groupKeys    [][]byte
+	executed     bool
+	currGroupIdx int
+	colIDs       map[int64]int
+
+	src executor
+}
+
+func (e *aggregateExec) SetSrcExec(exec executor) {
+	e.src = exec
+}
+
+func (e *aggregateExec) innerNext() (bool, error) {
+	handle, values, err := e.src.Next()
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if values == nil {
+		return false, nil
+	}
+	err = e.aggregate(handle, values)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return true, nil
+}
+
+func (e *aggregateExec) Next() (handle int64, value [][]byte, err error) {
+	if !e.executed {
+		for {
+			hasMore, err := e.innerNext()
+			if err != nil {
+				return 0, nil, errors.Trace(err)
+			}
+			if !hasMore {
+				break
+			}
+		}
+		e.executed = true
+	}
+
+	if e.currGroupIdx >= len(e.groups) {
+		return 0, nil, nil
+	}
+	gk := e.groupKeys[e.currGroupIdx]
+	gkData, err := codec.EncodeValue(nil, types.NewBytesDatum(gk))
+	if err != nil {
+		return 0, nil, errors.Trace(err)
+	}
+	value = make([][]byte, 0, 1+2*len(e.aggFuncs))
+	// The first column is group key.
+	value = append(value, gkData)
+	for _, agg := range e.aggFuncs {
+		agg.currentGroup = gk
+		ds, err := agg.toDatums(e.eval)
+		if err != nil {
+			return 0, nil, errors.Trace(err)
+		}
+		data, err := codec.EncodeValue(nil, ds...)
+		if err != nil {
+			return 0, nil, errors.Trace(err)
+		}
+		value = append(value, data)
+	}
+	e.currGroupIdx++
+
+	return 0, value, nil
+}
+
+// aggregate updates aggregate functions with row.
+func (e *aggregateExec) aggregate(handle int64, row [][]byte) error {
+	// Put row data into evaluate for later evaluation.
+	err := e.eval.SetRowValue(handle, row, e.colIDs)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// Get group key.
+	gk, err := getGroupKey(e.eval, e.GetGroupBy())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if _, ok := e.groups[string(gk)]; !ok {
+		e.groups[string(gk)] = struct{}{}
+		e.groupKeys = append(e.groupKeys, gk)
+	}
+	// Update aggregate funcs.
+	for _, agg := range e.aggFuncs {
+		agg.currentGroup = gk
+		args := make([]types.Datum, 0, len(agg.expr.Children))
+		// Evaluate arguments.
+		for _, x := range agg.expr.Children {
+			cv, err := e.eval.Eval(x)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			args = append(args, cv)
+		}
+		agg.update(e.eval, args)
+	}
+	return nil
+}
+
+type topNExec struct {
+	heap              *topnHeap
+	evalCtx           *evalContext
+	relatedColOffsets []int
+	orderByExprs      []expression.Expression
+	row               []types.Datum
+	cursor            int
+	executed          bool
+
+	src executor
+}
+
+func (e *topNExec) SetSrcExec(src executor) {
+	e.src = src
+}
+
+func (e *topNExec) innerNext() (bool, error) {
+	handle, value, err := e.src.Next()
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if value == nil {
+		return false, nil
+	}
+	err = e.evalTopN(handle, value)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return true, nil
+}
+
+func (e *topNExec) Next() (handle int64, value [][]byte, err error) {
+	if !e.executed {
+		for {
+			hasMore, err := e.innerNext()
+			if err != nil {
+				return 0, nil, errors.Trace(err)
+			}
+			if !hasMore {
+				break
+			}
+		}
+		e.executed = true
+	}
+	if e.cursor >= len(e.heap.rows) {
+		return 0, nil, nil
+	}
+	sort.Sort(&e.heap.topnSorter)
+	row := e.heap.rows[e.cursor]
+	e.cursor++
+	value = [][]byte{row.data}
+
+	return row.meta.Handle, value, nil
+}
+
+// evalTopN evaluates the top n elements from the data. The input receives a record including its handle and data.
+// And this function will check if this record can replace one of the old records.
+func (e *topNExec) evalTopN(handle int64, value [][]byte) error {
+	newRow := &sortRow{
+		meta: tipb.RowMeta{Handle: handle},
+		key:  make([]types.Datum, len(value)),
+	}
+	err := e.evalCtx.decodeRelatedColumnVals(e.relatedColOffsets, handle, value, e.row)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for i, expr := range e.orderByExprs {
+		newRow.key[i], err = expr.Eval(e.row)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	if e.heap.tryToAddRow(newRow) {
+		for _, val := range value {
+			newRow.data = append(newRow.data, val...)
+			newRow.meta.Length += int64(len(val))
+		}
+	}
+	return errors.Trace(e.heap.err)
+}
+
+type limitExec struct {
+	limit  int64
+	cursor int64
+
+	src executor
+}
+
+func (e *limitExec) SetSrcExec(src executor) {
+	e.src = src
+}
+
+func (e *limitExec) Next() (handle int64, value [][]byte, err error) {
+	if e.cursor >= e.limit {
+		return 0, nil, nil
+	}
+
+	handle, value, err = e.src.Next()
+	if err != nil {
+		return 0, nil, errors.Trace(err)
+	}
+	if value == nil {
+		return 0, nil, nil
+	}
+	e.cursor++
+	return handle, value, nil
 }
 
 func hasColVal(data [][]byte, colIDs map[int64]int, id int64) bool {
@@ -337,12 +570,14 @@ func getRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle int64, 
 		if mysql.HasNotNullFlag(uint(col.GetFlag())) {
 			return nil, errors.Errorf("Miss column %d", id)
 		}
+
 		values[offset] = []byte{codec.NilFlag}
 	}
 
 	return values, nil
 }
 
+// TODO: Remove it after replacing evaluator in aggregation.
 func extractColIDsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector map[int64]int) error {
 	if expr == nil {
 		return nil
@@ -367,4 +602,55 @@ func extractColIDsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector 
 		}
 	}
 	return nil
+}
+
+func isDuplicated(offsets []int, offset int) bool {
+	for _, idx := range offsets {
+		if idx == offset {
+			return true
+		}
+	}
+	return false
+}
+
+func extractOffsetsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector []int) ([]int, error) {
+	if expr == nil {
+		return nil, nil
+	}
+	if expr.GetTp() == tipb.ExprType_ColumnRef {
+		_, i, err := codec.DecodeInt(expr.Val)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		for idx, c := range columns {
+			if c.GetColumnId() != i {
+				continue
+			}
+			if !isDuplicated(collector, idx) {
+				collector = append(collector, idx)
+			}
+			return collector, nil
+		}
+		return nil, xeval.ErrInvalid.Gen("column %d not found", i)
+	}
+	var err error
+	for _, child := range expr.Children {
+		collector, err = extractOffsetsInExpr(child, columns, collector)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return collector, nil
+}
+
+func convertToExprs(sc *variable.StatementContext, colIDs map[int64]int, pbExprs []*tipb.Expr) ([]expression.Expression, error) {
+	exprs := make([]expression.Expression, 0, len(pbExprs))
+	for _, expr := range pbExprs {
+		e, err := expression.PBToExpr(expr, colIDs, sc)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		exprs = append(exprs, e)
+	}
+	return exprs, nil
 }

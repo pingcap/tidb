@@ -68,13 +68,62 @@ var (
 	_ PhysicalPlan = &Cache{}
 )
 
+// PhysicalTableReader is the table reader in tidb.
+type PhysicalTableReader struct {
+	*basePlan
+	basePhysicalPlan
+
+	copPlan PhysicalPlan
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *PhysicalTableReader) Copy() PhysicalPlan {
+	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
+	return &np
+}
+
+// PhysicalIndexReader is the index reader in tidb.
+type PhysicalIndexReader struct {
+	*basePlan
+	basePhysicalPlan
+
+	copPlan PhysicalPlan
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *PhysicalIndexReader) Copy() PhysicalPlan {
+	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
+	return &np
+}
+
+// PhysicalIndexLookUpReader is the index look up reader in tidb. It's used in case of double reading.
+type PhysicalIndexLookUpReader struct {
+	*basePlan
+	basePhysicalPlan
+
+	indexPlan PhysicalPlan
+	tablePlan PhysicalPlan
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *PhysicalIndexLookUpReader) Copy() PhysicalPlan {
+	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
+	return &np
+}
+
 // PhysicalIndexScan represents an index scan plan.
 type PhysicalIndexScan struct {
 	physicalTableSource
 
 	Table      *model.TableInfo
 	Index      *model.IndexInfo
-	Ranges     []*IndexRange
+	Ranges     []*types.IndexRange
 	Columns    []*model.ColumnInfo
 	DBName     model.CIStr
 	Desc       bool
@@ -99,7 +148,7 @@ type PhysicalMemTable struct {
 	DBName      model.CIStr
 	Table       *model.TableInfo
 	Columns     []*model.ColumnInfo
-	Ranges      []TableRange
+	Ranges      []types.IntColumnRange
 	TableAsName *model.CIStr
 }
 
@@ -365,7 +414,7 @@ type PhysicalTableScan struct {
 	Columns []*model.ColumnInfo
 	DBName  model.CIStr
 	Desc    bool
-	Ranges  []TableRange
+	Ranges  []types.IntColumnRange
 	pkCol   *expression.Column
 
 	TableAsName *model.CIStr

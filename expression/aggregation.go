@@ -24,8 +24,10 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // AggregationFunction stands for aggregate functions.
@@ -34,6 +36,10 @@ type AggregationFunction interface {
 	json.Marshaler
 	// Update during executing.
 	Update(row []types.Datum, groupKey []byte, ctx context.Context) error
+
+	// GetPartialResult will called by coprocessor to get partial results. For avg function, partial results will return
+	// sum and count values at the same time.
+	GetPartialResult(groupKey []byte) []types.Datum
 
 	// StreamUpdate updates data using streaming algo.
 	StreamUpdate(row []types.Datum, ctx context.Context) error
@@ -113,6 +119,35 @@ func NewAggFunction(funcType string, funcArgs []Expression, distinct bool) Aggre
 	return nil
 }
 
+// NewDistAggFunc creates new Aggregate function for mock tikv.
+func NewDistAggFunc(expr *tipb.Expr, colsID map[int64]int, sc *variable.StatementContext) (AggregationFunction, error) {
+	args := make([]Expression, 0, len(expr.Children))
+	for _, child := range expr.Children {
+		arg, err := PBToExpr(child, colsID, sc)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		args = append(args, arg)
+	}
+	switch expr.Tp {
+	case tipb.ExprType_Sum:
+		return &sumFunction{aggFunction: newAggFunc(ast.AggFuncSum, args, false)}, nil
+	case tipb.ExprType_Count:
+		return &countFunction{aggFunction: newAggFunc(ast.AggFuncCount, args, false)}, nil
+	case tipb.ExprType_Avg:
+		return &avgFunction{aggFunction: newAggFunc(ast.AggFuncAvg, args, false)}, nil
+	case tipb.ExprType_GroupConcat:
+		return &concatFunction{aggFunction: newAggFunc(ast.AggFuncGroupConcat, args, false)}, nil
+	case tipb.ExprType_Max:
+		return &maxMinFunction{aggFunction: newAggFunc(ast.AggFuncMax, args, false), isMax: true}, nil
+	case tipb.ExprType_Min:
+		return &maxMinFunction{aggFunction: newAggFunc(ast.AggFuncMin, args, false)}, nil
+	case tipb.ExprType_First:
+		return &maxMinFunction{aggFunction: newAggFunc(ast.AggFuncFirstRow, args, false)}, nil
+	}
+	return nil, errors.Errorf("Unknown aggregate function type %v", expr.Tp)
+}
+
 type aggCtxMapper map[string]*aggEvaluateContext
 
 // AggFunctionMode stands for the aggregation function's mode.
@@ -132,6 +167,7 @@ type aggFunction struct {
 	Distinct     bool
 	resultMapper aggCtxMapper
 	streamCtx    *aggEvaluateContext
+	datumBuf     []types.Datum
 }
 
 // Equal implements AggregationFunction interface.
@@ -260,7 +296,7 @@ func (af *aggFunction) updateSum(row []types.Datum, groupKey []byte, ectx contex
 		return nil
 	}
 	if af.Distinct {
-		d, err1 := ctx.DistinctChecker.Check([]interface{}{value.GetValue()})
+		d, err1 := ctx.DistinctChecker.Check([]types.Datum{value})
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
@@ -287,7 +323,7 @@ func (af *aggFunction) streamUpdateSum(row []types.Datum, ectx context.Context) 
 		return nil
 	}
 	if af.Distinct {
-		d, err1 := ctx.DistinctChecker.Check([]interface{}{value.GetValue()})
+		d, err1 := ctx.DistinctChecker.Check([]types.Datum{value})
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
@@ -330,6 +366,11 @@ func (sf *sumFunction) StreamUpdate(row []types.Datum, ectx context.Context) err
 // GetGroupResult implements AggregationFunction interface.
 func (sf *sumFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 	return sf.getContext(groupKey).Value
+}
+
+// GetPartialResult implements AggregationFunction interface.
+func (sf *sumFunction) GetPartialResult(groupKey []byte) []types.Datum {
+	return []types.Datum{sf.GetGroupResult(groupKey)}
 }
 
 // GetStreamResult implements AggregationFunction interface.
@@ -414,9 +455,8 @@ func (cf *countFunction) GetType() *types.FieldType {
 // Update implements AggregationFunction interface.
 func (cf *countFunction) Update(row []types.Datum, groupKey []byte, ectx context.Context) error {
 	ctx := cf.getContext(groupKey)
-	var vals []interface{}
 	if cf.Distinct {
-		vals = make([]interface{}, 0, len(cf.Args))
+		cf.datumBuf = cf.datumBuf[:0]
 	}
 	for _, a := range cf.Args {
 		value, err := a.Eval(row)
@@ -430,11 +470,11 @@ func (cf *countFunction) Update(row []types.Datum, groupKey []byte, ectx context
 			ctx.Count += value.GetInt64()
 		}
 		if cf.Distinct {
-			vals = append(vals, value.GetValue())
+			cf.datumBuf = append(cf.datumBuf, value)
 		}
 	}
 	if cf.Distinct {
-		d, err := ctx.DistinctChecker.Check(vals)
+		d, err := ctx.DistinctChecker.Check(cf.datumBuf)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -451,9 +491,8 @@ func (cf *countFunction) Update(row []types.Datum, groupKey []byte, ectx context
 // StreamUpdate implements AggregationFunction interface.
 func (cf *countFunction) StreamUpdate(row []types.Datum, ectx context.Context) error {
 	ctx := cf.getStreamedContext()
-	var vals []interface{}
 	if cf.Distinct {
-		vals = make([]interface{}, 0, len(cf.Args))
+		cf.datumBuf = cf.datumBuf[:0]
 	}
 	for _, a := range cf.Args {
 		value, err := a.Eval(row)
@@ -464,11 +503,11 @@ func (cf *countFunction) StreamUpdate(row []types.Datum, ectx context.Context) e
 			return nil
 		}
 		if cf.Distinct {
-			vals = append(vals, value.GetValue())
+			cf.datumBuf = append(cf.datumBuf, value)
 		}
 	}
 	if cf.Distinct {
-		d, err := ctx.DistinctChecker.Check(vals)
+		d, err := ctx.DistinctChecker.Check(cf.datumBuf)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -484,6 +523,11 @@ func (cf *countFunction) StreamUpdate(row []types.Datum, ectx context.Context) e
 func (cf *countFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 	d.SetInt64(cf.getContext(groupKey).Count)
 	return d
+}
+
+// GetPartialResult implements AggregationFunction interface.
+func (cf *countFunction) GetPartialResult(groupKey []byte) []types.Datum {
+	return []types.Datum{cf.GetGroupResult(groupKey)}
 }
 
 // GetStreamResult implements AggregationFunction interface.
@@ -530,7 +574,7 @@ func (af *avgFunction) updateAvg(row []types.Datum, groupKey []byte, ectx contex
 		return nil
 	}
 	if af.Distinct {
-		d, err1 := ctx.DistinctChecker.Check([]interface{}{value.GetValue()})
+		d, err1 := ctx.DistinctChecker.Check([]types.Datum{value})
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
@@ -585,6 +629,12 @@ func (af *avgFunction) GetGroupResult(groupKey []byte) types.Datum {
 	return af.calculateResult(ctx)
 }
 
+// GetPartialResult implements AggregationFunction interface.
+func (af *avgFunction) GetPartialResult(groupKey []byte) []types.Datum {
+	ctx := af.getContext(groupKey)
+	return []types.Datum{ctx.Value, types.NewIntDatum(ctx.Count)}
+}
+
 // GetStreamResult implements AggregationFunction interface.
 func (af *avgFunction) GetStreamResult() (d types.Datum) {
 	if af.streamCtx == nil {
@@ -617,7 +667,7 @@ func (cf *concatFunction) GetType() *types.FieldType {
 // Update implements AggregationFunction interface.
 func (cf *concatFunction) Update(row []types.Datum, groupKey []byte, ectx context.Context) error {
 	ctx := cf.getContext(groupKey)
-	vals := make([]interface{}, 0, len(cf.Args))
+	cf.datumBuf = cf.datumBuf[:0]
 	for _, a := range cf.Args {
 		value, err := a.Eval(row)
 		if err != nil {
@@ -626,10 +676,10 @@ func (cf *concatFunction) Update(row []types.Datum, groupKey []byte, ectx contex
 		if value.GetValue() == nil {
 			return nil
 		}
-		vals = append(vals, value.GetValue())
+		cf.datumBuf = append(cf.datumBuf, value)
 	}
 	if cf.Distinct {
-		d, err := ctx.DistinctChecker.Check(vals)
+		d, err := ctx.DistinctChecker.Check(cf.datumBuf)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -643,8 +693,8 @@ func (cf *concatFunction) Update(row []types.Datum, groupKey []byte, ectx contex
 		// now use comma separator
 		ctx.Buffer.WriteString(",")
 	}
-	for _, val := range vals {
-		ctx.Buffer.WriteString(fmt.Sprintf("%v", val))
+	for _, val := range cf.datumBuf {
+		ctx.Buffer.WriteString(fmt.Sprintf("%v", val.GetValue()))
 	}
 	// TODO: if total length is greater than global var group_concat_max_len, truncate it.
 	return nil
@@ -653,7 +703,7 @@ func (cf *concatFunction) Update(row []types.Datum, groupKey []byte, ectx contex
 // StreamUpdate implements AggregationFunction interface.
 func (cf *concatFunction) StreamUpdate(row []types.Datum, ectx context.Context) error {
 	ctx := cf.getStreamedContext()
-	vals := make([]interface{}, 0, len(cf.Args))
+	cf.datumBuf = cf.datumBuf[:0]
 	for _, a := range cf.Args {
 		value, err := a.Eval(row)
 		if err != nil {
@@ -662,10 +712,10 @@ func (cf *concatFunction) StreamUpdate(row []types.Datum, ectx context.Context) 
 		if value.GetValue() == nil {
 			return nil
 		}
-		vals = append(vals, value)
+		cf.datumBuf = append(cf.datumBuf, value)
 	}
 	if cf.Distinct {
-		d, err := ctx.DistinctChecker.Check(vals)
+		d, err := ctx.DistinctChecker.Check(cf.datumBuf)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -679,8 +729,8 @@ func (cf *concatFunction) StreamUpdate(row []types.Datum, ectx context.Context) 
 		// now use comma separator
 		ctx.Buffer.WriteString(",")
 	}
-	for _, val := range vals {
-		ctx.Buffer.WriteString(fmt.Sprintf("%v", val))
+	for _, val := range cf.datumBuf {
+		ctx.Buffer.WriteString(fmt.Sprintf("%v", val.GetValue()))
 	}
 	// TODO: if total length is greater than global var group_concat_max_len, truncate it.
 	return nil
@@ -695,6 +745,11 @@ func (cf *concatFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 		d.SetNull()
 	}
 	return d
+}
+
+// GetPartialResult implements AggregationFunction interface.
+func (cf *concatFunction) GetPartialResult(groupKey []byte) []types.Datum {
+	return []types.Datum{cf.GetGroupResult(groupKey)}
 }
 
 // GetStreamResult implements AggregationFunction interface.
@@ -748,6 +803,11 @@ func (mmf *maxMinFunction) GetType() *types.FieldType {
 // GetGroupResult implements AggregationFunction interface.
 func (mmf *maxMinFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
 	return mmf.getContext(groupKey).Value
+}
+
+// GetPartialResult implements AggregationFunction interface.
+func (mmf *maxMinFunction) GetPartialResult(groupKey []byte) []types.Datum {
+	return []types.Datum{mmf.GetGroupResult(groupKey)}
 }
 
 // GetStreamResult implements AggregationFunction interface.
@@ -874,6 +934,11 @@ func (ff *firstRowFunction) StreamUpdate(row []types.Datum, ectx context.Context
 // GetGroupResult implements AggregationFunction interface.
 func (ff *firstRowFunction) GetGroupResult(groupKey []byte) types.Datum {
 	return ff.getContext(groupKey).Value
+}
+
+// GetPartialResult implements AggregationFunction interface.
+func (ff *firstRowFunction) GetPartialResult(groupKey []byte) []types.Datum {
+	return []types.Datum{ff.GetGroupResult(groupKey)}
 }
 
 // GetStreamResult implements AggregationFunction interface.

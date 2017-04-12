@@ -273,12 +273,22 @@ func (s *testSuite) TestDAG(c *C) {
 
 	r = tk.MustQuery("select * from select_dag where id > 1;")
 	r.Check(testkit.Rows(rowStr2, rowStr3))
+
+	// for limit
+	r = tk.MustQuery("select * from select_dag limit 1;")
+	r.Check(testkit.Rows(rowStr1))
+	r = tk.MustQuery("select * from select_dag limit 0;")
+	r.Check(testkit.Rows())
+	r = tk.MustQuery("select * from select_dag limit 5;")
+	r.Check(testkit.Rows(rowStr1, rowStr2, rowStr3))
 }
 
 func (s *testSuite) TestSelectOrderBy(c *C) {
+	mocktikv.MockDAGRequest = true
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
+		mocktikv.MockDAGRequest = false
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -290,6 +300,9 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	rowStr := fmt.Sprintf("%v %v", 1, []byte("hello"))
 	r.Check(testkit.Rows(rowStr))
 	tk.MustExec("commit")
+
+	r = tk.MustQuery("select id from select_order_test order by id desc limit 1 ")
+	r.Check(testkit.Rows("2"))
 
 	r = tk.MustQuery("select id from select_order_test order by id + 1 desc limit 1 ")
 	r.Check(testkit.Rows("2"))
