@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -1750,14 +1751,26 @@ func (b *builtinSecToTimeSig) eval(row []types.Datum) (d types.Datum, err error)
 	}
 
 	var (
-		hour     int64
-		minute   int64
-		second   int64
-		negative string
+		hour          int64
+		minute        int64
+		second        int64
+		demical       float64
+		secondDemical float64
+		negative      string
 	)
 
 	sc := b.ctx.GetSessionVars().StmtCtx
-	seconds, _ := args[0].ToInt64(sc)
+	secondsFloat, err := args[0].ToFloat64(sc)
+	if err != nil {
+		if args[0].Kind() == types.KindString && terror.ErrorEqual(err, types.ErrTruncated) {
+			secondsFloat = float64(0)
+		} else {
+			return d, errors.Trace(err)
+		}
+	}
+
+	seconds := int64(secondsFloat)
+	demical = secondsFloat - float64(seconds)
 
 	if seconds < 0 {
 		negative = "-"
@@ -1773,10 +1786,20 @@ func (b *builtinSecToTimeSig) eval(row []types.Datum) (d types.Datum, err error)
 		minute = seconds % 3600 / 60
 		second = seconds % 60
 	}
+	secondDemical = float64(second) + demical
 
 	var dur types.Duration
-	fsp := types.MinFsp
-	dur, err = types.ParseDuration(fmt.Sprintf("%s%02d:%02d:%02d", negative, hour, minute, second), fsp)
+	fsp := types.MaxFsp
+	if args[0].Kind() != types.KindString {
+		sec, _ := args[0].ToString()
+		secs := strings.Split(sec, ".")
+		if len(secs) <= 1 {
+			fsp = 0
+		} else if len(secs[1]) < fsp {
+			fsp = len(secs[1])
+		}
+	}
+	dur, err = types.ParseDuration(fmt.Sprintf("%s%02d:%02d:%v", negative, hour, minute, secondDemical), fsp)
 	if err != nil {
 		return d, errors.Trace(err)
 	}

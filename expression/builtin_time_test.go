@@ -1001,6 +1001,15 @@ func (s *testEvaluatorSuite) TestTimestamp(c *C) {
 
 func (s *testEvaluatorSuite) TestSecToTime(c *C) {
 	// Test cases from https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_sec-to-time
+	fc := funcs[ast.SecToTime]
+	//test nil
+	nilDatum := types.NewDatum(nil)
+	f, err := fc.getFunction(datumsToConstants([]types.Datum{nilDatum}), s.ctx)
+	c.Assert(err, IsNil)
+	d, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(d.Kind(), Equals, types.KindNull)
+
 	tests := []struct {
 		param  interface{}
 		expect string
@@ -1008,10 +1017,13 @@ func (s *testEvaluatorSuite) TestSecToTime(c *C) {
 		{2378, "00:39:38"},
 		{3864000, "838:59:59"},
 		{-3864000, "-838:59:59"},
-		{86401.4, "24:00:01"},
-		{86401.5, "24:00:02"},
+		{86401.4, "24:00:01.4"},
+		{86401.54321, "24:00:01.54321"},
+		{"123.4", "00:02:03.400000"},
+		{"123.4567891", "00:02:03.456789"},
+		{"123", "00:02:03.000000"},
+		{"abc", "00:00:00.000000"},
 	}
-	fc := funcs[ast.SecToTime]
 	for _, test := range tests {
 		t := []types.Datum{types.NewDatum(test.param)}
 		f, err := fc.getFunction(datumsToConstants(t), s.ctx)
