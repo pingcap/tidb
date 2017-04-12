@@ -122,6 +122,7 @@ func (s *testClientSuite) TestSimpleRPC(c *C) {
 		stopCh <- 1
 	}()
 	client := newRPCClient()
+	defer client.Close()
 	ctx := goctx.Background()
 	req := &kvrpcpb.GetRequest{}
 	resp, err := client.KvGet(ctx, addr, req)

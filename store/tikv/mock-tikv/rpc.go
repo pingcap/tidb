@@ -124,18 +124,22 @@ func (c *RPCClient) getAndCheckStoreByAddr(addr string) (*metapb.Store, error) {
 	return store, nil
 }
 
-func (c *RPCClient) checkArgs(ctx goctx.Context, addr string) error {
+func (c *RPCClient) checkArgs(ctx goctx.Context, addr string) (*RPCClient, error) {
 	if err := checkGoContext(ctx); err != nil {
-		return err
+		return nil, err
 	}
 
 	store, err := c.getAndCheckStoreByAddr(addr)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	// set store id for current request
-	c.storeID = store.GetId()
-	return nil
+	client := &RPCClient{
+		Cluster:   c.Cluster,
+		MvccStore: c.MvccStore,
+		// set store id for current request
+		storeID: store.GetId(),
+	}
+	return client, nil
 }
 
 func (c *RPCClient) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
@@ -240,16 +244,17 @@ func (c *RPCClient) checkKeyInRegion(key []byte) bool {
 }
 
 func (c *RPCClient) KvGet(ctx goctx.Context, addr string, req *kvrpcpb.GetRequest) (*kvrpcpb.GetResponse, error) {
-	if err := c.checkArgs(ctx, addr); err != nil {
+	client, err := c.checkArgs(ctx, addr)
+	if err != nil {
 		return nil, err
 	}
-	if err := c.checkRequest(req.GetContext(), req.Size()); err != nil {
+	if err := client.checkRequest(req.GetContext(), req.Size()); err != nil {
 		return &kvrpcpb.GetResponse{
 			RegionError: err,
 		}, nil
 	}
 
-	return c.handleKvGet(req), nil
+	return client.handleKvGet(req), nil
 }
 
 func (c *RPCClient) handleKvGet(req *kvrpcpb.GetRequest) *kvrpcpb.GetResponse {
@@ -269,16 +274,17 @@ func (c *RPCClient) handleKvGet(req *kvrpcpb.GetRequest) *kvrpcpb.GetResponse {
 }
 
 func (c *RPCClient) KvScan(ctx goctx.Context, addr string, req *kvrpcpb.ScanRequest) (*kvrpcpb.ScanResponse, error) {
-	if err := c.checkArgs(ctx, addr); err != nil {
+	client, err := c.checkArgs(ctx, addr)
+	if err != nil {
 		return nil, err
 	}
-	if err := c.checkRequest(req.GetContext(), req.Size()); err != nil {
+	if err := client.checkRequest(req.GetContext(), req.Size()); err != nil {
 		return &kvrpcpb.ScanResponse{
 			RegionError: err,
 		}, nil
 	}
 
-	return c.handleKvScan(req), nil
+	return client.handleKvScan(req), nil
 }
 
 func (c *RPCClient) handleKvScan(req *kvrpcpb.ScanRequest) *kvrpcpb.ScanResponse {
@@ -292,16 +298,17 @@ func (c *RPCClient) handleKvScan(req *kvrpcpb.ScanRequest) *kvrpcpb.ScanResponse
 }
 
 func (c *RPCClient) KvPrewrite(ctx goctx.Context, addr string, req *kvrpcpb.PrewriteRequest) (*kvrpcpb.PrewriteResponse, error) {
-	if err := c.checkArgs(ctx, addr); err != nil {
+	client, err := c.checkArgs(ctx, addr)
+	if err != nil {
 		return nil, err
 	}
-	if err := c.checkRequest(req.GetContext(), req.Size()); err != nil {
+	if err := client.checkRequest(req.GetContext(), req.Size()); err != nil {
 		return &kvrpcpb.PrewriteResponse{
 			RegionError: err,
 		}, nil
 	}
 
-	return c.handleKvPrewrite(req), nil
+	return client.handleKvPrewrite(req), nil
 }
 
 func (c *RPCClient) handleKvPrewrite(req *kvrpcpb.PrewriteRequest) *kvrpcpb.PrewriteResponse {
@@ -317,16 +324,17 @@ func (c *RPCClient) handleKvPrewrite(req *kvrpcpb.PrewriteRequest) *kvrpcpb.Prew
 }
 
 func (c *RPCClient) KvCommit(ctx goctx.Context, addr string, req *kvrpcpb.CommitRequest) (*kvrpcpb.CommitResponse, error) {
-	if err := c.checkArgs(ctx, addr); err != nil {
+	client, err := c.checkArgs(ctx, addr)
+	if err != nil {
 		return nil, err
 	}
-	if err := c.checkRequest(req.GetContext(), req.Size()); err != nil {
+	if err := client.checkRequest(req.GetContext(), req.Size()); err != nil {
 		return &kvrpcpb.CommitResponse{
 			RegionError: err,
 		}, nil
 	}
 
-	return c.handleKvCommit(req), nil
+	return client.handleKvCommit(req), nil
 }
 
 func (c *RPCClient) handleKvCommit(req *kvrpcpb.CommitRequest) *kvrpcpb.CommitResponse {
@@ -344,16 +352,17 @@ func (c *RPCClient) handleKvCommit(req *kvrpcpb.CommitRequest) *kvrpcpb.CommitRe
 }
 
 func (c *RPCClient) KvCleanup(ctx goctx.Context, addr string, req *kvrpcpb.CleanupRequest) (*kvrpcpb.CleanupResponse, error) {
-	if err := c.checkArgs(ctx, addr); err != nil {
+	client, err := c.checkArgs(ctx, addr)
+	if err != nil {
 		return nil, err
 	}
-	if err := c.checkRequest(req.GetContext(), req.Size()); err != nil {
+	if err := client.checkRequest(req.GetContext(), req.Size()); err != nil {
 		return &kvrpcpb.CleanupResponse{
 			RegionError: err,
 		}, nil
 	}
 
-	return c.handleKvCleanup(req), nil
+	return client.handleKvCleanup(req), nil
 }
 
 func (c *RPCClient) handleKvCleanup(req *kvrpcpb.CleanupRequest) *kvrpcpb.CleanupResponse {
@@ -373,16 +382,17 @@ func (c *RPCClient) handleKvCleanup(req *kvrpcpb.CleanupRequest) *kvrpcpb.Cleanu
 }
 
 func (c *RPCClient) KvBatchGet(ctx goctx.Context, addr string, req *kvrpcpb.BatchGetRequest) (*kvrpcpb.BatchGetResponse, error) {
-	if err := c.checkArgs(ctx, addr); err != nil {
+	client, err := c.checkArgs(ctx, addr)
+	if err != nil {
 		return nil, err
 	}
-	if err := c.checkRequest(req.GetContext(), req.Size()); err != nil {
+	if err := client.checkRequest(req.GetContext(), req.Size()); err != nil {
 		return &kvrpcpb.BatchGetResponse{
 			RegionError: err,
 		}, nil
 	}
 
-	return c.handleKvBatchGet(req), nil
+	return client.handleKvBatchGet(req), nil
 }
 
 func (c *RPCClient) handleKvBatchGet(req *kvrpcpb.BatchGetRequest) *kvrpcpb.BatchGetResponse {
@@ -398,16 +408,17 @@ func (c *RPCClient) handleKvBatchGet(req *kvrpcpb.BatchGetRequest) *kvrpcpb.Batc
 }
 
 func (c *RPCClient) KvBatchRollback(ctx goctx.Context, addr string, req *kvrpcpb.BatchRollbackRequest) (*kvrpcpb.BatchRollbackResponse, error) {
-	if err := c.checkArgs(ctx, addr); err != nil {
+	client, err := c.checkArgs(ctx, addr)
+	if err != nil {
 		return nil, err
 	}
-	if err := c.checkRequest(req.GetContext(), req.Size()); err != nil {
+	if err := client.checkRequest(req.GetContext(), req.Size()); err != nil {
 		return &kvrpcpb.BatchRollbackResponse{
 			RegionError: err,
 		}, nil
 	}
 
-	return c.handleKvBatchRollback(req), nil
+	return client.handleKvBatchRollback(req), nil
 }
 
 func (c *RPCClient) handleKvBatchRollback(req *kvrpcpb.BatchRollbackRequest) *kvrpcpb.BatchRollbackResponse {
@@ -421,16 +432,17 @@ func (c *RPCClient) handleKvBatchRollback(req *kvrpcpb.BatchRollbackRequest) *kv
 }
 
 func (c *RPCClient) KvScanLock(ctx goctx.Context, addr string, req *kvrpcpb.ScanLockRequest) (*kvrpcpb.ScanLockResponse, error) {
-	if err := c.checkArgs(ctx, addr); err != nil {
+	client, err := c.checkArgs(ctx, addr)
+	if err != nil {
 		return nil, err
 	}
-	if err := c.checkRequest(req.GetContext(), req.Size()); err != nil {
+	if err := client.checkRequest(req.GetContext(), req.Size()); err != nil {
 		return &kvrpcpb.ScanLockResponse{
 			RegionError: err,
 		}, nil
 	}
 
-	return c.handleKvScanLock(req), nil
+	return client.handleKvScanLock(req), nil
 }
 
 func (c *RPCClient) handleKvScanLock(req *kvrpcpb.ScanLockRequest) *kvrpcpb.ScanLockResponse {
@@ -446,16 +458,17 @@ func (c *RPCClient) handleKvScanLock(req *kvrpcpb.ScanLockRequest) *kvrpcpb.Scan
 }
 
 func (c *RPCClient) KvResolveLock(ctx goctx.Context, addr string, req *kvrpcpb.ResolveLockRequest) (*kvrpcpb.ResolveLockResponse, error) {
-	if err := c.checkArgs(ctx, addr); err != nil {
+	client, err := c.checkArgs(ctx, addr)
+	if err != nil {
 		return nil, err
 	}
-	if err := c.checkRequest(req.GetContext(), req.Size()); err != nil {
+	if err := client.checkRequest(req.GetContext(), req.Size()); err != nil {
 		return &kvrpcpb.ResolveLockResponse{
 			RegionError: err,
 		}, nil
 	}
 
-	return c.handleKvResolveLock(req), nil
+	return client.handleKvResolveLock(req), nil
 }
 
 func (c *RPCClient) handleKvResolveLock(req *kvrpcpb.ResolveLockRequest) *kvrpcpb.ResolveLockResponse {
@@ -469,10 +482,11 @@ func (c *RPCClient) handleKvResolveLock(req *kvrpcpb.ResolveLockRequest) *kvrpcp
 }
 
 func (c *RPCClient) KvGC(ctx goctx.Context, addr string, req *kvrpcpb.GCRequest) (*kvrpcpb.GCResponse, error) {
-	if err := c.checkArgs(ctx, addr); err != nil {
+	client, err := c.checkArgs(ctx, addr)
+	if err != nil {
 		return nil, err
 	}
-	if err := c.checkRequest(req.GetContext(), req.Size()); err != nil {
+	if err := client.checkRequest(req.GetContext(), req.Size()); err != nil {
 		return &kvrpcpb.GCResponse{
 			RegionError: err,
 		}, nil
@@ -482,16 +496,17 @@ func (c *RPCClient) KvGC(ctx goctx.Context, addr string, req *kvrpcpb.GCRequest)
 }
 
 func (c *RPCClient) RawGet(ctx goctx.Context, addr string, req *kvrpcpb.RawGetRequest) (*kvrpcpb.RawGetResponse, error) {
-	if err := c.checkArgs(ctx, addr); err != nil {
+	client, err := c.checkArgs(ctx, addr)
+	if err != nil {
 		return nil, err
 	}
-	if err := c.checkRequest(req.GetContext(), req.Size()); err != nil {
+	if err := client.checkRequest(req.GetContext(), req.Size()); err != nil {
 		return &kvrpcpb.RawGetResponse{
 			RegionError: err,
 		}, nil
 	}
 
-	return c.handleKvRawGet(req), nil
+	return client.handleKvRawGet(req), nil
 }
 
 func (c *RPCClient) handleKvRawGet(req *kvrpcpb.RawGetRequest) *kvrpcpb.RawGetResponse {
@@ -501,16 +516,17 @@ func (c *RPCClient) handleKvRawGet(req *kvrpcpb.RawGetRequest) *kvrpcpb.RawGetRe
 }
 
 func (c *RPCClient) RawPut(ctx goctx.Context, addr string, req *kvrpcpb.RawPutRequest) (*kvrpcpb.RawPutResponse, error) {
-	if err := c.checkArgs(ctx, addr); err != nil {
+	client, err := c.checkArgs(ctx, addr)
+	if err != nil {
 		return nil, err
 	}
-	if err := c.checkRequest(req.GetContext(), req.Size()); err != nil {
+	if err := client.checkRequest(req.GetContext(), req.Size()); err != nil {
 		return &kvrpcpb.RawPutResponse{
 			RegionError: err,
 		}, nil
 	}
 
-	return c.handleKvRawPut(req), nil
+	return client.handleKvRawPut(req), nil
 }
 
 func (c *RPCClient) handleKvRawPut(req *kvrpcpb.RawPutRequest) *kvrpcpb.RawPutResponse {
@@ -519,16 +535,17 @@ func (c *RPCClient) handleKvRawPut(req *kvrpcpb.RawPutRequest) *kvrpcpb.RawPutRe
 }
 
 func (c *RPCClient) RawDelete(ctx goctx.Context, addr string, req *kvrpcpb.RawDeleteRequest) (*kvrpcpb.RawDeleteResponse, error) {
-	if err := c.checkArgs(ctx, addr); err != nil {
+	client, err := c.checkArgs(ctx, addr)
+	if err != nil {
 		return nil, err
 	}
-	if err := c.checkRequest(req.GetContext(), req.Size()); err != nil {
+	if err := client.checkRequest(req.GetContext(), req.Size()); err != nil {
 		return &kvrpcpb.RawDeleteResponse{
 			RegionError: err,
 		}, nil
 	}
 
-	return c.handleKvRawDelete(req), nil
+	return client.handleKvRawDelete(req), nil
 }
 
 func (c *RPCClient) handleKvRawDelete(req *kvrpcpb.RawDeleteRequest) *kvrpcpb.RawDeleteResponse {
@@ -596,19 +613,20 @@ func (c *RPCClient) CoprocessorNew(ctx goctx.Context, addr string, req *coproces
 }
 
 func (c *RPCClient) Coprocessor(ctx goctx.Context, addr string, req *coprocessor.Request) (*coprocessor.Response, error) {
-	if err := c.checkArgs(ctx, addr); err != nil {
+	client, err := c.checkArgs(ctx, addr)
+	if err != nil {
 		return nil, err
 	}
 
 	if MockDAGRequest {
 		if req.GetTp() == kv.ReqTypeSelect || req.GetTp() == kv.ReqTypeIndex {
 			req.Tp = kv.ReqTypeDAG
-			resp, err := c.CoprocessorNew(ctx, addr, req)
+			resp, err := client.CoprocessorNew(ctx, addr, req)
 			return resp, errors.Trace(err)
 		}
 	}
 
-	return c.handleCopRequest(req)
+	return client.handleCopRequest(req)
 }
 
 func (c *RPCClient) Close() error {

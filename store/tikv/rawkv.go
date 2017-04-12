@@ -93,7 +93,8 @@ func (c *RawKVClient) Put(key, value []byte) error {
 	rawkvSizeHistogram.WithLabelValues("value").Observe(float64(len(value)))
 
 	req := &kvrpcpb.RawPutRequest{
-		Key: key,
+		Key:   key,
+		Value: value,
 	}
 	bo := NewBackoffer(rawkvMaxBackoff, goctx.Background())
 	sender := NewRegionRequestSender(bo, c.regionCache, c.rpcClient)
