@@ -41,7 +41,7 @@ const (
 )
 
 var (
-	msgOverflow string = mysql.MySQLErrName[mysql.ErrDataOutOfRange]
+	msgOverflow = mysql.MySQLErrName[mysql.ErrDataOutOfRange]
 )
 
 func init() {

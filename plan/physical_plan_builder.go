@@ -88,13 +88,13 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 		for i, colInfo := range ts.Columns {
 			if mysql.HasPriKeyFlag(colInfo.Flag) {
 				ts.pkCol = p.Schema().Columns[i]
+				var err error
+				rowCount, err = statsTbl.GetRowCountByIntColumnRanges(sc, ts.pkCol.ID, ts.Ranges)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
 				break
 			}
-		}
-		var err error
-		rowCount, err = ts.rowCount(sc, statsTbl)
-		if err != nil {
-			return nil, errors.Trace(err)
 		}
 	}
 	if ts.TableConditionPBExpr != nil {
@@ -148,7 +148,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 			}
 			log.Warn("truncate error in buildIndexRange")
 		}
-		rowCount, err = is.getRowCountByIndexRanges(sc, statsTbl)
+		rowCount, err = statsTbl.GetRowCountByIndexRanges(sc, is.Index.ID, is.Ranges, is.accessInAndEqCount)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

@@ -15,6 +15,7 @@ package statistics
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -126,11 +128,8 @@ func (hg *Histogram) toString(isIndex bool) string {
 	return strings.Join(strs, "\n")
 }
 
-// EqualRowCount estimates the row count where the column equals to value.
-func (hg *Histogram) EqualRowCount(sc *variable.StatementContext, value types.Datum) (int64, error) {
-	if len(hg.Buckets) == 0 {
-		return pseudoRowCount / pseudoEqualRate, nil
-	}
+// equalRowCount estimates the row count where the column equals to value.
+func (hg *Histogram) equalRowCount(sc *variable.StatementContext, value types.Datum) (int64, error) {
 	index, match, err := hg.lowerBound(sc, value)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -144,16 +143,13 @@ func (hg *Histogram) EqualRowCount(sc *variable.StatementContext, value types.Da
 	return hg.totalRowCount() / hg.NDV, nil
 }
 
-// GreaterRowCount estimates the row count where the column greater than value.
-func (hg *Histogram) GreaterRowCount(sc *variable.StatementContext, value types.Datum) (int64, error) {
-	if len(hg.Buckets) == 0 {
-		return pseudoRowCount / pseudoLessRate, nil
-	}
-	lessCount, err := hg.LessRowCount(sc, value)
+// greaterRowCount estimates the row count where the column greater than value.
+func (hg *Histogram) greaterRowCount(sc *variable.StatementContext, value types.Datum) (int64, error) {
+	lessCount, err := hg.lessRowCount(sc, value)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	eqCount, err := hg.EqualRowCount(sc, value)
+	eqCount, err := hg.equalRowCount(sc, value)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -164,11 +160,8 @@ func (hg *Histogram) GreaterRowCount(sc *variable.StatementContext, value types.
 	return gtCount, nil
 }
 
-// LessRowCount estimates the row count where the column less than value.
-func (hg *Histogram) LessRowCount(sc *variable.StatementContext, value types.Datum) (int64, error) {
-	if len(hg.Buckets) == 0 {
-		return pseudoRowCount / pseudoLessRate, nil
-	}
+// lessRowCount estimates the row count where the column less than value.
+func (hg *Histogram) lessRowCount(sc *variable.StatementContext, value types.Datum) (int64, error) {
 	index, match, err := hg.lowerBound(sc, value)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -188,16 +181,13 @@ func (hg *Histogram) LessRowCount(sc *variable.StatementContext, value types.Dat
 	return (prevCount + lessThanBucketValueCount) / 2, nil
 }
 
-// BetweenRowCount estimates the row count where column greater or equal to a and less than b.
-func (hg *Histogram) BetweenRowCount(sc *variable.StatementContext, a, b types.Datum) (int64, error) {
-	if len(hg.Buckets) == 0 {
-		return pseudoRowCount / pseudoBetweenRate, nil
-	}
-	lessCountA, err := hg.LessRowCount(sc, a)
+// betweenRowCount estimates the row count where column greater or equal to a and less than b.
+func (hg *Histogram) betweenRowCount(sc *variable.StatementContext, a, b types.Datum) (int64, error) {
+	lessCountA, err := hg.lessRowCount(sc, a)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	lessCountB, err := hg.LessRowCount(sc, b)
+	lessCountB, err := hg.lessRowCount(sc, b)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -263,6 +253,40 @@ func (c *Column) String() string {
 	return c.Histogram.toString(false)
 }
 
+// getIntColumnRowCount estimates the row count by a slice of IntColumnRange.
+func (c *Column) getIntColumnRowCount(sc *variable.StatementContext, intRanges []types.IntColumnRange,
+	totalRowCount int64) (uint64, error) {
+	var rowCount int64
+	for _, rg := range intRanges {
+		var cnt int64
+		var err error
+		if rg.LowVal == math.MinInt64 && rg.HighVal == math.MaxInt64 {
+			cnt = totalRowCount
+		} else if rg.LowVal == math.MinInt64 {
+			cnt, err = c.lessRowCount(sc, types.NewIntDatum(rg.HighVal))
+		} else if rg.HighVal == math.MaxInt64 {
+			cnt, err = c.greaterRowCount(sc, types.NewIntDatum(rg.LowVal))
+		} else {
+			if rg.LowVal == rg.HighVal {
+				cnt, err = c.equalRowCount(sc, types.NewIntDatum(rg.LowVal))
+			} else {
+				cnt, err = c.betweenRowCount(sc, types.NewIntDatum(rg.LowVal), types.NewIntDatum(rg.HighVal))
+			}
+		}
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if rg.HighVal-rg.LowVal > 0 && cnt > rg.HighVal-rg.LowVal {
+			cnt = rg.HighVal - rg.LowVal
+		}
+		rowCount += cnt
+	}
+	if rowCount > totalRowCount {
+		rowCount = totalRowCount
+	}
+	return uint64(rowCount), nil
+}
+
 // Index represents an index histogram.
 type Index struct {
 	Histogram
@@ -271,4 +295,36 @@ type Index struct {
 
 func (idx *Index) String() string {
 	return idx.Histogram.toString(true)
+}
+
+func (idx *Index) getRowCount(sc *variable.StatementContext, indexRanges []*types.IndexRange, inAndEQCnt int) (uint64, error) {
+	totalCount := int64(0)
+	for _, indexRange := range indexRanges {
+		indexRange.Align(idx.NumColumns)
+		lb, err := codec.EncodeKey(nil, indexRange.LowVal...)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if indexRange.LowExclude {
+			lb = append(lb, 0)
+		}
+		rb, err := codec.EncodeKey(nil, indexRange.HighVal...)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if !indexRange.HighExclude {
+			rb = append(rb, 0)
+		}
+		l := types.NewBytesDatum(lb)
+		r := types.NewBytesDatum(rb)
+		rowCount, err := idx.betweenRowCount(sc, l, r)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		totalCount += rowCount
+	}
+	if totalCount > idx.totalRowCount() {
+		totalCount = idx.totalRowCount()
+	}
+	return uint64(totalCount), nil
 }
