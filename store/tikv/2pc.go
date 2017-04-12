@@ -260,7 +260,10 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 	ch := make(chan error, len(batches))
 	for _, batch := range batches {
 		go func(batch batchKeys) {
-			ch <- singleBatchActionFunc(backoffer.Fork(), batch)
+			singleBatchBackoffer := backoffer.Fork()
+			singleBatchBackoffer.ctx, cancel = goctx.WithCancel(singleBatchBackoffer.ctx)
+			defer cancel()
+			ch <- singleBatchActionFunc(singleBatchBackoffer, batch)
 		}(batch)
 	}
 	var err error
