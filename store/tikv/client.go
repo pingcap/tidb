@@ -18,8 +18,8 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/kvprote/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	goctx "golang.org/x/net/context"
 	"google.golang.org/grpc"

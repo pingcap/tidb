@@ -1,5 +1,5 @@
-hash: 72cdbc4157923a75f6b1ee6b9c367d0eaab696fe614b6b299a195d53bbb9f344
-updated: 2017-03-28T20:20:33.904733747+08:00
+hash: 995fb058c04f8859c526b24cad72166b29bc7ba0f68e69591086048c7c766844
+updated: 2017-04-12T14:26:52.543898238+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -57,7 +57,7 @@ imports:
 - name: github.com/golang/snappy
   version: 723cc1e459b8eea2dea4583200fd60757d40097a
 - name: github.com/gorilla/context
-  version: 1ea25387ff6f684839d82767c1733ff4d4d15d0a
+  version: 08b5f424b9271eedf6f9f0ce86cb9396ed337a42
 - name: github.com/gorilla/mux
   version: 599cba5e7b6137d46ddf58fb1765f5d928e69604
 - name: github.com/grpc-ecosystem/grpc-gateway
@@ -106,18 +106,14 @@ imports:
   - leveldb/table
   - leveldb/util
 - name: github.com/pingcap/kvproto
-  version: 1ce19dac18a11abf6a04a11034bf42f2fbf57f1b
+  version: 3d2964e111240c5777c3b1e7aeb30cf223b644c7
   subpackages:
   - pkg/coprocessor
-  - pkg/eraftpb
   - pkg/errorpb
   - pkg/kvrpcpb
   - pkg/metapb
-  - pkg/msgpb
   - pkg/pdpb
-  - pkg/raft_cmdpb
-  - pkg/raft_serverpb
-  - pkg/util
+  - pkg/tikvpb
 - name: github.com/pingcap/pd
   version: 1441cded9a00260033f33556ff39060423eaa100
   subpackages:
