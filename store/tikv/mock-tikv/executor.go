@@ -19,8 +19,10 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/distsql/xeval"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
@@ -247,15 +249,39 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 }
 
 type selectionExec struct {
-	*tipb.Selection
-	eval   *xeval.Evaluator
-	colIDs map[int64]int
+	sc                *variable.StatementContext
+	conditions        []expression.Expression
+	relatedColOffsets []int
+	row               []types.Datum
+	evalCtx           *evalContext
 
 	src executor
 }
 
 func (e *selectionExec) SetSrcExec(exec executor) {
 	e.src = exec
+}
+
+// evalBool evaluates expression to a boolean value.
+func evalBool(exprs []expression.Expression, row []types.Datum, ctx *variable.StatementContext) (bool, error) {
+	for _, expr := range exprs {
+		data, err := expr.Eval(row)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if data.IsNull() {
+			return false, nil
+		}
+
+		isBool, err := data.ToBool(ctx)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if isBool == 0 {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func (e *selectionExec) Next() (handle int64, value [][]byte, err error) {
@@ -268,23 +294,15 @@ func (e *selectionExec) Next() (handle int64, value [][]byte, err error) {
 			return 0, nil, nil
 		}
 
-		err = e.eval.SetRowValue(handle, value, e.colIDs)
+		err = e.evalCtx.decodeRelatedColumnVals(e.relatedColOffsets, handle, value, e.row)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
-		// TODO: Now the conditions length is 1.
-		result, err := e.eval.Eval(e.Conditions[0])
+		match, err := evalBool(e.conditions, e.row, e.evalCtx.sc)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
-		if result.IsNull() {
-			continue
-		}
-		boolResult, err := result.ToBool(e.eval.StatementCtx)
-		if err != nil {
-			return 0, nil, errors.Trace(err)
-		}
-		if boolResult == 1 {
+		if match {
 			return handle, value, nil
 		}
 	}
@@ -398,12 +416,13 @@ func (e *aggregateExec) aggregate(handle int64, row [][]byte) error {
 }
 
 type topNExec struct {
-	*tipb.TopN
-	eval     *xeval.Evaluator
-	heap     *topnHeap
-	colIDs   map[int64]int
-	cursor   int
-	executed bool
+	heap              *topnHeap
+	evalCtx           *evalContext
+	relatedColOffsets []int
+	orderByExprs      []expression.Expression
+	row               []types.Datum
+	cursor            int
+	executed          bool
 
 	src executor
 }
@@ -453,23 +472,24 @@ func (e *topNExec) Next() (handle int64, value [][]byte, err error) {
 
 // evalTopN evaluates the top n elements from the data. The input receives a record including its handle and data.
 // And this function will check if this record can replace one of the old records.
-func (e *topNExec) evalTopN(handle int64, row [][]byte) error {
-	err := e.eval.SetRowValue(handle, row, e.colIDs)
+func (e *topNExec) evalTopN(handle int64, value [][]byte) error {
+	newRow := &sortRow{
+		meta: tipb.RowMeta{Handle: handle},
+		key:  make([]types.Datum, len(value)),
+	}
+	err := e.evalCtx.decodeRelatedColumnVals(e.relatedColOffsets, handle, value, e.row)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	newRow := &sortRow{
-		meta: tipb.RowMeta{Handle: handle},
-	}
-	for _, item := range e.heap.orderByItems {
-		result, err := e.eval.Eval(item.Expr)
+	for i, expr := range e.orderByExprs {
+		newRow.key[i], err = expr.Eval(e.row)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		newRow.key = append(newRow.key, result)
 	}
+
 	if e.heap.tryToAddRow(newRow) {
-		for _, val := range row {
+		for _, val := range value {
 			newRow.data = append(newRow.data, val...)
 			newRow.meta.Length += int64(len(val))
 		}
@@ -478,7 +498,7 @@ func (e *topNExec) evalTopN(handle int64, row [][]byte) error {
 }
 
 type limitExec struct {
-	*tipb.Limit
+	limit  int64
 	cursor int64
 
 	src executor
@@ -489,7 +509,7 @@ func (e *limitExec) SetSrcExec(src executor) {
 }
 
 func (e *limitExec) Next() (handle int64, value [][]byte, err error) {
-	if e.cursor >= e.GetLimit() {
+	if e.cursor >= e.limit {
 		return 0, nil, nil
 	}
 
@@ -557,6 +577,7 @@ func getRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle int64, 
 	return values, nil
 }
 
+// TODO: Remove it after replacing evaluator in aggregation.
 func extractColIDsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector map[int64]int) error {
 	if expr == nil {
 		return nil
@@ -581,4 +602,55 @@ func extractColIDsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector 
 		}
 	}
 	return nil
+}
+
+func isDuplicated(offsets []int, offset int) bool {
+	for _, idx := range offsets {
+		if idx == offset {
+			return true
+		}
+	}
+	return false
+}
+
+func extractOffsetsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector []int) ([]int, error) {
+	if expr == nil {
+		return nil, nil
+	}
+	if expr.GetTp() == tipb.ExprType_ColumnRef {
+		_, i, err := codec.DecodeInt(expr.Val)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		for idx, c := range columns {
+			if c.GetColumnId() != i {
+				continue
+			}
+			if !isDuplicated(collector, idx) {
+				collector = append(collector, idx)
+			}
+			return collector, nil
+		}
+		return nil, xeval.ErrInvalid.Gen("column %d not found", i)
+	}
+	var err error
+	for _, child := range expr.Children {
+		collector, err = extractOffsetsInExpr(child, columns, collector)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return collector, nil
+}
+
+func convertToExprs(sc *variable.StatementContext, colIDs map[int64]int, pbExprs []*tipb.Expr) ([]expression.Expression, error) {
+	exprs := make([]expression.Expression, 0, len(pbExprs))
+	for _, expr := range pbExprs {
+		e, err := expression.PBToExpr(expr, colIDs, sc)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		exprs = append(exprs, e)
+	}
+	return exprs, nil
 }

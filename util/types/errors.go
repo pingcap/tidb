@@ -24,7 +24,7 @@ var (
 	// ErrTruncated is returned when data has been truncated during conversion.
 	ErrTruncated = terror.ClassTypes.New(codeTruncated, "Data Truncated")
 	// ErrOverflow is returned when data is out of range for a field type.
-	ErrOverflow = terror.ClassTypes.New(codeOverflow, "Data Out Of Range")
+	ErrOverflow = terror.ClassTypes.New(codeOverflow, msgOverflow)
 	// ErrDivByZero is return when do division by 0.
 	ErrDivByZero = terror.ClassTypes.New(codeDivByZero, "Division by 0")
 	// ErrBadNumber is return when parsing an invalid binary decimal number.
@@ -36,15 +36,19 @@ const (
 
 	codeDataTooLong terror.ErrCode = terror.ErrCode(mysql.ErrDataTooLong)
 	codeTruncated   terror.ErrCode = terror.ErrCode(mysql.WarnDataTruncated)
-	codeOverflow    terror.ErrCode = terror.ErrCode(mysql.ErrWarnDataOutOfRange)
+	codeOverflow    terror.ErrCode = terror.ErrCode(mysql.ErrDataOutOfRange)
 	codeDivByZero   terror.ErrCode = terror.ErrCode(mysql.ErrDivisionByZero)
+)
+
+var (
+	msgOverflow string = mysql.MySQLErrName[mysql.ErrDataOutOfRange]
 )
 
 func init() {
 	typesMySQLErrCodes := map[terror.ErrCode]uint16{
 		codeDataTooLong: mysql.ErrDataTooLong,
 		codeTruncated:   mysql.WarnDataTruncated,
-		codeOverflow:    mysql.ErrWarnDataOutOfRange,
+		codeOverflow:    mysql.ErrDataOutOfRange,
 		codeDivByZero:   mysql.ErrDivisionByZero,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassTypes] = typesMySQLErrCodes
