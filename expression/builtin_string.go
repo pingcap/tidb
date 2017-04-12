@@ -1700,64 +1700,62 @@ func (b *builtinExportSetSig) eval(row []types.Datum) (d types.Datum, err error)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	if len(args) < 3 {
-		return d, errors.Trace(fmt.Errorf("Number of parameter error"))
-	}
-	for i := range args {
-		if args[i].IsNull() {
-			return d, errors.Trace(fmt.Errorf("parameter cann`t be null"))
-		}
-	}
+	var (
+		bits         string
+		on           string
+		off          string
+		separator    = ","
+		numberOfBits = 64
+	)
 	arg0, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	arg1, err := args[1].ToString()
+	bits = strconv.FormatInt(arg0, 2)
+	on, err = args[1].ToString()
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	arg2, err := args[2].ToString()
+	off, err = args[2].ToString()
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	arg3 := ","
-	var arg4 int64 = 64
-	if len(args) > 3 {
-		arg3, err = args[3].ToString()
+	switch len(args) {
+	case 4:
+		separator, err = args[3].ToString()
 		if err != nil {
 			return d, errors.Trace(err)
 		}
-	}
-	if len(args) > 4 {
-		arg4, err = args[4].ToInt64(b.ctx.GetSessionVars().StmtCtx)
+	case 5:
+		separator, err = args[3].ToString()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		arg4, err := args[4].ToInt64(b.ctx.GetSessionVars().StmtCtx)
 		if err != nil {
 			return d, errors.Trace(err)
 		}
 		if arg4 < 0 || arg4 > 64 {
 			arg4 = 64
 		}
+		numberOfBits = int(arg4)
 	}
-	bitsStr := strconv.FormatInt(arg0, 2)
-	on := arg1
-	off := arg2
-	separator := arg3
-	numberOfBits := int(arg4)
 	resSlice := make([]string, 0, numberOfBits)
-	if len(resSlice) < numberOfBits {
-		defaultStr := ""
-		for i := 0; i < numberOfBits-len(bitsStr); i++ {
-			defaultStr += "0"
+	if len(bits) < numberOfBits {
+		complementStr := ""
+		for i := 0; i < numberOfBits-len(bits); i++ {
+			complementStr += "0"
 		}
-		bitsStr = defaultStr + bitsStr
+		bits = complementStr + bits
 	}
-	for i := len(bitsStr) - 1; i >= 0; i-- {
-		if bitsStr[i] == '1' {
+	for i := len(bits) - 1; i >= 0; i-- {
+		if len(resSlice) == numberOfBits {
+			break
+		}
+		if bits[i] == '1' {
 			resSlice = append(resSlice, on)
 		} else {
 			resSlice = append(resSlice, off)
-		}
-		if len(resSlice) == numberOfBits {
-			break
 		}
 	}
 	resStr := strings.Join(resSlice, separator)
