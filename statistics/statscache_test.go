@@ -88,22 +88,23 @@ func (s *testStatsCacheSuite) TestStatsCache(c *C) {
 	c.Assert(statsTbl.Pseudo, IsTrue)
 }
 
-func compareTwoColumnsStatsSlice(cols0 map[int64]*statistics.Column, cols1 map[int64]*statistics.Column, c *C) {
-	c.Assert(len(cols0), Equals, len(cols1))
-	for _, col0 := range cols0 {
-		find := false
-		for _, col1 := range cols1 {
-			if col0.ID == col1.ID {
-				c.Assert(col0.NDV, Equals, col1.NDV)
-				c.Assert(len(col0.Buckets), Equals, len(col1.Buckets))
-				for j := 0; j < len(col0.Buckets); j++ {
-					c.Assert(col0.Buckets[j], DeepEquals, col1.Buckets[j])
-				}
-				find = true
-				break
-			}
-		}
-		c.Assert(find, IsTrue)
+func assertTableEqual(c *C, a *statistics.Table, b *statistics.Table) {
+	c.Assert(len(a.Columns), Equals, len(b.Columns))
+	for i := range a.Columns {
+		assertHistogramEqual(c, a.Columns[i].Histogram, b.Columns[i].Histogram)
+	}
+	c.Assert(len(a.Indices), Equals, len(b.Indices))
+	for i := range a.Indices {
+		assertHistogramEqual(c, a.Indices[i].Histogram, b.Indices[i].Histogram)
+	}
+}
+
+func assertHistogramEqual(c *C, a, b statistics.Histogram) {
+	c.Assert(a.ID, Equals, b.ID)
+	c.Assert(a.NDV, Equals, b.NDV)
+	c.Assert(len(a.Buckets), Equals, len(b.Buckets))
+	for j := 0; j < len(a.Buckets); j++ {
+		c.Assert(a.Buckets[j], DeepEquals, b.Buckets[j])
 	}
 }
 
@@ -133,8 +134,7 @@ func (s *testStatsCacheSuite) TestStatsStoreAndLoad(c *C) {
 	c.Assert(statsTbl2.Pseudo, IsFalse)
 	c.Assert(statsTbl2.Count, Equals, int64(recordCount))
 
-	compareTwoColumnsStatsSlice(statsTbl1.Columns, statsTbl2.Columns, c)
-	compareTwoColumnsStatsSlice(statsTbl1.Indices, statsTbl2.Indices, c)
+	assertTableEqual(c, statsTbl1, statsTbl2)
 }
 
 func (s *testStatsCacheSuite) TestDDLAfterLoad(c *C) {
