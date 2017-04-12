@@ -31,12 +31,12 @@ import (
 
 // Error instances.
 var (
-	errInvalid = terror.ClassXEval.New(codeInvalid, "invalid operation")
+	errInvalid = terror.ClassMockTikv.New(codeInvalid, "invalid operation")
 )
 
 // Error codes.
 const (
-	codeInvalid = 3
+	codeInvalid = 1
 )
 
 type executor interface {

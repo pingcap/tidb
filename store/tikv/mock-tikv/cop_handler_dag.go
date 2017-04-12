@@ -157,9 +157,9 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) *i
 }
 
 func (h *rpcHandler) buildSelection(ctx *dagContext, executor *tipb.Executor) (*selectionExec, error) {
-	pbConds := executor.Selection.Conditions
 	var err error
 	var relatedColOffsets []int
+	pbConds := executor.Selection.Conditions
 	for _, cond := range pbConds {
 		relatedColOffsets, err = extractOffsetsInExpr(cond, ctx.evalCtx.columnInfos, relatedColOffsets)
 		if err != nil {
