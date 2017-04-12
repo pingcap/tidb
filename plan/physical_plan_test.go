@@ -116,7 +116,7 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 	}
 }
 
-func (s *testPlanSuite) TestPushDownOrderbyAndLimit(c *C) {
+func (s *testPlanSuite) TestPushDownOrderByAndLimit(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql          string

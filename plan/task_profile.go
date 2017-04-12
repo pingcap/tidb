@@ -85,9 +85,14 @@ func attachPlan2TaskProfile(p PhysicalPlan, t taskProfile) taskProfile {
 // finishIndexPlan means we no longer add plan to index plan, and compute the network cost for it.
 func (t *copTaskProfile) finishIndexPlan() {
 	if t.addPlan2Index {
-		t.cst += float64(t.cnt) * netWorkFactor
+		t.indexPlan.SetSchema(expression.NewSchema()) // we only need the handle
+		t.cst += float64(t.cnt) * (netWorkFactor + scanFactor)
 		t.addPlan2Index = false
 	}
+}
+
+func (p *basePhysicalPlan) attach2TaskProfile(tasks ...taskProfile) taskProfile {
+	return attachPlan2TaskProfile(p.basePlan.self.(PhysicalPlan).Copy(), tasks[0])
 }
 
 // finishTask means we close the coprocessor task and create a root task.
@@ -104,10 +109,13 @@ func (t *copTaskProfile) finishTask(ctx context.Context, allocator *idAllocator)
 	}
 	if t.indexPlan != nil && t.tablePlan != nil {
 		newTask.plan = PhysicalIndexLookUpReader{tablePlan: t.tablePlan, indexPlan: t.indexPlan}.init(allocator, ctx)
+		newTask.plan.SetSchema(t.tablePlan.Schema())
 	} else if t.indexPlan != nil {
 		newTask.plan = PhysicalIndexReader{copPlan: t.indexPlan}.init(allocator, ctx)
+		newTask.plan.SetSchema(t.indexPlan.Schema())
 	} else {
 		newTask.plan = PhysicalTableReader{copPlan: t.tablePlan}.init(allocator, ctx)
+		newTask.plan.SetSchema(t.tablePlan.Schema())
 	}
 	return newTask
 }
@@ -149,11 +157,18 @@ func (p *Limit) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 		// If the task is copTask, the Limit can always be pushed down.
 		// When limit be pushed down, it should remove its offset.
 		pushedDownLimit := Limit{Count: p.Offset + p.Count}.init(p.allocator, p.ctx)
+		if cop.tablePlan != nil {
+			pushedDownLimit.SetSchema(cop.tablePlan.Schema())
+		} else {
+			pushedDownLimit.SetSchema(cop.indexPlan.Schema())
+		}
 		cop = attachPlan2TaskProfile(pushedDownLimit, cop).(*copTaskProfile)
 		cop.setCount(pushedDownLimit.Count)
 		profile = cop.finishTask(p.ctx, p.allocator)
 	}
-	profile = attachPlan2TaskProfile(p.Copy(), profile)
+	np := p.Copy()
+	np.SetSchema(profile.(*rootTaskProfile).plan.Schema())
+	profile = attachPlan2TaskProfile(np, profile)
 	profile.setCount(p.Count)
 	return profile
 }
@@ -190,11 +205,12 @@ func (p *Sort) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 	profile := profiles[0].copy()
 	// If this is a Sort , we cannot push it down.
 	if p.ExecLimit == nil {
-		switch t := profile.(type) {
-		case *copTaskProfile:
-			profile = t.finishTask(p.ctx, p.allocator)
+		if cop, ok := profile.(*copTaskProfile); ok {
+			profile = cop.finishTask(p.ctx, p.allocator)
 		}
-		profile = attachPlan2TaskProfile(p.Copy(), profile)
+		np := p.Copy()
+		np.SetSchema(profile.(*rootTaskProfile).plan.Schema())
+		profile = attachPlan2TaskProfile(np, profile)
 		profile.addCost(p.getCost(profile.count()))
 		return profile
 	}
@@ -208,9 +224,13 @@ func (p *Sort) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 		// push it to table plan.
 		if copTask.addPlan2Index && p.allColsFromSchema(copTask.indexPlan.Schema()) {
 			pushedDownTopN.SetChildren(copTask.indexPlan)
+			copTask.indexPlan = pushedDownTopN
+			pushedDownTopN.SetSchema(copTask.indexPlan.Schema())
 		} else {
 			copTask.finishIndexPlan()
 			pushedDownTopN.SetChildren(copTask.tablePlan)
+			copTask.tablePlan = pushedDownTopN
+			pushedDownTopN.SetSchema(copTask.tablePlan.Schema())
 		}
 		copTask.addCost(pushedDownTopN.getCost(profile.count()))
 		copTask.setCount(pushedDownTopN.ExecLimit.Count)
@@ -226,13 +246,15 @@ func (p *Sort) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 
 func (p *Projection) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 	profile := profiles[0].copy()
+	np := p.Copy()
 	switch t := profile.(type) {
 	case *copTaskProfile:
 		// TODO: Support projection push down.
 		task := t.finishTask(p.ctx, p.allocator)
-		return attachPlan2TaskProfile(p.Copy(), task)
+		profile = attachPlan2TaskProfile(np, task)
+		return profile
 	case *rootTaskProfile:
-		return attachPlan2TaskProfile(p.Copy(), t)
+		return attachPlan2TaskProfile(np, t)
 	}
 	return nil
 }
@@ -241,32 +263,55 @@ func (sel *Selection) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 	profile := profiles[0].copy()
 	switch t := profile.(type) {
 	case *copTaskProfile:
-		if t.addPlan2Index {
-			var indexSel, tableSel *Selection
-			if t.tablePlan != nil {
-				indexSel, tableSel = sel.splitSelectionByIndexColumns(t.indexPlan.Schema())
-			} else {
-				indexSel = sel.Copy().(*Selection)
+		var indexConds, tableConds []expression.Expression
+		conds := sel.pushDownConditions
+		if t.indexPlan != nil && t.addPlan2Index {
+			if is, ok := t.indexPlan.(*PhysicalIndexScan); ok {
+				conds = is.indexFilterConditions
 			}
-			if indexSel != nil {
-				indexSel.SetChildren(t.indexPlan)
-				t.indexPlan = indexSel
-				// TODO: Update t.cnt.
-				t.cst += float64(t.cnt) * cpuFactor
-			}
-			if tableSel != nil {
-				t.finishIndexPlan()
-				tableSel.SetChildren(t.tablePlan)
-				t.tablePlan = tableSel
-				t.cst += float64(t.cnt) * cpuFactor
-			}
-		} else {
-			sel.SetChildren(t.tablePlan)
-			t.tablePlan = sel.Copy()
-			t.cst += float64(t.cnt) * cpuFactor
 		}
-		// TODO: Estimate t.cnt by histogram.
-		t.cnt = uint64(float64(t.cnt) * selectionFactor)
+		if t.tablePlan != nil && !t.addPlan2Index {
+			if ts, ok := t.tablePlan.(*PhysicalTableScan); ok {
+				conds = ts.tableFilterConditions
+			}
+		}
+		if t.tablePlan != nil && t.addPlan2Index {
+			// This is the case of double read.
+			tableConds, indexConds = splitConditionsByIndexColumns(conds, t.indexPlan.Schema())
+		} else if t.addPlan2Index {
+			// Index single read.
+			indexConds = conds
+		} else {
+			tableConds = conds
+		}
+		if len(indexConds) > 0 {
+			indexSel := Selection{Conditions: indexConds}.init(sel.allocator, sel.ctx)
+			indexSel.SetChildren(t.indexPlan)
+			indexSel.SetSchema(t.indexPlan.Schema())
+			t.indexPlan = indexSel
+			t.cst += float64(t.cnt) * cpuFactor
+			// TODO: Estimate t.cnt by histogram.
+			t.cnt = uint64(float64(t.cnt) * selectionFactor)
+		}
+		if len(tableConds) > 0 {
+			t.finishIndexPlan()
+			tableSel := Selection{Conditions: tableConds}.init(sel.allocator, sel.ctx)
+			tableSel.SetChildren(t.tablePlan)
+			tableSel.SetSchema(t.tablePlan.Schema())
+			t.tablePlan = tableSel
+			t.cst += float64(t.cnt) * cpuFactor
+			// TODO: Estimate t.cnt by histogram.
+			t.cnt = uint64(float64(t.cnt) * selectionFactor)
+		}
+		if len(sel.residualConditions) > 0 {
+			profile = t.finishTask(sel.ctx, sel.allocator)
+			rootSel := Selection{Conditions: sel.residualConditions}.init(sel.allocator, sel.ctx)
+			rootSel.SetSchema(profile.(*rootTaskProfile).plan.Schema())
+			profile = attachPlan2TaskProfile(rootSel, profile)
+			t.cst += float64(t.cnt) * cpuFactor
+			// TODO: Estimate t.cnt by histogram.
+			t.cnt = uint64(float64(t.cnt) * selectionFactor)
+		}
 	case *rootTaskProfile:
 		t.cst += float64(t.cnt) * cpuFactor
 		t.cnt = uint64(float64(t.cnt) * selectionFactor)
@@ -275,25 +320,24 @@ func (sel *Selection) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 	return profile
 }
 
+func (sel *Selection) splitPushDownConditions() {
+	if len(sel.pushDownConditions)+len(sel.residualConditions) != 0 {
+		return
+	}
+	_, sel.pushDownConditions, sel.residualConditions = ExpressionsToPB(sel.ctx.GetSessionVars().StmtCtx, sel.Conditions, sel.ctx.GetClient())
+}
+
 // splitSelectionByIndexColumns splits the selection conditions by index schema. If some condition only contain the index
 // columns, it will be pushed to index plan.
-func (sel *Selection) splitSelectionByIndexColumns(schema *expression.Schema) (indexSel *Selection, tableSel *Selection) {
-	var tableConds []expression.Expression
-	var indexConds []expression.Expression
-	for _, cond := range sel.Conditions {
+func splitConditionsByIndexColumns(conditions []expression.Expression, schema *expression.Schema) (tableConds []expression.Expression, indexConds []expression.Expression) {
+	for _, cond := range conditions {
 		cols := expression.ExtractColumns(cond)
 		indices := schema.ColumnsIndices(cols)
-		if indices == nil {
+		if len(indices) == 0 {
 			tableConds = append(tableConds, cond)
 		} else {
 			indexConds = append(indexConds, cond)
 		}
-	}
-	if len(indexConds) != 0 {
-		indexSel = Selection{Conditions: indexConds}.init(sel.allocator, sel.ctx)
-	}
-	if len(tableConds) != 0 {
-		tableSel = Selection{Conditions: tableConds}.init(sel.allocator, sel.ctx)
 	}
 	return
 }

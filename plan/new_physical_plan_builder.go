@@ -14,9 +14,16 @@
 package plan
 
 import (
+	"math"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/types"
 )
 
 func (p *requiredProp) enforceProperty(task taskProfile, ctx context.Context, allocator *idAllocator) taskProfile {
@@ -48,7 +55,7 @@ func (p *Projection) getPushedProp(prop *requiredProp) (*requiredProp, bool) {
 		case *expression.Column:
 			newCols = append(newCols, expr)
 		case *expression.ScalarFunction:
-			return nil, false
+			return newProp, false
 		}
 	}
 	newProp.cols = newCols
@@ -94,7 +101,7 @@ func (p *Projection) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, e
 // consider the case that all expression are columns and all of them are asc or desc.
 func (p *Sort) getPushedProp() (*requiredProp, bool) {
 	desc := false
-	cols := make([]*expression.Column, len(p.ByItems))
+	cols := make([]*expression.Column, 0, len(p.ByItems))
 	for i, item := range p.ByItems {
 		col, ok := item.Expr.(*expression.Column)
 		if !ok {
@@ -145,8 +152,24 @@ func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) 
 	return task, p.storeTaskProfile(prop, task)
 }
 
-// TODO: The behavior of Limit may be same with many other plans. Most plans can pass the props or refuse and enforce it.
-func (p *Limit) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) {
+func planCanPushDown(p LogicalPlan) bool {
+	switch v := p.(type) {
+	case *Selection:
+		v.splitPushDownConditions()
+		return len(v.pushDownConditions) > 0
+	case *Sort:
+		return v.canPushDown()
+	case *Limit:
+		return true
+	case *LogicalAggregation:
+		// pending
+		return true
+	}
+	return false
+}
+
+// convert2NewPhysicalPlan implements LogicalPlan interface.
+func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) {
 	task, err := p.getTaskProfile(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -154,21 +177,220 @@ func (p *Limit) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error)
 	if task != nil {
 		return task, nil
 	}
-	// enforce branch
-	task, err = p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	task = p.attach2TaskProfile(task)
-	task = prop.enforceProperty(task, p.ctx, p.allocator)
-	if !prop.isEmpty() {
-		orderedTask, err := p.children[0].(LogicalPlan).convert2NewPhysicalPlan(prop)
+	if len(p.basePlan.children) == 0 {
+		task = &rootTaskProfile{plan: p.basePlan.self.(PhysicalPlan)}
+	} else {
+		// enforce branch
+		task, err = p.basePlan.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{})
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+	}
+	task = p.basePlan.self.(PhysicalPlan).attach2TaskProfile(task)
+	task = prop.enforceProperty(task, p.basePlan.ctx, p.basePlan.allocator)
+	if !prop.isEmpty() && len(p.basePlan.children) > 0 {
+		orderedTask, err := p.basePlan.children[0].(LogicalPlan).convert2NewPhysicalPlan(prop)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		orderedTask = p.basePlan.self.(PhysicalPlan).attach2TaskProfile(orderedTask)
+		if cop, ok := orderedTask.(*copTaskProfile); ok && !planCanPushDown(p.basePlan.parents[0].(LogicalPlan)) {
+			orderedTask = cop.finishTask(p.basePlan.ctx, p.basePlan.allocator)
 		}
 		if orderedTask.cost() < task.cost() {
 			task = orderedTask
 		}
 	}
 	return task, p.storeTaskProfile(prop, task)
+}
+
+func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) {
+	task, err := p.getTaskProfile(prop)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if task != nil {
+		return task, nil
+	}
+	client := p.ctx.GetClient()
+	memDB := infoschema.IsMemoryDB(p.DBName.L)
+	isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeSelect, 0)
+
+	if !isDistReq {
+		memTable := PhysicalMemTable{
+			DBName:      p.DBName,
+			Table:       p.tableInfo,
+			Columns:     p.Columns,
+			TableAsName: p.TableAsName,
+		}.init(p.allocator, p.ctx)
+		memTable.SetSchema(p.schema)
+		rb := &rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
+		memTable.Ranges = rb.buildTableRanges(fullRange)
+		task = &rootTaskProfile{plan: memTable}
+		task = prop.enforceProperty(task, p.ctx, p.allocator)
+		p.storeTaskProfile(prop, task)
+		return task, nil
+	}
+
+	indices, includeTableScan := availableIndices(p.indexHints, p.tableInfo)
+	if includeTableScan {
+		task, err = p.convert2TableScanner(prop)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	for _, idx := range indices {
+		idxTask, err := p.convert2IndexScanner(prop, idx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if task == nil || idxTask.cost() < task.cost() {
+			task = idxTask
+		}
+	}
+	return task, p.storeTaskProfile(prop, task)
+}
+
+func (p *DataSource) convert2IndexScanner(prop *requiredProp, idx *model.IndexInfo) (task taskProfile, err error) {
+	is := PhysicalIndexScan{
+		Table:       p.tableInfo,
+		TableAsName: p.TableAsName,
+		DBName:      p.DBName,
+		Columns:     p.Columns,
+		Index:       idx,
+	}.init(p.allocator, p.ctx)
+	statsTbl := p.statisticTable
+	rowCount := uint64(statsTbl.Count)
+	sc := p.ctx.GetSessionVars().StmtCtx
+	if sel, ok := p.parents[0].(*Selection); ok {
+		sel.splitPushDownConditions()
+		conds := make([]expression.Expression, 0, len(sel.pushDownConditions))
+		for _, cond := range sel.pushDownConditions {
+			conds = append(conds, cond.Clone())
+		}
+		is.AccessCondition, is.indexFilterConditions, is.accessEqualCount, is.accessInAndEqCount = DetachIndexScanConditions(conds, idx)
+		err = BuildIndexRange(sc, is)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		rowCount, err = is.getRowCountByIndexRanges(sc, statsTbl)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	} else {
+		rb := rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
+		is.Ranges = rb.buildIndexRanges(fullRange, types.NewFieldType(mysql.TypeNull))
+	}
+	copTask := &copTaskProfile{
+		cnt:           rowCount,
+		cst:           float64(rowCount) * scanFactor,
+		indexPlan:     is,
+		addPlan2Index: true,
+	}
+	if !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle) {
+		// On this way, it's double read case.
+		copTask.tablePlan = PhysicalTableScan{Columns: p.Columns, Table: is.Table}.init(p.allocator, p.ctx)
+		copTask.tablePlan.SetSchema(p.schema)
+		var indexCols []*expression.Column
+		for _, col := range idx.Columns {
+			indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: col.Offset})
+		}
+		copTask.indexPlan.SetSchema(expression.NewSchema(indexCols...))
+	} else {
+		is.SetSchema(p.schema)
+	}
+	// Check if this plan matches the property.
+	matchProperty := true
+	if !prop.isEmpty() {
+		for i, col := range idx.Columns {
+			// not matched
+			if col.Name.L == prop.cols[0].ColName.L {
+				matchProperty = matchIndicesProp(idx.Columns[i:], prop.cols)
+				break
+			} else if i >= is.accessEqualCount {
+				matchProperty = false
+				break
+			}
+		}
+	}
+	if matchProperty && !prop.isEmpty() {
+		if prop.desc {
+			is.Desc = true
+			copTask.cst += 4 * copTask.cst
+		}
+		task = copTask
+	} else {
+		is.OutOfOrder = true
+		task = prop.enforceProperty(copTask, p.ctx, p.allocator)
+	}
+	return task, nil
+}
+
+func matchIndicesProp(idxCols []*model.IndexColumn, propCols []*expression.Column) bool {
+	if len(idxCols) < len(propCols) {
+		return false
+	}
+	for i, col := range propCols {
+		if col.ColName.L != propCols[i].ColName.L {
+			return false
+		}
+	}
+	return true
+}
+
+func (p *DataSource) convert2TableScanner(prop *requiredProp) (task taskProfile, err error) {
+	ts := PhysicalTableScan{
+		Table:       p.tableInfo,
+		Columns:     p.Columns,
+		TableAsName: p.TableAsName,
+		DBName:      p.DBName,
+	}.init(p.allocator, p.ctx)
+	ts.SetSchema(p.schema)
+	sc := p.ctx.GetSessionVars().StmtCtx
+	if sel, ok := p.parents[0].(*Selection); ok {
+		sel.splitPushDownConditions()
+		conds := make([]expression.Expression, 0, len(sel.pushDownConditions))
+		for _, cond := range sel.pushDownConditions {
+			conds = append(conds, cond.Clone())
+		}
+		ts.AccessCondition, ts.tableFilterConditions = DetachTableScanConditions(conds, p.tableInfo)
+		ts.Ranges, err = BuildTableRange(ts.AccessCondition, sc)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	} else {
+		ts.Ranges = []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}
+	}
+	statsTbl := p.statisticTable
+	rowCount := uint64(statsTbl.Count)
+	var pkCol *expression.Column
+	if p.tableInfo.PKIsHandle {
+		for i, colInfo := range ts.Columns {
+			if mysql.HasPriKeyFlag(colInfo.Flag) {
+				pkCol = p.Schema().Columns[i]
+				break
+			}
+		}
+		var err error
+		rowCount, err = ts.rowCount(sc, statsTbl)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	cost := float64(rowCount) * scanFactor
+	task = &copTaskProfile{
+		cnt:       rowCount,
+		tablePlan: ts,
+		cst:       cost,
+	}
+	if pkCol != nil && len(prop.cols) == 1 && prop.cols[0].Equal(pkCol, nil) {
+		if prop.desc {
+			ts.Desc = true
+			task.addCost(cost * 4)
+		}
+		ts.KeepOrder = true
+	} else {
+		task = prop.enforceProperty(task, p.ctx, p.allocator)
+	}
+	return task, nil
 }

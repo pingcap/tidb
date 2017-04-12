@@ -179,6 +179,9 @@ type Selection struct {
 	// split into a list of AND conditions.
 	Conditions []expression.Expression
 
+	pushDownConditions []expression.Expression
+	residualConditions []expression.Expression
+
 	// onTable means if this selection's child is a table scan or index scan.
 	onTable bool
 
