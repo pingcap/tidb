@@ -18,24 +18,25 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/plan/statistics"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 )
 
 func (is *PhysicalIndexScan) getRowCountByIndexRanges(sc *variable.StatementContext, statsTbl *statistics.Table) (uint64, error) {
-	var offset int
-	for i := range is.Table.Indices {
-		if is.Table.Indices[i].Name.L == is.Index.Name.L {
-			offset = i
+	var id int64
+	for _, idx := range is.Table.Indices {
+		if idx.Name.L == is.Index.Name.L {
+			id = idx.ID
 			break
 		}
 	}
-	if len(statsTbl.Indices[offset].Numbers) == 0 {
-		return getPseudoRowCountByIndexRanges(sc, statsTbl, is.Ranges, is.Index, is.accessInAndEqCount)
+	if statsTbl.Pseudo {
+		return getPseudoRowCountByIndexRanges(sc, statsTbl, is.Table, is.Ranges, is.Index, is.accessInAndEqCount)
 	}
-	return getRealRowCountByIndexRanges(sc, statsTbl, is.Ranges, is.Index, offset)
+	return getRealRowCountByIndexRanges(sc, statsTbl, is.Ranges, is.Index, id)
 }
 
 func getRowCountByRange(sc *variable.StatementContext, statsTblCount int64, statsCol *statistics.Column, l, r types.Datum) (int64, error) {
@@ -72,7 +73,7 @@ func getRowCountByRange(sc *variable.StatementContext, statsTblCount int64, stat
 	return rowCount, nil
 }
 
-func getRealRowCountByIndexRanges(sc *variable.StatementContext, statsTbl *statistics.Table, indexRanges []*IndexRange, indexInfo *model.IndexInfo, offset int) (uint64, error) {
+func getRealRowCountByIndexRanges(sc *variable.StatementContext, statsTbl *statistics.Table, indexRanges []*types.IndexRange, indexInfo *model.IndexInfo, id int64) (uint64, error) {
 	totalCount := int64(0)
 	for _, indexRange := range indexRanges {
 		lv := indexRange.LowVal
@@ -93,7 +94,7 @@ func getRealRowCountByIndexRanges(sc *variable.StatementContext, statsTbl *stati
 		}
 		l := types.NewBytesDatum(lb)
 		r := types.NewBytesDatum(rb)
-		rowCount, err := getRowCountByRange(sc, statsTbl.Count, statsTbl.Indices[offset], l, r)
+		rowCount, err := getRowCountByRange(sc, statsTbl.Count, statsTbl.Indices[id], l, r)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -105,7 +106,7 @@ func getRealRowCountByIndexRanges(sc *variable.StatementContext, statsTbl *stati
 	return uint64(totalCount), nil
 }
 
-func getPseudoRowCountByIndexRanges(sc *variable.StatementContext, statsTbl *statistics.Table, indexRanges []*IndexRange, indexInfo *model.IndexInfo, inAndEQCnt int) (uint64, error) {
+func getPseudoRowCountByIndexRanges(sc *variable.StatementContext, statsTbl *statistics.Table, table *model.TableInfo, indexRanges []*types.IndexRange, indexInfo *model.IndexInfo, inAndEQCnt int) (uint64, error) {
 	totalCount := float64(0)
 	for _, indexRange := range indexRanges {
 		count := float64(statsTbl.Count)
@@ -116,7 +117,8 @@ func getPseudoRowCountByIndexRanges(sc *variable.StatementContext, statsTbl *sta
 		l := indexRange.LowVal[i]
 		r := indexRange.HighVal[i]
 		offset := indexInfo.Columns[i].Offset
-		rowCount, err := getRowCountByRange(sc, statsTbl.Count, statsTbl.Columns[offset], l, r)
+		id := table.Columns[offset].ID
+		rowCount, err := getRowCountByRange(sc, statsTbl.Count, statsTbl.Columns[id], l, r)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -139,22 +141,29 @@ func getPseudoRowCountByIndexRanges(sc *variable.StatementContext, statsTbl *sta
 	return uint64(totalCount), nil
 }
 
-func getRowCountByTableRange(sc *variable.StatementContext, statsTbl *statistics.Table, ranges []TableRange, offset int) (uint64, error) {
+func (p *PhysicalTableScan) rowCount(sc *variable.StatementContext, statsTbl *statistics.Table) (uint64, error) {
+	var col *model.ColumnInfo
+	for _, colInfo := range p.Table.Columns {
+		if mysql.HasPriKeyFlag(colInfo.Flag) {
+			col = colInfo
+			break
+		}
+	}
 	var rowCount uint64
-	for _, rg := range ranges {
+	for _, rg := range p.Ranges {
 		var cnt int64
 		var err error
 		if rg.LowVal == math.MinInt64 && rg.HighVal == math.MaxInt64 {
 			cnt = statsTbl.Count
 		} else if rg.LowVal == math.MinInt64 {
-			cnt, err = statsTbl.Columns[offset].LessRowCount(sc, types.NewDatum(rg.HighVal))
+			cnt, err = statsTbl.ColumnLessRowCount(sc, types.NewDatum(rg.HighVal), col)
 		} else if rg.HighVal == math.MaxInt64 {
-			cnt, err = statsTbl.Columns[offset].GreaterRowCount(sc, types.NewDatum(rg.LowVal))
+			cnt, err = statsTbl.ColumnGreaterRowCount(sc, types.NewDatum(rg.LowVal), col)
 		} else {
 			if rg.LowVal == rg.HighVal {
-				cnt, err = statsTbl.Columns[offset].EqualRowCount(sc, types.NewDatum(rg.LowVal))
+				cnt, err = statsTbl.ColumnEqualRowCount(sc, types.NewDatum(rg.LowVal), col)
 			} else {
-				cnt, err = statsTbl.Columns[offset].BetweenRowCount(sc, types.NewDatum(rg.LowVal), types.NewDatum(rg.HighVal))
+				cnt, err = statsTbl.ColumnBetweenRowCount(sc, types.NewDatum(rg.LowVal), types.NewDatum(rg.HighVal), col)
 			}
 		}
 		if err != nil {

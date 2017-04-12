@@ -21,4 +21,6 @@ type Config struct {
 	StatusAddr   string `json:"status_addr" toml:"status_addr"`
 	Socket       string `json:"socket" toml:"socket"`
 	ReportStatus bool   `json:"report_status" toml:"report_status"`
+	StorePath    string `json:"store_path" toml:"store_path"`
+	Store        string `json:"store" toml:"store"`
 }

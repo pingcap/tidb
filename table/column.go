@@ -19,6 +19,7 @@ package table
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -113,15 +114,34 @@ func CastValues(ctx context.Context, rec []types.Datum, cols []*Column, ignoreEr
 
 // CastValue casts a value based on column type.
 func CastValue(ctx context.Context, val types.Datum, col *model.ColumnInfo) (casted types.Datum, err error) {
-	casted, err = val.ConvertTo(ctx.GetSessionVars().StmtCtx, &col.FieldType)
+	sc := ctx.GetSessionVars().StmtCtx
+	casted, err = val.ConvertTo(sc, &col.FieldType)
+	// TODO: make sure all truncate errors are handled by ConvertTo.
+	err = sc.HandleTruncate(err)
 	if err != nil {
-		if ctx.GetSessionVars().StrictSQLMode {
-			return casted, errors.Trace(err)
-		}
-		// TODO: add warnings.
-		log.Warnf("cast value error %v", err)
+		return casted, errors.Trace(err)
 	}
-	return casted, nil
+	if ctx.GetSessionVars().SkipUTF8Check {
+		return casted, nil
+	}
+	if !mysql.IsUTF8Charset(col.Charset) {
+		return casted, nil
+	}
+	str := casted.GetString()
+	for i, r := range str {
+		if r == utf8.RuneError {
+			if strings.HasPrefix(str[i:], string(utf8.RuneError)) {
+				continue
+			}
+			log.Errorf("[%d] incorrect utf8 value: %x for column %s",
+				ctx.GetSessionVars().ConnectionID, []byte(str), col.Name)
+			// Truncate to valid utf8 string.
+			casted = types.NewStringDatum(str[:i])
+			err = sc.HandleTruncate(ErrTruncateWrongValue)
+			break
+		}
+	}
+	return casted, errors.Trace(err)
 }
 
 // ColDesc describes column information like MySQL desc and show columns do.
@@ -239,22 +259,31 @@ func CheckNotNull(cols []*Column, row []types.Datum) error {
 	return nil
 }
 
+// GetColOriginDefaultValue gets default value of the column from original default value.
+func GetColOriginDefaultValue(ctx context.Context, col *model.ColumnInfo) (types.Datum, error) {
+	return getColDefaultValue(ctx, col, col.OriginDefaultValue)
+}
+
 // GetColDefaultValue gets default value of the column.
 func GetColDefaultValue(ctx context.Context, col *model.ColumnInfo) (types.Datum, error) {
-	if col.DefaultValue == nil {
+	return getColDefaultValue(ctx, col, col.DefaultValue)
+}
+
+func getColDefaultValue(ctx context.Context, col *model.ColumnInfo, defaultVal interface{}) (types.Datum, error) {
+	if defaultVal == nil {
 		return getColDefaultValueFromNil(ctx, col)
 	}
 
 	// Check and get timestamp/datetime default value.
 	if col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime {
-		value, err := expression.GetTimeValue(ctx, col.DefaultValue, col.Tp, col.Decimal)
+		value, err := expression.GetTimeValue(ctx, defaultVal, col.Tp, col.Decimal)
 		if err != nil {
 			return types.Datum{}, errGetDefaultFailed.Gen("Field '%s' get default value fail - %s",
 				col.Name, errors.Trace(err))
 		}
 		return value, nil
 	}
-	value, err := CastValue(ctx, types.NewDatum(col.DefaultValue), col)
+	value, err := CastValue(ctx, types.NewDatum(defaultVal), col)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}

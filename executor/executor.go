@@ -50,7 +50,6 @@ var (
 	_ Executor = &TableDualExec{}
 	_ Executor = &TableScanExec{}
 	_ Executor = &TopnExec{}
-	_ Executor = &TrimExec{}
 	_ Executor = &UnionExec{}
 )
 
@@ -64,6 +63,9 @@ var (
 	ErrRowKeyCount     = terror.ClassExecutor.New(codeRowKeyCount, "Wrong row key entry count")
 	ErrPrepareDDL      = terror.ClassExecutor.New(codePrepareDDL, "Can not prepare DDL statements")
 	ErrPasswordNoMatch = terror.ClassExecutor.New(CodePasswordNoMatch, "Can't find any matching row in the user table")
+	ErrResultIsEmpty   = terror.ClassExecutor.New(codeResultIsEmpty, "result is empty")
+	ErrBuildExecutor   = terror.ClassExecutor.New(codeErrBuildExec, "Failed to build executor")
+	ErrBatchInsertFail = terror.ClassExecutor.New(codeBatchInsertFail, "Batch insert failed, please clean the table and try again.")
 )
 
 // Error codes.
@@ -75,6 +77,9 @@ const (
 	codeWrongParamCount terror.ErrCode = 5
 	codeRowKeyCount     terror.ErrCode = 6
 	codePrepareDDL      terror.ErrCode = 7
+	codeResultIsEmpty   terror.ErrCode = 8
+	codeErrBuildExec    terror.ErrCode = 9
+	codeBatchInsertFail terror.ErrCode = 10
 	// MySQL error code
 	CodePasswordNoMatch terror.ErrCode = 1133
 	CodeCannotUser      terror.ErrCode = 1396
@@ -95,7 +100,7 @@ type RowKeyEntry struct {
 	// Row key.
 	Handle int64
 	// Table alias name.
-	TableAsName *model.CIStr
+	TableName string
 }
 
 // Executor executes a query.
@@ -350,24 +355,26 @@ func init() {
 	// While doing optimization in the plan package, we need to execute uncorrelated subquery,
 	// but the plan package cannot import the executor package because of the dependency cycle.
 	// So we assign a function implemented in the executor package to the plan package to avoid the dependency cycle.
-	plan.EvalSubquery = func(p plan.PhysicalPlan, is infoschema.InfoSchema, ctx context.Context) (d []types.Datum, err error) {
+	plan.EvalSubquery = func(p plan.PhysicalPlan, is infoschema.InfoSchema, ctx context.Context) (rows [][]types.Datum, err error) {
 		err = ctx.ActivePendingTxn()
 		if err != nil {
-			return d, errors.Trace(err)
+			return rows, errors.Trace(err)
 		}
 		e := &executorBuilder{is: is, ctx: ctx}
 		exec := e.build(p)
 		if e.err != nil {
-			return d, errors.Trace(err)
+			return rows, errors.Trace(err)
 		}
-		row, err := exec.Next()
-		if err != nil {
-			return d, errors.Trace(err)
+		for {
+			row, err := exec.Next()
+			if err != nil {
+				return rows, errors.Trace(err)
+			}
+			if row == nil {
+				return rows, nil
+			}
+			rows = append(rows, row.Data)
 		}
-		if row == nil {
-			return
-		}
-		return row.Data, nil
 	}
 	tableMySQLErrCodes := map[terror.ErrCode]uint16{
 		CodeCannotUser:      mysql.ErrCannotUser,
@@ -434,13 +441,14 @@ func (e *ProjectionExec) Close() error {
 
 // TableDualExec represents a dual table executor.
 type TableDualExec struct {
-	schema   *expression.Schema
-	executed bool
+	schema    *expression.Schema
+	rowCount  int
+	returnCnt int
 }
 
 // Init implements the Executor Init interface.
 func (e *TableDualExec) Init() {
-	e.executed = false
+	e.returnCnt = 0
 }
 
 // Schema implements the Executor Schema interface.
@@ -450,10 +458,10 @@ func (e *TableDualExec) Schema() *expression.Schema {
 
 // Next implements the Executor Next interface.
 func (e *TableDualExec) Next() (*Row, error) {
-	if e.executed {
+	if e.returnCnt >= e.rowCount {
 		return nil, nil
 	}
-	e.executed = true
+	e.returnCnt++
 	return &Row{}, nil
 }
 
@@ -468,6 +476,12 @@ type SelectionExec struct {
 	Condition expression.Expression
 	ctx       context.Context
 	schema    *expression.Schema
+
+	// scanController will tell whether this selection need to
+	// control the condition of below scan executor.
+	scanController bool
+	controllerInit bool
+	Conditions     []expression.Expression
 }
 
 // Schema implements the Executor Schema interface.
@@ -475,8 +489,54 @@ func (e *SelectionExec) Schema() *expression.Schema {
 	return e.schema
 }
 
+// initController will init the conditions of the below scan executor.
+// It will first substitute the correlated column to constant, then build range and filter by new conditions.
+func (e *SelectionExec) initController() error {
+	sc := e.ctx.GetSessionVars().StmtCtx
+	client := e.ctx.GetClient()
+	newConds := make([]expression.Expression, 0, len(e.Conditions))
+	for _, cond := range e.Conditions {
+		newCond, err := expression.SubstituteCorCol2Constant(cond.Clone())
+		if err != nil {
+			return errors.Trace(err)
+		}
+		newConds = append(newConds, newCond)
+	}
+
+	switch x := e.Src.(type) {
+	case *XSelectTableExec:
+		accessCondition, restCondtion := plan.DetachTableScanConditions(newConds, x.tableInfo)
+		x.where, _, _ = plan.ExpressionsToPB(sc, restCondtion, client)
+		ranges, err := plan.BuildTableRange(accessCondition, sc)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		x.ranges = ranges
+	case *XSelectIndexExec:
+		x.indexPlan.AccessCondition, newConds, _, _ = plan.DetachIndexScanConditions(newConds, x.indexPlan.Index)
+		idxConds, tblConds := plan.DetachIndexFilterConditions(newConds, x.indexPlan.Index.Columns, x.indexPlan.Table)
+		x.indexPlan.IndexConditionPBExpr, _, _ = plan.ExpressionsToPB(sc, idxConds, client)
+		x.indexPlan.TableConditionPBExpr, _, _ = plan.ExpressionsToPB(sc, tblConds, client)
+		err := plan.BuildIndexRange(sc, x.indexPlan)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		x.where = x.indexPlan.TableConditionPBExpr
+	default:
+		return errors.Errorf("Error type of Executor: %T", x)
+	}
+	return nil
+}
+
 // Next implements the Executor Next interface.
 func (e *SelectionExec) Next() (*Row, error) {
+	if e.scanController && !e.controllerInit {
+		err := e.initController()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		e.controllerInit = true
+	}
 	for {
 		srcRow, err := e.Src.Next()
 		if err != nil {
@@ -485,11 +545,18 @@ func (e *SelectionExec) Next() (*Row, error) {
 		if srcRow == nil {
 			return nil, nil
 		}
-		match, err := expression.EvalBool(e.Condition, srcRow.Data, e.ctx)
-		if err != nil {
-			return nil, errors.Trace(err)
+		allMatch := true
+		for _, cond := range e.Conditions {
+			match, err := expression.EvalBool(cond, srcRow.Data, e.ctx)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if !match {
+				allMatch = false
+				break
+			}
 		}
-		if match {
+		if allMatch {
 			return srcRow, nil
 		}
 	}
@@ -497,6 +564,9 @@ func (e *SelectionExec) Next() (*Row, error) {
 
 // Close implements the Executor Close interface.
 func (e *SelectionExec) Close() error {
+	if e.scanController {
+		e.controllerInit = false
+	}
 	return e.Src.Close()
 }
 
@@ -505,7 +575,7 @@ type TableScanExec struct {
 	t          table.Table
 	asName     *model.CIStr
 	ctx        context.Context
-	ranges     []plan.TableRange
+	ranges     []types.IntColumnRange
 	seekHandle int64
 	iter       kv.Iterator
 	cursor     int
@@ -622,9 +692,13 @@ func (e *TableScanExec) getRow(handle int64) (*Row, error) {
 
 	// Put rowKey to the tail of record row.
 	rke := &RowKeyEntry{
-		Tbl:         e.t,
-		Handle:      handle,
-		TableAsName: e.asName,
+		Tbl:    e.t,
+		Handle: handle,
+	}
+	if e.asName != nil && e.asName.L != "" {
+		rke.TableName = e.asName.L
+	} else {
+		rke.TableName = e.t.Meta().Name.L
 	}
 	row.RowKeys = append(row.RowKeys, rke)
 	return row, nil
@@ -709,39 +783,6 @@ func (e *MaxOneRowExec) Next() (*Row, error) {
 		return srcRow, nil
 	}
 	return nil, nil
-}
-
-// TrimExec truncates extra columns in the Src rows.
-// Some columns in src rows are not needed in the result.
-// For example, in the 'SELECT a from t order by b' statement,
-// 'b' is needed for ordering, but not needed in the result.
-type TrimExec struct {
-	schema *expression.Schema
-	Src    Executor
-	len    int
-}
-
-// Schema implements the Executor Schema interface.
-func (e *TrimExec) Schema() *expression.Schema {
-	return e.schema
-}
-
-// Close implements the Executor Close interface.
-func (e *TrimExec) Close() error {
-	return e.Src.Close()
-}
-
-// Next implements the Executor Next interface.
-func (e *TrimExec) Next() (*Row, error) {
-	row, err := e.Src.Next()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if row == nil {
-		return nil, nil
-	}
-	row.Data = row.Data[:e.len]
-	return row, nil
 }
 
 // UnionExec represents union executor.

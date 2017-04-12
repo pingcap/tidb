@@ -90,7 +90,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache", "action", "round",
 		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest", "least",
 		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events", "less", "than", "timediff",
-		"ln", "log", "log2", "log10", "timestampdiff", "pi",
+		"ln", "log", "log2", "log10", "timestampdiff", "pi", "quote", "none", "super",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -165,6 +165,11 @@ func (s *testParserSuite) TestSimple(c *C) {
 	c.Assert(cs.Cols, HasLen, 1)
 	c.Assert(cs.Cols[0].Options, HasLen, 1)
 	c.Assert(cs.Cols[0].Options[0].Tp, Equals, ast.ColumnOptionPrimaryKey)
+
+	// for issue 2803
+	src = "use quote;"
+	_, err = parser.ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
 }
 
 type testCase struct {
@@ -597,6 +602,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		// for binary operator
 		{"SELECT binary 'a';", true},
 
+		// for bit_count
+		{`SELECT BIT_COUNT(1);`, true},
+
 		// select time
 		{"select current_timestamp", true},
 		{"select current_timestamp()", true},
@@ -661,6 +669,11 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 
 		// for CONVERT_TZ
 		{"SELECT CONVERT_TZ('2004-01-01 12:00:00','+00:00','+10:00');", true},
+
+		// for GET_FORMAT
+		{"SELECT GET_FORMAT(DATE, 'USA');", true},
+		{"SELECT GET_FORMAT(DATETIME, 'USA');", true},
+		{"SELECT GET_FORMAT(TIME, 'USA');", true},
 
 		// for LOCALTIME, LOCALTIMESTAMP
 		{"SELECT LOCALTIME(), LOCALTIME(1)", true},
@@ -760,9 +773,12 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT EXPORT_SET(5,'Y','N'), EXPORT_SET(5,'Y','N',','), EXPORT_SET(5,'Y','N',',',4)`, true},
 		{`SELECT FORMAT(12332.2,2,'de_DE'), FORMAT(12332.123456, 4)`, true},
 		{`SELECT FROM_BASE64('abc')`, true},
+		{`SELECT TO_BASE64('abc')`, true},
 		{`SELECT INSERT('Quadratic', 3, 4, 'What'), INSTR('foobarbar', 'bar')`, true},
 		{`SELECT LOAD_FILE('/tmp/picture')`, true},
 		{`SELECT LPAD('hi',4,'??')`, true},
+		{`SELECT LEFT("foobar", 3)`, true},
+		{`SELECT RIGHT("foobar", 3)`, true},
 
 		// repeat
 		{`SELECT REPEAT("a", 10);`, true},
@@ -925,16 +941,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select AES_ENCRYPT('text',UNHEX('F3229A0B371ED2D9441B830D21A390C3'))`, true},
 		{`select AES_DECRYPT(@crypt_str,@key_str)`, true},
 		{`select AES_DECRYPT(@crypt_str,@key_str,@init_vector);`, true},
-		{`SELECT ASYMMETRIC_DECRYPT(0, 0, 0);`, true},
-		{`SELECT ASYMMETRIC_DERIVE(@pub2, @priv1);`, true},
-		{`SELECT ASYMMETRIC_ENCRYPT('RSA', 'The quick brown fox', @priv);`, true},
-		{`SELECT ASYMMETRIC_SIGN(@algorithm, @digest_str, @priv_key_str, @digest_type);`, true},
-		{`SELECT ASYMMETRIC_VERIFY(@algorithm, @digest_str, @sig_str, @pub_key_str, @digest_type);`, true},
 		{`SELECT COMPRESS('');`, true},
-		{`SELECT CREATE_ASYMMETRIC_PRIV_KEY('DSA', 2048);`, true},
-		{`SELECT CREATE_ASYMMETRIC_PUB_KEY(@algorithm, @priv_key_str);`, true},
-		{`SELECT CREATE_DH_PARAMETERS(1024);`, true},
-		{`SELECT CREATE_DIGEST('SHA512', 'The quick brown fox');`, true},
 		{`SELECT DECODE(@crypt_str, @pass_str);`, true},
 		{`SELECT DES_DECRYPT(@crypt_str), DES_DECRYPT(@crypt_str, @key_str);`, true},
 		{`SELECT DES_ENCRYPT(@str), DES_ENCRYPT(@key_num);`, true},
@@ -1190,6 +1197,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t ALTER COLUMN a SET DEFAULT 1+1", false},
 		{"ALTER TABLE t ALTER COLUMN a DROP DEFAULT", true},
 		{"ALTER TABLE t ALTER a DROP DEFAULT", true},
+		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED, lock=none", true},
 
 		// for rename table statement
 		{"RENAME TABLE t TO t1", true},
@@ -1200,6 +1208,41 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"TRUNCATE t1", true},
 	}
 	s.RunTest(c, table)
+}
+
+func (s *testParserSuite) TestOptimizerHints(c *C) {
+	parser := New()
+	stmt, err := parser.Parse("select /*+ tidb_SMJ(T1,t2) tidb_smj(T3,t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	c.Assert(err, IsNil)
+	selectStmt := stmt[0].(*ast.SelectStmt)
+
+	hints := selectStmt.TableHints
+	c.Assert(len(hints), Equals, 2)
+	c.Assert(hints[0].HintName.L, Equals, "tidb_smj")
+	c.Assert(len(hints[0].Tables), Equals, 2)
+	c.Assert(hints[0].Tables[0].L, Equals, "t1")
+	c.Assert(hints[0].Tables[1].L, Equals, "t2")
+
+	c.Assert(hints[1].HintName.L, Equals, "tidb_smj")
+	c.Assert(hints[1].Tables[0].L, Equals, "t3")
+	c.Assert(hints[1].Tables[1].L, Equals, "t4")
+
+	c.Assert(len(selectStmt.TableHints), Equals, 2)
+
+	stmt, err = parser.Parse("select /*+ TIDB_INLJ(t1, T2) tidb_inlj(t3, t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	c.Assert(err, IsNil)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	c.Assert(len(hints), Equals, 2)
+	c.Assert(hints[0].HintName.L, Equals, "tidb_inlj")
+	c.Assert(len(hints[0].Tables), Equals, 2)
+	c.Assert(hints[0].Tables[0].L, Equals, "t1")
+	c.Assert(hints[0].Tables[1].L, Equals, "t2")
+
+	c.Assert(hints[1].HintName.L, Equals, "tidb_inlj")
+	c.Assert(hints[1].Tables[0].L, Equals, "t3")
+	c.Assert(hints[1].Tables[1].L, Equals, "t4")
 }
 
 func (s *testParserSuite) TestType(c *C) {
@@ -1459,6 +1502,22 @@ func (s *testParserSuite) TestTimestampDiffUnit(c *C) {
 	f, ok = expr.(*ast.FuncCallExpr)
 	c.Assert(ok, IsTrue)
 	c.Assert(f.Args[0].GetDatum().GetString(), Equals, "MONTH")
+
+	// Test Illegal TimeUnit for TimestampDiff
+	table := []testCase{
+		{"SELECT TIMESTAMPDIFF(SECOND_MICROSECOND,'2003-02-01','2003-05-01')", false},
+		{"SELECT TIMESTAMPDIFF(MINUTE_MICROSECOND,'2003-02-01','2003-05-01')", false},
+		{"SELECT TIMESTAMPDIFF(MINUTE_SECOND,'2003-02-01','2003-05-01')", false},
+		{"SELECT TIMESTAMPDIFF(HOUR_MICROSECOND,'2003-02-01','2003-05-01')", false},
+		{"SELECT TIMESTAMPDIFF(HOUR_SECOND,'2003-02-01','2003-05-01')", false},
+		{"SELECT TIMESTAMPDIFF(HOUR_MINUTE,'2003-02-01','2003-05-01')", false},
+		{"SELECT TIMESTAMPDIFF(DAY_MICROSECOND,'2003-02-01','2003-05-01')", false},
+		{"SELECT TIMESTAMPDIFF(DAY_SECOND,'2003-02-01','2003-05-01')", false},
+		{"SELECT TIMESTAMPDIFF(DAY_MINUTE,'2003-02-01','2003-05-01')", false},
+		{"SELECT TIMESTAMPDIFF(DAY_HOUR,'2003-02-01','2003-05-01')", false},
+		{"SELECT TIMESTAMPDIFF(YEAR_MONTH,'2003-02-01','2003-05-01')", false},
+	}
+	s.RunTest(c, table)
 }
 
 func (s *testParserSuite) TestSessionManage(c *C) {
@@ -1472,6 +1531,7 @@ func (s *testParserSuite) TestSessionManage(c *C) {
 		{"kill tidb 23123", true},
 		{"kill tidb connection 23123", true},
 		{"kill tidb query 23123", true},
+		{"show processlist", true},
 	}
 	s.RunTest(c, table)
 }

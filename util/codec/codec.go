@@ -95,8 +95,8 @@ func encodeBytes(b []byte, v []byte, comparable bool) []byte {
 	return b
 }
 
-func encodeSignedInt(b []byte, v int64, comaprable bool) []byte {
-	if comaprable {
+func encodeSignedInt(b []byte, v int64, comparable bool) []byte {
+	if comparable {
 		b = append(b, intFlag)
 		b = EncodeInt(b, v)
 	} else {
@@ -220,6 +220,19 @@ func CutOne(b []byte) (data []byte, remain []byte, err error) {
 		return nil, nil, errors.Trace(err)
 	}
 	return b[:l], b[l:], nil
+}
+
+// SetRawValues set raw datum values from a row data.
+func SetRawValues(data []byte, values []types.Datum) error {
+	for i := 0; i < len(values); i++ {
+		l, err := peek(data)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		values[i].SetRaw(data[:l:l])
+		data = data[l:]
+	}
+	return nil
 }
 
 // peeks the first encoded value from b and returns its length.

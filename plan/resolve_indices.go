@@ -26,7 +26,7 @@ func (p *Projection) ResolveIndicesAndCorCols() {
 }
 
 // ResolveIndicesAndCorCols implements LogicalPlan interface.
-func (p *Join) ResolveIndicesAndCorCols() {
+func (p *LogicalJoin) ResolveIndicesAndCorCols() {
 	p.baseLogicalPlan.ResolveIndicesAndCorCols()
 	lSchema := p.children[0].Schema()
 	rSchema := p.children[1].Schema()
@@ -54,7 +54,7 @@ func (p *Selection) ResolveIndicesAndCorCols() {
 }
 
 // ResolveIndicesAndCorCols implements LogicalPlan interface.
-func (p *Aggregation) ResolveIndicesAndCorCols() {
+func (p *LogicalAggregation) ResolveIndicesAndCorCols() {
 	p.baseLogicalPlan.ResolveIndicesAndCorCols()
 	for _, aggFun := range p.AggFuncs {
 		for _, arg := range aggFun.GetArgs() {
@@ -75,8 +75,8 @@ func (p *Sort) ResolveIndicesAndCorCols() {
 }
 
 // ResolveIndicesAndCorCols implements LogicalPlan interface.
-func (p *Apply) ResolveIndicesAndCorCols() {
-	p.Join.ResolveIndicesAndCorCols()
+func (p *LogicalApply) ResolveIndicesAndCorCols() {
+	p.LogicalJoin.ResolveIndicesAndCorCols()
 	for _, col := range p.corCols {
 		col.Column.ResolveIndices(p.children[0].Schema())
 	}

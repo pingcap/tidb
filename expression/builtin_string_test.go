@@ -563,7 +563,7 @@ func (s *testEvaluatorSuite) TestSpace(c *C) {
 		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
 	}
 
-	// TODO: the error depends on statement context, add those back when statemen context is supported.
+	// TODO: the error depends on statement context, add those back when statement context is supported.
 	//wrong := []struct {
 	//	Input string
 	//}{
@@ -946,6 +946,433 @@ func (s *testEvaluatorSuite) TestField(c *C) {
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.argLst...)), s.ctx)
 		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
+	}
+}
+
+func (s *testEvaluatorSuite) TestLpad(c *C) {
+	tests := []struct {
+		str    string
+		len    int64
+		padStr string
+		expect interface{}
+	}{
+		{"hi", 5, "?", "???hi"},
+		{"hi", 1, "?", "h"},
+		{"hi", 0, "?", ""},
+		{"hi", -1, "?", nil},
+		{"hi", 1, "", "h"},
+		{"hi", 5, "", nil},
+		{"hi", 5, "ab", "abahi"},
+		{"hi", 6, "ab", "ababhi"},
+	}
+	fc := funcs[ast.Lpad]
+	for _, test := range tests {
+		str := types.NewStringDatum(test.str)
+		length := types.NewIntDatum(test.len)
+		padStr := types.NewStringDatum(test.padStr)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{str, length, padStr}), s.ctx)
+		c.Assert(err, IsNil)
+		result, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		if test.expect == nil {
+			c.Assert(result.Kind(), Equals, types.KindNull)
+		} else {
+			expect, _ := test.expect.(string)
+			c.Assert(result.GetString(), Equals, expect)
+		}
+	}
+}
+
+func (s *testEvaluatorSuite) TestInstr(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Args []interface{}
+		Want interface{}
+	}{
+		{[]interface{}{"foobarbar", "bar"}, 4},
+		{[]interface{}{"xbar", "foobar"}, 0},
+
+		{[]interface{}{123456234, 234}, 2},
+		{[]interface{}{123456, 567}, 0},
+		{[]interface{}{1e10, 1e2}, 1},
+		{[]interface{}{1.234, ".234"}, 2},
+		{[]interface{}{1.234, ""}, 1},
+		{[]interface{}{"", 123}, 0},
+		{[]interface{}{"", ""}, 1},
+
+		{[]interface{}{"中文美好", "美好"}, 3},
+		{[]interface{}{"中文美好", "世界"}, 0},
+		{[]interface{}{"中文abc", "a"}, 3},
+
+		{[]interface{}{"live LONG and prosper", "long"}, 6},
+
+		{[]interface{}{"not BINARY string", "binary"}, 5},
+		{[]interface{}{[]byte("BINARY string"), []byte("binary")}, 0},
+		{[]interface{}{[]byte("BINARY string"), []byte("BINARY")}, 1},
+		{[]interface{}{[]byte("中文abc"), []byte("abc")}, 7},
+
+		{[]interface{}{"foobar", nil}, nil},
+		{[]interface{}{nil, "foobar"}, nil},
+		{[]interface{}{nil, nil}, nil},
+	}
+
+	Dtbl := tblToDtbl(tbl)
+	instr := funcs[ast.Instr]
+	for i, t := range Dtbl {
+		f, err := instr.getFunction(datumsToConstants(t["Args"]), s.ctx)
+		c.Assert(err, IsNil)
+		got, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
+	}
+}
+
+func (s *testEvaluatorSuite) TestMakeSet(c *C) {
+	defer testleak.AfterTest(c)()
+
+	tbl := []struct {
+		argList []interface{}
+		ret     interface{}
+	}{
+		{[]interface{}{1, "a", "b", "c"}, "a"},
+		{[]interface{}{1 | 4, "hello", "nice", "world"}, "hello,world"},
+		{[]interface{}{1 | 4, "hello", "nice", nil, "world"}, "hello"},
+		{[]interface{}{0, "a", "b", "c"}, ""},
+		{[]interface{}{nil, "a", "b", "c"}, nil},
+		{[]interface{}{-100 | 4, "hello", "nice", "abc", "world"}, "abc,world"},
+		{[]interface{}{-1, "hello", "nice", "abc", "world"}, "hello,nice,abc,world"},
+	}
+
+	for _, t := range tbl {
+		fc := funcs[ast.MakeSet]
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.argList...)), s.ctx)
+		c.Assert(err, IsNil)
+		r, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
+	}
+}
+
+func (s *testEvaluatorSuite) TestOct(c *C) {
+	defer testleak.AfterTest(c)()
+	octCases := []struct {
+		origin interface{}
+		ret    string
+	}{
+		{"-2.7", "1777777777777777777776"},
+		{-1.5, "1777777777777777777777"},
+		{-1, "1777777777777777777777"},
+		{"0", "0"},
+		{"1", "1"},
+		{"8", "10"},
+		{"12", "14"},
+		{"20", "24"},
+		{"100", "144"},
+		{"1024", "2000"},
+		{"2048", "4000"},
+		{1.0, "1"},
+		{9.5, "11"},
+		{13, "15"},
+		{1025, "2001"},
+		{"8a8", "10"},
+		{"abc", "0"},
+		//overflow uint64
+		{"9999999999999999999999999", "1777777777777777777777"},
+		{"-9999999999999999999999999", "1777777777777777777777"},
+	}
+	fc := funcs[ast.Oct]
+	for _, test := range octCases {
+		in := types.NewDatum(test.origin)
+		f, _ := fc.getFunction(datumsToConstants([]types.Datum{in}), s.ctx)
+		r, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		res, err := r.ToString()
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, test.ret)
+	}
+	// test NULL input for sha
+	var argNull types.Datum
+	f, _ := fc.getFunction(datumsToConstants([]types.Datum{argNull}), s.ctx)
+	r, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(r.IsNull(), IsTrue)
+}
+
+func (s *testEvaluatorSuite) TestFormat(c *C) {
+	defer testleak.AfterTest(c)()
+	formatCases := []struct {
+		number    interface{}
+		precision interface{}
+		locale    string
+		ret       interface{}
+	}{
+		{12332.1234561111111111111111111111111111111111111, 4, "en_US", "12,332.1234"},
+		{nil, 22, "en_US", nil},
+	}
+	formatCases1 := []struct {
+		number    interface{}
+		precision interface{}
+		ret       interface{}
+	}{
+		{12332.123456, 4, "12,332.1234"},
+		{12332.123456, 0, "12,332"},
+		{12332.123456, -4, "12,332"},
+		{-12332.123456, 4, "-12,332.1234"},
+		{-12332.123456, 0, "-12,332"},
+		{-12332.123456, -4, "-12,332"},
+		{"12332.123456", "4", "12,332.1234"},
+		{"12332.123456A", "4", "12,332.1234"},
+		{"-12332.123456", "4", "-12,332.1234"},
+		{"-12332.123456A", "4", "-12,332.1234"},
+		{"A123345", "4", "0.0000"},
+		{"-A123345", "4", "0.0000"},
+		{"-12332.123456", "A", "-12,332"},
+		{"12332.123456", "A", "12,332"},
+		{"-12332.123456", "4A", "-12,332.1234"},
+		{"12332.123456", "4A", "12,332.1234"},
+		{"-A12332.123456", "A", "0"},
+		{"A12332.123456", "A", "0"},
+		{"-A12332.123456", "4A", "0.0000"},
+		{"A12332.123456", "4A", "0.0000"},
+		{"-.12332.123456", "4A", "-0.1233"},
+		{".12332.123456", "4A", "0.1233"},
+		{"12332.1234567890123456789012345678901", 22, "12,332.1234567890123456789012"},
+		{nil, 22, nil},
+	}
+	formatCases2 := struct {
+		number    interface{}
+		precision interface{}
+		locale    string
+		ret       interface{}
+	}{-12332.123456, -4, "zh_CN", nil}
+	formatCases3 := struct {
+		number    interface{}
+		precision interface{}
+		locale    string
+		ret       interface{}
+	}{"-12332.123456", "4", "de_GE", nil}
+
+	for _, t := range formatCases {
+		fc := funcs[ast.Format]
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.number, t.precision, t.locale)), s.ctx)
+		c.Assert(err, IsNil)
+		r, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
+	}
+
+	for _, t := range formatCases1 {
+		fc := funcs[ast.Format]
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.number, t.precision)), s.ctx)
+		c.Assert(err, IsNil)
+		r, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
+	}
+
+	fc2 := funcs[ast.Format]
+	f2, err := fc2.getFunction(datumsToConstants(types.MakeDatums(formatCases2.number, formatCases2.precision, formatCases2.locale)), s.ctx)
+	c.Assert(err, IsNil)
+	r2, err := f2.eval(nil)
+	c.Assert(types.NewDatum(err), testutil.DatumEquals, types.NewDatum(errors.New("not implemented")))
+	c.Assert(r2, testutil.DatumEquals, types.NewDatum(formatCases2.ret))
+
+	fc3 := funcs[ast.Format]
+	f3, err := fc3.getFunction(datumsToConstants(types.MakeDatums(formatCases3.number, formatCases3.precision, formatCases3.locale)), s.ctx)
+	c.Assert(err, IsNil)
+	r3, err := f3.eval(nil)
+	c.Assert(types.NewDatum(err), testutil.DatumEquals, types.NewDatum(errors.New("not support for the specific locale")))
+	c.Assert(r3, testutil.DatumEquals, types.NewDatum(formatCases3.ret))
+}
+
+func (s *testEvaluatorSuite) TestFromBase64(c *C) {
+	tests := []struct {
+		args   interface{}
+		expect interface{}
+	}{
+		{string(""), string("")},
+		{string("YWJj"), string("abc")},
+		{string("cXdlcnR5MTIzNDU2"), string("qwerty123456")},
+		{
+			string("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0NTY3ODkrLw=="),
+			string("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"),
+		},
+	}
+	fc := funcs[ast.FromBase64]
+	for _, test := range tests {
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(test.args)), s.ctx)
+		c.Assert(err, IsNil)
+		result, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		if test.expect == nil {
+			c.Assert(result.Kind(), Equals, types.KindNull)
+		} else {
+			expect, _ := test.expect.(string)
+			c.Assert(result.GetString(), Equals, expect)
+		}
+	}
+}
+
+func (s *testEvaluatorSuite) TestInsert(c *C) {
+	tests := []struct {
+		args   []interface{}
+		expect interface{}
+	}{
+		{[]interface{}{"Quadratic", 3, 4, "What"}, "QuWhattic"},
+		{[]interface{}{"Quadratic", -1, 4, "What"}, "Quadratic"},
+		{[]interface{}{"Quadratic", 3, 100, "What"}, "QuWhat"},
+		{[]interface{}{nil, 3, 100, "What"}, nil},
+		{[]interface{}{"Quadratic", nil, 4, "What"}, nil},
+		{[]interface{}{"Quadratic", 3, nil, "What"}, nil},
+		{[]interface{}{"Quadratic", 3, 4, nil}, nil},
+		{[]interface{}{"Quadratic", 3, -1, "What"}, "QuWhat"},
+		{[]interface{}{"Quadratic", 3, 1, "What"}, "QuWhatdratic"},
+
+		{[]interface{}{"我叫小雨呀", 3, 2, "王雨叶"}, "我叫王雨叶呀"},
+		{[]interface{}{"我叫小雨呀", -1, 2, "王雨叶"}, "我叫小雨呀"},
+		{[]interface{}{"我叫小雨呀", 3, 100, "王雨叶"}, "我叫王雨叶"},
+		{[]interface{}{nil, 3, 100, "王雨叶"}, nil},
+		{[]interface{}{"我叫小雨呀", nil, 4, "王雨叶"}, nil},
+		{[]interface{}{"我叫小雨呀", 3, nil, "王雨叶"}, nil},
+		{[]interface{}{"我叫小雨呀", 3, 4, nil}, nil},
+		{[]interface{}{"我叫小雨呀", 3, -1, "王雨叶"}, "我叫王雨叶"},
+		{[]interface{}{"我叫小雨呀", 3, 1, "王雨叶"}, "我叫王雨叶雨呀"},
+	}
+	fc := funcs[ast.InsertFunc]
+	for _, test := range tests {
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(test.args...)), s.ctx)
+		c.Assert(err, IsNil)
+		result, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		if test.expect == nil {
+			c.Assert(result.Kind(), Equals, types.KindNull)
+		} else {
+			expect, _ := test.expect.(string)
+			c.Assert(result.GetString(), Equals, expect)
+		}
+	}
+}
+
+func (s *testEvaluatorSuite) TestOrd(c *C) {
+	defer testleak.AfterTest(c)()
+	ordCases := []struct {
+		origin interface{}
+		ret    int64
+	}{
+		// ASCII test cases
+		{"", 0},
+		{"A", 65},
+		{"你好", 14990752},
+		{1, 49},
+		{1.2, 49},
+		{true, 49},
+		{false, 48},
+
+		{2, 50},
+		{-1, 45},
+		{"-1", 45},
+		{"2", 50},
+		{"PingCap", 80},
+		{"中国", 14989485},
+		{"にほん", 14909867},
+		{"한국", 15570332},
+	}
+
+	fc := funcs[ast.Ord]
+	for _, testcase := range ordCases {
+		in := types.NewDatum(testcase.origin)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{in}), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(v.GetInt64(), Equals, testcase.ret)
+	}
+	// test NULL input for sha
+	var argNull types.Datum
+	f, err := fc.getFunction(datumsToConstants([]types.Datum{argNull}), s.ctx)
+	c.Assert(err, IsNil)
+	r, err := f.eval(nil)
+	c.Assert(r.IsNull(), IsTrue)
+}
+
+func (s *testEvaluatorSuite) TestElt(c *C) {
+	defer testleak.AfterTest(c)()
+
+	tbl := []struct {
+		argLst []interface{}
+		ret    interface{}
+	}{
+		{[]interface{}{1, "Hej", "ej", "Heja", "hej", "foo"}, "Hej"},
+		{[]interface{}{9, "Hej", "ej", "Heja", "hej", "foo"}, nil},
+		{[]interface{}{-1, "Hej", "ej", "Heja", "ej", "hej", "foo"}, nil},
+		{[]interface{}{0, 2, 3, 11, 1}, nil},
+		{[]interface{}{3, 2, 3, 11, 1}, "11"},
+		{[]interface{}{1.1, "2.1", "3.1", "11.1", "1.1"}, "2.1"},
+	}
+	for _, t := range tbl {
+		fc := funcs[ast.Elt]
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.argLst...)), s.ctx)
+		c.Assert(err, IsNil)
+		r, err := f.eval(nil)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
+	}
+}
+
+func (s *testEvaluatorSuite) TestBin(c *C) {
+	defer testleak.AfterTest(c)()
+
+	tbl := []struct {
+		Input    interface{}
+		Expected interface{}
+	}{
+		{"10", "1010"},
+		{"10.2", "1010"},
+		{"10aa", "1010"},
+		{"10.2aa", "1010"},
+		{"aaa", "0"},
+		{"", nil},
+		{10, "1010"},
+		{10.0, "1010"},
+		{-1, "1111111111111111111111111111111111111111111111111111111111111111"},
+		{"-1", "1111111111111111111111111111111111111111111111111111111111111111"},
+		{nil, nil},
+	}
+	fc := funcs[ast.Bin]
+	dtbl := tblToDtbl(tbl)
+	for _, t := range dtbl {
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t["Input"])), s.ctx)
+		c.Assert(err, IsNil)
+		r, err := f.eval(nil)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(t["Expected"][0]))
+	}
+}
+
+func (s *testEvaluatorSuite) TestQuote(c *C) {
+	defer testleak.AfterTest(c)()
+
+	tbl := []struct {
+		arg interface{}
+		ret interface{}
+	}{
+		{`Don\'t!`, `'Don\\\'t!'`},
+		{`Don't`, `'Don\'t'`},
+		{`Don"`, `'Don"'`},
+		{`Don\"`, `'Don\\"'`},
+		{`\'`, `'\\\''`},
+		{`\"`, `'\\"'`},
+		{`萌萌哒(๑•ᴗ•๑)😊`, `'萌萌哒(๑•ᴗ•๑)😊'`},
+		{`㍿㌍㍑㌫`, `'㍿㌍㍑㌫'`},
+		{string([]byte{0, 26}), `'\0\Z'`},
+		{nil, nil},
+	}
+
+	for _, t := range tbl {
+		fc := funcs[ast.Quote]
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.arg)), s.ctx)
+		c.Assert(err, IsNil)
+		r, err := f.eval(nil)
+		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
 	}
 }

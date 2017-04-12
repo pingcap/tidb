@@ -199,6 +199,30 @@ func (s *testSuite) TestJoin(c *C) {
 	tk.MustExec("insert into t1 values (1)")
 	result = tk.MustQuery("select t.c1 from t , t1 where t.c1 = t1.c1")
 	result.Check(testkit.Rows("1"))
+	tk.MustExec("drop table if exists t,t2,t1")
+	tk.MustExec("create table t(c1 int)")
+	tk.MustExec("create table t1(c1 int, c2 int)")
+	tk.MustExec("create table t2(c1 int, c2 int)")
+	tk.MustExec("insert into t1 values(1,2),(2,3),(3,4)")
+	tk.MustExec("insert into t2 values(1,0),(2,0),(3,0)")
+	tk.MustExec("insert into t values(1),(2),(3)")
+	result = tk.MustQuery("select * from t1 , t2 where t2.c1 = t1.c1 and t2.c2 = 0 and t1.c2 in (select * from t)")
+	result.Check(testkit.Rows("1 2 1 0", "2 3 2 0"))
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t(a int primary key, b int)")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("insert into t values(1, 1), (2, 2), (3, 3)")
+	tk.MustExec("insert into t1 values(1, 2), (1, 3), (3, 4), (4, 5)")
+	// The physical plans of the two sql are tested at physical_plan_test.go
+	tk.MustQuery("select /*+ TIDB_INLJ(t, t1) */ * from t join t1 on t.a=t1.a").Check(testkit.Rows("1 1 1 2", "1 1 1 3", "3 3 3 4"))
+	tk.MustQuery("select /*+ TIDB_INLJ(t1) */ * from t1 join t on t.a=t1.a and t.a < t1.b").Check(testkit.Rows("1 2 1 1", "1 3 1 1", "3 4 3 3"))
+	tk.MustQuery("select /*+ TIDB_INLJ(t, t1) */ * from t right outer join t1 on t.a=t1.a").Check(testkit.Rows("1 1 1 2", "1 1 1 3", "3 3 3 4", "<nil> <nil> 4 5"))
+	tk.MustQuery("select /*+ TIDB_INLJ(t, t1) */ avg(t.b) from t right outer join t1 on t.a=t1.a").Check(testkit.Rows("1.6667"))
+
+	// Test that two conflict hints will return error
+	_, err = tk.Exec("select /*+ TIDB_INLJ(t) TIDB_SMJ(t) */ * from t join t1 on t.a=t1.a")
+	c.Assert(err, NotNil)
+
 }
 
 func (s *testSuite) TestMultiJoin(c *C) {
@@ -426,6 +450,15 @@ func (s *testSuite) TestSubquery(c *C) {
 	result.Check(testkit.Rows("1 0", "2 2"))
 	result = tk.MustQuery("select *, 0 < any (select count(id) from s where id = t.id) from t")
 	result.Check(testkit.Rows("1 0", "2 1"))
+	result = tk.MustQuery("select (select count(*) from t k where t.id = id) from s, t where t.id = s.id limit 1")
+	result.Check(testkit.Rows("1"))
+	tk.MustExec("drop table if exists t, s")
+	tk.MustExec("create table t(id int primary key)")
+	tk.MustExec("create table s(id int, index k(id))")
+	tk.MustExec("insert into t values(1), (2)")
+	tk.MustExec("insert into s values(2), (2)")
+	result = tk.MustQuery("select (select id from s where s.id = t.id order by s.id limit 1) from t")
+	result.Check(testkit.Rows("<nil>", "2"))
 }
 
 func (s *testSuite) TestInSubquery(c *C) {
@@ -467,6 +500,26 @@ func (s *testSuite) TestInSubquery(c *C) {
 	tk.MustExec("insert into t2 values (1),(2),(3),(4),(5),(6),(7),(8),(9),(10)")
 	result = tk.MustQuery("select a from t1 where (1,1) in (select * from t2 s , t2 t where t1.a = s.a and s.a = t.a limit 1)")
 	result.Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("create table t2 (a int)")
+	tk.MustExec("insert into t1 values (1),(2)")
+	tk.MustExec("insert into t2 values (1),(2)")
+	tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 1")
+	result = tk.MustQuery("select * from t1 where a in (select * from t2)")
+	result.Check(testkit.Rows("1", "2"))
+	result = tk.MustQuery("select * from t1 where a in (select * from t2 where false)")
+	result.Check(testkit.Rows())
+	result = tk.MustQuery("select * from t1 where a not in (select * from t2 where false)")
+	result.Check(testkit.Rows("1", "2"))
+	tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 0")
+	result = tk.MustQuery("select * from t1 where a in (select * from t2)")
+	result.Check(testkit.Rows("1", "2"))
+	result = tk.MustQuery("select * from t1 where a in (select * from t2 where false)")
+	result.Check(testkit.Rows())
+	result = tk.MustQuery("select * from t1 where a not in (select * from t2 where false)")
+	result.Check(testkit.Rows("1", "2"))
 }
 
 func (s *testSuite) TestJoinLeak(c *C) {

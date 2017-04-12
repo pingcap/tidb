@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -57,11 +58,13 @@ func (m *MockExec) Close() error {
 }
 
 func (s *testSuite) TestAggregation(c *C) {
+	mocktikv.MockDAGRequest = true
 	plan.JoinConcurrency = 1
 	defer func() {
 		plan.JoinConcurrency = 5
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
+		mocktikv.MockDAGRequest = false
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -74,7 +77,9 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("insert t values (1, 1)")
 	tk.MustExec("insert t values (3, 2)")
 	tk.MustExec("insert t values (4, 3)")
-	result := tk.MustQuery("select count(*) from t group by d")
+	result := tk.MustQuery("select count(*) from t")
+	result.Check(testkit.Rows("7"))
+	result = tk.MustQuery("select count(*) from t group by d")
 	result.Check(testkit.Rows("3", "2", "2"))
 	result = tk.MustQuery("select distinct 99 from t group by d having d > 0")
 	result.Check(testkit.Rows("99"))
@@ -270,8 +275,32 @@ func (s *testSuite) TestAggregation(c *C) {
 
 	result = tk.MustQuery("select count(*) from information_schema.columns")
 	// When adding new memory table in information_schema, please update this variable.
-	columnCountOfAllInformationSchemaTables := "557"
+	columnCountOfAllInformationSchemaTables := "587"
 	result.Check(testkit.Rows(columnCountOfAllInformationSchemaTables))
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1 (c1 int)")
+	tk.MustExec("create table t2 (c1 int)")
+	tk.MustExec("insert into t1 values(3), (2)")
+	tk.MustExec("insert into t2 values(1), (2)")
+	tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 1")
+	result = tk.MustQuery("select sum(c1 in (select * from t2)) from t1")
+	result.Check(testkit.Rows("1"))
+	tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 0")
+	result = tk.MustQuery("select sum(c1 in (select * from t2)) from t1")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select sum(c1) k from (select * from t1 union all select * from t2)t group by c1 * 2 order by k")
+	result.Check(testkit.Rows("1", "3", "4"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int)")
+	tk.MustExec("insert into t values(1, 2, 3), (1, 2, 4)")
+	result = tk.MustQuery("select count(distinct c), count(distinct a,b) from t")
+	result.Check(testkit.Rows("2 1"))
+
+	tk.MustExec("create table idx_agg (a int, b int, index (b))")
+	tk.MustExec("insert idx_agg values (1, 1), (1, 2), (2, 2)")
+	tk.MustQuery("select sum(a), sum(b) from idx_agg where b > 0 and b < 10")
 }
 
 func (s *testSuite) TestStreamAgg(c *C) {
@@ -364,9 +393,11 @@ func (s *testSuite) TestStreamAgg(c *C) {
 }
 
 func (s *testSuite) TestAggPrune(c *C) {
+	mocktikv.MockDAGRequest = true
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
+		mocktikv.MockDAGRequest = false
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -403,9 +434,11 @@ func (s *testSuite) TestSelectDistinct(c *C) {
 }
 
 func (s *testSuite) TestAggPushDown(c *C) {
+	mocktikv.MockDAGRequest = true
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
+		mocktikv.MockDAGRequest = false
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

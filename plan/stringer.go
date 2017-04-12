@@ -26,7 +26,7 @@ func ToString(p Plan) string {
 
 func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 	switch in.(type) {
-	case *Join, *Union, *PhysicalHashJoin, *PhysicalHashSemiJoin, *Apply, *PhysicalApply:
+	case *LogicalJoin, *Union, *PhysicalHashJoin, *PhysicalHashSemiJoin, *LogicalApply, *PhysicalApply, *PhysicalMergeJoin:
 		idxs = append(idxs, len(strs))
 	}
 
@@ -42,8 +42,6 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = fmt.Sprintf("Index(%s.%s)%v", x.Table.Name.L, x.Index.Name.L, x.Ranges)
 	case *PhysicalTableScan:
 		str = fmt.Sprintf("Table(%s)", x.Table.Name.L)
-	case *PhysicalDummyScan:
-		str = "Dummy"
 	case *PhysicalHashJoin:
 		last := len(idxs) - 1
 		idx := idxs[last]
@@ -71,7 +69,19 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		} else {
 			str = "SemiJoin{" + strings.Join(children, "->") + "}"
 		}
-	case *Apply, *PhysicalApply:
+	case *PhysicalMergeJoin:
+		last := len(idxs) - 1
+		idx := idxs[last]
+		children := strs[idx:]
+		strs = strs[:idx]
+		idxs = idxs[:last]
+		str = "MergeJoin{" + strings.Join(children, "->") + "}"
+		for _, eq := range x.EqualConditions {
+			l := eq.GetArgs()[0].String()
+			r := eq.GetArgs()[1].String()
+			str += fmt.Sprintf("(%s,%s)", l, r)
+		}
+	case *LogicalApply, *PhysicalApply:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]
@@ -93,7 +103,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		if x.ExecLimit != nil {
 			str += fmt.Sprintf(" + Limit(%v) + Offset(%v)", x.ExecLimit.Count, x.ExecLimit.Offset)
 		}
-	case *Join:
+	case *LogicalJoin:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]
@@ -122,6 +132,8 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "Selection"
 	case *Projection:
 		str = "Projection"
+	case *TableDual:
+		str = "Dual"
 	case *PhysicalAggregation:
 		switch x.AggType {
 		case StreamedAgg:
@@ -129,7 +141,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		default:
 			str = "HashAgg"
 		}
-	case *Aggregation:
+	case *LogicalAggregation:
 		str = "Aggr("
 		for i, aggFunc := range x.AggFuncs {
 			str += aggFunc.String()
@@ -138,8 +150,6 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			}
 		}
 		str += ")"
-	case *Trim:
-		str = "Trim"
 	case *Cache:
 		str = "Cache"
 	default:

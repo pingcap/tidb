@@ -32,6 +32,7 @@ var (
 	_ functionClass = &lockFunctionClass{}
 	_ functionClass = &releaseLockFunctionClass{}
 	_ functionClass = &valuesFunctionClass{}
+	_ functionClass = &bitCountFunctionClass{}
 )
 
 var (
@@ -44,6 +45,7 @@ var (
 	_ builtinFunc = &builtinLockSig{}
 	_ builtinFunc = &builtinReleaseLockSig{}
 	_ builtinFunc = &builtinValuesSig{}
+	_ builtinFunc = &builtinBitCountSig{}
 )
 
 type inFunctionClass struct {
@@ -245,4 +247,21 @@ func (b *builtinValuesSig) eval(_ []types.Datum) (types.Datum, error) {
 		return row[b.offset], nil
 	}
 	return types.Datum{}, errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), b.offset)
+}
+
+type bitCountFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *bitCountFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinBitCountSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinBitCountSig struct {
+	baseBuiltinFunc
+}
+
+// See https://dev.mysql.com/doc/refman/5.7/en/bit-functions.html#function_bit-count
+func (b *builtinBitCountSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("BIT_COUNT")
 }

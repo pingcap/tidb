@@ -1,5 +1,5 @@
-hash: 69c8b0a13ba9c488c1a34d8fbc66cc55863e0bf595e738e642ca343c58bec615
-updated: 2017-03-06T19:54:24.967046566+08:00
+hash: ab51f14e77a696bd94f19d1c7e37daa1f61ea84b83b354739fa0880d5a6112be
+updated: 2017-04-07T19:00:39.285793236+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -46,7 +46,7 @@ imports:
 - name: github.com/go-sql-driver/mysql
   version: 3dd7008ac1529aca1bcd8a9db75228a71ba23cac
 - name: github.com/gogo/protobuf
-  version: 909568be09de550ed094403c2bf8a261b5bb730a
+  version: 100ba4e885062801d56799d78530b73b178a78f3
   subpackages:
   - proto
 - name: github.com/golang/protobuf
@@ -56,6 +56,10 @@ imports:
   - proto
 - name: github.com/golang/snappy
   version: 723cc1e459b8eea2dea4583200fd60757d40097a
+- name: github.com/gorilla/context
+  version: 08b5f424b9271eedf6f9f0ce86cb9396ed337a42
+- name: github.com/gorilla/mux
+  version: 599cba5e7b6137d46ddf58fb1765f5d928e69604
 - name: github.com/grpc-ecosystem/grpc-gateway
   version: c8ec92d0481dd77d9b8c1808eb6476d190aa039a
   subpackages:
@@ -102,7 +106,7 @@ imports:
   - leveldb/table
   - leveldb/util
 - name: github.com/pingcap/kvproto
-  version: 854b7eeb43e436a692463a18f03dabfe917ebe2b
+  version: 1ce19dac18a11abf6a04a11034bf42f2fbf57f1b
   subpackages:
   - pkg/coprocessor
   - pkg/eraftpb
@@ -115,18 +119,16 @@ imports:
   - pkg/raft_serverpb
   - pkg/util
 - name: github.com/pingcap/pd
-  version: 174171b2b15c871c480959397d9b8047175559e7
+  version: cb3635aa22d90672a84567c80009de1d71552520
   subpackages:
   - pd-client
   - pkg/apiutil
-  - pkg/metricutil
-  - pkg/rpcutil
-  - pkg/typeutil
 - name: github.com/pingcap/tipb
-  version: 05a4d27c130a965745196e4da8ca395a15d7928f
+  version: 9cc6927f2246516ce8a2e9517e3ebdf81554a2d2
   subpackages:
   - go-binlog
   - go-tipb
+  - sharedbytes
 - name: github.com/prometheus/client_golang
   version: c5b7fccd204277076155f10851dad72b76a49317
   subpackages:

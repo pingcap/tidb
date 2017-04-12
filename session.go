@@ -18,7 +18,6 @@
 package tidb
 
 import (
-	goctx "context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -49,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-binlog"
+	goctx "golang.org/x/net/context"
 )
 
 // Session context
@@ -255,6 +255,7 @@ func (s *session) doCommitWithRetry() error {
 	err := s.doCommit()
 	if err != nil {
 		if s.isRetryableError(err) {
+			log.Warnf("[%d] retryable error: %v, txn: %v", s.sessionVars.ConnectionID, err, s.txn)
 			// Transactions will retry 2 ~ commitRetryLimit times.
 			// We make larger transactions retry less times to prevent cluster resource outage.
 			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
@@ -341,11 +342,18 @@ func (s *session) retry(maxCnt int) error {
 	for {
 		s.prepareTxnCtx()
 		s.sessionVars.RetryInfo.ResetOffset()
-		for _, sr := range nh.history {
+		for i, sr := range nh.history {
 			st := sr.st
 			txt := st.OriginText()
-			log.Warnf("[%d] Retry %s", connID, sqlForLog(txt))
+			if retryCnt == 0 {
+				// We do not have to log the query every time.
+				// We print the queries at the first try only.
+				log.Warnf("[%d] Retry [%d] query [%d] %s", connID, retryCnt, i, sqlForLog(txt))
+			} else {
+				log.Warnf("[%d] Retry [%d] query [%d]", connID, retryCnt, i)
+			}
 			s.sessionVars.StmtCtx = sr.stmtCtx
+			s.sessionVars.StmtCtx.ResetForRetry()
 			_, err = st.Exec(s)
 			if err != nil {
 				break
@@ -363,9 +371,10 @@ func (s *session) retry(maxCnt int) error {
 		}
 		retryCnt++
 		if !s.unlimitedRetryCount && (retryCnt >= maxCnt) {
-			log.Warnf("[%id] Retry reached max count %d", connID, retryCnt)
+			log.Warnf("[%d] Retry reached max count %d", connID, retryCnt)
 			return errors.Trace(err)
 		}
+		log.Warnf("[%d] retryable error: %v, txn: %v", connID, err, s.txn)
 		kv.BackOff(retryCnt)
 	}
 	return err
@@ -378,7 +387,9 @@ func sqlForLog(sql string) string {
 	return sql
 }
 
-var sysSessionPool = sync.Pool{}
+func (s *session) sysSessionPool() *sync.Pool {
+	return sessionctx.GetDomain(s).SysSessionPool()
+}
 
 // ExecRestrictedSQL implements RestrictedSQLExecutor interface.
 // This is used for executing some restricted sql statements, usually executed during a normal statement execution.
@@ -387,7 +398,7 @@ var sysSessionPool = sync.Pool{}
 func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) ([]*ast.Row, []*ast.ResultField, error) {
 	// Use special session to execute the sql.
 	var se *session
-	tmp := sysSessionPool.Get()
+	tmp := s.sysSessionPool().Get()
 	if tmp != nil {
 		se = tmp.(*session)
 	} else {
@@ -400,7 +411,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) ([]*ast.Row
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
 	}
-	defer sysSessionPool.Put(se)
+	defer s.sysSessionPool().Put(se)
 
 	recordSets, err := se.Execute(sql)
 	if err != nil {
@@ -455,7 +466,7 @@ func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
 		return "", errors.Trace(err)
 	}
 	if len(rows) == 0 {
-		return "", terror.ExecResultIsEmpty
+		return "", executor.ErrResultIsEmpty
 	}
 	value, err := types.ToString(rows[0].Data[0].GetValue())
 	if err != nil {
@@ -474,7 +485,12 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 		mysql.SystemDB, mysql.GlobalVariablesTable, name)
 	sysVar, err := s.getExecRet(s, sql)
 	if err != nil {
-		if terror.ExecResultIsEmpty.Equal(err) {
+		if executor.ErrResultIsEmpty.Equal(err) {
+			sv, ok := variable.SysVars[name]
+			isUninitializedGlobalVariable := ok && sv.Scope|variable.ScopeGlobal > 0
+			if isUninitializedGlobalVariable {
+				return sv.Value, nil
+			}
 			return "", variable.UnknownSystemVar.GenByArgs(name)
 		}
 		return "", errors.Trace(err)
@@ -484,8 +500,8 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
 func (s *session) SetGlobalSysVar(name string, value string) error {
-	sql := fmt.Sprintf(`UPDATE  %s.%s SET VARIABLE_VALUE="%s" WHERE VARIABLE_NAME="%s";`,
-		mysql.SystemDB, mysql.GlobalVariablesTable, value, strings.ToLower(name))
+	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
+		mysql.SystemDB, mysql.GlobalVariablesTable, strings.ToLower(name), value)
 	_, _, err := s.ExecRestrictedSQL(s, sql)
 	return errors.Trace(err)
 }
@@ -542,9 +558,6 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 
 		s.stmtState = ph.StartStatement(sql, connID, perfschema.CallerNameSessionExecute, rawStmts[i])
 		s.SetValue(context.QueryString, st.OriginText())
-
-		// Update processinfo, ShowProcess() will use it.
-		s.SetProcessInfo(st.OriginText())
 
 		startTS = time.Now()
 		r, err := runStmt(s, st)
@@ -637,9 +650,6 @@ func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (ast.R
 	}
 	s.prepareTxnCtx()
 	st := executor.CompileExecutePreparedStmt(s, stmtID, args...)
-
-	// Update processinfo, ShowProcess() will use it.
-	s.SetProcessInfo(st.OriginText())
 
 	r, err := runStmt(s, st)
 	return r, errors.Trace(err)
@@ -736,7 +746,7 @@ func (s *session) getPassword(name, host string) (string, error) {
 	pwd, err := s.getExecRet(s, authSQL)
 	if err == nil {
 		return pwd, nil
-	} else if !terror.ExecResultIsEmpty.Equal(err) {
+	} else if !executor.ErrResultIsEmpty.Equal(err) {
 		return "", errors.Trace(err)
 	}
 	//Try to get user password for name with any host(%).
@@ -754,17 +764,17 @@ func (s *session) Auth(user string, auth []byte, salt []byte) bool {
 	// Get user password.
 	name := strs[0]
 	host := strs[1]
-	checker := privilege.GetPrivilegeChecker(s)
+	pm := privilege.GetPrivilegeManager(s)
 
 	// Check IP.
-	if checker.ConnectionVerification(name, host, auth, salt) {
+	if pm.ConnectionVerification(name, host, auth, salt) {
 		s.sessionVars.User = name + "@" + host
 		return true
 	}
 
 	// Check Hostname.
 	for _, addr := range getHostByIP(host) {
-		if checker.ConnectionVerification(name, addr, auth, salt) {
+		if pm.ConnectionVerification(name, addr, auth, salt) {
 			s.sessionVars.User = name + "@" + addr
 			return true
 		}
@@ -806,10 +816,10 @@ func CreateSession(store kv.Storage) (Session, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	privChecker := &privileges.UserPrivileges{
+	pm := &privileges.UserPrivileges{
 		Handle: do.PrivilegeHandle(),
 	}
-	privilege.BindPrivilegeChecker(s, privChecker)
+	privilege.BindPrivilegeManager(s, pm)
 
 	return s, nil
 }
@@ -829,7 +839,14 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	}
 	dom := sessionctx.GetDomain(se)
 	err = dom.LoadPrivilegeLoop(se)
-
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	se1, err := createSession(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	err = dom.LoadTableStatsLoop(se1)
 	return dom, errors.Trace(err)
 }
 
@@ -860,15 +877,15 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
 }
 
 func createSession(store kv.Storage) (*session, error) {
+	domain, err := domap.Get(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	s := &session{
 		values:      make(map[fmt.Stringer]interface{}),
 		store:       store,
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
-	}
-	domain, err := domap.Get(store)
-	if err != nil {
-		return nil, errors.Trace(err)
 	}
 	sessionctx.BindDomain(s, domain)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
@@ -879,7 +896,7 @@ func createSession(store kv.Storage) (*session, error) {
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 3
+	currentBootstrapVersion = 6
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -923,12 +940,18 @@ func finishBootstrap(store kv.Storage) {
 	}
 }
 
+const quoteCommaQuote = "', '"
 const loadCommonGlobalVarsSQL = "select * from mysql.global_variables where variable_name in ('" +
-	variable.AutocommitVar + "', '" +
-	variable.SQLModeVar + "', '" +
-	variable.DistSQLJoinConcurrencyVar + "', '" +
-	variable.MaxAllowedPacket + "', '" +
-	variable.DistSQLScanConcurrencyVar + "')"
+	variable.AutocommitVar + quoteCommaQuote +
+	variable.SQLModeVar + quoteCommaQuote +
+	variable.MaxAllowedPacket + quoteCommaQuote +
+	/* TiDB specific global variables: */
+	variable.TiDBSkipUTF8Check + quoteCommaQuote +
+	variable.TiDBSkipDDLWait + quoteCommaQuote +
+	variable.TiDBIndexLookupSize + quoteCommaQuote +
+	variable.TiDBIndexLookupConcurrency + quoteCommaQuote +
+	variable.TiDBIndexSerialScanConcurrency + quoteCommaQuote +
+	variable.TiDBDistSQLScanConcurrency + "')"
 
 // LoadCommonGlobalVariableIfNeeded loads and applies commonly used global variables for the session.
 func (s *session) loadCommonGlobalVariablesIfNeeded() error {

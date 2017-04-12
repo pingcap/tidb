@@ -16,6 +16,8 @@
 package kv
 
 import (
+	"sync/atomic"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/goleveldb/leveldb"
 	"github.com/pingcap/goleveldb/leveldb/comparer"
@@ -28,7 +30,7 @@ import (
 type memDbBuffer struct {
 	db              *memdb.DB
 	entrySizeLimit  int
-	bufferLenLimit  int
+	bufferLenLimit  uint64
 	bufferSizeLimit int
 }
 
@@ -42,7 +44,7 @@ func NewMemDbBuffer() MemBuffer {
 	return &memDbBuffer{
 		db:              memdb.New(comparer.DefaultComparer, 4*1024),
 		entrySizeLimit:  TxnEntrySizeLimit,
-		bufferLenLimit:  TxnEntryCountLimit,
+		bufferLenLimit:  atomic.LoadUint64(&TxnEntryCountLimit),
 		bufferSizeLimit: TxnTotalSizeLimit,
 	}
 }
@@ -92,7 +94,7 @@ func (m *memDbBuffer) Set(k Key, v []byte) error {
 	if m.Size() > m.bufferSizeLimit {
 		return ErrTxnTooLarge.Gen("transaction too large, size:%d", m.Size())
 	}
-	if m.Len() > m.bufferLenLimit {
+	if m.Len() > int(m.bufferLenLimit) {
 		return ErrTxnTooLarge.Gen("transaction too large, len:%d", m.Len())
 	}
 	return errors.Trace(err)

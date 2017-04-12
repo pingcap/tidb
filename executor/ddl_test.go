@@ -15,10 +15,14 @@ package executor_test
 
 import (
 	"fmt"
+	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/types"
 )
 
 func (s *testSuite) TestTruncateTable(c *C) {
@@ -145,7 +149,21 @@ func (s *testSuite) TestAlterTableAddColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists alter_test (c1 int)")
-	tk.MustExec("alter table alter_test add column c2 int")
+	tk.MustExec("insert into alter_test values(1)")
+	tk.MustExec("alter table alter_test add column c2 timestamp default current_timestamp")
+	time.Sleep(1 * time.Second)
+	now := time.Now().Add(-time.Duration(1 * time.Second)).Format(types.TimeFormat)
+	rowStr := fmt.Sprintf("%v", now)
+	r, err := tk.Exec("select c2 from alter_test")
+	c.Assert(err, IsNil)
+	row, err := r.Next()
+	c.Assert(err, IsNil)
+	c.Assert(len(row.Data), Equals, 1)
+	t := row.Data[0].GetMysqlTime()
+	c.Assert(now, GreaterEqual, t.String())
+	tk.MustExec("alter table alter_test add column c3 varchar(50) default 'CURRENT_TIMESTAMP'")
+	rowStr = fmt.Sprintf("%v", []byte("CURRENT_TIMESTAMP"))
+	tk.MustQuery("select c3 from alter_test").Check(testkit.Rows(rowStr))
 }
 
 func (s *testSuite) TestAddNotNullColumnNoDefault(c *C) {
@@ -155,8 +173,15 @@ func (s *testSuite) TestAddNotNullColumnNoDefault(c *C) {
 	tk.MustExec("create table nn (c1 int)")
 	tk.MustExec("insert nn values (1), (2)")
 	tk.MustExec("alter table nn add column c2 int not null")
+
+	tbl, err := sessionctx.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("nn"))
+	c.Assert(err, IsNil)
+	col2 := tbl.Meta().Columns[1]
+	c.Assert(col2.DefaultValue, IsNil)
+	c.Assert(col2.OriginDefaultValue, Equals, "0")
+
 	tk.MustQuery("select * from nn").Check(testkit.Rows("1 0", "2 0"))
-	_, err := tk.Exec("insert nn (c1) values (3)")
+	_, err = tk.Exec("insert nn (c1) values (3)")
 	c.Check(err, NotNil)
 	tk.MustExec("set sql_mode=''")
 	tk.MustExec("insert nn (c1) values (3)")

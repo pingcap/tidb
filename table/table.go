@@ -53,6 +53,8 @@ var (
 	ErrIndexStateCantNone = terror.ClassTable.New(codeIndexStateCantNone, "index can not be in none state")
 	// ErrInvalidRecordKey returns for invalid record key.
 	ErrInvalidRecordKey = terror.ClassTable.New(codeInvalidRecordKey, "invalid record key")
+	// ErrTruncateWrongValue returns for truncate wrong value for field.
+	ErrTruncateWrongValue = terror.ClassTable.New(codeTruncateWrongValue, "Incorrect value")
 )
 
 // RecordIterFunc is used for low-level record iteration.
@@ -137,10 +139,11 @@ const (
 	codeIndexStateCantNone   = 8
 	codeInvalidRecordKey     = 9
 
-	codeColumnCantNull  = 1048
-	codeUnknownColumn   = 1054
-	codeDuplicateColumn = 1110
-	codeNoDefaultValue  = 1364
+	codeColumnCantNull     = 1048
+	codeUnknownColumn      = 1054
+	codeDuplicateColumn    = 1110
+	codeNoDefaultValue     = 1364
+	codeTruncateWrongValue = 1366
 )
 
 // Slice is used for table sorting.
@@ -156,10 +159,11 @@ func (s Slice) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
 
 func init() {
 	tableMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeColumnCantNull:  mysql.ErrBadNull,
-		codeUnknownColumn:   mysql.ErrBadField,
-		codeDuplicateColumn: mysql.ErrFieldSpecifiedTwice,
-		codeNoDefaultValue:  mysql.ErrNoDefaultForField,
+		codeColumnCantNull:     mysql.ErrBadNull,
+		codeUnknownColumn:      mysql.ErrBadField,
+		codeDuplicateColumn:    mysql.ErrFieldSpecifiedTwice,
+		codeNoDefaultValue:     mysql.ErrNoDefaultForField,
+		codeTruncateWrongValue: mysql.ErrTruncatedWrongValueForField,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassTable] = tableMySQLErrCodes
 }

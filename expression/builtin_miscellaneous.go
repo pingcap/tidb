@@ -13,10 +13,15 @@
 package expression
 
 import (
+	"encoding/binary"
+	"math"
+	"net"
+	"time"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/util/types"
-	"time"
+	"github.com/twinj/uuid"
 )
 
 var (
@@ -28,7 +33,7 @@ var (
 	_ functionClass = &inetAtonFunctionClass{}
 	_ functionClass = &inetNtoaFunctionClass{}
 	_ functionClass = &inet6AtonFunctionClass{}
-	_ functionClass = &inet6NtonFunctionClass{}
+	_ functionClass = &inet6NtoaFunctionClass{}
 	_ functionClass = &isFreeLockFunctionClass{}
 	_ functionClass = &isIPv4FunctionClass{}
 	_ functionClass = &isIPv4CompatFunctionClass{}
@@ -51,7 +56,7 @@ var (
 	_ builtinFunc = &builtinInetAtonSig{}
 	_ builtinFunc = &builtinInetNtoaSig{}
 	_ builtinFunc = &builtinInet6AtonSig{}
-	_ builtinFunc = &builtinInet6NtonSig{}
+	_ builtinFunc = &builtinInet6NtoaSig{}
 	_ builtinFunc = &builtinIsFreeLockSig{}
 	_ builtinFunc = &builtinIsIPv4Sig{}
 	_ builtinFunc = &builtinIsIPv4CompatSig{}
@@ -169,7 +174,12 @@ type builtinAnyValueSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
 func (b *builtinAnyValueSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("ANY_VALUE")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d = args[0]
+	return d, nil
 }
 
 type defaultFunctionClass struct {
@@ -203,7 +213,59 @@ type builtinInetAtonSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet-aton
 func (b *builtinInetAtonSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("INET_ATON")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	arg := args[0]
+	if arg.IsNull() {
+		return d, nil
+	}
+	s, err := arg.ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	// ip address should not end with '.'.
+	if len(s) == 0 || s[len(s)-1] == '.' {
+		return d, nil
+	}
+
+	var (
+		byteResult, result uint64
+		dotCount           int
+	)
+	for _, c := range s {
+		if c >= '0' && c <= '9' {
+			digit := uint64(c - '0')
+			byteResult = byteResult*10 + digit
+			if byteResult > 255 {
+				return d, nil
+			}
+		} else if c == '.' {
+			dotCount++
+			if dotCount > 3 {
+				return d, nil
+			}
+			result = (result << 8) + byteResult
+			byteResult = 0
+		} else {
+			return d, nil
+		}
+	}
+	// 127 		-> 0.0.0.127
+	// 127.255 	-> 127.0.0.255
+	// 127.256	-> NULL
+	// 127.2.1	-> 127.2.0.1
+	switch dotCount {
+	case 1:
+		result <<= 8
+		fallthrough
+	case 2:
+		result <<= 8
+	}
+	d.SetUint64((result << 8) + byteResult)
+	return d, nil
 }
 
 type inetNtoaFunctionClass struct {
@@ -220,7 +282,34 @@ type builtinInetNtoaSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet-ntoa
 func (b *builtinInetNtoaSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("INET_NTOA")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if args[0].IsNull() {
+		return d, nil
+	}
+
+	ipArg, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if ipArg < 0 || uint64(ipArg) > math.MaxUint32 {
+		//not an IPv4 address.
+		return d, nil
+	}
+	ip := make(net.IP, net.IPv4len)
+	binary.BigEndian.PutUint32(ip, uint32(ipArg))
+	ipv4 := ip.To4()
+	if ipv4 == nil {
+		//Not a vaild ipv4 address.
+		return d, nil
+	}
+
+	d.SetString(ipv4.String())
+	return d, nil
 }
 
 type inet6AtonFunctionClass struct {
@@ -240,21 +329,21 @@ func (b *builtinInet6AtonSig) eval(row []types.Datum) (d types.Datum, err error)
 	return d, errFunctionNotExists.GenByArgs("INET6_ATON")
 }
 
-type inet6NtonFunctionClass struct {
+type inet6NtoaFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *inet6NtonFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinInet6NtonSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+func (c *inet6NtoaFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinInet6NtoaSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
 }
 
-type builtinInet6NtonSig struct {
+type builtinInet6NtoaSig struct {
 	baseBuiltinFunc
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet6-ntoa
-func (b *builtinInet6NtonSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("INET6_NTON")
+func (b *builtinInet6NtoaSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("INET6_NTOA")
 }
 
 type isFreeLockFunctionClass struct {
@@ -288,7 +377,53 @@ type builtinIsIPv4Sig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4
 func (b *builtinIsIPv4Sig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("IS_IPV4")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if args[0].IsNull() {
+		d.SetInt64(0)
+		return d, nil
+	}
+	// isIPv4(str)
+	// args[0] string
+	s, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if isIPv4(s) {
+		d.SetInt64(1)
+	} else {
+		d.SetInt64(0)
+	}
+	return d, nil
+}
+
+// isIPv4 checks IPv4 address which satisfying the format A.B.C.D(0<=A/B/C/D<=255).
+// Mapped IPv6 address like '::ffff:1.2.3.4' would return false.
+func isIPv4(ip string) bool {
+	// acc: keep the decimal value of each segment under check, which should between 0 and 255 for valid IPv4 address.
+	// pd: sentinel for '.'
+	dots, acc, pd := 0, 0, true
+	for _, c := range ip {
+		switch {
+		case '0' <= c && c <= '9':
+			acc = acc*10 + int(c-'0')
+			pd = false
+		case c == '.':
+			dots++
+			if dots > 3 || acc > 255 || pd {
+				return false
+			}
+			acc, pd = 0, true
+		default:
+			return false
+		}
+	}
+	if dots != 3 || acc > 255 || pd {
+		return false
+	}
+	return true
 }
 
 type isIPv4CompatFunctionClass struct {
@@ -339,7 +474,27 @@ type builtinIsIPv6Sig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv6
 func (b *builtinIsIPv6Sig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("IS_IPV6")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	// isIPv6(str)
+	// args[0] string
+	if args[0].IsNull() {
+		d.SetInt64(0)
+		return d, nil
+	}
+	s, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	ip := net.ParseIP(s)
+	if ip != nil && !isIPv4(s) {
+		d.SetInt64(1)
+	} else {
+		d.SetInt64(0)
+	}
+	return d, nil
 }
 
 type isUsedLockFunctionClass struct {
@@ -423,8 +578,9 @@ type builtinUUIDSig struct {
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_uuid
-func (b *builtinUUIDSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("UUID")
+func (b *builtinUUIDSig) eval(_ []types.Datum) (d types.Datum, err error) {
+	d.SetString(uuid.NewV1().String())
+	return
 }
 
 type uuidShortFunctionClass struct {

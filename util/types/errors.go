@@ -21,7 +21,7 @@ import (
 var (
 	// ErrDataTooLong is returned when converts a string value that is longer than field type length.
 	ErrDataTooLong = terror.ClassTypes.New(codeDataTooLong, "Data Too Long")
-	// ErrTruncated is returned when data has been truncated during convertion.
+	// ErrTruncated is returned when data has been truncated during conversion.
 	ErrTruncated = terror.ClassTypes.New(codeTruncated, "Data Truncated")
 	// ErrOverflow is returned when data is out of range for a field type.
 	ErrOverflow = terror.ClassTypes.New(codeOverflow, "Data Out Of Range")

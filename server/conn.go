@@ -77,6 +77,7 @@ type clientConn struct {
 	lastCmd      string            // latest sql query string, currently used for logging error.
 	ctx          QueryCtx          // an interface to execute sql statements.
 	attrs        map[string]string // attributes parsed from client handshake response, not used for now.
+	killed       bool
 }
 
 func (cc *clientConn) String() string {
@@ -330,13 +331,14 @@ func (cc *clientConn) Run() {
 		r := recover()
 		if r != nil {
 			buf := make([]byte, size)
-			buf = buf[:runtime.Stack(buf, false)]
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
 			log.Errorf("lastCmd %s, %v, %s", cc.lastCmd, r, buf)
 		}
 		cc.Close()
 	}()
 
-	for {
+	for !cc.killed {
 		cc.alloc.Reset()
 		data, err := cc.readPacket()
 		if err != nil {
@@ -350,6 +352,15 @@ func (cc *clientConn) Run() {
 		if err = cc.dispatch(data); err != nil {
 			if terror.ErrorEqual(err, io.EOF) {
 				cc.addMetrics(data[0], startTime, nil)
+				return
+			} else if terror.ErrorEqual(err, terror.ErrCritical) {
+				log.Errorf("[%d] critical error, stop the server listener %s",
+					cc.connectionID, errors.ErrorStack(err))
+				criticalErrorCounter.Add(1)
+				select {
+				case cc.server.stopListenerCh <- struct{}{}:
+				default:
+				}
 				return
 			}
 			log.Warnf("[%d] dispatch error:\n%s\n%s\n%s",
@@ -440,7 +451,7 @@ func (cc *clientConn) dispatch(data []byte) error {
 		// Input payload may end with byte '\0', we didn't find related mysql document about it, but mysql
 		// implementation accept that case. So trim the last '\0' here as if the payload an EOF string.
 		// See http://dev.mysql.com/doc/internals/en/com-query.html
-		if data[len(data)-1] == 0 {
+		if len(data) > 0 && data[len(data)-1] == 0 {
 			data = data[:len(data)-1]
 		}
 		return cc.handleQuery(hack.String(data))
@@ -643,8 +654,10 @@ func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error 
 
 	txn := loadDataInfo.Ctx.Txn()
 	if err != nil {
-		if err1 := txn.Rollback(); err1 != nil {
-			log.Errorf("load data rollback failed: %v", err1)
+		if txn.Valid() {
+			if err1 := txn.Rollback(); err1 != nil {
+				log.Errorf("load data rollback failed: %v", err1)
+			}
 		}
 		return errors.Trace(err)
 	}

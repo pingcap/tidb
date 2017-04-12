@@ -14,7 +14,6 @@
 package mocktikv
 
 import (
-	goctx "context"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -23,7 +22,10 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tipb/go-tipb"
+	goctx "golang.org/x/net/context"
 )
 
 const requestMaxSize = 4 * 1024 * 1024
@@ -32,8 +34,13 @@ type rpcHandler struct {
 	cluster   *Cluster
 	mvccStore *MvccStore
 	storeID   uint64
-	startKey  []byte
-	endKey    []byte
+	// Used for handling normal request.
+	startKey []byte
+	endKey   []byte
+
+	// Used for handling coprocessor request.
+	rawStartKey []byte
+	rawEndKey   []byte
 }
 
 func newRPCHandler(cluster *Cluster, mvccStore *MvccStore, storeID uint64) *rpcHandler {
@@ -158,6 +165,8 @@ func (h *rpcHandler) checkContext(ctx *kvrpcpb.Context) *errorpb.Error {
 		}
 	}
 	h.startKey, h.endKey = region.StartKey, region.EndKey
+	h.rawStartKey = MvccKey(h.startKey).Raw()
+	h.rawEndKey = MvccKey(h.endKey).Raw()
 	return nil
 }
 
@@ -370,22 +379,156 @@ type RPCClient struct {
 
 // SendKVReq sends a kv request to mock cluster.
 func (c *RPCClient) SendKVReq(ctx goctx.Context, addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error) {
-	store := c.Cluster.GetStoreByAddr(addr)
-	if store == nil {
-		return nil, errors.New("connect fail")
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
 	}
+
+	store, err := c.getAndCheckStoreByAddr(addr)
+	if err != nil {
+		return nil, err
+	}
+
 	handler := newRPCHandler(c.Cluster, c.MvccStore, store.GetId())
 	return handler.handleRequest(req), nil
 }
 
+func (c *RPCClient) getAndCheckStoreByAddr(addr string) (*metapb.Store, error) {
+	store, err := c.Cluster.GetAndCheckStoreByAddr(addr)
+	if err != nil {
+		return nil, err
+	}
+	if store == nil {
+		return nil, errors.New("connect fail")
+	}
+	if store.GetState() == metapb.StoreState_Offline ||
+		store.GetState() == metapb.StoreState_Tombstone {
+		return nil, errors.New("connection refused")
+	}
+	return store, nil
+}
+
 // SendCopReq sends a coprocessor request to mock cluster.
 func (c *RPCClient) SendCopReq(ctx goctx.Context, addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
+	if MockDAGRequest {
+		if req.GetTp() == kv.ReqTypeSelect || req.GetTp() == kv.ReqTypeIndex {
+			req.Tp = kv.ReqTypeDAG
+			resp, err := c.SendCopReqNew(addr, req, timeout)
+			return resp, errors.Trace(err)
+		}
+	}
+
+	store, err := c.getAndCheckStoreByAddr(addr)
+	if err != nil {
+		return nil, err
+	}
+
+	handler := newRPCHandler(c.Cluster, c.MvccStore, store.GetId())
+
+	return handler.handleCopRequest(req)
+}
+
+// extractExecutors extracts executors form select request.
+// It's removed when select request is replaced with DAG request.
+func extractExecutors(sel *tipb.SelectRequest) []*tipb.Executor {
+	var desc bool
+	if len(sel.OrderBy) > 0 && sel.OrderBy[0].Expr == nil {
+		desc = sel.OrderBy[0].Desc
+	}
+	var exec *tipb.Executor
+	var executors []*tipb.Executor
+	if sel.TableInfo != nil {
+		exec = &tipb.Executor{
+			Tp: tipb.ExecType_TypeTableScan,
+			TblScan: &tipb.TableScan{
+				Columns: sel.TableInfo.Columns,
+				Desc:    &desc,
+			},
+		}
+	} else {
+		exec = &tipb.Executor{
+			Tp: tipb.ExecType_TypeIndexScan,
+			IdxScan: &tipb.IndexScan{
+				Columns: sel.IndexInfo.Columns,
+				Desc:    &desc,
+			},
+		}
+	}
+	executors = append(executors, exec)
+	if sel.Where != nil {
+		exec := &tipb.Executor{
+			Tp: tipb.ExecType_TypeSelection,
+			Selection: &tipb.Selection{
+				Conditions: []*tipb.Expr{sel.Where},
+			},
+		}
+		executors = append(executors, exec)
+	}
+	if sel.Aggregates != nil {
+		exec := &tipb.Executor{
+			Tp: tipb.ExecType_TypeAggregation,
+			Aggregation: &tipb.Aggregation{
+				AggFunc: sel.Aggregates,
+				GroupBy: itemsToExprs(sel.GroupBy),
+			},
+		}
+		executors = append(executors, exec)
+	}
+	if len(sel.OrderBy) > 0 && sel.Limit != nil {
+		exec := &tipb.Executor{
+			Tp: tipb.ExecType_TypeTopN,
+			TopN: &tipb.TopN{
+				OrderBy: sel.OrderBy,
+				Limit:   sel.Limit,
+			},
+		}
+		executors = append(executors, exec)
+	}
+	if sel.Limit != nil {
+		exec := &tipb.Executor{
+			Tp:    tipb.ExecType_TypeLimit,
+			Limit: &tipb.Limit{Limit: sel.Limit},
+		}
+		executors = append(executors, exec)
+	}
+
+	return executors
+}
+
+// SendCopReqNew sends a coprocessor request to mock cluster.
+func (c *RPCClient) SendCopReqNew(addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
+	sel := new(tipb.SelectRequest)
+	err := proto.Unmarshal(req.Data, sel)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	executors := extractExecutors(sel)
+	dag := &tipb.DAGRequest{
+		StartTs:        sel.GetStartTs(),
+		TimeZoneOffset: sel.TimeZoneOffset,
+		Flags:          sel.Flags,
+		Executors:      executors,
+	}
+	req.Data, err = dag.Marshal()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	store := c.Cluster.GetStoreByAddr(addr)
 	if store == nil {
 		return nil, errors.New("connect fail")
 	}
 	handler := newRPCHandler(c.Cluster, c.MvccStore, store.GetId())
-	return handler.handleCopRequest(req)
+	resp, err := handler.handleCopDAGRequest(req)
+	return resp, errors.Trace(err)
 }
 
 // Close closes the client.

@@ -31,7 +31,8 @@ var fullRange = []rangePoint{
 	{value: types.MaxValueDatum()},
 }
 
-func buildIndexRange(sc *variable.StatementContext, p *PhysicalIndexScan) error {
+// BuildIndexRange will build range of index for PhysicalIndexScan
+func BuildIndexRange(sc *variable.StatementContext, p *PhysicalIndexScan) error {
 	rb := rangeBuilder{sc: sc}
 	for i := 0; i < p.accessInAndEqCount; i++ {
 		// Build ranges for equal or in access conditions.
@@ -86,7 +87,7 @@ func buildIndexRange(sc *variable.StatementContext, p *PhysicalIndexScan) error 
 }
 
 // refineRange changes the IndexRange taking prefix index length into consideration.
-func refineRange(v *IndexRange, idxInfo *model.IndexInfo) {
+func refineRange(v *types.IndexRange, idxInfo *model.IndexInfo) {
 	for i := 0; i < len(v.LowVal); i++ {
 		refineRangeDatum(&v.LowVal[i], idxInfo.Columns[i])
 		v.LowExclude = false
@@ -167,7 +168,8 @@ func checkIndexCondition(condition expression.Expression, indexColumns []*model.
 	return true
 }
 
-func detachIndexFilterConditions(conditions []expression.Expression, indexColumns []*model.IndexColumn, table *model.TableInfo) ([]expression.Expression, []expression.Expression) {
+// DetachIndexFilterConditions will detach the access conditions from other conditions.
+func DetachIndexFilterConditions(conditions []expression.Expression, indexColumns []*model.IndexColumn, table *model.TableInfo) ([]expression.Expression, []expression.Expression) {
 	var pKName model.CIStr
 	if table.PKIsHandle {
 		for _, colInfo := range table.Columns {
@@ -188,15 +190,16 @@ func detachIndexFilterConditions(conditions []expression.Expression, indexColumn
 	return indexConditions, tableConditions
 }
 
-func detachIndexScanConditions(conditions []expression.Expression, indexScan *PhysicalIndexScan) ([]expression.Expression, []expression.Expression) {
-	accessConds := make([]expression.Expression, len(indexScan.Index.Columns))
-	var filterConds []expression.Expression
+// DetachIndexScanConditions will detach the index filters from table filters.
+func DetachIndexScanConditions(conditions []expression.Expression, index *model.IndexInfo) (accessConds []expression.Expression,
+	filterConds []expression.Expression, accessEqualCount int, accessInAndEqCount int) {
+	accessConds = make([]expression.Expression, len(index.Columns))
 	// pushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	for i, cond := range conditions {
 		conditions[i] = pushDownNot(cond, false, nil)
 	}
 	for _, cond := range conditions {
-		offset := getEQFunctionOffset(cond, indexScan.Index.Columns)
+		offset := getEQFunctionOffset(cond, index.Columns)
 		if offset != -1 {
 			accessConds[offset] = cond
 		}
@@ -204,26 +207,25 @@ func detachIndexScanConditions(conditions []expression.Expression, indexScan *Ph
 	for i, cond := range accessConds {
 		if cond == nil {
 			accessConds = accessConds[:i]
-			indexScan.accessEqualCount = i
+			accessEqualCount = i
 			break
 		}
-		if indexScan.Index.Columns[i].Length != types.UnspecifiedLength {
+		if index.Columns[i].Length != types.UnspecifiedLength {
 			filterConds = append(filterConds, cond)
 		}
 		if i == len(accessConds)-1 {
-			indexScan.accessEqualCount = len(accessConds)
+			accessEqualCount = len(accessConds)
 		}
 	}
-	indexScan.accessInAndEqCount = indexScan.accessEqualCount
+	accessInAndEqCount = accessEqualCount
 	// We should remove all accessConds, so that they will not be added to filter conditions.
 	conditions = removeAccessConditions(conditions, accessConds)
 	var curIndex int
-	for curIndex = indexScan.accessEqualCount; curIndex < len(indexScan.Index.Columns); curIndex++ {
+	for curIndex = accessEqualCount; curIndex < len(index.Columns); curIndex++ {
 		checker := &conditionChecker{
-			tableName:    indexScan.Table.Name,
-			idx:          indexScan.Index,
+			idx:          index,
 			columnOffset: curIndex,
-			length:       indexScan.Index.Columns[curIndex].Length,
+			length:       index.Columns[curIndex].Length,
 		}
 		// First of all, we should extract all of in/eq expressions from rest conditions for every continuous index column.
 		// e.g. For index (a,b,c) and conditions a in (1,2) and b < 1 and c in (3,4), we should only extract column a in (1,2).
@@ -233,22 +235,22 @@ func detachIndexScanConditions(conditions []expression.Expression, indexScan *Ph
 			accessConds, filterConds = checker.extractAccessAndFilterConds(conditions, accessConds, filterConds)
 			break
 		}
-		indexScan.accessInAndEqCount++
+		accessInAndEqCount++
 		accessConds = append(accessConds, conditions[accessIdx])
-		if indexScan.Index.Columns[curIndex].Length != types.UnspecifiedLength {
+		if index.Columns[curIndex].Length != types.UnspecifiedLength {
 			filterConds = append(filterConds, conditions[accessIdx])
 		}
 		conditions = append(conditions[:accessIdx], conditions[accessIdx+1:]...)
 	}
 	// If curIndex equals to len of index columns, it means the rest conditions haven't been appended to filter conditions.
-	if curIndex == len(indexScan.Index.Columns) {
+	if curIndex == len(index.Columns) {
 		filterConds = append(filterConds, conditions...)
 	}
-	return accessConds, filterConds
+	return accessConds, filterConds, accessEqualCount, accessInAndEqCount
 }
 
-// detachTableScanConditions distinguishes between access conditions and filter conditions from conditions.
-func detachTableScanConditions(conditions []expression.Expression, table *model.TableInfo) ([]expression.Expression, []expression.Expression) {
+// DetachTableScanConditions distinguishes between access conditions and filter conditions from conditions.
+func DetachTableScanConditions(conditions []expression.Expression, table *model.TableInfo) ([]expression.Expression, []expression.Expression) {
 	var pkName model.CIStr
 	if table.PKIsHandle {
 		for _, colInfo := range table.Columns {
@@ -264,9 +266,8 @@ func detachTableScanConditions(conditions []expression.Expression, table *model.
 
 	var accessConditions, filterConditions []expression.Expression
 	checker := conditionChecker{
-		tableName: table.Name,
-		pkName:    pkName,
-		length:    types.UnspecifiedLength,
+		pkName: pkName,
+		length: types.UnspecifiedLength,
 	}
 	for _, cond := range conditions {
 		cond = pushDownNot(cond, false, nil)
@@ -285,27 +286,29 @@ func detachTableScanConditions(conditions []expression.Expression, table *model.
 	return accessConditions, filterConditions
 }
 
-func buildTableRange(p *PhysicalTableScan) error {
-	if len(p.AccessCondition) == 0 {
-		p.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
-		return nil
+// BuildTableRange will build range of pk for PhysicalTableScan
+func BuildTableRange(accessConditions []expression.Expression, sc *variable.StatementContext) ([]types.IntColumnRange, error) {
+	if len(accessConditions) == 0 {
+		return []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}, nil
 	}
 
-	rb := rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
+	rb := rangeBuilder{sc: sc}
 	rangePoints := fullRange
-	for _, cond := range p.AccessCondition {
+	for _, cond := range accessConditions {
 		rangePoints = rb.intersection(rangePoints, rb.build(cond))
 		if rb.err != nil {
-			return errors.Trace(rb.err)
+			return nil, errors.Trace(rb.err)
 		}
 	}
-	p.Ranges = rb.buildTableRanges(rangePoints)
-	return errors.Trace(rb.err)
+	ranges := rb.buildTableRanges(rangePoints)
+	if rb.err != nil {
+		return nil, errors.Trace(rb.err)
+	}
+	return ranges, nil
 }
 
 // conditionChecker checks if this condition can be pushed to index plan.
 type conditionChecker struct {
-	tableName     model.CIStr
 	idx           *model.IndexInfo
 	columnOffset  int // the offset of the indexed column to be checked.
 	pkName        model.CIStr

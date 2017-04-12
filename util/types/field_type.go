@@ -26,6 +26,18 @@ const (
 	UnspecifiedLength int = -1
 )
 
+// TypeClass classifies types, used for type inference.
+type TypeClass byte
+
+// TypeClass values.
+const (
+	ClassString  TypeClass = 0
+	ClassReal    TypeClass = 1
+	ClassInt     TypeClass = 2
+	ClassRow     TypeClass = 3
+	ClassDecimal TypeClass = 4
+)
+
 // FieldType records field type information.
 type FieldType struct {
 	Tp      byte
@@ -45,6 +57,37 @@ func NewFieldType(tp byte) *FieldType {
 		Tp:      tp,
 		Flen:    UnspecifiedLength,
 		Decimal: UnspecifiedLength,
+	}
+}
+
+// ToClass maps the field type to a type class.
+func (ft *FieldType) ToClass() TypeClass {
+	switch ft.Tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
+		mysql.TypeBit, mysql.TypeYear:
+		return ClassInt
+	case mysql.TypeNewDecimal:
+		return ClassDecimal
+	case mysql.TypeFloat, mysql.TypeDouble:
+		return ClassReal
+	default:
+		return ClassString
+	}
+}
+
+// ToType maps the type class to a type.
+func (tc TypeClass) ToType() byte {
+	switch tc {
+	case ClassString:
+		return mysql.TypeVarString
+	case ClassReal:
+		return mysql.TypeDouble
+	case ClassInt:
+		return mysql.TypeLonglong
+	case ClassDecimal:
+		return mysql.TypeNewDecimal
+	default:
+		return mysql.TypeUnspecified
 	}
 }
 
@@ -122,53 +165,42 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		tp.Tp = mysql.TypeNull
 	case bool, int64, int:
 		tp.Tp = mysql.TypeLonglong
-		tp.Charset = charset.CharsetBin
-		tp.Collate = charset.CharsetBin
+		SetBinChsClnFlag(tp)
 	case uint64:
 		tp.Tp = mysql.TypeLonglong
 		tp.Flag |= mysql.UnsignedFlag
-		tp.Charset = charset.CharsetBin
-		tp.Collate = charset.CharsetBin
+		SetBinChsClnFlag(tp)
 	case string:
 		tp.Tp = mysql.TypeVarString
 		tp.Charset = mysql.DefaultCharset
 		tp.Collate = mysql.DefaultCollationName
 	case float64:
 		tp.Tp = mysql.TypeDouble
-		tp.Charset = charset.CharsetBin
-		tp.Collate = charset.CharsetBin
+		SetBinChsClnFlag(tp)
 	case []byte:
 		tp.Tp = mysql.TypeBlob
-		tp.Charset = charset.CharsetBin
-		tp.Collate = charset.CharsetBin
+		SetBinChsClnFlag(tp)
 	case Bit:
 		tp.Tp = mysql.TypeBit
-		tp.Charset = charset.CharsetBin
-		tp.Collate = charset.CharsetBin
+		SetBinChsClnFlag(tp)
 	case Hex:
 		tp.Tp = mysql.TypeVarchar
-		tp.Charset = charset.CharsetBin
-		tp.Collate = charset.CharsetBin
+		SetBinChsClnFlag(tp)
 	case Time:
 		tp.Tp = x.Type
-		tp.Charset = charset.CharsetBin
-		tp.Collate = charset.CharsetBin
+		SetBinChsClnFlag(tp)
 	case Duration:
 		tp.Tp = mysql.TypeDuration
-		tp.Charset = charset.CharsetBin
-		tp.Collate = charset.CharsetBin
+		SetBinChsClnFlag(tp)
 	case *MyDecimal:
 		tp.Tp = mysql.TypeNewDecimal
-		tp.Charset = charset.CharsetBin
-		tp.Collate = charset.CharsetBin
+		SetBinChsClnFlag(tp)
 	case Enum:
 		tp.Tp = mysql.TypeEnum
-		tp.Charset = charset.CharsetBin
-		tp.Collate = charset.CharsetBin
+		SetBinChsClnFlag(tp)
 	case Set:
 		tp.Tp = mysql.TypeSet
-		tp.Charset = charset.CharsetBin
-		tp.Collate = charset.CharsetBin
+		SetBinChsClnFlag(tp)
 	default:
 		tp.Tp = mysql.TypeUnspecified
 	}
@@ -1049,4 +1081,11 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		//mysql.TypeString       mysql.TypeGeometry
 		mysql.TypeString, mysql.TypeGeometry,
 	},
+}
+
+// SetBinChsClnFlag sets charset, collation as 'binary' and adds binaryFlag to FieldType.
+func SetBinChsClnFlag(ft *FieldType) {
+	ft.Charset = charset.CharsetBin
+	ft.Collate = charset.CollationBin
+	ft.Flag |= mysql.BinaryFlag
 }

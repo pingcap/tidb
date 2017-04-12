@@ -61,9 +61,10 @@ func (s *testColumnSuite) TearDownSuite(c *C) {
 func testCreateColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
 	colName string, pos *ast.ColumnPosition, defaultValue interface{}) *model.Job {
 	col := &model.ColumnInfo{
-		Name:         model.NewCIStr(colName),
-		Offset:       len(tblInfo.Columns),
-		DefaultValue: defaultValue,
+		Name:               model.NewCIStr(colName),
+		Offset:             len(tblInfo.Columns),
+		DefaultValue:       defaultValue,
+		OriginDefaultValue: defaultValue,
 	}
 	col.ID = allocateColumnID(tblInfo)
 	col.FieldType = *types.NewFieldType(mysql.TypeLong)
@@ -140,15 +141,17 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	c.Assert(table.FindCol(t.Cols(), "c4"), NotNil)
 
 	i = int64(0)
-	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-		c.Assert(data, HasLen, 4)
-		c.Assert(data[0].GetInt64(), Equals, i)
-		c.Assert(data[1].GetInt64(), Equals, 10*i)
-		c.Assert(data[2].GetInt64(), Equals, 100*i)
-		c.Assert(data[3].GetInt64(), Equals, int64(100))
-		i++
-		return true, nil
-	})
+	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(),
+		func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+			c.Assert(data, HasLen, 4)
+			c.Assert(data[0].GetInt64(), Equals, i)
+			c.Assert(data[1].GetInt64(), Equals, 10*i)
+			c.Assert(data[2].GetInt64(), Equals, 100*i)
+			c.Assert(data[3].GetInt64(), Equals, int64(100))
+			i++
+			return true, nil
+		})
+	c.Assert(err, IsNil)
 	c.Assert(i, Equals, int64(num))
 
 	h, err := t.AddRecord(ctx, types.MakeDatums(11, 12, 13, 14))
@@ -909,6 +912,7 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 		{"text", "blob", false},
 		{"varchar(10)", "varchar(8)", false},
 		{"varchar(10)", "varchar(11)", true},
+		{"varchar(10) character set utf8 collate utf8_bin", "varchar(10) character set utf8", true},
 	}
 	for _, ca := range cases {
 		ftA := s.colDefStrToFieldType(c, ca.origin)
@@ -922,7 +926,7 @@ func (s *testColumnSuite) colDefStrToFieldType(c *C, str string) *types.FieldTyp
 	stmt, err := parser.New().ParseOneStmt(sqlA, "", "")
 	c.Assert(err, IsNil)
 	colDef := stmt.(*ast.AlterTableStmt).Specs[0].NewColumn
-	col, _, err := columnDefToCol(nil, 0, colDef)
+	col, _, err := buildColumnAndConstraint(nil, 0, colDef)
 	c.Assert(err, IsNil)
 	return &col.FieldType
 }
