@@ -141,7 +141,7 @@ func (t *topnHeap) tryToAddRow(row *sortRow) bool {
 
 // evalTopN evaluates the top n elements from the data. The input receives a record including its handle and data.
 // And this function will check if this record can replace one of the old records.
-func (c *RPCClient) evalTopN(ctx *selectContext, handle int64, values map[int64][]byte, columns []*tipb.ColumnInfo) error {
+func (h *rpcHandler) evalTopN(ctx *selectContext, handle int64, values map[int64][]byte, columns []*tipb.ColumnInfo) error {
 	err := setColumnValueToEval(ctx.eval, handle, values, ctx.topnColumns)
 	if err != nil {
 		return errors.Trace(err)
