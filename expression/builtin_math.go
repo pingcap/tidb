@@ -18,6 +18,7 @@
 package expression
 
 import (
+	"fmt"
 	"hash/crc32"
 	"math"
 	"math/rand"
@@ -372,7 +373,12 @@ func (b *builtinPowSig) eval(row []types.Datum) (d types.Datum, err error) {
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	d.SetFloat64(math.Pow(x, y))
+
+	power := math.Pow(x, y)
+	if math.IsInf(power, -1) || math.IsInf(power, 1) || math.IsNaN(power) {
+		return d, errors.Trace(types.ErrOverflow.GenByArgs("DOUBLE", fmt.Sprintf("pow(%s, %s)", strconv.FormatFloat(x, 'f', -1, 64), strconv.FormatFloat(y, 'f', -1, 64))))
+	}
+	d.SetFloat64(power)
 	return d, nil
 }
 
