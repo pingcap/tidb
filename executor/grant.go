@@ -129,10 +129,8 @@ func (e *GrantExec) Next() (*Row, error) {
 		}
 	}
 	e.done = true
-	// Flush privileges.
-	dom := sessionctx.GetDomain(e.ctx)
-	err := dom.PrivilegeHandle().Update()
-	return nil, errors.Trace(err)
+	sessionctx.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
+	return nil, nil
 }
 
 // Close implements the Executor Close interface.

@@ -76,10 +76,8 @@ func (e *RevokeExec) Next() (*Row, error) {
 		}
 	}
 	e.done = true
-	// Flush privileges.
-	dom := sessionctx.GetDomain(e.ctx)
-	err := dom.PrivilegeHandle().Update()
-	return nil, errors.Trace(err)
+	sessionctx.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
+	return nil, nil
 }
 
 func (e *RevokeExec) revokeOneUser(user, host string) error {
