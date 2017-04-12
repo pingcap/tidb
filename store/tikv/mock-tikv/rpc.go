@@ -254,7 +254,7 @@ func (c *RPCClient) KvGet(ctx goctx.Context, addr string, req *kvrpcpb.GetReques
 
 func (c *RPCClient) handleKvGet(req *kvrpcpb.GetRequest) *kvrpcpb.GetResponse {
 	if !c.checkKeyInRegion(req.Key) {
-		panic("onGet: key not in region")
+		panic("KvGet: key not in region")
 	}
 
 	val, err := c.MvccStore.Get(req.Key, req.GetVersion())
@@ -283,7 +283,7 @@ func (c *RPCClient) KvScan(ctx goctx.Context, addr string, req *kvrpcpb.ScanRequ
 
 func (c *RPCClient) handleKvScan(req *kvrpcpb.ScanRequest) *kvrpcpb.ScanResponse {
 	if !c.checkKeyInRegion(req.GetStartKey()) {
-		panic("onScan: startKey not in region")
+		panic("KvScan: startKey not in region")
 	}
 	pairs := c.MvccStore.Scan(req.GetStartKey(), c.endKey, int(req.GetLimit()), req.GetVersion())
 	return &kvrpcpb.ScanResponse{
@@ -307,7 +307,7 @@ func (c *RPCClient) KvPrewrite(ctx goctx.Context, addr string, req *kvrpcpb.Prew
 func (c *RPCClient) handleKvPrewrite(req *kvrpcpb.PrewriteRequest) *kvrpcpb.PrewriteResponse {
 	for _, m := range req.Mutations {
 		if !c.checkKeyInRegion(m.Key) {
-			panic("onPrewrite: key not in region")
+			panic("KvPrewrite: key not in region")
 		}
 	}
 	errors := c.MvccStore.Prewrite(req.Mutations, req.PrimaryLock, req.GetStartVersion(), req.GetLockTtl())
@@ -332,7 +332,7 @@ func (c *RPCClient) KvCommit(ctx goctx.Context, addr string, req *kvrpcpb.Commit
 func (c *RPCClient) handleKvCommit(req *kvrpcpb.CommitRequest) *kvrpcpb.CommitResponse {
 	for _, k := range req.Keys {
 		if !c.checkKeyInRegion(k) {
-			panic("onCommit: key not in region")
+			panic("KvCommit: key not in region")
 		}
 	}
 	var resp kvrpcpb.CommitResponse
@@ -358,7 +358,7 @@ func (c *RPCClient) KvCleanup(ctx goctx.Context, addr string, req *kvrpcpb.Clean
 
 func (c *RPCClient) handleKvCleanup(req *kvrpcpb.CleanupRequest) *kvrpcpb.CleanupResponse {
 	if !c.checkKeyInRegion(req.Key) {
-		panic("onCleanup: key not in region")
+		panic("KvCleanup: key not in region")
 	}
 	var resp kvrpcpb.CleanupResponse
 	err := c.MvccStore.Cleanup(req.Key, req.GetStartVersion())
@@ -388,7 +388,7 @@ func (c *RPCClient) KvBatchGet(ctx goctx.Context, addr string, req *kvrpcpb.Batc
 func (c *RPCClient) handleKvBatchGet(req *kvrpcpb.BatchGetRequest) *kvrpcpb.BatchGetResponse {
 	for _, k := range req.Keys {
 		if !c.checkKeyInRegion(k) {
-			panic("onBatchGet: key not in region")
+			panic("KvBatchGet: key not in region")
 		}
 	}
 	pairs := c.MvccStore.BatchGet(req.Keys, req.GetVersion())
