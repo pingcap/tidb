@@ -509,7 +509,7 @@ func (b *builtinConvSig) eval(row []types.Datum) (d types.Datum, err error) {
 
 	val, err := strconv.ParseUint(n, int(fromBase), 64)
 	if err != nil {
-		return d, errors.Trace(types.ErrOverflow)
+		return d, types.ErrOverflow.GenByArgs("BIGINT UNSINGED", n)
 	}
 	// See https://github.com/mysql/mysql-server/blob/5.7/strings/ctype-simple.c#L598
 	if signed {
