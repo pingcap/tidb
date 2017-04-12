@@ -50,5 +50,8 @@ func (c *Conn) Close() {
 		return
 	}
 	c.closed = true
-	c.ClientConn.Close()
+	if c.ClientConn != nil {
+		c.ClientConn.Close()
+		c.ClientConn = nil
+	}
 }

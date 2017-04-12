@@ -16,35 +16,21 @@
 
 package tikv
 
-import (
-	"net"
-	"time"
-
-	. "github.com/pingcap/check"
-)
+import . "github.com/pingcap/check"
 
 type testPoolSuite struct {
 }
 
 var _ = Suite(&testPoolSuite{})
 
-type testDummyConn struct {
-}
-
-func (c *testDummyConn) Read(b []byte) (n int, err error)   { return len(b), nil }
-func (c *testDummyConn) Write(b []byte) (n int, err error)  { return len(b), nil }
-func (c *testDummyConn) Close() error                       { return nil }
-func (c *testDummyConn) LocalAddr() net.Addr                { return nil }
-func (c *testDummyConn) RemoteAddr() net.Addr               { return nil }
-func (c *testDummyConn) SetDeadline(t time.Time) error      { return nil }
-func (c *testDummyConn) SetReadDeadline(t time.Time) error  { return nil }
-func (c *testDummyConn) SetWriteDeadline(t time.Time) error { return nil }
-
 func (s *testPoolSuite) TestPool(c *C) {
 	count := 0
 	f := func(addr string) (*Conn, error) {
 		count++
-		return &Conn{closed: false, nc: &testDummyConn{}}, nil
+		return &Conn{
+			addr:   addr,
+			closed: false,
+		}, nil
 	}
 
 	capability := 4
@@ -102,7 +88,7 @@ func (s *testPoolSuite) TestPoolsClose(c *C) {
 		return &Conn{
 			addr:   addr,
 			closed: false,
-			nc:     &testDummyConn{}}, nil
+		}, nil
 	}
 
 	capability := 4
