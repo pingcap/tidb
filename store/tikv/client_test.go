@@ -19,11 +19,89 @@ import (
 
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
-	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/kvproto/pkg/msgpb"
-	"github.com/pingcap/kvproto/pkg/util"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/tikvpb"
 	goctx "golang.org/x/net/context"
+	"google.golang.org/grpc"
 )
+
+type testTikvServer struct {
+}
+
+func (s *testTikvServer) KvGet(ctx goctx.Context, req *kvrpcpb.GetRequest) (*kvrpcpb.GetResponse, error) {
+	return &kvrpcpb.GetResponse{}, nil
+}
+
+func (s *testTikvServer) KvScan(ctx goctx.Context, req *kvrpcpb.ScanRequest) (*kvrpcpb.ScanResponse, error) {
+	return &kvrpcpb.ScanResponse{}, nil
+}
+
+func (s *testTikvServer) KvPrewrite(ctx goctx.Context, req *kvrpcpb.PrewriteRequest) (*kvrpcpb.PrewriteResponse, error) {
+	return &kvrpcpb.PrewriteResponse{}, nil
+}
+
+func (s *testTikvServer) KvCommit(ctx goctx.Context, req *kvrpcpb.CommitRequest) (*kvrpcpb.CommitResponse, error) {
+	return &kvrpcpb.CommitResponse{}, nil
+}
+
+func (s *testTikvServer) KvCleanup(ctx goctx.Context, req *kvrpcpb.CleanupRequest) (*kvrpcpb.CleanupResponse, error) {
+	return &kvrpcpb.CleanupResponse{}, nil
+}
+
+func (s *testTikvServer) KvBatchGet(ctx goctx.Context, req *kvrpcpb.BatchGetRequest) (*kvrpcpb.BatchGetResponse, error) {
+	return &kvrpcpb.BatchGetResponse{}, nil
+}
+
+func (s *testTikvServer) KvBatchRollback(ctx goctx.Context, req *kvrpcpb.BatchRollbackRequest) (*kvrpcpb.BatchRollbackResponse, error) {
+	return &kvrpcpb.BatchRollbackResponse{}, nil
+}
+
+func (s *testTikvServer) KvScanLock(ctx goctx.Context, req *kvrpcpb.ScanLockRequest) (*kvrpcpb.ScanLockResponse, error) {
+	return &kvrpcpb.ScanLockResponse{}, nil
+}
+
+func (s *testTikvServer) KvResolveLock(ctx goctx.Context, req *kvrpcpb.ResolveLockRequest) (*kvrpcpb.ResolveLockResponse, error) {
+	return &kvrpcpb.ResolveLockResponse{}, nil
+}
+
+func (s *testTikvServer) KvGC(ctx goctx.Context, req *kvrpcpb.GCRequest) (*kvrpcpb.GCResponse, error) {
+	return &kvrpcpb.GCResponse{}, nil
+}
+
+func (s *testTikvServer) RawGet(ctx goctx.Context, req *kvrpcpb.RawGetRequest) (*kvrpcpb.RawGetResponse, error) {
+	return &kvrpcpb.RawGetResponse{}, nil
+}
+
+func (s *testTikvServer) RawPut(ctx goctx.Context, req *kvrpcpb.RawPutRequest) (*kvrpcpb.RawPutResponse, error) {
+	return &kvrpcpb.RawPutResponse{}, nil
+}
+
+func (s *testTikvServer) RawDelete(ctx goctx.Context, req *kvrpcpb.RawDeleteRequest) (*kvrpcpb.RawDeleteResponse, error) {
+	return &kvrpcpb.RawDeleteResponse{}, nil
+}
+
+func (s *testTikvServer) Coprocessor(ctx goctx.Context, req *coprocessor.Request) (*coprocessor.Response, error) {
+	return &coprocessor.Response{}, nil
+}
+
+func startServer(addr string, c *C, stopCh chan int) {
+	listener, err := net.Listen("tcp", addr)
+	c.Assert(err, IsNil)
+	log.Debug("Start listenning on", addr)
+	grpcServer := grpc.NewServer()
+	tikvpb.RegisterTiKVServer(grpcServer, &testTikvServer{})
+	go func() {
+		grpcServer.Serve(listener)
+		listener.Close()
+	}()
+	go func() {
+		select {
+		case <-stopCh:
+			grpcServer.Stop()
+		}
+	}()
+}
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
@@ -35,129 +113,18 @@ var _ = Suite(&testClientSuite{})
 type testClientSuite struct {
 }
 
-// handleRequest receive Request then send empty Response back fill with same Type.
-func handleRequest(conn net.Conn, c *C) {
-	c.Assert(conn, NotNil)
-	defer conn.Close()
-	var msg msgpb.Message
-	msgID, err := util.ReadMessage(conn, &msg)
-	c.Assert(err, IsNil)
-	c.Assert(msgID, Greater, uint64(0))
-	c.Assert(msg.GetMsgType(), Equals, msgpb.MessageType_KvReq)
-
-	req := msg.GetKvReq()
-	c.Assert(req, NotNil)
-	var resp pb.Response
-	resp.Type = req.Type
-	msg = msgpb.Message{
-		MsgType: msgpb.MessageType_KvResp,
-		KvResp:  &resp,
-	}
-	err = util.WriteMessage(conn, msgID, &msg)
-	c.Assert(err, IsNil)
-}
-
 // One normally `Send`.
-func (s *testClientSuite) TestSendBySelf(c *C) {
-	l := startServer(":61234", c, handleRequest)
-	defer l.Close()
-	cli := newRPCClient()
-	req := new(pb.Request)
-	req.Type = pb.MessageType_CmdGet
-	getReq := new(pb.CmdGetRequest)
-	getReq.Key = []byte("a")
-	ver := uint64(0)
-	getReq.Version = ver
-	req.CmdGetReq = getReq
-	resp, err := cli.SendKVReq(goctx.Background(), ":61234", req, readTimeoutShort)
-	c.Assert(err, IsNil)
-	c.Assert(req.GetType(), Equals, resp.GetType())
-}
-
-func closeRequest(conn net.Conn, c *C) {
-	c.Assert(conn, NotNil)
-	err := conn.Close()
-	c.Assert(err, IsNil)
-}
-
-// Server close connection directly if new connection is coming.
-func (s *testClientSuite) TestRetryClose(c *C) {
-	l := startServer(":61235", c, closeRequest)
-	defer l.Close()
-	cli := newRPCClient()
-	req := new(pb.Request)
-	resp, err := cli.SendKVReq(goctx.Background(), ":61235", req, readTimeoutShort)
-	c.Assert(err, NotNil)
-	c.Assert(resp, IsNil)
-}
-
-func readThenCloseRequest(conn net.Conn, c *C) {
-	c.Assert(conn, NotNil)
-	defer conn.Close()
-	var msg msgpb.Message
-	msgID, err := util.ReadMessage(conn, &msg)
-	c.Assert(err, IsNil)
-	c.Assert(msg.GetKvReq(), NotNil)
-	c.Assert(msgID, Greater, uint64(0))
-}
-
-// Server read message then close, so `Send` will return retry error.
-func (s *testClientSuite) TestRetryReadThenClose(c *C) {
-	l := startServer(":61236", c, readThenCloseRequest)
-	defer l.Close()
-	cli := newRPCClient()
-	req := new(pb.Request)
-	req.Type = pb.MessageType_CmdGet
-	resp, err := cli.SendKVReq(goctx.Background(), ":61236", req, readTimeoutShort)
-	c.Assert(err, NotNil)
-	c.Assert(resp, IsNil)
-}
-
-func (s *testClientSuite) TestWrongMessageID(c *C) {
-	l := startServer(":61237", c, func(conn net.Conn, c *C) {
-		var msg msgpb.Message
-		msgID, err := util.ReadMessage(conn, &msg)
-		c.Assert(err, IsNil)
-		resp := msgpb.Message{
-			MsgType: msgpb.MessageType_KvResp,
-			KvResp: &pb.Response{
-				Type: msg.GetKvReq().GetType(),
-			},
-		}
-		// Send the request back to client, set wrong msgID for the 1st
-		// request.
-		if msgID == 1 {
-			err = util.WriteMessage(conn, msgID+100, &resp)
-		} else {
-			err = util.WriteMessage(conn, msgID, &resp)
-		}
-		c.Assert(err, IsNil)
-	})
-	defer l.Close()
-	cli := newRPCClient()
-	req := &pb.Request{
-		Type: pb.MessageType_CmdGet,
-	}
-	// Wrong ID for the first request, correct for the rests.
-	_, err := cli.SendKVReq(goctx.Background(), ":61237", req, readTimeoutShort)
-	c.Assert(err, NotNil)
-	resp, err := cli.SendKVReq(goctx.Background(), ":61237", req, readTimeoutShort)
-	c.Assert(err, IsNil)
-	c.Assert(resp.GetType(), Equals, req.GetType())
-}
-
-func startServer(host string, c *C, handleFunc func(net.Conn, *C)) net.Listener {
-	l, err := net.Listen("tcp", host)
-	c.Assert(err, IsNil)
-	log.Debug("Start listenning on", host)
-	go func() {
-		for {
-			conn, err := l.Accept()
-			if err != nil {
-				return
-			}
-			go handleFunc(conn, c)
-		}
+func (s *testClientSuite) TestSimpleRPC(c *C) {
+	addr := ":61234"
+	stopCh := make(chan int, 1)
+	startServer(addr, c, stopCh)
+	defer func() {
+		stopCh <- 1
 	}()
-	return l
+	client := newRPCClient()
+	ctx := goctx.Background()
+	req := &kvrpcpb.GetRequest{}
+	resp, err := client.KvGet(ctx, addr, req)
+	c.Assert(err, IsNil)
+	c.Assert(resp, NotNil)
 }

@@ -23,11 +23,13 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 	goctx "golang.org/x/net/context"
-	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 )
 
 type storeCache struct {
@@ -242,7 +244,7 @@ func (s *tikvStore) KvBatchGet(bo *Backoffer, req *kvrpcpb.BatchGetRequest, regi
 	return sender.KvBatchGet(req, regionID, timeout)
 }
 
-func (s *tikvStore) KvBatchRollback(bo *Backoffer, req *kvrpcpb.BatchGetRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.BatchRollbackResponse, error) {
+func (s *tikvStore) KvBatchRollback(bo *Backoffer, req *kvrpcpb.BatchRollbackRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.BatchRollbackResponse, error) {
 	sender := NewRegionRequestSender(bo, s.regionCache, s.client)
 	return sender.KvBatchRollback(req, regionID, timeout)
 }

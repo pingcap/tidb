@@ -246,7 +246,7 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 			StartVersion: l.TxnID,
 		}
 		if status.IsCommitted() {
-			req.GetCmdResolveLockReq().CommitVersion = status.CommitTS()
+			req.CommitVersion = status.CommitTS()
 		}
 		resp, err := lr.store.KvResolveLock(bo, req, loc.Region, readTimeoutShort)
 		if err != nil {

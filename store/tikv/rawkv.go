@@ -55,7 +55,7 @@ func (c *RawKVClient) Get(key []byte) ([]byte, error) {
 	defer func() { rawkvCmdHistogram.WithLabelValues("get").Observe(time.Since(start).Seconds()) }()
 
 	req := &kvrpcpb.RawGetRequest{
-		key: key,
+		Key: key,
 	}
 	bo := NewBackoffer(rawkvMaxBackoff, goctx.Background())
 	sender := NewRegionRequestSender(bo, c.regionCache, c.rpcClient)
@@ -65,7 +65,7 @@ func (c *RawKVClient) Get(key []byte) ([]byte, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp, err = sender.KvRawGet(req, loc.Region, readTimeoutShort)
+		resp, err = sender.RawGet(req, loc.Region, readTimeoutShort)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -93,7 +93,7 @@ func (c *RawKVClient) Put(key, value []byte) error {
 	rawkvSizeHistogram.WithLabelValues("value").Observe(float64(len(value)))
 
 	req := &kvrpcpb.RawPutRequest{
-		key: key,
+		Key: key,
 	}
 	bo := NewBackoffer(rawkvMaxBackoff, goctx.Background())
 	sender := NewRegionRequestSender(bo, c.regionCache, c.rpcClient)
@@ -101,16 +101,16 @@ func (c *RawKVClient) Put(key, value []byte) error {
 	for {
 		loc, err := c.regionCache.LocateKey(bo, key)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
-		resp, err = sender.KvRawPut(req, loc.Region, readTimeoutShort)
+		resp, err = sender.RawPut(req, loc.Region, readTimeoutShort)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		if regionErr := resp.GetRegionError(); regionErr != nil {
 			err := bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
-				return nil, errors.Trace(err)
+				return errors.Trace(err)
 			}
 			continue
 		}
@@ -129,24 +129,24 @@ func (c *RawKVClient) Delete(key []byte) error {
 	defer func() { rawkvCmdHistogram.WithLabelValues("delete").Observe(time.Since(start).Seconds()) }()
 
 	req := &kvrpcpb.RawDeleteRequest{
-		key: key,
+		Key: key,
 	}
 	bo := NewBackoffer(rawkvMaxBackoff, goctx.Background())
 	sender := NewRegionRequestSender(bo, c.regionCache, c.rpcClient)
-	var resp *kvrpcpb.RawPutResponse
+	var resp *kvrpcpb.RawDeleteResponse
 	for {
 		loc, err := c.regionCache.LocateKey(bo, key)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
-		resp, err = sender.KvRawDelete(req, loc.Region, readTimeoutShort)
+		resp, err = sender.RawDelete(req, loc.Region, readTimeoutShort)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		if regionErr := resp.GetRegionError(); regionErr != nil {
 			err := bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
-				return nil, errors.Trace(err)
+				return errors.Trace(err)
 			}
 			continue
 		}

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tipb/go-binlog"
 	goctx "golang.org/x/net/context"
 )
 
@@ -301,7 +302,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 		skipCheck = true
 	}
 
-	req := &kvrpcpb.PrewriteRequest{
+	req := &pb.PrewriteRequest{
 		Mutations:           mutations,
 		PrimaryLock:         c.primary(),
 		StartVersion:        c.startTS,
@@ -352,7 +353,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 }
 
 func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) error {
-	req := &kvrpc.CommitRequest{
+	req := &pb.CommitRequest{
 		StartVersion:  c.startTS,
 		Keys:          batch.keys,
 		CommitVersion: c.commitTS,
@@ -367,7 +368,7 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 		bo = NewBackoffer(commitPrimaryMaxBackoff, bo.ctx)
 	}
 
-	resp, err := c.store.Commit(bo, req, batch.region, readTimeoutShort)
+	resp, err := c.store.KvCommit(bo, req, batch.region, readTimeoutShort)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -404,11 +405,11 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 }
 
 func (c *twoPhaseCommitter) cleanupSingleBatch(bo *Backoffer, batch batchKeys) error {
-	req := &kvrpcpb.CleanupRequest{
+	req := &pb.BatchRollbackRequest{
 		Keys:         batch.keys,
 		StartVersion: c.startTS,
 	}
-	resp, err := c.store.KvCleanup(bo, req, batch.region, readTimeoutShort)
+	resp, err := c.store.KvBatchRollback(bo, req, batch.region, readTimeoutShort)
 	if err != nil {
 		return errors.Trace(err)
 	}

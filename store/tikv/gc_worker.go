@@ -308,14 +308,10 @@ func (w *GCWorker) resolveLocks(safePoint uint64) error {
 			}
 			continue
 		}
-		locksResp := resp.GetCmdScanLockResp()
-		if locksResp == nil {
-			return errors.Trace(errBodyMissing)
+		if resp.GetError() != nil {
+			return errors.Errorf("unexpected scanlock error: %s", resp)
 		}
-		if locksResp.GetError() != nil {
-			return errors.Errorf("unexpected scanlock error: %s", locksResp)
-		}
-		locksInfo := locksResp.GetLocks()
+		locksInfo := resp.GetLocks()
 		locks := make([]*Lock, len(locksInfo))
 		for i := range locksInfo {
 			locks[i] = newLock(locksInfo[i])
@@ -379,12 +375,8 @@ func (w *GCWorker) DoGC(safePoint uint64) error {
 			}
 			continue
 		}
-		gcResp := resp.GetCmdGcResp()
-		if gcResp == nil {
-			return errors.Trace(errBodyMissing)
-		}
-		if gcResp.GetError() != nil {
-			return errors.Errorf("unexpected gc error: %s", gcResp.GetError())
+		if resp.GetError() != nil {
+			return errors.Errorf("unexpected gc error: %s", resp.GetError())
 		}
 		regions++
 		key = loc.EndKey

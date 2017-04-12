@@ -109,6 +109,7 @@ func (s *RegionRequestSender) KvGet(req *kvrpcpb.GetRequest, regionID RegionVerI
 		req.Context = ctx.KVCtx
 		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
 		defer cancel()
+		var err error
 		resp, err = s.client.KvGet(context, ctx.Addr, req)
 		return resp, err, true
 	}
@@ -131,6 +132,7 @@ func (s *RegionRequestSender) KvScan(req *kvrpcpb.ScanRequest, regionID RegionVe
 		req.Context = ctx.KVCtx
 		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
 		defer cancel()
+		var err error
 		resp, err = s.client.KvScan(context, ctx.Addr, req)
 		return resp, err, true
 	}
@@ -153,6 +155,7 @@ func (s *RegionRequestSender) KvPrewrite(req *kvrpcpb.PrewriteRequest, regionID 
 		req.Context = ctx.KVCtx
 		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
 		defer cancel()
+		var err error
 		resp, err = s.client.KvPrewrite(context, ctx.Addr, req)
 		return resp, err, true
 	}
@@ -175,6 +178,7 @@ func (s *RegionRequestSender) KvCommit(req *kvrpcpb.CommitRequest, regionID Regi
 		req.Context = ctx.KVCtx
 		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
 		defer cancel()
+		var err error
 		resp, err = s.client.KvCommit(context, ctx.Addr, req)
 		return resp, err, true
 	}
@@ -197,6 +201,7 @@ func (s *RegionRequestSender) KvCleanup(req *kvrpcpb.CleanupRequest, regionID Re
 		req.Context = ctx.KVCtx
 		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
 		defer cancel()
+		var err error
 		resp, err = s.client.KvCleanup(context, ctx.Addr, req)
 		return resp, err, true
 	}
@@ -219,7 +224,8 @@ func (s *RegionRequestSender) KvBatchGet(req *kvrpcpb.BatchGetRequest, regionID 
 		req.Context = ctx.KVCtx
 		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
 		defer cancel()
-		resp, err = s.client.KvCleanup(context, ctx.Addr, req)
+		var err error
+		resp, err = s.client.KvBatchGet(context, ctx.Addr, req)
 		return resp, err, true
 	}
 
@@ -241,6 +247,7 @@ func (s *RegionRequestSender) KvBatchRollback(req *kvrpcpb.BatchRollbackRequest,
 		req.Context = ctx.KVCtx
 		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
 		defer cancel()
+		var err error
 		resp, err = s.client.KvBatchRollback(context, ctx.Addr, req)
 		return resp, err, true
 	}
@@ -263,6 +270,7 @@ func (s *RegionRequestSender) KvScanLock(req *kvrpcpb.ScanLockRequest, regionID 
 		req.Context = ctx.KVCtx
 		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
 		defer cancel()
+		var err error
 		resp, err = s.client.KvScanLock(context, ctx.Addr, req)
 		return resp, err, true
 	}
@@ -285,6 +293,7 @@ func (s *RegionRequestSender) KvResolveLock(req *kvrpcpb.ResolveLockRequest, reg
 		req.Context = ctx.KVCtx
 		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
 		defer cancel()
+		var err error
 		resp, err = s.client.KvResolveLock(context, ctx.Addr, req)
 		return resp, err, true
 	}
@@ -295,7 +304,7 @@ func (s *RegionRequestSender) KvResolveLock(req *kvrpcpb.ResolveLockRequest, reg
 	return resp, nil
 }
 
-func (s *RegionRequestSender) KvGC(req *kvrpcpb.GCRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.GCRequest, error) {
+func (s *RegionRequestSender) KvGC(req *kvrpcpb.GCRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.GCResponse, error) {
 	var resp *kvrpcpb.GCResponse
 	f := func(ctx *RPCContext) (RegionErrorResponse, error, bool) {
 		if ctx == nil {
@@ -307,6 +316,7 @@ func (s *RegionRequestSender) KvGC(req *kvrpcpb.GCRequest, regionID RegionVerID,
 		req.Context = ctx.KVCtx
 		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
 		defer cancel()
+		var err error
 		resp, err = s.client.KvGC(context, ctx.Addr, req)
 		return resp, err, true
 	}
@@ -317,7 +327,7 @@ func (s *RegionRequestSender) KvGC(req *kvrpcpb.GCRequest, regionID RegionVerID,
 	return resp, nil
 }
 
-func (s *RegionRequestSender) KvRawGet(req *kvrpcpb.RawGetRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.RawGetResponse, error) {
+func (s *RegionRequestSender) RawGet(req *kvrpcpb.RawGetRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.RawGetResponse, error) {
 	var resp *kvrpcpb.RawGetResponse
 	f := func(ctx *RPCContext) (RegionErrorResponse, error, bool) {
 		if ctx == nil {
@@ -329,7 +339,8 @@ func (s *RegionRequestSender) KvRawGet(req *kvrpcpb.RawGetRequest, regionID Regi
 		req.Context = ctx.KVCtx
 		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
 		defer cancel()
-		resp, err = s.client.KvRawGet(context, ctx.Addr, req)
+		var err error
+		resp, err = s.client.RawGet(context, ctx.Addr, req)
 		return resp, err, true
 	}
 
@@ -339,7 +350,7 @@ func (s *RegionRequestSender) KvRawGet(req *kvrpcpb.RawGetRequest, regionID Regi
 	return resp, nil
 }
 
-func (s *RegionRequestSender) KvRawPut(req *kvrpcpb.RawPutRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.RawPutResponse, error) {
+func (s *RegionRequestSender) RawPut(req *kvrpcpb.RawPutRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.RawPutResponse, error) {
 	var resp *kvrpcpb.RawPutResponse
 	f := func(ctx *RPCContext) (RegionErrorResponse, error, bool) {
 		if ctx == nil {
@@ -351,17 +362,18 @@ func (s *RegionRequestSender) KvRawPut(req *kvrpcpb.RawPutRequest, regionID Regi
 		req.Context = ctx.KVCtx
 		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
 		defer cancel()
-		resp, err = s.client.KvRawPut(context, ctx.Addr, req)
+		var err error
+		resp, err = s.client.RawPut(context, ctx.Addr, req)
 		return resp, err, true
 	}
 
-	if err != s.callRpcFunc(regionID, f); err != nil {
+	if err := s.callRpcFunc(regionID, f); err != nil {
 		return nil, err
 	}
 	return resp, nil
 }
 
-func (s *RegionRequestSender) KvRawDelete(req *kvrpcpb.RawDeleteRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.RawDeleteResponse, error) {
+func (s *RegionRequestSender) RawDelete(req *kvrpcpb.RawDeleteRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.RawDeleteResponse, error) {
 	var resp *kvrpcpb.RawDeleteResponse
 	f := func(ctx *RPCContext) (RegionErrorResponse, error, bool) {
 		if ctx == nil {
@@ -373,11 +385,12 @@ func (s *RegionRequestSender) KvRawDelete(req *kvrpcpb.RawDeleteRequest, regionI
 		req.Context = ctx.KVCtx
 		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
 		defer cancel()
-		resp, err = s.client.KvRawDelete(context, ctx.Addr, req)
+		var err error
+		resp, err = s.client.RawDelete(context, ctx.Addr, req)
 		return resp, err, true
 	}
 
-	if err != s.callRpcFunc(regionID, f); err != nil {
+	if err := s.callRpcFunc(regionID, f); err != nil {
 		return nil, err
 	}
 	return resp, nil
@@ -388,18 +401,19 @@ func (s *RegionRequestSender) Coprocessor(req *coprocessor.Request, regionID Reg
 	f := func(ctx *RPCContext) (RegionErrorResponse, error, bool) {
 		if ctx == nil {
 			resp = &coprocessor.Response{
-				RegionError: &erropb.Error{StaleEpoch: &errorpb.StaleEpoch{}},
+				RegionError: &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}},
 			}
 			return resp, nil, false
 		}
 		req.Context = ctx.KVCtx
 		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
 		defer cancel()
+		var err error
 		resp, err = s.client.Coprocessor(context, ctx.Addr, req)
 		return resp, err, true
 	}
 
-	if err != s.callRpcFunc(regionID, f); err != nil {
+	if err := s.callRpcFunc(regionID, f); err != nil {
 		return nil, err
 	}
 	return resp, nil

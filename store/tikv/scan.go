@@ -135,12 +135,12 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		req := &kvrpcpb.ScanRequest{
+		req := &pb.ScanRequest{
 			StartKey: []byte(s.nextStartKey),
 			Limit:    uint32(s.batchSize),
 			Version:  s.startTS(),
 		}
-		resp, err := s.snapshot.store.KVScan(bo, req, loc.Region, readTimeoutMedium)
+		resp, err := s.snapshot.store.KvScan(bo, req, loc.Region, readTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
 		}

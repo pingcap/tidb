@@ -113,11 +113,11 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collectF func(k, v []byte)) error {
 	pending := batch.keys
 	for {
-		req := &kvrpcpb.BatchGetRequest{
+		req := &pb.BatchGetRequest{
 			Keys:    pending,
 			Version: s.version.Ver,
 		}
-		resp, err := s.store.BatchGetRequest(bo, req, batch.region, readTimeoutMedium)
+		resp, err := s.store.KvBatchGet(bo, req, batch.region, readTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -177,7 +177,7 @@ func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
 }
 
 func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
-	req := &kvrpcpb.GetRequest{
+	req := &pb.GetRequest{
 		Key:     k,
 		Version: s.version.Ver,
 	}

@@ -55,7 +55,7 @@ type selectContext struct {
 
 func (c *RPCClient) handleCopRequest(req *coprocessor.Request) (*coprocessor.Response, error) {
 	resp := &coprocessor.Response{}
-	if err := c.checkContext(req.GetContext()); err != nil {
+	if err := c.checkRequestContext(req.GetContext()); err != nil {
 		resp.RegionError = err
 		return resp, nil
 	}
@@ -323,7 +323,7 @@ func (c *RPCClient) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, limit 
 	}
 
 	if ran.IsPoint() {
-		val, err := c.mvccStore.Get(startKey, ctx.sel.GetStartTs())
+		val, err := c.MvccStore.Get(startKey, ctx.sel.GetStartTs())
 		if len(val) == 0 {
 			return chunks, nil
 		} else if err != nil {
@@ -358,9 +358,9 @@ func (c *RPCClient) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, limit 
 			err   error
 		)
 		if ctx.descScan {
-			pairs = c.mvccStore.ReverseScan(startKey, seekKey, 1, ctx.sel.GetStartTs())
+			pairs = c.MvccStore.ReverseScan(startKey, seekKey, 1, ctx.sel.GetStartTs())
 		} else {
-			pairs = c.mvccStore.Scan(seekKey, endKey, 1, ctx.sel.GetStartTs())
+			pairs = c.MvccStore.Scan(seekKey, endKey, 1, ctx.sel.GetStartTs())
 		}
 		if len(pairs) > 0 {
 			pair = pairs[0]
@@ -562,9 +562,9 @@ func (c *RPCClient) getIndexRowFromRange(ctx *selectContext, ran kv.KeyRange, li
 			err   error
 		)
 		if ctx.descScan {
-			pairs = c.mvccStore.ReverseScan(startKey, seekKey, 1, ctx.sel.GetStartTs())
+			pairs = c.MvccStore.ReverseScan(startKey, seekKey, 1, ctx.sel.GetStartTs())
 		} else {
-			pairs = c.mvccStore.Scan(seekKey, endKey, 1, ctx.sel.GetStartTs())
+			pairs = c.MvccStore.Scan(seekKey, endKey, 1, ctx.sel.GetStartTs())
 		}
 		if len(pairs) > 0 {
 			pair = pairs[0]

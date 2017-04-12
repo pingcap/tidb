@@ -188,20 +188,15 @@ func (s *testLockSuite) mustGetLock(c *C, key []byte) *Lock {
 	ver, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
 	bo := NewBackoffer(getMaxBackoff, goctx.Background())
-	req := &kvrpcpb.Request{
-		Type: kvrpcpb.MessageType_CmdGet,
-		CmdGetReq: &kvrpcpb.CmdGetRequest{
-			Key:     key,
-			Version: ver.Ver,
-		},
+	req := &kvrpcpb.GetRequest{
+		Key:     key,
+		Version: ver.Ver,
 	}
 	loc, err := s.store.regionCache.LocateKey(bo, key)
 	c.Assert(err, IsNil)
-	resp, err := s.store.SendKVReq(bo, req, loc.Region, readTimeoutShort)
+	resp, err := s.store.KvGet(bo, req, loc.Region, readTimeoutShort)
 	c.Assert(err, IsNil)
-	cmdGetResp := resp.GetCmdGetResp()
-	c.Assert(cmdGetResp, NotNil)
-	keyErr := cmdGetResp.GetError()
+	keyErr := resp.GetError()
 	c.Assert(keyErr, NotNil)
 	lock, err := extractLockFromKeyErr(keyErr)
 	c.Assert(err, IsNil)

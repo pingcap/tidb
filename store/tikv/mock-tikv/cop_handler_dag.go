@@ -42,7 +42,7 @@ func (c *RPCClient) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor.
 	if req.GetTp() != kv.ReqTypeDAG {
 		return resp, nil
 	}
-	if err := c.checkContext(req.GetContext()); err != nil {
+	if err := c.checkRequestContext(req.GetContext()); err != nil {
 		resp.RegionError = err
 		return resp, nil
 	}
@@ -97,7 +97,7 @@ func (c *RPCClient) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, e
 			kvRanges:    ranges,
 			colIDs:      colIDs,
 			startTS:     ctx.dagReq.GetStartTs(),
-			mvccStore:   c.mvccStore,
+			mvccStore:   c.MvccStore,
 			rawStartKey: c.rawStartKey,
 			rawEndKey:   c.rawEndKey,
 		}
@@ -115,7 +115,7 @@ func (c *RPCClient) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, e
 			kvRanges:    ranges,
 			colsLen:     len(columns),
 			startTS:     ctx.dagReq.GetStartTs(),
-			mvccStore:   c.mvccStore,
+			mvccStore:   c.MvccStore,
 			rawStartKey: c.rawStartKey,
 			rawEndKey:   c.rawEndKey,
 		}
