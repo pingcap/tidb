@@ -1942,13 +1942,12 @@ func (b *builtinSecToTimeSig) eval(row []types.Datum) (d types.Datum, err error)
 		}
 	}
 
+	if secondsFloat < 0 {
+		negative = "-"
+		secondsFloat = math.Abs(secondsFloat)
+	}
 	seconds := int64(secondsFloat)
 	demical = secondsFloat - float64(seconds)
-
-	if seconds < 0 {
-		negative = "-"
-		seconds = 0 - seconds
-	}
 
 	hour = seconds / 3600
 	if hour > 838 {
