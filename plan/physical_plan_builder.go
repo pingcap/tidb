@@ -1311,6 +1311,7 @@ func (p *Selection) appendSelToInfo(info *physicalPlanInfo) *physicalPlanInfo {
 	return &physicalPlanInfo{
 		p:        np,
 		cost:     info.cost,
+		count:    uint64(float64(info.count) * selectionFactor),
 		reliable: info.reliable,
 	}
 }

@@ -167,7 +167,7 @@ type physicalPlanInfo struct {
 	count uint64
 
 	// If the count is calculated by pseudo table, it's not reliable. Otherwise it's reliable.
-	// But if we has limit, maxOneRow or something else, the count is reliable.
+	// But if we has limit or maxOneRow, the count is reliable.
 	reliable bool
 }
 
