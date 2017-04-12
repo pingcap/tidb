@@ -34,7 +34,7 @@ type dagContext struct {
 	columns   []*tipb.ColumnInfo
 }
 
-func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor.Response, error) {
+func (c *RPCClient) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor.Response, error) {
 	resp := &coprocessor.Response{}
 	if len(req.Ranges) == 0 {
 		return resp, nil
@@ -42,7 +42,7 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor
 	if req.GetTp() != kv.ReqTypeDAG {
 		return resp, nil
 	}
-	if err := h.checkContext(req.GetContext()); err != nil {
+	if err := c.checkContext(req.GetContext()); err != nil {
 		resp.RegionError = err
 		return resp, nil
 	}
@@ -59,7 +59,7 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor
 		sc:        sc,
 		eval:      xeval.NewEvaluator(sc),
 	}
-	e, err := h.buildDAG(ctx, dagReq.Executors)
+	e, err := c.buildDAG(ctx, dagReq.Executors)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -81,7 +81,7 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor
 	return buildResp(chunks, err)
 }
 
-func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, error) {
+func (c *RPCClient) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, error) {
 	var currExec executor
 	switch curr.GetTp() {
 	case tipb.ExecType_TypeTableScan:
@@ -91,15 +91,15 @@ func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 		for i, col := range columns {
 			colIDs[col.GetColumnId()] = i
 		}
-		ranges := h.extractKVRanges(ctx.keyRanges, *curr.TblScan.Desc)
+		ranges := c.extractKVRanges(ctx.keyRanges, *curr.TblScan.Desc)
 		currExec = &tableScanExec{
 			TableScan:   curr.TblScan,
 			kvRanges:    ranges,
 			colIDs:      colIDs,
 			startTS:     ctx.dagReq.GetStartTs(),
-			mvccStore:   h.mvccStore,
-			rawStartKey: h.rawStartKey,
-			rawEndKey:   h.rawEndKey,
+			mvccStore:   c.mvccStore,
+			rawStartKey: c.rawStartKey,
+			rawEndKey:   c.rawEndKey,
 		}
 	case tipb.ExecType_TypeIndexScan:
 		columns := curr.IdxScan.Columns
@@ -109,15 +109,15 @@ func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 		if columns[length-1].GetPkHandle() {
 			columns = columns[:length-1]
 		}
-		ranges := h.extractKVRanges(ctx.keyRanges, *curr.IdxScan.Desc)
+		ranges := c.extractKVRanges(ctx.keyRanges, *curr.IdxScan.Desc)
 		currExec = &indexScanExec{
 			IndexScan:   curr.IdxScan,
 			kvRanges:    ranges,
 			colsLen:     len(columns),
 			startTS:     ctx.dagReq.GetStartTs(),
-			mvccStore:   h.mvccStore,
-			rawStartKey: h.rawStartKey,
-			rawEndKey:   h.rawEndKey,
+			mvccStore:   c.mvccStore,
+			rawStartKey: c.rawStartKey,
+			rawEndKey:   c.rawEndKey,
 		}
 	case tipb.ExecType_TypeSelection:
 		var cond *tipb.Expr
@@ -143,10 +143,10 @@ func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 	return currExec, nil
 }
 
-func (h *rpcHandler) buildDAG(ctx *dagContext, executors []*tipb.Executor) (executor, error) {
+func (c *RPCClient) buildDAG(ctx *dagContext, executors []*tipb.Executor) (executor, error) {
 	var src executor
 	for i := 0; i < len(executors); i++ {
-		curr, err := h.buildExec(ctx, executors[i])
+		curr, err := c.buildExec(ctx, executors[i])
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

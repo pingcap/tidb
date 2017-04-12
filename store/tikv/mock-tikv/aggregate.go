@@ -25,7 +25,7 @@ import (
 
 var singleGroup = []byte("SingleGroup")
 
-func (h *rpcHandler) getGroupKey(ctx *selectContext) ([]byte, error) {
+func (c *RPCClient) getGroupKey(ctx *selectContext) ([]byte, error) {
 	items := ctx.sel.GetGroupBy()
 	if len(items) == 0 {
 		return singleGroup, nil
@@ -46,14 +46,14 @@ func (h *rpcHandler) getGroupKey(ctx *selectContext) ([]byte, error) {
 }
 
 // Update aggregate functions with rows.
-func (h *rpcHandler) aggregate(ctx *selectContext, handle int64, row map[int64][]byte) error {
+func (c *RPCClient) aggregate(ctx *selectContext, handle int64, row map[int64][]byte) error {
 	// Put row data into evaluate for later evaluation.
 	err := setColumnValueToEval(ctx.eval, handle, row, ctx.aggColumns)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// Get group key.
-	gk, err := h.getGroupKey(ctx)
+	gk, err := c.getGroupKey(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}

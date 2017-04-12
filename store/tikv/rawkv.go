@@ -54,88 +54,18 @@ func (c *RawKVClient) Get(key []byte) ([]byte, error) {
 	start := time.Now()
 	defer func() { rawkvCmdHistogram.WithLabelValues("get").Observe(time.Since(start).Seconds()) }()
 
-	req := &kvrpcpb.Request{
-		Type: kvrpcpb.MessageType_CmdRawGet,
-		CmdRawGetReq: &kvrpcpb.CmdRawGetRequest{
-			Key: key,
-		},
+	req := &kvrpcpb.RawGetRequest{
+		key: key,
 	}
-	resp, err := c.sendKVReq(key, req)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	cmdResp := resp.GetCmdRawGetResp()
-	if cmdResp == nil {
-		return nil, errors.Trace(errBodyMissing)
-	}
-	if cmdResp.GetError() != "" {
-		return nil, errors.New(cmdResp.GetError())
-	}
-	return cmdResp.Value, nil
-}
-
-// Put stores a key-value pair to TiKV.
-func (c *RawKVClient) Put(key, value []byte) error {
-	start := time.Now()
-	defer func() { rawkvCmdHistogram.WithLabelValues("put").Observe(time.Since(start).Seconds()) }()
-	rawkvSizeHistogram.WithLabelValues("key").Observe(float64(len(key)))
-	rawkvSizeHistogram.WithLabelValues("value").Observe(float64(len(value)))
-
-	req := &kvrpcpb.Request{
-		Type: kvrpcpb.MessageType_CmdRawPut,
-		CmdRawPutReq: &kvrpcpb.CmdRawPutRequest{
-			Key:   key,
-			Value: value,
-		},
-	}
-	resp, err := c.sendKVReq(key, req)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cmdResp := resp.GetCmdRawPutResp()
-	if cmdResp == nil {
-		return errors.Trace(errBodyMissing)
-	}
-	if cmdResp.GetError() != "" {
-		return errors.New(cmdResp.GetError())
-	}
-	return nil
-}
-
-// Delete deletes a key-value pair from TiKV.
-func (c *RawKVClient) Delete(key []byte) error {
-	start := time.Now()
-	defer func() { rawkvCmdHistogram.WithLabelValues("delete").Observe(time.Since(start).Seconds()) }()
-
-	req := &kvrpcpb.Request{
-		Type: kvrpcpb.MessageType_CmdRawDelete,
-		CmdRawDeleteReq: &kvrpcpb.CmdRawDeleteRequest{
-			Key: key,
-		},
-	}
-	resp, err := c.sendKVReq(key, req)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cmdResp := resp.GetCmdRawDeleteResp()
-	if cmdResp == nil {
-		return errors.Trace(errBodyMissing)
-	}
-	if cmdResp.GetError() != "" {
-		return errors.New(cmdResp.GetError())
-	}
-	return nil
-}
-
-func (c *RawKVClient) sendKVReq(key []byte, req *kvrpcpb.Request) (*kvrpcpb.Response, error) {
 	bo := NewBackoffer(rawkvMaxBackoff, goctx.Background())
 	sender := NewRegionRequestSender(bo, c.regionCache, c.rpcClient)
+	var resp *kvrpcpb.RawGetResponse
 	for {
 		loc, err := c.regionCache.LocateKey(bo, key)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp, err := sender.SendKVReq(req, loc.Region, readTimeoutShort)
+		resp, err = sender.KvRawGet(req, loc.Region, readTimeoutShort)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -146,6 +76,85 @@ func (c *RawKVClient) sendKVReq(key []byte, req *kvrpcpb.Request) (*kvrpcpb.Resp
 			}
 			continue
 		}
-		return resp, nil
+		break
 	}
+
+	if resp.GetError() != "" {
+		return nil, errors.New(resp.GetError())
+	}
+	return resp.Value, nil
+}
+
+// Put stores a key-value pair to TiKV.
+func (c *RawKVClient) Put(key, value []byte) error {
+	start := time.Now()
+	defer func() { rawkvCmdHistogram.WithLabelValues("put").Observe(time.Since(start).Seconds()) }()
+	rawkvSizeHistogram.WithLabelValues("key").Observe(float64(len(key)))
+	rawkvSizeHistogram.WithLabelValues("value").Observe(float64(len(value)))
+
+	req := &kvrpcpb.RawPutRequest{
+		key: key,
+	}
+	bo := NewBackoffer(rawkvMaxBackoff, goctx.Background())
+	sender := NewRegionRequestSender(bo, c.regionCache, c.rpcClient)
+	var resp *kvrpcpb.RawPutResponse
+	for {
+		loc, err := c.regionCache.LocateKey(bo, key)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		resp, err = sender.KvRawPut(req, loc.Region, readTimeoutShort)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if regionErr := resp.GetRegionError(); regionErr != nil {
+			err := bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			continue
+		}
+		break
+	}
+
+	if resp.GetError() != "" {
+		return errors.New(resp.GetError())
+	}
+	return nil
+}
+
+// Delete deletes a key-value pair from TiKV.
+func (c *RawKVClient) Delete(key []byte) error {
+	start := time.Now()
+	defer func() { rawkvCmdHistogram.WithLabelValues("delete").Observe(time.Since(start).Seconds()) }()
+
+	req := &kvrpcpb.RawDeleteRequest{
+		key: key,
+	}
+	bo := NewBackoffer(rawkvMaxBackoff, goctx.Background())
+	sender := NewRegionRequestSender(bo, c.regionCache, c.rpcClient)
+	var resp *kvrpcpb.RawPutResponse
+	for {
+		loc, err := c.regionCache.LocateKey(bo, key)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		resp, err = sender.KvRawDelete(req, loc.Region, readTimeoutShort)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if regionErr := resp.GetRegionError(); regionErr != nil {
+			err := bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			continue
+		}
+		break
+	}
+
+	if resp.GetError() != "" {
+		return errors.New(resp.GetError())
+	}
+	return nil
 }

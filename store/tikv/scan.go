@@ -135,15 +135,12 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		req := &pb.Request{
-			Type: pb.MessageType_CmdScan,
-			CmdScanReq: &pb.CmdScanRequest{
-				StartKey: []byte(s.nextStartKey),
-				Limit:    uint32(s.batchSize),
-				Version:  s.startTS(),
-			},
+		req := &kvrpcpb.ScanRequest{
+			StartKey: []byte(s.nextStartKey),
+			Limit:    uint32(s.batchSize),
+			Version:  s.startTS(),
 		}
-		resp, err := s.snapshot.store.SendKVReq(bo, req, loc.Region, readTimeoutMedium)
+		resp, err := s.snapshot.store.KVScan(bo, req, loc.Region, readTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -155,12 +152,8 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			}
 			continue
 		}
-		cmdScanResp := resp.GetCmdScanResp()
-		if cmdScanResp == nil {
-			return errors.Trace(errBodyMissing)
-		}
 
-		kvPairs := cmdScanResp.Pairs
+		kvPairs := resp.Pairs
 		// Check if kvPair contains error, it should be a Lock.
 		for _, pair := range kvPairs {
 			if keyErr := pair.GetError(); keyErr != nil {

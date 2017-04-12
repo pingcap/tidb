@@ -28,22 +28,22 @@ import (
 // Client is a client that sends RPC.
 // It should not be used after calling Close().
 type Client interface {
-	KvGet(ctx goctx.Context, in *kvrpcpb.GetRequest) (*kvrpcpb.GetResponse, error)
-	KvScan(ctx goctx.Context, in *kvrpcpb.ScanRequest) (*kvrpcpb.ScanResponse, error)
-	KvPrewrite(ctx goctx.Context, in *kvrpcpb.PrewriteRequest) (*kvrpcpb.PrewriteResponse, error)
-	KvCommit(ctx goctx.Context, in *kvrpcpb.CommitRequest) (*kvrpcpb.CommitResponse, error)
-	KvCleanup(ctx goctx.Context, in *kvrpcpb.CleanupRequest) (*kvrpcpb.CleanupResponse, error)
-	KvBatchGet(ctx goctx.Context, in *kvrpcpb.BatchGetRequest) (*kvrpcpb.BatchGetResponse, error)
-	KvBatchRollback(ctx goctx.Context, in *kvrpcpb.BatchRollbackRequest) (*kvrpcpb.BatchRollbackRespone, error)
-	KvScanLock(ctx goctx.Context, in *kvrpcpb.ScanLockRequest) (*kvrpcpb.ScanLockResponse, error)
-	KvResolveLock(ctx goctx.Context, in *kvrpcpb.ResolveLockRequest) (*kvrpcpb.ResolveLockResponse, error)
-	KvGC(ctx goctx.Context, in *kvrpcpb.GCRequest) (*kvrpcpb.GCResponse, error)
+	KvGet(ctx goctx.Context, addr string, in *kvrpcpb.GetRequest) (*kvrpcpb.GetResponse, error)
+	KvScan(ctx goctx.Context, addr string, in *kvrpcpb.ScanRequest) (*kvrpcpb.ScanResponse, error)
+	KvPrewrite(ctx goctx.Context, addr string, in *kvrpcpb.PrewriteRequest) (*kvrpcpb.PrewriteResponse, error)
+	KvCommit(ctx goctx.Context, addr string, in *kvrpcpb.CommitRequest) (*kvrpcpb.CommitResponse, error)
+	KvCleanup(ctx goctx.Context, addr string, in *kvrpcpb.CleanupRequest) (*kvrpcpb.CleanupResponse, error)
+	KvBatchGet(ctx goctx.Context, addr string, in *kvrpcpb.BatchGetRequest) (*kvrpcpb.BatchGetResponse, error)
+	KvBatchRollback(ctx goctx.Context, addr string, in *kvrpcpb.BatchRollbackRequest) (*kvrpcpb.BatchRollbackRespone, error)
+	KvScanLock(ctx goctx.Context, addr string, in *kvrpcpb.ScanLockRequest) (*kvrpcpb.ScanLockResponse, error)
+	KvResolveLock(ctx goctx.Context, addr string, in *kvrpcpb.ResolveLockRequest) (*kvrpcpb.ResolveLockResponse, error)
+	KvGC(ctx goctx.Context, addr string, in *kvrpcpb.GCRequest) (*kvrpcpb.GCResponse, error)
 
-	RawGet(ctx goctx.Context, in *kvrpcpb.RawGetRequest) (*kvrpcpb.RawGetResponse, error)
-	RawPut(ctx goctx.Context, in *kvrpcpb.RawPutRequest) (*kvrpcpb.RawPutResponse, error)
-	RawDelete(ctx goctx.Context, in *kvrpcpb.RawDeleteRequest) (*kvrpcpb.RawDeleteResponse, error)
+	RawGet(ctx goctx.Context, addr string, in *kvrpcpb.RawGetRequest) (*kvrpcpb.RawGetResponse, error)
+	RawPut(ctx goctx.Context, addr string, in *kvrpcpb.RawPutRequest) (*kvrpcpb.RawPutResponse, error)
+	RawDelete(ctx goctx.Context, addr string, in *kvrpcpb.RawDeleteRequest) (*kvrpcpb.RawDeleteResponse, error)
 
-	Coprocessor(ctx goctx.Context, in *coprocessor.Request) (*coprocessor.Response, error)
+	Coprocessor(ctx goctx.Context, addr string, in *coprocessor.Request) (*coprocessor.Response, error)
 
 	// Close should release all data.
 	Close() error
@@ -70,7 +70,7 @@ func newRPCClient() *rpcClient {
 	}
 }
 
-func (c *rpcClient) callRpcFunc(f func(conn *grpc.ClientConn), label string) error {
+func (c *rpcClient) callRpcFunc(addr string, f func(conn *grpc.ClientConn), label string) error {
 	startTime := time.Now()
 	defer func() { sendReqHistogram.WithLabelValues(label).Observe(time.Since(startTime).Seconds()) }()
 
@@ -82,7 +82,7 @@ func (c *rpcClient) callRpcFunc(f func(conn *grpc.ClientConn), label string) err
 	f(conn)
 }
 
-func (c *rpcClient) KvGet(ctx goctx.Context, in *kvrpcpb.GetRequest) (*kvrpcpb.GetResponse, error) {
+func (c *rpcClient) KvGet(ctx goctx.Context, addr string, in *kvrpcpb.GetRequest) (*kvrpcpb.GetResponse, error) {
 	var out *kvrpcpb.GetResponse
 	var err error
 	f := func(conn *grpc.ClientConn) {
@@ -93,13 +93,13 @@ func (c *rpcClient) KvGet(ctx goctx.Context, in *kvrpcpb.GetRequest) (*kvrpcpb.G
 			err = errors.Trace(err)
 		}
 	}
-	if e := c.callRpcFunc(f, "kv"); e != nil {
+	if e := c.callRpcFunc(addr, f, "kv"); e != nil {
 		return nil, errors.Trace(err)
 	}
 	return out, err
 }
 
-func (c *rpcClient) KvScan(ctx goctx.Context, in *kvrpcpb.ScanRequest) (*kvrpcpb.ScanResponse, error) {
+func (c *rpcClient) KvScan(ctx goctx.Context, addr string, in *kvrpcpb.ScanRequest) (*kvrpcpb.ScanResponse, error) {
 	var out *kvrpcpb.ScanResponse
 	var err orror
 	f := func(conn *grpc.ClientConn) {
@@ -110,13 +110,13 @@ func (c *rpcClient) KvScan(ctx goctx.Context, in *kvrpcpb.ScanRequest) (*kvrpcpb
 			err = errors.Trace(err)
 		}
 	}
-	if e := c.callRpcFunc(f, "kv"); e != nil {
+	if e := c.callRpcFunc(addr, f, "kv"); e != nil {
 		return nil, errors.Trace(err)
 	}
 	return out, err
 }
 
-func (c *rpcClient) KvPrewrite(ctx goctx.Context, in *kvrpcpb.PrewriteRequest) (*kvrpcpb.PrewriteResponse, error) {
+func (c *rpcClient) KvPrewrite(ctx goctx.Context, addr string, in *kvrpcpb.PrewriteRequest) (*kvrpcpb.PrewriteResponse, error) {
 	var out *kvrpcpb.RrewriteResponse
 	var err error
 	f := func(conn *grpc.ClientConn) {
@@ -127,13 +127,13 @@ func (c *rpcClient) KvPrewrite(ctx goctx.Context, in *kvrpcpb.PrewriteRequest) (
 			err = errors.Trace(err)
 		}
 	}
-	if e := c.callRpcFunc(f, "kv"); e != nil {
+	if e := c.callRpcFunc(addr, f, "kv"); e != nil {
 		return nil, errors.Trace(err)
 	}
 	return out, err
 }
 
-func (c *rpcClient) KvCommit(ctx goctx.Context, in *kvrpcpb.CommitRequest) (*kvrpcpb.CommitResponse, error) {
+func (c *rpcClient) KvCommit(ctx goctx.Context, addr string, in *kvrpcpb.CommitRequest) (*kvrpcpb.CommitResponse, error) {
 	var out *kvrpcpb.CommitResponse
 	var err error
 	f := func(conn *grpc.ClientConn) {
@@ -144,13 +144,13 @@ func (c *rpcClient) KvCommit(ctx goctx.Context, in *kvrpcpb.CommitRequest) (*kvr
 			err = errors.Trace(err)
 		}
 	}
-	if e := c.callRpcFunc(f, "kv"); e != nil {
+	if e := c.callRpcFunc(addr, f, "kv"); e != nil {
 		return nil, errors.Trace(err)
 	}
 	return out, err
 }
 
-func (c *rpcClient) KvCleanup(ctx goctx.Context, in *kvrpcpb.CleanupRequest) (*kvrpcpb.CleanupResponse, error) {
+func (c *rpcClient) KvCleanup(ctx goctx.Context, addr string, in *kvrpcpb.CleanupRequest) (*kvrpcpb.CleanupResponse, error) {
 	var out *kvrpcpb.CleanupResponse
 	var err error
 	f := func(conn *grpc.ClientConn) {
@@ -161,13 +161,13 @@ func (c *rpcClient) KvCleanup(ctx goctx.Context, in *kvrpcpb.CleanupRequest) (*k
 			err = errors.Trace(err)
 		}
 	}
-	if e := c.callRpcFunc(f, "kv"); e != nil {
+	if e := c.callRpcFunc(addr, f, "kv"); e != nil {
 		return nil, errors.Trace(err)
 	}
 	return out, err
 }
 
-func (c *rpcClient) KvBatchGet(ctx goctx.Context, in *kvrpcpb.BatchGetRequest) (*kvrpcpb.BatchGetResponse, error) {
+func (c *rpcClient) KvBatchGet(ctx goctx.Context, addr string, in *kvrpcpb.BatchGetRequest) (*kvrpcpb.BatchGetResponse, error) {
 	var out *kvrpcpb.BatchGetResponse
 	var err error
 	f := func(conn *grpc.ClientConn) {
@@ -178,13 +178,13 @@ func (c *rpcClient) KvBatchGet(ctx goctx.Context, in *kvrpcpb.BatchGetRequest) (
 			err = errors.Trace(err)
 		}
 	}
-	if e := c.callRpcFunc(f, "kv"); e != nil {
+	if e := c.callRpcFunc(addr, f, "kv"); e != nil {
 		return nil, errors.Trace(err)
 	}
 	return out, err
 }
 
-func (c *rpcClient) KvBatchRollback(ctx goctx.Context, in *kvrpcpb.BatchRollbackRequest) (*kvrpcpb.BatchRollbackResponse, error) {
+func (c *rpcClient) KvBatchRollback(ctx goctx.Context, addr string, in *kvrpcpb.BatchRollbackRequest) (*kvrpcpb.BatchRollbackResponse, error) {
 	var out *kvrpcpb.BatchRollbackResponse
 	var err error
 	f := func(conn *grpc.ClientConn) {
@@ -195,13 +195,13 @@ func (c *rpcClient) KvBatchRollback(ctx goctx.Context, in *kvrpcpb.BatchRollback
 			err = errors.Trace(err)
 		}
 	}
-	if e := c.callRpcFunc(f, "kv"); e != nil {
+	if e := c.callRpcFunc(addr, f, "kv"); e != nil {
 		return nil, errors.Trace(err)
 	}
 	return out, err
 }
 
-func (c *rpcClient) KvScanLock(ctx goctx.Context, in *kvrpcpb.ScanLockRequest) (*kvrpcpb.ScanLockResponse, error) {
+func (c *rpcClient) KvScanLock(ctx goctx.Context, addr string, in *kvrpcpb.ScanLockRequest) (*kvrpcpb.ScanLockResponse, error) {
 	var out *kvrpcpb.ScanLockResponse
 	var err error
 	f := func(conn *grpc.ClientConn) {
@@ -212,13 +212,13 @@ func (c *rpcClient) KvScanLock(ctx goctx.Context, in *kvrpcpb.ScanLockRequest) (
 			err = errors.Trace(err)
 		}
 	}
-	if e := c.callRpcFunc(f, "kv"); e != nil {
+	if e := c.callRpcFunc(addr, f, "kv"); e != nil {
 		return nil, errors.Trace(err)
 	}
 	return out, err
 }
 
-func (c *rpcClient) KvResolveLock(ctx goctx.Context, in *kvrpcpb.ResolveLockRequest) (*kvrpcpb.ResolveLockResponse, error) {
+func (c *rpcClient) KvResolveLock(ctx goctx.Context, addr string, in *kvrpcpb.ResolveLockRequest) (*kvrpcpb.ResolveLockResponse, error) {
 	var out *kvrpcpb.ResolveLockRequest
 	var err error
 	f := func(conn *grpc.ClientConn) {
@@ -229,13 +229,13 @@ func (c *rpcClient) KvResolveLock(ctx goctx.Context, in *kvrpcpb.ResolveLockRequ
 			err = errors.Trace(err)
 		}
 	}
-	if e := c.callRpcFunc(f, "kv"); e != nil {
+	if e := c.callRpcFunc(addr, f, "kv"); e != nil {
 		return nil, errors.Trace(err)
 	}
 	return out, err
 }
 
-func (c *rpcClient) RawGet(ctx goctx.Context, in *kvrpcpb.RawGetRequest) (*kvrpcpb.RawGetResponse, error) {
+func (c *rpcClient) RawGet(ctx goctx.Context, addr string, in *kvrpcpb.RawGetRequest) (*kvrpcpb.RawGetResponse, error) {
 	var out *kvrpcpb.RawGetResponse
 	var err error
 	f := func(conn *grpc.ClientConn) {
@@ -246,13 +246,13 @@ func (c *rpcClient) RawGet(ctx goctx.Context, in *kvrpcpb.RawGetRequest) (*kvrpc
 			err = errors.Trace(err)
 		}
 	}
-	if e := c.callRpcFunc(f, "kv"); e != nil {
+	if e := c.callRpcFunc(addr, f, "kv"); e != nil {
 		return nil, errors.Trace(err)
 	}
 	return out, err
 }
 
-func (c *rpcClient) RawPut(ctx goctx.Context, in *kvrpcpb.RawPutRequest) (*kvrpcpb.RawPutResponse, error) {
+func (c *rpcClient) RawPut(ctx goctx.Context, addr string, in *kvrpcpb.RawPutRequest) (*kvrpcpb.RawPutResponse, error) {
 	var out *kvrpcpb.RawPutResponse
 	var err error
 	f := func(conn *grpc.ClientConn) {
@@ -263,13 +263,13 @@ func (c *rpcClient) RawPut(ctx goctx.Context, in *kvrpcpb.RawPutRequest) (*kvrpc
 			err = errors.Trace(err)
 		}
 	}
-	if e = c.callRpcFunc(f, "kv"); e != nil {
+	if e = c.callRpcFunc(addr, f, "kv"); e != nil {
 		return nil, errors.Trace(err)
 	}
 	return out, err
 }
 
-func (c *rpcClient) RawDelete(ctx goctx.Context, in *kvrpc.RawDeleteRequest) (*kvrpcpb.RawDeleteResponse, error) {
+func (c *rpcClient) RawDelete(ctx goctx.Context, addr string, in *kvrpc.RawDeleteRequest) (*kvrpcpb.RawDeleteResponse, error) {
 	var out *kvrpcpb.RawDeleteResponse
 	var err error
 	f := func(conn *grpc.ClientConn) {
@@ -280,13 +280,13 @@ func (c *rpcClient) RawDelete(ctx goctx.Context, in *kvrpc.RawDeleteRequest) (*k
 			err = errors.Trace(err)
 		}
 	}
-	if e = c.callRpcFunc(f, "kv"); e != nil {
+	if e = c.callRpcFunc(addr, f, "kv"); e != nil {
 		return nil, errors.Trace(err)
 	}
 	return out, err
 }
 
-func (c *rpcClient) Coprocessor(ctx goctx.Context, in *coprocessor.Request) (*coprocessor.Response, error) {
+func (c *rpcClient) Coprocessor(ctx goctx.Context, addr string, in *coprocessor.Request) (*coprocessor.Response, error) {
 	var out *coprocessor.Response
 	var err error
 	f := func(conn *grpc.ClientConn) {
@@ -297,7 +297,7 @@ func (c *rpcClient) Coprocessor(ctx goctx.Context, in *coprocessor.Request) (*co
 			err = errors.Trace(err)
 		}
 	}
-	if e = c.callRpcFunc(f, "cop"); e != nil {
+	if e = c.callRpcFunc(addr, f, "cop"); e != nil {
 		return nil, errors.Trace(err)
 	}
 	return out, err

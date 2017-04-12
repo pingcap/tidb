@@ -196,19 +196,16 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 	lockResolverCounter.WithLabelValues("query_txn_status").Inc()
 
 	var status TxnStatus
-	req := &kvrpcpb.Request{
-		Type: kvrpcpb.MessageType_CmdCleanup,
-		CmdCleanupReq: &kvrpcpb.CmdCleanupRequest{
-			Key:          primary,
-			StartVersion: txnID,
-		},
+	req := &kvrpcpb.CleanupRequest{
+		Key:          primary,
+		StartVersion: txnID,
 	}
 	for {
 		loc, err := lr.store.regionCache.LocateKey(bo, primary)
 		if err != nil {
 			return status, errors.Trace(err)
 		}
-		resp, err := lr.store.SendKVReq(bo, req, loc.Region, readTimeoutShort)
+		resp, err := lr.store.KvCleanup(bo, req, loc.Region, readTimeoutShort)
 		if err != nil {
 			return status, errors.Trace(err)
 		}
@@ -219,17 +216,13 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 			}
 			continue
 		}
-		cmdResp := resp.GetCmdCleanupResp()
-		if cmdResp == nil {
-			return status, errors.Trace(errBodyMissing)
-		}
-		if keyErr := cmdResp.GetError(); keyErr != nil {
+		if keyErr := resp.GetError(); keyErr != nil {
 			err = errors.Errorf("unexpected cleanup err: %s, tid: %v", keyErr, txnID)
 			log.Error(err)
 			return status, err
 		}
-		if cmdResp.CommitVersion != 0 {
-			status = TxnStatus(cmdResp.GetCommitVersion())
+		if resp.GetCommitVersion() != 0 {
+			status = TxnStatus(resp.GetCommitVersion())
 			lockResolverCounter.WithLabelValues("query_txn_status_committed").Inc()
 		} else {
 			lockResolverCounter.WithLabelValues("query_txn_status_rolled_back").Inc()
@@ -249,16 +242,13 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 		if _, ok := cleanRegions[loc.Region]; ok {
 			return nil
 		}
-		req := &kvrpcpb.Request{
-			Type: kvrpcpb.MessageType_CmdResolveLock,
-			CmdResolveLockReq: &kvrpcpb.CmdResolveLockRequest{
-				StartVersion: l.TxnID,
-			},
+		req := &kvrpcpb.ResolveLockRequest{
+			StartVersion: l.TxnID,
 		}
 		if status.IsCommitted() {
 			req.GetCmdResolveLockReq().CommitVersion = status.CommitTS()
 		}
-		resp, err := lr.store.SendKVReq(bo, req, loc.Region, readTimeoutShort)
+		resp, err := lr.store.KvResolveLock(bo, req, loc.Region, readTimeoutShort)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -269,11 +259,7 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 			}
 			continue
 		}
-		cmdResp := resp.GetCmdResolveLockResp()
-		if cmdResp == nil {
-			return errors.Trace(errBodyMissing)
-		}
-		if keyErr := cmdResp.GetError(); keyErr != nil {
+		if keyErr := resp.GetError(); keyErr != nil {
 			err = errors.Errorf("unexpected resolve err: %s, lock: %v", keyErr, l)
 			log.Error(err)
 			return err
