@@ -349,7 +349,6 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		if classType == types.ClassString && !mysql.HasBinaryFlag(tp.Flag) {
 			tp.Charset, tp.Collate = types.DefaultCharsetForType(tp.Tp)
 		}
-
 	// number related
 	case ast.Ln, ast.Log, ast.Log2, ast.Log10, ast.Sqrt, ast.PI, ast.Exp, ast.Degrees, ast.Sin, ast.Cos, ast.Tan,
 		ast.Cot, ast.Acos, ast.Asin, ast.Atan, ast.Pow, ast.Power, ast.Rand, ast.Radians:
@@ -357,14 +356,13 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	case ast.MicroSecond, ast.Second, ast.Minute, ast.Hour, ast.Day, ast.Week, ast.Month, ast.Year,
 		ast.DayOfWeek, ast.DayOfMonth, ast.DayOfYear, ast.Weekday, ast.WeekOfYear, ast.YearWeek, ast.DateDiff,
 		ast.FoundRows, ast.Length, ast.Extract, ast.Locate, ast.UnixTimestamp, ast.Quarter, ast.IsIPv4, ast.ToDays,
-		ast.Strcmp, ast.IsNull, ast.BitLength, ast.CharLength, ast.CharacterLength, ast.CRC32, ast.TimestampDiff,
+		ast.Strcmp, ast.IsNull, ast.BitLength, ast.CharLength, ast.CRC32, ast.TimestampDiff,
 		ast.Sign, ast.IsIPv6, ast.Ord, ast.Instr, ast.BitCount, ast.TimeToSec, ast.FindInSet, ast.Field,
 		ast.GetLock, ast.ReleaseLock, ast.Interval:
 		tp = types.NewFieldType(mysql.TypeLonglong)
 	case ast.ConnectionID, ast.InetAton:
 		tp = types.NewFieldType(mysql.TypeLonglong)
 		tp.Flag |= mysql.UnsignedFlag
-
 	// time related
 	case ast.Curtime, ast.CurrentTime, ast.TimeDiff, ast.MakeTime:
 		tp = types.NewFieldType(mysql.TypeDuration)
@@ -376,7 +374,6 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	case ast.Now, ast.Sysdate, ast.CurrentTimestamp, ast.UTCTimestamp:
 		tp = types.NewFieldType(mysql.TypeDatetime)
 		tp.Decimal = v.getFsp(x)
-
 	// string related
 	case ast.RandomBytes:
 		tp = types.NewFieldType(mysql.TypeVarString)
@@ -397,7 +394,6 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		ast.AesEncrypt, ast.AesDecrypt, ast.SHA2, ast.InetNtoa:
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
-
 	case ast.If:
 		// TODO: fix this
 		// See https://dev.mysql.com/doc/refman/5.5/en/control-flow-functions.html#function_if
