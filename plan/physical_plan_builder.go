@@ -596,8 +596,19 @@ func (p *Join) buildSelectionWithConds(leftAsOuter bool) (*Selection, []*express
 	return selection, corCols
 }
 
-// `forced` is used when we use hint to force choosing the index nested loop join. At this time, the outer table's row count need not to be reliable.
-func (p *Join) convert2IndexNestedLoopJoinLeft(prop *requiredProperty, innerJoin bool, forced bool) (*physicalPlanInfo, error) {
+// outerTableCouldINLJ will check the whether is forced to build index nested loop join or outer info is reliable
+// and the count satisfies the condition.
+func (p *Join) outerTableCouldINLJ(outerInfo *physicalPlanInfo, leftAsOuter bool) bool {
+	var forced bool
+	if leftAsOuter {
+		forced = (p.preferINLJ&preferLeftAsOuter) > 0 && p.hasEqualConds()
+	} else {
+		forced = (p.preferINLJ&preferRightAsOuter) > 0 && p.hasEqualConds()
+	}
+	return !forced && (!outerInfo.reliable || outerInfo.count > uint64(p.ctx.GetSessionVars().MaxRowCountForINLJ))
+}
+
+func (p *Join) convert2IndexNestedLoopJoinLeft(prop *requiredProperty, innerJoin bool) (*physicalPlanInfo, error) {
 	lChild := p.children[0].(LogicalPlan)
 	if _, ok := p.children[1].(*DataSource); !ok {
 		return nil, nil
@@ -629,7 +640,7 @@ func (p *Join) convert2IndexNestedLoopJoinLeft(prop *requiredProperty, innerJoin
 	}
 	// If the outer table's row count is reliable and don't exceed the MaxRowCountForINLJ or we use hint to force
 	// choosing index nested loop join, we will continue building. Otherwise we just break and return nil.
-	if !forced && (!lInfo.reliable || lInfo.count > uint64(p.ctx.GetSessionVars().MaxRowCountForINLJ)) {
+	if p.outerTableCouldINLJ(lInfo, true) {
 		return nil, nil
 	}
 	selection, corCols := p.buildSelectionWithConds(true)
@@ -667,8 +678,7 @@ func (p *Join) convert2IndexNestedLoopJoinLeft(prop *requiredProperty, innerJoin
 	return resultInfo, nil
 }
 
-// `forced` is used when we use hint to force choosing the index nested loop join. At this time, the outer table's row count need not to be reliable.
-func (p *Join) convert2IndexNestedLoopJoinRight(prop *requiredProperty, innerJoin bool, forced bool) (*physicalPlanInfo, error) {
+func (p *Join) convert2IndexNestedLoopJoinRight(prop *requiredProperty, innerJoin bool) (*physicalPlanInfo, error) {
 	rChild := p.children[1].(LogicalPlan)
 	if _, ok := p.children[0].(*DataSource); !ok {
 		return nil, nil
@@ -700,7 +710,7 @@ func (p *Join) convert2IndexNestedLoopJoinRight(prop *requiredProperty, innerJoi
 	}
 	// If the outer table's row count is reliable and don't exceed the MaxRowCountForINLJ or we use hint to force
 	// choosing index nested loop join, we will continue building. Otherwise we just break and return nil.
-	if !forced && (!rInfo.reliable || rInfo.count > uint64(p.ctx.GetSessionVars().MaxRowCountForINLJ)) {
+	if p.outerTableCouldINLJ(rInfo, false) {
 		return nil, nil
 	}
 	selection, corCols := p.buildSelectionWithConds(false)
@@ -931,8 +941,7 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 				break
 			}
 		}
-		forcedINLJ := (p.preferINLJ&preferLeftAsOuter) > 0 && p.hasEqualConds()
-		nljInfo, err := p.convert2IndexNestedLoopJoinLeft(prop, false, forcedINLJ)
+		nljInfo, err := p.convert2IndexNestedLoopJoinLeft(prop, false)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -955,8 +964,7 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 				break
 			}
 		}
-		forcedINLJ := (p.preferINLJ&preferRightAsOuter) > 0 && p.hasEqualConds()
-		nljInfo, err := p.convert2IndexNestedLoopJoinRight(prop, false, forcedINLJ)
+		nljInfo, err := p.convert2IndexNestedLoopJoinRight(prop, false)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -977,13 +985,11 @@ func (p *Join) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, 
 			}
 			break
 		}
-		lForced := (p.preferINLJ&preferLeftAsOuter) > 0 && p.hasEqualConds()
-		rForced := (p.preferINLJ&preferRightAsOuter) > 0 && p.hasEqualConds()
-		lNLJInfo, err := p.convert2IndexNestedLoopJoinLeft(prop, true, lForced)
+		lNLJInfo, err := p.convert2IndexNestedLoopJoinLeft(prop, true)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		rNLJInfo, err := p.convert2IndexNestedLoopJoinRight(prop, true, rForced)
+		rNLJInfo, err := p.convert2IndexNestedLoopJoinRight(prop, true)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

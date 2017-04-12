@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -1145,8 +1146,9 @@ func (s *testPlanSuite) TestJoinAlgorithm(c *C) {
 func (s *testPlanSuite) TestAutoJoinChosen(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
-		sql string
-		ans string
+		sql         string
+		ans         string
+		genStatsTbl bool
 	}{
 		{
 			sql: "select * from (select * from t limit 0, 128) t1 join t t2 on t1.a = t2.a",
@@ -1164,6 +1166,16 @@ func (s *testPlanSuite) TestAutoJoinChosen(c *C) {
 			sql: "select * from (select * from t limit 0, 29 union all select * from t limit 0, 100) t1 join t t2 on t1.a = t2.a",
 			ans: "RightHashJoin{UnionAll{Table(t)->Limit->Table(t)->Limit}->Table(t)}(t1.a,t2.a)",
 		},
+		{
+			sql:         "select * from t t1 join t t2 on t1.f = t2.f and t1.a < 5",
+			ans:         "Apply{Table(t)->Index(t.f)[]->Selection}",
+			genStatsTbl: true,
+		},
+		{
+			sql:         "select * from t t1 join t t2 on t1.f = t2.f and t1.a < 19",
+			ans:         "LeftHashJoin{Table(t)->Table(t)}(t1.f,t2.f)",
+			genStatsTbl: true,
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
@@ -1173,6 +1185,34 @@ func (s *testPlanSuite) TestAutoJoinChosen(c *C) {
 
 		is, err := mockResolve(stmt)
 		c.Assert(err, IsNil)
+
+		if ca.genStatsTbl {
+			tb, _ := is.TableByID(0)
+			tbl := tb.Meta()
+			statsTbl := statistics.Table{
+				Info:    tbl,
+				Count:   200,
+				Columns: make([]*statistics.Column, len(tbl.Columns)),
+				Indices: make([]*statistics.Column, len(tbl.Indices)),
+			}
+			for i := range statsTbl.Columns {
+				statsTbl.Columns[i] = &statistics.Column{ID: tbl.Columns[i].ID}
+			}
+			for i := range statsTbl.Indices {
+				statsTbl.Indices[i] = &statistics.Column{ID: tbl.Indices[i].ID}
+			}
+			pkStatsCol := statsTbl.Columns[0]
+			pkStatsCol.NDV = 10
+			pkStatsCol.Numbers = make([]int64, 10)
+			pkStatsCol.Repeats = make([]int64, 10)
+			pkStatsCol.Values = make([]types.Datum, 10)
+			for i := 0; i < 10; i++ {
+				pkStatsCol.Numbers[i] = int64(20 * (i + 1))
+				pkStatsCol.Repeats[i] = 20
+				pkStatsCol.Values[i] = types.NewIntDatum(int64(i))
+			}
+			statistics.SetStatisticsTableCache(tbl.ID, &statsTbl, 1)
+		}
 
 		builder := &planBuilder{
 			allocator: new(idAllocator),
@@ -1185,5 +1225,9 @@ func (s *testPlanSuite) TestAutoJoinChosen(c *C) {
 		pp, err := doOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx, builder.allocator)
 		c.Assert(err, IsNil)
 		c.Assert(ToString(pp), Equals, ca.ans, Commentf("for %s", ca.sql))
+
+		if ca.genStatsTbl {
+			statistics.DelStatsTblFromCache(0)
+		}
 	}
 }

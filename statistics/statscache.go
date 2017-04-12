@@ -118,3 +118,14 @@ func SetStatisticsTableCache(id int64, statsTbl *Table, version uint64) {
 	stats.tbl = statsTbl
 	stats.version = version
 }
+
+// DelStatsTblFromCache is only used for test.
+func DelStatsTblFromCache(id int64) {
+	statsTblCache.m.Lock()
+	defer statsTblCache.m.Unlock()
+	delete(statsTblCache.cache, id)
+	cnt := 0
+	for range statsTblCache.cache {
+		cnt++
+	}
+}
