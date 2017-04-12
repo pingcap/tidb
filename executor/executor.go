@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/memusage"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -802,8 +803,9 @@ type UnionExec struct {
 }
 
 type execResult struct {
-	rows []*Row
-	err  error
+	rows     []*Row
+	err      error
+	memUsage *memusage.Record
 }
 
 // Schema implements the Executor Schema interface.
