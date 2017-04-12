@@ -55,13 +55,15 @@ func NewRegionRequestSender(bo *Backoffer, regionCache *RegionCache, client Clie
 	}
 }
 
+// RegionErrorResponse is an interface used for retry on region errors in
+// the implemetation of RegionRequestSender.
 type RegionErrorResponse interface {
 	GetRegionError() *errorpb.Error
 }
 
 type rpcFunc func(ctx *RPCContext) (RegionErrorResponse, error, bool)
 
-func (s *RegionRequestSender) callRpcFunc(regionID RegionVerID, f rpcFunc) error {
+func (s *RegionRequestSender) callRPCFunc(regionID RegionVerID, f rpcFunc) error {
 	for {
 		ctx, err := s.regionCache.GetRPCContext(s.bo, regionID)
 		if err != nil {
@@ -94,6 +96,7 @@ func (s *RegionRequestSender) callRpcFunc(regionID RegionVerID, f rpcFunc) error
 	}
 }
 
+// KvGet sends a Get request to TiKV server.
 func (s *RegionRequestSender) KvGet(req *kvrpcpb.GetRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.GetResponse, error) {
 	var resp *kvrpcpb.GetResponse
 	f := func(ctx *RPCContext) (RegionErrorResponse, error, bool) {
@@ -114,12 +117,13 @@ func (s *RegionRequestSender) KvGet(req *kvrpcpb.GetRequest, regionID RegionVerI
 		return resp, err, true
 	}
 
-	if err := s.callRpcFunc(regionID, f); err != nil {
+	if err := s.callRPCFunc(regionID, f); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return resp, nil
 }
 
+// KvScan sends a Scan request to TiKV server.
 func (s *RegionRequestSender) KvScan(req *kvrpcpb.ScanRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.ScanResponse, error) {
 	var resp *kvrpcpb.ScanResponse
 	f := func(ctx *RPCContext) (RegionErrorResponse, error, bool) {
@@ -137,12 +141,13 @@ func (s *RegionRequestSender) KvScan(req *kvrpcpb.ScanRequest, regionID RegionVe
 		return resp, err, true
 	}
 
-	if err := s.callRpcFunc(regionID, f); err != nil {
+	if err := s.callRPCFunc(regionID, f); err != nil {
 		return nil, err
 	}
 	return resp, nil
 }
 
+// KvPrewrite sends a Prewrite request to TiKV server.
 func (s *RegionRequestSender) KvPrewrite(req *kvrpcpb.PrewriteRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.PrewriteResponse, error) {
 	var resp *kvrpcpb.PrewriteResponse
 	f := func(ctx *RPCContext) (RegionErrorResponse, error, bool) {
@@ -160,12 +165,13 @@ func (s *RegionRequestSender) KvPrewrite(req *kvrpcpb.PrewriteRequest, regionID 
 		return resp, err, true
 	}
 
-	if err := s.callRpcFunc(regionID, f); err != nil {
+	if err := s.callRPCFunc(regionID, f); err != nil {
 		return nil, err
 	}
 	return resp, nil
 }
 
+// KvCommit sends a Commit request to TiKV server.
 func (s *RegionRequestSender) KvCommit(req *kvrpcpb.CommitRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.CommitResponse, error) {
 	var resp *kvrpcpb.CommitResponse
 	f := func(ctx *RPCContext) (RegionErrorResponse, error, bool) {
@@ -183,12 +189,13 @@ func (s *RegionRequestSender) KvCommit(req *kvrpcpb.CommitRequest, regionID Regi
 		return resp, err, true
 	}
 
-	if err := s.callRpcFunc(regionID, f); err != nil {
+	if err := s.callRPCFunc(regionID, f); err != nil {
 		return nil, err
 	}
 	return resp, nil
 }
 
+// KvCleanup sends a Cleanup request to TiKV server.
 func (s *RegionRequestSender) KvCleanup(req *kvrpcpb.CleanupRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.CleanupResponse, error) {
 	var resp *kvrpcpb.CleanupResponse
 	f := func(ctx *RPCContext) (RegionErrorResponse, error, bool) {
@@ -206,12 +213,13 @@ func (s *RegionRequestSender) KvCleanup(req *kvrpcpb.CleanupRequest, regionID Re
 		return resp, err, true
 	}
 
-	if err := s.callRpcFunc(regionID, f); err != nil {
+	if err := s.callRPCFunc(regionID, f); err != nil {
 		return nil, err
 	}
 	return resp, nil
 }
 
+// KvBatchGet sends a BatchGet request to TiKV server.
 func (s *RegionRequestSender) KvBatchGet(req *kvrpcpb.BatchGetRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.BatchGetResponse, error) {
 	var resp *kvrpcpb.BatchGetResponse
 	f := func(ctx *RPCContext) (RegionErrorResponse, error, bool) {
@@ -229,12 +237,13 @@ func (s *RegionRequestSender) KvBatchGet(req *kvrpcpb.BatchGetRequest, regionID 
 		return resp, err, true
 	}
 
-	if err := s.callRpcFunc(regionID, f); err != nil {
+	if err := s.callRPCFunc(regionID, f); err != nil {
 		return nil, err
 	}
 	return resp, nil
 }
 
+// KvBatchRollback sends a BatchRollback request to TiKV server.
 func (s *RegionRequestSender) KvBatchRollback(req *kvrpcpb.BatchRollbackRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.BatchRollbackResponse, error) {
 	var resp *kvrpcpb.BatchRollbackResponse
 	f := func(ctx *RPCContext) (RegionErrorResponse, error, bool) {
@@ -252,12 +261,13 @@ func (s *RegionRequestSender) KvBatchRollback(req *kvrpcpb.BatchRollbackRequest,
 		return resp, err, true
 	}
 
-	if err := s.callRpcFunc(regionID, f); err != nil {
+	if err := s.callRPCFunc(regionID, f); err != nil {
 		return nil, err
 	}
 	return resp, nil
 }
 
+// KvScanLock sends a ScanLock request to TiKV server.
 func (s *RegionRequestSender) KvScanLock(req *kvrpcpb.ScanLockRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.ScanLockResponse, error) {
 	var resp *kvrpcpb.ScanLockResponse
 	f := func(ctx *RPCContext) (RegionErrorResponse, error, bool) {
@@ -275,12 +285,13 @@ func (s *RegionRequestSender) KvScanLock(req *kvrpcpb.ScanLockRequest, regionID 
 		return resp, err, true
 	}
 
-	if err := s.callRpcFunc(regionID, f); err != nil {
+	if err := s.callRPCFunc(regionID, f); err != nil {
 		return nil, err
 	}
 	return resp, nil
 }
 
+// KvResolveLock sends a ResolveLock request to TiKV server.
 func (s *RegionRequestSender) KvResolveLock(req *kvrpcpb.ResolveLockRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.ResolveLockResponse, error) {
 	var resp *kvrpcpb.ResolveLockResponse
 	f := func(ctx *RPCContext) (RegionErrorResponse, error, bool) {
@@ -298,12 +309,13 @@ func (s *RegionRequestSender) KvResolveLock(req *kvrpcpb.ResolveLockRequest, reg
 		return resp, err, true
 	}
 
-	if err := s.callRpcFunc(regionID, f); err != nil {
+	if err := s.callRPCFunc(regionID, f); err != nil {
 		return nil, err
 	}
 	return resp, nil
 }
 
+// KvGC sends a GC request to TiKV server.
 func (s *RegionRequestSender) KvGC(req *kvrpcpb.GCRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.GCResponse, error) {
 	var resp *kvrpcpb.GCResponse
 	f := func(ctx *RPCContext) (RegionErrorResponse, error, bool) {
@@ -321,12 +333,13 @@ func (s *RegionRequestSender) KvGC(req *kvrpcpb.GCRequest, regionID RegionVerID,
 		return resp, err, true
 	}
 
-	if err := s.callRpcFunc(regionID, f); err != nil {
+	if err := s.callRPCFunc(regionID, f); err != nil {
 		return nil, err
 	}
 	return resp, nil
 }
 
+// RawGet sends a RawGet request to TiKV server.
 func (s *RegionRequestSender) RawGet(req *kvrpcpb.RawGetRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.RawGetResponse, error) {
 	var resp *kvrpcpb.RawGetResponse
 	f := func(ctx *RPCContext) (RegionErrorResponse, error, bool) {
@@ -344,12 +357,13 @@ func (s *RegionRequestSender) RawGet(req *kvrpcpb.RawGetRequest, regionID Region
 		return resp, err, true
 	}
 
-	if err := s.callRpcFunc(regionID, f); err != nil {
+	if err := s.callRPCFunc(regionID, f); err != nil {
 		return nil, err
 	}
 	return resp, nil
 }
 
+// RawPut sends a RawPut request to TiKV server.
 func (s *RegionRequestSender) RawPut(req *kvrpcpb.RawPutRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.RawPutResponse, error) {
 	var resp *kvrpcpb.RawPutResponse
 	f := func(ctx *RPCContext) (RegionErrorResponse, error, bool) {
@@ -367,12 +381,13 @@ func (s *RegionRequestSender) RawPut(req *kvrpcpb.RawPutRequest, regionID Region
 		return resp, err, true
 	}
 
-	if err := s.callRpcFunc(regionID, f); err != nil {
+	if err := s.callRPCFunc(regionID, f); err != nil {
 		return nil, err
 	}
 	return resp, nil
 }
 
+// RawDelete sends a RawDelete request to TiKV server.
 func (s *RegionRequestSender) RawDelete(req *kvrpcpb.RawDeleteRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.RawDeleteResponse, error) {
 	var resp *kvrpcpb.RawDeleteResponse
 	f := func(ctx *RPCContext) (RegionErrorResponse, error, bool) {
@@ -390,12 +405,13 @@ func (s *RegionRequestSender) RawDelete(req *kvrpcpb.RawDeleteRequest, regionID 
 		return resp, err, true
 	}
 
-	if err := s.callRpcFunc(regionID, f); err != nil {
+	if err := s.callRPCFunc(regionID, f); err != nil {
 		return nil, err
 	}
 	return resp, nil
 }
 
+// Coprocessor sends a Coprocessor request to TiKV server.
 func (s *RegionRequestSender) Coprocessor(req *coprocessor.Request, regionID RegionVerID, timeout time.Duration) (*coprocessor.Response, error) {
 	var resp *coprocessor.Response
 	f := func(ctx *RPCContext) (RegionErrorResponse, error, bool) {
@@ -413,7 +429,7 @@ func (s *RegionRequestSender) Coprocessor(req *coprocessor.Request, regionID Reg
 		return resp, err, true
 	}
 
-	if err := s.callRpcFunc(regionID, f); err != nil {
+	if err := s.callRPCFunc(regionID, f); err != nil {
 		return nil, err
 	}
 	return resp, nil

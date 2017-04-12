@@ -69,7 +69,7 @@ func newRPCClient() *rpcClient {
 	}
 }
 
-func (c *rpcClient) callRpcFunc(addr string, f func(conn *Conn), label string) error {
+func (c *rpcClient) callRPCFunc(addr string, f func(conn *Conn), label string) error {
 	startTime := time.Now()
 	defer func() { sendReqHistogram.WithLabelValues(label).Observe(time.Since(startTime).Seconds()) }()
 
@@ -93,7 +93,7 @@ func (c *rpcClient) KvGet(ctx goctx.Context, addr string, req *kvrpcpb.GetReques
 			err = errors.Trace(err)
 		}
 	}
-	if e := c.callRpcFunc(addr, f, "kv"); e != nil {
+	if e := c.callRPCFunc(addr, f, "kv"); e != nil {
 		return nil, errors.Trace(err)
 	}
 	return resp, err
@@ -110,7 +110,7 @@ func (c *rpcClient) KvScan(ctx goctx.Context, addr string, req *kvrpcpb.ScanRequ
 			err = errors.Trace(err)
 		}
 	}
-	if e := c.callRpcFunc(addr, f, "kv"); e != nil {
+	if e := c.callRPCFunc(addr, f, "kv"); e != nil {
 		return nil, errors.Trace(err)
 	}
 	return resp, err
@@ -127,7 +127,7 @@ func (c *rpcClient) KvPrewrite(ctx goctx.Context, addr string, req *kvrpcpb.Prew
 			err = errors.Trace(err)
 		}
 	}
-	if e := c.callRpcFunc(addr, f, "kv"); e != nil {
+	if e := c.callRPCFunc(addr, f, "kv"); e != nil {
 		return nil, errors.Trace(err)
 	}
 	return resp, err
@@ -144,7 +144,7 @@ func (c *rpcClient) KvCommit(ctx goctx.Context, addr string, req *kvrpcpb.Commit
 			err = errors.Trace(err)
 		}
 	}
-	if e := c.callRpcFunc(addr, f, "kv"); e != nil {
+	if e := c.callRPCFunc(addr, f, "kv"); e != nil {
 		return nil, errors.Trace(err)
 	}
 	return resp, err
@@ -161,7 +161,7 @@ func (c *rpcClient) KvCleanup(ctx goctx.Context, addr string, req *kvrpcpb.Clean
 			err = errors.Trace(err)
 		}
 	}
-	if e := c.callRpcFunc(addr, f, "kv"); e != nil {
+	if e := c.callRPCFunc(addr, f, "kv"); e != nil {
 		return nil, errors.Trace(err)
 	}
 	return resp, err
@@ -178,7 +178,7 @@ func (c *rpcClient) KvBatchGet(ctx goctx.Context, addr string, req *kvrpcpb.Batc
 			err = errors.Trace(err)
 		}
 	}
-	if e := c.callRpcFunc(addr, f, "kv"); e != nil {
+	if e := c.callRPCFunc(addr, f, "kv"); e != nil {
 		return nil, errors.Trace(err)
 	}
 	return resp, err
@@ -195,7 +195,7 @@ func (c *rpcClient) KvBatchRollback(ctx goctx.Context, addr string, req *kvrpcpb
 			err = errors.Trace(err)
 		}
 	}
-	if e := c.callRpcFunc(addr, f, "kv"); e != nil {
+	if e := c.callRPCFunc(addr, f, "kv"); e != nil {
 		return nil, errors.Trace(err)
 	}
 	return resp, err
@@ -212,7 +212,7 @@ func (c *rpcClient) KvScanLock(ctx goctx.Context, addr string, req *kvrpcpb.Scan
 			err = errors.Trace(err)
 		}
 	}
-	if e := c.callRpcFunc(addr, f, "kv"); e != nil {
+	if e := c.callRPCFunc(addr, f, "kv"); e != nil {
 		return nil, errors.Trace(err)
 	}
 	return resp, err
@@ -229,7 +229,7 @@ func (c *rpcClient) KvResolveLock(ctx goctx.Context, addr string, req *kvrpcpb.R
 			err = errors.Trace(err)
 		}
 	}
-	if e := c.callRpcFunc(addr, f, "kv"); e != nil {
+	if e := c.callRPCFunc(addr, f, "kv"); e != nil {
 		return nil, errors.Trace(err)
 	}
 	return resp, err
@@ -246,7 +246,7 @@ func (c *rpcClient) KvGC(ctx goctx.Context, addr string, req *kvrpcpb.GCRequest)
 			err = errors.Trace(err)
 		}
 	}
-	if e := c.callRpcFunc(addr, f, "kv"); e != nil {
+	if e := c.callRPCFunc(addr, f, "kv"); e != nil {
 		return nil, errors.Trace(err)
 	}
 	return resp, err
@@ -263,7 +263,7 @@ func (c *rpcClient) RawGet(ctx goctx.Context, addr string, req *kvrpcpb.RawGetRe
 			err = errors.Trace(err)
 		}
 	}
-	if e := c.callRpcFunc(addr, f, "kv"); e != nil {
+	if e := c.callRPCFunc(addr, f, "kv"); e != nil {
 		return nil, errors.Trace(err)
 	}
 	return resp, err
@@ -280,7 +280,7 @@ func (c *rpcClient) RawPut(ctx goctx.Context, addr string, req *kvrpcpb.RawPutRe
 			err = errors.Trace(err)
 		}
 	}
-	if e := c.callRpcFunc(addr, f, "kv"); e != nil {
+	if e := c.callRPCFunc(addr, f, "kv"); e != nil {
 		return nil, errors.Trace(err)
 	}
 	return resp, err
@@ -297,7 +297,7 @@ func (c *rpcClient) RawDelete(ctx goctx.Context, addr string, req *kvrpcpb.RawDe
 			err = errors.Trace(err)
 		}
 	}
-	if e := c.callRpcFunc(addr, f, "kv"); e != nil {
+	if e := c.callRPCFunc(addr, f, "kv"); e != nil {
 		return nil, errors.Trace(err)
 	}
 	return resp, err
@@ -314,7 +314,7 @@ func (c *rpcClient) Coprocessor(ctx goctx.Context, addr string, req *coprocessor
 			err = errors.Trace(err)
 		}
 	}
-	if e := c.callRpcFunc(addr, f, "cop"); e != nil {
+	if e := c.callRPCFunc(addr, f, "cop"); e != nil {
 		return nil, errors.Trace(err)
 	}
 	return resp, err

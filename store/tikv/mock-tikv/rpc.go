@@ -472,6 +472,7 @@ func (c *RPCClient) checkArgs(ctx goctx.Context, addr string) (*rpcHandler, erro
 	return handler, nil
 }
 
+// KvGet sends a Get request to mock cluster.
 func (c *RPCClient) KvGet(ctx goctx.Context, addr string, req *kvrpcpb.GetRequest) (*kvrpcpb.GetResponse, error) {
 	handler, err := c.checkArgs(ctx, addr)
 	if err != nil {
@@ -486,6 +487,7 @@ func (c *RPCClient) KvGet(ctx goctx.Context, addr string, req *kvrpcpb.GetReques
 	return handler.handleKvGet(req), nil
 }
 
+// KvScan sends a Scan request to mock cluster.
 func (c *RPCClient) KvScan(ctx goctx.Context, addr string, req *kvrpcpb.ScanRequest) (*kvrpcpb.ScanResponse, error) {
 	handler, err := c.checkArgs(ctx, addr)
 	if err != nil {
@@ -500,6 +502,7 @@ func (c *RPCClient) KvScan(ctx goctx.Context, addr string, req *kvrpcpb.ScanRequ
 	return handler.handleKvScan(req), nil
 }
 
+// KvPrewrite sends a Prewrite request to mock cluster.
 func (c *RPCClient) KvPrewrite(ctx goctx.Context, addr string, req *kvrpcpb.PrewriteRequest) (*kvrpcpb.PrewriteResponse, error) {
 	handler, err := c.checkArgs(ctx, addr)
 	if err != nil {
@@ -514,6 +517,7 @@ func (c *RPCClient) KvPrewrite(ctx goctx.Context, addr string, req *kvrpcpb.Prew
 	return handler.handleKvPrewrite(req), nil
 }
 
+// KvCommit sends a Commit request to mock cluster.
 func (c *RPCClient) KvCommit(ctx goctx.Context, addr string, req *kvrpcpb.CommitRequest) (*kvrpcpb.CommitResponse, error) {
 	handler, err := c.checkArgs(ctx, addr)
 	if err != nil {
@@ -528,6 +532,7 @@ func (c *RPCClient) KvCommit(ctx goctx.Context, addr string, req *kvrpcpb.Commit
 	return handler.handleKvCommit(req), nil
 }
 
+// KvCleanup sends a Cleanup request to mock cluster.
 func (c *RPCClient) KvCleanup(ctx goctx.Context, addr string, req *kvrpcpb.CleanupRequest) (*kvrpcpb.CleanupResponse, error) {
 	handler, err := c.checkArgs(ctx, addr)
 	if err != nil {
@@ -542,6 +547,7 @@ func (c *RPCClient) KvCleanup(ctx goctx.Context, addr string, req *kvrpcpb.Clean
 	return handler.handleKvCleanup(req), nil
 }
 
+// KvBatchGet sends a BatchGet request to mock cluster.
 func (c *RPCClient) KvBatchGet(ctx goctx.Context, addr string, req *kvrpcpb.BatchGetRequest) (*kvrpcpb.BatchGetResponse, error) {
 	handler, err := c.checkArgs(ctx, addr)
 	if err != nil {
@@ -556,6 +562,7 @@ func (c *RPCClient) KvBatchGet(ctx goctx.Context, addr string, req *kvrpcpb.Batc
 	return handler.handleKvBatchGet(req), nil
 }
 
+// KvBatchRollback sends a BatchRollback request to mock cluster.
 func (c *RPCClient) KvBatchRollback(ctx goctx.Context, addr string, req *kvrpcpb.BatchRollbackRequest) (*kvrpcpb.BatchRollbackResponse, error) {
 	handler, err := c.checkArgs(ctx, addr)
 	if err != nil {
@@ -570,6 +577,7 @@ func (c *RPCClient) KvBatchRollback(ctx goctx.Context, addr string, req *kvrpcpb
 	return handler.handleKvBatchRollback(req), nil
 }
 
+// KvScanLock sends a ScanLock request to mock cluster.
 func (c *RPCClient) KvScanLock(ctx goctx.Context, addr string, req *kvrpcpb.ScanLockRequest) (*kvrpcpb.ScanLockResponse, error) {
 	handler, err := c.checkArgs(ctx, addr)
 	if err != nil {
@@ -584,6 +592,7 @@ func (c *RPCClient) KvScanLock(ctx goctx.Context, addr string, req *kvrpcpb.Scan
 	return handler.handleKvScanLock(req), nil
 }
 
+// KvResolveLock sends a ResolveLock request to mock cluster.
 func (c *RPCClient) KvResolveLock(ctx goctx.Context, addr string, req *kvrpcpb.ResolveLockRequest) (*kvrpcpb.ResolveLockResponse, error) {
 	handler, err := c.checkArgs(ctx, addr)
 	if err != nil {
@@ -598,6 +607,7 @@ func (c *RPCClient) KvResolveLock(ctx goctx.Context, addr string, req *kvrpcpb.R
 	return handler.handleKvResolveLock(req), nil
 }
 
+// KvGC sends a GC request to mock cluster.
 func (c *RPCClient) KvGC(ctx goctx.Context, addr string, req *kvrpcpb.GCRequest) (*kvrpcpb.GCResponse, error) {
 	client, err := c.checkArgs(ctx, addr)
 	if err != nil {
@@ -612,6 +622,7 @@ func (c *RPCClient) KvGC(ctx goctx.Context, addr string, req *kvrpcpb.GCRequest)
 	return &kvrpcpb.GCResponse{}, nil
 }
 
+// RawGet sends a RawGet request to mock cluster.
 func (c *RPCClient) RawGet(ctx goctx.Context, addr string, req *kvrpcpb.RawGetRequest) (*kvrpcpb.RawGetResponse, error) {
 	handler, err := c.checkArgs(ctx, addr)
 	if err != nil {
@@ -626,6 +637,7 @@ func (c *RPCClient) RawGet(ctx goctx.Context, addr string, req *kvrpcpb.RawGetRe
 	return handler.handleKvRawGet(req), nil
 }
 
+// RawPut sends a RawPut request to mock cluster.
 func (c *RPCClient) RawPut(ctx goctx.Context, addr string, req *kvrpcpb.RawPutRequest) (*kvrpcpb.RawPutResponse, error) {
 	handler, err := c.checkArgs(ctx, addr)
 	if err != nil {
@@ -640,6 +652,7 @@ func (c *RPCClient) RawPut(ctx goctx.Context, addr string, req *kvrpcpb.RawPutRe
 	return handler.handleKvRawPut(req), nil
 }
 
+// RawDelete sends a RawDelete request to mock cluster.
 func (c *RPCClient) RawDelete(ctx goctx.Context, addr string, req *kvrpcpb.RawDeleteRequest) (*kvrpcpb.RawDeleteResponse, error) {
 	client, err := c.checkArgs(ctx, addr)
 	if err != nil {
@@ -654,6 +667,7 @@ func (c *RPCClient) RawDelete(ctx goctx.Context, addr string, req *kvrpcpb.RawDe
 	return client.handleKvRawDelete(req), nil
 }
 
+// Coprocessor sends a Coprocessor request to mock cluster.
 func (c *RPCClient) Coprocessor(ctx goctx.Context, addr string, req *coprocessor.Request) (*coprocessor.Response, error) {
 	handler, err := c.checkArgs(ctx, addr)
 	if err != nil {
@@ -671,6 +685,7 @@ func (c *RPCClient) Coprocessor(ctx goctx.Context, addr string, req *coprocessor
 	return handler.handleCopRequest(req)
 }
 
+// Close closes the client.
 func (c *RPCClient) Close() error {
 	return nil
 }
