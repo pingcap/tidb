@@ -56,7 +56,6 @@ func (h *Handle) SaveToStorage(ctx context.Context, t *Table) error {
 	}
 	txn := ctx.Txn()
 	version := txn.StartTS()
-	h.SetTableStats(t.Info.ID, t, version)
 	deleteSQL := fmt.Sprintf("delete from mysql.stats_meta where table_id = %d", t.Info.ID)
 	_, err = ctx.(sqlexec.SQLExecutor).Execute(deleteSQL)
 	if err != nil {
