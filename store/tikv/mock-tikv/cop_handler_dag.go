@@ -133,7 +133,7 @@ func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) *t
 		kvRanges:    ranges,
 		colIDs:      ctx.eval.ColIDs,
 		startTS:     ctx.dagReq.GetStartTs(),
-		mvccStore:   h.MvccStore,
+		mvccStore:   h.mvccStore,
 		rawStartKey: h.rawStartKey,
 		rawEndKey:   h.rawEndKey,
 	}
@@ -155,7 +155,7 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) *i
 		kvRanges:    ranges,
 		colsLen:     len(columns),
 		startTS:     ctx.dagReq.GetStartTs(),
-		mvccStore:   h.MvccStore,
+		mvccStore:   h.mvccStore,
 		rawStartKey: h.rawStartKey,
 		rawEndKey:   h.rawEndKey,
 	}
