@@ -15,6 +15,7 @@ package executor
 
 import (
 	"math/rand"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -115,8 +116,22 @@ func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = sessionctx.GetDomain(e.ctx).StatsHandle().SaveToStorage(e.ctx, t)
-	return errors.Trace(err)
+	dom := sessionctx.GetDomain(e.ctx)
+	err = dom.StatsHandle().SaveToStorage(e.ctx, t)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	lease := dom.DDL().GetLease()
+	if lease > 0 {
+		// We sleep two lease to make sure other tidb node has updated this node.
+		time.Sleep(lease * 2)
+	} else {
+		err = dom.StatsHandle().Update(GetInfoSchema(e.ctx))
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 // CollectSamplesAndEstimateNDVs collects sample from the result set using Reservoir Sampling algorithm,
