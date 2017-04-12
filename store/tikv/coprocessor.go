@@ -305,9 +305,9 @@ const minLogCopTaskTime = 300 * time.Millisecond
 // The worker function that get a copTask from channel, handle it and
 // send the result back.
 func (it *copIterator) work(ctx goctx.Context, taskCh <-chan *copTask) {
+	defer it.wg.Done()
 	childCtx, cancel := goctx.WithCancel(ctx)
 	defer cancel()
-	defer it.wg.Done()
 	for task := range taskCh {
 		bo := NewBackoffer(copNextMaxBackoff, childCtx)
 		startTime := time.Now()

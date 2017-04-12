@@ -261,8 +261,9 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 	for _, batch := range batches {
 		go func(batch batchKeys) {
 			singleBatchBackoffer := backoffer.Fork()
-			singleBatchBackoffer.ctx, cancel = goctx.WithCancel(singleBatchBackoffer.ctx)
-			defer cancel()
+			ctx, singleBatchCancel := goctx.WithCancel(singleBatchBackoffer.ctx)
+			singleBatchBackoffer.ctx = ctx
+			defer singleBatchCancel()
 			ch <- singleBatchActionFunc(singleBatchBackoffer, batch)
 		}(batch)
 	}
