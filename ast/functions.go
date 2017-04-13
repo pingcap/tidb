@@ -276,6 +276,9 @@ const (
 	Uncompress               = "uncompress"
 	UncompressedLength       = "uncompressed_length"
 	ValidatePasswordStrength = "validate_password_strength"
+
+	// Thirdpart functions.
+	NewBosid = "newbosid"
 )
 
 // FuncCallExpr is for function expression.

@@ -376,4 +376,7 @@ var funcs = map[string]functionClass{
 	ast.Uncompress:               &uncompressFunctionClass{baseFunctionClass{ast.Uncompress, 1, 1}},
 	ast.UncompressedLength:       &uncompressedLengthFunctionClass{baseFunctionClass{ast.UncompressedLength, 1, 1}},
 	ast.ValidatePasswordStrength: &validatePasswordStrengthFunctionClass{baseFunctionClass{ast.ValidatePasswordStrength, 1, 1}},
+
+	// Thirdpart functions.
+	ast.NewBosid: &newBosidFunctionClass{baseFunctionClass{ast.NewBosid, 1, 1}},
 }
