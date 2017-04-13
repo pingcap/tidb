@@ -152,6 +152,7 @@ func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) 
 	return task, p.storeTaskProfile(prop, task)
 }
 
+// canPushDown checks if this plan can be pushed down.
 func planCanPushDown(p LogicalPlan) bool {
 	switch v := p.(type) {
 	case *Selection:
@@ -162,7 +163,7 @@ func planCanPushDown(p LogicalPlan) bool {
 	case *Limit:
 		return true
 	case *LogicalAggregation:
-		// pending
+		// FIXME: We should check every expressions for gby items and function arguments.
 		return true
 	}
 	return false
@@ -194,6 +195,40 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (taskProfi
 			return nil, errors.Trace(err)
 		}
 		orderedTask = p.basePlan.self.(PhysicalPlan).attach2TaskProfile(orderedTask)
+		if orderedTask.cost() < task.cost() {
+			task = orderedTask
+		}
+	}
+	return task, p.storeTaskProfile(prop, task)
+}
+
+// convert2NewPhysicalPlan implements LogicalPlan interface.
+func (p *Selection) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) {
+	task, err := p.getTaskProfile(prop)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if task != nil {
+		return task, nil
+	}
+	// TODO: We will do it in preparing phase in future.
+	p.splitPushDownConditions()
+	// enforce branch
+	task, err = p.basePlan.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	task = p.basePlan.self.(PhysicalPlan).attach2TaskProfile(task)
+	task = prop.enforceProperty(task, p.basePlan.ctx, p.basePlan.allocator)
+	if !prop.isEmpty() && len(p.basePlan.children) > 0 {
+		orderedTask, err := p.basePlan.children[0].(LogicalPlan).convert2NewPhysicalPlan(prop)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		orderedTask = p.basePlan.self.(PhysicalPlan).attach2TaskProfile(orderedTask)
+		// TODO: Here is a trick: selection is the only plan that may not finish the cop task. It is unfair that we compare
+		// the cost between CopTask and RootTask. So we try to finish the cop task here if its parent can finish it.
+		// We can remove this check after we support join pushed down.
 		if cop, ok := orderedTask.(*copTaskProfile); ok && !planCanPushDown(p.basePlan.parents[0].(LogicalPlan)) {
 			orderedTask = cop.finishTask(p.basePlan.ctx, p.basePlan.allocator)
 		}
@@ -204,6 +239,30 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (taskProfi
 	return task, p.storeTaskProfile(prop, task)
 }
 
+// checkMemTableAndGetTask will check if this table is a mem table. If it is, it will produce a task and store it.
+func (p *DataSource) checkMemTableAndGetTask(prop *requiredProp) (task taskProfile, err error) {
+	client := p.ctx.GetClient()
+	memDB := infoschema.IsMemoryDB(p.DBName.L)
+	isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeSelect, 0)
+	if isDistReq {
+		return nil, nil
+	}
+	memTable := PhysicalMemTable{
+		DBName:      p.DBName,
+		Table:       p.tableInfo,
+		Columns:     p.Columns,
+		TableAsName: p.TableAsName,
+	}.init(p.allocator, p.ctx)
+	memTable.SetSchema(p.schema)
+	rb := &rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
+	memTable.Ranges = rb.buildTableRanges(fullRange)
+	task = &rootTaskProfile{plan: memTable}
+	task = prop.enforceProperty(task, p.ctx, p.allocator)
+	return task, p.storeTaskProfile(prop, task)
+}
+
+// convert2NewPhysicalPlan implements the PhysicalPlan interface.
+// It will enumerate all the available indices and choose a plan with least cost.
 func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) {
 	task, err := p.getTaskProfile(prop)
 	if err != nil {
@@ -212,35 +271,24 @@ func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, e
 	if task != nil {
 		return task, nil
 	}
-	client := p.ctx.GetClient()
-	memDB := infoschema.IsMemoryDB(p.DBName.L)
-	isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeSelect, 0)
-
-	if !isDistReq {
-		memTable := PhysicalMemTable{
-			DBName:      p.DBName,
-			Table:       p.tableInfo,
-			Columns:     p.Columns,
-			TableAsName: p.TableAsName,
-		}.init(p.allocator, p.ctx)
-		memTable.SetSchema(p.schema)
-		rb := &rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
-		memTable.Ranges = rb.buildTableRanges(fullRange)
-		task = &rootTaskProfile{plan: memTable}
-		task = prop.enforceProperty(task, p.ctx, p.allocator)
-		p.storeTaskProfile(prop, task)
+	// TODO: We don't consider the false condition here. We will add this check in ppd phase.
+	task, err = p.checkMemTableAndGetTask(prop)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if task != nil {
 		return task, nil
 	}
-
+	// TODO: We have not checked if this table has a predicate. If not, we can only consider table scan.
 	indices, includeTableScan := availableIndices(p.indexHints, p.tableInfo)
 	if includeTableScan {
-		task, err = p.convert2TableScanner(prop)
+		task, err = p.convertToTableScan(prop)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 	for _, idx := range indices {
-		idxTask, err := p.convert2IndexScanner(prop, idx)
+		idxTask, err := p.convertToIndexScan(prop, idx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -251,7 +299,8 @@ func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, e
 	return task, p.storeTaskProfile(prop, task)
 }
 
-func (p *DataSource) convert2IndexScanner(prop *requiredProp, idx *model.IndexInfo) (task taskProfile, err error) {
+// convert2IndexScanner converts the DataSource to index scan with idx.
+func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo) (task taskProfile, err error) {
 	is := PhysicalIndexScan{
 		Table:       p.tableInfo,
 		TableAsName: p.TableAsName,
@@ -260,12 +309,11 @@ func (p *DataSource) convert2IndexScanner(prop *requiredProp, idx *model.IndexIn
 		Index:       idx,
 	}.init(p.allocator, p.ctx)
 	statsTbl := p.statisticTable
-	rowCount := uint64(statsTbl.Count)
+	rowCount := float64(statsTbl.Count)
 	sc := p.ctx.GetSessionVars().StmtCtx
-	if sel, ok := p.parents[0].(*Selection); ok {
-		sel.splitPushDownConditions()
-		conds := make([]expression.Expression, 0, len(sel.pushDownConditions))
-		for _, cond := range sel.pushDownConditions {
+	if len(p.pushedDownConds) > 0 {
+		conds := make([]expression.Expression, 0, len(p.pushedDownConds))
+		for _, cond := range p.pushedDownConds {
 			conds = append(conds, cond.Clone())
 		}
 		is.AccessCondition, is.indexFilterConditions, is.accessEqualCount, is.accessInAndEqCount = DetachIndexScanConditions(conds, idx)
@@ -273,7 +321,7 @@ func (p *DataSource) convert2IndexScanner(prop *requiredProp, idx *model.IndexIn
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		rowCount, err = is.getRowCountByIndexRanges(sc, statsTbl)
+		rowCount, err = statsTbl.GetRowCountByIndexRanges(sc, is.Index.ID, is.Ranges, is.accessInAndEqCount)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -283,7 +331,7 @@ func (p *DataSource) convert2IndexScanner(prop *requiredProp, idx *model.IndexIn
 	}
 	copTask := &copTaskProfile{
 		cnt:           rowCount,
-		cst:           float64(rowCount) * scanFactor,
+		cst:           rowCount * scanFactor,
 		indexPlan:     is,
 		addPlan2Index: true,
 	}
@@ -295,6 +343,7 @@ func (p *DataSource) convert2IndexScanner(prop *requiredProp, idx *model.IndexIn
 		for _, col := range idx.Columns {
 			indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: col.Offset})
 		}
+		// TODO: We should add pk column to index schema.
 		copTask.indexPlan.SetSchema(expression.NewSchema(indexCols...))
 	} else {
 		is.SetSchema(p.schema)
@@ -302,6 +351,7 @@ func (p *DataSource) convert2IndexScanner(prop *requiredProp, idx *model.IndexIn
 	// Check if this plan matches the property.
 	matchProperty := true
 	if !prop.isEmpty() {
+		// FIXME: We have not considered the case of index columns with length.
 		for i, col := range idx.Columns {
 			// not matched
 			if col.Name.L == prop.cols[0].ColName.L {
@@ -338,7 +388,8 @@ func matchIndicesProp(idxCols []*model.IndexColumn, propCols []*expression.Colum
 	return true
 }
 
-func (p *DataSource) convert2TableScanner(prop *requiredProp) (task taskProfile, err error) {
+// convertToTableScan converts the DataSource to table scan.
+func (p *DataSource) convertToTableScan(prop *requiredProp) (task taskProfile, err error) {
 	ts := PhysicalTableScan{
 		Table:       p.tableInfo,
 		Columns:     p.Columns,
@@ -347,10 +398,9 @@ func (p *DataSource) convert2TableScanner(prop *requiredProp) (task taskProfile,
 	}.init(p.allocator, p.ctx)
 	ts.SetSchema(p.schema)
 	sc := p.ctx.GetSessionVars().StmtCtx
-	if sel, ok := p.parents[0].(*Selection); ok {
-		sel.splitPushDownConditions()
-		conds := make([]expression.Expression, 0, len(sel.pushDownConditions))
-		for _, cond := range sel.pushDownConditions {
+	if len(p.pushedDownConds) > 0 {
+		conds := make([]expression.Expression, 0, len(p.pushedDownConds))
+		for _, cond := range p.pushedDownConds {
 			conds = append(conds, cond.Clone())
 		}
 		ts.AccessCondition, ts.tableFilterConditions = DetachTableScanConditions(conds, p.tableInfo)
@@ -362,7 +412,7 @@ func (p *DataSource) convert2TableScanner(prop *requiredProp) (task taskProfile,
 		ts.Ranges = []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}
 	}
 	statsTbl := p.statisticTable
-	rowCount := uint64(statsTbl.Count)
+	rowCount := float64(statsTbl.Count)
 	var pkCol *expression.Column
 	if p.tableInfo.PKIsHandle {
 		for i, colInfo := range ts.Columns {
@@ -371,13 +421,14 @@ func (p *DataSource) convert2TableScanner(prop *requiredProp) (task taskProfile,
 				break
 			}
 		}
-		var err error
-		rowCount, err = ts.rowCount(sc, statsTbl)
-		if err != nil {
-			return nil, errors.Trace(err)
+		if pkCol != nil {
+			rowCount, err = statsTbl.GetRowCountByIntColumnRanges(sc, pkCol.ID, ts.Ranges)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 	}
-	cost := float64(rowCount) * scanFactor
+	cost := rowCount * scanFactor
 	task = &copTaskProfile{
 		cnt:       rowCount,
 		tablePlan: ts,
