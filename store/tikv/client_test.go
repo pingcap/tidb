@@ -85,6 +85,14 @@ func (s *testTikvServer) Coprocessor(ctx goctx.Context, req *coprocessor.Request
 	return &coprocessor.Response{}, nil
 }
 
+func (s *testTikvServer) Raft(tikvpb.TiKV_RaftServer) error {
+	return nil
+}
+
+func (s *testTikvServer) Snapshot(tikvpb.TiKV_SnapshotServer) error {
+	return nil
+}
+
 func startServer(addr string, c *C, stopCh chan int) {
 	listener, err := net.Listen("tcp", addr)
 	c.Assert(err, IsNil)
