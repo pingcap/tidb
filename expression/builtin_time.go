@@ -1863,6 +1863,7 @@ func (b *builtinPeriodDiffSig) eval(row []types.Datum) (d types.Datum, err error
 	if args[0].IsNull() || args[1].IsNull() {
 		return d, nil
 	}
+	// convert input to int64
 	sc := b.ctx.GetSessionVars().StmtCtx
 	period1, err := args[0].ToInt64(sc)
 	if err != nil {
@@ -1872,10 +1873,12 @@ func (b *builtinPeriodDiffSig) eval(row []types.Datum) (d types.Datum, err error
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	if period1 <= 0 || period2 <= 0 {
+	//input check format
+	if period1 <= 0 || period2 <= 0 || period1 > 999999 || period2 > 999999 {
 		d.SetNull()
 		return d, errors.Errorf("not in the format YYMM or YYYYMM")
 	}
+	//calculate total months from A.D. 0
 	y1 := period1 / 100
 	m1 := period1 % 100
 	y2 := period2 / 100
@@ -1884,6 +1887,7 @@ func (b *builtinPeriodDiffSig) eval(row []types.Datum) (d types.Datum, err error
 		d.SetNull()
 		return d, errors.Errorf("Month not in the right format")
 	}
+	// if YY >70 get 19YY else get 20YY  and if  YYY we got error format
 	if y1 < 70 {
 		y1 += 2000
 	} else if y1 < 100 {
@@ -1900,13 +1904,15 @@ func (b *builtinPeriodDiffSig) eval(row []types.Datum) (d types.Datum, err error
 		d.SetNull()
 		return d, errors.Errorf("not in the format YYMM or YYYYMM")
 	}
+
+	mCount1 := y1*12 + m1
+	mCount2 := y2*12 + m2
+	//calculate the diff
 	var result int64
-	m_count1 := y1*12 + m1
-	m_count2 := y2*12 + m2
-	if m_count1 > m_count2 {
-		result = m_count1 - m_count2
+	if mCount1 > mCount2 {
+		result = mCount1 - mCount2
 	} else {
-		result = m_count2 - m_count1
+		result = mCount2 - mCount1
 	}
 	d.SetInt64(result)
 	return d, nil
