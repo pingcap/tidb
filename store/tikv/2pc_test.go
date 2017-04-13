@@ -166,10 +166,9 @@ func (s *testCommitterSuite) TestContextCancel(c *C) {
 	c.Assert(err, IsNil)
 
 	bo := NewBackoffer(prewriteMaxBackoff, goctx.Background())
-	context, cancel := goctx.WithCancel(bo.ctx)
-	bo.ctx = context
+	backoffer, cancel := bo.Fork()
 	cancel() // cancel the context
-	err = committer.prewriteKeys(bo, committer.keys)
+	err = committer.prewriteKeys(backoffer, committer.keys)
 	c.Assert(errors.Cause(err), Equals, goctx.Canceled)
 }
 
