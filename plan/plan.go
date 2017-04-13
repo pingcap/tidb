@@ -125,7 +125,7 @@ func (p *requiredProperty) String() string {
 type physicalPlanInfo struct {
 	p     PhysicalPlan
 	cost  float64
-	count uint64
+	count float64
 }
 
 // LogicalPlan is a tree of logical operators.

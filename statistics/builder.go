@@ -265,11 +265,11 @@ func (b *Builder) buildColumn(t *Table, sc *variable.StatementContext, id int64,
 		NDV:     ndv,
 		Buckets: make([]bucket, 1, bucketCount),
 	}
-	valuesPerBucket := t.Count/bucketCount + 1
+	valuesPerBucket := float64(t.Count)/float64(bucketCount) + 1
 
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
-	sampleFactor := t.Count / int64(len(samples))
-	ndvFactor := t.Count / ndv
+	sampleFactor := float64(t.Count) / float64(len(samples))
+	ndvFactor := float64(t.Count) / float64(ndv)
 	if ndvFactor > sampleFactor {
 		ndvFactor = sampleFactor
 	}
@@ -280,31 +280,30 @@ func (b *Builder) buildColumn(t *Table, sc *variable.StatementContext, id int64,
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		totalCount := (i + 1) * sampleFactor
+		totalCount := float64(i+1) * sampleFactor
 		if cmp == 0 {
 			// The new item has the same value as current bucket value, to ensure that
 			// a same value only stored in a single bucket, we do not increase bucketIdx even if it exceeds
 			// valuesPerBucket.
-			hg.Buckets[bucketIdx].Count = totalCount
-			if hg.Buckets[bucketIdx].Repeats == ndvFactor {
-				hg.Buckets[bucketIdx].Repeats = 2 * sampleFactor
+			hg.Buckets[bucketIdx].Count = int64(totalCount)
+			if float64(hg.Buckets[bucketIdx].Repeats) == ndvFactor {
+				hg.Buckets[bucketIdx].Repeats = int64(2 * sampleFactor)
 			} else {
-				hg.Buckets[bucketIdx].Repeats += sampleFactor
+				hg.Buckets[bucketIdx].Repeats += int64(sampleFactor)
 			}
-		} else if totalCount-lastCount <= valuesPerBucket {
-			// TODO: Making sampleFactor as float may be better.
+		} else if totalCount-float64(lastCount) <= valuesPerBucket {
 			// The bucket still have room to store a new item, update the bucket.
-			hg.Buckets[bucketIdx].Count = totalCount
+			hg.Buckets[bucketIdx].Count = int64(totalCount)
 			hg.Buckets[bucketIdx].Value = samples[i]
-			hg.Buckets[bucketIdx].Repeats = ndvFactor
+			hg.Buckets[bucketIdx].Repeats = int64(ndvFactor)
 		} else {
 			lastCount = hg.Buckets[bucketIdx].Count
 			// The bucket is full, store the item in the next bucket.
 			bucketIdx++
 			hg.Buckets = append(hg.Buckets, bucket{
-				Count:   totalCount,
+				Count:   int64(totalCount),
 				Value:   samples[i],
-				Repeats: ndvFactor,
+				Repeats: int64(ndvFactor),
 			})
 		}
 	}
