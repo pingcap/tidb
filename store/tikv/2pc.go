@@ -250,19 +250,17 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 	}
 
 	// For prewrite, stop sending other requests after receiving first error.
-	backoffer := bo.Fork()
+	backoffer := bo
 	var cancel goctx.CancelFunc
 	if action == actionPrewrite {
-		backoffer.ctx, cancel = goctx.WithCancel(backoffer.ctx)
+		backoffer, cancel = bo.Fork()
 	}
 
 	// Concurrently do the work for each batch.
 	ch := make(chan error, len(batches))
 	for _, batch := range batches {
 		go func(batch batchKeys) {
-			singleBatchBackoffer := backoffer.Fork()
-			ctx, singleBatchCancel := goctx.WithCancel(singleBatchBackoffer.ctx)
-			singleBatchBackoffer.ctx = ctx
+			singleBatchBackoffer, singleBatchCancel := backoffer.Fork()
 			defer singleBatchCancel()
 			ch <- singleBatchActionFunc(singleBatchBackoffer, batch)
 		}(batch)
