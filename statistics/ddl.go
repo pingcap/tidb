@@ -36,7 +36,7 @@ type DDLTask struct {
 	tableInfo *model.TableInfo
 }
 
-// DDLCh return the ddl task channel.
+// DDLCh returns the ddl task channel.
 func (h *Handle) DDLCh() <-chan *DDLTask {
 	return h.ddlCh
 }
