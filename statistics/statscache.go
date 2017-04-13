@@ -32,6 +32,7 @@ type Handle struct {
 	ctx         context.Context
 	lastVersion uint64
 	statsCache  atomic.Value
+	ddlCh       chan *ddlTask
 }
 
 // Clear the statsCache, only for test.
@@ -43,7 +44,8 @@ func (h *Handle) Clear() {
 // NewHandle creates a Handle for update stats.
 func NewHandle(ctx context.Context) *Handle {
 	handle := &Handle{
-		ctx: ctx,
+		ctx:   ctx,
+		ddlCh: make(chan *ddlTask, 10000),
 	}
 	handle.statsCache.Store(statsCache{})
 	return handle

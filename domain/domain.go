@@ -445,6 +445,7 @@ func (do *Domain) StatsHandle() *statistics.Handle {
 // should be called only once in BootstrapSession.
 func (do *Domain) LoadTableStatsLoop(ctx context.Context) error {
 	do.statsHandle = statistics.NewHandle(ctx)
+	ddl.BindStatsHandle(do.ddl, do.statsHandle)
 	err := do.statsHandle.Update(do.InfoSchema())
 	if err != nil {
 		return errors.Trace(err)
@@ -466,6 +467,11 @@ func (do *Domain) LoadTableStatsLoop(ctx context.Context) error {
 				}
 			case <-do.exit:
 				return
+			case t := <-do.statsHandle.DDLCh():
+				err := do.statsHandle.DoDDLTask(t)
+				if err != nil {
+					log.Error(errors.ErrorStack(err))
+				}
 			}
 		}
 	}(do)

@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
 	"github.com/twinj/uuid"
 )
@@ -127,10 +128,11 @@ type DDL interface {
 type ddl struct {
 	m sync.RWMutex
 
-	infoHandle *infoschema.Handle
-	hook       Callback
-	hookMu     sync.RWMutex
-	store      kv.Storage
+	infoHandle  *infoschema.Handle
+	statsHandle *statistics.Handle
+	hook        Callback
+	hookMu      sync.RWMutex
+	store       kv.Storage
 	// Schema lease seconds.
 	lease        time.Duration
 	uuid         string
@@ -148,6 +150,10 @@ type ddl struct {
 
 	quitCh chan struct{}
 	wait   sync.WaitGroup
+}
+
+func BindStatsHandle(d DDL, handle *statistics.Handle) {
+	d.(*ddl).statsHandle = handle
 }
 
 // NewDDL creates a new DDL.
