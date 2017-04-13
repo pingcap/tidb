@@ -173,7 +173,7 @@ func (t *Table) String() string {
 	return strings.Join(strs, "\n")
 }
 
-// columnIsInvalid checks if this column is invalid. Exported for test.
+// columnIsInvalid checks if this column is invalid.
 func (t *Table) columnIsInvalid(colInfo *model.ColumnInfo) bool {
 	if t.Pseudo {
 		return true
