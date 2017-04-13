@@ -696,16 +696,24 @@ func (p *PhysicalApply) MarshalJSON() ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 	buffer := bytes.NewBufferString("{")
-	if p.PhysicalJoin.(*PhysicalHashJoin).SmallTable == 1 {
+	switch x := p.PhysicalJoin.(type) {
+	case *PhysicalHashJoin:
+		if x.SmallTable == 1 {
+			buffer.WriteString(fmt.Sprintf(
+				"\"innerPlan\": \"%s\",\n "+
+					"\"outerPlan\": \"%s\",\n "+
+					"\"join\": %s\n}", p.children[1].ID(), p.children[0].ID(), join))
+		} else {
+			buffer.WriteString(fmt.Sprintf(
+				"\"innerPlan\": \"%s\",\n "+
+					"\"outerPlan\": \"%s\",\n "+
+					"\"join\": %s\n}", p.children[0].ID(), p.children[1].ID(), join))
+		}
+	case *PhysicalHashSemiJoin:
 		buffer.WriteString(fmt.Sprintf(
 			"\"innerPlan\": \"%s\",\n "+
 				"\"outerPlan\": \"%s\",\n "+
 				"\"join\": %s\n}", p.children[1].ID(), p.children[0].ID(), join))
-	} else {
-		buffer.WriteString(fmt.Sprintf(
-			"\"innerPlan\": \"%s\",\n "+
-				"\"outerPlan\": \"%s\",\n "+
-				"\"join\": %s\n}", p.children[0].ID(), p.children[1].ID(), join))
 	}
 	return buffer.Bytes(), nil
 }
