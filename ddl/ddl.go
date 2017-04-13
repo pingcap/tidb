@@ -152,6 +152,7 @@ type ddl struct {
 	wait   sync.WaitGroup
 }
 
+// BindStatsHandle will bind the stats handle with a DDL interface. It will be called after a handle has been initialized.
 func BindStatsHandle(d DDL, handle *statistics.Handle) {
 	d.(*ddl).statsHandle = handle
 }

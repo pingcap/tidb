@@ -30,20 +30,24 @@ const (
 	dropColumn
 )
 
-type ddlTask struct {
+// DDLTask is a task describing how we should update the stats table after a ddl operation has done.
+type DDLTask struct {
 	tp        ddlType
 	tableInfo *model.TableInfo
 }
 
-func (h *Handle) DDLCh() <-chan *ddlTask {
+// DDLCh return the ddl task channel.
+func (h *Handle) DDLCh() <-chan *DDLTask {
 	return h.ddlCh
 }
 
+// CreateTable creates a ddl task and pushes to channel. A worker will read the channel and updates the stats table.
 func (h *Handle) CreateTable(tableInfo *model.TableInfo) {
-	h.ddlCh <- &ddlTask{tp: createTable, tableInfo: tableInfo}
+	h.ddlCh <- &DDLTask{tp: createTable, tableInfo: tableInfo}
 }
 
-func (h *Handle) DoDDLTask(t *ddlTask) error {
+// HandleDDLTask begins to process a ddl task.
+func (h *Handle) HandleDDLTask(t *DDLTask) error {
 	switch t.tp {
 	case createTable:
 		return h.onCreateTable(t.tableInfo)

@@ -468,7 +468,7 @@ func (do *Domain) LoadTableStatsLoop(ctx context.Context) error {
 			case <-do.exit:
 				return
 			case t := <-do.statsHandle.DDLCh():
-				err := do.statsHandle.DoDDLTask(t)
+				err := do.statsHandle.HandleDDLTask(t)
 				if err != nil {
 					log.Error(errors.ErrorStack(err))
 				}
