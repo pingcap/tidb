@@ -292,7 +292,6 @@ func (b *Builder) buildColumn(t *Table, sc *variable.StatementContext, id int64,
 				hg.Buckets[bucketIdx].Repeats += int64(sampleFactor)
 			}
 		} else if totalCount-float64(lastCount) <= valuesPerBucket {
-			// TODO: Making sampleFactor as float may be better.
 			// The bucket still have room to store a new item, update the bucket.
 			hg.Buckets[bucketIdx].Count = int64(totalCount)
 			hg.Buckets[bucketIdx].Value = samples[i]
