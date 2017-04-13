@@ -111,9 +111,9 @@ func (s *RegionRequestSender) KvGet(req *kvrpcpb.GetRequest, regionID RegionVerI
 		}
 		req.Context = ctx.KVCtx
 		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
-		defer cancel()
 		var err error
 		resp, err = s.client.KvGet(context, ctx.Addr, req)
+		cancel()
 		return resp, err, true
 	}
 
@@ -135,9 +135,9 @@ func (s *RegionRequestSender) KvScan(req *kvrpcpb.ScanRequest, regionID RegionVe
 		}
 		req.Context = ctx.KVCtx
 		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
-		defer cancel()
 		var err error
 		resp, err = s.client.KvScan(context, ctx.Addr, req)
+		cancel()
 		return resp, err, true
 	}
 
@@ -159,9 +159,9 @@ func (s *RegionRequestSender) KvPrewrite(req *kvrpcpb.PrewriteRequest, regionID 
 		}
 		req.Context = ctx.KVCtx
 		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
-		defer cancel()
 		var err error
 		resp, err = s.client.KvPrewrite(context, ctx.Addr, req)
+		cancel()
 		return resp, err, true
 	}
 
@@ -183,9 +183,9 @@ func (s *RegionRequestSender) KvCommit(req *kvrpcpb.CommitRequest, regionID Regi
 		}
 		req.Context = ctx.KVCtx
 		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
-		defer cancel()
 		var err error
 		resp, err = s.client.KvCommit(context, ctx.Addr, req)
+		cancel()
 		return resp, err, true
 	}
 
@@ -207,9 +207,9 @@ func (s *RegionRequestSender) KvCleanup(req *kvrpcpb.CleanupRequest, regionID Re
 		}
 		req.Context = ctx.KVCtx
 		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
-		defer cancel()
 		var err error
 		resp, err = s.client.KvCleanup(context, ctx.Addr, req)
+		cancel()
 		return resp, err, true
 	}
 
@@ -231,9 +231,9 @@ func (s *RegionRequestSender) KvBatchGet(req *kvrpcpb.BatchGetRequest, regionID 
 		}
 		req.Context = ctx.KVCtx
 		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
-		defer cancel()
 		var err error
 		resp, err = s.client.KvBatchGet(context, ctx.Addr, req)
+		cancel()
 		return resp, err, true
 	}
 
@@ -255,9 +255,9 @@ func (s *RegionRequestSender) KvBatchRollback(req *kvrpcpb.BatchRollbackRequest,
 		}
 		req.Context = ctx.KVCtx
 		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
-		defer cancel()
 		var err error
 		resp, err = s.client.KvBatchRollback(context, ctx.Addr, req)
+		cancel()
 		return resp, err, true
 	}
 
@@ -279,9 +279,9 @@ func (s *RegionRequestSender) KvScanLock(req *kvrpcpb.ScanLockRequest, regionID 
 		}
 		req.Context = ctx.KVCtx
 		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
-		defer cancel()
 		var err error
 		resp, err = s.client.KvScanLock(context, ctx.Addr, req)
+		cancel()
 		return resp, err, true
 	}
 
@@ -303,9 +303,9 @@ func (s *RegionRequestSender) KvResolveLock(req *kvrpcpb.ResolveLockRequest, reg
 		}
 		req.Context = ctx.KVCtx
 		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
-		defer cancel()
 		var err error
 		resp, err = s.client.KvResolveLock(context, ctx.Addr, req)
+		cancel()
 		return resp, err, true
 	}
 
@@ -327,9 +327,9 @@ func (s *RegionRequestSender) KvGC(req *kvrpcpb.GCRequest, regionID RegionVerID,
 		}
 		req.Context = ctx.KVCtx
 		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
-		defer cancel()
 		var err error
 		resp, err = s.client.KvGC(context, ctx.Addr, req)
+		cancel()
 		return resp, err, true
 	}
 
@@ -351,9 +351,9 @@ func (s *RegionRequestSender) RawGet(req *kvrpcpb.RawGetRequest, regionID Region
 		}
 		req.Context = ctx.KVCtx
 		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
-		defer cancel()
 		var err error
 		resp, err = s.client.RawGet(context, ctx.Addr, req)
+		cancel()
 		return resp, err, true
 	}
 
@@ -375,9 +375,9 @@ func (s *RegionRequestSender) RawPut(req *kvrpcpb.RawPutRequest, regionID Region
 		}
 		req.Context = ctx.KVCtx
 		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
-		defer cancel()
 		var err error
 		resp, err = s.client.RawPut(context, ctx.Addr, req)
+		cancel()
 		return resp, err, true
 	}
 
@@ -399,9 +399,9 @@ func (s *RegionRequestSender) RawDelete(req *kvrpcpb.RawDeleteRequest, regionID 
 		}
 		req.Context = ctx.KVCtx
 		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
-		defer cancel()
 		var err error
 		resp, err = s.client.RawDelete(context, ctx.Addr, req)
+		cancel()
 		return resp, err, true
 	}
 
@@ -423,9 +423,9 @@ func (s *RegionRequestSender) Coprocessor(req *coprocessor.Request, regionID Reg
 		}
 		req.Context = ctx.KVCtx
 		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
-		defer cancel()
 		var err error
 		resp, err = s.client.Coprocessor(context, ctx.Addr, req)
+		cancel()
 		return resp, err, true
 	}
 
