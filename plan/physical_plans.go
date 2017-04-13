@@ -167,13 +167,12 @@ type physicalDistSQLPlan interface {
 	addTopN(ctx context.Context, prop *requiredProperty) bool
 	addLimit(limit *Limit)
 	// scanCount means the original row count that need to be scanned and resultCount means the row count after scanning.
-	calculateCost(resultCount uint64, scanCount uint64) float64
+	calculateCost(resultCount float64, scanCount float64) float64
 }
 
-func (p *PhysicalIndexScan) calculateCost(resultCount uint64, scanCount uint64) float64 {
+func (p *PhysicalIndexScan) calculateCost(resultCount float64, scanCnt float64) float64 {
 	// TODO: Eliminate index cost more precisely.
-	cost := float64(resultCount) * netWorkFactor
-	scanCnt := float64(scanCount)
+	cost := resultCount * netWorkFactor
 	if p.DoubleRead {
 		cost += scanCnt * netWorkFactor
 	}
@@ -190,10 +189,10 @@ func (p *PhysicalIndexScan) calculateCost(resultCount uint64, scanCount uint64) 
 	return cost
 }
 
-func (p *PhysicalTableScan) calculateCost(resultCount uint64, scanCount uint64) float64 {
-	cost := float64(resultCount) * netWorkFactor
+func (p *PhysicalTableScan) calculateCost(resultCount float64, scanCount float64) float64 {
+	cost := resultCount * netWorkFactor
 	if len(p.tableFilterConditions) > 0 {
-		cost += float64(scanCount) * cpuFactor
+		cost += scanCount * cpuFactor
 	}
 	return cost
 }
