@@ -111,8 +111,12 @@ type session struct {
 	goCtx      goctx.Context
 	cancelFunc goctx.CancelFunc
 
-	values map[fmt.Stringer]interface{}
-	store  kv.Storage
+	mu struct {
+		sync.RWMutex
+		values map[fmt.Stringer]interface{}
+	}
+
+	store kv.Storage
 
 	// Used for test only.
 	unlimitedRetryCount bool
@@ -718,16 +722,22 @@ func (s *session) NewTxn() error {
 }
 
 func (s *session) SetValue(key fmt.Stringer, value interface{}) {
-	s.values[key] = value
+	s.mu.Lock()
+	s.mu.values[key] = value
+	s.mu.Unlock()
 }
 
 func (s *session) Value(key fmt.Stringer) interface{} {
-	value := s.values[key]
+	s.mu.RLock()
+	value := s.mu.values[key]
+	s.mu.RUnlock()
 	return value
 }
 
 func (s *session) ClearValue(key fmt.Stringer) {
-	delete(s.values, key)
+	s.mu.Lock()
+	delete(s.mu.values, key)
+	s.mu.Unlock()
 }
 
 // Close function does some clean work when session end.
@@ -882,11 +892,11 @@ func createSession(store kv.Storage) (*session, error) {
 		return nil, errors.Trace(err)
 	}
 	s := &session{
-		values:      make(map[fmt.Stringer]interface{}),
 		store:       store,
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
 	}
+	s.mu.values = make(map[fmt.Stringer]interface{})
 	sessionctx.BindDomain(s, domain)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
