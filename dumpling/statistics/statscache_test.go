@@ -168,10 +168,10 @@ func (s *testStatsCacheSuite) TestDDLAfterLoad(c *C) {
 	sc := new(variable.StatementContext)
 	count, err := statsTbl.ColumnGreaterRowCount(sc, types.NewDatum(recordCount+1), tableInfo.Columns[0])
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, int64(0))
+	c.Assert(count, Equals, 0.0)
 	count, err = statsTbl.ColumnGreaterRowCount(sc, types.NewDatum(recordCount+1), tableInfo.Columns[2])
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, int64(333))
+	c.Assert(int(count), Equals, 333)
 }
 
 func (s *testStatsCacheSuite) TestEmptyTable(c *C) {
@@ -190,8 +190,7 @@ func (s *testStatsCacheSuite) TestEmptyTable(c *C) {
 	sc := new(variable.StatementContext)
 	count, err := statsTbl.ColumnGreaterRowCount(sc, types.NewDatum(1), tableInfo.Columns[0])
 	c.Assert(err, IsNil)
-	// FIXME: The result should be zero.
-	c.Assert(count, Equals, int64(3333333))
+	c.Assert(count, Equals, 0.0)
 }
 
 func (s *testStatsCacheSuite) TestColumnIDs(c *C) {
@@ -211,7 +210,7 @@ func (s *testStatsCacheSuite) TestColumnIDs(c *C) {
 	sc := new(variable.StatementContext)
 	count, err := statsTbl.ColumnLessRowCount(sc, types.NewDatum(2), tableInfo.Columns[0])
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, int64(1))
+	c.Assert(count, Equals, float64(1))
 
 	// Drop a column and the offset changed,
 	testKit.MustExec("alter table t drop column c1")
@@ -225,7 +224,7 @@ func (s *testStatsCacheSuite) TestColumnIDs(c *C) {
 	// At that time, we should get c2's stats instead of c1's.
 	count, err = statsTbl.ColumnLessRowCount(sc, types.NewDatum(2), tableInfo.Columns[0])
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, int64(0))
+	c.Assert(count, Equals, 0.0)
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
