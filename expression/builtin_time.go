@@ -1834,8 +1834,10 @@ type builtinPeriodAddSig struct {
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_period-add
+
 func (b *builtinPeriodAddSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("PERIOD_ADD")
+
 }
 
 type periodDiffFunctionClass struct {
@@ -1851,8 +1853,53 @@ type builtinPeriodDiffSig struct {
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_period-diff
+//wudy changed in 2017-4-13
 func (b *builtinPeriodDiffSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("PERIOD_DIFF")
+	//return d, errFunctionNotExists.GenByArgs("PERIOD_DIFF")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	if args[0].IsNull() || args[1].IsNull() {
+		return d, nil
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	period1, err := args[0].ToInt64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	period2, err := args[1].ToInt64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if period1 <= 0 || period2 <= 0 {
+		d.SetNull()
+		return d, errors.Errorf("not in the format YYMM or YYYYMM")
+	}
+	y1 := period1 / 100
+	m1 := period1 % 100
+	y2 := period2 / 100
+	m2 := period2 % 100
+	if y1 < 70 {
+		y1 += 2000
+	} else if y1 < 100 {
+		y1 += 1900
+	}
+	if y2 < 70 {
+		y2 += 2000
+	} else if y2 < 100 {
+		y2 += 1900
+	}
+	var result int64
+	m_count1 := y1*12 + m1
+	m_count2 := y2*12 + m2
+	if m_count1 > m_count2 {
+		result = m_count1 - m_count2
+	} else {
+		result = m_count2 - m_count1
+	}
+	d.SetInt64(result)
+	return d, nil
 }
 
 type quarterFunctionClass struct {
@@ -1914,6 +1961,7 @@ type builtinSecToTimeSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_sec-to-time
 func (b *builtinSecToTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
+
 	return d, errFunctionNotExists.GenByArgs("SEC_TO_TIME")
 }
 

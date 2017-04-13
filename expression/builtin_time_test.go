@@ -1248,3 +1248,36 @@ func (s *testEvaluatorSuite) TestTimeToSec(c *C) {
 		c.Assert(result.GetInt64(), Equals, test.expect)
 	}
 }
+func (s *testEvaluatorSuite) TestPeriodDiff(c *C) {
+	tests := []struct {
+		p1     int64
+		p2     int64
+		expect int64
+	}{
+		{201101, 201012, 1},
+		{200108, 207809, 925},
+		{8910, 201908, 238},
+		{8806, 9810, 124},
+		{9005, 9005, 0},
+		{201101, 201101, 0},
+		{188604, 188704, 12},
+		{188604, 188703, 11},
+		{188604, 188705, 13},
+	}
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.PeriodDiff]
+	for _, test := range tests {
+		arg1 := types.NewIntDatum(test.p1)
+		arg2 := types.NewIntDatum(test.p2)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{arg1, arg2}), s.ctx)
+		c.Assert(err, IsNil)
+		result, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(result.GetInt64(), Equals, test.expect)
+	}
+	var argNull types.Datum
+	f, _ := fc.getFunction(datumsToConstants([]types.Datum{argNull}), s.ctx)
+	crypt, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(crypt.IsNull(), IsTrue)
+}
