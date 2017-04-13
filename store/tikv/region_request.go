@@ -63,7 +63,7 @@ type RegionErrorResponse interface {
 
 type rpcFunc func(ctx *RPCContext) (RegionErrorResponse, error, bool)
 
-func (s *RegionRequestSender) callRPCFunc(regionID RegionVerID, f rpcFunc) error {
+func (s *RegionRequestSender) callFunc(regionID RegionVerID, f rpcFunc) error {
 	for {
 		ctx, err := s.regionCache.GetRPCContext(s.bo, regionID)
 		if err != nil {
@@ -117,7 +117,7 @@ func (s *RegionRequestSender) KvGet(req *kvrpcpb.GetRequest, regionID RegionVerI
 		return resp, err, true
 	}
 
-	if err := s.callRPCFunc(regionID, f); err != nil {
+	if err := s.callFunc(regionID, f); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return resp, nil
@@ -141,7 +141,7 @@ func (s *RegionRequestSender) KvScan(req *kvrpcpb.ScanRequest, regionID RegionVe
 		return resp, err, true
 	}
 
-	if err := s.callRPCFunc(regionID, f); err != nil {
+	if err := s.callFunc(regionID, f); err != nil {
 		return nil, err
 	}
 	return resp, nil
@@ -165,7 +165,7 @@ func (s *RegionRequestSender) KvPrewrite(req *kvrpcpb.PrewriteRequest, regionID 
 		return resp, err, true
 	}
 
-	if err := s.callRPCFunc(regionID, f); err != nil {
+	if err := s.callFunc(regionID, f); err != nil {
 		return nil, err
 	}
 	return resp, nil
@@ -189,7 +189,7 @@ func (s *RegionRequestSender) KvCommit(req *kvrpcpb.CommitRequest, regionID Regi
 		return resp, err, true
 	}
 
-	if err := s.callRPCFunc(regionID, f); err != nil {
+	if err := s.callFunc(regionID, f); err != nil {
 		return nil, err
 	}
 	return resp, nil
@@ -213,7 +213,7 @@ func (s *RegionRequestSender) KvCleanup(req *kvrpcpb.CleanupRequest, regionID Re
 		return resp, err, true
 	}
 
-	if err := s.callRPCFunc(regionID, f); err != nil {
+	if err := s.callFunc(regionID, f); err != nil {
 		return nil, err
 	}
 	return resp, nil
@@ -237,7 +237,7 @@ func (s *RegionRequestSender) KvBatchGet(req *kvrpcpb.BatchGetRequest, regionID 
 		return resp, err, true
 	}
 
-	if err := s.callRPCFunc(regionID, f); err != nil {
+	if err := s.callFunc(regionID, f); err != nil {
 		return nil, err
 	}
 	return resp, nil
@@ -261,7 +261,7 @@ func (s *RegionRequestSender) KvBatchRollback(req *kvrpcpb.BatchRollbackRequest,
 		return resp, err, true
 	}
 
-	if err := s.callRPCFunc(regionID, f); err != nil {
+	if err := s.callFunc(regionID, f); err != nil {
 		return nil, err
 	}
 	return resp, nil
@@ -285,7 +285,7 @@ func (s *RegionRequestSender) KvScanLock(req *kvrpcpb.ScanLockRequest, regionID 
 		return resp, err, true
 	}
 
-	if err := s.callRPCFunc(regionID, f); err != nil {
+	if err := s.callFunc(regionID, f); err != nil {
 		return nil, err
 	}
 	return resp, nil
@@ -309,7 +309,7 @@ func (s *RegionRequestSender) KvResolveLock(req *kvrpcpb.ResolveLockRequest, reg
 		return resp, err, true
 	}
 
-	if err := s.callRPCFunc(regionID, f); err != nil {
+	if err := s.callFunc(regionID, f); err != nil {
 		return nil, err
 	}
 	return resp, nil
@@ -333,7 +333,7 @@ func (s *RegionRequestSender) KvGC(req *kvrpcpb.GCRequest, regionID RegionVerID,
 		return resp, err, true
 	}
 
-	if err := s.callRPCFunc(regionID, f); err != nil {
+	if err := s.callFunc(regionID, f); err != nil {
 		return nil, err
 	}
 	return resp, nil
@@ -357,7 +357,7 @@ func (s *RegionRequestSender) RawGet(req *kvrpcpb.RawGetRequest, regionID Region
 		return resp, err, true
 	}
 
-	if err := s.callRPCFunc(regionID, f); err != nil {
+	if err := s.callFunc(regionID, f); err != nil {
 		return nil, err
 	}
 	return resp, nil
@@ -381,7 +381,7 @@ func (s *RegionRequestSender) RawPut(req *kvrpcpb.RawPutRequest, regionID Region
 		return resp, err, true
 	}
 
-	if err := s.callRPCFunc(regionID, f); err != nil {
+	if err := s.callFunc(regionID, f); err != nil {
 		return nil, err
 	}
 	return resp, nil
@@ -405,7 +405,7 @@ func (s *RegionRequestSender) RawDelete(req *kvrpcpb.RawDeleteRequest, regionID 
 		return resp, err, true
 	}
 
-	if err := s.callRPCFunc(regionID, f); err != nil {
+	if err := s.callFunc(regionID, f); err != nil {
 		return nil, err
 	}
 	return resp, nil
@@ -429,7 +429,7 @@ func (s *RegionRequestSender) Coprocessor(req *coprocessor.Request, regionID Reg
 		return resp, err, true
 	}
 
-	if err := s.callRPCFunc(regionID, f); err != nil {
+	if err := s.callFunc(regionID, f); err != nil {
 		return nil, err
 	}
 	return resp, nil
