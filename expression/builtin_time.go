@@ -1880,15 +1880,25 @@ func (b *builtinPeriodDiffSig) eval(row []types.Datum) (d types.Datum, err error
 	m1 := period1 % 100
 	y2 := period2 / 100
 	m2 := period2 % 100
+	if m1 > 12 || m2 > 12 || m1 == 0 || m2 == 0 {
+		d.SetNull()
+		return d, errors.Errorf("Month not in the right format")
+	}
 	if y1 < 70 {
 		y1 += 2000
 	} else if y1 < 100 {
 		y1 += 1900
+	} else if y1 < 1000 {
+		d.SetNull()
+		return d, errors.Errorf("not in the format YYMM or YYYYMM")
 	}
 	if y2 < 70 {
 		y2 += 2000
 	} else if y2 < 100 {
 		y2 += 1900
+	} else if y2 < 1000 {
+		d.SetNull()
+		return d, errors.Errorf("not in the format YYMM or YYYYMM")
 	}
 	var result int64
 	m_count1 := y1*12 + m1
