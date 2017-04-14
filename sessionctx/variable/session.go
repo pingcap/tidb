@@ -273,6 +273,12 @@ const (
 	TimeZone            = "time_zone"
 )
 
+// TableDelta stands for the changed count for one table.
+type TableDelta struct {
+	Delta int64
+	Count int64
+}
+
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
 type StatementContext struct {
@@ -289,6 +295,7 @@ type StatementContext struct {
 		foundRows    uint64
 		warnings     []error
 	}
+	UpdateMapper map[int64]*TableDelta
 }
 
 // AddAffectedRows adds affected rows.
@@ -296,6 +303,20 @@ func (sc *StatementContext) AddAffectedRows(rows uint64) {
 	sc.mu.Lock()
 	sc.mu.affectedRows += rows
 	sc.mu.Unlock()
+}
+
+// UpdateDeltaForTable updates the delta info for some table.
+func (sc *StatementContext) UpdateDeltaForTable(tableID int64, delta int64, count int64) {
+	if sc.UpdateMapper == nil {
+		sc.UpdateMapper = make(map[int64]*TableDelta)
+	}
+	item, ok := sc.UpdateMapper[tableID]
+	if !ok {
+		sc.UpdateMapper[tableID] = &TableDelta{delta, count}
+	} else {
+		item.Delta += delta
+		item.Count += count
+	}
 }
 
 // AffectedRows gets affected rows.

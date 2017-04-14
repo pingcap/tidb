@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
@@ -127,6 +128,8 @@ type session struct {
 
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
+
+	statsUpdateHandle *statistics.StatsUpdateHandle
 }
 
 // Cancel cancels the execution of current transaction.
@@ -271,6 +274,12 @@ func (s *session) doCommitWithRetry() error {
 	if err != nil {
 		log.Warnf("[%d] finished txn:%v, %v", s.sessionVars.ConnectionID, s.txn, err)
 		return errors.Trace(err)
+	}
+	mapper := s.GetSessionVars().StmtCtx.UpdateMapper
+	if s.statsUpdateHandle != nil && mapper != nil {
+		for id, item := range mapper {
+			s.statsUpdateHandle.Update(id, item.Delta, item.Count)
+		}
 	}
 	return nil
 }
@@ -742,6 +751,13 @@ func (s *session) ClearValue(key fmt.Stringer) {
 
 // Close function does some clean work when session end.
 func (s *session) Close() error {
+	if s.statsUpdateHandle != nil {
+		do, err := domap.Get(s.store)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		do.StatsHandle().DelStatsUpdateHandle(s.statsUpdateHandle)
+	}
 	return s.RollbackTxn()
 }
 
@@ -830,6 +846,11 @@ func CreateSession(store kv.Storage) (Session, error) {
 		Handle: do.PrivilegeHandle(),
 	}
 	privilege.BindPrivilegeManager(s, pm)
+
+	// Add statsUpdateHandle.
+	if do.StatsHandle() != nil {
+		s.statsUpdateHandle = do.StatsHandle().NewStatsUpdateHandle()
+	}
 
 	return s, nil
 }

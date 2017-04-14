@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"sync"
 )
 
 type statsCache map[int64]*Table
@@ -35,6 +36,8 @@ type Handle struct {
 	statsCache  atomic.Value
 	// ddlEventCh is a channel to notify a ddl operation has happened. It is sent only by owner and read by stats handle.
 	ddlEventCh chan *ddl.Event
+
+	updateManager *updateManager
 }
 
 // Clear the statsCache, only for test.
@@ -48,9 +51,24 @@ func NewHandle(ctx context.Context) *Handle {
 	handle := &Handle{
 		ctx:        ctx,
 		ddlEventCh: make(chan *ddl.Event, 100),
+		updateManager: &updateManager{
+			listHead: &StatsUpdateHandle{
+				mapper: make(updateMapper),
+			},
+			mapper: struct {
+				sync.Mutex
+				updateMapper
+			}{updateMapper: make(updateMapper)},
+			ctx: ctx,
+		},
 	}
 	handle.statsCache.Store(statsCache{})
 	return handle
+}
+
+// DumpUpdateInfoToKV will dump the UpdateInfo which caches in manager to KV.
+func (h *Handle) DumpUpdateInfoToKV() {
+	h.updateManager.dumpUpdateMapper2KV()
 }
 
 // Update reads stats meta from store and updates the stats map.
