@@ -214,18 +214,18 @@ func (p *Selection) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, er
 	// TODO: We will do it in preparing phase in future.
 	p.splitPushDownConditions()
 	// enforce branch
-	task, err = p.basePlan.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{})
+	task, err = p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	task = p.basePlan.self.(PhysicalPlan).attach2TaskProfile(task)
+	task = p.attach2TaskProfile(task)
 	task = prop.enforceProperty(task, p.basePlan.ctx, p.basePlan.allocator)
-	if !prop.isEmpty() && len(p.basePlan.children) > 0 {
+	if !prop.isEmpty() {
 		orderedTask, err := p.basePlan.children[0].(LogicalPlan).convert2NewPhysicalPlan(prop)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		orderedTask = p.basePlan.self.(PhysicalPlan).attach2TaskProfile(orderedTask)
+		orderedTask = p.attach2TaskProfile(orderedTask)
 		// TODO: Here is a trick: selection is the only plan that may not finish the cop task. It is unfair that we compare
 		// the cost between CopTask and RootTask. So we try to finish the cop task here if its parent can finish it.
 		// We can remove this check after we support join pushed down.
