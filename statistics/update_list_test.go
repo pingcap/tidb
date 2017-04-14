@@ -24,7 +24,7 @@ type testUpdateListSuite struct {
 
 func (s *testUpdateListSuite) TestInsertAndDelete(c *C) {
 	h := NewHandle(nil)
-	var items []*StatsUpdateHandle
+	var items []*SessionStatsCollector
 	for i := 0; i < 5; i++ {
 		items = append(items, h.NewStatsUpdateHandle())
 	}

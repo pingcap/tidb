@@ -129,7 +129,7 @@ type session struct {
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
 
-	statsUpdateHandle *statistics.StatsUpdateHandle
+	statsCollector *statistics.SessionStatsCollector
 }
 
 // Cancel cancels the execution of current transaction.
@@ -275,10 +275,10 @@ func (s *session) doCommitWithRetry() error {
 		log.Warnf("[%d] finished txn:%v, %v", s.sessionVars.ConnectionID, s.txn, err)
 		return errors.Trace(err)
 	}
-	mapper := s.GetSessionVars().TxnCtx.UpdateMapper
-	if s.statsUpdateHandle != nil && mapper != nil {
+	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
+	if s.statsCollector != nil && mapper != nil {
 		for id, item := range mapper {
-			s.statsUpdateHandle.Update(id, item.Delta, item.Count)
+			s.statsCollector.Update(id, item.Delta, item.Count)
 		}
 	}
 	return nil
@@ -751,12 +751,12 @@ func (s *session) ClearValue(key fmt.Stringer) {
 
 // Close function does some clean work when session end.
 func (s *session) Close() error {
-	if s.statsUpdateHandle != nil {
+	if s.statsCollector != nil {
 		do, err := domap.Get(s.store)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		do.StatsHandle().DelStatsUpdateHandle(s.statsUpdateHandle)
+		do.StatsHandle().DelStatsUpdateHandle(s.statsCollector)
 	}
 	return s.RollbackTxn()
 }
@@ -849,7 +849,7 @@ func CreateSession(store kv.Storage) (Session, error) {
 
 	// Add statsUpdateHandle.
 	if do.StatsHandle() != nil {
-		s.statsUpdateHandle = do.StatsHandle().NewStatsUpdateHandle()
+		s.statsCollector = do.StatsHandle().NewStatsUpdateHandle()
 	}
 
 	return s, nil

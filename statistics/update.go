@@ -20,76 +20,73 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-type updateItem struct {
-	delta int64
-	count int64
-}
+type tableDeltaMap map[int64]*variable.TableDelta
 
-type updateMapper map[int64]*updateItem
-
-func (m updateMapper) update(id int64, delta int64, count int64) {
+func (m tableDeltaMap) update(id int64, delta int64, count int64) {
 	item, ok := m[id]
 	if !ok {
-		m[id] = &updateItem{delta: delta, count: count}
+		m[id] = &variable.TableDelta{Delta: delta, Count: count}
 	} else {
-		item.delta += delta
-		item.count += count
+		item.Delta += delta
+		item.Count += count
 	}
 }
 
-func (m updateMapper) merge(handle *StatsUpdateHandle) {
+func (m tableDeltaMap) merge(handle *SessionStatsCollector) {
 	handle.Lock()
 	defer handle.Unlock()
 	for id, item := range handle.mapper {
-		m.update(id, item.delta, item.count)
+		m.update(id, item.Delta, item.Count)
 	}
-	handle.mapper = make(updateMapper)
+	handle.mapper = make(tableDeltaMap)
 }
 
-// StatsUpdateHandle is a list item that holds the update mapper. If you want write or read mapper, you must add the lock.
-type StatsUpdateHandle struct {
+// SessionStatsCollector is a list item that holds the update mapper. If you want write or read mapper, you must add the lock.
+type SessionStatsCollector struct {
 	sync.Mutex
 
-	mapper updateMapper
-	prev   *StatsUpdateHandle
-	next   *StatsUpdateHandle
+	mapper tableDeltaMap
+	prev   *SessionStatsCollector
+	next   *SessionStatsCollector
 }
 
 // Update will updates the delta and count for one table id.
-func (h *StatsUpdateHandle) Update(id int64, delta int64, count int64) {
+func (h *SessionStatsCollector) Update(id int64, delta int64, count int64) {
 	h.Lock()
 	defer h.Unlock()
 	h.mapper.update(id, delta, count)
 }
 
+// updateManager management the delta information in tidb. It collects the delta map from all sessions and write them to tikv.
 type updateManager struct {
-	listHead *StatsUpdateHandle
+	listHead *SessionStatsCollector
 	mapper   struct {
 		sync.Mutex
-		updateMapper
+		tableDeltaMap
 	}
 	ctx context.Context
 }
 
-func (m *updateManager) newStatsUpdateHandle() *StatsUpdateHandle {
+func (m *updateManager) newSessionStatsCollector() *SessionStatsCollector {
 	m.listHead.Lock()
 	defer m.listHead.Unlock()
-	mapper := &StatsUpdateHandle{
-		mapper: make(updateMapper),
+	newHandle := &SessionStatsCollector{
+		mapper: make(tableDeltaMap),
 		next:   m.listHead.next,
 		prev:   m.listHead,
 	}
 	if m.listHead.next != nil {
-		m.listHead.next.prev = mapper
+		m.listHead.next.prev = newHandle
 	}
-	m.listHead.next = mapper
-	return mapper
+	m.listHead.next = newHandle
+	return newHandle
 }
 
-func (m *updateManager) delStatsUpdateHandle(handle *StatsUpdateHandle) {
+func (m *updateManager) delStatsUpdateHandle(handle *SessionStatsCollector) {
 	m.listHead.Lock()
 	nextHandle := handle.next
 	prevHandle := handle.prev
@@ -110,10 +107,10 @@ func (m *updateManager) dumpUpdateMapper2KV() {
 		m.mapper.merge(item)
 	}
 	m.listHead.Unlock()
-	for id, item := range m.mapper.updateMapper {
+	for id, item := range m.mapper.tableDeltaMap {
 		err := m.dumpTableStatToKV(id, item)
 		if err == nil {
-			delete(m.mapper.updateMapper, id)
+			delete(m.mapper.tableDeltaMap, id)
 		} else {
 			log.Warnf("Error happens when updating stats table, the error message is %s.", err.Error())
 		}
@@ -121,12 +118,12 @@ func (m *updateManager) dumpUpdateMapper2KV() {
 	m.mapper.Unlock()
 }
 
-func (m *updateManager) dumpTableStatToKV(id int64, item *updateItem) error {
+func (m *updateManager) dumpTableStatToKV(id int64, delta *variable.TableDelta) error {
 	_, err := m.ctx.(sqlexec.SQLExecutor).Execute("begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = m.ctx.(sqlexec.SQLExecutor).Execute(fmt.Sprintf("update mysql.stats_meta set version = %d, count = count + %d, modify_count = modify_count + %d where table_id = %d", m.ctx.Txn().StartTS(), item.delta, item.count, id))
+	_, err = m.ctx.(sqlexec.SQLExecutor).Execute(fmt.Sprintf("update mysql.stats_meta set version = %d, count = count + %d, modify_count = modify_count + %d where table_id = %d", m.ctx.Txn().StartTS(), delta.Delta, delta.Count, id))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -135,11 +132,11 @@ func (m *updateManager) dumpTableStatToKV(id int64, item *updateItem) error {
 }
 
 // NewStatsUpdateHandle creates a new stats update handle. It is called when a session is created first time.
-func (h *Handle) NewStatsUpdateHandle() *StatsUpdateHandle {
-	return h.updateManager.newStatsUpdateHandle()
+func (h *Handle) NewStatsUpdateHandle() *SessionStatsCollector {
+	return h.updateManager.newSessionStatsCollector()
 }
 
 // DelStatsUpdateHandle deletes a stats update handle from updateManager. It is called when a session is closed.
-func (h *Handle) DelStatsUpdateHandle(handle *StatsUpdateHandle) {
+func (h *Handle) DelStatsUpdateHandle(handle *SessionStatsCollector) {
 	h.updateManager.delStatsUpdateHandle(handle)
 }

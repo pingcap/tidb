@@ -52,13 +52,13 @@ func NewHandle(ctx context.Context) *Handle {
 		ctx:        ctx,
 		ddlEventCh: make(chan *ddl.Event, 100),
 		updateManager: &updateManager{
-			listHead: &StatsUpdateHandle{
-				mapper: make(updateMapper),
+			listHead: &SessionStatsCollector{
+				mapper: make(tableDeltaMap),
 			},
 			mapper: struct {
 				sync.Mutex
-				updateMapper
-			}{updateMapper: make(updateMapper)},
+				tableDeltaMap
+			}{tableDeltaMap: make(tableDeltaMap)},
 			ctx: ctx,
 		},
 	}
