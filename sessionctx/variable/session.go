@@ -81,6 +81,21 @@ type TransactionContext struct {
 	InfoSchema    interface{}
 	Histroy       interface{}
 	SchemaVersion int64
+	UpdateMapper  map[int64]*TableDelta
+}
+
+// UpdateDeltaForTable updates the delta info for some table.
+func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, count int64) {
+	if tc.UpdateMapper == nil {
+		tc.UpdateMapper = make(map[int64]*TableDelta)
+	}
+	item, ok := tc.UpdateMapper[tableID]
+	if !ok {
+		tc.UpdateMapper[tableID] = &TableDelta{delta, count}
+	} else {
+		item.Delta += delta
+		item.Count += count
+	}
 }
 
 // SessionVars is to handle user-defined or global variables in current session.
@@ -295,7 +310,6 @@ type StatementContext struct {
 		foundRows    uint64
 		warnings     []error
 	}
-	UpdateMapper map[int64]*TableDelta
 }
 
 // AddAffectedRows adds affected rows.
@@ -303,20 +317,6 @@ func (sc *StatementContext) AddAffectedRows(rows uint64) {
 	sc.mu.Lock()
 	sc.mu.affectedRows += rows
 	sc.mu.Unlock()
-}
-
-// UpdateDeltaForTable updates the delta info for some table.
-func (sc *StatementContext) UpdateDeltaForTable(tableID int64, delta int64, count int64) {
-	if sc.UpdateMapper == nil {
-		sc.UpdateMapper = make(map[int64]*TableDelta)
-	}
-	item, ok := sc.UpdateMapper[tableID]
-	if !ok {
-		sc.UpdateMapper[tableID] = &TableDelta{delta, count}
-	} else {
-		item.Delta += delta
-		item.Count += count
-	}
 }
 
 // AffectedRows gets affected rows.

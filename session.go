@@ -275,7 +275,7 @@ func (s *session) doCommitWithRetry() error {
 		log.Warnf("[%d] finished txn:%v, %v", s.sessionVars.ConnectionID, s.txn, err)
 		return errors.Trace(err)
 	}
-	mapper := s.GetSessionVars().StmtCtx.UpdateMapper
+	mapper := s.GetSessionVars().TxnCtx.UpdateMapper
 	if s.statsUpdateHandle != nil && mapper != nil {
 		for id, item := range mapper {
 			s.statsUpdateHandle.Update(id, item.Delta, item.Count)

@@ -15,8 +15,8 @@ package statistics_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/util/testkit"
 )
 
 var _ = Suite(&testStatsUpdateSuite{})
@@ -34,10 +34,10 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 
 	rowCount1 := 10
 	rowCount2 := 20
-	for i := 0; i < rowCount1; i ++ {
+	for i := 0; i < rowCount1; i++ {
 		testKit.MustExec("insert into t1 values(1, 2)")
 	}
-	for i := 0; i < rowCount2; i ++ {
+	for i := 0; i < rowCount2; i++ {
 		testKit.MustExec("insert into t2 values(1, 2)")
 	}
 
@@ -60,4 +60,23 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 	tableInfo2 := tbl2.Meta()
 	stats2 := h.GetTableStats(tableInfo2)
 	c.Assert(stats2.Count, Equals, int64(rowCount2))
+
+	// Test update in a txn.
+	for i := 0; i < rowCount1; i++ {
+		testKit.MustExec("insert into t1 values(1, 2)")
+	}
+	h.DumpUpdateInfoToKV()
+	h.Update(is)
+	stats1 = h.GetTableStats(tableInfo1)
+	c.Assert(stats1.Count, Equals, int64(rowCount1*2))
+
+	testKit.MustExec("begin")
+	for i := 0; i < rowCount1; i++ {
+		testKit.MustExec("insert into t1 values(1, 2)")
+	}
+	testKit.MustExec("commit")
+	h.DumpUpdateInfoToKV()
+	h.Update(is)
+	stats1 = h.GetTableStats(tableInfo1)
+	c.Assert(stats1.Count, Equals, int64(rowCount1*3))
 }
