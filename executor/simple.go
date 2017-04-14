@@ -172,10 +172,7 @@ func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	// Flush privileges.
-	dom := sessionctx.GetDomain(e.ctx)
-	err = dom.PrivilegeHandle().Update()
+	sessionctx.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return errors.Trace(err)
 }
 
@@ -301,6 +298,7 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 	// update mysql.user
 	sql := fmt.Sprintf(`UPDATE %s.%s SET password="%s" WHERE User="%s" AND Host="%s";`, mysql.SystemDB, mysql.UserTable, util.EncodePassword(s.Password), userName, host)
 	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	sessionctx.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return errors.Trace(err)
 }
 
