@@ -111,8 +111,12 @@ type session struct {
 	goCtx      goctx.Context
 	cancelFunc goctx.CancelFunc
 
-	values map[fmt.Stringer]interface{}
-	store  kv.Storage
+	mu struct {
+		sync.RWMutex
+		values map[fmt.Stringer]interface{}
+	}
+
+	store kv.Storage
 
 	// Used for test only.
 	unlimitedRetryCount bool
@@ -718,16 +722,22 @@ func (s *session) NewTxn() error {
 }
 
 func (s *session) SetValue(key fmt.Stringer, value interface{}) {
-	s.values[key] = value
+	s.mu.Lock()
+	s.mu.values[key] = value
+	s.mu.Unlock()
 }
 
 func (s *session) Value(key fmt.Stringer) interface{} {
-	value := s.values[key]
+	s.mu.RLock()
+	value := s.mu.values[key]
+	s.mu.RUnlock()
 	return value
 }
 
 func (s *session) ClearValue(key fmt.Stringer) {
-	delete(s.values, key)
+	s.mu.Lock()
+	delete(s.mu.values, key)
+	s.mu.Unlock()
 }
 
 // Close function does some clean work when session end.
@@ -764,17 +774,17 @@ func (s *session) Auth(user string, auth []byte, salt []byte) bool {
 	// Get user password.
 	name := strs[0]
 	host := strs[1]
-	checker := privilege.GetPrivilegeChecker(s)
+	pm := privilege.GetPrivilegeManager(s)
 
 	// Check IP.
-	if checker.ConnectionVerification(name, host, auth, salt) {
+	if pm.ConnectionVerification(name, host, auth, salt) {
 		s.sessionVars.User = name + "@" + host
 		return true
 	}
 
 	// Check Hostname.
 	for _, addr := range getHostByIP(host) {
-		if checker.ConnectionVerification(name, addr, auth, salt) {
+		if pm.ConnectionVerification(name, addr, auth, salt) {
 			s.sessionVars.User = name + "@" + addr
 			return true
 		}
@@ -816,10 +826,10 @@ func CreateSession(store kv.Storage) (Session, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	privChecker := &privileges.UserPrivileges{
+	pm := &privileges.UserPrivileges{
 		Handle: do.PrivilegeHandle(),
 	}
-	privilege.BindPrivilegeChecker(s, privChecker)
+	privilege.BindPrivilegeManager(s, pm)
 
 	return s, nil
 }
@@ -842,7 +852,11 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	err = dom.LoadTableStatsLoop(se)
+	se1, err := createSession(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	err = dom.UpdateTableStatsLoop(se1)
 	return dom, errors.Trace(err)
 }
 
@@ -878,11 +892,11 @@ func createSession(store kv.Storage) (*session, error) {
 		return nil, errors.Trace(err)
 	}
 	s := &session{
-		values:      make(map[fmt.Stringer]interface{}),
 		store:       store,
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
 	}
+	s.mu.values = make(map[fmt.Stringer]interface{})
 	sessionctx.BindDomain(s, domain)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
@@ -892,7 +906,7 @@ func createSession(store kv.Storage) (*session, error) {
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 5
+	currentBootstrapVersion = 6
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {

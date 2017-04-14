@@ -33,7 +33,7 @@ var (
 	_ functionClass = &inetAtonFunctionClass{}
 	_ functionClass = &inetNtoaFunctionClass{}
 	_ functionClass = &inet6AtonFunctionClass{}
-	_ functionClass = &inet6NtonFunctionClass{}
+	_ functionClass = &inet6NtoaFunctionClass{}
 	_ functionClass = &isFreeLockFunctionClass{}
 	_ functionClass = &isIPv4FunctionClass{}
 	_ functionClass = &isIPv4CompatFunctionClass{}
@@ -56,7 +56,7 @@ var (
 	_ builtinFunc = &builtinInetAtonSig{}
 	_ builtinFunc = &builtinInetNtoaSig{}
 	_ builtinFunc = &builtinInet6AtonSig{}
-	_ builtinFunc = &builtinInet6NtonSig{}
+	_ builtinFunc = &builtinInet6NtoaSig{}
 	_ builtinFunc = &builtinIsFreeLockSig{}
 	_ builtinFunc = &builtinIsIPv4Sig{}
 	_ builtinFunc = &builtinIsIPv4CompatSig{}
@@ -213,7 +213,59 @@ type builtinInetAtonSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet-aton
 func (b *builtinInetAtonSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("INET_ATON")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	arg := args[0]
+	if arg.IsNull() {
+		return d, nil
+	}
+	s, err := arg.ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	// ip address should not end with '.'.
+	if len(s) == 0 || s[len(s)-1] == '.' {
+		return d, nil
+	}
+
+	var (
+		byteResult, result uint64
+		dotCount           int
+	)
+	for _, c := range s {
+		if c >= '0' && c <= '9' {
+			digit := uint64(c - '0')
+			byteResult = byteResult*10 + digit
+			if byteResult > 255 {
+				return d, nil
+			}
+		} else if c == '.' {
+			dotCount++
+			if dotCount > 3 {
+				return d, nil
+			}
+			result = (result << 8) + byteResult
+			byteResult = 0
+		} else {
+			return d, nil
+		}
+	}
+	// 127 		-> 0.0.0.127
+	// 127.255 	-> 127.0.0.255
+	// 127.256	-> NULL
+	// 127.2.1	-> 127.2.0.1
+	switch dotCount {
+	case 1:
+		result <<= 8
+		fallthrough
+	case 2:
+		result <<= 8
+	}
+	d.SetUint64((result << 8) + byteResult)
+	return d, nil
 }
 
 type inetNtoaFunctionClass struct {
@@ -277,21 +329,21 @@ func (b *builtinInet6AtonSig) eval(row []types.Datum) (d types.Datum, err error)
 	return d, errFunctionNotExists.GenByArgs("INET6_ATON")
 }
 
-type inet6NtonFunctionClass struct {
+type inet6NtoaFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *inet6NtonFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinInet6NtonSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+func (c *inet6NtoaFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinInet6NtoaSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
 }
 
-type builtinInet6NtonSig struct {
+type builtinInet6NtoaSig struct {
 	baseBuiltinFunc
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet6-ntoa
-func (b *builtinInet6NtonSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("INET6_NTON")
+func (b *builtinInet6NtoaSig) eval(row []types.Datum) (d types.Datum, err error) {
+	return d, errFunctionNotExists.GenByArgs("INET6_NTOA")
 }
 
 type isFreeLockFunctionClass struct {

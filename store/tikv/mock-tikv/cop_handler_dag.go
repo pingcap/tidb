@@ -18,9 +18,11 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/distsql"
-	"github.com/pingcap/tidb/distsql/xeval"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -31,14 +33,7 @@ var MockDAGRequest bool
 type dagContext struct {
 	dagReq    *tipb.DAGRequest
 	keyRanges []*coprocessor.KeyRange
-	eval      *xeval.Evaluator
-	sc        *variable.StatementContext
-	columns   []*tipb.ColumnInfo
-}
-
-func (ctx *dagContext) setColumns(columns []*tipb.ColumnInfo) {
-	ctx.columns = make([]*tipb.ColumnInfo, len(columns))
-	copy(ctx.columns, columns)
+	evalCtx   *evalContext
 }
 
 func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor.Response, error) {
@@ -59,12 +54,11 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	sc := xeval.FlagsToStatementContext(dagReq.Flags)
+	sc := flagsToStatementContext(dagReq.Flags)
 	ctx := &dagContext{
 		dagReq:    dagReq,
 		keyRanges: req.Ranges,
-		sc:        sc,
-		eval:      xeval.NewEvaluator(sc),
+		evalCtx:   &evalContext{sc: sc},
 	}
 	e, err := h.buildDAG(ctx, dagReq.Executors)
 	if err != nil {
@@ -80,8 +74,8 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor
 			break
 		}
 		data := dummySlice
-		for _, col := range ctx.columns {
-			data = append(data, row[col.GetColumnId()]...)
+		for _, val := range row {
+			data = append(data, val...)
 		}
 		chunks = appendRow(chunks, handle, data)
 	}
@@ -90,71 +84,26 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor
 
 func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, error) {
 	var currExec executor
+	var err error
 	switch curr.GetTp() {
 	case tipb.ExecType_TypeTableScan:
-		columns := curr.TblScan.Columns
-		ctx.setColumns(columns)
-		colTps := make(map[int64]*types.FieldType, len(columns))
-		for _, col := range columns {
-			if col.GetPkHandle() {
-				continue
-			}
-			colTps[col.GetColumnId()] = distsql.FieldTypeFromPBColumn(col)
-		}
-		ranges := h.extractKVRanges(ctx.keyRanges, *curr.TblScan.Desc)
-		currExec = &tableScanExec{
-			TableScan:   curr.TblScan,
-			kvRanges:    ranges,
-			colTps:      colTps,
-			startTS:     ctx.dagReq.GetStartTs(),
-			mvccStore:   h.mvccStore,
-			rawStartKey: h.rawStartKey,
-			rawEndKey:   h.rawEndKey,
-		}
+		currExec = h.buildTableScan(ctx, curr)
 	case tipb.ExecType_TypeIndexScan:
-		columns := curr.IdxScan.Columns
-		ctx.setColumns(columns)
-		length := len(columns)
-		// The PKHandle column info has been collected in ctx.
-		if columns[length-1].GetPkHandle() {
-			columns = columns[:length-1]
-		}
-		ids := make([]int64, 0, len(columns))
-		for _, col := range columns {
-			ids = append(ids, col.GetColumnId())
-		}
-		ranges := h.extractKVRanges(ctx.keyRanges, *curr.IdxScan.Desc)
-		currExec = &indexScanExec{
-			IndexScan:   curr.IdxScan,
-			kvRanges:    ranges,
-			ids:         ids,
-			startTS:     ctx.dagReq.GetStartTs(),
-			mvccStore:   h.mvccStore,
-			rawStartKey: h.rawStartKey,
-			rawEndKey:   h.rawEndKey,
-		}
+		currExec = h.buildIndexScan(ctx, curr)
 	case tipb.ExecType_TypeSelection:
-		var cond *tipb.Expr
-		// TODO: Now len(Conditions) is 1.
-		if len(curr.Selection.Conditions) > 0 {
-			cond = curr.Selection.Conditions[0]
-		}
-		cols := make(map[int64]*tipb.ColumnInfo)
-		err := extractColumnsInExpr(cond, ctx.columns, cols)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		currExec = &selectionExec{
-			Selection: curr.Selection,
-			eval:      ctx.eval,
-			columns:   cols,
-			sc:        ctx.sc,
-		}
+		currExec, err = h.buildSelection(ctx, curr)
+	case tipb.ExecType_TypeAggregation:
+		currExec, err = h.buildAggregation(ctx, curr)
+	case tipb.ExecType_TypeTopN:
+		currExec, err = h.buildTopN(ctx, curr)
+	case tipb.ExecType_TypeLimit:
+		currExec = &limitExec{limit: curr.Limit.GetLimit()}
 	default:
 		// TODO: Support other types.
+		err = errors.Errorf("this exec type %v doesn't support yet.", curr.GetTp())
 	}
 
-	return currExec, nil
+	return currExec, errors.Trace(err)
 }
 
 func (h *rpcHandler) buildDAG(ctx *dagContext, executors []*tipb.Executor) (executor, error) {
@@ -168,4 +117,196 @@ func (h *rpcHandler) buildDAG(ctx *dagContext, executors []*tipb.Executor) (exec
 		src = curr
 	}
 	return src, nil
+}
+
+func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) *tableScanExec {
+	columns := executor.TblScan.Columns
+	ctx.evalCtx.setColumnInfo(columns)
+	ranges := h.extractKVRanges(ctx.keyRanges, *executor.TblScan.Desc)
+
+	return &tableScanExec{
+		TableScan:   executor.TblScan,
+		kvRanges:    ranges,
+		colIDs:      ctx.evalCtx.colIDs,
+		startTS:     ctx.dagReq.GetStartTs(),
+		mvccStore:   h.mvccStore,
+		rawStartKey: h.rawStartKey,
+		rawEndKey:   h.rawEndKey,
+	}
+}
+
+func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) *indexScanExec {
+	columns := executor.IdxScan.Columns
+	ctx.evalCtx.setColumnInfo(columns)
+	length := len(columns)
+	// The PKHandle column info has been collected in ctx.
+	if columns[length-1].GetPkHandle() {
+		columns = columns[:length-1]
+	}
+	ranges := h.extractKVRanges(ctx.keyRanges, *executor.IdxScan.Desc)
+
+	return &indexScanExec{
+		IndexScan:   executor.IdxScan,
+		kvRanges:    ranges,
+		colsLen:     len(columns),
+		startTS:     ctx.dagReq.GetStartTs(),
+		mvccStore:   h.mvccStore,
+		rawStartKey: h.rawStartKey,
+		rawEndKey:   h.rawEndKey,
+	}
+}
+
+func (h *rpcHandler) buildSelection(ctx *dagContext, executor *tipb.Executor) (*selectionExec, error) {
+	var err error
+	var relatedColOffsets []int
+	pbConds := executor.Selection.Conditions
+	for _, cond := range pbConds {
+		relatedColOffsets, err = extractOffsetsInExpr(cond, ctx.evalCtx.columnInfos, relatedColOffsets)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	conds, err := convertToExprs(ctx.evalCtx.sc, ctx.evalCtx.colIDs, pbConds)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return &selectionExec{
+		evalCtx:           ctx.evalCtx,
+		relatedColOffsets: relatedColOffsets,
+		conditions:        conds,
+		row:               make([]types.Datum, len(ctx.evalCtx.columnInfos)),
+	}, nil
+}
+
+func (h *rpcHandler) buildAggregation(ctx *dagContext, executor *tipb.Executor) (*aggregateExec, error) {
+	length := len(executor.Aggregation.AggFunc)
+	aggs := make([]expression.AggregationFunction, 0, length)
+	var err error
+	var relatedColOffsets []int
+	for _, expr := range executor.Aggregation.AggFunc {
+		aggExpr, err := expression.NewDistAggFunc(expr, ctx.evalCtx.colIDs, ctx.evalCtx.sc)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		aggs = append(aggs, aggExpr)
+		relatedColOffsets, err = extractOffsetsInExpr(expr, ctx.evalCtx.columnInfos, relatedColOffsets)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	for _, item := range executor.Aggregation.GroupBy {
+		relatedColOffsets, err = extractOffsetsInExpr(item, ctx.evalCtx.columnInfos, relatedColOffsets)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	groupBys, err := convertToExprs(ctx.evalCtx.sc, ctx.evalCtx.colIDs, executor.Aggregation.GetGroupBy())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return &aggregateExec{
+		evalCtx:           ctx.evalCtx,
+		aggExprs:          aggs,
+		groupByExprs:      groupBys,
+		groups:            make(map[string]struct{}),
+		groupKeys:         make([][]byte, 0),
+		relatedColOffsets: relatedColOffsets,
+		row:               make([]types.Datum, len(ctx.evalCtx.columnInfos)),
+	}, nil
+}
+
+func (h *rpcHandler) buildTopN(ctx *dagContext, executor *tipb.Executor) (*topNExec, error) {
+	topN := executor.TopN
+	var err error
+	var relatedColOffsets []int
+	pbConds := make([]*tipb.Expr, len(topN.OrderBy))
+	for i, item := range topN.OrderBy {
+		relatedColOffsets, err = extractOffsetsInExpr(item.Expr, ctx.evalCtx.columnInfos, relatedColOffsets)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		pbConds[i] = item.Expr
+	}
+	heap := &topnHeap{
+		totalCount: int(*topN.Limit),
+		topnSorter: topnSorter{
+			orderByItems: topN.OrderBy,
+			sc:           ctx.evalCtx.sc,
+		},
+	}
+
+	conds, err := convertToExprs(ctx.evalCtx.sc, ctx.evalCtx.colIDs, pbConds)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return &topNExec{
+		heap:              heap,
+		evalCtx:           ctx.evalCtx,
+		relatedColOffsets: relatedColOffsets,
+		orderByExprs:      conds,
+		row:               make([]types.Datum, len(ctx.evalCtx.columnInfos)),
+	}, nil
+}
+
+type evalContext struct {
+	colIDs      map[int64]int
+	columnInfos []*tipb.ColumnInfo
+	fieldTps    []*types.FieldType
+	sc          *variable.StatementContext
+}
+
+func (e *evalContext) setColumnInfo(cols []*tipb.ColumnInfo) {
+	e.columnInfos = make([]*tipb.ColumnInfo, len(cols))
+	copy(e.columnInfos, cols)
+
+	e.colIDs = make(map[int64]int)
+	e.fieldTps = make([]*types.FieldType, 0, len(e.columnInfos))
+	for i, col := range e.columnInfos {
+		ft := distsql.FieldTypeFromPBColumn(col)
+		e.fieldTps = append(e.fieldTps, ft)
+		e.colIDs[col.GetColumnId()] = i
+	}
+}
+
+// decodeRelatedColumnVals decodes data to Datum slice according to the row information.
+func (e *evalContext) decodeRelatedColumnVals(relatedColOffsets []int, handle int64, value [][]byte, row []types.Datum) error {
+	var err error
+	for _, offset := range relatedColOffsets {
+		col := e.columnInfos[offset]
+		if col.GetPkHandle() {
+			if mysql.HasUnsignedFlag(uint(col.GetFlag())) {
+				row[offset] = types.NewUintDatum(uint64(handle))
+			} else {
+				row[offset] = types.NewIntDatum(handle)
+			}
+			continue
+		}
+		row[offset], err = tablecodec.DecodeColumnValue(value[offset], e.fieldTps[offset])
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+// Flags are used by tipb.SelectRequest.Flags to handle execution mode, like how to handle truncate error.
+const (
+	// FlagIgnoreTruncate indicates if truncate error should be ignored.
+	// Read-only statements should ignore truncate error, write statements should not ignore truncate error.
+	FlagIgnoreTruncate uint64 = 1
+	// FlagTruncateAsWarning indicates if truncate error should be returned as warning.
+	// This flag only matters if FlagIgnoreTruncate is not set, in strict sql mode, truncate error should
+	// be returned as error, in non-strict sql mode, truncate error should be saved as warning.
+	FlagTruncateAsWarning uint64 = 1 << 1
+)
+
+// flagsToStatementContext creates a StatementContext from a `tipb.SelectRequest.Flags`.
+func flagsToStatementContext(flags uint64) *variable.StatementContext {
+	sc := new(variable.StatementContext)
+	sc.IgnoreTruncate = (flags & FlagIgnoreTruncate) > 0
+	sc.TruncateAsWarning = (flags & FlagTruncateAsWarning) > 0
+	return sc
 }

@@ -72,6 +72,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	s.etcdAddrs = etcdAddrs
 	mc.cache[uuid] = s
 	return s, nil
 }
@@ -87,6 +88,7 @@ type tikvStore struct {
 	regionCache  *RegionCache
 	lockResolver *LockResolver
 	gcWorker     *GCWorker
+	etcdAddrs    []string
 }
 
 func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool) (*tikvStore, error) {
@@ -110,6 +112,10 @@ func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool)
 		}
 	}
 	return store, nil
+}
+
+func (s *tikvStore) EtcdAddrs() []string {
+	return s.etcdAddrs
 }
 
 // NewMockTikvStore creates a mocked tikv store.
@@ -196,7 +202,7 @@ func (s *tikvStore) CurrentVersion() (kv.Version, error) {
 
 func (s *tikvStore) getTimestampWithRetry(bo *Backoffer) (uint64, error) {
 	for {
-		startTS, err := s.oracle.GetTimestamp()
+		startTS, err := s.oracle.GetTimestamp(bo.ctx)
 		if err == nil {
 			return startTS, nil
 		}

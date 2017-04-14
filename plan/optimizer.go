@@ -33,6 +33,7 @@ const (
 	flagDecorrelate
 	flagPredicatePushDown
 	flagAggregationOptimize
+	flagPushDownTopN
 )
 
 var optRuleList = []logicalOptRule{
@@ -41,6 +42,7 @@ var optRuleList = []logicalOptRule{
 	&decorrelateSolver{},
 	&ppdSolver{},
 	&aggregationOptimizer{},
+	&pushDownTopNOptimizer{},
 }
 
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
@@ -69,8 +71,8 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 
 	// Maybe it's better to move this to Preprocess, but check privilege need table
 	// information, which is collected into visitInfo during logical plan builder.
-	if checker := privilege.GetPrivilegeChecker(ctx); checker != nil {
-		if !checkPrivilege(checker, builder.visitInfo) {
+	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
+		if !checkPrivilege(pm, builder.visitInfo) {
 			return nil, errors.New("privilege check fail")
 		}
 	}
@@ -81,9 +83,9 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 	return p, nil
 }
 
-func checkPrivilege(checker privilege.Checker, vs []visitInfo) bool {
+func checkPrivilege(pm privilege.Manager, vs []visitInfo) bool {
 	for _, v := range vs {
-		if !checker.RequestVerification(v.db, v.table, v.column, v.privilege) {
+		if !pm.RequestVerification(v.db, v.table, v.column, v.privilege) {
 			return false
 		}
 	}
@@ -133,7 +135,7 @@ func physicalOptimize(flag uint64, logic LogicalPlan, allocator *idAllocator) (P
 }
 
 func existsCartesianProduct(p LogicalPlan) bool {
-	if join, ok := p.(*Join); ok && len(join.EqualConditions) == 0 {
+	if join, ok := p.(*LogicalJoin); ok && len(join.EqualConditions) == 0 {
 		return join.JoinType == InnerJoin || join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin
 	}
 	for _, child := range p.Children() {

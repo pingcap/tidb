@@ -20,11 +20,13 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
@@ -337,6 +339,8 @@ func mockContext() context.Context {
 	ctx.Store = &mockStore{
 		client: &mockClient{},
 	}
+	do := &domain.Domain{}
+	sessionctx.BindDomain(ctx, do)
 	return ctx
 }
 
@@ -587,11 +591,11 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "do sleep(5)",
-			plan: "*plan.TableDual->Projection",
+			plan: "Dual->Projection",
 		},
 		{
 			sql:  "select substr(\"abc\", 1)",
-			plan: "*plan.TableDual->Projection",
+			plan: "Dual->Projection",
 		},
 		{
 			sql:  "analyze table t, t",
@@ -1137,11 +1141,9 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 }
 
 func (s *testPlanSuite) TestAllocID(c *C) {
-	pA := &DataSource{baseLogicalPlan: newBaseLogicalPlan(Tbl, new(idAllocator))}
-	pB := &DataSource{baseLogicalPlan: newBaseLogicalPlan(Tbl, new(idAllocator))}
 	ctx := mockContext()
-	pA.initIDAndContext(ctx)
-	pB.initIDAndContext(ctx)
+	pA := DataSource{}.init(new(idAllocator), ctx)
+	pB := DataSource{}.init(new(idAllocator), ctx)
 	c.Assert(pA.id, Equals, pB.id)
 }
 
@@ -1552,15 +1554,13 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: `revoke all privileges on *.* from 'test'@'%'`,
 			ans: []visitInfo{
-				// TODO: This should be SUPER privilege.
-				{mysql.CreateUserPriv, "", "", ""},
+				{mysql.SuperPriv, "", "", ""},
 			},
 		},
 		{
 			sql: `set password for 'root'@'%' = 'xxxxx'`,
 			ans: []visitInfo{
-				// TODO: This should be SUPER privilege.
-				{mysql.CreateUserPriv, "", "", ""},
+				{mysql.SuperPriv, "", "", ""},
 			},
 		},
 	}
@@ -1634,5 +1634,128 @@ func checkVisitInfo(c *C, v1, v2 []visitInfo, comment CommentInterface) {
 	c.Assert(len(v1), Equals, len(v2), comment)
 	for i := 0; i < len(v1); i++ {
 		c.Assert(v1[i], Equals, v2[i], comment)
+	}
+}
+
+func (s *testPlanSuite) TestTopNPushDown(c *C) {
+	UseDAGPlanBuilder = true
+	defer func() {
+		testleak.AfterTest(c)()
+		UseDAGPlanBuilder = false
+	}()
+	cases := []struct {
+		sql  string
+		best string
+	}{
+		// Test TopN + Selection.
+		{
+			sql:  "select * from t where a < 1 order by b limit 5",
+			best: "DataScan(t)->Selection->Sort + Limit(5) + Offset(0)->Projection",
+		},
+		// Test Limit + Selection.
+		{
+			sql:  "select * from t where a < 1 limit 5",
+			best: "DataScan(t)->Selection->Limit->Projection",
+		},
+		// Test Limit + Agg + Proj .
+		{
+			sql:  "select a, count(b) from t group by b limit 5",
+			best: "DataScan(t)->Aggr(count(test.t.b),firstrow(test.t.a))->Limit->Projection",
+		},
+		// Test TopN + Agg + Proj .
+		{
+			sql:  "select a, count(b) from t group by b order by c limit 5",
+			best: "DataScan(t)->Aggr(count(test.t.b),firstrow(test.t.a),firstrow(test.t.c))->Sort + Limit(5) + Offset(0)->Projection->Projection",
+		},
+		// Test TopN + Join + Proj.
+		{
+			sql:  "select * from t, t s order by t.a limit 5",
+			best: "Join{DataScan(t)->DataScan(s)}->Sort + Limit(5) + Offset(0)->Projection",
+		},
+		// Test Limit + Join + Proj.
+		{
+			sql:  "select * from t, t s limit 5",
+			best: "Join{DataScan(t)->DataScan(s)}->Limit->Projection",
+		},
+		// Test TopN + Left Join + Proj.
+		{
+			sql:  "select * from t left outer join t s on t.a = s.a order by t.a limit 5",
+			best: "Join{DataScan(t)->Sort + Limit(5) + Offset(0)->DataScan(s)}(test.t.a,s.a)->Sort + Limit(5) + Offset(0)->Projection",
+		},
+		// Test TopN + Left Join + Proj.
+		{
+			sql:  "select * from t left outer join t s on t.a = s.a order by t.a limit 5, 5",
+			best: "Join{DataScan(t)->Sort + Limit(10) + Offset(0)->DataScan(s)}(test.t.a,s.a)->Sort + Limit(5) + Offset(5)->Projection",
+		},
+		// Test Limit + Left Join + Proj.
+		{
+			sql:  "select * from t left outer join t s on t.a = s.a limit 5",
+			best: "Join{DataScan(t)->Limit->DataScan(s)}(test.t.a,s.a)->Limit->Projection",
+		},
+		// Test Limit + Left Join Apply + Proj.
+		{
+			sql:  "select (select s.a from t s where t.a = s.a) from t limit 5",
+			best: "Join{DataScan(t)->Limit->DataScan(s)}(test.t.a,s.a)->Limit->Projection->Projection",
+		},
+		// Test TopN + Left Join Apply + Proj.
+		{
+			sql:  "select (select s.a from t s where t.a = s.a) from t order by t.a limit 5",
+			best: "Join{DataScan(t)->Sort + Limit(5) + Offset(0)->DataScan(s)}(test.t.a,s.a)->Sort + Limit(5) + Offset(0)->Projection->Projection->Projection",
+		},
+		// Test TopN + Left Semi Join Apply + Proj.
+		{
+			sql:  "select exists (select s.a from t s where t.a = s.a) from t order by t.a limit 5",
+			best: "Join{DataScan(t)->Sort + Limit(5) + Offset(0)->DataScan(s)}(test.t.a,s.a)->Sort + Limit(5) + Offset(0)->Projection->Projection",
+		},
+		// Test TopN + Semi Join Apply + Proj.
+		{
+			sql:  "select * from t where exists (select s.a from t s where t.a = s.a) order by t.a limit 5",
+			best: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Sort + Limit(5) + Offset(0)->Projection",
+		},
+		// Test TopN + Right Join + Proj.
+		{
+			sql:  "select * from t right outer join t s on t.a = s.a order by s.a limit 5",
+			best: "Join{DataScan(t)->DataScan(s)->Sort + Limit(5) + Offset(0)}(test.t.a,s.a)->Sort + Limit(5) + Offset(0)->Projection",
+		},
+		// Test Limit + Right Join + Proj.
+		{
+			sql:  "select * from t right outer join t s on t.a = s.a order by s.a,t.b limit 5",
+			best: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Sort + Limit(5) + Offset(0)->Projection",
+		},
+		// Test TopN + UA + Proj.
+		{
+			sql:  "select * from t union all (select * from t s) order by a,b limit 5",
+			best: "UnionAll{DataScan(t)->Sort + Limit(5) + Offset(0)->Projection->DataScan(s)->Sort + Limit(5) + Offset(0)->Projection}->Sort + Limit(5) + Offset(0)",
+		},
+		// Test TopN + UA + Proj.
+		{
+			sql:  "select * from t union all (select * from t s) order by a,b limit 5, 5",
+			best: "UnionAll{DataScan(t)->Sort + Limit(10) + Offset(0)->Projection->DataScan(s)->Sort + Limit(10) + Offset(0)->Projection}->Sort + Limit(5) + Offset(5)",
+		},
+		// Test Limit + UA + Proj + Sort.
+		{
+			sql:  "select * from t union all (select * from t s order by a) limit 5",
+			best: "UnionAll{DataScan(t)->Limit->Projection->DataScan(s)->Sort + Limit(5) + Offset(0)->Projection->Projection}->Limit",
+		},
+	}
+	for _, ca := range cases {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+
+		is, err := mockResolve(stmt)
+		c.Assert(err, IsNil)
+
+		builder := &planBuilder{
+			allocator: new(idAllocator),
+			ctx:       mockContext(),
+			is:        is,
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		p := builder.build(stmt).(LogicalPlan)
+		c.Assert(builder.err, IsNil)
+		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx, builder.allocator)
+		c.Assert(err, IsNil)
+		c.Assert(ToString(p), Equals, ca.best, comment)
 	}
 }

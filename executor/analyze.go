@@ -15,12 +15,14 @@ package executor
 
 import (
 	"math/rand"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -29,17 +31,18 @@ var _ Executor = &AnalyzeExec{}
 
 // AnalyzeExec represents Analyze executor.
 type AnalyzeExec struct {
-	schema     *expression.Schema
-	tblInfo    *model.TableInfo
-	ctx        context.Context
-	idxOffsets []int
-	colOffsets []int
-	pkOffset   int
-	Srcs       []Executor
+	schema  *expression.Schema
+	tblInfo *model.TableInfo
+	ctx     context.Context
+	idxIDs  []int64
+	colIDs  []int64
+	pkID    int64
+	Srcs    []Executor
 }
 
 const (
 	maxSampleCount     = 10000
+	maxSketchSize      = 1000
 	defaultBucketCount = 256
 )
 
@@ -65,28 +68,29 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 		ae := src.(*AnalyzeExec)
 		var count int64 = -1
 		var sampleRows []*ast.Row
-		if ae.colOffsets != nil {
+		var colNDVs []int64
+		if len(ae.colIDs) != 0 {
 			rs := &recordSet{executor: ae.Srcs[len(ae.Srcs)-1]}
 			var err error
-			count, sampleRows, err = collectSamples(rs)
+			count, sampleRows, colNDVs, err = CollectSamplesAndEstimateNDVs(rs, len(ae.colIDs))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
 		columnSamples := rowsToColumnSamples(sampleRows)
 		var pkRS ast.RecordSet
-		if ae.pkOffset != -1 {
+		if ae.pkID != 0 {
 			offset := len(ae.Srcs) - 1
-			if ae.colOffsets != nil {
+			if len(ae.colIDs) != 0 {
 				offset--
 			}
 			pkRS = &recordSet{executor: ae.Srcs[offset]}
 		}
-		idxRS := make([]ast.RecordSet, 0, len(ae.idxOffsets))
-		for i := range ae.idxOffsets {
+		idxRS := make([]ast.RecordSet, 0, len(ae.idxIDs))
+		for i := range ae.idxIDs {
 			idxRS = append(idxRS, &recordSet{executor: ae.Srcs[i]})
 		}
-		err := ae.buildStatisticsAndSaveToKV(count, columnSamples, idxRS, pkRS)
+		err := ae.buildStatisticsAndSaveToKV(count, columnSamples, colNDVs, idxRS, pkRS)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -94,37 +98,64 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 	return nil, nil
 }
 
-func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]types.Datum, idxRS []ast.RecordSet, pkRS ast.RecordSet) error {
+func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]types.Datum, colNDVs []int64, idxRS []ast.RecordSet, pkRS ast.RecordSet) error {
 	statBuilder := &statistics.Builder{
 		Ctx:           e.ctx,
 		TblInfo:       e.tblInfo,
 		Count:         count,
 		NumBuckets:    defaultBucketCount,
 		ColumnSamples: columnSamples,
-		ColOffsets:    e.colOffsets,
+		ColIDs:        e.colIDs,
+		ColNDVs:       colNDVs,
 		IdxRecords:    idxRS,
-		IdxOffsets:    e.idxOffsets,
+		IdxIDs:        e.idxIDs,
 		PkRecords:     pkRS,
-		PkOffset:      e.pkOffset,
+		PkID:          e.pkID,
 	}
 	t, err := statBuilder.NewTable()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = t.SaveToStorage(e.ctx)
-	return errors.Trace(err)
+	dom := sessionctx.GetDomain(e.ctx)
+	err = dom.StatsHandle().SaveToStorage(e.ctx, t)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	lease := dom.DDL().GetLease()
+	if lease > 0 {
+		// We sleep two lease to make sure other tidb node has updated this node.
+		time.Sleep(lease * 2)
+	} else {
+		err = dom.StatsHandle().Update(GetInfoSchema(e.ctx))
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
-// collectSamples collects sample from the result set, using Reservoir Sampling algorithm.
+// CollectSamplesAndEstimateNDVs collects sample from the result set using Reservoir Sampling algorithm,
+// and estimates NDVs using FM Sketch during the collecting process.
 // See https://en.wikipedia.org/wiki/Reservoir_sampling
-func collectSamples(e ast.RecordSet) (count int64, samples []*ast.Row, err error) {
+// Exported for test.
+func CollectSamplesAndEstimateNDVs(e ast.RecordSet, numCols int) (count int64, samples []*ast.Row, ndvs []int64, err error) {
+	var sketches []*statistics.FMSketch
+	for i := 0; i < numCols; i++ {
+		sketches = append(sketches, statistics.NewFMSketch(maxSketchSize))
+	}
 	for {
 		row, err := e.Next()
 		if err != nil {
-			return count, samples, errors.Trace(err)
+			return count, samples, ndvs, errors.Trace(err)
 		}
 		if row == nil {
 			break
+		}
+		for i, val := range row.Data {
+			err = sketches[i].InsertValue(val)
+			if err != nil {
+				return count, samples, ndvs, errors.Trace(err)
+			}
 		}
 		if len(samples) < maxSampleCount {
 			samples = append(samples, row)
@@ -137,7 +168,10 @@ func collectSamples(e ast.RecordSet) (count int64, samples []*ast.Row, err error
 		}
 		count++
 	}
-	return count, samples, nil
+	for _, sketch := range sketches {
+		ndvs = append(ndvs, sketch.NDV())
+	}
+	return count, samples, ndvs, nil
 }
 
 func rowsToColumnSamples(rows []*ast.Row) [][]types.Datum {

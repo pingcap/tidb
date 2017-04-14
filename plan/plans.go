@@ -14,26 +14,11 @@
 package plan
 
 import (
-	"fmt"
-	"strings"
-
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util/types"
 )
-
-// TableRange represents a range of row handle.
-type TableRange struct {
-	LowVal  int64
-	HighVal int64
-}
-
-// IsPoint returns if the table range is a point.
-func (tr *TableRange) IsPoint() bool {
-	return tr.HighVal == tr.LowVal
-}
 
 // ShowDDL is for showing DDL information.
 type ShowDDL struct {
@@ -47,75 +32,20 @@ type CheckTable struct {
 	Tables []*ast.TableName
 }
 
-// IndexRange represents an index range to be scanned.
-type IndexRange struct {
-	LowVal      []types.Datum
-	LowExclude  bool
-	HighVal     []types.Datum
-	HighExclude bool
-}
-
-func datumToString(d types.Datum) string {
-	if d.Kind() == types.KindMinNotNull {
-		return "-inf"
-	}
-	if d.Kind() == types.KindMaxValue {
-		return "+inf"
-	}
-	return fmt.Sprintf("%v", d.GetValue())
-}
-
-// IsPoint returns if the index range is a point.
-func (ir *IndexRange) IsPoint(sc *variable.StatementContext) bool {
-	if len(ir.LowVal) != len(ir.HighVal) {
-		return false
-	}
-	for i := range ir.LowVal {
-		a := ir.LowVal[i]
-		b := ir.HighVal[i]
-		if a.Kind() == types.KindMinNotNull || b.Kind() == types.KindMaxValue {
-			return false
-		}
-		cmp, err := a.CompareDatum(sc, b)
-		if err != nil {
-			return false
-		}
-		if cmp != 0 {
-			return false
-		}
-	}
-	return !ir.LowExclude && !ir.HighExclude
-}
-
-func (ir *IndexRange) String() string {
-	lowStrs := make([]string, 0, len(ir.LowVal))
-	for _, d := range ir.LowVal {
-		lowStrs = append(lowStrs, datumToString(d))
-	}
-	highStrs := make([]string, 0, len(ir.LowVal))
-	for _, d := range ir.HighVal {
-		highStrs = append(highStrs, datumToString(d))
-	}
-	l, r := "[", "]"
-	if ir.LowExclude {
-		l = "("
-	}
-	if ir.HighExclude {
-		r = ")"
-	}
-	return l + strings.Join(lowStrs, " ") + "," + strings.Join(highStrs, " ") + r
-}
-
 // SelectLock represents a select lock plan.
 type SelectLock struct {
+	*basePlan
 	baseLogicalPlan
+	basePhysicalPlan
 
 	Lock ast.SelectLockType
 }
 
 // Limit represents offset and limit plan.
 type Limit struct {
+	*basePlan
 	baseLogicalPlan
+	basePhysicalPlan
 
 	Offset uint64
 	Count  uint64
@@ -147,7 +77,9 @@ type Deallocate struct {
 
 // Show represents a show plan.
 type Show struct {
+	*basePlan
 	baseLogicalPlan
+	basePhysicalPlan
 
 	Tp     ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName string
@@ -177,7 +109,9 @@ type Simple struct {
 
 // Insert represents an insert plan.
 type Insert struct {
+	*basePlan
 	baseLogicalPlan
+	basePhysicalPlan
 
 	Table       table.Table
 	tableSchema *expression.Schema
@@ -193,12 +127,14 @@ type Insert struct {
 
 // Analyze represents an analyze plan
 type Analyze struct {
+	*basePlan
 	baseLogicalPlan
+	basePhysicalPlan
 
-	Table      *ast.TableName
-	IdxOffsets []int
-	ColOffsets []int
-	PkOffset   int // Used only when pk is handle.
+	TableInfo   *model.TableInfo
+	IndicesInfo []*model.IndexInfo
+	ColsInfo    []*model.ColumnInfo
+	PkInfo      *model.ColumnInfo // Used only when pk is handle.
 }
 
 // LoadData represents a loaddata plan.

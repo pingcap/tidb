@@ -288,12 +288,9 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 		funcName = ast.AggFuncMin
 	}
 	aggFunc := expression.NewAggFunction(funcName, []expression.Expression{rexpr}, false)
-	agg := &Aggregation{
-		baseLogicalPlan: newBaseLogicalPlan(Agg, er.b.allocator),
-		AggFuncs:        []expression.AggregationFunction{aggFunc},
-	}
-	agg.initIDAndContext(er.b.ctx)
-	agg.self = agg
+	agg := LogicalAggregation{
+		AggFuncs: []expression.AggregationFunction{aggFunc},
+	}.init(er.b.allocator, er.ctx)
 	addChild(agg, np)
 	aggCol0 := &expression.Column{
 		ColName:  model.NewCIStr("agg_Col_0"),
@@ -308,7 +305,7 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 }
 
 // buildQuantifierPlan adds extra condition for any / all subquery.
-func (er *expressionRewriter) buildQuantifierPlan(agg *Aggregation, cond, rexpr expression.Expression, all bool) {
+func (er *expressionRewriter) buildQuantifierPlan(agg *LogicalAggregation, cond, rexpr expression.Expression, all bool) {
 	isNullFunc, _ := expression.NewFunction(er.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), rexpr.Clone())
 	sumFunc := expression.NewAggFunction(ast.AggFuncSum, []expression.Expression{isNullFunc}, false)
 	countFuncNull := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{isNullFunc.Clone()}, false)
@@ -344,7 +341,7 @@ func (er *expressionRewriter) buildQuantifierPlan(agg *Aggregation, cond, rexpr 
 		cond = expression.ComposeDNFCondition(er.ctx, cond, nullChecker)
 	}
 	if !er.asScalar {
-		// For Semi Apply without aux column, the result is no matter false or null. So we can add it to join predicate.
+		// For Semi LogicalApply without aux column, the result is no matter false or null. So we can add it to join predicate.
 		er.p = er.b.buildSemiApply(er.p, agg, []expression.Expression{cond}, false, false)
 		return
 	}
@@ -352,12 +349,9 @@ func (er *expressionRewriter) buildQuantifierPlan(agg *Aggregation, cond, rexpr 
 	outerSchemaLen := er.p.Schema().Len()
 	er.p = er.b.buildApplyWithJoinType(er.p, agg, InnerJoin)
 	joinSchema := er.p.Schema()
-	proj := &Projection{
-		baseLogicalPlan: newBaseLogicalPlan(Proj, er.b.allocator),
-		Exprs:           expression.Column2Exprs(joinSchema.Clone().Columns[:outerSchemaLen]),
-	}
-	proj.self = proj
-	proj.initIDAndContext(er.ctx)
+	proj := Projection{
+		Exprs: expression.Column2Exprs(joinSchema.Clone().Columns[:outerSchemaLen]),
+	}.init(er.b.allocator, er.ctx)
 	proj.SetSchema(expression.NewSchema(joinSchema.Clone().Columns[:outerSchemaLen]...))
 	proj.Exprs = append(proj.Exprs, cond)
 	proj.schema.Append(&expression.Column{
@@ -371,18 +365,15 @@ func (er *expressionRewriter) buildQuantifierPlan(agg *Aggregation, cond, rexpr 
 	er.p = proj
 }
 
-// handleNEAny handles the case of != any. For exmaple, if the query is t.id != any (select s.id from s), it will be rewrote to
+// handleNEAny handles the case of != any. For example, if the query is t.id != any (select s.id from s), it will be rewrote to
 // t.id != s.id or count(distinct s.id) > 1 or [any checker]. If there are two different values in s.id ,
 // there must exist a s.id that doesn't equal to t.id.
 func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np LogicalPlan) {
 	firstRowFunc := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
 	countFunc := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, true)
-	agg := &Aggregation{
-		baseLogicalPlan: newBaseLogicalPlan(Agg, er.b.allocator),
-		AggFuncs:        []expression.AggregationFunction{firstRowFunc, countFunc},
-	}
-	agg.initIDAndContext(er.b.ctx)
-	agg.self = agg
+	agg := LogicalAggregation{
+		AggFuncs: []expression.AggregationFunction{firstRowFunc, countFunc},
+	}.init(er.b.allocator, er.ctx)
 	addChild(agg, np)
 	firstRowResultCol := &expression.Column{
 		ColName:  model.NewCIStr("col_firstRow"),
@@ -408,12 +399,9 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np LogicalPlan) {
 	firstRowFunc := expression.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
 	countFunc := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{rexpr.Clone()}, true)
-	agg := &Aggregation{
-		baseLogicalPlan: newBaseLogicalPlan(Agg, er.b.allocator),
-		AggFuncs:        []expression.AggregationFunction{firstRowFunc, countFunc},
-	}
-	agg.initIDAndContext(er.b.ctx)
-	agg.self = agg
+	agg := LogicalAggregation{
+		AggFuncs: []expression.AggregationFunction{firstRowFunc, countFunc},
+	}.init(er.b.allocator, er.ctx)
 	addChild(agg, np)
 	firstRowResultCol := &expression.Column{
 		ColName:  model.NewCIStr("col_firstRow"),

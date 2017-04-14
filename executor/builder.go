@@ -113,8 +113,6 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildExists(v)
 	case *plan.MaxOneRow:
 		return b.buildMaxOneRow(v)
-	case *plan.PhysicalDummyScan:
-		return b.buildDummyScan(v)
 	case *plan.Cache:
 		return b.buildCache(v)
 	case *plan.Analyze:
@@ -482,7 +480,7 @@ func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor
 		return &StreamAggExec{
 			Src:          src,
 			schema:       v.Schema(),
-			Ctx:          b.ctx,
+			StmtCtx:      b.ctx.GetSessionVars().StmtCtx,
 			AggFuncs:     v.AggFuncs,
 			GroupByItems: v.GroupByItems,
 		}
@@ -490,7 +488,7 @@ func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor
 	return &HashAggExec{
 		Src:          src,
 		schema:       v.Schema(),
-		ctx:          b.ctx,
+		sc:           b.ctx.GetSessionVars().StmtCtx,
 		AggFuncs:     v.AggFuncs,
 		GroupByItems: v.GroupByItems,
 		aggType:      v.AggType,
@@ -519,7 +517,7 @@ func (b *executorBuilder) buildProjection(v *plan.Projection) Executor {
 }
 
 func (b *executorBuilder) buildTableDual(v *plan.TableDual) Executor {
-	return &TableDualExec{schema: v.Schema()}
+	return &TableDualExec{schema: v.Schema(), rowCount: v.RowCount}
 }
 
 func (b *executorBuilder) getStartTS() uint64 {
@@ -634,17 +632,34 @@ func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
 }
 
 func (b *executorBuilder) buildNestedLoopJoin(v *plan.PhysicalHashJoin) *NestedLoopJoinExec {
-	bigExec := b.build(v.Children()[0])
-	smallExec := b.build(v.Children()[1])
+	for _, cond := range v.EqualConditions {
+		cond.GetArgs()[0].(*expression.Column).ResolveIndices(v.Schema())
+		cond.GetArgs()[1].(*expression.Column).ResolveIndices(v.Schema())
+	}
+	if v.SmallTable == 1 {
+		return &NestedLoopJoinExec{
+			SmallExec:     b.build(v.Children()[1]),
+			BigExec:       b.build(v.Children()[0]),
+			Ctx:           b.ctx,
+			BigFilter:     expression.ComposeCNFCondition(b.ctx, v.LeftConditions...),
+			SmallFilter:   expression.ComposeCNFCondition(b.ctx, v.RightConditions...),
+			OtherFilter:   expression.ComposeCNFCondition(b.ctx, append(expression.ScalarFuncs2Exprs(v.EqualConditions), v.OtherConditions...)...),
+			schema:        v.Schema(),
+			outer:         v.JoinType != plan.InnerJoin,
+			defaultValues: v.DefaultValues,
+		}
+	}
 	return &NestedLoopJoinExec{
-		SmallExec:   smallExec,
-		BigExec:     bigExec,
-		Ctx:         b.ctx,
-		BigFilter:   expression.ComposeCNFCondition(b.ctx, v.LeftConditions...),
-		SmallFilter: expression.ComposeCNFCondition(b.ctx, v.RightConditions...),
-		OtherFilter: expression.ComposeCNFCondition(b.ctx, append(expression.ScalarFuncs2Exprs(v.EqualConditions), v.OtherConditions...)...),
-		schema:      v.Schema(),
-		outer:       v.JoinType != plan.InnerJoin,
+		SmallExec:     b.build(v.Children()[0]),
+		BigExec:       b.build(v.Children()[1]),
+		leftSmall:     true,
+		Ctx:           b.ctx,
+		BigFilter:     expression.ComposeCNFCondition(b.ctx, v.RightConditions...),
+		SmallFilter:   expression.ComposeCNFCondition(b.ctx, v.LeftConditions...),
+		OtherFilter:   expression.ComposeCNFCondition(b.ctx, append(expression.ScalarFuncs2Exprs(v.EqualConditions), v.OtherConditions...)...),
+		schema:        v.Schema(),
+		outer:         v.JoinType != plan.InnerJoin,
+		defaultValues: v.DefaultValues,
 	}
 }
 
@@ -654,7 +669,7 @@ func (b *executorBuilder) buildApply(v *plan.PhysicalApply) Executor {
 	case *plan.PhysicalHashSemiJoin:
 		join = b.buildSemiJoin(x)
 	case *plan.PhysicalHashJoin:
-		if x.JoinType == plan.InnerJoin || x.JoinType == plan.LeftOuterJoin {
+		if x.JoinType == plan.InnerJoin || x.JoinType == plan.LeftOuterJoin || x.JoinType == plan.RightOuterJoin {
 			join = b.buildNestedLoopJoin(x)
 		} else {
 			b.err = errors.Errorf("Unsupported join type %v in nested loop join", x.JoinType)
@@ -702,12 +717,6 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 	return &UpdateExec{ctx: b.ctx, SelectExec: selExec, OrderedList: v.OrderedList}
 }
 
-func (b *executorBuilder) buildDummyScan(v *plan.PhysicalDummyScan) Executor {
-	return &DummyScanExec{
-		schema: v.Schema(),
-	}
-}
-
 func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
 	selExec := b.build(v.Children()[0])
 	return &DeleteExec{
@@ -727,18 +736,20 @@ func (b *executorBuilder) buildCache(v *plan.Cache) Executor {
 }
 
 func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
-	var tblInfo *model.TableInfo
-	if v.Table != nil {
-		tblInfo = v.Table.TableInfo
-	}
 	e := &AnalyzeExec{
-		schema:     v.Schema(),
-		tblInfo:    tblInfo,
-		ctx:        b.ctx,
-		idxOffsets: v.IdxOffsets,
-		colOffsets: v.ColOffsets,
-		pkOffset:   v.PkOffset,
-		Srcs:       make([]Executor, len(v.Children())),
+		schema:  v.Schema(),
+		tblInfo: v.TableInfo,
+		ctx:     b.ctx,
+		Srcs:    make([]Executor, len(v.Children())),
+	}
+	for _, idx := range v.IndicesInfo {
+		e.idxIDs = append(e.idxIDs, idx.ID)
+	}
+	for _, col := range v.ColsInfo {
+		e.colIDs = append(e.colIDs, col.ID)
+	}
+	if v.PkInfo != nil {
+		e.pkID = v.PkInfo.ID
 	}
 	for i, child := range v.Children() {
 		childExec := b.build(child)

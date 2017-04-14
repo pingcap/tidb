@@ -180,6 +180,9 @@ type SessionVars struct {
 
 	// The number of concurrent index serial scan worker.
 	IndexSerialScanConcurrency int
+
+	// Should we split insert data into multiple batches.
+	BatchInsert bool
 }
 
 // NewSessionVars creates a session vars object.
