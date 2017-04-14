@@ -170,7 +170,7 @@ const (
 	ConcatWS       = "concat_ws"
 	Convert        = "convert"
 	Elt            = "elt"
-	ExportSet      = "Export"
+	ExportSet      = "export_set"
 	Field          = "field"
 	Format         = "format"
 	FromBase64     = "from_base64"
