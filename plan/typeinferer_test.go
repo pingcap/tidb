@@ -187,6 +187,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"CONCAT('T', 'i', 'DB')", mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{"CONCAT_WS('-', 'T', 'i', 'DB')", mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{"left('TiDB', 2)", mysql.TypeVarString, charset.CharsetUTF8, 0},
+		{"right('TiDB', 2)", mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{"lower('TiDB')", mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{"lcase('TiDB')", mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{"repeat('TiDB', 3)", mysql.TypeVarString, charset.CharsetUTF8, 0},
@@ -236,7 +237,6 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"bit_length('TiDB')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"char(66)", mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{"char_length('TiDB')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
-		{"character_length('TiDB')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"crc32('TiDB')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"instr('foobarbar', 'bar')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"timestampdiff(MINUTE,'2003-02-01','2003-05-01 12:05:55')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
@@ -264,6 +264,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`sha2(123, 256)`, mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{`uuid()`, mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{`from_base64('YWJj')`, mysql.TypeVarString, charset.CharsetUTF8, 0},
+		{`to_base64('abc')`, mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{`random_bytes(32)`, mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag},
 		{`coalesce(null, 0)`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{`coalesce(null, 0.1)`, mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag},
@@ -296,6 +297,8 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`bin(1)`, mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{"to_seconds('2003-05-01 12:05:55')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"to_seconds(950501)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
+		{`bit_count(1)`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
+		{`time_to_sec("23:59:59")`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 	}
 	for _, ca := range cases {
 		ctx := testKit.Se.(context.Context)

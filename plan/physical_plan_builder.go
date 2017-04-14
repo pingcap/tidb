@@ -80,25 +80,25 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 			resultPlan = newSel
 		}
 	} else {
-		ts.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
+		ts.Ranges = []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}
 	}
 	statsTbl := p.statisticTable
-	rowCount := uint64(statsTbl.Count)
+	rowCount := float64(statsTbl.Count)
 	if table.PKIsHandle {
 		for i, colInfo := range ts.Columns {
 			if mysql.HasPriKeyFlag(colInfo.Flag) {
 				ts.pkCol = p.Schema().Columns[i]
+				var err error
+				rowCount, err = statsTbl.GetRowCountByIntColumnRanges(sc, ts.pkCol.ID, ts.Ranges)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
 				break
 			}
 		}
-		var err error
-		rowCount, err = ts.rowCount(sc, statsTbl)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 	}
 	if ts.TableConditionPBExpr != nil {
-		rowCount = uint64(float64(rowCount) * selectionFactor)
+		rowCount = rowCount * selectionFactor
 	}
 	return resultPlan.matchProperty(prop, &physicalPlanInfo{count: rowCount}), nil
 }
@@ -124,7 +124,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 	var resultPlan PhysicalPlan
 	resultPlan = is
 	statsTbl := p.statisticTable
-	rowCount := uint64(statsTbl.Count)
+	rowCount := float64(statsTbl.Count)
 	sc := p.ctx.GetSessionVars().StmtCtx
 	if sel, ok := p.parents[0].(*Selection); ok {
 		newSel := sel.Copy().(*Selection)
@@ -148,7 +148,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 			}
 			log.Warn("truncate error in buildIndexRange")
 		}
-		rowCount, err = is.getRowCountByIndexRanges(sc, statsTbl)
+		rowCount, err = statsTbl.GetRowCountByIndexRanges(sc, is.Index.ID, is.Ranges, is.accessInAndEqCount)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -300,7 +300,7 @@ func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPl
 
 		count := info.count
 		if prop.limit != nil {
-			count = prop.limit.Offset + prop.limit.Count
+			count = float64(prop.limit.Offset + prop.limit.Count)
 		}
 		info.cost += sortCost(count)
 	} else if prop.limit != nil {
@@ -308,18 +308,18 @@ func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPl
 		limit.SetSchema(info.p.Schema())
 		info = addPlanToResponse(limit, info)
 	}
-	if prop.limit != nil && prop.limit.Count < info.count {
-		info.count = prop.limit.Count
+	if prop.limit != nil && float64(prop.limit.Count) < info.count {
+		info.count = float64(prop.limit.Count)
 	}
 	return info
 }
 
-func sortCost(cnt uint64) float64 {
+func sortCost(cnt float64) float64 {
 	if cnt == 0 {
 		// If cnt is 0, the log(cnt) will be NAN.
 		return 0.0
 	}
-	return float64(cnt)*math.Log2(float64(cnt))*cpuFactor + memoryFactor*float64(cnt)
+	return cnt*math.Log2(float64(cnt))*cpuFactor + memoryFactor*float64(cnt)
 }
 
 // removeLimit removes the limit from prop.
@@ -410,7 +410,7 @@ func (p *LogicalJoin) convert2PhysicalPlanSemi(prop *requiredProperty) (*physica
 	}
 	resultInfo := join.matchProperty(prop, lInfo, rInfo)
 	if p.JoinType == SemiJoin {
-		resultInfo.count = uint64(float64(lInfo.count) * selectionFactor)
+		resultInfo.count = lInfo.count * selectionFactor
 	} else {
 		resultInfo.count = lInfo.count
 	}
@@ -546,6 +546,7 @@ func (p *LogicalJoin) convert2PhysicalPlanRight(prop *requiredProperty, innerJoi
 }
 
 // buildSelectionWithConds will build a selection use the conditions of join and convert one side's column to correlated column.
+// If the inner side is one selection then one data source, the inner child should be the data source other than the selection.
 // This is called when build nested loop join.
 func (p *LogicalJoin) buildSelectionWithConds(leftAsOuter bool) (*Selection, []*expression.CorrelatedColumn) {
 	var (
@@ -562,6 +563,10 @@ func (p *LogicalJoin) buildSelectionWithConds(leftAsOuter bool) (*Selection, []*
 		innerConditions = p.LeftConditions
 		innerChild = p.children[0]
 	}
+	if sel, ok := innerChild.(*Selection); ok {
+		innerConditions = append(innerConditions, sel.Conditions...)
+		innerChild = sel.children[0]
+	}
 	corCols := make([]*expression.CorrelatedColumn, 0, outerSchema.Len())
 	for _, col := range outerSchema.Columns {
 		corCol := &expression.CorrelatedColumn{Column: *col, Data: new(types.Datum)}
@@ -572,12 +577,19 @@ func (p *LogicalJoin) buildSelectionWithConds(leftAsOuter bool) (*Selection, []*
 	selection.SetSchema(innerChild.Schema().Clone())
 	selection.SetChildren(innerChild)
 	conds := make([]expression.Expression, 0, len(p.EqualConditions)+len(innerConditions)+len(p.OtherConditions))
-	for _, cond := range innerConditions {
-		conds = append(conds, cond)
-	}
 	for _, cond := range p.EqualConditions {
 		newCond := expression.ConvertCol2CorCol(cond, corCols, outerSchema)
 		conds = append(conds, newCond)
+	}
+	selection.Conditions = conds
+	// Currently only eq conds will be considered when we call checkScanController, and innerConds from the below sel may contain correlated column,
+	// which will have side effect when we do check. So we do check before append other conditions into selection.
+	selection.controllerStatus = selection.checkScanController()
+	if selection.controllerStatus == notController {
+		return nil, nil
+	}
+	for _, cond := range innerConditions {
+		conds = append(conds, cond)
 	}
 	for _, cond := range p.OtherConditions {
 		newCond := expression.ConvertCol2CorCol(cond, corCols, outerSchema)
@@ -585,13 +597,18 @@ func (p *LogicalJoin) buildSelectionWithConds(leftAsOuter bool) (*Selection, []*
 		conds = append(conds, newCond)
 	}
 	selection.Conditions = conds
-	selection.controllerStatus = selection.checkScanController()
 	return selection, corCols
 }
 
 func (p *LogicalJoin) convert2IndexNestedLoopJoinLeft(prop *requiredProperty, innerJoin bool) (*physicalPlanInfo, error) {
 	lChild := p.children[0].(LogicalPlan)
-	if _, ok := p.children[1].(*DataSource); !ok {
+	switch x := p.children[1].(type) {
+	case *DataSource:
+	case *Selection:
+		if _, ok := x.children[0].(*DataSource); !ok {
+			return nil, nil
+		}
+	default:
 		return nil, nil
 	}
 	allLeft := true
@@ -620,7 +637,7 @@ func (p *LogicalJoin) convert2IndexNestedLoopJoinLeft(prop *requiredProperty, in
 		return nil, nil
 	}
 	selection, corCols := p.buildSelectionWithConds(true)
-	if selection.controllerStatus == notController {
+	if selection == nil {
 		return nil, nil
 	}
 	rInfo := selection.makeScanController()
@@ -656,7 +673,13 @@ func (p *LogicalJoin) convert2IndexNestedLoopJoinLeft(prop *requiredProperty, in
 
 func (p *LogicalJoin) convert2IndexNestedLoopJoinRight(prop *requiredProperty, innerJoin bool) (*physicalPlanInfo, error) {
 	rChild := p.children[1].(LogicalPlan)
-	if _, ok := p.children[0].(*DataSource); !ok {
+	switch x := p.children[0].(type) {
+	case *DataSource:
+	case *Selection:
+		if _, ok := x.children[0].(*DataSource); !ok {
+			return nil, nil
+		}
+	default:
 		return nil, nil
 	}
 	allRight := true
@@ -685,7 +708,7 @@ func (p *LogicalJoin) convert2IndexNestedLoopJoinRight(prop *requiredProperty, i
 		return nil, nil
 	}
 	selection, corCols := p.buildSelectionWithConds(false)
-	if selection.controllerStatus == notController {
+	if selection == nil {
 		return nil, nil
 	}
 	lInfo := selection.makeScanController()
@@ -960,7 +983,7 @@ func (p *LogicalJoin) convert2PhysicalPlan(prop *requiredProperty) (*physicalPla
 			break
 		}
 		if p.preferINLJ > 0 && p.hasEqualConds() {
-			if _, ok := p.children[1].(*DataSource); ok && (p.preferINLJ&preferLeftAsOuter) > 0 {
+			if (p.preferINLJ & preferLeftAsOuter) > 0 {
 				lNLJInfo, err := p.convert2IndexNestedLoopJoinLeft(prop, true)
 				if err != nil {
 					return nil, errors.Trace(err)
@@ -969,7 +992,7 @@ func (p *LogicalJoin) convert2PhysicalPlan(prop *requiredProperty) (*physicalPla
 					info = lNLJInfo
 				}
 			}
-			if _, ok := p.children[0].(*DataSource); ok && (p.preferINLJ&preferRightAsOuter) > 0 {
+			if (p.preferINLJ & preferRightAsOuter) > 0 {
 				rNLJInfo, err := p.convert2IndexNestedLoopJoinRight(prop, true)
 				if err != nil {
 					return nil, errors.Trace(err)
@@ -1046,8 +1069,8 @@ func (p *LogicalAggregation) convert2PhysicalPlanStream(prop *requiredProperty) 
 		return nil, errors.Trace(err)
 	}
 	info = addPlanToResponse(agg, childInfo)
-	info.cost += float64(info.count) * cpuFactor
-	info.count = uint64(float64(info.count) * aggFactor)
+	info.cost += info.count * cpuFactor
+	info.count = info.count * aggFactor
 	return info, nil
 }
 
@@ -1066,7 +1089,7 @@ func (p *LogicalAggregation) convert2PhysicalPlanFinalHash(x physicalDistSQLPlan
 	}
 	x.(PhysicalPlan).SetSchema(schema)
 	info := addPlanToResponse(agg, childInfo)
-	info.count = uint64(float64(info.count) * aggFactor)
+	info.count = info.count * aggFactor
 	// if we build the final aggregation, it must be the best plan.
 	info.cost = 0
 	return info
@@ -1082,8 +1105,8 @@ func (p *LogicalAggregation) convert2PhysicalPlanCompleteHash(childInfo *physica
 	agg.HasGby = len(p.GroupByItems) > 0
 	agg.SetSchema(p.schema)
 	info := addPlanToResponse(agg, childInfo)
-	info.cost += float64(info.count) * memoryFactor
-	info.count = uint64(float64(info.count) * aggFactor)
+	info.cost += info.count * memoryFactor
+	info.count = info.count * aggFactor
 	return info
 }
 
@@ -1244,9 +1267,9 @@ func (p *Selection) makeScanController() *physicalPlanInfo {
 	newSel.SetChildren(child)
 	info := &physicalPlanInfo{
 		p:     newSel,
-		count: uint64(ds.statisticTable.Count),
+		count: float64(ds.statisticTable.Count),
 	}
-	info.cost = float64(info.count) * selectionFactor
+	info.cost = info.count * selectionFactor
 	return info
 }
 
@@ -1291,7 +1314,7 @@ func (p *Selection) appendSelToInfo(info *physicalPlanInfo) *physicalPlanInfo {
 	return &physicalPlanInfo{
 		p:     np,
 		cost:  info.cost,
-		count: uint64(float64(info.count) * selectionFactor),
+		count: info.count * selectionFactor,
 	}
 }
 
@@ -1306,7 +1329,7 @@ func (p *Selection) convert2PhysicalPlanPushOrder(prop *requiredProperty) (*phys
 		if np, ok := info.p.(physicalDistSQLPlan); ok {
 			np.addLimit(limit)
 			scanCount := info.count
-			info.count = limit.Count
+			info.count = float64(limit.Count)
 			info.cost = np.calculateCost(info.count, scanCount)
 			if limit.Offset > 0 {
 				info = enforceProperty(&requiredProperty{limit: limit}, info)
@@ -1509,27 +1532,23 @@ func (p *LogicalApply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPl
 
 func (p *Analyze) prepareSimpleTableScan(cols []*model.ColumnInfo) *PhysicalTableScan {
 	ts := PhysicalTableScan{
-		Table:               p.Table.TableInfo,
+		Table:               p.TableInfo,
 		Columns:             cols,
-		TableAsName:         &p.Table.Name,
-		DBName:              p.Table.DBInfo.Name,
 		physicalTableSource: physicalTableSource{client: p.ctx.GetClient()},
 	}.init(p.allocator, p.ctx)
 	ts.SetSchema(expression.NewSchema(expression.ColumnInfos2Columns(ts.Table.Name, cols)...))
 	ts.readOnly = true
-	ts.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
+	ts.Ranges = []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}
 	return ts
 }
 
-func (p *Analyze) prepareSimpleIndexScan(idxOffset int, cols []*model.ColumnInfo) *PhysicalIndexScan {
-	tblInfo := p.Table.TableInfo
+func (p *Analyze) prepareSimpleIndexScan(idxInfo *model.IndexInfo, cols []*model.ColumnInfo) *PhysicalIndexScan {
+	tblInfo := p.TableInfo
 	is := PhysicalIndexScan{
-		Index:               tblInfo.Indices[idxOffset],
+		Index:               idxInfo,
 		Table:               tblInfo,
 		Columns:             cols,
-		TableAsName:         &p.Table.Name,
 		OutOfOrder:          false,
-		DBName:              p.Table.DBInfo.Name,
 		physicalTableSource: physicalTableSource{client: p.ctx.GetClient()},
 		DoubleRead:          false,
 	}.init(p.allocator, p.ctx)
@@ -1550,11 +1569,10 @@ func (p *Analyze) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInf
 		return info, nil
 	}
 	var childInfos []*physicalPlanInfo
-	for _, idx := range p.IdxOffsets {
-		var columns []*model.ColumnInfo
-		tblInfo := p.Table.TableInfo
-		for _, idxCol := range tblInfo.Indices[idx].Columns {
-			for _, col := range tblInfo.Columns {
+	for _, idx := range p.IndicesInfo {
+		columns := make([]*model.ColumnInfo, 0, len(idx.Columns))
+		for _, idxCol := range idx.Columns {
+			for _, col := range p.TableInfo.Columns {
 				if col.Name.L == idxCol.Name.L {
 					columns = append(columns, col)
 					break
@@ -1565,17 +1583,12 @@ func (p *Analyze) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInf
 		childInfos = append(childInfos, is.matchProperty(prop, &physicalPlanInfo{count: 0}))
 	}
 	// TODO: It's inefficient to do table scan two times for massive data.
-	if p.PkOffset != -1 {
-		col := p.Table.TableInfo.Columns[p.PkOffset]
-		ts := p.prepareSimpleTableScan([]*model.ColumnInfo{col})
+	if p.PkInfo != nil {
+		ts := p.prepareSimpleTableScan([]*model.ColumnInfo{p.PkInfo})
 		childInfos = append(childInfos, ts.matchProperty(prop, &physicalPlanInfo{count: 0}))
 	}
-	if p.ColOffsets != nil {
-		cols := make([]*model.ColumnInfo, 0, len(p.ColOffsets))
-		for _, offset := range p.ColOffsets {
-			cols = append(cols, p.Table.TableInfo.Columns[offset])
-		}
-		ts := p.prepareSimpleTableScan(cols)
+	if len(p.ColsInfo) != 0 {
+		ts := p.prepareSimpleTableScan(p.ColsInfo)
 		childInfos = append(childInfos, ts.matchProperty(prop, &physicalPlanInfo{count: 0}))
 	}
 	for _, child := range p.Children() {

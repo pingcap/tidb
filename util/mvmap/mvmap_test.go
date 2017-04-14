@@ -34,6 +34,23 @@ func TestMVMap(t *testing.T) {
 	if fmt.Sprintf("%s", vals) != "[def1 def2]" {
 		t.FailNow()
 	}
+
+	if m.Len() != 4 {
+		t.FailNow()
+	}
+
+	results := []string{"abc abc1", "abc abc2", "def def1", "def def2"}
+	it := m.NewIterator()
+	for i := 0; i < 4; i++ {
+		key, val := it.Next()
+		if fmt.Sprintf("%s %s", key, val) != results[i] {
+			t.FailNow()
+		}
+	}
+	key, val := it.Next()
+	if key != nil || val != nil {
+		t.FailNow()
+	}
 }
 
 func BenchmarkMVMapPut(b *testing.B) {

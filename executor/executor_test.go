@@ -284,9 +284,11 @@ func (s *testSuite) TestDAG(c *C) {
 }
 
 func (s *testSuite) TestSelectOrderBy(c *C) {
+	mocktikv.MockDAGRequest = true
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
+		mocktikv.MockDAGRequest = false
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -298,6 +300,9 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	rowStr := fmt.Sprintf("%v %v", 1, []byte("hello"))
 	r.Check(testkit.Rows(rowStr))
 	tk.MustExec("commit")
+
+	r = tk.MustQuery("select id from select_order_test order by id desc limit 1 ")
+	r.Check(testkit.Rows("2"))
 
 	r = tk.MustQuery("select id from select_order_test order by id + 1 desc limit 1 ")
 	r.Check(testkit.Rows("2"))
@@ -751,9 +756,8 @@ func (s *testSuite) TestIndexScan(c *C) {
 	tk.MustExec("CREATE TABLE t (a int primary key, b int, c int, index(c))")
 	tk.MustExec("insert t values(1, 1, 1), (2, 2, 2), (4, 4, 4), (3, 3, 3), (5, 5, 5)")
 	// Test for double read and top n.
-	// TODO: Add this test after supporting topN whit DAG.
-	//	result = tk.MustQuery("select a from t where c >= 2 order by b desc limit 1")
-	//	result.Check(testkit.Rows("5"))
+	result = tk.MustQuery("select a from t where c >= 2 order by b desc limit 1")
+	result.Check(testkit.Rows("5"))
 }
 
 func (s *testSuite) TestIndexReverseOrder(c *C) {
