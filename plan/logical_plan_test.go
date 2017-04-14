@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
@@ -338,6 +339,35 @@ func mockContext() context.Context {
 		client: &mockClient{},
 	}
 	return ctx
+}
+
+func mockStatsTable(tbl *model.TableInfo, rowCount int64, ndv []int64, numbers [][]int64, values [][]types.Datum, repeats [][]int64) {
+	statsTbl := statistics.Table{
+		Info:    tbl,
+		Count:   rowCount,
+		Columns: make([]*statistics.Column, len(tbl.Columns)),
+		Indices: make([]*statistics.Column, len(tbl.Indices)),
+	}
+	for i := range statsTbl.Columns {
+		statsTbl.Columns[i] = &statistics.Column{
+			ID:      tbl.Columns[i].ID,
+			NDV:     ndv[i],
+			Numbers: numbers[i],
+			Values:  values[i],
+			Repeats: repeats[i],
+		}
+	}
+	colLen := len(statsTbl.Columns)
+	for i := range statsTbl.Indices {
+		statsTbl.Indices[i] = &statistics.Column{
+			ID:      tbl.Indices[i].ID,
+			NDV:     ndv[i+colLen],
+			Numbers: numbers[i+colLen],
+			Values:  values[i+colLen],
+			Repeats: repeats[i+colLen],
+		}
+	}
+	statistics.SetStatisticsTableCache(tbl.ID, &statsTbl, 1)
 }
 
 func (s *testPlanSuite) TestPredicatePushDown(c *C) {

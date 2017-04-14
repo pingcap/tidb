@@ -1189,29 +1189,22 @@ func (s *testPlanSuite) TestAutoJoinChosen(c *C) {
 		if ca.genStatsTbl {
 			tb, _ := is.TableByID(0)
 			tbl := tb.Meta()
-			statsTbl := statistics.Table{
-				Info:    tbl,
-				Count:   200,
-				Columns: make([]*statistics.Column, len(tbl.Columns)),
-				Indices: make([]*statistics.Column, len(tbl.Indices)),
-			}
-			for i := range statsTbl.Columns {
-				statsTbl.Columns[i] = &statistics.Column{ID: tbl.Columns[i].ID}
-			}
-			for i := range statsTbl.Indices {
-				statsTbl.Indices[i] = &statistics.Column{ID: tbl.Indices[i].ID}
-			}
-			pkStatsCol := statsTbl.Columns[0]
-			pkStatsCol.NDV = 10
-			pkStatsCol.Numbers = make([]int64, 10)
-			pkStatsCol.Repeats = make([]int64, 10)
-			pkStatsCol.Values = make([]types.Datum, 10)
+			totalLen := len(tbl.Columns) + len(tbl.Indices)
+			ndv := make([]int64, totalLen)
+			numbers := make([][]int64, totalLen)
+			repeats := make([][]int64, totalLen)
+			values := make([][]types.Datum, totalLen)
+			// Only set the histogram of pk column for test.
+			ndv[0] = 10
+			numbers[0] = make([]int64, 10)
+			repeats[0] = make([]int64, 10)
+			values[0] = make([]types.Datum, 10)
 			for i := 0; i < 10; i++ {
-				pkStatsCol.Numbers[i] = int64(20 * (i + 1))
-				pkStatsCol.Repeats[i] = 20
-				pkStatsCol.Values[i] = types.NewIntDatum(int64(i))
+				numbers[0][i] = int64(20 * (i + 1))
+				repeats[0][i] = 20
+				values[0][i] = types.NewIntDatum(int64(i))
 			}
-			statistics.SetStatisticsTableCache(tbl.ID, &statsTbl, 1)
+			mockStatsTable(tbl, 200, ndv, numbers, values, repeats)
 		}
 
 		builder := &planBuilder{

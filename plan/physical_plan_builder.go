@@ -605,7 +605,7 @@ func (p *Join) outerTableCouldINLJ(outerInfo *physicalPlanInfo, leftAsOuter bool
 	} else {
 		forced = (p.preferINLJ&preferRightAsOuter) > 0 && p.hasEqualConds()
 	}
-	return !forced && (!outerInfo.reliable || outerInfo.count > uint64(p.ctx.GetSessionVars().MaxRowCountForINLJ))
+	return forced || (outerInfo.reliable && outerInfo.count <= uint64(p.ctx.GetSessionVars().MaxRowCountForINLJ))
 }
 
 func (p *Join) convert2IndexNestedLoopJoinLeft(prop *requiredProperty, innerJoin bool) (*physicalPlanInfo, error) {
@@ -640,7 +640,7 @@ func (p *Join) convert2IndexNestedLoopJoinLeft(prop *requiredProperty, innerJoin
 	}
 	// If the outer table's row count is reliable and don't exceed the MaxRowCountForINLJ or we use hint to force
 	// choosing index nested loop join, we will continue building. Otherwise we just break and return nil.
-	if p.outerTableCouldINLJ(lInfo, true) {
+	if !p.outerTableCouldINLJ(lInfo, true) {
 		return nil, nil
 	}
 	selection, corCols := p.buildSelectionWithConds(true)
@@ -710,7 +710,7 @@ func (p *Join) convert2IndexNestedLoopJoinRight(prop *requiredProperty, innerJoi
 	}
 	// If the outer table's row count is reliable and don't exceed the MaxRowCountForINLJ or we use hint to force
 	// choosing index nested loop join, we will continue building. Otherwise we just break and return nil.
-	if p.outerTableCouldINLJ(rInfo, false) {
+	if !p.outerTableCouldINLJ(rInfo, false) {
 		return nil, nil
 	}
 	selection, corCols := p.buildSelectionWithConds(false)
