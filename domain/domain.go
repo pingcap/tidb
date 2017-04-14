@@ -441,11 +441,11 @@ func (do *Domain) StatsHandle() *statistics.Handle {
 	return do.statsHandle
 }
 
-// LoadTableStatsLoop creates a goroutine loads stats info in a loop, it
+// UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop. It
 // should be called only once in BootstrapSession.
-func (do *Domain) LoadTableStatsLoop(ctx context.Context) error {
+func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 	do.statsHandle = statistics.NewHandle(ctx)
-	ddl.BindStatsHandle(do.ddl, do.statsHandle)
+	do.ddl.RegisterEventCh(do.statsHandle.DDLEventCh())
 	err := do.statsHandle.Update(do.InfoSchema())
 	if err != nil {
 		return errors.Trace(err)
@@ -467,8 +467,9 @@ func (do *Domain) LoadTableStatsLoop(ctx context.Context) error {
 				}
 			case <-do.exit:
 				return
-			case t := <-do.statsHandle.DDLCh():
-				err := do.statsHandle.HandleDDLTask(t)
+			// This channel is sent only by ddl owner. Only owner know if this ddl is done or not.
+			case t := <-do.statsHandle.DDLEventCh():
+				err := do.statsHandle.HandleDDLEvent(t)
 				if err != nil {
 					log.Error(errors.ErrorStack(err))
 				}

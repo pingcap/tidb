@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
 	"github.com/twinj/uuid"
 )
@@ -123,21 +122,36 @@ type DDL interface {
 	Stop() error
 	// Start starts DDL worker.
 	Start() error
+	// RegisterEventCh registers event channel for ddl.
+	RegisterEventCh(chan<- *Event)
+}
+
+type ddlType int
+
+const (
+	// TypeCreateTable standing for a create table operation.
+	TypeCreateTable ddlType = iota
+)
+
+// Event is an event that a ddl operation happened.
+type Event struct {
+	Tp        ddlType
+	TableInfo *model.TableInfo
 }
 
 type ddl struct {
 	m sync.RWMutex
 
-	infoHandle  *infoschema.Handle
-	statsHandle *statistics.Handle
-	hook        Callback
-	hookMu      sync.RWMutex
-	store       kv.Storage
+	infoHandle *infoschema.Handle
+	hook       Callback
+	hookMu     sync.RWMutex
+	store      kv.Storage
 	// Schema lease seconds.
 	lease        time.Duration
 	uuid         string
 	ddlJobCh     chan struct{}
 	ddlJobDoneCh chan struct{}
+	ddlEventCh   chan<- *Event
 	// Drop database/table job that runs in the background.
 	bgJobCh chan struct{}
 	// reorgDoneCh is for reorganization, if the reorganization job is done,
@@ -153,8 +167,8 @@ type ddl struct {
 }
 
 // BindStatsHandle will bind the stats handle with a DDL interface. It will be called after a handle has been initialized.
-func BindStatsHandle(d DDL, handle *statistics.Handle) {
-	d.(*ddl).statsHandle = handle
+func (d *ddl) RegisterEventCh(ch chan<- *Event) {
+	d.ddlEventCh = ch
 }
 
 // NewDDL creates a new DDL.

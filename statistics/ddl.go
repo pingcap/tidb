@@ -17,45 +17,28 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-type ddlType int
-
-const (
-	createTable ddlType = iota
-	dropTable
-	createColumn
-	dropColumn
-)
-
-// DDLTask is a task describing how we should update the stats table after a ddl operation has done.
-type DDLTask struct {
-	tp        ddlType
-	tableInfo *model.TableInfo
-}
-
-// DDLCh returns the ddl task channel.
-func (h *Handle) DDLCh() <-chan *DDLTask {
-	return h.ddlCh
-}
-
-// CreateTable creates a ddl task and pushes to channel. A worker will read the channel and updates the stats table.
-func (h *Handle) CreateTable(tableInfo *model.TableInfo) {
-	h.ddlCh <- &DDLTask{tp: createTable, tableInfo: tableInfo}
-}
-
-// HandleDDLTask begins to process a ddl task.
-func (h *Handle) HandleDDLTask(t *DDLTask) error {
-	switch t.tp {
-	case createTable:
-		return h.onCreateTable(t.tableInfo)
+// HandleDDLEvent begins to process a ddl task.
+func (h *Handle) HandleDDLEvent(t *ddl.Event) error {
+	switch t.Tp {
+	case ddl.TypeCreateTable:
+		return h.insertTableStats2KV(t.TableInfo)
 	}
 	return nil
 }
 
-func (h *Handle) onCreateTable(info *model.TableInfo) error {
+// DDLEventCh returns ddl events channel in handle.
+func (h *Handle) DDLEventCh() chan *ddl.Event {
+	return h.ddlEventCh
+}
+
+// insertTableStats2KV inserts a record standing for a new table to stats_meta and inserts some records standing for the
+// new columns and indices which belong to this table.
+func (h *Handle) insertTableStats2KV(info *model.TableInfo) error {
 	_, err := h.ctx.(sqlexec.SQLExecutor).Execute("begin")
 	if err != nil {
 		return errors.Trace(err)
