@@ -225,6 +225,7 @@ func (s *testSuite) TestFlushPrivileges(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec(`CREATE USER 'testflush'@'localhost' IDENTIFIED BY '';`)
+	tk.MustExec(`FLUSH PRIVILEGES;`)
 	tk.MustExec(`UPDATE mysql.User SET Select_priv='Y' WHERE User="testflush" and Host="localhost"`)
 
 	// Create a new session.
