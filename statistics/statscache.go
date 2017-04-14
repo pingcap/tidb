@@ -34,7 +34,6 @@ type Handle struct {
 	lastVersion uint64
 	statsCache  atomic.Value
 	// ddlEventCh is a channel to notify a ddl operation has happened. It is sent only by owner and read by stats handle.
-	// Exported for test.
 	ddlEventCh chan *ddl.Event
 }
 
