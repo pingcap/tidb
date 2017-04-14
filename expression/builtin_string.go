@@ -783,7 +783,6 @@ func (b *builtinLocateSig) eval(row []types.Datum) (d types.Datum, err error) {
 		pos = p - 1
 	}
 	var ret int64
-	var idx int
 	caseSensitive := false
 	if args[0].Kind() == types.KindBytes || args[1].Kind() == types.KindBytes {
 		caseSensitive = true
@@ -796,10 +795,8 @@ func (b *builtinLocateSig) eval(row []types.Datum) (d types.Datum, err error) {
 			d.SetInt64(pos + 1)
 			return d, nil
 		}
-		idx = strings.Index(str[pos:], subStr)
-		if idx == -1 {
-			ret = 0
-		} else {
+		idx := strings.Index(str[pos:], subStr)
+		if idx != -1 {
 			ret = pos + int64(idx) + 1
 		}
 	} else {
@@ -812,10 +809,8 @@ func (b *builtinLocateSig) eval(row []types.Datum) (d types.Datum, err error) {
 			return d, nil
 		}
 		s := string(rStr[pos:])
-		idx = strings.Index(s, strings.ToLower(subStr))
-		if idx == -1 {
-			ret = 0
-		} else {
+		idx := strings.Index(s, strings.ToLower(subStr))
+		if idx != -1 {
 			ret = pos + int64(utf8.RuneCountInString(s[:idx])) + 1
 		}
 	}
