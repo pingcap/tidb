@@ -15,6 +15,7 @@ package statistics
 
 import (
 	"fmt"
+	"sync"
 	"sync/atomic"
 
 	"github.com/juju/errors"
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"sync"
 )
 
 type statsCache map[int64]*Table

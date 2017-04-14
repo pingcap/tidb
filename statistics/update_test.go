@@ -79,4 +79,84 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 	h.Update(is)
 	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1*3))
+
+	testKit.MustExec("begin")
+	for i := 0; i < rowCount1; i++ {
+		testKit.MustExec("insert into t1 values(1, 2)")
+	}
+	for i := 0; i < rowCount1; i++ {
+		testKit.MustExec("delete from t1 limit 1")
+	}
+	for i := 0; i < rowCount2; i++ {
+		testKit.MustExec("update t2 set c2 = c1")
+	}
+	testKit.MustExec("commit")
+	h.DumpUpdateInfoToKV()
+	h.Update(is)
+	stats1 = h.GetTableStats(tableInfo1)
+	c.Assert(stats1.Count, Equals, int64(rowCount1*3))
+	stats2 = h.GetTableStats(tableInfo2)
+	c.Assert(stats2.Count, Equals, int64(rowCount2))
+
+	rs := testKit.MustQuery("select modify_count from mysql.stats_meta")
+	rs.Check(testkit.Rows("50", "40"))
+}
+func (s *testStatsUpdateSuite) TestMultiSession(c *C) {
+	store, do, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t1 (c1 int, c2 int)")
+
+	rowCount1 := 10
+	for i := 0; i < rowCount1; i++ {
+		testKit.MustExec("insert into t1 values(1, 2)")
+	}
+
+	testKit1 := testkit.NewTestKit(c, store)
+	for i := 0; i < rowCount1; i++ {
+		testKit1.MustExec("insert into test.t1 values(1, 2)")
+	}
+	testKit2 := testkit.NewTestKit(c, store)
+	for i := 0; i < rowCount1; i++ {
+		testKit2.MustExec("delete from test.t1 limit 1")
+	}
+	is := do.InfoSchema()
+	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	tableInfo1 := tbl1.Meta()
+	h := do.StatsHandle()
+
+	h.HandleDDLEvent(<-h.DDLEventCh())
+
+	h.DumpUpdateInfoToKV()
+	h.Update(is)
+	stats1 := h.GetTableStats(tableInfo1)
+	c.Assert(stats1.Count, Equals, int64(rowCount1))
+
+	for i := 0; i < rowCount1; i++ {
+		testKit.MustExec("insert into t1 values(1, 2)")
+	}
+
+	for i := 0; i < rowCount1; i++ {
+		testKit1.MustExec("insert into test.t1 values(1, 2)")
+	}
+
+	for i := 0; i < rowCount1; i++ {
+		testKit2.MustExec("delete from test.t1 limit 1")
+	}
+
+	err = testKit.Se.Close()
+	c.Assert(err, IsNil)
+
+	err = testKit2.Se.Close()
+	c.Assert(err, IsNil)
+
+	h.DumpUpdateInfoToKV()
+	h.Update(is)
+	stats1 = h.GetTableStats(tableInfo1)
+	c.Assert(stats1.Count, Equals, int64(rowCount1*2))
+	rs := testKit.MustQuery("select modify_count from mysql.stats_meta")
+	rs.Check(testkit.Rows("60"))
 }

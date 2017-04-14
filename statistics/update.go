@@ -82,6 +82,9 @@ func (m *updateManager) newStatsUpdateHandle() *StatsUpdateHandle {
 		next:   m.listHead.next,
 		prev:   m.listHead,
 	}
+	if m.listHead.next != nil {
+		m.listHead.next.prev = mapper
+	}
 	m.listHead.next = mapper
 	return mapper
 }
@@ -102,11 +105,11 @@ func (m *updateManager) delStatsUpdateHandle(handle *StatsUpdateHandle) {
 
 func (m *updateManager) dumpUpdateMapper2KV() {
 	m.listHead.Lock()
+	m.mapper.Lock()
 	for item := m.listHead.next; item != nil; item = item.next {
 		m.mapper.merge(item)
 	}
 	m.listHead.Unlock()
-	m.mapper.Lock()
 	for id, item := range m.mapper.updateMapper {
 		err := m.dumpTableStatToKV(id, item)
 		if err == nil {
