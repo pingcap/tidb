@@ -71,6 +71,7 @@ const (
 	ClassTable
 	ClassTypes
 	ClassGlobal
+	ClassMockTikv
 	// Add more as needed.
 )
 
@@ -115,6 +116,8 @@ func (ec ErrClass) String() string {
 		return "types"
 	case ClassGlobal:
 		return "global"
+	case ClassMockTikv:
+		return "mocktikv"
 	}
 	return strconv.Itoa(int(ec))
 }

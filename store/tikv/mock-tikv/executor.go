@@ -18,15 +18,25 @@ import (
 	"sort"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/distsql/xeval"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
+)
+
+// Error instances.
+var (
+	errInvalid = terror.ClassMockTikv.New(codeInvalid, "invalid operation")
+)
+
+// Error codes.
+const (
+	codeInvalid = 1
 )
 
 type executor interface {
@@ -249,7 +259,6 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 }
 
 type selectionExec struct {
-	sc                *variable.StatementContext
 	conditions        []expression.Expression
 	relatedColOffsets []int
 	row               []types.Datum
@@ -309,14 +318,15 @@ func (e *selectionExec) Next() (handle int64, value [][]byte, err error) {
 }
 
 type aggregateExec struct {
-	*tipb.Aggregation
-	eval         *xeval.Evaluator
-	aggFuncs     []*aggregateFuncExpr
-	groups       map[string]struct{}
-	groupKeys    [][]byte
-	executed     bool
-	currGroupIdx int
-	colIDs       map[int64]int
+	evalCtx           *evalContext
+	aggExprs          []expression.AggregationFunction
+	groupByExprs      []expression.Expression
+	relatedColOffsets []int
+	row               []types.Datum
+	groups            map[string]struct{}
+	groupKeys         [][]byte
+	executed          bool
+	currGroupIdx      int
 
 	src executor
 }
@@ -362,15 +372,11 @@ func (e *aggregateExec) Next() (handle int64, value [][]byte, err error) {
 	if err != nil {
 		return 0, nil, errors.Trace(err)
 	}
-	value = make([][]byte, 0, 1+2*len(e.aggFuncs))
+	value = make([][]byte, 0, 1+2*len(e.aggExprs))
 	// The first column is group key.
 	value = append(value, gkData)
-	for _, agg := range e.aggFuncs {
-		agg.currentGroup = gk
-		ds, err := agg.toDatums(e.eval)
-		if err != nil {
-			return 0, nil, errors.Trace(err)
-		}
+	for _, agg := range e.aggExprs {
+		ds := agg.GetPartialResult(gk)
 		data, err := codec.EncodeValue(nil, ds...)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
@@ -382,15 +388,31 @@ func (e *aggregateExec) Next() (handle int64, value [][]byte, err error) {
 	return 0, value, nil
 }
 
+func (e *aggregateExec) getGroupKey() ([]byte, error) {
+	length := len(e.groupByExprs)
+	if length == 0 {
+		return []byte{}, nil
+	}
+	vals := make([]types.Datum, 0, len(e.groupByExprs))
+	for _, item := range e.groupByExprs {
+		v, err := item.Eval(e.row)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		vals = append(vals, v)
+	}
+	buf, err := codec.EncodeValue(nil, vals...)
+	return buf, errors.Trace(err)
+}
+
 // aggregate updates aggregate functions with row.
-func (e *aggregateExec) aggregate(handle int64, row [][]byte) error {
-	// Put row data into evaluate for later evaluation.
-	err := e.eval.SetRowValue(handle, row, e.colIDs)
+func (e *aggregateExec) aggregate(handle int64, value [][]byte) error {
+	err := e.evalCtx.decodeRelatedColumnVals(e.relatedColOffsets, handle, value, e.row)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// Get group key.
-	gk, err := getGroupKey(e.eval, e.GetGroupBy())
+	gk, err := e.getGroupKey()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -398,19 +420,9 @@ func (e *aggregateExec) aggregate(handle int64, row [][]byte) error {
 		e.groups[string(gk)] = struct{}{}
 		e.groupKeys = append(e.groupKeys, gk)
 	}
-	// Update aggregate funcs.
-	for _, agg := range e.aggFuncs {
-		agg.currentGroup = gk
-		args := make([]types.Datum, 0, len(agg.expr.Children))
-		// Evaluate arguments.
-		for _, x := range agg.expr.Children {
-			cv, err := e.eval.Eval(x)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			args = append(args, cv)
-		}
-		agg.update(e.eval, args)
+	// Update aggregate expressions.
+	for _, agg := range e.aggExprs {
+		agg.Update(e.row, gk, e.evalCtx.sc)
 	}
 	return nil
 }
@@ -593,7 +605,7 @@ func extractColIDsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector 
 				return nil
 			}
 		}
-		return xeval.ErrInvalid.Gen("column %d not found", i)
+		return errInvalid.Gen("column %d not found", i)
 	}
 	for _, child := range expr.Children {
 		err := extractColIDsInExpr(child, columns, collector)
@@ -631,7 +643,7 @@ func extractOffsetsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector
 			}
 			return collector, nil
 		}
-		return nil, xeval.ErrInvalid.Gen("column %d not found", i)
+		return nil, errInvalid.Gen("column %d not found", i)
 	}
 	var err error
 	for _, child := range expr.Children {
