@@ -129,8 +129,7 @@ func dagPhysicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	p := task.(*rootTaskProfile).plan
-	return EliminateProjection(p), nil
+	return EliminateProjection(task.plan()), nil
 }
 
 func physicalOptimize(flag uint64, logic LogicalPlan, allocator *idAllocator) (PhysicalPlan, error) {

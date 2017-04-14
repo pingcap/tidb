@@ -34,6 +34,7 @@ func (p *requiredProp) enforceProperty(task taskProfile, ctx context.Context, al
 	for _, col := range p.cols {
 		sort.ByItems = append(sort.ByItems, &ByItems{col, p.desc})
 	}
+	sort.SetSchema(task.plan().Schema())
 	return sort.attach2TaskProfile(task)
 }
 
@@ -142,6 +143,7 @@ func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) 
 		// Leave the limit.
 		if p.ExecLimit != nil {
 			limit := Limit{Offset: p.ExecLimit.Offset, Count: p.ExecLimit.Count}.init(p.allocator, p.ctx)
+			limit.SetSchema(p.schema)
 			orderedTask = limit.attach2TaskProfile(orderedTask)
 		}
 		if orderedTask.cost() < task.cost() {
@@ -179,7 +181,7 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (taskProfi
 		return task, nil
 	}
 	if len(p.basePlan.children) == 0 {
-		task = &rootTaskProfile{plan: p.basePlan.self.(PhysicalPlan)}
+		task = &rootTaskProfile{p: p.basePlan.self.(PhysicalPlan)}
 	} else {
 		// enforce branch
 		task, err = p.basePlan.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{})
@@ -256,7 +258,7 @@ func (p *DataSource) checkMemTableAndGetTask(prop *requiredProp) (task taskProfi
 	memTable.SetSchema(p.schema)
 	rb := &rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
 	memTable.Ranges = rb.buildTableRanges(fullRange)
-	task = &rootTaskProfile{plan: memTable}
+	task = &rootTaskProfile{p: memTable}
 	task = prop.enforceProperty(task, p.ctx, p.allocator)
 	return task, p.storeTaskProfile(prop, task)
 }
@@ -330,10 +332,9 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		is.Ranges = rb.buildIndexRanges(fullRange, types.NewFieldType(mysql.TypeNull))
 	}
 	copTask := &copTaskProfile{
-		cnt:           rowCount,
-		cst:           rowCount * scanFactor,
-		indexPlan:     is,
-		addPlan2Index: true,
+		cnt:       rowCount,
+		cst:       rowCount * scanFactor,
+		indexPlan: is,
 	}
 	if !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle) {
 		// On this way, it's double read case.
@@ -430,9 +431,10 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task taskProfile, e
 	}
 	cost := rowCount * scanFactor
 	task = &copTaskProfile{
-		cnt:       rowCount,
-		tablePlan: ts,
-		cst:       cost,
+		cnt:               rowCount,
+		tablePlan:         ts,
+		cst:               cost,
+		indexPlanFinished: true,
 	}
 	if pkCol != nil && len(prop.cols) == 1 && prop.cols[0].Equal(pkCol, nil) {
 		if prop.desc {

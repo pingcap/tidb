@@ -87,7 +87,22 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		// Test Limit push down in index single read.
 		{
 			sql:  "select c from t where c = 1 limit 1",
-			best: "IndexReader(Index(t.c_d_e)[[1,1]]->Limit)->Limit->Projection",
+			best: "IndexReader(Index(t.c_d_e)[[1,1]]->Limit)->Limit",
+		},
+		// Test index single read and Selection.
+		{
+			sql:  "select c from t where c = 1",
+			best: "IndexReader(Index(t.c_d_e)[[1,1]])",
+		},
+		// Test index single read and Sort.
+		{
+			sql:  "select c from t order by c",
+			best: "IndexReader(Index(t.c_d_e)[[<nil>,+inf]])",
+		},
+		// Test index single read and Sort.
+		{
+			sql:  "select c from t where c = 1 order by e",
+			best: "IndexReader(Index(t.c_d_e)[[1,1]])->Sort->Projection",
 		},
 		// Test Limit push down in double single read.
 		{
