@@ -1112,6 +1112,18 @@ func (s *testPlanSuite) TestJoinAlgorithm(c *C) {
 			sql: "select /*+ tidb_inlj(t2) */ * from t t1 join t t2 on t1.c=t2.c and t1.d=t2.d and t1.e > t2.e",
 			ans: "Apply{Index(t.c_d_e)[]->Selection->Table(t)}",
 		},
+		{
+			sql: "select /*+ TIDB_INLJ(t1) */ * from t join t t1 where t.a=t1.a and t.b > 100 and t1.b>10",
+			ans: "Apply{Table(t)->Selection->Table(t)}",
+		},
+		{
+			sql: "select /*+ TIDB_INLJ(tt, t1) */ * from (select * from t where t.b > 100) tt left join t t1 on tt.a=t1.a and t1.b>10",
+			ans: "Apply{Table(t)->Table(t)->Selection}",
+		},
+		{
+			sql: "select /*+ TIDB_INLJ(t, t1) */ * from t left join (select * from t where t.b > 10) t1 on t.a=t1.a and t.b > 100",
+			ans: "LeftHashJoin{Table(t)->Table(t)}(test.t.a,t1.a)",
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
