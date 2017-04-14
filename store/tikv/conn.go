@@ -17,8 +17,6 @@
 package tikv
 
 import (
-	"time"
-
 	"github.com/juju/errors"
 	"google.golang.org/grpc"
 )
@@ -31,8 +29,8 @@ type Conn struct {
 }
 
 // NewConnection creates a Conn with dial timeout.
-func NewConnection(addr string, dialTimeout time.Duration) (*Conn, error) {
-	conn, err := grpc.Dial(addr, grpc.WithInsecure(), grpc.WithBlock(), grpc.WithTimeout(dialTimeout))
+func NewConnection(addr string) (*Conn, error) {
+	conn, err := grpc.Dial(addr, grpc.WithInsecure())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
