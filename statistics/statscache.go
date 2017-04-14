@@ -20,6 +20,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -32,6 +33,8 @@ type Handle struct {
 	ctx         context.Context
 	lastVersion uint64
 	statsCache  atomic.Value
+	// ddlEventCh is a channel to notify a ddl operation has happened. It is sent only by owner and read by stats handle.
+	ddlEventCh chan *ddl.Event
 }
 
 // Clear the statsCache, only for test.
@@ -43,7 +46,8 @@ func (h *Handle) Clear() {
 // NewHandle creates a Handle for update stats.
 func NewHandle(ctx context.Context) *Handle {
 	handle := &Handle{
-		ctx: ctx,
+		ctx:        ctx,
+		ddlEventCh: make(chan *ddl.Event, 100),
 	}
 	handle.statsCache.Store(statsCache{})
 	return handle

@@ -856,7 +856,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	err = dom.LoadTableStatsLoop(se1)
+	err = dom.UpdateTableStatsLoop(se1)
 	return dom, errors.Trace(err)
 }
 
