@@ -41,18 +41,18 @@ func (m tableDeltaMap) merge(handle *SessionStatsCollector) {
 	handle.mapper = make(tableDeltaMap)
 }
 
-// SessionStatsCollector is a list item that holds the update mapper. If you want write or read mapper, you must add the lock.
+// SessionStatsCollector is a list item that holds the delta mapper. If you want to write or read mapper, you must lock it.
 type SessionStatsCollector struct {
 	sync.Mutex
 
 	mapper tableDeltaMap
 	prev   *SessionStatsCollector
 	next   *SessionStatsCollector
-	// If a session is close, it only set this flag true. Every time we sweep the list, we will remove the useless collector.
+	// If a session is closed, it only sets this flag true. Every time we sweep the list, we will remove the useless collector.
 	deleted bool
 }
 
-// Delete only set the deleted flag true, it will be deleted from list when DumpStatsDeltaToKV is called.
+// Delete only sets the deleted flag true, it will be deleted from list when DumpStatsDeltaToKV is called.
 func (s *SessionStatsCollector) Delete() {
 	s.Lock()
 	defer s.Unlock()
@@ -66,7 +66,7 @@ func (s *SessionStatsCollector) Update(id int64, delta int64, count int64) {
 	s.mapper.update(id, delta, count)
 }
 
-// tryToRemoveFromList will remove this collector from the list if its deleted flag is set.
+// tryToRemoveFromList will remove this collector from the list if it's deleted flag is set.
 func (s *SessionStatsCollector) tryToRemoveFromList() {
 	s.Lock()
 	defer s.Unlock()
@@ -115,6 +115,7 @@ func (h *Handle) DumpStatsDeltaToKV() {
 	}
 }
 
+// dumpTableStatDeltaToKV dumps a single delta with some table to KV and updates the version.
 func (h *Handle) dumpTableStatDeltaToKV(id int64, delta variable.TableDelta) error {
 	_, err := h.ctx.(sqlexec.SQLExecutor).Execute("begin")
 	if err != nil {
