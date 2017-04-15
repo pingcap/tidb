@@ -142,7 +142,14 @@ func (b *Builder) NewTable() (*Table, error) {
 	}
 	// The sorted bucket is more accurate, we replace the sampled column histogram with index histogram if the
 	// index is single column index.
-	for _, idxInfo := range b.TblInfo.Indices {
+	for _, idxID := range b.IdxIDs {
+		var idxInfo *model.IndexInfo
+		for _, idx := range b.TblInfo.Indices {
+			if idx.ID == idxID {
+				idxInfo = idx
+				break
+			}
+		}
 		if idxInfo != nil && len(idxInfo.Columns) == 1 {
 			columnOffset := idxInfo.Columns[0].Offset
 			columnID := b.TblInfo.Columns[columnOffset].ID

@@ -43,7 +43,7 @@ const (
 
 // Schema implements the Executor Schema interface.
 func (e *AnalyzeExec) Schema() *expression.Schema {
-	return nil
+	return expression.NewSchema()
 }
 
 // Close implements the Executor Close interface.

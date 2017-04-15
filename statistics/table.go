@@ -49,6 +49,20 @@ type Table struct {
 	Pseudo  bool
 }
 
+func (h *Handle) deleteHistogramFromStorage(ctx context.Context, tblID int64, isIndex int, histID int64) error {
+	deleteSQL := fmt.Sprintf("delete from mysql.stats_histograms where table_id = %d and is_index = %d and hist_id = %d", tblID, isIndex, histID)
+	_, err := ctx.(sqlexec.SQLExecutor).Execute(deleteSQL)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	deleteSQL = fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tblID, isIndex, histID)
+	_, err = ctx.(sqlexec.SQLExecutor).Execute(deleteSQL)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 // SaveToStorage saves stats table to storage.
 func (h *Handle) SaveToStorage(ctx context.Context, t *Table) error {
 	_, err := ctx.(sqlexec.SQLExecutor).Execute("begin")
@@ -67,15 +81,17 @@ func (h *Handle) SaveToStorage(ctx context.Context, t *Table) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	deleteSQL = fmt.Sprintf("delete from mysql.stats_histograms where table_id = %d", t.Info.ID)
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(deleteSQL)
-	if err != nil {
-		return errors.Trace(err)
+	for _, idx := range t.Indices {
+		err = h.deleteHistogramFromStorage(ctx, t.Info.ID, 1, idx.ID)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
-	deleteSQL = fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d", t.Info.ID)
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(deleteSQL)
-	if err != nil {
-		return errors.Trace(err)
+	for _, col := range t.Columns {
+		err = h.deleteHistogramFromStorage(ctx, t.Info.ID, 0, col.ID)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	for _, col := range t.Columns {
 		err = col.saveToStorage(ctx, t.Info.ID, 0)
