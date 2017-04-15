@@ -81,6 +81,18 @@ type TransactionContext struct {
 	InfoSchema    interface{}
 	Histroy       interface{}
 	SchemaVersion int64
+	TableDeltaMap map[int64]TableDelta
+}
+
+// UpdateDeltaForTable updates the delta info for some table.
+func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, count int64) {
+	if tc.TableDeltaMap == nil {
+		tc.TableDeltaMap = make(map[int64]TableDelta)
+	}
+	item := tc.TableDeltaMap[tableID]
+	item.Delta += delta
+	item.Count += count
+	tc.TableDeltaMap[tableID] = item
 }
 
 // SessionVars is to handle user-defined or global variables in current session.
@@ -272,6 +284,12 @@ const (
 	MaxAllowedPacket    = "max_allowed_packet"
 	TimeZone            = "time_zone"
 )
+
+// TableDelta stands for the changed count for one table.
+type TableDelta struct {
+	Delta int64
+	Count int64
+}
 
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
