@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/types"
@@ -31,12 +30,8 @@ var _ Executor = &AnalyzeExec{}
 
 // AnalyzeExec represents Analyze executor.
 type AnalyzeExec struct {
-	schema  *expression.Schema
-	tblInfo *model.TableInfo
 	ctx     context.Context
-	idxIDs  []int64
-	colIDs  []int64
-	pkID    int64
+	pkCount int
 	Srcs    []Executor
 }
 
@@ -48,7 +43,7 @@ const (
 
 // Schema implements the Executor Schema interface.
 func (e *AnalyzeExec) Schema() *expression.Schema {
-	return e.schema
+	return nil
 }
 
 // Close implements the Executor Close interface.
@@ -64,54 +59,78 @@ func (e *AnalyzeExec) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *AnalyzeExec) Next() (*Row, error) {
-	for _, src := range e.Srcs {
-		ae := src.(*AnalyzeExec)
-		var count int64 = -1
-		var sampleRows []*ast.Row
-		var colNDVs []int64
-		if len(ae.colIDs) != 0 {
-			rs := &recordSet{executor: ae.Srcs[len(ae.Srcs)-1]}
+	for i, src := range e.Srcs {
+		switch src.(type) {
+		case *XSelectTableExec:
 			var err error
-			count, sampleRows, colNDVs, err = CollectSamplesAndEstimateNDVs(rs, len(ae.colIDs))
+			if i < e.pkCount {
+				err = e.analyzePK(src.(*XSelectTableExec))
+			} else {
+				err = e.analyzeColumns(src.(*XSelectTableExec))
+			}
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-		}
-		columnSamples := rowsToColumnSamples(sampleRows)
-		var pkRS ast.RecordSet
-		if ae.pkID != 0 {
-			offset := len(ae.Srcs) - 1
-			if len(ae.colIDs) != 0 {
-				offset--
+		case *XSelectIndexExec:
+			err := e.analyzeIndex(src.(*XSelectIndexExec))
+			if err != nil {
+				return nil, errors.Trace(err)
 			}
-			pkRS = &recordSet{executor: ae.Srcs[offset]}
-		}
-		idxRS := make([]ast.RecordSet, 0, len(ae.idxIDs))
-		for i := range ae.idxIDs {
-			idxRS = append(idxRS, &recordSet{executor: ae.Srcs[i]})
-		}
-		err := ae.buildStatisticsAndSaveToKV(count, columnSamples, colNDVs, idxRS, pkRS)
-		if err != nil {
-			return nil, errors.Trace(err)
 		}
 	}
 	return nil, nil
 }
 
-func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]types.Datum, colNDVs []int64, idxRS []ast.RecordSet, pkRS ast.RecordSet) error {
+func (e *AnalyzeExec) analyzePK(exec *XSelectTableExec) error {
 	statBuilder := &statistics.Builder{
-		Ctx:           e.ctx,
-		TblInfo:       e.tblInfo,
+		Ctx:        exec.ctx,
+		TblInfo:    exec.tableInfo,
+		Count:      -1,
+		NumBuckets: defaultBucketCount,
+		PkRecords:  &recordSet{executor: exec},
+		PkID:       exec.Columns[0].ID,
+	}
+	err := e.buildStatisticsAndSaveToKV(statBuilder)
+	return errors.Trace(err)
+}
+
+func (e *AnalyzeExec) analyzeColumns(exec *XSelectTableExec) error {
+	count, sampleRows, colNDVs, err := CollectSamplesAndEstimateNDVs(&recordSet{executor: exec}, len(exec.Columns))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	columnSamples := rowsToColumnSamples(sampleRows)
+	var colIDs []int64
+	for _, col := range exec.Columns {
+		colIDs = append(colIDs, col.ID)
+	}
+	statBuilder := &statistics.Builder{
+		Ctx:           exec.ctx,
+		TblInfo:       exec.tableInfo,
 		Count:         count,
 		NumBuckets:    defaultBucketCount,
 		ColumnSamples: columnSamples,
-		ColIDs:        e.colIDs,
+		ColIDs:        colIDs,
 		ColNDVs:       colNDVs,
-		IdxRecords:    idxRS,
-		IdxIDs:        e.idxIDs,
-		PkRecords:     pkRS,
-		PkID:          e.pkID,
 	}
+	err = e.buildStatisticsAndSaveToKV(statBuilder)
+	return errors.Trace(err)
+}
+
+func (e *AnalyzeExec) analyzeIndex(exec *XSelectIndexExec) error {
+	statBuilder := &statistics.Builder{
+		Ctx:        exec.ctx,
+		TblInfo:    exec.tableInfo,
+		Count:      -1,
+		NumBuckets: defaultBucketCount,
+		IdxRecords: []ast.RecordSet{&recordSet{executor: exec}},
+		IdxIDs:     []int64{exec.indexPlan.Index.ID},
+	}
+	err := e.buildStatisticsAndSaveToKV(statBuilder)
+	return errors.Trace(err)
+}
+
+func (e *AnalyzeExec) buildStatisticsAndSaveToKV(statBuilder *statistics.Builder) error {
 	t, err := statBuilder.NewTable()
 	if err != nil {
 		return errors.Trace(err)

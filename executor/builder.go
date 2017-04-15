@@ -737,19 +737,9 @@ func (b *executorBuilder) buildCache(v *plan.Cache) Executor {
 
 func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	e := &AnalyzeExec{
-		schema:  v.Schema(),
-		tblInfo: v.TableInfo,
 		ctx:     b.ctx,
+		pkCount: v.PKCount,
 		Srcs:    make([]Executor, len(v.Children())),
-	}
-	for _, idx := range v.IndicesInfo {
-		e.idxIDs = append(e.idxIDs, idx.ID)
-	}
-	for _, col := range v.ColsInfo {
-		e.colIDs = append(e.colIDs, col.ID)
-	}
-	if v.PkInfo != nil {
-		e.pkID = v.PkInfo.ID
 	}
 	for i, child := range v.Children() {
 		childExec := b.build(child)
