@@ -15,7 +15,6 @@ package statistics
 
 import (
 	"fmt"
-	"sync"
 	"sync/atomic"
 
 	"github.com/juju/errors"
@@ -37,7 +36,10 @@ type Handle struct {
 	// ddlEventCh is a channel to notify a ddl operation has happened. It is sent only by owner and read by stats handle.
 	ddlEventCh chan *ddl.Event
 
-	updateManager *updateManager
+	// All the stats collector required by session are maintained in this list.
+	listHead *SessionStatsCollector
+	// We collect the delta map and merge them with globalMap.
+	globalMap tableDeltaMap
 }
 
 // Clear the statsCache, only for test.
@@ -51,24 +53,11 @@ func NewHandle(ctx context.Context) *Handle {
 	handle := &Handle{
 		ctx:        ctx,
 		ddlEventCh: make(chan *ddl.Event, 100),
-		updateManager: &updateManager{
-			listHead: &SessionStatsCollector{
-				mapper: make(tableDeltaMap),
-			},
-			mapper: struct {
-				sync.Mutex
-				tableDeltaMap
-			}{tableDeltaMap: make(tableDeltaMap)},
-			ctx: ctx,
-		},
+		listHead:   &SessionStatsCollector{mapper: make(tableDeltaMap)},
+		globalMap:  make(tableDeltaMap),
 	}
 	handle.statsCache.Store(statsCache{})
 	return handle
-}
-
-// DumpUpdateInfoToKV will dump the UpdateInfo which caches in manager to KV.
-func (h *Handle) DumpUpdateInfoToKV() {
-	h.updateManager.dumpUpdateMapper2KV()
 }
 
 // Update reads stats meta from store and updates the stats map.

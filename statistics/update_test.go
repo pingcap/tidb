@@ -50,7 +50,7 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 	h.HandleDDLEvent(<-h.DDLEventCh())
 	h.HandleDDLEvent(<-h.DDLEventCh())
 
-	h.DumpUpdateInfoToKV()
+	h.DumpStatsDeltaToKV()
 	h.Update(is)
 	stats1 := h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1))
@@ -65,7 +65,7 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 	for i := 0; i < rowCount1; i++ {
 		testKit.MustExec("insert into t1 values(1, 2)")
 	}
-	h.DumpUpdateInfoToKV()
+	h.DumpStatsDeltaToKV()
 	h.Update(is)
 	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1*2))
@@ -75,7 +75,7 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 		testKit.MustExec("insert into t1 values(1, 2)")
 	}
 	testKit.MustExec("commit")
-	h.DumpUpdateInfoToKV()
+	h.DumpStatsDeltaToKV()
 	h.Update(is)
 	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1*3))
@@ -91,7 +91,7 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 		testKit.MustExec("update t2 set c2 = c1")
 	}
 	testKit.MustExec("commit")
-	h.DumpUpdateInfoToKV()
+	h.DumpStatsDeltaToKV()
 	h.Update(is)
 	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1*3))
@@ -101,6 +101,7 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 	rs := testKit.MustQuery("select modify_count from mysql.stats_meta")
 	rs.Check(testkit.Rows("50", "40"))
 }
+
 func (s *testStatsUpdateSuite) TestMultiSession(c *C) {
 	store, do, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
@@ -130,7 +131,7 @@ func (s *testStatsUpdateSuite) TestMultiSession(c *C) {
 
 	h.HandleDDLEvent(<-h.DDLEventCh())
 
-	h.DumpUpdateInfoToKV()
+	h.DumpStatsDeltaToKV()
 	h.Update(is)
 	stats1 := h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1))
@@ -153,10 +154,58 @@ func (s *testStatsUpdateSuite) TestMultiSession(c *C) {
 	err = testKit2.Se.Close()
 	c.Assert(err, IsNil)
 
-	h.DumpUpdateInfoToKV()
+	h.DumpStatsDeltaToKV()
 	h.Update(is)
 	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1*2))
 	rs := testKit.MustQuery("select modify_count from mysql.stats_meta")
 	rs.Check(testkit.Rows("60"))
+}
+
+func (s *testStatsUpdateSuite) TestTxnWithFailure(c *C) {
+	store, do, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t1 (c1 int primary key, c2 int)")
+
+	is := do.InfoSchema()
+	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	tableInfo1 := tbl1.Meta()
+	h := do.StatsHandle()
+
+	h.HandleDDLEvent(<-h.DDLEventCh())
+
+	rowCount1 := 10
+	testKit.MustExec("begin")
+	for i := 0; i < rowCount1; i++ {
+		testKit.MustExec("insert into t1 values(?, 2)", i)
+	}
+	h.DumpStatsDeltaToKV()
+	h.Update(is)
+	stats1 := h.GetTableStats(tableInfo1)
+	// have not commit
+	c.Assert(stats1.Count, Equals, int64(0))
+	testKit.MustExec("commit")
+
+	h.DumpStatsDeltaToKV()
+	h.Update(is)
+	stats1 = h.GetTableStats(tableInfo1)
+	c.Assert(stats1.Count, Equals, int64(rowCount1))
+
+	_, err = testKit.Exec("insert into t1 values(0, 2)")
+	c.Assert(err, NotNil)
+
+	h.DumpStatsDeltaToKV()
+	h.Update(is)
+	stats1 = h.GetTableStats(tableInfo1)
+	c.Assert(stats1.Count, Equals, int64(rowCount1))
+
+	testKit.MustExec("insert into t1 values(-1, 2)")
+	h.DumpStatsDeltaToKV()
+	h.Update(is)
+	stats1 = h.GetTableStats(tableInfo1)
+	c.Assert(stats1.Count, Equals, int64(rowCount1+1))
 }

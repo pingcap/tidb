@@ -81,21 +81,18 @@ type TransactionContext struct {
 	InfoSchema    interface{}
 	Histroy       interface{}
 	SchemaVersion int64
-	TableDeltaMap map[int64]*TableDelta
+	TableDeltaMap map[int64]TableDelta
 }
 
 // UpdateDeltaForTable updates the delta info for some table.
 func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, count int64) {
 	if tc.TableDeltaMap == nil {
-		tc.TableDeltaMap = make(map[int64]*TableDelta)
+		tc.TableDeltaMap = make(map[int64]TableDelta)
 	}
-	item, ok := tc.TableDeltaMap[tableID]
-	if !ok {
-		tc.TableDeltaMap[tableID] = &TableDelta{delta, count}
-	} else {
-		item.Delta += delta
-		item.Count += count
-	}
+	item := tc.TableDeltaMap[tableID]
+	item.Delta += delta
+	item.Count += count
+	tc.TableDeltaMap[tableID] = item
 }
 
 // SessionVars is to handle user-defined or global variables in current session.

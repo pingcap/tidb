@@ -454,7 +454,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 	if lease <= 0 {
 		return nil
 	}
-	deltaUpdateDuration := 5 * time.Minute
+	deltaUpdateDuration := time.Minute
 	go func(do *Domain) {
 		loadTicker := time.NewTicker(lease)
 		defer loadTicker.Stop()
@@ -477,7 +477,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 					log.Error(errors.ErrorStack(err))
 				}
 			case <-deltaUpdateTicker.C:
-				do.statsHandle.DumpUpdateInfoToKV()
+				do.statsHandle.DumpStatsDeltaToKV()
 			}
 		}
 	}(do)

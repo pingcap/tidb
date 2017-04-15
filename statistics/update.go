@@ -19,21 +19,17 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-type tableDeltaMap map[int64]*variable.TableDelta
+type tableDeltaMap map[int64]variable.TableDelta
 
 func (m tableDeltaMap) update(id int64, delta int64, count int64) {
-	item, ok := m[id]
-	if !ok {
-		m[id] = &variable.TableDelta{Delta: delta, Count: count}
-	} else {
-		item.Delta += delta
-		item.Count += count
-	}
+	item := m[id]
+	item.Delta += delta
+	item.Count += count
+	m[id] = item
 }
 
 func (m tableDeltaMap) merge(handle *SessionStatsCollector) {
@@ -52,91 +48,82 @@ type SessionStatsCollector struct {
 	mapper tableDeltaMap
 	prev   *SessionStatsCollector
 	next   *SessionStatsCollector
+	// If a session is close, it only set this flag true. Every time we sweep the list, we will remove the useless collector.
+	deleted bool
+}
+
+// Delete only set the deleted flag true, it will be deleted from list when DumpStatsDeltaToKV is called.
+func (s *SessionStatsCollector) Delete() {
+	s.Lock()
+	defer s.Unlock()
+	s.deleted = true
 }
 
 // Update will updates the delta and count for one table id.
-func (h *SessionStatsCollector) Update(id int64, delta int64, count int64) {
-	h.Lock()
-	defer h.Unlock()
-	h.mapper.update(id, delta, count)
+func (s *SessionStatsCollector) Update(id int64, delta int64, count int64) {
+	s.Lock()
+	defer s.Unlock()
+	s.mapper.update(id, delta, count)
 }
 
-// updateManager management the delta information in tidb. It collects the delta map from all sessions and write them to tikv.
-type updateManager struct {
-	listHead *SessionStatsCollector
-	mapper   struct {
-		sync.Mutex
-		tableDeltaMap
+// tryToRemoveFromList will remove this collector from the list if its deleted flag is set.
+func (s *SessionStatsCollector) tryToRemoveFromList() {
+	s.Lock()
+	defer s.Unlock()
+	if !s.deleted {
+		return
 	}
-	ctx context.Context
+	next := s.next
+	prev := s.prev
+	prev.next = next
+	if next != nil {
+		next.prev = prev
+	}
 }
 
-func (m *updateManager) newSessionStatsCollector() *SessionStatsCollector {
-	m.listHead.Lock()
-	defer m.listHead.Unlock()
-	newHandle := &SessionStatsCollector{
+// NewSessionStatsCollector allocates a stats collector for a session.
+func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
+	h.listHead.Lock()
+	defer h.listHead.Unlock()
+	newCollector := &SessionStatsCollector{
 		mapper: make(tableDeltaMap),
-		next:   m.listHead.next,
-		prev:   m.listHead,
+		next:   h.listHead.next,
+		prev:   h.listHead,
 	}
-	if m.listHead.next != nil {
-		m.listHead.next.prev = newHandle
+	if h.listHead.next != nil {
+		h.listHead.next.prev = newCollector
 	}
-	m.listHead.next = newHandle
-	return newHandle
+	h.listHead.next = newCollector
+	return newCollector
 }
 
-func (m *updateManager) delStatsUpdateHandle(handle *SessionStatsCollector) {
-	m.listHead.Lock()
-	nextHandle := handle.next
-	prevHandle := handle.prev
-	prevHandle.next = nextHandle
-	if nextHandle != nil {
-		nextHandle.prev = prevHandle
+// DumpStatsDeltaToKV sweeps the whole list and updates the global map. Then we dumps every table that held in map to KV.
+func (h *Handle) DumpStatsDeltaToKV() {
+	h.listHead.Lock()
+	for collector := h.listHead.next; collector != nil; collector = collector.next {
+		collector.tryToRemoveFromList()
+		h.globalMap.merge(collector)
 	}
-	m.listHead.Unlock()
-	m.mapper.Lock()
-	m.mapper.merge(handle)
-	m.mapper.Unlock()
-}
-
-func (m *updateManager) dumpUpdateMapper2KV() {
-	m.listHead.Lock()
-	m.mapper.Lock()
-	for item := m.listHead.next; item != nil; item = item.next {
-		m.mapper.merge(item)
-	}
-	m.listHead.Unlock()
-	for id, item := range m.mapper.tableDeltaMap {
-		err := m.dumpTableStatToKV(id, item)
+	h.listHead.Unlock()
+	for id, item := range h.globalMap {
+		err := h.dumpTableStatDeltaToKV(id, item)
 		if err == nil {
-			delete(m.mapper.tableDeltaMap, id)
+			delete(h.globalMap, id)
 		} else {
 			log.Warnf("Error happens when updating stats table, the error message is %s.", err.Error())
 		}
 	}
-	m.mapper.Unlock()
 }
 
-func (m *updateManager) dumpTableStatToKV(id int64, delta *variable.TableDelta) error {
-	_, err := m.ctx.(sqlexec.SQLExecutor).Execute("begin")
+func (h *Handle) dumpTableStatDeltaToKV(id int64, delta variable.TableDelta) error {
+	_, err := h.ctx.(sqlexec.SQLExecutor).Execute("begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = m.ctx.(sqlexec.SQLExecutor).Execute(fmt.Sprintf("update mysql.stats_meta set version = %d, count = count + %d, modify_count = modify_count + %d where table_id = %d", m.ctx.Txn().StartTS(), delta.Delta, delta.Count, id))
+	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(fmt.Sprintf("update mysql.stats_meta set version = %d, count = count + %d, modify_count = modify_count + %d where table_id = %d", h.ctx.Txn().StartTS(), delta.Delta, delta.Count, id))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = m.ctx.(sqlexec.SQLExecutor).Execute("commit")
+	_, err = h.ctx.(sqlexec.SQLExecutor).Execute("commit")
 	return errors.Trace(err)
-}
-
-// NewStatsUpdateHandle creates a new stats update handle. It is called when a session is created first time.
-func (h *Handle) NewStatsUpdateHandle() *SessionStatsCollector {
-	return h.updateManager.newSessionStatsCollector()
-}
-
-// DelStatsUpdateHandle deletes a stats update handle from updateManager. It is called when a session is closed.
-func (h *Handle) DelStatsUpdateHandle(handle *SessionStatsCollector) {
-	h.updateManager.delStatsUpdateHandle(handle)
 }

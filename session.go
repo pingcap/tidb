@@ -752,11 +752,7 @@ func (s *session) ClearValue(key fmt.Stringer) {
 // Close function does some clean work when session end.
 func (s *session) Close() error {
 	if s.statsCollector != nil {
-		do, err := domap.Get(s.store)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		do.StatsHandle().DelStatsUpdateHandle(s.statsCollector)
+		s.statsCollector.Delete()
 	}
 	return s.RollbackTxn()
 }
@@ -849,7 +845,7 @@ func CreateSession(store kv.Storage) (Session, error) {
 
 	// Add statsUpdateHandle.
 	if do.StatsHandle() != nil {
-		s.statsCollector = do.StatsHandle().NewStatsUpdateHandle()
+		s.statsCollector = do.StatsHandle().NewSessionStatsCollector()
 	}
 
 	return s, nil

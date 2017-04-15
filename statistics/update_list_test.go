@@ -26,20 +26,22 @@ func (s *testUpdateListSuite) TestInsertAndDelete(c *C) {
 	h := NewHandle(nil)
 	var items []*SessionStatsCollector
 	for i := 0; i < 5; i++ {
-		items = append(items, h.NewStatsUpdateHandle())
+		items = append(items, h.NewSessionStatsCollector())
 	}
-	h.DelStatsUpdateHandle(items[0]) // delete tail
-	h.DelStatsUpdateHandle(items[2]) // delete middle
-	h.DelStatsUpdateHandle(items[4]) // delete head
+	items[0].Delete() // delete tail
+	items[2].Delete() // delete middle
+	items[4].Delete() // delete head
+	h.DumpStatsDeltaToKV()
 
-	c.Assert(h.updateManager.listHead.next, Equals, items[3])
+	c.Assert(h.listHead.next, Equals, items[3])
 	c.Assert(items[3].next, Equals, items[1])
-	c.Assert(h.updateManager.listHead.next.next.next, IsNil)
+	c.Assert(items[1].next, IsNil)
 	c.Assert(items[1].prev, Equals, items[3])
-	c.Assert(items[3].prev, Equals, h.updateManager.listHead)
+	c.Assert(items[3].prev, Equals, h.listHead)
 
 	// delete rest
-	h.DelStatsUpdateHandle(items[1])
-	h.DelStatsUpdateHandle(items[3])
-	c.Assert(h.updateManager.listHead.next, IsNil)
+	items[1].Delete()
+	items[3].Delete()
+	h.DumpStatsDeltaToKV()
+	c.Assert(h.listHead.next, IsNil)
 }
