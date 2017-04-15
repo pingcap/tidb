@@ -298,13 +298,13 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		chs = charset.CharsetBin
 	)
 	switch x.FnName.L {
-	case "abs", "ifnull", "nullif":
+	case ast.Abs, ast.Ifnull, ast.Nullif:
 		tp = x.Args[0].GetType()
 		// TODO: We should cover all types.
-		if x.FnName.L == "abs" && tp.Tp == mysql.TypeDatetime {
+		if x.FnName.L == ast.Abs && tp.Tp == mysql.TypeDatetime {
 			tp = types.NewFieldType(mysql.TypeDouble)
 		}
-	case "round":
+	case ast.Round:
 		t := x.Args[0].GetType().Tp
 		switch t {
 		case mysql.TypeBit, mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLonglong:
@@ -314,7 +314,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		default:
 			tp = types.NewFieldType(mysql.TypeDouble)
 		}
-	case "greatest", "least":
+	case ast.Greatest, ast.Least:
 		for _, arg := range x.Args {
 			InferType(v.sc, arg)
 		}
@@ -324,9 +324,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 				tp = mergeCmpType(tp, x.Args[i].GetType())
 			}
 		}
-	case "interval":
-		tp = types.NewFieldType(mysql.TypeLonglong)
-	case "ceil", "ceiling", "floor":
+	case ast.Ceil, ast.Ceiling, ast.Floor:
 		t := x.Args[0].GetType().Tp
 		if t == mysql.TypeNull || t == mysql.TypeFloat || t == mysql.TypeDouble || t == mysql.TypeVarchar ||
 			t == mysql.TypeTinyBlob || t == mysql.TypeMediumBlob || t == mysql.TypeLongBlob ||
@@ -335,85 +333,13 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		} else {
 			tp = types.NewFieldType(mysql.TypeLonglong)
 		}
-	case "ln", "log", "log2", "log10", "sqrt", "pi", "exp", "degrees":
-		tp = types.NewFieldType(mysql.TypeDouble)
-	case "sin":
-		tp = types.NewFieldType(mysql.TypeDouble)
-	case "cos":
-		tp = types.NewFieldType(mysql.TypeDouble)
-	case "tan", "cot":
-		tp = types.NewFieldType(mysql.TypeDouble)
-	case "acos", "asin", "atan":
-		tp = types.NewFieldType(mysql.TypeDouble)
-	case "pow", "power", "rand":
-		tp = types.NewFieldType(mysql.TypeDouble)
-	case "radians":
-		tp = types.NewFieldType(mysql.TypeDouble)
-	case "curdate", "current_date", "date", "from_days":
-		tp = types.NewFieldType(mysql.TypeDate)
-	case "curtime", "current_time", "timediff", "maketime":
-		tp = types.NewFieldType(mysql.TypeDuration)
-		tp.Decimal = v.getFsp(x)
-	case "date_add", "date_sub", "adddate", "subdate", "timestamp", "timestampadd":
-		tp = types.NewFieldType(mysql.TypeDatetime)
-	case "microsecond", "second", "minute", "hour", "day", "week", "month", "year",
-		"dayofweek", "dayofmonth", "dayofyear", "weekday", "weekofyear", "yearweek", "datediff",
-		"found_rows", "length", "extract", "locate", "unix_timestamp", "quarter", "is_ipv4", "to_days":
-		tp = types.NewFieldType(mysql.TypeLonglong)
-	case "now", "sysdate", "current_timestamp", "utc_timestamp":
-		tp = types.NewFieldType(mysql.TypeDatetime)
-		tp.Decimal = v.getFsp(x)
-	case "from_unixtime":
+	case ast.FromUnixTime:
 		if len(x.Args) == 1 {
 			tp = types.NewFieldType(mysql.TypeDatetime)
 		} else {
 			tp = types.NewFieldType(mysql.TypeVarString)
 			chs = v.defaultCharset
 		}
-	case "str_to_date":
-		tp = types.NewFieldType(mysql.TypeDatetime)
-	case "dayname", "version", "database", "user", "current_user", "schema",
-		"concat", "concat_ws", "left", "right", "lcase", "lower", "repeat",
-		"replace", "ucase", "upper", "convert", "substring", "elt",
-		"substring_index", "trim", "ltrim", "rtrim", "reverse", "hex", "unhex",
-		"date_format", "rpad", "lpad", "char_func", "conv", "make_set", "oct", "uuid",
-		"insert_func", "bin", "quote", "format", "from_base64", "to_base64":
-		tp = types.NewFieldType(mysql.TypeVarString)
-		chs = v.defaultCharset
-	case "strcmp", "isnull", "bit_length", "char_length", "character_length", "crc32", "timestampdiff",
-		"sign", "is_ipv6", "ord", "instr", "bit_count", "time_to_sec":
-		tp = types.NewFieldType(mysql.TypeLonglong)
-	case "connection_id":
-		tp = types.NewFieldType(mysql.TypeLonglong)
-		tp.Flag |= mysql.UnsignedFlag
-	case "find_in_set", ast.Field:
-		tp = types.NewFieldType(mysql.TypeLonglong)
-	case "if":
-		// TODO: fix this
-		// See https://dev.mysql.com/doc/refman/5.5/en/control-flow-functions.html#function_if
-		// The default return type of IF() (which may matter when it is stored into a temporary table) is calculated as follows.
-		// Expression	Return Value
-		// expr2 or expr3 returns a string	string
-		// expr2 or expr3 returns a floating-point value	floating-point
-		// expr2 or expr3 returns an integer	integer
-		tp = x.Args[1].GetType()
-	case "get_lock", "release_lock":
-		tp = types.NewFieldType(mysql.TypeLonglong)
-	case ast.AesEncrypt, ast.AesDecrypt, ast.SHA2, ast.InetNtoa:
-		tp = types.NewFieldType(mysql.TypeVarString)
-		chs = v.defaultCharset
-	case ast.MD5:
-		tp = types.NewFieldType(mysql.TypeVarString)
-		chs = v.defaultCharset
-		tp.Flen = 32
-	case ast.Compress:
-		tp = types.NewFieldType(mysql.TypeBlob)
-	case ast.SHA, ast.SHA1:
-		tp = types.NewFieldType(mysql.TypeVarString)
-		chs = v.defaultCharset
-		tp.Flen = 40
-	case ast.RandomBytes:
-		tp = types.NewFieldType(mysql.TypeVarString)
 	case ast.Coalesce:
 		tp = aggFieldType(x.Args)
 		if tp.Tp == mysql.TypeVarchar {
@@ -423,11 +349,64 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		if classType == types.ClassString && !mysql.HasBinaryFlag(tp.Flag) {
 			tp.Charset, tp.Collate = types.DefaultCharsetForType(tp.Tp)
 		}
-	case ast.AnyValue:
-		tp = x.Args[0].GetType()
-	case ast.InetAton:
+	// number related
+	case ast.Ln, ast.Log, ast.Log2, ast.Log10, ast.Sqrt, ast.PI, ast.Exp, ast.Degrees, ast.Sin, ast.Cos, ast.Tan,
+		ast.Cot, ast.Acos, ast.Asin, ast.Atan, ast.Pow, ast.Power, ast.Rand, ast.Radians:
+		tp = types.NewFieldType(mysql.TypeDouble)
+	case ast.MicroSecond, ast.Second, ast.Minute, ast.Hour, ast.Day, ast.Week, ast.Month, ast.Year,
+		ast.DayOfWeek, ast.DayOfMonth, ast.DayOfYear, ast.Weekday, ast.WeekOfYear, ast.YearWeek, ast.DateDiff,
+		ast.FoundRows, ast.Length, ast.Extract, ast.Locate, ast.UnixTimestamp, ast.Quarter, ast.IsIPv4, ast.ToDays,
+		ast.Strcmp, ast.IsNull, ast.BitLength, ast.CharLength, ast.CRC32, ast.TimestampDiff,
+		ast.Sign, ast.IsIPv6, ast.Ord, ast.Instr, ast.BitCount, ast.TimeToSec, ast.FindInSet, ast.Field,
+		ast.GetLock, ast.ReleaseLock, ast.Interval:
+		tp = types.NewFieldType(mysql.TypeLonglong)
+	case ast.ConnectionID, ast.InetAton:
 		tp = types.NewFieldType(mysql.TypeLonglong)
 		tp.Flag |= mysql.UnsignedFlag
+	// time related
+	case ast.Curtime, ast.CurrentTime, ast.TimeDiff, ast.MakeTime:
+		tp = types.NewFieldType(mysql.TypeDuration)
+		tp.Decimal = v.getFsp(x)
+	case ast.Curdate, ast.CurrentDate, ast.Date, ast.FromDays:
+		tp = types.NewFieldType(mysql.TypeDate)
+	case ast.DateAdd, ast.DateSub, ast.AddDate, ast.SubDate, ast.Timestamp, ast.TimestampAdd, ast.StrToDate:
+		tp = types.NewFieldType(mysql.TypeDatetime)
+	case ast.Now, ast.Sysdate, ast.CurrentTimestamp, ast.UTCTimestamp:
+		tp = types.NewFieldType(mysql.TypeDatetime)
+		tp.Decimal = v.getFsp(x)
+	// string related
+	case ast.RandomBytes:
+		tp = types.NewFieldType(mysql.TypeVarString)
+	case ast.MD5:
+		tp = types.NewFieldType(mysql.TypeVarString)
+		chs = v.defaultCharset
+		tp.Flen = 32
+	case ast.SHA, ast.SHA1:
+		tp = types.NewFieldType(mysql.TypeVarString)
+		chs = v.defaultCharset
+		tp.Flen = 40
+	case ast.DayName, ast.Version, ast.Database, ast.User, ast.CurrentUser, ast.Schema,
+		ast.Concat, ast.ConcatWS, ast.Left, ast.Right, ast.Lcase, ast.Lower, ast.Repeat,
+		ast.Replace, ast.Ucase, ast.Upper, ast.Convert, ast.Substring, ast.Elt,
+		ast.SubstringIndex, ast.Trim, ast.LTrim, ast.RTrim, ast.Reverse, ast.Hex, ast.Unhex,
+		ast.DateFormat, ast.Rpad, ast.Lpad, ast.CharFunc, ast.Conv, ast.MakeSet, ast.Oct, ast.UUID,
+		ast.InsertFunc, ast.Bin, ast.Quote, ast.Format, ast.FromBase64, ast.ToBase64, ast.ExportSet,
+		ast.AesEncrypt, ast.AesDecrypt, ast.SHA2, ast.InetNtoa:
+		tp = types.NewFieldType(mysql.TypeVarString)
+		chs = v.defaultCharset
+	case ast.If:
+		// TODO: fix this
+		// See https://dev.mysql.com/doc/refman/5.5/en/control-flow-functions.html#function_if
+		// The default return type of IF() (which may matter when it is stored into a temporary table) is calculated as follows.
+		// Expression	Return Value
+		// expr2 or expr3 returns a string	string
+		// expr2 or expr3 returns a floating-point value	floating-point
+		// expr2 or expr3 returns an integer	integer
+		tp = x.Args[1].GetType()
+	case ast.Compress:
+		tp = types.NewFieldType(mysql.TypeBlob)
+	case ast.AnyValue:
+		tp = x.Args[0].GetType()
 	default:
 		tp = types.NewFieldType(mysql.TypeUnspecified)
 	}

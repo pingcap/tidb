@@ -367,7 +367,7 @@ func (s *testSuite) TestStreamAgg(c *C) {
 		e := &executor.StreamAggExec{
 			AggFuncs: []expression.AggregationFunction{ca.aggFunc},
 			Src:      mock,
-			Ctx:      ctx,
+			StmtCtx:  ctx.GetSessionVars().StmtCtx,
 		}
 		row, err := e.Next()
 		c.Check(err, IsNil)
