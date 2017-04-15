@@ -19,7 +19,9 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // HandleDDLEvent begins to process a ddl task.
@@ -27,6 +29,10 @@ func (h *Handle) HandleDDLEvent(t *ddl.Event) error {
 	switch t.Tp {
 	case ddl.TypeCreateTable:
 		return h.insertTableStats2KV(t.TableInfo)
+	case ddl.TypeCreateColumn:
+		return h.insertColStats2KV(t.TableInfo.ID, t.ColumnInfo)
+	case ddl.TypeDropColumn:
+		return h.deleteHistStatsFromKV(t.TableInfo.ID, t.ColumnInfo.ID, 0)
 	}
 	return nil
 }
@@ -48,16 +54,76 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo) error {
 		return errors.Trace(err)
 	}
 	for _, col := range info.Columns {
-		_, err = h.ctx.(sqlexec.SQLExecutor).Execute(fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%d, false, %d, 0, %d)", info.ID, col.ID, h.ctx.Txn().StartTS()))
+		_, err = h.ctx.(sqlexec.SQLExecutor).Execute(fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%d, 0, %d, 0, %d)", info.ID, col.ID, h.ctx.Txn().StartTS()))
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	for _, idx := range info.Indices {
-		_, err = h.ctx.(sqlexec.SQLExecutor).Execute(fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%d, true, %d, 0, %d)", info.ID, idx.ID, h.ctx.Txn().StartTS()))
+		_, err = h.ctx.(sqlexec.SQLExecutor).Execute(fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%d, 1, %d, 0, %d)", info.ID, idx.ID, h.ctx.Txn().StartTS()))
 		if err != nil {
 			return errors.Trace(err)
 		}
+	}
+	_, err = h.ctx.(sqlexec.SQLExecutor).Execute("commit")
+	return errors.Trace(err)
+}
+
+// insertColStats2KV insert a record to stats_histograms with distinct_count 1 and insert a bucket to stats_buckets with default value.
+// This operation also updates version.
+func (h *Handle) insertColStats2KV(tableID int64, colInfo *model.ColumnInfo) error {
+	_, err := h.ctx.(sqlexec.SQLExecutor).Execute("begin")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.ctx.Txn().StartTS(), tableID))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if h.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0 {
+		_, err = h.ctx.(sqlexec.SQLExecutor).Execute(fmt.Sprintf("insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count) values (%d, %d, 0, %d, 1)", h.ctx.Txn().StartTS(), tableID, colInfo.ID))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		rs, err := h.ctx.(sqlexec.SQLExecutor).Execute(fmt.Sprintf("select count from mysql.stats_meta where table_id = %d", tableID))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		row, err := rs[0].Next()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		count := row.Data[0].GetInt64()
+		valueBytes, err := codec.EncodeValue(nil, types.NewDatum(colInfo.DefaultValue))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		_, err = h.ctx.(sqlexec.SQLExecutor).Execute(fmt.Sprintf("insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, repeats, count, value) values (%d, 0, %d, 0, %d, %d, X'%X')", tableID, colInfo.ID, count, count, valueBytes))
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	_, err = h.ctx.(sqlexec.SQLExecutor).Execute("commit")
+	return errors.Trace(err)
+}
+
+// deleteHistStatsFromKV deletes all records about a column or an index and updates version.
+func (h *Handle) deleteHistStatsFromKV(tableID int64, histID int64, isIndex int) error {
+	_, err := h.ctx.(sqlexec.SQLExecutor).Execute("begin")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.ctx.Txn().StartTS(), tableID))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(fmt.Sprintf("delete from mysql.stats_histograms where table_id = %d and hist_id = %d and is_index = %d", tableID, histID, isIndex))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d and hist_id = %d and is_index = %d", tableID, histID, isIndex))
+	if err != nil {
+		return errors.Trace(err)
 	}
 	_, err = h.ctx.(sqlexec.SQLExecutor).Execute("commit")
 	return errors.Trace(err)

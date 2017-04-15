@@ -131,12 +131,17 @@ type ddlType int
 const (
 	// TypeCreateTable standing for a create table operation.
 	TypeCreateTable ddlType = iota
+	// TypeCreateColumn standing for a create column operation.
+	TypeCreateColumn
+	// TypeDropColumn standing for a drop column operation.
+	TypeDropColumn
 )
 
 // Event is an event that a ddl operation happened.
 type Event struct {
-	Tp        ddlType
-	TableInfo *model.TableInfo
+	Tp         ddlType
+	TableInfo  *model.TableInfo
+	ColumnInfo *model.ColumnInfo
 }
 
 type ddl struct {
