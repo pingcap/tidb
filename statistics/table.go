@@ -48,6 +48,23 @@ type Table struct {
 	Pseudo  bool
 }
 
+func (t *Table) copy() *Table {
+	nt := &Table{
+		Info:    t.Info,
+		Count:   t.Count,
+		Pseudo:  t.Pseudo,
+		Columns: make(map[int64]*Column),
+		Indices: make(map[int64]*Index),
+	}
+	for id, col := range t.Columns {
+		nt.Columns[id] = col
+	}
+	for id, idx := range t.Indices {
+		nt.Indices[id] = idx
+	}
+	return nt
+}
+
 // SaveToStorage saves stats table to storage.
 func (h *Handle) SaveToStorage(t *Table) error {
 	_, err := h.ctx.(sqlexec.SQLExecutor).Execute("begin")
@@ -93,13 +110,16 @@ func (h *Handle) SaveToStorage(t *Table) error {
 }
 
 // tableStatsFromStorage loads table stats info from storage.
-func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) (Table, error) {
+func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) (*Table, error) {
 	table, ok := h.statsCache.Load().(statsCache)[tableInfo.ID]
 	if !ok {
-		table = Table{
+		table = &Table{
 			Columns: make(map[int64]*Column, len(tableInfo.Columns)),
 			Indices: make(map[int64]*Index, len(tableInfo.Indices)),
 		}
+	} else {
+		// We copy it before writing to avoid race.
+		table = table.copy()
 	}
 	table.Info = tableInfo
 	table.Count = count
@@ -107,7 +127,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count, version from mysql.stats_histograms where table_id = %d", tableInfo.ID)
 	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, selSQL)
 	if err != nil {
-		return table, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	// indexCount and columnCount record the number of indices and columns in table stats. If the number don't match with
 	// tableInfo, we will return pseudo table.
@@ -123,9 +143,9 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 			for _, idxInfo := range tableInfo.Indices {
 				if histID == idxInfo.ID {
 					if idx == nil || idx.LastUpdateVersion < histVer {
-						hg, err1 := histogramFromStorage(h.ctx, tableInfo.ID, histID, nil, distinct, 1, histVer)
-						if err1 != nil {
-							return table, errors.Trace(err1)
+						hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, nil, distinct, 1, histVer)
+						if err != nil {
+							return nil, errors.Trace(err)
 						}
 						idx = &Index{Histogram: *hg}
 					}
@@ -147,7 +167,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 					if col == nil || col.LastUpdateVersion < histVer {
 						hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, &colInfo.FieldType, distinct, 0, histVer)
 						if err != nil {
-							return table, errors.Trace(err)
+							return nil, errors.Trace(err)
 						}
 						col = &Column{Histogram: *hg}
 					}
@@ -163,10 +183,10 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 		}
 	}
 	if indexCount != len(tableInfo.Indices) {
-		return table, errors.New("The number of indices doesn't match with the schema")
+		return nil, errors.New("The number of indices doesn't match with the schema")
 	}
 	if columnCount != len(tableInfo.Columns) {
-		return table, errors.New("The number of columns doesn't match with the schema")
+		return nil, errors.New("The number of columns doesn't match with the schema")
 	}
 	return table, nil
 }

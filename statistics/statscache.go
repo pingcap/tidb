@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-type statsCache map[int64]Table
+type statsCache map[int64]*Table
 
 // Handle can update stats info periodically.
 type Handle struct {
@@ -60,7 +60,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	tables := make([]Table, 0, len(rows))
+	tables := make([]*Table, 0, len(rows))
 	for _, row := range rows {
 		version, tableID, count := row.Data[0].GetUint64(), row.Data[1].GetInt64(), row.Data[2].GetInt64()
 		table, ok := is.TableByID(tableID)
@@ -92,7 +92,7 @@ func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *Table {
 	// Also, we rely on the fact that TableInfo will not be same if and only if there are ddl changes.
 	// TODO: Remove this check.
 	if tblInfo == tbl.Info {
-		return &tbl
+		return tbl
 	}
 	return PseudoTable(tblInfo)
 }
@@ -107,7 +107,7 @@ func (h *Handle) copyFromOldCache() statsCache {
 }
 
 // updateTableStats updates the statistics table cache using copy on write.
-func (h *Handle) updateTableStats(tables []Table) {
+func (h *Handle) updateTableStats(tables []*Table) {
 	newCache := h.copyFromOldCache()
 	for _, tbl := range tables {
 		id := tbl.Info.ID
