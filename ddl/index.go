@@ -367,6 +367,12 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 			job.State = model.JobDone
 		}
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
+		if d.ddlEventCh != nil {
+			select {
+			case d.ddlEventCh <- &Event{Tp: TypeDropIndex, TableInfo: tblInfo, IndexInfo: indexInfo}:
+			default:
+			}
+		}
 	default:
 		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
 	}

@@ -135,6 +135,8 @@ const (
 	TypeCreateColumn
 	// TypeDropColumn standing for a drop column operation.
 	TypeDropColumn
+	// TypeDropIndex standing for a drop index operation.
+	TypeDropIndex
 )
 
 // Event is an event that a ddl operation happened.
@@ -142,6 +144,7 @@ type Event struct {
 	Tp         ddlType
 	TableInfo  *model.TableInfo
 	ColumnInfo *model.ColumnInfo
+	IndexInfo  *model.IndexInfo
 }
 
 type ddl struct {
