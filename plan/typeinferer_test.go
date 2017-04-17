@@ -295,6 +295,8 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`ord(true)`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{`ord(null)`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{`bin(1)`, mysql.TypeVarString, charset.CharsetUTF8, 0},
+		{"to_seconds('2003-05-01 12:05:55')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
+		{"to_seconds(950501)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{`bit_count(1)`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{`time_to_sec("23:59:59")`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 	}
