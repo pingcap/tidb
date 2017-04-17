@@ -1160,6 +1160,44 @@ func (s *testEvaluatorSuite) TestGetFormat(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestToSeconds(c *C) {
+	tests := []struct {
+		param  interface{}
+		expect int64
+	}{
+		{950501, 62966505600},
+		{"2009-11-29", 63426672000},
+		{"2009-11-29 13:43:32", 63426721412},
+		{"09-11-29 13:43:32", 63426721412},
+		{"99-11-29 13:43:32", 63111102212},
+	}
+
+	fc := funcs[ast.ToSeconds]
+	for _, test := range tests {
+		t := []types.Datum{types.NewDatum(test.param)}
+		f, err := fc.getFunction(datumsToConstants(t), s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(d.GetInt64(), Equals, test.expect)
+	}
+
+	testsNull := []interface{}{
+		"0000-00-00",
+		"1992-13-00",
+		"2007-10-07 23:59:61",
+		123456789}
+
+	for _, i := range testsNull {
+		t := []types.Datum{types.NewDatum(i)}
+		f, err := fc.getFunction(datumsToConstants(t), s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(d.IsNull(), IsTrue)
+	}
+}
+
 func (s *testEvaluatorSuite) TestToDays(c *C) {
 	tests := []struct {
 		param  interface{}
