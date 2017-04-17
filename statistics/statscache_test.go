@@ -264,6 +264,11 @@ func (s *testStatsCacheSuite) TestLoadHist(c *C) {
 	for i := 0; i < rowCount; i++ {
 		testKit.MustExec("insert into t values(1,2)")
 	}
+	h.DumpStatsDeltaToKV()
+	h.Update(do.InfoSchema())
+	c.Assert(h.LoadTableCount, Equals, 1)
+	// At this time, the histogram doesn't update, so we don't need load any histograms.
+	c.Assert(h.LoadHistogramCount, Equals, 0)
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {

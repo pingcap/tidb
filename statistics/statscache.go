@@ -40,6 +40,10 @@ type Handle struct {
 	LoadHistogramCount int
 	// LoadTableCount records the times of handle loads table stats meta from TiKV. It's only for test.
 	LoadTableCount int
+	// All the stats collector required by session are maintained in this list.
+	listHead *SessionStatsCollector
+	// We collect the delta map and merge them with globalMap.
+	globalMap tableDeltaMap
 }
 
 // Clear the statsCache, only for test.
@@ -53,6 +57,8 @@ func NewHandle(ctx context.Context) *Handle {
 	handle := &Handle{
 		ctx:        ctx,
 		ddlEventCh: make(chan *ddl.Event, 100),
+		listHead:   &SessionStatsCollector{mapper: make(tableDeltaMap)},
+		globalMap:  make(tableDeltaMap),
 	}
 	handle.statsCache.Store(statsCache{})
 	return handle
