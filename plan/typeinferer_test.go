@@ -246,6 +246,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"unix_timestamp('2015-11-13 10:20:19')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"to_days('2015-11-13')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"to_days(950501)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
+		{"period_diff(201702, 201107)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"floor(1.23)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"field('foo', null)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"find_in_set('foo', 'foo,bar')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
