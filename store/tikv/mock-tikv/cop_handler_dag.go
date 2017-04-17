@@ -15,7 +15,6 @@ package mocktikv
 
 import (
 	"bytes"
-	"encoding/binary"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
@@ -346,13 +345,6 @@ func minEndKey(rangeEndKey kv.Key, regionEndKey []byte) []byte {
 	return regionEndKey
 }
 
-func decodeHandle(data []byte) (int64, error) {
-	var h int64
-	buf := bytes.NewBuffer(data)
-	err := binary.Read(buf, binary.BigEndian, &h)
-	return h, errors.Trace(err)
-}
-
 func toPBError(err error) *tipb.Error {
 	if err == nil {
 		return nil
@@ -391,6 +383,18 @@ func reverseKVRanges(kvRanges []kv.KeyRange) {
 		j := len(kvRanges) - i - 1
 		kvRanges[i], kvRanges[j] = kvRanges[j], kvRanges[i]
 	}
+}
+
+func convertToExprs(sc *variable.StatementContext, colIDs map[int64]int, pbExprs []*tipb.Expr) ([]expression.Expression, error) {
+	exprs := make([]expression.Expression, 0, len(pbExprs))
+	for _, expr := range pbExprs {
+		e, err := expression.PBToExpr(expr, colIDs, sc)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		exprs = append(exprs, e)
+	}
+	return exprs, nil
 }
 
 // Flags are used by tipb.SelectRequest.Flags to handle execution mode, like how to handle truncate error.
