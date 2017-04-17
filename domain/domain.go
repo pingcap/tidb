@@ -454,13 +454,16 @@ func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 	if lease <= 0 {
 		return nil
 	}
+	deltaUpdateDuration := time.Minute
 	go func(do *Domain) {
-		ticker := time.NewTicker(lease)
-		defer ticker.Stop()
+		loadTicker := time.NewTicker(lease)
+		defer loadTicker.Stop()
+		deltaUpdateTicker := time.NewTicker(deltaUpdateDuration)
+		defer deltaUpdateTicker.Stop()
 
 		for {
 			select {
-			case <-ticker.C:
+			case <-loadTicker.C:
 				err := do.statsHandle.Update(do.InfoSchema())
 				if err != nil {
 					log.Error(errors.ErrorStack(err))
@@ -473,6 +476,8 @@ func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 				if err != nil {
 					log.Error(errors.ErrorStack(err))
 				}
+			case <-deltaUpdateTicker.C:
+				do.statsHandle.DumpStatsDeltaToKV()
 			}
 		}
 	}(do)
