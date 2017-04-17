@@ -14,9 +14,13 @@
 package mocktikv
 
 import (
+	"bytes"
+	"encoding/binary"
+
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -26,9 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
-
-// MockDAGRequest is used for testing now.
-var MockDAGRequest bool
 
 type dagContext struct {
 	dagReq    *tipb.DAGRequest
@@ -65,6 +66,7 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor
 		return nil, errors.Trace(err)
 	}
 	var chunks []tipb.Chunk
+	data := make([]byte, 0)
 	for {
 		handle, row, err := e.Next()
 		if err != nil {
@@ -73,7 +75,7 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor
 		if row == nil {
 			break
 		}
-		data := dummySlice
+		data = data[:0]
 		for _, val := range row {
 			data = append(data, val...)
 		}
@@ -290,6 +292,105 @@ func (e *evalContext) decodeRelatedColumnVals(relatedColOffsets []int, handle in
 		}
 	}
 	return nil
+}
+
+func buildResp(chunks []tipb.Chunk, err error) (*coprocessor.Response, error) {
+	resp := &coprocessor.Response{}
+	selResp := &tipb.SelectResponse{
+		Error:  toPBError(err),
+		Chunks: chunks,
+	}
+	if err != nil {
+		if locked, ok := errors.Cause(err).(*ErrLocked); ok {
+			resp.Locked = &kvrpcpb.LockInfo{
+				Key:         locked.Key,
+				PrimaryLock: locked.Primary,
+				LockVersion: locked.StartTS,
+				LockTtl:     locked.TTL,
+			}
+		} else {
+			resp.OtherError = err.Error()
+		}
+	}
+	data, err := proto.Marshal(selResp)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	resp.Data = data
+	return resp, nil
+}
+
+const rowsPerChunk = 64
+
+func appendRow(chunks []tipb.Chunk, handle int64, data []byte) []tipb.Chunk {
+	if len(chunks) == 0 || len(chunks[len(chunks)-1].RowsMeta) >= rowsPerChunk {
+		chunks = append(chunks, tipb.Chunk{})
+	}
+	cur := &chunks[len(chunks)-1]
+	cur.RowsMeta = append(cur.RowsMeta, tipb.RowMeta{Handle: handle, Length: int64(len(data))})
+	cur.RowsData = append(cur.RowsData, data...)
+	return chunks
+}
+
+func maxStartKey(rangeStartKey kv.Key, regionStartKey []byte) []byte {
+	if bytes.Compare([]byte(rangeStartKey), regionStartKey) > 0 {
+		return []byte(rangeStartKey)
+	}
+	return regionStartKey
+}
+
+func minEndKey(rangeEndKey kv.Key, regionEndKey []byte) []byte {
+	if len(regionEndKey) == 0 || bytes.Compare([]byte(rangeEndKey), regionEndKey) < 0 {
+		return []byte(rangeEndKey)
+	}
+	return regionEndKey
+}
+
+func decodeHandle(data []byte) (int64, error) {
+	var h int64
+	buf := bytes.NewBuffer(data)
+	err := binary.Read(buf, binary.BigEndian, &h)
+	return h, errors.Trace(err)
+}
+
+func toPBError(err error) *tipb.Error {
+	if err == nil {
+		return nil
+	}
+	perr := new(tipb.Error)
+	perr.Code = int32(1)
+	errStr := err.Error()
+	perr.Msg = errStr
+	return perr
+}
+
+// extractKVRanges extracts kv.KeyRanges slice from a SelectRequest.
+func (h *rpcHandler) extractKVRanges(keyRanges []*coprocessor.KeyRange, descScan bool) (kvRanges []kv.KeyRange) {
+	for _, kran := range keyRanges {
+		upperKey := kran.GetEnd()
+		if bytes.Compare(upperKey, h.rawStartKey) <= 0 {
+			continue
+		}
+		lowerKey := kran.GetStart()
+		if len(h.rawEndKey) != 0 && bytes.Compare([]byte(lowerKey), h.rawEndKey) >= 0 {
+			break
+		}
+		var kvr kv.KeyRange
+		kvr.StartKey = kv.Key(maxStartKey(lowerKey, h.rawStartKey))
+		kvr.EndKey = kv.Key(minEndKey(upperKey, h.rawEndKey))
+		kvRanges = append(kvRanges, kvr)
+	}
+	if descScan {
+		reverseKVRanges(kvRanges)
+	}
+	return
+}
+
+func reverseKVRanges(kvRanges []kv.KeyRange) {
+	for i := 0; i < len(kvRanges)/2; i++ {
+		j := len(kvRanges) - i - 1
+		kvRanges[i], kvRanges[j] = kvRanges[j], kvRanges[i]
+	}
 }
 
 // Flags are used by tipb.SelectRequest.Flags to handle execution mode, like how to handle truncate error.
