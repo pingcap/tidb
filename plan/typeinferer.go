@@ -333,20 +333,6 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		} else {
 			tp = types.NewFieldType(mysql.TypeLonglong)
 		}
-	case "ln", "log", "log2", "log10", "sqrt", "pi", "exp", "degrees":
-		tp = types.NewFieldType(mysql.TypeDouble)
-	case "sin":
-		tp = types.NewFieldType(mysql.TypeDouble)
-	case "cos":
-		tp = types.NewFieldType(mysql.TypeDouble)
-	case "tan", "cot":
-		tp = types.NewFieldType(mysql.TypeDouble)
-	case "acos", "asin", "atan":
-		tp = types.NewFieldType(mysql.TypeDouble)
-	case "pow", "power", "rand":
-		tp = types.NewFieldType(mysql.TypeDouble)
-	case "radians":
-		tp = types.NewFieldType(mysql.TypeDouble)
 	case "curdate", "current_date", "date", "from_days":
 		tp = types.NewFieldType(mysql.TypeDate)
 	case "curtime", "current_time", "timediff", "maketime", "sec_to_time":
