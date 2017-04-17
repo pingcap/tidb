@@ -117,7 +117,7 @@ func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]
 		return errors.Trace(err)
 	}
 	dom := sessionctx.GetDomain(e.ctx)
-	err = dom.StatsHandle().SaveToStorage(e.ctx, t)
+	err = dom.StatsHandle().SaveToStorage(t)
 	if err != nil {
 		return errors.Trace(err)
 	}
