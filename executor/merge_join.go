@@ -212,7 +212,7 @@ func (rb *rowBlockIterator) init() error {
 
 func (rb *rowBlockIterator) nextRow() (*Row, error) {
 	for {
-		row, err := rb.reader.Next()
+		row, err := NextDecodedRow(rb.reader)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

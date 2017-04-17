@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
@@ -44,13 +45,16 @@ type SelectResult interface {
 	// Fetch fetches partial results from client.
 	// The caller should call SetFields() before call Fetch().
 	Fetch(ctx goctx.Context)
+
+	// SetNumFields sets the number of fields in the result row.
+	SetNumFields(n int)
 }
 
 // PartialResult is the result from a single region server.
 type PartialResult interface {
 	// Next returns the next rowData of the sub result.
 	// If no more row to return, rowData would be nil.
-	Next() (handle int64, rowData []byte, err error)
+	Next() (handle int64, rowData []byte, offsets []uint32, err error)
 	// Close closes the partial result.
 	Close() error
 }
@@ -60,6 +64,7 @@ type selectResult struct {
 	label     string
 	aggregate bool
 	resp      kv.Response
+	numFields int
 
 	results chan resultWithErr
 	closed  chan struct{}
@@ -91,6 +96,7 @@ func (r *selectResult) fetch(ctx goctx.Context) {
 			return
 		}
 		pr := &partialResult{}
+		pr.numFields = r.numFields
 		pr.unmarshal(resultSubset)
 
 		select {
@@ -117,12 +123,22 @@ func (r *selectResult) Close() error {
 	return r.resp.Close()
 }
 
+// SetNumFields implements the SelectResult interface.
+func (r *selectResult) SetNumFields(n int) {
+	r.numFields = n
+}
+
 // partialResult represents a subset of select result.
 type partialResult struct {
 	resp       *tipb.SelectResponse
 	chunkIdx   int
 	cursor     int
 	dataOffset int64
+
+	rowCount     int
+	numFields    int
+	offsetBuf    []uint32
+	offsetBufIdx int
 }
 
 func (pr *partialResult) unmarshal(resultSubset []byte) error {
@@ -135,7 +151,11 @@ func (pr *partialResult) unmarshal(resultSubset []byte) error {
 	if pr.resp.Error != nil {
 		return errInvalidResp.Gen("[%d %s]", pr.resp.Error.GetCode(), pr.resp.Error.GetMsg())
 	}
-
+	for i := 0; i < len(pr.resp.Chunks); i++ {
+		pr.rowCount += len(pr.resp.Chunks[i].RowsMeta)
+	}
+	// Allocate offset once per partial result, reduce memory allocation.
+	pr.offsetBuf = make([]uint32, pr.rowCount*pr.numFields)
 	return nil
 }
 
@@ -143,10 +163,10 @@ var zeroLenData = make([]byte, 0)
 
 // Next returns the next row of the sub result.
 // If no more row to return, data would be nil.
-func (pr *partialResult) Next() (handle int64, data []byte, err error) {
+func (pr *partialResult) Next() (handle int64, data []byte, offsets []uint32, err error) {
 	chunk := pr.getChunk()
 	if chunk == nil {
-		return 0, nil, nil
+		return 0, nil, nil, nil
 	}
 	rowMeta := chunk.RowsMeta[pr.cursor]
 	data = chunk.RowsData[pr.dataOffset : pr.dataOffset+rowMeta.Length]
@@ -154,6 +174,18 @@ func (pr *partialResult) Next() (handle int64, data []byte, err error) {
 		// The caller checks if data is nil to determine finished.
 		data = zeroLenData
 	}
+	offsets = pr.offsetBuf[pr.offsetBufIdx : pr.offsetBufIdx+pr.numFields]
+	offset := 0
+	for i := 0; i < pr.numFields; i++ {
+		offsets[i] = uint32(offset)
+		colLen, err1 := codec.Peek(data[offset:])
+		if err1 != nil {
+			return 0, nil, nil, errors.Trace(err)
+		}
+		offset += colLen
+	}
+	pr.offsetBufIdx += pr.numFields
+
 	pr.dataOffset += rowMeta.Length
 	handle = rowMeta.Handle
 	pr.cursor++

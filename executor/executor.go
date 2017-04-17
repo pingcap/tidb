@@ -85,24 +85,6 @@ const (
 	CodeCannotUser      terror.ErrCode = 1396
 )
 
-// Row represents a result set row, it may be returned from a table, a join, or a projection.
-type Row struct {
-	// Data is the output record data for current Plan.
-	Data []types.Datum
-	// RowKeys contains all table row keys in the row.
-	RowKeys []*RowKeyEntry
-}
-
-// RowKeyEntry represents a row key read from a table.
-type RowKeyEntry struct {
-	// The table which this row come from.
-	Tbl table.Table
-	// Row key.
-	Handle int64
-	// Table alias name.
-	TableName string
-}
-
 // Executor executes a query.
 type Executor interface {
 	Next() (*Row, error)
@@ -366,7 +348,7 @@ func init() {
 			return rows, errors.Trace(err)
 		}
 		for {
-			row, err := exec.Next()
+			row, err := NextDecodedRow(exec)
 			if err != nil {
 				return rows, errors.Trace(err)
 			}
@@ -385,11 +367,12 @@ func init() {
 
 // ProjectionExec represents a select fields executor.
 type ProjectionExec struct {
-	Src      Executor
-	schema   *expression.Schema
-	executed bool
-	ctx      context.Context
-	exprs    []expression.Expression
+	Src       Executor
+	schema    *expression.Schema
+	executed  bool
+	ctx       context.Context
+	exprs     []expression.Expression
+	valuesBuf []types.Datum
 }
 
 // Schema implements the Executor Schema interface.
@@ -409,6 +392,10 @@ func (e *ProjectionExec) Next() (retRow *Row, err error) {
 		if srcRow == nil {
 			return nil, nil
 		}
+		err = srcRow.DecodeValuesTo(e.Src.Schema().Columns, e.valuesBuf)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		rowKeys = srcRow.RowKeys
 	} else {
 		// If Src is nil, only one row should be returned.
@@ -422,7 +409,7 @@ func (e *ProjectionExec) Next() (retRow *Row, err error) {
 		Data:    make([]types.Datum, 0, len(e.exprs)),
 	}
 	for _, expr := range e.exprs {
-		val, err := expr.Eval(srcRow.Data)
+		val, err := expr.Eval(e.valuesBuf)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -482,6 +469,7 @@ type SelectionExec struct {
 	scanController bool
 	controllerInit bool
 	Conditions     []expression.Expression
+	valuesBuf      []types.Datum
 }
 
 // Schema implements the Executor Schema interface.
@@ -545,9 +533,13 @@ func (e *SelectionExec) Next() (*Row, error) {
 		if srcRow == nil {
 			return nil, nil
 		}
+		err = srcRow.DecodeValuesTo(e.Src.Schema().Columns, e.valuesBuf)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		allMatch := true
 		for _, cond := range e.Conditions {
-			match, err := expression.EvalBool(cond, srcRow.Data, e.ctx)
+			match, err := expression.EvalBool(cond, e.valuesBuf, e.ctx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -828,7 +820,8 @@ func (e *UnionExec) fetchData(idx int) {
 			if e.finished.Load().(bool) {
 				return
 			}
-			row, err := e.Srcs[idx].Next()
+			// We have to decode values here because union may change the type of the row.
+			row, err := NextDecodedRow(e.Srcs[idx])
 			if err != nil {
 				e.finished.Store(true)
 				result.err = err
@@ -972,5 +965,21 @@ func (e *CacheExec) Next() (*Row, error) {
 	}
 	row := e.storedRows[e.cursor]
 	e.cursor++
+	return row, nil
+}
+
+// NextDecodedRow returns the next row and decode it.
+func NextDecodedRow(e Executor) (*Row, error) {
+	row, err := e.Next()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if row == nil {
+		return nil, nil
+	}
+	err = row.DecodeValues(e.Schema())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	return row, nil
 }

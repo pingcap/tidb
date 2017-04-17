@@ -183,7 +183,7 @@ func (e *DeleteExec) deleteMultiTables() error {
 	// Map for unique (Table, Row) pair.
 	tblRowMap := make(map[table.Table]map[int64][]types.Datum)
 	for {
-		joinedRow, err := e.SelectExec.Next()
+		joinedRow, err := NextDecodedRow(e.SelectExec)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -230,7 +230,7 @@ func isMatchTableName(entry *RowKeyEntry, tblMap map[int64][]string) bool {
 
 func (e *DeleteExec) deleteSingleTable() error {
 	for {
-		row, err := e.SelectExec.Next()
+		row, err := NextDecodedRow(e.SelectExec)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -805,7 +805,7 @@ func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, err
 	}
 	var rows [][]types.Datum
 	for {
-		innerRow, err := e.SelectExec.Next()
+		innerRow, err := NextDecodedRow(e.SelectExec)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1168,7 +1168,7 @@ func getUpdateColumns(assignList []*expression.Assignment) ([]bool, error) {
 
 func (e *UpdateExec) fetchRows() error {
 	for {
-		row, err := e.SelectExec.Next()
+		row, err := NextDecodedRow(e.SelectExec)
 		if err != nil {
 			return errors.Trace(err)
 		}

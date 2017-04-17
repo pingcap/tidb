@@ -42,19 +42,6 @@ const (
 	minLogDuration = 50 * time.Millisecond
 )
 
-func resultRowToRow(t table.Table, h int64, data []types.Datum, tableAsName *model.CIStr) *Row {
-	entry := &RowKeyEntry{
-		Handle: h,
-		Tbl:    t,
-	}
-	if tableAsName != nil && tableAsName.L != "" {
-		entry.TableName = tableAsName.L
-	} else {
-		entry.TableName = t.Meta().Name.L
-	}
-	return &Row{Data: data, RowKeys: []*RowKeyEntry{entry}}
-}
-
 // LookupTableTaskChannelSize represents the channel size of the index double read taskChan.
 var LookupTableTaskChannelSize = 50
 
@@ -268,7 +255,7 @@ func extractHandlesFromIndexSubResult(subResult distsql.PartialResult) ([]int64,
 	defer subResult.Close()
 	var handles []int64
 	for {
-		h, data, err := subResult.Next()
+		h, data, _, err := subResult.Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -344,6 +331,7 @@ type XSelectIndexExec struct {
 	result        distsql.SelectResult
 	partialResult distsql.PartialResult
 	idxColsSchema *expression.Schema
+	valuesBuf     []types.Datum
 
 	// Variables only used for double read.
 	taskChan    chan *lookupTableTask
@@ -414,6 +402,11 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		if e.aggregate {
+			e.result.SetNumFields(e.Schema().Len())
+		} else {
+			e.result.SetNumFields(e.idxColsSchema.Len())
+		}
 		e.result.Fetch(context.CtxForCancel{e.ctx})
 	}
 	for {
@@ -436,7 +429,7 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 			e.partialCount++
 		}
 		// Get a row from partial result.
-		h, rowData, err := e.partialResult.Next()
+		h, rowData, offsets, err := e.partialResult.Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -446,26 +439,24 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 			e.partialResult = nil
 			continue
 		}
-		var schema *expression.Schema
-		if e.aggregate {
-			schema = e.Schema()
-		} else {
-			schema = e.idxColsSchema
+		row := &Row{
+			RawRow: RawRow{RawData: rowData, Offsets: offsets},
 		}
-		values := make([]types.Datum, schema.Len())
-		err = codec.SetRawValues(rowData, values)
+		if e.aggregate {
+			return row, nil
+		}
+		// Index single read result doesn't have the same column order as the schema, we should
+		// decode it and convert it to table row.
+		err = row.DecodeValuesTo(e.idxColsSchema.Columns, e.valuesBuf)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = decodeRawValues(values, schema)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if e.aggregate {
-			return &Row{Data: values}, nil
-		}
-		values = e.indexRowToTableRow(h, values)
-		return resultRowToRow(e.table, h, values, e.asName), nil
+		row.Data = e.indexRowToTableRow(h, e.valuesBuf)
+		// Set RawData to nil because it can not decode to row.Data.
+		row.RawData = nil
+		row.Offsets = nil
+		row.setRowKeyEntry(e.table, h, e.asName)
+		return row, nil
 	}
 }
 
@@ -731,23 +722,17 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 	defer partialResult.Close()
 	var rows []*Row
 	for {
-		h, rowData, err := partialResult.Next()
+		h, rowData, offsets, err := partialResult.Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if rowData == nil {
 			break
 		}
-		values := make([]types.Datum, e.Schema().Len())
-		err = codec.SetRawValues(rowData, values)
-		if err != nil {
-			return nil, errors.Trace(err)
+		row := &Row{
+			RawRow: RawRow{RawData: rowData, Offsets: offsets},
 		}
-		err = decodeRawValues(values, e.Schema())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		row := resultRowToRow(t, h, values, e.indexPlan.TableAsName)
+		row.setRowKeyEntry(t, h, e.indexPlan.TableAsName)
 		rows = append(rows, row)
 	}
 	return rows, nil
@@ -781,6 +766,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	resp.SetNumFields(e.Schema().Len())
 	resp.Fetch(context.CtxForCancel{e.ctx})
 	return resp, nil
 }
@@ -861,6 +847,7 @@ func (e *XSelectTableExec) doRequest() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	e.result.SetNumFields(e.schema.Len())
 	e.result.Fetch(context.CtxForCancel{e.ctx})
 	return nil
 }
@@ -910,7 +897,7 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 			e.partialCount++
 		}
 		// Get a row from partial result.
-		h, rowData, err := e.partialResult.Next()
+		h, rowData, offsets, err := e.partialResult.Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -921,20 +908,14 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 			continue
 		}
 		e.returnedRows++
-		values := make([]types.Datum, e.schema.Len())
-		err = codec.SetRawValues(rowData, values)
-		if err != nil {
-			return nil, errors.Trace(err)
+
+		row := &Row{
+			RawRow: RawRow{RawData: rowData, Offsets: offsets},
 		}
-		err = decodeRawValues(values, e.schema)
-		if err != nil {
-			return nil, errors.Trace(err)
+		if !e.aggregate {
+			row.setRowKeyEntry(e.table, h, e.asName)
 		}
-		if e.aggregate {
-			// compose aggregate row
-			return &Row{Data: values}, nil
-		}
-		return resultRowToRow(e.table, h, values, e.asName), nil
+		return row, nil
 	}
 }
 

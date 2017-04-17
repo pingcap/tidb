@@ -121,7 +121,7 @@ func (e *HashAggExec) getGroupKey(row *Row) ([]byte, error) {
 func (e *HashAggExec) innerNext() (ret bool, err error) {
 	var srcRow *Row
 	if e.Src != nil {
-		srcRow, err = e.Src.Next()
+		srcRow, err = NextDecodedRow(e.Src)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -186,7 +186,7 @@ func (e *StreamAggExec) Next() (*Row, error) {
 	}
 	retRow := &Row{Data: make([]types.Datum, 0, len(e.AggFuncs))}
 	for {
-		row, err := e.Src.Next()
+		row, err := NextDecodedRow(e.Src)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

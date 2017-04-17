@@ -215,7 +215,7 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 // CutOne cuts the first encoded value from b.
 // It will return the first encoded item and the remains as byte slice.
 func CutOne(b []byte) (data []byte, remain []byte, err error) {
-	l, err := peek(b)
+	l, err := Peek(b)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -225,7 +225,7 @@ func CutOne(b []byte) (data []byte, remain []byte, err error) {
 // SetRawValues set raw datum values from a row data.
 func SetRawValues(data []byte, values []types.Datum) error {
 	for i := 0; i < len(values); i++ {
-		l, err := peek(data)
+		l, err := Peek(data)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -235,8 +235,8 @@ func SetRawValues(data []byte, values []types.Datum) error {
 	return nil
 }
 
-// peeks the first encoded value from b and returns its length.
-func peek(b []byte) (length int, err error) {
+// Peek peeks the first encoded value from b and returns its length.
+func Peek(b []byte) (length int, err error) {
 	if len(b) < 1 {
 		return 0, errors.New("invalid encoded key")
 	}
@@ -254,7 +254,7 @@ func peek(b []byte) (length int, err error) {
 	case compactBytesFlag:
 		l, err = peekCompactBytes(b)
 	case decimalFlag:
-		l, err = types.DecimalPeak(b)
+		l, err = types.DecimalPeek(b)
 	case varintFlag:
 		l, err = peekVarint(b)
 	case uvarintFlag:
