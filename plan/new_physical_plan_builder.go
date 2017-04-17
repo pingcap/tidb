@@ -242,7 +242,7 @@ func (p *Selection) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, er
 }
 
 // checkMemTableAndGetTask will check if this table is a mem table. If it is, it will produce a task and store it.
-func (p *DataSource) checkMemTableAndGetTask(prop *requiredProp) (task taskProfile, err error) {
+func (p *DataSource) getMemTableTask(prop *requiredProp) (task taskProfile, err error) {
 	client := p.ctx.GetClient()
 	memDB := infoschema.IsMemoryDB(p.DBName.L)
 	isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeSelect, 0)
@@ -273,8 +273,8 @@ func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, e
 	if task != nil {
 		return task, nil
 	}
-	// TODO: We don't consider the false condition here. We will add this check in ppd phase.
-	task, err = p.checkMemTableAndGetTask(prop)
+	// TODO: We don't consider the false condition here. We will add this check in PPD phase.
+	task, err = p.getMemTableTask(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -318,7 +318,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		for _, cond := range p.pushedDownConds {
 			conds = append(conds, cond.Clone())
 		}
-		is.AccessCondition, is.indexFilterConditions, is.accessEqualCount, is.accessInAndEqCount = DetachIndexScanConditions(conds, idx)
+		is.AccessCondition, is.filterCondition, is.accessEqualCount, is.accessInAndEqCount = DetachIndexScanConditions(conds, idx)
 		err = BuildIndexRange(sc, is)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -328,7 +328,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 			return nil, errors.Trace(err)
 		}
 	} else {
-		rb := rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
+		rb := rangeBuilder{sc: sc}
 		is.Ranges = rb.buildIndexRanges(fullRange, types.NewFieldType(mysql.TypeNull))
 	}
 	copTask := &copTaskProfile{
@@ -344,7 +344,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		for _, col := range idx.Columns {
 			indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: col.Offset})
 		}
-		// TODO: We should add pk column to index schema.
+		// TODO: We should add PK column to index schema.
 		copTask.indexPlan.SetSchema(expression.NewSchema(indexCols...))
 	} else {
 		is.SetSchema(p.schema)
@@ -367,7 +367,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 	if matchProperty && !prop.isEmpty() {
 		if prop.desc {
 			is.Desc = true
-			copTask.cst += 4 * copTask.cst
+			copTask.cst = rowCount * descScanFactor
 		}
 		task = copTask
 	} else {
@@ -404,7 +404,7 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task taskProfile, e
 		for _, cond := range p.pushedDownConds {
 			conds = append(conds, cond.Clone())
 		}
-		ts.AccessCondition, ts.tableFilterConditions = DetachTableScanConditions(conds, p.tableInfo)
+		ts.AccessCondition, ts.filterCondition = DetachTableScanConditions(conds, p.tableInfo)
 		ts.Ranges, err = BuildTableRange(ts.AccessCondition, sc)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -430,16 +430,17 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task taskProfile, e
 		}
 	}
 	cost := rowCount * scanFactor
-	task = &copTaskProfile{
+	copTask := &copTaskProfile{
 		cnt:               rowCount,
 		tablePlan:         ts,
 		cst:               cost,
 		indexPlanFinished: true,
 	}
+	task = copTask
 	if pkCol != nil && len(prop.cols) == 1 && prop.cols[0].Equal(pkCol, nil) {
 		if prop.desc {
 			ts.Desc = true
-			task.addCost(cost * 4)
+			copTask.cst = rowCount * descScanFactor
 		}
 		ts.KeepOrder = true
 	} else {

@@ -225,6 +225,9 @@ type physicalTableSource struct {
 	sortItems             []*ByItems
 	indexFilterConditions []expression.Expression
 	tableFilterConditions []expression.Expression
+
+	// filterCondition is only used by new planner.
+	filterCondition []expression.Expression
 }
 
 // MarshalJSON implements json.Marshaler interface.

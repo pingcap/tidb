@@ -36,7 +36,7 @@ type copTaskProfile struct {
 	tablePlan PhysicalPlan
 	cst       float64
 	cnt       float64
-	// indexPlanFinished means we are processing index plan.
+	// indexPlanFinished means we have finished index plan.
 	indexPlanFinished bool
 }
 
@@ -274,10 +274,10 @@ func (sel *Selection) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 		conds := sel.pushDownConditions
 		if t.indexPlanFinished {
 			if ts, ok := t.tablePlan.(*PhysicalTableScan); ok {
-				conds = ts.tableFilterConditions
+				conds = ts.filterCondition
 			}
 		} else if is, ok := t.indexPlan.(*PhysicalIndexScan); ok {
-			conds = is.indexFilterConditions
+			conds = is.filterCondition
 		}
 		if t.tablePlan != nil && !t.indexPlanFinished {
 			// This is the case of double read.
