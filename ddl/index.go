@@ -369,7 +369,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
 		if d.ddlEventCh != nil {
 			select {
-			case d.ddlEventCh <- &Event{Tp: TypeDropIndex, TableInfo: tblInfo, IndexInfo: indexInfo}:
+			case d.ddlEventCh <- &Event{Tp: model.ActionDropIndex, TableInfo: tblInfo, IndexInfo: indexInfo}:
 			default:
 			}
 		}

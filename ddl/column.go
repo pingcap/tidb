@@ -173,7 +173,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 		// Send the event to stats handle.
 		if d.ddlEventCh != nil {
 			select {
-			case d.ddlEventCh <- &Event{Tp: TypeCreateColumn, TableInfo: tblInfo, ColumnInfo: columnInfo}:
+			case d.ddlEventCh <- &Event{Tp: model.ActionAddColumn, TableInfo: tblInfo, ColumnInfo: columnInfo}:
 			default:
 			}
 		}
@@ -267,7 +267,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 		// Send the event to stats handle.
 		if d.ddlEventCh != nil {
 			select {
-			case d.ddlEventCh <- &Event{Tp: TypeDropColumn, TableInfo: tblInfo, ColumnInfo: colInfo}:
+			case d.ddlEventCh <- &Event{Tp: model.ActionDropColumn, TableInfo: tblInfo, ColumnInfo: colInfo}:
 			default:
 			}
 		}

@@ -59,7 +59,7 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 		job.BinlogInfo.AddTableInfo(ver, tbInfo)
 		if d.ddlEventCh != nil {
 			select {
-			case d.ddlEventCh <- &Event{Tp: TypeCreateTable, TableInfo: tbInfo}:
+			case d.ddlEventCh <- &Event{Tp: model.ActionCreateTable, TableInfo: tbInfo}:
 			default:
 			}
 		}

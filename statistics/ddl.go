@@ -27,13 +27,13 @@ import (
 // HandleDDLEvent begins to process a ddl task.
 func (h *Handle) HandleDDLEvent(t *ddl.Event) error {
 	switch t.Tp {
-	case ddl.TypeCreateTable:
+	case model.ActionCreateTable:
 		return h.insertTableStats2KV(t.TableInfo)
-	case ddl.TypeCreateColumn:
+	case model.ActionAddColumn:
 		return h.insertColStats2KV(t.TableInfo.ID, t.ColumnInfo)
-	case ddl.TypeDropColumn:
+	case model.ActionDropColumn:
 		return h.deleteHistStatsFromKV(t.TableInfo.ID, t.ColumnInfo.ID, 0)
-	case ddl.TypeDropIndex:
+	case model.ActionDropIndex:
 		return h.deleteHistStatsFromKV(t.TableInfo.ID, t.IndexInfo.ID, 1)
 	}
 	return nil

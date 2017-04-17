@@ -126,22 +126,9 @@ type DDL interface {
 	RegisterEventCh(chan<- *Event)
 }
 
-type ddlType int
-
-const (
-	// TypeCreateTable standing for a create table operation.
-	TypeCreateTable ddlType = iota
-	// TypeCreateColumn standing for a create column operation.
-	TypeCreateColumn
-	// TypeDropColumn standing for a drop column operation.
-	TypeDropColumn
-	// TypeDropIndex standing for a drop index operation.
-	TypeDropIndex
-)
-
 // Event is an event that a ddl operation happened.
 type Event struct {
-	Tp         ddlType
+	Tp         model.ActionType
 	TableInfo  *model.TableInfo
 	ColumnInfo *model.ColumnInfo
 	IndexInfo  *model.IndexInfo
