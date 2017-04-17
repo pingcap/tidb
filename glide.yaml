@@ -155,7 +155,7 @@ import:
   - go-tipb
   - sharedbytes
 - package: github.com/pingcap/kvproto
-  version: 1ce19dac18a11abf6a04a11034bf42f2fbf57f1b
+  version: 0671142ca3dfbdddb4a61e815486834a4695cd02
 - package: github.com/gogo/protobuf
   version: ^0.3.0
   subpackages:
