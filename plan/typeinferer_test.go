@@ -154,6 +154,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"curtime()", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag},
 		{"curtime(2)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag},
 		{"maketime(12, 15, 30)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag},
+		{"sec_to_time(2378)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag},
 		{"current_timestamp()", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
 		{"utc_timestamp()", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
 		{"microsecond('2009-12-31 23:59:59.000010')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
