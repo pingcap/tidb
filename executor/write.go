@@ -131,6 +131,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 	} else {
 		sc.AddAffectedRows(2)
 	}
+	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, 0, 1)
 	return nil
 }
 
@@ -252,6 +253,7 @@ func (e *DeleteExec) removeRow(ctx context.Context, t table.Table, h int64, data
 	}
 	getDirtyDB(ctx).deleteRow(t.Meta().ID, h)
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
+	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, -1, 1)
 	return nil
 }
 
