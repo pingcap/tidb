@@ -259,16 +259,23 @@ func (s *testStatsCacheSuite) TestLoadHist(c *C) {
 	}
 	testKit.MustExec("analyze table t")
 	h := do.StatsHandle()
-	c.Assert(h.LoadTableCount, Equals, 1)
-	c.Assert(h.LoadHistogramCount, Equals, 2)
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	oldStatsTbl := h.GetTableStats(tableInfo)
 	for i := 0; i < rowCount; i++ {
 		testKit.MustExec("insert into t values(1,2)")
 	}
 	h.DumpStatsDeltaToKV()
 	h.Update(do.InfoSchema())
-	c.Assert(h.LoadTableCount, Equals, 1)
-	// At this time, the histogram doesn't update, so we don't need load any histograms.
-	c.Assert(h.LoadHistogramCount, Equals, 0)
+	newStatsTbl := h.GetTableStats(tableInfo)
+	// The stats table is updated.
+	c.Assert(oldStatsTbl == newStatsTbl, IsFalse)
+	// The histograms is not updated.
+	for id, hist := range oldStatsTbl.Columns {
+		c.Assert(hist, Equals, newStatsTbl.Columns[id])
+	}
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
