@@ -67,29 +67,30 @@ func (t *Table) copy() *Table {
 
 // SaveToStorage saves stats table to storage.
 func (h *Handle) SaveToStorage(t *Table) error {
-	_, err := h.ctx.(sqlexec.SQLExecutor).Execute("begin")
+	exec := h.ctx.(sqlexec.SQLExecutor)
+	_, err := exec.Execute("begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	txn := h.ctx.Txn()
 	version := txn.StartTS()
 	deleteSQL := fmt.Sprintf("delete from mysql.stats_meta where table_id = %d", t.Info.ID)
-	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(deleteSQL)
+	_, err = exec.Execute(deleteSQL)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	insertSQL := fmt.Sprintf("insert into mysql.stats_meta (version, table_id, count) values (%d, %d, %d)", version, t.Info.ID, t.Count)
-	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(insertSQL)
+	_, err = exec.Execute(insertSQL)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	deleteSQL = fmt.Sprintf("delete from mysql.stats_histograms where table_id = %d", t.Info.ID)
-	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(deleteSQL)
+	_, err = exec.Execute(deleteSQL)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	deleteSQL = fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d", t.Info.ID)
-	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(deleteSQL)
+	_, err = exec.Execute(deleteSQL)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -105,12 +106,13 @@ func (h *Handle) SaveToStorage(t *Table) error {
 			return errors.Trace(err)
 		}
 	}
-	_, err = h.ctx.(sqlexec.SQLExecutor).Execute("commit")
+	_, err = exec.Execute("commit")
 	return errors.Trace(err)
 }
 
 // tableStatsFromStorage loads table stats info from storage.
 func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) (*Table, error) {
+	h.LoadTableCount++
 	table, ok := h.statsCache.Load().(statsCache)[tableInfo.ID]
 	if !ok {
 		table = &Table{
@@ -143,7 +145,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 			for _, idxInfo := range tableInfo.Indices {
 				if histID == idxInfo.ID {
 					if idx == nil || idx.LastUpdateVersion < histVer {
-						hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, nil, distinct, 1, histVer)
+						hg, err := h.histogramFromStorage(tableInfo.ID, histID, nil, distinct, 1, histVer)
 						if err != nil {
 							return nil, errors.Trace(err)
 						}
@@ -165,7 +167,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 			for _, colInfo := range tableInfo.Columns {
 				if histID == colInfo.ID {
 					if col == nil || col.LastUpdateVersion < histVer {
-						hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, &colInfo.FieldType, distinct, 0, histVer)
+						hg, err := h.histogramFromStorage(tableInfo.ID, histID, &colInfo.FieldType, distinct, 0, histVer)
 						if err != nil {
 							return nil, errors.Trace(err)
 						}

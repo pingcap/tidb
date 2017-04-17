@@ -35,6 +35,11 @@ type Handle struct {
 	statsCache  atomic.Value
 	// ddlEventCh is a channel to notify a ddl operation has happened. It is sent only by owner and read by stats handle.
 	ddlEventCh chan *ddl.Event
+
+	// LoadHistogramCount records the times of handle loads histogram from TiKV. It's only for test.
+	LoadHistogramCount int
+	// LoadTableCount records the times of handle loads table stats meta from TiKV. It's only for test.
+	LoadTableCount int
 }
 
 // Clear the statsCache, only for test.
@@ -55,6 +60,8 @@ func NewHandle(ctx context.Context) *Handle {
 
 // Update reads stats meta from store and updates the stats map.
 func (h *Handle) Update(is infoschema.InfoSchema) error {
+	h.LoadTableCount = 0
+	h.LoadHistogramCount = 0
 	sql := fmt.Sprintf("SELECT version, table_id, count from mysql.stats_meta where version > %d order by version", h.lastVersion)
 	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
 	if err != nil {
