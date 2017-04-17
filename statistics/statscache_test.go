@@ -263,7 +263,7 @@ func (s *testStatsCacheSuite) TestVersion(c *C) {
 
 	h.Update(is)
 	c.Assert(h.LastVersion, Equals, uint64(2))
-	c.Assert(h.LastTwoVersion, Equals, uint64(0))
+	c.Assert(h.PrevLastVersion, Equals, uint64(0))
 	statsTbl1 := h.GetTableStats(tableInfo1)
 	c.Assert(statsTbl1.Pseudo, IsFalse)
 
@@ -277,7 +277,7 @@ func (s *testStatsCacheSuite) TestVersion(c *C) {
 	testKit.MustExec("update mysql.stats_meta set version = 1 where table_id = ?", tableInfo2.ID)
 	h.Update(is)
 	c.Assert(h.LastVersion, Equals, uint64(2))
-	c.Assert(h.LastTwoVersion, Equals, uint64(2))
+	c.Assert(h.PrevLastVersion, Equals, uint64(2))
 	statsTbl2 := h.GetTableStats(tableInfo2)
 	c.Assert(statsTbl2.Pseudo, IsFalse)
 
@@ -286,7 +286,7 @@ func (s *testStatsCacheSuite) TestVersion(c *C) {
 	testKit.MustExec("update mysql.stats_meta set version = 4 where table_id = ?", tableInfo1.ID)
 	h.Update(is)
 	c.Assert(h.LastVersion, Equals, uint64(4))
-	c.Assert(h.LastTwoVersion, Equals, uint64(2))
+	c.Assert(h.PrevLastVersion, Equals, uint64(2))
 	statsTbl1 = h.GetTableStats(tableInfo1)
 	c.Assert(statsTbl1.Count, Equals, int64(1))
 
@@ -296,7 +296,7 @@ func (s *testStatsCacheSuite) TestVersion(c *C) {
 	testKit.MustExec("update mysql.stats_meta set version = 3 where table_id = ?", tableInfo2.ID)
 	h.Update(is)
 	c.Assert(h.LastVersion, Equals, uint64(4))
-	c.Assert(h.LastTwoVersion, Equals, uint64(4))
+	c.Assert(h.PrevLastVersion, Equals, uint64(4))
 	statsTbl2 = h.GetTableStats(tableInfo2)
 	c.Assert(statsTbl2.Count, Equals, int64(1))
 
@@ -306,7 +306,7 @@ func (s *testStatsCacheSuite) TestVersion(c *C) {
 	testKit.MustExec("update mysql.stats_meta set version = 3 where table_id = ?", tableInfo2.ID)
 	h.Update(is)
 	c.Assert(h.LastVersion, Equals, uint64(4))
-	c.Assert(h.LastTwoVersion, Equals, uint64(4))
+	c.Assert(h.PrevLastVersion, Equals, uint64(4))
 	statsTbl2 = h.GetTableStats(tableInfo2)
 	c.Assert(statsTbl2.Count, Equals, int64(1))
 }
