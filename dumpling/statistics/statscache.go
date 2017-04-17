@@ -76,7 +76,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 			continue
 		}
 		tableInfo := table.Meta()
-		tbl, err := h.TableStatsFromStorage(h.ctx, tableInfo, count)
+		tbl, err := h.tableStatsFromStorage(tableInfo, count)
 		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
 		if err != nil {
 			log.Errorf("Error occurred when read table stats for table id %d. The error message is %s.", tableID, err.Error())
@@ -85,14 +85,14 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		tables = append(tables, tbl)
 		h.lastVersion = version
 	}
-	h.UpdateTableStats(tables)
+	h.updateTableStats(tables)
 	return nil
 }
 
 // GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
 func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *Table {
 	tbl, ok := h.statsCache.Load().(statsCache)[tblInfo.ID]
-	if !ok || tbl == nil {
+	if !ok {
 		return PseudoTable(tblInfo)
 	}
 	// Here we check the TableInfo because there may be some ddl changes in the duration period.
@@ -113,8 +113,8 @@ func (h *Handle) copyFromOldCache() statsCache {
 	return newCache
 }
 
-// UpdateTableStats updates the statistics table cache using copy on write.
-func (h *Handle) UpdateTableStats(tables []*Table) {
+// updateTableStats updates the statistics table cache using copy on write.
+func (h *Handle) updateTableStats(tables []*Table) {
 	newCache := h.copyFromOldCache()
 	for _, tbl := range tables {
 		id := tbl.Info.ID
