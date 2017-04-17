@@ -521,7 +521,7 @@ func (e *limitExec) SetSrcExec(src executor) {
 }
 
 func (e *limitExec) Next() (handle int64, value [][]byte, err error) {
-	if e.cursor >= e.limit {
+	if e.cursor >= e.limit && e.limit >= 0 {
 		return 0, nil, nil
 	}
 
