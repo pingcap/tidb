@@ -50,6 +50,7 @@ type Client interface {
 
 const (
 	maxConnection     = 150
+	dialTimeout       = 5 * time.Second
 	writeTimeout      = 10 * time.Second
 	readTimeoutShort  = 20 * time.Second  // For requests that read/write several key-values.
 	readTimeoutMedium = 60 * time.Second  // For requests that may need scan region.
@@ -63,7 +64,7 @@ type rpcClient struct {
 func newRPCClient() *rpcClient {
 	return &rpcClient{
 		p: NewPools(maxConnection, func(addr string) (*Conn, error) {
-			return NewConnection(addr)
+			return NewConnection(addr, dialTimeout)
 		}),
 	}
 }
