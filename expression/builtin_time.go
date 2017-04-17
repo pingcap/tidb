@@ -2103,7 +2103,24 @@ type builtinToSecondsSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_to-seconds
 func (b *builtinToSecondsSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("TO_SECONDS")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if args[0].IsNull() {
+		return d, nil
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	date, err := convertDatumToTime(sc, args[0])
+	if err != nil {
+		return d, errorOrWarning(err, b.ctx)
+	}
+	ret := types.TimestampDiff("SECOND", types.ZeroDate, date)
+	if ret == 0 {
+		return d, errorOrWarning(types.ErrInvalidTimeFormat, b.ctx)
+	}
+	d.SetInt64(ret)
+	return d, nil
 }
 
 type utcTimeFunctionClass struct {
