@@ -279,11 +279,11 @@ func (sel *Selection) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 		} else if is, ok := t.indexPlan.(*PhysicalIndexScan); ok {
 			conds = is.filterCondition
 		}
-		if t.tablePlan != nil && !t.indexPlanFinished {
+		if t.indexPlanFinished {
+			tableConds = conds
+		} else if t.tablePlan != nil {
 			// This is the case of double read.
 			tableConds, indexConds = splitConditionsByIndexColumns(conds, t.indexPlan.Schema())
-		} else if t.indexPlanFinished {
-			tableConds = conds
 		} else {
 			// Index single read.
 			indexConds = conds
