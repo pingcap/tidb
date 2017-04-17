@@ -139,9 +139,9 @@ func (s *session) Cancel() {
 	s.cancelFunc()
 }
 
-// Canceled implements context.Context interface.
-func (s *session) Done() <-chan struct{} {
-	return s.goCtx.Done()
+// GoCtx returns the standard context.Context that bind with current transaction.
+func (s *session) GoCtx() goctx.Context {
+	return s.goCtx
 }
 
 func (s *session) cleanRetryInfo() {
