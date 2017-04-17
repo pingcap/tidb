@@ -414,7 +414,7 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		e.result.Fetch(e.ctx.TxnCtx())
+		e.result.Fetch(e.ctx.GoCtx())
 	}
 	for {
 		// Get partial result.
@@ -510,7 +510,7 @@ func (e *XSelectIndexExec) nextForDoubleRead() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		idxResult.Fetch(e.ctx.TxnCtx())
+		idxResult.Fetch(e.ctx.GoCtx())
 
 		// Use a background goroutine to fetch index and put the result in e.taskChan.
 		// e.taskChan serves as a pipeline, so fetching index and getting table data can
@@ -569,7 +569,7 @@ func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<
 	var concurrency int
 	e.addWorker(workCh, &concurrency, lookupConcurrencyLimit)
 
-	txnCtx := e.ctx.TxnCtx()
+	txnCtx := e.ctx.GoCtx()
 	for {
 		handles, finish, err := extractHandlesFromIndexResult(idxResult)
 		if err != nil || finish {
@@ -634,7 +634,7 @@ func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return distsql.Select(e.ctx.GetClient(), e.ctx.TxnCtx(), selIdxReq, keyRanges, e.scanConcurrency, !e.indexPlan.OutOfOrder)
+	return distsql.Select(e.ctx.GetClient(), e.ctx.GoCtx(), selIdxReq, keyRanges, e.scanConcurrency, !e.indexPlan.OutOfOrder)
 }
 
 func (e *XSelectIndexExec) buildTableTasks(handles []int64) []*lookupTableTask {
@@ -782,7 +782,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	resp.Fetch(e.ctx.TxnCtx())
+	resp.Fetch(e.ctx.GoCtx())
 	return resp, nil
 }
 
@@ -862,7 +862,7 @@ func (e *XSelectTableExec) doRequest() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result.Fetch(e.ctx.TxnCtx())
+	e.result.Fetch(e.ctx.GoCtx())
 	return nil
 }
 

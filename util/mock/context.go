@@ -150,8 +150,8 @@ func (c *Context) GetSessionManager() util.SessionManager {
 func (c *Context) Cancel() {
 }
 
-// TxnCtx implements the context.Context interface.
-func (c *Context) TxnCtx() goctx.Context {
+// GoCtx returns standard context.Context that bind with current transaction.
+func (c *Context) GoCtx() goctx.Context {
 	return goctx.Background()
 }
 

@@ -139,8 +139,8 @@ func (s *session) Cancel() {
 	s.cancelFunc()
 }
 
-// TxnCtx returns the standard context.Context that bind with current transaction.
-func (s *session) TxnCtx() goctx.Context {
+// GoCtx returns the standard context.Context that bind with current transaction.
+func (s *session) GoCtx() goctx.Context {
 	return s.goCtx
 }
 

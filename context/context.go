@@ -32,8 +32,8 @@ type Context interface {
 	// Txn returns the current transaction which is created before executing a statement.
 	Txn() kv.Transaction
 
-	// TxnCtx returns the standard context.Context that bind with current transaction.
-	TxnCtx() goctx.Context
+	// GoCtx returns the standard context.Context that bind with current transaction.
+	GoCtx() goctx.Context
 
 	// GetClient gets a kv.Client.
 	GetClient() kv.Client
