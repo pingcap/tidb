@@ -64,12 +64,17 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	var chunks []tipb.Chunk
 	data := make([]byte, 0)
+	var (
+		handle int64
+		row    [][]byte
+		chunks []tipb.Chunk
+	)
 	for {
-		handle, row, err := e.Next()
+		handle, row, err = e.Next()
 		if err != nil {
-			return nil, errors.Trace(err)
+			// Wrap this error into response.
+			break
 		}
 		if row == nil {
 			break
