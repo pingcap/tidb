@@ -1797,7 +1797,6 @@ type builtinToBase64Sig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_to-base64
 func (b *builtinToBase64Sig) eval(row []types.Datum) (d types.Datum, err error) {
-	//return d, errFunctionNotExists.GenByArgs("TO_BASE64")
 	args, err := b.evalArgs(row)
 	if err != nil {
 		return d, errors.Trace(err)
@@ -1806,7 +1805,6 @@ func (b *builtinToBase64Sig) eval(row []types.Datum) (d types.Datum, err error) 
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-
 	//encode
 	strBytes := []byte(str)
 	result := base64.StdEncoding.EncodeToString(strBytes)
@@ -1823,19 +1821,12 @@ func (b *builtinToBase64Sig) eval(row []types.Datum) (d types.Datum, err error) 
 
 //func to splite a string every n runes into a string[]
 func splitToSubN(s string, n int) []string {
-	var sub string
-	var subs []string
-	runes := bytes.Runes([]byte(s))
-	l := len(runes)
-	for i, r := range runes {
-		sub = sub + string(r)
-		if (i+1)%n == 0 {
-			subs = append(subs, sub)
-			sub = ""
-		} else if (i + 1) == l {
-			subs = append(subs, sub)
-		}
+	subs := make([]string, 0, len(s)/n+1)
+	for len(s) > n {
+		subs = append(subs, s[:n])
+		s = s[n:]
 	}
+	subs = append(subs, s)
 	return subs
 }
 
