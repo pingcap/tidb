@@ -1852,8 +1852,8 @@ func (b *builtinPeriodAddSig) eval(row []types.Datum) (d types.Datum, err error)
 
 	//Check zero
 	if period <= 0 {
-		d.SetNull()
-		return d, errors.Errorf("in the format YYMM or YYYYMM")
+		d.SetInt64(0)
+		return d, nil
 	}
 
 	y := period / 100
@@ -1861,14 +1861,10 @@ func (b *builtinPeriodAddSig) eval(row []types.Datum) (d types.Datum, err error)
 
 	// YYMM, 00-69 year: 2000-2069
 	// YYMM, 70-99 year: 1970-1999
-	// YYYYMM, 1000-? year: 1000-?
 	if y <= 69 {
 		y += 2000
 	} else if y <= 99 {
 		y += 1900
-	} else if y < 1000 {
-		d.SetNull()
-		return d, errors.Errorf("in the format YYMM or YYYYMM")
 	}
 
 	months, err := args[1].ToInt64(sc)
@@ -1880,7 +1876,6 @@ func (b *builtinPeriodAddSig) eval(row []types.Datum) (d types.Datum, err error)
 	// TODO: Consider time_zone variable.
 	t := time.Date(int(y), sum, 1, 0, 0, 0, 0, time.Local)
 
-	//ret := fmt.Sprintf("%d%d", t.Year(), t.Month())
 	ret := int64(t.Year())*100 + int64(t.Month())
 	d.SetInt64(ret)
 	return d, nil
