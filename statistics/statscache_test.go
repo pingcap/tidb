@@ -266,6 +266,18 @@ func (s *testStatsCacheSuite) TestDDL(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, float64(0))
 
+	testKit.MustExec("alter table t add column c4 datetime NOT NULL default CURRENT_TIMESTAMP")
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
+	is = do.InfoSchema()
+	h.Update(is)
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo = tbl.Meta()
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	// If we don't use orginal default value, we will get a pseudo table.
+	c.Assert(statsTbl.Pseudo, IsFalse)
+
 	rs := testKit.MustQuery("select count(*) from mysql.stats_histograms where table_id = ? and hist_id = 3 and is_index = 0", tableInfo.ID)
 	rs.Check(testkit.Rows("1"))
 	rs = testKit.MustQuery("select count(*) from mysql.stats_buckets where table_id = ? and hist_id = 3 and is_index = 0", tableInfo.ID)

@@ -19,7 +19,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -103,12 +103,17 @@ func (h *Handle) insertColStats2KV(tableID int64, colInfo *model.ColumnInfo) err
 			return errors.Trace(err)
 		}
 		count := row.Data[0].GetInt64()
-		valueBytes, err := codec.EncodeValue(nil, types.NewDatum(colInfo.DefaultValue))
+		value := types.NewDatum(colInfo.OriginDefaultValue)
+		value, err = value.ConvertTo(h.ctx.GetSessionVars().StmtCtx, &colInfo.FieldType)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		value, err = value.ConvertTo(h.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
 		if err != nil {
 			return errors.Trace(err)
 		}
 		// There must be only one bucket for this new column and the value is the default value.
-		_, err = exec.Execute(fmt.Sprintf("insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, repeats, count, value) values (%d, 0, %d, 0, %d, %d, X'%X')", tableID, colInfo.ID, count, count, valueBytes))
+		_, err = exec.Execute(fmt.Sprintf("insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, repeats, count, value) values (%d, 0, %d, 0, %d, %d, X'%X')", tableID, colInfo.ID, count, count, value.GetBytes()))
 		if err != nil {
 			return errors.Trace(err)
 		}
