@@ -319,12 +319,14 @@ func (s *testStatsCacheSuite) TestLoadHist(c *C) {
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
+	h := do.StatsHandle()
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
 	rowCount := 10
 	for i := 0; i < rowCount; i++ {
 		testKit.MustExec("insert into t values(1,2)")
 	}
 	testKit.MustExec("analyze table t")
-	h := do.StatsHandle()
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -342,6 +344,22 @@ func (s *testStatsCacheSuite) TestLoadHist(c *C) {
 	for id, hist := range oldStatsTbl.Columns {
 		c.Assert(hist, Equals, newStatsTbl.Columns[id])
 	}
+	// Add column c3, we only update c3.
+	testKit.MustExec("alter table t add column c3 int")
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
+	is = do.InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo = tbl.Meta()
+	h.Update(is)
+	newStatsTbl2 := h.GetTableStats(tableInfo)
+	c.Assert(newStatsTbl2 == newStatsTbl, IsFalse)
+	// The histograms is not updated.
+	for id, hist := range newStatsTbl.Columns {
+		c.Assert(hist, Equals, newStatsTbl2.Columns[id])
+	}
+	c.Assert(newStatsTbl2.Columns[int64(3)].LastUpdateVersion, Greater, newStatsTbl2.Columns[int64(1)].LastUpdateVersion)
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
