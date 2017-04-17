@@ -154,6 +154,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"curtime()", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag},
 		{"curtime(2)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag},
 		{"maketime(12, 15, 30)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag},
+		{"sec_to_time(2378)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag},
 		{"current_timestamp()", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
 		{"utc_timestamp()", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
 		{"microsecond('2009-12-31 23:59:59.000010')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
@@ -295,6 +296,8 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`ord(true)`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{`ord(null)`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{`bin(1)`, mysql.TypeVarString, charset.CharsetUTF8, 0},
+		{"to_seconds('2003-05-01 12:05:55')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
+		{"to_seconds(950501)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{`bit_count(1)`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{`time_to_sec("23:59:59")`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 	}
