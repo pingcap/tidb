@@ -333,16 +333,6 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		} else {
 			tp = types.NewFieldType(mysql.TypeLonglong)
 		}
-	case "curdate", "current_date", "date", "from_days":
-		tp = types.NewFieldType(mysql.TypeDate)
-	case "curtime", "current_time", "timediff", "maketime", "sec_to_time":
-		tp = types.NewFieldType(mysql.TypeDuration)
-		tp.Decimal = v.getFsp(x)
-	case "date_add", "date_sub", "adddate", "subdate", "timestamp", "timestampadd":
-		tp = types.NewFieldType(mysql.TypeDatetime)
-	case "now", "sysdate", "current_timestamp", "utc_timestamp":
-		tp = types.NewFieldType(mysql.TypeDatetime)
-		tp.Decimal = v.getFsp(x)
 	case ast.FromUnixTime:
 		if len(x.Args) == 1 {
 			tp = types.NewFieldType(mysql.TypeDatetime)
@@ -374,7 +364,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = types.NewFieldType(mysql.TypeLonglong)
 		tp.Flag |= mysql.UnsignedFlag
 	// time related
-	case ast.Curtime, ast.CurrentTime, ast.TimeDiff, ast.MakeTime:
+	case ast.Curtime, ast.CurrentTime, ast.TimeDiff, ast.MakeTime, ast.SecToTime:
 		tp = types.NewFieldType(mysql.TypeDuration)
 		tp.Decimal = v.getFsp(x)
 	case ast.Curdate, ast.CurrentDate, ast.Date, ast.FromDays:
