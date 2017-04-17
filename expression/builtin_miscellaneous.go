@@ -363,10 +363,6 @@ func (b *builtinInet6AtonSig) eval(row []types.Datum) (d types.Datum, err error)
 		result = make([]byte, net.IPv4len)
 	}
 
-	for i := range result {
-		result[i] = 0
-	}
-
 	if isMappedIpv6 {
 		copy(result[12:], ip.To4())
 		result[11] = 0xff
