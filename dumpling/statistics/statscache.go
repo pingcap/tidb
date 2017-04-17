@@ -30,9 +30,15 @@ type statsCache map[int64]*Table
 
 // Handle can update stats info periodically.
 type Handle struct {
-	ctx         context.Context
-	lastVersion uint64
-	statsCache  atomic.Value
+	ctx context.Context
+	// LastVersion is the latest update version before last lease. Exported for test.
+	LastVersion uint64
+	// PrevLastVersion is the latest update version before two lease. Exported for test.
+	// We need this because for two tables, the smaller version may write later than the one with larger version.
+	// We can read the version with lastTwoVersion if the diff between commit time and version is less than one lease.
+	// PrevLastVersion will be assigned by LastVersion every time Update is called.
+	PrevLastVersion uint64
+	statsCache      atomic.Value
 	// ddlEventCh is a channel to notify a ddl operation has happened. It is sent only by owner and read by stats handle.
 	ddlEventCh chan *ddl.Event
 
@@ -45,7 +51,8 @@ type Handle struct {
 // Clear the statsCache, only for test.
 func (h *Handle) Clear() {
 	h.statsCache.Store(statsCache{})
-	h.lastVersion = 0
+	h.LastVersion = 0
+	h.PrevLastVersion = 0
 }
 
 // NewHandle creates a Handle for update stats.
@@ -62,11 +69,12 @@ func NewHandle(ctx context.Context) *Handle {
 
 // Update reads stats meta from store and updates the stats map.
 func (h *Handle) Update(is infoschema.InfoSchema) error {
-	sql := fmt.Sprintf("SELECT version, table_id, count from mysql.stats_meta where version > %d order by version", h.lastVersion)
+	sql := fmt.Sprintf("SELECT version, table_id, count from mysql.stats_meta where version > %d order by version", h.PrevLastVersion)
 	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	h.PrevLastVersion = h.LastVersion
 	tables := make([]*Table, 0, len(rows))
 	for _, row := range rows {
 		version, tableID, count := row.Data[0].GetUint64(), row.Data[1].GetInt64(), row.Data[2].GetInt64()
@@ -83,7 +91,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 			continue
 		}
 		tables = append(tables, tbl)
-		h.lastVersion = version
+		h.LastVersion = version
 	}
 	h.updateTableStats(tables)
 	return nil
