@@ -14,6 +14,7 @@
 package privileges
 
 import (
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -29,12 +30,20 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-const (
-	userTablePrivilegeMask = mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.DeletePriv | mysql.CreatePriv | mysql.DropPriv | mysql.GrantPriv | mysql.IndexPriv | mysql.AlterPriv | mysql.ShowDBPriv | mysql.ExecutePriv | mysql.CreateUserPriv
-	dbTablePrivilegeMask   = mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.DeletePriv | mysql.CreatePriv | mysql.DropPriv | mysql.GrantPriv | mysql.IndexPriv | mysql.AlterPriv
-	tablePrivMask          = mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.DeletePriv | mysql.CreatePriv | mysql.DropPriv | mysql.GrantPriv | mysql.IndexPriv | mysql.AlterPriv
-	columnPrivMask         = mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv
+var (
+	userTablePrivilegeMask = computePrivMask(mysql.AllGlobalPrivs)
+	dbTablePrivilegeMask   = computePrivMask(mysql.AllDBPrivs)
+	tablePrivMask          = computePrivMask(mysql.AllTablePrivs)
+	columnPrivMask         = computePrivMask(mysql.AllColumnPrivs)
 )
+
+func computePrivMask(privs []mysql.PrivilegeType) mysql.PrivilegeType {
+	var mask mysql.PrivilegeType
+	for _, p := range privs {
+		mask |= p
+	}
+	return mask
+}
 
 type userRecord struct {
 	Host       string // max length 60, primary key
@@ -140,7 +149,7 @@ func noSuchTable(err error) bool {
 
 // LoadUserTable loads the mysql.user table from database.
 func (p *MySQLPrivilege) LoadUserTable(ctx context.Context) error {
-	return p.loadTable(ctx, "select Host,User,Password,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Alter_priv,Show_db_priv,Execute_priv,Index_priv,Create_user_priv from mysql.user order by host, user;", p.decodeUserTableRow)
+	return p.loadTable(ctx, "select Host,User,Password,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Alter_priv,Show_db_priv,Super_priv,Execute_priv,Index_priv,Create_user_priv from mysql.user order by host, user;", p.decodeUserTableRow)
 }
 
 // LoadDBTable loads the mysql.db table from database.
@@ -416,6 +425,143 @@ func (p *MySQLPrivilege) RequestVerification(user, host, db, table, column strin
 	}
 
 	return false
+}
+
+// DBIsVisible checks whether the user can see the db.
+func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
+	if record := p.matchUser(user, host); record != nil {
+		if record.Privileges&mysql.ShowDBPriv > 0 {
+			return true
+		}
+	}
+
+	if record := p.matchDB(user, host, db); record != nil {
+		if record.Privileges > 0 {
+			return true
+		}
+	}
+
+	for _, record := range p.TablesPriv {
+		if record.User == user &&
+			patternMatch(host, record.patChars, record.patTypes) &&
+			strings.EqualFold(record.DB, db) {
+			if record.TablePriv != 0 || record.ColumnPriv != 0 {
+				return true
+			}
+		}
+	}
+
+	for _, record := range p.ColumnsPriv {
+		if record.User == user &&
+			patternMatch(host, record.patChars, record.patTypes) &&
+			strings.EqualFold(record.DB, db) {
+			if record.ColumnPriv != 0 {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func (p *MySQLPrivilege) showGrants(user, host string) []string {
+	var gs []string
+	// Show global grants
+	for _, record := range p.User {
+		if record.User == user && record.Host == host {
+			g := userPrivToString(record.Privileges)
+			s := fmt.Sprintf(`GRANT %s ON *.* TO '%s'@'%s'`, g, record.User, record.Host)
+			gs = append(gs, s)
+			break // it's unique
+		}
+	}
+
+	// Show db scope grants
+	for _, record := range p.DB {
+		if record.User == user && record.Host == host {
+			g := dbPrivToString(record.Privileges)
+			s := fmt.Sprintf(`GRANT %s ON %s.* TO '%s'@'%s'`, g, record.DB, record.User, record.Host)
+			gs = append(gs, s)
+		}
+	}
+
+	// Show table scope grants
+	for _, record := range p.TablesPriv {
+		if record.User == user && record.Host == host {
+			g := tablePrivToString(record.TablePriv)
+			s := fmt.Sprintf(`GRANT %s ON %s.%s TO '%s'@'%s'`, g, record.DB, record.TableName, record.User, record.Host)
+			gs = append(gs, s)
+		}
+	}
+	return gs
+}
+
+func userPrivToString(privs mysql.PrivilegeType) string {
+	if privs == userTablePrivilegeMask {
+		return mysql.AllPrivilegeLiteral
+	}
+	return privToString(privs, mysql.AllGlobalPrivs, mysql.Priv2Str)
+}
+
+func dbPrivToString(privs mysql.PrivilegeType) string {
+	if privs == dbTablePrivilegeMask {
+		return mysql.AllPrivilegeLiteral
+	}
+	return privToString(privs, mysql.AllDBPrivs, mysql.Priv2SetStr)
+}
+
+func tablePrivToString(privs mysql.PrivilegeType) string {
+	if privs == tablePrivMask {
+		return mysql.AllPrivilegeLiteral
+	}
+	return privToString(privs, mysql.AllTablePrivs, mysql.Priv2Str)
+}
+
+func privToString(priv mysql.PrivilegeType, allPrivs []mysql.PrivilegeType, allPrivNames map[mysql.PrivilegeType]string) string {
+	pstrs := make([]string, 0, 20)
+	for _, p := range allPrivs {
+		if priv&p == 0 {
+			continue
+		}
+		s, _ := allPrivNames[p]
+		pstrs = append(pstrs, s)
+	}
+	return strings.Join(pstrs, ",")
+}
+
+// UserPrivilegesTable provide data for INFORMATION_SCHEMA.USERS_PRIVILEGE table.
+func (p *MySQLPrivilege) UserPrivilegesTable() [][]types.Datum {
+	var rows [][]types.Datum
+	for _, user := range p.User {
+		rows = appendUserPrivilegesTableRow(rows, user)
+	}
+	return rows
+}
+
+func appendUserPrivilegesTableRow(rows [][]types.Datum, user userRecord) [][]types.Datum {
+	var isGrantable string
+	if user.Privileges&mysql.GrantPriv > 0 {
+		isGrantable = "YES"
+	} else {
+		isGrantable = "NO"
+	}
+	gurantee := fmt.Sprintf("'%s'@'%s'", user.User, user.Host)
+
+	for _, priv := range mysql.AllGlobalPrivs {
+		if priv == mysql.GrantPriv {
+			continue
+		}
+		if user.Privileges&priv > 0 {
+			privilegeType := mysql.Priv2Str[priv]
+			// +---------------------------+---------------+-------------------------+--------------+
+			// | GRANTEE                   | TABLE_CATALOG | PRIVILEGE_TYPE          | IS_GRANTABLE |
+			// +---------------------------+---------------+-------------------------+--------------+
+			// | 'root'@'localhost'        | def           | SELECT                  | YES          |
+			record := types.MakeDatums(gurantee, "def", privilegeType, isGrantable)
+			rows = append(rows, record)
+		}
+	}
+	return rows
 }
 
 // Handle wraps MySQLPrivilege providing thread safe access.

@@ -43,7 +43,7 @@ func (e *Evaluator) evalCaseWhen(expr *tipb.Expr) (d types.Datum, err error) {
 		if child.IsNull() {
 			continue
 		}
-		x, err := child.ToBool(e.sc)
+		x, err := child.ToBool(e.StatementCtx)
 		if err != nil {
 			return d, errors.Trace(err)
 		}
@@ -76,7 +76,7 @@ func (e *Evaluator) evalIf(expr *tipb.Expr) (d types.Datum, err error) {
 		return d, errors.Trace(err)
 	}
 	if !child1.IsNull() {
-		x, err := child1.ToBool(e.sc)
+		x, err := child1.ToBool(e.StatementCtx)
 		if err != nil {
 			return d, errors.Trace(err)
 		}
@@ -100,7 +100,7 @@ func (e *Evaluator) evalNullIf(expr *tipb.Expr) (d types.Datum, err error) {
 	if left.IsNull() || right.IsNull() {
 		return left, nil
 	}
-	x, err := left.CompareDatum(e.sc, right)
+	x, err := left.CompareDatum(e.StatementCtx, right)
 	if err != nil {
 		return d, errors.Trace(err)
 	}

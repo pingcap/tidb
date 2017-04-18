@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -110,7 +111,7 @@ func calculateSum(sc *variable.StatementContext, sum, v types.Datum) (data types
 	}
 }
 
-// getValidPrefix gets a prefix of string which can parsed to a number with base. the minimun base is 2 and the maximum is 36.
+// getValidPrefix gets a prefix of string which can parsed to a number with base. the minimum base is 2 and the maximum is 36.
 func getValidPrefix(s string, base int64) string {
 	var (
 		validLen int
@@ -152,26 +153,90 @@ Loop:
 // createDistinctChecker creates a new distinct checker.
 func createDistinctChecker() *distinctChecker {
 	return &distinctChecker{
-		existingKeys: make(map[string]bool),
+		existingKeys: mvmap.NewMVMap(),
 	}
 }
 
 // Checker stores existing keys and checks if given data is distinct.
 type distinctChecker struct {
-	existingKeys map[string]bool
+	existingKeys *mvmap.MVMap
+	buf          []byte
 }
 
 // Check checks if values is distinct.
-func (d *distinctChecker) Check(values []interface{}) (bool, error) {
-	bs, err := codec.EncodeValue([]byte{}, types.MakeDatums(values...)...)
+func (d *distinctChecker) Check(values []types.Datum) (bool, error) {
+	d.buf = d.buf[:0]
+	var err error
+	d.buf, err = codec.EncodeValue(d.buf, values...)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	key := string(bs)
-	_, ok := d.existingKeys[key]
-	if ok {
+	v := d.existingKeys.Get(d.buf)
+	if v != nil {
 		return false, nil
 	}
-	d.existingKeys[key] = true
+	d.existingKeys.Put(d.buf, []byte{})
 	return true, nil
+}
+
+// SubstituteCorCol2Constant will substitute correlated column to constant value which it contains.
+// If the args of one scalar function are all constant, we will substitute it to constant.
+func SubstituteCorCol2Constant(expr Expression) (Expression, error) {
+	switch x := expr.(type) {
+	case *ScalarFunction:
+		allConstant := true
+		newArgs := make([]Expression, 0, len(x.GetArgs()))
+		for _, arg := range x.GetArgs() {
+			newArg, err := SubstituteCorCol2Constant(arg)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			_, ok := newArg.(*Constant)
+			newArgs = append(newArgs, newArg)
+			allConstant = allConstant && ok
+		}
+		if allConstant {
+			val, err := x.Eval(nil)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			return &Constant{Value: val}, nil
+		}
+		var newSf Expression
+		if x.FuncName.L == ast.Cast {
+			newSf = NewCastFunc(x.RetType, newArgs[0], x.GetCtx())
+		} else {
+			newSf, _ = NewFunction(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
+		}
+		return newSf, nil
+	case *CorrelatedColumn:
+		return &Constant{Value: *x.Data, RetType: x.GetType()}, nil
+	default:
+		return x.Clone(), nil
+	}
+}
+
+// ConvertCol2CorCol will convert the column in the condition which can be found in outerSchema to a correlated column whose
+// Column is this column. And please make sure the outerSchema.Columns[i].Equal(corCols[i].Column)) holds when you call this.
+func ConvertCol2CorCol(cond Expression, corCols []*CorrelatedColumn, outerSchema *Schema) Expression {
+	switch x := cond.(type) {
+	case *ScalarFunction:
+		newArgs := make([]Expression, 0, len(x.GetArgs()))
+		for _, arg := range x.GetArgs() {
+			newArg := ConvertCol2CorCol(arg, corCols, outerSchema)
+			newArgs = append(newArgs, newArg)
+		}
+		var newSf Expression
+		if x.FuncName.L == ast.Cast {
+			newSf = NewCastFunc(x.RetType, newArgs[0], x.GetCtx())
+		} else {
+			newSf, _ = NewFunction(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
+		}
+		return newSf
+	case *Column:
+		if pos := outerSchema.ColumnIndex(x); pos >= 0 {
+			return corCols[pos]
+		}
+	}
+	return cond
 }

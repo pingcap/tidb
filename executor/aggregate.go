@@ -15,10 +15,11 @@ package executor
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -26,24 +27,23 @@ import (
 // It is built from the Aggregate Plan. When Next() is called, it reads all the data from Src
 // and updates all the items in AggFuncs.
 type HashAggExec struct {
-	Src               Executor
-	schema            *expression.Schema
-	executed          bool
-	hasGby            bool
-	aggType           plan.AggregationType
-	ctx               context.Context
-	AggFuncs          []expression.AggregationFunction
-	groupMap          map[string]bool
-	groups            [][]byte
-	currentGroupIndex int
-	GroupByItems      []expression.Expression
+	Src           Executor
+	schema        *expression.Schema
+	executed      bool
+	hasGby        bool
+	aggType       plan.AggregationType
+	sc            *variable.StatementContext
+	AggFuncs      []expression.AggregationFunction
+	groupMap      *mvmap.MVMap
+	groupIterator *mvmap.Iterator
+	GroupByItems  []expression.Expression
 }
 
 // Close implements the Executor Close interface.
 func (e *HashAggExec) Close() error {
 	e.executed = false
-	e.groups = nil
-	e.currentGroupIndex = 0
+	e.groupMap = nil
+	e.groupIterator = nil
 	for _, agg := range e.AggFuncs {
 		agg.Clear()
 	}
@@ -59,7 +59,8 @@ func (e *HashAggExec) Schema() *expression.Schema {
 func (e *HashAggExec) Next() (*Row, error) {
 	// In this stage we consider all data from src as a single group.
 	if !e.executed {
-		e.groupMap = make(map[string]bool)
+		e.groupMap = mvmap.NewMVMap()
+		e.groupIterator = e.groupMap.NewIterator()
 		for {
 			hasMore, err := e.innerNext()
 			if err != nil {
@@ -69,24 +70,23 @@ func (e *HashAggExec) Next() (*Row, error) {
 				break
 			}
 		}
-		e.executed = true
-		if (len(e.groups) == 0) && !e.hasGby {
+		if (e.groupMap.Len() == 0) && !e.hasGby {
 			// If no groupby and no data, we should add an empty group.
 			// For example:
 			// "select count(c) from t;" should return one row [0]
 			// "select count(c) from t group by c1;" should return empty result set.
-			e.groups = append(e.groups, []byte{})
+			e.groupMap.Put([]byte{}, []byte{})
 		}
+		e.executed = true
 	}
-	if e.currentGroupIndex >= len(e.groups) {
+	groupKey, _ := e.groupIterator.Next()
+	if groupKey == nil {
 		return nil, nil
 	}
 	retRow := &Row{Data: make([]types.Datum, 0, len(e.AggFuncs))}
-	groupKey := e.groups[e.currentGroupIndex]
 	for _, af := range e.AggFuncs {
 		retRow.Data = append(retRow.Data, af.GetGroupResult(groupKey))
 	}
-	e.currentGroupIndex++
 	return retRow, nil
 }
 
@@ -139,25 +139,24 @@ func (e *HashAggExec) innerNext() (ret bool, err error) {
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if _, ok := e.groupMap[string(groupKey)]; !ok {
-		e.groupMap[string(groupKey)] = true
-		e.groups = append(e.groups, groupKey)
+	if e.groupMap.Get(groupKey) == nil {
+		e.groupMap.Put(groupKey, []byte{})
 	}
 	for _, af := range e.AggFuncs {
-		af.Update(srcRow.Data, groupKey, e.ctx)
+		af.Update(srcRow.Data, groupKey, e.sc)
 	}
 	return true, nil
 }
 
 // StreamAggExec deals with all the aggregate functions.
-// It assumes all the input datas is sorted by group by key.
+// It assumes all the input data is sorted by group by key.
 // When Next() is called, it will return a result for the same group.
 type StreamAggExec struct {
 	Src                Executor
 	schema             *expression.Schema
 	executed           bool
 	hasData            bool
-	Ctx                context.Context
+	StmtCtx            *variable.StatementContext
 	AggFuncs           []expression.AggregationFunction
 	GroupByItems       []expression.Expression
 	curGroupEncodedKey []byte
@@ -211,7 +210,7 @@ func (e *StreamAggExec) Next() (*Row, error) {
 			break
 		}
 		for _, af := range e.AggFuncs {
-			err = af.StreamUpdate(row.Data, e.Ctx)
+			err = af.StreamUpdate(row.Data, e.StmtCtx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -236,14 +235,13 @@ func (e *StreamAggExec) meetNewGroup(row *Row) (bool, error) {
 	if len(e.curGroupKey) == 0 {
 		matched, firstGroup = false, true
 	}
-	sc := e.Ctx.GetSessionVars().StmtCtx
 	for i, item := range e.GroupByItems {
 		v, err := item.Eval(row.Data)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		if matched {
-			c, err := v.CompareDatum(sc, e.curGroupKey[i])
+			c, err := v.CompareDatum(e.StmtCtx, e.curGroupKey[i])
 			if err != nil {
 				return false, errors.Trace(err)
 			}

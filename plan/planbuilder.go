@@ -63,6 +63,46 @@ type visitInfo struct {
 	column    string
 }
 
+type tableHintInfo struct {
+	INLJTables          []model.CIStr
+	sortMergeJoinTables []model.CIStr
+}
+
+func (info *tableHintInfo) ifPreferMergeJoin(tableNames ...*model.CIStr) bool {
+	// Only need either side matches one on the list.
+	// Even though you can put 2 tables on the list,
+	// it doesn't mean optimizer will reorder to make them
+	// join directly.
+	// Which it joins on with depend on sequence of traverse
+	// and without reorder, user might adjust themselves.
+	// This is similar to MySQL hints.
+	for _, tableName := range tableNames {
+		if tableName == nil {
+			continue
+		}
+		for _, curEntry := range info.sortMergeJoinTables {
+			if curEntry.L == tableName.L {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (info *tableHintInfo) ifPreferINLJ(tableNames ...*model.CIStr) bool {
+	for _, tableName := range tableNames {
+		if tableName == nil {
+			continue
+		}
+		for _, curEntry := range info.INLJTables {
+			if curEntry.L == tableName.L {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // planBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
 type planBuilder struct {
@@ -77,8 +117,9 @@ type planBuilder struct {
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
 	// Collect the visit information for privilege check.
-	visitInfo []visitInfo
-	optFlag   uint64
+	visitInfo     []visitInfo
+	tableHintInfo []tableHintInfo
+	optFlag       uint64
 }
 
 func (b *planBuilder) build(node ast.Node) Plan {
@@ -141,10 +182,7 @@ func (b *planBuilder) buildExecute(v *ast.ExecuteStmt) Plan {
 
 func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 	exprs := make([]expression.Expression, 0, len(v.Exprs))
-	dual := &TableDual{
-		baseLogicalPlan: newBaseLogicalPlan(Dual, b.allocator),
-	}
-	dual.self = dual
+	dual := TableDual{RowCount: 1}.init(b.allocator, b.ctx)
 	for _, astExpr := range v.Exprs {
 		expr, _, err := b.rewrite(astExpr, dual, nil, true)
 		if err != nil {
@@ -154,11 +192,7 @@ func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 		exprs = append(exprs, expr)
 	}
 	dual.SetSchema(expression.NewSchema())
-	p := &Projection{
-		Exprs:           exprs,
-		baseLogicalPlan: newBaseLogicalPlan(Proj, b.allocator),
-	}
-	p.initIDAndContext(b.ctx)
+	p := Projection{Exprs: exprs}.init(b.allocator, b.ctx)
 	addChild(p, dual)
 	p.self = p
 	p.SetSchema(expression.NewSchema())
@@ -167,8 +201,6 @@ func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 
 func (b *planBuilder) buildSet(v *ast.SetStmt) Plan {
 	p := &Set{}
-	p.tp = St
-	p.allocator = b.allocator
 	for _, vars := range v.Variables {
 		assign := &expression.VarAssignment{
 			Name:     vars.Name,
@@ -191,7 +223,6 @@ func (b *planBuilder) buildSet(v *ast.SetStmt) Plan {
 		}
 		p.VarAssigns = append(p.VarAssigns, assign)
 	}
-	p.initIDAndContext(b.ctx)
 	p.SetSchema(expression.NewSchema())
 	return p
 }
@@ -295,12 +326,7 @@ func findIndexByName(indices []*model.IndexInfo, name model.CIStr) *model.IndexI
 }
 
 func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *SelectLock {
-	selectLock := &SelectLock{
-		Lock:            lock,
-		baseLogicalPlan: newBaseLogicalPlan(Lock, b.allocator),
-	}
-	selectLock.self = selectLock
-	selectLock.initIDAndContext(b.ctx)
+	selectLock := SelectLock{Lock: lock}.init(b.allocator, b.ctx)
 	addChild(selectLock, src)
 	selectLock.SetSchema(src.Schema())
 	return selectLock
@@ -335,26 +361,25 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 	return p
 }
 
-// getColumnOffsets returns the offsets of index columns, normal columns and primary key with integer type.
-func getColumnOffsets(tn *ast.TableName) (indexOffsets []int, columnOffsets []int, pkOffset int) {
+// getColsInfo returns the info of index columns, normal columns and primary key.
+func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []*model.ColumnInfo, pkCol *model.ColumnInfo) {
 	tbl := tn.TableInfo
 	// idxNames contains all the normal columns that can be analyzed more effectively, because those columns occur as index
 	// columns or primary key columns with integer type.
 	var idxNames []string
-	pkOffset = -1
 	if tbl.PKIsHandle {
-		for i, col := range tbl.Columns {
+		for _, col := range tbl.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
 				idxNames = append(idxNames, col.Name.L)
-				pkOffset = i
+				pkCol = col
 			}
 		}
 	}
 	indices, _ := availableIndices(tn.IndexHints, tn.TableInfo)
 	for _, index := range indices {
-		for i, idx := range tn.TableInfo.Indices {
+		for _, idx := range tn.TableInfo.Indices {
 			if index.Name.L == idx.Name.L {
-				indexOffsets = append(indexOffsets, i)
+				indicesInfo = append(indicesInfo, idx)
 				break
 			}
 		}
@@ -362,7 +387,7 @@ func getColumnOffsets(tn *ast.TableName) (indexOffsets []int, columnOffsets []in
 			idxNames = append(idxNames, index.Columns[0].Name.L)
 		}
 	}
-	for i, col := range tbl.Columns {
+	for _, col := range tbl.Columns {
 		isIndexCol := false
 		for _, idx := range idxNames {
 			if idx == col.Name.L {
@@ -371,33 +396,25 @@ func getColumnOffsets(tn *ast.TableName) (indexOffsets []int, columnOffsets []in
 			}
 		}
 		if !isIndexCol {
-			columnOffsets = append(columnOffsets, i)
+			colsInfo = append(colsInfo, col)
 		}
 	}
 	return
 }
 
 func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) LogicalPlan {
-	p := &Analyze{
-		baseLogicalPlan: newBaseLogicalPlan(Aly, b.allocator),
-		PkOffset:        -1,
-	}
+	p := Analyze{}.init(b.allocator, b.ctx)
 	for _, tbl := range as.TableNames {
-		idxOffsets, colOffsets, pkOffset := getColumnOffsets(tbl)
-		result := &Analyze{
-			baseLogicalPlan: newBaseLogicalPlan(Aly, b.allocator),
-			Table:           tbl,
-			IdxOffsets:      idxOffsets,
-			ColOffsets:      colOffsets,
-			PkOffset:        pkOffset,
-		}
-		result.self = result
-		result.initIDAndContext(b.ctx)
+		idxInfo, colInfo, pkInfo := getColsInfo(tbl)
+		result := Analyze{
+			TableInfo:   tbl.TableInfo,
+			IndicesInfo: idxInfo,
+			ColsInfo:    colInfo,
+			PkInfo:      pkInfo,
+		}.init(b.allocator, b.ctx)
 		result.SetSchema(expression.TableInfo2Schema(tbl.TableInfo))
 		addChild(p, result)
 	}
-	p.self = p
-	p.initIDAndContext(b.ctx)
 	p.SetSchema(&expression.Schema{})
 	return p
 }
@@ -460,19 +477,16 @@ func splitWhere(where ast.ExprNode) []ast.ExprNode {
 
 func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 	var resultPlan Plan
-	p := &Show{
-		Tp:              show.Tp,
-		DBName:          show.DBName,
-		Table:           show.Table,
-		Column:          show.Column,
-		Flag:            show.Flag,
-		Full:            show.Full,
-		User:            show.User,
-		baseLogicalPlan: newBaseLogicalPlan("Show", b.allocator),
-	}
+	p := Show{
+		Tp:     show.Tp,
+		DBName: show.DBName,
+		Table:  show.Table,
+		Column: show.Column,
+		Flag:   show.Flag,
+		Full:   show.Full,
+		User:   show.User,
+	}.init(b.allocator, b.ctx)
 	resultPlan = p
-	p.initIDAndContext(b.ctx)
-	p.self = p
 	switch show.Tp {
 	case ast.ShowProcedureStatus:
 		p.SetSchema(buildShowProcedureSchema())
@@ -509,12 +523,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 		}
 	}
 	if len(conditions) != 0 {
-		sel := &Selection{
-			baseLogicalPlan: newBaseLogicalPlan(Sel, b.allocator),
-			Conditions:      conditions,
-		}
-		sel.initIDAndContext(b.ctx)
-		sel.self = sel
+		sel := Selection{Conditions: conditions}.init(b.allocator, b.ctx)
 		addChild(sel, p)
 		sel.SetSchema(p.Schema())
 		resultPlan = sel
@@ -531,9 +540,8 @@ func (b *planBuilder) buildSimple(node ast.StmtNode) Plan {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "")
 	case *ast.GrantStmt:
 		b.visitInfo = collectVisitInfoFromGrantStmt(b.visitInfo, raw)
-	case *ast.SetPwdStmt, *ast.RevokeStmt:
-		// TODO: Require SUPER privilege, it's a temporary solution here.
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "")
+	case *ast.SetPwdStmt, *ast.RevokeStmt, *ast.KillStmt:
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "")
 	}
 	return p
 }
@@ -605,15 +613,14 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		b.err = errors.Errorf("Can't get table %s.", tableInfo.Name.O)
 		return nil
 	}
-	insertPlan := &Insert{
-		Table:           table,
-		Columns:         insert.Columns,
-		tableSchema:     schema,
-		IsReplace:       insert.IsReplace,
-		Priority:        insert.Priority,
-		Ignore:          insert.Ignore,
-		baseLogicalPlan: newBaseLogicalPlan(Ins, b.allocator),
-	}
+	insertPlan := Insert{
+		Table:       table,
+		Columns:     insert.Columns,
+		tableSchema: schema,
+		IsReplace:   insert.IsReplace,
+		Priority:    insert.Priority,
+		Ignore:      insert.Ignore,
+	}.init(b.allocator, b.ctx)
 
 	b.visitInfo = append(b.visitInfo, visitInfo{
 		privilege: mysql.InsertPriv,
@@ -670,7 +677,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 			Expr: expr,
 		})
 	}
-	mockTablePlan := &TableDual{}
+	mockTablePlan := TableDual{}.init(b.allocator, b.ctx)
 	mockTablePlan.SetSchema(schema)
 	for _, assign := range insert.OnDuplicate {
 		col, err := schema.FindColumn(assign.Column)
@@ -692,8 +699,6 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 			Expr: expr,
 		})
 	}
-	insertPlan.initIDAndContext(b.ctx)
-	insertPlan.self = insertPlan
 	if insert.Select != nil {
 		selectPlan := b.build(insert.Select)
 		if b.err != nil {

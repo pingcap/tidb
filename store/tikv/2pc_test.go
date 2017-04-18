@@ -145,7 +145,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 		err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff, ctx), committer.keys)
 		c.Assert(err, IsNil)
 	}
-	committer.commitTS, err = s.store.oracle.GetTimestamp()
+	committer.commitTS, err = s.store.oracle.GetTimestamp(ctx)
 	c.Assert(err, IsNil)
 	err = committer.commitKeys(NewBackoffer(commitMaxBackoff, ctx), [][]byte{[]byte("a")})
 	c.Assert(err, IsNil)
@@ -166,9 +166,9 @@ func (s *testCommitterSuite) TestContextCancel(c *C) {
 	c.Assert(err, IsNil)
 
 	bo := NewBackoffer(prewriteMaxBackoff, goctx.Background())
-	cancel := bo.WithCancel()
+	backoffer, cancel := bo.Fork()
 	cancel() // cancel the context
-	err = committer.prewriteKeys(bo, committer.keys)
+	err = committer.prewriteKeys(backoffer, committer.keys)
 	c.Assert(errors.Cause(err), Equals, goctx.Canceled)
 }
 

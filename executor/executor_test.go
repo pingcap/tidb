@@ -70,11 +70,9 @@ func (s *testSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	logLevel := os.Getenv("log_level")
 	log.SetLevelByString(logLevel)
-	executor.BaseLookupTableTaskSize = 2
 }
 
 func (s *testSuite) TearDownSuite(c *C) {
-	executor.BaseLookupTableTaskSize = 512
 	s.store.Close()
 }
 
@@ -118,7 +116,6 @@ func (s *testSuite) TestAdmin(c *C) {
 	rowOwnerInfos = strings.Split(row.Data[4].GetString(), ",")
 	ownerInfos = strings.Split(bgInfo.Owner.String(), ",")
 	c.Assert(rowOwnerInfos[0], Equals, ownerInfos[0])
-	c.Assert(row.Data[5].GetString(), Equals, "")
 	row, err = r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, IsNil)
@@ -251,6 +248,38 @@ func (s *testSuite) TestSelectLimit(c *C) {
 	tk.MustExec("rollback")
 }
 
+func (s *testSuite) TestDAG(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("create table select_dag(id int not null default 1, name varchar(255));")
+
+	tk.MustExec("insert INTO select_dag VALUES (1, \"hello\");")
+	tk.MustExec("insert INTO select_dag VALUES (2, \"hello\");")
+	tk.MustExec("insert INTO select_dag VALUES (3, \"hello\");")
+	tk.CheckExecResult(1, 0)
+
+	r := tk.MustQuery("select * from select_dag;")
+	rowStr1 := fmt.Sprintf("%v %v", 1, []byte("hello"))
+	rowStr2 := fmt.Sprintf("%v %v", 2, []byte("hello"))
+	rowStr3 := fmt.Sprintf("%v %v", 3, []byte("hello"))
+	r.Check(testkit.Rows(rowStr1, rowStr2, rowStr3))
+
+	r = tk.MustQuery("select * from select_dag where id > 1;")
+	r.Check(testkit.Rows(rowStr2, rowStr3))
+
+	// for limit
+	r = tk.MustQuery("select * from select_dag limit 1;")
+	r.Check(testkit.Rows(rowStr1))
+	r = tk.MustQuery("select * from select_dag limit 0;")
+	r.Check(testkit.Rows())
+	r = tk.MustQuery("select * from select_dag limit 5;")
+	r.Check(testkit.Rows(rowStr1, rowStr2, rowStr3))
+}
+
 func (s *testSuite) TestSelectOrderBy(c *C) {
 	defer func() {
 		s.cleanEnv(c)
@@ -266,6 +295,9 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	rowStr := fmt.Sprintf("%v %v", 1, []byte("hello"))
 	r.Check(testkit.Rows(rowStr))
 	tk.MustExec("commit")
+
+	r = tk.MustQuery("select id from select_order_test order by id desc limit 1 ")
+	r.Check(testkit.Rows("2"))
 
 	r = tk.MustQuery("select id from select_order_test order by id + 1 desc limit 1 ")
 	r.Check(testkit.Rows("2"))
@@ -1279,4 +1311,17 @@ func (s *testSuite) TestHistoryRead(c *C) {
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2", "4"))
 	tk.MustExec("set @@tidb_snapshot = ''")
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2 <nil>", "4 <nil>", "8 8", "9 9"))
+}
+
+func (s *testSuite) TestScanControlSelection(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int, c int, index idx_b(b))")
+	tk.MustExec("insert into t values (1, 1, 1), (2, 1, 1), (3, 1, 2), (4, 2, 3)")
+	tk.MustQuery("select (select count(1) k from t s where s.b = t1.c) from t t1").Check(testkit.Rows("3", "3", "1", "0"))
 }

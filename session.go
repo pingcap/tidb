@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
@@ -111,8 +112,12 @@ type session struct {
 	goCtx      goctx.Context
 	cancelFunc goctx.CancelFunc
 
-	values map[fmt.Stringer]interface{}
-	store  kv.Storage
+	mu struct {
+		sync.RWMutex
+		values map[fmt.Stringer]interface{}
+	}
+
+	store kv.Storage
 
 	// Used for test only.
 	unlimitedRetryCount bool
@@ -123,6 +128,8 @@ type session struct {
 
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
+
+	statsCollector *statistics.SessionStatsCollector
 }
 
 // Cancel cancels the execution of current transaction.
@@ -132,9 +139,9 @@ func (s *session) Cancel() {
 	s.cancelFunc()
 }
 
-// Canceled implements context.Context interface.
-func (s *session) Done() <-chan struct{} {
-	return s.goCtx.Done()
+// GoCtx returns the standard context.Context that bind with current transaction.
+func (s *session) GoCtx() goctx.Context {
+	return s.goCtx
 }
 
 func (s *session) cleanRetryInfo() {
@@ -152,7 +159,10 @@ func (s *session) Status() uint16 {
 }
 
 func (s *session) LastInsertID() uint64 {
-	return s.sessionVars.LastInsertID
+	if s.sessionVars.LastInsertID > 0 {
+		return s.sessionVars.LastInsertID
+	}
+	return s.sessionVars.InsertID
 }
 
 func (s *session) AffectedRows() uint64 {
@@ -268,6 +278,12 @@ func (s *session) doCommitWithRetry() error {
 		log.Warnf("[%d] finished txn:%v, %v", s.sessionVars.ConnectionID, s.txn, err)
 		return errors.Trace(err)
 	}
+	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
+	if s.statsCollector != nil && mapper != nil {
+		for id, item := range mapper {
+			s.statsCollector.Update(id, item.Delta, item.Count)
+		}
+	}
 	return nil
 }
 
@@ -342,11 +358,18 @@ func (s *session) retry(maxCnt int) error {
 	for {
 		s.prepareTxnCtx()
 		s.sessionVars.RetryInfo.ResetOffset()
-		for _, sr := range nh.history {
+		for i, sr := range nh.history {
 			st := sr.st
 			txt := st.OriginText()
-			log.Warnf("[%d] Retry %s", connID, sqlForLog(txt))
+			if retryCnt == 0 {
+				// We do not have to log the query every time.
+				// We print the queries at the first try only.
+				log.Warnf("[%d] Retry [%d] query [%d] %s", connID, retryCnt, i, sqlForLog(txt))
+			} else {
+				log.Warnf("[%d] Retry [%d] query [%d]", connID, retryCnt, i)
+			}
 			s.sessionVars.StmtCtx = sr.stmtCtx
+			s.sessionVars.StmtCtx.ResetForRetry()
 			_, err = st.Exec(s)
 			if err != nil {
 				break
@@ -479,6 +502,11 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 	sysVar, err := s.getExecRet(s, sql)
 	if err != nil {
 		if executor.ErrResultIsEmpty.Equal(err) {
+			sv, ok := variable.SysVars[name]
+			isUninitializedGlobalVariable := ok && sv.Scope|variable.ScopeGlobal > 0
+			if isUninitializedGlobalVariable {
+				return sv.Value, nil
+			}
 			return "", variable.UnknownSystemVar.GenByArgs(name)
 		}
 		return "", errors.Trace(err)
@@ -488,8 +516,8 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
 func (s *session) SetGlobalSysVar(name string, value string) error {
-	sql := fmt.Sprintf(`UPDATE  %s.%s SET VARIABLE_VALUE="%s" WHERE VARIABLE_NAME="%s";`,
-		mysql.SystemDB, mysql.GlobalVariablesTable, value, strings.ToLower(name))
+	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
+		mysql.SystemDB, mysql.GlobalVariablesTable, strings.ToLower(name), value)
 	_, _, err := s.ExecRestrictedSQL(s, sql)
 	return errors.Trace(err)
 }
@@ -706,20 +734,29 @@ func (s *session) NewTxn() error {
 }
 
 func (s *session) SetValue(key fmt.Stringer, value interface{}) {
-	s.values[key] = value
+	s.mu.Lock()
+	s.mu.values[key] = value
+	s.mu.Unlock()
 }
 
 func (s *session) Value(key fmt.Stringer) interface{} {
-	value := s.values[key]
+	s.mu.RLock()
+	value := s.mu.values[key]
+	s.mu.RUnlock()
 	return value
 }
 
 func (s *session) ClearValue(key fmt.Stringer) {
-	delete(s.values, key)
+	s.mu.Lock()
+	delete(s.mu.values, key)
+	s.mu.Unlock()
 }
 
 // Close function does some clean work when session end.
 func (s *session) Close() error {
+	if s.statsCollector != nil {
+		s.statsCollector.Delete()
+	}
 	return s.RollbackTxn()
 }
 
@@ -752,17 +789,17 @@ func (s *session) Auth(user string, auth []byte, salt []byte) bool {
 	// Get user password.
 	name := strs[0]
 	host := strs[1]
-	checker := privilege.GetPrivilegeChecker(s)
+	pm := privilege.GetPrivilegeManager(s)
 
 	// Check IP.
-	if checker.ConnectionVerification(name, host, auth, salt) {
+	if pm.ConnectionVerification(name, host, auth, salt) {
 		s.sessionVars.User = name + "@" + host
 		return true
 	}
 
 	// Check Hostname.
 	for _, addr := range getHostByIP(host) {
-		if checker.ConnectionVerification(name, addr, auth, salt) {
+		if pm.ConnectionVerification(name, addr, auth, salt) {
 			s.sessionVars.User = name + "@" + addr
 			return true
 		}
@@ -804,10 +841,15 @@ func CreateSession(store kv.Storage) (Session, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	privChecker := &privileges.UserPrivileges{
+	pm := &privileges.UserPrivileges{
 		Handle: do.PrivilegeHandle(),
 	}
-	privilege.BindPrivilegeChecker(s, privChecker)
+	privilege.BindPrivilegeManager(s, pm)
+
+	// Add statsUpdateHandle.
+	if do.StatsHandle() != nil {
+		s.statsCollector = do.StatsHandle().NewSessionStatsCollector()
+	}
 
 	return s, nil
 }
@@ -830,7 +872,11 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	err = dom.LoadTableStatsLoop(se)
+	se1, err := createSession(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	err = dom.UpdateTableStatsLoop(se1)
 	return dom, errors.Trace(err)
 }
 
@@ -866,11 +912,11 @@ func createSession(store kv.Storage) (*session, error) {
 		return nil, errors.Trace(err)
 	}
 	s := &session{
-		values:      make(map[fmt.Stringer]interface{}),
 		store:       store,
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
 	}
+	s.mu.values = make(map[fmt.Stringer]interface{})
 	sessionctx.BindDomain(s, domain)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
@@ -880,7 +926,7 @@ func createSession(store kv.Storage) (*session, error) {
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 4
+	currentBootstrapVersion = 6
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -924,12 +970,18 @@ func finishBootstrap(store kv.Storage) {
 	}
 }
 
+const quoteCommaQuote = "', '"
 const loadCommonGlobalVarsSQL = "select * from mysql.global_variables where variable_name in ('" +
-	variable.AutocommitVar + "', '" +
-	variable.SQLModeVar + "', '" +
-	variable.DistSQLJoinConcurrencyVar + "', '" +
-	variable.MaxAllowedPacket + "', '" +
-	variable.DistSQLScanConcurrencyVar + "')"
+	variable.AutocommitVar + quoteCommaQuote +
+	variable.SQLModeVar + quoteCommaQuote +
+	variable.MaxAllowedPacket + quoteCommaQuote +
+	/* TiDB specific global variables: */
+	variable.TiDBSkipUTF8Check + quoteCommaQuote +
+	variable.TiDBSkipDDLWait + quoteCommaQuote +
+	variable.TiDBIndexLookupSize + quoteCommaQuote +
+	variable.TiDBIndexLookupConcurrency + quoteCommaQuote +
+	variable.TiDBIndexSerialScanConcurrency + quoteCommaQuote +
+	variable.TiDBDistSQLScanConcurrency + "')"
 
 // LoadCommonGlobalVariableIfNeeded loads and applies commonly used global variables for the session.
 func (s *session) loadCommonGlobalVariablesIfNeeded() error {

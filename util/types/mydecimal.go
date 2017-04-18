@@ -740,7 +740,7 @@ func (d *MyDecimal) Round(to *MyDecimal, frac int) (err error) {
 			}
 		case 5:
 			digAfterScale := d.wordBuf[toIdx+1] / digMask // the first digit after scale.
-			// If first digit after scale is 5 and round even, do incre if digit at scale is odd.
+			// If first digit after scale is 5 and round even, do increment if digit at scale is odd.
 			doInc = (digAfterScale > 5) || (digAfterScale == 5)
 		}
 		if doInc {

@@ -47,6 +47,7 @@ const (
 	KindInterface     byte = 15
 	KindMinNotNull    byte = 16
 	KindMaxValue      byte = 17
+	KindRaw           byte = 18
 )
 
 // Datum is a data box holds different kind of data.
@@ -289,6 +290,17 @@ func (d *Datum) GetMysqlTime() Time {
 func (d *Datum) SetMysqlTime(b Time) {
 	d.k = KindMysqlTime
 	d.x = b
+}
+
+// SetRaw sets raw value.
+func (d *Datum) SetRaw(b []byte) {
+	d.k = KindRaw
+	d.b = b
+}
+
+// GetRaw gets raw value.
+func (d *Datum) GetRaw() []byte {
+	return d.b
 }
 
 // GetValue gets the value of the datum of any kind.
@@ -657,7 +669,7 @@ func (d *Datum) ConvertTo(sc *variable.StatementContext, target *FieldType) (Dat
 	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
 		mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString:
 		return d.convertToString(sc, target)
-	case mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDate:
+	case mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDate, mysql.TypeNewDate:
 		return d.convertToMysqlTime(sc, target)
 	case mysql.TypeDuration:
 		return d.convertToMysqlDuration(sc, target)
@@ -988,7 +1000,7 @@ func (d *Datum) convertToMysqlDecimal(sc *variable.StatementContext, target *Fie
 		prec, frac := dec.PrecisionAndFrac()
 		if prec-frac > target.Flen-target.Decimal {
 			dec = NewMaxOrMinDec(dec.IsNegative(), target.Flen, target.Decimal)
-			err = errors.Trace(ErrOverflow)
+			err = ErrOverflow.GenByArgs("DECIMAL", fmt.Sprintf("(%d, %d)", target.Flen, target.Decimal))
 		} else if frac != target.Decimal {
 			dec.Round(dec, target.Decimal)
 			if frac > target.Decimal {
@@ -1492,6 +1504,13 @@ func NewDurationDatum(dur Duration) (d Datum) {
 // NewDecimalDatum creates a new Datum form a MyDecimal value.
 func NewDecimalDatum(dec *MyDecimal) (d Datum) {
 	d.SetMysqlDecimal(dec)
+	return d
+}
+
+// NewRawDatum create a new Datum that is not decoded.
+func NewRawDatum(b []byte) (d Datum) {
+	d.k = KindRaw
+	d.b = b
 	return d
 }
 

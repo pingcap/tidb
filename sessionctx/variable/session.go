@@ -15,11 +15,9 @@ package variable
 
 import (
 	"math"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 )
@@ -83,6 +81,18 @@ type TransactionContext struct {
 	InfoSchema    interface{}
 	Histroy       interface{}
 	SchemaVersion int64
+	TableDeltaMap map[int64]TableDelta
+}
+
+// UpdateDeltaForTable updates the delta info for some table.
+func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, count int64) {
+	if tc.TableDeltaMap == nil {
+		tc.TableDeltaMap = make(map[int64]TableDelta)
+	}
+	item := tc.TableDeltaMap[tableID]
+	item.Delta += delta
+	item.Count += count
+	tc.TableDeltaMap[tableID] = item
 }
 
 // SessionVars is to handle user-defined or global variables in current session.
@@ -103,8 +113,10 @@ type SessionVars struct {
 	TxnCtx *TransactionContext
 
 	// following variables are special for current session
-	Status       uint16
-	LastInsertID uint64
+	Status           uint16
+	PrevLastInsertID uint64 // PrevLastInsertID is the last insert ID of previous statement.
+	LastInsertID     uint64 // LastInsertID is the auto-generated ID in the current statement.
+	InsertID         uint64 // InsertID is the given insert ID of an auto_increment column.
 
 	// Client capability
 	ClientCapability uint32
@@ -134,13 +146,6 @@ type SessionVars struct {
 	// version, we load an old version schema for query.
 	SnapshotInfoschema interface{}
 
-	// SkipConstraintCheck is true when importing data.
-	SkipConstraintCheck bool
-
-	// SkipDDLWait can be set to true to skip 2 lease wait after create/drop/truncate table, create/drop database.
-	// Then if there are multiple TiDB servers, the new table may not be available for other TiDB servers.
-	SkipDDLWait bool
-
 	// GlobalAccessor is used to set and get global variables.
 	GlobalVarsAccessor GlobalVarAccessor
 
@@ -162,21 +167,56 @@ type SessionVars struct {
 	TimeZone *time.Location
 
 	SQLMode mysql.SQLMode
+
+	/* TiDB system variables */
+
+	// SkipConstraintCheck is true when importing data.
+	SkipConstraintCheck bool
+
+	// SkipUTF8 check on input value.
+	SkipUTF8Check bool
+
+	// SkipDDLWait can be set to true to skip 2 lease wait after create/drop/truncate table, create/drop database.
+	// Then if there are multiple TiDB servers, the new table may not be available for other TiDB servers.
+	SkipDDLWait bool
+
+	// TiDBBuildStatsConcurrency is used to control statistics building concurrency.
+	BuildStatsConcurrencyVar int
+
+	// The number of handles for a index lookup task in index double read executor.
+	IndexLookupSize int
+
+	// The number of concurrent index lookup worker.
+	IndexLookupConcurrency int
+
+	// The number of concurrent dist SQL scan worker.
+	DistSQLScanConcurrency int
+
+	// The number of concurrent index serial scan worker.
+	IndexSerialScanConcurrency int
+
+	// Should we split insert data into multiple batches.
+	BatchInsert bool
 }
 
 // NewSessionVars creates a session vars object.
 func NewSessionVars() *SessionVars {
 	return &SessionVars{
-		Users:                make(map[string]string),
-		Systems:              make(map[string]string),
-		PreparedStmts:        make(map[uint32]interface{}),
-		PreparedStmtNameToID: make(map[string]uint32),
-		TxnCtx:               &TransactionContext{},
-		RetryInfo:            &RetryInfo{},
-		StrictSQLMode:        true,
-		Status:               mysql.ServerStatusAutocommit,
-		StmtCtx:              new(StatementContext),
-		AllowAggPushDown:     true,
+		Users:                      make(map[string]string),
+		Systems:                    make(map[string]string),
+		PreparedStmts:              make(map[uint32]interface{}),
+		PreparedStmtNameToID:       make(map[string]uint32),
+		TxnCtx:                     &TransactionContext{},
+		RetryInfo:                  &RetryInfo{},
+		StrictSQLMode:              true,
+		Status:                     mysql.ServerStatusAutocommit,
+		StmtCtx:                    new(StatementContext),
+		AllowAggPushDown:           true,
+		BuildStatsConcurrencyVar:   DefBuildStatsConcurrency,
+		IndexLookupSize:            DefIndexLookupSize,
+		IndexLookupConcurrency:     DefIndexLookupConcurrency,
+		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
+		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
 	}
 }
 
@@ -247,21 +287,10 @@ const (
 	TimeZone            = "time_zone"
 )
 
-// GetTiDBSystemVar gets variable value for name.
-// The variable should be a TiDB specific system variable (The vars in tidbSysVars map).
-// We load the variable from session first, if not found, use local defined default variable.
-func (s *SessionVars) GetTiDBSystemVar(name string) (string, error) {
-	key := strings.ToLower(name)
-	_, ok := tidbSysVars[key]
-	if !ok {
-		return "", errors.Errorf("%s is not a TiDB specific system variable.", name)
-	}
-
-	sVal, ok := s.Systems[key]
-	if ok {
-		return sVal, nil
-	}
-	return SysVars[key].Value, nil
+// TableDelta stands for the changed count for one table.
+type TableDelta struct {
+	Delta int64
+	Count int64
 }
 
 // StatementContext contains variables for a statement.
@@ -361,4 +390,13 @@ func (sc *StatementContext) HandleTruncate(err error) error {
 		return nil
 	}
 	return err
+}
+
+// ResetForRetry resets the changed states during execution.
+func (sc *StatementContext) ResetForRetry() {
+	sc.mu.Lock()
+	sc.mu.affectedRows = 0
+	sc.mu.foundRows = 0
+	sc.mu.warnings = nil
+	sc.mu.Unlock()
 }

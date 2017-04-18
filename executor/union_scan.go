@@ -258,7 +258,13 @@ func (us *UnionScanExec) buildAndSortAddedRows(t table.Table, asName *model.CISt
 				continue
 			}
 		}
-		rowKeyEntry := &RowKeyEntry{Handle: h, Tbl: t, TableAsName: asName}
+		rowKeyEntry := &RowKeyEntry{Handle: h, Tbl: t}
+		if asName != nil && asName.L != "" {
+			rowKeyEntry.TableName = asName.L
+		} else {
+			rowKeyEntry.TableName = t.Meta().Name.L
+		}
+
 		row := &Row{Data: newData, RowKeys: []*RowKeyEntry{rowKeyEntry}}
 		us.addedRows = append(us.addedRows, row)
 	}

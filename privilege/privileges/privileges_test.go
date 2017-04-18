@@ -23,8 +23,8 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -54,15 +54,17 @@ type testPrivilegeSuite struct {
 }
 
 func (s *testPrivilegeSuite) SetUpSuit(c *C) {
-	privileges.Enable = true
 	logLevel := os.Getenv("log_level")
 	log.SetLevelByString(logLevel)
 }
 
 func (s *testPrivilegeSuite) SetUpTest(c *C) {
+	privileges.Enable = true
 	s.dbName = "test"
 	s.store = newStore(c, s.dbName)
 	se := newSession(c, s.store, s.dbName)
+	_, err := tidb.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
 	s.createDBSQL = fmt.Sprintf("create database if not exists %s;", s.dbName)
 	s.createDB1SQL = fmt.Sprintf("create database if not exists %s1;", s.dbName)
 	s.dropDBSQL = fmt.Sprintf("drop database if exists %s;", s.dbName)
@@ -95,115 +97,91 @@ func (s *testPrivilegeSuite) TearDownTest(c *C) {
 
 func (s *testPrivilegeSuite) TestCheckDBPrivilege(c *C) {
 	defer testleak.AfterTest(c)()
+	rootSe := newSession(c, s.store, s.dbName)
+	mustExec(c, rootSe, `CREATE USER 'testcheck'@'localhost';`)
+	mustExec(c, rootSe, `FLUSH PRIVILEGES;`)
+
 	se := newSession(c, s.store, s.dbName)
-	mustExec(c, se, `CREATE USER 'test'@'localhost' identified by '123';`)
-	pc := &privileges.UserPrivileges{}
-	db := &model.DBInfo{
-		Name: model.NewCIStr("test"),
-	}
-	ctx, _ := se.(context.Context)
-	ctx.GetSessionVars().User = "test@localhost"
-	r, err := pc.Check(ctx, db, nil, mysql.SelectPriv)
-	c.Assert(err, IsNil)
-	c.Assert(r, IsFalse)
+	c.Assert(se.Auth("testcheck@localhost", nil, nil), IsTrue)
+	pc := privilege.GetPrivilegeManager(se)
+	c.Assert(pc.RequestVerification("test", "", "", mysql.SelectPriv), IsFalse)
 
-	mustExec(c, se, `GRANT SELECT ON *.* TO  'test'@'localhost';`)
-	pc = &privileges.UserPrivileges{}
-	r, err = pc.Check(ctx, db, nil, mysql.SelectPriv)
-	c.Assert(err, IsNil)
-	c.Assert(r, IsTrue)
-	r, err = pc.Check(ctx, db, nil, mysql.UpdatePriv)
-	c.Assert(err, IsNil)
-	c.Assert(r, IsFalse)
+	mustExec(c, rootSe, `GRANT SELECT ON *.* TO  'testcheck'@'localhost';`)
+	mustExec(c, rootSe, `FLUSH PRIVILEGES;`)
+	c.Assert(pc.RequestVerification("test", "", "", mysql.SelectPriv), IsTrue)
+	c.Assert(pc.RequestVerification("test", "", "", mysql.UpdatePriv), IsFalse)
 
-	mustExec(c, se, `GRANT Update ON test.* TO  'test'@'localhost';`)
-	pc = &privileges.UserPrivileges{}
-	r, err = pc.Check(ctx, db, nil, mysql.UpdatePriv)
-	c.Assert(err, IsNil)
-	c.Assert(r, IsTrue)
+	mustExec(c, rootSe, `GRANT Update ON test.* TO  'testcheck'@'localhost';`)
+	mustExec(c, rootSe, `FLUSH PRIVILEGES;`)
+	c.Assert(pc.RequestVerification("test", "", "", mysql.UpdatePriv), IsTrue)
 }
 
 func (s *testPrivilegeSuite) TestCheckTablePrivilege(c *C) {
 	defer testleak.AfterTest(c)()
+	rootSe := newSession(c, s.store, s.dbName)
+	mustExec(c, rootSe, `CREATE USER 'test1'@'localhost';`)
+	mustExec(c, rootSe, `FLUSH PRIVILEGES;`)
+
 	se := newSession(c, s.store, s.dbName)
-	mustExec(c, se, `CREATE USER 'test1'@'localhost' identified by '123';`)
-	pc := &privileges.UserPrivileges{}
-	db := &model.DBInfo{
-		Name: model.NewCIStr("test"),
-	}
-	tbl := &model.TableInfo{
-		Name: model.NewCIStr("test"),
-	}
-	ctx, _ := se.(context.Context)
-	ctx.GetSessionVars().User = "test1@localhost"
-	r, err := pc.Check(ctx, db, tbl, mysql.SelectPriv)
-	c.Assert(err, IsNil)
-	c.Assert(r, IsFalse)
+	c.Assert(se.Auth("test1@localhost", nil, nil), IsTrue)
+	pc := privilege.GetPrivilegeManager(se)
+	c.Assert(pc.RequestVerification("test", "test", "", mysql.SelectPriv), IsFalse)
 
-	mustExec(c, se, `GRANT SELECT ON *.* TO  'test1'@'localhost';`)
-	pc = &privileges.UserPrivileges{}
-	r, err = pc.Check(ctx, db, tbl, mysql.SelectPriv)
-	c.Assert(err, IsNil)
-	c.Assert(r, IsTrue)
-	r, err = pc.Check(ctx, db, tbl, mysql.UpdatePriv)
-	c.Assert(err, IsNil)
-	c.Assert(r, IsFalse)
+	mustExec(c, rootSe, `GRANT SELECT ON *.* TO  'test1'@'localhost';`)
+	mustExec(c, rootSe, `FLUSH PRIVILEGES;`)
+	c.Assert(pc.RequestVerification("test", "test", "", mysql.SelectPriv), IsTrue)
+	c.Assert(pc.RequestVerification("test", "test", "", mysql.UpdatePriv), IsFalse)
 
-	mustExec(c, se, `GRANT Update ON test.* TO  'test1'@'localhost';`)
-	pc = &privileges.UserPrivileges{}
-	r, err = pc.Check(ctx, db, tbl, mysql.UpdatePriv)
-	c.Assert(err, IsNil)
-	c.Assert(r, IsTrue)
-	r, err = pc.Check(ctx, db, tbl, mysql.IndexPriv)
-	c.Assert(err, IsNil)
-	c.Assert(r, IsFalse)
+	mustExec(c, rootSe, `GRANT Update ON test.* TO  'test1'@'localhost';`)
+	mustExec(c, rootSe, `FLUSH PRIVILEGES;`)
+	c.Assert(pc.RequestVerification("test", "test", "", mysql.UpdatePriv), IsTrue)
+	c.Assert(pc.RequestVerification("test", "test", "", mysql.IndexPriv), IsFalse)
 
-	mustExec(c, se, `GRANT Index ON test.test TO  'test1'@'localhost';`)
-	pc = &privileges.UserPrivileges{}
-	r, err = pc.Check(ctx, db, tbl, mysql.IndexPriv)
-	c.Assert(err, IsNil)
-	c.Assert(r, IsTrue)
+	mustExec(c, rootSe, `GRANT Index ON test.test TO  'test1'@'localhost';`)
+	mustExec(c, rootSe, `FLUSH PRIVILEGES;`)
+	c.Assert(pc.RequestVerification("test", "test", "", mysql.IndexPriv), IsTrue)
 }
 
 func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	defer testleak.AfterTest(c)()
 	se := newSession(c, s.store, s.dbName)
-	ctx, _ := se.(context.Context)
 	mustExec(c, se, `CREATE USER 'show'@'localhost' identified by '123';`)
 	mustExec(c, se, `GRANT Index ON *.* TO  'show'@'localhost';`)
-	pc := &privileges.UserPrivileges{}
-	gs, err := pc.ShowGrants(ctx, `show@localhost`)
+	mustExec(c, se, `FLUSH PRIVILEGES;`)
+	pc := privilege.GetPrivilegeManager(se)
+
+	gs, err := pc.ShowGrants(se, `show@localhost`)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 1)
 	c.Assert(gs[0], Equals, `GRANT Index ON *.* TO 'show'@'localhost'`)
 
 	mustExec(c, se, `GRANT Select ON *.* TO  'show'@'localhost';`)
-	pc = &privileges.UserPrivileges{}
-	gs, err = pc.ShowGrants(ctx, `show@localhost`)
+	mustExec(c, se, `FLUSH PRIVILEGES;`)
+	gs, err = pc.ShowGrants(se, `show@localhost`)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 1)
 	c.Assert(gs[0], Equals, `GRANT Select,Index ON *.* TO 'show'@'localhost'`)
 
 	// The order of privs is the same with AllGlobalPrivs
 	mustExec(c, se, `GRANT Update ON *.* TO  'show'@'localhost';`)
-	pc = &privileges.UserPrivileges{}
-	gs, err = pc.ShowGrants(ctx, `show@localhost`)
+	mustExec(c, se, `FLUSH PRIVILEGES;`)
+	gs, err = pc.ShowGrants(se, `show@localhost`)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 1)
 	c.Assert(gs[0], Equals, `GRANT Select,Update,Index ON *.* TO 'show'@'localhost'`)
 
 	// All privileges
 	mustExec(c, se, `GRANT ALL ON *.* TO  'show'@'localhost';`)
-	pc = &privileges.UserPrivileges{}
-	gs, err = pc.ShowGrants(ctx, `show@localhost`)
+	mustExec(c, se, `FLUSH PRIVILEGES;`)
+	gs, err = pc.ShowGrants(se, `show@localhost`)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 1)
 	c.Assert(gs[0], Equals, `GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`)
 
 	// Add db scope privileges
 	mustExec(c, se, `GRANT Select ON test.* TO  'show'@'localhost';`)
-	pc = &privileges.UserPrivileges{}
-	gs, err = pc.ShowGrants(ctx, `show@localhost`)
+	mustExec(c, se, `FLUSH PRIVILEGES;`)
+	gs, err = pc.ShowGrants(se, `show@localhost`)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 2)
 	expected := []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
@@ -211,8 +189,8 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	c.Assert(testutil.CompareUnorderedStringSlice(gs, expected), IsTrue)
 
 	mustExec(c, se, `GRANT Index ON test1.* TO  'show'@'localhost';`)
-	pc = &privileges.UserPrivileges{}
-	gs, err = pc.ShowGrants(ctx, `show@localhost`)
+	mustExec(c, se, `FLUSH PRIVILEGES;`)
+	gs, err = pc.ShowGrants(se, `show@localhost`)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 3)
 	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
@@ -221,8 +199,8 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	c.Assert(testutil.CompareUnorderedStringSlice(gs, expected), IsTrue)
 
 	mustExec(c, se, `GRANT ALL ON test1.* TO  'show'@'localhost';`)
-	pc = &privileges.UserPrivileges{}
-	gs, err = pc.ShowGrants(ctx, `show@localhost`)
+	mustExec(c, se, `FLUSH PRIVILEGES;`)
+	gs, err = pc.ShowGrants(se, `show@localhost`)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 3)
 	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
@@ -232,8 +210,8 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 
 	// Add table scope privileges
 	mustExec(c, se, `GRANT Update ON test.test TO  'show'@'localhost';`)
-	pc = &privileges.UserPrivileges{}
-	gs, err = pc.ShowGrants(ctx, `show@localhost`)
+	mustExec(c, se, `FLUSH PRIVILEGES;`)
+	gs, err = pc.ShowGrants(se, `show@localhost`)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 4)
 	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
@@ -248,11 +226,14 @@ func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {
 	se := newSession(c, s.store, s.dbName)
 	ctx, _ := se.(context.Context)
 	mustExec(c, se, `CREATE TABLE todrop(c int);`)
-	ctx.GetSessionVars().User = "root@localhost"
-	mustExec(c, se, `CREATE USER 'drop'@'localhost' identified by '123';`)
+	// ctx.GetSessionVars().User = "root@localhost"
+	c.Assert(se.Auth("root@localhost", nil, nil), IsTrue)
+	mustExec(c, se, `CREATE USER 'drop'@'localhost';`)
 	mustExec(c, se, `GRANT Select ON test.todrop TO  'drop'@'localhost';`)
+	mustExec(c, se, `FLUSH PRIVILEGES;`)
 
-	ctx.GetSessionVars().User = "drop@localhost"
+	// ctx.GetSessionVars().User = "drop@localhost"
+	c.Assert(se.Auth("drop@localhost", nil, nil), IsTrue)
 	mustExec(c, se, `SELECT * FROM todrop;`)
 	_, err := se.Execute("DROP TABLE todrop;")
 	c.Assert(err, NotNil)
@@ -260,6 +241,7 @@ func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {
 	se = newSession(c, s.store, s.dbName)
 	ctx.GetSessionVars().User = "root@localhost"
 	mustExec(c, se, `GRANT Drop ON test.todrop TO  'drop'@'localhost';`)
+	mustExec(c, se, `FLUSH PRIVILEGES;`)
 
 	se = newSession(c, s.store, s.dbName)
 	ctx.GetSessionVars().User = "drop@localhost"
