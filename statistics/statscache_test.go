@@ -227,6 +227,122 @@ func (s *testStatsCacheSuite) TestColumnIDs(c *C) {
 	c.Assert(count, Equals, 0.0)
 }
 
+func (s *testStatsCacheSuite) TestDDL(c *C) {
+	store, do, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (c1 int, c2 int)")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	h := do.StatsHandle()
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
+	h.Update(is)
+	statsTbl := h.GetTableStats(tableInfo)
+	c.Assert(statsTbl.Pseudo, IsFalse)
+}
+
+func (s *testStatsCacheSuite) TestVersion(c *C) {
+	store, do, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t1 (c1 int, c2 int)")
+	testKit.MustExec("analyze table t1")
+	is := do.InfoSchema()
+	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	tableInfo1 := tbl1.Meta()
+	h := statistics.NewHandle(testKit.Se)
+	testKit.MustExec("update mysql.stats_meta set version = 2 where table_id = ?", tableInfo1.ID)
+
+	h.Update(is)
+	c.Assert(h.LastVersion, Equals, uint64(2))
+	c.Assert(h.PrevLastVersion, Equals, uint64(0))
+	statsTbl1 := h.GetTableStats(tableInfo1)
+	c.Assert(statsTbl1.Pseudo, IsFalse)
+
+	testKit.MustExec("create table t2 (c1 int, c2 int)")
+	testKit.MustExec("analyze table t2")
+	is = do.InfoSchema()
+	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	c.Assert(err, IsNil)
+	tableInfo2 := tbl2.Meta()
+	// A smaller version write, and we can still read it.
+	testKit.MustExec("update mysql.stats_meta set version = 1 where table_id = ?", tableInfo2.ID)
+	h.Update(is)
+	c.Assert(h.LastVersion, Equals, uint64(2))
+	c.Assert(h.PrevLastVersion, Equals, uint64(2))
+	statsTbl2 := h.GetTableStats(tableInfo2)
+	c.Assert(statsTbl2.Pseudo, IsFalse)
+
+	testKit.MustExec("insert t1 values(1,2)")
+	testKit.MustExec("analyze table t1")
+	testKit.MustExec("update mysql.stats_meta set version = 4 where table_id = ?", tableInfo1.ID)
+	h.Update(is)
+	c.Assert(h.LastVersion, Equals, uint64(4))
+	c.Assert(h.PrevLastVersion, Equals, uint64(2))
+	statsTbl1 = h.GetTableStats(tableInfo1)
+	c.Assert(statsTbl1.Count, Equals, int64(1))
+
+	testKit.MustExec("insert t2 values(1,2)")
+	testKit.MustExec("analyze table t2")
+	// A smaller version write, and we can still read it.
+	testKit.MustExec("update mysql.stats_meta set version = 3 where table_id = ?", tableInfo2.ID)
+	h.Update(is)
+	c.Assert(h.LastVersion, Equals, uint64(4))
+	c.Assert(h.PrevLastVersion, Equals, uint64(4))
+	statsTbl2 = h.GetTableStats(tableInfo2)
+	c.Assert(statsTbl2.Count, Equals, int64(1))
+
+	testKit.MustExec("insert t2 values(1,2)")
+	testKit.MustExec("analyze table t2")
+	// A smaller version write, and we cannot read it. Because at this time, lastTwo Version is 4.
+	testKit.MustExec("update mysql.stats_meta set version = 3 where table_id = ?", tableInfo2.ID)
+	h.Update(is)
+	c.Assert(h.LastVersion, Equals, uint64(4))
+	c.Assert(h.PrevLastVersion, Equals, uint64(4))
+	statsTbl2 = h.GetTableStats(tableInfo2)
+	c.Assert(statsTbl2.Count, Equals, int64(1))
+}
+
+func (s *testStatsCacheSuite) TestLoadHist(c *C) {
+	store, do, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (c1 int, c2 int)")
+	rowCount := 10
+	for i := 0; i < rowCount; i++ {
+		testKit.MustExec("insert into t values(1,2)")
+	}
+	testKit.MustExec("analyze table t")
+	h := do.StatsHandle()
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	oldStatsTbl := h.GetTableStats(tableInfo)
+	for i := 0; i < rowCount; i++ {
+		testKit.MustExec("insert into t values(1,2)")
+	}
+	h.DumpStatsDeltaToKV()
+	h.Update(do.InfoSchema())
+	newStatsTbl := h.GetTableStats(tableInfo)
+	// The stats table is updated.
+	c.Assert(oldStatsTbl == newStatsTbl, IsFalse)
+	// The histograms is not updated.
+	for id, hist := range oldStatsTbl.Columns {
+		c.Assert(hist, Equals, newStatsTbl.Columns[id])
+	}
+}
+
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
 	if err != nil {

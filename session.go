@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
@@ -127,6 +128,8 @@ type session struct {
 
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
+
+	statsCollector *statistics.SessionStatsCollector
 }
 
 // Cancel cancels the execution of current transaction.
@@ -136,9 +139,9 @@ func (s *session) Cancel() {
 	s.cancelFunc()
 }
 
-// Canceled implements context.Context interface.
-func (s *session) Done() <-chan struct{} {
-	return s.goCtx.Done()
+// GoCtx returns the standard context.Context that bind with current transaction.
+func (s *session) GoCtx() goctx.Context {
+	return s.goCtx
 }
 
 func (s *session) cleanRetryInfo() {
@@ -271,6 +274,12 @@ func (s *session) doCommitWithRetry() error {
 	if err != nil {
 		log.Warnf("[%d] finished txn:%v, %v", s.sessionVars.ConnectionID, s.txn, err)
 		return errors.Trace(err)
+	}
+	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
+	if s.statsCollector != nil && mapper != nil {
+		for id, item := range mapper {
+			s.statsCollector.Update(id, item.Delta, item.Count)
+		}
 	}
 	return nil
 }
@@ -742,6 +751,9 @@ func (s *session) ClearValue(key fmt.Stringer) {
 
 // Close function does some clean work when session end.
 func (s *session) Close() error {
+	if s.statsCollector != nil {
+		s.statsCollector.Delete()
+	}
 	return s.RollbackTxn()
 }
 
@@ -831,6 +843,11 @@ func CreateSession(store kv.Storage) (Session, error) {
 	}
 	privilege.BindPrivilegeManager(s, pm)
 
+	// Add statsUpdateHandle.
+	if do.StatsHandle() != nil {
+		s.statsCollector = do.StatsHandle().NewSessionStatsCollector()
+	}
+
 	return s, nil
 }
 
@@ -856,7 +873,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	err = dom.LoadTableStatsLoop(se1)
+	err = dom.UpdateTableStatsLoop(se1)
 	return dom, errors.Trace(err)
 }
 

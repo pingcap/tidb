@@ -20,7 +20,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -49,16 +48,40 @@ type Table struct {
 	Pseudo  bool
 }
 
-// TableStatsFromStorage loads table stats info from storage.
-func (h *Handle) TableStatsFromStorage(ctx context.Context, info *model.TableInfo, count int64) (*Table, error) {
-	table := &Table{
-		Info:    info,
-		Count:   count,
-		Columns: make(map[int64]*Column, len(info.Columns)),
-		Indices: make(map[int64]*Index, len(info.Indices)),
+func (t *Table) copy() *Table {
+	nt := &Table{
+		Info:    t.Info,
+		Count:   t.Count,
+		Pseudo:  t.Pseudo,
+		Columns: make(map[int64]*Column),
+		Indices: make(map[int64]*Index),
 	}
-	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count from mysql.stats_histograms where table_id = %d", info.ID)
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, selSQL)
+	for id, col := range t.Columns {
+		nt.Columns[id] = col
+	}
+	for id, idx := range t.Indices {
+		nt.Indices[id] = idx
+	}
+	return nt
+}
+
+// tableStatsFromStorage loads table stats info from storage.
+func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) (*Table, error) {
+	table, ok := h.statsCache.Load().(statsCache)[tableInfo.ID]
+	if !ok {
+		table = &Table{
+			Columns: make(map[int64]*Column, len(tableInfo.Columns)),
+			Indices: make(map[int64]*Index, len(tableInfo.Indices)),
+		}
+	} else {
+		// We copy it before writing to avoid race.
+		table = table.copy()
+	}
+	table.Info = tableInfo
+	table.Count = count
+
+	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count, version from mysql.stats_histograms where table_id = %d", tableInfo.ID)
+	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, selSQL)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -69,36 +92,41 @@ func (h *Handle) TableStatsFromStorage(ctx context.Context, info *model.TableInf
 	for _, row := range rows {
 		distinct := row.Data[3].GetInt64()
 		histID := row.Data[2].GetInt64()
+		histVer := row.Data[4].GetUint64()
 		if row.Data[1].GetInt64() > 0 {
 			// process index
-			var idx *Index
-			for _, idxInfo := range info.Indices {
+			idx := table.Indices[histID]
+			for _, idxInfo := range tableInfo.Indices {
 				if histID == idxInfo.ID {
-					hg, err1 := histogramFromStorage(ctx, info.ID, histID, nil, distinct, 1)
-					if err1 != nil {
-						return nil, errors.Trace(err1)
+					if idx == nil || idx.LastUpdateVersion < histVer {
+						hg, err := h.histogramFromStorage(tableInfo.ID, histID, nil, distinct, 1, histVer)
+						if err != nil {
+							return nil, errors.Trace(err)
+						}
+						idx = &Index{Histogram: *hg}
 					}
-					idx = &Index{Histogram: *hg}
 					break
 				}
 			}
 			if idx != nil {
-				table.Indices[idx.ID] = idx
+				table.Indices[histID] = idx
 				indexCount++
 			} else {
-				log.Warnf("We cannot find index id %d in table %s now. It may be deleted.", histID, info.Name)
+				// TODO: If we support create index ddl, it may be a new created index. We needn't refer tableInfo any more.
+				log.Warnf("We cannot find index id %d in table %s now. It may be deleted.", histID, tableInfo.Name)
 			}
 		} else {
 			// process column
-			var col *Column
-			for _, colInfo := range info.Columns {
+			col := table.Columns[histID]
+			for _, colInfo := range tableInfo.Columns {
 				if histID == colInfo.ID {
-					var hg *Histogram
-					hg, err = histogramFromStorage(ctx, info.ID, histID, &colInfo.FieldType, distinct, 0)
-					if err != nil {
-						return nil, errors.Trace(err)
+					if col == nil || col.LastUpdateVersion < histVer {
+						hg, err := h.histogramFromStorage(tableInfo.ID, histID, &colInfo.FieldType, distinct, 0, histVer)
+						if err != nil {
+							return nil, errors.Trace(err)
+						}
+						col = &Column{Histogram: *hg}
 					}
-					col = &Column{Histogram: *hg}
 					break
 				}
 			}
@@ -106,14 +134,14 @@ func (h *Handle) TableStatsFromStorage(ctx context.Context, info *model.TableInf
 				table.Columns[col.ID] = col
 				columnCount++
 			} else {
-				log.Warnf("We cannot find column id %d in table %s now. It may be deleted.", histID, info.Name)
+				log.Warnf("We cannot find column id %d in table %s now. It may be deleted.", histID, tableInfo.Name)
 			}
 		}
 	}
-	if indexCount != len(info.Indices) {
+	if indexCount != len(tableInfo.Indices) {
 		return nil, errors.New("The number of indices doesn't match with the schema")
 	}
-	if columnCount != len(info.Columns) {
+	if columnCount != len(tableInfo.Columns) {
 		return nil, errors.New("The number of columns doesn't match with the schema")
 	}
 	return table, nil

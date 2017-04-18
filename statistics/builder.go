@@ -29,7 +29,7 @@ type Builder struct {
 	NumBuckets int64            // NumBuckets is the number of buckets a column histogram has.
 }
 
-// BuildIndex builds histogram for index and save the histogram to kv.
+// BuildIndex builds histogram for index or pk.
 func (b *Builder) BuildIndex(id int64, records ast.RecordSet, isIndex int) (int64, *Histogram, error) {
 	hg := &Histogram{
 		ID:      id,
@@ -109,7 +109,7 @@ func (b *Builder) BuildIndex(id int64, records ast.RecordSet, isIndex int) (int6
 	return count, hg, nil
 }
 
-// BuildColumn builds histogram from samples for column and save the histogram to kv.
+// BuildColumn builds histogram from samples for column.
 func (b *Builder) BuildColumn(id int64, ndv int64, count int64, samples []types.Datum) (*Histogram, error) {
 	if count == 0 {
 		return &Histogram{ID: id}, nil

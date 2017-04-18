@@ -57,6 +57,12 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 		// Finish this job.
 		job.State = model.JobDone
 		job.BinlogInfo.AddTableInfo(ver, tbInfo)
+		if d.ddlEventCh != nil {
+			select {
+			case d.ddlEventCh <- &Event{Tp: TypeCreateTable, TableInfo: tbInfo}:
+			default:
+			}
+		}
 		return nil
 	default:
 		return ErrInvalidTableState.Gen("invalid table state %v", tbInfo.State)
