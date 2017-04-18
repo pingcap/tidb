@@ -20,6 +20,7 @@ This is a rough outline of what a contributor's workflow looks like:
 - Push your changes to a topic branch in your fork of the repository.
 - Submit a pull request to pingcap/tidb.
 - Your PR must receive LGTMs from two maintainers found in the [MAINTAINERS](./docs/MAINTAINERS.md) file.
+To get started, <a href="https://www.clahub.com/agreements/pingcap/tidb">sign the Contributor License Agreement</a>.
 
 Thanks for your contributions!
 
