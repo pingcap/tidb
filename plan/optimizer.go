@@ -101,6 +101,9 @@ func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context, allocator *
 		return nil, errors.Trace(ErrCartesianProductUnsupported)
 	}
 	logic.ResolveIndicesAndCorCols()
+	if UseDAGPlanBuilder {
+		return dagPhysicalOptimize(logic)
+	}
 	return physicalOptimize(flag, logic, allocator)
 }
 
@@ -119,6 +122,14 @@ func logicalOptimize(flag uint64, logic LogicalPlan, ctx context.Context, alloc 
 		}
 	}
 	return logic, errors.Trace(err)
+}
+
+func dagPhysicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
+	task, err := logic.convert2NewPhysicalPlan(&requiredProp{})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return EliminateProjection(task.plan()), nil
 }
 
 func physicalOptimize(flag uint64, logic LogicalPlan, allocator *idAllocator) (PhysicalPlan, error) {
