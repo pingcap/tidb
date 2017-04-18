@@ -5892,23 +5892,23 @@ StringType:
 	{
 		x := types.NewFieldType(mysql.TypeString)
 		x.Flen = $3.(int)
-		x.Charset = charset.CharsetUTF8
-		x.Collate = charset.CollationUTF8
+		x.Charset = $5.(string)
+		x.Collate = $6.(string)
 		$$ = x
 	}
 |	NationalOpt "CHAR" OptBinary OptCharset OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeString)
-		x.Charset = charset.CharsetUTF8
-		x.Collate = charset.CollationUTF8
+		x.Charset = $4.(string)
+		x.Collate = $5.(string)
 		$$ = x
 	}
 |	NationalOpt "VARCHAR" FieldLen OptBinary OptCharset OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeVarchar)
 		x.Flen = $3.(int)
-		x.Charset = charset.CharsetUTF8
-		x.Collate = charset.CollationUTF8
+		x.Charset = $5.(string)
+		x.Collate = $6.(string)
 		$$ = x
 	}
 |	"BINARY" OptFieldLen
@@ -5940,24 +5940,24 @@ StringType:
 |	TextType OptBinary OptCharset OptCollate
 	{
 		x := $1.(*types.FieldType)
-		x.Charset = charset.CharsetUTF8
-		x.Collate = charset.CollationUTF8
+		x.Charset = $3.(string)
+		x.Collate = $4.(string)
 		$$ = x
 	}
 |	"ENUM" '(' StringList ')' OptCharset OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeEnum)
 		x.Elems = $3.([]string)
-		x.Charset = charset.CharsetUTF8
-		x.Collate = charset.CollationUTF8
+		x.Charset = $5.(string)
+		x.Collate = $6.(string)
 		$$ = x
 	}
 |	"SET" '(' StringList ')' OptCharset OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeSet)
 		x.Elems = $3.([]string)
-		x.Charset = charset.CharsetUTF8
-		x.Collate = charset.CollationUTF8
+		x.Charset = $5.(string)
+		x.Collate = $6.(string)
 		$$ = x
 	}
 
