@@ -227,11 +227,8 @@ func (s *testStatisticsSuite) TestPseudoTable(c *C) {
 		FieldType: *types.NewFieldType(mysql.TypeLonglong),
 	}
 	ti.Columns = append(ti.Columns, colInfo)
-	tbl := PseudoTable(ti)
+	tbl := PseudoTable(ti.ID)
 	c.Assert(tbl.Count, Greater, int64(0))
-	col := tbl.Columns[1]
-	c.Assert(col.ID, Greater, int64(0))
-	c.Assert(col.NDV, Greater, int64(0))
 	sc := new(variable.StatementContext)
 	count, err := tbl.ColumnLessRowCount(sc, types.NewIntDatum(100), colInfo)
 	c.Assert(err, IsNil)
