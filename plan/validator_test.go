@@ -71,7 +71,7 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 			errors.New("[schema:1068]Multiple primary key defined")},
 		{"create table t(c1 int not null, c2 int not null, primary key(c1), primary key(c2))", true,
 			errors.New("[schema:1068]Multiple primary key defined")},
-		{"alter table t auto_increment=1", true, errors.New("[autoid:2]No support for setting auto_increment using alter_table")},
+		{"alter table t auto_increment=1", true, errors.New("[autoid:3]No support for setting auto_increment using alter_table")},
 	}
 
 	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)

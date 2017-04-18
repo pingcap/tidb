@@ -43,10 +43,10 @@ var (
 const (
 	CodeUnsupportedType terror.ErrCode = 1
 	SystemInternalError terror.ErrCode = 2
+	CodeAlterAutoID     terror.ErrCode = 3
 	CodeAmbiguous       terror.ErrCode = 1052
 	CodeUnknownColumn   terror.ErrCode = 1054
 	CodeWrongArguments  terror.ErrCode = 1210
-	CodeAlterAutoID     terror.ErrCode = 2
 )
 
 func init() {
