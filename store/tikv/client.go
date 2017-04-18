@@ -39,7 +39,7 @@ type Client interface {
 }
 
 const (
-	maxConnection     = 150
+	maxConnection     = 200
 	dialTimeout       = 5 * time.Second
 	writeTimeout      = 10 * time.Second
 	readTimeoutShort  = 20 * time.Second  // For requests that read/write several key-values.
