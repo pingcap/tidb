@@ -210,9 +210,10 @@ func (b *builtinLastInsertIDSig) eval(row []types.Datum) (d types.Datum, err err
 			return d, errors.Trace(err)
 		}
 		b.ctx.GetSessionVars().SetLastInsertID(uint64(id))
+		d.SetUint64(uint64(id))
+	} else {
+		d.SetUint64(b.ctx.GetSessionVars().PrevLastInsertID)
 	}
-
-	d.SetUint64(b.ctx.GetSessionVars().LastInsertID)
 	return
 }
 
