@@ -1552,7 +1552,6 @@ func (s *testParserSuite) TestSQLModeANSIQuotes(c *C) {
 
 func (s *testParserSuite) TestDDLStatements(c *C) {
 	parser := New()
-	parser.SetSQLMode(mysql.ModeANSIQuotes)
 	// Tests that whatever the charset it is define, we always assign utf8 charset and utf8_bin collate.
 	createTableStr := `CREATE TABLE t (
 		a varchar(64) binary,
