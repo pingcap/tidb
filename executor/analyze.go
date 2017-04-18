@@ -15,13 +15,17 @@ package executor
 
 import (
 	"math/rand"
+	"strconv"
 	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -59,98 +63,179 @@ func (e *AnalyzeExec) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *AnalyzeExec) Next() (*Row, error) {
+	var tasks []*analyzeTask
 	for i, src := range e.Srcs {
 		switch src.(type) {
 		case *XSelectTableExec:
-			var err error
 			if i < e.pkCount {
-				err = e.analyzePK(src.(*XSelectTableExec))
+				tasks = append(tasks, e.buildAnalyzePKTask(src.(*XSelectTableExec)))
 			} else {
-				err = e.analyzeColumns(src.(*XSelectTableExec))
-			}
-			if err != nil {
-				return nil, errors.Trace(err)
+				t, err := e.buildAnalyzeColumnsTask(src.(*XSelectTableExec))
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				tasks = append(tasks, t...)
 			}
 		case *XSelectIndexExec:
-			err := e.analyzeIndex(src.(*XSelectIndexExec))
-			if err != nil {
-				return nil, errors.Trace(err)
+			tasks = append(tasks, e.buildAnalyzeIndexTask(src.(*XSelectIndexExec)))
+		}
+	}
+	concurrency, err := getBuildStatsConcurrency(e.ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	taskCh := make(chan *analyzeTask, len(tasks))
+	resultCh := make(chan *analyzeResult, len(tasks))
+	for i := 0; i < concurrency; i++ {
+		go analyzeWorker(taskCh, resultCh)
+	}
+	for _, task := range tasks {
+		taskCh <- task
+	}
+	close(taskCh)
+	for i := 0; i < len(tasks); i++ {
+		result := <-resultCh
+		if result.err != nil {
+			return nil, errors.Trace(err)
+		}
+		err = result.hist.SaveToStorage(e.ctx, result.tblInfo.ID, result.count, result.isIndex)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// The sorted bucket is more accurate, we replace the sampled column histogram with index histogram if the
+		// index is single column index.
+		if result.isIndex == 1 {
+			var idxInfo *model.IndexInfo
+			for _, idx := range result.tblInfo.Indices {
+				if idx.ID == result.hist.ID {
+					idxInfo = idx
+					break
+				}
+			}
+			if idxInfo != nil && len(idxInfo.Columns) == 1 {
+				columnOffset := idxInfo.Columns[0].Offset
+				columnID := result.tblInfo.Columns[columnOffset].ID
+				colHist, err := statistics.CopyFromIndexColumns(&statistics.Index{Histogram: *result.hist}, columnID)
+				err = colHist.SaveToStorage(e.ctx, result.tblInfo.ID, result.count, 0)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
 			}
 		}
 	}
-	return nil, nil
-}
-
-func (e *AnalyzeExec) analyzePK(exec *XSelectTableExec) error {
-	statBuilder := &statistics.Builder{
-		Ctx:        exec.ctx,
-		TblInfo:    exec.tableInfo,
-		Count:      -1,
-		NumBuckets: defaultBucketCount,
-		PkRecords:  &recordSet{executor: exec},
-		PkID:       exec.Columns[0].ID,
-	}
-	err := e.buildStatisticsAndSaveToKV(statBuilder)
-	return errors.Trace(err)
-}
-
-func (e *AnalyzeExec) analyzeColumns(exec *XSelectTableExec) error {
-	count, sampleRows, colNDVs, err := CollectSamplesAndEstimateNDVs(&recordSet{executor: exec}, len(exec.Columns))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	columnSamples := rowsToColumnSamples(sampleRows)
-	var colIDs []int64
-	for _, col := range exec.Columns {
-		colIDs = append(colIDs, col.ID)
-	}
-	statBuilder := &statistics.Builder{
-		Ctx:           exec.ctx,
-		TblInfo:       exec.tableInfo,
-		Count:         count,
-		NumBuckets:    defaultBucketCount,
-		ColumnSamples: columnSamples,
-		ColIDs:        colIDs,
-		ColNDVs:       colNDVs,
-	}
-	err = e.buildStatisticsAndSaveToKV(statBuilder)
-	return errors.Trace(err)
-}
-
-func (e *AnalyzeExec) analyzeIndex(exec *XSelectIndexExec) error {
-	statBuilder := &statistics.Builder{
-		Ctx:        exec.ctx,
-		TblInfo:    exec.tableInfo,
-		Count:      -1,
-		NumBuckets: defaultBucketCount,
-		IdxRecords: []ast.RecordSet{&recordSet{executor: exec}},
-		IdxIDs:     []int64{exec.indexPlan.Index.ID},
-	}
-	err := e.buildStatisticsAndSaveToKV(statBuilder)
-	return errors.Trace(err)
-}
-
-func (e *AnalyzeExec) buildStatisticsAndSaveToKV(statBuilder *statistics.Builder) error {
-	t, err := statBuilder.NewTable()
-	if err != nil {
-		return errors.Trace(err)
-	}
 	dom := sessionctx.GetDomain(e.ctx)
-	err = dom.StatsHandle().SaveToStorage(e.ctx, t)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	lease := dom.DDL().GetLease()
 	if lease > 0 {
 		// We sleep two lease to make sure other tidb node has updated this node.
 		time.Sleep(lease * 2)
 	} else {
-		err = dom.StatsHandle().Update(GetInfoSchema(e.ctx))
+		err := dom.StatsHandle().Update(GetInfoSchema(e.ctx))
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 	}
-	return nil
+	return nil, nil
+}
+
+func getBuildStatsConcurrency(ctx context.Context) (int, error) {
+	sessionVars := ctx.GetSessionVars()
+	concurrency, err := varsutil.GetSessionSystemVar(sessionVars, variable.TiDBBuildStatsConcurrency)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	c, err := strconv.ParseInt(concurrency, 10, 64)
+	return int(c), errors.Trace(err)
+}
+
+type analyzeTask struct {
+	statsBuilder *statistics.Builder
+	taskType     int // 0 for pk, 1 for index, 2 for column.
+	id           int64
+	record       ast.RecordSet
+	ndv          int64
+	count        int64
+	samples      []types.Datum
+}
+
+type analyzeResult struct {
+	tblInfo *model.TableInfo
+	hist    *statistics.Histogram
+	count   int64
+	isIndex int
+	err     error
+}
+
+func analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- *analyzeResult) {
+	for task := range taskCh {
+		switch task.taskType {
+		case 0:
+			count, hg, err := task.statsBuilder.BuildIndex(task.id, task.record, 0)
+			resultCh <- &analyzeResult{tblInfo: task.statsBuilder.TblInfo, hist: hg, count: count, isIndex: 0, err: err}
+		case 1:
+			count, hg, err := task.statsBuilder.BuildIndex(task.id, task.record, 1)
+			resultCh <- &analyzeResult{tblInfo: task.statsBuilder.TblInfo, hist: hg, count: count, isIndex: 1, err: err}
+		case 2:
+			hg, err := task.statsBuilder.BuildColumn(task.id, task.ndv, task.count, task.samples)
+			resultCh <- &analyzeResult{tblInfo: task.statsBuilder.TblInfo, hist: hg, count: task.count, isIndex: 0, err: err}
+		}
+	}
+}
+
+func (e *AnalyzeExec) buildAnalyzePKTask(exec *XSelectTableExec) *analyzeTask {
+	b := &statistics.Builder{
+		Ctx:        exec.ctx,
+		TblInfo:    exec.tableInfo,
+		NumBuckets: defaultBucketCount,
+	}
+	return &analyzeTask{
+		statsBuilder: b,
+		taskType:     0,
+		id:           exec.Columns[0].ID,
+		record:       &recordSet{executor: exec},
+	}
+}
+
+func (e *AnalyzeExec) buildAnalyzeColumnsTask(exec *XSelectTableExec) ([]*analyzeTask, error) {
+	count, sampleRows, colNDVs, err := CollectSamplesAndEstimateNDVs(&recordSet{executor: exec}, len(exec.Columns))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	b := &statistics.Builder{
+		Ctx:        exec.ctx,
+		TblInfo:    exec.tableInfo,
+		NumBuckets: defaultBucketCount,
+	}
+	columnSamples := rowsToColumnSamples(sampleRows)
+	if columnSamples == nil {
+		columnSamples = make([][]types.Datum, len(exec.Columns))
+	}
+	var tasks []*analyzeTask
+	for i, col := range exec.Columns {
+		t := &analyzeTask{
+			statsBuilder: b,
+			taskType:     2,
+			id:           col.ID,
+			ndv:          colNDVs[i],
+			count:        count,
+			samples:      columnSamples[i],
+		}
+		tasks = append(tasks, t)
+	}
+	return tasks, nil
+}
+
+func (e *AnalyzeExec) buildAnalyzeIndexTask(exec *XSelectIndexExec) *analyzeTask {
+	b := &statistics.Builder{
+		Ctx:        exec.ctx,
+		TblInfo:    exec.tableInfo,
+		NumBuckets: defaultBucketCount,
+	}
+	return &analyzeTask{
+		statsBuilder: b,
+		taskType:     1,
+		id:           exec.indexPlan.Index.ID,
+		record:       &recordSet{executor: exec},
+	}
 }
 
 // CollectSamplesAndEstimateNDVs collects sample from the result set using Reservoir Sampling algorithm,

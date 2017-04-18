@@ -113,7 +113,7 @@ func (s *testStatisticsSuite) SetUpSuite(c *C) {
 	s.pk = pk
 }
 
-func (s *testStatisticsSuite) TestTable(c *C) {
+func (s *testStatisticsSuite) TestBuild(c *C) {
 	tblInfo := &model.TableInfo{
 		ID: 1,
 	}
@@ -148,28 +148,17 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	}
 	tblInfo.Columns = columns
 	tblInfo.Indices = indices
-	timestamp := int64(10)
 	bucketCount := int64(256)
 	_, ndv, _ := buildFMSketch(s.rc.(*recordSet).data, 1000)
 	builder := &Builder{
-		Ctx:           mock.NewContext(),
-		TblInfo:       tblInfo,
-		StartTS:       timestamp,
-		Count:         s.count,
-		NumBuckets:    bucketCount,
-		ColumnSamples: [][]types.Datum{s.samples},
-		ColIDs:        []int64{2},
-		ColNDVs:       []int64{ndv},
-		IdxRecords:    []ast.RecordSet{s.rc},
-		IdxIDs:        []int64{1},
-		PkRecords:     ast.RecordSet(s.pk),
-		PkID:          4,
+		Ctx:        mock.NewContext(),
+		TblInfo:    tblInfo,
+		NumBuckets: bucketCount,
 	}
 	sc := builder.Ctx.GetSessionVars().StmtCtx
-	t, err := builder.NewTable()
-	c.Check(err, IsNil)
 
-	col := t.Columns[2]
+	col, err := builder.BuildColumn(2, ndv, s.count, s.samples)
+	c.Check(err, IsNil)
 	c.Check(len(col.Buckets), Equals, 232)
 	count, err := col.equalRowCount(sc, types.NewIntDatum(1000))
 	c.Check(err, IsNil)
@@ -193,7 +182,12 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 5075)
 
-	col = t.Columns[3]
+	tblCount, hg, err := builder.BuildIndex(1, ast.RecordSet(s.rc), 1)
+	c.Check(err, IsNil)
+	c.Check(int(tblCount), Equals, 100000)
+	column, err := CopyFromIndexColumns(&Index{Histogram: *hg}, 3)
+	c.Check(err, IsNil)
+	col = &column.Histogram
 	count, err = col.equalRowCount(sc, types.NewIntDatum(10000))
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 1)
@@ -204,7 +198,9 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 4618)
 
-	col = t.Columns[4]
+	tblCount, col, err = builder.BuildIndex(4, ast.RecordSet(s.pk), 0)
+	c.Check(err, IsNil)
+	c.Check(int(tblCount), Equals, 100000)
 	count, err = col.equalRowCount(sc, types.NewIntDatum(10000))
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 1)
@@ -214,10 +210,6 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	count, err = col.betweenRowCount(sc, types.NewIntDatum(30000), types.NewIntDatum(35000))
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 5120)
-
-	str := t.String()
-	c.Check(len(str), Greater, 0)
-
 }
 
 func (s *testStatisticsSuite) TestPseudoTable(c *C) {

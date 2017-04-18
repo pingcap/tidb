@@ -49,66 +49,6 @@ type Table struct {
 	Pseudo  bool
 }
 
-func (h *Handle) deleteHistogramFromStorage(ctx context.Context, tblID int64, isIndex int, histID int64) error {
-	deleteSQL := fmt.Sprintf("delete from mysql.stats_histograms where table_id = %d and is_index = %d and hist_id = %d", tblID, isIndex, histID)
-	_, err := ctx.(sqlexec.SQLExecutor).Execute(deleteSQL)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	deleteSQL = fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tblID, isIndex, histID)
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(deleteSQL)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-// SaveToStorage saves stats table to storage.
-func (h *Handle) SaveToStorage(ctx context.Context, t *Table) error {
-	_, err := ctx.(sqlexec.SQLExecutor).Execute("begin")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	txn := ctx.Txn()
-	version := txn.StartTS()
-	deleteSQL := fmt.Sprintf("delete from mysql.stats_meta where table_id = %d", t.Info.ID)
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(deleteSQL)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	insertSQL := fmt.Sprintf("insert into mysql.stats_meta (version, table_id, count) values (%d, %d, %d)", version, t.Info.ID, t.Count)
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(insertSQL)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	for _, idx := range t.Indices {
-		err = h.deleteHistogramFromStorage(ctx, t.Info.ID, 1, idx.ID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	for _, col := range t.Columns {
-		err = h.deleteHistogramFromStorage(ctx, t.Info.ID, 0, col.ID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	for _, col := range t.Columns {
-		err = col.saveToStorage(ctx, t.Info.ID, 0)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	for _, idx := range t.Indices {
-		err = idx.saveToStorage(ctx, t.Info.ID, 1)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	_, err = ctx.(sqlexec.SQLExecutor).Execute("commit")
-	return errors.Trace(err)
-}
-
 // TableStatsFromStorage loads table stats info from storage.
 func (h *Handle) TableStatsFromStorage(ctx context.Context, info *model.TableInfo, count int64) (*Table, error) {
 	table := &Table{
