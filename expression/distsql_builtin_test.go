@@ -32,7 +32,7 @@ func (s *testEvalSuite) TestEval(c *C) {
 	row := []types.Datum{types.NewDatum(100)}
 	colIDs := make(map[int64]int)
 	colIDs[int64(1)] = 0
-	cases := []struct {
+	tests := []struct {
 		expr   *tipb.Expr
 		result types.Datum
 	}{
@@ -272,13 +272,13 @@ func (s *testEvalSuite) TestEval(c *C) {
 		},
 	}
 	sc := new(variable.StatementContext)
-	for _, ca := range cases {
-		expr, err := PBToExpr(ca.expr, colIDs, sc)
+	for _, tt := range tests {
+		expr, err := PBToExpr(tt.expr, colIDs, sc)
 		c.Assert(err, IsNil)
 		result, err := expr.Eval(row)
 		c.Assert(err, IsNil)
-		c.Assert(result.Kind(), Equals, ca.result.Kind())
-		cmp, err := result.CompareDatum(sc, ca.result)
+		c.Assert(result.Kind(), Equals, tt.result.Kind())
+		cmp, err := result.CompareDatum(sc, tt.result)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}
@@ -358,7 +358,7 @@ func notExpr(value interface{}) *tipb.Expr {
 }
 
 func (s *testEvalSuite) TestLike(c *C) {
-	cases := []struct {
+	tests := []struct {
 		expr   *tipb.Expr
 		result int64
 	}{
@@ -408,17 +408,17 @@ func (s *testEvalSuite) TestLike(c *C) {
 		},
 	}
 	sc := new(variable.StatementContext)
-	for _, ca := range cases {
-		expr, err := PBToExpr(ca.expr, nil, sc)
+	for _, tt := range tests {
+		expr, err := PBToExpr(tt.expr, nil, sc)
 		c.Check(err, IsNil)
 		res, err := expr.Eval(nil)
 		c.Check(err, IsNil)
-		c.Check(res.GetInt64(), Equals, ca.result)
+		c.Check(res.GetInt64(), Equals, tt.result)
 	}
 }
 
 func (s *testEvalSuite) TestWhereIn(c *C) {
-	cases := []struct {
+	tests := []struct {
 		expr   *tipb.Expr
 		result interface{}
 	}{
@@ -456,16 +456,16 @@ func (s *testEvalSuite) TestWhereIn(c *C) {
 		},
 	}
 	sc := new(variable.StatementContext)
-	for _, ca := range cases {
-		expr, err := PBToExpr(ca.expr, nil, sc)
+	for _, tt := range tests {
+		expr, err := PBToExpr(tt.expr, nil, sc)
 		c.Check(err, IsNil)
 		res, err := expr.Eval(nil)
 		c.Check(err, IsNil)
-		if ca.result == nil {
+		if tt.result == nil {
 			c.Check(res.Kind(), Equals, types.KindNull)
 		} else {
 			c.Check(res.Kind(), Equals, types.KindInt64)
-			if ca.result == true {
+			if tt.result == true {
 				c.Check(res.GetInt64(), Equals, int64(1))
 			} else {
 				c.Check(res.GetInt64(), Equals, int64(0))
@@ -476,7 +476,7 @@ func (s *testEvalSuite) TestWhereIn(c *C) {
 
 func (s *testEvalSuite) TestEvalIsNull(c *C) {
 	null, trueAns, falseAns := types.Datum{}, types.NewIntDatum(1), types.NewIntDatum(0)
-	cases := []struct {
+	tests := []struct {
 		expr   *tipb.Expr
 		result types.Datum
 	}{
@@ -494,13 +494,13 @@ func (s *testEvalSuite) TestEvalIsNull(c *C) {
 		},
 	}
 	sc := new(variable.StatementContext)
-	for _, ca := range cases {
-		expr, err := PBToExpr(ca.expr, nil, sc)
+	for _, tt := range tests {
+		expr, err := PBToExpr(tt.expr, nil, sc)
 		c.Assert(err, IsNil)
 		result, err := expr.Eval(nil)
 		c.Assert(err, IsNil)
-		c.Assert(result.Kind(), Equals, ca.result.Kind())
-		cmp, err := result.CompareDatum(sc, ca.result)
+		c.Assert(result.Kind(), Equals, tt.result.Kind())
+		cmp, err := result.CompareDatum(sc, tt.result)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}
