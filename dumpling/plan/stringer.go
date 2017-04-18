@@ -130,6 +130,9 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		}
 	case *Selection:
 		str = "Selection"
+		if UseDAGPlanBuilder {
+			str = fmt.Sprintf("Sel(%s)", x.Conditions)
+		}
 	case *Projection:
 		str = "Projection"
 	case *TableDual:
@@ -152,6 +155,12 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str += ")"
 	case *Cache:
 		str = "Cache"
+	case *PhysicalTableReader:
+		str = fmt.Sprintf("TableReader(%s)", ToString(x.copPlan))
+	case *PhysicalIndexReader:
+		str = fmt.Sprintf("IndexReader(%s)", ToString(x.copPlan))
+	case *PhysicalIndexLookUpReader:
+		str = fmt.Sprintf("IndexLookUp(%s, %s)", ToString(x.indexPlan), ToString(x.tablePlan))
 	default:
 		str = fmt.Sprintf("%T", in)
 	}
