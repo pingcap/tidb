@@ -937,7 +937,7 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 			return nil
 		}
 	}
-	msg := fmt.Sprintf("column type %s", to.Tp)
+	msg := fmt.Sprintf("type %v not match orgin %v", to.Tp, origin.Tp)
 	return errUnsupportedModifyColumn.GenByArgs(msg)
 }
 
