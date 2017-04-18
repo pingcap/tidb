@@ -572,6 +572,10 @@ func (b *builtinReplaceSig) eval(row []types.Datum) (d types.Datum, err error) {
 	if err != nil {
 		return d, errors.Trace(err)
 	}
+	if oldStr == "" {
+		d.SetString(str)
+		return d, nil
+	}
 	d.SetString(strings.Replace(str, oldStr, newStr, -1))
 
 	return d, nil

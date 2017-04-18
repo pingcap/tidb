@@ -342,6 +342,7 @@ func (s *testEvaluatorSuite) TestReplace(c *C) {
 		{[]interface{}{"12345", 2, 222}, "1222345"},
 		{[]interface{}{"12325", 2, "a"}, "1a3a5"},
 		{[]interface{}{12345, 2, "aa"}, "1aa345"},
+		{[]interface{}{"www.mysql.com", "", "tidb"}, "www.mysql.com"},
 	}
 
 	dtbl := tblToDtbl(tbl)
