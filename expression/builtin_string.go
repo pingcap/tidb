@@ -1771,6 +1771,8 @@ func (b *builtinFromBase64Sig) eval(row []types.Datum) (d types.Datum, err error
 	if err != nil {
 		return d, errors.Trace(err)
 	}
+	str = strings.Replace(str, "\t", "", -1)
+	str = strings.Replace(str, " ", "", -1)
 	result, err := base64.StdEncoding.DecodeString(str)
 	if err != nil {
 		return d, errors.Trace(err)
@@ -1795,7 +1797,37 @@ type builtinToBase64Sig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_to-base64
 func (b *builtinToBase64Sig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("TO_BASE64")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	str, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	//encode
+	strBytes := []byte(str)
+	result := base64.StdEncoding.EncodeToString(strBytes)
+	//A newline is added after each 76 characters of encoded output to divide long output into multiple lines.
+	count := len(result)
+	if count > 76 {
+		resultArr := splitToSubN(result, 76)
+		result = strings.Join(resultArr, "\n")
+	}
+	// Set the result to be of type string
+	d.SetString(result)
+	return d, nil
+}
+
+//func to splite a string every n runes into a string[]
+func splitToSubN(s string, n int) []string {
+	subs := make([]string, 0, len(s)/n+1)
+	for len(s) > n {
+		subs = append(subs, s[:n])
+		s = s[n:]
+	}
+	subs = append(subs, s)
+	return subs
 }
 
 type insertFuncFunctionClass struct {
