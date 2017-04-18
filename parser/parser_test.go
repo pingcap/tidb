@@ -1576,6 +1576,7 @@ func (s *testParserSuite) TestDDLStatements(c *C) {
 		b binary(10),
 		c blob)`
 	stmts, err = parser.Parse(createTableStr, "", "")
+	c.Assert(err, IsNil)
 	stmt = stmts[0].(*ast.CreateTableStmt)
 	for _, colDef := range stmt.Cols {
 		c.Assert(colDef.Tp.Charset, Equals, charset.CharsetBin)
