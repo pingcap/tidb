@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -276,7 +275,7 @@ func (v *validator) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 			for _, opt := range spec.Options {
 				switch opt.Tp {
 				case ast.TableOptionAutoIncrement:
-					v.err = terror.ClassAutoid.New(codeAlterAutoID, "no support for setting auto_increment using alter table")
+					v.err = ErrAlterAutoID
 					return
 				default:
 					// Nothing to do now.
@@ -301,5 +300,3 @@ func checkDuplicateColumnName(indexColNames []*ast.IndexColName) error {
 	}
 	return nil
 }
-
-const codeAlterAutoID terror.ErrCode = 2
