@@ -277,12 +277,31 @@ func (s *testSessionSuite) TestAutoIncrementID(c *C) {
 	c.Assert(lastID, Less, uint64(4))
 	mustExecSQL(c, se, "insert t () values ()")
 	c.Assert(se.LastInsertID(), Greater, lastID)
-	mustExecSQL(c, se, "insert t () select 100")
+	lastID = se.LastInsertID()
+	mustExecSQL(c, se, "insert t values (100)")
+	c.Assert(se.LastInsertID(), Equals, uint64(100))
+
+	// If the auto_increment column value is given, it uses the value of the latest row.
+	mustExecSQL(c, se, "insert t values (120), (112)")
+	c.Assert(se.LastInsertID(), Equals, uint64(112))
+
+	// The last_insert_id function only use last auto-generated id.
+	mustExecMatch(c, se, "select last_insert_id()", [][]interface{}{{lastID}})
 
 	mustExecSQL(c, se, "drop table if exists t")
 	mustExecSQL(c, se, "create table t (i tinyint unsigned not null auto_increment, primary key (i));")
 	mustExecSQL(c, se, "insert into t set i = 254;")
 	mustExecSQL(c, se, "insert t values ()")
+
+	// The last insert ID doesn't care about primary key, it is set even if its a normal index column.
+	mustExecSQL(c, se, "create table autoid (id int auto_increment, index (id))")
+	mustExecSQL(c, se, "insert autoid values ()")
+	c.Assert(se.LastInsertID(), Greater, uint64(0))
+	mustExecSQL(c, se, "insert autoid values (100)")
+	c.Assert(se.LastInsertID(), Equals, uint64(100))
+
+	mustExecMatch(c, se, "select last_insert_id(20)", [][]interface{}{{20}})
+	mustExecMatch(c, se, "select last_insert_id()", [][]interface{}{{20}})
 
 	mustExecSQL(c, se, dropDBSQL)
 }
@@ -521,11 +540,11 @@ func (s *testSessionSuite) TestIssue827(c *C) {
 	r, err := GetRows(rs)
 	c.Assert(err, IsNil)
 	c.Assert(r, DeepEquals, expect)
-	currLastInsertID := se.LastInsertID()
+	currLastInsertID := se.GetSessionVars().PrevLastInsertID
 	c.Assert(lastInsertID+5, Equals, currLastInsertID)
 
 	// insert set
-	lastInsertID = se.LastInsertID()
+	lastInsertID = currLastInsertID
 	mustExecSQL(c, se, "begin")
 	mustExecSQL(c, se, "insert into t set c2 = 31")
 	rs, err = exec(se, "select c1 from t where c2 = 31")
@@ -547,11 +566,11 @@ func (s *testSessionSuite) TestIssue827(c *C) {
 	r, err = GetRows(rs)
 	c.Assert(err, IsNil)
 	c.Assert(r, DeepEquals, expect)
-	currLastInsertID = se.LastInsertID()
+	currLastInsertID = se.GetSessionVars().PrevLastInsertID
 	c.Assert(lastInsertID+3, Equals, currLastInsertID)
 
 	// replace
-	lastInsertID = se.LastInsertID()
+	lastInsertID = currLastInsertID
 	mustExecSQL(c, se, "begin")
 	mustExecSQL(c, se, "insert into t (c2) values (21), (22), (23)")
 	rs, err = exec(se, "select c1 from t where c2 = 21")
@@ -573,11 +592,11 @@ func (s *testSessionSuite) TestIssue827(c *C) {
 	r, err = GetRows(rs)
 	c.Assert(err, IsNil)
 	c.Assert(r, DeepEquals, expect)
-	currLastInsertID = se.LastInsertID()
+	currLastInsertID = se.GetSessionVars().PrevLastInsertID
 	c.Assert(lastInsertID+1, Equals, currLastInsertID)
 
 	// update
-	lastInsertID = se.LastInsertID()
+	lastInsertID = currLastInsertID
 	mustExecSQL(c, se, "begin")
 	mustExecSQL(c, se, "insert into t set c2 = 41")
 	mustExecSQL(c, se, "update t set c1 = 0 where c2 = 41")
@@ -600,11 +619,11 @@ func (s *testSessionSuite) TestIssue827(c *C) {
 	r, err = GetRows(rs)
 	c.Assert(err, IsNil)
 	c.Assert(r, DeepEquals, expect)
-	currLastInsertID = se.LastInsertID()
+	currLastInsertID = se.GetSessionVars().PrevLastInsertID
 	c.Assert(lastInsertID+3, Equals, currLastInsertID)
 
 	// prepare
-	lastInsertID = se.LastInsertID()
+	lastInsertID = currLastInsertID
 	mustExecSQL(c, se, "begin")
 	mustExecSQL(c, se, "prepare stmt from 'insert into t (c2) values (?)'")
 	mustExecSQL(c, se, "set @v1=100")
@@ -633,7 +652,7 @@ func (s *testSessionSuite) TestIssue827(c *C) {
 	r, err = GetRows(rs)
 	c.Assert(err, IsNil)
 	c.Assert(r, DeepEquals, expect)
-	currLastInsertID = se.LastInsertID()
+	currLastInsertID = se.GetSessionVars().PrevLastInsertID
 	c.Assert(lastInsertID+3, Equals, currLastInsertID)
 
 	mustExecSQL(c, se, dropDBSQL)
@@ -667,7 +686,7 @@ func (s *testSessionSuite) TestIssue996(c *C) {
 	r, err := GetRows(rs)
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
-	currLastInsertID := se.LastInsertID()
+	currLastInsertID := se.GetSessionVars().PrevLastInsertID
 	c.Assert(r[0][0].GetValue(), DeepEquals, int64(currLastInsertID))
 	c.Assert(lastInsertID+2, Equals, currLastInsertID)
 
@@ -2605,8 +2624,8 @@ func (s *testSessionSuite) TestXAggregateWithoutAggFunc(c *C) {
 func (s *testSessionSuite) TestSelectHaving(c *C) {
 	defer testleak.AfterTest(c)()
 	table := "select_having_test"
-	initSQL := fmt.Sprintf(`use test; 
-		drop table if exists %s; 
+	initSQL := fmt.Sprintf(`use test;
+		drop table if exists %s;
 		create table %s(id int not null default 1, name varchar(255), PRIMARY KEY(id));
 		insert INTO %s VALUES (1, "hello");
 		insert into %s VALUES (2, "hello");`,

@@ -903,21 +903,26 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 	cases := []struct {
 		origin string
 		to     string
-		ok     bool
+		err    error
 	}{
-		{"int", "bigint", true},
-		{"int", "int unsigned", false},
-		{"varchar(10)", "text", true},
-		{"varbinary(10)", "blob", true},
-		{"text", "blob", false},
-		{"varchar(10)", "varchar(8)", false},
-		{"varchar(10)", "varchar(11)", true},
-		{"varchar(10) character set utf8 collate utf8_bin", "varchar(10) character set utf8", true},
+		{"int", "bigint", nil},
+		{"int", "int unsigned", errUnsupportedModifyColumn.GenByArgs("unsigned true not match origin false")},
+		{"varchar(10)", "text", nil},
+		{"varbinary(10)", "blob", nil},
+		{"text", "blob", errUnsupportedModifyColumn.GenByArgs("charset binary not match origin utf8")},
+		{"varchar(10)", "varchar(8)", errUnsupportedModifyColumn.GenByArgs("length 8 is less than origin 10")},
+		{"varchar(10)", "varchar(11)", nil},
+		{"varchar(10) character set utf8 collate utf8_bin", "varchar(10) character set utf8", nil},
 	}
 	for _, ca := range cases {
 		ftA := s.colDefStrToFieldType(c, ca.origin)
 		ftB := s.colDefStrToFieldType(c, ca.to)
-		c.Assert(modifiable(ftA, ftB), Equals, ca.ok)
+		err := modifiable(ftA, ftB)
+		if err == nil {
+			c.Assert(ca.err, IsNil)
+		} else {
+			c.Assert(err.Error(), Equals, ca.err.Error())
+		}
 	}
 }
 

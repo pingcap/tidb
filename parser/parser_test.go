@@ -22,6 +22,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -1546,5 +1547,40 @@ func (s *testParserSuite) TestSQLModeANSIQuotes(c *C) {
 	for _, test := range tests {
 		_, err := parser.Parse(test, "", "")
 		c.Assert(err, IsNil)
+	}
+}
+
+func (s *testParserSuite) TestDDLStatements(c *C) {
+	parser := New()
+	// Tests that whatever the charset it is define, we always assign utf8 charset and utf8_bin collate.
+	createTableStr := `CREATE TABLE t (
+		a varchar(64) binary,
+		b char(10) charset utf8 collate utf8_general_ci,
+		c text charset latin1) ENGINE=innoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin`
+	stmts, err := parser.Parse(createTableStr, "", "")
+	c.Assert(err, IsNil)
+	stmt := stmts[0].(*ast.CreateTableStmt)
+	for _, colDef := range stmt.Cols {
+		c.Assert(mysql.HasBinaryFlag(colDef.Tp.Flag), IsFalse)
+	}
+	for _, tblOpt := range stmt.Options {
+		switch tblOpt.Tp {
+		case ast.TableOptionCharset:
+			c.Assert(tblOpt.StrValue, Equals, "utf8")
+		case ast.TableOptionCollate:
+			c.Assert(tblOpt.StrValue, Equals, "utf8_bin")
+		}
+	}
+	createTableStr = `CREATE TABLE t (
+		a varbinary(64),
+		b binary(10),
+		c blob)`
+	stmts, err = parser.Parse(createTableStr, "", "")
+	c.Assert(err, IsNil)
+	stmt = stmts[0].(*ast.CreateTableStmt)
+	for _, colDef := range stmt.Cols {
+		c.Assert(colDef.Tp.Charset, Equals, charset.CharsetBin)
+		c.Assert(colDef.Tp.Collate, Equals, charset.CollationBin)
+		c.Assert(mysql.HasBinaryFlag(colDef.Tp.Flag), IsTrue)
 	}
 }
