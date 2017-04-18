@@ -170,13 +170,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 		job.State = model.JobDone
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
 
-		// Send the event to stats handle.
-		if d.ddlEventCh != nil {
-			select {
-			case d.ddlEventCh <- &Event{Tp: model.ActionAddColumn, TableInfo: tblInfo, ColumnInfo: columnInfo}:
-			default:
-			}
-		}
+		d.asyncNotifyEvent(&Event{Tp: model.ActionAddColumn, TableInfo: tblInfo, ColumnInfo: columnInfo})
 	default:
 		err = ErrInvalidColumnState.Gen("invalid column state %v", columnInfo.State)
 	}
@@ -264,13 +258,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 		job.State = model.JobDone
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
 
-		// Send the event to stats handle.
-		if d.ddlEventCh != nil {
-			select {
-			case d.ddlEventCh <- &Event{Tp: model.ActionDropColumn, TableInfo: tblInfo, ColumnInfo: colInfo}:
-			default:
-			}
-		}
+		d.asyncNotifyEvent(&Event{Tp: model.ActionDropColumn, TableInfo: tblInfo, ColumnInfo: colInfo})
 	default:
 		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
 	}
