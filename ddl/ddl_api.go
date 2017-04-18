@@ -896,18 +896,28 @@ func (d *ddl) DropColumn(ctx context.Context, ti ast.Ident, colName model.CIStr)
 // change or check existing data in the table.
 // It returns true if the two types has the same Charset and Collation, the same sign, both are
 // integer types or string types, and new Flen and Decimal must be greater than or equal to origin.
-func modifiable(origin *types.FieldType, to *types.FieldType) bool {
+func modifiable(origin *types.FieldType, to *types.FieldType) error {
 	if to.Flen > 0 && to.Flen < origin.Flen {
-		return false
+		msg := fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
+		return errUnsupportedModifyColumn.GenByArgs(msg)
 	}
 	if to.Decimal > 0 && to.Decimal < origin.Decimal {
-		return false
+		msg := fmt.Sprintf("decimal %d is less than origin %d", to.Decimal, origin.Decimal)
+		return errUnsupportedModifyColumn.GenByArgs(msg)
 	}
-	if origin.Charset != to.Charset || origin.Collate != to.Collate {
-		return false
+	if to.Charset != origin.Charset {
+		msg := fmt.Sprintf("charset %s not match origin %s", to.Charset, origin.Charset)
+		return errUnsupportedModifyColumn.GenByArgs(msg)
 	}
-	if mysql.HasUnsignedFlag(uint(origin.Flag)) != mysql.HasUnsignedFlag(uint(to.Flag)) {
-		return false
+	if to.Collate != origin.Collate {
+		msg := fmt.Sprintf("collate %s not match origin %s", to.Collate, origin.Collate)
+		return errUnsupportedModifyColumn.GenByArgs(msg)
+	}
+	toUnsigned := mysql.HasUnsignedFlag(uint(to.Flag))
+	originUnsigned := mysql.HasUnsignedFlag(uint(origin.Flag))
+	if originUnsigned != toUnsigned {
+		msg := fmt.Sprintf("unsigned %v not match origin %v", toUnsigned, originUnsigned)
+		return errUnsupportedModifyColumn.GenByArgs(msg)
 	}
 	switch origin.Tp {
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
@@ -915,24 +925,20 @@ func modifiable(origin *types.FieldType, to *types.FieldType) bool {
 		switch to.Tp {
 		case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
 			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-			return true
-		default:
-			return false
+			return nil
 		}
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		switch to.Tp {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-			return true
-		default:
-			return false
+			return nil
 		}
 	default:
 		if origin.Tp == to.Tp {
-			return true
+			return nil
 		}
-
-		return false
 	}
+	msg := fmt.Sprintf("type %v not match orgin %v", to.Tp, origin.Tp)
+	return errUnsupportedModifyColumn.GenByArgs(msg)
 }
 
 func setDefaultValue(ctx context.Context, col *table.Column, option *ast.ColumnOption) error {
@@ -1029,15 +1035,16 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 		FieldType:          *spec.NewColumn.Tp,
 	}
 	setCharsetCollationFlenDecimal(&newCol.FieldType)
-	if !modifiable(&col.FieldType, &newCol.FieldType) {
-		return nil, errors.Trace(errUnsupportedModifyColumn)
+	err = modifiable(&col.FieldType, &newCol.FieldType)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	if err := setDefaultAndComment(ctx, newCol, spec.NewColumn.Options); err != nil {
 		return nil, errors.Trace(err)
 	}
 	// We don't support modifying the type definitions from 'null' to 'not null' now.
 	if !mysql.HasNotNullFlag(col.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
-		return nil, errors.Trace(errUnsupportedModifyColumn)
+		return nil, errUnsupportedModifyColumn.GenByArgs("null to not null")
 	}
 
 	newCol.Name = spec.NewColumn.Name.Name
