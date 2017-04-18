@@ -32,6 +32,8 @@ import (
 type Histogram struct {
 	ID  int64 // Column ID.
 	NDV int64 // Number of distinct values.
+	// LastUpdateVersion is the version that this histogram updated last time.
+	LastUpdateVersion uint64
 
 	Buckets []bucket
 }
@@ -52,7 +54,8 @@ type bucket struct {
 }
 
 func (hg *Histogram) saveToStorage(ctx context.Context, tableID int64, isIndex int) error {
-	insertSQL := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count) values (%d, %d, %d, %d)", tableID, isIndex, hg.ID, hg.NDV)
+	ver := ctx.Txn().StartTS()
+	insertSQL := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values (%d, %d, %d, %d, %d)", tableID, isIndex, hg.ID, hg.NDV, ver)
 	_, err := ctx.(sqlexec.SQLExecutor).Execute(insertSQL)
 	if err != nil {
 		return errors.Trace(err)
@@ -77,17 +80,18 @@ func (hg *Histogram) saveToStorage(ctx context.Context, tableID int64, isIndex i
 	return nil
 }
 
-func histogramFromStorage(ctx context.Context, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int) (*Histogram, error) {
+func (h *Handle) histogramFromStorage(tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64) (*Histogram, error) {
 	selSQL := fmt.Sprintf("select bucket_id, count, repeats, value from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, colID)
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, selSQL)
+	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, selSQL)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	bucketSize := len(rows)
 	hg := &Histogram{
-		ID:      colID,
-		NDV:     distinct,
-		Buckets: make([]bucket, bucketSize),
+		ID:                colID,
+		NDV:               distinct,
+		LastUpdateVersion: ver,
+		Buckets:           make([]bucket, bucketSize),
 	}
 	for i := 0; i < bucketSize; i++ {
 		bucketID := rows[i].Data[0].GetInt64()
@@ -97,7 +101,7 @@ func histogramFromStorage(ctx context.Context, tableID int64, colID int64, tp *t
 		if isIndex == 1 {
 			value = rows[i].Data[3]
 		} else {
-			value, err = rows[i].Data[3].ConvertTo(ctx.GetSessionVars().StmtCtx, tp)
+			value, err = rows[i].Data[3].ConvertTo(h.ctx.GetSessionVars().StmtCtx, tp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

@@ -68,17 +68,17 @@ func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 				{
 					Name:   model.NewCIStr("c"),
 					Length: types.UnspecifiedLength,
-					Offset: 1,
+					Offset: 2,
 				},
 				{
 					Name:   model.NewCIStr("d"),
 					Length: types.UnspecifiedLength,
-					Offset: 2,
+					Offset: 3,
 				},
 				{
 					Name:   model.NewCIStr("e"),
 					Length: types.UnspecifiedLength,
-					Offset: 3,
+					Offset: 4,
 				},
 			},
 			State:  model.StatePublic,
@@ -90,6 +90,7 @@ func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 				{
 					Name:   model.NewCIStr("e"),
 					Length: types.UnspecifiedLength,
+					Offset: 4,
 				},
 			},
 			State:  model.StateWriteOnly,
@@ -101,7 +102,7 @@ func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 				{
 					Name:   model.NewCIStr("f"),
 					Length: types.UnspecifiedLength,
-					Offset: 1,
+					Offset: 8,
 				},
 			},
 			State:  model.StatePublic,
@@ -113,7 +114,7 @@ func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 				{
 					Name:   model.NewCIStr("g"),
 					Length: types.UnspecifiedLength,
-					Offset: 1,
+					Offset: 9,
 				},
 			},
 			State:  model.StatePublic,
@@ -125,12 +126,12 @@ func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 				{
 					Name:   model.NewCIStr("f"),
 					Length: types.UnspecifiedLength,
-					Offset: 1,
+					Offset: 8,
 				},
 				{
 					Name:   model.NewCIStr("g"),
 					Length: types.UnspecifiedLength,
-					Offset: 2,
+					Offset: 9,
 				},
 			},
 			State:  model.StatePublic,
@@ -1650,12 +1651,12 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		// Test TopN + Selection.
 		{
 			sql:  "select * from t where a < 1 order by b limit 5",
-			best: "DataScan(t)->Selection->Sort + Limit(5) + Offset(0)->Projection",
+			best: "DataScan(t)->Sel([lt(test.t.a, 1)])->Sort + Limit(5) + Offset(0)->Projection",
 		},
 		// Test Limit + Selection.
 		{
 			sql:  "select * from t where a < 1 limit 5",
-			best: "DataScan(t)->Selection->Limit->Projection",
+			best: "DataScan(t)->Sel([lt(test.t.a, 1)])->Limit->Projection",
 		},
 		// Test Limit + Agg + Proj .
 		{

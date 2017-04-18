@@ -583,46 +583,59 @@ func (s *testEvaluatorSuite) TestSpace(c *C) {
 func (s *testEvaluatorSuite) TestLocate(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
-		subStr string
-		Str    string
-		result int64
+		Args []interface{}
+		Want interface{}
 	}{
-		{"bar", "foobarbar", 4},
-		{"xbar", "foobar", 0},
-		{"", "foobar", 1},
-		{"foobar", "", 0},
-		{"", "", 1},
+		{[]interface{}{"bar", "foobarbar"}, 4},
+		{[]interface{}{"xbar", "foobar"}, 0},
+		{[]interface{}{"", "foobar"}, 1},
+		{[]interface{}{"foobar", ""}, 0},
+		{[]interface{}{"", ""}, 1},
+		{[]interface{}{"好世", "你好世界"}, 2},
+		{[]interface{}{"界面", "你好世界"}, 0},
+		{[]interface{}{"b", "中a英b文"}, 4},
+		{[]interface{}{"BaR", "foobArbar"}, 4},
+		{[]interface{}{[]byte("BaR"), "foobArbar"}, 0},
+		{[]interface{}{"BaR", []byte("foobArbar")}, 0},
+		{[]interface{}{nil, "foobar"}, nil},
+		{[]interface{}{"bar", nil}, nil},
 	}
-	for _, v := range tbl {
-		fc := funcs[ast.Locate]
-		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(v.subStr, v.Str)), s.ctx)
+
+	Dtbl := tblToDtbl(tbl)
+	instr := funcs[ast.Locate]
+	for i, t := range Dtbl {
+		f, err := instr.getFunction(datumsToConstants(t["Args"]), s.ctx)
 		c.Assert(err, IsNil)
-		r, err := f.eval(nil)
+		got, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		c.Assert(r.Kind(), Equals, types.KindInt64)
-		c.Assert(r.GetInt64(), Equals, v.result)
+		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
 	}
 
 	tbl2 := []struct {
-		subStr string
-		Str    string
-		pos    int64
-		result int64
+		Args []interface{}
+		Want interface{}
 	}{
-		{"bar", "foobarbar", 5, 7},
-		{"xbar", "foobar", 1, 0},
-		{"", "foobar", 2, 2},
-		{"foobar", "", 1, 0},
-		{"", "", 2, 0},
+		{[]interface{}{"bar", "foobarbar", 5}, 7},
+		{[]interface{}{"xbar", "foobar", 1}, 0},
+		{[]interface{}{"", "foobar", 2}, 2},
+		{[]interface{}{"foobar", "", 1}, 0},
+		{[]interface{}{"", "", 2}, 0},
+		{[]interface{}{"A", "大A写的A", 0}, 0},
+		{[]interface{}{"A", "大A写的A", 1}, 2},
+		{[]interface{}{"A", "大A写的A", 2}, 2},
+		{[]interface{}{"A", "大A写的A", 3}, 5},
+		{[]interface{}{"bAr", "foobarBaR", 5}, 7},
+		{[]interface{}{[]byte("bAr"), "foobarBaR", 5}, 0},
+		{[]interface{}{"bAr", []byte("foobarBaR"), 5}, 0},
+		{[]interface{}{"bAr", []byte("foobarbAr"), 5}, 7},
 	}
-	for _, v := range tbl2 {
-		fc := funcs[ast.Locate]
-		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(v.subStr, v.Str, v.pos)), s.ctx)
+	Dtbl2 := tblToDtbl(tbl2)
+	for i, t := range Dtbl2 {
+		f, err := instr.getFunction(datumsToConstants(t["Args"]), s.ctx)
 		c.Assert(err, IsNil)
-		r, err := f.eval(nil)
+		got, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		c.Assert(r.Kind(), Equals, types.KindInt64)
-		c.Assert(r.GetInt64(), Equals, v.result)
+		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
 	}
 
 	errTbl := []struct {
@@ -1193,9 +1206,24 @@ func (s *testEvaluatorSuite) TestFromBase64(c *C) {
 	}{
 		{string(""), string("")},
 		{string("YWJj"), string("abc")},
+		{string("YWIgYw=="), string("ab c")},
+		{string("YWIKYw=="), string("ab\nc")},
+		{string("YWIJYw=="), string("ab\tc")},
 		{string("cXdlcnR5MTIzNDU2"), string("qwerty123456")},
 		{
+			string("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0\nNTY3ODkrL0FCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4\neXowMTIzNDU2Nzg5Ky9BQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWmFiY2RlZmdoaWprbG1ub3Bx\ncnN0dXZ3eHl6MDEyMzQ1Njc4OSsv"),
+			string("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"),
+		},
+		{
 			string("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0NTY3ODkrLw=="),
+			string("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"),
+		},
+		{
+			string("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0NTY3ODkrLw=="),
+			string("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"),
+		},
+		{
+			string("QUJDREVGR0hJSkt\tMTU5PUFFSU1RVVld\nYWVphYmNkZ\rWZnaGlqa2xt   bm9wcXJzdHV2d3h5ejAxMjM0NTY3ODkrLw=="),
 			string("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"),
 		},
 	}
@@ -1374,5 +1402,44 @@ func (s *testEvaluatorSuite) TestQuote(c *C) {
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
+	}
+}
+
+func (s *testEvaluatorSuite) TestToBase64(c *C) {
+	tests := []struct {
+		args   interface{}
+		expect interface{}
+	}{
+		{string(""), string("")},
+		{string("abc"), string("YWJj")},
+		{string("ab c"), string("YWIgYw==")},
+		{string("ab\nc"), string("YWIKYw==")},
+		{string("ab\tc"), string("YWIJYw==")},
+		{string("qwerty123456"), string("cXdlcnR5MTIzNDU2")},
+		{
+			string("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"),
+			string("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0\nNTY3ODkrLw=="),
+		},
+		{
+			string("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"),
+			string("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0\nNTY3ODkrL0FCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4\neXowMTIzNDU2Nzg5Ky9BQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWmFiY2RlZmdoaWprbG1ub3Bx\ncnN0dXZ3eHl6MDEyMzQ1Njc4OSsv"),
+		},
+		{
+			string("ABCD  EFGHI\nJKLMNOPQRSTUVWXY\tZabcdefghijklmnopqrstuv  wxyz012\r3456789+/"),
+			string("QUJDRCAgRUZHSEkKSktMTU5PUFFSU1RVVldYWQlaYWJjZGVmZ2hpamtsbW5vcHFyc3R1diAgd3h5\nejAxMg0zNDU2Nzg5Ky8="),
+		},
+	}
+	fc := funcs[ast.ToBase64]
+	for _, test := range tests {
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(test.args)), s.ctx)
+		c.Assert(err, IsNil)
+		result, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		if test.expect == nil {
+			c.Assert(result.Kind(), Equals, types.KindNull)
+		} else {
+			expect, _ := test.expect.(string)
+			c.Assert(result.GetString(), Equals, expect)
+		}
 	}
 }

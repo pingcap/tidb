@@ -107,7 +107,7 @@ func (b *Builder) splitAndConcurrentBuild(t *Table, IDs []int64, isSorted bool) 
 // NewTable creates a table statistics.
 func (b *Builder) NewTable() (*Table, error) {
 	t := &Table{
-		Info:    b.TblInfo,
+		tableID: b.TblInfo.ID,
 		Count:   b.Count,
 		Columns: make(map[int64]*Column, len(b.TblInfo.Columns)),
 		Indices: make(map[int64]*Index, len(b.TblInfo.Indices)),
