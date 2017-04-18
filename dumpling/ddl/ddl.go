@@ -51,7 +51,7 @@ var (
 	// We don't support dropping column with index covered now.
 	errCantDropColWithIndex    = terror.ClassDDL.New(codeCantDropColWithIndex, "can't drop column with index")
 	errUnsupportedAddColumn    = terror.ClassDDL.New(codeUnsupportedAddColumn, "unsupported add column")
-	errUnsupportedModifyColumn = terror.ClassDDL.New(codeUnsupportedModifyColumn, "unsupported modify column")
+	errUnsupportedModifyColumn = terror.ClassDDL.New(codeUnsupportedModifyColumn, "unsupported modify column %s")
 	errUnsupportedPKHandle     = terror.ClassDDL.New(codeUnsupportedDropPKHandle,
 		"unsupported drop integer primary key")
 
