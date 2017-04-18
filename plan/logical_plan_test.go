@@ -724,7 +724,7 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 		},
 		{
 			sql:  "select sum(a.a) from t a, t b, t c where a.c = b.c and b.c = c.c",
-			best: "Join{Join{DataScan(a)->Aggr(sum(a.a),firstrow(a.c))->DataScan(b)}(a.c,b.c)->Aggr(sum(join_agg_0),firstrow(b.c))->DataScan(c)}(b.c,c.c)->Aggr(sum(join_agg_0))->Projection",
+			best: "Join{Join{DataScan(a)->DataScan(b)}(a.c,b.c)->DataScan(c)}(b.c,c.c)->Aggr(sum(a.a))->Projection",
 		},
 		{
 			sql:  "select sum(b.a) from t a left join t b on a.c = b.c",
