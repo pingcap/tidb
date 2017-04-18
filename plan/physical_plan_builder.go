@@ -30,6 +30,8 @@ import (
 
 const (
 	netWorkFactor   = 1.5
+	scanFactor      = 2.0
+	descScanFactor  = 5 * scanFactor
 	memoryFactor    = 5.0
 	selectionFactor = 0.8
 	cpuFactor       = 0.9
