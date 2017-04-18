@@ -712,7 +712,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) {
 		case ast.TableOptionCharset:
 			tbInfo.Charset = op.StrValue
 		case ast.TableOptionCollate:
-			tbInfo.Charset = op.StrValue
+			tbInfo.Collate = op.StrValue
 		}
 	}
 }

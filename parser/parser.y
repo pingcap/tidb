@@ -4174,9 +4174,6 @@ CastType:
 	{
 		x := types.NewFieldType(mysql.TypeString)
 		x.Flen = $2.(int)
-		if $3.(bool) {
-			x.Flag |= mysql.BinaryFlag
-		}
 		x.Charset = $4.(string)
 		$$ = x
 	}
@@ -5889,26 +5886,21 @@ StringType:
 	{
 		x := types.NewFieldType(mysql.TypeString)
 		x.Flen = $3.(int)
-		if $4.(bool) {
-			x.Flag |= mysql.BinaryFlag
-		}
+		x.Charset = $5.(string)
+		x.Collate = $6.(string)
 		$$ = x
 	}
 |	NationalOpt "CHAR" OptBinary OptCharset OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeString)
-		if $3.(bool) {
-			x.Flag |= mysql.BinaryFlag
-		}
+		x.Charset = $4.(string)
+		x.Collate = $5.(string)
 		$$ = x
 	}
 |	NationalOpt "VARCHAR" FieldLen OptBinary OptCharset OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeVarchar)
 		x.Flen = $3.(int)
-		if $4.(bool) {
-			x.Flag |= mysql.BinaryFlag
-		}
 		x.Charset = $5.(string)
 		x.Collate = $6.(string)
 		$$ = x
@@ -5919,6 +5911,7 @@ StringType:
 		x.Flen = $2.(int)
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CharsetBin
+		x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
 |	"VARBINARY" FieldLen
@@ -5927,18 +5920,20 @@ StringType:
 		x.Flen = $2.(int)
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CharsetBin
+		x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
 |	BlobType
 	{
+		x := $1.(*types.FieldType)
+		x.Charset = charset.CharsetBin
+		x.Collate = charset.CharsetBin
+		x.Flag |= mysql.BinaryFlag
 		$$ = $1.(*types.FieldType)
 	}
 |	TextType OptBinary OptCharset OptCollate
 	{
 		x := $1.(*types.FieldType)
-		if $2.(bool) {
-			x.Flag |= mysql.BinaryFlag
-		}
 		x.Charset = $3.(string)
 		x.Collate = $4.(string)
 		$$ = x
@@ -5968,30 +5963,22 @@ BlobType:
 	"TINYBLOB"
 	{
 		x := types.NewFieldType(mysql.TypeTinyBlob)
-		x.Charset = charset.CharsetBin
-		x.Collate = charset.CharsetBin
 		$$ = x
 	}
 |	"BLOB" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeBlob)
 		x.Flen = $2.(int)
-		x.Charset = charset.CharsetBin
-		x.Collate = charset.CharsetBin
 		$$ = x
 	}
 |	"MEDIUMBLOB"
 	{
 		x := types.NewFieldType(mysql.TypeMediumBlob)
-		x.Charset = charset.CharsetBin
-		x.Collate = charset.CharsetBin
 		$$ = x
 	}
 |	"LONGBLOB"
 	{
 		x := types.NewFieldType(mysql.TypeLongBlob)
-		x.Charset = charset.CharsetBin
-		x.Collate = charset.CharsetBin
 		$$ = x
 	}
 
