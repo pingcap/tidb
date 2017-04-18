@@ -130,8 +130,6 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// indexCount and columnCount record the number of indices and columns in table stats. If the number don't match with
-	// tableInfo, we will return pseudo table.
 	for _, row := range rows {
 		distinct := row.Data[3].GetInt64()
 		histID := row.Data[2].GetInt64()
