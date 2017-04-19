@@ -147,7 +147,7 @@ type Analyze struct {
 	baseLogicalPlan
 	basePhysicalPlan
 
-	PKCount  int
+	PKCount  int // PKCount is the number of analyzePKTask, exported for usage in executor.
 	pkTasks  []analyzePKTask
 	colTasks []analyzeColumnsTask
 	idxTasks []analyzeIndexTask

@@ -168,31 +168,3 @@ func (b *Builder) BuildColumn(id int64, ndv int64, count int64, samples []types.
 	}
 	return hg, nil
 }
-
-// CopyFromIndexColumns is used to replace the sampled column histogram with index histogram if the
-// index is single column index.
-// Index histogram is encoded, it need to be decoded to be used as column histogram.
-// TODO: use field type to decode the value.
-func CopyFromIndexColumns(ind *Index, id int64) (*Column, error) {
-	hg := Histogram{
-		ID:      id,
-		NDV:     ind.NDV,
-		Buckets: make([]bucket, 0, len(ind.Buckets)),
-	}
-	for _, b := range ind.Buckets {
-		val := b.Value
-		if val.GetBytes() == nil {
-			break
-		}
-		data, err := codec.Decode(val.GetBytes(), 1)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		hg.Buckets = append(hg.Buckets, bucket{
-			Count:   b.Count,
-			Value:   data[0],
-			Repeats: b.Repeats,
-		})
-	}
-	return &Column{Histogram: hg}, nil
-}

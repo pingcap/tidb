@@ -738,7 +738,7 @@ func (b *executorBuilder) buildCache(v *plan.Cache) Executor {
 func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	e := &AnalyzeExec{
 		ctx:     b.ctx,
-		pkCount: v.PKCount,
+		pkOffset: v.PKCount,
 		Srcs:    make([]Executor, len(v.Children())),
 	}
 	for i, child := range v.Children() {

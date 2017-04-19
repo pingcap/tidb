@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
@@ -34,9 +33,9 @@ var _ Executor = &AnalyzeExec{}
 
 // AnalyzeExec represents Analyze executor.
 type AnalyzeExec struct {
-	ctx     context.Context
-	pkCount int
-	Srcs    []Executor
+	ctx      context.Context
+	pkOffset int // The first pkOffset executors is for pk.
+	Srcs     []Executor
 }
 
 const (
@@ -65,19 +64,19 @@ func (e *AnalyzeExec) Close() error {
 func (e *AnalyzeExec) Next() (*Row, error) {
 	var tasks []*analyzeTask
 	for i, src := range e.Srcs {
-		switch src.(type) {
+		switch v := src.(type) {
 		case *XSelectTableExec:
-			if i < e.pkCount {
-				tasks = append(tasks, e.buildAnalyzePKTask(src.(*XSelectTableExec)))
+			if i < e.pkOffset {
+				tasks = append(tasks, e.buildAnalyzePKTask(v))
 			} else {
-				t, err := e.buildAnalyzeColumnsTask(src.(*XSelectTableExec))
+				t, err := e.buildAnalyzeColumnsTask(v)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
 				tasks = append(tasks, t...)
 			}
 		case *XSelectIndexExec:
-			tasks = append(tasks, e.buildAnalyzeIndexTask(src.(*XSelectIndexExec)))
+			tasks = append(tasks, e.buildAnalyzeIndexTask(v))
 		}
 	}
 	concurrency, err := getBuildStatsConcurrency(e.ctx)
@@ -98,29 +97,9 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 		if result.err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = result.hist.SaveToStorage(e.ctx, result.tblInfo.ID, result.count, result.isIndex)
+		err = result.hist.SaveToStorage(e.ctx, result.tableID, result.count, result.isIndex)
 		if err != nil {
 			return nil, errors.Trace(err)
-		}
-		// The sorted bucket is more accurate, we replace the sampled column histogram with index histogram if the
-		// index is single column index.
-		if result.isIndex == 1 {
-			var idxInfo *model.IndexInfo
-			for _, idx := range result.tblInfo.Indices {
-				if idx.ID == result.hist.ID {
-					idxInfo = idx
-					break
-				}
-			}
-			if idxInfo != nil && len(idxInfo.Columns) == 1 {
-				columnOffset := idxInfo.Columns[0].Offset
-				columnID := result.tblInfo.Columns[columnOffset].ID
-				colHist, err := statistics.CopyFromIndexColumns(&statistics.Index{Histogram: *result.hist}, columnID)
-				err = colHist.SaveToStorage(e.ctx, result.tblInfo.ID, result.count, 0)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-			}
 		}
 	}
 	dom := sessionctx.GetDomain(e.ctx)
@@ -147,9 +126,17 @@ func getBuildStatsConcurrency(ctx context.Context) (int, error) {
 	return int(c), errors.Trace(err)
 }
 
+type taskType int
+
+const (
+	pkTask taskType = iota
+	idxTask
+	colTask
+)
+
 type analyzeTask struct {
 	statsBuilder *statistics.Builder
-	taskType     int // 0 for pk, 1 for index, 2 for column.
+	taskType     taskType
 	id           int64
 	record       ast.RecordSet
 	ndv          int64
@@ -158,7 +145,7 @@ type analyzeTask struct {
 }
 
 type analyzeResult struct {
-	tblInfo *model.TableInfo
+	tableID int64
 	hist    *statistics.Histogram
 	count   int64
 	isIndex int
@@ -168,15 +155,15 @@ type analyzeResult struct {
 func analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- *analyzeResult) {
 	for task := range taskCh {
 		switch task.taskType {
-		case 0:
+		case pkTask:
 			count, hg, err := task.statsBuilder.BuildIndex(task.id, task.record, 0)
-			resultCh <- &analyzeResult{tblInfo: task.statsBuilder.TblInfo, hist: hg, count: count, isIndex: 0, err: err}
-		case 1:
+			resultCh <- &analyzeResult{tableID: task.statsBuilder.TblInfo.ID, hist: hg, count: count, isIndex: 0, err: err}
+		case idxTask:
 			count, hg, err := task.statsBuilder.BuildIndex(task.id, task.record, 1)
-			resultCh <- &analyzeResult{tblInfo: task.statsBuilder.TblInfo, hist: hg, count: count, isIndex: 1, err: err}
-		case 2:
+			resultCh <- &analyzeResult{tableID: task.statsBuilder.TblInfo.ID, hist: hg, count: count, isIndex: 1, err: err}
+		case colTask:
 			hg, err := task.statsBuilder.BuildColumn(task.id, task.ndv, task.count, task.samples)
-			resultCh <- &analyzeResult{tblInfo: task.statsBuilder.TblInfo, hist: hg, count: task.count, isIndex: 0, err: err}
+			resultCh <- &analyzeResult{tableID: task.statsBuilder.TblInfo.ID, hist: hg, count: task.count, isIndex: 0, err: err}
 		}
 	}
 }
@@ -189,7 +176,7 @@ func (e *AnalyzeExec) buildAnalyzePKTask(exec *XSelectTableExec) *analyzeTask {
 	}
 	return &analyzeTask{
 		statsBuilder: b,
-		taskType:     0,
+		taskType:     pkTask,
 		id:           exec.Columns[0].ID,
 		record:       &recordSet{executor: exec},
 	}
@@ -213,7 +200,7 @@ func (e *AnalyzeExec) buildAnalyzeColumnsTask(exec *XSelectTableExec) ([]*analyz
 	for i, col := range exec.Columns {
 		t := &analyzeTask{
 			statsBuilder: b,
-			taskType:     2,
+			taskType:     colTask,
 			id:           col.ID,
 			ndv:          colNDVs[i],
 			count:        count,
@@ -232,7 +219,7 @@ func (e *AnalyzeExec) buildAnalyzeIndexTask(exec *XSelectIndexExec) *analyzeTask
 	}
 	return &analyzeTask{
 		statsBuilder: b,
-		taskType:     1,
+		taskType:     idxTask,
 		id:           exec.indexPlan.Index.ID,
 		record:       &recordSet{executor: exec},
 	}
