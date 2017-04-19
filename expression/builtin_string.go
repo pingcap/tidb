@@ -1701,7 +1701,7 @@ func (b *builtinExportSetSig) eval(row []types.Datum) (d types.Datum, err error)
 		return d, errors.Trace(err)
 	}
 	var (
-		bits         string
+		bits         uint64
 		on           string
 		off          string
 		separator    = ","
@@ -1728,7 +1728,7 @@ func (b *builtinExportSetSig) eval(row []types.Datum) (d types.Datum, err error)
 		if err != nil {
 			return d, errors.Trace(err)
 		}
-		bits = strconv.FormatInt(arg, 2)
+		bits = uint64(arg)
 		on, err = args[1].ToString()
 		if err != nil {
 			return d, errors.Trace(err)
@@ -1739,16 +1739,12 @@ func (b *builtinExportSetSig) eval(row []types.Datum) (d types.Datum, err error)
 		}
 	}
 	res := make([]string, 0, numberOfBits)
-	for i := len(bits) - 1; i >= len(bits)-numberOfBits; i-- {
+	for ; len(res) < numberOfBits; bits = bits / 2 {
 		var appendStr string
-		if i < 0 {
-			appendStr = off
+		if bits&1 > 0 {
+			appendStr = on
 		} else {
-			if bits[i] == '1' {
-				appendStr = on
-			} else {
-				appendStr = off
-			}
+			appendStr = off
 		}
 		res = append(res, appendStr)
 	}

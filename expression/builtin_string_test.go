@@ -1326,6 +1326,8 @@ func (s *testEvaluatorSuite) TestExportSet(c *C) {
 		argLst []interface{}
 		res    string
 	}{
+		{[]interface{}{-9223372036854775807, "Y", "N", ",", 5}, "Y,N,N,N,N"},
+		{[]interface{}{-6, "Y", "N", ",", 5}, "N,Y,N,Y,Y"},
 		{[]interface{}{5, "Y", "N", ",", 4}, "Y,N,Y,N"},
 		{[]interface{}{5, "Y", "N", ",", 0}, ""},
 		{[]interface{}{5, "Y", "N", ",", 1}, "Y"},
