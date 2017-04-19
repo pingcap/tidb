@@ -664,7 +664,7 @@ func (cf *concatFunction) GetType() *types.FieldType {
 	return types.NewFieldType(mysql.TypeVarString)
 }
 
-func writeValue(ctx *aggEvaluateContext, val types.Datum) {
+func (cf *concatFunction) writeValue(ctx *aggEvaluateContext, val types.Datum) {
 	if val.Kind() == types.KindBytes {
 		ctx.Buffer.Write(val.GetBytes())
 	} else {
@@ -702,7 +702,7 @@ func (cf *concatFunction) Update(row []types.Datum, groupKey []byte, sc *variabl
 		ctx.Buffer.WriteString(",")
 	}
 	for _, val := range cf.datumBuf {
-		writeValue(ctx, val)
+		cf.writeValue(ctx, val)
 	}
 	// TODO: if total length is greater than global var group_concat_max_len, truncate it.
 	return nil
@@ -738,7 +738,7 @@ func (cf *concatFunction) StreamUpdate(row []types.Datum, sc *variable.Statement
 		ctx.Buffer.WriteString(",")
 	}
 	for _, val := range cf.datumBuf {
-		writeValue(ctx, val)
+		cf.writeValue(ctx, val)
 	}
 	// TODO: if total length is greater than global var group_concat_max_len, truncate it.
 	return nil
