@@ -1651,12 +1651,12 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		// Test TopN + Selection.
 		{
 			sql:  "select * from t where a < 1 order by b limit 5",
-			best: "DataScan(t)->Sel([lt(test.t.a, 1)])->Sort + Limit(5) + Offset(0)->Projection",
+			best: "DataScan(t)->Sort + Limit(5) + Offset(0)->Projection",
 		},
 		// Test Limit + Selection.
 		{
 			sql:  "select * from t where a < 1 limit 5",
-			best: "DataScan(t)->Sel([lt(test.t.a, 1)])->Limit->Projection",
+			best: "DataScan(t)->Limit->Projection",
 		},
 		// Test Limit + Agg + Proj .
 		{
