@@ -9,8 +9,8 @@ import (
 )
 
 var bitCountCases = []struct {
-	origin int64
-	count  int64
+	origin interface{}
+	count  interface{}
 }{
 	{8, 1},
 	{29, 4},
