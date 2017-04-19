@@ -38,7 +38,7 @@ func (s *testEvalSuite) TestEval(c *C) {
 	colID := int64(1)
 	xevaluator := NewEvaluator(new(variable.StatementContext))
 	xevaluator.Row[colID] = types.NewIntDatum(100)
-	cases := []struct {
+	tests := []struct {
 		expr   *tipb.Expr
 		result types.Datum
 	}{
@@ -273,11 +273,11 @@ func (s *testEvalSuite) TestEval(c *C) {
 			types.NewFloat64Datum(1.1),
 		},
 	}
-	for _, ca := range cases {
-		result, err := xevaluator.Eval(ca.expr)
+	for _, tt := range tests {
+		result, err := xevaluator.Eval(tt.expr)
 		c.Assert(err, IsNil)
-		c.Assert(result.Kind(), Equals, ca.result.Kind())
-		cmp, err := result.CompareDatum(xevaluator.StatementCtx, ca.result)
+		c.Assert(result.Kind(), Equals, tt.result.Kind())
+		cmp, err := result.CompareDatum(xevaluator.StatementCtx, tt.result)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}
@@ -357,7 +357,7 @@ func notExpr(value interface{}) *tipb.Expr {
 }
 
 func (s *testEvalSuite) TestLike(c *C) {
-	cases := []struct {
+	tests := []struct {
 		expr   *tipb.Expr
 		result int64
 	}{
@@ -407,15 +407,15 @@ func (s *testEvalSuite) TestLike(c *C) {
 		},
 	}
 	ev := NewEvaluator(new(variable.StatementContext))
-	for _, ca := range cases {
-		res, err := ev.Eval(ca.expr)
+	for _, tt := range tests {
+		res, err := ev.Eval(tt.expr)
 		c.Check(err, IsNil)
-		c.Check(res.GetInt64(), Equals, ca.result)
+		c.Check(res.GetInt64(), Equals, tt.result)
 	}
 }
 
 func (s *testEvalSuite) TestWhereIn(c *C) {
-	cases := []struct {
+	tests := []struct {
 		expr   *tipb.Expr
 		result interface{}
 	}{
@@ -453,14 +453,14 @@ func (s *testEvalSuite) TestWhereIn(c *C) {
 		},
 	}
 	ev := NewEvaluator(new(variable.StatementContext))
-	for _, ca := range cases {
-		res, err := ev.Eval(ca.expr)
+	for _, tt := range tests {
+		res, err := ev.Eval(tt.expr)
 		c.Check(err, IsNil)
-		if ca.result == nil {
+		if tt.result == nil {
 			c.Check(res.Kind(), Equals, types.KindNull)
 		} else {
 			c.Check(res.Kind(), Equals, types.KindInt64)
-			if ca.result == true {
+			if tt.result == true {
 				c.Check(res.GetInt64(), Equals, int64(1))
 			} else {
 				c.Check(res.GetInt64(), Equals, int64(0))
@@ -474,7 +474,7 @@ func (s *testEvalSuite) TestEvalIsNull(c *C) {
 	xevaluator := NewEvaluator(new(variable.StatementContext))
 	xevaluator.Row[colID] = types.NewIntDatum(100)
 	null, trueAns, falseAns := types.Datum{}, types.NewIntDatum(1), types.NewIntDatum(0)
-	cases := []struct {
+	tests := []struct {
 		expr   *tipb.Expr
 		result types.Datum
 	}{
@@ -491,11 +491,11 @@ func (s *testEvalSuite) TestEvalIsNull(c *C) {
 			result: falseAns,
 		},
 	}
-	for _, ca := range cases {
-		result, err := xevaluator.Eval(ca.expr)
+	for _, tt := range tests {
+		result, err := xevaluator.Eval(tt.expr)
 		c.Assert(err, IsNil)
-		c.Assert(result.Kind(), Equals, ca.result.Kind())
-		cmp, err := result.CompareDatum(xevaluator.StatementCtx, ca.result)
+		c.Assert(result.Kind(), Equals, tt.result.Kind())
+		cmp, err := result.CompareDatum(xevaluator.StatementCtx, tt.result)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}

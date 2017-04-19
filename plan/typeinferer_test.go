@@ -59,7 +59,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		c_set set('a', 'b', 'c'),
 		c_enum enum('a', 'b', 'c'))`
 	testKit.MustExec(sql)
-	cases := []struct {
+	tests := []struct {
 		expr string
 		tp   byte
 		chs  string
@@ -301,9 +301,9 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`bit_count(1)`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{`time_to_sec("23:59:59")`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 	}
-	for _, ca := range cases {
+	for _, tt := range tests {
 		ctx := testKit.Se.(context.Context)
-		stmts, err := tidb.Parse(ctx, "select "+ca.expr+" from t")
+		stmts, err := tidb.Parse(ctx, "select "+tt.expr+" from t")
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0].(*ast.SelectStmt)
@@ -314,9 +314,9 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		tp := stmt.GetResultFields()[0].Column.Tp
 		chs := stmt.GetResultFields()[0].Column.Charset
 		flag := stmt.GetResultFields()[0].Column.Flag
-		c.Assert(tp, Equals, ca.tp, Commentf("Tp for %s", ca.expr))
-		c.Assert(chs, Equals, ca.chs, Commentf("Charset for %s", ca.expr))
-		c.Assert(flag^uint(ca.flag), Equals, uint(0x0), Commentf("Charset for %s", ca.flag))
+		c.Assert(tp, Equals, tt.tp, Commentf("Tp for %s", tt.expr))
+		c.Assert(chs, Equals, tt.chs, Commentf("Charset for %s", tt.expr))
+		c.Assert(flag^uint(tt.flag), Equals, uint(0x0), Commentf("Charset for %s", tt.flag))
 	}
 }
 
