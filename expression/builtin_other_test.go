@@ -9,14 +9,13 @@ import (
 )
 
 var bitCountCases = []struct {
-	origin interface{}
-	count  interface{}
+	origin int64
+	count  int64
 }{
 	{8, 1},
 	{29, 4},
 	{0, 0},
 	{-1, 64},
-	{nil, nil},
 }
 
 func (s *testEvaluatorSuite) TestBitCount(c *C) {

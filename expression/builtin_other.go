@@ -280,10 +280,8 @@ func (b *builtinBitCountSig) eval(row []types.Datum) (d types.Datum, err error) 
 	}
 	var count int64
 	for bin != 0 {
-		if bin%2 == 0 {
-			count += bin & 1
-			bin >>= 1
-		}
+		count++
+		bin = (bin - 1) & bin
 	}
 	d.SetInt64(count)
 	return d, nil
