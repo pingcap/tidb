@@ -540,8 +540,7 @@ func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast
 				// It is not ambiguous and already resolved from table source.
 				// We should restore its Refer.
 				cn.Refer = r
-			}
-			if _, ok := cn.Refer.Expr.(*ast.AggregateFuncExpr); ok {
+			} else if _, ok := cn.Refer.Expr.(*ast.AggregateFuncExpr); ok {
 				nr.Err = ErrIllegalReference.Gen("Reference '%s' not supported (reference to group function)", cn.Name.Name.O)
 			}
 			return true

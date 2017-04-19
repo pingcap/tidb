@@ -142,6 +142,7 @@ func (s *testSuite) TestShowVisibility(c *C) {
 	tk.MustExec("create table t1 (id int)")
 	tk.MustExec("create table t2 (id int)")
 	tk.MustExec(`create user 'show'@'%'`)
+	tk.MustExec(`flush privileges`)
 
 	se, err := tidb.CreateSession(s.store)
 	c.Assert(err, IsNil)
@@ -156,6 +157,7 @@ func (s *testSuite) TestShowVisibility(c *C) {
 
 	// After grant, the user can see the database.
 	tk.MustExec(`grant select on showdatabase.t1 to 'show'@'%'`)
+	tk.MustExec(`flush privileges`)
 	rs, err = se.Execute("show databases")
 	c.Assert(err, IsNil)
 	rows, err = tidb.GetRows(rs[0])

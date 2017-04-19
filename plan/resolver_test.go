@@ -73,6 +73,7 @@ var resolverTestCases = []resolverTestCase{
 	{"select c1 from t1 group by c1 having c1 = 3", true},
 	{"select c1 from t1 group by c1 having c2 = 3", false},
 	{"select c1 from t1 where exists (select c2)", true},
+	{"select cnt from (select count(c2) as cnt from t1 group by c1) t2 group by cnt", true},
 }
 
 func (ts *testNameResolverSuite) TestNameResolver(c *C) {

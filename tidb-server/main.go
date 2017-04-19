@@ -23,7 +23,6 @@ import (
 	"syscall"
 	"time"
 
-	_ "github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/ngaut/systimemon"
