@@ -145,6 +145,8 @@ func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) 
 			limit := Limit{Offset: p.ExecLimit.Offset, Count: p.ExecLimit.Count}.init(p.allocator, p.ctx)
 			limit.SetSchema(p.schema)
 			orderedTask = limit.attach2TaskProfile(orderedTask)
+		} else if cop, ok := orderedTask.(*copTaskProfile); ok {
+			orderedTask = cop.finishTask(p.ctx, p.allocator)
 		}
 		if orderedTask.cost() < task.cost() {
 			task = orderedTask
@@ -152,23 +154,6 @@ func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) 
 	}
 	task = prop.enforceProperty(task, p.ctx, p.allocator)
 	return task, p.storeTaskProfile(prop, task)
-}
-
-// canPushDown checks if this plan can be pushed down.
-func planCanPushDown(p LogicalPlan) bool {
-	switch v := p.(type) {
-	case *Selection:
-		v.splitPushDownConditions()
-		return len(v.pushDownConditions) > 0
-	case *Sort:
-		return v.canPushDown()
-	case *Limit:
-		return true
-	case *LogicalAggregation:
-		// FIXME: We should check every expressions for gby items and function arguments.
-		return true
-	}
-	return false
 }
 
 // convert2NewPhysicalPlan implements LogicalPlan interface.
@@ -197,43 +182,6 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (taskProfi
 			return nil, errors.Trace(err)
 		}
 		orderedTask = p.basePlan.self.(PhysicalPlan).attach2TaskProfile(orderedTask)
-		if orderedTask.cost() < task.cost() {
-			task = orderedTask
-		}
-	}
-	return task, p.storeTaskProfile(prop, task)
-}
-
-// convert2NewPhysicalPlan implements LogicalPlan interface.
-func (p *Selection) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) {
-	task, err := p.getTaskProfile(prop)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if task != nil {
-		return task, nil
-	}
-	// TODO: We will do it in preparing phase in future.
-	p.splitPushDownConditions()
-	// enforce branch
-	task, err = p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	task = p.attach2TaskProfile(task)
-	task = prop.enforceProperty(task, p.basePlan.ctx, p.basePlan.allocator)
-	if !prop.isEmpty() {
-		orderedTask, err := p.basePlan.children[0].(LogicalPlan).convert2NewPhysicalPlan(prop)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		orderedTask = p.attach2TaskProfile(orderedTask)
-		// TODO: Here is a trick: selection is the only plan that may not finish the cop task. It is unfair that we compare
-		// the cost between CopTask and RootTask. So we try to finish the cop task here if its parent can finish it.
-		// We can remove this check after we support join pushed down.
-		if cop, ok := orderedTask.(*copTaskProfile); ok && !planCanPushDown(p.basePlan.parents[0].(LogicalPlan)) {
-			orderedTask = cop.finishTask(p.basePlan.ctx, p.basePlan.allocator)
-		}
 		if orderedTask.cost() < task.cost() {
 			task = orderedTask
 		}
@@ -369,12 +317,43 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 			is.Desc = true
 			copTask.cst = rowCount * descScanFactor
 		}
+		is.addPushedDownSelection(copTask)
 		task = copTask
 	} else {
 		is.OutOfOrder = true
+		is.addPushedDownSelection(copTask)
 		task = prop.enforceProperty(copTask, p.ctx, p.allocator)
 	}
 	return task, nil
+}
+
+func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTaskProfile) {
+	// Add filter condition to table plan now.
+	if len(is.filterCondition) > 0 {
+		var indexConds, tableConds []expression.Expression
+		if copTask.tablePlan != nil {
+			tableConds, indexConds = splitConditionsByIndexColumns(is.filterCondition, is.schema)
+		} else {
+			indexConds = is.filterCondition
+		}
+		if indexConds != nil {
+			indexSel := Selection{Conditions: indexConds}.init(is.allocator, is.ctx)
+			indexSel.SetSchema(is.schema)
+			indexSel.SetChildren(is)
+			copTask.indexPlan = indexSel
+			copTask.cst += copTask.cnt * cpuFactor
+			copTask.cnt = copTask.cnt * selectionFactor
+		}
+		if tableConds != nil {
+			copTask.finishIndexPlan()
+			tableSel := Selection{Conditions: tableConds}.init(is.allocator, is.ctx)
+			tableSel.SetSchema(copTask.tablePlan.Schema())
+			tableSel.SetChildren(copTask.tablePlan)
+			copTask.tablePlan = tableSel
+			copTask.cst += copTask.cnt * cpuFactor
+			copTask.cnt = copTask.cnt * selectionFactor
+		}
+	}
 }
 
 func matchIndicesProp(idxCols []*model.IndexColumn, propCols []*expression.Column) bool {
@@ -443,8 +422,37 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task taskProfile, e
 			copTask.cst = rowCount * descScanFactor
 		}
 		ts.KeepOrder = true
+		ts.addPushedDownSelection(copTask)
 	} else {
+		ts.addPushedDownSelection(copTask)
 		task = prop.enforceProperty(task, p.ctx, p.allocator)
 	}
 	return task, nil
+}
+
+func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTaskProfile) {
+	// Add filter condition to table plan now.
+	if len(ts.filterCondition) > 0 {
+		sel := Selection{Conditions: ts.filterCondition}.init(ts.allocator, ts.ctx)
+		sel.SetSchema(ts.schema)
+		sel.SetChildren(ts)
+		copTask.tablePlan = sel
+		copTask.cst += copTask.cnt * cpuFactor
+		copTask.cnt = copTask.cnt * selectionFactor
+	}
+}
+
+// splitConditionsByIndexColumns splits the conditions by index schema. If some condition only contain the index
+// columns, it will be pushed to index plan.
+func splitConditionsByIndexColumns(conditions []expression.Expression, schema *expression.Schema) (tableConds []expression.Expression, indexConds []expression.Expression) {
+	for _, cond := range conditions {
+		cols := expression.ExtractColumns(cond)
+		indices := schema.ColumnsIndices(cols)
+		if len(indices) == 0 {
+			tableConds = append(tableConds, cond)
+		} else {
+			indexConds = append(indexConds, cond)
+		}
+	}
+	return
 }
