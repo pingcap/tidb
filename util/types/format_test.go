@@ -73,7 +73,7 @@ func (s *testTimeSuite) TestTimeFormatMethod(c *C) {
 }
 
 func (s *testTimeSuite) TestStrToDate(c *C) {
-	testcases := []struct {
+	tests := []struct {
 		input  string
 		format string
 		expect TimeInternal
@@ -98,13 +98,13 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		{`12:00:00 AM`, `%h:%i:%s %p`, FromDate(0, 0, 0, 0, 0, 0, 0)},
 		{`12:00:00 PM`, `%h:%i:%s %p`, FromDate(0, 0, 0, 12, 0, 0, 0)},
 	}
-	for i, test := range testcases {
+	for i, tt := range tests {
 		var t Time
-		c.Assert(t.StrToDate(test.input, test.format), IsTrue, Commentf("no.%d failed", i))
-		c.Assert(t.Time, Equals, test.expect, Commentf("no.%d failed", i))
+		c.Assert(t.StrToDate(tt.input, tt.format), IsTrue, Commentf("no.%d failed", i))
+		c.Assert(t.Time, Equals, tt.expect, Commentf("no.%d failed", i))
 	}
 
-	errcases := []struct {
+	errTests := []struct {
 		input  string
 		format string
 	}{
@@ -116,8 +116,8 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		{`18`, `%l`},
 		{`00:21:22 AM`, `%h:%i:%s %p`},
 	}
-	for _, test := range errcases {
+	for _, tt := range errTests {
 		var t Time
-		c.Assert(t.StrToDate(test.input, test.format), IsFalse)
+		c.Assert(t.StrToDate(tt.input, tt.format), IsFalse)
 	}
 }
