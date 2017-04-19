@@ -156,11 +156,11 @@ const (
 	CollationUTF8MB4 = "utf8mb4_bin"
 	// CharsetASCII is a subset of UTF8.
 	CharsetASCII = "ascii"
-	// CollationASCII is the default collation for CharsetACSII
+	// CollationASCII is the default collation for CharsetACSII.
 	CollationASCII = "ascii_bin"
 	// CharsetLatin1 is a single byte charset.
 	CharsetLatin1 = "latin1"
-	// CollationLatin1 is the default collation for CharsetLatin1
+	// CollationLatin1 is the default collation for CharsetLatin1.
 	CollationLatin1 = "latin1_bin"
 )
 
