@@ -57,7 +57,7 @@ type resolverTestCase struct {
 	valid bool
 }
 
-var resolverTestCases = []resolverTestCase{
+var resolverTests = []resolverTestCase{
 	{"select c1 from t1", true},
 	{"select c3 from t1", false},
 	{"select c1 from t4", false},
@@ -88,16 +88,16 @@ func (ts *testNameResolverSuite) TestNameResolver(c *C) {
 	ctx := testKit.Se.(context.Context)
 	domain := sessionctx.GetDomain(ctx)
 	ctx.GetSessionVars().CurrentDB = "test"
-	for _, tc := range resolverTestCases {
-		node, err := ts.ParseOneStmt(tc.src, "", "")
+	for _, tt := range resolverTests {
+		node, err := ts.ParseOneStmt(tt.src, "", "")
 		c.Assert(err, IsNil)
 		resolveErr := plan.ResolveName(node, domain.InfoSchema(), ctx)
-		if tc.valid {
+		if tt.valid {
 			c.Assert(resolveErr, IsNil)
-			verifier := &resolverVerifier{c: c, src: tc.src}
+			verifier := &resolverVerifier{c: c, src: tt.src}
 			node.Accept(verifier)
 		} else {
-			c.Assert(resolveErr, NotNil, Commentf("%s", tc.src))
+			c.Assert(resolveErr, NotNil, Commentf("%s", tt.src))
 		}
 	}
 }
