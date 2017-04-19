@@ -273,12 +273,9 @@ func (v *validator) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 			}
 		case ast.AlterTableOption:
 			for _, opt := range spec.Options {
-				switch opt.Tp {
-				case ast.TableOptionAutoIncrement:
+				if opt.Tp == ast.TableOptionAutoIncrement {
 					v.err = ErrAlterAutoID
 					return
-				default:
-					// Nothing to do now.
 				}
 			}
 		default:
