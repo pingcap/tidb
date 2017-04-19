@@ -1069,7 +1069,7 @@ func (s *testEvaluatorSuite) TestMakeSet(c *C) {
 
 func (s *testEvaluatorSuite) TestOct(c *C) {
 	defer testleak.AfterTest(c)()
-	octCases := []struct {
+	octTests := []struct {
 		origin interface{}
 		ret    string
 	}{
@@ -1095,16 +1095,16 @@ func (s *testEvaluatorSuite) TestOct(c *C) {
 		{"-9999999999999999999999999", "1777777777777777777777"},
 	}
 	fc := funcs[ast.Oct]
-	for _, test := range octCases {
-		in := types.NewDatum(test.origin)
+	for _, tt := range octTests {
+		in := types.NewDatum(tt.origin)
 		f, _ := fc.getFunction(datumsToConstants([]types.Datum{in}), s.ctx)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
 		res, err := r.ToString()
 		c.Assert(err, IsNil)
-		c.Assert(res, Equals, test.ret)
+		c.Assert(res, Equals, tt.ret)
 	}
-	// test NULL input for sha
+	// tt NULL input for sha
 	var argNull types.Datum
 	f, _ := fc.getFunction(datumsToConstants([]types.Datum{argNull}), s.ctx)
 	r, err := f.eval(nil)
@@ -1114,7 +1114,7 @@ func (s *testEvaluatorSuite) TestOct(c *C) {
 
 func (s *testEvaluatorSuite) TestFormat(c *C) {
 	defer testleak.AfterTest(c)()
-	formatCases := []struct {
+	formatTests := []struct {
 		number    interface{}
 		precision interface{}
 		locale    string
@@ -1123,7 +1123,7 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 		{12332.1234561111111111111111111111111111111111111, 4, "en_US", "12,332.1234"},
 		{nil, 22, "en_US", nil},
 	}
-	formatCases1 := []struct {
+	formatTests1 := []struct {
 		number    interface{}
 		precision interface{}
 		ret       interface{}
@@ -1153,50 +1153,50 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 		{"12332.1234567890123456789012345678901", 22, "12,332.1234567890123456789012"},
 		{nil, 22, nil},
 	}
-	formatCases2 := struct {
+	formatTests2 := struct {
 		number    interface{}
 		precision interface{}
 		locale    string
 		ret       interface{}
 	}{-12332.123456, -4, "zh_CN", nil}
-	formatCases3 := struct {
+	formatTests3 := struct {
 		number    interface{}
 		precision interface{}
 		locale    string
 		ret       interface{}
 	}{"-12332.123456", "4", "de_GE", nil}
 
-	for _, t := range formatCases {
+	for _, tt := range formatTests {
 		fc := funcs[ast.Format]
-		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.number, t.precision, t.locale)), s.ctx)
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(tt.number, tt.precision, tt.locale)), s.ctx)
 		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.ret))
 	}
 
-	for _, t := range formatCases1 {
+	for _, tt := range formatTests1 {
 		fc := funcs[ast.Format]
-		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.number, t.precision)), s.ctx)
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(tt.number, tt.precision)), s.ctx)
 		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.ret))
 	}
 
 	fc2 := funcs[ast.Format]
-	f2, err := fc2.getFunction(datumsToConstants(types.MakeDatums(formatCases2.number, formatCases2.precision, formatCases2.locale)), s.ctx)
+	f2, err := fc2.getFunction(datumsToConstants(types.MakeDatums(formatTests2.number, formatTests2.precision, formatTests2.locale)), s.ctx)
 	c.Assert(err, IsNil)
 	r2, err := f2.eval(nil)
 	c.Assert(types.NewDatum(err), testutil.DatumEquals, types.NewDatum(errors.New("not implemented")))
-	c.Assert(r2, testutil.DatumEquals, types.NewDatum(formatCases2.ret))
+	c.Assert(r2, testutil.DatumEquals, types.NewDatum(formatTests2.ret))
 
 	fc3 := funcs[ast.Format]
-	f3, err := fc3.getFunction(datumsToConstants(types.MakeDatums(formatCases3.number, formatCases3.precision, formatCases3.locale)), s.ctx)
+	f3, err := fc3.getFunction(datumsToConstants(types.MakeDatums(formatTests3.number, formatTests3.precision, formatTests3.locale)), s.ctx)
 	c.Assert(err, IsNil)
 	r3, err := f3.eval(nil)
 	c.Assert(types.NewDatum(err), testutil.DatumEquals, types.NewDatum(errors.New("not support for the specific locale")))
-	c.Assert(r3, testutil.DatumEquals, types.NewDatum(formatCases3.ret))
+	c.Assert(r3, testutil.DatumEquals, types.NewDatum(formatTests3.ret))
 }
 
 func (s *testEvaluatorSuite) TestFromBase64(c *C) {
@@ -1284,7 +1284,7 @@ func (s *testEvaluatorSuite) TestInsert(c *C) {
 
 func (s *testEvaluatorSuite) TestOrd(c *C) {
 	defer testleak.AfterTest(c)()
-	ordCases := []struct {
+	ordTests := []struct {
 		origin interface{}
 		ret    int64
 	}{
@@ -1308,13 +1308,13 @@ func (s *testEvaluatorSuite) TestOrd(c *C) {
 	}
 
 	fc := funcs[ast.Ord]
-	for _, testcase := range ordCases {
-		in := types.NewDatum(testcase.origin)
+	for _, tt := range ordTests {
+		in := types.NewDatum(tt.origin)
 		f, err := fc.getFunction(datumsToConstants([]types.Datum{in}), s.ctx)
 		c.Assert(err, IsNil)
 		v, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		c.Assert(v.GetInt64(), Equals, testcase.ret)
+		c.Assert(v.GetInt64(), Equals, tt.ret)
 	}
 	// test NULL input for sha
 	var argNull types.Datum

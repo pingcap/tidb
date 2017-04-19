@@ -657,7 +657,7 @@ func (s *testSuite) TestLoadData(c *C) {
 	r.Check(nil)
 
 	// fields and lines are default, InsertData returns data is nil
-	cases := []testCase{
+	tests := []testCase{
 		// data1 = nil, data2 != nil
 		{nil, []byte("\n"), []string{fmt.Sprintf("%v %v %v %v", 1, 0, []byte(""), 0)}, nil},
 		{nil, []byte("\t\n"), []string{fmt.Sprintf("%v %v %v %v", 2, 0, []byte(""), 0)}, nil},
@@ -682,11 +682,11 @@ func (s *testSuite) TestLoadData(c *C) {
 		// data1 != nil, data2 != nil, InsertData returns data isn't nil
 		{[]byte("\t2\t3"), []byte("\t4\t5"), nil, []byte("\t2\t3\t4\t5")},
 	}
-	checkCases(cases, ld, c, tk, ctx, selectSQL, deleteSQL)
+	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 
 	// lines starting symbol is "" and terminated symbol length is 2, InsertData returns data is nil
 	ld.LinesInfo.Terminated = "||"
-	cases = []testCase{
+	tests = []testCase{
 		// data1 != nil, data2 != nil
 		{[]byte("0\t2\t3"), []byte("\t4\t5||"), []string{fmt.Sprintf("%v %v %v %v", 12, 2, []byte("3"), 4)}, nil},
 		{[]byte("1\t2\t3\t4\t5|"), []byte("|"), []string{fmt.Sprintf("%v %v %v %v", 1, 2, []byte("3"), 4)}, nil},
@@ -702,13 +702,13 @@ func (s *testSuite) TestLoadData(c *C) {
 			fmt.Sprintf("%v %v %v %v", 6, 222, []byte(""), 0)}, nil},
 		{[]byte("6\t2\t3"), []byte("4\t5||"), []string{fmt.Sprintf("%v %v %v %v", 6, 2, []byte("34"), 5)}, nil},
 	}
-	checkCases(cases, ld, c, tk, ctx, selectSQL, deleteSQL)
+	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 
 	// fields and lines aren't default, InsertData returns data is nil
 	ld.FieldsInfo.Terminated = "\\"
 	ld.LinesInfo.Starting = "xxx"
 	ld.LinesInfo.Terminated = "|!#^"
-	cases = []testCase{
+	tests = []testCase{
 		// data1 = nil, data2 != nil
 		{nil, []byte("xxx|!#^"), []string{fmt.Sprintf("%v %v %v %v", 13, 0, []byte(""), 0)}, nil},
 		{nil, []byte("xxx\\|!#^"), []string{fmt.Sprintf("%v %v %v %v", 14, 0, []byte(""), 0)}, nil},
@@ -762,11 +762,11 @@ func (s *testSuite) TestLoadData(c *C) {
 			fmt.Sprintf("%v %v %v %v", 2, 22, []byte("33"), 0)}, []byte("#^")},
 		{[]byte("xx1\\2\\3"), []byte("\\4\\5|!#^"), nil, []byte("#^")},
 	}
-	checkCases(cases, ld, c, tk, ctx, selectSQL, deleteSQL)
+	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 
 	// lines starting symbol is the same as terminated symbol, InsertData returns data is nil
 	ld.LinesInfo.Terminated = "xxx"
-	cases = []testCase{
+	tests = []testCase{
 		// data1 = nil, data2 != nil
 		{nil, []byte("xxxxxx"), []string{fmt.Sprintf("%v %v %v %v", 29, 0, []byte(""), 0)}, nil},
 		{nil, []byte("xxx3\\2\\3\\4xxx"), []string{fmt.Sprintf("%v %v %v %v", 3, 2, []byte("3"), 4)}, nil},
@@ -809,7 +809,7 @@ func (s *testSuite) TestLoadData(c *C) {
 			fmt.Sprintf("%v %v %v %v", 10, 2, []byte("3"), 4),
 			fmt.Sprintf("%v %v %v %v", 40, 0, []byte(""), 0)}, []byte("xxx")},
 	}
-	checkCases(cases, ld, c, tk, ctx, selectSQL, deleteSQL)
+	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 }
 
 func (s *testSuite) TestLoadDataEscape(c *C) {
@@ -824,7 +824,7 @@ func (s *testSuite) TestLoadDataEscape(c *C) {
 	ctx := tk.Se.(context.Context)
 	ld := makeLoadDataInfo(2, ctx, c)
 	// test escape
-	cases := []testCase{
+	tests := []testCase{
 		// data1 = nil, data2 != nil
 		{nil, []byte("1\ta string\n"), []string{fmt.Sprintf("%v %v", 1, []byte("a string"))}, nil},
 		{nil, []byte("2\tstr \\t\n"), []string{fmt.Sprintf("%v %v", 2, []byte("str \t"))}, nil},
@@ -835,7 +835,7 @@ func (s *testSuite) TestLoadDataEscape(c *C) {
 	}
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
-	checkCases(cases, ld, c, tk, ctx, selectSQL, deleteSQL)
+	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 }
 
 func makeLoadDataInfo(column int, ctx context.Context, c *C) (ld *executor.LoadDataInfo) {

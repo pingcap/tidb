@@ -46,7 +46,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 	testKit.MustExec("create index a on t1 (a)")
 	testKit.MustExec("create index b on t1 (b)")
 	testKit.MustExec("insert into t1 (a,b) values (1,1),(1,2),(1,3),(1,4),(2,5),(2,6),(2,7),(2,8)")
-	cases := []struct {
+	tests := []struct {
 		sql  string
 		best string
 	}{
@@ -67,9 +67,9 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 			best: "Index(t1.a)[[1,1]]",
 		},
 	}
-	for _, ca := range cases {
+	for _, tt := range tests {
 		ctx := testKit.Se.(context.Context)
-		stmts, err := tidb.Parse(ctx, ca.sql)
+		stmts, err := tidb.Parse(ctx, tt.sql)
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
@@ -79,6 +79,6 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		err = plan.InferType(ctx.GetSessionVars().StmtCtx, stmt)
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(ctx, stmt, is)
-		c.Assert(plan.ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
+		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
 }

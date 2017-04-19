@@ -25,7 +25,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		UseDAGPlanBuilder = false
 		testleak.AfterTest(c)()
 	}()
-	cases := []struct {
+	tests := []struct {
 		sql  string
 		best string
 	}{
@@ -115,9 +115,9 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t)->Sel([eq(test.t.b, 1)])->Limit)->Limit->Projection",
 		},
 	}
-	for _, ca := range cases {
-		comment := Commentf("for %s", ca.sql)
-		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+	for _, tt := range tests {
+		comment := Commentf("for %s", tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
 		is, err := mockResolve(stmt)
@@ -133,6 +133,6 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		c.Assert(builder.err, IsNil)
 		p, err = doOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx, builder.allocator)
 		c.Assert(err, IsNil)
-		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
+		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
 }
