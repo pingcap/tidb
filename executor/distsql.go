@@ -112,7 +112,7 @@ func (s *rowsSorter) Swap(i, j int) {
 	s.rows[i], s.rows[j] = s.rows[j], s.rows[i]
 }
 
-func tableRangesToKVRanges(tid int64, tableRanges []plan.TableRange) []kv.KeyRange {
+func tableRangesToKVRanges(tid int64, tableRanges []types.IntColumnRange) []kv.KeyRange {
 	krs := make([]kv.KeyRange, 0, len(tableRanges))
 	for _, tableRange := range tableRanges {
 		startKey := tablecodec.EncodeRowKeyWithHandle(tid, tableRange.LowVal)
@@ -157,7 +157,7 @@ func tableHandlesToKVRanges(tid int64, handles []int64) []kv.KeyRange {
 	return krs
 }
 
-func indexRangesToKVRanges(sc *variable.StatementContext, tid, idxID int64, ranges []*plan.IndexRange, fieldTypes []*types.FieldType) ([]kv.KeyRange, error) {
+func indexRangesToKVRanges(sc *variable.StatementContext, tid, idxID int64, ranges []*types.IndexRange, fieldTypes []*types.FieldType) ([]kv.KeyRange, error) {
 	krs := make([]kv.KeyRange, 0, len(ranges))
 	for _, ran := range ranges {
 		err := convertIndexRangeTypes(sc, ran, fieldTypes)
@@ -186,7 +186,7 @@ func indexRangesToKVRanges(sc *variable.StatementContext, tid, idxID int64, rang
 	return krs, nil
 }
 
-func convertIndexRangeTypes(sc *variable.StatementContext, ran *plan.IndexRange, fieldTypes []*types.FieldType) error {
+func convertIndexRangeTypes(sc *variable.StatementContext, ran *types.IndexRange, fieldTypes []*types.FieldType) error {
 	for i := range ran.LowVal {
 		if ran.LowVal[i].Kind() == types.KindMinNotNull || ran.LowVal[i].Kind() == types.KindMaxValue {
 			continue
@@ -414,7 +414,7 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		e.result.Fetch(context.CtxForCancel{e.ctx})
+		e.result.Fetch(e.ctx.GoCtx())
 	}
 	for {
 		// Get partial result.
@@ -510,7 +510,7 @@ func (e *XSelectIndexExec) nextForDoubleRead() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		idxResult.Fetch(context.CtxForCancel{e.ctx})
+		idxResult.Fetch(e.ctx.GoCtx())
 
 		// Use a background goroutine to fetch index and put the result in e.taskChan.
 		// e.taskChan serves as a pipeline, so fetching index and getting table data can
@@ -569,6 +569,7 @@ func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<
 	var concurrency int
 	e.addWorker(workCh, &concurrency, lookupConcurrencyLimit)
 
+	txnCtx := e.ctx.GoCtx()
 	for {
 		handles, finish, err := extractHandlesFromIndexResult(idxResult)
 		if err != nil || finish {
@@ -583,7 +584,7 @@ func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<
 			}
 
 			select {
-			case <-e.ctx.Done():
+			case <-txnCtx.Done():
 				return
 			case workCh <- task:
 			default:
@@ -633,7 +634,7 @@ func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return distsql.Select(e.ctx.GetClient(), context.CtxForCancel{e.ctx}, selIdxReq, keyRanges, e.scanConcurrency, !e.indexPlan.OutOfOrder)
+	return distsql.Select(e.ctx.GetClient(), e.ctx.GoCtx(), selIdxReq, keyRanges, e.scanConcurrency, !e.indexPlan.OutOfOrder)
 }
 
 func (e *XSelectIndexExec) buildTableTasks(handles []int64) []*lookupTableTask {
@@ -781,7 +782,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	resp.Fetch(context.CtxForCancel{e.ctx})
+	resp.Fetch(e.ctx.GoCtx())
 	return resp, nil
 }
 
@@ -802,7 +803,7 @@ type XSelectTableExec struct {
 	where        *tipb.Expr
 	Columns      []*model.ColumnInfo
 	schema       *expression.Schema
-	ranges       []plan.TableRange
+	ranges       []types.IntColumnRange
 	desc         bool
 	limitCount   *int64
 	returnedRows uint64 // returned rowCount
@@ -861,7 +862,7 @@ func (e *XSelectTableExec) doRequest() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result.Fetch(context.CtxForCancel{e.ctx})
+	e.result.Fetch(e.ctx.GoCtx())
 	return nil
 }
 

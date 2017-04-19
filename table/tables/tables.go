@@ -355,6 +355,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 		mutation.Sequence = append(mutation.Sequence, binlog.MutationType_Insert)
 	}
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
+	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.ID, 1, 1)
 	return recordID, nil
 }
 

@@ -288,10 +288,8 @@ func (s *testSuite) TestMergeJoin(c *C) {
 	tk.MustExec("create table t1(c1 int)")
 	tk.MustExec("insert into t values (1),(2),(3),(4),(5),(6),(7)")
 	tk.MustExec("insert into t1 values (1),(2),(3),(4),(5),(6),(7)")
-	fmt.Println("2")
 	result = tk.MustQuery("select /*+ TIDB_SMJ(a,b) */ a.c1 from t a , t1 b where a.c1 = b.c1 order by a.c1;")
 	result.Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7"))
-	fmt.Println("3")
 	result = tk.MustQuery("select /*+ TIDB_SMJ(a, b) */ a.c1 from t a , (select * from t1 limit 3) b where a.c1 = b.c1 order by b.c1;")
 	result.Check(testkit.Rows("1", "2", "3"))
 
@@ -309,7 +307,6 @@ func (s *testSuite) TestMergeJoin(c *C) {
 	tk.MustExec("create table t1(c1 int unsigned)")
 	tk.MustExec("insert into t values (1)")
 	tk.MustExec("insert into t1 values (1)")
-	fmt.Println("4")
 	result = tk.MustQuery("select /*+ TIDB_SMJ(t,t1) */ t.c1 from t , t1 where t.c1 = t1.c1")
 	result.Check(testkit.Rows("1"))
 }

@@ -31,7 +31,7 @@ type testValidatorSuite struct {
 
 func (s *testValidatorSuite) TestValidator(c *C) {
 	defer testleak.AfterTest(c)()
-	cases := []struct {
+	tests := []struct {
 		sql       string
 		inPrepare bool
 		err       error
@@ -78,12 +78,12 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 	defer store.Close()
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
-	for _, ca := range cases {
-		stmts, err1 := tidb.Parse(se.(context.Context), ca.sql)
+	for _, tt := range tests {
+		stmts, err1 := tidb.Parse(se.(context.Context), tt.sql)
 		c.Assert(err1, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
-		err = plan.Validate(stmt, ca.inPrepare)
-		c.Assert(terror.ErrorEqual(err, ca.err), IsTrue)
+		err = plan.Validate(stmt, tt.inPrepare)
+		c.Assert(terror.ErrorEqual(err, tt.err), IsTrue)
 	}
 }

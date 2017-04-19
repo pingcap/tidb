@@ -52,8 +52,7 @@ func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 		v.aggregateFunc(x)
 	case *ast.BetweenExpr:
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
-		x.Type.Charset = charset.CharsetBin
-		x.Type.Collate = charset.CollationBin
+		types.SetBinChsClnFlag(&x.Type)
 	case *ast.BinaryOperationExpr:
 		v.binaryOperation(x)
 	case *ast.CaseExpr:
@@ -62,12 +61,10 @@ func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 		x.SetType(&x.Refer.Column.FieldType)
 	case *ast.CompareSubqueryExpr:
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
-		x.Type.Charset = charset.CharsetBin
-		x.Type.Collate = charset.CollationBin
+		types.SetBinChsClnFlag(&x.Type)
 	case *ast.ExistsSubqueryExpr:
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
-		x.Type.Charset = charset.CharsetBin
-		x.Type.Collate = charset.CollationBin
+		types.SetBinChsClnFlag(&x.Type)
 	case *ast.FuncCallExpr:
 		v.handleFuncCallExpr(x)
 	case *ast.FuncCastExpr:
@@ -77,22 +74,22 @@ func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 		if len(x.Type.Charset) == 0 {
 			x.Type.Charset, x.Type.Collate = types.DefaultCharsetForType(x.Type.Tp)
 		}
+		if x.Type.Charset == charset.CharsetBin {
+			x.Type.Flag |= mysql.BinaryFlag
+		}
 	case *ast.IsNullExpr:
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
-		x.Type.Charset = charset.CharsetBin
-		x.Type.Collate = charset.CollationBin
+		types.SetBinChsClnFlag(&x.Type)
 	case *ast.IsTruthExpr:
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
-		x.Type.Charset = charset.CharsetBin
-		x.Type.Collate = charset.CollationBin
+		types.SetBinChsClnFlag(&x.Type)
 	case *ast.ParamMarkerExpr:
 		types.DefaultTypeForValue(x.GetValue(), x.GetType())
 	case *ast.ParenthesesExpr:
 		x.SetType(x.Expr.GetType())
 	case *ast.PatternInExpr:
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
-		x.Type.Charset = charset.CharsetBin
-		x.Type.Collate = charset.CollationBin
+		types.SetBinChsClnFlag(&x.Type)
 		v.convertValueToColumnTypeIfNeeded(x)
 	case *ast.PatternLikeExpr:
 		v.handleLikeExpr(x)
@@ -136,15 +133,13 @@ func (v *typeInferrer) aggregateFunc(x *ast.AggregateFuncExpr) {
 	case ast.AggFuncCount:
 		ft := types.NewFieldType(mysql.TypeLonglong)
 		ft.Flen = 21
-		ft.Charset = charset.CharsetBin
-		ft.Collate = charset.CollationBin
+		types.SetBinChsClnFlag(ft)
 		x.SetType(ft)
 	case ast.AggFuncMax, ast.AggFuncMin:
 		x.SetType(x.Args[0].GetType())
 	case ast.AggFuncSum, ast.AggFuncAvg:
 		ft := types.NewFieldType(mysql.TypeNewDecimal)
-		ft.Charset = charset.CharsetBin
-		ft.Collate = charset.CollationBin
+		types.SetBinChsClnFlag(ft)
 		ft.Decimal = x.Args[0].GetType().Decimal
 		x.SetType(ft)
 	case ast.AggFuncGroupConcat:
@@ -188,8 +183,7 @@ func (v *typeInferrer) binaryOperation(x *ast.BinaryOperationExpr) {
 			x.Type.Init(xTp)
 		}
 	}
-	x.Type.Charset = charset.CharsetBin
-	x.Type.Collate = charset.CollationBin
+	types.SetBinChsClnFlag(&x.Type)
 }
 
 // toArithType converts DateTime, Duration and Timestamp types to NewDecimal type if Decimal > 0.
@@ -276,8 +270,7 @@ func (v *typeInferrer) unaryOperation(x *ast.UnaryOperationExpr) {
 			}
 		}
 	}
-	x.Type.Charset = charset.CharsetBin
-	x.Type.Collate = charset.CollationBin
+	types.SetBinChsClnFlag(&x.Type)
 }
 
 func (v *typeInferrer) handleValueExpr(x *ast.ValueExpr) {
@@ -305,13 +298,13 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		chs = charset.CharsetBin
 	)
 	switch x.FnName.L {
-	case "abs", "ifnull", "nullif":
+	case ast.Abs, ast.Ifnull, ast.Nullif:
 		tp = x.Args[0].GetType()
 		// TODO: We should cover all types.
-		if x.FnName.L == "abs" && tp.Tp == mysql.TypeDatetime {
+		if x.FnName.L == ast.Abs && tp.Tp == mysql.TypeDatetime {
 			tp = types.NewFieldType(mysql.TypeDouble)
 		}
-	case "round":
+	case ast.Round:
 		t := x.Args[0].GetType().Tp
 		switch t {
 		case mysql.TypeBit, mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLonglong:
@@ -321,7 +314,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		default:
 			tp = types.NewFieldType(mysql.TypeDouble)
 		}
-	case "greatest", "least":
+	case ast.Greatest, ast.Least:
 		for _, arg := range x.Args {
 			InferType(v.sc, arg)
 		}
@@ -331,9 +324,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 				tp = mergeCmpType(tp, x.Args[i].GetType())
 			}
 		}
-	case "interval":
-		tp = types.NewFieldType(mysql.TypeLonglong)
-	case "ceil", "ceiling", "floor":
+	case ast.Ceil, ast.Ceiling, ast.Floor:
 		t := x.Args[0].GetType().Tp
 		if t == mysql.TypeNull || t == mysql.TypeFloat || t == mysql.TypeDouble || t == mysql.TypeVarchar ||
 			t == mysql.TypeTinyBlob || t == mysql.TypeMediumBlob || t == mysql.TypeLongBlob ||
@@ -342,86 +333,13 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		} else {
 			tp = types.NewFieldType(mysql.TypeLonglong)
 		}
-	case "ln", "log", "log2", "log10", "sqrt", "pi", "exp", "degrees":
-		tp = types.NewFieldType(mysql.TypeDouble)
-	case "sin":
-		tp = types.NewFieldType(mysql.TypeDouble)
-	case "cos":
-		tp = types.NewFieldType(mysql.TypeDouble)
-	case "tan", "cot":
-		tp = types.NewFieldType(mysql.TypeDouble)
-	case "acos", "asin", "atan":
-		tp = types.NewFieldType(mysql.TypeDouble)
-	case "pow", "power", "rand":
-		tp = types.NewFieldType(mysql.TypeDouble)
-	case "radians":
-		tp = types.NewFieldType(mysql.TypeDouble)
-	case "curdate", "current_date", "date", "from_days":
-		tp = types.NewFieldType(mysql.TypeDate)
-	case "curtime", "current_time", "timediff", "maketime":
-		tp = types.NewFieldType(mysql.TypeDuration)
-		tp.Decimal = v.getFsp(x)
-	case "date_add", "date_sub", "adddate", "subdate", "timestamp", "timestampadd":
-		tp = types.NewFieldType(mysql.TypeDatetime)
-	case "microsecond", "second", "minute", "hour", "day", "week", "month", "year",
-		"dayofweek", "dayofmonth", "dayofyear", "weekday", "weekofyear", "yearweek", "datediff",
-		"found_rows", "length", "extract", "locate", "unix_timestamp", "quarter", "is_ipv4",
-		"period_add":
-		tp = types.NewFieldType(mysql.TypeLonglong)
-	case "now", "sysdate", "current_timestamp", "utc_timestamp":
-		tp = types.NewFieldType(mysql.TypeDatetime)
-		tp.Decimal = v.getFsp(x)
-	case "from_unixtime":
+	case ast.FromUnixTime:
 		if len(x.Args) == 1 {
 			tp = types.NewFieldType(mysql.TypeDatetime)
 		} else {
 			tp = types.NewFieldType(mysql.TypeVarString)
 			chs = v.defaultCharset
 		}
-	case "str_to_date":
-		tp = types.NewFieldType(mysql.TypeDatetime)
-	case "dayname", "version", "database", "user", "current_user", "schema",
-		"concat", "concat_ws", "left", "lcase", "lower", "repeat",
-		"replace", "ucase", "upper", "convert", "substring", "elt",
-		"substring_index", "trim", "ltrim", "rtrim", "reverse", "hex", "unhex",
-		"date_format", "rpad", "lpad", "char_func", "conv", "make_set", "oct", "uuid",
-		"insert_func", "bin", "quote", "format", "from_base64":
-		tp = types.NewFieldType(mysql.TypeVarString)
-		chs = v.defaultCharset
-	case "strcmp", "isnull", "bit_length", "char_length", "character_length", "crc32", "timestampdiff",
-		"sign", "is_ipv6", "ord", "instr":
-		tp = types.NewFieldType(mysql.TypeLonglong)
-	case "connection_id":
-		tp = types.NewFieldType(mysql.TypeLonglong)
-		tp.Flag |= mysql.UnsignedFlag
-	case "find_in_set", ast.Field:
-		tp = types.NewFieldType(mysql.TypeLonglong)
-	case "if":
-		// TODO: fix this
-		// See https://dev.mysql.com/doc/refman/5.5/en/control-flow-functions.html#function_if
-		// The default return type of IF() (which may matter when it is stored into a temporary table) is calculated as follows.
-		// Expression	Return Value
-		// expr2 or expr3 returns a string	string
-		// expr2 or expr3 returns a floating-point value	floating-point
-		// expr2 or expr3 returns an integer	integer
-		tp = x.Args[1].GetType()
-	case "get_lock", "release_lock":
-		tp = types.NewFieldType(mysql.TypeLonglong)
-	case ast.AesEncrypt, ast.AesDecrypt, ast.SHA2, ast.InetNtoa:
-		tp = types.NewFieldType(mysql.TypeVarString)
-		chs = v.defaultCharset
-	case ast.MD5:
-		tp = types.NewFieldType(mysql.TypeVarString)
-		chs = v.defaultCharset
-		tp.Flen = 32
-	case ast.Compress:
-		tp = types.NewFieldType(mysql.TypeBlob)
-	case ast.SHA, ast.SHA1:
-		tp = types.NewFieldType(mysql.TypeVarString)
-		chs = v.defaultCharset
-		tp.Flen = 40
-	case ast.RandomBytes:
-		tp = types.NewFieldType(mysql.TypeVarString)
 	case ast.Coalesce:
 		tp = aggFieldType(x.Args)
 		if tp.Tp == mysql.TypeVarchar {
@@ -431,26 +349,77 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		if classType == types.ClassString && !mysql.HasBinaryFlag(tp.Flag) {
 			tp.Charset, tp.Collate = types.DefaultCharsetForType(tp.Tp)
 		}
-	case ast.AnyValue:
-		tp = x.Args[0].GetType()
-	case ast.InetAton:
+	// number related
+	case ast.Ln, ast.Log, ast.Log2, ast.Log10, ast.Sqrt, ast.PI, ast.Exp, ast.Degrees, ast.Sin, ast.Cos, ast.Tan,
+		ast.Cot, ast.Acos, ast.Asin, ast.Atan, ast.Pow, ast.Power, ast.Rand, ast.Radians:
+		tp = types.NewFieldType(mysql.TypeDouble)
+	case ast.MicroSecond, ast.Second, ast.Minute, ast.Hour, ast.Day, ast.Week, ast.Month, ast.Year,
+		ast.DayOfWeek, ast.DayOfMonth, ast.DayOfYear, ast.Weekday, ast.WeekOfYear, ast.YearWeek, ast.DateDiff,
+		ast.FoundRows, ast.Length, ast.Extract, ast.Locate, ast.UnixTimestamp, ast.Quarter, ast.IsIPv4, ast.ToDays,
+		ast.ToSeconds, ast.Strcmp, ast.IsNull, ast.BitLength, ast.CharLength, ast.CRC32, ast.TimestampDiff,
+		ast.Sign, ast.IsIPv6, ast.Ord, ast.Instr, ast.BitCount, ast.TimeToSec, ast.FindInSet, ast.Field,
+		ast.GetLock, ast.ReleaseLock, ast.Interval, ast.PeriodAdd:
+		tp = types.NewFieldType(mysql.TypeLonglong)
+	case ast.ConnectionID, ast.InetAton:
 		tp = types.NewFieldType(mysql.TypeLonglong)
 		tp.Flag |= mysql.UnsignedFlag
+	// time related
+	case ast.Curtime, ast.CurrentTime, ast.TimeDiff, ast.MakeTime, ast.SecToTime:
+		tp = types.NewFieldType(mysql.TypeDuration)
+		tp.Decimal = v.getFsp(x)
+	case ast.Curdate, ast.CurrentDate, ast.Date, ast.FromDays:
+		tp = types.NewFieldType(mysql.TypeDate)
+	case ast.DateAdd, ast.DateSub, ast.AddDate, ast.SubDate, ast.Timestamp, ast.TimestampAdd, ast.StrToDate:
+		tp = types.NewFieldType(mysql.TypeDatetime)
+	case ast.Now, ast.Sysdate, ast.CurrentTimestamp, ast.UTCTimestamp:
+		tp = types.NewFieldType(mysql.TypeDatetime)
+		tp.Decimal = v.getFsp(x)
+	// string related
+	case ast.RandomBytes:
+		tp = types.NewFieldType(mysql.TypeVarString)
+	case ast.MD5:
+		tp = types.NewFieldType(mysql.TypeVarString)
+		chs = v.defaultCharset
+		tp.Flen = 32
+	case ast.SHA, ast.SHA1:
+		tp = types.NewFieldType(mysql.TypeVarString)
+		chs = v.defaultCharset
+		tp.Flen = 40
+	case ast.DayName, ast.Version, ast.Database, ast.User, ast.CurrentUser, ast.Schema,
+		ast.Concat, ast.ConcatWS, ast.Left, ast.Right, ast.Lcase, ast.Lower, ast.Repeat,
+		ast.Replace, ast.Ucase, ast.Upper, ast.Convert, ast.Substring, ast.Elt,
+		ast.SubstringIndex, ast.Trim, ast.LTrim, ast.RTrim, ast.Reverse, ast.Hex, ast.Unhex,
+		ast.DateFormat, ast.Rpad, ast.Lpad, ast.CharFunc, ast.Conv, ast.MakeSet, ast.Oct, ast.UUID,
+		ast.InsertFunc, ast.Bin, ast.Quote, ast.Format, ast.FromBase64, ast.ToBase64, ast.ExportSet,
+		ast.AesEncrypt, ast.AesDecrypt, ast.SHA2, ast.InetNtoa:
+		tp = types.NewFieldType(mysql.TypeVarString)
+		chs = v.defaultCharset
+	case ast.If:
+		// TODO: fix this
+		// See https://dev.mysql.com/doc/refman/5.5/en/control-flow-functions.html#function_if
+		// The default return type of IF() (which may matter when it is stored into a temporary table) is calculated as follows.
+		// Expression	Return Value
+		// expr2 or expr3 returns a string	string
+		// expr2 or expr3 returns a floating-point value	floating-point
+		// expr2 or expr3 returns an integer	integer
+		tp = x.Args[1].GetType()
+	case ast.Compress:
+		tp = types.NewFieldType(mysql.TypeBlob)
+	case ast.AnyValue:
+		tp = x.Args[0].GetType()
 	default:
 		tp = types.NewFieldType(mysql.TypeUnspecified)
 	}
 	// If charset is unspecified.
 	if len(tp.Charset) == 0 {
-		tp.Charset = chs
-		cln := charset.CollationBin
-		if chs != charset.CharsetBin {
-			var err error
-			cln, err = charset.GetDefaultCollation(chs)
-			if err != nil {
-				v.err = err
-			}
+		cln, err := charset.GetDefaultCollation(chs)
+		if err != nil {
+			v.err = err
 		}
-		tp.Collate = cln
+		tp.Charset, tp.Collate = chs, cln
+	}
+	if tp.Charset == charset.CharsetBin {
+		tp.Flag |= mysql.BinaryFlag
 	}
 	x.SetType(tp)
 }
@@ -475,8 +444,7 @@ func (v *typeInferrer) handleCaseExpr(x *ast.CaseExpr) {
 	if classType == types.ClassString && !mysql.HasBinaryFlag(tp.Flag) {
 		tp.Charset, tp.Collate = types.DefaultCharsetForType(tp.Tp)
 	} else {
-		tp.Charset = charset.CharsetBin
-		tp.Collate = charset.CollationBin
+		types.SetBinChsClnFlag(tp)
 	}
 	x.SetType(tp)
 }
@@ -484,8 +452,7 @@ func (v *typeInferrer) handleCaseExpr(x *ast.CaseExpr) {
 // like expression expects the target expression and pattern to be a string, if it's not, we add a cast function.
 func (v *typeInferrer) handleLikeExpr(x *ast.PatternLikeExpr) {
 	x.SetType(types.NewFieldType(mysql.TypeLonglong))
-	x.Type.Charset = charset.CharsetBin
-	x.Type.Collate = charset.CollationBin
+	types.SetBinChsClnFlag(&x.Type)
 	x.Expr = v.addCastToString(x.Expr)
 	x.Pattern = v.addCastToString(x.Pattern)
 }
@@ -493,8 +460,7 @@ func (v *typeInferrer) handleLikeExpr(x *ast.PatternLikeExpr) {
 // regexp expression expects the target expression and pattern to be a string, if it's not, we add a cast function.
 func (v *typeInferrer) handleRegexpExpr(x *ast.PatternRegexpExpr) {
 	x.SetType(types.NewFieldType(mysql.TypeLonglong))
-	x.Type.Charset = charset.CharsetBin
-	x.Type.Collate = charset.CollationBin
+	types.SetBinChsClnFlag(&x.Type)
 	x.Expr = v.addCastToString(x.Expr)
 	x.Pattern = v.addCastToString(x.Pattern)
 }

@@ -51,7 +51,7 @@ var (
 	// We don't support dropping column with index covered now.
 	errCantDropColWithIndex    = terror.ClassDDL.New(codeCantDropColWithIndex, "can't drop column with index")
 	errUnsupportedAddColumn    = terror.ClassDDL.New(codeUnsupportedAddColumn, "unsupported add column")
-	errUnsupportedModifyColumn = terror.ClassDDL.New(codeUnsupportedModifyColumn, "unsupported modify column")
+	errUnsupportedModifyColumn = terror.ClassDDL.New(codeUnsupportedModifyColumn, "unsupported modify column %s")
 	errUnsupportedPKHandle     = terror.ClassDDL.New(codeUnsupportedDropPKHandle,
 		"unsupported drop integer primary key")
 
@@ -122,6 +122,21 @@ type DDL interface {
 	Stop() error
 	// Start starts DDL worker.
 	Start() error
+	// RegisterEventCh registers event channel for ddl.
+	RegisterEventCh(chan<- *Event)
+}
+
+type ddlType int
+
+const (
+	// TypeCreateTable standing for a create table operation.
+	TypeCreateTable ddlType = iota
+)
+
+// Event is an event that a ddl operation happened.
+type Event struct {
+	Tp        ddlType
+	TableInfo *model.TableInfo
 }
 
 type ddl struct {
@@ -136,6 +151,7 @@ type ddl struct {
 	uuid         string
 	ddlJobCh     chan struct{}
 	ddlJobDoneCh chan struct{}
+	ddlEventCh   chan<- *Event
 	// Drop database/table job that runs in the background.
 	bgJobCh chan struct{}
 	// reorgDoneCh is for reorganization, if the reorganization job is done,
@@ -148,6 +164,11 @@ type ddl struct {
 
 	quitCh chan struct{}
 	wait   sync.WaitGroup
+}
+
+// BindStatsHandle will bind the stats handle with a DDL interface. It will be called after a handle has been initialized.
+func (d *ddl) RegisterEventCh(ch chan<- *Event) {
+	d.ddlEventCh = ch
 }
 
 // NewDDL creates a new DDL.
