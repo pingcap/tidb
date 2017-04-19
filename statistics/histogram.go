@@ -55,24 +55,25 @@ type bucket struct {
 
 // SaveToStorage saves the histogram to storage.
 func (hg *Histogram) SaveToStorage(ctx context.Context, tableID int64, count int64, isIndex int) error {
-	_, err := ctx.(sqlexec.SQLExecutor).Execute("begin")
+	exec := ctx.(sqlexec.SQLExecutor)
+	_, err := exec.Execute("begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	txn := ctx.Txn()
 	version := txn.StartTS()
 	replaceSQL := fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count) values (%d, %d, %d)", version, tableID, count)
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(replaceSQL)
+	_, err = exec.Execute(replaceSQL)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	replaceSQL = fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count) values (%d, %d, %d, %d)", tableID, isIndex, hg.ID, hg.NDV)
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(replaceSQL)
+	_, err = exec.Execute(replaceSQL)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	deleteSQL := fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, hg.ID)
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(deleteSQL)
+	_, err = exec.Execute(deleteSQL)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -88,12 +89,12 @@ func (hg *Histogram) SaveToStorage(ctx context.Context, tableID int64, count int
 			return errors.Trace(err)
 		}
 		insertSQL := fmt.Sprintf("insert into mysql.stats_buckets values(%d, %d, %d, %d, %d, %d, X'%X')", tableID, isIndex, hg.ID, i, count, bucket.Repeats, val.GetBytes())
-		_, err = ctx.(sqlexec.SQLExecutor).Execute(insertSQL)
+		_, err = exec.Execute(insertSQL)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-	_, err = ctx.(sqlexec.SQLExecutor).Execute("commit")
+	_, err = exec.Execute("commit")
 	return errors.Trace(err)
 }
 

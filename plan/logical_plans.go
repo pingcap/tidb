@@ -179,6 +179,11 @@ type Selection struct {
 	// split into a list of AND conditions.
 	Conditions []expression.Expression
 
+	// pushDownConditions is the Conditions will be pushed to coprocessor.
+	pushDownConditions []expression.Expression
+	// residualConditions is the Conditions will remain in tidb.
+	residualConditions []expression.Expression
+
 	// onTable means if this selection's child is a table scan or index scan.
 	onTable bool
 
@@ -252,6 +257,9 @@ type DataSource struct {
 	TableAsName *model.CIStr
 
 	LimitCount *int64
+
+	// pushedDownConds are the conditions that will be pushed down to coprocessor.
+	pushedDownConds []expression.Expression
 
 	statisticTable *statistics.Table
 }

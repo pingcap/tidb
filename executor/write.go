@@ -880,6 +880,7 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 			}
 			row[i].SetInt64(val)
 			if val != 0 {
+				e.ctx.GetSessionVars().InsertID = uint64(val)
 				e.Table.RebaseAutoID(val, true)
 				continue
 			}

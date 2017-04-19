@@ -982,9 +982,9 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	var statisticTable *statistics.Table
 	if handle == nil {
 		// When the first session is created, the handle hasn't been initialized.
-		statisticTable = statistics.PseudoTable(tn.TableInfo)
+		statisticTable = statistics.PseudoTable(tn.TableInfo.ID)
 	} else {
-		statisticTable = handle.GetTableStats(tn.TableInfo)
+		statisticTable = handle.GetTableStats(tn.TableInfo.ID)
 	}
 	if b.err != nil {
 		return nil

@@ -41,7 +41,7 @@ const (
 
 // Table represents statistics for a table.
 type Table struct {
-	Info    *model.TableInfo
+	tableID int64
 	Columns map[int64]*Column
 	Indices map[int64]*Index
 	Count   int64 // Total row count in a table.
@@ -50,7 +50,7 @@ type Table struct {
 
 func (t *Table) copy() *Table {
 	nt := &Table{
-		Info:    t.Info,
+		tableID: t.tableID,
 		Count:   t.Count,
 		Pseudo:  t.Pseudo,
 		Columns: make(map[int64]*Column),
@@ -77,7 +77,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 		// We copy it before writing to avoid race.
 		table = table.copy()
 	}
-	table.Info = tableInfo
+	table.tableID = tableInfo.ID
 	table.Count = count
 
 	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count, version from mysql.stats_histograms where table_id = %d", tableInfo.ID)
@@ -85,10 +85,6 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// indexCount and columnCount record the number of indices and columns in table stats. If the number don't match with
-	// tableInfo, we will return pseudo table.
-	// TODO: In fact, we can return pseudo column.
-	indexCount, columnCount := 0, 0
 	for _, row := range rows {
 		distinct := row.Data[3].GetInt64()
 		histID := row.Data[2].GetInt64()
@@ -110,10 +106,8 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 			}
 			if idx != nil {
 				table.Indices[histID] = idx
-				indexCount++
 			} else {
-				// TODO: If we support create index ddl, it may be a new created index. We needn't refer tableInfo any more.
-				log.Warnf("We cannot find index id %d in table %s now. It may be deleted.", histID, tableInfo.Name)
+				log.Warnf("We cannot find index id %d in table info %s now. It may be deleted.", histID, tableInfo.Name)
 			}
 		} else {
 			// process column
@@ -132,17 +126,13 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 			}
 			if col != nil {
 				table.Columns[col.ID] = col
-				columnCount++
 			} else {
-				log.Warnf("We cannot find column id %d in table %s now. It may be deleted.", histID, tableInfo.Name)
+				// If we didn't find a Column or Index in tableInfo, we won't load the histogram for it.
+				// But don't worry, next lease the ddl will be updated, and we will load a same table for two times to
+				// avoid error.
+				log.Warnf("We cannot find column id %d in table info %s now. It may be deleted.", histID, tableInfo.Name)
 			}
 		}
-	}
-	if indexCount != len(tableInfo.Indices) {
-		return nil, errors.New("The number of indices doesn't match with the schema")
-	}
-	if columnCount != len(tableInfo.Columns) {
-		return nil, errors.New("The number of columns doesn't match with the schema")
 	}
 	return table, nil
 }
@@ -150,8 +140,11 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 // String implements Stringer interface.
 func (t *Table) String() string {
 	strs := make([]string, 0, len(t.Columns)+1)
-	strs = append(strs, fmt.Sprintf("Table:%d count:%d", t.Info.ID, t.Count))
+	strs = append(strs, fmt.Sprintf("Table:%d Count:%d", t.tableID, t.Count))
 	for _, col := range t.Columns {
+		strs = append(strs, col.String())
+	}
+	for _, col := range t.Indices {
 		strs = append(strs, col.String())
 	}
 	return strings.Join(strs, "\n")
@@ -217,29 +210,11 @@ func (t *Table) GetRowCountByIndexRanges(sc *variable.StatementContext, idxID in
 }
 
 // PseudoTable creates a pseudo table statistics when statistic can not be found in KV store.
-func PseudoTable(ti *model.TableInfo) *Table {
-	t := &Table{Info: ti, Pseudo: true}
+func PseudoTable(tableID int64) *Table {
+	t := &Table{tableID: tableID, Pseudo: true}
 	t.Count = pseudoRowCount
-	t.Columns = make(map[int64]*Column, len(ti.Columns))
-	t.Indices = make(map[int64]*Index, len(ti.Indices))
-	for _, v := range ti.Columns {
-		c := &Column{
-			Histogram: Histogram{
-				ID:  v.ID,
-				NDV: pseudoRowCount / 2,
-			},
-		}
-		t.Columns[v.ID] = c
-	}
-	for _, v := range ti.Indices {
-		idx := &Index{
-			Histogram: Histogram{
-				ID:  v.ID,
-				NDV: pseudoRowCount / 2,
-			},
-		}
-		t.Indices[v.ID] = idx
-	}
+	t.Columns = make(map[int64]*Column)
+	t.Indices = make(map[int64]*Index)
 	return t
 }
 

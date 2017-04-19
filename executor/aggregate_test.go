@@ -311,7 +311,7 @@ func (s *testSuite) TestStreamAgg(c *C) {
 	cntAgg := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{col}, false)
 	avgAgg := expression.NewAggFunction(ast.AggFuncAvg, []expression.Expression{col}, false)
 	maxAgg := expression.NewAggFunction(ast.AggFuncMax, []expression.Expression{col}, false)
-	cases := []struct {
+	tests := []struct {
 		aggFunc expression.AggregationFunction
 		result  string
 		input   [][]interface{}
@@ -359,28 +359,28 @@ func (s *testSuite) TestStreamAgg(c *C) {
 		},
 	}
 	ctx := mock.NewContext()
-	for _, ca := range cases {
+	for _, tt := range tests {
 		mock := &MockExec{}
 		e := &executor.StreamAggExec{
-			AggFuncs: []expression.AggregationFunction{ca.aggFunc},
+			AggFuncs: []expression.AggregationFunction{tt.aggFunc},
 			Src:      mock,
 			StmtCtx:  ctx.GetSessionVars().StmtCtx,
 		}
 		row, err := e.Next()
 		c.Check(err, IsNil)
 		c.Check(row, NotNil)
-		c.Assert(fmt.Sprintf("%v", row.Data[0].GetValue()), Equals, ca.result)
+		c.Assert(fmt.Sprintf("%v", row.Data[0].GetValue()), Equals, tt.result)
 		e.GroupByItems = append(e.GroupByItems, gbyCol)
 		e.Close()
 		row, err = e.Next()
 		c.Check(err, IsNil)
 		c.Check(row, IsNil)
 		e.Close()
-		for _, input := range ca.input {
+		for _, input := range tt.input {
 			data := types.MakeDatums(input...)
 			mock.Rows = append(mock.Rows, &executor.Row{Data: data})
 		}
-		for _, res := range ca.result1 {
+		for _, res := range tt.result1 {
 			row, err = e.Next()
 			c.Check(err, IsNil)
 			c.Check(row, NotNil)

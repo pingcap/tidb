@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -98,18 +97,12 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 }
 
 // GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
-func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *Table {
-	tbl, ok := h.statsCache.Load().(statsCache)[tblInfo.ID]
+func (h *Handle) GetTableStats(tblID int64) *Table {
+	tbl, ok := h.statsCache.Load().(statsCache)[tblID]
 	if !ok {
-		return PseudoTable(tblInfo)
+		return PseudoTable(tblID)
 	}
-	// Here we check the TableInfo because there may be some ddl changes in the duration period.
-	// Also, we rely on the fact that TableInfo will not be same if and only if there are ddl changes.
-	// TODO: Remove this check.
-	if tblInfo == tbl.Info {
-		return tbl
-	}
-	return PseudoTable(tblInfo)
+	return tbl
 }
 
 func (h *Handle) copyFromOldCache() statsCache {
@@ -125,7 +118,7 @@ func (h *Handle) copyFromOldCache() statsCache {
 func (h *Handle) updateTableStats(tables []*Table) {
 	newCache := h.copyFromOldCache()
 	for _, tbl := range tables {
-		id := tbl.Info.ID
+		id := tbl.tableID
 		newCache[id] = tbl
 	}
 	h.statsCache.Store(newCache)
