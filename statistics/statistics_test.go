@@ -16,11 +16,13 @@ package statistics
 import (
 	"testing"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -113,6 +115,30 @@ func (s *testStatisticsSuite) SetUpSuite(c *C) {
 	s.pk = pk
 }
 
+func decodeIndexHistogram(ind *Histogram, id int64) (*Histogram, error) {
+	hg := &Histogram{
+		ID:      id,
+		NDV:     ind.NDV,
+		Buckets: make([]bucket, 0, len(ind.Buckets)),
+	}
+	for _, b := range ind.Buckets {
+		val := b.Value
+		if val.GetBytes() == nil {
+			break
+		}
+		data, err := codec.Decode(val.GetBytes(), 1)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		hg.Buckets = append(hg.Buckets, bucket{
+			Count:   b.Count,
+			Value:   data[0],
+			Repeats: b.Repeats,
+		})
+	}
+	return hg, nil
+}
+
 func (s *testStatisticsSuite) TestBuild(c *C) {
 	tblInfo := &model.TableInfo{
 		ID: 1,
@@ -182,12 +208,11 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 5075)
 
-	tblCount, hg, err := builder.BuildIndex(1, ast.RecordSet(s.rc), 1)
+	tblCount, idx, err := builder.BuildIndex(1, ast.RecordSet(s.rc), 1)
 	c.Check(err, IsNil)
 	c.Check(int(tblCount), Equals, 100000)
-	column, err := CopyFromIndexColumns(&Index{Histogram: *hg}, 3)
+	col, err = decodeIndexHistogram(idx, 1)
 	c.Check(err, IsNil)
-	col = &column.Histogram
 	count, err = col.equalRowCount(sc, types.NewIntDatum(10000))
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 1)

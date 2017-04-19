@@ -407,16 +407,15 @@ func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) LogicalPlan {
 	for _, tbl := range as.TableNames {
 		idxInfo, colInfo, pkInfo := getColsInfo(tbl)
 		for _, idx := range idxInfo {
-			p.idxTasks = append(p.idxTasks, analyzeIndexTask{TableInfo: tbl.TableInfo, IndexInfo: idx})
+			p.IdxTasks = append(p.IdxTasks, analyzeIndexTask{TableInfo: tbl.TableInfo, IndexInfo: idx})
 		}
 		if len(colInfo) > 0 {
-			p.colTasks = append(p.colTasks, analyzeColumnsTask{TableInfo: tbl.TableInfo, ColsInfo: colInfo})
+			p.ColTasks = append(p.ColTasks, analyzeColumnsTask{TableInfo: tbl.TableInfo, ColsInfo: colInfo})
 		}
 		if pkInfo != nil {
-			p.pkTasks = append(p.pkTasks, analyzePKTask{TableInfo: tbl.TableInfo, PKInfo: pkInfo})
+			p.PkTasks = append(p.PkTasks, analyzePKTask{TableInfo: tbl.TableInfo, PKInfo: pkInfo})
 		}
 	}
-	p.PKCount = len(p.pkTasks)
 	p.SetSchema(&expression.Schema{})
 	return p
 }

@@ -1,0 +1,67 @@
+
+----------------------------------------------------------------------
+FAIL: statistics_test.go:116: testStatisticsSuite.TestBuild
+
+statistics_test.go:189:
+    c.Check(err, IsNil)
+... value *errors.Err = &errors.Err{message:"", cause:(*terror.Error)(0xc42001ce10), previous:(*errors.Err)(0xc4201b0f50), file:"/home/tylerx/go/src/github.com/pingcap/tidb/statistics/histogram.go", line:157} ("[types:1265]Data Truncated")
+
+statistics_test.go:190:
+    c.Check(int(count), Equals, 1)
+... obtained int = 0
+... expected int = 1
+
+statistics_test.go:192:
+    c.Check(err, IsNil)
+... value *errors.Err = &errors.Err{message:"", cause:(*terror.Error)(0xc42001ce10), previous:(*errors.Err)(0xc4201b5360), file:"/home/tylerx/go/src/github.com/pingcap/tidb/statistics/histogram.go", line:189} ("[types:1265]Data Truncated")
+
+statistics_test.go:193:
+    c.Check(int(count), Equals, 19983)
+... obtained int = 0
+... expected int = 19983
+
+statistics_test.go:195:
+    c.Check(err, IsNil)
+... value *errors.Err = &errors.Err{message:"", cause:(*terror.Error)(0xc42001ce10), previous:(*errors.Err)(0xc42134c460), file:"/home/tylerx/go/src/github.com/pingcap/tidb/statistics/histogram.go", line:210} ("[types:1265]Data Truncated")
+
+statistics_test.go:196:
+    c.Check(int(count), Equals, 4618)
+... obtained int = 0
+... expected int = 4618
+
+--- FAIL: TestT (1.51s)
+
+----------------------------------------------------------------------
+FAIL: statistics_test.go:116: testStatisticsSuite.TestBuild
+
+statistics_test.go:189:
+    c.Check(err, IsNil)
+... value *errors.Err = &errors.Err{message:"", cause:(*terror.Error)(0xc42001ce10), previous:(*errors.Err)(0xc422e42f00), file:"/home/tylerx/go/src/github.com/pingcap/tidb/statistics/histogram.go", line:157} ("[types:1265]Data Truncated")
+
+statistics_test.go:190:
+    c.Check(int(count), Equals, 1)
+... obtained int = 0
+... expected int = 1
+
+statistics_test.go:192:
+    c.Check(err, IsNil)
+... value *errors.Err = &errors.Err{message:"", cause:(*terror.Error)(0xc42001ce10), previous:(*errors.Err)(0xc422418550), file:"/home/tylerx/go/src/github.com/pingcap/tidb/statistics/histogram.go", line:189} ("[types:1265]Data Truncated")
+
+statistics_test.go:193:
+    c.Check(int(count), Equals, 19983)
+... obtained int = 0
+... expected int = 19983
+
+statistics_test.go:195:
+    c.Check(err, IsNil)
+... value *errors.Err = &errors.Err{message:"", cause:(*terror.Error)(0xc42001ce10), previous:(*errors.Err)(0xc421e31720), file:"/home/tylerx/go/src/github.com/pingcap/tidb/statistics/histogram.go", line:210} ("[types:1265]Data Truncated")
+
+statistics_test.go:196:
+    c.Check(int(count), Equals, 4618)
+... obtained int = 0
+... expected int = 4618
+
+--- FAIL: TestT (1.55s)
+FAIL
+exit status 1
+FAIL	github.com/pingcap/tidb/statistics	3.074s

@@ -1571,15 +1571,15 @@ func (p *Analyze) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInf
 	}
 	var childInfos []*physicalPlanInfo
 	// TODO: It's inefficient to do table scan two times for massive data.
-	for _, task := range p.pkTasks {
+	for _, task := range p.PkTasks {
 		ts := p.prepareSimpleTableScan(task.TableInfo, []*model.ColumnInfo{task.PKInfo})
 		childInfos = append(childInfos, ts.matchProperty(prop, &physicalPlanInfo{count: 0}))
 	}
-	for _, task := range p.colTasks {
+	for _, task := range p.ColTasks {
 		ts := p.prepareSimpleTableScan(task.TableInfo, task.ColsInfo)
 		childInfos = append(childInfos, ts.matchProperty(prop, &physicalPlanInfo{count: 0}))
 	}
-	for _, task := range p.idxTasks {
+	for _, task := range p.IdxTasks {
 		idx := task.IndexInfo
 		columns := make([]*model.ColumnInfo, 0, len(idx.Columns))
 		for _, idxCol := range idx.Columns {

@@ -147,10 +147,9 @@ type Analyze struct {
 	baseLogicalPlan
 	basePhysicalPlan
 
-	PKCount  int // PKCount is the number of analyzePKTask, exported for usage in executor.
-	pkTasks  []analyzePKTask
-	colTasks []analyzeColumnsTask
-	idxTasks []analyzeIndexTask
+	PkTasks  []analyzePKTask
+	ColTasks []analyzeColumnsTask
+	IdxTasks []analyzeIndexTask
 }
 
 // LoadData represents a loaddata plan.
