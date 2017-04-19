@@ -191,6 +191,8 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"right('TiDB', 2)", mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{"lower('TiDB')", mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{"lcase('TiDB')", mysql.TypeVarString, charset.CharsetUTF8, 0},
+		{"locate('foo', 'foobar')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
+		{"position('foo' in 'foobar')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"repeat('TiDB', 3)", mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{"replace('TiDB', 'D', 'd')", mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{"upper('TiDB')", mysql.TypeVarString, charset.CharsetUTF8, 0},
