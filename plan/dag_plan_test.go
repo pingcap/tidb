@@ -156,7 +156,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 		// Test complex update.
 		{
 			sql:  "update t set a = 5 where b < 1 order by d limit 1",
-			best: "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->Limit)->Limit->*plan.Update",
+			best: "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->Sort + Limit(1) + Offset(0))->Sort + Limit(1) + Offset(0)->*plan.Update",
 		},
 		// Test simple update.
 		{
@@ -167,7 +167,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 		// Test complex delete.
 		{
 			sql:  "delete from t where b < 1 order by d limit 1",
-			best: "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->Limit)->Limit->*plan.Delete",
+			best: "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->Sort + Limit(1) + Offset(0))->Sort + Limit(1) + Offset(0)->*plan.Delete",
 		},
 		// Test simple delete.
 		{

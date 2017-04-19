@@ -1155,7 +1155,6 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, dbName, t.Name.L, "")
 	}
 
-	_, _ = b.resolveHavingAndOrderBy(sel, p)
 	if sel.Where != nil {
 		p = b.buildSelection(p, sel.Where, nil)
 		if b.err != nil {
@@ -1221,7 +1220,6 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 		return nil
 	}
 
-	_, _ = b.resolveHavingAndOrderBy(sel, p)
 	if sel.Where != nil {
 		p = b.buildSelection(p, sel.Where, nil)
 		if b.err != nil {
