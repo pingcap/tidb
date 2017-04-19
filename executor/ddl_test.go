@@ -207,7 +207,7 @@ func (s *testSuite) TestAlterTableModifyColumn(c *C) {
 	tk.MustExec("alter table mc modify column c2 text")
 	result := tk.MustQuery("show create table mc")
 	createSQL := result.Rows()[0][1]
-	expected := "CREATE TABLE `mc` (\n  `c1` bigint(21) DEFAULT NULL,\n  `c2` text DEFAULT NULL\n) ENGINE=InnoDB"
+	expected := "CREATE TABLE `mc` (\n  `c1` bigint(21) DEFAULT NULL,\n  `c2` text DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
 	c.Assert(createSQL, Equals, expected)
 }
 
@@ -250,4 +250,33 @@ func (s *testSuite) TestRenameTable(c *C) {
 	tk.MustExec("drop database rename1")
 	tk.MustExec("drop database rename2")
 	tk.MustExec("drop database rename3")
+}
+
+func (s *testSuite) TestUnsupportedCharset(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	dbName := "unsupported_charset"
+	tk.MustExec("create database " + dbName)
+	tk.MustExec("use " + dbName)
+	tests := []struct {
+		charset string
+		valid   bool
+	}{
+		{"charset UTF8 collate UTF8_bin", true},
+		{"charset utf8mb4", true},
+		{"charset utf16", false},
+		{"charset latin1", true},
+		{"charset binary", true},
+		{"charset ascii", true},
+	}
+	for i, tt := range tests {
+		sql := fmt.Sprintf("create table t%d (a varchar(10) %s)", i, tt.charset)
+		if tt.valid {
+			tk.MustExec(sql)
+		} else {
+			_, err := tk.Exec(sql)
+			c.Assert(err, NotNil, Commentf(sql))
+		}
+	}
+	tk.MustExec("drop database " + dbName)
 }

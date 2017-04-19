@@ -56,7 +56,7 @@ func newFunction(funcName string, args ...Expression) Expression {
 func (*testExpressionSuite) TestConstantPropagation(c *C) {
 	defer testleak.AfterTest(c)()
 	nullValue := &Constant{Value: types.Datum{}}
-	cases := []struct {
+	tests := []struct {
 		conditions []Expression
 		result     string
 	}{
@@ -116,21 +116,21 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 			result: "0",
 		},
 	}
-	for _, ca := range cases {
+	for _, tt := range tests {
 		ctx := mock.NewContext()
-		newConds := PropagateConstant(ctx, ca.conditions)
+		newConds := PropagateConstant(ctx, tt.conditions)
 		var result []string
 		for _, v := range newConds {
 			result = append(result, v.String())
 		}
 		sort.Strings(result)
-		c.Assert(strings.Join(result, ", "), Equals, ca.result, Commentf("different for expr %s", ca.conditions))
+		c.Assert(strings.Join(result, ", "), Equals, tt.result, Commentf("different for expr %s", tt.conditions))
 	}
 }
 
 func (*testExpressionSuite) TestConstantFolding(c *C) {
 	defer testleak.AfterTest(c)()
-	cases := []struct {
+	tests := []struct {
 		condition Expression
 		result    string
 	}{
@@ -163,8 +163,8 @@ func (*testExpressionSuite) TestConstantFolding(c *C) {
 			result:    "lt(test.t.a, plus(test.t.b, 3))",
 		},
 	}
-	for _, ca := range cases {
-		newConds := FoldConstant(ca.condition)
-		c.Assert(newConds.String(), Equals, ca.result, Commentf("different for expr %s", ca.condition))
+	for _, tt := range tests {
+		newConds := FoldConstant(tt.condition)
+		c.Assert(newConds.String(), Equals, tt.result, Commentf("different for expr %s", tt.condition))
 	}
 }
