@@ -54,7 +54,7 @@ type Plan interface {
 	Allocator() *idAllocator
 	// SetParents sets the parents for the plan.
 	SetParents(...Plan)
-	// SetParents sets the children for the plan.
+	// SetChildren sets the children for the plan.
 	SetChildren(...Plan)
 
 	context() context.Context
@@ -443,12 +443,12 @@ func (p *basePlan) Children() []Plan {
 	return p.children
 }
 
-// RemoveAllParents implements Plan RemoveAllParents interface.
+// SetParents implements Plan SetParents interface.
 func (p *basePlan) SetParents(pars ...Plan) {
 	p.parents = pars
 }
 
-// RemoveAllParents implements Plan RemoveAllParents interface.
+// SetChildren implements Plan SetChildren interface.
 func (p *basePlan) SetChildren(children ...Plan) {
 	p.children = children
 }
