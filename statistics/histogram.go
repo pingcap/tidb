@@ -15,6 +15,7 @@ package statistics
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -30,6 +32,8 @@ import (
 type Histogram struct {
 	ID  int64 // Column ID.
 	NDV int64 // Number of distinct values.
+	// LastUpdateVersion is the version that this histogram updated last time.
+	LastUpdateVersion uint64
 
 	Buckets []bucket
 }
@@ -50,7 +54,8 @@ type bucket struct {
 }
 
 func (hg *Histogram) saveToStorage(ctx context.Context, tableID int64, isIndex int) error {
-	insertSQL := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count) values (%d, %d, %d, %d)", tableID, isIndex, hg.ID, hg.NDV)
+	ver := ctx.Txn().StartTS()
+	insertSQL := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values (%d, %d, %d, %d, %d)", tableID, isIndex, hg.ID, hg.NDV, ver)
 	_, err := ctx.(sqlexec.SQLExecutor).Execute(insertSQL)
 	if err != nil {
 		return errors.Trace(err)
@@ -75,17 +80,18 @@ func (hg *Histogram) saveToStorage(ctx context.Context, tableID int64, isIndex i
 	return nil
 }
 
-func histogramFromStorage(ctx context.Context, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int) (*Histogram, error) {
+func (h *Handle) histogramFromStorage(tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64) (*Histogram, error) {
 	selSQL := fmt.Sprintf("select bucket_id, count, repeats, value from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, colID)
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, selSQL)
+	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, selSQL)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	bucketSize := len(rows)
 	hg := &Histogram{
-		ID:      colID,
-		NDV:     distinct,
-		Buckets: make([]bucket, bucketSize),
+		ID:                colID,
+		NDV:               distinct,
+		LastUpdateVersion: ver,
+		Buckets:           make([]bucket, bucketSize),
 	}
 	for i := 0; i < bucketSize; i++ {
 		bucketID := rows[i].Data[0].GetInt64()
@@ -95,7 +101,7 @@ func histogramFromStorage(ctx context.Context, tableID int64, colID int64, tp *t
 		if isIndex == 1 {
 			value = rows[i].Data[3]
 		} else {
-			value, err = rows[i].Data[3].ConvertTo(ctx.GetSessionVars().StmtCtx, tp)
+			value, err = rows[i].Data[3].ConvertTo(h.ctx.GetSessionVars().StmtCtx, tp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -126,11 +132,8 @@ func (hg *Histogram) toString(isIndex bool) string {
 	return strings.Join(strs, "\n")
 }
 
-// EqualRowCount estimates the row count where the column equals to value.
-func (hg *Histogram) EqualRowCount(sc *variable.StatementContext, value types.Datum) (int64, error) {
-	if len(hg.Buckets) == 0 {
-		return pseudoRowCount / pseudoEqualRate, nil
-	}
+// equalRowCount estimates the row count where the column equals to value.
+func (hg *Histogram) equalRowCount(sc *variable.StatementContext, value types.Datum) (float64, error) {
 	index, match, err := hg.lowerBound(sc, value)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -139,21 +142,18 @@ func (hg *Histogram) EqualRowCount(sc *variable.StatementContext, value types.Da
 		return 0, nil
 	}
 	if match {
-		return hg.Buckets[index].Repeats, nil
+		return float64(hg.Buckets[index].Repeats), nil
 	}
-	return hg.totalRowCount() / hg.NDV, nil
+	return hg.totalRowCount() / float64(hg.NDV), nil
 }
 
-// GreaterRowCount estimates the row count where the column greater than value.
-func (hg *Histogram) GreaterRowCount(sc *variable.StatementContext, value types.Datum) (int64, error) {
-	if len(hg.Buckets) == 0 {
-		return pseudoRowCount / pseudoLessRate, nil
-	}
-	lessCount, err := hg.LessRowCount(sc, value)
+// greaterRowCount estimates the row count where the column greater than value.
+func (hg *Histogram) greaterRowCount(sc *variable.StatementContext, value types.Datum) (float64, error) {
+	lessCount, err := hg.lessRowCount(sc, value)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	eqCount, err := hg.EqualRowCount(sc, value)
+	eqCount, err := hg.equalRowCount(sc, value)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -164,11 +164,8 @@ func (hg *Histogram) GreaterRowCount(sc *variable.StatementContext, value types.
 	return gtCount, nil
 }
 
-// LessRowCount estimates the row count where the column less than value.
-func (hg *Histogram) LessRowCount(sc *variable.StatementContext, value types.Datum) (int64, error) {
-	if len(hg.Buckets) == 0 {
-		return pseudoRowCount / pseudoLessRate, nil
-	}
+// lessRowCount estimates the row count where the column less than value.
+func (hg *Histogram) lessRowCount(sc *variable.StatementContext, value types.Datum) (float64, error) {
 	index, match, err := hg.lowerBound(sc, value)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -176,28 +173,25 @@ func (hg *Histogram) LessRowCount(sc *variable.StatementContext, value types.Dat
 	if index == len(hg.Buckets) {
 		return hg.totalRowCount(), nil
 	}
-	curCount := hg.Buckets[index].Count
-	prevCount := int64(0)
+	curCount := float64(hg.Buckets[index].Count)
+	prevCount := float64(0)
 	if index > 0 {
-		prevCount = hg.Buckets[index-1].Count
+		prevCount = float64(hg.Buckets[index-1].Count)
 	}
-	lessThanBucketValueCount := curCount - hg.Buckets[index].Repeats
+	lessThanBucketValueCount := curCount - float64(hg.Buckets[index].Repeats)
 	if match {
 		return lessThanBucketValueCount, nil
 	}
 	return (prevCount + lessThanBucketValueCount) / 2, nil
 }
 
-// BetweenRowCount estimates the row count where column greater or equal to a and less than b.
-func (hg *Histogram) BetweenRowCount(sc *variable.StatementContext, a, b types.Datum) (int64, error) {
-	if len(hg.Buckets) == 0 {
-		return pseudoRowCount / pseudoBetweenRate, nil
-	}
-	lessCountA, err := hg.LessRowCount(sc, a)
+// betweenRowCount estimates the row count where column greater or equal to a and less than b.
+func (hg *Histogram) betweenRowCount(sc *variable.StatementContext, a, b types.Datum) (float64, error) {
+	lessCountA, err := hg.lessRowCount(sc, a)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	lessCountB, err := hg.LessRowCount(sc, b)
+	lessCountB, err := hg.lessRowCount(sc, b)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -207,15 +201,18 @@ func (hg *Histogram) BetweenRowCount(sc *variable.StatementContext, a, b types.D
 	return lessCountB - lessCountA, nil
 }
 
-func (hg *Histogram) totalRowCount() int64 {
-	return hg.Buckets[len(hg.Buckets)-1].Count
+func (hg *Histogram) totalRowCount() float64 {
+	if len(hg.Buckets) == 0 {
+		return 0
+	}
+	return float64(hg.Buckets[len(hg.Buckets)-1].Count)
 }
 
-func (hg *Histogram) bucketRowCount() int64 {
-	return hg.totalRowCount() / int64(len(hg.Buckets))
+func (hg *Histogram) bucketRowCount() float64 {
+	return hg.totalRowCount() / float64(len(hg.Buckets))
 }
 
-func (hg *Histogram) inBucketBetweenCount() int64 {
+func (hg *Histogram) inBucketBetweenCount() float64 {
 	// TODO: Make this estimation more accurate using uniform spread assumption.
 	return hg.bucketRowCount()/3 + 1
 }
@@ -263,6 +260,40 @@ func (c *Column) String() string {
 	return c.Histogram.toString(false)
 }
 
+// getIntColumnRowCount estimates the row count by a slice of IntColumnRange.
+func (c *Column) getIntColumnRowCount(sc *variable.StatementContext, intRanges []types.IntColumnRange,
+	totalRowCount float64) (float64, error) {
+	var rowCount float64
+	for _, rg := range intRanges {
+		var cnt float64
+		var err error
+		if rg.LowVal == math.MinInt64 && rg.HighVal == math.MaxInt64 {
+			cnt = totalRowCount
+		} else if rg.LowVal == math.MinInt64 {
+			cnt, err = c.lessRowCount(sc, types.NewIntDatum(rg.HighVal))
+		} else if rg.HighVal == math.MaxInt64 {
+			cnt, err = c.greaterRowCount(sc, types.NewIntDatum(rg.LowVal))
+		} else {
+			if rg.LowVal == rg.HighVal {
+				cnt, err = c.equalRowCount(sc, types.NewIntDatum(rg.LowVal))
+			} else {
+				cnt, err = c.betweenRowCount(sc, types.NewIntDatum(rg.LowVal), types.NewIntDatum(rg.HighVal))
+			}
+		}
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if rg.HighVal-rg.LowVal > 0 && cnt > float64(rg.HighVal-rg.LowVal) {
+			cnt = float64(rg.HighVal - rg.LowVal)
+		}
+		rowCount += cnt
+	}
+	if rowCount > totalRowCount {
+		rowCount = totalRowCount
+	}
+	return rowCount, nil
+}
+
 // Index represents an index histogram.
 type Index struct {
 	Histogram
@@ -271,4 +302,36 @@ type Index struct {
 
 func (idx *Index) String() string {
 	return idx.Histogram.toString(true)
+}
+
+func (idx *Index) getRowCount(sc *variable.StatementContext, indexRanges []*types.IndexRange, inAndEQCnt int) (float64, error) {
+	totalCount := float64(0)
+	for _, indexRange := range indexRanges {
+		indexRange.Align(idx.NumColumns)
+		lb, err := codec.EncodeKey(nil, indexRange.LowVal...)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if indexRange.LowExclude {
+			lb = append(lb, 0)
+		}
+		rb, err := codec.EncodeKey(nil, indexRange.HighVal...)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if !indexRange.HighExclude {
+			rb = append(rb, 0)
+		}
+		l := types.NewBytesDatum(lb)
+		r := types.NewBytesDatum(rb)
+		rowCount, err := idx.betweenRowCount(sc, l, r)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		totalCount += rowCount
+	}
+	if totalCount > idx.totalRowCount() {
+		totalCount = idx.totalRowCount()
+	}
+	return totalCount, nil
 }

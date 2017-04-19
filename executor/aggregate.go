@@ -15,9 +15,9 @@ package executor
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/types"
@@ -32,7 +32,7 @@ type HashAggExec struct {
 	executed      bool
 	hasGby        bool
 	aggType       plan.AggregationType
-	ctx           context.Context
+	sc            *variable.StatementContext
 	AggFuncs      []expression.AggregationFunction
 	groupMap      *mvmap.MVMap
 	groupIterator *mvmap.Iterator
@@ -143,7 +143,7 @@ func (e *HashAggExec) innerNext() (ret bool, err error) {
 		e.groupMap.Put(groupKey, []byte{})
 	}
 	for _, af := range e.AggFuncs {
-		af.Update(srcRow.Data, groupKey, e.ctx)
+		af.Update(srcRow.Data, groupKey, e.sc)
 	}
 	return true, nil
 }
@@ -156,7 +156,7 @@ type StreamAggExec struct {
 	schema             *expression.Schema
 	executed           bool
 	hasData            bool
-	Ctx                context.Context
+	StmtCtx            *variable.StatementContext
 	AggFuncs           []expression.AggregationFunction
 	GroupByItems       []expression.Expression
 	curGroupEncodedKey []byte
@@ -210,7 +210,7 @@ func (e *StreamAggExec) Next() (*Row, error) {
 			break
 		}
 		for _, af := range e.AggFuncs {
-			err = af.StreamUpdate(row.Data, e.Ctx)
+			err = af.StreamUpdate(row.Data, e.StmtCtx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -235,14 +235,13 @@ func (e *StreamAggExec) meetNewGroup(row *Row) (bool, error) {
 	if len(e.curGroupKey) == 0 {
 		matched, firstGroup = false, true
 	}
-	sc := e.Ctx.GetSessionVars().StmtCtx
 	for i, item := range e.GroupByItems {
 		v, err := item.Eval(row.Data)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		if matched {
-			c, err := v.CompareDatum(sc, e.curGroupKey[i])
+			c, err := v.CompareDatum(e.StmtCtx, e.curGroupKey[i])
 			if err != nil {
 				return false, errors.Trace(err)
 			}

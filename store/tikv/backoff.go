@@ -149,13 +149,6 @@ func NewBackoffer(maxSleep int, ctx goctx.Context) *Backoffer {
 	}
 }
 
-// WithCancel returns a cancel function which, when called, would cancel backoffer's context.
-func (b *Backoffer) WithCancel() goctx.CancelFunc {
-	var cancel goctx.CancelFunc
-	b.ctx, cancel = goctx.WithCancel(b.ctx)
-	return cancel
-}
-
 // Backoff sleeps a while base on the backoffType and records the error message.
 // It returns a retryable error if total sleep time exceeds maxSleep.
 func (b *Backoffer) Backoff(typ backoffType, err error) error {
@@ -195,12 +188,14 @@ func (b *Backoffer) String() string {
 	return fmt.Sprintf(" backoff(%dms %s)", b.totalSleep, b.types)
 }
 
-// Fork creates a new Backoffer which keeps current Backoffer's sleep time and errors.
-func (b *Backoffer) Fork() *Backoffer {
+// Fork creates a new Backoffer which keeps current Backoffer's sleep time and errors, and holds
+// a child context of current Backoffer's context.
+func (b *Backoffer) Fork() (*Backoffer, goctx.CancelFunc) {
+	ctx, cancel := goctx.WithCancel(b.ctx)
 	return &Backoffer{
 		maxSleep:   b.maxSleep,
 		totalSleep: b.totalSleep,
 		errors:     b.errors,
-		ctx:        b.ctx,
-	}
+		ctx:        ctx,
+	}, cancel
 }

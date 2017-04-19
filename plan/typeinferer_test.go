@@ -59,7 +59,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		c_set set('a', 'b', 'c'),
 		c_enum enum('a', 'b', 'c'))`
 	testKit.MustExec(sql)
-	cases := []struct {
+	tests := []struct {
 		expr string
 		tp   byte
 		chs  string
@@ -154,6 +154,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"curtime()", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag},
 		{"curtime(2)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag},
 		{"maketime(12, 15, 30)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag},
+		{"sec_to_time(2378)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag},
 		{"current_timestamp()", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
 		{"utc_timestamp()", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
 		{"microsecond('2009-12-31 23:59:59.000010')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
@@ -237,7 +238,6 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"bit_length('TiDB')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"char(66)", mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{"char_length('TiDB')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
-		{"character_length('TiDB')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"crc32('TiDB')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"instr('foobarbar', 'bar')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"timestampdiff(MINUTE,'2003-02-01','2003-05-01 12:05:55')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
@@ -296,12 +296,14 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`ord(true)`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{`ord(null)`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{`bin(1)`, mysql.TypeVarString, charset.CharsetUTF8, 0},
+		{"to_seconds('2003-05-01 12:05:55')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
+		{"to_seconds(950501)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{`bit_count(1)`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{`time_to_sec("23:59:59")`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 	}
-	for _, ca := range cases {
+	for _, tt := range tests {
 		ctx := testKit.Se.(context.Context)
-		stmts, err := tidb.Parse(ctx, "select "+ca.expr+" from t")
+		stmts, err := tidb.Parse(ctx, "select "+tt.expr+" from t")
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0].(*ast.SelectStmt)
@@ -312,9 +314,9 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		tp := stmt.GetResultFields()[0].Column.Tp
 		chs := stmt.GetResultFields()[0].Column.Charset
 		flag := stmt.GetResultFields()[0].Column.Flag
-		c.Assert(tp, Equals, ca.tp, Commentf("Tp for %s", ca.expr))
-		c.Assert(chs, Equals, ca.chs, Commentf("Charset for %s", ca.expr))
-		c.Assert(flag^uint(ca.flag), Equals, uint(0x0), Commentf("Charset for %s", ca.flag))
+		c.Assert(tp, Equals, tt.tp, Commentf("Tp for %s", tt.expr))
+		c.Assert(chs, Equals, tt.chs, Commentf("Charset for %s", tt.expr))
+		c.Assert(flag^uint(tt.flag), Equals, uint(0x0), Commentf("Charset for %s", tt.flag))
 	}
 }
 

@@ -140,7 +140,7 @@ func StrToInt(sc *variable.StatementContext, str string) (int64, error) {
 	validPrefix, err := getValidIntPrefix(sc, str)
 	iVal, err1 := strconv.ParseInt(validPrefix, 10, 64)
 	if err1 != nil {
-		return iVal, errors.Trace(ErrOverflow)
+		return iVal, ErrOverflow.GenByArgs("BIGINT", validPrefix)
 	}
 	return iVal, errors.Trace(err)
 }
@@ -154,7 +154,7 @@ func StrToUint(sc *variable.StatementContext, str string) (uint64, error) {
 	}
 	uVal, err1 := strconv.ParseUint(validPrefix, 10, 64)
 	if err1 != nil {
-		return uVal, errors.Trace(ErrOverflow)
+		return uVal, ErrOverflow.GenByArgs("BIGINT UNSIGNED", validPrefix)
 	}
 	return uVal, errors.Trace(err)
 }
@@ -204,7 +204,7 @@ func floatStrToIntStr(validFloat string) (string, error) {
 	}
 	if exp > 0 && int64(intCnt) > (math.MaxInt64-int64(exp)) {
 		// (exp + incCnt) overflows MaxInt64.
-		return validFloat, errors.Trace(ErrOverflow)
+		return validFloat, ErrOverflow.GenByArgs("BIGINT", validFloat)
 	}
 	intCnt += exp
 	if intCnt <= 0 {
@@ -220,7 +220,7 @@ func floatStrToIntStr(validFloat string) (string, error) {
 		extraZeroCount := intCnt - len(digits)
 		if extraZeroCount > 20 {
 			// Return overflow to avoid allocating too much memory.
-			return validFloat, errors.Trace(ErrOverflow)
+			return validFloat, ErrOverflow.GenByArgs("BIGINT", validFloat)
 		}
 		validInt = string(digits) + strings.Repeat("0", extraZeroCount)
 	}
