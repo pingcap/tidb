@@ -1294,7 +1294,7 @@ func (s *testEvaluatorSuite) TestPeriodAdd(c *C) {
 		c.Assert(value, Equals, test.Expect)
 	}
 }
-    
+
 func (s *testEvaluatorSuite) TestTimeToSec(c *C) {
 	tests := []struct {
 		t      string
