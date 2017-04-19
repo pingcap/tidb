@@ -1749,7 +1749,7 @@ func (s *testSessionSuite) TestFieldText(c *C) {
 	se := newSession(c, s.store, dbName)
 	mustExecSQL(c, se, "drop table if exists t")
 	mustExecSQL(c, se, "create table t (a int)")
-	cases := []struct {
+	tests := []struct {
 		sql   string
 		field string
 	}{
@@ -1759,13 +1759,13 @@ func (s *testSessionSuite) TestFieldText(c *C) {
 		{"select a from t", "a"},
 		{"select        ((a+1))     from t", "((a+1))"},
 	}
-	for _, v := range cases {
-		results, err := se.Execute(v.sql)
+	for _, tt := range tests {
+		results, err := se.Execute(tt.sql)
 		c.Assert(err, IsNil)
 		result := results[0]
 		fields, err := result.Fields()
 		c.Assert(err, IsNil)
-		c.Assert(fields[0].ColumnAsName.O, Equals, v.field)
+		c.Assert(fields[0].ColumnAsName.O, Equals, tt.field)
 	}
 
 	mustExecSQL(c, se, dropDBSQL)

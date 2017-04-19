@@ -900,7 +900,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 func (s *testColumnSuite) TestModifyColumn(c *C) {
 	d := newDDL(s.store, nil, nil, testLease)
 	defer d.Stop()
-	cases := []struct {
+	tests := []struct {
 		origin string
 		to     string
 		err    error
@@ -914,14 +914,14 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 		{"varchar(10)", "varchar(11)", nil},
 		{"varchar(10) character set utf8 collate utf8_bin", "varchar(10) character set utf8", nil},
 	}
-	for _, ca := range cases {
-		ftA := s.colDefStrToFieldType(c, ca.origin)
-		ftB := s.colDefStrToFieldType(c, ca.to)
+	for _, tt := range tests {
+		ftA := s.colDefStrToFieldType(c, tt.origin)
+		ftB := s.colDefStrToFieldType(c, tt.to)
 		err := modifiable(ftA, ftB)
 		if err == nil {
-			c.Assert(ca.err, IsNil)
+			c.Assert(tt.err, IsNil)
 		} else {
-			c.Assert(err.Error(), Equals, ca.err.Error())
+			c.Assert(err.Error(), Equals, tt.err.Error())
 		}
 	}
 }
