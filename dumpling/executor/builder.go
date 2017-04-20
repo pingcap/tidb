@@ -595,6 +595,14 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 		aggFuncs:       v.AggFuncsPB,
 		byItems:        v.GbyItemsPB,
 	}
+	vars := b.ctx.GetSessionVars()
+	if v.OutOfOrder {
+		e.scanConcurrency = vars.DistSQLScanConcurrency
+	} else {
+		// The cost of index scan double-read is higher than single-read. Usually ordered index scan has a limit
+		// which may not have been pushed down, so we set concurrency lower to avoid fetching unnecessary data.
+		e.scanConcurrency = vars.IndexSerialScanConcurrency
+	}
 	if !e.aggregate && e.singleReadMode {
 		// Single read index result has the schema of full index columns.
 		schemaColumns := make([]*expression.Column, len(e.indexPlan.Index.Columns))
