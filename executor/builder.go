@@ -584,7 +584,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 	table, _ := b.is.TableByID(v.Table.ID)
 	client := b.ctx.GetClient()
 	supportDesc := client.SupportRequestType(kv.ReqTypeIndex, kv.ReqSubTypeDesc)
-	st := &XSelectIndexExec{
+	e := &XSelectIndexExec{
 		tableInfo:      v.Table,
 		ctx:            b.ctx,
 		supportDesc:    supportDesc,
@@ -599,7 +599,15 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 		aggFields:      v.AggFields,
 		byItems:        v.GbyItemsPB,
 	}
-	return st
+	vars := b.ctx.GetSessionVars()
+	if v.OutOfOrder {
+		e.scanConcurrency = vars.DistSQLScanConcurrency
+	} else {
+		// The cost of index scan double-read is higher than single-read. Usually ordered index scan has a limit
+		// which may not have been pushed down, so we set concurrency lower to avoid fetching unnecessary data.
+		e.scanConcurrency = vars.IndexSerialScanConcurrency
+	}
+	return e
 }
 
 func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
