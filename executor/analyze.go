@@ -15,14 +15,16 @@ package executor
 
 import (
 	"math/rand"
+	"strconv"
 	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -31,13 +33,8 @@ var _ Executor = &AnalyzeExec{}
 
 // AnalyzeExec represents Analyze executor.
 type AnalyzeExec struct {
-	schema  *expression.Schema
-	tblInfo *model.TableInfo
-	ctx     context.Context
-	idxIDs  []int64
-	colIDs  []int64
-	pkID    int64
-	Srcs    []Executor
+	ctx   context.Context
+	tasks []analyzeTask
 }
 
 const (
@@ -48,13 +45,13 @@ const (
 
 // Schema implements the Executor Schema interface.
 func (e *AnalyzeExec) Schema() *expression.Schema {
-	return e.schema
+	return expression.NewSchema()
 }
 
 // Close implements the Executor Close interface.
 func (e *AnalyzeExec) Close() error {
-	for _, src := range e.Srcs {
-		err := src.Close()
+	for _, task := range e.tasks {
+		err := task.src.Close()
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -64,33 +61,38 @@ func (e *AnalyzeExec) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *AnalyzeExec) Next() (*Row, error) {
-	for _, src := range e.Srcs {
-		ae := src.(*AnalyzeExec)
-		var count int64 = -1
-		var sampleRows []*ast.Row
-		var colNDVs []int64
-		if len(ae.colIDs) != 0 {
-			rs := &recordSet{executor: ae.Srcs[len(ae.Srcs)-1]}
-			var err error
-			count, sampleRows, colNDVs, err = CollectSamplesAndEstimateNDVs(rs, len(ae.colIDs))
+	concurrency, err := getBuildStatsConcurrency(e.ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	taskCh := make(chan analyzeTask, len(e.tasks))
+	resultCh := make(chan analyzeResult, len(e.tasks))
+	for i := 0; i < concurrency; i++ {
+		go analyzeWorker(taskCh, resultCh)
+	}
+	for _, task := range e.tasks {
+		taskCh <- task
+	}
+	close(taskCh)
+	for i := 0; i < len(e.tasks); i++ {
+		result := <-resultCh
+		if result.err != nil {
+			return nil, errors.Trace(err)
+		}
+		for _, hg := range result.hist {
+			err = hg.SaveToStorage(e.ctx, result.tableID, result.count, result.isIndex)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
-		columnSamples := rowsToColumnSamples(sampleRows)
-		var pkRS ast.RecordSet
-		if ae.pkID != 0 {
-			offset := len(ae.Srcs) - 1
-			if len(ae.colIDs) != 0 {
-				offset--
-			}
-			pkRS = &recordSet{executor: ae.Srcs[offset]}
-		}
-		idxRS := make([]ast.RecordSet, 0, len(ae.idxIDs))
-		for i := range ae.idxIDs {
-			idxRS = append(idxRS, &recordSet{executor: ae.Srcs[i]})
-		}
-		err := ae.buildStatisticsAndSaveToKV(count, columnSamples, colNDVs, idxRS, pkRS)
+	}
+	dom := sessionctx.GetDomain(e.ctx)
+	lease := dom.DDL().GetLease()
+	if lease > 0 {
+		// We sleep two lease to make sure other tidb node has updated this node.
+		time.Sleep(lease * 2)
+	} else {
+		err := dom.StatsHandle().Update(GetInfoSchema(e.ctx))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -98,40 +100,78 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 	return nil, nil
 }
 
-func (e *AnalyzeExec) buildStatisticsAndSaveToKV(count int64, columnSamples [][]types.Datum, colNDVs []int64, idxRS []ast.RecordSet, pkRS ast.RecordSet) error {
-	statBuilder := &statistics.Builder{
-		Ctx:           e.ctx,
-		TblInfo:       e.tblInfo,
-		Count:         count,
-		NumBuckets:    defaultBucketCount,
-		ColumnSamples: columnSamples,
-		ColIDs:        e.colIDs,
-		ColNDVs:       colNDVs,
-		IdxRecords:    idxRS,
-		IdxIDs:        e.idxIDs,
-		PkRecords:     pkRS,
-		PkID:          e.pkID,
-	}
-	t, err := statBuilder.NewTable()
+func getBuildStatsConcurrency(ctx context.Context) (int, error) {
+	sessionVars := ctx.GetSessionVars()
+	concurrency, err := varsutil.GetSessionSystemVar(sessionVars, variable.TiDBBuildStatsConcurrency)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
-	dom := sessionctx.GetDomain(e.ctx)
-	err = dom.StatsHandle().SaveToStorage(t)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	lease := dom.DDL().GetLease()
-	if lease > 0 {
-		// We sleep two lease to make sure other tidb node has updated this node.
-		time.Sleep(lease * 2)
-	} else {
-		err = dom.StatsHandle().Update(GetInfoSchema(e.ctx))
-		if err != nil {
-			return errors.Trace(err)
+	c, err := strconv.ParseInt(concurrency, 10, 64)
+	return int(c), errors.Trace(err)
+}
+
+type taskType int
+
+const (
+	pkTask taskType = iota
+	colTask
+	idxTask
+)
+
+type analyzeTask struct {
+	taskType taskType
+	src      Executor
+}
+
+type analyzeResult struct {
+	tableID int64
+	hist    []*statistics.Histogram
+	count   int64
+	isIndex int
+	err     error
+}
+
+func analyzeWorker(taskCh <-chan analyzeTask, resultCh chan<- analyzeResult) {
+	for task := range taskCh {
+		switch task.taskType {
+		case pkTask:
+			resultCh <- analyzePK(task.src.(*XSelectTableExec))
+		case colTask:
+			resultCh <- analyzeColumns(task.src.(*XSelectTableExec))
+		case idxTask:
+			resultCh <- analyzeIndex(task.src.(*XSelectIndexExec))
 		}
 	}
-	return nil
+}
+
+func analyzePK(exec *XSelectTableExec) analyzeResult {
+	count, hg, err := statistics.BuildPK(exec.ctx, defaultBucketCount, exec.Columns[0].ID, &recordSet{executor: exec})
+	return analyzeResult{tableID: exec.tableInfo.ID, hist: []*statistics.Histogram{hg}, count: count, isIndex: 0, err: err}
+}
+
+func analyzeColumns(exec *XSelectTableExec) analyzeResult {
+	count, sampleRows, colNDVs, err := CollectSamplesAndEstimateNDVs(&recordSet{executor: exec}, len(exec.Columns))
+	if err != nil {
+		return analyzeResult{err: err}
+	}
+	columnSamples := rowsToColumnSamples(sampleRows)
+	if columnSamples == nil {
+		columnSamples = make([][]types.Datum, len(exec.Columns))
+	}
+	result := analyzeResult{tableID: exec.tableInfo.ID, count: count, isIndex: 0}
+	for i, col := range exec.Columns {
+		hg, err := statistics.BuildColumn(exec.ctx, defaultBucketCount, col.ID, colNDVs[i], count, columnSamples[i])
+		result.hist = append(result.hist, hg)
+		if err != nil && result.err == nil {
+			result.err = err
+		}
+	}
+	return result
+}
+
+func analyzeIndex(exec *XSelectIndexExec) analyzeResult {
+	count, hg, err := statistics.BuildIndex(exec.ctx, defaultBucketCount, exec.indexPlan.Index.ID, &recordSet{executor: exec})
+	return analyzeResult{tableID: exec.tableInfo.ID, hist: []*statistics.Histogram{hg}, count: count, isIndex: 1, err: err}
 }
 
 // CollectSamplesAndEstimateNDVs collects sample from the result set using Reservoir Sampling algorithm,
