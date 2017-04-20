@@ -74,11 +74,15 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 		taskCh <- task
 	}
 	close(taskCh)
+	results := make([]analyzeResult, 0, len(e.tasks))
 	for i := 0; i < len(e.tasks); i++ {
 		result := <-resultCh
+		results = append(results, result)
 		if result.err != nil {
 			return nil, errors.Trace(err)
 		}
+	}
+	for _, result := range results {
 		for _, hg := range result.hist {
 			err = hg.SaveToStorage(e.ctx, result.tableID, result.count, result.isIndex)
 			if err != nil {
