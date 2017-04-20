@@ -504,9 +504,17 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	buf.WriteString("\n")
 
 	buf.WriteString(") ENGINE=InnoDB")
-	if s := tb.Meta().Charset; len(s) > 0 {
-		buf.WriteString(fmt.Sprintf(" DEFAULT CHARSET=%s", s))
+	charsetName := tb.Meta().Charset
+	if len(charsetName) == 0 {
+		charsetName = charset.CharsetUTF8
 	}
+	collate := tb.Meta().Collate
+	if len(collate) == 0 {
+		collate = charset.CollationUTF8
+	}
+	// Because we only support case sensitive utf8_bin collate, we need to explicitly set the default charset and collation
+	// to make it work on MySQL server which has default collate utf8_general_ci.
+	buf.WriteString(fmt.Sprintf(" DEFAULT CHARSET=%s COLLATE=%s", charsetName, collate))
 
 	if tb.Meta().AutoIncID > 0 {
 		buf.WriteString(fmt.Sprintf(" AUTO_INCREMENT=%d", tb.Meta().AutoIncID))
