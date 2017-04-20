@@ -268,84 +268,11 @@ func (p *Projection) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 
 func (sel *Selection) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 	profile := profiles[0].copy()
-	switch t := profile.(type) {
-	case *copTaskProfile:
-		var indexConds, tableConds []expression.Expression
-		conds := sel.pushDownConditions
-		if t.indexPlanFinished {
-			if ts, ok := t.tablePlan.(*PhysicalTableScan); ok {
-				conds = ts.filterCondition
-			}
-		} else if is, ok := t.indexPlan.(*PhysicalIndexScan); ok {
-			conds = is.filterCondition
-		}
-		if t.indexPlanFinished {
-			tableConds = conds
-		} else if t.tablePlan != nil {
-			// This is the case of double read.
-			tableConds, indexConds = splitConditionsByIndexColumns(conds, t.indexPlan.Schema())
-		} else {
-			// Index single read.
-			indexConds = conds
-		}
-		if len(indexConds) > 0 {
-			indexSel := Selection{Conditions: indexConds}.init(sel.allocator, sel.ctx)
-			indexSel.SetChildren(t.indexPlan)
-			indexSel.SetSchema(t.indexPlan.Schema())
-			t.indexPlan = indexSel
-			t.cst += t.cnt * cpuFactor
-			// TODO: Estimate t.cnt by histogram.
-			t.cnt = t.cnt * selectionFactor
-		}
-		if len(tableConds) > 0 {
-			t.finishIndexPlan()
-			tableSel := Selection{Conditions: tableConds}.init(sel.allocator, sel.ctx)
-			tableSel.SetChildren(t.tablePlan)
-			tableSel.SetSchema(t.tablePlan.Schema())
-			t.tablePlan = tableSel
-			t.cst += t.cnt * cpuFactor
-			// TODO: Estimate t.cnt by histogram.
-			t.cnt = t.cnt * selectionFactor
-		}
-		if len(sel.residualConditions) > 0 {
-			profile = t.finishTask(sel.ctx, sel.allocator)
-			rootSel := Selection{Conditions: sel.residualConditions}.init(sel.allocator, sel.ctx)
-			rootSel.SetSchema(profile.plan().Schema())
-			profile = attachPlan2TaskProfile(rootSel, profile)
-			t.cst += t.cnt * cpuFactor
-			// TODO: Estimate t.cnt by histogram.
-			t.cnt = t.cnt * selectionFactor
-		}
-	case *rootTaskProfile:
-		t.cst += t.cnt * cpuFactor
-		t.cnt = t.cnt * selectionFactor
-		profile = attachPlan2TaskProfile(sel.Copy(), t)
+	if cop, ok := profile.(*copTaskProfile); ok {
+		profile = cop.finishTask(sel.ctx, sel.allocator)
 	}
+	profile.addCost(profile.count() * cpuFactor)
+	profile.setCount(profile.count() * selectionFactor)
+	profile = attachPlan2TaskProfile(sel.Copy(), profile)
 	return profile
-}
-
-// splitPushDownConditions choose the conditions to push down and the conditions to remain.
-func (sel *Selection) splitPushDownConditions() {
-	if len(sel.pushDownConditions)+len(sel.residualConditions) != 0 {
-		return
-	}
-	_, sel.pushDownConditions, sel.residualConditions = ExpressionsToPB(sel.ctx.GetSessionVars().StmtCtx, sel.Conditions, sel.ctx.GetClient())
-	if ds, ok := sel.children[0].(*DataSource); ok {
-		ds.pushedDownConds = sel.pushDownConditions
-	}
-}
-
-// splitConditionsByIndexColumns splits the conditions by index schema. If some condition only contain the index
-// columns, it will be pushed to index plan.
-func splitConditionsByIndexColumns(conditions []expression.Expression, schema *expression.Schema) (tableConds []expression.Expression, indexConds []expression.Expression) {
-	for _, cond := range conditions {
-		cols := expression.ExtractColumns(cond)
-		indices := schema.ColumnsIndices(cols)
-		if len(indices) == 0 {
-			tableConds = append(tableConds, cond)
-		} else {
-			indexConds = append(indexConds, cond)
-		}
-	}
-	return
 }

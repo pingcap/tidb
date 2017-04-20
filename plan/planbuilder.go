@@ -36,12 +36,14 @@ var (
 	ErrUnknownColumn        = terror.ClassOptimizerPlan.New(CodeUnknownColumn, "Unknown column '%s' in '%s'")
 	ErrWrongArguments       = terror.ClassOptimizerPlan.New(CodeWrongArguments, "Incorrect arguments to EXECUTE")
 	ErrAmbiguous            = terror.ClassOptimizerPlan.New(CodeAmbiguous, "Column '%s' in field list is ambiguous")
+	ErrAlterAutoID          = terror.ClassAutoid.New(CodeAlterAutoID, "No support for setting auto_increment using alter_table")
 )
 
 // Error codes.
 const (
 	CodeUnsupportedType terror.ErrCode = 1
 	SystemInternalError terror.ErrCode = 2
+	CodeAlterAutoID     terror.ErrCode = 3
 	CodeAmbiguous       terror.ErrCode = 1052
 	CodeUnknownColumn   terror.ErrCode = 1054
 	CodeWrongArguments  terror.ErrCode = 1210
