@@ -16,7 +16,6 @@ package statistics
 import (
 	"testing"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
@@ -115,28 +114,9 @@ func (s *testStatisticsSuite) SetUpSuite(c *C) {
 	s.pk = pk
 }
 
-func decodeIndexHistogram(ind *Histogram, id int64) (*Histogram, error) {
-	hg := &Histogram{
-		ID:      id,
-		NDV:     ind.NDV,
-		Buckets: make([]bucket, 0, len(ind.Buckets)),
-	}
-	for _, b := range ind.Buckets {
-		val := b.Value
-		if val.GetBytes() == nil {
-			break
-		}
-		data, err := codec.Decode(val.GetBytes(), 1)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		hg.Buckets = append(hg.Buckets, bucket{
-			Count:   b.Count,
-			Value:   data[0],
-			Repeats: b.Repeats,
-		})
-	}
-	return hg, nil
+func encodeKey(key types.Datum) types.Datum {
+	bytes, _ := codec.EncodeKey(nil, key)
+	return types.NewBytesDatum(bytes)
 }
 
 func (s *testStatisticsSuite) TestBuild(c *C) {
@@ -208,22 +188,20 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 5075)
 
-	tblCount, idx, err := builder.BuildIndex(1, ast.RecordSet(s.rc), 1)
+	tblCount, col, err := builder.BuildIndex(1, ast.RecordSet(s.rc))
 	c.Check(err, IsNil)
 	c.Check(int(tblCount), Equals, 100000)
-	col, err = decodeIndexHistogram(idx, 1)
-	c.Check(err, IsNil)
-	count, err = col.equalRowCount(sc, types.NewIntDatum(10000))
+	count, err = col.equalRowCount(sc, encodeKey(types.NewIntDatum(10000)))
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 1)
-	count, err = col.lessRowCount(sc, types.NewIntDatum(20000))
+	count, err = col.lessRowCount(sc, encodeKey(types.NewIntDatum(20000)))
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 19983)
-	count, err = col.betweenRowCount(sc, types.NewIntDatum(30000), types.NewIntDatum(35000))
+	count, err = col.betweenRowCount(sc, encodeKey(types.NewIntDatum(30000)), encodeKey(types.NewIntDatum(35000)))
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 4618)
 
-	tblCount, col, err = builder.BuildIndex(4, ast.RecordSet(s.pk), 0)
+	tblCount, col, err = builder.BuildPK(4, ast.RecordSet(s.pk))
 	c.Check(err, IsNil)
 	c.Check(int(tblCount), Equals, 100000)
 	count, err = col.equalRowCount(sc, types.NewIntDatum(10000))

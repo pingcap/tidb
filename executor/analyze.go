@@ -150,7 +150,7 @@ func analyzePK(exec *XSelectTableExec) analyzeResult {
 		TblInfo:    exec.tableInfo,
 		NumBuckets: defaultBucketCount,
 	}
-	count, hg, err := b.BuildIndex(exec.Columns[0].ID, &recordSet{executor: exec}, 0)
+	count, hg, err := b.BuildPK(exec.Columns[0].ID, &recordSet{executor: exec})
 	return analyzeResult{tableID: exec.tableInfo.ID, hist: []*statistics.Histogram{hg}, count: count, isIndex: 0, err: err}
 }
 
@@ -185,7 +185,7 @@ func analyzeIndex(exec *XSelectIndexExec) analyzeResult {
 		TblInfo:    exec.tableInfo,
 		NumBuckets: defaultBucketCount,
 	}
-	count, hg, err := b.BuildIndex(exec.indexPlan.Index.ID, &recordSet{executor: exec}, 1)
+	count, hg, err := b.BuildIndex(exec.indexPlan.Index.ID, &recordSet{executor: exec})
 	return analyzeResult{tableID: exec.tableInfo.ID, hist: []*statistics.Histogram{hg}, count: count, isIndex: 1, err: err}
 }
 

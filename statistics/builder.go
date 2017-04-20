@@ -29,8 +29,17 @@ type Builder struct {
 	NumBuckets int64            // NumBuckets is the number of buckets a column histogram has.
 }
 
-// BuildIndex builds histogram for index or pk.
-func (b *Builder) BuildIndex(id int64, records ast.RecordSet, isIndex int) (int64, *Histogram, error) {
+// BuildPK builds histogram for pk.
+func (b *Builder) BuildPK(id int64, records ast.RecordSet) (int64, *Histogram, error) {
+	return b.build4SortedColumn(id, records, true)
+}
+
+// BuildIndex builds histogram for index.
+func (b *Builder) BuildIndex(id int64, records ast.RecordSet) (int64, *Histogram, error) {
+	return b.build4SortedColumn(id, records, false)
+}
+
+func (b *Builder) build4SortedColumn(id int64, records ast.RecordSet, isPK bool) (int64, *Histogram, error) {
 	hg := &Histogram{
 		ID:      id,
 		NDV:     0,
@@ -48,7 +57,7 @@ func (b *Builder) BuildIndex(id int64, records ast.RecordSet, isIndex int) (int6
 			break
 		}
 		var data types.Datum
-		if isIndex == 0 {
+		if isPK {
 			data = row.Data[0]
 		} else {
 			bytes, err := codec.EncodeKey(nil, row.Data...)
