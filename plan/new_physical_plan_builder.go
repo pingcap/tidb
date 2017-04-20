@@ -189,6 +189,19 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (taskProfi
 	return task, p.storeTaskProfile(prop, task)
 }
 
+func tryToAddUnionScan(cop *copTaskProfile, conds []expression.Expression, ctx context.Context, allocator *idAllocator) taskProfile {
+	if ctx.Txn() == nil || !ctx.Txn().IsReadOnly() {
+		return cop
+	}
+	task := cop.finishTask(ctx, allocator)
+	us := PhysicalUnionScan{
+		Condition: expression.ComposeCNFCondition(ctx, conds...),
+	}.init(allocator, ctx)
+	us.SetSchema(task.plan().Schema())
+	task = us.attach2TaskProfile(task)
+	return task
+}
+
 // checkMemTableAndGetTask will check if this table is a mem table. If it is, it will produce a task and store it.
 func (p *DataSource) getMemTableTask(prop *requiredProp) (task taskProfile, err error) {
 	client := p.ctx.GetClient()
@@ -318,11 +331,12 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 			copTask.cst = rowCount * descScanFactor
 		}
 		is.addPushedDownSelection(copTask)
-		task = copTask
+		task = tryToAddUnionScan(copTask, p.pushedDownConds, p.ctx, p.allocator)
 	} else {
 		is.OutOfOrder = true
 		is.addPushedDownSelection(copTask)
-		task = prop.enforceProperty(copTask, p.ctx, p.allocator)
+		task = tryToAddUnionScan(copTask, p.pushedDownConds, p.ctx, p.allocator)
+		task = prop.enforceProperty(task, p.ctx, p.allocator)
 	}
 	return task, nil
 }
@@ -423,8 +437,10 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task taskProfile, e
 		}
 		ts.KeepOrder = true
 		ts.addPushedDownSelection(copTask)
+		task = tryToAddUnionScan(copTask, p.pushedDownConds, p.ctx, p.allocator)
 	} else {
 		ts.addPushedDownSelection(copTask)
+		task = tryToAddUnionScan(copTask, p.pushedDownConds, p.ctx, p.allocator)
 		task = prop.enforceProperty(task, p.ctx, p.allocator)
 	}
 	return task, nil
