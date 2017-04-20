@@ -1738,17 +1738,19 @@ func (b *builtinExportSetSig) eval(row []types.Datum) (d types.Datum, err error)
 			return d, errors.Trace(err)
 		}
 	}
-	res := make([]string, 0, numberOfBits)
-	for ; len(res) < numberOfBits; bits = bits / 2 {
-		var appendStr string
+	var result string
+	for i := 0; i < numberOfBits; i++ {
 		if bits&1 > 0 {
-			appendStr = on
+			result += on
 		} else {
-			appendStr = off
+			result += off
 		}
-		res = append(res, appendStr)
+		bits >>= 1
+		if i < numberOfBits-1 {
+			result += separator
+		}
 	}
-	d.SetString(strings.Join(res, separator))
+	d.SetString(result)
 	return d, nil
 }
 
