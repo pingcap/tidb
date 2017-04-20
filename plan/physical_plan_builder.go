@@ -308,7 +308,7 @@ func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPl
 		count := info.count
 		if prop.limit != nil {
 			count = float64(prop.limit.Offset + prop.limit.Count)
-		info.reliable = true
+			info.reliable = true
 		}
 		info.cost += sortCost(count)
 	} else if prop.limit != nil {

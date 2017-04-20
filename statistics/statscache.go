@@ -114,7 +114,7 @@ func (h *Handle) copyFromOldCache() statsCache {
 	return newCache
 }
 
-// updateTableStats updates the statistics table cache using copy on write.
+// UpdateTableStats updates the statistics table cache using copy on write.
 func (h *Handle) UpdateTableStats(tables ...*Table) {
 	newCache := h.copyFromOldCache()
 	for _, tbl := range tables {

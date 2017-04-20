@@ -349,7 +349,7 @@ func mockContext() context.Context {
 
 func mockStatsTable(tbl *model.TableInfo, rowCount int64) *statistics.Table {
 	statsTbl := &statistics.Table{
-		TableID:    tbl.ID,
+		TableID: tbl.ID,
 		Count:   rowCount,
 		Columns: make(map[int64]*statistics.Column, len(tbl.Columns)),
 		Indices: make(map[int64]*statistics.Index, len(tbl.Indices)),
@@ -367,7 +367,7 @@ func mockStatsHistogram(id int64, values []types.Datum, repeat int64) *statistic
 	}
 	for i := 0; i < ndv; i++ {
 		histogram.Buckets[i].Repeats = repeat
-		histogram.Buckets[i].Count = repeat * int64(i + 1)
+		histogram.Buckets[i].Count = repeat * int64(i+1)
 		histogram.Buckets[i].Value = values[i]
 	}
 	return histogram
