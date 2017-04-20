@@ -188,6 +188,44 @@ func (s *testEvaluatorSuite) TestLeft(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testEvaluatorSuite) TestRight(c *C) {
+	defer testleak.AfterTest(c)()
+	args := types.MakeDatums([]interface{}{"abcdefg", int64(2)}...)
+
+	fc := funcs[ast.Right]
+	f, err := fc.getFunction(datumsToConstants(args), s.ctx)
+	c.Assert(err, IsNil)
+	v, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.GetString(), Equals, "fg")
+
+	args = types.MakeDatums([]interface{}{"abcdefg", int64(-1)}...)
+	f, err = fc.getFunction(datumsToConstants(args), s.ctx)
+	c.Assert(err, IsNil)
+	v, err = f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.GetString(), Equals, "")
+
+	args = types.MakeDatums([]interface{}{"abcdefg", int64(100)}...)
+	f, err = fc.getFunction(datumsToConstants(args), s.ctx)
+	c.Assert(err, IsNil)
+	v, err = f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.GetString(), Equals, "abcdefg")
+
+	args = types.MakeDatums([]interface{}{1, int64(1)}...)
+	f, err = fc.getFunction(datumsToConstants(args), s.ctx)
+	c.Assert(err, IsNil)
+	v, err = f.eval(nil)
+	c.Assert(err, IsNil)
+
+	args = types.MakeDatums([]interface{}{"abcdefg", "xxx"}...)
+	f, err = fc.getFunction(datumsToConstants(args), s.ctx)
+	c.Assert(err, IsNil)
+	_, err = f.eval(nil)
+	c.Assert(err, NotNil)
+}
+
 func (s *testEvaluatorSuite) TestRepeat(c *C) {
 	defer testleak.AfterTest(c)()
 	args := []interface{}{"a", int64(2)}

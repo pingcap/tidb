@@ -318,7 +318,26 @@ type builtinRightSig struct {
 }
 
 func (b *builtinRightSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("RIGHT")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	str, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	length, err := args[1].ToInt64(b.ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	l := int(length)
+	if l < 0 {
+		l = 0
+	} else if l > len(str) {
+		l = len(str)
+	}
+	d.SetString(str[len(str)-l:])
+	return d, nil
 }
 
 type repeatFunctionClass struct {
