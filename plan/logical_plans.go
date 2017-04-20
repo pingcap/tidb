@@ -253,6 +253,9 @@ type DataSource struct {
 
 	LimitCount *int64
 
+	// pushedDownConds are the conditions that will be pushed down to coprocessor.
+	pushedDownConds []expression.Expression
+
 	statisticTable *statistics.Table
 }
 

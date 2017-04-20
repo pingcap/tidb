@@ -329,6 +329,14 @@ func (h *rpcHandler) handleKvRawDelete(req *kvrpcpb.RawDeleteRequest) *kvrpcpb.R
 	return &kvrpcpb.RawDeleteResponse{}
 }
 
+func itemsToExprs(items []*tipb.ByItem) []*tipb.Expr {
+	exprs := make([]*tipb.Expr, 0, len(items))
+	for _, item := range items {
+		exprs = append(exprs, item.Expr)
+	}
+	return exprs
+}
+
 // extractExecutors extracts executors form select request.
 // It's removed when select request is replaced with DAG request.
 func extractExecutors(sel *tipb.SelectRequest) []*tipb.Executor {
@@ -395,34 +403,6 @@ func extractExecutors(sel *tipb.SelectRequest) []*tipb.Executor {
 	}
 
 	return executors
-}
-
-// SendCopReqNew sends a coprocessor request to mock cluster.
-func (h *rpcHandler) handleCopRequestNew(ctx goctx.Context, addr string, req *coprocessor.Request) (*coprocessor.Response, error) {
-	sel := new(tipb.SelectRequest)
-	err := proto.Unmarshal(req.Data, sel)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	executors := extractExecutors(sel)
-	dag := &tipb.DAGRequest{
-		StartTs:        sel.GetStartTs(),
-		TimeZoneOffset: sel.TimeZoneOffset,
-		Flags:          sel.Flags,
-		Executors:      executors,
-	}
-	req.Data, err = dag.Marshal()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	store := h.cluster.GetStoreByAddr(addr)
-	if store == nil {
-		return nil, errors.New("connect fail")
-	}
-	resp, err := h.handleCopDAGRequest(req)
-	return resp, errors.Trace(err)
 }
 
 // RPCClient sends kv RPC calls to mock cluster.
@@ -674,15 +654,35 @@ func (c *RPCClient) Coprocessor(ctx goctx.Context, addr string, req *coprocessor
 		return nil, err
 	}
 
-	if MockDAGRequest {
-		if req.GetTp() == kv.ReqTypeSelect || req.GetTp() == kv.ReqTypeIndex {
-			req.Tp = kv.ReqTypeDAG
-			resp, err := handler.handleCopRequestNew(ctx, addr, req)
-			return resp, errors.Trace(err)
+	if req.GetTp() == kv.ReqTypeSelect || req.GetTp() == kv.ReqTypeIndex {
+		req.Tp = kv.ReqTypeDAG
+		sel := new(tipb.SelectRequest)
+		err := proto.Unmarshal(req.Data, sel)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
+
+		executors := extractExecutors(sel)
+		dag := &tipb.DAGRequest{
+			StartTs:        sel.GetStartTs(),
+			TimeZoneOffset: sel.TimeZoneOffset,
+			Flags:          sel.Flags,
+			Executors:      executors,
+		}
+		req.Data, err = dag.Marshal()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		store := handler.cluster.GetStoreByAddr(addr)
+		if store == nil {
+			return nil, errors.New("connect fail")
+		}
+		resp, err := handler.handleCopDAGRequest(req)
+		return resp, errors.Trace(err)
 	}
 
-	return handler.handleCopRequest(req)
+	return nil, errors.Errorf("unsupport this request type %v", req.GetTp())
 }
 
 // Close closes the client.

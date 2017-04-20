@@ -167,13 +167,12 @@ type physicalDistSQLPlan interface {
 	addTopN(ctx context.Context, prop *requiredProperty) bool
 	addLimit(limit *Limit)
 	// scanCount means the original row count that need to be scanned and resultCount means the row count after scanning.
-	calculateCost(resultCount uint64, scanCount uint64) float64
+	calculateCost(resultCount float64, scanCount float64) float64
 }
 
-func (p *PhysicalIndexScan) calculateCost(resultCount uint64, scanCount uint64) float64 {
+func (p *PhysicalIndexScan) calculateCost(resultCount float64, scanCnt float64) float64 {
 	// TODO: Eliminate index cost more precisely.
-	cost := float64(resultCount) * netWorkFactor
-	scanCnt := float64(scanCount)
+	cost := resultCount * netWorkFactor
 	if p.DoubleRead {
 		cost += scanCnt * netWorkFactor
 	}
@@ -190,10 +189,10 @@ func (p *PhysicalIndexScan) calculateCost(resultCount uint64, scanCount uint64) 
 	return cost
 }
 
-func (p *PhysicalTableScan) calculateCost(resultCount uint64, scanCount uint64) float64 {
-	cost := float64(resultCount) * netWorkFactor
+func (p *PhysicalTableScan) calculateCost(resultCount float64, scanCount float64) float64 {
+	cost := resultCount * netWorkFactor
 	if len(p.tableFilterConditions) > 0 {
-		cost += float64(scanCount) * cpuFactor
+		cost += scanCount * cpuFactor
 	}
 	return cost
 }
@@ -226,6 +225,9 @@ type physicalTableSource struct {
 	sortItems             []*ByItems
 	indexFilterConditions []expression.Expression
 	tableFilterConditions []expression.Expression
+
+	// filterCondition is only used by new planner.
+	filterCondition []expression.Expression
 }
 
 // MarshalJSON implements json.Marshaler interface.
@@ -697,16 +699,24 @@ func (p *PhysicalApply) MarshalJSON() ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 	buffer := bytes.NewBufferString("{")
-	if p.PhysicalJoin.(*PhysicalHashJoin).SmallTable == 1 {
+	switch x := p.PhysicalJoin.(type) {
+	case *PhysicalHashJoin:
+		if x.SmallTable == 1 {
+			buffer.WriteString(fmt.Sprintf(
+				"\"innerPlan\": \"%s\",\n "+
+					"\"outerPlan\": \"%s\",\n "+
+					"\"join\": %s\n}", p.children[1].ID(), p.children[0].ID(), join))
+		} else {
+			buffer.WriteString(fmt.Sprintf(
+				"\"innerPlan\": \"%s\",\n "+
+					"\"outerPlan\": \"%s\",\n "+
+					"\"join\": %s\n}", p.children[0].ID(), p.children[1].ID(), join))
+		}
+	case *PhysicalHashSemiJoin:
 		buffer.WriteString(fmt.Sprintf(
 			"\"innerPlan\": \"%s\",\n "+
 				"\"outerPlan\": \"%s\",\n "+
 				"\"join\": %s\n}", p.children[1].ID(), p.children[0].ID(), join))
-	} else {
-		buffer.WriteString(fmt.Sprintf(
-			"\"innerPlan\": \"%s\",\n "+
-				"\"outerPlan\": \"%s\",\n "+
-				"\"join\": %s\n}", p.children[0].ID(), p.children[1].ID(), join))
 	}
 	return buffer.Bytes(), nil
 }
@@ -941,6 +951,9 @@ func (p *Union) Copy() PhysicalPlan {
 // Copy implements the PhysicalPlan Copy interface.
 func (p *Sort) Copy() PhysicalPlan {
 	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }
 
