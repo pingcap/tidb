@@ -408,14 +408,15 @@ func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) LogicalPlan {
 	p := Analyze{}.init(b.allocator, b.ctx)
 	for _, tbl := range as.TableNames {
 		idxInfo, colInfo, pkInfo := getColsInfo(tbl)
-		result := Analyze{
-			TableInfo:   tbl.TableInfo,
-			IndicesInfo: idxInfo,
-			ColsInfo:    colInfo,
-			PkInfo:      pkInfo,
-		}.init(b.allocator, b.ctx)
-		result.SetSchema(expression.TableInfo2Schema(tbl.TableInfo))
-		addChild(p, result)
+		for _, idx := range idxInfo {
+			p.IdxTasks = append(p.IdxTasks, analyzeIndexTask{TableInfo: tbl.TableInfo, IndexInfo: idx})
+		}
+		if len(colInfo) > 0 {
+			p.ColTasks = append(p.ColTasks, analyzeColumnsTask{TableInfo: tbl.TableInfo, ColsInfo: colInfo})
+		}
+		if pkInfo != nil {
+			p.PkTasks = append(p.PkTasks, analyzePKTask{TableInfo: tbl.TableInfo, PKInfo: pkInfo})
+		}
 	}
 	p.SetSchema(&expression.Schema{})
 	return p
