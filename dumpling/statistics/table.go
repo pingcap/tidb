@@ -65,51 +65,6 @@ func (t *Table) copy() *Table {
 	return nt
 }
 
-// SaveToStorage saves stats table to storage.
-func (h *Handle) SaveToStorage(t *Table) error {
-	exec := h.ctx.(sqlexec.SQLExecutor)
-	_, err := exec.Execute("begin")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	txn := h.ctx.Txn()
-	version := txn.StartTS()
-	deleteSQL := fmt.Sprintf("delete from mysql.stats_meta where table_id = %d", t.tableID)
-	_, err = exec.Execute(deleteSQL)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	insertSQL := fmt.Sprintf("insert into mysql.stats_meta (version, table_id, count) values (%d, %d, %d)", version, t.tableID, t.Count)
-	_, err = exec.Execute(insertSQL)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	deleteSQL = fmt.Sprintf("delete from mysql.stats_histograms where table_id = %d", t.tableID)
-	_, err = exec.Execute(deleteSQL)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	deleteSQL = fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d", t.tableID)
-	_, err = exec.Execute(deleteSQL)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	for _, col := range t.Columns {
-		err = col.saveToStorage(h.ctx, t.tableID, 0)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	for _, idx := range t.Indices {
-		err = idx.saveToStorage(h.ctx, t.tableID, 1)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	_, err = exec.Execute("commit")
-	return errors.Trace(err)
-}
-
 // tableStatsFromStorage loads table stats info from storage.
 func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) (*Table, error) {
 	table, ok := h.statsCache.Load().(statsCache)[tableInfo.ID]

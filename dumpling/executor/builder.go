@@ -737,23 +737,20 @@ func (b *executorBuilder) buildCache(v *plan.Cache) Executor {
 
 func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	e := &AnalyzeExec{
-		schema:  v.Schema(),
-		tblInfo: v.TableInfo,
-		ctx:     b.ctx,
-		Srcs:    make([]Executor, len(v.Children())),
+		ctx:   b.ctx,
+		tasks: make([]analyzeTask, 0, len(v.Children())),
 	}
-	for _, idx := range v.IndicesInfo {
-		e.idxIDs = append(e.idxIDs, idx.ID)
+	pkTasks := v.Children()[:len(v.PkTasks)]
+	for _, task := range pkTasks {
+		e.tasks = append(e.tasks, analyzeTask{taskType: pkTask, src: b.build(task)})
 	}
-	for _, col := range v.ColsInfo {
-		e.colIDs = append(e.colIDs, col.ID)
+	colTasks := v.Children()[len(v.PkTasks) : len(v.PkTasks)+len(v.ColTasks)]
+	for _, task := range colTasks {
+		e.tasks = append(e.tasks, analyzeTask{taskType: colTask, src: b.build(task)})
 	}
-	if v.PkInfo != nil {
-		e.pkID = v.PkInfo.ID
-	}
-	for i, child := range v.Children() {
-		childExec := b.build(child)
-		e.Srcs[i] = childExec
+	idxTasks := v.Children()[len(v.PkTasks)+len(v.ColTasks):]
+	for _, task := range idxTasks {
+		e.tasks = append(e.tasks, analyzeTask{taskType: idxTask, src: b.build(task)})
 	}
 	return e
 }

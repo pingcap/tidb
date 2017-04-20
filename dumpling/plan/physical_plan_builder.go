@@ -1532,9 +1532,9 @@ func (p *LogicalApply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPl
 	return info, nil
 }
 
-func (p *Analyze) prepareSimpleTableScan(cols []*model.ColumnInfo) *PhysicalTableScan {
+func (p *Analyze) prepareSimpleTableScan(tblInfo *model.TableInfo, cols []*model.ColumnInfo) *PhysicalTableScan {
 	ts := PhysicalTableScan{
-		Table:               p.TableInfo,
+		Table:               tblInfo,
 		Columns:             cols,
 		physicalTableSource: physicalTableSource{client: p.ctx.GetClient()},
 	}.init(p.allocator, p.ctx)
@@ -1544,8 +1544,7 @@ func (p *Analyze) prepareSimpleTableScan(cols []*model.ColumnInfo) *PhysicalTabl
 	return ts
 }
 
-func (p *Analyze) prepareSimpleIndexScan(idxInfo *model.IndexInfo, cols []*model.ColumnInfo) *PhysicalIndexScan {
-	tblInfo := p.TableInfo
+func (p *Analyze) prepareSimpleIndexScan(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, cols []*model.ColumnInfo) *PhysicalIndexScan {
 	is := PhysicalIndexScan{
 		Index:               idxInfo,
 		Table:               tblInfo,
@@ -1571,34 +1570,28 @@ func (p *Analyze) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInf
 		return info, nil
 	}
 	var childInfos []*physicalPlanInfo
-	for _, idx := range p.IndicesInfo {
+	// TODO: It's inefficient to do table scan two times for massive data.
+	for _, task := range p.PkTasks {
+		ts := p.prepareSimpleTableScan(task.TableInfo, []*model.ColumnInfo{task.PKInfo})
+		childInfos = append(childInfos, ts.matchProperty(prop, &physicalPlanInfo{count: 0}))
+	}
+	for _, task := range p.ColTasks {
+		ts := p.prepareSimpleTableScan(task.TableInfo, task.ColsInfo)
+		childInfos = append(childInfos, ts.matchProperty(prop, &physicalPlanInfo{count: 0}))
+	}
+	for _, task := range p.IdxTasks {
+		idx := task.IndexInfo
 		columns := make([]*model.ColumnInfo, 0, len(idx.Columns))
 		for _, idxCol := range idx.Columns {
-			for _, col := range p.TableInfo.Columns {
+			for _, col := range task.TableInfo.Columns {
 				if col.Name.L == idxCol.Name.L {
 					columns = append(columns, col)
 					break
 				}
 			}
 		}
-		is := p.prepareSimpleIndexScan(idx, columns)
+		is := p.prepareSimpleIndexScan(task.TableInfo, idx, columns)
 		childInfos = append(childInfos, is.matchProperty(prop, &physicalPlanInfo{count: 0}))
-	}
-	// TODO: It's inefficient to do table scan two times for massive data.
-	if p.PkInfo != nil {
-		ts := p.prepareSimpleTableScan([]*model.ColumnInfo{p.PkInfo})
-		childInfos = append(childInfos, ts.matchProperty(prop, &physicalPlanInfo{count: 0}))
-	}
-	if len(p.ColsInfo) != 0 {
-		ts := p.prepareSimpleTableScan(p.ColsInfo)
-		childInfos = append(childInfos, ts.matchProperty(prop, &physicalPlanInfo{count: 0}))
-	}
-	for _, child := range p.Children() {
-		childInfo, err := child.(LogicalPlan).convert2PhysicalPlan(&requiredProperty{})
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		childInfos = append(childInfos, childInfo)
 	}
 	info = p.matchProperty(prop, childInfos...)
 	p.storePlanInfo(prop, info)

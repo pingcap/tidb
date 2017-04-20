@@ -14,182 +14,36 @@
 package statistics
 
 import (
-	"strconv"
-	"sync/atomic"
-
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 )
 
-// Builder describes information needed by NewTable
-type Builder struct {
-	Ctx           context.Context      // Ctx is the context.
-	TblInfo       *model.TableInfo     // TblInfo is the table info of the table.
-	StartTS       int64                // StartTS is the start timestamp of the statistics table builder.
-	Count         int64                // Count is the total rows in the table.
-	NumBuckets    int64                // NumBuckets is the number of buckets a column histogram has.
-	ColumnSamples [][]types.Datum      // ColumnSamples is the sample of columns.
-	ColIDs        []int64              // ColIDs is the id of columns in the table.
-	ColNDVs       []int64              // ColNDVs is the NDV of columns.
-	IdxRecords    []ast.RecordSet      // IdxRecords is the record set of index columns.
-	IdxIDs        []int64              // IdxIDs is the id of indices in the table.
-	PkRecords     ast.RecordSet        // PkRecords is the record set of primary key of integer type.
-	PkID          int64                // PkID is the id of primary key with integer type in the table.
-	doneCh        chan *buildStatsTask // doneCh is the channel that stores stats building task.
+// BuildPK builds histogram for pk.
+func BuildPK(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, error) {
+	return build4SortedColumn(ctx, numBuckets, id, records, true)
 }
 
-type buildStatsTask struct {
-	err   error
-	index bool
-	hg    *Histogram
+// BuildIndex builds histogram for index.
+func BuildIndex(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, error) {
+	return build4SortedColumn(ctx, numBuckets, id, records, false)
 }
 
-func (b *Builder) buildMultiHistograms(t *Table, IDs []int64, baseOffset int, isSorted bool) {
-	for i, id := range IDs {
-		if isSorted {
-			hg, err := b.buildIndex(t, b.Ctx.GetSessionVars().StmtCtx, id, b.IdxRecords[i+baseOffset], b.NumBuckets, false)
-			b.doneCh <- &buildStatsTask{err: err, index: true, hg: hg}
-		} else {
-			hg, err := b.buildColumn(t, b.Ctx.GetSessionVars().StmtCtx, id, b.ColNDVs[i+baseOffset], b.ColumnSamples[i+baseOffset], b.NumBuckets)
-			b.doneCh <- &buildStatsTask{err: err, hg: hg}
-		}
-	}
-}
-
-func (b *Builder) getBuildStatsConcurrency() (int, error) {
-	sessionVars := b.Ctx.GetSessionVars()
-	concurrency, err := varsutil.GetSessionSystemVar(sessionVars, variable.TiDBBuildStatsConcurrency)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	c, err := strconv.ParseInt(concurrency, 10, 64)
-	return int(c), errors.Trace(err)
-}
-
-func (b *Builder) splitAndConcurrentBuild(t *Table, IDs []int64, isSorted bool) error {
-	IDCnt := len(IDs)
-	concurrency, err := b.getBuildStatsConcurrency()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	groupSize := (IDCnt + concurrency - 1) / concurrency
-	splitIDs := make([][]int64, 0, concurrency)
-	for i := 0; i < IDCnt; i += groupSize {
-		end := i + groupSize
-		if end > IDCnt {
-			end = IDCnt
-		}
-		splitIDs = append(splitIDs, IDs[i:end])
-	}
-	for i, IDs := range splitIDs {
-		go b.buildMultiHistograms(t, IDs, i*groupSize, isSorted)
-	}
-	for range IDs {
-		task := <-b.doneCh
-		if task.err != nil {
-			return errors.Trace(task.err)
-		}
-		if task.index {
-			t.Indices[task.hg.ID] = &Index{Histogram: *task.hg, NumColumns: indexNumColumnsByID(b.TblInfo, task.hg.ID)}
-		} else {
-			t.Columns[task.hg.ID] = &Column{Histogram: *task.hg}
-		}
-	}
-	return nil
-}
-
-// NewTable creates a table statistics.
-func (b *Builder) NewTable() (*Table, error) {
-	t := &Table{
-		tableID: b.TblInfo.ID,
-		Count:   b.Count,
-		Columns: make(map[int64]*Column, len(b.TblInfo.Columns)),
-		Indices: make(map[int64]*Index, len(b.TblInfo.Indices)),
-	}
-	if b.Count == 0 {
-		for _, col := range b.TblInfo.Columns {
-			t.Columns[col.ID] = &Column{Histogram{ID: col.ID}}
-		}
-		for _, idx := range b.TblInfo.Indices {
-			t.Indices[idx.ID] = &Index{
-				Histogram:  Histogram{ID: idx.ID},
-				NumColumns: len(idx.Columns),
-			}
-		}
-		return t, nil
-	}
-	b.doneCh = make(chan *buildStatsTask, len(b.ColIDs)+len(b.IdxIDs))
-	err := b.splitAndConcurrentBuild(t, b.ColIDs, false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if b.PkID != 0 {
-		hg, err := b.buildIndex(t, b.Ctx.GetSessionVars().StmtCtx, b.PkID, b.PkRecords, b.NumBuckets, true)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		t.Columns[hg.ID] = &Column{Histogram: *hg}
-	}
-	err = b.splitAndConcurrentBuild(t, b.IdxIDs, true)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	// The sorted bucket is more accurate, we replace the sampled column histogram with index histogram if the
-	// index is single column index.
-	for _, idxInfo := range b.TblInfo.Indices {
-		if idxInfo != nil && len(idxInfo.Columns) == 1 {
-			columnOffset := idxInfo.Columns[0].Offset
-			columnID := b.TblInfo.Columns[columnOffset].ID
-			t.Columns[columnID], err = copyFromIndexColumns(t.Indices[idxInfo.ID], columnID)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
-	}
-	// There may be cases that we have no columnSamples, and only after we build the index columns that we can know it is 0,
-	// so we should also checked it here.
-	if t.Count == 0 {
-		for _, col := range b.TblInfo.Columns {
-			t.Columns[col.ID] = &Column{Histogram{ID: col.ID}}
-		}
-		for _, idx := range b.TblInfo.Indices {
-			t.Indices[idx.ID] = &Index{
-				Histogram:  Histogram{ID: idx.ID},
-				NumColumns: len(idx.Columns),
-			}
-		}
-	}
-	return t, nil
-}
-
-func indexNumColumnsByID(tblInfo *model.TableInfo, idxID int64) int {
-	for _, idx := range tblInfo.Indices {
-		if idx.ID == idxID {
-			return len(idx.Columns)
-		}
-	}
-	return 0
-}
-
-// buildIndex builds histogram for index.
-func (b *Builder) buildIndex(t *Table, sc *variable.StatementContext, id int64, records ast.RecordSet, bucketCount int64, isPK bool) (*Histogram, error) {
+func build4SortedColumn(ctx context.Context, numBuckets, id int64, records ast.RecordSet, isPK bool) (int64, *Histogram, error) {
 	hg := &Histogram{
 		ID:      id,
 		NDV:     0,
-		Buckets: make([]bucket, 1, bucketCount),
+		Buckets: make([]bucket, 1, numBuckets),
 	}
 	var valuesPerBucket, lastNumber, bucketIdx int64 = 1, 0, 0
 	count := int64(0)
+	sc := ctx.GetSessionVars().StmtCtx
 	for {
 		row, err := records.Next()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return 0, nil, errors.Trace(err)
 		}
 		if row == nil {
 			break
@@ -200,13 +54,13 @@ func (b *Builder) buildIndex(t *Table, sc *variable.StatementContext, id int64, 
 		} else {
 			bytes, err := codec.EncodeKey(nil, row.Data...)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return 0, nil, errors.Trace(err)
 			}
 			data = types.NewBytesDatum(bytes)
 		}
 		cmp, err := hg.Buckets[bucketIdx].Value.CompareDatum(sc, data)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return 0, nil, errors.Trace(err)
 		}
 		count++
 		if cmp == 0 {
@@ -223,7 +77,7 @@ func (b *Builder) buildIndex(t *Table, sc *variable.StatementContext, id int64, 
 			hg.NDV++
 		} else {
 			// All buckets are full, we should merge buckets.
-			if bucketIdx+1 == bucketCount {
+			if bucketIdx+1 == numBuckets {
 				hg.mergeBuckets(bucketIdx)
 				valuesPerBucket *= 2
 				bucketIdx = bucketIdx / 2
@@ -250,12 +104,18 @@ func (b *Builder) buildIndex(t *Table, sc *variable.StatementContext, id int64, 
 			hg.NDV++
 		}
 	}
-	atomic.StoreInt64(&t.Count, count)
-	return hg, nil
+	if count == 0 {
+		hg = &Histogram{ID: id}
+	}
+	return count, hg, nil
 }
 
-// buildColumn builds histogram from samples for column.
-func (b *Builder) buildColumn(t *Table, sc *variable.StatementContext, id int64, ndv int64, samples []types.Datum, bucketCount int64) (*Histogram, error) {
+// BuildColumn builds histogram from samples for column.
+func BuildColumn(ctx context.Context, numBuckets, id int64, ndv int64, count int64, samples []types.Datum) (*Histogram, error) {
+	if count == 0 {
+		return &Histogram{ID: id}, nil
+	}
+	sc := ctx.GetSessionVars().StmtCtx
 	err := types.SortDatums(sc, samples)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -263,13 +123,13 @@ func (b *Builder) buildColumn(t *Table, sc *variable.StatementContext, id int64,
 	hg := &Histogram{
 		ID:      id,
 		NDV:     ndv,
-		Buckets: make([]bucket, 1, bucketCount),
+		Buckets: make([]bucket, 1, numBuckets),
 	}
-	valuesPerBucket := float64(t.Count)/float64(bucketCount) + 1
+	valuesPerBucket := float64(count)/float64(numBuckets) + 1
 
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
-	sampleFactor := float64(t.Count) / float64(len(samples))
-	ndvFactor := float64(t.Count) / float64(ndv)
+	sampleFactor := float64(count) / float64(len(samples))
+	ndvFactor := float64(count) / float64(ndv)
 	if ndvFactor > sampleFactor {
 		ndvFactor = sampleFactor
 	}
@@ -308,30 +168,4 @@ func (b *Builder) buildColumn(t *Table, sc *variable.StatementContext, id int64,
 		}
 	}
 	return hg, nil
-}
-
-// Index histogram is encoded, it need to be decoded to be used as column histogram.
-// TODO: use field type to decode the value.
-func copyFromIndexColumns(ind *Index, id int64) (*Column, error) {
-	hg := Histogram{
-		ID:      id,
-		NDV:     ind.NDV,
-		Buckets: make([]bucket, 0, len(ind.Buckets)),
-	}
-	for _, b := range ind.Buckets {
-		val := b.Value
-		if val.GetBytes() == nil {
-			break
-		}
-		data, err := codec.Decode(val.GetBytes(), 1)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		hg.Buckets = append(hg.Buckets, bucket{
-			Count:   b.Count,
-			Value:   data[0],
-			Repeats: b.Repeats,
-		})
-	}
-	return &Column{Histogram: hg}, nil
 }

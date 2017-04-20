@@ -600,7 +600,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "analyze table t, t",
-			plan: "*plan.Analyze->*plan.Analyze->*plan.Analyze",
+			plan: "*plan.Analyze",
 		},
 	}
 	for _, ca := range tests {
