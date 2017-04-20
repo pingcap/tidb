@@ -1173,7 +1173,7 @@ func (s *testPlanSuite) TestAutoJoinChosen(c *C) {
 		},
 		{
 			sql:         "select * from t t1 join t t2 on t1.f = t2.f and t1.a < 19",
-			ans:         "LeftHashJoin{Table(t)->Table(t)}(t1.f,t2.f)",
+			ans:         "RightHashJoin{Table(t)->Table(t)}(t1.f,t2.f)",
 			genStatsTbl: true,
 		},
 	}
@@ -1189,22 +1189,16 @@ func (s *testPlanSuite) TestAutoJoinChosen(c *C) {
 		if ca.genStatsTbl {
 			tb, _ := is.TableByID(0)
 			tbl := tb.Meta()
-			totalLen := len(tbl.Columns) + len(tbl.Indices)
-			ndv := make([]int64, totalLen)
-			numbers := make([][]int64, totalLen)
-			repeats := make([][]int64, totalLen)
-			values := make([][]types.Datum, totalLen)
-			// Only set the histogram of pk column for test.
-			ndv[0] = 10
-			numbers[0] = make([]int64, 10)
-			repeats[0] = make([]int64, 10)
-			values[0] = make([]types.Datum, 10)
-			for i := 0; i < 10; i++ {
-				numbers[0][i] = int64(20 * (i + 1))
-				repeats[0][i] = 20
-				values[0][i] = types.NewIntDatum(int64(i))
+			statsTbl := mockStatsTable(tbl, 200)
+			// generate 20 distinct values for pk.
+			pkValues := make([]types.Datum, 20)
+			for i := 0; i < 20; i++ {
+				pkValues[i] = types.NewIntDatum(int64(i))
 			}
-			mockStatsTable(tbl, 200, ndv, numbers, values, repeats)
+			// set the statistic col info for pk.
+			statsTbl.Columns[0] = mockStatsColInfo(0, pkValues, 10)
+
+			statistics.SetStatisticsTableCache(tbl.ID, statsTbl, 1)
 		}
 
 		builder := &planBuilder{

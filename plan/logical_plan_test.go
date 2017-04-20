@@ -67,17 +67,17 @@ func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 				{
 					Name:   model.NewCIStr("c"),
 					Length: types.UnspecifiedLength,
-					Offset: 1,
+					Offset: 2,
 				},
 				{
 					Name:   model.NewCIStr("d"),
 					Length: types.UnspecifiedLength,
-					Offset: 2,
+					Offset: 3,
 				},
 				{
 					Name:   model.NewCIStr("e"),
 					Length: types.UnspecifiedLength,
-					Offset: 3,
+					Offset: 4,
 				},
 			},
 			State:  model.StatePublic,
@@ -89,6 +89,7 @@ func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 				{
 					Name:   model.NewCIStr("e"),
 					Length: types.UnspecifiedLength,
+					Offset: 4,
 				},
 			},
 			State:  model.StateWriteOnly,
@@ -100,7 +101,7 @@ func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 				{
 					Name:   model.NewCIStr("f"),
 					Length: types.UnspecifiedLength,
-					Offset: 1,
+					Offset: 8,
 				},
 			},
 			State:  model.StatePublic,
@@ -112,7 +113,7 @@ func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 				{
 					Name:   model.NewCIStr("g"),
 					Length: types.UnspecifiedLength,
-					Offset: 1,
+					Offset: 9,
 				},
 			},
 			State:  model.StatePublic,
@@ -124,12 +125,12 @@ func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 				{
 					Name:   model.NewCIStr("f"),
 					Length: types.UnspecifiedLength,
-					Offset: 1,
+					Offset: 8,
 				},
 				{
 					Name:   model.NewCIStr("g"),
 					Length: types.UnspecifiedLength,
-					Offset: 2,
+					Offset: 9,
 				},
 			},
 			State:  model.StatePublic,
@@ -161,61 +162,61 @@ func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 		State:     model.StatePublic,
 		Name:      model.NewCIStr("a"),
 		FieldType: newLongType(),
-		ID:        1,
+		ID:        0,
 	}
 	col0 := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Name:      model.NewCIStr("b"),
 		FieldType: newLongType(),
-		ID:        2,
+		ID:        1,
 	}
 	col1 := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Name:      model.NewCIStr("c"),
 		FieldType: newLongType(),
-		ID:        3,
+		ID:        2,
 	}
 	col2 := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Name:      model.NewCIStr("d"),
 		FieldType: newLongType(),
-		ID:        4,
+		ID:        3,
 	}
 	col3 := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Name:      model.NewCIStr("e"),
 		FieldType: newLongType(),
-		ID:        5,
+		ID:        4,
 	}
 	colStr1 := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Name:      model.NewCIStr("c_str"),
 		FieldType: newStringType(),
-		ID:        6,
+		ID:        5,
 	}
 	colStr2 := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Name:      model.NewCIStr("d_str"),
 		FieldType: newStringType(),
-		ID:        7,
+		ID:        6,
 	}
 	colStr3 := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Name:      model.NewCIStr("e_str"),
 		FieldType: newStringType(),
-		ID:        8,
+		ID:        7,
 	}
 	col4 := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Name:      model.NewCIStr("f"),
 		FieldType: newLongType(),
-		ID:        9,
+		ID:        8,
 	}
 	col5 := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Name:      model.NewCIStr("g"),
 		FieldType: newLongType(),
-		ID:        10,
+		ID:        9,
 	}
 
 	pkColumn.Flag = mysql.PriKeyFlag
@@ -341,8 +342,8 @@ func mockContext() context.Context {
 	return ctx
 }
 
-func mockStatsTable(tbl *model.TableInfo, rowCount int64, ndv []int64, numbers [][]int64, values [][]types.Datum, repeats [][]int64) {
-	statsTbl := statistics.Table{
+func mockStatsTable(tbl *model.TableInfo, rowCount int64) *statistics.Table {
+	statsTbl := &statistics.Table{
 		Info:    tbl,
 		Count:   rowCount,
 		Columns: make([]*statistics.Column, len(tbl.Columns)),
@@ -350,24 +351,32 @@ func mockStatsTable(tbl *model.TableInfo, rowCount int64, ndv []int64, numbers [
 	}
 	for i := range statsTbl.Columns {
 		statsTbl.Columns[i] = &statistics.Column{
-			ID:      tbl.Columns[i].ID,
-			NDV:     ndv[i],
-			Numbers: numbers[i],
-			Values:  values[i],
-			Repeats: repeats[i],
+			ID: tbl.Columns[i].ID,
 		}
 	}
-	colLen := len(statsTbl.Columns)
 	for i := range statsTbl.Indices {
 		statsTbl.Indices[i] = &statistics.Column{
-			ID:      tbl.Indices[i].ID,
-			NDV:     ndv[i+colLen],
-			Numbers: numbers[i+colLen],
-			Values:  values[i+colLen],
-			Repeats: repeats[i+colLen],
+			ID: tbl.Indices[i].ID,
 		}
 	}
-	statistics.SetStatisticsTableCache(tbl.ID, &statsTbl, 1)
+	return statsTbl
+}
+
+// mockStatsColInfo will create a statistics.Column, of which the data is uniform distribution.
+func mockStatsColInfo(id int64, values []types.Datum, repeat int64) *statistics.Column {
+	ndv := len(values)
+	colInfo := &statistics.Column{
+		ID:      id,
+		NDV:     int64(ndv),
+		Numbers: make([]int64, ndv),
+		Repeats: make([]int64, ndv),
+		Values:  values,
+	}
+	for i := 0; i < ndv; i++ {
+		colInfo.Repeats[i] = repeat
+		colInfo.Numbers[i] = repeat * int64(i + 1)
+	}
+	return colInfo
 }
 
 func (s *testPlanSuite) TestPredicatePushDown(c *C) {
