@@ -131,7 +131,9 @@ type lengthFunctionClass struct {
 }
 
 func (c *lengthFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinLengthSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinLengthSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinLengthSig struct {
@@ -162,7 +164,9 @@ type asciiFunctionClass struct {
 }
 
 func (c *asciiFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinASCIISig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinASCIISig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinASCIISig struct {
@@ -197,7 +201,9 @@ type concatFunctionClass struct {
 }
 
 func (c *concatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinConcatSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinConcatSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinConcatSig struct {
@@ -231,7 +237,9 @@ type concatWSFunctionClass struct {
 }
 
 func (c *concatWSFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinConcatWSSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinConcatWSSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinConcatWSSig struct {
@@ -274,7 +282,9 @@ type leftFunctionClass struct {
 }
 
 func (c *leftFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinLeftSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinLeftSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinLeftSig struct {
@@ -310,7 +320,9 @@ type rightFunctionClass struct {
 }
 
 func (c *rightFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinRightSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinRightSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinRightSig struct {
@@ -326,7 +338,9 @@ type repeatFunctionClass struct {
 }
 
 func (c *repeatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinRepeatSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinRepeatSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinRepeatSig struct {
@@ -365,7 +379,9 @@ type lowerFunctionClass struct {
 }
 
 func (c *lowerFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinLowerSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinLowerSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinLowerSig struct {
@@ -397,7 +413,9 @@ type reverseFunctionClass struct {
 }
 
 func (c *reverseFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinReverseSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinReverseSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinReverseSig struct {
@@ -429,7 +447,9 @@ type spaceFunctionClass struct {
 }
 
 func (c *spaceFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinSpaceSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinSpaceSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinSpaceSig struct {
@@ -475,7 +495,9 @@ type upperFunctionClass struct {
 }
 
 func (c *upperFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinUpperSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinUpperSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinUpperSig struct {
@@ -507,7 +529,9 @@ type strcmpFunctionClass struct {
 }
 
 func (c *strcmpFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinStrcmpSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinStrcmpSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinStrcmpSig struct {
@@ -541,7 +565,9 @@ type replaceFunctionClass struct {
 }
 
 func (c *replaceFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinReplaceSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinReplaceSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinReplaceSig struct {
@@ -582,7 +608,9 @@ type convertFunctionClass struct {
 }
 
 func (c *convertFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinConvertSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinConvertSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinConvertSig struct {
@@ -630,7 +658,9 @@ type substringFunctionClass struct {
 }
 
 func (c *substringFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinSubstringSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinSubstringSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinSubstringSig struct {
@@ -695,7 +725,9 @@ type substringIndexFunctionClass struct {
 }
 
 func (c *substringIndexFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinSubstringIndexSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinSubstringIndexSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinSubstringIndexSig struct {
@@ -758,7 +790,9 @@ type locateFunctionClass struct {
 }
 
 func (c *locateFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinLocateSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinLocateSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinLocateSig struct {
@@ -828,7 +862,9 @@ type hexFunctionClass struct {
 }
 
 func (c *hexFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinHexSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinHexSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinHexSig struct {
@@ -866,7 +902,9 @@ type unhexFunctionClass struct {
 }
 
 func (c *unhexFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinUnHexSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinUnHexSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinUnHexSig struct {
@@ -914,7 +952,9 @@ type trimFunctionClass struct {
 }
 
 func (c *trimFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinTrimSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinTrimSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinTrimSig struct {
@@ -983,7 +1023,9 @@ type lTrimFunctionClass struct {
 }
 
 func (c *lTrimFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinLTrimSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinLTrimSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinLTrimSig struct {
@@ -1003,7 +1045,9 @@ type rTrimFunctionClass struct {
 }
 
 func (c *rTrimFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinRTrimSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinRTrimSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinRTrimSig struct {
@@ -1060,7 +1104,9 @@ type rpadFunctionClass struct {
 }
 
 func (c *rpadFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinRpadSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinRpadSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinRpadSig struct {
@@ -1110,7 +1156,9 @@ type bitLengthFunctionClass struct {
 }
 
 func (c *bitLengthFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinBitLengthSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinBitLengthSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinBitLengthSig struct {
@@ -1140,7 +1188,9 @@ type charFunctionClass struct {
 }
 
 func (c *charFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinCharSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinCharSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinCharSig struct {
@@ -1244,7 +1294,9 @@ type charLengthFunctionClass struct {
 }
 
 func (c *charLengthFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinCharLengthSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinCharLengthSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinCharLengthSig struct {
@@ -1276,7 +1328,9 @@ type findInSetFunctionClass struct {
 }
 
 func (c *findInSetFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinFindInSetSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinFindInSetSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinFindInSetSig struct {
@@ -1324,7 +1378,9 @@ type fieldFunctionClass struct {
 }
 
 func (c *fieldFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinFieldSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinFieldSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinFieldSig struct {
@@ -1407,7 +1463,9 @@ type makeSetFunctionClass struct {
 }
 
 func (c *makeSetFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinMakeSetSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinMakeSetSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinMakeSetSig struct {
@@ -1457,7 +1515,9 @@ type octFunctionClass struct {
 }
 
 func (c *octFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinOctSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinOctSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinOctSig struct {
@@ -1517,7 +1577,9 @@ type ordFunctionClass struct {
 }
 
 func (c *ordFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinOrdSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinOrdSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinOrdSig struct {
@@ -1565,7 +1627,9 @@ type quoteFunctionClass struct {
 }
 
 func (c *quoteFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinQuoteSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinQuoteSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinQuoteSig struct {
@@ -1616,7 +1680,9 @@ type binFunctionClass struct {
 }
 
 func (c *binFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinBinSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinBinSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinBinSig struct {
@@ -1649,7 +1715,9 @@ type eltFunctionClass struct {
 }
 
 func (c *eltFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinEltSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinEltSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinEltSig struct {
@@ -1687,7 +1755,9 @@ type exportSetFunctionClass struct {
 }
 
 func (c *exportSetFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinExportSetSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinExportSetSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinExportSetSig struct {
@@ -1704,7 +1774,9 @@ type formatFunctionClass struct {
 }
 
 func (c *formatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinFormatSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinFormatSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinFormatSig struct {
@@ -1754,7 +1826,9 @@ type fromBase64FunctionClass struct {
 }
 
 func (c *fromBase64FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinFromBase64Sig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinFromBase64Sig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinFromBase64Sig struct {
@@ -1786,7 +1860,9 @@ type toBase64FunctionClass struct {
 }
 
 func (c *toBase64FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinToBase64Sig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinToBase64Sig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinToBase64Sig struct {
@@ -1803,7 +1879,9 @@ type insertFuncFunctionClass struct {
 }
 
 func (c *insertFuncFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinInsertFuncSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinInsertFuncSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinInsertFuncSig struct {
@@ -1864,7 +1942,9 @@ type instrFunctionClass struct {
 }
 
 func (c *instrFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinInstrSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinInstrSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinInstrSig struct {
@@ -1921,7 +2001,9 @@ type loadFileFunctionClass struct {
 }
 
 func (c *loadFileFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinLoadFileSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinLoadFileSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinLoadFileSig struct {
@@ -1938,7 +2020,9 @@ type lpadFunctionClass struct {
 }
 
 func (c *lpadFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinLpadSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinLpadSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinLpadSig struct {

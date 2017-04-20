@@ -216,10 +216,7 @@ func (b *planBuilder) buildSet(v *ast.SetStmt) Plan {
 			assign.IsDefault = true
 		}
 		if vars.ExtendValue != nil {
-			assign.ExtendValue = &expression.Constant{
-				Value:   vars.ExtendValue.Datum,
-				RetType: &vars.ExtendValue.Type,
-			}
+			assign.ExtendValue = expression.NewConstant(vars.ExtendValue.Datum, &vars.ExtendValue.Type)
 		}
 		p.VarAssigns = append(p.VarAssigns, assign)
 	}
@@ -447,12 +444,7 @@ func buildColumn(tableName, name string, tp byte, size int) *expression.Column {
 		Flen:    size,
 		Flag:    uint(flag),
 	}
-	return &expression.Column{
-		ColName: model.NewCIStr(name),
-		TblName: model.NewCIStr(tableName),
-		DBName:  model.NewCIStr(infoschema.Name),
-		RetType: fieldType,
-	}
+	return expression.NewColumn("", name, infoschema.Name, tableName, fieldType, 0, 0)
 }
 
 // splitWhere split a where expression to a list of AND conditions.
@@ -583,7 +575,7 @@ func (b *planBuilder) getDefaultValue(col *table.Column) (*expression.Constant, 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return &expression.Constant{Value: value, RetType: &col.FieldType}, nil
+	return expression.NewConstant(value, &col.FieldType), nil
 }
 
 func (b *planBuilder) findDefaultValue(cols []*table.Column, name *ast.ColumnName) (*expression.Constant, error) {
@@ -641,10 +633,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 					expr, err = b.getDefaultValue(cols[i])
 				}
 			} else if val, ok := valueItem.(*ast.ValueExpr); ok {
-				expr = &expression.Constant{
-					Value:   val.Datum,
-					RetType: &val.Type,
-				}
+				expr = expression.NewConstant(val.Datum, &val.Type)
 			} else {
 				expr, _, err = b.rewrite(valueItem, nil, nil, true)
 			}
@@ -809,18 +798,18 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 	p := &Explain{StmtPlan: targetPlan}
 	addChild(p, targetPlan)
 	schema := expression.NewSchema(make([]*expression.Column, 0, 3)...)
-	schema.Append(&expression.Column{
-		ColName: model.NewCIStr("ID"),
-		RetType: types.NewFieldType(mysql.TypeString),
-	})
-	schema.Append(&expression.Column{
-		ColName: model.NewCIStr("Json"),
-		RetType: types.NewFieldType(mysql.TypeString),
-	})
-	schema.Append(&expression.Column{
-		ColName: model.NewCIStr("ParentID"),
-		RetType: types.NewFieldType(mysql.TypeString),
-	})
+	idCol := expression.NewEmptyColumn()
+	idCol.ColName = model.NewCIStr("ID")
+	idCol.RetType = types.NewFieldType(mysql.TypeString)
+	schema.Append(idCol)
+	jsonCol := expression.NewEmptyColumn()
+	jsonCol.ColName = model.NewCIStr("Json")
+	jsonCol.RetType = types.NewFieldType(mysql.TypeString)
+	schema.Append(jsonCol)
+	parentIDCol := expression.NewEmptyColumn()
+	parentIDCol.ColName = model.NewCIStr("ParentID")
+	parentIDCol.RetType = types.NewFieldType(mysql.TypeString)
+	schema.Append(parentIDCol)
 	p.SetSchema(schema)
 	return p
 }
@@ -892,9 +881,8 @@ func buildShowWarningsSchema() *expression.Schema {
 func composeShowSchema(names []string, ftypes []byte) *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(names))...)
 	for i, name := range names {
-		col := &expression.Column{
-			ColName: model.NewCIStr(name),
-		}
+		col := expression.NewEmptyColumn()
+		col.ColName = model.NewCIStr(name)
 		var retType types.FieldType
 		if len(ftypes) == 0 || ftypes[i] == 0 {
 			// Use varchar as the default return column type.

@@ -36,6 +36,7 @@ func (a *LogicalApply) extractCorColumnsBySchema() {
 					Column: *schema.Columns[idx],
 					Data:   new(types.Datum),
 				}
+				resultCorCols[idx].SetSelf(resultCorCols[idx])
 			}
 			corCol.Data = resultCorCols[idx].Data
 		}

@@ -53,7 +53,9 @@ type inFunctionClass struct {
 }
 
 func (c *inFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinInSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinInSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinInSig struct {
@@ -105,7 +107,9 @@ type rowFunctionClass struct {
 }
 
 func (c *rowFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinRowSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinRowSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinRowSig struct {
@@ -128,7 +132,9 @@ type castFunctionClass struct {
 }
 
 func (c *castFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinCastSig{newBaseBuiltinFunc(args, ctx), c.tp}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinCastSig{newBaseBuiltinFunc(args, ctx), c.tp}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinCastSig struct {
@@ -166,6 +172,7 @@ func (c *setVarFunctionClass) getFunction(args []Expression, ctx context.Context
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinSetVarSig{newBaseBuiltinFunc(args, ctx)}
 	bt.deterministic = false
+	bt.self = bt
 	return bt, errors.Trace(err)
 }
 
@@ -198,6 +205,7 @@ func (c *getVarFunctionClass) getFunction(args []Expression, ctx context.Context
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinGetVarSig{newBaseBuiltinFunc(args, ctx)}
 	bt.deterministic = false
+	bt.self = bt
 	return bt, errors.Trace(err)
 }
 
@@ -228,6 +236,7 @@ func (c *valuesFunctionClass) getFunction(args []Expression, ctx context.Context
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinValuesSig{newBaseBuiltinFunc(args, ctx), c.offset}
 	bt.deterministic = false
+	bt.self = bt
 	return bt, errors.Trace(err)
 }
 
@@ -254,7 +263,9 @@ type bitCountFunctionClass struct {
 }
 
 func (c *bitCountFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinBitCountSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinBitCountSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinBitCountSig struct {

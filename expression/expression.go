@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
@@ -45,12 +46,98 @@ const (
 // EvalAstExpr evaluates ast expression directly.
 var EvalAstExpr func(expr ast.ExprNode, ctx context.Context) (types.Datum, error)
 
+type baseExpr struct {
+	self Expression
+}
+
+func (be *baseExpr) SetSelf(expr Expression) {
+	be.self = expr
+}
+
+func (be *baseExpr) EvalInt(row []types.Datum, sc *variable.StatementContext) (int64, bool, error) {
+	if be.self.GetType().Tp == mysql.TypeNull {
+		return 0, true, nil
+	}
+	val, err := be.self.Eval(row)
+	if err != nil || val.IsNull() {
+		return 0, val.IsNull(), errors.Trace(err)
+	}
+	switch be.self.GetType().ToClass() {
+	case types.ClassInt:
+		return val.GetInt64(), false, nil
+	default:
+		res, err := val.ToInt64(sc)
+		return res, false, errors.Trace(err)
+	}
+}
+
+func (be *baseExpr) EvalReal(row []types.Datum, sc *variable.StatementContext) (float64, bool, error) {
+	if be.self.GetType().Tp == mysql.TypeNull {
+		return 0, true, nil
+	}
+	val, err := be.self.Eval(row)
+	if err != nil || val.IsNull() {
+		return 0, val.IsNull(), errors.Trace(err)
+	}
+	switch be.self.GetType().ToClass() {
+	case types.ClassReal:
+		return val.GetFloat64(), false, nil
+	default:
+		res, err := val.ToFloat64(sc)
+		return res, false, errors.Trace(err)
+	}
+}
+
+func (be *baseExpr) EvalString(row []types.Datum, sc *variable.StatementContext) (string, bool, error) {
+	if be.self.GetType().Tp == mysql.TypeNull {
+		return "", true, nil
+	}
+	val, err := be.self.Eval(row)
+	if err != nil || val.IsNull() {
+		return "", val.IsNull(), errors.Trace(err)
+	}
+	// We cannot use val.GetString() even if b.self.GetType().ToClass() == types.ClassString here,
+	// because the types like types.KindMysqlHex will get an empty value.
+	res, err := val.ToString()
+	return res, false, errors.Trace(err)
+}
+
+func (be *baseExpr) EvalDecimal(row []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
+	if be.self.GetType().Tp == mysql.TypeNull {
+		return nil, true, nil
+	}
+	val, err := be.self.Eval(row)
+	if err != nil || val.IsNull() {
+		return nil, val.IsNull(), errors.Trace(err)
+	}
+	switch be.self.GetType().ToClass() {
+	case types.ClassDecimal:
+		return val.GetMysqlDecimal(), false, nil
+	default:
+		res, err := val.ToDecimal(sc)
+		return res, false, errors.Trace(err)
+	}
+}
+
 // Expression represents all scalar expression in SQL.
 type Expression interface {
 	fmt.Stringer
 	json.Marshaler
+
 	// Eval evaluates an expression through a row.
 	Eval(row []types.Datum) (types.Datum, error)
+
+	// EvalInt returns the int64 representation of expression.
+	EvalInt(row []types.Datum, sc *variable.StatementContext) (int64, bool, error)
+
+	// EvalReal returns the float64 representation of expression.
+	EvalReal(row []types.Datum, sc *variable.StatementContext) (float64, bool, error)
+
+	// EvalString returns the string representation of expression.
+	EvalString(row []types.Datum, sc *variable.StatementContext) (string, bool, error)
+
+	// EvalDecimal returns the decimal representation of expression.
+	EvalDecimal(row []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error)
 
 	// Get the expression return type.
 	GetType() *types.FieldType
@@ -92,25 +179,27 @@ func EvalBool(expr Expression, row []types.Datum, ctx context.Context) (bool, er
 }
 
 // One stands for a number 1.
-var One = &Constant{
-	Value:   types.NewDatum(1),
-	RetType: types.NewFieldType(mysql.TypeTiny),
-}
+var One = NewConstant(types.NewDatum(1), types.NewFieldType(mysql.TypeTiny))
 
 // Zero stands for a number 0.
-var Zero = &Constant{
-	Value:   types.NewDatum(0),
-	RetType: types.NewFieldType(mysql.TypeTiny),
-}
+var Zero = NewConstant(types.NewDatum(0), types.NewFieldType(mysql.TypeTiny))
 
 // Null stands for null constant.
-var Null = &Constant{
-	Value:   types.NewDatum(nil),
-	RetType: types.NewFieldType(mysql.TypeTiny),
+var Null = NewConstant(types.NewDatum(nil), types.NewFieldType(mysql.TypeTiny))
+
+// NewConstant creates a Constant.
+func NewConstant(value types.Datum, tp *types.FieldType) (con *Constant) {
+	con = &Constant{
+		Value:   value,
+		RetType: tp,
+	}
+	con.self = con
+	return con
 }
 
 // Constant stands for a constant value.
 type Constant struct {
+	baseExpr
 	Value   types.Datum
 	RetType *types.FieldType
 }
@@ -129,6 +218,7 @@ func (c *Constant) MarshalJSON() ([]byte, error) {
 // Clone implements Expression interface.
 func (c *Constant) Clone() Expression {
 	con := *c
+	con.SetSelf(&con)
 	return &con
 }
 
@@ -268,7 +358,7 @@ func EvaluateExprWithNull(ctx context.Context, schema *Schema, expr Expression) 
 		if !schema.Contains(x) {
 			return x, nil
 		}
-		constant := &Constant{Value: types.Datum{}}
+		constant := NewConstant(types.Datum{}, types.NewFieldType(mysql.TypeNull))
 		return constant, nil
 	default:
 		return x.Clone(), nil
@@ -329,6 +419,7 @@ func ColumnInfos2Columns(tblName model.CIStr, colInfos []*model.ColumnInfo) []*C
 			RetType:  &col.FieldType,
 			Position: i,
 		}
+		newCol.self = newCol
 		columns = append(columns, newCol)
 	}
 	return columns
@@ -337,22 +428,15 @@ func ColumnInfos2Columns(tblName model.CIStr, colInfos []*model.ColumnInfo) []*C
 // NewCastFunc creates a new cast function.
 func NewCastFunc(tp *types.FieldType, arg Expression, ctx context.Context) *ScalarFunction {
 	bt := &builtinCastSig{newBaseBuiltinFunc([]Expression{arg}, ctx), tp}
-	return &ScalarFunction{
-		FuncName: model.NewCIStr(ast.Cast),
-		RetType:  tp,
-		Function: bt,
-	}
+	bt.self = bt
+	return NewScalarFunction(ast.Cast, tp, bt)
 }
 
 // NewValuesFunc creates a new values function.
 func NewValuesFunc(offset int, retTp *types.FieldType, ctx context.Context) *ScalarFunction {
 	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, offset}
 	bt, _ := fc.getFunction(nil, ctx)
-	return &ScalarFunction{
-		FuncName: model.NewCIStr(ast.Values),
-		RetType:  retTp,
-		Function: bt,
-	}
+	return NewScalarFunction(ast.Values, retTp, bt)
 }
 
 func init() {

@@ -599,7 +599,11 @@ func (s *testEvaluatorSuite) TestDynamic(c *C) {
 		ast.RowCount:     0,
 	}
 	for name, fc := range funcs {
-		f, _ := fc.getFunction(nil, s.ctx)
+		args := make([]Expression, 10)
+		for i := range args {
+			args[i] = NewConstant(types.NewDatum(0), types.NewFieldType(mysql.TypeLonglong))
+		}
+		f, _ := fc.getFunction(args, s.ctx)
 		if _, ok := dynamicFuncs[name]; ok {
 			c.Assert(f.isDeterministic(), IsFalse)
 		} else {

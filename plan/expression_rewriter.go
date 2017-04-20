@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
@@ -112,7 +111,7 @@ func getRowArg(e expression.Expression, idx int) expression.Expression {
 	}
 	c, _ := e.(*expression.Constant)
 	d := c.Value.GetRow()[idx]
-	return &expression.Constant{Value: d, RetType: c.GetType()}
+	return expression.NewConstant(d, c.GetType())
 }
 
 // constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0) and (a1 op b1) and (a2 op b2).
@@ -292,12 +291,7 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 		AggFuncs: []expression.AggregationFunction{aggFunc},
 	}.init(er.b.allocator, er.ctx)
 	addChild(agg, np)
-	aggCol0 := &expression.Column{
-		ColName:  model.NewCIStr("agg_Col_0"),
-		FromID:   agg.id,
-		Position: 0,
-		RetType:  aggFunc.GetType(),
-	}
+	aggCol0 := expression.NewColumn(agg.id, "agg_Col_0", "", "", aggFunc.GetType(), 0, 0)
 	schema := expression.NewSchema(aggCol0)
 	agg.SetSchema(schema)
 	cond, _ := expression.NewFunction(er.ctx, cmpFunc, types.NewFieldType(mysql.TypeTiny), lexpr, aggCol0.Clone())
@@ -311,20 +305,10 @@ func (er *expressionRewriter) buildQuantifierPlan(agg *LogicalAggregation, cond,
 	countFuncNull := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{isNullFunc.Clone()}, false)
 	agg.AggFuncs = append(agg.AggFuncs, sumFunc, countFuncNull)
 	posID := agg.schema.Len()
-	aggColSum := &expression.Column{
-		ColName:  model.NewCIStr("agg_col_sum"),
-		FromID:   agg.id,
-		Position: posID,
-		RetType:  sumFunc.GetType(),
-	}
+	aggColSum := expression.NewColumn(agg.id, "agg_col_sum", "", "", sumFunc.GetType(), 0, posID)
 	agg.schema.Append(aggColSum)
 	if all {
-		aggColCountNull := &expression.Column{
-			ColName:  model.NewCIStr("agg_col_cnt"),
-			FromID:   agg.id,
-			Position: posID + 1,
-			RetType:  countFuncNull.GetType(),
-		}
+		aggColCountNull := expression.NewColumn(agg.id, "agg_col_cnt", "", "", countFuncNull.GetType(), 0, posID+1)
 		agg.schema.Append(aggColCountNull)
 		// All of the inner record set should not contain null value. So for t.id < all(select s.id from s), it
 		// should be rewrote to t.id < min(s.id) and if(sum(s.id is null) = 0, true, null).
@@ -354,13 +338,9 @@ func (er *expressionRewriter) buildQuantifierPlan(agg *LogicalAggregation, cond,
 	}.init(er.b.allocator, er.ctx)
 	proj.SetSchema(expression.NewSchema(joinSchema.Clone().Columns[:outerSchemaLen]...))
 	proj.Exprs = append(proj.Exprs, cond)
-	proj.schema.Append(&expression.Column{
-		FromID:      proj.id,
-		ColName:     model.NewCIStr("aux_col"),
-		Position:    proj.schema.Len(),
-		IsAggOrSubq: true,
-		RetType:     cond.GetType(),
-	})
+	newCol := expression.NewColumn(proj.id, "aux_col", "", "", cond.GetType(), 0, proj.schema.Len())
+	newCol.IsAggOrSubq = true
+	proj.schema.Append(newCol)
 	addChild(proj, er.p)
 	er.p = proj
 }
@@ -375,18 +355,8 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 		AggFuncs: []expression.AggregationFunction{firstRowFunc, countFunc},
 	}.init(er.b.allocator, er.ctx)
 	addChild(agg, np)
-	firstRowResultCol := &expression.Column{
-		ColName:  model.NewCIStr("col_firstRow"),
-		FromID:   agg.id,
-		Position: 0,
-		RetType:  firstRowFunc.GetType(),
-	}
-	count := &expression.Column{
-		ColName:  model.NewCIStr("col_count"),
-		FromID:   agg.id,
-		Position: 1,
-		RetType:  countFunc.GetType(),
-	}
+	firstRowResultCol := expression.NewColumn(agg.id, "col_firstRow", "", "", firstRowFunc.GetType(), 0, 0)
+	count := expression.NewColumn(agg.id, "col_count", "", "", countFunc.GetType(), 0, 1)
 	agg.SetSchema(expression.NewSchema(firstRowResultCol, count))
 	gtFunc, _ := expression.NewFunction(er.ctx, ast.GT, types.NewFieldType(mysql.TypeTiny), count.Clone(), expression.One)
 	neCond, _ := expression.NewFunction(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), lexpr, firstRowResultCol.Clone())
@@ -403,18 +373,8 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 		AggFuncs: []expression.AggregationFunction{firstRowFunc, countFunc},
 	}.init(er.b.allocator, er.ctx)
 	addChild(agg, np)
-	firstRowResultCol := &expression.Column{
-		ColName:  model.NewCIStr("col_firstRow"),
-		FromID:   agg.id,
-		Position: 0,
-		RetType:  firstRowFunc.GetType(),
-	}
-	count := &expression.Column{
-		ColName:  model.NewCIStr("col_count"),
-		FromID:   agg.id,
-		Position: 1,
-		RetType:  countFunc.GetType(),
-	}
+	firstRowResultCol := expression.NewColumn(agg.id, "col_firstRow", "", "", firstRowFunc.GetType(), 0, 0)
+	count := expression.NewColumn(agg.id, "col_count", "", "", countFunc.GetType(), 0, 1)
 	agg.SetSchema(expression.NewSchema(firstRowResultCol, count))
 	leFunc, _ := expression.NewFunction(er.ctx, ast.LE, types.NewFieldType(mysql.TypeTiny), count.Clone(), expression.One)
 	eqCond, _ := expression.NewFunction(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lexpr, firstRowResultCol.Clone())
@@ -446,9 +406,7 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 			er.err = errors.Trace(err)
 			return v, true
 		}
-		er.ctxStack = append(er.ctxStack, &expression.Constant{
-			Value:   rows[0][0],
-			RetType: types.NewFieldType(mysql.TypeTiny)})
+		er.ctxStack = append(er.ctxStack, expression.NewConstant(rows[0][0], types.NewFieldType(mysql.TypeTiny)))
 	}
 	return v, true
 }
@@ -490,18 +448,12 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 			return v, true
 		}
 		for _, row := range rows {
-			con := &expression.Constant{
-				Value:   row[0],
-				RetType: np.Schema().Columns[0].GetType(),
-			}
+			con := expression.NewConstant(row[0], np.Schema().Columns[0].GetType())
 			er.ctxStack = append(er.ctxStack, con)
 		}
 		listLen := len(rows)
 		if listLen == 0 {
-			er.ctxStack[len(er.ctxStack)-1] = &expression.Constant{
-				Value:   types.NewDatum(v.Not),
-				RetType: types.NewFieldType(mysql.TypeTiny),
-			}
+			er.ctxStack[len(er.ctxStack)-1] = expression.NewConstant(types.NewDatum(v.Not), types.NewFieldType(mysql.TypeTiny))
 		} else {
 			er.inToExpression(listLen, v.Not, &v.Type)
 		}
@@ -575,9 +527,7 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 	if np.Schema().Len() > 1 {
 		newCols := make([]expression.Expression, 0, np.Schema().Len())
 		for i, data := range rows[0] {
-			newCols = append(newCols, &expression.Constant{
-				Value:   data,
-				RetType: np.Schema().Columns[i].GetType()})
+			newCols = append(newCols, expression.NewConstant(data, np.Schema().Columns[i].GetType()))
 		}
 		expr, err1 := expression.NewFunction(er.ctx, ast.RowFunc, nil, newCols...)
 		if err1 != nil {
@@ -586,10 +536,7 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 		}
 		er.ctxStack = append(er.ctxStack, expr)
 	} else {
-		er.ctxStack = append(er.ctxStack, &expression.Constant{
-			Value:   rows[0][0],
-			RetType: np.Schema().Columns[0].GetType(),
-		})
+		er.ctxStack = append(er.ctxStack, expression.NewConstant(rows[0][0], np.Schema().Columns[0].GetType()))
 	}
 	return v, true
 }
@@ -604,10 +551,10 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 	case *ast.AggregateFuncExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause,
 		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr:
 	case *ast.ValueExpr:
-		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
+		value := expression.NewConstant(v.Datum, &v.Type)
 		er.ctxStack = append(er.ctxStack, value)
 	case *ast.ParamMarkerExpr:
-		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
+		value := expression.NewConstant(v.Datum, &v.Type)
 		er.ctxStack = append(er.ctxStack, value)
 	case *ast.VariableExpr:
 		er.rewriteVariable(v)
@@ -658,7 +605,7 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 }
 
 func datumToConstant(d types.Datum, tp byte) *expression.Constant {
-	return &expression.Constant{Value: d, RetType: types.NewFieldType(tp)}
+	return expression.NewConstant(d, types.NewFieldType(tp))
 }
 
 func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
@@ -687,7 +634,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 			er.ctxStack = append(er.ctxStack, f)
 		} else {
 			// select null user vars is permitted.
-			er.ctxStack = append(er.ctxStack, &expression.Constant{RetType: types.NewFieldType(mysql.TypeNull)})
+			er.ctxStack = append(er.ctxStack, expression.NewConstant(types.NewDatum(nil), types.NewFieldType(mysql.TypeNull)))
 		}
 		return
 	}
@@ -890,7 +837,7 @@ func (er *expressionRewriter) likeToScalarFunc(v *ast.PatternLikeExpr) {
 		return
 	}
 	function := er.notToExpression(v.Not, ast.Like, &v.Type,
-		er.ctxStack[l-2], er.ctxStack[l-1], &expression.Constant{Value: types.NewIntDatum(int64(v.Escape))})
+		er.ctxStack[l-2], er.ctxStack[l-1], expression.NewConstant(types.NewIntDatum(int64(v.Escape)), types.NewFieldType(mysql.TypeLonglong)))
 	er.ctxStack = er.ctxStack[:l-2]
 	er.ctxStack = append(er.ctxStack, function)
 }
@@ -991,7 +938,10 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		outerSchema := er.b.outerSchemas[i]
 		column, err = outerSchema.FindColumn(v)
 		if column != nil {
-			er.ctxStack = append(er.ctxStack, &expression.CorrelatedColumn{Column: *column})
+			column.SetSelf(column)
+			corCol := &expression.CorrelatedColumn{Column: *column}
+			corCol.SetSelf(corCol)
+			er.ctxStack = append(er.ctxStack, corCol)
 			return
 		}
 		if err != nil {

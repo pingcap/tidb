@@ -570,6 +570,7 @@ func (p *LogicalJoin) buildSelectionWithConds(leftAsOuter bool) (*Selection, []*
 	corCols := make([]*expression.CorrelatedColumn, 0, outerSchema.Len())
 	for _, col := range outerSchema.Columns {
 		corCol := &expression.CorrelatedColumn{Column: *col, Data: new(types.Datum)}
+		corCol.SetSelf(corCol)
 		corCol.Column.ResolveIndices(outerSchema)
 		corCols = append(corCols, corCol)
 	}

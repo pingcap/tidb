@@ -1356,7 +1356,7 @@ func (d *Datum) ToBytes() ([]byte, error) {
 }
 
 func invalidConv(d *Datum, tp byte) (Datum, error) {
-	return Datum{}, errors.Errorf("cannot convert %v to type %s", d, TypeStr(tp))
+	return Datum{}, errors.Errorf("cannot convert %v, %s to type %s", d, d.Kind(), TypeStr(tp))
 }
 
 func (d *Datum) convergeType(hasUint, hasDecimal, hasFloat *bool) (x Datum) {
