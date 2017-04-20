@@ -175,6 +175,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"found_rows()", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"length('tidb')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"is_ipv4('192.168.1.1')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
+		{"period_add(199206, 2)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"now()", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
 		{"from_unixtime(1447430881)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
 		{"from_unixtime(1447430881, '%Y %D %M %h:%i:%s %x')", mysql.TypeVarString, charset.CharsetUTF8, 0},
