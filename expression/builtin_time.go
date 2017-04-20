@@ -1836,7 +1836,50 @@ type builtinPeriodAddSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_period-add
 func (b *builtinPeriodAddSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("PERIOD_ADD")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if args[0].IsNull() || args[1].IsNull() {
+		return d, errors.Trace(err)
+	}
+
+	sc := b.ctx.GetSessionVars().StmtCtx
+	period, err := args[0].ToInt64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	//Check zero
+	if period <= 0 {
+		d.SetInt64(0)
+		return d, nil
+	}
+
+	y := period / 100
+	m := period % 100
+
+	// YYMM, 00-69 year: 2000-2069
+	// YYMM, 70-99 year: 1970-1999
+	if y <= 69 {
+		y += 2000
+	} else if y <= 99 {
+		y += 1900
+	}
+
+	months, err := args[1].ToInt64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	sum := time.Month(m + months)
+	// TODO: Consider time_zone variable.
+	t := time.Date(int(y), sum, 1, 0, 0, 0, 0, time.Local)
+
+	ret := int64(t.Year())*100 + int64(t.Month())
+	d.SetInt64(ret)
+	return d, nil
 }
 
 type periodDiffFunctionClass struct {

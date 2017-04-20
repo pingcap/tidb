@@ -251,3 +251,32 @@ func (s *testSuite) TestRenameTable(c *C) {
 	tk.MustExec("drop database rename2")
 	tk.MustExec("drop database rename3")
 }
+
+func (s *testSuite) TestUnsupportedCharset(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	dbName := "unsupported_charset"
+	tk.MustExec("create database " + dbName)
+	tk.MustExec("use " + dbName)
+	tests := []struct {
+		charset string
+		valid   bool
+	}{
+		{"charset UTF8 collate UTF8_bin", true},
+		{"charset utf8mb4", true},
+		{"charset utf16", false},
+		{"charset latin1", true},
+		{"charset binary", true},
+		{"charset ascii", true},
+	}
+	for i, tt := range tests {
+		sql := fmt.Sprintf("create table t%d (a varchar(10) %s)", i, tt.charset)
+		if tt.valid {
+			tk.MustExec(sql)
+		} else {
+			_, err := tk.Exec(sql)
+			c.Assert(err, NotNil, Commentf(sql))
+		}
+	}
+	tk.MustExec("drop database " + dbName)
+}

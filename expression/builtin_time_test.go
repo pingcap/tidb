@@ -1261,6 +1261,40 @@ func (s *testEvaluatorSuite) TestTimestampAdd(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestPeriodAdd(c *C) {
+	tests := []struct {
+		Period  int64
+		Months  int64
+		Success bool
+		Expect  int64
+	}{
+		{201611, 2, true, 201701},
+		{201611, 3, true, 201702},
+		{201611, -13, true, 201510},
+		{1611, 3, true, 201702},
+		{7011, 3, true, 197102},
+		{12323, 10, true, 12509},
+		{0, 3, true, 0},
+	}
+
+	fc := funcs[ast.PeriodAdd]
+	for _, test := range tests {
+		period := types.NewIntDatum(test.Period)
+		months := types.NewIntDatum(test.Months)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{period, months}), s.ctx)
+		c.Assert(err, IsNil)
+		result, err := f.eval(nil)
+		if !test.Success {
+			c.Assert(result.IsNull(), IsTrue)
+			continue
+		}
+		c.Assert(err, IsNil)
+		c.Assert(result.Kind(), Equals, types.KindInt64)
+		value := result.GetInt64()
+		c.Assert(value, Equals, test.Expect)
+	}
+}
+
 func (s *testEvaluatorSuite) TestTimeToSec(c *C) {
 	tests := []struct {
 		t      string
