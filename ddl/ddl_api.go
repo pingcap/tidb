@@ -112,18 +112,6 @@ func getDefaultCharsetAndCollate() (string, string) {
 	return "utf8", "utf8_bin"
 }
 
-func getDefaultCollateForCharset(str string) string {
-	switch str {
-	case charset.CharsetBin:
-		return charset.CollationBin
-	case charset.CharsetUTF8MB4:
-		return charset.CollationUTF8MB4
-	case charset.CharsetUTF8:
-		return charset.CollationUTF8
-	}
-	return ""
-}
-
 func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constraint) {
 	switch v.Tp {
 	case ast.ConstraintPrimaryKey:
@@ -189,7 +177,9 @@ func buildColumnsAndConstraints(ctx context.Context, colDefs []*ast.ColumnDef,
 	return cols, constraints, nil
 }
 
-func setCharsetCollationFlenDecimal(tp *types.FieldType) {
+func setCharsetCollationFlenDecimal(tp *types.FieldType) error {
+	tp.Charset = strings.ToLower(tp.Charset)
+	tp.Collate = strings.ToLower(tp.Collate)
 	if len(tp.Charset) == 0 {
 		switch tp.Tp {
 		case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeEnum, mysql.TypeSet:
@@ -198,8 +188,17 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType) {
 			tp.Charset = charset.CharsetBin
 			tp.Collate = charset.CharsetBin
 		}
-	} else if len(tp.Collate) == 0 {
-		tp.Collate = getDefaultCollateForCharset(tp.Charset)
+	} else {
+		if !charset.ValidCharsetAndCollation(tp.Charset, tp.Collate) {
+			return errUnsupportedCharset.GenByArgs(tp.Charset, tp.Collate)
+		}
+		if len(tp.Collate) == 0 {
+			var err error
+			tp.Collate, err = charset.GetDefaultCollation(tp.Charset)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
 	// If flen is not assigned, assigned it by type.
 	if tp.Flen == types.UnspecifiedLength {
@@ -208,11 +207,15 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType) {
 	if tp.Decimal == types.UnspecifiedLength {
 		tp.Decimal = mysql.GetDefaultDecimal(tp.Tp)
 	}
+	return nil
 }
 
 func buildColumnAndConstraint(ctx context.Context, offset int,
 	colDef *ast.ColumnDef) (*table.Column, []*ast.Constraint, error) {
-	setCharsetCollationFlenDecimal(colDef.Tp)
+	err := setCharsetCollationFlenDecimal(colDef.Tp)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
 	col, cts, err := columnDefToCol(ctx, offset, colDef)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -1034,7 +1037,10 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 		OriginDefaultValue: col.OriginDefaultValue,
 		FieldType:          *spec.NewColumn.Tp,
 	}
-	setCharsetCollationFlenDecimal(&newCol.FieldType)
+	err = setCharsetCollationFlenDecimal(&newCol.FieldType)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	err = modifiable(&col.FieldType, &newCol.FieldType)
 	if err != nil {
 		return nil, errors.Trace(err)
