@@ -107,7 +107,7 @@ type session struct {
 	processInfo atomic.Value
 	txn         kv.Transaction // current transaction
 	txnFuture   *txnFuture
-	txnCh       chan *txnFuture
+	txnFutureCh chan *txnFuture
 	// For cancel the execution of current transaction.
 	goCtx      goctx.Context
 	cancelFunc goctx.CancelFunc
@@ -743,8 +743,8 @@ func (s *session) ClearValue(key fmt.Stringer) {
 
 // Close function does some clean work when session end.
 func (s *session) Close() error {
-	if s.txnCh != nil {
-		close(s.txnCh)
+	if s.txnFutureCh != nil {
+		close(s.txnFutureCh)
 	}
 	return s.RollbackTxn()
 }
@@ -1003,28 +1003,18 @@ type txnFuture struct {
 }
 
 func (s *session) getTxnFuture() *txnFuture {
-	if s.txnCh == nil {
-		s.txnCh = make(chan *txnFuture, 1)
-		go asyncGetTSWorker(s.store, s.txnCh)
+	if s.txnFutureCh == nil {
+		s.txnFutureCh = make(chan *txnFuture, 1)
+		go asyncGetTSWorker(s.store, s.txnFutureCh)
 	}
 
 	future := &txnFuture{}
 	future.Add(1)
-	s.txnCh <- future
+	s.txnFutureCh <- future
 	return future
 }
 
-//go:noinline
 func asyncGetTSWorker(store kv.Storage, ch chan *txnFuture) {
-	// Reserved 4KB memory on the stack to avoid runtime.morestack
-	var buf [4 << 10]byte
-	if false {
-		// Make sure the compiler doesn't optimize away buf.
-		for i := range buf {
-			buf[i] = byte(i)
-		}
-	}
-
 	for future := range ch {
 		txn, err := store.Begin()
 		future.txn = txn
@@ -1086,7 +1076,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	if s.txnFuture == nil {
 		return errors.New("transaction channel is not set")
 	}
-	// no need to get txn from txnCh since txn should init with startTs
+	// no need to get txn from txnFutureCh since txn should init with startTs
 	s.txnFuture = nil
 	var err error
 	s.txn, err = s.store.BeginWithStartTS(startTS)
