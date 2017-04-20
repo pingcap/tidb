@@ -104,6 +104,8 @@ func (s *RegionRequestSender) KvGet(req *kvrpcpb.GetRequest, regionID RegionVerI
 			// If the region is not found in cache, it must be out
 			// of date and already be cleaned up. We can skip the
 			// RPC by returning RegionError directly.
+			// TODO Change the returned error to something like "region missing in cache",
+			// and handle this error like StaleEpoch, which means to re-split the request and retry.
 			resp = &kvrpcpb.GetResponse{
 				RegionError: &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}},
 			}
