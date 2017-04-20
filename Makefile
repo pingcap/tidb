@@ -72,9 +72,9 @@ check:
 	@echo "vet"
 	@ go tool vet $(FILES) 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
 	@echo "vet --shadow"
-	@ go tool vet --shadow $(FILES) 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
+	@ go tool vet --shadow $(FILES) 1>&1 | awk '{print} END{if(NR>0) {exit 1}}'
 	@echo "golint"
-	@ golint ./... 2>&1 | grep -vE 'context\.Context|LastInsertId|NewLexer|\.pb\.go' | awk '{print} END{if(NR>0) {exit 1}}'
+	@ golint ./... 2>&1 | grep -vE 'vendor|context\.Context|LastInsertId|NewLexer|\.pb\.go' | awk '{print} END{if(NR>0) {exit 1}}'
 	@echo "gofmt (simplify)"
 	@ gofmt -s -l -w $(FILES) 2>&1 | grep -v "parser/parser.go" | awk '{print} END{if(NR>0) {exit 1}}'
 
@@ -124,8 +124,7 @@ benchdb:
 update:
 	which glide >/dev/null || curl https://glide.sh/get | sh
 	which glide-vc || go get -v -u github.com/sgotti/glide-vc
-	rm -r vendor && mv _vendor/src vendor || true
-	rm -rf _vendor
+
 ifdef PKG
 	glide get -s -v --skip-test ${PKG}
 else
@@ -133,5 +132,3 @@ else
 endif
 	@echo "removing test files"
 	glide vc --only-code --no-tests
-	mkdir -p _vendor
-	mv vendor _vendor/src
