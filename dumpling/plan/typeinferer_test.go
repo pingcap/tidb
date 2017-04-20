@@ -238,6 +238,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"rpad('TiDB', 12, 'go')", mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{"lpad('TiDB', 12, 'go')", mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{"elt(1, 'TiDB', 17, 'go')", mysql.TypeVarString, charset.CharsetUTF8, 0},
+		{"export_set(5, 'Y', 'N', ',', 4)", mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{"bit_length('TiDB')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"char(66)", mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{"char_length('TiDB')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},

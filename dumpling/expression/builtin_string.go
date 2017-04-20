@@ -1714,7 +1714,62 @@ type builtinExportSetSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_export-set
 func (b *builtinExportSetSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("export_set")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	var (
+		bits         uint64
+		on           string
+		off          string
+		separator    = ","
+		numberOfBits = 64
+	)
+	switch len(args) {
+	case 5:
+		arg, err := args[4].ToInt64(b.ctx.GetSessionVars().StmtCtx)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		if arg >= 0 && arg < 64 {
+			numberOfBits = int(arg)
+		}
+		fallthrough
+	case 4:
+		separator, err = args[3].ToString()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		fallthrough
+	case 3:
+		arg, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		bits = uint64(arg)
+		on, err = args[1].ToString()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		off, err = args[2].ToString()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+	}
+	var result string
+	for i := 0; i < numberOfBits; i++ {
+		if bits&1 > 0 {
+			result += on
+		} else {
+			result += off
+		}
+		bits >>= 1
+		if i < numberOfBits-1 {
+			result += separator
+		}
+	}
+	d.SetString(result)
+	return d, nil
 }
 
 type formatFunctionClass struct {
