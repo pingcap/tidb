@@ -145,12 +145,7 @@ func analyzeWorker(taskCh <-chan analyzeTask, resultCh chan<- analyzeResult) {
 }
 
 func analyzePK(exec *XSelectTableExec) analyzeResult {
-	b := &statistics.Builder{
-		Ctx:        exec.ctx,
-		TblInfo:    exec.tableInfo,
-		NumBuckets: defaultBucketCount,
-	}
-	count, hg, err := b.BuildPK(exec.Columns[0].ID, &recordSet{executor: exec})
+	count, hg, err := statistics.BuildPK(exec.ctx, defaultBucketCount, exec.Columns[0].ID, &recordSet{executor: exec})
 	return analyzeResult{tableID: exec.tableInfo.ID, hist: []*statistics.Histogram{hg}, count: count, isIndex: 0, err: err}
 }
 
@@ -159,18 +154,13 @@ func analyzeColumns(exec *XSelectTableExec) analyzeResult {
 	if err != nil {
 		return analyzeResult{err: err}
 	}
-	b := &statistics.Builder{
-		Ctx:        exec.ctx,
-		TblInfo:    exec.tableInfo,
-		NumBuckets: defaultBucketCount,
-	}
 	columnSamples := rowsToColumnSamples(sampleRows)
 	if columnSamples == nil {
 		columnSamples = make([][]types.Datum, len(exec.Columns))
 	}
 	result := analyzeResult{tableID: exec.tableInfo.ID, count: count, isIndex: 0}
 	for i, col := range exec.Columns {
-		hg, err := b.BuildColumn(col.ID, colNDVs[i], count, columnSamples[i])
+		hg, err := statistics.BuildColumn(exec.ctx, defaultBucketCount, col.ID, colNDVs[i], count, columnSamples[i])
 		result.hist = append(result.hist, hg)
 		if err != nil && result.err == nil {
 			result.err = err
@@ -180,12 +170,7 @@ func analyzeColumns(exec *XSelectTableExec) analyzeResult {
 }
 
 func analyzeIndex(exec *XSelectIndexExec) analyzeResult {
-	b := &statistics.Builder{
-		Ctx:        exec.ctx,
-		TblInfo:    exec.tableInfo,
-		NumBuckets: defaultBucketCount,
-	}
-	count, hg, err := b.BuildIndex(exec.indexPlan.Index.ID, &recordSet{executor: exec})
+	count, hg, err := statistics.BuildIndex(exec.ctx, defaultBucketCount, exec.indexPlan.Index.ID, &recordSet{executor: exec})
 	return analyzeResult{tableID: exec.tableInfo.ID, hist: []*statistics.Histogram{hg}, count: count, isIndex: 1, err: err}
 }
 

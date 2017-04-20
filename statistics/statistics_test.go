@@ -120,50 +120,12 @@ func encodeKey(key types.Datum) types.Datum {
 }
 
 func (s *testStatisticsSuite) TestBuild(c *C) {
-	tblInfo := &model.TableInfo{
-		ID: 1,
-	}
-	columns := []*model.ColumnInfo{
-		{
-			ID:        2,
-			Name:      model.NewCIStr("a"),
-			FieldType: *types.NewFieldType(mysql.TypeLonglong),
-		},
-		{
-			ID:        3,
-			Name:      model.NewCIStr("b"),
-			FieldType: *types.NewFieldType(mysql.TypeLonglong),
-		},
-		{
-			ID:        4,
-			Name:      model.NewCIStr("c"),
-			FieldType: *types.NewFieldType(mysql.TypeLonglong),
-		},
-	}
-	indices := []*model.IndexInfo{
-		{
-			ID: 1,
-			Columns: []*model.IndexColumn{
-				{
-					Name:   model.NewCIStr("b"),
-					Length: types.UnspecifiedLength,
-					Offset: 1,
-				},
-			},
-		},
-	}
-	tblInfo.Columns = columns
-	tblInfo.Indices = indices
 	bucketCount := int64(256)
 	_, ndv, _ := buildFMSketch(s.rc.(*recordSet).data, 1000)
-	builder := &Builder{
-		Ctx:        mock.NewContext(),
-		TblInfo:    tblInfo,
-		NumBuckets: bucketCount,
-	}
-	sc := builder.Ctx.GetSessionVars().StmtCtx
+	ctx := mock.NewContext()
+	sc := ctx.GetSessionVars().StmtCtx
 
-	col, err := builder.BuildColumn(2, ndv, s.count, s.samples)
+	col, err := BuildColumn(ctx, bucketCount, 2, ndv, s.count, s.samples)
 	c.Check(err, IsNil)
 	c.Check(len(col.Buckets), Equals, 232)
 	count, err := col.equalRowCount(sc, types.NewIntDatum(1000))
@@ -188,7 +150,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 5075)
 
-	tblCount, col, err := builder.BuildIndex(1, ast.RecordSet(s.rc))
+	tblCount, col, err := BuildIndex(ctx, bucketCount, 1, ast.RecordSet(s.rc))
 	c.Check(err, IsNil)
 	c.Check(int(tblCount), Equals, 100000)
 	count, err = col.equalRowCount(sc, encodeKey(types.NewIntDatum(10000)))
@@ -201,7 +163,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 4618)
 
-	tblCount, col, err = builder.BuildPK(4, ast.RecordSet(s.pk))
+	tblCount, col, err = BuildPK(ctx, bucketCount, 4, ast.RecordSet(s.pk))
 	c.Check(err, IsNil)
 	c.Check(int(tblCount), Equals, 100000)
 	count, err = col.equalRowCount(sc, types.NewIntDatum(10000))

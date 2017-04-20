@@ -17,37 +17,29 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 )
 
-// Builder describes information needed when build index or column.
-type Builder struct {
-	Ctx        context.Context  // Ctx is the context.
-	TblInfo    *model.TableInfo // TblInfo is the table info of the table.
-	NumBuckets int64            // NumBuckets is the number of buckets a column histogram has.
-}
-
 // BuildPK builds histogram for pk.
-func (b *Builder) BuildPK(id int64, records ast.RecordSet) (int64, *Histogram, error) {
-	return b.build4SortedColumn(id, records, true)
+func BuildPK(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, error) {
+	return build4SortedColumn(ctx, numBuckets, id, records, true)
 }
 
 // BuildIndex builds histogram for index.
-func (b *Builder) BuildIndex(id int64, records ast.RecordSet) (int64, *Histogram, error) {
-	return b.build4SortedColumn(id, records, false)
+func BuildIndex(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, error) {
+	return build4SortedColumn(ctx, numBuckets, id, records, false)
 }
 
-func (b *Builder) build4SortedColumn(id int64, records ast.RecordSet, isPK bool) (int64, *Histogram, error) {
+func build4SortedColumn(ctx context.Context, numBuckets, id int64, records ast.RecordSet, isPK bool) (int64, *Histogram, error) {
 	hg := &Histogram{
 		ID:      id,
 		NDV:     0,
-		Buckets: make([]bucket, 1, b.NumBuckets),
+		Buckets: make([]bucket, 1, numBuckets),
 	}
 	var valuesPerBucket, lastNumber, bucketIdx int64 = 1, 0, 0
 	count := int64(0)
-	sc := b.Ctx.GetSessionVars().StmtCtx
+	sc := ctx.GetSessionVars().StmtCtx
 	for {
 		row, err := records.Next()
 		if err != nil {
@@ -85,7 +77,7 @@ func (b *Builder) build4SortedColumn(id int64, records ast.RecordSet, isPK bool)
 			hg.NDV++
 		} else {
 			// All buckets are full, we should merge buckets.
-			if bucketIdx+1 == b.NumBuckets {
+			if bucketIdx+1 == numBuckets {
 				hg.mergeBuckets(bucketIdx)
 				valuesPerBucket *= 2
 				bucketIdx = bucketIdx / 2
@@ -119,11 +111,11 @@ func (b *Builder) build4SortedColumn(id int64, records ast.RecordSet, isPK bool)
 }
 
 // BuildColumn builds histogram from samples for column.
-func (b *Builder) BuildColumn(id int64, ndv int64, count int64, samples []types.Datum) (*Histogram, error) {
+func BuildColumn(ctx context.Context, numBuckets, id int64, ndv int64, count int64, samples []types.Datum) (*Histogram, error) {
 	if count == 0 {
 		return &Histogram{ID: id}, nil
 	}
-	sc := b.Ctx.GetSessionVars().StmtCtx
+	sc := ctx.GetSessionVars().StmtCtx
 	err := types.SortDatums(sc, samples)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -131,9 +123,9 @@ func (b *Builder) BuildColumn(id int64, ndv int64, count int64, samples []types.
 	hg := &Histogram{
 		ID:      id,
 		NDV:     ndv,
-		Buckets: make([]bucket, 1, b.NumBuckets),
+		Buckets: make([]bucket, 1, numBuckets),
 	}
-	valuesPerBucket := float64(count)/float64(b.NumBuckets) + 1
+	valuesPerBucket := float64(count)/float64(numBuckets) + 1
 
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
 	sampleFactor := float64(count) / float64(len(samples))
