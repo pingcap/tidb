@@ -266,7 +266,7 @@ type builtinBitCountSig struct {
 func (b *builtinBitCountSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	arg := args[0]
 	if arg.IsNull() {
@@ -276,6 +276,10 @@ func (b *builtinBitCountSig) eval(row []types.Datum) (d types.Datum, err error) 
 	sc.IgnoreTruncate = true
 	bin, err := arg.ToInt64(sc)
 	if err != nil {
+		if strings.Contains(err.Error(), "overflows") {
+			d.SetInt64(64)
+			return d, nil
+		}
 		return d, errors.Trace(err)
 	}
 	var count int64
