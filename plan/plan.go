@@ -54,7 +54,7 @@ type Plan interface {
 	Allocator() *idAllocator
 	// SetParents sets the parents for the plan.
 	SetParents(...Plan)
-	// SetParents sets the children for the plan.
+	// SetChildren sets the children for the plan.
 	SetChildren(...Plan)
 
 	context() context.Context
@@ -90,6 +90,11 @@ func (p *requiredProp) getHashKey() ([]byte, error) {
 	}
 	bytes, err := codec.EncodeValue(nil, datums...)
 	return bytes, errors.Trace(err)
+}
+
+// String implements fmt.Stringer interface. Just for test.
+func (p *requiredProp) String() string {
+	return fmt.Sprintf("Prop{cols: %s, desc: %v}", p.cols, p.desc)
 }
 
 type requiredProperty struct {
@@ -195,14 +200,6 @@ type baseLogicalPlan struct {
 
 type basePhysicalPlan struct {
 	basePlan *basePlan
-}
-
-func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) {
-	panic(fmt.Sprintf("plan %s have not implemented convert2NewPhysicalPlan", p.basePlan.id))
-}
-
-func (p *basePhysicalPlan) attach2TaskProfile(tasks ...taskProfile) taskProfile {
-	return attachPlan2TaskProfile(p.basePlan.self.(PhysicalPlan).Copy(), tasks[0])
 }
 
 func (p *baseLogicalPlan) getTaskProfile(prop *requiredProp) (taskProfile, error) {
@@ -446,12 +443,12 @@ func (p *basePlan) Children() []Plan {
 	return p.children
 }
 
-// RemoveAllParents implements Plan RemoveAllParents interface.
+// SetParents implements Plan SetParents interface.
 func (p *basePlan) SetParents(pars ...Plan) {
 	p.parents = pars
 }
 
-// RemoveAllParents implements Plan RemoveAllParents interface.
+// SetChildren implements Plan SetChildren interface.
 func (p *basePlan) SetChildren(children ...Plan) {
 	p.children = children
 }

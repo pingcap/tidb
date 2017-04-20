@@ -125,16 +125,31 @@ type Insert struct {
 	Ignore    bool
 }
 
+// Used only when pk is handle.
+type analyzePKTask struct {
+	TableInfo *model.TableInfo
+	PKInfo    *model.ColumnInfo
+}
+
+type analyzeColumnsTask struct {
+	TableInfo *model.TableInfo
+	ColsInfo  []*model.ColumnInfo
+}
+
+type analyzeIndexTask struct {
+	TableInfo *model.TableInfo
+	IndexInfo *model.IndexInfo
+}
+
 // Analyze represents an analyze plan
 type Analyze struct {
 	*basePlan
 	baseLogicalPlan
 	basePhysicalPlan
 
-	TableInfo   *model.TableInfo
-	IndicesInfo []*model.IndexInfo
-	ColsInfo    []*model.ColumnInfo
-	PkInfo      *model.ColumnInfo // Used only when pk is handle.
+	PkTasks  []analyzePKTask
+	ColTasks []analyzeColumnsTask
+	IdxTasks []analyzeIndexTask
 }
 
 // LoadData represents a loaddata plan.

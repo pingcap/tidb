@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -58,13 +57,11 @@ func (m *MockExec) Close() error {
 }
 
 func (s *testSuite) TestAggregation(c *C) {
-	mocktikv.MockDAGRequest = true
 	plan.JoinConcurrency = 1
 	defer func() {
 		plan.JoinConcurrency = 5
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
-		mocktikv.MockDAGRequest = false
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -168,6 +165,11 @@ func (s *testSuite) TestAggregation(c *C) {
 	result.Check(testkit.Rows("-1", "-1", "-2", "-2"))
 	result = tk.MustQuery("select 1-d as d from t having d + 1 < 0 order by d + 1")
 	result.Check(testkit.Rows("-2", "-2"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (keywords varchar(20), type int)")
+	tk.MustExec("insert into t values('测试', 1), ('test', 2)")
+	result = tk.MustQuery("select group_concat(keywords) from t group by type order by type")
+	result.Check(testkit.Rows("测试", "test"))
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int, d int)")
 	tk.MustExec("insert t values (1, -1)")
@@ -314,7 +316,7 @@ func (s *testSuite) TestStreamAgg(c *C) {
 	cntAgg := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{col}, false)
 	avgAgg := expression.NewAggFunction(ast.AggFuncAvg, []expression.Expression{col}, false)
 	maxAgg := expression.NewAggFunction(ast.AggFuncMax, []expression.Expression{col}, false)
-	cases := []struct {
+	tests := []struct {
 		aggFunc expression.AggregationFunction
 		result  string
 		input   [][]interface{}
@@ -362,28 +364,28 @@ func (s *testSuite) TestStreamAgg(c *C) {
 		},
 	}
 	ctx := mock.NewContext()
-	for _, ca := range cases {
+	for _, tt := range tests {
 		mock := &MockExec{}
 		e := &executor.StreamAggExec{
-			AggFuncs: []expression.AggregationFunction{ca.aggFunc},
+			AggFuncs: []expression.AggregationFunction{tt.aggFunc},
 			Src:      mock,
-			Ctx:      ctx,
+			StmtCtx:  ctx.GetSessionVars().StmtCtx,
 		}
 		row, err := e.Next()
 		c.Check(err, IsNil)
 		c.Check(row, NotNil)
-		c.Assert(fmt.Sprintf("%v", row.Data[0].GetValue()), Equals, ca.result)
+		c.Assert(fmt.Sprintf("%v", row.Data[0].GetValue()), Equals, tt.result)
 		e.GroupByItems = append(e.GroupByItems, gbyCol)
 		e.Close()
 		row, err = e.Next()
 		c.Check(err, IsNil)
 		c.Check(row, IsNil)
 		e.Close()
-		for _, input := range ca.input {
+		for _, input := range tt.input {
 			data := types.MakeDatums(input...)
 			mock.Rows = append(mock.Rows, &executor.Row{Data: data})
 		}
-		for _, res := range ca.result1 {
+		for _, res := range tt.result1 {
 			row, err = e.Next()
 			c.Check(err, IsNil)
 			c.Check(row, NotNil)
@@ -393,11 +395,9 @@ func (s *testSuite) TestStreamAgg(c *C) {
 }
 
 func (s *testSuite) TestAggPrune(c *C) {
-	mocktikv.MockDAGRequest = true
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
-		mocktikv.MockDAGRequest = false
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -434,11 +434,9 @@ func (s *testSuite) TestSelectDistinct(c *C) {
 }
 
 func (s *testSuite) TestAggPushDown(c *C) {
-	mocktikv.MockDAGRequest = true
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
-		mocktikv.MockDAGRequest = false
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

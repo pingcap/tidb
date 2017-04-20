@@ -20,7 +20,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -42,123 +41,98 @@ const (
 
 // Table represents statistics for a table.
 type Table struct {
-	Info    *model.TableInfo
+	tableID int64
 	Columns map[int64]*Column
 	Indices map[int64]*Index
 	Count   int64 // Total row count in a table.
 	Pseudo  bool
 }
 
-// SaveToStorage saves stats table to storage.
-func (h *Handle) SaveToStorage(ctx context.Context, t *Table) error {
-	_, err := ctx.(sqlexec.SQLExecutor).Execute("begin")
-	if err != nil {
-		return errors.Trace(err)
+func (t *Table) copy() *Table {
+	nt := &Table{
+		tableID: t.tableID,
+		Count:   t.Count,
+		Pseudo:  t.Pseudo,
+		Columns: make(map[int64]*Column),
+		Indices: make(map[int64]*Index),
 	}
-	txn := ctx.Txn()
-	version := txn.StartTS()
-	deleteSQL := fmt.Sprintf("delete from mysql.stats_meta where table_id = %d", t.Info.ID)
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(deleteSQL)
-	if err != nil {
-		return errors.Trace(err)
+	for id, col := range t.Columns {
+		nt.Columns[id] = col
 	}
-	insertSQL := fmt.Sprintf("insert into mysql.stats_meta (version, table_id, count) values (%d, %d, %d)", version, t.Info.ID, t.Count)
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(insertSQL)
-	if err != nil {
-		return errors.Trace(err)
+	for id, idx := range t.Indices {
+		nt.Indices[id] = idx
 	}
-	deleteSQL = fmt.Sprintf("delete from mysql.stats_histograms where table_id = %d", t.Info.ID)
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(deleteSQL)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	deleteSQL = fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d", t.Info.ID)
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(deleteSQL)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	for _, col := range t.Columns {
-		err = col.saveToStorage(ctx, t.Info.ID, 0)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	for _, idx := range t.Indices {
-		err = idx.saveToStorage(ctx, t.Info.ID, 1)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	_, err = ctx.(sqlexec.SQLExecutor).Execute("commit")
-	return errors.Trace(err)
+	return nt
 }
 
-// TableStatsFromStorage loads table stats info from storage.
-func (h *Handle) TableStatsFromStorage(ctx context.Context, info *model.TableInfo, count int64) (*Table, error) {
-	table := &Table{
-		Info:    info,
-		Count:   count,
-		Columns: make(map[int64]*Column, len(info.Columns)),
-		Indices: make(map[int64]*Index, len(info.Indices)),
+// tableStatsFromStorage loads table stats info from storage.
+func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) (*Table, error) {
+	table, ok := h.statsCache.Load().(statsCache)[tableInfo.ID]
+	if !ok {
+		table = &Table{
+			Columns: make(map[int64]*Column, len(tableInfo.Columns)),
+			Indices: make(map[int64]*Index, len(tableInfo.Indices)),
+		}
+	} else {
+		// We copy it before writing to avoid race.
+		table = table.copy()
 	}
-	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count from mysql.stats_histograms where table_id = %d", info.ID)
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, selSQL)
+	table.tableID = tableInfo.ID
+	table.Count = count
+
+	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count, version from mysql.stats_histograms where table_id = %d", tableInfo.ID)
+	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, selSQL)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// indexCount and columnCount record the number of indices and columns in table stats. If the number don't match with
-	// tableInfo, we will return pseudo table.
-	// TODO: In fact, we can return pseudo column.
-	indexCount, columnCount := 0, 0
 	for _, row := range rows {
 		distinct := row.Data[3].GetInt64()
 		histID := row.Data[2].GetInt64()
+		histVer := row.Data[4].GetUint64()
 		if row.Data[1].GetInt64() > 0 {
 			// process index
-			var idx *Index
-			for _, idxInfo := range info.Indices {
+			idx := table.Indices[histID]
+			for _, idxInfo := range tableInfo.Indices {
 				if histID == idxInfo.ID {
-					hg, err1 := histogramFromStorage(ctx, info.ID, histID, nil, distinct, 1)
-					if err1 != nil {
-						return nil, errors.Trace(err1)
+					if idx == nil || idx.LastUpdateVersion < histVer {
+						hg, err := h.histogramFromStorage(tableInfo.ID, histID, nil, distinct, 1, histVer)
+						if err != nil {
+							return nil, errors.Trace(err)
+						}
+						idx = &Index{Histogram: *hg}
 					}
-					idx = &Index{Histogram: *hg}
 					break
 				}
 			}
 			if idx != nil {
-				table.Indices[idx.ID] = idx
-				indexCount++
+				table.Indices[histID] = idx
 			} else {
-				log.Warnf("We cannot find index id %d in table %s now. It may be deleted.", histID, info.Name)
+				log.Warnf("We cannot find index id %d in table info %s now. It may be deleted.", histID, tableInfo.Name)
 			}
 		} else {
 			// process column
-			var col *Column
-			for _, colInfo := range info.Columns {
+			col := table.Columns[histID]
+			for _, colInfo := range tableInfo.Columns {
 				if histID == colInfo.ID {
-					var hg *Histogram
-					hg, err = histogramFromStorage(ctx, info.ID, histID, &colInfo.FieldType, distinct, 0)
-					if err != nil {
-						return nil, errors.Trace(err)
+					if col == nil || col.LastUpdateVersion < histVer {
+						hg, err := h.histogramFromStorage(tableInfo.ID, histID, &colInfo.FieldType, distinct, 0, histVer)
+						if err != nil {
+							return nil, errors.Trace(err)
+						}
+						col = &Column{Histogram: *hg}
 					}
-					col = &Column{Histogram: *hg}
 					break
 				}
 			}
 			if col != nil {
 				table.Columns[col.ID] = col
-				columnCount++
 			} else {
-				log.Warnf("We cannot find column id %d in table %s now. It may be deleted.", histID, info.Name)
+				// If we didn't find a Column or Index in tableInfo, we won't load the histogram for it.
+				// But don't worry, next lease the ddl will be updated, and we will load a same table for two times to
+				// avoid error.
+				log.Warnf("We cannot find column id %d in table info %s now. It may be deleted.", histID, tableInfo.Name)
 			}
 		}
-	}
-	if indexCount != len(info.Indices) {
-		return nil, errors.New("The number of indices doesn't match with the schema")
-	}
-	if columnCount != len(info.Columns) {
-		return nil, errors.New("The number of columns doesn't match with the schema")
 	}
 	return table, nil
 }
@@ -166,8 +140,11 @@ func (h *Handle) TableStatsFromStorage(ctx context.Context, info *model.TableInf
 // String implements Stringer interface.
 func (t *Table) String() string {
 	strs := make([]string, 0, len(t.Columns)+1)
-	strs = append(strs, fmt.Sprintf("Table:%d count:%d", t.Info.ID, t.Count))
+	strs = append(strs, fmt.Sprintf("Table:%d Count:%d", t.tableID, t.Count))
 	for _, col := range t.Columns {
+		strs = append(strs, col.String())
+	}
+	for _, col := range t.Indices {
 		strs = append(strs, col.String())
 	}
 	return strings.Join(strs, "\n")
@@ -233,29 +210,11 @@ func (t *Table) GetRowCountByIndexRanges(sc *variable.StatementContext, idxID in
 }
 
 // PseudoTable creates a pseudo table statistics when statistic can not be found in KV store.
-func PseudoTable(ti *model.TableInfo) *Table {
-	t := &Table{Info: ti, Pseudo: true}
+func PseudoTable(tableID int64) *Table {
+	t := &Table{tableID: tableID, Pseudo: true}
 	t.Count = pseudoRowCount
-	t.Columns = make(map[int64]*Column, len(ti.Columns))
-	t.Indices = make(map[int64]*Index, len(ti.Indices))
-	for _, v := range ti.Columns {
-		c := &Column{
-			Histogram: Histogram{
-				ID:  v.ID,
-				NDV: pseudoRowCount / 2,
-			},
-		}
-		t.Columns[v.ID] = c
-	}
-	for _, v := range ti.Indices {
-		idx := &Index{
-			Histogram: Histogram{
-				ID:  v.ID,
-				NDV: pseudoRowCount / 2,
-			},
-		}
-		t.Indices[v.ID] = idx
-	}
+	t.Columns = make(map[int64]*Column)
+	t.Indices = make(map[int64]*Index)
 	return t
 }
 
