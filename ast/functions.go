@@ -188,6 +188,7 @@ const (
 	Mid            = "mid"
 	Oct            = "oct"
 	Ord            = "ord"
+	Position       = "position"
 	Quote          = "quote"
 	Repeat         = "repeat"
 	Replace        = "replace"
