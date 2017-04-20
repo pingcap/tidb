@@ -321,7 +321,7 @@ type builtinRightSig struct {
 func (b *builtinRightSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	if len(args) != 2 {
 		return d, nil
