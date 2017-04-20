@@ -61,7 +61,6 @@ var (
 	_ PhysicalPlan = &PhysicalTableScan{}
 	_ PhysicalPlan = &PhysicalAggregation{}
 	_ PhysicalPlan = &PhysicalApply{}
-	_ PhysicalPlan = &PhysicalDummyScan{}
 	_ PhysicalPlan = &PhysicalHashJoin{}
 	_ PhysicalPlan = &PhysicalHashSemiJoin{}
 	_ PhysicalPlan = &PhysicalMergeJoin{}
@@ -69,13 +68,62 @@ var (
 	_ PhysicalPlan = &Cache{}
 )
 
+// PhysicalTableReader is the table reader in tidb.
+type PhysicalTableReader struct {
+	*basePlan
+	basePhysicalPlan
+
+	copPlan PhysicalPlan
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *PhysicalTableReader) Copy() PhysicalPlan {
+	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
+	return &np
+}
+
+// PhysicalIndexReader is the index reader in tidb.
+type PhysicalIndexReader struct {
+	*basePlan
+	basePhysicalPlan
+
+	copPlan PhysicalPlan
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *PhysicalIndexReader) Copy() PhysicalPlan {
+	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
+	return &np
+}
+
+// PhysicalIndexLookUpReader is the index look up reader in tidb. It's used in case of double reading.
+type PhysicalIndexLookUpReader struct {
+	*basePlan
+	basePhysicalPlan
+
+	indexPlan PhysicalPlan
+	tablePlan PhysicalPlan
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *PhysicalIndexLookUpReader) Copy() PhysicalPlan {
+	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
+	return &np
+}
+
 // PhysicalIndexScan represents an index scan plan.
 type PhysicalIndexScan struct {
 	physicalTableSource
 
 	Table      *model.TableInfo
 	Index      *model.IndexInfo
-	Ranges     []*IndexRange
+	Ranges     []*types.IndexRange
 	Columns    []*model.ColumnInfo
 	DBName     model.CIStr
 	Desc       bool
@@ -100,7 +148,7 @@ type PhysicalMemTable struct {
 	DBName      model.CIStr
 	Table       *model.TableInfo
 	Columns     []*model.ColumnInfo
-	Ranges      []TableRange
+	Ranges      []types.IntColumnRange
 	TableAsName *model.CIStr
 }
 
@@ -119,13 +167,12 @@ type physicalDistSQLPlan interface {
 	addTopN(ctx context.Context, prop *requiredProperty) bool
 	addLimit(limit *Limit)
 	// scanCount means the original row count that need to be scanned and resultCount means the row count after scanning.
-	calculateCost(resultCount uint64, scanCount uint64) float64
+	calculateCost(resultCount float64, scanCount float64) float64
 }
 
-func (p *PhysicalIndexScan) calculateCost(resultCount uint64, scanCount uint64) float64 {
+func (p *PhysicalIndexScan) calculateCost(resultCount float64, scanCnt float64) float64 {
 	// TODO: Eliminate index cost more precisely.
-	cost := float64(resultCount) * netWorkFactor
-	scanCnt := float64(scanCount)
+	cost := resultCount * netWorkFactor
 	if p.DoubleRead {
 		cost += scanCnt * netWorkFactor
 	}
@@ -142,10 +189,10 @@ func (p *PhysicalIndexScan) calculateCost(resultCount uint64, scanCount uint64) 
 	return cost
 }
 
-func (p *PhysicalTableScan) calculateCost(resultCount uint64, scanCount uint64) float64 {
-	cost := float64(resultCount) * netWorkFactor
+func (p *PhysicalTableScan) calculateCost(resultCount float64, scanCount float64) float64 {
+	cost := resultCount * netWorkFactor
 	if len(p.tableFilterConditions) > 0 {
-		cost += float64(scanCount) * cpuFactor
+		cost += scanCount * cpuFactor
 	}
 	return cost
 }
@@ -178,6 +225,9 @@ type physicalTableSource struct {
 	sortItems             []*ByItems
 	indexFilterConditions []expression.Expression
 	tableFilterConditions []expression.Expression
+
+	// filterCondition is only used by new planner.
+	filterCondition []expression.Expression
 }
 
 // MarshalJSON implements json.Marshaler interface.
@@ -366,19 +416,13 @@ type PhysicalTableScan struct {
 	Columns []*model.ColumnInfo
 	DBName  model.CIStr
 	Desc    bool
-	Ranges  []TableRange
+	Ranges  []types.IntColumnRange
 	pkCol   *expression.Column
 
 	TableAsName *model.CIStr
 
 	// If sort data by scanning pkcol, KeepOrder should be true.
 	KeepOrder bool
-}
-
-// PhysicalDummyScan is a dummy table that returns nothing.
-type PhysicalDummyScan struct {
-	*basePlan
-	basePhysicalPlan
 }
 
 // PhysicalApply represents apply plan, only used for subquery.
@@ -655,16 +699,24 @@ func (p *PhysicalApply) MarshalJSON() ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 	buffer := bytes.NewBufferString("{")
-	if p.PhysicalJoin.(*PhysicalHashJoin).SmallTable == 1 {
+	switch x := p.PhysicalJoin.(type) {
+	case *PhysicalHashJoin:
+		if x.SmallTable == 1 {
+			buffer.WriteString(fmt.Sprintf(
+				"\"innerPlan\": \"%s\",\n "+
+					"\"outerPlan\": \"%s\",\n "+
+					"\"join\": %s\n}", p.children[1].ID(), p.children[0].ID(), join))
+		} else {
+			buffer.WriteString(fmt.Sprintf(
+				"\"innerPlan\": \"%s\",\n "+
+					"\"outerPlan\": \"%s\",\n "+
+					"\"join\": %s\n}", p.children[0].ID(), p.children[1].ID(), join))
+		}
+	case *PhysicalHashSemiJoin:
 		buffer.WriteString(fmt.Sprintf(
 			"\"innerPlan\": \"%s\",\n "+
 				"\"outerPlan\": \"%s\",\n "+
 				"\"join\": %s\n}", p.children[1].ID(), p.children[0].ID(), join))
-	} else {
-		buffer.WriteString(fmt.Sprintf(
-			"\"innerPlan\": \"%s\",\n "+
-				"\"outerPlan\": \"%s\",\n "+
-				"\"join\": %s\n}", p.children[0].ID(), p.children[1].ID(), join))
 	}
 	return buffer.Bytes(), nil
 }
@@ -899,6 +951,9 @@ func (p *Union) Copy() PhysicalPlan {
 // Copy implements the PhysicalPlan Copy interface.
 func (p *Sort) Copy() PhysicalPlan {
 	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }
 
@@ -977,14 +1032,6 @@ func (p *Update) Copy() PhysicalPlan {
 }
 
 // Copy implements the PhysicalPlan Copy interface.
-func (p *PhysicalDummyScan) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
-// Copy implements the PhysicalPlan Copy interface.
 func (p *Delete) Copy() PhysicalPlan {
 	np := *p
 	np.basePlan = p.basePlan.copy()
@@ -1018,7 +1065,7 @@ func (p *Cache) Copy() PhysicalPlan {
 	return &np
 }
 
-// Copy implements the Analyze Copy interface.
+// Copy implements the PhysicalPlan Copy interface.
 func (p *Analyze) Copy() PhysicalPlan {
 	np := *p
 	np.basePlan = p.basePlan.copy()

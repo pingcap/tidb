@@ -349,12 +349,14 @@ import (
 	yearweek			"YEARWEEK"
 	round				"ROUND"
 	statsPersistent			"STATS_PERSISTENT"
+	toBase64			"TO_BASE64"
 	toDays				"TO_DAYS"
 	toSeconds			"TO_SECONDS"
 	getLock				"GET_LOCK"
 	releaseLock			"RELEASE_LOCK"
 	rpad				"RPAD"
 	utcTime				"UTC_TIME"
+	bitCount			"BIT_COUNT"
 	bitLength			"BIT_LENGTH"
 	charFunc			"CHAR_FUNC"
 	charLength			"CHAR_LENGTH"
@@ -484,6 +486,7 @@ import (
 	sqlNoCache	"SQL_NO_CACHE"
 	start		"START"
 	status		"STATUS"
+	super		"SUPER"
 	some 		"SOME"
 	global		"GLOBAL"
 	tables		"TABLES"
@@ -650,7 +653,6 @@ import (
 	LocalOpt		"Local opt"
 	LockTablesStmt		"Lock tables statement"
 	LowPriorityOptional	"LOW_PRIORITY or empty"
-	NotOpt			"optional NOT"
 	NumLiteral		"Num/Int/Float/Decimal Literal"
 	NoWriteToBinLogAliasOpt "NO_WRITE_TO_BINLOG alias LOCAL or empty"
 	NowSymOptionFraction	"NowSym with optional fraction part"
@@ -758,6 +760,12 @@ import (
 	ElseOpt			"Optional else clause"
 	ExpressionOpt		"Optional expression"
 	Type			"Types"
+
+	BetweenOrNotOp		"Between predicate"
+	IsOrNotOp		"Is predicate"
+	InOrNotOp		"In predicate"
+	LikeOrNotOp		"Like predicate"
+	RegexpOrNotOp		"Regexp predicate"
 
 	NumericType		"Numeric types"
 	IntegerType		"Integer Types types"
@@ -1870,18 +1878,18 @@ Expression:
 	{
 		$$ = &ast.UnaryOperationExpr{Op: opcode.Not, V: $2.(ast.ExprNode)}
 	}
-|	Factor "IS" NotOpt trueKwd %prec is
+|	Factor IsOrNotOp trueKwd %prec is
 	{
-		$$ = &ast.IsTruthExpr{Expr:$1.(ast.ExprNode), Not: $3.(bool), True: int64(1)}
+		$$ = &ast.IsTruthExpr{Expr:$1.(ast.ExprNode), Not: !$2.(bool), True: int64(1)}
 	}
-|	Factor "IS" NotOpt falseKwd %prec is
+|	Factor IsOrNotOp falseKwd %prec is
 	{
-		$$ = &ast.IsTruthExpr{Expr:$1.(ast.ExprNode), Not: $3.(bool), True: int64(0)}
+		$$ = &ast.IsTruthExpr{Expr:$1.(ast.ExprNode), Not: !$2.(bool), True: int64(0)}
 	}
-|	Factor "IS" NotOpt "UNKNOWN" %prec is
+|	Factor IsOrNotOp "UNKNOWN" %prec is
 	{
 		/* https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#operator_is */
-		$$ = &ast.IsNullExpr{Expr: $1.(ast.ExprNode), Not: $3.(bool)}
+		$$ = &ast.IsNullExpr{Expr: $1.(ast.ExprNode), Not: !$2.(bool)}
 	}
 |	Factor
 
@@ -1909,9 +1917,9 @@ ExpressionListOpt:
 |	ExpressionList
 
 Factor:
-	Factor "IS" NotOpt "NULL" %prec is
+	Factor IsOrNotOp "NULL" %prec is
 	{
-		$$ = &ast.IsNullExpr{Expr: $1.(ast.ExprNode), Not: $3.(bool)}
+		$$ = &ast.IsNullExpr{Expr: $1.(ast.ExprNode), Not: !$2.(bool)}
 	}
 |	Factor CompareOp PredicateExpr %prec eq
 	{
@@ -1971,6 +1979,56 @@ CompareOp:
 		$$ = opcode.NullEQ
 	}
 
+BetweenOrNotOp:
+	"BETWEEN"
+	{
+		$$ = true
+	}
+|	"NOT" "BETWEEN"
+	{
+		$$ = false
+	}
+
+IsOrNotOp:
+	"IS"
+	{
+		$$ = true
+	}
+|	"IS" "NOT"
+	{
+		$$ = false
+	}
+
+InOrNotOp:
+	"IN"
+	{
+		$$ = true
+	}
+|	"NOT" "IN"
+	{
+		$$ = false
+	}
+
+LikeOrNotOp:
+	"LIKE"
+	{
+		$$ = true
+	}
+|	"NOT" "LIKE"
+	{
+		$$ = false
+	}
+
+RegexpOrNotOp:
+	RegexpSym
+	{
+		$$ = true
+	}
+|	"NOT" RegexpSym
+	{
+		$$ = false
+	}
+
 AnyOrAll:
 	"ANY"
 	{
@@ -1986,28 +2044,28 @@ AnyOrAll:
 	}
 
 PredicateExpr:
-	PrimaryFactor NotOpt "IN" '(' ExpressionList ')'
+	PrimaryFactor InOrNotOp '(' ExpressionList ')'
 	{
-		$$ = &ast.PatternInExpr{Expr: $1.(ast.ExprNode), Not: $2.(bool), List: $5.([]ast.ExprNode)}
+		$$ = &ast.PatternInExpr{Expr: $1.(ast.ExprNode), Not: !$2.(bool), List: $4.([]ast.ExprNode)}
 	}
-|	PrimaryFactor NotOpt "IN" SubSelect
+|	PrimaryFactor InOrNotOp SubSelect
 	{
-		sq := $4.(*ast.SubqueryExpr)
+		sq := $3.(*ast.SubqueryExpr)
 		sq.MultiRows = true
-		$$ = &ast.PatternInExpr{Expr: $1.(ast.ExprNode), Not: $2.(bool), Sel: sq}
+		$$ = &ast.PatternInExpr{Expr: $1.(ast.ExprNode), Not: !$2.(bool), Sel: sq}
 	}
-|	PrimaryFactor NotOpt "BETWEEN" PrimaryFactor "AND" PredicateExpr
+|	PrimaryFactor BetweenOrNotOp PrimaryFactor "AND" PredicateExpr
 	{
 		$$ = &ast.BetweenExpr{
 			Expr:	$1.(ast.ExprNode),
-			Left:	$4.(ast.ExprNode),
-			Right:	$6.(ast.ExprNode),
-			Not:	$2.(bool),
+			Left:	$3.(ast.ExprNode),
+			Right:	$5.(ast.ExprNode),
+			Not:	!$2.(bool),
 		}
 	}
-|	PrimaryFactor NotOpt "LIKE" PrimaryExpression LikeEscapeOpt
+|	PrimaryFactor LikeOrNotOp PrimaryExpression LikeEscapeOpt
 	{
-		escape := $5.(string)
+		escape := $4.(string)
 		if len(escape) > 1 {
 			yylex.Errorf("Incorrect arguments %s to ESCAPE", escape)
 			return 1
@@ -2016,14 +2074,14 @@ PredicateExpr:
 		}
 		$$ = &ast.PatternLikeExpr{
 			Expr:		$1.(ast.ExprNode),
-			Pattern:	$4.(ast.ExprNode),
-			Not: 		$2.(bool),
+			Pattern:	$3.(ast.ExprNode),
+			Not: 		!$2.(bool),
 			Escape: 	escape[0],
 		}
 	}
-|	PrimaryFactor NotOpt RegexpSym PrimaryExpression
+|	PrimaryFactor RegexpOrNotOp PrimaryExpression
 	{
-		$$ = &ast.PatternRegexpExpr{Expr: $1.(ast.ExprNode), Pattern: $4.(ast.ExprNode), Not: $2.(bool)}
+		$$ = &ast.PatternRegexpExpr{Expr: $1.(ast.ExprNode), Pattern: $3.(ast.ExprNode), Not: !$2.(bool)}
 	}
 |	PrimaryFactor
 
@@ -2038,15 +2096,6 @@ LikeEscapeOpt:
 |	"ESCAPE" stringLit
 	{
 		$$ = $2
-	}
-
-NotOpt:
-	{
-		$$ = false
-	}
-|	"NOT"
-	{
-		$$ = true
 	}
 
 Field:
@@ -2256,7 +2305,7 @@ UnReservedKeyword:
 | "MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION"
 | "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
-| "TIMESTAMPDIFF" | "NONE"
+| "TIMESTAMPDIFF" | "NONE" | "SUPER"
 
 ReservedKeyword:
 "ADD" | "ALL" | "ALTER" | "ANALYZE" | "AND" | "AS" | "ASC" | "BETWEEN" | "BIGINT"
@@ -2284,12 +2333,12 @@ ReservedKeyword:
 
 
 NotKeywordToken:
-	"ABS" | "ACOS" | "ADDTIME" | "ADDDATE" | "ADMIN" | "ASIN" | "ATAN" | "ATAN2" | "BENCHMARK" | "BIN" | "COALESCE" | "COERCIBILITY" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CONVERT_TZ" | "CUR_TIME"| "COS" | "COT" | "COUNT" | "DAY"
+	"ABS" | "ACOS" | "ADDTIME" | "ADDDATE" | "ADMIN" | "ASIN" | "ATAN" | "ATAN2" | "BENCHMARK" | "BIN" | "BIT_COUNT" | "BIT_LENGTH" | "COALESCE" | "COERCIBILITY" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CONVERT_TZ" | "CUR_TIME"| "COS" | "COT" | "COUNT" | "DAY"
 |	"DATEDIFF" | "DATE_ADD" | "DATE_FORMAT" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "DEGREES" | "ELT" | "EXP" | "EXPORT_SET" | "FROM_DAYS" | "FROM_BASE64" | "FIND_IN_SET" | "FOUND_ROWS"
 |	"GET_FORMAT" | "GROUP_CONCAT" | "GREATEST" | "LEAST" | "HOUR" | "HEX" | "UNHEX" | "IFNULL" | "INSTR" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOAD_FILE" | "LOCATE" | "LOWER" | "LPAD" | "LTRIM"
 |	"MAKE_SET" | "MAX" | "MAKEDATE" | "MAKETIME" | "MICROSECOND" | "MID" | "MIN" |	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" |  "OCT" | "OCTET_LENGTH" | "ORD" | "POSITION" | "PERIOD_ADD" | "PERIOD_DIFF" | "PI" | "POW" | "POWER" | "RAND" | "RADIANS" | "ROW_COUNT"
 	"QUOTE" | "SEC_TO_TIME" | "SECOND" | "SIGN" | "SIN" | "SLEEP" | "SQRT" | "SQL_CALC_FOUND_ROWS" | "STR_TO_DATE" | "SUBTIME" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen |
-	"SESSION_USER" | "SUBSTRING_INDEX" | "SUM" | "SYSTEM_USER" | "TAN" | "TIME_FORMAT" | "TIME_TO_SEC" | "TIMESTAMPADD" | "TO_DAYS" | "TO_SECONDS" | "TRIM" | "RTRIM" | "UCASE" | "UTC_TIME" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
+	"SESSION_USER" | "SUBSTRING_INDEX" | "SUM" | "SYSTEM_USER" | "TAN" | "TIME_FORMAT" | "TIME_TO_SEC" | "TIMESTAMPADD" | "TO_BASE64" | "TO_DAYS" | "TO_SECONDS" | "TRIM" | "RTRIM" | "UCASE" | "UTC_TIME" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
 |	"STATS_PERSISTENT" | "GET_LOCK" | "RELEASE_LOCK" | "CEIL" | "CEILING" | "FLOOR" | "FROM_UNIXTIME" | "TIMEDIFF" | "LN" | "LOG" | "LOG2" | "LOG10" | "FIELD_KWD"
 |	"AES_DECRYPT" | "AES_ENCRYPT" | "QUOTE"
 |	"ANY_VALUE" | "INET_ATON" | "INET_NTOA" | "INET6_ATON" | "INET6_NTOA" | "IS_FREE_LOCK" | "IS_IPV4" | "IS_IPV4_COMPAT" | "IS_IPV4_MAPPED" | "IS_IPV6" | "IS_USED_LOCK" | "MASTER_POS_WAIT" | "NAME_CONST" | "RELEASE_ALL_LOCKS" | "UUID" | "UUID_SHORT"
@@ -2638,6 +2687,7 @@ FunctionNameConflict:
 |	"SCHEMA"
 |	"IF"
 |	"LEFT"
+|	"RIGHT"
 |	"REPEAT"
 |	"CURRENT_USER"
 |	"UTC_DATE"
@@ -3289,13 +3339,10 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
-/* TODO: This will cause reduce/reduce conflict on in.
-|	"POSITION" '(' Expression "IN" Expression ')'
+|	"POSITION" '(' PrimaryFactor "IN" Expression ')'
 	{
-		args := []ast.ExprNode{$5.(ast.ExprNode), $3.(ast.ExprNode)}
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.Locate), Args: args}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}}
 	}
-*/
 |	"POW" '(' Expression ',' Expression ')'
 	{
 		args := []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}
@@ -3480,6 +3527,13 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
+|	"TO_BASE64" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
 |	"TO_DAYS" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
@@ -3594,6 +3648,13 @@ FunctionCallNonKeyword:
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)},
+		}
+	}
+|	"BIT_COUNT" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
 		}
 	}
 |	"BIT_LENGTH" '(' Expression ')'
@@ -4158,9 +4219,6 @@ CastType:
 	{
 		x := types.NewFieldType(mysql.TypeString)
 		x.Flen = $2.(int)
-		if $3.(bool) {
-			x.Flag |= mysql.BinaryFlag
-		}
 		x.Charset = $4.(string)
 		$$ = x
 	}
@@ -5877,26 +5935,21 @@ StringType:
 	{
 		x := types.NewFieldType(mysql.TypeString)
 		x.Flen = $3.(int)
-		if $4.(bool) {
-			x.Flag |= mysql.BinaryFlag
-		}
+		x.Charset = $5.(string)
+		x.Collate = $6.(string)
 		$$ = x
 	}
 |	NationalOpt "CHAR" OptBinary OptCharset OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeString)
-		if $3.(bool) {
-			x.Flag |= mysql.BinaryFlag
-		}
+		x.Charset = $4.(string)
+		x.Collate = $5.(string)
 		$$ = x
 	}
 |	NationalOpt "VARCHAR" FieldLen OptBinary OptCharset OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeVarchar)
 		x.Flen = $3.(int)
-		if $4.(bool) {
-			x.Flag |= mysql.BinaryFlag
-		}
 		x.Charset = $5.(string)
 		x.Collate = $6.(string)
 		$$ = x
@@ -5907,6 +5960,7 @@ StringType:
 		x.Flen = $2.(int)
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CharsetBin
+		x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
 |	"VARBINARY" FieldLen
@@ -5915,18 +5969,20 @@ StringType:
 		x.Flen = $2.(int)
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CharsetBin
+		x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
 |	BlobType
 	{
+		x := $1.(*types.FieldType)
+		x.Charset = charset.CharsetBin
+		x.Collate = charset.CharsetBin
+		x.Flag |= mysql.BinaryFlag
 		$$ = $1.(*types.FieldType)
 	}
 |	TextType OptBinary OptCharset OptCollate
 	{
 		x := $1.(*types.FieldType)
-		if $2.(bool) {
-			x.Flag |= mysql.BinaryFlag
-		}
 		x.Charset = $3.(string)
 		x.Collate = $4.(string)
 		$$ = x
@@ -5956,30 +6012,22 @@ BlobType:
 	"TINYBLOB"
 	{
 		x := types.NewFieldType(mysql.TypeTinyBlob)
-		x.Charset = charset.CharsetBin
-		x.Collate = charset.CharsetBin
 		$$ = x
 	}
 |	"BLOB" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeBlob)
 		x.Flen = $2.(int)
-		x.Charset = charset.CharsetBin
-		x.Collate = charset.CharsetBin
 		$$ = x
 	}
 |	"MEDIUMBLOB"
 	{
 		x := types.NewFieldType(mysql.TypeMediumBlob)
-		x.Charset = charset.CharsetBin
-		x.Collate = charset.CharsetBin
 		$$ = x
 	}
 |	"LONGBLOB"
 	{
 		x := types.NewFieldType(mysql.TypeLongBlob)
-		x.Charset = charset.CharsetBin
-		x.Collate = charset.CharsetBin
 		$$ = x
 	}
 
@@ -6387,6 +6435,10 @@ PrivType:
 |	"SELECT"
 	{
 		$$ = mysql.SelectPriv
+	}
+|	"SUPER"
+	{
+		$$ = mysql.SuperPriv
 	}
 |	"SHOW" "DATABASES"
 	{

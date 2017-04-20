@@ -32,7 +32,7 @@ func (s *testSuite) TestExplain(c *C) {
 	tk.MustExec("create table t2 (c1 int unique, c2 int)")
 	tk.MustExec("insert into t2 values(1, 0), (2, 1)")
 
-	cases := []struct {
+	tests := []struct {
 		sql       string
 		ids       []string
 		parentIds []string
@@ -676,11 +676,11 @@ func (s *testSuite) TestExplain(c *C) {
 		},
 	}
 	tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 1")
-	for _, ca := range cases {
-		result := tk.MustQuery("explain " + ca.sql)
+	for _, tt := range tests {
+		result := tk.MustQuery("explain " + tt.sql)
 		var resultList []string
-		for i := range ca.ids {
-			resultList = append(resultList, ca.ids[i]+" "+ca.result[i]+" "+ca.parentIds[i])
+		for i := range tt.ids {
+			resultList = append(resultList, tt.ids[i]+" "+tt.result[i]+" "+tt.parentIds[i])
 		}
 		result.Check(testkit.Rows(resultList...))
 	}

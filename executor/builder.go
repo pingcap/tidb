@@ -113,8 +113,6 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildExists(v)
 	case *plan.MaxOneRow:
 		return b.buildMaxOneRow(v)
-	case *plan.PhysicalDummyScan:
-		return b.buildDummyScan(v)
 	case *plan.Cache:
 		return b.buildCache(v)
 	case *plan.Analyze:
@@ -482,7 +480,7 @@ func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor
 		return &StreamAggExec{
 			Src:          src,
 			schema:       v.Schema(),
-			Ctx:          b.ctx,
+			StmtCtx:      b.ctx.GetSessionVars().StmtCtx,
 			AggFuncs:     v.AggFuncs,
 			GroupByItems: v.GroupByItems,
 		}
@@ -490,7 +488,7 @@ func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor
 	return &HashAggExec{
 		Src:          src,
 		schema:       v.Schema(),
-		ctx:          b.ctx,
+		sc:           b.ctx.GetSessionVars().StmtCtx,
 		AggFuncs:     v.AggFuncs,
 		GroupByItems: v.GroupByItems,
 		aggType:      v.AggType,
@@ -519,7 +517,7 @@ func (b *executorBuilder) buildProjection(v *plan.Projection) Executor {
 }
 
 func (b *executorBuilder) buildTableDual(v *plan.TableDual) Executor {
-	return &TableDualExec{schema: v.Schema()}
+	return &TableDualExec{schema: v.Schema(), rowCount: v.RowCount}
 }
 
 func (b *executorBuilder) getStartTS() uint64 {
@@ -719,12 +717,6 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 	return &UpdateExec{ctx: b.ctx, SelectExec: selExec, OrderedList: v.OrderedList}
 }
 
-func (b *executorBuilder) buildDummyScan(v *plan.PhysicalDummyScan) Executor {
-	return &DummyScanExec{
-		schema: v.Schema(),
-	}
-}
-
 func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
 	selExec := b.build(v.Children()[0])
 	return &DeleteExec{
@@ -744,18 +736,20 @@ func (b *executorBuilder) buildCache(v *plan.Cache) Executor {
 }
 
 func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
-	var tblInfo *model.TableInfo
-	if v.Table != nil {
-		tblInfo = v.Table.TableInfo
-	}
 	e := &AnalyzeExec{
-		schema:     v.Schema(),
-		tblInfo:    tblInfo,
-		ctx:        b.ctx,
-		idxOffsets: v.IdxOffsets,
-		colOffsets: v.ColOffsets,
-		pkOffset:   v.PkOffset,
-		Srcs:       make([]Executor, len(v.Children())),
+		schema:  v.Schema(),
+		tblInfo: v.TableInfo,
+		ctx:     b.ctx,
+		Srcs:    make([]Executor, len(v.Children())),
+	}
+	for _, idx := range v.IndicesInfo {
+		e.idxIDs = append(e.idxIDs, idx.ID)
+	}
+	for _, col := range v.ColsInfo {
+		e.colIDs = append(e.colIDs, col.ID)
+	}
+	if v.PkInfo != nil {
+		e.pkID = v.PkInfo.ID
 	}
 	for i, child := range v.Children() {
 		childExec := b.build(child)
