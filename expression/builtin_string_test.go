@@ -1348,6 +1348,35 @@ func (s *testEvaluatorSuite) TestElt(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestExportSet(c *C) {
+	defer testleak.AfterTest(c)()
+
+	estd := []struct {
+		argLst []interface{}
+		res    string
+	}{
+		{[]interface{}{-9223372036854775807, "Y", "N", ",", 5}, "Y,N,N,N,N"},
+		{[]interface{}{-6, "Y", "N", ",", 5}, "N,Y,N,Y,Y"},
+		{[]interface{}{5, "Y", "N", ",", 4}, "Y,N,Y,N"},
+		{[]interface{}{5, "Y", "N", ",", 0}, ""},
+		{[]interface{}{5, "Y", "N", ",", 1}, "Y"},
+		{[]interface{}{6, "1", "0", ",", 10}, "0,1,1,0,0,0,0,0,0,0"},
+		{[]interface{}{333333, "Ysss", "sN", "---", 9}, "Ysss---sN---Ysss---sN---Ysss---sN---sN---sN---sN"},
+		{[]interface{}{7, "Y", "N"}, "Y,Y,Y,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N"},
+		{[]interface{}{7, "Y", "N", 6}, "Y6Y6Y6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N"},
+		{[]interface{}{7, "Y", "N", 6, 133}, "Y6Y6Y6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N"},
+	}
+	fc := funcs[ast.ExportSet]
+	for _, t := range estd {
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.argLst...)), s.ctx)
+		c.Assert(err, IsNil)
+		exportSetRes, err := f.eval(nil)
+		res, err := exportSetRes.ToString()
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, t.res)
+	}
+}
+
 func (s *testEvaluatorSuite) TestBin(c *C) {
 	defer testleak.AfterTest(c)()
 
