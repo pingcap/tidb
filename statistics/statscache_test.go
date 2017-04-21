@@ -250,7 +250,7 @@ func (s *testStatsCacheSuite) TestDDL(c *C) {
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo = tbl.Meta()
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo.ID)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 	sc := new(variable.StatementContext)
 	count, err := statsTbl.ColumnEqualRowCount(sc, types.NewIntDatum(0), tableInfo.Columns[2])
@@ -268,7 +268,7 @@ func (s *testStatsCacheSuite) TestDDL(c *C) {
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo = tbl.Meta()
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo.ID)
 	// If we don't use orginal default value, we will get a pseudo table.
 	c.Assert(statsTbl.Pseudo, IsFalse)
 
@@ -284,7 +284,7 @@ func (s *testStatsCacheSuite) TestDDL(c *C) {
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo = tbl.Meta()
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo.ID)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 	rs = testKit.MustQuery("select count(*) from mysql.stats_histograms where table_id = ? and hist_id = 3 and is_index = 0", tableInfo.ID)
 	rs.Check(testkit.Rows("0"))
@@ -428,7 +428,7 @@ func (s *testStatsCacheSuite) TestLoadHist(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo = tbl.Meta()
 	h.Update(is)
-	newStatsTbl2 := h.GetTableStats(tableInfo)
+	newStatsTbl2 := h.GetTableStats(tableInfo.ID)
 	c.Assert(newStatsTbl2 == newStatsTbl, IsFalse)
 	// The histograms is not updated.
 	for id, hist := range newStatsTbl.Columns {
