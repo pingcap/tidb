@@ -127,17 +127,27 @@ type DDL interface {
 	RegisterEventCh(chan<- *Event)
 }
 
-type ddlType int
-
-const (
-	// TypeCreateTable standing for a create table operation.
-	TypeCreateTable ddlType = iota
-)
-
 // Event is an event that a ddl operation happened.
 type Event struct {
-	Tp        ddlType
-	TableInfo *model.TableInfo
+	Tp         model.ActionType
+	TableInfo  *model.TableInfo
+	ColumnInfo *model.ColumnInfo
+	IndexInfo  *model.IndexInfo
+}
+
+// String implements fmt.Stringer interface.
+func (e *Event) String() string {
+	ret := fmt.Sprintf("(Event Type: %s", e.Tp)
+	if e.TableInfo != nil {
+		ret += fmt.Sprintf(", Table ID: %d, Table Name %s", e.TableInfo.ID, e.TableInfo.Name)
+	}
+	if e.ColumnInfo != nil {
+		ret += fmt.Sprintf(", Column ID: %d, Column Name %s", e.ColumnInfo.ID, e.ColumnInfo.Name)
+	}
+	if e.IndexInfo != nil {
+		ret += fmt.Sprintf(", Index ID: %d, Index Name %s", e.IndexInfo.ID, e.IndexInfo.Name)
+	}
+	return ret
 }
 
 type ddl struct {
@@ -170,6 +180,18 @@ type ddl struct {
 // BindStatsHandle will bind the stats handle with a DDL interface. It will be called after a handle has been initialized.
 func (d *ddl) RegisterEventCh(ch chan<- *Event) {
 	d.ddlEventCh = ch
+}
+
+// asyncNotifyEvent will notify the ddl event to outside world, say statistic handle. When the channel is full, we may
+// give up notify and log it.
+func (d *ddl) asyncNotifyEvent(e *Event) {
+	if d.ddlEventCh != nil {
+		select {
+		case d.ddlEventCh <- e:
+		default:
+			log.Warnf("Fail to notify event %s.", e)
+		}
+	}
 }
 
 // NewDDL creates a new DDL.
