@@ -305,7 +305,6 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 	// Check if this plan matches the property.
 	matchProperty := true
 	if !prop.isEmpty() {
-		// FIXME: We have not considered the case of index columns with length.
 		for i, col := range idx.Columns {
 			// not matched
 			if col.Name.L == prop.cols[0].ColName.L {
