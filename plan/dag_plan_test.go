@@ -122,7 +122,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		// Test for index with length.
 		{
 			sql:  "select c_str from t where e_str = '1' order by d_str, c_str",
-			best: "IndexLookUp(Index(t.e_d_c_str)[[1,1]], Table(t))->Projection->Sort->Projection",
+			best: "IndexLookUp(Index(t.e_d_c_str_prefix)[[1,1]], Table(t))->Projection->Sort->Projection",
 		},
 		// Test PK in index single read.
 		{

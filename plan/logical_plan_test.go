@@ -159,7 +159,7 @@ func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 			State: model.StatePublic,
 		},
 		{
-			Name: model.NewCIStr("e_d_c_str"),
+			Name: model.NewCIStr("e_d_c_str_prefix"),
 			Columns: []*model.IndexColumn{
 				{
 					Name:   model.NewCIStr("e_str"),
