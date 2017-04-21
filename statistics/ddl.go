@@ -31,7 +31,7 @@ func (h *Handle) HandleDDLEvent(t *ddl.Event) error {
 	case model.ActionCreateTable:
 		return h.insertTableStats2KV(t.TableInfo)
 	case model.ActionDropTable:
-		return h.deleteTableStats2KV(t.TableInfo)
+		return h.deleteTableStatsFromKV(t.TableInfo.ID)
 	case model.ActionAddColumn:
 		return h.insertColStats2KV(t.TableInfo.ID, t.ColumnInfo)
 	case model.ActionDropColumn:
@@ -77,22 +77,22 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo) error {
 	return errors.Trace(err)
 }
 
-func (h *Handle) deleteTableStats2KV(info *model.TableInfo) error {
+func (h *Handle) deleteTableStatsFromKV(id int64) error {
 	exec := h.ctx.(sqlexec.SQLExecutor)
 	_, err := exec.Execute("begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// First of all, we update the version.
-	_, err = exec.Execute(fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.ctx.Txn().StartTS(), info.ID))
+	_, err = exec.Execute(fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.ctx.Txn().StartTS(), id))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = exec.Execute(fmt.Sprintf("delete from mysql.stats_histograms where table_id = %d", info.ID))
+	_, err = exec.Execute(fmt.Sprintf("delete from mysql.stats_histograms where table_id = %d", id))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = exec.Execute(fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d", info.ID))
+	_, err = exec.Execute(fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d", id))
 	if err != nil {
 		return errors.Trace(err)
 	}
