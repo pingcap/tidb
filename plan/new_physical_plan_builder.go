@@ -361,7 +361,7 @@ func matchIndicesProp(idxCols []*model.IndexColumn, propCols []*expression.Colum
 		return false
 	}
 	for i, col := range propCols {
-		if col.ColName.L != propCols[i].ColName.L {
+		if idxCols[i].Length != types.UnspecifiedLength || col.ColName.L != idxCols[i].Name.L {
 			return false
 		}
 	}
