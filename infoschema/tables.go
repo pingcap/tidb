@@ -50,6 +50,7 @@ const (
 	tableTriggers       = "TRIGGERS"
 	tableUserPrivileges = "USER_PRIVILEGES"
 	tableEngines        = "ENGINES"
+	tableViews          = "VIEWS"
 )
 
 type columnInfo struct {
@@ -339,6 +340,19 @@ var tableEnginesCols = []columnInfo{
 	{"TRANSACTIONS", mysql.TypeVarchar, 3, 0, nil, nil},
 	{"XA", mysql.TypeVarchar, 3, 0, nil, nil},
 	{"SAVEPOINTS", mysql.TypeVarchar, 3, 0, nil, nil},
+}
+
+var tableViewsCols = []columnInfo{
+	{"TABLE_CATALOG", mysql.TypeVarchar, 512, 0, nil, nil},
+	{"TABLE_SCHEMA", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"VIEW_DEFINITION", mysql.TypeLongBlob, 0, 0, nil, nil},
+	{"CHECK_OPTION", mysql.TypeVarchar, 8, 0, nil, nil},
+	{"IS_UPDATABLE", mysql.TypeVarchar, 3, 0, nil, nil},
+	{"DEFINER", mysql.TypeVarchar, 77, 0, nil, nil},
+	{"SECURITY_TYPE", mysql.TypeVarchar, 7, 0, nil, nil},
+	{"CHARACTER_SET_CLIENT", mysql.TypeVarchar, 32, 0, nil, nil},
+	{"COLLATION_CONNECTION", mysql.TypeVarchar, 32, 0, nil, nil},
 }
 
 func dataForCharacterSets() (records [][]types.Datum) {
@@ -686,6 +700,7 @@ var tableNameToColumns = map[string]([]columnInfo){
 	tableTriggers:       tableTriggersCols,
 	tableUserPrivileges: tableUserPrivilegesCols,
 	tableEngines:        tableEnginesCols,
+	tableViews:          tableEnginesCols,
 }
 
 func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
@@ -753,6 +768,7 @@ func (it *infoschemaTable) getRows(ctx context.Context, cols []*table.Column) (f
 		fullRows = dataForUserPrivileges(ctx)
 	case tableEngines:
 		fullRows = dataForEngines()
+	case tableViews:
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
