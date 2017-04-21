@@ -81,7 +81,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 type MockDriver struct {
 }
 
-// Open creates an MockTiKV storage.
+// Open creates a MockTiKV storage.
 func (d MockDriver) Open(path string) (kv.Storage, error) {
 	u, err := url.Parse(path)
 	if err != nil {
