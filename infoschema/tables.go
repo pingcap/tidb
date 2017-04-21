@@ -700,7 +700,7 @@ var tableNameToColumns = map[string]([]columnInfo){
 	tableTriggers:       tableTriggersCols,
 	tableUserPrivileges: tableUserPrivilegesCols,
 	tableEngines:        tableEnginesCols,
-	tableViews:          tableEnginesCols,
+	tableViews:          tableViewsCols,
 }
 
 func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
