@@ -458,7 +458,7 @@ func dataForTables(schemas []*model.DBInfo) [][]types.Datum {
 				catalogVal,          // TABLE_CATALOG
 				schema.Name.O,       // TABLE_SCHEMA
 				table.Name.O,        // TABLE_NAME
-				"BASE_TABLE",        // TABLE_TYPE
+				"BASE TABLE",        // TABLE_TYPE
 				"InnoDB",            // ENGINE
 				uint64(10),          // VERSION
 				"Compact",           // ROW_FORMAT
