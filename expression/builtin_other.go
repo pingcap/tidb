@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -276,9 +277,10 @@ func (b *builtinBitCountSig) eval(row []types.Datum) (d types.Datum, err error) 
 	sc.IgnoreTruncate = true
 	bin, err := arg.ToInt64(sc)
 	if err != nil {
-		if strings.Contains(err.Error(), "overflows") {
+		if terror.ErrorEqual(err, types.ErrOverflow) {
 			d.SetInt64(64)
 			return d, nil
+
 		}
 		return d, errors.Trace(err)
 	}
