@@ -23,7 +23,6 @@ import (
 )
 
 var (
-	_ functionClass = &sleepFunctionClass{}
 	_ functionClass = &inFunctionClass{}
 	_ functionClass = &rowFunctionClass{}
 	_ functionClass = &castFunctionClass{}

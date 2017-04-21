@@ -114,6 +114,16 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 			sql:  "select c, b from t where c = 1 and e = 1 and b = 1 limit 1",
 			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t)->Sel([eq(test.t.b, 1)])->Limit)->Limit->Projection",
 		},
+		// Test PK in index single read.
+		{
+			sql:  "select c from t where t.c = 1 and t.a = 1 order by t.d limit 1",
+			best: "IndexReader(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.a, 1)])->Limit)->Limit->Projection->Projection",
+		},
+		// Test PK in index double read.
+		{
+			sql:  "select * from t where t.c = 1 and t.a = 1 order by t.d limit 1",
+			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.a, 1)])->Limit, Table(t))->Limit",
+		},
 	}
 	for _, tt := range tests {
 		comment := Commentf("for %s", tt.sql)
