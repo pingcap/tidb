@@ -1740,7 +1740,38 @@ type builtinMakeDateSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_makedate
 func (b *builtinMakeDateSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("MAKEDATE")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if args[0].IsNull() || args[1].IsNull() {
+		return d, nil
+	}
+	year := args[0].GetInt64()
+	dayOfYear := args[1].GetInt64()
+	if dayOfYear <= 0 || year < 0 || year > 9999 {
+		return d, nil
+	}
+	if year < 70 {
+		year += 2000
+	} else if year < 100 {
+		year += 1900
+	}
+	startTime := types.Time{
+		Time: types.FromDate(int(year), 1, 1, 0, 0, 0, 0),
+		Type: mysql.TypeDate,
+		Fsp:  0,
+	}
+	retTimestamp := types.TimestampDiff("DAY", types.ZeroDate, startTime)
+	if retTimestamp == 0 {
+		return d, errorOrWarning(types.ErrInvalidTimeFormat, b.ctx)
+	}
+	ret := types.TimeFromDays(retTimestamp + dayOfYear - 1)
+	if ret.IsZero() || ret.Time.Year() > 9999 {
+		return d, nil
+	}
+	d.SetMysqlTime(ret)
+	return d, nil
 }
 
 type makeTimeFunctionClass struct {
