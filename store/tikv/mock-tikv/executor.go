@@ -15,6 +15,7 @@ package mocktikv
 
 import (
 	"bytes"
+	"encoding/binary"
 	"sort"
 
 	"github.com/juju/errors"
@@ -256,6 +257,13 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 	}
 
 	return handle, values, nil
+}
+
+func decodeHandle(data []byte) (int64, error) {
+	var h int64
+	buf := bytes.NewBuffer(data)
+	err := binary.Read(buf, binary.BigEndian, &h)
+	return h, errors.Trace(err)
 }
 
 type selectionExec struct {
@@ -521,7 +529,7 @@ func (e *limitExec) SetSrcExec(src executor) {
 }
 
 func (e *limitExec) Next() (handle int64, value [][]byte, err error) {
-	if e.cursor >= e.limit {
+	if e.cursor >= e.limit && e.limit >= 0 {
 		return 0, nil, nil
 	}
 
@@ -589,33 +597,6 @@ func getRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle int64, 
 	return values, nil
 }
 
-// TODO: Remove it after replacing evaluator in aggregation.
-func extractColIDsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector map[int64]int) error {
-	if expr == nil {
-		return nil
-	}
-	if expr.GetTp() == tipb.ExprType_ColumnRef {
-		_, i, err := codec.DecodeInt(expr.Val)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for idx, c := range columns {
-			if c.GetColumnId() == i {
-				collector[i] = idx
-				return nil
-			}
-		}
-		return errInvalid.Gen("column %d not found", i)
-	}
-	for _, child := range expr.Children {
-		err := extractColIDsInExpr(child, columns, collector)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
 func isDuplicated(offsets []int, offset int) bool {
 	for _, idx := range offsets {
 		if idx == offset {
@@ -653,16 +634,4 @@ func extractOffsetsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector
 		}
 	}
 	return collector, nil
-}
-
-func convertToExprs(sc *variable.StatementContext, colIDs map[int64]int, pbExprs []*tipb.Expr) ([]expression.Expression, error) {
-	exprs := make([]expression.Expression, 0, len(pbExprs))
-	for _, expr := range pbExprs {
-		e, err := expression.PBToExpr(expr, colIDs, sc)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		exprs = append(exprs, e)
-	}
-	return exprs, nil
 }

@@ -87,7 +87,7 @@ func (ts *testDatumSuite) TestToBool(c *C) {
 }
 
 func (ts *testDatumSuite) TestEqualDatums(c *C) {
-	testCases := []struct {
+	tests := []struct {
 		a    []interface{}
 		b    []interface{}
 		same bool
@@ -109,8 +109,8 @@ func (ts *testDatumSuite) TestEqualDatums(c *C) {
 		{[]interface{}{1}, []interface{}{1, 1}, false},
 		{[]interface{}{nil}, []interface{}{1}, false},
 	}
-	for _, t := range testCases {
-		testEqualDatums(c, t.a, t.b, t.same)
+	for _, tt := range tests {
+		testEqualDatums(c, tt.a, tt.b, tt.same)
 	}
 }
 
@@ -185,7 +185,7 @@ func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
 }
 
 func (ts *testDatumSuite) TestIsNull(c *C) {
-	testCases := []struct {
+	tests := []struct {
 		data   interface{}
 		isnull bool
 	}{
@@ -196,8 +196,8 @@ func (ts *testDatumSuite) TestIsNull(c *C) {
 		{"string", false},
 		{"", false},
 	}
-	for _, t := range testCases {
-		testIsNull(c, t.data, t.isnull)
+	for _, tt := range tests {
+		testIsNull(c, tt.data, tt.isnull)
 	}
 }
 
@@ -207,7 +207,7 @@ func testIsNull(c *C, data interface{}, isnull bool) {
 }
 
 func (ts *testDatumSuite) TestCoerceDatum(c *C) {
-	testCases := []struct {
+	tests := []struct {
 		a    Datum
 		b    Datum
 		kind byte
@@ -219,16 +219,16 @@ func (ts *testDatumSuite) TestCoerceDatum(c *C) {
 	}
 	sc := new(variable.StatementContext)
 	sc.IgnoreTruncate = true
-	for _, ca := range testCases {
-		x, y, err := CoerceDatum(sc, ca.a, ca.b)
+	for _, tt := range tests {
+		x, y, err := CoerceDatum(sc, tt.a, tt.b)
 		c.Check(err, IsNil)
 		c.Check(x.Kind(), Equals, y.Kind())
-		c.Check(x.Kind(), Equals, ca.kind)
+		c.Check(x.Kind(), Equals, tt.kind)
 	}
 }
 
 func (ts *testDatumSuite) TestBitOps(c *C) {
-	testCases := []struct {
+	tests := []struct {
 		a      Datum
 		b      Datum
 		bitop  string // bitwise operator
@@ -275,34 +275,34 @@ func (ts *testDatumSuite) TestBitOps(c *C) {
 		{NewFloat64Datum(1024), NewFloat64Datum(10.5), "RightShift", NewUintDatum(0)},
 	}
 
-	for _, ca := range testCases {
+	for _, tt := range tests {
 		var (
 			result Datum
 			err    error
 		)
 		sc := new(variable.StatementContext)
 		sc.IgnoreTruncate = true
-		switch ca.bitop {
+		switch tt.bitop {
 		case "And":
-			result, err = ComputeBitAnd(sc, ca.a, ca.b)
+			result, err = ComputeBitAnd(sc, tt.a, tt.b)
 		case "Or":
-			result, err = ComputeBitOr(sc, ca.a, ca.b)
+			result, err = ComputeBitOr(sc, tt.a, tt.b)
 		case "Not":
-			result, err = ComputeBitNeg(sc, ca.a)
+			result, err = ComputeBitNeg(sc, tt.a)
 		case "Xor":
-			result, err = ComputeBitXor(sc, ca.a, ca.b)
+			result, err = ComputeBitXor(sc, tt.a, tt.b)
 		case "LeftShift":
-			result, err = ComputeLeftShift(sc, ca.a, ca.b)
+			result, err = ComputeLeftShift(sc, tt.a, tt.b)
 		case "RightShift":
-			result, err = ComputeRightShift(sc, ca.a, ca.b)
+			result, err = ComputeRightShift(sc, tt.a, tt.b)
 		}
 		c.Check(err, Equals, nil)
-		c.Assert(result.GetUint64(), Equals, ca.result.GetUint64())
+		c.Assert(result.GetUint64(), Equals, tt.result.GetUint64())
 	}
 }
 
 func (ts *testDatumSuite) TestToBytes(c *C) {
-	testCases := []struct {
+	tests := []struct {
 		a   Datum
 		out []byte
 	}{
@@ -313,9 +313,9 @@ func (ts *testDatumSuite) TestToBytes(c *C) {
 	}
 	sc := new(variable.StatementContext)
 	sc.IgnoreTruncate = true
-	for _, ca := range testCases {
-		bin, err := ca.a.ToBytes()
+	for _, tt := range tests {
+		bin, err := tt.a.ToBytes()
 		c.Assert(err, IsNil)
-		c.Assert(bin, BytesEquals, ca.out)
+		c.Assert(bin, BytesEquals, tt.out)
 	}
 }
