@@ -256,6 +256,8 @@ func (*testSuite) TestInfoTables(c *C) {
 		"TABLE_CONSTRAINTS",
 		"TRIGGERS",
 		"USER_PRIVILEGES",
+		"ENGINES",
+		"VIEWS",
 	}
 	for _, t := range info_tables {
 		tb, err1 := is.TableByName(model.NewCIStr(infoschema.Name), model.NewCIStr(t))
