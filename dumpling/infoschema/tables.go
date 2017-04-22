@@ -50,6 +50,8 @@ const (
 	tableTriggers       = "TRIGGERS"
 	tableUserPrivileges = "USER_PRIVILEGES"
 	tableEngines        = "ENGINES"
+	tableViews          = "VIEWS"
+	tableRoutines       = "ROUTINES"
 )
 
 type columnInfo struct {
@@ -339,6 +341,53 @@ var tableEnginesCols = []columnInfo{
 	{"TRANSACTIONS", mysql.TypeVarchar, 3, 0, nil, nil},
 	{"XA", mysql.TypeVarchar, 3, 0, nil, nil},
 	{"SAVEPOINTS", mysql.TypeVarchar, 3, 0, nil, nil},
+}
+
+var tableViewsCols = []columnInfo{
+	{"TABLE_CATALOG", mysql.TypeVarchar, 512, mysql.NotNullFlag, nil, nil},
+	{"TABLE_SCHEMA", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"TABLE_NAME", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"VIEW_DEFINITION", mysql.TypeLongBlob, 0, mysql.NotNullFlag, nil, nil},
+	{"CHECK_OPTION", mysql.TypeVarchar, 8, mysql.NotNullFlag, nil, nil},
+	{"IS_UPDATABLE", mysql.TypeVarchar, 3, mysql.NotNullFlag, nil, nil},
+	{"DEFINER", mysql.TypeVarchar, 77, mysql.NotNullFlag, nil, nil},
+	{"SECURITY_TYPE", mysql.TypeVarchar, 7, mysql.NotNullFlag, nil, nil},
+	{"CHARACTER_SET_CLIENT", mysql.TypeVarchar, 32, mysql.NotNullFlag, nil, nil},
+	{"COLLATION_CONNECTION", mysql.TypeVarchar, 32, mysql.NotNullFlag, nil, nil},
+}
+
+var tableRoutinesCols = []columnInfo{
+	{"SPECIFIC_NAME", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"ROUTINE_CATALOG", mysql.TypeVarchar, 512, mysql.NotNullFlag, nil, nil},
+	{"ROUTINE_SCHEMA", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"ROUTINE_NAME", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"ROUTINE_TYPE", mysql.TypeVarchar, 9, mysql.NotNullFlag, nil, nil},
+	{"DATA_TYPE", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"CHARACTER_MAXIMUM_LENGTH", mysql.TypeLong, 21, 0, nil, nil},
+	{"CHARACTER_OCTET_LENGTH", mysql.TypeLong, 21, 0, nil, nil},
+	{"NUMERIC_PRECISION", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"NUMERIC_SCALE", mysql.TypeLong, 21, 0, nil, nil},
+	{"DATETIME_PRECISION", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"CHARACTER_SET_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"COLLATION_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"DTD_IDENTIFIER", mysql.TypeLongBlob, 0, 0, nil, nil},
+	{"ROUTINE_BODY", mysql.TypeVarchar, 8, mysql.NotNullFlag, nil, nil},
+	{"ROUTINE_DEFINITION", mysql.TypeLongBlob, 0, 0, nil, nil},
+	{"EXTERNAL_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"EXTERNAL_LANGUAGE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"PARAMETER_STYLE", mysql.TypeVarchar, 8, mysql.NotNullFlag, nil, nil},
+	{"IS_DETERMINISTIC", mysql.TypeVarchar, 3, mysql.NotNullFlag, nil, nil},
+	{"SQL_DATA_ACCESS", mysql.TypeVarchar, 64, mysql.NotNullFlag, nil, nil},
+	{"SQL_PATH", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"SECURITY_TYPE", mysql.TypeVarchar, 7, mysql.NotNullFlag, nil, nil},
+	{"CREATED", mysql.TypeDatetime, 0, mysql.NotNullFlag, "0000-00-00 00:00:00", nil},
+	{"LAST_ALTERED", mysql.TypeDatetime, 0, mysql.NotNullFlag, "0000-00-00 00:00:00", nil},
+	{"SQL_MODE", mysql.TypeVarchar, 8192, mysql.NotNullFlag, nil, nil},
+	{"ROUTINE_COMMENT", mysql.TypeLongBlob, 0, 0, nil, nil},
+	{"DEFINER", mysql.TypeVarchar, 77, mysql.NotNullFlag, nil, nil},
+	{"CHARACTER_SET_CLIENT", mysql.TypeVarchar, 32, mysql.NotNullFlag, nil, nil},
+	{"COLLATION_CONNECTION", mysql.TypeVarchar, 32, mysql.NotNullFlag, nil, nil},
+	{"DATABASE_COLLATION", mysql.TypeVarchar, 32, mysql.NotNullFlag, nil, nil},
 }
 
 func dataForCharacterSets() (records [][]types.Datum) {
@@ -686,6 +735,8 @@ var tableNameToColumns = map[string]([]columnInfo){
 	tableTriggers:       tableTriggersCols,
 	tableUserPrivileges: tableUserPrivilegesCols,
 	tableEngines:        tableEnginesCols,
+	tableViews:          tableViewsCols,
+	tableRoutines:       tableRoutinesCols,
 }
 
 func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
@@ -753,6 +804,8 @@ func (it *infoschemaTable) getRows(ctx context.Context, cols []*table.Column) (f
 		fullRows = dataForUserPrivileges(ctx)
 	case tableEngines:
 		fullRows = dataForEngines()
+	case tableViews:
+	case tableRoutines:
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
