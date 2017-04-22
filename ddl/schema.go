@@ -119,6 +119,9 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) error {
 		}
 		job.State = model.JobDone
 		job.SchemaState = model.StateNone
+		for _, tblInfo := range dbInfo.Tables {
+			d.asyncNotifyEvent(&Event{Tp: model.ActionDropTable, TableInfo: tblInfo})
+		}
 	default:
 		// We can't enter here.
 		err = errors.Errorf("invalid db state %v", dbInfo.State)

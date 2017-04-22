@@ -292,7 +292,12 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		for _, col := range idx.Columns {
 			indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: col.Offset})
 		}
-		// TODO: We should add PK column to index schema.
+		for i, col := range is.Columns {
+			if is.Table.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
+				indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: i})
+				break
+			}
+		}
 		copTask.indexPlan.SetSchema(expression.NewSchema(indexCols...))
 	} else {
 		is.SetSchema(p.schema)
