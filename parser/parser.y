@@ -835,6 +835,7 @@ import (
 	FunctionNameConflict		"Built-in function call names which are conflict with keywords"
 	FunctionNameDateArith		"Date arith function call names (date_add or date_sub)"
 	FunctionNameDateArithMultiForms	"Date arith function call names (adddate or subdate)"
+	FunctionNameTimeArithMultiForms	"Time arith function call names (addtime or subtime)"
 
 %precedence lowestOpt
 %token	tableRefPriority
@@ -2873,10 +2874,6 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
-|	"ADDTIME" '(' Expression ',' Expression ')'
- 	{
- 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}}
- 	}
 |	"ACOS" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
@@ -3081,6 +3078,16 @@ FunctionCallNonKeyword:
 				$3.(ast.ExprNode),
 				$6.(ast.ExprNode),
 				ast.NewValueExpr($7),
+			},
+		}
+	}
+|	FunctionNameTimeArithMultiForms '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{
+				$3.(ast.ExprNode),
+				$5.(ast.ExprNode),
 			},
 		}
 	}
@@ -3460,10 +3467,6 @@ FunctionCallNonKeyword:
 			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)},
 		}
-	}
-|	"SUBTIME" '(' Expression ',' Expression ')'
-	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}}
 	}
 |	"SYSDATE" '(' ExpressionOpt ')'
 	{
@@ -3975,6 +3978,9 @@ FunctionNameDateArithMultiForms:
 	"ADDDATE"
 |	"SUBDATE"
 
+FunctionNameTimeArithMultiForms:
+	"ADDTIME"
+|	"SUBTIME"
 
 TrimDirection:
 	"BOTH"

@@ -668,6 +668,8 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		// for ADDTIME, SUBTIME
 		{"SELECT ADDTIME('01:00:00.999999', '02:00:00.999998');", true},
 		{"SELECT SUBTIME('01:00:00.999999', '02:00:00.999998');", true},
+		{"SELECT ADDTIME('2017-12-31 23:59:59', '120:44:33.1');", true},
+		{"SELECT SUBTIME('2017-12-31 23:59:59', '120:44:33');", true},
 
 		// for CONVERT_TZ
 		{"SELECT CONVERT_TZ('2004-01-01 12:00:00','+00:00','+10:00');", true},

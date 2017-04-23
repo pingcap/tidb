@@ -1014,6 +1014,65 @@ func (s *testEvaluatorSuite) TestTimestamp(c *C) {
 	c.Assert(d.Kind(), Equals, types.KindNull)
 }
 
+func (s *testEvaluatorSuite) TestTimeArithFuncFactory(c *C) {
+	defer testleak.AfterTest(c)()
+
+	testsDateTimeStrings := []struct {
+		t1        string
+		t2        string
+		expectAdd string
+		expectSub string
+	}{
+		{"2007-12-31 23:59:59.999999", "23:59:59.999999", "2008-01-01 23:59:59.999998", "2007-12-31 00:00:00"},
+		{"9207-12-31 23:59:59.1", "-120:44:33", "9207-12-26 23:15:26.100000", "9208-01-06 00:44:32.100000"},
+		{"9207-12-31 23:59:59", "120:44:33.1", "9208-01-06 00:44:32.100000", "9207-12-26 23:15:25.900000"},
+		{"2007-12-00 00:00:00", "1:1:1.000002", "2007-11-30 01:01:01.000002", "2007-11-29 22:58:58.999998"},
+		{"2007-12-00 00:00:00", "1 1:1:1.000002", "2007-12-01 02:01:01.000002", "2007-11-28 22:58:58.999998"},
+	}
+
+	testsDurationStrings := []struct {
+		t1        string
+		t2        string
+		expectAdd string
+		expectSub string
+	}{
+		{"23:59:59.999999", "22:59:59.999999", "46:59:59.999998", "01:00:00"},
+		{"22 23:59:59.999999", "-9 22:59:59.999999", "313:00:00", "790:59:59.999998"},
+		{"-22 23:59:59.999999", "-19 22:59:59.999999", "-838:59:59", "-73:00:00"},
+		{"22 23:59:59.999999", "19 22:59:59.999999", "838:59:59", "73:00:00"},
+	}
+
+	timeAdd := timeArithFuncFactory(ast.TimeArithAdd)
+	timeSub := timeArithFuncFactory(ast.TimeArithSub)
+
+	for _, test := range testsDateTimeStrings {
+		t1 := types.NewStringDatum(test.t1)
+		t2 := types.NewStringDatum(test.t2)
+		result1, err := timeAdd([]types.Datum{t1, t2}, s.ctx)
+		c.Assert(err, IsNil)
+
+		result2, err := timeSub([]types.Datum{t1, t2}, s.ctx)
+		c.Assert(err, IsNil)
+
+		c.Assert(result1.GetMysqlTime().String(), Equals, test.expectAdd)
+		c.Assert(result2.GetMysqlTime().String(), Equals, test.expectSub)
+	}
+
+	for _, test := range testsDurationStrings {
+		t1 := types.NewStringDatum(test.t1)
+		t2 := types.NewStringDatum(test.t2)
+
+		result1, err := timeAdd([]types.Datum{t1, t2}, s.ctx)
+		c.Assert(err, IsNil)
+
+		result2, err := timeSub([]types.Datum{t1, t2}, s.ctx)
+		c.Assert(err, IsNil)
+
+		c.Assert(result1.GetMysqlDuration().String(), Equals, test.expectAdd)
+		c.Assert(result2.GetMysqlDuration().String(), Equals, test.expectSub)
+	}
+}
+
 func (s *testEvaluatorSuite) TestMakeTime(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {

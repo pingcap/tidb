@@ -1480,6 +1480,110 @@ func (b *builtinDateArithSig) eval(row []types.Datum) (d types.Datum, err error)
 	return d, nil
 }
 
+type timeArithFunctionClass struct {
+	baseFunctionClass
+
+	op ast.TimeArithType
+}
+
+func (c *timeArithFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinTimeArithSig{newBaseBuiltinFunc(args, ctx), c.op}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinTimeArithSig struct {
+	baseBuiltinFunc
+
+	op ast.TimeArithType
+}
+
+func (b *builtinTimeArithSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return timeArithFuncFactory(b.op)(args, b.ctx)
+}
+
+func timeArithFuncFactory(op ast.TimeArithType) BuiltinFunc {
+	return func(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+		// args[0] -> DateTime, Time.
+		// args[1] -> Time.
+		// result type equals to args[0] type.
+		if args[0].IsNull() || args[1].IsNull() {
+			return d, nil
+		}
+
+		//todo fsp
+		bd1, err := convertToDuration(ctx.GetSessionVars().StmtCtx, args[1], types.MaxFsp)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		b1 := bd1.GetMysqlDuration()
+
+		a1, err := convertDatumToTime(ctx.GetSessionVars().StmtCtx, args[0])
+		if err != nil {
+			ad1, err := convertToDuration(ctx.GetSessionVars().StmtCtx, args[0], types.MaxFsp)
+			if err != nil {
+				return d, errors.Trace(err)
+			}
+			a1 := ad1.GetMysqlDuration()
+			//args[0] is Duration case, result will be Duration too.
+			var r time.Duration
+
+			if op == ast.TimeArithAdd {
+				r = a1.Duration + b1.Duration
+			} else {
+				r = a1.Duration - b1.Duration
+			}
+
+			if r > types.MaxTime {
+				r = types.MaxTime
+			} else if r < types.MinTime {
+				r = types.MinTime
+			}
+
+			// Calculate fsp like mysql does.
+			var fsp int
+			milliseconds := (r.Nanoseconds() % int64(time.Second) / 1000)
+			if milliseconds == 0 {
+				fsp = types.DefaultFsp
+			} else {
+				fsp = types.MaxFsp
+			}
+			dr := types.Duration{
+				Duration: r,
+				Fsp:      fsp}
+			d.SetMysqlDuration(dr)
+			return d, nil
+		}
+		//args[0] is Time case, result will be Time too.
+		var r time.Time
+		sign := b1.Duration > 0
+		if (op == ast.TimeArithAdd && sign) || (op == ast.TimeArithSub && !sign) {
+			r = time.Date(a1.Time.Year(), time.Month(a1.Time.Month()), a1.Time.Day(), a1.Time.Hour()+b1.Hour(), a1.Time.Minute()+b1.Minute(), a1.Time.Second()+b1.Second(), 1000*(a1.Time.Microsecond()+b1.MicroSecond()), getTimeZone(ctx))
+		} else {
+			r = time.Date(a1.Time.Year(), time.Month(a1.Time.Month()), a1.Time.Day(), a1.Time.Hour()-b1.Hour(), a1.Time.Minute()-b1.Minute(), a1.Time.Second()-b1.Second(), 1000*(a1.Time.Microsecond()-b1.MicroSecond()), getTimeZone(ctx))
+		}
+
+		// Calculate fsp like mysql does.
+		var fsp int
+		milliseconds := r.Nanosecond() / 1000
+
+		if milliseconds == 0 {
+			fsp = types.DefaultFsp
+		} else {
+			fsp = types.MaxFsp
+		}
+		rt := types.Time{
+			Time: types.FromDate(r.Year(), int(r.Month()), r.Day(), r.Hour(), r.Minute(), r.Second(), milliseconds),
+			Type: mysql.TypeDatetime,
+			Fsp:  fsp}
+
+		d.SetMysqlTime(rt)
+		return d, nil
+	}
+}
+
 var reg = regexp.MustCompile(`[\d]+`)
 
 func parseDayInterval(sc *variable.StatementContext, value types.Datum) (int64, error) {

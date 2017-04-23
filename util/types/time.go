@@ -828,6 +828,11 @@ func (d Duration) MicroSecond() int {
 	return frac
 }
 
+//ParseDuration(test.Input, MinFsp)
+// ParseDuration parses the time form a formatted string with a fractional seconds part,
+// returns the duration type Time value.
+// See http://dev.mysql.com/doc/refman/5.7/en/fractional-seconds.html
+
 // ParseDuration parses the time form a formatted string with a fractional seconds part,
 // returns the duration type Time value.
 // See http://dev.mysql.com/doc/refman/5.7/en/fractional-seconds.html
@@ -1647,6 +1652,11 @@ func IsDateFormat(format string) bool {
 
 // ParseTimeFromInt64 parses mysql time value from int64.
 func ParseTimeFromInt64(num int64) (Time, error) {
+	return parseDateTimeFromNum(num)
+}
+
+// ParseDurationFromInt64 parses mysql duration value from int64.
+func ParseDurationFromInt64(num int64) (Time, error) {
 	return parseDateTimeFromNum(num)
 }
 
