@@ -30,7 +30,7 @@ func BenchmarkEncodeEndKey(b *testing.B) {
 	}
 }
 
-// PrefixNext() is slow than using EncodeRowKeyWithHandle.
+// BenchmarkEncodeRowKeyWithPrefixNex PrefixNext() is slow than using EncodeRowKeyWithHandle.
 // BenchmarkEncodeEndKey-4		20000000	        97.2 ns/op
 // BenchmarkEncodeRowKeyWithPrefixNex-4	10000000	       121 ns/op
 func BenchmarkEncodeRowKeyWithPrefixNex(b *testing.B) {

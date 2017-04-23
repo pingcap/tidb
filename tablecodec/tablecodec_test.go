@@ -33,7 +33,7 @@ var _ = Suite(&testTableCodecSuite{})
 
 type testTableCodecSuite struct{}
 
-// TODO: add more tests.
+// TestTableCodec TODO: add more tests.
 func (s *testTableCodecSuite) TestTableCodec(c *C) {
 	defer testleak.AfterTest(c)()
 	key := EncodeRowKey(1, codec.EncodeInt(nil, 2))
