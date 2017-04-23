@@ -292,7 +292,12 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		for _, col := range idx.Columns {
 			indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: col.Offset})
 		}
-		// TODO: We should add PK column to index schema.
+		for i, col := range is.Columns {
+			if is.Table.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
+				indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: i})
+				break
+			}
+		}
 		copTask.indexPlan.SetSchema(expression.NewSchema(indexCols...))
 	} else {
 		is.SetSchema(p.schema)
@@ -300,7 +305,6 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 	// Check if this plan matches the property.
 	matchProperty := true
 	if !prop.isEmpty() {
-		// FIXME: We have not considered the case of index columns with length.
 		for i, col := range idx.Columns {
 			// not matched
 			if col.Name.L == prop.cols[0].ColName.L {
@@ -361,7 +365,7 @@ func matchIndicesProp(idxCols []*model.IndexColumn, propCols []*expression.Colum
 		return false
 	}
 	for i, col := range propCols {
-		if col.ColName.L != propCols[i].ColName.L {
+		if idxCols[i].Length != types.UnspecifiedLength || col.ColName.L != idxCols[i].Name.L {
 			return false
 		}
 	}

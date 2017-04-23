@@ -374,9 +374,6 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	case ast.Now, ast.Sysdate, ast.CurrentTimestamp, ast.UTCTimestamp:
 		tp = types.NewFieldType(mysql.TypeDatetime)
 		tp.Decimal = v.getFsp(x)
-	// string related
-	case ast.RandomBytes:
-		tp = types.NewFieldType(mysql.TypeVarString)
 	case ast.MD5:
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
@@ -391,9 +388,11 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		ast.SubstringIndex, ast.Trim, ast.LTrim, ast.RTrim, ast.Reverse, ast.Hex, ast.Unhex,
 		ast.DateFormat, ast.Rpad, ast.Lpad, ast.CharFunc, ast.Conv, ast.MakeSet, ast.Oct, ast.UUID,
 		ast.InsertFunc, ast.Bin, ast.Quote, ast.Format, ast.FromBase64, ast.ToBase64, ast.ExportSet,
-		ast.AesEncrypt, ast.AesDecrypt, ast.SHA2, ast.InetNtoa:
+		ast.AesEncrypt, ast.AesDecrypt, ast.SHA2, ast.InetNtoa, ast.Inet6Aton:
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
+	case ast.RandomBytes:
+		tp = types.NewFieldType(mysql.TypeVarString)
 	case ast.If:
 		// TODO: fix this
 		// See https://dev.mysql.com/doc/refman/5.5/en/control-flow-functions.html#function_if

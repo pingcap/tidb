@@ -34,7 +34,7 @@ type testClusterSuite struct {
 }
 
 func (s *testClusterSuite) TestClusterSplit(c *C) {
-	store, err := tikv.NewMockTikvStore()
+	store, err := tikv.NewMockTikvStore("")
 	c.Assert(err, IsNil)
 
 	txn, err := store.Begin()
