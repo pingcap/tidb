@@ -1033,6 +1033,9 @@ func (s *testEvaluatorSuite) TestMakeDate(c *C) {
 		{[]interface{}{nil, 2900025}, nil},
 		{[]interface{}{2060, nil}, nil},
 		{[]interface{}{nil, nil}, nil},
+		{[]interface{}{"71", 1}, "1971-01-01"},
+		{[]interface{}{71, "1"}, "1971-01-01"},
+		{[]interface{}{"71", "1"}, "1971-01-01"},
 	}
 	Dtbl := tblToDtbl(tbl)
 	maketime := funcs[ast.MakeDate]

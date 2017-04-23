@@ -1747,8 +1747,15 @@ func (b *builtinMakeDateSig) eval(row []types.Datum) (d types.Datum, err error) 
 	if args[0].IsNull() || args[1].IsNull() {
 		return d, nil
 	}
-	year := args[0].GetInt64()
-	dayOfYear := args[1].GetInt64()
+	sc := b.ctx.GetSessionVars().StmtCtx
+	year, err := args[0].ToInt64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	dayOfYear, err := args[1].ToInt64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
 	if dayOfYear <= 0 || year < 0 || year > 9999 {
 		return d, nil
 	}
