@@ -85,7 +85,7 @@ func newECBDecrypter(b cipher.Block) cipher.BlockMode {
 	return (*ecbDecrypter)(newECB(b))
 }
 
-// Padding using PKCS7
+// pkcs7Padding padds data using PKCS7
 // See https://en.wikipedia.org/wiki/Padding_(cryptography)#PKCS7
 func pkcs7Padding(ciphertext []byte, blockSize int) []byte {
 	// The bytes need to padding.
@@ -94,7 +94,7 @@ func pkcs7Padding(ciphertext []byte, blockSize int) []byte {
 	return append(ciphertext, padtext...)
 }
 
-// UnPadding using PKCS7
+// pkcs5UnPadding unPadd data using PKCS7
 // See https://en.wikipedia.org/wiki/Padding_(cryptography)#PKCS7
 func pkcs5UnPadding(origData []byte) []byte {
 	length := len(origData)
