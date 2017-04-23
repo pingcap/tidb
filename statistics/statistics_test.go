@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -113,63 +114,19 @@ func (s *testStatisticsSuite) SetUpSuite(c *C) {
 	s.pk = pk
 }
 
-func (s *testStatisticsSuite) TestTable(c *C) {
-	tblInfo := &model.TableInfo{
-		ID: 1,
-	}
-	columns := []*model.ColumnInfo{
-		{
-			ID:        2,
-			Name:      model.NewCIStr("a"),
-			FieldType: *types.NewFieldType(mysql.TypeLonglong),
-		},
-		{
-			ID:        3,
-			Name:      model.NewCIStr("b"),
-			FieldType: *types.NewFieldType(mysql.TypeLonglong),
-		},
-		{
-			ID:        4,
-			Name:      model.NewCIStr("c"),
-			FieldType: *types.NewFieldType(mysql.TypeLonglong),
-		},
-	}
-	indices := []*model.IndexInfo{
-		{
-			ID: 1,
-			Columns: []*model.IndexColumn{
-				{
-					Name:   model.NewCIStr("b"),
-					Length: types.UnspecifiedLength,
-					Offset: 1,
-				},
-			},
-		},
-	}
-	tblInfo.Columns = columns
-	tblInfo.Indices = indices
-	timestamp := int64(10)
+func encodeKey(key types.Datum) types.Datum {
+	bytes, _ := codec.EncodeKey(nil, key)
+	return types.NewBytesDatum(bytes)
+}
+
+func (s *testStatisticsSuite) TestBuild(c *C) {
 	bucketCount := int64(256)
 	_, ndv, _ := buildFMSketch(s.rc.(*recordSet).data, 1000)
-	builder := &Builder{
-		Ctx:           mock.NewContext(),
-		TblInfo:       tblInfo,
-		StartTS:       timestamp,
-		Count:         s.count,
-		NumBuckets:    bucketCount,
-		ColumnSamples: [][]types.Datum{s.samples},
-		ColIDs:        []int64{2},
-		ColNDVs:       []int64{ndv},
-		IdxRecords:    []ast.RecordSet{s.rc},
-		IdxIDs:        []int64{1},
-		PkRecords:     ast.RecordSet(s.pk),
-		PkID:          4,
-	}
-	sc := builder.Ctx.GetSessionVars().StmtCtx
-	t, err := builder.NewTable()
-	c.Check(err, IsNil)
+	ctx := mock.NewContext()
+	sc := ctx.GetSessionVars().StmtCtx
 
-	col := t.Columns[2]
+	col, err := BuildColumn(ctx, bucketCount, 2, ndv, s.count, s.samples)
+	c.Check(err, IsNil)
 	c.Check(len(col.Buckets), Equals, 232)
 	count, err := col.equalRowCount(sc, types.NewIntDatum(1000))
 	c.Check(err, IsNil)
@@ -193,18 +150,22 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 5075)
 
-	col = t.Columns[3]
-	count, err = col.equalRowCount(sc, types.NewIntDatum(10000))
+	tblCount, col, err := BuildIndex(ctx, bucketCount, 1, ast.RecordSet(s.rc))
+	c.Check(err, IsNil)
+	c.Check(int(tblCount), Equals, 100000)
+	count, err = col.equalRowCount(sc, encodeKey(types.NewIntDatum(10000)))
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 1)
-	count, err = col.lessRowCount(sc, types.NewIntDatum(20000))
+	count, err = col.lessRowCount(sc, encodeKey(types.NewIntDatum(20000)))
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 19983)
-	count, err = col.betweenRowCount(sc, types.NewIntDatum(30000), types.NewIntDatum(35000))
+	count, err = col.betweenRowCount(sc, encodeKey(types.NewIntDatum(30000)), encodeKey(types.NewIntDatum(35000)))
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 4618)
 
-	col = t.Columns[4]
+	tblCount, col, err = BuildPK(ctx, bucketCount, 4, ast.RecordSet(s.pk))
+	c.Check(err, IsNil)
+	c.Check(int(tblCount), Equals, 100000)
 	count, err = col.equalRowCount(sc, types.NewIntDatum(10000))
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 1)
@@ -214,10 +175,6 @@ func (s *testStatisticsSuite) TestTable(c *C) {
 	count, err = col.betweenRowCount(sc, types.NewIntDatum(30000), types.NewIntDatum(35000))
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 5120)
-
-	str := t.String()
-	c.Check(len(str), Greater, 0)
-
 }
 
 func (s *testStatisticsSuite) TestPseudoTable(c *C) {

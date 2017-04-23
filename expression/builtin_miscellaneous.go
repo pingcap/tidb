@@ -20,6 +20,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/twinj/uuid"
 )
@@ -116,7 +117,11 @@ func (b *builtinSleepSig) eval(row []types.Datum) (d types.Datum, err error) {
 
 	// TODO: consider it's interrupted using KILL QUERY from other session, or
 	// interrupted by time out.
-	duration := time.Duration(args[0].GetFloat64() * float64(time.Second.Nanoseconds()))
+	sleepTime, err := args[0].ConvertTo(sc, types.NewFieldType(mysql.TypeDouble))
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	duration := time.Duration(sleepTime.GetFloat64() * float64(time.Second.Nanoseconds()))
 	time.Sleep(duration)
 	d.SetInt64(0)
 	return
