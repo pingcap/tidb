@@ -304,6 +304,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"to_seconds(950501)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{`bit_count(1)`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{`time_to_sec("23:59:59")`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
+		{`inet6_aton('FE80::AAAA:0000:00C2:0002')`, mysql.TypeVarString, charset.CharsetUTF8, 0},
 	}
 	for _, tt := range tests {
 		ctx := testKit.Se.(context.Context)
