@@ -53,28 +53,28 @@ type testCase struct {
 	resultStr string
 }
 
-func (s *testExpressionSuite) runTests(c *C, cases []testCase) {
-	for _, ca := range cases {
-		expr := s.parseExpr(c, ca.exprStr)
+func (s *testExpressionSuite) runTests(c *C, tests []testCase) {
+	for _, tt := range tests {
+		expr := s.parseExpr(c, tt.exprStr)
 		val, err := evalAstExpr(expr, s.ctx)
 		c.Assert(err, IsNil)
 		valStr := fmt.Sprintf("%v", val.GetValue())
-		c.Assert(valStr, Equals, ca.resultStr, Commentf("for %s", ca.exprStr))
+		c.Assert(valStr, Equals, tt.resultStr, Commentf("for %s", tt.exprStr))
 	}
 }
 
 func (s *testExpressionSuite) TestBetween(c *C) {
 	defer testleak.AfterTest(c)()
-	cases := []testCase{
+	tests := []testCase{
 		{exprStr: "1 between 2 and 3", resultStr: "0"},
 		{exprStr: "1 not between 2 and 3", resultStr: "1"},
 	}
-	s.runTests(c, cases)
+	s.runTests(c, tests)
 }
 
 func (s *testExpressionSuite) TestCaseWhen(c *C) {
 	defer testleak.AfterTest(c)()
-	cases := []testCase{
+	tests := []testCase{
 		{
 			exprStr:   "case 1 when 1 then 'str1' when 2 then 'str2' end",
 			resultStr: "str1",
@@ -92,7 +92,7 @@ func (s *testExpressionSuite) TestCaseWhen(c *C) {
 			resultStr: "str3",
 		},
 	}
-	s.runTests(c, cases)
+	s.runTests(c, tests)
 
 	// When expression value changed, result set back to null.
 	valExpr := ast.NewValueExpr(1)
@@ -148,7 +148,7 @@ func (s *testExpressionSuite) TestCast(c *C) {
 
 func (s *testExpressionSuite) TestPatternIn(c *C) {
 	defer testleak.AfterTest(c)()
-	cases := []testCase{
+	tests := []testCase{
 		{
 			exprStr:   "1 not in (1, 2, 3)",
 			resultStr: "0",
@@ -190,12 +190,12 @@ func (s *testExpressionSuite) TestPatternIn(c *C) {
 			resultStr: "0",
 		},
 	}
-	s.runTests(c, cases)
+	s.runTests(c, tests)
 }
 
 func (s *testExpressionSuite) TestIsNull(c *C) {
 	defer testleak.AfterTest(c)()
-	cases := []testCase{
+	tests := []testCase{
 		{
 			exprStr:   "1 IS NULL",
 			resultStr: "0",
@@ -213,12 +213,12 @@ func (s *testExpressionSuite) TestIsNull(c *C) {
 			resultStr: "0",
 		},
 	}
-	s.runTests(c, cases)
+	s.runTests(c, tests)
 }
 
 func (s *testExpressionSuite) TestIsTruth(c *C) {
 	defer testleak.AfterTest(c)()
-	cases := []testCase{
+	tests := []testCase{
 		{
 			exprStr:   "1 IS TRUE",
 			resultStr: "1",
@@ -284,7 +284,7 @@ func (s *testExpressionSuite) TestIsTruth(c *C) {
 			resultStr: "1",
 		},
 	}
-	s.runTests(c, cases)
+	s.runTests(c, tests)
 }
 
 func (s *testExpressionSuite) TestDateArith(c *C) {

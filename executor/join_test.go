@@ -108,7 +108,7 @@ func (s *testSuite) TestJoin(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int)")
 	tk.MustExec("insert t values (1)")
-	cases := []struct {
+	tests := []struct {
 		sql    string
 		result [][]interface{}
 	}{
@@ -121,9 +121,9 @@ func (s *testSuite) TestJoin(c *C) {
 			testkit.Rows("1"),
 		},
 	}
-	for _, ca := range cases {
-		result := tk.MustQuery(ca.sql)
-		result.Check(ca.result)
+	for _, tt := range tests {
+		result := tk.MustQuery(tt.sql)
+		result.Check(tt.result)
 	}
 
 	tk.MustExec("drop table if exists t")

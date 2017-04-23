@@ -158,6 +158,27 @@ func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 			},
 			State: model.StatePublic,
 		},
+		{
+			Name: model.NewCIStr("e_d_c_str_prefix"),
+			Columns: []*model.IndexColumn{
+				{
+					Name:   model.NewCIStr("e_str"),
+					Length: types.UnspecifiedLength,
+					Offset: 7,
+				},
+				{
+					Name:   model.NewCIStr("d_str"),
+					Length: types.UnspecifiedLength,
+					Offset: 6,
+				},
+				{
+					Name:   model.NewCIStr("c_str"),
+					Length: 10,
+					Offset: 5,
+				},
+			},
+			State: model.StatePublic,
+		},
 	}
 	pkColumn := &model.ColumnInfo{
 		State:     model.StatePublic,
@@ -347,7 +368,7 @@ func mockContext() context.Context {
 
 func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 	defer testleak.AfterTest(c)()
-	cases := []struct {
+	tests := []struct {
 		sql   string
 		first string
 		best  string
@@ -481,7 +502,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 			best: "DataScan(t)->Aggr(count(test.t.a),firstrow(test.t.a))->Selection->Projection",
 		},
 	}
-	for _, ca := range cases {
+	for _, ca := range tests {
 		comment := Commentf("for %s", ca.sql)
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
@@ -506,7 +527,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 
 func (s *testPlanSuite) TestPlanBuilder(c *C) {
 	defer testleak.AfterTest(c)()
-	cases := []struct {
+	tests := []struct {
 		sql  string
 		plan string
 	}{
@@ -600,10 +621,10 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "analyze table t, t",
-			plan: "*plan.Analyze->*plan.Analyze->*plan.Analyze",
+			plan: "*plan.Analyze",
 		},
 	}
-	for _, ca := range cases {
+	for _, ca := range tests {
 		comment := Commentf("for %s", ca.sql)
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
@@ -628,7 +649,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 
 func (s *testPlanSuite) TestJoinReOrder(c *C) {
 	defer testleak.AfterTest(c)()
-	cases := []struct {
+	tests := []struct {
 		sql  string
 		best string
 	}{
@@ -657,9 +678,9 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 			best: "Apply{DataScan(o)->Join{Join{DataScan(t1)->Selection->DataScan(t3)->Selection}->DataScan(t2)->Selection}->Projection}->Projection",
 		},
 	}
-	for _, ca := range cases {
-		comment := Commentf("for %s", ca.sql)
-		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+	for _, tt := range tests {
+		comment := Commentf("for %s", tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
 		is, err := mockResolve(stmt)
@@ -676,13 +697,13 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		lp := p.(LogicalPlan)
 		p, err = logicalOptimize(flagPredicatePushDown, lp.(LogicalPlan), builder.ctx, builder.allocator)
 		c.Assert(err, IsNil)
-		c.Assert(ToString(lp), Equals, ca.best, Commentf("for %s", ca.sql))
+		c.Assert(ToString(lp), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
 }
 
 func (s *testPlanSuite) TestAggPushDown(c *C) {
 	defer testleak.AfterTest(c)()
-	cases := []struct {
+	tests := []struct {
 		sql  string
 		best string
 	}{
@@ -724,7 +745,7 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 		},
 		{
 			sql:  "select sum(a.a) from t a, t b, t c where a.c = b.c and b.c = c.c",
-			best: "Join{Join{DataScan(a)->Aggr(sum(a.a),firstrow(a.c))->DataScan(b)}(a.c,b.c)->Aggr(sum(join_agg_0),firstrow(b.c))->DataScan(c)}(b.c,c.c)->Aggr(sum(join_agg_0))->Projection",
+			best: "Join{Join{DataScan(a)->DataScan(b)}(a.c,b.c)->DataScan(c)}(b.c,c.c)->Aggr(sum(a.a))->Projection",
 		},
 		{
 			sql:  "select sum(b.a) from t a left join t b on a.c = b.c",
@@ -763,9 +784,9 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 			best: "Join{DataScan(a)->DataScan(b)}(a.a,b.a)(a.b,b.b)->Aggr(max(a.c))->Projection",
 		},
 	}
-	for _, ca := range cases {
-		comment := Commentf("for %s", ca.sql)
-		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+	for _, tt := range tests {
+		comment := Commentf("for %s", tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
 		is, err := mockResolve(stmt)
@@ -783,13 +804,13 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 		p, err = logicalOptimize(flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagAggregationOptimize, lp.(LogicalPlan), builder.ctx, builder.allocator)
 		lp.ResolveIndicesAndCorCols()
 		c.Assert(err, IsNil)
-		c.Assert(ToString(lp), Equals, ca.best, Commentf("for %s", ca.sql))
+		c.Assert(ToString(lp), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
 }
 
 func (s *testPlanSuite) TestRefine(c *C) {
 	defer testleak.AfterTest(c)()
-	cases := []struct {
+	tests := []struct {
 		sql  string
 		best string
 	}{
@@ -980,9 +1001,9 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			best: "Index(t.c_d_e)[[2,+inf]]->Projection",
 		},
 	}
-	for _, ca := range cases {
-		comment := Commentf("for %s", ca.sql)
-		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+	for _, tt := range tests {
+		comment := Commentf("for %s", tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
 		is, err := mockResolve(stmt)
@@ -999,13 +1020,13 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		info, err := p.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
 		jsonPlan, _ := info.p.MarshalJSON()
-		c.Assert(ToString(info.p), Equals, ca.best, Commentf("for %s, %s", ca.sql, string(jsonPlan)))
+		c.Assert(ToString(info.p), Equals, tt.best, Commentf("for %s, %s", tt.sql, string(jsonPlan)))
 	}
 }
 
 func (s *testPlanSuite) TestColumnPruning(c *C) {
 	defer testleak.AfterTest(c)()
-	cases := []struct {
+	tests := []struct {
 		sql string
 		ans map[string][]string
 	}{
@@ -1118,9 +1139,9 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 			},
 		},
 	}
-	for _, ca := range cases {
-		comment := Commentf("for %s", ca.sql)
-		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+	for _, tt := range tests {
+		comment := Commentf("for %s", tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
 		is, err := mockResolve(stmt)
@@ -1137,7 +1158,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 
 		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan), builder.ctx, builder.allocator)
 		c.Assert(err, IsNil)
-		checkDataSourceCols(p, c, ca.ans, comment)
+		checkDataSourceCols(p, c, tt.ans, comment)
 	}
 }
 
@@ -1164,7 +1185,7 @@ func checkDataSourceCols(p Plan, c *C, ans map[string][]string, comment CommentI
 
 func (s *testPlanSuite) TestValidate(c *C) {
 	defer testleak.AfterTest(c)()
-	cases := []struct {
+	tests := []struct {
 		sql string
 		err *terror.Error
 	}{
@@ -1249,8 +1270,8 @@ func (s *testPlanSuite) TestValidate(c *C) {
 			err: nil,
 		},
 	}
-	for _, ca := range cases {
-		sql := ca.sql
+	for _, tt := range tests {
+		sql := tt.sql
 		comment := Commentf("for %s", sql)
 		stmt, err := s.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil, comment)
@@ -1263,10 +1284,10 @@ func (s *testPlanSuite) TestValidate(c *C) {
 			is:        is,
 		}
 		builder.build(stmt)
-		if ca.err == nil {
+		if tt.err == nil {
 			c.Assert(builder.err, IsNil, comment)
 		} else {
-			c.Assert(ca.err.Equal(builder.err), IsTrue, comment)
+			c.Assert(tt.err.Equal(builder.err), IsTrue, comment)
 		}
 	}
 }
@@ -1288,7 +1309,7 @@ func checkUniqueKeys(p Plan, c *C, ans map[string][][]string, sql string) {
 
 func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 	defer testleak.AfterTest(c)()
-	cases := []struct {
+	tests := []struct {
 		sql string
 		ans map[string][][]string
 	}{
@@ -1353,9 +1374,9 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 			},
 		},
 	}
-	for _, ca := range cases {
-		comment := Commentf("for %s", ca.sql)
-		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+	for _, tt := range tests {
+		comment := Commentf("for %s", tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
 		is, err := mockResolve(stmt)
@@ -1371,13 +1392,13 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 		c.Assert(builder.err, IsNil, comment)
 
 		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo, p.(LogicalPlan), builder.ctx, builder.allocator)
-		checkUniqueKeys(p, c, ca.ans, ca.sql)
+		checkUniqueKeys(p, c, tt.ans, tt.sql)
 	}
 }
 
 func (s *testPlanSuite) TestAggPrune(c *C) {
 	defer testleak.AfterTest(c)()
-	cases := []struct {
+	tests := []struct {
 		sql  string
 		best string
 	}{
@@ -1402,9 +1423,9 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 			best: "DataScan(t)->Projection->Projection->Projection->Projection",
 		},
 	}
-	for _, ca := range cases {
-		comment := Commentf("for %s", ca.sql)
-		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+	for _, tt := range tests {
+		comment := Commentf("for %s", tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
 		is, err := mockResolve(stmt)
@@ -1419,13 +1440,13 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 		c.Assert(builder.err, IsNil)
 		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo|flagAggregationOptimize, p.(LogicalPlan), builder.ctx, builder.allocator)
 		c.Assert(err, IsNil)
-		c.Assert(ToString(p), Equals, ca.best, comment)
+		c.Assert(ToString(p), Equals, tt.best, comment)
 	}
 }
 
 func (s *testPlanSuite) TestVisitInfo(c *C) {
 	defer testleak.AfterTest(c)()
-	cases := []struct {
+	tests := []struct {
 		sql string
 		ans []visitInfo
 	}{
@@ -1566,9 +1587,9 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		},
 	}
 
-	for _, ca := range cases {
-		comment := Commentf("for %s", ca.sql)
-		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+	for _, tt := range tests {
+		comment := Commentf("for %s", tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
 		is, err := mockResolve(stmt)
@@ -1583,7 +1604,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		builder.build(stmt)
 		c.Assert(builder.err, IsNil, comment)
 
-		checkVisitInfo(c, builder.visitInfo, ca.ans, comment)
+		checkVisitInfo(c, builder.visitInfo, tt.ans, comment)
 	}
 }
 
@@ -1644,19 +1665,19 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		testleak.AfterTest(c)()
 		UseDAGPlanBuilder = false
 	}()
-	cases := []struct {
+	tests := []struct {
 		sql  string
 		best string
 	}{
 		// Test TopN + Selection.
 		{
 			sql:  "select * from t where a < 1 order by b limit 5",
-			best: "DataScan(t)->Sel([lt(test.t.a, 1)])->Sort + Limit(5) + Offset(0)->Projection",
+			best: "DataScan(t)->Sort + Limit(5) + Offset(0)->Projection",
 		},
 		// Test Limit + Selection.
 		{
 			sql:  "select * from t where a < 1 limit 5",
-			best: "DataScan(t)->Sel([lt(test.t.a, 1)])->Limit->Projection",
+			best: "DataScan(t)->Limit->Projection",
 		},
 		// Test Limit + Agg + Proj .
 		{
@@ -1739,9 +1760,9 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 			best: "UnionAll{DataScan(t)->Limit->Projection->DataScan(s)->Sort + Limit(5) + Offset(0)->Projection->Projection}->Limit",
 		},
 	}
-	for _, ca := range cases {
-		comment := Commentf("for %s", ca.sql)
-		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+	for _, tt := range tests {
+		comment := Commentf("for %s", tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
 		is, err := mockResolve(stmt)
@@ -1757,6 +1778,6 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		c.Assert(builder.err, IsNil)
 		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx, builder.allocator)
 		c.Assert(err, IsNil)
-		c.Assert(ToString(p), Equals, ca.best, comment)
+		c.Assert(ToString(p), Equals, tt.best, comment)
 	}
 }

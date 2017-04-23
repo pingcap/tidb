@@ -36,12 +36,14 @@ var (
 	ErrUnknownColumn        = terror.ClassOptimizerPlan.New(CodeUnknownColumn, "Unknown column '%s' in '%s'")
 	ErrWrongArguments       = terror.ClassOptimizerPlan.New(CodeWrongArguments, "Incorrect arguments to EXECUTE")
 	ErrAmbiguous            = terror.ClassOptimizerPlan.New(CodeAmbiguous, "Column '%s' in field list is ambiguous")
+	ErrAlterAutoID          = terror.ClassAutoid.New(CodeAlterAutoID, "No support for setting auto_increment using alter_table")
 )
 
 // Error codes.
 const (
 	CodeUnsupportedType terror.ErrCode = 1
 	SystemInternalError terror.ErrCode = 2
+	CodeAlterAutoID     terror.ErrCode = 3
 	CodeAmbiguous       terror.ErrCode = 1052
 	CodeUnknownColumn   terror.ErrCode = 1054
 	CodeWrongArguments  terror.ErrCode = 1210
@@ -406,14 +408,15 @@ func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) LogicalPlan {
 	p := Analyze{}.init(b.allocator, b.ctx)
 	for _, tbl := range as.TableNames {
 		idxInfo, colInfo, pkInfo := getColsInfo(tbl)
-		result := Analyze{
-			TableInfo:   tbl.TableInfo,
-			IndicesInfo: idxInfo,
-			ColsInfo:    colInfo,
-			PkInfo:      pkInfo,
-		}.init(b.allocator, b.ctx)
-		result.SetSchema(expression.TableInfo2Schema(tbl.TableInfo))
-		addChild(p, result)
+		for _, idx := range idxInfo {
+			p.IdxTasks = append(p.IdxTasks, analyzeIndexTask{TableInfo: tbl.TableInfo, IndexInfo: idx})
+		}
+		if len(colInfo) > 0 {
+			p.ColTasks = append(p.ColTasks, analyzeColumnsTask{TableInfo: tbl.TableInfo, ColsInfo: colInfo})
+		}
+		if pkInfo != nil {
+			p.PkTasks = append(p.PkTasks, analyzePKTask{TableInfo: tbl.TableInfo, PKInfo: pkInfo})
+		}
 	}
 	p.SetSchema(&expression.Schema{})
 	return p

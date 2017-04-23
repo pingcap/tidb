@@ -502,6 +502,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 	table := []testCase{
 		// for builtin functions
 		{"SELECT POW(1, 2)", true},
+		{"SELECT POW(1, 2, 1)", true}, // illegal number of arguments shall pass too
 		{"SELECT POW(1, 0.5)", true},
 		{"SELECT POW(1, -1)", true},
 		{"SELECT POW(-1, 1)", true},
@@ -766,8 +767,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT OCT(12)`, true},
 		{`SELECT OCTET_LENGTH('text')`, true},
 		{`SELECT ORD('2')`, true},
-		// parser of POSITION will cause conflict now.
-		//{`SELECT POSITION('foobarbar' IN 'bar')`, false},
+		{`SELECT POSITION('bar' IN 'foobarbar')`, true},
 		{`SELECT QUOTE('Don\'t!')`, true},
 		{`SELECT BIN(12)`, true},
 		{`SELECT ELT(1, 'ej', 'Heja', 'hej', 'foo')`, true},

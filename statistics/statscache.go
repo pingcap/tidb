@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -76,11 +75,13 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 	}
 	h.PrevLastVersion = h.LastVersion
 	tables := make([]*Table, 0, len(rows))
+	deletedTableIDs := make([]int64, 0, len(rows))
 	for _, row := range rows {
 		version, tableID, count := row.Data[0].GetUint64(), row.Data[1].GetInt64(), row.Data[2].GetInt64()
 		table, ok := is.TableByID(tableID)
 		if !ok {
 			log.Debugf("Unknown table ID %d in stats meta table, maybe it has been dropped", tableID)
+			deletedTableIDs = append(deletedTableIDs, tableID)
 			continue
 		}
 		tableInfo := table.Meta()
@@ -90,26 +91,24 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 			log.Errorf("Error occurred when read table stats for table id %d. The error message is %s.", tableID, err.Error())
 			continue
 		}
+		if tbl == nil {
+			deletedTableIDs = append(deletedTableIDs, tableID)
+			continue
+		}
 		tables = append(tables, tbl)
 		h.LastVersion = version
 	}
-	h.updateTableStats(tables)
+	h.updateTableStats(tables, deletedTableIDs)
 	return nil
 }
 
 // GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
-func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *Table {
-	tbl, ok := h.statsCache.Load().(statsCache)[tblInfo.ID]
+func (h *Handle) GetTableStats(tblID int64) *Table {
+	tbl, ok := h.statsCache.Load().(statsCache)[tblID]
 	if !ok {
-		return PseudoTable(tblInfo)
+		return PseudoTable(tblID)
 	}
-	// Here we check the TableInfo because there may be some ddl changes in the duration period.
-	// Also, we rely on the fact that TableInfo will not be same if and only if there are ddl changes.
-	// TODO: Remove this check.
-	if tblInfo == tbl.Info {
-		return tbl
-	}
-	return PseudoTable(tblInfo)
+	return tbl
 }
 
 func (h *Handle) copyFromOldCache() statsCache {
@@ -122,11 +121,14 @@ func (h *Handle) copyFromOldCache() statsCache {
 }
 
 // updateTableStats updates the statistics table cache using copy on write.
-func (h *Handle) updateTableStats(tables []*Table) {
+func (h *Handle) updateTableStats(tables []*Table, deletedIDs []int64) {
 	newCache := h.copyFromOldCache()
 	for _, tbl := range tables {
-		id := tbl.Info.ID
+		id := tbl.tableID
 		newCache[id] = tbl
+	}
+	for _, id := range deletedIDs {
+		delete(newCache, id)
 	}
 	h.statsCache.Store(newCache)
 }

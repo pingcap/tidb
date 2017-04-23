@@ -59,7 +59,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		c_set set('a', 'b', 'c'),
 		c_enum enum('a', 'b', 'c'))`
 	testKit.MustExec(sql)
-	cases := []struct {
+	tests := []struct {
 		expr string
 		tp   byte
 		chs  string
@@ -175,6 +175,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"found_rows()", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"length('tidb')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"is_ipv4('192.168.1.1')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
+		{"period_add(199206, 2)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"now()", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
 		{"from_unixtime(1447430881)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
 		{"from_unixtime(1447430881, '%Y %D %M %h:%i:%s %x')", mysql.TypeVarString, charset.CharsetUTF8, 0},
@@ -191,6 +192,8 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"right('TiDB', 2)", mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{"lower('TiDB')", mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{"lcase('TiDB')", mysql.TypeVarString, charset.CharsetUTF8, 0},
+		{"locate('foo', 'foobar')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
+		{"position('foo' in 'foobar')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"repeat('TiDB', 3)", mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{"replace('TiDB', 'D', 'd')", mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{"upper('TiDB')", mysql.TypeVarString, charset.CharsetUTF8, 0},
@@ -235,6 +238,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"rpad('TiDB', 12, 'go')", mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{"lpad('TiDB', 12, 'go')", mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{"elt(1, 'TiDB', 17, 'go')", mysql.TypeVarString, charset.CharsetUTF8, 0},
+		{"export_set(5, 'Y', 'N', ',', 4)", mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{"bit_length('TiDB')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"char(66)", mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{"char_length('TiDB')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
@@ -302,9 +306,9 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`time_to_sec("23:59:59")`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{`inet6_aton('FE80::AAAA:0000:00C2:0002')`, mysql.TypeVarString, charset.CharsetUTF8, 0},
 	}
-	for _, ca := range cases {
+	for _, tt := range tests {
 		ctx := testKit.Se.(context.Context)
-		stmts, err := tidb.Parse(ctx, "select "+ca.expr+" from t")
+		stmts, err := tidb.Parse(ctx, "select "+tt.expr+" from t")
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0].(*ast.SelectStmt)
@@ -315,9 +319,9 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		tp := stmt.GetResultFields()[0].Column.Tp
 		chs := stmt.GetResultFields()[0].Column.Charset
 		flag := stmt.GetResultFields()[0].Column.Flag
-		c.Assert(tp, Equals, ca.tp, Commentf("Tp for %s", ca.expr))
-		c.Assert(chs, Equals, ca.chs, Commentf("Charset for %s", ca.expr))
-		c.Assert(flag^uint(ca.flag), Equals, uint(0x0), Commentf("Charset for %s", ca.flag))
+		c.Assert(tp, Equals, tt.tp, Commentf("Tp for %s", tt.expr))
+		c.Assert(chs, Equals, tt.chs, Commentf("Charset for %s", tt.expr))
+		c.Assert(flag^uint(tt.flag), Equals, uint(0x0), Commentf("Charset for %s", tt.flag))
 	}
 }
 
