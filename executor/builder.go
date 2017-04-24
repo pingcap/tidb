@@ -20,13 +20,16 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // executorBuilder builds an Executor from a Plan.
@@ -117,6 +120,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildCache(v)
 	case *plan.Analyze:
 		return b.buildAnalyze(v)
+	case *plan.PhysicalTableReader:
+		return b.buildTableReader(v)
 	default:
 		b.err = ErrUnknownPlan.Gen("Unknown Plan %T", p)
 		return nil
@@ -761,4 +766,106 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 		e.tasks = append(e.tasks, analyzeTask{taskType: idxTask, src: b.build(task)})
 	}
 	return e
+}
+
+type tableInfo struct {
+	asName    *model.CIStr
+	table     table.Table
+	tableID   int64
+	keepOrder bool
+	desc      bool
+	ranges    []types.IntColumnRange
+}
+
+func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor {
+	ts := &TableReaderExecutor{
+		ctx:    b.ctx,
+		schema: v.Schema(),
+	}
+	ts.dagPB, ts.tableInfo = b.plan2DAGRequest(v.TablePlan)
+	if b.err != nil {
+		return nil
+	}
+	b.err = ts.doRequest()
+	return ts
+}
+
+func (b *executorBuilder) plan2DAGRequest(p plan.PhysicalPlan) (dagReq *tipb.DAGRequest, info *tableInfo) {
+	dagReq = &tipb.DAGRequest{}
+	dagReq.StartTs = b.getStartTS()
+	dagReq.TimeZoneOffset = timeZoneOffset()
+	sc := b.ctx.GetSessionVars().StmtCtx
+	client := b.ctx.GetClient()
+	dagReq.Flags = statementContextToFlags(sc)
+	// Construct executors by v.TablePlan.
+	plans := make([]plan.PhysicalPlan, 0, 5)
+	for {
+		plans = append(plans, p)
+		if len(p.Children()) == 0 {
+			break
+		}
+		p = p.Children()[0].(plan.PhysicalPlan)
+	}
+	for i := len(plans) - 1; i >= 0; i-- {
+		p := plans[i]
+		switch x := p.(type) {
+		case *plan.PhysicalAggregation:
+			aggExec := &tipb.Aggregation{
+				GroupBy: expression.ExpressionsToPBList(sc, x.GroupByItems, client),
+			}
+			for _, aggFunc := range x.AggFuncs {
+				aggExec.AggFunc = append(aggExec.AggFunc, expression.AggFuncToPBExpr(sc, client, aggFunc))
+			}
+			dagReq.Executors = append(dagReq.Executors, &tipb.Executor{Tp: tipb.ExecType_TypeAggregation, Aggregation: aggExec})
+		case *plan.Selection:
+			selExec := &tipb.Selection{
+				Conditions: expression.ExpressionsToPBList(sc, x.Conditions, client),
+			}
+			dagReq.Executors = append(dagReq.Executors, &tipb.Executor{Tp: tipb.ExecType_TypeSelection, Selection: selExec})
+		case *plan.Sort:
+			count := int64(x.ExecLimit.Count)
+			topNExec := &tipb.TopN{
+				Limit: &count,
+			}
+			for _, item := range x.ByItems {
+				topNExec.OrderBy = append(topNExec.OrderBy, expression.SortByItemToPB(sc, client, item.Expr, item.Desc))
+			}
+			dagReq.Executors = append(dagReq.Executors, &tipb.Executor{Tp: tipb.ExecType_TypeTopN, TopN: topNExec})
+		case *plan.Limit:
+			count := int64(x.Count)
+			limitExec := &tipb.Limit{
+				Limit: &count,
+			}
+			dagReq.Executors = append(dagReq.Executors, &tipb.Executor{Tp: tipb.ExecType_TypeLimit, Limit: limitExec})
+		case *plan.PhysicalTableScan:
+			tsExec := &tipb.TableScan{
+				TableId: x.Table.ID,
+				Columns: distsql.ColumnsToProto(x.Columns, x.Table.PKIsHandle),
+				Desc:    &x.Desc,
+			}
+			b.err = setPBColumnsDefaultValue(b.ctx, tsExec.Columns, x.Columns)
+			dagReq.Executors = append(dagReq.Executors, &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec})
+			table, _ := b.is.TableByID(x.Table.ID)
+			info = &tableInfo{
+				tableID:   x.Table.ID,
+				table:     table,
+				desc:      x.Desc,
+				keepOrder: x.KeepOrder,
+				ranges:    x.Ranges,
+			}
+		case *plan.PhysicalIndexScan:
+			isExec := &tipb.IndexScan{
+				TableId: x.Table.ID,
+				IndexId: x.Index.ID,
+				Columns: distsql.ColumnsToProto(x.Columns, x.Table.PKIsHandle),
+				Desc:    &x.Desc,
+			}
+			b.err = setPBColumnsDefaultValue(b.ctx, isExec.Columns, x.Columns)
+			dagReq.Executors = append(dagReq.Executors, &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: isExec})
+		default:
+			b.err = errors.Errorf("Unknown plan %T", x)
+			return
+		}
+	}
+	return
 }

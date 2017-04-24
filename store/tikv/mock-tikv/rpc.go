@@ -444,6 +444,24 @@ func (c *RPCClient) SendCopReq(ctx goctx.Context, addr string, req *coprocessor.
 		handler := newRPCHandler(c.Cluster, c.MvccStore, store.GetId())
 		resp, err := handler.handleCopDAGRequest(req)
 		return resp, errors.Trace(err)
+	} else if req.GetTp() == kv.ReqTypeDAG {
+		dag := new(tipb.DAGRequest)
+		err := proto.Unmarshal(req.Data, dag)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		req.Data, err = dag.Marshal()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		store := c.Cluster.GetStoreByAddr(addr)
+		if store == nil {
+			return nil, errors.New("connect fail")
+		}
+		handler := newRPCHandler(c.Cluster, c.MvccStore, store.GetId())
+		resp, err := handler.handleCopDAGRequest(req)
+		return resp, errors.Trace(err)
 	}
 
 	return nil, errors.Errorf("unsupport this request type %v", req.GetTp())

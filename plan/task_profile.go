@@ -113,13 +113,13 @@ func (t *copTaskProfile) finishTask(ctx context.Context, allocator *idAllocator)
 		cnt: t.cnt,
 	}
 	if t.indexPlan != nil && t.tablePlan != nil {
-		newTask.p = PhysicalIndexLookUpReader{tablePlan: t.tablePlan, indexPlan: t.indexPlan}.init(allocator, ctx)
+		newTask.p = PhysicalIndexLookUpReader{TablePlan: t.tablePlan, IndexPlan: t.indexPlan}.init(allocator, ctx)
 		newTask.p.SetSchema(t.tablePlan.Schema())
 	} else if t.indexPlan != nil {
-		newTask.p = PhysicalIndexReader{copPlan: t.indexPlan}.init(allocator, ctx)
+		newTask.p = PhysicalIndexReader{IndexPlan: t.indexPlan}.init(allocator, ctx)
 		newTask.p.SetSchema(t.indexPlan.Schema())
 	} else {
-		newTask.p = PhysicalTableReader{copPlan: t.tablePlan}.init(allocator, ctx)
+		newTask.p = PhysicalTableReader{TablePlan: t.tablePlan}.init(allocator, ctx)
 		newTask.p.SetSchema(t.tablePlan.Schema())
 	}
 	return newTask
@@ -196,7 +196,7 @@ func (p *Sort) canPushDown() bool {
 	for _, item := range p.ByItems {
 		exprs = append(exprs, item.Expr)
 	}
-	_, _, remained := ExpressionsToPB(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient())
+	_, _, remained := expression.ExpressionsToPB(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient())
 	return len(remained) == 0
 }
 
