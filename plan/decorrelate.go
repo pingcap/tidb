@@ -23,7 +23,7 @@ import (
 
 // extractCorColumnsBySchema only extracts the correlated columns that match the outer plan's schema.
 // e.g. If the correlated columns from inner plan are [t1.a, t2.a, t3.a] and outer plan's schema is [t2.a, t2.b, t2.c],
-// only [t2.a] is treated as this apply's correlated column.
+// only [t2.a] is treated as this applies correlated column.
 func (a *LogicalApply) extractCorColumnsBySchema() {
 	schema := a.children[0].Schema()
 	corCols := a.children[1].(LogicalPlan).extractCorrelatedCols()
