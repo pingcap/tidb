@@ -149,6 +149,9 @@ type SessionVars struct {
 	// GlobalAccessor is used to set and get global variables.
 	GlobalVarsAccessor GlobalVarAccessor
 
+	// LastFoundRows is the last found rows of previous query statement
+	LastFoundRows uint64
+
 	// StmtCtx holds variables for current executing statement.
 	StmtCtx *StatementContext
 

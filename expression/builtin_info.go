@@ -101,7 +101,7 @@ func (b *builtinFoundRowsSig) eval(_ []types.Datum) (d types.Datum, err error) {
 		return d, errors.Errorf("Missing session variable when evalue builtin")
 	}
 
-	d.SetUint64(data.StmtCtx.FoundRows())
+	d.SetUint64(data.LastFoundRows)
 	return d, nil
 }
 
