@@ -29,7 +29,7 @@ import (
 
 func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 	defer testleak.AfterTest(c)()
-	cases := []struct {
+	tests := []struct {
 		sql       string
 		best      string
 		aggFuns   string
@@ -54,20 +54,20 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 			sql:       "select sum(b) from t group by c",
 			best:      "Table(t)->HashAgg->Projection",
 			aggFuns:   "[sum(test.t.b)]",
-			aggFields: "[blob decimal]",
+			aggFields: "[blob decimal BINARY]",
 			gbyItems:  "[test.t.c]",
 		},
 		{
 			sql:       "select max(b + c), min(case when b then 1 else 2 end) from t group by d + e, a",
 			best:      "Table(t)->HashAgg->Projection",
 			aggFuns:   "[max(plus(test.t.b, test.t.c)) min(case(test.t.b, 1, 2))]",
-			aggFields: "[blob bigint bigint BINARY]",
+			aggFields: "[blob bigint BINARY bigint BINARY]",
 			gbyItems:  "[plus(test.t.d, test.t.e) test.t.a]",
 		},
 	}
-	for _, ca := range cases {
-		comment := Commentf("for %s", ca.sql)
-		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+	for _, tt := range tests {
+		comment := Commentf("for %s", tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 
@@ -91,7 +91,7 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
-		c.Assert(ToString(info.p), Equals, ca.best, Commentf("for %s", ca.sql))
+		c.Assert(ToString(info.p), Equals, tt.best, Commentf("for %s", tt.sql))
 		p = info.p
 		for {
 			var ts *physicalTableSource
@@ -102,13 +102,13 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 				ts = &x.physicalTableSource
 			}
 			if ts != nil {
-				c.Assert(fmt.Sprintf("%s", ts.aggFuncs), Equals, ca.aggFuns, Commentf("for %s", ca.sql))
-				c.Assert(fmt.Sprintf("%s", ts.gbyItems), Equals, ca.gbyItems, Commentf("for %s", ca.sql))
+				c.Assert(fmt.Sprintf("%s", ts.aggFuncs), Equals, tt.aggFuns, Commentf("for %s", tt.sql))
+				c.Assert(fmt.Sprintf("%s", ts.gbyItems), Equals, tt.gbyItems, Commentf("for %s", tt.sql))
 				fields := make([]*types.FieldType, ts.schema.Len())
 				for i, col := range ts.schema.Columns {
 					fields[i] = col.RetType
 				}
-				c.Assert(fmt.Sprintf("%s", fields), Equals, ca.aggFields, Commentf("for %s", ca.sql))
+				c.Assert(fmt.Sprintf("%s", fields), Equals, tt.aggFields, Commentf("for %s", tt.sql))
 				break
 			}
 			p = p.Children()[0]
@@ -116,9 +116,9 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 	}
 }
 
-func (s *testPlanSuite) TestPushDownOrderbyAndLimit(c *C) {
+func (s *testPlanSuite) TestPushDownOrderByAndLimit(c *C) {
 	defer testleak.AfterTest(c)()
-	cases := []struct {
+	tests := []struct {
 		sql          string
 		best         string
 		orderByItmes string
@@ -126,56 +126,56 @@ func (s *testPlanSuite) TestPushDownOrderbyAndLimit(c *C) {
 	}{
 		{
 			sql:          "select * from t order by a limit 5",
-			best:         "Table(t)->Limit->Projection",
+			best:         "Table(t)->Limit",
 			orderByItmes: "[]",
 			limit:        "5",
 		},
 		{
 			sql:          "select * from t where a < 1 limit 1, 1",
-			best:         "Table(t)->Limit->Projection",
+			best:         "Table(t)->Limit",
 			orderByItmes: "[]",
 			limit:        "2",
 		},
 		{
 			sql:          "select * from t limit 5",
-			best:         "Table(t)->Limit->Projection",
+			best:         "Table(t)->Limit",
 			orderByItmes: "[]",
 			limit:        "5",
 		},
 		{
 			sql:          "select * from t order by 1 limit 5",
-			best:         "Table(t)->Limit->Projection",
+			best:         "Table(t)->Limit",
 			orderByItmes: "[]",
 			limit:        "5",
 		},
 		{
 			sql:          "select c from t order by c limit 5",
-			best:         "Index(t.c_d_e)[[<nil>,+inf]]->Limit->Projection",
+			best:         "Index(t.c_d_e)[[<nil>,+inf]]->Limit",
 			orderByItmes: "[]",
 			limit:        "5",
 		},
 		{
 			sql:          "select * from t order by d limit 1",
-			best:         "Table(t)->Sort + Limit(1) + Offset(0)->Projection",
+			best:         "Table(t)->Sort + Limit(1) + Offset(0)",
 			orderByItmes: "[(test.t.d, false)]",
 			limit:        "1",
 		},
 		{
 			sql:          "select * from t where c > 0 order by d limit 1",
-			best:         "Index(t.c_d_e)[(0 +inf,+inf +inf]]->Sort + Limit(1) + Offset(0)->Projection",
+			best:         "Index(t.c_d_e)[(0 +inf,+inf +inf]]->Sort + Limit(1) + Offset(0)",
 			orderByItmes: "[(test.t.d, false)]",
 			limit:        "1",
 		},
 		{
 			sql:          "select * from t a where a.c < 10000 and a.d in (1000, a.e) order by a.b limit 2",
-			best:         "Index(t.c_d_e)[[-inf <nil>,10000 <nil>)]->Selection->Sort + Limit(2) + Offset(0)->Projection",
+			best:         "Index(t.c_d_e)[[-inf <nil>,10000 <nil>)]->Selection->Sort + Limit(2) + Offset(0)",
 			orderByItmes: "[]",
 			limit:        "nil",
 		},
 	}
-	for _, ca := range cases {
-		comment := Commentf("for %s", ca.sql)
-		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+	for _, tt := range tests {
+		comment := Commentf("for %s", tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 
@@ -190,15 +190,9 @@ func (s *testPlanSuite) TestPushDownOrderbyAndLimit(c *C) {
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
-
-		_, lp, err = lp.PredicatePushDown(nil)
+		p, err = doOptimize(builder.optFlag, lp, builder.ctx, builder.allocator)
 		c.Assert(err, IsNil)
-		lp.PruneColumns(lp.Schema().Columns)
-		lp.ResolveIndicesAndCorCols()
-		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
-		c.Assert(err, IsNil)
-		c.Assert(ToString(info.p), Equals, ca.best, Commentf("for %s", ca.sql))
-		p = info.p
+		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 		for {
 			var ts *physicalTableSource
 			switch x := p.(type) {
@@ -208,14 +202,14 @@ func (s *testPlanSuite) TestPushDownOrderbyAndLimit(c *C) {
 				ts = &x.physicalTableSource
 			}
 			if ts != nil {
-				c.Assert(fmt.Sprintf("%s", ts.sortItems), Equals, ca.orderByItmes, Commentf("for %s", ca.sql))
+				c.Assert(fmt.Sprintf("%s", ts.sortItems), Equals, tt.orderByItmes, Commentf("for %s", tt.sql))
 				var limitStr string
 				if ts.LimitCount == nil {
 					limitStr = fmt.Sprint("nil")
 				} else {
 					limitStr = fmt.Sprintf("%d", *ts.LimitCount)
 				}
-				c.Assert(limitStr, Equals, ca.limit, Commentf("for %s", ca.sql))
+				c.Assert(limitStr, Equals, tt.limit, Commentf("for %s", tt.sql))
 				break
 			}
 			p = p.Children()[0]
@@ -226,7 +220,7 @@ func (s *testPlanSuite) TestPushDownOrderbyAndLimit(c *C) {
 // TestPushDownExpression tests whether expressions have been pushed down successfully.
 func (s *testPlanSuite) TestPushDownExpression(c *C) {
 	defer testleak.AfterTest(c)()
-	cases := []struct {
+	tests := []struct {
 		sql  string
 		cond string // readable expressions.
 	}{
@@ -304,8 +298,8 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 			cond: "isnull(test.t.b)",
 		},
 	}
-	for _, ca := range cases {
-		sql := "select * from t where " + ca.sql
+	for _, tt := range tests {
+		sql := "select * from t where " + tt.sql
 		comment := Commentf("for %s", sql)
 		stmt, err := s.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil, comment)
@@ -340,7 +334,7 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 			}
 			if ts != nil {
 				conditions := append(ts.indexFilterConditions, ts.tableFilterConditions...)
-				c.Assert(fmt.Sprintf("%s", expression.ComposeCNFCondition(mock.NewContext(), conditions...).String()), Equals, ca.cond, Commentf("for %s", sql))
+				c.Assert(fmt.Sprintf("%s", expression.ComposeCNFCondition(mock.NewContext(), conditions...).String()), Equals, tt.cond, Commentf("for %s", sql))
 				break
 			}
 			p = p.Children()[0]
@@ -350,7 +344,7 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 
 func (s *testPlanSuite) TestCBO(c *C) {
 	defer testleak.AfterTest(c)()
-	cases := []struct {
+	tests := []struct {
 		sql  string
 		best string
 	}{
@@ -404,7 +398,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select * from t t1 where 1 = 0",
-			best: "Dummy",
+			best: "Dual",
 		},
 		{
 			sql:  "select * from t t1 where c in (1,2,3,4,5,6,7,8,9,0)",
@@ -416,7 +410,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		},
 		{
 			sql:  "select count(*) from t t1 having 1 = 0",
-			best: "Dummy->HashAgg->Selection",
+			best: "Dual->HashAgg->Selection",
 		},
 		{
 			sql:  "select sum(a.b), sum(b.b) from t a join t b on a.c = b.c group by a.d order by a.d",
@@ -528,9 +522,9 @@ func (s *testPlanSuite) TestCBO(c *C) {
 			best: "LeftHashJoin{Table(t)->Table(t)->HashAgg}(test.t.a,t1.b)->Projection->Selection->Projection",
 		},
 	}
-	for _, ca := range cases {
-		comment := Commentf("for %s", ca.sql)
-		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+	for _, tt := range tests {
+		comment := Commentf("for %s", tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
 		is, err := mockResolve(stmt)
@@ -545,17 +539,17 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
-		lp, err = logicalOptimize(flagPredicatePushDown|flagBuildKeyInfo|flagPrunColumns|flagAggregationOptimize|flagDecorrelate, lp, builder.ctx, builder.allocator)
+		lp, err = logicalOptimize(builder.optFlag, lp, builder.ctx, builder.allocator)
 		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
-		c.Assert(ToString(EliminateProjection(info.p)), Equals, ca.best, Commentf("for %s", ca.sql))
+		c.Assert(ToString(EliminateProjection(info.p)), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
 }
 
 func (s *testPlanSuite) TestProjectionElimination(c *C) {
 	defer testleak.AfterTest(c)()
-	cases := []struct {
+	tests := []struct {
 		sql string
 		ans string
 	}{
@@ -590,7 +584,7 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		},
 		{
 			sql: "select a from (select d as a from t where d = 0) k where k.a = 5",
-			ans: "Dummy",
+			ans: "Dual",
 		},
 		{
 			sql: "select t1.a from t t1 where t1.a in (select t2.a from t t2 where t2.a > 1)",
@@ -639,12 +633,12 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		},
 		{
 			sql: "select t1.a from t t1, (select @a:=0, @b:=0) t2",
-			ans: "LeftHashJoin{Table(t)->*plan.TableDual->Projection}->Projection",
+			ans: "LeftHashJoin{Table(t)->Dual->Projection}->Projection",
 		},
 	}
-	for _, ca := range cases {
-		comment := Commentf("for %s", ca.sql)
-		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+	for _, tt := range tests {
+		comment := Commentf("for %s", tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 
@@ -662,12 +656,12 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		lp.ResolveIndicesAndCorCols()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		p = EliminateProjection(info.p)
-		c.Assert(ToString(p), Equals, ca.ans, Commentf("for %s", ca.sql))
+		c.Assert(ToString(p), Equals, tt.ans, Commentf("for %s", tt.sql))
 	}
 }
 
 func (s *testPlanSuite) TestCoveringIndex(c *C) {
-	cases := []struct {
+	tests := []struct {
 		columnNames []string
 		indexNames  []string
 		indexLens   []int
@@ -681,10 +675,10 @@ func (s *testPlanSuite) TestCoveringIndex(c *C) {
 		{[]string{"a", "b"}, []string{"a", "c"}, []int{-1, -1}, false},
 		{[]string{"id", "a"}, []string{"a", "b"}, []int{-1, -1}, true},
 	}
-	for _, ca := range cases {
+	for _, tt := range tests {
 		var columns []*model.ColumnInfo
 		var pkIsHandle bool
-		for _, cn := range ca.columnNames {
+		for _, cn := range tt.columnNames {
 			col := &model.ColumnInfo{Name: model.NewCIStr(cn)}
 			if cn == "id" {
 				pkIsHandle = true
@@ -693,19 +687,19 @@ func (s *testPlanSuite) TestCoveringIndex(c *C) {
 			columns = append(columns, col)
 		}
 		var indexCols []*model.IndexColumn
-		for i := range ca.indexNames {
-			icn := ca.indexNames[i]
-			icl := ca.indexLens[i]
+		for i := range tt.indexNames {
+			icn := tt.indexNames[i]
+			icl := tt.indexLens[i]
 			indexCols = append(indexCols, &model.IndexColumn{Name: model.NewCIStr(icn), Length: icl})
 		}
 		covering := isCoveringIndex(columns, indexCols, pkIsHandle)
-		c.Assert(covering, Equals, ca.isCovering)
+		c.Assert(covering, Equals, tt.isCovering)
 	}
 }
 
 func (s *testPlanSuite) TestFilterConditionPushDown(c *C) {
 	defer testleak.AfterTest(c)()
-	cases := []struct {
+	tests := []struct {
 		sql         string
 		access      string
 		indexFilter string
@@ -736,9 +730,9 @@ func (s *testPlanSuite) TestFilterConditionPushDown(c *C) {
 			tableFilter: "[gt(test.t.b, minus(test.t.a, test.t.d))]",
 		},
 	}
-	for _, ca := range cases {
-		comment := Commentf("for %s", ca.sql)
-		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+	for _, tt := range tests {
+		comment := Commentf("for %s", tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 
@@ -770,9 +764,9 @@ func (s *testPlanSuite) TestFilterConditionPushDown(c *C) {
 				ts = &x.physicalTableSource
 			}
 			if ts != nil {
-				c.Assert(fmt.Sprintf("%s", ts.AccessCondition), Equals, ca.access, Commentf("for %s", ca.sql))
-				c.Assert(fmt.Sprintf("%s", ts.indexFilterConditions), Equals, ca.indexFilter, Commentf("for %s", ca.sql))
-				c.Assert(fmt.Sprintf("%s", ts.tableFilterConditions), Equals, ca.tableFilter, Commentf("for %s", ca.sql))
+				c.Assert(fmt.Sprintf("%s", ts.AccessCondition), Equals, tt.access, Commentf("for %s", tt.sql))
+				c.Assert(fmt.Sprintf("%s", ts.indexFilterConditions), Equals, tt.indexFilter, Commentf("for %s", tt.sql))
+				c.Assert(fmt.Sprintf("%s", ts.tableFilterConditions), Equals, tt.tableFilter, Commentf("for %s", tt.sql))
 				break
 			}
 			p = p.Children()[0]
@@ -782,7 +776,7 @@ func (s *testPlanSuite) TestFilterConditionPushDown(c *C) {
 
 func (s *testPlanSuite) TestAddCache(c *C) {
 	defer testleak.AfterTest(c)()
-	cases := []struct {
+	tests := []struct {
 		sql string
 		ans string
 	}{
@@ -791,9 +785,9 @@ func (s *testPlanSuite) TestAddCache(c *C) {
 			ans: "Apply{Table(t)->LeftHashJoin{Table(t)->Cache->Table(t)->Cache}(t2.a,t3.a)->StreamAgg->MaxOneRow}->Selection->Projection",
 		},
 	}
-	for _, ca := range cases {
-		comment := Commentf("for %s", ca.sql)
-		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+	for _, tt := range tests {
+		comment := Commentf("for %s", tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 
@@ -817,7 +811,7 @@ func (s *testPlanSuite) TestAddCache(c *C) {
 		pp := info.p
 		pp = EliminateProjection(pp)
 		addCachePlan(pp, builder.allocator)
-		c.Assert(ToString(pp), Equals, ca.ans, Commentf("for %s", ca.sql))
+		c.Assert(ToString(pp), Equals, tt.ans, Commentf("for %s", tt.sql))
 	}
 }
 
@@ -825,7 +819,7 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 	defer testleak.AfterTest(c)()
 	rb := &rangeBuilder{sc: new(variable.StatementContext)}
 
-	cases := []struct {
+	tests := []struct {
 		exprStr   string
 		resultStr string
 	}{
@@ -975,10 +969,10 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 		},
 	}
 
-	for _, ca := range cases {
-		sql := "select * from t where " + ca.exprStr
+	for _, tt := range tests {
+		sql := "select * from t where " + tt.exprStr
 		stmt, err := s.ParseOneStmt(sql, "", "")
-		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, ca.exprStr))
+		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		is, err := mockResolve(stmt)
 		c.Assert(err, IsNil)
 
@@ -988,7 +982,7 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 			is:        is,
 		}
 		p := builder.build(stmt)
-		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, ca.exprStr))
+		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
 		var selection *Selection
 		for _, child := range p.Children() {
 			plan, ok := child.(*Selection)
@@ -997,20 +991,20 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 				break
 			}
 		}
-		c.Assert(selection, NotNil, Commentf("expr:%v", ca.exprStr))
+		c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
 		result := fullRange
 		for _, cond := range selection.Conditions {
 			result = rb.intersection(result, rb.build(pushDownNot(cond, false, nil)))
 		}
 		c.Assert(rb.err, IsNil)
 		got := fmt.Sprintf("%v", result)
-		c.Assert(got, Equals, ca.resultStr, Commentf("different for expr %s", ca.exprStr))
+		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
 	}
 }
 
 func (s *testPlanSuite) TestScanController(c *C) {
 	defer testleak.AfterTest(c)()
-	cases := []struct {
+	tests := []struct {
 		sql string
 		ans string
 	}{
@@ -1027,9 +1021,9 @@ func (s *testPlanSuite) TestScanController(c *C) {
 			ans: "Apply{Table(t)->Index(t.f)[]->Selection->StreamAgg}->Projection",
 		},
 	}
-	for _, ca := range cases {
-		comment := Commentf("for %s", ca.sql)
-		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+	for _, tt := range tests {
+		comment := Commentf("for %s", tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 
@@ -1056,13 +1050,13 @@ func (s *testPlanSuite) TestScanController(c *C) {
 		pp := info.p
 		pp = EliminateProjection(pp)
 		addCachePlan(pp, builder.allocator)
-		c.Assert(ToString(pp), Equals, ca.ans, Commentf("for %s", ca.sql))
+		c.Assert(ToString(pp), Equals, tt.ans, Commentf("for %s", tt.sql))
 	}
 }
 
 func (s *testPlanSuite) TestJoinAlgorithm(c *C) {
 	defer testleak.AfterTest(c)()
-	cases := []struct {
+	tests := []struct {
 		sql string
 		ans string
 	}{
@@ -1118,10 +1112,22 @@ func (s *testPlanSuite) TestJoinAlgorithm(c *C) {
 			sql: "select /*+ tidb_inlj(t2) */ * from t t1 join t t2 on t1.c=t2.c and t1.d=t2.d and t1.e > t2.e",
 			ans: "Apply{Index(t.c_d_e)[]->Selection->Table(t)}",
 		},
+		{
+			sql: "select /*+ TIDB_INLJ(t1) */ * from t join t t1 where t.a=t1.a and t.b > 100 and t1.b>10",
+			ans: "Apply{Table(t)->Selection->Table(t)}",
+		},
+		{
+			sql: "select /*+ TIDB_INLJ(tt, t1) */ * from (select * from t where t.b > 100) tt left join t t1 on tt.a=t1.a and t1.b>10",
+			ans: "Apply{Table(t)->Table(t)->Selection}",
+		},
+		{
+			sql: "select /*+ TIDB_INLJ(t, t1) */ * from t left join (select * from t where t.b > 10) t1 on t.a=t1.a and t.b > 100",
+			ans: "LeftHashJoin{Table(t)->Table(t)}(test.t.a,t1.a)",
+		},
 	}
-	for _, ca := range cases {
-		comment := Commentf("for %s", ca.sql)
-		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+	for _, tt := range tests {
+		comment := Commentf("for %s", tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 
@@ -1138,6 +1144,6 @@ func (s *testPlanSuite) TestJoinAlgorithm(c *C) {
 		c.Assert(builder.err, IsNil)
 		pp, err := doOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx, builder.allocator)
 		c.Assert(err, IsNil)
-		c.Assert(ToString(pp), Equals, ca.ans, Commentf("for %s", ca.sql))
+		c.Assert(ToString(pp), Equals, tt.ans, Commentf("for %s", tt.sql))
 	}
 }

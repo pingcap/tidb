@@ -19,6 +19,7 @@ package expression
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"math"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -75,6 +77,7 @@ var (
 	_ functionClass = &exportSetFunctionClass{}
 	_ functionClass = &formatFunctionClass{}
 	_ functionClass = &fromBase64FunctionClass{}
+	_ functionClass = &toBase64FunctionClass{}
 	_ functionClass = &insertFuncFunctionClass{}
 	_ functionClass = &instrFunctionClass{}
 	_ functionClass = &loadFileFunctionClass{}
@@ -117,6 +120,7 @@ var (
 	_ builtinFunc = &builtinExportSetSig{}
 	_ builtinFunc = &builtinFormatSig{}
 	_ builtinFunc = &builtinFromBase64Sig{}
+	_ builtinFunc = &builtinToBase64Sig{}
 	_ builtinFunc = &builtinInsertFuncSig{}
 	_ builtinFunc = &builtinInstrSig{}
 	_ builtinFunc = &builtinLoadFileSig{}
@@ -299,6 +303,57 @@ func (b *builtinLeftSig) eval(row []types.Datum) (d types.Datum, err error) {
 		l = len(str)
 	}
 	d.SetString(str[:l])
+	return d, nil
+}
+
+type rightFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *rightFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinRightSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinRightSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinRightSig) eval(row []types.Datum) (d types.Datum, err error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if len(args) != 2 {
+		return d, nil
+	}
+	arg0, arg1 := args[0], args[1]
+	if arg0.IsNull() || arg1.IsNull() {
+		return d, nil
+	}
+
+	str, err := arg0.ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	sc := new(variable.StatementContext)
+	sc.IgnoreTruncate = true
+	length, err := arg1.ToInt64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if length <= 0 {
+		d.SetString("")
+		return d, nil
+	}
+	var result string
+	strLen := int64(len(str))
+	if strLen >= length {
+		result = str[strLen-length:]
+	} else {
+		result = str
+	}
+	d.SetString(result)
+
 	return d, nil
 }
 
@@ -553,6 +608,10 @@ func (b *builtinReplaceSig) eval(row []types.Datum) (d types.Datum, err error) {
 	if err != nil {
 		return d, errors.Trace(err)
 	}
+	if oldStr == "" {
+		d.SetString(str)
+		return d, nil
+	}
 	d.SetString(strings.Replace(str, oldStr, newStr, -1))
 
 	return d, nil
@@ -756,6 +815,7 @@ func (b *builtinLocateSig) eval(row []types.Datum) (d types.Datum, err error) {
 	// args[0] -> SubStr
 	// args[1] -> Str
 	// args[2] -> Pos
+
 	// eval str
 	if args[1].IsNull() {
 		return d, nil
@@ -780,25 +840,38 @@ func (b *builtinLocateSig) eval(row []types.Datum) (d types.Datum, err error) {
 			return d, errors.Trace(err)
 		}
 		pos = p - 1
-		if pos < 0 || pos > int64(len(str)) {
-			d.SetInt64(0)
-			return d, nil
-		}
-		if pos > int64(len(str)-len(subStr)) {
-			d.SetInt64(0)
-			return d, nil
-		}
 	}
-	if len(subStr) == 0 {
-		d.SetInt64(pos + 1)
-		return d, nil
+	var ret, subStrLen, sentinel int64
+	caseSensitive := false
+	if args[0].Kind() == types.KindBytes || args[1].Kind() == types.KindBytes {
+		caseSensitive = true
+		subStrLen = int64(len(subStr))
+		sentinel = int64(len(str)) - subStrLen
+	} else {
+		subStrLen = int64(len([]rune(subStr)))
+		sentinel = int64(len([]rune(strings.ToLower(str)))) - subStrLen
 	}
-	i := strings.Index(str[pos:], subStr)
-	if i == -1 {
+
+	if pos < 0 || pos > sentinel {
 		d.SetInt64(0)
 		return d, nil
+	} else if subStrLen == 0 {
+		d.SetInt64(pos + 1)
+		return d, nil
+	} else if caseSensitive {
+		slice := str[pos:]
+		idx := strings.Index(slice, subStr)
+		if idx != -1 {
+			ret = pos + int64(idx) + 1
+		}
+	} else {
+		slice := string([]rune(strings.ToLower(str))[pos:])
+		idx := strings.Index(slice, strings.ToLower(subStr))
+		if idx != -1 {
+			ret = pos + int64(utf8.RuneCountInString(slice[:idx])) + 1
+		}
 	}
-	d.SetInt64(int64(i) + pos + 1)
+	d.SetInt64(ret)
 	return d, nil
 }
 
@@ -1677,7 +1750,62 @@ type builtinExportSetSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_export-set
 func (b *builtinExportSetSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("export_set")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	var (
+		bits         uint64
+		on           string
+		off          string
+		separator    = ","
+		numberOfBits = 64
+	)
+	switch len(args) {
+	case 5:
+		arg, err := args[4].ToInt64(b.ctx.GetSessionVars().StmtCtx)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		if arg >= 0 && arg < 64 {
+			numberOfBits = int(arg)
+		}
+		fallthrough
+	case 4:
+		separator, err = args[3].ToString()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		fallthrough
+	case 3:
+		arg, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		bits = uint64(arg)
+		on, err = args[1].ToString()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		off, err = args[2].ToString()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+	}
+	var result string
+	for i := 0; i < numberOfBits; i++ {
+		if bits&1 > 0 {
+			result += on
+		} else {
+			result += off
+		}
+		bits >>= 1
+		if i < numberOfBits-1 {
+			result += separator
+		}
+	}
+	d.SetString(result)
+	return d, nil
 }
 
 type formatFunctionClass struct {
@@ -1744,7 +1872,71 @@ type builtinFromBase64Sig struct {
 
 // See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_from-base64
 func (b *builtinFromBase64Sig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("from_base64")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	str, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	str = strings.Replace(str, "\t", "", -1)
+	str = strings.Replace(str, " ", "", -1)
+	result, err := base64.StdEncoding.DecodeString(str)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	// Set the result to be of type []byte
+	d.SetBytes(result)
+	return d, nil
+
+}
+
+type toBase64FunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *toBase64FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinToBase64Sig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinToBase64Sig struct {
+	baseBuiltinFunc
+}
+
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_to-base64
+func (b *builtinToBase64Sig) eval(row []types.Datum) (d types.Datum, err error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	str, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	//encode
+	strBytes := []byte(str)
+	result := base64.StdEncoding.EncodeToString(strBytes)
+	//A newline is added after each 76 characters of encoded output to divide long output into multiple lines.
+	count := len(result)
+	if count > 76 {
+		resultArr := splitToSubN(result, 76)
+		result = strings.Join(resultArr, "\n")
+	}
+	// Set the result to be of type string
+	d.SetString(result)
+	return d, nil
+}
+
+//func to splite a string every n runes into a string[]
+func splitToSubN(s string, n int) []string {
+	subs := make([]string, 0, len(s)/n+1)
+	for len(s) > n {
+		subs = append(subs, s[:n])
+		s = s[n:]
+	}
+	subs = append(subs, s)
+	return subs
 }
 
 type insertFuncFunctionClass struct {

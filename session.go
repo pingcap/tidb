@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
@@ -111,8 +112,12 @@ type session struct {
 	goCtx      goctx.Context
 	cancelFunc goctx.CancelFunc
 
-	values map[fmt.Stringer]interface{}
-	store  kv.Storage
+	mu struct {
+		sync.RWMutex
+		values map[fmt.Stringer]interface{}
+	}
+
+	store kv.Storage
 
 	// Used for test only.
 	unlimitedRetryCount bool
@@ -123,6 +128,8 @@ type session struct {
 
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
+
+	statsCollector *statistics.SessionStatsCollector
 }
 
 // Cancel cancels the execution of current transaction.
@@ -132,9 +139,9 @@ func (s *session) Cancel() {
 	s.cancelFunc()
 }
 
-// Canceled implements context.Context interface.
-func (s *session) Done() <-chan struct{} {
-	return s.goCtx.Done()
+// GoCtx returns the standard context.Context that bind with current transaction.
+func (s *session) GoCtx() goctx.Context {
+	return s.goCtx
 }
 
 func (s *session) cleanRetryInfo() {
@@ -152,7 +159,10 @@ func (s *session) Status() uint16 {
 }
 
 func (s *session) LastInsertID() uint64 {
-	return s.sessionVars.LastInsertID
+	if s.sessionVars.LastInsertID > 0 {
+		return s.sessionVars.LastInsertID
+	}
+	return s.sessionVars.InsertID
 }
 
 func (s *session) AffectedRows() uint64 {
@@ -267,6 +277,12 @@ func (s *session) doCommitWithRetry() error {
 	if err != nil {
 		log.Warnf("[%d] finished txn:%v, %v", s.sessionVars.ConnectionID, s.txn, err)
 		return errors.Trace(err)
+	}
+	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
+	if s.statsCollector != nil && mapper != nil {
+		for id, item := range mapper {
+			s.statsCollector.Update(id, item.Delta, item.Count)
+		}
 	}
 	return nil
 }
@@ -718,20 +734,29 @@ func (s *session) NewTxn() error {
 }
 
 func (s *session) SetValue(key fmt.Stringer, value interface{}) {
-	s.values[key] = value
+	s.mu.Lock()
+	s.mu.values[key] = value
+	s.mu.Unlock()
 }
 
 func (s *session) Value(key fmt.Stringer) interface{} {
-	value := s.values[key]
+	s.mu.RLock()
+	value := s.mu.values[key]
+	s.mu.RUnlock()
 	return value
 }
 
 func (s *session) ClearValue(key fmt.Stringer) {
-	delete(s.values, key)
+	s.mu.Lock()
+	delete(s.mu.values, key)
+	s.mu.Unlock()
 }
 
 // Close function does some clean work when session end.
 func (s *session) Close() error {
+	if s.statsCollector != nil {
+		s.statsCollector.Delete()
+	}
 	return s.RollbackTxn()
 }
 
@@ -821,6 +846,11 @@ func CreateSession(store kv.Storage) (Session, error) {
 	}
 	privilege.BindPrivilegeManager(s, pm)
 
+	// Add statsUpdateHandle.
+	if do.StatsHandle() != nil {
+		s.statsCollector = do.StatsHandle().NewSessionStatsCollector()
+	}
+
 	return s, nil
 }
 
@@ -842,7 +872,11 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	err = dom.LoadTableStatsLoop(se)
+	se1, err := createSession(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	err = dom.UpdateTableStatsLoop(se1)
 	return dom, errors.Trace(err)
 }
 
@@ -878,11 +912,11 @@ func createSession(store kv.Storage) (*session, error) {
 		return nil, errors.Trace(err)
 	}
 	s := &session{
-		values:      make(map[fmt.Stringer]interface{}),
 		store:       store,
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
 	}
+	s.mu.values = make(map[fmt.Stringer]interface{})
 	sessionctx.BindDomain(s, domain)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
@@ -892,7 +926,7 @@ func createSession(store kv.Storage) (*session, error) {
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 5
+	currentBootstrapVersion = 6
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {

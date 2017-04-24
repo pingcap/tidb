@@ -113,8 +113,6 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildExists(v)
 	case *plan.MaxOneRow:
 		return b.buildMaxOneRow(v)
-	case *plan.PhysicalDummyScan:
-		return b.buildDummyScan(v)
 	case *plan.Cache:
 		return b.buildCache(v)
 	case *plan.Analyze:
@@ -482,7 +480,7 @@ func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor
 		return &StreamAggExec{
 			Src:          src,
 			schema:       v.Schema(),
-			Ctx:          b.ctx,
+			StmtCtx:      b.ctx.GetSessionVars().StmtCtx,
 			AggFuncs:     v.AggFuncs,
 			GroupByItems: v.GroupByItems,
 		}
@@ -490,7 +488,7 @@ func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor
 	return &HashAggExec{
 		Src:          src,
 		schema:       v.Schema(),
-		ctx:          b.ctx,
+		sc:           b.ctx.GetSessionVars().StmtCtx,
 		AggFuncs:     v.AggFuncs,
 		GroupByItems: v.GroupByItems,
 		aggType:      v.AggType,
@@ -519,7 +517,7 @@ func (b *executorBuilder) buildProjection(v *plan.Projection) Executor {
 }
 
 func (b *executorBuilder) buildTableDual(v *plan.TableDual) Executor {
-	return &TableDualExec{schema: v.Schema()}
+	return &TableDualExec{schema: v.Schema(), rowCount: v.RowCount}
 }
 
 func (b *executorBuilder) getStartTS() uint64 {
@@ -596,6 +594,14 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 		aggregate:      v.Aggregated,
 		aggFuncs:       v.AggFuncsPB,
 		byItems:        v.GbyItemsPB,
+	}
+	vars := b.ctx.GetSessionVars()
+	if v.OutOfOrder {
+		e.scanConcurrency = vars.DistSQLScanConcurrency
+	} else {
+		// The cost of index scan double-read is higher than single-read. Usually ordered index scan has a limit
+		// which may not have been pushed down, so we set concurrency lower to avoid fetching unnecessary data.
+		e.scanConcurrency = vars.IndexSerialScanConcurrency
 	}
 	if !e.aggregate && e.singleReadMode {
 		// Single read index result has the schema of full index columns.
@@ -719,12 +725,6 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 	return &UpdateExec{ctx: b.ctx, SelectExec: selExec, OrderedList: v.OrderedList}
 }
 
-func (b *executorBuilder) buildDummyScan(v *plan.PhysicalDummyScan) Executor {
-	return &DummyScanExec{
-		schema: v.Schema(),
-	}
-}
-
 func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
 	selExec := b.build(v.Children()[0])
 	return &DeleteExec{
@@ -744,22 +744,21 @@ func (b *executorBuilder) buildCache(v *plan.Cache) Executor {
 }
 
 func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
-	var tblInfo *model.TableInfo
-	if v.Table != nil {
-		tblInfo = v.Table.TableInfo
-	}
 	e := &AnalyzeExec{
-		schema:     v.Schema(),
-		tblInfo:    tblInfo,
-		ctx:        b.ctx,
-		idxOffsets: v.IdxOffsets,
-		colOffsets: v.ColOffsets,
-		pkOffset:   v.PkOffset,
-		Srcs:       make([]Executor, len(v.Children())),
+		ctx:   b.ctx,
+		tasks: make([]analyzeTask, 0, len(v.Children())),
 	}
-	for i, child := range v.Children() {
-		childExec := b.build(child)
-		e.Srcs[i] = childExec
+	pkTasks := v.Children()[:len(v.PkTasks)]
+	for _, task := range pkTasks {
+		e.tasks = append(e.tasks, analyzeTask{taskType: pkTask, src: b.build(task)})
+	}
+	colTasks := v.Children()[len(v.PkTasks) : len(v.PkTasks)+len(v.ColTasks)]
+	for _, task := range colTasks {
+		e.tasks = append(e.tasks, analyzeTask{taskType: colTask, src: b.build(task)})
+	}
+	idxTasks := v.Children()[len(v.PkTasks)+len(v.ColTasks):]
+	for _, task := range idxTasks {
+		e.tasks = append(e.tasks, analyzeTask{taskType: idxTask, src: b.build(task)})
 	}
 	return e
 }

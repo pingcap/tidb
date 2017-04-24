@@ -19,11 +19,12 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
 
 var (
-	_ functionClass = &sleepFunctionClass{}
 	_ functionClass = &inFunctionClass{}
 	_ functionClass = &rowFunctionClass{}
 	_ functionClass = &castFunctionClass{}
@@ -32,6 +33,7 @@ var (
 	_ functionClass = &lockFunctionClass{}
 	_ functionClass = &releaseLockFunctionClass{}
 	_ functionClass = &valuesFunctionClass{}
+	_ functionClass = &bitCountFunctionClass{}
 )
 
 var (
@@ -44,6 +46,7 @@ var (
 	_ builtinFunc = &builtinLockSig{}
 	_ builtinFunc = &builtinReleaseLockSig{}
 	_ builtinFunc = &builtinValuesSig{}
+	_ builtinFunc = &builtinBitCountSig{}
 )
 
 type inFunctionClass struct {
@@ -245,4 +248,46 @@ func (b *builtinValuesSig) eval(_ []types.Datum) (types.Datum, error) {
 		return row[b.offset], nil
 	}
 	return types.Datum{}, errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), b.offset)
+}
+
+type bitCountFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *bitCountFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	return &builtinBitCountSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+}
+
+type builtinBitCountSig struct {
+	baseBuiltinFunc
+}
+
+// See https://dev.mysql.com/doc/refman/5.7/en/bit-functions.html#function_bit-count
+func (b *builtinBitCountSig) eval(row []types.Datum) (d types.Datum, err error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	arg := args[0]
+	if arg.IsNull() {
+		return d, nil
+	}
+	sc := new(variable.StatementContext)
+	sc.IgnoreTruncate = true
+	bin, err := arg.ToInt64(sc)
+	if err != nil {
+		if terror.ErrorEqual(err, types.ErrOverflow) {
+			d.SetInt64(64)
+			return d, nil
+
+		}
+		return d, errors.Trace(err)
+	}
+	var count int64
+	for bin != 0 {
+		count++
+		bin = (bin - 1) & bin
+	}
+	d.SetInt64(count)
+	return d, nil
 }

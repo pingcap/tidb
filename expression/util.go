@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -152,27 +153,29 @@ Loop:
 // createDistinctChecker creates a new distinct checker.
 func createDistinctChecker() *distinctChecker {
 	return &distinctChecker{
-		existingKeys: make(map[string]bool),
+		existingKeys: mvmap.NewMVMap(),
 	}
 }
 
 // Checker stores existing keys and checks if given data is distinct.
 type distinctChecker struct {
-	existingKeys map[string]bool
+	existingKeys *mvmap.MVMap
+	buf          []byte
 }
 
 // Check checks if values is distinct.
-func (d *distinctChecker) Check(values []interface{}) (bool, error) {
-	bs, err := codec.EncodeValue([]byte{}, types.MakeDatums(values...)...)
+func (d *distinctChecker) Check(values []types.Datum) (bool, error) {
+	d.buf = d.buf[:0]
+	var err error
+	d.buf, err = codec.EncodeValue(d.buf, values...)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	key := string(bs)
-	_, ok := d.existingKeys[key]
-	if ok {
+	v := d.existingKeys.Get(d.buf)
+	if v != nil {
 		return false, nil
 	}
-	d.existingKeys[key] = true
+	d.existingKeys.Put(d.buf, []byte{})
 	return true, nil
 }
 

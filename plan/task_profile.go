@@ -13,16 +13,20 @@
 
 package plan
 
-import "github.com/pingcap/tidb/expression"
+import (
+	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression"
+)
 
 // taskProfile is a new version of `PhysicalPlanInfo`. It stores cost information for a task.
 // A task may be CopTask, RootTask, MPPTask or a ParallelTask.
 type taskProfile interface {
-	setCount(cnt uint64)
-	count() uint64
-	setCost(cost float64)
+	setCount(cnt float64)
+	count() float64
+	addCost(cost float64)
 	cost() float64
 	copy() taskProfile
+	plan() PhysicalPlan
 }
 
 // TODO: In future, we should split copTask to indexTask and tableTask.
@@ -31,21 +35,21 @@ type copTaskProfile struct {
 	indexPlan PhysicalPlan
 	tablePlan PhysicalPlan
 	cst       float64
-	cnt       uint64
-	// addPlan2Index means we are processing index plan.
-	addPlan2Index bool
+	cnt       float64
+	// indexPlanFinished means we have finished index plan.
+	indexPlanFinished bool
 }
 
-func (t *copTaskProfile) setCount(cnt uint64) {
+func (t *copTaskProfile) setCount(cnt float64) {
 	t.cnt = cnt
 }
 
-func (t *copTaskProfile) count() uint64 {
+func (t *copTaskProfile) count() float64 {
 	return t.cnt
 }
 
-func (t *copTaskProfile) setCost(cst float64) {
-	t.cst = cst
+func (t *copTaskProfile) addCost(cst float64) {
+	t.cst += cst
 }
 
 func (t *copTaskProfile) cost() float64 {
@@ -53,138 +57,222 @@ func (t *copTaskProfile) cost() float64 {
 }
 
 func (t *copTaskProfile) copy() taskProfile {
-	return &copTaskProfile{
-		indexPlan:     t.indexPlan,
-		tablePlan:     t.tablePlan,
-		cst:           t.cst,
-		cnt:           t.cnt,
-		addPlan2Index: t.addPlan2Index,
-	}
+	nt := *t
+	return &nt
 }
 
-func attachPlan2Task(p PhysicalPlan, t taskProfile) taskProfile {
-	nt := t.copy()
-	switch v := nt.(type) {
+func (t *copTaskProfile) plan() PhysicalPlan {
+	if t.indexPlanFinished {
+		return t.tablePlan
+	}
+	return t.indexPlan
+}
+
+func attachPlan2TaskProfile(p PhysicalPlan, t taskProfile) taskProfile {
+	switch v := t.(type) {
 	case *copTaskProfile:
-		if v.addPlan2Index {
-			p.SetChildren(v.indexPlan)
-			v.indexPlan = p
-		} else {
+		if v.indexPlanFinished {
 			p.SetChildren(v.tablePlan)
 			v.tablePlan = p
+		} else {
+			p.SetChildren(v.indexPlan)
+			v.indexPlan = p
 		}
 	case *rootTaskProfile:
-		p.SetChildren(v.plan)
-		v.plan = p
-		return nt
+		p.SetChildren(v.p)
+		v.p = p
 	}
-	return nt
+	return t
 }
 
+// finishIndexPlan means we no longer add plan to index plan, and compute the network cost for it.
 func (t *copTaskProfile) finishIndexPlan() {
-	t.cst += float64(t.cnt) * netWorkFactor
-	t.addPlan2Index = false
+	if !t.indexPlanFinished {
+		if t.tablePlan != nil {
+			t.indexPlan.SetSchema(expression.NewSchema()) // we only need the handle
+		}
+		t.cst += t.cnt * (netWorkFactor + scanFactor)
+		t.indexPlanFinished = true
+	}
 }
 
-func (t *copTaskProfile) finishTask() {
-	if t.addPlan2Index {
-		t.finishIndexPlan()
+func (p *basePhysicalPlan) attach2TaskProfile(tasks ...taskProfile) taskProfile {
+	return attachPlan2TaskProfile(p.basePlan.self.(PhysicalPlan).Copy(), tasks[0])
+}
+
+// finishTask means we close the coprocessor task and create a root task.
+func (t *copTaskProfile) finishTask(ctx context.Context, allocator *idAllocator) taskProfile {
+	// FIXME: When it is a double reading. The cost should be more expensive. The right cost should add the
+	// `NetWorkStartCost` * (totalCount / perCountIndexRead)
+	t.finishIndexPlan()
+	if t.tablePlan != nil {
+		t.cst += t.cnt * netWorkFactor
 	}
-	t.cst += float64(t.cnt) * netWorkFactor
+	newTask := &rootTaskProfile{
+		cst: t.cst,
+		cnt: t.cnt,
+	}
+	if t.indexPlan != nil && t.tablePlan != nil {
+		newTask.p = PhysicalIndexLookUpReader{tablePlan: t.tablePlan, indexPlan: t.indexPlan}.init(allocator, ctx)
+		newTask.p.SetSchema(t.tablePlan.Schema())
+	} else if t.indexPlan != nil {
+		newTask.p = PhysicalIndexReader{copPlan: t.indexPlan}.init(allocator, ctx)
+		newTask.p.SetSchema(t.indexPlan.Schema())
+	} else {
+		newTask.p = PhysicalTableReader{copPlan: t.tablePlan}.init(allocator, ctx)
+		newTask.p.SetSchema(t.tablePlan.Schema())
+	}
+	return newTask
 }
 
 // rootTaskProfile is the final sink node of a plan graph. It should be a single goroutine on tidb.
 type rootTaskProfile struct {
-	plan PhysicalPlan
-	cst  float64
-	cnt  uint64
+	p   PhysicalPlan
+	cst float64
+	cnt float64
 }
 
 func (t *rootTaskProfile) copy() taskProfile {
 	return &rootTaskProfile{
-		plan: t.plan,
-		cst:  t.cst,
-		cnt:  t.cnt,
+		p:   t.p,
+		cst: t.cst,
+		cnt: t.cnt,
 	}
 }
 
-func (t *rootTaskProfile) setCount(cnt uint64) {
+func (t *rootTaskProfile) setCount(cnt float64) {
 	t.cnt = cnt
 }
 
-func (t *rootTaskProfile) count() uint64 {
+func (t *rootTaskProfile) count() float64 {
 	return t.cnt
 }
 
-func (t *rootTaskProfile) setCost(cst float64) {
-	t.cst = cst
+func (t *rootTaskProfile) addCost(cst float64) {
+	t.cst += cst
 }
 
 func (t *rootTaskProfile) cost() float64 {
 	return t.cst
 }
 
-func (limit *Limit) attach2TaskProfile(profiles ...taskProfile) taskProfile {
-	profile := attachPlan2Task(limit, profiles[0])
-	profile.setCount(limit.Count)
+func (t *rootTaskProfile) plan() PhysicalPlan {
+	return t.p
+}
+
+func (p *Limit) attach2TaskProfile(profiles ...taskProfile) taskProfile {
+	profile := profiles[0].copy()
+	if cop, ok := profile.(*copTaskProfile); ok {
+		// If the task is copTask, the Limit can always be pushed down.
+		// When limit be pushed down, it should remove its offset.
+		pushedDownLimit := Limit{Count: p.Offset + p.Count}.init(p.allocator, p.ctx)
+		if cop.tablePlan != nil {
+			pushedDownLimit.SetSchema(cop.tablePlan.Schema())
+		} else {
+			pushedDownLimit.SetSchema(cop.indexPlan.Schema())
+		}
+		cop = attachPlan2TaskProfile(pushedDownLimit, cop).(*copTaskProfile)
+		cop.setCount(float64(pushedDownLimit.Count))
+		profile = cop.finishTask(p.ctx, p.allocator)
+	}
+	profile = attachPlan2TaskProfile(p.Copy(), profile)
+	profile.setCount(float64(p.Count))
 	return profile
+}
+
+func (p *Sort) getCost(count float64) float64 {
+	if p.ExecLimit == nil {
+		return count*cpuFactor + count*memoryFactor
+	}
+	return count*cpuFactor + float64(p.ExecLimit.Count)*memoryFactor
+}
+
+// canPushDown check if this topN can be pushed down. If each of the expression can be converted to pb, it can be pushed.
+func (p *Sort) canPushDown() bool {
+	if p.ExecLimit == nil {
+		return false
+	}
+	exprs := make([]expression.Expression, 0, len(p.ByItems))
+	for _, item := range p.ByItems {
+		exprs = append(exprs, item.Expr)
+	}
+	_, _, remained := ExpressionsToPB(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient())
+	return len(remained) == 0
+}
+
+func (p *Sort) allColsFromSchema(schema *expression.Schema) bool {
+	var cols []*expression.Column
+	for _, item := range p.ByItems {
+		cols = append(cols, expression.ExtractColumns(item.Expr)...)
+	}
+	return len(schema.ColumnsIndices(cols)) > 0
+}
+
+func (p *Sort) attach2TaskProfile(profiles ...taskProfile) taskProfile {
+	profile := profiles[0].copy()
+	// If this is a Sort , we cannot push it down.
+	if p.ExecLimit == nil {
+		if cop, ok := profile.(*copTaskProfile); ok {
+			profile = cop.finishTask(p.ctx, p.allocator)
+		}
+		profile = attachPlan2TaskProfile(p.Copy(), profile)
+		profile.addCost(p.getCost(profile.count()))
+		return profile
+	}
+	// This is a topN plan.
+	if copTask, ok := profile.(*copTaskProfile); ok && p.canPushDown() {
+		limit := p.ExecLimit
+		pushedDownTopN := p.Copy().(*Sort)
+		// When topN is pushed down, it should remove its offset.
+		pushedDownTopN.ExecLimit = &Limit{Count: limit.Count + limit.Offset}
+		// If all columns in topN are from index plan, we can push it to index plan. Or we finish the index plan and
+		// push it to table plan.
+		if !copTask.indexPlanFinished && p.allColsFromSchema(copTask.indexPlan.Schema()) {
+			pushedDownTopN.SetChildren(copTask.indexPlan)
+			copTask.indexPlan = pushedDownTopN
+			pushedDownTopN.SetSchema(copTask.indexPlan.Schema())
+		} else {
+			// FIXME: When we pushed down a top-N plan to table plan branch in case of double reading. The cost should
+			// be more expensive in case of single reading, because we may execute table scan multi times.
+			copTask.finishIndexPlan()
+			pushedDownTopN.SetChildren(copTask.tablePlan)
+			copTask.tablePlan = pushedDownTopN
+			pushedDownTopN.SetSchema(copTask.tablePlan.Schema())
+		}
+		copTask.addCost(pushedDownTopN.getCost(profile.count()))
+		copTask.setCount(float64(pushedDownTopN.ExecLimit.Count))
+		profile = copTask.finishTask(p.ctx, p.allocator)
+	} else if ok {
+		profile = copTask.finishTask(p.ctx, p.allocator)
+	}
+	profile = attachPlan2TaskProfile(p.Copy(), profile)
+	profile.addCost(p.getCost(profile.count()))
+	profile.setCount(float64(p.ExecLimit.Count))
+	return profile
+}
+
+func (p *Projection) attach2TaskProfile(profiles ...taskProfile) taskProfile {
+	profile := profiles[0].copy()
+	np := p.Copy()
+	switch t := profile.(type) {
+	case *copTaskProfile:
+		// TODO: Support projection push down.
+		task := t.finishTask(p.ctx, p.allocator)
+		profile = attachPlan2TaskProfile(np, task)
+		return profile
+	case *rootTaskProfile:
+		return attachPlan2TaskProfile(np, t)
+	}
+	return nil
 }
 
 func (sel *Selection) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 	profile := profiles[0].copy()
-	switch t := profile.(type) {
-	case *copTaskProfile:
-		if t.addPlan2Index {
-			var indexSel, tableSel *Selection
-			if t.tablePlan != nil {
-				indexSel, tableSel = sel.splitSelectionByIndexColumns(t.indexPlan.Schema())
-			} else {
-				indexSel = sel
-			}
-			if indexSel != nil {
-				indexSel.SetChildren(t.indexPlan)
-				t.indexPlan = indexSel
-				// TODO: Update t.cnt.
-				t.cst += float64(t.cnt) * cpuFactor
-			}
-			if tableSel != nil {
-				t.finishIndexPlan()
-				tableSel.SetChildren(t.tablePlan)
-				t.tablePlan = tableSel
-				t.cst += float64(t.cnt) * cpuFactor
-			}
-		} else {
-			sel.SetChildren(t.tablePlan)
-			t.tablePlan = sel
-			t.cst += float64(t.cnt) * cpuFactor
-		}
-		// TODO: Estimate t.cnt by histogram.
-		t.cnt = uint64(float64(t.cnt) * selectionFactor)
-	case *rootTaskProfile:
-		t.cst += float64(t.cnt) * cpuFactor
-		t.cnt = uint64(float64(t.cnt) * selectionFactor)
+	if cop, ok := profile.(*copTaskProfile); ok {
+		profile = cop.finishTask(sel.ctx, sel.allocator)
 	}
+	profile.addCost(profile.count() * cpuFactor)
+	profile.setCount(profile.count() * selectionFactor)
+	profile = attachPlan2TaskProfile(sel.Copy(), profile)
 	return profile
-}
-
-// splitSelectionByIndexColumns splits the selection conditions by index schema. If some condition only contain the index
-// columns, it will be pushed to index plan.
-func (sel *Selection) splitSelectionByIndexColumns(schema *expression.Schema) (indexSel *Selection, tableSel *Selection) {
-	conditions := sel.Conditions
-	var tableConds []expression.Expression
-	for i := len(conditions) - 1; i >= 0; i-- {
-		cols := expression.ExtractColumns(conditions[i])
-		indices := schema.ColumnsIndices(cols)
-		if indices == nil {
-			tableConds = append(tableConds, conditions[i])
-			conditions = append(conditions[:i], conditions[i+1:]...)
-		}
-	}
-	if len(conditions) != 0 {
-		indexSel = sel
-	}
-	if len(tableConds) != 0 {
-		tableSel = Selection{Conditions: tableConds}.init(sel.allocator, sel.ctx)
-	}
-	return
 }

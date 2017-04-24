@@ -47,6 +47,7 @@ const (
 		Grant_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
 		Alter_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
 		Show_db_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
+		Super_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
 		Execute_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
 		Index_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
 		Create_user_priv	ENUM('N','Y') NOT NULL  DEFAULT 'N',
@@ -180,6 +181,7 @@ const (
 	version3 = 3
 	version4 = 4
 	version5 = 5
+	version6 = 6
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -219,6 +221,7 @@ func getTiDBVar(s Session, name string) (types.Datum, error) {
 		return types.Datum{}, errors.New("Wrong number of Recordset")
 	}
 	r := rs[0]
+	defer r.Close()
 	row, err := r.Next()
 	if err != nil || row == nil {
 		return types.Datum{}, errors.Trace(err)
@@ -235,10 +238,6 @@ func upgrade(s Session) {
 	}
 	if ver >= currentBootstrapVersion {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
-		if err1 := s.CommitTxn(); err1 != nil {
-			// Make sure that doesn't affect the following operations.
-			log.Fatal(errors.Trace(err1))
-		}
 		return
 	}
 	// Do upgrade works then update bootstrap version.
@@ -257,6 +256,10 @@ func upgrade(s Session) {
 		upgradeToVer5(s)
 	}
 
+	if ver < version6 {
+		upgradeToVer6(s)
+	}
+
 	updateBootstrapVer(s)
 	_, err = s.Execute("COMMIT")
 
@@ -269,10 +272,6 @@ func upgrade(s Session) {
 		}
 		if v >= currentBootstrapVersion {
 			// It is already bootstrapped/upgraded by a higher version TiDB server.
-			if err1 := s.CommitTxn(); err1 != nil {
-				// Make sure that doesn't affect the following operations.
-				log.Fatal(errors.Trace(err1))
-			}
 			return
 		}
 		log.Errorf("[Upgrade] upgrade from %d to %d error", ver, currentBootstrapVersion)
@@ -313,6 +312,12 @@ func upgradeToVer4(s Session) {
 func upgradeToVer5(s Session) {
 	mustExecute(s, CreateStatsColsTable)
 	mustExecute(s, CreateStatsBucketsTable)
+}
+
+func upgradeToVer6(s Session) {
+	s.Execute("ALTER TABLE mysql.user ADD COLUMN `Super_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Show_db_priv`")
+	// For reasons of compatibility, set the non-exists privilege column value to 'Y', as TiDB doesn't check them in older versions.
+	s.Execute("UPDATE mysql.user SET Super_priv='Y'")
 }
 
 // Update boostrap version variable in mysql.TiDB table.
@@ -368,7 +373,7 @@ func doDMLWorks(s Session) {
 
 	// Insert a default user with empty password.
 	mustExecute(s, `INSERT INTO mysql.user VALUES
-		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
 
 	// Init global system variables table.
 	values := make([]string, 0, len(variable.SysVars))
