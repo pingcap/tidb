@@ -1,5 +1,7 @@
 machine:
   environment:
+    GITHUB_PROJECT_USERNAME: pingcap
+    GITHUB_PROJECT_REPONAME: tidb
     GODIST: "go1.7.3.linux-amd64.tar.gz"
   post:
     - mkdir -p download
@@ -11,10 +13,10 @@ dependencies:
   cache_directories:
     - ~/download
   override:
-    - mkdir -p $HOME/.go_project/src/github.com/$CIRCLE_PROJECT_USERNAME
-    - ln -fs $HOME/$CIRCLE_PROJECT_REPONAME $HOME/.go_project/src/github.com/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME
+    - mkdir -p $HOME/.go_project/src/github.com/$GITHUB_PROJECT_USERNAME
+    - ln -fs $HOME/$CIRCLE_PROJECT_REPONAME $HOME/.go_project/src/github.com/$GITHUB_PROJECT_USERNAME/$GITHUB_PROJECT_REPONAME
     - echo 'export GOPATH=$GOPATH:$HOME/.go_project' >> ~/.circlerc
 
 test:
   override:
-    - cd $HOME/.go_project/src/github.com/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME && make dev 
+    - cd $HOME/.go_project/src/github.com/$GITHUB_PROJECT_USERNAME/$GITHUB_PROJECT_REPONAME && make dev
