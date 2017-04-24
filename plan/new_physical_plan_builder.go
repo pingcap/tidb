@@ -173,8 +173,8 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (taskProfi
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		task = p.basePlan.self.(PhysicalPlan).attach2TaskProfile(task)
 	}
-	task = p.basePlan.self.(PhysicalPlan).attach2TaskProfile(task)
 	task = prop.enforceProperty(task, p.basePlan.ctx, p.basePlan.allocator)
 	if !prop.isEmpty() && len(p.basePlan.children) > 0 {
 		orderedTask, err := p.basePlan.children[0].(LogicalPlan).convert2NewPhysicalPlan(prop)
@@ -305,7 +305,12 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		for _, col := range idx.Columns {
 			indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: col.Offset})
 		}
-		// TODO: We should add PK column to index schema.
+		for i, col := range is.Columns {
+			if is.Table.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
+				indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: i})
+				break
+			}
+		}
 		copTask.indexPlan.SetSchema(expression.NewSchema(indexCols...))
 	} else {
 		is.SetSchema(p.schema)
@@ -313,7 +318,6 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 	// Check if this plan matches the property.
 	matchProperty := true
 	if !prop.isEmpty() {
-		// FIXME: We have not considered the case of index columns with length.
 		for i, col := range idx.Columns {
 			// not matched
 			if col.Name.L == prop.cols[0].ColName.L {
@@ -375,7 +379,7 @@ func matchIndicesProp(idxCols []*model.IndexColumn, propCols []*expression.Colum
 		return false
 	}
 	for i, col := range propCols {
-		if col.ColName.L != propCols[i].ColName.L {
+		if idxCols[i].Length != types.UnspecifiedLength || col.ColName.L != idxCols[i].Name.L {
 			return false
 		}
 	}
@@ -444,6 +448,29 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task taskProfile, e
 		task = prop.enforceProperty(task, p.ctx, p.allocator)
 	}
 	return task, nil
+}
+
+func (p *Union) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) {
+	task, err := p.getTaskProfile(prop)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if task != nil {
+		return task, nil
+	}
+	// Union is a sort blocker. We can only enforce it.
+	tasks := make([]taskProfile, 0, len(p.children))
+	for _, child := range p.children {
+		task, err = child.(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		tasks = append(tasks, task)
+	}
+	task = p.attach2TaskProfile(tasks...)
+	task = prop.enforceProperty(task, p.ctx, p.allocator)
+
+	return task, p.storeTaskProfile(prop, task)
 }
 
 func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTaskProfile) {

@@ -31,7 +31,11 @@ func (ts *PhysicalTableScan) matchProperty(prop *requiredProperty, infos ...*phy
 		newTS := ts.Copy().(*PhysicalTableScan)
 		newTS.addLimit(prop.limit)
 		p := newTS.tryToAddUnionScan(newTS)
-		return enforceProperty(prop, &physicalPlanInfo{p: p, cost: cost, count: infos[0].count})
+		return enforceProperty(prop, &physicalPlanInfo{
+			p:        p,
+			cost:     cost,
+			count:    infos[0].count,
+			reliable: infos[0].reliable})
 	}
 	if len(prop.props) == 1 && ts.pkCol != nil && ts.pkCol.Equal(prop.props[0].col, ts.ctx) {
 		sortedTS := ts.Copy().(*PhysicalTableScan)
@@ -44,9 +48,10 @@ func (ts *PhysicalTableScan) matchProperty(prop *requiredProperty, infos ...*phy
 		}
 		p := sortedTS.tryToAddUnionScan(sortedTS)
 		return enforceProperty(&requiredProperty{limit: prop.limit}, &physicalPlanInfo{
-			p:     p,
-			cost:  cost,
-			count: infos[0].count})
+			p:        p,
+			cost:     cost,
+			count:    infos[0].count,
+			reliable: infos[0].reliable})
 	}
 	if prop.limit != nil {
 		sortedTS := ts.Copy().(*PhysicalTableScan)
@@ -59,9 +64,10 @@ func (ts *PhysicalTableScan) matchProperty(prop *requiredProperty, infos ...*phy
 		sortedTS.KeepOrder = true
 		p := sortedTS.tryToAddUnionScan(sortedTS)
 		return enforceProperty(prop, &physicalPlanInfo{
-			p:     p,
-			cost:  cost,
-			count: infos[0].count})
+			p:        p,
+			cost:     cost,
+			count:    infos[0].count,
+			reliable: infos[0].reliable})
 	}
 	return &physicalPlanInfo{p: nil, cost: math.MaxFloat64, count: infos[0].count}
 }
@@ -109,7 +115,11 @@ func (is *PhysicalIndexScan) matchProperty(prop *requiredProperty, infos ...*phy
 	}
 	if len(prop.props) == 0 {
 		p := is.tryToAddUnionScan(is)
-		return enforceProperty(&requiredProperty{limit: prop.limit}, &physicalPlanInfo{p: p, cost: cost, count: infos[0].count})
+		return enforceProperty(&requiredProperty{limit: prop.limit}, &physicalPlanInfo{
+			p:        p,
+			cost:     cost,
+			count:    infos[0].count,
+			reliable: infos[0].reliable})
 	}
 	matchedIdx := 0
 	matchedList := make([]bool, len(prop.props))
@@ -141,9 +151,10 @@ func (is *PhysicalIndexScan) matchProperty(prop *requiredProperty, infos ...*phy
 			sortedIS.addLimit(prop.limit)
 			p := sortedIS.tryToAddUnionScan(sortedIS)
 			return enforceProperty(&requiredProperty{limit: prop.limit}, &physicalPlanInfo{
-				p:     p,
-				cost:  sortedCost,
-				count: infos[0].count})
+				p:        p,
+				cost:     sortedCost,
+				count:    infos[0].count,
+				reliable: infos[0].reliable})
 		}
 	}
 	if prop.limit != nil {
@@ -157,9 +168,10 @@ func (is *PhysicalIndexScan) matchProperty(prop *requiredProperty, infos ...*phy
 		sortedIS.OutOfOrder = true
 		p := sortedIS.tryToAddUnionScan(sortedIS)
 		return enforceProperty(prop, &physicalPlanInfo{
-			p:     p,
-			cost:  cost,
-			count: infos[0].count})
+			p:        p,
+			cost:     cost,
+			count:    infos[0].count,
+			reliable: infos[0].reliable})
 	}
 	return &physicalPlanInfo{p: nil, cost: math.MaxFloat64, count: infos[0].count}
 }
@@ -223,13 +235,15 @@ func (p *Union) matchProperty(_ *requiredProperty, childPlanInfo ...*physicalPla
 	children := make([]Plan, 0, len(childPlanInfo))
 	cost := float64(0)
 	count := float64(0)
+	reliable := true
 	for _, res := range childPlanInfo {
 		children = append(children, res.p)
 		cost += res.cost
 		count += res.count
+		reliable = reliable && res.reliable
 	}
 	np.SetChildren(children...)
-	return &physicalPlanInfo{p: np, cost: cost, count: count}
+	return &physicalPlanInfo{p: np, cost: cost, count: count, reliable: reliable}
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
@@ -254,6 +268,7 @@ func (p *PhysicalUnionScan) matchProperty(prop *requiredProperty, childPlanInfo 
 	res.p = np
 	if limit != nil {
 		res = addPlanToResponse(limit, res)
+		res.reliable = true
 	}
 	return res
 }
@@ -262,7 +277,7 @@ func (p *PhysicalUnionScan) matchProperty(prop *requiredProperty, childPlanInfo 
 func (p *Projection) matchProperty(_ *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
 	np := p.Copy()
 	np.SetChildren(childPlanInfo[0].p)
-	return &physicalPlanInfo{p: np, cost: childPlanInfo[0].cost}
+	return &physicalPlanInfo{p: np, cost: childPlanInfo[0].cost, reliable: childPlanInfo[0].reliable}
 }
 
 // matchProperty implements PhysicalPlan matchProperty interface.
