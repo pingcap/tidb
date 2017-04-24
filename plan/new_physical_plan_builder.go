@@ -173,8 +173,8 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (taskProfi
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		task = p.basePlan.self.(PhysicalPlan).attach2TaskProfile(task)
 	}
-	task = p.basePlan.self.(PhysicalPlan).attach2TaskProfile(task)
 	task = prop.enforceProperty(task, p.basePlan.ctx, p.basePlan.allocator)
 	if !prop.isEmpty() && len(p.basePlan.children) > 0 {
 		orderedTask, err := p.basePlan.children[0].(LogicalPlan).convert2NewPhysicalPlan(prop)
@@ -432,6 +432,29 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task taskProfile, e
 		task = prop.enforceProperty(task, p.ctx, p.allocator)
 	}
 	return task, nil
+}
+
+func (p *Union) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) {
+	task, err := p.getTaskProfile(prop)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if task != nil {
+		return task, nil
+	}
+	// Union is a sort blocker. We can only enforce it.
+	tasks := make([]taskProfile, 0, len(p.children))
+	for _, child := range p.children {
+		task, err = child.(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		tasks = append(tasks, task)
+	}
+	task = p.attach2TaskProfile(tasks...)
+	task = prop.enforceProperty(task, p.ctx, p.allocator)
+
+	return task, p.storeTaskProfile(prop, task)
 }
 
 func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTaskProfile) {
