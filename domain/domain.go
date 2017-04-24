@@ -441,6 +441,11 @@ func (do *Domain) StatsHandle() *statistics.Handle {
 	return do.statsHandle
 }
 
+// CreateStatsHandle is used only for test.
+func (do *Domain) CreateStatsHandle(ctx context.Context) {
+	do.statsHandle = statistics.NewHandle(ctx)
+}
+
 // UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop. It
 // should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
