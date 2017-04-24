@@ -654,7 +654,6 @@ import (
 	LocalOpt		"Local opt"
 	LockTablesStmt		"Lock tables statement"
 	LowPriorityOptional	"LOW_PRIORITY or empty"
-	NotOpt			"optional NOT"
 	NumLiteral		"Num/Int/Float/Decimal Literal"
 	NoWriteToBinLogAliasOpt "NO_WRITE_TO_BINLOG alias LOCAL or empty"
 	NowSymOptionFraction	"NowSym with optional fraction part"
@@ -762,6 +761,12 @@ import (
 	ElseOpt			"Optional else clause"
 	ExpressionOpt		"Optional expression"
 	Type			"Types"
+
+	BetweenOrNotOp		"Between predicate"
+	IsOrNotOp		"Is predicate"
+	InOrNotOp		"In predicate"
+	LikeOrNotOp		"Like predicate"
+	RegexpOrNotOp		"Regexp predicate"
 
 	NumericType		"Numeric types"
 	IntegerType		"Integer Types types"
@@ -1874,18 +1879,18 @@ Expression:
 	{
 		$$ = &ast.UnaryOperationExpr{Op: opcode.Not, V: $2.(ast.ExprNode)}
 	}
-|	Factor "IS" NotOpt trueKwd %prec is
+|	Factor IsOrNotOp trueKwd %prec is
 	{
-		$$ = &ast.IsTruthExpr{Expr:$1.(ast.ExprNode), Not: $3.(bool), True: int64(1)}
+		$$ = &ast.IsTruthExpr{Expr:$1.(ast.ExprNode), Not: !$2.(bool), True: int64(1)}
 	}
-|	Factor "IS" NotOpt falseKwd %prec is
+|	Factor IsOrNotOp falseKwd %prec is
 	{
-		$$ = &ast.IsTruthExpr{Expr:$1.(ast.ExprNode), Not: $3.(bool), True: int64(0)}
+		$$ = &ast.IsTruthExpr{Expr:$1.(ast.ExprNode), Not: !$2.(bool), True: int64(0)}
 	}
-|	Factor "IS" NotOpt "UNKNOWN" %prec is
+|	Factor IsOrNotOp "UNKNOWN" %prec is
 	{
 		/* https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#operator_is */
-		$$ = &ast.IsNullExpr{Expr: $1.(ast.ExprNode), Not: $3.(bool)}
+		$$ = &ast.IsNullExpr{Expr: $1.(ast.ExprNode), Not: !$2.(bool)}
 	}
 |	Factor
 
@@ -1913,9 +1918,9 @@ ExpressionListOpt:
 |	ExpressionList
 
 Factor:
-	Factor "IS" NotOpt "NULL" %prec is
+	Factor IsOrNotOp "NULL" %prec is
 	{
-		$$ = &ast.IsNullExpr{Expr: $1.(ast.ExprNode), Not: $3.(bool)}
+		$$ = &ast.IsNullExpr{Expr: $1.(ast.ExprNode), Not: !$2.(bool)}
 	}
 |	Factor CompareOp PredicateExpr %prec eq
 	{
@@ -1975,6 +1980,56 @@ CompareOp:
 		$$ = opcode.NullEQ
 	}
 
+BetweenOrNotOp:
+	"BETWEEN"
+	{
+		$$ = true
+	}
+|	"NOT" "BETWEEN"
+	{
+		$$ = false
+	}
+
+IsOrNotOp:
+	"IS"
+	{
+		$$ = true
+	}
+|	"IS" "NOT"
+	{
+		$$ = false
+	}
+
+InOrNotOp:
+	"IN"
+	{
+		$$ = true
+	}
+|	"NOT" "IN"
+	{
+		$$ = false
+	}
+
+LikeOrNotOp:
+	"LIKE"
+	{
+		$$ = true
+	}
+|	"NOT" "LIKE"
+	{
+		$$ = false
+	}
+
+RegexpOrNotOp:
+	RegexpSym
+	{
+		$$ = true
+	}
+|	"NOT" RegexpSym
+	{
+		$$ = false
+	}
+
 AnyOrAll:
 	"ANY"
 	{
@@ -1990,28 +2045,28 @@ AnyOrAll:
 	}
 
 PredicateExpr:
-	PrimaryFactor NotOpt "IN" '(' ExpressionList ')'
+	PrimaryFactor InOrNotOp '(' ExpressionList ')'
 	{
-		$$ = &ast.PatternInExpr{Expr: $1.(ast.ExprNode), Not: $2.(bool), List: $5.([]ast.ExprNode)}
+		$$ = &ast.PatternInExpr{Expr: $1.(ast.ExprNode), Not: !$2.(bool), List: $4.([]ast.ExprNode)}
 	}
-|	PrimaryFactor NotOpt "IN" SubSelect
+|	PrimaryFactor InOrNotOp SubSelect
 	{
-		sq := $4.(*ast.SubqueryExpr)
+		sq := $3.(*ast.SubqueryExpr)
 		sq.MultiRows = true
-		$$ = &ast.PatternInExpr{Expr: $1.(ast.ExprNode), Not: $2.(bool), Sel: sq}
+		$$ = &ast.PatternInExpr{Expr: $1.(ast.ExprNode), Not: !$2.(bool), Sel: sq}
 	}
-|	PrimaryFactor NotOpt "BETWEEN" PrimaryFactor "AND" PredicateExpr
+|	PrimaryFactor BetweenOrNotOp PrimaryFactor "AND" PredicateExpr
 	{
 		$$ = &ast.BetweenExpr{
 			Expr:	$1.(ast.ExprNode),
-			Left:	$4.(ast.ExprNode),
-			Right:	$6.(ast.ExprNode),
-			Not:	$2.(bool),
+			Left:	$3.(ast.ExprNode),
+			Right:	$5.(ast.ExprNode),
+			Not:	!$2.(bool),
 		}
 	}
-|	PrimaryFactor NotOpt "LIKE" PrimaryExpression LikeEscapeOpt
+|	PrimaryFactor LikeOrNotOp PrimaryExpression LikeEscapeOpt
 	{
-		escape := $5.(string)
+		escape := $4.(string)
 		if len(escape) > 1 {
 			yylex.Errorf("Incorrect arguments %s to ESCAPE", escape)
 			return 1
@@ -2020,14 +2075,14 @@ PredicateExpr:
 		}
 		$$ = &ast.PatternLikeExpr{
 			Expr:		$1.(ast.ExprNode),
-			Pattern:	$4.(ast.ExprNode),
-			Not: 		$2.(bool),
+			Pattern:	$3.(ast.ExprNode),
+			Not: 		!$2.(bool),
 			Escape: 	escape[0],
 		}
 	}
-|	PrimaryFactor NotOpt RegexpSym PrimaryExpression
+|	PrimaryFactor RegexpOrNotOp PrimaryExpression
 	{
-		$$ = &ast.PatternRegexpExpr{Expr: $1.(ast.ExprNode), Pattern: $4.(ast.ExprNode), Not: $2.(bool)}
+		$$ = &ast.PatternRegexpExpr{Expr: $1.(ast.ExprNode), Pattern: $3.(ast.ExprNode), Not: !$2.(bool)}
 	}
 |	PrimaryFactor
 
@@ -2042,15 +2097,6 @@ LikeEscapeOpt:
 |	"ESCAPE" stringLit
 	{
 		$$ = $2
-	}
-
-NotOpt:
-	{
-		$$ = false
-	}
-|	"NOT"
-	{
-		$$ = true
 	}
 
 Field:
@@ -3294,22 +3340,17 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
-/* TODO: This will cause reduce/reduce conflict on in.
-|	"POSITION" '(' Expression "IN" Expression ')'
+|	"POSITION" '(' PrimaryFactor "IN" Expression ')'
 	{
-		args := []ast.ExprNode{$5.(ast.ExprNode), $3.(ast.ExprNode)}
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.Locate), Args: args}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}}
 	}
-*/
-|	"POW" '(' Expression ',' Expression ')'
+|	"POW" '(' ExpressionList ')'
 	{
-		args := []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
-|	"POWER" '(' Expression ',' Expression ')'
+|	"POWER" '(' ExpressionList ')'
 	{
-		args := []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: args}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
 |	"RADIANS" '(' Expression ')'
 	{
@@ -4177,9 +4218,6 @@ CastType:
 	{
 		x := types.NewFieldType(mysql.TypeString)
 		x.Flen = $2.(int)
-		if $3.(bool) {
-			x.Flag |= mysql.BinaryFlag
-		}
 		x.Charset = $4.(string)
 		$$ = x
 	}
@@ -5896,26 +5934,21 @@ StringType:
 	{
 		x := types.NewFieldType(mysql.TypeString)
 		x.Flen = $3.(int)
-		if $4.(bool) {
-			x.Flag |= mysql.BinaryFlag
-		}
+		x.Charset = $5.(string)
+		x.Collate = $6.(string)
 		$$ = x
 	}
 |	NationalOpt "CHAR" OptBinary OptCharset OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeString)
-		if $3.(bool) {
-			x.Flag |= mysql.BinaryFlag
-		}
+		x.Charset = $4.(string)
+		x.Collate = $5.(string)
 		$$ = x
 	}
 |	NationalOpt "VARCHAR" FieldLen OptBinary OptCharset OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeVarchar)
 		x.Flen = $3.(int)
-		if $4.(bool) {
-			x.Flag |= mysql.BinaryFlag
-		}
 		x.Charset = $5.(string)
 		x.Collate = $6.(string)
 		$$ = x
@@ -5926,6 +5959,7 @@ StringType:
 		x.Flen = $2.(int)
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CharsetBin
+		x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
 |	"VARBINARY" FieldLen
@@ -5934,18 +5968,20 @@ StringType:
 		x.Flen = $2.(int)
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CharsetBin
+		x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
 |	BlobType
 	{
+		x := $1.(*types.FieldType)
+		x.Charset = charset.CharsetBin
+		x.Collate = charset.CharsetBin
+		x.Flag |= mysql.BinaryFlag
 		$$ = $1.(*types.FieldType)
 	}
 |	TextType OptBinary OptCharset OptCollate
 	{
 		x := $1.(*types.FieldType)
-		if $2.(bool) {
-			x.Flag |= mysql.BinaryFlag
-		}
 		x.Charset = $3.(string)
 		x.Collate = $4.(string)
 		$$ = x
@@ -5975,30 +6011,22 @@ BlobType:
 	"TINYBLOB"
 	{
 		x := types.NewFieldType(mysql.TypeTinyBlob)
-		x.Charset = charset.CharsetBin
-		x.Collate = charset.CharsetBin
 		$$ = x
 	}
 |	"BLOB" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeBlob)
 		x.Flen = $2.(int)
-		x.Charset = charset.CharsetBin
-		x.Collate = charset.CharsetBin
 		$$ = x
 	}
 |	"MEDIUMBLOB"
 	{
 		x := types.NewFieldType(mysql.TypeMediumBlob)
-		x.Charset = charset.CharsetBin
-		x.Collate = charset.CharsetBin
 		$$ = x
 	}
 |	"LONGBLOB"
 	{
 		x := types.NewFieldType(mysql.TypeLongBlob)
-		x.Charset = charset.CharsetBin
-		x.Collate = charset.CharsetBin
 		$$ = x
 	}
 

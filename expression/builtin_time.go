@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -1739,7 +1740,45 @@ type builtinMakeDateSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_makedate
 func (b *builtinMakeDateSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("MAKEDATE")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if args[0].IsNull() || args[1].IsNull() {
+		return d, nil
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	year, err := args[0].ToInt64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	dayOfYear, err := args[1].ToInt64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if dayOfYear <= 0 || year < 0 || year > 9999 {
+		return d, nil
+	}
+	if year < 70 {
+		year += 2000
+	} else if year < 100 {
+		year += 1900
+	}
+	startTime := types.Time{
+		Time: types.FromDate(int(year), 1, 1, 0, 0, 0, 0),
+		Type: mysql.TypeDate,
+		Fsp:  0,
+	}
+	retTimestamp := types.TimestampDiff("DAY", types.ZeroDate, startTime)
+	if retTimestamp == 0 {
+		return d, errorOrWarning(types.ErrInvalidTimeFormat, b.ctx)
+	}
+	ret := types.TimeFromDays(retTimestamp + dayOfYear - 1)
+	if ret.IsZero() || ret.Time.Year() > 9999 {
+		return d, nil
+	}
+	d.SetMysqlTime(ret)
+	return d, nil
 }
 
 type makeTimeFunctionClass struct {
@@ -1835,7 +1874,50 @@ type builtinPeriodAddSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_period-add
 func (b *builtinPeriodAddSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("PERIOD_ADD")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if args[0].IsNull() || args[1].IsNull() {
+		return d, errors.Trace(err)
+	}
+
+	sc := b.ctx.GetSessionVars().StmtCtx
+	period, err := args[0].ToInt64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	//Check zero
+	if period <= 0 {
+		d.SetInt64(0)
+		return d, nil
+	}
+
+	y := period / 100
+	m := period % 100
+
+	// YYMM, 00-69 year: 2000-2069
+	// YYMM, 70-99 year: 1970-1999
+	if y <= 69 {
+		y += 2000
+	} else if y <= 99 {
+		y += 1900
+	}
+
+	months, err := args[1].ToInt64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	sum := time.Month(m + months)
+	// TODO: Consider time_zone variable.
+	t := time.Date(int(y), sum, 1, 0, 0, 0, 0, time.Local)
+
+	ret := int64(t.Year())*100 + int64(t.Month())
+	d.SetInt64(ret)
+	return d, nil
 }
 
 type periodDiffFunctionClass struct {
@@ -1914,7 +1996,68 @@ type builtinSecToTimeSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_sec-to-time
 func (b *builtinSecToTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("SEC_TO_TIME")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if args[0].IsNull() {
+		return d, nil
+	}
+
+	var (
+		hour          int64
+		minute        int64
+		second        int64
+		demical       float64
+		secondDemical float64
+		negative      string
+	)
+
+	sc := b.ctx.GetSessionVars().StmtCtx
+	secondsFloat, err := args[0].ToFloat64(sc)
+	if err != nil {
+		if args[0].Kind() == types.KindString && terror.ErrorEqual(err, types.ErrTruncated) {
+			secondsFloat = float64(0)
+		} else {
+			return d, errors.Trace(err)
+		}
+	}
+
+	if secondsFloat < 0 {
+		negative = "-"
+		secondsFloat = math.Abs(secondsFloat)
+	}
+	seconds := int64(secondsFloat)
+	demical = secondsFloat - float64(seconds)
+
+	hour = seconds / 3600
+	if hour > 838 {
+		hour = 838
+		minute = 59
+		second = 59
+	} else {
+		minute = seconds % 3600 / 60
+		second = seconds % 60
+	}
+	secondDemical = float64(second) + demical
+
+	var dur types.Duration
+	fsp := types.MaxFsp
+	if args[0].Kind() != types.KindString {
+		sec, _ := args[0].ToString()
+		secs := strings.Split(sec, ".")
+		if len(secs) <= 1 {
+			fsp = 0
+		} else if len(secs[1]) < fsp {
+			fsp = len(secs[1])
+		}
+	}
+	dur, err = types.ParseDuration(fmt.Sprintf("%s%02d:%02d:%v", negative, hour, minute, secondDemical), fsp)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d.SetMysqlDuration(dur)
+	return d, nil
 }
 
 type subTimeFunctionClass struct {
@@ -2103,7 +2246,24 @@ type builtinToSecondsSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_to-seconds
 func (b *builtinToSecondsSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("TO_SECONDS")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if args[0].IsNull() {
+		return d, nil
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	date, err := convertDatumToTime(sc, args[0])
+	if err != nil {
+		return d, errorOrWarning(err, b.ctx)
+	}
+	ret := types.TimestampDiff("SECOND", types.ZeroDate, date)
+	if ret == 0 {
+		return d, errorOrWarning(types.ErrInvalidTimeFormat, b.ctx)
+	}
+	d.SetInt64(ret)
+	return d, nil
 }
 
 type utcTimeFunctionClass struct {

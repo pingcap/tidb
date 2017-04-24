@@ -72,8 +72,25 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	s.etcdAddrs = etcdAddrs
 	mc.cache[uuid] = s
 	return s, nil
+}
+
+// MockDriver is in memory mock TiKV driver.
+type MockDriver struct {
+}
+
+// Open creates a MockTiKV storage.
+func (d MockDriver) Open(path string) (kv.Storage, error) {
+	u, err := url.Parse(path)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if !strings.EqualFold(u.Scheme, "mocktikv") {
+		return nil, errors.Errorf("Uri scheme expected(mocktikv) but found (%s)", u.Scheme)
+	}
+	return NewMockTikvStore(u.Path)
 }
 
 // update oracle's lastTS every 2000ms.
@@ -87,6 +104,7 @@ type tikvStore struct {
 	regionCache  *RegionCache
 	lockResolver *LockResolver
 	gcWorker     *GCWorker
+	etcdAddrs    []string
 }
 
 func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool) (*tikvStore, error) {
@@ -112,8 +130,16 @@ func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool)
 	return store, nil
 }
 
-// NewMockTikvStore creates a mocked tikv store.
-func NewMockTikvStore() (kv.Storage, error) {
+func (s *tikvStore) EtcdAddrs() []string {
+	return s.etcdAddrs
+}
+
+// NewMockTikvStore creates a mocked tikv store, the path is the file path to store the data.
+// Zero length string represents in memory storage.
+func NewMockTikvStore(path string) (kv.Storage, error) {
+	if path != "" {
+		return nil, errors.New("persistent mockTiKV is not supported yet")
+	}
 	cluster := mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(cluster)
 	mvccStore := mocktikv.NewMvccStore()

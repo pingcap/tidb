@@ -108,11 +108,11 @@ func globalVarsCount() int64 {
 // Create a new session on store but only do ddl works.
 func (s *testBootstrapSuite) bootstrapWithOnlyDDLWork(store kv.Storage, c *C) {
 	ss := &session{
-		values:      make(map[fmt.Stringer]interface{}),
 		store:       store,
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
 	}
+	ss.mu.values = make(map[fmt.Stringer]interface{})
 	ss.SetValue(context.Initing, true)
 	domain, err := domap.Get(store)
 	c.Assert(err, IsNil)

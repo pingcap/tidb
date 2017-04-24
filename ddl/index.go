@@ -367,6 +367,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 			job.State = model.JobDone
 		}
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
+		d.asyncNotifyEvent(&Event{Tp: model.ActionDropIndex, TableInfo: tblInfo, IndexInfo: indexInfo})
 	default:
 		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
 	}

@@ -89,6 +89,24 @@ func (ir *IndexRange) String() string {
 	return l + strings.Join(lowStrs, " ") + "," + strings.Join(highStrs, " ") + r
 }
 
+// Align appends low value and high value up to the number of columns with max value, min not null value or null value.
+func (ir *IndexRange) Align(numColumns int) {
+	for i := len(ir.LowVal); i < numColumns; i++ {
+		if ir.LowExclude {
+			ir.LowVal = append(ir.LowVal, MaxValueDatum())
+		} else {
+			ir.LowVal = append(ir.LowVal, Datum{})
+		}
+	}
+	for i := len(ir.HighVal); i < numColumns; i++ {
+		if ir.HighExclude {
+			ir.HighVal = append(ir.HighVal, Datum{})
+		} else {
+			ir.HighVal = append(ir.HighVal, MaxValueDatum())
+		}
+	}
+}
+
 func formatDatum(d Datum) string {
 	if d.Kind() == KindMinNotNull {
 		return "-inf"
