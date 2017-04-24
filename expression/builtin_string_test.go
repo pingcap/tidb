@@ -1473,3 +1473,35 @@ func (s *testEvaluatorSuite) TestToBase64(c *C) {
 		}
 	}
 }
+
+func (s *testEvaluatorSuite) TestStringRight(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.Right]
+	tests := []struct {
+		str    interface{}
+		length interface{}
+		expect interface{}
+	}{
+		{"helloworld", 5, "world"},
+		{"helloworld", 10, "helloworld"},
+		{"helloworld", 11, "helloworld"},
+		{"helloworld", -1, ""},
+		{"", 2, ""},
+		{nil, 2, nil},
+	}
+
+	for _, test := range tests {
+		str := types.NewDatum(test.str)
+		length := types.NewDatum(test.length)
+		f, _ := fc.getFunction(datumsToConstants([]types.Datum{str, length}), s.ctx)
+		result, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		if result.IsNull() {
+			c.Assert(test.expect, IsNil)
+			continue
+		}
+		res, err := result.ToString()
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, test.expect)
+	}
+}

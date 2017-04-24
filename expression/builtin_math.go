@@ -376,7 +376,7 @@ func (b *builtinPowSig) eval(row []types.Datum) (d types.Datum, err error) {
 
 	power := math.Pow(x, y)
 	if math.IsInf(power, -1) || math.IsInf(power, 1) || math.IsNaN(power) {
-		return d, errors.Trace(types.ErrOverflow.GenByArgs("DOUBLE", fmt.Sprintf("pow(%s, %s)", strconv.FormatFloat(x, 'f', -1, 64), strconv.FormatFloat(y, 'f', -1, 64))))
+		return d, types.ErrOverflow.GenByArgs("DOUBLE", fmt.Sprintf("pow(%s, %s)", strconv.FormatFloat(x, 'f', -1, 64), strconv.FormatFloat(y, 'f', -1, 64)))
 	}
 	d.SetFloat64(power)
 	return d, nil
