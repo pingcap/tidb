@@ -276,11 +276,8 @@ func (w *GCWorker) runGCJob(safePoint uint64) {
 func (w *GCWorker) resolveLocks(safePoint uint64) error {
 	gcWorkerCounter.WithLabelValues("resolve_locks").Inc()
 
-	req := &kvrpcpb.Request{
-		Type: kvrpcpb.MessageType_CmdScanLock,
-		CmdScanLockReq: &kvrpcpb.CmdScanLockRequest{
-			MaxVersion: safePoint,
-		},
+	req := &kvrpcpb.ScanLockRequest{
+		MaxVersion: safePoint,
 	}
 	bo := NewBackoffer(gcResolveLockMaxBackoff, goctx.Background())
 
@@ -300,7 +297,7 @@ func (w *GCWorker) resolveLocks(safePoint uint64) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		resp, err := w.store.SendKVReq(bo, req, loc.Region, readTimeoutMedium)
+		resp, err := w.store.KvScanLock(bo, req, loc.Region, readTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -311,14 +308,10 @@ func (w *GCWorker) resolveLocks(safePoint uint64) error {
 			}
 			continue
 		}
-		locksResp := resp.GetCmdScanLockResp()
-		if locksResp == nil {
-			return errors.Trace(errBodyMissing)
+		if resp.GetError() != nil {
+			return errors.Errorf("unexpected scanlock error: %s", resp)
 		}
-		if locksResp.GetError() != nil {
-			return errors.Errorf("unexpected scanlock error: %s", locksResp)
-		}
-		locksInfo := locksResp.GetLocks()
+		locksInfo := resp.GetLocks()
 		locks := make([]*Lock, len(locksInfo))
 		for i := range locksInfo {
 			locks[i] = newLock(locksInfo[i])
@@ -350,11 +343,8 @@ func (w *GCWorker) resolveLocks(safePoint uint64) error {
 func (w *GCWorker) DoGC(safePoint uint64) error {
 	gcWorkerCounter.WithLabelValues("do_gc").Inc()
 
-	req := &kvrpcpb.Request{
-		Type: kvrpcpb.MessageType_CmdGC,
-		CmdGcReq: &kvrpcpb.CmdGCRequest{
-			SafePoint: safePoint,
-		},
+	req := &kvrpcpb.GCRequest{
+		SafePoint: safePoint,
 	}
 	bo := NewBackoffer(gcMaxBackoff, goctx.Background())
 
@@ -374,7 +364,7 @@ func (w *GCWorker) DoGC(safePoint uint64) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		resp, err := w.store.SendKVReq(bo, req, loc.Region, readTimeoutLong)
+		resp, err := w.store.KvGC(bo, req, loc.Region, readTimeoutLong)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -385,12 +375,8 @@ func (w *GCWorker) DoGC(safePoint uint64) error {
 			}
 			continue
 		}
-		gcResp := resp.GetCmdGcResp()
-		if gcResp == nil {
-			return errors.Trace(errBodyMissing)
-		}
-		if gcResp.GetError() != nil {
-			return errors.Errorf("unexpected gc error: %s", gcResp.GetError())
+		if resp.GetError() != nil {
+			return errors.Errorf("unexpected gc error: %s", resp.GetError())
 		}
 		regions++
 		key = loc.EndKey

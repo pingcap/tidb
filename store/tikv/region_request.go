@@ -55,109 +55,386 @@ func NewRegionRequestSender(bo *Backoffer, regionCache *RegionCache, client Clie
 	}
 }
 
-// SendKVReq sends a KV request to tikv server.
-func (s *RegionRequestSender) SendKVReq(req *kvrpcpb.Request, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.Response, error) {
+// RegionErrorResponse is an interface used for retry on region errors in
+// the implemetation of RegionRequestSender.
+type RegionErrorResponse interface {
+	GetRegionError() *errorpb.Error
+}
+
+type rpcFunc func(ctx *RPCContext) (RegionErrorResponse, error, bool)
+
+func (s *RegionRequestSender) callFunc(regionID RegionVerID, f rpcFunc) error {
 	for {
 		ctx, err := s.regionCache.GetRPCContext(s.bo, regionID)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
-		if ctx == nil {
-			// If the region is not found in cache, it must be out
-			// of date and already be cleaned up. We can skip the
-			// RPC by returning RegionError directly.
-			return &kvrpcpb.Response{
-				Type:        req.GetType(),
-				RegionError: &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}},
-			}, nil
+		resp, err, retry := f(ctx)
+		if err != nil {
+			if e := s.onSendFail(ctx, err); e != nil {
+				return errors.Trace(e)
+			}
+			continue
 		}
 
-		resp, retry, err := s.sendKVReqToRegion(ctx, req, timeout)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if retry {
-			continue
+		if !retry {
+			return nil
 		}
 
 		if regionErr := resp.GetRegionError(); regionErr != nil {
 			retry, err := s.onRegionError(ctx, regionErr)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return errors.Trace(err)
 			}
 			if retry {
 				continue
 			}
-			return resp, nil
+			return nil
 		}
 
-		if resp.GetType() != req.GetType() {
-			return nil, errors.Trace(errMismatch(resp, req))
-		}
-		return resp, nil
+		return nil
 	}
 }
 
-// SendCopReq sends a coprocessor request to tikv server.
-func (s *RegionRequestSender) SendCopReq(req *coprocessor.Request, regionID RegionVerID, timeout time.Duration) (*coprocessor.Response, error) {
-	for {
-		ctx, err := s.regionCache.GetRPCContext(s.bo, regionID)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+// KvGet sends a Get request to TiKV server.
+func (s *RegionRequestSender) KvGet(req *kvrpcpb.GetRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.GetResponse, error) {
+	var resp *kvrpcpb.GetResponse
+	f := func(ctx *RPCContext) (RegionErrorResponse, error, bool) {
 		if ctx == nil {
 			// If the region is not found in cache, it must be out
 			// of date and already be cleaned up. We can skip the
 			// RPC by returning RegionError directly.
-			return &coprocessor.Response{
+			// TODO Change the returned error to something like "region missing in cache",
+			// and handle this error like StaleEpoch, which means to re-split the request and retry.
+			resp = &kvrpcpb.GetResponse{
 				RegionError: &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}},
-			}, nil
-		}
-
-		s.storeAddr = ctx.Addr
-		resp, retry, err := s.sendCopReqToRegion(ctx, req, timeout)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if retry {
-			continue
-		}
-
-		if regionErr := resp.GetRegionError(); regionErr != nil {
-			retry, err := s.onRegionError(ctx, regionErr)
-			if err != nil {
-				return nil, errors.Trace(err)
 			}
-			if retry {
-				continue
-			}
+			return resp, nil, false
 		}
-		return resp, nil
+		req.Context = ctx.KVCtx
+		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
+		var err error
+		resp, err = s.client.KvGet(context, ctx.Addr, req)
+		cancel()
+		return resp, err, true
 	}
+
+	if err := s.callFunc(regionID, f); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return resp, nil
 }
 
-func (s *RegionRequestSender) sendKVReqToRegion(ctx *RPCContext, req *kvrpcpb.Request, timeout time.Duration) (resp *kvrpcpb.Response, retry bool, err error) {
-	req.Context = ctx.KVCtx
-	resp, err = s.client.SendKVReq(ctx.Context, ctx.Addr, req, timeout)
-	if err != nil {
-		if e := s.onSendFail(ctx, err); e != nil {
-			return nil, false, errors.Trace(e)
+// KvScan sends a Scan request to TiKV server.
+func (s *RegionRequestSender) KvScan(req *kvrpcpb.ScanRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.ScanResponse, error) {
+	var resp *kvrpcpb.ScanResponse
+	f := func(ctx *RPCContext) (RegionErrorResponse, error, bool) {
+		if ctx == nil {
+			resp = &kvrpcpb.ScanResponse{
+				RegionError: &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}},
+			}
+			return resp, nil, false
 		}
-		return nil, true, nil
+		req.Context = ctx.KVCtx
+		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
+		var err error
+		resp, err = s.client.KvScan(context, ctx.Addr, req)
+		cancel()
+		return resp, err, true
 	}
-	return
+
+	if err := s.callFunc(regionID, f); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
-func (s *RegionRequestSender) sendCopReqToRegion(ctx *RPCContext, req *coprocessor.Request, timeout time.Duration) (resp *coprocessor.Response, retry bool, err error) {
-	req.Context = ctx.KVCtx
-	resp, err = s.client.SendCopReq(ctx.Context, ctx.Addr, req, timeout)
-	if err != nil {
-		if e := s.onSendFail(ctx, err); e != nil {
-			return nil, false, errors.Trace(err)
+// KvPrewrite sends a Prewrite request to TiKV server.
+func (s *RegionRequestSender) KvPrewrite(req *kvrpcpb.PrewriteRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.PrewriteResponse, error) {
+	var resp *kvrpcpb.PrewriteResponse
+	f := func(ctx *RPCContext) (RegionErrorResponse, error, bool) {
+		if ctx == nil {
+			resp = &kvrpcpb.PrewriteResponse{
+				RegionError: &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}},
+			}
+			return resp, nil, false
 		}
-		return nil, true, nil
+		req.Context = ctx.KVCtx
+		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
+		var err error
+		resp, err = s.client.KvPrewrite(context, ctx.Addr, req)
+		cancel()
+		return resp, err, true
 	}
-	return
+
+	if err := s.callFunc(regionID, f); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// KvCommit sends a Commit request to TiKV server.
+func (s *RegionRequestSender) KvCommit(req *kvrpcpb.CommitRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.CommitResponse, error) {
+	var resp *kvrpcpb.CommitResponse
+	f := func(ctx *RPCContext) (RegionErrorResponse, error, bool) {
+		if ctx == nil {
+			resp = &kvrpcpb.CommitResponse{
+				RegionError: &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}},
+			}
+			return resp, nil, false
+		}
+		req.Context = ctx.KVCtx
+		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
+		var err error
+		resp, err = s.client.KvCommit(context, ctx.Addr, req)
+		cancel()
+		return resp, err, true
+	}
+
+	if err := s.callFunc(regionID, f); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// KvCleanup sends a Cleanup request to TiKV server.
+func (s *RegionRequestSender) KvCleanup(req *kvrpcpb.CleanupRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.CleanupResponse, error) {
+	var resp *kvrpcpb.CleanupResponse
+	f := func(ctx *RPCContext) (RegionErrorResponse, error, bool) {
+		if ctx == nil {
+			resp = &kvrpcpb.CleanupResponse{
+				RegionError: &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}},
+			}
+			return resp, nil, false
+		}
+		req.Context = ctx.KVCtx
+		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
+		var err error
+		resp, err = s.client.KvCleanup(context, ctx.Addr, req)
+		cancel()
+		return resp, err, true
+	}
+
+	if err := s.callFunc(regionID, f); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// KvBatchGet sends a BatchGet request to TiKV server.
+func (s *RegionRequestSender) KvBatchGet(req *kvrpcpb.BatchGetRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.BatchGetResponse, error) {
+	var resp *kvrpcpb.BatchGetResponse
+	f := func(ctx *RPCContext) (RegionErrorResponse, error, bool) {
+		if ctx == nil {
+			resp = &kvrpcpb.BatchGetResponse{
+				RegionError: &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}},
+			}
+			return resp, nil, false
+		}
+		req.Context = ctx.KVCtx
+		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
+		var err error
+		resp, err = s.client.KvBatchGet(context, ctx.Addr, req)
+		cancel()
+		return resp, err, true
+	}
+
+	if err := s.callFunc(regionID, f); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// KvBatchRollback sends a BatchRollback request to TiKV server.
+func (s *RegionRequestSender) KvBatchRollback(req *kvrpcpb.BatchRollbackRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.BatchRollbackResponse, error) {
+	var resp *kvrpcpb.BatchRollbackResponse
+	f := func(ctx *RPCContext) (RegionErrorResponse, error, bool) {
+		if ctx == nil {
+			resp = &kvrpcpb.BatchRollbackResponse{
+				RegionError: &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}},
+			}
+			return resp, nil, false
+		}
+		req.Context = ctx.KVCtx
+		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
+		var err error
+		resp, err = s.client.KvBatchRollback(context, ctx.Addr, req)
+		cancel()
+		return resp, err, true
+	}
+
+	if err := s.callFunc(regionID, f); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// KvScanLock sends a ScanLock request to TiKV server.
+func (s *RegionRequestSender) KvScanLock(req *kvrpcpb.ScanLockRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.ScanLockResponse, error) {
+	var resp *kvrpcpb.ScanLockResponse
+	f := func(ctx *RPCContext) (RegionErrorResponse, error, bool) {
+		if ctx == nil {
+			resp = &kvrpcpb.ScanLockResponse{
+				RegionError: &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}},
+			}
+			return resp, nil, false
+		}
+		req.Context = ctx.KVCtx
+		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
+		var err error
+		resp, err = s.client.KvScanLock(context, ctx.Addr, req)
+		cancel()
+		return resp, err, true
+	}
+
+	if err := s.callFunc(regionID, f); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// KvResolveLock sends a ResolveLock request to TiKV server.
+func (s *RegionRequestSender) KvResolveLock(req *kvrpcpb.ResolveLockRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.ResolveLockResponse, error) {
+	var resp *kvrpcpb.ResolveLockResponse
+	f := func(ctx *RPCContext) (RegionErrorResponse, error, bool) {
+		if ctx == nil {
+			resp = &kvrpcpb.ResolveLockResponse{
+				RegionError: &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}},
+			}
+			return resp, nil, false
+		}
+		req.Context = ctx.KVCtx
+		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
+		var err error
+		resp, err = s.client.KvResolveLock(context, ctx.Addr, req)
+		cancel()
+		return resp, err, true
+	}
+
+	if err := s.callFunc(regionID, f); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// KvGC sends a GC request to TiKV server.
+func (s *RegionRequestSender) KvGC(req *kvrpcpb.GCRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.GCResponse, error) {
+	var resp *kvrpcpb.GCResponse
+	f := func(ctx *RPCContext) (RegionErrorResponse, error, bool) {
+		if ctx == nil {
+			resp = &kvrpcpb.GCResponse{
+				RegionError: &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}},
+			}
+			return resp, nil, false
+		}
+		req.Context = ctx.KVCtx
+		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
+		var err error
+		resp, err = s.client.KvGC(context, ctx.Addr, req)
+		cancel()
+		return resp, err, true
+	}
+
+	if err := s.callFunc(regionID, f); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// RawGet sends a RawGet request to TiKV server.
+func (s *RegionRequestSender) RawGet(req *kvrpcpb.RawGetRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.RawGetResponse, error) {
+	var resp *kvrpcpb.RawGetResponse
+	f := func(ctx *RPCContext) (RegionErrorResponse, error, bool) {
+		if ctx == nil {
+			resp = &kvrpcpb.RawGetResponse{
+				RegionError: &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}},
+			}
+			return resp, nil, false
+		}
+		req.Context = ctx.KVCtx
+		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
+		var err error
+		resp, err = s.client.RawGet(context, ctx.Addr, req)
+		cancel()
+		return resp, err, true
+	}
+
+	if err := s.callFunc(regionID, f); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// RawPut sends a RawPut request to TiKV server.
+func (s *RegionRequestSender) RawPut(req *kvrpcpb.RawPutRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.RawPutResponse, error) {
+	var resp *kvrpcpb.RawPutResponse
+	f := func(ctx *RPCContext) (RegionErrorResponse, error, bool) {
+		if ctx == nil {
+			resp = &kvrpcpb.RawPutResponse{
+				RegionError: &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}},
+			}
+			return resp, nil, false
+		}
+		req.Context = ctx.KVCtx
+		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
+		var err error
+		resp, err = s.client.RawPut(context, ctx.Addr, req)
+		cancel()
+		return resp, err, true
+	}
+
+	if err := s.callFunc(regionID, f); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// RawDelete sends a RawDelete request to TiKV server.
+func (s *RegionRequestSender) RawDelete(req *kvrpcpb.RawDeleteRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.RawDeleteResponse, error) {
+	var resp *kvrpcpb.RawDeleteResponse
+	f := func(ctx *RPCContext) (RegionErrorResponse, error, bool) {
+		if ctx == nil {
+			resp = &kvrpcpb.RawDeleteResponse{
+				RegionError: &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}},
+			}
+			return resp, nil, false
+		}
+		req.Context = ctx.KVCtx
+		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
+		var err error
+		resp, err = s.client.RawDelete(context, ctx.Addr, req)
+		cancel()
+		return resp, err, true
+	}
+
+	if err := s.callFunc(regionID, f); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// Coprocessor sends a Coprocessor request to TiKV server.
+func (s *RegionRequestSender) Coprocessor(req *coprocessor.Request, regionID RegionVerID, timeout time.Duration) (*coprocessor.Response, error) {
+	var resp *coprocessor.Response
+	f := func(ctx *RPCContext) (RegionErrorResponse, error, bool) {
+		if ctx == nil {
+			resp = &coprocessor.Response{
+				RegionError: &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}},
+			}
+			return resp, nil, false
+		}
+		req.Context = ctx.KVCtx
+		context, cancel := goctx.WithDeadline(ctx.Context, time.Now().Add(timeout))
+		var err error
+		resp, err = s.client.Coprocessor(context, ctx.Addr, req)
+		cancel()
+		return resp, err, true
+	}
+
+	if err := s.callFunc(regionID, f); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 func (s *RegionRequestSender) onSendFail(ctx *RPCContext, err error) error {

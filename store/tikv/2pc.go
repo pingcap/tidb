@@ -304,19 +304,16 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 	if skip, ok := optSkipCheck.(bool); ok && skip {
 		skipCheck = true
 	}
-	req := &pb.Request{
-		Type: pb.MessageType_CmdPrewrite,
-		CmdPrewriteReq: &pb.CmdPrewriteRequest{
-			Mutations:           mutations,
-			PrimaryLock:         c.primary(),
-			StartVersion:        c.startTS,
-			LockTtl:             c.lockTTL,
-			SkipConstraintCheck: skipCheck,
-		},
-	}
 
+	req := &pb.PrewriteRequest{
+		Mutations:           mutations,
+		PrimaryLock:         c.primary(),
+		StartVersion:        c.startTS,
+		LockTtl:             c.lockTTL,
+		SkipConstraintCheck: skipCheck,
+	}
 	for {
-		resp, err := c.store.SendKVReq(bo, req, batch.region, readTimeoutShort)
+		resp, err := c.store.KvPrewrite(bo, req, batch.region, readTimeoutShort)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -328,11 +325,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			err = c.prewriteKeys(bo, batch.keys)
 			return errors.Trace(err)
 		}
-		prewriteResp := resp.GetCmdPrewriteResp()
-		if prewriteResp == nil {
-			return errors.Trace(errBodyMissing)
-		}
-		keyErrs := prewriteResp.GetErrors()
+		keyErrs := resp.GetErrors()
 		if len(keyErrs) == 0 {
 			// We need to cleanup all written keys if transaction aborts.
 			c.mu.Lock()
@@ -363,13 +356,10 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 }
 
 func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) error {
-	req := &pb.Request{
-		Type: pb.MessageType_CmdCommit,
-		CmdCommitReq: &pb.CmdCommitRequest{
-			StartVersion:  c.startTS,
-			Keys:          batch.keys,
-			CommitVersion: c.commitTS,
-		},
+	req := &pb.CommitRequest{
+		StartVersion:  c.startTS,
+		Keys:          batch.keys,
+		CommitVersion: c.commitTS,
 	}
 
 	// If we fail to receive response for the request that commits primary key, it will be undetermined whether this
@@ -381,7 +371,7 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 		bo = NewBackoffer(commitPrimaryMaxBackoff, bo.ctx)
 	}
 
-	resp, err := c.store.SendKVReq(bo, req, batch.region, readTimeoutShort)
+	resp, err := c.store.KvCommit(bo, req, batch.region, readTimeoutShort)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -394,11 +384,7 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 		err = c.commitKeys(bo, batch.keys)
 		return errors.Trace(err)
 	}
-	commitResp := resp.GetCmdCommitResp()
-	if commitResp == nil {
-		return errors.Trace(errBodyMissing)
-	}
-	if keyErr := commitResp.GetError(); keyErr != nil {
+	if keyErr := resp.GetError(); keyErr != nil {
 		c.mu.RLock()
 		defer c.mu.RUnlock()
 		err = errors.Errorf("2PC commit failed: %v", keyErr.String())
@@ -422,14 +408,11 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 }
 
 func (c *twoPhaseCommitter) cleanupSingleBatch(bo *Backoffer, batch batchKeys) error {
-	req := &pb.Request{
-		Type: pb.MessageType_CmdBatchRollback,
-		CmdBatchRollbackReq: &pb.CmdBatchRollbackRequest{
-			Keys:         batch.keys,
-			StartVersion: c.startTS,
-		},
+	req := &pb.BatchRollbackRequest{
+		Keys:         batch.keys,
+		StartVersion: c.startTS,
 	}
-	resp, err := c.store.SendKVReq(bo, req, batch.region, readTimeoutShort)
+	resp, err := c.store.KvBatchRollback(bo, req, batch.region, readTimeoutShort)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -441,7 +424,7 @@ func (c *twoPhaseCommitter) cleanupSingleBatch(bo *Backoffer, batch batchKeys) e
 		err = c.cleanupKeys(bo, batch.keys)
 		return errors.Trace(err)
 	}
-	if keyErr := resp.GetCmdBatchRollbackResp().GetError(); keyErr != nil {
+	if keyErr := resp.GetError(); keyErr != nil {
 		err = errors.Errorf("2PC cleanup failed: %s", keyErr)
 		log.Debugf("2PC failed cleanup key: %v, tid: %d", err, c.startTS)
 		return errors.Trace(err)

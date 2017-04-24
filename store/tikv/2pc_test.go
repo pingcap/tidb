@@ -210,20 +210,16 @@ func (s *testCommitterSuite) isKeyLocked(c *C, key []byte) bool {
 	ver, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
 	bo := NewBackoffer(getMaxBackoff, goctx.Background())
-	req := &kvrpcpb.Request{
-		Type: kvrpcpb.MessageType_CmdGet,
-		CmdGetReq: &kvrpcpb.CmdGetRequest{
-			Key:     key,
-			Version: ver.Ver,
-		},
+	req := &kvrpcpb.GetRequest{
+		Key:     key,
+		Version: ver.Ver,
 	}
 	loc, err := s.store.regionCache.LocateKey(bo, key)
 	c.Assert(err, IsNil)
-	resp, err := s.store.SendKVReq(bo, req, loc.Region, readTimeoutShort)
+	resp, err := s.store.KvGet(bo, req, loc.Region, readTimeoutShort)
 	c.Assert(err, IsNil)
-	cmdGetResp := resp.GetCmdGetResp()
-	c.Assert(cmdGetResp, NotNil)
-	keyErr := cmdGetResp.GetError()
+	c.Assert(resp, NotNil)
+	keyErr := resp.GetError()
 	return keyErr.GetLocked() != nil
 }
 
@@ -270,22 +266,82 @@ type slowClient struct {
 	regionDelays map[uint64]time.Duration
 }
 
-func (c *slowClient) SendKVReq(ctx goctx.Context, addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error) {
+func (c *slowClient) delay(regionID uint64) {
 	for id, delay := range c.regionDelays {
-		if req.GetContext().GetRegionId() == id {
+		if id == regionID {
 			time.Sleep(delay)
 		}
 	}
-	return c.Client.SendKVReq(ctx, addr, req, timeout)
 }
 
-func (c *slowClient) SendCopReq(ctx goctx.Context, addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
-	for id, delay := range c.regionDelays {
-		if req.GetContext().GetRegionId() == id {
-			time.Sleep(delay)
-		}
-	}
-	return c.Client.SendCopReq(ctx, addr, req, timeout)
+func (c *slowClient) KvGet(ctx goctx.Context, addr string, req *kvrpcpb.GetRequest) (*kvrpcpb.GetResponse, error) {
+	c.delay(req.GetContext().GetRegionId())
+	return c.Client.KvGet(ctx, addr, req)
+}
+
+func (c *slowClient) KvScan(ctx goctx.Context, addr string, req *kvrpcpb.ScanRequest) (*kvrpcpb.ScanResponse, error) {
+	c.delay(req.GetContext().GetRegionId())
+	return c.Client.KvScan(ctx, addr, req)
+}
+
+func (c *slowClient) KvPrewrite(ctx goctx.Context, addr string, req *kvrpcpb.PrewriteRequest) (*kvrpcpb.PrewriteResponse, error) {
+	c.delay(req.GetContext().GetRegionId())
+	return c.Client.KvPrewrite(ctx, addr, req)
+}
+
+func (c *slowClient) KvCommit(ctx goctx.Context, addr string, req *kvrpcpb.CommitRequest) (*kvrpcpb.CommitResponse, error) {
+	c.delay(req.GetContext().GetRegionId())
+	return c.Client.KvCommit(ctx, addr, req)
+}
+
+func (c *slowClient) KvCleanup(ctx goctx.Context, addr string, req *kvrpcpb.CleanupRequest) (*kvrpcpb.CleanupResponse, error) {
+	c.delay(req.GetContext().GetRegionId())
+	return c.Client.KvCleanup(ctx, addr, req)
+}
+
+func (c *slowClient) KvBatchGet(ctx goctx.Context, addr string, req *kvrpcpb.BatchGetRequest) (*kvrpcpb.BatchGetResponse, error) {
+	c.delay(req.GetContext().GetRegionId())
+	return c.Client.KvBatchGet(ctx, addr, req)
+}
+
+func (c *slowClient) KvBatchRollback(ctx goctx.Context, addr string, req *kvrpcpb.BatchRollbackRequest) (*kvrpcpb.BatchRollbackResponse, error) {
+	c.delay(req.GetContext().GetRegionId())
+	return c.Client.KvBatchRollback(ctx, addr, req)
+}
+
+func (c *slowClient) KvScanLock(ctx goctx.Context, addr string, req *kvrpcpb.ScanLockRequest) (*kvrpcpb.ScanLockResponse, error) {
+	c.delay(req.GetContext().GetRegionId())
+	return c.Client.KvScanLock(ctx, addr, req)
+}
+
+func (c *slowClient) KvResolveLock(ctx goctx.Context, addr string, req *kvrpcpb.ResolveLockRequest) (*kvrpcpb.ResolveLockResponse, error) {
+	c.delay(req.GetContext().GetRegionId())
+	return c.Client.KvResolveLock(ctx, addr, req)
+}
+
+func (c *slowClient) KvGC(ctx goctx.Context, addr string, req *kvrpcpb.GCRequest) (*kvrpcpb.GCResponse, error) {
+	c.delay(req.GetContext().GetRegionId())
+	return c.Client.KvGC(ctx, addr, req)
+}
+
+func (c *slowClient) RawGet(ctx goctx.Context, addr string, req *kvrpcpb.RawGetRequest) (*kvrpcpb.RawGetResponse, error) {
+	c.delay(req.GetContext().GetRegionId())
+	return c.Client.RawGet(ctx, addr, req)
+}
+
+func (c *slowClient) RawPut(ctx goctx.Context, addr string, req *kvrpcpb.RawPutRequest) (*kvrpcpb.RawPutResponse, error) {
+	c.delay(req.GetContext().GetRegionId())
+	return c.Client.RawPut(ctx, addr, req)
+}
+
+func (c *slowClient) RawDelete(ctx goctx.Context, addr string, req *kvrpcpb.RawDeleteRequest) (*kvrpcpb.RawDeleteResponse, error) {
+	c.delay(req.GetContext().GetRegionId())
+	return c.Client.RawDelete(ctx, addr, req)
+}
+
+func (c *slowClient) Coprocessor(ctx goctx.Context, addr string, req *coprocessor.Request) (*coprocessor.Response, error) {
+	c.delay(req.GetContext().GetRegionId())
+	return c.Client.Coprocessor(ctx, addr, req)
 }
 
 func (s *testCommitterSuite) TestIllegalTso(c *C) {

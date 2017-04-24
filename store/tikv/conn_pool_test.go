@@ -17,10 +17,8 @@
 package tikv
 
 import (
-	"net"
-	"time"
-
 	. "github.com/pingcap/check"
+	"google.golang.org/grpc"
 )
 
 type testPoolSuite struct {
@@ -28,104 +26,31 @@ type testPoolSuite struct {
 
 var _ = Suite(&testPoolSuite{})
 
-type testDummyConn struct {
-}
-
-func (c *testDummyConn) Read(b []byte) (n int, err error)   { return len(b), nil }
-func (c *testDummyConn) Write(b []byte) (n int, err error)  { return len(b), nil }
-func (c *testDummyConn) Close() error                       { return nil }
-func (c *testDummyConn) LocalAddr() net.Addr                { return nil }
-func (c *testDummyConn) RemoteAddr() net.Addr               { return nil }
-func (c *testDummyConn) SetDeadline(t time.Time) error      { return nil }
-func (c *testDummyConn) SetReadDeadline(t time.Time) error  { return nil }
-func (c *testDummyConn) SetWriteDeadline(t time.Time) error { return nil }
-
 func (s *testPoolSuite) TestPool(c *C) {
 	count := 0
-	f := func(addr string) (*Conn, error) {
+	f := func(addr string) (*grpc.ClientConn, error) {
 		count++
-		return &Conn{closed: false, nc: &testDummyConn{}}, nil
+		return grpc.Dial(addr, grpc.WithInsecure(), grpc.WithTimeout(dialTimeout))
 	}
+	p := NewConnPool(f)
 
-	capability := 4
-	p := NewPool("127.0.0.1:6379", 4, f)
-
-	conns := make([]*Conn, 0, capability)
-	for i := 0; i < capability; i++ {
-		conn, err := p.GetConn()
-		c.Assert(err, IsNil)
-		conns = append(conns, conn)
-	}
-
-	c.Assert(count, Equals, capability)
-
-	// we can not get any connection now, so TryGet will return nil
-	emptyConn, err := p.p.TryGet()
+	addr := "127.0.0.1:6379"
+	conn1, err := p.Get(addr)
 	c.Assert(err, IsNil)
-	c.Assert(emptyConn, IsNil)
+	c.Assert(count, Equals, 1)
 
-	for i := 0; i < len(conns); i++ {
-		p.PutConn(conns[i])
-	}
-
-	conns = conns[0:0]
-
-	conn, err := p.GetConn()
+	conn2, err := p.Get(addr)
 	c.Assert(err, IsNil)
-	conn.Close()
-	p.PutConn(conn)
+	c.Assert(conn2, Equals, conn1)
+	c.Assert(count, Equals, 1)
 
-	// get all connections again, now only one needs to be created
-	for i := 0; i < capability; i++ {
-		conn, err1 := p.GetConn()
-		c.Assert(err1, IsNil)
-		conns = append(conns, conn)
-	}
-
-	for i := 0; i < len(conns); i++ {
-		p.PutConn(conns[i])
-	}
-
-	c.Assert(count, Equals, capability+1)
+	p.Put(addr, conn1)
+	c.Assert(count, Equals, 1)
+	p.Put(addr, conn2)
+	c.Assert(count, Equals, 1)
 
 	p.Close()
-
-	_, err = p.GetConn()
+	conn3, err := p.Get(addr)
 	c.Assert(err, NotNil)
-}
-
-func (s *testPoolSuite) TestPoolsClose(c *C) {
-	count := 0
-	addr := "127.0.0.1:6379"
-	f := func(addr string) (*Conn, error) {
-		count++
-		return &Conn{
-			addr:   addr,
-			closed: false,
-			nc:     &testDummyConn{}}, nil
-	}
-
-	capability := 4
-	pools := NewPools(capability, f)
-
-	conns := make([]*Conn, 0, capability)
-	for i := 0; i < capability; i++ {
-		conn, err := pools.GetConn(addr)
-		c.Assert(err, IsNil)
-		conns = append(conns, conn)
-	}
-
-	c.Assert(count, Equals, capability)
-
-	for i := 0; i < len(conns)-1; i++ {
-		pools.PutConn(conns[i])
-	}
-
-	ch := make(chan struct{})
-	go func() {
-		<-ch
-		pools.PutConn(conns[capability-1])
-	}()
-	close(ch)
-	pools.Close()
+	c.Assert(conn3, IsNil)
 }

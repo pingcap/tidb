@@ -115,14 +115,11 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collectF func(k, v []byte)) error {
 	pending := batch.keys
 	for {
-		req := &pb.Request{
-			Type: pb.MessageType_CmdBatchGet,
-			CmdBatchGetReq: &pb.CmdBatchGetRequest{
-				Keys:    pending,
-				Version: s.version.Ver,
-			},
+		req := &pb.BatchGetRequest{
+			Keys:    pending,
+			Version: s.version.Ver,
 		}
-		resp, err := s.store.SendKVReq(bo, req, batch.region, readTimeoutMedium)
+		resp, err := s.store.KvBatchGet(bo, req, batch.region, readTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -134,15 +131,11 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 			err = s.batchGetKeysByRegions(bo, pending, collectF)
 			return errors.Trace(err)
 		}
-		batchGetResp := resp.GetCmdBatchGetResp()
-		if batchGetResp == nil {
-			return errors.Trace(errBodyMissing)
-		}
 		var (
 			lockedKeys [][]byte
 			locks      []*Lock
 		)
-		for _, pair := range batchGetResp.Pairs {
+		for _, pair := range resp.Pairs {
 			keyErr := pair.GetError()
 			if keyErr == nil {
 				collectF(pair.GetKey(), pair.GetValue())
@@ -186,19 +179,16 @@ func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
 }
 
 func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
-	req := &pb.Request{
-		Type: pb.MessageType_CmdGet,
-		CmdGetReq: &pb.CmdGetRequest{
-			Key:     k,
-			Version: s.version.Ver,
-		},
+	req := &pb.GetRequest{
+		Key:     k,
+		Version: s.version.Ver,
 	}
 	for {
 		loc, err := s.store.regionCache.LocateKey(bo, k)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp, err := s.store.SendKVReq(bo, req, loc.Region, readTimeoutShort)
+		resp, err := s.store.KvGet(bo, req, loc.Region, readTimeoutShort)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -209,12 +199,8 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 			}
 			continue
 		}
-		cmdGetResp := resp.GetCmdGetResp()
-		if cmdGetResp == nil {
-			return nil, errors.Trace(errBodyMissing)
-		}
-		val := cmdGetResp.GetValue()
-		if keyErr := cmdGetResp.GetError(); keyErr != nil {
+		val := resp.GetValue()
+		if keyErr := resp.GetError(); keyErr != nil {
 			lock, err := extractLockFromKeyErr(keyErr)
 			if err != nil {
 				return nil, errors.Trace(err)

@@ -23,7 +23,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
@@ -240,9 +240,54 @@ func (s *tikvStore) GetClient() kv.Client {
 	}
 }
 
-func (s *tikvStore) SendKVReq(bo *Backoffer, req *pb.Request, regionID RegionVerID, timeout time.Duration) (*pb.Response, error) {
+func (s *tikvStore) KvGet(bo *Backoffer, req *kvrpcpb.GetRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.GetResponse, error) {
 	sender := NewRegionRequestSender(bo, s.regionCache, s.client)
-	return sender.SendKVReq(req, regionID, timeout)
+	return sender.KvGet(req, regionID, timeout)
+}
+
+func (s *tikvStore) KvScan(bo *Backoffer, req *kvrpcpb.ScanRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.ScanResponse, error) {
+	sender := NewRegionRequestSender(bo, s.regionCache, s.client)
+	return sender.KvScan(req, regionID, timeout)
+}
+
+func (s *tikvStore) KvPrewrite(bo *Backoffer, req *kvrpcpb.PrewriteRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.PrewriteResponse, error) {
+	sender := NewRegionRequestSender(bo, s.regionCache, s.client)
+	return sender.KvPrewrite(req, regionID, timeout)
+}
+
+func (s *tikvStore) KvCommit(bo *Backoffer, req *kvrpcpb.CommitRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.CommitResponse, error) {
+	sender := NewRegionRequestSender(bo, s.regionCache, s.client)
+	return sender.KvCommit(req, regionID, timeout)
+}
+
+func (s *tikvStore) KvCleanup(bo *Backoffer, req *kvrpcpb.CleanupRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.CleanupResponse, error) {
+	sender := NewRegionRequestSender(bo, s.regionCache, s.client)
+	return sender.KvCleanup(req, regionID, timeout)
+}
+
+func (s *tikvStore) KvBatchGet(bo *Backoffer, req *kvrpcpb.BatchGetRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.BatchGetResponse, error) {
+	sender := NewRegionRequestSender(bo, s.regionCache, s.client)
+	return sender.KvBatchGet(req, regionID, timeout)
+}
+
+func (s *tikvStore) KvBatchRollback(bo *Backoffer, req *kvrpcpb.BatchRollbackRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.BatchRollbackResponse, error) {
+	sender := NewRegionRequestSender(bo, s.regionCache, s.client)
+	return sender.KvBatchRollback(req, regionID, timeout)
+}
+
+func (s *tikvStore) KvScanLock(bo *Backoffer, req *kvrpcpb.ScanLockRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.ScanLockResponse, error) {
+	sender := NewRegionRequestSender(bo, s.regionCache, s.client)
+	return sender.KvScanLock(req, regionID, timeout)
+}
+
+func (s *tikvStore) KvResolveLock(bo *Backoffer, req *kvrpcpb.ResolveLockRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.ResolveLockResponse, error) {
+	sender := NewRegionRequestSender(bo, s.regionCache, s.client)
+	return sender.KvResolveLock(req, regionID, timeout)
+}
+
+func (s *tikvStore) KvGC(bo *Backoffer, req *kvrpcpb.GCRequest, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.GCResponse, error) {
+	sender := NewRegionRequestSender(bo, s.regionCache, s.client)
+	return sender.KvGC(req, regionID, timeout)
 }
 
 // ParseEtcdAddr parses path to etcd address list

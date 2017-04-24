@@ -243,25 +243,189 @@ func (c *busyClient) setBusy(busy bool) {
 	c.mu.isBusy = busy
 }
 
-func (c *busyClient) Close() error {
-	return c.client.Close()
-}
-
-func (c *busyClient) SendKVReq(ctx goctx.Context, addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error) {
+func (c *busyClient) KvGet(ctx goctx.Context, addr string, req *kvrpcpb.GetRequest) (*kvrpcpb.GetResponse, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
 	if c.mu.isBusy {
-		return &kvrpcpb.Response{
+		return &kvrpcpb.GetResponse{
 			RegionError: &errorpb.Error{
 				ServerIsBusy: &errorpb.ServerIsBusy{},
 			},
 		}, nil
 	}
-	return c.client.SendKVReq(ctx, addr, req, timeout)
+	return c.client.KvGet(ctx, addr, req)
 }
 
-func (c *busyClient) SendCopReq(ctx goctx.Context, addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
+func (c *busyClient) KvScan(ctx goctx.Context, addr string, req *kvrpcpb.ScanRequest) (*kvrpcpb.ScanResponse, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.mu.isBusy {
+		return &kvrpcpb.ScanResponse{
+			RegionError: &errorpb.Error{
+				ServerIsBusy: &errorpb.ServerIsBusy{},
+			},
+		}, nil
+	}
+	return c.client.KvScan(ctx, addr, req)
+}
+
+func (c *busyClient) KvPrewrite(ctx goctx.Context, addr string, req *kvrpcpb.PrewriteRequest) (*kvrpcpb.PrewriteResponse, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.mu.isBusy {
+		return &kvrpcpb.PrewriteResponse{
+			RegionError: &errorpb.Error{
+				ServerIsBusy: &errorpb.ServerIsBusy{},
+			},
+		}, nil
+	}
+	return c.client.KvPrewrite(ctx, addr, req)
+}
+
+func (c *busyClient) KvCommit(ctx goctx.Context, addr string, req *kvrpcpb.CommitRequest) (*kvrpcpb.CommitResponse, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.mu.isBusy {
+		return &kvrpcpb.CommitResponse{
+			RegionError: &errorpb.Error{
+				ServerIsBusy: &errorpb.ServerIsBusy{},
+			},
+		}, nil
+	}
+	return c.client.KvCommit(ctx, addr, req)
+}
+
+func (c *busyClient) KvCleanup(ctx goctx.Context, addr string, req *kvrpcpb.CleanupRequest) (*kvrpcpb.CleanupResponse, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.mu.isBusy {
+		return &kvrpcpb.CleanupResponse{
+			RegionError: &errorpb.Error{
+				ServerIsBusy: &errorpb.ServerIsBusy{},
+			},
+		}, nil
+	}
+	return c.client.KvCleanup(ctx, addr, req)
+}
+
+func (c *busyClient) KvBatchGet(ctx goctx.Context, addr string, req *kvrpcpb.BatchGetRequest) (*kvrpcpb.BatchGetResponse, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.mu.isBusy {
+		return &kvrpcpb.BatchGetResponse{
+			RegionError: &errorpb.Error{
+				ServerIsBusy: &errorpb.ServerIsBusy{},
+			},
+		}, nil
+	}
+	return c.client.KvBatchGet(ctx, addr, req)
+}
+
+func (c *busyClient) KvBatchRollback(ctx goctx.Context, addr string, req *kvrpcpb.BatchRollbackRequest) (*kvrpcpb.BatchRollbackResponse, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.mu.isBusy {
+		return &kvrpcpb.BatchRollbackResponse{
+			RegionError: &errorpb.Error{
+				ServerIsBusy: &errorpb.ServerIsBusy{},
+			},
+		}, nil
+	}
+	return c.client.KvBatchRollback(ctx, addr, req)
+}
+
+func (c *busyClient) KvScanLock(ctx goctx.Context, addr string, req *kvrpcpb.ScanLockRequest) (*kvrpcpb.ScanLockResponse, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.mu.isBusy {
+		return &kvrpcpb.ScanLockResponse{
+			RegionError: &errorpb.Error{
+				ServerIsBusy: &errorpb.ServerIsBusy{},
+			},
+		}, nil
+	}
+	return c.client.KvScanLock(ctx, addr, req)
+}
+
+func (c *busyClient) KvResolveLock(ctx goctx.Context, addr string, req *kvrpcpb.ResolveLockRequest) (*kvrpcpb.ResolveLockResponse, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.mu.isBusy {
+		return &kvrpcpb.ResolveLockResponse{
+			RegionError: &errorpb.Error{
+				ServerIsBusy: &errorpb.ServerIsBusy{},
+			},
+		}, nil
+	}
+	return c.client.KvResolveLock(ctx, addr, req)
+}
+
+func (c *busyClient) KvGC(ctx goctx.Context, addr string, req *kvrpcpb.GCRequest) (*kvrpcpb.GCResponse, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.mu.isBusy {
+		return &kvrpcpb.GCResponse{
+			RegionError: &errorpb.Error{
+				ServerIsBusy: &errorpb.ServerIsBusy{},
+			},
+		}, nil
+	}
+	return c.client.KvGC(ctx, addr, req)
+}
+
+func (c *busyClient) RawGet(ctx goctx.Context, addr string, req *kvrpcpb.RawGetRequest) (*kvrpcpb.RawGetResponse, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.mu.isBusy {
+		return &kvrpcpb.RawGetResponse{
+			RegionError: &errorpb.Error{
+				ServerIsBusy: &errorpb.ServerIsBusy{},
+			},
+		}, nil
+	}
+	return c.client.RawGet(ctx, addr, req)
+}
+
+func (c *busyClient) RawPut(ctx goctx.Context, addr string, req *kvrpcpb.RawPutRequest) (*kvrpcpb.RawPutResponse, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.mu.isBusy {
+		return &kvrpcpb.RawPutResponse{
+			RegionError: &errorpb.Error{
+				ServerIsBusy: &errorpb.ServerIsBusy{},
+			},
+		}, nil
+	}
+	return c.client.RawPut(ctx, addr, req)
+}
+
+func (c *busyClient) RawDelete(ctx goctx.Context, addr string, req *kvrpcpb.RawDeleteRequest) (*kvrpcpb.RawDeleteResponse, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.mu.isBusy {
+		return &kvrpcpb.RawDeleteResponse{
+			RegionError: &errorpb.Error{
+				ServerIsBusy: &errorpb.ServerIsBusy{},
+			},
+		}, nil
+	}
+	return c.client.RawDelete(ctx, addr, req)
+}
+
+func (c *busyClient) Coprocessor(ctx goctx.Context, addr string, req *coprocessor.Request) (*coprocessor.Response, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -272,7 +436,11 @@ func (c *busyClient) SendCopReq(ctx goctx.Context, addr string, req *coprocessor
 			},
 		}, nil
 	}
-	return c.client.SendCopReq(ctx, addr, req, timeout)
+	return c.client.Coprocessor(ctx, addr, req)
+}
+
+func (c *busyClient) Close() error {
+	return c.client.Close()
 }
 
 type mockPDClient struct {

@@ -434,7 +434,7 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
 			Data:   it.req.Data,
 			Ranges: task.ranges.toPBRanges(),
 		}
-		resp, err := sender.SendCopReq(req, task.region, readTimeoutMedium)
+		resp, err := sender.Coprocessor(req, task.region, readTimeoutMedium)
 		if err != nil {
 			return []copResponse{{err: errors.Trace(err)}}
 		}
