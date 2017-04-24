@@ -495,7 +495,7 @@ func EncodeTablePrefix(tableID int64) kv.Key {
 	return key
 }
 
-// Record prefix is "t[tableID]_r".
+// appendTableRecordPrefix appends table record prefix  "t[tableID]_r".
 func appendTableRecordPrefix(buf []byte, tableID int64) []byte {
 	buf = append(buf, tablePrefix...)
 	buf = codec.EncodeInt(buf, tableID)
@@ -503,7 +503,7 @@ func appendTableRecordPrefix(buf []byte, tableID int64) []byte {
 	return buf
 }
 
-// Index prefix is "t[tableID]_i".
+// appendTableIndexPrefix appends table index prefix  "t[tableID]_i".
 func appendTableIndexPrefix(buf []byte, tableID int64) []byte {
 	buf = append(buf, tablePrefix...)
 	buf = codec.EncodeInt(buf, tableID)
