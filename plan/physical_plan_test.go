@@ -1190,7 +1190,7 @@ func (s *testPlanSuite) TestAutoJoinChosen(c *C) {
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		ctx := mockContext()
