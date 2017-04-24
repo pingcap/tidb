@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
@@ -35,6 +36,8 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/twinj/uuid"
 )
+
+var NewOwnerChange = false
 
 var (
 	// errWorkerClosed means we have already closed the DDL worker.
@@ -161,6 +164,7 @@ type ddl struct {
 	hook       Callback
 	hookMu     sync.RWMutex
 	store      kv.Storage
+	worker     *worker
 	// lease is schema seconds.
 	lease        time.Duration
 	uuid         string
@@ -205,6 +209,12 @@ func (d *ddl) asyncNotifyEvent(e *Event) {
 // NewDDL creates a new DDL.
 func NewDDL(store kv.Storage, infoHandle *infoschema.Handle, hook Callback, lease time.Duration) DDL {
 	return newDDL(store, infoHandle, hook, lease)
+}
+
+func (d *ddl) setWorker(cli *clientv3.Client) {
+	d.worker = &worker{ddlID: d.uuid, etcdClient: cli}
+	d.wait.Add(2)
+	go d.campaignOwners()
 }
 
 func newDDL(store kv.Storage, infoHandle *infoschema.Handle, hook Callback, lease time.Duration) *ddl {
@@ -290,6 +300,7 @@ func (d *ddl) start() {
 	d.wait.Add(2)
 	go d.onBackgroundWorker()
 	go d.onDDLWorker()
+
 	// For every start, we will send a fake job to let worker
 	// check owner firstly and try to find whether a job exists and run.
 	asyncNotify(d.ddlJobCh)
