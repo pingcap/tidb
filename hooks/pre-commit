@@ -49,7 +49,7 @@ echo -ne "Checking for files that need goword... "
 files_need_goword=()
 files=($(git diff --cached --name-only --diff-filter ACM | grep "\.go" | grep -v -e "^_vendor"))
 for file in "${files[@]}"; do
-    # Check for files that fail gofmt.
+    # Check for files that fail goword.
     diff=$(goword ${file})
     if [[ -n "$diff" ]]; then
         files_need_goword+=("${file}")
