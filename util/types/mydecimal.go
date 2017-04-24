@@ -416,15 +416,15 @@ func (d *MyDecimal) Shift(shift int) error {
 		return nil
 	}
 	var (
-		// digitBegin is index of first non zero digit (all indexes from 0)
+		// digitBegin is index of first non zero digit (all indexes from 0).
 		digitBegin int
-		// digitEnd is index of position after last decimal digit
+		// digitEnd is index of position after last decimal digit.
 		digitEnd int
-		// point is index of digit position just after point
+		// point is index of digit position just after point.
 		point = digitsToWords(int(d.digitsInt)) * digitsPerWord
-		// new point position
+		// new point position.
 		newPoint = point + shift
-		// number of digits in result
+		// number of digits in result.
 		digitsInt, digitsFrac int
 		newFront              int
 	)
