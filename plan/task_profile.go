@@ -98,7 +98,9 @@ func (t *copTaskProfile) finishIndexPlan() {
 }
 
 func (p *basePhysicalPlan) attach2TaskProfile(tasks ...taskProfile) taskProfile {
-	return attachPlan2TaskProfile(p.basePlan.self.(PhysicalPlan).Copy(), tasks[0])
+	profile := tasks[0].copy()
+	profile = profile.finishTask(p.basePlan.ctx, p.basePlan.allocator)
+	return attachPlan2TaskProfile(p.basePlan.self.(PhysicalPlan).Copy(), profile)
 }
 
 func (p *PhysicalHashJoin) attach2TaskProfile(tasks ...taskProfile) taskProfile {
@@ -296,6 +298,20 @@ func (p *Projection) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 		return attachPlan2TaskProfile(np, t)
 	}
 	return nil
+}
+
+func (p *Union) attach2TaskProfile(profiles ...taskProfile) taskProfile {
+	np := p.Copy()
+	newTask := &rootTaskProfile{p: np}
+	newChildren := make([]Plan, 0, len(p.children))
+	for _, profile := range profiles {
+		profile = profile.finishTask(p.ctx, p.allocator)
+		newTask.cst += profile.cost()
+		newTask.cnt += profile.count()
+		newChildren = append(newChildren, profile.plan())
+	}
+	np.SetChildren(newChildren...)
+	return newTask
 }
 
 func (sel *Selection) attach2TaskProfile(profiles ...taskProfile) taskProfile {
