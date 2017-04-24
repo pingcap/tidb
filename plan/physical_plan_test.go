@@ -1199,14 +1199,16 @@ func (s *testPlanSuite) TestAutoJoinChosen(c *C) {
 			handle := sessionctx.GetDomain(ctx).StatsHandle()
 			tb, _ := is.TableByID(0)
 			tbl := tb.Meta()
-			statsTbl := mockStatsTable(tbl, 200)
-			// generate 20 distinct values for pk.
-			pkValues := make([]types.Datum, 20)
-			for i := 0; i < 20; i++ {
+			// generate 40 distinct values for pk.
+			pkValues := make([]types.Datum, 40)
+			for i := 0; i < 40; i++ {
 				pkValues[i] = types.NewIntDatum(int64(i))
 			}
-			// set the statistic col info for pk.
-			statsTbl.Columns[1] = &statistics.Column{Histogram: *mockStatsHistogram(1, pkValues, 10)}
+			// make the statistic col info for pk, every distinct value occurs 10 times.
+			pkStatsCol := &statistics.Column{Histogram: *mockStatsHistogram(1, pkValues, 10)}
+			// mock the statistic table and set the value of pk column.
+			statsTbl := mockStatsTable(tbl, 400)
+			statsTbl.Columns[1] = pkStatsCol
 			handle.UpdateTableStats([]*statistics.Table{statsTbl}, nil)
 		}
 
