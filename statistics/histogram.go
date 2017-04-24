@@ -35,10 +35,10 @@ type Histogram struct {
 	// LastUpdateVersion is the version that this histogram updated last time.
 	LastUpdateVersion uint64
 
-	Buckets []bucket
+	Buckets []Bucket
 }
 
-// bucket is an element of histogram.
+// Bucket is an element of histogram.
 //
 // A bucket count is the number of items stored in all previous buckets and the current bucket.
 // bucket numbers are always in increasing order.
@@ -47,7 +47,7 @@ type Histogram struct {
 //
 // Repeat is the number of repeats of the bucket value, it can be used to find popular values.
 //
-type bucket struct {
+type Bucket struct {
 	Count   int64
 	Value   types.Datum
 	Repeats int64
@@ -109,7 +109,7 @@ func (h *Handle) histogramFromStorage(tableID int64, colID int64, tp *types.Fiel
 		ID:                colID,
 		NDV:               distinct,
 		LastUpdateVersion: ver,
-		Buckets:           make([]bucket, bucketSize),
+		Buckets:           make([]Bucket, bucketSize),
 	}
 	for i := 0; i < bucketSize; i++ {
 		bucketID := rows[i].Data[0].GetInt64()
@@ -124,7 +124,7 @@ func (h *Handle) histogramFromStorage(tableID int64, colID int64, tp *types.Fiel
 				return nil, errors.Trace(err)
 			}
 		}
-		hg.Buckets[bucketID] = bucket{
+		hg.Buckets[bucketID] = Bucket{
 			Count:   count,
 			Value:   value,
 			Repeats: repeats,
@@ -254,7 +254,7 @@ func (hg *Histogram) lowerBound(sc *variable.StatementContext, target types.Datu
 func (hg *Histogram) mergeBuckets(bucketIdx int64) {
 	curBuck := 0
 	for i := int64(0); i+1 <= bucketIdx; i += 2 {
-		hg.Buckets[curBuck] = bucket{
+		hg.Buckets[curBuck] = Bucket{
 			Count:   hg.Buckets[i+1].Count,
 			Value:   hg.Buckets[i+1].Value,
 			Repeats: hg.Buckets[i+1].Repeats,

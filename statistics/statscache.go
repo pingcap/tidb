@@ -98,7 +98,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		tables = append(tables, tbl)
 		h.LastVersion = version
 	}
-	h.updateTableStats(tables, deletedTableIDs)
+	h.UpdateTableStats(tables, deletedTableIDs)
 	return nil
 }
 
@@ -120,11 +120,11 @@ func (h *Handle) copyFromOldCache() statsCache {
 	return newCache
 }
 
-// updateTableStats updates the statistics table cache using copy on write.
-func (h *Handle) updateTableStats(tables []*Table, deletedIDs []int64) {
+// UpdateTableStats updates the statistics table cache using copy on write.
+func (h *Handle) UpdateTableStats(tables []*Table, deletedIDs []int64) {
 	newCache := h.copyFromOldCache()
 	for _, tbl := range tables {
-		id := tbl.tableID
+		id := tbl.TableID
 		newCache[id] = tbl
 	}
 	for _, id := range deletedIDs {
