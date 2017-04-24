@@ -1014,6 +1014,46 @@ func (s *testEvaluatorSuite) TestTimestamp(c *C) {
 	c.Assert(d.Kind(), Equals, types.KindNull)
 }
 
+func (s *testEvaluatorSuite) TestMakeDate(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Args []interface{}
+		Want interface{}
+	}{
+		{[]interface{}{71, 1}, "1971-01-01"},
+		{[]interface{}{99, 1}, "1999-01-01"},
+		{[]interface{}{100, 1}, "0100-01-01"},
+		{[]interface{}{69, 1}, "2069-01-01"},
+		{[]interface{}{70, 1}, "1970-01-01"},
+		{[]interface{}{1000, 1}, "1000-01-01"},
+		{[]interface{}{-1, 3660}, nil},
+		{[]interface{}{10000, 3660}, nil},
+		{[]interface{}{2060, 2900025}, "9999-12-31"},
+		{[]interface{}{2060, 2900026}, nil},
+		{[]interface{}{nil, 2900025}, nil},
+		{[]interface{}{2060, nil}, nil},
+		{[]interface{}{nil, nil}, nil},
+		{[]interface{}{"71", 1}, "1971-01-01"},
+		{[]interface{}{71, "1"}, "1971-01-01"},
+		{[]interface{}{"71", "1"}, "1971-01-01"},
+	}
+	Dtbl := tblToDtbl(tbl)
+	maketime := funcs[ast.MakeDate]
+	for idx, t := range Dtbl {
+		f, err := maketime.getFunction(datumsToConstants(t["Args"]), s.ctx)
+		c.Assert(err, IsNil)
+		got, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		if t["Want"][0].Kind() == types.KindNull {
+			c.Assert(got.Kind(), Equals, types.KindNull, Commentf("[%v] - args:%v", idx, t["Args"]))
+		} else {
+			want, err := t["Want"][0].ToString()
+			c.Assert(err, IsNil)
+			c.Assert(got.GetMysqlTime().String(), Equals, want, Commentf("[%v] - args:%v", idx, t["Args"]))
+		}
+	}
+}
+
 func (s *testEvaluatorSuite) TestMakeTime(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
