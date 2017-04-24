@@ -78,6 +78,11 @@ check:
 	@echo "gofmt (simplify)"
 	@ gofmt -s -l -w $(FILES) 2>&1 | grep -v "parser/parser.go" | awk '{print} END{if(NR>0) {exit 1}}'
 
+goword:
+	go get github.com/chzchzchz/goword
+	@echo "goword"
+	@ goword $(FILES) | awk '{print} END{if(NR>0) {exit 1}}'
+
 errcheck:
 	go get github.com/kisielk/errcheck
 	errcheck -blank $(PACKAGES)
