@@ -264,14 +264,3 @@ func (p *Projection) matchProperty(_ *requiredProperty, childPlanInfo ...*physic
 	np.SetChildren(childPlanInfo[0].p)
 	return &physicalPlanInfo{p: np, cost: childPlanInfo[0].cost}
 }
-
-// matchProperty implements PhysicalPlan matchProperty interface.
-func (p *Analyze) matchProperty(_ *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
-	children := make([]Plan, 0, len(childPlanInfo))
-	for _, res := range childPlanInfo {
-		children = append(children, res.p)
-	}
-	np := p.Copy()
-	np.SetChildren(children...)
-	return &physicalPlanInfo{p: np}
-}

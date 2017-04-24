@@ -751,22 +751,78 @@ func (b *executorBuilder) buildCache(v *plan.Cache) Executor {
 	}
 }
 
+func (b *executorBuilder) buildSimpleTableScan(tblInfo *model.TableInfo, cols []*model.ColumnInfo) Executor {
+	startTS := b.getStartTS()
+	if b.err != nil {
+		return nil
+	}
+	table, _ := b.is.TableByID(tblInfo.ID)
+	client := b.ctx.GetClient()
+	supportDesc := client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeDesc)
+	schema := expression.NewSchema(expression.ColumnInfos2Columns(tblInfo.Name, cols)...)
+	ranges := []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}
+	e := &XSelectTableExec{
+		tableInfo:   tblInfo,
+		ctx:         b.ctx,
+		startTS:     startTS,
+		supportDesc: supportDesc,
+		table:       table,
+		schema:      schema,
+		Columns:     cols,
+		ranges:      ranges,
+	}
+	return e
+}
+
+func (b *executorBuilder) buildSimpleIndexScan(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) Executor {
+	startTS := b.getStartTS()
+	if b.err != nil {
+		return nil
+	}
+	table, _ := b.is.TableByID(tblInfo.ID)
+	client := b.ctx.GetClient()
+	supportDesc := client.SupportRequestType(kv.ReqTypeIndex, kv.ReqSubTypeDesc)
+	cols := make([]*model.ColumnInfo, len(idxInfo.Columns))
+	for i, col := range idxInfo.Columns {
+		cols[i] = tblInfo.Columns[col.Offset]
+	}
+	schema := expression.NewSchema(expression.ColumnInfos2Columns(tblInfo.Name, cols)...)
+	idxRange := &types.IndexRange{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.MaxValueDatum()}}
+	scanConcurrency := b.ctx.GetSessionVars().IndexSerialScanConcurrency
+	e := &XSelectIndexExec{
+		tableInfo:       tblInfo,
+		ctx:             b.ctx,
+		supportDesc:     supportDesc,
+		table:           table,
+		singleReadMode:  true,
+		startTS:         startTS,
+		idxColsSchema:   schema,
+		schema:          schema,
+		ranges:          []*types.IndexRange{idxRange},
+		columns:         cols,
+		index:           idxInfo,
+		outOfOrder:      false,
+		scanConcurrency: scanConcurrency,
+	}
+	return e
+}
+
 func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	e := &AnalyzeExec{
 		ctx:   b.ctx,
 		tasks: make([]analyzeTask, 0, len(v.Children())),
 	}
-	pkTasks := v.Children()[:len(v.PkTasks)]
-	for _, task := range pkTasks {
-		e.tasks = append(e.tasks, analyzeTask{taskType: pkTask, src: b.build(task)})
+	for _, task := range v.PkTasks {
+		e.tasks = append(e.tasks, analyzeTask{taskType: pkTask,
+			src: b.buildSimpleTableScan(task.TableInfo, []*model.ColumnInfo{task.PKInfo})})
 	}
-	colTasks := v.Children()[len(v.PkTasks) : len(v.PkTasks)+len(v.ColTasks)]
-	for _, task := range colTasks {
-		e.tasks = append(e.tasks, analyzeTask{taskType: colTask, src: b.build(task)})
+	for _, task := range v.ColTasks {
+		e.tasks = append(e.tasks, analyzeTask{taskType: colTask,
+			src: b.buildSimpleTableScan(task.TableInfo, task.ColsInfo)})
 	}
-	idxTasks := v.Children()[len(v.PkTasks)+len(v.ColTasks):]
-	for _, task := range idxTasks {
-		e.tasks = append(e.tasks, analyzeTask{taskType: idxTask, src: b.build(task)})
+	for _, task := range v.IdxTasks {
+		e.tasks = append(e.tasks, analyzeTask{taskType: idxTask,
+			src: b.buildSimpleIndexScan(task.TableInfo, task.IndexInfo)})
 	}
 	return e
 }
