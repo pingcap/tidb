@@ -159,6 +159,27 @@ func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 			},
 			State: model.StatePublic,
 		},
+		{
+			Name: model.NewCIStr("e_d_c_str_prefix"),
+			Columns: []*model.IndexColumn{
+				{
+					Name:   model.NewCIStr("e_str"),
+					Length: types.UnspecifiedLength,
+					Offset: 7,
+				},
+				{
+					Name:   model.NewCIStr("d_str"),
+					Length: types.UnspecifiedLength,
+					Offset: 6,
+				},
+				{
+					Name:   model.NewCIStr("c_str"),
+					Length: 10,
+					Offset: 5,
+				},
+			},
+			State: model.StatePublic,
+		},
 	}
 	pkColumn := &model.ColumnInfo{
 		State:     model.StatePublic,
@@ -628,7 +649,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "analyze table t, t",
-			plan: "*plan.Analyze->*plan.Analyze->*plan.Analyze",
+			plan: "*plan.Analyze",
 		},
 	}
 	for _, ca := range tests {

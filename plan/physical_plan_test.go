@@ -1207,7 +1207,7 @@ func (s *testPlanSuite) TestAutoJoinChosen(c *C) {
 			}
 			// set the statistic col info for pk.
 			statsTbl.Columns[1] = &statistics.Column{Histogram: *mockStatsHistogram(1, pkValues, 10)}
-			handle.UpdateTableStats(statsTbl)
+			handle.UpdateTableStats([]*statistics.Table{statsTbl}, nil)
 		}
 
 		builder := &planBuilder{
