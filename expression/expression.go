@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
+	"strconv"
 )
 
 // Error instances.
@@ -91,6 +92,38 @@ func EvalBool(expr Expression, row []types.Datum, ctx context.Context) (bool, er
 	return i != 0, nil
 }
 
+func evalExpr(expr Expression, tp types.TypeClass, row []types.Datum, sc *variable.StatementContext) (interface{}, bool, error) {
+	val, err := expr.Eval(row)
+	if val.IsNull() || err != nil {
+		return nil, val.IsNull(), errors.Trace(err)
+	}
+	var res interface{}
+	tc := expr.GetType().ToClass()
+	switch tp {
+		case types.ClassInt:
+			if tc == tp {
+				res = val.GetInt64()
+			}else{
+				res, err = val.ToInt64(sc)
+			}
+		case types.ClassReal:
+			if tc == tp {
+				res = val.GetFloat64()
+			}else{
+				res, err = val.ToFloat64(sc)
+			}
+		case types.ClassString:
+			res, err = val.ToString()
+		case types.ClassDecimal:
+			if tc == tp {
+				res = val.GetMysqlDecimal()
+			}else {
+				res, err = val.ToDecimal(sc)
+			}
+	}
+	return res, false, errors.Trace(err)
+}
+
 // One stands for a number 1.
 var One = &Constant{
 	Value:   types.NewDatum(1),
@@ -142,6 +175,42 @@ func (c *Constant) Eval(_ []types.Datum) (types.Datum, error) {
 	return c.Value, nil
 }
 
+func (c *Constant) EvalInt(_ []types.Datum, sc *variable.StatementContext) (int64, bool, error) {
+	val, isNull, err := evalExpr(c, types.ClassInt, nil, sc)
+	var res int64
+	if val != nil {
+		res = val.(int64)
+	}
+	return res, isNull, errors.Trace(err)
+}
+
+func (c *Constant) EvalReal(_ []types.Datum, sc *variable.StatementContext) (float64, bool, error) {
+	val, isNull, err := evalExpr(c, types.ClassReal, nil, sc)
+	var res float64
+	if val != nil {
+		res = val.(float64)
+	}
+	return res, isNull, errors.Trace(err)
+}
+
+func (c *Constant) EvalString(_ []types.Datum, sc *variable.StatementContext) (string, bool, error) {
+	val, isNull, err := evalExpr(c, types.ClassString, nil, sc)
+	var res string
+	if val != nil {
+		res = val.(string)
+	}
+	return res, isNull, errors.Trace(err)
+}
+
+func (c *Constant) EvalDecimal(_ []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
+	val, isNull, err := evalExpr(c, types.ClassDecimal, nil, sc)
+	var res *types.MyDecimal
+	if val != nil {
+		res = val.(*types.MyDecimal)
+	}
+	return res, isNull, errors.Trace(err)
+}
+
 // Equal implements Expression interface.
 func (c *Constant) Equal(b Expression, ctx context.Context) bool {
 	y, ok := b.(*Constant)
@@ -174,6 +243,141 @@ func (c *Constant) HashCode() []byte {
 
 // ResolveIndices implements Expression interface.
 func (c *Constant) ResolveIndices(_ *Schema) {
+}
+
+type IntConstant struct {
+	*Constant
+}
+
+func (c *IntConstant) EvalInt(row []types.Datum, sc *variable.StatementContext) (int64, bool, error) {
+	val := c.Value
+	if val.IsNull() {
+		return 0, true, nil
+	}
+	return val.GetInt64(), false, nil
+}
+
+func (c *IntConstant) EvalReal(row []types.Datum, sc *variable.StatementContext) (float64, bool, error) {
+	val, isNull, err := c.EvalInt(row, sc)
+	return float64(val), isNull, errors.Trace(err)
+}
+
+func (c *IntConstant) EvalDecimal(row []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
+	val, isNull, err := c.EvalInt(row, sc)
+	return types.NewDecFromInt(val), isNull, errors.Trace(err)
+}
+
+func (c *IntConstant) EvalString(row []types.Datum, sc *variable.StatementContext) (string, bool, error) {
+	val, isNull, err := c.EvalInt(row, sc)
+	return strconv.FormatInt(val, 10), isNull, errors.Trace(err)
+}
+
+type RealConstant struct {
+	*Constant
+}
+
+func (c *RealConstant) EvalReal(row []types.Datum, sc *variable.StatementContext) (float64, bool, error) {
+	val := c.Value
+	if val.IsNull() {
+		return 0, true, nil
+	}
+	return val.GetFloat64(), false, nil
+}
+
+func (c *RealConstant) EvalInt(row []types.Datum, sc *variable.StatementContext) (int64, bool, error) {
+	val, isNull, err := c.EvalReal(row, sc)
+	return int64(val), isNull, errors.Trace(err)
+}
+
+func (c *RealConstant) EvalDecimal(row []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
+	val, isNull, err := c.EvalReal(row, sc)
+	if isNull || err != nil {
+		return nil, isNull, errors.Trace(err)
+	}
+	res := new(types.MyDecimal)
+	err = res.FromFloat64(val)
+	return res, false, errors.Trace(err)
+}
+
+func (c *RealConstant) EvalString(row []types.Datum, sc *variable.StatementContext) (string, bool, error) {
+	val, isNull, err := c.EvalReal(row, sc)
+	return strconv.FormatFloat(val, 'f', -1, 64), isNull, errors.Trace(err)
+}
+
+type DecimalConstant struct {
+	*Constant
+}
+
+func (c *DecimalConstant) EvalDecimal(row []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
+	val := c.Value
+	if val.IsNull() {
+		return nil, true, nil
+	}
+	return val.GetMysqlDecimal(), false, nil
+}
+
+func (c *DecimalConstant) EvalInt(row []types.Datum, sc *variable.StatementContext) (int64, bool, error) {
+	val, isNull, err := c.EvalDecimal(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	res, err := val.ToInt()
+	return res, false, errors.Trace(err)
+}
+
+func (c *DecimalConstant) EvalReal(row []types.Datum, sc *variable.StatementContext) (float64, bool, error) {
+	val, isNull, err := c.EvalDecimal(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	res, err := val.ToFloat64()
+	return res, false, errors.Trace(err)
+}
+
+func (c *DecimalConstant) EvalString(row []types.Datum, sc *variable.StatementContext) (string, bool, error) {
+	val, isNull, err := c.EvalDecimal(row, sc)
+	return string(val.ToString()), isNull, errors.Trace(err)
+}
+
+type StringConstant struct {
+	*Constant
+}
+
+func (c *StringConstant) EvalString(row []types.Datum, sc *variable.StatementContext) (string, bool, error) {
+	val := c.Value
+	if val.IsNull() {
+		return "", true, nil
+	}
+	res, err := val.ToString()
+	return res, false, errors.Trace(err)
+}
+
+func (c *StringConstant) EvalInt(row []types.Datum, sc *variable.StatementContext) (int64, bool, error) {
+	val, isNull, err := c.EvalString(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	res, err := strconv.ParseInt(val, 10, 64)
+	return res, false, errors.Trace(err)
+}
+
+func (c *StringConstant) EvalReal(row []types.Datum, sc *variable.StatementContext) (float64, bool, error) {
+	val, isNull, err := c.EvalString(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	res, err := strconv.ParseFloat(val, 64)
+	return res, false, errors.Trace(err)
+}
+
+func (c *StringConstant) EvalDecimal(row []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
+	val, isNull, err := c.EvalString(row, sc)
+	if isNull || err != nil {
+		return nil, isNull, errors.Trace(err)
+	}
+	res := new(types.MyDecimal)
+	err = res.FromString([]byte(val))
+	return res, false, errors.Trace(err)
 }
 
 // composeConditionWithBinaryOp composes condition with binary operator into a balance deep tree, which benefits a lot for pb decoder/encoder.
