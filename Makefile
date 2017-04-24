@@ -24,9 +24,9 @@ LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-
 
 TARGET = ""
 
-.PHONY: all build update parser clean todo test gotest interpreter server dev benchkv benchraw check parserlib precommithook
+.PHONY: all build update parser clean todo test gotest interpreter server dev benchkv benchraw check parserlib
 
-default: server buildsucc precommithook
+default: server buildsucc
 
 buildsucc:
 	@echo Build TiDB Server successfully!
@@ -140,7 +140,3 @@ endif
 	glide vc --only-code --no-tests
 	mkdir -p _vendor
 	mv vendor _vendor/src
-
-precommithook:
-	ln -s hooks/pre-commit .git/hooks/
-	chmod +x .git/hooks/pre-commit
