@@ -106,15 +106,15 @@ func ParseBit(s string, width int) (Bit, error) {
 	return Bit{Value: n, Width: width}, nil
 }
 
-// ParseBitValue parses the binary string for bit type into uint64.
-func ParseBitValue(s string, width int) (uint64, error) {
+// ParseStringToBitValue parses the binary string for bit type into uint64.
+func ParseStringToBitValue(s string, width int) (uint64, error) {
 	if len(s) == 0 {
 		return 0, errors.Errorf("invalid empty string for parsing bit value")
 	}
 
 	b := hack.Slice(s)
 	if width == UnspecifiedBitWidth {
-		width = (len(b) + 7) & ^7
+		width = len(b) * 8
 	}
 	if width == 0 {
 		width = MinBitWidth

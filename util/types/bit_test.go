@@ -44,7 +44,7 @@ func (s *testBitSuite) TestBit(c *C) {
 		c.Assert(b.String(), Equals, t.String)
 		c.Assert(b.ToString(), Equals, t.BitString)
 
-		n, err := ParseBitValue(t.BitString, t.Width)
+		n, err := ParseStringToBitValue(t.BitString, t.Width)
 		c.Assert(err, IsNil)
 		c.Assert(n, Equals, uint64(t.Number))
 	}

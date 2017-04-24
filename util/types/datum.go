@@ -1050,7 +1050,7 @@ func (d *Datum) convertToMysqlBit(sc *variable.StatementContext, target *FieldTy
 	)
 	if d.Kind() == KindString {
 		var n uint64
-		n, err = ParseBitValue(d.GetString(), target.Flen)
+		n, err = ParseStringToBitValue(d.GetString(), target.Flen)
 		x = NewUintDatum(n)
 	} else {
 		x, err = d.convertToUint(sc, target)
