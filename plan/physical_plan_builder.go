@@ -143,7 +143,8 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 			is.TableConditionPBExpr, is.tableFilterConditions, tblConds = ExpressionsToPB(sc, tblConds, client)
 			newSel.Conditions = append(idxConds, tblConds...)
 		}
-		err := BuildIndexRange(p.ctx.GetSessionVars().StmtCtx, is)
+		var err error
+		is.Ranges, err = BuildIndexRange(p.ctx.GetSessionVars().StmtCtx, is.Table, is.Index, is.accessInAndEqCount, is.AccessCondition)
 		if err != nil {
 			if !terror.ErrorEqual(err, types.ErrTruncated) {
 				return nil, errors.Trace(err)

@@ -343,9 +343,9 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 		us.condition = v.Condition
 		us.buildAndSortAddedRows(x.table, x.asName)
 	case *XSelectIndexExec:
-		us.desc = x.indexPlan.Desc
-		for _, ic := range x.indexPlan.Index.Columns {
-			for i, col := range x.indexPlan.Schema().Columns {
+		us.desc = x.desc
+		for _, ic := range x.index.Columns {
+			for i, col := range x.schema.Columns {
 				if col.ColName.L == ic.Name.L {
 					us.usedIndex = append(us.usedIndex, i)
 					break
@@ -582,18 +582,26 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 	client := b.ctx.GetClient()
 	supportDesc := client.SupportRequestType(kv.ReqTypeIndex, kv.ReqSubTypeDesc)
 	e := &XSelectIndexExec{
-		tableInfo:      v.Table,
-		ctx:            b.ctx,
-		supportDesc:    supportDesc,
-		asName:         v.TableAsName,
-		table:          table,
-		indexPlan:      v,
-		singleReadMode: !v.DoubleRead,
-		startTS:        startTS,
-		where:          v.TableConditionPBExpr,
-		aggregate:      v.Aggregated,
-		aggFuncs:       v.AggFuncsPB,
-		byItems:        v.GbyItemsPB,
+		tableInfo:            v.Table,
+		ctx:                  b.ctx,
+		supportDesc:          supportDesc,
+		asName:               v.TableAsName,
+		table:                table,
+		singleReadMode:       !v.DoubleRead,
+		startTS:              startTS,
+		where:                v.TableConditionPBExpr,
+		schema:               v.Schema(),
+		ranges:               v.Ranges,
+		limitCount:           v.LimitCount,
+		sortItemsPB:          v.SortItemsPB,
+		columns:              v.Columns,
+		index:                v.Index,
+		desc:                 v.Desc,
+		outOfOrder:           v.OutOfOrder,
+		indexConditionPBExpr: v.IndexConditionPBExpr,
+		aggregate:            v.Aggregated,
+		aggFuncs:             v.AggFuncsPB,
+		byItems:              v.GbyItemsPB,
 	}
 	vars := b.ctx.GetSessionVars()
 	if v.OutOfOrder {
@@ -605,9 +613,9 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 	}
 	if !e.aggregate && e.singleReadMode {
 		// Single read index result has the schema of full index columns.
-		schemaColumns := make([]*expression.Column, len(e.indexPlan.Index.Columns))
-		for i, col := range e.indexPlan.Index.Columns {
-			colInfo := e.indexPlan.Table.Columns[col.Offset]
+		schemaColumns := make([]*expression.Column, len(e.index.Columns))
+		for i, col := range e.index.Columns {
+			colInfo := e.tableInfo.Columns[col.Offset]
 			schemaColumns[i] = &expression.Column{
 				Index:   i,
 				ColName: col.Name,

@@ -243,7 +243,7 @@ func (us *UnionScanExec) buildAndSortAddedRows(t table.Table, asName *model.CISt
 			if t, ok := us.Src.(*XSelectTableExec); ok {
 				columns = t.Columns
 			} else {
-				columns = us.Src.(*XSelectIndexExec).indexPlan.Columns
+				columns = us.Src.(*XSelectIndexExec).columns
 			}
 			for _, col := range columns {
 				newData = append(newData, data[col.Offset])
