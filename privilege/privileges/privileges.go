@@ -27,6 +27,9 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+// Enable enables the new privilege check feature.
+var Enable = true
+
 // SkipWithGrant causes the server to start without using the privilege system at all.
 var SkipWithGrant = false
 
@@ -53,7 +56,7 @@ type UserPrivileges struct {
 
 // RequestVerification implements the Manager interface.
 func (p *UserPrivileges) RequestVerification(db, table, column string, priv mysql.PrivilegeType) bool {
-	if SkipWithGrant {
+	if !Enable || SkipWithGrant {
 		return true
 	}
 
@@ -104,7 +107,7 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, auth, salt []
 
 // DBIsVisible implements the Manager interface.
 func (p *UserPrivileges) DBIsVisible(db string) bool {
-	if SkipWithGrant {
+	if !Enable || SkipWithGrant {
 		return true
 	}
 	mysqlPriv := p.Handle.Get()
