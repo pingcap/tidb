@@ -319,10 +319,11 @@ func upgradeToVer5(s Session) {
 
 func upgradeToVer6(s Session) {
 	_, err := s.Execute("ALTER TABLE mysql.user ADD COLUMN `Super_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Show_db_priv`")
+	if terror.ErrorEqual(err, infoschema.ErrColumnExists) {
+		return
+	}
 	if err != nil {
-		if terror.ErrorNotEqual(err, infoschema.ErrColumnExists) {
-			log.Fatal(err)
-		}
+		log.Fatal(err)
 	}
 	// For reasons of compatibility, set the non-exists privilege column value to 'Y', as TiDB doesn't check them in older versions.
 	mustExecute(s, "UPDATE mysql.user SET Super_priv='Y'")
@@ -330,10 +331,11 @@ func upgradeToVer6(s Session) {
 
 func upgradeToVer7(s Session) {
 	_, err := s.Execute("ALTER TABLE mysql.user ADD COLUMN `Process_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Drop_priv`")
+	if terror.ErrorEqual(err, infoschema.ErrColumnExists) {
+		return
+	}
 	if err != nil {
-		if terror.ErrorNotEqual(err, infoschema.ErrColumnExists) {
-			log.Fatal(err)
-		}
+		log.Fatal(err)
 	}
 	// For reasons of compatibility, set the non-exists privilege column value to 'Y', as TiDB doesn't check them in older versions.
 	mustExecute(s, "UPDATE mysql.user SET Process_priv='Y'")
