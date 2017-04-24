@@ -17,16 +17,17 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strconv"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
-	"strconv"
 )
 
 // Error instances.
@@ -100,26 +101,26 @@ func evalExpr(expr Expression, tp types.TypeClass, row []types.Datum, sc *variab
 	var res interface{}
 	tc := expr.GetType().ToClass()
 	switch tp {
-		case types.ClassInt:
-			if tc == tp {
-				res = val.GetInt64()
-			}else{
-				res, err = val.ToInt64(sc)
-			}
-		case types.ClassReal:
-			if tc == tp {
-				res = val.GetFloat64()
-			}else{
-				res, err = val.ToFloat64(sc)
-			}
-		case types.ClassString:
-			res, err = val.ToString()
-		case types.ClassDecimal:
-			if tc == tp {
-				res = val.GetMysqlDecimal()
-			}else {
-				res, err = val.ToDecimal(sc)
-			}
+	case types.ClassInt:
+		if tc == tp {
+			res = val.GetInt64()
+		} else {
+			res, err = val.ToInt64(sc)
+		}
+	case types.ClassReal:
+		if tc == tp {
+			res = val.GetFloat64()
+		} else {
+			res, err = val.ToFloat64(sc)
+		}
+	case types.ClassString:
+		res, err = val.ToString()
+	case types.ClassDecimal:
+		if tc == tp {
+			res = val.GetMysqlDecimal()
+		} else {
+			res, err = val.ToDecimal(sc)
+		}
 	}
 	return res, false, errors.Trace(err)
 }
@@ -175,6 +176,7 @@ func (c *Constant) Eval(_ []types.Datum) (types.Datum, error) {
 	return c.Value, nil
 }
 
+// EvalInt returns int representation of Constant.
 func (c *Constant) EvalInt(_ []types.Datum, sc *variable.StatementContext) (int64, bool, error) {
 	val, isNull, err := evalExpr(c, types.ClassInt, nil, sc)
 	var res int64
@@ -184,6 +186,7 @@ func (c *Constant) EvalInt(_ []types.Datum, sc *variable.StatementContext) (int6
 	return res, isNull, errors.Trace(err)
 }
 
+// EvalReal returns real representation of Constant.
 func (c *Constant) EvalReal(_ []types.Datum, sc *variable.StatementContext) (float64, bool, error) {
 	val, isNull, err := evalExpr(c, types.ClassReal, nil, sc)
 	var res float64
@@ -193,6 +196,7 @@ func (c *Constant) EvalReal(_ []types.Datum, sc *variable.StatementContext) (flo
 	return res, isNull, errors.Trace(err)
 }
 
+// EvalString returns string representation of Constant.
 func (c *Constant) EvalString(_ []types.Datum, sc *variable.StatementContext) (string, bool, error) {
 	val, isNull, err := evalExpr(c, types.ClassString, nil, sc)
 	var res string
@@ -202,6 +206,7 @@ func (c *Constant) EvalString(_ []types.Datum, sc *variable.StatementContext) (s
 	return res, isNull, errors.Trace(err)
 }
 
+// EvalDecimal returns decimal representation of Constant.
 func (c *Constant) EvalDecimal(_ []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
 	val, isNull, err := evalExpr(c, types.ClassDecimal, nil, sc)
 	var res *types.MyDecimal
@@ -245,10 +250,12 @@ func (c *Constant) HashCode() []byte {
 func (c *Constant) ResolveIndices(_ *Schema) {
 }
 
+// IntConstant represent int constants.
 type IntConstant struct {
 	*Constant
 }
 
+// EvalInt returns int representation of IntConstant.
 func (c *IntConstant) EvalInt(row []types.Datum, sc *variable.StatementContext) (int64, bool, error) {
 	val := c.Value
 	if val.IsNull() {
@@ -257,25 +264,30 @@ func (c *IntConstant) EvalInt(row []types.Datum, sc *variable.StatementContext) 
 	return val.GetInt64(), false, nil
 }
 
+// EvalReal returns real representation of IntConstant.
 func (c *IntConstant) EvalReal(row []types.Datum, sc *variable.StatementContext) (float64, bool, error) {
 	val, isNull, err := c.EvalInt(row, sc)
 	return float64(val), isNull, errors.Trace(err)
 }
 
+// EvalDecimal returns decimal representation of IntConstant.
 func (c *IntConstant) EvalDecimal(row []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
 	val, isNull, err := c.EvalInt(row, sc)
 	return types.NewDecFromInt(val), isNull, errors.Trace(err)
 }
 
+// EvalString returns string representation of IntConstant.
 func (c *IntConstant) EvalString(row []types.Datum, sc *variable.StatementContext) (string, bool, error) {
 	val, isNull, err := c.EvalInt(row, sc)
 	return strconv.FormatInt(val, 10), isNull, errors.Trace(err)
 }
 
+// RealConstant represent real constants.
 type RealConstant struct {
 	*Constant
 }
 
+// EvalReal returns real representation of RealConstant.
 func (c *RealConstant) EvalReal(row []types.Datum, sc *variable.StatementContext) (float64, bool, error) {
 	val := c.Value
 	if val.IsNull() {
@@ -284,11 +296,13 @@ func (c *RealConstant) EvalReal(row []types.Datum, sc *variable.StatementContext
 	return val.GetFloat64(), false, nil
 }
 
+// EvalInt returns int representation of RealConstant.
 func (c *RealConstant) EvalInt(row []types.Datum, sc *variable.StatementContext) (int64, bool, error) {
 	val, isNull, err := c.EvalReal(row, sc)
 	return int64(val), isNull, errors.Trace(err)
 }
 
+// EvalDecimal returns decimal representation of RealConstant.
 func (c *RealConstant) EvalDecimal(row []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
 	val, isNull, err := c.EvalReal(row, sc)
 	if isNull || err != nil {
@@ -299,15 +313,18 @@ func (c *RealConstant) EvalDecimal(row []types.Datum, sc *variable.StatementCont
 	return res, false, errors.Trace(err)
 }
 
+// EvalString returns string representation of RealConstant.
 func (c *RealConstant) EvalString(row []types.Datum, sc *variable.StatementContext) (string, bool, error) {
 	val, isNull, err := c.EvalReal(row, sc)
 	return strconv.FormatFloat(val, 'f', -1, 64), isNull, errors.Trace(err)
 }
 
+// DecimalConstant represent decimal constants.
 type DecimalConstant struct {
 	*Constant
 }
 
+// EvalDecimal returns decimal representation of DecimalConstant.
 func (c *DecimalConstant) EvalDecimal(row []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
 	val := c.Value
 	if val.IsNull() {
@@ -316,6 +333,7 @@ func (c *DecimalConstant) EvalDecimal(row []types.Datum, sc *variable.StatementC
 	return val.GetMysqlDecimal(), false, nil
 }
 
+// EvalInt returns int representation of DecimalConstant.
 func (c *DecimalConstant) EvalInt(row []types.Datum, sc *variable.StatementContext) (int64, bool, error) {
 	val, isNull, err := c.EvalDecimal(row, sc)
 	if isNull || err != nil {
@@ -325,6 +343,7 @@ func (c *DecimalConstant) EvalInt(row []types.Datum, sc *variable.StatementConte
 	return res, false, errors.Trace(err)
 }
 
+// EvalReal returns real representation of DecimalConstant.
 func (c *DecimalConstant) EvalReal(row []types.Datum, sc *variable.StatementContext) (float64, bool, error) {
 	val, isNull, err := c.EvalDecimal(row, sc)
 	if isNull || err != nil {
@@ -334,15 +353,18 @@ func (c *DecimalConstant) EvalReal(row []types.Datum, sc *variable.StatementCont
 	return res, false, errors.Trace(err)
 }
 
+// EvalString returns string representation of DecimalConstant.
 func (c *DecimalConstant) EvalString(row []types.Datum, sc *variable.StatementContext) (string, bool, error) {
 	val, isNull, err := c.EvalDecimal(row, sc)
 	return string(val.ToString()), isNull, errors.Trace(err)
 }
 
+// StringConstant represent string constants.
 type StringConstant struct {
 	*Constant
 }
 
+// EvalString returns string representation of StringConstant.
 func (c *StringConstant) EvalString(row []types.Datum, sc *variable.StatementContext) (string, bool, error) {
 	val := c.Value
 	if val.IsNull() {
@@ -352,6 +374,7 @@ func (c *StringConstant) EvalString(row []types.Datum, sc *variable.StatementCon
 	return res, false, errors.Trace(err)
 }
 
+// EvalInt returns int representation of StringConstant.
 func (c *StringConstant) EvalInt(row []types.Datum, sc *variable.StatementContext) (int64, bool, error) {
 	val, isNull, err := c.EvalString(row, sc)
 	if isNull || err != nil {
@@ -361,6 +384,7 @@ func (c *StringConstant) EvalInt(row []types.Datum, sc *variable.StatementContex
 	return res, false, errors.Trace(err)
 }
 
+// EvalReal returns real representation of StringConstant.
 func (c *StringConstant) EvalReal(row []types.Datum, sc *variable.StatementContext) (float64, bool, error) {
 	val, isNull, err := c.EvalString(row, sc)
 	if isNull || err != nil {
@@ -370,6 +394,7 @@ func (c *StringConstant) EvalReal(row []types.Datum, sc *variable.StatementConte
 	return res, false, errors.Trace(err)
 }
 
+// EvalDecimal returns decimal representation of StringConstant.
 func (c *StringConstant) EvalDecimal(row []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
 	val, isNull, err := c.EvalString(row, sc)
 	if isNull || err != nil {
