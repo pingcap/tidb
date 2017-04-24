@@ -128,16 +128,16 @@ type Expression interface {
 	Eval(row []types.Datum) (types.Datum, error)
 
 	// EvalInt returns the int64 representation of expression.
-	EvalInt(row []types.Datum, sc *variable.StatementContext) (int64, bool, error)
+	EvalInt(row []types.Datum, sc *variable.StatementContext) (val int64, isNull bool, err error)
 
 	// EvalReal returns the float64 representation of expression.
-	EvalReal(row []types.Datum, sc *variable.StatementContext) (float64, bool, error)
+	EvalReal(row []types.Datum, sc *variable.StatementContext) (val float64, isNull bool, err error)
 
 	// EvalString returns the string representation of expression.
-	EvalString(row []types.Datum, sc *variable.StatementContext) (string, bool, error)
+	EvalString(row []types.Datum, sc *variable.StatementContext) (val string, isNull bool, err error)
 
 	// EvalDecimal returns the decimal representation of expression.
-	EvalDecimal(row []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error)
+	EvalDecimal(row []types.Datum, sc *variable.StatementContext) (val *types.MyDecimal, isNull bool, err error)
 
 	// Get the expression return type.
 	GetType() *types.FieldType

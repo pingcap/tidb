@@ -18,12 +18,13 @@
 package expression
 
 import (
+	"strconv"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
-	"strconv"
 )
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
@@ -127,11 +128,11 @@ type baseIntBuiltinFunc struct {
 }
 
 func (b *baseIntBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) {
-	res, isKindNull, err := b.self.evalInt(row)
+	res, isNull, err := b.self.evalInt(row)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	if !isKindNull {
+	if !isNull {
 		d.SetInt64(res)
 	}
 	return
@@ -143,25 +144,25 @@ func (b *baseIntBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
 }
 
 func (b *baseIntBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
-	iVal, isKindNull, err := b.self.evalInt(row)
-	if err != nil || isKindNull {
-		return 0, isKindNull, errors.Trace(err)
+	iVal, isNull, err := b.self.evalInt(row)
+	if err != nil || isNull {
+		return 0, isNull, errors.Trace(err)
 	}
 	return float64(iVal), false, nil
 }
 
 func (b *baseIntBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
-	iVal, isKindNull, err := b.self.evalInt(row)
-	if err != nil || isKindNull {
-		return nil, isKindNull, errors.Trace(err)
+	iVal, isNull, err := b.self.evalInt(row)
+	if err != nil || isNull {
+		return nil, isNull, errors.Trace(err)
 	}
 	return types.NewDecFromInt(iVal), false, nil
 }
 
 func (b *baseIntBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
-	iVal, isKindNull, err := b.self.evalInt(row)
-	if err != nil || isKindNull {
-		return "", isKindNull, errors.Trace(err)
+	iVal, isNull, err := b.self.evalInt(row)
+	if err != nil || isNull {
+		return "", isNull, errors.Trace(err)
 	}
 	return strconv.FormatInt(iVal, 10), false, nil
 }
@@ -172,11 +173,11 @@ type baseRealBuiltinFunc struct {
 }
 
 func (b *baseRealBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) {
-	res, isKindNull, err := b.self.evalReal(row)
+	res, isNull, err := b.self.evalReal(row)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	if !isKindNull {
+	if !isNull {
 		d.SetFloat64(res)
 	}
 	return
@@ -188,17 +189,17 @@ func (b *baseRealBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error)
 }
 
 func (b *baseRealBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
-	val, isKindNull, err := b.self.evalReal(row)
-	if err != nil || isKindNull {
-		return 0, isKindNull, errors.Trace(err)
+	val, isNull, err := b.self.evalReal(row)
+	if err != nil || isNull {
+		return 0, isNull, errors.Trace(err)
 	}
 	return int64(val), false, nil
 }
 
 func (b *baseRealBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
-	val, isKindNull, err := b.self.evalReal(row)
-	if err != nil || isKindNull {
-		return nil, isKindNull, errors.Trace(err)
+	val, isNull, err := b.self.evalReal(row)
+	if err != nil || isNull {
+		return nil, isNull, errors.Trace(err)
 	}
 	res := new(types.MyDecimal)
 	res.FromFloat64(val)
@@ -209,9 +210,9 @@ func (b *baseRealBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, 
 }
 
 func (b *baseRealBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
-	val, isKindNull, err := b.self.evalReal(row)
-	if err != nil || isKindNull {
-		return "", isKindNull, errors.Trace(err)
+	val, isNull, err := b.self.evalReal(row)
+	if err != nil || isNull {
+		return "", isNull, errors.Trace(err)
 	}
 	return strconv.FormatFloat(val, 'f', -1, 64), false, nil
 }
@@ -222,11 +223,11 @@ type baseDecimalBuiltinFunc struct {
 }
 
 func (b *baseDecimalBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) {
-	res, isKindNull, err := b.self.evalDecimal(row)
+	res, isNull, err := b.self.evalDecimal(row)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	if !isKindNull {
+	if !isNull {
 		d.SetMysqlDecimal(res)
 	}
 	return
@@ -238,27 +239,27 @@ func (b *baseDecimalBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecima
 }
 
 func (b *baseDecimalBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
-	val, isKindNull, err := b.self.evalDecimal(row)
-	if err != nil || isKindNull {
-		return 0, isKindNull, errors.Trace(err)
+	val, isNull, err := b.self.evalDecimal(row)
+	if err != nil || isNull {
+		return 0, isNull, errors.Trace(err)
 	}
 	res, err := val.ToInt()
 	return res, false, errors.Trace(err)
 }
 
 func (b *baseDecimalBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
-	val, isKindNull, err := b.self.evalDecimal(row)
-	if err != nil || isKindNull {
-		return 0, isKindNull, errors.Trace(err)
+	val, isNull, err := b.self.evalDecimal(row)
+	if err != nil || isNull {
+		return 0, isNull, errors.Trace(err)
 	}
 	res, err := val.ToFloat64()
 	return res, false, errors.Trace(err)
 }
 
 func (b *baseDecimalBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
-	val, isKindNull, err := b.self.evalDecimal(row)
-	if err != nil || isKindNull {
-		return "", isKindNull, errors.Trace(err)
+	val, isNull, err := b.self.evalDecimal(row)
+	if err != nil || isNull {
+		return "", isNull, errors.Trace(err)
 	}
 	return string(val.ToString()), false, errors.Trace(err)
 }
@@ -269,11 +270,11 @@ type baseStringBuiltinFunc struct {
 }
 
 func (b *baseStringBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) {
-	val, isKindNull, err := b.self.evalString(row)
+	val, isNull, err := b.self.evalString(row)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	if !isKindNull {
+	if !isNull {
 		d.SetString(val)
 	}
 	return
@@ -285,27 +286,27 @@ func (b *baseStringBuiltinFunc) evalString(row []types.Datum) (string, bool, err
 }
 
 func (b *baseStringBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
-	val, isKindNull, err := b.self.evalString(row)
-	if err != nil || isKindNull {
-		return 0, isKindNull, errors.Trace(err)
+	val, isNull, err := b.self.evalString(row)
+	if err != nil || isNull {
+		return 0, isNull, errors.Trace(err)
 	}
 	res, err := strconv.ParseInt(val, 10, 64)
 	return res, false, errors.Trace(err)
 }
 
 func (b *baseStringBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
-	val, isKindNull, err := b.self.evalString(row)
-	if err != nil || isKindNull {
-		return 0, isKindNull, errors.Trace(err)
+	val, isNull, err := b.self.evalString(row)
+	if err != nil || isNull {
+		return 0, isNull, errors.Trace(err)
 	}
 	res, err := strconv.ParseFloat(val, 64)
 	return res, false, errors.Trace(err)
 }
 
 func (b *baseStringBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
-	val, isKindNull, err := b.self.evalString(row)
-	if err != nil || isKindNull {
-		return nil, isKindNull, errors.Trace(err)
+	val, isNull, err := b.self.evalString(row)
+	if err != nil || isNull {
+		return nil, isNull, errors.Trace(err)
 	}
 	res := new(types.MyDecimal)
 	err = res.FromString([]byte(val))
@@ -316,14 +317,14 @@ func (b *baseStringBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal
 type builtinFunc interface {
 	// eval does evaluation by the given row.
 	eval([]types.Datum) (types.Datum, error)
-	// evalInt evaluate int result of builtinFunc by given row.
-	evalInt(row []types.Datum) (int64, bool, error)
-	// evalInt evaluate real representation of builtinFunc by given row.
-	evalReal(row []types.Datum) (float64, bool, error)
-	// evalInt evaluate string representation of builtinFunc by given row.
-	evalString(row []types.Datum) (string, bool, error)
-	// evalInt evaluate decimal representation of builtinFunc by given row.
-	evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error)
+	// evalInt evaluates int result of builtinFunc by given row.
+	evalInt(row []types.Datum) (val int64, isNull bool, err error)
+	// evalReal evaluates real representation of builtinFunc by given row.
+	evalReal(row []types.Datum) (val float64, isNull bool, err error)
+	// evalString evaluates string representation of builtinFunc by given row.
+	evalString(row []types.Datum) (val string, isNull bool, err error)
+	// evalDecimal evaluates decimal representation of builtinFunc by given row.
+	evalDecimal(row []types.Datum) (val *types.MyDecimal, isNull bool, err error)
 	// getArgs returns the arguments expressions.
 	getArgs() []Expression
 	// isDeterministic checks if a function is deterministic.
