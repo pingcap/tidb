@@ -357,7 +357,9 @@ func getDefaultValue(ctx context.Context, c *ast.ColumnOption, tp byte, fsp int)
 
 	if v.IsNull() {
 		return nil, nil
-	} else if v.Kind() == types.KindMysqlHex {
+	}
+
+	if v.Kind() == types.KindMysqlHex {
 		return strconv.FormatInt(v.GetMysqlHex().Value, 10), nil
 	}
 
