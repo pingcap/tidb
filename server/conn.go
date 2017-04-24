@@ -792,7 +792,7 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 
 	sessVars := cc.ctx.(*TiDBContext).session.GetSessionVars()
 	sessVars.StmtCtx.AddFoundRows(foundRows)
-	sessVars.FoundRows = sessVars.StmtCtx.FoundRows()
+	sessVars.LastFoundRows = sessVars.StmtCtx.FoundRows()
 
 	err = cc.writeEOF(more)
 	if err != nil {
