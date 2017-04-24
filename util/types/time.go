@@ -661,7 +661,7 @@ func ParseYear(str string) (int16, error) {
 	return y, nil
 }
 
-// adjustYear will adjusts year according to y
+// adjustYear adjusts year according to y
 // See https://dev.mysql.com/doc/refman/5.7/en/two-digit-years.html
 func adjustYear(y int) int {
 	if y >= 0 && y <= 69 {
