@@ -18,6 +18,7 @@ import (
 	"github.com/ngaut/log"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
 )
 
@@ -135,15 +136,15 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		req := &pb.Request{
-			Type: pb.MessageType_CmdScan,
-			CmdScanReq: &pb.CmdScanRequest{
+		req := &tikvrpc.Request{
+			Type: tikvrpc.CmdScan,
+			Scan: &pb.ScanRequest{
 				StartKey: []byte(s.nextStartKey),
 				Limit:    uint32(s.batchSize),
 				Version:  s.startTS(),
 			},
 		}
-		resp, err := s.snapshot.store.SendKVReq(bo, req, loc.Region, readTimeoutMedium)
+		resp, err := s.snapshot.store.SendReq(bo, req, loc.Region, readTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -155,7 +156,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			}
 			continue
 		}
-		cmdScanResp := resp.GetCmdScanResp()
+		cmdScanResp := resp.Scan
 		if cmdScanResp == nil {
 			return errors.Trace(errBodyMissing)
 		}
