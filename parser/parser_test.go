@@ -502,6 +502,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 	table := []testCase{
 		// for builtin functions
 		{"SELECT POW(1, 2)", true},
+		{"SELECT POW(1, 2, 1)", true}, // illegal number of arguments shall pass too
 		{"SELECT POW(1, 0.5)", true},
 		{"SELECT POW(1, -1)", true},
 		{"SELECT POW(-1, 1)", true},

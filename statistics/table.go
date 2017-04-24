@@ -41,7 +41,7 @@ const (
 
 // Table represents statistics for a table.
 type Table struct {
-	tableID int64
+	TableID int64
 	Columns map[int64]*Column
 	Indices map[int64]*Index
 	Count   int64 // Total row count in a table.
@@ -50,7 +50,7 @@ type Table struct {
 
 func (t *Table) copy() *Table {
 	nt := &Table{
-		tableID: t.tableID,
+		TableID: t.TableID,
 		Count:   t.Count,
 		Pseudo:  t.Pseudo,
 		Columns: make(map[int64]*Column),
@@ -65,51 +65,6 @@ func (t *Table) copy() *Table {
 	return nt
 }
 
-// SaveToStorage saves stats table to storage.
-func (h *Handle) SaveToStorage(t *Table) error {
-	exec := h.ctx.(sqlexec.SQLExecutor)
-	_, err := exec.Execute("begin")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	txn := h.ctx.Txn()
-	version := txn.StartTS()
-	deleteSQL := fmt.Sprintf("delete from mysql.stats_meta where table_id = %d", t.tableID)
-	_, err = exec.Execute(deleteSQL)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	insertSQL := fmt.Sprintf("insert into mysql.stats_meta (version, table_id, count) values (%d, %d, %d)", version, t.tableID, t.Count)
-	_, err = exec.Execute(insertSQL)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	deleteSQL = fmt.Sprintf("delete from mysql.stats_histograms where table_id = %d", t.tableID)
-	_, err = exec.Execute(deleteSQL)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	deleteSQL = fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d", t.tableID)
-	_, err = exec.Execute(deleteSQL)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	for _, col := range t.Columns {
-		err = col.saveToStorage(h.ctx, t.tableID, 0)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	for _, idx := range t.Indices {
-		err = idx.saveToStorage(h.ctx, t.tableID, 1)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	_, err = exec.Execute("commit")
-	return errors.Trace(err)
-}
-
 // tableStatsFromStorage loads table stats info from storage.
 func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) (*Table, error) {
 	table, ok := h.statsCache.Load().(statsCache)[tableInfo.ID]
@@ -122,13 +77,17 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 		// We copy it before writing to avoid race.
 		table = table.copy()
 	}
-	table.tableID = tableInfo.ID
+	table.TableID = tableInfo.ID
 	table.Count = count
 
 	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count, version from mysql.stats_histograms where table_id = %d", tableInfo.ID)
 	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, selSQL)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	// Check deleted table.
+	if len(rows) == 0 {
+		return nil, nil
 	}
 	for _, row := range rows {
 		distinct := row.Data[3].GetInt64()
@@ -185,7 +144,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 // String implements Stringer interface.
 func (t *Table) String() string {
 	strs := make([]string, 0, len(t.Columns)+1)
-	strs = append(strs, fmt.Sprintf("Table:%d Count:%d", t.tableID, t.Count))
+	strs = append(strs, fmt.Sprintf("Table:%d Count:%d", t.TableID, t.Count))
 	for _, col := range t.Columns {
 		strs = append(strs, col.String())
 	}
@@ -256,7 +215,7 @@ func (t *Table) GetRowCountByIndexRanges(sc *variable.StatementContext, idxID in
 
 // PseudoTable creates a pseudo table statistics when statistic can not be found in KV store.
 func PseudoTable(tableID int64) *Table {
-	t := &Table{tableID: tableID, Pseudo: true}
+	t := &Table{TableID: tableID, Pseudo: true}
 	t.Count = pseudoRowCount
 	t.Columns = make(map[int64]*Column)
 	t.Indices = make(map[int64]*Index)

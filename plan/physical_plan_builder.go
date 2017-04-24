@@ -102,7 +102,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 	if ts.TableConditionPBExpr != nil {
 		rowCount = rowCount * selectionFactor
 	}
-	return resultPlan.matchProperty(prop, &physicalPlanInfo{count: rowCount}), nil
+	return resultPlan.matchProperty(prop, &physicalPlanInfo{count: rowCount, reliable: !statsTbl.Pseudo}), nil
 }
 
 func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.IndexInfo) (*physicalPlanInfo, error) {
@@ -164,7 +164,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		is.Ranges = rb.buildIndexRanges(fullRange, types.NewFieldType(mysql.TypeNull))
 	}
 	is.DoubleRead = !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
-	return resultPlan.matchProperty(prop, &physicalPlanInfo{count: rowCount}), nil
+	return resultPlan.matchProperty(prop, &physicalPlanInfo{count: rowCount, reliable: !statsTbl.Pseudo}), nil
 }
 
 func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexColumn, pkIsHandle bool) bool {
@@ -279,7 +279,12 @@ func (p *DataSource) tryToConvert2DummyScan(prop *requiredProperty) (*physicalPl
 func addPlanToResponse(parent PhysicalPlan, info *physicalPlanInfo) *physicalPlanInfo {
 	np := parent.Copy()
 	np.SetChildren(info.p)
-	return &physicalPlanInfo{p: np, cost: info.cost, count: info.count}
+	ret := &physicalPlanInfo{p: np, cost: info.cost, count: info.count, reliable: info.reliable}
+	if _, ok := parent.(*MaxOneRow); ok {
+		ret.count = 1
+		ret.reliable = true
+	}
+	return ret
 }
 
 // enforceProperty creates a *physicalPlanInfo that satisfies the required property by adding
@@ -303,12 +308,14 @@ func enforceProperty(prop *requiredProperty, info *physicalPlanInfo) *physicalPl
 		count := info.count
 		if prop.limit != nil {
 			count = float64(prop.limit.Offset + prop.limit.Count)
+			info.reliable = true
 		}
 		info.cost += sortCost(count)
 	} else if prop.limit != nil {
 		limit := Limit{Offset: prop.limit.Offset, Count: prop.limit.Count}.init(info.p.Allocator(), info.p.context())
 		limit.SetSchema(info.p.Schema())
 		info = addPlanToResponse(limit, info)
+		info.reliable = true
 	}
 	if prop.limit != nil && float64(prop.limit.Count) < info.count {
 		info.count = float64(prop.limit.Count)
@@ -602,6 +609,18 @@ func (p *LogicalJoin) buildSelectionWithConds(leftAsOuter bool) (*Selection, []*
 	return selection, corCols
 }
 
+// outerTableCouldINLJ will check the whether is forced to build index nested loop join or outer info is reliable
+// and the count satisfies the condition.
+func (p *LogicalJoin) outerTableCouldINLJ(outerInfo *physicalPlanInfo, leftAsOuter bool) bool {
+	var forced bool
+	if leftAsOuter {
+		forced = (p.preferINLJ&preferLeftAsOuter) > 0 && p.hasEqualConds()
+	} else {
+		forced = (p.preferINLJ&preferRightAsOuter) > 0 && p.hasEqualConds()
+	}
+	return forced || (outerInfo.reliable && outerInfo.count <= float64(p.ctx.GetSessionVars().MaxRowCountForINLJ))
+}
+
 func (p *LogicalJoin) convert2IndexNestedLoopJoinLeft(prop *requiredProperty, innerJoin bool) (*physicalPlanInfo, error) {
 	lChild := p.children[0].(LogicalPlan)
 	switch x := p.children[1].(type) {
@@ -636,6 +655,11 @@ func (p *LogicalJoin) convert2IndexNestedLoopJoinLeft(prop *requiredProperty, in
 		return nil, errors.Trace(err)
 	}
 	if lInfo.p == nil {
+		return nil, nil
+	}
+	// If the outer table's row count is reliable and don't exceed the MaxRowCountForINLJ or we use hint to force
+	// choosing index nested loop join, we will continue building. Otherwise we just break and return nil.
+	if !p.outerTableCouldINLJ(lInfo, true) {
 		return nil, nil
 	}
 	selection, corCols := p.buildSelectionWithConds(true)
@@ -707,6 +731,11 @@ func (p *LogicalJoin) convert2IndexNestedLoopJoinRight(prop *requiredProperty, i
 		return nil, errors.Trace(err)
 	}
 	if rInfo.p == nil {
+		return nil, nil
+	}
+	// If the outer table's row count is reliable and don't exceed the MaxRowCountForINLJ or we use hint to force
+	// choosing index nested loop join, we will continue building. Otherwise we just break and return nil.
+	if !p.outerTableCouldINLJ(rInfo, false) {
 		return nil, nil
 	}
 	selection, corCols := p.buildSelectionWithConds(false)
@@ -936,15 +965,13 @@ func (p *LogicalJoin) convert2PhysicalPlan(prop *requiredProperty) (*physicalPla
 				break
 			}
 		}
-		if (p.preferINLJ&preferLeftAsOuter) > 0 && p.hasEqualConds() {
-			nljInfo, err := p.convert2IndexNestedLoopJoinLeft(prop, false)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if nljInfo != nil {
-				info = nljInfo
-				break
-			}
+		nljInfo, err := p.convert2IndexNestedLoopJoinLeft(prop, false)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if nljInfo != nil {
+			info = nljInfo
+			break
 		}
 		// Otherwise fall into hash join
 		info, err = p.convert2PhysicalPlanLeft(prop, false)
@@ -961,15 +988,13 @@ func (p *LogicalJoin) convert2PhysicalPlan(prop *requiredProperty) (*physicalPla
 				break
 			}
 		}
-		if (p.preferINLJ&preferRightAsOuter) > 0 && p.hasEqualConds() {
-			nljInfo, err := p.convert2IndexNestedLoopJoinRight(prop, false)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if nljInfo != nil {
-				info = nljInfo
-				break
-			}
+		nljInfo, err := p.convert2IndexNestedLoopJoinRight(prop, false)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if nljInfo != nil {
+			info = nljInfo
+			break
 		}
 		info, err = p.convert2PhysicalPlanRight(prop, false)
 		if err != nil {
@@ -984,28 +1009,22 @@ func (p *LogicalJoin) convert2PhysicalPlan(prop *requiredProperty) (*physicalPla
 			}
 			break
 		}
-		if p.preferINLJ > 0 && p.hasEqualConds() {
-			if (p.preferINLJ & preferLeftAsOuter) > 0 {
-				lNLJInfo, err := p.convert2IndexNestedLoopJoinLeft(prop, true)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				if lNLJInfo != nil {
-					info = lNLJInfo
-				}
-			}
-			if (p.preferINLJ & preferRightAsOuter) > 0 {
-				rNLJInfo, err := p.convert2IndexNestedLoopJoinRight(prop, true)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				if info == nil || (rNLJInfo != nil && info.cost > rNLJInfo.cost) {
-					info = rNLJInfo
-				}
-			}
-			if info != nil {
-				break
-			}
+		lNLJInfo, err := p.convert2IndexNestedLoopJoinLeft(prop, true)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		rNLJInfo, err := p.convert2IndexNestedLoopJoinRight(prop, true)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if lNLJInfo != nil {
+			info = lNLJInfo
+		}
+		if info == nil || (rNLJInfo != nil && info.cost > rNLJInfo.cost) {
+			info = rNLJInfo
+		}
+		if info != nil {
+			break
 		}
 		// fall back to hash join
 		lInfo, err := p.convert2PhysicalPlanLeft(prop, true)
@@ -1314,9 +1333,10 @@ func (p *Selection) appendSelToInfo(info *physicalPlanInfo) *physicalPlanInfo {
 	np := p.Copy().(*Selection)
 	np.SetChildren(info.p)
 	return &physicalPlanInfo{
-		p:     np,
-		cost:  info.cost,
-		count: info.count * selectionFactor,
+		p:        np,
+		cost:     info.cost,
+		count:    info.count * selectionFactor,
+		reliable: info.reliable,
 	}
 }
 
@@ -1532,9 +1552,9 @@ func (p *LogicalApply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPl
 	return info, nil
 }
 
-func (p *Analyze) prepareSimpleTableScan(cols []*model.ColumnInfo) *PhysicalTableScan {
+func (p *Analyze) prepareSimpleTableScan(tblInfo *model.TableInfo, cols []*model.ColumnInfo) *PhysicalTableScan {
 	ts := PhysicalTableScan{
-		Table:               p.TableInfo,
+		Table:               tblInfo,
 		Columns:             cols,
 		physicalTableSource: physicalTableSource{client: p.ctx.GetClient()},
 	}.init(p.allocator, p.ctx)
@@ -1544,8 +1564,7 @@ func (p *Analyze) prepareSimpleTableScan(cols []*model.ColumnInfo) *PhysicalTabl
 	return ts
 }
 
-func (p *Analyze) prepareSimpleIndexScan(idxInfo *model.IndexInfo, cols []*model.ColumnInfo) *PhysicalIndexScan {
-	tblInfo := p.TableInfo
+func (p *Analyze) prepareSimpleIndexScan(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, cols []*model.ColumnInfo) *PhysicalIndexScan {
 	is := PhysicalIndexScan{
 		Index:               idxInfo,
 		Table:               tblInfo,
@@ -1571,34 +1590,28 @@ func (p *Analyze) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInf
 		return info, nil
 	}
 	var childInfos []*physicalPlanInfo
-	for _, idx := range p.IndicesInfo {
+	// TODO: It's inefficient to do table scan two times for massive data.
+	for _, task := range p.PkTasks {
+		ts := p.prepareSimpleTableScan(task.TableInfo, []*model.ColumnInfo{task.PKInfo})
+		childInfos = append(childInfos, ts.matchProperty(prop, &physicalPlanInfo{count: 0}))
+	}
+	for _, task := range p.ColTasks {
+		ts := p.prepareSimpleTableScan(task.TableInfo, task.ColsInfo)
+		childInfos = append(childInfos, ts.matchProperty(prop, &physicalPlanInfo{count: 0}))
+	}
+	for _, task := range p.IdxTasks {
+		idx := task.IndexInfo
 		columns := make([]*model.ColumnInfo, 0, len(idx.Columns))
 		for _, idxCol := range idx.Columns {
-			for _, col := range p.TableInfo.Columns {
+			for _, col := range task.TableInfo.Columns {
 				if col.Name.L == idxCol.Name.L {
 					columns = append(columns, col)
 					break
 				}
 			}
 		}
-		is := p.prepareSimpleIndexScan(idx, columns)
+		is := p.prepareSimpleIndexScan(task.TableInfo, idx, columns)
 		childInfos = append(childInfos, is.matchProperty(prop, &physicalPlanInfo{count: 0}))
-	}
-	// TODO: It's inefficient to do table scan two times for massive data.
-	if p.PkInfo != nil {
-		ts := p.prepareSimpleTableScan([]*model.ColumnInfo{p.PkInfo})
-		childInfos = append(childInfos, ts.matchProperty(prop, &physicalPlanInfo{count: 0}))
-	}
-	if len(p.ColsInfo) != 0 {
-		ts := p.prepareSimpleTableScan(p.ColsInfo)
-		childInfos = append(childInfos, ts.matchProperty(prop, &physicalPlanInfo{count: 0}))
-	}
-	for _, child := range p.Children() {
-		childInfo, err := child.(LogicalPlan).convert2PhysicalPlan(&requiredProperty{})
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		childInfos = append(childInfos, childInfo)
 	}
 	info = p.matchProperty(prop, childInfos...)
 	p.storePlanInfo(prop, info)

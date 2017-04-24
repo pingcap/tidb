@@ -1740,7 +1740,45 @@ type builtinMakeDateSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_makedate
 func (b *builtinMakeDateSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("MAKEDATE")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if args[0].IsNull() || args[1].IsNull() {
+		return d, nil
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	year, err := args[0].ToInt64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	dayOfYear, err := args[1].ToInt64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if dayOfYear <= 0 || year < 0 || year > 9999 {
+		return d, nil
+	}
+	if year < 70 {
+		year += 2000
+	} else if year < 100 {
+		year += 1900
+	}
+	startTime := types.Time{
+		Time: types.FromDate(int(year), 1, 1, 0, 0, 0, 0),
+		Type: mysql.TypeDate,
+		Fsp:  0,
+	}
+	retTimestamp := types.TimestampDiff("DAY", types.ZeroDate, startTime)
+	if retTimestamp == 0 {
+		return d, errorOrWarning(types.ErrInvalidTimeFormat, b.ctx)
+	}
+	ret := types.TimeFromDays(retTimestamp + dayOfYear - 1)
+	if ret.IsZero() || ret.Time.Year() > 9999 {
+		return d, nil
+	}
+	d.SetMysqlTime(ret)
+	return d, nil
 }
 
 type makeTimeFunctionClass struct {
@@ -1836,7 +1874,50 @@ type builtinPeriodAddSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_period-add
 func (b *builtinPeriodAddSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("PERIOD_ADD")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if args[0].IsNull() || args[1].IsNull() {
+		return d, errors.Trace(err)
+	}
+
+	sc := b.ctx.GetSessionVars().StmtCtx
+	period, err := args[0].ToInt64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	//Check zero
+	if period <= 0 {
+		d.SetInt64(0)
+		return d, nil
+	}
+
+	y := period / 100
+	m := period % 100
+
+	// YYMM, 00-69 year: 2000-2069
+	// YYMM, 70-99 year: 1970-1999
+	if y <= 69 {
+		y += 2000
+	} else if y <= 99 {
+		y += 1900
+	}
+
+	months, err := args[1].ToInt64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	sum := time.Month(m + months)
+	// TODO: Consider time_zone variable.
+	t := time.Date(int(y), sum, 1, 0, 0, 0, 0, time.Local)
+
+	ret := int64(t.Year())*100 + int64(t.Month())
+	d.SetInt64(ret)
+	return d, nil
 }
 
 type periodDiffFunctionClass struct {
