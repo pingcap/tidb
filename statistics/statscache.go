@@ -75,11 +75,13 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 	}
 	h.PrevLastVersion = h.LastVersion
 	tables := make([]*Table, 0, len(rows))
+	deletedTableIDs := make([]int64, 0, len(rows))
 	for _, row := range rows {
 		version, tableID, count := row.Data[0].GetUint64(), row.Data[1].GetInt64(), row.Data[2].GetInt64()
 		table, ok := is.TableByID(tableID)
 		if !ok {
 			log.Debugf("Unknown table ID %d in stats meta table, maybe it has been dropped", tableID)
+			deletedTableIDs = append(deletedTableIDs, tableID)
 			continue
 		}
 		tableInfo := table.Meta()
@@ -89,10 +91,14 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 			log.Errorf("Error occurred when read table stats for table id %d. The error message is %s.", tableID, err.Error())
 			continue
 		}
+		if tbl == nil {
+			deletedTableIDs = append(deletedTableIDs, tableID)
+			continue
+		}
 		tables = append(tables, tbl)
 		h.LastVersion = version
 	}
-	h.updateTableStats(tables)
+	h.updateTableStats(tables, deletedTableIDs)
 	return nil
 }
 
@@ -115,11 +121,14 @@ func (h *Handle) copyFromOldCache() statsCache {
 }
 
 // updateTableStats updates the statistics table cache using copy on write.
-func (h *Handle) updateTableStats(tables []*Table) {
+func (h *Handle) updateTableStats(tables []*Table, deletedIDs []int64) {
 	newCache := h.copyFromOldCache()
 	for _, tbl := range tables {
 		id := tbl.tableID
 		newCache[id] = tbl
+	}
+	for _, id := range deletedIDs {
+		delete(newCache, id)
 	}
 	h.statsCache.Store(newCache)
 }

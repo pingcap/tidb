@@ -85,6 +85,10 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	// Check deleted table.
+	if len(rows) == 0 {
+		return nil, nil
+	}
 	for _, row := range rows {
 		distinct := row.Data[3].GetInt64()
 		histID := row.Data[2].GetInt64()
