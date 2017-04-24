@@ -246,7 +246,7 @@ func getPseudoRowCountByIndexRanges(sc *variable.StatementContext, indexRanges [
 	}
 	// To avoid the totalCount become too small.
 	if totalCount < tableRowCount/1000 {
-		// We will not let the row count less than 1000 to avoid collapsing too fast in the future calculation.
+		// We will not let the row count less than tableRowCount / 1000 to avoid collapsing too fast in the future calculation.
 		totalCount = tableRowCount / 1000.0
 	}
 	if totalCount > tableRowCount {
