@@ -661,7 +661,7 @@ func ParseYear(str string) (int16, error) {
 	return y, nil
 }
 
-// adjustYear adjusts year according to y
+// adjustYear adjusts year according to y.
 // See https://dev.mysql.com/doc/refman/5.7/en/two-digit-years.html
 func adjustYear(y int) int {
 	if y >= 0 && y <= 69 {
@@ -1486,7 +1486,7 @@ func extractHourMinute(format string) (int64, int64, int64, gotime.Duration, err
 	return 0, 0, 0, gotime.Duration(hours)*gotime.Hour + gotime.Duration(minutes)*gotime.Minute, nil
 }
 
-// extractDayMicrosecond extracts data and microsecond from a string and its format is `DD HH:MM:SS.FFFFFF`.
+// extractDayMicrosecond extracts day and microsecond from a string and its format is `DD HH:MM:SS.FFFFFF`.
 func extractDayMicrosecond(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, " ")
 	if len(fields) != 2 {
@@ -2254,7 +2254,7 @@ func monthNumeric(t *mysqlTime, input string, ctx map[string]int) (string, bool)
 	return rem, false
 }
 
-//  dayOfMonthWithSuffix returns different suffix according t which day. i.e. 0 return th. 1 return st.
+//  dayOfMonthWithSuffix returns different suffix according t being which day. i.e. 0 return th. 1 return st.
 func dayOfMonthWithSuffix(t *mysqlTime, input string, ctx map[string]int) (string, bool) {
 	month, remain := parseOrdinalNumbers(input)
 	if month >= 0 {
