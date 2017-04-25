@@ -133,7 +133,7 @@ type PhysicalIndexScan struct {
 	DoubleRead bool
 
 	// All conditions in AccessCondition[accessEqualCount:accessInAndEqCount] are IN expressions or equal conditions.
-	accessInAndEqCount int
+	AccessInAndEqCount int
 	// All conditions in AccessCondition[:accessEqualCount] are equal conditions.
 	accessEqualCount int
 

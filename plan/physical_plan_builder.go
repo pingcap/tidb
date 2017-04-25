@@ -134,7 +134,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		for _, cond := range sel.Conditions {
 			conds = append(conds, cond.Clone())
 		}
-		is.AccessCondition, newSel.Conditions, is.accessEqualCount, is.accessInAndEqCount = DetachIndexScanConditions(conds, is.Index)
+		is.AccessCondition, newSel.Conditions, is.accessEqualCount, is.AccessInAndEqCount = DetachIndexScanConditions(conds, is.Index)
 		memDB := infoschema.IsMemoryDB(p.DBName.L)
 		isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeIndex, 0)
 		if isDistReq {
@@ -143,14 +143,15 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 			is.TableConditionPBExpr, is.tableFilterConditions, tblConds = ExpressionsToPB(sc, tblConds, client)
 			newSel.Conditions = append(idxConds, tblConds...)
 		}
-		err := BuildIndexRange(p.ctx.GetSessionVars().StmtCtx, is)
+		ranges, err := BuildIndexRange(p.ctx.GetSessionVars().StmtCtx, is.Table, is.Index, is.AccessCondition, is.AccessInAndEqCount)
 		if err != nil {
 			if !terror.ErrorEqual(err, types.ErrTruncated) {
 				return nil, errors.Trace(err)
 			}
 			log.Warn("truncate error in buildIndexRange")
 		}
-		rowCount, err = statsTbl.GetRowCountByIndexRanges(sc, is.Index.ID, is.Ranges, is.accessInAndEqCount)
+		is.Ranges = ranges
+		rowCount, err = statsTbl.GetRowCountByIndexRanges(sc, is.Index.ID, is.Ranges, is.AccessInAndEqCount)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

@@ -517,10 +517,11 @@ func (e *SelectionExec) initController() error {
 		idxConds, tblConds := plan.DetachIndexFilterConditions(newConds, x.indexPlan.Index.Columns, x.indexPlan.Table)
 		x.indexPlan.IndexConditionPBExpr, _, _ = plan.ExpressionsToPB(sc, idxConds, client)
 		x.indexPlan.TableConditionPBExpr, _, _ = plan.ExpressionsToPB(sc, tblConds, client)
-		err := plan.BuildIndexRange(sc, x.indexPlan)
+		ranges, err := plan.BuildIndexRange(sc, x.indexPlan.Table, x.indexPlan.Index, x.indexPlan.AccessCondition, x.indexPlan.AccessInAndEqCount)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		x.indexPlan.Ranges = ranges
 		x.where = x.indexPlan.TableConditionPBExpr
 	default:
 		return errors.Errorf("Error type of Executor: %T", x)

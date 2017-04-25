@@ -32,43 +32,44 @@ var fullRange = []rangePoint{
 }
 
 // BuildIndexRange will build range of index for PhysicalIndexScan
-func BuildIndexRange(sc *variable.StatementContext, p *PhysicalIndexScan) error {
+func BuildIndexRange(sc *variable.StatementContext, tbl *model.TableInfo, index *model.IndexInfo, conds []expression.Expression, inAndEqCnt int) ([]*types.IndexRange, error) {
+	var ranges []*types.IndexRange
 	rb := rangeBuilder{sc: sc}
-	for i := 0; i < p.accessInAndEqCount; i++ {
+	for i := 0; i < inAndEqCnt; i++ {
 		// Build ranges for equal or in access conditions.
-		point := rb.build(p.AccessCondition[i])
-		colOff := p.Index.Columns[i].Offset
-		tp := &p.Table.Columns[colOff].FieldType
+		point := rb.build(conds[i])
+		colOff := index.Columns[i].Offset
+		tp := &tbl.Columns[colOff].FieldType
 		if i == 0 {
-			p.Ranges = rb.buildIndexRanges(point, tp)
+			ranges = rb.buildIndexRanges(point, tp)
 		} else {
-			p.Ranges = rb.appendIndexRanges(p.Ranges, point, tp)
+			ranges = rb.appendIndexRanges(ranges, point, tp)
 		}
 	}
 	rangePoints := fullRange
 	// Build rangePoints for non-equal access conditions.
-	for i := p.accessInAndEqCount; i < len(p.AccessCondition); i++ {
-		rangePoints = rb.intersection(rangePoints, rb.build(p.AccessCondition[i]))
+	for i := inAndEqCnt; i < len(conds); i++ {
+		rangePoints = rb.intersection(rangePoints, rb.build(conds[i]))
 	}
-	if p.accessInAndEqCount == 0 {
-		colOff := p.Index.Columns[0].Offset
-		tp := &p.Table.Columns[colOff].FieldType
-		p.Ranges = rb.buildIndexRanges(rangePoints, tp)
-	} else if p.accessInAndEqCount < len(p.AccessCondition) {
-		colOff := p.Index.Columns[p.accessInAndEqCount].Offset
-		tp := &p.Table.Columns[colOff].FieldType
-		p.Ranges = rb.appendIndexRanges(p.Ranges, rangePoints, tp)
+	if inAndEqCnt == 0 {
+		colOff := index.Columns[0].Offset
+		tp := &tbl.Columns[colOff].FieldType
+		ranges = rb.buildIndexRanges(rangePoints, tp)
+	} else if inAndEqCnt < len(conds) {
+		colOff := index.Columns[inAndEqCnt].Offset
+		tp := &tbl.Columns[colOff].FieldType
+		ranges = rb.appendIndexRanges(ranges, rangePoints, tp)
 	}
 
 	// Take prefix index into consideration.
-	if p.Index.HasPrefixIndex() {
-		for i := 0; i < len(p.Ranges); i++ {
-			refineRange(p.Ranges[i], p.Index)
+	if index.HasPrefixIndex() {
+		for i := 0; i < len(ranges); i++ {
+			refineRange(ranges[i], index)
 		}
 	}
 
-	if len(p.Ranges) > 0 && len(p.Ranges[0].LowVal) < len(p.Index.Columns) {
-		for _, ran := range p.Ranges {
+	if len(ranges) > 0 && len(ranges[0].LowVal) < len(index.Columns) {
+		for _, ran := range ranges {
 			if ran.HighExclude || ran.LowExclude {
 				if ran.HighExclude {
 					ran.HighVal = append(ran.HighVal, types.NewDatum(nil))
@@ -83,7 +84,7 @@ func BuildIndexRange(sc *variable.StatementContext, p *PhysicalIndexScan) error 
 			}
 		}
 	}
-	return errors.Trace(rb.err)
+	return ranges, errors.Trace(rb.err)
 }
 
 // refineRange changes the IndexRange taking prefix index length into consideration.

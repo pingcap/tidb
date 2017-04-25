@@ -266,12 +266,12 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		for _, cond := range p.pushedDownConds {
 			conds = append(conds, cond.Clone())
 		}
-		is.AccessCondition, is.filterCondition, is.accessEqualCount, is.accessInAndEqCount = DetachIndexScanConditions(conds, idx)
-		err = BuildIndexRange(sc, is)
+		is.AccessCondition, is.filterCondition, is.accessEqualCount, is.AccessInAndEqCount = DetachIndexScanConditions(conds, idx)
+		is.Ranges, err = BuildIndexRange(sc, is.Table, is.Index, is.AccessCondition, is.AccessInAndEqCount)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		rowCount, err = statsTbl.GetRowCountByIndexRanges(sc, is.Index.ID, is.Ranges, is.accessInAndEqCount)
+		rowCount, err = statsTbl.GetRowCountByIndexRanges(sc, is.Index.ID, is.Ranges, is.AccessInAndEqCount)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
