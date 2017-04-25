@@ -21,9 +21,9 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
 )
 
@@ -210,20 +210,19 @@ func (s *testCommitterSuite) isKeyLocked(c *C, key []byte) bool {
 	ver, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
 	bo := NewBackoffer(getMaxBackoff, goctx.Background())
-	req := &kvrpcpb.Request{
-		Type: kvrpcpb.MessageType_CmdGet,
-		CmdGetReq: &kvrpcpb.CmdGetRequest{
+	req := &tikvrpc.Request{
+		Type: tikvrpc.CmdGet,
+		Get: &kvrpcpb.GetRequest{
 			Key:     key,
 			Version: ver.Ver,
 		},
 	}
 	loc, err := s.store.regionCache.LocateKey(bo, key)
 	c.Assert(err, IsNil)
-	resp, err := s.store.SendKVReq(bo, req, loc.Region, readTimeoutShort)
+	resp, err := s.store.SendReq(bo, req, loc.Region, readTimeoutShort)
 	c.Assert(err, IsNil)
-	cmdGetResp := resp.GetCmdGetResp()
-	c.Assert(cmdGetResp, NotNil)
-	keyErr := cmdGetResp.GetError()
+	c.Assert(resp.Get, NotNil)
+	keyErr := resp.Get.GetError()
 	return keyErr.GetLocked() != nil
 }
 
@@ -270,22 +269,13 @@ type slowClient struct {
 	regionDelays map[uint64]time.Duration
 }
 
-func (c *slowClient) SendKVReq(ctx goctx.Context, addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error) {
+func (c *slowClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 	for id, delay := range c.regionDelays {
 		if req.GetContext().GetRegionId() == id {
 			time.Sleep(delay)
 		}
 	}
-	return c.Client.SendKVReq(ctx, addr, req, timeout)
-}
-
-func (c *slowClient) SendCopReq(ctx goctx.Context, addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
-	for id, delay := range c.regionDelays {
-		if req.GetContext().GetRegionId() == id {
-			time.Sleep(delay)
-		}
-	}
-	return c.Client.SendCopReq(ctx, addr, req, timeout)
+	return c.Client.SendReq(ctx, addr, req)
 }
 
 func (s *testCommitterSuite) TestIllegalTso(c *C) {
