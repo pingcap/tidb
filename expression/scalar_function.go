@@ -27,6 +27,7 @@ import (
 // ScalarFunction is the function that returns a value.
 type ScalarFunction struct {
 	FuncName model.CIStr
+	// RetType is the type that ScalarFunction returns.
 	// TODO: Implement type inference here, now we use ast's return type temporarily.
 	RetType  *types.FieldType
 	Function builtinFunc
@@ -80,7 +81,7 @@ func NewFunction(ctx context.Context, funcName string, retType *types.FieldType,
 	}, nil
 }
 
-//ScalarFuncs2Exprs converts []*ScalarFunction to []Expression.
+// ScalarFuncs2Exprs converts []*ScalarFunction to []Expression.
 func ScalarFuncs2Exprs(funcs []*ScalarFunction) []Expression {
 	result := make([]Expression, 0, len(funcs))
 	for _, col := range funcs {

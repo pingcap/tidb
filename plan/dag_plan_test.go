@@ -157,6 +157,63 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 	}
 }
 
+func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
+	UseDAGPlanBuilder = true
+	defer func() {
+		UseDAGPlanBuilder = false
+		testleak.AfterTest(c)()
+	}()
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		{
+			sql:  "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.a = t3.a",
+			best: "LeftHashJoin{LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t))}(t1.a,t3.a)",
+		},
+		{
+			sql:  "select * from t t1 join t t2 on t1.a = t2.a order by t1.a",
+			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->Sort",
+		},
+		{
+			sql:  "select * from t t1 left outer join t t2 on t1.a = t2.a right outer join t t3 on t1.a = t3.a",
+			best: "RightHashJoin{LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t))}(t1.a,t3.a)",
+		},
+		{
+			sql:  "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.a = t3.a and t1.b = 1 and t3.c = 1",
+			best: "LeftHashJoin{RightHashJoin{TableReader(Table(t)->Sel([eq(t1.b, 1)]))->TableReader(Table(t))}(t1.a,t2.a)->IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t))}(t1.a,t3.a)",
+		},
+		{
+			sql:  "select * from t where t.c in (select b from t s where s.a = t.a)",
+			best: "SemiJoin{TableReader(Table(t))->TableReader(Table(t))}",
+		},
+		{
+			sql:  "select t.c in (select b from t s where s.a = t.a) from t",
+			best: "SemiJoinWithAux{TableReader(Table(t))->TableReader(Table(t))}->Projection",
+		},
+	}
+	for _, tt := range tests {
+		comment := Commentf("for %s", tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+
+		is, err := mockResolve(stmt)
+		c.Assert(err, IsNil)
+
+		builder := &planBuilder{
+			allocator: new(idAllocator),
+			ctx:       mockContext(),
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+			is:        is,
+		}
+		p := builder.build(stmt)
+		c.Assert(builder.err, IsNil)
+		p, err = doOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx, builder.allocator)
+		c.Assert(err, IsNil)
+		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
+	}
+}
+
 func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 	UseDAGPlanBuilder = true
 	defer func() {
