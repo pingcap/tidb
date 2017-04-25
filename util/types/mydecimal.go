@@ -148,18 +148,15 @@ func digitsToWords(digits int) int {
 
 // MyDecimal represents a decimal value.
 type MyDecimal struct {
-	// The number of *decimal* digits before the point.
-	digitsInt int8
+	digitsInt int8 // the number of *decimal* digits before the point.
 
-	// The number of decimal digits after the point.
-	digitsFrac int8
+	digitsFrac int8 // the number of decimal digits after the point.
 
-	// result fraction digits.
-	resultFrac int8
+	resultFrac int8 // result fraction digits.
 
 	negative bool
 
-	// An array of int32 words.
+	//  wordBuf is an array of int32 words.
 	// A word is an int32 value can hold 9 digits.(0 <= word < wordBase)
 	wordBuf [maxWordBufLen]int32
 }
@@ -419,15 +416,15 @@ func (d *MyDecimal) Shift(shift int) error {
 		return nil
 	}
 	var (
-		/* index of first non zero digit (all indexes from 0) */
+		// digitBegin is index of first non zero digit (all indexes from 0).
 		digitBegin int
-		/* index of position after last decimal digit */
+		// digitEnd is index of position after last decimal digit.
 		digitEnd int
-		/* index of digit position just after point */
+		// point is index of digit position just after point.
 		point = digitsToWords(int(d.digitsInt)) * digitsPerWord
-		/* new point position */
+		// new point position.
 		newPoint = point + shift
-		/* number of digits in result */
+		// number of digits in result.
 		digitsInt, digitsFrac int
 		newFront              int
 	)

@@ -289,3 +289,61 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnion(c *C) {
 		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
 }
+
+func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
+	UseDAGPlanBuilder = true
+	defer func() {
+		UseDAGPlanBuilder = false
+		testleak.AfterTest(c)()
+	}()
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		// Test agg + table.
+		{
+			sql:  "select sum(a), avg(b + c) from t group by d",
+			best: "TableReader(Table(t)->HashAgg)->HashAgg",
+		},
+		// Test agg + index single.
+		{
+			sql:  "select sum(e), avg(e + c) from t where c = 1 group by d",
+			best: "IndexReader(Index(t.c_d_e)[[1,1]]->HashAgg)->HashAgg",
+		},
+		// Test agg + index double.
+		{
+			sql:  "select sum(e), avg(b + c) from t where c = 1 and e = 1 group by d",
+			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t)->HashAgg)->HashAgg",
+		},
+		// Test agg + order.
+		{
+			sql:  "select sum(e) as k, avg(b + c) from t where c = 1 and b = 1 and e = 1 group by d order by k",
+			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t)->Sel([eq(test.t.b, 1)])->HashAgg)->HashAgg->Sort",
+		},
+		// Test agg can't push down.
+		{
+			sql:  "select sum(to_base64(e)) from t where c = 1",
+			best: "IndexReader(Index(t.c_d_e)[[1,1]])->HashAgg",
+		},
+	}
+	for _, tt := range tests {
+		comment := Commentf("for %s", tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+
+		is, err := mockResolve(stmt)
+		c.Assert(err, IsNil)
+
+		builder := &planBuilder{
+			allocator: new(idAllocator),
+			ctx:       mockContext(),
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+			is:        is,
+		}
+		p := builder.build(stmt)
+		c.Assert(builder.err, IsNil)
+		p, err = doOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx, builder.allocator)
+		c.Assert(err, IsNil)
+		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
+	}
+}

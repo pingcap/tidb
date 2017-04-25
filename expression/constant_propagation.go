@@ -174,7 +174,7 @@ func (s *propagateConstantSolver) pickNewEQConds(visited []bool) (retMapper map[
 		ok := false
 		if col == nil {
 			if con, ok = cond.(*Constant); ok {
-				value, _ := EvalBool(con, nil, s.ctx)
+				value, _ := EvalBool([]Expression{con}, nil, s.ctx)
 				if !value {
 					s.setConds2ConstFalse()
 					return nil
