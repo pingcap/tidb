@@ -266,6 +266,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 			sql:  "select 1",
 			best: "Dual->Projection",
 		},
+		{
+			sql:  "select * from t where false",
+			best: "Dual",
+		},
 		// Test show.
 		{
 			sql:  "show tables",
