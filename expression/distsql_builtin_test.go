@@ -27,6 +27,7 @@ var _ = Suite(&testEvalSuite{})
 
 type testEvalSuite struct{}
 
+// TestEval test expr.Eval().
 // TODO: add more tests.
 func (s *testEvalSuite) TestEval(c *C) {
 	row := []types.Datum{types.NewDatum(100)}

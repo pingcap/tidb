@@ -157,7 +157,7 @@ func createDistinctChecker() *distinctChecker {
 	}
 }
 
-// Checker stores existing keys and checks if given data is distinct.
+// distinctChecker stores existing keys and checks if given data is distinct.
 type distinctChecker struct {
 	existingKeys *mvmap.MVMap
 	buf          []byte

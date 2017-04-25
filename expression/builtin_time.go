@@ -216,6 +216,7 @@ type builtinDateSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinDateSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date
 func (b *builtinDateSig) eval(row []types.Datum) (types.Datum, error) {
 	args, err := b.evalArgs(row)
@@ -247,6 +248,7 @@ type builtinDateDiffSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinDateDiffSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_datediff
 func (b *builtinDateDiffSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -288,6 +290,7 @@ type builtinTimeDiffSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinTimeDiffSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timediff
 func (b *builtinTimeDiffSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -324,7 +327,8 @@ type builtinDateFormatSig struct {
 	baseBuiltinFunc
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-format
+// eval evals a builtinDateFormatSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-format
 func (b *builtinDateFormatSig) eval(row []types.Datum) (types.Datum, error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
@@ -333,7 +337,8 @@ func (b *builtinDateFormatSig) eval(row []types.Datum) (types.Datum, error) {
 	return builtinDateFormat(args, b.ctx)
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-format
+// builtinDateFormat ...
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-format
 func builtinDateFormat(args []types.Datum, ctx context.Context) (types.Datum, error) {
 	var d types.Datum
 	date, err := convertToTime(ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDatetime)
@@ -365,6 +370,7 @@ type builtinFromDaysSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinFromDaysSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_from-days
 func (b *builtinFromDaysSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -388,7 +394,8 @@ type builtinHourSig struct {
 	baseBuiltinFunc
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_hour
+// eval evals a builtinHourSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_hour
 func (b *builtinHourSig) eval(row []types.Datum) (types.Datum, error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
@@ -417,7 +424,8 @@ type builtinMinuteSig struct {
 	baseBuiltinFunc
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_minute
+// eval evals a builtinMinuteSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_minute
 func (b *builtinMinuteSig) eval(row []types.Datum) (types.Datum, error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
@@ -446,7 +454,8 @@ type builtinSecondSig struct {
 	baseBuiltinFunc
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_second
+// eval evals a builtinSecondSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_second
 func (b *builtinSecondSig) eval(row []types.Datum) (types.Datum, error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
@@ -475,7 +484,8 @@ type builtinMicroSecondSig struct {
 	baseBuiltinFunc
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_microsecond
+// eval evals a builtinMicroSecondSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_microsecond
 func (b *builtinMicroSecondSig) eval(row []types.Datum) (types.Datum, error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
@@ -512,7 +522,8 @@ func (b *builtinMonthSig) eval(row []types.Datum) (types.Datum, error) {
 	return builtinMonth(args, b.ctx)
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_month
+// builtinMonth ...
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_month
 func builtinMonth(args []types.Datum, ctx context.Context) (types.Datum, error) {
 	d, err := convertToTime(ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
 	if err != nil || d.IsNull() {
@@ -551,7 +562,8 @@ func (b *builtinMonthNameSig) eval(row []types.Datum) (types.Datum, error) {
 	return builtinMonthName(args, b.ctx)
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_monthname
+// builtinMonthName ...
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_monthname
 func builtinMonthName(args []types.Datum, ctx context.Context) (types.Datum, error) {
 	d, err := builtinMonth(args, ctx)
 	if err != nil || d.IsNull() {
@@ -591,6 +603,7 @@ func (b *builtinNowSig) eval(row []types.Datum) (types.Datum, error) {
 	return builtinNow(args, b.ctx)
 }
 
+// builtinNow ...
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_now
 func builtinNow(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	// TODO: if NOW is used in stored function or trigger, NOW will return the beginning time
@@ -624,7 +637,8 @@ type builtinDayNameSig struct {
 	baseBuiltinFunc
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayname
+// eval evals a builtinDayNameSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayname
 func (b *builtinDayNameSig) eval(row []types.Datum) (types.Datum, error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
@@ -655,7 +669,8 @@ type builtinDayOfMonthSig struct {
 	baseBuiltinFunc
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayofmonth
+// eval evals a builtinDayOfMonthSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayofmonth
 func (b *builtinDayOfMonthSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
@@ -690,7 +705,8 @@ type builtinDayOfWeekSig struct {
 	baseBuiltinFunc
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayofweek
+// eval evals a builtinDayOfWeekSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayofweek
 func (b *builtinDayOfWeekSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
@@ -726,7 +742,8 @@ type builtinDayOfYearSig struct {
 	baseBuiltinFunc
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayofyear
+// eval evals a builtinDayOfYearSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayofyear
 func (b *builtinDayOfYearSig) eval(row []types.Datum) (types.Datum, error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
@@ -769,7 +786,8 @@ func (b *builtinWeekSig) eval(row []types.Datum) (types.Datum, error) {
 	return builtinWeek(args, b.ctx)
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_week
+// builtinWeek ...
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_week
 func builtinWeek(args []types.Datum, ctx context.Context) (types.Datum, error) {
 	d, err := convertToTime(ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
 	if err != nil || d.IsNull() {
@@ -819,7 +837,8 @@ func (b *builtinWeekDaySig) eval(row []types.Datum) (types.Datum, error) {
 	return builtinWeekDay(args, b.ctx)
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_weekday
+// builtinWeekDay ...
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_weekday
 func builtinWeekDay(args []types.Datum, ctx context.Context) (types.Datum, error) {
 	d, err := convertToTime(ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
 	if err != nil || d.IsNull() {
@@ -854,7 +873,8 @@ type builtinWeekOfYearSig struct {
 	baseBuiltinFunc
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_weekofyear
+// eval evals a builtinWeekOfYearSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_weekofyear
 func (b *builtinWeekOfYearSig) eval(row []types.Datum) (types.Datum, error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
@@ -878,7 +898,8 @@ type builtinYearSig struct {
 	baseBuiltinFunc
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_year
+// eval evals a builtinYearSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_year
 func (b *builtinYearSig) eval(row []types.Datum) (types.Datum, error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
@@ -912,7 +933,8 @@ type builtinYearWeekSig struct {
 	baseBuiltinFunc
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_yearweek
+// eval evals a builtinYearWeekSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_yearweek
 func (b *builtinYearWeekSig) eval(row []types.Datum) (types.Datum, error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
@@ -960,7 +982,8 @@ type builtinFromUnixTimeSig struct {
 	baseBuiltinFunc
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_from-unixtime
+// eval evals a builtinFromUnixTimeSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_from-unixtime
 func (b *builtinFromUnixTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
@@ -1030,7 +1053,6 @@ func (b *builtinFromUnixTimeSig) eval(row []types.Datum) (d types.Datum, err err
 	return builtinDateFormat([]types.Datum{d, args[1]}, b.ctx)
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_get-format
 type getFormatFunctionClass struct {
 	baseFunctionClass
 }
@@ -1043,6 +1065,8 @@ type builtinGetFormatSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinGetFormatSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_get-format
 func (b *builtinGetFormatSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	t := args[0].GetString()
@@ -1104,6 +1128,7 @@ type builtinStrToDateSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinStrToDateSig.
 // See https://dev.mysql.com/doc/refman/5.5/en/date-and-time-functions.html#function_str-to-date
 func (b *builtinStrToDateSig) eval(row []types.Datum) (types.Datum, error) {
 	args, err := b.evalArgs(row)
@@ -1139,6 +1164,7 @@ type builtinSysDateSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinSysDateSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_sysdate
 func (b *builtinSysDateSig) eval(row []types.Datum) (types.Datum, error) {
 	args, err := b.evalArgs(row)
@@ -1163,6 +1189,7 @@ type builtinCurrentDateSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinCurrentDateSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_curdate
 func (b *builtinCurrentDateSig) eval(_ []types.Datum) (d types.Datum, err error) {
 	year, month, day := time.Now().Date()
@@ -1185,6 +1212,7 @@ type builtinCurrentTimeSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinCurrentTimeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_curtime
 func (b *builtinCurrentTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -1215,7 +1243,8 @@ type builtinTimeSig struct {
 	baseBuiltinFunc
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time
+// eval evals a builtinTimeSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time
 func (b *builtinTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
@@ -1255,6 +1284,7 @@ type builtinUTCDateSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinUTCDateSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-date
 func (b *builtinUTCDateSig) eval(_ []types.Datum) (d types.Datum, err error) {
 	year, month, day := time.Now().UTC().Date()
@@ -1277,6 +1307,7 @@ type builtinUTCTimestampSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinUTCTimestampSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-timestamp
 func (b *builtinUTCTimestampSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -1313,6 +1344,7 @@ type builtinExtractSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinExtractSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_extract
 func (b *builtinExtractSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -1509,7 +1541,8 @@ type builtinTimestampDiffSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timestampdiff
+// eval evals a builtinTimestampDiffSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timestampdiff
 func (b *builtinTimestampDiffSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
@@ -1559,6 +1592,7 @@ type builtinUnixTimestampSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinUnixTimestampSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_unix-timestamp
 func (b *builtinUnixTimestampSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -1591,7 +1625,7 @@ func (b *builtinUnixTimestampSig) eval(row []types.Datum) (d types.Datum, err er
 	case types.KindNull:
 		return
 	default:
-		return d, errors.Errorf("Unkonwn args type for unix_timestamp %d", args[0].Kind())
+		return d, errors.Errorf("Unknown args type for unix_timestamp %d", args[0].Kind())
 	}
 
 	t1, err = t.Time.GoTime(getTimeZone(b.ctx))
@@ -1622,6 +1656,7 @@ type builtinTimestampSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinTimestampSig.
 // See https://dev.mysql.com/doc/refman/5.5/en/date-and-time-functions.html#function_timestamp
 func (b *builtinTimestampSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -1704,6 +1739,7 @@ type builtinAddTimeSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinAddTimeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_addtime
 func (b *builtinAddTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("ADDTIME")
@@ -1721,6 +1757,7 @@ type builtinConvertTzSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinConvertTzSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_convert-tz
 func (b *builtinConvertTzSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("CONVERT_TZ")
@@ -1738,6 +1775,7 @@ type builtinMakeDateSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinMakeDateSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_makedate
 func (b *builtinMakeDateSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -1793,6 +1831,7 @@ type builtinMakeTimeSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinMakeTimeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_maketime
 func (b *builtinMakeTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -1872,6 +1911,7 @@ type builtinPeriodAddSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinPeriodAddSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_period-add
 func (b *builtinPeriodAddSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -1932,6 +1972,7 @@ type builtinPeriodDiffSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinPeriodDiffSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_period-diff
 func (b *builtinPeriodDiffSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("PERIOD_DIFF")
@@ -1949,6 +1990,7 @@ type builtinQuarterSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinQuarterSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_quarter
 func (b *builtinQuarterSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -1994,6 +2036,7 @@ type builtinSecToTimeSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinSecToTimeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_sec-to-time
 func (b *builtinSecToTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -2072,6 +2115,7 @@ type builtinSubTimeSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinSubTimeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
 func (b *builtinSubTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("SUB_TIME")
@@ -2089,6 +2133,7 @@ type builtinTimeFormatSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinTimeFormatSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time-format
 func (b *builtinTimeFormatSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("TIME_FORMAT")
@@ -2106,6 +2151,7 @@ type builtinTimeToSecSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinTimeToSecSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time-to-sec
 func (b *builtinTimeToSecSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -2141,6 +2187,7 @@ type builtinTimestampAddSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinTimestampAddSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timestampadd
 func (b *builtinTimestampAddSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -2210,6 +2257,7 @@ type builtinToDaysSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinToDaysSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_to-days
 func (b *builtinToDaysSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -2244,6 +2292,7 @@ type builtinToSecondsSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinToSecondsSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_to-seconds
 func (b *builtinToSecondsSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -2278,6 +2327,7 @@ type builtinUTCTimeSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinUTCTimeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-time
 func (b *builtinUTCTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("UTC_TIME")

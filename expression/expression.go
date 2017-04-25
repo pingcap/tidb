@@ -52,7 +52,7 @@ type Expression interface {
 	// Eval evaluates an expression through a row.
 	Eval(row []types.Datum) (types.Datum, error)
 
-	// Get the expression return type.
+	// GetType gets the type that the expression returns.
 	GetType() *types.FieldType
 
 	// Clone copies an expression totally.
@@ -74,21 +74,26 @@ type Expression interface {
 	ResolveIndices(schema *Schema)
 }
 
-// EvalBool evaluates expression to a boolean value.
-func EvalBool(expr Expression, row []types.Datum, ctx context.Context) (bool, error) {
-	data, err := expr.Eval(row)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	if data.IsNull() {
-		return false, nil
-	}
+// EvalBool evaluates expression list to a boolean value.
+func EvalBool(exprList []Expression, row []types.Datum, ctx context.Context) (bool, error) {
+	for _, expr := range exprList {
+		data, err := expr.Eval(row)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if data.IsNull() {
+			return false, nil
+		}
 
-	i, err := data.ToBool(ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return false, errors.Trace(err)
+		i, err := data.ToBool(ctx.GetSessionVars().StmtCtx)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if i == 0 {
+			return false, nil
+		}
 	}
-	return i != 0, nil
+	return true, nil
 }
 
 // One stands for a number 1.
