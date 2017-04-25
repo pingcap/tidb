@@ -1044,7 +1044,17 @@ func (d *Datum) convertToMysqlYear(sc *variable.StatementContext, target *FieldT
 }
 
 func (d *Datum) convertToMysqlBit(sc *variable.StatementContext, target *FieldType) (Datum, error) {
-	x, err := d.convertToUint(sc, target)
+	var (
+		x   Datum
+		err error
+	)
+	if d.Kind() == KindString {
+		var n uint64
+		n, err = ParseStringToBitValue(d.GetString(), target.Flen)
+		x = NewUintDatum(n)
+	} else {
+		x, err = d.convertToUint(sc, target)
+	}
 	if err != nil {
 		return x, errors.Trace(err)
 	}
