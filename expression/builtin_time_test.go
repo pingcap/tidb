@@ -651,6 +651,7 @@ func (s *testEvaluatorSuite) TestUTCTime(c *C) {
 	_, err = f.eval(nil)
 	c.Assert(err, NotNil)
 }
+
 func (s *testEvaluatorSuite) TestUTCDate(c *C) {
 	defer testleak.AfterTest(c)()
 	last := time.Now().UTC()
