@@ -106,7 +106,7 @@ func ParseBit(s string, width int) (Bit, error) {
 	return Bit{Value: n, Width: width}, nil
 }
 
-// ParseStringToBitValue parses the binary string for bit type into uint64.
+// ParseStringToBitValue parses the string for bit type into uint64.
 func ParseStringToBitValue(s string, width int) (uint64, error) {
 	if len(s) == 0 {
 		return 0, errors.Errorf("invalid empty string for parsing bit value")
