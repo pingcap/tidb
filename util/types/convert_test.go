@@ -192,11 +192,12 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 
 	// For TypeBit
 	ft = NewFieldType(mysql.TypeBit)
-	ft.Flen = 8
+	ft.Flen = 24
 	v, err = Convert("100", ft)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, Bit{Value: 100, Width: 8})
+	c.Assert(v, Equals, Bit{Value: 3223600, Width: 24})
 
+	ft.Flen = 8
 	v, err = Convert(Hex{Value: 100}, ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, Bit{Value: 100, Width: 8})

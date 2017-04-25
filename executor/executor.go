@@ -472,10 +472,9 @@ func (e *TableDualExec) Close() error {
 
 // SelectionExec represents a filter executor.
 type SelectionExec struct {
-	Src       Executor
-	Condition expression.Expression
-	ctx       context.Context
-	schema    *expression.Schema
+	Src    Executor
+	ctx    context.Context
+	schema *expression.Schema
 
 	// scanController will tell whether this selection need to
 	// control the condition of below scan executor.
@@ -545,18 +544,11 @@ func (e *SelectionExec) Next() (*Row, error) {
 		if srcRow == nil {
 			return nil, nil
 		}
-		allMatch := true
-		for _, cond := range e.Conditions {
-			match, err := expression.EvalBool(cond, srcRow.Data, e.ctx)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if !match {
-				allMatch = false
-				break
-			}
+		match, err := expression.EvalBool(e.Conditions, srcRow.Data, e.ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
-		if allMatch {
+		if match {
 			return srcRow, nil
 		}
 	}

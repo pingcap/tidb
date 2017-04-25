@@ -259,7 +259,7 @@ func (p *DataSource) tryToConvert2DummyScan(prop *requiredProperty) (*physicalPl
 
 	for _, cond := range sel.Conditions {
 		if con, ok := cond.(*expression.Constant); ok {
-			result, err := expression.EvalBool(con, nil, p.ctx)
+			result, err := expression.EvalBool([]expression.Expression{con}, nil, p.ctx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
