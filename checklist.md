@@ -3,7 +3,7 @@
 # Self Review
 Have you reviewed every line of your changes by yourself?
 # Test
-Have you added enough test case to cover the new feature or bug fix?
+Have you added enough test cases to cover the new feature or bug fix?
 Also, add comments to describe your test cases.
 # Naming
 Do function names keep consistent with its behavior?
