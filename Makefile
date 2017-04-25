@@ -105,7 +105,7 @@ gotest: parserlib
 	$(GOTEST) -cover $(PACKAGES)
 
 gocover: 
-	$(OVERALLS) -project=github.com/pingcap/tidb -covermode=count -ignore=['.git', '_vendor']
+	$(OVERALLS) -project=github.com/pingcap/tidb -covermode=count -ignore='.git,_vendor'
 
 race: parserlib
 	@export log_level=debug; \
