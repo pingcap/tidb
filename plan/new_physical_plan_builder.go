@@ -208,7 +208,26 @@ func (p *DataSource) getMemTableTask(prop *requiredProp) (task taskProfile, err 
 	memTable.Ranges = rb.buildTableRanges(fullRange)
 	task = &rootTaskProfile{p: memTable}
 	task = prop.enforceProperty(task, p.ctx, p.allocator)
-	return task, p.storeTaskProfile(prop, task)
+	return task, nil
+}
+
+func (p *DataSource) getDualTask() (taskProfile, error) {
+	for _, cond := range p.pushedDownConds {
+		if _, ok := cond.(*expression.Constant); ok {
+			result, err := expression.EvalBool(cond, nil, p.ctx)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if !result {
+				dual := TableDual{}.init(p.allocator, p.ctx)
+				dual.SetSchema(p.schema)
+				return &rootTaskProfile{
+					p: dual,
+				}, nil
+			}
+		}
+	}
+	return nil, nil
 }
 
 // convert2NewPhysicalPlan implements the PhysicalPlan interface.
@@ -221,13 +240,19 @@ func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, e
 	if task != nil {
 		return task, nil
 	}
-	// TODO: We don't consider the false condition here. We will add this check in PPD phase.
+	task, err = p.getDualTask()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if task != nil {
+		return task, p.storeTaskProfile(prop, task)
+	}
 	task, err = p.getMemTableTask(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	if task != nil {
-		return task, nil
+		return task, p.storeTaskProfile(prop, task)
 	}
 	// TODO: We have not checked if this table has a predicate. If not, we can only consider table scan.
 	indices, includeTableScan := availableIndices(p.indexHints, p.tableInfo)
