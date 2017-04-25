@@ -300,7 +300,7 @@ func (p *DataSource) tryToGetMemTask(prop *requiredProp) (task taskProfile, err 
 func (p *DataSource) tryToGetDualTask() (taskProfile, error) {
 	for _, cond := range p.pushedDownConds {
 		if _, ok := cond.(*expression.Constant); ok {
-			result, err := expression.EvalBool(cond, nil, p.ctx)
+			result, err := expression.EvalBool([]expression.Expression{cond}, nil, p.ctx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
