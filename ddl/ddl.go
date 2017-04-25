@@ -150,6 +150,7 @@ func (e *Event) String() string {
 	return ret
 }
 
+// ddl represents the statements which are used to define the database structure or schema.
 type ddl struct {
 	m sync.RWMutex
 
@@ -157,7 +158,7 @@ type ddl struct {
 	hook       Callback
 	hookMu     sync.RWMutex
 	store      kv.Storage
-	// Schema lease seconds.
+	// lease is schema seconds.
 	lease        time.Duration
 	uuid         string
 	ddlJobCh     chan struct{}
@@ -177,7 +178,7 @@ type ddl struct {
 	wait   sync.WaitGroup
 }
 
-// BindStatsHandle will bind the stats handle with a DDL interface. It will be called after a handle has been initialized.
+// RegisterEventCh registers passed channel for ddl Event.
 func (d *ddl) RegisterEventCh(ch chan<- *Event) {
 	d.ddlEventCh = ch
 }
