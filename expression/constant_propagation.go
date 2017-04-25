@@ -109,7 +109,7 @@ func (s *propagateConstantSolver) propagateInEQ() {
 	}
 }
 
-// propagatesEQ propagates equal expression multiple times. An example runs as following:
+// propagateEQ propagates equal expression multiple times. An example runs as following:
 // a = d & b * 2 = c & c = d + 2 & b = 1 & a = 4, we pick eq cond b = 1 and a = 4
 // d = 4 & 2 = c & c = d + 2 & b = 1 & a = 4, we propagate b = 1 and a = 4 and pick eq cond c = 2 and d = 4
 // d = 4 & 2 = c & false & b = 1 & a = 4, we propagate c = 2 and d = 4, and do constant folding: c = d + 2 will be folded as false.
