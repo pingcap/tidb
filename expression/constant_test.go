@@ -31,20 +31,19 @@ var _ = Suite(&testExpressionSuite{})
 type testExpressionSuite struct{}
 
 func newColumn(name string) *Column {
-	return &Column{
+	newCol := &Column{
 		FromID:  name,
 		ColName: model.NewCIStr(name),
 		TblName: model.NewCIStr("t"),
 		DBName:  model.NewCIStr("test"),
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
+	newCol.self = newCol
+	return newCol
 }
 
 func newLonglong(value int64) *Constant {
-	return &Constant{
-		Value:   types.NewIntDatum(value),
-		RetType: types.NewFieldType(mysql.TypeLonglong),
-	}
+	return NewConstant(types.NewIntDatum(value), types.NewFieldType(mysql.TypeLonglong))
 }
 
 func newFunction(funcName string, args ...Expression) Expression {
@@ -55,7 +54,7 @@ func newFunction(funcName string, args ...Expression) Expression {
 
 func (*testExpressionSuite) TestConstantPropagation(c *C) {
 	defer testleak.AfterTest(c)()
-	nullValue := &Constant{Value: types.Datum{}}
+	nullValue := NewConstant(types.Datum{}, types.NewFieldType(mysql.TypeNull))
 	tests := []struct {
 		conditions []Expression
 		result     string

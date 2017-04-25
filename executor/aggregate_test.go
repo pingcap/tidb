@@ -306,12 +306,10 @@ func (s *testSuite) TestAggregation(c *C) {
 }
 
 func (s *testSuite) TestStreamAgg(c *C) {
-	col := &expression.Column{
-		Index: 1,
-	}
-	gbyCol := &expression.Column{
-		Index: 0,
-	}
+	col := expression.NewEmptyColumn()
+	col.Index = 1
+	gbyCol := expression.NewEmptyColumn()
+	gbyCol.Index = 0
 	sumAgg := expression.NewAggFunction(ast.AggFuncSum, []expression.Expression{col}, false)
 	cntAgg := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{col}, false)
 	avgAgg := expression.NewAggFunction(ast.AggFuncAvg, []expression.Expression{col}, false)

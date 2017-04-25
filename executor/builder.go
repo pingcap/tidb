@@ -608,11 +608,11 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 		schemaColumns := make([]*expression.Column, len(e.indexPlan.Index.Columns))
 		for i, col := range e.indexPlan.Index.Columns {
 			colInfo := e.indexPlan.Table.Columns[col.Offset]
-			schemaColumns[i] = &expression.Column{
-				Index:   i,
-				ColName: col.Name,
-				RetType: &colInfo.FieldType,
-			}
+			newCol := expression.NewEmptyColumn()
+			newCol.Index = i
+			newCol.ColName = col.Name
+			newCol.RetType = &colInfo.FieldType
+			schemaColumns[i] = newCol
 		}
 		e.idxColsSchema = expression.NewSchema(schemaColumns...)
 	}

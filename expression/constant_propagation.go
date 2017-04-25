@@ -156,10 +156,7 @@ func (s *propagateConstantSolver) validPropagateCond(cond Expression, funNameMap
 }
 
 func (s *propagateConstantSolver) setConds2ConstFalse() {
-	s.conditions = []Expression{&Constant{
-		Value:   types.NewDatum(false),
-		RetType: types.NewFieldType(mysql.TypeTiny),
-	}}
+	s.conditions = []Expression{NewConstant(types.NewDatum(false), types.NewFieldType(mysql.TypeTiny))}
 }
 
 // pickNewEQConds tries to pick new equal conds and puts them to retMapper.

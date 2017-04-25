@@ -15,12 +15,14 @@ package expression
 
 import (
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/ast"
 )
 
 // FoldConstant does constant folding optimization on an expression.
 func FoldConstant(expr Expression) Expression {
 	scalarFunc, ok := expr.(*ScalarFunction)
-	if !ok || !scalarFunc.Function.isDeterministic() {
+	// TODO: We do not fold builtin func ROW because we cannot handle it in functionClass.getFunction() now.
+	if !ok || !scalarFunc.Function.isDeterministic() || scalarFunc.FuncName.O == ast.RowFunc {
 		return expr
 	}
 	args := scalarFunc.GetArgs()
@@ -40,8 +42,5 @@ func FoldConstant(expr Expression) Expression {
 		log.Warnf("There may exist an error during constant folding. The function name is %s, args are %s", scalarFunc.FuncName, args)
 		return expr
 	}
-	return &Constant{
-		Value:   value,
-		RetType: scalarFunc.RetType,
-	}
+	return NewConstant(value, scalarFunc.RetType)
 }

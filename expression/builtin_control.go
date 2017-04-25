@@ -38,7 +38,9 @@ type caseWhenFunctionClass struct {
 }
 
 func (c *caseWhenFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinCaseWhenSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinCaseWhenSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinCaseWhenSig struct {
@@ -80,7 +82,9 @@ type ifFunctionClass struct {
 }
 
 func (c *ifFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinIfSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinIfSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinIfSig struct {
@@ -122,7 +126,9 @@ type ifNullFunctionClass struct {
 }
 
 func (c *ifNullFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinIfNullSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinIfNullSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinIfNullSig struct {
@@ -152,7 +158,9 @@ type nullIfFunctionClass struct {
 }
 
 func (c *nullIfFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinNullIfSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinNullIfSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinNullIfSig struct {

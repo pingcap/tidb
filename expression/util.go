@@ -18,6 +18,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
@@ -66,9 +67,31 @@ func ColumnSubstitute(expr Expression, schema *Schema, newExprs []Expression) Ex
 func datumsToConstants(datums []types.Datum) []Expression {
 	constants := make([]Expression, 0, len(datums))
 	for _, d := range datums {
-		constants = append(constants, &Constant{Value: d})
+		newCon := NewConstant(d, types.NewFieldType(kindToMysqlType[d.Kind()]))
+		constants = append(constants, newCon)
 	}
 	return constants
+}
+
+var kindToMysqlType = map[byte]byte{
+	types.KindNull:          mysql.TypeNull,
+	types.KindInt64:         mysql.TypeLonglong,
+	types.KindUint64:        mysql.TypeLonglong,
+	types.KindFloat32:       mysql.TypeDouble,
+	types.KindFloat64:       mysql.TypeDouble,
+	types.KindString:        mysql.TypeVarString,
+	types.KindBytes:         mysql.TypeVarString,
+	types.KindMysqlBit:      mysql.TypeVarString,
+	types.KindMysqlDecimal:  mysql.TypeNewDecimal,
+	types.KindMysqlDuration: mysql.TypeVarString,
+	types.KindMysqlEnum:     mysql.TypeVarString,
+	types.KindMysqlHex:      mysql.TypeLonglong,
+	types.KindMysqlSet:      mysql.TypeVarString,
+	types.KindMysqlTime:     mysql.TypeVarString,
+	types.KindRow:           mysql.TypeVarString,
+	types.KindInterface:     mysql.TypeVarString,
+	types.KindMinNotNull:    mysql.TypeLonglong,
+	types.KindMaxValue:      mysql.TypeLonglong,
 }
 
 // calculateSum adds v to sum.
@@ -200,7 +223,7 @@ func SubstituteCorCol2Constant(expr Expression) (Expression, error) {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			return &Constant{Value: val}, nil
+			return NewConstant(val, x.GetType()), nil
 		}
 		var newSf Expression
 		if x.FuncName.L == ast.Cast {
@@ -210,7 +233,7 @@ func SubstituteCorCol2Constant(expr Expression) (Expression, error) {
 		}
 		return newSf, nil
 	case *CorrelatedColumn:
-		return &Constant{Value: *x.Data, RetType: x.GetType()}, nil
+		return NewConstant(*x.Data, x.GetType()), nil
 	default:
 		return x.Clone(), nil
 	}

@@ -299,7 +299,7 @@ func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interfac
 	execPlan.UsingVars = make([]expression.Expression, len(args))
 	for i, val := range args {
 		value := ast.NewValueExpr(val)
-		execPlan.UsingVars[i] = &expression.Constant{Value: value.Datum, RetType: &value.Type}
+		execPlan.UsingVars[i] = expression.NewConstant(value.Datum, &value.Type)
 	}
 	sa := &statement{
 		is:   GetInfoSchema(ctx),

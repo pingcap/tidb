@@ -84,12 +84,9 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 			position := len(agg.AggFuncs)
 			aggIndexMap[i] = position
 			agg.AggFuncs = append(agg.AggFuncs, newFunc)
-			schema.Append(&expression.Column{
-				FromID:      agg.id,
-				ColName:     model.NewCIStr(fmt.Sprintf("%s_col_%d", agg.id, position)),
-				Position:    position,
-				IsAggOrSubq: true,
-				RetType:     aggFunc.GetType()})
+			newCol := expression.NewColumn(agg.id, fmt.Sprintf("%s_col_%d", agg.id, position), "", "", aggFunc.GetType(), 0, position)
+			newCol.IsAggOrSubq = true
+			schema.Append(newCol)
 		}
 	}
 	for _, col := range p.Schema().Columns {
@@ -331,12 +328,7 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 				}
 			}
 		}
-		col := &expression.Column{
-			FromID:  proj.id,
-			TblName: tblName,
-			ColName: colName,
-			RetType: newExpr.GetType(),
-		}
+		col := expression.NewColumn(proj.id, colName.O, "", tblName.O, newExpr.GetType(), 0, 0)
 		if !field.Auxiliary {
 			oldLen++
 		}
@@ -1025,14 +1017,8 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 			continue
 		}
 		p.Columns = append(p.Columns, col)
-		schema.Append(&expression.Column{
-			FromID:   p.id,
-			ColName:  col.Name,
-			TblName:  tableInfo.Name,
-			DBName:   schemaName,
-			RetType:  &col.FieldType,
-			Position: i,
-			ID:       col.ID})
+		newCol := expression.NewColumn(p.id, col.Name.O, schemaName.O, tableInfo.Name.O, &col.FieldType, col.ID, i)
+		schema.Append(newCol)
 	}
 	p.SetSchema(schema)
 	return p
@@ -1098,10 +1084,10 @@ out:
 	}
 	exists := Exists{}.init(b.allocator, b.ctx)
 	addChild(exists, p)
-	newCol := &expression.Column{
-		FromID:  exists.id,
-		RetType: types.NewFieldType(mysql.TypeTiny),
-		ColName: model.NewCIStr("exists_col")}
+	newCol := expression.NewEmptyColumn()
+	newCol.FromID = exists.id
+	newCol.RetType = types.NewFieldType(mysql.TypeTiny)
+	newCol.ColName = model.NewCIStr("exists_col")
 	exists.SetSchema(expression.NewSchema(newCol))
 	return exists
 }
@@ -1124,12 +1110,9 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	joinPlan.attachOnConds(onCondition)
 	if asScalar {
 		newSchema := outerPlan.Schema().Clone()
-		newSchema.Append(&expression.Column{
-			FromID:      joinPlan.id,
-			ColName:     model.NewCIStr(fmt.Sprintf("%s_aux_0", joinPlan.id)),
-			RetType:     types.NewFieldType(mysql.TypeTiny),
-			IsAggOrSubq: true,
-		})
+		newCol := expression.NewColumn(joinPlan.id, fmt.Sprintf("%s_aux_0", joinPlan.id), "", "", types.NewFieldType(mysql.TypeTiny), 0, 0)
+		newCol.IsAggOrSubq = true
+		newSchema.Append(newCol)
 		joinPlan.SetSchema(newSchema)
 		joinPlan.JoinType = LeftOuterSemiJoin
 	} else {

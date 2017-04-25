@@ -209,7 +209,9 @@ type dateFunctionClass struct {
 }
 
 func (c *dateFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinDateSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinDateSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinDateSig struct {
@@ -240,7 +242,9 @@ type dateDiffFunctionClass struct {
 }
 
 func (c *dateDiffFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinDateDiffSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinDateDiffSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinDateDiffSig struct {
@@ -281,7 +285,9 @@ type timeDiffFunctionClass struct {
 }
 
 func (c *timeDiffFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinTimeDiffSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinTimeDiffSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinTimeDiffSig struct {
@@ -317,7 +323,9 @@ type dateFormatFunctionClass struct {
 }
 
 func (c *dateFormatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinDateFormatSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinDateFormatSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinDateFormatSig struct {
@@ -358,7 +366,9 @@ type fromDaysFunctionClass struct {
 }
 
 func (c *fromDaysFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinFromDaysSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinFromDaysSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinFromDaysSig struct {
@@ -381,7 +391,9 @@ type hourFunctionClass struct {
 }
 
 func (c *hourFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinHourSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinHourSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinHourSig struct {
@@ -410,7 +422,9 @@ type minuteFunctionClass struct {
 }
 
 func (c *minuteFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinMinuteSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinMinuteSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinMinuteSig struct {
@@ -439,7 +453,9 @@ type secondFunctionClass struct {
 }
 
 func (c *secondFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinSecondSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinSecondSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinSecondSig struct {
@@ -468,7 +484,9 @@ type microSecondFunctionClass struct {
 }
 
 func (c *microSecondFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinMicroSecondSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinMicroSecondSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinMicroSecondSig struct {
@@ -497,7 +515,9 @@ type monthFunctionClass struct {
 }
 
 func (c *monthFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinMonthSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinMonthSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinMonthSig struct {
@@ -536,7 +556,9 @@ type monthNameFunctionClass struct {
 }
 
 func (c *monthNameFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinMonthNameSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinMonthNameSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinMonthNameSig struct {
@@ -576,7 +598,9 @@ type nowFunctionClass struct {
 }
 
 func (c *nowFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinNowSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinNowSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinNowSig struct {
@@ -617,7 +641,9 @@ type dayNameFunctionClass struct {
 }
 
 func (c *dayNameFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinDayNameSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinDayNameSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinDayNameSig struct {
@@ -648,7 +674,9 @@ type dayOfMonthFunctionClass struct {
 }
 
 func (c *dayOfMonthFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinDayOfMonthSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinDayOfMonthSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinDayOfMonthSig struct {
@@ -683,7 +711,9 @@ type dayOfWeekFunctionClass struct {
 }
 
 func (c *dayOfWeekFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinDayOfWeekSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinDayOfWeekSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinDayOfWeekSig struct {
@@ -719,7 +749,9 @@ type dayOfYearFunctionClass struct {
 }
 
 func (c *dayOfYearFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinDayOfYearSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinDayOfYearSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinDayOfYearSig struct {
@@ -754,7 +786,9 @@ type weekFunctionClass struct {
 }
 
 func (c *weekFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinWeekSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinWeekSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinWeekSig struct {
@@ -804,7 +838,9 @@ type weekDayFunctionClass struct {
 }
 
 func (c *weekDayFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinWeekDaySig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinWeekDaySig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinWeekDaySig struct {
@@ -847,7 +883,9 @@ type weekOfYearFunctionClass struct {
 }
 
 func (c *weekOfYearFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinWeekOfYearSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinWeekOfYearSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinWeekOfYearSig struct {
@@ -871,7 +909,9 @@ type yearFunctionClass struct {
 }
 
 func (c *yearFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinYearSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinYearSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinYearSig struct {
@@ -905,7 +945,9 @@ type yearWeekFunctionClass struct {
 }
 
 func (c *yearWeekFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinYearWeekSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinYearWeekSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinYearWeekSig struct {
@@ -953,7 +995,9 @@ type fromUnixTimeFunctionClass struct {
 }
 
 func (c *fromUnixTimeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinFromUnixTimeSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinFromUnixTimeSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinFromUnixTimeSig struct {
@@ -1036,7 +1080,9 @@ type getFormatFunctionClass struct {
 }
 
 func (c *getFormatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinGetFormatSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinGetFormatSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinGetFormatSig struct {
@@ -1097,7 +1143,9 @@ type strToDateFunctionClass struct {
 }
 
 func (c *strToDateFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinStrToDateSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinStrToDateSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinStrToDateSig struct {
@@ -1132,7 +1180,9 @@ type sysDateFunctionClass struct {
 }
 
 func (c *sysDateFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinSysDateSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinSysDateSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinSysDateSig struct {
@@ -1156,7 +1206,9 @@ type currentDateFunctionClass struct {
 }
 
 func (c *currentDateFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinCurrentDateSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinCurrentDateSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinCurrentDateSig struct {
@@ -1178,7 +1230,9 @@ type currentTimeFunctionClass struct {
 }
 
 func (c *currentTimeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinCurrentTimeSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinCurrentTimeSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinCurrentTimeSig struct {
@@ -1208,7 +1262,9 @@ type timeFunctionClass struct {
 }
 
 func (c *timeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinTimeSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinTimeSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinTimeSig struct {
@@ -1248,7 +1304,9 @@ type utcDateFunctionClass struct {
 }
 
 func (c *utcDateFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinUTCDateSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinUTCDateSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinUTCDateSig struct {
@@ -1270,7 +1328,9 @@ type utcTimestampFunctionClass struct {
 }
 
 func (c *utcTimestampFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinUTCTimestampSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinUTCTimestampSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinUTCTimestampSig struct {
@@ -1306,7 +1366,9 @@ type extractFunctionClass struct {
 }
 
 func (c *extractFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinExtractSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinExtractSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinExtractSig struct {
@@ -1373,7 +1435,9 @@ type dateArithFunctionClass struct {
 }
 
 func (c *dateArithFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinDateArithSig{newBaseBuiltinFunc(args, ctx), c.op}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinDateArithSig{newBaseBuiltinFunc(args, ctx), c.op}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinDateArithSig struct {
@@ -1502,7 +1566,9 @@ type timestampDiffFunctionClass struct {
 }
 
 func (c *timestampDiffFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinTimestampDiffSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinTimestampDiffSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinTimestampDiffSig struct {
@@ -1552,7 +1618,9 @@ type unixTimestampFunctionClass struct {
 }
 
 func (c *unixTimestampFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinUnixTimestampSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinUnixTimestampSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinUnixTimestampSig struct {
@@ -1615,7 +1683,9 @@ type timestampFunctionClass struct {
 }
 
 func (c *timestampFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinTimestampSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinTimestampSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinTimestampSig struct {
@@ -1697,7 +1767,9 @@ type addTimeFunctionClass struct {
 }
 
 func (c *addTimeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinAddTimeSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinAddTimeSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinAddTimeSig struct {
@@ -1714,7 +1786,9 @@ type convertTzFunctionClass struct {
 }
 
 func (c *convertTzFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinConvertTzSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinConvertTzSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinConvertTzSig struct {
@@ -1731,7 +1805,9 @@ type makeDateFunctionClass struct {
 }
 
 func (c *makeDateFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinMakeDateSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinMakeDateSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinMakeDateSig struct {
@@ -1786,7 +1862,9 @@ type makeTimeFunctionClass struct {
 }
 
 func (c *makeTimeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinMakeTimeSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinMakeTimeSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinMakeTimeSig struct {
@@ -1865,7 +1943,9 @@ type periodAddFunctionClass struct {
 }
 
 func (c *periodAddFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinPeriodAddSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinPeriodAddSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinPeriodAddSig struct {
@@ -1925,7 +2005,9 @@ type periodDiffFunctionClass struct {
 }
 
 func (c *periodDiffFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinPeriodDiffSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinPeriodDiffSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinPeriodDiffSig struct {
@@ -1942,7 +2024,9 @@ type quarterFunctionClass struct {
 }
 
 func (c *quarterFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinQuarterSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinQuarterSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinQuarterSig struct {
@@ -1987,7 +2071,9 @@ type secToTimeFunctionClass struct {
 }
 
 func (c *secToTimeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinSecToTimeSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinSecToTimeSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinSecToTimeSig struct {
@@ -2065,7 +2151,9 @@ type subTimeFunctionClass struct {
 }
 
 func (c *subTimeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinSubTimeSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinSubTimeSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinSubTimeSig struct {
@@ -2082,7 +2170,9 @@ type timeFormatFunctionClass struct {
 }
 
 func (c *timeFormatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinTimeFormatSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinTimeFormatSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinTimeFormatSig struct {
@@ -2099,7 +2189,9 @@ type timeToSecFunctionClass struct {
 }
 
 func (c *timeToSecFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinTimeToSecSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinTimeToSecSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinTimeToSecSig struct {
@@ -2134,7 +2226,9 @@ type timestampAddFunctionClass struct {
 }
 
 func (c *timestampAddFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinTimestampAddSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinTimestampAddSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinTimestampAddSig struct {
@@ -2203,7 +2297,9 @@ type toDaysFunctionClass struct {
 }
 
 func (c *toDaysFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinToDaysSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinToDaysSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinToDaysSig struct {
@@ -2237,7 +2333,9 @@ type toSecondsFunctionClass struct {
 }
 
 func (c *toSecondsFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinToSecondsSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinToSecondsSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinToSecondsSig struct {
@@ -2271,7 +2369,9 @@ type utcTimeFunctionClass struct {
 }
 
 func (c *utcTimeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinUTCTimeSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinUTCTimeSig{newBaseBuiltinFunc(args, ctx)}
+	sig.self = sig
+	return sig, errors.Trace(c.verifyArgs(args))
 }
 
 type builtinUTCTimeSig struct {

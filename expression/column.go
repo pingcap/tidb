@@ -59,6 +59,8 @@ func (col *CorrelatedColumn) Decorrelate(schema *Schema) Expression {
 	if !schema.Contains(&col.Column) {
 		return col
 	}
+	expr := &col.Column
+	expr.SetSelf(expr)
 	return &col.Column
 }
 
@@ -68,6 +70,7 @@ func (col *CorrelatedColumn) ResolveIndices(_ *Schema) {
 
 // Column represents a column.
 type Column struct {
+	baseExpr
 	FromID  string
 	ColName model.CIStr
 	DBName  model.CIStr
@@ -86,6 +89,26 @@ type Column struct {
 	Index int
 
 	hashcode []byte
+}
+
+// NewEmptyColumn creates an empty Column.
+func NewEmptyColumn() *Column {
+	col := &Column{}
+	col.self = col
+	return col
+}
+
+// NewColumn creates an Column.
+func NewColumn(fromID string, colName string, dbName string, tblName string, retType *types.FieldType, id int64, position int) *Column {
+	col := NewEmptyColumn()
+	col.FromID = fromID
+	col.ColName = model.NewCIStr(colName)
+	col.DBName = model.NewCIStr(dbName)
+	col.TblName = model.NewCIStr(tblName)
+	col.RetType = retType
+	col.ID = id
+	col.Position = position
+	return col
 }
 
 // Equal implements Expression interface.
@@ -127,6 +150,7 @@ func (col *Column) Eval(row []types.Datum) (types.Datum, error) {
 // Clone implements Expression interface.
 func (col *Column) Clone() Expression {
 	newCol := *col
+	newCol.SetSelf(&newCol)
 	return &newCol
 }
 

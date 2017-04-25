@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -175,12 +174,8 @@ func (a *aggregationOptimizer) decompose(aggFunc expression.AggregationFunction,
 	// Result is a slice because avg should be decomposed to sum and count. Currently we don't process this case.
 	result := []expression.AggregationFunction{aggFunc.Clone()}
 	for _, aggFunc := range result {
-		schema.Append(&expression.Column{
-			ColName:  model.NewCIStr(fmt.Sprintf("join_agg_%d", schema.Len())), // useless but for debug
-			FromID:   id,
-			Position: schema.Len(),
-			RetType:  aggFunc.GetType(),
-		})
+		newCol := expression.NewColumn(id, fmt.Sprintf("join_agg_%d", schema.Len()), "", "", aggFunc.GetType(), 0, schema.Len())
+		schema.Append(newCol)
 	}
 	aggFunc.SetArgs(expression.Column2Exprs(schema.Columns[schema.Len()-len(result):]))
 	aggFunc.SetMode(expression.FinalMode)
@@ -220,9 +215,7 @@ func (a *aggregationOptimizer) tryToPushDownAgg(aggFuncs []expression.Aggregatio
 	// If agg has no group-by item, it will return a default value, which may cause some bugs.
 	// So here we add a group-by item forcely.
 	if len(agg.GroupByItems) == 0 {
-		agg.GroupByItems = []expression.Expression{&expression.Constant{
-			Value:   types.NewDatum(0),
-			RetType: types.NewFieldType(mysql.TypeLong)}}
+		agg.GroupByItems = []expression.Expression{expression.NewConstant(types.NewDatum(0), types.NewFieldType(mysql.TypeLong))}
 	}
 	if (childIdx == 0 && join.JoinType == RightOuterJoin) || (childIdx == 1 && join.JoinType == LeftOuterJoin) {
 		var existsDefaultValues bool

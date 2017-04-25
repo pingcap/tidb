@@ -20,16 +20,30 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 )
 
 // ScalarFunction is the function that returns a value.
 type ScalarFunction struct {
+	baseExpr
 	FuncName model.CIStr
 	// TODO: Implement type inference here, now we use ast's return type temporarily.
 	RetType  *types.FieldType
 	Function builtinFunc
+}
+
+// NewScalarFunction creates a ScalarFunction.
+func NewScalarFunction(funcName string, retType *types.FieldType, function builtinFunc) *ScalarFunction {
+	sf := &ScalarFunction{
+		FuncName: model.NewCIStr(funcName),
+		RetType:  retType,
+		Function: function,
+	}
+	sf.self = sf
+	return sf
 }
 
 // GetArgs gets arguments of function.
@@ -73,11 +87,13 @@ func NewFunction(ctx context.Context, funcName string, retType *types.FieldType,
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return &ScalarFunction{
-		FuncName: model.NewCIStr(funcName),
-		RetType:  retType,
-		Function: f,
-	}, nil
+	var tp *types.FieldType
+	if retType == nil {
+		tp = types.NewFieldType(mysql.TypeUnspecified)
+	} else {
+		tp = retType
+	}
+	return NewScalarFunction(funcName, tp, f), nil
 }
 
 //ScalarFuncs2Exprs converts []*ScalarFunction to []Expression.
@@ -143,6 +159,26 @@ func (sf *ScalarFunction) Decorrelate(schema *Schema) Expression {
 // Eval implements Expression interface.
 func (sf *ScalarFunction) Eval(row []types.Datum) (types.Datum, error) {
 	return sf.Function.eval(row)
+}
+
+// EvalInt implements Expression interface.
+func (sf *ScalarFunction) EvalInt(row []types.Datum, sc *variable.StatementContext) (int64, bool, error) {
+	return sf.Function.evalInt(row)
+}
+
+// EvalReal implements Expression interface.
+func (sf *ScalarFunction) EvalReal(row []types.Datum, sc *variable.StatementContext) (float64, bool, error) {
+	return sf.Function.evalReal(row)
+}
+
+// EvalDecimal implements Expression interface.
+func (sf *ScalarFunction) EvalDecimal(row []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
+	return sf.Function.evalDecimal(row)
+}
+
+// EvalString implements Expression interface.
+func (sf *ScalarFunction) EvalString(row []types.Datum, sc *variable.StatementContext) (string, bool, error) {
+	return sf.Function.evalString(row)
 }
 
 // HashCode implements Expression interface.

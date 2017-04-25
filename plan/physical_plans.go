@@ -378,7 +378,9 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 	gkType.Collate = charset.CollationBin
 	schema := expression.NewSchema()
 	cursor := 0
-	schema.Append(&expression.Column{Index: cursor, ColName: model.NewCIStr(fmt.Sprint(agg.GroupByItems)), RetType: gkType})
+	newCol := expression.NewColumn("", fmt.Sprint(agg.GroupByItems), "", "", gkType, 0, 0)
+	newCol.Index = cursor
+	schema.Append(newCol)
 	agg.GroupByItems = []expression.Expression{schema.Columns[cursor]}
 	newAggFuncs := make([]expression.AggregationFunction, len(agg.AggFuncs))
 	for i, aggFun := range agg.AggFuncs {
@@ -391,13 +393,17 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 			ft.Flen = 21
 			ft.Charset = charset.CharsetBin
 			ft.Collate = charset.CollationBin
-			schema.Append(&expression.Column{Index: cursor, ColName: colName, RetType: ft})
+			newCol := expression.NewColumn("", colName.O, "", "", ft, 0, 0)
+			newCol.Index = cursor
+			schema.Append(newCol)
 			args = append(args, schema.Columns[cursor])
 		}
 		if needValue(fun) {
 			cursor++
 			ft := agg.schema.Columns[i].GetType()
-			schema.Append(&expression.Column{Index: cursor, ColName: colName, RetType: ft})
+			newCol := expression.NewColumn("", colName.O, "", "", ft, 0, 0)
+			newCol.Index = cursor
+			schema.Append(newCol)
 			args = append(args, schema.Columns[cursor])
 		}
 		fun.SetArgs(args)
