@@ -134,6 +134,8 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		vars.IndexSerialScanConcurrency = tidbOptPositiveInt(sVal, variable.DefIndexSerialScanConcurrency)
 	case variable.TiDBBatchInsert:
 		vars.BatchInsert = tidbOptOn(sVal)
+	case variable.TiDBMaxRowCountForINLJ:
+		vars.MaxRowCountForINLJ = tidbOptPositiveInt(sVal, variable.DefMaxRowCountForINLJ)
 	}
 	vars.Systems[name] = sVal
 	return nil

@@ -153,6 +153,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"current_time()", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag},
 		{"curtime()", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag},
 		{"curtime(2)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag},
+		{"makedate(2017,31)", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag},
 		{"maketime(12, 15, 30)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag},
 		{"sec_to_time(2378)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag},
 		{"current_timestamp()", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
@@ -304,6 +305,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"to_seconds(950501)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{`bit_count(1)`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{`time_to_sec("23:59:59")`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
+		{`inet6_aton('FE80::AAAA:0000:00C2:0002')`, mysql.TypeVarString, charset.CharsetUTF8, 0},
 	}
 	for _, tt := range tests {
 		ctx := testKit.Se.(context.Context)

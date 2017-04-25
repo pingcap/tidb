@@ -186,10 +186,14 @@ func (d *ddl) RegisterEventCh(ch chan<- *Event) {
 // give up notify and log it.
 func (d *ddl) asyncNotifyEvent(e *Event) {
 	if d.ddlEventCh != nil {
-		select {
-		case d.ddlEventCh <- e:
-		default:
-			log.Warnf("Fail to notify event %s.", e)
+		for i := 0; i < 10; i++ {
+			select {
+			case d.ddlEventCh <- e:
+				return
+			default:
+				log.Warnf("Fail to notify event %s.", e)
+				time.Sleep(time.Microsecond * 10)
+			}
 		}
 	}
 }

@@ -21,7 +21,9 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -1145,5 +1147,85 @@ func (s *testPlanSuite) TestJoinAlgorithm(c *C) {
 		pp, err := doOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx, builder.allocator)
 		c.Assert(err, IsNil)
 		c.Assert(ToString(pp), Equals, tt.ans, Commentf("for %s", tt.sql))
+	}
+}
+
+func (s *testPlanSuite) TestAutoJoinChosen(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		sql         string
+		ans         string
+		genStatsTbl bool
+	}{
+		{
+			sql: "select * from (select * from t limit 0, 128) t1 join t t2 on t1.a = t2.a",
+			ans: "Apply{Table(t)->Limit->Table(t)->Selection}",
+		},
+		{
+			sql: "select * from (select * from t limit 0, 129) t1 join t t2 on t1.a = t2.a",
+			ans: "RightHashJoin{Table(t)->Limit->Table(t)}(t1.a,t2.a)",
+		},
+		{
+			sql: "select * from (select * from t limit 0, 10 union select * from t limit 10, 100) t1 join t t2 on t1.a = t2.a",
+			ans: "Apply{UnionAll{Table(t)->Limit->Projection->Table(t)->Limit->Projection}->HashAgg->Table(t)->Selection}",
+		},
+		{
+			sql: "select * from (select * from t limit 0, 29 union all select * from t limit 0, 100) t1 join t t2 on t1.a = t2.a",
+			ans: "RightHashJoin{UnionAll{Table(t)->Limit->Table(t)->Limit}->Table(t)}(t1.a,t2.a)",
+		},
+		{
+			sql:         "select * from t t1 join t t2 on t1.f = t2.f and t1.a < 5",
+			ans:         "Apply{Table(t)->Index(t.f)[]->Selection}",
+			genStatsTbl: true,
+		},
+		{
+			sql:         "select * from t t1 join t t2 on t1.f = t2.f and t1.a < 19",
+			ans:         "RightHashJoin{Table(t)->Table(t)}(t1.f,t2.f)",
+			genStatsTbl: true,
+		},
+	}
+	for _, ca := range cases {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		ast.SetFlag(stmt)
+
+		is, err := mockResolve(stmt)
+		c.Assert(err, IsNil)
+
+		ctx := mockContext()
+
+		if ca.genStatsTbl {
+			handle := sessionctx.GetDomain(ctx).StatsHandle()
+			tb, _ := is.TableByID(0)
+			tbl := tb.Meta()
+			// generate 40 distinct values for pk.
+			pkValues := make([]types.Datum, 40)
+			for i := 0; i < 40; i++ {
+				pkValues[i] = types.NewIntDatum(int64(i))
+			}
+			// make the statistic col info for pk, every distinct value occurs 10 times.
+			pkStatsCol := &statistics.Column{Histogram: *mockStatsHistogram(1, pkValues, 10)}
+			// mock the statistic table and set the value of pk column.
+			statsTbl := mockStatsTable(tbl, 400)
+			statsTbl.Columns[1] = pkStatsCol
+			handle.UpdateTableStats([]*statistics.Table{statsTbl}, nil)
+		}
+
+		builder := &planBuilder{
+			allocator: new(idAllocator),
+			ctx:       ctx,
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+			is:        is,
+		}
+		p := builder.build(stmt)
+		c.Assert(builder.err, IsNil)
+		pp, err := doOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx, builder.allocator)
+		c.Assert(err, IsNil)
+		c.Assert(ToString(pp), Equals, ca.ans, Commentf("for %s", ca.sql))
+
+		if ca.genStatsTbl {
+			sessionctx.GetDomain(ctx).StatsHandle().Clear()
+		}
 	}
 }
