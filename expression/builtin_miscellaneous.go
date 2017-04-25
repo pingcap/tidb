@@ -16,6 +16,7 @@ import (
 	"encoding/binary"
 	"math"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/juju/errors"
@@ -331,7 +332,54 @@ type builtinInet6AtonSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet6-aton
 func (b *builtinInet6AtonSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("INET6_ATON")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if args[0].IsNull() {
+		return d, nil
+	}
+
+	ipAddress, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if len(ipAddress) == 0 {
+		return d, nil
+	}
+
+	ip := net.ParseIP(ipAddress)
+	if ip == nil {
+		return d, nil
+	}
+
+	var isMappedIpv6 bool
+	if ip.To4() != nil && strings.Contains(ipAddress, ":") {
+		//mapped ipv6 address.
+		isMappedIpv6 = true
+	}
+
+	var result []byte
+	if isMappedIpv6 || ip.To4() == nil {
+		result = make([]byte, net.IPv6len)
+	} else {
+		result = make([]byte, net.IPv4len)
+	}
+
+	if isMappedIpv6 {
+		copy(result[12:], ip.To4())
+		result[11] = 0xff
+		result[10] = 0xff
+	} else if ip.To4() == nil {
+		copy(result, ip.To16())
+	} else {
+		copy(result, ip.To4())
+	}
+
+	d.SetBytes(result)
+	return d, nil
 }
 
 type inet6NtoaFunctionClass struct {
