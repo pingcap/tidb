@@ -293,7 +293,7 @@ func (v *typeInferrer) getFsp(x *ast.FuncCallExpr) int {
 }
 
 // handleFuncCallExpr ...
-// TODO: (zhexuany) this function contains too much redundant things. Mybe replace with a map like
+// TODO: (zhexuany) this function contains too much redundant things. Maybe replace with a map like
 // we did for error in mysql package.
 func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	var (
