@@ -30,13 +30,11 @@ var _ context.Context = (*Context)(nil)
 
 // Context represents mocked context.Context.
 type Context struct {
-	values map[fmt.Stringer]interface{}
-	// mock global variable
-	txn         kv.Transaction
-	Store       kv.Storage
+	values      map[fmt.Stringer]interface{}
+	txn         kv.Transaction // mock global variable
+	Store       kv.Storage     // mock global variable
 	sessionVars *variable.SessionVars
-	// Fix data race in ddl test.
-	mux sync.Mutex
+	mux         sync.Mutex // fix data race in ddl test.
 }
 
 // SetValue implements context.Context SetValue interface.
