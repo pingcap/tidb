@@ -22,6 +22,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -501,6 +502,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 	table := []testCase{
 		// for builtin functions
 		{"SELECT POW(1, 2)", true},
+		{"SELECT POW(1, 2, 1)", true}, // illegal number of arguments shall pass too
 		{"SELECT POW(1, 0.5)", true},
 		{"SELECT POW(1, -1)", true},
 		{"SELECT POW(-1, 1)", true},
@@ -765,8 +767,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT OCT(12)`, true},
 		{`SELECT OCTET_LENGTH('text')`, true},
 		{`SELECT ORD('2')`, true},
-		// parser of POSITION will cause conflict now.
-		//{`SELECT POSITION('foobarbar' IN 'bar')`, false},
+		{`SELECT POSITION('bar' IN 'foobarbar')`, true},
 		{`SELECT QUOTE('Don\'t!')`, true},
 		{`SELECT BIN(12)`, true},
 		{`SELECT ELT(1, 'ej', 'Heja', 'hej', 'foo')`, true},
@@ -1050,6 +1051,8 @@ func (s *testParserSuite) TestDDL(c *C) {
 		// partition option
 		{"create table t (c int) PARTITION BY HASH (c) PARTITIONS 32;", true},
 		{"create table t (c int) PARTITION BY RANGE (Year(VDate)) (PARTITION p1980 VALUES LESS THAN (1980) ENGINE = MyISAM, PARTITION p1990 VALUES LESS THAN (1990) ENGINE = MyISAM, PARTITION pothers VALUES LESS THAN MAXVALUE ENGINE = MyISAM)", true},
+		{"create table t (c int, `create_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '') PARTITION BY RANGE (UNIX_TIMESTAMP(create_time)) (PARTITION p201610 VALUES LESS THAN(1477929600), PARTITION p201611 VALUES LESS THAN(1480521600),PARTITION p201612 VALUES LESS THAN(1483200000),PARTITION p201701 VALUES LESS THAN(1485878400),PARTITION p201702 VALUES LESS THAN(1488297600),PARTITION p201703 VALUES LESS THAN(1490976000))", true},
+
 		// for check clause
 		{"create table t (c1 bool, c2 bool, check (c1 in (0, 1)), check (c2 in (0, 1)))", true},
 		{"CREATE TABLE Customer (SD integer CHECK (SD > 0), First_Name varchar(30));", true},
@@ -1546,5 +1549,40 @@ func (s *testParserSuite) TestSQLModeANSIQuotes(c *C) {
 	for _, test := range tests {
 		_, err := parser.Parse(test, "", "")
 		c.Assert(err, IsNil)
+	}
+}
+
+func (s *testParserSuite) TestDDLStatements(c *C) {
+	parser := New()
+	// Tests that whatever the charset it is define, we always assign utf8 charset and utf8_bin collate.
+	createTableStr := `CREATE TABLE t (
+		a varchar(64) binary,
+		b char(10) charset utf8 collate utf8_general_ci,
+		c text charset latin1) ENGINE=innoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin`
+	stmts, err := parser.Parse(createTableStr, "", "")
+	c.Assert(err, IsNil)
+	stmt := stmts[0].(*ast.CreateTableStmt)
+	for _, colDef := range stmt.Cols {
+		c.Assert(mysql.HasBinaryFlag(colDef.Tp.Flag), IsFalse)
+	}
+	for _, tblOpt := range stmt.Options {
+		switch tblOpt.Tp {
+		case ast.TableOptionCharset:
+			c.Assert(tblOpt.StrValue, Equals, "utf8")
+		case ast.TableOptionCollate:
+			c.Assert(tblOpt.StrValue, Equals, "utf8_bin")
+		}
+	}
+	createTableStr = `CREATE TABLE t (
+		a varbinary(64),
+		b binary(10),
+		c blob)`
+	stmts, err = parser.Parse(createTableStr, "", "")
+	c.Assert(err, IsNil)
+	stmt = stmts[0].(*ast.CreateTableStmt)
+	for _, colDef := range stmt.Cols {
+		c.Assert(colDef.Tp.Charset, Equals, charset.CharsetBin)
+		c.Assert(colDef.Tp.Collate, Equals, charset.CollationBin)
+		c.Assert(mysql.HasBinaryFlag(colDef.Tp.Flag), IsTrue)
 	}
 }

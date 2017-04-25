@@ -397,6 +397,7 @@ type builtinIsNullSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinIsNullSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_isnull
 func (b *builtinIsNullSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)

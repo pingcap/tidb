@@ -19,11 +19,12 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
 
 var (
-	_ functionClass = &sleepFunctionClass{}
 	_ functionClass = &inFunctionClass{}
 	_ functionClass = &rowFunctionClass{}
 	_ functionClass = &castFunctionClass{}
@@ -60,7 +61,8 @@ type builtinInSig struct {
 	baseBuiltinFunc
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/any-in-some-subqueries.html
+// eval evals a builtinInSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/any-in-some-subqueries.html
 func (b *builtinInSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
@@ -137,8 +139,9 @@ type builtinCastSig struct {
 	tp *types.FieldType
 }
 
-// CastFuncFactory produces builtin function according to field types.
+// eval evals a builtinCastSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html
+// CastFuncFactory produces builtin function according to field types.
 func (b *builtinCastSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
@@ -261,7 +264,33 @@ type builtinBitCountSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinBitCountSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/bit-functions.html#function_bit-count
 func (b *builtinBitCountSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("BIT_COUNT")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	arg := args[0]
+	if arg.IsNull() {
+		return d, nil
+	}
+	sc := new(variable.StatementContext)
+	sc.IgnoreTruncate = true
+	bin, err := arg.ToInt64(sc)
+	if err != nil {
+		if terror.ErrorEqual(err, types.ErrOverflow) {
+			d.SetInt64(64)
+			return d, nil
+
+		}
+		return d, errors.Trace(err)
+	}
+	var count int64
+	for bin != 0 {
+		count++
+		bin = (bin - 1) & bin
+	}
+	d.SetInt64(count)
+	return d, nil
 }

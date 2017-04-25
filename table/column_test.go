@@ -114,7 +114,7 @@ func (s *testColumnSuite) TestDesc(c *C) {
 }
 
 func (s *testColumnSuite) TestGetZeroValue(c *C) {
-	cases := []struct {
+	tests := []struct {
 		ft    *types.FieldType
 		value types.Datum
 	}{
@@ -175,18 +175,18 @@ func (s *testColumnSuite) TestGetZeroValue(c *C) {
 		},
 	}
 	sc := new(variable.StatementContext)
-	for _, ca := range cases {
-		colInfo := &model.ColumnInfo{FieldType: *ca.ft}
+	for _, tt := range tests {
+		colInfo := &model.ColumnInfo{FieldType: *tt.ft}
 		zv := GetZeroValue(colInfo)
-		c.Assert(zv.Kind(), Equals, ca.value.Kind())
-		cmp, err := zv.CompareDatum(sc, ca.value)
+		c.Assert(zv.Kind(), Equals, tt.value.Kind())
+		cmp, err := zv.CompareDatum(sc, tt.value)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}
 }
 
 func (s *testColumnSuite) TestGetDefaultValue(c *C) {
-	tcases := []struct {
+	tests := []struct {
 		colInfo *model.ColumnInfo
 		strict  bool
 		val     types.Datum
@@ -275,14 +275,14 @@ func (s *testColumnSuite) TestGetDefaultValue(c *C) {
 
 	ctx := mock.NewContext()
 
-	for _, tc := range tcases {
-		ctx.GetSessionVars().StrictSQLMode = tc.strict
-		val, err := GetColDefaultValue(ctx, tc.colInfo)
+	for _, tt := range tests {
+		ctx.GetSessionVars().StrictSQLMode = tt.strict
+		val, err := GetColDefaultValue(ctx, tt.colInfo)
 		if err != nil {
-			c.Assert(tc.err, NotNil, Commentf("%v", err))
+			c.Assert(tt.err, NotNil, Commentf("%v", err))
 			continue
 		}
-		c.Assert(val, DeepEquals, tc.val)
+		c.Assert(val, DeepEquals, tt.val)
 	}
 
 }

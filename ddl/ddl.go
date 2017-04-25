@@ -51,9 +51,10 @@ var (
 	// We don't support dropping column with index covered now.
 	errCantDropColWithIndex    = terror.ClassDDL.New(codeCantDropColWithIndex, "can't drop column with index")
 	errUnsupportedAddColumn    = terror.ClassDDL.New(codeUnsupportedAddColumn, "unsupported add column")
-	errUnsupportedModifyColumn = terror.ClassDDL.New(codeUnsupportedModifyColumn, "unsupported modify column")
+	errUnsupportedModifyColumn = terror.ClassDDL.New(codeUnsupportedModifyColumn, "unsupported modify column %s")
 	errUnsupportedPKHandle     = terror.ClassDDL.New(codeUnsupportedDropPKHandle,
 		"unsupported drop integer primary key")
+	errUnsupportedCharset = terror.ClassDDL.New(codeUnsupportedCharset, "unsupported charset %s collate %s")
 
 	errBlobKeyWithoutLength = terror.ClassDDL.New(codeBlobKeyWithoutLength, "index for BLOB/TEXT column must specificate a key length")
 	errIncorrectPrefixKey   = terror.ClassDDL.New(codeIncorrectPrefixKey, "Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys")
@@ -122,8 +123,34 @@ type DDL interface {
 	Stop() error
 	// Start starts DDL worker.
 	Start() error
+	// RegisterEventCh registers event channel for ddl.
+	RegisterEventCh(chan<- *Event)
 }
 
+// Event is an event that a ddl operation happened.
+type Event struct {
+	Tp         model.ActionType
+	TableInfo  *model.TableInfo
+	ColumnInfo *model.ColumnInfo
+	IndexInfo  *model.IndexInfo
+}
+
+// String implements fmt.Stringer interface.
+func (e *Event) String() string {
+	ret := fmt.Sprintf("(Event Type: %s", e.Tp)
+	if e.TableInfo != nil {
+		ret += fmt.Sprintf(", Table ID: %d, Table Name %s", e.TableInfo.ID, e.TableInfo.Name)
+	}
+	if e.ColumnInfo != nil {
+		ret += fmt.Sprintf(", Column ID: %d, Column Name %s", e.ColumnInfo.ID, e.ColumnInfo.Name)
+	}
+	if e.IndexInfo != nil {
+		ret += fmt.Sprintf(", Index ID: %d, Index Name %s", e.IndexInfo.ID, e.IndexInfo.Name)
+	}
+	return ret
+}
+
+// ddl represents the statements which are used to define the database structure or schema.
 type ddl struct {
 	m sync.RWMutex
 
@@ -131,11 +158,12 @@ type ddl struct {
 	hook       Callback
 	hookMu     sync.RWMutex
 	store      kv.Storage
-	// Schema lease seconds.
+	// lease is schema seconds.
 	lease        time.Duration
 	uuid         string
 	ddlJobCh     chan struct{}
 	ddlJobDoneCh chan struct{}
+	ddlEventCh   chan<- *Event
 	// Drop database/table job that runs in the background.
 	bgJobCh chan struct{}
 	// reorgDoneCh is for reorganization, if the reorganization job is done,
@@ -148,6 +176,27 @@ type ddl struct {
 
 	quitCh chan struct{}
 	wait   sync.WaitGroup
+}
+
+// RegisterEventCh registers passed channel for ddl Event.
+func (d *ddl) RegisterEventCh(ch chan<- *Event) {
+	d.ddlEventCh = ch
+}
+
+// asyncNotifyEvent will notify the ddl event to outside world, say statistic handle. When the channel is full, we may
+// give up notify and log it.
+func (d *ddl) asyncNotifyEvent(e *Event) {
+	if d.ddlEventCh != nil {
+		for i := 0; i < 10; i++ {
+			select {
+			case d.ddlEventCh <- e:
+				return
+			default:
+				log.Warnf("Fail to notify event %s.", e)
+				time.Sleep(time.Microsecond * 10)
+			}
+		}
+	}
 }
 
 // NewDDL creates a new DDL.
@@ -411,6 +460,7 @@ const (
 	codeUnsupportedAddColumn    = 202
 	codeUnsupportedModifyColumn = 203
 	codeUnsupportedDropPKHandle = 204
+	codeUnsupportedCharset      = 205
 
 	codeFileNotFound          = 1017
 	codeErrorOnRename         = 1025

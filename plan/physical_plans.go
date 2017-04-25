@@ -225,6 +225,9 @@ type physicalTableSource struct {
 	sortItems             []*ByItems
 	indexFilterConditions []expression.Expression
 	tableFilterConditions []expression.Expression
+
+	// filterCondition is only used by new planner.
+	filterCondition []expression.Expression
 }
 
 // MarshalJSON implements json.Marshaler interface.
@@ -303,7 +306,7 @@ func (p *physicalTableSource) tryToAddUnionScan(resultPlan PhysicalPlan) Physica
 	}
 	conditions := append(p.indexFilterConditions, p.tableFilterConditions...)
 	us := PhysicalUnionScan{
-		Condition: expression.ComposeCNFCondition(p.ctx, append(conditions, p.AccessCondition...)...),
+		Conditions: append(conditions, p.AccessCondition...),
 	}.init(p.allocator, p.ctx)
 	us.SetChildren(resultPlan)
 	us.SetSchema(resultPlan.Schema())
@@ -506,7 +509,7 @@ type PhysicalUnionScan struct {
 	*basePlan
 	basePhysicalPlan
 
-	Condition expression.Expression
+	Conditions []expression.Expression
 }
 
 // Cache plan is a physical plan which stores the result of its child node.
@@ -948,6 +951,9 @@ func (p *Union) Copy() PhysicalPlan {
 // Copy implements the PhysicalPlan Copy interface.
 func (p *Sort) Copy() PhysicalPlan {
 	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }
 

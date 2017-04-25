@@ -19,6 +19,7 @@ package ddl
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -112,18 +113,6 @@ func getDefaultCharsetAndCollate() (string, string) {
 	return "utf8", "utf8_bin"
 }
 
-func getDefaultCollateForCharset(str string) string {
-	switch str {
-	case charset.CharsetBin:
-		return charset.CollationBin
-	case charset.CharsetUTF8MB4:
-		return charset.CollationUTF8MB4
-	case charset.CharsetUTF8:
-		return charset.CollationUTF8
-	}
-	return ""
-}
-
 func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constraint) {
 	switch v.Tp {
 	case ast.ConstraintPrimaryKey:
@@ -189,7 +178,9 @@ func buildColumnsAndConstraints(ctx context.Context, colDefs []*ast.ColumnDef,
 	return cols, constraints, nil
 }
 
-func setCharsetCollationFlenDecimal(tp *types.FieldType) {
+func setCharsetCollationFlenDecimal(tp *types.FieldType) error {
+	tp.Charset = strings.ToLower(tp.Charset)
+	tp.Collate = strings.ToLower(tp.Collate)
 	if len(tp.Charset) == 0 {
 		switch tp.Tp {
 		case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeEnum, mysql.TypeSet:
@@ -198,8 +189,17 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType) {
 			tp.Charset = charset.CharsetBin
 			tp.Collate = charset.CharsetBin
 		}
-	} else if len(tp.Collate) == 0 {
-		tp.Collate = getDefaultCollateForCharset(tp.Charset)
+	} else {
+		if !charset.ValidCharsetAndCollation(tp.Charset, tp.Collate) {
+			return errUnsupportedCharset.GenByArgs(tp.Charset, tp.Collate)
+		}
+		if len(tp.Collate) == 0 {
+			var err error
+			tp.Collate, err = charset.GetDefaultCollation(tp.Charset)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
 	// If flen is not assigned, assigned it by type.
 	if tp.Flen == types.UnspecifiedLength {
@@ -208,11 +208,15 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType) {
 	if tp.Decimal == types.UnspecifiedLength {
 		tp.Decimal = mysql.GetDefaultDecimal(tp.Tp)
 	}
+	return nil
 }
 
 func buildColumnAndConstraint(ctx context.Context, offset int,
 	colDef *ast.ColumnDef) (*table.Column, []*ast.Constraint, error) {
-	setCharsetCollationFlenDecimal(colDef.Tp)
+	err := setCharsetCollationFlenDecimal(colDef.Tp)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
 	col, cts, err := columnDefToCol(ctx, offset, colDef)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -350,9 +354,15 @@ func getDefaultValue(ctx context.Context, c *ast.ColumnOption, tp byte, fsp int)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	if v.IsNull() {
 		return nil, nil
 	}
+
+	if v.Kind() == types.KindMysqlHex {
+		return strconv.FormatInt(v.GetMysqlHex().Value, 10), nil
+	}
+
 	return v.ToString()
 }
 
@@ -681,12 +691,14 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 	return errors.Trace(err)
 }
 
-// If create table with auto_increment option, we should rebase tableAutoIncID value.
+// handleAutoIncID handles auto_increment option in DDL. It creates a ID counter for the table and initiates the counter to a proper value.
+// For example if the option sets auto_increment to 10. The counter will be set to 9. So the next allocated ID will be 10.
 func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64) error {
 	if tbInfo.OldSchemaID != 0 {
 		schemaID = tbInfo.OldSchemaID
 	}
 	alloc := autoid.NewAllocator(d.store, schemaID)
+
 	tbInfo.State = model.StatePublic
 	tb, err := table.TableFromMeta(alloc, tbInfo)
 	if err != nil {
@@ -701,7 +713,7 @@ func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64) error {
 	return nil
 }
 
-// Add create table options into TableInfo.
+// handleTableOptions updates tableInfo according to table options.
 func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) {
 	for _, op := range options {
 		switch op.Tp {
@@ -712,7 +724,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) {
 		case ast.TableOptionCharset:
 			tbInfo.Charset = op.StrValue
 		case ast.TableOptionCollate:
-			tbInfo.Charset = op.StrValue
+			tbInfo.Collate = op.StrValue
 		}
 	}
 }
@@ -896,18 +908,28 @@ func (d *ddl) DropColumn(ctx context.Context, ti ast.Ident, colName model.CIStr)
 // change or check existing data in the table.
 // It returns true if the two types has the same Charset and Collation, the same sign, both are
 // integer types or string types, and new Flen and Decimal must be greater than or equal to origin.
-func modifiable(origin *types.FieldType, to *types.FieldType) bool {
+func modifiable(origin *types.FieldType, to *types.FieldType) error {
 	if to.Flen > 0 && to.Flen < origin.Flen {
-		return false
+		msg := fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
+		return errUnsupportedModifyColumn.GenByArgs(msg)
 	}
 	if to.Decimal > 0 && to.Decimal < origin.Decimal {
-		return false
+		msg := fmt.Sprintf("decimal %d is less than origin %d", to.Decimal, origin.Decimal)
+		return errUnsupportedModifyColumn.GenByArgs(msg)
 	}
-	if origin.Charset != to.Charset || origin.Collate != to.Collate {
-		return false
+	if to.Charset != origin.Charset {
+		msg := fmt.Sprintf("charset %s not match origin %s", to.Charset, origin.Charset)
+		return errUnsupportedModifyColumn.GenByArgs(msg)
 	}
-	if mysql.HasUnsignedFlag(uint(origin.Flag)) != mysql.HasUnsignedFlag(uint(to.Flag)) {
-		return false
+	if to.Collate != origin.Collate {
+		msg := fmt.Sprintf("collate %s not match origin %s", to.Collate, origin.Collate)
+		return errUnsupportedModifyColumn.GenByArgs(msg)
+	}
+	toUnsigned := mysql.HasUnsignedFlag(uint(to.Flag))
+	originUnsigned := mysql.HasUnsignedFlag(uint(origin.Flag))
+	if originUnsigned != toUnsigned {
+		msg := fmt.Sprintf("unsigned %v not match origin %v", toUnsigned, originUnsigned)
+		return errUnsupportedModifyColumn.GenByArgs(msg)
 	}
 	switch origin.Tp {
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
@@ -915,24 +937,20 @@ func modifiable(origin *types.FieldType, to *types.FieldType) bool {
 		switch to.Tp {
 		case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
 			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-			return true
-		default:
-			return false
+			return nil
 		}
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		switch to.Tp {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-			return true
-		default:
-			return false
+			return nil
 		}
 	default:
 		if origin.Tp == to.Tp {
-			return true
+			return nil
 		}
-
-		return false
 	}
+	msg := fmt.Sprintf("type %v not match orgin %v", to.Tp, origin.Tp)
+	return errUnsupportedModifyColumn.GenByArgs(msg)
 }
 
 func setDefaultValue(ctx context.Context, col *table.Column, option *ast.ColumnOption) error {
@@ -1028,16 +1046,20 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 		OriginDefaultValue: col.OriginDefaultValue,
 		FieldType:          *spec.NewColumn.Tp,
 	}
-	setCharsetCollationFlenDecimal(&newCol.FieldType)
-	if !modifiable(&col.FieldType, &newCol.FieldType) {
-		return nil, errors.Trace(errUnsupportedModifyColumn)
+	err = setCharsetCollationFlenDecimal(&newCol.FieldType)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	err = modifiable(&col.FieldType, &newCol.FieldType)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	if err := setDefaultAndComment(ctx, newCol, spec.NewColumn.Options); err != nil {
 		return nil, errors.Trace(err)
 	}
 	// We don't support modifying the type definitions from 'null' to 'not null' now.
 	if !mysql.HasNotNullFlag(col.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
-		return nil, errors.Trace(errUnsupportedModifyColumn)
+		return nil, errUnsupportedModifyColumn.GenByArgs("null to not null")
 	}
 
 	newCol.Name = spec.NewColumn.Name.Name

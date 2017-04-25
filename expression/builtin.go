@@ -344,7 +344,7 @@ func (b *baseFunctionClass) verifyArgs(args []Expression) error {
 	return nil
 }
 
-// builtinFunc stands for a class for a function which may contains multiple functions.
+// functionClass is the interface for a function which may contains multiple functions.
 type functionClass interface {
 	// getFunction gets a function signature by the types and the counts of given arguments.
 	getFunction(args []Expression, ctx context.Context) (builtinFunc, error)
@@ -480,6 +480,7 @@ var funcs = map[string]functionClass{
 	ast.MakeSet:        &makeSetFunctionClass{baseFunctionClass{ast.MakeSet, 2, -1}},
 	ast.Oct:            &octFunctionClass{baseFunctionClass{ast.Oct, 1, 1}},
 	ast.Ord:            &ordFunctionClass{baseFunctionClass{ast.Ord, 1, 1}},
+	ast.Position:       &locateFunctionClass{baseFunctionClass{ast.Position, 2, 2}},
 	ast.Quote:          &quoteFunctionClass{baseFunctionClass{ast.Quote, 1, 1}},
 	ast.Repeat:         &repeatFunctionClass{baseFunctionClass{ast.Repeat, 2, 2}},
 	ast.Replace:        &replaceFunctionClass{baseFunctionClass{ast.Replace, 3, 3}},
