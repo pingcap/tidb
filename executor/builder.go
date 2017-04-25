@@ -751,7 +751,7 @@ func (b *executorBuilder) buildCache(v *plan.Cache) Executor {
 	}
 }
 
-func (b *executorBuilder) buildSimpleTableScan(tblInfo *model.TableInfo, cols []*model.ColumnInfo) Executor {
+func (b *executorBuilder) buildTableScanForAnalyze(tblInfo *model.TableInfo, cols []*model.ColumnInfo) Executor {
 	startTS := b.getStartTS()
 	if b.err != nil {
 		return nil
@@ -774,7 +774,7 @@ func (b *executorBuilder) buildSimpleTableScan(tblInfo *model.TableInfo, cols []
 	return e
 }
 
-func (b *executorBuilder) buildSimpleIndexScan(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) Executor {
+func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) Executor {
 	startTS := b.getStartTS()
 	if b.err != nil {
 		return nil
@@ -814,15 +814,15 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	}
 	for _, task := range v.PkTasks {
 		e.tasks = append(e.tasks, analyzeTask{taskType: pkTask,
-			src: b.buildSimpleTableScan(task.TableInfo, []*model.ColumnInfo{task.PKInfo})})
+			src: b.buildTableScanForAnalyze(task.TableInfo, []*model.ColumnInfo{task.PKInfo})})
 	}
 	for _, task := range v.ColTasks {
 		e.tasks = append(e.tasks, analyzeTask{taskType: colTask,
-			src: b.buildSimpleTableScan(task.TableInfo, task.ColsInfo)})
+			src: b.buildTableScanForAnalyze(task.TableInfo, task.ColsInfo)})
 	}
 	for _, task := range v.IdxTasks {
 		e.tasks = append(e.tasks, analyzeTask{taskType: idxTask,
-			src: b.buildSimpleIndexScan(task.TableInfo, task.IndexInfo)})
+			src: b.buildIndexScanForAnalyze(task.TableInfo, task.IndexInfo)})
 	}
 	return e
 }
