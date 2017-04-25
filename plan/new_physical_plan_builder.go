@@ -189,8 +189,8 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (taskProfi
 	return task, p.storeTaskProfile(prop, task)
 }
 
-// checkMemTableAndGetTask will check if this table is a mem table. If it is, it will produce a task and store it.
-func (p *DataSource) getMemTableTask(prop *requiredProp) (task taskProfile, err error) {
+// tryToGetMemTask will check if this table is a mem table. If it is, it will produce a task and store it.
+func (p *DataSource) tryToGetMemTask(prop *requiredProp) (task taskProfile, err error) {
 	client := p.ctx.GetClient()
 	memDB := infoschema.IsMemoryDB(p.DBName.L)
 	isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeSelect, 0)
@@ -211,7 +211,8 @@ func (p *DataSource) getMemTableTask(prop *requiredProp) (task taskProfile, err 
 	return task, nil
 }
 
-func (p *DataSource) getDualTask() (taskProfile, error) {
+// tryToGetDualTask will check if the push down predicate has false constant. If so, it will return table dual.
+func (p *DataSource) tryToGetDualTask() (taskProfile, error) {
 	for _, cond := range p.pushedDownConds {
 		if _, ok := cond.(*expression.Constant); ok {
 			result, err := expression.EvalBool(cond, nil, p.ctx)
@@ -240,14 +241,14 @@ func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, e
 	if task != nil {
 		return task, nil
 	}
-	task, err = p.getDualTask()
+	task, err = p.tryToGetDualTask()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	if task != nil {
 		return task, p.storeTaskProfile(prop, task)
 	}
-	task, err = p.getMemTableTask(prop)
+	task, err = p.tryToGetMemTask(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
