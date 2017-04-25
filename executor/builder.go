@@ -757,15 +757,12 @@ func (b *executorBuilder) buildTableScanForAnalyze(tblInfo *model.TableInfo, col
 		return nil
 	}
 	table, _ := b.is.TableByID(tblInfo.ID)
-	client := b.ctx.GetClient()
-	supportDesc := client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeDesc)
 	schema := expression.NewSchema(expression.ColumnInfos2Columns(tblInfo.Name, cols)...)
 	ranges := []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}
 	e := &XSelectTableExec{
 		tableInfo:   tblInfo,
 		ctx:         b.ctx,
 		startTS:     startTS,
-		supportDesc: supportDesc,
 		table:       table,
 		schema:      schema,
 		Columns:     cols,
@@ -780,8 +777,6 @@ func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idx
 		return nil
 	}
 	table, _ := b.is.TableByID(tblInfo.ID)
-	client := b.ctx.GetClient()
-	supportDesc := client.SupportRequestType(kv.ReqTypeIndex, kv.ReqSubTypeDesc)
 	cols := make([]*model.ColumnInfo, len(idxInfo.Columns))
 	for i, col := range idxInfo.Columns {
 		cols[i] = tblInfo.Columns[col.Offset]
@@ -792,7 +787,6 @@ func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idx
 	e := &XSelectIndexExec{
 		tableInfo:       tblInfo,
 		ctx:             b.ctx,
-		supportDesc:     supportDesc,
 		table:           table,
 		singleReadMode:  true,
 		startTS:         startTS,
