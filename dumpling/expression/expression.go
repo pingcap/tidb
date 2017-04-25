@@ -52,7 +52,7 @@ type Expression interface {
 	// Eval evaluates an expression through a row.
 	Eval(row []types.Datum) (types.Datum, error)
 
-	// Get the expression return type.
+	// GetType gets the type that the expression returns.
 	GetType() *types.FieldType
 
 	// Clone copies an expression totally.

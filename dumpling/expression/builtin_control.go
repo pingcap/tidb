@@ -45,6 +45,7 @@ type builtinCaseWhenSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinCaseWhenSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/case.html
 func (b *builtinCaseWhenSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -87,6 +88,7 @@ type builtinIfSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinIfSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_if
 func (s *builtinIfSig) eval(row []types.Datum) (types.Datum, error) {
 	args, err := s.evalArgs(row)
@@ -129,6 +131,7 @@ type builtinIfNullSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinIfNullSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_ifnull
 func (b *builtinIfNullSig) eval(row []types.Datum) (types.Datum, error) {
 	args, err := b.evalArgs(row)
@@ -159,6 +162,7 @@ type builtinNullIfSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinNullIfSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_nullif
 func (b *builtinNullIfSig) eval(row []types.Datum) (types.Datum, error) {
 	args, err := b.evalArgs(row)

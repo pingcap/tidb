@@ -61,7 +61,8 @@ type builtinInSig struct {
 	baseBuiltinFunc
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/any-in-some-subqueries.html
+// eval evals a builtinInSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/any-in-some-subqueries.html
 func (b *builtinInSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
@@ -138,8 +139,9 @@ type builtinCastSig struct {
 	tp *types.FieldType
 }
 
-// CastFuncFactory produces builtin function according to field types.
+// eval evals a builtinCastSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html
+// CastFuncFactory produces builtin function according to field types.
 func (b *builtinCastSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
@@ -262,6 +264,7 @@ type builtinBitCountSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinBitCountSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/bit-functions.html#function_bit-count
 func (b *builtinBitCountSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
