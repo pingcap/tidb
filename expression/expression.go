@@ -46,6 +46,9 @@ const (
 // EvalAstExpr evaluates ast expression directly.
 var EvalAstExpr func(expr ast.ExprNode, ctx context.Context) (types.Datum, error)
 
+// baseExpr will be removed later.
+// baseExpr implements the common implementation of EvalXXX(XXX:Int/Real/Decimal/String) of Expression to guarantee the
+// availability of Constant and Column.
 type baseExpr struct {
 	self Expression
 }

@@ -129,12 +129,10 @@ type baseIntBuiltinFunc struct {
 
 func (b *baseIntBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) {
 	res, isNull, err := b.self.evalInt(row)
-	if err != nil {
+	if err != nil || isNull {
 		return d, errors.Trace(err)
 	}
-	if !isNull {
-		d.SetInt64(res)
-	}
+	d.SetInt64(res)
 	return
 }
 
@@ -174,12 +172,10 @@ type baseRealBuiltinFunc struct {
 
 func (b *baseRealBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) {
 	res, isNull, err := b.self.evalReal(row)
-	if err != nil {
+	if err != nil || isNull {
 		return d, errors.Trace(err)
 	}
-	if !isNull {
-		d.SetFloat64(res)
-	}
+	d.SetFloat64(res)
 	return
 }
 
@@ -224,12 +220,10 @@ type baseDecimalBuiltinFunc struct {
 
 func (b *baseDecimalBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) {
 	res, isNull, err := b.self.evalDecimal(row)
-	if err != nil {
+	if err != nil || isNull {
 		return d, errors.Trace(err)
 	}
-	if !isNull {
-		d.SetMysqlDecimal(res)
-	}
+	d.SetMysqlDecimal(res)
 	return
 }
 
@@ -271,12 +265,10 @@ type baseStringBuiltinFunc struct {
 
 func (b *baseStringBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) {
 	val, isNull, err := b.self.evalString(row)
-	if err != nil {
+	if err != nil || isNull {
 		return d, errors.Trace(err)
 	}
-	if !isNull {
-		d.SetString(val)
-	}
+	d.SetString(val)
 	return
 }
 
