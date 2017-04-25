@@ -340,7 +340,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 	case *XSelectTableExec:
 		us.desc = x.desc
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
-		us.condition = v.Condition
+		us.conditions = v.Conditions
 		us.buildAndSortAddedRows(x.table, x.asName)
 	case *XSelectIndexExec:
 		us.desc = x.indexPlan.Desc
@@ -353,7 +353,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 			}
 		}
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
-		us.condition = v.Condition
+		us.conditions = v.Conditions
 		us.buildAndSortAddedRows(x.table, x.asName)
 	default:
 		// The mem table will not be written by sql directly, so we can omit the union scan to avoid err reporting.
@@ -369,9 +369,9 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 		LeftChild(b.build(v.Children()[0])).
 		RightChild(b.build(v.Children()[1])).
 		EqualConditions(v.EqualConditions).
-		LeftFilter(expression.ComposeCNFCondition(b.ctx, v.LeftConditions...)).
-		RightFilter(expression.ComposeCNFCondition(b.ctx, v.RightConditions...)).
-		OtherFilter(expression.ComposeCNFCondition(b.ctx, v.OtherConditions...)).
+		LeftFilter(v.LeftConditions).
+		RightFilter(v.RightConditions).
+		OtherFilter(v.OtherConditions).
 		Schema(v.Schema()).
 		JoinType(v.JoinType).
 		DefaultVals(v.DefaultValues).
@@ -401,7 +401,7 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 	}
 	e := &HashJoinExec{
 		schema:        v.Schema(),
-		otherFilter:   expression.ComposeCNFCondition(b.ctx, v.OtherConditions...),
+		otherFilter:   v.OtherConditions,
 		prepared:      false,
 		ctx:           b.ctx,
 		targetTypes:   targetTypes,
@@ -409,15 +409,15 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 		defaultValues: v.DefaultValues,
 	}
 	if v.SmallTable == 1 {
-		e.smallFilter = expression.ComposeCNFCondition(b.ctx, v.RightConditions...)
-		e.bigFilter = expression.ComposeCNFCondition(b.ctx, v.LeftConditions...)
+		e.smallFilter = v.RightConditions
+		e.bigFilter = v.LeftConditions
 		e.smallHashKey = rightHashKey
 		e.bigHashKey = leftHashKey
 		e.leftSmall = false
 	} else {
 		e.leftSmall = true
-		e.smallFilter = expression.ComposeCNFCondition(b.ctx, v.LeftConditions...)
-		e.bigFilter = expression.ComposeCNFCondition(b.ctx, v.RightConditions...)
+		e.smallFilter = v.LeftConditions
+		e.bigFilter = v.RightConditions
 		e.smallHashKey = leftHashKey
 		e.bigHashKey = rightHashKey
 	}
@@ -434,10 +434,10 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 	for i := 0; i < e.concurrency; i++ {
 		ctx := &hashJoinCtx{}
 		if e.bigFilter != nil {
-			ctx.bigFilter = e.bigFilter.Clone()
+			ctx.bigFilter = e.bigFilter
 		}
 		if e.otherFilter != nil {
-			ctx.otherFilter = e.otherFilter.Clone()
+			ctx.otherFilter = e.otherFilter
 		}
 		ctx.datumBuffer = make([]types.Datum, len(e.bigHashKey))
 		ctx.hashKeyBuffer = make([]byte, 0, 10000)
@@ -458,9 +458,9 @@ func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) *HashSemiJ
 	}
 	e := &HashSemiJoinExec{
 		schema:       v.Schema(),
-		otherFilter:  expression.ComposeCNFCondition(b.ctx, v.OtherConditions...),
-		bigFilter:    expression.ComposeCNFCondition(b.ctx, v.LeftConditions...),
-		smallFilter:  expression.ComposeCNFCondition(b.ctx, v.RightConditions...),
+		otherFilter:  v.OtherConditions,
+		bigFilter:    v.LeftConditions,
+		smallFilter:  v.RightConditions,
 		bigExec:      b.build(v.Children()[0]),
 		smallExec:    b.build(v.Children()[1]),
 		prepared:     false,
@@ -649,9 +649,9 @@ func (b *executorBuilder) buildNestedLoopJoin(v *plan.PhysicalHashJoin) *NestedL
 			SmallExec:     b.build(v.Children()[1]),
 			BigExec:       b.build(v.Children()[0]),
 			Ctx:           b.ctx,
-			BigFilter:     expression.ComposeCNFCondition(b.ctx, v.LeftConditions...),
-			SmallFilter:   expression.ComposeCNFCondition(b.ctx, v.RightConditions...),
-			OtherFilter:   expression.ComposeCNFCondition(b.ctx, append(expression.ScalarFuncs2Exprs(v.EqualConditions), v.OtherConditions...)...),
+			BigFilter:     v.LeftConditions,
+			SmallFilter:   v.RightConditions,
+			OtherFilter:   append(expression.ScalarFuncs2Exprs(v.EqualConditions), v.OtherConditions...),
 			schema:        v.Schema(),
 			outer:         v.JoinType != plan.InnerJoin,
 			defaultValues: v.DefaultValues,
@@ -662,9 +662,9 @@ func (b *executorBuilder) buildNestedLoopJoin(v *plan.PhysicalHashJoin) *NestedL
 		BigExec:       b.build(v.Children()[1]),
 		leftSmall:     true,
 		Ctx:           b.ctx,
-		BigFilter:     expression.ComposeCNFCondition(b.ctx, v.RightConditions...),
-		SmallFilter:   expression.ComposeCNFCondition(b.ctx, v.LeftConditions...),
-		OtherFilter:   expression.ComposeCNFCondition(b.ctx, append(expression.ScalarFuncs2Exprs(v.EqualConditions), v.OtherConditions...)...),
+		BigFilter:     v.RightConditions,
+		SmallFilter:   v.LeftConditions,
+		OtherFilter:   append(expression.ScalarFuncs2Exprs(v.EqualConditions), v.OtherConditions...),
 		schema:        v.Schema(),
 		outer:         v.JoinType != plan.InnerJoin,
 		defaultValues: v.DefaultValues,
