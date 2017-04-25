@@ -265,6 +265,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 	return errors.Trace(err)
 }
 
+// addTableColumn adds a column to the table.
 // TODO: Use it when updating the column type or remove it.
 // How to backfill column data in reorganization state?
 //  1. Generate a snapshot with special version.

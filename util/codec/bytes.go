@@ -190,7 +190,7 @@ func reverseBytes(b []byte) {
 	safeReverseBytes(b)
 }
 
-// like realloc.
+// reallocBytes is like realloc.
 func reallocBytes(b []byte, n int) []byte {
 	newSize := len(b) + n
 	if cap(b) < newSize {

@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -318,7 +319,42 @@ type builtinRightSig struct {
 }
 
 func (b *builtinRightSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("RIGHT")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if len(args) != 2 {
+		return d, nil
+	}
+	arg0, arg1 := args[0], args[1]
+	if arg0.IsNull() || arg1.IsNull() {
+		return d, nil
+	}
+
+	str, err := arg0.ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	sc := new(variable.StatementContext)
+	sc.IgnoreTruncate = true
+	length, err := arg1.ToInt64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if length <= 0 {
+		d.SetString("")
+		return d, nil
+	}
+	var result string
+	strLen := int64(len(str))
+	if strLen >= length {
+		result = str[strLen-length:]
+	} else {
+		result = str
+	}
+	d.SetString(result)
+
+	return d, nil
 }
 
 type repeatFunctionClass struct {

@@ -131,6 +131,10 @@ type physicalPlanInfo struct {
 	p     PhysicalPlan
 	cost  float64
 	count float64
+
+	// If the count is calculated by pseudo table, it's not reliable. Otherwise it's reliable.
+	// But if we has limit or maxOneRow, the count is reliable.
+	reliable bool
 }
 
 // LogicalPlan is a tree of logical operators.
