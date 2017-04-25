@@ -166,16 +166,19 @@ func (hg *Histogram) equalRowCount(sc *variable.StatementContext, value types.Da
 }
 
 // greaterRowCount estimates the row count where the column greater than value.
-func (hg *Histogram) greaterRowCount(sc *variable.StatementContext, value types.Datum) (float64, error) {
-	lessCount, err := hg.lessRowCount(sc, value)
+func (hg *Histogram) greaterRowCount(sc *variable.StatementContext, value types.Datum, hasEq bool) (float64, error) {
+	lessCount, err := hg.lessRowCount(sc, value, false)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	eqCount, err := hg.equalRowCount(sc, value)
-	if err != nil {
-		return 0, errors.Trace(err)
+	gtCount := hg.totalRowCount() - lessCount
+	if !hasEq {
+		eqCount, err := hg.equalRowCount(sc, value)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		gtCount -= eqCount
 	}
-	gtCount := hg.totalRowCount() - lessCount - eqCount
 	if gtCount < 0 {
 		gtCount = 0
 	}
@@ -183,7 +186,7 @@ func (hg *Histogram) greaterRowCount(sc *variable.StatementContext, value types.
 }
 
 // lessRowCount estimates the row count where the column less than value.
-func (hg *Histogram) lessRowCount(sc *variable.StatementContext, value types.Datum) (float64, error) {
+func (hg *Histogram) lessRowCount(sc *variable.StatementContext, value types.Datum, hasEq bool) (float64, error) {
 	index, match, err := hg.lowerBound(sc, value)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -198,6 +201,9 @@ func (hg *Histogram) lessRowCount(sc *variable.StatementContext, value types.Dat
 	}
 	lessThanBucketValueCount := curCount - float64(hg.Buckets[index].Repeats)
 	if match {
+		if hasEq {
+			return curCount, nil
+		}
 		return lessThanBucketValueCount, nil
 	}
 	return (prevCount + lessThanBucketValueCount) / 2, nil
@@ -205,11 +211,11 @@ func (hg *Histogram) lessRowCount(sc *variable.StatementContext, value types.Dat
 
 // betweenRowCount estimates the row count where column greater or equal to a and less than b.
 func (hg *Histogram) betweenRowCount(sc *variable.StatementContext, a, b types.Datum) (float64, error) {
-	lessCountA, err := hg.lessRowCount(sc, a)
+	lessCountA, err := hg.lessRowCount(sc, a, false)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	lessCountB, err := hg.lessRowCount(sc, b)
+	lessCountB, err := hg.lessRowCount(sc, b, false)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -288,9 +294,9 @@ func (c *Column) getIntColumnRowCount(sc *variable.StatementContext, intRanges [
 		if rg.LowVal == math.MinInt64 && rg.HighVal == math.MaxInt64 {
 			cnt = totalRowCount
 		} else if rg.LowVal == math.MinInt64 {
-			cnt, err = c.lessRowCount(sc, types.NewIntDatum(rg.HighVal))
+			cnt, err = c.lessRowCount(sc, types.NewIntDatum(rg.HighVal), true)
 		} else if rg.HighVal == math.MaxInt64 {
-			cnt, err = c.greaterRowCount(sc, types.NewIntDatum(rg.LowVal))
+			cnt, err = c.greaterRowCount(sc, types.NewIntDatum(rg.LowVal), true)
 		} else {
 			if rg.LowVal == rg.HighVal {
 				cnt, err = c.equalRowCount(sc, types.NewIntDatum(rg.LowVal))
