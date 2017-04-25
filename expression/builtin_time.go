@@ -2280,5 +2280,18 @@ type builtinUTCTimeSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-time
 func (b *builtinUTCTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("UTC_TIME")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	fsp := 0
+	sc := b.ctx.GetSessionVars().StmtCtx
+	if len(args) == 1 && !args[0].IsNull() {
+		if fsp, err = checkFsp(sc, args[0]); err != nil {
+			d.SetNull()
+			return d, errors.Trace(err)
+		}
+	}
+	d.SetString(time.Now().UTC().Format("15:04:05.000000"))
+	return convertToDuration(b.ctx.GetSessionVars().StmtCtx, d, fsp)
 }
