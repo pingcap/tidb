@@ -101,8 +101,8 @@ type rpcHandler struct {
 }
 
 func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
-	ctxPear := ctx.GetPeer()
-	if ctxPear != nil && ctxPear.GetStoreId() != h.storeID {
+	ctxPeer := ctx.GetPeer()
+	if ctxPeer != nil && ctxPeer.GetStoreId() != h.storeID {
 		return &errorpb.Error{
 			Message:       proto.String("store not match"),
 			StoreNotMatch: &errorpb.StoreNotMatch{},

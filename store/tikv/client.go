@@ -39,7 +39,7 @@ const (
 type Client interface {
 	// Close should release all data.
 	Close() error
-	// SendKVReq sends kv request.
+	// SendReq sends Request.
 	SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error)
 }
 
