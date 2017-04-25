@@ -673,6 +673,8 @@ import (
 	PartitionDefinitionListOpt	"Partition definition list option"
 	PartitionOpt		"Partition option"
 	PartitionNumOpt		"PARTITION NUM option"
+	PartDefValuesOpt	"VALUES {LESS THAN {(expr | value_list) | MAXVALUE} | IN {value_list}"
+	PartDefStorageOpt	"ENGINE = xxx or empty"
 	PasswordOpt		"Password option"
 	ColumnPosition		"Column position [First|After ColumnName]"
 	PreparedStmt		"PreparedStmt"
@@ -1677,13 +1679,23 @@ PartitionDefinitionListOpt:
 PartitionDefinitionList:
 	PartitionDefinition
 	{}
-|	PartitionDefinition ',' PartitionDefinitionList
+|	PartitionDefinitionList ',' PartitionDefinition
 	{}
 
 PartitionDefinition:
-	"PARTITION" Identifier "VALUES" "LESS" "THAN" ExpressionList "ENGINE" eq Identifier
+	"PARTITION" Identifier PartDefValuesOpt PartDefStorageOpt
 	{}
-|	"PARTITION" Identifier "VALUES" "LESS" "THAN" "MAXVALUE" "ENGINE" eq Identifier
+
+PartDefValuesOpt:
+	{}
+|	"VALUES" "LESS" "THAN" "MAXVALUE"
+	{}
+|	"VALUES" "LESS" "THAN" '(' ExpressionList ')'
+	{}
+
+PartDefStorageOpt:
+	{}
+|	"ENGINE" eq Identifier
 	{}
 
 /******************************************************************
