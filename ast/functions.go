@@ -398,6 +398,10 @@ type AggregateFuncExpr struct {
 	// For example, column c1 values are "1", "2", "2",  "sum(c1)" is "5",
 	// but "sum(distinct c1)" is "3".
 	Distinct bool
+	// OrderBy is ORDER BY clause in group_concat
+	OrderBy *OrderByClause
+	// Separator is SEPARATOR in group_concat
+	Separator string
 }
 
 // Accept implements Node Accept interface.

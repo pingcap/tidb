@@ -99,7 +99,9 @@ type aggEvaluateContext struct {
 }
 
 // NewAggFunction creates a new AggregationFunction.
-func NewAggFunction(funcType string, funcArgs []Expression, distinct bool) AggregationFunction {
+// TODO: after determining how the `order by` is implemented,
+// convert the optional parameters list to the determined parameters
+func NewAggFunction(funcType string, funcArgs []Expression, distinct bool, concatOpt ...interface{}) AggregationFunction {
 	switch tp := strings.ToLower(funcType); tp {
 	case ast.AggFuncSum:
 		return &sumFunction{aggFunction: newAggFunc(tp, funcArgs, distinct)}
@@ -108,7 +110,14 @@ func NewAggFunction(funcType string, funcArgs []Expression, distinct bool) Aggre
 	case ast.AggFuncAvg:
 		return &avgFunction{aggFunction: newAggFunc(tp, funcArgs, distinct)}
 	case ast.AggFuncGroupConcat:
-		return &concatFunction{aggFunction: newAggFunc(tp, funcArgs, distinct)}
+		var sep string
+		for _, opt := range concatOpt {
+			if v, ok := opt.(string); ok {
+				sep = v
+				break
+			}
+		}
+		return &concatFunction{aggFunction: newAggFunc(tp, funcArgs, distinct), sep: sep}
 	case ast.AggFuncMax:
 		return &maxMinFunction{aggFunction: newAggFunc(tp, funcArgs, distinct), isMax: true}
 	case ast.AggFuncMin:
@@ -137,7 +146,7 @@ func NewDistAggFunc(expr *tipb.Expr, colsID map[int64]int, sc *variable.Statemen
 	case tipb.ExprType_Avg:
 		return &avgFunction{aggFunction: newAggFunc(ast.AggFuncAvg, args, false)}, nil
 	case tipb.ExprType_GroupConcat:
-		return &concatFunction{aggFunction: newAggFunc(ast.AggFuncGroupConcat, args, false)}, nil
+		return &concatFunction{aggFunction: newAggFunc(ast.AggFuncGroupConcat, args, false), sep: ","}, nil
 	case tipb.ExprType_Max:
 		return &maxMinFunction{aggFunction: newAggFunc(ast.AggFuncMax, args, false), isMax: true}, nil
 	case tipb.ExprType_Min:
@@ -647,6 +656,7 @@ func (af *avgFunction) GetStreamResult() (d types.Datum) {
 
 type concatFunction struct {
 	aggFunction
+	sep string
 }
 
 // Clone implements AggregationFunction interface.
@@ -698,8 +708,7 @@ func (cf *concatFunction) Update(row []types.Datum, groupKey []byte, sc *variabl
 	if ctx.Buffer == nil {
 		ctx.Buffer = &bytes.Buffer{}
 	} else {
-		// now use comma separator
-		ctx.Buffer.WriteString(",")
+		ctx.Buffer.WriteString(cf.sep)
 	}
 	for _, val := range cf.datumBuf {
 		cf.writeValue(ctx, val)
@@ -734,8 +743,7 @@ func (cf *concatFunction) StreamUpdate(row []types.Datum, sc *variable.Statement
 	if ctx.Buffer == nil {
 		ctx.Buffer = &bytes.Buffer{}
 	} else {
-		// now use comma separator
-		ctx.Buffer.WriteString(",")
+		ctx.Buffer.WriteString(cf.sep)
 	}
 	for _, val := range cf.datumBuf {
 		cf.writeValue(ctx, val)

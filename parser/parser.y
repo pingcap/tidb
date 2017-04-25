@@ -224,6 +224,7 @@ import (
 	xor 			"XOR"
 	yearMonth		"YEAR_MONTH"
 	zerofill		"ZEROFILL"
+	separator		"SEPARATOR"
 
 	/* the following tokens belong to NotKeywordToken*/
 	abs				"ABS"
@@ -581,6 +582,7 @@ import (
 	DefaultValueExpr	"DefaultValueExpr(Now or Signed Literal)"
 	DeleteFromStmt		"DELETE FROM statement"
 	DistinctOpt		"Distinct option"
+	Separator			"group_concat separator"
 	DoStmt			"Do statement"
 	DropDatabaseStmt	"DROP DATABASE statement"
 	DropIndexStmt		"DROP INDEX statement"
@@ -2326,7 +2328,7 @@ ReservedKeyword:
 | "STARTING" | "TABLE" | "TERMINATED" | "THEN" | "TINYBLOB" | "TINYINT" | "TINYTEXT" | "TO"
 | "TRAILING" | "TRUE" | "UNION" | "UNIQUE" | "UNLOCK" | "UNSIGNED"
 | "UPDATE" | "USE" | "USING" | "UTC_DATE" | "UTC_TIMESTAMP" | "VALUES" | "VARBINARY" | "VARCHAR"
-| "WHEN" | "WHERE" | "WRITE" | "XOR" | "YEAR_MONTH" | "ZEROFILL"
+| "WHEN" | "WHERE" | "WRITE" | "XOR" | "YEAR_MONTH" | "ZEROFILL" | "SEPARATOR"
  /*
 | "DELAYED" | "HIGH_PRIORITY" | "LOW_PRIORITY"| "WITH"
  */
@@ -3990,6 +3992,15 @@ TrimDirection:
 		$$ = ast.TrimTrailing
 	}
 
+Separator:
+	{
+		$$ = ","
+	}
+|	"SEPARATOR" stringLit
+	{
+		$$ = $2
+	}
+
 FunctionCallAgg:
 	"AVG" '(' DistinctOpt Expression ')'
 	{
@@ -4016,9 +4027,13 @@ FunctionCallAgg:
 		args := []ast.ExprNode{ast.NewValueExpr(1)}
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: args}
 	}
-|	"GROUP_CONCAT" '(' DistinctOpt ExpressionList ')'
+|	"GROUP_CONCAT" '(' DistinctOpt ExpressionList OrderByOptional Separator ')'
 	{
-		$$ = &ast.AggregateFuncExpr{F: $1, Args: $4.([]ast.ExprNode), Distinct: $3.(bool)}
+		var order *ast.OrderByClause
+		if $5 != nil {
+			order = $5.(*ast.OrderByClause)
+		}
+		$$ = &ast.AggregateFuncExpr{F: $1, Args:  $4.([]ast.ExprNode), Distinct: $3.(bool), OrderBy: order, Separator: $6.(string)}
 	}
 |	"MAX" '(' DistinctOpt Expression ')'
 	{
