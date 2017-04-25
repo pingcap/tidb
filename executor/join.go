@@ -42,9 +42,9 @@ type HashJoinExec struct {
 	bigExec       Executor
 	prepared      bool
 	ctx           context.Context
-	smallFilter   expression.Expression
-	bigFilter     expression.Expression
-	otherFilter   expression.Expression
+	smallFilter   []expression.Expression
+	bigFilter     []expression.Expression
+	otherFilter   []expression.Expression
 	schema        *expression.Schema
 	outer         bool
 	leftSmall     bool
@@ -75,8 +75,8 @@ type HashJoinExec struct {
 
 // hashJoinCtx holds the variables needed to do a hash join in one of many concurrent goroutines.
 type hashJoinCtx struct {
-	bigFilter   expression.Expression
-	otherFilter expression.Expression
+	bigFilter   []expression.Expression
+	otherFilter []expression.Expression
 	// Buffer used for encode hash keys.
 	datumBuffer   []types.Datum
 	hashKeyBuffer []byte
@@ -228,15 +228,12 @@ func (e *HashJoinExec) prepare() error {
 			break
 		}
 
-		matched := true
-		if e.smallFilter != nil {
-			matched, err = expression.EvalBool(e.smallFilter, row.Data, e.ctx)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if !matched {
-				continue
-			}
+		matched, err := expression.EvalBool(e.smallFilter, row.Data, e.ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !matched {
+			continue
 		}
 		hasNull, joinKey, err := getJoinKey(sc, e.smallHashKey, row, e.targetTypes, e.hashJoinContexts[0].datumBuffer, nil)
 		if err != nil {
@@ -417,18 +414,15 @@ func (e *HashJoinExec) constructMatchedRows(ctx *hashJoinCtx, bigRow *Row) (matc
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		otherMatched := true
 		var matchedRow *Row
 		if e.leftSmall {
 			matchedRow = makeJoinRow(smallRow, bigRow)
 		} else {
 			matchedRow = makeJoinRow(bigRow, smallRow)
 		}
-		if e.otherFilter != nil {
-			otherMatched, err = expression.EvalBool(ctx.otherFilter, matchedRow.Data, e.ctx)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+		otherMatched, err := expression.EvalBool(ctx.otherFilter, matchedRow.Data, e.ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 		if otherMatched {
 			matchedRows = append(matchedRows, matchedRow)
@@ -509,9 +503,9 @@ type NestedLoopJoinExec struct {
 	leftSmall     bool
 	prepared      bool
 	Ctx           context.Context
-	SmallFilter   expression.Expression
-	BigFilter     expression.Expression
-	OtherFilter   expression.Expression
+	SmallFilter   []expression.Expression
+	BigFilter     []expression.Expression
+	OtherFilter   []expression.Expression
 	schema        *expression.Schema
 	outer         bool
 	defaultValues []types.Datum
@@ -545,12 +539,9 @@ func (e *NestedLoopJoinExec) fetchBigRow() (*Row, bool, error) {
 			return nil, false, e.BigExec.Close()
 		}
 
-		matched := true
-		if e.BigFilter != nil {
-			matched, err = expression.EvalBool(e.BigFilter, bigRow.Data, e.Ctx)
-			if err != nil {
-				return nil, false, errors.Trace(err)
-			}
+		matched, err := expression.EvalBool(e.BigFilter, bigRow.Data, e.Ctx)
+		if err != nil {
+			return nil, false, errors.Trace(err)
 		}
 		if matched {
 			return bigRow, true, nil
@@ -578,15 +569,9 @@ func (e *NestedLoopJoinExec) prepare() error {
 			return e.SmallExec.Close()
 		}
 
-		matched := true
-		if e.SmallFilter != nil {
-			matched, err = expression.EvalBool(e.SmallFilter, row.Data, e.Ctx)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if !matched {
-				continue
-			}
+		matched, err := expression.EvalBool(e.SmallFilter, row.Data, e.Ctx)
+		if err != nil {
+			return errors.Trace(err)
 		}
 		if matched {
 			e.innerRows = append(e.innerRows, row)
@@ -621,14 +606,12 @@ func (e *NestedLoopJoinExec) doJoin(bigRow *Row, match bool) ([]*Row, error) {
 		} else {
 			mergedRow = makeJoinRow(bigRow, row)
 		}
-		if e.OtherFilter != nil {
-			matched, err := expression.EvalBool(e.OtherFilter, mergedRow.Data, e.Ctx)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if !matched {
-				continue
-			}
+		matched, err := expression.EvalBool(e.OtherFilter, mergedRow.Data, e.Ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if !matched {
+			continue
 		}
 		e.resultRows = append(e.resultRows, mergedRow)
 	}
@@ -673,9 +656,9 @@ type HashSemiJoinExec struct {
 	bigExec      Executor
 	prepared     bool
 	ctx          context.Context
-	smallFilter  expression.Expression
-	bigFilter    expression.Expression
-	otherFilter  expression.Expression
+	smallFilter  []expression.Expression
+	bigFilter    []expression.Expression
+	otherFilter  []expression.Expression
 	schema       *expression.Schema
 	resultRows   []*Row
 	// In auxMode, the result row always returns with an extra column which stores a boolean
@@ -725,15 +708,12 @@ func (e *HashSemiJoinExec) prepare() error {
 			break
 		}
 
-		matched := true
-		if e.smallFilter != nil {
-			matched, err = expression.EvalBool(e.smallFilter, row.Data, e.ctx)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if !matched {
-				continue
-			}
+		matched, err := expression.EvalBool(e.smallFilter, row.Data, e.ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !matched {
+			continue
 		}
 		hasNull, hashcode, err := getJoinKey(sc, e.smallHashKey, row, e.targetTypes, make([]types.Datum, len(e.smallHashKey)), nil)
 		if err != nil {
@@ -769,14 +749,10 @@ func (e *HashSemiJoinExec) rowIsMatched(bigRow *Row) (matched bool, hasNull bool
 	}
 	// match eq condition
 	for _, smallRow := range rows {
-		matched = true
-		if e.otherFilter != nil {
-			var matchedRow *Row
-			matchedRow = makeJoinRow(bigRow, smallRow)
-			matched, err = expression.EvalBool(e.otherFilter, matchedRow.Data, e.ctx)
-			if err != nil {
-				return false, false, errors.Trace(err)
-			}
+		matchedRow := makeJoinRow(bigRow, smallRow)
+		matched, err = expression.EvalBool(e.otherFilter, matchedRow.Data, e.ctx)
+		if err != nil {
+			return false, false, errors.Trace(err)
 		}
 		if matched {
 			return
@@ -795,12 +771,9 @@ func (e *HashSemiJoinExec) fetchBigRow() (*Row, bool, error) {
 			return nil, false, errors.Trace(e.bigExec.Close())
 		}
 
-		matched := true
-		if e.bigFilter != nil {
-			matched, err = expression.EvalBool(e.bigFilter, bigRow.Data, e.ctx)
-			if err != nil {
-				return nil, false, errors.Trace(err)
-			}
+		matched, err := expression.EvalBool(e.bigFilter, bigRow.Data, e.ctx)
+		if err != nil {
+			return nil, false, errors.Trace(err)
 		}
 		if matched {
 			return bigRow, true, nil
