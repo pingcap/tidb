@@ -23,12 +23,12 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
 )
 
@@ -240,9 +240,9 @@ func (s *tikvStore) GetClient() kv.Client {
 	}
 }
 
-func (s *tikvStore) SendKVReq(bo *Backoffer, req *pb.Request, regionID RegionVerID, timeout time.Duration) (*pb.Response, error) {
+func (s *tikvStore) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
 	sender := NewRegionRequestSender(bo, s.regionCache, s.client)
-	return sender.SendKVReq(req, regionID, timeout)
+	return sender.SendReq(req, regionID, timeout)
 }
 
 // ParseEtcdAddr parses path to etcd address list
