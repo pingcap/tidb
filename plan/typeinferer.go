@@ -304,7 +304,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		if x.FnName.L == ast.Abs && tp.Tp == mysql.TypeDatetime {
 			tp = types.NewFieldType(mysql.TypeDouble)
 		}
-	case ast.Round:
+	case ast.Round, ast.Truncate:
 		t := x.Args[0].GetType().Tp
 		switch t {
 		case mysql.TypeBit, mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLonglong:
