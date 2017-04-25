@@ -453,6 +453,7 @@ var tokenMap = map[string]int{
 	"TO_SECONDS":                 toSeconds,
 	"TRAILING":                   trailing,
 	"TRANSACTION":                transaction,
+	"TRIGGER":                    trigger,
 	"TRIGGERS":                   triggers,
 	"TRIM":                       trim,
 	"TRUE":                       trueKwd,
