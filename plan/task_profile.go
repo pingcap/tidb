@@ -14,8 +14,14 @@
 package plan
 
 import (
+	"fmt"
+
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // taskProfile is a new version of `PhysicalPlanInfo`. It stores cost information for a task.
@@ -294,5 +300,91 @@ func (sel *Selection) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 	profile.addCost(profile.count() * cpuFactor)
 	profile.setCount(profile.count() * selectionFactor)
 	profile = attachPlan2TaskProfile(sel.Copy(), profile)
+	return profile
+}
+
+func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *PhysicalAggregation) {
+	finalAgg = p.Copy().(*PhysicalAggregation)
+	// Check if this aggregation can push down.
+	sc := p.ctx.GetSessionVars().StmtCtx
+	client := p.ctx.GetClient()
+	for _, aggFunc := range p.AggFuncs {
+		pb := aggFuncToPBExpr(sc, client, aggFunc)
+		if pb == nil {
+			return
+		}
+	}
+	_, _, remained := ExpressionsToPB(sc, p.GroupByItems, client)
+	if len(remained) > 0 {
+		return
+	}
+	partialAgg = p.Copy().(*PhysicalAggregation)
+	// TODO: It's toooooo ugly here. Refactor in the future !!
+	gkType := types.NewFieldType(mysql.TypeBlob)
+	gkType.Charset = charset.CharsetBin
+	gkType.Collate = charset.CollationBin
+	partialSchema := expression.NewSchema(&expression.Column{RetType: gkType, FromID: p.id, Index: 0})
+	cursor := 0
+	finalAggFuncs := make([]expression.AggregationFunction, len(finalAgg.AggFuncs))
+	for i, aggFun := range p.AggFuncs {
+		fun := expression.NewAggFunction(aggFun.GetName(), nil, false)
+		var args []expression.Expression
+		colName := model.NewCIStr(fmt.Sprintf("col_%d", cursor+1))
+		if needCount(fun) {
+			cursor++
+			ft := types.NewFieldType(mysql.TypeLonglong)
+			ft.Flen = 21
+			ft.Charset = charset.CharsetBin
+			ft.Collate = charset.CollationBin
+			partialSchema.Append(&expression.Column{Index: cursor, ColName: colName, RetType: ft})
+			args = append(args, partialSchema.Columns[cursor].Clone())
+		}
+		if needValue(fun) {
+			cursor++
+			ft := p.schema.Columns[i].GetType()
+			partialSchema.Append(&expression.Column{Index: cursor, ColName: colName, RetType: ft})
+			args = append(args, partialSchema.Columns[cursor].Clone())
+		}
+		fun.SetArgs(args)
+		fun.SetMode(expression.FinalMode)
+		finalAggFuncs[i] = fun
+	}
+	finalAgg = PhysicalAggregation{
+		HasGby:       p.HasGby,
+		AggType:      FinalAgg,
+		GroupByItems: []expression.Expression{partialSchema.Columns[0].Clone()},
+		AggFuncs:     finalAggFuncs,
+	}.init(p.allocator, p.ctx)
+	finalAgg.SetSchema(p.schema)
+	return
+}
+
+func (p *PhysicalAggregation) attach2TaskProfile(profiles ...taskProfile) taskProfile {
+	// TODO: We only consider hash aggregation here.
+	profile := profiles[0].copy()
+	if cop, ok := profile.(*copTaskProfile); ok {
+		partialAgg, finalAgg := p.newPartialAggregate()
+		if partialAgg != nil {
+			if cop.tablePlan != nil {
+				cop.finishIndexPlan()
+				partialAgg.SetChildren(cop.tablePlan)
+				cop.tablePlan = partialAgg
+				cop.cst += cop.cnt * cpuFactor
+				cop.cnt = cop.cnt * aggFactor
+			} else {
+				partialAgg.SetChildren(cop.indexPlan)
+				cop.indexPlan = partialAgg
+				cop.cst += cop.cnt * cpuFactor
+				cop.cnt = cop.cnt * aggFactor
+			}
+		}
+		profile = cop.finishTask(p.ctx, p.allocator)
+		attachPlan2TaskProfile(finalAgg, profile)
+	} else {
+		np := p.Copy()
+		attachPlan2TaskProfile(np, profile)
+		profile.addCost(profile.count() * cpuFactor)
+		profile.setCount(profile.count() * aggFactor)
+	}
 	return profile
 }

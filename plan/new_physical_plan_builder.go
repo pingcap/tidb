@@ -483,3 +483,35 @@ func splitConditionsByIndexColumns(conditions []expression.Expression, schema *e
 	}
 	return
 }
+
+func (p *LogicalAggregation) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) {
+	task, err := p.getTaskProfile(prop)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if task != nil {
+		return task, nil
+	}
+	task, err = p.convert2HashAggregation(prop)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return task, p.storeTaskProfile(prop, task)
+}
+
+func (p *LogicalAggregation) convert2HashAggregation(prop *requiredProp) (taskProfile, error) {
+	task, err := p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	ha := PhysicalAggregation{
+		GroupByItems: p.GroupByItems,
+		AggFuncs:     p.AggFuncs,
+		HasGby:       len(p.GroupByItems) > 0,
+		AggType:      CompleteAgg,
+	}.init(p.allocator, p.ctx)
+	ha.SetSchema(p.schema)
+	task = ha.attach2TaskProfile(task)
+	task = prop.enforceProperty(task, p.ctx, p.allocator)
+	return task, nil
+}
