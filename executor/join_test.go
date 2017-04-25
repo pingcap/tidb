@@ -57,9 +57,9 @@ func (s *testSuite) TestNestedLoopJoin(c *C) {
 		BigExec:     bigExec,
 		SmallExec:   smallExec,
 		Ctx:         mock.NewContext(),
-		BigFilter:   bigFilter,
-		SmallFilter: smallFilter,
-		OtherFilter: otherFilter,
+		BigFilter:   []expression.Expression{bigFilter},
+		SmallFilter: []expression.Expression{smallFilter},
+		OtherFilter: []expression.Expression{otherFilter},
 	}
 	row, err := join.Next()
 	c.Check(err, IsNil)
