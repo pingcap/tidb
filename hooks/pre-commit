@@ -13,15 +13,16 @@ readonly green=$(tput bold; tput setaf 2)
 
 exit_code=0
 
-echo -ne "Checking that it builds..."
-if ! OUT=$(make 2>&1); then
-    echo
-    echo "${red}${OUT}"
-    exit_code=1
-else
-    echo "${green}OK"
-fi
-echo "${reset}"
+# comment it by default. You can uncomment it.
+# echo -ne "Checking that it builds..."
+# if ! OUT=$(make 2>&1); then
+#     echo
+#     echo "${red}${OUT}"
+#     exit_code=1
+# else
+#     echo "${green}OK"
+# fi
+# echo "${reset}"
 
 echo -ne "Checking for files that need gofmt... "
 files_need_gofmt=()
@@ -59,8 +60,8 @@ done
 if [[ "${#files_need_goword[@]}" -ne 0 ]]; then
     echo "${red}ERROR!"
     echo "Some files may have spelling errors."
-    # echo ${files_need_goword[@]}
-    echo "make goword for more details"
+    echo "copy and paste the following for where fails this test:"
+    echo "  goword ${files_need_goword[@]}"
     exit_code=1
 else
     echo "${green}OK"
