@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/ngaut/log"
 )
 
 // Histogram represents statistics for a column or index.
@@ -171,10 +172,12 @@ func (hg *Histogram) greaterRowCount(sc *variable.StatementContext, value types.
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	log.Warnf("nooooooooooooooooo %v", value)
 	eqCount, err := hg.equalRowCount(sc, value)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	log.Warnf("total: %v, less: %v, equal: %v", hg.totalRowCount(), lessCount, eqCount)
 	gtCount := hg.totalRowCount() - lessCount - eqCount
 	if gtCount < 0 {
 		gtCount = 0

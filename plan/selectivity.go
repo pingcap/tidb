@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"math"
+	"github.com/ngaut/log"
 )
 
 // indexBlock is used when calculating selectivity
@@ -40,7 +41,7 @@ func selectivity(exprs []expression.Expression, indices []*model.IndexInfo, ds *
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	if ds.tableInfo.PKIsHandle {
 		c := ds.statisticTable.Columns[pkColID]
-		// pk should has histogram.
+		// pk should have histogram.
 		if c != nil && len(c.Buckets) > 0 {
 			copiedExprs := make([]expression.Expression, 0, len(exprs))
 			for _, expr := range exprs {
@@ -66,7 +67,7 @@ func selectivity(exprs []expression.Expression, indices []*model.IndexInfo, ds *
 	}
 	for id, index := range indices {
 		c := ds.statisticTable.Indices[index.ID]
-		// This index should has histogram.
+		// This index should have histogram.
 		if c != nil && len(c.Buckets) > 0 {
 			copiedExprs := make([]expression.Expression, 0, len(exprs))
 			for _, expr := range exprs {
@@ -87,6 +88,7 @@ func selectivity(exprs []expression.Expression, indices []*model.IndexInfo, ds *
 		}
 	}
 	blocks = getUsedIndicesByGreedy(blocks)
+	log.Warnf("block len: %v", len(blocks))
 	ret := 1.0
 	for _, block := range blocks {
 		conds := getCondThroughCompressBits(block.cover, exprs)
@@ -96,6 +98,7 @@ func selectivity(exprs []expression.Expression, indices []*model.IndexInfo, ds *
 			if err != nil {
 				return 0.0, err
 			}
+			log.Warnf("ranges: %v", ranges)
 			rowCount, err = ds.statisticTable.GetRowCountByIntColumnRanges(sc, pkColID, ranges)
 			if err != nil {
 				return 0.0, err
@@ -106,6 +109,9 @@ func selectivity(exprs []expression.Expression, indices []*model.IndexInfo, ds *
 				return 0.0, nil
 			}
 			rowCount, err = ds.statisticTable.GetRowCountByIndexRanges(sc, indices[block.pos].ID, ranges, block.inAndEqCnt)
+			if err != nil {
+				return 0.0, nil
+			}
 		}
 		ret *= rowCount / float64(ds.statisticTable.Count)
 	}
