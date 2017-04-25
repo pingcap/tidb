@@ -325,7 +325,7 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 	gkType.Collate = charset.CollationBin
 	partialSchema := expression.NewSchema(&expression.Column{RetType: gkType, FromID: p.id, Index: 0})
 	cursor := 0
-	newAggFuncs := make([]expression.AggregationFunction, len(finalAgg.AggFuncs))
+	finalAggFuncs := make([]expression.AggregationFunction, len(finalAgg.AggFuncs))
 	for i, aggFun := range p.AggFuncs {
 		fun := expression.NewAggFunction(aggFun.GetName(), nil, false)
 		var args []expression.Expression
@@ -347,13 +347,13 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 		}
 		fun.SetArgs(args)
 		fun.SetMode(expression.FinalMode)
-		newAggFuncs[i] = fun
+		finalAggFuncs[i] = fun
 	}
 	finalAgg = PhysicalAggregation{
 		HasGby:       p.HasGby,
 		AggType:      FinalAgg,
 		GroupByItems: []expression.Expression{partialSchema.Columns[0].Clone()},
-		AggFuncs:     newAggFuncs,
+		AggFuncs:     finalAggFuncs,
 	}.init(p.allocator, p.ctx)
 	finalAgg.SetSchema(p.schema)
 	return
