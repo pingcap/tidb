@@ -158,6 +158,9 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
+		err = se.NewTxn()
+		c.Assert(err, IsNil)
+		
 		is, err := plan.MockResolve(stmt)
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(se, stmt, is)
