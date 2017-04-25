@@ -60,7 +60,7 @@ func (d *ddl) GetScope(status string) variable.ScopeFlag {
 	return variable.DefaultScopeFlag
 }
 
-// Stat returns the DDL statistics.
+// Stats returns the DDL statistics.
 func (d *ddl) Stats() (map[string]interface{}, error) {
 	m := make(map[string]interface{})
 	m[serverID] = d.uuid
