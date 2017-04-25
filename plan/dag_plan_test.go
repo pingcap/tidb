@@ -353,6 +353,8 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 
 		err = se.NewTxn()
 		c.Assert(err, IsNil)
+		// Make txn not read only.
+		se.Txn().Set(nil, nil)
 		p, err := plan.Optimize(se, stmt, is)
 		c.Assert(err, IsNil)
 		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))

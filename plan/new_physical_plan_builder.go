@@ -190,7 +190,7 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (taskProfi
 }
 
 func tryToAddUnionScan(cop *copTaskProfile, conds []expression.Expression, ctx context.Context, allocator *idAllocator) taskProfile {
-	if ctx.Txn() == nil || !ctx.Txn().IsReadOnly() {
+	if ctx.Txn() == nil || ctx.Txn().IsReadOnly() {
 		return cop
 	}
 	task := cop.finishTask(ctx, allocator)
