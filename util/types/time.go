@@ -661,6 +661,7 @@ func ParseYear(str string) (int16, error) {
 	return y, nil
 }
 
+// adjustYear adjusts year according to y.
 // See https://dev.mysql.com/doc/refman/5.7/en/two-digit-years.html
 func adjustYear(y int) int {
 	if y >= 0 && y <= 69 {
@@ -986,6 +987,7 @@ func getTime(num int64, tp byte) (Time, error) {
 	return t, errors.Trace(err)
 }
 
+// parseDateTimeFromNum parses date time from num.
 // See number_to_datetime function.
 // https://github.com/mysql/mysql-server/blob/5.7/sql-common/my_time.c
 func parseDateTimeFromNum(num int64) (Time, error) {
@@ -1354,7 +1356,7 @@ func extractSingleTimeValue(unit string, format string) (int64, int64, int64, go
 	return 0, 0, 0, 0, errors.Errorf("invalid singel timeunit - %s", unit)
 }
 
-// Format is `SS.FFFFFF`.
+// extractSecondMicrosecond extracts second and microsecond from a string and its format is `SS.FFFFFF`.
 func extractSecondMicrosecond(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, ".")
 	if len(fields) != 2 {
@@ -1374,7 +1376,7 @@ func extractSecondMicrosecond(format string) (int64, int64, int64, gotime.Durati
 	return 0, 0, 0, gotime.Duration(seconds)*gotime.Second + gotime.Duration(microseconds)*gotime.Microsecond, nil
 }
 
-// Format is `MM:SS.FFFFFF`.
+// extractMinuteMicrosecond extracts minutes and microsecond from a string and its format is `MM:SS.FFFFFF`.
 func extractMinuteMicrosecond(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, ":")
 	if len(fields) != 2 {
@@ -1394,7 +1396,7 @@ func extractMinuteMicrosecond(format string) (int64, int64, int64, gotime.Durati
 	return 0, 0, 0, gotime.Duration(minutes)*gotime.Minute + value, nil
 }
 
-// Format is `MM:SS`.
+// extractMinuteSecond extracts minutes and second from a string and its format is `MM:SS`.
 func extractMinuteSecond(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, ":")
 	if len(fields) != 2 {
@@ -1414,7 +1416,7 @@ func extractMinuteSecond(format string) (int64, int64, int64, gotime.Duration, e
 	return 0, 0, 0, gotime.Duration(minutes)*gotime.Minute + gotime.Duration(seconds)*gotime.Second, nil
 }
 
-// Format is `HH:MM:SS.FFFFFF`.
+// extractHourMicrosecond extracts hour and microsecond from a string and its format is `HH:MM:SS.FFFFFF`.
 func extractHourMicrosecond(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, ":")
 	if len(fields) != 3 {
@@ -1439,7 +1441,7 @@ func extractHourMicrosecond(format string) (int64, int64, int64, gotime.Duration
 	return 0, 0, 0, gotime.Duration(hours)*gotime.Hour + gotime.Duration(minutes)*gotime.Minute + value, nil
 }
 
-// Format is `HH:MM:SS`.
+// extractHourSecond extracts hour and second from a string and its format is `HH:MM:SS`.
 func extractHourSecond(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, ":")
 	if len(fields) != 3 {
@@ -1464,7 +1466,7 @@ func extractHourSecond(format string) (int64, int64, int64, gotime.Duration, err
 	return 0, 0, 0, gotime.Duration(hours)*gotime.Hour + gotime.Duration(minutes)*gotime.Minute + gotime.Duration(seconds)*gotime.Second, nil
 }
 
-// Format is `HH:MM`.
+// extractHourMinute extracts hour and minute from a string and its format is `HH:MM`.
 func extractHourMinute(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, ":")
 	if len(fields) != 2 {
@@ -1484,7 +1486,7 @@ func extractHourMinute(format string) (int64, int64, int64, gotime.Duration, err
 	return 0, 0, 0, gotime.Duration(hours)*gotime.Hour + gotime.Duration(minutes)*gotime.Minute, nil
 }
 
-// Format is `DD HH:MM:SS.FFFFFF`.
+// extractDayMicrosecond extracts day and microsecond from a string and its format is `DD HH:MM:SS.FFFFFF`.
 func extractDayMicrosecond(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, " ")
 	if len(fields) != 2 {
@@ -1504,7 +1506,7 @@ func extractDayMicrosecond(format string) (int64, int64, int64, gotime.Duration,
 	return 0, 0, days, value, nil
 }
 
-// Format is `DD HH:MM:SS`.
+// extractDaySecond extracts day and hour from a string and its format is `DD HH:MM:SS`.
 func extractDaySecond(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, " ")
 	if len(fields) != 2 {
@@ -1524,7 +1526,7 @@ func extractDaySecond(format string) (int64, int64, int64, gotime.Duration, erro
 	return 0, 0, days, value, nil
 }
 
-// Format is `DD HH:MM`.
+// extractDayMinute extracts day and minute from a string and its format is `DD HH:MM`.
 func extractDayMinute(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, " ")
 	if len(fields) != 2 {
@@ -1544,7 +1546,7 @@ func extractDayMinute(format string) (int64, int64, int64, gotime.Duration, erro
 	return 0, 0, days, value, nil
 }
 
-// Format is `DD HH`.
+// extractDayHour extracts day and hour from a string and its format is `DD HH`.
 func extractDayHour(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, " ")
 	if len(fields) != 2 {
@@ -1564,7 +1566,7 @@ func extractDayHour(format string) (int64, int64, int64, gotime.Duration, error)
 	return 0, 0, days, gotime.Duration(hours) * gotime.Hour, nil
 }
 
-// Format is `YYYY-MM`.
+// extractYearMonth extracts year and month from a string and its format is `YYYY-MM`.
 func extractYearMonth(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, "-")
 	if len(fields) != 2 {
@@ -2252,7 +2254,7 @@ func monthNumeric(t *mysqlTime, input string, ctx map[string]int) (string, bool)
 	return rem, false
 }
 
-// 0th 1st 2nd 3rd ...
+//  dayOfMonthWithSuffix returns different suffix according t being which day. i.e. 0 return th. 1 return st.
 func dayOfMonthWithSuffix(t *mysqlTime, input string, ctx map[string]int) (string, bool) {
 	month, remain := parseOrdinalNumbers(input)
 	if month >= 0 {
