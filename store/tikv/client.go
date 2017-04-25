@@ -89,98 +89,98 @@ func (c *rpcClient) callRPC(ctx goctx.Context, conn *Conn, req *tikvrpc.Request)
 	case tikvrpc.CmdGet:
 		r, err := client.KvGet(ctx, req.Get)
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		resp.Get = r
 		return resp, nil
 	case tikvrpc.CmdScan:
 		r, err := client.KvScan(ctx, req.Scan)
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		resp.Scan = r
 		return resp, nil
 	case tikvrpc.CmdPrewrite:
 		r, err := client.KvPrewrite(ctx, req.Prewrite)
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		resp.Prewrite = r
 		return resp, nil
 	case tikvrpc.CmdCommit:
 		r, err := client.KvCommit(ctx, req.Commit)
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		resp.Commit = r
 		return resp, nil
 	case tikvrpc.CmdCleanup:
 		r, err := client.KvCleanup(ctx, req.Cleanup)
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		resp.Cleanup = r
 		return resp, nil
 	case tikvrpc.CmdBatchGet:
 		r, err := client.KvBatchGet(ctx, req.BatchGet)
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		resp.BatchGet = r
 		return resp, nil
 	case tikvrpc.CmdBatchRollback:
 		r, err := client.KvBatchRollback(ctx, req.BatchRollback)
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		resp.BatchRollback = r
 		return resp, nil
 	case tikvrpc.CmdScanLock:
 		r, err := client.KvScanLock(ctx, req.ScanLock)
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		resp.ScanLock = r
 		return resp, nil
 	case tikvrpc.CmdResolveLock:
 		r, err := client.KvResolveLock(ctx, req.ResolveLock)
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		resp.ResolveLock = r
 		return resp, nil
 	case tikvrpc.CmdGC:
 		r, err := client.KvGC(ctx, req.GC)
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		resp.GC = r
 		return resp, nil
 	case tikvrpc.CmdRawGet:
 		r, err := client.RawGet(ctx, req.RawGet)
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		resp.RawGet = r
 		return resp, nil
 	case tikvrpc.CmdRawPut:
 		r, err := client.RawPut(ctx, req.RawPut)
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		resp.RawPut = r
 		return resp, nil
 	case tikvrpc.CmdRawDelete:
 		r, err := client.RawDelete(ctx, req.RawDelete)
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		resp.RawDelete = r
 		return resp, nil
 	case tikvrpc.CmdCop:
 		r, err := client.Coprocessor(ctx, req.Cop)
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		resp.Cop = r
 		return resp, nil

@@ -21,8 +21,10 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 )
 
+// CmdType represents the concrete request type in Request or response type in Response.
 type CmdType uint16
 
+// CmdType values.
 const (
 	CmdGet CmdType = 1 + iota
 	CmdScan
@@ -42,6 +44,7 @@ const (
 	CmdCop CmdType = 512 + iota
 )
 
+// Request wraps all kv/coprocessor requests.
 type Request struct {
 	Type          CmdType
 	Get           *kvrpcpb.GetRequest
@@ -60,6 +63,7 @@ type Request struct {
 	Cop           *coprocessor.Request
 }
 
+// GetContext returns the rpc context for the underlying concrete request.
 func (req *Request) GetContext() *kvrpcpb.Context {
 	switch req.Type {
 	case CmdGet:
@@ -95,6 +99,7 @@ func (req *Request) GetContext() *kvrpcpb.Context {
 	}
 }
 
+// Response wraps all kv/coprocessor responses.
 type Response struct {
 	Type          CmdType
 	Get           *kvrpcpb.GetResponse
@@ -113,6 +118,7 @@ type Response struct {
 	Cop           *coprocessor.Response
 }
 
+// GetRegionError returns the RegionError of the underlying concrete response.
 func (resp *Response) GetRegionError() *errorpb.Error {
 	switch resp.Type {
 	case CmdGet:

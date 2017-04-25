@@ -411,7 +411,7 @@ type RPCClient struct {
 	MvccStore *MvccStore
 }
 
-// NewRPCClient creates a RPCClient.
+// NewRPCClient creates an RPCClient.
 func NewRPCClient(cluster *Cluster, mvccStore *MvccStore) *RPCClient {
 	return &RPCClient{
 		Cluster:   cluster,
