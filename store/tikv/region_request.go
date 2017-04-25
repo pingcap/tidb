@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/juju/errors"
@@ -21,6 +22,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
 )
 
@@ -55,51 +57,109 @@ func NewRegionRequestSender(bo *Backoffer, regionCache *RegionCache, client Clie
 	}
 }
 
-// SendKVReq sends a KV request to tikv server.
-func (s *RegionRequestSender) SendKVReq(req *kvrpcpb.Request, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.Response, error) {
-	for {
-		ctx, err := s.regionCache.GetRPCContext(s.bo, regionID)
-		if err != nil {
-			return nil, errors.Trace(err)
+func genRegionErrorResp(req *tikvrpc.Request, e *errorpb.Error) *tikvrpc.Response {
+	resp := &tikvrpc.Response{}
+	resp.Type = req.Type
+	switch req.Type {
+	case tikvrpc.CmdGet:
+		resp.Get = &kvrpcpb.GetResponse{
+			RegionError: e,
 		}
-		if ctx == nil {
-			// If the region is not found in cache, it must be out
-			// of date and already be cleaned up. We can skip the
-			// RPC by returning RegionError directly.
-			return &kvrpcpb.Response{
-				Type:        req.GetType(),
-				RegionError: &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}},
-			}, nil
+	case tikvrpc.CmdScan:
+		resp.Scan = &kvrpcpb.ScanResponse{
+			RegionError: e,
 		}
+	case tikvrpc.CmdPrewrite:
+		resp.Prewrite = &kvrpcpb.PrewriteResponse{
+			RegionError: e,
+		}
+	case tikvrpc.CmdCommit:
+		resp.Commit = &kvrpcpb.CommitResponse{
+			RegionError: e,
+		}
+	case tikvrpc.CmdCleanup:
+		resp.Cleanup = &kvrpcpb.CleanupResponse{
+			RegionError: e,
+		}
+	case tikvrpc.CmdBatchGet:
+		resp.BatchGet = &kvrpcpb.BatchGetResponse{
+			RegionError: e,
+		}
+	case tikvrpc.CmdBatchRollback:
+		resp.BatchRollback = &kvrpcpb.BatchRollbackResponse{
+			RegionError: e,
+		}
+	case tikvrpc.CmdScanLock:
+		resp.ScanLock = &kvrpcpb.ScanLockResponse{
+			RegionError: e,
+		}
+	case tikvrpc.CmdResolveLock:
+		resp.ResolveLock = &kvrpcpb.ResolveLockResponse{
+			RegionError: e,
+		}
+	case tikvrpc.CmdGC:
+		resp.GC = &kvrpcpb.GCResponse{
+			RegionError: e,
+		}
+	case tikvrpc.CmdRawGet:
+		resp.RawGet = &kvrpcpb.RawGetResponse{
+			RegionError: e,
+		}
+	case tikvrpc.CmdRawPut:
+		resp.RawPut = &kvrpcpb.RawPutResponse{
+			RegionError: e,
+		}
+	case tikvrpc.CmdRawDelete:
+		resp.RawDelete = &kvrpcpb.RawDeleteResponse{
+			RegionError: e,
+		}
+	case tikvrpc.CmdCop:
+		resp.Cop = &coprocessor.Response{
+			RegionError: e,
+		}
+	default:
+		panic(fmt.Sprintf("invalid request type %v", req.Type))
+	}
+	return resp
+}
 
-		resp, retry, err := s.sendKVReqToRegion(ctx, req, timeout)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if retry {
-			continue
-		}
-
-		if regionErr := resp.GetRegionError(); regionErr != nil {
-			retry, err := s.onRegionError(ctx, regionErr)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if retry {
-				continue
-			}
-			return resp, nil
-		}
-
-		if resp.GetType() != req.GetType() {
-			return nil, errors.Trace(errMismatch(resp, req))
-		}
-		return resp, nil
+func setContext(req *tikvrpc.Request, ctx *kvrpcpb.Context) {
+	switch req.Type {
+	case tikvrpc.CmdGet:
+		req.Get.Context = ctx
+	case tikvrpc.CmdScan:
+		req.Scan.Context = ctx
+	case tikvrpc.CmdPrewrite:
+		req.Prewrite.Context = ctx
+	case tikvrpc.CmdCommit:
+		req.Commit.Context = ctx
+	case tikvrpc.CmdCleanup:
+		req.Cleanup.Context = ctx
+	case tikvrpc.CmdBatchGet:
+		req.BatchGet.Context = ctx
+	case tikvrpc.CmdBatchRollback:
+		req.BatchRollback.Context = ctx
+	case tikvrpc.CmdScanLock:
+		req.ScanLock.Context = ctx
+	case tikvrpc.CmdResolveLock:
+		req.ResolveLock.Context = ctx
+	case tikvrpc.CmdGC:
+		req.GC.Context = ctx
+	case tikvrpc.CmdRawGet:
+		req.RawGet.Context = ctx
+	case tikvrpc.CmdRawPut:
+		req.RawPut.Context = ctx
+	case tikvrpc.CmdRawDelete:
+		req.RawDelete.Context = ctx
+	case tikvrpc.CmdCop:
+		req.Cop.Context = ctx
+	default:
+		panic(fmt.Sprintf("invalid request type %v", req.Type))
 	}
 }
 
-// SendCopReq sends a coprocessor request to tikv server.
-func (s *RegionRequestSender) SendCopReq(req *coprocessor.Request, regionID RegionVerID, timeout time.Duration) (*coprocessor.Response, error) {
+// SendReq sends a request to tikv server.
+func (s *RegionRequestSender) SendReq(req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
 	for {
 		ctx, err := s.regionCache.GetRPCContext(s.bo, regionID)
 		if err != nil {
@@ -109,13 +169,14 @@ func (s *RegionRequestSender) SendCopReq(req *coprocessor.Request, regionID Regi
 			// If the region is not found in cache, it must be out
 			// of date and already be cleaned up. We can skip the
 			// RPC by returning RegionError directly.
-			return &coprocessor.Response{
-				RegionError: &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}},
-			}, nil
+
+			// TODO: Change the returned error to something like "region missing in cache",
+			// and handle this error like StaleEpoch, which means to re-split the request and retry.
+			return genRegionErrorResp(req, &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}}), nil
 		}
 
 		s.storeAddr = ctx.Addr
-		resp, retry, err := s.sendCopReqToRegion(ctx, req, timeout)
+		resp, retry, err := s.sendReqToRegion(ctx, req, timeout)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -136,24 +197,14 @@ func (s *RegionRequestSender) SendCopReq(req *coprocessor.Request, regionID Regi
 	}
 }
 
-func (s *RegionRequestSender) sendKVReqToRegion(ctx *RPCContext, req *kvrpcpb.Request, timeout time.Duration) (resp *kvrpcpb.Response, retry bool, err error) {
-	req.Context = ctx.KVCtx
-	resp, err = s.client.SendKVReq(ctx.Context, ctx.Addr, req, timeout)
+func (s *RegionRequestSender) sendReqToRegion(ctx *RPCContext, req *tikvrpc.Request, timeout time.Duration) (resp *tikvrpc.Response, retry bool, err error) {
+	setContext(req, ctx.KVCtx)
+	context, cancel := goctx.WithTimeout(ctx.Context, timeout)
+	defer cancel()
+	resp, err = s.client.SendReq(context, ctx.Addr, req)
 	if err != nil {
 		if e := s.onSendFail(ctx, err); e != nil {
 			return nil, false, errors.Trace(e)
-		}
-		return nil, true, nil
-	}
-	return
-}
-
-func (s *RegionRequestSender) sendCopReqToRegion(ctx *RPCContext, req *coprocessor.Request, timeout time.Duration) (resp *coprocessor.Response, retry bool, err error) {
-	req.Context = ctx.KVCtx
-	resp, err = s.client.SendCopReq(ctx.Context, ctx.Addr, req, timeout)
-	if err != nil {
-		if e := s.onSendFail(ctx, err); e != nil {
-			return nil, false, errors.Trace(err)
 		}
 		return nil, true, nil
 	}

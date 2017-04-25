@@ -21,6 +21,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
 )
 
@@ -49,9 +50,9 @@ func (s *testRegionRequestSuite) SetUpTest(c *C) {
 }
 
 func (s *testRegionRequestSuite) TestOnSendFailedWithStoreRestart(c *C) {
-	req := &kvrpcpb.Request{
-		Type: kvrpcpb.MessageType_CmdRawPut,
-		CmdRawPutReq: &kvrpcpb.CmdRawPutRequest{
+	req := &tikvrpc.Request{
+		Type: tikvrpc.CmdRawPut,
+		RawPut: &kvrpcpb.RawPutRequest{
 			Key:   []byte("key"),
 			Value: []byte("value"),
 		},
@@ -59,13 +60,13 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithStoreRestart(c *C) {
 	region, err := s.cache.LocateRegionByID(s.bo, s.region)
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
-	resp, err := s.regionRequestSender.SendKVReq(req, region.Region, time.Second)
+	resp, err := s.regionRequestSender.SendReq(req, region.Region, time.Second)
 	c.Assert(err, IsNil)
-	c.Assert(resp.GetCmdRawPutResp(), NotNil)
+	c.Assert(resp.RawPut, NotNil)
 
 	// stop store.
 	s.cluster.StopStore(s.store)
-	_, err = s.regionRequestSender.SendKVReq(req, region.Region, time.Second)
+	_, err = s.regionRequestSender.SendReq(req, region.Region, time.Second)
 	c.Assert(err, NotNil)
 	c.Assert(strings.Contains(err.Error(), "try again later"), IsTrue)
 
@@ -77,15 +78,15 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithStoreRestart(c *C) {
 	region, err = s.cache.LocateRegionByID(s.bo, s.region)
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
-	resp, err = s.regionRequestSender.SendKVReq(req, region.Region, time.Second)
+	resp, err = s.regionRequestSender.SendReq(req, region.Region, time.Second)
 	c.Assert(err, IsNil)
-	c.Assert(resp.GetCmdRawPutResp(), NotNil)
+	c.Assert(resp.RawPut, NotNil)
 }
 
 func (s *testRegionRequestSuite) TestOnSendFailedWithCancelled(c *C) {
-	req := &kvrpcpb.Request{
-		Type: kvrpcpb.MessageType_CmdRawPut,
-		CmdRawPutReq: &kvrpcpb.CmdRawPutRequest{
+	req := &tikvrpc.Request{
+		Type: tikvrpc.CmdRawPut,
+		RawPut: &kvrpcpb.RawPutRequest{
 			Key:   []byte("key"),
 			Value: []byte("value"),
 		},
@@ -93,15 +94,15 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithCancelled(c *C) {
 	region, err := s.cache.LocateRegionByID(s.bo, s.region)
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
-	resp, err := s.regionRequestSender.SendKVReq(req, region.Region, time.Second)
+	resp, err := s.regionRequestSender.SendReq(req, region.Region, time.Second)
 	c.Assert(err, IsNil)
-	c.Assert(resp.GetCmdRawPutResp(), NotNil)
+	c.Assert(resp.RawPut, NotNil)
 
 	// set store to cancel state.
 	s.cluster.CancelStore(s.store)
 	// locate region again is needed
 	// since last request on the region failed and region's info had been cleared.
-	_, err = s.regionRequestSender.SendKVReq(req, region.Region, time.Second)
+	_, err = s.regionRequestSender.SendReq(req, region.Region, time.Second)
 	c.Assert(err, NotNil)
 	c.Assert(errors.Cause(err), Equals, goctx.Canceled)
 
@@ -110,7 +111,7 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithCancelled(c *C) {
 	region, err = s.cache.LocateRegionByID(s.bo, s.region)
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
-	resp, err = s.regionRequestSender.SendKVReq(req, region.Region, time.Second)
+	resp, err = s.regionRequestSender.SendReq(req, region.Region, time.Second)
 	c.Assert(err, IsNil)
-	c.Assert(resp.GetCmdRawPutResp(), NotNil)
+	c.Assert(resp.RawPut, NotNil)
 }
