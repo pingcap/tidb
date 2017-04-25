@@ -231,7 +231,7 @@ func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) 
 			limit.SetSchema(p.schema)
 			orderedTask = limit.attach2TaskProfile(orderedTask)
 		} else if cop, ok := orderedTask.(*copTaskProfile); ok {
-			orderedTask = cop.finishTask(p.ctx, p.allocator)
+			orderedTask = finishCopTask(cop, p.ctx, p.allocator)
 		}
 		if orderedTask.cost() < task.cost() {
 			task = orderedTask

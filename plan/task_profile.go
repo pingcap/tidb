@@ -27,7 +27,6 @@ type taskProfile interface {
 	cost() float64
 	copy() taskProfile
 	plan() PhysicalPlan
-	finishTask(ctx context.Context, allocator *idAllocator) taskProfile
 }
 
 // TODO: In future, we should split copTask to indexTask and tableTask.
@@ -98,14 +97,13 @@ func (t *copTaskProfile) finishIndexPlan() {
 }
 
 func (p *basePhysicalPlan) attach2TaskProfile(tasks ...taskProfile) taskProfile {
-	profile := tasks[0].copy()
-	profile = profile.finishTask(p.basePlan.ctx, p.basePlan.allocator)
+	profile := finishCopTask(tasks[0].copy(), p.basePlan.ctx, p.basePlan.allocator)
 	return attachPlan2TaskProfile(p.basePlan.self.(PhysicalPlan).Copy(), profile)
 }
 
 func (p *PhysicalHashJoin) attach2TaskProfile(tasks ...taskProfile) taskProfile {
-	lTask := tasks[0].copy().finishTask(p.ctx, p.allocator)
-	rTask := tasks[1].copy().finishTask(p.ctx, p.allocator)
+	lTask := finishCopTask(tasks[0].copy(), p.ctx, p.allocator)
+	rTask := finishCopTask(tasks[1].copy(), p.ctx, p.allocator)
 	np := p.Copy()
 	np.SetChildren(lTask.plan(), rTask.plan())
 	return &rootTaskProfile{
@@ -117,8 +115,8 @@ func (p *PhysicalHashJoin) attach2TaskProfile(tasks ...taskProfile) taskProfile 
 }
 
 func (p *PhysicalHashSemiJoin) attach2TaskProfile(tasks ...taskProfile) taskProfile {
-	lTask := tasks[0].copy().finishTask(p.ctx, p.allocator)
-	rTask := tasks[1].copy().finishTask(p.ctx, p.allocator)
+	lTask := finishCopTask(tasks[0].copy(), p.ctx, p.allocator)
+	rTask := finishCopTask(tasks[1].copy(), p.ctx, p.allocator)
 	np := p.Copy()
 	np.SetChildren(lTask.plan(), rTask.plan())
 	task := &rootTaskProfile{
@@ -134,8 +132,12 @@ func (p *PhysicalHashSemiJoin) attach2TaskProfile(tasks ...taskProfile) taskProf
 	return task
 }
 
-// finishTask means we close the coprocessor task and create a root task.
-func (t *copTaskProfile) finishTask(ctx context.Context, allocator *idAllocator) taskProfile {
+// finishCopTask means we close the coprocessor task and create a root task.
+func finishCopTask(task taskProfile, ctx context.Context, allocator *idAllocator) taskProfile {
+	t, ok := task.(*copTaskProfile)
+	if !ok {
+		return task
+	}
 	// FIXME: When it is a double reading. The cost should be more expensive. The right cost should add the
 	// `NetWorkStartCost` * (totalCount / perCountIndexRead)
 	t.finishIndexPlan()
@@ -164,10 +166,6 @@ type rootTaskProfile struct {
 	p   PhysicalPlan
 	cst float64
 	cnt float64
-}
-
-func (t *rootTaskProfile) finishTask(_ context.Context, _ *idAllocator) taskProfile {
-	return t
 }
 
 func (t *rootTaskProfile) copy() taskProfile {
@@ -211,7 +209,7 @@ func (p *Limit) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 		}
 		cop = attachPlan2TaskProfile(pushedDownLimit, cop).(*copTaskProfile)
 		cop.setCount(float64(pushedDownLimit.Count))
-		profile = cop.finishTask(p.ctx, p.allocator)
+		profile = finishCopTask(cop, p.ctx, p.allocator)
 	}
 	profile = attachPlan2TaskProfile(p.Copy(), profile)
 	profile.setCount(float64(p.Count))
@@ -250,7 +248,7 @@ func (p *Sort) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 	profile := profiles[0].copy()
 	// If this is a Sort , we cannot push it down.
 	if p.ExecLimit == nil {
-		profile = profile.finishTask(p.ctx, p.allocator)
+		profile = finishCopTask(profile, p.ctx, p.allocator)
 		profile = attachPlan2TaskProfile(p.Copy(), profile)
 		profile.addCost(p.getCost(profile.count()))
 		return profile
@@ -278,7 +276,7 @@ func (p *Sort) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 		copTask.addCost(pushedDownTopN.getCost(profile.count()))
 		copTask.setCount(float64(pushedDownTopN.ExecLimit.Count))
 	}
-	profile = profile.finishTask(p.ctx, p.allocator)
+	profile = finishCopTask(profile, p.ctx, p.allocator)
 	profile = attachPlan2TaskProfile(p.Copy(), profile)
 	profile.addCost(p.getCost(profile.count()))
 	profile.setCount(float64(p.ExecLimit.Count))
@@ -291,7 +289,7 @@ func (p *Projection) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 	switch t := profile.(type) {
 	case *copTaskProfile:
 		// TODO: Support projection push down.
-		task := t.finishTask(p.ctx, p.allocator)
+		task := finishCopTask(profile, p.ctx, p.allocator)
 		profile = attachPlan2TaskProfile(np, task)
 		return profile
 	case *rootTaskProfile:
@@ -305,7 +303,7 @@ func (p *Union) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 	newTask := &rootTaskProfile{p: np}
 	newChildren := make([]Plan, 0, len(p.children))
 	for _, profile := range profiles {
-		profile = profile.finishTask(p.ctx, p.allocator)
+		profile = finishCopTask(profile, p.ctx, p.allocator)
 		newTask.cst += profile.cost()
 		newTask.cnt += profile.count()
 		newChildren = append(newChildren, profile.plan())
@@ -315,7 +313,7 @@ func (p *Union) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 }
 
 func (sel *Selection) attach2TaskProfile(profiles ...taskProfile) taskProfile {
-	profile := profiles[0].copy().finishTask(sel.ctx, sel.allocator)
+	profile := finishCopTask(profiles[0].copy(), sel.ctx, sel.allocator)
 	profile.addCost(profile.count() * cpuFactor)
 	profile.setCount(profile.count() * selectionFactor)
 	profile = attachPlan2TaskProfile(sel.Copy(), profile)
