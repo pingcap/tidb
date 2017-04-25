@@ -309,12 +309,12 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 	sc := p.ctx.GetSessionVars().StmtCtx
 	client := p.ctx.GetClient()
 	for _, aggFunc := range p.AggFuncs {
-		pb := aggFuncToPBExpr(sc, client, aggFunc)
+		pb := expression.AggFuncToPBExpr(sc, client, aggFunc)
 		if pb == nil {
 			return
 		}
 	}
-	_, _, remained := ExpressionsToPB(sc, p.GroupByItems, client)
+	_, _, remained := expression.ExpressionsToPB(sc, p.GroupByItems, client)
 	if len(remained) > 0 {
 		return
 	}
@@ -324,6 +324,7 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 	gkType.Charset = charset.CharsetBin
 	gkType.Collate = charset.CollationBin
 	partialSchema := expression.NewSchema(&expression.Column{RetType: gkType, FromID: p.id, Index: 0})
+	partialAgg.SetSchema(partialSchema)
 	cursor := 0
 	finalAggFuncs := make([]expression.AggregationFunction, len(finalAgg.AggFuncs))
 	for i, aggFun := range p.AggFuncs {

@@ -1346,4 +1346,8 @@ func (s *testSuite) TestSimpleDAG(c *C) {
 	tk.MustQuery("select a from t where a < 3").Check(testkit.Rows("1", "2"))
 	tk.MustQuery("select a from t where b > 1").Check(testkit.Rows("4"))
 	tk.MustQuery("select a from t where b > 1 and a < 3").Check(testkit.Rows())
+	tk.MustQuery("select count(*) from t where b > 1 and a < 3").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("4"))
+	tk.MustQuery("select count(*), c from t group by c").Check(testkit.Rows("2 1", "1 2", "1 3"))
+	tk.MustQuery("select sum(c) from t group by b").Check(testkit.Rows("4", "3"))
 }
