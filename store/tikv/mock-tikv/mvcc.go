@@ -130,18 +130,18 @@ func (e *mvccEntry) Prewrite(mutation *kvrpcpb.Mutation, startTS uint64, primary
 	return nil
 }
 
-func (e *mvccEntry) checkTxnCommitted(startTS uint64) (uint64, bool) {
+func (e *mvccEntry) getTxnCommitInfo(startTS uint64) (*mvccValue, bool) {
 	for _, v := range e.values {
-		if v.startTS == startTS && v.valueType != typeRollback {
-			return v.commitTS, true
+		if v.startTS == startTS {
+			return &v, true
 		}
 	}
-	return 0, false
+	return nil, false
 }
 
 func (e *mvccEntry) Commit(startTS, commitTS uint64) error {
 	if e.lock == nil || e.lock.startTS != startTS {
-		if _, ok := e.checkTxnCommitted(startTS); ok {
+		if c, ok := e.getTxnCommitInfo(startTS); ok && c.valueType != typeRollback {
 			return nil
 		}
 		return ErrRetryable("txn not found")
@@ -166,17 +166,22 @@ func (e *mvccEntry) Commit(startTS, commitTS uint64) error {
 
 func (e *mvccEntry) Rollback(startTS uint64) error {
 	if e.lock == nil || e.lock.startTS != startTS {
-		if commitTS, ok := e.checkTxnCommitted(startTS); ok {
-			return ErrAlreadyCommitted(commitTS)
+		c, ok := e.getTxnCommitInfo(startTS)
+		if ok && c.valueType != typeRollback {
+			return ErrAlreadyCommitted(c.commitTS)
 		}
-		return nil
+		if ok && c.valueType == typeRollback {
+			return nil
+		}
+	} else {
+		e.lock = nil
 	}
+
 	e.values = append([]mvccValue{{
 		valueType: typeRollback,
 		startTS:   startTS,
 		commitTS:  startTS,
 	}}, e.values...)
-	e.lock = nil
 	return nil
 }
 

@@ -64,7 +64,7 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	data := make([]byte, 0)
+	var data []byte
 	var (
 		handle int64
 		row    [][]byte
