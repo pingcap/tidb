@@ -2881,9 +2881,9 @@ FunctionCallKeyword:
 	}
 
 FunctionCallNonKeyword:
-	"ABS" '(' Expression ')'
+	"ABS" '(' ExpressionListOpt ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
 |	"ADDTIME" '(' Expression ',' Expression ')'
  	{
