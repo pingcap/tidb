@@ -42,7 +42,7 @@ type item struct {
 	value *comparableRow
 }
 
-// Min-heap of comparableRows
+// rowHeap maintains a min-heap property of comparableRows.
 type rowHeap struct {
 	sc     *variable.StatementContext
 	ims    []*item
@@ -92,12 +92,12 @@ func (rh *rowHeap) Less(i, j int) bool {
 	return ret
 }
 
-// Push implements heap.Interface Push interface.
+// Push pushes an element into rowHeap.
 func (rh *rowHeap) Push(x interface{}) {
 	rh.ims = append(rh.ims, x.(*item))
 }
 
-// Push implements heap.Interface Pop interface.
+// Pop pops the last element from rowHeap.
 func (rh *rowHeap) Pop() interface{} {
 	old := rh.ims
 	n := len(old)
@@ -295,7 +295,7 @@ func (fs *FileSorter) closeAllFiles() error {
 	return nil
 }
 
-// Perform full in-memory sort.
+// internalSort performs full in-memory sort.
 func (fs *FileSorter) internalSort() (*comparableRow, error) {
 	w := fs.workers[fs.cWorker]
 
@@ -314,7 +314,7 @@ func (fs *FileSorter) internalSort() (*comparableRow, error) {
 	return nil, nil
 }
 
-// Perform external file sort.
+// externalSort performs external file sort.
 func (fs *FileSorter) externalSort() (*comparableRow, error) {
 	if !fs.fetched {
 		// flush all remaining content to file (if any)
@@ -412,7 +412,7 @@ func (fs *FileSorter) openAllFiles() error {
 	return nil
 }
 
-// Fetch the next row given the source file index.
+// fetchNextRow fetches the next row given the source file index.
 func (fs *FileSorter) fetchNextRow(index int) (*comparableRow, error) {
 	n, err := fs.fds[index].Read(fs.head)
 	if err == io.EOF {
@@ -559,7 +559,7 @@ func (w *Worker) input(row *comparableRow) {
 	}
 }
 
-// Flush the buffer to file if it is full.
+// flushToFile flushes the buffer to file if it is full.
 func (w *Worker) flushToFile() {
 	defer w.ctx.wg.Done()
 	var (

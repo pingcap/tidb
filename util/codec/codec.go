@@ -235,7 +235,7 @@ func SetRawValues(data []byte, values []types.Datum) error {
 	return nil
 }
 
-// peeks the first encoded value from b and returns its length.
+// peek peeks the first encoded value from b and returns its length.
 func peek(b []byte) (length int, err error) {
 	if len(b) < 1 {
 		return 0, errors.New("invalid encoded key")

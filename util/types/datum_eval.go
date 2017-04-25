@@ -547,7 +547,7 @@ func ComputeRightShift(sc *variable.StatementContext, a, b Datum) (d Datum, err 
 	return d, nil
 }
 
-// covertNonIntegerToUint64 coverts a non-integer to an uint64
+// convertNonInt2RoundUint64 converts a non-integer to an uint64
 func convertNonInt2RoundUint64(sc *variable.StatementContext, x Datum) (d uint64, err error) {
 	decimalX, err := x.ToDecimal(sc)
 	if err != nil {

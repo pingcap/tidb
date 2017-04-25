@@ -466,6 +466,8 @@ type indexTaskOpInfo struct {
 	nextCh    chan int64                 // It notifies to start the next task.
 }
 
+// addTableIndex adds index into table.
+// TODO: Move this to doc or wiki.
 // How to add index in reorganization state?
 // Concurrently process the defaultTaskHandleCnt tasks. Each task deals with a handle range of the index record.
 // The handle range size is defaultTaskHandleCnt.
