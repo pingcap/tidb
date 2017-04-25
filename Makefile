@@ -12,6 +12,7 @@ export PATH := $(path_to_add):$(PATH)
 GO        := GO15VENDOREXPERIMENT="1" go
 GOBUILD   := GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=0 $(GO) build
 GOTEST    := GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=1 $(GO) test
+OVERALLS  := GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=1 overalls
 
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
@@ -100,8 +101,11 @@ todo:
 test: checklist gotest
 
 gotest: parserlib
-	@export log_level=error;\
+	@export log_level=error; \
 	$(GOTEST) -cover $(PACKAGES)
+
+gocover: 
+	$(OVERALLS) -project=github.com/pingcap/tidb -covermode=count -ignore=['.git', '_vendor']
 
 race: parserlib
 	@export log_level=debug; \

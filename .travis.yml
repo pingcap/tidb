@@ -5,4 +5,12 @@ go_import_path: github.com/pingcap/tidb
 go:
   - 1.8
 
-script: make dev
+before_install:  
+  # Install deps.
+  - go get github.com/mattn/goveralls
+  - go get github.com/go-playground/overalls
+  # create /logs/unit-test for unit test.
+  - sudo mkdir /logs
+  - sudo touch /logs/unit-test
+
+script: make gocover
