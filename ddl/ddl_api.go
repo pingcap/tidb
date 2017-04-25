@@ -19,6 +19,7 @@ package ddl
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -353,9 +354,15 @@ func getDefaultValue(ctx context.Context, c *ast.ColumnOption, tp byte, fsp int)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	if v.IsNull() {
 		return nil, nil
 	}
+
+	if v.Kind() == types.KindMysqlHex {
+		return strconv.FormatInt(v.GetMysqlHex().Value, 10), nil
+	}
+
 	return v.ToString()
 }
 
