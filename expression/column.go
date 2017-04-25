@@ -82,7 +82,7 @@ type Column struct {
 	// If so, this column's name will be the plain sql text.
 	IsAggOrSubq bool
 
-	// Only used for execution.
+	// Index is only used for execution.
 	Index int
 
 	hashcode []byte
