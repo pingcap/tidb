@@ -292,6 +292,9 @@ func (v *typeInferrer) getFsp(x *ast.FuncCallExpr) int {
 	return 0
 }
 
+// handleFuncCallExpr ...
+// TODO: (zhexuany) this function contains too much redundant things. Mybe replace with a map like
+// we did for error in mysql package.
 func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	var (
 		tp  *types.FieldType
@@ -299,28 +302,28 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	)
 	switch x.FnName.L {
 	case ast.Abs, ast.Ifnull, ast.Nullif:
-		if len(x.Args) > 0 {
-			tp = x.Args[0].GetType()
-			// TODO: We should cover all types.
-			if x.FnName.L == ast.Abs && tp.Tp == mysql.TypeDatetime {
-				tp = types.NewFieldType(mysql.TypeDouble)
-			}
-		} else {
+		if len(x.Args) == 0 {
 			tp = types.NewFieldType(mysql.TypeNull)
+			break
+		}
+		tp = x.Args[0].GetType()
+		// TODO: We should cover all types.
+		if x.FnName.L == ast.Abs && tp.Tp == mysql.TypeDatetime {
+			tp = types.NewFieldType(mysql.TypeDouble)
 		}
 	case ast.Round:
-		if len(x.Args) > 0 {
-			t := x.Args[0].GetType().Tp
-			switch t {
-			case mysql.TypeBit, mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLonglong:
-				tp = types.NewFieldType(mysql.TypeLonglong)
-			case mysql.TypeNewDecimal:
-				tp = types.NewFieldType(mysql.TypeNewDecimal)
-			default:
-				tp = types.NewFieldType(mysql.TypeDouble)
-			}
-		} else {
+		if len(x.Args) == 0 {
 			tp = types.NewFieldType(mysql.TypeNull)
+			break
+		}
+		t := x.Args[0].GetType().Tp
+		switch t {
+		case mysql.TypeBit, mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLonglong:
+			tp = types.NewFieldType(mysql.TypeLonglong)
+		case mysql.TypeNewDecimal:
+			tp = types.NewFieldType(mysql.TypeNewDecimal)
+		default:
+			tp = types.NewFieldType(mysql.TypeDouble)
 		}
 	case ast.Greatest, ast.Least:
 		for _, arg := range x.Args {
@@ -348,9 +351,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 			tp = types.NewFieldType(mysql.TypeNull)
 		}
 	case ast.FromUnixTime:
-		if len(x.Args) == 0 {
-			tp = types.NewFieldType(mysql.TypeNull)
-		} else if len(x.Args) == 1 {
+		if len(x.Args) == 1 {
 			tp = types.NewFieldType(mysql.TypeDatetime)
 		} else {
 			tp = types.NewFieldType(mysql.TypeVarString)
