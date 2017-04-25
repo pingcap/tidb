@@ -760,13 +760,13 @@ func (b *executorBuilder) buildTableScanForAnalyze(tblInfo *model.TableInfo, col
 	schema := expression.NewSchema(expression.ColumnInfos2Columns(tblInfo.Name, cols)...)
 	ranges := []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}
 	e := &XSelectTableExec{
-		tableInfo:   tblInfo,
-		ctx:         b.ctx,
-		startTS:     startTS,
-		table:       table,
-		schema:      schema,
-		Columns:     cols,
-		ranges:      ranges,
+		tableInfo: tblInfo,
+		ctx:       b.ctx,
+		startTS:   startTS,
+		table:     table,
+		schema:    schema,
+		Columns:   cols,
+		ranges:    ranges,
 	}
 	return e
 }
