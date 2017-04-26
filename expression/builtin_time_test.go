@@ -624,7 +624,7 @@ func (s *testEvaluatorSuite) TestUTCTime(c *C) {
 	}{{nil, 8}, {0, 8}, {3, 12}, {6, 15}, {-1, 0}, {7, 0}}
 
 	for _, test := range tests {
-		f, err = fc.getFunction(datumsToConstants(types.MakeDatums(test.param)), s.ctx)
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(test.param)), s.ctx)
 		c.Assert(err, IsNil)
 		v, err = f.eval(nil)
 		if test.expect > 0 {
