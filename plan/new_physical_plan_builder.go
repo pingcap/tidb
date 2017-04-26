@@ -98,6 +98,91 @@ func (p *Projection) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, e
 	return task, p.storeTaskProfile(prop, task)
 }
 
+// convert2NewPhysicalPlan implements PhysicalPlan interface.
+// Join has three physical operators: Hash Join, Merge Join and Index Look Up Join. We implement Hash Join at first.
+func (p *LogicalJoin) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) {
+	task, err := p.getTaskProfile(prop)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if task != nil {
+		return task, nil
+	}
+	switch p.JoinType {
+	case SemiJoin, LeftOuterSemiJoin:
+		task, err = p.convert2SemiJoin()
+	default:
+		// TODO: We will consider smj and index look up join in the future.
+		task, err = p.convert2HashJoin()
+	}
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// Because hash join is executed by multiple goroutines, it will not propagate physical property any more.
+	// TODO: We will consider the problem of property again for parallel execution.
+	task = prop.enforceProperty(task, p.ctx, p.allocator)
+	return task, p.storeTaskProfile(prop, task)
+}
+
+func (p *LogicalJoin) convert2SemiJoin() (taskProfile, error) {
+	lChild := p.children[0].(LogicalPlan)
+	rChild := p.children[1].(LogicalPlan)
+	semiJoin := PhysicalHashSemiJoin{
+		WithAux:         LeftOuterSemiJoin == p.JoinType,
+		EqualConditions: p.EqualConditions,
+		LeftConditions:  p.LeftConditions,
+		RightConditions: p.RightConditions,
+		OtherConditions: p.OtherConditions,
+		Anti:            p.anti,
+	}.init(p.allocator, p.ctx)
+	semiJoin.SetSchema(p.schema)
+	lTask, err := lChild.convert2NewPhysicalPlan(&requiredProp{})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	rTask, err := rChild.convert2NewPhysicalPlan(&requiredProp{})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return semiJoin.attach2TaskProfile(lTask, rTask), nil
+}
+
+func (p *LogicalJoin) convert2HashJoin() (taskProfile, error) {
+	lChild := p.children[0].(LogicalPlan)
+	rChild := p.children[1].(LogicalPlan)
+	hashJoin := PhysicalHashJoin{
+		EqualConditions: p.EqualConditions,
+		LeftConditions:  p.LeftConditions,
+		RightConditions: p.RightConditions,
+		OtherConditions: p.OtherConditions,
+		JoinType:        p.JoinType,
+		Concurrency:     JoinConcurrency,
+		DefaultValues:   p.DefaultValues,
+	}.init(p.allocator, p.ctx)
+	hashJoin.SetSchema(p.schema)
+	lTask, err := lChild.convert2NewPhysicalPlan(&requiredProp{})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	rTask, err := rChild.convert2NewPhysicalPlan(&requiredProp{})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	switch p.JoinType {
+	case LeftOuterJoin:
+		hashJoin.SmallTable = 1
+	case RightOuterJoin:
+		hashJoin.SmallTable = 0
+	case InnerJoin:
+		// We will use right table as small table.
+		if lTask.count() >= rTask.count() {
+			hashJoin.SmallTable = 1
+		}
+	}
+	return hashJoin.attach2TaskProfile(lTask, rTask), nil
+
+}
+
 // getPushedProp will check if this sort property can be pushed or not. In order to simplify the problem, we only
 // consider the case that all expression are columns and all of them are asc or desc.
 func (p *Sort) getPushedProp() (*requiredProp, bool) {
@@ -146,7 +231,7 @@ func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) 
 			limit.SetSchema(p.schema)
 			orderedTask = limit.attach2TaskProfile(orderedTask)
 		} else if cop, ok := orderedTask.(*copTaskProfile); ok {
-			orderedTask = cop.finishTask(p.ctx, p.allocator)
+			orderedTask = finishCopTask(cop, p.ctx, p.allocator)
 		}
 		if orderedTask.cost() < task.cost() {
 			task = orderedTask
@@ -189,8 +274,8 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (taskProfi
 	return task, p.storeTaskProfile(prop, task)
 }
 
-// checkMemTableAndGetTask will check if this table is a mem table. If it is, it will produce a task and store it.
-func (p *DataSource) getMemTableTask(prop *requiredProp) (task taskProfile, err error) {
+// tryToGetMemTask will check if this table is a mem table. If it is, it will produce a task and store it.
+func (p *DataSource) tryToGetMemTask(prop *requiredProp) (task taskProfile, err error) {
 	client := p.ctx.GetClient()
 	memDB := infoschema.IsMemoryDB(p.DBName.L)
 	isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeSelect, 0)
@@ -208,7 +293,27 @@ func (p *DataSource) getMemTableTask(prop *requiredProp) (task taskProfile, err 
 	memTable.Ranges = rb.buildTableRanges(fullRange)
 	task = &rootTaskProfile{p: memTable}
 	task = prop.enforceProperty(task, p.ctx, p.allocator)
-	return task, p.storeTaskProfile(prop, task)
+	return task, nil
+}
+
+// tryToGetDualTask will check if the push down predicate has false constant. If so, it will return table dual.
+func (p *DataSource) tryToGetDualTask() (taskProfile, error) {
+	for _, cond := range p.pushedDownConds {
+		if _, ok := cond.(*expression.Constant); ok {
+			result, err := expression.EvalBool([]expression.Expression{cond}, nil, p.ctx)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if !result {
+				dual := TableDual{}.init(p.allocator, p.ctx)
+				dual.SetSchema(p.schema)
+				return &rootTaskProfile{
+					p: dual,
+				}, nil
+			}
+		}
+	}
+	return nil, nil
 }
 
 // convert2NewPhysicalPlan implements the PhysicalPlan interface.
@@ -221,13 +326,19 @@ func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, e
 	if task != nil {
 		return task, nil
 	}
-	// TODO: We don't consider the false condition here. We will add this check in PPD phase.
-	task, err = p.getMemTableTask(prop)
+	task, err = p.tryToGetDualTask()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	if task != nil {
-		return task, nil
+		return task, p.storeTaskProfile(prop, task)
+	}
+	task, err = p.tryToGetMemTask(prop)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if task != nil {
+		return task, p.storeTaskProfile(prop, task)
 	}
 	// TODO: We have not checked if this table has a predicate. If not, we can only consider table scan.
 	indices, includeTableScan := availableIndices(p.indexHints, p.tableInfo)

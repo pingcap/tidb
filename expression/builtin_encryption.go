@@ -91,6 +91,7 @@ type builtinAesDecryptSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinAesDecryptSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_aes-decrypt
 func (b *builtinAesDecryptSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -137,6 +138,7 @@ type builtinAesEncryptSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinAesEncryptSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_aes-decrypt
 // We only support aes-128-ecb mode.
 // TODO: support other mode.
@@ -168,7 +170,7 @@ func (b *builtinAesEncryptSig) eval(row []types.Datum) (d types.Datum, err error
 	return
 }
 
-// Transforms an arbitrary long key into a fixed length AES key.
+// handleAESKey transforms an arbitrary long key into a fixed length AES key.
 func handleAESKey(key []byte, mode string) []byte {
 	// TODO: get key size according to mode
 	keySize := 16
@@ -196,6 +198,7 @@ type builtinCompressSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinCompressSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_compress
 func (b *builtinCompressSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -233,6 +236,7 @@ type builtinDecodeSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinDecodeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_decode
 func (b *builtinDecodeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("DECODE")
@@ -250,6 +254,7 @@ type builtinDesDecryptSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinDesDecryptSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_des-decrypt
 func (b *builtinDesDecryptSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("DES_DECRYPT")
@@ -267,6 +272,7 @@ type builtinDesEncryptSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinDesEncryptSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_des-encrypt
 func (b *builtinDesEncryptSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("DES_ENCRYPT")
@@ -284,6 +290,7 @@ type builtinEncodeSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinEncodeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_encode
 func (b *builtinEncodeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("ENCODE")
@@ -301,6 +308,7 @@ type builtinEncryptSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinEncryptSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_encrypt
 func (b *builtinEncryptSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("ENCRYPT")
@@ -318,6 +326,7 @@ type builtinMD5Sig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinMD5Sig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_md5
 func (b *builtinMD5Sig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -351,6 +360,7 @@ type builtinOldPasswordSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinOldPasswordSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_old-password
 func (b *builtinOldPasswordSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("OLD_PASSWORD")
@@ -368,6 +378,7 @@ type builtinPasswordSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinPasswordSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
 func (b *builtinPasswordSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("PASSWORD")
@@ -385,6 +396,7 @@ type builtinRandomBytesSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinRandomBytesSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_random-bytes
 func (b *builtinRandomBytesSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -421,6 +433,7 @@ type builtinSHA1Sig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinSHA1Sig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_sha1
 // The value is returned as a string of 40 hexadecimal digits, or NULL if the argument was NULL.
 func (b *builtinSHA1Sig) eval(row []types.Datum) (d types.Datum, err error) {
@@ -465,6 +478,7 @@ const (
 	SHA512 int = 512
 )
 
+// eval evals a builtinSHA2Sig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_sha2
 func (b *builtinSHA2Sig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -518,6 +532,7 @@ type builtinUncompressSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinUncompressSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_uncompress
 func (b *builtinUncompressSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("UNCOMPRESS")
@@ -535,6 +550,7 @@ type builtinUncompressedLengthSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinUncompressedLengthSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_uncompressed-length
 func (b *builtinUncompressedLengthSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("UNCOMPRESSED_LENGTH")
@@ -552,6 +568,7 @@ type builtinValidatePasswordStrengthSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinValidatePasswordStrengthSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_validate-password-strength
 func (b *builtinValidatePasswordStrengthSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("VALIDATE_PASSWORD_STRENGTH")
