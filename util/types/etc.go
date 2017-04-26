@@ -129,7 +129,7 @@ func InvOp2(x, y interface{}, o opcode.Op) (interface{}, error) {
 	return nil, errors.Errorf("Invalid operation: %v %v %v (mismatched types %T and %T)", x, o, y, x, y)
 }
 
-// Overflow returns an overflowed error.
+// overflow returns an overflowed error.
 func overflow(v interface{}, tp byte) error {
 	return ErrOverflow.Gen("constant %v overflows %s", v, TypeStr(tp))
 }

@@ -87,6 +87,11 @@ const (
 	// tidb_batch_insert is used to enable/disable auto-split insert data. If set this option on, insert executor will automatically
 	// insert data into multiple batches and use a single txn for each batch. This will be helpful when inserting large data.
 	TiDBBatchInsert = "tidb_batch_insert"
+
+	// tidb_max_row_count_for_inlj is used when do index nested loop join.
+	// It controls the max row count of outer table when do index nested loop join without hint.
+	// After the row count of the inner table is accurate, this variable will be removed.
+	TiDBMaxRowCountForINLJ = "tidb_max_row_count_for_inlj"
 )
 
 // Default TiDB system variable values.
@@ -96,6 +101,7 @@ const (
 	DefIndexLookupSize            = 20000
 	DefDistSQLScanConcurrency     = 10
 	DefBuildStatsConcurrency      = 4
+	DefMaxRowCountForINLJ         = 128
 	DefSkipDDLWait                = false
 	DefSkipUTF8Check              = false
 	DefOptAggPushDown             = true

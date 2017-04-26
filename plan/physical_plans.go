@@ -305,7 +305,7 @@ func (p *physicalTableSource) tryToAddUnionScan(resultPlan PhysicalPlan) Physica
 	}
 	conditions := append(p.indexFilterConditions, p.tableFilterConditions...)
 	us := PhysicalUnionScan{
-		Condition: expression.ComposeCNFCondition(p.ctx, append(conditions, p.AccessCondition...)...),
+		Conditions: append(conditions, p.AccessCondition...),
 	}.init(p.allocator, p.ctx)
 	us.SetChildren(resultPlan)
 	us.SetSchema(resultPlan.Schema())
@@ -508,7 +508,7 @@ type PhysicalUnionScan struct {
 	*basePlan
 	basePhysicalPlan
 
-	Condition expression.Expression
+	Conditions []expression.Expression
 }
 
 // Cache plan is a physical plan which stores the result of its child node.
