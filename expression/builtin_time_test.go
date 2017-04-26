@@ -626,10 +626,10 @@ func (s *testEvaluatorSuite) TestUTCTime(c *C) {
 	for _, test := range tests {
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(test.param)), s.ctx)
 		c.Assert(err, IsNil)
-		v, err = f.eval(nil)
+		v, err := f.eval(nil)
 		if test.expect > 0 {
 			c.Assert(err, IsNil)
-			n = v.GetMysqlDuration()
+			n := v.GetMysqlDuration()
 			c.Assert(n.String(), HasLen, test.expect)
 			c.Assert(n.String(), GreaterEqual, last.Format(tfStr))
 		} else {
