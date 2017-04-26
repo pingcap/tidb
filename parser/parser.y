@@ -2871,7 +2871,7 @@ FunctionCallNonKeyword:
 	}
 |	"ATAN" '(' ExpressionListOpt ')'
 	{
-    $$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+	 	$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
 |	"ATAN2" '(' ExpressionListOpt ')'
 	{
@@ -2995,15 +2995,15 @@ FunctionCallNonKeyword:
 	}
 |	FunctionNameDateArithMultiForms '(' Expression ',' Expression ')'
 	{
-    $$ = &ast.FuncCallExpr{
-    FnName: model.NewCIStr($1),
-    Args: []ast.ExprNode{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{
 				$3.(ast.ExprNode),
 				$5.(ast.ExprNode),
-        ast.NewValueExpr("DAY"),
+				ast.NewValueExpr("DAY"),
 			},
 		}
-  }
+	}
 |	FunctionNameDateArithMultiForms '(' Expression ',' "INTERVAL" Expression TimeUnit ')'
 	{
 		$$ = &ast.FuncCallExpr{
