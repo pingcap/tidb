@@ -378,7 +378,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 			conds = append(conds, cond.Clone())
 		}
 		is.AccessCondition, is.filterCondition, is.accessEqualCount, is.accessInAndEqCount = DetachIndexScanConditions(conds, idx)
-		err = BuildIndexRange(sc, is)
+		is.Ranges, err = BuildIndexRange(sc, is.Table, is.Index, is.accessInAndEqCount, is.AccessCondition)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
