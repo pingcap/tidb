@@ -68,7 +68,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 		for _, cond := range sel.Conditions {
 			conds = append(conds, cond.Clone())
 		}
-		ts.AccessCondition, newSel.Conditions = DetachTableScanConditions(conds, table)
+		ts.AccessCondition, newSel.Conditions = DetachTableScanConditions(conds, GetPkName(table))
 		ts.TableConditionPBExpr, ts.tableFilterConditions, newSel.Conditions =
 			ExpressionsToPB(sc, newSel.Conditions, client)
 		ranges, err := BuildTableRange(ts.AccessCondition, sc)

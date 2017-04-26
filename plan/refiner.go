@@ -251,9 +251,8 @@ func DetachIndexScanConditions(conditions []expression.Expression, index *model.
 	return accessConds, filterConds, accessEqualCount, accessInAndEqCount
 }
 
-// DetachTableScanConditions distinguishes between access conditions and filter conditions from conditions.
-func DetachTableScanConditions(conditions []expression.Expression, table *model.TableInfo) ([]expression.Expression, []expression.Expression) {
-	var pkName model.CIStr
+// GetPkName will get name of pk col from table info.
+func GetPkName(table *model.TableInfo) (pkName model.CIStr) {
 	if table.PKIsHandle {
 		for _, colInfo := range table.Columns {
 			if mysql.HasPriKeyFlag(colInfo.Flag) {
@@ -262,6 +261,11 @@ func DetachTableScanConditions(conditions []expression.Expression, table *model.
 			}
 		}
 	}
+	return
+}
+
+// DetachTableScanConditions distinguishes between access conditions and filter conditions from conditions.
+func DetachTableScanConditions(conditions []expression.Expression, pkName model.CIStr) ([]expression.Expression, []expression.Expression) {
 	if pkName.L == "" {
 		return nil, conditions
 	}

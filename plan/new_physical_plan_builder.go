@@ -498,7 +498,7 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task taskProfile, e
 		for _, cond := range p.pushedDownConds {
 			conds = append(conds, cond.Clone())
 		}
-		ts.AccessCondition, ts.filterCondition = DetachTableScanConditions(conds, p.tableInfo)
+		ts.AccessCondition, ts.filterCondition = DetachTableScanConditions(conds, GetPkName(p.tableInfo))
 		ts.Ranges, err = BuildTableRange(ts.AccessCondition, sc)
 		if err != nil {
 			return nil, errors.Trace(err)

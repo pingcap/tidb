@@ -14,17 +14,17 @@
 package plan
 
 import (
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"math"
+	"github.com/pingcap/tidb/context"
 )
 
 // indexBlock is used when calculating selectivity
 type indexBlock struct {
 	// the position that this index is in the index slice
 	pos int
-	// cover will tell which expressions is covered by this index.
+	// the ith bit of `cover` will tell whether the ith expression is covered by this index.
 	cover uint64
 	// pk won't use this, only index will use.
 	inAndEqCnt int
@@ -32,7 +32,7 @@ type indexBlock struct {
 
 // selectivity is a function calculate the selectivity of the expressions.
 // The definition of selectivity is (row count after filter / row count before filter).
-// And exprs must be CNF now, in other words, `exprs[0] and exprs[1] and ... and exprs[len - 1]` should hold when you call this.
+// And exprs must be CNF now, in other words, `exprs[0] and exprs[1] and ... and exprs[len - 1]` should be held when you call this.
 func selectivity(exprs []expression.Expression, indices []*model.IndexInfo, ds *DataSource, pkColID int64) (float64, error) {
 	if ds.statisticTable.Pseudo || len(exprs) > 64 {
 		return selectionFactor, nil
@@ -43,23 +43,7 @@ func selectivity(exprs []expression.Expression, indices []*model.IndexInfo, ds *
 		c := ds.statisticTable.Columns[pkColID]
 		// pk should have histogram.
 		if c != nil && len(c.Buckets) > 0 {
-			copiedExprs := make([]expression.Expression, 0, len(exprs))
-			for _, expr := range exprs {
-				copiedExprs = append(copiedExprs, expr.Clone())
-			}
-			accessConds, _ := DetachTableScanConditions(copiedExprs, ds.tableInfo)
-			covered := uint64(0)
-			for i := 0; i < len(exprs); {
-				for j := 0; j < len(accessConds); {
-					if exprs[i].Equal(accessConds[j], ds.ctx) {
-						covered = covered | (1 << uint64(i))
-						i++
-						j++
-					} else {
-						j++
-					}
-				}
-			}
+			covered, _ := getMaskByColumn(ds.ctx, exprs, GetPkName(ds.tableInfo))
 			if covered != 0 {
 				blocks = append(blocks, &indexBlock{pos: -1, cover: covered})
 			}
@@ -69,36 +53,25 @@ func selectivity(exprs []expression.Expression, indices []*model.IndexInfo, ds *
 		c := ds.statisticTable.Indices[index.ID]
 		// This index should have histogram.
 		if c != nil && len(c.Buckets) > 0 {
-			copiedExprs := make([]expression.Expression, 0, len(exprs))
-			for _, expr := range exprs {
-				copiedExprs = append(copiedExprs, expr.Clone())
-			}
-			covered := uint64(0)
-			accessConds, _, _, inAndEqCnt := DetachIndexScanConditions(copiedExprs, index)
-			for i := range exprs {
-				for j := range accessConds {
-					if exprs[i].Equal(accessConds[j], ds.ctx) {
-						covered = covered | (1 << uint64(i))
-					}
-				}
-			}
-			if covered != 0 {
+			covered, inAndEqCnt, _ := getMaskByIndex(ds.ctx, exprs, index)
+			if covered > 0 {
 				blocks = append(blocks, &indexBlock{pos: id, cover: covered, inAndEqCnt: inAndEqCnt})
 			}
 		}
 	}
 	blocks = getUsedIndicesByGreedy(blocks)
-	log.Warnf("block len: %v", len(blocks))
 	ret := 1.0
+	mask := uint64(math.MaxUint64)
+	mask = mask >> uint64(64 - len(exprs))
 	for _, block := range blocks {
-		conds := getCondThroughCompressBits(block.cover, exprs)
+		conds := getCondThroughMask(block.cover, exprs)
+		mask &^= block.cover
 		var rowCount float64
 		if block.pos == -1 {
 			ranges, err := BuildTableRange(conds, sc)
 			if err != nil {
 				return 0.0, err
 			}
-			log.Warnf("ranges: %v", ranges)
 			rowCount, err = ds.statisticTable.GetRowCountByIntColumnRanges(sc, pkColID, ranges)
 			if err != nil {
 				return 0.0, err
@@ -115,11 +88,45 @@ func selectivity(exprs []expression.Expression, indices []*model.IndexInfo, ds *
 		}
 		ret *= rowCount / float64(ds.statisticTable.Count)
 	}
+	if mask > 0 {
+		ret *= selectionFactor
+	}
 	return ret, nil
 }
 
-// getUsedIndicesByGreedy will get the indices used for calculate selectivity by greedy algorithm.
-// New covers and usedIdxs will be returned.
+func getMaskByColumn(ctx context.Context, exprs []expression.Expression, colName model.CIStr) (uint64, []expression.Expression) {
+	accessConds, _ := DetachTableScanConditions(exprs, colName)
+	mask := uint64(0)
+	// There accessConds is a sub sequence of exprs. i.e. If exprs is `[ a > 1, b > 1, a < 10]`,
+	// accessConds could be `[ a > 1, b > 1 ]` or `[a > 1, a < 10]`, couldn't be `[ a < 10, a > 1 ]`
+	for i := 0; i < len(exprs); {
+		for j := 0; j < len(accessConds); {
+			if exprs[i].Equal(accessConds[j], ctx) {
+				mask = mask | (1 << uint64(i))
+				i++
+				j++
+			} else {
+				i++
+			}
+		}
+	}
+	return mask, accessConds
+}
+
+func getMaskByIndex(ctx context.Context, exprs []expression.Expression, index *model.IndexInfo) (uint64, int, []expression.Expression) {
+	accessConds, _, _, inAndEqCnt := DetachIndexScanConditions(exprs, index)
+	mask := uint64(0)
+	for i := range exprs {
+		for j := range exprs {
+			if exprs[i].Equal(accessConds[j], ctx) {
+				mask = mask | (1 << uint64(i))
+			}
+		}
+	}
+	return mask, inAndEqCnt, accessConds
+}
+
+// getUsedIndicesByGreedy will select the indices and pk used for calculate selectivity by greedy algorithm.
 func getUsedIndicesByGreedy(blocks []*indexBlock) (newBlocks []*indexBlock) {
 	mask := uint64(math.MaxUint64)
 	for {
@@ -157,7 +164,7 @@ func countOneBits(x uint64) int {
 	return ret
 }
 
-func getCondThroughCompressBits(x uint64, conds []expression.Expression) []expression.Expression {
+func getCondThroughMask(x uint64, conds []expression.Expression) []expression.Expression {
 	accessConds := make([]expression.Expression, 0, countOneBits(x))
 	for i := 0; x > 0; i++ {
 		if (x & 1) > 0 {
