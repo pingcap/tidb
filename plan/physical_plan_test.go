@@ -73,7 +73,7 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 		builder := &planBuilder{
 			allocator: new(idAllocator),
@@ -181,7 +181,7 @@ func (s *testPlanSuite) TestPushDownOrderByAndLimit(c *C) {
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 		builder := &planBuilder{
 			allocator: new(idAllocator),
@@ -307,7 +307,7 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 		builder := &planBuilder{
 			allocator: new(idAllocator),
@@ -529,7 +529,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
@@ -644,7 +644,7 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
@@ -738,7 +738,7 @@ func (s *testPlanSuite) TestFilterConditionPushDown(c *C) {
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 		builder := &planBuilder{
 			allocator: new(idAllocator),
@@ -793,7 +793,7 @@ func (s *testPlanSuite) TestAddCache(c *C) {
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
@@ -975,7 +975,7 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 		sql := "select * from t where " + tt.exprStr
 		stmt, err := s.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
@@ -1029,7 +1029,7 @@ func (s *testPlanSuite) TestScanController(c *C) {
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
@@ -1133,7 +1133,7 @@ func (s *testPlanSuite) TestJoinAlgorithm(c *C) {
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
@@ -1190,7 +1190,7 @@ func (s *testPlanSuite) TestAutoJoinChosen(c *C) {
 		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		ctx := mockContext()
