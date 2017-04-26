@@ -330,3 +330,36 @@ func (s *builtinCompareStringSig) evalInt(row []types.Datum) (int64, bool, error
 	}
 	return ret, false, nil
 }
+
+// builtinCompareRealSig compares two reals.
+type builtinCompareRealSig struct {
+	baseIntBuiltinFunc
+
+	op opcode.Op
+}
+
+func (s *builtinCompareRealSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := s.ctx.GetSessionVars().StmtCtx
+	arg0, isKindNull0, err := s.args[0].EvalReal(row, sc)
+	if err != nil {
+		return zeroI64, false, errors.Trace(err)
+	}
+	arg1, isKindNull1, err := s.args[1].EvalReal(row, sc)
+	if err != nil {
+		return zeroI64, false, errors.Trace(err)
+	}
+	if isKindNull0 || isKindNull1 {
+		if s.op == opcode.NullEQ {
+			if isKindNull0 && isKindNull1 {
+				return oneI64, false, nil
+			}
+			return zeroI64, false, nil
+		}
+		return zeroI64, true, nil
+	}
+	ret := resOfCmp(types.CompareFloat64(arg0, arg1), s.op)
+	if ret == -1 {
+		return zeroI64, false, errInvalidOperation.Gen("invalid op %v in comparison operation", s.op)
+	}
+	return ret, false, nil
+}
