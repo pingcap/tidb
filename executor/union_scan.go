@@ -90,9 +90,9 @@ type UnionScanExec struct {
 	Src   Executor
 	dirty *dirtyTable
 	// usedIndex is the column offsets of the index which Src executor has used.
-	usedIndex []int
-	desc      bool
-	condition expression.Expression
+	usedIndex  []int
+	desc       bool
+	conditions []expression.Expression
 
 	addedRows   []*Row
 	cursor      int
@@ -243,20 +243,18 @@ func (us *UnionScanExec) buildAndSortAddedRows(t table.Table, asName *model.CISt
 			if t, ok := us.Src.(*XSelectTableExec); ok {
 				columns = t.Columns
 			} else {
-				columns = us.Src.(*XSelectIndexExec).indexPlan.Columns
+				columns = us.Src.(*XSelectIndexExec).columns
 			}
 			for _, col := range columns {
 				newData = append(newData, data[col.Offset])
 			}
 		}
-		if us.condition != nil {
-			matched, err := expression.EvalBool(us.condition, newData, us.ctx)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if !matched {
-				continue
-			}
+		matched, err := expression.EvalBool(us.conditions, newData, us.ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !matched {
+			continue
 		}
 		rowKeyEntry := &RowKeyEntry{Handle: h, Tbl: t}
 		if asName != nil && asName.L != "" {

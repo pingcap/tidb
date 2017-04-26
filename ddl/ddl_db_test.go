@@ -1093,3 +1093,21 @@ out:
 	expected := fmt.Sprintf("%d %d", updateCnt, 3)
 	s.tk.MustQuery("select c2, c3 from tnn where c1 = 99").Check(testkit.Rows(expected))
 }
+
+func (s *testDBSuite) TestIssue2858And2717(c *C) {
+	defer testleak.AfterTest(c)()
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+
+	s.tk.MustExec("create table t_issue_2858_bit (a bit(64) default b'0')")
+	s.tk.MustExec("insert into t_issue_2858_bit value ()")
+	s.tk.MustExec(`insert into t_issue_2858_bit values (100), ('10'), ('\0')`)
+	s.tk.MustQuery("select a+0 from t_issue_2858_bit").Check([][]interface{}{{0}, {100}, {0x3130}, {0}})
+	s.tk.MustExec(`alter table t_issue_2858_bit alter column a set default '\0'`)
+
+	s.tk.MustExec("create table t_issue_2858_hex (a int default 0x123)")
+	s.tk.MustExec("insert into t_issue_2858_hex value ()")
+	s.tk.MustExec("insert into t_issue_2858_hex values (123), (0x321)")
+	s.tk.MustQuery("select a from t_issue_2858_hex").Check([][]interface{}{{0x123}, {123}, {0x321}})
+	s.tk.MustExec(`alter table t_issue_2858_hex alter column a set default 0x321`)
+}

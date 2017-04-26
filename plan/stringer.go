@@ -162,11 +162,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 	case *PhysicalIndexLookUpReader:
 		str = fmt.Sprintf("IndexLookUp(%s, %s)", ToString(x.indexPlan), ToString(x.tablePlan))
 	case *PhysicalUnionScan:
-		if x.Condition == nil {
-			str = "UnionScan"
-		} else {
-			str = fmt.Sprintf("UnionScan(%s)", x.Condition)
-		}
+		str = fmt.Sprintf("UnionScan(%s)", x.Conditions)
 	default:
 		str = fmt.Sprintf("%T", in)
 	}
