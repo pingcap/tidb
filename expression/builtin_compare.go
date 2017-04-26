@@ -272,3 +272,61 @@ func (s *builtinCompareSig) eval(row []types.Datum) (d types.Datum, err error) {
 	}
 	return
 }
+
+func resOfCmp(res int, op opcode.Op) int64 {
+	var ret bool
+	switch op {
+	case opcode.LT:
+		ret = res < 0
+	case opcode.LE:
+		ret = res <= 0
+	case opcode.EQ, opcode.NullEQ:
+		ret = res == 0
+	case opcode.GT:
+		ret = res > 0
+	case opcode.GE:
+		ret = res >= 0
+	case opcode.NE:
+		ret = res != 0
+	default:
+		return -1
+	}
+	res = 1
+	if !ret {
+		res = 0
+	}
+	return int64(res)
+}
+
+// builtinCompareStringSig compares two strings.
+type builtinCompareStringSig struct {
+	baseIntBuiltinFunc
+
+	op opcode.Op
+}
+
+func (s *builtinCompareStringSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := s.ctx.GetSessionVars().StmtCtx
+	arg0, isKindNull0, err := s.args[0].EvalString(row, sc)
+	if err != nil {
+		return zeroI64, false, errors.Trace(err)
+	}
+	arg1, isKindNull1, err := s.args[1].EvalString(row, sc)
+	if err != nil {
+		return zeroI64, false, errors.Trace(err)
+	}
+	if isKindNull0 || isKindNull1 {
+		if s.op == opcode.NullEQ {
+			if isKindNull0 && isKindNull1 {
+				return oneI64, false, nil
+			}
+			return zeroI64, false, nil
+		}
+		return zeroI64, true, nil
+	}
+	ret := resOfCmp(types.CompareString(arg0, arg1), s.op)
+	if ret == -1 {
+		return zeroI64, false, errInvalidOperation.Gen("invalid op %v in comparison operation", s.op)
+	}
+	return ret, false, nil
+}
