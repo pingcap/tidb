@@ -17,9 +17,11 @@ import (
 	"bytes"
 	"fmt"
 
+	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -122,6 +124,42 @@ func (col *Column) GetType() *types.FieldType {
 // Eval implements Expression interface.
 func (col *Column) Eval(row []types.Datum) (types.Datum, error) {
 	return row[col.Index], nil
+}
+
+// EvalInt returns int representation of Column.
+func (col *Column) EvalInt(_ []types.Datum, sc *variable.StatementContext) (int64, bool, error) {
+	val, err := evalExprToTypeClass(col, types.ClassInt, nil, sc)
+	if val.IsNull() || err != nil {
+		return 0, true, errors.Trace(err)
+	}
+	return val.GetInt64(), false, nil
+}
+
+// EvalReal returns real representation of Column.
+func (col *Column) EvalReal(_ []types.Datum, sc *variable.StatementContext) (float64, bool, error) {
+	val, err := evalExprToTypeClass(col, types.ClassReal, nil, sc)
+	if val.IsNull() || err != nil {
+		return 0, true, errors.Trace(err)
+	}
+	return val.GetFloat64(), false, nil
+}
+
+// EvalString returns string representation of Column.
+func (col *Column) EvalString(_ []types.Datum, sc *variable.StatementContext) (string, bool, error) {
+	val, err := evalExprToTypeClass(col, types.ClassString, nil, sc)
+	if val.IsNull() || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	return val.GetString(), false, nil
+}
+
+// EvalDecimal returns decimal representation of Column.
+func (col *Column) EvalDecimal(_ []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
+	val, err := evalExprToTypeClass(col, types.ClassDecimal, nil, sc)
+	if val.IsNull() || err != nil {
+		return nil, true, errors.Trace(err)
+	}
+	return val.GetMysqlDecimal(), false, nil
 }
 
 // Clone implements Expression interface.
