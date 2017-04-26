@@ -68,6 +68,7 @@ func (col *CorrelatedColumn) ResolveIndices(_ *Schema) {
 
 // Column represents a column.
 type Column struct {
+	baseExpr
 	FromID  string
 	ColName model.CIStr
 	DBName  model.CIStr
