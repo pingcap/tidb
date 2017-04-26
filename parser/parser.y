@@ -3420,7 +3420,7 @@ FunctionCallNonKeyword:
 |	"TRUNCATE" '(' ExpressionListOpt ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
- }
+	}
 |	"UPPER" '(' ExpressionListOpt ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
@@ -3434,11 +3434,11 @@ FunctionCallNonKeyword:
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
 |	"UNIX_TIMESTAMP" '(' ')'
-  {
+	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1)}
 	}
 |	"UNIX_TIMESTAMP" '(' ExpressionList ')'
-  {
+	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
 |	"UTC_TIMESTAMP" FuncDatetimePrec
