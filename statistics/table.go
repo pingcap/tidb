@@ -168,7 +168,7 @@ func (t *Table) ColumnGreaterRowCount(sc *variable.StatementContext, value types
 	if t.columnIsInvalid(colInfo) {
 		return float64(t.Count) / pseudoLessRate, nil
 	}
-	return t.Columns[colInfo.ID].greaterRowCount(sc, value, false)
+	return t.Columns[colInfo.ID].greaterRowCount(sc, value)
 }
 
 // ColumnLessRowCount estimates the row count where the column less than value.
@@ -176,7 +176,7 @@ func (t *Table) ColumnLessRowCount(sc *variable.StatementContext, value types.Da
 	if t.columnIsInvalid(colInfo) {
 		return float64(t.Count) / pseudoLessRate, nil
 	}
-	return t.Columns[colInfo.ID].lessRowCount(sc, value, false)
+	return t.Columns[colInfo.ID].lessRowCount(sc, value)
 }
 
 // ColumnBetweenRowCount estimates the row count where column greater or equal to a and less than b.
