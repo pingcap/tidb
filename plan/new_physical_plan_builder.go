@@ -198,8 +198,7 @@ func tryToAddUnionScan(cop *copTaskProfile, conds []expression.Expression, ctx c
 		Condition: expression.ComposeCNFCondition(ctx, conds...),
 	}.init(allocator, ctx)
 	us.SetSchema(task.plan().Schema())
-	task = us.attach2TaskProfile(task)
-	return task
+	return us.attach2TaskProfile(task)
 }
 
 // checkMemTableAndGetTask will check if this table is a mem table. If it is, it will produce a task and store it.
