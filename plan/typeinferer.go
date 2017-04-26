@@ -388,7 +388,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		ast.SubstringIndex, ast.Trim, ast.LTrim, ast.RTrim, ast.Reverse, ast.Hex, ast.Unhex,
 		ast.DateFormat, ast.Rpad, ast.Lpad, ast.CharFunc, ast.Conv, ast.MakeSet, ast.Oct, ast.UUID,
 		ast.InsertFunc, ast.Bin, ast.Quote, ast.Format, ast.FromBase64, ast.ToBase64, ast.ExportSet,
-		ast.AesEncrypt, ast.AesDecrypt, ast.SHA2, ast.InetNtoa, ast.Inet6Aton, ast.Uncompress:
+		ast.AesEncrypt, ast.AesDecrypt, ast.SHA2, ast.InetNtoa, ast.Inet6Aton:
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
 	case ast.RandomBytes:
@@ -404,6 +404,8 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = x.Args[1].GetType()
 	case ast.Compress:
 		tp = types.NewFieldType(mysql.TypeBlob)
+	case ast.Uncompress:
+		tp = types.NewFieldType(mysql.TypeLongBlob)
 	case ast.AnyValue:
 		tp = x.Args[0].GetType()
 	default:

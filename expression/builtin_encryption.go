@@ -213,7 +213,7 @@ func (b *builtinCompressSig) eval(row []types.Datum) (d types.Datum, err error) 
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	//Empty strings are stored as empty strings.
+	// Empty strings are stored as empty strings.
 	if len(compressStr) == 0 {
 		d.SetString("")
 		return d, nil
