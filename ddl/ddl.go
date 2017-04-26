@@ -37,8 +37,6 @@ import (
 	"github.com/twinj/uuid"
 )
 
-var NewOwnerChange = false
-
 var (
 	// errWorkerClosed means we have already closed the DDL worker.
 	errInvalidWorker = terror.ClassDDL.New(codeInvalidWorker, "invalid worker")
@@ -442,6 +440,7 @@ func (d *ddl) setHook(h Callback) {
 	defer d.hookMu.Unlock()
 
 	d.hook = h
+	log.Infof("set hook end")
 }
 
 func filterError(err, exceptErr error) error {

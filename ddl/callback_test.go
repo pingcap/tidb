@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/testleak"
@@ -25,6 +26,7 @@ type testDDLCallback struct {
 	onJobRunBefore func(*model.Job)
 	onJobUpdated   func(*model.Job)
 	onBgJobUpdated func(*model.Job)
+	onWatched      func()
 }
 
 func (tc *testDDLCallback) OnJobRunBefore(job *model.Job) {
@@ -54,6 +56,16 @@ func (tc *testDDLCallback) OnBgJobUpdated(job *model.Job) {
 	tc.BaseCallback.OnBgJobUpdated(job)
 }
 
+func (tc *testDDLCallback) OnWatched() {
+	log.Warnf("on watch %v", tc.onWatched)
+	if tc.onWatched != nil {
+		tc.onWatched()
+		return
+	}
+
+	tc.BaseCallback.OnWatched()
+}
+
 func (s *testDDLSuite) TestCallback(c *C) {
 	defer testleak.AfterTest(c)()
 	cb := &BaseCallback{}
@@ -61,4 +73,5 @@ func (s *testDDLSuite) TestCallback(c *C) {
 	cb.OnJobRunBefore(nil)
 	cb.OnJobUpdated(nil)
 	cb.OnBgJobUpdated(nil)
+	cb.OnWatched()
 }

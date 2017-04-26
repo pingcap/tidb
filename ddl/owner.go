@@ -21,12 +21,17 @@ import (
 	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/coreos/etcd/mvcc/mvccpb"
 	"github.com/ngaut/log"
-	"golang.org/x/net/context"
 	goctx "golang.org/x/net/context"
 )
 
+// NewOwnerChange is used for testing.
+var NewOwnerChange = false
+
 const ddlOwnerKey = "/tidb/ddl/owner"
 const bgOwnerKey = "/tidb/ddl/bg/owner"
+
+// campaignTimeout is variable for testing.
+var campaignTimeout = 5 * time.Second
 
 type worker struct {
 	ddlOwner    int32
@@ -70,6 +75,7 @@ func (w *worker) newSession() {
 			continue
 		}
 		w.etcdSession = session
+		break
 	}
 }
 
@@ -83,58 +89,77 @@ func (d *ddl) campaignLoop(key string) {
 	defer d.wait.Done()
 	worker := d.worker
 	for {
+		if d.isClosed() {
+			return
+		}
+
 		elec := concurrency.NewElection(worker.etcdSession, key)
-		ctx, cancel := context.WithTimeout(context.TODO(), 5*time.Second)
+		ctx, cancel := goctx.WithTimeout(goctx.Background(), campaignTimeout)
 		defer cancel()
 		err := elec.Campaign(ctx, worker.ddlID)
 		if err != nil {
-			log.Warnf("[ddl] failed to campaign, err %v", err)
+			log.Infof("[ddl] worker %s failed to campaign, err %v", worker.ddlID, err)
 		}
-		_, err = elec.Leader(goctx.Background())
+
+		// Get owner information.
+		resp, err := elec.Leader(goctx.Background())
 		if err != nil {
 			// If no leader elected currently, it returns ErrElectionNoLeader.
-			log.Warnf("[ddl] failed to get leader, err %v", err)
+			log.Infof("[ddl] failed to get leader, err %v", err)
 			continue
 		}
-		worker.watchOwner(key)
+		if len(resp.Kvs) < 1 {
+			log.Warnf("[ddl] worker %s watch owner key is empty")
+		}
+		leader := string(resp.Kvs[0].Value)
+		log.Infof("[ddl] %s worker is %s, owner is %v", key, worker.ddlID, leader)
+		if leader == worker.ddlID {
+			worker.setOwnerVal(key, true)
+		}
+
+		// TODO: Use content instead of quitCh.
+		worker.watchOwner(d.quitCh, string(resp.Kvs[0].Key))
+		worker.setOwnerVal(key, false)
+		d.hookMu.Lock()
+		d.hook.OnWatched()
+		d.hookMu.Unlock()
 
 		select {
-		case <-d.quitCh:
-			break
 		case <-worker.etcdSession.Done():
-			// TODO: Do something.
+			// TODO: Create session again?
 		default:
 		}
 	}
 }
 
-func (w *worker) watchOwner(key string) {
-	watchCh := w.etcdClient.Watch(goctx.Background(), key)
+func (w *worker) setOwnerVal(key string, val bool) {
+	if key == ddlOwnerKey {
+		w.setOwner(val)
+	} else {
+		w.setBgOwner(val)
+	}
+}
 
+func (w *worker) watchOwner(quitCh chan struct{}, key string) {
+	log.Debugf("[ddl] worker %s watch owner key %v", w.ddlID, key)
+	watchCh := w.etcdClient.Watch(goctx.Background(), key)
 	for {
 		select {
 		case resp := <-watchCh:
 			if resp.Canceled {
-				log.Infof("[ddl] watch owner failed, no owner")
+				log.Infof("[ddl] worker %s watch owner key %v failed, no owner",
+					w.ddlID, key)
 				return
 			}
 
 			for _, ev := range resp.Events {
 				if ev.Type == mvccpb.DELETE {
-					log.Infof("[ddl] owner is deleted")
+					log.Infof("[ddl] worker %s watch owner key %v failed, owner is deleted", w.ddlID, key)
+					return
 				}
 			}
+		case <-quitCh:
+			return
 		}
 	}
 }
-
-//func (w *worker) sessionLoop() {
-//	for {
-//		select {
-//		case <-w.etcdSession.Done():
-//			w.newSession()
-//		case <-quitCh:
-//			return
-//		}
-//	}
-//}
