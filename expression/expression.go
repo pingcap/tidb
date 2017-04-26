@@ -92,43 +92,60 @@ func EvalBool(expr Expression, row []types.Datum, ctx context.Context) (bool, er
 	return i != 0, nil
 }
 
-// evalExprToTypeClass evaluates `expr` to specified `tp`.
-// This function is temporarily used to guarantee Constant and Column implement interface Expression.
-func evalExprToTypeClass(expr Expression, tp types.TypeClass, row []types.Datum, sc *variable.StatementContext) (d types.Datum, err error) {
+// evalExprToInt evaluates `expr` to int type.
+func evalExprToInt(expr Expression, row []types.Datum, sc *variable.StatementContext) (res int64, isNull bool, err error) {
 	val, err := expr.Eval(row)
 	if val.IsNull() || err != nil {
-		return d, errors.Trace(err)
+		return 0, val.IsNull(), errors.Trace(err)
 	}
-	var res interface{}
 	tc := expr.GetType().ToClass()
-	switch tp {
-	case types.ClassInt:
-		if tc == tp {
-			res = val.GetInt64()
-		} else {
-			res, err = val.ToInt64(sc)
-		}
-	case types.ClassReal:
-		if tc == tp {
-			res = val.GetFloat64()
-		} else {
-			res, err = val.ToFloat64(sc)
-		}
-	case types.ClassString:
-		if tc == tp {
-			res = val.GetString()
-		} else {
-			res, err = val.ToString()
-		}
-	case types.ClassDecimal:
-		if tc == tp {
-			res = val.GetMysqlDecimal()
-		} else {
-			res, err = val.ToDecimal(sc)
-		}
+	if tc == types.ClassInt {
+		return val.GetInt64(), false, nil
 	}
-	d = types.NewDatum(res)
-	return
+	res, err = val.ToInt64(sc)
+	return res, false, errors.Trace(err)
+}
+
+// evalExprToReal evaluates `expr` to real type.
+func evalExprToReal(expr Expression, row []types.Datum, sc *variable.StatementContext) (res float64, isNull bool, err error) {
+	val, err := expr.Eval(row)
+	if val.IsNull() || err != nil {
+		return 0, val.IsNull(), errors.Trace(err)
+	}
+	tc := expr.GetType().ToClass()
+	if tc == types.ClassReal {
+		return val.GetFloat64(), false, nil
+	}
+	res, err = val.ToFloat64(sc)
+	return res, false, errors.Trace(err)
+}
+
+// evalExprToDecimal evaluates `expr` to decimal type.
+func evalExprToDecimal(expr Expression, row []types.Datum, sc *variable.StatementContext) (res *types.MyDecimal, isNull bool, err error) {
+	val, err := expr.Eval(row)
+	if val.IsNull() || err != nil {
+		return nil, val.IsNull(), errors.Trace(err)
+	}
+	tc := expr.GetType().ToClass()
+	if tc == types.ClassDecimal {
+		return val.GetMysqlDecimal(), false, nil
+	}
+	res, err = val.ToDecimal(sc)
+	return res, false, errors.Trace(err)
+}
+
+// evalExprToString evaluates `expr` to string type.
+func evalExprToString(expr Expression, row []types.Datum, _ *variable.StatementContext) (res string, isNull bool, err error) {
+	val, err := expr.Eval(row)
+	if val.IsNull() || err != nil {
+		return "", val.IsNull(), errors.Trace(err)
+	}
+	tc := expr.GetType().ToClass()
+	if tc == types.ClassString {
+		return val.GetString(), false, nil
+	}
+	res, err = val.ToString()
+	return res, false, errors.Trace(err)
 }
 
 // One stands for a number 1.
