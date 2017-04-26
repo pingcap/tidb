@@ -18,6 +18,8 @@
 package expression
 
 import (
+	"strconv"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -31,6 +33,7 @@ type baseBuiltinFunc struct {
 	argValues     []types.Datum
 	ctx           context.Context
 	deterministic bool
+	self          builtinFunc
 }
 
 func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc {
@@ -61,6 +64,42 @@ func (b *baseBuiltinFunc) getArgs() []Expression {
 	return b.args
 }
 
+func (b *baseBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
+	val, err := b.self.eval(row)
+	if err != nil || val.IsNull() {
+		return 0, val.IsNull(), errors.Trace(err)
+	}
+	intVal, err := val.ToInt64(b.ctx.GetSessionVars().StmtCtx)
+	return intVal, false, errors.Trace(err)
+}
+
+func (b *baseBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
+	val, err := b.self.eval(row)
+	if err != nil || val.IsNull() {
+		return 0, val.IsNull(), errors.Trace(err)
+	}
+	doubleVal, err := val.ToFloat64(b.ctx.GetSessionVars().StmtCtx)
+	return doubleVal, false, errors.Trace(err)
+}
+
+func (b *baseBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
+	val, err := b.self.eval(row)
+	if err != nil || val.IsNull() {
+		return "", val.IsNull(), errors.Trace(err)
+	}
+	strVal, err := val.ToString()
+	return strVal, false, errors.Trace(err)
+}
+
+func (b *baseBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
+	val, err := b.self.eval(row)
+	if err != nil || val.IsNull() {
+		return nil, val.IsNull(), errors.Trace(err)
+	}
+	decVal, err := val.ToDecimal(b.ctx.GetSessionVars().StmtCtx)
+	return decVal, false, errors.Trace(err)
+}
+
 // equal only checks if both functions are non-deterministic and if these arguments are same.
 // Function name will be checked outside.
 func (b *baseBuiltinFunc) equal(fun builtinFunc) bool {
@@ -83,10 +122,201 @@ func (b *baseBuiltinFunc) getCtx() context.Context {
 	return b.ctx
 }
 
+// baseIntBuiltinFunc represents the functions which return int values.
+type baseIntBuiltinFunc struct {
+	baseBuiltinFunc
+}
+
+func (b *baseIntBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) {
+	res, isNull, err := b.self.evalInt(row)
+	if err != nil || isNull {
+		return d, errors.Trace(err)
+	}
+	d.SetInt64(res)
+	return
+}
+
+// evalInt will always be overridden.
+func (b *baseIntBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
+	return b.self.evalInt(row)
+}
+
+func (b *baseIntBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
+	iVal, isNull, err := b.self.evalInt(row)
+	if err != nil || isNull {
+		return 0, isNull, errors.Trace(err)
+	}
+	return float64(iVal), false, nil
+}
+
+func (b *baseIntBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
+	iVal, isNull, err := b.self.evalInt(row)
+	if err != nil || isNull {
+		return nil, isNull, errors.Trace(err)
+	}
+	return types.NewDecFromInt(iVal), false, nil
+}
+
+func (b *baseIntBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
+	iVal, isNull, err := b.self.evalInt(row)
+	if err != nil || isNull {
+		return "", isNull, errors.Trace(err)
+	}
+	return strconv.FormatInt(iVal, 10), false, nil
+}
+
+// baseRealBuiltinFunc represents the functions which return real values.
+type baseRealBuiltinFunc struct {
+	baseBuiltinFunc
+}
+
+func (b *baseRealBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) {
+	res, isNull, err := b.self.evalReal(row)
+	if err != nil || isNull {
+		return d, errors.Trace(err)
+	}
+	d.SetFloat64(res)
+	return
+}
+
+// evalReal will always be overridden.
+func (b *baseRealBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
+	return b.self.evalReal(row)
+}
+
+func (b *baseRealBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
+	val, isNull, err := b.self.evalReal(row)
+	if err != nil || isNull {
+		return 0, isNull, errors.Trace(err)
+	}
+	return int64(val), false, nil
+}
+
+func (b *baseRealBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
+	val, isNull, err := b.self.evalReal(row)
+	if err != nil || isNull {
+		return nil, isNull, errors.Trace(err)
+	}
+	res := new(types.MyDecimal)
+	res.FromFloat64(val)
+	if err != nil {
+		return nil, false, errors.Trace(err)
+	}
+	return res, false, nil
+}
+
+func (b *baseRealBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
+	val, isNull, err := b.self.evalReal(row)
+	if err != nil || isNull {
+		return "", isNull, errors.Trace(err)
+	}
+	return strconv.FormatFloat(val, 'f', -1, 64), false, nil
+}
+
+// baseDecimalBuiltinFunc represents the functions which return decimal values.
+type baseDecimalBuiltinFunc struct {
+	baseBuiltinFunc
+}
+
+func (b *baseDecimalBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) {
+	res, isNull, err := b.self.evalDecimal(row)
+	if err != nil || isNull {
+		return d, errors.Trace(err)
+	}
+	d.SetMysqlDecimal(res)
+	return
+}
+
+// evalDecimal will always be overridden.
+func (b *baseDecimalBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
+	return b.self.evalDecimal(row)
+}
+
+func (b *baseDecimalBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
+	val, isNull, err := b.self.evalDecimal(row)
+	if err != nil || isNull {
+		return 0, isNull, errors.Trace(err)
+	}
+	res, err := val.ToInt()
+	return res, false, errors.Trace(err)
+}
+
+func (b *baseDecimalBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
+	val, isNull, err := b.self.evalDecimal(row)
+	if err != nil || isNull {
+		return 0, isNull, errors.Trace(err)
+	}
+	res, err := val.ToFloat64()
+	return res, false, errors.Trace(err)
+}
+
+func (b *baseDecimalBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
+	val, isNull, err := b.self.evalDecimal(row)
+	if err != nil || isNull {
+		return "", isNull, errors.Trace(err)
+	}
+	return string(val.ToString()), false, errors.Trace(err)
+}
+
+// baseStringBuiltinFunc represents the functions which return string values.
+type baseStringBuiltinFunc struct {
+	baseBuiltinFunc
+}
+
+func (b *baseStringBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) {
+	val, isNull, err := b.self.evalString(row)
+	if err != nil || isNull {
+		return d, errors.Trace(err)
+	}
+	d.SetString(val)
+	return
+}
+
+// evalString will always be overridden.
+func (b *baseStringBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
+	return b.self.evalString(row)
+}
+
+func (b *baseStringBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
+	val, isNull, err := b.self.evalString(row)
+	if err != nil || isNull {
+		return 0, isNull, errors.Trace(err)
+	}
+	res, err := strconv.ParseInt(val, 10, 64)
+	return res, false, errors.Trace(err)
+}
+
+func (b *baseStringBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
+	val, isNull, err := b.self.evalString(row)
+	if err != nil || isNull {
+		return 0, isNull, errors.Trace(err)
+	}
+	res, err := strconv.ParseFloat(val, 64)
+	return res, false, errors.Trace(err)
+}
+
+func (b *baseStringBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
+	val, isNull, err := b.self.evalString(row)
+	if err != nil || isNull {
+		return nil, isNull, errors.Trace(err)
+	}
+	res := new(types.MyDecimal)
+	err = res.FromString([]byte(val))
+	return res, false, errors.Trace(err)
+}
+
 // builtinFunc stands for a particular function signature.
 type builtinFunc interface {
 	// eval does evaluation by the given row.
 	eval([]types.Datum) (types.Datum, error)
+	// evalInt evaluates int result of builtinFunc by given row.
+	evalInt(row []types.Datum) (val int64, isNull bool, err error)
+	// evalReal evaluates real representation of builtinFunc by given row.
+	evalReal(row []types.Datum) (val float64, isNull bool, err error)
+	// evalString evaluates string representation of builtinFunc by given row.
+	evalString(row []types.Datum) (val string, isNull bool, err error)
+	// evalDecimal evaluates decimal representation of builtinFunc by given row.
+	evalDecimal(row []types.Datum) (val *types.MyDecimal, isNull bool, err error)
 	// getArgs returns the arguments expressions.
 	getArgs() []Expression
 	// isDeterministic checks if a function is deterministic.

@@ -425,7 +425,7 @@ func (b *builtinRoundSig) eval(row []types.Datum) (d types.Datum, err error) {
 
 	if args[0].Kind() == types.KindMysqlDecimal {
 		var dec types.MyDecimal
-		err = args[0].GetMysqlDecimal().Round(&dec, frac)
+		err = args[0].GetMysqlDecimal().Round(&dec, frac, types.ModeHalfEven)
 		if err != nil {
 			return d, errors.Trace(err)
 		}
@@ -1091,5 +1091,53 @@ type builtinTruncateSig struct {
 // eval evals a builtinTruncateSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_truncate
 func (b *builtinTruncateSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("truncate")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if len(args) != 2 || args[0].IsNull() || args[1].IsNull() {
+		return
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+
+	// Get the fraction as Int.
+	frac64, err1 := args[1].ToInt64(sc)
+	if err1 != nil {
+		return d, errors.Trace(err1)
+	}
+	frac := int(frac64)
+
+	// The number is a decimal, run decimal.Round(number, fraction, 9).
+	if args[0].Kind() == types.KindMysqlDecimal {
+		var dec types.MyDecimal
+		err = args[0].GetMysqlDecimal().Round(&dec, frac, types.ModeTruncate)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		d.SetMysqlDecimal(&dec)
+		return d, nil
+	}
+
+	// The number is a float, run math.Trunc.
+	x, err := args[0].ToFloat64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	// Get the truncate.
+	val := types.Truncate(x, frac)
+
+	// Return result as Round does.
+	switch args[0].Kind() {
+	case types.KindInt64:
+		d.SetInt64(int64(val))
+	case types.KindUint64:
+		d.SetUint64(uint64(val))
+	default:
+		d.SetFloat64(val)
+		if frac > 0 {
+			d.SetFrac(frac)
+		}
+	}
+	return d, nil
 }
