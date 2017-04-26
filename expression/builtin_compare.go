@@ -58,6 +58,8 @@ func (b *builtinCoalesceSig) eval(row []types.Datum) (types.Datum, error) {
 	return builtinCoalesce(args, b.ctx)
 }
 
+// builtinCoalesce returns the first non-NULL value in the list,
+// or NULL if there are no non-NULL values.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 func builtinCoalesce(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	for _, d = range args {
@@ -80,6 +82,7 @@ type builtinGreatestSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinGreatestSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
 func (b *builtinGreatestSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -121,6 +124,7 @@ type builtinLeastSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinLeastSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_least
 func (b *builtinLeastSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -162,6 +166,7 @@ type builtinIntervalSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinIntervalSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_interval
 func (b *builtinIntervalSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
@@ -45,14 +46,103 @@ const (
 // EvalAstExpr evaluates ast expression directly.
 var EvalAstExpr func(expr ast.ExprNode, ctx context.Context) (types.Datum, error)
 
+// baseExpr will be removed later.
+// baseExpr implements the common implementation of EvalXXX(XXX:Int/Real/Decimal/String) of Expression to guarantee the
+// availability of Constant and Column.
+type baseExpr struct {
+	self Expression
+}
+
+func (be *baseExpr) SetSelf(expr Expression) {
+	be.self = expr
+}
+
+func (be *baseExpr) EvalInt(row []types.Datum, sc *variable.StatementContext) (int64, bool, error) {
+	if be.self.GetType().Tp == mysql.TypeNull {
+		return 0, true, nil
+	}
+	val, err := be.self.Eval(row)
+	if err != nil || val.IsNull() {
+		return 0, val.IsNull(), errors.Trace(err)
+	}
+	switch be.self.GetType().ToClass() {
+	case types.ClassInt:
+		return val.GetInt64(), false, nil
+	default:
+		res, err := val.ToInt64(sc)
+		return res, false, errors.Trace(err)
+	}
+}
+
+func (be *baseExpr) EvalReal(row []types.Datum, sc *variable.StatementContext) (float64, bool, error) {
+	if be.self.GetType().Tp == mysql.TypeNull {
+		return 0, true, nil
+	}
+	val, err := be.self.Eval(row)
+	if err != nil || val.IsNull() {
+		return 0, val.IsNull(), errors.Trace(err)
+	}
+	switch be.self.GetType().ToClass() {
+	case types.ClassReal:
+		return val.GetFloat64(), false, nil
+	default:
+		res, err := val.ToFloat64(sc)
+		return res, false, errors.Trace(err)
+	}
+}
+
+func (be *baseExpr) EvalString(row []types.Datum, sc *variable.StatementContext) (string, bool, error) {
+	if be.self.GetType().Tp == mysql.TypeNull {
+		return "", true, nil
+	}
+	val, err := be.self.Eval(row)
+	if err != nil || val.IsNull() {
+		return "", val.IsNull(), errors.Trace(err)
+	}
+	// We cannot use val.GetString() even if b.self.GetType().ToClass() == types.ClassString here,
+	// because the types like types.KindMysqlHex will get an empty value.
+	res, err := val.ToString()
+	return res, false, errors.Trace(err)
+}
+
+func (be *baseExpr) EvalDecimal(row []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
+	if be.self.GetType().Tp == mysql.TypeNull {
+		return nil, true, nil
+	}
+	val, err := be.self.Eval(row)
+	if err != nil || val.IsNull() {
+		return nil, val.IsNull(), errors.Trace(err)
+	}
+	switch be.self.GetType().ToClass() {
+	case types.ClassDecimal:
+		return val.GetMysqlDecimal(), false, nil
+	default:
+		res, err := val.ToDecimal(sc)
+		return res, false, errors.Trace(err)
+	}
+}
+
 // Expression represents all scalar expression in SQL.
 type Expression interface {
 	fmt.Stringer
 	json.Marshaler
+
 	// Eval evaluates an expression through a row.
 	Eval(row []types.Datum) (types.Datum, error)
 
-	// Get the expression return type.
+	// EvalInt returns the int64 representation of expression.
+	EvalInt(row []types.Datum, sc *variable.StatementContext) (val int64, isNull bool, err error)
+
+	// EvalReal returns the float64 representation of expression.
+	EvalReal(row []types.Datum, sc *variable.StatementContext) (val float64, isNull bool, err error)
+
+	// EvalString returns the string representation of expression.
+	EvalString(row []types.Datum, sc *variable.StatementContext) (val string, isNull bool, err error)
+
+	// EvalDecimal returns the decimal representation of expression.
+	EvalDecimal(row []types.Datum, sc *variable.StatementContext) (val *types.MyDecimal, isNull bool, err error)
+
+	// GetType gets the type that the expression returns.
 	GetType() *types.FieldType
 
 	// Clone copies an expression totally.
@@ -74,21 +164,26 @@ type Expression interface {
 	ResolveIndices(schema *Schema)
 }
 
-// EvalBool evaluates expression to a boolean value.
-func EvalBool(expr Expression, row []types.Datum, ctx context.Context) (bool, error) {
-	data, err := expr.Eval(row)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	if data.IsNull() {
-		return false, nil
-	}
+// EvalBool evaluates expression list to a boolean value.
+func EvalBool(exprList []Expression, row []types.Datum, ctx context.Context) (bool, error) {
+	for _, expr := range exprList {
+		data, err := expr.Eval(row)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if data.IsNull() {
+			return false, nil
+		}
 
-	i, err := data.ToBool(ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return false, errors.Trace(err)
+		i, err := data.ToBool(ctx.GetSessionVars().StmtCtx)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if i == 0 {
+			return false, nil
+		}
 	}
-	return i != 0, nil
+	return true, nil
 }
 
 // One stands for a number 1.
@@ -111,6 +206,7 @@ var Null = &Constant{
 
 // Constant stands for a constant value.
 type Constant struct {
+	baseExpr
 	Value   types.Datum
 	RetType *types.FieldType
 }
