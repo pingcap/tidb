@@ -17,12 +17,12 @@ import (
 	"sort"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 	"math"
-	"github.com/pingcap/tidb/ast"
 )
 
 var (
