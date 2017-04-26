@@ -14,10 +14,10 @@
 package plan
 
 import (
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"math"
-	"github.com/ngaut/log"
 )
 
 // indexBlock is used when calculating selectivity
@@ -104,7 +104,7 @@ func selectivity(exprs []expression.Expression, indices []*model.IndexInfo, ds *
 				return 0.0, err
 			}
 		} else {
-			ranges, err := BuildIndexRange(sc, ds.tableInfo, indices[block.pos], conds, block.inAndEqCnt)
+			ranges, err := BuildIndexRange(sc, ds.tableInfo, indices[block.pos], block.inAndEqCnt, conds)
 			if err != nil {
 				return 0.0, nil
 			}

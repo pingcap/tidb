@@ -56,7 +56,6 @@ var (
 	_ PhysicalPlan = &Limit{}
 	_ PhysicalPlan = &Show{}
 	_ PhysicalPlan = &Insert{}
-	_ PhysicalPlan = &Analyze{}
 	_ PhysicalPlan = &PhysicalIndexScan{}
 	_ PhysicalPlan = &PhysicalTableScan{}
 	_ PhysicalPlan = &PhysicalAggregation{}
@@ -133,7 +132,7 @@ type PhysicalIndexScan struct {
 	DoubleRead bool
 
 	// All conditions in AccessCondition[accessEqualCount:accessInAndEqCount] are IN expressions or equal conditions.
-	AccessInAndEqCount int
+	accessInAndEqCount int
 	// All conditions in AccessCondition[:accessEqualCount] are equal conditions.
 	accessEqualCount int
 
@@ -306,7 +305,7 @@ func (p *physicalTableSource) tryToAddUnionScan(resultPlan PhysicalPlan) Physica
 	}
 	conditions := append(p.indexFilterConditions, p.tableFilterConditions...)
 	us := PhysicalUnionScan{
-		Condition: expression.ComposeCNFCondition(p.ctx, append(conditions, p.AccessCondition...)...),
+		Conditions: append(conditions, p.AccessCondition...),
 	}.init(p.allocator, p.ctx)
 	us.SetChildren(resultPlan)
 	us.SetSchema(resultPlan.Schema())
@@ -509,7 +508,7 @@ type PhysicalUnionScan struct {
 	*basePlan
 	basePhysicalPlan
 
-	Condition expression.Expression
+	Conditions []expression.Expression
 }
 
 // Cache plan is a physical plan which stores the result of its child node.
@@ -1061,15 +1060,6 @@ func (p *PhysicalUnionScan) Copy() PhysicalPlan {
 func (p *Cache) Copy() PhysicalPlan {
 	np := *p
 	np.basePlan = p.basePlan.copy()
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
-// Copy implements the PhysicalPlan Copy interface.
-func (p *Analyze) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
 	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }

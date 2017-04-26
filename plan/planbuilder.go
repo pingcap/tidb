@@ -404,18 +404,18 @@ func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []
 	return
 }
 
-func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) LogicalPlan {
-	p := Analyze{}.init(b.allocator, b.ctx)
+func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) Plan {
+	p := &Analyze{}
 	for _, tbl := range as.TableNames {
 		idxInfo, colInfo, pkInfo := getColsInfo(tbl)
 		for _, idx := range idxInfo {
-			p.IdxTasks = append(p.IdxTasks, analyzeIndexTask{TableInfo: tbl.TableInfo, IndexInfo: idx})
+			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{TableInfo: tbl.TableInfo, IndexInfo: idx})
 		}
 		if len(colInfo) > 0 {
-			p.ColTasks = append(p.ColTasks, analyzeColumnsTask{TableInfo: tbl.TableInfo, ColsInfo: colInfo})
+			p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{TableInfo: tbl.TableInfo, ColsInfo: colInfo})
 		}
 		if pkInfo != nil {
-			p.PkTasks = append(p.PkTasks, analyzePKTask{TableInfo: tbl.TableInfo, PKInfo: pkInfo})
+			p.PkTasks = append(p.PkTasks, AnalyzePKTask{TableInfo: tbl.TableInfo, PKInfo: pkInfo})
 		}
 	}
 	p.SetSchema(&expression.Schema{})

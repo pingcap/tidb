@@ -472,10 +472,9 @@ func (e *TableDualExec) Close() error {
 
 // SelectionExec represents a filter executor.
 type SelectionExec struct {
-	Src       Executor
-	Condition expression.Expression
-	ctx       context.Context
-	schema    *expression.Schema
+	Src    Executor
+	ctx    context.Context
+	schema *expression.Schema
 
 	// scanController will tell whether this selection need to
 	// control the condition of below scan executor.
@@ -513,16 +512,16 @@ func (e *SelectionExec) initController() error {
 		}
 		x.ranges = ranges
 	case *XSelectIndexExec:
-		x.indexPlan.AccessCondition, newConds, _, _ = plan.DetachIndexScanConditions(newConds, x.indexPlan.Index)
-		idxConds, tblConds := plan.DetachIndexFilterConditions(newConds, x.indexPlan.Index.Columns, x.indexPlan.Table)
-		x.indexPlan.IndexConditionPBExpr, _, _ = plan.ExpressionsToPB(sc, idxConds, client)
-		x.indexPlan.TableConditionPBExpr, _, _ = plan.ExpressionsToPB(sc, tblConds, client)
-		ranges, err := plan.BuildIndexRange(sc, x.indexPlan.Table, x.indexPlan.Index, x.indexPlan.AccessCondition, x.indexPlan.AccessInAndEqCount)
+		accessCondition, newConds, _, accessInAndEqCount := plan.DetachIndexScanConditions(newConds, x.index)
+		idxConds, tblConds := plan.DetachIndexFilterConditions(newConds, x.index.Columns, x.tableInfo)
+		x.indexConditionPBExpr, _, _ = plan.ExpressionsToPB(sc, idxConds, client)
+		tableConditionPBExpr, _, _ := plan.ExpressionsToPB(sc, tblConds, client)
+		var err error
+		x.ranges, err = plan.BuildIndexRange(sc, x.tableInfo, x.index, accessInAndEqCount, accessCondition)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		x.indexPlan.Ranges = ranges
-		x.where = x.indexPlan.TableConditionPBExpr
+		x.where = tableConditionPBExpr
 	default:
 		return errors.Errorf("Error type of Executor: %T", x)
 	}
@@ -546,18 +545,11 @@ func (e *SelectionExec) Next() (*Row, error) {
 		if srcRow == nil {
 			return nil, nil
 		}
-		allMatch := true
-		for _, cond := range e.Conditions {
-			match, err := expression.EvalBool(cond, srcRow.Data, e.ctx)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if !match {
-				allMatch = false
-				break
-			}
+		match, err := expression.EvalBool(e.Conditions, srcRow.Data, e.ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
-		if allMatch {
+		if match {
 			return srcRow, nil
 		}
 	}

@@ -32,14 +32,15 @@ var fullRange = []rangePoint{
 }
 
 // BuildIndexRange will build range of index for PhysicalIndexScan
-func BuildIndexRange(sc *variable.StatementContext, tbl *model.TableInfo, index *model.IndexInfo, conds []expression.Expression, inAndEqCnt int) ([]*types.IndexRange, error) {
-	var ranges []*types.IndexRange
+func BuildIndexRange(sc *variable.StatementContext, tblInfo *model.TableInfo, index *model.IndexInfo,
+	accessInAndEqCount int, accessCondition []expression.Expression) ([]*types.IndexRange, error) {
 	rb := rangeBuilder{sc: sc}
-	for i := 0; i < inAndEqCnt; i++ {
+	var ranges []*types.IndexRange
+	for i := 0; i < accessInAndEqCount; i++ {
 		// Build ranges for equal or in access conditions.
-		point := rb.build(conds[i])
+		point := rb.build(accessCondition[i])
 		colOff := index.Columns[i].Offset
-		tp := &tbl.Columns[colOff].FieldType
+		tp := &tblInfo.Columns[colOff].FieldType
 		if i == 0 {
 			ranges = rb.buildIndexRanges(point, tp)
 		} else {
@@ -48,16 +49,16 @@ func BuildIndexRange(sc *variable.StatementContext, tbl *model.TableInfo, index 
 	}
 	rangePoints := fullRange
 	// Build rangePoints for non-equal access conditions.
-	for i := inAndEqCnt; i < len(conds); i++ {
-		rangePoints = rb.intersection(rangePoints, rb.build(conds[i]))
+	for i := accessInAndEqCount; i < len(accessCondition); i++ {
+		rangePoints = rb.intersection(rangePoints, rb.build(accessCondition[i]))
 	}
-	if inAndEqCnt == 0 {
+	if accessInAndEqCount == 0 {
 		colOff := index.Columns[0].Offset
-		tp := &tbl.Columns[colOff].FieldType
+		tp := &tblInfo.Columns[colOff].FieldType
 		ranges = rb.buildIndexRanges(rangePoints, tp)
-	} else if inAndEqCnt < len(conds) {
-		colOff := index.Columns[inAndEqCnt].Offset
-		tp := &tbl.Columns[colOff].FieldType
+	} else if accessInAndEqCount < len(accessCondition) {
+		colOff := index.Columns[accessInAndEqCount].Offset
+		tp := &tblInfo.Columns[colOff].FieldType
 		ranges = rb.appendIndexRanges(ranges, rangePoints, tp)
 	}
 

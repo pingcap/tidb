@@ -14,25 +14,25 @@
 package plan
 
 import (
+	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/ast"
-	"github.com/ngaut/log"
-	"github.com/pingcap/tidb/mysql"
 )
 
 func (s *testPlanSuite) TestSelectivity(c *C) {
 	defer testleak.AfterTest(c)()
-	tests := []struct{
-		exprs string
+	tests := []struct {
+		exprs       string
 		selectivity float64
 	}{
 		{
-			exprs: "a >= 39",
-			selectivity: 0.1,
+			exprs:       "a >= 1 and a < 2",
+			selectivity: 0.025,
 		},
 	}
 	for _, tt := range tests {
