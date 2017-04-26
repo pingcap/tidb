@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"strconv"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
