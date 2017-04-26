@@ -363,3 +363,36 @@ func (s *builtinCompareRealSig) evalInt(row []types.Datum) (int64, bool, error) 
 	}
 	return ret, false, nil
 }
+
+// builtinCompareDecimalSig compares two decimals.
+type builtinCompareDecimalSig struct {
+	baseIntBuiltinFunc
+
+	op opcode.Op
+}
+
+func (s *builtinCompareDecimalSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := s.ctx.GetSessionVars().StmtCtx
+	arg0, isKindNull0, err := s.args[0].EvalDecimal(row, sc)
+	if err != nil {
+		return zeroI64, false, errors.Trace(err)
+	}
+	arg1, isKindNull1, err := s.args[1].EvalDecimal(row, sc)
+	if err != nil {
+		return zeroI64, false, errors.Trace(err)
+	}
+	if isKindNull0 || isKindNull1 {
+		if s.op == opcode.NullEQ {
+			if isKindNull0 && isKindNull1 {
+				return oneI64, false, nil
+			}
+			return zeroI64, false, nil
+		}
+		return zeroI64, true, nil
+	}
+	ret := resOfCmp(arg0.Compare(arg1), s.op)
+	if ret == -1 {
+		return zeroI64, false, errInvalidOperation.Gen("invalid op %v in comparison operation", s.op)
+	}
+	return ret, false, nil
+}
