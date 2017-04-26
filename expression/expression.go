@@ -201,38 +201,26 @@ func (c *Constant) Eval(_ []types.Datum) (types.Datum, error) {
 
 // EvalInt returns int representation of Constant.
 func (c *Constant) EvalInt(_ []types.Datum, sc *variable.StatementContext) (int64, bool, error) {
-	val, err := evalExprToTypeClass(c, types.ClassInt, nil, sc)
-	if val.IsNull() || err != nil {
-		return 0, true, errors.Trace(err)
-	}
-	return val.GetInt64(), false, nil
+	val, isNull, err := evalExprToInt(c, nil, sc)
+	return val, isNull, errors.Trace(err)
 }
 
 // EvalReal returns real representation of Constant.
 func (c *Constant) EvalReal(_ []types.Datum, sc *variable.StatementContext) (float64, bool, error) {
-	val, err := evalExprToTypeClass(c, types.ClassReal, nil, sc)
-	if val.IsNull() || err != nil {
-		return 0, true, errors.Trace(err)
-	}
-	return val.GetFloat64(), false, nil
+	val, isNull, err := evalExprToReal(c, nil, sc)
+	return val, isNull, errors.Trace(err)
 }
 
 // EvalString returns string representation of Constant.
 func (c *Constant) EvalString(_ []types.Datum, sc *variable.StatementContext) (string, bool, error) {
-	val, err := evalExprToTypeClass(c, types.ClassString, nil, sc)
-	if val.IsNull() || err != nil {
-		return "", true, errors.Trace(err)
-	}
-	return val.GetString(), false, nil
+	val, isNull, err := evalExprToString(c, nil, sc)
+	return val, isNull, errors.Trace(err)
 }
 
 // EvalDecimal returns decimal representation of Constant.
 func (c *Constant) EvalDecimal(_ []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
-	val, err := evalExprToTypeClass(c, types.ClassDecimal, nil, sc)
-	if val.IsNull() || err != nil {
-		return nil, true, errors.Trace(err)
-	}
-	return val.GetMysqlDecimal(), false, nil
+	val, isNull, err := evalExprToDecimal(c, nil, sc)
+	return val, isNull, errors.Trace(err)
 }
 
 // Equal implements Expression interface.
