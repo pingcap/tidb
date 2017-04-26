@@ -274,8 +274,8 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (taskProfi
 	return task, p.storeTaskProfile(prop, task)
 }
 
-// checkMemTableAndGetTask will check if this table is a mem table. If it is, it will produce a task and store it.
-func (p *DataSource) getMemTableTask(prop *requiredProp) (task taskProfile, err error) {
+// tryToGetMemTask will check if this table is a mem table. If it is, it will produce a task and store it.
+func (p *DataSource) tryToGetMemTask(prop *requiredProp) (task taskProfile, err error) {
 	client := p.ctx.GetClient()
 	memDB := infoschema.IsMemoryDB(p.DBName.L)
 	isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeSelect, 0)
@@ -293,7 +293,27 @@ func (p *DataSource) getMemTableTask(prop *requiredProp) (task taskProfile, err 
 	memTable.Ranges = rb.buildTableRanges(fullRange)
 	task = &rootTaskProfile{p: memTable}
 	task = prop.enforceProperty(task, p.ctx, p.allocator)
-	return task, p.storeTaskProfile(prop, task)
+	return task, nil
+}
+
+// tryToGetDualTask will check if the push down predicate has false constant. If so, it will return table dual.
+func (p *DataSource) tryToGetDualTask() (taskProfile, error) {
+	for _, cond := range p.pushedDownConds {
+		if _, ok := cond.(*expression.Constant); ok {
+			result, err := expression.EvalBool([]expression.Expression{cond}, nil, p.ctx)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if !result {
+				dual := TableDual{}.init(p.allocator, p.ctx)
+				dual.SetSchema(p.schema)
+				return &rootTaskProfile{
+					p: dual,
+				}, nil
+			}
+		}
+	}
+	return nil, nil
 }
 
 // convert2NewPhysicalPlan implements the PhysicalPlan interface.
@@ -306,13 +326,19 @@ func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, e
 	if task != nil {
 		return task, nil
 	}
-	// TODO: We don't consider the false condition here. We will add this check in PPD phase.
-	task, err = p.getMemTableTask(prop)
+	task, err = p.tryToGetDualTask()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	if task != nil {
-		return task, nil
+		return task, p.storeTaskProfile(prop, task)
+	}
+	task, err = p.tryToGetMemTask(prop)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if task != nil {
+		return task, p.storeTaskProfile(prop, task)
 	}
 	// TODO: We have not checked if this table has a predicate. If not, we can only consider table scan.
 	indices, includeTableScan := availableIndices(p.indexHints, p.tableInfo)
