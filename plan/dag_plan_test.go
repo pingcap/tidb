@@ -11,18 +11,36 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package plan
+package plan_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
+var _ = Suite(&testPlanSuite{})
+
+type testPlanSuite struct {
+	*parser.Parser
+}
+
+func (s *testPlanSuite) SetUpSuite(c *C) {
+	s.Parser = parser.New()
+}
+
 func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
-	UseDAGPlanBuilder = true
+	store, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	se, err := tidb.CreateSession(store)
+	c.Assert(err, IsNil)
+
+	plan.UseDAGPlanBuilder = true
 	defer func() {
-		UseDAGPlanBuilder = false
+		plan.UseDAGPlanBuilder = false
 		testleak.AfterTest(c)()
 	}()
 	tests := []struct {
@@ -140,27 +158,27 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := mockResolve(stmt)
+		err = se.NewTxn()
 		c.Assert(err, IsNil)
 
-		builder := &planBuilder{
-			allocator: new(idAllocator),
-			ctx:       mockContext(),
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-			is:        is,
-		}
-		p := builder.build(stmt)
-		c.Assert(builder.err, IsNil)
-		p, err = doOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx, builder.allocator)
+		is, err := plan.MockResolve(stmt)
 		c.Assert(err, IsNil)
-		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
+		p, err := plan.Optimize(se, stmt, is)
+		c.Assert(err, IsNil)
+		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
 }
 
 func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
-	UseDAGPlanBuilder = true
+	store, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	se, err := tidb.CreateSession(store)
+	c.Assert(err, IsNil)
+
+	plan.UseDAGPlanBuilder = true
 	defer func() {
-		UseDAGPlanBuilder = false
+		plan.UseDAGPlanBuilder = false
 		testleak.AfterTest(c)()
 	}()
 	tests := []struct {
@@ -197,27 +215,24 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := mockResolve(stmt)
+		is, err := plan.MockResolve(stmt)
 		c.Assert(err, IsNil)
-
-		builder := &planBuilder{
-			allocator: new(idAllocator),
-			ctx:       mockContext(),
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-			is:        is,
-		}
-		p := builder.build(stmt)
-		c.Assert(builder.err, IsNil)
-		p, err = doOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx, builder.allocator)
+		p, err := plan.Optimize(se, stmt, is)
 		c.Assert(err, IsNil)
-		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
+		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
 }
 
 func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
-	UseDAGPlanBuilder = true
+	store, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	se, err := tidb.CreateSession(store)
+	c.Assert(err, IsNil)
+
+	plan.UseDAGPlanBuilder = true
 	defer func() {
-		UseDAGPlanBuilder = false
+		plan.UseDAGPlanBuilder = false
 		testleak.AfterTest(c)()
 	}()
 	tests := []struct {
@@ -281,27 +296,24 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := mockResolve(stmt)
+		is, err := plan.MockResolve(stmt)
 		c.Assert(err, IsNil)
-
-		builder := &planBuilder{
-			allocator: new(idAllocator),
-			ctx:       mockContext(),
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-			is:        is,
-		}
-		p := builder.build(stmt)
-		c.Assert(builder.err, IsNil)
-		p, err = doOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx, builder.allocator)
+		p, err := plan.Optimize(se, stmt, is)
 		c.Assert(err, IsNil)
-		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
+		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
 }
 
 func (s *testPlanSuite) TestDAGPlanBuilderUnion(c *C) {
-	UseDAGPlanBuilder = true
+	store, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	se, err := tidb.CreateSession(store)
+	c.Assert(err, IsNil)
+
+	plan.UseDAGPlanBuilder = true
 	defer func() {
-		UseDAGPlanBuilder = false
+		plan.UseDAGPlanBuilder = false
 		testleak.AfterTest(c)()
 	}()
 	tests := []struct {
@@ -334,27 +346,92 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnion(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := mockResolve(stmt)
+		is, err := plan.MockResolve(stmt)
+		c.Assert(err, IsNil)
+		p, err := plan.Optimize(se, stmt, is)
+		c.Assert(err, IsNil)
+		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
+	}
+}
+
+func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
+	store, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	se, err := tidb.CreateSession(store)
+	c.Assert(err, IsNil)
+
+	plan.UseDAGPlanBuilder = true
+	defer func() {
+		plan.UseDAGPlanBuilder = false
+		testleak.AfterTest(c)()
+	}()
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		// Read table.
+		{
+			sql:  "select * from t",
+			best: "TableReader(Table(t))->UnionScan([])",
+		},
+		{
+			sql:  "select * from t where b = 1",
+			best: "TableReader(Table(t)->Sel([eq(test.t.b, 1)]))->UnionScan([eq(test.t.b, 1)])",
+		},
+		{
+			sql:  "select * from t where a = 1",
+			best: "TableReader(Table(t))->UnionScan([eq(test.t.a, 1)])",
+		},
+		{
+			sql:  "select * from t where a = 1 order by a",
+			best: "TableReader(Table(t))->UnionScan([eq(test.t.a, 1)])",
+		},
+		{
+			sql:  "select * from t where a = 1 order by b",
+			best: "TableReader(Table(t))->UnionScan([eq(test.t.a, 1)])->Sort",
+		},
+		{
+			sql:  "select * from t where a = 1 limit 1",
+			best: "TableReader(Table(t))->UnionScan([eq(test.t.a, 1)])->Limit",
+		},
+		{
+			sql:  "select * from t where c = 1",
+			best: "IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t))->UnionScan([eq(test.t.c, 1)])",
+		},
+		{
+			sql:  "select c from t where c = 1",
+			best: "IndexReader(Index(t.c_d_e)[[1,1]])->UnionScan([eq(test.t.c, 1)])",
+		},
+	}
+	for _, tt := range tests {
+		comment := Commentf("for %s", tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+
+		is, err := plan.MockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &planBuilder{
-			allocator: new(idAllocator),
-			ctx:       mockContext(),
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-			is:        is,
-		}
-		p := builder.build(stmt)
-		c.Assert(builder.err, IsNil)
-		p, err = doOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx, builder.allocator)
+		err = se.NewTxn()
 		c.Assert(err, IsNil)
-		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
+		// Make txn not read only.
+		se.Txn().Set(nil, nil)
+		p, err := plan.Optimize(se, stmt, is)
+		c.Assert(err, IsNil)
+		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
 }
 
 func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
-	UseDAGPlanBuilder = true
+	store, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	se, err := tidb.CreateSession(store)
+	c.Assert(err, IsNil)
+
+	plan.UseDAGPlanBuilder = true
 	defer func() {
-		UseDAGPlanBuilder = false
+		plan.UseDAGPlanBuilder = false
 		testleak.AfterTest(c)()
 	}()
 	tests := []struct {
@@ -392,19 +469,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := mockResolve(stmt)
+		is, err := plan.MockResolve(stmt)
 		c.Assert(err, IsNil)
-
-		builder := &planBuilder{
-			allocator: new(idAllocator),
-			ctx:       mockContext(),
-			colMapper: make(map[*ast.ColumnNameExpr]int),
-			is:        is,
-		}
-		p := builder.build(stmt)
-		c.Assert(builder.err, IsNil)
-		p, err = doOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx, builder.allocator)
+		p, err := plan.Optimize(se, stmt, is)
 		c.Assert(err, IsNil)
-		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
+		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
 }
