@@ -20,14 +20,12 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -768,36 +766,7 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	return e
 }
 
-type tableInfo struct {
-	asName    *model.CIStr
-	table     table.Table
-	tableID   int64
-	keepOrder bool
-	desc      bool
-	ranges    []types.IntColumnRange
-}
-
-func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor {
-	ts := &TableReaderExecutor{
-		ctx:    b.ctx,
-		schema: v.Schema(),
-	}
-	ts.dagPB, ts.tableInfo = b.plan2DAGRequest(v.TablePlan)
-	if b.err != nil {
-		return nil
-	}
-	b.err = ts.doRequest()
-	return ts
-}
-
-func (b *executorBuilder) plan2DAGRequest(p plan.PhysicalPlan) (dagReq *tipb.DAGRequest, info *tableInfo) {
-	dagReq = &tipb.DAGRequest{}
-	dagReq.StartTs = b.getStartTS()
-	dagReq.TimeZoneOffset = timeZoneOffset()
-	sc := b.ctx.GetSessionVars().StmtCtx
-	client := b.ctx.GetClient()
-	dagReq.Flags = statementContextToFlags(sc)
-	// Construct executors by v.TablePlan.
+func flattenPlans(p plan.PhysicalPlan) []plan.PhysicalPlan {
 	plans := make([]plan.PhysicalPlan, 0, 5)
 	for {
 		plans = append(plans, p)
@@ -806,66 +775,44 @@ func (b *executorBuilder) plan2DAGRequest(p plan.PhysicalPlan) (dagReq *tipb.DAG
 		}
 		p = p.Children()[0].(plan.PhysicalPlan)
 	}
-	for i := len(plans) - 1; i >= 0; i-- {
-		p := plans[i]
-		switch x := p.(type) {
-		case *plan.PhysicalAggregation:
-			aggExec := &tipb.Aggregation{
-				GroupBy: expression.ExpressionsToPBList(sc, x.GroupByItems, client),
-			}
-			for _, aggFunc := range x.AggFuncs {
-				aggExec.AggFunc = append(aggExec.AggFunc, expression.AggFuncToPBExpr(sc, client, aggFunc))
-			}
-			dagReq.Executors = append(dagReq.Executors, &tipb.Executor{Tp: tipb.ExecType_TypeAggregation, Aggregation: aggExec})
-		case *plan.Selection:
-			selExec := &tipb.Selection{
-				Conditions: expression.ExpressionsToPBList(sc, x.Conditions, client),
-			}
-			dagReq.Executors = append(dagReq.Executors, &tipb.Executor{Tp: tipb.ExecType_TypeSelection, Selection: selExec})
-		case *plan.Sort:
-			count := int64(x.ExecLimit.Count)
-			topNExec := &tipb.TopN{
-				Limit: &count,
-			}
-			for _, item := range x.ByItems {
-				topNExec.OrderBy = append(topNExec.OrderBy, expression.SortByItemToPB(sc, client, item.Expr, item.Desc))
-			}
-			dagReq.Executors = append(dagReq.Executors, &tipb.Executor{Tp: tipb.ExecType_TypeTopN, TopN: topNExec})
-		case *plan.Limit:
-			count := int64(x.Count)
-			limitExec := &tipb.Limit{
-				Limit: &count,
-			}
-			dagReq.Executors = append(dagReq.Executors, &tipb.Executor{Tp: tipb.ExecType_TypeLimit, Limit: limitExec})
-		case *plan.PhysicalTableScan:
-			tsExec := &tipb.TableScan{
-				TableId: x.Table.ID,
-				Columns: distsql.ColumnsToProto(x.Columns, x.Table.PKIsHandle),
-				Desc:    &x.Desc,
-			}
-			b.err = setPBColumnsDefaultValue(b.ctx, tsExec.Columns, x.Columns)
-			dagReq.Executors = append(dagReq.Executors, &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec})
-			table, _ := b.is.TableByID(x.Table.ID)
-			info = &tableInfo{
-				tableID:   x.Table.ID,
-				table:     table,
-				desc:      x.Desc,
-				keepOrder: x.KeepOrder,
-				ranges:    x.Ranges,
-			}
-		case *plan.PhysicalIndexScan:
-			isExec := &tipb.IndexScan{
-				TableId: x.Table.ID,
-				IndexId: x.Index.ID,
-				Columns: distsql.ColumnsToProto(x.Columns, x.Table.PKIsHandle),
-				Desc:    &x.Desc,
-			}
-			b.err = setPBColumnsDefaultValue(b.ctx, isExec.Columns, x.Columns)
-			dagReq.Executors = append(dagReq.Executors, &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: isExec})
-		default:
-			b.err = errors.Errorf("Unknown plan %T", x)
-			return
-		}
+	for i := 0; i < len(plans)/2; i++ {
+		j := len(plans) - i - 1
+		plans[i], plans[j] = plans[j], plans[i]
 	}
-	return
+	return plans
+}
+
+func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor {
+	dagReq := &tipb.DAGRequest{}
+	dagReq.StartTs = b.getStartTS()
+	dagReq.TimeZoneOffset = timeZoneOffset()
+	sc := b.ctx.GetSessionVars().StmtCtx
+	dagReq.Flags = statementContextToFlags(sc)
+	// TODO: The construction of executor pbs will be moved to plan package.
+	plans := flattenPlans(v.TablePlan)
+	for _, p := range plans {
+		execPB, err := p.ToPB(b.ctx)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		dagReq.Executors = append(dagReq.Executors, execPB)
+	}
+
+	ts := plans[0].(*plan.PhysicalTableScan)
+	table, _ := b.is.TableByID(ts.Table.ID)
+	e := &TableReaderExecutor{
+		ctx:       b.ctx,
+		schema:    v.Schema(),
+		dagPB:     dagReq,
+		asName:    ts.TableAsName,
+		tableID:   ts.Table.ID,
+		table:     table,
+		keepOrder: ts.KeepOrder,
+		desc:      ts.Desc,
+		ranges:    ts.Ranges,
+	}
+
+	b.err = e.doRequest()
+	return e
 }

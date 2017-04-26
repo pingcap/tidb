@@ -18,6 +18,8 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -30,10 +32,15 @@ var (
 
 // TableReaderExecutor sends dag request and reads table data from kv layer.
 type TableReaderExecutor struct {
-	*tableInfo
-	dagPB  *tipb.DAGRequest
-	ctx    context.Context
-	schema *expression.Schema
+	asName    *model.CIStr
+	table     table.Table
+	tableID   int64
+	keepOrder bool
+	desc      bool
+	ranges    []types.IntColumnRange
+	dagPB     *tipb.DAGRequest
+	ctx       context.Context
+	schema    *expression.Schema
 
 	// result returns one or more distsql.PartialResult and each PartialResult is return by one region.
 	result        distsql.SelectResult
