@@ -127,39 +127,27 @@ func (col *Column) Eval(row []types.Datum) (types.Datum, error) {
 }
 
 // EvalInt returns int representation of Column.
-func (col *Column) EvalInt(_ []types.Datum, sc *variable.StatementContext) (int64, bool, error) {
-	val, err := evalExprToTypeClass(col, types.ClassInt, nil, sc)
-	if val.IsNull() || err != nil {
-		return 0, true, errors.Trace(err)
-	}
-	return val.GetInt64(), false, nil
+func (col *Column) EvalInt(row []types.Datum, sc *variable.StatementContext) (int64, bool, error) {
+	val, isNull, err := evalExprToInt(col, row, sc)
+	return val, isNull, errors.Trace(err)
 }
 
 // EvalReal returns real representation of Column.
-func (col *Column) EvalReal(_ []types.Datum, sc *variable.StatementContext) (float64, bool, error) {
-	val, err := evalExprToTypeClass(col, types.ClassReal, nil, sc)
-	if val.IsNull() || err != nil {
-		return 0, true, errors.Trace(err)
-	}
-	return val.GetFloat64(), false, nil
+func (col *Column) EvalReal(row []types.Datum, sc *variable.StatementContext) (float64, bool, error) {
+	val, isNull, err := evalExprToReal(col, row, sc)
+	return val, isNull, errors.Trace(err)
 }
 
 // EvalString returns string representation of Column.
-func (col *Column) EvalString(_ []types.Datum, sc *variable.StatementContext) (string, bool, error) {
-	val, err := evalExprToTypeClass(col, types.ClassString, nil, sc)
-	if val.IsNull() || err != nil {
-		return "", true, errors.Trace(err)
-	}
-	return val.GetString(), false, nil
+func (col *Column) EvalString(row []types.Datum, sc *variable.StatementContext) (string, bool, error) {
+	val, isNull, err := evalExprToString(col, row, sc)
+	return val, isNull, errors.Trace(err)
 }
 
 // EvalDecimal returns decimal representation of Column.
-func (col *Column) EvalDecimal(_ []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
-	val, err := evalExprToTypeClass(col, types.ClassDecimal, nil, sc)
-	if val.IsNull() || err != nil {
-		return nil, true, errors.Trace(err)
-	}
-	return val.GetMysqlDecimal(), false, nil
+func (col *Column) EvalDecimal(row []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
+	val, isNull, err := evalExprToDecimal(col, row, sc)
+	return val, isNull, errors.Trace(err)
 }
 
 // Clone implements Expression interface.
