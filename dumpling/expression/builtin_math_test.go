@@ -269,6 +269,46 @@ func (s *testEvaluatorSuite) TestRound(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestTruncate(c *C) {
+	defer testleak.AfterTest(c)()
+	newDec := types.NewDecFromStringForTest
+	tbl := []struct {
+		Arg []interface{}
+		Ret interface{}
+	}{
+		{[]interface{}{-1.23, 0}, -1},
+		{[]interface{}{1.58, 0}, 1},
+		{[]interface{}{1.298, 1}, 1.2},
+		{[]interface{}{123.2, -1}, 120},
+		{[]interface{}{123.2, 100}, 123.2},
+		{[]interface{}{123.2, -100}, 0},
+		{[]interface{}{123.2, -100}, 0},
+		{[]interface{}{1.797693134862315708145274237317043567981e+308, 2},
+			1.797693134862315708145274237317043567981e+308},
+		{[]interface{}{newDec("-1.23"), 0}, newDec("-1")},
+		{[]interface{}{newDec("-1.23"), 1}, newDec("-1.2")},
+		{[]interface{}{newDec("-11.23"), -1}, newDec("-10")},
+		{[]interface{}{newDec("1.58"), 0}, newDec("1")},
+		{[]interface{}{newDec("1.58"), 1}, newDec("1.5")},
+		{[]interface{}{newDec("11.58"), -1}, newDec("10")},
+		{[]interface{}{newDec("23.298"), -1}, newDec("20")},
+		{[]interface{}{newDec("23.298"), -100}, newDec("0")},
+		{[]interface{}{newDec("23.298"), 100}, newDec("23.298")},
+		{[]interface{}{nil, 2}, nil},
+	}
+
+	Dtbl := tblToDtbl(tbl)
+
+	for _, t := range Dtbl {
+		fc := funcs[ast.Truncate]
+		f, err := fc.getFunction(datumsToConstants(t["Arg"]), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
+	}
+}
+
 func (s *testEvaluatorSuite) TestCRC32(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
