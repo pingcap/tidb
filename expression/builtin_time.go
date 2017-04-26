@@ -2280,6 +2280,7 @@ type builtinUTCTimeSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-time
 func (b *builtinUTCTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
+	const utctimeFormat = "15:04:05.000000"
 	args, err := b.evalArgs(row)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
@@ -2292,6 +2293,6 @@ func (b *builtinUTCTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 			return d, errors.Trace(err)
 		}
 	}
-	d.SetString(time.Now().UTC().Format("15:04:05.000000"))
+	d.SetString(time.Now().UTC().Format(utctimeFormat))
 	return convertToDuration(b.ctx.GetSessionVars().StmtCtx, d, fsp)
 }

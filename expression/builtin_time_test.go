@@ -613,43 +613,29 @@ func (s *testEvaluatorSuite) TestCurrentTime(c *C) {
 
 func (s *testEvaluatorSuite) TestUTCTime(c *C) {
 	defer testleak.AfterTest(c)()
-	tfStr := "15:04:05"
 
+	tfStr := "15:04:05"
 	last := time.Now().UTC()
 	fc := funcs[ast.UTCTime]
-	f, err := fc.getFunction(datumsToConstants(types.MakeDatums(nil)), s.ctx)
-	c.Assert(err, IsNil)
-	v, err := f.eval(nil)
-	c.Assert(err, IsNil)
-	n := v.GetMysqlDuration()
-	c.Assert(n.String(), HasLen, 8)
-	c.Assert(n.String(), GreaterEqual, last.Format(tfStr))
 
-	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(3)), s.ctx)
-	c.Assert(err, IsNil)
-	v, err = f.eval(nil)
-	c.Assert(err, IsNil)
-	n = v.GetMysqlDuration()
-	c.Assert(n.String(), HasLen, 12)
-	c.Assert(n.String(), GreaterEqual, last.Format(tfStr))
+	tests := []struct {
+		param  interface{}
+		expect int
+	}{{nil, 8}, {0, 8}, {3, 12}, {6, 15}, {-1, 0}, {7, 0}}
 
-	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(6)), s.ctx)
-	c.Assert(err, IsNil)
-	v, err = f.eval(nil)
-	c.Assert(err, IsNil)
-	n = v.GetMysqlDuration()
-	c.Assert(n.String(), HasLen, 15)
-	c.Assert(n.String(), GreaterEqual, last.Format(tfStr))
-
-	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(-1)), s.ctx)
-	c.Assert(err, IsNil)
-	_, err = f.eval(nil)
-	c.Assert(err, NotNil)
-
-	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(7)), s.ctx)
-	c.Assert(err, IsNil)
-	_, err = f.eval(nil)
-	c.Assert(err, NotNil)
+	for _, test := range tests {
+		f, err = fc.getFunction(datumsToConstants(types.MakeDatums(test.param)), s.ctx)
+		c.Assert(err, IsNil)
+		v, err = f.eval(nil)
+		if test.expect > 0 {
+			c.Assert(err, IsNil)
+			n = v.GetMysqlDuration()
+			c.Assert(n.String(), HasLen, test.expect)
+			c.Assert(n.String(), GreaterEqual, last.Format(tfStr))
+		} else {
+			c.Assert(err, NotNil)
+		}
+	}
 }
 
 func (s *testEvaluatorSuite) TestUTCDate(c *C) {
