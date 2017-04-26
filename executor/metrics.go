@@ -62,6 +62,8 @@ const (
 	AlterTable = "AlterTable"
 	// AnalyzeTable represents analyze table statements.
 	AnalyzeTable = "AnalyzeTable"
+	// AnalyzeIndex represents analyze index statements.
+	AnalyzeIndex = "AnalyzeIndex"
 	// Begin represents begin statements.
 	Begin = "Begin"
 	// Commit represents commit statements.
@@ -113,6 +115,8 @@ func StatementLabel(node ast.StmtNode, p plan.Plan) string {
 		return AlterTable
 	case *ast.AnalyzeTableStmt:
 		return AnalyzeTable
+	case *ast.AnalyzeIndexStmt:
+		return AnalyzeIndex
 	case *ast.BeginStmt:
 		return Begin
 	case *ast.CommitStmt:

@@ -36,17 +36,19 @@ var (
 	ErrUnknownColumn        = terror.ClassOptimizerPlan.New(CodeUnknownColumn, "Unknown column '%s' in '%s'")
 	ErrWrongArguments       = terror.ClassOptimizerPlan.New(CodeWrongArguments, "Incorrect arguments to EXECUTE")
 	ErrAmbiguous            = terror.ClassOptimizerPlan.New(CodeAmbiguous, "Column '%s' in field list is ambiguous")
+	ErrAnalyzeMissIndex     = terror.ClassOptimizerPlan.New(CodeAnalyzeMissIndex, "Index '%s' in field list does not exist in table '%s'")
 	ErrAlterAutoID          = terror.ClassAutoid.New(CodeAlterAutoID, "No support for setting auto_increment using alter_table")
 )
 
 // Error codes.
 const (
-	CodeUnsupportedType terror.ErrCode = 1
-	SystemInternalError terror.ErrCode = 2
-	CodeAlterAutoID     terror.ErrCode = 3
-	CodeAmbiguous       terror.ErrCode = 1052
-	CodeUnknownColumn   terror.ErrCode = 1054
-	CodeWrongArguments  terror.ErrCode = 1210
+	CodeUnsupportedType  terror.ErrCode = 1
+	SystemInternalError  terror.ErrCode = 2
+	CodeAlterAutoID      terror.ErrCode = 3
+	CodeAnalyzeMissIndex terror.ErrCode = 4
+	CodeAmbiguous        terror.ErrCode = 1052
+	CodeUnknownColumn    terror.ErrCode = 1054
+	CodeWrongArguments   terror.ErrCode = 1210
 )
 
 func init() {
@@ -156,7 +158,9 @@ func (b *planBuilder) build(node ast.Node) Plan {
 	case *ast.SetStmt:
 		return b.buildSet(x)
 	case *ast.AnalyzeTableStmt:
-		return b.buildAnalyze(x)
+		return b.buildAnalyzeTable(x)
+	case *ast.AnalyzeIndexStmt:
+		return b.buildAnalyzeIndex(x)
 	case *ast.BinlogStmt, *ast.FlushStmt, *ast.UseStmt,
 		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt:
@@ -404,7 +408,7 @@ func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []
 	return
 }
 
-func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) Plan {
+func (b *planBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) Plan {
 	p := &Analyze{}
 	for _, tbl := range as.TableNames {
 		idxInfo, colInfo, pkInfo := getColsInfo(tbl)
@@ -417,6 +421,20 @@ func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) Plan {
 		if pkInfo != nil {
 			p.PkTasks = append(p.PkTasks, AnalyzePKTask{TableInfo: tbl.TableInfo, PKInfo: pkInfo})
 		}
+	}
+	p.SetSchema(&expression.Schema{})
+	return p
+}
+
+func (b *planBuilder) buildAnalyzeIndex(as *ast.AnalyzeIndexStmt) Plan {
+	p := &Analyze{}
+	for _, idxName := range as.IndexNames {
+		idx := findIndexByName(as.TableName.TableInfo.Indices, idxName)
+		if idx == nil {
+			b.err = ErrAnalyzeMissIndex.GenByArgs(idxName.O, as.TableName.Name.O)
+			break
+		}
+		p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{TableInfo: as.TableName.TableInfo, IndexInfo: idx})
 	}
 	p.SetSchema(&expression.Schema{})
 	return p
