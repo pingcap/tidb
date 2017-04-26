@@ -72,8 +72,6 @@ const (
 	TypeUpate = "Update"
 	// TypeDelete is the type of Delete.
 	TypeDelete = "Delete"
-	// TypeAnalyze is the type of Analyze.
-	TypeAnalyze = "Analyze"
 	// TypeIndexLookUp is the type of IndexLookUp.
 	TypeIndexLookUp = "IndexLookUp"
 	// TypeTableReader is the type of TableReader.
@@ -185,13 +183,6 @@ func (p Insert) init(allocator *idAllocator, ctx context.Context) *Insert {
 
 func (p Show) init(allocator *idAllocator, ctx context.Context) *Show {
 	p.basePlan = newBasePlan(TypeShow, allocator, ctx, &p)
-	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
-	return &p
-}
-
-func (p Analyze) init(allocator *idAllocator, ctx context.Context) *Analyze {
-	p.basePlan = newBasePlan(TypeAnalyze, allocator, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p

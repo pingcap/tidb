@@ -56,7 +56,6 @@ var (
 	_ PhysicalPlan = &Limit{}
 	_ PhysicalPlan = &Show{}
 	_ PhysicalPlan = &Insert{}
-	_ PhysicalPlan = &Analyze{}
 	_ PhysicalPlan = &PhysicalIndexScan{}
 	_ PhysicalPlan = &PhysicalTableScan{}
 	_ PhysicalPlan = &PhysicalAggregation{}
@@ -1061,15 +1060,6 @@ func (p *PhysicalUnionScan) Copy() PhysicalPlan {
 func (p *Cache) Copy() PhysicalPlan {
 	np := *p
 	np.basePlan = p.basePlan.copy()
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
-// Copy implements the PhysicalPlan Copy interface.
-func (p *Analyze) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
 	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }

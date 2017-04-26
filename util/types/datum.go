@@ -845,7 +845,7 @@ func (d *Datum) convertToUint(sc *variable.StatementContext, target *FieldType) 
 		ret.SetUint64(val)
 	case KindMysqlTime:
 		dec := d.GetMysqlTime().ToNumber()
-		dec.Round(dec, 0)
+		dec.Round(dec, 0, ModeHalfEven)
 		ival, err1 := dec.ToInt()
 		val, err = convertIntToUint(ival, upperBound, tp)
 		if err == nil {
@@ -853,7 +853,7 @@ func (d *Datum) convertToUint(sc *variable.StatementContext, target *FieldType) 
 		}
 	case KindMysqlDuration:
 		dec := d.GetMysqlDuration().ToNumber()
-		dec.Round(dec, 0)
+		dec.Round(dec, 0, ModeHalfEven)
 		var ival int64
 		ival, err = dec.ToInt()
 		if err == nil {
@@ -1002,7 +1002,7 @@ func (d *Datum) convertToMysqlDecimal(sc *variable.StatementContext, target *Fie
 			dec = NewMaxOrMinDec(dec.IsNegative(), target.Flen, target.Decimal)
 			err = ErrOverflow.GenByArgs("DECIMAL", fmt.Sprintf("(%d, %d)", target.Flen, target.Decimal))
 		} else if frac != target.Decimal {
-			dec.Round(dec, target.Decimal)
+			dec.Round(dec, target.Decimal, ModeHalfEven)
 			if frac > target.Decimal {
 				err = errors.Trace(handleTruncateError(sc))
 			}
@@ -1237,7 +1237,7 @@ func (d *Datum) toSignedInteger(sc *variable.StatementContext, tp byte) (int64, 
 	case KindMysqlTime:
 		// 2011-11-10 11:11:11.999999 -> 20111110111112
 		dec := d.GetMysqlTime().ToNumber()
-		dec.Round(dec, 0)
+		dec.Round(dec, 0, ModeHalfEven)
 		ival, err := dec.ToInt()
 		ival, err2 := convertIntToInt(ival, lowerBound, upperBound, tp)
 		if err == nil {
@@ -1247,7 +1247,7 @@ func (d *Datum) toSignedInteger(sc *variable.StatementContext, tp byte) (int64, 
 	case KindMysqlDuration:
 		// 11:11:11.999999 -> 111112
 		dec := d.GetMysqlDuration().ToNumber()
-		dec.Round(dec, 0)
+		dec.Round(dec, 0, ModeHalfEven)
 		ival, err := dec.ToInt()
 		ival, err2 := convertIntToInt(ival, lowerBound, upperBound, tp)
 		if err == nil {
@@ -1256,7 +1256,7 @@ func (d *Datum) toSignedInteger(sc *variable.StatementContext, tp byte) (int64, 
 		return ival, err
 	case KindMysqlDecimal:
 		var to MyDecimal
-		d.GetMysqlDecimal().Round(&to, 0)
+		d.GetMysqlDecimal().Round(&to, 0, ModeHalfEven)
 		ival, err := to.ToInt()
 		ival, err2 := convertIntToInt(ival, lowerBound, upperBound, tp)
 		if err == nil {
