@@ -1803,13 +1803,13 @@ DropViewStmt:
 
 DropUserStmt:
     "DROP" "USER" UsernameList
-    {
+	{
         $$ = &ast.DropUserStmt{IfExists: false, UserList: $3.([]string)}
-    }
+	}
 |   "DROP" "USER" "IF" "EXISTS" UsernameList
-    {
+	{
         $$ = &ast.DropUserStmt{IfExists: true, UserList: $5.([]string)}
-    }
+	}
 
 TableOrTables:
 	"TABLE"
@@ -2974,9 +2974,9 @@ FunctionCallNonKeyword:
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
 |	"ELT" '(' ExpressionListOpt ')'
-    {
+	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
-    }
+	}
 |	"EXP" '(' ExpressionListOpt ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
@@ -3490,23 +3490,23 @@ FunctionCallNonKeyword:
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
 |   "CHAR" '(' ExpressionList ')'
-    {
+	{
 		nilVal := ast.NewValueExpr(nil)
 		args := $3.([]ast.ExprNode)
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr(ast.CharFunc),
 			Args: append(args, nilVal),
 		}
-    }
+	}
 |   "CHAR" '(' ExpressionList "USING" StringName ')'
-    {
+	{
 		charset := ast.NewValueExpr($5)
 		args := $3.([]ast.ExprNode)
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr(ast.CharFunc),
 			Args: append(args, charset),
 		}
-    }
+	}
 |	"CHAR_LENGTH" '(' ExpressionListOpt ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
@@ -4882,13 +4882,14 @@ Username:
 
 UsernameList:
     Username
-    {
+	{
         $$ = []string{$1.(string)}
-    }
+	}
 |   UsernameList ',' Username
-    {
+
+	{
         $$ = append($1.([]string), $3.(string))
-    }
+	}
 
 PasswordOpt:
 	stringLit
@@ -5009,20 +5010,20 @@ ShowTargetFilterable:
 		}
 	}
 |	ShowIndexKwd FromOrIn TableName
-    {
+	{
         $$ = &ast.ShowStmt{
             Tp: ast.ShowIndex,
             Table: $3.(*ast.TableName),
-        }
-    }
+		}
+	}
 |	ShowIndexKwd FromOrIn Identifier FromOrIn Identifier
-    {
+	{
         show := &ast.ShowStmt{
             Tp: ast.ShowIndex,
             Table: &ast.TableName{Name:model.NewCIStr($3), Schema: model.NewCIStr($5)},
-        }
+		}
         $$ = show
-    }
+	}
 |	OptFull "COLUMNS" ShowTableAliasOpt ShowDatabaseNameOpt
 	{
 		$$ = &ast.ShowStmt{
@@ -5090,12 +5091,12 @@ ShowTargetFilterable:
 		}
 	}
 |   "EVENTS" ShowDatabaseNameOpt
-    {
+	{
         $$ = &ast.ShowStmt{
         	Tp:	ast.ShowEvents,
         	DBName:	$2.(string),
        	}
-    }
+	}
 ShowLikeOrWhereOpt:
 	{
 		$$ = nil
