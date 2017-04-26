@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tipb/go-tipb"
+	tipb "github.com/pingcap/tipb/go-tipb"
 )
 
 // AggregationFunction stands for aggregate functions.
@@ -617,7 +617,7 @@ func (af *avgFunction) calculateResult(ctx *aggEvaluateContext) (d types.Datum) 
 		y := types.NewDecFromInt(ctx.Count)
 		to := new(types.MyDecimal)
 		types.DecimalDiv(x, y, to, types.DivFracIncr)
-		to.Round(to, ctx.Value.Frac()+types.DivFracIncr)
+		to.Round(to, ctx.Value.Frac()+types.DivFracIncr, types.ModeHalfEven)
 		d.SetMysqlDecimal(to)
 	}
 	return

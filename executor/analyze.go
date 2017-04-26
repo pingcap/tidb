@@ -174,7 +174,7 @@ func analyzeColumns(exec *XSelectTableExec) analyzeResult {
 }
 
 func analyzeIndex(exec *XSelectIndexExec) analyzeResult {
-	count, hg, err := statistics.BuildIndex(exec.ctx, defaultBucketCount, exec.indexPlan.Index.ID, &recordSet{executor: exec})
+	count, hg, err := statistics.BuildIndex(exec.ctx, defaultBucketCount, exec.index.ID, &recordSet{executor: exec})
 	return analyzeResult{tableID: exec.tableInfo.ID, hist: []*statistics.Histogram{hg}, count: count, isIndex: 1, err: err}
 }
 
