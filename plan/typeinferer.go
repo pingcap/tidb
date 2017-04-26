@@ -311,7 +311,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		if x.FnName.L == ast.Abs && tp.Tp == mysql.TypeDatetime {
 			tp = types.NewFieldType(mysql.TypeDouble)
 		}
-	case ast.Round:
+	case ast.Round, ast.Truncate:
 		if len(x.Args) == 0 {
 			tp = types.NewFieldType(mysql.TypeNull)
 			break
