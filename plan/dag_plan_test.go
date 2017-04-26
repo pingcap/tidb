@@ -209,6 +209,15 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 			sql:  "select t.c in (select b from t s where s.a = t.a) from t",
 			best: "SemiJoinWithAux{TableReader(Table(t))->TableReader(Table(t))}->Projection",
 		},
+		// Test Apply.
+		{
+			sql:  "select t.c in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t",
+			best: "Apply{TableReader(Table(t))->RightHashJoin{TableReader(Table(t))->Sel([eq(s.a, test.t.a)])->TableReader(Table(t))}(s.a,t1.a)->HashAgg}->Projection",
+		},
+		{
+			sql:  "select (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t",
+			best: "Apply{TableReader(Table(t))->RightHashJoin{TableReader(Table(t))->Sel([eq(s.a, test.t.a)])->TableReader(Table(t))}(s.a,t1.a)->HashAgg}->Projection",
+		},
 	}
 	for _, tt := range tests {
 		comment := Commentf("for %s", tt.sql)

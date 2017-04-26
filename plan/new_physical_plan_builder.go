@@ -641,3 +641,35 @@ func (p *LogicalAggregation) convert2HashAggregation(prop *requiredProp) (taskPr
 	task = prop.enforceProperty(task, p.ctx, p.allocator)
 	return task, nil
 }
+
+func (p *LogicalApply) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) {
+	task, err := p.getTaskProfile(prop)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if task != nil {
+		return task, nil
+	}
+	// TODO: refine this code.
+	if p.JoinType == SemiJoin || p.JoinType == LeftOuterSemiJoin {
+		task, err = p.convert2SemiJoin()
+	} else {
+		task, err = p.convert2HashJoin()
+	}
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	apply := PhysicalApply{
+		PhysicalJoin: task.plan(),
+		OuterSchema:  p.corCols,
+	}.init(p.allocator, p.ctx)
+	apply.SetSchema(p.schema)
+	newTask := task.(*rootTaskProfile)
+	apply.children = newTask.p.Children()
+	newTask.p = apply
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	task = prop.enforceProperty(newTask, p.ctx, p.allocator)
+	return task, p.storeTaskProfile(prop, task)
+}
