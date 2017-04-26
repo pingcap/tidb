@@ -18,6 +18,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
@@ -239,4 +240,56 @@ func ConvertCol2CorCol(cond Expression, corCols []*CorrelatedColumn, outerSchema
 		}
 	}
 	return cond
+}
+
+// ConvertConstantType convert constant value to appropriate type
+// See https://dev.mysql.com/doc/refman/5.7/en/type-conversion.html for detail
+func ConvertConstantType(expr Expression) (Expression, error) {
+	scalarFunc, ok := expr.(*ScalarFunction)
+	if !ok {
+		return expr, nil
+	}
+
+	var err error
+	args := scalarFunc.GetArgs()
+
+	switch scalarFunc.FuncName.L {
+	case ast.EQ, ast.GT, ast.LE, ast.GE, ast.LT:
+		for i, arg := range args {
+			if c, ok := arg.(*Constant); ok { // check if there is a constant
+				col := args[(i+1)%2].GetType() // only two args here
+				switch col.Tp {                // check if need to convert type based on another arg
+				case mysql.TypeDatetime, mysql.TypeTimestamp:
+					err = convertConstantToTime(col, c)
+					// add miss case here in the future
+				}
+			} else {
+				args[i], err = ConvertConstantType(arg)
+			}
+			if err != nil {
+				break
+			}
+		}
+	}
+
+	return scalarFunc, errors.Trace(err)
+}
+
+func convertConstantToTime(col *types.FieldType, constant *Constant) error {
+	var (
+		t   types.Time
+		err error
+	)
+	switch constant.Value.Kind() {
+	case types.KindInt64, types.KindUint64:
+		t, err = types.ParseTimeFromNum(constant.Value.GetInt64(), col.Tp, col.Decimal)
+	case types.KindBytes, types.KindString:
+		t, err = types.ParseTime(constant.Value.GetString(), col.Tp, col.Decimal)
+	default:
+		return nil
+	}
+	if err == nil {
+		constant.Value.SetMysqlTime(t)
+	}
+	return errors.Trace(err)
 }
