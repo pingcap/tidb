@@ -794,7 +794,8 @@ func (s *testDBSuite) TestAlterColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 
-	s.mustExec(c, "create table test_alter_column (a int default 111, b varchar(8), c varchar(8) not null, d timestamp on update current_timestamp)")
+	s.mustExec(c, `create table test_alter_column (a int default 111, b varchar(8), c varchar(8) not null,
+				d timestamp on update current_timestamp)`)
 	s.mustExec(c, "insert into test_alter_column set b = 'a', c = 'aa'")
 	s.tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111"))
 	s.mustExec(c, "alter table test_alter_column alter column a set default 222")
@@ -806,8 +807,15 @@ func (s *testDBSuite) TestAlterColumn(c *C) {
 	rowStr1 := fmt.Sprintf("%v", []byte("b"))
 	rowStr2 := fmt.Sprintf("%v", nil)
 	s.tk.MustQuery("select b from test_alter_column").Check(testkit.Rows(rowStr, rowStr1, rowStr2))
-	// TODO: After fix issue 2606.
-	// s.mustExec(c, "alter table test_alter_column alter column d set default null")
+	s.mustExec(c, "alter table test_alter_column alter column d set default null")
+	ctx := s.tk.Se.(context.Context)
+	is := sessionctx.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_alter_column"))
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	colD := tblInfo.Columns[3]
+	hasNotNull := tmysql.HasNotNullFlag(colD.Flag)
+	c.Assert(hasNotNull, IsFalse)
 	s.mustExec(c, "alter table test_alter_column alter column a drop default")
 	s.mustExec(c, "insert into test_alter_column set b = 'd', c = 'dd'")
 	s.tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222", "222", rowStr2))
@@ -846,6 +854,17 @@ func match(c *C, row []interface{}, expected ...interface{}) {
 		need := fmt.Sprintf("%v", expected[i])
 		c.Assert(got, Equals, need)
 	}
+}
+
+func (s *testDBSuite) TestTimestamp(c *C) {
+	defer testleak.AfterTest(c)
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+
+	s.tk.MustExec("create table test_timestamp (a int, b timestamp default null on update current_timestamp);")
+	s.mustExec(c, "insert into test_timestamp set a = 1")
+	rowStr := fmt.Sprintf("%v", nil)
+	s.tk.MustQuery("select b from test_timestamp").Check(testkit.Rows(rowStr))
 }
 
 func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
