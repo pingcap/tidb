@@ -824,6 +824,7 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	return e
 }
 
+// flattenPlans convert a plan tree to list, whose head is the leaf node like table scan.
 func flattenPlans(p plan.PhysicalPlan) []plan.PhysicalPlan {
 	plans := make([]plan.PhysicalPlan, 0, 5)
 	for {
