@@ -14,7 +14,6 @@
 package ddl
 
 import (
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/testleak"
@@ -57,7 +56,6 @@ func (tc *testDDLCallback) OnBgJobUpdated(job *model.Job) {
 }
 
 func (tc *testDDLCallback) OnWatched() {
-	log.Warnf("on watch %v", tc.onWatched)
 	if tc.onWatched != nil {
 		tc.onWatched()
 		return

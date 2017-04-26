@@ -209,6 +209,7 @@ func NewDDL(store kv.Storage, infoHandle *infoschema.Handle, hook Callback, leas
 	return newDDL(store, infoHandle, hook, lease)
 }
 
+// TODO: Move this to the function of newDDL.
 func (d *ddl) setWorker(cli *clientv3.Client) {
 	d.worker = &worker{ddlID: d.uuid, etcdClient: cli}
 	d.wait.Add(2)
@@ -440,7 +441,6 @@ func (d *ddl) setHook(h Callback) {
 	defer d.hookMu.Unlock()
 
 	d.hook = h
-	log.Infof("set hook end")
 }
 
 func filterError(err, exceptErr error) error {
