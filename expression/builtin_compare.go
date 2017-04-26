@@ -18,8 +18,10 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
+	"math"
 )
 
 var (
@@ -391,6 +393,58 @@ func (s *builtinCompareDecimalSig) evalInt(row []types.Datum) (int64, bool, erro
 		return zeroI64, true, nil
 	}
 	ret := resOfCmp(arg0.Compare(arg1), s.op)
+	if ret == -1 {
+		return zeroI64, false, errInvalidOperation.Gen("invalid op %v in comparison operation", s.op)
+	}
+	return ret, false, nil
+}
+
+// builtinCompareIntSig compares two integers.
+type builtinCompareIntSig struct {
+	baseIntBuiltinFunc
+
+	op opcode.Op
+}
+
+func (s *builtinCompareIntSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := s.ctx.GetSessionVars().StmtCtx
+	arg0, isKindNull0, err := s.args[0].EvalInt(row, sc)
+	if err != nil {
+		return zeroI64, false, errors.Trace(err)
+	}
+	arg1, isKindNull1, err := s.args[1].EvalInt(row, sc)
+	if err != nil {
+		return zeroI64, isKindNull1, errors.Trace(err)
+	}
+	if isKindNull0 || isKindNull1 {
+		if s.op == opcode.NullEQ {
+			if isKindNull0 && isKindNull1 {
+				return oneI64, false, nil
+			}
+			return zeroI64, false, nil
+		}
+		return zeroI64, true, nil
+	}
+	isUnsigned0, isUnsigned1 := mysql.HasUnsignedFlag(s.args[0].GetType().Flag), mysql.HasUnsignedFlag(s.args[1].GetType().Flag)
+	var res int
+	if !isUnsigned0 && !isUnsigned1 {
+		res = types.CompareInt64(arg0, arg1)
+	} else if !isUnsigned0 && isUnsigned1 {
+		if arg0 < 0 || arg1 > math.MaxInt64 {
+			res = -1
+		} else {
+			res = types.CompareInt64(arg0, arg1)
+		}
+	} else if isUnsigned0 && !isUnsigned1 {
+		if arg1 < 0 || arg0 > math.MaxInt64 {
+			res = 1
+		} else {
+			res = types.CompareInt64(arg0, arg1)
+		}
+	} else if isUnsigned0 && isUnsigned1 {
+		res = types.CompareUint64(uint64(arg0), uint64(arg1))
+	}
+	ret := resOfCmp(res, s.op)
 	if ret == -1 {
 		return zeroI64, false, errInvalidOperation.Gen("invalid op %v in comparison operation", s.op)
 	}
