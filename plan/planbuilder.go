@@ -158,9 +158,7 @@ func (b *planBuilder) build(node ast.Node) Plan {
 	case *ast.SetStmt:
 		return b.buildSet(x)
 	case *ast.AnalyzeTableStmt:
-		return b.buildAnalyzeTable(x)
-	case *ast.AnalyzeIndexStmt:
-		return b.buildAnalyzeIndex(x)
+		return b.buildAnalyze(x)
 	case *ast.BinlogStmt, *ast.FlushStmt, *ast.UseStmt,
 		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt:
@@ -426,18 +424,28 @@ func (b *planBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) Plan {
 	return p
 }
 
-func (b *planBuilder) buildAnalyzeIndex(as *ast.AnalyzeIndexStmt) Plan {
+func (b *planBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) Plan {
 	p := &Analyze{}
+	tblInfo := as.TableNames[0].TableInfo
 	for _, idxName := range as.IndexNames {
-		idx := findIndexByName(as.TableName.TableInfo.Indices, idxName)
+		idx := findIndexByName(tblInfo.Indices, idxName)
 		if idx == nil {
-			b.err = ErrAnalyzeMissIndex.GenByArgs(idxName.O, as.TableName.Name.O)
+			b.err = ErrAnalyzeMissIndex.GenByArgs(idxName.O, tblInfo.Name.O)
 			break
 		}
-		p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{TableInfo: as.TableName.TableInfo, IndexInfo: idx})
+		if idx.State == model.StatePublic {
+			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{TableInfo: tblInfo, IndexInfo: idx})
+		}
 	}
 	p.SetSchema(&expression.Schema{})
 	return p
+}
+
+func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) Plan {
+	if len(as.IndexNames) == 0 {
+		return b.buildAnalyzeTable(as)
+	}
+	return b.buildAnalyzeIndex(as)
 }
 
 func buildShowDDLFields() *expression.Schema {

@@ -544,7 +544,6 @@ import (
 	AlterTableSpecList	"Alter table specification list"
 	AlterUserStmt		"Alter user statement"
 	AnalyzeTableStmt	"Analyze table statement"
-	AnalyzeIndexStmt	"Analyze index statement"
 	AnyOrAll		"Any or All for subquery"
 	Assignment		"assignment"
 	AssignmentList		"assignment list"
@@ -1104,11 +1103,9 @@ AnalyzeTableStmt:
 	 {
 		$$ = &ast.AnalyzeTableStmt{TableNames: $3.([]*ast.TableName)}
 	 }
-
-AnalyzeIndexStmt:
-    "ANALYZE" "TABLE" TableName "INDEX" IndexNameList
+|   "ANALYZE" "TABLE" TableName "INDEX" IndexNameList
     {
-        $$ = &ast.AnalyzeIndexStmt{TableName: $3.(*ast.TableName), IndexNames: $5.([]model.CIStr)}
+        $$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$3.(*ast.TableName)}, IndexNames: $5.([]model.CIStr)}
     }
 
 /*******************************************************************************************/
@@ -5541,7 +5538,6 @@ Statement:
 |	AlterTableStmt
 |	AlterUserStmt
 |	AnalyzeTableStmt
-|	AnalyzeIndexStmt
 |	BeginTransactionStmt
 |	BinlogStmt
 |	CommitStmt

@@ -52,7 +52,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 	testKit.MustExec("create index a on t2 (a)")
 	testKit.MustExec("create index b on t2 (b)")
 	testKit.MustExec("insert into t2 (a,b) values (1,1),(1,2),(1,3),(1,4),(2,5),(2,6),(2,7),(2,8)")
-	testKit.MustExec("analyze table t2 index a,b")
+	testKit.MustExec("analyze table t2 index a")
 
 	tests := []struct {
 		sql  string
@@ -76,7 +76,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		},
 		{
 			sql:  "select * from t2 where t2.a <= 2",
-			best: "Table(t2)",
+			best: "Index(t2.b)[[<nil>,+inf]]",
 		},
 		{
 			sql:  "select * from t2 where t2.a = 1 and t2.b <= 2",

@@ -69,9 +69,6 @@ func (ts *testMiscSuite) TestMiscVisitorCover(c *C) {
 				{},
 			},
 		}),
-		(&AnalyzeIndexStmt{
-			TableName: &TableName{},
-		}),
 		(&FlushStmt{}),
 		(&PrivElem{}),
 		(&VariableAssignment{Value: &ValueExpr{}}),

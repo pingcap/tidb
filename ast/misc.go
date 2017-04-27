@@ -39,7 +39,6 @@ var (
 	_ StmtNode = &SetStmt{}
 	_ StmtNode = &UseStmt{}
 	_ StmtNode = &AnalyzeTableStmt{}
-	_ StmtNode = &AnalyzeIndexStmt{}
 	_ StmtNode = &FlushStmt{}
 	_ StmtNode = &KillStmt{}
 
@@ -672,6 +671,7 @@ type AnalyzeTableStmt struct {
 	stmtNode
 
 	TableNames []*TableName
+	IndexNames []model.CIStr
 }
 
 // Accept implements Node Accept interface.
@@ -688,29 +688,6 @@ func (n *AnalyzeTableStmt) Accept(v Visitor) (Node, bool) {
 		}
 		n.TableNames[i] = node.(*TableName)
 	}
-	return v.Leave(n)
-}
-
-// AnalyzeIndexStmt is used to create index statistics.
-type AnalyzeIndexStmt struct {
-	stmtNode
-
-	TableName  *TableName
-	IndexNames []model.CIStr
-}
-
-// Accept implements Node Accept interface.
-func (n *AnalyzeIndexStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*AnalyzeIndexStmt)
-	node, ok := n.TableName.Accept(v)
-	if !ok {
-		return n, false
-	}
-	n.TableName = node.(*TableName)
 	return v.Leave(n)
 }
 
