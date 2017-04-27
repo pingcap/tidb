@@ -9,6 +9,7 @@ import:
   subpackages:
   - auth/authpb
   - clientv3
+  - clientv3/concurrency
   - etcdserver/api/v3rpc/rpctypes
   - etcdserver/etcdserverpb
   - mvcc/mvccpb
