@@ -72,7 +72,7 @@ type PhysicalTableReader struct {
 	*basePlan
 	basePhysicalPlan
 
-	copPlan PhysicalPlan
+	TablePlan PhysicalPlan
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -88,7 +88,7 @@ type PhysicalIndexReader struct {
 	*basePlan
 	basePhysicalPlan
 
-	copPlan PhysicalPlan
+	IndexPlan PhysicalPlan
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -104,8 +104,8 @@ type PhysicalIndexLookUpReader struct {
 	*basePlan
 	basePhysicalPlan
 
-	indexPlan PhysicalPlan
-	tablePlan PhysicalPlan
+	IndexPlan PhysicalPlan
+	TablePlan PhysicalPlan
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -334,7 +334,7 @@ func (p *physicalTableSource) addTopN(ctx context.Context, prop *requiredPropert
 	count := int64(prop.limit.Count + prop.limit.Offset)
 	p.LimitCount = &count
 	for _, prop := range prop.props {
-		item := sortByItemToPB(sc, p.client, prop.col, prop.desc)
+		item := expression.SortByItemToPB(sc, p.client, prop.col, prop.desc)
 		if item == nil {
 			// When we fail to convert any sortItem to PB struct, we should clear the environments.
 			p.clearForTopnPushDown()
@@ -352,7 +352,7 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	for _, f := range agg.AggFuncs {
-		pb := aggFuncToPBExpr(sc, p.client, f)
+		pb := expression.AggFuncToPBExpr(sc, p.client, f)
 		if pb == nil {
 			// When we fail to convert any agg function to PB struct, we should clear the environments.
 			p.clearForAggPushDown()
@@ -362,7 +362,7 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 		p.aggFuncs = append(p.aggFuncs, f.Clone())
 	}
 	for _, item := range agg.GroupByItems {
-		pb := groupByItemToPB(sc, p.client, item)
+		pb := expression.GroupByItemToPB(sc, p.client, item)
 		if pb == nil {
 			// When we fail to convert any group-by item to PB struct, we should clear the environments.
 			p.clearForAggPushDown()
