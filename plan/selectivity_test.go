@@ -14,14 +14,14 @@
 package plan
 
 import (
-	"github.com/ngaut/log"
+	"math"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/testleak"
-	"math"
 )
 
 const eps = 1e-9
@@ -127,7 +127,6 @@ func (s *testPlanSuite) TestSelectivity(c *C) {
 		}
 		ratio, err := selectivity(sel.Conditions, indices, ds, pkColID)
 		c.Assert(err, IsNil, comment)
-		log.Warnf("%v xxxxx", ratio)
 		c.Assert(math.Abs(ratio-tt.selectivity) < eps, IsTrue, comment)
 	}
 }

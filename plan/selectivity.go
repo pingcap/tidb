@@ -14,10 +14,11 @@
 package plan
 
 import (
+	"math"
+
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
-	"math"
 )
 
 // indexBlock is used when calculating selectivity
