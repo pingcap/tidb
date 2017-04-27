@@ -824,8 +824,8 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	return e
 }
 
-// flattenPlans convert a plan tree to list, whose head is the leaf node like table scan.
-func flattenPlans(p plan.PhysicalPlan) []plan.PhysicalPlan {
+// flattenPushDownPlan converts a plan tree to a list, whose head is the leaf node like table scan.
+func flattenPushDownPlan(p plan.PhysicalPlan) []plan.PhysicalPlan {
 	plans := make([]plan.PhysicalPlan, 0, 5)
 	for {
 		plans = append(plans, p)
@@ -848,7 +848,7 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 	sc := b.ctx.GetSessionVars().StmtCtx
 	dagReq.Flags = statementContextToFlags(sc)
 	// TODO: The construction of executor pbs will be moved to plan package.
-	plans := flattenPlans(v.TablePlan)
+	plans := flattenPushDownPlan(v.TablePlan)
 	for _, p := range plans {
 		execPB, err := p.ToPB(b.ctx)
 		if err != nil {

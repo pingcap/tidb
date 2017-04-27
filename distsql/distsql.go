@@ -225,14 +225,14 @@ func Select(client kv.Client, ctx goctx.Context, req *tipb.SelectRequest, keyRan
 	return result, nil
 }
 
-// SelectDAG do a DAG request, returns SelectResult.
+// SelectDAG sends a DAG request, returns SelectResult.
 // concurrency: The max concurrency for underlying coprocessor request.
 // keepOrder: If the result should returned in key order. For example if we need keep data in order by
 //            scan index, we should set keepOrder to true.
 func SelectDAG(client kv.Client, ctx goctx.Context, dag *tipb.DAGRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool, desc bool) (SelectResult, error) {
 	var err error
 	defer func() {
-		// Add metrics
+		// Add metrics.
 		if err != nil {
 			queryCounter.WithLabelValues(queryFailed).Inc()
 		} else {
@@ -249,13 +249,13 @@ func SelectDAG(client kv.Client, ctx goctx.Context, dag *tipb.DAGRequest, keyRan
 	}
 	kvReq.Data, err = dag.Marshal()
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	resp := client.Send(ctx, kvReq)
 	if resp == nil {
 		err = errors.New("client returns nil response")
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	result := &selectResult{
 		label:   "dag",
