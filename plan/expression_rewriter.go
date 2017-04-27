@@ -81,6 +81,10 @@ func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*a
 		return nil, nil, ErrOperandColumns.GenByArgs(1)
 	}
 	result := expression.FoldConstant(er.ctxStack[0])
+	result, err := expression.ConvertConstantType(result)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
 	return result, er.p, nil
 }
 

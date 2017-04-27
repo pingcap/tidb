@@ -1336,3 +1336,27 @@ func (s *testSuite) TestScanControlSelection(c *C) {
 	tk.MustExec("insert into t values (1, 1, 1), (2, 1, 1), (3, 1, 2), (4, 2, 3)")
 	tk.MustQuery("select (select count(1) k from t s where s.b = t1.c) from t t1").Check(testkit.Rows("3", "3", "1", "0"))
 }
+
+func (s *testSuite) TestIssue2318(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, dt datetime)")
+	tk.MustExec(`insert into t values (1,'2001-08-14 00:00:00'),(2,'2001-08-15 00:00:00'),(3,'2001-08-16 00:00:00'),(4,'2003-09-15 01:20:30')`)
+	tk.MustQuery("select * from t where dt > 20021020 or dt = 20010816").Check(testkit.Rows("3 2001-08-16 00:00:00", "4 2003-09-15 01:20:30"))
+	tk.MustQuery(`select * from t where dt > '2003-09-15'`).Check(testkit.Rows("4 2003-09-15 01:20:30"))
+	tk.MustQuery(`select * from t where dt > '20030915'`).Check(testkit.Rows("4 2003-09-15 01:20:30"))
+	tk.MustQuery(`select * from t where dt > 20030914+1`).Check(testkit.Rows("4 2003-09-15 01:20:30"))
+	tk.MustExec("create index dt on t (dt)")
+	tk.MustQuery("select * from t ignore index (dt) where dt > 20021020").Check(testkit.Rows("4 2003-09-15 01:20:30"))
+	tk.MustQuery("select * from t where dt > 20021020").Check(testkit.Rows("4 2003-09-15 01:20:30"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, dt timestamp)")
+	tk.MustExec(`insert into t values (1,'2001-08-14 00:00:00'),(2,'2001-08-15 00:00:00'),(3,'2001-08-16 00:00:00'),(4,'2003-09-15 01:20:30')`)
+	tk.MustQuery("select * from t where dt > 20021020 or dt = 20010816").Check(testkit.Rows("3 2001-08-16 00:00:00", "4 2003-09-15 01:20:30"))
+}
