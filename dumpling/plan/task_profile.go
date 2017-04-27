@@ -155,13 +155,13 @@ func finishCopTask(task taskProfile, ctx context.Context, allocator *idAllocator
 		cnt: t.cnt,
 	}
 	if t.indexPlan != nil && t.tablePlan != nil {
-		newTask.p = PhysicalIndexLookUpReader{tablePlan: t.tablePlan, indexPlan: t.indexPlan}.init(allocator, ctx)
+		newTask.p = PhysicalIndexLookUpReader{TablePlan: t.tablePlan, IndexPlan: t.indexPlan}.init(allocator, ctx)
 		newTask.p.SetSchema(t.tablePlan.Schema())
 	} else if t.indexPlan != nil {
-		newTask.p = PhysicalIndexReader{copPlan: t.indexPlan}.init(allocator, ctx)
+		newTask.p = PhysicalIndexReader{IndexPlan: t.indexPlan}.init(allocator, ctx)
 		newTask.p.SetSchema(t.indexPlan.Schema())
 	} else {
-		newTask.p = PhysicalTableReader{copPlan: t.tablePlan}.init(allocator, ctx)
+		newTask.p = PhysicalTableReader{TablePlan: t.tablePlan}.init(allocator, ctx)
 		newTask.p.SetSchema(t.tablePlan.Schema())
 	}
 	return newTask
@@ -238,7 +238,7 @@ func (p *Sort) canPushDown() bool {
 	for _, item := range p.ByItems {
 		exprs = append(exprs, item.Expr)
 	}
-	_, _, remained := ExpressionsToPB(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient())
+	_, _, remained := expression.ExpressionsToPB(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient())
 	return len(remained) == 0
 }
 
@@ -332,12 +332,12 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 	sc := p.ctx.GetSessionVars().StmtCtx
 	client := p.ctx.GetClient()
 	for _, aggFunc := range p.AggFuncs {
-		pb := aggFuncToPBExpr(sc, client, aggFunc)
+		pb := expression.AggFuncToPBExpr(sc, client, aggFunc)
 		if pb == nil {
 			return
 		}
 	}
-	_, _, remained := ExpressionsToPB(sc, p.GroupByItems, client)
+	_, _, remained := expression.ExpressionsToPB(sc, p.GroupByItems, client)
 	if len(remained) > 0 {
 		return
 	}
@@ -347,6 +347,7 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 	gkType.Charset = charset.CharsetBin
 	gkType.Collate = charset.CollationBin
 	partialSchema := expression.NewSchema(&expression.Column{RetType: gkType, FromID: p.id, Index: 0})
+	partialAgg.SetSchema(partialSchema)
 	cursor := 0
 	finalAggFuncs := make([]expression.AggregationFunction, len(finalAgg.AggFuncs))
 	for i, aggFun := range p.AggFuncs {
