@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"hash"
 	"hash/fnv"
+	"sync"
 )
 
 type entry struct {
@@ -121,6 +122,7 @@ type MVMap struct {
 	entryStore entryStore
 	dataStore  dataStore
 	hashTable  map[uint64]entryAddr
+	hashLock   sync.Mutex
 	hashFunc   hash.Hash64
 	length     int
 }
@@ -177,9 +179,12 @@ func (m *MVMap) Get(key []byte) [][]byte {
 }
 
 func (m *MVMap) hash(key []byte) uint64 {
+	m.hashLock.Lock()
 	m.hashFunc.Reset()
 	m.hashFunc.Write(key)
-	return m.hashFunc.Sum64()
+	hashVal := m.hashFunc.Sum64()
+	m.hashLock.Unlock()
+	return hashVal
 }
 
 // Len returns the number of values in th mv map, the number of keys may be less than Len
