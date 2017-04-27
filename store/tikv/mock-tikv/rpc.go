@@ -425,6 +425,16 @@ func (c *RPCClient) SendCopReq(ctx goctx.Context, addr string, req *coprocessor.
 		}
 	}
 
+	if req.GetTp() == kv.ReqTypeDAG {
+		store := c.Cluster.GetStoreByAddr(addr)
+		if store == nil {
+			return nil, errors.New("connect fail")
+		}
+		handler := newRPCHandler(c.Cluster, c.MvccStore, store.GetId())
+		resp, err := handler.handleCopDAGRequest(req)
+		return resp, errors.Trace(err)
+	}
+
 	store, err := c.getAndCheckStoreByAddr(addr)
 	if err != nil {
 		return nil, err
