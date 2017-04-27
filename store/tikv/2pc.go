@@ -206,7 +206,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	}
 
 	firstIsPrimary := bytes.Equal(keys[0], c.primary())
-	if firstIsPrimary && action != actionPrewrite {
+	if firstIsPrimary && action == actionCommit {
 		// prewrite can be sent to all the regions in parallel
 		err = c.doActionOnBatches(bo, action, batches[:1])
 		if err != nil {
