@@ -164,6 +164,7 @@ type Expression interface {
 	ResolveIndices(schema *Schema)
 }
 
+// CNFExprs stands for a CNF expression.
 type CNFExprs []Expression
 
 // Clone clones itself.
