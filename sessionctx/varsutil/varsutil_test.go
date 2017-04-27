@@ -120,13 +120,21 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(v.TimeZone.String(), Equals, "US/Eastern")
 	SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum("SYSTEM"))
 	c.Assert(v.TimeZone.String(), Equals, "Local")
+
 	SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum("+10:00"))
 	c.Assert(v.TimeZone.String(), Equals, "UTC")
 	t1 := time.Date(2000, 1, 1, 0, 0, 0, 0, v.TimeZone)
 	t2 := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 	c.Assert(t2.Sub(t1), Equals, 10*time.Hour)
+
 	SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum("-6:00"))
 	c.Assert(v.TimeZone.String(), Equals, "UTC")
+	t1 = time.Date(2000, 1, 1, 0, 0, 0, 0, v.TimeZone)
+	t2 = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	c.Assert(t1.Sub(t2), Equals, 6*time.Hour)
+
+	err = SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum("6:00"))
+	c.Assert(err, NotNil)
 
 	// Test case for sql mode.
 	for str, mode := range mysql.Str2SQLMode {
