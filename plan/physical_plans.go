@@ -72,7 +72,14 @@ type PhysicalTableReader struct {
 	*basePlan
 	basePhysicalPlan
 
-	TablePlan PhysicalPlan
+	tablePlan PhysicalPlan
+
+	AsName    *model.CIStr
+	TableID   int64
+	KeepOrder bool
+	Desc      bool
+	Ranges    []types.IntColumnRange
+	Executors []*tipb.Executor
 }
 
 // Copy implements the PhysicalPlan Copy interface.

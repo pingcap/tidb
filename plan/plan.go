@@ -194,7 +194,7 @@ type PhysicalPlan interface {
 
 	// attach2TaskProfile makes the current physical plan as the father of task's physicalPlan and updates the cost of
 	// current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
-	attach2TaskProfile(...taskProfile) taskProfile
+	attach2TaskProfile(...taskProfile) (taskProfile, error)
 
 	// ToPB converts physical plan to tipb executor.
 	ToPB(ctx context.Context) (*tipb.Executor, error)

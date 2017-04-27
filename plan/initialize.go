@@ -13,7 +13,10 @@
 
 package plan
 
-import "github.com/pingcap/tidb/context"
+import (
+	"github.com/juju/errors"
+	"github.com/pingcap/tidb/context"
+)
 
 const (
 	// TypeSel is the type of Selection.
@@ -269,14 +272,45 @@ func (p PhysicalIndexLookUpReader) init(allocator *idAllocator, ctx context.Cont
 	return &p
 }
 
-func (p PhysicalTableReader) init(allocator *idAllocator, ctx context.Context) *PhysicalTableReader {
+func (p PhysicalTableReader) init(allocator *idAllocator, ctx context.Context) (*PhysicalTableReader, error) {
 	p.basePlan = newBasePlan(TypeTableReader, allocator, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
-	return &p
+	plans := flattenPushDownPlan(p.tablePlan)
+	ts := plans[0].(*PhysicalTableScan)
+	p.TableID = ts.Table.ID
+	p.AsName = ts.TableAsName
+	p.Desc = ts.Desc
+	p.KeepOrder = ts.KeepOrder
+	p.Ranges = ts.Ranges
+	for _, pushedPlan := range plans {
+		exec, err := pushedPlan.ToPB(p.ctx)
+		if err != nil {
+			return &p, errors.Trace(err)
+		}
+		p.Executors = append(p.Executors, exec)
+	}
+	return &p, nil
 }
 
 func (p PhysicalIndexReader) init(allocator *idAllocator, ctx context.Context) *PhysicalIndexReader {
 	p.basePlan = newBasePlan(TypeIndexReader, allocator, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
+}
+
+// flattenPushDownPlan converts a plan tree to a list, whose head is the leaf node like table scan.
+func flattenPushDownPlan(p PhysicalPlan) []PhysicalPlan {
+	plans := make([]PhysicalPlan, 0, 5)
+	for {
+		plans = append(plans, p)
+		if len(p.Children()) == 0 {
+			break
+		}
+		p = p.Children()[0].(PhysicalPlan)
+	}
+	for i := 0; i < len(plans)/2; i++ {
+		j := len(plans) - i - 1
+		plans[i], plans[j] = plans[j], plans[i]
+	}
+	return plans
 }
