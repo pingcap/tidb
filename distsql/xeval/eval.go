@@ -100,7 +100,7 @@ func (e *Evaluator) SetRowValue(handle int64, row [][]byte, relatedColIDs map[in
 		} else {
 			data := row[offset]
 			ft := e.fieldTps[offset]
-			datum, err := tablecodec.DecodeColumnValue(data, ft)
+			datum, err := tablecodec.DecodeColumnValue(data, ft, e.StatementCtx.TimeZone)
 			if err != nil {
 				return errors.Trace(err)
 			}

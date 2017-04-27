@@ -463,7 +463,7 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = decodeRawValues(values, schema)
+		err = decodeRawValues(values, schema, getTimeZone(e.ctx))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -475,11 +475,11 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 	}
 }
 
-func decodeRawValues(values []types.Datum, schema *expression.Schema) error {
+func decodeRawValues(values []types.Datum, schema *expression.Schema, loc *time.Location) error {
 	var err error
 	for i := 0; i < schema.Len(); i++ {
 		if values[i].Kind() == types.KindRaw {
-			values[i], err = tablecodec.DecodeColumnValue(values[i].GetRaw(), schema.Columns[i].RetType)
+			values[i], err = tablecodec.DecodeColumnValue(values[i].GetRaw(), schema.Columns[i].RetType, loc)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -746,7 +746,7 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = decodeRawValues(values, e.Schema())
+		err = decodeRawValues(values, e.Schema(), getTimeZone(e.ctx))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -930,7 +930,7 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = decodeRawValues(values, e.schema)
+		err = decodeRawValues(values, e.schema, getTimeZone(e.ctx))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -980,10 +980,18 @@ func setPBColumnsDefaultValue(ctx context.Context, pbColumns []*tipb.ColumnInfo,
 			return errors.Trace(err)
 		}
 
-		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(d)
+		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(d, getTimeZone(ctx))
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	return nil
+}
+
+func getTimeZone(ctx context.Context) *time.Location {
+	loc := ctx.GetSessionVars().TimeZone
+	if loc == nil {
+		loc = time.Local
+	}
+	return loc
 }

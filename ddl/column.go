@@ -347,7 +347,8 @@ func (d *ddl) backfillColumnInTxn(t table.Table, colMeta *columnMeta, handles []
 			return 0, errors.Trace(err)
 		}
 
-		rowColumns, err := tablecodec.DecodeRow(rowVal, colMeta.oldColMap)
+		// TODO: Should use session's TimeZone instead of UTC.
+		rowColumns, err := tablecodec.DecodeRow(rowVal, colMeta.oldColMap, time.UTC)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -364,7 +365,7 @@ func (d *ddl) backfillColumnInTxn(t table.Table, colMeta *columnMeta, handles []
 		}
 		newColumnIDs = append(newColumnIDs, colMeta.colID)
 		newRow = append(newRow, colMeta.defaultVal)
-		newRowVal, err := tablecodec.EncodeRow(newRow, newColumnIDs)
+		newRowVal, err := tablecodec.EncodeRow(newRow, newColumnIDs, time.UTC)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}

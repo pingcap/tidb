@@ -16,6 +16,7 @@ package ddl
 import (
 	"reflect"
 	"sync"
+	"time"
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
@@ -275,7 +276,7 @@ func (s *testColumnSuite) checkColumnKVExist(ctx context.Context, t table.Table,
 	}
 	colMap := make(map[int64]*types.FieldType)
 	colMap[col.ID] = &col.FieldType
-	rowMap, err := tablecodec.DecodeRow(data, colMap)
+	rowMap, err := tablecodec.DecodeRow(data, colMap, getTimeZone(ctx))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -290,6 +291,14 @@ func (s *testColumnSuite) checkColumnKVExist(ctx context.Context, t table.Table,
 		}
 	}
 	return nil
+}
+
+func getTimeZone(ctx context.Context) *time.Location {
+	loc := ctx.GetSessionVars().TimeZone
+	if loc == nil {
+		loc = time.Local
+	}
+	return loc
 }
 
 func (s *testColumnSuite) checkNoneColumn(ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, columnValue interface{}) error {

@@ -305,6 +305,7 @@ type StatementContext struct {
 	IgnoreTruncate       bool
 	TruncateAsWarning    bool
 	InShowWarning        bool
+	TimeZone             *time.Location
 
 	/* Variables that changes during execution. */
 	mu struct {
