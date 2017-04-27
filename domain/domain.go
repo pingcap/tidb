@@ -31,6 +31,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
+	// TODO: It's used fo update vendor. It will be removed.
+	_ "github.com/coreos/etcd/clientv3/concurrency"
+	_ "github.com/coreos/etcd/mvcc/mvccpb"
 	goctx "golang.org/x/net/context"
 )
 
