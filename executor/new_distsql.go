@@ -55,12 +55,9 @@ func (t *TableReaderExecutor) Schema() *expression.Schema {
 // Close implements the Executor Close interface.
 func (t *TableReaderExecutor) Close() error {
 	err := closeAll(t.result, t.partialResult)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	t.result = nil
 	t.partialResult = nil
-	return nil
+	return errors.Trace(err)
 }
 
 // Next implements the Executor Next interface.
