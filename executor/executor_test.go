@@ -1350,6 +1350,7 @@ func (s *testSuite) TestIssue2318(c *C) {
 	tk.MustQuery("select * from t where dt > 20021020 or dt = 20010816").Check(testkit.Rows("3 2001-08-16 00:00:00", "4 2003-09-15 01:20:30"))
 	tk.MustQuery(`select * from t where dt > '2003-09-15'`).Check(testkit.Rows("4 2003-09-15 01:20:30"))
 	tk.MustQuery(`select * from t where dt > '20030915'`).Check(testkit.Rows("4 2003-09-15 01:20:30"))
+	tk.MustQuery(`select * from t where dt > 20030914+1`).Check(testkit.Rows("4 2003-09-15 01:20:30"))
 	tk.MustExec("create index dt on t (dt)")
 	tk.MustQuery("select * from t ignore index (dt) where dt > 20021020").Check(testkit.Rows("4 2003-09-15 01:20:30"))
 	tk.MustQuery("select * from t where dt > 20021020").Check(testkit.Rows("4 2003-09-15 01:20:30"))

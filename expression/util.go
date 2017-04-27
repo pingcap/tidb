@@ -278,6 +278,9 @@ func ConvertConstantType(expr Expression) (Expression, error) {
 }
 
 func convertConstantTo(tp *types.FieldType, constant *Constant) error {
+	if tp == nil {
+		return nil
+	}
 	switch tp.Tp { // check if need to convert type based on tp
 	case mysql.TypeDatetime, mysql.TypeTimestamp:
 		return convertConstantToTime(tp, constant)
