@@ -257,16 +257,18 @@ func ConvertConstantType(expr Expression) (Expression, error) {
 	case ast.EQ, ast.GT, ast.LE, ast.GE, ast.LT:
 		for i, arg := range args {
 			if c, ok := arg.(*Constant); ok { // check if there is a constant
-				col := args[(i+1)%2].GetType() // only two args here
-				switch col.Tp {                // check if need to convert type based on another arg
-				case mysql.TypeDatetime, mysql.TypeTimestamp:
-					err = convertConstantToTime(col, c)
-					// add miss case here in the future
-				}
+				tp := args[(i+1)%2].GetType() // only two args here
+				err = convertConstantTo(tp, c)
 			} else {
 				args[i], err = ConvertConstantType(arg)
 			}
 			if err != nil {
+				break
+			}
+		}
+	default:
+		for i, arg := range args {
+			if args[i], err = ConvertConstantType(arg); err != nil {
 				break
 			}
 		}
@@ -275,16 +277,26 @@ func ConvertConstantType(expr Expression) (Expression, error) {
 	return scalarFunc, errors.Trace(err)
 }
 
-func convertConstantToTime(col *types.FieldType, constant *Constant) error {
+func convertConstantTo(tp *types.FieldType, constant *Constant) error {
+	switch tp.Tp { // check if need to convert type based on tp
+	case mysql.TypeDatetime, mysql.TypeTimestamp:
+		return convertConstantToTime(tp, constant)
+		// add miss case here in the future
+	default:
+		return nil
+	}
+}
+
+func convertConstantToTime(tp *types.FieldType, constant *Constant) error {
 	var (
 		t   types.Time
 		err error
 	)
 	switch constant.Value.Kind() {
 	case types.KindInt64, types.KindUint64:
-		t, err = types.ParseTimeFromNum(constant.Value.GetInt64(), col.Tp, col.Decimal)
+		t, err = types.ParseTimeFromNum(constant.Value.GetInt64(), tp.Tp, tp.Decimal)
 	case types.KindBytes, types.KindString:
-		t, err = types.ParseTime(constant.Value.GetString(), col.Tp, col.Decimal)
+		t, err = types.ParseTime(constant.Value.GetString(), tp.Tp, tp.Decimal)
 	default:
 		return nil
 	}
