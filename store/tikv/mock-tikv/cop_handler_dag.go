@@ -27,9 +27,6 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// MockDAGRequest is used for testing now.
-var MockDAGRequest bool
-
 type dagContext struct {
 	dagReq    *tipb.DAGRequest
 	keyRanges []*coprocessor.KeyRange
