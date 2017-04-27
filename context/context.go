@@ -68,6 +68,8 @@ func (t basicCtxType) String() string {
 		return "query_string"
 	case Initing:
 		return "initing"
+	case MemoryStatistics:
+		return "memory_statistics"
 	}
 	return "unknown"
 }
@@ -78,4 +80,6 @@ const (
 	QueryString basicCtxType = 1
 	// Initing is the key for indicating if the server is running bootstrap or upgrad job.
 	Initing basicCtxType = 2
+	// MemoryStatistics is the key for memory allocation statistics.
+	MemoryStatistics basicCtxType = 3
 )

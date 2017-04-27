@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/memusage"
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -71,6 +72,7 @@ type HashJoinExec struct {
 	// rowKeyCache is used to store the table and table name from a row.
 	// Because every row has the same table name and table, we can use a single row key cache.
 	rowKeyCache []*RowKeyEntry
+	memUsage    *memusage.Record
 }
 
 // hashJoinCtx holds the variables needed to do a hash join in one of many concurrent goroutines.
@@ -93,6 +95,7 @@ func (e *HashJoinExec) Close() error {
 	e.prepared = false
 	e.cursor = 0
 	e.rows = nil
+	e.memUsage.Close()
 	return e.smallExec.Close()
 }
 
@@ -153,7 +156,10 @@ func (e *HashJoinExec) fetchBigExec() {
 		e.wg.Done()
 	}()
 	curBatchSize := 1
-	result := &execResult{rows: make([]*Row, 0, batchSize)}
+	result := &execResult{
+		rows:     make([]*Row, 0, batchSize),
+		memUsage: e.memUsage.Open(),
+	}
 	txnCtx := e.ctx.GoCtx()
 	for {
 		done := false
@@ -174,12 +180,16 @@ func (e *HashJoinExec) fetchBigExec() {
 				break
 			}
 			result.rows = append(result.rows, row)
+			result.memUsage.Add(int64(len(row.Data)) * 54)
 			if len(result.rows) >= batchSize {
 				select {
 				case <-txnCtx.Done():
 					return
 				case e.bigTableResultCh[idx] <- result:
-					result = &execResult{rows: make([]*Row, 0, batchSize)}
+					result = &execResult{
+						rows:     make([]*Row, 0, batchSize),
+						memUsage: e.memUsage.Open(),
+					}
 				}
 			}
 		}
@@ -248,6 +258,7 @@ func (e *HashJoinExec) prepare() error {
 			return errors.Trace(err)
 		}
 		e.hashTable.Put(joinKey, buffer)
+		e.memUsage.Add(int64(len(buffer)))
 	}
 
 	e.resultCh = make(chan *execResult, e.concurrency)
@@ -320,7 +331,10 @@ func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 // doJoin does join job in one goroutine.
 func (e *HashJoinExec) runJoinWorker(idx int) {
 	maxRowsCnt := 1000
-	result := &execResult{rows: make([]*Row, 0, maxRowsCnt)}
+	result := &execResult{
+		rows:     make([]*Row, 0, maxRowsCnt),
+		memUsage: e.memUsage.Open(),
+	}
 	txnCtx := e.ctx.GoCtx()
 	for {
 		var bigTableResult *execResult
@@ -339,7 +353,9 @@ func (e *HashJoinExec) runJoinWorker(idx int) {
 		}
 
 		if bigTableResult.err != nil {
-			e.resultCh <- &execResult{err: errors.Trace(bigTableResult.err)}
+			e.resultCh <- &execResult{
+				err: errors.Trace(bigTableResult.err),
+			}
 			break
 		}
 		for _, bigRow := range bigTableResult.rows {
@@ -349,9 +365,13 @@ func (e *HashJoinExec) runJoinWorker(idx int) {
 			}
 			if len(result.rows) >= maxRowsCnt {
 				e.resultCh <- result
-				result = &execResult{rows: make([]*Row, 0, maxRowsCnt)}
+				result = &execResult{
+					rows:     make([]*Row, 0, maxRowsCnt),
+					memUsage: e.memUsage.Open(),
+				}
 			}
 		}
+		bigTableResult.memUsage.Close()
 	}
 	if len(result.rows) != 0 || result.err != nil {
 		e.resultCh <- result
@@ -384,6 +404,7 @@ func (e *HashJoinExec) joinOneBigRow(ctx *hashJoinCtx, bigRow *Row, result *exec
 	}
 	for _, r := range matchedRows {
 		result.rows = append(result.rows, r)
+		result.memUsage.Add(int64(len(r.Data)) * 54)
 	}
 	if len(matchedRows) == 0 && e.outer {
 		r := e.fillRowWithDefaultValues(bigRow)

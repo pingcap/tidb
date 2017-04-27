@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/memusage"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-binlog"
 	goctx "golang.org/x/net/context"
@@ -129,6 +130,7 @@ type session struct {
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
 
+	memUsage       memusage.Record
 	statsCollector *statistics.SessionStatsCollector
 }
 
@@ -917,6 +919,8 @@ func createSession(store kv.Storage) (*session, error) {
 		sessionVars: variable.NewSessionVars(),
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
+	s.SetValue(context.MemoryStatistics, &s.memUsage)
+
 	sessionctx.BindDomain(s, domain)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
@@ -1041,6 +1045,7 @@ func (s *session) prepareTxnCtx() {
 	if !s.sessionVars.IsAutocommit() {
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 	}
+	s.memUsage.Close()
 }
 
 // ActivePendingTxn implements Context.ActivePendingTxn interface.

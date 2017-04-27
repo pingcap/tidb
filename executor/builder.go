@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/util/memusage"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -399,6 +400,8 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 		rightHashKey = append(rightHashKey, rn)
 		targetTypes = append(targetTypes, types.NewFieldType(types.MergeFieldType(ln.GetType().Tp, rn.GetType().Tp)))
 	}
+
+	ms := b.ctx.Value(context.MemoryStatistics).(*memusage.Record)
 	e := &HashJoinExec{
 		schema:        v.Schema(),
 		otherFilter:   v.OtherConditions,
@@ -407,6 +410,7 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 		targetTypes:   targetTypes,
 		concurrency:   v.Concurrency,
 		defaultValues: v.DefaultValues,
+		memUsage:      ms.Open(),
 	}
 	if v.SmallTable == 1 {
 		e.smallFilter = v.RightConditions
