@@ -180,6 +180,9 @@ func (s *testSuite) TestJoin(c *C) {
 	tk.MustExec("insert into t1 values (1),(2),(3),(4),(5),(6),(7)")
 	result = tk.MustQuery("select a.c1 from t a , t1 b where a.c1 = b.c1 order by a.c1;")
 	result.Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7"))
+	// Test race.
+	result = tk.MustQuery("select a.c1 from t a , t1 b where a.c1 = b.c1 and a.c1 + b.c1 > 5 order by b.c1")
+	result.Check(testkit.Rows("3", "4", "5", "6", "7"))
 	result = tk.MustQuery("select a.c1 from t a , (select * from t1 limit 3) b where a.c1 = b.c1 order by b.c1;")
 	result.Check(testkit.Rows("1", "2", "3"))
 
