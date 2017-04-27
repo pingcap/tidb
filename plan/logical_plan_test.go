@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"math"
 	"sort"
 	"testing"
 
@@ -35,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
-	"math"
 )
 
 var _ = Suite(&testPlanSuite{})

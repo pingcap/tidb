@@ -23,7 +23,7 @@ import (
 
 // indexBlock is used when calculating selectivity
 type indexBlock struct {
-	// the position that this index is in the index slice
+	// the position that this index is in the index slice, if is -1, then this is primary key.
 	pos int
 	// the ith bit of `cover` will tell whether the ith expression is covered by this index.
 	cover uint64
@@ -34,8 +34,9 @@ type indexBlock struct {
 // selectivity is a function calculate the selectivity of the expressions.
 // The definition of selectivity is (row count after filter / row count before filter).
 // And exprs must be CNF now, in other words, `exprs[0] and exprs[1] and ... and exprs[len - 1]` should be held when you call this.
+// TODO: support expressions that the top layer is a DNF.
 func selectivity(exprs []expression.Expression, indices []*model.IndexInfo, ds *DataSource, pkColID int64) (float64, error) {
-	// TODO: If len(exprs) is bigger than 64, we could use bitset to replace the uint64.
+	// TODO: If len(exprs) is bigger than 64, we could use bitset structure to replace the uint64.
 	// This will simplify some code and speed up if we use this rather than a boolean slice.
 	if ds.statisticTable.Pseudo || len(exprs) > 64 {
 		return selectionFactor, nil
@@ -68,33 +69,33 @@ func selectivity(exprs []expression.Expression, indices []*model.IndexInfo, ds *
 	mask := uint64(math.MaxUint64) >> uint64(64-len(exprs))
 	for _, block := range blocks {
 		conds := getCondThroughMask(block.cover, exprs)
+		// update the mask.
 		mask &^= block.cover
 		var rowCount float64
 		if block.pos == -1 {
 			ranges, err := BuildTableRange(conds, sc)
 			if err != nil {
-				return 0.0, err
+				return 0, err
 			}
 			rowCount, err = ds.statisticTable.GetRowCountByIntColumnRanges(sc, pkColID, ranges)
 			if err != nil {
-				return 0.0, err
+				return 0, err
 			}
 		} else {
 			ranges, err := BuildIndexRange(sc, ds.tableInfo, indices[block.pos], block.inAndEqCnt, conds)
 			if err != nil {
-				return 0.0, err
+				return 0, err
 			}
 			rowCount, err = ds.statisticTable.GetRowCountByIndexRanges(sc, indices[block.pos].ID, ranges, block.inAndEqCnt)
 			if err != nil {
-				return 0.0, err
+				return 0, err
 			}
 		}
 		ret *= rowCount / float64(ds.statisticTable.Count)
 	}
 	// TODO: add the calculation of column sampling.
 	if mask > 0 {
-		//ret *= float64(selectionFactor)
-		ret = ret * selectionFactor
+		ret *= float64(selectionFactor)
 	}
 	return ret, nil
 }
