@@ -29,11 +29,13 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
+	"math"
 )
 
 var _ = Suite(&testPlanSuite{})
@@ -82,6 +84,7 @@ func mockInfoSchema() infoschema.InfoSchema {
 					Offset: 4,
 				},
 			},
+			ID:     1,
 			State:  model.StatePublic,
 			Unique: true,
 		},
@@ -94,6 +97,7 @@ func mockInfoSchema() infoschema.InfoSchema {
 					Offset: 4,
 				},
 			},
+			ID:     2,
 			State:  model.StateWriteOnly,
 			Unique: true,
 		},
@@ -106,6 +110,7 @@ func mockInfoSchema() infoschema.InfoSchema {
 					Offset: 8,
 				},
 			},
+			ID:     3,
 			State:  model.StatePublic,
 			Unique: true,
 		},
@@ -118,6 +123,7 @@ func mockInfoSchema() infoschema.InfoSchema {
 					Offset: 9,
 				},
 			},
+			ID:     4,
 			State:  model.StatePublic,
 			Unique: true,
 		},
@@ -135,6 +141,7 @@ func mockInfoSchema() infoschema.InfoSchema {
 					Offset: 9,
 				},
 			},
+			ID:     5,
 			State:  model.StatePublic,
 			Unique: true,
 		},
@@ -157,6 +164,7 @@ func mockInfoSchema() infoschema.InfoSchema {
 					Offset: 7,
 				},
 			},
+			ID:    6,
 			State: model.StatePublic,
 		},
 		{
@@ -178,6 +186,7 @@ func mockInfoSchema() infoschema.InfoSchema {
 					Offset: 5,
 				},
 			},
+			ID:    7,
 			State: model.StatePublic,
 		},
 	}
@@ -381,6 +390,34 @@ func mockStatsTable(tbl *model.TableInfo, rowCount int64) *statistics.Table {
 		Indices: make(map[int64]*statistics.Index, len(tbl.Indices)),
 	}
 	return statsTbl
+}
+
+// generateIntDatum will generate a datum slice, every dimension is begin from 0, end with num - 1.
+// If dimension is x, len is y, the total number of datum is y^x. And This slice is sorted.
+func generateIntDatum(dimension, num int) ([]types.Datum, error) {
+	len := int(math.Pow(float64(num), float64(dimension)))
+	ret := make([]types.Datum, len)
+	if dimension == 1 {
+		for i := 0; i < num; i++ {
+			ret[i] = types.NewIntDatum(int64(i))
+		}
+	} else {
+		// In this way, we can guarantee the datum is in order.
+		for i := 0; i < len; i++ {
+			data := make([]types.Datum, dimension)
+			j := i
+			for k := 0; k < dimension; k++ {
+				data[dimension-k-1].SetInt64(int64(j % num))
+				j = j / num
+			}
+			bytes, err := codec.EncodeKey(nil, data...)
+			if err != nil {
+				return nil, err
+			}
+			ret[i].SetBytes(bytes)
+		}
+	}
+	return ret, nil
 }
 
 // mockStatsHistogram will create a statistics.Histogram, of which the data is uniform distribution.

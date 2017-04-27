@@ -14,10 +14,10 @@
 package plan
 
 import (
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"math"
-	"github.com/pingcap/tidb/context"
 )
 
 // indexBlock is used when calculating selectivity
@@ -34,6 +34,8 @@ type indexBlock struct {
 // The definition of selectivity is (row count after filter / row count before filter).
 // And exprs must be CNF now, in other words, `exprs[0] and exprs[1] and ... and exprs[len - 1]` should be held when you call this.
 func selectivity(exprs []expression.Expression, indices []*model.IndexInfo, ds *DataSource, pkColID int64) (float64, error) {
+	// TODO: If len(exprs) is bigger than 64, we could use bitset to replace the uint64.
+	// This will simplify some code and speed up if we use this rather than a boolean slice.
 	if ds.statisticTable.Pseudo || len(exprs) > 64 {
 		return selectionFactor, nil
 	}
@@ -61,8 +63,8 @@ func selectivity(exprs []expression.Expression, indices []*model.IndexInfo, ds *
 	}
 	blocks = getUsedIndicesByGreedy(blocks)
 	ret := 1.0
-	mask := uint64(math.MaxUint64)
-	mask = mask >> uint64(64 - len(exprs))
+	// cut off the higher bit of mask.
+	mask := uint64(math.MaxUint64) >> uint64(64-len(exprs))
 	for _, block := range blocks {
 		conds := getCondThroughMask(block.cover, exprs)
 		mask &^= block.cover
@@ -79,17 +81,19 @@ func selectivity(exprs []expression.Expression, indices []*model.IndexInfo, ds *
 		} else {
 			ranges, err := BuildIndexRange(sc, ds.tableInfo, indices[block.pos], block.inAndEqCnt, conds)
 			if err != nil {
-				return 0.0, nil
+				return 0.0, err
 			}
 			rowCount, err = ds.statisticTable.GetRowCountByIndexRanges(sc, indices[block.pos].ID, ranges, block.inAndEqCnt)
 			if err != nil {
-				return 0.0, nil
+				return 0.0, err
 			}
 		}
 		ret *= rowCount / float64(ds.statisticTable.Count)
 	}
+	// TODO: add the calculation of column sampling.
 	if mask > 0 {
-		ret *= selectionFactor
+		//ret *= float64(selectionFactor)
+		ret = ret * selectionFactor
 	}
 	return ret, nil
 }
@@ -99,27 +103,32 @@ func getMaskByColumn(ctx context.Context, exprs []expression.Expression, colName
 	mask := uint64(0)
 	// There accessConds is a sub sequence of exprs. i.e. If exprs is `[ a > 1, b > 1, a < 10]`,
 	// accessConds could be `[ a > 1, b > 1 ]` or `[a > 1, a < 10]`, couldn't be `[ a < 10, a > 1 ]`
-	for i := 0; i < len(exprs); {
-		for j := 0; j < len(accessConds); {
-			if exprs[i].Equal(accessConds[j], ctx) {
-				mask = mask | (1 << uint64(i))
-				i++
-				j++
-			} else {
-				i++
-			}
+	// So we can use the following o(n) algorithm.
+	i, j := 0, 0
+	for i < len(exprs) && j < len(accessConds) {
+		if exprs[i].Equal(accessConds[j], ctx) {
+			mask |= 1 << uint64(i)
+			i++
+			j++
+		} else {
+			i++
 		}
 	}
 	return mask, accessConds
 }
 
 func getMaskByIndex(ctx context.Context, exprs []expression.Expression, index *model.IndexInfo) (uint64, int, []expression.Expression) {
-	accessConds, _, _, inAndEqCnt := DetachIndexScanConditions(exprs, index)
+	exprsClone := make([]expression.Expression, 0, len(exprs))
+	for _, expr := range exprs {
+		exprsClone = append(exprsClone, expr.Clone())
+	}
+	accessConds, _, _, inAndEqCnt := DetachIndexScanConditions(exprsClone, index)
 	mask := uint64(0)
 	for i := range exprs {
-		for j := range exprs {
+		for j := range accessConds {
 			if exprs[i].Equal(accessConds[j], ctx) {
-				mask = mask | (1 << uint64(i))
+				mask |= 1 << uint64(i)
+				break
 			}
 		}
 	}
@@ -134,7 +143,7 @@ func getUsedIndicesByGreedy(blocks []*indexBlock) (newBlocks []*indexBlock) {
 		bestCount := 0
 		for i, block := range blocks {
 			block.cover &= mask
-			bits := countOneBits(block.cover)
+			bits := popcount(block.cover)
 			if bestCount < bits {
 				bestCount = bits
 				bestID = i
@@ -154,7 +163,8 @@ func getUsedIndicesByGreedy(blocks []*indexBlock) (newBlocks []*indexBlock) {
 	return
 }
 
-func countOneBits(x uint64) int {
+// It's the digit sum of the binary representation of the number x.
+func popcount(x uint64) int {
 	ret := 0
 	for ; x > 0; x = x >> 1 {
 		if (x & 1) > 0 {
@@ -165,7 +175,7 @@ func countOneBits(x uint64) int {
 }
 
 func getCondThroughMask(x uint64, conds []expression.Expression) []expression.Expression {
-	accessConds := make([]expression.Expression, 0, countOneBits(x))
+	accessConds := make([]expression.Expression, 0, popcount(x))
 	for i := 0; x > 0; i++ {
 		if (x & 1) > 0 {
 			accessConds = append(accessConds, conds[i])
