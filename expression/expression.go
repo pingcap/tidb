@@ -168,7 +168,7 @@ type CNFExprs []Expression
 
 // Clone clones itself.
 func (e CNFExprs) Clone() CNFExprs {
-	cnf := make(CNFExprs,0, len(e))
+	cnf := make(CNFExprs, 0, len(e))
 	for _, expr := range e {
 		cnf = append(cnf, expr.Clone())
 	}

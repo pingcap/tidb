@@ -368,11 +368,11 @@ func (e *HashJoinExec) joinOneBigRow(ctx *hashJoinCtx, bigRow *Row, result *exec
 		err         error
 	)
 	bigMatched := true
-		bigMatched, err = expression.EvalBool(ctx.bigFilter, bigRow.Data, e.ctx)
-		if err != nil {
-			result.err = errors.Trace(err)
-			return false
-		}
+	bigMatched, err = expression.EvalBool(ctx.bigFilter, bigRow.Data, e.ctx)
+	if err != nil {
+		result.err = errors.Trace(err)
+		return false
+	}
 	if bigMatched {
 		matchedRows, err = e.constructMatchedRows(ctx, bigRow)
 		if err != nil {
