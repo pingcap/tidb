@@ -119,7 +119,7 @@ func (h *rpcHandler) buildDAG(ctx *dagContext, executors []*tipb.Executor) (exec
 func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) *tableScanExec {
 	columns := executor.TblScan.Columns
 	ctx.evalCtx.setColumnInfo(columns)
-	ranges := h.extractKVRanges(ctx.keyRanges, *executor.TblScan.Desc)
+	ranges := h.extractKVRanges(ctx.keyRanges, executor.TblScan.Desc)
 
 	return &tableScanExec{
 		TableScan:   executor.TblScan,
@@ -140,7 +140,7 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) *i
 	if columns[length-1].GetPkHandle() {
 		columns = columns[:length-1]
 	}
-	ranges := h.extractKVRanges(ctx.keyRanges, *executor.IdxScan.Desc)
+	ranges := h.extractKVRanges(ctx.keyRanges, executor.IdxScan.Desc)
 
 	return &indexScanExec{
 		IndexScan:   executor.IdxScan,
@@ -227,7 +227,7 @@ func (h *rpcHandler) buildTopN(ctx *dagContext, executor *tipb.Executor) (*topNE
 		pbConds[i] = item.Expr
 	}
 	heap := &topnHeap{
-		totalCount: int(*topN.Limit),
+		totalCount: int(topN.Limit),
 		topnSorter: topnSorter{
 			orderByItems: topN.OrderBy,
 			sc:           ctx.evalCtx.sc,
