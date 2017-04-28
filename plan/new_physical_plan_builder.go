@@ -129,6 +129,7 @@ func (p *LogicalJoin) preferUseMergeJoin() bool {
 	return p.preferMergeJoin && len(p.EqualConditions) == 1
 }
 
+// TODO: Now we only process the case that the join has only one equal condition.
 func (p *LogicalJoin) convert2MergeJoin(prop *requiredProp) (taskProfile, error) {
 	lChild := p.children[0].(LogicalPlan)
 	rChild := p.children[1].(LogicalPlan)
