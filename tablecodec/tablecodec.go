@@ -15,7 +15,6 @@ package tablecodec
 
 import (
 	"bytes"
-	"fmt"
 	"math"
 	"time"
 
@@ -190,7 +189,7 @@ func flatten(data types.Datum, loc *time.Location) (types.Datum, error) {
 	case types.KindMysqlTime:
 		// for mysql datetime, timestamp and date type
 		t := data.GetMysqlTime()
-		if t.Type == mysql.TypeTimestamp {
+		if t.Type == mysql.TypeTimestamp && !t.IsZero() {
 			raw, err := t.Time.GoTime(loc)
 			if err != nil {
 				return data, errors.Trace(err)
@@ -412,7 +411,7 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 		if err != nil {
 			return datum, errors.Trace(err)
 		}
-		if ft.Tp == mysql.TypeTimestamp {
+		if ft.Tp == mysql.TypeTimestamp && !t.IsZero() {
 			raw, err := t.Time.GoTime(time.UTC)
 			if err != nil {
 				return datum, errors.Trace(err)
