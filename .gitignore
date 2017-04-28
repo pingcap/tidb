@@ -11,3 +11,5 @@ coverage.out
 tags
 temp_parser_file
 y.output
+
+cscope.*

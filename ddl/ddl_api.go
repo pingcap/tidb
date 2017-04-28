@@ -428,7 +428,7 @@ func checkDefaultValue(ctx context.Context, c *table.Column, hasDefaultValue boo
 func checkDuplicateColumn(colDefs []*ast.ColumnDef) error {
 	colNames := map[string]bool{}
 	for _, colDef := range colDefs {
-		nameLower := colDef.Name.Name.O
+		nameLower := colDef.Name.Name.L
 		if colNames[nameLower] {
 			return infoschema.ErrColumnExists.GenByArgs(colDef.Name.Name)
 		}
