@@ -523,14 +523,24 @@ type builtinUncompressSig struct {
 	baseBuiltinFunc
 }
 
+func uncompress(compressStr []byte) ([]byte, error) {
+	reader := bytes.NewReader(compressStr)
+	var out bytes.Buffer
+	r, err := zlib.NewReader(reader)
+	if err != nil {
+		return nil, nil
+	}
+	io.Copy(&out, r)
+	r.Close()
+	return out.Bytes(), nil
+}
+
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_uncompress
 func (b *builtinUncompressSig) eval(row []types.Datum) (d types.Datum, err error) {
-
 	args, err := b.evalArgs(row)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-
 	arg := args[0]
 	if arg.IsNull() {
 		return d, nil
@@ -543,16 +553,11 @@ func (b *builtinUncompressSig) eval(row []types.Datum) (d types.Datum, err error
 		d.SetString("")
 		return d, nil
 	}
-	reader := bytes.NewReader(compressStr)
-	var out bytes.Buffer
-	r, err := zlib.NewReader(reader)
-
-	if err != nil {
-		return d, nil
+	bytes, err := uncompress(compressStr)
+	if err != nil || bytes == nil {
+		return d, err
 	}
-	io.Copy(&out, r)
-	r.Close()
-	d.SetBytes(out.Bytes())
+	d.SetBytes(bytes)
 	return d, nil
 }
 
@@ -570,35 +575,27 @@ type builtinUncompressedLengthSig struct {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_uncompressed-length
 func (b *builtinUncompressedLengthSig) eval(row []types.Datum) (d types.Datum, err error) {
-
 	args, err := b.evalArgs(row)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-
 	arg := args[0]
 	if arg.IsNull() {
 		return d, nil
 	}
-
 	compressStr, err := arg.ToBytes()
 	if err != nil {
 		return d, errors.Trace(err)
 	}
 	if len(compressStr) == 0 {
-		d.SetInt64(0)
+		d.SetString("")
 		return d, nil
 	}
-	reader := bytes.NewReader(compressStr)
-	var out bytes.Buffer
-	r, err := zlib.NewReader(reader)
-
-	if err != nil {
-		return d, errors.Trace(err)
+	bytes, err := uncompress(compressStr)
+	if err != nil || bytes == nil {
+		return d, err
 	}
-	io.Copy(&out, r)
-	r.Close()
-	d.SetInt64(int64(out.Len()))
+	d.SetInt64(int64(len(bytes)))
 	return d, nil
 }
 
