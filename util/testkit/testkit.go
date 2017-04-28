@@ -15,6 +15,7 @@ package testkit
 
 import (
 	"fmt"
+	"sort"
 	"sync/atomic"
 
 	"github.com/juju/errors"
@@ -34,7 +35,7 @@ type TestKit struct {
 
 // Result is the result returned by MustQuery.
 type Result struct {
-	rows    [][]interface{}
+	rows    [][]string
 	comment check.CommentInterface
 	c       *check.C
 }
@@ -48,7 +49,33 @@ func (res *Result) Check(expected [][]interface{}) {
 
 // Rows returns the result data.
 func (res *Result) Rows() [][]interface{} {
-	return res.rows
+	ifacesSlice := make([][]interface{}, len(res.rows))
+	for i := range res.rows {
+		ifaces := make([]interface{}, len(res.rows[i]))
+		for j := range res.rows[i] {
+			ifaces[j] = res.rows[i][j]
+		}
+		ifacesSlice[i] = ifaces
+	}
+	return ifacesSlice
+}
+
+// Sort sorts and return the result.
+func (res *Result) Sort() *Result {
+	sort.Slice(res.rows, func(i, j int) bool {
+		a := res.rows[i]
+		b := res.rows[j]
+		for i := range a {
+			if a[i] == "<nil>" {
+				return b[i] != "<nil>"
+			}
+			if a[i] < b[i] {
+				return true
+			}
+		}
+		return false
+	})
+	return res
 }
 
 // NewTestKit returns a new *TestKit.
@@ -115,10 +142,10 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	tk.c.Assert(rs, check.NotNil, comment)
 	rows, err := tidb.GetRows(rs)
 	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
-	sRows := make([][]interface{}, len(rows))
+	sRows := make([][]string, len(rows))
 	for i := range rows {
 		row := rows[i]
-		iRow := make([]interface{}, len(row))
+		iRow := make([]string, len(row))
 		for j := range row {
 			if row[j].IsNull() {
 				iRow[j] = "<nil>"
