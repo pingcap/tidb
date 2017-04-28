@@ -68,7 +68,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 		return store, nil
 	}
 
-	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, newRPCClient(), !disableGC)
+	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, newRPCClient(), !disableGC, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -105,9 +105,10 @@ type tikvStore struct {
 	lockResolver *LockResolver
 	gcWorker     *GCWorker
 	etcdAddrs    []string
+	mock         bool
 }
 
-func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool) (*tikvStore, error) {
+func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool, mock bool) (*tikvStore, error) {
 	oracle, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -119,6 +120,7 @@ func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool)
 		oracle:      oracle,
 		client:      client,
 		regionCache: NewRegionCache(pdClient),
+		mock:        mock,
 	}
 	store.lockResolver = newLockResolver(store)
 	if enableGC {
@@ -146,7 +148,7 @@ func NewMockTikvStore(path string) (kv.Storage, error) {
 	client := mocktikv.NewRPCClient(cluster, mvccStore)
 	uuid := fmt.Sprintf("mock-tikv-store-:%v", time.Now().Unix())
 	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
-	return newTikvStore(uuid, pdCli, client, false)
+	return newTikvStore(uuid, pdCli, client, false, true)
 }
 
 // NewMockTikvStoreWithCluster creates a mocked tikv store with cluster.
@@ -156,7 +158,7 @@ func NewMockTikvStoreWithCluster(cluster *mocktikv.Cluster) (kv.Storage, error) 
 	client := mocktikv.NewRPCClient(cluster, mvccStore)
 	uuid := fmt.Sprintf("mock-tikv-store-:%v", time.Now().Unix())
 	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
-	return newTikvStore(uuid, pdCli, client, false)
+	return newTikvStore(uuid, pdCli, client, false, true)
 }
 
 // GetMockTiKVClient gets the *mocktikv.RPCClient from a mocktikv store.

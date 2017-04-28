@@ -38,14 +38,9 @@ type testStoreSuite struct {
 var _ = Suite(&testStoreSuite{})
 
 func (s *testStoreSuite) SetUpTest(c *C) {
-	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(s.cluster)
-	mvccStore := mocktikv.NewMvccStore()
-	clientFactory := mocktikv.NewRPCClient(s.cluster, mvccStore)
-	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
-	store, err := newTikvStore("mock-tikv-store", pdCli, clientFactory, false)
-	c.Assert(err, IsNil)
-	s.store = store
+	store, err := NewMockTikvStore("")
+	c.Check(err, IsNil)
+	s.store = store.(*tikvStore)
 }
 
 func (s *testStoreSuite) TestParsePath(c *C) {
