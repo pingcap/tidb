@@ -17,16 +17,15 @@ ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
 PACKAGES  := $$(go list ./...| grep -vE 'vendor')
+FILES     := $$(find . -name '*.go' | grep -vE 'vendor')
 
-# FILES is used in make check, only modified files need to be checked.
-FILES     := $$(git diff --name-only --diff-filter ACM master | grep '\.go' | grep -vE 'vendor')
 
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-parse HEAD)"
 
 TARGET = ""
 
-.PHONY: all build update parser clean todo test gotest interpreter server dev benchkv benchraw check parserlib checklist
+.PHONY: all build update parser clean todo test gotest interpreter server dev benchkv benchraw check parserlib checklist goimports
 
 default: server buildsucc
 
@@ -70,7 +69,6 @@ parser/parser.go: parser/parser.y
 check:
 	bash gitcookie.sh
 	go get github.com/golang/lint/golint
-	go get golang.org/x/tools/cmd/goimports
 
 	@echo "vet"
 	@ go tool vet $(FILES) 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
@@ -80,13 +78,16 @@ check:
 	@ golint ./... 2>&1 | grep -vE 'context\.Context|LastInsertId|NewLexer|\.pb\.go' | awk '{print} END{if(NR>0) {exit 1}}'
 	@echo "gofmt (simplify)"
 	@ gofmt -s -l -w $(FILES) 2>&1 | grep -v "parser/parser.go" | awk '{print} END{if(NR>0) {exit 1}}'
-	@echo "goimports"
-	@ goimports -d -w $(FILES)
 
 goword:
 	go get github.com/chzchzchz/goword
 	@echo "goword"
 	@ goword $(FILES) | awk '{print} END{if(NR>0) {exit 1}}'
+
+goimports:
+	go get golang.org/x/tools/cmd/goimports
+	@echo "goimports"
+	@ goimports -d -w $(FILES)
 
 errcheck:
 	go get github.com/kisielk/errcheck
