@@ -72,7 +72,8 @@ type PhysicalTableReader struct {
 	*basePlan
 	basePhysicalPlan
 
-	TablePlan PhysicalPlan
+	TablePlans []PhysicalPlan
+	tablePlan  PhysicalPlan
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -88,7 +89,8 @@ type PhysicalIndexReader struct {
 	*basePlan
 	basePhysicalPlan
 
-	IndexPlan PhysicalPlan
+	IndexPlans []PhysicalPlan
+	indexPlan  PhysicalPlan
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -104,8 +106,10 @@ type PhysicalIndexLookUpReader struct {
 	*basePlan
 	basePhysicalPlan
 
-	IndexPlan PhysicalPlan
-	TablePlan PhysicalPlan
+	IndexPlans []PhysicalPlan
+	TablePlans []PhysicalPlan
+	indexPlan  PhysicalPlan
+	tablePlan  PhysicalPlan
 }
 
 // Copy implements the PhysicalPlan Copy interface.
