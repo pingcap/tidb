@@ -72,6 +72,7 @@ type PhysicalTableReader struct {
 	*basePlan
 	basePhysicalPlan
 
+	// TablePlans flats the tablePlan to construct executor pb.
 	TablePlans []PhysicalPlan
 	tablePlan  PhysicalPlan
 }
@@ -89,6 +90,7 @@ type PhysicalIndexReader struct {
 	*basePlan
 	basePhysicalPlan
 
+	// IndexPlans flats the indexPlan to construct executor pb.
 	IndexPlans []PhysicalPlan
 	indexPlan  PhysicalPlan
 }
@@ -106,7 +108,9 @@ type PhysicalIndexLookUpReader struct {
 	*basePlan
 	basePhysicalPlan
 
+	// IndexPlans flats the indexPlan to construct executor pb.
 	IndexPlans []PhysicalPlan
+	// TablePlans flats the tablePlan to construct executor pb.
 	TablePlans []PhysicalPlan
 	indexPlan  PhysicalPlan
 	tablePlan  PhysicalPlan
