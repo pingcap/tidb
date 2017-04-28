@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // UseDAGPlanBuilder means we should use new planner and dag pb.
@@ -54,7 +55,7 @@ type Plan interface {
 	Allocator() *idAllocator
 	// SetParents sets the parents for the plan.
 	SetParents(...Plan)
-	// SetParents sets the children for the plan.
+	// SetChildren sets the children for the plan.
 	SetChildren(...Plan)
 
 	context() context.Context
@@ -92,6 +93,11 @@ func (p *requiredProp) getHashKey() ([]byte, error) {
 	return bytes, errors.Trace(err)
 }
 
+// String implements fmt.Stringer interface. Just for test.
+func (p *requiredProp) String() string {
+	return fmt.Sprintf("Prop{cols: %s, desc: %v}", p.cols, p.desc)
+}
+
 type requiredProperty struct {
 	props      []*columnProp
 	sortKeyLen int
@@ -126,6 +132,10 @@ type physicalPlanInfo struct {
 	p     PhysicalPlan
 	cost  float64
 	count float64
+
+	// If the count is calculated by pseudo table, it's not reliable. Otherwise it's reliable.
+	// But if we has limit or maxOneRow, the count is reliable.
+	reliable bool
 }
 
 // LogicalPlan is a tree of logical operators.
@@ -185,6 +195,9 @@ type PhysicalPlan interface {
 	// attach2TaskProfile makes the current physical plan as the father of task's physicalPlan and updates the cost of
 	// current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
 	attach2TaskProfile(...taskProfile) taskProfile
+
+	// ToPB converts physical plan to tipb executor.
+	ToPB(ctx context.Context) (*tipb.Executor, error)
 }
 
 type baseLogicalPlan struct {
@@ -195,14 +208,6 @@ type baseLogicalPlan struct {
 
 type basePhysicalPlan struct {
 	basePlan *basePlan
-}
-
-func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) {
-	panic(fmt.Sprintf("plan %s have not implemented convert2NewPhysicalPlan", p.basePlan.id))
-}
-
-func (p *basePhysicalPlan) attach2TaskProfile(tasks ...taskProfile) taskProfile {
-	return attachPlan2TaskProfile(p.basePlan.self.(PhysicalPlan).Copy(), tasks[0])
 }
 
 func (p *baseLogicalPlan) getTaskProfile(prop *requiredProp) (taskProfile, error) {
@@ -446,12 +451,12 @@ func (p *basePlan) Children() []Plan {
 	return p.children
 }
 
-// RemoveAllParents implements Plan RemoveAllParents interface.
+// SetParents implements Plan SetParents interface.
 func (p *basePlan) SetParents(pars ...Plan) {
 	p.parents = pars
 }
 
-// RemoveAllParents implements Plan RemoveAllParents interface.
+// SetChildren implements Plan SetChildren interface.
 func (p *basePlan) SetChildren(children ...Plan) {
 	p.children = children
 }

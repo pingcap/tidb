@@ -36,8 +36,8 @@ type MergeJoinExec struct {
 	leftJoinKeys  []*expression.Column
 	rightJoinKeys []*expression.Column
 	prepared      bool
-	leftFilter    expression.Expression
-	otherFilter   expression.Expression
+	leftFilter    []expression.Expression
+	otherFilter   []expression.Expression
 	schema        *expression.Schema
 	preserveLeft  bool // To preserve left side of the relation as in left outer join
 	cursor        int
@@ -61,9 +61,9 @@ type joinBuilder struct {
 	leftChild     Executor
 	rightChild    Executor
 	eqConditions  []*expression.ScalarFunction
-	leftFilter    expression.Expression
-	rightFilter   expression.Expression
-	otherFilter   expression.Expression
+	leftFilter    []expression.Expression
+	rightFilter   []expression.Expression
+	otherFilter   []expression.Expression
 	schema        *expression.Schema
 	joinType      plan.JoinType
 	defaultValues []types.Datum
@@ -89,17 +89,17 @@ func (b *joinBuilder) RightChild(exec Executor) *joinBuilder {
 	return b
 }
 
-func (b *joinBuilder) LeftFilter(expr expression.Expression) *joinBuilder {
+func (b *joinBuilder) LeftFilter(expr []expression.Expression) *joinBuilder {
 	b.leftFilter = expr
 	return b
 }
 
-func (b *joinBuilder) RightFilter(expr expression.Expression) *joinBuilder {
+func (b *joinBuilder) RightFilter(expr []expression.Expression) *joinBuilder {
 	b.rightFilter = expr
 	return b
 }
 
-func (b *joinBuilder) OtherFilter(expr expression.Expression) *joinBuilder {
+func (b *joinBuilder) OtherFilter(expr []expression.Expression) *joinBuilder {
 	b.otherFilter = expr
 	return b
 }
@@ -189,7 +189,7 @@ type rowBlockIterator struct {
 	stmtCtx   *variable.StatementContext
 	ctx       context.Context
 	reader    Executor
-	filter    expression.Expression
+	filter    []expression.Expression
 	joinKeys  []*expression.Column
 	peekedRow *Row
 	rowCache  []*Row

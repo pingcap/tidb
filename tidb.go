@@ -157,6 +157,11 @@ func resetStmtCtx(ctx context.Context, s ast.StmtNode) {
 			}
 		}
 	}
+	if sessVars.LastInsertID > 0 {
+		sessVars.PrevLastInsertID = sessVars.LastInsertID
+		sessVars.LastInsertID = 0
+	}
+	sessVars.InsertID = 0
 	sessVars.StmtCtx = sc
 }
 

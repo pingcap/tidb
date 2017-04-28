@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -338,8 +337,6 @@ type XSelectIndexExec struct {
 	isMemDB        bool
 	singleReadMode bool
 
-	indexPlan *plan.PhysicalIndexScan
-
 	// Variables only used for single read.
 	result        distsql.SelectResult
 	partialResult distsql.PartialResult
@@ -351,9 +348,18 @@ type XSelectIndexExec struct {
 	taskCurr    *lookupTableTask
 	handleCount uint64 // returned handle count in double read.
 
-	where        *tipb.Expr
-	startTS      uint64
-	returnedRows uint64 // returned row count
+	where                *tipb.Expr
+	startTS              uint64
+	returnedRows         uint64 // returned row count
+	schema               *expression.Schema
+	ranges               []*types.IndexRange
+	limitCount           *int64
+	sortItemsPB          []*tipb.ByItem
+	columns              []*model.ColumnInfo
+	index                *model.IndexInfo
+	desc                 bool
+	outOfOrder           bool
+	indexConditionPBExpr *tipb.Expr
 
 	/*
 	   The following attributes are used for aggregation push down.
@@ -373,7 +379,7 @@ type XSelectIndexExec struct {
 
 // Schema implements Exec Schema interface.
 func (e *XSelectIndexExec) Schema() *expression.Schema {
-	return e.indexPlan.Schema()
+	return e.schema
 }
 
 // Close implements Exec Close interface.
@@ -396,7 +402,7 @@ func (e *XSelectIndexExec) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *XSelectIndexExec) Next() (*Row, error) {
-	if e.indexPlan.LimitCount != nil && len(e.indexPlan.SortItemsPB) == 0 && e.returnedRows >= uint64(*e.indexPlan.LimitCount) {
+	if e.limitCount != nil && len(e.sortItemsPB) == 0 && e.returnedRows >= uint64(*e.limitCount) {
 		return nil, nil
 	}
 	e.returnedRows++
@@ -414,7 +420,7 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		e.result.Fetch(context.CtxForCancel{e.ctx})
+		e.result.Fetch(e.ctx.GoCtx())
 	}
 	for {
 		// Get partial result.
@@ -483,9 +489,9 @@ func decodeRawValues(values []types.Datum, schema *expression.Schema) error {
 }
 
 func (e *XSelectIndexExec) indexRowToTableRow(handle int64, indexRow []types.Datum) []types.Datum {
-	tableRow := make([]types.Datum, len(e.indexPlan.Columns))
-	for i, tblCol := range e.indexPlan.Columns {
-		if table.ToColumn(tblCol).IsPKHandleColumn(e.indexPlan.Table) {
+	tableRow := make([]types.Datum, len(e.columns))
+	for i, tblCol := range e.columns {
+		if table.ToColumn(tblCol).IsPKHandleColumn(e.tableInfo) {
 			if mysql.HasUnsignedFlag(tblCol.FieldType.Flag) {
 				tableRow[i] = types.NewUintDatum(uint64(handle))
 			} else {
@@ -493,7 +499,7 @@ func (e *XSelectIndexExec) indexRowToTableRow(handle int64, indexRow []types.Dat
 			}
 			continue
 		}
-		for j, idxCol := range e.indexPlan.Index.Columns {
+		for j, idxCol := range e.index.Columns {
 			if tblCol.Name.L == idxCol.Name.L {
 				tableRow[i] = indexRow[j]
 				break
@@ -510,7 +516,7 @@ func (e *XSelectIndexExec) nextForDoubleRead() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		idxResult.Fetch(context.CtxForCancel{e.ctx})
+		idxResult.Fetch(e.ctx.GoCtx())
 
 		// Use a background goroutine to fetch index and put the result in e.taskChan.
 		// e.taskChan serves as a pipeline, so fetching index and getting table data can
@@ -546,7 +552,7 @@ func (e *XSelectIndexExec) nextForDoubleRead() (*Row, error) {
 
 func (e *XSelectIndexExec) slowQueryInfo(duration time.Duration) string {
 	return fmt.Sprintf("time: %v, table: %s(%d), index: %s(%d), partials: %d, concurrency: %d, rows: %d, handles: %d",
-		duration, e.tableInfo.Name, e.tableInfo.ID, e.indexPlan.Index.Name, e.indexPlan.Index.ID,
+		duration, e.tableInfo.Name, e.tableInfo.ID, e.index.Name, e.index.ID,
 		e.partialCount, e.scanConcurrency, e.returnedRows, e.handleCount)
 }
 
@@ -569,6 +575,7 @@ func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<
 	var concurrency int
 	e.addWorker(workCh, &concurrency, lookupConcurrencyLimit)
 
+	txnCtx := e.ctx.GoCtx()
 	for {
 		handles, finish, err := extractHandlesFromIndexResult(idxResult)
 		if err != nil || finish {
@@ -583,7 +590,7 @@ func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<
 			}
 
 			select {
-			case <-e.ctx.Done():
+			case <-txnCtx.Done():
 				return
 			case workCh <- task:
 			default:
@@ -600,40 +607,36 @@ func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 	selIdxReq.StartTs = e.startTS
 	selIdxReq.TimeZoneOffset = timeZoneOffset()
 	selIdxReq.Flags = statementContextToFlags(e.ctx.GetSessionVars().StmtCtx)
-	selIdxReq.IndexInfo = distsql.IndexToProto(e.table.Meta(), e.indexPlan.Index)
-	if e.indexPlan.Desc {
-		selIdxReq.OrderBy = []*tipb.ByItem{{Desc: e.indexPlan.Desc}}
+	selIdxReq.IndexInfo = distsql.IndexToProto(e.table.Meta(), e.index)
+	if e.desc {
+		selIdxReq.OrderBy = []*tipb.ByItem{{Desc: e.desc}}
 	}
 	// If the index is single read, we can push topn down.
 	if e.singleReadMode {
-		selIdxReq.Limit = e.indexPlan.LimitCount
+		selIdxReq.Limit = e.limitCount
 		// If sortItemsPB is empty, the Desc may be true and we shouldn't overwrite it.
-		if len(e.indexPlan.SortItemsPB) > 0 {
-			selIdxReq.OrderBy = e.indexPlan.SortItemsPB
+		if len(e.sortItemsPB) > 0 {
+			selIdxReq.OrderBy = e.sortItemsPB
 		}
-	} else if e.where == nil && len(e.indexPlan.SortItemsPB) == 0 {
+	} else if e.where == nil && len(e.sortItemsPB) == 0 {
 		// If the index is double read but table scan has no filter or topn, we can push limit down to index.
-		selIdxReq.Limit = e.indexPlan.LimitCount
+		selIdxReq.Limit = e.limitCount
 	}
-	selIdxReq.Where = e.indexPlan.IndexConditionPBExpr
+	selIdxReq.Where = e.indexConditionPBExpr
 	if e.singleReadMode {
 		selIdxReq.Aggregates = e.aggFuncs
 		selIdxReq.GroupBy = e.byItems
-	} else if !e.indexPlan.OutOfOrder {
-		// The cost of index scan double-read is higher than single-read. Usually ordered index scan has a limit
-		// which may not have been pushed down, so we set concurrency to 1 to avoid fetching unnecessary data.
-		e.scanConcurrency = e.ctx.GetSessionVars().IndexSerialScanConcurrency
 	}
-	fieldTypes := make([]*types.FieldType, len(e.indexPlan.Index.Columns))
-	for i, v := range e.indexPlan.Index.Columns {
+	fieldTypes := make([]*types.FieldType, len(e.index.Columns))
+	for i, v := range e.index.Columns {
 		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)
 	}
 	sc := e.ctx.GetSessionVars().StmtCtx
-	keyRanges, err := indexRangesToKVRanges(sc, e.table.Meta().ID, e.indexPlan.Index.ID, e.indexPlan.Ranges, fieldTypes)
+	keyRanges, err := indexRangesToKVRanges(sc, e.table.Meta().ID, e.index.ID, e.ranges, fieldTypes)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return distsql.Select(e.ctx.GetClient(), context.CtxForCancel{e.ctx}, selIdxReq, keyRanges, e.scanConcurrency, !e.indexPlan.OutOfOrder)
+	return distsql.Select(e.ctx.GetClient(), e.ctx.GoCtx(), selIdxReq, keyRanges, e.scanConcurrency, !e.outOfOrder)
 }
 
 func (e *XSelectIndexExec) buildTableTasks(handles []int64) []*lookupTableTask {
@@ -650,7 +653,7 @@ func (e *XSelectIndexExec) buildTableTasks(handles []int64) []*lookupTableTask {
 	}
 
 	var indexOrder map[int64]int
-	if !e.indexPlan.OutOfOrder {
+	if !e.outOfOrder {
 		// Save the index order.
 		indexOrder = make(map[int64]int, len(handles))
 		for i, h := range handles {
@@ -695,10 +698,10 @@ func (e *XSelectIndexExec) executeTask(task *lookupTableTask) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if !e.indexPlan.OutOfOrder {
+	if !e.outOfOrder {
 		// Restore the index order.
 		sorter := &rowsSorter{order: task.indexOrder, rows: task.rows}
-		if e.indexPlan.Desc && !e.supportDesc {
+		if e.desc && !e.supportDesc {
 			sort.Sort(sort.Reverse(sorter))
 		} else {
 			sort.Sort(sorter)
@@ -747,7 +750,7 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		row := resultRowToRow(t, h, values, e.indexPlan.TableAsName)
+		row := resultRowToRow(t, h, values, e.asName)
 		rows = append(rows, row)
 	}
 	return rows, nil
@@ -756,9 +759,9 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult, error) {
 	// The handles are not in original index order, so we can't push limit here.
 	selTableReq := new(tipb.SelectRequest)
-	if e.indexPlan.OutOfOrder {
-		selTableReq.Limit = e.indexPlan.LimitCount
-		selTableReq.OrderBy = e.indexPlan.SortItemsPB
+	if e.outOfOrder {
+		selTableReq.Limit = e.limitCount
+		selTableReq.OrderBy = e.sortItemsPB
 	}
 	selTableReq.StartTs = e.startTS
 	selTableReq.TimeZoneOffset = timeZoneOffset()
@@ -766,8 +769,8 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 	selTableReq.TableInfo = &tipb.TableInfo{
 		TableId: e.table.Meta().ID,
 	}
-	selTableReq.TableInfo.Columns = distsql.ColumnsToProto(e.indexPlan.Columns, e.table.Meta().PKIsHandle)
-	err := setPBColumnsDefaultValue(e.ctx, selTableReq.TableInfo.Columns, e.indexPlan.Columns)
+	selTableReq.TableInfo.Columns = distsql.ColumnsToProto(e.columns, e.table.Meta().PKIsHandle)
+	err := setPBColumnsDefaultValue(e.ctx, selTableReq.TableInfo.Columns, e.columns)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -776,12 +779,13 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 	selTableReq.Aggregates = e.aggFuncs
 	selTableReq.GroupBy = e.byItems
 	keyRanges := tableHandlesToKVRanges(e.table.Meta().ID, handles)
-
-	resp, err := distsql.Select(e.ctx.GetClient(), goctx.Background(), selTableReq, keyRanges, e.scanConcurrency, false)
+	// Use the table scan concurrency variable to do table request.
+	concurrency := e.ctx.GetSessionVars().DistSQLScanConcurrency
+	resp, err := distsql.Select(e.ctx.GetClient(), goctx.Background(), selTableReq, keyRanges, concurrency, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	resp.Fetch(context.CtxForCancel{e.ctx})
+	resp.Fetch(e.ctx.GoCtx())
 	return resp, nil
 }
 
@@ -861,7 +865,7 @@ func (e *XSelectTableExec) doRequest() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result.Fetch(context.CtxForCancel{e.ctx})
+	e.result.Fetch(e.ctx.GoCtx())
 	return nil
 }
 

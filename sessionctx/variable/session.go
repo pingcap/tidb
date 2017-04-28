@@ -81,6 +81,18 @@ type TransactionContext struct {
 	InfoSchema    interface{}
 	Histroy       interface{}
 	SchemaVersion int64
+	TableDeltaMap map[int64]TableDelta
+}
+
+// UpdateDeltaForTable updates the delta info for some table.
+func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, count int64) {
+	if tc.TableDeltaMap == nil {
+		tc.TableDeltaMap = make(map[int64]TableDelta)
+	}
+	item := tc.TableDeltaMap[tableID]
+	item.Delta += delta
+	item.Count += count
+	tc.TableDeltaMap[tableID] = item
 }
 
 // SessionVars is to handle user-defined or global variables in current session.
@@ -101,8 +113,10 @@ type SessionVars struct {
 	TxnCtx *TransactionContext
 
 	// following variables are special for current session
-	Status       uint16
-	LastInsertID uint64
+	Status           uint16
+	PrevLastInsertID uint64 // PrevLastInsertID is the last insert ID of previous statement.
+	LastInsertID     uint64 // LastInsertID is the auto-generated ID in the current statement.
+	InsertID         uint64 // InsertID is the given insert ID of an auto_increment column.
 
 	// Client capability
 	ClientCapability uint32
@@ -183,6 +197,9 @@ type SessionVars struct {
 
 	// Should we split insert data into multiple batches.
 	BatchInsert bool
+
+	// Max row count that the outer table of index nested loop join could be without force hint.
+	MaxRowCountForINLJ int
 }
 
 // NewSessionVars creates a session vars object.
@@ -203,6 +220,7 @@ func NewSessionVars() *SessionVars {
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
 		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
+		MaxRowCountForINLJ:         DefMaxRowCountForINLJ,
 	}
 }
 
@@ -272,6 +290,12 @@ const (
 	MaxAllowedPacket    = "max_allowed_packet"
 	TimeZone            = "time_zone"
 )
+
+// TableDelta stands for the changed count for one table.
+type TableDelta struct {
+	Delta int64
+	Count int64
+}
 
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.

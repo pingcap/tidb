@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -58,7 +57,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
 	if useMockTikv {
-		store, err := tikv.NewMockTikvStore()
+		store, err := tikv.NewMockTikvStore("")
 		c.Assert(err, IsNil)
 		s.store = store
 		tidb.SetSchemaLease(0)
@@ -164,24 +163,24 @@ type testCase struct {
 	restData []byte
 }
 
-func checkCases(cases []testCase, ld *executor.LoadDataInfo,
+func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 	c *C, tk *testkit.TestKit, ctx context.Context, selectSQL, deleteSQL string) {
-	for _, ca := range cases {
+	for _, tt := range tests {
 		c.Assert(ctx.NewTxn(), IsNil)
-		data, reachLimit, err1 := ld.InsertData(ca.data1, ca.data2)
+		data, reachLimit, err1 := ld.InsertData(tt.data1, tt.data2)
 		c.Assert(err1, IsNil)
 		c.Assert(reachLimit, IsFalse)
-		if ca.restData == nil {
+		if tt.restData == nil {
 			c.Assert(data, HasLen, 0,
-				Commentf("data1:%v, data2:%v, data:%v", string(ca.data1), string(ca.data2), string(data)))
+				Commentf("data1:%v, data2:%v, data:%v", string(tt.data1), string(tt.data2), string(data)))
 		} else {
-			c.Assert(data, DeepEquals, ca.restData,
-				Commentf("data1:%v, data2:%v, data:%v", string(ca.data1), string(ca.data2), string(data)))
+			c.Assert(data, DeepEquals, tt.restData,
+				Commentf("data1:%v, data2:%v, data:%v", string(tt.data1), string(tt.data2), string(data)))
 		}
 		err1 = ctx.Txn().Commit()
 		c.Assert(err1, IsNil)
 		r := tk.MustQuery(selectSQL)
-		r.Check(testkit.Rows(ca.expected...))
+		r.Check(testkit.Rows(tt.expected...))
 		tk.MustExec(deleteSQL)
 	}
 }
@@ -251,11 +250,9 @@ func (s *testSuite) TestSelectLimit(c *C) {
 
 func (s *testSuite) TestDAG(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	mocktikv.MockDAGRequest = true
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
-		mocktikv.MockDAGRequest = false
 	}()
 	tk.MustExec("use test")
 	tk.MustExec("create table select_dag(id int not null default 1, name varchar(255));")
@@ -284,11 +281,9 @@ func (s *testSuite) TestDAG(c *C) {
 }
 
 func (s *testSuite) TestSelectOrderBy(c *C) {
-	mocktikv.MockDAGRequest = true
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
-		mocktikv.MockDAGRequest = false
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -595,11 +590,9 @@ func (s *testSuite) TestUnion(c *C) {
 }
 
 func (s *testSuite) TestIn(c *C) {
-	mocktikv.MockDAGRequest = true
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
-		mocktikv.MockDAGRequest = false
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -628,7 +621,7 @@ func (s *testSuite) TestTablePKisHandleScan(c *C) {
 	tk.MustExec("insert t values (),()")
 	tk.MustExec("insert t values (-100),(0)")
 
-	cases := []struct {
+	tests := []struct {
 		sql    string
 		result [][]interface{}
 	}{
@@ -676,18 +669,16 @@ func (s *testSuite) TestTablePKisHandleScan(c *C) {
 		},
 	}
 
-	for _, ca := range cases {
-		result := tk.MustQuery(ca.sql)
-		result.Check(ca.result)
+	for _, tt := range tests {
+		result := tk.MustQuery(tt.sql)
+		result.Check(tt.result)
 	}
 }
 
 func (s *testSuite) TestIndexScan(c *C) {
-	mocktikv.MockDAGRequest = true
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
-		mocktikv.MockDAGRequest = false
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -967,7 +958,7 @@ func (s *testSuite) TestBuiltin(c *C) {
 		}
 	}
 	// for like
-	testCases := []testCase{
+	likeTests := []testCase{
 		{"a", "a", 1},
 		{"a", "b", 0},
 		{"aA", "Aa", 1},
@@ -977,9 +968,9 @@ func (s *testSuite) TestBuiltin(c *C) {
 		{"", "", 1},
 		{"", "a", 0},
 	}
-	patternMatching(c, tk, "like", testCases)
+	patternMatching(c, tk, "like", likeTests)
 	// for regexp
-	testCases = []testCase{
+	likeTests = []testCase{
 		{"^$", "a", 0},
 		{"a", "a", 1},
 		{"a", "b", 0},
@@ -991,15 +982,13 @@ func (s *testSuite) TestBuiltin(c *C) {
 		{"ab.", "abcd", 1},
 		{".*", "abcd", 1},
 	}
-	patternMatching(c, tk, "regexp", testCases)
+	patternMatching(c, tk, "regexp", likeTests)
 }
 
 func (s *testSuite) TestToPBExpr(c *C) {
-	mocktikv.MockDAGRequest = true
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
-		mocktikv.MockDAGRequest = false
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1180,14 +1169,14 @@ func (s *testSuite) TestPointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use mysql")
 	ctx := tk.Se.(context.Context)
-	testCases := map[string]bool{
+	tests := map[string]bool{
 		"select * from help_topic where name='aaa'":         true,
 		"select * from help_topic where help_topic_id=1":    true,
 		"select * from help_topic where help_category_id=1": false,
 	}
 	infoSchema := executor.GetInfoSchema(ctx)
 
-	for sqlStr, result := range testCases {
+	for sqlStr, result := range tests {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		c.Check(err, IsNil)
 		err = plan.Preprocess(stmtNode, infoSchema, ctx)
@@ -1335,4 +1324,30 @@ func (s *testSuite) TestScanControlSelection(c *C) {
 	tk.MustExec("create table t(a int primary key, b int, c int, index idx_b(b))")
 	tk.MustExec("insert into t values (1, 1, 1), (2, 1, 1), (3, 1, 2), (4, 2, 3)")
 	tk.MustQuery("select (select count(1) k from t s where s.b = t1.c) from t t1").Check(testkit.Rows("3", "3", "1", "0"))
+}
+
+func (s *testSuite) TestSimpleDAG(c *C) {
+	defer func() {
+		plan.UseDAGPlanBuilder = false
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int, c int)")
+	tk.MustExec("insert into t values (1, 1, 1), (2, 1, 1), (3, 1, 2), (4, 2, 3)")
+	plan.UseDAGPlanBuilder = true
+	tk.MustQuery("select a from t").Check(testkit.Rows("1", "2", "3", "4"))
+	tk.MustQuery("select a from t limit 1").Check(testkit.Rows("1"))
+	tk.MustQuery("select a from t order by a desc").Check(testkit.Rows("4", "3", "2", "1"))
+	tk.MustQuery("select a from t order by a desc limit 1").Check(testkit.Rows("4"))
+	tk.MustQuery("select a from t order by b desc limit 1").Check(testkit.Rows("4"))
+	tk.MustQuery("select a from t where a < 3").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select a from t where b > 1").Check(testkit.Rows("4"))
+	tk.MustQuery("select a from t where b > 1 and a < 3").Check(testkit.Rows())
+	tk.MustQuery("select count(*) from t where b > 1 and a < 3").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("4"))
+	tk.MustQuery("select count(*), c from t group by c").Check(testkit.Rows("2 1", "1 2", "1 3"))
+	tk.MustQuery("select sum(c) from t group by b").Check(testkit.Rows("4", "3"))
 }

@@ -114,7 +114,7 @@ func (s *testSuite) TestSetVar(c *C) {
 	tk.MustExec("set names utf8")
 	charset, collation := vars.GetCharsetInfo()
 	c.Assert(charset, Equals, "utf8")
-	c.Assert(collation, Equals, "utf8_general_ci")
+	c.Assert(collation, Equals, "utf8_bin")
 
 	tk.MustExec("set @@character_set_results = NULL")
 
@@ -145,7 +145,7 @@ func (s *testSuite) TestSetCharset(c *C) {
 	}
 	sVar, err := varsutil.GetSessionSystemVar(sessionVars, variable.CollationConnection)
 	c.Assert(err, IsNil)
-	c.Assert(sVar, Equals, "utf8_general_ci")
+	c.Assert(sVar, Equals, "utf8_bin")
 
 	// Issue 1523
 	tk.MustExec(`SET NAMES binary`)

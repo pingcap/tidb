@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"hash/fnv"
 	"testing"
 )
 
@@ -76,5 +77,17 @@ func BenchmarkMVMapGet(b *testing.B) {
 		if len(val) != 1 || bytes.Compare(val[0], buffer) != 0 {
 			b.FailNow()
 		}
+	}
+}
+
+func TestFNVHash(t *testing.T) {
+	b := []byte{0xcb, 0xf2, 0x9c, 0xe4, 0x84, 0x22, 0x23, 0x25}
+	sum1 := fnvHash64(b)
+	hash := fnv.New64()
+	hash.Reset()
+	hash.Write(b)
+	sum2 := hash.Sum64()
+	if sum1 != sum2 {
+		t.FailNow()
 	}
 }

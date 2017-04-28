@@ -33,6 +33,7 @@ var _ = Suite(&testTableCodecSuite{})
 
 type testTableCodecSuite struct{}
 
+// TestTableCodec  tests some functions in package tablecodec
 // TODO: add more tests.
 func (s *testTableCodecSuite) TestTableCodec(c *C) {
 	defer testleak.AfterTest(c)()
