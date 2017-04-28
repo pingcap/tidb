@@ -114,7 +114,7 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(val, Equals, "1")
 
 	// Test case for time_zone session variable.
-	cases := []struct {
+	tests := []struct {
 		input  string
 		succ   bool
 		expect string
@@ -126,10 +126,10 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 		{"-6:00", true, "UTC"},
 		{"6:00", false, ""},
 	}
-	for _, ca := range cases {
-		err := SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum(ca.input))
-		if ca.succ {
-			c.Assert(v.TimeZone.String(), Equals, ca.expect)
+	for _, tt := range tests {
+		err := SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum(tt.input))
+		if tt.succ {
+			c.Assert(v.TimeZone.String(), Equals, tt.expect)
 		} else {
 			c.Assert(err, NotNil)
 		}
