@@ -155,13 +155,13 @@ func finishCopTask(task taskProfile, ctx context.Context, allocator *idAllocator
 		cnt: t.cnt,
 	}
 	if t.indexPlan != nil && t.tablePlan != nil {
-		newTask.p = PhysicalIndexLookUpReader{TablePlan: t.tablePlan, IndexPlan: t.indexPlan}.init(allocator, ctx)
+		newTask.p = PhysicalIndexLookUpReader{tablePlan: t.tablePlan, indexPlan: t.indexPlan}.init(allocator, ctx)
 		newTask.p.SetSchema(t.tablePlan.Schema())
 	} else if t.indexPlan != nil {
-		newTask.p = PhysicalIndexReader{IndexPlan: t.indexPlan}.init(allocator, ctx)
+		newTask.p = PhysicalIndexReader{indexPlan: t.indexPlan}.init(allocator, ctx)
 		newTask.p.SetSchema(t.indexPlan.Schema())
 	} else {
-		newTask.p = PhysicalTableReader{TablePlan: t.tablePlan}.init(allocator, ctx)
+		newTask.p = PhysicalTableReader{tablePlan: t.tablePlan}.init(allocator, ctx)
 		newTask.p.SetSchema(t.tablePlan.Schema())
 	}
 	return newTask

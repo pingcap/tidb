@@ -1,5 +1,5 @@
-hash: 0c59511d7b6c9324764064dbbb9641fae2112c5f9a04cd2958357db24a0993d5
-updated: 2017-04-27T20:47:01.064706762+08:00
+hash: c3d7f84a9457920f8cbecc1f469c6aafd4e91dde13a3eb0de3c1b6107498a24b
+updated: 2017-04-28T14:46:37.911965876+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -62,7 +62,7 @@ imports:
 - name: github.com/golang/snappy
   version: 723cc1e459b8eea2dea4583200fd60757d40097a
 - name: github.com/gorilla/context
-  version: 1ea25387ff6f684839d82767c1733ff4d4d15d0a
+  version: 08b5f424b9271eedf6f9f0ce86cb9396ed337a42
 - name: github.com/gorilla/mux
   version: 599cba5e7b6137d46ddf58fb1765f5d928e69604
 - name: github.com/grpc-ecosystem/go-grpc-prometheus
@@ -130,7 +130,7 @@ imports:
   subpackages:
   - pd-client
 - name: github.com/pingcap/tipb
-  version: 9cc6927f2246516ce8a2e9517e3ebdf81554a2d2
+  version: 37bbffad21f347c02af7d822909832f0eed39c85
   subpackages:
   - go-binlog
   - go-tipb
@@ -180,7 +180,7 @@ imports:
   - encoding/unicode
   - transform
 - name: golang.org/x/time
-  version: c06e80d9300e4443158a03817b8a8cb37d230320
+  version: 8be79e1e0910c292df4e79c241bb7e8f7e725959
   subpackages:
   - rate
 - name: google.golang.org/grpc
