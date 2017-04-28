@@ -437,10 +437,10 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 	for i := 0; i < e.concurrency; i++ {
 		ctx := &hashJoinCtx{}
 		if e.bigFilter != nil {
-			ctx.bigFilter = e.bigFilter
+			ctx.bigFilter = e.bigFilter.Clone()
 		}
 		if e.otherFilter != nil {
-			ctx.otherFilter = e.otherFilter
+			ctx.otherFilter = e.otherFilter.Clone()
 		}
 		ctx.datumBuffer = make([]types.Datum, len(e.bigHashKey))
 		ctx.hashKeyBuffer = make([]byte, 0, 10000)
@@ -824,32 +824,13 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	return e
 }
 
-// flattenPushDownPlan converts a plan tree to a list, whose head is the leaf node like table scan.
-func flattenPushDownPlan(p plan.PhysicalPlan) []plan.PhysicalPlan {
-	plans := make([]plan.PhysicalPlan, 0, 5)
-	for {
-		plans = append(plans, p)
-		if len(p.Children()) == 0 {
-			break
-		}
-		p = p.Children()[0].(plan.PhysicalPlan)
-	}
-	for i := 0; i < len(plans)/2; i++ {
-		j := len(plans) - i - 1
-		plans[i], plans[j] = plans[j], plans[i]
-	}
-	return plans
-}
-
 func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor {
 	dagReq := &tipb.DAGRequest{}
 	dagReq.StartTs = b.getStartTS()
 	dagReq.TimeZoneOffset = timeZoneOffset()
 	sc := b.ctx.GetSessionVars().StmtCtx
 	dagReq.Flags = statementContextToFlags(sc)
-	// TODO: The construction of executor pbs will be moved to plan package.
-	plans := flattenPushDownPlan(v.TablePlan)
-	for _, p := range plans {
+	for _, p := range v.TablePlans {
 		execPB, err := p.ToPB(b.ctx)
 		if err != nil {
 			b.err = errors.Trace(err)
@@ -858,7 +839,7 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 		dagReq.Executors = append(dagReq.Executors, execPB)
 	}
 
-	ts := plans[0].(*plan.PhysicalTableScan)
+	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
 	table, _ := b.is.TableByID(ts.Table.ID)
 	e := &TableReaderExecutor{
 		ctx:       b.ctx,
