@@ -68,7 +68,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 		return store, nil
 	}
 
-	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, newRPCClient(), !disableGC, false)
+	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, newRPCClient(), !disableGC)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -108,12 +108,12 @@ type tikvStore struct {
 	mock         bool
 }
 
-func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool, mock bool) (*tikvStore, error) {
+func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool) (*tikvStore, error) {
 	oracle, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
+	_, mock := client.(*mocktikv.RPCClient)
 	store := &tikvStore{
 		clusterID:   pdClient.GetClusterID(goctx.TODO()),
 		uuid:        uuid,
@@ -148,7 +148,7 @@ func NewMockTikvStore(path string) (kv.Storage, error) {
 	client := mocktikv.NewRPCClient(cluster, mvccStore)
 	uuid := fmt.Sprintf("mock-tikv-store-:%v", time.Now().Unix())
 	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
-	return newTikvStore(uuid, pdCli, client, false, true)
+	return newTikvStore(uuid, pdCli, client, false)
 }
 
 // NewMockTikvStoreWithCluster creates a mocked tikv store with cluster.
@@ -158,7 +158,7 @@ func NewMockTikvStoreWithCluster(cluster *mocktikv.Cluster) (kv.Storage, error) 
 	client := mocktikv.NewRPCClient(cluster, mvccStore)
 	uuid := fmt.Sprintf("mock-tikv-store-:%v", time.Now().Unix())
 	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
-	return newTikvStore(uuid, pdCli, client, false, true)
+	return newTikvStore(uuid, pdCli, client, false)
 }
 
 // GetMockTiKVClient gets the *mocktikv.RPCClient from a mocktikv store.
