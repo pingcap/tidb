@@ -38,7 +38,8 @@ type testStoreSuite struct {
 var _ = Suite(&testStoreSuite{})
 
 func (s *testStoreSuite) SetUpTest(c *C) {
-	store, err := NewMockTikvStore("")
+	s.cluster = mocktikv.NewCluster()
+	store, err := NewMockTikvStoreWithCluster(s.cluster)
 	c.Check(err, IsNil)
 	s.store = store.(*tikvStore)
 }
