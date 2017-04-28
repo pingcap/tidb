@@ -1,3 +1,16 @@
+// Copyright 2017 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package ddl
 
 import (
@@ -6,13 +19,9 @@ import (
 	"github.com/pingcap/tidb/model"
 )
 
-type testFieldCaseSuite struct {
-	colDefs []*ast.ColumnDef
-}
-
-func (s *testFieldCaseSuite) SetUpSuite(c *C) {
+func testFieldCase(c *C) {
+	var colDefs []*ast.ColumnDef
 	var fields = []string{"field", "Field"}
-
 	for _, name := range fields {
 		colDef := &ast.ColumnDef{
 			Name: &ast.ColumnName{
@@ -21,10 +30,7 @@ func (s *testFieldCaseSuite) SetUpSuite(c *C) {
 				Name:   model.NewCIStr(name),
 			},
 		}
-		s.colDefs = append(s.colDefs, colDef)
+		colDefs = append(colDefs, colDef)
 	}
-}
-
-func (s *testFieldCaseSuite) TestFieldCase(c *C) {
-	c.Assert(checkDuplicateColumn(s.colDefs) != nil, Matches, true)
+	c.Assert(checkDuplicateColumn(colDefs) != nil, Matches, true)
 }
