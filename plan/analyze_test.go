@@ -58,6 +58,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		sql  string
 		best string
 	}{
+		// Test analyze full table.
 		{
 			sql:  "select * from t where t.a <= 2",
 			best: "Table(t)",
@@ -66,6 +67,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 			sql:  "select * from t where t.a = 1 and t.b <= 2",
 			best: "Index(t.b)[[-inf,2]]",
 		},
+		// Test not analyzed table.
 		{
 			sql:  "select * from t1 where t1.a <= 2",
 			best: "Index(t1.a)[[-inf,2]]",
@@ -74,8 +76,11 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 			sql:  "select * from t1 where t1.a = 1 and t1.b <= 2",
 			best: "Index(t1.a)[[1,1]]",
 		},
+		// Test analyze single index.
 		{
-			sql:  "select * from t2 where t2.a <= 2",
+			sql: "select * from t2 where t2.a <= 2",
+			// This is not the best because the histogram for index b is pseudo, then the row count calculated for such
+			// a small table is always tableRowCount/3, so the cost is smaller.
 			best: "Index(t2.b)[[<nil>,+inf]]",
 		},
 		{
