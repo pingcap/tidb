@@ -56,9 +56,8 @@ func (p *Selection) ToPB(ctx context.Context) (*tipb.Executor, error) {
 func (p *Sort) ToPB(ctx context.Context) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
-	count := int64(p.ExecLimit.Count)
 	topNExec := &tipb.TopN{
-		Limit: &count,
+		Limit: p.ExecLimit.Count,
 	}
 	for _, item := range p.ByItems {
 		topNExec.OrderBy = append(topNExec.OrderBy, expression.SortByItemToPB(sc, client, item.Expr, item.Desc))
@@ -68,9 +67,8 @@ func (p *Sort) ToPB(ctx context.Context) (*tipb.Executor, error) {
 
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *Limit) ToPB(ctx context.Context) (*tipb.Executor, error) {
-	count := int64(p.Count)
 	limitExec := &tipb.Limit{
-		Limit: &count,
+		Limit: p.Count,
 	}
 	return &tipb.Executor{Tp: tipb.ExecType_TypeLimit, Limit: limitExec}, nil
 }
@@ -80,7 +78,7 @@ func (p *PhysicalTableScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 	tsExec := &tipb.TableScan{
 		TableId: p.Table.ID,
 		Columns: distsql.ColumnsToProto(p.Columns, p.Table.PKIsHandle),
-		Desc:    &p.Desc,
+		Desc:    p.Desc,
 	}
 	err := setPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec}, errors.Trace(err)
