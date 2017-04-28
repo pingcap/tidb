@@ -933,6 +933,7 @@ func (s *testEvaluatorSuite) TestFindInSet(c *C) {
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.str, t.strlst)), s.ctx)
 		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
+		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
 	}
 }
@@ -960,6 +961,7 @@ func (s *testEvaluatorSuite) TestField(c *C) {
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.argLst...)), s.ctx)
 		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
+		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
 	}
 }
@@ -1322,6 +1324,7 @@ func (s *testEvaluatorSuite) TestOrd(c *C) {
 	f, err := fc.getFunction(datumsToConstants([]types.Datum{argNull}), s.ctx)
 	c.Assert(err, IsNil)
 	r, err := f.eval(nil)
+	c.Assert(err, IsNil)
 	c.Assert(r.IsNull(), IsTrue)
 }
 
@@ -1344,6 +1347,7 @@ func (s *testEvaluatorSuite) TestElt(c *C) {
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.argLst...)), s.ctx)
 		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
+		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
 	}
 }
@@ -1402,6 +1406,7 @@ func (s *testEvaluatorSuite) TestBin(c *C) {
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t["Input"])), s.ctx)
 		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
+		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t["Expected"][0]))
 	}
 }
