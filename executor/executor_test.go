@@ -1131,7 +1131,7 @@ func (s *testSuite) TestTableScan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use information_schema")
 	result := tk.MustQuery("select * from schemata")
-	// There must be these tables: information_schema, mysql, preformance_schema and test.
+	// There must be these tables: information_schema, mysql, performance_schema and test.
 	c.Assert(len(result.Rows()), GreaterEqual, 4)
 	tk.MustExec("use test")
 	tk.MustExec("create database mytest")

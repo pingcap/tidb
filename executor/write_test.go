@@ -903,7 +903,7 @@ func (s *testSuite) TestBatchInsert(c *C) {
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
 
-	// Disable BachInsert mode in transation.
+	// Disable BachInsert mode in transition.
 	tk.MustExec("begin;")
 	_, err = tk.Exec("insert into batch_insert (c) select * from batch_insert;")
 	c.Assert(err, NotNil)
