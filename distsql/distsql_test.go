@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
 )
 
@@ -93,7 +92,7 @@ type mockResponse struct {
 func (resp *mockResponse) Next() ([]byte, error) {
 	resp.count++
 	if resp.count == 100 {
-		return nil, errors.New("error happend")
+		return nil, errors.New("error happened")
 	}
 	return mockSubresult(), nil
 }
