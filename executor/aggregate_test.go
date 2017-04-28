@@ -427,8 +427,7 @@ func (s *testSuite) TestSelectDistinct(c *C) {
 
 	tk.MustExec("begin")
 	r := tk.MustQuery("select distinct name from select_distinct_test;")
-	rowStr := fmt.Sprintf("%v", []byte("hello"))
-	r.Check(testkit.Rows(rowStr))
+	r.Check(testkit.Rows("hello"))
 	tk.MustExec("commit")
 
 }

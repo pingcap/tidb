@@ -41,8 +41,8 @@ type Result struct {
 
 // Check asserts the result equals the expected results.
 func (res *Result) Check(expected [][]interface{}) {
-	got := fmt.Sprintf("%v", res.rows)
-	need := fmt.Sprintf("%v", expected)
+	got := fmt.Sprintf("%s", res.rows)
+	need := fmt.Sprintf("%s", expected)
 	res.c.Assert(got, check.Equals, need, res.comment)
 }
 
@@ -115,16 +115,21 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	tk.c.Assert(rs, check.NotNil, comment)
 	rows, err := tidb.GetRows(rs)
 	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
-	iRows := make([][]interface{}, len(rows))
+	sRows := make([][]interface{}, len(rows))
 	for i := range rows {
 		row := rows[i]
 		iRow := make([]interface{}, len(row))
 		for j := range row {
-			iRow[j] = row[j].GetValue()
+			if row[j].IsNull() {
+				iRow[j] = "<nil>"
+			} else {
+				iRow[j], err = row[j].ToString()
+				tk.c.Assert(err, check.IsNil)
+			}
 		}
-		iRows[i] = iRow
+		sRows[i] = iRow
 	}
-	return &Result{rows: iRows, c: tk.c, comment: comment}
+	return &Result{rows: sRows, c: tk.c, comment: comment}
 }
 
 // Rows is similar to RowsWithSep, use white space as separator string.
