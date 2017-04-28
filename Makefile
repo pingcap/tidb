@@ -19,7 +19,7 @@ MAC       := "Darwin"
 PACKAGES  := $$(go list ./...| grep -vE 'vendor')
 
 # FILES is used in make check, only modified files need to be checked.
-FILES     := $$(git diff --name-only --diff-filter ACM origin/master | grep '\.go' | grep -vE 'vendor')
+FILES     := $$(git diff --name-only --diff-filter ACM master | grep '\.go' | grep -vE 'vendor')
 
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-parse HEAD)"
