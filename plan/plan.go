@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // UseDAGPlanBuilder means we should use new planner and dag pb.
@@ -131,6 +132,10 @@ type physicalPlanInfo struct {
 	p     PhysicalPlan
 	cost  float64
 	count float64
+
+	// If the count is calculated by pseudo table, it's not reliable. Otherwise it's reliable.
+	// But if we has limit or maxOneRow, the count is reliable.
+	reliable bool
 }
 
 // LogicalPlan is a tree of logical operators.
@@ -190,6 +195,9 @@ type PhysicalPlan interface {
 	// attach2TaskProfile makes the current physical plan as the father of task's physicalPlan and updates the cost of
 	// current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
 	attach2TaskProfile(...taskProfile) taskProfile
+
+	// ToPB converts physical plan to tipb executor.
+	ToPB(ctx context.Context) (*tipb.Executor, error)
 }
 
 type baseLogicalPlan struct {

@@ -38,7 +38,7 @@ type testTableSuite struct {
 	d *ddl
 }
 
-// create a test table with num int columns and with no index.
+// testTableInfo creates a test table with num int columns and with no index.
 func testTableInfo(c *C, d *ddl, name string, num int) *model.TableInfo {
 	var err error
 	tblInfo := &model.TableInfo{
