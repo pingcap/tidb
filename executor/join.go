@@ -42,9 +42,9 @@ type HashJoinExec struct {
 	bigExec       Executor
 	prepared      bool
 	ctx           context.Context
-	smallFilter   []expression.Expression
-	bigFilter     []expression.Expression
-	otherFilter   []expression.Expression
+	smallFilter   expression.CNFExprs
+	bigFilter     expression.CNFExprs
+	otherFilter   expression.CNFExprs
 	schema        *expression.Schema
 	outer         bool
 	leftSmall     bool
@@ -75,8 +75,8 @@ type HashJoinExec struct {
 
 // hashJoinCtx holds the variables needed to do a hash join in one of many concurrent goroutines.
 type hashJoinCtx struct {
-	bigFilter   []expression.Expression
-	otherFilter []expression.Expression
+	bigFilter   expression.CNFExprs
+	otherFilter expression.CNFExprs
 	// Buffer used for encode hash keys.
 	datumBuffer   []types.Datum
 	hashKeyBuffer []byte
@@ -153,7 +153,7 @@ func (e *HashJoinExec) fetchBigExec() {
 		e.wg.Done()
 	}()
 	curBatchSize := 1
-	result := &execResult{rows: make([]*Row, 0, batchSize)}
+	result := &execResult{rows: make([]*Row, 0, curBatchSize)}
 	txnCtx := e.ctx.GoCtx()
 	for {
 		done := false
@@ -174,18 +174,18 @@ func (e *HashJoinExec) fetchBigExec() {
 				break
 			}
 			result.rows = append(result.rows, row)
-			if len(result.rows) >= batchSize {
+			if len(result.rows) >= curBatchSize {
 				select {
 				case <-txnCtx.Done():
 					return
 				case e.bigTableResultCh[idx] <- result:
-					result = &execResult{rows: make([]*Row, 0, batchSize)}
+					result = &execResult{rows: make([]*Row, 0, curBatchSize)}
 				}
 			}
 		}
 		cnt++
 		if done {
-			if len(result.rows) > 0 && len(result.rows) < batchSize {
+			if len(result.rows) > 0 {
 				select {
 				case <-txnCtx.Done():
 					return
@@ -368,12 +368,10 @@ func (e *HashJoinExec) joinOneBigRow(ctx *hashJoinCtx, bigRow *Row, result *exec
 		err         error
 	)
 	bigMatched := true
-	if e.bigFilter != nil {
-		bigMatched, err = expression.EvalBool(ctx.bigFilter, bigRow.Data, e.ctx)
-		if err != nil {
-			result.err = errors.Trace(err)
-			return false
-		}
+	bigMatched, err = expression.EvalBool(ctx.bigFilter, bigRow.Data, e.ctx)
+	if err != nil {
+		result.err = errors.Trace(err)
+		return false
 	}
 	if bigMatched {
 		matchedRows, err = e.constructMatchedRows(ctx, bigRow)
@@ -503,9 +501,9 @@ type NestedLoopJoinExec struct {
 	leftSmall     bool
 	prepared      bool
 	Ctx           context.Context
-	SmallFilter   []expression.Expression
-	BigFilter     []expression.Expression
-	OtherFilter   []expression.Expression
+	SmallFilter   expression.CNFExprs
+	BigFilter     expression.CNFExprs
+	OtherFilter   expression.CNFExprs
 	schema        *expression.Schema
 	outer         bool
 	defaultValues []types.Datum
@@ -656,9 +654,9 @@ type HashSemiJoinExec struct {
 	bigExec      Executor
 	prepared     bool
 	ctx          context.Context
-	smallFilter  []expression.Expression
-	bigFilter    []expression.Expression
-	otherFilter  []expression.Expression
+	smallFilter  expression.CNFExprs
+	bigFilter    expression.CNFExprs
+	otherFilter  expression.CNFExprs
 	schema       *expression.Schema
 	resultRows   []*Row
 	// In auxMode, the result row always returns with an extra column which stores a boolean

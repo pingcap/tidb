@@ -156,9 +156,9 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 	case *Cache:
 		str = "Cache"
 	case *PhysicalTableReader:
-		str = fmt.Sprintf("TableReader(%s)", ToString(x.copPlan))
+		str = fmt.Sprintf("TableReader(%s)", ToString(x.tablePlan))
 	case *PhysicalIndexReader:
-		str = fmt.Sprintf("IndexReader(%s)", ToString(x.copPlan))
+		str = fmt.Sprintf("IndexReader(%s)", ToString(x.indexPlan))
 	case *PhysicalIndexLookUpReader:
 		str = fmt.Sprintf("IndexLookUp(%s, %s)", ToString(x.indexPlan), ToString(x.tablePlan))
 	case *PhysicalUnionScan:
