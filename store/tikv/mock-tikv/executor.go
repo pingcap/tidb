@@ -171,6 +171,7 @@ type indexScanExec struct {
 	seekKey     []byte
 	rawStartKey []byte // The start key of the current region.
 	rawEndKey   []byte // The end key of the current region.
+	pkCol       *tipb.ColumnInfo
 
 	src executor
 }
@@ -248,10 +249,26 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 			return 0, nil, errors.Trace(err)
 		}
 		handle = handleDatum.GetInt64()
+		if e.pkCol != nil {
+			values = append(values, b)
+		}
 	} else {
 		handle, err = decodeHandle(pair.Value)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
+		}
+		if e.pkCol != nil {
+			var handleDatum types.Datum
+			if mysql.HasUnsignedFlag(uint(e.pkCol.GetFlag())) {
+				handleDatum = types.NewUintDatum(uint64(handle))
+			} else {
+				handleDatum = types.NewIntDatum(handle)
+			}
+			handleBytes, err := codec.EncodeValue(b, handleDatum)
+			if err != nil {
+				return 0, nil, errors.Trace(err)
+			}
+			values = append(values, handleBytes)
 		}
 	}
 
@@ -477,9 +494,8 @@ func (e *topNExec) Next() (handle int64, value [][]byte, err error) {
 	sort.Sort(&e.heap.topnSorter)
 	row := e.heap.rows[e.cursor]
 	e.cursor++
-	value = [][]byte{row.data}
 
-	return row.meta.Handle, value, nil
+	return row.meta.Handle, row.data, nil
 }
 
 // evalTopN evaluates the top n elements from the data. The input receives a record including its handle and data.
@@ -502,7 +518,7 @@ func (e *topNExec) evalTopN(handle int64, value [][]byte) error {
 
 	if e.heap.tryToAddRow(newRow) {
 		for _, val := range value {
-			newRow.data = append(newRow.data, val...)
+			newRow.data = append(newRow.data, val)
 			newRow.meta.Length += int64(len(val))
 		}
 	}
@@ -587,33 +603,6 @@ func getRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle int64, 
 	}
 
 	return values, nil
-}
-
-// TODO: Remove it after replacing evaluator in aggregation.
-func extractColIDsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector map[int64]int) error {
-	if expr == nil {
-		return nil
-	}
-	if expr.GetTp() == tipb.ExprType_ColumnRef {
-		_, i, err := codec.DecodeInt(expr.Val)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for idx, c := range columns {
-			if c.GetColumnId() == i {
-				collector[i] = idx
-				return nil
-			}
-		}
-		return errInvalid.Gen("column %d not found", i)
-	}
-	for _, child := range expr.Children {
-		err := extractColIDsInExpr(child, columns, collector)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
 }
 
 func isDuplicated(offsets []int, offset int) bool {

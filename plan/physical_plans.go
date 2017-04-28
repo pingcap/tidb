@@ -145,6 +145,8 @@ type PhysicalIndexScan struct {
 	accessEqualCount int
 
 	TableAsName *model.CIStr
+
+	oldSchema *expression.Schema
 }
 
 // PhysicalMemTable reads memory table.

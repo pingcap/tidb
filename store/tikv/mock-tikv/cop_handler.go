@@ -178,7 +178,11 @@ func (h *rpcHandler) setTopNDataForCtx(ctx *selectContext) []tipb.Chunk {
 	sort.Sort(&ctx.topnHeap.topnSorter)
 	chunks := make([]tipb.Chunk, 0, len(ctx.topnHeap.rows)/rowsPerChunk)
 	for _, row := range ctx.topnHeap.rows {
-		chunks = appendRow(chunks, row.meta.Handle, row.data)
+		data := make([]byte, 0)
+		for _, d := range row.data {
+			data = append(data, d...)
+		}
+		chunks = appendRow(chunks, row.meta.Handle, data)
 	}
 	return chunks
 }

@@ -380,6 +380,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		DBName:      p.DBName,
 		Columns:     p.Columns,
 		Index:       idx,
+		oldSchema:   p.schema,
 	}.init(p.allocator, p.ctx)
 	statsTbl := p.statisticTable
 	rowCount := float64(statsTbl.Count)
@@ -411,20 +412,18 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		// On this way, it's double read case.
 		copTask.tablePlan = PhysicalTableScan{Columns: p.Columns, Table: is.Table}.init(p.allocator, p.ctx)
 		copTask.tablePlan.SetSchema(p.schema)
-		var indexCols []*expression.Column
-		for _, col := range idx.Columns {
-			indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: col.Offset})
-		}
-		for i, col := range is.Columns {
-			if is.Table.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
-				indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: i})
-				break
-			}
-		}
-		copTask.indexPlan.SetSchema(expression.NewSchema(indexCols...))
-	} else {
-		is.SetSchema(p.schema)
 	}
+	var indexCols []*expression.Column
+	for _, col := range idx.Columns {
+		indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: col.Offset})
+	}
+	for _, col := range is.Columns {
+		if is.Table.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
+			indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: col.Offset})
+			break
+		}
+	}
+	is.SetSchema(expression.NewSchema(indexCols...))
 	// Check if this plan matches the property.
 	matchProperty := true
 	if !prop.isEmpty() {

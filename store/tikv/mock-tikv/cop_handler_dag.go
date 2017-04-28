@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/types"
@@ -71,8 +70,8 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor
 			break
 		}
 		data := dummySlice
-		for _, val := range row {
-			data = append(data, val...)
+		for _, offset := range dagReq.OutputOffsets {
+			data = append(data, row[offset]...)
 		}
 		chunks = appendRow(chunks, handle, data)
 	}
@@ -136,8 +135,10 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) *i
 	columns := executor.IdxScan.Columns
 	ctx.evalCtx.setColumnInfo(columns)
 	length := len(columns)
+	var pkCol *tipb.ColumnInfo
 	// The PKHandle column info has been collected in ctx.
 	if columns[length-1].GetPkHandle() {
+		pkCol = columns[length-1]
 		columns = columns[:length-1]
 	}
 	ranges := h.extractKVRanges(ctx.keyRanges, executor.IdxScan.Desc)
@@ -150,6 +151,7 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) *i
 		mvccStore:   h.mvccStore,
 		rawStartKey: h.rawStartKey,
 		rawEndKey:   h.rawEndKey,
+		pkCol:       pkCol,
 	}
 }
 
@@ -272,15 +274,6 @@ func (e *evalContext) setColumnInfo(cols []*tipb.ColumnInfo) {
 func (e *evalContext) decodeRelatedColumnVals(relatedColOffsets []int, handle int64, value [][]byte, row []types.Datum) error {
 	var err error
 	for _, offset := range relatedColOffsets {
-		col := e.columnInfos[offset]
-		if col.GetPkHandle() {
-			if mysql.HasUnsignedFlag(uint(col.GetFlag())) {
-				row[offset] = types.NewUintDatum(uint64(handle))
-			} else {
-				row[offset] = types.NewIntDatum(handle)
-			}
-			continue
-		}
 		row[offset], err = tablecodec.DecodeColumnValue(value[offset], e.fieldTps[offset])
 		if err != nil {
 			return errors.Trace(err)
