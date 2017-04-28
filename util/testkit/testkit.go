@@ -66,9 +66,6 @@ func (res *Result) Sort() *Result {
 		a := res.rows[i]
 		b := res.rows[j]
 		for i := range a {
-			if a[i] == "<nil>" {
-				return b[i] != "<nil>"
-			}
 			if a[i] < b[i] {
 				return true
 			}

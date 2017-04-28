@@ -191,15 +191,11 @@ func (s *testSuite) TestSelectWithoutFrom(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	tk.MustExec("begin")
 	r := tk.MustQuery("select 1 + 2*3")
 	r.Check(testkit.Rows("7"))
-	tk.MustExec("commit")
 
-	tk.MustExec("begin")
 	r = tk.MustQuery(`select _utf8"string";`)
 	r.Check(testkit.Rows("string"))
-	tk.MustExec("commit")
 }
 
 func (s *testSuite) TestSelectLimit(c *C) {
@@ -216,33 +212,23 @@ func (s *testSuite) TestSelectLimit(c *C) {
 	tk.MustExec("insert INTO select_limit VALUES (4, \"hello\");")
 	tk.CheckExecResult(1, 0)
 
-	tk.MustExec("begin")
 	r := tk.MustQuery("select * from select_limit limit 1;")
 	r.Check(testkit.Rows("1 hello"))
-	tk.MustExec("commit")
 
 	r = tk.MustQuery("select id from (select * from select_limit limit 1) k where id != 1;")
 	r.Check(testkit.Rows())
 
-	tk.MustExec("begin")
 	r = tk.MustQuery("select * from select_limit limit 18446744073709551615 offset 0;")
 	r.Check(testkit.Rows("1 hello", "2 hello", "3 hello", "4 hello"))
-	tk.MustExec("commit")
 
-	tk.MustExec("begin")
 	r = tk.MustQuery("select * from select_limit limit 18446744073709551615 offset 1;")
 	r.Check(testkit.Rows("2 hello", "3 hello", "4 hello"))
-	tk.MustExec("commit")
 
-	tk.MustExec("begin")
 	r = tk.MustQuery("select * from select_limit limit 18446744073709551615 offset 3;")
 	r.Check(testkit.Rows("4 hello"))
-	tk.MustExec("commit")
 
-	tk.MustExec("begin")
 	_, err := tk.Exec("select * from select_limit limit 18446744073709551616 offset 3;")
 	c.Assert(err, NotNil)
-	tk.MustExec("rollback")
 }
 
 func (s *testSuite) TestDAG(c *C) {
@@ -283,11 +269,9 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	tk.MustExec("use test")
 	s.fillData(tk, "select_order_test")
 
-	tk.MustExec("begin")
 	// Test star field
 	r := tk.MustQuery("select * from select_order_test where id = 1 order by id limit 1 offset 0;")
 	r.Check(testkit.Rows("1 hello"))
-	tk.MustExec("commit")
 
 	r = tk.MustQuery("select id from select_order_test order by id desc limit 1 ")
 	r.Check(testkit.Rows("2"))
@@ -295,35 +279,25 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	r = tk.MustQuery("select id from select_order_test order by id + 1 desc limit 1 ")
 	r.Check(testkit.Rows("2"))
 
-	tk.MustExec("begin")
 	// Test limit
 	r = tk.MustQuery("select * from select_order_test order by name, id limit 1 offset 0;")
 	r.Check(testkit.Rows("1 hello"))
-	tk.MustExec("commit")
 
-	tk.MustExec("begin")
 	// Test limit
 	r = tk.MustQuery("select id as c1, name from select_order_test order by 2, id limit 1 offset 0;")
 	r.Check(testkit.Rows("1 hello"))
-	tk.MustExec("commit")
 
-	tk.MustExec("begin")
 	// Test limit overflow
 	r = tk.MustQuery("select * from select_order_test order by name, id limit 100 offset 0;")
 	r.Check(testkit.Rows("1 hello", "2 hello"))
-	tk.MustExec("commit")
 
-	tk.MustExec("begin")
 	// Test offset overflow
 	r = tk.MustQuery("select * from select_order_test order by name, id limit 1 offset 100;")
 	r.Check(testkit.Rows())
-	tk.MustExec("commit")
 
-	tk.MustExec("begin")
 	// Test multiple field
 	r = tk.MustQuery("select id, name from select_order_test where id = 1 group by id, name limit 1 offset 0;")
 	r.Check(testkit.Rows("1 hello"))
-	tk.MustExec("commit")
 
 	// Test limit + order by
 	tk.MustExec("begin")
@@ -370,7 +344,6 @@ func (s *testSuite) TestSelectErrorRow(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	tk.MustExec("begin")
 	_, err := tk.Exec("select row(1, 1) from test")
 	c.Assert(err, NotNil)
 
@@ -394,8 +367,6 @@ func (s *testSuite) TestSelectErrorRow(c *C) {
 
 	_, err = tk.Exec("select * from test having (select 1, 1);")
 	c.Assert(err, NotNil)
-
-	tk.MustExec("commit")
 }
 
 // TestIssue2612 for https://github.com/pingcap/tidb/issues/2612
@@ -436,31 +407,22 @@ func (s *testSuite) TestIssue345(c *C) {
 	tk.MustExec(`update t1 as a, t2 as b set a.c1 = 2, b.c2 = 1;`)
 
 	// Check t1 content
-	tk.MustExec("begin")
 	r := tk.MustQuery("SELECT * FROM t1;")
 	r.Check(testkit.Rows("2"))
-	tk.MustExec("commit")
 	// Check t2 content
-	tk.MustExec("begin")
 	r = tk.MustQuery("SELECT * FROM t2;")
 	r.Check(testkit.Rows("1"))
-	tk.MustExec("commit")
 
 	tk.MustExec(`update t1 as a, t2 as t1 set a.c1 = 1, t1.c2 = 2;`)
 	// Check t1 content
-	tk.MustExec("begin")
 	r = tk.MustQuery("SELECT * FROM t1;")
 	r.Check(testkit.Rows("1"))
-	tk.MustExec("commit")
 	// Check t2 content
-	tk.MustExec("begin")
 	r = tk.MustQuery("SELECT * FROM t2;")
 	r.Check(testkit.Rows("2"))
 
 	_, err := tk.Exec(`update t1 as a, t2 set t1.c1 = 10;`)
 	c.Assert(err, NotNil)
-
-	tk.MustExec("commit")
 }
 
 func (s *testSuite) TestUnion(c *C) {
@@ -484,12 +446,10 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec(testSQL)
 
 	testSQL = `select id from union_test union select id from union_test;`
-	tk.MustExec("begin")
 	r := tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1", "2"))
 
 	testSQL = `select * from (select id from union_test union select id from union_test) t order by id;`
-	tk.MustExec("begin")
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1", "2"))
 
@@ -516,8 +476,6 @@ func (s *testSuite) TestUnion(c *C) {
 
 	r = tk.MustQuery(`select "abc" as a union (select 1) order by a`)
 	r.Check(testkit.Rows("1", "abc"))
-
-	tk.MustExec("commit")
 
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (c int, d int)")
