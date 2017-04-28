@@ -148,18 +148,18 @@ func (s *testStatsUpdateSuite) TestMultiSession(c *C) {
 		testKit2.MustExec("delete from test.t1 limit 1")
 	}
 
-	err = testKit.Se.Close()
-	c.Assert(err, IsNil)
-
-	err = testKit2.Se.Close()
-	c.Assert(err, IsNil)
-
 	h.DumpStatsDeltaToKV()
 	h.Update(is)
 	stats1 = h.GetTableStats(tableInfo1.ID)
 	c.Assert(stats1.Count, Equals, int64(rowCount1*2))
 	rs := testKit.MustQuery("select modify_count from mysql.stats_meta")
 	rs.Check(testkit.Rows("60"))
+
+	err = testKit.Se.Close()
+	c.Assert(err, IsNil)
+
+	err = testKit2.Se.Close()
+	c.Assert(err, IsNil)
 }
 
 func (s *testStatsUpdateSuite) TestTxnWithFailure(c *C) {

@@ -757,7 +757,7 @@ func (s *session) ClearValue(key fmt.Stringer) {
 func (s *session) Close() error {
 	if s.txnFutureCh != nil {
 		close(s.txnFutureCh)
-  }
+	}
 	if s.statsCollector != nil {
 		s.statsCollector.Delete()
 	}
