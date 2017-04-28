@@ -114,27 +114,35 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(val, Equals, "1")
 
 	// Test case for time_zone session variable.
-	SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum("Europe/Helsinki"))
-	c.Assert(v.TimeZone.String(), Equals, "Europe/Helsinki")
-	SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum("US/Eastern"))
-	c.Assert(v.TimeZone.String(), Equals, "US/Eastern")
-	SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum("SYSTEM"))
-	c.Assert(v.TimeZone.String(), Equals, "Local")
-
+	cases := []struct {
+		input  string
+		succ   bool
+		expect string
+	}{
+		{"Europe/Helsinki", true, "Europe/Helsinki"},
+		{"US/Eastern", true, "US/Eastern"},
+		{"SYSTEM", true, "Local"},
+		{"+10:00", true, "UTC"},
+		{"-6:00", true, "UTC"},
+		{"6:00", false, ""},
+	}
+	for _, ca := range cases {
+		err := SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum(ca.input))
+		if ca.succ {
+			c.Assert(v.TimeZone.String(), Equals, ca.expect)
+		} else {
+			c.Assert(err, NotNil)
+		}
+	}
 	SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum("+10:00"))
-	c.Assert(v.TimeZone.String(), Equals, "UTC")
 	t1 := time.Date(2000, 1, 1, 0, 0, 0, 0, v.TimeZone)
 	t2 := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 	c.Assert(t2.Sub(t1), Equals, 10*time.Hour)
 
 	SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum("-6:00"))
-	c.Assert(v.TimeZone.String(), Equals, "UTC")
 	t1 = time.Date(2000, 1, 1, 0, 0, 0, 0, v.TimeZone)
 	t2 = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 	c.Assert(t1.Sub(t2), Equals, 6*time.Hour)
-
-	err = SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum("6:00"))
-	c.Assert(err, NotNil)
 
 	// Test case for sql mode.
 	for str, mode := range mysql.Str2SQLMode {
