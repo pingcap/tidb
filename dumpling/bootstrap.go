@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -44,6 +45,7 @@ const (
 		Delete_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
 		Create_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
 		Drop_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
+		Process_priv		ENUM('N','Y') NOT NULL	DEFAULT 'N',
 		Grant_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
 		Alter_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
 		Show_db_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
@@ -182,6 +184,7 @@ const (
 	version4 = 4
 	version5 = 5
 	version6 = 6
+	version7 = 7
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -315,9 +318,27 @@ func upgradeToVer5(s Session) {
 }
 
 func upgradeToVer6(s Session) {
-	s.Execute("ALTER TABLE mysql.user ADD COLUMN `Super_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Show_db_priv`")
+	_, err := s.Execute("ALTER TABLE mysql.user ADD COLUMN `Super_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Show_db_priv`")
+	if terror.ErrorEqual(err, infoschema.ErrColumnExists) {
+		return
+	}
+	if err != nil {
+		log.Fatal(err)
+	}
 	// For reasons of compatibility, set the non-exists privilege column value to 'Y', as TiDB doesn't check them in older versions.
-	s.Execute("UPDATE mysql.user SET Super_priv='Y'")
+	mustExecute(s, "UPDATE mysql.user SET Super_priv='Y'")
+}
+
+func upgradeToVer7(s Session) {
+	_, err := s.Execute("ALTER TABLE mysql.user ADD COLUMN `Process_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Drop_priv`")
+	if terror.ErrorEqual(err, infoschema.ErrColumnExists) {
+		return
+	}
+	if err != nil {
+		log.Fatal(err)
+	}
+	// For reasons of compatibility, set the non-exists privilege column value to 'Y', as TiDB doesn't check them in older versions.
+	mustExecute(s, "UPDATE mysql.user SET Process_priv='Y'")
 }
 
 // Update boostrap version variable in mysql.TiDB table.
@@ -373,7 +394,7 @@ func doDMLWorks(s Session) {
 
 	// Insert a default user with empty password.
 	mustExecute(s, `INSERT INTO mysql.user VALUES
-		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
 
 	// Init global system variables table.
 	values := make([]string, 0, len(variable.SysVars))
