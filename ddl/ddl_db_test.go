@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"strconv"
 	"strings"
 	"time"
 
@@ -39,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
-	"strconv"
 )
 
 var _ = Suite(&testDBSuite{})
