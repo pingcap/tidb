@@ -184,6 +184,7 @@ func parseEndpoint(endpoint string) (proto string, host string, scheme string) {
 	case "http", "https":
 	case "unix":
 		proto = "unix"
+		host = url.Host + url.Path
 	default:
 		proto, host = "", ""
 	}
@@ -218,6 +219,11 @@ func (c *Client) dialSetupOpts(endpoint string, dopts ...grpc.DialOption) (opts 
 
 	f := func(host string, t time.Duration) (net.Conn, error) {
 		proto, host, _ := parseEndpoint(c.balancer.getEndpoint(host))
+		if host == "" && endpoint != "" {
+			// dialing an endpoint not in the balancer; use
+			// endpoint passed into dial
+			proto, host, _ = parseEndpoint(endpoint)
+		}
 		if proto == "" {
 			return nil, fmt.Errorf("unknown scheme for %q", host)
 		}
@@ -294,12 +300,24 @@ func (c *Client) dial(endpoint string, dopts ...grpc.DialOption) (*grpc.ClientCo
 			tokenMu: &sync.RWMutex{},
 		}
 
-		err := c.getToken(c.ctx)
-		if err != nil {
-			return nil, err
+		ctx := c.ctx
+		if c.cfg.DialTimeout > 0 {
+			cctx, cancel := context.WithTimeout(ctx, c.cfg.DialTimeout)
+			defer cancel()
+			ctx = cctx
 		}
 
-		opts = append(opts, grpc.WithPerRPCCredentials(c.tokenCred))
+		err := c.getToken(ctx)
+		if err != nil {
+			if toErr(ctx, err) != rpctypes.ErrAuthNotEnabled {
+				if err == ctx.Err() && ctx.Err() != c.ctx.Err() {
+					err = grpc.ErrClientConnTimeout
+				}
+				return nil, err
+			}
+		} else {
+			opts = append(opts, grpc.WithPerRPCCredentials(c.tokenCred))
+		}
 	}
 
 	opts = append(opts, c.cfg.DialOptions...)
@@ -349,8 +367,10 @@ func newClient(cfg *Config) (*Client, error) {
 	}
 
 	client.balancer = newSimpleBalancer(cfg.Endpoints)
-	conn, err := client.dial(cfg.Endpoints[0], grpc.WithBalancer(client.balancer))
+	conn, err := client.dial("", grpc.WithBalancer(client.balancer))
 	if err != nil {
+		client.cancel()
+		client.balancer.Close()
 		return nil, err
 	}
 	client.conn = conn
@@ -374,6 +394,7 @@ func newClient(cfg *Config) (*Client, error) {
 			default:
 			}
 			client.cancel()
+			client.balancer.Close()
 			conn.Close()
 			return nil, err
 		}

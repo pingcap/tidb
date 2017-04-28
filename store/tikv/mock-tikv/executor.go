@@ -115,7 +115,7 @@ func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 		if bytes.Compare(ran.StartKey, ran.EndKey) >= 0 {
 			return 0, nil, nil
 		}
-		if *e.Desc {
+		if e.Desc {
 			e.seekKey = endKey
 		} else {
 			e.seekKey = startKey
@@ -123,7 +123,7 @@ func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 	}
 	var pairs []Pair
 	var pair Pair
-	if *e.Desc {
+	if e.Desc {
 		pairs = e.mvccStore.ReverseScan(ran.StartKey, e.seekKey, 1, e.startTS)
 	} else {
 		pairs = e.mvccStore.Scan(e.seekKey, ran.EndKey, 1, e.startTS)
@@ -138,7 +138,7 @@ func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 	if pair.Key == nil {
 		return 0, nil, nil
 	}
-	if *e.Desc {
+	if e.Desc {
 		if bytes.Compare(pair.Key, ran.StartKey) < 0 {
 			return 0, nil, nil
 		}
@@ -204,7 +204,7 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 		if bytes.Compare(ran.StartKey, ran.EndKey) >= 0 {
 			return 0, nil, nil
 		}
-		if *e.Desc {
+		if e.Desc {
 			e.seekKey = endKey
 		} else {
 			e.seekKey = startKey
@@ -212,7 +212,7 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 	}
 	var pairs []Pair
 	var pair Pair
-	if *e.Desc {
+	if e.Desc {
 		pairs = e.mvccStore.ReverseScan(ran.StartKey, e.seekKey, 1, e.startTS)
 	} else {
 		pairs = e.mvccStore.Scan(e.seekKey, ran.EndKey, 1, e.startTS)
@@ -227,7 +227,7 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 	if pair.Key == nil {
 		return 0, nil, nil
 	}
-	if *e.Desc {
+	if e.Desc {
 		if bytes.Compare(pair.Key, ran.StartKey) < 0 {
 			return 0, nil, nil
 		}
@@ -510,8 +510,8 @@ func (e *topNExec) evalTopN(handle int64, value [][]byte) error {
 }
 
 type limitExec struct {
-	limit  int64
-	cursor int64
+	limit  uint64
+	cursor uint64
 
 	src executor
 }

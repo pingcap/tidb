@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -251,11 +250,9 @@ func (s *testSuite) TestSelectLimit(c *C) {
 
 func (s *testSuite) TestDAG(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	mocktikv.MockDAGRequest = true
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
-		mocktikv.MockDAGRequest = false
 	}()
 	tk.MustExec("use test")
 	tk.MustExec("create table select_dag(id int not null default 1, name varchar(255));")
@@ -284,11 +281,9 @@ func (s *testSuite) TestDAG(c *C) {
 }
 
 func (s *testSuite) TestSelectOrderBy(c *C) {
-	mocktikv.MockDAGRequest = true
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
-		mocktikv.MockDAGRequest = false
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -595,11 +590,9 @@ func (s *testSuite) TestUnion(c *C) {
 }
 
 func (s *testSuite) TestIn(c *C) {
-	mocktikv.MockDAGRequest = true
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
-		mocktikv.MockDAGRequest = false
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -683,11 +676,9 @@ func (s *testSuite) TestTablePKisHandleScan(c *C) {
 }
 
 func (s *testSuite) TestIndexScan(c *C) {
-	mocktikv.MockDAGRequest = true
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
-		mocktikv.MockDAGRequest = false
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -995,11 +986,9 @@ func (s *testSuite) TestBuiltin(c *C) {
 }
 
 func (s *testSuite) TestToPBExpr(c *C) {
-	mocktikv.MockDAGRequest = true
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
-		mocktikv.MockDAGRequest = false
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1335,4 +1324,30 @@ func (s *testSuite) TestScanControlSelection(c *C) {
 	tk.MustExec("create table t(a int primary key, b int, c int, index idx_b(b))")
 	tk.MustExec("insert into t values (1, 1, 1), (2, 1, 1), (3, 1, 2), (4, 2, 3)")
 	tk.MustQuery("select (select count(1) k from t s where s.b = t1.c) from t t1").Check(testkit.Rows("3", "3", "1", "0"))
+}
+
+func (s *testSuite) TestSimpleDAG(c *C) {
+	defer func() {
+		plan.UseDAGPlanBuilder = false
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int, c int)")
+	tk.MustExec("insert into t values (1, 1, 1), (2, 1, 1), (3, 1, 2), (4, 2, 3)")
+	plan.UseDAGPlanBuilder = true
+	tk.MustQuery("select a from t").Check(testkit.Rows("1", "2", "3", "4"))
+	tk.MustQuery("select a from t limit 1").Check(testkit.Rows("1"))
+	tk.MustQuery("select a from t order by a desc").Check(testkit.Rows("4", "3", "2", "1"))
+	tk.MustQuery("select a from t order by a desc limit 1").Check(testkit.Rows("4"))
+	tk.MustQuery("select a from t order by b desc limit 1").Check(testkit.Rows("4"))
+	tk.MustQuery("select a from t where a < 3").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select a from t where b > 1").Check(testkit.Rows("4"))
+	tk.MustQuery("select a from t where b > 1 and a < 3").Check(testkit.Rows())
+	tk.MustQuery("select count(*) from t where b > 1 and a < 3").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("4"))
+	tk.MustQuery("select count(*), c from t group by c").Check(testkit.Rows("2 1", "1 2", "1 3"))
+	tk.MustQuery("select sum(c) from t group by b").Check(testkit.Rows("4", "3"))
 }
