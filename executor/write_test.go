@@ -397,9 +397,7 @@ func (s *testSuite) TestUpdate(c *C) {
 	// select data
 	tk.MustExec("begin")
 	r := tk.MustQuery(`SELECT * from update_test limit 2;`)
-	rowStr1 := fmt.Sprintf("%v %v", 1, []byte("abc"))
-	rowStr2 := fmt.Sprintf("%v %v", 2, []byte("abc"))
-	r.Check(testkit.Rows(rowStr1, rowStr2))
+	r.Check(testkit.Rows("1 abc", "2 abc"))
 	tk.MustExec("commit")
 
 	tk.MustExec(`UPDATE update_test SET name = "foo"`)
@@ -417,9 +415,7 @@ func (s *testSuite) TestUpdate(c *C) {
 	tk.MustExec("commit")
 	tk.MustExec("begin")
 	r = tk.MustQuery("select * from update_test;")
-	rowStr1 = fmt.Sprintf("%v %v", 8, []byte("aa"))
-	rowStr2 = fmt.Sprintf("%v %v", 9, []byte("bb"))
-	r.Check(testkit.Rows(rowStr1, rowStr2))
+	r.Check(testkit.Rows("8 aa", "9 bb"))
 	tk.MustExec("commit")
 
 	tk.MustExec("begin")
@@ -474,30 +470,21 @@ func (s *testSuite) TestMultipleTableUpdate(c *C) {
 	tk.MustExec(`UPDATE items, month  SET items.price=month.mprice WHERE items.id=month.mid;`)
 	tk.MustExec("begin")
 	r := tk.MustQuery("SELECT * FROM items")
-	rowStr1 := fmt.Sprintf("%v %v", 11, []byte("month_price_11"))
-	rowStr2 := fmt.Sprintf("%v %v", 12, []byte("items_price_12"))
-	rowStr3 := fmt.Sprintf("%v %v", 13, []byte("month_price_13"))
-	r.Check(testkit.Rows(rowStr1, rowStr2, rowStr3))
+	r.Check(testkit.Rows("11 month_price_11", "12 items_price_12", "13 month_price_13"))
 	tk.MustExec("commit")
 
 	// Single-table syntax but with multiple tables
 	tk.MustExec(`UPDATE items join month on items.id=month.mid SET items.price=month.mid;`)
 	tk.MustExec("begin")
 	r = tk.MustQuery("SELECT * FROM items")
-	rowStr1 = fmt.Sprintf("%v %v", 11, []byte("11"))
-	rowStr2 = fmt.Sprintf("%v %v", 12, []byte("items_price_12"))
-	rowStr3 = fmt.Sprintf("%v %v", 13, []byte("13"))
-	r.Check(testkit.Rows(rowStr1, rowStr2, rowStr3))
+	r.Check(testkit.Rows("11 11", "12 items_price_12", "13 13"))
 	tk.MustExec("commit")
 
 	// JoinTable with alias table name.
 	tk.MustExec(`UPDATE items T0 join month T1 on T0.id=T1.mid SET T0.price=T1.mprice;`)
 	tk.MustExec("begin")
 	r = tk.MustQuery("SELECT * FROM items")
-	rowStr1 = fmt.Sprintf("%v %v", 11, []byte("month_price_11"))
-	rowStr2 = fmt.Sprintf("%v %v", 12, []byte("items_price_12"))
-	rowStr3 = fmt.Sprintf("%v %v", 13, []byte("month_price_13"))
-	r.Check(testkit.Rows(rowStr1, rowStr2, rowStr3))
+	r.Check(testkit.Rows("11 month_price_11", "12 items_price_12", "13 month_price_13"))
 	tk.MustExec("commit")
 
 	// fix https://github.com/pingcap/tidb/issues/369
@@ -548,8 +535,7 @@ func (s *testSuite) TestDelete(c *C) {
 	// Select data
 	tk.MustExec("begin")
 	rows := tk.MustQuery(`SELECT * from delete_test limit 2;`)
-	rowStr := fmt.Sprintf("%v %v", "1", []byte("hello"))
-	rows.Check(testkit.Rows(rowStr))
+	rows.Check(testkit.Rows("1 hello"))
 	tk.MustExec("commit")
 
 	tk.MustExec(`delete from delete_test ;`)
@@ -659,25 +645,22 @@ func (s *testSuite) TestLoadData(c *C) {
 	// fields and lines are default, InsertData returns data is nil
 	tests := []testCase{
 		// data1 = nil, data2 != nil
-		{nil, []byte("\n"), []string{fmt.Sprintf("%v %v %v %v", 1, 0, []byte(""), 0)}, nil},
-		{nil, []byte("\t\n"), []string{fmt.Sprintf("%v %v %v %v", 2, 0, []byte(""), 0)}, nil},
-		{nil, []byte("3\t2\t3\t4\n"), []string{fmt.Sprintf("%v %v %v %v", 3, 2, []byte("3"), 4)}, nil},
-		{nil, []byte("3*1\t2\t3\t4\n"), []string{fmt.Sprintf("%v %v %v %v", 3, 2, []byte("3"), 4)}, nil},
-		{nil, []byte("4\t2\t\t3\t4\n"), []string{fmt.Sprintf("%v %v %v %v", 4, 2, []byte(""), 3)}, nil},
-		{nil, []byte("\t1\t2\t3\t4\n"), []string{fmt.Sprintf("%v %v %v %v", 5, 1, []byte("2"), 3)}, nil},
-		{nil, []byte("6\t2\t3\n"), []string{fmt.Sprintf("%v %v %v %v", 6, 2, []byte("3"), 0)}, nil},
-		{nil, []byte("\t2\t3\t4\n\t22\t33\t44\n"), []string{
-			fmt.Sprintf("%v %v %v %v", 7, 2, []byte("3"), 4),
-			fmt.Sprintf("%v %v %v %v", 8, 22, []byte("33"), 44)}, nil},
-		{nil, []byte("7\t2\t3\t4\n7\t22\t33\t44\n"), []string{
-			fmt.Sprintf("%v %v %v %v", 7, 2, []byte("3"), 4)}, nil},
+		{nil, []byte("\n"), []string{"1|0||0"}, nil},
+		{nil, []byte("\t\n"), []string{"2|0||0"}, nil},
+		{nil, []byte("3\t2\t3\t4\n"), []string{"3|2|3|4"}, nil},
+		{nil, []byte("3*1\t2\t3\t4\n"), []string{"3|2|3|4"}, nil},
+		{nil, []byte("4\t2\t\t3\t4\n"), []string{"4|2||3"}, nil},
+		{nil, []byte("\t1\t2\t3\t4\n"), []string{"5|1|2|3"}, nil},
+		{nil, []byte("6\t2\t3\n"), []string{"6|2|3|0"}, nil},
+		{nil, []byte("\t2\t3\t4\n\t22\t33\t44\n"), []string{"7|2|3|4", "8|22|33|44"}, nil},
+		{nil, []byte("7\t2\t3\t4\n7\t22\t33\t44\n"), []string{"7|2|3|4"}, nil},
 
 		// data1 != nil, data2 = nil
-		{[]byte("\t2\t3\t4"), nil, []string{fmt.Sprintf("%v %v %v %v", 9, 2, []byte("3"), 4)}, nil},
+		{[]byte("\t2\t3\t4"), nil, []string{"9|2|3|4"}, nil},
 
 		// data1 != nil, data2 != nil
-		{[]byte("\t2\t3"), []byte("\t4\t5\n"), []string{fmt.Sprintf("%v %v %v %v", 10, 2, []byte("3"), 4)}, nil},
-		{[]byte("\t2\t3"), []byte("4\t5\n"), []string{fmt.Sprintf("%v %v %v %v", 11, 2, []byte("34"), 5)}, nil},
+		{[]byte("\t2\t3"), []byte("\t4\t5\n"), []string{"10|2|3|4"}, nil},
+		{[]byte("\t2\t3"), []byte("4\t5\n"), []string{"11|2|34|5"}, nil},
 
 		// data1 != nil, data2 != nil, InsertData returns data isn't nil
 		{[]byte("\t2\t3"), []byte("\t4\t5"), nil, []byte("\t2\t3\t4\t5")},
@@ -688,19 +671,15 @@ func (s *testSuite) TestLoadData(c *C) {
 	ld.LinesInfo.Terminated = "||"
 	tests = []testCase{
 		// data1 != nil, data2 != nil
-		{[]byte("0\t2\t3"), []byte("\t4\t5||"), []string{fmt.Sprintf("%v %v %v %v", 12, 2, []byte("3"), 4)}, nil},
-		{[]byte("1\t2\t3\t4\t5|"), []byte("|"), []string{fmt.Sprintf("%v %v %v %v", 1, 2, []byte("3"), 4)}, nil},
-		{[]byte("2\t2\t3\t4\t5|"), []byte("|3\t22\t33\t44\t55||"), []string{
-			fmt.Sprintf("%v %v %v %v", 2, 2, []byte("3"), 4),
-			fmt.Sprintf("%v %v %v %v", 3, 22, []byte("33"), 44)}, nil},
+		{[]byte("0\t2\t3"), []byte("\t4\t5||"), []string{"12|2|3|4"}, nil},
+		{[]byte("1\t2\t3\t4\t5|"), []byte("|"), []string{"1|2|3|4"}, nil},
+		{[]byte("2\t2\t3\t4\t5|"), []byte("|3\t22\t33\t44\t55||"),
+			[]string{"2|2|3|4", "3|22|33|44"}, nil},
 		{[]byte("3\t2\t3\t4\t5|"), []byte("|4\t22\t33||"), []string{
-			fmt.Sprintf("%v %v %v %v", 3, 2, []byte("3"), 4),
-			fmt.Sprintf("%v %v %v %v", 4, 22, []byte("33"), 0)}, nil},
-		{[]byte("4\t2\t3\t4\t5|"), []byte("|5\t22\t33||6\t222||"), []string{
-			fmt.Sprintf("%v %v %v %v", 4, 2, []byte("3"), 4),
-			fmt.Sprintf("%v %v %v %v", 5, 22, []byte("33"), 0),
-			fmt.Sprintf("%v %v %v %v", 6, 222, []byte(""), 0)}, nil},
-		{[]byte("6\t2\t3"), []byte("4\t5||"), []string{fmt.Sprintf("%v %v %v %v", 6, 2, []byte("34"), 5)}, nil},
+			"3|2|3|4", "4|22|33|0"}, nil},
+		{[]byte("4\t2\t3\t4\t5|"), []byte("|5\t22\t33||6\t222||"),
+			[]string{"4|2|3|4", "5|22|33|0", "6|222||0"}, nil},
+		{[]byte("6\t2\t3"), []byte("4\t5||"), []string{"6|2|34|5"}, nil},
 	}
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 
@@ -710,56 +689,49 @@ func (s *testSuite) TestLoadData(c *C) {
 	ld.LinesInfo.Terminated = "|!#^"
 	tests = []testCase{
 		// data1 = nil, data2 != nil
-		{nil, []byte("xxx|!#^"), []string{fmt.Sprintf("%v %v %v %v", 13, 0, []byte(""), 0)}, nil},
-		{nil, []byte("xxx\\|!#^"), []string{fmt.Sprintf("%v %v %v %v", 14, 0, []byte(""), 0)}, nil},
-		{nil, []byte("xxx3\\2\\3\\4|!#^"), []string{fmt.Sprintf("%v %v %v %v", 3, 2, []byte("3"), 4)}, nil},
-		{nil, []byte("xxx4\\2\\\\3\\4|!#^"), []string{fmt.Sprintf("%v %v %v %v", 4, 2, []byte(""), 3)}, nil},
-		{nil, []byte("xxx\\1\\2\\3\\4|!#^"), []string{fmt.Sprintf("%v %v %v %v", 15, 1, []byte("2"), 3)}, nil},
-		{nil, []byte("xxx6\\2\\3|!#^"), []string{fmt.Sprintf("%v %v %v %v", 6, 2, []byte("3"), 0)}, nil},
+		{nil, []byte("xxx|!#^"), []string{"13|0||0"}, nil},
+		{nil, []byte("xxx\\|!#^"), []string{"14|0||0"}, nil},
+		{nil, []byte("xxx3\\2\\3\\4|!#^"), []string{"3|2|3|4"}, nil},
+		{nil, []byte("xxx4\\2\\\\3\\4|!#^"), []string{"4|2||3"}, nil},
+		{nil, []byte("xxx\\1\\2\\3\\4|!#^"), []string{"15|1|2|3"}, nil},
+		{nil, []byte("xxx6\\2\\3|!#^"), []string{"6|2|3|0"}, nil},
 		{nil, []byte("xxx\\2\\3\\4|!#^xxx\\22\\33\\44|!#^"), []string{
-			fmt.Sprintf("%v %v %v %v", 16, 2, []byte("3"), 4),
-			fmt.Sprintf("%v %v %v %v", 17, 22, []byte("33"), 44)}, nil},
+			"16|2|3|4",
+			"17|22|33|44"}, nil},
 		{nil, []byte("\\2\\3\\4|!#^\\22\\33\\44|!#^xxx\\222\\333\\444|!#^"), []string{
-			fmt.Sprintf("%v %v %v %v", 18, 222, []byte("333"), 444)}, nil},
+			"18|222|333|444"}, nil},
 
 		// data1 != nil, data2 = nil
-		{[]byte("xxx\\2\\3\\4"), nil, []string{fmt.Sprintf("%v %v %v %v", 19, 2, []byte("3"), 4)}, nil},
+		{[]byte("xxx\\2\\3\\4"), nil, []string{"19|2|3|4"}, nil},
 		{[]byte("\\2\\3\\4|!#^"), nil, []string{}, nil},
 		{[]byte("\\2\\3\\4|!#^xxx18\\22\\33\\44|!#^"), nil,
-			[]string{fmt.Sprintf("%v %v %v %v", 18, 22, []byte("33"), 44)}, nil},
+			[]string{"18|22|33|44"}, nil},
 
 		// data1 != nil, data2 != nil
 		{[]byte("xxx10\\2\\3"), []byte("\\4|!#^"),
-			[]string{fmt.Sprintf("%v %v %v %v", 10, 2, []byte("3"), 4)}, nil},
+			[]string{"10|2|3|4"}, nil},
 		{[]byte("10\\2\\3xx"), []byte("x11\\4\\5|!#^"),
-			[]string{fmt.Sprintf("%v %v %v %v", 11, 4, []byte("5"), 0)}, nil},
+			[]string{"11|4|5|0"}, nil},
 		{[]byte("xxx21\\2\\3\\4\\5|!"), []byte("#^"),
-			[]string{fmt.Sprintf("%v %v %v %v", 21, 2, []byte("3"), 4)}, nil},
-		{[]byte("xxx22\\2\\3\\4\\5|!"), []byte("#^xxx23\\22\\33\\44\\55|!#^"), []string{
-			fmt.Sprintf("%v %v %v %v", 22, 2, []byte("3"), 4),
-			fmt.Sprintf("%v %v %v %v", 23, 22, []byte("33"), 44)}, nil},
-		{[]byte("xxx23\\2\\3\\4\\5|!"), []byte("#^xxx24\\22\\33|!#^"), []string{
-			fmt.Sprintf("%v %v %v %v", 23, 2, []byte("3"), 4),
-			fmt.Sprintf("%v %v %v %v", 24, 22, []byte("33"), 0)}, nil},
-		{[]byte("xxx24\\2\\3\\4\\5|!"), []byte("#^xxx25\\22\\33|!#^xxx26\\222|!#^"), []string{
-			fmt.Sprintf("%v %v %v %v", 24, 2, []byte("3"), 4),
-			fmt.Sprintf("%v %v %v %v", 25, 22, []byte("33"), 0),
-			fmt.Sprintf("%v %v %v %v", 26, 222, []byte(""), 0)}, nil},
-		{[]byte("xxx25\\2\\3\\4\\5|!"), []byte("#^26\\22\\33|!#^xxx27\\222|!#^"), []string{
-			fmt.Sprintf("%v %v %v %v", 25, 2, []byte("3"), 4),
-			fmt.Sprintf("%v %v %v %v", 27, 222, []byte(""), 0)}, nil},
-		{[]byte("xxx\\2\\3"), []byte("4\\5|!#^"),
-			[]string{fmt.Sprintf("%v %v %v %v", 28, 2, []byte("34"), 5)}, nil},
+			[]string{"21|2|3|4"}, nil},
+		{[]byte("xxx22\\2\\3\\4\\5|!"), []byte("#^xxx23\\22\\33\\44\\55|!#^"),
+			[]string{"22|2|3|4", "23|22|33|44"}, nil},
+		{[]byte("xxx23\\2\\3\\4\\5|!"), []byte("#^xxx24\\22\\33|!#^"),
+			[]string{"23|2|3|4", "24|22|33|0"}, nil},
+		{[]byte("xxx24\\2\\3\\4\\5|!"), []byte("#^xxx25\\22\\33|!#^xxx26\\222|!#^"),
+			[]string{"24|2|3|4", "25|22|33|0", "26|222||0"}, nil},
+		{[]byte("xxx25\\2\\3\\4\\5|!"), []byte("#^26\\22\\33|!#^xxx27\\222|!#^"),
+			[]string{"25|2|3|4", "27|222||0"}, nil},
+		{[]byte("xxx\\2\\3"), []byte("4\\5|!#^"), []string{"28|2|34|5"}, nil},
 
 		// InsertData returns data isn't nil
 		{nil, []byte("\\2\\3\\4|!#^"), nil, []byte("#^")},
 		{nil, []byte("\\4\\5"), nil, []byte("\\5")},
 		{[]byte("\\2\\3"), []byte("\\4\\5"), nil, []byte("\\5")},
 		{[]byte("xxx1\\2\\3|"), []byte("!#^\\4\\5|!#"),
-			[]string{fmt.Sprintf("%v %v %v %v", 1, 2, []byte("3"), 0)}, []byte("!#")},
-		{[]byte("xxx1\\2\\3\\4\\5|!"), []byte("#^xxx2\\22\\33|!#^3\\222|!#^"), []string{
-			fmt.Sprintf("%v %v %v %v", 1, 2, []byte("3"), 4),
-			fmt.Sprintf("%v %v %v %v", 2, 22, []byte("33"), 0)}, []byte("#^")},
+			[]string{"1|2|3|0"}, []byte("!#")},
+		{[]byte("xxx1\\2\\3\\4\\5|!"), []byte("#^xxx2\\22\\33|!#^3\\222|!#^"),
+			[]string{"1|2|3|4", "2|22|33|0"}, []byte("#^")},
 		{[]byte("xx1\\2\\3"), []byte("\\4\\5|!#^"), nil, []byte("#^")},
 	}
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
@@ -768,46 +740,34 @@ func (s *testSuite) TestLoadData(c *C) {
 	ld.LinesInfo.Terminated = "xxx"
 	tests = []testCase{
 		// data1 = nil, data2 != nil
-		{nil, []byte("xxxxxx"), []string{fmt.Sprintf("%v %v %v %v", 29, 0, []byte(""), 0)}, nil},
-		{nil, []byte("xxx3\\2\\3\\4xxx"), []string{fmt.Sprintf("%v %v %v %v", 3, 2, []byte("3"), 4)}, nil},
-		{nil, []byte("xxx\\2\\3\\4xxxxxx\\22\\33\\44xxx"), []string{
-			fmt.Sprintf("%v %v %v %v", 30, 2, []byte("3"), 4),
-			fmt.Sprintf("%v %v %v %v", 31, 22, []byte("33"), 44)}, nil},
+		{nil, []byte("xxxxxx"), []string{"29|0||0"}, nil},
+		{nil, []byte("xxx3\\2\\3\\4xxx"), []string{"3|2|3|4"}, nil},
+		{nil, []byte("xxx\\2\\3\\4xxxxxx\\22\\33\\44xxx"),
+			[]string{"30|2|3|4", "31|22|33|44"}, nil},
 
 		// data1 != nil, data2 = nil
-		{[]byte("xxx\\2\\3\\4"), nil, []string{fmt.Sprintf("%v %v %v %v", 32, 2, []byte("3"), 4)}, nil},
+		{[]byte("xxx\\2\\3\\4"), nil, []string{"32|2|3|4"}, nil},
 
 		// data1 != nil, data2 != nil
-		{[]byte("xxx10\\2\\3"), []byte("\\4\\5xxx"),
-			[]string{fmt.Sprintf("%v %v %v %v", 10, 2, []byte("3"), 4)}, nil},
-		{[]byte("xxxxx10\\2\\3"), []byte("\\4\\5xxx"),
-			[]string{fmt.Sprintf("%v %v %v %v", 33, 2, []byte("3"), 4)}, nil},
-		{[]byte("xxx21\\2\\3\\4\\5xx"), []byte("x"),
-			[]string{fmt.Sprintf("%v %v %v %v", 21, 2, []byte("3"), 4)}, nil},
-		{[]byte("xxx32\\2\\3\\4\\5x"), []byte("xxxxx33\\22\\33\\44\\55xxx"), []string{
-			fmt.Sprintf("%v %v %v %v", 32, 2, []byte("3"), 4),
-			fmt.Sprintf("%v %v %v %v", 33, 22, []byte("33"), 44)}, nil},
-		{[]byte("xxx33\\2\\3\\4\\5xxx"), []byte("xxx34\\22\\33xxx"), []string{
-			fmt.Sprintf("%v %v %v %v", 33, 2, []byte("3"), 4),
-			fmt.Sprintf("%v %v %v %v", 34, 22, []byte("33"), 0)}, nil},
-		{[]byte("xxx34\\2\\3\\4\\5xx"), []byte("xxxx35\\22\\33xxxxxx36\\222xxx"), []string{
-			fmt.Sprintf("%v %v %v %v", 34, 2, []byte("3"), 4),
-			fmt.Sprintf("%v %v %v %v", 35, 22, []byte("33"), 0),
-			fmt.Sprintf("%v %v %v %v", 36, 222, []byte(""), 0)}, nil},
+		{[]byte("xxx10\\2\\3"), []byte("\\4\\5xxx"), []string{"10|2|3|4"}, nil},
+		{[]byte("xxxxx10\\2\\3"), []byte("\\4\\5xxx"), []string{"33|2|3|4"}, nil},
+		{[]byte("xxx21\\2\\3\\4\\5xx"), []byte("x"), []string{"21|2|3|4"}, nil},
+		{[]byte("xxx32\\2\\3\\4\\5x"), []byte("xxxxx33\\22\\33\\44\\55xxx"),
+			[]string{"32|2|3|4", "33|22|33|44"}, nil},
+		{[]byte("xxx33\\2\\3\\4\\5xxx"), []byte("xxx34\\22\\33xxx"),
+			[]string{"33|2|3|4", "34|22|33|0"}, nil},
+		{[]byte("xxx34\\2\\3\\4\\5xx"), []byte("xxxx35\\22\\33xxxxxx36\\222xxx"),
+			[]string{"34|2|3|4", "35|22|33|0", "36|222||0"}, nil},
 
 		// InsertData returns data isn't nil
 		{nil, []byte("\\2\\3\\4xxxx"), nil, []byte("xxxx")},
-		{[]byte("\\2\\3\\4xxx"), nil,
-			[]string{fmt.Sprintf("%v %v %v %v", 37, 0, []byte(""), 0)}, nil},
-		{[]byte("\\2\\3\\4xxxxxx11\\22\\33\\44xxx"), nil, []string{
-			fmt.Sprintf("%v %v %v %v", 38, 0, []byte(""), 0),
-			fmt.Sprintf("%v %v %v %v", 39, 0, []byte(""), 0)}, nil},
+		{[]byte("\\2\\3\\4xxx"), nil, []string{"37|0||0"}, nil},
+		{[]byte("\\2\\3\\4xxxxxx11\\22\\33\\44xxx"), nil,
+			[]string{"38|0||0", "39|0||0"}, nil},
 		{[]byte("xx10\\2\\3"), []byte("\\4\\5xxx"), nil, []byte("xxx")},
-		{[]byte("xxx10\\2\\3"), []byte("\\4xxxx"),
-			[]string{fmt.Sprintf("%v %v %v %v", 10, 2, []byte("3"), 4)}, []byte("x")},
-		{[]byte("xxx10\\2\\3\\4\\5x"), []byte("xx11\\22\\33xxxxxx12\\222xxx"), []string{
-			fmt.Sprintf("%v %v %v %v", 10, 2, []byte("3"), 4),
-			fmt.Sprintf("%v %v %v %v", 40, 0, []byte(""), 0)}, []byte("xxx")},
+		{[]byte("xxx10\\2\\3"), []byte("\\4xxxx"), []string{"10|2|3|4"}, []byte("x")},
+		{[]byte("xxx10\\2\\3\\4\\5x"), []byte("xx11\\22\\33xxxxxx12\\222xxx"),
+			[]string{"10|2|3|4", "40|0||0"}, []byte("xxx")},
 	}
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 }
@@ -826,12 +786,12 @@ func (s *testSuite) TestLoadDataEscape(c *C) {
 	// test escape
 	tests := []testCase{
 		// data1 = nil, data2 != nil
-		{nil, []byte("1\ta string\n"), []string{fmt.Sprintf("%v %v", 1, []byte("a string"))}, nil},
-		{nil, []byte("2\tstr \\t\n"), []string{fmt.Sprintf("%v %v", 2, []byte("str \t"))}, nil},
-		{nil, []byte("3\tstr \\n\n"), []string{fmt.Sprintf("%v %v", 3, []byte("str \n"))}, nil},
-		{nil, []byte("4\tboth \\t\\n\n"), []string{fmt.Sprintf("%v %v", 4, []byte("both \t\n"))}, nil},
-		{nil, []byte("5\tstr \\\\\n"), []string{fmt.Sprintf("%v %v", 5, []byte("str \\"))}, nil},
-		{nil, []byte("6\t\\r\\t\\n\\0\\Z\\b\n"), []string{fmt.Sprintf("%v %v", 6, []byte{'\r', '\t', '\n', 0, 26, '\b'})}, nil},
+		{nil, []byte("1\ta string\n"), []string{"1|a string"}, nil},
+		{nil, []byte("2\tstr \\t\n"), []string{"2|str \t"}, nil},
+		{nil, []byte("3\tstr \\n\n"), []string{"3|str \n"}, nil},
+		{nil, []byte("4\tboth \\t\\n\n"), []string{"4|both \t\n"}, nil},
+		{nil, []byte("5\tstr \\\\\n"), []string{"5|str \\"}, nil},
+		{nil, []byte("6\t\\r\\t\\n\\0\\Z\\b\n"), []string{"6|" + string([]byte{'\r', '\t', '\n', 0, 26, '\b'})}, nil},
 	}
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
