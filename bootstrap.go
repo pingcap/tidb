@@ -155,7 +155,7 @@ const (
 	);`
 )
 
-// Bootstrap initiates system DB for a store.
+// bootstrap initiates system DB for a store.
 func bootstrap(s Session) {
 	b, err := checkBootstrapped(s)
 	if err != nil {
@@ -211,7 +211,7 @@ func checkBootstrapped(s Session) (bool, error) {
 	return isBootstrapped, nil
 }
 
-// Get variable value from mysql.tidb table.
+// getTiDBVar gets variable value from mysql.tidb table.
 // Those variables are used by TiDB server.
 func getTiDBVar(s Session, name string) (types.Datum, error) {
 	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s"`,
@@ -232,7 +232,7 @@ func getTiDBVar(s Session, name string) (types.Datum, error) {
 	return row.Data[0], nil
 }
 
-// When the system is boostrapped by low version TiDB server, we should do some upgrade works.
+// upgrade function  will do some upgrade works, when the system is boostrapped by low version TiDB server
 // For example, add new system variables into mysql.global_variables table.
 func upgrade(s Session) {
 	ver, err := getBootstrapVersion(s)
@@ -283,7 +283,7 @@ func upgrade(s Session) {
 	return
 }
 
-// Update to version 2.
+// upgradeToVer2 updates to version 2.
 func upgradeToVer2(s Session) {
 	// Version 2 add two system variable for DistSQL concurrency controlling.
 	// Insert distsql related system variable.
@@ -298,7 +298,7 @@ func upgradeToVer2(s Session) {
 	mustExecute(s, sql)
 }
 
-// Update to version 3.
+// upgradeToVer3 updates to version 3.
 func upgradeToVer3(s Session) {
 	// Version 3 fix tx_read_only variable value.
 	sql := fmt.Sprintf("UPDATE %s.%s set variable_value = '0' where variable_name = 'tx_read_only';",
@@ -306,7 +306,7 @@ func upgradeToVer3(s Session) {
 	mustExecute(s, sql)
 }
 
-// Update to version 4.
+// upgradeToVer4 updates to version 4.
 func upgradeToVer4(s Session) {
 	sql := CreateStatsMetaTable
 	mustExecute(s, sql)
@@ -341,7 +341,7 @@ func upgradeToVer7(s Session) {
 	mustExecute(s, "UPDATE mysql.user SET Process_priv='Y'")
 }
 
-// Update boostrap version variable in mysql.TiDB table.
+// updateBootstrapVer updates boostrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
 	sql := fmt.Sprintf(`INSERT INTO %s.%s VALUES ("%s", "%d", "TiDB bootstrap version.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE="%d"`,
@@ -349,7 +349,7 @@ func updateBootstrapVer(s Session) {
 	mustExecute(s, sql)
 }
 
-// Gets bootstrap version from mysql.tidb table;
+// getBootstrapVersion gets bootstrap version from mysql.tidb table;
 func getBootstrapVersion(s Session) (int64, error) {
 	d, err := getTiDBVar(s, tidbServerVersionVar)
 	if err != nil {
@@ -361,7 +361,7 @@ func getBootstrapVersion(s Session) (int64, error) {
 	return strconv.ParseInt(d.GetString(), 10, 64)
 }
 
-// Execute DDL statements in bootstrap stage.
+// doDDLWorks executes DDL statements in bootstrap stage.
 func doDDLWorks(s Session) {
 	// Create a test database.
 	mustExecute(s, "CREATE DATABASE IF NOT EXISTS test")
@@ -387,7 +387,7 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateStatsBucketsTable)
 }
 
-// Execute DML statements in bootstrap stage.
+// doDMLWorks executes DML statements in bootstrap stage.
 // All the statements run in a single transaction.
 func doDMLWorks(s Session) {
 	mustExecute(s, "BEGIN")
