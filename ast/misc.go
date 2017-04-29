@@ -318,12 +318,12 @@ func (n *FlushStmt) Accept(v Visitor) (Node, bool) {
 type KillStmt struct {
 	stmtNode
 
-	// Query ...
+	// Query indicates whether terminate a single query on this connection or the whole connection.
 	// If Query is true, terminates the statement the connection is currently executing, but leaves the connection itself intact.
 	// If Query is false, terminates the connection associated with the given ConnectionID, after terminating any statement the connection is executing.
 	Query        bool
 	ConnectionID uint64
-	// TiDBExtension ...
+	// TiDBExtension is used to indicate whether the user knows he is sending kill statement to the right tidb-server.
 	// When the SQL grammar is "KILL TIDB [CONNECTION | QUERY] connectionID", TiDBExtension will be set.
 	// It's a special grammar extension in TiDB. This extension exists because, when the connection is:
 	// client -> LVS proxy -> TiDB, and type Ctrl+C in client, the following action will be executed:
@@ -703,7 +703,7 @@ type SelectStmtOpts struct {
 // TableOptimizerHint is Table level optimizer hint
 type TableOptimizerHint struct {
 	node
-	// HintName ...
+	// HintName is the name or alias of the table(s) which the hint will affect.
 	// Table hints has no schema info
 	// It allows only table name or alias (if table has an alias)
 	HintName model.CIStr
