@@ -283,7 +283,7 @@ const (
 	attrAggregate = "Agg"
 )
 
-// Not all attributes is used to create the label, because we don't want too many labels.
+// toLabel is not all attributes is used to create the label, because we don't want too many labels.
 func (pa *stmtAttributes) toLabel() string {
 	var attrs []string
 	// First attribute.

@@ -77,7 +77,7 @@ func (a *recordSet) Close() error {
 
 // statement implements the ast.Statement interface, it builds a plan.Plan to an ast.Statement.
 type statement struct {
-	// The InfoSchema cannot change during execution, so we hold a reference to it.
+	// is is the InfoSchema cannot change during execution, so we hold a reference to it.
 	is        infoschema.InfoSchema
 	ctx       context.Context
 	text      string
