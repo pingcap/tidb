@@ -164,7 +164,7 @@ func (s *testBootstrapSuite) testBootstrapWithError(c *C) {
 	c.Assert(err, IsNil)
 }
 
-// TestUpgrade tests case for upgrade
+// TestUpgrade tests upgrading
 func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	defer testleak.AfterTest(c)()
 	store := newStoreWithBootstrap(c, s.dbName)
