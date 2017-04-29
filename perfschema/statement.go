@@ -28,9 +28,9 @@ import (
 
 // statementInfo defines statement instrument information.
 type statementInfo struct {
-	// The registered statement key
+	// key means registered statement key
 	key uint64
-	// The name of the statement instrument to register
+	// name is the name of the statement instrument to register
 	name string
 }
 
@@ -39,61 +39,61 @@ type statementInfo struct {
 // 1. support statement digest.
 // 2. support prepared statement.
 type StatementState struct {
-	// Connection identifier
+	// connID means connection identifier
 	connID uint64
-	// Statement information
+	// info means statement information
 	info *statementInfo
-	// Statement type
+	// stmtType means statement type
 	stmtType reflect.Type
-	// Source file and line number
+	// source includes source file and line number
 	source string
-	// Timer name
+	// timerName means timer name
 	timerName enumTimerName
-	// Timer start
+	// timerStart means the timer's start time
 	timerStart int64
-	// Timer end
+	// timerEnd means the timer's end time
 	timerEnd int64
-	// Locked time
+	// lockTime means locked time
 	lockTime int64
-	// SQL statement string
+	// sqlText means SQL statement string
 	sqlText string
-	// Current schema name
+	// schemaName is current schema name
 	schemaName string
-	// Number of errors
+	// errNum is the number of errors
 	errNum uint32
-	// Number of warnings
+	// warnNum is the number of warnings
 	warnNum uint32
-	// Rows affected
+	// rowsAffected is the number of rows affected
 	rowsAffected uint64
-	// Rows sent
+	// rowsSent is the number of rows sent
 	rowsSent uint64
-	// Rows examined
+	// rowsExamined is the number of rows examined
 	rowsExamined uint64
-	// Metric, temporary tables created on disk
+	// createdTmpDiskTables is a metric, temporary tables created on disk
 	createdTmpDiskTables uint32
-	// Metric, temporary tables created
+	// createdTmpTables is a metric, temporary tables created
 	createdTmpTables uint32
-	// Metric, number of select full join
+	// selectFullJoin is a metric, number of select full join
 	selectFullJoin uint32
-	// Metric, number of select full range join
+	// selectFullRangeJoin is a metric, number of select full range join
 	selectFullRangeJoin uint32
-	// Metric, number of select range
+	// selectRange is a metric, number of select range
 	selectRange uint32
-	// Metric, number of select range check
+	// selectRangeCheck is a metric, number of select range check
 	selectRangeCheck uint32
-	// Metric, number of select scan
+	// selectScan is a metric, number of select scan
 	selectScan uint32
-	// Metric, number of sort merge passes
+	// sortMergePasses is a metric, number of sort merge passes
 	sortMergePasses uint32
-	// Metric, number of sort merge
+	// sortRange is a metric, number of sort merge
 	sortRange uint32
-	// Metric, number of sort rows
+	// sortRows is a metric, number of sort rows
 	sortRows uint32
-	// Metric, number of sort scans
+	// sortScan is a metric, number of sort scans
 	sortScan uint32
-	// Metric, no index used flag
+	// noIndexUsed is a metric, no index used flag
 	noIndexUsed uint8
-	// Metric, no good index used flag
+	// noGoodIndexUsed is a metric, no good index used flag
 	noGoodIndexUsed uint8
 }
 
