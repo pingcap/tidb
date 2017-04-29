@@ -232,7 +232,7 @@ func getTiDBVar(s Session, name string) (types.Datum, error) {
 	return row.Data[0], nil
 }
 
-// upgrade will do some works, when the system is boostrapped by low version TiDB server
+// upgrade function  will do some upgrade works, when the system is boostrapped by low version TiDB server
 // For example, add new system variables into mysql.global_variables table.
 func upgrade(s Session) {
 	ver, err := getBootstrapVersion(s)
