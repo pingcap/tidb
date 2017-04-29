@@ -449,7 +449,7 @@ func escapeCols(strs [][]byte) []string {
 	return ret
 }
 
-// escape ...
+// escape handles escape characters when running load data statement.
 // TODO: escape need to be improved, it should support ESCAPED BY to specify
 // the escape character and handle \N escape.
 // See http://dev.mysql.com/doc/refman/5.7/en/load-data.html
@@ -683,7 +683,7 @@ func (e *InsertExec) Close() error {
 	return nil
 }
 
-// getColumns ...
+// getColumns gets the explicitly specified columns of an insert statement. There are three cases:
 // There are three types of insert statements:
 // 1 insert ... values(...)  --> name type column
 // 2 insert ... set x=y...   --> set type column

@@ -365,7 +365,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 	return us
 }
 
-// buildMergeJoin ...
+// buildMergeJoin builds SortMergeJoin executor.
 // TODO: Refactor against different join strategies by extracting common code base
 func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 	joinBuilder := &joinBuilder{}

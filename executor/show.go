@@ -329,7 +329,7 @@ func (e *ShowExec) fetchShowIndex() error {
 	return nil
 }
 
-// fetchShowCharset ...
+// fetchShowCharset gets all charset information and fill them into e.rows.
 // See http://dev.mysql.com/doc/refman/5.7/en/show-character-set.html
 func (e *ShowExec) fetchShowCharset() error {
 	descs := charset.GetAllCharsets()
