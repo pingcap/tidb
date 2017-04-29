@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -180,7 +181,7 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 		err1 = ctx.Txn().Commit()
 		c.Assert(err1, IsNil)
 		r := tk.MustQuery(selectSQL)
-		r.Check(testkit.Rows(tt.expected...))
+		r.Check(testutil.RowsWithSep("|", tt.expected...))
 		tk.MustExec(deleteSQL)
 	}
 }
@@ -190,15 +191,11 @@ func (s *testSuite) TestSelectWithoutFrom(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	tk.MustExec("begin")
 	r := tk.MustQuery("select 1 + 2*3")
 	r.Check(testkit.Rows("7"))
-	tk.MustExec("commit")
 
-	tk.MustExec("begin")
 	r = tk.MustQuery(`select _utf8"string";`)
 	r.Check(testkit.Rows("string"))
-	tk.MustExec("commit")
 }
 
 func (s *testSuite) TestSelectLimit(c *C) {
@@ -215,37 +212,23 @@ func (s *testSuite) TestSelectLimit(c *C) {
 	tk.MustExec("insert INTO select_limit VALUES (4, \"hello\");")
 	tk.CheckExecResult(1, 0)
 
-	tk.MustExec("begin")
 	r := tk.MustQuery("select * from select_limit limit 1;")
-	rowStr1 := fmt.Sprintf("%v %v", 1, []byte("hello"))
-	r.Check(testkit.Rows(rowStr1))
-	tk.MustExec("commit")
+	r.Check(testkit.Rows("1 hello"))
 
 	r = tk.MustQuery("select id from (select * from select_limit limit 1) k where id != 1;")
 	r.Check(testkit.Rows())
 
-	tk.MustExec("begin")
 	r = tk.MustQuery("select * from select_limit limit 18446744073709551615 offset 0;")
-	rowStr2 := fmt.Sprintf("%v %v", 2, []byte("hello"))
-	rowStr3 := fmt.Sprintf("%v %v", 3, []byte("hello"))
-	rowStr4 := fmt.Sprintf("%v %v", 4, []byte("hello"))
-	r.Check(testkit.Rows(rowStr1, rowStr2, rowStr3, rowStr4))
-	tk.MustExec("commit")
+	r.Check(testkit.Rows("1 hello", "2 hello", "3 hello", "4 hello"))
 
-	tk.MustExec("begin")
 	r = tk.MustQuery("select * from select_limit limit 18446744073709551615 offset 1;")
-	r.Check(testkit.Rows(rowStr2, rowStr3, rowStr4))
-	tk.MustExec("commit")
+	r.Check(testkit.Rows("2 hello", "3 hello", "4 hello"))
 
-	tk.MustExec("begin")
 	r = tk.MustQuery("select * from select_limit limit 18446744073709551615 offset 3;")
-	r.Check(testkit.Rows(rowStr4))
-	tk.MustExec("commit")
+	r.Check(testkit.Rows("4 hello"))
 
-	tk.MustExec("begin")
 	_, err := tk.Exec("select * from select_limit limit 18446744073709551616 offset 3;")
 	c.Assert(err, NotNil)
-	tk.MustExec("rollback")
 }
 
 func (s *testSuite) TestDAG(c *C) {
@@ -263,21 +246,18 @@ func (s *testSuite) TestDAG(c *C) {
 	tk.CheckExecResult(1, 0)
 
 	r := tk.MustQuery("select * from select_dag;")
-	rowStr1 := fmt.Sprintf("%v %v", 1, []byte("hello"))
-	rowStr2 := fmt.Sprintf("%v %v", 2, []byte("hello"))
-	rowStr3 := fmt.Sprintf("%v %v", 3, []byte("hello"))
-	r.Check(testkit.Rows(rowStr1, rowStr2, rowStr3))
+	r.Check(testkit.Rows("1 hello", "2 hello", "3 hello"))
 
 	r = tk.MustQuery("select * from select_dag where id > 1;")
-	r.Check(testkit.Rows(rowStr2, rowStr3))
+	r.Check(testkit.Rows("2 hello", "3 hello"))
 
 	// for limit
 	r = tk.MustQuery("select * from select_dag limit 1;")
-	r.Check(testkit.Rows(rowStr1))
+	r.Check(testkit.Rows("1 hello"))
 	r = tk.MustQuery("select * from select_dag limit 0;")
 	r.Check(testkit.Rows())
 	r = tk.MustQuery("select * from select_dag limit 5;")
-	r.Check(testkit.Rows(rowStr1, rowStr2, rowStr3))
+	r.Check(testkit.Rows("1 hello", "2 hello", "3 hello"))
 }
 
 func (s *testSuite) TestSelectOrderBy(c *C) {
@@ -289,12 +269,9 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	tk.MustExec("use test")
 	s.fillData(tk, "select_order_test")
 
-	tk.MustExec("begin")
 	// Test star field
 	r := tk.MustQuery("select * from select_order_test where id = 1 order by id limit 1 offset 0;")
-	rowStr := fmt.Sprintf("%v %v", 1, []byte("hello"))
-	r.Check(testkit.Rows(rowStr))
-	tk.MustExec("commit")
+	r.Check(testkit.Rows("1 hello"))
 
 	r = tk.MustQuery("select id from select_order_test order by id desc limit 1 ")
 	r.Check(testkit.Rows("2"))
@@ -302,40 +279,25 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	r = tk.MustQuery("select id from select_order_test order by id + 1 desc limit 1 ")
 	r.Check(testkit.Rows("2"))
 
-	tk.MustExec("begin")
 	// Test limit
 	r = tk.MustQuery("select * from select_order_test order by name, id limit 1 offset 0;")
-	rowStr = fmt.Sprintf("%v %v", 1, []byte("hello"))
-	r.Check(testkit.Rows(rowStr))
-	tk.MustExec("commit")
+	r.Check(testkit.Rows("1 hello"))
 
-	tk.MustExec("begin")
 	// Test limit
 	r = tk.MustQuery("select id as c1, name from select_order_test order by 2, id limit 1 offset 0;")
-	rowStr = fmt.Sprintf("%v %v", 1, []byte("hello"))
-	r.Check(testkit.Rows(rowStr))
-	tk.MustExec("commit")
+	r.Check(testkit.Rows("1 hello"))
 
-	tk.MustExec("begin")
 	// Test limit overflow
 	r = tk.MustQuery("select * from select_order_test order by name, id limit 100 offset 0;")
-	rowStr1 := fmt.Sprintf("%v %v", 1, []byte("hello"))
-	rowStr2 := fmt.Sprintf("%v %v", 2, []byte("hello"))
-	r.Check(testkit.Rows(rowStr1, rowStr2))
-	tk.MustExec("commit")
+	r.Check(testkit.Rows("1 hello", "2 hello"))
 
-	tk.MustExec("begin")
 	// Test offset overflow
 	r = tk.MustQuery("select * from select_order_test order by name, id limit 1 offset 100;")
 	r.Check(testkit.Rows())
-	tk.MustExec("commit")
 
-	tk.MustExec("begin")
 	// Test multiple field
 	r = tk.MustQuery("select id, name from select_order_test where id = 1 group by id, name limit 1 offset 0;")
-	rowStr = fmt.Sprintf("%v %v", 1, []byte("hello"))
-	r.Check(testkit.Rows(rowStr))
-	tk.MustExec("commit")
+	r.Check(testkit.Rows("1 hello"))
 
 	// Test limit + order by
 	tk.MustExec("begin")
@@ -351,8 +313,7 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	}
 	tk.MustExec("insert INTO select_order_test VALUES (1501, \"aa\");")
 	r = tk.MustQuery("select * from select_order_test order by name, id limit 1 offset 3;")
-	rowStr = fmt.Sprintf("%v %v", 11, []byte("hh"))
-	r.Check(testkit.Rows(rowStr))
+	r.Check(testkit.Rows("11 hh"))
 	tk.MustExec("drop table select_order_test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int, d int)")
@@ -383,7 +344,6 @@ func (s *testSuite) TestSelectErrorRow(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	tk.MustExec("begin")
 	_, err := tk.Exec("select row(1, 1) from test")
 	c.Assert(err, NotNil)
 
@@ -407,11 +367,9 @@ func (s *testSuite) TestSelectErrorRow(c *C) {
 
 	_, err = tk.Exec("select * from test having (select 1, 1);")
 	c.Assert(err, NotNil)
-
-	tk.MustExec("commit")
 }
 
-// For https://github.com/pingcap/tidb/issues/2612
+// TestIssue2612 for https://github.com/pingcap/tidb/issues/2612
 func (s *testSuite) TestIssue2612(c *C) {
 	defer func() {
 		s.cleanEnv(c)
@@ -431,7 +389,7 @@ func (s *testSuite) TestIssue2612(c *C) {
 	row.Data[0].GetMysqlDuration().String()
 }
 
-// For https://github.com/pingcap/tidb/issues/345
+// TestIssue345 for https://github.com/pingcap/tidb/issues/345
 func (s *testSuite) TestIssue345(c *C) {
 	defer func() {
 		s.cleanEnv(c)
@@ -449,31 +407,22 @@ func (s *testSuite) TestIssue345(c *C) {
 	tk.MustExec(`update t1 as a, t2 as b set a.c1 = 2, b.c2 = 1;`)
 
 	// Check t1 content
-	tk.MustExec("begin")
 	r := tk.MustQuery("SELECT * FROM t1;")
 	r.Check(testkit.Rows("2"))
-	tk.MustExec("commit")
 	// Check t2 content
-	tk.MustExec("begin")
 	r = tk.MustQuery("SELECT * FROM t2;")
 	r.Check(testkit.Rows("1"))
-	tk.MustExec("commit")
 
 	tk.MustExec(`update t1 as a, t2 as t1 set a.c1 = 1, t1.c2 = 2;`)
 	// Check t1 content
-	tk.MustExec("begin")
 	r = tk.MustQuery("SELECT * FROM t1;")
 	r.Check(testkit.Rows("1"))
-	tk.MustExec("commit")
 	// Check t2 content
-	tk.MustExec("begin")
 	r = tk.MustQuery("SELECT * FROM t2;")
 	r.Check(testkit.Rows("2"))
 
 	_, err := tk.Exec(`update t1 as a, t2 set t1.c1 = 10;`)
 	c.Assert(err, NotNil)
-
-	tk.MustExec("commit")
 }
 
 func (s *testSuite) TestUnion(c *C) {
@@ -497,12 +446,10 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec(testSQL)
 
 	testSQL = `select id from union_test union select id from union_test;`
-	tk.MustExec("begin")
 	r := tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1", "2"))
 
 	testSQL = `select * from (select id from union_test union select id from union_test) t order by id;`
-	tk.MustExec("begin")
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1", "2"))
 
@@ -525,13 +472,10 @@ func (s *testSuite) TestUnion(c *C) {
 	r.Check(testkit.Rows("2", "1"))
 
 	r = tk.MustQuery(`select null as a union (select "abc") order by a`)
-	rowStr1 := fmt.Sprintf("%v", nil)
-	r.Check(testkit.Rows(rowStr1, "abc"))
+	r.Check(testkit.Rows("<nil>", "abc"))
 
 	r = tk.MustQuery(`select "abc" as a union (select 1) order by a`)
 	r.Check(testkit.Rows("1", "abc"))
-
-	tk.MustExec("commit")
 
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (c int, d int)")
@@ -741,7 +685,7 @@ func (s *testSuite) TestIndexScan(c *C) {
 	tk.MustExec("CREATE TABLE t (a varchar(3), index(a))")
 	tk.MustExec("insert t values('aaa'), ('aab')")
 	result = tk.MustQuery("select * from t where a >= 'aaaa' and a < 'aabb'")
-	result.Check(testkit.Rows("[97 97 98]"))
+	result.Check(testkit.Rows("aab"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE t (a int primary key, b int, c int, index(c))")
@@ -907,36 +851,32 @@ func (s *testSuite) TestBuiltin(c *C) {
 	tk.MustExec("create table t (a varchar(255), b int)")
 	tk.MustExec("insert t values ('str1', 1)")
 	result = tk.MustQuery("select * from t where a = case b when 1 then 'str1' when 2 then 'str2' end")
-	rowStr1 := fmt.Sprintf("%v %v", []byte("str1"), "1")
-	result.Check(testkit.Rows(rowStr1))
+	result.Check(testkit.Rows("str1 1"))
 	result = tk.MustQuery("select * from t where a = case b when 1 then 'str2' when 2 then 'str3' end")
 	result.Check(nil)
 	tk.MustExec("insert t values ('str2', 2)")
 	result = tk.MustQuery("select * from t where a = case b when 2 then 'str2' when 3 then 'str3' end")
-	rowStr2 := fmt.Sprintf("%v %v", []byte("str2"), "2")
-	result.Check(testkit.Rows(rowStr2))
+	result.Check(testkit.Rows("str2 2"))
 	tk.MustExec("insert t values ('str3', 3)")
 	result = tk.MustQuery("select * from t where a = case b when 4 then 'str4' when 5 then 'str5' else 'str3' end")
-	rowStr3 := fmt.Sprintf("%v %v", []byte("str3"), "3")
-	result.Check(testkit.Rows(rowStr3))
+	result.Check(testkit.Rows("str3 3"))
 	result = tk.MustQuery("select * from t where a = case b when 4 then 'str4' when 5 then 'str5' else 'str6' end")
 	result.Check(nil)
 	result = tk.MustQuery("select * from t where a = case  when b then 'str3' when 1 then 'str1' else 'str2' end")
-	result.Check(testkit.Rows(rowStr3))
+	result.Check(testkit.Rows("str3 3"))
 	tk.MustExec("delete from t")
 	tk.MustExec("insert t values ('str2', 0)")
 	result = tk.MustQuery("select * from t where a = case  when b then 'str3' when 0 then 'str1' else 'str2' end")
-	rowStr2 = fmt.Sprintf("%v %v", []byte("str2"), "0")
-	result.Check(testkit.Rows(rowStr2))
+	result.Check(testkit.Rows("str2 0"))
 	tk.MustExec("insert t values ('str1', null)")
 	result = tk.MustQuery("select * from t where a = case b when null then 'str3' when 10 then 'str1' else 'str2' end")
-	result.Check(testkit.Rows(rowStr2))
+	result.Check(testkit.Rows("str2 0"))
 	result = tk.MustQuery("select * from t where a = case null when b then 'str3' when 10 then 'str1' else 'str2' end")
-	result.Check(testkit.Rows(rowStr2))
+	result.Check(testkit.Rows("str2 0"))
 	result = tk.MustQuery("select cast(1234 as char(3))")
 	result.Check(testkit.Rows("123"))
 
-	// for like and regexp
+	// testCase for like and regexp
 	type testCase struct {
 		pattern string
 		val     string
@@ -949,7 +889,7 @@ func (s *testSuite) TestBuiltin(c *C) {
 			tk.MustExec(fmt.Sprintf("insert into t values('%s', %d)", d.val, i))
 			result := tk.MustQuery(fmt.Sprintf("select * from t where a %s '%s'", queryOp, d.pattern))
 			if d.result == 1 {
-				rowStr := fmt.Sprintf("%v %d", []byte(d.val), i)
+				rowStr := fmt.Sprintf("%s %d", d.val, i)
 				result.Check(testkit.Rows(rowStr))
 			} else {
 				result.Check(nil)
@@ -1022,9 +962,7 @@ func (s *testSuite) TestToPBExpr(c *C) {
 	tk.MustExec("insert t values ('abc123', 1)")
 	tk.MustExec("insert t values ('ab123', 2)")
 	result = tk.MustQuery("select * from t where a like 'ab%'")
-	rowStr0 := fmt.Sprintf("%v %v", []byte("abc123"), "1")
-	rowStr1 := fmt.Sprintf("%v %v", []byte("ab123"), "2")
-	result.Check(testkit.Rows(rowStr0, rowStr1))
+	result.Check(testkit.Rows("abc123 1", "ab123 2"))
 	result = tk.MustQuery("select * from t where a like 'ab_12'")
 	result.Check(nil)
 	tk.MustExec("drop table if exists t")
@@ -1103,7 +1041,7 @@ func (s *testSuite) TestSQLMode(c *C) {
 	tk2.MustExec("use test")
 	tk2.MustExec("create table t2 (a varchar(3))")
 	tk2.MustExec("insert t2 values ('abcd')")
-	tk2.MustQuery("select * from t2").Check(testkit.Rows(fmt.Sprintf("%v", []byte("abc"))))
+	tk2.MustQuery("select * from t2").Check(testkit.Rows("abc"))
 
 	// session1 is still in strict mode.
 	_, err = tk.Exec("insert t2 values ('abcd')")
