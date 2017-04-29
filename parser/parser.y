@@ -312,6 +312,7 @@ import (
 	pi				"PI"
 	pow				"POW"
 	power				"POWER"
+	process				"PROCESS"
 	query				"QUERY"
 	rand				"RAND"
 	radians				"RADIANS"
@@ -6114,6 +6115,10 @@ PrivType:
 |	"DROP"
 	{
 		$$ = mysql.DropPriv
+	}
+|	"PROCESS"
+	{
+		$$ = mysql.ProcessPriv
 	}
 |	"EXECUTE"
 	{

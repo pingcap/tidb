@@ -53,11 +53,11 @@ func (s *testCacheSuite) TestLoadUserTable(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(p.User), Equals, 0)
 
-	// Host | User | Password | Select_priv | Insert_priv | Update_priv | Delete_priv | Create_priv | Drop_priv | Grant_priv | Alter_priv | Show_db_priv | Super_priv | Execute_priv | Index_priv | Create_user_priv
-	mustExec(c, se, `INSERT INTO mysql.user VALUES ("%", "root", "", "Y", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N")`)
-	mustExec(c, se, `INSERT INTO mysql.user VALUES ("%", "root1", "admin", "N", "Y", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N")`)
-	mustExec(c, se, `INSERT INTO mysql.user VALUES ("%", "root11", "", "N", "N", "Y", "N", "N", "N", "N", "N", "Y", "N", "N", "N", "N")`)
-	mustExec(c, se, `INSERT INTO mysql.user VALUES ("%", "root111", "", "N", "N", "N", "N", "N", "N", "N", "N", "Y", "Y", "Y", "Y", "Y")`)
+	// Host | User | Password | Select_priv | Insert_priv | Update_priv | Delete_priv | Create_priv | Drop_priv| Process_priv  | Grant_priv | Alter_priv | Show_db_priv | Super_priv | Execute_priv | Index_priv | Create_user_priv
+	mustExec(c, se, `INSERT INTO mysql.user VALUES ("%", "root", "", "Y", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N")`)
+	mustExec(c, se, `INSERT INTO mysql.user VALUES ("%", "root1", "admin", "N", "Y", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N")`)
+	mustExec(c, se, `INSERT INTO mysql.user VALUES ("%", "root11", "", "N", "N", "Y", "N", "N", "N", "N", "N", "N", "Y", "N", "N", "N", "N")`)
+	mustExec(c, se, `INSERT INTO mysql.user VALUES ("%", "root111", "", "N", "N", "N", "N", "N", "N", "N", "N", "N", "Y", "Y", "Y", "Y", "Y")`)
 
 	p = privileges.MySQLPrivilege{}
 	err = p.LoadUserTable(se)
@@ -136,7 +136,7 @@ func (s *testCacheSuite) TestPatternMatch(c *C) {
 	defer se.Close()
 	mustExec(c, se, "USE MYSQL;")
 	mustExec(c, se, "TRUNCATE TABLE mysql.user")
-	mustExec(c, se, `INSERT INTO mysql.user VALUES ("10.0.%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+	mustExec(c, se, `INSERT INTO mysql.user VALUES ("10.0.%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
 	var p privileges.MySQLPrivilege
 	err = p.LoadUserTable(se)
 	c.Assert(err, IsNil)
@@ -147,7 +147,7 @@ func (s *testCacheSuite) TestPatternMatch(c *C) {
 	c.Assert(p.RequestVerification("root", "114.114.114.114", "test", "", "", mysql.SelectPriv), IsFalse)
 
 	mustExec(c, se, "TRUNCATE TABLE mysql.user")
-	mustExec(c, se, `INSERT INTO mysql.user VALUES ("", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+	mustExec(c, se, `INSERT INTO mysql.user VALUES ("", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
 	p = privileges.MySQLPrivilege{}
 	err = p.LoadUserTable(se)
 	c.Assert(err, IsNil)

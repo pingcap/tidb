@@ -1685,7 +1685,7 @@ func (b *builtinTimestampSig) eval(row []types.Datum) (d types.Datum, err error)
 	case types.KindMysqlTime:
 		arg0 = args[0].GetMysqlTime()
 	default:
-		return d, errors.Errorf("Unkonwn args type for timestamp %d", tp)
+		return d, errors.Errorf("Unknown args type for timestamp %d", tp)
 	}
 	if len(args) == 1 {
 		d.SetMysqlTime(arg0)
