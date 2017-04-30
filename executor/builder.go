@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // executorBuilder builds an Executor from a Plan.
@@ -117,6 +118,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildCache(v)
 	case *plan.Analyze:
 		return b.buildAnalyze(v)
+	case *plan.PhysicalTableReader:
+		return b.buildTableReader(v)
 	default:
 		b.err = ErrUnknownPlan.Gen("Unknown Plan %T", p)
 		return nil
@@ -343,9 +346,9 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 		us.conditions = v.Conditions
 		us.buildAndSortAddedRows(x.table, x.asName)
 	case *XSelectIndexExec:
-		us.desc = x.indexPlan.Desc
-		for _, ic := range x.indexPlan.Index.Columns {
-			for i, col := range x.indexPlan.Schema().Columns {
+		us.desc = x.desc
+		for _, ic := range x.index.Columns {
+			for i, col := range x.schema.Columns {
 				if col.ColName.L == ic.Name.L {
 					us.usedIndex = append(us.usedIndex, i)
 					break
@@ -434,10 +437,10 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 	for i := 0; i < e.concurrency; i++ {
 		ctx := &hashJoinCtx{}
 		if e.bigFilter != nil {
-			ctx.bigFilter = e.bigFilter
+			ctx.bigFilter = e.bigFilter.Clone()
 		}
 		if e.otherFilter != nil {
-			ctx.otherFilter = e.otherFilter
+			ctx.otherFilter = e.otherFilter.Clone()
 		}
 		ctx.datumBuffer = make([]types.Datum, len(e.bigHashKey))
 		ctx.hashKeyBuffer = make([]byte, 0, 10000)
@@ -582,18 +585,26 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 	client := b.ctx.GetClient()
 	supportDesc := client.SupportRequestType(kv.ReqTypeIndex, kv.ReqSubTypeDesc)
 	e := &XSelectIndexExec{
-		tableInfo:      v.Table,
-		ctx:            b.ctx,
-		supportDesc:    supportDesc,
-		asName:         v.TableAsName,
-		table:          table,
-		indexPlan:      v,
-		singleReadMode: !v.DoubleRead,
-		startTS:        startTS,
-		where:          v.TableConditionPBExpr,
-		aggregate:      v.Aggregated,
-		aggFuncs:       v.AggFuncsPB,
-		byItems:        v.GbyItemsPB,
+		tableInfo:            v.Table,
+		ctx:                  b.ctx,
+		supportDesc:          supportDesc,
+		asName:               v.TableAsName,
+		table:                table,
+		singleReadMode:       !v.DoubleRead,
+		startTS:              startTS,
+		where:                v.TableConditionPBExpr,
+		schema:               v.Schema(),
+		ranges:               v.Ranges,
+		limitCount:           v.LimitCount,
+		sortItemsPB:          v.SortItemsPB,
+		columns:              v.Columns,
+		index:                v.Index,
+		desc:                 v.Desc,
+		outOfOrder:           v.OutOfOrder,
+		indexConditionPBExpr: v.IndexConditionPBExpr,
+		aggregate:            v.Aggregated,
+		aggFuncs:             v.AggFuncsPB,
+		byItems:              v.GbyItemsPB,
 	}
 	vars := b.ctx.GetSessionVars()
 	if v.OutOfOrder {
@@ -605,9 +616,9 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 	}
 	if !e.aggregate && e.singleReadMode {
 		// Single read index result has the schema of full index columns.
-		schemaColumns := make([]*expression.Column, len(e.indexPlan.Index.Columns))
-		for i, col := range e.indexPlan.Index.Columns {
-			colInfo := e.indexPlan.Table.Columns[col.Offset]
+		schemaColumns := make([]*expression.Column, len(e.index.Columns))
+		for i, col := range e.index.Columns {
+			colInfo := e.tableInfo.Columns[col.Offset]
 			schemaColumns[i] = &expression.Column{
 				Index:   i,
 				ColName: col.Name,
@@ -743,22 +754,105 @@ func (b *executorBuilder) buildCache(v *plan.Cache) Executor {
 	}
 }
 
+func (b *executorBuilder) buildTableScanForAnalyze(tblInfo *model.TableInfo, cols []*model.ColumnInfo) Executor {
+	startTS := b.getStartTS()
+	if b.err != nil {
+		return nil
+	}
+	table, _ := b.is.TableByID(tblInfo.ID)
+	schema := expression.NewSchema(expression.ColumnInfos2Columns(tblInfo.Name, cols)...)
+	ranges := []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}
+	e := &XSelectTableExec{
+		tableInfo: tblInfo,
+		ctx:       b.ctx,
+		startTS:   startTS,
+		table:     table,
+		schema:    schema,
+		Columns:   cols,
+		ranges:    ranges,
+	}
+	return e
+}
+
+func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) Executor {
+	startTS := b.getStartTS()
+	if b.err != nil {
+		return nil
+	}
+	table, _ := b.is.TableByID(tblInfo.ID)
+	cols := make([]*model.ColumnInfo, len(idxInfo.Columns))
+	for i, col := range idxInfo.Columns {
+		cols[i] = tblInfo.Columns[col.Offset]
+	}
+	schema := expression.NewSchema(expression.ColumnInfos2Columns(tblInfo.Name, cols)...)
+	idxRange := &types.IndexRange{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.MaxValueDatum()}}
+	scanConcurrency := b.ctx.GetSessionVars().IndexSerialScanConcurrency
+	e := &XSelectIndexExec{
+		tableInfo:       tblInfo,
+		ctx:             b.ctx,
+		table:           table,
+		singleReadMode:  true,
+		startTS:         startTS,
+		idxColsSchema:   schema,
+		schema:          schema,
+		ranges:          []*types.IndexRange{idxRange},
+		columns:         cols,
+		index:           idxInfo,
+		outOfOrder:      false,
+		scanConcurrency: scanConcurrency,
+	}
+	return e
+}
+
 func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	e := &AnalyzeExec{
 		ctx:   b.ctx,
 		tasks: make([]analyzeTask, 0, len(v.Children())),
 	}
-	pkTasks := v.Children()[:len(v.PkTasks)]
-	for _, task := range pkTasks {
-		e.tasks = append(e.tasks, analyzeTask{taskType: pkTask, src: b.build(task)})
+	for _, task := range v.PkTasks {
+		e.tasks = append(e.tasks, analyzeTask{taskType: pkTask,
+			src: b.buildTableScanForAnalyze(task.TableInfo, []*model.ColumnInfo{task.PKInfo})})
 	}
-	colTasks := v.Children()[len(v.PkTasks) : len(v.PkTasks)+len(v.ColTasks)]
-	for _, task := range colTasks {
-		e.tasks = append(e.tasks, analyzeTask{taskType: colTask, src: b.build(task)})
+	for _, task := range v.ColTasks {
+		e.tasks = append(e.tasks, analyzeTask{taskType: colTask,
+			src: b.buildTableScanForAnalyze(task.TableInfo, task.ColsInfo)})
 	}
-	idxTasks := v.Children()[len(v.PkTasks)+len(v.ColTasks):]
-	for _, task := range idxTasks {
-		e.tasks = append(e.tasks, analyzeTask{taskType: idxTask, src: b.build(task)})
+	for _, task := range v.IdxTasks {
+		e.tasks = append(e.tasks, analyzeTask{taskType: idxTask,
+			src: b.buildIndexScanForAnalyze(task.TableInfo, task.IndexInfo)})
 	}
+	return e
+}
+
+func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor {
+	dagReq := &tipb.DAGRequest{}
+	dagReq.StartTs = b.getStartTS()
+	dagReq.TimeZoneOffset = timeZoneOffset()
+	sc := b.ctx.GetSessionVars().StmtCtx
+	dagReq.Flags = statementContextToFlags(sc)
+	for _, p := range v.TablePlans {
+		execPB, err := p.ToPB(b.ctx)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		dagReq.Executors = append(dagReq.Executors, execPB)
+	}
+
+	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
+	table, _ := b.is.TableByID(ts.Table.ID)
+	e := &TableReaderExecutor{
+		ctx:       b.ctx,
+		schema:    v.Schema(),
+		dagPB:     dagReq,
+		asName:    ts.TableAsName,
+		tableID:   ts.Table.ID,
+		table:     table,
+		keepOrder: ts.KeepOrder,
+		desc:      ts.Desc,
+		ranges:    ts.Ranges,
+	}
+
+	b.err = e.doRequest()
 	return e
 }

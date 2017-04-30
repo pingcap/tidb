@@ -505,22 +505,23 @@ func (e *SelectionExec) initController() error {
 	switch x := e.Src.(type) {
 	case *XSelectTableExec:
 		accessCondition, restCondtion := plan.DetachTableScanConditions(newConds, x.tableInfo)
-		x.where, _, _ = plan.ExpressionsToPB(sc, restCondtion, client)
+		x.where, _, _ = expression.ExpressionsToPB(sc, restCondtion, client)
 		ranges, err := plan.BuildTableRange(accessCondition, sc)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		x.ranges = ranges
 	case *XSelectIndexExec:
-		x.indexPlan.AccessCondition, newConds, _, _ = plan.DetachIndexScanConditions(newConds, x.indexPlan.Index)
-		idxConds, tblConds := plan.DetachIndexFilterConditions(newConds, x.indexPlan.Index.Columns, x.indexPlan.Table)
-		x.indexPlan.IndexConditionPBExpr, _, _ = plan.ExpressionsToPB(sc, idxConds, client)
-		x.indexPlan.TableConditionPBExpr, _, _ = plan.ExpressionsToPB(sc, tblConds, client)
-		err := plan.BuildIndexRange(sc, x.indexPlan)
+		accessCondition, newConds, _, accessInAndEqCount := plan.DetachIndexScanConditions(newConds, x.index)
+		idxConds, tblConds := plan.DetachIndexFilterConditions(newConds, x.index.Columns, x.tableInfo)
+		x.indexConditionPBExpr, _, _ = expression.ExpressionsToPB(sc, idxConds, client)
+		tableConditionPBExpr, _, _ := expression.ExpressionsToPB(sc, tblConds, client)
+		var err error
+		x.ranges, err = plan.BuildIndexRange(sc, x.tableInfo, x.index, accessInAndEqCount, accessCondition)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		x.where = x.indexPlan.TableConditionPBExpr
+		x.where = tableConditionPBExpr
 	default:
 		return errors.Errorf("Error type of Executor: %T", x)
 	}

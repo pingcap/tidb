@@ -93,7 +93,7 @@ type mockResponse struct {
 func (resp *mockResponse) Next() ([]byte, error) {
 	resp.count++
 	if resp.count == 100 {
-		return nil, errors.New("error happend")
+		return nil, errors.New("error happened")
 	}
 	return mockSubresult(), nil
 }

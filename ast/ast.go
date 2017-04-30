@@ -116,12 +116,12 @@ type ResultField struct {
 	TableAsName  model.CIStr
 	DBName       model.CIStr
 
-	// The expression for the result field. If it is generated from a select field, it would
+	// Expr represents the expression for the result field. If it is generated from a select field, it would
 	// be the expression of that select field, otherwise the type would be ValueExpr and value
 	// will be set for every retrieved row.
 	Expr      ExprNode
 	TableName *TableName
-	// Whether this result field has been referenced.
+	// Referenced indicates the result field has been referenced or not.
 	// If not, we don't need to get the values.
 	Referenced bool
 }
@@ -145,7 +145,7 @@ type RecordSet interface {
 	Close() error
 }
 
-// The ResultSetNode interface has a ResultFields property, represents a Node that returns result set.
+// ResultSetNode interface has a ResultFields property, represents a Node that returns result set.
 // Implementations include SelectStmt, SubqueryExpr, TableSource, TableName and Join.
 type ResultSetNode interface {
 	Node

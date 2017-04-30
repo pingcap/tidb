@@ -271,7 +271,7 @@ func (s *testMyDecimalSuite) TestRound(c *C) {
 			var dec MyDecimal
 			dec.FromString([]byte(ca.input))
 			var rounded MyDecimal
-			err := dec.Round(&rounded, ca.scale)
+			err := dec.Round(&rounded, ca.scale, ModeHalfEven)
 			c.Check(err, Equals, ca.err)
 			result := rounded.ToString()
 			c.Check(string(result), Equals, ca.output)

@@ -620,7 +620,7 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeNewDecimal, NewDecFromInt(12300000), "12300000")
 	dec := NewDecFromInt(-123)
 	dec.Shift(-5)
-	dec.Round(dec, 5)
+	dec.Round(dec, 5, ModeHalfEven)
 	signedAccept(c, mysql.TypeNewDecimal, dec, "-0.00123")
 }
 

@@ -311,7 +311,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		if x.FnName.L == ast.Abs && tp.Tp == mysql.TypeDatetime {
 			tp = types.NewFieldType(mysql.TypeDouble)
 		}
-	case ast.Round:
+	case ast.Round, ast.Truncate:
 		if len(x.Args) == 0 {
 			tp = types.NewFieldType(mysql.TypeNull)
 			break
@@ -381,7 +381,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = types.NewFieldType(mysql.TypeLonglong)
 		tp.Flag |= mysql.UnsignedFlag
 	// time related
-	case ast.Curtime, ast.CurrentTime, ast.TimeDiff, ast.MakeTime, ast.SecToTime:
+	case ast.Curtime, ast.CurrentTime, ast.TimeDiff, ast.MakeTime, ast.SecToTime, ast.UTCTime:
 		tp = types.NewFieldType(mysql.TypeDuration)
 		tp.Decimal = v.getFsp(x)
 	case ast.Curdate, ast.CurrentDate, ast.Date, ast.FromDays, ast.MakeDate:

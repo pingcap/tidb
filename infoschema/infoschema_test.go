@@ -224,7 +224,7 @@ func (testSuite) TestConcurrent(c *C) {
 	wg.Wait()
 }
 
-// Make sure that all tables of infomation_schema could be found in infoschema handle.
+// Make sure that all tables of information_schema could be found in infoschema handle.
 func (*testSuite) TestInfoTables(c *C) {
 	defer testleak.AfterTest(c)()
 	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
