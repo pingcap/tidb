@@ -78,24 +78,10 @@ func (s *testSuite) TestShow(c *C) {
 	// Test case for index type and comment
 	tk.MustExec(`create table show_index (id int, c int, primary key (id), index cIdx using hash (c) comment "index_comment_for_cIdx");`)
 	testSQL = "SHOW index from show_index;"
-	result = tk.MustQuery(testSQL)
-	c.Check(result.Rows(), HasLen, 2)
-	expectedRow = []interface{}{
-		"show_index", int64(0), "PRIMARY", int64(1), "id", "utf8_bin",
-		int64(0), nil, nil, "", "BTREE", "", ""}
-	row = result.Rows()[0]
-	c.Check(row, HasLen, len(expectedRow))
-	for i, r := range row {
-		c.Check(r, Equals, expectedRow[i])
-	}
-	expectedRow = []interface{}{
-		"show_index", int64(1), "cIdx", int64(1), "c", "utf8_bin",
-		int64(0), nil, nil, "YES", "HASH", "", "index_comment_for_cIdx"}
-	row = result.Rows()[1]
-	c.Check(row, HasLen, len(expectedRow))
-	for i, r := range row {
-		c.Check(r, Equals, expectedRow[i])
-	}
+	tk.MustQuery(testSQL).Check(testutil.RowsWithSep("|",
+		"show_index|0|PRIMARY|1|id|utf8_bin|0|<nil>|<nil>||BTREE||",
+		"show_index|1|cIdx|1|c|utf8_bin|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx",
+	))
 
 	// For show like with escape
 	testSQL = `show tables like 'show\_test'`
@@ -119,14 +105,9 @@ func (s *testSuite) TestShow(c *C) {
 	testSQL = `create database show_test_DB`
 	tk.MustExec(testSQL)
 	testSQL = "show create database show_test_DB;"
-	result = tk.MustQuery(testSQL)
-	c.Check(result.Rows(), HasLen, 1)
-	row = result.Rows()[0]
-	expectedRow = []interface{}{
-		"show_test_DB", "CREATE DATABASE `show_test_DB` /* !40100 DEFAULT CHARACTER SET utf8 */"}
-	for i, r := range row {
-		c.Check(r, Equals, expectedRow[i])
-	}
+	tk.MustQuery(testSQL).Check(testutil.RowsWithSep("|",
+		"show_test_DB|CREATE DATABASE `show_test_DB` /* !40100 DEFAULT CHARACTER SET utf8 */",
+	))
 
 	tk.MustExec("use show_test_DB")
 	result = tk.MustQuery("SHOW index from show_index from test where Column_name = 'c'")

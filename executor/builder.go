@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // executorBuilder builds an Executor from a Plan.
@@ -117,6 +118,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildCache(v)
 	case *plan.Analyze:
 		return b.buildAnalyze(v)
+	case *plan.PhysicalTableReader:
+		return b.buildTableReader(v)
 	default:
 		b.err = ErrUnknownPlan.Gen("Unknown Plan %T", p)
 		return nil
@@ -434,10 +437,10 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 	for i := 0; i < e.concurrency; i++ {
 		ctx := &hashJoinCtx{}
 		if e.bigFilter != nil {
-			ctx.bigFilter = e.bigFilter
+			ctx.bigFilter = e.bigFilter.Clone()
 		}
 		if e.otherFilter != nil {
-			ctx.otherFilter = e.otherFilter
+			ctx.otherFilter = e.otherFilter.Clone()
 		}
 		ctx.datumBuffer = make([]types.Datum, len(e.bigHashKey))
 		ctx.hashKeyBuffer = make([]byte, 0, 10000)
@@ -818,5 +821,38 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 		e.tasks = append(e.tasks, analyzeTask{taskType: idxTask,
 			src: b.buildIndexScanForAnalyze(task.TableInfo, task.IndexInfo)})
 	}
+	return e
+}
+
+func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor {
+	dagReq := &tipb.DAGRequest{}
+	dagReq.StartTs = b.getStartTS()
+	dagReq.TimeZoneOffset = timeZoneOffset()
+	sc := b.ctx.GetSessionVars().StmtCtx
+	dagReq.Flags = statementContextToFlags(sc)
+	for _, p := range v.TablePlans {
+		execPB, err := p.ToPB(b.ctx)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		dagReq.Executors = append(dagReq.Executors, execPB)
+	}
+
+	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
+	table, _ := b.is.TableByID(ts.Table.ID)
+	e := &TableReaderExecutor{
+		ctx:       b.ctx,
+		schema:    v.Schema(),
+		dagPB:     dagReq,
+		asName:    ts.TableAsName,
+		tableID:   ts.Table.ID,
+		table:     table,
+		keepOrder: ts.KeepOrder,
+		desc:      ts.Desc,
+		ranges:    ts.Ranges,
+	}
+
+	b.err = e.doRequest()
 	return e
 }

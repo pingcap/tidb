@@ -164,8 +164,20 @@ type Expression interface {
 	ResolveIndices(schema *Schema)
 }
 
+// CNFExprs stands for a CNF expression.
+type CNFExprs []Expression
+
+// Clone clones itself.
+func (e CNFExprs) Clone() CNFExprs {
+	cnf := make(CNFExprs, 0, len(e))
+	for _, expr := range e {
+		cnf = append(cnf, expr.Clone())
+	}
+	return cnf
+}
+
 // EvalBool evaluates expression list to a boolean value.
-func EvalBool(exprList []Expression, row []types.Datum, ctx context.Context) (bool, error) {
+func EvalBool(exprList CNFExprs, row []types.Datum, ctx context.Context) (bool, error) {
 	for _, expr := range exprList {
 		data, err := expr.Eval(row)
 		if err != nil {

@@ -143,7 +143,7 @@ func (s *testStatsCacheSuite) TestDDLHistogram(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo.ID)
-	// If we don't use orginal default value, we will get a pseudo table.
+	// If we don't use original default value, we will get a pseudo table.
 	c.Assert(statsTbl.Pseudo, IsFalse)
 
 	rs := testKit.MustQuery("select count(*) from mysql.stats_histograms where table_id = ? and hist_id = 3 and is_index = 0", tableInfo.ID)

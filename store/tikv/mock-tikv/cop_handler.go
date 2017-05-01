@@ -62,7 +62,9 @@ func (h *rpcHandler) handleCopRequest(req *coprocessor.Request) (*coprocessor.Re
 	if len(req.Ranges) == 0 {
 		return resp, nil
 	}
-	if req.GetTp() == kv.ReqTypeSelect || req.GetTp() == kv.ReqTypeIndex {
+	if req.GetTp() == kv.ReqTypeDAG {
+		return h.handleCopDAGRequest(req)
+	} else if req.GetTp() == kv.ReqTypeSelect || req.GetTp() == kv.ReqTypeIndex {
 		sel := new(tipb.SelectRequest)
 		err := proto.Unmarshal(req.Data, sel)
 		if err != nil {
