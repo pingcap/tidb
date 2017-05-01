@@ -72,12 +72,10 @@ func (e *ShowExec) Next() (*Row, error) {
 		}
 	}
 	if e.cursor >= len(e.rows) {
-		e.ctx.GetSessionVars().LastFoundRows = e.ctx.GetSessionVars().StmtCtx.FoundRows()
 		return nil, nil
 	}
 	row := e.rows[e.cursor]
 	e.cursor++
-	e.ctx.GetSessionVars().StmtCtx.AddFoundRows(1)
 	return row, nil
 }
 

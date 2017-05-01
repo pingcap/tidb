@@ -341,14 +341,6 @@ func (sc *StatementContext) FoundRows() uint64 {
 	return rows
 }
 
-// SubFoundRows subs found rows.
-// Only SelectionExec use when condition not matched for now.
-func (sc *StatementContext) SubFoundRows(rows uint64) {
-	sc.mu.Lock()
-	sc.mu.foundRows -= rows
-	sc.mu.Unlock()
-}
-
 // AddFoundRows adds found rows.
 func (sc *StatementContext) AddFoundRows(rows uint64) {
 	sc.mu.Lock()
