@@ -35,7 +35,7 @@ import (
 type executorBuilder struct {
 	ctx context.Context
 	is  infoschema.InfoSchema
-	// If there is any error during Executor building process, err is set.
+	// err is set when there is error happened during Executor building process.
 	err error
 }
 
@@ -365,6 +365,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 	return us
 }
 
+// buildMergeJoin builds SortMergeJoin executor.
 // TODO: Refactor against different join strategies by extracting common code base
 func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 	joinBuilder := &joinBuilder{}
