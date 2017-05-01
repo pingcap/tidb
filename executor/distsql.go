@@ -403,6 +403,7 @@ func (e *XSelectIndexExec) Close() error {
 // Next implements the Executor Next interface.
 func (e *XSelectIndexExec) Next() (*Row, error) {
 	if e.limitCount != nil && len(e.sortItemsPB) == 0 && e.returnedRows >= uint64(*e.limitCount) {
+		e.ctx.GetSessionVars().LastFoundRows = e.ctx.GetSessionVars().StmtCtx.FoundRows()
 		return nil, nil
 	}
 	e.returnedRows++
@@ -437,6 +438,7 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 					connID := e.ctx.GetSessionVars().ConnectionID
 					log.Infof("[%d] [TIME_INDEX_SINGLE] %s", connID, e.slowQueryInfo(duration))
 				}
+				e.ctx.GetSessionVars().LastFoundRows = e.ctx.GetSessionVars().StmtCtx.FoundRows()
 				return nil, nil
 			}
 			e.partialCount++
@@ -452,6 +454,8 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 			e.partialResult = nil
 			continue
 		}
+		e.ctx.GetSessionVars().StmtCtx.AddFoundRows(1)
+
 		var schema *expression.Schema
 		if e.aggregate {
 			schema = e.Schema()
@@ -534,6 +538,7 @@ func (e *XSelectIndexExec) nextForDoubleRead() (*Row, error) {
 					connID := e.ctx.GetSessionVars().ConnectionID
 					log.Infof("[%d] [TIME_INDEX_DOUBLE] %s", connID, e.slowQueryInfo(duration))
 				}
+				e.ctx.GetSessionVars().LastFoundRows = e.ctx.GetSessionVars().StmtCtx.FoundRows()
 				return nil, e.tasksErr
 			}
 			e.partialCount++
@@ -544,6 +549,7 @@ func (e *XSelectIndexExec) nextForDoubleRead() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		if row != nil {
+			e.ctx.GetSessionVars().StmtCtx.AddFoundRows(1)
 			return row, nil
 		}
 		e.taskCurr = nil
@@ -885,6 +891,7 @@ func (e *XSelectTableExec) Close() error {
 // Next implements the Executor interface.
 func (e *XSelectTableExec) Next() (*Row, error) {
 	if e.limitCount != nil && e.returnedRows >= uint64(*e.limitCount) {
+		e.ctx.GetSessionVars().LastFoundRows = e.ctx.GetSessionVars().StmtCtx.FoundRows()
 		return nil, nil
 	}
 	if e.result == nil {
@@ -909,6 +916,7 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 					connID := e.ctx.GetSessionVars().ConnectionID
 					log.Infof("[%d] [TIME_TABLE_SCAN] %s", connID, e.slowQueryInfo(duration))
 				}
+				e.ctx.GetSessionVars().LastFoundRows = e.ctx.GetSessionVars().StmtCtx.FoundRows()
 				return nil, nil
 			}
 			e.partialCount++
@@ -924,6 +932,7 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 			e.partialResult = nil
 			continue
 		}
+		e.ctx.GetSessionVars().StmtCtx.AddFoundRows(1)
 		e.returnedRows++
 		values := make([]types.Datum, e.schema.Len())
 		err = codec.SetRawValues(rowData, values)

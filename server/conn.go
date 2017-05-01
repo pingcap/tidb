@@ -751,8 +751,6 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 		return errors.Trace(err)
 	}
 
-	var foundRows uint64
-
 	for {
 		if err != nil {
 			return errors.Trace(err)
@@ -787,12 +785,7 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 			return errors.Trace(err)
 		}
 		row, err = rs.Next()
-		foundRows++
 	}
-
-	sessVars := cc.ctx.(*TiDBContext).session.GetSessionVars()
-	sessVars.StmtCtx.AddFoundRows(foundRows)
-	sessVars.LastFoundRows = sessVars.StmtCtx.FoundRows()
 
 	err = cc.writeEOF(more)
 	if err != nil {

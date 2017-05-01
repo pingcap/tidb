@@ -407,16 +407,19 @@ func (e *ProjectionExec) Next() (retRow *Row, err error) {
 			return nil, errors.Trace(err)
 		}
 		if srcRow == nil {
+			e.ctx.GetSessionVars().LastFoundRows = e.ctx.GetSessionVars().StmtCtx.FoundRows()
 			return nil, nil
 		}
 		rowKeys = srcRow.RowKeys
 	} else {
 		// If Src is nil, only one row should be returned.
 		if e.executed {
+			e.ctx.GetSessionVars().LastFoundRows = e.ctx.GetSessionVars().StmtCtx.FoundRows()
 			return nil, nil
 		}
 	}
 	e.executed = true
+	e.ctx.GetSessionVars().StmtCtx.AddFoundRows(1)
 	row := &Row{
 		RowKeys: rowKeys,
 		Data:    make([]types.Datum, 0, len(e.exprs)),
@@ -543,6 +546,7 @@ func (e *SelectionExec) Next() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		if srcRow == nil {
+			e.ctx.GetSessionVars().LastFoundRows = e.ctx.GetSessionVars().StmtCtx.FoundRows()
 			return nil, nil
 		}
 		match, err := expression.EvalBool(e.Conditions, srcRow.Data, e.ctx)
@@ -551,6 +555,8 @@ func (e *SelectionExec) Next() (*Row, error) {
 		}
 		if match {
 			return srcRow, nil
+		} else {
+			e.ctx.GetSessionVars().StmtCtx.SubFoundRows(1)
 		}
 	}
 }

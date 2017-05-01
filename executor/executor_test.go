@@ -923,6 +923,34 @@ func (s *testSuite) TestBuiltin(c *C) {
 		{".*", "abcd", 1},
 	}
 	patternMatching(c, tk, "regexp", likeTests)
+
+	// for found_rows
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustQuery("select * from t") // Test XSelectTableExec
+	result = tk.MustQuery("select found_rows()")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select found_rows()")
+	result.Check(testkit.Rows("1")) // Last query is found_rows(), it returns 1 row with value 0
+	tk.MustExec("insert t values (1),(2),(2)")
+	tk.MustQuery("select * from t")
+	result = tk.MustQuery("select found_rows()")
+	result.Check(testkit.Rows("3"))
+	tk.MustQuery("select * from t where a = 0")
+	result = tk.MustQuery("select found_rows()")
+	result.Check(testkit.Rows("0"))
+	tk.MustQuery("select * from t where a = 1")
+	result = tk.MustQuery("select found_rows()")
+	result.Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t where a like '2'") // Test SelectionExec
+	result = tk.MustQuery("select found_rows()")
+	result.Check(testkit.Rows("2"))
+	tk.MustQuery("show tables like 't'")
+	result = tk.MustQuery("select found_rows()")
+	result.Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from t") // Test ProjectionExec
+	result = tk.MustQuery("select found_rows()")
+	result.Check(testkit.Rows("1"))
 }
 
 func (s *testSuite) TestToPBExpr(c *C) {
