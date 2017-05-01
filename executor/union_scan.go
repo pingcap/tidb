@@ -27,7 +27,7 @@ import (
 // dirtyDB stores uncommitted write operations for a transaction.
 // It is stored and retrieved by context.Value and context.SetValue method.
 type dirtyDB struct {
-	// Key is tableID.
+	// tables is a map whose key is tableID.
 	tables map[int64]*dirtyTable
 }
 
@@ -66,7 +66,8 @@ func (udb *dirtyDB) getDirtyTable(tid int64) *dirtyTable {
 }
 
 type dirtyTable struct {
-	// key is handle.
+	// addedRows ...
+	// the key is handle.
 	addedRows   map[int64][]types.Datum
 	deletedRows map[int64]struct{}
 	truncated   bool
