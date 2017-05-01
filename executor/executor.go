@@ -80,10 +80,8 @@ const (
 	codeResultIsEmpty   terror.ErrCode = 8
 	codeErrBuildExec    terror.ErrCode = 9
 	codeBatchInsertFail terror.ErrCode = 10
-	// MySQL error code
-
-	CodePasswordNoMatch terror.ErrCode = 1133
-	CodeCannotUser      terror.ErrCode = 1396
+	CodePasswordNoMatch terror.ErrCode = 1133 // MySQL error code
+	CodeCannotUser      terror.ErrCode = 1396 // MySQL error code
 )
 
 // Row represents a result set row, it may be returned from a table, a join, or a projection.

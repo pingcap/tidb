@@ -30,7 +30,8 @@ import (
 // 2. For other cases its preferred not to use SMJ and operator
 // will throw error.
 type MergeJoinExec struct {
-	// ctx is always the driver side
+	// Left is always the driver side
+
 	ctx           context.Context
 	stmtCtx       *variable.StatementContext
 	leftJoinKeys  []*expression.Column
@@ -43,7 +44,8 @@ type MergeJoinExec struct {
 	cursor        int
 	defaultValues []types.Datum
 
-	// defaultRightRow is default for both side in case full join
+	// Default for both side in case full join
+
 	defaultRightRow *Row
 	outputBuf       []*Row
 	leftRowBlock    *rowBlockIterator

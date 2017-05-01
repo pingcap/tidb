@@ -66,7 +66,8 @@ func (udb *dirtyDB) getDirtyTable(tid int64) *dirtyTable {
 }
 
 type dirtyTable struct {
-	// addedRows is a map whose key is handle.
+	// addedRows ...
+	// the key is handle.
 	addedRows   map[int64][]types.Datum
 	deletedRows map[int64]struct{}
 	truncated   bool

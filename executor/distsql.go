@@ -66,11 +66,10 @@ type lookupTableTask struct {
 	done    bool
 	doneCh  chan error
 
-	// The handles fetched from index is originally ordered by index, but we need handles to be ordered by itself
-	// to do table request.
-
 	// indexOrder map is used to save the original index order for the handles.
 	// Without this map, the original index order might be lost.
+	// The handles fetched from index is originally ordered by index, but we need handles to be ordered by itself
+	// to do table request.
 	indexOrder map[int64]int
 }
 

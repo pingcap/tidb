@@ -1093,7 +1093,7 @@ type UpdateExec struct {
 	SelectExec  Executor
 	OrderedList []*expression.Assignment
 
-	// updatedRowKeys is map for unique (Table, handle) pair.
+	// updatedRowKeys is a map for unique (Table, handle) pair.
 	updatedRowKeys map[table.Table]map[int64]struct{}
 	ctx            context.Context
 
