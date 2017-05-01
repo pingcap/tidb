@@ -46,7 +46,7 @@ type ShowExec struct {
 	Full   bool
 	User   string // Used for show grants.
 
-	// Used by show variables
+	// GlobalScope is used by show variables
 	GlobalScope bool
 
 	schema *expression.Schema
@@ -329,6 +329,7 @@ func (e *ShowExec) fetchShowIndex() error {
 	return nil
 }
 
+// fetchShowCharset gets all charset information and fill them into e.rows.
 // See http://dev.mysql.com/doc/refman/5.7/en/show-character-set.html
 func (e *ShowExec) fetchShowCharset() error {
 	descs := charset.GetAllCharsets()
@@ -529,7 +530,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	return nil
 }
 
-// Compose show create database result.
+// fetchShowCreateDatabase composes show create database result.
 func (e *ShowExec) fetchShowCreateDatabase() error {
 	db, ok := e.is.SchemaByName(e.DBName)
 	if !ok {
