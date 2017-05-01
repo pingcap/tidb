@@ -525,7 +525,39 @@ type builtinIsIPv4MappedSig struct {
 // eval evals a builtinIsIPv4MappedSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-mapped
 func (b *builtinIsIPv4MappedSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("IS_IPV4_MAPPED")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+
+	arg := args[0]
+	d.SetInt64(0)
+	if arg.IsNull() {
+		return d, nil
+	}
+
+	ipAddress, err := arg.ToBytes()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if len(ipAddress) != net.IPv6len {
+		//Not an IPv6 address, return false
+		return d, nil
+	}
+
+	for _, bytes := range ipAddress[:10] {
+		if bytes != 0x0 {
+			return d, nil
+		}
+	}
+
+	if ipAddress[10] != 0xff && ipAddress[11] != 0xff {
+		return d, nil
+	}
+
+	d.SetInt64(1)
+	return d, nil
 }
 
 type isIPv6FunctionClass struct {
