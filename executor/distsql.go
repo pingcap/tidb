@@ -452,7 +452,6 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 			e.partialResult = nil
 			continue
 		}
-
 		var schema *expression.Schema
 		if e.aggregate {
 			schema = e.Schema()
