@@ -146,6 +146,7 @@ type PhysicalIndexScan struct {
 
 	TableAsName *model.CIStr
 
+	// oldSchema is the original schema of DataSource.
 	oldSchema *expression.Schema
 }
 

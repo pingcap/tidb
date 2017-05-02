@@ -110,7 +110,7 @@ func (e *TableReaderExecutor) doRequest() error {
 	return nil
 }
 
-// IndexReaderExecutor sends dag request and reads table data from kv layer.
+// IndexReaderExecutor sends dag request and reads index data from kv layer.
 type IndexReaderExecutor struct {
 	asName    *model.CIStr
 	table     table.Table
