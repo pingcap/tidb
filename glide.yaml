@@ -5,7 +5,7 @@ import:
 - package: github.com/cloudfoundry-incubator/candiedyaml
   version: 5cef21e2e4f0fd147973b558d4db7395176bcd95
 - package: github.com/coreos/etcd
-  version: 8bad78cb98739eed7bbf1f94b218a7fa5dc5611a
+  version: ea5f6dab6b1d07e22cf46bf5f5088d567548c124
   subpackages:
   - auth/authpb
   - clientv3
