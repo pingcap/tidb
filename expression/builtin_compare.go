@@ -431,27 +431,22 @@ func (s *builtinCompareIntSig) evalInt(row []types.Datum) (int64, bool, error) {
 	var res int
 	switch isUnsigned0 {
 	case true:
-		switch isUnsigned1 {
-		case true:
-			res = types.CompareUint64(uint64(arg0), uint64(arg1))
-		case false:
-			if arg1 < 0 || arg0 > math.MaxInt64 {
-				res = 1
-			} else {
-				res = types.CompareInt64(arg0, arg1)
-			}
-		}
-	case false:
-		switch isUnsigned1 {
-		case true:
-			if arg0 < 0 || arg1 > math.MaxInt64 {
-				res = -1
-			} else {
-				res = types.CompareInt64(arg0, arg1)
-			}
-		case false:
+	case isUnsigned0 && isUnsigned1:
+		res = types.CompareUint64(uint64(arg0), uint64(arg1))
+	case isUnsigned0 && !isUnsigned1:
+		if arg1 < 0 || arg0 > math.MaxInt64 {
+			res = 1
+		} else {
 			res = types.CompareInt64(arg0, arg1)
 		}
+	case !isUnsigned0 && isUnsigned1:
+		if arg0 < 0 || arg1 > math.MaxInt64 {
+			res = -1
+		} else {
+			res = types.CompareInt64(arg0, arg1)
+		}
+	case !isUnsigned0 && !isUnsigned1:
+		res = types.CompareInt64(arg0, arg1)
 	}
 	ret := resOfCmp(res, s.op)
 	if ret == -1 {
