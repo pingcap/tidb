@@ -20,6 +20,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -115,34 +116,31 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 
 	// Test case for time_zone session variable.
 	tests := []struct {
-		input  string
-		succ   bool
-		expect string
+		input        string
+		expect       string
+		compareValue bool
+		diff         time.Duration
 	}{
-		{"Europe/Helsinki", true, "Europe/Helsinki"},
-		{"US/Eastern", true, "US/Eastern"},
-		{"SYSTEM", true, "Local"},
-		{"+10:00", true, "UTC"},
-		{"-6:00", true, "UTC"},
-		{"6:00", false, ""},
+		{"Europe/Helsinki", "Europe/Helsinki", true, -2 * time.Hour},
+		{"US/Eastern", "US/Eastern", true, 5 * time.Hour},
+		{"SYSTEM", "Local", false, 0},
+		{"+10:00", "UTC", true, -10 * time.Hour},
+		{"-6:00", "UTC", true, 6 * time.Hour},
 	}
 	for _, tt := range tests {
 		err := SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum(tt.input))
-		if tt.succ {
-			c.Assert(v.TimeZone.String(), Equals, tt.expect)
-		} else {
-			c.Assert(err, NotNil)
+		c.Assert(err, IsNil)
+		c.Assert(v.TimeZone.String(), Equals, tt.expect)
+		if tt.compareValue {
+			SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum(tt.input))
+			t1 := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+			t2 := time.Date(2000, 1, 1, 0, 0, 0, 0, v.TimeZone)
+			c.Assert(t2.Sub(t1), Equals, tt.diff)
 		}
 	}
-	SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum("+10:00"))
-	t1 := time.Date(2000, 1, 1, 0, 0, 0, 0, v.TimeZone)
-	t2 := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
-	c.Assert(t2.Sub(t1), Equals, 10*time.Hour)
-
-	SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum("-6:00"))
-	t1 = time.Date(2000, 1, 1, 0, 0, 0, 0, v.TimeZone)
-	t2 = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
-	c.Assert(t1.Sub(t2), Equals, 6*time.Hour)
+	err = SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum("6:00"))
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, variable.ErrUnknownTimeZone), IsTrue)
 
 	// Test case for sql mode.
 	for str, mode := range mysql.Str2SQLMode {

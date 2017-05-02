@@ -180,7 +180,7 @@ func parseTimeZone(s string) (*time.Location, error) {
 		}
 	}
 
-	return nil, errors.Errorf("Unknown or incorrect time zone: %s", s)
+	return nil, variable.ErrUnknownTimeZone.GenByArgs(s)
 }
 
 func setSnapshotTS(s *variable.SessionVars, sVal string) error {
