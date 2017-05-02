@@ -42,7 +42,7 @@ type TableReaderExecutor struct {
 	ctx       context.Context
 	schema    *expression.Schema
 
-	// result is returned one or more distsql.PartialResult and each PartialResult is return by one region.
+	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result        distsql.SelectResult
 	partialResult distsql.PartialResult
 }
@@ -123,7 +123,7 @@ type IndexReaderExecutor struct {
 	ctx       context.Context
 	schema    *expression.Schema
 
-	// result is returned one or more distsql.PartialResult and each PartialResult is return by one region.
+	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result        distsql.SelectResult
 	partialResult distsql.PartialResult
 }

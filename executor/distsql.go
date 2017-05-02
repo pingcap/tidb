@@ -799,7 +799,7 @@ type XSelectTableExec struct {
 	supportDesc bool
 	isMemDB     bool
 
-	// result is returned one or more distsql.PartialResult and each PartialResult is return by one region.
+	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result        distsql.SelectResult
 	partialResult distsql.PartialResult
 
