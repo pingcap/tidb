@@ -210,7 +210,7 @@ func (s *testSuite) TestJoin(c *C) {
 	tk.MustExec("insert into t2 values(1,0),(2,0),(3,0)")
 	tk.MustExec("insert into t values(1),(2),(3)")
 	result = tk.MustQuery("select * from t1 , t2 where t2.c1 = t1.c1 and t2.c2 = 0 and t1.c2 in (select * from t)")
-	result.Check(testkit.Rows("1 2 1 0", "2 3 2 0"))
+	result.Sort().Check(testkit.Rows("1 2 1 0", "2 3 2 0"))
 	tk.MustExec("drop table if exists t, t1")
 	tk.MustExec("create table t(a int primary key, b int)")
 	tk.MustExec("create table t1(a int, b int)")
