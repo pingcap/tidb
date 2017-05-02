@@ -116,7 +116,7 @@ func (e *HashAggExec) getGroupKey(row *Row) ([]byte, error) {
 	return bs, nil
 }
 
-// Fetch a single row from src and update each aggregate function.
+// innerNext fetches a single row from src and update each aggregate function.
 // If the first return value is false, it means there is no more data from src.
 func (e *HashAggExec) innerNext() (ret bool, err error) {
 	var srcRow *Row

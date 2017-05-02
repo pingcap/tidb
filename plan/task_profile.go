@@ -120,6 +120,19 @@ func (p *PhysicalHashJoin) attach2TaskProfile(tasks ...taskProfile) taskProfile 
 	}
 }
 
+func (p *PhysicalMergeJoin) attach2TaskProfile(tasks ...taskProfile) taskProfile {
+	lTask := finishCopTask(tasks[0].copy(), p.ctx, p.allocator)
+	rTask := finishCopTask(tasks[1].copy(), p.ctx, p.allocator)
+	np := p.Copy()
+	np.SetChildren(lTask.plan(), rTask.plan())
+	return &rootTaskProfile{
+		p: np,
+		// TODO: we will estimate the cost and count more precisely.
+		cst: lTask.cost() + rTask.cost(),
+		cnt: lTask.count() + rTask.count(),
+	}
+}
+
 func (p *PhysicalHashSemiJoin) attach2TaskProfile(tasks ...taskProfile) taskProfile {
 	lTask := finishCopTask(tasks[0].copy(), p.ctx, p.allocator)
 	rTask := finishCopTask(tasks[1].copy(), p.ctx, p.allocator)

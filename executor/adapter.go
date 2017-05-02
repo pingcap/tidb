@@ -60,8 +60,18 @@ func (a *recordSet) Fields() ([]*ast.ResultField, error) {
 
 func (a *recordSet) Next() (*ast.Row, error) {
 	row, err := a.executor.Next()
-	if err != nil || row == nil {
+	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if row == nil {
+		if a.stmt != nil {
+			a.stmt.ctx.GetSessionVars().LastFoundRows = a.stmt.ctx.GetSessionVars().StmtCtx.FoundRows()
+		}
+		return nil, nil
+	}
+
+	if a.stmt != nil {
+		a.stmt.ctx.GetSessionVars().StmtCtx.AddFoundRows(1)
 	}
 	return &ast.Row{Data: row.Data}, nil
 }
@@ -77,8 +87,8 @@ func (a *recordSet) Close() error {
 
 // statement implements the ast.Statement interface, it builds a plan.Plan to an ast.Statement.
 type statement struct {
-	// The InfoSchema cannot change during execution, so we hold a reference to it.
-	is        infoschema.InfoSchema
+	is infoschema.InfoSchema // The InfoSchema cannot change during execution, so we hold a reference to it.
+
 	ctx       context.Context
 	text      string
 	plan      plan.Plan
