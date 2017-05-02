@@ -48,12 +48,16 @@ func (s *testEvaluatorSuite) TestDatabase(c *C) {
 
 func (s *testEvaluatorSuite) TestFoundRows(c *C) {
 	defer testleak.AfterTest(c)()
+	ctx := mock.NewContext()
+	sessionVars := ctx.GetSessionVars()
+	sessionVars.LastFoundRows = 2
+
 	fc := funcs[ast.FoundRows]
-	f, err := fc.getFunction(nil, s.ctx)
+	f, err := fc.getFunction(nil, ctx)
 	c.Assert(err, IsNil)
 	d, err := f.eval(nil)
 	c.Assert(err, IsNil)
-	c.Assert(d.GetUint64(), Equals, uint64(0))
+	c.Assert(d.GetUint64(), Equals, uint64(2))
 }
 
 func (s *testEvaluatorSuite) TestUser(c *C) {
