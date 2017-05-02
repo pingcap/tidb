@@ -46,14 +46,12 @@ type executor interface {
 
 type tableScanExec struct {
 	*tipb.TableScan
-	colIDs      map[int64]int
-	kvRanges    []kv.KeyRange
-	startTS     uint64
-	mvccStore   *MvccStore
-	cursor      int
-	seekKey     []byte
-	rawStartKey []byte // The start key of the current region.
-	rawEndKey   []byte // The end key of the current region.
+	colIDs    map[int64]int
+	kvRanges  []kv.KeyRange
+	startTS   uint64
+	mvccStore *MvccStore
+	cursor    int
+	seekKey   []byte
 
 	src executor
 }
@@ -110,15 +108,10 @@ func (e *tableScanExec) getRowFromPoint(ran kv.KeyRange) (int64, [][]byte, error
 
 func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error) {
 	if e.seekKey == nil {
-		startKey := maxStartKey(ran.StartKey, e.rawStartKey)
-		endKey := minEndKey(ran.EndKey, e.rawEndKey)
-		if bytes.Compare(ran.StartKey, ran.EndKey) >= 0 {
-			return 0, nil, nil
-		}
 		if e.Desc {
-			e.seekKey = endKey
+			e.seekKey = ran.EndKey
 		} else {
-			e.seekKey = startKey
+			e.seekKey = ran.StartKey
 		}
 	}
 	var pairs []Pair
@@ -163,14 +156,12 @@ func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 
 type indexScanExec struct {
 	*tipb.IndexScan
-	colsLen     int
-	kvRanges    []kv.KeyRange
-	startTS     uint64
-	mvccStore   *MvccStore
-	cursor      int
-	seekKey     []byte
-	rawStartKey []byte // The start key of the current region.
-	rawEndKey   []byte // The end key of the current region.
+	colsLen   int
+	kvRanges  []kv.KeyRange
+	startTS   uint64
+	mvccStore *MvccStore
+	cursor    int
+	seekKey   []byte
 
 	src executor
 }
@@ -199,15 +190,10 @@ func (e *indexScanExec) Next() (handle int64, value [][]byte, err error) {
 
 func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error) {
 	if e.seekKey == nil {
-		startKey := maxStartKey(ran.StartKey, e.rawStartKey)
-		endKey := minEndKey(ran.EndKey, e.rawEndKey)
-		if bytes.Compare(ran.StartKey, ran.EndKey) >= 0 {
-			return 0, nil, nil
-		}
 		if e.Desc {
-			e.seekKey = endKey
+			e.seekKey = ran.EndKey
 		} else {
-			e.seekKey = startKey
+			e.seekKey = ran.StartKey
 		}
 	}
 	var pairs []Pair
