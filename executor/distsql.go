@@ -66,10 +66,10 @@ type lookupTableTask struct {
 	done    bool
 	doneCh  chan error
 
+	// indexOrder map is used to save the original index order for the handles.
+	// Without this map, the original index order might be lost.
 	// The handles fetched from index is originally ordered by index, but we need handles to be ordered by itself
 	// to do table request.
-	// The indexOrder map is used to save the original index order for the handles.
-	// Without this map, the original index order might be lost.
 	indexOrder map[int64]int
 }
 
@@ -338,11 +338,13 @@ type XSelectIndexExec struct {
 	singleReadMode bool
 
 	// Variables only used for single read.
+
 	result        distsql.SelectResult
 	partialResult distsql.PartialResult
 	idxColsSchema *expression.Schema
 
 	// Variables only used for double read.
+
 	taskChan    chan *lookupTableTask
 	tasksErr    error // not nil if tasks closed due to error.
 	taskCurr    *lookupTableTask
@@ -685,7 +687,7 @@ func (e *XSelectIndexExec) pickAndExecTask(ch <-chan *lookupTableTask) {
 	}
 }
 
-// ExecuteTask executes a lookup table task.
+// executeTask executes a lookup table task.
 // It works like executing an XSelectTableExec, except that the ranges are built from a slice of handles
 // rather than table ranges. It sends the request to all the regions containing those handles.
 func (e *XSelectIndexExec) executeTask(task *lookupTableTask) error {
