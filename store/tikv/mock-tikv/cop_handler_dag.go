@@ -271,7 +271,7 @@ func (e *evalContext) setColumnInfo(cols []*tipb.ColumnInfo) {
 }
 
 // decodeRelatedColumnVals decodes data to Datum slice according to the row information.
-func (e *evalContext) decodeRelatedColumnVals(relatedColOffsets []int, handle int64, value [][]byte, row []types.Datum) error {
+func (e *evalContext) decodeRelatedColumnVals(relatedColOffsets []int, value [][]byte, row []types.Datum) error {
 	var err error
 	for _, offset := range relatedColOffsets {
 		row[offset], err = tablecodec.DecodeColumnValue(value[offset], e.fieldTps[offset])

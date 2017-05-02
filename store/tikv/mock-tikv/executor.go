@@ -320,7 +320,7 @@ func (e *selectionExec) Next() (handle int64, value [][]byte, err error) {
 			return 0, nil, nil
 		}
 
-		err = e.evalCtx.decodeRelatedColumnVals(e.relatedColOffsets, handle, value, e.row)
+		err = e.evalCtx.decodeRelatedColumnVals(e.relatedColOffsets, value, e.row)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
@@ -353,14 +353,14 @@ func (e *aggregateExec) SetSrcExec(exec executor) {
 }
 
 func (e *aggregateExec) innerNext() (bool, error) {
-	handle, values, err := e.src.Next()
+	_, values, err := e.src.Next()
 	if err != nil {
 		return false, errors.Trace(err)
 	}
 	if values == nil {
 		return false, nil
 	}
-	err = e.aggregate(handle, values)
+	err = e.aggregate(values)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -423,8 +423,8 @@ func (e *aggregateExec) getGroupKey() ([]byte, error) {
 }
 
 // aggregate updates aggregate functions with row.
-func (e *aggregateExec) aggregate(handle int64, value [][]byte) error {
-	err := e.evalCtx.decodeRelatedColumnVals(e.relatedColOffsets, handle, value, e.row)
+func (e *aggregateExec) aggregate(value [][]byte) error {
+	err := e.evalCtx.decodeRelatedColumnVals(e.relatedColOffsets, value, e.row)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -505,7 +505,7 @@ func (e *topNExec) evalTopN(handle int64, value [][]byte) error {
 		meta: tipb.RowMeta{Handle: handle},
 		key:  make([]types.Datum, len(value)),
 	}
-	err := e.evalCtx.decodeRelatedColumnVals(e.relatedColOffsets, handle, value, e.row)
+	err := e.evalCtx.decodeRelatedColumnVals(e.relatedColOffsets, value, e.row)
 	if err != nil {
 		return errors.Trace(err)
 	}
