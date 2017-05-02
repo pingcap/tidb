@@ -1289,3 +1289,32 @@ func (s *testSuite) TestSimpleDAG(c *C) {
 	tk.MustQuery("select count(*), c from t group by c").Check(testkit.Rows("2 1", "1 2", "1 3"))
 	tk.MustQuery("select sum(c) from t group by b").Check(testkit.Rows("4", "3"))
 }
+
+func (s *testSuite) TestConvertToBit(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t (a bit(64))")
+	tk.MustExec("create table t1 (a varchar(2))")
+	tk.MustExec(`insert t1 value ('10')`)
+	tk.MustExec(`insert t select a from t1`)
+	tk.MustQuery("select a0 from t").Check(testkit.Rows("12592"))
+
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t (a bit(64))")
+	tk.MustExec("create table t1 (a binary(2))")
+	tk.MustExec(`insert t1 value ('10')`)
+	tk.MustExec(`insert t select a from t1`)
+	tk.MustQuery("select a0 from t").Check(testkit.Rows("12592"))
+
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t (a bit(64))")
+	tk.MustExec("create table t1 (a datetime)")
+	tk.MustExec(`insert t1 value ('09-01-01')`)
+	tk.MustExec(`insert t select a from t1`)
+	tk.MustQuery("select a0 from t").Check(testkit.Rows("20090101000000"))
+}
