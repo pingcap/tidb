@@ -312,6 +312,7 @@ import (
 	pi				"PI"
 	pow				"POW"
 	power				"POWER"
+	process				"PROCESS"
 	query				"QUERY"
 	rand				"RAND"
 	radians				"RADIANS"
@@ -1103,6 +1104,10 @@ AnalyzeTableStmt:
 	 {
 		$$ = &ast.AnalyzeTableStmt{TableNames: $3.([]*ast.TableName)}
 	 }
+|   "ANALYZE" "TABLE" TableName "INDEX" IndexNameList
+    {
+        $$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$3.(*ast.TableName)}, IndexNames: $5.([]model.CIStr)}
+    }
 
 /*******************************************************************************************/
 Assignment:
@@ -6114,6 +6119,10 @@ PrivType:
 |	"DROP"
 	{
 		$$ = mysql.DropPriv
+	}
+|	"PROCESS"
+	{
+		$$ = mysql.ProcessPriv
 	}
 |	"EXECUTE"
 	{

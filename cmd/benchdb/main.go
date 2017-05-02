@@ -275,7 +275,7 @@ func (ut *benchDB) selectRows(spec string) {
 	})
 }
 
-// manually trigger GC and send to done channel after finished.
+// manualGC manually triggers GC and sends to done channel after finished.
 func (ut *benchDB) manualGC(done chan bool) {
 	cLog("GC started")
 	start := time.Now()

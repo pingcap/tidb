@@ -31,6 +31,7 @@ import (
 // will throw error.
 type MergeJoinExec struct {
 	// Left is always the driver side
+
 	ctx           context.Context
 	stmtCtx       *variable.StatementContext
 	leftJoinKeys  []*expression.Column
@@ -44,6 +45,7 @@ type MergeJoinExec struct {
 	defaultValues []types.Datum
 
 	// Default for both side in case full join
+
 	defaultRightRow *Row
 	outputBuf       []*Row
 	leftRowBlock    *rowBlockIterator
@@ -184,7 +186,7 @@ func (b *joinBuilder) BuildMergeJoin(assumeSortedDesc bool) (*MergeJoinExec, err
 	return exec, nil
 }
 
-// Represent a row block with the same join keys
+// rowBlockIterator represents a row block with the same join keys
 type rowBlockIterator struct {
 	stmtCtx   *variable.StatementContext
 	ctx       context.Context

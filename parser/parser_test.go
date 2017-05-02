@@ -1644,3 +1644,14 @@ func (s *testParserSuite) TestDDLStatements(c *C) {
 		c.Assert(mysql.HasBinaryFlag(colDef.Tp.Flag), IsTrue)
 	}
 }
+
+func (s *testParserSuite) TestAnalyze(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []testCase{
+		{"analyze table t1", true},
+		{"analyze table t,t1", true},
+		{"analyze table t1 index a", true},
+		{"analyze table t1 index a,b", true},
+	}
+	s.RunTest(c, table)
+}

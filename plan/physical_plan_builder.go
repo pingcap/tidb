@@ -70,7 +70,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 		}
 		ts.AccessCondition, newSel.Conditions = DetachTableScanConditions(conds, table)
 		ts.TableConditionPBExpr, ts.tableFilterConditions, newSel.Conditions =
-			ExpressionsToPB(sc, newSel.Conditions, client)
+			expression.ExpressionsToPB(sc, newSel.Conditions, client)
 		ranges, err := BuildTableRange(ts.AccessCondition, sc)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -139,8 +139,8 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeIndex, 0)
 		if isDistReq {
 			idxConds, tblConds := DetachIndexFilterConditions(newSel.Conditions, is.Index.Columns, is.Table)
-			is.IndexConditionPBExpr, is.indexFilterConditions, idxConds = ExpressionsToPB(sc, idxConds, client)
-			is.TableConditionPBExpr, is.tableFilterConditions, tblConds = ExpressionsToPB(sc, tblConds, client)
+			is.IndexConditionPBExpr, is.indexFilterConditions, idxConds = expression.ExpressionsToPB(sc, idxConds, client)
+			is.TableConditionPBExpr, is.tableFilterConditions, tblConds = expression.ExpressionsToPB(sc, tblConds, client)
 			newSel.Conditions = append(idxConds, tblConds...)
 		}
 		var err error

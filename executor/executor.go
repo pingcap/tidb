@@ -80,9 +80,8 @@ const (
 	codeResultIsEmpty   terror.ErrCode = 8
 	codeErrBuildExec    terror.ErrCode = 9
 	codeBatchInsertFail terror.ErrCode = 10
-	// MySQL error code
-	CodePasswordNoMatch terror.ErrCode = 1133
-	CodeCannotUser      terror.ErrCode = 1396
+	CodePasswordNoMatch terror.ErrCode = 1133 // MySQL error code
+	CodeCannotUser      terror.ErrCode = 1396 // MySQL error code
 )
 
 // Row represents a result set row, it may be returned from a table, a join, or a projection.
@@ -95,11 +94,11 @@ type Row struct {
 
 // RowKeyEntry represents a row key read from a table.
 type RowKeyEntry struct {
-	// The table which this row come from.
+	// Tbl is the table which this row come from.
 	Tbl table.Table
-	// Row key.
+	// Handle is Row key.
 	Handle int64
-	// Table alias name.
+	// TableName is table alias name.
 	TableName string
 }
 
@@ -505,7 +504,7 @@ func (e *SelectionExec) initController() error {
 	switch x := e.Src.(type) {
 	case *XSelectTableExec:
 		accessCondition, restCondtion := plan.DetachTableScanConditions(newConds, x.tableInfo)
-		x.where, _, _ = plan.ExpressionsToPB(sc, restCondtion, client)
+		x.where, _, _ = expression.ExpressionsToPB(sc, restCondtion, client)
 		ranges, err := plan.BuildTableRange(accessCondition, sc)
 		if err != nil {
 			return errors.Trace(err)
@@ -514,8 +513,8 @@ func (e *SelectionExec) initController() error {
 	case *XSelectIndexExec:
 		accessCondition, newConds, _, accessInAndEqCount := plan.DetachIndexScanConditions(newConds, x.index)
 		idxConds, tblConds := plan.DetachIndexFilterConditions(newConds, x.index.Columns, x.tableInfo)
-		x.indexConditionPBExpr, _, _ = plan.ExpressionsToPB(sc, idxConds, client)
-		tableConditionPBExpr, _, _ := plan.ExpressionsToPB(sc, tblConds, client)
+		x.indexConditionPBExpr, _, _ = expression.ExpressionsToPB(sc, idxConds, client)
+		tableConditionPBExpr, _, _ := expression.ExpressionsToPB(sc, tblConds, client)
 		var err error
 		x.ranges, err = plan.BuildIndexRange(sc, x.tableInfo, x.index, accessInAndEqCount, accessCondition)
 		if err != nil {
