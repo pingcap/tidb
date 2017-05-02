@@ -24,8 +24,8 @@ import (
 	goctx "golang.org/x/net/context"
 )
 
-// NewOwnerChange is used for testing.
-var NewOwnerChange = false
+// ChangeOwnerInNewWay is used for testing.
+var ChangeOwnerInNewWay = false
 
 const ddlOwnerKey = "/tidb/ddl/owner"
 const bgOwnerKey = "/tidb/ddl/bg/owner"

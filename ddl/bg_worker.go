@@ -56,7 +56,7 @@ func (d *ddl) handleBgJobQueue() error {
 			return errors.Trace(err)
 		}
 
-		if NewOwnerChange {
+		if ChangeOwnerInNewWay {
 			return nil
 		}
 		owner.LastUpdateTS = time.Now().UnixNano()
