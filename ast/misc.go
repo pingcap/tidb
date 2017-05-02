@@ -673,6 +673,7 @@ type AnalyzeTableStmt struct {
 	stmtNode
 
 	TableNames []*TableName
+	IndexNames []model.CIStr
 }
 
 // Accept implements Node Accept interface.

@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-// This test checks that when a index double read returns before reading all the rows, the goroutine doesn't
+// TestIndexDoubleReadClose checks that when a index double read returns before reading all the rows, the goroutine doesn't
 // leak. For testing distsql with multiple regions, we need to manually split a mock TiKV.
 func (s *testSuite) TestIndexDoubleReadClose(c *C) {
 	if _, ok := s.store.GetClient().(*tikv.CopClient); !ok {

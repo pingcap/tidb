@@ -1104,6 +1104,10 @@ AnalyzeTableStmt:
 	 {
 		$$ = &ast.AnalyzeTableStmt{TableNames: $3.([]*ast.TableName)}
 	 }
+|   "ANALYZE" "TABLE" TableName "INDEX" IndexNameList
+    {
+        $$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$3.(*ast.TableName)}, IndexNames: $5.([]model.CIStr)}
+    }
 
 /*******************************************************************************************/
 Assignment:

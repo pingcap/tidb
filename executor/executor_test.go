@@ -369,7 +369,7 @@ func (s *testSuite) TestSelectErrorRow(c *C) {
 	c.Assert(err, NotNil)
 }
 
-// TestIssue2612 for https://github.com/pingcap/tidb/issues/2612
+// TestIssue2612 is related with https://github.com/pingcap/tidb/issues/2612
 func (s *testSuite) TestIssue2612(c *C) {
 	defer func() {
 		s.cleanEnv(c)
@@ -389,7 +389,7 @@ func (s *testSuite) TestIssue2612(c *C) {
 	row.Data[0].GetMysqlDuration().String()
 }
 
-// TestIssue345 for https://github.com/pingcap/tidb/issues/345
+// TestIssue345 is related with https://github.com/pingcap/tidb/issues/345
 func (s *testSuite) TestIssue345(c *C) {
 	defer func() {
 		s.cleanEnv(c)
@@ -876,7 +876,7 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select cast(1234 as char(3))")
 	result.Check(testkit.Rows("123"))
 
-	// testCase for like and regexp
+	// testCase is for like and regexp
 	type testCase struct {
 		pattern string
 		val     string

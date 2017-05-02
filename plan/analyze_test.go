@@ -42,14 +42,23 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 	testKit.MustExec("create index b on t (b)")
 	testKit.MustExec("insert into t (a,b) values (1,1),(1,2),(1,3),(1,4),(2,5),(2,6),(2,7),(2,8)")
 	testKit.MustExec("analyze table t")
+
 	testKit.MustExec("create table t1 (a int, b int)")
 	testKit.MustExec("create index a on t1 (a)")
 	testKit.MustExec("create index b on t1 (b)")
 	testKit.MustExec("insert into t1 (a,b) values (1,1),(1,2),(1,3),(1,4),(2,5),(2,6),(2,7),(2,8)")
+
+	testKit.MustExec("create table t2 (a int, b int)")
+	testKit.MustExec("create index a on t2 (a)")
+	testKit.MustExec("create index b on t2 (b)")
+	testKit.MustExec("insert into t2 (a,b) values (1,1),(1,2),(1,3),(1,4),(2,5),(2,6),(2,7),(2,8)")
+	testKit.MustExec("analyze table t2 index a")
+
 	tests := []struct {
 		sql  string
 		best string
 	}{
+		// Test analyze full table.
 		{
 			sql:  "select * from t where t.a <= 2",
 			best: "Table(t)",
@@ -58,6 +67,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 			sql:  "select * from t where t.a = 1 and t.b <= 2",
 			best: "Index(t.b)[[-inf,2]]",
 		},
+		// Test not analyzed table.
 		{
 			sql:  "select * from t1 where t1.a <= 2",
 			best: "Index(t1.a)[[-inf,2]]",
@@ -65,6 +75,17 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		{
 			sql:  "select * from t1 where t1.a = 1 and t1.b <= 2",
 			best: "Index(t1.a)[[1,1]]",
+		},
+		// Test analyze single index.
+		{
+			sql: "select * from t2 where t2.a <= 2",
+			// This is not the best because the histogram for index b is pseudo, then the row count calculated for such
+			// a small table is always tableRowCount/3, so the cost is smaller.
+			best: "Index(t2.b)[[<nil>,+inf]]",
+		},
+		{
+			sql:  "select * from t2 where t2.a = 1 and t2.b <= 2",
+			best: "Index(t2.b)[[-inf,2]]",
 		},
 	}
 	for _, tt := range tests {
