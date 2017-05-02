@@ -60,8 +60,18 @@ func (a *recordSet) Fields() ([]*ast.ResultField, error) {
 
 func (a *recordSet) Next() (*ast.Row, error) {
 	row, err := a.executor.Next()
-	if err != nil || row == nil {
+	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if row == nil {
+		if a.stmt != nil {
+			a.stmt.ctx.GetSessionVars().LastFoundRows = a.stmt.ctx.GetSessionVars().StmtCtx.FoundRows()
+		}
+		return nil, nil
+	}
+
+	if a.stmt != nil {
+		a.stmt.ctx.GetSessionVars().StmtCtx.AddFoundRows(1)
 	}
 	return &ast.Row{Data: row.Data}, nil
 }
