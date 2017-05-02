@@ -277,7 +277,7 @@ func (s *testSuite) TestAggregation(c *C) {
 
 	result = tk.MustQuery("select count(*) from information_schema.columns")
 	// When adding new memory table in information_schema, please update this variable.
-	columnCountOfAllInformationSchemaTables := "628"
+	columnCountOfAllInformationSchemaTables := "715"
 	result.Check(testkit.Rows(columnCountOfAllInformationSchemaTables))
 
 	tk.MustExec("drop table if exists t1")
@@ -427,8 +427,7 @@ func (s *testSuite) TestSelectDistinct(c *C) {
 
 	tk.MustExec("begin")
 	r := tk.MustQuery("select distinct name from select_distinct_test;")
-	rowStr := fmt.Sprintf("%v", []byte("hello"))
-	r.Check(testkit.Rows(rowStr))
+	r.Check(testkit.Rows("hello"))
 	tk.MustExec("commit")
 
 }

@@ -59,13 +59,15 @@ const (
 	CodeUnknownStatusVar terror.ErrCode = 1
 	CodeUnknownSystemVar terror.ErrCode = 1193
 	CodeIncorrectScope   terror.ErrCode = 1238
+	CodeUnknownTimeZone  terror.ErrCode = 1298
 )
 
 // Variable errors
 var (
-	UnknownStatusVar  = terror.ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
-	UnknownSystemVar  = terror.ClassVariable.New(CodeUnknownSystemVar, "unknown system variable '%s'")
-	ErrIncorrectScope = terror.ClassVariable.New(CodeIncorrectScope, "Incorrect variable scope")
+	UnknownStatusVar   = terror.ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
+	UnknownSystemVar   = terror.ClassVariable.New(CodeUnknownSystemVar, "unknown system variable '%s'")
+	ErrIncorrectScope  = terror.ClassVariable.New(CodeIncorrectScope, "Incorrect variable scope")
+	ErrUnknownTimeZone = terror.ClassVariable.New(CodeUnknownTimeZone, "unknown or incorrect time zone: %s")
 )
 
 func init() {
@@ -78,6 +80,7 @@ func init() {
 	mySQLErrCodes := map[terror.ErrCode]uint16{
 		CodeUnknownSystemVar: mysql.ErrUnknownSystemVariable,
 		CodeIncorrectScope:   mysql.ErrIncorrectGlobalLocalVar,
+		CodeUnknownTimeZone:  mysql.ErrUnknownTimeZone,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassVariable] = mySQLErrCodes
 }
@@ -600,6 +603,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBIndexLookupSize, strconv.Itoa(DefIndexLookupSize)},
 	{ScopeGlobal | ScopeSession, TiDBIndexLookupConcurrency, strconv.Itoa(DefIndexLookupConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBIndexSerialScanConcurrency, strconv.Itoa(DefIndexSerialScanConcurrency)},
+	{ScopeGlobal | ScopeSession, TiDBMaxRowCountForINLJ, strconv.Itoa(DefMaxRowCountForINLJ)},
 	{ScopeGlobal | ScopeSession, TiDBSkipDDLWait, boolToIntStr(DefSkipDDLWait)},
 	{ScopeGlobal | ScopeSession, TiDBSkipUTF8Check, boolToIntStr(DefSkipUTF8Check)},
 	{ScopeSession, TiDBBatchInsert, boolToIntStr(DefBatchInsert)},

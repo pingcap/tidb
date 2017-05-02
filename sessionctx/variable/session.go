@@ -149,6 +149,9 @@ type SessionVars struct {
 	// GlobalAccessor is used to set and get global variables.
 	GlobalVarsAccessor GlobalVarAccessor
 
+	// LastFoundRows is the number of found rows of last query statement
+	LastFoundRows uint64
+
 	// StmtCtx holds variables for current executing statement.
 	StmtCtx *StatementContext
 
@@ -197,6 +200,9 @@ type SessionVars struct {
 
 	// Should we split insert data into multiple batches.
 	BatchInsert bool
+
+	// Max row count that the outer table of index nested loop join could be without force hint.
+	MaxRowCountForINLJ int
 }
 
 // NewSessionVars creates a session vars object.
@@ -217,6 +223,7 @@ func NewSessionVars() *SessionVars {
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
 		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
+		MaxRowCountForINLJ:         DefMaxRowCountForINLJ,
 	}
 }
 

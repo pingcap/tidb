@@ -87,7 +87,8 @@ type builtinSleepSig struct {
 	baseBuiltinFunc
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_sleep
+// eval evals a builtinSleepSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_sleep
 func (b *builtinSleepSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
@@ -140,6 +141,8 @@ type builtinLockSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinLockSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_get-lock
 // The lock function will do nothing.
 // Warning: get_lock() function is parsed but ignored.
 func (b *builtinLockSig) eval(_ []types.Datum) (d types.Datum, err error) {
@@ -159,6 +162,8 @@ type builtinReleaseLockSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinReleaseLockSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_release-lock
 // The release lock function will do nothing.
 // Warning: release_lock() function is parsed but ignored.
 func (b *builtinReleaseLockSig) eval(_ []types.Datum) (d types.Datum, err error) {
@@ -178,6 +183,7 @@ type builtinAnyValueSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinAnyValueSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
 func (b *builtinAnyValueSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -200,6 +206,7 @@ type builtinDefaultSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinDefaultSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_default
 func (b *builtinDefaultSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("DEFAULT")
@@ -217,6 +224,7 @@ type builtinInetAtonSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinInetAtonSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet-aton
 func (b *builtinInetAtonSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -286,6 +294,7 @@ type builtinInetNtoaSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinInetNtoaSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet-ntoa
 func (b *builtinInetNtoaSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -330,6 +339,7 @@ type builtinInet6AtonSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinInet6AtonSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet6-aton
 func (b *builtinInet6AtonSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -394,6 +404,7 @@ type builtinInet6NtoaSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinInet6NtoaSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet6-ntoa
 func (b *builtinInet6NtoaSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("INET6_NTOA")
@@ -411,6 +422,7 @@ type builtinIsFreeLockSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinIsFreeLockSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-free-lock
 func (b *builtinIsFreeLockSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("IS_FREE_LOCK")
@@ -428,6 +440,7 @@ type builtinIsIPv4Sig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinIsIPv4Sig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4
 func (b *builtinIsIPv4Sig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -491,6 +504,7 @@ type builtinIsIPv4CompatSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinIsIPv4CompatSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-compat
 func (b *builtinIsIPv4CompatSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("IS_IPV4_COMPAT")
@@ -508,6 +522,7 @@ type builtinIsIPv4MappedSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinIsIPv4MappedSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-mapped
 func (b *builtinIsIPv4MappedSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("IS_IPV4_MAPPED")
@@ -525,6 +540,7 @@ type builtinIsIPv6Sig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinIsIPv6Sig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv6
 func (b *builtinIsIPv6Sig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -562,6 +578,7 @@ type builtinIsUsedLockSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinIsUsedLockSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-used-lock
 func (b *builtinIsUsedLockSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("IS_USED_LOCK")
@@ -579,6 +596,7 @@ type builtinMasterPosWaitSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinMasterPosWaitSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_master-pos-wait
 func (b *builtinMasterPosWaitSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("MASTER_POS_WAIT")
@@ -596,6 +614,7 @@ type builtinNameConstSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinNameConstSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_name-const
 func (b *builtinNameConstSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("NAME_CONST")
@@ -613,6 +632,7 @@ type builtinReleaseAllLocksSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinReleaseAllLocksSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_release-all-locks
 func (b *builtinReleaseAllLocksSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("RELEASEA_ALL_LOCKS")
@@ -630,6 +650,7 @@ type builtinUUIDSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinUUIDSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_uuid
 func (b *builtinUUIDSig) eval(_ []types.Datum) (d types.Datum, err error) {
 	d.SetString(uuid.NewV1().String())
@@ -648,6 +669,7 @@ type builtinUUIDShortSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinUUIDShortSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_uuid-short
 func (b *builtinUUIDShortSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("UUID_SHORT")

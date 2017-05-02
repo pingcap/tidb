@@ -24,7 +24,7 @@ LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-
 
 TARGET = ""
 
-.PHONY: all build update parser clean todo test gotest interpreter server dev benchkv benchraw check parserlib
+.PHONY: all build update parser clean todo test gotest interpreter server dev benchkv benchraw check parserlib checklist
 
 default: server buildsucc
 
@@ -33,7 +33,7 @@ buildsucc:
 
 all: dev server benchkv
 
-dev: parserlib build benchkv test check
+dev: checklist parserlib build benchkv test check
 
 build:
 	$(GOBUILD)
@@ -97,7 +97,7 @@ todo:
 	@grep -n BUG */*.go parser/parser.y || true
 	@grep -n println */*.go parser/parser.y || true
 
-test: gotest
+test: checklist gotest
 
 gotest: parserlib
 	@export log_level=error;\
@@ -140,3 +140,6 @@ endif
 	glide vc --only-code --no-tests
 	mkdir -p _vendor
 	mv vendor _vendor/src
+
+checklist:
+	cat checklist.md
