@@ -810,8 +810,6 @@ func (b *builtinAtanSig) eval(row []types.Datum) (d types.Datum, err error) {
 		x, err := args[1].ToFloat64(sc)
 		if err != nil {
 			d.SetFloat64(math.Atan(y))
-			// FIXME: Trigger a warning perhaps.
-			err = nil
 		} else {
 			d.SetFloat64(math.Atan2(y, x))
 		}
@@ -819,7 +817,7 @@ func (b *builtinAtanSig) eval(row []types.Datum) (d types.Datum, err error) {
 		d.SetFloat64(math.Atan(y))
 	}
 
-	return
+	return d, nil
 }
 
 type cosFunctionClass struct {
