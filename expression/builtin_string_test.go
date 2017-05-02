@@ -14,13 +14,14 @@
 package expression
 
 import (
-	"errors"
 	"strings"
 	"time"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
@@ -933,6 +934,7 @@ func (s *testEvaluatorSuite) TestFindInSet(c *C) {
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.str, t.strlst)), s.ctx)
 		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
+		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
 	}
 }
@@ -960,6 +962,7 @@ func (s *testEvaluatorSuite) TestField(c *C) {
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.argLst...)), s.ctx)
 		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
+		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
 	}
 }
@@ -1322,6 +1325,7 @@ func (s *testEvaluatorSuite) TestOrd(c *C) {
 	f, err := fc.getFunction(datumsToConstants([]types.Datum{argNull}), s.ctx)
 	c.Assert(err, IsNil)
 	r, err := f.eval(nil)
+	c.Assert(err, IsNil)
 	c.Assert(r.IsNull(), IsTrue)
 }
 
@@ -1344,6 +1348,7 @@ func (s *testEvaluatorSuite) TestElt(c *C) {
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.argLst...)), s.ctx)
 		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
+		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
 	}
 }
@@ -1398,10 +1403,13 @@ func (s *testEvaluatorSuite) TestBin(c *C) {
 	}
 	fc := funcs[ast.Bin]
 	dtbl := tblToDtbl(tbl)
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
 	for _, t := range dtbl {
-		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t["Input"])), s.ctx)
+		f, err := fc.getFunction(datumsToConstants(t["Input"]), ctx)
 		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
+		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t["Expected"][0]))
 	}
 }
