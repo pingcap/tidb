@@ -15,8 +15,6 @@ package mvmap
 
 import (
 	"bytes"
-	"hash"
-	"hash/fnv"
 )
 
 type entry struct {
@@ -121,7 +119,6 @@ type MVMap struct {
 	entryStore entryStore
 	dataStore  dataStore
 	hashTable  map[uint64]entryAddr
-	hashFunc   hash.Hash64
 	length     int
 }
 
@@ -129,7 +126,6 @@ type MVMap struct {
 func NewMVMap() *MVMap {
 	m := new(MVMap)
 	m.hashTable = make(map[uint64]entryAddr)
-	m.hashFunc = fnv.New64()
 	m.entryStore.slices = [][]entry{make([]entry, 0, 64)}
 	// Append the first empty entry, so the zero entryAddr can represent null.
 	m.entryStore.put(entry{})
@@ -140,7 +136,7 @@ func NewMVMap() *MVMap {
 // Put puts the key/value pairs to the MVMap, if the key already exists, old value will not be overwritten,
 // values are stored in a list.
 func (m *MVMap) Put(key, value []byte) {
-	hashKey := m.hash(key)
+	hashKey := fnvHash64(key)
 	oldEntryAddr := m.hashTable[hashKey]
 	dataAddr := m.dataStore.put(key, value)
 	e := entry{
@@ -157,7 +153,7 @@ func (m *MVMap) Put(key, value []byte) {
 // Get gets the values of the key.
 func (m *MVMap) Get(key []byte) [][]byte {
 	var values [][]byte
-	hashKey := m.hash(key)
+	hashKey := fnvHash64(key)
 	entryAddr := m.hashTable[hashKey]
 	for entryAddr != nullEntryAddr {
 		e := m.entryStore.get(entryAddr)
@@ -174,12 +170,6 @@ func (m *MVMap) Get(key []byte) [][]byte {
 		values[i], values[j] = values[j], values[i]
 	}
 	return values
-}
-
-func (m *MVMap) hash(key []byte) uint64 {
-	m.hashFunc.Reset()
-	m.hashFunc.Write(key)
-	return m.hashFunc.Sum64()
 }
 
 // Len returns the number of values in th mv map, the number of keys may be less than Len

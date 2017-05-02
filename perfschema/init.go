@@ -33,10 +33,10 @@ type columnInfo struct {
 }
 
 const (
-	// Maximum concurrent number of elements in table events_xxx_current.
+	// currentElemMax is maximum concurrent number of elements in table events_xxx_current.
 	// TODO: make it configurable?
 	currentElemMax int64 = 1024
-	// Maximum allowed number of elements in table events_xxx_history.
+	// historyElemMax is maximum allowed number of elements in table events_xxx_history.
 	// TODO: make it configurable?
 	historyElemMax int64 = 1024
 )

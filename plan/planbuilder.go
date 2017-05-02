@@ -36,17 +36,19 @@ var (
 	ErrUnknownColumn        = terror.ClassOptimizerPlan.New(CodeUnknownColumn, "Unknown column '%s' in '%s'")
 	ErrWrongArguments       = terror.ClassOptimizerPlan.New(CodeWrongArguments, "Incorrect arguments to EXECUTE")
 	ErrAmbiguous            = terror.ClassOptimizerPlan.New(CodeAmbiguous, "Column '%s' in field list is ambiguous")
+	ErrAnalyzeMissIndex     = terror.ClassOptimizerPlan.New(CodeAnalyzeMissIndex, "Index '%s' in field list does not exist in table '%s'")
 	ErrAlterAutoID          = terror.ClassAutoid.New(CodeAlterAutoID, "No support for setting auto_increment using alter_table")
 )
 
 // Error codes.
 const (
-	CodeUnsupportedType terror.ErrCode = 1
-	SystemInternalError terror.ErrCode = 2
-	CodeAlterAutoID     terror.ErrCode = 3
-	CodeAmbiguous       terror.ErrCode = 1052
-	CodeUnknownColumn   terror.ErrCode = 1054
-	CodeWrongArguments  terror.ErrCode = 1210
+	CodeUnsupportedType  terror.ErrCode = 1
+	SystemInternalError  terror.ErrCode = 2
+	CodeAlterAutoID      terror.ErrCode = 3
+	CodeAnalyzeMissIndex terror.ErrCode = 4
+	CodeAmbiguous        terror.ErrCode = 1052
+	CodeUnknownColumn    terror.ErrCode = 1054
+	CodeWrongArguments   terror.ErrCode = 1210
 )
 
 func init() {
@@ -404,7 +406,7 @@ func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []
 	return
 }
 
-func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) Plan {
+func (b *planBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) Plan {
 	p := &Analyze{}
 	for _, tbl := range as.TableNames {
 		idxInfo, colInfo, pkInfo := getColsInfo(tbl)
@@ -420,6 +422,28 @@ func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) Plan {
 	}
 	p.SetSchema(&expression.Schema{})
 	return p
+}
+
+func (b *planBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) Plan {
+	p := &Analyze{}
+	tblInfo := as.TableNames[0].TableInfo
+	for _, idxName := range as.IndexNames {
+		idx := findIndexByName(tblInfo.Indices, idxName)
+		if idx == nil || idx.State != model.StatePublic {
+			b.err = ErrAnalyzeMissIndex.GenByArgs(idxName.O, tblInfo.Name.O)
+			break
+		}
+		p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{TableInfo: tblInfo, IndexInfo: idx})
+	}
+	p.SetSchema(&expression.Schema{})
+	return p
+}
+
+func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) Plan {
+	if len(as.IndexNames) == 0 {
+		return b.buildAnalyzeTable(as)
+	}
+	return b.buildAnalyzeIndex(as)
 }
 
 func buildShowDDLFields() *expression.Schema {

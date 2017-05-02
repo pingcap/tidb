@@ -70,7 +70,7 @@ func reload(validator SchemaValidator, leaseGrantCh chan leaseGrantItem) {
 	validator.Update(item.leaseGrantTS, item.schemaVer)
 }
 
-// serverFunc plays the role as a remote server, runs in a seperate goroutine.
+// serverFunc plays the role as a remote server, runs in a separate goroutine.
 // It can grant lease and provide timestamp oracle.
 // Caller should communicate with it through channel to mock network.
 func serverFunc(lease time.Duration, requireLease chan leaseGrantItem, oracleCh chan uint64, exit chan struct{}) {

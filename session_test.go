@@ -2673,7 +2673,7 @@ func (s *testSessionSuite) TestTruncateAlloc(c *C) {
 	mustExecSQL(c, se, dropDBSQL)
 }
 
-// Test infomation_schema.columns.
+// Test information_schema.columns.
 func (s *testSessionSuite) TestISColumns(c *C) {
 	defer testleak.AfterTest(c)()
 	dbName := "test_is_columns"
