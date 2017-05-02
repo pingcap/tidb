@@ -146,8 +146,9 @@ type PhysicalIndexScan struct {
 
 	TableAsName *model.CIStr
 
-	// oldSchema is the original schema of DataSource.
-	oldSchema *expression.Schema
+	// dataSourceSchema is the original schema of DataSource. The schema of index scan in kv and index reader in tidb
+	// will be different. The schema of index scan will decode all columns of index but the tidb only need some of them.
+	dataSourceSchema *expression.Schema
 }
 
 // PhysicalMemTable reads memory table.

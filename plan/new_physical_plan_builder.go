@@ -375,12 +375,12 @@ func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, e
 // convert2IndexScanner converts the DataSource to index scan with idx.
 func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo) (task taskProfile, err error) {
 	is := PhysicalIndexScan{
-		Table:       p.tableInfo,
-		TableAsName: p.TableAsName,
-		DBName:      p.DBName,
-		Columns:     p.Columns,
-		Index:       idx,
-		oldSchema:   p.schema,
+		Table:            p.tableInfo,
+		TableAsName:      p.TableAsName,
+		DBName:           p.DBName,
+		Columns:          p.Columns,
+		Index:            idx,
+		dataSourceSchema: p.schema,
 	}.init(p.allocator, p.ctx)
 	statsTbl := p.statisticTable
 	rowCount := float64(statsTbl.Count)

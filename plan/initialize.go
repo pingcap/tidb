@@ -290,7 +290,7 @@ func (p PhysicalIndexReader) init(allocator *idAllocator, ctx context.Context) *
 	} else {
 		schemaInKV := p.indexPlan.Schema()
 		is := p.IndexPlans[0].(*PhysicalIndexScan)
-		p.schema = is.oldSchema
+		p.schema = is.dataSourceSchema
 		for _, col := range p.schema.Columns {
 			col.ResolveIndices(schemaInKV)
 		}
