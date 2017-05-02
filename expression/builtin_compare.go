@@ -276,6 +276,7 @@ func (s *builtinCompareSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return
 }
 
+// resOfCmp returns the results of different compare built-in functions.
 func resOfCmp(res int, op opcode.Op) int64 {
 	var ret bool
 	switch op {
