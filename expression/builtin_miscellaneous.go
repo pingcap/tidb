@@ -527,7 +527,7 @@ type builtinIsIPv4MappedSig struct {
 func (b *builtinIsIPv4MappedSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 
 	arg := args[0]
@@ -543,21 +543,21 @@ func (b *builtinIsIPv4MappedSig) eval(row []types.Datum) (d types.Datum, err err
 
 	if len(ipAddress) != net.IPv6len {
 		//Not an IPv6 address, return false
-		return d, nil
+		return
 	}
 
 	for _, bytes := range ipAddress[:10] {
 		if bytes != 0x0 {
-			return d, nil
+			return
 		}
 	}
 
-	if ipAddress[10] != 0xff && ipAddress[11] != 0xff {
-		return d, nil
+	if ipAddress[10] != 0xff || ipAddress[11] != 0xff {
+		return
 	}
 
 	d.SetInt64(1)
-	return d, nil
+	return
 }
 
 type isIPv6FunctionClass struct {
