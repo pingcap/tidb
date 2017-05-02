@@ -15,6 +15,7 @@ package testkit
 
 import (
 	"fmt"
+	"sort"
 	"sync/atomic"
 
 	"github.com/juju/errors"
@@ -34,21 +35,44 @@ type TestKit struct {
 
 // Result is the result returned by MustQuery.
 type Result struct {
-	rows    [][]interface{}
+	rows    [][]string
 	comment check.CommentInterface
 	c       *check.C
 }
 
 // Check asserts the result equals the expected results.
 func (res *Result) Check(expected [][]interface{}) {
-	got := fmt.Sprintf("%v", res.rows)
-	need := fmt.Sprintf("%v", expected)
+	got := fmt.Sprintf("%s", res.rows)
+	need := fmt.Sprintf("%s", expected)
 	res.c.Assert(got, check.Equals, need, res.comment)
 }
 
 // Rows returns the result data.
 func (res *Result) Rows() [][]interface{} {
-	return res.rows
+	ifacesSlice := make([][]interface{}, len(res.rows))
+	for i := range res.rows {
+		ifaces := make([]interface{}, len(res.rows[i]))
+		for j := range res.rows[i] {
+			ifaces[j] = res.rows[i][j]
+		}
+		ifacesSlice[i] = ifaces
+	}
+	return ifacesSlice
+}
+
+// Sort sorts and return the result.
+func (res *Result) Sort() *Result {
+	sort.Slice(res.rows, func(i, j int) bool {
+		a := res.rows[i]
+		b := res.rows[j]
+		for i := range a {
+			if a[i] < b[i] {
+				return true
+			}
+		}
+		return false
+	})
+	return res
 }
 
 // NewTestKit returns a new *TestKit.
@@ -115,16 +139,21 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	tk.c.Assert(rs, check.NotNil, comment)
 	rows, err := tidb.GetRows(rs)
 	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
-	iRows := make([][]interface{}, len(rows))
+	sRows := make([][]string, len(rows))
 	for i := range rows {
 		row := rows[i]
-		iRow := make([]interface{}, len(row))
+		iRow := make([]string, len(row))
 		for j := range row {
-			iRow[j] = row[j].GetValue()
+			if row[j].IsNull() {
+				iRow[j] = "<nil>"
+			} else {
+				iRow[j], err = row[j].ToString()
+				tk.c.Assert(err, check.IsNil)
+			}
 		}
-		iRows[i] = iRow
+		sRows[i] = iRow
 	}
-	return &Result{rows: iRows, c: tk.c, comment: comment}
+	return &Result{rows: sRows, c: tk.c, comment: comment}
 }
 
 // Rows is similar to RowsWithSep, use white space as separator string.

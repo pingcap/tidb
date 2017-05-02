@@ -110,21 +110,61 @@ func (p *LogicalJoin) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, 
 	}
 	switch p.JoinType {
 	case SemiJoin, LeftOuterSemiJoin:
-		task, err = p.convert2SemiJoin()
+		task, err = p.convert2SemiJoin(prop)
 	default:
-		// TODO: We will consider smj and index look up join in the future.
-		task, err = p.convert2HashJoin()
+		if p.preferUseMergeJoin() {
+			task, err = p.convert2MergeJoin(prop)
+		} else {
+			// TODO: We will consider index look up join in the future.
+			task, err = p.convert2HashJoin(prop)
+		}
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// Because hash join is executed by multiple goroutines, it will not propagate physical property any more.
-	// TODO: We will consider the problem of property again for parallel execution.
-	task = prop.enforceProperty(task, p.ctx, p.allocator)
 	return task, p.storeTaskProfile(prop, task)
 }
 
-func (p *LogicalJoin) convert2SemiJoin() (taskProfile, error) {
+func (p *LogicalJoin) preferUseMergeJoin() bool {
+	return p.preferMergeJoin && len(p.EqualConditions) == 1
+}
+
+// TODO: Now we only process the case that the join has only one equal condition.
+func (p *LogicalJoin) convert2MergeJoin(prop *requiredProp) (taskProfile, error) {
+	lChild := p.children[0].(LogicalPlan)
+	rChild := p.children[1].(LogicalPlan)
+	mergeJoin := PhysicalMergeJoin{
+		JoinType:        p.JoinType,
+		EqualConditions: p.EqualConditions,
+		LeftConditions:  p.LeftConditions,
+		RightConditions: p.RightConditions,
+		OtherConditions: p.OtherConditions,
+	}.init(p.allocator, p.ctx)
+	mergeJoin.SetSchema(p.schema)
+	lJoinKey := p.EqualConditions[0].GetArgs()[0].(*expression.Column)
+	lProp := &requiredProp{cols: []*expression.Column{lJoinKey}}
+	lTask, err := lChild.convert2NewPhysicalPlan(lProp)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	rJoinKey := p.EqualConditions[0].GetArgs()[1].(*expression.Column)
+	rProp := &requiredProp{cols: []*expression.Column{rJoinKey}}
+	rTask, err := rChild.convert2NewPhysicalPlan(rProp)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	task := mergeJoin.attach2TaskProfile(lTask, rTask)
+	if prop.equal(lProp) && p.JoinType != RightOuterJoin {
+		return task, nil
+	}
+	if prop.equal(rProp) && p.JoinType != LeftOuterJoin {
+		return task, nil
+	}
+	task = prop.enforceProperty(task, p.ctx, p.allocator)
+	return task, nil
+}
+
+func (p *LogicalJoin) convert2SemiJoin(prop *requiredProp) (taskProfile, error) {
 	lChild := p.children[0].(LogicalPlan)
 	rChild := p.children[1].(LogicalPlan)
 	semiJoin := PhysicalHashSemiJoin{
@@ -144,10 +184,14 @@ func (p *LogicalJoin) convert2SemiJoin() (taskProfile, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return semiJoin.attach2TaskProfile(lTask, rTask), nil
+	task := semiJoin.attach2TaskProfile(lTask, rTask)
+	// Because hash join is executed by multiple goroutines, it will not propagate physical property any more.
+	// TODO: We will consider the problem of property again for parallel execution.
+	task = prop.enforceProperty(task, p.ctx, p.allocator)
+	return task, nil
 }
 
-func (p *LogicalJoin) convert2HashJoin() (taskProfile, error) {
+func (p *LogicalJoin) convert2HashJoin(prop *requiredProp) (taskProfile, error) {
 	lChild := p.children[0].(LogicalPlan)
 	rChild := p.children[1].(LogicalPlan)
 	hashJoin := PhysicalHashJoin{
@@ -179,8 +223,9 @@ func (p *LogicalJoin) convert2HashJoin() (taskProfile, error) {
 			hashJoin.SmallTable = 1
 		}
 	}
-	return hashJoin.attach2TaskProfile(lTask, rTask), nil
-
+	task := hashJoin.attach2TaskProfile(lTask, rTask)
+	task = prop.enforceProperty(task, p.ctx, p.allocator)
+	return task, nil
 }
 
 // getPushedProp will check if this sort property can be pushed or not. In order to simplify the problem, we only
@@ -652,9 +697,9 @@ func (p *LogicalApply) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile,
 	}
 	// TODO: refine this code.
 	if p.JoinType == SemiJoin || p.JoinType == LeftOuterSemiJoin {
-		task, err = p.convert2SemiJoin()
+		task, err = p.convert2SemiJoin(&requiredProp{})
 	} else {
-		task, err = p.convert2HashJoin()
+		task, err = p.convert2HashJoin(&requiredProp{})
 	}
 	if err != nil {
 		return nil, errors.Trace(err)

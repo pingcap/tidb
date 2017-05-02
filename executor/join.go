@@ -42,9 +42,9 @@ type HashJoinExec struct {
 	bigExec       Executor
 	prepared      bool
 	ctx           context.Context
-	smallFilter   []expression.Expression
-	bigFilter     []expression.Expression
-	otherFilter   []expression.Expression
+	smallFilter   expression.CNFExprs
+	bigFilter     expression.CNFExprs
+	otherFilter   expression.CNFExprs
 	schema        *expression.Schema
 	outer         bool
 	leftSmall     bool
@@ -54,13 +54,13 @@ type HashJoinExec struct {
 	targetTypes []*types.FieldType
 
 	finished atomic.Value
-	// For sync multiple join workers.
+	// wg is for sync multiple join workers.
 	wg sync.WaitGroup
 	// closeCh add a lock for closing executor.
 	closeCh chan struct{}
 
 	rows []*Row
-	// Concurrent channels.
+	// concurrency is number of concurrent channels.
 	concurrency      int
 	bigTableResultCh []chan *execResult
 	hashJoinContexts []*hashJoinCtx
@@ -75,9 +75,9 @@ type HashJoinExec struct {
 
 // hashJoinCtx holds the variables needed to do a hash join in one of many concurrent goroutines.
 type hashJoinCtx struct {
-	bigFilter   []expression.Expression
-	otherFilter []expression.Expression
-	// Buffer used for encode hash keys.
+	bigFilter   expression.CNFExprs
+	otherFilter expression.CNFExprs
+	// datumBuffer is used for encode hash keys.
 	datumBuffer   []types.Datum
 	hashKeyBuffer []byte
 }
@@ -153,7 +153,7 @@ func (e *HashJoinExec) fetchBigExec() {
 		e.wg.Done()
 	}()
 	curBatchSize := 1
-	result := &execResult{rows: make([]*Row, 0, batchSize)}
+	result := &execResult{rows: make([]*Row, 0, curBatchSize)}
 	txnCtx := e.ctx.GoCtx()
 	for {
 		done := false
@@ -174,18 +174,18 @@ func (e *HashJoinExec) fetchBigExec() {
 				break
 			}
 			result.rows = append(result.rows, row)
-			if len(result.rows) >= batchSize {
+			if len(result.rows) >= curBatchSize {
 				select {
 				case <-txnCtx.Done():
 					return
 				case e.bigTableResultCh[idx] <- result:
-					result = &execResult{rows: make([]*Row, 0, batchSize)}
+					result = &execResult{rows: make([]*Row, 0, curBatchSize)}
 				}
 			}
 		}
 		cnt++
 		if done {
-			if len(result.rows) > 0 && len(result.rows) < batchSize {
+			if len(result.rows) > 0 {
 				select {
 				case <-txnCtx.Done():
 					return
@@ -317,7 +317,7 @@ func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 	close(e.closeCh)
 }
 
-// doJoin does join job in one goroutine.
+// runJoinWorker does join job in one goroutine.
 func (e *HashJoinExec) runJoinWorker(idx int) {
 	maxRowsCnt := 1000
 	result := &execResult{rows: make([]*Row, 0, maxRowsCnt)}
@@ -368,12 +368,10 @@ func (e *HashJoinExec) joinOneBigRow(ctx *hashJoinCtx, bigRow *Row, result *exec
 		err         error
 	)
 	bigMatched := true
-	if e.bigFilter != nil {
-		bigMatched, err = expression.EvalBool(ctx.bigFilter, bigRow.Data, e.ctx)
-		if err != nil {
-			result.err = errors.Trace(err)
-			return false
-		}
+	bigMatched, err = expression.EvalBool(ctx.bigFilter, bigRow.Data, e.ctx)
+	if err != nil {
+		result.err = errors.Trace(err)
+		return false
 	}
 	if bigMatched {
 		matchedRows, err = e.constructMatchedRows(ctx, bigRow)
@@ -503,9 +501,9 @@ type NestedLoopJoinExec struct {
 	leftSmall     bool
 	prepared      bool
 	Ctx           context.Context
-	SmallFilter   []expression.Expression
-	BigFilter     []expression.Expression
-	OtherFilter   []expression.Expression
+	SmallFilter   expression.CNFExprs
+	BigFilter     expression.CNFExprs
+	OtherFilter   expression.CNFExprs
 	schema        *expression.Schema
 	outer         bool
 	defaultValues []types.Datum
@@ -551,7 +549,7 @@ func (e *NestedLoopJoinExec) fetchBigRow() (*Row, bool, error) {
 	}
 }
 
-// Prepare runs the first time when 'Next' is called and it reads all data from the small table and stores
+// prepare runs the first time when 'Next' is called and it reads all data from the small table and stores
 // them in a slice.
 func (e *NestedLoopJoinExec) prepare() error {
 	err := e.SmallExec.Close()
@@ -656,17 +654,17 @@ type HashSemiJoinExec struct {
 	bigExec      Executor
 	prepared     bool
 	ctx          context.Context
-	smallFilter  []expression.Expression
-	bigFilter    []expression.Expression
-	otherFilter  []expression.Expression
+	smallFilter  expression.CNFExprs
+	bigFilter    expression.CNFExprs
+	otherFilter  expression.CNFExprs
 	schema       *expression.Schema
 	resultRows   []*Row
-	// In auxMode, the result row always returns with an extra column which stores a boolean
+	// auxMode is a mode that the result row always returns with an extra column which stores a boolean
 	// or NULL value to indicate if this row is matched.
 	auxMode           bool
 	targetTypes       []*types.FieldType
 	smallTableHasNull bool
-	// If anti is true, semi join only output the unmatched row.
+	// anti is true, semi join only output the unmatched row.
 	anti bool
 }
 
@@ -688,7 +686,7 @@ func (e *HashSemiJoinExec) Schema() *expression.Schema {
 	return e.schema
 }
 
-// Prepare runs the first time when 'Next' is called and it reads all data from the small table and stores
+// prepare runs the first time when 'Next' is called and it reads all data from the small table and stores
 // them in a hash table.
 func (e *HashSemiJoinExec) prepare() error {
 	err := e.smallExec.Close()

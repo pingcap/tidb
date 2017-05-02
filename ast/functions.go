@@ -323,7 +323,7 @@ type FuncCastExpr struct {
 	Expr ExprNode
 	// Tp is the conversion type.
 	Tp *types.FieldType
-	// Cast, Convert and Binary share this struct.
+	// FunctionType is either Cast, Convert or Binary.
 	FunctionType CastFunctionType
 }
 
@@ -394,7 +394,7 @@ type AggregateFuncExpr struct {
 	F string
 	// Args is the function args.
 	Args []ExprNode
-	// If distinct is true, the function only aggregate distinct values.
+	// Distinct is true, function hence only aggregate distinct values.
 	// For example, column c1 values are "1", "2", "2",  "sum(c1)" is "5",
 	// but "sum(distinct c1)" is "3".
 	Distinct bool
