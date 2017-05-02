@@ -429,8 +429,7 @@ func (s *builtinCompareIntSig) evalInt(row []types.Datum) (int64, bool, error) {
 	}
 	isUnsigned0, isUnsigned1 := mysql.HasUnsignedFlag(s.args[0].GetType().Flag), mysql.HasUnsignedFlag(s.args[1].GetType().Flag)
 	var res int
-	switch isUnsigned0 {
-	case true:
+	switch {
 	case isUnsigned0 && isUnsigned1:
 		res = types.CompareUint64(uint64(arg0), uint64(arg1))
 	case isUnsigned0 && !isUnsigned1:
