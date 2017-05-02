@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"math"
 	"sort"
 
 	"github.com/juju/errors"
@@ -22,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
-	"math"
 )
 
 var (
@@ -429,22 +429,29 @@ func (s *builtinCompareIntSig) evalInt(row []types.Datum) (int64, bool, error) {
 	}
 	isUnsigned0, isUnsigned1 := mysql.HasUnsignedFlag(s.args[0].GetType().Flag), mysql.HasUnsignedFlag(s.args[1].GetType().Flag)
 	var res int
-	if !isUnsigned0 && !isUnsigned1 {
-		res = types.CompareInt64(arg0, arg1)
-	} else if !isUnsigned0 && isUnsigned1 {
-		if arg0 < 0 || arg1 > math.MaxInt64 {
-			res = -1
-		} else {
+	switch isUnsigned0 {
+	case true:
+		switch isUnsigned1 {
+		case true:
+			res = types.CompareUint64(uint64(arg0), uint64(arg1))
+		case false:
+			if arg1 < 0 || arg0 > math.MaxInt64 {
+				res = 1
+			} else {
+				res = types.CompareInt64(arg0, arg1)
+			}
+		}
+	case false:
+		switch isUnsigned1 {
+		case true:
+			if arg0 < 0 || arg1 > math.MaxInt64 {
+				res = -1
+			} else {
+				res = types.CompareInt64(arg0, arg1)
+			}
+		case false:
 			res = types.CompareInt64(arg0, arg1)
 		}
-	} else if isUnsigned0 && !isUnsigned1 {
-		if arg1 < 0 || arg0 > math.MaxInt64 {
-			res = 1
-		} else {
-			res = types.CompareInt64(arg0, arg1)
-		}
-	} else if isUnsigned0 && isUnsigned1 {
-		res = types.CompareUint64(uint64(arg0), uint64(arg1))
 	}
 	ret := resOfCmp(res, s.op)
 	if ret == -1 {
