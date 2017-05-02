@@ -172,6 +172,8 @@ const (
 	CreateUserPriv
 	// DropPriv is the privilege to drop schema/table.
 	DropPriv
+	// ProcessPriv pertains to display of information about the threads executing within the server.
+	ProcessPriv
 	// GrantPriv is the privilege to grant privilege to user.
 	GrantPriv
 	// AlterPriv is the privilege to run alter statement.
@@ -198,6 +200,7 @@ var Priv2UserCol = map[PrivilegeType]string{
 	SuperPriv:      "Super_priv",
 	CreateUserPriv: "Create_user_priv",
 	DropPriv:       "Drop_priv",
+	ProcessPriv:    "Process_priv",
 	GrantPriv:      "Grant_priv",
 	AlterPriv:      "Alter_priv",
 	ExecutePriv:    "Execute_priv",
@@ -215,6 +218,7 @@ var Col2PrivType = map[string]PrivilegeType{
 	"Super_priv":       SuperPriv,
 	"Create_user_priv": CreateUserPriv,
 	"Drop_priv":        DropPriv,
+	"Process_priv":     ProcessPriv,
 	"Grant_priv":       GrantPriv,
 	"Alter_priv":       AlterPriv,
 	"Execute_priv":     ExecutePriv,
@@ -222,7 +226,7 @@ var Col2PrivType = map[string]PrivilegeType{
 }
 
 // AllGlobalPrivs is all the privileges in global scope.
-var AllGlobalPrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, GrantPriv, AlterPriv, ShowDBPriv, SuperPriv, ExecutePriv, IndexPriv, CreateUserPriv}
+var AllGlobalPrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, ProcessPriv, GrantPriv, AlterPriv, ShowDBPriv, SuperPriv, ExecutePriv, IndexPriv, CreateUserPriv}
 
 // Priv2Str is the map for privilege to string.
 var Priv2Str = map[PrivilegeType]string{
@@ -235,6 +239,7 @@ var Priv2Str = map[PrivilegeType]string{
 	SuperPriv:      "Super",
 	CreateUserPriv: "Create User",
 	DropPriv:       "Drop",
+	ProcessPriv:    "Process",
 	GrantPriv:      "Grant Option",
 	AlterPriv:      "Alter",
 	ExecutePriv:    "Execute",

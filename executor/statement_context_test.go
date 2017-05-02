@@ -75,7 +75,7 @@ func (s *testSuite) TestStatementContext(c *C) {
 	// Insert an invalid UTF8
 	tk.MustExec("insert sc2 values (unhex('4040ffff'))")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Greater, uint16(0))
-	tk.MustQuery("select * from sc2").Check(testkit.Rows(fmt.Sprintf("%v", []byte("@@"))))
+	tk.MustQuery("select * from sc2").Check(testkit.Rows("@@"))
 	tk.MustExec(strictModeSQL)
 	_, err = tk.Exec("insert sc2 values (unhex('4040ffff'))")
 	c.Assert(err, NotNil)
