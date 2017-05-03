@@ -762,6 +762,8 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 				err = d.CreateIndex(ctx, ident, true, model.NewCIStr(constr.Name), spec.Constraint.Keys)
 			case ast.ConstraintForeignKey:
 				err = d.CreateForeignKey(ctx, ident, model.NewCIStr(constr.Name), spec.Constraint.Keys, spec.Constraint.Refer)
+			case ast.ConstraintPrimaryKey:
+				err = ErrUnsupportedModifyPrimaryKey.GenByArgs("add")
 			default:
 				// Nothing to do now.
 			}
@@ -776,6 +778,8 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 		case ast.AlterTableRenameTable:
 			newIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
 			err = d.RenameTable(ctx, ident, newIdent)
+		case ast.AlterTableDropPrimaryKey:
+			err = ErrUnsupportedModifyPrimaryKey.GenByArgs("drop")
 		default:
 			// Nothing to do now.
 		}

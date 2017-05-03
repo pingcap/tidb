@@ -25,6 +25,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -737,6 +738,18 @@ LOOP:
 	count, err := strconv.ParseInt(rows[0][0].(string), 10, 64)
 	c.Assert(err, IsNil)
 	c.Assert(count, Greater, int64(0))
+}
+
+func (s *testDBSuite) TestPrimaryKey(c *C) {
+	defer testleak.AfterTest(c)()
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+
+	s.mustExec(c, "create table primary_key_test (a int, b varchar(10))")
+	_, err := s.tk.Exec("alter table primary_key_test add primary key(a)")
+	c.Assert(ddl.ErrUnsupportedModifyPrimaryKey.Equal(err), IsTrue)
+	_, err = s.tk.Exec("alter table primary_key_test drop primary key")
+	c.Assert(ddl.ErrUnsupportedModifyPrimaryKey.Equal(err), IsTrue)
 }
 
 func (s *testDBSuite) TestChangeColumn(c *C) {
