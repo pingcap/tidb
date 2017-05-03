@@ -1,5 +1,5 @@
-hash: c3d7f84a9457920f8cbecc1f469c6aafd4e91dde13a3eb0de3c1b6107498a24b
-updated: 2017-04-28T14:46:37.911965876+08:00
+hash: 72fc48b4e2b9e8116ca8457e10d1eb0df1c1d1e7d0286f75928f0eb427a9e46c
+updated: 2017-05-02T18:53:14.187450044+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -12,7 +12,7 @@ imports:
 - name: github.com/cloudfoundry-incubator/candiedyaml
   version: 5cef21e2e4f0fd147973b558d4db7395176bcd95
 - name: github.com/coreos/etcd
-  version: 8bad78cb98739eed7bbf1f94b218a7fa5dc5611a
+  version: ea5f6dab6b1d07e22cf46bf5f5088d567548c124
   subpackages:
   - auth/authpb
   - clientv3
@@ -62,7 +62,7 @@ imports:
 - name: github.com/golang/snappy
   version: 723cc1e459b8eea2dea4583200fd60757d40097a
 - name: github.com/gorilla/context
-  version: 08b5f424b9271eedf6f9f0ce86cb9396ed337a42
+  version: 1ea25387ff6f684839d82767c1733ff4d4d15d0a
 - name: github.com/gorilla/mux
   version: 599cba5e7b6137d46ddf58fb1765f5d928e69604
 - name: github.com/grpc-ecosystem/go-grpc-prometheus
@@ -180,7 +180,7 @@ imports:
   - encoding/unicode
   - transform
 - name: golang.org/x/time
-  version: 8be79e1e0910c292df4e79c241bb7e8f7e725959
+  version: c06e80d9300e4443158a03817b8a8cb37d230320
   subpackages:
   - rate
 - name: google.golang.org/grpc
