@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/plan/ranger"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -819,7 +820,7 @@ func (s *testPlanSuite) TestAddCache(c *C) {
 
 func (s *testPlanSuite) TestRangeBuilder(c *C) {
 	defer testleak.AfterTest(c)()
-	rb := &rangeBuilder{sc: new(variable.StatementContext)}
+	rb := &ranger.Builder{Sc: new(variable.StatementContext)}
 
 	tests := []struct {
 		exprStr   string
@@ -994,11 +995,8 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 			}
 		}
 		c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
-		result := fullRange
-		for _, cond := range selection.Conditions {
-			result = rb.intersection(result, rb.build(pushDownNot(cond, false, nil)))
-		}
-		c.Assert(rb.err, IsNil)
+		result, err := rb.BuildFromConds(selection.Conditions)
+		c.Assert(err, IsNil)
 		got := fmt.Sprintf("%v", result)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
 	}

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/plan/util"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -274,7 +275,7 @@ func (v *validator) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 		case ast.AlterTableOption:
 			for _, opt := range spec.Options {
 				if opt.Tp == ast.TableOptionAutoIncrement {
-					v.err = ErrAlterAutoID
+					v.err = util.ErrAlterAutoID
 					return
 				}
 			}

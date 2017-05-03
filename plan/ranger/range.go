@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package plan
+package ranger
 
 import (
 	"fmt"
@@ -21,17 +21,19 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/plan/util"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 )
 
-type rangePoint struct {
+// Point is the end point of range interval.
+type Point struct {
 	value types.Datum
 	excl  bool // exclude
 	start bool
 }
 
-func (rp rangePoint) String() string {
+func (rp Point) String() string {
 	val := rp.value.GetValue()
 	if rp.value.Kind() == types.KindMinNotNull {
 		val = "-inf"
@@ -52,17 +54,17 @@ func (rp rangePoint) String() string {
 	return fmt.Sprintf("%v%s", val, symbol)
 }
 
-type rangePointSorter struct {
-	points []rangePoint
+type pointSorter struct {
+	points []Point
 	err    error
 	sc     *variable.StatementContext
 }
 
-func (r *rangePointSorter) Len() int {
+func (r *pointSorter) Len() int {
 	return len(r.points)
 }
 
-func (r *rangePointSorter) Less(i, j int) bool {
+func (r *pointSorter) Less(i, j int) bool {
 	a := r.points[i]
 	b := r.points[j]
 	less, err := rangePointLess(r.sc, a, b)
@@ -72,7 +74,7 @@ func (r *rangePointSorter) Less(i, j int) bool {
 	return less
 }
 
-func rangePointLess(sc *variable.StatementContext, a, b rangePoint) (bool, error) {
+func rangePointLess(sc *variable.StatementContext, a, b Point) (bool, error) {
 	cmp, err := a.value.CompareDatum(sc, b.value)
 	if cmp != 0 {
 		return cmp < 0, nil
@@ -80,7 +82,7 @@ func rangePointLess(sc *variable.StatementContext, a, b rangePoint) (bool, error
 	return rangePointEqualValueLess(a, b), errors.Trace(err)
 }
 
-func rangePointEqualValueLess(a, b rangePoint) bool {
+func rangePointEqualValueLess(a, b Point) bool {
 	if a.start && b.start {
 		return !a.excl && b.excl
 	} else if a.start {
@@ -91,16 +93,26 @@ func rangePointEqualValueLess(a, b rangePoint) bool {
 	return a.excl && !b.excl
 }
 
-func (r *rangePointSorter) Swap(i, j int) {
+func (r *pointSorter) Swap(i, j int) {
 	r.points[i], r.points[j] = r.points[j], r.points[i]
 }
 
-type rangeBuilder struct {
+// Builder is the range builder struct.
+type Builder struct {
 	err error
-	sc  *variable.StatementContext
+	Sc  *variable.StatementContext
 }
 
-func (r *rangeBuilder) build(expr expression.Expression) []rangePoint {
+// BuildFromConds is used for test.
+func (r *Builder) BuildFromConds(conds []expression.Expression) ([]Point, error) {
+	result := FullRange
+	for _, cond := range conds {
+		result = r.intersection(result, r.build(expression.PushDownNot(cond, false, nil)))
+	}
+	return result, r.err
+}
+
+func (r *Builder) build(expr expression.Expression) []Point {
 	switch x := expr.(type) {
 	case *expression.Column:
 		return r.buildFromColumn(x)
@@ -110,15 +122,15 @@ func (r *rangeBuilder) build(expr expression.Expression) []rangePoint {
 		return r.buildFromConstant(x)
 	}
 
-	return fullRange
+	return FullRange
 }
 
-func (r *rangeBuilder) buildFromConstant(expr *expression.Constant) []rangePoint {
+func (r *Builder) buildFromConstant(expr *expression.Constant) []Point {
 	if expr.Value.IsNull() {
 		return nil
 	}
 
-	val, err := expr.Value.ToBool(r.sc)
+	val, err := expr.Value.ToBool(r.Sc)
 	if err != nil {
 		r.err = err
 		return nil
@@ -127,21 +139,21 @@ func (r *rangeBuilder) buildFromConstant(expr *expression.Constant) []rangePoint
 	if val == 0 {
 		return nil
 	}
-	return fullRange
+	return FullRange
 }
 
-func (r *rangeBuilder) buildFromColumn(expr *expression.Column) []rangePoint {
+func (r *Builder) buildFromColumn(expr *expression.Column) []Point {
 	// column name expression is equivalent to column name is true.
-	startPoint1 := rangePoint{value: types.MinNotNullDatum(), start: true}
-	endPoint1 := rangePoint{excl: true}
+	startPoint1 := Point{value: types.MinNotNullDatum(), start: true}
+	endPoint1 := Point{excl: true}
 	endPoint1.value.SetInt64(0)
-	startPoint2 := rangePoint{excl: true, start: true}
+	startPoint2 := Point{excl: true, start: true}
 	startPoint2.value.SetInt64(0)
-	endPoint2 := rangePoint{value: types.MaxValueDatum()}
-	return []rangePoint{startPoint1, endPoint1, startPoint2, endPoint2}
+	endPoint2 := Point{value: types.MaxValueDatum()}
+	return []Point{startPoint1, endPoint1, startPoint2, endPoint2}
 }
 
-func (r *rangeBuilder) buildFormBinOp(expr *expression.ScalarFunction) []rangePoint {
+func (r *Builder) buildFormBinOp(expr *expression.ScalarFunction) []Point {
 	// This has been checked that the binary operation is comparison operation, and one of
 	// the operand is column name expression.
 	var value types.Datum
@@ -170,89 +182,89 @@ func (r *rangeBuilder) buildFormBinOp(expr *expression.ScalarFunction) []rangePo
 
 	switch op {
 	case ast.EQ:
-		startPoint := rangePoint{value: value, start: true}
-		endPoint := rangePoint{value: value}
-		return []rangePoint{startPoint, endPoint}
+		startPoint := Point{value: value, start: true}
+		endPoint := Point{value: value}
+		return []Point{startPoint, endPoint}
 	case ast.NE:
-		startPoint1 := rangePoint{value: types.MinNotNullDatum(), start: true}
-		endPoint1 := rangePoint{value: value, excl: true}
-		startPoint2 := rangePoint{value: value, start: true, excl: true}
-		endPoint2 := rangePoint{value: types.MaxValueDatum()}
-		return []rangePoint{startPoint1, endPoint1, startPoint2, endPoint2}
+		startPoint1 := Point{value: types.MinNotNullDatum(), start: true}
+		endPoint1 := Point{value: value, excl: true}
+		startPoint2 := Point{value: value, start: true, excl: true}
+		endPoint2 := Point{value: types.MaxValueDatum()}
+		return []Point{startPoint1, endPoint1, startPoint2, endPoint2}
 	case ast.LT:
-		startPoint := rangePoint{value: types.MinNotNullDatum(), start: true}
-		endPoint := rangePoint{value: value, excl: true}
-		return []rangePoint{startPoint, endPoint}
+		startPoint := Point{value: types.MinNotNullDatum(), start: true}
+		endPoint := Point{value: value, excl: true}
+		return []Point{startPoint, endPoint}
 	case ast.LE:
-		startPoint := rangePoint{value: types.MinNotNullDatum(), start: true}
-		endPoint := rangePoint{value: value}
-		return []rangePoint{startPoint, endPoint}
+		startPoint := Point{value: types.MinNotNullDatum(), start: true}
+		endPoint := Point{value: value}
+		return []Point{startPoint, endPoint}
 	case ast.GT:
-		startPoint := rangePoint{value: value, start: true, excl: true}
-		endPoint := rangePoint{value: types.MaxValueDatum()}
-		return []rangePoint{startPoint, endPoint}
+		startPoint := Point{value: value, start: true, excl: true}
+		endPoint := Point{value: types.MaxValueDatum()}
+		return []Point{startPoint, endPoint}
 	case ast.GE:
-		startPoint := rangePoint{value: value, start: true}
-		endPoint := rangePoint{value: types.MaxValueDatum()}
-		return []rangePoint{startPoint, endPoint}
+		startPoint := Point{value: value, start: true}
+		endPoint := Point{value: types.MaxValueDatum()}
+		return []Point{startPoint, endPoint}
 	}
 	return nil
 }
 
-func (r *rangeBuilder) buildFromIsTrue(expr *expression.ScalarFunction, isNot int) []rangePoint {
+func (r *Builder) buildFromIsTrue(expr *expression.ScalarFunction, isNot int) []Point {
 	if isNot == 1 {
 		// NOT TRUE range is {[null null] [0, 0]}
-		startPoint1 := rangePoint{start: true}
-		endPoint1 := rangePoint{}
-		startPoint2 := rangePoint{start: true}
+		startPoint1 := Point{start: true}
+		endPoint1 := Point{}
+		startPoint2 := Point{start: true}
 		startPoint2.value.SetInt64(0)
-		endPoint2 := rangePoint{}
+		endPoint2 := Point{}
 		endPoint2.value.SetInt64(0)
-		return []rangePoint{startPoint1, endPoint1, startPoint2, endPoint2}
+		return []Point{startPoint1, endPoint1, startPoint2, endPoint2}
 	}
 	// TRUE range is {[-inf 0) (0 +inf]}
-	startPoint1 := rangePoint{value: types.MinNotNullDatum(), start: true}
-	endPoint1 := rangePoint{excl: true}
+	startPoint1 := Point{value: types.MinNotNullDatum(), start: true}
+	endPoint1 := Point{excl: true}
 	endPoint1.value.SetInt64(0)
-	startPoint2 := rangePoint{excl: true, start: true}
+	startPoint2 := Point{excl: true, start: true}
 	startPoint2.value.SetInt64(0)
-	endPoint2 := rangePoint{value: types.MaxValueDatum()}
-	return []rangePoint{startPoint1, endPoint1, startPoint2, endPoint2}
+	endPoint2 := Point{value: types.MaxValueDatum()}
+	return []Point{startPoint1, endPoint1, startPoint2, endPoint2}
 }
 
-func (r *rangeBuilder) buildFromIsFalse(expr *expression.ScalarFunction, isNot int) []rangePoint {
+func (r *Builder) buildFromIsFalse(expr *expression.ScalarFunction, isNot int) []Point {
 	if isNot == 1 {
 		// NOT FALSE range is {[-inf, 0), (0, +inf], [null, null]}
-		startPoint1 := rangePoint{start: true}
-		endPoint1 := rangePoint{excl: true}
+		startPoint1 := Point{start: true}
+		endPoint1 := Point{excl: true}
 		endPoint1.value.SetInt64(0)
-		startPoint2 := rangePoint{start: true, excl: true}
+		startPoint2 := Point{start: true, excl: true}
 		startPoint2.value.SetInt64(0)
-		endPoint2 := rangePoint{value: types.MaxValueDatum()}
-		return []rangePoint{startPoint1, endPoint1, startPoint2, endPoint2}
+		endPoint2 := Point{value: types.MaxValueDatum()}
+		return []Point{startPoint1, endPoint1, startPoint2, endPoint2}
 	}
 	// FALSE range is {[0, 0]}
-	startPoint := rangePoint{start: true}
+	startPoint := Point{start: true}
 	startPoint.value.SetInt64(0)
-	endPoint := rangePoint{}
+	endPoint := Point{}
 	endPoint.value.SetInt64(0)
-	return []rangePoint{startPoint, endPoint}
+	return []Point{startPoint, endPoint}
 }
 
-func (r *rangeBuilder) newBuildFromIn(expr *expression.ScalarFunction) []rangePoint {
-	var rangePoints []rangePoint
+func (r *Builder) newBuildFromIn(expr *expression.ScalarFunction) []Point {
+	var rangePoints []Point
 	list := expr.GetArgs()[1:]
 	for _, e := range list {
 		v, ok := e.(*expression.Constant)
 		if !ok {
-			r.err = ErrUnsupportedType.Gen("expr:%v is not constant", e)
-			return fullRange
+			r.err = util.ErrUnsupportedType.Gen("expr:%v is not constant", e)
+			return FullRange
 		}
-		startPoint := rangePoint{value: types.NewDatum(v.Value.GetValue()), start: true}
-		endPoint := rangePoint{value: types.NewDatum(v.Value.GetValue())}
+		startPoint := Point{value: types.NewDatum(v.Value.GetValue()), start: true}
+		endPoint := Point{value: types.NewDatum(v.Value.GetValue())}
 		rangePoints = append(rangePoints, startPoint, endPoint)
 	}
-	sorter := rangePointSorter{points: rangePoints, sc: r.sc}
+	sorter := pointSorter{points: rangePoints, sc: r.Sc}
 	sort.Sort(&sorter)
 	if sorter.err != nil {
 		r.err = sorter.err
@@ -271,7 +283,7 @@ func (r *rangeBuilder) newBuildFromIn(expr *expression.ScalarFunction) []rangePo
 		return rangePoints
 	}
 	// remove duplicates
-	distinctRangePoints := make([]rangePoint, 0, len(rangePoints))
+	distinctRangePoints := make([]Point, 0, len(rangePoints))
 	isStart = false
 	for i := 0; i < len(rangePoints); i++ {
 		current := rangePoints[i]
@@ -284,16 +296,16 @@ func (r *rangeBuilder) newBuildFromIn(expr *expression.ScalarFunction) []rangePo
 	return distinctRangePoints
 }
 
-func (r *rangeBuilder) newBuildFromPatternLike(expr *expression.ScalarFunction) []rangePoint {
+func (r *Builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []Point {
 	pattern, err := expr.GetArgs()[1].(*expression.Constant).Value.ToString()
 	if err != nil {
 		r.err = errors.Trace(err)
-		return fullRange
+		return FullRange
 	}
 	if pattern == "" {
-		startPoint := rangePoint{value: types.NewStringDatum(""), start: true}
-		endPoint := rangePoint{value: types.NewStringDatum("")}
-		return []rangePoint{startPoint, endPoint}
+		startPoint := Point{value: types.NewStringDatum(""), start: true}
+		endPoint := Point{value: types.NewStringDatum("")}
+		return []Point{startPoint, endPoint}
 	}
 	lowValue := make([]byte, 0, len(pattern))
 	escape := byte(expr.GetArgs()[2].(*expression.Constant).Value.GetInt64())
@@ -324,17 +336,17 @@ func (r *rangeBuilder) newBuildFromPatternLike(expr *expression.ScalarFunction) 
 		lowValue = append(lowValue, pattern[i])
 	}
 	if len(lowValue) == 0 {
-		return []rangePoint{{value: types.MinNotNullDatum(), start: true}, {value: types.MaxValueDatum()}}
+		return []Point{{value: types.MinNotNullDatum(), start: true}, {value: types.MaxValueDatum()}}
 	}
 	if isExactMatch {
 		val := types.NewStringDatum(string(lowValue))
-		return []rangePoint{{value: val, start: true}, {value: val}}
+		return []Point{{value: val, start: true}, {value: val}}
 	}
-	startPoint := rangePoint{start: true, excl: exclude}
+	startPoint := Point{start: true, excl: exclude}
 	startPoint.value.SetBytesAsString(lowValue)
 	highValue := make([]byte, len(lowValue))
 	copy(highValue, lowValue)
-	endPoint := rangePoint{excl: true}
+	endPoint := Point{excl: true}
 	for i := len(highValue) - 1; i >= 0; i-- {
 		// Make the end point value more than the start point value,
 		// and the length of the end point value is the same as the length of the start point value.
@@ -349,10 +361,10 @@ func (r *rangeBuilder) newBuildFromPatternLike(expr *expression.ScalarFunction) 
 			endPoint.value = types.MaxValueDatum()
 		}
 	}
-	return []rangePoint{startPoint, endPoint}
+	return []Point{startPoint, endPoint}
 }
 
-func (r *rangeBuilder) buildFromNot(expr *expression.ScalarFunction) []rangePoint {
+func (r *Builder) buildFromNot(expr *expression.ScalarFunction) []Point {
 	switch n := expr.FuncName.L; n {
 	case ast.IsTruth:
 		return r.buildFromIsTrue(expr, 1)
@@ -360,21 +372,21 @@ func (r *rangeBuilder) buildFromNot(expr *expression.ScalarFunction) []rangePoin
 		return r.buildFromIsFalse(expr, 1)
 	case ast.In:
 		// Pattern not in is not supported.
-		r.err = ErrUnsupportedType.Gen("NOT IN is not supported")
-		return fullRange
+		r.err = util.ErrUnsupportedType.Gen("NOT IN is not supported")
+		return FullRange
 	case ast.Like:
 		// Pattern not like is not supported.
-		r.err = ErrUnsupportedType.Gen("NOT LIKE is not supported.")
-		return fullRange
+		r.err = util.ErrUnsupportedType.Gen("NOT LIKE is not supported.")
+		return FullRange
 	case ast.IsNull:
-		startPoint := rangePoint{value: types.MinNotNullDatum(), start: true}
-		endPoint := rangePoint{value: types.MaxValueDatum()}
-		return []rangePoint{startPoint, endPoint}
+		startPoint := Point{value: types.MinNotNullDatum(), start: true}
+		endPoint := Point{value: types.MaxValueDatum()}
+		return []Point{startPoint, endPoint}
 	}
 	return nil
 }
 
-func (r *rangeBuilder) buildFromScalarFunc(expr *expression.ScalarFunction) []rangePoint {
+func (r *Builder) buildFromScalarFunc(expr *expression.ScalarFunction) []Point {
 	switch op := expr.FuncName.L; op {
 	case ast.GE, ast.GT, ast.LT, ast.LE, ast.EQ, ast.NE:
 		return r.buildFormBinOp(expr)
@@ -391,9 +403,9 @@ func (r *rangeBuilder) buildFromScalarFunc(expr *expression.ScalarFunction) []ra
 	case ast.Like:
 		return r.newBuildFromPatternLike(expr)
 	case ast.IsNull:
-		startPoint := rangePoint{start: true}
-		endPoint := rangePoint{}
-		return []rangePoint{startPoint, endPoint}
+		startPoint := Point{start: true}
+		endPoint := Point{}
+		return []Point{startPoint, endPoint}
 	case ast.UnaryNot:
 		return r.buildFromNot(expr.GetArgs()[0].(*expression.ScalarFunction))
 	}
@@ -401,23 +413,23 @@ func (r *rangeBuilder) buildFromScalarFunc(expr *expression.ScalarFunction) []ra
 	return nil
 }
 
-func (r *rangeBuilder) intersection(a, b []rangePoint) []rangePoint {
+func (r *Builder) intersection(a, b []Point) []Point {
 	return r.merge(a, b, false)
 }
 
-func (r *rangeBuilder) union(a, b []rangePoint) []rangePoint {
+func (r *Builder) union(a, b []Point) []Point {
 	return r.merge(a, b, true)
 }
 
-func (r *rangeBuilder) merge(a, b []rangePoint, union bool) []rangePoint {
-	sorter := rangePointSorter{points: append(a, b...), sc: r.sc}
+func (r *Builder) merge(a, b []Point, union bool) []Point {
+	sorter := pointSorter{points: append(a, b...), sc: r.Sc}
 	sort.Sort(&sorter)
 	if sorter.err != nil {
 		r.err = sorter.err
 		return nil
 	}
 	var (
-		merged               []rangePoint
+		merged               []Point
 		inRangeCount         int
 		requiredInRangeCount int
 	)
@@ -444,15 +456,15 @@ func (r *rangeBuilder) merge(a, b []rangePoint, union bool) []rangePoint {
 	return merged
 }
 
-// buildIndexRanges build index ranges from range points.
+// BuildIndexRanges build index ranges from range points.
 // Only the first column in the index is built, extra column ranges will be appended by
 // appendIndexRanges.
-func (r *rangeBuilder) buildIndexRanges(rangePoints []rangePoint, tp *types.FieldType) []*types.IndexRange {
+func (r *Builder) BuildIndexRanges(rangePoints []Point, tp *types.FieldType) []*types.IndexRange {
 	indexRanges := make([]*types.IndexRange, 0, len(rangePoints)/2)
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint := r.convertPoint(rangePoints[i], tp)
 		endPoint := r.convertPoint(rangePoints[i+1], tp)
-		less, err := rangePointLess(r.sc, startPoint, endPoint)
+		less, err := rangePointLess(r.Sc, startPoint, endPoint)
 		if err != nil {
 			r.err = errors.Trace(err)
 		}
@@ -470,16 +482,16 @@ func (r *rangeBuilder) buildIndexRanges(rangePoints []rangePoint, tp *types.Fiel
 	return indexRanges
 }
 
-func (r *rangeBuilder) convertPoint(point rangePoint, tp *types.FieldType) rangePoint {
+func (r *Builder) convertPoint(point Point, tp *types.FieldType) Point {
 	switch point.value.Kind() {
 	case types.KindMaxValue, types.KindMinNotNull:
 		return point
 	}
-	casted, err := point.value.ConvertTo(r.sc, tp)
+	casted, err := point.value.ConvertTo(r.Sc, tp)
 	if err != nil {
 		r.err = errors.Trace(err)
 	}
-	valCmpCasted, err := point.value.CompareDatum(r.sc, casted)
+	valCmpCasted, err := point.value.CompareDatum(r.Sc, casted)
 	if err != nil {
 		r.err = errors.Trace(err)
 	}
@@ -519,11 +531,11 @@ func (r *rangeBuilder) convertPoint(point rangePoint, tp *types.FieldType) range
 // The additional column ranges can only be appended to point ranges.
 // for example we have an index (a, b), if the condition is (a > 1 and b = 2)
 // then we can not build a conjunctive ranges for this index.
-func (r *rangeBuilder) appendIndexRanges(origin []*types.IndexRange, rangePoints []rangePoint, ft *types.FieldType) []*types.IndexRange {
+func (r *Builder) appendIndexRanges(origin []*types.IndexRange, rangePoints []Point, ft *types.FieldType) []*types.IndexRange {
 	var newIndexRanges []*types.IndexRange
 	for i := 0; i < len(origin); i++ {
 		oRange := origin[i]
-		if !oRange.IsPoint(r.sc) {
+		if !oRange.IsPoint(r.Sc) {
 			newIndexRanges = append(newIndexRanges, oRange)
 		} else {
 			newIndexRanges = append(newIndexRanges, r.appendIndexRange(oRange, rangePoints, ft)...)
@@ -532,12 +544,12 @@ func (r *rangeBuilder) appendIndexRanges(origin []*types.IndexRange, rangePoints
 	return newIndexRanges
 }
 
-func (r *rangeBuilder) appendIndexRange(origin *types.IndexRange, rangePoints []rangePoint, ft *types.FieldType) []*types.IndexRange {
+func (r *Builder) appendIndexRange(origin *types.IndexRange, rangePoints []Point, ft *types.FieldType) []*types.IndexRange {
 	newRanges := make([]*types.IndexRange, 0, len(rangePoints)/2)
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint := r.convertPoint(rangePoints[i], ft)
 		endPoint := r.convertPoint(rangePoints[i+1], ft)
-		less, err := rangePointLess(r.sc, startPoint, endPoint)
+		less, err := rangePointLess(r.Sc, startPoint, endPoint)
 		if err != nil {
 			r.err = errors.Trace(err)
 		}
@@ -564,20 +576,21 @@ func (r *rangeBuilder) appendIndexRange(origin *types.IndexRange, rangePoints []
 	return newRanges
 }
 
-func (r *rangeBuilder) buildTableRanges(rangePoints []rangePoint) []types.IntColumnRange {
+// BuildTableRanges will construct the range slice with the given range points
+func (r *Builder) BuildTableRanges(rangePoints []Point) []types.IntColumnRange {
 	tableRanges := make([]types.IntColumnRange, 0, len(rangePoints)/2)
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint := rangePoints[i]
 		if startPoint.value.IsNull() || startPoint.value.Kind() == types.KindMinNotNull {
 			startPoint.value.SetInt64(math.MinInt64)
 		}
-		startInt, err := startPoint.value.ToInt64(r.sc)
+		startInt, err := startPoint.value.ToInt64(r.Sc)
 		if err != nil {
 			r.err = errors.Trace(err)
 			return tableRanges
 		}
 		startDatum := types.NewDatum(startInt)
-		cmp, err := startDatum.CompareDatum(r.sc, startPoint.value)
+		cmp, err := startDatum.CompareDatum(r.Sc, startPoint.value)
 		if err != nil {
 			r.err = errors.Trace(err)
 			return tableRanges
@@ -591,13 +604,13 @@ func (r *rangeBuilder) buildTableRanges(rangePoints []rangePoint) []types.IntCol
 		} else if endPoint.value.Kind() == types.KindMaxValue {
 			endPoint.value.SetInt64(math.MaxInt64)
 		}
-		endInt, err := endPoint.value.ToInt64(r.sc)
+		endInt, err := endPoint.value.ToInt64(r.Sc)
 		if err != nil {
 			r.err = errors.Trace(err)
 			return tableRanges
 		}
 		endDatum := types.NewDatum(endInt)
-		cmp, err = endDatum.CompareDatum(r.sc, endPoint.value)
+		cmp, err = endDatum.CompareDatum(r.Sc, endPoint.value)
 		if err != nil {
 			r.err = errors.Trace(err)
 			return tableRanges

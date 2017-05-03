@@ -21,6 +21,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/plan/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -439,7 +440,7 @@ func (p *basePlan) ReplaceParent(parent, newPar Plan) error {
 			return nil
 		}
 	}
-	return SystemInternalErrorType.Gen("ReplaceParent Failed!")
+	return util.SystemInternalErrorType.Gen("ReplaceParent Failed!")
 }
 
 // ReplaceChild means replace a child with another one.
@@ -450,7 +451,7 @@ func (p *basePlan) ReplaceChild(child, newChild Plan) error {
 			return nil
 		}
 	}
-	return SystemInternalErrorType.Gen("ReplaceChildren Failed!")
+	return util.SystemInternalErrorType.Gen("ReplaceChildren Failed!")
 }
 
 // Parents implements Plan Parents interface.

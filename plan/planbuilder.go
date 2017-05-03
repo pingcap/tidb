@@ -24,41 +24,10 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/plan/util"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
-
-// Error instances.
-var (
-	ErrUnsupportedType      = terror.ClassOptimizerPlan.New(CodeUnsupportedType, "Unsupported type")
-	SystemInternalErrorType = terror.ClassOptimizerPlan.New(SystemInternalError, "System internal error")
-	ErrUnknownColumn        = terror.ClassOptimizerPlan.New(CodeUnknownColumn, "Unknown column '%s' in '%s'")
-	ErrWrongArguments       = terror.ClassOptimizerPlan.New(CodeWrongArguments, "Incorrect arguments to EXECUTE")
-	ErrAmbiguous            = terror.ClassOptimizerPlan.New(CodeAmbiguous, "Column '%s' in field list is ambiguous")
-	ErrAnalyzeMissIndex     = terror.ClassOptimizerPlan.New(CodeAnalyzeMissIndex, "Index '%s' in field list does not exist in table '%s'")
-	ErrAlterAutoID          = terror.ClassAutoid.New(CodeAlterAutoID, "No support for setting auto_increment using alter_table")
-)
-
-// Error codes.
-const (
-	CodeUnsupportedType  terror.ErrCode = 1
-	SystemInternalError  terror.ErrCode = 2
-	CodeAlterAutoID      terror.ErrCode = 3
-	CodeAnalyzeMissIndex terror.ErrCode = 4
-	CodeAmbiguous        terror.ErrCode = 1052
-	CodeUnknownColumn    terror.ErrCode = 1054
-	CodeWrongArguments   terror.ErrCode = 1210
-)
-
-func init() {
-	tableMySQLErrCodes := map[terror.ErrCode]uint16{
-		CodeUnknownColumn:  mysql.ErrBadField,
-		CodeAmbiguous:      mysql.ErrNonUniq,
-		CodeWrongArguments: mysql.ErrWrongArguments,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassOptimizerPlan] = tableMySQLErrCodes
-}
 
 type visitInfo struct {
 	privilege mysql.PrivilegeType
@@ -166,7 +135,7 @@ func (b *planBuilder) build(node ast.Node) Plan {
 	case ast.DDLNode:
 		return b.buildDDL(x)
 	}
-	b.err = ErrUnsupportedType.Gen("Unsupported type %T", node)
+	b.err = util.ErrUnsupportedType.Gen("Unsupported type %T", node)
 	return nil
 }
 
@@ -360,7 +329,7 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 		p = &ShowDDL{}
 		p.SetSchema(buildShowDDLFields())
 	default:
-		b.err = ErrUnsupportedType.Gen("Unsupported type %T", as)
+		b.err = util.ErrUnsupportedType.Gen("Unsupported type %T", as)
 	}
 	return p
 }
@@ -430,7 +399,7 @@ func (b *planBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) Plan {
 	for _, idxName := range as.IndexNames {
 		idx := findIndexByName(tblInfo.Indices, idxName)
 		if idx == nil || idx.State != model.StatePublic {
-			b.err = ErrAnalyzeMissIndex.GenByArgs(idxName.O, tblInfo.Name.O)
+			b.err = util.ErrAnalyzeMissIndex.GenByArgs(idxName.O, tblInfo.Name.O)
 			break
 		}
 		p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{TableInfo: tblInfo, IndexInfo: idx})
@@ -619,7 +588,7 @@ func (b *planBuilder) findDefaultValue(cols []*table.Column, name *ast.ColumnNam
 			return b.getDefaultValue(col)
 		}
 	}
-	return nil, ErrUnknownColumn.GenByArgs(name.Name.O, "field_list")
+	return nil, util.ErrUnknownColumn.GenByArgs(name.Name.O, "field_list")
 }
 
 func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
