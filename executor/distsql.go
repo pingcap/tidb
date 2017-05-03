@@ -463,7 +463,7 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = decodeRawValues(values, schema, getTimeZone(e.ctx))
+		err = decodeRawValues(values, schema, e.ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -746,7 +746,7 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = decodeRawValues(values, e.Schema(), getTimeZone(e.ctx))
+		err = decodeRawValues(values, e.Schema(), e.ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -930,7 +930,7 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = decodeRawValues(values, e.schema, getTimeZone(e.ctx))
+		err = decodeRawValues(values, e.schema, e.ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -980,18 +980,10 @@ func setPBColumnsDefaultValue(ctx context.Context, pbColumns []*tipb.ColumnInfo,
 			return errors.Trace(err)
 		}
 
-		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(d, getTimeZone(ctx))
+		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(d, ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	return nil
-}
-
-func getTimeZone(ctx context.Context) *time.Location {
-	loc := ctx.GetSessionVars().TimeZone
-	if loc == nil {
-		loc = time.Local
-	}
-	return loc
 }

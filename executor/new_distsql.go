@@ -91,7 +91,7 @@ func (t *TableReaderExecutor) Next() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = decodeRawValues(values, t.schema, getTimeZone(t.ctx))
+		err = decodeRawValues(values, t.schema, t.ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

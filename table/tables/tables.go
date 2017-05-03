@@ -19,7 +19,6 @@ package tables
 
 import (
 	"strings"
-	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -199,7 +198,7 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum
 	}
 	// Set new row data into KV.
 	key := t.RecordKey(h)
-	value, err := tablecodec.EncodeRow(currentData, colIDs, getTimeZone(ctx))
+	value, err := tablecodec.EncodeRow(currentData, colIDs, ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -337,7 +336,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 		row = append(row, value)
 	}
 	key := t.RecordKey(recordID)
-	value, err := tablecodec.EncodeRow(row, colIDs, getTimeZone(ctx))
+	value, err := tablecodec.EncodeRow(row, colIDs, ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -452,7 +451,7 @@ func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*table.Column) 
 		}
 		colTps[col.ID] = &col.FieldType
 	}
-	row, err := tablecodec.DecodeRow(value, colTps, getTimeZone(ctx))
+	row, err := tablecodec.DecodeRow(value, colTps, ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -484,14 +483,6 @@ func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*table.Column) 
 	return v, nil
 }
 
-func getTimeZone(ctx context.Context) *time.Location {
-	loc := ctx.GetSessionVars().TimeZone
-	if loc == nil {
-		loc = time.Local
-	}
-	return loc
-}
-
 // Row implements table.Table Row interface.
 func (t *Table) Row(ctx context.Context, h int64) ([]types.Datum, error) {
 	r, err := t.RowWithCols(ctx, h, t.Cols())
@@ -520,7 +511,7 @@ func (t *Table) RemoveRecord(ctx context.Context, h int64, r []types.Datum) erro
 
 func (t *Table) addUpdateBinlog(ctx context.Context, h int64, old []types.Datum, newValue []byte, colIDs []int64) error {
 	var bin []byte
-	oldData, err := tablecodec.EncodeRow(old, colIDs, getTimeZone(ctx))
+	oldData, err := tablecodec.EncodeRow(old, colIDs, ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -539,7 +530,7 @@ func (t *Table) addDeleteBinlog(ctx context.Context, r []types.Datum) error {
 	for i, col := range t.Cols() {
 		colIDs[i] = col.ID
 	}
-	data, err = tablecodec.EncodeRow(r, colIDs, getTimeZone(ctx))
+	data, err = tablecodec.EncodeRow(r, colIDs, ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -628,7 +619,7 @@ func (t *Table) IterRecords(ctx context.Context, startKey kv.Key, cols []*table.
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rowMap, err := tablecodec.DecodeRow(it.Value(), colMap, getTimeZone(ctx))
+		rowMap, err := tablecodec.DecodeRow(it.Value(), colMap, ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
 			return errors.Trace(err)
 		}

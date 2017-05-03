@@ -14,8 +14,6 @@
 package plan
 
 import (
-	"time"
-
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/distsql"
@@ -101,18 +99,10 @@ func setPBColumnsDefaultValue(ctx context.Context, pbColumns []*tipb.ColumnInfo,
 			return errors.Trace(err)
 		}
 
-		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(d, getTimeZone(ctx))
+		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(d, ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	return nil
-}
-
-func getTimeZone(ctx context.Context) *time.Location {
-	loc := ctx.GetSessionVars().TimeZone
-	if loc == nil {
-		loc = time.Local
-	}
-	return loc
 }

@@ -347,7 +347,6 @@ func (d *ddl) backfillColumnInTxn(t table.Table, colMeta *columnMeta, handles []
 			return 0, errors.Trace(err)
 		}
 
-		// TODO: Should use session's TimeZone instead of UTC.
 		rowColumns, err := tablecodec.DecodeRow(rowVal, colMeta.oldColMap, time.UTC)
 		if err != nil {
 			return 0, errors.Trace(err)

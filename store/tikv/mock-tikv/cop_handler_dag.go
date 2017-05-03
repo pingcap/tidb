@@ -14,8 +14,6 @@
 package mocktikv
 
 import (
-	"time"
-
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -283,8 +281,7 @@ func (e *evalContext) decodeRelatedColumnVals(relatedColOffsets []int, handle in
 			}
 			continue
 		}
-		// TODO: Should use session's TimeZone instead of UTC.
-		row[offset], err = tablecodec.DecodeColumnValue(value[offset], e.fieldTps[offset], time.UTC)
+		row[offset], err = tablecodec.DecodeColumnValue(value[offset], e.fieldTps[offset], e.sc.TimeZone)
 		if err != nil {
 			return errors.Trace(err)
 		}

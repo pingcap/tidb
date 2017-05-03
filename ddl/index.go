@@ -416,7 +416,6 @@ func (d *ddl) fetchRowColVals(txn kv.Transaction, t table.Table, taskOpInfo *ind
 	cols := t.Cols()
 	idxInfo := taskOpInfo.tblIndex.Meta()
 	for i, idxRecord := range idxRecords {
-		// TODO: Should use session's TimeZone instead of UTC.
 		rowMap, err := tablecodec.DecodeRow(rawRecords[i], taskOpInfo.colMap, time.UTC)
 		if err != nil {
 			ret.err = errors.Trace(err)

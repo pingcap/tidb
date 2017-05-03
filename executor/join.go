@@ -302,7 +302,7 @@ func (e *HashJoinExec) decodeRow(data []byte) (*Row, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	err = decodeRawValues(values, e.smallExec.Schema(), getTimeZone(e.ctx))
+	err = decodeRawValues(values, e.smallExec.Schema(), e.ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
