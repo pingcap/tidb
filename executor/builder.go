@@ -829,13 +829,13 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	return e
 }
 
-func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor {
+func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) *tipb.DAGRequest {
 	dagReq := &tipb.DAGRequest{}
 	dagReq.StartTs = b.getStartTS()
 	dagReq.TimeZoneOffset = timeZoneOffset()
 	sc := b.ctx.GetSessionVars().StmtCtx
 	dagReq.Flags = statementContextToFlags(sc)
-	for _, p := range v.TablePlans {
+	for _, p := range plans {
 		execPB, err := p.ToPB(b.ctx)
 		if err != nil {
 			b.err = errors.Trace(err)
@@ -843,7 +843,11 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 		}
 		dagReq.Executors = append(dagReq.Executors, execPB)
 	}
+	return dagReq
+}
 
+func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor {
+	dagReq := b.constructDAGReq(v.TablePlans)
 	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
 	table, _ := b.is.TableByID(ts.Table.ID)
 	e := &TableReaderExecutor{
@@ -867,20 +871,7 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 }
 
 func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor {
-	dagReq := &tipb.DAGRequest{}
-	dagReq.StartTs = b.getStartTS()
-	dagReq.TimeZoneOffset = timeZoneOffset()
-	sc := b.ctx.GetSessionVars().StmtCtx
-	dagReq.Flags = statementContextToFlags(sc)
-	for _, p := range v.IndexPlans {
-		execPB, err := p.ToPB(b.ctx)
-		if err != nil {
-			b.err = errors.Trace(err)
-			return nil
-		}
-		dagReq.Executors = append(dagReq.Executors, execPB)
-	}
-
+	dagReq := b.constructDAGReq(v.IndexPlans)
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
 	table, _ := b.is.TableByID(is.Table.ID)
 	e := &IndexReaderExecutor{
@@ -905,34 +896,8 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor
 }
 
 func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpReader) Executor {
-	dagReq := &tipb.DAGRequest{}
-	dagReq.StartTs = b.getStartTS()
-	dagReq.TimeZoneOffset = timeZoneOffset()
-	sc := b.ctx.GetSessionVars().StmtCtx
-	dagReq.Flags = statementContextToFlags(sc)
-	for _, p := range v.IndexPlans {
-		execPB, err := p.ToPB(b.ctx)
-		if err != nil {
-			b.err = errors.Trace(err)
-			return nil
-		}
-		dagReq.Executors = append(dagReq.Executors, execPB)
-	}
-
-	tableReq := &tipb.DAGRequest{
-		StartTs:        dagReq.StartTs,
-		TimeZoneOffset: dagReq.TimeZoneOffset,
-		Flags:          dagReq.Flags,
-	}
-	for _, p := range v.TablePlans {
-		execPB, err := p.ToPB(b.ctx)
-		if err != nil {
-			b.err = errors.Trace(err)
-			return nil
-		}
-		tableReq.Executors = append(tableReq.Executors, execPB)
-	}
-
+	indexReq := b.constructDAGReq(v.IndexPlans)
+	tableReq := b.constructDAGReq(v.TablePlans)
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
 	table, _ := b.is.TableByID(is.Table.ID)
 
@@ -943,7 +908,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 	e := &IndexLookUpExecutor{
 		ctx:          b.ctx,
 		schema:       v.Schema(),
-		dagPB:        dagReq,
+		dagPB:        indexReq,
 		asName:       is.TableAsName,
 		tableID:      is.Table.ID,
 		table:        table,
@@ -953,6 +918,6 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 		ranges:       is.Ranges,
 		tableRequest: tableReq,
 	}
-	e.doRequest()
+	b.err = e.doRequest()
 	return e
 }
