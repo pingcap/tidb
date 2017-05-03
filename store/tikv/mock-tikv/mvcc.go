@@ -166,11 +166,10 @@ func (e *mvccEntry) Commit(startTS, commitTS uint64) error {
 
 func (e *mvccEntry) Rollback(startTS uint64) error {
 	if e.lock == nil || e.lock.startTS != startTS {
-		c, ok := e.getTxnCommitInfo(startTS)
-		if ok && c.valueType != typeRollback {
-			return ErrAlreadyCommitted(c.commitTS)
-		}
-		if ok && c.valueType == typeRollback {
+		if c, ok := e.getTxnCommitInfo(startTS); ok {
+			if c.valueType != typeRollback {
+				return ErrAlreadyCommitted(c.commitTS)
+			}
 			return nil
 		}
 	} else {

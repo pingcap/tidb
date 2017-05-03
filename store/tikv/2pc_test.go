@@ -304,20 +304,24 @@ func (s *testCommitterSuite) TestIllegalTso(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func errMsgMustContain(c *C, err error, msg string) {
+	c.Assert(strings.Contains(err.Error(), msg), IsTrue)
+}
+
 func (s *testCommitterSuite) TestCommitBeforePrewrite(c *C) {
 	txn := s.begin(c)
 	err := txn.Set([]byte("a"), []byte("a1"))
 	c.Assert(err, IsNil)
 	commiter, err := newTwoPhaseCommitter(txn)
 	ctx := goctx.Background()
-	err = commiter.cleanupKeys(NewBackoffer(prewriteMaxBackoff, ctx), commiter.keys)
+	err = commiter.cleanupKeys(NewBackoffer(cleanupMaxBackoff, ctx), commiter.keys)
 	c.Assert(err, IsNil)
 	err = commiter.prewriteKeys(NewBackoffer(prewriteMaxBackoff, ctx), commiter.keys)
 	c.Assert(err, NotNil)
-	c.Assert(strings.Contains(err.Error(), "write conflict"), IsTrue)
+	errMsgMustContain(c, err, "write conflict")
 }
 
-func (s *testCommitterSuite) TestPrewritePkFailed(c *C) {
+func (s *testCommitterSuite) TestPrewritePrimaryKeyFailed(c *C) {
 	// commit (a,a1)
 	txn1 := s.begin(c)
 	err := txn1.Set([]byte("a"), []byte("a1"))
@@ -348,12 +352,12 @@ func (s *testCommitterSuite) TestPrewritePkFailed(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("a1"))
 	v, err = txn.Get([]byte("b"))
-	c.Assert(strings.Contains(err.Error(), "key not exist"), IsTrue)
+	errMsgMustContain(c, err, "key not exist")
 
 	// clean again, shouldn't be failed when a rollback already exist.
 	ctx := goctx.Background()
 	commiter, err := newTwoPhaseCommitter(txn2)
-	err = commiter.cleanupKeys(NewBackoffer(prewriteMaxBackoff, ctx), commiter.keys)
+	err = commiter.cleanupKeys(NewBackoffer(cleanupMaxBackoff, ctx), commiter.keys)
 	c.Assert(err, IsNil)
 
 	// check the data after rollback twice.
@@ -372,5 +376,4 @@ func (s *testCommitterSuite) TestPrewritePkFailed(c *C) {
 	v, err = txn.Get([]byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("a3"))
-
 }
