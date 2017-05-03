@@ -257,9 +257,6 @@ func NewHandle(store kv.Storage) (*Handle, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	return h, nil
 }
 

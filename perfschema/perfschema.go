@@ -40,7 +40,7 @@ type StatementInstrument interface {
 // PerfSchema defines the methods to be invoked by the executor
 type PerfSchema interface {
 
-	// For statement instrumentation only.
+	// StatementInstrument is for statement instrumentation only.
 	StatementInstrument
 
 	// GetDBMeta returns db info for PerformanceSchema.

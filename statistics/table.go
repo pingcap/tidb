@@ -41,7 +41,7 @@ const (
 
 // Table represents statistics for a table.
 type Table struct {
-	tableID int64
+	TableID int64
 	Columns map[int64]*Column
 	Indices map[int64]*Index
 	Count   int64 // Total row count in a table.
@@ -50,7 +50,7 @@ type Table struct {
 
 func (t *Table) copy() *Table {
 	nt := &Table{
-		tableID: t.tableID,
+		TableID: t.TableID,
 		Count:   t.Count,
 		Pseudo:  t.Pseudo,
 		Columns: make(map[int64]*Column),
@@ -77,7 +77,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 		// We copy it before writing to avoid race.
 		table = table.copy()
 	}
-	table.tableID = tableInfo.ID
+	table.TableID = tableInfo.ID
 	table.Count = count
 
 	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count, version from mysql.stats_histograms where table_id = %d", tableInfo.ID)
@@ -144,7 +144,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 // String implements Stringer interface.
 func (t *Table) String() string {
 	strs := make([]string, 0, len(t.Columns)+1)
-	strs = append(strs, fmt.Sprintf("Table:%d Count:%d", t.tableID, t.Count))
+	strs = append(strs, fmt.Sprintf("Table:%d Count:%d", t.TableID, t.Count))
 	for _, col := range t.Columns {
 		strs = append(strs, col.String())
 	}
@@ -215,7 +215,7 @@ func (t *Table) GetRowCountByIndexRanges(sc *variable.StatementContext, idxID in
 
 // PseudoTable creates a pseudo table statistics when statistic can not be found in KV store.
 func PseudoTable(tableID int64) *Table {
-	t := &Table{tableID: tableID, Pseudo: true}
+	t := &Table{TableID: tableID, Pseudo: true}
 	t.Count = pseudoRowCount
 	t.Columns = make(map[int64]*Column)
 	t.Indices = make(map[int64]*Index)

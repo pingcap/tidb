@@ -70,6 +70,7 @@ func (col *CorrelatedColumn) ResolveIndices(_ *Schema) {
 
 // Column represents a column.
 type Column struct {
+	baseExpr
 	FromID  string
 	ColName model.CIStr
 	DBName  model.CIStr
@@ -84,7 +85,7 @@ type Column struct {
 	// If so, this column's name will be the plain sql text.
 	IsAggOrSubq bool
 
-	// Only used for execution.
+	// Index is only used for execution.
 	Index int
 
 	hashcode []byte

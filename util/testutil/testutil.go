@@ -58,7 +58,7 @@ func CompareUnorderedStringSlice(a []string, b []string) bool {
 	return len(m) == 0
 }
 
-// DatumEquals checker.
+// datumEqualsChecker is a checker for DatumEquals.
 type datumEqualsChecker struct {
 	*check.CheckerInfo
 }

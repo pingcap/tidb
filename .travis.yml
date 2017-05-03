@@ -1,6 +1,8 @@
 language: go
 
+go_import_path: github.com/pingcap/tidb
+
 go:
   - 1.8
-    
+
 script: make dev

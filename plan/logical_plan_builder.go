@@ -681,6 +681,9 @@ func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool
 	return n, true
 }
 
+// resolveHavingAndOrderBy will process aggregate functions and resolve the columns that don't exist in select fields.
+// If we found some columns that are not in select fields, we will append it to select fields and update the colMapper.
+// When we rewrite the order by / having expression, we will find column in map at first.
 func (b *planBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan) (
 	map[*ast.AggregateFuncExpr]int, map[*ast.AggregateFuncExpr]int) {
 	extractor := &havingAndOrderbyExprResolver{
@@ -1155,7 +1158,6 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, dbName, t.Name.L, "")
 	}
 
-	_, _ = b.resolveHavingAndOrderBy(sel, p)
 	if sel.Where != nil {
 		p = b.buildSelection(p, sel.Where, nil)
 		if b.err != nil {
@@ -1221,7 +1223,6 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 		return nil
 	}
 
-	_, _ = b.resolveHavingAndOrderBy(sel, p)
 	if sel.Where != nil {
 		p = b.buildSelection(p, sel.Where, nil)
 		if b.err != nil {

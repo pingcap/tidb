@@ -31,6 +31,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
+	// TODO: It's used fo update vendor. It will be removed.
+	_ "github.com/coreos/etcd/clientv3/concurrency"
+	_ "github.com/coreos/etcd/mvcc/mvccpb"
 	goctx "golang.org/x/net/context"
 )
 
@@ -439,6 +442,11 @@ func (do *Domain) PrivilegeHandle() *privileges.Handle {
 // StatsHandle returns the statistic handle.
 func (do *Domain) StatsHandle() *statistics.Handle {
 	return do.statsHandle
+}
+
+// CreateStatsHandle is used only for test.
+func (do *Domain) CreateStatsHandle(ctx context.Context) {
+	do.statsHandle = statistics.NewHandle(ctx)
 }
 
 // UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop. It

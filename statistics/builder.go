@@ -35,7 +35,7 @@ func build4SortedColumn(ctx context.Context, numBuckets, id int64, records ast.R
 	hg := &Histogram{
 		ID:      id,
 		NDV:     0,
-		Buckets: make([]bucket, 1, numBuckets),
+		Buckets: make([]Bucket, 1, numBuckets),
 	}
 	var valuesPerBucket, lastNumber, bucketIdx int64 = 1, 0, 0
 	count := int64(0)
@@ -95,7 +95,7 @@ func build4SortedColumn(ctx context.Context, numBuckets, id int64, records ast.R
 			} else {
 				lastNumber = hg.Buckets[bucketIdx].Count
 				bucketIdx++
-				hg.Buckets = append(hg.Buckets, bucket{
+				hg.Buckets = append(hg.Buckets, Bucket{
 					Count:   lastNumber + 1,
 					Value:   data,
 					Repeats: 1,
@@ -123,7 +123,7 @@ func BuildColumn(ctx context.Context, numBuckets, id int64, ndv int64, count int
 	hg := &Histogram{
 		ID:      id,
 		NDV:     ndv,
-		Buckets: make([]bucket, 1, numBuckets),
+		Buckets: make([]Bucket, 1, numBuckets),
 	}
 	valuesPerBucket := float64(count)/float64(numBuckets) + 1
 
@@ -160,7 +160,7 @@ func BuildColumn(ctx context.Context, numBuckets, id int64, ndv int64, count int
 			lastCount = hg.Buckets[bucketIdx].Count
 			// The bucket is full, store the item in the next bucket.
 			bucketIdx++
-			hg.Buckets = append(hg.Buckets, bucket{
+			hg.Buckets = append(hg.Buckets, Bucket{
 				Count:   int64(totalCount),
 				Value:   samples[i],
 				Repeats: int64(ndvFactor),
