@@ -95,7 +95,6 @@ func (d *ddl) campaignLoop(key string) {
 
 		elec := concurrency.NewElection(worker.etcdSession, key)
 		ctx, cancel := goctx.WithTimeout(goctx.Background(), campaignTimeout)
-		defer cancel()
 		err := elec.Campaign(ctx, worker.ddlID)
 		if err != nil {
 			log.Infof("[ddl] worker %s failed to campaign, err %v", worker.ddlID, err)
@@ -109,10 +108,10 @@ func (d *ddl) campaignLoop(key string) {
 			continue
 		}
 		if len(resp.Kvs) < 1 {
-			log.Warnf("[ddl] worker %s watch owner key is empty")
+			log.Warn("[ddl] worker watch owner key is empty")
 		}
 		leader := string(resp.Kvs[0].Value)
-		log.Infof("[ddl] %s worker is %s, owner is %v", key, worker.ddlID, leader)
+		log.Info("[ddl] %s worker is %s, owner is %v", key, worker.ddlID, leader)
 		if leader == worker.ddlID {
 			worker.setOwnerVal(key, true)
 		}
