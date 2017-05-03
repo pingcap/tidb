@@ -538,13 +538,13 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil, comment)
 
-		builder := &planBuilder{
+		builder := &PlanBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			is:        is,
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 		}
-		p := builder.build(stmt)
+		p := builder.Build(stmt)
 		c.Assert(builder.err, IsNil, comment)
 		c.Assert(builder.optFlag&flagPredicatePushDown, Greater, uint64(0))
 		p, err = logicalOptimize(flagPredicatePushDown|flagDecorrelate|flagPrunColumns, p.(LogicalPlan), builder.ctx, builder.allocator)
@@ -660,13 +660,13 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &planBuilder{
+		builder := &PlanBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
-		p := builder.build(stmt)
+		p := builder.Build(stmt)
 		if lp, ok := p.(LogicalPlan); ok {
 			p, err = logicalOptimize(flagBuildKeyInfo|flagDecorrelate|flagPrunColumns, lp.(LogicalPlan), builder.ctx, builder.allocator)
 		}
@@ -714,13 +714,13 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &planBuilder{
+		builder := &PlanBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
-		p := builder.build(stmt)
+		p := builder.Build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
 		p, err = logicalOptimize(flagPredicatePushDown, lp.(LogicalPlan), builder.ctx, builder.allocator)
@@ -820,13 +820,13 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &planBuilder{
+		builder := &PlanBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
-		p := builder.build(stmt)
+		p := builder.Build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
 		p, err = logicalOptimize(flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagAggregationOptimize, lp.(LogicalPlan), builder.ctx, builder.allocator)
@@ -1037,12 +1037,12 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &planBuilder{
+		builder := &PlanBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			is:        is,
 		}
-		p := builder.build(stmt).(LogicalPlan)
+		p := builder.Build(stmt).(LogicalPlan)
 		c.Assert(builder.err, IsNil)
 		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan), builder.ctx, builder.allocator)
 		info, err := p.convert2PhysicalPlan(&requiredProperty{})
@@ -1175,13 +1175,13 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil, comment)
 
-		builder := &planBuilder{
+		builder := &PlanBuilder{
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			is:        is,
 		}
-		p := builder.build(stmt).(LogicalPlan)
+		p := builder.Build(stmt).(LogicalPlan)
 		c.Assert(builder.err, IsNil, comment)
 
 		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan), builder.ctx, builder.allocator)
@@ -1305,13 +1305,13 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		c.Assert(err, IsNil, comment)
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
-		builder := &planBuilder{
+		builder := &PlanBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
-		builder.build(stmt)
+		builder.Build(stmt)
 		if tt.err == nil {
 			c.Assert(builder.err, IsNil, comment)
 		} else {
@@ -1410,13 +1410,13 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &planBuilder{
+		builder := &PlanBuilder{
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			is:        is,
 		}
-		p := builder.build(stmt).(LogicalPlan)
+		p := builder.Build(stmt).(LogicalPlan)
 		c.Assert(builder.err, IsNil, comment)
 
 		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo, p.(LogicalPlan), builder.ctx, builder.allocator)
@@ -1459,12 +1459,12 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &planBuilder{
+		builder := &PlanBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			is:        is,
 		}
-		p := builder.build(stmt).(LogicalPlan)
+		p := builder.Build(stmt).(LogicalPlan)
 		c.Assert(builder.err, IsNil)
 		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo|flagAggregationOptimize, p.(LogicalPlan), builder.ctx, builder.allocator)
 		c.Assert(err, IsNil)
@@ -1623,13 +1623,13 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &planBuilder{
+		builder := &PlanBuilder{
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			is:        is,
 		}
-		builder.build(stmt)
+		builder.Build(stmt)
 		c.Assert(builder.err, IsNil, comment)
 
 		checkVisitInfo(c, builder.visitInfo, tt.ans, comment)
@@ -1796,13 +1796,13 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &planBuilder{
+		builder := &PlanBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			is:        is,
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 		}
-		p := builder.build(stmt).(LogicalPlan)
+		p := builder.Build(stmt).(LogicalPlan)
 		c.Assert(builder.err, IsNil)
 		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx, builder.allocator)
 		c.Assert(err, IsNil)

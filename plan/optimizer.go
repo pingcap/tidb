@@ -57,14 +57,13 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 	if err := InferType(ctx.GetSessionVars().StmtCtx, node); err != nil {
 		return nil, errors.Trace(err)
 	}
-	allocator := new(idAllocator)
-	builder := &planBuilder{
+	builder := &PlanBuilder{
 		ctx:       ctx,
 		is:        is,
 		colMapper: make(map[*ast.ColumnNameExpr]int),
-		allocator: allocator,
+		allocator: new(idAllocator),
 	}
-	p := builder.build(node)
+	p := builder.Build(node)
 	if builder.err != nil {
 		return nil, errors.Trace(builder.err)
 	}
@@ -78,7 +77,7 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 	}
 
 	if logic, ok := p.(LogicalPlan); ok {
-		return doOptimize(builder.optFlag, logic, ctx, allocator)
+		return doOptimize(builder.optFlag, logic, ctx, builder.allocator)
 	}
 	return p, nil
 }

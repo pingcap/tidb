@@ -76,13 +76,13 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
-		builder := &planBuilder{
+		builder := &PlanBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
-		p := builder.build(stmt)
+		p := builder.Build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
 
@@ -184,13 +184,13 @@ func (s *testPlanSuite) TestPushDownOrderByAndLimit(c *C) {
 
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
-		builder := &planBuilder{
+		builder := &PlanBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
-		p := builder.build(stmt)
+		p := builder.Build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
 		p, err = doOptimize(builder.optFlag, lp, builder.ctx, builder.allocator)
@@ -310,13 +310,13 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
-		builder := &planBuilder{
+		builder := &PlanBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
-		p := builder.build(stmt)
+		p := builder.Build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
 
@@ -533,13 +533,13 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &planBuilder{
+		builder := &PlanBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
-		p := builder.build(stmt)
+		p := builder.Build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
 		lp, err = logicalOptimize(builder.optFlag, lp, builder.ctx, builder.allocator)
@@ -648,12 +648,12 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &planBuilder{
+		builder := &PlanBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			is:        is,
 		}
-		p := builder.build(stmt)
+		p := builder.Build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp, err := logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagDecorrelate, p.(LogicalPlan), builder.ctx, builder.allocator)
 		lp.ResolveIndicesAndCorCols()
@@ -741,13 +741,13 @@ func (s *testPlanSuite) TestFilterConditionPushDown(c *C) {
 
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
-		builder := &planBuilder{
+		builder := &PlanBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
-		p := builder.build(stmt)
+		p := builder.Build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
 
@@ -797,13 +797,13 @@ func (s *testPlanSuite) TestAddCache(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &planBuilder{
+		builder := &PlanBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
-		p := builder.build(stmt)
+		p := builder.Build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
 		_, lp, err = lp.PredicatePushDown(nil)
@@ -818,189 +818,6 @@ func (s *testPlanSuite) TestAddCache(c *C) {
 	}
 }
 
-func (s *testPlanSuite) TestRangeBuilder(c *C) {
-	defer testleak.AfterTest(c)()
-	rb := &ranger.Builder{Sc: new(variable.StatementContext)}
-
-	tests := []struct {
-		exprStr   string
-		resultStr string
-	}{
-		{
-			exprStr:   "a = 1",
-			resultStr: "[[1 1]]",
-		},
-		{
-			exprStr:   "1 = a",
-			resultStr: "[[1 1]]",
-		},
-		{
-			exprStr:   "a != 1",
-			resultStr: "[[-inf 1) (1 +inf]]",
-		},
-		{
-			exprStr:   "1 != a",
-			resultStr: "[[-inf 1) (1 +inf]]",
-		},
-		{
-			exprStr:   "a > 1",
-			resultStr: "[(1 +inf]]",
-		},
-		{
-			exprStr:   "1 < a",
-			resultStr: "[(1 +inf]]",
-		},
-		{
-			exprStr:   "a >= 1",
-			resultStr: "[[1 +inf]]",
-		},
-		{
-			exprStr:   "1 <= a",
-			resultStr: "[[1 +inf]]",
-		},
-		{
-			exprStr:   "a < 1",
-			resultStr: "[[-inf 1)]",
-		},
-		{
-			exprStr:   "1 > a",
-			resultStr: "[[-inf 1)]",
-		},
-		{
-			exprStr:   "a <= 1",
-			resultStr: "[[-inf 1]]",
-		},
-		{
-			exprStr:   "1 >= a",
-			resultStr: "[[-inf 1]]",
-		},
-		{
-			exprStr:   "(a)",
-			resultStr: "[[-inf 0) (0 +inf]]",
-		},
-		{
-			exprStr:   "a in (1, 3, NULL, 2)",
-			resultStr: "[[<nil> <nil>] [1 1] [2 2] [3 3]]",
-		},
-		{
-			exprStr:   `a IN (8,8,81,45)`,
-			resultStr: `[[8 8] [45 45] [81 81]]`,
-		},
-		{
-			exprStr:   "a between 1 and 2",
-			resultStr: "[[1 2]]",
-		},
-		{
-			exprStr:   "a not between 1 and 2",
-			resultStr: "[[-inf 1) (2 +inf]]",
-		},
-		{
-			exprStr:   "a not between null and 0",
-			resultStr: "[(0 +inf]]",
-		},
-		{
-			exprStr:   "a between 2 and 1",
-			resultStr: "[]",
-		},
-		{
-			exprStr:   "a not between 2 and 1",
-			resultStr: "[[-inf +inf]]",
-		},
-		{
-			exprStr:   "a IS NULL",
-			resultStr: "[[<nil> <nil>]]",
-		},
-		{
-			exprStr:   "a IS NOT NULL",
-			resultStr: "[[-inf +inf]]",
-		},
-		{
-			exprStr:   "a IS TRUE",
-			resultStr: "[[-inf 0) (0 +inf]]",
-		},
-		{
-			exprStr:   "a IS NOT TRUE",
-			resultStr: "[[<nil> <nil>] [0 0]]",
-		},
-		{
-			exprStr:   "a IS FALSE",
-			resultStr: "[[0 0]]",
-		},
-		{
-			exprStr:   "a IS NOT FALSE",
-			resultStr: "[[<nil> 0) (0 +inf]]",
-		},
-		{
-			exprStr:   "a LIKE 'abc%'",
-			resultStr: "[[abc abd)]",
-		},
-		{
-			exprStr:   "a LIKE 'abc_'",
-			resultStr: "[(abc abd)]",
-		},
-		{
-			exprStr:   "a LIKE 'abc'",
-			resultStr: "[[abc abc]]",
-		},
-		{
-			exprStr:   `a LIKE "ab\_c"`,
-			resultStr: "[[ab_c ab_c]]",
-		},
-		{
-			exprStr:   "a LIKE '%'",
-			resultStr: "[[-inf +inf]]",
-		},
-		{
-			exprStr:   `a LIKE '\%a'`,
-			resultStr: `[[%a %a]]`,
-		},
-		{
-			exprStr:   `a LIKE "\\"`,
-			resultStr: `[[\ \]]`,
-		},
-		{
-			exprStr:   `a LIKE "\\\\a%"`,
-			resultStr: `[[\a \b)]`,
-		},
-		{
-			exprStr:   `0.4`,
-			resultStr: `[]`,
-		},
-		{
-			exprStr:   `a > NULL`,
-			resultStr: `[]`,
-		},
-	}
-
-	for _, tt := range tests {
-		sql := "select * from t where " + tt.exprStr
-		stmt, err := s.ParseOneStmt(sql, "", "")
-		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
-		is, err := MockResolve(stmt)
-		c.Assert(err, IsNil)
-
-		builder := &planBuilder{
-			allocator: new(idAllocator),
-			ctx:       mockContext(),
-			is:        is,
-		}
-		p := builder.build(stmt)
-		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
-		var selection *Selection
-		for _, child := range p.Children() {
-			plan, ok := child.(*Selection)
-			if ok {
-				selection = plan
-				break
-			}
-		}
-		c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
-		result, err := rb.BuildFromConds(selection.Conditions)
-		c.Assert(err, IsNil)
-		got := fmt.Sprintf("%v", result)
-		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
-	}
-}
 
 func (s *testPlanSuite) TestScanController(c *C) {
 	defer testleak.AfterTest(c)()
@@ -1030,13 +847,13 @@ func (s *testPlanSuite) TestScanController(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &planBuilder{
+		builder := &PlanBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
-		p := builder.build(stmt)
+		p := builder.Build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
 		_, lp, err = lp.PredicatePushDown(nil)
@@ -1134,13 +951,13 @@ func (s *testPlanSuite) TestJoinAlgorithm(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &planBuilder{
+		builder := &PlanBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
-		p := builder.build(stmt)
+		p := builder.Build(stmt)
 		c.Assert(builder.err, IsNil)
 		pp, err := doOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx, builder.allocator)
 		c.Assert(err, IsNil)
@@ -1210,13 +1027,13 @@ func (s *testPlanSuite) TestAutoJoinChosen(c *C) {
 			handle.UpdateTableStats([]*statistics.Table{statsTbl}, nil)
 		}
 
-		builder := &planBuilder{
+		builder := &PlanBuilder{
 			allocator: new(idAllocator),
 			ctx:       ctx,
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
-		p := builder.build(stmt)
+		p := builder.Build(stmt)
 		c.Assert(builder.err, IsNil)
 		pp, err := doOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx, builder.allocator)
 		c.Assert(err, IsNil)

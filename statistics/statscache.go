@@ -104,6 +104,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 
 // GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
 func (h *Handle) GetTableStats(tblID int64) *Table {
+	log.Warnf("wtfffffffffffffffff")
 	tbl, ok := h.statsCache.Load().(statsCache)[tblID]
 	if !ok {
 		return PseudoTable(tblID)
