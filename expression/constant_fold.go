@@ -21,8 +21,7 @@ import (
 // FoldConstant does constant folding optimization on an expression.
 func FoldConstant(expr Expression) Expression {
 	scalarFunc, ok := expr.(*ScalarFunction)
-	// TODO: We do not fold builtin func ROW because we cannot handle it in functionClass.getFunction() now.
-	if !ok || !scalarFunc.Function.isDeterministic() || scalarFunc.FuncName.O == ast.RowFunc {
+	if !ok || !scalarFunc.Function.isDeterministic() {
 		return expr
 	}
 	args := scalarFunc.GetArgs()

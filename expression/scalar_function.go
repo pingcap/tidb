@@ -36,17 +36,6 @@ type ScalarFunction struct {
 	Function builtinFunc
 }
 
-// NewScalarFunction creates a ScalarFunction.
-func NewScalarFunction(funcName string, retType *types.FieldType, function builtinFunc) *ScalarFunction {
-	sf := &ScalarFunction{
-		FuncName: model.NewCIStr(funcName),
-		RetType:  retType,
-		Function: function,
-	}
-	sf.self = sf
-	return sf
-}
-
 // GetArgs gets arguments of function.
 func (sf *ScalarFunction) GetArgs() []Expression {
 	return sf.Function.getArgs()
@@ -94,7 +83,11 @@ func NewFunction(ctx context.Context, funcName string, retType *types.FieldType,
 	} else {
 		tp = retType
 	}
-	return NewScalarFunction(funcName, tp, f), nil
+	return &ScalarFunction{
+		FuncName: model.NewCIStr(funcName),
+		RetType:  tp,
+		Function: f,
+	}, nil
 }
 
 // ScalarFuncs2Exprs converts []*ScalarFunction to []Expression.
