@@ -227,7 +227,7 @@ func DetachIndexScanConditions(conditions []expression.Expression, index *model.
 		checker := &conditionChecker{
 			idx:          index,
 			columnOffset: curIndex,
-			Length:       index.Columns[curIndex].Length,
+			length:       index.Columns[curIndex].Length,
 		}
 		// First of all, we should extract all of in/eq expressions from rest conditions for every continuous index column.
 		// e.g. For index (a,b,c) and conditions a in (1,2) and b < 1 and c in (3,4), we should only extract column a in (1,2).
@@ -259,8 +259,8 @@ func DetachTableScanConditions(conditions []expression.Expression, pkName model.
 
 	var accessConditions, filterConditions []expression.Expression
 	checker := conditionChecker{
-		PkName: pkName,
-		Length: types.UnspecifiedLength,
+		pkName: pkName,
+		length: types.UnspecifiedLength,
 	}
 	for _, cond := range conditions {
 		cond = expression.PushDownNot(cond, false, nil)
@@ -304,9 +304,9 @@ func BuildTableRange(accessConditions []expression.Expression, sc *variable.Stat
 type conditionChecker struct {
 	idx           *model.IndexInfo
 	columnOffset  int // the offset of the indexed column to be checked.
-	PkName        model.CIStr
+	pkName        model.CIStr
 	shouldReserve bool // check if a access condition should be reserved in filter conditions.
-	Length        int
+	length        int
 }
 
 func (c *conditionChecker) check(condition expression.Expression) bool {
@@ -360,12 +360,12 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 	case ast.EQ, ast.NE, ast.GE, ast.GT, ast.LE, ast.LT:
 		if _, ok := scalar.GetArgs()[0].(*expression.Constant); ok {
 			if c.checkColumn(scalar.GetArgs()[1]) {
-				return scalar.FuncName.L != ast.NE || c.Length == types.UnspecifiedLength
+				return scalar.FuncName.L != ast.NE || c.length == types.UnspecifiedLength
 			}
 		}
 		if _, ok := scalar.GetArgs()[1].(*expression.Constant); ok {
 			if c.checkColumn(scalar.GetArgs()[0]) {
-				return scalar.FuncName.L != ast.NE || c.Length == types.UnspecifiedLength
+				return scalar.FuncName.L != ast.NE || c.length == types.UnspecifiedLength
 			}
 		}
 	case ast.IsNull, ast.IsTruth, ast.IsFalsity:
@@ -446,8 +446,8 @@ func (c *conditionChecker) checkColumn(expr expression.Expression) bool {
 	if !ok {
 		return false
 	}
-	if c.PkName.L != "" {
-		return c.PkName.L == col.ColName.L
+	if c.pkName.L != "" {
+		return c.pkName.L == col.ColName.L
 	}
 	if c.idx != nil {
 		return col.ColName.L == c.idx.Columns[c.columnOffset].Name.L
