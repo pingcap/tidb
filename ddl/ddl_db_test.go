@@ -747,7 +747,6 @@ func (s *testDBSuite) TestPrimaryKey(c *C) {
 
 	s.mustExec(c, "create table primary_key_test (a int, b varchar(10))")
 	_, err := s.tk.Exec("alter table primary_key_test add primary key(a)")
-	log
 	c.Assert(ddl.ErrUnsupportedModifyPrimaryKey.Equal(err), IsTrue)
 	_, err = s.tk.Exec("alter table primary_key_test drop primary key")
 	c.Assert(ddl.ErrUnsupportedModifyPrimaryKey.Equal(err), IsTrue)
