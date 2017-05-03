@@ -40,7 +40,6 @@ var (
 	_ LogicalPlan = &Limit{}
 	_ LogicalPlan = &Show{}
 	_ LogicalPlan = &Insert{}
-	_ LogicalPlan = &Analyze{}
 )
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, FullOuterJoin, SemiJoin.

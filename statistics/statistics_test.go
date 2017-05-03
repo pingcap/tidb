@@ -175,6 +175,18 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	count, err = col.betweenRowCount(sc, types.NewIntDatum(30000), types.NewIntDatum(35000))
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 5120)
+	count, err = col.greaterAndEqRowCount(sc, types.NewIntDatum(1001))
+	c.Check(err, IsNil)
+	c.Check(int(count), Equals, 99232)
+	count, err = col.lessAndEqRowCount(sc, types.NewIntDatum(99999))
+	c.Check(err, IsNil)
+	c.Check(int(count), Equals, 100000)
+	count, err = col.greaterRowCount(sc, types.NewIntDatum(1001))
+	c.Check(err, IsNil)
+	c.Check(int(count), Equals, 99231)
+	count, err = col.lessRowCount(sc, types.NewIntDatum(99999))
+	c.Check(err, IsNil)
+	c.Check(int(count), Equals, 99999)
 }
 
 func (s *testStatisticsSuite) TestPseudoTable(c *C) {
