@@ -13,7 +13,9 @@
 
 package plan
 
-import "github.com/pingcap/tidb/context"
+import (
+	"github.com/pingcap/tidb/context"
+)
 
 const (
 	// TypeSel is the type of Selection.
@@ -275,6 +277,7 @@ func (p PhysicalTableReader) init(allocator *idAllocator, ctx context.Context) *
 	p.basePlan = newBasePlan(TypeTableReader, allocator, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	p.TablePlans = flattenPushDownPlan(p.tablePlan)
+	p.schema = p.tablePlan.Schema()
 	return &p
 }
 
@@ -282,6 +285,18 @@ func (p PhysicalIndexReader) init(allocator *idAllocator, ctx context.Context) *
 	p.basePlan = newBasePlan(TypeIndexReader, allocator, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	p.IndexPlans = flattenPushDownPlan(p.indexPlan)
+	if _, ok := p.indexPlan.(*PhysicalAggregation); ok {
+		p.schema = p.indexPlan.Schema()
+	} else {
+		// The IndexScan running in KV Layer will read all columns from storage. But TiDB Only needs some of them.
+		// So their schemas are different, we need to resolve indices again.
+		schemaInKV := p.indexPlan.Schema()
+		is := p.IndexPlans[0].(*PhysicalIndexScan)
+		p.schema = is.dataSourceSchema
+		for _, col := range p.schema.Columns {
+			col.ResolveIndices(schemaInKV)
+		}
+	}
 	return &p
 }
 
