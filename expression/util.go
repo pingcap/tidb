@@ -67,7 +67,7 @@ func ColumnSubstitute(expr Expression, schema *Schema, newExprs []Expression) Ex
 func datumsToConstants(datums []types.Datum) []Expression {
 	constants := make([]Expression, 0, len(datums))
 	for _, d := range datums {
-		constants = append(constants, &Constant{Value: d, RetType:types.NewFieldType(kindToMysqlType[d.Kind()])})
+		constants = append(constants, &Constant{Value: d, RetType: types.NewFieldType(kindToMysqlType[d.Kind()])})
 	}
 	return constants
 }
@@ -222,7 +222,7 @@ func SubstituteCorCol2Constant(expr Expression) (Expression, error) {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			return &Constant{Value: val, , RetType:x.GetType()}, nil
+			return &Constant{Value: val, RetType: x.GetType()}, nil
 		}
 		var newSf Expression
 		if x.FuncName.L == ast.Cast {

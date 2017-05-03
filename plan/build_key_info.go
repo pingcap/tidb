@@ -97,7 +97,7 @@ func (p *Projection) buildSchemaByExprs() *expression.Schema {
 		} else {
 			// If the expression is not a column, we add a column to occupy the position.
 			schema.Append(&expression.Column{
-				Position: -1, RetType:types.NewFieldType(mysql.TypeUnspecified)})
+				Position: -1, RetType: types.NewFieldType(mysql.TypeUnspecified)})
 		}
 	}
 	return schema

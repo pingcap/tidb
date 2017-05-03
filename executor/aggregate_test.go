@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
@@ -306,10 +307,14 @@ func (s *testSuite) TestAggregation(c *C) {
 }
 
 func (s *testSuite) TestStreamAgg(c *C) {
-	col := expression.NewEmptyColumn()
-	col.Index = 1
-	gbyCol := expression.NewEmptyColumn()
-	gbyCol.Index = 0
+	col := &expression.Column{
+		Index:   1,
+		RetType: types.NewFieldType(mysql.TypeUnspecified),
+	}
+	gbyCol := &expression.Column{
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeUnspecified),
+	}
 	sumAgg := expression.NewAggFunction(ast.AggFuncSum, []expression.Expression{col}, false)
 	cntAgg := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{col}, false)
 	avgAgg := expression.NewAggFunction(ast.AggFuncAvg, []expression.Expression{col}, false)
