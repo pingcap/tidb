@@ -15,7 +15,6 @@ package expression
 
 import (
 	"github.com/ngaut/log"
-	"github.com/pingcap/tidb/ast"
 )
 
 // FoldConstant does constant folding optimization on an expression.

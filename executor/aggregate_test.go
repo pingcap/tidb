@@ -309,11 +309,11 @@ func (s *testSuite) TestAggregation(c *C) {
 func (s *testSuite) TestStreamAgg(c *C) {
 	col := &expression.Column{
 		Index:   1,
-		RetType: types.NewFieldType(mysql.TypeUnspecified),
+		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
 	gbyCol := &expression.Column{
 		Index:   0,
-		RetType: types.NewFieldType(mysql.TypeUnspecified),
+		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
 	sumAgg := expression.NewAggFunction(ast.AggFuncSum, []expression.Expression{col}, false)
 	cntAgg := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{col}, false)
