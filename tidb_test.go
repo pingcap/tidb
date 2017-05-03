@@ -188,6 +188,37 @@ func (s *testMainSuite) TestCaseInsensitive(c *C) {
 	mustExecSQL(c, se, dropDBSQL)
 }
 
+func (s *testMainSuite) TestTimestampTimeZone(c *C) {
+	dbName := "test_timestamp_timeZone"
+	dropDBSQL := fmt.Sprintf("drop database %s", dbName)
+
+	se := newSession(c, s.store, dbName)
+	mustExecute(se, "create table t (ts timestamp)")
+	mustExecute(se, "insert into t values ('2017-04-27 22:40:42')")
+	rs := mustExecSQL(c, se, "select * from t")
+	rows, err := GetRows(rs)
+	c.Assert(err, IsNil)
+	match(c, rows[0], "2017-04-27 22:40:42")
+
+	// The timestamp will get different value if time_zone session variable changes.
+	tests := []struct {
+		timezone string
+		expect   string
+	}{
+		{"+10:00", "2017-04-28 00:40:42"},
+		{"-6:00", "2017-04-27 20:40:42"},
+	}
+	for _, tt := range tests {
+		mustExecute(se, fmt.Sprintf("set time_zone = '%s'", tt.timezone))
+		rs := mustExecSQL(c, se, "select * from t")
+		rows, err := GetRows(rs)
+		c.Assert(err, IsNil)
+		match(c, rows[0], tt.expect)
+	}
+
+	mustExecSQL(c, se, dropDBSQL)
+}
+
 // Testcase for delete panic
 func (s *testMainSuite) TestDeletePanic(c *C) {
 	se := newSession(c, s.store, "test_delete_panic")

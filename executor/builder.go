@@ -827,7 +827,7 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor {
 	dagReq := &tipb.DAGRequest{}
 	dagReq.StartTs = b.getStartTS()
-	dagReq.TimeZoneOffset = timeZoneOffset()
+	dagReq.TimeZoneOffset = timeZoneOffset(b.ctx)
 	sc := b.ctx.GetSessionVars().StmtCtx
 	dagReq.Flags = statementContextToFlags(sc)
 	for _, p := range v.TablePlans {

@@ -605,7 +605,7 @@ func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<
 func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 	selIdxReq := new(tipb.SelectRequest)
 	selIdxReq.StartTs = e.startTS
-	selIdxReq.TimeZoneOffset = timeZoneOffset()
+	selIdxReq.TimeZoneOffset = timeZoneOffset(e.ctx)
 	selIdxReq.Flags = statementContextToFlags(e.ctx.GetSessionVars().StmtCtx)
 	selIdxReq.IndexInfo = distsql.IndexToProto(e.table.Meta(), e.index)
 	if e.desc {
@@ -764,7 +764,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 		selTableReq.OrderBy = e.sortItemsPB
 	}
 	selTableReq.StartTs = e.startTS
-	selTableReq.TimeZoneOffset = timeZoneOffset()
+	selTableReq.TimeZoneOffset = timeZoneOffset(e.ctx)
 	selTableReq.Flags = statementContextToFlags(e.ctx.GetSessionVars().StmtCtx)
 	selTableReq.TableInfo = &tipb.TableInfo{
 		TableId: e.table.Meta().ID,
@@ -839,7 +839,7 @@ func (e *XSelectTableExec) Schema() *expression.Schema {
 func (e *XSelectTableExec) doRequest() error {
 	selReq := new(tipb.SelectRequest)
 	selReq.StartTs = e.startTS
-	selReq.TimeZoneOffset = timeZoneOffset()
+	selReq.TimeZoneOffset = timeZoneOffset(e.ctx)
 	selReq.Flags = statementContextToFlags(e.ctx.GetSessionVars().StmtCtx)
 	selReq.Where = e.where
 	selReq.TableInfo = &tipb.TableInfo{
@@ -949,8 +949,9 @@ func (e *XSelectTableExec) slowQueryInfo(duration time.Duration) string {
 }
 
 // timeZoneOffset returns the local time zone offset in seconds.
-func timeZoneOffset() int64 {
-	_, offset := time.Now().Zone()
+func timeZoneOffset(ctx context.Context) int64 {
+	loc := ctx.GetSessionVars().GetTimeZone()
+	_, offset := time.Now().In(loc).Zone()
 	return int64(offset)
 }
 

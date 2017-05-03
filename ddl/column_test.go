@@ -16,7 +16,6 @@ package ddl
 import (
 	"reflect"
 	"sync"
-	"time"
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
