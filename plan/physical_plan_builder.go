@@ -1390,7 +1390,7 @@ func (p *Selection) convert2PhysicalPlanEnforce(prop *requiredProperty) (*physic
 		}
 		info = enforceProperty(prop, info)
 	} else if len(prop.props) != 0 {
-		info.cost = math.MaxFloat64
+		info = &physicalPlanInfo{cost: math.MaxFloat64}
 	}
 	return info, nil
 }

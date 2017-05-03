@@ -198,6 +198,62 @@ func EvalBool(exprList CNFExprs, row []types.Datum, ctx context.Context) (bool, 
 	return true, nil
 }
 
+// evalExprToInt evaluates `expr` to int type.
+func evalExprToInt(expr Expression, row []types.Datum, sc *variable.StatementContext) (res int64, isNull bool, err error) {
+	val, err := expr.Eval(row)
+	if val.IsNull() || err != nil {
+		return 0, val.IsNull(), errors.Trace(err)
+	}
+	tc := expr.GetType().ToClass()
+	if tc == types.ClassInt {
+		return val.GetInt64(), false, nil
+	}
+	res, err = val.ToInt64(sc)
+	return res, false, errors.Trace(err)
+}
+
+// evalExprToReal evaluates `expr` to real type.
+func evalExprToReal(expr Expression, row []types.Datum, sc *variable.StatementContext) (res float64, isNull bool, err error) {
+	val, err := expr.Eval(row)
+	if val.IsNull() || err != nil {
+		return 0, val.IsNull(), errors.Trace(err)
+	}
+	tc := expr.GetType().ToClass()
+	if tc == types.ClassReal {
+		return val.GetFloat64(), false, nil
+	}
+	res, err = val.ToFloat64(sc)
+	return res, false, errors.Trace(err)
+}
+
+// evalExprToDecimal evaluates `expr` to decimal type.
+func evalExprToDecimal(expr Expression, row []types.Datum, sc *variable.StatementContext) (res *types.MyDecimal, isNull bool, err error) {
+	val, err := expr.Eval(row)
+	if val.IsNull() || err != nil {
+		return nil, val.IsNull(), errors.Trace(err)
+	}
+	tc := expr.GetType().ToClass()
+	if tc == types.ClassDecimal {
+		return val.GetMysqlDecimal(), false, nil
+	}
+	res, err = val.ToDecimal(sc)
+	return res, false, errors.Trace(err)
+}
+
+// evalExprToString evaluates `expr` to string type.
+func evalExprToString(expr Expression, row []types.Datum, _ *variable.StatementContext) (res string, isNull bool, err error) {
+	val, err := expr.Eval(row)
+	if val.IsNull() || err != nil {
+		return "", val.IsNull(), errors.Trace(err)
+	}
+	tc := expr.GetType().ToClass()
+	if tc == types.ClassString {
+		return val.GetString(), false, nil
+	}
+	res, err = val.ToString()
+	return res, false, errors.Trace(err)
+}
+
 // One stands for a number 1.
 var One = &Constant{
 	Value:   types.NewDatum(1),
@@ -248,6 +304,30 @@ func (c *Constant) GetType() *types.FieldType {
 // Eval implements Expression interface.
 func (c *Constant) Eval(_ []types.Datum) (types.Datum, error) {
 	return c.Value, nil
+}
+
+// EvalInt returns int representation of Constant.
+func (c *Constant) EvalInt(_ []types.Datum, sc *variable.StatementContext) (int64, bool, error) {
+	val, isNull, err := evalExprToInt(c, nil, sc)
+	return val, isNull, errors.Trace(err)
+}
+
+// EvalReal returns real representation of Constant.
+func (c *Constant) EvalReal(_ []types.Datum, sc *variable.StatementContext) (float64, bool, error) {
+	val, isNull, err := evalExprToReal(c, nil, sc)
+	return val, isNull, errors.Trace(err)
+}
+
+// EvalString returns string representation of Constant.
+func (c *Constant) EvalString(_ []types.Datum, sc *variable.StatementContext) (string, bool, error) {
+	val, isNull, err := evalExprToString(c, nil, sc)
+	return val, isNull, errors.Trace(err)
+}
+
+// EvalDecimal returns decimal representation of Constant.
+func (c *Constant) EvalDecimal(_ []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
+	val, isNull, err := evalExprToDecimal(c, nil, sc)
+	return val, isNull, errors.Trace(err)
 }
 
 // Equal implements Expression interface.
