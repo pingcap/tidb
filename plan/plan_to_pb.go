@@ -84,6 +84,21 @@ func (p *PhysicalTableScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec}, errors.Trace(err)
 }
 
+// ToPB implements PhysicalPlan ToPB interface.
+func (p *PhysicalIndexScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
+	columns := make([]*model.ColumnInfo, 0, p.schema.Len())
+	for _, col := range p.schema.Columns {
+		columns = append(columns, p.Table.Columns[col.Position])
+	}
+	idxExec := &tipb.IndexScan{
+		TableId: p.Table.ID,
+		IndexId: p.Index.ID,
+		Columns: distsql.ColumnsToProto(columns, p.Table.PKIsHandle),
+		Desc:    p.Desc,
+	}
+	return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec}, nil
+}
+
 func setPBColumnsDefaultValue(ctx context.Context, pbColumns []*tipb.ColumnInfo, columns []*model.ColumnInfo) error {
 	for i, c := range columns {
 		if c.OriginDefaultValue == nil {

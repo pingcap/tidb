@@ -80,9 +80,8 @@ const (
 	codeResultIsEmpty   terror.ErrCode = 8
 	codeErrBuildExec    terror.ErrCode = 9
 	codeBatchInsertFail terror.ErrCode = 10
-	// MySQL error code
-	CodePasswordNoMatch terror.ErrCode = 1133
-	CodeCannotUser      terror.ErrCode = 1396
+	CodePasswordNoMatch terror.ErrCode = 1133 // MySQL error code
+	CodeCannotUser      terror.ErrCode = 1396 // MySQL error code
 )
 
 // Row represents a result set row, it may be returned from a table, a join, or a projection.
@@ -95,11 +94,11 @@ type Row struct {
 
 // RowKeyEntry represents a row key read from a table.
 type RowKeyEntry struct {
-	// The table which this row come from.
+	// Tbl is the table which this row come from.
 	Tbl table.Table
-	// Row key.
+	// Handle is Row key.
 	Handle int64
-	// Table alias name.
+	// TableName is table alias name.
 	TableName string
 }
 

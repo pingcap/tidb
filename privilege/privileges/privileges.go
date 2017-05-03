@@ -28,7 +28,7 @@ import (
 )
 
 // Enable enables the new privilege check feature.
-var Enable = false
+var Enable = true
 
 // SkipWithGrant causes the server to start without using the privilege system at all.
 var SkipWithGrant = false

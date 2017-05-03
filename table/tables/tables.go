@@ -236,7 +236,7 @@ func (t *Table) setOnUpdateData(ctx context.Context, touched map[int]bool, data 
 	return nil
 }
 
-// Fill untouched columns with original values.
+// composeNewData fills untouched columns with original values.
 // TODO: consider col state
 func (t *Table) composeNewData(touched map[int]bool, newData []types.Datum, oldData []types.Datum) {
 	for i, od := range oldData {
@@ -359,7 +359,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 	return recordID, nil
 }
 
-// Generate index content string representation.
+// genIndexKeyStr generates index content string representation.
 func (t *Table) genIndexKeyStr(colVals []types.Datum) (string, error) {
 	// Pass pre-composed error to txn.
 	strVals := make([]string, 0, len(colVals))
@@ -377,7 +377,7 @@ func (t *Table) genIndexKeyStr(colVals []types.Datum) (string, error) {
 	return strings.Join(strVals, "-"), nil
 }
 
-// Add data into indices.
+// addIndices adds data into indices.
 func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum, bs *kv.BufferStore) (int64, error) {
 	txn := ctx.Txn()
 	// Clean up lazy check error environment
@@ -548,7 +548,7 @@ func (t *Table) removeRowData(ctx context.Context, h int64) error {
 	return nil
 }
 
-// removeRowAllIndex removes all the indices of a row.
+// removeRowIndices removes all the indices of a row.
 func (t *Table) removeRowIndices(ctx context.Context, h int64, rec []types.Datum) error {
 	for _, v := range t.indices {
 		vals, err := v.FetchValues(rec)
@@ -569,7 +569,7 @@ func (t *Table) removeRowIndices(ctx context.Context, h int64, rec []types.Datum
 	return nil
 }
 
-// RemoveRowIndex implements table.Table RemoveRowIndex interface.
+// removeRowIndex implements table.Table RemoveRowIndex interface.
 func (t *Table) removeRowIndex(rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index) error {
 	if err := idx.Delete(rm, vals, h); err != nil {
 		return errors.Trace(err)
@@ -577,7 +577,7 @@ func (t *Table) removeRowIndex(rm kv.RetrieverMutator, h int64, vals []types.Dat
 	return nil
 }
 
-// BuildIndexForRow implements table.Table BuildIndexForRow interface.
+// buildIndexForRow implements table.Table BuildIndexForRow interface.
 func (t *Table) buildIndexForRow(rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index) error {
 	if idx.Meta().State == model.StateDeleteOnly || idx.Meta().State == model.StateDeleteReorganization {
 		// If the index is in delete only or write reorganization state, we can not add index.

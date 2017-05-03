@@ -194,6 +194,7 @@ func (s *testMainSuite) TestTimestampTimeZone(c *C) {
 
 	se := newSession(c, s.store, dbName)
 	mustExecute(se, "create table t (ts timestamp)")
+	mustExecute(se, "set time_zone = '+00:00'")
 	mustExecute(se, "insert into t values ('2017-04-27 22:40:42')")
 	rs := mustExecSQL(c, se, "select * from t")
 	rows, err := GetRows(rs)
@@ -205,8 +206,8 @@ func (s *testMainSuite) TestTimestampTimeZone(c *C) {
 		timezone string
 		expect   string
 	}{
-		{"+10:00", "2017-04-28 00:40:42"},
-		{"-6:00", "2017-04-27 20:40:42"},
+		{"+10:00", "2017-04-28 08:40:42"},
+		{"-6:00", "2017-04-27 16:40:42"},
 	}
 	for _, tt := range tests {
 		mustExecute(se, fmt.Sprintf("set time_zone = '%s'", tt.timezone))
