@@ -288,7 +288,7 @@ func (p PhysicalIndexReader) init(allocator *idAllocator, ctx context.Context) *
 	if _, ok := p.indexPlan.(*PhysicalAggregation); ok {
 		p.schema = p.indexPlan.Schema()
 	} else {
-		// The IndexScan runned in KV Layer will read all columns from storage. But TiDB Only needs some of them.
+		// The IndexScan running in KV Layer will read all columns from storage. But TiDB Only needs some of them.
 		// So their schemas are different, we need to resolve indices again.
 		schemaInKV := p.indexPlan.Schema()
 		is := p.IndexPlans[0].(*PhysicalIndexScan)
