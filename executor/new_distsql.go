@@ -186,6 +186,9 @@ func (e *IndexReaderExecutor) doRequest() error {
 		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)
 	}
 	kvRanges, err := indexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges, fieldTypes)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goctx.Background(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc)
 	if err != nil {
 		return errors.Trace(err)
