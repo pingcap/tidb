@@ -937,8 +937,8 @@ func (s *testColumnSuite) colDefStrToFieldType(c *C, str string) *types.FieldTyp
 }
 
 func (s *testColumnSuite) TestFieldCase(c *C) {
-	var colDefs [2]*ast.ColumnDef
 	var fields = []string{"field", "Field"}
+	var colDefs = make([]*ast.ColumnDef, len(fields))
 	for idx, name := range fields {
 		colDefs[idx] = &ast.ColumnDef{
 			Name: &ast.ColumnName{
@@ -948,5 +948,5 @@ func (s *testColumnSuite) TestFieldCase(c *C) {
 			},
 		}
 	}
-	c.Assert(checkDuplicateColumn(colDefs[:]), NotNil)
+	c.Assert(checkDuplicateColumn(colDefs), NotNil)
 }
