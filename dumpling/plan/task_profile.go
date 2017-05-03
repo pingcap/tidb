@@ -172,10 +172,8 @@ func finishCopTask(task taskProfile, ctx context.Context, allocator *idAllocator
 		newTask.p.SetSchema(t.tablePlan.Schema())
 	} else if t.indexPlan != nil {
 		newTask.p = PhysicalIndexReader{indexPlan: t.indexPlan}.init(allocator, ctx)
-		newTask.p.SetSchema(t.indexPlan.Schema())
 	} else {
 		newTask.p = PhysicalTableReader{tablePlan: t.tablePlan}.init(allocator, ctx)
-		newTask.p.SetSchema(t.tablePlan.Schema())
 	}
 	return newTask
 }
