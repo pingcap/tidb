@@ -185,6 +185,7 @@ const (
 	version5 = 5
 	version6 = 6
 	version7 = 7
+	version8 = 8
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -263,6 +264,14 @@ func upgrade(s Session) {
 		upgradeToVer6(s)
 	}
 
+	if ver < version7 {
+		upgradeToVer7(s)
+	}
+
+	if ver < version8 {
+		upgradeToVer8(s)
+	}
+
 	updateBootstrapVer(s)
 	_, err = s.Execute("COMMIT")
 
@@ -339,6 +348,14 @@ func upgradeToVer7(s Session) {
 	}
 	// For reasons of compatibility, set the non-exists privilege column value to 'Y', as TiDB doesn't check them in older versions.
 	mustExecute(s, "UPDATE mysql.user SET Process_priv='Y'")
+}
+
+func upgradeToVer8(s Session) {
+	// This is a dummy upgrade, it checks whether upgradeToVer7 success, if not, do it again.
+	if _, err := s.Execute("SELECT `Process_priv` from mysql.user limit 0"); err == nil {
+		return
+	}
+	upgradeToVer7(s)
 }
 
 // updateBootstrapVer updates boostrap version variable in mysql.TiDB table.
