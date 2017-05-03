@@ -40,7 +40,6 @@ var (
 	_ LogicalPlan = &Limit{}
 	_ LogicalPlan = &Show{}
 	_ LogicalPlan = &Insert{}
-	_ LogicalPlan = &Analyze{}
 )
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, FullOuterJoin, SemiJoin.
@@ -252,6 +251,9 @@ type DataSource struct {
 	TableAsName *model.CIStr
 
 	LimitCount *int64
+
+	// pushedDownConds are the conditions that will be pushed down to coprocessor.
+	pushedDownConds []expression.Expression
 
 	statisticTable *statistics.Table
 }

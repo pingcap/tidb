@@ -131,6 +131,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 	} else {
 		sc.AddAffectedRows(2)
 	}
+	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, 0, 1)
 	return nil
 }
 
@@ -252,6 +253,7 @@ func (e *DeleteExec) removeRow(ctx context.Context, t table.Table, h int64, data
 	}
 	getDirtyDB(ctx).deleteRow(t.Meta().ID, h)
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
+	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, -1, 1)
 	return nil
 }
 
@@ -447,6 +449,7 @@ func escapeCols(strs [][]byte) []string {
 	return ret
 }
 
+// escape handles escape characters when running load data statement.
 // TODO: escape need to be improved, it should support ESCAPED BY to specify
 // the escape character and handle \N escape.
 // See http://dev.mysql.com/doc/refman/5.7/en/load-data.html
@@ -680,6 +683,7 @@ func (e *InsertExec) Close() error {
 	return nil
 }
 
+// getColumns gets the explicitly specified columns of an insert statement. There are three cases:
 // There are three types of insert statements:
 // 1 insert ... values(...)  --> name type column
 // 2 insert ... set x=y...   --> set type column
@@ -878,6 +882,7 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 			}
 			row[i].SetInt64(val)
 			if val != 0 {
+				e.ctx.GetSessionVars().InsertID = uint64(val)
 				e.Table.RebaseAutoID(val, true)
 				continue
 			}
@@ -1088,7 +1093,7 @@ type UpdateExec struct {
 	SelectExec  Executor
 	OrderedList []*expression.Assignment
 
-	// Map for unique (Table, handle) pair.
+	// updatedRowKeys is a map for unique (Table, handle) pair.
 	updatedRowKeys map[table.Table]map[int64]struct{}
 	ctx            context.Context
 

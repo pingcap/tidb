@@ -62,7 +62,9 @@ func (h *rpcHandler) handleCopRequest(req *coprocessor.Request) (*coprocessor.Re
 	if len(req.Ranges) == 0 {
 		return resp, nil
 	}
-	if req.GetTp() == kv.ReqTypeSelect || req.GetTp() == kv.ReqTypeIndex {
+	if req.GetTp() == kv.ReqTypeDAG {
+		return h.handleCopDAGRequest(req)
+	} else if req.GetTp() == kv.ReqTypeSelect || req.GetTp() == kv.ReqTypeIndex {
 		sel := new(tipb.SelectRequest)
 		err := proto.Unmarshal(req.Data, sel)
 		if err != nil {
@@ -176,7 +178,11 @@ func (h *rpcHandler) setTopNDataForCtx(ctx *selectContext) []tipb.Chunk {
 	sort.Sort(&ctx.topnHeap.topnSorter)
 	chunks := make([]tipb.Chunk, 0, len(ctx.topnHeap.rows)/rowsPerChunk)
 	for _, row := range ctx.topnHeap.rows {
-		chunks = appendRow(chunks, row.meta.Handle, row.data)
+		data := make([]byte, 0)
+		for _, d := range row.data {
+			data = append(data, d...)
+		}
+		chunks = appendRow(chunks, row.meta.Handle, data)
 	}
 	return chunks
 }
@@ -316,8 +322,8 @@ func reverseKVRanges(kvRanges []kv.KeyRange) {
 }
 
 func (h *rpcHandler) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, limit *int64, chunks []tipb.Chunk) ([]tipb.Chunk, error) {
-	startKey := maxStartKey(ran.StartKey, h.rawStartKey)
-	endKey := minEndKey(ran.EndKey, h.rawEndKey)
+	startKey := ran.StartKey
+	endKey := ran.EndKey
 	if (*limit) == 0 || bytes.Compare(startKey, endKey) >= 0 {
 		return chunks, nil
 	}
@@ -537,8 +543,8 @@ func (h *rpcHandler) getChunksFromIndexReq(ctx *selectContext) ([]tipb.Chunk, er
 
 func (h *rpcHandler) getIndexRowFromRange(ctx *selectContext, ran kv.KeyRange, limit *int64, chunks []tipb.Chunk) ([]tipb.Chunk, error) {
 	idxInfo := ctx.sel.IndexInfo
-	startKey := maxStartKey(ran.StartKey, h.rawStartKey)
-	endKey := minEndKey(ran.EndKey, h.rawEndKey)
+	startKey := ran.StartKey
+	endKey := ran.EndKey
 	if (*limit) == 0 || bytes.Compare(startKey, endKey) >= 0 {
 		return nil, nil
 	}

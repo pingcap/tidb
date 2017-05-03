@@ -25,7 +25,7 @@ func (s *testSuite) TestStmtLabel(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table label (c1 int primary key, c2 int, c3 int, index (c2))")
-	cases := []struct {
+	tests := []struct {
 		sql   string
 		label string
 	}{
@@ -47,13 +47,13 @@ func (s *testSuite) TestStmtLabel(c *C) {
 		{"update label set c3 = 3 where c2 = 1", "UpdateIndexRange"},
 		{"update label set c3 = 3 where c2 = 1 order by c3 limit 1", "UpdateIndexRangeOrderLimit"},
 	}
-	for _, ca := range cases {
-		stmtNode, err := parser.New().ParseOneStmt(ca.sql, "", "")
+	for _, tt := range tests {
+		stmtNode, err := parser.New().ParseOneStmt(tt.sql, "", "")
 		c.Check(err, IsNil)
 		is := executor.GetInfoSchema(tk.Se)
 		c.Assert(plan.Preprocess(stmtNode, is, tk.Se), IsNil)
 		p, err := plan.Optimize(tk.Se, stmtNode, is)
 		c.Assert(err, IsNil)
-		c.Assert(executor.StatementLabel(stmtNode, p), Equals, ca.label)
+		c.Assert(executor.StatementLabel(stmtNode, p), Equals, tt.label)
 	}
 }

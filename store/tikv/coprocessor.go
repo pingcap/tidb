@@ -42,6 +42,8 @@ func (c *CopClient) SupportRequestType(reqType, subType int64) bool {
 		default:
 			return supportExpr(tipb.ExprType(subType))
 		}
+	case kv.ReqTypeDAG:
+		return c.store.mock
 	}
 	return false
 }
@@ -306,8 +308,10 @@ const minLogCopTaskTime = 300 * time.Millisecond
 // send the result back.
 func (it *copIterator) work(ctx goctx.Context, taskCh <-chan *copTask) {
 	defer it.wg.Done()
+	childCtx, cancel := goctx.WithCancel(ctx)
+	defer cancel()
 	for task := range taskCh {
-		bo := NewBackoffer(copNextMaxBackoff, ctx)
+		bo := NewBackoffer(copNextMaxBackoff, childCtx)
 		startTime := time.Now()
 		resps := it.handleTask(bo, task)
 		costTime := time.Since(startTime)
@@ -349,8 +353,10 @@ func (it *copIterator) run(ctx goctx.Context) {
 
 	go func() {
 		// Send tasks to feed the worker goroutines.
+		childCtx, cancel := goctx.WithCancel(ctx)
+		defer cancel()
 		for _, t := range it.tasks {
-			finished, canceled := it.sendToTaskCh(ctx, t)
+			finished, canceled := it.sendToTaskCh(childCtx, t)
 			if finished || canceled {
 				break
 			}

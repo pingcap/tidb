@@ -70,11 +70,11 @@ const (
 	// Set this value higher may reduce the latency but consumes more system resource.
 	TiDBIndexLookupConcurrency = "tidb_index_lookup_concurrency"
 
-	// tidb_index_serial_scan_concurrency is used for controling the concurrency of index scan operation
+	// tidb_index_serial_scan_concurrency is used for controlling the concurrency of index scan operation
 	// when we need to keep the data output order the same as the order of index data.
 	TiDBIndexSerialScanConcurrency = "tidb_index_serial_scan_concurrency"
 
-	// tidb_skip_ddl_wait skips the wait tiem of two lease after executing CREATE TABLE statement.
+	// tidb_skip_ddl_wait skips the wait time of two lease after executing CREATE TABLE statement.
 	// When we have multiple TiDB servers in a cluster, the newly created table may not be available on all TiDB server
 	// until two lease time later, set this value to true will reduce the time to create a table, with the risk that
 	// other TiDB servers may fail to use the newly created table in a small time window.
@@ -87,6 +87,11 @@ const (
 	// tidb_batch_insert is used to enable/disable auto-split insert data. If set this option on, insert executor will automatically
 	// insert data into multiple batches and use a single txn for each batch. This will be helpful when inserting large data.
 	TiDBBatchInsert = "tidb_batch_insert"
+
+	// tidb_max_row_count_for_inlj is used when do index nested loop join.
+	// It controls the max row count of outer table when do index nested loop join without hint.
+	// After the row count of the inner table is accurate, this variable will be removed.
+	TiDBMaxRowCountForINLJ = "tidb_max_row_count_for_inlj"
 )
 
 // Default TiDB system variable values.
@@ -96,6 +101,7 @@ const (
 	DefIndexLookupSize            = 20000
 	DefDistSQLScanConcurrency     = 10
 	DefBuildStatsConcurrency      = 4
+	DefMaxRowCountForINLJ         = 128
 	DefSkipDDLWait                = false
 	DefSkipUTF8Check              = false
 	DefOptAggPushDown             = true

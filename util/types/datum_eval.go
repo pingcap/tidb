@@ -399,7 +399,7 @@ func ComputeIntDiv(sc *variable.StatementContext, a, b Datum) (d Datum, err erro
 // decimal2RoundUint converts a MyDecimal to an uint64 after rounding.
 func decimal2RoundUint(x *MyDecimal) (uint64, error) {
 	roundX := new(MyDecimal)
-	x.Round(roundX, 0)
+	x.Round(roundX, 0, ModeHalfEven)
 	var (
 		uintX uint64
 		err   error
@@ -547,7 +547,7 @@ func ComputeRightShift(sc *variable.StatementContext, a, b Datum) (d Datum, err 
 	return d, nil
 }
 
-// covertNonIntegerToUint64 coverts a non-integer to an uint64
+// convertNonInt2RoundUint64 converts a non-integer to an uint64
 func convertNonInt2RoundUint64(sc *variable.StatementContext, x Datum) (d uint64, err error) {
 	decimalX, err := x.ToDecimal(sc)
 	if err != nil {

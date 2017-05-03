@@ -18,15 +18,25 @@ import (
 	"sort"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/distsql/xeval"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
+)
+
+// Error instances.
+var (
+	errInvalid = terror.ClassMockTikv.New(codeInvalid, "invalid operation")
+)
+
+// Error codes.
+const (
+	codeInvalid = 1
 )
 
 type executor interface {
@@ -36,14 +46,12 @@ type executor interface {
 
 type tableScanExec struct {
 	*tipb.TableScan
-	colIDs      map[int64]int
-	kvRanges    []kv.KeyRange
-	startTS     uint64
-	mvccStore   *MvccStore
-	cursor      int
-	seekKey     []byte
-	rawStartKey []byte // The start key of the current region.
-	rawEndKey   []byte // The end key of the current region.
+	colIDs    map[int64]int
+	kvRanges  []kv.KeyRange
+	startTS   uint64
+	mvccStore *MvccStore
+	cursor    int
+	seekKey   []byte
 
 	src executor
 }
@@ -100,20 +108,15 @@ func (e *tableScanExec) getRowFromPoint(ran kv.KeyRange) (int64, [][]byte, error
 
 func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error) {
 	if e.seekKey == nil {
-		startKey := maxStartKey(ran.StartKey, e.rawStartKey)
-		endKey := minEndKey(ran.EndKey, e.rawEndKey)
-		if bytes.Compare(ran.StartKey, ran.EndKey) >= 0 {
-			return 0, nil, nil
-		}
-		if *e.Desc {
-			e.seekKey = endKey
+		if e.Desc {
+			e.seekKey = ran.EndKey
 		} else {
-			e.seekKey = startKey
+			e.seekKey = ran.StartKey
 		}
 	}
 	var pairs []Pair
 	var pair Pair
-	if *e.Desc {
+	if e.Desc {
 		pairs = e.mvccStore.ReverseScan(ran.StartKey, e.seekKey, 1, e.startTS)
 	} else {
 		pairs = e.mvccStore.Scan(e.seekKey, ran.EndKey, 1, e.startTS)
@@ -128,7 +131,7 @@ func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 	if pair.Key == nil {
 		return 0, nil, nil
 	}
-	if *e.Desc {
+	if e.Desc {
 		if bytes.Compare(pair.Key, ran.StartKey) < 0 {
 			return 0, nil, nil
 		}
@@ -153,14 +156,13 @@ func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 
 type indexScanExec struct {
 	*tipb.IndexScan
-	colsLen     int
-	kvRanges    []kv.KeyRange
-	startTS     uint64
-	mvccStore   *MvccStore
-	cursor      int
-	seekKey     []byte
-	rawStartKey []byte // The start key of the current region.
-	rawEndKey   []byte // The end key of the current region.
+	colsLen   int
+	kvRanges  []kv.KeyRange
+	startTS   uint64
+	mvccStore *MvccStore
+	cursor    int
+	seekKey   []byte
+	pkCol     *tipb.ColumnInfo
 
 	src executor
 }
@@ -189,20 +191,15 @@ func (e *indexScanExec) Next() (handle int64, value [][]byte, err error) {
 
 func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error) {
 	if e.seekKey == nil {
-		startKey := maxStartKey(ran.StartKey, e.rawStartKey)
-		endKey := minEndKey(ran.EndKey, e.rawEndKey)
-		if bytes.Compare(ran.StartKey, ran.EndKey) >= 0 {
-			return 0, nil, nil
-		}
-		if *e.Desc {
-			e.seekKey = endKey
+		if e.Desc {
+			e.seekKey = ran.EndKey
 		} else {
-			e.seekKey = startKey
+			e.seekKey = ran.StartKey
 		}
 	}
 	var pairs []Pair
 	var pair Pair
-	if *e.Desc {
+	if e.Desc {
 		pairs = e.mvccStore.ReverseScan(ran.StartKey, e.seekKey, 1, e.startTS)
 	} else {
 		pairs = e.mvccStore.Scan(e.seekKey, ran.EndKey, 1, e.startTS)
@@ -217,7 +214,7 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 	if pair.Key == nil {
 		return 0, nil, nil
 	}
-	if *e.Desc {
+	if e.Desc {
 		if bytes.Compare(pair.Key, ran.StartKey) < 0 {
 			return 0, nil, nil
 		}
@@ -238,10 +235,26 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 			return 0, nil, errors.Trace(err)
 		}
 		handle = handleDatum.GetInt64()
+		if e.pkCol != nil {
+			values = append(values, b)
+		}
 	} else {
 		handle, err = decodeHandle(pair.Value)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
+		}
+		if e.pkCol != nil {
+			var handleDatum types.Datum
+			if mysql.HasUnsignedFlag(uint(e.pkCol.GetFlag())) {
+				handleDatum = types.NewUintDatum(uint64(handle))
+			} else {
+				handleDatum = types.NewIntDatum(handle)
+			}
+			handleBytes, err := codec.EncodeValue(b, handleDatum)
+			if err != nil {
+				return 0, nil, errors.Trace(err)
+			}
+			values = append(values, handleBytes)
 		}
 	}
 
@@ -249,7 +262,6 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 }
 
 type selectionExec struct {
-	sc                *variable.StatementContext
 	conditions        []expression.Expression
 	relatedColOffsets []int
 	row               []types.Datum
@@ -294,7 +306,7 @@ func (e *selectionExec) Next() (handle int64, value [][]byte, err error) {
 			return 0, nil, nil
 		}
 
-		err = e.evalCtx.decodeRelatedColumnVals(e.relatedColOffsets, handle, value, e.row)
+		err = e.evalCtx.decodeRelatedColumnVals(e.relatedColOffsets, value, e.row)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
@@ -309,14 +321,15 @@ func (e *selectionExec) Next() (handle int64, value [][]byte, err error) {
 }
 
 type aggregateExec struct {
-	*tipb.Aggregation
-	eval         *xeval.Evaluator
-	aggFuncs     []*aggregateFuncExpr
-	groups       map[string]struct{}
-	groupKeys    [][]byte
-	executed     bool
-	currGroupIdx int
-	colIDs       map[int64]int
+	evalCtx           *evalContext
+	aggExprs          []expression.AggregationFunction
+	groupByExprs      []expression.Expression
+	relatedColOffsets []int
+	row               []types.Datum
+	groups            map[string]struct{}
+	groupKeys         [][]byte
+	executed          bool
+	currGroupIdx      int
 
 	src executor
 }
@@ -326,14 +339,14 @@ func (e *aggregateExec) SetSrcExec(exec executor) {
 }
 
 func (e *aggregateExec) innerNext() (bool, error) {
-	handle, values, err := e.src.Next()
+	_, values, err := e.src.Next()
 	if err != nil {
 		return false, errors.Trace(err)
 	}
 	if values == nil {
 		return false, nil
 	}
-	err = e.aggregate(handle, values)
+	err = e.aggregate(values)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -362,15 +375,11 @@ func (e *aggregateExec) Next() (handle int64, value [][]byte, err error) {
 	if err != nil {
 		return 0, nil, errors.Trace(err)
 	}
-	value = make([][]byte, 0, 1+2*len(e.aggFuncs))
+	value = make([][]byte, 0, 1+2*len(e.aggExprs))
 	// The first column is group key.
 	value = append(value, gkData)
-	for _, agg := range e.aggFuncs {
-		agg.currentGroup = gk
-		ds, err := agg.toDatums(e.eval)
-		if err != nil {
-			return 0, nil, errors.Trace(err)
-		}
+	for _, agg := range e.aggExprs {
+		ds := agg.GetPartialResult(gk)
 		data, err := codec.EncodeValue(nil, ds...)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
@@ -382,15 +391,31 @@ func (e *aggregateExec) Next() (handle int64, value [][]byte, err error) {
 	return 0, value, nil
 }
 
+func (e *aggregateExec) getGroupKey() ([]byte, error) {
+	length := len(e.groupByExprs)
+	if length == 0 {
+		return []byte{}, nil
+	}
+	vals := make([]types.Datum, 0, len(e.groupByExprs))
+	for _, item := range e.groupByExprs {
+		v, err := item.Eval(e.row)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		vals = append(vals, v)
+	}
+	buf, err := codec.EncodeValue(nil, vals...)
+	return buf, errors.Trace(err)
+}
+
 // aggregate updates aggregate functions with row.
-func (e *aggregateExec) aggregate(handle int64, row [][]byte) error {
-	// Put row data into evaluate for later evaluation.
-	err := e.eval.SetRowValue(handle, row, e.colIDs)
+func (e *aggregateExec) aggregate(value [][]byte) error {
+	err := e.evalCtx.decodeRelatedColumnVals(e.relatedColOffsets, value, e.row)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// Get group key.
-	gk, err := getGroupKey(e.eval, e.GetGroupBy())
+	gk, err := e.getGroupKey()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -398,19 +423,9 @@ func (e *aggregateExec) aggregate(handle int64, row [][]byte) error {
 		e.groups[string(gk)] = struct{}{}
 		e.groupKeys = append(e.groupKeys, gk)
 	}
-	// Update aggregate funcs.
-	for _, agg := range e.aggFuncs {
-		agg.currentGroup = gk
-		args := make([]types.Datum, 0, len(agg.expr.Children))
-		// Evaluate arguments.
-		for _, x := range agg.expr.Children {
-			cv, err := e.eval.Eval(x)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			args = append(args, cv)
-		}
-		agg.update(e.eval, args)
+	// Update aggregate expressions.
+	for _, agg := range e.aggExprs {
+		agg.Update(e.row, gk, e.evalCtx.sc)
 	}
 	return nil
 }
@@ -465,9 +480,8 @@ func (e *topNExec) Next() (handle int64, value [][]byte, err error) {
 	sort.Sort(&e.heap.topnSorter)
 	row := e.heap.rows[e.cursor]
 	e.cursor++
-	value = [][]byte{row.data}
 
-	return row.meta.Handle, value, nil
+	return row.meta.Handle, row.data, nil
 }
 
 // evalTopN evaluates the top n elements from the data. The input receives a record including its handle and data.
@@ -477,7 +491,7 @@ func (e *topNExec) evalTopN(handle int64, value [][]byte) error {
 		meta: tipb.RowMeta{Handle: handle},
 		key:  make([]types.Datum, len(value)),
 	}
-	err := e.evalCtx.decodeRelatedColumnVals(e.relatedColOffsets, handle, value, e.row)
+	err := e.evalCtx.decodeRelatedColumnVals(e.relatedColOffsets, value, e.row)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -490,7 +504,7 @@ func (e *topNExec) evalTopN(handle int64, value [][]byte) error {
 
 	if e.heap.tryToAddRow(newRow) {
 		for _, val := range value {
-			newRow.data = append(newRow.data, val...)
+			newRow.data = append(newRow.data, val)
 			newRow.meta.Length += int64(len(val))
 		}
 	}
@@ -498,8 +512,8 @@ func (e *topNExec) evalTopN(handle int64, value [][]byte) error {
 }
 
 type limitExec struct {
-	limit  int64
-	cursor int64
+	limit  uint64
+	cursor uint64
 
 	src executor
 }
@@ -577,33 +591,6 @@ func getRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle int64, 
 	return values, nil
 }
 
-// TODO: Remove it after replacing evaluator in aggregation.
-func extractColIDsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector map[int64]int) error {
-	if expr == nil {
-		return nil
-	}
-	if expr.GetTp() == tipb.ExprType_ColumnRef {
-		_, i, err := codec.DecodeInt(expr.Val)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for idx, c := range columns {
-			if c.GetColumnId() == i {
-				collector[i] = idx
-				return nil
-			}
-		}
-		return xeval.ErrInvalid.Gen("column %d not found", i)
-	}
-	for _, child := range expr.Children {
-		err := extractColIDsInExpr(child, columns, collector)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
 func isDuplicated(offsets []int, offset int) bool {
 	for _, idx := range offsets {
 		if idx == offset {
@@ -631,7 +618,7 @@ func extractOffsetsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector
 			}
 			return collector, nil
 		}
-		return nil, xeval.ErrInvalid.Gen("column %d not found", i)
+		return nil, errInvalid.Gen("column %d not found", i)
 	}
 	var err error
 	for _, child := range expr.Children {

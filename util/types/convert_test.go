@@ -192,11 +192,12 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 
 	// For TypeBit
 	ft = NewFieldType(mysql.TypeBit)
-	ft.Flen = 8
+	ft.Flen = 24
 	v, err = Convert("100", ft)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, Bit{Value: 100, Width: 8})
+	c.Assert(v, Equals, Bit{Value: 3223600, Width: 24})
 
+	ft.Flen = 8
 	v, err = Convert(Hex{Value: 100}, ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, Bit{Value: 100, Width: 8})
@@ -324,7 +325,7 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 	c.Assert(err, NotNil)
 
 	// test truncate
-	cases := []struct {
+	tests := []struct {
 		flen    int
 		charset string
 		input   string
@@ -338,19 +339,19 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 		{12, "binary", "你好，世界", "你好，世"},
 		{0, "binary", "你好，世界", ""},
 	}
-	for _, ca := range cases {
+	for _, tt := range tests {
 		ft = NewFieldType(mysql.TypeVarchar)
-		ft.Flen = ca.flen
-		ft.Charset = ca.charset
-		inputDatum := NewStringDatum(ca.input)
+		ft.Flen = tt.flen
+		ft.Charset = tt.charset
+		inputDatum := NewStringDatum(tt.input)
 		sc := new(variable.StatementContext)
 		outputDatum, err := inputDatum.ConvertTo(sc, ft)
-		if ca.input != ca.output {
+		if tt.input != tt.output {
 			c.Assert(ErrDataTooLong.Equal(err), IsTrue)
 		} else {
 			c.Assert(err, IsNil)
 		}
-		c.Assert(outputDatum.GetString(), Equals, ca.output)
+		c.Assert(outputDatum.GetString(), Equals, tt.output)
 	}
 }
 
@@ -619,12 +620,12 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeNewDecimal, NewDecFromInt(12300000), "12300000")
 	dec := NewDecFromInt(-123)
 	dec.Shift(-5)
-	dec.Round(dec, 5)
+	dec.Round(dec, 5, ModeHalfEven)
 	signedAccept(c, mysql.TypeNewDecimal, dec, "-0.00123")
 }
 
 func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
-	cases := []struct {
+	tests := []struct {
 		origin string
 		valid  string
 	}{
@@ -644,9 +645,9 @@ func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 		{"123.e", "123."},
 	}
 	sc := new(variable.StatementContext)
-	for _, ca := range cases {
-		prefix, _ := getValidFloatPrefix(sc, ca.origin)
-		c.Assert(prefix, Equals, ca.valid)
+	for _, tt := range tests {
+		prefix, _ := getValidFloatPrefix(sc, tt.origin)
+		c.Assert(prefix, Equals, tt.valid)
 		_, err := strconv.ParseFloat(prefix, 64)
 		c.Assert(err, IsNil)
 	}

@@ -367,6 +367,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 			job.State = model.JobDone
 		}
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
+		d.asyncNotifyEvent(&Event{Tp: model.ActionDropIndex, TableInfo: tblInfo, IndexInfo: indexInfo})
 	default:
 		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
 	}
@@ -465,6 +466,8 @@ type indexTaskOpInfo struct {
 	nextCh    chan int64                 // It notifies to start the next task.
 }
 
+// addTableIndex adds index into table.
+// TODO: Move this to doc or wiki.
 // How to add index in reorganization state?
 // Concurrently process the defaultTaskHandleCnt tasks. Each task deals with a handle range of the index record.
 // The handle range size is defaultTaskHandleCnt.
