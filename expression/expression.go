@@ -268,7 +268,7 @@ func EvaluateExprWithNull(ctx context.Context, schema *Schema, expr Expression) 
 		if !schema.Contains(x) {
 			return x, nil
 		}
-		constant := &Constant{Value: types.Datum{}}
+		constant := &Constant{Value: types.Datum{}, RetType:types.NewFieldType(mysql.TypeNull)}
 		return constant, nil
 	default:
 		return x.Clone(), nil
@@ -337,22 +337,14 @@ func ColumnInfos2Columns(tblName model.CIStr, colInfos []*model.ColumnInfo) []*C
 // NewCastFunc creates a new cast function.
 func NewCastFunc(tp *types.FieldType, arg Expression, ctx context.Context) *ScalarFunction {
 	bt := &builtinCastSig{newBaseBuiltinFunc([]Expression{arg}, ctx), tp}
-	return &ScalarFunction{
-		FuncName: model.NewCIStr(ast.Cast),
-		RetType:  tp,
-		Function: bt,
-	}
+	return NewScalarFunction(ast.Cast, tp, bt)
 }
 
 // NewValuesFunc creates a new values function.
 func NewValuesFunc(offset int, retTp *types.FieldType, ctx context.Context) *ScalarFunction {
 	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, offset}
 	bt, _ := fc.getFunction(nil, ctx)
-	return &ScalarFunction{
-		FuncName: model.NewCIStr(ast.Values),
-		RetType:  retTp,
-		Function: bt,
-	}
+	return NewScalarFunction(ast.Values, retTp, bt)
 }
 
 func init() {
