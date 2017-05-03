@@ -97,13 +97,14 @@ type builtinFoundRowsSig struct {
 
 // eval evals a builtinFoundRowsSig.
 // See https://dev.mysql.com/doc/refman/5.6/en/information-functions.html#function_found-rows
+// TODO: SQL_CALC_FOUND_ROWS and LIMIT not support for now, We will finish in another PR.
 func (b *builtinFoundRowsSig) eval(_ []types.Datum) (d types.Datum, err error) {
 	data := b.ctx.GetSessionVars()
 	if data == nil {
 		return d, errors.Errorf("Missing session variable when evalue builtin")
 	}
 
-	d.SetUint64(data.StmtCtx.FoundRows())
+	d.SetUint64(data.LastFoundRows)
 	return d, nil
 }
 

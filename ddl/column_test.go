@@ -949,5 +949,5 @@ func (s *testColumnSuite) TestFieldCase(c *C) {
 		}
 		colDefs = append(colDefs, colDef)
 	}
-	c.Assert(checkDuplicateColumn(colDefs) != nil, Matches, true)
+	c.Assert(checkDuplicateColumn(colDefs) != nil, Equals, true)
 }
