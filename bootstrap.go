@@ -53,6 +53,7 @@ const (
 		Execute_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
 		Index_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
 		Create_user_priv	ENUM('N','Y') NOT NULL  DEFAULT 'N',
+		Trigger_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
 		PRIMARY KEY (Host, User));`
 	// CreateDBPrivTable is the SQL statement creates DB scope privilege table in system db.
 	CreateDBPrivTable = `CREATE TABLE if not exists mysql.db (
@@ -186,6 +187,7 @@ const (
 	version6 = 6
 	version7 = 7
 	version8 = 8
+	version9 = 9
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -270,6 +272,10 @@ func upgrade(s Session) {
 
 	if ver < version8 {
 		upgradeToVer8(s)
+	}
+
+	if ver < version9 {
+		upgradeToVer9(s)
 	}
 
 	updateBootstrapVer(s)
@@ -358,6 +364,18 @@ func upgradeToVer8(s Session) {
 	upgradeToVer7(s)
 }
 
+func upgradeToVer9(s Session) {
+	_, err := s.Execute("ALTER TABLE mysql.user ADD COLUMN `Trigger_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_user_priv`")
+	if terror.ErrorEqual(err, infoschema.ErrColumnExists) {
+		return
+	}
+	if err != nil {
+		log.Fatal(err)
+	}
+	// For reasons of compatibility, set the non-exists privilege column value to 'Y', as TiDB doesn't check them in older versions.
+	s.Execute("UPDATE mysql.user SET Trigger_priv='Y'")
+}
+
 // updateBootstrapVer updates boostrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -411,7 +429,7 @@ func doDMLWorks(s Session) {
 
 	// Insert a default user with empty password.
 	mustExecute(s, `INSERT INTO mysql.user VALUES
-		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
 
 	// Init global system variables table.
 	values := make([]string, 0, len(variable.SysVars))

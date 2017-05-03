@@ -498,6 +498,7 @@ import (
 	timestampType	"TIMESTAMP"
 	timestampDiff	"TIMESTAMPDIFF"
 	transaction	"TRANSACTION"
+	trigger		"TRIGGER"
 	triggers	"TRIGGERS"
 	truncate	"TRUNCATE"
 	uncommitted	"UNCOMMITTED"
@@ -2341,7 +2342,7 @@ ReservedKeyword:
 | "REAL" | "REFERENCES" | "REGEXP" | "RENAME" | "REPEAT" | "REPLACE" | "RESTRICT" | "REVOKE" | "RIGHT" | "RLIKE"
 | "SCHEMA" | "SCHEMAS" | "SECOND_MICROSECOND" | "SELECT" | "SET" | "SHOW" | "SMALLINT"
 | "STARTING" | "TABLE" | "TERMINATED" | "THEN" | "TINYBLOB" | "TINYINT" | "TINYTEXT" | "TO"
-| "TRAILING" | "TRUE" | "UNION" | "UNIQUE" | "UNLOCK" | "UNSIGNED"
+| "TRAILING" | "TRIGGER" | "TRUE" | "UNION" | "UNIQUE" | "UNLOCK" | "UNSIGNED"
 | "UPDATE" | "USE" | "USING" | "UTC_DATE" | "UTC_TIMESTAMP" | "VALUES" | "VARBINARY" | "VARCHAR"
 | "WHEN" | "WHERE" | "WRITE" | "XOR" | "YEAR_MONTH" | "ZEROFILL"
  /*
@@ -6111,6 +6112,10 @@ PrivType:
 |	"CREATE" "USER"
 	{
 		$$ = mysql.CreateUserPriv
+	}
+|	"TRIGGER"
+	{
+		$$ = mysql.TriggerPriv
 	}
 |	"DELETE"
 	{
