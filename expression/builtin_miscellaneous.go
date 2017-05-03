@@ -13,6 +13,7 @@
 package expression
 
 import (
+	"bytes"
 	"encoding/binary"
 	"math"
 	"net"
@@ -546,13 +547,8 @@ func (b *builtinIsIPv4MappedSig) eval(row []types.Datum) (d types.Datum, err err
 		return
 	}
 
-	for _, bytes := range ipAddress[:10] {
-		if bytes != 0x0 {
-			return
-		}
-	}
-
-	if ipAddress[10] != 0xff || ipAddress[11] != 0xff {
+	var v4InV6Prefix = []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff}
+	if !bytes.HasPrefix(ipAddress, v4InV6Prefix) {
 		return
 	}
 
