@@ -110,6 +110,7 @@ func (e *TableReaderExecutor) doRequest() error {
 	return nil
 }
 
+// doRequestForHandles constructs kv ranges by handles. It is used by index look up executor.
 func (e *TableReaderExecutor) doRequestForHandles(handles []int64) error {
 	kvRanges := tableHandlesToKVRanges(e.tableID, handles)
 	var err error
@@ -231,7 +232,7 @@ type IndexLookUpExecutor struct {
 	tableRequest *tipb.DAGRequest
 }
 
-func (e *IndexLookUpExecutor) doIndexRequest() error {
+func (e *IndexLookUpExecutor) doRequest() error {
 	fieldTypes := make([]*types.FieldType, len(e.index.Columns))
 	for i, v := range e.index.Columns {
 		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)
@@ -245,14 +246,7 @@ func (e *IndexLookUpExecutor) doIndexRequest() error {
 		return errors.Trace(err)
 	}
 	e.result.Fetch(e.ctx.GoCtx())
-	return nil
-}
 
-func (e *IndexLookUpExecutor) doRequest() error {
-	err := e.doIndexRequest()
-	if err != nil {
-		return errors.Trace(err)
-	}
 	// Use a background goroutine to fetch index and put the result in e.taskChan.
 	// e.taskChan serves as a pipeline, so fetching index and getting table data can
 	// run concurrently.
@@ -261,6 +255,8 @@ func (e *IndexLookUpExecutor) doRequest() error {
 	return nil
 }
 
+// executeTask executes the table look up tasks. We will construct a table reader and send request by handles.
+// Then we hold the returning rows and finish this task.
 func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask) {
 	var err error
 	defer func() {
@@ -288,6 +284,8 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask) {
 	}
 }
 
+// fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
+// We initialize some workers to execute this tasks concurrently and put the task to taskCh by order.
 func (e *IndexLookUpExecutor) fetchHandles() {
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency
 	workCh := make(chan *lookupTableTask, lookupConcurrencyLimit)
