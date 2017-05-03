@@ -114,7 +114,7 @@ func (e *TableReaderExecutor) doRequest() error {
 func (e *TableReaderExecutor) doRequestForHandles(handles []int64) error {
 	kvRanges := tableHandlesToKVRanges(e.tableID, handles)
 	var err error
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goctx.Background(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc)
+	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -201,7 +201,7 @@ func (e *IndexReaderExecutor) doRequest() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goctx.Background(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc)
+	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -241,7 +241,7 @@ func (e *IndexLookUpExecutor) doRequest() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goctx.Background(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc)
+	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -297,8 +297,15 @@ func (e *IndexLookUpExecutor) fetchHandles() {
 
 	for i := 0; i < lookupConcurrencyLimit; i++ {
 		go func() {
-			for task := range workCh {
+			childCtx, cancel := goctx.WithCancel(e.ctx.GoCtx())
+			defer cancel()
+			select {
+			case task := <-workCh:
+				if task == nil {
+					return
+				}
 				e.executeTask(task)
+			case <-childCtx.Done():
 			}
 		}()
 	}
