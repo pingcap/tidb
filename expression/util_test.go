@@ -62,5 +62,6 @@ func (s *testUtilSuite) TestSubstituteCorCol2Constant(c *check.C) {
 	c.Assert(ret.Equal(ans, ctx), check.IsTrue)
 	col1 := &Column{Index: 1}
 	newCol, err := SubstituteCorCol2Constant(col1)
+	c.Assert(err, check.IsNil)
 	c.Assert(newCol.Equal(col1, ctx), check.IsTrue)
 }

@@ -54,13 +54,13 @@ type HashJoinExec struct {
 	targetTypes []*types.FieldType
 
 	finished atomic.Value
-	// For sync multiple join workers.
+	// wg is for sync multiple join workers.
 	wg sync.WaitGroup
 	// closeCh add a lock for closing executor.
 	closeCh chan struct{}
 
 	rows []*Row
-	// Concurrent channels.
+	// concurrency is number of concurrent channels.
 	concurrency      int
 	bigTableResultCh []chan *execResult
 	hashJoinContexts []*hashJoinCtx
@@ -77,7 +77,7 @@ type HashJoinExec struct {
 type hashJoinCtx struct {
 	bigFilter   expression.CNFExprs
 	otherFilter expression.CNFExprs
-	// Buffer used for encode hash keys.
+	// datumBuffer is used for encode hash keys.
 	datumBuffer   []types.Datum
 	hashKeyBuffer []byte
 }
@@ -317,7 +317,7 @@ func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 	close(e.closeCh)
 }
 
-// doJoin does join job in one goroutine.
+// runJoinWorker does join job in one goroutine.
 func (e *HashJoinExec) runJoinWorker(idx int) {
 	maxRowsCnt := 1000
 	result := &execResult{rows: make([]*Row, 0, maxRowsCnt)}
@@ -549,7 +549,7 @@ func (e *NestedLoopJoinExec) fetchBigRow() (*Row, bool, error) {
 	}
 }
 
-// Prepare runs the first time when 'Next' is called and it reads all data from the small table and stores
+// prepare runs the first time when 'Next' is called and it reads all data from the small table and stores
 // them in a slice.
 func (e *NestedLoopJoinExec) prepare() error {
 	err := e.SmallExec.Close()
@@ -659,12 +659,12 @@ type HashSemiJoinExec struct {
 	otherFilter  expression.CNFExprs
 	schema       *expression.Schema
 	resultRows   []*Row
-	// In auxMode, the result row always returns with an extra column which stores a boolean
+	// auxMode is a mode that the result row always returns with an extra column which stores a boolean
 	// or NULL value to indicate if this row is matched.
 	auxMode           bool
 	targetTypes       []*types.FieldType
 	smallTableHasNull bool
-	// If anti is true, semi join only output the unmatched row.
+	// anti is true, semi join only output the unmatched row.
 	anti bool
 }
 
@@ -686,7 +686,7 @@ func (e *HashSemiJoinExec) Schema() *expression.Schema {
 	return e.schema
 }
 
-// Prepare runs the first time when 'Next' is called and it reads all data from the small table and stores
+// prepare runs the first time when 'Next' is called and it reads all data from the small table and stores
 // them in a hash table.
 func (e *HashSemiJoinExec) prepare() error {
 	err := e.smallExec.Close()

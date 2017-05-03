@@ -369,7 +369,7 @@ func (s *testSuite) TestSelectErrorRow(c *C) {
 	c.Assert(err, NotNil)
 }
 
-// TestIssue2612 for https://github.com/pingcap/tidb/issues/2612
+// TestIssue2612 is related with https://github.com/pingcap/tidb/issues/2612
 func (s *testSuite) TestIssue2612(c *C) {
 	defer func() {
 		s.cleanEnv(c)
@@ -389,7 +389,7 @@ func (s *testSuite) TestIssue2612(c *C) {
 	row.Data[0].GetMysqlDuration().String()
 }
 
-// TestIssue345 for https://github.com/pingcap/tidb/issues/345
+// TestIssue345 is related with https://github.com/pingcap/tidb/issues/345
 func (s *testSuite) TestIssue345(c *C) {
 	defer func() {
 		s.cleanEnv(c)
@@ -876,7 +876,7 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select cast(1234 as char(3))")
 	result.Check(testkit.Rows("123"))
 
-	// testCase for like and regexp
+	// testCase is for like and regexp
 	type testCase struct {
 		pattern string
 		val     string
@@ -923,6 +923,34 @@ func (s *testSuite) TestBuiltin(c *C) {
 		{".*", "abcd", 1},
 	}
 	patternMatching(c, tk, "regexp", likeTests)
+
+	// for found_rows
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustQuery("select * from t") // Test XSelectTableExec
+	result = tk.MustQuery("select found_rows()")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select found_rows()")
+	result.Check(testkit.Rows("1")) // Last query is found_rows(), it returns 1 row with value 0
+	tk.MustExec("insert t values (1),(2),(2)")
+	tk.MustQuery("select * from t")
+	result = tk.MustQuery("select found_rows()")
+	result.Check(testkit.Rows("3"))
+	tk.MustQuery("select * from t where a = 0")
+	result = tk.MustQuery("select found_rows()")
+	result.Check(testkit.Rows("0"))
+	tk.MustQuery("select * from t where a = 1")
+	result = tk.MustQuery("select found_rows()")
+	result.Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t where a like '2'") // Test SelectionExec
+	result = tk.MustQuery("select found_rows()")
+	result.Check(testkit.Rows("2"))
+	tk.MustQuery("show tables like 't'")
+	result = tk.MustQuery("select found_rows()")
+	result.Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from t") // Test ProjectionExec
+	result = tk.MustQuery("select found_rows()")
+	result.Check(testkit.Rows("1"))
 }
 
 func (s *testSuite) TestToPBExpr(c *C) {
@@ -1288,6 +1316,12 @@ func (s *testSuite) TestSimpleDAG(c *C) {
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("4"))
 	tk.MustQuery("select count(*), c from t group by c").Check(testkit.Rows("2 1", "1 2", "1 3"))
 	tk.MustQuery("select sum(c) from t group by b").Check(testkit.Rows("4", "3"))
+
+	tk.MustExec("create index i on t(c,b)")
+	tk.MustQuery("select a from t where c = 1").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select a from t where c = 1 and a < 2").Check(testkit.Rows("1"))
+	tk.MustQuery("select a from t where c = 1 order by a limit 1").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from t where c = 1 ").Check(testkit.Rows("2"))
 }
 
 func (s *testSuite) TestConvertToBit(c *C) {
