@@ -107,7 +107,8 @@ type session struct {
 	// It's used by ShowProcess(), and should be modified atomically.
 	processInfo atomic.Value
 	txn         kv.Transaction // current transaction
-	txnCh       chan *txnWithErr
+	txnFuture   *txnFuture
+	txnFutureCh chan *txnFuture
 	// For cancel the execution of current transaction.
 	goCtx      goctx.Context
 	cancelFunc goctx.CancelFunc
@@ -298,7 +299,7 @@ func (s *session) RollbackTxn() error {
 	}
 	s.cleanRetryInfo()
 	s.txn = nil
-	s.txnCh = nil
+	s.txnFuture = nil
 	s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	return errors.Trace(err)
 }
@@ -754,6 +755,9 @@ func (s *session) ClearValue(key fmt.Stringer) {
 
 // Close function does some clean work when session end.
 func (s *session) Close() error {
+	if s.txnFutureCh != nil {
+		close(s.txnFutureCh)
+	}
 	if s.statsCollector != nil {
 		s.statsCollector.Delete()
 	}
@@ -1012,9 +1016,32 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	return nil
 }
 
-type txnWithErr struct {
+// txnFuture is a promise, which promises to return a txn in future.
+type txnFuture struct {
+	sync.WaitGroup
 	txn kv.Transaction
 	err error
+}
+
+func (s *session) getTxnFuture() *txnFuture {
+	if s.txnFutureCh == nil {
+		s.txnFutureCh = make(chan *txnFuture, 1)
+		go asyncGetTSWorker(s.store, s.txnFutureCh)
+	}
+
+	future := &txnFuture{}
+	future.Add(1)
+	s.txnFutureCh <- future
+	return future
+}
+
+func asyncGetTSWorker(store kv.Storage, ch chan *txnFuture) {
+	for future := range ch {
+		txn, err := store.Begin()
+		future.txn = txn
+		future.err = err
+		future.Done()
+	}
 }
 
 // prepareTxnCtx starts a goroutine to begin a transaction if needed, and creates a new transaction context.
@@ -1023,16 +1050,13 @@ func (s *session) prepareTxnCtx() {
 	if s.txn != nil && s.txn.Valid() {
 		return
 	}
-	if s.txnCh != nil {
+	if s.txnFuture != nil {
 		return
 	}
-	txnCh := make(chan *txnWithErr, 1)
-	go func() {
-		txn, err := s.store.Begin()
-		txnCh <- &txnWithErr{txn: txn, err: err}
-	}()
+
+	txnFuture := s.getTxnFuture()
 	goCtx, cancelFunc := goctx.WithCancel(goctx.Background())
-	s.txnCh, s.goCtx, s.cancelFunc = txnCh, goCtx, cancelFunc
+	s.txnFuture, s.goCtx, s.cancelFunc = txnFuture, goCtx, cancelFunc
 	is := sessionctx.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		InfoSchema:    is,
@@ -1048,15 +1072,16 @@ func (s *session) ActivePendingTxn() error {
 	if s.txn != nil && s.txn.Valid() {
 		return nil
 	}
-	if s.txnCh == nil {
-		return errors.New("transaction channel is not set")
+	if s.txnFuture == nil {
+		return errors.New("transaction future is not set")
 	}
-	txnWithErr := <-s.txnCh
-	s.txnCh = nil
-	if txnWithErr.err != nil {
-		return errors.Trace(txnWithErr.err)
+	future := s.txnFuture
+	s.txnFuture = nil
+	future.Wait()
+	if future.err != nil {
+		return errors.Trace(future.err)
 	}
-	s.txn = txnWithErr.txn
+	s.txn = future.txn
 	err := s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
 		return errors.Trace(err)
@@ -1069,11 +1094,11 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	if s.txn != nil && s.txn.Valid() {
 		return nil
 	}
-	if s.txnCh == nil {
+	if s.txnFuture == nil {
 		return errors.New("transaction channel is not set")
 	}
-	// no need to get txn from txnCh since txn should init with startTs
-	s.txnCh = nil
+	// no need to get txn from txnFutureCh since txn should init with startTs
+	s.txnFuture = nil
 	var err error
 	s.txn, err = s.store.BeginWithStartTS(startTS)
 	if err != nil {

@@ -158,6 +158,8 @@ func (s *testStatsUpdateSuite) TestMultiSession(c *C) {
 	h.Update(is)
 	stats1 = h.GetTableStats(tableInfo1.ID)
 	c.Assert(stats1.Count, Equals, int64(rowCount1*2))
+	// The session in testKit is already Closed, set it to nil will create a new session.
+	testKit.Se = nil
 	rs := testKit.MustQuery("select modify_count from mysql.stats_meta")
 	rs.Check(testkit.Rows("60"))
 }

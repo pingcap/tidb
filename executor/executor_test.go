@@ -1305,6 +1305,7 @@ func (s *testSuite) TestSimpleDAG(c *C) {
 	tk.MustExec("insert into t values (1, 1, 1), (2, 1, 1), (3, 1, 2), (4, 2, 3)")
 	plan.UseDAGPlanBuilder = true
 	tk.MustQuery("select a from t").Check(testkit.Rows("1", "2", "3", "4"))
+	tk.MustQuery("select * from t where a = 4").Check(testkit.Rows("4 2 3"))
 	tk.MustQuery("select a from t limit 1").Check(testkit.Rows("1"))
 	tk.MustQuery("select a from t order by a desc").Check(testkit.Rows("4", "3", "2", "1"))
 	tk.MustQuery("select a from t order by a desc limit 1").Check(testkit.Rows("4"))
@@ -1322,6 +1323,11 @@ func (s *testSuite) TestSimpleDAG(c *C) {
 	tk.MustQuery("select a from t where c = 1 and a < 2").Check(testkit.Rows("1"))
 	tk.MustQuery("select a from t where c = 1 order by a limit 1").Check(testkit.Rows("1"))
 	tk.MustQuery("select count(*) from t where c = 1 ").Check(testkit.Rows("2"))
+	tk.MustExec("create index i1 on t(b)")
+	tk.MustQuery("select c from t where b = 2").Check(testkit.Rows("3"))
+	tk.MustQuery("select * from t where b = 2").Check(testkit.Rows("4 2 3"))
+	tk.MustQuery("select count(*) from t where b = 1").Check(testkit.Rows("3"))
+	tk.MustQuery("select * from t where b = 1 and a > 1 limit 1").Check(testkit.Rows("2 1 1"))
 }
 
 func (s *testSuite) TestConvertToBit(c *C) {
