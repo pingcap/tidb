@@ -26,7 +26,7 @@ import (
 )
 
 // FullRange is (-∞,, +∞).
-var FullRange = []Point{
+var FullRange = []point{
 	{start: true},
 	{value: types.MaxValueDatum()},
 }

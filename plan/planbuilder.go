@@ -95,14 +95,6 @@ type planBuilder struct {
 	optFlag       uint64
 }
 
-// Init will initialize a PlanBuilder
-func (b planBuilder) Init(ctx context.Context, is infoschema.InfoSchema) *planBuilder {
-	b.allocator = new(idAllocator)
-	b.ctx = ctx
-	b.is = is
-	return &b
-}
-
 func (b *planBuilder) build(node ast.Node) Plan {
 	b.optFlag = flagPrunColumns
 	switch x := node.(type) {
