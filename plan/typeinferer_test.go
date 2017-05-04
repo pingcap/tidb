@@ -228,7 +228,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"interval(1, 2, 3)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"interval(1.0, 2.0, 3.0)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"interval('1', '2', '3')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
-		// {"round()", mysql.TypeNull, charset.CharsetBin, mysql.BinaryFlag},
+		{"round()", mysql.TypeNull, charset.CharsetBin, mysql.BinaryFlag},
 		{"round(null, 2)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag},
 		{"round('1.2', 2)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag},
 		{"round(1e2, 2)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag},
@@ -262,11 +262,11 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"unix_timestamp('2015-11-13 10:20:19')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"to_days('2015-11-13')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"to_days(950501)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
-		// {"ceiling()", mysql.TypeNull, charset.CharsetBin, mysql.BinaryFlag},
+		{"ceiling()", mysql.TypeNull, charset.CharsetBin, mysql.BinaryFlag},
 		{"ceiling(1.23)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
-		// {"ceil()", mysql.TypeNull, charset.CharsetBin, mysql.BinaryFlag},
+		{"ceil()", mysql.TypeNull, charset.CharsetBin, mysql.BinaryFlag},
 		{"ceil(1.23)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
-		// {"floor()", mysql.TypeNull, charset.CharsetBin, mysql.BinaryFlag},
+		{"floor()", mysql.TypeNull, charset.CharsetBin, mysql.BinaryFlag},
 		{"floor(1.23)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"field('foo', null)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"find_in_set('foo', 'foo,bar')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
@@ -321,6 +321,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`bit_count(1)`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{`time_to_sec("23:59:59")`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{`inet6_aton('FE80::AAAA:0000:00C2:0002')`, mysql.TypeVarString, charset.CharsetUTF8, 0},
+		{`is_ipv4_mapped(c_varbinary)`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 	}
 	for _, tt := range tests {
 		ctx := testKit.Se.(context.Context)

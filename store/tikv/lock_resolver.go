@@ -15,13 +15,11 @@ package tikv
 
 import (
 	"container/list"
-	"fmt"
 	"sync"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/pd/pd-client"
 	goctx "golang.org/x/net/context"
 )
 
@@ -45,20 +43,6 @@ func newLockResolver(store *tikvStore) *LockResolver {
 	r.mu.resolved = make(map[uint64]TxnStatus)
 	r.mu.recentResolved = list.New()
 	return r
-}
-
-// NewLockResolver creates a LockResolver.
-func NewLockResolver(etcdAddrs []string) (*LockResolver, error) {
-	pdCli, err := pd.NewClient(etcdAddrs)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	uuid := fmt.Sprintf("tikv-%v", pdCli.GetClusterID(goctx.TODO()))
-	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, newRPCClient(), false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return s.lockResolver, nil
 }
 
 // TxnStatus represents a txn's final status. It should be Commit or Rollback.

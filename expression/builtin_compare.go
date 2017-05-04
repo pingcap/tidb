@@ -14,10 +14,13 @@
 package expression
 
 import (
+	"math"
 	"sort"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -271,4 +274,236 @@ func (s *builtinCompareSig) eval(row []types.Datum) (d types.Datum, err error) {
 		d.SetInt64(zeroI64)
 	}
 	return
+}
+
+// resOfCmp returns the results of different compare built-in functions.
+func resOfCmp(res int, op opcode.Op) int64 {
+	var ret bool
+	switch op {
+	case opcode.LT:
+		ret = res < 0
+	case opcode.LE:
+		ret = res <= 0
+	case opcode.EQ, opcode.NullEQ:
+		ret = res == 0
+	case opcode.GT:
+		ret = res > 0
+	case opcode.GE:
+		ret = res >= 0
+	case opcode.NE:
+		ret = res != 0
+	default:
+		return -1
+	}
+	res = 1
+	if !ret {
+		res = 0
+	}
+	return int64(res)
+}
+
+// builtinCompareStringSig compares two strings.
+type builtinCompareStringSig struct {
+	baseIntBuiltinFunc
+
+	op opcode.Op
+}
+
+func (s *builtinCompareStringSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := s.ctx.GetSessionVars().StmtCtx
+	arg0, isKindNull0, err := s.args[0].EvalString(row, sc)
+	if err != nil {
+		return zeroI64, false, errors.Trace(err)
+	}
+	arg1, isKindNull1, err := s.args[1].EvalString(row, sc)
+	if err != nil {
+		return zeroI64, false, errors.Trace(err)
+	}
+	if isKindNull0 || isKindNull1 {
+		if s.op == opcode.NullEQ {
+			if isKindNull0 && isKindNull1 {
+				return oneI64, false, nil
+			}
+			return zeroI64, false, nil
+		}
+		return zeroI64, true, nil
+	}
+	ret := resOfCmp(types.CompareString(arg0, arg1), s.op)
+	if ret == -1 {
+		return zeroI64, false, errInvalidOperation.Gen("invalid op %v in comparison operation", s.op)
+	}
+	return ret, false, nil
+}
+
+// builtinCompareRealSig compares two reals.
+type builtinCompareRealSig struct {
+	baseIntBuiltinFunc
+
+	op opcode.Op
+}
+
+func (s *builtinCompareRealSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := s.ctx.GetSessionVars().StmtCtx
+	arg0, isKindNull0, err := s.args[0].EvalReal(row, sc)
+	if err != nil {
+		return zeroI64, false, errors.Trace(err)
+	}
+	arg1, isKindNull1, err := s.args[1].EvalReal(row, sc)
+	if err != nil {
+		return zeroI64, false, errors.Trace(err)
+	}
+	if isKindNull0 || isKindNull1 {
+		if s.op == opcode.NullEQ {
+			if isKindNull0 && isKindNull1 {
+				return oneI64, false, nil
+			}
+			return zeroI64, false, nil
+		}
+		return zeroI64, true, nil
+	}
+	ret := resOfCmp(types.CompareFloat64(arg0, arg1), s.op)
+	if ret == -1 {
+		return zeroI64, false, errInvalidOperation.Gen("invalid op %v in comparison operation", s.op)
+	}
+	return ret, false, nil
+}
+
+// builtinCompareDecimalSig compares two decimals.
+type builtinCompareDecimalSig struct {
+	baseIntBuiltinFunc
+
+	op opcode.Op
+}
+
+func (s *builtinCompareDecimalSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := s.ctx.GetSessionVars().StmtCtx
+	arg0, isKindNull0, err := s.args[0].EvalDecimal(row, sc)
+	if err != nil {
+		return zeroI64, false, errors.Trace(err)
+	}
+	arg1, isKindNull1, err := s.args[1].EvalDecimal(row, sc)
+	if err != nil {
+		return zeroI64, false, errors.Trace(err)
+	}
+	if isKindNull0 || isKindNull1 {
+		if s.op == opcode.NullEQ {
+			if isKindNull0 && isKindNull1 {
+				return oneI64, false, nil
+			}
+			return zeroI64, false, nil
+		}
+		return zeroI64, true, nil
+	}
+	ret := resOfCmp(arg0.Compare(arg1), s.op)
+	if ret == -1 {
+		return zeroI64, false, errInvalidOperation.Gen("invalid op %v in comparison operation", s.op)
+	}
+	return ret, false, nil
+}
+
+// builtinCompareIntSig compares two integers.
+type builtinCompareIntSig struct {
+	baseIntBuiltinFunc
+
+	op opcode.Op
+}
+
+func (s *builtinCompareIntSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := s.ctx.GetSessionVars().StmtCtx
+	arg0, isKindNull0, err := s.args[0].EvalInt(row, sc)
+	if err != nil {
+		return zeroI64, false, errors.Trace(err)
+	}
+	arg1, isKindNull1, err := s.args[1].EvalInt(row, sc)
+	if err != nil {
+		return zeroI64, isKindNull1, errors.Trace(err)
+	}
+	if isKindNull0 || isKindNull1 {
+		if s.op == opcode.NullEQ {
+			if isKindNull0 && isKindNull1 {
+				return oneI64, false, nil
+			}
+			return zeroI64, false, nil
+		}
+		return zeroI64, true, nil
+	}
+	isUnsigned0, isUnsigned1 := mysql.HasUnsignedFlag(s.args[0].GetType().Flag), mysql.HasUnsignedFlag(s.args[1].GetType().Flag)
+	var res int
+	switch {
+	case isUnsigned0 && isUnsigned1:
+		res = types.CompareUint64(uint64(arg0), uint64(arg1))
+	case isUnsigned0 && !isUnsigned1:
+		if arg1 < 0 || arg0 > math.MaxInt64 {
+			res = 1
+		} else {
+			res = types.CompareInt64(arg0, arg1)
+		}
+	case !isUnsigned0 && isUnsigned1:
+		if arg0 < 0 || arg1 > math.MaxInt64 {
+			res = -1
+		} else {
+			res = types.CompareInt64(arg0, arg1)
+		}
+	case !isUnsigned0 && !isUnsigned1:
+		res = types.CompareInt64(arg0, arg1)
+	}
+	ret := resOfCmp(res, s.op)
+	if ret == -1 {
+		return zeroI64, false, errInvalidOperation.Gen("invalid op %v in comparison operation", s.op)
+	}
+	return ret, false, nil
+}
+
+// builtinCompareRowSig compares two rows.
+type builtinCompareRowSig struct {
+	baseIntBuiltinFunc
+
+	op opcode.Op
+}
+
+func (s *builtinCompareRowSig) evalInt(row []types.Datum) (int64, bool, error) {
+	var row0, row1 []Expression
+	if sf, ok := s.args[0].(*ScalarFunction); ok && sf.FuncName.O == ast.RowFunc {
+		row0 = sf.GetArgs()
+	} else {
+		row0 = []Expression{s.args[0]}
+	}
+	if sf, ok := s.args[1].(*ScalarFunction); ok && sf.FuncName.O == ast.RowFunc {
+		row1 = sf.GetArgs()
+	} else {
+		row1 = []Expression{s.args[1]}
+	}
+	res := 0
+	for i := 0; i < len(row0) && i < len(row1); i++ {
+		arg0, err := row0[i].Eval(row)
+		if err != nil {
+			return 0, false, errors.Trace(err)
+		}
+		arg1, err := row1[i].Eval(row)
+		if err != nil {
+			return 0, false, errors.Trace(err)
+		}
+		isKindNull0, isKindNull1 := arg0.IsNull(), arg1.IsNull()
+		if isKindNull0 || isKindNull1 {
+			if s.op == opcode.NullEQ {
+				if isKindNull0 && isKindNull1 {
+					return oneI64, false, nil
+				}
+				return zeroI64, false, nil
+			}
+			return zeroI64, true, nil
+		}
+		res, err = arg0.CompareDatum(s.getCtx().GetSessionVars().StmtCtx, arg1)
+		if err != nil {
+			return zeroI64, false, errors.Trace(err)
+		}
+		if res != 0 {
+			break
+		}
+	}
+	ret := resOfCmp(res, s.op)
+	if ret == -1 {
+		return zeroI64, false, errInvalidOperation.Gen("invalid op %v in comparison operation", s.op)
+	}
+	return ret, false, nil
 }

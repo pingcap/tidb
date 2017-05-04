@@ -80,7 +80,7 @@ func Init() {
 	go http.ListenAndServe(":9191", nil)
 }
 
-// without conflict
+// batchRW makes sure conflict free.
 func batchRW(value []byte) {
 	wg := sync.WaitGroup{}
 	base := *dataCnt / *workerCnt

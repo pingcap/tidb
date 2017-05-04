@@ -1048,7 +1048,7 @@ func (d *Datum) convertToMysqlBit(sc *variable.StatementContext, target *FieldTy
 		x   Datum
 		err error
 	)
-	if d.Kind() == KindString {
+	if d.Kind() == KindString || d.Kind() == KindBytes {
 		var n uint64
 		n, err = ParseStringToBitValue(d.GetString(), target.Flen)
 		x = NewUintDatum(n)

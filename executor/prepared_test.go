@@ -53,7 +53,7 @@ func (s *testSuite) TestPrepared(c *C) {
 
 	// Use parameter marker with argument will run prepared statement.
 	result := tk.MustQuery("select distinct c1, c2 from prepare_test where c1 = ?", 1)
-	result.Check([][]interface{}{{1, nil}})
+	result.Check(testkit.Rows("1 <nil>"))
 
 	// Call Session PrepareStmt directly to get stmtId.
 	query := "select c1, c2 from prepare_test where c1 = ?"
