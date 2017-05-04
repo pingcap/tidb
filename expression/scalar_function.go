@@ -20,7 +20,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
@@ -77,15 +76,12 @@ func NewFunction(ctx context.Context, funcName string, retType *types.FieldType,
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	var tp *types.FieldType
 	if retType == nil {
-		tp = types.NewFieldType(mysql.TypeUnspecified)
-	} else {
-		tp = retType
+		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction.")
 	}
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(funcName),
-		RetType:  tp,
+		RetType:  retType,
 		Function: f,
 	}, nil
 }

@@ -18,6 +18,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
@@ -80,11 +81,48 @@ func newDistSQLFunction(sc *variable.StatementContext, exprType tipb.ExprType, a
 	// TODO: Too ugly...
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx = sc
-	return NewFunction(ctx, name, nil, args...)
+	tp, err := reInferFuncType(sc, name, args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return NewFunction(ctx, name, tp, args...)
+}
+
+// reInferFuncType is only used by mock-tikv.
+// reInferFuncType re-infer FieldType of ScalarFunction because FieldType information will be lost after ScalarFunction be converted to pb.
+func reInferFuncType(sc *variable.StatementContext, funcName string, args []Expression) (*types.FieldType, error) {
+	newArgs := make([]ast.ExprNode, len(args))
+	for i, arg := range args {
+		switch x := arg.(type) {
+		case *Constant:
+			newArgs[i] = &ast.ValueExpr{}
+			newArgs[i].SetValue(x.Value.GetValue())
+		case *Column:
+			newArgs[i] = &ast.ColumnNameExpr{
+				Refer: &ast.ResultField{
+					Column: &model.ColumnInfo{
+						FieldType: *x.GetType(),
+					},
+				},
+			}
+		case *ScalarFunction:
+			newArgs[i] = &ast.FuncCallExpr{FnName: x.FuncName}
+			_, err := reInferFuncType(sc, x.FuncName.O, x.GetArgs())
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+	}
+	funcNode := &ast.FuncCallExpr{FnName: model.NewCIStr(funcName), Args: newArgs}
+	err := InferType(sc, funcNode)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return funcNode.GetType(), nil
 }
 
 // PBToExpr converts pb structure to expression.
-func PBToExpr(expr *tipb.Expr, colIDs map[int64]int, sc *variable.StatementContext) (Expression, error) {
+func PBToExpr(expr *tipb.Expr, colIDs map[int64]int, tps []*types.FieldType, sc *variable.StatementContext) (Expression, error) {
 	switch expr.Tp {
 	case tipb.ExprType_ColumnRef:
 		_, id, err := codec.DecodeInt(expr.Val)
@@ -95,7 +133,7 @@ func PBToExpr(expr *tipb.Expr, colIDs map[int64]int, sc *variable.StatementConte
 		if !ok {
 			return nil, errors.Errorf("Can't find column id %d", id)
 		}
-		return &Column{Index: offset, RetType: types.NewFieldType(mysql.TypeUnspecified)}, nil
+		return &Column{Index: offset, RetType: tps[offset]}, nil
 	case tipb.ExprType_Null:
 		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}, nil
 	case tipb.ExprType_Int64:
@@ -129,7 +167,7 @@ func PBToExpr(expr *tipb.Expr, colIDs map[int64]int, sc *variable.StatementConte
 			args = append(args, results...)
 			continue
 		}
-		arg, err := PBToExpr(child, colIDs, sc)
+		arg, err := PBToExpr(child, colIDs, tps, sc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
