@@ -260,7 +260,7 @@ func (e *IndexLookUpExecutor) doRequest() error {
 func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Context) {
 	var err error
 	defer func() {
-		task.doneCh <- err
+		task.doneCh <- errors.Trace(err)
 	}()
 	tableReader := &TableReaderExecutor{
 		asName:  e.asName,
