@@ -2083,9 +2083,9 @@ func (s *testSessionSuite) TestSession(c *C) {
 	se := newSession(c, s.store, dbName)
 	mustExecSQL(c, se, "ROLLBACK;")
 
+	mustExecSQL(c, se, dropDBSQL)
 	err := se.Close()
 	c.Assert(err, IsNil)
-	mustExecSQL(c, se, dropDBSQL)
 }
 
 func (s *testSessionSuite) TestSessionAuth(c *C) {
@@ -2210,9 +2210,9 @@ func (s *testSessionSuite) TestMultiColumnIndex(c *C) {
 	sql = "select c1, c2 from t where c1 = 'abc' and id < 2"
 	mustExecMatch(c, se, sql, [][]interface{}{{[]byte("abc"), []byte("def")}})
 
+	mustExecSQL(c, se, dropDBSQL)
 	err := se.Close()
 	c.Assert(err, IsNil)
-	mustExecSQL(c, se, dropDBSQL)
 }
 
 func (s *testSessionSuite) TestSubstringIndexExpr(c *C) {
@@ -2419,9 +2419,9 @@ func (s *testSessionSuite) TestSpecifyIndexPrefixLength(c *C) {
 	mustExecMatch(c, se, "select c from t where a < 'bbcc' and b = 'abcd';", [][]interface{}{{1}, {4}})
 	mustExecMatch(c, se, "select c from t where a > 'bbcf';", [][]interface{}{{5}, {6}})
 
+	mustExecSQL(c, se, dropDBSQL)
 	err = se.Close()
 	c.Assert(err, IsNil)
-	mustExecSQL(c, se, dropDBSQL)
 }
 
 func (s *testSessionSuite) TestIndexColumnLength(c *C) {
