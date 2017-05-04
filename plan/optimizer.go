@@ -57,13 +57,14 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 	if err := InferType(ctx.GetSessionVars().StmtCtx, node); err != nil {
 		return nil, errors.Trace(err)
 	}
-	builder := &PlanBuilder{
+	allocator := new(idAllocator)
+	builder := &planBuilder{
 		ctx:       ctx,
 		is:        is,
 		colMapper: make(map[*ast.ColumnNameExpr]int),
-		allocator: new(idAllocator),
+		allocator: allocator,
 	}
-	p := builder.Build(node)
+	p := builder.build(node)
 	if builder.err != nil {
 		return nil, errors.Trace(builder.err)
 	}
@@ -77,7 +78,26 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 	}
 
 	if logic, ok := p.(LogicalPlan); ok {
-		return doOptimize(builder.optFlag, logic, ctx, builder.allocator)
+		return doOptimize(builder.optFlag, logic, ctx, allocator)
+	}
+	return p, nil
+}
+
+// BuildLogicalPlan is exported and only used for test.
+func BuildLogicalPlan(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
+	// We have to infer type again because after parameter is set, the expression type may change.
+	if err := InferType(ctx.GetSessionVars().StmtCtx, node); err != nil {
+		return nil, errors.Trace(err)
+	}
+	builder := &planBuilder{
+		ctx:       ctx,
+		is:        is,
+		colMapper: make(map[*ast.ColumnNameExpr]int),
+		allocator: new(idAllocator),
+	}
+	p := builder.build(node)
+	if builder.err != nil {
+		return nil, errors.Trace(builder.err)
 	}
 	return p, nil
 }

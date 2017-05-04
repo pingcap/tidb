@@ -21,9 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan/ranger"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
@@ -76,13 +74,13 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
-		builder := &PlanBuilder{
+		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
-		p := builder.Build(stmt)
+		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
 
@@ -184,13 +182,13 @@ func (s *testPlanSuite) TestPushDownOrderByAndLimit(c *C) {
 
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
-		builder := &PlanBuilder{
+		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
-		p := builder.Build(stmt)
+		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
 		p, err = doOptimize(builder.optFlag, lp, builder.ctx, builder.allocator)
@@ -310,13 +308,13 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
-		builder := &PlanBuilder{
+		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
-		p := builder.Build(stmt)
+		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
 
@@ -533,13 +531,13 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &PlanBuilder{
+		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
-		p := builder.Build(stmt)
+		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
 		lp, err = logicalOptimize(builder.optFlag, lp, builder.ctx, builder.allocator)
@@ -648,12 +646,12 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &PlanBuilder{
+		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			is:        is,
 		}
-		p := builder.Build(stmt)
+		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp, err := logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagDecorrelate, p.(LogicalPlan), builder.ctx, builder.allocator)
 		lp.ResolveIndicesAndCorCols()
@@ -741,13 +739,13 @@ func (s *testPlanSuite) TestFilterConditionPushDown(c *C) {
 
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
-		builder := &PlanBuilder{
+		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
-		p := builder.Build(stmt)
+		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
 
@@ -797,13 +795,13 @@ func (s *testPlanSuite) TestAddCache(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &PlanBuilder{
+		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
-		p := builder.Build(stmt)
+		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
 		_, lp, err = lp.PredicatePushDown(nil)
@@ -817,7 +815,6 @@ func (s *testPlanSuite) TestAddCache(c *C) {
 		c.Assert(ToString(pp), Equals, tt.ans, Commentf("for %s", tt.sql))
 	}
 }
-
 
 func (s *testPlanSuite) TestScanController(c *C) {
 	defer testleak.AfterTest(c)()
@@ -847,13 +844,13 @@ func (s *testPlanSuite) TestScanController(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &PlanBuilder{
+		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
-		p := builder.Build(stmt)
+		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
 		_, lp, err = lp.PredicatePushDown(nil)
@@ -951,13 +948,13 @@ func (s *testPlanSuite) TestJoinAlgorithm(c *C) {
 		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
-		builder := &PlanBuilder{
+		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       mockContext(),
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
-		p := builder.Build(stmt)
+		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
 		pp, err := doOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx, builder.allocator)
 		c.Assert(err, IsNil)
@@ -1027,13 +1024,13 @@ func (s *testPlanSuite) TestAutoJoinChosen(c *C) {
 			handle.UpdateTableStats([]*statistics.Table{statsTbl}, nil)
 		}
 
-		builder := &PlanBuilder{
+		builder := &planBuilder{
 			allocator: new(idAllocator),
 			ctx:       ctx,
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			is:        is,
 		}
-		p := builder.Build(stmt)
+		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
 		pp, err := doOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx, builder.allocator)
 		c.Assert(err, IsNil)

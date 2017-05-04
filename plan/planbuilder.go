@@ -78,7 +78,7 @@ func (info *tableHintInfo) ifPreferINLJ(tableNames ...*model.CIStr) bool {
 
 // PlanBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
-type PlanBuilder struct {
+type planBuilder struct {
 	err          error
 	hasAgg       bool
 	obj          interface{}
@@ -96,14 +96,14 @@ type PlanBuilder struct {
 }
 
 // Init will initialize a PlanBuilder
-func (b PlanBuilder) Init(ctx context.Context, is infoschema.InfoSchema) *PlanBuilder {
+func (b planBuilder) Init(ctx context.Context, is infoschema.InfoSchema) *planBuilder {
 	b.allocator = new(idAllocator)
 	b.ctx = ctx
 	b.is = is
 	return &b
 }
 
-func (b *PlanBuilder) Build(node ast.Node) Plan {
+func (b *planBuilder) build(node ast.Node) Plan {
 	b.optFlag = flagPrunColumns
 	switch x := node.(type) {
 	case *ast.AdminStmt:
@@ -147,7 +147,7 @@ func (b *PlanBuilder) Build(node ast.Node) Plan {
 	return nil
 }
 
-func (b *PlanBuilder) buildExecute(v *ast.ExecuteStmt) Plan {
+func (b *planBuilder) buildExecute(v *ast.ExecuteStmt) Plan {
 	vars := make([]expression.Expression, 0, len(v.UsingVars))
 	for _, expr := range v.UsingVars {
 		newExpr, _, err := b.rewrite(expr, nil, nil, true)
@@ -161,7 +161,7 @@ func (b *PlanBuilder) buildExecute(v *ast.ExecuteStmt) Plan {
 	return exe
 }
 
-func (b *PlanBuilder) buildDo(v *ast.DoStmt) Plan {
+func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 	exprs := make([]expression.Expression, 0, len(v.Exprs))
 	dual := TableDual{RowCount: 1}.init(b.allocator, b.ctx)
 	for _, astExpr := range v.Exprs {
@@ -180,7 +180,7 @@ func (b *PlanBuilder) buildDo(v *ast.DoStmt) Plan {
 	return p
 }
 
-func (b *PlanBuilder) buildSet(v *ast.SetStmt) Plan {
+func (b *planBuilder) buildSet(v *ast.SetStmt) Plan {
 	p := &Set{}
 	for _, vars := range v.Variables {
 		assign := &expression.VarAssignment{
@@ -209,7 +209,7 @@ func (b *PlanBuilder) buildSet(v *ast.SetStmt) Plan {
 }
 
 // Detect aggregate function or groupby clause.
-func (b *PlanBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
+func (b *planBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 	if sel.GroupBy != nil {
 		return true
 	}
@@ -306,14 +306,14 @@ func findIndexByName(indices []*model.IndexInfo, name model.CIStr) *model.IndexI
 	return nil
 }
 
-func (b *PlanBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *SelectLock {
+func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *SelectLock {
 	selectLock := SelectLock{Lock: lock}.init(b.allocator, b.ctx)
 	addChild(selectLock, src)
 	selectLock.SetSchema(src.Schema())
 	return selectLock
 }
 
-func (b *PlanBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
+func (b *planBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 	p := &Prepare{
 		Name: x.Name,
 	}
@@ -326,7 +326,7 @@ func (b *PlanBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 	return p
 }
 
-func (b *PlanBuilder) buildAdmin(as *ast.AdminStmt) Plan {
+func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 	var p Plan
 
 	switch as.Tp {
@@ -383,7 +383,7 @@ func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []
 	return
 }
 
-func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) Plan {
+func (b *planBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) Plan {
 	p := &Analyze{}
 	for _, tbl := range as.TableNames {
 		idxInfo, colInfo, pkInfo := getColsInfo(tbl)
@@ -401,7 +401,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) Plan {
 	return p
 }
 
-func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) Plan {
+func (b *planBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) Plan {
 	p := &Analyze{}
 	tblInfo := as.TableNames[0].TableInfo
 	for _, idxName := range as.IndexNames {
@@ -416,7 +416,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) Plan {
 	return p
 }
 
-func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) Plan {
+func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) Plan {
 	if len(as.IndexNames) == 0 {
 		return b.buildAnalyzeTable(as)
 	}
@@ -479,7 +479,7 @@ func splitWhere(where ast.ExprNode) []ast.ExprNode {
 	return conditions
 }
 
-func (b *PlanBuilder) buildShow(show *ast.ShowStmt) Plan {
+func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 	var resultPlan Plan
 	p := Show{
 		Tp:     show.Tp,
@@ -535,7 +535,7 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) Plan {
 	return resultPlan
 }
 
-func (b *PlanBuilder) buildSimple(node ast.StmtNode) Plan {
+func (b *planBuilder) buildSimple(node ast.StmtNode) Plan {
 	p := &Simple{Statement: node}
 	p.SetSchema(expression.NewSchema())
 
@@ -582,7 +582,7 @@ func collectVisitInfoFromGrantStmt(vi []visitInfo, stmt *ast.GrantStmt) []visitI
 	return vi
 }
 
-func (b *PlanBuilder) getDefaultValue(col *table.Column) (*expression.Constant, error) {
+func (b *planBuilder) getDefaultValue(col *table.Column) (*expression.Constant, error) {
 	value, err := table.GetColDefaultValue(b.ctx, col.ToInfo())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -590,7 +590,7 @@ func (b *PlanBuilder) getDefaultValue(col *table.Column) (*expression.Constant, 
 	return &expression.Constant{Value: value, RetType: &col.FieldType}, nil
 }
 
-func (b *PlanBuilder) findDefaultValue(cols []*table.Column, name *ast.ColumnName) (*expression.Constant, error) {
+func (b *planBuilder) findDefaultValue(cols []*table.Column, name *ast.ColumnName) (*expression.Constant, error) {
 	for _, col := range cols {
 		if col.Name.L == name.Name.L {
 			return b.getDefaultValue(col)
@@ -599,7 +599,7 @@ func (b *PlanBuilder) findDefaultValue(cols []*table.Column, name *ast.ColumnNam
 	return nil, util.ErrUnknownColumn.GenByArgs(name.Name.O, "field_list")
 }
 
-func (b *PlanBuilder) buildInsert(insert *ast.InsertStmt) Plan {
+func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	ts, ok := insert.Table.TableRefs.Left.(*ast.TableSource)
 	if !ok {
 		b.err = infoschema.ErrTableNotExists.GenByArgs()
@@ -704,7 +704,7 @@ func (b *PlanBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		})
 	}
 	if insert.Select != nil {
-		selectPlan := b.Build(insert.Select)
+		selectPlan := b.build(insert.Select)
 		if b.err != nil {
 			return nil
 		}
@@ -714,7 +714,7 @@ func (b *PlanBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	return insertPlan
 }
 
-func (b *PlanBuilder) buildLoadData(ld *ast.LoadDataStmt) Plan {
+func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) Plan {
 	p := &LoadData{
 		IsLocal:    ld.IsLocal,
 		Path:       ld.Path,
@@ -726,7 +726,7 @@ func (b *PlanBuilder) buildLoadData(ld *ast.LoadDataStmt) Plan {
 	return p
 }
 
-func (b *PlanBuilder) buildDDL(node ast.DDLNode) Plan {
+func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {
 	switch v := node.(type) {
 	case *ast.AlterTableStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
@@ -801,7 +801,7 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) Plan {
 	return p
 }
 
-func (b *PlanBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
+func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 	if show, ok := explain.Stmt.(*ast.ShowStmt); ok {
 		return b.buildShow(show)
 	}

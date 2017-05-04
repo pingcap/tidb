@@ -4,18 +4,18 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/plan/ranger"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb"
 	"github.com/juju/errors"
-	."github.com/pingcap/check"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/plan/ranger"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 func TestT(t *testing.T) {
@@ -211,8 +211,7 @@ func (s *testRangerSuite) TestRangeBuilder(c *C) {
 		is := sessionctx.GetDomain(ctx).InfoSchema()
 		err = plan.ResolveName(stmts[0], is, ctx)
 
-		builder := plan.PlanBuilder{}.Init(ctx, is)
-		p := builder.Build(stmts[0])
+		p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
 		var selection *plan.Selection
 		for _, child := range p.Children() {

@@ -37,7 +37,7 @@ func evalAstExpr(expr ast.ExprNode, ctx context.Context) (types.Datum, error) {
 	if val, ok := expr.(*ast.ValueExpr); ok {
 		return val.Datum, nil
 	}
-	b := &PlanBuilder{
+	b := &planBuilder{
 		ctx:       ctx,
 		allocator: new(idAllocator),
 		colMapper: make(map[*ast.ColumnNameExpr]int),
@@ -56,7 +56,7 @@ func evalAstExpr(expr ast.ExprNode, ctx context.Context) (types.Datum, error) {
 // aggMapper maps ast.AggregateFuncExpr to the columns offset in p's output schema.
 // asScalar means whether this expression must be treated as a scalar expression.
 // And this function returns a result expression, a new plan that may have apply or semi-join.
-func (b *PlanBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool) (
+func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool) (
 	expression.Expression, LogicalPlan, error) {
 	er := &expressionRewriter{
 		p:        p,
@@ -91,7 +91,7 @@ type expressionRewriter struct {
 	schema   *expression.Schema
 	err      error
 	aggrMap  map[*ast.AggregateFuncExpr]int
-	b        *PlanBuilder
+	b        *planBuilder
 	ctx      context.Context
 	// asScalar means the return value must be a scalar value.
 	asScalar bool
