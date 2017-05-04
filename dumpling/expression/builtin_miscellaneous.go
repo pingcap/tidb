@@ -13,6 +13,7 @@
 package expression
 
 import (
+	"bytes"
 	"encoding/binary"
 	"math"
 	"net"
@@ -525,7 +526,34 @@ type builtinIsIPv4MappedSig struct {
 // eval evals a builtinIsIPv4MappedSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-mapped
 func (b *builtinIsIPv4MappedSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("IS_IPV4_MAPPED")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	arg := args[0]
+	d.SetInt64(0)
+	if arg.IsNull() {
+		return d, nil
+	}
+
+	ipAddress, err := arg.ToBytes()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if len(ipAddress) != net.IPv6len {
+		//Not an IPv6 address, return false
+		return
+	}
+
+	var v4InV6Prefix = []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff}
+	if !bytes.HasPrefix(ipAddress, v4InV6Prefix) {
+		return
+	}
+
+	d.SetInt64(1)
+	return
 }
 
 type isIPv6FunctionClass struct {
