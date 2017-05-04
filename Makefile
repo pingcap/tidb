@@ -12,6 +12,8 @@ export PATH := $(path_to_add):$(PATH)
 GO        := GO15VENDOREXPERIMENT="1" go
 GOBUILD   := GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=0 $(GO) build
 GOTEST    := GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=1 $(GO) test
+OVERALLS  := GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=1 overalls
+GOVERALLS := goveralls
 
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
@@ -100,8 +102,18 @@ todo:
 test: checklist gotest
 
 gotest: parserlib
-	@export log_level=error;\
+ifeq ("$(TRAVIS_COVERAGE)", "1")
+	@echo "Running in TRAVIS_COVERAGE mode."
+	@export log_level=error; \
+	go get github.com/go-playground/overalls
+	go get github.com/mattn/goveralls
+	$(OVERALLS) -project=github.com/pingcap/tidb -covermode=count -ignore='.git,_vendor'
+	$(GOVERALLS) -service=travis-ci -coverprofile=overalls.coverprofile
+else
+	@echo "Running in native mode."
+	@export log_level=error; \
 	$(GOTEST) -cover $(PACKAGES)
+endif
 
 race: parserlib
 	@export log_level=debug; \

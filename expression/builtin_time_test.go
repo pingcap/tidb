@@ -1187,6 +1187,7 @@ func (s *testEvaluatorSuite) TestQuarter(c *C) {
 	f, err := fc.getFunction(datumsToConstants([]types.Datum{argInvalid}), s.ctx)
 	c.Assert(err, IsNil)
 	result, err := f.eval(nil)
+	c.Assert(err, NotNil)
 	c.Assert(result.IsNull(), IsTrue)
 }
 

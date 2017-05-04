@@ -923,6 +923,34 @@ func (s *testSuite) TestBuiltin(c *C) {
 		{".*", "abcd", 1},
 	}
 	patternMatching(c, tk, "regexp", likeTests)
+
+	// for found_rows
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustQuery("select * from t") // Test XSelectTableExec
+	result = tk.MustQuery("select found_rows()")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select found_rows()")
+	result.Check(testkit.Rows("1")) // Last query is found_rows(), it returns 1 row with value 0
+	tk.MustExec("insert t values (1),(2),(2)")
+	tk.MustQuery("select * from t")
+	result = tk.MustQuery("select found_rows()")
+	result.Check(testkit.Rows("3"))
+	tk.MustQuery("select * from t where a = 0")
+	result = tk.MustQuery("select found_rows()")
+	result.Check(testkit.Rows("0"))
+	tk.MustQuery("select * from t where a = 1")
+	result = tk.MustQuery("select found_rows()")
+	result.Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t where a like '2'") // Test SelectionExec
+	result = tk.MustQuery("select found_rows()")
+	result.Check(testkit.Rows("2"))
+	tk.MustQuery("show tables like 't'")
+	result = tk.MustQuery("select found_rows()")
+	result.Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from t") // Test ProjectionExec
+	result = tk.MustQuery("select found_rows()")
+	result.Check(testkit.Rows("1"))
 }
 
 func (s *testSuite) TestToPBExpr(c *C) {
@@ -1288,4 +1316,39 @@ func (s *testSuite) TestSimpleDAG(c *C) {
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("4"))
 	tk.MustQuery("select count(*), c from t group by c").Check(testkit.Rows("2 1", "1 2", "1 3"))
 	tk.MustQuery("select sum(c) from t group by b").Check(testkit.Rows("4", "3"))
+
+	tk.MustExec("create index i on t(c,b)")
+	tk.MustQuery("select a from t where c = 1").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select a from t where c = 1 and a < 2").Check(testkit.Rows("1"))
+	tk.MustQuery("select a from t where c = 1 order by a limit 1").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from t where c = 1 ").Check(testkit.Rows("2"))
+}
+
+func (s *testSuite) TestConvertToBit(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t (a bit(64))")
+	tk.MustExec("create table t1 (a varchar(2))")
+	tk.MustExec(`insert t1 value ('10')`)
+	tk.MustExec(`insert t select a from t1`)
+	tk.MustQuery("select a+0 from t").Check(testkit.Rows("12592"))
+
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t (a bit(64))")
+	tk.MustExec("create table t1 (a binary(2))")
+	tk.MustExec(`insert t1 value ('10')`)
+	tk.MustExec(`insert t select a from t1`)
+	tk.MustQuery("select a+0 from t").Check(testkit.Rows("12592"))
+
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t (a bit(64))")
+	tk.MustExec("create table t1 (a datetime)")
+	tk.MustExec(`insert t1 value ('09-01-01')`)
+	tk.MustExec(`insert t select a from t1`)
+	tk.MustQuery("select a+0 from t").Check(testkit.Rows("20090101000000"))
 }

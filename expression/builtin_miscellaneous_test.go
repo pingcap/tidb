@@ -131,6 +131,7 @@ func (s *testEvaluatorSuite) TestAnyValue(c *C) {
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.arg)), s.ctx)
 		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
+		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
 	}
 }
