@@ -94,9 +94,6 @@ func attachPlan2TaskProfile(p PhysicalPlan, t taskProfile) taskProfile {
 // finishIndexPlan means we no longer add plan to index plan, and compute the network cost for it.
 func (t *copTaskProfile) finishIndexPlan() {
 	if !t.indexPlanFinished {
-		if t.tablePlan != nil {
-			t.indexPlan.SetSchema(expression.NewSchema()) // we only need the handle
-		}
 		t.cst += t.cnt * (netWorkFactor + scanFactor)
 		t.indexPlanFinished = true
 	}
@@ -169,7 +166,6 @@ func finishCopTask(task taskProfile, ctx context.Context, allocator *idAllocator
 	}
 	if t.indexPlan != nil && t.tablePlan != nil {
 		newTask.p = PhysicalIndexLookUpReader{tablePlan: t.tablePlan, indexPlan: t.indexPlan}.init(allocator, ctx)
-		newTask.p.SetSchema(t.tablePlan.Schema())
 	} else if t.indexPlan != nil {
 		newTask.p = PhysicalIndexReader{indexPlan: t.indexPlan}.init(allocator, ctx)
 	} else {
