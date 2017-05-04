@@ -118,7 +118,7 @@ func (e *TableReaderExecutor) doRequestForHandles(handles []int64, goCtx goctx.C
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result.Fetch(e.ctx.GoCtx())
+	e.result.Fetch(goCtx)
 	return nil
 }
 
@@ -251,7 +251,7 @@ func (e *IndexLookUpExecutor) doRequest() error {
 	// e.taskChan serves as a pipeline, so fetching index and getting table data can
 	// run concurrently.
 	e.taskChan = make(chan *lookupTableTask, LookupTableTaskChannelSize)
-	go e.fetchHandles()
+	go e.fetchHandlesAndStartWorkers()
 	return nil
 }
 
@@ -284,9 +284,9 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 	}
 }
 
-// fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
+// fetchHandlesAndStartWorkers fetches a batch of handles from index data and builds the index lookup tasks.
 // We initialize some workers to execute this tasks concurrently and put the task to taskCh by order.
-func (e *IndexLookUpExecutor) fetchHandles() {
+func (e *IndexLookUpExecutor) fetchHandlesAndStartWorkers() {
 	// The tasks in workCh will be consumed by workers. When all workers are busy, we should stop to push tasks to channel.
 	// So its length is one.
 	workCh := make(chan *lookupTableTask, 1)
