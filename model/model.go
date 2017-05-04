@@ -120,7 +120,7 @@ func (t *TableInfo) Clone() *TableInfo {
 	return &nt
 }
 
-//GetPkName will return the pk name if pk exitsts.
+// GetPkName will return the pk name if pk exists.
 func (t *TableInfo) GetPkName() CIStr {
 	if t.PKIsHandle {
 		for _, colInfo := range t.Columns {

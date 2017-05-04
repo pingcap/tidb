@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-// FullRange is (-∞,, +∞).
+// FullRange is (-∞, +∞).
 var FullRange = []Point{
 	{start: true},
 	{value: types.MaxValueDatum()},
