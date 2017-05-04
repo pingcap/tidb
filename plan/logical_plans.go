@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/plan/util"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -332,7 +331,7 @@ func RemovePlan(p Plan) error {
 	parents := p.Parents()
 	children := p.Children()
 	if len(parents) > 1 || len(children) != 1 {
-		return util.SystemInternalErrorType.Gen("can't remove this plan")
+		return SystemInternalErrorType.Gen("can't remove this plan")
 	}
 	if len(parents) == 0 {
 		child := children[0]

@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
-	"github.com/pingcap/tidb/plan/util"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -981,7 +980,7 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 	column, err := er.schema.FindColumn(v)
 	if err != nil {
-		er.err = util.ErrAmbiguous.GenByArgs(v.Name)
+		er.err = ErrAmbiguous.GenByArgs(v.Name)
 		return
 	}
 	if column != nil {

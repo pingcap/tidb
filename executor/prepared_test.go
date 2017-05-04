@@ -16,7 +16,7 @@ package executor_test
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/plan/util"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -106,7 +106,7 @@ func (s *testSuite) TestPreparedLimitOffset(c *C) {
 
 	tk.MustExec(`set @c="-1"`)
 	_, err := tk.Exec("execute stmt_test_1 using @c, @c")
-	c.Assert(util.ErrWrongArguments.Equal(err), IsTrue)
+	c.Assert(plan.ErrWrongArguments.Equal(err), IsTrue)
 
 	stmtID, _, _, err := tk.Se.PrepareStmt("select id from prepare_test limit ?")
 	c.Assert(err, IsNil)

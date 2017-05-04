@@ -21,9 +21,19 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/plan/util"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
+)
+
+// Error instances.
+var (
+	ErrUnsupportedType = terror.ClassOptimizerPlan.New(CodeUnsupportedType, "Unsupported type")
+)
+
+// Error codes.
+const (
+	CodeUnsupportedType terror.ErrCode = 1
 )
 
 // Point is the end point of range interval.
@@ -257,7 +267,7 @@ func (r *Builder) newBuildFromIn(expr *expression.ScalarFunction) []Point {
 	for _, e := range list {
 		v, ok := e.(*expression.Constant)
 		if !ok {
-			r.err = util.ErrUnsupportedType.Gen("expr:%v is not constant", e)
+			r.err = ErrUnsupportedType.Gen("expr:%v is not constant", e)
 			return FullRange
 		}
 		startPoint := Point{value: types.NewDatum(v.Value.GetValue()), start: true}
@@ -372,11 +382,11 @@ func (r *Builder) buildFromNot(expr *expression.ScalarFunction) []Point {
 		return r.buildFromIsFalse(expr, 1)
 	case ast.In:
 		// Pattern not in is not supported.
-		r.err = util.ErrUnsupportedType.Gen("NOT IN is not supported")
+		r.err = ErrUnsupportedType.Gen("NOT IN is not supported")
 		return FullRange
 	case ast.Like:
 		// Pattern not like is not supported.
-		r.err = util.ErrUnsupportedType.Gen("NOT LIKE is not supported.")
+		r.err = ErrUnsupportedType.Gen("NOT LIKE is not supported.")
 		return FullRange
 	case ast.IsNull:
 		startPoint := Point{value: types.MinNotNullDatum(), start: true}

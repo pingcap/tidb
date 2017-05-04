@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -119,7 +118,7 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 		case *ast.TableName:
 			p = b.buildDataSource(v)
 		default:
-			b.err = util.ErrUnsupportedType.Gen("unsupported table source type %T", v)
+			b.err = ErrUnsupportedType.Gen("unsupported table source type %T", v)
 			return nil
 		}
 		if b.err != nil {
@@ -140,7 +139,7 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 	case *ast.UnionStmt:
 		return b.buildUnion(x)
 	default:
-		b.err = util.ErrUnsupportedType.Gen("unsupported table source type %T", x)
+		b.err = ErrUnsupportedType.Gen("unsupported table source type %T", x)
 		return nil
 	}
 }
@@ -486,14 +485,14 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 	if limit.Offset != nil {
 		offset, err = getUintForLimitOffset(sc, limit.Offset.GetValue())
 		if err != nil {
-			b.err = util.ErrWrongArguments
+			b.err = ErrWrongArguments
 			return nil
 		}
 	}
 	if limit.Count != nil {
 		count, err = getUintForLimitOffset(sc, limit.Count.GetValue())
 		if err != nil {
-			b.err = util.ErrWrongArguments
+			b.err = ErrWrongArguments
 			return nil
 		}
 	}
@@ -550,7 +549,7 @@ func resolveFromSelectFields(v *ast.ColumnNameExpr, fields []*ast.SelectField, i
 				index = i
 			} else if !colMatch(matchedExpr.(*ast.ColumnNameExpr).Name, curCol.Name) &&
 				!colMatch(curCol.Name, matchedExpr.(*ast.ColumnNameExpr).Name) {
-				return -1, util.ErrAmbiguous.GenByArgs(curCol.Name.Name.L)
+				return -1, ErrAmbiguous.GenByArgs(curCol.Name.Name.L)
 			}
 		}
 	}
@@ -726,7 +725,7 @@ func (b *planBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan
 }
 
 func (b *planBuilder) extractAggFuncs(fields []*ast.SelectField) ([]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int) {
-	extractor := &util.AggregateFuncExtractor{}
+	extractor := &AggregateFuncExtractor{}
 	for _, f := range fields {
 		n, _ := f.Expr.Accept(extractor)
 		f.Expr = n.(ast.ExprNode)
