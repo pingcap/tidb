@@ -287,14 +287,16 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask) {
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
 // We initialize some workers to execute this tasks concurrently and put the task to taskCh by order.
 func (e *IndexLookUpExecutor) fetchHandles() {
-	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency
-	workCh := make(chan *lookupTableTask, lookupConcurrencyLimit)
+	// The tasks in workCh will be consumed by workers. When all workers are busy, we should stop to push tasks to channel.
+	// So its length is one.
+	workCh := make(chan *lookupTableTask, 1)
 	defer func() {
 		close(e.taskChan)
 		close(workCh)
 		e.result.Close()
 	}()
 
+	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency
 	for i := 0; i < lookupConcurrencyLimit; i++ {
 		go func() {
 			childCtx, cancel := goctx.WithCancel(e.ctx.GoCtx())
