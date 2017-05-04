@@ -20,6 +20,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -114,19 +115,32 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(val, Equals, "1")
 
 	// Test case for time_zone session variable.
-	SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum("Europe/Helsinki"))
-	c.Assert(v.TimeZone.String(), Equals, "Europe/Helsinki")
-	SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum("US/Eastern"))
-	c.Assert(v.TimeZone.String(), Equals, "US/Eastern")
-	SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum("SYSTEM"))
-	c.Assert(v.TimeZone.String(), Equals, "Local")
-	SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum("+10:00"))
-	c.Assert(v.TimeZone.String(), Equals, "UTC")
-	t1 := time.Date(2000, 1, 1, 0, 0, 0, 0, v.TimeZone)
-	t2 := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
-	c.Assert(t2.Sub(t1), Equals, 10*time.Hour)
-	SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum("-6:00"))
-	c.Assert(v.TimeZone.String(), Equals, "UTC")
+	tests := []struct {
+		input        string
+		expect       string
+		compareValue bool
+		diff         time.Duration
+	}{
+		{"Europe/Helsinki", "Europe/Helsinki", true, -2 * time.Hour},
+		{"US/Eastern", "US/Eastern", true, 5 * time.Hour},
+		{"SYSTEM", "Local", false, 0},
+		{"+10:00", "UTC", true, -10 * time.Hour},
+		{"-6:00", "UTC", true, 6 * time.Hour},
+	}
+	for _, tt := range tests {
+		err := SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum(tt.input))
+		c.Assert(err, IsNil)
+		c.Assert(v.TimeZone.String(), Equals, tt.expect)
+		if tt.compareValue {
+			SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum(tt.input))
+			t1 := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+			t2 := time.Date(2000, 1, 1, 0, 0, 0, 0, v.TimeZone)
+			c.Assert(t2.Sub(t1), Equals, tt.diff)
+		}
+	}
+	err = SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum("6:00"))
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, variable.ErrUnknownTimeZone), IsTrue)
 
 	// Test case for sql mode.
 	for str, mode := range mysql.Str2SQLMode {

@@ -78,6 +78,18 @@ type requiredProp struct {
 	desc bool
 }
 
+func (p *requiredProp) equal(prop *requiredProp) bool {
+	if len(p.cols) != len(prop.cols) || p.desc != prop.desc {
+		return false
+	}
+	for i := range p.cols {
+		if !p.cols[i].Equal(prop.cols[i], nil) {
+			return false
+		}
+	}
+	return true
+}
+
 func (p *requiredProp) isEmpty() bool {
 	return len(p.cols) == 0
 }

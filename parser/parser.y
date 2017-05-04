@@ -498,6 +498,7 @@ import (
 	timestampType	"TIMESTAMP"
 	timestampDiff	"TIMESTAMPDIFF"
 	transaction	"TRANSACTION"
+	trigger		"TRIGGER"
 	triggers	"TRIGGERS"
 	truncate	"TRUNCATE"
 	uncommitted	"UNCOMMITTED"
@@ -1104,6 +1105,10 @@ AnalyzeTableStmt:
 	 {
 		$$ = &ast.AnalyzeTableStmt{TableNames: $3.([]*ast.TableName)}
 	 }
+|   "ANALYZE" "TABLE" TableName "INDEX" IndexNameList
+    {
+        $$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$3.(*ast.TableName)}, IndexNames: $5.([]model.CIStr)}
+    }
 
 /*******************************************************************************************/
 Assignment:
@@ -2337,7 +2342,7 @@ ReservedKeyword:
 | "REAL" | "REFERENCES" | "REGEXP" | "RENAME" | "REPEAT" | "REPLACE" | "RESTRICT" | "REVOKE" | "RIGHT" | "RLIKE"
 | "SCHEMA" | "SCHEMAS" | "SECOND_MICROSECOND" | "SELECT" | "SET" | "SHOW" | "SMALLINT"
 | "STARTING" | "TABLE" | "TERMINATED" | "THEN" | "TINYBLOB" | "TINYINT" | "TINYTEXT" | "TO"
-| "TRAILING" | "TRUE" | "UNION" | "UNIQUE" | "UNLOCK" | "UNSIGNED"
+| "TRAILING" | "TRIGGER" | "TRUE" | "UNION" | "UNIQUE" | "UNLOCK" | "UNSIGNED"
 | "UPDATE" | "USE" | "USING" | "UTC_DATE" | "UTC_TIMESTAMP" | "VALUES" | "VARBINARY" | "VARCHAR"
 | "WHEN" | "WHERE" | "WRITE" | "XOR" | "YEAR_MONTH" | "ZEROFILL"
  /*
@@ -6107,6 +6112,10 @@ PrivType:
 |	"CREATE" "USER"
 	{
 		$$ = mysql.CreateUserPriv
+	}
+|	"TRIGGER"
+	{
+		$$ = mysql.TriggerPriv
 	}
 |	"DELETE"
 	{

@@ -87,7 +87,10 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 	}
 	switch name {
 	case variable.TimeZone:
-		vars.TimeZone = parseTimeZone(sVal)
+		vars.TimeZone, err = parseTimeZone(sVal)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	case variable.SQLModeVar:
 		sVal = strings.ToUpper(sVal)
 		// TODO: Remove this latter.
@@ -154,26 +157,30 @@ func tidbOptPositiveInt(opt string, defaultVal int) int {
 	return val
 }
 
-func parseTimeZone(s string) *time.Location {
+func parseTimeZone(s string) (*time.Location, error) {
 	if s == "SYSTEM" {
 		// TODO: Support global time_zone variable, it should be set to global time_zone value.
-		return time.Local
+		return time.Local, nil
 	}
 
 	loc, err := time.LoadLocation(s)
 	if err == nil {
-		return loc
+		return loc, nil
 	}
 
 	// The value can be given as a string indicating an offset from UTC, such as '+10:00' or '-6:00'.
 	if strings.HasPrefix(s, "+") || strings.HasPrefix(s, "-") {
 		d, err := types.ParseDuration(s[1:], 0)
 		if err == nil {
-			return time.FixedZone("UTC", int(d.Duration/time.Second))
+			ofst := int(d.Duration / time.Second)
+			if s[0] == '-' {
+				ofst = -ofst
+			}
+			return time.FixedZone("UTC", ofst), nil
 		}
 	}
 
-	return nil
+	return nil, variable.ErrUnknownTimeZone.GenByArgs(s)
 }
 
 func setSnapshotTS(s *variable.SessionVars, sVal string) error {

@@ -35,7 +35,7 @@ import (
 type executorBuilder struct {
 	ctx context.Context
 	is  infoschema.InfoSchema
-	// If there is any error during Executor building process, err is set.
+	// err is set when there is error happened during Executor building process.
 	err error
 }
 
@@ -120,6 +120,10 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildAnalyze(v)
 	case *plan.PhysicalTableReader:
 		return b.buildTableReader(v)
+	case *plan.PhysicalIndexReader:
+		return b.buildIndexReader(v)
+	case *plan.PhysicalIndexLookUpReader:
+		return b.buildIndexLookUpReader(v)
 	default:
 		b.err = ErrUnknownPlan.Gen("Unknown Plan %T", p)
 		return nil
@@ -365,6 +369,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 	return us
 }
 
+// buildMergeJoin builds SortMergeJoin executor.
 // TODO: Refactor against different join strategies by extracting common code base
 func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 	joinBuilder := &joinBuilder{}
@@ -824,13 +829,13 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	return e
 }
 
-func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor {
+func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) *tipb.DAGRequest {
 	dagReq := &tipb.DAGRequest{}
 	dagReq.StartTs = b.getStartTS()
 	dagReq.TimeZoneOffset = timeZoneOffset()
 	sc := b.ctx.GetSessionVars().StmtCtx
 	dagReq.Flags = statementContextToFlags(sc)
-	for _, p := range v.TablePlans {
+	for _, p := range plans {
 		execPB, err := p.ToPB(b.ctx)
 		if err != nil {
 			b.err = errors.Trace(err)
@@ -838,7 +843,14 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 		}
 		dagReq.Executors = append(dagReq.Executors, execPB)
 	}
+	return dagReq
+}
 
+func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor {
+	dagReq := b.constructDAGReq(v.TablePlans)
+	if b.err != nil {
+		return nil
+	}
 	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
 	table, _ := b.is.TableByID(ts.Table.ID)
 	e := &TableReaderExecutor{
@@ -853,6 +865,71 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 		ranges:    ts.Ranges,
 	}
 
+	for i := range v.Schema().Columns {
+		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
+	}
+
+	b.err = e.doRequest()
+	return e
+}
+
+func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor {
+	dagReq := b.constructDAGReq(v.IndexPlans)
+	if b.err != nil {
+		return nil
+	}
+	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
+	table, _ := b.is.TableByID(is.Table.ID)
+	e := &IndexReaderExecutor{
+		ctx:       b.ctx,
+		schema:    v.Schema(),
+		dagPB:     dagReq,
+		asName:    is.TableAsName,
+		tableID:   is.Table.ID,
+		table:     table,
+		index:     is.Index,
+		keepOrder: !is.OutOfOrder,
+		desc:      is.Desc,
+		ranges:    is.Ranges,
+	}
+
+	for _, col := range v.Schema().Columns {
+		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(col.Index))
+	}
+
+	b.err = e.doRequest()
+	return e
+}
+
+func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpReader) Executor {
+	indexReq := b.constructDAGReq(v.IndexPlans)
+	if b.err != nil {
+		return nil
+	}
+	tableReq := b.constructDAGReq(v.TablePlans)
+	if b.err != nil {
+		return nil
+	}
+	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
+	table, _ := b.is.TableByID(is.Table.ID)
+
+	for i := range v.Schema().Columns {
+		tableReq.OutputOffsets = append(tableReq.OutputOffsets, uint32(i))
+	}
+
+	e := &IndexLookUpExecutor{
+		ctx:          b.ctx,
+		schema:       v.Schema(),
+		dagPB:        indexReq,
+		asName:       is.TableAsName,
+		tableID:      is.Table.ID,
+		table:        table,
+		index:        is.Index,
+		keepOrder:    !is.OutOfOrder,
+		desc:         is.Desc,
+		ranges:       is.Ranges,
+		tableRequest: tableReq,
+	}
 	b.err = e.doRequest()
 	return e
 }
