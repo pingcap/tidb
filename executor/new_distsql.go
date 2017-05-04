@@ -111,10 +111,10 @@ func (e *TableReaderExecutor) doRequest() error {
 }
 
 // doRequestForHandles constructs kv ranges by handles. It is used by index look up executor.
-func (e *TableReaderExecutor) doRequestForHandles(handles []int64) error {
+func (e *TableReaderExecutor) doRequestForHandles(handles []int64, goCtx goctx.Context) error {
 	kvRanges := tableHandlesToKVRanges(e.tableID, handles)
 	var err error
-	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc)
+	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goCtx, e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -257,7 +257,7 @@ func (e *IndexLookUpExecutor) doRequest() error {
 
 // executeTask executes the table look up tasks. We will construct a table reader and send request by handles.
 // Then we hold the returning rows and finish this task.
-func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask) {
+func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Context) {
 	var err error
 	defer func() {
 		task.doneCh <- err
@@ -270,7 +270,7 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask) {
 		schema:  e.schema,
 		ctx:     e.ctx,
 	}
-	err = tableReader.doRequestForHandles(task.handles)
+	err = tableReader.doRequestForHandles(task.handles, goCtx)
 	if err != nil {
 		return
 	}
@@ -306,7 +306,7 @@ func (e *IndexLookUpExecutor) fetchHandles() {
 				if task == nil {
 					return
 				}
-				e.executeTask(task)
+				e.executeTask(task, childCtx)
 			case <-childCtx.Done():
 			}
 		}()
