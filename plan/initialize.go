@@ -270,6 +270,7 @@ func (p PhysicalIndexLookUpReader) init(allocator *idAllocator, ctx context.Cont
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	p.TablePlans = flattenPushDownPlan(p.tablePlan)
 	p.IndexPlans = flattenPushDownPlan(p.indexPlan)
+	p.schema = p.tablePlan.Schema()
 	return &p
 }
 
