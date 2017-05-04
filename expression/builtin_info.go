@@ -21,6 +21,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -278,7 +279,21 @@ type builtinCharsetSig struct {
 // eval evals a builtinCharsetSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_charset
 func (b *builtinCharsetSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("CHARSET")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	if len(args) != 1 {
+		return d, nil
+	}
+	// TODO: should use types.Datum.collation to determine the charset
+	switch args[0].Kind() {
+	case types.KindString:
+		d.SetString(charset.CharsetUTF8)
+	default:
+		d.SetString(charset.CharsetBin)
+	}
+	return
 }
 
 type coercibilityFunctionClass struct {

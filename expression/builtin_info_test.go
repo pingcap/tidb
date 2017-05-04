@@ -17,6 +17,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -110,4 +111,22 @@ func (s *testEvaluatorSuite) TestVersion(c *C) {
 	v, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetString(), Equals, mysql.ServerVersion)
+}
+
+func (s *testEvaluatorSuite) TestCharset(c *C) {
+	defer testleak.AfterTest(c)()
+
+	fc := funcs[ast.Charset]
+
+	f, err := fc.getFunction(datumsToConstants([]types.Datum{types.NewDatum("abc")}), s.ctx)
+	c.Assert(err, IsNil)
+	d, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(d.GetString(), Equals, charset.CharsetUTF8)
+
+	f, err = fc.getFunction(datumsToConstants([]types.Datum{types.NewDatum(123456789)}), s.ctx)
+	c.Assert(err, IsNil)
+	d, err = f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(d.GetString(), Equals, charset.CharsetBin)
 }
