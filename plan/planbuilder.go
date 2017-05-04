@@ -76,7 +76,7 @@ func (info *tableHintInfo) ifPreferINLJ(tableNames ...*model.CIStr) bool {
 	return false
 }
 
-// PlanBuilder builds Plan from an ast.Node.
+// planBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
 type planBuilder struct {
 	err          error
