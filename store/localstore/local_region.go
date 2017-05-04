@@ -208,7 +208,8 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 			keyRanges: req.ranges,
 			sc:        xeval.FlagsToStatementContext(sel.Flags),
 		}
-		ctx.eval = xeval.NewEvaluator(ctx.sc)
+		loc := time.FixedZone("UTC", int(sel.TimeZoneOffset))
+		ctx.eval = xeval.NewEvaluator(ctx.sc, loc)
 		if sel.Where != nil {
 			ctx.whereColumns = make(map[int64]*tipb.ColumnInfo)
 			collectColumnsInExpr(sel.Where, ctx, ctx.whereColumns)
