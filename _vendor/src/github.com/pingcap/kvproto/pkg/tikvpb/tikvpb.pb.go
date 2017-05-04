@@ -92,7 +92,7 @@ func (c *tiKVClient) KvGet(ctx context.Context, in *kvrpcpb.GetRequest, opts ...
 
 func (c *tiKVClient) KvScan(ctx context.Context, in *kvrpcpb.ScanRequest, opts ...grpc.CallOption) (*kvrpcpb.ScanResponse, error) {
 	out := new(kvrpcpb.ScanResponse)
-	err := grpc.Invoke(ctx, "/tikvpb.TiKV/KvScan", in, out, c.cc, opts...)
+	err := grpc.Invoke(ctx, "/tikvpb.Tikv/KvScan", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +101,7 @@ func (c *tiKVClient) KvScan(ctx context.Context, in *kvrpcpb.ScanRequest, opts .
 
 func (c *tiKVClient) KvPrewrite(ctx context.Context, in *kvrpcpb.PrewriteRequest, opts ...grpc.CallOption) (*kvrpcpb.PrewriteResponse, error) {
 	out := new(kvrpcpb.PrewriteResponse)
-	err := grpc.Invoke(ctx, "/tikvpb.TiKV/KvPrewrite", in, out, c.cc, opts...)
+	err := grpc.Invoke(ctx, "/tikvpb.Tikv/KvPrewrite", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +110,7 @@ func (c *tiKVClient) KvPrewrite(ctx context.Context, in *kvrpcpb.PrewriteRequest
 
 func (c *tiKVClient) KvCommit(ctx context.Context, in *kvrpcpb.CommitRequest, opts ...grpc.CallOption) (*kvrpcpb.CommitResponse, error) {
 	out := new(kvrpcpb.CommitResponse)
-	err := grpc.Invoke(ctx, "/tikvpb.TiKV/KvCommit", in, out, c.cc, opts...)
+	err := grpc.Invoke(ctx, "/tikvpb.Tikv/KvCommit", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +119,7 @@ func (c *tiKVClient) KvCommit(ctx context.Context, in *kvrpcpb.CommitRequest, op
 
 func (c *tiKVClient) KvCleanup(ctx context.Context, in *kvrpcpb.CleanupRequest, opts ...grpc.CallOption) (*kvrpcpb.CleanupResponse, error) {
 	out := new(kvrpcpb.CleanupResponse)
-	err := grpc.Invoke(ctx, "/tikvpb.TiKV/KvCleanup", in, out, c.cc, opts...)
+	err := grpc.Invoke(ctx, "/tikvpb.Tikv/KvCleanup", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +128,7 @@ func (c *tiKVClient) KvCleanup(ctx context.Context, in *kvrpcpb.CleanupRequest, 
 
 func (c *tiKVClient) KvBatchGet(ctx context.Context, in *kvrpcpb.BatchGetRequest, opts ...grpc.CallOption) (*kvrpcpb.BatchGetResponse, error) {
 	out := new(kvrpcpb.BatchGetResponse)
-	err := grpc.Invoke(ctx, "/tikvpb.TiKV/KvBatchGet", in, out, c.cc, opts...)
+	err := grpc.Invoke(ctx, "/tikvpb.Tikv/KvBatchGet", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +137,7 @@ func (c *tiKVClient) KvBatchGet(ctx context.Context, in *kvrpcpb.BatchGetRequest
 
 func (c *tiKVClient) KvBatchRollback(ctx context.Context, in *kvrpcpb.BatchRollbackRequest, opts ...grpc.CallOption) (*kvrpcpb.BatchRollbackResponse, error) {
 	out := new(kvrpcpb.BatchRollbackResponse)
-	err := grpc.Invoke(ctx, "/tikvpb.TiKV/KvBatchRollback", in, out, c.cc, opts...)
+	err := grpc.Invoke(ctx, "/tikvpb.Tikv/KvBatchRollback", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +146,7 @@ func (c *tiKVClient) KvBatchRollback(ctx context.Context, in *kvrpcpb.BatchRollb
 
 func (c *tiKVClient) KvScanLock(ctx context.Context, in *kvrpcpb.ScanLockRequest, opts ...grpc.CallOption) (*kvrpcpb.ScanLockResponse, error) {
 	out := new(kvrpcpb.ScanLockResponse)
-	err := grpc.Invoke(ctx, "/tikvpb.TiKV/KvScanLock", in, out, c.cc, opts...)
+	err := grpc.Invoke(ctx, "/tikvpb.Tikv/KvScanLock", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +155,7 @@ func (c *tiKVClient) KvScanLock(ctx context.Context, in *kvrpcpb.ScanLockRequest
 
 func (c *tiKVClient) KvResolveLock(ctx context.Context, in *kvrpcpb.ResolveLockRequest, opts ...grpc.CallOption) (*kvrpcpb.ResolveLockResponse, error) {
 	out := new(kvrpcpb.ResolveLockResponse)
-	err := grpc.Invoke(ctx, "/tikvpb.TiKV/KvResolveLock", in, out, c.cc, opts...)
+	err := grpc.Invoke(ctx, "/tikvpb.Tikv/KvResolveLock", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +164,7 @@ func (c *tiKVClient) KvResolveLock(ctx context.Context, in *kvrpcpb.ResolveLockR
 
 func (c *tiKVClient) KvGC(ctx context.Context, in *kvrpcpb.GCRequest, opts ...grpc.CallOption) (*kvrpcpb.GCResponse, error) {
 	out := new(kvrpcpb.GCResponse)
-	err := grpc.Invoke(ctx, "/tikvpb.TiKV/KvGC", in, out, c.cc, opts...)
+	err := grpc.Invoke(ctx, "/tikvpb.Tikv/KvGC", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +173,7 @@ func (c *tiKVClient) KvGC(ctx context.Context, in *kvrpcpb.GCRequest, opts ...gr
 
 func (c *tiKVClient) RawGet(ctx context.Context, in *kvrpcpb.RawGetRequest, opts ...grpc.CallOption) (*kvrpcpb.RawGetResponse, error) {
 	out := new(kvrpcpb.RawGetResponse)
-	err := grpc.Invoke(ctx, "/tikvpb.TiKV/RawGet", in, out, c.cc, opts...)
+	err := grpc.Invoke(ctx, "/tikvpb.Tikv/RawGet", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +182,7 @@ func (c *tiKVClient) RawGet(ctx context.Context, in *kvrpcpb.RawGetRequest, opts
 
 func (c *tiKVClient) RawPut(ctx context.Context, in *kvrpcpb.RawPutRequest, opts ...grpc.CallOption) (*kvrpcpb.RawPutResponse, error) {
 	out := new(kvrpcpb.RawPutResponse)
-	err := grpc.Invoke(ctx, "/tikvpb.TiKV/RawPut", in, out, c.cc, opts...)
+	err := grpc.Invoke(ctx, "/tikvpb.Tikv/RawPut", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -191,7 +191,7 @@ func (c *tiKVClient) RawPut(ctx context.Context, in *kvrpcpb.RawPutRequest, opts
 
 func (c *tiKVClient) RawDelete(ctx context.Context, in *kvrpcpb.RawDeleteRequest, opts ...grpc.CallOption) (*kvrpcpb.RawDeleteResponse, error) {
 	out := new(kvrpcpb.RawDeleteResponse)
-	err := grpc.Invoke(ctx, "/tikvpb.TiKV/RawDelete", in, out, c.cc, opts...)
+	err := grpc.Invoke(ctx, "/tikvpb.Tikv/RawDelete", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -200,7 +200,7 @@ func (c *tiKVClient) RawDelete(ctx context.Context, in *kvrpcpb.RawDeleteRequest
 
 func (c *tiKVClient) Coprocessor(ctx context.Context, in *coprocessor.Request, opts ...grpc.CallOption) (*coprocessor.Response, error) {
 	out := new(coprocessor.Response)
-	err := grpc.Invoke(ctx, "/tikvpb.TiKV/Coprocessor", in, out, c.cc, opts...)
+	err := grpc.Invoke(ctx, "/tikvpb.Tikv/Coprocessor", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +208,7 @@ func (c *tiKVClient) Coprocessor(ctx context.Context, in *coprocessor.Request, o
 }
 
 func (c *tiKVClient) Raft(ctx context.Context, opts ...grpc.CallOption) (TiKV_RaftClient, error) {
-	stream, err := grpc.NewClientStream(ctx, &_TiKV_serviceDesc.Streams[0], c.cc, "/tikvpb.TiKV/Raft", opts...)
+	stream, err := grpc.NewClientStream(ctx, &_TiKV_serviceDesc.Streams[0], c.cc, "/tikvpb.Tikv/Raft", opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -242,7 +242,7 @@ func (x *tiKVRaftClient) CloseAndRecv() (*raft_serverpb.Done, error) {
 }
 
 func (c *tiKVClient) Snapshot(ctx context.Context, opts ...grpc.CallOption) (TiKV_SnapshotClient, error) {
-	stream, err := grpc.NewClientStream(ctx, &_TiKV_serviceDesc.Streams[1], c.cc, "/tikvpb.TiKV/Snapshot", opts...)
+	stream, err := grpc.NewClientStream(ctx, &_TiKV_serviceDesc.Streams[1], c.cc, "/tikvpb.Tikv/Snapshot", opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -314,7 +314,7 @@ func _TiKV_KvGet_Handler(srv interface{}, ctx context.Context, dec func(interfac
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/tikvpb.TiKV/KvGet",
+		FullMethod: "/tikvpb.Tikv/KvGet",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(TiKVServer).KvGet(ctx, req.(*kvrpcpb.GetRequest))
@@ -332,7 +332,7 @@ func _TiKV_KvScan_Handler(srv interface{}, ctx context.Context, dec func(interfa
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/tikvpb.TiKV/KvScan",
+		FullMethod: "/tikvpb.Tikv/KvScan",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(TiKVServer).KvScan(ctx, req.(*kvrpcpb.ScanRequest))
@@ -350,7 +350,7 @@ func _TiKV_KvPrewrite_Handler(srv interface{}, ctx context.Context, dec func(int
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/tikvpb.TiKV/KvPrewrite",
+		FullMethod: "/tikvpb.Tikv/KvPrewrite",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(TiKVServer).KvPrewrite(ctx, req.(*kvrpcpb.PrewriteRequest))
@@ -368,7 +368,7 @@ func _TiKV_KvCommit_Handler(srv interface{}, ctx context.Context, dec func(inter
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/tikvpb.TiKV/KvCommit",
+		FullMethod: "/tikvpb.Tikv/KvCommit",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(TiKVServer).KvCommit(ctx, req.(*kvrpcpb.CommitRequest))
@@ -386,7 +386,7 @@ func _TiKV_KvCleanup_Handler(srv interface{}, ctx context.Context, dec func(inte
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/tikvpb.TiKV/KvCleanup",
+		FullMethod: "/tikvpb.Tikv/KvCleanup",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(TiKVServer).KvCleanup(ctx, req.(*kvrpcpb.CleanupRequest))
@@ -404,7 +404,7 @@ func _TiKV_KvBatchGet_Handler(srv interface{}, ctx context.Context, dec func(int
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/tikvpb.TiKV/KvBatchGet",
+		FullMethod: "/tikvpb.Tikv/KvBatchGet",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(TiKVServer).KvBatchGet(ctx, req.(*kvrpcpb.BatchGetRequest))
@@ -422,7 +422,7 @@ func _TiKV_KvBatchRollback_Handler(srv interface{}, ctx context.Context, dec fun
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/tikvpb.TiKV/KvBatchRollback",
+		FullMethod: "/tikvpb.Tikv/KvBatchRollback",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(TiKVServer).KvBatchRollback(ctx, req.(*kvrpcpb.BatchRollbackRequest))
@@ -440,7 +440,7 @@ func _TiKV_KvScanLock_Handler(srv interface{}, ctx context.Context, dec func(int
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/tikvpb.TiKV/KvScanLock",
+		FullMethod: "/tikvpb.Tikv/KvScanLock",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(TiKVServer).KvScanLock(ctx, req.(*kvrpcpb.ScanLockRequest))
@@ -458,7 +458,7 @@ func _TiKV_KvResolveLock_Handler(srv interface{}, ctx context.Context, dec func(
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/tikvpb.TiKV/KvResolveLock",
+		FullMethod: "/tikvpb.Tikv/KvResolveLock",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(TiKVServer).KvResolveLock(ctx, req.(*kvrpcpb.ResolveLockRequest))
@@ -476,7 +476,7 @@ func _TiKV_KvGC_Handler(srv interface{}, ctx context.Context, dec func(interface
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/tikvpb.TiKV/KvGC",
+		FullMethod: "/tikvpb.Tikv/KvGC",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(TiKVServer).KvGC(ctx, req.(*kvrpcpb.GCRequest))
@@ -494,7 +494,7 @@ func _TiKV_RawGet_Handler(srv interface{}, ctx context.Context, dec func(interfa
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/tikvpb.TiKV/RawGet",
+		FullMethod: "/tikvpb.Tikv/RawGet",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(TiKVServer).RawGet(ctx, req.(*kvrpcpb.RawGetRequest))
@@ -512,7 +512,7 @@ func _TiKV_RawPut_Handler(srv interface{}, ctx context.Context, dec func(interfa
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/tikvpb.TiKV/RawPut",
+		FullMethod: "/tikvpb.Tikv/RawPut",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(TiKVServer).RawPut(ctx, req.(*kvrpcpb.RawPutRequest))
@@ -530,7 +530,7 @@ func _TiKV_RawDelete_Handler(srv interface{}, ctx context.Context, dec func(inte
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/tikvpb.TiKV/RawDelete",
+		FullMethod: "/tikvpb.Tikv/RawDelete",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(TiKVServer).RawDelete(ctx, req.(*kvrpcpb.RawDeleteRequest))
@@ -548,7 +548,7 @@ func _TiKV_Coprocessor_Handler(srv interface{}, ctx context.Context, dec func(in
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/tikvpb.TiKV/Coprocessor",
+		FullMethod: "/tikvpb.Tikv/Coprocessor",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(TiKVServer).Coprocessor(ctx, req.(*coprocessor.Request))
@@ -609,7 +609,7 @@ func (x *tiKVSnapshotServer) Recv() (*raft_serverpb.SnapshotChunk, error) {
 }
 
 var _TiKV_serviceDesc = grpc.ServiceDesc{
-	ServiceName: "tikvpb.TiKV",
+	ServiceName: "tikvpb.Tikv",
 	HandlerType: (*TiKVServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
