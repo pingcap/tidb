@@ -643,7 +643,10 @@ type uuidFunctionClass struct {
 }
 
 func (c *uuidFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinUUIDSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	err := errors.Trace(c.verifyArgs(args))
+	bt := &builtinUUIDSig{newBaseBuiltinFunc(args, ctx)}
+	bt.deterministic = false
+	return bt, errors.Trace(err)
 }
 
 type builtinUUIDSig struct {
