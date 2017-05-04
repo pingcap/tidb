@@ -848,6 +848,9 @@ func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) *tipb.DAGRe
 
 func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor {
 	dagReq := b.constructDAGReq(v.TablePlans)
+	if b.err != nil {
+		return nil
+	}
 	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
 	table, _ := b.is.TableByID(ts.Table.ID)
 	e := &TableReaderExecutor{
@@ -872,6 +875,9 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 
 func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor {
 	dagReq := b.constructDAGReq(v.IndexPlans)
+	if b.err != nil {
+		return nil
+	}
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
 	table, _ := b.is.TableByID(is.Table.ID)
 	e := &IndexReaderExecutor{
@@ -897,7 +903,13 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor
 
 func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpReader) Executor {
 	indexReq := b.constructDAGReq(v.IndexPlans)
+	if b.err != nil {
+		return nil
+	}
 	tableReq := b.constructDAGReq(v.TablePlans)
+	if b.err != nil {
+		return nil
+	}
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
 	table, _ := b.is.TableByID(is.Table.ID)
 
