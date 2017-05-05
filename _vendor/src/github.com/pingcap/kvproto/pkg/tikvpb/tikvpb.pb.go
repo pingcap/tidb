@@ -83,7 +83,7 @@ func NewTiKVClient(cc *grpc.ClientConn) TiKVClient {
 
 func (c *tiKVClient) KvGet(ctx context.Context, in *kvrpcpb.GetRequest, opts ...grpc.CallOption) (*kvrpcpb.GetResponse, error) {
 	out := new(kvrpcpb.GetResponse)
-	err := grpc.Invoke(ctx, "/tikvpb.TiKV/KvGet", in, out, c.cc, opts...)
+	err := grpc.Invoke(ctx, "/tikvpb.Tikv/KvGet", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
