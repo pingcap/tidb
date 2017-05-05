@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
+	"time"
 )
 
 var (
@@ -332,7 +333,7 @@ func (c *randFunctionClass) getFunction(args []Expression, ctx context.Context) 
 
 type builtinRandSig struct {
 	baseBuiltinFunc
-	ranGen *rand.Rand
+	randGen *rand.Rand
 }
 
 // eval evals a builtinRandSig.
@@ -342,18 +343,19 @@ func (b *builtinRandSig) eval(row []types.Datum) (d types.Datum, err error) {
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	if len(args) == 1 && !args[0].IsNull() {
-		if b.ranGen == nil {
+	if b.randGen == nil {
+		if len(args) == 1 && !args[0].IsNull() {
 			seed, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
 			if err != nil {
 				return d, errors.Trace(err)
 			}
-			b.ranGen = rand.New(rand.NewSource(seed))
+			b.randGen = rand.New(rand.NewSource(seed))
+		} else {
+			// If seed is not set, we use current timestamp as seed.
+			b.randGen = rand.New(rand.NewSource(time.Now().UnixNano()))
 		}
-		d.SetFloat64(b.ranGen.Float64())
-	} else {
-		d.SetFloat64(rand.Float64())
 	}
+	d.SetFloat64(b.randGen.Float64())
 	return d, nil
 }
 
