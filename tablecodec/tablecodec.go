@@ -207,6 +207,11 @@ func flatten(data types.Datum) (types.Datum, error) {
 		data.SetInt64(data.GetMysqlHex().Value)
 		return data, nil
 	default:
+		// NOTE: we must let storage engine know KindMysqlJson, for push down this predicate:
+		//     select * from table where json_field = 3
+		// Without that, we can only support push down json predicate like:
+		//     select * from table where json_extract(json_field, '$') = 3
+		// TODO: remove this note after design is stable.
 		return data, nil
 	}
 }

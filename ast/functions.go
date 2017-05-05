@@ -277,6 +277,9 @@ const (
 	Uncompress               = "uncompress"
 	UncompressedLength       = "uncompressed_length"
 	ValidatePasswordStrength = "validate_password_strength"
+
+	// json functions
+	JsonExtract = "json_extract"
 )
 
 // FuncCallExpr is for function expression.

@@ -879,4 +879,5 @@ var MySQLErrName = map[uint16]string{
 	ErrAlterOperationNotSupportedReasonNotNull:               "cannot silently convert NULL values, as required in this SQLMODE",
 	ErrMustChangePasswordLogin:                               "Your password has expired. To log in you must change it using a client that supports expired passwords.",
 	ErrRowInWrongPartition:                                   "Found a row in wrong partition %s",
+	ErrInvalidJsonText:                                       "Invalid JSON text: %-.192s",
 }

@@ -72,6 +72,7 @@ const (
 	ClassTypes
 	ClassGlobal
 	ClassMockTikv
+	ClassJson
 	// Add more as needed.
 )
 
