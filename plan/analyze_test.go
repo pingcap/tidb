@@ -14,9 +14,12 @@
 package plan_test
 
 import (
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testkit"
@@ -97,9 +100,18 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		is := sessionctx.GetDomain(ctx).InfoSchema()
 		err = plan.ResolveName(stmt, is, ctx)
 		c.Assert(err, IsNil)
-		err = plan.InferType(ctx.GetSessionVars().StmtCtx, stmt)
+		err = expression.InferType(ctx.GetSessionVars().StmtCtx, stmt)
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(ctx, stmt, is)
 		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
+}
+
+func newStoreWithBootstrap() (kv.Storage, error) {
+	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	_, err = tidb.BootstrapSession(store)
+	return store, errors.Trace(err)
 }

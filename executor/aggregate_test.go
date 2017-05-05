@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
@@ -277,7 +278,7 @@ func (s *testSuite) TestAggregation(c *C) {
 
 	result = tk.MustQuery("select count(*) from information_schema.columns")
 	// When adding new memory table in information_schema, please update this variable.
-	columnCountOfAllInformationSchemaTables := "715"
+	columnCountOfAllInformationSchemaTables := "716"
 	result.Check(testkit.Rows(columnCountOfAllInformationSchemaTables))
 
 	tk.MustExec("drop table if exists t1")
@@ -307,10 +308,12 @@ func (s *testSuite) TestAggregation(c *C) {
 
 func (s *testSuite) TestStreamAgg(c *C) {
 	col := &expression.Column{
-		Index: 1,
+		Index:   1,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
 	gbyCol := &expression.Column{
-		Index: 0,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
 	sumAgg := expression.NewAggFunction(ast.AggFuncSum, []expression.Expression{col}, false)
 	cntAgg := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{col}, false)

@@ -27,7 +27,6 @@ import (
 
 // ScalarFunction is the function that returns a value.
 type ScalarFunction struct {
-	baseExpr
 	FuncName model.CIStr
 	// RetType is the type that ScalarFunction returns.
 	// TODO: Implement type inference here, now we use ast's return type temporarily.
@@ -75,6 +74,9 @@ func NewFunction(ctx context.Context, funcName string, retType *types.FieldType,
 	f, err := fc.getFunction(funcArgs, ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if retType == nil {
+		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction.")
 	}
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(funcName),

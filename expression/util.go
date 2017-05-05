@@ -18,12 +18,12 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/context"
 )
 
 // ExtractColumns extracts all columns from an expression.
@@ -68,9 +68,30 @@ func ColumnSubstitute(expr Expression, schema *Schema, newExprs []Expression) Ex
 func datumsToConstants(datums []types.Datum) []Expression {
 	constants := make([]Expression, 0, len(datums))
 	for _, d := range datums {
-		constants = append(constants, &Constant{Value: d})
+		constants = append(constants, &Constant{Value: d, RetType: types.NewFieldType(kindToMysqlType[d.Kind()])})
 	}
 	return constants
+}
+
+var kindToMysqlType = map[byte]byte{
+	types.KindNull:          mysql.TypeNull,
+	types.KindInt64:         mysql.TypeLonglong,
+	types.KindUint64:        mysql.TypeLonglong,
+	types.KindMysqlHex:      mysql.TypeLonglong,
+	types.KindMinNotNull:    mysql.TypeLonglong,
+	types.KindMaxValue:      mysql.TypeLonglong,
+	types.KindFloat32:       mysql.TypeDouble,
+	types.KindFloat64:       mysql.TypeDouble,
+	types.KindString:        mysql.TypeVarString,
+	types.KindBytes:         mysql.TypeVarString,
+	types.KindMysqlBit:      mysql.TypeVarString,
+	types.KindMysqlEnum:     mysql.TypeVarString,
+	types.KindMysqlSet:      mysql.TypeVarString,
+	types.KindRow:           mysql.TypeVarString,
+	types.KindInterface:     mysql.TypeVarString,
+	types.KindMysqlDecimal:  mysql.TypeNewDecimal,
+	types.KindMysqlDuration: mysql.TypeDuration,
+	types.KindMysqlTime:     mysql.TypeDatetime,
 }
 
 // calculateSum adds v to sum.
@@ -202,7 +223,7 @@ func SubstituteCorCol2Constant(expr Expression) (Expression, error) {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			return &Constant{Value: val}, nil
+			return &Constant{Value: val, RetType: x.GetType()}, nil
 		}
 		var newSf Expression
 		if x.FuncName.L == ast.Cast {

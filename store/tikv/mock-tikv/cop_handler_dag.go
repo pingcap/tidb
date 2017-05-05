@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/types"
@@ -71,8 +70,8 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor
 			break
 		}
 		data := dummySlice
-		for _, val := range row {
-			data = append(data, val...)
+		for _, offset := range dagReq.OutputOffsets {
+			data = append(data, row[offset]...)
 		}
 		chunks = appendRow(chunks, handle, data)
 	}
@@ -134,8 +133,10 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) *i
 	columns := executor.IdxScan.Columns
 	ctx.evalCtx.setColumnInfo(columns)
 	length := len(columns)
+	var pkCol *tipb.ColumnInfo
 	// The PKHandle column info has been collected in ctx.
 	if columns[length-1].GetPkHandle() {
+		pkCol = columns[length-1]
 		columns = columns[:length-1]
 	}
 	ranges := h.extractKVRanges(ctx.keyRanges, executor.IdxScan.Desc)
@@ -146,6 +147,7 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) *i
 		colsLen:   len(columns),
 		startTS:   ctx.dagReq.GetStartTs(),
 		mvccStore: h.mvccStore,
+		pkCol:     pkCol,
 	}
 }
 
@@ -159,7 +161,7 @@ func (h *rpcHandler) buildSelection(ctx *dagContext, executor *tipb.Executor) (*
 			return nil, errors.Trace(err)
 		}
 	}
-	conds, err := convertToExprs(ctx.evalCtx.sc, ctx.evalCtx.colIDs, pbConds)
+	conds, err := convertToExprs(ctx.evalCtx.sc, ctx.evalCtx.colIDs, ctx.evalCtx.fieldTps, pbConds)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -178,7 +180,7 @@ func (h *rpcHandler) buildAggregation(ctx *dagContext, executor *tipb.Executor) 
 	var err error
 	var relatedColOffsets []int
 	for _, expr := range executor.Aggregation.AggFunc {
-		aggExpr, err := expression.NewDistAggFunc(expr, ctx.evalCtx.colIDs, ctx.evalCtx.sc)
+		aggExpr, err := expression.NewDistAggFunc(expr, ctx.evalCtx.colIDs, ctx.evalCtx.fieldTps, ctx.evalCtx.sc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -194,7 +196,7 @@ func (h *rpcHandler) buildAggregation(ctx *dagContext, executor *tipb.Executor) 
 			return nil, errors.Trace(err)
 		}
 	}
-	groupBys, err := convertToExprs(ctx.evalCtx.sc, ctx.evalCtx.colIDs, executor.Aggregation.GetGroupBy())
+	groupBys, err := convertToExprs(ctx.evalCtx.sc, ctx.evalCtx.colIDs, ctx.evalCtx.fieldTps, executor.Aggregation.GetGroupBy())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -230,7 +232,7 @@ func (h *rpcHandler) buildTopN(ctx *dagContext, executor *tipb.Executor) (*topNE
 		},
 	}
 
-	conds, err := convertToExprs(ctx.evalCtx.sc, ctx.evalCtx.colIDs, pbConds)
+	conds, err := convertToExprs(ctx.evalCtx.sc, ctx.evalCtx.colIDs, ctx.evalCtx.fieldTps, pbConds)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -265,18 +267,9 @@ func (e *evalContext) setColumnInfo(cols []*tipb.ColumnInfo) {
 }
 
 // decodeRelatedColumnVals decodes data to Datum slice according to the row information.
-func (e *evalContext) decodeRelatedColumnVals(relatedColOffsets []int, handle int64, value [][]byte, row []types.Datum) error {
+func (e *evalContext) decodeRelatedColumnVals(relatedColOffsets []int, value [][]byte, row []types.Datum) error {
 	var err error
 	for _, offset := range relatedColOffsets {
-		col := e.columnInfos[offset]
-		if col.GetPkHandle() {
-			if mysql.HasUnsignedFlag(uint(col.GetFlag())) {
-				row[offset] = types.NewUintDatum(uint64(handle))
-			} else {
-				row[offset] = types.NewIntDatum(handle)
-			}
-			continue
-		}
 		row[offset], err = tablecodec.DecodeColumnValue(value[offset], e.fieldTps[offset])
 		if err != nil {
 			return errors.Trace(err)
