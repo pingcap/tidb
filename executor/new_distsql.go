@@ -291,15 +291,15 @@ func (e *IndexLookUpExecutor) fetchHandlesAndStartWorkers() {
 	// So its length is one.
 	workCh := make(chan *lookupTableTask, 1)
 	defer func() {
-		close(e.taskChan)
 		close(workCh)
-		e.result.Close()
+		close(e.taskChan)
 	}()
 
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency
+	txnCtx := e.ctx.GoCtx()
 	for i := 0; i < lookupConcurrencyLimit; i++ {
 		go func() {
-			childCtx, cancel := goctx.WithCancel(e.ctx.GoCtx())
+			childCtx, cancel := goctx.WithCancel(txnCtx)
 			defer cancel()
 			select {
 			case task := <-workCh:
@@ -312,7 +312,6 @@ func (e *IndexLookUpExecutor) fetchHandlesAndStartWorkers() {
 		}()
 	}
 
-	txnCtx := e.ctx.GoCtx()
 	for {
 		handles, finish, err := extractHandlesFromIndexResult(e.result)
 		if err != nil || finish {
@@ -373,13 +372,14 @@ func (e *IndexLookUpExecutor) Schema() *expression.Schema {
 
 // Close implements Exec Close interface.
 func (e *IndexLookUpExecutor) Close() error {
-	e.result = nil
-
+	// TODO: It's better to notify fetchHandles to close instead of fetching all index handle.
 	// Consume the task channel in case channel is full.
 	for range e.taskChan {
 	}
 	e.taskChan = nil
-	return nil
+	err := e.result.Close()
+	e.result = nil
+	return errors.Trace(err)
 }
 
 // Next implements Exec Next interface.
