@@ -379,12 +379,14 @@ func (e *aggregateExec) Next() (handle int64, value [][]byte, err error) {
 	// The first column is group key.
 	value = append(value, gkData)
 	for _, agg := range e.aggExprs {
-		ds := agg.GetPartialResult(gk)
-		data, err := codec.EncodeValue(nil, ds...)
-		if err != nil {
-			return 0, nil, errors.Trace(err)
+		partialResults := agg.GetPartialResult(gk)
+		for _, result := range partialResults {
+			data, err := codec.EncodeValue(nil, result)
+			if err != nil {
+				return 0, nil, errors.Trace(err)
+			}
+			value = append(value, data)
 		}
-		value = append(value, data)
 	}
 	e.currGroupIdx++
 
@@ -630,10 +632,10 @@ func extractOffsetsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector
 	return collector, nil
 }
 
-func convertToExprs(sc *variable.StatementContext, colIDs map[int64]int, pbExprs []*tipb.Expr) ([]expression.Expression, error) {
+func convertToExprs(sc *variable.StatementContext, colIDs map[int64]int, fieldTps []*types.FieldType, pbExprs []*tipb.Expr) ([]expression.Expression, error) {
 	exprs := make([]expression.Expression, 0, len(pbExprs))
 	for _, expr := range pbExprs {
-		e, err := expression.PBToExpr(expr, colIDs, sc)
+		e, err := expression.PBToExpr(expr, colIDs, fieldTps, sc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
