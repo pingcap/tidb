@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package plan_test
+package expression_test
 
 import (
 	"github.com/juju/errors"
@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -332,7 +333,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		is := sessionctx.GetDomain(ctx).InfoSchema()
 		err = plan.ResolveName(stmt, is, ctx)
 		c.Assert(err, IsNil)
-		plan.InferType(ctx.GetSessionVars().StmtCtx, stmt)
+		expression.InferType(ctx.GetSessionVars().StmtCtx, stmt)
 		tp := stmt.GetResultFields()[0].Column.Tp
 		chs := stmt.GetResultFields()[0].Column.Charset
 		flag := stmt.GetResultFields()[0].Column.Flag
