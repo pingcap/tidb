@@ -192,14 +192,13 @@ func (s *testEvaluatorSuite) TestRand(c *C) {
 	c.Assert(v.GetFloat64(), GreaterEqual, float64(0))
 
 	// issue 3211
-	rand.Seed(20160101)
-	result := []float64{rand.Float64(), rand.Float64(), rand.Float64()}
 	f2, err := fc.getFunction([]Expression{&Constant{Value: types.NewIntDatum(20160101), RetType: types.NewFieldType(mysql.TypeLonglong)}}, s.ctx)
 	c.Assert(err, IsNil)
+	rand.Seed(20160101)
 	for i := 0; i < 3; i++ {
 		v, err = f2.eval(nil)
 		c.Assert(err, IsNil)
-		c.Assert(v.GetFloat64(), Equals, result[i])
+		c.Assert(v.GetFloat64(), Equals, rand.Float64())
 	}
 }
 
