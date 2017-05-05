@@ -96,7 +96,7 @@ func (p *Projection) buildSchemaByExprs() *expression.Schema {
 		} else {
 			// If the expression is not a column, we add a column to occupy the position.
 			schema.Append(&expression.Column{
-				Position: -1})
+				Position: -1, RetType: expr.GetType()})
 		}
 	}
 	return schema
