@@ -86,7 +86,7 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 // BuildLogicalPlan is exported and only used for test.
 func BuildLogicalPlan(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
 	// We have to infer type again because after parameter is set, the expression type may change.
-	if err := InferType(ctx.GetSessionVars().StmtCtx, node); err != nil {
+	if err := expression.InferType(ctx.GetSessionVars().StmtCtx, node); err != nil {
 		return nil, errors.Trace(err)
 	}
 	builder := &planBuilder{
