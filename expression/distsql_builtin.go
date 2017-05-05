@@ -81,17 +81,17 @@ func newDistSQLFunction(sc *variable.StatementContext, exprType tipb.ExprType, a
 	// TODO: Too ugly...
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx = sc
-	tp, err := reInferFuncType(sc, name, args)
+	tp, err := reinferFuncType(sc, name, args)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return NewFunction(ctx, name, tp, args...)
 }
 
-// reInferFuncType re-infer FieldType of ScalarFunction because FieldType information will be lost after ScalarFunction be converted to pb.
-// reInferFuncType is only used by mock-tikv, the real TiKV do not need to re-infer field type.
+// reinferFuncType re-infer FieldType of ScalarFunction because FieldType information will be lost after ScalarFunction be converted to pb.
+// reinferFuncType is only used by mock-tikv, the real TiKV do not need to re-infer field type.
 // This is a temporary solution to make the new type inferer works normally, and will be replaced by passing function signature in the future.
-func reInferFuncType(sc *variable.StatementContext, funcName string, args []Expression) (*types.FieldType, error) {
+func reinferFuncType(sc *variable.StatementContext, funcName string, args []Expression) (*types.FieldType, error) {
 	newArgs := make([]ast.ExprNode, len(args))
 	for i, arg := range args {
 		switch x := arg.(type) {
@@ -108,7 +108,7 @@ func reInferFuncType(sc *variable.StatementContext, funcName string, args []Expr
 			}
 		case *ScalarFunction:
 			newArgs[i] = &ast.FuncCallExpr{FnName: x.FuncName}
-			_, err := reInferFuncType(sc, x.FuncName.O, x.GetArgs())
+			_, err := reinferFuncType(sc, x.FuncName.O, x.GetArgs())
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
