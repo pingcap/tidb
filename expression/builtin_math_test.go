@@ -196,15 +196,11 @@ func (s *testEvaluatorSuite) TestRand(c *C) {
 	result := []float64{rand.Float64(), rand.Float64(), rand.Float64()}
 	f2, err := fc.getFunction([]Expression{&Constant{Value: types.NewIntDatum(20160101), RetType: types.NewFieldType(mysql.TypeLonglong)}}, s.ctx)
 	c.Assert(err, IsNil)
-	v, err = f2.eval(nil)
-	c.Assert(err, IsNil)
-	c.Assert(v.GetFloat64(), Equals, result[0])
-	v, err = f2.eval(nil)
-	c.Assert(err, IsNil)
-	c.Assert(v.GetFloat64(), Equals, result[1])
-	v, err = f2.eval(nil)
-	c.Assert(err, IsNil)
-	c.Assert(v.GetFloat64(), Equals, result[2])
+	for i := 0; i < 3; i++ {
+		v, err = f2.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(v.GetFloat64(), Equals, result[i])
+	}
 }
 
 func (s *testEvaluatorSuite) TestPow(c *C) {
