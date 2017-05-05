@@ -21,9 +21,6 @@ import (
 func FoldConstant(expr Expression) Expression {
 	scalarFunc, ok := expr.(*ScalarFunction)
 	if !ok || !scalarFunc.Function.isDeterministic() {
-		if ok {
-			log.Warning(scalarFunc)
-		}
 		return expr
 	}
 	args := scalarFunc.GetArgs()
