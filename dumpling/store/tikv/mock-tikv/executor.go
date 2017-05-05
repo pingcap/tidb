@@ -379,12 +379,14 @@ func (e *aggregateExec) Next() (handle int64, value [][]byte, err error) {
 	// The first column is group key.
 	value = append(value, gkData)
 	for _, agg := range e.aggExprs {
-		ds := agg.GetPartialResult(gk)
-		data, err := codec.EncodeValue(nil, ds...)
-		if err != nil {
-			return 0, nil, errors.Trace(err)
+		partialResults := agg.GetPartialResult(gk)
+		for _, result := range partialResults {
+			data, err := codec.EncodeValue(nil, result)
+			if err != nil {
+				return 0, nil, errors.Trace(err)
+			}
+			value = append(value, data)
 		}
-		value = append(value, data)
 	}
 	e.currGroupIdx++
 
