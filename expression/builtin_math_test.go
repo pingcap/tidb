@@ -15,6 +15,7 @@ package expression
 
 import (
 	"math"
+	"math/rand"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
@@ -22,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
-	"math/rand"
 )
 
 func (s *testEvaluatorSuite) TestAbs(c *C) {
