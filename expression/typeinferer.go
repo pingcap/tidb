@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package plan
+package expression
 
 import (
 	"strings"
@@ -422,6 +422,8 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	case ast.Compress:
 		tp = types.NewFieldType(mysql.TypeBlob)
 	case ast.AnyValue:
+		tp = x.Args[0].GetType()
+	case ast.RowFunc:
 		tp = x.Args[0].GetType()
 	default:
 		tp = types.NewFieldType(mysql.TypeUnspecified)

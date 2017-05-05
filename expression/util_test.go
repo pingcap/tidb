@@ -56,7 +56,7 @@ func (s *testUtilSuite) TestSubstituteCorCol2Constant(c *check.C) {
 	cast := NewCastFunc(types.NewFieldType(mysql.TypeLonglong), corCol1, ctx)
 	plus := newFunction(ast.Plus, cast, corCol2)
 	plus2 := newFunction(ast.Plus, plus, One)
-	ans := &Constant{Value: types.NewIntDatum(3)}
+	ans := &Constant{Value: types.NewIntDatum(3), RetType: types.NewFieldType(mysql.TypeLonglong)}
 	ret, err := SubstituteCorCol2Constant(plus2)
 	c.Assert(err, check.IsNil)
 	c.Assert(ret.Equal(ans, ctx), check.IsTrue)
