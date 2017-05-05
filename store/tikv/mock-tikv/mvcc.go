@@ -130,18 +130,18 @@ func (e *mvccEntry) Prewrite(mutation *kvrpcpb.Mutation, startTS uint64, primary
 	return nil
 }
 
-func (e *mvccEntry) checkTxnCommitted(startTS uint64) (uint64, bool) {
+func (e *mvccEntry) getTxnCommitInfo(startTS uint64) *mvccValue {
 	for _, v := range e.values {
-		if v.startTS == startTS && v.valueType != typeRollback {
-			return v.commitTS, true
+		if v.startTS == startTS {
+			return &v
 		}
 	}
-	return 0, false
+	return nil
 }
 
 func (e *mvccEntry) Commit(startTS, commitTS uint64) error {
 	if e.lock == nil || e.lock.startTS != startTS {
-		if _, ok := e.checkTxnCommitted(startTS); ok {
+		if c := e.getTxnCommitInfo(startTS); c != nil && c.valueType != typeRollback {
 			return nil
 		}
 		return ErrRetryable("txn not found")
@@ -165,18 +165,33 @@ func (e *mvccEntry) Commit(startTS, commitTS uint64) error {
 }
 
 func (e *mvccEntry) Rollback(startTS uint64) error {
-	if e.lock == nil || e.lock.startTS != startTS {
-		if commitTS, ok := e.checkTxnCommitted(startTS); ok {
-			return ErrAlreadyCommitted(commitTS)
-		}
+	// If current transaction's lock exist.
+	if e.lock != nil && e.lock.startTS == startTS {
+		e.lock = nil
+		e.values = append([]mvccValue{{
+			valueType: typeRollback,
+			startTS:   startTS,
+			commitTS:  startTS,
+		}}, e.values...)
 		return nil
 	}
+
+	// If current transaction's lock not exist.
+	// If commit info of current transaction exist.
+	if c := e.getTxnCommitInfo(startTS); c != nil {
+		// If current transaction is already committed.
+		if c.valueType != typeRollback {
+			return ErrAlreadyCommitted(c.commitTS)
+		}
+		// If current transaction is already rollback.
+		return nil
+	}
+	// If current transaction is not prewritted before.
 	e.values = append([]mvccValue{{
 		valueType: typeRollback,
 		startTS:   startTS,
 		commitTS:  startTS,
 	}}, e.values...)
-	e.lock = nil
 	return nil
 }
 
