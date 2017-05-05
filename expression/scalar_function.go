@@ -27,7 +27,6 @@ import (
 
 // ScalarFunction is the function that returns a value.
 type ScalarFunction struct {
-	baseExpr
 	FuncName model.CIStr
 	// RetType is the type that ScalarFunction returns.
 	// TODO: Implement type inference here, now we use ast's return type temporarily.

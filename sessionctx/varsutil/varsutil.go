@@ -144,7 +144,7 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 	return nil
 }
 
-// For all tidb session variable options, we use "ON"/1 to turn on the options.
+// tidbOptOn could be used for all tidb session variable options, we use "ON"/1 to turn on those options.
 func tidbOptOn(opt string) bool {
 	return strings.EqualFold(opt, "ON") || opt == "1"
 }

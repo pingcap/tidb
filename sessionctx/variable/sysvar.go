@@ -38,10 +38,10 @@ type SysVar struct {
 	// Scope is for whether can be changed or not
 	Scope ScopeFlag
 
-	// Variable name
+	// Name is the variable name.
 	Name string
 
-	// Variable value
+	// Value is the variable value.
 	Value string
 }
 
