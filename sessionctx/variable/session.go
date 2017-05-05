@@ -95,16 +95,16 @@ func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, co
 	tc.TableDeltaMap[tableID] = item
 }
 
-// SessionVars is to handle user-defined or global variables in current session.
+// SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
-	// user-defined variables
+	// Users are user defined variables.
 	Users map[string]string
-	// system variables
+	// Systems are system variables.
 	Systems map[string]string
-	// prepared statement
+	// PreparedStmts stores prepared statement.
 	PreparedStmts        map[uint32]interface{}
 	PreparedStmtNameToID map[string]uint32
-	// prepared statement auto increment id
+	// preparedStmtID is id of prepared statement.
 	preparedStmtID uint32
 
 	// retry information
@@ -112,25 +112,26 @@ type SessionVars struct {
 	// Should be reset on transaction finished.
 	TxnCtx *TransactionContext
 
-	// following variables are special for current session
+	// Following variables are special for current session.
+
 	Status           uint16
 	PrevLastInsertID uint64 // PrevLastInsertID is the last insert ID of previous statement.
 	LastInsertID     uint64 // LastInsertID is the auto-generated ID in the current statement.
 	InsertID         uint64 // InsertID is the given insert ID of an auto_increment column.
 
-	// Client capability
+	// ClientCapability is client's capability.
 	ClientCapability uint32
 
-	// Connection ID
+	// ConnectionID is the connection id of the current session.
 	ConnectionID uint64
 
-	// Current user
+	// User is the username with which the session login.
 	User string
 
-	// Current DB
+	// CurrentDB is the default database of this session.
 	CurrentDB string
 
-	// Strict SQL mode
+	// StrictSQLMode indicates if the session is in strict mode.
 	StrictSQLMode bool
 
 	// CommonGlobalLoaded indicates if common global variable has been loaded for this session.
@@ -146,7 +147,7 @@ type SessionVars struct {
 	// version, we load an old version schema for query.
 	SnapshotInfoschema interface{}
 
-	// GlobalAccessor is used to set and get global variables.
+	// GlobalVarsAccessor is used to set and get global variables.
 	GlobalVarsAccessor GlobalVarAccessor
 
 	// LastFoundRows is the number of found rows of last query statement
@@ -158,7 +159,7 @@ type SessionVars struct {
 	// AllowAggPushDown can be set to false to forbid aggregation push down.
 	AllowAggPushDown bool
 
-	// AllowSubqueryUnFolding can be set to true to fold in subquery
+	// AllowInSubqueryUnFolding can be set to true to fold in subquery
 	AllowInSubqueryUnFolding bool
 
 	// CurrInsertValues is used to record current ValuesExpr's values.
@@ -176,32 +177,32 @@ type SessionVars struct {
 	// SkipConstraintCheck is true when importing data.
 	SkipConstraintCheck bool
 
-	// SkipUTF8 check on input value.
+	// SkipUTF8Check check on input value.
 	SkipUTF8Check bool
 
-	// SkipDDLWait can be set to true to skip 2 lease wait after create/drop/truncate table, create/drop database.
+	// SkipDDLWait can be set to true to skip 2 lease wait after creating/dropping/truncating table, creating/dropping database.
 	// Then if there are multiple TiDB servers, the new table may not be available for other TiDB servers.
 	SkipDDLWait bool
 
-	// TiDBBuildStatsConcurrency is used to control statistics building concurrency.
+	// BuildStatsConcurrencyVar is used to control statistics building concurrency.
 	BuildStatsConcurrencyVar int
 
-	// The number of handles for a index lookup task in index double read executor.
+	// IndexLookupSize is the number of handles for an index lookup task in index double read executor.
 	IndexLookupSize int
 
-	// The number of concurrent index lookup worker.
+	// IndexLookupConcurrency is the number of concurrent index lookup worker.
 	IndexLookupConcurrency int
 
-	// The number of concurrent dist SQL scan worker.
+	// DistSQLScanConcurrency is the number of concurrent dist SQL scan worker.
 	DistSQLScanConcurrency int
 
-	// The number of concurrent index serial scan worker.
+	// IndexSerialScanConcurrency is the number of concurrent index serial scan worker.
 	IndexSerialScanConcurrency int
 
-	// Should we split insert data into multiple batches.
+	// BatchInsert indicates if we should split insert data into multiple batches.
 	BatchInsert bool
 
-	// Max row count that the outer table of index nested loop join could be without force hint.
+	// MaxRowCountForINLJ defines max row count that the outer table of index nested loop join could be without force hint.
 	MaxRowCountForINLJ int
 }
 
@@ -303,13 +304,14 @@ type TableDelta struct {
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
 type StatementContext struct {
-	/* Variables that are set before execution */
+	// Set the following variables before execution
+
 	InUpdateOrDeleteStmt bool
 	IgnoreTruncate       bool
 	TruncateAsWarning    bool
 	InShowWarning        bool
 
-	/* Variables that changes during execution. */
+	// mu struct holds variables that change during execution.
 	mu struct {
 		sync.Mutex
 		affectedRows uint64

@@ -379,7 +379,7 @@ func EvaluateExprWithNull(ctx context.Context, schema *Schema, expr Expression) 
 		if !schema.Contains(x) {
 			return x, nil
 		}
-		constant := &Constant{Value: types.Datum{}}
+		constant := &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}
 		return constant, nil
 	default:
 		return x.Clone(), nil
