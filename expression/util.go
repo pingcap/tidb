@@ -273,7 +273,7 @@ var oppositeOp = map[string]string{
 	ast.NE: ast.EQ,
 }
 
-// PushDownNot will push the `not` function down to the expression's arguments.
+// PushDownNot pushes the `not` function down to the expression's arguments.
 func PushDownNot(expr Expression, not bool, ctx context.Context) Expression {
 	if f, ok := expr.(*ScalarFunction); ok {
 		switch f.FuncName.L {
