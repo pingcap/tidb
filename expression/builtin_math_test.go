@@ -18,9 +18,11 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
+	"math/rand"
 )
 
 func (s *testEvaluatorSuite) TestAbs(c *C) {
@@ -188,6 +190,21 @@ func (s *testEvaluatorSuite) TestRand(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v.GetFloat64(), Less, float64(1))
 	c.Assert(v.GetFloat64(), GreaterEqual, float64(0))
+
+	// issue 3211
+	rand.Seed(20160101)
+	result := []float64{rand.Float64(), rand.Float64(), rand.Float64()}
+	f2, err := fc.getFunction([]Expression{&Constant{Value: types.NewIntDatum(20160101), RetType: types.NewFieldType(mysql.TypeLonglong)}}, s.ctx)
+	c.Assert(err, IsNil)
+	v, err = f2.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.GetFloat64(), Equals, result[0])
+	v, err = f2.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.GetFloat64(), Equals, result[1])
+	v, err = f2.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.GetFloat64(), Equals, result[2])
 }
 
 func (s *testEvaluatorSuite) TestPow(c *C) {

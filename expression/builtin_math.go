@@ -27,6 +27,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -325,6 +326,10 @@ type randFunctionClass struct {
 
 func (c *randFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	err := errors.Trace(c.verifyArgs(args))
+	// To fix issue3211, we add an extra argument to record the time that RAND has executed.
+	if len(args) == 1 {
+		args = append(args, &Constant{Value: types.NewIntDatum(0), RetType: types.NewFieldType(mysql.TypeLonglong)})
+	}
 	bt := &builtinRandSig{newBaseBuiltinFunc(args, ctx)}
 	bt.deterministic = false
 	return bt, errors.Trace(err)
@@ -341,12 +346,20 @@ func (b *builtinRandSig) eval(row []types.Datum) (d types.Datum, err error) {
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	if len(args) == 1 && !args[0].IsNull() {
+	if len(args) == 2 && !args[0].IsNull() {
 		seed, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
 		if err != nil {
 			return d, errors.Trace(err)
 		}
 		rand.Seed(seed)
+		cnt := args[1].GetInt64()
+		// To avoid get a same result every time for `rand(seed)`,
+		// we check arg[1] to get the time that RAND has executed,
+		// and skip the first cnt results.
+		for i := 0; i < int(cnt); i++ {
+			rand.Float64()
+		}
+		b.args[1] = &Constant{Value: types.NewIntDatum(cnt + 1), RetType: types.NewFieldType(mysql.TypeLonglong)}
 	}
 	d.SetFloat64(rand.Float64())
 	return d, nil
