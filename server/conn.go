@@ -59,7 +59,7 @@ var defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 	mysql.ClientConnectWithDB | mysql.ClientProtocol41 |
 	mysql.ClientTransactions | mysql.ClientSecureConnection | mysql.ClientFoundRows |
 	mysql.ClientMultiStatements | mysql.ClientMultiResults | mysql.ClientLocalFiles |
-	mysql.ClientConnectAtts
+	mysql.ClientConnectAtts | mysql.ClientDeprecateEOF
 
 // clientConn represents a connection between server and client, it maintains connection specific state,
 // handles client query.
@@ -456,12 +456,12 @@ func (cc *clientConn) dispatch(data []byte) error {
 		}
 		return cc.handleQuery(hack.String(data))
 	case mysql.ComPing:
-		return cc.writeOK()
+		return cc.writeOK(false, false)
 	case mysql.ComInitDB:
 		if err := cc.useDB(hack.String(data)); err != nil {
 			return errors.Trace(err)
 		}
-		return cc.writeOK()
+		return cc.writeOK(false, false)
 	case mysql.ComFieldList:
 		return cc.handleFieldList(hack.String(data))
 	case mysql.ComStmtPrepare:
@@ -496,13 +496,21 @@ func (cc *clientConn) flush() error {
 	return cc.pkt.flush()
 }
 
-func (cc *clientConn) writeOK() error {
+func (cc *clientConn) writeOK(more, eof bool) error {
 	data := cc.alloc.AllocWithLen(4, 32)
-	data = append(data, mysql.OKHeader)
+	if eof {
+		data = append(data, mysql.EOFHeader)
+	} else {
+		data = append(data, mysql.OKHeader)
+	}
 	data = append(data, dumpLengthEncodedInt(uint64(cc.ctx.AffectedRows()))...)
 	data = append(data, dumpLengthEncodedInt(uint64(cc.ctx.LastInsertID()))...)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
-		data = append(data, dumpUint16(cc.ctx.Status())...)
+		status := cc.ctx.Status()
+		if more {
+			status |= mysql.ServerMoreResultsExists
+		}
+		data = append(data, dumpUint16(status)...)
 		data = append(data, dumpUint16(cc.ctx.WarningCount())...)
 	}
 
@@ -687,7 +695,7 @@ func (cc *clientConn) handleQuery(sql string) (err error) {
 				return errors.Trace(err)
 			}
 		}
-		err = cc.writeOK()
+		err = cc.writeOK(false, false)
 	}
 	return errors.Trace(err)
 }
@@ -708,7 +716,12 @@ func (cc *clientConn) handleFieldList(sql string) (err error) {
 			return errors.Trace(err)
 		}
 	}
-	if err := cc.writeEOF(false); err != nil {
+	if cc.capability&mysql.ClientDeprecateEOF > 0 {
+		err = cc.writeOK(false, true)
+	} else {
+		err = cc.writeEOF(false)
+	}
+	if err != nil {
 		return errors.Trace(err)
 	}
 	return errors.Trace(cc.flush())
@@ -746,9 +759,11 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 			return errors.Trace(err)
 		}
 	}
-
-	if err = cc.writeEOF(false); err != nil {
-		return errors.Trace(err)
+	if cc.capability&mysql.ClientDeprecateEOF == 0 {
+		err = cc.writeEOF(false)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	for {
@@ -786,8 +801,11 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool, more bool) error
 		}
 		row, err = rs.Next()
 	}
-
-	err = cc.writeEOF(more)
+	if cc.capability&mysql.ClientDeprecateEOF > 0 {
+		err = cc.writeOK(more, true)
+	} else {
+		err = cc.writeEOF(more)
+	}
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -801,5 +819,11 @@ func (cc *clientConn) writeMultiResultset(rss []ResultSet, binary bool) error {
 			return errors.Trace(err)
 		}
 	}
-	return cc.writeOK()
+	var err error
+	if cc.capability&mysql.ClientDeprecateEOF > 0 {
+		err = cc.writeOK(false, true)
+	} else {
+		err = cc.writeEOF(false)
+	}
+	return errors.Trace(err)
 }
