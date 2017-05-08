@@ -448,29 +448,26 @@ func (d *ddl) onModifyColumn(t *meta.Meta, job *model.Job) error {
 		col = findCol(tblInfo.Columns, oldColName.L)
 	}
 
-	originalState := col.State
-	switch col.State {
-	case model.StatePublic:
+	originalState := job.SchemaState
+	switch job.SchemaState {
+	case model.StateNone:
 		if err = d.modifyColumnPosition(tblInfo, newCol, oldColName, pos); err != nil {
 			job.State = model.JobCancelled
 			return errors.Trace(err)
 		}
 		// use delete only to prevent add record based on different column order.
 		// otherwise `insert into t value (1, 2)` will add different row and index record.
-		newCol.State = model.StateDeleteOnly
 		job.SchemaState = model.StateDeleteOnly
 		_, err = updateTableInfo(t, job, tblInfo, originalState)
 	case model.StateDeleteOnly:
 		// TODO: add write and reorganization phase to support modify column type
-		col.State = model.StatePublic
-		job.SchemaState = model.StatePublic
-
 		ver, err := updateTableInfo(t, job, tblInfo, originalState)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
 		job.State = model.JobDone
+		job.SchemaState = model.StatePublic
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
 	default:
 		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
