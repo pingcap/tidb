@@ -20,15 +20,22 @@ import (
 	"github.com/pingcap/tidb/terror"
 )
 
+// Json is for MySQL Json type.
 type Json interface {
+	// ParseFromString parses a json from string.
 	ParseFromString(s string) error
+	// DumpToString dumps itself to string.
 	DumpToString() string
+	// Serialize means serialize itself into bytes.
 	Serialize() ([]byte, error)
+	// Deserialize means deserialize a json from bytes.
 	Deserialize(bytes []byte) error
 
+	// Extract is used for json_extract function.
 	Extract(pathExpr string) (Json, error)
 }
 
+// CreateJson will create a json with bson as serde format and nil as data.
 func CreateJson(j interface{}) Json {
 	return &jsonImpl{
 		serde: bsonImplFlag,
@@ -36,6 +43,7 @@ func CreateJson(j interface{}) Json {
 	}
 }
 
+// CompareJson compares two json object.
 func CompareJson(j1 Json, j2 Json) (int, error) {
 	s1, _ := j1.Serialize()
 	s2, _ := j2.Serialize()

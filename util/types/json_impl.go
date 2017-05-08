@@ -52,8 +52,7 @@ func (j *jsonImpl) DumpToString() string {
 }
 
 func (j *jsonImpl) Serialize() (data []byte, err error) {
-	// TODO 这里暂时采用json的序列化，因为bson的go实现目前无法做到
-	// {"a": 1, "b": 2}, {"b": 2, "a": 1}序列化后的内容完全相同
+	// TODO use real bson format for serde.
 	switch j.serde {
 	case bsonImplFlag:
 		binary, err := bson.MarshalJSON(j.json)

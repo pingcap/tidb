@@ -406,7 +406,8 @@ func (d *Datum) SetValue(val interface{}) {
 // TODO: return error properly.
 func (d *Datum) CompareDatum(sc *variable.StatementContext, ad Datum) (int, error) {
 	if d.k == KindMysqlJson && ad.k != KindMysqlJson {
-		return ad.CompareDatum(sc, *d)
+		cmp, err := ad.CompareDatum(sc, *d)
+		return cmp * -1, err
 	}
 	switch ad.k {
 	case KindNull:

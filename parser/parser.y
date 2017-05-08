@@ -451,7 +451,7 @@ import (
 	identified	"IDENTIFIED"
 	isolation	"ISOLATION"
 	indexes		"INDEXES"
-    jsonType    "JSON"
+	jsonType    "JSON"
     jsonExtract "JSON_EXTRACT"
 	keyBlockSize	"KEY_BLOCK_SIZE"
 	local		"LOCAL"
