@@ -36,7 +36,7 @@ type testEvalSuite struct{}
 // TODO: add more tests.
 func (s *testEvalSuite) TestEval(c *C) {
 	colID := int64(1)
-	xevaluator := NewEvaluator(new(variable.StatementContext))
+	xevaluator := NewEvaluator(new(variable.StatementContext), time.Local)
 	xevaluator.Row[colID] = types.NewIntDatum(100)
 	tests := []struct {
 		expr   *tipb.Expr
@@ -406,7 +406,7 @@ func (s *testEvalSuite) TestLike(c *C) {
 			result: 0,
 		},
 	}
-	ev := NewEvaluator(new(variable.StatementContext))
+	ev := NewEvaluator(new(variable.StatementContext), time.Local)
 	for _, tt := range tests {
 		res, err := ev.Eval(tt.expr)
 		c.Check(err, IsNil)
@@ -452,7 +452,7 @@ func (s *testEvalSuite) TestWhereIn(c *C) {
 			result: false,
 		},
 	}
-	ev := NewEvaluator(new(variable.StatementContext))
+	ev := NewEvaluator(new(variable.StatementContext), time.Local)
 	for _, tt := range tests {
 		res, err := ev.Eval(tt.expr)
 		c.Check(err, IsNil)
@@ -471,7 +471,7 @@ func (s *testEvalSuite) TestWhereIn(c *C) {
 
 func (s *testEvalSuite) TestEvalIsNull(c *C) {
 	colID := int64(1)
-	xevaluator := NewEvaluator(new(variable.StatementContext))
+	xevaluator := NewEvaluator(new(variable.StatementContext), time.Local)
 	xevaluator.Row[colID] = types.NewIntDatum(100)
 	null, trueAns, falseAns := types.Datum{}, types.NewIntDatum(1), types.NewIntDatum(0)
 	tests := []struct {
