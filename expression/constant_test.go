@@ -68,7 +68,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 				newFunction(ast.EQ, newColumn("d"), newLonglong(1)),
 				newFunction(ast.OrOr, newLonglong(1), newColumn("a")),
 			},
-			result: "eq(test.t.a, 1), eq(test.t.b, 1), eq(test.t.c, 1), eq(test.t.d, 1), or(1, 1)",
+			result: "1, eq(test.t.a, 1), eq(test.t.b, 1), eq(test.t.c, 1), eq(test.t.d, 1)",
 		},
 		{
 			conditions: []Expression{
@@ -164,7 +164,7 @@ func (*testExpressionSuite) TestConstantFolding(c *C) {
 		},
 	}
 	for _, tt := range tests {
-		newConds := FoldConstant(tt.condition)
+		newConds := FoldConstant(tt.condition, true)
 		c.Assert(newConds.String(), Equals, tt.result, Commentf("different for expr %s", tt.condition))
 	}
 }

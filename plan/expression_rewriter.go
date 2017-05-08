@@ -80,7 +80,7 @@ func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*a
 	if getRowLen(er.ctxStack[0]) != 1 {
 		return nil, nil, ErrOperandColumns.GenByArgs(1)
 	}
-	result := expression.FoldConstant(er.ctxStack[0])
+	result := expression.FoldConstant(er.ctxStack[0], true)
 	return result, er.p, nil
 }
 

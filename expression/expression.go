@@ -170,10 +170,9 @@ func evalExprToString(expr Expression, row []types.Datum, _ *variable.StatementC
 	if val.IsNull() || err != nil {
 		return "", val.IsNull(), errors.Trace(err)
 	}
-	tc := expr.GetType().ToClass()
-	if tc == types.ClassString {
-		return val.GetString(), false, nil
-	}
+	// We should not call `Datum.GetString()` directly if `expr` is `ClassString`,
+	// for types like Bit or Hex, the values are stored in `Datum.i` but not `Datum.b`,
+	// so it will cause an error if we call `val.GetString()` directly.
 	res, err = val.ToString()
 	return res, false, errors.Trace(err)
 }
@@ -374,7 +373,7 @@ func EvaluateExprWithNull(ctx context.Context, schema *Schema, expr Expression) 
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return FoldConstant(newFunc), nil
+		return FoldConstant(newFunc, true), nil
 	case *Column:
 		if !schema.Contains(x) {
 			return x, nil

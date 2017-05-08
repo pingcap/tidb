@@ -78,11 +78,12 @@ func NewFunction(ctx context.Context, funcName string, retType *types.FieldType,
 	if retType == nil {
 		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction.")
 	}
-	return &ScalarFunction{
+	function := &ScalarFunction{
 		FuncName: model.NewCIStr(funcName),
 		RetType:  retType,
 		Function: f,
-	}, nil
+	}
+	return FoldConstant(function, false), nil
 }
 
 // ScalarFuncs2Exprs converts []*ScalarFunction to []Expression.

@@ -15,21 +15,31 @@ package expression
 
 import (
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/ast"
 )
 
 // FoldConstant does constant folding optimization on an expression.
-func FoldConstant(expr Expression) Expression {
+// isRecursive indicates whether fold constant recursively.
+func FoldConstant(expr Expression, isRecursive bool) Expression {
 	scalarFunc, ok := expr.(*ScalarFunction)
-	if !ok || !scalarFunc.Function.isDeterministic() {
+	// TODO: RowFun cannot be correctly evaluated if we fold it.
+	if !ok || !scalarFunc.Function.isDeterministic() || scalarFunc.FuncName.O == ast.RowFunc {
 		return expr
 	}
 	args := scalarFunc.GetArgs()
 	canFold := true
 	for i := 0; i < len(args); i++ {
-		foldedArg := FoldConstant(args[i])
-		scalarFunc.GetArgs()[i] = foldedArg
-		if _, ok := foldedArg.(*Constant); !ok {
-			canFold = false
+		if isRecursive {
+			foldedArg := FoldConstant(args[i], true)
+			scalarFunc.GetArgs()[i] = foldedArg
+			if _, ok := foldedArg.(*Constant); !ok {
+				canFold = false
+			}
+		} else {
+			if _, ok := args[i].(*Constant); !ok {
+				canFold = false
+				break
+			}
 		}
 	}
 	if !canFold {
