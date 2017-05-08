@@ -1131,7 +1131,7 @@ func (s *testDBSuite) TestChangeColumnPosition(c *C) {
 	s.tk.MustExec("alter table position modify column b int first")
 	s.tk.MustQuery("select * from position").Check(testkit.Rows("2 1", "4 3"))
 	s.tk.MustExec("insert into position value ()")
-	s.tk.MustQuery("select * from position").Check(testkit.Rows("2 1", "4 3", "2 1"))
+	s.tk.MustQuery("select * from position").Check(testkit.Rows("2 1", "4 3", "<nil> 1"))
 
 	s.tk.MustExec("drop table position")
 	s.tk.MustExec("create table position (a int, b int, c double, d varchar(5))")
@@ -1146,10 +1146,20 @@ func (s *testDBSuite) TestChangeColumnPosition(c *C) {
 	c.Assert(err, NotNil)
 
 	s.tk.MustExec("drop table position")
-	s.tk.MustExec("drop table if exists position")
 	s.tk.MustExec("create table position (a int, b int)")
 	s.tk.MustExec("alter table position add index t(a, b)")
 	s.tk.MustExec("alter table position modify column b int first")
 	s.tk.MustExec("insert into position value (3, 5)")
 	s.tk.MustQuery("select a from position where a = 3").Check(testkit.Rows())
+
+	s.tk.MustExec("alter table position change column b c int first")
+	s.tk.MustQuery("select * from position where c = 3").Check(testkit.Rows("3 5"))
+	_, err = s.tk.Exec("alter table position change column c b int after c")
+	c.Assert(err, NotNil)
+
+	s.tk.MustExec("drop table position")
+	s.tk.MustExec("create table position (a int default 2)")
+	s.tk.MustExec("alter table position modify column a int default 5 first")
+	s.tk.MustExec("insert into position value ()")
+	s.tk.MustQuery("select * from position").Check(testkit.Rows("5"))
 }

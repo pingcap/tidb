@@ -443,21 +443,26 @@ func (d *ddl) onModifyColumn(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	}
 
-	originalState := tblInfo.State
-	switch tblInfo.State {
+	col := findCol(tblInfo.Columns, newCol.Name.L)
+	if col == nil {
+		col = findCol(tblInfo.Columns, oldColName.L)
+	}
+
+	originalState := col.State
+	switch col.State {
 	case model.StatePublic:
-		if err = d.modifyColumnPosition(tblInfo, oldColName, pos); err != nil {
+		if err = d.modifyColumnPosition(tblInfo, newCol, oldColName, pos); err != nil {
 			job.State = model.JobCancelled
 			return errors.Trace(err)
 		}
 		// use delete only to prevent add record based on different column order.
 		// otherwise `insert into t value (1, 2)` will add different row and index record.
-		tblInfo.State = model.StateDeleteOnly
+		newCol.State = model.StateDeleteOnly
 		job.SchemaState = model.StateDeleteOnly
 		_, err = updateTableInfo(t, job, tblInfo, originalState)
 	case model.StateDeleteOnly:
 		// TODO: add write and reorganization phase to support modify column type
-		tblInfo.State = model.StatePublic
+		col.State = model.StatePublic
 		job.SchemaState = model.StatePublic
 
 		ver, err := updateTableInfo(t, job, tblInfo, originalState)
@@ -474,16 +479,18 @@ func (d *ddl) onModifyColumn(t *meta.Meta, job *model.Job) error {
 	return errors.Trace(err)
 }
 
-func (d *ddl) modifyColumnPosition(tblInfo *model.TableInfo, colName *model.CIStr, pos *ast.ColumnPosition) error {
-	if pos.Tp == ast.ColumnPositionAfter && colName.L == pos.RelativeColumn.Name.L {
-		return infoschema.ErrColumnNotExists.GenByArgs(colName, tblInfo.Name)
+// modifyColumnPosition put column at designated position, and change offset and column name in indices.
+func (d *ddl) modifyColumnPosition(tblInfo *model.TableInfo, col *model.ColumnInfo, oldName *model.CIStr, pos *ast.ColumnPosition) error {
+	if pos.Tp == ast.ColumnPositionAfter && oldName.L == pos.RelativeColumn.Name.L {
+		return infoschema.ErrColumnNotExists.GenByArgs(oldName, tblInfo.Name)
 	}
 
-	col := findCol(tblInfo.Columns, colName.L)
-	if col == nil || col.State != model.StatePublic {
-		return infoschema.ErrColumnNotExists.GenByArgs(colName, tblInfo.Name)
+	oldCol := findCol(tblInfo.Columns, oldName.L)
+	if oldCol == nil || oldCol.State != model.StatePublic {
+		return infoschema.ErrColumnNotExists.GenByArgs(oldName, tblInfo.Name)
 	}
-	oldPos, newPos := col.Offset, 0
+
+	oldPos, newPos := oldCol.Offset, 0
 	if pos.Tp == ast.ColumnPositionAfter {
 		relative := findCol(tblInfo.Columns, pos.RelativeColumn.Name.L)
 		if relative == nil || relative.State != model.StatePublic {
@@ -498,6 +505,7 @@ func (d *ddl) modifyColumnPosition(tblInfo *model.TableInfo, colName *model.CISt
 	}
 
 	if newPos == oldPos {
+		tblInfo.Columns[newPos] = col
 		return nil
 	}
 
@@ -518,10 +526,14 @@ func (d *ddl) modifyColumnPosition(tblInfo *model.TableInfo, colName *model.CISt
 	}
 
 	for _, idx := range tblInfo.Indices {
-		for _, col := range idx.Columns {
-			newOffset, ok := offsetChanged[col.Offset]
+		for _, c := range idx.Columns {
+			newOffset, ok := offsetChanged[c.Offset]
 			if ok {
-				col.Offset = newOffset
+				c.Offset = newOffset
+			}
+
+			if c.Name.L == oldName.L {
+				c.Name = col.Name
 			}
 		}
 	}
