@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package types
+package json
 
 import (
 	"bytes"
@@ -37,11 +37,11 @@ type jsonImpl struct {
 
 func (j *jsonImpl) ParseFromString(s string) (err error) {
 	if len(s) == 0 {
-		return errInvalidJsonText.GenByArgs("The document is empty")
+		return ErrInvalidJsonText.GenByArgs("The document is empty")
 	}
 	err = bson.UnmarshalJSON([]byte(s), &j.json)
 	if err != nil {
-		return errInvalidJsonText.GenByArgs(err)
+		return ErrInvalidJsonText.GenByArgs(err)
 	}
 	return err
 }

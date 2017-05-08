@@ -19,6 +19,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/types/json"
 )
 
 // First byte in the encoded value which specifies the encoding type.
@@ -209,7 +210,7 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 		}
 	case jsonFlag:
 		var v []byte
-		var j types.Json = types.CreateJson(nil)
+		var j json.Json = json.CreateJson(nil)
 		b, v, err = DecodeBytes(b)
 		err = j.Deserialize(v)
 		d.SetValue(j)

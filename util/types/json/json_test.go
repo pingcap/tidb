@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package types
+package json
 
 import . "github.com/pingcap/check"
 
@@ -38,12 +38,11 @@ func (s *testJsonSuite) TestValidatePathExpr(c *C) {
 
 func (s *testJsonSuite) TestJson(c *C) {
 	var (
-		jstrList  []string
-		jList     []Json
-		datumList []Datum
-		bytes     []byte
-		err       error
-		cmp       int
+		jstrList []string
+		jList    []Json
+		bytes    []byte
+		err      error
+		cmp      int
 	)
 	jstrList = []string{
 		`[3, "4", 6.8, true, null, {"a": ["22", false], "b": "x"}]`,
@@ -52,7 +51,6 @@ func (s *testJsonSuite) TestJson(c *C) {
 		// `[  3  , "4", 6.8, true, null, {"b" : "x", "a": ["22", false]}]`,
 	}
 	jList = make([]Json, len(jstrList))
-	datumList = make([]Datum, len(jstrList))
 
 	for i, jstr := range jstrList {
 		jList[i] = CreateJson(nil)
@@ -66,14 +64,8 @@ func (s *testJsonSuite) TestJson(c *C) {
 		j := CreateJson(nil)
 		err = j.Deserialize(bytes)
 		c.Assert(err, IsNil)
-
-		datumList[i].SetMysqlJson(jList[i])
 	}
 	cmp, err = CompareJson(jList[0], jList[1])
-	c.Assert(err, IsNil)
-	c.Assert(cmp, Equals, 0)
-
-	cmp, err = datumList[0].CompareDatum(nil, datumList[1])
 	c.Assert(err, IsNil)
 	c.Assert(cmp, Equals, 0)
 }
@@ -95,20 +87,4 @@ func (s *testJsonSuite) TestCreateJson(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}
-}
-
-func (s *testJsonSuite) TestCompareJson(c *C) {
-	var d Datum
-	var cmp int
-	var err error
-
-	d.SetInt64(3)
-	cmp, err = d.compareMysqlJson(nil, CreateJson(3))
-	c.Assert(err, IsNil)
-	c.Assert(cmp, Equals, 0)
-
-	d.SetString("3")
-	cmp, err = d.compareMysqlJson(nil, CreateJson("3"))
-	c.Assert(err, IsNil)
-	c.Assert(cmp, Equals, 0)
 }

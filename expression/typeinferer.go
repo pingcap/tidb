@@ -421,6 +421,11 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = x.Args[1].GetType()
 	case ast.Compress:
 		tp = types.NewFieldType(mysql.TypeBlob)
+	case ast.JsonValid, ast.JsonContains:
+		tp = types.NewFieldType(mysql.TypeTiny)
+	case ast.JsonType, ast.JsonExtract, ast.JsonObject, ast.JsonArray, ast.JsonMerge,
+		ast.JsonSet, ast.JsonInsert, ast.JsonReplace, ast.JsonRemove:
+		tp = types.NewFieldType(mysql.TypeJson)
 	case ast.AnyValue:
 		tp = x.Args[0].GetType()
 	case ast.RowFunc:

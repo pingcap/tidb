@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package types
+package json
 
 import (
 	"bytes"
@@ -51,11 +51,16 @@ func CompareJson(j1 Json, j2 Json) (int, error) {
 }
 
 var (
-	errInvalidJsonText = terror.ClassJson.New(mysql.ErrInvalidJsonText, mysql.MySQLErrName[mysql.ErrInvalidJsonText])
+	// Error codes and messages about json.
+	ErrInvalidJsonText = terror.ClassJson.New(mysql.ErrInvalidJsonText, mysql.MySQLErrName[mysql.ErrInvalidJsonText])
+	ErrInvalidJsonPath = terror.ClassJson.New(mysql.ErrInvalidJsonPath, mysql.MySQLErrName[mysql.ErrInvalidJsonPath])
+	ErrInvalidJsonData = terror.ClassJson.New(mysql.ErrInvalidJsonData, mysql.MySQLErrName[mysql.ErrInvalidJsonData])
 )
 
 func init() {
 	terror.ErrClassToMySQLCodes[terror.ClassJson] = map[terror.ErrCode]uint16{
 		mysql.ErrInvalidJsonText: mysql.ErrInvalidJsonText,
+		mysql.ErrInvalidJsonPath: mysql.ErrInvalidJsonPath,
+		mysql.ErrInvalidJsonData: mysql.ErrInvalidJsonData,
 	}
 }

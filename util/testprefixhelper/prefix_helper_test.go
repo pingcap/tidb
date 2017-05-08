@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package util
+package testprefixhelper
 
 import (
 	"fmt"
@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	. "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
