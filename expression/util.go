@@ -14,6 +14,9 @@
 package expression
 
 import (
+	"strconv"
+	"strings"
+	"time"
 	"unicode"
 
 	"github.com/juju/errors"
@@ -261,4 +264,15 @@ func ConvertCol2CorCol(cond Expression, corCols []*CorrelatedColumn, outerSchema
 		}
 	}
 	return cond
+}
+
+// tz has format (\+|-)([0-9]|0[0-9]|1[0-3]):00
+func timeZone2Hour(tz string) time.Duration {
+	sign := 1
+	if strings.HasPrefix(tz, "-") {
+		sign = -1
+	}
+
+	h, _ := strconv.Atoi(tz[1:strings.Index(tz, ":")])
+	return time.Duration(sign*h) * time.Hour
 }

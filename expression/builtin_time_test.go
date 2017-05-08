@@ -1426,3 +1426,37 @@ func (s *testEvaluatorSuite) TestSecToTime(c *C) {
 		c.Assert(result, Equals, test.expect)
 	}
 }
+
+func (s *testEvaluatorSuite) TestConvertTz(c *C) {
+	tests := []struct {
+		t      string
+		fromTz string
+		toTz   string
+		expect string
+	}{
+		{"2004-01-01 12:00:00", "GMT", "MET", "2004-01-01 13:00:00"},
+		{"2004-01-01 12:00:00", "-01:00", "-12:00", "2004-01-01 01:00:00"},
+		{"2004-01-01 12:00:00", "+00:00", "-11:00", "2004-01-01 01:00:00"},
+		{"2004-01-01 12:00:00", "+00:00", "-08:00", "2004-01-01 04:00:00"},
+		{"2004-01-01 12:00:00", "+00:00", "+10:00", "2004-01-01 22:00:00"},
+		{"2004-01-01 12:00:00", "+00:00", "+11:00", "2004-01-01 23:00:00"},
+		{"2004-01-01 12:00:00", "+00:00", "+12:00", "2004-01-02 00:00:00"},
+		{"2004-01-01 18:00:00", "+00:00", "+12:00", "2004-01-02 06:00:00"},
+		{"2004-01-01 12:00:00", "-00:00", "+13:00", "2004-01-02 01:00:00"},
+	}
+	fc := funcs[ast.ConvertTz]
+	for _, test := range tests {
+		f, err := fc.getFunction(
+			datumsToConstants(
+				[]types.Datum{
+					types.NewDatum(test.t),
+					types.NewStringDatum(test.fromTz),
+					types.NewStringDatum(test.toTz)}),
+			s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		result, _ := d.ToString()
+		c.Assert(result, Equals, test.expect)
+	}
+}

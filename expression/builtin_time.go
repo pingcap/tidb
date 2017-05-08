@@ -1760,7 +1760,71 @@ type builtinConvertTzSig struct {
 // eval evals a builtinConvertTzSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_convert-tz
 func (b *builtinConvertTzSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("CONVERT_TZ")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if args[0].IsNull() || args[1].IsNull() || args[2].IsNull() {
+		return d, errors.Trace(err)
+	}
+
+	sc := b.ctx.GetSessionVars().StmtCtx
+	date, err := convertToTime(sc, args[0], mysql.TypeDatetime)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if date.IsNull() {
+		return d, nil
+	}
+
+	fromTZ := args[1].GetString()
+	toTZ := args[2].GetString()
+
+	r, _ := regexp.Compile(`(\+|-)([0-9]|0[0-9]|1[0-3]):00`)
+	fmatch := r.MatchString(fromTZ)
+	tmatch := r.MatchString(toTZ)
+
+	if !fmatch && !tmatch {
+
+		ftz, err := time.LoadLocation(fromTZ)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+
+		ttz, err := time.LoadLocation(toTZ)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+
+		t, err := date.GetMysqlTime().Time.GoTime(ftz)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+
+		d.SetMysqlTime(types.Time{
+			Time: types.FromGoTime(t.In(ttz)),
+			Type: mysql.TypeDatetime,
+			Fsp:  0,
+		})
+		return d, nil
+	}
+
+	if fmatch && tmatch {
+		t, err := date.GetMysqlTime().Time.GoTime(time.Local)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+
+		d.SetMysqlTime(types.Time{
+			Time: types.FromGoTime(t.Add(timeZone2Hour(toTZ) - timeZone2Hour(fromTZ))),
+			Type: mysql.TypeDatetime,
+			Fsp:  0,
+		})
+	}
+
+	return d, nil
 }
 
 type makeDateFunctionClass struct {
