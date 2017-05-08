@@ -57,7 +57,7 @@ func NewRegionRequestSender(bo *Backoffer, regionCache *RegionCache, client Clie
 	}
 }
 
-func genRegionErrorResp(req *tikvrpc.Request, e *errorpb.Error) *tikvrpc.Response {
+func genRegionErrorResp(req *tikvrpc.Request, e *errorpb.Error) (*tikvrpc.Response, error) {
 	resp := &tikvrpc.Response{}
 	resp.Type = req.Type
 	switch req.Type {
@@ -118,9 +118,9 @@ func genRegionErrorResp(req *tikvrpc.Request, e *errorpb.Error) *tikvrpc.Respons
 			RegionError: e,
 		}
 	default:
-		panic(fmt.Sprintf("invalid request type %v", req.Type))
+		return nil, fmt.Errorf("invalid request type %v", req.Type)
 	}
-	return resp
+	return resp, nil
 }
 
 func setContext(req *tikvrpc.Request, ctx *kvrpcpb.Context) {
@@ -172,7 +172,7 @@ func (s *RegionRequestSender) SendReq(req *tikvrpc.Request, regionID RegionVerID
 
 			// TODO: Change the returned error to something like "region missing in cache",
 			// and handle this error like StaleEpoch, which means to re-split the request and retry.
-			return genRegionErrorResp(req, &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}}), nil
+			return genRegionErrorResp(req, &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}})
 		}
 
 		s.storeAddr = ctx.Addr

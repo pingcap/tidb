@@ -18,6 +18,9 @@ import (
 	"strconv"
 )
 
+// RoundMode is the type for round mode.
+type RoundMode string
+
 // constant values.
 const (
 	ten0 = 1
@@ -41,6 +44,13 @@ const (
 
 	MaxFraction = 30
 	DivFracIncr = 4
+
+	// ModeHalfEven rounds normally.
+	ModeHalfEven RoundMode = "ModeHalfEven"
+	// Truncate just truncates the decimal.
+	ModeTruncate RoundMode = "Truncate"
+	// Ceiling is not supported now.
+	modeCeiling RoundMode = "Ceiling"
 )
 
 var (
@@ -169,7 +179,7 @@ func (d *MyDecimal) IsNegative() bool {
 // String returns the decimal string representation rounded to resultFrac.
 func (d *MyDecimal) String() string {
 	tmp := *d
-	tmp.Round(&tmp, int(tmp.resultFrac))
+	tmp.Round(&tmp, int(tmp.resultFrac), ModeHalfEven)
 	return string(tmp.ToString())
 }
 
@@ -454,7 +464,7 @@ func (d *MyDecimal) Shift(shift int) error {
 		err = ErrTruncated
 		wordsFrac -= lack
 		diff := digitsFrac - wordsFrac*digitsPerWord
-		d.Round(d, digitEnd-point-diff)
+		d.Round(d, digitEnd-point-diff, ModeHalfEven)
 		digitEnd -= diff
 		digitsFrac = wordsFrac * digitsPerWord
 		if digitEnd <= digitBegin {
@@ -664,9 +674,11 @@ func (d *MyDecimal) doMiniRightShift(shift, beg, end int) {
 
 // Round rounds the decimal to "frac" digits.
 //
-//    to     - result buffer. d == to is allowed
-//    frac   - to what position after fraction point to round. can be negative!
-//    mode   - round to nearest even or truncate
+//    to			- result buffer. d == to is allowed
+//    frac			- to what position after fraction point to round. can be negative!
+//    roundMode		- round to nearest even or truncate
+// 			ModeHalfEven rounds normally.
+// 			Truncate just truncates the decimal.
 //
 // NOTES
 //  scale can be negative !
@@ -674,7 +686,7 @@ func (d *MyDecimal) doMiniRightShift(shift, beg, end int) {
 //
 // RETURN VALUE
 //  eDecOK/eDecTruncated
-func (d *MyDecimal) Round(to *MyDecimal, frac int) (err error) {
+func (d *MyDecimal) Round(to *MyDecimal, frac int, roundMode RoundMode) (err error) {
 	if frac > MaxFraction {
 		frac = MaxFraction
 	}
@@ -686,7 +698,16 @@ func (d *MyDecimal) Round(to *MyDecimal, frac int) (err error) {
 	wordsFrac := digitsToWords(int(d.digitsFrac))
 	wordsInt := digitsToWords(int(d.digitsInt))
 
-	var roundDigit int32 = 5
+	var roundDigit int32
+	/* TODO - fix this code as it won't work for CEILING mode */
+	switch roundMode {
+	case modeCeiling:
+		roundDigit = 0
+	case ModeHalfEven:
+		roundDigit = 5
+	case ModeTruncate:
+		roundDigit = 10
+	}
 
 	if wordsInt+wordsFracTo > wordBufLen {
 		wordsFracTo = wordBufLen - wordsInt
@@ -724,6 +745,7 @@ func (d *MyDecimal) Round(to *MyDecimal, frac int) (err error) {
 	if frac == wordsFracTo*digitsPerWord {
 		doInc := false
 		switch roundDigit {
+		// Notice: No support for ceiling mode now.
 		case 0:
 			// If any word after scale is not zero, do increment.
 			// e.g ceiling 3.0001 to scale 1, gets 3.1
@@ -739,6 +761,9 @@ func (d *MyDecimal) Round(to *MyDecimal, frac int) (err error) {
 			digAfterScale := d.wordBuf[toIdx+1] / digMask // the first digit after scale.
 			// If first digit after scale is 5 and round even, do increment if digit at scale is odd.
 			doInc = (digAfterScale > 5) || (digAfterScale == 5)
+		case 10:
+			// Never round, just truncate.
+			doInc = false
 		}
 		if doInc {
 			if toIdx >= 0 {

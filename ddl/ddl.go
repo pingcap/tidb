@@ -82,6 +82,9 @@ var (
 	ErrInvalidIndexState = terror.ClassDDL.New(codeInvalidIndexState, "invalid index state")
 	// ErrInvalidForeignKeyState returns for invalid foreign key state.
 	ErrInvalidForeignKeyState = terror.ClassDDL.New(codeInvalidForeignKeyState, "invalid foreign key state")
+	// ErrUnsupportedModifyPrimaryKey returns an error when add or drop the primary key.
+	// It's exported for testing.
+	ErrUnsupportedModifyPrimaryKey = terror.ClassDDL.New(codeUnsupportedModifyPrimaryKey, "unsupported %s primary key")
 
 	// ErrColumnBadNull returns for a bad null value.
 	ErrColumnBadNull = terror.ClassDDL.New(codeBadNull, "column cann't be null")
@@ -456,11 +459,12 @@ const (
 	codeInvalidIndexState      = 103
 	codeInvalidForeignKeyState = 104
 
-	codeCantDropColWithIndex    = 201
-	codeUnsupportedAddColumn    = 202
-	codeUnsupportedModifyColumn = 203
-	codeUnsupportedDropPKHandle = 204
-	codeUnsupportedCharset      = 205
+	codeCantDropColWithIndex        = 201
+	codeUnsupportedAddColumn        = 202
+	codeUnsupportedModifyColumn     = 203
+	codeUnsupportedDropPKHandle     = 204
+	codeUnsupportedCharset          = 205
+	codeUnsupportedModifyPrimaryKey = 206
 
 	codeFileNotFound          = 1017
 	codeErrorOnRename         = 1025

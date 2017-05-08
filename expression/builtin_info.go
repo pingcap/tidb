@@ -69,6 +69,7 @@ type builtinDatabaseSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinDatabaseSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html
 func (b *builtinDatabaseSig) eval(_ []types.Datum) (d types.Datum, err error) {
 	currentDB := b.ctx.GetSessionVars().CurrentDB
@@ -94,14 +95,16 @@ type builtinFoundRowsSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinFoundRowsSig.
 // See https://dev.mysql.com/doc/refman/5.6/en/information-functions.html#function_found-rows
+// TODO: SQL_CALC_FOUND_ROWS and LIMIT not support for now, We will finish in another PR.
 func (b *builtinFoundRowsSig) eval(_ []types.Datum) (d types.Datum, err error) {
 	data := b.ctx.GetSessionVars()
 	if data == nil {
 		return d, errors.Errorf("Missing session variable when evalue builtin")
 	}
 
-	d.SetUint64(data.StmtCtx.FoundRows())
+	d.SetUint64(data.LastFoundRows)
 	return d, nil
 }
 
@@ -120,6 +123,7 @@ type builtinCurrentUserSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinCurrentUserSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
 // TODO: The value of CURRENT_USER() can differ from the value of USER(). We will finish this after we support grant tables.
 func (b *builtinCurrentUserSig) eval(_ []types.Datum) (d types.Datum, err error) {
@@ -147,6 +151,7 @@ type builtinUserSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinUserSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_user
 func (b *builtinUserSig) eval(_ []types.Datum) (d types.Datum, err error) {
 	data := b.ctx.GetSessionVars()
@@ -198,7 +203,8 @@ type builtinLastInsertIDSig struct {
 	baseBuiltinFunc
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_last-insert-id
+// eval evals a builtinLastInsertIDSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_last-insert-id
 func (b *builtinLastInsertIDSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
@@ -232,6 +238,7 @@ type builtinVersionSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinVersionSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_version
 func (b *builtinVersionSig) eval(_ []types.Datum) (d types.Datum, err error) {
 	d.SetString(mysql.ServerVersion)
@@ -250,7 +257,8 @@ type builtinBenchmarkSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_benchmark
+// eval evals a builtinBenchmarkSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_benchmark
 func (b *builtinBenchmarkSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("BENCHMARK")
 }
@@ -267,7 +275,8 @@ type builtinCharsetSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_charset
+// eval evals a builtinCharsetSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_charset
 func (b *builtinCharsetSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("CHARSET")
 }
@@ -284,7 +293,8 @@ type builtinCoercibilitySig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_coercibility
+// eval evals a builtinCoercibilitySig.
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_coercibility
 func (b *builtinCoercibilitySig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("COERCIBILITY")
 }
@@ -301,7 +311,8 @@ type builtinCollationSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_collation
+// eval evals a builtinCollationSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_collation
 func (b *builtinCollationSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("COLLATION")
 }
@@ -321,7 +332,8 @@ type builtinRowCountSig struct {
 	baseBuiltinFunc
 }
 
-// https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_row-count
+// eval evals a builtinRowCountSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_row-count
 func (b *builtinRowCountSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("ROW_COUNT")
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
@@ -49,10 +50,23 @@ var EvalAstExpr func(expr ast.ExprNode, ctx context.Context) (types.Datum, error
 type Expression interface {
 	fmt.Stringer
 	json.Marshaler
+
 	// Eval evaluates an expression through a row.
 	Eval(row []types.Datum) (types.Datum, error)
 
-	// Get the expression return type.
+	// EvalInt returns the int64 representation of expression.
+	EvalInt(row []types.Datum, sc *variable.StatementContext) (val int64, isNull bool, err error)
+
+	// EvalReal returns the float64 representation of expression.
+	EvalReal(row []types.Datum, sc *variable.StatementContext) (val float64, isNull bool, err error)
+
+	// EvalString returns the string representation of expression.
+	EvalString(row []types.Datum, sc *variable.StatementContext) (val string, isNull bool, err error)
+
+	// EvalDecimal returns the decimal representation of expression.
+	EvalDecimal(row []types.Datum, sc *variable.StatementContext) (val *types.MyDecimal, isNull bool, err error)
+
+	// GetType gets the type that the expression returns.
 	GetType() *types.FieldType
 
 	// Clone copies an expression totally.
@@ -74,21 +88,94 @@ type Expression interface {
 	ResolveIndices(schema *Schema)
 }
 
-// EvalBool evaluates expression to a boolean value.
-func EvalBool(expr Expression, row []types.Datum, ctx context.Context) (bool, error) {
-	data, err := expr.Eval(row)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	if data.IsNull() {
-		return false, nil
-	}
+// CNFExprs stands for a CNF expression.
+type CNFExprs []Expression
 
-	i, err := data.ToBool(ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return false, errors.Trace(err)
+// Clone clones itself.
+func (e CNFExprs) Clone() CNFExprs {
+	cnf := make(CNFExprs, 0, len(e))
+	for _, expr := range e {
+		cnf = append(cnf, expr.Clone())
 	}
-	return i != 0, nil
+	return cnf
+}
+
+// EvalBool evaluates expression list to a boolean value.
+func EvalBool(exprList CNFExprs, row []types.Datum, ctx context.Context) (bool, error) {
+	for _, expr := range exprList {
+		data, err := expr.Eval(row)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if data.IsNull() {
+			return false, nil
+		}
+
+		i, err := data.ToBool(ctx.GetSessionVars().StmtCtx)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if i == 0 {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// evalExprToInt evaluates `expr` to int type.
+func evalExprToInt(expr Expression, row []types.Datum, sc *variable.StatementContext) (res int64, isNull bool, err error) {
+	val, err := expr.Eval(row)
+	if val.IsNull() || err != nil {
+		return 0, val.IsNull(), errors.Trace(err)
+	}
+	tc := expr.GetType().ToClass()
+	if tc == types.ClassInt {
+		return val.GetInt64(), false, nil
+	}
+	res, err = val.ToInt64(sc)
+	return res, false, errors.Trace(err)
+}
+
+// evalExprToReal evaluates `expr` to real type.
+func evalExprToReal(expr Expression, row []types.Datum, sc *variable.StatementContext) (res float64, isNull bool, err error) {
+	val, err := expr.Eval(row)
+	if val.IsNull() || err != nil {
+		return 0, val.IsNull(), errors.Trace(err)
+	}
+	tc := expr.GetType().ToClass()
+	if tc == types.ClassReal {
+		return val.GetFloat64(), false, nil
+	}
+	res, err = val.ToFloat64(sc)
+	return res, false, errors.Trace(err)
+}
+
+// evalExprToDecimal evaluates `expr` to decimal type.
+func evalExprToDecimal(expr Expression, row []types.Datum, sc *variable.StatementContext) (res *types.MyDecimal, isNull bool, err error) {
+	val, err := expr.Eval(row)
+	if val.IsNull() || err != nil {
+		return nil, val.IsNull(), errors.Trace(err)
+	}
+	tc := expr.GetType().ToClass()
+	if tc == types.ClassDecimal {
+		return val.GetMysqlDecimal(), false, nil
+	}
+	res, err = val.ToDecimal(sc)
+	return res, false, errors.Trace(err)
+}
+
+// evalExprToString evaluates `expr` to string type.
+func evalExprToString(expr Expression, row []types.Datum, _ *variable.StatementContext) (res string, isNull bool, err error) {
+	val, err := expr.Eval(row)
+	if val.IsNull() || err != nil {
+		return "", val.IsNull(), errors.Trace(err)
+	}
+	tc := expr.GetType().ToClass()
+	if tc == types.ClassString {
+		return val.GetString(), false, nil
+	}
+	res, err = val.ToString()
+	return res, false, errors.Trace(err)
 }
 
 // One stands for a number 1.
@@ -140,6 +227,30 @@ func (c *Constant) GetType() *types.FieldType {
 // Eval implements Expression interface.
 func (c *Constant) Eval(_ []types.Datum) (types.Datum, error) {
 	return c.Value, nil
+}
+
+// EvalInt returns int representation of Constant.
+func (c *Constant) EvalInt(_ []types.Datum, sc *variable.StatementContext) (int64, bool, error) {
+	val, isNull, err := evalExprToInt(c, nil, sc)
+	return val, isNull, errors.Trace(err)
+}
+
+// EvalReal returns real representation of Constant.
+func (c *Constant) EvalReal(_ []types.Datum, sc *variable.StatementContext) (float64, bool, error) {
+	val, isNull, err := evalExprToReal(c, nil, sc)
+	return val, isNull, errors.Trace(err)
+}
+
+// EvalString returns string representation of Constant.
+func (c *Constant) EvalString(_ []types.Datum, sc *variable.StatementContext) (string, bool, error) {
+	val, isNull, err := evalExprToString(c, nil, sc)
+	return val, isNull, errors.Trace(err)
+}
+
+// EvalDecimal returns decimal representation of Constant.
+func (c *Constant) EvalDecimal(_ []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
+	val, isNull, err := evalExprToDecimal(c, nil, sc)
+	return val, isNull, errors.Trace(err)
 }
 
 // Equal implements Expression interface.
@@ -268,7 +379,7 @@ func EvaluateExprWithNull(ctx context.Context, schema *Schema, expr Expression) 
 		if !schema.Contains(x) {
 			return x, nil
 		}
-		constant := &Constant{Value: types.Datum{}}
+		constant := &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}
 		return constant, nil
 	default:
 		return x.Clone(), nil

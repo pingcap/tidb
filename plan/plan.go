@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // UseDAGPlanBuilder means we should use new planner and dag pb.
@@ -75,6 +76,18 @@ func (c *columnProp) equal(nc *columnProp, ctx context.Context) bool {
 type requiredProp struct {
 	cols []*expression.Column
 	desc bool
+}
+
+func (p *requiredProp) equal(prop *requiredProp) bool {
+	if len(p.cols) != len(prop.cols) || p.desc != prop.desc {
+		return false
+	}
+	for i := range p.cols {
+		if !p.cols[i].Equal(prop.cols[i], nil) {
+			return false
+		}
+	}
+	return true
 }
 
 func (p *requiredProp) isEmpty() bool {
@@ -194,6 +207,9 @@ type PhysicalPlan interface {
 	// attach2TaskProfile makes the current physical plan as the father of task's physicalPlan and updates the cost of
 	// current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
 	attach2TaskProfile(...taskProfile) taskProfile
+
+	// ToPB converts physical plan to tipb executor.
+	ToPB(ctx context.Context) (*tipb.Executor, error)
 }
 
 type baseLogicalPlan struct {

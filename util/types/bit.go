@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 // Bit is for mysql bit type.
@@ -103,4 +104,34 @@ func ParseBit(s string, width int) (Bit, error) {
 	}
 
 	return Bit{Value: n, Width: width}, nil
+}
+
+// ParseStringToBitValue parses the string for bit type into uint64.
+func ParseStringToBitValue(s string, width int) (uint64, error) {
+	if len(s) == 0 {
+		return 0, errors.Errorf("invalid empty string for parsing bit value")
+	}
+
+	b := hack.Slice(s)
+	if width == UnspecifiedBitWidth {
+		width = len(b) * 8
+	}
+	if width == 0 {
+		width = MinBitWidth
+	}
+	if width < MinBitWidth || width > MaxBitWidth {
+		return 0, errors.Errorf("invalid display width for bit type, must in [1, 64], but %d", width)
+	}
+
+	var n uint64
+	l := len(b)
+	for i := range b {
+		n += uint64(b[l-i-1]) << uint(i*8)
+	}
+
+	if n > (uint64(1)<<uint64(width))-1 {
+		return 0, errors.Errorf("bit %s is too long for width %d", s, width)
+	}
+
+	return n, nil
 }

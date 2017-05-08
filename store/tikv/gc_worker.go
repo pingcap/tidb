@@ -67,7 +67,7 @@ func NewGCWorker(store kv.Storage) (*GCWorker, error) {
 	return worker, nil
 }
 
-// Close stops backgroud goroutines.
+// Close stops background goroutines.
 func (w *GCWorker) Close() {
 	close(w.quit)
 }

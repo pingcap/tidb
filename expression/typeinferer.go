@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package plan
+package expression
 
 import (
 	"strings"
@@ -292,6 +292,9 @@ func (v *typeInferrer) getFsp(x *ast.FuncCallExpr) int {
 	return 0
 }
 
+// handleFuncCallExpr ...
+// TODO: (zhexuany) this function contains too much redundant things. Maybe replace with a map like
+// we did for error in mysql package.
 func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	var (
 		tp  *types.FieldType
@@ -299,12 +302,20 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	)
 	switch x.FnName.L {
 	case ast.Abs, ast.Ifnull, ast.Nullif:
+		if len(x.Args) == 0 {
+			tp = types.NewFieldType(mysql.TypeNull)
+			break
+		}
 		tp = x.Args[0].GetType()
 		// TODO: We should cover all types.
 		if x.FnName.L == ast.Abs && tp.Tp == mysql.TypeDatetime {
 			tp = types.NewFieldType(mysql.TypeDouble)
 		}
-	case ast.Round:
+	case ast.Round, ast.Truncate:
+		if len(x.Args) == 0 {
+			tp = types.NewFieldType(mysql.TypeNull)
+			break
+		}
 		t := x.Args[0].GetType().Tp
 		switch t {
 		case mysql.TypeBit, mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLonglong:
@@ -323,15 +334,21 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 			for i := 1; i < len(x.Args); i++ {
 				tp = mergeCmpType(tp, x.Args[i].GetType())
 			}
+		} else {
+			tp = types.NewFieldType(mysql.TypeNull)
 		}
 	case ast.Ceil, ast.Ceiling, ast.Floor:
-		t := x.Args[0].GetType().Tp
-		if t == mysql.TypeNull || t == mysql.TypeFloat || t == mysql.TypeDouble || t == mysql.TypeVarchar ||
-			t == mysql.TypeTinyBlob || t == mysql.TypeMediumBlob || t == mysql.TypeLongBlob ||
-			t == mysql.TypeBlob || t == mysql.TypeVarString || t == mysql.TypeString {
-			tp = types.NewFieldType(mysql.TypeDouble)
+		if len(x.Args) > 0 {
+			t := x.Args[0].GetType().Tp
+			if t == mysql.TypeNull || t == mysql.TypeFloat || t == mysql.TypeDouble || t == mysql.TypeVarchar ||
+				t == mysql.TypeTinyBlob || t == mysql.TypeMediumBlob || t == mysql.TypeLongBlob ||
+				t == mysql.TypeBlob || t == mysql.TypeVarString || t == mysql.TypeString {
+				tp = types.NewFieldType(mysql.TypeDouble)
+			} else {
+				tp = types.NewFieldType(mysql.TypeLonglong)
+			}
 		} else {
-			tp = types.NewFieldType(mysql.TypeLonglong)
+			tp = types.NewFieldType(mysql.TypeNull)
 		}
 	case ast.FromUnixTime:
 		if len(x.Args) == 1 {
@@ -358,13 +375,13 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		ast.FoundRows, ast.Length, ast.Extract, ast.Locate, ast.UnixTimestamp, ast.Quarter, ast.IsIPv4, ast.ToDays,
 		ast.ToSeconds, ast.Strcmp, ast.IsNull, ast.BitLength, ast.CharLength, ast.CRC32, ast.TimestampDiff,
 		ast.Sign, ast.IsIPv6, ast.Ord, ast.Instr, ast.BitCount, ast.TimeToSec, ast.FindInSet, ast.Field,
-		ast.GetLock, ast.ReleaseLock, ast.Interval, ast.Position, ast.PeriodAdd:
+		ast.GetLock, ast.ReleaseLock, ast.Interval, ast.Position, ast.PeriodAdd, ast.IsIPv4Mapped:
 		tp = types.NewFieldType(mysql.TypeLonglong)
 	case ast.ConnectionID, ast.InetAton:
 		tp = types.NewFieldType(mysql.TypeLonglong)
 		tp.Flag |= mysql.UnsignedFlag
 	// time related
-	case ast.Curtime, ast.CurrentTime, ast.TimeDiff, ast.MakeTime, ast.SecToTime:
+	case ast.Curtime, ast.CurrentTime, ast.TimeDiff, ast.MakeTime, ast.SecToTime, ast.UTCTime:
 		tp = types.NewFieldType(mysql.TypeDuration)
 		tp.Decimal = v.getFsp(x)
 	case ast.Curdate, ast.CurrentDate, ast.Date, ast.FromDays, ast.MakeDate:
@@ -405,6 +422,8 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	case ast.Compress:
 		tp = types.NewFieldType(mysql.TypeBlob)
 	case ast.AnyValue:
+		tp = x.Args[0].GetType()
+	case ast.RowFunc:
 		tp = x.Args[0].GetType()
 	default:
 		tp = types.NewFieldType(mysql.TypeUnspecified)

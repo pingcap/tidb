@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tipb/go-tipb"
+	tipb "github.com/pingcap/tipb/go-tipb"
 )
 
 // AggregationFunction stands for aggregate functions.
@@ -120,10 +120,10 @@ func NewAggFunction(funcType string, funcArgs []Expression, distinct bool) Aggre
 }
 
 // NewDistAggFunc creates new Aggregate function for mock tikv.
-func NewDistAggFunc(expr *tipb.Expr, colsID map[int64]int, sc *variable.StatementContext) (AggregationFunction, error) {
+func NewDistAggFunc(expr *tipb.Expr, colsID map[int64]int, fieldTps []*types.FieldType, sc *variable.StatementContext) (AggregationFunction, error) {
 	args := make([]Expression, 0, len(expr.Children))
 	for _, child := range expr.Children {
-		arg, err := PBToExpr(child, colsID, sc)
+		arg, err := PBToExpr(child, colsID, fieldTps, sc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -617,7 +617,7 @@ func (af *avgFunction) calculateResult(ctx *aggEvaluateContext) (d types.Datum) 
 		y := types.NewDecFromInt(ctx.Count)
 		to := new(types.MyDecimal)
 		types.DecimalDiv(x, y, to, types.DivFracIncr)
-		to.Round(to, ctx.Value.Frac()+types.DivFracIncr)
+		to.Round(to, ctx.Value.Frac()+types.DivFracIncr, types.ModeHalfEven)
 		d.SetMysqlDecimal(to)
 	}
 	return

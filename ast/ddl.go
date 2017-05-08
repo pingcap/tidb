@@ -249,9 +249,8 @@ const (
 type ColumnOption struct {
 	node
 
-	Tp ColumnOptionType
-	// The value For Default or On Update.
-	Expr ExprNode
+	Tp   ColumnOptionType
+	Expr ExprNode // The value For Default or On Update.
 }
 
 // Accept implements Node Accept interface.
@@ -318,14 +317,11 @@ type Constraint struct {
 	Tp   ConstraintType
 	Name string
 
-	// Used for PRIMARY KEY, UNIQUE, ......
-	Keys []*IndexColName
+	Keys []*IndexColName // Used for PRIMARY KEY, UNIQUE, ......
 
-	// Used for foreign key.
-	Refer *ReferenceDef
+	Refer *ReferenceDef // Used for foreign key.
 
-	// Index Options
-	Option *IndexOption
+	Option *IndexOption // Index Options
 }
 
 // Accept implements Node Accept interface.
@@ -606,7 +602,7 @@ const (
 // ColumnPosition represent the position of the newly added column
 type ColumnPosition struct {
 	node
-	// ColumnPositionNone | ColumnPositionFirst | ColumnPositionAfter
+	// Tp is either ColumnPositionNone, ColumnPositionFirst or ColumnPositionAfter.
 	Tp ColumnPositionType
 	// RelativeColumn is the column the newly added column after if type is ColumnPositionAfter
 	RelativeColumn *ColumnName

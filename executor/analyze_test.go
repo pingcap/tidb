@@ -42,6 +42,15 @@ func (s *testSuite) TestAnalyzeTable(c *C) {
 	result = tk.MustQuery("explain select * from t1 where t1.a = 1")
 	rowStr = fmt.Sprintf("%s", result.Rows())
 	c.Check(strings.Split(rowStr, "{")[0], Equals, "[[TableScan_4 ")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("create index ind_a on t1 (a)")
+	tk.MustExec("insert into t1 (a) values (1)")
+	tk.MustExec("analyze table t1 index ind_a")
+	result = tk.MustQuery("explain select * from t1 where t1.a = 1")
+	rowStr = fmt.Sprintf("%s", result.Rows())
+	c.Check(strings.Split(rowStr, "{")[0], Equals, "[[TableScan_4 ")
 }
 
 type recordSet struct {

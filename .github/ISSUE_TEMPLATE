@@ -12,5 +12,5 @@ If possible, provide a recipe for reproducing the error.
 
 
 
-4. What version of Go are you using (`go version`)?
+4. What version of TiDB are you using (`tidb-server -V`)?
 

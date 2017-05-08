@@ -17,9 +17,11 @@ import (
 	"bytes"
 	"fmt"
 
+	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -82,7 +84,7 @@ type Column struct {
 	// If so, this column's name will be the plain sql text.
 	IsAggOrSubq bool
 
-	// Only used for execution.
+	// Index is only used for execution.
 	Index int
 
 	hashcode []byte
@@ -122,6 +124,30 @@ func (col *Column) GetType() *types.FieldType {
 // Eval implements Expression interface.
 func (col *Column) Eval(row []types.Datum) (types.Datum, error) {
 	return row[col.Index], nil
+}
+
+// EvalInt returns int representation of Column.
+func (col *Column) EvalInt(row []types.Datum, sc *variable.StatementContext) (int64, bool, error) {
+	val, isNull, err := evalExprToInt(col, row, sc)
+	return val, isNull, errors.Trace(err)
+}
+
+// EvalReal returns real representation of Column.
+func (col *Column) EvalReal(row []types.Datum, sc *variable.StatementContext) (float64, bool, error) {
+	val, isNull, err := evalExprToReal(col, row, sc)
+	return val, isNull, errors.Trace(err)
+}
+
+// EvalString returns string representation of Column.
+func (col *Column) EvalString(row []types.Datum, sc *variable.StatementContext) (string, bool, error) {
+	val, isNull, err := evalExprToString(col, row, sc)
+	return val, isNull, errors.Trace(err)
+}
+
+// EvalDecimal returns decimal representation of Column.
+func (col *Column) EvalDecimal(row []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
+	val, isNull, err := evalExprToDecimal(col, row, sc)
+	return val, isNull, errors.Trace(err)
 }
 
 // Clone implements Expression interface.

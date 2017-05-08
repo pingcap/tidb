@@ -1,5 +1,5 @@
-hash: 12e3c4bf27fa3b7919af988925a33313ed69f884129bf1639045645fe0ed283b
-updated: 2017-04-24T22:01:01.162682839+08:00
+hash: 72fc48b4e2b9e8116ca8457e10d1eb0df1c1d1e7d0286f75928f0eb427a9e46c
+updated: 2017-05-02T18:53:14.187450044+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -12,10 +12,11 @@ imports:
 - name: github.com/cloudfoundry-incubator/candiedyaml
   version: 5cef21e2e4f0fd147973b558d4db7395176bcd95
 - name: github.com/coreos/etcd
-  version: 9ca7f22e84f58deb40ea0de78b350c0fe3eaf77b
+  version: ea5f6dab6b1d07e22cf46bf5f5088d567548c124
   subpackages:
   - auth/authpb
   - clientv3
+  - clientv3/concurrency
   - etcdserver/api/v3rpc/rpctypes
   - etcdserver/etcdserverpb
   - mvcc/mvccpb
@@ -61,7 +62,7 @@ imports:
 - name: github.com/golang/snappy
   version: 723cc1e459b8eea2dea4583200fd60757d40097a
 - name: github.com/gorilla/context
-  version: 08b5f424b9271eedf6f9f0ce86cb9396ed337a42
+  version: 1ea25387ff6f684839d82767c1733ff4d4d15d0a
 - name: github.com/gorilla/mux
   version: 599cba5e7b6137d46ddf58fb1765f5d928e69604
 - name: github.com/grpc-ecosystem/go-grpc-prometheus
@@ -127,7 +128,7 @@ imports:
   subpackages:
   - pd-client
 - name: github.com/pingcap/tipb
-  version: 9cc6927f2246516ce8a2e9517e3ebdf81554a2d2
+  version: 37bbffad21f347c02af7d822909832f0eed39c85
   subpackages:
   - go-binlog
   - go-tipb

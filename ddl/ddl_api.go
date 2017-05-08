@@ -19,6 +19,7 @@ package ddl
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -353,9 +354,15 @@ func getDefaultValue(ctx context.Context, c *ast.ColumnOption, tp byte, fsp int)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	if v.IsNull() {
 		return nil, nil
 	}
+
+	if v.Kind() == types.KindMysqlHex {
+		return strconv.FormatInt(v.GetMysqlHex().Value, 10), nil
+	}
+
 	return v.ToString()
 }
 
@@ -421,7 +428,7 @@ func checkDefaultValue(ctx context.Context, c *table.Column, hasDefaultValue boo
 func checkDuplicateColumn(colDefs []*ast.ColumnDef) error {
 	colNames := map[string]bool{}
 	for _, colDef := range colDefs {
-		nameLower := colDef.Name.Name.O
+		nameLower := colDef.Name.Name.L
 		if colNames[nameLower] {
 			return infoschema.ErrColumnExists.GenByArgs(colDef.Name.Name)
 		}
@@ -755,6 +762,8 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 				err = d.CreateIndex(ctx, ident, true, model.NewCIStr(constr.Name), spec.Constraint.Keys)
 			case ast.ConstraintForeignKey:
 				err = d.CreateForeignKey(ctx, ident, model.NewCIStr(constr.Name), spec.Constraint.Keys, spec.Constraint.Refer)
+			case ast.ConstraintPrimaryKey:
+				err = ErrUnsupportedModifyPrimaryKey.GenByArgs("add")
 			default:
 				// Nothing to do now.
 			}
@@ -769,6 +778,8 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 		case ast.AlterTableRenameTable:
 			newIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
 			err = d.RenameTable(ctx, ident, newIdent)
+		case ast.AlterTableDropPrimaryKey:
+			err = ErrUnsupportedModifyPrimaryKey.GenByArgs("drop")
 		default:
 			// Nothing to do now.
 		}
@@ -942,7 +953,7 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 			return nil
 		}
 	}
-	msg := fmt.Sprintf("type %v not match orgin %v", to.Tp, origin.Tp)
+	msg := fmt.Sprintf("type %v not match origin %v", to.Tp, origin.Tp)
 	return errUnsupportedModifyColumn.GenByArgs(msg)
 }
 

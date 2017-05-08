@@ -16,12 +16,11 @@ package mocktikv
 import (
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
 )
 
@@ -329,82 +328,6 @@ func (h *rpcHandler) handleKvRawDelete(req *kvrpcpb.RawDeleteRequest) *kvrpcpb.R
 	return &kvrpcpb.RawDeleteResponse{}
 }
 
-func itemsToExprs(items []*tipb.ByItem) []*tipb.Expr {
-	exprs := make([]*tipb.Expr, 0, len(items))
-	for _, item := range items {
-		exprs = append(exprs, item.Expr)
-	}
-	return exprs
-}
-
-// extractExecutors extracts executors form select request.
-// It's removed when select request is replaced with DAG request.
-func extractExecutors(sel *tipb.SelectRequest) []*tipb.Executor {
-	var desc bool
-	if len(sel.OrderBy) > 0 && sel.OrderBy[0].Expr == nil {
-		desc = sel.OrderBy[0].Desc
-		sel.OrderBy = nil
-	}
-	var exec *tipb.Executor
-	var executors []*tipb.Executor
-	if sel.TableInfo != nil {
-		exec = &tipb.Executor{
-			Tp: tipb.ExecType_TypeTableScan,
-			TblScan: &tipb.TableScan{
-				Columns: sel.TableInfo.Columns,
-				Desc:    &desc,
-			},
-		}
-	} else {
-		exec = &tipb.Executor{
-			Tp: tipb.ExecType_TypeIndexScan,
-			IdxScan: &tipb.IndexScan{
-				Columns: sel.IndexInfo.Columns,
-				Desc:    &desc,
-			},
-		}
-	}
-	executors = append(executors, exec)
-	if sel.Where != nil {
-		exec := &tipb.Executor{
-			Tp: tipb.ExecType_TypeSelection,
-			Selection: &tipb.Selection{
-				Conditions: []*tipb.Expr{sel.Where},
-			},
-		}
-		executors = append(executors, exec)
-	}
-	if sel.Aggregates != nil {
-		exec := &tipb.Executor{
-			Tp: tipb.ExecType_TypeAggregation,
-			Aggregation: &tipb.Aggregation{
-				AggFunc: sel.Aggregates,
-				GroupBy: itemsToExprs(sel.GroupBy),
-			},
-		}
-		executors = append(executors, exec)
-	}
-	if len(sel.OrderBy) > 0 && sel.Limit != nil {
-		exec := &tipb.Executor{
-			Tp: tipb.ExecType_TypeTopN,
-			TopN: &tipb.TopN{
-				OrderBy: sel.OrderBy,
-				Limit:   sel.Limit,
-			},
-		}
-		executors = append(executors, exec)
-	}
-	if sel.Limit != nil {
-		exec := &tipb.Executor{
-			Tp:    tipb.ExecType_TypeLimit,
-			Limit: &tipb.Limit{Limit: sel.Limit},
-		}
-		executors = append(executors, exec)
-	}
-
-	return executors
-}
-
 // RPCClient sends kv RPC calls to mock cluster.
 type RPCClient struct {
 	Cluster   *Cluster
@@ -555,35 +478,15 @@ func (c *RPCClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 		resp.RawDelete = handler.handleKvRawDelete(r)
 	case tikvrpc.CmdCop:
 		r := req.Cop
-		if r.GetTp() == kv.ReqTypeSelect || r.GetTp() == kv.ReqTypeIndex {
-			r.Tp = kv.ReqTypeDAG
-			sel := new(tipb.SelectRequest)
-			err = proto.Unmarshal(r.Data, sel)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-
-			executors := extractExecutors(sel)
-			dag := &tipb.DAGRequest{
-				StartTs:        sel.GetStartTs(),
-				TimeZoneOffset: sel.TimeZoneOffset,
-				Flags:          sel.Flags,
-				Executors:      executors,
-			}
-			r.Data, err = dag.Marshal()
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-
-			store := handler.cluster.GetStoreByAddr(addr)
-			if store == nil {
-				return nil, errors.New("connect fail")
-			}
-			resp.Cop, err = handler.handleCopDAGRequest(r)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+		if err := handler.checkRequestContext(r.GetContext()); err != nil {
+			resp.Cop = &coprocessor.Response{RegionError: err}
+			return resp, nil
 		}
+		res, err := handler.handleCopRequest(r)
+		if err != nil {
+			return nil, err
+		}
+		resp.Cop = res
 	default:
 		return nil, errors.Errorf("unsupport this request type %v", req.Type)
 	}
