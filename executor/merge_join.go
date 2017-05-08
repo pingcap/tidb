@@ -292,7 +292,7 @@ func (e *MergeJoinExec) Open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return e.rightRowBlock.reader.Open()
+	return errors.Trace(e.rightRowBlock.reader.Open())
 }
 
 // Schema implements the Executor Schema interface.

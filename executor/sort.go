@@ -44,14 +44,14 @@ type SortExec struct {
 // Close implements the Executor Close interface.
 func (e *SortExec) Close() error {
 	e.Rows = nil
-	return e.children[0].Close()
+	return errors.Trace(e.children[0].Close())
 }
 
 // Open implements the Executor Open interface.
 func (e *SortExec) Open() error {
 	e.fetched = false
 	e.Rows = nil
-	return e.children[0].Open()
+	return errors.Trace(e.children[0].Open())
 }
 
 // Len returns the number of rows.

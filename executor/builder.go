@@ -740,9 +740,8 @@ func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
 }
 
 func (b *executorBuilder) buildCache(v *plan.Cache) Executor {
-	src := b.build(v.Children()[0])
 	return &CacheExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
 	}
 }
 

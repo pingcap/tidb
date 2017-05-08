@@ -530,13 +530,13 @@ func (e *NestedLoopJoinExec) Close() error {
 	return e.BigExec.Close()
 }
 
-// Open implements Executor interface.
+// Open implements Executor Open interface.
 func (e *NestedLoopJoinExec) Open() error {
 	e.cursor = 0
 	e.prepared = false
 	e.resultRows = e.resultRows[:0]
 	e.innerRows = e.innerRows[:0]
-	return e.BigExec.Open()
+	return errors.Trace(e.BigExec.Open())
 }
 
 func (e *NestedLoopJoinExec) fetchBigRow() (*Row, bool, error) {
@@ -693,11 +693,7 @@ func (e *HashSemiJoinExec) Open() error {
 	e.smallTableHasNull = false
 	e.hashTable = make(map[string][]*Row)
 	e.resultRows = make([]*Row, 1)
-	err := e.smallExec.Open()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return e.bigExec.Open()
+	return errors.Trace(e.bigExec.Open())
 }
 
 // Schema implements the Executor Schema interface.

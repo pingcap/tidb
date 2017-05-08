@@ -96,12 +96,12 @@ func (e *PrepareExec) Next() (*Row, error) {
 	return nil, e.Err
 }
 
-// Close implements Executor Close interface.
+// Close implements the Executor Close interface.
 func (e *PrepareExec) Close() error {
 	return nil
 }
 
-// Open implements Executor Open interface.
+// Open implements the Executor Open interface.
 func (e *PrepareExec) Open() error {
 	return nil
 }
