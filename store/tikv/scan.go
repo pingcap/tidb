@@ -148,7 +148,11 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if regionErr := resp.GetRegionError(); regionErr != nil {
+		regionErr, err := resp.GetRegionError()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if regionErr != nil {
 			log.Debugf("scanner getData failed: %s", regionErr)
 			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 			if err != nil {

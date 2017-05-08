@@ -123,7 +123,7 @@ func genRegionErrorResp(req *tikvrpc.Request, e *errorpb.Error) (*tikvrpc.Respon
 	return resp, nil
 }
 
-func setContext(req *tikvrpc.Request, ctx *kvrpcpb.Context) {
+func setContext(req *tikvrpc.Request, ctx *kvrpcpb.Context) error {
 	switch req.Type {
 	case tikvrpc.CmdGet:
 		req.Get.Context = ctx
@@ -154,8 +154,9 @@ func setContext(req *tikvrpc.Request, ctx *kvrpcpb.Context) {
 	case tikvrpc.CmdCop:
 		req.Cop.Context = ctx
 	default:
-		panic(fmt.Sprintf("invalid request type %v", req.Type))
+		return fmt.Errorf("invalid request type %v", req.Type)
 	}
+	return nil
 }
 
 // SendReq sends a request to tikv server.
@@ -184,7 +185,11 @@ func (s *RegionRequestSender) SendReq(req *tikvrpc.Request, regionID RegionVerID
 			continue
 		}
 
-		if regionErr := resp.GetRegionError(); regionErr != nil {
+		regionErr, err := resp.GetRegionError()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if regionErr != nil {
 			retry, err := s.onRegionError(ctx, regionErr)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -198,7 +203,9 @@ func (s *RegionRequestSender) SendReq(req *tikvrpc.Request, regionID RegionVerID
 }
 
 func (s *RegionRequestSender) sendReqToRegion(ctx *RPCContext, req *tikvrpc.Request, timeout time.Duration) (resp *tikvrpc.Response, retry bool, err error) {
-	setContext(req, ctx.KVCtx)
+	if e := setContext(req, ctx.KVCtx); e != nil {
+		return nil, false, errors.Trace(e)
+	}
 	context, cancel := goctx.WithTimeout(ctx.Context, timeout)
 	defer cancel()
 	resp, err = s.client.SendReq(context, ctx.Addr, req)

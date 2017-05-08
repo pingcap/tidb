@@ -381,19 +381,23 @@ func (c *RPCClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 	if err != nil {
 		return nil, err
 	}
+	reqCtx, err := req.GetContext()
+	if err != nil {
+		return nil, err
+	}
 	resp := &tikvrpc.Response{}
 	resp.Type = req.Type
 	switch req.Type {
 	case tikvrpc.CmdGet:
 		r := req.Get
-		if err := handler.checkRequest(r.GetContext(), r.Size()); err != nil {
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
 			resp.Get = &kvrpcpb.GetResponse{RegionError: err}
 			return resp, nil
 		}
 		resp.Get = handler.handleKvGet(r)
 	case tikvrpc.CmdScan:
 		r := req.Scan
-		if err := handler.checkRequest(r.GetContext(), r.Size()); err != nil {
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
 			resp.Scan = &kvrpcpb.ScanResponse{RegionError: err}
 			return resp, nil
 		}
@@ -401,84 +405,84 @@ func (c *RPCClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 
 	case tikvrpc.CmdPrewrite:
 		r := req.Prewrite
-		if err := handler.checkRequest(r.GetContext(), r.Size()); err != nil {
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
 			resp.Prewrite = &kvrpcpb.PrewriteResponse{RegionError: err}
 			return resp, nil
 		}
 		resp.Prewrite = handler.handleKvPrewrite(r)
 	case tikvrpc.CmdCommit:
 		r := req.Commit
-		if err := handler.checkRequest(r.GetContext(), r.Size()); err != nil {
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
 			resp.Commit = &kvrpcpb.CommitResponse{RegionError: err}
 			return resp, nil
 		}
 		resp.Commit = handler.handleKvCommit(r)
 	case tikvrpc.CmdCleanup:
 		r := req.Cleanup
-		if err := handler.checkRequest(r.GetContext(), r.Size()); err != nil {
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
 			resp.Cleanup = &kvrpcpb.CleanupResponse{RegionError: err}
 			return resp, nil
 		}
 		resp.Cleanup = handler.handleKvCleanup(r)
 	case tikvrpc.CmdBatchGet:
 		r := req.BatchGet
-		if err := handler.checkRequest(r.GetContext(), r.Size()); err != nil {
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
 			resp.BatchGet = &kvrpcpb.BatchGetResponse{RegionError: err}
 			return resp, nil
 		}
 		resp.BatchGet = handler.handleKvBatchGet(r)
 	case tikvrpc.CmdBatchRollback:
 		r := req.BatchRollback
-		if err := handler.checkRequest(r.GetContext(), r.Size()); err != nil {
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
 			resp.BatchRollback = &kvrpcpb.BatchRollbackResponse{RegionError: err}
 			return resp, nil
 		}
 		resp.BatchRollback = handler.handleKvBatchRollback(r)
 	case tikvrpc.CmdScanLock:
 		r := req.ScanLock
-		if err := handler.checkRequest(r.GetContext(), r.Size()); err != nil {
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
 			resp.ScanLock = &kvrpcpb.ScanLockResponse{RegionError: err}
 			return resp, nil
 		}
 		resp.ScanLock = handler.handleKvScanLock(r)
 	case tikvrpc.CmdResolveLock:
 		r := req.ResolveLock
-		if err := handler.checkRequest(r.GetContext(), r.Size()); err != nil {
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
 			resp.ResolveLock = &kvrpcpb.ResolveLockResponse{RegionError: err}
 			return resp, nil
 		}
 		resp.ResolveLock = handler.handleKvResolveLock(r)
 	case tikvrpc.CmdGC:
 		r := req.GC
-		if err := handler.checkRequest(r.GetContext(), r.Size()); err != nil {
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
 			resp.GC = &kvrpcpb.GCResponse{RegionError: err}
 			return resp, nil
 		}
 		resp.GC = &kvrpcpb.GCResponse{}
 	case tikvrpc.CmdRawGet:
 		r := req.RawGet
-		if err := handler.checkRequest(r.GetContext(), r.Size()); err != nil {
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
 			resp.RawGet = &kvrpcpb.RawGetResponse{RegionError: err}
 			return resp, nil
 		}
 		resp.RawGet = handler.handleKvRawGet(r)
 	case tikvrpc.CmdRawPut:
 		r := req.RawPut
-		if err := handler.checkRequest(r.GetContext(), r.Size()); err != nil {
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
 			resp.RawPut = &kvrpcpb.RawPutResponse{RegionError: err}
 			return resp, nil
 		}
 		resp.RawPut = handler.handleKvRawPut(r)
 	case tikvrpc.CmdRawDelete:
 		r := req.RawDelete
-		if err := handler.checkRequest(r.GetContext(), r.Size()); err != nil {
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
 			resp.RawDelete = &kvrpcpb.RawDeleteResponse{RegionError: err}
 			return resp, nil
 		}
 		resp.RawDelete = handler.handleKvRawDelete(r)
 	case tikvrpc.CmdCop:
 		r := req.Cop
-		if err := handler.checkRequestContext(r.GetContext()); err != nil {
+		if err := handler.checkRequestContext(reqCtx); err != nil {
 			resp.Cop = &coprocessor.Response{RegionError: err}
 			return resp, nil
 		}

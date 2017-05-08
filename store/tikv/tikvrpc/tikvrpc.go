@@ -64,39 +64,41 @@ type Request struct {
 }
 
 // GetContext returns the rpc context for the underlying concrete request.
-func (req *Request) GetContext() *kvrpcpb.Context {
+func (req *Request) GetContext() (*kvrpcpb.Context, error) {
+	var c *kvrpcpb.Context
 	switch req.Type {
 	case CmdGet:
-		return req.Get.GetContext()
+		c = req.Get.GetContext()
 	case CmdScan:
-		return req.Scan.GetContext()
+		c = req.Scan.GetContext()
 	case CmdPrewrite:
-		return req.Prewrite.GetContext()
+		c = req.Prewrite.GetContext()
 	case CmdCommit:
-		return req.Commit.GetContext()
+		c = req.Commit.GetContext()
 	case CmdCleanup:
-		return req.Cleanup.GetContext()
+		c = req.Cleanup.GetContext()
 	case CmdBatchGet:
-		return req.BatchGet.GetContext()
+		c = req.BatchGet.GetContext()
 	case CmdBatchRollback:
-		return req.BatchRollback.GetContext()
+		c = req.BatchRollback.GetContext()
 	case CmdScanLock:
-		return req.ScanLock.GetContext()
+		c = req.ScanLock.GetContext()
 	case CmdResolveLock:
-		return req.ResolveLock.GetContext()
+		c = req.ResolveLock.GetContext()
 	case CmdGC:
-		return req.GC.GetContext()
+		c = req.GC.GetContext()
 	case CmdRawGet:
-		return req.RawGet.GetContext()
+		c = req.RawGet.GetContext()
 	case CmdRawPut:
-		return req.RawPut.GetContext()
+		c = req.RawPut.GetContext()
 	case CmdRawDelete:
-		return req.RawDelete.GetContext()
+		c = req.RawDelete.GetContext()
 	case CmdCop:
-		return req.Cop.GetContext()
+		c = req.Cop.GetContext()
 	default:
-		panic(fmt.Sprintf("invalid request type %v", req.Type))
+		return nil, fmt.Errorf("invalid request type %v", req.Type)
 	}
+	return c, nil
 }
 
 // Response wraps all kv/coprocessor responses.
@@ -119,37 +121,39 @@ type Response struct {
 }
 
 // GetRegionError returns the RegionError of the underlying concrete response.
-func (resp *Response) GetRegionError() *errorpb.Error {
+func (resp *Response) GetRegionError() (*errorpb.Error, error) {
+	var e *errorpb.Error
 	switch resp.Type {
 	case CmdGet:
-		return resp.Get.GetRegionError()
+		e = resp.Get.GetRegionError()
 	case CmdScan:
-		return resp.Scan.GetRegionError()
+		e = resp.Scan.GetRegionError()
 	case CmdPrewrite:
-		return resp.Prewrite.GetRegionError()
+		e = resp.Prewrite.GetRegionError()
 	case CmdCommit:
-		return resp.Commit.GetRegionError()
+		e = resp.Commit.GetRegionError()
 	case CmdCleanup:
-		return resp.Cleanup.GetRegionError()
+		e = resp.Cleanup.GetRegionError()
 	case CmdBatchGet:
-		return resp.BatchGet.GetRegionError()
+		e = resp.BatchGet.GetRegionError()
 	case CmdBatchRollback:
-		return resp.BatchRollback.GetRegionError()
+		e = resp.BatchRollback.GetRegionError()
 	case CmdScanLock:
-		return resp.ScanLock.GetRegionError()
+		e = resp.ScanLock.GetRegionError()
 	case CmdResolveLock:
-		return resp.ResolveLock.GetRegionError()
+		e = resp.ResolveLock.GetRegionError()
 	case CmdGC:
-		return resp.GC.GetRegionError()
+		e = resp.GC.GetRegionError()
 	case CmdRawGet:
-		return resp.RawGet.GetRegionError()
+		e = resp.RawGet.GetRegionError()
 	case CmdRawPut:
-		return resp.RawPut.GetRegionError()
+		e = resp.RawPut.GetRegionError()
 	case CmdRawDelete:
-		return resp.RawDelete.GetRegionError()
+		e = resp.RawDelete.GetRegionError()
 	case CmdCop:
-		return resp.Cop.GetRegionError()
+		e = resp.Cop.GetRegionError()
 	default:
-		panic(fmt.Sprintf("invalid response type %v", resp.Type))
+		return nil, fmt.Errorf("invalid response type %v", resp.Type)
 	}
+	return e, nil
 }
