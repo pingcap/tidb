@@ -24,6 +24,7 @@ import (
 	"math/rand"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
@@ -325,13 +326,14 @@ type randFunctionClass struct {
 
 func (c *randFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	err := errors.Trace(c.verifyArgs(args))
-	bt := &builtinRandSig{newBaseBuiltinFunc(args, ctx)}
+	bt := &builtinRandSig{baseBuiltinFunc: newBaseBuiltinFunc(args, ctx)}
 	bt.deterministic = false
 	return bt, errors.Trace(err)
 }
 
 type builtinRandSig struct {
 	baseBuiltinFunc
+	randGen *rand.Rand
 }
 
 // eval evals a builtinRandSig.
@@ -341,14 +343,19 @@ func (b *builtinRandSig) eval(row []types.Datum) (d types.Datum, err error) {
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	if len(args) == 1 && !args[0].IsNull() {
-		seed, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
-		if err != nil {
-			return d, errors.Trace(err)
+	if b.randGen == nil {
+		if len(args) == 1 && !args[0].IsNull() {
+			seed, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
+			if err != nil {
+				return d, errors.Trace(err)
+			}
+			b.randGen = rand.New(rand.NewSource(seed))
+		} else {
+			// If seed is not set, we use current timestamp as seed.
+			b.randGen = rand.New(rand.NewSource(time.Now().UnixNano()))
 		}
-		rand.Seed(seed)
 	}
-	d.SetFloat64(rand.Float64())
+	d.SetFloat64(b.randGen.Float64())
 	return d, nil
 }
 
