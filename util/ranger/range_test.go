@@ -21,6 +21,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/expression"
 )
 
 func TestT(t *testing.T) {
@@ -55,9 +55,8 @@ func newStoreWithBootstrap() (kv.Storage, error) {
 	return store, errors.Trace(err)
 }
 
-func (s *testRangerSuite) TestRangeBuilder(c *C) {
+func (s *testRangerSuite) TestTableRange(c *C) {
 	defer testleak.AfterTest(c)()
-	rb := &ranger.Builder{Sc: new(variable.StatementContext)}
 	store, err := newStoreWithBootstrap()
 	defer store.Close()
 	c.Assert(err, IsNil)
@@ -72,75 +71,75 @@ func (s *testRangerSuite) TestRangeBuilder(c *C) {
 	}{
 		{
 			exprStr:   "a = 1",
-			resultStr: "[[1 1]]",
+			resultStr: "[[1,1]]",
 		},
 		{
 			exprStr:   "1 = a",
-			resultStr: "[[1 1]]",
+			resultStr: "[[1,1]]",
 		},
 		{
 			exprStr:   "a != 1",
-			resultStr: "[[-inf 1) (1 +inf]]",
+			resultStr: "[(-inf,0] [2,+inf)]",
 		},
 		{
 			exprStr:   "1 != a",
-			resultStr: "[[-inf 1) (1 +inf]]",
+			resultStr: "[(-inf,0] [2,+inf)]",
 		},
 		{
 			exprStr:   "a > 1",
-			resultStr: "[(1 +inf]]",
+			resultStr: "[[2,+inf)]",
 		},
 		{
 			exprStr:   "1 < a",
-			resultStr: "[(1 +inf]]",
+			resultStr: "[[2,+inf)]",
 		},
 		{
 			exprStr:   "a >= 1",
-			resultStr: "[[1 +inf]]",
+			resultStr: "[[1,+inf)]",
 		},
 		{
 			exprStr:   "1 <= a",
-			resultStr: "[[1 +inf]]",
+			resultStr: "[[1,+inf)]",
 		},
 		{
 			exprStr:   "a < 1",
-			resultStr: "[[-inf 1)]",
+			resultStr: "[(-inf,0]]",
 		},
 		{
 			exprStr:   "1 > a",
-			resultStr: "[[-inf 1)]",
+			resultStr: "[(-inf,0]]",
 		},
 		{
 			exprStr:   "a <= 1",
-			resultStr: "[[-inf 1]]",
+			resultStr: "[(-inf,1]]",
 		},
 		{
 			exprStr:   "1 >= a",
-			resultStr: "[[-inf 1]]",
+			resultStr: "[(-inf,1]]",
 		},
 		{
 			exprStr:   "(a)",
-			resultStr: "[[-inf 0) (0 +inf]]",
+			resultStr: "[(-inf,-1] [1,+inf)]",
 		},
 		{
 			exprStr:   "a in (1, 3, NULL, 2)",
-			resultStr: "[[<nil> <nil>] [1 1] [2 2] [3 3]]",
+			resultStr: "[(-inf,-inf) [1,1] [2,2] [3,3]]",
 		},
 		{
 			exprStr:   `a IN (8,8,81,45)`,
-			resultStr: `[[8 8] [45 45] [81 81]]`,
+			resultStr: `[[8,8] [45,45] [81,81]]`,
 		},
 		{
 			exprStr:   "a between 1 and 2",
-			resultStr: "[[1 2]]",
+			resultStr: "[[1,2]]",
 		},
 		{
 			exprStr:   "a not between 1 and 2",
-			resultStr: "[[-inf 1) (2 +inf]]",
+			resultStr: "[(-inf,0] [3,+inf)]",
 		},
 		{
 			exprStr:   "a not between null and 0",
-			resultStr: "[(0 +inf]]",
+			resultStr: "[[1,+inf)]",
 		},
 		{
 			exprStr:   "a between 2 and 1",
@@ -148,71 +147,31 @@ func (s *testRangerSuite) TestRangeBuilder(c *C) {
 		},
 		{
 			exprStr:   "a not between 2 and 1",
-			resultStr: "[[-inf +inf]]",
+			resultStr: "[(-inf,+inf)]",
 		},
 		{
 			exprStr:   "a IS NULL",
-			resultStr: "[[<nil> <nil>]]",
+			resultStr: "[(-inf,-inf)]",
 		},
 		{
 			exprStr:   "a IS NOT NULL",
-			resultStr: "[[-inf +inf]]",
+			resultStr: "[(-inf,+inf)]",
 		},
 		{
 			exprStr:   "a IS TRUE",
-			resultStr: "[[-inf 0) (0 +inf]]",
+			resultStr: "[(-inf,-1] [1,+inf)]",
 		},
 		{
 			exprStr:   "a IS NOT TRUE",
-			resultStr: "[[<nil> <nil>] [0 0]]",
+			resultStr: "[(-inf,-inf) [0,0]]",
 		},
 		{
 			exprStr:   "a IS FALSE",
-			resultStr: "[[0 0]]",
+			resultStr: "[[0,0]]",
 		},
 		{
 			exprStr:   "a IS NOT FALSE",
-			resultStr: "[[<nil> 0) (0 +inf]]",
-		},
-		{
-			exprStr:   "a LIKE 'abc%'",
-			resultStr: "[[abc abd)]",
-		},
-		{
-			exprStr:   "a LIKE 'abc_'",
-			resultStr: "[(abc abd)]",
-		},
-		{
-			exprStr:   "a LIKE 'abc'",
-			resultStr: "[[abc abc]]",
-		},
-		{
-			exprStr:   `a LIKE "ab\_c"`,
-			resultStr: "[[ab_c ab_c]]",
-		},
-		{
-			exprStr:   "a LIKE '%'",
-			resultStr: "[[-inf +inf]]",
-		},
-		{
-			exprStr:   `a LIKE '\%a'`,
-			resultStr: `[[%a %a]]`,
-		},
-		{
-			exprStr:   `a LIKE "\\"`,
-			resultStr: `[[\ \]]`,
-		},
-		{
-			exprStr:   `a LIKE "\\\\a%"`,
-			resultStr: `[[\a \b)]`,
-		},
-		{
-			exprStr:   `0.4`,
-			resultStr: `[]`,
-		},
-		{
-			exprStr:   `a > NULL`,
-			resultStr: `[]`,
+			resultStr: "[(-inf,-1] [1,+inf)]",
 		},
 	}
 
@@ -236,7 +195,110 @@ func (s *testRangerSuite) TestRangeBuilder(c *C) {
 			}
 		}
 		c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
-		result, err := rb.BuildFromConds(selection.Conditions)
+		conds := make([]expression.Expression, 0, len(selection.Conditions))
+		for _, cond := range selection.Conditions {
+			conds = append(conds, expression.PushDownNot(cond, false, ctx))
+		}
+		result, err := ranger.BuildTableRange(conds, new(variable.StatementContext))
+		c.Assert(err, IsNil)
+		got := fmt.Sprintf("%v", result)
+		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
+	}
+}
+
+func (s *testRangerSuite) TestIndexRange(c *C) {
+	defer testleak.AfterTest(c)()
+	store, err := newStoreWithBootstrap()
+	defer store.Close()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a varchar(50), b int, index idx_ab(a, b))")
+
+	tests := []struct {
+		exprStr    string
+		resultStr  string
+		inAndEqCnt int
+	}{
+		{
+			exprStr:    "a LIKE 'abc%'",
+			resultStr:  "[[abc <nil>,abd <nil>)]",
+			inAndEqCnt: 0,
+		},
+		{
+			exprStr:    "a LIKE 'abc_'",
+			resultStr:  "[(abc +inf,abd <nil>)]",
+			inAndEqCnt: 0,
+		},
+		{
+			exprStr:    "a LIKE 'abc'",
+			resultStr:  "[[abc,abc]]",
+			inAndEqCnt: 0,
+		},
+		{
+			exprStr:    `a LIKE "ab\_c"`,
+			resultStr:  "[[ab_c,ab_c]]",
+			inAndEqCnt: 0,
+		},
+		{
+			exprStr:    "a LIKE '%'",
+			resultStr:  "[[-inf,+inf]]",
+			inAndEqCnt: 0,
+		},
+		{
+			exprStr:    `a LIKE '\%a'`,
+			resultStr:  `[[%a,%a]]`,
+			inAndEqCnt: 0,
+		},
+		{
+			exprStr:    `a LIKE "\\"`,
+			resultStr:  `[[\,\]]`,
+			inAndEqCnt: 0,
+		},
+		{
+			exprStr:    `a LIKE "\\\\a%"`,
+			resultStr:  `[[\a <nil>,\b <nil>)]`,
+			inAndEqCnt: 0,
+		},
+		{
+			exprStr:    `a > NULL`,
+			resultStr:  `[]`,
+			inAndEqCnt: 0,
+		},
+		{
+			exprStr:    `a = 'a' and b in (1, 2, 3)`,
+			resultStr:  `[[a 1,a 1] [a 2,a 2] [a 3,a 3]]`,
+			inAndEqCnt: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		sql := "select * from t where " + tt.exprStr
+		ctx := testKit.Se.(context.Context)
+		stmts, err := tidb.Parse(ctx, sql)
+		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
+		c.Assert(stmts, HasLen, 1)
+		is := sessionctx.GetDomain(ctx).InfoSchema()
+		err = plan.ResolveName(stmts[0], is, ctx)
+
+		p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
+		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
+		var selection *plan.Selection
+		for _, child := range p.Children() {
+			plan, ok := child.(*plan.Selection)
+			if ok {
+				selection = plan
+				break
+			}
+		}
+		tbl := selection.Children()[0].(*plan.DataSource).TableInfo()
+		c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
+		conds := make([]expression.Expression, 0, len(selection.Conditions))
+		for _, cond := range selection.Conditions {
+			conds = append(conds, expression.PushDownNot(cond, false, ctx))
+		}
+		result, err := ranger.BuildIndexRange(new(variable.StatementContext), tbl, tbl.Indices[0], tt.inAndEqCnt, conds)
 		c.Assert(err, IsNil)
 		got := fmt.Sprintf("%v", result)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
