@@ -90,10 +90,26 @@ func (e *HashJoinExec) Close() error {
 		}
 		<-e.closeCh
 	}
+	e.rows = nil
+	return nil
+}
+
+// Open implements the Executor Open interface.
+func (e *HashJoinExec) Open() error {
+	e.closeCh = make(chan struct{})
+	e.finished.Store(false)
+	e.bigTableResultCh = make([]chan *execResult, e.concurrency)
+	e.wg = sync.WaitGroup{}
+	for i := 0; i < e.concurrency; i++ {
+		e.bigTableResultCh[i] = make(chan *execResult, e.concurrency)
+	}
 	e.prepared = false
 	e.cursor = 0
-	e.rows = nil
-	return e.smallExec.Close()
+	err := e.smallExec.Open()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return errors.Trace(e.bigExec.Open())
 }
 
 // makeJoinRow simply creates a new row that appends row b to row a.
@@ -203,13 +219,6 @@ func (e *HashJoinExec) fetchBigExec() {
 // prepare runs the first time when 'Next' is called, it starts one worker goroutine to fetch rows from the big table,
 // and reads all data from the small table to build a hash table, then starts multiple join worker goroutines.
 func (e *HashJoinExec) prepare() error {
-	e.closeCh = make(chan struct{})
-	e.finished.Store(false)
-	e.bigTableResultCh = make([]chan *execResult, e.concurrency)
-	e.wg = sync.WaitGroup{}
-	for i := 0; i < e.concurrency; i++ {
-		e.bigTableResultCh[i] = make(chan *execResult, e.concurrency)
-	}
 	// Start a worker to fetch big table rows.
 	e.wg.Add(1)
 	go e.fetchBigExec()
@@ -518,13 +527,16 @@ func (e *NestedLoopJoinExec) Schema() *expression.Schema {
 func (e *NestedLoopJoinExec) Close() error {
 	e.resultRows = nil
 	e.innerRows = nil
+	return e.BigExec.Close()
+}
+
+// Open implements Executor interface.
+func (e *NestedLoopJoinExec) Open() error {
 	e.cursor = 0
 	e.prepared = false
-	err := e.BigExec.Close()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return e.SmallExec.Close()
+	e.resultRows = e.resultRows[:0]
+	e.innerRows = e.innerRows[:0]
+	return e.BigExec.Open()
 }
 
 func (e *NestedLoopJoinExec) fetchBigRow() (*Row, bool, error) {
@@ -552,7 +564,7 @@ func (e *NestedLoopJoinExec) fetchBigRow() (*Row, bool, error) {
 // prepare runs the first time when 'Next' is called and it reads all data from the small table and stores
 // them in a slice.
 func (e *NestedLoopJoinExec) prepare() error {
-	err := e.SmallExec.Close()
+	err := e.SmallExec.Open()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -670,15 +682,22 @@ type HashSemiJoinExec struct {
 
 // Close implements the Executor Close interface.
 func (e *HashSemiJoinExec) Close() error {
-	e.prepared = false
-	e.hashTable = make(map[string][]*Row)
-	e.smallTableHasNull = false
+	e.hashTable = nil
 	e.resultRows = nil
-	err := e.smallExec.Close()
+	return e.bigExec.Close()
+}
+
+// Open implements the Executor Open interface.
+func (e *HashSemiJoinExec) Open() error {
+	e.prepared = false
+	e.smallTableHasNull = false
+	e.hashTable = make(map[string][]*Row)
+	e.resultRows = make([]*Row, 1)
+	err := e.smallExec.Open()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return e.bigExec.Close()
+	return e.bigExec.Open()
 }
 
 // Schema implements the Executor Schema interface.
@@ -689,21 +708,21 @@ func (e *HashSemiJoinExec) Schema() *expression.Schema {
 // prepare runs the first time when 'Next' is called and it reads all data from the small table and stores
 // them in a hash table.
 func (e *HashSemiJoinExec) prepare() error {
-	err := e.smallExec.Close()
+	err := e.smallExec.Open()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	e.hashTable = make(map[string][]*Row)
 	sc := e.ctx.GetSessionVars().StmtCtx
 	e.resultRows = make([]*Row, 1)
+	e.prepared = true
 	for {
 		row, err := e.smallExec.Next()
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if row == nil {
-			e.smallExec.Close()
-			break
+			return errors.Trace(e.smallExec.Close())
 		}
 
 		matched, err := expression.EvalBool(e.smallFilter, row.Data, e.ctx)
@@ -727,9 +746,6 @@ func (e *HashSemiJoinExec) prepare() error {
 			e.hashTable[string(hashcode)] = append(rows, row)
 		}
 	}
-
-	e.prepared = true
-	return nil
 }
 
 func (e *HashSemiJoinExec) rowIsMatched(bigRow *Row) (matched bool, hasNull bool, err error) {
@@ -853,9 +869,14 @@ func (e *ApplyJoinExec) Schema() *expression.Schema {
 
 // Close implements the Executor interface.
 func (e *ApplyJoinExec) Close() error {
+	return nil
+}
+
+// Open implements the Executor interface.
+func (e *ApplyJoinExec) Open() error {
 	e.cursor = 0
 	e.resultRows = nil
-	return e.join.Close()
+	return e.join.Open()
 }
 
 // Next implements the Executor interface.
