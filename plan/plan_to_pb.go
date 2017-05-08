@@ -114,7 +114,7 @@ func setPBColumnsDefaultValue(ctx context.Context, pbColumns []*tipb.ColumnInfo,
 			return errors.Trace(err)
 		}
 
-		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(d)
+		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(d, ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
 			return errors.Trace(err)
 		}

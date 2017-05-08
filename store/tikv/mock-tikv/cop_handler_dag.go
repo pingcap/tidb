@@ -14,6 +14,8 @@
 package mocktikv
 
 import (
+	"time"
+
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -51,10 +53,11 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor
 		return nil, errors.Trace(err)
 	}
 	sc := flagsToStatementContext(dagReq.Flags)
+	timeZone := time.FixedZone("UTC", int(dagReq.TimeZoneOffset))
 	ctx := &dagContext{
 		dagReq:    dagReq,
 		keyRanges: req.Ranges,
-		evalCtx:   &evalContext{sc: sc},
+		evalCtx:   &evalContext{sc: sc, timeZone: timeZone},
 	}
 	e, err := h.buildDAG(ctx, dagReq.Executors)
 	if err != nil {
@@ -251,6 +254,7 @@ type evalContext struct {
 	columnInfos []*tipb.ColumnInfo
 	fieldTps    []*types.FieldType
 	sc          *variable.StatementContext
+	timeZone    *time.Location
 }
 
 func (e *evalContext) setColumnInfo(cols []*tipb.ColumnInfo) {
@@ -270,7 +274,7 @@ func (e *evalContext) setColumnInfo(cols []*tipb.ColumnInfo) {
 func (e *evalContext) decodeRelatedColumnVals(relatedColOffsets []int, value [][]byte, row []types.Datum) error {
 	var err error
 	for _, offset := range relatedColOffsets {
-		row[offset], err = tablecodec.DecodeColumnValue(value[offset], e.fieldTps[offset])
+		row[offset], err = tablecodec.DecodeColumnValue(value[offset], e.fieldTps[offset], e.timeZone)
 		if err != nil {
 			return errors.Trace(err)
 		}

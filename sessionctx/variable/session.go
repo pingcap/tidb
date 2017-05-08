@@ -286,6 +286,15 @@ func (s *SessionVars) GetNextPreparedStmtID() uint32 {
 	return s.preparedStmtID
 }
 
+// GetTimeZone returns the value of time_zone session variable.
+func (s *SessionVars) GetTimeZone() *time.Location {
+	loc := s.TimeZone
+	if loc == nil {
+		loc = time.Local
+	}
+	return loc
+}
+
 // special session variables.
 const (
 	SQLModeVar          = "sql_mode"
