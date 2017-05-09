@@ -59,6 +59,21 @@ type ColumnRange struct {
 	HighExcl bool
 }
 
+func (cr *ColumnRange) String() string {
+	var l, r string
+	if cr.LowExcl {
+		l = "("
+	} else {
+		l = "["
+	}
+	if cr.HighExcl {
+		r = ")"
+	} else {
+		r = "]"
+	}
+	return l + formatDatum(cr.Low) + "," + formatDatum(cr.High) + r
+}
+
 // IndexRange represents a range for an index.
 type IndexRange struct {
 	LowVal  []Datum

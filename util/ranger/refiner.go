@@ -300,7 +300,8 @@ func BuildTableRange(accessConditions []expression.Expression, sc *variable.Stat
 	return ranges, nil
 }
 
-func BuildColumnRange(conds []expression.Expression, sc *variable.StatementContext) ([]types.ColumnRange, error) {
+// BuildColumnRange builds the range for sampling histogram to calculate the row count.
+func BuildColumnRange(conds []expression.Expression, sc *variable.StatementContext, tp *types.FieldType) ([]types.ColumnRange, error) {
 	if len(conds) == 0 {
 		return []types.ColumnRange{{Low: types.Datum{}, LowExcl: true, High: types.MaxValueDatum(), HighExcl: true}}, nil
 	}
@@ -313,7 +314,11 @@ func BuildColumnRange(conds []expression.Expression, sc *variable.StatementConte
 			return nil, errors.Trace(rb.err)
 		}
 	}
-	return nil, nil
+	ranges := rb.buildColumnRanges(rangePoints, tp)
+	if rb.err != nil {
+		return nil, errors.Trace(rb.err)
+	}
+	return ranges, nil
 }
 
 // conditionChecker checks if this condition can be pushed to index plan.

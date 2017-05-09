@@ -342,60 +342,23 @@ func (c *Column) getColumnRowCount(sc *variable.StatementContext, ranges []types
 	totalRowCount float64) (float64, error) {
 	var rowCount float64
 	for _, rg := range ranges {
-		var cnt float64
-		var err error
-		if rg.Low.Kind() == types.KindNull  && rg.High.Kind() == types.KindMaxValue {
-			cnt = totalRowCount
-		} else if rg.Low.Kind() == types.KindNull {
-			if rg.HighExcl {
-				cnt, err = c.lessRowCount(sc, rg.High)
-			}  else {
-				cnt, err = c.lessAndEqRowCount(sc, rg.High)
-			}
+		cnt, err := c.betweenRowCount(sc, rg.Low, rg.High)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if rg.LowExcl {
+			lowCnt, err := c.equalRowCount(sc, rg.Low)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-		} else if rg.High.Kind() == types.KindMaxValue {
-			if rg.LowExcl {
-				cnt, err = c.greaterRowCount(sc, rg.Low)
-			} else {
-				cnt, err = c.greaterAndEqRowCount(sc, rg.Low)
-			}
+			cnt -= lowCnt
+		}
+		if rg.HighExcl {
+			highCnt, err := c.equalRowCount(sc, rg.High)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-		} else {
-			cmpResult, err := rg.Low.CompareDatum(sc, rg.High)
-			if err != nil {
-				return 0, errors.Trace(err)
-			}
-			if cmpResult == 0 {
-				if !rg.LowExcl && !rg.HighExcl {
-					cnt, err = c.equalRowCount(sc, rg.Low)
-				}
-				if err != nil {
-					return 0, errors.Trace(err)
-				}
-			} else {
-				cnt, err = c.betweenRowCount(sc, rg.Low, rg.High)
-				if err != nil {
-					return 0, errors.Trace(err)
-				}
-				if rg.LowExcl {
-					lowCnt, err := c.equalRowCount(sc, rg.Low)
-					if err != nil {
-						return 0, errors.Trace(err)
-					}
-					cnt -= lowCnt
-				}
-				if rg.HighExcl {
-					highCnt, err := c.equalRowCount(sc, rg.High)
-					if err != nil {
-						return 0, errors.Trace(err)
-					}
-					cnt -= highCnt
-				}
-			}
+			cnt -= highCnt
 		}
 		rowCount += cnt
 	}

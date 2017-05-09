@@ -635,6 +635,7 @@ func (r *Builder) buildColumnRanges(points []point, tp *types.FieldType) []types
 		less, err := pointLess(r.Sc, startPoint, endPoint)
 		if err != nil {
 			r.err = errors.Trace(err)
+			return nil
 		}
 		if !less {
 			continue
