@@ -19,7 +19,6 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/_vendor/src/github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
@@ -133,7 +132,6 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	mu.Lock()
 	tb := publicTable
 	mu.Unlock()
-	s.testChangePosition(c, ctx, d)
 	s.testColumnDrop(c, ctx, d, tb)
 	s.testAddColumnNoDefault(c, ctx, d, tblInfo)
 }
@@ -368,132 +366,4 @@ func datumsToInterfaces(datums []types.Datum) []interface{} {
 		ifs = append(ifs, d.GetValue())
 	}
 	return ifs
-}
-
-func (s *testColumnChangeSuite) testChangePosition(c *C, ctx context.Context, d *ddl) {
-	defer testleak.AfterTest(c)()
-	tblInfo := testTableInfo(c, d, "position", 2)
-
-	var (
-		checkErr  error
-		prevState model.SchemaState
-		mu        sync.Mutex
-		tbl       table.Table
-		handles   []int64
-		finaleTbl table.Table
-	)
-
-	addRecord := func(ctx context.Context, tbl table.Table, vals []types.Datum) {
-		// These code are copy from InsertExecutor
-		row := make([]types.Datum, len(tbl.Cols()))
-		for i, v := range vals {
-			// builder use Table.Cols() as insert column list if there have no col list
-			cols := tbl.Cols()
-			// Same as InsertExecutor
-			offset := cols[i].Offset
-			row[offset] = v
-		}
-
-		if err := ctx.NewTxn(); err != nil {
-			checkErr = errors.Trace(err)
-		}
-		// Insert. Same as InsertExecutor
-		h, err := tbl.AddRecord(ctx, row)
-		if err != nil {
-			checkErr = errors.Trace(err)
-		}
-		if err = ctx.Txn().Commit(); err != nil {
-			checkErr = errors.Trace(err)
-		}
-
-		handles = append(handles, h)
-	}
-
-	err := ctx.NewTxn()
-	c.Assert(err, IsNil)
-	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
-	err = ctx.Txn().Commit()
-	c.Assert(err, IsNil)
-
-	oldTbl := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-
-	// insert position value (1, 2) using old schema
-	addRecord(ctx, oldTbl, types.MakeDatums(1, 2))
-
-	d.Stop()
-	tc := &testDDLCallback{}
-	tc.onJobUpdated = func(job *model.Job) {
-		if job.SchemaState == prevState {
-			return
-		}
-
-		mu.Lock()
-		defer mu.Unlock()
-		hookCtx := mock.NewContext()
-		hookCtx.Store = s.store
-		prevState = job.SchemaState
-
-		var vals []types.Datum
-		switch job.SchemaState {
-		case model.StateDeleteOnly:
-			// insert position value (1, 2) using new schema
-			vals = types.MakeDatums(1, 2)
-		case model.StatePublic:
-			finaleTbl, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
-			if err != nil {
-				checkErr = errors.Trace(err)
-			}
-			return
-		default:
-			return
-		}
-		tbl, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
-		if err != nil {
-			checkErr = errors.Trace(err)
-		}
-		addRecord(hookCtx, tbl, vals)
-	}
-	d.setHook(tc)
-	d.start()
-	pos := &ast.ColumnPosition{Tp: ast.ColumnPositionFirst}
-	col := tblInfo.Columns[1]
-	job := &model.Job{
-		SchemaID:   s.dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionModifyColumn,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{&col, col.Name, pos},
-	}
-
-	err = d.doDDLJob(ctx, job)
-	c.Assert(err, IsNil)
-
-	testCheckJobDone(c, d, job, true)
-	c.Assert(errors.ErrorStack(checkErr), Equals, "")
-	c.Assert(finaleTbl, NotNil)
-	c.Assert(len(handles), Equals, 2)
-
-	mu.Lock()
-	tb := finaleTbl
-	mu.Unlock()
-
-	for _, h := range handles {
-		row, err := tb.Row(ctx, h)
-		c.Assert(err, IsNil)
-		log.Warn(row)
-		for _, col := range tb.Cols() {
-			// If we allow position(a, b) and position(b, a) writable at same time. (such as change order directly)
-			// We will never know what is the actual result of `insert position value (1, 2)`.
-			// This is not a consistency problem, it's a ambiguous problem.
-			// The new record based on each schema is consistent and durable,
-			// but we cannot point out which result we will get in this case.
-			if col.Name.L == "c1" {
-				// c1 maybe 1 or 2. panic
-				c.Assert(row[col.Offset].GetInt64(), Equals, int64(1))
-			} else {
-				// c2 maybe 1 or 2. panic
-				c.Assert(row[col.Offset].GetInt64(), Equals, int64(2))
-			}
-		}
-	}
 }
