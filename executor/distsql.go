@@ -379,6 +379,13 @@ type XSelectIndexExec struct {
 	partialCount    int
 }
 
+// Open implements the Executor Open interface.
+func (e *XSelectIndexExec) Open() error {
+	e.returnedRows = 0
+	e.partialCount = 0
+	return nil
+}
+
 // Schema implements Exec Schema interface.
 func (e *XSelectIndexExec) Schema() *expression.Schema {
 	return e.schema
@@ -397,8 +404,6 @@ func (e *XSelectIndexExec) Close() error {
 		}
 		e.taskChan = nil
 	}
-	e.returnedRows = 0
-	e.partialCount = 0
 	return errors.Trace(err)
 }
 
@@ -465,7 +470,7 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = decodeRawValues(values, schema)
+		err = decodeRawValues(values, schema, e.ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -477,11 +482,11 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 	}
 }
 
-func decodeRawValues(values []types.Datum, schema *expression.Schema) error {
+func decodeRawValues(values []types.Datum, schema *expression.Schema, loc *time.Location) error {
 	var err error
 	for i := 0; i < schema.Len(); i++ {
 		if values[i].Kind() == types.KindRaw {
-			values[i], err = tablecodec.DecodeColumnValue(values[i].GetRaw(), schema.Columns[i].RetType)
+			values[i], err = tablecodec.DecodeColumnValue(values[i].GetRaw(), schema.Columns[i].RetType, loc)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -607,7 +612,7 @@ func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<
 func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 	selIdxReq := new(tipb.SelectRequest)
 	selIdxReq.StartTs = e.startTS
-	selIdxReq.TimeZoneOffset = timeZoneOffset()
+	selIdxReq.TimeZoneOffset = timeZoneOffset(e.ctx)
 	selIdxReq.Flags = statementContextToFlags(e.ctx.GetSessionVars().StmtCtx)
 	selIdxReq.IndexInfo = distsql.IndexToProto(e.table.Meta(), e.index)
 	if e.desc {
@@ -748,7 +753,7 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = decodeRawValues(values, e.Schema())
+		err = decodeRawValues(values, e.Schema(), e.ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -766,7 +771,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 		selTableReq.OrderBy = e.sortItemsPB
 	}
 	selTableReq.StartTs = e.startTS
-	selTableReq.TimeZoneOffset = timeZoneOffset()
+	selTableReq.TimeZoneOffset = timeZoneOffset(e.ctx)
 	selTableReq.Flags = statementContextToFlags(e.ctx.GetSessionVars().StmtCtx)
 	selTableReq.TableInfo = &tipb.TableInfo{
 		TableId: e.table.Meta().ID,
@@ -841,7 +846,7 @@ func (e *XSelectTableExec) Schema() *expression.Schema {
 func (e *XSelectTableExec) doRequest() error {
 	selReq := new(tipb.SelectRequest)
 	selReq.StartTs = e.startTS
-	selReq.TimeZoneOffset = timeZoneOffset()
+	selReq.TimeZoneOffset = timeZoneOffset(e.ctx)
 	selReq.Flags = statementContextToFlags(e.ctx.GetSessionVars().StmtCtx)
 	selReq.Where = e.where
 	selReq.TableInfo = &tipb.TableInfo{
@@ -877,6 +882,13 @@ func (e *XSelectTableExec) Close() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	e.result = nil
+	e.partialResult = nil
+	return nil
+}
+
+// Open implements the Executor interface.
+func (e *XSelectTableExec) Open() error {
 	e.result = nil
 	e.partialResult = nil
 	e.returnedRows = 0
@@ -932,7 +944,7 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = decodeRawValues(values, e.schema)
+		err = decodeRawValues(values, e.schema, e.ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -951,8 +963,9 @@ func (e *XSelectTableExec) slowQueryInfo(duration time.Duration) string {
 }
 
 // timeZoneOffset returns the local time zone offset in seconds.
-func timeZoneOffset() int64 {
-	_, offset := time.Now().Zone()
+func timeZoneOffset(ctx context.Context) int64 {
+	loc := ctx.GetSessionVars().GetTimeZone()
+	_, offset := time.Now().In(loc).Zone()
 	return int64(offset)
 }
 
@@ -982,7 +995,7 @@ func setPBColumnsDefaultValue(ctx context.Context, pbColumns []*tipb.ColumnInfo,
 			return errors.Trace(err)
 		}
 
-		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(d)
+		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(d, ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
 			return errors.Trace(err)
 		}

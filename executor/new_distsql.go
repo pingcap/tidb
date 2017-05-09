@@ -27,7 +27,9 @@ import (
 )
 
 var (
-	_ = &TableReaderExecutor{}
+	_ Executor = &TableReaderExecutor{}
+	_ Executor = &IndexReaderExecutor{}
+	_ Executor = &IndexLookUpExecutor{}
 )
 
 // TableReaderExecutor sends dag request and reads table data from kv layer.
@@ -91,7 +93,7 @@ func (e *TableReaderExecutor) Next() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = decodeRawValues(values, e.schema)
+		err = decodeRawValues(values, e.schema, e.ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -99,7 +101,8 @@ func (e *TableReaderExecutor) Next() (*Row, error) {
 	}
 }
 
-func (e *TableReaderExecutor) doRequest() error {
+// Open implements the Executor Open interface.
+func (e *TableReaderExecutor) Open() error {
 	kvRanges := tableRangesToKVRanges(e.tableID, e.ranges)
 	var err error
 	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goctx.Background(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc)
@@ -184,7 +187,7 @@ func (e *IndexReaderExecutor) Next() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = decodeRawValues(values, e.schema)
+		err = decodeRawValues(values, e.schema, e.ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -192,7 +195,8 @@ func (e *IndexReaderExecutor) Next() (*Row, error) {
 	}
 }
 
-func (e *IndexReaderExecutor) doRequest() error {
+// Open implements the Executor Open interface.
+func (e *IndexReaderExecutor) Open() error {
 	fieldTypes := make([]*types.FieldType, len(e.index.Columns))
 	for i, v := range e.index.Columns {
 		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)
@@ -232,7 +236,8 @@ type IndexLookUpExecutor struct {
 	tableRequest *tipb.DAGRequest
 }
 
-func (e *IndexLookUpExecutor) doRequest() error {
+// Open implements the Executor Open interface.
+func (e *IndexLookUpExecutor) Open() error {
 	fieldTypes := make([]*types.FieldType, len(e.index.Columns))
 	for i, v := range e.index.Columns {
 		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)
@@ -291,15 +296,15 @@ func (e *IndexLookUpExecutor) fetchHandlesAndStartWorkers() {
 	// So its length is one.
 	workCh := make(chan *lookupTableTask, 1)
 	defer func() {
-		close(e.taskChan)
 		close(workCh)
-		e.result.Close()
+		close(e.taskChan)
 	}()
 
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency
+	txnCtx := e.ctx.GoCtx()
 	for i := 0; i < lookupConcurrencyLimit; i++ {
 		go func() {
-			childCtx, cancel := goctx.WithCancel(e.ctx.GoCtx())
+			childCtx, cancel := goctx.WithCancel(txnCtx)
 			defer cancel()
 			select {
 			case task := <-workCh:
@@ -312,7 +317,6 @@ func (e *IndexLookUpExecutor) fetchHandlesAndStartWorkers() {
 		}()
 	}
 
-	txnCtx := e.ctx.GoCtx()
 	for {
 		handles, finish, err := extractHandlesFromIndexResult(e.result)
 		if err != nil || finish {
@@ -373,13 +377,14 @@ func (e *IndexLookUpExecutor) Schema() *expression.Schema {
 
 // Close implements Exec Close interface.
 func (e *IndexLookUpExecutor) Close() error {
-	e.result = nil
-
+	// TODO: It's better to notify fetchHandles to close instead of fetching all index handle.
 	// Consume the task channel in case channel is full.
 	for range e.taskChan {
 	}
 	e.taskChan = nil
-	return nil
+	err := e.result.Close()
+	e.result = nil
+	return errors.Trace(err)
 }
 
 // Next implements Exec Next interface.
