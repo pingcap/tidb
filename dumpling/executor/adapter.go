@@ -139,6 +139,11 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 		e = executorExec.StmtExec
 	}
 
+	err := e.Open()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	var pi processinfoSetter
 	if raw, ok := ctx.(processinfoSetter); ok {
 		pi = raw

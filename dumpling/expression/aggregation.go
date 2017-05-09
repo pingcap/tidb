@@ -65,8 +65,8 @@ type AggregationFunction interface {
 	// SetArgs sets argument by index.
 	SetArgs(args []Expression)
 
-	// Clear collects the mapper's memory.
-	Clear()
+	// Reset resets this aggregate function.
+	Reset()
 
 	// IsDistinct indicates if the aggregate function contains distinct attribute.
 	IsDistinct() bool
@@ -227,8 +227,8 @@ func (af *aggFunction) IsDistinct() bool {
 	return af.Distinct
 }
 
-// Clear implements AggregationFunction interface.
-func (af *aggFunction) Clear() {
+// Reset implements AggregationFunction interface.
+func (af *aggFunction) Reset() {
 	af.resultMapper = make(aggCtxMapper, 0)
 	af.streamCtx = nil
 }

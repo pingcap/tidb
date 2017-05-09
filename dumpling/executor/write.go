@@ -138,9 +138,10 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 // DeleteExec represents a delete executor.
 // See https://dev.mysql.com/doc/refman/5.7/en/delete.html
 type DeleteExec struct {
+	baseExecutor
+
 	SelectExec Executor
 
-	ctx          context.Context
 	Tables       []*ast.TableName
 	IsMultiTable bool
 
@@ -260,6 +261,11 @@ func (e *DeleteExec) removeRow(ctx context.Context, t table.Table, h int64, data
 // Close implements the Executor Close interface.
 func (e *DeleteExec) Close() error {
 	return e.SelectExec.Close()
+}
+
+// Open implements the Executor Open interface.
+func (e *DeleteExec) Open() error {
+	return e.SelectExec.Open()
 }
 
 // NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
@@ -561,6 +567,11 @@ func (e *LoadData) Close() error {
 	return nil
 }
 
+// Open implements the Executor Open interface.
+func (e *LoadData) Open() error {
+	return nil
+}
+
 // InsertValues is the data to insert.
 type InsertValues struct {
 	currRow      int64
@@ -679,6 +690,14 @@ func (e *InsertExec) Close() error {
 	e.ctx.GetSessionVars().CurrInsertValues = nil
 	if e.SelectExec != nil {
 		return e.SelectExec.Close()
+	}
+	return nil
+}
+
+// Open implements the Executor Close interface.
+func (e *InsertExec) Open() error {
+	if e.SelectExec != nil {
+		return e.SelectExec.Open()
 	}
 	return nil
 }
@@ -1009,6 +1028,14 @@ func (e *ReplaceExec) Close() error {
 	return nil
 }
 
+// Open implements the Executor Open interface.
+func (e *ReplaceExec) Open() error {
+	if e.SelectExec != nil {
+		return e.SelectExec.Open()
+	}
+	return nil
+}
+
 // Next implements the Executor Next interface.
 func (e *ReplaceExec) Next() (*Row, error) {
 	if e.finished {
@@ -1090,22 +1117,18 @@ func (e *ReplaceExec) Next() (*Row, error) {
 
 // UpdateExec represents a new update executor.
 type UpdateExec struct {
+	baseExecutor
+
 	SelectExec  Executor
 	OrderedList []*expression.Assignment
 
 	// updatedRowKeys is a map for unique (Table, handle) pair.
 	updatedRowKeys map[table.Table]map[int64]struct{}
-	ctx            context.Context
 
 	rows        []*Row          // The rows fetched from TableExec.
 	newRowsData [][]types.Datum // The new values to be set.
 	fetched     bool
 	cursor      int
-}
-
-// Schema implements the Executor Schema interface.
-func (e *UpdateExec) Schema() *expression.Schema {
-	return expression.NewSchema()
 }
 
 // Next implements the Executor Next interface.
@@ -1211,4 +1234,9 @@ func getTableOffset(schema *expression.Schema, entry *RowKeyEntry) int {
 // Close implements the Executor Close interface.
 func (e *UpdateExec) Close() error {
 	return e.SelectExec.Close()
+}
+
+// Open implements the Executor Open interface.
+func (e *UpdateExec) Open() error {
+	return e.SelectExec.Open()
 }

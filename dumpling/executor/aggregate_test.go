@@ -14,18 +14,13 @@
 package executor_test
 
 import (
-	"fmt"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/types"
 )
 
 type MockExec struct {
@@ -53,6 +48,11 @@ func (m *MockExec) Next() (*executor.Row, error) {
 }
 
 func (m *MockExec) Close() error {
+	m.curRowIdx = 0
+	return nil
+}
+
+func (m *MockExec) Open() error {
 	m.curRowIdx = 0
 	return nil
 }
@@ -304,97 +304,6 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("create table idx_agg (a int, b int, index (b))")
 	tk.MustExec("insert idx_agg values (1, 1), (1, 2), (2, 2)")
 	tk.MustQuery("select sum(a), sum(b) from idx_agg where b > 0 and b < 10")
-}
-
-func (s *testSuite) TestStreamAgg(c *C) {
-	col := &expression.Column{
-		Index:   1,
-		RetType: types.NewFieldType(mysql.TypeLonglong),
-	}
-	gbyCol := &expression.Column{
-		Index:   0,
-		RetType: types.NewFieldType(mysql.TypeLonglong),
-	}
-	sumAgg := expression.NewAggFunction(ast.AggFuncSum, []expression.Expression{col}, false)
-	cntAgg := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{col}, false)
-	avgAgg := expression.NewAggFunction(ast.AggFuncAvg, []expression.Expression{col}, false)
-	maxAgg := expression.NewAggFunction(ast.AggFuncMax, []expression.Expression{col}, false)
-	tests := []struct {
-		aggFunc expression.AggregationFunction
-		result  string
-		input   [][]interface{}
-		result1 []string
-	}{
-		{
-			sumAgg,
-			"<nil>",
-			[][]interface{}{
-				{0, 1}, {0, nil}, {1, 2}, {1, 3},
-			},
-			[]string{
-				"1", "5",
-			},
-		},
-		{
-			cntAgg,
-			"0",
-			[][]interface{}{
-				{0, 1}, {0, nil}, {1, 2}, {1, 3},
-			},
-			[]string{
-				"1", "2",
-			},
-		},
-		{
-			avgAgg,
-			"<nil>",
-			[][]interface{}{
-				{0, 1}, {0, nil}, {1, 2}, {1, 3},
-			},
-			[]string{
-				"1.0000", "2.5000",
-			},
-		},
-		{
-			maxAgg,
-			"<nil>",
-			[][]interface{}{
-				{0, 1}, {0, nil}, {1, 2}, {1, 3},
-			},
-			[]string{
-				"1", "3",
-			},
-		},
-	}
-	ctx := mock.NewContext()
-	for _, tt := range tests {
-		mock := &MockExec{}
-		e := &executor.StreamAggExec{
-			AggFuncs: []expression.AggregationFunction{tt.aggFunc},
-			Src:      mock,
-			StmtCtx:  ctx.GetSessionVars().StmtCtx,
-		}
-		row, err := e.Next()
-		c.Check(err, IsNil)
-		c.Check(row, NotNil)
-		c.Assert(fmt.Sprintf("%v", row.Data[0].GetValue()), Equals, tt.result)
-		e.GroupByItems = append(e.GroupByItems, gbyCol)
-		e.Close()
-		row, err = e.Next()
-		c.Check(err, IsNil)
-		c.Check(row, IsNil)
-		e.Close()
-		for _, input := range tt.input {
-			data := types.MakeDatums(input...)
-			mock.Rows = append(mock.Rows, &executor.Row{Data: data})
-		}
-		for _, res := range tt.result1 {
-			row, err = e.Next()
-			c.Check(err, IsNil)
-			c.Check(row, NotNil)
-			c.Assert(fmt.Sprintf("%v", row.Data[0].GetValue()), Equals, res)
-		}
-	}
 }
 
 func (s *testSuite) TestAggPrune(c *C) {
