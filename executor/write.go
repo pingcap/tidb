@@ -513,13 +513,13 @@ func (e *LoadDataInfo) insertData(cols []string) {
 	}
 }
 
-func (e *InsertValues) handleLoadDataWarnings(err error, errMsg string) {
+func (e *InsertValues) handleLoadDataWarnings(err error, logInfo string) {
 	sc := e.ctx.GetSessionVars().StmtCtx
 	if variable.GoSQLDriverTest {
 		return
 	}
 	sc.AppendWarning(err)
-	log.Warn(errMsg)
+	log.Warn(logInfo)
 }
 
 // LoadData represents a load data executor.
