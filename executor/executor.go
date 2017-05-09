@@ -646,7 +646,7 @@ type ExistsExec struct {
 // Open implements the Executor Open interface.
 func (e *ExistsExec) Open() error {
 	e.evaluated = false
-	return e.children[0].Open()
+	return errors.Trace(e.children[0].Open())
 }
 
 // Next implements the Executor Next interface.
@@ -674,7 +674,7 @@ type MaxOneRowExec struct {
 // Open implements the Executor Open interface.
 func (e *MaxOneRowExec) Open() error {
 	e.evaluated = false
-	return e.children[0].Open()
+	return errors.Trace(e.children[0].Open())
 }
 
 // Next implements the Executor Next interface.
@@ -817,7 +817,7 @@ func (e *UnionExec) Close() error {
 	e.finished.Store(true)
 	<-e.closedCh
 	e.rows = nil
-	return e.baseExecutor.Close()
+	return errors.Trace(e.baseExecutor.Close())
 }
 
 // DummyScanExec returns zero results, when some where condition never match, there won't be any
@@ -844,7 +844,7 @@ type CacheExec struct {
 // Open implements the Executor Open interface.
 func (e *CacheExec) Open() error {
 	e.cursor = 0
-	return e.children[0].Open()
+	return errors.Trace(e.children[0].Open())
 }
 
 // Next implements the Executor Next interface.

@@ -568,6 +568,7 @@ func (e *NestedLoopJoinExec) prepare() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	defer e.SmallExec.Close()
 	e.innerRows = e.innerRows[:0]
 	e.prepared = true
 	for {
@@ -576,7 +577,7 @@ func (e *NestedLoopJoinExec) prepare() error {
 			return errors.Trace(err)
 		}
 		if row == nil {
-			return e.SmallExec.Close()
+			return nil
 		}
 
 		matched, err := expression.EvalBool(e.SmallFilter, row.Data, e.Ctx)
@@ -708,6 +709,7 @@ func (e *HashSemiJoinExec) prepare() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	defer e.smallExec.Close()
 	e.hashTable = make(map[string][]*Row)
 	sc := e.ctx.GetSessionVars().StmtCtx
 	e.resultRows = make([]*Row, 1)
@@ -718,7 +720,7 @@ func (e *HashSemiJoinExec) prepare() error {
 			return errors.Trace(err)
 		}
 		if row == nil {
-			return errors.Trace(e.smallExec.Close())
+			return nil
 		}
 
 		matched, err := expression.EvalBool(e.smallFilter, row.Data, e.ctx)
