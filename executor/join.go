@@ -872,7 +872,7 @@ func (e *ApplyJoinExec) Close() error {
 func (e *ApplyJoinExec) Open() error {
 	e.cursor = 0
 	e.resultRows = nil
-	return e.join.Open()
+	return errors.Trace(e.join.Open())
 }
 
 // Next implements the Executor interface.

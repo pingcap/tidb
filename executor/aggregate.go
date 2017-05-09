@@ -46,7 +46,7 @@ func (e *HashAggExec) Close() error {
 	for _, agg := range e.AggFuncs {
 		agg.Reset()
 	}
-	return e.children[0].Close()
+	return errors.Trace(e.children[0].Close())
 }
 
 // Open implements the Executor Open interface.
@@ -54,7 +54,7 @@ func (e *HashAggExec) Open() error {
 	e.executed = false
 	e.groupMap = mvmap.NewMVMap()
 	e.groupIterator = e.groupMap.NewIterator()
-	return e.children[0].Open()
+	return errors.Trace(e.children[0].Open())
 }
 
 // Next implements the Executor Next interface.
@@ -163,7 +163,7 @@ func (e *StreamAggExec) Open() error {
 	for _, agg := range e.AggFuncs {
 		agg.Reset()
 	}
-	return e.children[0].Open()
+	return errors.Trace(e.children[0].Open())
 }
 
 // Next implements the Executor Next interface.

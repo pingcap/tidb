@@ -379,7 +379,7 @@ type XSelectIndexExec struct {
 	partialCount    int
 }
 
-// Open implements Exec Open interface.
+// Open implements the Executor Open interface.
 func (e *XSelectIndexExec) Open() error {
 	e.returnedRows = 0
 	e.partialCount = 0
