@@ -66,10 +66,10 @@ type lookupTableTask struct {
 	done    bool
 	doneCh  chan error
 
+	// indexOrder map is used to save the original index order for the handles.
+	// Without this map, the original index order might be lost.
 	// The handles fetched from index is originally ordered by index, but we need handles to be ordered by itself
 	// to do table request.
-	// The indexOrder map is used to save the original index order for the handles.
-	// Without this map, the original index order might be lost.
 	indexOrder map[int64]int
 }
 
@@ -338,11 +338,13 @@ type XSelectIndexExec struct {
 	singleReadMode bool
 
 	// Variables only used for single read.
+
 	result        distsql.SelectResult
 	partialResult distsql.PartialResult
 	idxColsSchema *expression.Schema
 
 	// Variables only used for double read.
+
 	taskChan    chan *lookupTableTask
 	tasksErr    error // not nil if tasks closed due to error.
 	taskCurr    *lookupTableTask
@@ -463,7 +465,7 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = decodeRawValues(values, schema)
+		err = decodeRawValues(values, schema, e.ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -475,11 +477,11 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 	}
 }
 
-func decodeRawValues(values []types.Datum, schema *expression.Schema) error {
+func decodeRawValues(values []types.Datum, schema *expression.Schema, loc *time.Location) error {
 	var err error
 	for i := 0; i < schema.Len(); i++ {
 		if values[i].Kind() == types.KindRaw {
-			values[i], err = tablecodec.DecodeColumnValue(values[i].GetRaw(), schema.Columns[i].RetType)
+			values[i], err = tablecodec.DecodeColumnValue(values[i].GetRaw(), schema.Columns[i].RetType, loc)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -605,7 +607,7 @@ func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<
 func (e *XSelectIndexExec) doIndexRequest() (distsql.SelectResult, error) {
 	selIdxReq := new(tipb.SelectRequest)
 	selIdxReq.StartTs = e.startTS
-	selIdxReq.TimeZoneOffset = timeZoneOffset()
+	selIdxReq.TimeZoneOffset = timeZoneOffset(e.ctx)
 	selIdxReq.Flags = statementContextToFlags(e.ctx.GetSessionVars().StmtCtx)
 	selIdxReq.IndexInfo = distsql.IndexToProto(e.table.Meta(), e.index)
 	if e.desc {
@@ -685,7 +687,7 @@ func (e *XSelectIndexExec) pickAndExecTask(ch <-chan *lookupTableTask) {
 	}
 }
 
-// ExecuteTask executes a lookup table task.
+// executeTask executes a lookup table task.
 // It works like executing an XSelectTableExec, except that the ranges are built from a slice of handles
 // rather than table ranges. It sends the request to all the regions containing those handles.
 func (e *XSelectIndexExec) executeTask(task *lookupTableTask) error {
@@ -746,7 +748,7 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = decodeRawValues(values, e.Schema())
+		err = decodeRawValues(values, e.Schema(), e.ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -764,7 +766,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (distsql.SelectResult
 		selTableReq.OrderBy = e.sortItemsPB
 	}
 	selTableReq.StartTs = e.startTS
-	selTableReq.TimeZoneOffset = timeZoneOffset()
+	selTableReq.TimeZoneOffset = timeZoneOffset(e.ctx)
 	selTableReq.Flags = statementContextToFlags(e.ctx.GetSessionVars().StmtCtx)
 	selTableReq.TableInfo = &tipb.TableInfo{
 		TableId: e.table.Meta().ID,
@@ -799,7 +801,7 @@ type XSelectTableExec struct {
 	supportDesc bool
 	isMemDB     bool
 
-	// result returns one or more distsql.PartialResult and each PartialResult is return by one region.
+	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result        distsql.SelectResult
 	partialResult distsql.PartialResult
 
@@ -839,7 +841,7 @@ func (e *XSelectTableExec) Schema() *expression.Schema {
 func (e *XSelectTableExec) doRequest() error {
 	selReq := new(tipb.SelectRequest)
 	selReq.StartTs = e.startTS
-	selReq.TimeZoneOffset = timeZoneOffset()
+	selReq.TimeZoneOffset = timeZoneOffset(e.ctx)
 	selReq.Flags = statementContextToFlags(e.ctx.GetSessionVars().StmtCtx)
 	selReq.Where = e.where
 	selReq.TableInfo = &tipb.TableInfo{
@@ -930,7 +932,7 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = decodeRawValues(values, e.schema)
+		err = decodeRawValues(values, e.schema, e.ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -949,8 +951,9 @@ func (e *XSelectTableExec) slowQueryInfo(duration time.Duration) string {
 }
 
 // timeZoneOffset returns the local time zone offset in seconds.
-func timeZoneOffset() int64 {
-	_, offset := time.Now().Zone()
+func timeZoneOffset(ctx context.Context) int64 {
+	loc := ctx.GetSessionVars().GetTimeZone()
+	_, offset := time.Now().In(loc).Zone()
 	return int64(offset)
 }
 
@@ -980,7 +983,7 @@ func setPBColumnsDefaultValue(ctx context.Context, pbColumns []*tipb.ColumnInfo,
 			return errors.Trace(err)
 		}
 
-		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(d)
+		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(d, ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -349,6 +349,9 @@ func SortByItemToPB(sc *variable.StatementContext, client kv.Client, expr Expres
 
 // AggFuncToPBExpr converts aggregate function to pb.
 func AggFuncToPBExpr(sc *variable.StatementContext, client kv.Client, aggFunc AggregationFunction) *tipb.Expr {
+	if aggFunc.IsDistinct() {
+		return nil
+	}
 	pc := pbConverter{client: client, sc: sc}
 	var tp tipb.ExprType
 	switch aggFunc.GetName() {

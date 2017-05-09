@@ -72,7 +72,9 @@ type PhysicalTableReader struct {
 	*basePlan
 	basePhysicalPlan
 
-	TablePlan PhysicalPlan
+	// TablePlans flats the tablePlan to construct executor pb.
+	TablePlans []PhysicalPlan
+	tablePlan  PhysicalPlan
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -88,7 +90,9 @@ type PhysicalIndexReader struct {
 	*basePlan
 	basePhysicalPlan
 
-	IndexPlan PhysicalPlan
+	// IndexPlans flats the indexPlan to construct executor pb.
+	IndexPlans []PhysicalPlan
+	indexPlan  PhysicalPlan
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -104,8 +108,12 @@ type PhysicalIndexLookUpReader struct {
 	*basePlan
 	basePhysicalPlan
 
-	IndexPlan PhysicalPlan
-	TablePlan PhysicalPlan
+	// IndexPlans flats the indexPlan to construct executor pb.
+	IndexPlans []PhysicalPlan
+	// TablePlans flats the tablePlan to construct executor pb.
+	TablePlans []PhysicalPlan
+	indexPlan  PhysicalPlan
+	tablePlan  PhysicalPlan
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -137,6 +145,10 @@ type PhysicalIndexScan struct {
 	accessEqualCount int
 
 	TableAsName *model.CIStr
+
+	// dataSourceSchema is the original schema of DataSource. The schema of index scan in KV and index reader in TiDB
+	// will be different. The schema of index scan will decode all columns of index but the TiDB only need some of them.
+	dataSourceSchema *expression.Schema
 }
 
 // PhysicalMemTable reads memory table.

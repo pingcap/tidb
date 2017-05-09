@@ -5,4 +5,21 @@ go_import_path: github.com/pingcap/tidb
 go:
   - 1.8
 
-script: make dev
+# https://docs.travis-ci.com/user/customizing-the-build/#Rows-that-are-Allowed-to-Fail
+env:
+    - TRAVIS_COVERAGE=0
+    - TRAVIS_COVERAGE=1
+
+# Run coverage tests.
+matrix:
+  fast_finish: true
+  allow_failures:
+    - go: 1.8
+      env: TRAVIS_COVERAGE=1
+
+before_install:  
+  # create /logs/unit-test for unit test.
+  - sudo mkdir /logs
+  - sudo touch /logs/unit-test
+script:
+  - make dev

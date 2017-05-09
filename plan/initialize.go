@@ -13,7 +13,9 @@
 
 package plan
 
-import "github.com/pingcap/tidb/context"
+import (
+	"github.com/pingcap/tidb/context"
+)
 
 const (
 	// TypeSel is the type of Selection.
@@ -266,17 +268,52 @@ func (p PhysicalUnionScan) init(allocator *idAllocator, ctx context.Context) *Ph
 func (p PhysicalIndexLookUpReader) init(allocator *idAllocator, ctx context.Context) *PhysicalIndexLookUpReader {
 	p.basePlan = newBasePlan(TypeIndexLookUp, allocator, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.TablePlans = flattenPushDownPlan(p.tablePlan)
+	p.IndexPlans = flattenPushDownPlan(p.indexPlan)
+	p.schema = p.tablePlan.Schema()
 	return &p
 }
 
 func (p PhysicalTableReader) init(allocator *idAllocator, ctx context.Context) *PhysicalTableReader {
 	p.basePlan = newBasePlan(TypeTableReader, allocator, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.TablePlans = flattenPushDownPlan(p.tablePlan)
+	p.schema = p.tablePlan.Schema()
 	return &p
 }
 
 func (p PhysicalIndexReader) init(allocator *idAllocator, ctx context.Context) *PhysicalIndexReader {
 	p.basePlan = newBasePlan(TypeIndexReader, allocator, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.IndexPlans = flattenPushDownPlan(p.indexPlan)
+	if _, ok := p.indexPlan.(*PhysicalAggregation); ok {
+		p.schema = p.indexPlan.Schema()
+	} else {
+		// The IndexScan running in KV Layer will read all columns from storage. But TiDB Only needs some of them.
+		// So their schemas are different, we need to resolve indices again.
+		schemaInKV := p.indexPlan.Schema()
+		is := p.IndexPlans[0].(*PhysicalIndexScan)
+		p.schema = is.dataSourceSchema
+		for _, col := range p.schema.Columns {
+			col.ResolveIndices(schemaInKV)
+		}
+	}
 	return &p
+}
+
+// flattenPushDownPlan converts a plan tree to a list, whose head is the leaf node like table scan.
+func flattenPushDownPlan(p PhysicalPlan) []PhysicalPlan {
+	plans := make([]PhysicalPlan, 0, 5)
+	for {
+		plans = append(plans, p)
+		if len(p.Children()) == 0 {
+			break
+		}
+		p = p.Children()[0].(PhysicalPlan)
+	}
+	for i := 0; i < len(plans)/2; i++ {
+		j := len(plans) - i - 1
+		plans[i], plans[j] = plans[j], plans[i]
+	}
+	return plans
 }

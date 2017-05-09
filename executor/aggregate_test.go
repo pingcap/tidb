@@ -20,8 +20,8 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -58,13 +58,11 @@ func (m *MockExec) Close() error {
 }
 
 func (s *testSuite) TestAggregation(c *C) {
-	mocktikv.MockDAGRequest = true
 	plan.JoinConcurrency = 1
 	defer func() {
 		plan.JoinConcurrency = 5
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
-		mocktikv.MockDAGRequest = false
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -280,7 +278,7 @@ func (s *testSuite) TestAggregation(c *C) {
 
 	result = tk.MustQuery("select count(*) from information_schema.columns")
 	// When adding new memory table in information_schema, please update this variable.
-	columnCountOfAllInformationSchemaTables := "714"
+	columnCountOfAllInformationSchemaTables := "716"
 	result.Check(testkit.Rows(columnCountOfAllInformationSchemaTables))
 
 	tk.MustExec("drop table if exists t1")
@@ -310,10 +308,12 @@ func (s *testSuite) TestAggregation(c *C) {
 
 func (s *testSuite) TestStreamAgg(c *C) {
 	col := &expression.Column{
-		Index: 1,
+		Index:   1,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
 	gbyCol := &expression.Column{
-		Index: 0,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
 	sumAgg := expression.NewAggFunction(ast.AggFuncSum, []expression.Expression{col}, false)
 	cntAgg := expression.NewAggFunction(ast.AggFuncCount, []expression.Expression{col}, false)
@@ -398,11 +398,9 @@ func (s *testSuite) TestStreamAgg(c *C) {
 }
 
 func (s *testSuite) TestAggPrune(c *C) {
-	mocktikv.MockDAGRequest = true
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
-		mocktikv.MockDAGRequest = false
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -432,18 +430,15 @@ func (s *testSuite) TestSelectDistinct(c *C) {
 
 	tk.MustExec("begin")
 	r := tk.MustQuery("select distinct name from select_distinct_test;")
-	rowStr := fmt.Sprintf("%v", []byte("hello"))
-	r.Check(testkit.Rows(rowStr))
+	r.Check(testkit.Rows("hello"))
 	tk.MustExec("commit")
 
 }
 
 func (s *testSuite) TestAggPushDown(c *C) {
-	mocktikv.MockDAGRequest = true
 	defer func() {
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
-		mocktikv.MockDAGRequest = false
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

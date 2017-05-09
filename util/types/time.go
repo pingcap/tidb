@@ -86,8 +86,6 @@ var (
 		Type: mysql.TypeDate,
 		Fsp:  DefaultFsp,
 	}
-
-	local = gotime.Local
 )
 
 var (
@@ -381,16 +379,6 @@ func (t Time) ToPackedUint() (uint64, error) {
 	if t.IsZero() {
 		return 0, nil
 	}
-	if t.Type == mysql.TypeTimestamp {
-		// TODO: Consider time_zone variable.
-		if t1, err := t.Time.GoTime(gotime.Local); err == nil {
-			utc := t1.UTC()
-			tm = FromGoTime(utc)
-		} else {
-			// mysql timestamp month and day can't be zero.
-			return 0, errors.Trace(err)
-		}
-	}
 	year, month, day := tm.Year(), tm.Month(), tm.Day()
 	hour, minute, sec := tm.Hour(), tm.Minute(), tm.Second()
 	ymd := uint64(((year*13 + int(month)) << 5) | day)
@@ -418,15 +406,9 @@ func (t *Time) FromPackedUint(packed uint64) error {
 	hour := int(hms >> 12)
 	microsec := int(packed % (1 << 24))
 
-	loc := local
-	if t.Type == mysql.TypeTimestamp {
-		loc = gotime.UTC
-		t.Time = FromGoTime(gotime.Date(year, gotime.Month(month), day, hour, minute, second, microsec*1000, loc).In(local))
-	} else {
-		t.Time = FromDate(year, month, day, hour, minute, second, microsec)
-		if err := t.check(); err != nil {
-			return errors.Trace(err)
-		}
+	t.Time = FromDate(year, month, day, hour, minute, second, microsec)
+	if err := t.check(); err != nil {
+		return errors.Trace(err)
 	}
 
 	return nil

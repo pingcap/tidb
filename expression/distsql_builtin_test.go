@@ -17,6 +17,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
@@ -33,6 +34,8 @@ func (s *testEvalSuite) TestEval(c *C) {
 	row := []types.Datum{types.NewDatum(100)}
 	colIDs := make(map[int64]int)
 	colIDs[int64(1)] = 0
+	fieldTps := make([]*types.FieldType, 1)
+	fieldTps[0] = types.NewFieldType(mysql.TypeDouble)
 	tests := []struct {
 		expr   *tipb.Expr
 		result types.Datum
@@ -274,7 +277,7 @@ func (s *testEvalSuite) TestEval(c *C) {
 	}
 	sc := new(variable.StatementContext)
 	for _, tt := range tests {
-		expr, err := PBToExpr(tt.expr, colIDs, sc)
+		expr, err := PBToExpr(tt.expr, colIDs, fieldTps, sc)
 		c.Assert(err, IsNil)
 		result, err := expr.Eval(row)
 		c.Assert(err, IsNil)
@@ -410,7 +413,7 @@ func (s *testEvalSuite) TestLike(c *C) {
 	}
 	sc := new(variable.StatementContext)
 	for _, tt := range tests {
-		expr, err := PBToExpr(tt.expr, nil, sc)
+		expr, err := PBToExpr(tt.expr, nil, nil, sc)
 		c.Check(err, IsNil)
 		res, err := expr.Eval(nil)
 		c.Check(err, IsNil)
@@ -458,7 +461,7 @@ func (s *testEvalSuite) TestWhereIn(c *C) {
 	}
 	sc := new(variable.StatementContext)
 	for _, tt := range tests {
-		expr, err := PBToExpr(tt.expr, nil, sc)
+		expr, err := PBToExpr(tt.expr, nil, nil, sc)
 		c.Check(err, IsNil)
 		res, err := expr.Eval(nil)
 		c.Check(err, IsNil)
@@ -496,7 +499,7 @@ func (s *testEvalSuite) TestEvalIsNull(c *C) {
 	}
 	sc := new(variable.StatementContext)
 	for _, tt := range tests {
-		expr, err := PBToExpr(tt.expr, nil, sc)
+		expr, err := PBToExpr(tt.expr, nil, nil, sc)
 		c.Assert(err, IsNil)
 		result, err := expr.Eval(nil)
 		c.Assert(err, IsNil)

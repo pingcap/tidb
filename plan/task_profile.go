@@ -94,9 +94,6 @@ func attachPlan2TaskProfile(p PhysicalPlan, t taskProfile) taskProfile {
 // finishIndexPlan means we no longer add plan to index plan, and compute the network cost for it.
 func (t *copTaskProfile) finishIndexPlan() {
 	if !t.indexPlanFinished {
-		if t.tablePlan != nil {
-			t.indexPlan.SetSchema(expression.NewSchema()) // we only need the handle
-		}
 		t.cst += t.cnt * (netWorkFactor + scanFactor)
 		t.indexPlanFinished = true
 	}
@@ -108,6 +105,19 @@ func (p *basePhysicalPlan) attach2TaskProfile(tasks ...taskProfile) taskProfile 
 }
 
 func (p *PhysicalHashJoin) attach2TaskProfile(tasks ...taskProfile) taskProfile {
+	lTask := finishCopTask(tasks[0].copy(), p.ctx, p.allocator)
+	rTask := finishCopTask(tasks[1].copy(), p.ctx, p.allocator)
+	np := p.Copy()
+	np.SetChildren(lTask.plan(), rTask.plan())
+	return &rootTaskProfile{
+		p: np,
+		// TODO: we will estimate the cost and count more precisely.
+		cst: lTask.cost() + rTask.cost(),
+		cnt: lTask.count() + rTask.count(),
+	}
+}
+
+func (p *PhysicalMergeJoin) attach2TaskProfile(tasks ...taskProfile) taskProfile {
 	lTask := finishCopTask(tasks[0].copy(), p.ctx, p.allocator)
 	rTask := finishCopTask(tasks[1].copy(), p.ctx, p.allocator)
 	np := p.Copy()
@@ -155,14 +165,11 @@ func finishCopTask(task taskProfile, ctx context.Context, allocator *idAllocator
 		cnt: t.cnt,
 	}
 	if t.indexPlan != nil && t.tablePlan != nil {
-		newTask.p = PhysicalIndexLookUpReader{TablePlan: t.tablePlan, IndexPlan: t.indexPlan}.init(allocator, ctx)
-		newTask.p.SetSchema(t.tablePlan.Schema())
+		newTask.p = PhysicalIndexLookUpReader{tablePlan: t.tablePlan, indexPlan: t.indexPlan}.init(allocator, ctx)
 	} else if t.indexPlan != nil {
-		newTask.p = PhysicalIndexReader{IndexPlan: t.indexPlan}.init(allocator, ctx)
-		newTask.p.SetSchema(t.indexPlan.Schema())
+		newTask.p = PhysicalIndexReader{indexPlan: t.indexPlan}.init(allocator, ctx)
 	} else {
-		newTask.p = PhysicalTableReader{TablePlan: t.tablePlan}.init(allocator, ctx)
-		newTask.p.SetSchema(t.tablePlan.Schema())
+		newTask.p = PhysicalTableReader{tablePlan: t.tablePlan}.init(allocator, ctx)
 	}
 	return newTask
 }

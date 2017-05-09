@@ -105,6 +105,7 @@ type tikvStore struct {
 	lockResolver *LockResolver
 	gcWorker     *GCWorker
 	etcdAddrs    []string
+	mock         bool
 }
 
 func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool) (*tikvStore, error) {
@@ -112,13 +113,14 @@ func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
+	_, mock := client.(*mocktikv.RPCClient)
 	store := &tikvStore{
 		clusterID:   pdClient.GetClusterID(goctx.TODO()),
 		uuid:        uuid,
 		oracle:      oracle,
 		client:      client,
 		regionCache: NewRegionCache(pdClient),
+		mock:        mock,
 	}
 	store.lockResolver = newLockResolver(store)
 	if enableGC {

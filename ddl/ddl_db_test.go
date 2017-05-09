@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -639,8 +641,8 @@ LOOP:
 	rows := s.mustQuery(c, "select count(c4) from t2")
 	c.Assert(rows, HasLen, 1)
 	c.Assert(rows[0], HasLen, 1)
-	count, ok := rows[0][0].(int64)
-	c.Assert(ok, IsTrue)
+	count, err := strconv.ParseInt(rows[0][0].(string), 10, 64)
+	c.Assert(err, IsNil)
 	c.Assert(count, Greater, int64(0))
 
 	rows = s.mustQuery(c, "select count(c4) from t2 where c4 = -1")
@@ -657,7 +659,7 @@ LOOP:
 	j := 0
 	ctx.NewTxn()
 	defer ctx.Txn().Rollback()
-	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(),
+	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(),
 		func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 			i++
 			// c4 must be -1 or > 0
@@ -733,9 +735,21 @@ LOOP:
 	rows := s.mustQuery(c, "select count(*) from t2")
 	c.Assert(rows, HasLen, 1)
 	c.Assert(rows[0], HasLen, 1)
-	count, ok := rows[0][0].(int64)
-	c.Assert(ok, IsTrue)
+	count, err := strconv.ParseInt(rows[0][0].(string), 10, 64)
+	c.Assert(err, IsNil)
 	c.Assert(count, Greater, int64(0))
+}
+
+func (s *testDBSuite) TestPrimaryKey(c *C) {
+	defer testleak.AfterTest(c)()
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+
+	s.mustExec(c, "create table primary_key_test (a int, b varchar(10))")
+	_, err := s.tk.Exec("alter table primary_key_test add primary key(a)")
+	c.Assert(ddl.ErrUnsupportedModifyPrimaryKey.Equal(err), IsTrue)
+	_, err = s.tk.Exec("alter table primary_key_test drop primary key")
+	c.Assert(ddl.ErrUnsupportedModifyPrimaryKey.Equal(err), IsTrue)
 }
 
 func (s *testDBSuite) TestChangeColumn(c *C) {
@@ -748,8 +762,7 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	s.tk.MustQuery("select a from t3").Check(testkit.Rows("0"))
 	s.mustExec(c, "alter table t3 change a aa bigint")
 	s.mustExec(c, "insert into t3 set b = 'b'")
-	rowStr := fmt.Sprintf("%v", nil)
-	s.tk.MustQuery("select aa from t3").Check(testkit.Rows("0", rowStr))
+	s.tk.MustQuery("select aa from t3").Check(testkit.Rows("0", "<nil>"))
 	// for the following definitions: 'not null', 'null', 'default value' and 'comment'
 	s.mustExec(c, "alter table t3 change b b varchar(20) null default 'c' comment 'my comment'")
 	ctx := s.tk.Se.(context.Context)
@@ -762,10 +775,7 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	hasNotNull := tmysql.HasNotNullFlag(colB.Flag)
 	c.Assert(hasNotNull, IsFalse)
 	s.mustExec(c, "insert into t3 set aa = 3")
-	rowStr = fmt.Sprintf("%v", []byte("a"))
-	rowStr1 := fmt.Sprintf("%v", []byte("b"))
-	rowStr2 := fmt.Sprintf("%v", []byte("c"))
-	s.tk.MustQuery("select b from t3").Check(testkit.Rows(rowStr, rowStr1, rowStr2))
+	s.tk.MustQuery("select b from t3").Check(testkit.Rows("a", "b", "c"))
 	// for timestamp
 	s.mustExec(c, "alter table t3 add column c timestamp not null")
 	s.mustExec(c, "alter table t3 change c c timestamp null default '2017-02-11' comment 'col c comment' on update current_timestamp")
@@ -802,15 +812,12 @@ func (s *testDBSuite) TestAlterColumn(c *C) {
 	s.tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222"))
 	s.mustExec(c, "alter table test_alter_column alter column b set default null")
 	s.mustExec(c, "insert into test_alter_column set c = 'cc'")
-	rowStr := fmt.Sprintf("%v", []byte("a"))
-	rowStr1 := fmt.Sprintf("%v", []byte("b"))
-	rowStr2 := fmt.Sprintf("%v", nil)
-	s.tk.MustQuery("select b from test_alter_column").Check(testkit.Rows(rowStr, rowStr1, rowStr2))
+	s.tk.MustQuery("select b from test_alter_column").Check(testkit.Rows("a", "b", "<nil>"))
 	// TODO: After fix issue 2606.
 	// s.mustExec(c, "alter table test_alter_column alter column d set default null")
 	s.mustExec(c, "alter table test_alter_column alter column a drop default")
 	s.mustExec(c, "insert into test_alter_column set b = 'd', c = 'dd'")
-	s.tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222", "222", rowStr2))
+	s.tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222", "222", "<nil>"))
 
 	// for failing tests
 	sql := "alter table db_not_exist.test_alter_column alter column b set default 'c'"
@@ -1102,12 +1109,12 @@ func (s *testDBSuite) TestIssue2858And2717(c *C) {
 	s.tk.MustExec("create table t_issue_2858_bit (a bit(64) default b'0')")
 	s.tk.MustExec("insert into t_issue_2858_bit value ()")
 	s.tk.MustExec(`insert into t_issue_2858_bit values (100), ('10'), ('\0')`)
-	s.tk.MustQuery("select a+0 from t_issue_2858_bit").Check([][]interface{}{{0}, {100}, {0x3130}, {0}})
+	s.tk.MustQuery("select a+0 from t_issue_2858_bit").Check(testkit.Rows("0", "100", "12592", "0"))
 	s.tk.MustExec(`alter table t_issue_2858_bit alter column a set default '\0'`)
 
 	s.tk.MustExec("create table t_issue_2858_hex (a int default 0x123)")
 	s.tk.MustExec("insert into t_issue_2858_hex value ()")
 	s.tk.MustExec("insert into t_issue_2858_hex values (123), (0x321)")
-	s.tk.MustQuery("select a from t_issue_2858_hex").Check([][]interface{}{{0x123}, {123}, {0x321}})
+	s.tk.MustQuery("select a from t_issue_2858_hex").Check(testkit.Rows("291", "123", "801"))
 	s.tk.MustExec(`alter table t_issue_2858_hex alter column a set default 0x321`)
 }
