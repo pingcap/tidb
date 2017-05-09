@@ -77,22 +77,22 @@ func (r *pointSorter) Len() int {
 func (r *pointSorter) Less(i, j int) bool {
 	a := r.points[i]
 	b := r.points[j]
-	less, err := rangePointLess(r.sc, a, b)
+	less, err := pointLess(r.sc, a, b)
 	if err != nil {
 		r.err = err
 	}
 	return less
 }
 
-func rangePointLess(sc *variable.StatementContext, a, b point) (bool, error) {
+func pointLess(sc *variable.StatementContext, a, b point) (bool, error) {
 	cmp, err := a.value.CompareDatum(sc, b.value)
 	if cmp != 0 {
 		return cmp < 0, nil
 	}
-	return rangePointEqualValueLess(a, b), errors.Trace(err)
+	return pointEqualValueLess(a, b), errors.Trace(err)
 }
 
-func rangePointEqualValueLess(a, b point) bool {
+func pointEqualValueLess(a, b point) bool {
 	if a.start && b.start {
 		return !a.excl && b.excl
 	} else if a.start {
@@ -253,7 +253,7 @@ func (r *Builder) buildFromIsFalse(expr *expression.ScalarFunction, isNot int) [
 }
 
 func (r *Builder) newBuildFromIn(expr *expression.ScalarFunction) []point {
-	var rangePoints []point
+	var points []point
 	list := expr.GetArgs()[1:]
 	for _, e := range list {
 		v, ok := e.(*expression.Constant)
@@ -263,9 +263,9 @@ func (r *Builder) newBuildFromIn(expr *expression.ScalarFunction) []point {
 		}
 		startPoint := point{value: types.NewDatum(v.Value.GetValue()), start: true}
 		endPoint := point{value: types.NewDatum(v.Value.GetValue())}
-		rangePoints = append(rangePoints, startPoint, endPoint)
+		points = append(points, startPoint, endPoint)
 	}
-	sorter := pointSorter{points: rangePoints, sc: r.Sc}
+	sorter := pointSorter{points: points, sc: r.Sc}
 	sort.Sort(&sorter)
 	if sorter.err != nil {
 		r.err = sorter.err
@@ -273,7 +273,7 @@ func (r *Builder) newBuildFromIn(expr *expression.ScalarFunction) []point {
 	// check duplicates
 	hasDuplicate := false
 	isStart := false
-	for _, v := range rangePoints {
+	for _, v := range points {
 		if isStart == v.start {
 			hasDuplicate = true
 			break
@@ -281,13 +281,13 @@ func (r *Builder) newBuildFromIn(expr *expression.ScalarFunction) []point {
 		isStart = v.start
 	}
 	if !hasDuplicate {
-		return rangePoints
+		return points
 	}
 	// remove duplicates
-	distinctRangePoints := make([]point, 0, len(rangePoints))
+	distinctRangePoints := make([]point, 0, len(points))
 	isStart = false
-	for i := 0; i < len(rangePoints); i++ {
-		current := rangePoints[i]
+	for i := 0; i < len(points); i++ {
+		current := points[i]
 		if isStart == current.start {
 			continue
 		}
@@ -460,12 +460,12 @@ func (r *Builder) merge(a, b []point, union bool) []point {
 // BuildIndexRanges build index ranges from range points.
 // Only the first column in the index is built, extra column ranges will be appended by
 // appendIndexRanges.
-func (r *Builder) BuildIndexRanges(rangePoints []point, tp *types.FieldType) []*types.IndexRange {
-	indexRanges := make([]*types.IndexRange, 0, len(rangePoints)/2)
-	for i := 0; i < len(rangePoints); i += 2 {
-		startPoint := r.convertPoint(rangePoints[i], tp)
-		endPoint := r.convertPoint(rangePoints[i+1], tp)
-		less, err := rangePointLess(r.Sc, startPoint, endPoint)
+func (r *Builder) BuildIndexRanges(points []point, tp *types.FieldType) []*types.IndexRange {
+	indexRanges := make([]*types.IndexRange, 0, len(points)/2)
+	for i := 0; i < len(points); i += 2 {
+		startPoint := r.convertPoint(points[i], tp)
+		endPoint := r.convertPoint(points[i+1], tp)
+		less, err := pointLess(r.Sc, startPoint, endPoint)
 		if err != nil {
 			r.err = errors.Trace(err)
 		}
@@ -532,25 +532,25 @@ func (r *Builder) convertPoint(point point, tp *types.FieldType) point {
 // The additional column ranges can only be appended to point ranges.
 // for example we have an index (a, b), if the condition is (a > 1 and b = 2)
 // then we can not build a conjunctive ranges for this index.
-func (r *Builder) appendIndexRanges(origin []*types.IndexRange, rangePoints []point, ft *types.FieldType) []*types.IndexRange {
+func (r *Builder) appendIndexRanges(origin []*types.IndexRange, points []point, ft *types.FieldType) []*types.IndexRange {
 	var newIndexRanges []*types.IndexRange
 	for i := 0; i < len(origin); i++ {
 		oRange := origin[i]
 		if !oRange.IsPoint(r.Sc) {
 			newIndexRanges = append(newIndexRanges, oRange)
 		} else {
-			newIndexRanges = append(newIndexRanges, r.appendIndexRange(oRange, rangePoints, ft)...)
+			newIndexRanges = append(newIndexRanges, r.appendIndexRange(oRange, points, ft)...)
 		}
 	}
 	return newIndexRanges
 }
 
-func (r *Builder) appendIndexRange(origin *types.IndexRange, rangePoints []point, ft *types.FieldType) []*types.IndexRange {
-	newRanges := make([]*types.IndexRange, 0, len(rangePoints)/2)
-	for i := 0; i < len(rangePoints); i += 2 {
-		startPoint := r.convertPoint(rangePoints[i], ft)
-		endPoint := r.convertPoint(rangePoints[i+1], ft)
-		less, err := rangePointLess(r.Sc, startPoint, endPoint)
+func (r *Builder) appendIndexRange(origin *types.IndexRange, points []point, ft *types.FieldType) []*types.IndexRange {
+	newRanges := make([]*types.IndexRange, 0, len(points)/2)
+	for i := 0; i < len(points); i += 2 {
+		startPoint := r.convertPoint(points[i], ft)
+		endPoint := r.convertPoint(points[i+1], ft)
+		less, err := pointLess(r.Sc, startPoint, endPoint)
 		if err != nil {
 			r.err = errors.Trace(err)
 		}
@@ -578,10 +578,10 @@ func (r *Builder) appendIndexRange(origin *types.IndexRange, rangePoints []point
 }
 
 // BuildTableRanges will construct the range slice with the given range points
-func (r *Builder) BuildTableRanges(rangePoints []point) []types.IntColumnRange {
-	tableRanges := make([]types.IntColumnRange, 0, len(rangePoints)/2)
-	for i := 0; i < len(rangePoints); i += 2 {
-		startPoint := rangePoints[i]
+func (r *Builder) BuildTableRanges(points []point) []types.IntColumnRange {
+	tableRanges := make([]types.IntColumnRange, 0, len(points)/2)
+	for i := 0; i < len(points); i += 2 {
+		startPoint := points[i]
 		if startPoint.value.IsNull() || startPoint.value.Kind() == types.KindMinNotNull {
 			startPoint.value.SetInt64(math.MinInt64)
 		}
@@ -599,7 +599,7 @@ func (r *Builder) BuildTableRanges(rangePoints []point) []types.IntColumnRange {
 		if cmp < 0 || (cmp == 0 && startPoint.excl) {
 			startInt++
 		}
-		endPoint := rangePoints[i+1]
+		endPoint := points[i+1]
 		if endPoint.value.IsNull() {
 			endPoint.value.SetInt64(math.MinInt64)
 		} else if endPoint.value.Kind() == types.KindMaxValue {
@@ -627,12 +627,12 @@ func (r *Builder) BuildTableRanges(rangePoints []point) []types.IntColumnRange {
 	return tableRanges
 }
 
-func (r *rangeBuilder) buildColumnRanges(rangePoints []rangePoint, tp *types.FieldType) []types.ColumnRange {
-	columnRanges := make([]types.ColumnRange, 0, len(rangePoints)/2)
-	for i := 0; i < len(rangePoints); i += 2 {
-		startPoint := r.convertPoint(rangePoints[i], tp)
-		endPoint := r.convertPoint(rangePoints[i+1], tp)
-		less, err := rangePointLess(r.sc, startPoint, endPoint)
+func (r *Builder) buildColumnRanges(points []point, tp *types.FieldType) []types.ColumnRange {
+	columnRanges := make([]types.ColumnRange, 0, len(points)/2)
+	for i := 0; i < len(points); i += 2 {
+		startPoint := r.convertPoint(points[i], tp)
+		endPoint := r.convertPoint(points[i+1], tp)
+		less, err := pointLess(r.Sc, startPoint, endPoint)
 		if err != nil {
 			r.err = errors.Trace(err)
 		}

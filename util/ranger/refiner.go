@@ -305,8 +305,8 @@ func BuildColumnRange(conds []expression.Expression, sc *variable.StatementConte
 		return []types.ColumnRange{{Low: types.Datum{}, LowExcl: true, High: types.MaxValueDatum(), HighExcl: true}}, nil
 	}
 
-	rb := rangeBuilder{sc: sc}
-	rangePoints := fullRange
+	rb := Builder{Sc: sc}
+	rangePoints := FullRange
 	for _, cond := range conds {
 		rangePoints = rb.intersection(rangePoints, rb.build(cond))
 		if rb.err != nil {
