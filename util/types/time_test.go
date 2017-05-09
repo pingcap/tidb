@@ -777,7 +777,7 @@ func (s *testTimeSuite) TestTamestampDiff(c *C) {
 	}
 }
 
-func (s *testTimeSuite) TestTamestampDiff(c *C) {
+func (s *testTimeSuite) TestDateFSP(c *C) {
 	tests := []struct {
 		date   string
 		expect int
