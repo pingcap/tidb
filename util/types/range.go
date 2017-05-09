@@ -35,8 +35,8 @@ func (tr *IntColumnRange) IsPoint() bool {
 type ColumnRange struct {
 	Low      Datum
 	High     Datum
-	lowExcl  bool
-	highExcl bool
+	LowExcl  bool
+	HighExcl bool
 }
 
 // IndexRange represents a range for an index.
