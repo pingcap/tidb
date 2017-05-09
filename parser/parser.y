@@ -451,6 +451,9 @@ import (
 	identified	"IDENTIFIED"
 	isolation	"ISOLATION"
 	indexes		"INDEXES"
+	jsonType    "JSON"
+	jsonExtract "JSON_EXTRACT"
+	jsonUnquote "JSON_UNQUOTE"
 	keyBlockSize	"KEY_BLOCK_SIZE"
 	local		"LOCAL"
 	less		"LESS"
@@ -2361,6 +2364,7 @@ NotKeywordToken:
 |	"AES_DECRYPT" | "AES_ENCRYPT" | "QUOTE"
 |	"ANY_VALUE" | "INET_ATON" | "INET_NTOA" | "INET6_ATON" | "INET6_NTOA" | "IS_FREE_LOCK" | "IS_IPV4" | "IS_IPV4_COMPAT" | "IS_IPV4_MAPPED" | "IS_IPV6" | "IS_USED_LOCK" | "MASTER_POS_WAIT" | "NAME_CONST" | "RELEASE_ALL_LOCKS" | "UUID" | "UUID_SHORT"
 |	"COMPRESS" | "DECODE" | "DES_DECRYPT" | "DES_ENCRYPT" | "ENCODE" | "ENCRYPT" | "MD5" | "OLD_PASSWORD" | "RANDOM_BYTES" | "SHA1" | "SHA" | "SHA2" | "UNCOMPRESS" | "UNCOMPRESSED_LENGTH" | "VALIDATE_PASSWORD_STRENGTH"
+|	"JSON_EXTRACT" | "JSON_UNQUOTE"
 
 /************************************************************************************
  *
@@ -3652,6 +3656,20 @@ FunctionCallNonKeyword:
 |	"VALIDATE_PASSWORD_STRENGTH" '(' ExpressionListOpt ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+	}
+|	"JSON_EXTRACT" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
+		}
+	}
+|	"JSON_UNQUOTE" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
 	}
 
 GetFormatSelector:
@@ -5702,6 +5720,11 @@ StringType:
 		x.Elems = $3.([]string)
 		x.Charset = $5.(string)
 		x.Collate = $6.(string)
+		$$ = x
+	}
+|	"JSON"
+	{
+		x := types.NewFieldType(mysql.TypeJson)
 		$$ = x
 	}
 
