@@ -880,6 +880,6 @@ var MySQLErrName = map[uint16]string{
 	ErrMustChangePasswordLogin:                               "Your password has expired. To log in you must change it using a client that supports expired passwords.",
 	ErrRowInWrongPartition:                                   "Found a row in wrong partition %s",
 	ErrInvalidJsonText:                                       "Invalid JSON text: %-.192s",
-	ErrInvalidJsonPath:                                       "Invalid Json path expression",
+	ErrInvalidJsonPath:                                       "Invalid JSON path expression",
 	ErrInvalidJsonData:                                       "Invalid data type for JSON data",
 }
