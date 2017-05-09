@@ -1198,9 +1198,18 @@ func checkMonthDay(year, month, day int) error {
 }
 
 func checkTimestampType(t TimeInternal) error {
+	if compareTime(t, ZeroTime) == 0 {
+		return nil
+	}
+
 	if compareTime(t, maxTimestamp) > 0 || compareTime(t, minTimestamp) < 0 {
 		return errors.Trace(ErrInvalidTimeFormat)
 	}
+
+	if _, err := t.GoTime(gotime.Local); err != nil {
+		return errors.Trace(ErrInvalidTimeFormat)
+	}
+
 	return nil
 }
 

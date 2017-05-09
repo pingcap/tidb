@@ -748,7 +748,7 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = decodeRawValues(values, e.Schema(), e.ctx.GetSessionVars().GetTimeZone())
+		err = decodeRawValues(values, e.Schema(), time.UTC)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
