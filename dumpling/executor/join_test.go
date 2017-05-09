@@ -551,3 +551,16 @@ func (s *testSuite) TestJoinLeak(c *C) {
 	time.Sleep(100 * time.Millisecond)
 	result.Close()
 }
+
+func (s *testSuite) TestHashJoinExecEncodeDecodeRow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1 (id int)")
+	tk.MustExec("create table t2 (id int, name varchar(255), ts timestamp)")
+	tk.MustExec("insert into t1 values (1)")
+	tk.MustExec("insert into t2 values (1, 'xxx', '2003-06-09 10:51:26')")
+	result := tk.MustQuery("select ts from t1 inner join t2 where t2.name = 'xxx'")
+	result.Check(testkit.Rows("2003-06-09 10:51:26"))
+}
