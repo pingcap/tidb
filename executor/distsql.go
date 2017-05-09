@@ -465,7 +465,7 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = decodeRawValues(values, schema, e.ctx.GetSessionVars().GetTimeZone())
+		err = decodeRawValues(values, schema, time.UTC)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
