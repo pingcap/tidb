@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/types"
@@ -277,8 +278,15 @@ func (e *HashJoinExec) encodeRow(b []byte, row *Row) ([]byte, error) {
 			e.rowKeyCache[i] = rk
 		}
 	}
-	b, err := codec.EncodeValue(b, row.Data...)
-	return b, errors.Trace(err)
+	loc := e.ctx.GetSessionVars().GetTimeZone()
+	for _, datum := range row.Data {
+		tmp, err := tablecodec.EncodeValue(datum, loc)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		b = append(b, tmp...)
+	}
+	return b, nil
 }
 
 func (e *HashJoinExec) decodeRow(data []byte) (*Row, error) {
