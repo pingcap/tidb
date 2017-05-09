@@ -258,6 +258,11 @@ type DataSource struct {
 	statisticTable *statistics.Table
 }
 
+// TableInfo returns the *TableInfo of data source.
+func (p *DataSource) TableInfo() *model.TableInfo {
+	return p.tableInfo
+}
+
 // Union represents Union plan.
 type Union struct {
 	*basePlan
