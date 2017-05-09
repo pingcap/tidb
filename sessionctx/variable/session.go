@@ -310,6 +310,10 @@ type TableDelta struct {
 	Count int64
 }
 
+// GoSQLDriverTest used for server testing.
+// Because go-sql-driver returns the warnings as errors.
+var GoSQLDriverTest = false
+
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
 type StatementContext struct {
