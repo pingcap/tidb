@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package plan
+package statistics
 
 import (
 	"math"
@@ -19,7 +19,10 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/util/ranger"
 )
+
+const selectionFactor  = 0.8
 
 // indexBlock is used when calculating selectivity
 type indexBlock struct {
@@ -35,29 +38,30 @@ type indexBlock struct {
 // The definition of selectivity is (row count after filter / row count before filter).
 // And exprs must be CNF now, in other words, `exprs[0] and exprs[1] and ... and exprs[len - 1]` should be held when you call this.
 // TODO: support expressions that the top layer is a DNF.
-func selectivity(exprs []expression.Expression, indices []*model.IndexInfo, ds *DataSource, pkColID int64) (float64, error) {
+func selectivity(ctx context.Context, exprs []expression.Expression, indices []*model.IndexInfo, pkColID int64,
+tbl *model.TableInfo, statsTbl *Table) (float64, error) {
 	// TODO: If len(exprs) is bigger than 64, we could use bitset structure to replace the uint64.
 	// This will simplify some code and speed up if we use this rather than a boolean slice.
-	if ds.statisticTable.Pseudo || len(exprs) > 64 {
+	if statsTbl.Pseudo || len(exprs) > 64 {
 		return selectionFactor, nil
 	}
 	var blocks []*indexBlock
-	sc := ds.ctx.GetSessionVars().StmtCtx
-	if ds.tableInfo.PKIsHandle {
-		c := ds.statisticTable.Columns[pkColID]
+	sc := ctx.GetSessionVars().StmtCtx
+	if tbl.PKIsHandle {
+		c := statsTbl.Columns[pkColID]
 		// pk should have histogram.
 		if c != nil && len(c.Buckets) > 0 {
-			covered, _ := getMaskByColumn(ds.ctx, exprs, GetPkName(ds.tableInfo))
+			covered, _ := getMaskByColumn(ctx, exprs, tbl.GetPkName())
 			if covered != 0 {
 				blocks = append(blocks, &indexBlock{pos: -1, cover: covered})
 			}
 		}
 	}
 	for id, index := range indices {
-		c := ds.statisticTable.Indices[index.ID]
+		c := statsTbl.Indices[index.ID]
 		// This index should have histogram.
 		if c != nil && len(c.Buckets) > 0 {
-			covered, inAndEqCnt, _ := getMaskByIndex(ds.ctx, exprs, index)
+			covered, inAndEqCnt, _ := getMaskByIndex(ctx, exprs, index)
 			if covered > 0 {
 				blocks = append(blocks, &indexBlock{pos: id, cover: covered, inAndEqCnt: inAndEqCnt})
 			}
@@ -73,25 +77,25 @@ func selectivity(exprs []expression.Expression, indices []*model.IndexInfo, ds *
 		mask &^= block.cover
 		var rowCount float64
 		if block.pos == -1 {
-			ranges, err := BuildTableRange(conds, sc)
+			ranges, err := ranger.BuildTableRange(conds, sc)
 			if err != nil {
 				return 0, err
 			}
-			rowCount, err = ds.statisticTable.GetRowCountByIntColumnRanges(sc, pkColID, ranges)
+			rowCount, err = statsTbl.GetRowCountByIntColumnRanges(sc, pkColID, ranges)
 			if err != nil {
 				return 0, err
 			}
 		} else {
-			ranges, err := BuildIndexRange(sc, ds.tableInfo, indices[block.pos], block.inAndEqCnt, conds)
+			ranges, err := ranger.BuildIndexRange(sc, tbl, indices[block.pos], block.inAndEqCnt, conds)
 			if err != nil {
 				return 0, err
 			}
-			rowCount, err = ds.statisticTable.GetRowCountByIndexRanges(sc, indices[block.pos].ID, ranges, block.inAndEqCnt)
+			rowCount, err = statsTbl.GetRowCountByIndexRanges(sc, indices[block.pos].ID, ranges, block.inAndEqCnt)
 			if err != nil {
 				return 0, err
 			}
 		}
-		ret *= rowCount / float64(ds.statisticTable.Count)
+		ret *= rowCount / float64(statsTbl.Count)
 	}
 	// TODO: add the calculation of column sampling.
 	if mask > 0 {
@@ -101,7 +105,7 @@ func selectivity(exprs []expression.Expression, indices []*model.IndexInfo, ds *
 }
 
 func getMaskByColumn(ctx context.Context, exprs []expression.Expression, colName model.CIStr) (uint64, []expression.Expression) {
-	accessConds, _ := DetachTableScanConditions(exprs, colName)
+	accessConds, _ := ranger.DetachTableScanConditions(exprs, colName)
 	mask := uint64(0)
 	// There accessConds is a sub sequence of exprs. i.e. If exprs is `[ a > 1, b > 1, a < 10]`,
 	// accessConds could be `[ a > 1, b > 1 ]` or `[a > 1, a < 10]`, couldn't be `[ a < 10, a > 1 ]`
@@ -124,7 +128,7 @@ func getMaskByIndex(ctx context.Context, exprs []expression.Expression, index *m
 	for _, expr := range exprs {
 		exprsClone = append(exprsClone, expr.Clone())
 	}
-	accessConds, _, _, inAndEqCnt := DetachIndexScanConditions(exprsClone, index)
+	accessConds, _, _, inAndEqCnt := ranger.DetachIndexScanConditions(exprsClone, index)
 	mask := uint64(0)
 	for i := range exprs {
 		for j := range accessConds {
