@@ -266,13 +266,15 @@ func ConvertCol2CorCol(cond Expression, corCols []*CorrelatedColumn, outerSchema
 	return cond
 }
 
-// tz has format (\+|-)([0-9]|0[0-9]|1[0-3]):00
-func timeZone2Hour(tz string) time.Duration {
+// tz has format `(^(\+|-)(0?[0-9]|1[0-2]):[0-5]?\d$)|(^\+13:00$)`
+func timeZone2Duration(tz string) time.Duration {
 	sign := 1
 	if strings.HasPrefix(tz, "-") {
 		sign = -1
 	}
 
-	h, _ := strconv.Atoi(tz[1:strings.Index(tz, ":")])
-	return time.Duration(sign*h) * time.Hour
+	i := strings.Index(tz, ":")
+	h, _ := strconv.Atoi(tz[1:i])
+	m, _ := strconv.Atoi(tz[i+1:])
+	return time.Duration(sign) * (time.Duration(h)*time.Hour + time.Duration(m)*time.Minute)
 }
