@@ -134,6 +134,7 @@ import (
 	insert			"INSERT"
 	intType			"INT"
 	join			"JOIN"
+	jsonType	"JSON"
 	key			"KEY"
 	keys			"KEYS"
 	leading			"LEADING"
@@ -451,7 +452,6 @@ import (
 	identified	"IDENTIFIED"
 	isolation	"ISOLATION"
 	indexes		"INDEXES"
-	jsonType    "JSON"
 	jsonExtract "JSON_EXTRACT"
 	jsonUnquote "JSON_UNQUOTE"
 	keyBlockSize	"KEY_BLOCK_SIZE"
@@ -3657,11 +3657,13 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
-|	"JSON_EXTRACT" '(' Expression ',' Expression ')'
+|	"JSON_EXTRACT" '(' Expression ',' ExpressionList ')'
 	{
+		var args = []ast.ExprNode{$3.(ast.ExprNode)}
+		args = append(args, $5.([]ast.ExprNode)...)
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
-			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
+			Args: args,
 		}
 	}
 |	"JSON_UNQUOTE" '(' Expression ')'
