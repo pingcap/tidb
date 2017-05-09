@@ -437,53 +437,25 @@ func (d *ddl) onModifyColumn(t *meta.Meta, job *model.Job) error {
 	if pos.Tp == ast.ColumnPositionNone {
 		return errors.Trace(d.updateColumn(t, job, newCol, oldColName))
 	}
+	return errors.Trace(d.modifyColumnPosition(t, job, newCol, oldColName, pos))
 
-	tblInfo, err := t.GetTable(job.SchemaID, job.TableID)
+}
+
+// modifyColumnPosition put column at designated position, and change offset and column name in indices.
+func (d *ddl) modifyColumnPosition(t *meta.Meta, job *model.Job, col *model.ColumnInfo, oldName *model.CIStr, pos *ast.ColumnPosition) error {
+	tblInfo, err := getTableInfo(t, job, job.SchemaID)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	col := findCol(tblInfo.Columns, newCol.Name.L)
-	if col == nil {
-		col = findCol(tblInfo.Columns, oldColName.L)
-	}
-
-	originalState := job.SchemaState
-	switch job.SchemaState {
-	case model.StateNone:
-		if err = d.modifyColumnPosition(tblInfo, newCol, oldColName, pos); err != nil {
-			job.State = model.JobCancelled
-			return errors.Trace(err)
-		}
-		// use delete only to prevent add record based on different column order.
-		// otherwise `insert into t value (1, 2)` will add different row and index record.
-		job.SchemaState = model.StateDeleteOnly
-		_, err = updateTableInfo(t, job, tblInfo, originalState)
-	case model.StateDeleteOnly:
-		// TODO: add write and reorganization phase to support modify column type
-		ver, err := updateTableInfo(t, job, tblInfo, originalState)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		job.State = model.JobDone
-		job.SchemaState = model.StatePublic
-		job.BinlogInfo.AddTableInfo(ver, tblInfo)
-	default:
-		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
-	}
-
-	return errors.Trace(err)
-}
-
-// modifyColumnPosition put column at designated position, and change offset and column name in indices.
-func (d *ddl) modifyColumnPosition(tblInfo *model.TableInfo, col *model.ColumnInfo, oldName *model.CIStr, pos *ast.ColumnPosition) error {
 	if pos.Tp == ast.ColumnPositionAfter && oldName.L == pos.RelativeColumn.Name.L {
+		job.State = model.JobCancelled
 		return infoschema.ErrColumnNotExists.GenByArgs(oldName, tblInfo.Name)
 	}
 
 	oldCol := findCol(tblInfo.Columns, oldName.L)
 	if oldCol == nil || oldCol.State != model.StatePublic {
+		job.State = model.JobCancelled
 		return infoschema.ErrColumnNotExists.GenByArgs(oldName, tblInfo.Name)
 	}
 
@@ -491,6 +463,7 @@ func (d *ddl) modifyColumnPosition(tblInfo *model.TableInfo, col *model.ColumnIn
 	if pos.Tp == ast.ColumnPositionAfter {
 		relative := findCol(tblInfo.Columns, pos.RelativeColumn.Name.L)
 		if relative == nil || relative.State != model.StatePublic {
+			job.State = model.JobCancelled
 			return infoschema.ErrColumnNotExists.GenByArgs(pos.RelativeColumn, tblInfo.Name)
 		}
 
@@ -503,38 +476,47 @@ func (d *ddl) modifyColumnPosition(tblInfo *model.TableInfo, col *model.ColumnIn
 
 	if newPos == oldPos {
 		tblInfo.Columns[newPos] = col
-		return nil
-	}
-
-	cols := tblInfo.Columns
-	if newPos < oldPos {
-		_ = append(cols[:newPos+1], cols[newPos:oldPos]...)
 	} else {
-		_ = append(cols[:oldPos], cols[oldPos+1:newPos+1]...)
-	}
-	cols[newPos] = col
+		cols := tblInfo.Columns
+		if newPos < oldPos {
+			_ = append(cols[:newPos+1], cols[newPos:oldPos]...)
+		} else {
+			_ = append(cols[:oldPos], cols[oldPos+1:newPos+1]...)
+		}
+		cols[newPos] = col
 
-	offsetChanged := make(map[int]int)
-	for i, col := range tblInfo.Columns {
-		if col.Offset != i {
-			offsetChanged[col.Offset] = i
-			col.Offset = i
+		offsetChanged := make(map[int]int)
+		for i, col := range tblInfo.Columns {
+			if col.Offset != i {
+				offsetChanged[col.Offset] = i
+				col.Offset = i
+			}
+		}
+
+		for _, idx := range tblInfo.Indices {
+			for _, c := range idx.Columns {
+				newOffset, ok := offsetChanged[c.Offset]
+				if ok {
+					c.Offset = newOffset
+				}
+
+				if c.Name.L == oldName.L {
+					c.Name = col.Name
+				}
+			}
 		}
 	}
 
-	for _, idx := range tblInfo.Indices {
-		for _, c := range idx.Columns {
-			newOffset, ok := offsetChanged[c.Offset]
-			if ok {
-				c.Offset = newOffset
-			}
-
-			if c.Name.L == oldName.L {
-				c.Name = col.Name
-			}
-		}
+	originalState := job.SchemaState
+	job.SchemaState = model.StatePublic
+	ver, err := updateTableInfo(t, job, tblInfo, originalState)
+	if err != nil {
+		job.State = model.JobCancelled
+		return errors.Trace(err)
 	}
 
+	job.State = model.JobDone
+	job.BinlogInfo.AddTableInfo(ver, tblInfo)
 	return nil
 }
 
