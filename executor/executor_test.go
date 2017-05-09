@@ -953,6 +953,39 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("1"))
 }
 
+func (s *testSuite) TestJson(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_json")
+	tk.MustExec("create table test_json (a json, b text)")
+	tk.MustExec(`insert into test_json (a, b) values ('{"a":[1,"2",{"aa":"bb"},4],"b":true}', '{"a":[1,"2",{"aa":"bb"},4],"b":true}')`)
+	tk.MustExec(`insert into test_json (a, b) values ("null", "null")`)
+	tk.MustExec(`insert into test_json (a, b) values (null, null)`)
+	tk.MustExec(`insert into test_json (a, b) values ('3', '3')`)
+	tk.MustExec(`insert into test_json (a, b) values ('"string"', '"string"')`)
+
+	var result *testkit.Result
+	result = tk.MustQuery(`select json_extract(a, '$.a[2].aa') from test_json`)
+	result.Check(testkit.Rows("bb", "<nil>", "<nil>", "<nil>", "<nil>"))
+
+	result = tk.MustQuery(`select json_extract(b, '$.a[2].aa') from test_json`)
+	result.Check(testkit.Rows("bb", "<nil>", "<nil>", "<nil>", "<nil>"))
+
+	result = tk.MustQuery(`select json_extract(a, '$.a[2].aa') from test_json where json_extract(a, '$.a[2].aa') = "bb"`)
+	result.Check(testkit.Rows("bb"))
+
+	result = tk.MustQuery(`select a from test_json where a = 3`)
+	result.Check(testkit.Rows("3"))
+
+	result = tk.MustQuery(`select a from test_json where a = "string"`)
+	result.Check(testkit.Rows("\"string\""))
+}
+
 func (s *testSuite) TestToPBExpr(c *C) {
 	defer func() {
 		s.cleanEnv(c)
