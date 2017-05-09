@@ -48,6 +48,17 @@ func (e *AnalyzeExec) Schema() *expression.Schema {
 	return expression.NewSchema()
 }
 
+// Open implements the Executor Open interface.
+func (e *AnalyzeExec) Open() error {
+	for _, task := range e.tasks {
+		err := task.src.Open()
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
 // Close implements the Executor Close interface.
 func (e *AnalyzeExec) Close() error {
 	for _, task := range e.tasks {
