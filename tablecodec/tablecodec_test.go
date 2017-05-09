@@ -16,6 +16,7 @@ package tablecodec
 import (
 	"math"
 	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
@@ -71,7 +72,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	for _, col := range cols {
 		colIDs = append(colIDs, col.id)
 	}
-	bs, err := EncodeRow(row, colIDs)
+	bs, err := EncodeRow(row, colIDs, time.Local)
 	c.Assert(err, IsNil)
 	c.Assert(bs, NotNil)
 
@@ -80,7 +81,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	for _, col := range cols {
 		colMap[col.id] = col.tp
 	}
-	r, err := DecodeRow(bs, colMap)
+	r, err := DecodeRow(bs, colMap, time.Local)
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r, HasLen, 3)
@@ -96,7 +97,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 
 	// colMap may contains more columns than encoded row.
 	colMap[4] = types.NewFieldType(mysql.TypeFloat)
-	r, err = DecodeRow(bs, colMap)
+	r, err = DecodeRow(bs, colMap, time.Local)
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r, HasLen, 3)
@@ -111,7 +112,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	// colMap may contains less columns than encoded row.
 	delete(colMap, 3)
 	delete(colMap, 4)
-	r, err = DecodeRow(bs, colMap)
+	r, err = DecodeRow(bs, colMap, time.Local)
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r, HasLen, 2)
@@ -127,11 +128,11 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	}
 
 	// Make sure empty row return not nil value.
-	bs, err = EncodeRow([]types.Datum{}, []int64{})
+	bs, err = EncodeRow([]types.Datum{}, []int64{}, time.Local)
 	c.Assert(err, IsNil)
 	c.Assert(bs, HasLen, 1)
 
-	r, err = DecodeRow(bs, colMap)
+	r, err = DecodeRow(bs, colMap, time.Local)
 	c.Assert(err, IsNil)
 	c.Assert(r, IsNil)
 }
@@ -155,7 +156,7 @@ func (s *testTableCodecSuite) TestTimeCodec(c *C) {
 	for _, col := range cols {
 		colIDs = append(colIDs, col.id)
 	}
-	bs, err := EncodeRow(row, colIDs)
+	bs, err := EncodeRow(row, colIDs, time.Local)
 	c.Assert(err, IsNil)
 	c.Assert(bs, NotNil)
 
@@ -164,7 +165,7 @@ func (s *testTableCodecSuite) TestTimeCodec(c *C) {
 	for _, col := range cols {
 		colMap[col.id] = col.tp
 	}
-	r, err := DecodeRow(bs, colMap)
+	r, err := DecodeRow(bs, colMap, time.Local)
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r, HasLen, 3)
@@ -194,18 +195,18 @@ func (s *testTableCodecSuite) TestCutRow(c *C) {
 	row[2] = types.NewDecimalDatum(types.NewDecFromInt(1))
 
 	data := make([][]byte, 3)
-	data[0], err = EncodeValue(row[0])
+	data[0], err = EncodeValue(row[0], time.Local)
 	c.Assert(err, IsNil)
-	data[1], err = EncodeValue(row[1])
+	data[1], err = EncodeValue(row[1], time.Local)
 	c.Assert(err, IsNil)
-	data[2], err = EncodeValue(row[2])
+	data[2], err = EncodeValue(row[2], time.Local)
 	c.Assert(err, IsNil)
 	// Encode
 	colIDs := make([]int64, 0, 3)
 	for _, col := range cols {
 		colIDs = append(colIDs, col.id)
 	}
-	bs, err := EncodeRow(row, colIDs)
+	bs, err := EncodeRow(row, colIDs, time.Local)
 	c.Assert(err, IsNil)
 	c.Assert(bs, NotNil)
 

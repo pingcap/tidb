@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -503,20 +504,20 @@ func (e *SelectionExec) initController() error {
 
 	switch x := e.Src.(type) {
 	case *XSelectTableExec:
-		accessCondition, restCondtion := plan.DetachTableScanConditions(newConds, x.tableInfo)
+		accessCondition, restCondtion := ranger.DetachTableScanConditions(newConds, x.tableInfo.GetPkName())
 		x.where, _, _ = expression.ExpressionsToPB(sc, restCondtion, client)
-		ranges, err := plan.BuildTableRange(accessCondition, sc)
+		ranges, err := ranger.BuildTableRange(accessCondition, sc)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		x.ranges = ranges
 	case *XSelectIndexExec:
-		accessCondition, newConds, _, accessInAndEqCount := plan.DetachIndexScanConditions(newConds, x.index)
-		idxConds, tblConds := plan.DetachIndexFilterConditions(newConds, x.index.Columns, x.tableInfo)
+		accessCondition, newConds, _, accessInAndEqCount := ranger.DetachIndexScanConditions(newConds, x.index)
+		idxConds, tblConds := ranger.DetachIndexFilterConditions(newConds, x.index.Columns, x.tableInfo)
 		x.indexConditionPBExpr, _, _ = expression.ExpressionsToPB(sc, idxConds, client)
 		tableConditionPBExpr, _, _ := expression.ExpressionsToPB(sc, tblConds, client)
 		var err error
-		x.ranges, err = plan.BuildIndexRange(sc, x.tableInfo, x.index, accessInAndEqCount, accessCondition)
+		x.ranges, err = ranger.BuildIndexRange(sc, x.tableInfo, x.index, accessInAndEqCount, accessCondition)
 		if err != nil {
 			return errors.Trace(err)
 		}

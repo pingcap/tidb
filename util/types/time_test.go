@@ -337,18 +337,6 @@ func (s *testTimeSuite) TestCodec(c *C) {
 
 	var t1 Time
 	t1.Type = mysql.TypeTimestamp
-
-	z := s.getLocation(c)
-	local = z
-	err = t1.FromPackedUint(packed)
-	c.Assert(err, IsNil)
-	c.Assert(t.String(), Not(Equals), t1.String())
-
-	local = time.Local
-	err = t1.FromPackedUint(packed)
-	c.Assert(err, IsNil)
-	c.Assert(t.String(), Equals, t1.String())
-
 	t1.Time = FromGoTime(time.Now())
 	packed, err = t1.ToPackedUint()
 	c.Assert(err, IsNil)
