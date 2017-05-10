@@ -100,6 +100,9 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 		tblInfo.State = model.StateNone
 		job.SchemaState = model.StateNone
 		ver, err := updateTableInfo(t, job, tblInfo, originalState)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		if err = t.DropTable(job.SchemaID, job.TableID); err != nil {
 			break
 		}
