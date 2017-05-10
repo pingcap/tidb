@@ -15,6 +15,8 @@ package types
 
 import (
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -29,6 +31,24 @@ type IntColumnRange struct {
 // IsPoint returns if the table range is a point.
 func (tr *IntColumnRange) IsPoint() bool {
 	return tr.HighVal == tr.LowVal
+}
+
+func (tr IntColumnRange) String() string {
+	var l, r string
+	if tr.LowVal == math.MinInt64 {
+		l = "(-inf"
+	} else {
+		l = "[" + strconv.FormatInt(tr.LowVal, 10)
+	}
+	if tr.HighVal == math.MaxInt64 {
+		r = "+inf)"
+	} else if tr.HighVal == math.MinInt64 {
+		// This branch is for nil
+		r = "-inf)"
+	} else {
+		r = strconv.FormatInt(tr.HighVal, 10) + "]"
+	}
+	return l + "," + r
 }
 
 // ColumnRange represents a range for a column.

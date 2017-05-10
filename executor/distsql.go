@@ -379,6 +379,13 @@ type XSelectIndexExec struct {
 	partialCount    int
 }
 
+// Open implements the Executor Open interface.
+func (e *XSelectIndexExec) Open() error {
+	e.returnedRows = 0
+	e.partialCount = 0
+	return nil
+}
+
 // Schema implements Exec Schema interface.
 func (e *XSelectIndexExec) Schema() *expression.Schema {
 	return e.schema
@@ -397,8 +404,6 @@ func (e *XSelectIndexExec) Close() error {
 		}
 		e.taskChan = nil
 	}
-	e.returnedRows = 0
-	e.partialCount = 0
 	return errors.Trace(err)
 }
 
@@ -877,6 +882,13 @@ func (e *XSelectTableExec) Close() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	e.result = nil
+	e.partialResult = nil
+	return nil
+}
+
+// Open implements the Executor interface.
+func (e *XSelectTableExec) Open() error {
 	e.result = nil
 	e.partialResult = nil
 	e.returnedRows = 0

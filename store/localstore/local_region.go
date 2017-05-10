@@ -650,8 +650,7 @@ func (rs *localRegion) setColumnValueToCtx(ctx *selectContext, h int64, row map[
 		} else {
 			data := row[colID]
 			ft := distsql.FieldTypeFromPBColumn(col)
-			// TODO: Should use session's TimeZone instead of UTC.
-			datum, err := tablecodec.DecodeColumnValue(data, ft, time.UTC)
+			datum, err := tablecodec.DecodeColumnValue(data, ft, ctx.eval.TimeZone)
 			if err != nil {
 				return errors.Trace(err)
 			}

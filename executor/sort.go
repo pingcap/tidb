@@ -18,18 +18,23 @@ import (
 	"sort"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/types"
 )
 
+// orderByRow binds a row to its order values, so it can be sorted.
+type orderByRow struct {
+	key []types.Datum
+	row *Row
+}
+
 // SortExec represents sorting executor.
 type SortExec struct {
-	Src     Executor
+	baseExecutor
+
 	ByItems []*plan.ByItems
 	Rows    []*orderByRow
-	ctx     context.Context
 	Idx     int
 	fetched bool
 	err     error
@@ -38,14 +43,15 @@ type SortExec struct {
 
 // Close implements the Executor Close interface.
 func (e *SortExec) Close() error {
-	e.fetched = false
 	e.Rows = nil
-	return e.Src.Close()
+	return errors.Trace(e.children[0].Close())
 }
 
-// Schema implements the Executor Schema interface.
-func (e *SortExec) Schema() *expression.Schema {
-	return e.schema
+// Open implements the Executor Open interface.
+func (e *SortExec) Open() error {
+	e.fetched = false
+	e.Rows = nil
+	return errors.Trace(e.children[0].Open())
 }
 
 // Len returns the number of rows.
@@ -89,7 +95,7 @@ func (e *SortExec) Less(i, j int) bool {
 func (e *SortExec) Next() (*Row, error) {
 	if !e.fetched {
 		for {
-			srcRow, err := e.Src.Next()
+			srcRow, err := e.children[0].Next()
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -183,7 +189,7 @@ func (e *TopnExec) Next() (*Row, error) {
 		e.Rows = make([]*orderByRow, 0, e.totalCount+1)
 		e.heapSize = 0
 		for {
-			srcRow, err := e.Src.Next()
+			srcRow, err := e.children[0].Next()
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
