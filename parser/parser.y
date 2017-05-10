@@ -5726,7 +5726,7 @@ StringType:
 	}
 |	"JSON"
 	{
-		x := types.NewFieldType(mysql.TypeJson)
+		x := types.NewFieldType(mysql.TypeJSON)
 		$$ = x
 	}
 
