@@ -2275,7 +2275,7 @@ func parseOrdinalNumbers(input string) (value int, remain string) {
 	return -1, input
 }
 
-//DateFSP get fsp from date string
+//DateFSP gets fsp from date string.
 func DateFSP(date string) (fsp int) {
 	i := strings.LastIndex(date, ".")
 	if i != -1 {

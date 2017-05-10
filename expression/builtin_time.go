@@ -163,6 +163,10 @@ func convertTimeToMysqlTime(t time.Time, fsp int) (types.Time, error) {
 }
 
 func convertToTimeWithFsp(sc *variable.StatementContext, arg types.Datum, tp byte, fsp int) (d types.Datum, err error) {
+	if fsp > types.MaxFsp {
+		fsp = types.MaxFsp
+	}
+
 	f := types.NewFieldType(tp)
 	f.Decimal = fsp
 
@@ -1766,7 +1770,7 @@ type builtinConvertTzSig struct {
 func (b *builtinConvertTzSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return
+		return d, errors.Trace(err)
 	}
 
 	if args[0].IsNull() || args[1].IsNull() || args[2].IsNull() {
@@ -1775,20 +1779,17 @@ func (b *builtinConvertTzSig) eval(row []types.Datum) (d types.Datum, err error)
 
 	sc := b.ctx.GetSessionVars().StmtCtx
 	fsp := types.DateFSP(args[0].GetString())
-	if fsp > types.MaxFsp {
-		fsp = types.MaxFsp
-	}
 
-	date, err := convertToTimeWithFsp(sc, args[0], mysql.TypeDatetime, fsp)
+	arg0, err := convertToTimeWithFsp(sc, args[0], mysql.TypeDatetime, fsp)
 	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if arg0.IsNull() {
 		return
 	}
 
-	if date.IsNull() {
-		return
-	}
-
-	mysqlTime := date.GetMysqlTime()
+	dt := arg0.GetMysqlTime()
 
 	fromTZ := args[1].GetString()
 	toTZ := args[2].GetString()
@@ -1798,39 +1799,39 @@ func (b *builtinConvertTzSig) eval(row []types.Datum) (d types.Datum, err error)
 	tmatch := r.MatchString(toTZ)
 
 	if !fmatch && !tmatch {
-		ftz, er := time.LoadLocation(fromTZ)
-		if er != nil {
-			return
+		ftz, err := time.LoadLocation(fromTZ)
+		if err != nil {
+			return d, errors.Trace(err)
 		}
 
-		ttz, er := time.LoadLocation(toTZ)
-		if er != nil {
-			return
+		ttz, err := time.LoadLocation(toTZ)
+		if err != nil {
+			return d, errors.Trace(err)
 		}
 
-		t, er := mysqlTime.Time.GoTime(ftz)
-		if er != nil {
-			return
+		t, err := dt.Time.GoTime(ftz)
+		if err != nil {
+			return d, errors.Trace(err)
 		}
 
 		d.SetMysqlTime(types.Time{
 			Time: types.FromGoTime(t.In(ttz)),
 			Type: mysql.TypeDatetime,
-			Fsp:  mysqlTime.Fsp,
+			Fsp:  dt.Fsp,
 		})
-		return
+		return d, nil
 	}
 
 	if fmatch && tmatch {
-		t, er := mysqlTime.Time.GoTime(time.Local)
-		if er != nil {
-			return
+		t, err := dt.Time.GoTime(time.Local)
+		if err != nil {
+			return d, errors.Trace(err)
 		}
 
 		d.SetMysqlTime(types.Time{
 			Time: types.FromGoTime(t.Add(timeZone2Duration(toTZ) - timeZone2Duration(fromTZ))),
 			Type: mysql.TypeDatetime,
-			Fsp:  mysqlTime.Fsp,
+			Fsp:  dt.Fsp,
 		})
 	}
 
