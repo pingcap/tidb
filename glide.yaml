@@ -174,3 +174,5 @@ import:
   version: 599cba5e7b6137d46ddf58fb1765f5d928e69604
 - package: github.com/grpc-ecosystem/go-grpc-prometheus
   version: 6b7015e65d366bf3f19b2b2a000a831940f0f7e0
+- package: gopkg.in/mgo.v2/bson
+  version: v2

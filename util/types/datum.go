@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
+	. "github.com/pingcap/tidb/util/types/json"
 )
 
 // Kind constants.
@@ -48,6 +49,7 @@ const (
 	KindMinNotNull    byte = 16
 	KindMaxValue      byte = 17
 	KindRaw           byte = 18
+	KindMysqlJson     byte = 19
 )
 
 // Datum is a data box holds different kind of data.
@@ -281,6 +283,17 @@ func (d *Datum) SetMysqlSet(b Set) {
 	d.b = hack.Slice(b.Name)
 }
 
+// GetMysqlJson gets Json value
+func (d *Datum) GetMysqlJson() Json {
+	return d.x.(Json)
+}
+
+// SetMysqlJson sets Json value
+func (d *Datum) SetMysqlJson(b Json) {
+	d.k = KindMysqlJson
+	d.x = b
+}
+
 // GetMysqlTime gets types.Time value
 func (d *Datum) GetMysqlTime() Time {
 	return d.x.(Time)
@@ -330,6 +343,8 @@ func (d *Datum) GetValue() interface{} {
 		return d.GetMysqlHex()
 	case KindMysqlSet:
 		return d.GetMysqlSet()
+	case KindMysqlJson:
+		return d.GetMysqlJson()
 	case KindMysqlTime:
 		return d.GetMysqlTime()
 	default:
@@ -374,6 +389,8 @@ func (d *Datum) SetValue(val interface{}) {
 		d.SetMysqlHex(x)
 	case Set:
 		d.SetMysqlSet(x)
+	case Json:
+		d.SetMysqlJson(x)
 	case Time:
 		d.SetMysqlTime(x)
 	case []Datum:
@@ -389,6 +406,10 @@ func (d *Datum) SetValue(val interface{}) {
 // CompareDatum compares datum to another datum.
 // TODO: return error properly.
 func (d *Datum) CompareDatum(sc *variable.StatementContext, ad Datum) (int, error) {
+	if d.k == KindMysqlJson && ad.k != KindMysqlJson {
+		cmp, err := ad.CompareDatum(sc, *d)
+		return cmp * -1, err
+	}
 	switch ad.k {
 	case KindNull:
 		if d.k == KindNull {
@@ -429,6 +450,8 @@ func (d *Datum) CompareDatum(sc *variable.StatementContext, ad Datum) (int, erro
 		return d.compareMysqlHex(sc, ad.GetMysqlHex())
 	case KindMysqlSet:
 		return d.compareMysqlSet(sc, ad.GetMysqlSet())
+	case KindMysqlJson:
+		return d.compareMysqlJson(sc, ad.GetMysqlJson())
 	case KindMysqlTime:
 		return d.compareMysqlTime(sc, ad.GetMysqlTime())
 	case KindRow:
@@ -612,6 +635,33 @@ func (d *Datum) compareMysqlSet(sc *variable.StatementContext, set Set) (int, er
 	}
 }
 
+func (d *Datum) compareMysqlJson(sc *variable.StatementContext, target Json) (int, error) {
+	var origin Json
+
+	switch d.k {
+	case KindMysqlJson:
+		origin = d.x.(Json)
+	case KindInt64:
+		f64 := float64(d.GetInt64())
+		origin = CreateJson(f64)
+	case KindUint64:
+		f64 := float64(d.GetUint64())
+		origin = CreateJson(f64)
+	case KindFloat32:
+		f64 := float64(d.GetFloat32())
+		origin = CreateJson(f64)
+	case KindFloat64:
+		f64 := d.GetFloat64()
+		origin = CreateJson(f64)
+	case KindString, KindBytes:
+		s := d.GetString()
+		origin = CreateJson(s)
+	default:
+		origin = CreateJson(nil)
+	}
+	return CompareJson(origin, target)
+}
+
 func (d *Datum) compareMysqlTime(sc *variable.StatementContext, time Time) (int, error) {
 	switch d.k {
 	case KindString, KindBytes:
@@ -683,6 +733,8 @@ func (d *Datum) ConvertTo(sc *variable.StatementContext, target *FieldType) (Dat
 		return d.convertToMysqlEnum(sc, target)
 	case mysql.TypeSet:
 		return d.convertToMysqlSet(sc, target)
+	case mysql.TypeJson:
+		return d.convertToMysqlJson(sc, target)
 	case mysql.TypeNull:
 		return Datum{}, nil
 	default:
@@ -1124,6 +1176,26 @@ func (d *Datum) convertToMysqlSet(sc *variable.StatementContext, target *FieldTy
 	return ret, nil
 }
 
+func (d *Datum) convertToMysqlJson(sc *variable.StatementContext, target *FieldType) (Datum, error) {
+	var (
+		s   string
+		j   Json = CreateJson(nil)
+		ret Datum
+		err error = nil
+	)
+	switch d.k {
+	case KindString, KindBytes:
+		s = d.GetString()
+	default:
+		return invalidConv(d, target.Tp)
+	}
+	err = j.ParseFromString(s)
+	if err == nil {
+		ret.SetValue(j)
+	}
+	return ret, err
+}
+
 // ToBool converts to a bool.
 // We will use 1 for true, and 0 for false.
 func (d *Datum) ToBool(sc *variable.StatementContext) (int64, error) {
@@ -1366,6 +1438,7 @@ func (d *Datum) ToBytes() ([]byte, error) {
 }
 
 func invalidConv(d *Datum, tp byte) (Datum, error) {
+	// TODO: should format Datum better.
 	return Datum{}, errors.Errorf("cannot convert %v to type %s", d, TypeStr(tp))
 }
 

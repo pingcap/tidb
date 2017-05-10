@@ -1,5 +1,5 @@
-hash: 72fc48b4e2b9e8116ca8457e10d1eb0df1c1d1e7d0286f75928f0eb427a9e46c
-updated: 2017-05-02T18:53:14.187450044+08:00
+hash: 784323c09f1852fde6dd91d20e707fe5c6e9ee363030898a92bc1f9272d51ee9
+updated: 2017-05-09T12:19:08.311456564+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -62,7 +62,7 @@ imports:
 - name: github.com/golang/snappy
   version: 723cc1e459b8eea2dea4583200fd60757d40097a
 - name: github.com/gorilla/context
-  version: 1ea25387ff6f684839d82767c1733ff4d4d15d0a
+  version: 08b5f424b9271eedf6f9f0ce86cb9396ed337a42
 - name: github.com/gorilla/mux
   version: 599cba5e7b6137d46ddf58fb1765f5d928e69604
 - name: github.com/grpc-ecosystem/go-grpc-prometheus
@@ -180,7 +180,7 @@ imports:
   - encoding/unicode
   - transform
 - name: golang.org/x/time
-  version: c06e80d9300e4443158a03817b8a8cb37d230320
+  version: a4bde12657593d5e90d0533a3e4fd95e635124cb
   subpackages:
   - rate
 - name: google.golang.org/grpc
@@ -194,4 +194,9 @@ imports:
   - naming
   - peer
   - transport
+- name: gopkg.in/mgo.v2
+  version: 3f83fa5005286a7fe593b055f0d7771a7dce4655
+  subpackages:
+  - bson
+  - internal/json
 testImports: []

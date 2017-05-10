@@ -348,6 +348,9 @@ func dumpTextValue(mysqlType uint8, value types.Datum) ([]byte, error) {
 		return hack.Slice(value.GetMysqlEnum().String()), nil
 	case types.KindMysqlSet:
 		return hack.Slice(value.GetMysqlSet().String()), nil
+	case types.KindMysqlJson:
+		j := value.GetMysqlJson()
+		return hack.Slice(j.DumpToString()), nil
 	case types.KindMysqlBit:
 		return hack.Slice(value.GetMysqlBit().ToString()), nil
 	case types.KindMysqlHex:

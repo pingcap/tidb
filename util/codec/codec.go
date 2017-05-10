@@ -19,6 +19,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/types/json"
 )
 
 // First byte in the encoded value which specifies the encoding type.
@@ -33,6 +34,7 @@ const (
 	durationFlag     byte = 7
 	varintFlag       byte = 8
 	uvarintFlag      byte = 9
+	jsonFlag         byte = 10
 	maxFlag          byte = 250
 )
 
@@ -70,6 +72,10 @@ func encode(b []byte, vals []types.Datum, comparable bool) ([]byte, error) {
 			b = encodeUnsignedInt(b, uint64(val.GetMysqlEnum().ToNumber()), comparable)
 		case types.KindMysqlSet:
 			b = encodeUnsignedInt(b, uint64(val.GetMysqlSet().ToNumber()), comparable)
+		case types.KindMysqlJson:
+			bytes, _ := val.GetMysqlJson().Serialize()
+			b = append(b, jsonFlag)
+			b = EncodeBytes(b, bytes)
 		case types.KindNull:
 			b = append(b, NilFlag)
 		case types.KindMinNotNull:
@@ -202,6 +208,12 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 			v := types.Duration{Duration: time.Duration(r), Fsp: types.MaxFsp}
 			d.SetValue(v)
 		}
+	case jsonFlag:
+		var v []byte
+		var j json.Json = json.CreateJson(nil)
+		b, v, err = DecodeBytes(b)
+		err = j.Deserialize(v)
+		d.SetValue(j)
 	case NilFlag:
 	default:
 		return b, d, errors.Errorf("invalid encoded key flag %v", flag)
@@ -249,7 +261,7 @@ func peek(b []byte) (length int, err error) {
 	case intFlag, uintFlag, floatFlag, durationFlag:
 		// Those types are stored in 8 bytes.
 		l = 8
-	case bytesFlag:
+	case bytesFlag, jsonFlag:
 		l, err = peekBytes(b, false)
 	case compactBytesFlag:
 		l, err = peekCompactBytes(b)
