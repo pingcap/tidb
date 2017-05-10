@@ -234,15 +234,21 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx context.Context, p plan.Plan) b
 		p = proj.Children()[0]
 	}
 
-	// get by index key
-	if indexScan, ok := p.(*plan.PhysicalIndexScan); ok {
+	switch v := p.(type) {
+	case *plan.PhysicalIndexScan:
+		return v.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx)
+	case *plan.PhysicalIndexReader:
+		indexScan := v.IndexPlans[0].(*plan.PhysicalIndexScan)
 		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx)
-	}
-
-	// get by primary key
-	if tableScan, ok := p.(*plan.PhysicalTableScan); ok {
+	case *plan.PhysicalIndexLookUpReader:
+		indexScan := v.IndexPlans[0].(*plan.PhysicalIndexScan)
+		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx)
+	case *plan.PhysicalTableScan:
+		return len(v.Ranges) == 1 && v.Ranges[0].IsPoint()
+	case *plan.PhysicalTableReader:
+		tableScan := v.TablePlans[0].(*plan.PhysicalTableScan)
 		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint()
+	default:
+		return false
 	}
-
-	return false
 }
