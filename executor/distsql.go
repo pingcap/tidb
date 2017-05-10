@@ -465,6 +465,8 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		// Use time.UTC instead of session's timezone because coprocessor evaluator has
+		// already handle the timezone.
 		err = decodeRawValues(values, schema, time.UTC)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -748,6 +750,8 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		// Use time.UTC instead of session's timezone because coprocessor evaluator has
+		// already handle the timezone.
 		err = decodeRawValues(values, e.Schema(), time.UTC)
 		if err != nil {
 			return nil, errors.Trace(err)

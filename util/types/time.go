@@ -1207,7 +1207,7 @@ func checkTimestampType(t TimeInternal) error {
 	}
 
 	if _, err := t.GoTime(gotime.Local); err != nil {
-		return errors.Trace(ErrInvalidTimeFormat)
+		return errors.Trace(err)
 	}
 
 	return nil
