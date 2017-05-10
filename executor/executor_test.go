@@ -1132,7 +1132,10 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 
 func (s *testSuite) TestPointGet(c *C) {
 	plan.UseDAGPlanBuilder = true
-	defer testleak.AfterTest(c)()
+	defer func() {
+		plan.UseDAGPlanBuilder = false
+		testleak.AfterTest(c)()
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use mysql")
 	ctx := tk.Se.(context.Context)
@@ -1157,7 +1160,6 @@ func (s *testSuite) TestPointGet(c *C) {
 		c.Assert(ret, Equals, result)
 	}
 
-	plan.UseDAGPlanBuilder = false
 }
 
 func (s *testSuite) TestRow(c *C) {
