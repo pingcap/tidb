@@ -1131,6 +1131,7 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 }
 
 func (s *testSuite) TestPointGet(c *C) {
+	plan.UseDAGPlanBuilder = true
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use mysql")
@@ -1156,6 +1157,7 @@ func (s *testSuite) TestPointGet(c *C) {
 		c.Assert(ret, Equals, result)
 	}
 
+	plan.UseDAGPlanBuilder = false
 }
 
 func (s *testSuite) TestRow(c *C) {
@@ -1293,6 +1295,7 @@ func (s *testSuite) TestScanControlSelection(c *C) {
 }
 
 func (s *testSuite) TestSimpleDAG(c *C) {
+	plan.UseDAGPlanBuilder = true
 	defer func() {
 		plan.UseDAGPlanBuilder = false
 		s.cleanEnv(c)
@@ -1303,7 +1306,6 @@ func (s *testSuite) TestSimpleDAG(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, c int)")
 	tk.MustExec("insert into t values (1, 1, 1), (2, 1, 1), (3, 1, 2), (4, 2, 3)")
-	plan.UseDAGPlanBuilder = true
 	tk.MustQuery("select a from t").Check(testkit.Rows("1", "2", "3", "4"))
 	tk.MustQuery("select * from t where a = 4").Check(testkit.Rows("4 2 3"))
 	tk.MustQuery("select a from t limit 1").Check(testkit.Rows("1"))
