@@ -43,6 +43,8 @@ type TableReaderExecutor struct {
 	dagPB     *tipb.DAGRequest
 	ctx       context.Context
 	schema    *expression.Schema
+	// columns are only required by union scan.
+	columns []*model.ColumnInfo
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result        distsql.SelectResult
@@ -141,6 +143,8 @@ type IndexReaderExecutor struct {
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result        distsql.SelectResult
 	partialResult distsql.PartialResult
+	// columns are only required by union scan.
+	columns []*model.ColumnInfo
 }
 
 // Schema implements the Executor Schema interface.
@@ -234,6 +238,8 @@ type IndexLookUpExecutor struct {
 	taskCurr *lookupTableTask
 
 	tableRequest *tipb.DAGRequest
+	// columns are only required by union scan.
+	columns []*model.ColumnInfo
 }
 
 // Open implements the Executor Open interface.
