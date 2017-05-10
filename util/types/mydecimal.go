@@ -1176,9 +1176,6 @@ func (d *MyDecimal) PrecisionAndFrac() (precision, frac int) {
 	frac = int(d.digitsFrac)
 	_, digitsInt := d.removeLeadingZeros()
 	precision = digitsInt + frac
-	if precision == 0 {
-		precision = 1
-	}
 	return
 }
 
