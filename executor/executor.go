@@ -42,7 +42,6 @@ var (
 	_ Executor = &LimitExec{}
 	_ Executor = &MaxOneRowExec{}
 	_ Executor = &ProjectionExec{}
-	_ Executor = &ReverseExec{}
 	_ Executor = &SelectionExec{}
 	_ Executor = &SelectLockExec{}
 	_ Executor = &ShowDDLExec{}
@@ -103,25 +102,66 @@ type RowKeyEntry struct {
 	TableName string
 }
 
+type baseExecutor struct {
+	children []Executor
+	ctx      context.Context
+	schema   *expression.Schema
+}
+
+// Open implements the Executor Open interface.
+func (e *baseExecutor) Open() error {
+	for _, child := range e.children {
+		err := child.Open()
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+// Close implements the Executor Close interface.
+func (e *baseExecutor) Close() error {
+	for _, child := range e.children {
+		err := child.Close()
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+// Schema implements the Executor Schema interface.
+func (e *baseExecutor) Schema() *expression.Schema {
+	if e.schema == nil {
+		return expression.NewSchema()
+	}
+	return e.schema
+}
+
+func newBaseExecutor(schema *expression.Schema, ctx context.Context, children ...Executor) baseExecutor {
+	return baseExecutor{
+		children: children,
+		ctx:      ctx,
+		schema:   schema,
+	}
+}
+
 // Executor executes a query.
 type Executor interface {
 	Next() (*Row, error)
 	Close() error
+	Open() error
 	Schema() *expression.Schema
 }
 
 // ShowDDLExec represents a show DDL executor.
 type ShowDDLExec struct {
+	baseExecutor
+
 	schema  *expression.Schema
-	ctx     context.Context
 	ddlInfo *inspectkv.DDLInfo
 	bgInfo  *inspectkv.DDLInfo
 	done    bool
-}
-
-// Schema implements the Executor Schema interface.
-func (e *ShowDDLExec) Schema() *expression.Schema {
-	return e.schema
 }
 
 // Next implements the Executor Next interface.
@@ -159,24 +199,16 @@ func (e *ShowDDLExec) Next() (*Row, error) {
 	return row, nil
 }
 
-// Close implements the Executor Close interface.
-func (e *ShowDDLExec) Close() error {
-	return nil
-}
-
 // CheckTableExec represents a check table executor.
 // It is built from the "admin check table" statement, and it checks if the
 // index matches the records in the table.
 type CheckTableExec struct {
+	baseExecutor
+
 	tables []*ast.TableName
 	ctx    context.Context
 	done   bool
 	is     infoschema.InfoSchema
-}
-
-// Schema implements the Executor Schema interface.
-func (e *CheckTableExec) Schema() *expression.Schema {
-	return expression.NewSchema()
 }
 
 // Next implements the Executor Next interface.
@@ -217,20 +249,14 @@ func (e *CheckTableExec) Close() error {
 // when doing commit. If there is any key already locked by another transaction,
 // the transaction will rollback and retry.
 type SelectLockExec struct {
-	Src    Executor
-	Lock   ast.SelectLockType
-	ctx    context.Context
-	schema *expression.Schema
-}
+	baseExecutor
 
-// Schema implements the Executor Schema interface.
-func (e *SelectLockExec) Schema() *expression.Schema {
-	return e.schema
+	Lock ast.SelectLockType
 }
 
 // Next implements the Executor Next interface.
 func (e *SelectLockExec) Next() (*Row, error) {
-	row, err := e.Src.Next()
+	row, err := e.children[0].Next()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -251,30 +277,20 @@ func (e *SelectLockExec) Next() (*Row, error) {
 	return row, nil
 }
 
-// Close implements the Executor Close interface.
-func (e *SelectLockExec) Close() error {
-	return e.Src.Close()
-}
-
 // LimitExec represents limit executor
 // It ignores 'Offset' rows from src, then returns 'Count' rows at maximum.
 type LimitExec struct {
-	Src    Executor
+	baseExecutor
+
 	Offset uint64
 	Count  uint64
 	Idx    uint64
-	schema *expression.Schema
-}
-
-// Schema implements the Executor Schema interface.
-func (e *LimitExec) Schema() *expression.Schema {
-	return e.schema
 }
 
 // Next implements the Executor Next interface.
 func (e *LimitExec) Next() (*Row, error) {
 	for e.Idx < e.Offset {
-		srcRow, err := e.Src.Next()
+		srcRow, err := e.children[0].Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -286,7 +302,7 @@ func (e *LimitExec) Next() (*Row, error) {
 	if e.Idx >= e.Count+e.Offset {
 		return nil, nil
 	}
-	srcRow, err := e.Src.Next()
+	srcRow, err := e.children[0].Next()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -297,58 +313,10 @@ func (e *LimitExec) Next() (*Row, error) {
 	return srcRow, nil
 }
 
-// Close implements the Executor Close interface.
-func (e *LimitExec) Close() error {
+// Open implements the Executor Open interface.
+func (e *LimitExec) Open() error {
 	e.Idx = 0
-	return e.Src.Close()
-}
-
-// orderByRow binds a row to its order values, so it can be sorted.
-type orderByRow struct {
-	key []types.Datum
-	row *Row
-}
-
-// ReverseExec produces reverse ordered result, it is used to wrap executors that do not support reverse scan.
-type ReverseExec struct {
-	Src    Executor
-	rows   []*Row
-	cursor int
-	done   bool
-}
-
-// Schema implements the Executor Schema interface.
-func (e *ReverseExec) Schema() *expression.Schema {
-	return e.Src.Schema()
-}
-
-// Next implements the Executor Next interface.
-func (e *ReverseExec) Next() (*Row, error) {
-	if !e.done {
-		for {
-			row, err := e.Src.Next()
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if row == nil {
-				break
-			}
-			e.rows = append(e.rows, row)
-		}
-		e.cursor = len(e.rows) - 1
-		e.done = true
-	}
-	if e.cursor < 0 {
-		return nil, nil
-	}
-	row := e.rows[e.cursor]
-	e.cursor--
-	return row, nil
-}
-
-// Close implements the Executor Close interface.
-func (e *ReverseExec) Close() error {
-	return e.Src.Close()
+	return errors.Trace(e.children[0].Open())
 }
 
 func init() {
@@ -365,13 +333,17 @@ func init() {
 		if e.err != nil {
 			return rows, errors.Trace(err)
 		}
+		err = exec.Open()
+		if err != nil {
+			return rows, errors.Trace(err)
+		}
 		for {
 			row, err := exec.Next()
 			if err != nil {
 				return rows, errors.Trace(err)
 			}
 			if row == nil {
-				return rows, nil
+				return rows, errors.Trace(exec.Close())
 			}
 			rows = append(rows, row.Data)
 		}
@@ -385,40 +357,22 @@ func init() {
 
 // ProjectionExec represents a select fields executor.
 type ProjectionExec struct {
-	Src      Executor
-	schema   *expression.Schema
-	executed bool
-	ctx      context.Context
-	exprs    []expression.Expression
-}
+	baseExecutor
 
-// Schema implements the Executor Schema interface.
-func (e *ProjectionExec) Schema() *expression.Schema {
-	return e.schema
+	exprs []expression.Expression
 }
 
 // Next implements the Executor Next interface.
 func (e *ProjectionExec) Next() (retRow *Row, err error) {
-	var rowKeys []*RowKeyEntry
-	var srcRow *Row
-	if e.Src != nil {
-		srcRow, err = e.Src.Next()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if srcRow == nil {
-			return nil, nil
-		}
-		rowKeys = srcRow.RowKeys
-	} else {
-		// If Src is nil, only one row should be returned.
-		if e.executed {
-			return nil, nil
-		}
+	srcRow, err := e.children[0].Next()
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	e.executed = true
+	if srcRow == nil {
+		return nil, nil
+	}
 	row := &Row{
-		RowKeys: rowKeys,
+		RowKeys: srcRow.RowKeys,
 		Data:    make([]types.Datum, 0, len(e.exprs)),
 	}
 	for _, expr := range e.exprs {
@@ -431,29 +385,18 @@ func (e *ProjectionExec) Next() (retRow *Row, err error) {
 	return row, nil
 }
 
-// Close implements the Executor Close interface.
-func (e *ProjectionExec) Close() error {
-	if e.Src != nil {
-		return e.Src.Close()
-	}
-	return nil
-}
-
 // TableDualExec represents a dual table executor.
 type TableDualExec struct {
-	schema    *expression.Schema
+	baseExecutor
+
 	rowCount  int
 	returnCnt int
 }
 
-// Init implements the Executor Init interface.
-func (e *TableDualExec) Init() {
+// Open implements the Executor Open interface.
+func (e *TableDualExec) Open() error {
 	e.returnCnt = 0
-}
-
-// Schema implements the Executor Schema interface.
-func (e *TableDualExec) Schema() *expression.Schema {
-	return e.schema
+	return nil
 }
 
 // Next implements the Executor Next interface.
@@ -465,27 +408,15 @@ func (e *TableDualExec) Next() (*Row, error) {
 	return &Row{}, nil
 }
 
-// Close implements the Executor interface.
-func (e *TableDualExec) Close() error {
-	return nil
-}
-
 // SelectionExec represents a filter executor.
 type SelectionExec struct {
-	Src    Executor
-	ctx    context.Context
-	schema *expression.Schema
+	baseExecutor
 
 	// scanController will tell whether this selection need to
 	// control the condition of below scan executor.
 	scanController bool
 	controllerInit bool
 	Conditions     []expression.Expression
-}
-
-// Schema implements the Executor Schema interface.
-func (e *SelectionExec) Schema() *expression.Schema {
-	return e.schema
 }
 
 // initController will init the conditions of the below scan executor.
@@ -502,7 +433,7 @@ func (e *SelectionExec) initController() error {
 		newConds = append(newConds, newCond)
 	}
 
-	switch x := e.Src.(type) {
+	switch x := e.children[0].(type) {
 	case *XSelectTableExec:
 		accessCondition, restCondtion := ranger.DetachTableScanConditions(newConds, x.tableInfo.GetPkName())
 		x.where, _, _ = expression.ExpressionsToPB(sc, restCondtion, client)
@@ -538,7 +469,7 @@ func (e *SelectionExec) Next() (*Row, error) {
 		e.controllerInit = true
 	}
 	for {
-		srcRow, err := e.Src.Next()
+		srcRow, err := e.children[0].Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -555,16 +486,18 @@ func (e *SelectionExec) Next() (*Row, error) {
 	}
 }
 
-// Close implements the Executor Close interface.
-func (e *SelectionExec) Close() error {
+// Open implements the Executor Open interface.
+func (e *SelectionExec) Open() error {
 	if e.scanController {
 		e.controllerInit = false
 	}
-	return e.Src.Close()
+	return e.children[0].Open()
 }
 
 // TableScanExec is a table scan executor without result fields.
 type TableScanExec struct {
+	baseExecutor
+
 	t          table.Table
 	asName     *model.CIStr
 	ctx        context.Context
@@ -697,8 +630,8 @@ func (e *TableScanExec) getRow(handle int64) (*Row, error) {
 	return row, nil
 }
 
-// Close implements the Executor Close interface.
-func (e *TableScanExec) Close() error {
+// Open implements the Executor Open interface.
+func (e *TableScanExec) Open() error {
 	e.iter = nil
 	e.cursor = 0
 	return nil
@@ -706,20 +639,15 @@ func (e *TableScanExec) Close() error {
 
 // ExistsExec represents exists executor.
 type ExistsExec struct {
-	schema    *expression.Schema
-	Src       Executor
+	baseExecutor
+
 	evaluated bool
 }
 
-// Schema implements the Executor Schema interface.
-func (e *ExistsExec) Schema() *expression.Schema {
-	return e.schema
-}
-
-// Close implements the Executor Close interface.
-func (e *ExistsExec) Close() error {
+// Open implements the Executor Open interface.
+func (e *ExistsExec) Open() error {
 	e.evaluated = false
-	return e.Src.Close()
+	return errors.Trace(e.children[0].Open())
 }
 
 // Next implements the Executor Next interface.
@@ -727,7 +655,7 @@ func (e *ExistsExec) Close() error {
 func (e *ExistsExec) Next() (*Row, error) {
 	if !e.evaluated {
 		e.evaluated = true
-		srcRow, err := e.Src.Next()
+		srcRow, err := e.children[0].Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -739,34 +667,29 @@ func (e *ExistsExec) Next() (*Row, error) {
 // MaxOneRowExec checks if the number of rows that a query returns is at maximum one.
 // It's built from subquery expression.
 type MaxOneRowExec struct {
-	schema    *expression.Schema
-	Src       Executor
+	baseExecutor
+
 	evaluated bool
 }
 
-// Schema implements the Executor Schema interface.
-func (e *MaxOneRowExec) Schema() *expression.Schema {
-	return e.schema
-}
-
-// Close implements the Executor Close interface.
-func (e *MaxOneRowExec) Close() error {
+// Open implements the Executor Open interface.
+func (e *MaxOneRowExec) Open() error {
 	e.evaluated = false
-	return e.Src.Close()
+	return errors.Trace(e.children[0].Open())
 }
 
 // Next implements the Executor Next interface.
 func (e *MaxOneRowExec) Next() (*Row, error) {
 	if !e.evaluated {
 		e.evaluated = true
-		srcRow, err := e.Src.Next()
+		srcRow, err := e.children[0].Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if srcRow == nil {
 			return &Row{Data: make([]types.Datum, e.schema.Len())}, nil
 		}
-		srcRow1, err := e.Src.Next()
+		srcRow1, err := e.children[0].Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -782,10 +705,8 @@ func (e *MaxOneRowExec) Next() (*Row, error) {
 // UnionExec has multiple source Executors, it executes them sequentially, and do conversion to the same type
 // as source Executors may has different field type, we need to do conversion.
 type UnionExec struct {
-	schema   *expression.Schema
-	Srcs     []Executor
-	ctx      context.Context
-	inited   bool
+	baseExecutor
+
 	finished atomic.Value
 	resultCh chan *execResult
 	rows     []*Row
@@ -821,7 +742,7 @@ func (e *UnionExec) fetchData(idx int) {
 			if e.finished.Load().(bool) {
 				return
 			}
-			row, err := e.Srcs[idx].Next()
+			row, err := e.children[idx].Next()
 			if err != nil {
 				e.finished.Store(true)
 				result.err = err
@@ -852,19 +773,27 @@ func (e *UnionExec) fetchData(idx int) {
 	}
 }
 
+// Open implements the Executor Open interface.
+func (e *UnionExec) Open() error {
+	e.finished.Store(false)
+	e.resultCh = make(chan *execResult, len(e.children))
+	e.closedCh = make(chan struct{})
+	e.cursor = 0
+	var err error
+	for i, child := range e.children {
+		err = child.Open()
+		if err != nil {
+			break
+		}
+		e.wg.Add(1)
+		go e.fetchData(i)
+	}
+	go e.waitAllFinished()
+	return errors.Trace(err)
+}
+
 // Next implements the Executor Next interface.
 func (e *UnionExec) Next() (*Row, error) {
-	if !e.inited {
-		e.finished.Store(false)
-		e.resultCh = make(chan *execResult, len(e.Srcs))
-		e.closedCh = make(chan struct{})
-		for i := range e.Srcs {
-			e.wg.Add(1)
-			go e.fetchData(i)
-		}
-		go e.waitAllFinished()
-		e.inited = true
-	}
 	if e.cursor >= len(e.rows) {
 		result, ok := <-e.resultCh
 		if !ok {
@@ -887,35 +816,15 @@ func (e *UnionExec) Next() (*Row, error) {
 // Close implements the Executor Close interface.
 func (e *UnionExec) Close() error {
 	e.finished.Store(true)
-	if e.inited {
-		<-e.closedCh
-	}
-	e.cursor = 0
-	e.inited = false
+	<-e.closedCh
 	e.rows = nil
-	for _, sel := range e.Srcs {
-		er := sel.Close()
-		if er != nil {
-			return errors.Trace(er)
-		}
-	}
-	return nil
+	return errors.Trace(e.baseExecutor.Close())
 }
 
 // DummyScanExec returns zero results, when some where condition never match, there won't be any
 // rows to return, so DummyScan is used to avoid real scan on KV.
 type DummyScanExec struct {
-	schema *expression.Schema
-}
-
-// Schema implements the Executor Schema interface.
-func (e *DummyScanExec) Schema() *expression.Schema {
-	return e.schema
-}
-
-// Close implements the Executor Close interface.
-func (e *DummyScanExec) Close() error {
-	return nil
+	baseExecutor
 }
 
 // Next implements the Executor Next interface.
@@ -926,22 +835,17 @@ func (e *DummyScanExec) Next() (*Row, error) {
 // CacheExec represents Cache executor.
 // it stores the return values of the executor of its child node.
 type CacheExec struct {
-	schema      *expression.Schema
-	Src         Executor
+	baseExecutor
+
 	storedRows  []*Row
 	cursor      int
 	srcFinished bool
 }
 
-// Schema implements the Executor Schema interface.
-func (e *CacheExec) Schema() *expression.Schema {
-	return e.schema
-}
-
-// Close implements the Executor Close interface.
-func (e *CacheExec) Close() error {
+// Open implements the Executor Open interface.
+func (e *CacheExec) Open() error {
 	e.cursor = 0
-	return nil
+	return errors.Trace(e.children[0].Open())
 }
 
 // Next implements the Executor Next interface.
@@ -950,13 +854,13 @@ func (e *CacheExec) Next() (*Row, error) {
 		return nil, nil
 	}
 	if !e.srcFinished {
-		row, err := e.Src.Next()
+		row, err := e.children[0].Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if row == nil {
 			e.srcFinished = true
-			err := e.Src.Close()
+			err := e.children[0].Close()
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
