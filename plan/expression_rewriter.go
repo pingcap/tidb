@@ -237,7 +237,7 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 		for _, col := range np.Schema().Columns {
 			args = append(args, col.Clone())
 		}
-		rexpr, er.err = expression.NewFunction(er.ctx, ast.RowFunc, types.NewFieldType(types.KindRow), args...)
+		rexpr, er.err = expression.NewFunction(er.ctx, ast.RowFunc, args[0].GetType(), args...)
 		if er.err != nil {
 			er.err = errors.Trace(er.err)
 			return v, true
@@ -515,7 +515,7 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		for _, col := range np.Schema().Columns {
 			args = append(args, col.Clone())
 		}
-		rexpr, er.err = expression.NewFunction(er.ctx, ast.RowFunc, nil, args...)
+		rexpr, er.err = expression.NewFunction(er.ctx, ast.RowFunc, args[0].GetType(), args...)
 		if er.err != nil {
 			er.err = errors.Trace(er.err)
 			return v, true
@@ -551,7 +551,7 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 			for _, col := range np.Schema().Columns {
 				newCols = append(newCols, col.Clone())
 			}
-			expr, err := expression.NewFunction(er.ctx, ast.RowFunc, nil, newCols...)
+			expr, err := expression.NewFunction(er.ctx, ast.RowFunc, newCols[0].GetType(), newCols...)
 			if err != nil {
 				er.err = errors.Trace(err)
 				return v, true
@@ -579,7 +579,7 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 				Value:   data,
 				RetType: np.Schema().Columns[i].GetType()})
 		}
-		expr, err1 := expression.NewFunction(er.ctx, ast.RowFunc, nil, newCols...)
+		expr, err1 := expression.NewFunction(er.ctx, ast.RowFunc, newCols[0].GetType(), newCols...)
 		if err1 != nil {
 			er.err = errors.Trace(err1)
 			return v, true
@@ -914,7 +914,7 @@ func (er *expressionRewriter) rowToScalarFunc(v *ast.RowExpr) {
 		rows = append(rows, er.ctxStack[i])
 	}
 	er.ctxStack = er.ctxStack[:stkLen-length]
-	function, err := expression.NewFunction(er.ctx, ast.RowFunc, nil, rows...)
+	function, err := expression.NewFunction(er.ctx, ast.RowFunc, rows[0].GetType(), rows...)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return

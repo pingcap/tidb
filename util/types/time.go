@@ -86,8 +86,6 @@ var (
 		Type: mysql.TypeDate,
 		Fsp:  DefaultFsp,
 	}
-
-	local = gotime.Local
 )
 
 var (
@@ -97,9 +95,9 @@ var (
 	maxDatetime = FromDate(9999, 12, 31, 23, 59, 59, 999999)
 
 	// minTimestamp is the minimum for mysql timestamp type.
-	minTimestamp = gotime.Date(1970, 1, 1, 0, 0, 1, 0, gotime.UTC)
+	minTimestamp = FromDate(1970, 1, 1, 0, 0, 1, 0)
 	// maxTimestamp is the maximum for mysql timestamp type.
-	maxTimestamp = gotime.Date(2038, 1, 19, 3, 14, 7, 999999, gotime.UTC)
+	maxTimestamp = FromDate(2038, 1, 19, 3, 14, 7, 999999)
 
 	// WeekdayNames lists names of weekdays, which are used in builtin time function `dayname`.
 	WeekdayNames = []string{
@@ -381,16 +379,6 @@ func (t Time) ToPackedUint() (uint64, error) {
 	if t.IsZero() {
 		return 0, nil
 	}
-	if t.Type == mysql.TypeTimestamp {
-		// TODO: Consider time_zone variable.
-		if t1, err := t.Time.GoTime(gotime.Local); err == nil {
-			utc := t1.UTC()
-			tm = FromGoTime(utc)
-		} else {
-			// mysql timestamp month and day can't be zero.
-			return 0, errors.Trace(err)
-		}
-	}
 	year, month, day := tm.Year(), tm.Month(), tm.Day()
 	hour, minute, sec := tm.Hour(), tm.Minute(), tm.Second()
 	ymd := uint64(((year*13 + int(month)) << 5) | day)
@@ -418,15 +406,9 @@ func (t *Time) FromPackedUint(packed uint64) error {
 	hour := int(hms >> 12)
 	microsec := int(packed % (1 << 24))
 
-	loc := local
-	if t.Type == mysql.TypeTimestamp {
-		loc = gotime.UTC
-		t.Time = FromGoTime(gotime.Date(year, gotime.Month(month), day, hour, minute, second, microsec*1000, loc).In(local))
-	} else {
-		t.Time = FromDate(year, month, day, hour, minute, second, microsec)
-		if err := t.check(); err != nil {
-			return errors.Trace(err)
-		}
+	t.Time = FromDate(year, month, day, hour, minute, second, microsec)
+	if err := t.check(); err != nil {
+		return errors.Trace(err)
 	}
 
 	return nil
@@ -1220,16 +1202,14 @@ func checkTimestampType(t TimeInternal) error {
 		return nil
 	}
 
-	// TODO: Consider time_zone variable.
-	t1, err := t.GoTime(gotime.Local)
-	if err != nil {
-		log.Infof("checkTimestampType failed, t=%v", t)
+	if compareTime(t, maxTimestamp) > 0 || compareTime(t, minTimestamp) < 0 {
+		return errors.Trace(ErrInvalidTimeFormat)
+	}
+
+	if _, err := t.GoTime(gotime.Local); err != nil {
 		return errors.Trace(err)
 	}
 
-	if t1.After(maxTimestamp) || t1.Before(minTimestamp) {
-		return ErrInvalidTimeFormat
-	}
 	return nil
 }
 

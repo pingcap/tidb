@@ -108,6 +108,11 @@ func (e *DDLExec) Close() error {
 	return nil
 }
 
+// Open implements the Executor Open interface.
+func (e *DDLExec) Open() error {
+	return nil
+}
+
 func (e *DDLExec) executeTruncateTable(s *ast.TruncateTableStmt) error {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	err := sessionctx.GetDomain(e.ctx).DDL().TruncateTable(e.ctx, ident)

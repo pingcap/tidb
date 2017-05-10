@@ -14,6 +14,8 @@
 package types
 
 import (
+	"math"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx/variable"
 )
@@ -126,5 +128,30 @@ func (s *testRangeSuite) TestRange(c *C) {
 	sc := new(variable.StatementContext)
 	for _, t := range isPointTests {
 		c.Assert(t.ran.IsPoint(sc), Equals, t.isPoint)
+	}
+}
+
+func (s *testRangeSuite) TestIntColumnRangeString(c *C) {
+	tests := []struct {
+		ran IntColumnRange
+		ans string
+	}{
+		{
+			ran: IntColumnRange{
+				LowVal:  math.MinInt64,
+				HighVal: 2,
+			},
+			ans: "(-inf,2]",
+		},
+		{
+			ran: IntColumnRange{
+				LowVal:  3,
+				HighVal: math.MaxInt64,
+			},
+			ans: "[3,+inf)",
+		},
+	}
+	for _, t := range tests {
+		c.Assert(t.ran.String(), Equals, t.ans)
 	}
 }

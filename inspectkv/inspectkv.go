@@ -16,6 +16,7 @@ package inspectkv
 import (
 	"io"
 	"reflect"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -404,7 +405,7 @@ func rowWithCols(txn kv.Retriever, t table.Table, h int64, cols []*table.Column)
 		}
 		colTps[col.ID] = &col.FieldType
 	}
-	row, err := tablecodec.DecodeRow(value, colTps)
+	row, err := tablecodec.DecodeRow(value, colTps, time.UTC)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -456,7 +457,7 @@ func iterRecords(retriever kv.Retriever, t table.Table, startKey kv.Key, cols []
 			return errors.Trace(err)
 		}
 
-		rowMap, err := tablecodec.DecodeRow(it.Value(), colMap)
+		rowMap, err := tablecodec.DecodeRow(it.Value(), colMap, time.UTC)
 		if err != nil {
 			return errors.Trace(err)
 		}

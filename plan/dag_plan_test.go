@@ -476,6 +476,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 			sql:  "select sum(a), avg(b + c) from t group by d",
 			best: "TableReader(Table(t)->HashAgg)->HashAgg",
 		},
+		{
+			sql:  "select sum(distinct a), avg(b + c) from t group by d",
+			best: "TableReader(Table(t))->HashAgg",
+		},
 		// Test agg + index single.
 		{
 			sql:  "select sum(e), avg(e + c) from t where c = 1 group by d",

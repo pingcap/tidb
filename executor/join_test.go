@@ -211,6 +211,8 @@ func (s *testSuite) TestJoin(c *C) {
 	tk.MustExec("insert into t values(1),(2),(3)")
 	result = tk.MustQuery("select * from t1 , t2 where t2.c1 = t1.c1 and t2.c2 = 0 and t1.c2 in (select * from t)")
 	result.Sort().Check(testkit.Rows("1 2 1 0", "2 3 2 0"))
+	result = tk.MustQuery("select * from t1 , t2 where t2.c1 = t1.c1 and t2.c2 = 0 and t1.c1 = 1 order by t1.c2 limit 1")
+	result.Sort().Check(testkit.Rows("1 2 1 0"))
 	tk.MustExec("drop table if exists t, t1")
 	tk.MustExec("create table t(a int primary key, b int)")
 	tk.MustExec("create table t1(a int, b int)")
@@ -548,4 +550,17 @@ func (s *testSuite) TestJoinLeak(c *C) {
 	result.Next()
 	time.Sleep(100 * time.Millisecond)
 	result.Close()
+}
+
+func (s *testSuite) TestHashJoinExecEncodeDecodeRow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1 (id int)")
+	tk.MustExec("create table t2 (id int, name varchar(255), ts timestamp)")
+	tk.MustExec("insert into t1 values (1)")
+	tk.MustExec("insert into t2 values (1, 'xxx', '2003-06-09 10:51:26')")
+	result := tk.MustQuery("select ts from t1 inner join t2 where t2.name = 'xxx'")
+	result.Check(testkit.Rows("2003-06-09 10:51:26"))
 }

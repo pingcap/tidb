@@ -15,9 +15,11 @@ package expression
 
 import (
 	"math"
+	"math/rand"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
@@ -188,6 +190,16 @@ func (s *testEvaluatorSuite) TestRand(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v.GetFloat64(), Less, float64(1))
 	c.Assert(v.GetFloat64(), GreaterEqual, float64(0))
+
+	// issue 3211
+	f2, err := fc.getFunction([]Expression{&Constant{Value: types.NewIntDatum(20160101), RetType: types.NewFieldType(mysql.TypeLonglong)}}, s.ctx)
+	c.Assert(err, IsNil)
+	randGen := rand.New(rand.NewSource(20160101))
+	for i := 0; i < 3; i++ {
+		v, err = f2.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(v.GetFloat64(), Equals, randGen.Float64())
+	}
 }
 
 func (s *testEvaluatorSuite) TestPow(c *C) {

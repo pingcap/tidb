@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -346,8 +347,8 @@ func (p *DataSource) tryToGetMemTask(prop *requiredProp) (task taskProfile, err 
 		TableAsName: p.TableAsName,
 	}.init(p.allocator, p.ctx)
 	memTable.SetSchema(p.schema)
-	rb := &rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
-	memTable.Ranges = rb.buildTableRanges(fullRange)
+	rb := &ranger.Builder{Sc: p.ctx.GetSessionVars().StmtCtx}
+	memTable.Ranges = rb.BuildTableRanges(ranger.FullRange)
 	task = &rootTaskProfile{p: memTable}
 	task = prop.enforceProperty(task, p.ctx, p.allocator)
 	return task, nil
@@ -420,11 +421,12 @@ func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, e
 // convert2IndexScanner converts the DataSource to index scan with idx.
 func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo) (task taskProfile, err error) {
 	is := PhysicalIndexScan{
-		Table:       p.tableInfo,
-		TableAsName: p.TableAsName,
-		DBName:      p.DBName,
-		Columns:     p.Columns,
-		Index:       idx,
+		Table:            p.tableInfo,
+		TableAsName:      p.TableAsName,
+		DBName:           p.DBName,
+		Columns:          p.Columns,
+		Index:            idx,
+		dataSourceSchema: p.schema,
 	}.init(p.allocator, p.ctx)
 	statsTbl := p.statisticTable
 	rowCount := float64(statsTbl.Count)
@@ -434,8 +436,8 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		for _, cond := range p.pushedDownConds {
 			conds = append(conds, cond.Clone())
 		}
-		is.AccessCondition, is.filterCondition, is.accessEqualCount, is.accessInAndEqCount = DetachIndexScanConditions(conds, idx)
-		is.Ranges, err = BuildIndexRange(sc, is.Table, is.Index, is.accessInAndEqCount, is.AccessCondition)
+		is.AccessCondition, is.filterCondition, is.accessEqualCount, is.accessInAndEqCount = ranger.DetachIndexScanConditions(conds, idx)
+		is.Ranges, err = ranger.BuildIndexRange(sc, is.Table, is.Index, is.accessInAndEqCount, is.AccessCondition)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -444,8 +446,8 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 			return nil, errors.Trace(err)
 		}
 	} else {
-		rb := rangeBuilder{sc: sc}
-		is.Ranges = rb.buildIndexRanges(fullRange, types.NewFieldType(mysql.TypeNull))
+		rb := ranger.Builder{Sc: sc}
+		is.Ranges = rb.BuildIndexRanges(ranger.FullRange, types.NewFieldType(mysql.TypeNull))
 	}
 	copTask := &copTaskProfile{
 		cnt:       rowCount,
@@ -456,20 +458,20 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		// On this way, it's double read case.
 		copTask.tablePlan = PhysicalTableScan{Columns: p.Columns, Table: is.Table}.init(p.allocator, p.ctx)
 		copTask.tablePlan.SetSchema(p.schema)
-		var indexCols []*expression.Column
-		for _, col := range idx.Columns {
-			indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: col.Offset})
-		}
-		for i, col := range is.Columns {
-			if is.Table.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
-				indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: i})
+	}
+	var indexCols []*expression.Column
+	for _, col := range idx.Columns {
+		indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: col.Offset})
+	}
+	if is.Table.PKIsHandle {
+		for _, col := range is.Columns {
+			if mysql.HasPriKeyFlag(col.Flag) {
+				indexCols = append(indexCols, &expression.Column{FromID: p.id, Position: col.Offset})
 				break
 			}
 		}
-		copTask.indexPlan.SetSchema(expression.NewSchema(indexCols...))
-	} else {
-		is.SetSchema(p.schema)
 	}
+	is.SetSchema(expression.NewSchema(indexCols...))
 	// Check if this plan matches the property.
 	matchProperty := true
 	if !prop.isEmpty() {
@@ -556,8 +558,8 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task taskProfile, e
 		for _, cond := range p.pushedDownConds {
 			conds = append(conds, cond.Clone())
 		}
-		ts.AccessCondition, ts.filterCondition = DetachTableScanConditions(conds, p.tableInfo)
-		ts.Ranges, err = BuildTableRange(ts.AccessCondition, sc)
+		ts.AccessCondition, ts.filterCondition = ranger.DetachTableScanConditions(conds, p.tableInfo.GetPkName())
+		ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

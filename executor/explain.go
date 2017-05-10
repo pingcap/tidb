@@ -25,8 +25,9 @@ import (
 // ExplainExec represents an explain executor.
 // See https://dev.mysql.com/doc/refman/5.7/en/explain-output.html
 type ExplainExec struct {
+	baseExecutor
+
 	StmtPlan plan.Plan
-	schema   *expression.Schema
 	rows     []*Row
 	cursor   int
 }
