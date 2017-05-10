@@ -95,9 +95,9 @@ var (
 	maxDatetime = FromDate(9999, 12, 31, 23, 59, 59, 999999)
 
 	// minTimestamp is the minimum for mysql timestamp type.
-	minTimestamp = gotime.Date(1970, 1, 1, 0, 0, 1, 0, gotime.UTC)
+	minTimestamp = FromDate(1970, 1, 1, 0, 0, 1, 0)
 	// maxTimestamp is the maximum for mysql timestamp type.
-	maxTimestamp = gotime.Date(2038, 1, 19, 3, 14, 7, 999999, gotime.UTC)
+	maxTimestamp = FromDate(2038, 1, 19, 3, 14, 7, 999999)
 
 	// WeekdayNames lists names of weekdays, which are used in builtin time function `dayname`.
 	WeekdayNames = []string{
@@ -1202,16 +1202,14 @@ func checkTimestampType(t TimeInternal) error {
 		return nil
 	}
 
-	// TODO: Consider time_zone variable.
-	t1, err := t.GoTime(gotime.Local)
-	if err != nil {
-		log.Infof("checkTimestampType failed, t=%v", t)
+	if compareTime(t, maxTimestamp) > 0 || compareTime(t, minTimestamp) < 0 {
+		return errors.Trace(ErrInvalidTimeFormat)
+	}
+
+	if _, err := t.GoTime(gotime.Local); err != nil {
 		return errors.Trace(err)
 	}
 
-	if t1.After(maxTimestamp) || t1.Before(minTimestamp) {
-		return ErrInvalidTimeFormat
-	}
 	return nil
 }
 
