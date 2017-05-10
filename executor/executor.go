@@ -504,7 +504,7 @@ func (e *SelectionExec) initController() error {
 
 	switch x := e.Src.(type) {
 	case *XSelectTableExec:
-		accessCondition, restCondtion := ranger.DetachTableScanConditions(newConds, x.tableInfo.GetPkName())
+		accessCondition, restCondtion := ranger.DetachColumnConditions(newConds, x.tableInfo.GetPkName())
 		x.where, _, _ = expression.ExpressionsToPB(sc, restCondtion, client)
 		ranges, err := ranger.BuildTableRange(accessCondition, sc)
 		if err != nil {

@@ -251,15 +251,15 @@ func DetachIndexScanConditions(conditions []expression.Expression, index *model.
 	return accessConds, filterConds, accessEqualCount, accessInAndEqCount
 }
 
-// DetachTableScanConditions distinguishes between access conditions and filter conditions from conditions.
-func DetachTableScanConditions(conditions []expression.Expression, pkName model.CIStr) ([]expression.Expression, []expression.Expression) {
-	if pkName.L == "" {
+// DetachColumnConditions distinguishes between access conditions and filter conditions from conditions.
+func DetachColumnConditions(conditions []expression.Expression, colName model.CIStr) ([]expression.Expression, []expression.Expression) {
+	if colName.L == "" {
 		return nil, conditions
 	}
 
 	var accessConditions, filterConditions []expression.Expression
 	checker := conditionChecker{
-		pkName: pkName,
+		pkName: colName,
 		length: types.UnspecifiedLength,
 	}
 	for _, cond := range conditions {
@@ -301,24 +301,26 @@ func BuildTableRange(accessConditions []expression.Expression, sc *variable.Stat
 }
 
 // BuildColumnRange builds the range for sampling histogram to calculate the row count.
-func BuildColumnRange(conds []expression.Expression, sc *variable.StatementContext, tp *types.FieldType) ([]*types.ColumnRange, error) {
-	if len(conds) == 0 {
-		return []*types.ColumnRange{{Low: types.Datum{}, LowExcl: true, High: types.MaxValueDatum(), HighExcl: true}}, nil
+func BuildColumnRange(conds []expression.Expression, colName model.CIStr, sc *variable.StatementContext,
+	tp *types.FieldType) (ranges []*types.ColumnRange, usedConds, unusedConds []expression.Expression, _ error) {
+	usedConds, unusedConds = DetachColumnConditions(conds, colName)
+	if len(usedConds) == 0 {
+		return []*types.ColumnRange{{Low: types.Datum{}, High: types.MaxValueDatum()}}, nil, conds, nil
 	}
 
 	rb := Builder{Sc: sc}
 	rangePoints := FullRange
-	for _, cond := range conds {
+	for _, cond := range usedConds {
 		rangePoints = rb.intersection(rangePoints, rb.build(cond))
 		if rb.err != nil {
-			return nil, errors.Trace(rb.err)
+			return nil, nil, nil, errors.Trace(rb.err)
 		}
 	}
-	ranges := rb.buildColumnRanges(rangePoints, tp)
+	ranges = rb.buildColumnRanges(rangePoints, tp)
 	if rb.err != nil {
-		return nil, errors.Trace(rb.err)
+		return nil, nil, nil, errors.Trace(rb.err)
 	}
-	return ranges, nil
+	return
 }
 
 // conditionChecker checks if this condition can be pushed to index plan.

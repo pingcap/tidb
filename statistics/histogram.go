@@ -341,12 +341,12 @@ func (c *Column) getIntColumnRowCount(sc *variable.StatementContext, intRanges [
 func (c *Column) getColumnRowCount(sc *variable.StatementContext, ranges ...types.ColumnRange) (float64, error) {
 	var rowCount float64
 	for _, rg := range ranges {
-		// the point case.
 		cmp, err := rg.Low.CompareDatum(sc, rg.High)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
 		if cmp == 0 {
+			// the point case.
 			if !rg.LowExcl && !rg.HighExcl {
 				cnt, err := c.equalRowCount(sc, rg.Low)
 				if err != nil {

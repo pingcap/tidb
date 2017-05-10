@@ -315,15 +315,19 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a int)")
+	testKit.MustExec("create table t(a int, b int)")
 
 	tests := []struct {
 		exprStr   string
 		resultStr string
 	}{
 		{
-			exprStr:   "a = 1",
+			exprStr:   "a = 1 and b > 1",
 			resultStr: "[[1,1]]",
+		},
+		{
+			exprStr:   "b > 1",
+			resultStr: "[[<nil>,+inf]]",
 		},
 		{
 			exprStr:   "1 = a",
@@ -438,20 +442,22 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 
 		p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
-		var selection *plan.Selection
+		var sel *plan.Selection
 		for _, child := range p.Children() {
 			plan, ok := child.(*plan.Selection)
 			if ok {
-				selection = plan
+				sel = plan
 				break
 			}
 		}
-		c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
-		conds := make([]expression.Expression, 0, len(selection.Conditions))
-		for _, cond := range selection.Conditions {
+		c.Assert(sel, NotNil, Commentf("expr:%v", tt.exprStr))
+		ds, ok := sel.Children()[0].(*plan.DataSource)
+		c.Assert(ok, IsTrue, Commentf("expr:%v", tt.exprStr))
+		conds := make([]expression.Expression, 0, len(sel.Conditions))
+		for _, cond := range sel.Conditions {
 			conds = append(conds, expression.PushDownNot(cond, false, ctx))
 		}
-		result, err := ranger.BuildColumnRange(conds, new(variable.StatementContext), types.NewFieldType(mysql.TypeLonglong))
+		result, _, _, err := ranger.BuildColumnRange(conds, ds.TableInfo().Columns[0].Name, new(variable.StatementContext), types.NewFieldType(mysql.TypeLonglong))
 		c.Assert(err, IsNil)
 		got := fmt.Sprintf("%s", result)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
