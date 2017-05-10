@@ -234,7 +234,6 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx context.Context, p plan.Plan) b
 		p = proj.Children()[0]
 	}
 
-	// get by index key
 	switch v := p.(type) {
 	case *plan.PhysicalIndexScan:
 		return v.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx)
