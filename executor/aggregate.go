@@ -27,8 +27,8 @@ import (
 // It is built from the Aggregate Plan. When Next() is called, it reads all the data from Src
 // and updates all the items in AggFuncs.
 type HashAggExec struct {
-	Src           Executor
-	schema        *expression.Schema
+	baseExecutor
+
 	executed      bool
 	hasGby        bool
 	aggType       plan.AggregationType
@@ -41,26 +41,26 @@ type HashAggExec struct {
 
 // Close implements the Executor Close interface.
 func (e *HashAggExec) Close() error {
-	e.executed = false
 	e.groupMap = nil
 	e.groupIterator = nil
 	for _, agg := range e.AggFuncs {
-		agg.Clear()
+		agg.Reset()
 	}
-	return e.Src.Close()
+	return errors.Trace(e.children[0].Close())
 }
 
-// Schema implements the Executor Schema interface.
-func (e *HashAggExec) Schema() *expression.Schema {
-	return e.schema
+// Open implements the Executor Open interface.
+func (e *HashAggExec) Open() error {
+	e.executed = false
+	e.groupMap = mvmap.NewMVMap()
+	e.groupIterator = e.groupMap.NewIterator()
+	return errors.Trace(e.children[0].Open())
 }
 
 // Next implements the Executor Next interface.
 func (e *HashAggExec) Next() (*Row, error) {
 	// In this stage we consider all data from src as a single group.
 	if !e.executed {
-		e.groupMap = mvmap.NewMVMap()
-		e.groupIterator = e.groupMap.NewIterator()
 		for {
 			hasMore, err := e.innerNext()
 			if err != nil {
@@ -119,20 +119,12 @@ func (e *HashAggExec) getGroupKey(row *Row) ([]byte, error) {
 // innerNext fetches a single row from src and update each aggregate function.
 // If the first return value is false, it means there is no more data from src.
 func (e *HashAggExec) innerNext() (ret bool, err error) {
-	var srcRow *Row
-	if e.Src != nil {
-		srcRow, err = e.Src.Next()
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		if srcRow == nil {
-			return false, nil
-		}
-	} else {
-		// If Src is nil, only one row should be returned.
-		if e.executed {
-			return false, nil
-		}
+	srcRow, err := e.children[0].Next()
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if srcRow == nil {
+		return false, nil
 	}
 	e.executed = true
 	groupKey, err := e.getGroupKey(srcRow)
@@ -152,8 +144,8 @@ func (e *HashAggExec) innerNext() (ret bool, err error) {
 // It assumes all the input data is sorted by group by key.
 // When Next() is called, it will return a result for the same group.
 type StreamAggExec struct {
-	Src                Executor
-	schema             *expression.Schema
+	baseExecutor
+
 	executed           bool
 	hasData            bool
 	StmtCtx            *variable.StatementContext
@@ -164,19 +156,14 @@ type StreamAggExec struct {
 	tmpGroupKey        []types.Datum
 }
 
-// Close implements the Executor Close interface.
-func (e *StreamAggExec) Close() error {
+// Open implements the Executor Open interface.
+func (e *StreamAggExec) Open() error {
 	e.executed = false
 	e.hasData = false
 	for _, agg := range e.AggFuncs {
-		agg.Clear()
+		agg.Reset()
 	}
-	return e.Src.Close()
-}
-
-// Schema implements the Executor Schema interface.
-func (e *StreamAggExec) Schema() *expression.Schema {
-	return e.schema
+	return errors.Trace(e.children[0].Open())
 }
 
 // Next implements the Executor Next interface.
@@ -186,7 +173,7 @@ func (e *StreamAggExec) Next() (*Row, error) {
 	}
 	retRow := &Row{Data: make([]types.Datum, 0, len(e.AggFuncs))}
 	for {
-		row, err := e.Src.Next()
+		row, err := e.children[0].Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

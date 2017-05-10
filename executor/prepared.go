@@ -96,8 +96,13 @@ func (e *PrepareExec) Next() (*Row, error) {
 	return nil, e.Err
 }
 
-// Close implements plan.Plan Close interface.
+// Close implements the Executor Close interface.
 func (e *PrepareExec) Close() error {
+	return nil
+}
+
+// Open implements the Executor Open interface.
+func (e *PrepareExec) Open() error {
 	return nil
 }
 
@@ -200,7 +205,12 @@ func (e *ExecuteExec) Next() (*Row, error) {
 	return nil, nil
 }
 
-// Close implements plan.Plan Close interface.
+// Open implements the Executor Open interface.
+func (e *ExecuteExec) Open() error {
+	return nil
+}
+
+// Close implements Executor Close interface.
 func (e *ExecuteExec) Close() error {
 	// Will never be called.
 	return nil
@@ -288,8 +298,13 @@ func (e *DeallocateExec) Next() (*Row, error) {
 	return nil, nil
 }
 
-// Close implements plan.Plan Close interface.
+// Close implements Executor Close interface.
 func (e *DeallocateExec) Close() error {
+	return nil
+}
+
+// Open implements Executor Open interface.
+func (e *DeallocateExec) Open() error {
 	return nil
 }
 
