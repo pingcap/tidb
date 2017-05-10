@@ -267,8 +267,6 @@ func (rb *rowBlockIterator) nextBlock() ([]*Row, error) {
 
 // Close implements the Executor Close interface.
 func (e *MergeJoinExec) Close() error {
-	e.prepared = false
-	e.cursor = 0
 	e.outputBuf = nil
 
 	lErr := e.leftRowBlock.reader.Close()
@@ -282,6 +280,19 @@ func (e *MergeJoinExec) Close() error {
 	}
 
 	return nil
+}
+
+// Open implements the Executor Open interface.
+func (e *MergeJoinExec) Open() error {
+	e.prepared = false
+	e.cursor = 0
+	e.outputBuf = nil
+
+	err := e.leftRowBlock.reader.Open()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return errors.Trace(e.rightRowBlock.reader.Open())
 }
 
 // Schema implements the Executor Schema interface.
