@@ -157,25 +157,32 @@ func (s *testRangeSuite) TestIntColumnRangeString(c *C) {
 }
 
 func (s *testRangeSuite) TestColumnRangeString(c *C) {
-	tests := []struct{
+	tests := []struct {
 		ran ColumnRange
 		ans string
 	}{
 		{
 			ran: ColumnRange{
-				Low: NewStringDatum("a"),
-				High: MaxValueDatum(),
+				Low:      NewStringDatum("a"),
+				High:     MaxValueDatum(),
 				HighExcl: true,
 			},
 			ans: "[a,+inf)",
 		},
 		{
 			ran: ColumnRange{
-				Low: NewFloat64Datum(3.2),
+				Low:     NewFloat64Datum(3.2),
 				LowExcl: true,
-				High: NewFloat64Datum(6.4),
+				High:    NewFloat64Datum(6.4),
 			},
 			ans: "(3.2,6.4]",
+		},
+		{
+			ran: ColumnRange{
+				Low:  Datum{},
+				High: Datum{},
+			},
+			ans: "[<nil>,<nil>]",
 		},
 	}
 	for _, t := range tests {

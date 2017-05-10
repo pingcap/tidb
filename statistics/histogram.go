@@ -321,7 +321,7 @@ func (c *Column) getIntColumnRowCount(sc *variable.StatementContext, intRanges [
 			if rg.LowVal == rg.HighVal {
 				cnt, err = c.equalRowCount(sc, types.NewIntDatum(rg.LowVal))
 			} else {
-				cnt, err = c.betweenRowCount(sc, types.NewIntDatum(rg.LowVal), types.NewIntDatum(rg.HighVal))
+				cnt, err = c.betweenRowCount(sc, types.NewIntDatum(rg.LowVal), types.NewIntDatum(rg.HighVal+1))
 			}
 		}
 		if err != nil {
@@ -338,10 +338,25 @@ func (c *Column) getIntColumnRowCount(sc *variable.StatementContext, intRanges [
 	return rowCount, nil
 }
 
-func (c *Column) getColumnRowCount(sc *variable.StatementContext, ranges []types.ColumnRange,
-	totalRowCount float64) (float64, error) {
+func (c *Column) getColumnRowCount(sc *variable.StatementContext, ranges ...types.ColumnRange) (float64, error) {
 	var rowCount float64
 	for _, rg := range ranges {
+		// the point case.
+		cmp, err := rg.Low.CompareDatum(sc, rg.High)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if cmp == 0 {
+			if !rg.LowExcl && !rg.HighExcl {
+				cnt, err := c.equalRowCount(sc, rg.Low)
+				if err != nil {
+					return 0, errors.Trace(err)
+				}
+				rowCount += cnt
+			}
+			continue
+		}
+		// the interval case.
 		cnt, err := c.betweenRowCount(sc, rg.Low, rg.High)
 		if err != nil {
 			return 0, errors.Trace(err)
@@ -353,17 +368,17 @@ func (c *Column) getColumnRowCount(sc *variable.StatementContext, ranges []types
 			}
 			cnt -= lowCnt
 		}
-		if rg.HighExcl {
+		if !rg.HighExcl {
 			highCnt, err := c.equalRowCount(sc, rg.High)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-			cnt -= highCnt
+			cnt += highCnt
 		}
 		rowCount += cnt
 	}
-	if rowCount > totalRowCount {
-		rowCount = totalRowCount
+	if rowCount > c.totalRowCount() {
+		rowCount = c.totalRowCount()
 	} else if rowCount < 0 {
 		rowCount = 0
 	}
