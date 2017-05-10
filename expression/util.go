@@ -18,6 +18,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
@@ -261,4 +262,62 @@ func ConvertCol2CorCol(cond Expression, corCols []*CorrelatedColumn, outerSchema
 		}
 	}
 	return cond
+}
+
+var oppositeOp = map[string]string{
+	ast.LT: ast.GE,
+	ast.GE: ast.LT,
+	ast.GT: ast.LE,
+	ast.LE: ast.GT,
+	ast.EQ: ast.NE,
+	ast.NE: ast.EQ,
+}
+
+// PushDownNot pushes the `not` function down to the expression's arguments.
+func PushDownNot(expr Expression, not bool, ctx context.Context) Expression {
+	if f, ok := expr.(*ScalarFunction); ok {
+		switch f.FuncName.L {
+		case ast.UnaryNot:
+			return PushDownNot(f.GetArgs()[0], !not, f.GetCtx())
+		case ast.LT, ast.GE, ast.GT, ast.LE, ast.EQ, ast.NE:
+			if not {
+				nf, _ := NewFunction(f.GetCtx(), oppositeOp[f.FuncName.L], f.GetType(), f.GetArgs()...)
+				return nf
+			}
+			for i, arg := range f.GetArgs() {
+				f.GetArgs()[i] = PushDownNot(arg, false, f.GetCtx())
+			}
+			return f
+		case ast.AndAnd:
+			if not {
+				args := f.GetArgs()
+				for i, a := range args {
+					args[i] = PushDownNot(a, true, f.GetCtx())
+				}
+				nf, _ := NewFunction(f.GetCtx(), ast.OrOr, f.GetType(), args...)
+				return nf
+			}
+			for i, arg := range f.GetArgs() {
+				f.GetArgs()[i] = PushDownNot(arg, false, f.GetCtx())
+			}
+			return f
+		case ast.OrOr:
+			if not {
+				args := f.GetArgs()
+				for i, a := range args {
+					args[i] = PushDownNot(a, true, f.GetCtx())
+				}
+				nf, _ := NewFunction(f.GetCtx(), ast.AndAnd, f.GetType(), args...)
+				return nf
+			}
+			for i, arg := range f.GetArgs() {
+				f.GetArgs()[i] = PushDownNot(arg, false, f.GetCtx())
+			}
+			return f
+		}
+	}
+	if not {
+		expr, _ = NewFunction(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), expr)
+	}
+	return expr
 }
