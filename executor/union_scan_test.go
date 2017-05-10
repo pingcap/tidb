@@ -15,12 +15,15 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
 func (s *testSuite) TestDirtyTransaction(c *C) {
+	plan.UseDAGPlanBuilder = true
 	defer func() {
+		plan.UseDAGPlanBuilder = false
 		s.cleanEnv(c)
 		testleak.AfterTest(c)
 	}()
