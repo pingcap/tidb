@@ -393,34 +393,6 @@ func mockStatsTable(tbl *model.TableInfo, rowCount int64) *statistics.Table {
 	return statsTbl
 }
 
-// generateIntDatum will generate a datum slice, every dimension is begin from 0, end with num - 1.
-// If dimension is x, len is y, the total number of datum is y^x. And This slice is sorted.
-func generateIntDatum(dimension, num int) ([]types.Datum, error) {
-	len := int(math.Pow(float64(num), float64(dimension)))
-	ret := make([]types.Datum, len)
-	if dimension == 1 {
-		for i := 0; i < num; i++ {
-			ret[i] = types.NewIntDatum(int64(i))
-		}
-	} else {
-		// In this way, we can guarantee the datum is in order.
-		for i := 0; i < len; i++ {
-			data := make([]types.Datum, dimension)
-			j := i
-			for k := 0; k < dimension; k++ {
-				data[dimension-k-1].SetInt64(int64(j % num))
-				j = j / num
-			}
-			bytes, err := codec.EncodeKey(nil, data...)
-			if err != nil {
-				return nil, err
-			}
-			ret[i].SetBytes(bytes)
-		}
-	}
-	return ret, nil
-}
-
 // mockStatsHistogram will create a statistics.Histogram, of which the data is uniform distribution.
 func mockStatsHistogram(id int64, values []types.Datum, repeat int64) *statistics.Histogram {
 	ndv := len(values)

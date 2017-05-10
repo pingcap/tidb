@@ -22,24 +22,24 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 )
 
-const selectionFactor  = 0.8
+const selectionFactor = 0.8
 
-// indexBlock is used when calculating selectivity
+// indexBlock is used when calculating selectivity.
 type indexBlock struct {
 	// the position that this index is in the index slice, if is -1, then this is primary key.
 	pos int
 	// the ith bit of `cover` will tell whether the ith expression is covered by this index.
 	cover uint64
-	// pk won't use this, only index will use.
+	// pk won't use this, only index will use. It's the count of `in` or `equal` expressions.
 	inAndEqCnt int
 }
 
-// selectivity is a function calculate the selectivity of the expressions.
+// Selectivity is a function calculate the selectivity of the expressions.
 // The definition of selectivity is (row count after filter / row count before filter).
 // And exprs must be CNF now, in other words, `exprs[0] and exprs[1] and ... and exprs[len - 1]` should be held when you call this.
 // TODO: support expressions that the top layer is a DNF.
-func selectivity(ctx context.Context, exprs []expression.Expression, indices []*model.IndexInfo, pkColID int64,
-tbl *model.TableInfo, statsTbl *Table) (float64, error) {
+func Selectivity(ctx context.Context, exprs []expression.Expression, indices []*model.IndexInfo, pkColID int64,
+	tbl *model.TableInfo, statsTbl *Table) (float64, error) {
 	// TODO: If len(exprs) is bigger than 64, we could use bitset structure to replace the uint64.
 	// This will simplify some code and speed up if we use this rather than a boolean slice.
 	if statsTbl.Pseudo || len(exprs) > 64 {
@@ -145,6 +145,7 @@ func getMaskByIndex(ctx context.Context, exprs []expression.Expression, index *m
 func getUsedIndicesByGreedy(blocks []*indexBlock) (newBlocks []*indexBlock) {
 	mask := uint64(math.MaxUint64)
 	for {
+		// Choose the index that covers most.
 		bestID := -1
 		bestCount := 0
 		for i, block := range blocks {
@@ -169,7 +170,7 @@ func getUsedIndicesByGreedy(blocks []*indexBlock) (newBlocks []*indexBlock) {
 	return
 }
 
-// It's the digit sum of the binary representation of the number x.
+// popcount is the digit sum of the binary representation of the number x.
 func popcount(x uint64) int {
 	ret := 0
 	for ; x > 0; x = x >> 1 {
