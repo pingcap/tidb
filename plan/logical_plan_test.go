@@ -14,7 +14,6 @@
 package plan
 
 import (
-	"math"
 	"sort"
 	"testing"
 
@@ -31,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -64,7 +62,7 @@ func newStringType() types.FieldType {
 	return *ft
 }
 
-func mockInfoSchema() infoschema.InfoSchema {
+func MockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 	indices := []*model.IndexInfo{
 		{
 			Name: model.NewCIStr("c_d_e"),
@@ -85,7 +83,6 @@ func mockInfoSchema() infoschema.InfoSchema {
 					Offset: 4,
 				},
 			},
-			ID:     1,
 			State:  model.StatePublic,
 			Unique: true,
 		},
@@ -98,7 +95,6 @@ func mockInfoSchema() infoschema.InfoSchema {
 					Offset: 4,
 				},
 			},
-			ID:     2,
 			State:  model.StateWriteOnly,
 			Unique: true,
 		},
@@ -111,7 +107,6 @@ func mockInfoSchema() infoschema.InfoSchema {
 					Offset: 8,
 				},
 			},
-			ID:     3,
 			State:  model.StatePublic,
 			Unique: true,
 		},
@@ -124,7 +119,6 @@ func mockInfoSchema() infoschema.InfoSchema {
 					Offset: 9,
 				},
 			},
-			ID:     4,
 			State:  model.StatePublic,
 			Unique: true,
 		},
@@ -142,7 +136,6 @@ func mockInfoSchema() infoschema.InfoSchema {
 					Offset: 9,
 				},
 			},
-			ID:     5,
 			State:  model.StatePublic,
 			Unique: true,
 		},
@@ -165,7 +158,6 @@ func mockInfoSchema() infoschema.InfoSchema {
 					Offset: 7,
 				},
 			},
-			ID:    6,
 			State: model.StatePublic,
 		},
 		{
@@ -187,7 +179,6 @@ func mockInfoSchema() infoschema.InfoSchema {
 					Offset: 5,
 				},
 			},
-			ID:    7,
 			State: model.StatePublic,
 		},
 	}
@@ -266,11 +257,6 @@ func mockInfoSchema() infoschema.InfoSchema {
 		PKIsHandle: true,
 	}
 	is := infoschema.MockInfoSchema([]*model.TableInfo{table})
-	return is
-}
-
-func MockResolve(node ast.Node) (infoschema.InfoSchema, error) {
-	is := mockInfoSchema()
 	ctx := mockContext()
 	err := MockResolveName(node, is, "test", ctx)
 	if err != nil {

@@ -105,11 +105,14 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 	c.Assert(err, IsNil)
 	tbl := tb.Meta()
 
+	// mock the statistic table
 	statsTbl := mockStatsTable(tbl, 540)
 
+	// Set the value of pk column's histogram.
 	pkValues, _ := s.generateIntDatum(1, 54)
 	statsTbl.Columns[1] = &statistics.Column{Histogram: *mockStatsHistogram(1, pkValues, 10)}
 
+	// Set the value of two indices' histograms.
 	idxValues, err := s.generateIntDatum(2, 3)
 	c.Assert(err, IsNil)
 	statsTbl.Indices[1] = &statistics.Index{Histogram: *mockStatsHistogram(1, idxValues, 60), NumColumns: 2}
