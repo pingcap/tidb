@@ -267,8 +267,8 @@ func ConvertCol2CorCol(cond Expression, corCols []*CorrelatedColumn, outerSchema
 	return cond
 }
 
-// timeZone2Duration convert CONVERT_TZ arg such as `+08:34` to time.Duration
-// tz has format `(^(\+|-)(0?[0-9]|1[0-2]):[0-5]?\d$)|(^\+13:00$)`
+// timeZone2Duration converts timezone whose format should satisfy the regular condition
+// `(^(+|-)(0?[0-9]|1[0-2]):[0-5]?\d$)|(^+13:00$)` to time.Duration.
 func timeZone2Duration(tz string) time.Duration {
 	sign := 1
 	if strings.HasPrefix(tz, "-") {
