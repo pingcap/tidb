@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/twinj/uuid"
+	goctx "golang.org/x/net/context"
 )
 
 var (
@@ -210,10 +211,14 @@ func NewDDL(store kv.Storage, infoHandle *infoschema.Handle, hook Callback, leas
 }
 
 // TODO: Move this to the function of newDDL.
-func (d *ddl) setWorker(cli *clientv3.Client) {
-	d.worker = &worker{ddlID: d.uuid, etcdClient: cli}
+func (d *ddl) setWorker(ctx goctx.Context, cli *clientv3.Client) {
+	d.worker = &worker{
+		ddlID:      d.uuid,
+		etcdClient: cli,
+	}
+	ctx, d.worker.cancelFunc = goctx.WithCancel(ctx)
 	d.wait.Add(2)
-	go d.campaignOwners()
+	go d.campaignOwners(ctx)
 }
 
 func newDDL(store kv.Storage, infoHandle *infoschema.Handle, hook Callback, lease time.Duration) *ddl {
@@ -312,6 +317,9 @@ func (d *ddl) close() {
 	}
 
 	close(d.quitCh)
+	if d.worker != nil {
+		d.worker.cancelFunc()
+	}
 
 	d.wait.Wait()
 	log.Infof("close DDL:%s", d.uuid)

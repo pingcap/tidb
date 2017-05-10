@@ -64,7 +64,7 @@ func TestSingle(t *testing.T) {
 	defer clus.Terminate(t)
 	cli := clus.RandClient()
 
-	d.setWorker(cli)
+	d.setWorker(goctx.Background(), cli)
 	isOwner, isBgOwner := checkOwners(d, true)
 	if !isOwner || !isBgOwner {
 		t.Fatalf("expect true, got isOwner:%v, isBgOwner:%v", isOwner, isBgOwner)
@@ -73,10 +73,7 @@ func TestSingle(t *testing.T) {
 
 func TestCluster(t *testing.T) {
 	ChangeOwnerInNewWay := true
-	originalCampaignTimeout := campaignTimeout
-	campaignTimeout = 200 * time.Millisecond
 	defer func() {
-		campaignTimeout = originalCampaignTimeout
 		ChangeOwnerInNewWay = false
 	}()
 	log.SetLevel(log.LOG_LEVEL_INFO)
@@ -97,12 +94,12 @@ func TestCluster(t *testing.T) {
 	defer d1.Stop()
 	cli := clus.Client(0)
 	cli1 := clus.Client(1)
-	d.setWorker(cli)
+	d.setWorker(goctx.Background(), cli)
 	isOwner, isBgOwner := checkOwners(d, true)
 	if !isOwner || !isBgOwner {
 		t.Fatalf("expect true, got isOwner:%v, isBgOwner:%v", isOwner, isBgOwner)
 	}
-	d1.setWorker(cli1)
+	d1.setWorker(goctx.Background(), cli1)
 	isOwner, isBgOwner = checkOwners(d1, false)
 	if isOwner || isBgOwner {
 		t.Fatalf("expect false, got isOwner:%v, isBgOwner:%v", isOwner, isBgOwner)

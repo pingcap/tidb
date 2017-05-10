@@ -27,17 +27,17 @@ import (
 // ChangeOwnerInNewWay is used for testing.
 var ChangeOwnerInNewWay = false
 
-const ddlOwnerKey = "/tidb/ddl/owner"
-const bgOwnerKey = "/tidb/ddl/bg/owner"
-
-// campaignTimeout is variable for testing.
-var campaignTimeout = 5 * time.Second
+const (
+	ddlOwnerKey               = "/tidb/ddl/owner"
+	bgOwnerKey                = "/tidb/ddl/bg/owner"
+	newSessionDefaultRetryCnt = 3
+)
 
 type worker struct {
 	ddlOwner    int32
 	bgOwner     int32
 	ddlID       string
-	quitCh      chan struct{}
+	cancelFunc  goctx.CancelFunc
 	etcdClient  *clientv3.Client
 	etcdSession *concurrency.Session
 }
@@ -66,9 +66,9 @@ func (w *worker) setBgOwner(isOwner bool) {
 	}
 }
 
-func (w *worker) newSession() {
-	for {
-		session, err := concurrency.NewSession(w.etcdClient)
+func (w *worker) newSession(ctx goctx.Context, retryCnt int) {
+	for i := 0; i < retryCnt; i++ {
+		session, err := concurrency.NewSession(w.etcdClient, concurrency.WithContext(ctx))
 		if err != nil {
 			log.Warnf("[ddl] failed to new session, err %v", err)
 			time.Sleep(200 * time.Millisecond)
@@ -79,13 +79,13 @@ func (w *worker) newSession() {
 	}
 }
 
-func (d *ddl) campaignOwners() {
-	d.worker.newSession()
-	go d.campaignLoop(ddlOwnerKey)
-	d.campaignLoop(bgOwnerKey)
+func (d *ddl) campaignOwners(ctx goctx.Context) {
+	d.worker.newSession(ctx, newSessionDefaultRetryCnt)
+	go d.campaignLoop(ctx, ddlOwnerKey)
+	d.campaignLoop(ctx, bgOwnerKey)
 }
 
-func (d *ddl) campaignLoop(key string) {
+func (d *ddl) campaignLoop(ctx goctx.Context, key string) {
 	defer d.wait.Done()
 	worker := d.worker
 	for {
@@ -94,30 +94,30 @@ func (d *ddl) campaignLoop(key string) {
 		}
 
 		elec := concurrency.NewElection(worker.etcdSession, key)
-		ctx, cancel := goctx.WithTimeout(goctx.Background(), campaignTimeout)
 		err := elec.Campaign(ctx, worker.ddlID)
 		if err != nil {
 			log.Infof("[ddl] worker %s failed to campaign, err %v", worker.ddlID, err)
+			continue
 		}
 
 		// Get owner information.
-		resp, err := elec.Leader(goctx.Background())
+		resp, err := elec.Leader(ctx)
 		if err != nil {
 			// If no leader elected currently, it returns ErrElectionNoLeader.
 			log.Infof("[ddl] failed to get leader, err %v", err)
 			continue
 		}
-		if len(resp.Kvs) < 1 {
-			log.Warn("[ddl] worker watch owner key is empty")
-		}
 		leader := string(resp.Kvs[0].Value)
 		log.Info("[ddl] %s worker is %s, owner is %v", key, worker.ddlID, leader)
 		if leader == worker.ddlID {
 			worker.setOwnerVal(key, true)
+		} else {
+			log.Warnf("[ddl] worker %s doesn't the owner", worker.ddlID)
+			continue
 		}
 
 		// TODO: Use content instead of quitCh.
-		worker.watchOwner(d.quitCh, string(resp.Kvs[0].Key))
+		worker.watchOwner(ctx, string(resp.Kvs[0].Key))
 		worker.setOwnerVal(key, false)
 		d.hookMu.Lock()
 		d.hook.OnWatched()
@@ -139,9 +139,9 @@ func (w *worker) setOwnerVal(key string, val bool) {
 	}
 }
 
-func (w *worker) watchOwner(quitCh chan struct{}, key string) {
+func (w *worker) watchOwner(ctx goctx.Context, key string) {
 	log.Debugf("[ddl] worker %s watch owner key %v", w.ddlID, key)
-	watchCh := w.etcdClient.Watch(goctx.Background(), key)
+	watchCh := w.etcdClient.Watch(ctx, key)
 	for {
 		select {
 		case resp := <-watchCh:
@@ -157,7 +157,7 @@ func (w *worker) watchOwner(quitCh chan struct{}, key string) {
 					return
 				}
 			}
-		case <-quitCh:
+		case <-ctx.Done():
 			return
 		}
 	}
