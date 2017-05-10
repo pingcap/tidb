@@ -138,6 +138,11 @@ func (e *GrantExec) Close() error {
 	return nil
 }
 
+// Open implements the Executor Open interface.
+func (e *GrantExec) Open() error {
+	return nil
+}
+
 // checkAndInitDBPriv checks if DB scope privilege entry exists in mysql.DB.
 // If unexists, insert a new one.
 func checkAndInitDBPriv(ctx context.Context, dbName string, is infoschema.InfoSchema, user string, host string) error {

@@ -882,4 +882,7 @@ const (
 	ErrMustChangePasswordLogin                                      = 1862
 	ErrRowInWrongPartition                                          = 1863
 	ErrErrorLast                                                    = 1863
+	ErrInvalidJSONText                                              = 3140
+	ErrInvalidJSONPath                                              = 3143
+	ErrInvalidJSONData                                              = 3146
 )

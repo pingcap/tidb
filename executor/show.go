@@ -22,8 +22,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -38,6 +36,8 @@ import (
 
 // ShowExec represents a show executor.
 type ShowExec struct {
+	baseExecutor
+
 	Tp     ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName model.CIStr
 	Table  *ast.TableName  // Used for showing columns.
@@ -49,18 +49,11 @@ type ShowExec struct {
 	// GlobalScope is used by show variables
 	GlobalScope bool
 
-	schema *expression.Schema
-	ctx    context.Context
-	is     infoschema.InfoSchema
+	is infoschema.InfoSchema
 
 	fetched bool
 	rows    []*Row
 	cursor  int
-}
-
-// Schema implements the Executor Schema interface.
-func (e *ShowExec) Schema() *expression.Schema {
-	return e.schema
 }
 
 // Next implements Execution Next interface.
@@ -621,9 +614,4 @@ func (e *ShowExec) getTable() (table.Table, error) {
 		return nil, errors.Errorf("table %s not found", e.Table.Name)
 	}
 	return tb, nil
-}
-
-// Close implements the Executor Close interface.
-func (e *ShowExec) Close() error {
-	return nil
 }
