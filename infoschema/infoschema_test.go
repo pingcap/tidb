@@ -196,7 +196,7 @@ func checkApplyCreateNonExistsTableDoesNotPanic(c *C, txn kv.Transaction, builde
 	c.Assert(infoschema.ErrTableNotExists.Equal(err), IsTrue)
 }
 
-// TestConcurrent make sure it is safe to concurrently create handle on multiple stores.
+// TestConcurrent makes sure it is safe to concurrently create handle on multiple stores.
 func (testSuite) TestConcurrent(c *C) {
 	defer testleak.AfterTest(c)()
 	storeCount := 5
