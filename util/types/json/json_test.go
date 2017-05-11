@@ -28,23 +28,6 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-func (s *testJSONSuite) TestJSONPathExprLegRe(c *C) {
-	var pathExpr = "$.key1[3][*].*.key3"
-	matches := jsonPathExprLegRe.FindAllString(pathExpr, -1)
-	c.Assert(len(matches), Equals, 5)
-	c.Assert(matches[0], Equals, ".key1")
-	c.Assert(matches[1], Equals, "[3]")
-	c.Assert(matches[2], Equals, "[*]")
-	c.Assert(matches[3], Equals, ".*")
-	c.Assert(matches[4], Equals, ".key3")
-}
-
-func (s *testJSONSuite) TestValidatePathExpr(c *C) {
-	var pathExpr = "$ .   key1[3]\t[*].*.key3"
-	_, err := validateJSONPathExpr(pathExpr)
-	c.Assert(err, IsNil)
-}
-
 func (s *testJSONSuite) TestJSONSerde(c *C) {
 	var j1 interface{}
 	var jstr1 = []byte(`{"a": [1, "2", {"aa": "bb"}, 4.0], "b": true}`)
