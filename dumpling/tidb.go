@@ -148,6 +148,13 @@ func resetStmtCtx(ctx context.Context, s ast.StmtNode) {
 		// Make sure the sql_mode is strict when checking column default value.
 		sc.IgnoreTruncate = false
 		sc.TruncateAsWarning = false
+	case *ast.LoadDataStmt:
+		if variable.GoSQLDriverTest {
+			sc.IgnoreTruncate = true
+			break
+		}
+		sc.IgnoreTruncate = false
+		sc.TruncateAsWarning = !sessVars.StrictSQLMode
 	default:
 		sc.IgnoreTruncate = true
 		if show, ok := s.(*ast.ShowStmt); ok {
