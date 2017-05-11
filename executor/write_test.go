@@ -642,6 +642,12 @@ func (s *testSuite) TestLoadData(c *C) {
 	r := tk.MustQuery(selectSQL)
 	r.Check(nil)
 
+	sc := ctx.GetSessionVars().StmtCtx
+	originIgnoreTruncate := sc.IgnoreTruncate
+	defer func() {
+		sc.IgnoreTruncate = originIgnoreTruncate
+	}()
+	sc.IgnoreTruncate = false
 	// fields and lines are default, InsertData returns data is nil
 	tests := []testCase{
 		// data1 = nil, data2 != nil
@@ -666,6 +672,7 @@ func (s *testSuite) TestLoadData(c *C) {
 		{[]byte("\t2\t3"), []byte("\t4\t5"), nil, []byte("\t2\t3\t4\t5")},
 	}
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
+	c.Assert(sc.WarningCount(), Equals, uint16(3))
 
 	// lines starting symbol is "" and terminated symbol length is 2, InsertData returns data is nil
 	ld.LinesInfo.Terminated = "||"

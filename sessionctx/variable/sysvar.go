@@ -411,7 +411,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "innodb_read_only", "OFF"},
 	{ScopeNone, "datetime_format", "%Y-%m-%d %H:%i:%s"},
 	{ScopeGlobal, "log_syslog", ""},
-	{ScopeNone, "version", "5.6.25"},
+	{ScopeNone, "version", mysql.ServerVersion},
 	{ScopeGlobal | ScopeSession, "transaction_alloc_block_size", "8192"},
 	{ScopeGlobal, "sql_slave_skip_counter", "0"},
 	{ScopeNone, "have_openssl", "DISABLED"},

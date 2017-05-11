@@ -43,6 +43,30 @@ func (col *CorrelatedColumn) Eval(row []types.Datum) (types.Datum, error) {
 	return *col.Data, nil
 }
 
+// EvalInt returns int representation of CorrelatedColumn.
+func (col *CorrelatedColumn) EvalInt(row []types.Datum, sc *variable.StatementContext) (int64, bool, error) {
+	val, isNull, err := evalExprToInt(col, row, sc)
+	return val, isNull, errors.Trace(err)
+}
+
+// EvalReal returns real representation of CorrelatedColumn.
+func (col *CorrelatedColumn) EvalReal(row []types.Datum, sc *variable.StatementContext) (float64, bool, error) {
+	val, isNull, err := evalExprToReal(col, row, sc)
+	return val, isNull, errors.Trace(err)
+}
+
+// EvalString returns string representation of CorrelatedColumn.
+func (col *CorrelatedColumn) EvalString(row []types.Datum, sc *variable.StatementContext) (string, bool, error) {
+	val, isNull, err := evalExprToString(col, row, sc)
+	return val, isNull, errors.Trace(err)
+}
+
+// EvalDecimal returns decimal representation of CorrelatedColumn.
+func (col *CorrelatedColumn) EvalDecimal(row []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
+	val, isNull, err := evalExprToDecimal(col, row, sc)
+	return val, isNull, errors.Trace(err)
+}
+
 // Equal implements Expression interface.
 func (col *CorrelatedColumn) Equal(expr Expression, ctx context.Context) bool {
 	if cc, ok := expr.(*CorrelatedColumn); ok {
