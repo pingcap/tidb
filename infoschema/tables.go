@@ -803,7 +803,7 @@ const (
 	uniqueKeyType  = "UNIQUE"
 )
 
-// See https://dev.mysql.com/doc/refman/5.7/en/table-constraints-table.html
+// dataForTableConstraints constructs data for table information_schema.constraints.See https://dev.mysql.com/doc/refman/5.7/en/table-constraints-table.html
 func dataForTableConstraints(schemas []*model.DBInfo) [][]types.Datum {
 	rows := [][]types.Datum{}
 	for _, schema := range schemas {
