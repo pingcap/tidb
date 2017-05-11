@@ -30,11 +30,6 @@ type JSON interface {
 	Serialize() []byte
 	// Deserialize means deserialize a json from bytes.
 	Deserialize(bytes []byte)
-
-	// Extract is used for json_extract function.
-	Extract(pathExpr string) (JSON, error)
-	// Unquote is used for json_unquote function.
-	Unquote() (string, error)
 }
 
 // CreateJSON will create a json with bson as serde format and nil as data.
