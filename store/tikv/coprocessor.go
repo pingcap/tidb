@@ -332,7 +332,7 @@ func (it *copIterator) work(ctx goctx.Context, taskCh <-chan *copTask) {
 		for _, resp := range resps {
 			select {
 			case ch <- resp:
-			case <-ctx.Done():
+			case <-childCtx.Done():
 				return
 			case <-it.finished:
 				return
