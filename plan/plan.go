@@ -62,7 +62,7 @@ type Plan interface {
 
 	extractCorrelatedCols() []*expression.CorrelatedColumn
 
-	// ResolveIndices resolves the index for columns.
+	// ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
 	ResolveIndices()
 }
 
