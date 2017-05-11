@@ -211,6 +211,7 @@ var compressTests = []compressTest{
 	{[]byte("hello world"), []byte{120, 156, 202, 72, 205, 201, 201, 87, 40, 207, 47, 202, 73, 1, 4, 0, 0, 255, 255, 26, 11, 4, 93}},
 	{[]byte("i love you)"), []byte{120, 156, 202, 84, 200, 201, 47, 75, 85, 168, 204, 47, 213, 4, 4, 0, 0, 255, 255, 23, 142, 3, 230}},
 	{nil, nil},
+	{string(""), string("")},
 }
 
 func (s *testEvaluatorSuite) TestCompress(c *C) {
@@ -253,4 +254,49 @@ func (s *testEvaluatorSuite) TestRandomBytes(c *C) {
 	out, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(len(out.GetBytes()), Equals, 0)
+}
+
+func (s *testEvaluatorSuite) TestUncompress(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		in     interface{}
+		expect interface{}
+	}{
+		{[]byte{120, 156, 202, 72, 205, 201, 201, 87, 40, 207, 47, 202, 73, 1, 4, 0, 0, 255, 255, 26, 11, 4, 93}, []byte("hello world")},
+		{[]byte{120, 156, 202, 84, 200, 201, 47, 75, 85, 168, 204, 47, 213, 4, 4, 0, 0, 255, 255, 23, 142, 3, 230}, []byte("i love you)")},
+		{nil, nil},
+		{string(""), string("")},
+	}
+
+	fc := funcs[ast.Uncompress]
+	for _, test := range tests {
+		arg := types.NewDatum(test.in)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{arg}), s.ctx)
+		c.Assert(err, IsNil)
+		out, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(out, DeepEquals, types.NewDatum(test.expect))
+	}
+}
+func (s *testEvaluatorSuite) TestUncompressLength(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		in     interface{}
+		expect interface{}
+	}{
+		{[]byte{120, 156, 202, 72, 205, 201, 201, 87, 40, 207, 47, 202, 73, 1, 4, 0, 0, 255, 255, 26, 11, 4, 93}, int64(11)},
+		{[]byte{120, 156, 202, 84, 200, 201, 47, 75, 85, 168, 204, 47, 213, 4, 4, 0, 0, 255, 255, 23, 142, 3, 230}, int64(11)},
+		{nil, int64(0)},
+		{string(""), int64(0)},
+	}
+
+	fc := funcs[ast.UncompressedLength]
+	for _, test := range tests {
+		arg := types.NewDatum(test.in)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{arg}), s.ctx)
+		c.Assert(err, IsNil)
+		out, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(out.GetInt64(), Equals, test.expect)
+	}
 }
