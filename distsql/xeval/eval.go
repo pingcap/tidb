@@ -14,6 +14,8 @@
 package xeval
 
 import (
+	"time"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/mysql"
@@ -59,14 +61,16 @@ type Evaluator struct {
 	fieldTps     []*types.FieldType
 	valueLists   map[*tipb.Expr]*decodedValueList
 	StatementCtx *variable.StatementContext
+	TimeZone     *time.Location
 }
 
 // NewEvaluator creates a new Evaluator instance.
-func NewEvaluator(sc *variable.StatementContext) *Evaluator {
+func NewEvaluator(sc *variable.StatementContext, timeZone *time.Location) *Evaluator {
 	return &Evaluator{
 		Row:          make(map[int64]types.Datum),
 		ColIDs:       make(map[int64]int),
 		StatementCtx: sc,
+		TimeZone:     timeZone,
 	}
 }
 
@@ -100,7 +104,7 @@ func (e *Evaluator) SetRowValue(handle int64, row [][]byte, relatedColIDs map[in
 		} else {
 			data := row[offset]
 			ft := e.fieldTps[offset]
-			datum, err := tablecodec.DecodeColumnValue(data, ft)
+			datum, err := tablecodec.DecodeColumnValue(data, ft, e.TimeZone)
 			if err != nil {
 				return errors.Trace(err)
 			}

@@ -38,10 +38,10 @@ type SysVar struct {
 	// Scope is for whether can be changed or not
 	Scope ScopeFlag
 
-	// Variable name
+	// Name is the variable name.
 	Name string
 
-	// Variable value
+	// Value is the variable value.
 	Value string
 }
 
@@ -59,13 +59,15 @@ const (
 	CodeUnknownStatusVar terror.ErrCode = 1
 	CodeUnknownSystemVar terror.ErrCode = 1193
 	CodeIncorrectScope   terror.ErrCode = 1238
+	CodeUnknownTimeZone  terror.ErrCode = 1298
 )
 
 // Variable errors
 var (
-	UnknownStatusVar  = terror.ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
-	UnknownSystemVar  = terror.ClassVariable.New(CodeUnknownSystemVar, "unknown system variable '%s'")
-	ErrIncorrectScope = terror.ClassVariable.New(CodeIncorrectScope, "Incorrect variable scope")
+	UnknownStatusVar   = terror.ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
+	UnknownSystemVar   = terror.ClassVariable.New(CodeUnknownSystemVar, "unknown system variable '%s'")
+	ErrIncorrectScope  = terror.ClassVariable.New(CodeIncorrectScope, "Incorrect variable scope")
+	ErrUnknownTimeZone = terror.ClassVariable.New(CodeUnknownTimeZone, "unknown or incorrect time zone: %s")
 )
 
 func init() {
@@ -78,6 +80,7 @@ func init() {
 	mySQLErrCodes := map[terror.ErrCode]uint16{
 		CodeUnknownSystemVar: mysql.ErrUnknownSystemVariable,
 		CodeIncorrectScope:   mysql.ErrIncorrectGlobalLocalVar,
+		CodeUnknownTimeZone:  mysql.ErrUnknownTimeZone,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassVariable] = mySQLErrCodes
 }
@@ -408,7 +411,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "innodb_read_only", "OFF"},
 	{ScopeNone, "datetime_format", "%Y-%m-%d %H:%i:%s"},
 	{ScopeGlobal, "log_syslog", ""},
-	{ScopeNone, "version", "5.6.25"},
+	{ScopeNone, "version", mysql.ServerVersion},
 	{ScopeGlobal | ScopeSession, "transaction_alloc_block_size", "8192"},
 	{ScopeGlobal, "sql_slave_skip_counter", "0"},
 	{ScopeNone, "have_openssl", "DISABLED"},

@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2017 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,14 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package plan
+package ranger
 
 import (
 	"math"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -26,49 +25,52 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-var fullRange = []rangePoint{
+// FullRange is (-∞, +∞).
+var FullRange = []point{
 	{start: true},
 	{value: types.MaxValueDatum()},
 }
 
 // BuildIndexRange will build range of index for PhysicalIndexScan
-func BuildIndexRange(sc *variable.StatementContext, p *PhysicalIndexScan) error {
-	rb := rangeBuilder{sc: sc}
-	for i := 0; i < p.accessInAndEqCount; i++ {
+func BuildIndexRange(sc *variable.StatementContext, tblInfo *model.TableInfo, index *model.IndexInfo,
+	accessInAndEqCount int, accessCondition []expression.Expression) ([]*types.IndexRange, error) {
+	rb := Builder{Sc: sc}
+	var ranges []*types.IndexRange
+	for i := 0; i < accessInAndEqCount; i++ {
 		// Build ranges for equal or in access conditions.
-		point := rb.build(p.AccessCondition[i])
-		colOff := p.Index.Columns[i].Offset
-		tp := &p.Table.Columns[colOff].FieldType
+		point := rb.build(accessCondition[i])
+		colOff := index.Columns[i].Offset
+		tp := &tblInfo.Columns[colOff].FieldType
 		if i == 0 {
-			p.Ranges = rb.buildIndexRanges(point, tp)
+			ranges = rb.BuildIndexRanges(point, tp)
 		} else {
-			p.Ranges = rb.appendIndexRanges(p.Ranges, point, tp)
+			ranges = rb.appendIndexRanges(ranges, point, tp)
 		}
 	}
-	rangePoints := fullRange
+	rangePoints := FullRange
 	// Build rangePoints for non-equal access conditions.
-	for i := p.accessInAndEqCount; i < len(p.AccessCondition); i++ {
-		rangePoints = rb.intersection(rangePoints, rb.build(p.AccessCondition[i]))
+	for i := accessInAndEqCount; i < len(accessCondition); i++ {
+		rangePoints = rb.intersection(rangePoints, rb.build(accessCondition[i]))
 	}
-	if p.accessInAndEqCount == 0 {
-		colOff := p.Index.Columns[0].Offset
-		tp := &p.Table.Columns[colOff].FieldType
-		p.Ranges = rb.buildIndexRanges(rangePoints, tp)
-	} else if p.accessInAndEqCount < len(p.AccessCondition) {
-		colOff := p.Index.Columns[p.accessInAndEqCount].Offset
-		tp := &p.Table.Columns[colOff].FieldType
-		p.Ranges = rb.appendIndexRanges(p.Ranges, rangePoints, tp)
+	if accessInAndEqCount == 0 {
+		colOff := index.Columns[0].Offset
+		tp := &tblInfo.Columns[colOff].FieldType
+		ranges = rb.BuildIndexRanges(rangePoints, tp)
+	} else if accessInAndEqCount < len(accessCondition) {
+		colOff := index.Columns[accessInAndEqCount].Offset
+		tp := &tblInfo.Columns[colOff].FieldType
+		ranges = rb.appendIndexRanges(ranges, rangePoints, tp)
 	}
 
 	// Take prefix index into consideration.
-	if p.Index.HasPrefixIndex() {
-		for i := 0; i < len(p.Ranges); i++ {
-			refineRange(p.Ranges[i], p.Index)
+	if index.HasPrefixIndex() {
+		for i := 0; i < len(ranges); i++ {
+			refineRange(ranges[i], index)
 		}
 	}
 
-	if len(p.Ranges) > 0 && len(p.Ranges[0].LowVal) < len(p.Index.Columns) {
-		for _, ran := range p.Ranges {
+	if len(ranges) > 0 && len(ranges[0].LowVal) < len(index.Columns) {
+		for _, ran := range ranges {
 			if ran.HighExclude || ran.LowExclude {
 				if ran.HighExclude {
 					ran.HighVal = append(ran.HighVal, types.NewDatum(nil))
@@ -83,7 +85,7 @@ func BuildIndexRange(sc *variable.StatementContext, p *PhysicalIndexScan) error 
 			}
 		}
 	}
-	return errors.Trace(rb.err)
+	return ranges, errors.Trace(rb.err)
 }
 
 // refineRange changes the IndexRange taking prefix index length into consideration.
@@ -194,9 +196,9 @@ func DetachIndexFilterConditions(conditions []expression.Expression, indexColumn
 func DetachIndexScanConditions(conditions []expression.Expression, index *model.IndexInfo) (accessConds []expression.Expression,
 	filterConds []expression.Expression, accessEqualCount int, accessInAndEqCount int) {
 	accessConds = make([]expression.Expression, len(index.Columns))
-	// pushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
+	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	for i, cond := range conditions {
-		conditions[i] = pushDownNot(cond, false, nil)
+		conditions[i] = expression.PushDownNot(cond, false, nil)
 	}
 	for _, cond := range conditions {
 		offset := getEQFunctionOffset(cond, index.Columns)
@@ -250,16 +252,7 @@ func DetachIndexScanConditions(conditions []expression.Expression, index *model.
 }
 
 // DetachTableScanConditions distinguishes between access conditions and filter conditions from conditions.
-func DetachTableScanConditions(conditions []expression.Expression, table *model.TableInfo) ([]expression.Expression, []expression.Expression) {
-	var pkName model.CIStr
-	if table.PKIsHandle {
-		for _, colInfo := range table.Columns {
-			if mysql.HasPriKeyFlag(colInfo.Flag) {
-				pkName = colInfo.Name
-				break
-			}
-		}
-	}
+func DetachTableScanConditions(conditions []expression.Expression, pkName model.CIStr) ([]expression.Expression, []expression.Expression) {
 	if pkName.L == "" {
 		return nil, conditions
 	}
@@ -270,7 +263,7 @@ func DetachTableScanConditions(conditions []expression.Expression, table *model.
 		length: types.UnspecifiedLength,
 	}
 	for _, cond := range conditions {
-		cond = pushDownNot(cond, false, nil)
+		cond = expression.PushDownNot(cond, false, nil)
 		if !checker.check(cond) {
 			filterConditions = append(filterConditions, cond)
 			continue
@@ -292,15 +285,15 @@ func BuildTableRange(accessConditions []expression.Expression, sc *variable.Stat
 		return []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}, nil
 	}
 
-	rb := rangeBuilder{sc: sc}
-	rangePoints := fullRange
+	rb := Builder{Sc: sc}
+	rangePoints := FullRange
 	for _, cond := range accessConditions {
 		rangePoints = rb.intersection(rangePoints, rb.build(cond))
 		if rb.err != nil {
 			return nil, errors.Trace(rb.err)
 		}
 	}
-	ranges := rb.buildTableRanges(rangePoints)
+	ranges := rb.BuildTableRanges(rangePoints)
 	if rb.err != nil {
 		return nil, errors.Trace(rb.err)
 	}
@@ -460,61 +453,4 @@ func (c *conditionChecker) checkColumn(expr expression.Expression) bool {
 		return col.ColName.L == c.idx.Columns[c.columnOffset].Name.L
 	}
 	return true
-}
-
-var oppositeOp = map[string]string{
-	ast.LT: ast.GE,
-	ast.GE: ast.LT,
-	ast.GT: ast.LE,
-	ast.LE: ast.GT,
-	ast.EQ: ast.NE,
-	ast.NE: ast.EQ,
-}
-
-func pushDownNot(expr expression.Expression, not bool, ctx context.Context) expression.Expression {
-	if f, ok := expr.(*expression.ScalarFunction); ok {
-		switch f.FuncName.L {
-		case ast.UnaryNot:
-			return pushDownNot(f.GetArgs()[0], !not, f.GetCtx())
-		case ast.LT, ast.GE, ast.GT, ast.LE, ast.EQ, ast.NE:
-			if not {
-				nf, _ := expression.NewFunction(f.GetCtx(), oppositeOp[f.FuncName.L], f.GetType(), f.GetArgs()...)
-				return nf
-			}
-			for i, arg := range f.GetArgs() {
-				f.GetArgs()[i] = pushDownNot(arg, false, f.GetCtx())
-			}
-			return f
-		case ast.AndAnd:
-			if not {
-				args := f.GetArgs()
-				for i, a := range args {
-					args[i] = pushDownNot(a, true, f.GetCtx())
-				}
-				nf, _ := expression.NewFunction(f.GetCtx(), ast.OrOr, f.GetType(), args...)
-				return nf
-			}
-			for i, arg := range f.GetArgs() {
-				f.GetArgs()[i] = pushDownNot(arg, false, f.GetCtx())
-			}
-			return f
-		case ast.OrOr:
-			if not {
-				args := f.GetArgs()
-				for i, a := range args {
-					args[i] = pushDownNot(a, true, f.GetCtx())
-				}
-				nf, _ := expression.NewFunction(f.GetCtx(), ast.AndAnd, f.GetType(), args...)
-				return nf
-			}
-			for i, arg := range f.GetArgs() {
-				f.GetArgs()[i] = pushDownNot(arg, false, f.GetCtx())
-			}
-			return f
-		}
-	}
-	if not {
-		expr, _ = expression.NewFunction(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), expr)
-	}
-	return expr
 }

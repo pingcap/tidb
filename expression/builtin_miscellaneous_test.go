@@ -131,6 +131,7 @@ func (s *testEvaluatorSuite) TestAnyValue(c *C) {
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.arg)), s.ctx)
 		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
+		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
 	}
 }
@@ -220,4 +221,32 @@ func (s *testEvaluatorSuite) TestInet6AtoN(c *C) {
 	r, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(r.IsNull(), IsTrue)
+}
+
+func (s *testEvaluatorSuite) TestIsIPv4Mapped(c *C) {
+	tests := []struct {
+		ip     []byte
+		expect interface{}
+	}{
+		{[]byte{}, 0},
+		{[]byte{0x10, 0x10, 0x10, 0x10}, 0},
+		{[]byte{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0xff, 0x1, 0x2, 0x3, 0x4}, 1},
+		{[]byte{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0xff, 0xff, 0x1, 0x2, 0x3, 0x4}, 0},
+		{[]byte{0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6}, 0},
+	}
+	fc := funcs[ast.IsIPv4Mapped]
+	for _, test := range tests {
+		ip := types.NewDatum(test.ip)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{ip}), s.ctx)
+		c.Assert(err, IsNil)
+		result, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
+	}
+
+	var argNull types.Datum
+	f, _ := fc.getFunction(datumsToConstants([]types.Datum{argNull}), s.ctx)
+	r, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(r, testutil.DatumEquals, types.NewDatum(0))
 }

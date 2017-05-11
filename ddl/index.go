@@ -416,7 +416,7 @@ func (d *ddl) fetchRowColVals(txn kv.Transaction, t table.Table, taskOpInfo *ind
 	cols := t.Cols()
 	idxInfo := taskOpInfo.tblIndex.Meta()
 	for i, idxRecord := range idxRecords {
-		rowMap, err := tablecodec.DecodeRow(rawRecords[i], taskOpInfo.colMap)
+		rowMap, err := tablecodec.DecodeRow(rawRecords[i], taskOpInfo.colMap, time.UTC)
 		if err != nil {
 			ret.err = errors.Trace(err)
 			return nil, ret
@@ -466,6 +466,8 @@ type indexTaskOpInfo struct {
 	nextCh    chan int64                 // It notifies to start the next task.
 }
 
+// addTableIndex adds index into table.
+// TODO: Move this to doc or wiki.
 // How to add index in reorganization state?
 // Concurrently process the defaultTaskHandleCnt tasks. Each task deals with a handle range of the index record.
 // The handle range size is defaultTaskHandleCnt.

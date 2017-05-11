@@ -86,8 +86,6 @@ var (
 		Type: mysql.TypeDate,
 		Fsp:  DefaultFsp,
 	}
-
-	local = gotime.Local
 )
 
 var (
@@ -97,9 +95,9 @@ var (
 	maxDatetime = FromDate(9999, 12, 31, 23, 59, 59, 999999)
 
 	// minTimestamp is the minimum for mysql timestamp type.
-	minTimestamp = gotime.Date(1970, 1, 1, 0, 0, 1, 0, gotime.UTC)
+	minTimestamp = FromDate(1970, 1, 1, 0, 0, 1, 0)
 	// maxTimestamp is the maximum for mysql timestamp type.
-	maxTimestamp = gotime.Date(2038, 1, 19, 3, 14, 7, 999999, gotime.UTC)
+	maxTimestamp = FromDate(2038, 1, 19, 3, 14, 7, 999999)
 
 	// WeekdayNames lists names of weekdays, which are used in builtin time function `dayname`.
 	WeekdayNames = []string{
@@ -381,16 +379,6 @@ func (t Time) ToPackedUint() (uint64, error) {
 	if t.IsZero() {
 		return 0, nil
 	}
-	if t.Type == mysql.TypeTimestamp {
-		// TODO: Consider time_zone variable.
-		if t1, err := t.Time.GoTime(gotime.Local); err == nil {
-			utc := t1.UTC()
-			tm = FromGoTime(utc)
-		} else {
-			// mysql timestamp month and day can't be zero.
-			return 0, errors.Trace(err)
-		}
-	}
 	year, month, day := tm.Year(), tm.Month(), tm.Day()
 	hour, minute, sec := tm.Hour(), tm.Minute(), tm.Second()
 	ymd := uint64(((year*13 + int(month)) << 5) | day)
@@ -418,30 +406,25 @@ func (t *Time) FromPackedUint(packed uint64) error {
 	hour := int(hms >> 12)
 	microsec := int(packed % (1 << 24))
 
-	loc := local
-	if t.Type == mysql.TypeTimestamp {
-		loc = gotime.UTC
-		t.Time = FromGoTime(gotime.Date(year, gotime.Month(month), day, hour, minute, second, microsec*1000, loc).In(local))
-	} else {
-		t.Time = FromDate(year, month, day, hour, minute, second, microsec)
-		if err := t.check(); err != nil {
-			return errors.Trace(err)
-		}
+	t.Time = FromDate(year, month, day, hour, minute, second, microsec)
+	if err := t.check(); err != nil {
+		return errors.Trace(err)
 	}
 
 	return nil
 }
 
 func (t *Time) check() error {
+	var err error
 	switch t.Type {
 	case mysql.TypeTimestamp:
-		return checkTimestampType(t.Time)
+		err = checkTimestampType(t.Time)
 	case mysql.TypeDatetime:
-		return checkDatetimeType(t.Time)
+		err = checkDatetimeType(t.Time)
 	case mysql.TypeDate:
-		return checkDateType(t.Time)
+		err = checkDateType(t.Time)
 	}
-	return nil
+	return errors.Trace(err)
 }
 
 // Check if 't' is valid
@@ -661,6 +644,7 @@ func ParseYear(str string) (int16, error) {
 	return y, nil
 }
 
+// adjustYear adjusts year according to y.
 // See https://dev.mysql.com/doc/refman/5.7/en/two-digit-years.html
 func adjustYear(y int) int {
 	if y >= 0 && y <= 69 {
@@ -986,6 +970,7 @@ func getTime(num int64, tp byte) (Time, error) {
 	return t, errors.Trace(err)
 }
 
+// parseDateTimeFromNum parses date time from num.
 // See number_to_datetime function.
 // https://github.com/mysql/mysql-server/blob/5.7/sql-common/my_time.c
 func parseDateTimeFromNum(num int64) (Time, error) {
@@ -1186,17 +1171,17 @@ func checkDateRange(t TimeInternal) error {
 	// Oddly enough, MySQL document says date range should larger than '1000-01-01',
 	// but we can insert '0001-01-01' actually.
 	if t.Year() < 0 || t.Month() < 0 || t.Day() < 0 {
-		return ErrInvalidTimeFormat
+		return errors.Trace(ErrInvalidTimeFormat)
 	}
 	if compareTime(t, maxDatetime) > 0 {
-		return ErrInvalidTimeFormat
+		return errors.Trace(ErrInvalidTimeFormat)
 	}
 	return nil
 }
 
 func checkMonthDay(year, month, day int) error {
 	if month < 0 || month > 12 {
-		return ErrInvalidTimeFormat
+		return errors.Trace(ErrInvalidTimeFormat)
 	}
 
 	maxDay := 31
@@ -1208,7 +1193,7 @@ func checkMonthDay(year, month, day int) error {
 	}
 
 	if day < 0 || day > maxDay {
-		return ErrInvalidTimeFormat
+		return errors.Trace(ErrInvalidTimeFormat)
 	}
 	return nil
 }
@@ -1218,16 +1203,14 @@ func checkTimestampType(t TimeInternal) error {
 		return nil
 	}
 
-	// TODO: Consider time_zone variable.
-	t1, err := t.GoTime(gotime.Local)
-	if err != nil {
-		log.Infof("checkTimestampType failed, t=%v", t)
+	if compareTime(t, maxTimestamp) > 0 || compareTime(t, minTimestamp) < 0 {
+		return errors.Trace(ErrInvalidTimeFormat)
+	}
+
+	if _, err := t.GoTime(gotime.Local); err != nil {
 		return errors.Trace(err)
 	}
 
-	if t1.After(maxTimestamp) || t1.Before(minTimestamp) {
-		return ErrInvalidTimeFormat
-	}
 	return nil
 }
 
@@ -1238,13 +1221,13 @@ func checkDatetimeType(t TimeInternal) error {
 
 	hour, minute, second := t.Hour(), t.Minute(), t.Second()
 	if hour < 0 || hour >= 24 {
-		return ErrInvalidTimeFormat
+		return errors.Trace(ErrInvalidTimeFormat)
 	}
 	if minute < 0 || minute >= 60 {
-		return ErrInvalidTimeFormat
+		return errors.Trace(ErrInvalidTimeFormat)
 	}
 	if second < 0 || second >= 60 {
-		return ErrInvalidTimeFormat
+		return errors.Trace(ErrInvalidTimeFormat)
 	}
 
 	return nil
@@ -1354,7 +1337,7 @@ func extractSingleTimeValue(unit string, format string) (int64, int64, int64, go
 	return 0, 0, 0, 0, errors.Errorf("invalid singel timeunit - %s", unit)
 }
 
-// Format is `SS.FFFFFF`.
+// extractSecondMicrosecond extracts second and microsecond from a string and its format is `SS.FFFFFF`.
 func extractSecondMicrosecond(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, ".")
 	if len(fields) != 2 {
@@ -1374,7 +1357,7 @@ func extractSecondMicrosecond(format string) (int64, int64, int64, gotime.Durati
 	return 0, 0, 0, gotime.Duration(seconds)*gotime.Second + gotime.Duration(microseconds)*gotime.Microsecond, nil
 }
 
-// Format is `MM:SS.FFFFFF`.
+// extractMinuteMicrosecond extracts minutes and microsecond from a string and its format is `MM:SS.FFFFFF`.
 func extractMinuteMicrosecond(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, ":")
 	if len(fields) != 2 {
@@ -1394,7 +1377,7 @@ func extractMinuteMicrosecond(format string) (int64, int64, int64, gotime.Durati
 	return 0, 0, 0, gotime.Duration(minutes)*gotime.Minute + value, nil
 }
 
-// Format is `MM:SS`.
+// extractMinuteSecond extracts minutes and second from a string and its format is `MM:SS`.
 func extractMinuteSecond(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, ":")
 	if len(fields) != 2 {
@@ -1414,7 +1397,7 @@ func extractMinuteSecond(format string) (int64, int64, int64, gotime.Duration, e
 	return 0, 0, 0, gotime.Duration(minutes)*gotime.Minute + gotime.Duration(seconds)*gotime.Second, nil
 }
 
-// Format is `HH:MM:SS.FFFFFF`.
+// extractHourMicrosecond extracts hour and microsecond from a string and its format is `HH:MM:SS.FFFFFF`.
 func extractHourMicrosecond(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, ":")
 	if len(fields) != 3 {
@@ -1439,7 +1422,7 @@ func extractHourMicrosecond(format string) (int64, int64, int64, gotime.Duration
 	return 0, 0, 0, gotime.Duration(hours)*gotime.Hour + gotime.Duration(minutes)*gotime.Minute + value, nil
 }
 
-// Format is `HH:MM:SS`.
+// extractHourSecond extracts hour and second from a string and its format is `HH:MM:SS`.
 func extractHourSecond(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, ":")
 	if len(fields) != 3 {
@@ -1464,7 +1447,7 @@ func extractHourSecond(format string) (int64, int64, int64, gotime.Duration, err
 	return 0, 0, 0, gotime.Duration(hours)*gotime.Hour + gotime.Duration(minutes)*gotime.Minute + gotime.Duration(seconds)*gotime.Second, nil
 }
 
-// Format is `HH:MM`.
+// extractHourMinute extracts hour and minute from a string and its format is `HH:MM`.
 func extractHourMinute(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, ":")
 	if len(fields) != 2 {
@@ -1484,7 +1467,7 @@ func extractHourMinute(format string) (int64, int64, int64, gotime.Duration, err
 	return 0, 0, 0, gotime.Duration(hours)*gotime.Hour + gotime.Duration(minutes)*gotime.Minute, nil
 }
 
-// Format is `DD HH:MM:SS.FFFFFF`.
+// extractDayMicrosecond extracts day and microsecond from a string and its format is `DD HH:MM:SS.FFFFFF`.
 func extractDayMicrosecond(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, " ")
 	if len(fields) != 2 {
@@ -1504,7 +1487,7 @@ func extractDayMicrosecond(format string) (int64, int64, int64, gotime.Duration,
 	return 0, 0, days, value, nil
 }
 
-// Format is `DD HH:MM:SS`.
+// extractDaySecond extracts day and hour from a string and its format is `DD HH:MM:SS`.
 func extractDaySecond(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, " ")
 	if len(fields) != 2 {
@@ -1524,7 +1507,7 @@ func extractDaySecond(format string) (int64, int64, int64, gotime.Duration, erro
 	return 0, 0, days, value, nil
 }
 
-// Format is `DD HH:MM`.
+// extractDayMinute extracts day and minute from a string and its format is `DD HH:MM`.
 func extractDayMinute(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, " ")
 	if len(fields) != 2 {
@@ -1544,7 +1527,7 @@ func extractDayMinute(format string) (int64, int64, int64, gotime.Duration, erro
 	return 0, 0, days, value, nil
 }
 
-// Format is `DD HH`.
+// extractDayHour extracts day and hour from a string and its format is `DD HH`.
 func extractDayHour(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, " ")
 	if len(fields) != 2 {
@@ -1564,7 +1547,7 @@ func extractDayHour(format string) (int64, int64, int64, gotime.Duration, error)
 	return 0, 0, days, gotime.Duration(hours) * gotime.Hour, nil
 }
 
-// Format is `YYYY-MM`.
+// extractYearMonth extracts year and month from a string and its format is `YYYY-MM`.
 func extractYearMonth(format string) (int64, int64, int64, gotime.Duration, error) {
 	fields := strings.Split(format, "-")
 	if len(fields) != 2 {
@@ -2252,7 +2235,7 @@ func monthNumeric(t *mysqlTime, input string, ctx map[string]int) (string, bool)
 	return rem, false
 }
 
-// 0th 1st 2nd 3rd ...
+//  dayOfMonthWithSuffix returns different suffix according t being which day. i.e. 0 return th. 1 return st.
 func dayOfMonthWithSuffix(t *mysqlTime, input string, ctx map[string]int) (string, bool) {
 	month, remain := parseOrdinalNumbers(input)
 	if month >= 0 {

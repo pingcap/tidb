@@ -16,6 +16,7 @@ package model
 import (
 	"strings"
 
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -90,6 +91,7 @@ type TableInfo struct {
 	AutoIncID   int64         `json:"auto_inc_id"`
 	MaxColumnID int64         `json:"max_col_id"`
 	MaxIndexID  int64         `json:"max_idx_id"`
+	// OldSchemaID :
 	// Because auto increment ID has schemaID as prefix,
 	// We need to save original schemaID to keep autoID unchanged
 	// while renaming a table from one database to another.
@@ -116,6 +118,18 @@ func (t *TableInfo) Clone() *TableInfo {
 	}
 
 	return &nt
+}
+
+// GetPkName will return the pk name if pk exists.
+func (t *TableInfo) GetPkName() CIStr {
+	if t.PKIsHandle {
+		for _, colInfo := range t.Columns {
+			if mysql.HasPriKeyFlag(colInfo.Flag) {
+				return colInfo.Name
+			}
+		}
+	}
+	return CIStr{}
 }
 
 // IndexColumn provides index column info.

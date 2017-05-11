@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -61,7 +62,7 @@ func newStringType() types.FieldType {
 	return *ft
 }
 
-func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
+func MockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 	indices := []*model.IndexInfo{
 		{
 			Name: model.NewCIStr("c_d_e"),
@@ -261,7 +262,7 @@ func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 	if err != nil {
 		return nil, err
 	}
-	return is, InferType(ctx.GetSessionVars().StmtCtx, node)
+	return is, expression.InferType(ctx.GetSessionVars().StmtCtx, node)
 }
 
 func supportExpr(exprType tipb.ExprType) bool {
@@ -535,7 +536,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil, comment)
 
 		builder := &planBuilder{
@@ -657,7 +658,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
@@ -711,7 +712,7 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
@@ -817,7 +818,7 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
@@ -1034,7 +1035,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
@@ -1172,7 +1173,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil, comment)
 
 		builder := &planBuilder{
@@ -1303,7 +1304,7 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		comment := Commentf("for %s", sql)
 		stmt, err := s.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil, comment)
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 		builder := &planBuilder{
 			allocator: new(idAllocator),
@@ -1407,7 +1408,7 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
@@ -1456,7 +1457,7 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
@@ -1620,7 +1621,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
@@ -1793,7 +1794,7 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{

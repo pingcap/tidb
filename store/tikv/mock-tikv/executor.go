@@ -15,7 +15,6 @@ package mocktikv
 
 import (
 	"bytes"
-	"encoding/binary"
 	"sort"
 
 	"github.com/juju/errors"
@@ -47,14 +46,12 @@ type executor interface {
 
 type tableScanExec struct {
 	*tipb.TableScan
-	colIDs      map[int64]int
-	kvRanges    []kv.KeyRange
-	startTS     uint64
-	mvccStore   *MvccStore
-	cursor      int
-	seekKey     []byte
-	rawStartKey []byte // The start key of the current region.
-	rawEndKey   []byte // The end key of the current region.
+	colIDs    map[int64]int
+	kvRanges  []kv.KeyRange
+	startTS   uint64
+	mvccStore *MvccStore
+	cursor    int
+	seekKey   []byte
 
 	src executor
 }
@@ -111,20 +108,15 @@ func (e *tableScanExec) getRowFromPoint(ran kv.KeyRange) (int64, [][]byte, error
 
 func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error) {
 	if e.seekKey == nil {
-		startKey := maxStartKey(ran.StartKey, e.rawStartKey)
-		endKey := minEndKey(ran.EndKey, e.rawEndKey)
-		if bytes.Compare(ran.StartKey, ran.EndKey) >= 0 {
-			return 0, nil, nil
-		}
-		if *e.Desc {
-			e.seekKey = endKey
+		if e.Desc {
+			e.seekKey = ran.EndKey
 		} else {
-			e.seekKey = startKey
+			e.seekKey = ran.StartKey
 		}
 	}
 	var pairs []Pair
 	var pair Pair
-	if *e.Desc {
+	if e.Desc {
 		pairs = e.mvccStore.ReverseScan(ran.StartKey, e.seekKey, 1, e.startTS)
 	} else {
 		pairs = e.mvccStore.Scan(e.seekKey, ran.EndKey, 1, e.startTS)
@@ -139,7 +131,7 @@ func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 	if pair.Key == nil {
 		return 0, nil, nil
 	}
-	if *e.Desc {
+	if e.Desc {
 		if bytes.Compare(pair.Key, ran.StartKey) < 0 {
 			return 0, nil, nil
 		}
@@ -164,14 +156,13 @@ func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 
 type indexScanExec struct {
 	*tipb.IndexScan
-	colsLen     int
-	kvRanges    []kv.KeyRange
-	startTS     uint64
-	mvccStore   *MvccStore
-	cursor      int
-	seekKey     []byte
-	rawStartKey []byte // The start key of the current region.
-	rawEndKey   []byte // The end key of the current region.
+	colsLen   int
+	kvRanges  []kv.KeyRange
+	startTS   uint64
+	mvccStore *MvccStore
+	cursor    int
+	seekKey   []byte
+	pkCol     *tipb.ColumnInfo
 
 	src executor
 }
@@ -200,20 +191,15 @@ func (e *indexScanExec) Next() (handle int64, value [][]byte, err error) {
 
 func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error) {
 	if e.seekKey == nil {
-		startKey := maxStartKey(ran.StartKey, e.rawStartKey)
-		endKey := minEndKey(ran.EndKey, e.rawEndKey)
-		if bytes.Compare(ran.StartKey, ran.EndKey) >= 0 {
-			return 0, nil, nil
-		}
-		if *e.Desc {
-			e.seekKey = endKey
+		if e.Desc {
+			e.seekKey = ran.EndKey
 		} else {
-			e.seekKey = startKey
+			e.seekKey = ran.StartKey
 		}
 	}
 	var pairs []Pair
 	var pair Pair
-	if *e.Desc {
+	if e.Desc {
 		pairs = e.mvccStore.ReverseScan(ran.StartKey, e.seekKey, 1, e.startTS)
 	} else {
 		pairs = e.mvccStore.Scan(e.seekKey, ran.EndKey, 1, e.startTS)
@@ -228,7 +214,7 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 	if pair.Key == nil {
 		return 0, nil, nil
 	}
-	if *e.Desc {
+	if e.Desc {
 		if bytes.Compare(pair.Key, ran.StartKey) < 0 {
 			return 0, nil, nil
 		}
@@ -249,21 +235,30 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) (int64, [][]byte, error
 			return 0, nil, errors.Trace(err)
 		}
 		handle = handleDatum.GetInt64()
+		if e.pkCol != nil {
+			values = append(values, b)
+		}
 	} else {
 		handle, err = decodeHandle(pair.Value)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
+		if e.pkCol != nil {
+			var handleDatum types.Datum
+			if mysql.HasUnsignedFlag(uint(e.pkCol.GetFlag())) {
+				handleDatum = types.NewUintDatum(uint64(handle))
+			} else {
+				handleDatum = types.NewIntDatum(handle)
+			}
+			handleBytes, err := codec.EncodeValue(b, handleDatum)
+			if err != nil {
+				return 0, nil, errors.Trace(err)
+			}
+			values = append(values, handleBytes)
+		}
 	}
 
 	return handle, values, nil
-}
-
-func decodeHandle(data []byte) (int64, error) {
-	var h int64
-	buf := bytes.NewBuffer(data)
-	err := binary.Read(buf, binary.BigEndian, &h)
-	return h, errors.Trace(err)
 }
 
 type selectionExec struct {
@@ -311,7 +306,7 @@ func (e *selectionExec) Next() (handle int64, value [][]byte, err error) {
 			return 0, nil, nil
 		}
 
-		err = e.evalCtx.decodeRelatedColumnVals(e.relatedColOffsets, handle, value, e.row)
+		err = e.evalCtx.decodeRelatedColumnVals(e.relatedColOffsets, value, e.row)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
@@ -344,14 +339,14 @@ func (e *aggregateExec) SetSrcExec(exec executor) {
 }
 
 func (e *aggregateExec) innerNext() (bool, error) {
-	handle, values, err := e.src.Next()
+	_, values, err := e.src.Next()
 	if err != nil {
 		return false, errors.Trace(err)
 	}
 	if values == nil {
 		return false, nil
 	}
-	err = e.aggregate(handle, values)
+	err = e.aggregate(values)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -384,12 +379,14 @@ func (e *aggregateExec) Next() (handle int64, value [][]byte, err error) {
 	// The first column is group key.
 	value = append(value, gkData)
 	for _, agg := range e.aggExprs {
-		ds := agg.GetPartialResult(gk)
-		data, err := codec.EncodeValue(nil, ds...)
-		if err != nil {
-			return 0, nil, errors.Trace(err)
+		partialResults := agg.GetPartialResult(gk)
+		for _, result := range partialResults {
+			data, err := codec.EncodeValue(nil, result)
+			if err != nil {
+				return 0, nil, errors.Trace(err)
+			}
+			value = append(value, data)
 		}
-		value = append(value, data)
 	}
 	e.currGroupIdx++
 
@@ -414,8 +411,8 @@ func (e *aggregateExec) getGroupKey() ([]byte, error) {
 }
 
 // aggregate updates aggregate functions with row.
-func (e *aggregateExec) aggregate(handle int64, value [][]byte) error {
-	err := e.evalCtx.decodeRelatedColumnVals(e.relatedColOffsets, handle, value, e.row)
+func (e *aggregateExec) aggregate(value [][]byte) error {
+	err := e.evalCtx.decodeRelatedColumnVals(e.relatedColOffsets, value, e.row)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -485,9 +482,8 @@ func (e *topNExec) Next() (handle int64, value [][]byte, err error) {
 	sort.Sort(&e.heap.topnSorter)
 	row := e.heap.rows[e.cursor]
 	e.cursor++
-	value = [][]byte{row.data}
 
-	return row.meta.Handle, value, nil
+	return row.meta.Handle, row.data, nil
 }
 
 // evalTopN evaluates the top n elements from the data. The input receives a record including its handle and data.
@@ -497,7 +493,7 @@ func (e *topNExec) evalTopN(handle int64, value [][]byte) error {
 		meta: tipb.RowMeta{Handle: handle},
 		key:  make([]types.Datum, len(value)),
 	}
-	err := e.evalCtx.decodeRelatedColumnVals(e.relatedColOffsets, handle, value, e.row)
+	err := e.evalCtx.decodeRelatedColumnVals(e.relatedColOffsets, value, e.row)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -510,7 +506,7 @@ func (e *topNExec) evalTopN(handle int64, value [][]byte) error {
 
 	if e.heap.tryToAddRow(newRow) {
 		for _, val := range value {
-			newRow.data = append(newRow.data, val...)
+			newRow.data = append(newRow.data, val)
 			newRow.meta.Length += int64(len(val))
 		}
 	}
@@ -518,8 +514,8 @@ func (e *topNExec) evalTopN(handle int64, value [][]byte) error {
 }
 
 type limitExec struct {
-	limit  int64
-	cursor int64
+	limit  uint64
+	cursor uint64
 
 	src executor
 }
@@ -529,7 +525,7 @@ func (e *limitExec) SetSrcExec(src executor) {
 }
 
 func (e *limitExec) Next() (handle int64, value [][]byte, err error) {
-	if e.cursor >= e.limit && e.limit >= 0 {
+	if e.cursor >= e.limit {
 		return 0, nil, nil
 	}
 
@@ -634,4 +630,16 @@ func extractOffsetsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector
 		}
 	}
 	return collector, nil
+}
+
+func convertToExprs(sc *variable.StatementContext, colIDs map[int64]int, fieldTps []*types.FieldType, pbExprs []*tipb.Expr) ([]expression.Expression, error) {
+	exprs := make([]expression.Expression, 0, len(pbExprs))
+	for _, expr := range pbExprs {
+		e, err := expression.PBToExpr(expr, colIDs, fieldTps, sc)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		exprs = append(exprs, e)
+	}
+	return exprs, nil
 }

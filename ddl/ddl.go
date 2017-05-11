@@ -82,6 +82,9 @@ var (
 	ErrInvalidIndexState = terror.ClassDDL.New(codeInvalidIndexState, "invalid index state")
 	// ErrInvalidForeignKeyState returns for invalid foreign key state.
 	ErrInvalidForeignKeyState = terror.ClassDDL.New(codeInvalidForeignKeyState, "invalid foreign key state")
+	// ErrUnsupportedModifyPrimaryKey returns an error when add or drop the primary key.
+	// It's exported for testing.
+	ErrUnsupportedModifyPrimaryKey = terror.ClassDDL.New(codeUnsupportedModifyPrimaryKey, "unsupported %s primary key")
 
 	// ErrColumnBadNull returns for a bad null value.
 	ErrColumnBadNull = terror.ClassDDL.New(codeBadNull, "column cann't be null")
@@ -150,6 +153,7 @@ func (e *Event) String() string {
 	return ret
 }
 
+// ddl represents the statements which are used to define the database structure or schema.
 type ddl struct {
 	m sync.RWMutex
 
@@ -157,7 +161,7 @@ type ddl struct {
 	hook       Callback
 	hookMu     sync.RWMutex
 	store      kv.Storage
-	// Schema lease seconds.
+	// lease is schema seconds.
 	lease        time.Duration
 	uuid         string
 	ddlJobCh     chan struct{}
@@ -177,7 +181,7 @@ type ddl struct {
 	wait   sync.WaitGroup
 }
 
-// BindStatsHandle will bind the stats handle with a DDL interface. It will be called after a handle has been initialized.
+// RegisterEventCh registers passed channel for ddl Event.
 func (d *ddl) RegisterEventCh(ch chan<- *Event) {
 	d.ddlEventCh = ch
 }
@@ -455,11 +459,12 @@ const (
 	codeInvalidIndexState      = 103
 	codeInvalidForeignKeyState = 104
 
-	codeCantDropColWithIndex    = 201
-	codeUnsupportedAddColumn    = 202
-	codeUnsupportedModifyColumn = 203
-	codeUnsupportedDropPKHandle = 204
-	codeUnsupportedCharset      = 205
+	codeCantDropColWithIndex        = 201
+	codeUnsupportedAddColumn        = 202
+	codeUnsupportedModifyColumn     = 203
+	codeUnsupportedDropPKHandle     = 204
+	codeUnsupportedCharset          = 205
+	codeUnsupportedModifyPrimaryKey = 206
 
 	codeFileNotFound          = 1017
 	codeErrorOnRename         = 1025

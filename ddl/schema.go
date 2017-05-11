@@ -108,6 +108,9 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) error {
 		}
 
 		err = t.UpdateDatabase(dbInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		if err = t.DropDatabase(dbInfo.ID); err != nil {
 			break
 		}

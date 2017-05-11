@@ -22,8 +22,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -38,6 +36,8 @@ import (
 
 // ShowExec represents a show executor.
 type ShowExec struct {
+	baseExecutor
+
 	Tp     ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName model.CIStr
 	Table  *ast.TableName  // Used for showing columns.
@@ -46,21 +46,14 @@ type ShowExec struct {
 	Full   bool
 	User   string // Used for show grants.
 
-	// Used by show variables
+	// GlobalScope is used by show variables
 	GlobalScope bool
 
-	schema *expression.Schema
-	ctx    context.Context
-	is     infoschema.InfoSchema
+	is infoschema.InfoSchema
 
 	fetched bool
 	rows    []*Row
 	cursor  int
-}
-
-// Schema implements the Executor Schema interface.
-func (e *ShowExec) Schema() *expression.Schema {
-	return e.schema
 }
 
 // Next implements Execution Next interface.
@@ -329,6 +322,7 @@ func (e *ShowExec) fetchShowIndex() error {
 	return nil
 }
 
+// fetchShowCharset gets all charset information and fill them into e.rows.
 // See http://dev.mysql.com/doc/refman/5.7/en/show-character-set.html
 func (e *ShowExec) fetchShowCharset() error {
 	descs := charset.GetAllCharsets()
@@ -529,7 +523,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	return nil
 }
 
-// Compose show create database result.
+// fetchShowCreateDatabase composes show create database result.
 func (e *ShowExec) fetchShowCreateDatabase() error {
 	db, ok := e.is.SchemaByName(e.DBName)
 	if !ok {
@@ -620,9 +614,4 @@ func (e *ShowExec) getTable() (table.Table, error) {
 		return nil, errors.Errorf("table %s not found", e.Table.Name)
 	}
 	return tb, nil
-}
-
-// Close implements the Executor Close interface.
-func (e *ShowExec) Close() error {
-	return nil
 }

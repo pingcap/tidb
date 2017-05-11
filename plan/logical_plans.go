@@ -40,7 +40,6 @@ var (
 	_ LogicalPlan = &Limit{}
 	_ LogicalPlan = &Show{}
 	_ LogicalPlan = &Insert{}
-	_ LogicalPlan = &Analyze{}
 )
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, FullOuterJoin, SemiJoin.
@@ -257,6 +256,11 @@ type DataSource struct {
 	pushedDownConds []expression.Expression
 
 	statisticTable *statistics.Table
+}
+
+// TableInfo returns the *TableInfo of data source.
+func (p *DataSource) TableInfo() *model.TableInfo {
+	return p.tableInfo
 }
 
 // Union represents Union plan.

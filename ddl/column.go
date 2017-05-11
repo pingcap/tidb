@@ -265,6 +265,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 	return errors.Trace(err)
 }
 
+// addTableColumn adds a column to the table.
 // TODO: Use it when updating the column type or remove it.
 // How to backfill column data in reorganization state?
 //  1. Generate a snapshot with special version.
@@ -346,7 +347,7 @@ func (d *ddl) backfillColumnInTxn(t table.Table, colMeta *columnMeta, handles []
 			return 0, errors.Trace(err)
 		}
 
-		rowColumns, err := tablecodec.DecodeRow(rowVal, colMeta.oldColMap)
+		rowColumns, err := tablecodec.DecodeRow(rowVal, colMeta.oldColMap, time.UTC)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -363,7 +364,7 @@ func (d *ddl) backfillColumnInTxn(t table.Table, colMeta *columnMeta, handles []
 		}
 		newColumnIDs = append(newColumnIDs, colMeta.colID)
 		newRow = append(newRow, colMeta.defaultVal)
-		newRowVal, err := tablecodec.EncodeRow(newRow, newColumnIDs)
+		newRowVal, err := tablecodec.EncodeRow(newRow, newColumnIDs, time.UTC)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}

@@ -60,8 +60,18 @@ func (a *recordSet) Fields() ([]*ast.ResultField, error) {
 
 func (a *recordSet) Next() (*ast.Row, error) {
 	row, err := a.executor.Next()
-	if err != nil || row == nil {
+	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if row == nil {
+		if a.stmt != nil {
+			a.stmt.ctx.GetSessionVars().LastFoundRows = a.stmt.ctx.GetSessionVars().StmtCtx.FoundRows()
+		}
+		return nil, nil
+	}
+
+	if a.stmt != nil {
+		a.stmt.ctx.GetSessionVars().StmtCtx.AddFoundRows(1)
 	}
 	return &ast.Row{Data: row.Data}, nil
 }
@@ -77,8 +87,8 @@ func (a *recordSet) Close() error {
 
 // statement implements the ast.Statement interface, it builds a plan.Plan to an ast.Statement.
 type statement struct {
-	// The InfoSchema cannot change during execution, so we hold a reference to it.
-	is        infoschema.InfoSchema
+	is infoschema.InfoSchema // The InfoSchema cannot change during execution, so we hold a reference to it.
+
 	ctx       context.Context
 	text      string
 	plan      plan.Plan
@@ -127,6 +137,11 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 		a.text = executorExec.Stmt.Text()
 		a.plan = executorExec.Plan
 		e = executorExec.StmtExec
+	}
+
+	err := e.Open()
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	var pi processinfoSetter
@@ -219,15 +234,21 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx context.Context, p plan.Plan) b
 		p = proj.Children()[0]
 	}
 
-	// get by index key
-	if indexScan, ok := p.(*plan.PhysicalIndexScan); ok {
+	switch v := p.(type) {
+	case *plan.PhysicalIndexScan:
+		return v.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx)
+	case *plan.PhysicalIndexReader:
+		indexScan := v.IndexPlans[0].(*plan.PhysicalIndexScan)
 		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx)
-	}
-
-	// get by primary key
-	if tableScan, ok := p.(*plan.PhysicalTableScan); ok {
+	case *plan.PhysicalIndexLookUpReader:
+		indexScan := v.IndexPlans[0].(*plan.PhysicalIndexScan)
+		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx)
+	case *plan.PhysicalTableScan:
+		return len(v.Ranges) == 1 && v.Ranges[0].IsPoint()
+	case *plan.PhysicalTableReader:
+		tableScan := v.TablePlans[0].(*plan.PhysicalTableScan)
 		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint()
+	default:
+		return false
 	}
-
-	return false
 }

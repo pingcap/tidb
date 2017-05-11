@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -68,10 +69,10 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 		for _, cond := range sel.Conditions {
 			conds = append(conds, cond.Clone())
 		}
-		ts.AccessCondition, newSel.Conditions = DetachTableScanConditions(conds, table)
+		ts.AccessCondition, newSel.Conditions = ranger.DetachTableScanConditions(conds, table.GetPkName())
 		ts.TableConditionPBExpr, ts.tableFilterConditions, newSel.Conditions =
-			ExpressionsToPB(sc, newSel.Conditions, client)
-		ranges, err := BuildTableRange(ts.AccessCondition, sc)
+			expression.ExpressionsToPB(sc, newSel.Conditions, client)
+		ranges, err := ranger.BuildTableRange(ts.AccessCondition, sc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -134,16 +135,17 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		for _, cond := range sel.Conditions {
 			conds = append(conds, cond.Clone())
 		}
-		is.AccessCondition, newSel.Conditions, is.accessEqualCount, is.accessInAndEqCount = DetachIndexScanConditions(conds, is.Index)
+		is.AccessCondition, newSel.Conditions, is.accessEqualCount, is.accessInAndEqCount = ranger.DetachIndexScanConditions(conds, is.Index)
 		memDB := infoschema.IsMemoryDB(p.DBName.L)
 		isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeIndex, 0)
 		if isDistReq {
-			idxConds, tblConds := DetachIndexFilterConditions(newSel.Conditions, is.Index.Columns, is.Table)
-			is.IndexConditionPBExpr, is.indexFilterConditions, idxConds = ExpressionsToPB(sc, idxConds, client)
-			is.TableConditionPBExpr, is.tableFilterConditions, tblConds = ExpressionsToPB(sc, tblConds, client)
+			idxConds, tblConds := ranger.DetachIndexFilterConditions(newSel.Conditions, is.Index.Columns, is.Table)
+			is.IndexConditionPBExpr, is.indexFilterConditions, idxConds = expression.ExpressionsToPB(sc, idxConds, client)
+			is.TableConditionPBExpr, is.tableFilterConditions, tblConds = expression.ExpressionsToPB(sc, tblConds, client)
 			newSel.Conditions = append(idxConds, tblConds...)
 		}
-		err := BuildIndexRange(p.ctx.GetSessionVars().StmtCtx, is)
+		var err error
+		is.Ranges, err = ranger.BuildIndexRange(p.ctx.GetSessionVars().StmtCtx, is.Table, is.Index, is.accessInAndEqCount, is.AccessCondition)
 		if err != nil {
 			if !terror.ErrorEqual(err, types.ErrTruncated) {
 				return nil, errors.Trace(err)
@@ -160,8 +162,8 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 			resultPlan = newSel
 		}
 	} else {
-		rb := rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
-		is.Ranges = rb.buildIndexRanges(fullRange, types.NewFieldType(mysql.TypeNull))
+		rb := ranger.Builder{Sc: p.ctx.GetSessionVars().StmtCtx}
+		is.Ranges = rb.BuildIndexRanges(ranger.FullRange, types.NewFieldType(mysql.TypeNull))
 	}
 	is.DoubleRead = !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
 	return resultPlan.matchProperty(prop, &physicalPlanInfo{count: rowCount, reliable: !statsTbl.Pseudo}), nil
@@ -221,8 +223,8 @@ func (p *DataSource) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlan
 			TableAsName: p.TableAsName,
 		}.init(p.allocator, p.ctx)
 		memTable.SetSchema(p.schema)
-		rb := &rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
-		memTable.Ranges = rb.buildTableRanges(fullRange)
+		rb := &ranger.Builder{Sc: p.ctx.GetSessionVars().StmtCtx}
+		memTable.Ranges = rb.BuildTableRanges(ranger.FullRange)
 		info = &physicalPlanInfo{p: memTable}
 		info = enforceProperty(prop, info)
 		p.storePlanInfo(prop, info)
@@ -259,7 +261,7 @@ func (p *DataSource) tryToConvert2DummyScan(prop *requiredProperty) (*physicalPl
 
 	for _, cond := range sel.Conditions {
 		if con, ok := cond.(*expression.Constant); ok {
-			result, err := expression.EvalBool(con, nil, p.ctx)
+			result, err := expression.EvalBool([]expression.Expression{con}, nil, p.ctx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -1227,7 +1229,7 @@ func (p *Selection) makeScanController() *physicalPlanInfo {
 		if !expr.IsCorrelated() {
 			continue
 		}
-		cond := pushDownNot(expr, false, nil)
+		cond := expression.PushDownNot(expr, false, nil)
 		corCols := extractCorColumns(cond)
 		for _, col := range corCols {
 			*col.Data = expression.One.Value
@@ -1260,7 +1262,7 @@ func (p *Selection) makeScanController() *physicalPlanInfo {
 			for _, cond := range corColConds {
 				condsBackUp = append(condsBackUp, cond.Clone())
 			}
-			_, _, accessEqualCount, _ := DetachIndexScanConditions(condsBackUp, idx)
+			_, _, accessEqualCount, _ := ranger.DetachIndexScanConditions(condsBackUp, idx)
 			if chosenPlan == nil || bestEqualCount < accessEqualCount {
 				is := PhysicalIndexScan{
 					Table:               ds.tableInfo,
@@ -1389,7 +1391,7 @@ func (p *Selection) convert2PhysicalPlanEnforce(prop *requiredProperty) (*physic
 		}
 		info = enforceProperty(prop, info)
 	} else if len(prop.props) != 0 {
-		info.cost = math.MaxFloat64
+		info = &physicalPlanInfo{cost: math.MaxFloat64}
 	}
 	return info, nil
 }
@@ -1548,72 +1550,6 @@ func (p *LogicalApply) convert2PhysicalPlan(prop *requiredProperty) (*physicalPl
 		info.p = nil
 	}
 	info = enforceProperty(prop, info)
-	p.storePlanInfo(prop, info)
-	return info, nil
-}
-
-func (p *Analyze) prepareSimpleTableScan(tblInfo *model.TableInfo, cols []*model.ColumnInfo) *PhysicalTableScan {
-	ts := PhysicalTableScan{
-		Table:               tblInfo,
-		Columns:             cols,
-		physicalTableSource: physicalTableSource{client: p.ctx.GetClient()},
-	}.init(p.allocator, p.ctx)
-	ts.SetSchema(expression.NewSchema(expression.ColumnInfos2Columns(ts.Table.Name, cols)...))
-	ts.readOnly = true
-	ts.Ranges = []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}
-	return ts
-}
-
-func (p *Analyze) prepareSimpleIndexScan(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, cols []*model.ColumnInfo) *PhysicalIndexScan {
-	is := PhysicalIndexScan{
-		Index:               idxInfo,
-		Table:               tblInfo,
-		Columns:             cols,
-		OutOfOrder:          false,
-		physicalTableSource: physicalTableSource{client: p.ctx.GetClient()},
-		DoubleRead:          false,
-	}.init(p.allocator, p.ctx)
-	is.SetSchema(expression.NewSchema(expression.ColumnInfos2Columns(tblInfo.Name, cols)...))
-	is.readOnly = true
-	rb := rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
-	is.Ranges = rb.buildIndexRanges(fullRange, types.NewFieldType(mysql.TypeNull))
-	return is
-}
-
-// convert2PhysicalPlan implements the LogicalPlan convert2PhysicalPlan interface.
-func (p *Analyze) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error) {
-	info, err := p.getPlanInfo(prop)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if info != nil {
-		return info, nil
-	}
-	var childInfos []*physicalPlanInfo
-	// TODO: It's inefficient to do table scan two times for massive data.
-	for _, task := range p.PkTasks {
-		ts := p.prepareSimpleTableScan(task.TableInfo, []*model.ColumnInfo{task.PKInfo})
-		childInfos = append(childInfos, ts.matchProperty(prop, &physicalPlanInfo{count: 0}))
-	}
-	for _, task := range p.ColTasks {
-		ts := p.prepareSimpleTableScan(task.TableInfo, task.ColsInfo)
-		childInfos = append(childInfos, ts.matchProperty(prop, &physicalPlanInfo{count: 0}))
-	}
-	for _, task := range p.IdxTasks {
-		idx := task.IndexInfo
-		columns := make([]*model.ColumnInfo, 0, len(idx.Columns))
-		for _, idxCol := range idx.Columns {
-			for _, col := range task.TableInfo.Columns {
-				if col.Name.L == idxCol.Name.L {
-					columns = append(columns, col)
-					break
-				}
-			}
-		}
-		is := p.prepareSimpleIndexScan(task.TableInfo, idx, columns)
-		childInfos = append(childInfos, is.matchProperty(prop, &physicalPlanInfo{count: 0}))
-	}
-	info = p.matchProperty(prop, childInfos...)
 	p.storePlanInfo(prop, info)
 	return info, nil
 }
