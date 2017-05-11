@@ -299,7 +299,7 @@ type TopN struct {
 	Count   uint64
 }
 
-// isLimit check if TopN is a limit plan.
+// isLimit checks if TopN is a limit plan.
 func (t *TopN) isLimit() bool {
 	return len(t.ByItems) == 0
 }

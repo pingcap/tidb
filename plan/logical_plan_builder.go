@@ -435,7 +435,7 @@ type ByItems struct {
 // String implements fmt.Stringer interface.
 func (by *ByItems) String() string {
 	if by.Desc {
-		return fmt.Sprintf("%s %v", by.Expr, by.Desc)
+		return fmt.Sprintf("%s true", by.Expr)
 	}
 	return by.Expr.String()
 }

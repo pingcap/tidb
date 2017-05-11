@@ -229,9 +229,9 @@ func (p *LogicalJoin) convert2HashJoin(prop *requiredProp) (taskProfile, error) 
 	return task, nil
 }
 
-// getPushedProp will check if this sort property can be pushed or not. In order to simplify the problem, we only
+// getPropByOrderByItems will check if this sort property can be pushed or not. In order to simplify the problem, we only
 // consider the case that all expression are columns and all of them are asc or desc.
-func getPushedProp(items []*ByItems) (*requiredProp, bool) {
+func getPropByOrderByItems(items []*ByItems) (*requiredProp, bool) {
 	desc := false
 	cols := make([]*expression.Column, 0, len(items))
 	for i, item := range items {
@@ -265,7 +265,7 @@ func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) 
 		return nil, errors.Trace(err)
 	}
 	task = p.attach2TaskProfile(task)
-	newProp, canPassProp := getPushedProp(p.ByItems)
+	newProp, canPassProp := getPropByOrderByItems(p.ByItems)
 	if canPassProp {
 		orderedTask, err := p.children[0].(LogicalPlan).convert2NewPhysicalPlan(newProp)
 		if err != nil {
@@ -296,7 +296,7 @@ func (p *TopN) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) 
 		return nil, errors.Trace(err)
 	}
 	task = p.attach2TaskProfile(task)
-	newProp, canPassProp := getPushedProp(p.ByItems)
+	newProp, canPassProp := getPropByOrderByItems(p.ByItems)
 	if canPassProp {
 		orderedTask, err := p.children[0].(LogicalPlan).convert2NewPhysicalPlan(newProp)
 		if err != nil {
@@ -311,7 +311,6 @@ func (p *TopN) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) 
 	}
 	task = prop.enforceProperty(task, p.ctx, p.allocator)
 	return task, p.storeTaskProfile(prop, task)
-
 }
 
 // convert2NewPhysicalPlan implements LogicalPlan interface.

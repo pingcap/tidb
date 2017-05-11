@@ -48,7 +48,7 @@ const (
 	TypeIdxScan = "IndexScan"
 	// TypeSort is the type of Sort.
 	TypeSort = "Sort"
-	// TypeTopN is the type of Sort.
+	// TypeTopN is the type of TopN.
 	TypeTopN = "TopN"
 	// TypeLimit is the type of Limit.
 	TypeLimit = "Limit"

@@ -108,6 +108,7 @@ func (p *Projection) pushDownTopN(topN *TopN) LogicalPlan {
 	return p
 }
 
+// pushDownTopNToChild will push a topN to one child of join. The idx stands for join child index. 0 is for left child.
 func (p *LogicalJoin) pushDownTopNToChild(topN *TopN, idx int) LogicalPlan {
 	var newTopN *TopN
 	if topN != nil {

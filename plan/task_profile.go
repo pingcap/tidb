@@ -237,7 +237,7 @@ func (p *TopN) getCost(count float64) float64 {
 	return count*cpuFactor + float64(p.Count)*memoryFactor
 }
 
-// canPushDown check if this topN can be pushed down. If each of the expression can be converted to pb, it can be pushed.
+// canPushDown checks if this topN can be pushed down. If each of the expression can be converted to pb, it can be pushed.
 func (p *TopN) canPushDown() bool {
 	exprs := make([]expression.Expression, 0, len(p.ByItems))
 	for _, item := range p.ByItems {
