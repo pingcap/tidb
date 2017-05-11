@@ -523,12 +523,13 @@ type builtinUncompressSig struct {
 	baseBuiltinFunc
 }
 
+// This func is used for umcopress a string compiled with a compression library such as zlib.
 func uncompress(compressStr []byte) ([]byte, error) {
 	reader := bytes.NewReader(compressStr)
 	var out bytes.Buffer
 	r, err := zlib.NewReader(reader)
 	if err != nil {
-		return nil, nil
+		return nil, errors.Trace(err)
 	}
 	io.Copy(&out, r)
 	r.Close()
@@ -555,7 +556,7 @@ func (b *builtinUncompressSig) eval(row []types.Datum) (d types.Datum, err error
 	}
 	bytes, err := uncompress(compressStr)
 	if err != nil || bytes == nil {
-		return d, err
+		return d, errors.Trace(err)
 	}
 	d.SetBytes(bytes)
 	return d, nil
@@ -588,12 +589,12 @@ func (b *builtinUncompressedLengthSig) eval(row []types.Datum) (d types.Datum, e
 		return d, errors.Trace(err)
 	}
 	if len(compressStr) == 0 {
-		d.SetString("")
+		d.SetInt64(0)
 		return d, nil
 	}
 	bytes, err := uncompress(compressStr)
 	if err != nil || bytes == nil {
-		return d, err
+		return d, errors.Trace(err)
 	}
 	d.SetInt64(int64(len(bytes)))
 	return d, nil
