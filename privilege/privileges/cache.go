@@ -51,7 +51,7 @@ type userRecord struct {
 	Password   string // max length 41
 	Privileges mysql.PrivilegeType
 
-	// Compiled from Host, cached for pattern match performance.
+	// patChars is compiled from Host, cached for pattern match performance.
 	patChars []byte
 	patTypes []byte
 }
@@ -62,7 +62,7 @@ type dbRecord struct {
 	User       string
 	Privileges mysql.PrivilegeType
 
-	// Compiled from Host, cached for pattern match performance.
+	// patChars is compiled from Host, cached for pattern match performance.
 	patChars []byte
 	patTypes []byte
 }
@@ -77,7 +77,7 @@ type tablesPrivRecord struct {
 	TablePriv  mysql.PrivilegeType
 	ColumnPriv mysql.PrivilegeType
 
-	// Compiled from Host, cached for pattern match performance.
+	// patChars is compiled from Host, cached for pattern match performance.
 	patChars []byte
 	patTypes []byte
 }
@@ -91,7 +91,7 @@ type columnsPrivRecord struct {
 	Timestamp  time.Time
 	ColumnPriv mysql.PrivilegeType
 
-	// Compiled from Host, cached for pattern match performance.
+	// patChars is compiled from Host, cached for pattern match performance.
 	patChars []byte
 	patTypes []byte
 }
