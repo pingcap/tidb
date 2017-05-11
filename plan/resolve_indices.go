@@ -112,6 +112,7 @@ func (p *PhysicalUnionScan) ResolveIndices() {
 	}
 }
 
+// ResolveIndices implements Plan interface.
 func (p *PhysicalIndexReader) ResolveIndices() {
 	p.indexPlan.ResolveIndices()
 	for _, col := range p.OutputColumns {
@@ -153,7 +154,7 @@ func (p *PhysicalAggregation) ResolveIndices() {
 	}
 }
 
-// ResolveIndicesAndCorCols implements Plan interface.
+// ResolveIndices implements Plan interface.
 func (p *Sort) ResolveIndices() {
 	p.basePlan.ResolveIndices()
 	for _, item := range p.ByItems {

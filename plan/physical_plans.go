@@ -94,6 +94,7 @@ type PhysicalIndexReader struct {
 	IndexPlans []PhysicalPlan
 	indexPlan  PhysicalPlan
 
+	// OutputColumns represents the columns that index reader should return.
 	OutputColumns []*expression.Column
 }
 
