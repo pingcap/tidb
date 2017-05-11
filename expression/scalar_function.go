@@ -146,8 +146,28 @@ func (sf *ScalarFunction) Decorrelate(schema *Schema) Expression {
 }
 
 // Eval implements Expression interface.
-func (sf *ScalarFunction) Eval(row []types.Datum) (types.Datum, error) {
-	return sf.Function.eval(row)
+func (sf *ScalarFunction) Eval(row []types.Datum) (d types.Datum, err error) {
+	var (
+		res    interface{}
+		isNull bool
+	)
+	switch sf.RetType.ToClass() {
+	case types.ClassString:
+		res, isNull, err = sf.EvalString(row, nil)
+	case types.ClassDecimal:
+		res, isNull, err = sf.EvalDecimal(row, nil)
+	case types.ClassReal:
+		res, isNull, err = sf.EvalReal(row, nil)
+	case types.ClassInt:
+		res, isNull, err = sf.EvalInt(row, nil)
+	}
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if !isNull {
+		d.SetValue(res)
+	}
+	return d, nil
 }
 
 // EvalInt implements Expression interface.

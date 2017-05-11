@@ -132,8 +132,7 @@ func evalExprToInt(expr Expression, row []types.Datum, sc *variable.StatementCon
 	if tc == types.ClassInt {
 		return val.GetInt64(), false, nil
 	}
-	res, err = val.ToInt64(sc)
-	return res, false, errors.Trace(err)
+	panic(fmt.Sprintf("cannot get INT result from %s expression", tc.String()))
 }
 
 // evalExprToReal evaluates `expr` to real type.
@@ -146,8 +145,7 @@ func evalExprToReal(expr Expression, row []types.Datum, sc *variable.StatementCo
 	if tc == types.ClassReal {
 		return val.GetFloat64(), false, nil
 	}
-	res, err = val.ToFloat64(sc)
-	return res, false, errors.Trace(err)
+	panic(fmt.Sprintf("cannot get REAL result from %s expression", tc.String()))
 }
 
 // evalExprToDecimal evaluates `expr` to decimal type.
@@ -160,8 +158,7 @@ func evalExprToDecimal(expr Expression, row []types.Datum, sc *variable.Statemen
 	if tc == types.ClassDecimal {
 		return val.GetMysqlDecimal(), false, nil
 	}
-	res, err = val.ToDecimal(sc)
-	return res, false, errors.Trace(err)
+	panic(fmt.Sprintf("cannot get DECIMAL result from %s expression", tc.String()))
 }
 
 // evalExprToString evaluates `expr` to string type.
@@ -174,8 +171,7 @@ func evalExprToString(expr Expression, row []types.Datum, _ *variable.StatementC
 	if tc == types.ClassString {
 		return val.GetString(), false, nil
 	}
-	res, err = val.ToString()
-	return res, false, errors.Trace(err)
+	panic(fmt.Sprintf("cannot get STRING result from %s expression", tc.String()))
 }
 
 // One stands for a number 1.
