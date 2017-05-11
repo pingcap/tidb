@@ -156,6 +156,20 @@ func tableHandlesToKVRanges(tid int64, handles []int64) []kv.KeyRange {
 	return krs
 }
 
+func indexValuesToKVRanges(tid, idxID int64, values [][]types.Datum) ([]kv.KeyRange, error) {
+	krs := make([]kv.KeyRange, 0, len(values))
+	for _, vals := range values {
+		// TODO: We don't process the case that equal key has different keys.
+		valKey, err := codec.EncodeKey(nil, vals...)
+		if err != nil {
+			return nil, errors.Trace(nil)
+		}
+		rangeKey := tablecodec.EncodeIndexSeekKey(tid, idxID, valKey)
+		krs = append(krs, kv.KeyRange{StartKey: rangeKey, EndKey: rangeKey})
+	}
+	return krs, nil
+}
+
 func indexRangesToKVRanges(sc *variable.StatementContext, tid, idxID int64, ranges []*types.IndexRange, fieldTypes []*types.FieldType) ([]kv.KeyRange, error) {
 	krs := make([]kv.KeyRange, 0, len(ranges))
 	for _, ran := range ranges {
