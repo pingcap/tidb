@@ -190,6 +190,14 @@ func (d *ddl) RegisterEventCh(ch chan<- *Event) {
 // give up notify and log it.
 func (d *ddl) asyncNotifyEvent(e *Event) {
 	if d.ddlEventCh != nil {
+		if d.lease == 0 {
+			// If lease is 0, it's always used in test.
+			select {
+			case d.ddlEventCh <- e:
+			default:
+			}
+			return
+		}
 		for i := 0; i < 10; i++ {
 			select {
 			case d.ddlEventCh <- e:
