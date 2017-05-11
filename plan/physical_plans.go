@@ -93,6 +93,8 @@ type PhysicalIndexReader struct {
 	// IndexPlans flats the indexPlan to construct executor pb.
 	IndexPlans []PhysicalPlan
 	indexPlan  PhysicalPlan
+
+	OutputColumns []*expression.Column
 }
 
 // Copy implements the PhysicalPlan Copy interface.
