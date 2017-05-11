@@ -117,7 +117,7 @@ type infoSchema struct {
 	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
 	sortedTablesBuckets []sortedTables
 
-	// We should check version when change schema.
+	// schemaMetaVersion is the version of schema, and we should check version when change schema.
 	schemaMetaVersion int64
 }
 
