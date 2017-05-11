@@ -277,7 +277,7 @@ type Sort struct {
 	basePhysicalPlan
 
 	ByItems   []*ByItems
-	ExecLimit *Limit
+	ExecLimit *Limit // no longer be used by new plan
 }
 
 func (p *Sort) extractCorrelatedCols() []*expression.CorrelatedColumn {
@@ -286,6 +286,20 @@ func (p *Sort) extractCorrelatedCols() []*expression.CorrelatedColumn {
 		corCols = append(corCols, extractCorColumns(item.Expr)...)
 	}
 	return corCols
+}
+
+type TopN struct {
+	*basePlan
+	baseLogicalPlan
+	basePhysicalPlan
+
+	ByItems []*ByItems
+	Offset  uint64
+	Count   uint64
+}
+
+func (t *TopN) isLimit() bool {
+	return len(t.ByItems) == 0
 }
 
 // Update represents Update plan.
