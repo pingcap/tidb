@@ -211,8 +211,114 @@ type compareFunctionClass struct {
 	op opcode.Op
 }
 
-func (c *compareFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinCompareSig{newBaseBuiltinFunc(args, ctx), c.op}, errors.Trace(c.verifyArgs(args))
+// getCmpType gets the ClassType that the two args will be treated as at runtime.
+func getCmpType(a types.TypeClass, b types.TypeClass) types.TypeClass {
+	if a == types.ClassString && b == types.ClassString {
+		return types.ClassString
+	} else if a == types.ClassInt && b == types.ClassInt {
+		return types.ClassInt
+	} else if (a == types.ClassInt || a == types.ClassDecimal) &&
+		(b == types.ClassInt || b == types.ClassDecimal) {
+		return types.ClassDecimal
+	}
+	return types.ClassReal
+}
+
+// canCompareAsDates checks whether the two args can be compared with temporal type.
+func canCompareAsDates(ft0, ft1 *types.FieldType) bool {
+	if isTemproalTypeWithDate(ft0) {
+		if isTemproalTypeWithDate(ft1) { // date[time] <cmp> date
+			return true
+		} else if ft1.ToClass() == types.ClassString { // date[time] <cmp> string
+			// TODO: we suppose arg[1] could always be converted to a temporal type here, actually we should check it first.
+			return true
+		}
+	} else if isTemproalTypeWithDate(ft1) && ft0.ToClass() == types.ClassString { // string <cmp> date[time]
+		// TODO: ditto
+		return true
+	}
+	return false
+}
+
+// isTemproalTypeWithDate checks if field type is temporal and has date part.
+func isTemproalTypeWithDate(ft *types.FieldType) bool {
+	switch ft.Tp {
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		return true
+	default:
+		return false
+	}
+}
+
+// isTemproalColumn checks if a expression is a temproal column.
+func isTemproalColumn(expr Expression) bool {
+	ft := expr.GetType()
+	if !isTemproalTypeWithDate(ft) && ft.Tp != types.KindMysqlDuration {
+		return false
+	}
+	if _, isCol := expr.(*Column); !isCol {
+		return false
+	}
+	return true
+}
+
+// getFunction sets compare built-in function signatures for various types.
+func (c *compareFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+	baseFunc := newBaseBuiltinFunc(args, ctx)
+	ft0, ft1 := args[0].GetType(), args[1].GetType()
+	tc0, tc1 := ft0.ToClass(), ft1.ToClass()
+	cmpType := getCmpType(tc0, tc1)
+	f0, ok0 := args[0].(*ScalarFunction)
+	f1, ok1 := args[0].(*ScalarFunction)
+	if ok0 && f0.FuncName.O == ast.RowFunc ||
+		ok1 && f1.FuncName.O == ast.RowFunc {
+		cmpType = types.ClassRow
+	} else if canCompareAsDates(ft0, ft1) {
+		sig = &builtinCompareTimeSig{baseIntBuiltinFunc{baseFunc}, c.op}
+	} else if (cmpType == types.ClassString || cmpType == types.ClassReal) &&
+		ft0.Tp == types.KindMysqlDuration &&
+		ft1.Tp == types.KindMysqlDuration {
+		sig = &builtinCompareTimeSig{baseIntBuiltinFunc{baseFunc}, c.op}
+	} else if cmpType == types.ClassReal {
+		_, isConst0 := args[0].(*Constant)
+		_, isConst1 := args[1].(*Constant)
+		if (tc0 == types.ClassDecimal && !isConst0 && tc1 == types.ClassString && isConst1) ||
+			(tc1 == types.ClassDecimal && !isConst1 && tc0 == types.ClassString && isConst0) {
+			/*
+				<non-const decimal expression> <cmp> <const string expression>
+				or
+				<const string expression> <cmp> <non-const decimal expression>
+
+				Do comparision as decimal rather than float, in order not to lose precision.
+			)*/
+			cmpType = types.ClassDecimal
+		} else if isTemproalColumn(args[0]) && isConst1 ||
+			isTemproalColumn(args[1]) && isConst0 {
+			/*
+				<time column> <cmp> <non-time constant>
+				or
+				<non-time constant> <cmp> <time column>
+
+				Convert the constant to time type.
+			*/
+			sig = &builtinCompareTimeSig{baseIntBuiltinFunc{baseFunc}, c.op}
+		}
+	}
+	if sig == nil {
+		switch cmpType {
+		case types.ClassRow:
+			sig = &builtinCompareRowSig{baseIntBuiltinFunc{baseFunc}, c.op}
+		case types.ClassString:
+			sig = &builtinCompareStringSig{baseIntBuiltinFunc{baseFunc}, c.op}
+		case types.ClassInt:
+			sig = &builtinCompareIntSig{baseIntBuiltinFunc{baseFunc}, c.op}
+		case types.ClassDecimal:
+			sig = &builtinCompareDecimalSig{baseIntBuiltinFunc{baseFunc}, c.op}
+		case types.ClassReal:
+			sig = &builtinCompareRealSig{baseIntBuiltinFunc{baseFunc}, c.op}
+		}
+	}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinCompareSig struct {
@@ -500,6 +606,43 @@ func (s *builtinCompareRowSig) evalInt(row []types.Datum) (int64, bool, error) {
 		if res != 0 {
 			break
 		}
+	}
+	ret := resOfCmp(res, s.op)
+	if ret == -1 {
+		return zeroI64, false, errInvalidOperation.Gen("invalid op %v in comparison operation", s.op)
+	}
+	return ret, false, nil
+}
+
+// builtinCompareStringSig compares two datetimes.
+type builtinCompareTimeSig struct {
+	baseIntBuiltinFunc
+
+	op opcode.Op
+}
+
+func (s *builtinCompareTimeSig) evalInt(row []types.Datum) (int64, bool, error) {
+	sc := s.getCtx().GetSessionVars().StmtCtx
+	args := s.getArgs()
+	arg0, err := args[0].Eval(row)
+	if arg0.IsNull() || err != nil {
+		return 0, arg0.IsNull(), errors.Trace(err)
+	}
+	arg1, err := args[1].Eval(row)
+	if arg1.IsNull() || err != nil {
+		return 0, arg1.IsNull(), errors.Trace(err)
+	}
+	time0, err := arg0.ConvertTo(sc, types.NewFieldType(mysql.TypeTimestamp))
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
+	time1, err := arg1.ConvertTo(sc, types.NewFieldType(mysql.TypeTimestamp))
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
+	res, err := time0.CompareDatum(sc, time1)
+	if err != nil {
+		return 0, false, errors.Trace(err)
 	}
 	ret := resOfCmp(res, s.op)
 	if ret == -1 {
