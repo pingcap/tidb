@@ -1778,7 +1778,11 @@ func (b *builtinConvertTzSig) eval(row []types.Datum) (d types.Datum, err error)
 	}
 
 	sc := b.ctx.GetSessionVars().StmtCtx
-	fsp := types.DateFSP(args[0].GetString())
+
+	fsp := 0
+	if args[0].Kind() == types.KindString {
+		fsp = types.DateFSP(args[0].GetString())
+	}
 
 	arg0, err := convertToTimeWithFsp(sc, args[0], mysql.TypeDatetime, fsp)
 	if err != nil {

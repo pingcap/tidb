@@ -1429,7 +1429,7 @@ func (s *testEvaluatorSuite) TestSecToTime(c *C) {
 
 func (s *testEvaluatorSuite) TestConvertTz(c *C) {
 	tests := []struct {
-		t       string
+		t       interface{}
 		fromTz  string
 		toTz    string
 		Success bool
@@ -1445,6 +1445,8 @@ func (s *testEvaluatorSuite) TestConvertTz(c *C) {
 		{"2004-01-01 12:00:00", "-00:00", "-12:88", true, ""},
 		{"2004-01-01 12:00:00", "+10:82", "GMT", false, ""},
 		{"2004-01-01 12:00:00", "+00:00", "GMT", true, ""},
+		{20040101, "+00:00", "+10:32", true, "2004-01-01 10:32:00"},
+		{3.14159, "+00:00", "+10:32", false, ""},
 	}
 	fc := funcs[ast.ConvertTz]
 	for _, test := range tests {
