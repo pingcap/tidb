@@ -288,6 +288,7 @@ func (p *Sort) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
+// TopN represents a top-n plan.
 type TopN struct {
 	*basePlan
 	baseLogicalPlan
@@ -298,6 +299,7 @@ type TopN struct {
 	Count   uint64
 }
 
+// isLimit check if TopN is a limit plan.
 func (t *TopN) isLimit() bool {
 	return len(t.ByItems) == 0
 }
