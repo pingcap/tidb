@@ -916,7 +916,7 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor
 		columns:   is.Columns,
 	}
 
-	for _, col := range v.Schema().Columns {
+	for _, col := range v.OutputColumns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(col.Index))
 	}
 
