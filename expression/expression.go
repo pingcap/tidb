@@ -169,7 +169,9 @@ func evalExprToString(expr Expression, row []types.Datum, _ *variable.StatementC
 	}
 	tc := expr.GetType().ToClass()
 	if tc == types.ClassString {
-		return val.GetString(), false, nil
+		// here we cannot use val.GetString() directly,
+		res, err = val.ToString()
+		return res, false, errors.Trace(err)
 	}
 	panic(fmt.Sprintf("cannot get STRING result from %s expression", tc.String()))
 }
@@ -447,7 +449,7 @@ func NewCastFunc(tp *types.FieldType, arg Expression, ctx context.Context) *Scal
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(ast.Cast),
 		RetType:  tp,
-		Function: bt,
+		Function: bt.setSelf(bt),
 	}
 }
 
@@ -458,7 +460,7 @@ func NewValuesFunc(offset int, retTp *types.FieldType, ctx context.Context) *Sca
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(ast.Values),
 		RetType:  retTp,
-		Function: bt,
+		Function: bt.setSelf(bt),
 	}
 }
 
