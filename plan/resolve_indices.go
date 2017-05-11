@@ -207,7 +207,7 @@ func (p *Insert) ResolveIndices() {
 	}
 }
 
-// ResolveIndicesAndCorCols implements Plan interface.
+// ResolveIndices implements Plan interface.
 func (p *basePlan) ResolveIndices() {
 	for _, child := range p.children {
 		child.ResolveIndices()
