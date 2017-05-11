@@ -206,8 +206,8 @@ func (b *Builder) copySchemasMap(oldIS *infoSchema) {
 	}
 }
 
-// copySchemaTables create a new schemaTables instance when a table in the database has changed.
-// Do modifications on the new one because old schemaTables must be read-only.
+// copySchemaTables creates a new schemaTables instance when a table in the database has changed.
+// It also does modifications on the new one because old schemaTables must be read-only.
 func (b *Builder) copySchemaTables(dbName string) {
 	oldSchemaTables := b.is.schemaMap[dbName]
 	newSchemaTables := &schemaTables{
