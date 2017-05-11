@@ -1200,7 +1200,7 @@ ColumnNameListOptWithBrackets:
 	{
 		$$ = []*ast.ColumnName{}
 	}
-|	'(' ColumnNameList ')'
+|	'(' ColumnNameListOpt ')'
 	{
 		$$ = $2.([]*ast.ColumnName)
 	}
