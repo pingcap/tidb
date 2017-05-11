@@ -109,7 +109,7 @@ func TestCluster(t *testing.T) {
 	// another worker become the owner.
 	tc := &testDDLCallback{}
 	ch := make(chan struct{})
-	tc.onWatched = func() {
+	tc.onWatched = func(ctx goctx.Context) {
 		<-ch
 		isOwner, isBgOwner = checkOwners(d1, true)
 		if !isOwner || !isBgOwner {

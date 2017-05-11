@@ -120,7 +120,7 @@ func (d *ddl) campaignLoop(ctx goctx.Context, key string) {
 		worker.watchOwner(ctx, string(resp.Kvs[0].Key))
 		worker.setOwnerVal(key, false)
 		d.hookMu.Lock()
-		d.hook.OnWatched()
+		d.hook.OnWatched(ctx)
 		d.hookMu.Unlock()
 
 		select {
@@ -157,6 +157,8 @@ func (w *worker) watchOwner(ctx goctx.Context, key string) {
 					return
 				}
 			}
+		case <-w.etcdSession.Done():
+			// TODO: Create session again?
 		case <-ctx.Done():
 			return
 		}
