@@ -1835,7 +1835,8 @@ func (b *builtinConvertTzSig) eval(row []types.Datum) (d types.Datum, err error)
 	fromTZ := args[1].GetString()
 	toTZ := args[2].GetString()
 
-	r, _ := regexp.Compile(`(^(\+|-)(0?[0-9]|1[0-2]):[0-5]?\d$)|(^\+13:00$)`)
+	const tzArgReg = `(^(\+|-)(0?[0-9]|1[0-2]):[0-5]?\d$)|(^\+13:00$)`
+	r, _ := regexp.Compile(tzArgReg)
 	fmatch := r.MatchString(fromTZ)
 	tmatch := r.MatchString(toTZ)
 
