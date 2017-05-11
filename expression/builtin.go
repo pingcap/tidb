@@ -45,6 +45,11 @@ func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc 
 	}
 }
 
+func (b *baseBuiltinFunc) setSelf(f builtinFunc) builtinFunc {
+	b.self = f
+	return f
+}
+
 func (b *baseBuiltinFunc) evalArgs(row []types.Datum) (_ []types.Datum, err error) {
 	for i, arg := range b.args {
 		b.argValues[i], err = arg.Eval(row)
@@ -327,6 +332,8 @@ type builtinFunc interface {
 	equal(builtinFunc) bool
 	// getCtx returns this function's context.
 	getCtx() context.Context
+	// setSelf sets a pointer to itself.
+	setSelf(builtinFunc) builtinFunc
 }
 
 // baseFunctionClass will be contained in every struct that implement functionClass interface.
