@@ -1972,7 +1972,7 @@ func (b *builtinPeriodDiffSig) eval(row []types.Datum) (d types.Datum, err error
 	}
 
 	if args[0].IsNull() || args[1].IsNull() {
-		return d, errors.Trace(err)
+		return d, nil
 	}
 
 	sc := b.ctx.GetSessionVars().StmtCtx
