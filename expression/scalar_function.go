@@ -146,7 +146,7 @@ func (sf *ScalarFunction) Decorrelate(schema *Schema) Expression {
 }
 
 // Eval implements Expression interface.
-func (sf *ScalarFunction) Eval(row []types.Datum) (d types.Datum, err error) {
+func (sf *ScalarFunction) Eval(row []types.Datum) (types.Datum, error) {
 	return sf.Function.eval(row)
 }
 
