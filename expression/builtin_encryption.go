@@ -23,6 +23,7 @@ import (
 	"crypto/sha512"
 	"fmt"
 	"hash"
+	"io"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
@@ -216,7 +217,11 @@ func (b *builtinCompressSig) eval(row []types.Datum) (d types.Datum, err error) 
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-
+	// Empty strings are stored as empty strings.
+	if len(compressStr) == 0 {
+		d.SetString("")
+		return d, nil
+	}
 	var in bytes.Buffer
 	w := zlib.NewWriter(&in)
 	w.Write(compressStr)
@@ -545,10 +550,44 @@ type builtinUncompressSig struct {
 	baseBuiltinFunc
 }
 
+// This func is used for uncompress a string compiled with a compression library such as zlib.
+func uncompress(compressStr []byte) ([]byte, error) {
+	reader := bytes.NewReader(compressStr)
+	var out bytes.Buffer
+	r, err := zlib.NewReader(reader)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	io.Copy(&out, r)
+	r.Close()
+	return out.Bytes(), nil
+}
+
 // eval evals a builtinUncompressSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_uncompress
 func (b *builtinUncompressSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("UNCOMPRESS")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	arg := args[0]
+	if arg.IsNull() {
+		return d, nil
+	}
+	compressStr, err := arg.ToBytes()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if len(compressStr) == 0 {
+		d.SetString("")
+		return d, nil
+	}
+	bytes, err := uncompress(compressStr)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d.SetBytes(bytes)
+	return d, nil
 }
 
 type uncompressedLengthFunctionClass struct {
@@ -567,7 +606,28 @@ type builtinUncompressedLengthSig struct {
 // eval evals a builtinUncompressedLengthSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_uncompressed-length
 func (b *builtinUncompressedLengthSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("UNCOMPRESSED_LENGTH")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	arg := args[0]
+	if arg.IsNull() {
+		return d, nil
+	}
+	compressStr, err := arg.ToBytes()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if len(compressStr) == 0 {
+		d.SetInt64(0)
+		return d, nil
+	}
+	bytes, err := uncompress(compressStr)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d.SetInt64(int64(len(bytes)))
+	return d, nil
 }
 
 type validatePasswordStrengthFunctionClass struct {

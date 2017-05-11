@@ -281,6 +281,8 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`aes_decrypt("pingcap", "fit2cloud@2014")`, mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{`md5(123)`, mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{`compress('love')`, mysql.TypeBlob, charset.CharsetBin, mysql.BinaryFlag},
+		{`uncompress('love')`, mysql.TypeLongBlob, charset.CharsetBin, mysql.BinaryFlag},
+		{`uncompressed_length('love')`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{`sha1(123)`, mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{`sha(123)`, mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{`sha2(123, 256)`, mysql.TypeVarString, charset.CharsetUTF8, 0},
