@@ -62,7 +62,7 @@ func (c *databaseFunctionClass) getFunction(args []Expression, ctx context.Conte
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinDatabaseSig{newBaseBuiltinFunc(args, ctx)}
 	bt.deterministic = false
-	return bt, errors.Trace(err)
+	return bt.setSelf(bt), errors.Trace(err)
 }
 
 type builtinDatabaseSig struct {
@@ -88,7 +88,7 @@ func (c *foundRowsFunctionClass) getFunction(args []Expression, ctx context.Cont
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinFoundRowsSig{newBaseBuiltinFunc(args, ctx)}
 	bt.deterministic = false
-	return bt, errors.Trace(err)
+	return bt.setSelf(bt), errors.Trace(err)
 }
 
 type builtinFoundRowsSig struct {
@@ -116,7 +116,7 @@ func (c *currentUserFunctionClass) getFunction(args []Expression, ctx context.Co
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinCurrentUserSig{newBaseBuiltinFunc(args, ctx)}
 	bt.deterministic = false
-	return bt, errors.Trace(err)
+	return bt.setSelf(bt), errors.Trace(err)
 }
 
 type builtinCurrentUserSig struct {
@@ -144,7 +144,7 @@ func (c *userFunctionClass) getFunction(args []Expression, ctx context.Context) 
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinUserSig{newBaseBuiltinFunc(args, ctx)}
 	bt.deterministic = false
-	return bt, errors.Trace(err)
+	return bt.setSelf(bt), errors.Trace(err)
 }
 
 type builtinUserSig struct {
@@ -171,7 +171,7 @@ func (c *connectionIDFunctionClass) getFunction(args []Expression, ctx context.C
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinConnectionIDSig{newBaseBuiltinFunc(args, ctx)}
 	bt.deterministic = false
-	return bt, errors.Trace(err)
+	return bt.setSelf(bt), errors.Trace(err)
 }
 
 type builtinConnectionIDSig struct {
@@ -196,7 +196,7 @@ func (c *lastInsertIDFunctionClass) getFunction(args []Expression, ctx context.C
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinLastInsertIDSig{newBaseBuiltinFunc(args, ctx)}
 	bt.deterministic = false
-	return bt, errors.Trace(err)
+	return bt.setSelf(bt), errors.Trace(err)
 }
 
 type builtinLastInsertIDSig struct {
@@ -231,7 +231,7 @@ func (c *versionFunctionClass) getFunction(args []Expression, ctx context.Contex
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinVersionSig{newBaseBuiltinFunc(args, ctx)}
 	bt.deterministic = false
-	return bt, errors.Trace(err)
+	return bt.setSelf(bt), errors.Trace(err)
 }
 
 type builtinVersionSig struct {
@@ -250,7 +250,8 @@ type benchmarkFunctionClass struct {
 }
 
 func (c *benchmarkFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinBenchmarkSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinBenchmarkSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinBenchmarkSig struct {
@@ -268,7 +269,8 @@ type charsetFunctionClass struct {
 }
 
 func (c *charsetFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinCharsetSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinCharsetSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinCharsetSig struct {
@@ -286,7 +288,8 @@ type coercibilityFunctionClass struct {
 }
 
 func (c *coercibilityFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinCoercibilitySig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinCoercibilitySig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinCoercibilitySig struct {
@@ -304,7 +307,8 @@ type collationFunctionClass struct {
 }
 
 func (c *collationFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinCollationSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinCollationSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinCollationSig struct {
@@ -325,7 +329,7 @@ func (c *rowCountFunctionClass) getFunction(args []Expression, ctx context.Conte
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinRowCountSig{newBaseBuiltinFunc(args, ctx)}
 	bt.deterministic = false
-	return bt, errors.Trace(err)
+	return bt.setSelf(bt), errors.Trace(err)
 }
 
 type builtinRowCountSig struct {

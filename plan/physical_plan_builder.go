@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -68,10 +69,10 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 		for _, cond := range sel.Conditions {
 			conds = append(conds, cond.Clone())
 		}
-		ts.AccessCondition, newSel.Conditions = DetachTableScanConditions(conds, table)
+		ts.AccessCondition, newSel.Conditions = ranger.DetachTableScanConditions(conds, table.GetPkName())
 		ts.TableConditionPBExpr, ts.tableFilterConditions, newSel.Conditions =
 			expression.ExpressionsToPB(sc, newSel.Conditions, client)
-		ranges, err := BuildTableRange(ts.AccessCondition, sc)
+		ranges, err := ranger.BuildTableRange(ts.AccessCondition, sc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -134,17 +135,17 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		for _, cond := range sel.Conditions {
 			conds = append(conds, cond.Clone())
 		}
-		is.AccessCondition, newSel.Conditions, is.accessEqualCount, is.accessInAndEqCount = DetachIndexScanConditions(conds, is.Index)
+		is.AccessCondition, newSel.Conditions, is.accessEqualCount, is.accessInAndEqCount = ranger.DetachIndexScanConditions(conds, is.Index)
 		memDB := infoschema.IsMemoryDB(p.DBName.L)
 		isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeIndex, 0)
 		if isDistReq {
-			idxConds, tblConds := DetachIndexFilterConditions(newSel.Conditions, is.Index.Columns, is.Table)
+			idxConds, tblConds := ranger.DetachIndexFilterConditions(newSel.Conditions, is.Index.Columns, is.Table)
 			is.IndexConditionPBExpr, is.indexFilterConditions, idxConds = expression.ExpressionsToPB(sc, idxConds, client)
 			is.TableConditionPBExpr, is.tableFilterConditions, tblConds = expression.ExpressionsToPB(sc, tblConds, client)
 			newSel.Conditions = append(idxConds, tblConds...)
 		}
 		var err error
-		is.Ranges, err = BuildIndexRange(p.ctx.GetSessionVars().StmtCtx, is.Table, is.Index, is.accessInAndEqCount, is.AccessCondition)
+		is.Ranges, err = ranger.BuildIndexRange(p.ctx.GetSessionVars().StmtCtx, is.Table, is.Index, is.accessInAndEqCount, is.AccessCondition)
 		if err != nil {
 			if !terror.ErrorEqual(err, types.ErrTruncated) {
 				return nil, errors.Trace(err)
@@ -161,8 +162,8 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 			resultPlan = newSel
 		}
 	} else {
-		rb := rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
-		is.Ranges = rb.buildIndexRanges(fullRange, types.NewFieldType(mysql.TypeNull))
+		rb := ranger.Builder{Sc: p.ctx.GetSessionVars().StmtCtx}
+		is.Ranges = rb.BuildIndexRanges(ranger.FullRange, types.NewFieldType(mysql.TypeNull))
 	}
 	is.DoubleRead = !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
 	return resultPlan.matchProperty(prop, &physicalPlanInfo{count: rowCount, reliable: !statsTbl.Pseudo}), nil
@@ -222,8 +223,8 @@ func (p *DataSource) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlan
 			TableAsName: p.TableAsName,
 		}.init(p.allocator, p.ctx)
 		memTable.SetSchema(p.schema)
-		rb := &rangeBuilder{sc: p.ctx.GetSessionVars().StmtCtx}
-		memTable.Ranges = rb.buildTableRanges(fullRange)
+		rb := &ranger.Builder{Sc: p.ctx.GetSessionVars().StmtCtx}
+		memTable.Ranges = rb.BuildTableRanges(ranger.FullRange)
 		info = &physicalPlanInfo{p: memTable}
 		info = enforceProperty(prop, info)
 		p.storePlanInfo(prop, info)
@@ -1228,7 +1229,7 @@ func (p *Selection) makeScanController() *physicalPlanInfo {
 		if !expr.IsCorrelated() {
 			continue
 		}
-		cond := pushDownNot(expr, false, nil)
+		cond := expression.PushDownNot(expr, false, nil)
 		corCols := extractCorColumns(cond)
 		for _, col := range corCols {
 			*col.Data = expression.One.Value
@@ -1261,7 +1262,7 @@ func (p *Selection) makeScanController() *physicalPlanInfo {
 			for _, cond := range corColConds {
 				condsBackUp = append(condsBackUp, cond.Clone())
 			}
-			_, _, accessEqualCount, _ := DetachIndexScanConditions(condsBackUp, idx)
+			_, _, accessEqualCount, _ := ranger.DetachIndexScanConditions(condsBackUp, idx)
 			if chosenPlan == nil || bestEqualCount < accessEqualCount {
 				is := PhysicalIndexScan{
 					Table:               ds.tableInfo,
