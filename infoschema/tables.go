@@ -849,13 +849,11 @@ func dataForTableConstraints(schemas []*model.DBInfo) [][]types.Datum {
 }
 
 func dataForKeyColumnUsage(schemas []*model.DBInfo) [][]types.Datum {
-	rows := [][]types.Datum{}
+	rows := make([][]types.Datum, len(schemas)) // The capacity is not accurate, but it is not a big problem.
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
 			rs := keyColumnUsageInTable(schema, table)
-			for _, r := range rs {
-				rows = append(rows, r)
-			}
+			rows = append(rows, rs...)
 		}
 	}
 	return rows
@@ -864,7 +862,7 @@ func dataForKeyColumnUsage(schemas []*model.DBInfo) [][]types.Datum {
 func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]types.Datum {
 	rows := [][]types.Datum{}
 	if table.PKIsHandle {
-		for i, col := range table.Columns {
+		for _, col := range table.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
 				record := types.MakeDatums(
 					catalogVal,        // CONSTRAINT_CATALOG
@@ -874,7 +872,7 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 					schema.Name.O,     // TABLE_SCHEMA
 					table.Name.O,      // TABLE_NAME
 					col.Name.O,        // COLUMN_NAME
-					i,                 // ORDINAL_POSITION
+					1,                 // ORDINAL_POSITION
 					1,                 // POSITION_IN_UNIQUE_CONSTRAINT
 					nil,               // REFERENCED_TABLE_SCHEMA
 					nil,               // REFERENCED_TABLE_NAME
