@@ -971,6 +971,15 @@ func (p *Sort) Copy() PhysicalPlan {
 	return &np
 }
 
+// Copy implements the PhysicalPlan Copy interface.
+func (p *TopN) Copy() PhysicalPlan {
+	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
+	return &np
+}
+
 // MarshalJSON implements json.Marshaler interface.
 func (p *Sort) MarshalJSON() ([]byte, error) {
 	exprs, err := json.Marshal(p.ByItems)
