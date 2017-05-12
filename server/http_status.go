@@ -19,9 +19,9 @@ import (
 	"net/http"
 	"sync"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/gorilla/mux"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/store/tikv"

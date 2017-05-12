@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ngaut/log"
+	log "github.com/Sirupsen/logrus"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"

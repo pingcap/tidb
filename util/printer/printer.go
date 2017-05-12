@@ -17,7 +17,7 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/ngaut/log"
+	log "github.com/Sirupsen/logrus"
 )
 
 // Version information.

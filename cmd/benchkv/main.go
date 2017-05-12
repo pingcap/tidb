@@ -24,7 +24,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 
-	"github.com/ngaut/log"
+	log "github.com/Sirupsen/logrus"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/prometheus/client_golang/prometheus"
