@@ -48,7 +48,7 @@ const (
 // Special error codes.
 const (
 	// CodeResultUndetermined indicates the sql execution result is undetermined.
-	CodeResultUndetermined ErrCode = iota + 1
+	CodeResultUndetermined ErrCode = iota + 2
 )
 
 // ErrClass represents a class of errors.
