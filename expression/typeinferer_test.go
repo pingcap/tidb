@@ -277,6 +277,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"conv('TiDB',36,10)", mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{"timestamp('2003-12-31 12:00:00')", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
 		{"timestamp('2003-12-31 12:00:00','12:00:00')", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
+		{"convert_tz('2003-12-31 12:00:00','GMT', 'MET')", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
 		{"timestampadd(WEEK,40,'2003-01-01 01:01:01.000011')", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
 		{`aes_encrypt("pingcap", "fit2cloud@2014")`, mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{`aes_decrypt("pingcap", "fit2cloud@2014")`, mysql.TypeVarString, charset.CharsetUTF8, 0},
