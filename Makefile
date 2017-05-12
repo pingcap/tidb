@@ -13,7 +13,7 @@ export PATH := $(path_to_add):$(PATH)
 
 GO        := GO15VENDOREXPERIMENT="1" go
 GOBUILD   := GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=0 $(GO) build
-GOTEST    := GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=1 $(GO) test
+GOTEST    := GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=1 GOMAXPROCS=8 $(GO) test
 OVERALLS  := GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=1 overalls
 GOVERALLS := goveralls
 
