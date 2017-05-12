@@ -1975,16 +1975,7 @@ func (b *builtinPeriodAddSig) eval(row []types.Datum) (d types.Datum, err error)
 		return d, nil
 	}
 
-	y := period / 100
-	m := period % 100
-
-	// YYMM, 00-69 year: 2000-2069
-	// YYMM, 70-99 year: 1970-1999
-	if y <= 69 {
-		y += 2000
-	} else if y <= 99 {
-		y += 1900
-	}
+	y, m := getYearAndMonth(period)
 
 	months, err := args[1].ToInt64(sc)
 	if err != nil {
@@ -2016,7 +2007,52 @@ type builtinPeriodDiffSig struct {
 // eval evals a builtinPeriodDiffSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_period-diff
 func (b *builtinPeriodDiffSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("PERIOD_DIFF")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if args[0].IsNull() || args[1].IsNull() {
+		return d, nil
+	}
+
+	sc := b.ctx.GetSessionVars().StmtCtx
+	period, err := args[0].ToInt64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	period2, err := args[1].ToInt64(sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	d.SetInt64(getMonth(period) - getMonth(period2))
+	return d, nil
+}
+
+func getYearAndMonth(period int64) (int64, int64) {
+	y := period / 100
+	m := period % 100
+
+	// YYMM, 00-69 year: 2000-2069
+	// YYMM, 70-99 year: 1970-1999
+	if y <= 69 {
+		y += 2000
+	} else if y <= 99 {
+		y += 1900
+	}
+	return y, m
+
+}
+
+func getMonth(period int64) int64 {
+	if period == 0 {
+		return int64(0)
+	}
+	y, m := getYearAndMonth(period)
+	return y*12 + m - 1
+
 }
 
 type quarterFunctionClass struct {
