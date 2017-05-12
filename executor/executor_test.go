@@ -963,7 +963,7 @@ func (s *testSuite) TestJSON(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists test_json")
 	tk.MustExec("create table test_json (id int, a json)")
-	tk.MustExec(`insert into test_json (id, a) values (1, '{"a":[1,"2",{"aa":"bb"},4],"b":true}'`)
+	tk.MustExec(`insert into test_json (id, a) values (1, '{"a":[1,"2",{"aa":"bb"},4],"b":true}')`)
 	tk.MustExec(`insert into test_json (id, a) values (2, "null")`)
 	tk.MustExec(`insert into test_json (id, a) values (3, null)`)
 	tk.MustExec(`insert into test_json (id, a) values (4, 'true')`)

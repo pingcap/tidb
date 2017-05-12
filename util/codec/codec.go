@@ -75,7 +75,7 @@ func encode(b []byte, vals []types.Datum, comparable bool) ([]byte, error) {
 		case types.KindMysqlJSON:
 			bytes := val.GetMysqlJSON().Serialize()
 			b = append(b, jsonFlag)
-			b = EncodeBytes(b, bytes)
+			b = EncodeCompactBytes(b, bytes)
 		case types.KindNull:
 			b = append(b, NilFlag)
 		case types.KindMinNotNull:
@@ -211,7 +211,7 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 	case jsonFlag:
 		var v []byte
 		var j json.JSON = json.CreateJSON(nil)
-		b, v, err = DecodeBytes(b)
+		b, v, err = DecodeCompactBytes(b)
 		j.Deserialize(v)
 		d.SetValue(j)
 	case NilFlag:
@@ -261,9 +261,9 @@ func peek(b []byte) (length int, err error) {
 	case intFlag, uintFlag, floatFlag, durationFlag:
 		// Those types are stored in 8 bytes.
 		l = 8
-	case bytesFlag, jsonFlag:
+	case bytesFlag:
 		l, err = peekBytes(b, false)
-	case compactBytesFlag:
+	case compactBytesFlag, jsonFlag:
 		l, err = peekCompactBytes(b)
 	case decimalFlag:
 		l, err = types.DecimalPeak(b)
