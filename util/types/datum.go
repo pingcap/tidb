@@ -406,10 +406,6 @@ func (d *Datum) SetValue(val interface{}) {
 // CompareDatum compares datum to another datum.
 // TODO: return error properly.
 func (d *Datum) CompareDatum(sc *variable.StatementContext, ad Datum) (int, error) {
-	if d.k == KindMysqlJSON && ad.k != KindMysqlJSON {
-		cmp, err := ad.CompareDatum(sc, *d)
-		return cmp * -1, err
-	}
 	switch ad.k {
 	case KindNull:
 		if d.k == KindNull {
@@ -450,8 +446,6 @@ func (d *Datum) CompareDatum(sc *variable.StatementContext, ad Datum) (int, erro
 		return d.compareMysqlHex(sc, ad.GetMysqlHex())
 	case KindMysqlSet:
 		return d.compareMysqlSet(sc, ad.GetMysqlSet())
-	case KindMysqlJSON:
-		return d.compareMysqlJSON(sc, ad.GetMysqlJSON())
 	case KindMysqlTime:
 		return d.compareMysqlTime(sc, ad.GetMysqlTime())
 	case KindRow:
@@ -633,28 +627,6 @@ func (d *Datum) compareMysqlSet(sc *variable.StatementContext, set Set) (int, er
 	default:
 		return d.compareFloat64(sc, set.ToNumber())
 	}
-}
-
-func (d *Datum) compareMysqlJSON(sc *variable.StatementContext, target json.JSON) (int, error) {
-	var origin json.JSON
-
-	switch d.Kind() {
-	case KindMysqlJSON:
-		origin = d.x.(json.JSON)
-	case KindInt64, KindUint64:
-		i64, _ := d.ToInt64(sc)
-		origin = json.CreateJSON(i64)
-	case KindFloat32, KindFloat64, KindMysqlDecimal:
-		f64, _ := d.ToFloat64(sc)
-		origin = json.CreateJSON(f64)
-	case KindString, KindBytes:
-		s := d.GetString()
-		origin = json.CreateJSON(s)
-	default:
-		s, _ := d.ToString()
-		origin = json.CreateJSON(s)
-	}
-	return json.CompareJSON(origin, target)
 }
 
 func (d *Datum) compareMysqlTime(sc *variable.StatementContext, time Time) (int, error) {

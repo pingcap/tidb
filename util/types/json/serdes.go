@@ -27,6 +27,8 @@ import (
 var errUnsupportedType = errors.New("Unsupported type")
 var errUnknownType = errors.New("Unknown type")
 
+// Every json type has a length which is useful for inline the value
+// in value-entry or not. -1 means the length can vary.
 var jsonTypeCodeLength = map[byte]int{
 	0x00: -1,
 	0x01: -1,
@@ -43,6 +45,7 @@ var jsonTypeCodeLength = map[byte]int{
 	0x0c: -1,
 }
 
+// Map go type to a type code used in the binary representation.
 func jsonTypeCode(in interface{}) (code byte, err error) {
 	switch in.(type) {
 	case map[string]interface{}:
@@ -73,6 +76,9 @@ func jsonTypeCode(in interface{}) (code byte, err error) {
 	return code, err
 }
 
+// Two map are equal if they have same keys and same values.
+// So we sort the keys before serialize in order to keep
+// their binary representations are same.
 func keysInMap(m map[string]interface{}) []string {
 	keys := make([]string, len(m))
 	i := 0
@@ -97,6 +103,8 @@ func push(bytesBuffer *bytes.Buffer, in interface{}) (err error) {
 	case int16, uint16, int32, uint32, int64, uint64, float64:
 		binary.Write(bytesBuffer, binary.LittleEndian, x)
 	case string:
+		// string ::= data-length utf8mb4-data
+		// data-length is encoded as varint in protobuf, so 9 bytes is enough.
 		var varIntBuf = make([]byte, 9)
 		var varIntLen = binary.PutUvarint(varIntBuf, uint64(len(hack.Slice(x))))
 		bytesBuffer.Write(varIntBuf[0:varIntLen])
@@ -112,6 +120,7 @@ func push(bytesBuffer *bytes.Buffer, in interface{}) (err error) {
 }
 
 func pushObject(buffer *bytes.Buffer, object map[string]interface{}) (err error) {
+	// object ::= element-count size key-entry* value-entry* key* value*
 	var countAndSize = make([]uint32, 2)
 	var countAndSizeLen = len(countAndSize) * 4
 	var keySlice = keysInMap(object)
@@ -152,6 +161,7 @@ func pushObject(buffer *bytes.Buffer, object map[string]interface{}) (err error)
 }
 
 func pushArray(buffer *bytes.Buffer, array []interface{}) (err error) {
+	// array ::= element-count size value-entry* value*
 	var countAndSize = make([]uint32, 2)
 	var countAndSizeLen = len(countAndSize) * 4
 
@@ -184,6 +194,8 @@ func pushValueEntry(value interface{}, valueEntrys *bytes.Buffer, values *bytes.
 
 	typeLen, _ := jsonTypeCodeLength[typeCode]
 	if typeLen > 0 && typeLen <= 4 {
+		// If the value has length in (0, 4], it could be inline here.
+		// And padding 0x00 to 4 bytes if needed.
 		oldEntryLen := valueEntrys.Len()
 		binary.Write(valueEntrys, binary.LittleEndian, value)
 		newEntryLen := valueEntrys.Len()

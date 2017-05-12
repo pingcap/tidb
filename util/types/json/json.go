@@ -14,8 +14,6 @@
 package json
 
 import (
-	"bytes"
-
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 )
@@ -37,13 +35,6 @@ func CreateJSON(j interface{}) JSON {
 	return &jsonImpl{
 		json: j,
 	}
-}
-
-// CompareJSON compares two json object.
-func CompareJSON(j1 JSON, j2 JSON) (int, error) {
-	s1 := j1.Serialize()
-	s2 := j2.Serialize()
-	return bytes.Compare(s1, s2), nil
 }
 
 var (
