@@ -132,8 +132,7 @@ func evalExprToInt(expr Expression, row []types.Datum, sc *variable.StatementCon
 	if tc == types.ClassInt {
 		return val.GetInt64(), false, nil
 	}
-	res, err = val.ToInt64(sc)
-	return res, false, errors.Trace(err)
+	panic(fmt.Sprintf("cannot get INT result from %s expression", tc.String()))
 }
 
 // evalExprToReal evaluates `expr` to real type.
@@ -146,8 +145,7 @@ func evalExprToReal(expr Expression, row []types.Datum, sc *variable.StatementCo
 	if tc == types.ClassReal {
 		return val.GetFloat64(), false, nil
 	}
-	res, err = val.ToFloat64(sc)
-	return res, false, errors.Trace(err)
+	panic(fmt.Sprintf("cannot get REAL result from %s expression", tc.String()))
 }
 
 // evalExprToDecimal evaluates `expr` to decimal type.
@@ -160,8 +158,7 @@ func evalExprToDecimal(expr Expression, row []types.Datum, sc *variable.Statemen
 	if tc == types.ClassDecimal {
 		return val.GetMysqlDecimal(), false, nil
 	}
-	res, err = val.ToDecimal(sc)
-	return res, false, errors.Trace(err)
+	panic(fmt.Sprintf("cannot get DECIMAL result from %s expression", tc.String()))
 }
 
 // evalExprToString evaluates `expr` to string type.
@@ -172,10 +169,14 @@ func evalExprToString(expr Expression, row []types.Datum, _ *variable.StatementC
 	}
 	tc := expr.GetType().ToClass()
 	if tc == types.ClassString {
-		return val.GetString(), false, nil
+		// We cannot use val.GetString() directly.
+		// For example, `Bit` is regarded as ClassString,
+		// while we can not use val.GetString() to get the value of a Bit variable,
+		// because value of `Bit` is stored in Datum.i while val.GetString() get value from Datum.b.
+		res, err = val.ToString()
+		return res, false, errors.Trace(err)
 	}
-	res, err = val.ToString()
-	return res, false, errors.Trace(err)
+	panic(fmt.Sprintf("cannot get STRING result from %s expression", tc.String()))
 }
 
 // One stands for a number 1.
@@ -451,7 +452,7 @@ func NewCastFunc(tp *types.FieldType, arg Expression, ctx context.Context) *Scal
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(ast.Cast),
 		RetType:  tp,
-		Function: bt,
+		Function: bt.setSelf(bt),
 	}
 }
 
@@ -462,7 +463,7 @@ func NewValuesFunc(offset int, retTp *types.FieldType, ctx context.Context) *Sca
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(ast.Values),
 		RetType:  retTp,
-		Function: bt,
+		Function: bt.setSelf(bt),
 	}
 }
 
