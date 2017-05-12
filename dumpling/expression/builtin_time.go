@@ -162,9 +162,13 @@ func convertTimeToMysqlTime(t time.Time, fsp int) (types.Time, error) {
 	}, nil
 }
 
-func convertToTime(sc *variable.StatementContext, arg types.Datum, tp byte) (d types.Datum, err error) {
+func convertToTimeWithFsp(sc *variable.StatementContext, arg types.Datum, tp byte, fsp int) (d types.Datum, err error) {
+	if fsp > types.MaxFsp {
+		fsp = types.MaxFsp
+	}
+
 	f := types.NewFieldType(tp)
-	f.Decimal = types.MaxFsp
+	f.Decimal = fsp
 
 	d, err = arg.ConvertTo(sc, f)
 	if err != nil {
@@ -181,6 +185,10 @@ func convertToTime(sc *variable.StatementContext, arg types.Datum, tp byte) (d t
 		return d, errors.Errorf("need time type, but got %T", d.GetValue())
 	}
 	return d, nil
+}
+
+func convertToTime(sc *variable.StatementContext, arg types.Datum, tp byte) (d types.Datum, err error) {
+	return convertToTimeWithFsp(sc, arg, tp, types.MaxFsp)
 }
 
 func convertToDuration(sc *variable.StatementContext, arg types.Datum, fsp int) (d types.Datum, err error) {
@@ -1797,7 +1805,79 @@ type builtinConvertTzSig struct {
 // eval evals a builtinConvertTzSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_convert-tz
 func (b *builtinConvertTzSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("CONVERT_TZ")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if args[0].IsNull() || args[1].IsNull() || args[2].IsNull() {
+		return
+	}
+
+	sc := b.ctx.GetSessionVars().StmtCtx
+
+	fsp := 0
+	if args[0].Kind() == types.KindString {
+		fsp = types.DateFSP(args[0].GetString())
+	}
+
+	arg0, err := convertToTimeWithFsp(sc, args[0], mysql.TypeDatetime, fsp)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if arg0.IsNull() {
+		return
+	}
+
+	dt := arg0.GetMysqlTime()
+
+	fromTZ := args[1].GetString()
+	toTZ := args[2].GetString()
+
+	const tzArgReg = `(^(\+|-)(0?[0-9]|1[0-2]):[0-5]?\d$)|(^\+13:00$)`
+	r, _ := regexp.Compile(tzArgReg)
+	fmatch := r.MatchString(fromTZ)
+	tmatch := r.MatchString(toTZ)
+
+	if !fmatch && !tmatch {
+		ftz, err := time.LoadLocation(fromTZ)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+
+		ttz, err := time.LoadLocation(toTZ)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+
+		t, err := dt.Time.GoTime(ftz)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+
+		d.SetMysqlTime(types.Time{
+			Time: types.FromGoTime(t.In(ttz)),
+			Type: mysql.TypeDatetime,
+			Fsp:  dt.Fsp,
+		})
+		return d, nil
+	}
+
+	if fmatch && tmatch {
+		t, err := dt.Time.GoTime(time.Local)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+
+		d.SetMysqlTime(types.Time{
+			Time: types.FromGoTime(t.Add(timeZone2Duration(toTZ) - timeZone2Duration(fromTZ))),
+			Type: mysql.TypeDatetime,
+			Fsp:  dt.Fsp,
+		})
+	}
+
+	return
 }
 
 type makeDateFunctionClass struct {
