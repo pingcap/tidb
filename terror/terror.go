@@ -26,7 +26,8 @@ import (
 
 // Global error instances.
 var (
-	ErrCritical = ClassGlobal.New(CodeExecResultIsEmpty, "critical error %v")
+	ErrCritical           = ClassGlobal.New(CodeExecResultIsEmpty, "critical error %v")
+	ErrResultUndetermined = ClassGlobal.New(CodeResultUndetermined, "execution result undetermined")
 )
 
 // ErrCode represents a specific error type in a error class.
@@ -42,6 +43,12 @@ const (
 // Expression error codes.
 const (
 	CodeMissConnectionID ErrCode = iota + 1
+)
+
+// Special error codes.
+const (
+	// CodeResultUndetermined indicates the sql execution result is undetermined.
+	CodeResultUndetermined ErrCode = iota + 1
 )
 
 // ErrClass represents a class of errors.
