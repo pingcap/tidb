@@ -40,8 +40,11 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 	}()
 	store, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
-	defer store.Close()
 	testKit := testkit.NewTestKit(c, store)
+	defer func() {
+		testKit.MustExec("drop table t, t1, t2")
+		store.Close()
+	}()
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a int, b int)")
 	testKit.MustExec("create index a on t (a)")

@@ -83,7 +83,8 @@ func (p *Projection) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, e
 	}
 	if prop.taskTp != rootTask {
 		// Projection cannot be pushed down currently, it can only return rootTask.
-		return &copTaskProfile{cst: math.MaxFloat64}, p.storeTaskProfile(prop, task)
+		task = &copTaskProfile{cst: math.MaxFloat64}
+		return task, p.storeTaskProfile(prop, task)
 	}
 	// enforceProperty task.
 	task, err = p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{})
@@ -119,7 +120,8 @@ func (p *LogicalJoin) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, 
 	}
 	if prop.taskTp != rootTask {
 		// Join cannot be pushed down currently, it can only return rootTask.
-		return &copTaskProfile{cst: math.MaxFloat64}, p.storeTaskProfile(prop, task)
+		task = &copTaskProfile{cst: math.MaxFloat64}
+		return task, p.storeTaskProfile(prop, task)
 	}
 	switch p.JoinType {
 	case SemiJoin, LeftOuterSemiJoin:
@@ -243,7 +245,7 @@ func (p *LogicalJoin) convert2HashJoin(prop *requiredProp) (taskProfile, error) 
 
 // getPropByOrderByItems will check if this sort property can be pushed or not. In order to simplify the problem, we only
 // consider the case that all expression are columns and all of them are asc or desc.
-func getPropByOrderByItems(items []*ByItems) (*requiredProp, bool) {
+func getPropByOrderByItems(items []*ByItems, taskTp taskType) (*requiredProp, bool) {
 	desc := false
 	cols := make([]*expression.Column, 0, len(items))
 	for i, item := range items {
@@ -257,7 +259,7 @@ func getPropByOrderByItems(items []*ByItems) (*requiredProp, bool) {
 			return nil, false
 		}
 	}
-	return &requiredProp{cols, desc, rootTask}, true
+	return &requiredProp{cols, desc, taskTp}, true
 }
 
 // convert2NewPhysicalPlan implements PhysicalPlan interface.
@@ -276,7 +278,8 @@ func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) 
 		// e.g. If a aggregation want to be pushed, the SQL is always like select count(*) from t order by ...
 		// The Sort will on top of Aggregation. If the SQL is like select count(*) from (select * from s order by k).
 		// The Aggregation will also block by projection. In the future we will break this restriction.
-		return &copTaskProfile{cst: math.MaxFloat64}, p.storeTaskProfile(prop, task)
+		task = &copTaskProfile{cst: math.MaxFloat64}
+		return task, p.storeTaskProfile(prop, task)
 	}
 	// enforce branch
 	task, err = p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{})
@@ -284,7 +287,7 @@ func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) 
 		return nil, errors.Trace(err)
 	}
 	task = p.attach2TaskProfile(task)
-	newProp, canPassProp := getPropByOrderByItems(p.ByItems)
+	newProp, canPassProp := getPropByOrderByItems(p.ByItems, rootTask)
 	if canPassProp {
 		orderedTask, err := p.children[0].(LogicalPlan).convert2NewPhysicalPlan(newProp)
 		if err != nil {
@@ -309,7 +312,8 @@ func (p *TopN) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) 
 	}
 	if prop.taskTp != rootTask {
 		// TopN can only return rootTask.
-		return &copTaskProfile{cst: math.MaxFloat64}, p.storeTaskProfile(prop, task)
+		task = &copTaskProfile{cst: math.MaxFloat64}
+		return task, p.storeTaskProfile(prop, task)
 	}
 	for _, taskTp := range taskTypes {
 		// Try to enforce topN for child.
@@ -319,7 +323,7 @@ func (p *TopN) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) 
 		}
 		optTask = p.attach2TaskProfile(optTask)
 		// Try to enforce sort to child and add limit for it.
-		newProp, canPassProp := getPropByOrderByItems(p.ByItems)
+		newProp, canPassProp := getPropByOrderByItems(p.ByItems, taskTp)
 		if canPassProp {
 			orderedTask, err := p.children[0].(LogicalPlan).convert2NewPhysicalPlan(newProp)
 			if err != nil {
@@ -340,6 +344,32 @@ func (p *TopN) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) 
 	return task, p.storeTaskProfile(prop, task)
 }
 
+func (p *Limit) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) {
+	task, err := p.getTaskProfile(prop)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if task != nil {
+		return task, nil
+	}
+	if prop.taskTp != rootTask {
+		task = &copTaskProfile{cst: math.MaxFloat64}
+		return task, p.storeTaskProfile(prop, task)
+	}
+	for _, taskTp := range taskTypes {
+		optTask, err := p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{taskTp: taskTp})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		optTask = p.attach2TaskProfile(optTask)
+		optTask = prop.enforceProperty(optTask, p.ctx, p.allocator)
+		if task == nil || task.cost() > optTask.cost() {
+			task = optTask
+		}
+	}
+	return task, p.storeTaskProfile(prop, task)
+}
+
 // convert2NewPhysicalPlan implements LogicalPlan interface.
 func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) {
 	task, err := p.getTaskProfile(prop)
@@ -350,7 +380,8 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (taskProfi
 		return task, nil
 	}
 	if prop.taskTp != rootTask {
-		return &copTaskProfile{cst: math.MaxFloat64}, p.storeTaskProfile(prop, task)
+		task = &copTaskProfile{cst: math.MaxFloat64}
+		return task, p.storeTaskProfile(prop, task)
 	}
 	if len(p.basePlan.children) == 0 {
 		task = &rootTaskProfile{p: p.basePlan.self.(PhysicalPlan)}
@@ -518,11 +549,9 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		if prop.taskTp == copSingleReadTask {
 			return &copTaskProfile{cst: math.MaxFloat64}, nil
 		}
-	} else {
+	} else if prop.taskTp == copDoubleReadTask {
 		// If it's parent requires double read task, return max cost.
-		if prop.taskTp == copDoubleReadTask {
-			return &copTaskProfile{cst: math.MaxFloat64}, nil
-		}
+		return &copTaskProfile{cst: math.MaxFloat64}, nil
 	}
 	var indexCols []*expression.Column
 	for _, col := range idx.Columns {
@@ -565,7 +594,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		task = prop.enforceProperty(task, p.ctx, p.allocator)
 	}
 	if prop.taskTp == rootTask {
-		finishCopTask(task, p.ctx, p.allocator)
+		task = finishCopTask(task, p.ctx, p.allocator)
 	}
 	return task, nil
 }
@@ -676,7 +705,7 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task taskProfile, e
 		task = prop.enforceProperty(task, p.ctx, p.allocator)
 	}
 	if prop.taskTp == rootTask {
-		finishCopTask(task, p.ctx, p.allocator)
+		task = finishCopTask(task, p.ctx, p.allocator)
 	}
 	return task, nil
 }
@@ -691,7 +720,8 @@ func (p *Union) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error)
 	}
 	if prop.taskTp != rootTask {
 		// Union can only return rootTask.
-		return &copTaskProfile{cst: math.MaxFloat64}, p.storeTaskProfile(prop, task)
+		task = &copTaskProfile{cst: math.MaxFloat64}
+		return task, p.storeTaskProfile(prop, task)
 	}
 	// Union is a sort blocker. We can only enforce it.
 	tasks := make([]taskProfile, 0, len(p.children))
