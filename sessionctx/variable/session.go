@@ -286,6 +286,15 @@ func (s *SessionVars) GetNextPreparedStmtID() uint32 {
 	return s.preparedStmtID
 }
 
+// GetTimeZone returns the value of time_zone session variable.
+func (s *SessionVars) GetTimeZone() *time.Location {
+	loc := s.TimeZone
+	if loc == nil {
+		loc = time.Local
+	}
+	return loc
+}
+
 // special session variables.
 const (
 	SQLModeVar          = "sql_mode"
@@ -300,6 +309,10 @@ type TableDelta struct {
 	Delta int64
 	Count int64
 }
+
+// GoSQLDriverTest is used for server testing.
+// Because go-sql-driver regards the warnings as errors.
+var GoSQLDriverTest = false
 
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.

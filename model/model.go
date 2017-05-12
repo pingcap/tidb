@@ -16,6 +16,7 @@ package model
 import (
 	"strings"
 
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -117,6 +118,18 @@ func (t *TableInfo) Clone() *TableInfo {
 	}
 
 	return &nt
+}
+
+// GetPkName will return the pk name if pk exists.
+func (t *TableInfo) GetPkName() CIStr {
+	if t.PKIsHandle {
+		for _, colInfo := range t.Columns {
+			if mysql.HasPriKeyFlag(colInfo.Flag) {
+				return colInfo.Name
+			}
+		}
+	}
+	return CIStr{}
 }
 
 // IndexColumn provides index column info.

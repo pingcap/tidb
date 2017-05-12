@@ -1131,7 +1131,11 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 }
 
 func (s *testSuite) TestPointGet(c *C) {
-	defer testleak.AfterTest(c)()
+	plan.UseDAGPlanBuilder = true
+	defer func() {
+		plan.UseDAGPlanBuilder = false
+		testleak.AfterTest(c)()
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use mysql")
 	ctx := tk.Se.(context.Context)
@@ -1293,6 +1297,7 @@ func (s *testSuite) TestScanControlSelection(c *C) {
 }
 
 func (s *testSuite) TestSimpleDAG(c *C) {
+	plan.UseDAGPlanBuilder = true
 	defer func() {
 		plan.UseDAGPlanBuilder = false
 		s.cleanEnv(c)
@@ -1303,7 +1308,6 @@ func (s *testSuite) TestSimpleDAG(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, c int)")
 	tk.MustExec("insert into t values (1, 1, 1), (2, 1, 1), (3, 1, 2), (4, 2, 3)")
-	plan.UseDAGPlanBuilder = true
 	tk.MustQuery("select a from t").Check(testkit.Rows("1", "2", "3", "4"))
 	tk.MustQuery("select * from t where a = 4").Check(testkit.Rows("4 2 3"))
 	tk.MustQuery("select a from t limit 1").Check(testkit.Rows("1"))
@@ -1359,4 +1363,29 @@ func (s *testSuite) TestConvertToBit(c *C) {
 	tk.MustExec(`insert t1 value ('09-01-01')`)
 	tk.MustExec(`insert t select a from t1`)
 	tk.MustQuery("select a+0 from t").Check(testkit.Rows("20090101000000"))
+}
+
+func (s *testSuite) TestTimestampTimeZone(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t (ts timestamp)")
+	tk.MustExec("set time_zone = '+00:00'")
+	tk.MustExec("insert into t values ('2017-04-27 22:40:42')")
+	// The timestamp will get different value if time_zone session variable changes.
+	tests := []struct {
+		timezone string
+		expect   string
+	}{
+		{"+10:00", "2017-04-28 08:40:42"},
+		{"-6:00", "2017-04-27 16:40:42"},
+	}
+	for _, tt := range tests {
+		tk.MustExec(fmt.Sprintf("set time_zone = '%s'", tt.timezone))
+		tk.MustQuery(fmt.Sprintf("select * from t where ts = '%s'", tt.expect)).Check(testkit.Rows(tt.expect))
+	}
 }

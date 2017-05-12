@@ -83,6 +83,25 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 	return p, nil
 }
 
+// BuildLogicalPlan is exported and only used for test.
+func BuildLogicalPlan(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
+	// We have to infer type again because after parameter is set, the expression type may change.
+	if err := expression.InferType(ctx.GetSessionVars().StmtCtx, node); err != nil {
+		return nil, errors.Trace(err)
+	}
+	builder := &planBuilder{
+		ctx:       ctx,
+		is:        is,
+		colMapper: make(map[*ast.ColumnNameExpr]int),
+		allocator: new(idAllocator),
+	}
+	p := builder.build(node)
+	if builder.err != nil {
+		return nil, errors.Trace(builder.err)
+	}
+	return p, nil
+}
+
 func checkPrivilege(pm privilege.Manager, vs []visitInfo) bool {
 	for _, v := range vs {
 		if !pm.RequestVerification(v.db, v.table, v.column, v.privilege) {
@@ -100,10 +119,10 @@ func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context, allocator *
 	if !AllowCartesianProduct && existsCartesianProduct(logic) {
 		return nil, errors.Trace(ErrCartesianProductUnsupported)
 	}
-	logic.ResolveIndicesAndCorCols()
 	if UseDAGPlanBuilder {
 		return dagPhysicalOptimize(logic)
 	}
+	logic.ResolveIndices()
 	return physicalOptimize(flag, logic, allocator)
 }
 
@@ -129,7 +148,9 @@ func dagPhysicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return EliminateProjection(task.plan()), nil
+	p := EliminateProjection(task.plan())
+	p.ResolveIndices()
+	return p, nil
 }
 
 func physicalOptimize(flag uint64, logic LogicalPlan, allocator *idAllocator) (PhysicalPlan, error) {

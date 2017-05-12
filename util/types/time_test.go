@@ -337,18 +337,6 @@ func (s *testTimeSuite) TestCodec(c *C) {
 
 	var t1 Time
 	t1.Type = mysql.TypeTimestamp
-
-	z := s.getLocation(c)
-	local = z
-	err = t1.FromPackedUint(packed)
-	c.Assert(err, IsNil)
-	c.Assert(t.String(), Not(Equals), t1.String())
-
-	local = time.Local
-	err = t1.FromPackedUint(packed)
-	c.Assert(err, IsNil)
-	c.Assert(t.String(), Equals, t1.String())
-
 	t1.Time = FromGoTime(time.Now())
 	packed, err = t1.ToPackedUint()
 	c.Assert(err, IsNil)
@@ -786,5 +774,21 @@ func (s *testTimeSuite) TestTamestampDiff(c *C) {
 		t1 := Time{test.t1, mysql.TypeDatetime, 6}
 		t2 := Time{test.t2, mysql.TypeDatetime, 6}
 		c.Assert(TimestampDiff(test.unit, t1, t2), Equals, test.expect)
+	}
+}
+
+func (s *testTimeSuite) TestDateFSP(c *C) {
+	tests := []struct {
+		date   string
+		expect int
+	}{
+		{"2004-01-01 12:00:00.111", 3},
+		{"2004-01-01 12:00:00.11", 2},
+		{"2004-01-01 12:00:00.111111", 6},
+		{"2004-01-01 12:00:00", 0},
+	}
+
+	for _, test := range tests {
+		c.Assert(DateFSP(test.date), Equals, test.expect)
 	}
 }
