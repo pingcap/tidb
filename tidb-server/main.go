@@ -118,7 +118,7 @@ func main() {
 	plan.AllowCartesianProduct = *crossJoin
 	// Call this before setting log level to make sure that TiDB info could be printed.
 	printer.PrintTiDBInfo()
-	logutil.SetLevel(cfg.LogLevel)
+	logutil.SetLevelByString(cfg.LogLevel)
 
 	store := createStore()
 

@@ -185,7 +185,7 @@ func InitFileLog(cfg *FileLogConfig) error {
 }
 
 // SetLevel sets current log level by string represent.
-func SetLevel(level string) {
+func SetLevelByString(level string) {
 	log.SetLevel(stringToLogLevel(level))
 }
 
