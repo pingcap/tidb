@@ -93,6 +93,9 @@ type PhysicalIndexReader struct {
 	// IndexPlans flats the indexPlan to construct executor pb.
 	IndexPlans []PhysicalPlan
 	indexPlan  PhysicalPlan
+
+	// OutputColumns represents the columns that index reader should return.
+	OutputColumns []*expression.Column
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -961,6 +964,15 @@ func (p *Union) Copy() PhysicalPlan {
 
 // Copy implements the PhysicalPlan Copy interface.
 func (p *Sort) Copy() PhysicalPlan {
+	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
+	return &np
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *TopN) Copy() PhysicalPlan {
 	np := *p
 	np.basePlan = p.basePlan.copy()
 	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
