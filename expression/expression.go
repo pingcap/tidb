@@ -169,7 +169,10 @@ func evalExprToString(expr Expression, row []types.Datum, _ *variable.StatementC
 	}
 	tc := expr.GetType().ToClass()
 	if tc == types.ClassString {
-		// here we cannot use val.GetString() directly,
+		// We cannot use val.GetString() directly.
+		// For example, `Bit` is regarded as ClassString,
+		// while we can not use val.GetString() to get the value of a Bit variable,
+		// because value of `Bit` is stored in Datum.i while val.GetString() get value from Datum.b.
 		res, err = val.ToString()
 		return res, false, errors.Trace(err)
 	}
