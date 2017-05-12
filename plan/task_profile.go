@@ -353,7 +353,7 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 	gkType := types.NewFieldType(mysql.TypeBlob)
 	gkType.Charset = charset.CharsetBin
 	gkType.Collate = charset.CollationBin
-	partialSchema := expression.NewSchema(&expression.Column{RetType: gkType, FromID: p.id, Index: 0})
+	partialSchema := expression.NewSchema(&expression.Column{RetType: gkType, FromID: p.id, Position: 0})
 	partialAgg.SetSchema(partialSchema)
 	cursor := 0
 	finalAggFuncs := make([]expression.AggregationFunction, len(finalAgg.AggFuncs))
@@ -367,13 +367,13 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 			ft.Flen = 21
 			ft.Charset = charset.CharsetBin
 			ft.Collate = charset.CollationBin
-			partialSchema.Append(&expression.Column{Index: cursor, ColName: colName, RetType: ft})
+			partialSchema.Append(&expression.Column{Position: cursor, ColName: colName, RetType: ft})
 			args = append(args, partialSchema.Columns[cursor].Clone())
 		}
 		if needValue(fun) {
 			cursor++
 			ft := p.schema.Columns[i].GetType()
-			partialSchema.Append(&expression.Column{Index: cursor, ColName: colName, RetType: ft})
+			partialSchema.Append(&expression.Column{Position: cursor, ColName: colName, RetType: ft})
 			args = append(args, partialSchema.Columns[cursor].Clone())
 		}
 		fun.SetArgs(args)
