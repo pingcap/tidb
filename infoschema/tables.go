@@ -849,7 +849,7 @@ func dataForTableConstraints(schemas []*model.DBInfo) [][]types.Datum {
 }
 
 func dataForKeyColumnUsage(schemas []*model.DBInfo) [][]types.Datum {
-	rows := make([][]types.Datum, len(schemas)) // The capacity is not accurate, but it is not a big problem.
+	rows := make([][]types.Datum, 0, len(schemas)) // The capacity is not accurate, but it is not a big problem.
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
 			rs := keyColumnUsageInTable(schema, table)
