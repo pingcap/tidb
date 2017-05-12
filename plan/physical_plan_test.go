@@ -158,13 +158,13 @@ func (s *testPlanSuite) TestPushDownOrderByAndLimit(c *C) {
 		{
 			sql:          "select * from t order by d limit 1",
 			best:         "Table(t)->Sort + Limit(1) + Offset(0)",
-			orderByItmes: "[(test.t.d, false)]",
+			orderByItmes: "[test.t.d]",
 			limit:        "1",
 		},
 		{
 			sql:          "select * from t where c > 0 order by d limit 1",
 			best:         "Index(t.c_d_e)[(0 +inf,+inf +inf]]->Sort + Limit(1) + Offset(0)",
-			orderByItmes: "[(test.t.d, false)]",
+			orderByItmes: "[test.t.d]",
 			limit:        "1",
 		},
 		{
