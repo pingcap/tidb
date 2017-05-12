@@ -18,8 +18,6 @@
 package expression
 
 import (
-	"strconv"
-
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -33,7 +31,9 @@ type baseBuiltinFunc struct {
 	argValues     []types.Datum
 	ctx           context.Context
 	deterministic bool
-	self          builtinFunc
+	// self points to the built-in function signature which contains this baseBuiltinFunc.
+	// TODO: self will be removed after all built-in function signatures implement EvalXXX().
+	self builtinFunc
 }
 
 func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc {
@@ -128,6 +128,7 @@ func (b *baseBuiltinFunc) getCtx() context.Context {
 }
 
 // baseIntBuiltinFunc represents the functions which return int values.
+// TODO: baseIntBuiltinFunc will be removed later after all built-in function signatures been implemented.
 type baseIntBuiltinFunc struct {
 	baseBuiltinFunc
 }
@@ -147,30 +148,19 @@ func (b *baseIntBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
 }
 
 func (b *baseIntBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
-	iVal, isNull, err := b.self.evalInt(row)
-	if err != nil || isNull {
-		return 0, isNull, errors.Trace(err)
-	}
-	return float64(iVal), false, nil
+	panic("cannot get REAL result from ClassInt expression")
 }
 
 func (b *baseIntBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
-	iVal, isNull, err := b.self.evalInt(row)
-	if err != nil || isNull {
-		return nil, isNull, errors.Trace(err)
-	}
-	return types.NewDecFromInt(iVal), false, nil
+	panic("cannot get DECIMAL result from ClassInt expression")
 }
 
 func (b *baseIntBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
-	iVal, isNull, err := b.self.evalInt(row)
-	if err != nil || isNull {
-		return "", isNull, errors.Trace(err)
-	}
-	return strconv.FormatInt(iVal, 10), false, nil
+	panic("cannot get STRING result from ClassInt expression")
 }
 
 // baseRealBuiltinFunc represents the functions which return real values.
+// TODO: baseRealBuiltinFunc will be removed later after all built-in function signatures been implemented.
 type baseRealBuiltinFunc struct {
 	baseBuiltinFunc
 }
@@ -190,35 +180,19 @@ func (b *baseRealBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error)
 }
 
 func (b *baseRealBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
-	val, isNull, err := b.self.evalReal(row)
-	if err != nil || isNull {
-		return 0, isNull, errors.Trace(err)
-	}
-	return int64(val), false, nil
+	panic("cannot get INT result from ClassReal expression")
 }
 
 func (b *baseRealBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
-	val, isNull, err := b.self.evalReal(row)
-	if err != nil || isNull {
-		return nil, isNull, errors.Trace(err)
-	}
-	res := new(types.MyDecimal)
-	res.FromFloat64(val)
-	if err != nil {
-		return nil, false, errors.Trace(err)
-	}
-	return res, false, nil
+	panic("cannot get DECIMAL result from ClassReal expression")
 }
 
 func (b *baseRealBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
-	val, isNull, err := b.self.evalReal(row)
-	if err != nil || isNull {
-		return "", isNull, errors.Trace(err)
-	}
-	return strconv.FormatFloat(val, 'f', -1, 64), false, nil
+	panic("cannot get STRING result from ClassReal expression")
 }
 
 // baseDecimalBuiltinFunc represents the functions which return decimal values.
+// TODO: baseDecimalBuiltinFunc will be removed later after all built-in function signatures been implemented.
 type baseDecimalBuiltinFunc struct {
 	baseBuiltinFunc
 }
@@ -238,32 +212,19 @@ func (b *baseDecimalBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecima
 }
 
 func (b *baseDecimalBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
-	val, isNull, err := b.self.evalDecimal(row)
-	if err != nil || isNull {
-		return 0, isNull, errors.Trace(err)
-	}
-	res, err := val.ToInt()
-	return res, false, errors.Trace(err)
+	panic("cannot get INT result from ClassDecimal expression")
 }
 
 func (b *baseDecimalBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
-	val, isNull, err := b.self.evalDecimal(row)
-	if err != nil || isNull {
-		return 0, isNull, errors.Trace(err)
-	}
-	res, err := val.ToFloat64()
-	return res, false, errors.Trace(err)
+	panic("cannot get REAL result from ClassDecimal expression")
 }
 
 func (b *baseDecimalBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
-	val, isNull, err := b.self.evalDecimal(row)
-	if err != nil || isNull {
-		return "", isNull, errors.Trace(err)
-	}
-	return string(val.ToString()), false, errors.Trace(err)
+	panic("cannot get REAL result from ClassDecimal expression")
 }
 
 // baseStringBuiltinFunc represents the functions which return string values.
+// TODO: baseStringBuiltinFunc will be removed later after all built-in function signatures been implemented.
 type baseStringBuiltinFunc struct {
 	baseBuiltinFunc
 }
@@ -283,31 +244,15 @@ func (b *baseStringBuiltinFunc) evalString(row []types.Datum) (string, bool, err
 }
 
 func (b *baseStringBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
-	val, isNull, err := b.self.evalString(row)
-	if err != nil || isNull {
-		return 0, isNull, errors.Trace(err)
-	}
-	res, err := strconv.ParseInt(val, 10, 64)
-	return res, false, errors.Trace(err)
+	panic("cannot get INT result from ClassString expression")
 }
 
 func (b *baseStringBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
-	val, isNull, err := b.self.evalString(row)
-	if err != nil || isNull {
-		return 0, isNull, errors.Trace(err)
-	}
-	res, err := strconv.ParseFloat(val, 64)
-	return res, false, errors.Trace(err)
+	panic("cannot get REAL result from ClassString expression")
 }
 
 func (b *baseStringBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
-	val, isNull, err := b.self.evalString(row)
-	if err != nil || isNull {
-		return nil, isNull, errors.Trace(err)
-	}
-	res := new(types.MyDecimal)
-	err = res.FromString([]byte(val))
-	return res, false, errors.Trace(err)
+	panic("cannot get DECIMAL result from ClassString expression")
 }
 
 // builtinFunc stands for a particular function signature.
