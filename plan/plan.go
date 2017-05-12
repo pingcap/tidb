@@ -182,7 +182,7 @@ type LogicalPlan interface {
 	buildKeyInfo()
 
 	// pushDownTopN will push down the topN or limit operator during logical optimization.
-	pushDownTopN(topN *Sort) LogicalPlan
+	pushDownTopN(topN *TopN) LogicalPlan
 }
 
 // PhysicalPlan is a tree of the physical operators.

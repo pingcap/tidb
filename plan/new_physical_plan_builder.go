@@ -229,19 +229,19 @@ func (p *LogicalJoin) convert2HashJoin(prop *requiredProp) (taskProfile, error) 
 	return task, nil
 }
 
-// getPushedProp will check if this sort property can be pushed or not. In order to simplify the problem, we only
+// getPropByOrderByItems will check if this sort property can be pushed or not. In order to simplify the problem, we only
 // consider the case that all expression are columns and all of them are asc or desc.
-func (p *Sort) getPushedProp() (*requiredProp, bool) {
+func getPropByOrderByItems(items []*ByItems) (*requiredProp, bool) {
 	desc := false
-	cols := make([]*expression.Column, 0, len(p.ByItems))
-	for i, item := range p.ByItems {
+	cols := make([]*expression.Column, 0, len(items))
+	for i, item := range items {
 		col, ok := item.Expr.(*expression.Column)
 		if !ok {
 			return nil, false
 		}
 		cols = append(cols, col)
 		desc = item.Desc
-		if i > 0 && item.Desc != p.ByItems[i-1].Desc {
+		if i > 0 && item.Desc != items[i-1].Desc {
 			return nil, false
 		}
 	}
@@ -265,20 +265,46 @@ func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) 
 		return nil, errors.Trace(err)
 	}
 	task = p.attach2TaskProfile(task)
-	newProp, canPassProp := p.getPushedProp()
+	newProp, canPassProp := getPropByOrderByItems(p.ByItems)
 	if canPassProp {
 		orderedTask, err := p.children[0].(LogicalPlan).convert2NewPhysicalPlan(newProp)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		// Leave the limit.
-		if p.ExecLimit != nil {
-			limit := Limit{Offset: p.ExecLimit.Offset, Count: p.ExecLimit.Count}.init(p.allocator, p.ctx)
-			limit.SetSchema(p.schema)
-			orderedTask = limit.attach2TaskProfile(orderedTask)
-		} else if cop, ok := orderedTask.(*copTaskProfile); ok {
+		if cop, ok := orderedTask.(*copTaskProfile); ok {
 			orderedTask = finishCopTask(cop, p.ctx, p.allocator)
 		}
+		if orderedTask.cost() < task.cost() {
+			task = orderedTask
+		}
+	}
+	task = prop.enforceProperty(task, p.ctx, p.allocator)
+	return task, p.storeTaskProfile(prop, task)
+}
+
+func (p *TopN) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) {
+	task, err := p.getTaskProfile(prop)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if task != nil {
+		return task, nil
+	}
+	// enforce branch
+	task, err = p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	task = p.attach2TaskProfile(task)
+	newProp, canPassProp := getPropByOrderByItems(p.ByItems)
+	if canPassProp {
+		orderedTask, err := p.children[0].(LogicalPlan).convert2NewPhysicalPlan(newProp)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		limit := Limit{Offset: p.Offset, Count: p.Count}.init(p.allocator, p.ctx)
+		limit.SetSchema(p.schema)
+		orderedTask = limit.attach2TaskProfile(orderedTask)
 		if orderedTask.cost() < task.cost() {
 			task = orderedTask
 		}

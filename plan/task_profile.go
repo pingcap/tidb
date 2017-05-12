@@ -230,17 +230,15 @@ func (p *Limit) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 }
 
 func (p *Sort) getCost(count float64) float64 {
-	if p.ExecLimit == nil {
-		return count*cpuFactor + count*memoryFactor
-	}
-	return count*cpuFactor + float64(p.ExecLimit.Count)*memoryFactor
+	return count*cpuFactor + count*memoryFactor
 }
 
-// canPushDown check if this topN can be pushed down. If each of the expression can be converted to pb, it can be pushed.
-func (p *Sort) canPushDown() bool {
-	if p.ExecLimit == nil {
-		return false
-	}
+func (p *TopN) getCost(count float64) float64 {
+	return count*cpuFactor + float64(p.Count)*memoryFactor
+}
+
+// canPushDown checks if this topN can be pushed down. If each of the expression can be converted to pb, it can be pushed.
+func (p *TopN) canPushDown() bool {
 	exprs := make([]expression.Expression, 0, len(p.ByItems))
 	for _, item := range p.ByItems {
 		exprs = append(exprs, item.Expr)
@@ -249,7 +247,7 @@ func (p *Sort) canPushDown() bool {
 	return len(remained) == 0
 }
 
-func (p *Sort) allColsFromSchema(schema *expression.Schema) bool {
+func (p *TopN) allColsFromSchema(schema *expression.Schema) bool {
 	var cols []*expression.Column
 	for _, item := range p.ByItems {
 		cols = append(cols, expression.ExtractColumns(item.Expr)...)
@@ -259,19 +257,19 @@ func (p *Sort) allColsFromSchema(schema *expression.Schema) bool {
 
 func (p *Sort) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 	profile := profiles[0].copy()
-	// If this is a Sort , we cannot push it down.
-	if p.ExecLimit == nil {
-		profile = finishCopTask(profile, p.ctx, p.allocator)
-		profile = attachPlan2TaskProfile(p.Copy(), profile)
-		profile.addCost(p.getCost(profile.count()))
-		return profile
-	}
+	profile = finishCopTask(profile, p.ctx, p.allocator)
+	profile = attachPlan2TaskProfile(p.Copy(), profile)
+	profile.addCost(p.getCost(profile.count()))
+	return profile
+}
+
+func (p *TopN) attach2TaskProfile(profiles ...taskProfile) taskProfile {
+	profile := profiles[0].copy()
 	// This is a topN plan.
 	if copTask, ok := profile.(*copTaskProfile); ok && p.canPushDown() {
-		limit := p.ExecLimit
-		pushedDownTopN := p.Copy().(*Sort)
+		pushedDownTopN := p.Copy().(*TopN)
 		// When topN is pushed down, it should remove its offset.
-		pushedDownTopN.ExecLimit = &Limit{Count: limit.Count + limit.Offset}
+		pushedDownTopN.Count, pushedDownTopN.Offset = p.Count+p.Offset, 0
 		// If all columns in topN are from index plan, we can push it to index plan. Or we finish the index plan and
 		// push it to table plan.
 		if !copTask.indexPlanFinished && p.allColsFromSchema(copTask.indexPlan.Schema()) {
@@ -287,12 +285,12 @@ func (p *Sort) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 			pushedDownTopN.SetSchema(copTask.tablePlan.Schema())
 		}
 		copTask.addCost(pushedDownTopN.getCost(profile.count()))
-		copTask.setCount(float64(pushedDownTopN.ExecLimit.Count))
+		copTask.setCount(float64(pushedDownTopN.Count))
 	}
 	profile = finishCopTask(profile, p.ctx, p.allocator)
 	profile = attachPlan2TaskProfile(p.Copy(), profile)
 	profile.addCost(p.getCost(profile.count()))
-	profile.setCount(float64(p.ExecLimit.Count))
+	profile.setCount(float64(p.Count))
 	return profile
 }
 
