@@ -1162,4 +1162,18 @@ func (s *testDBSuite) TestChangeColumnPosition(c *C) {
 	s.tk.MustExec("alter table position modify column a int default 5 first")
 	s.tk.MustExec("insert into position value ()")
 	s.tk.MustQuery("select * from position").Check(testkit.Rows("5"))
+
+	s.tk.MustExec("drop table position")
+	s.tk.MustExec("create table position (a int, b int)")
+	s.tk.MustExec("alter table position add index t(b)")
+	s.tk.MustExec("alter table position change column b c int first")
+	createSQL := s.tk.MustQuery("show create table position").Rows()[0][1]
+	exceptedSQL := []string{
+		"CREATE TABLE `position` (",
+		"  `c` int(11) DEFAULT NULL,",
+		"  `a` int(11) DEFAULT NULL,",
+		"  KEY `t` (`c`)",
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
+	}
+	c.Assert(createSQL, Equals, strings.Join(exceptedSQL, "\n"))
 }

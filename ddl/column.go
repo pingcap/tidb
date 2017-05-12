@@ -434,21 +434,18 @@ func (d *ddl) onModifyColumn(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	}
 
-	if pos.Tp == ast.ColumnPositionNone {
-		return errors.Trace(d.updateColumn(t, job, newCol, oldColName))
-	}
-	return errors.Trace(d.modifyColumnPosition(t, job, newCol, oldColName, pos))
-
+	return errors.Trace(d.doModifyColumn(t, job, newCol, oldColName, pos))
 }
 
-// modifyColumnPosition put column at designated position, and change offset and column name in indices.
-func (d *ddl) modifyColumnPosition(t *meta.Meta, job *model.Job, col *model.ColumnInfo, oldName *model.CIStr, pos *ast.ColumnPosition) error {
+// doModifyColumn update the column information and reorder all column.
+func (d *ddl) doModifyColumn(t *meta.Meta, job *model.Job, col *model.ColumnInfo, oldName *model.CIStr, pos *ast.ColumnPosition) error {
 	tblInfo, err := getTableInfo(t, job, job.SchemaID)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	if pos.Tp == ast.ColumnPositionAfter && oldName.L == pos.RelativeColumn.Name.L {
+		// `alter table modify column b int after b` will return ErrColumnNotExists.
 		job.State = model.JobCancelled
 		return infoschema.ErrColumnNotExists.GenByArgs(oldName, tblInfo.Name)
 	}
@@ -459,7 +456,8 @@ func (d *ddl) modifyColumnPosition(t *meta.Meta, job *model.Job, col *model.Colu
 		return infoschema.ErrColumnNotExists.GenByArgs(oldName, tblInfo.Name)
 	}
 
-	oldPos, newPos := oldCol.Offset, 0
+	// calculate column's new position.
+	oldPos, newPos := oldCol.Offset, oldCol.Offset
 	if pos.Tp == ast.ColumnPositionAfter {
 		relative := findCol(tblInfo.Columns, pos.RelativeColumn.Name.L)
 		if relative == nil || relative.State != model.StatePublic {
@@ -472,37 +470,40 @@ func (d *ddl) modifyColumnPosition(t *meta.Meta, job *model.Job, col *model.Colu
 		} else {
 			newPos = relative.Offset
 		}
+	} else if pos.Tp == ast.ColumnPositionFirst {
+		newPos = 0
 	}
+
+	columnChanged := make(map[string]*model.ColumnInfo)
+	columnChanged[oldName.L] = col
 
 	if newPos == oldPos {
 		tblInfo.Columns[newPos] = col
 	} else {
 		cols := tblInfo.Columns
+
+		// reorder columns in place.
 		if newPos < oldPos {
-			_ = append(cols[:newPos+1], cols[newPos:oldPos]...)
+			copy(cols[newPos+1:], cols[newPos:oldPos])
 		} else {
-			_ = append(cols[:oldPos], cols[oldPos+1:newPos+1]...)
+			copy(cols[oldPos:], cols[oldPos+1:newPos+1])
 		}
 		cols[newPos] = col
 
-		offsetChanged := make(map[int]int)
 		for i, col := range tblInfo.Columns {
 			if col.Offset != i {
-				offsetChanged[col.Offset] = i
+				columnChanged[col.Name.L] = col
 				col.Offset = i
 			}
 		}
+	}
 
-		for _, idx := range tblInfo.Indices {
-			for _, c := range idx.Columns {
-				newOffset, ok := offsetChanged[c.Offset]
-				if ok {
-					c.Offset = newOffset
-				}
-
-				if c.Name.L == oldName.L {
-					c.Name = col.Name
-				}
+	// change offset and name in indices.
+	for _, idx := range tblInfo.Indices {
+		for _, c := range idx.Columns {
+			if newCol, ok := columnChanged[c.Name.L]; ok {
+				c.Name = newCol.Name
+				c.Offset = newCol.Offset
 			}
 		}
 	}
