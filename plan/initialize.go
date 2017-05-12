@@ -48,6 +48,8 @@ const (
 	TypeIdxScan = "IndexScan"
 	// TypeSort is the type of Sort.
 	TypeSort = "Sort"
+	// TypeTopN is the type of TopN.
+	TypeTopN = "TopN"
 	// TypeLimit is the type of Limit.
 	TypeLimit = "Limit"
 	// TypeHashSemiJoin is the type of hash semi join.
@@ -129,6 +131,13 @@ func (p Union) init(allocator *idAllocator, ctx context.Context) *Union {
 
 func (p Sort) init(allocator *idAllocator, ctx context.Context) *Sort {
 	p.basePlan = newBasePlan(TypeSort, allocator, ctx, &p)
+	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	return &p
+}
+
+func (p TopN) init(allocator *idAllocator, ctx context.Context) *TopN {
+	p.basePlan = newBasePlan(TypeTopN, allocator, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
