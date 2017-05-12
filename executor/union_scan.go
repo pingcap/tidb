@@ -94,6 +94,7 @@ type UnionScanExec struct {
 	usedIndex  []int
 	desc       bool
 	conditions []expression.Expression
+	columns    []*model.ColumnInfo
 
 	addedRows   []*Row
 	cursor      int
@@ -229,13 +230,7 @@ func (us *UnionScanExec) buildAndSortAddedRows(t table.Table, asName *model.CISt
 			newData = data
 		} else {
 			newData = make([]types.Datum, 0, us.schema.Len())
-			var columns []*model.ColumnInfo
-			if t, ok := us.children[0].(*XSelectTableExec); ok {
-				columns = t.Columns
-			} else {
-				columns = us.children[0].(*XSelectIndexExec).columns
-			}
-			for _, col := range columns {
+			for _, col := range us.columns {
 				newData = append(newData, data[col.Offset])
 			}
 		}
