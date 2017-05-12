@@ -831,7 +831,7 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
 		p, err = logicalOptimize(flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagAggregationOptimize, lp.(LogicalPlan), builder.ctx, builder.allocator)
-		lp.ResolveIndicesAndCorCols()
+		lp.ResolveIndices()
 		c.Assert(err, IsNil)
 		c.Assert(ToString(lp), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
