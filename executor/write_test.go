@@ -808,7 +808,7 @@ func (s *testSuite) TestLoadDataSpecifiedCoumns(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec(`create table load_data_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 varchar(255) default "def", c3 int default 0);`)
-	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
+	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test (c1, c2)")
 	ctx := tk.Se.(context.Context)
 	ld := makeLoadDataInfo(2, []string{"c1", "c2"}, ctx, c)
 	// test
