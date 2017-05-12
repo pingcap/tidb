@@ -113,7 +113,7 @@ func batchRW(value []byte) {
 
 func main() {
 	flag.Parse()
-	log.SetLevelByString("error")
+	log.SetLevel(log.ErrorLevel)
 	Init()
 
 	value := make([]byte, *valueSize)
