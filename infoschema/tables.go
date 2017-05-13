@@ -799,8 +799,9 @@ func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]
 }
 
 const (
-	primaryKeyType = "PRIMARY KEY"
-	uniqueKeyType  = "UNIQUE"
+	primaryKeyType    = "PRIMARY KEY"
+	primaryConstraint = "PRIMARY"
+	uniqueKeyType     = "UNIQUE"
 )
 
 // dataForTableConstraints constructs data for table information_schema.constraints.See https://dev.mysql.com/doc/refman/5.7/en/table-constraints-table.html
@@ -842,6 +843,101 @@ func dataForTableConstraints(schemas []*model.DBInfo) [][]types.Datum {
 				)
 				rows = append(rows, record)
 			}
+		}
+	}
+	return rows
+}
+
+func dataForKeyColumnUsage(schemas []*model.DBInfo) [][]types.Datum {
+	rows := make([][]types.Datum, 0, len(schemas)) // The capacity is not accurate, but it is not a big problem.
+	for _, schema := range schemas {
+		for _, table := range schema.Tables {
+			rs := keyColumnUsageInTable(schema, table)
+			rows = append(rows, rs...)
+		}
+	}
+	return rows
+}
+
+func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]types.Datum {
+	rows := [][]types.Datum{}
+	if table.PKIsHandle {
+		for _, col := range table.Columns {
+			if mysql.HasPriKeyFlag(col.Flag) {
+				record := types.MakeDatums(
+					catalogVal,        // CONSTRAINT_CATALOG
+					schema.Name.O,     // CONSTRAINT_SCHEMA
+					primaryConstraint, // CONSTRAINT_NAME
+					catalogVal,        // TABLE_CATALOG
+					schema.Name.O,     // TABLE_SCHEMA
+					table.Name.O,      // TABLE_NAME
+					col.Name.O,        // COLUMN_NAME
+					1,                 // ORDINAL_POSITION
+					1,                 // POSITION_IN_UNIQUE_CONSTRAINT
+					nil,               // REFERENCED_TABLE_SCHEMA
+					nil,               // REFERENCED_TABLE_NAME
+					nil,               // REFERENCED_COLUMN_NAME
+				)
+				rows = append(rows, record)
+				break
+			}
+		}
+	}
+	nameToCol := make(map[string]*model.ColumnInfo, len(table.Columns))
+	for _, c := range table.Columns {
+		nameToCol[c.Name.L] = c
+	}
+	for _, index := range table.Indices {
+		var idxName string
+		if index.Primary {
+			idxName = primaryConstraint
+		} else if index.Unique {
+			idxName = index.Name.O
+		} else {
+			// Only handle unique/primary key
+			continue
+		}
+		for i, key := range index.Columns {
+			col := nameToCol[key.Name.L]
+			record := types.MakeDatums(
+				catalogVal,    // CONSTRAINT_CATALOG
+				schema.Name.O, // CONSTRAINT_SCHEMA
+				idxName,       // CONSTRAINT_NAME
+				catalogVal,    // TABLE_CATALOG
+				schema.Name.O, // TABLE_SCHEMA
+				table.Name.O,  // TABLE_NAME
+				col.Name.O,    // COLUMN_NAME
+				i+1,           // ORDINAL_POSITION,
+				nil,           // POSITION_IN_UNIQUE_CONSTRAINT
+				nil,           // REFERENCED_TABLE_SCHEMA
+				nil,           // REFERENCED_TABLE_NAME
+				nil,           // REFERENCED_COLUMN_NAME
+			)
+			rows = append(rows, record)
+		}
+	}
+	for _, fk := range table.ForeignKeys {
+		fkRefCol := ""
+		if len(fk.RefCols) > 0 {
+			fkRefCol = fk.RefCols[0].O
+		}
+		for i, key := range fk.Cols {
+			col := nameToCol[key.L]
+			record := types.MakeDatums(
+				catalogVal,    // CONSTRAINT_CATALOG
+				schema.Name.O, // CONSTRAINT_SCHEMA
+				fk.Name.O,     // CONSTRAINT_NAME
+				catalogVal,    // TABLE_CATALOG
+				schema.Name.O, // TABLE_SCHEMA
+				table.Name.O,  // TABLE_NAME
+				col.Name.O,    // COLUMN_NAME
+				i+1,           // ORDINAL_POSITION,
+				1,             // POSITION_IN_UNIQUE_CONSTRAINT
+				schema.Name.O, // REFERENCED_TABLE_SCHEMA
+				fk.RefTable.O, // REFERENCED_TABLE_NAME
+				fkRefCol,      // REFERENCED_COLUMN_NAME
+			)
+			rows = append(rows, record)
 		}
 	}
 	return rows
@@ -939,6 +1035,7 @@ func (it *infoschemaTable) getRows(ctx context.Context, cols []*table.Column) (f
 	case tableProfiling:
 	case tablePartitions:
 	case tableKeyColumm:
+		fullRows = dataForKeyColumnUsage(dbs)
 	case tableReferConst:
 	case tablePlugins, tableTriggers:
 	case tableUserPrivileges:

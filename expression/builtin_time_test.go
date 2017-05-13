@@ -1427,6 +1427,49 @@ func (s *testEvaluatorSuite) TestSecToTime(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestConvertTz(c *C) {
+	tests := []struct {
+		t       interface{}
+		fromTz  string
+		toTz    string
+		Success bool
+		expect  string
+	}{
+		{"2004-01-01 12:00:00.111", "-00:00", "+12:34", true, "2004-01-02 00:34:00.111"},
+		{"2004-01-01 12:00:00.11", "+00:00", "+12:34", true, "2004-01-02 00:34:00.11"},
+		{"2004-01-01 12:00:00.11111111111", "-00:00", "+12:34", true, "2004-01-02 00:34:00.111111"},
+		{"2004-01-01 12:00:00", "GMT", "MET", true, "2004-01-01 13:00:00"},
+		{"2004-01-01 12:00:00", "-01:00", "-12:00", true, "2004-01-01 01:00:00"},
+		{"2004-01-01 12:00:00", "-00:00", "+13:00", true, "2004-01-02 01:00:00"},
+		{"2004-01-01 12:00:00", "-00:00", "-13:00", true, ""},
+		{"2004-01-01 12:00:00", "-00:00", "-12:88", true, ""},
+		{"2004-01-01 12:00:00", "+10:82", "GMT", false, ""},
+		{"2004-01-01 12:00:00", "+00:00", "GMT", true, ""},
+		{"2004-01-01 12:00:00", "GMT", "+00:00", true, ""},
+		{20040101, "+00:00", "+10:32", true, "2004-01-01 10:32:00"},
+		{3.14159, "+00:00", "+10:32", false, ""},
+	}
+	fc := funcs[ast.ConvertTz]
+	for _, test := range tests {
+		f, err := fc.getFunction(
+			datumsToConstants(
+				[]types.Datum{
+					types.NewDatum(test.t),
+					types.NewStringDatum(test.fromTz),
+					types.NewStringDatum(test.toTz)}),
+			s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+		if test.Success {
+			c.Assert(err, IsNil)
+		} else {
+			c.Assert(err, NotNil)
+		}
+		result, _ := d.ToString()
+		c.Assert(result, Equals, test.expect)
+	}
+}
+
 func (s *testEvaluatorSuite) TestPeriodDiff(c *C) {
 	tests := []struct {
 		Period1 int64
