@@ -312,12 +312,14 @@ func (e *LoadDataInfo) RefreshTable() error {
 		columns = append(columns, col.Name.O)
 	}
 
-	if _, err := table.FindCols(tbl.WritableCols(), columns); err != nil {
+	cols, err := table.FindCols(tbl.WritableCols(), columns)
+	if err != nil {
 		return errors.Errorf("LOAD DATA %s: %s", e.Table.Meta().Name.O, err)
 	}
 
 	e.insertVal.Table = tbl
 	e.Table = tbl
+	e.columns = cols
 	return nil
 }
 
