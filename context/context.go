@@ -51,6 +51,10 @@ type Context interface {
 
 	GetSessionManager() util.SessionManager
 
+	// RefreshTxnCtx refreshs txn context immediately.
+	// now just for load data and batch insert.
+	RefreshTxnCtx() error
+
 	// ActivePendingTxn receives the pending transaction from the transaction channel.
 	// It should be called right before we builds an executor.
 	ActivePendingTxn() error

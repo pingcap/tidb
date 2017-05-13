@@ -1067,6 +1067,12 @@ func (s *session) prepareTxnCtx() {
 	}
 }
 
+// RefreshTxnCtx implements context.RefreshTxnCtx interface.
+func (s *session) RefreshTxnCtx() error {
+	s.prepareTxnCtx()
+	return errors.Trace(s.ActivePendingTxn())
+}
+
 // ActivePendingTxn implements Context.ActivePendingTxn interface.
 func (s *session) ActivePendingTxn() error {
 	if s.txn != nil && s.txn.Valid() {
