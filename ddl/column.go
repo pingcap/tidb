@@ -465,7 +465,7 @@ func (d *ddl) doModifyColumn(t *meta.Meta, job *model.Job, col *model.ColumnInfo
 			return infoschema.ErrColumnNotExists.GenByArgs(pos.RelativeColumn, tblInfo.Name)
 		}
 
-		if relative.Offset < col.Offset {
+		if relative.Offset < oldPos {
 			newPos = relative.Offset + 1
 		} else {
 			newPos = relative.Offset
