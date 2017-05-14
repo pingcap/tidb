@@ -116,8 +116,8 @@ type Client interface {
 	// Send sends request to KV layer, returns a Response.
 	Send(ctx goctx.Context, req *Request) Response
 
-	// SupportRequestType checks if reqType and subType is supported.
-	SupportRequestType(reqType, subType int64) bool
+	// IsRequestTypeSupported checks if reqType and subType is supported.
+	IsRequestTypeSupported(reqType, subType int64) bool
 }
 
 // ReqTypes.

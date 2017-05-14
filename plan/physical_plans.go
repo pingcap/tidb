@@ -336,7 +336,7 @@ func (p *physicalTableSource) addTopN(ctx context.Context, prop *requiredPropert
 		p.addLimit(prop.limit)
 		return true
 	}
-	if p.client == nil || !p.client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeTopN) {
+	if p.client == nil || !p.client.IsRequestTypeSupported(kv.ReqTypeSelect, kv.ReqSubTypeTopN) {
 		return false
 	}
 	if prop.limit == nil {
