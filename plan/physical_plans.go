@@ -139,9 +139,9 @@ type PhysicalIndexScan struct {
 	// If the query requires the columns that don't belong to index, DoubleRead will be true.
 	DoubleRead bool
 
-	// All conditions in AccessCondition[accessEqualCount:accessInAndEqCount] are IN expressions or equal conditions.
+	// accessInAndEqCount is counter of all conditions in AccessCondition[accessEqualCount:accessInAndEqCount].
 	accessInAndEqCount int
-	// All conditions in AccessCondition[:accessEqualCount] are equal conditions.
+	// accessEqualCount is counter of all conditions in AccessCondition[:accessEqualCount].
 	accessEqualCount int
 
 	TableAsName *model.CIStr
@@ -177,7 +177,6 @@ type physicalDistSQLPlan interface {
 	addAggregation(ctx context.Context, agg *PhysicalAggregation) *expression.Schema
 	addTopN(ctx context.Context, prop *requiredProperty) bool
 	addLimit(limit *Limit)
-	// scanCount means the original row count that need to be scanned and resultCount means the row count after scanning.
 	calculateCost(resultCount float64, scanCount float64) float64
 }
 
@@ -231,6 +230,7 @@ type physicalTableSource struct {
 	SortItemsPB []*tipb.ByItem
 
 	// The following fields are used for explaining and testing. Because pb structures are not human-readable.
+
 	aggFuncs              []expression.AggregationFunction
 	gbyItems              []expression.Expression
 	sortItems             []*ByItems
@@ -336,7 +336,7 @@ func (p *physicalTableSource) addTopN(ctx context.Context, prop *requiredPropert
 		p.addLimit(prop.limit)
 		return true
 	}
-	if p.client == nil || !p.client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeTopN) {
+	if p.client == nil || !p.client.IsRequestTypeSupported(kv.ReqTypeSelect, kv.ReqSubTypeTopN) {
 		return false
 	}
 	if prop.limit == nil {
@@ -432,7 +432,7 @@ type PhysicalTableScan struct {
 
 	TableAsName *model.CIStr
 
-	// If sort data by scanning pkcol, KeepOrder should be true.
+	// KeepOrder is true, if sort data by scanning pkcol,
 	KeepOrder bool
 }
 
