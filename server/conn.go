@@ -593,9 +593,6 @@ func insertDataWithCommit(prevData, curData []byte, loadDataInfo *executor.LoadD
 			break
 		}
 		// Make sure that there are no retries when committing.
-		if err = loadDataInfo.Ctx.Txn().Commit(); err != nil {
-			return nil, errors.Trace(err)
-		}
 		if err = loadDataInfo.Ctx.RefreshTxnCtx(); err != nil {
 			return nil, errors.Trace(err)
 		}

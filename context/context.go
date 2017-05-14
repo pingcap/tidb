@@ -51,7 +51,8 @@ type Context interface {
 
 	GetSessionManager() util.SessionManager
 
-	// RefreshTxnCtx refreshs txn context immediately.
+	// RefreshTxnCtx commit old transaction without retry,
+	// and create a new transation.
 	// now just for load data and batch insert.
 	RefreshTxnCtx() error
 
