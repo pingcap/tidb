@@ -395,7 +395,39 @@ type builtinPasswordSig struct {
 // eval evals a builtinPasswordSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
 func (b *builtinPasswordSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("PASSWORD")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+
+	arg := args[0]
+	if arg.IsNull() {
+		d.SetString("")
+		return d, nil
+	}
+
+	pass, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if pass == "" {
+		d.SetString("")
+		return d, nil
+	}
+
+	// Two stage SHA1 hash of the password
+	h1 := sha1.New()
+	h1.Write([]byte(pass))
+	hash1 := h1.Sum(nil)
+
+	h2 := sha1.New()
+	h2.Write(hash1)
+	hash2 := h2.Sum(nil)
+	ret := "*" + fmt.Sprintf("%X", hash2)
+	d.SetString(ret)
+
+	return d, nil
 }
 
 type randomBytesFunctionClass struct {
