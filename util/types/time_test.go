@@ -776,3 +776,19 @@ func (s *testTimeSuite) TestTamestampDiff(c *C) {
 		c.Assert(TimestampDiff(test.unit, t1, t2), Equals, test.expect)
 	}
 }
+
+func (s *testTimeSuite) TestDateFSP(c *C) {
+	tests := []struct {
+		date   string
+		expect int
+	}{
+		{"2004-01-01 12:00:00.111", 3},
+		{"2004-01-01 12:00:00.11", 2},
+		{"2004-01-01 12:00:00.111111", 6},
+		{"2004-01-01 12:00:00", 0},
+	}
+
+	for _, test := range tests {
+		c.Assert(DateFSP(test.date), Equals, test.expect)
+	}
+}

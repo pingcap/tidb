@@ -61,6 +61,9 @@ type Plan interface {
 	context() context.Context
 
 	extractCorrelatedCols() []*expression.CorrelatedColumn
+
+	// ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
+	ResolveIndices()
 }
 
 type columnProp struct {
@@ -163,9 +166,6 @@ type LogicalPlan interface {
 	// PruneColumns prunes the unused columns.
 	PruneColumns([]*expression.Column)
 
-	// ResolveIndicesAndCorCols resolves the index for columns and initializes the correlated columns.
-	ResolveIndicesAndCorCols()
-
 	// convert2PhysicalPlan converts the logical plan to the physical plan.
 	// It is called recursively from the parent to the children to create the result physical plan.
 	// Some logical plans will convert the children to the physical plans in different ways, and return the one
@@ -182,7 +182,7 @@ type LogicalPlan interface {
 	buildKeyInfo()
 
 	// pushDownTopN will push down the topN or limit operator during logical optimization.
-	pushDownTopN(topN *Sort) LogicalPlan
+	pushDownTopN(topN *TopN) LogicalPlan
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -352,13 +352,6 @@ func (p *basePlan) extractCorrelatedCols() []*expression.CorrelatedColumn {
 
 func (p *basePlan) Allocator() *idAllocator {
 	return p.allocator
-}
-
-// ResolveIndicesAndCorCols implements LogicalPlan interface.
-func (p *baseLogicalPlan) ResolveIndicesAndCorCols() {
-	for _, child := range p.basePlan.children {
-		child.(LogicalPlan).ResolveIndicesAndCorCols()
-	}
 }
 
 // PruneColumns implements LogicalPlan interface.

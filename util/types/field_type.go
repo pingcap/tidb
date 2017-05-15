@@ -75,6 +75,21 @@ func (ft *FieldType) ToClass() TypeClass {
 	}
 }
 
+func (tc TypeClass) String() string {
+	switch tc {
+	case ClassString:
+		return "ClassString"
+	case ClassReal:
+		return "ClassReal"
+	case ClassInt:
+		return "ClassInt"
+	case ClassDecimal:
+		return "ClassDecimal"
+	default:
+		return "ClassRow"
+	}
+}
+
 // ToType maps the type class to a type.
 func (tc TypeClass) ToType() byte {
 	switch tc {
