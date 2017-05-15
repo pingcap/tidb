@@ -75,6 +75,7 @@ func (c *columnProp) equal(nc *columnProp, ctx context.Context) bool {
 	return c.col.Equal(nc.col, ctx) && c.desc == nc.desc
 }
 
+// taskType is the type of execution task.
 type taskType int
 
 const (
@@ -98,8 +99,13 @@ func (t taskType) String() string {
 
 // requriedProp stands for the required order property by parents. It will be all asc or desc.
 type requiredProp struct {
-	cols   []*expression.Column
-	desc   bool
+	cols []*expression.Column
+	desc bool
+	// taskTp means the type of task that an operator requires.
+	// It needs to be specified because two different tasks can't be compared with cost directly.
+	// e.g. If a copTask takes less cost than a rootTask, we can't sure that we must choose the former one. Because the copTask
+	// must be finished and increase it's cost in sometime , but we can't make sure the finishing time. So the best way
+	// to let the comparision fair is to add taskType to required property.
 	taskTp taskType
 }
 

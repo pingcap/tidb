@@ -274,7 +274,7 @@ func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) 
 		return task, nil
 	}
 	if prop.taskTp != rootTask {
-		// TODO: This is a trick here, because a operator that can be pushed to Coprocessor can never be pushed across sort.
+		// TODO: This is a trick here, because an operator that can be pushed to Coprocessor can never be pushed across sort.
 		// e.g. If a aggregation want to be pushed, the SQL is always like select count(*) from t order by ...
 		// The Sort will on top of Aggregation. If the SQL is like select count(*) from (select * from s order by k).
 		// The Aggregation will also block by projection. In the future we will break this restriction.
