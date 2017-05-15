@@ -1,7 +1,7 @@
 #!groovy
 
 node {
-    def TIDB_TEST_BRANCH = "master"
+    def TIDB_TEST_BRANCH = "tiancaiamao/retry-infoschema-change"
     def TIKV_BRANCH = "master"
     def PD_BRANCH = "master"
 
