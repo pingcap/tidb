@@ -140,6 +140,7 @@ func (p *LogicalJoin) convert2MergeJoin(prop *requiredProp) (taskProfile, error)
 		LeftConditions:  p.LeftConditions,
 		RightConditions: p.RightConditions,
 		OtherConditions: p.OtherConditions,
+		DefaultValues:   p.DefaultValues,
 	}.init(p.allocator, p.ctx)
 	mergeJoin.SetSchema(p.schema)
 	lJoinKey := p.EqualConditions[0].GetArgs()[0].(*expression.Column)
