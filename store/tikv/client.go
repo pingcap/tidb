@@ -84,7 +84,7 @@ func (c *rpcClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 func (c *rpcClient) callRPC(ctx goctx.Context, conn *Conn, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 	resp := &tikvrpc.Response{}
 	resp.Type = req.Type
-	client := tikvpb.NewTiKVClient(conn.ClientConn)
+	client := tikvpb.NewTikvClient(conn.ClientConn)
 	switch req.Type {
 	case tikvrpc.CmdGet:
 		r, err := client.KvGet(ctx, req.Get)
