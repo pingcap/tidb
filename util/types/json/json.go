@@ -22,27 +22,22 @@ import (
 // JSON is for MySQL JSON type.
 type JSON interface {
 	getTypeCode() byte
-	writeBinaryRepresentation(buffer *bytes.Buffer)
-}
-
-// ParseFromString parses a json from string.
-func ParseFromString(s string) (JSON, error) {
-	return parseFromString(s)
-}
-
-// DumpToString dumps itself to string.
-func DumpToString(j JSON) string {
-	return dumpToString(j)
+	encode(buffer *bytes.Buffer)
 }
 
 // Serialize means serialize itself into bytes.
 func Serialize(j JSON) []byte {
-	return serialize(j)
+	var buffer = new(bytes.Buffer)
+	buffer.WriteByte(j.getTypeCode())
+	j.encode(buffer)
+	return buffer.Bytes()
 }
 
 // Deserialize means deserialize a json from bytes.
-func Deserialize(data []byte) (JSON, error) {
-	return deserialize(data)
+func Deserialize(data []byte) (j JSON, err error) {
+	j = jsonFromTypeCode(data[0])
+	err = jsonDeserFromJSON(j).decode(data[1:])
+	return
 }
 
 var (

@@ -30,11 +30,11 @@ func TestT(t *testing.T) {
 
 func (s *testJSONSuite) TestJSONSerde(c *C) {
 	var jstr1 = `{"a": [1, "2", {"aa": "bb"}, 4.0], "b": true}`
-	j1, err := parseFromString(jstr1)
+	j1, err := ParseFromString(jstr1)
 	c.Assert(err, IsNil)
 
 	var jstr2 = `[{"a": 1, "b": true}, 3, 3.5, "hello, world", null, true]`
-	j2, err := parseFromString(jstr2)
+	j2, err := ParseFromString(jstr2)
 	c.Assert(err, IsNil)
 
 	var jsonNilValue = jsonLiteral(0x00)
@@ -55,8 +55,8 @@ func (s *testJSONSuite) TestJSONSerde(c *C) {
 	}
 
 	for _, s := range testcses {
-		data := serialize(s.In)
-		t, err := deserialize(data)
+		data := Serialize(s.In)
+		t, err := Deserialize(data)
 		c.Assert(err, IsNil)
 
 		v1, _ := json.Marshal(t)

@@ -18,7 +18,8 @@ import (
 	"strings"
 )
 
-func parseFromString(s string) (JSON, error) {
+// ParseFromString parses a json from string.
+func ParseFromString(s string) (JSON, error) {
 	if len(s) == 0 {
 		return nil, ErrInvalidJSONText.GenByArgs("The document is empty")
 	}
@@ -29,7 +30,8 @@ func parseFromString(s string) (JSON, error) {
 	return normalize(in), nil
 }
 
-func dumpToString(j JSON) string {
+// DumpToString dumps a JSON to JSON text string.
+func DumpToString(j JSON) string {
 	bytes, _ := json.Marshal(j)
 	return strings.Trim(string(bytes), "\n")
 }

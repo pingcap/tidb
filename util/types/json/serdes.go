@@ -91,6 +91,22 @@ import (
                              // lengths up to 16383, and so on...
 */
 
+var (
+	_ jsonDeser = new(jsonLiteral)
+	_ jsonDeser = new(jsonString)
+	_ jsonDeser = new(jsonArray)
+	_ jsonDeser = new(jsonObject)
+	_ jsonDeser = new(jsonDouble)
+)
+
+const (
+	typeCodeObject  byte = 0x01
+	typeCodeArray   byte = 0x03
+	typeCodeLiteral byte = 0x04
+	typeCodeDouble  byte = 0x0b
+	typeCodeString  byte = 0x0c
+)
+
 type jsonLiteral byte
 type jsonString string
 type jsonObject map[string]JSON
@@ -99,7 +115,8 @@ type jsonDouble float64
 
 // jsonDeser is for deserialize json from bytes.
 type jsonDeser interface {
-	readBinaryRepresentation([]byte) error
+	JSON
+	decode([]byte) error
 }
 
 func jsonDeserFromJSON(j JSON) jsonDeser {
@@ -111,51 +128,38 @@ func jsonDeserFromJSON(j JSON) jsonDeser {
 	return nil
 }
 
-func serialize(j JSON) []byte {
-	var buffer = new(bytes.Buffer)
-	buffer.WriteByte(j.getTypeCode())
-	j.writeBinaryRepresentation(buffer)
-	return buffer.Bytes()
-}
-
-func deserialize(data []byte) (j JSON, err error) {
-	j = jsonFromTypeCode(data[0])
-	err = jsonDeserFromJSON(j).readBinaryRepresentation(data[1:])
-	return
-}
-
 func (b jsonLiteral) getTypeCode() byte {
-	return 0x04
+	return typeCodeLiteral
 }
 
-func (b jsonLiteral) writeBinaryRepresentation(buffer *bytes.Buffer) {
+func (b jsonLiteral) encode(buffer *bytes.Buffer) {
 	buffer.WriteByte(byte(b))
 }
 
-func (b *jsonLiteral) readBinaryRepresentation(data []byte) error {
+func (b *jsonLiteral) decode(data []byte) error {
 	var bb = (*byte)(unsafe.Pointer(b))
 	*bb = data[0]
 	return nil
 }
 
 func (f jsonDouble) getTypeCode() byte {
-	return 0x0b
+	return typeCodeDouble
 }
 
-func (f jsonDouble) writeBinaryRepresentation(buffer *bytes.Buffer) {
+func (f jsonDouble) encode(buffer *bytes.Buffer) {
 	binary.Write(buffer, binary.LittleEndian, f)
 }
 
-func (f *jsonDouble) readBinaryRepresentation(data []byte) error {
+func (f *jsonDouble) decode(data []byte) error {
 	var reader = bytes.NewReader(data)
 	return binary.Read(reader, binary.LittleEndian, f)
 }
 
 func (s jsonString) getTypeCode() byte {
-	return 0x0c
+	return typeCodeString
 }
 
-func (s jsonString) writeBinaryRepresentation(buffer *bytes.Buffer) {
+func (s jsonString) encode(buffer *bytes.Buffer) {
 	var ss = string(s)
 	var varIntBuf = make([]byte, 9)
 	var varIntLen = binary.PutUvarint(varIntBuf, uint64(len(hack.Slice(ss))))
@@ -163,7 +167,7 @@ func (s jsonString) writeBinaryRepresentation(buffer *bytes.Buffer) {
 	buffer.Write(hack.Slice(ss))
 }
 
-func (s *jsonString) readBinaryRepresentation(data []byte) error {
+func (s *jsonString) decode(data []byte) error {
 	var reader = bytes.NewReader(data)
 	length, err := binary.ReadUvarint(reader)
 	if err == nil {
@@ -177,10 +181,10 @@ func (s *jsonString) readBinaryRepresentation(data []byte) error {
 }
 
 func (m jsonObject) getTypeCode() byte {
-	return 0x01
+	return typeCodeObject
 }
 
-func (m jsonObject) writeBinaryRepresentation(buffer *bytes.Buffer) {
+func (m jsonObject) encode(buffer *bytes.Buffer) {
 	// object ::= element-count size key-entry* value-entry* key* value*
 	var countAndSize = make([]uint32, 2)
 	var countAndSizeLen = len(countAndSize) * 4
@@ -218,7 +222,7 @@ func (m jsonObject) writeBinaryRepresentation(buffer *bytes.Buffer) {
 	return
 }
 
-func (m *jsonObject) readBinaryRepresentation(data []byte) (err error) {
+func (m *jsonObject) decode(data []byte) (err error) {
 	var reader = bytes.NewReader(data)
 
 	var countAndSize = make([]uint32, 2)
@@ -253,9 +257,9 @@ func (m *jsonObject) readBinaryRepresentation(data []byte) (err error) {
 			var inline = valueOffsets[i]
 			var hdr = reflect.SliceHeader{Data: uintptr(unsafe.Pointer(&inline)), Len: 4, Cap: 4}
 			var buf = *(*[]byte)(unsafe.Pointer(&hdr))
-			jsonDeserFromJSON(value).readBinaryRepresentation(buf)
+			jsonDeserFromJSON(value).decode(buf)
 		} else {
-			jsonDeserFromJSON(value).readBinaryRepresentation(data[valueOffsets[i]:])
+			jsonDeserFromJSON(value).decode(data[valueOffsets[i]:])
 		}
 		if err != nil {
 			return
@@ -266,10 +270,10 @@ func (m *jsonObject) readBinaryRepresentation(data []byte) (err error) {
 }
 
 func (a jsonArray) getTypeCode() byte {
-	return 0x03
+	return typeCodeArray
 }
 
-func (a jsonArray) writeBinaryRepresentation(buffer *bytes.Buffer) {
+func (a jsonArray) encode(buffer *bytes.Buffer) {
 	// array ::= element-count size value-entry* value*
 	var countAndSize = make([]uint32, 2)
 	var countAndSizeLen = len(countAndSize) * 4
@@ -290,7 +294,7 @@ func (a jsonArray) writeBinaryRepresentation(buffer *bytes.Buffer) {
 	buffer.Write(values.Bytes())
 }
 
-func (a *jsonArray) readBinaryRepresentation(data []byte) (err error) {
+func (a *jsonArray) decode(data []byte) (err error) {
 	var reader = bytes.NewReader(data)
 
 	var countAndSize = make([]uint32, 2)
@@ -312,9 +316,9 @@ func (a *jsonArray) readBinaryRepresentation(data []byte) (err error) {
 			var inline = valueOffsets[i]
 			var hdr = reflect.SliceHeader{Data: uintptr(unsafe.Pointer(&inline)), Len: 4, Cap: 4}
 			var buf = *(*[]byte)(unsafe.Pointer(&hdr))
-			err = jsonDeserFromJSON(value).readBinaryRepresentation(buf)
+			err = jsonDeserFromJSON(value).decode(buf)
 		} else {
-			err = jsonDeserFromJSON(value).readBinaryRepresentation(data[valueOffsets[i]:])
+			err = jsonDeserFromJSON(value).decode(data[valueOffsets[i]:])
 		}
 		if err != nil {
 			return
@@ -327,30 +331,24 @@ func (a *jsonArray) readBinaryRepresentation(data []byte) (err error) {
 // Every json type has a length which is useful for inline the value
 // in value-entry. -1 means the length is variable.
 var jsonTypeCodeLength = map[byte]int{
-	0x01: -1,
-	0x03: -1,
-	0x04: 1,
-	0x05: 2,
-	0x06: 2,
-	0x07: 4,
-	0x08: 4,
-	0x09: 8,
-	0x0a: 8,
-	0x0b: 8,
-	0x0c: -1,
+	typeCodeObject:  -1,
+	typeCodeArray:   -1,
+	typeCodeLiteral: 1,
+	typeCodeDouble:  8,
+	typeCodeString:  -1,
 }
 
 func jsonFromTypeCode(typeCode byte) JSON {
 	switch typeCode {
-	case 0x01:
+	case typeCodeObject:
 		return new(jsonObject)
-	case 0x03:
+	case typeCodeArray:
 		return new(jsonArray)
-	case 0x04:
+	case typeCodeLiteral:
 		return new(jsonLiteral)
-	case 0x0b:
+	case typeCodeDouble:
 		return new(jsonDouble)
-	case 0x0c:
+	case typeCodeString:
 		return new(jsonString)
 	}
 	return nil
@@ -387,7 +385,7 @@ func pushValueEntry(value JSON, valueEntrys *bytes.Buffer, values *bytes.Buffer,
 	} else {
 		var valueOffset = uint32(prefixLen + values.Len())
 		binary.Write(valueEntrys, binary.LittleEndian, valueOffset)
-		value.writeBinaryRepresentation(values)
+		value.encode(values)
 	}
 	return
 }
