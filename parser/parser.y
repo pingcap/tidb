@@ -283,6 +283,8 @@ import (
 	insertFunc			"INSERT_FUNC"
 	instr				"INSTR"
 	isNull				"ISNULL"
+	jsonExtract			"JSON_EXTRACT"
+	jsonUnquote			"JSON_UNQUOTE"
 	kill				"KILL"
 	lastInsertID			"LAST_INSERT_ID"
 	lcase				"LCASE"
@@ -440,6 +442,7 @@ import (
 	engine		"ENGINE"
 	engines		"ENGINES"
 	escape 		"ESCAPE"
+	exclusive       "EXCLUSIVE"
 	execute		"EXECUTE"
 	fields		"FIELDS"
 	first		"FIRST"
@@ -451,6 +454,7 @@ import (
 	identified	"IDENTIFIED"
 	isolation	"ISOLATION"
 	indexes		"INDEXES"
+	jsonType	"JSON"
 	keyBlockSize	"KEY_BLOCK_SIZE"
 	local		"LOCAL"
 	less		"LESS"
@@ -480,6 +484,7 @@ import (
 	serializable	"SERIALIZABLE"
 	session		"SESSION"
 	share		"SHARE"
+	shared       	"SHARED"
 	signed		"SIGNED"
 	snapshot	"SNAPSHOT"
 	space 		"SPACE"
@@ -560,6 +565,7 @@ import (
 	ColumnName		"column name"
 	ColumnNameList		"column name list"
 	ColumnNameListOpt	"column name list opt"
+	ColumnNameListOptWithBrackets "column name list opt with brackets"
 	ColumnSetValue		"insert statement set value by column name"
 	ColumnSetValueList	"insert statement set value by column name list"
 	CommitStmt		"COMMIT statement"
@@ -654,6 +660,7 @@ import (
 	LoadDataStmt		"Load data statement"
 	LocalOpt		"Local opt"
 	LockTablesStmt		"Lock tables statement"
+	LockClause         	"Alter table lock clause"
 	LowPriorityOptional	"LOW_PRIORITY or empty"
 	NumLiteral		"Num/Int/Float/Decimal Literal"
 	NoWriteToBinLogAliasOpt "NO_WRITE_TO_BINLOG alias LOCAL or empty"
@@ -1028,13 +1035,31 @@ AlterTableSpec:
 			NewTable:      $3.(*ast.TableName),
 		}
 	}
-|	"LOCK" eq "NONE"
+|	LockClause
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp:    		ast.AlterTableLock,
+			LockType:   $1.(ast.LockType),
 		}
 	}
 
+LockClause: 
+	"LOCK" eq "NONE"
+	{
+		$$ = ast.LockTypeNone
+	}
+|	"LOCK" eq "DEFAULT"
+	{
+		$$ = ast.LockTypeDefault
+	}
+|       "LOCK" eq "SHARED"
+	{
+		$$ = ast.LockTypeShared
+	}
+|   	"LOCK" eq "EXCLUSIVE"
+	{
+		$$ = ast.LockTypeExclusive
+	}
 
 KeyOrIndex: "KEY" | "INDEX"
 
@@ -1193,6 +1218,16 @@ ColumnNameListOpt:
 |	ColumnNameList
 	{
 		$$ = $1.([]*ast.ColumnName)
+	}
+
+ColumnNameListOptWithBrackets:
+	/* EMPTY */
+	{
+		$$ = []*ast.ColumnName{}
+	}
+|	'(' ColumnNameListOpt ')'
+	{
+		$$ = $2.([]*ast.ColumnName)
 	}
 
 CommitStmt:
@@ -2321,10 +2356,10 @@ UnReservedKeyword:
 | "ROLLBACK" | "SESSION" | "SIGNED" | "SNAPSHOT" | "START" | "STATUS" | "TABLES" | "TEXT" | "THAN" | "TIDB" | "TIME" | "TIMESTAMP"
 | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" | "VALUE" | "WARNINGS" | "YEAR" | "MODE"  | "WEEK"  | "ANY" | "SOME" | "USER" | "IDENTIFIED"
 | "COLLATION" | "COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS"
-| "MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION"
+| "MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION" | "JSON"
 | "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
-| "TIMESTAMPDIFF" | "NONE" | "SUPER"
+| "TIMESTAMPDIFF" | "NONE" | "SUPER" | "SHARED" | "EXCLUSIVE"
 
 ReservedKeyword:
 "ADD" | "ALL" | "ALTER" | "ANALYZE" | "AND" | "AS" | "ASC" | "BETWEEN" | "BIGINT"
@@ -2362,6 +2397,7 @@ NotKeywordToken:
 |	"AES_DECRYPT" | "AES_ENCRYPT" | "QUOTE"
 |	"ANY_VALUE" | "INET_ATON" | "INET_NTOA" | "INET6_ATON" | "INET6_NTOA" | "IS_FREE_LOCK" | "IS_IPV4" | "IS_IPV4_COMPAT" | "IS_IPV4_MAPPED" | "IS_IPV6" | "IS_USED_LOCK" | "MASTER_POS_WAIT" | "NAME_CONST" | "RELEASE_ALL_LOCKS" | "UUID" | "UUID_SHORT"
 |	"COMPRESS" | "DECODE" | "DES_DECRYPT" | "DES_ENCRYPT" | "ENCODE" | "ENCRYPT" | "MD5" | "OLD_PASSWORD" | "RANDOM_BYTES" | "SHA1" | "SHA" | "SHA2" | "UNCOMPRESS" | "UNCOMPRESSED_LENGTH" | "VALIDATE_PASSWORD_STRENGTH"
+|	"JSON_EXTRACT" | "JSON_UNQUOTE"
 
 /************************************************************************************
  *
@@ -3654,6 +3690,22 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
+|	"JSON_EXTRACT" '(' Expression ',' ExpressionList ')'
+	{
+		var args = []ast.ExprNode{$3.(ast.ExprNode)}
+		args = append(args, $5.([]ast.ExprNode)...)
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: args,
+		}
+	}
+|	"JSON_UNQUOTE" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
+	}
 
 GetFormatSelector:
 	"DATE"
@@ -3668,6 +3720,7 @@ GetFormatSelector:
 	{
 		$$ = strings.ToUpper($1)
 	}
+
 
 FunctionNameDateArith:
 	"DATE_ADD"
@@ -5705,6 +5758,11 @@ StringType:
 		x.Collate = $6.(string)
 		$$ = x
 	}
+|	"JSON"
+	{
+		x := types.NewFieldType(mysql.TypeJSON)
+		$$ = x
+	}
 
 NationalOpt:
 	{}
@@ -6226,11 +6284,12 @@ RevokeStmt:
  * See https://dev.mysql.com/doc/refman/5.7/en/load-data.html
  *******************************************************************************************/
 LoadDataStmt:
-	"LOAD" "DATA" LocalOpt "INFILE" stringLit "INTO" "TABLE" TableName Fields Lines
+	"LOAD" "DATA" LocalOpt "INFILE" stringLit "INTO" "TABLE" TableName Fields Lines ColumnNameListOptWithBrackets
 	{
 		x := &ast.LoadDataStmt{
 			Path:       $5,
 			Table:      $8.(*ast.TableName),
+			Columns:    $11.([]*ast.ColumnName),
 		}
 		if $3 != nil {
 			x.IsLocal = true

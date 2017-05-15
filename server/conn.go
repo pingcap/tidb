@@ -593,10 +593,7 @@ func insertDataWithCommit(prevData, curData []byte, loadDataInfo *executor.LoadD
 			break
 		}
 		// Make sure that there are no retries when committing.
-		if err = loadDataInfo.Ctx.Txn().Commit(); err != nil {
-			return nil, errors.Trace(err)
-		}
-		if err = loadDataInfo.Ctx.NewTxn(); err != nil {
+		if err = loadDataInfo.Ctx.RefreshTxnCtx(); err != nil {
 			return nil, errors.Trace(err)
 		}
 		curData = prevData
@@ -654,7 +651,7 @@ func (cc *clientConn) handleLoadData(loadDataInfo *executor.LoadDataInfo) error 
 
 	txn := loadDataInfo.Ctx.Txn()
 	if err != nil {
-		if txn.Valid() {
+		if txn != nil && txn.Valid() {
 			if err1 := txn.Rollback(); err1 != nil {
 				log.Errorf("load data rollback failed: %v", err1)
 			}

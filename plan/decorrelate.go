@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -186,7 +187,7 @@ func (p *Selection) checkScanController() int {
 		if !expr.IsCorrelated() {
 			continue
 		}
-		cond := pushDownNot(expr, false, nil)
+		cond := expression.PushDownNot(expr, false, nil)
 		corCols := extractCorColumns(cond)
 		for _, col := range corCols {
 			*col.Data = expression.One.Value
@@ -203,15 +204,10 @@ func (p *Selection) checkScanController() int {
 		}
 	}
 	if pkCol != nil {
-		checker := conditionChecker{
-			pkName: pkCol.ColName,
-			length: types.UnspecifiedLength,
-		}
-		for _, cond := range corColConds {
-			if sf, ok := cond.(*expression.ScalarFunction); ok {
-				if sf.FuncName.L == ast.EQ && checker.checkScalarFunction(sf) {
-					return controlTableScan
-				}
+		access, _ := ranger.DetachTableScanConditions(corColConds, pkCol.ColName)
+		for _, cond := range access {
+			if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.EQ {
+				return controlTableScan
 			}
 		}
 	}
@@ -220,7 +216,7 @@ func (p *Selection) checkScanController() int {
 		for _, cond := range corColConds {
 			condsBackUp = append(condsBackUp, cond.Clone())
 		}
-		_, _, eqCount, _ := DetachIndexScanConditions(condsBackUp, idx)
+		_, _, eqCount, _ := ranger.DetachIndexScanConditions(condsBackUp, idx)
 		if eqCount > 0 {
 			return controlIndexScan
 		}

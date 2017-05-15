@@ -15,6 +15,7 @@ package executor
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 
 	"github.com/juju/errors"
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
@@ -138,9 +140,10 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 // DeleteExec represents a delete executor.
 // See https://dev.mysql.com/doc/refman/5.7/en/delete.html
 type DeleteExec struct {
+	baseExecutor
+
 	SelectExec Executor
 
-	ctx          context.Context
 	Tables       []*ast.TableName
 	IsMultiTable bool
 
@@ -262,13 +265,19 @@ func (e *DeleteExec) Close() error {
 	return e.SelectExec.Close()
 }
 
+// Open implements the Executor Open interface.
+func (e *DeleteExec) Open() error {
+	return e.SelectExec.Open()
+}
+
 // NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
-func NewLoadDataInfo(row []types.Datum, ctx context.Context, tbl table.Table) *LoadDataInfo {
+func NewLoadDataInfo(row []types.Datum, ctx context.Context, tbl table.Table, cols []*table.Column) *LoadDataInfo {
 	return &LoadDataInfo{
 		row:       row,
 		insertVal: &InsertValues{ctx: ctx, Table: tbl},
 		Table:     tbl,
 		Ctx:       ctx,
+		columns:   cols,
 	}
 }
 
@@ -282,6 +291,7 @@ type LoadDataInfo struct {
 	FieldsInfo *ast.FieldsClause
 	LinesInfo  *ast.LinesClause
 	Ctx        context.Context
+	columns    []*table.Column
 }
 
 // SetBatchCount sets the number of rows to insert in a batch.
@@ -498,15 +508,26 @@ func (e *LoadDataInfo) insertData(cols []string) {
 		}
 		e.row[i].SetString(cols[i])
 	}
-	row, err := e.insertVal.fillRowData(e.Table.Cols(), e.row, true)
+	row, err := e.insertVal.fillRowData(e.columns, e.row, true)
 	if err != nil {
-		log.Warnf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err))
+		warnLog := fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err))
+		e.insertVal.handleLoadDataWarnings(err, warnLog)
 		return
 	}
 	_, err = e.Table.AddRecord(e.insertVal.ctx, row)
 	if err != nil {
-		log.Warnf("Load Data: insert data:%v failed:%v", row, errors.ErrorStack(err))
+		warnLog := fmt.Sprintf("Load Data: insert data:%v failed:%v", row, errors.ErrorStack(err))
+		e.insertVal.handleLoadDataWarnings(err, warnLog)
 	}
+}
+
+func (e *InsertValues) handleLoadDataWarnings(err error, logInfo string) {
+	sc := e.ctx.GetSessionVars().StmtCtx
+	if variable.GoSQLDriverTest {
+		return
+	}
+	sc.AppendWarning(err)
+	log.Warn(logInfo)
 }
 
 // LoadData represents a load data executor.
@@ -558,6 +579,11 @@ func (e *LoadData) Schema() *expression.Schema {
 
 // Close implements the Executor Close interface.
 func (e *LoadData) Close() error {
+	return nil
+}
+
+// Open implements the Executor Open interface.
+func (e *LoadData) Open() error {
 	return nil
 }
 
@@ -679,6 +705,14 @@ func (e *InsertExec) Close() error {
 	e.ctx.GetSessionVars().CurrInsertValues = nil
 	if e.SelectExec != nil {
 		return e.SelectExec.Close()
+	}
+	return nil
+}
+
+// Open implements the Executor Close interface.
+func (e *InsertExec) Open() error {
+	if e.SelectExec != nil {
+		return e.SelectExec.Open()
 	}
 	return nil
 }
@@ -847,14 +881,16 @@ func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum, ign
 	return row, nil
 }
 
-func filterErr(err error, ignoreErr bool) error {
+func (e *InsertValues) filterErr(err error, ignoreErr bool) error {
 	if err == nil {
 		return nil
 	}
 	if !ignoreErr {
 		return errors.Trace(err)
 	}
-	log.Warning("ignore err:%v", errors.ErrorStack(err))
+
+	warnLog := fmt.Sprintf("ignore err:%v", errors.ErrorStack(err))
+	e.handleLoadDataWarnings(err, warnLog)
 	return nil
 }
 
@@ -877,7 +913,7 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 				continue
 			}
 			val, err := row[i].ToInt64(sc)
-			if filterErr(errors.Trace(err), ignoreErr) != nil {
+			if e.filterErr(errors.Trace(err), ignoreErr) != nil {
 				return errors.Trace(err)
 			}
 			row[i].SetInt64(val)
@@ -910,7 +946,7 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 		} else {
 			var err error
 			row[i], err = table.GetColDefaultValue(e.ctx, c.ToInfo())
-			if filterErr(err, ignoreErr) != nil {
+			if e.filterErr(err, ignoreErr) != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -1009,6 +1045,14 @@ func (e *ReplaceExec) Close() error {
 	return nil
 }
 
+// Open implements the Executor Open interface.
+func (e *ReplaceExec) Open() error {
+	if e.SelectExec != nil {
+		return e.SelectExec.Open()
+	}
+	return nil
+}
+
 // Next implements the Executor Next interface.
 func (e *ReplaceExec) Next() (*Row, error) {
 	if e.finished {
@@ -1090,22 +1134,18 @@ func (e *ReplaceExec) Next() (*Row, error) {
 
 // UpdateExec represents a new update executor.
 type UpdateExec struct {
+	baseExecutor
+
 	SelectExec  Executor
 	OrderedList []*expression.Assignment
 
 	// updatedRowKeys is a map for unique (Table, handle) pair.
 	updatedRowKeys map[table.Table]map[int64]struct{}
-	ctx            context.Context
 
 	rows        []*Row          // The rows fetched from TableExec.
 	newRowsData [][]types.Datum // The new values to be set.
 	fetched     bool
 	cursor      int
-}
-
-// Schema implements the Executor Schema interface.
-func (e *UpdateExec) Schema() *expression.Schema {
-	return expression.NewSchema()
 }
 
 // Next implements the Executor Next interface.
@@ -1211,4 +1251,9 @@ func getTableOffset(schema *expression.Schema, entry *RowKeyEntry) int {
 // Close implements the Executor Close interface.
 func (e *UpdateExec) Close() error {
 	return e.SelectExec.Close()
+}
+
+// Open implements the Executor Open interface.
+func (e *UpdateExec) Open() error {
+	return e.SelectExec.Open()
 }

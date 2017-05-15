@@ -27,7 +27,9 @@ import (
 )
 
 var (
-	_ = &TableReaderExecutor{}
+	_ Executor = &TableReaderExecutor{}
+	_ Executor = &IndexReaderExecutor{}
+	_ Executor = &IndexLookUpExecutor{}
 )
 
 // TableReaderExecutor sends dag request and reads table data from kv layer.
@@ -41,6 +43,8 @@ type TableReaderExecutor struct {
 	dagPB     *tipb.DAGRequest
 	ctx       context.Context
 	schema    *expression.Schema
+	// columns are only required by union scan.
+	columns []*model.ColumnInfo
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result        distsql.SelectResult
@@ -99,7 +103,8 @@ func (e *TableReaderExecutor) Next() (*Row, error) {
 	}
 }
 
-func (e *TableReaderExecutor) doRequest() error {
+// Open implements the Executor Open interface.
+func (e *TableReaderExecutor) Open() error {
 	kvRanges := tableRangesToKVRanges(e.tableID, e.ranges)
 	var err error
 	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goctx.Background(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc)
@@ -138,6 +143,8 @@ type IndexReaderExecutor struct {
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result        distsql.SelectResult
 	partialResult distsql.PartialResult
+	// columns are only required by union scan.
+	columns []*model.ColumnInfo
 }
 
 // Schema implements the Executor Schema interface.
@@ -192,7 +199,8 @@ func (e *IndexReaderExecutor) Next() (*Row, error) {
 	}
 }
 
-func (e *IndexReaderExecutor) doRequest() error {
+// Open implements the Executor Open interface.
+func (e *IndexReaderExecutor) Open() error {
 	fieldTypes := make([]*types.FieldType, len(e.index.Columns))
 	for i, v := range e.index.Columns {
 		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)
@@ -230,9 +238,12 @@ type IndexLookUpExecutor struct {
 	taskCurr *lookupTableTask
 
 	tableRequest *tipb.DAGRequest
+	// columns are only required by union scan.
+	columns []*model.ColumnInfo
 }
 
-func (e *IndexLookUpExecutor) doRequest() error {
+// Open implements the Executor Open interface.
+func (e *IndexLookUpExecutor) Open() error {
 	fieldTypes := make([]*types.FieldType, len(e.index.Columns))
 	for i, v := range e.index.Columns {
 		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)

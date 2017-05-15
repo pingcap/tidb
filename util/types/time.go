@@ -95,9 +95,9 @@ var (
 	maxDatetime = FromDate(9999, 12, 31, 23, 59, 59, 999999)
 
 	// minTimestamp is the minimum for mysql timestamp type.
-	minTimestamp = gotime.Date(1970, 1, 1, 0, 0, 1, 0, gotime.UTC)
+	minTimestamp = FromDate(1970, 1, 1, 0, 0, 1, 0)
 	// maxTimestamp is the maximum for mysql timestamp type.
-	maxTimestamp = gotime.Date(2038, 1, 19, 3, 14, 7, 999999, gotime.UTC)
+	maxTimestamp = FromDate(2038, 1, 19, 3, 14, 7, 999999)
 
 	// WeekdayNames lists names of weekdays, which are used in builtin time function `dayname`.
 	WeekdayNames = []string{
@@ -415,15 +415,16 @@ func (t *Time) FromPackedUint(packed uint64) error {
 }
 
 func (t *Time) check() error {
+	var err error
 	switch t.Type {
 	case mysql.TypeTimestamp:
-		return checkTimestampType(t.Time)
+		err = checkTimestampType(t.Time)
 	case mysql.TypeDatetime:
-		return checkDatetimeType(t.Time)
+		err = checkDatetimeType(t.Time)
 	case mysql.TypeDate:
-		return checkDateType(t.Time)
+		err = checkDateType(t.Time)
 	}
-	return nil
+	return errors.Trace(err)
 }
 
 // Check if 't' is valid
@@ -1170,17 +1171,17 @@ func checkDateRange(t TimeInternal) error {
 	// Oddly enough, MySQL document says date range should larger than '1000-01-01',
 	// but we can insert '0001-01-01' actually.
 	if t.Year() < 0 || t.Month() < 0 || t.Day() < 0 {
-		return ErrInvalidTimeFormat
+		return errors.Trace(ErrInvalidTimeFormat)
 	}
 	if compareTime(t, maxDatetime) > 0 {
-		return ErrInvalidTimeFormat
+		return errors.Trace(ErrInvalidTimeFormat)
 	}
 	return nil
 }
 
 func checkMonthDay(year, month, day int) error {
 	if month < 0 || month > 12 {
-		return ErrInvalidTimeFormat
+		return errors.Trace(ErrInvalidTimeFormat)
 	}
 
 	maxDay := 31
@@ -1192,7 +1193,7 @@ func checkMonthDay(year, month, day int) error {
 	}
 
 	if day < 0 || day > maxDay {
-		return ErrInvalidTimeFormat
+		return errors.Trace(ErrInvalidTimeFormat)
 	}
 	return nil
 }
@@ -1202,16 +1203,14 @@ func checkTimestampType(t TimeInternal) error {
 		return nil
 	}
 
-	// TODO: Consider time_zone variable.
-	t1, err := t.GoTime(gotime.Local)
-	if err != nil {
-		log.Infof("checkTimestampType failed, t=%v", t)
+	if compareTime(t, maxTimestamp) > 0 || compareTime(t, minTimestamp) < 0 {
+		return errors.Trace(ErrInvalidTimeFormat)
+	}
+
+	if _, err := t.GoTime(gotime.Local); err != nil {
 		return errors.Trace(err)
 	}
 
-	if t1.After(maxTimestamp) || t1.Before(minTimestamp) {
-		return ErrInvalidTimeFormat
-	}
 	return nil
 }
 
@@ -1222,13 +1221,13 @@ func checkDatetimeType(t TimeInternal) error {
 
 	hour, minute, second := t.Hour(), t.Minute(), t.Second()
 	if hour < 0 || hour >= 24 {
-		return ErrInvalidTimeFormat
+		return errors.Trace(ErrInvalidTimeFormat)
 	}
 	if minute < 0 || minute >= 60 {
-		return ErrInvalidTimeFormat
+		return errors.Trace(ErrInvalidTimeFormat)
 	}
 	if second < 0 || second >= 60 {
-		return ErrInvalidTimeFormat
+		return errors.Trace(ErrInvalidTimeFormat)
 	}
 
 	return nil
@@ -2273,4 +2272,13 @@ func parseOrdinalNumbers(input string) (value int, remain string) {
 		return
 	}
 	return -1, input
+}
+
+// DateFSP gets fsp from date string.
+func DateFSP(date string) (fsp int) {
+	i := strings.LastIndex(date, ".")
+	if i != -1 {
+		fsp = len(date) - i - 1
+	}
+	return
 }
