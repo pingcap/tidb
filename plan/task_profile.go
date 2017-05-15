@@ -210,6 +210,7 @@ func (t *rootTaskProfile) plan() PhysicalPlan {
 }
 
 func (p *Limit) attach2TaskProfile(profiles ...taskProfile) taskProfile {
+	// If task is invalid, keep it remained.
 	if profiles[0].plan() == nil {
 		return profiles[0]
 	}
@@ -267,6 +268,7 @@ func (p *Sort) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 }
 
 func (p *TopN) attach2TaskProfile(profiles ...taskProfile) taskProfile {
+	// If task is invalid, keep it remained.
 	if profiles[0].plan() == nil {
 		return profiles[0]
 	}
@@ -395,6 +397,7 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 }
 
 func (p *PhysicalAggregation) attach2TaskProfile(profiles ...taskProfile) taskProfile {
+	// If task is invalid, keep it remained.
 	if profiles[0].plan() == nil {
 		return profiles[0]
 	}

@@ -37,6 +37,10 @@ func (p *requiredProp) enforceProperty(task taskProfile, ctx context.Context, al
 	if p.isEmpty() {
 		return task
 	}
+	// If task is invalid, keep it remained.
+	if task.plan() == nil {
+		return task
+	}
 	sort := Sort{ByItems: make([]*ByItems, 0, len(p.cols))}.init(allocator, ctx)
 	for _, col := range p.cols {
 		sort.ByItems = append(sort.ByItems, &ByItems{col, p.desc})
