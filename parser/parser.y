@@ -1050,11 +1050,11 @@ LockClause:
 	{
 		$$ = ast.LockTypeDefault
 	}
-|   "LOCK" eq "SHARED"
+|       "LOCK" eq "SHARED"
 	{
 		$$ = ast.LockTypeShared
 	}
-|   "LOCK" eq "EXCLUSIVE"
+|   	"LOCK" eq "EXCLUSIVE"
 	{
 		$$ = ast.LockTypeExclusive
 	}
