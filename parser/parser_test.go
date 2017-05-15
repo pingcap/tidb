@@ -287,6 +287,16 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"load data local infile '/tmp/t.csv' into table t lines starting by 'ab' terminated by 'xy'", true},
 		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' lines terminated by 'xy'", true},
 		{"load data local infile '/tmp/t.csv' into table t terminated by 'xy' fields terminated by 'ab'", false},
+		{"load data infile '/tmp/t.csv' into table t (a,b)", true},
+		{"load data local infile '/tmp/t.csv' into table t (a,b)", true},
+		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' (a,b)", true},
+		{"load data local infile '/tmp/t.csv' into table t columns terminated by 'ab' (a,b)", true},
+		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b' (a,b)", true},
+		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b' escaped by '*' (a,b)", true},
+		{"load data local infile '/tmp/t.csv' into table t lines starting by 'ab' (a,b)", true},
+		{"load data local infile '/tmp/t.csv' into table t lines starting by 'ab' terminated by 'xy' (a,b)", true},
+		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' lines terminated by 'xy' (a,b)", true},
+		{"load data local infile '/tmp/t.csv' into table t (a,b) fields terminated by 'ab'", false},
 
 		// select for update
 		{"SELECT * from t for update", true},
