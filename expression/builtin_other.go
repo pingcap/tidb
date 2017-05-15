@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/juju/errors"
@@ -22,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
-	"strconv"
 )
 
 var (
@@ -217,10 +217,7 @@ type builtinCastIntAsRealSig struct {
 
 func (b *builtinCastIntAsRealSig) evalReal(row []types.Datum) (res float64, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalInt(row, b.getCtx().GetSessionVars().StmtCtx)
-	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
-	}
-	return float64(val), false, nil
+	return float64(val), isNull, errors.Trace(err)
 }
 
 type builtinCastIntAsDecimalSig struct {
@@ -229,10 +226,7 @@ type builtinCastIntAsDecimalSig struct {
 
 func (b *builtinCastIntAsDecimalSig) evalDecimal(row []types.Datum) (res *types.MyDecimal, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalInt(row, b.getCtx().GetSessionVars().StmtCtx)
-	if isNull || err != nil {
-		return nil, isNull, errors.Trace(err)
-	}
-	return types.NewDecFromInt(val), false, nil
+	return types.NewDecFromInt(val), isNull, errors.Trace(err)
 }
 
 type builtinCastIntAsStringSig struct {
@@ -241,10 +235,7 @@ type builtinCastIntAsStringSig struct {
 
 func (b *builtinCastIntAsStringSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalInt(row, b.getCtx().GetSessionVars().StmtCtx)
-	if isNull || err != nil {
-		return "", isNull, errors.Trace(err)
-	}
-	return strconv.FormatInt(val, 10), false, nil
+	return strconv.FormatInt(val, 10), isNull, errors.Trace(err)
 }
 
 type builtinCastRealAsIntSig struct {
@@ -253,10 +244,7 @@ type builtinCastRealAsIntSig struct {
 
 func (b *builtinCastRealAsIntSig) evalInt(row []types.Datum) (res int64, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalReal(row, b.getCtx().GetSessionVars().StmtCtx)
-	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
-	}
-	return int64(val), false, nil
+	return int64(val), isNull, errors.Trace(err)
 }
 
 type builtinCastRealAsDecimalSig struct {
@@ -279,10 +267,7 @@ type builtinCastRealAsStringSig struct {
 
 func (b *builtinCastRealAsStringSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalReal(row, b.getCtx().GetSessionVars().StmtCtx)
-	if isNull || err != nil {
-		return "", isNull, errors.Trace(err)
-	}
-	return strconv.FormatFloat(val, 'f', -1, 64), false, nil
+	return strconv.FormatFloat(val, 'f', -1, 64), isNull, errors.Trace(err)
 }
 
 type builtinCastDecimalAsIntSig struct {
@@ -295,15 +280,6 @@ func (b *builtinCastDecimalAsIntSig) evalInt(row []types.Datum) (res int64, isNu
 		return 0, isNull, errors.Trace(err)
 	}
 	res, err = val.ToInt()
-	return res, false, errors.Trace(err)
-}
-
-func (b *builtinCastDecimalAsRealSig) evalReal(row []types.Datum) (res float64, isNull bool, err error) {
-	val, isNull, err := b.args[0].EvalDecimal(row, b.getCtx().GetSessionVars().StmtCtx)
-	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
-	}
-	res, err = val.ToFloat64()
 	return res, false, errors.Trace(err)
 }
 
@@ -321,6 +297,15 @@ func (b *builtinCastDecimalAsStringSig) evalString(row []types.Datum) (res strin
 
 type builtinCastDecimalAsRealSig struct {
 	baseRealBuiltinFunc
+}
+
+func (b *builtinCastDecimalAsRealSig) evalReal(row []types.Datum) (res float64, isNull bool, err error) {
+	val, isNull, err := b.args[0].EvalDecimal(row, b.getCtx().GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	res, err = val.ToFloat64()
+	return res, false, errors.Trace(err)
 }
 
 type builtinCastStringAsIntSig struct {
