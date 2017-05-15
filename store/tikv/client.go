@@ -30,6 +30,9 @@ const (
 	readTimeoutMedium = 60 * time.Second  // For requests that may need scan region.
 	readTimeoutLong   = 150 * time.Second // For requests that may need scan region multiple times.
 
+	keepaliveTime    = 10 * time.Second
+	keepaliveTimeout = 3 * time.Second
+
 	rpcLabelKV  = "kv"
 	rpcLabelCop = "cop"
 )
