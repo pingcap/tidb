@@ -833,25 +833,6 @@ func (s *testSuite) TestLoadDataSpecifiedCoumns(c *C) {
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 }
 
-func (s *testSuite) TestLoadDataRefreshTable(c *C) {
-	defer func() {
-		s.cleanEnv(c)
-		testleak.AfterTest(c)()
-	}()
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test; drop table if exists load_data_test;")
-	tk.MustExec(`create table load_data_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 varchar(255) default "def", c3 int default 0);`)
-	ctx := tk.Se.(context.Context)
-	ld := makeLoadDataInfo(2, []string{"c1", "c2"}, ctx, c)
-	originTable := ld.Table
-	err := ld.RefreshTable()
-	c.Assert(err, IsNil)
-	c.Assert(ld.Table, DeepEquals, originTable)
-	tk.MustExec("use test; alter table load_data_test drop column c1")
-	err = ld.RefreshTable()
-	c.Assert(err, NotNil)
-}
-
 func makeLoadDataInfo(column int, specifiedColumns []string, ctx context.Context, c *C) (ld *executor.LoadDataInfo) {
 	domain := sessionctx.GetDomain(ctx)
 	is := domain.InfoSchema()
