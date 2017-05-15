@@ -131,12 +131,9 @@ func evalExprToInt(expr Expression, row []types.Datum, sc *variable.StatementCon
 	tc := expr.GetType().ToClass()
 	if tc == types.ClassInt {
 		return val.GetInt64(), false, nil
-	} else if tc == types.ClassString {
-		switch expr.GetType().Tp {
-		case mysql.TypeDatetime, mysql.TypeDate, mysql.TypeNewDate, mysql.TypeDuration, mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet:
-			res, err = val.ToInt64(sc)
-			return res, false, errors.Trace(err)
-		}
+	} else if types.IsHybridType(expr.GetType().Tp) {
+		res, err = val.ToInt64(sc)
+		return res, false, errors.Trace(err)
 	}
 	panic(fmt.Sprintf("cannot get INT result from %s expression", tc.String()))
 }
@@ -150,12 +147,9 @@ func evalExprToReal(expr Expression, row []types.Datum, sc *variable.StatementCo
 	tc := expr.GetType().ToClass()
 	if tc == types.ClassReal {
 		return val.GetFloat64(), false, nil
-	} else if tc == types.ClassString {
-		switch expr.GetType().Tp {
-		case mysql.TypeDatetime, mysql.TypeDate, mysql.TypeNewDate, mysql.TypeDuration, mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet:
-			res, err = val.ToFloat64(sc)
-			return res, false, errors.Trace(err)
-		}
+	} else if types.IsHybridType(expr.GetType().Tp) {
+		res, err = val.ToFloat64(sc)
+		return res, false, errors.Trace(err)
 	}
 	panic(fmt.Sprintf("cannot get REAL result from %s expression", tc.String()))
 }
@@ -169,12 +163,9 @@ func evalExprToDecimal(expr Expression, row []types.Datum, sc *variable.Statemen
 	tc := expr.GetType().ToClass()
 	if tc == types.ClassDecimal {
 		return val.GetMysqlDecimal(), false, nil
-	} else if tc == types.ClassString {
-		switch expr.GetType().Tp {
-		case mysql.TypeDatetime, mysql.TypeDate, mysql.TypeNewDate, mysql.TypeDuration, mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet:
-			res, err = val.ToDecimal(sc)
-			return res, false, errors.Trace(err)
-		}
+	} else if types.IsHybridType(expr.GetType().Tp) {
+		res, err = val.ToDecimal(sc)
+		return res, false, errors.Trace(err)
 	}
 	panic(fmt.Sprintf("cannot get DECIMAL result from %s expression", tc.String()))
 }

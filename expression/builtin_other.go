@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
+	"strconv"
 )
 
 var (
@@ -132,7 +133,53 @@ type castFunctionClass struct {
 }
 
 func (c *castFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinCastSig{newBaseBuiltinFunc(args, ctx), c.tp}
+	baseBuiltinFunc := newBaseBuiltinFunc(args, ctx)
+	var sig builtinFunc
+	switch c.tp.Tp {
+	case mysql.TypeString, mysql.TypeDuration, mysql.TypeDatetime,
+		mysql.TypeDate, mysql.TypeLonglong, mysql.TypeNewDecimal, mysql.TypeDouble:
+	default:
+		return nil, errors.Errorf("unknown cast type - %v", c.tp)
+	}
+
+	switch args[0].GetType().ToClass() {
+	case types.ClassString:
+		switch c.tp.ToClass() {
+		case types.ClassInt:
+			sig = &builtinCastStringAsIntSig{baseIntBuiltinFunc{baseBuiltinFunc}}
+		case types.ClassReal:
+			sig = &builtinCastStringAsRealSig{baseRealBuiltinFunc{baseBuiltinFunc}}
+		case types.ClassDecimal:
+			sig = &builtinCastStringAsDecimalSig{baseDecimalBuiltinFunc{baseBuiltinFunc}}
+		}
+	case types.ClassInt:
+		switch c.tp.ToClass() {
+		case types.ClassString:
+			sig = &builtinCastIntAsStringSig{baseStringBuiltinFunc{baseBuiltinFunc}}
+		case types.ClassReal:
+			sig = &builtinCastIntAsRealSig{baseRealBuiltinFunc{baseBuiltinFunc}}
+		case types.ClassDecimal:
+			sig = &builtinCastIntAsDecimalSig{baseDecimalBuiltinFunc{baseBuiltinFunc}}
+		}
+	case types.ClassReal:
+		switch c.tp.ToClass() {
+		case types.ClassString:
+			sig = &builtinCastRealAsStringSig{baseStringBuiltinFunc{baseBuiltinFunc}}
+		case types.ClassInt:
+			sig = &builtinCastRealAsIntSig{baseIntBuiltinFunc{baseBuiltinFunc}}
+		case types.ClassDecimal:
+			sig = &builtinCastRealAsDecimalSig{baseDecimalBuiltinFunc{baseBuiltinFunc}}
+		}
+	case types.ClassDecimal:
+		switch c.tp.ToClass() {
+		case types.ClassString:
+			sig = &builtinCastDecimalAsStringSig{baseStringBuiltinFunc{baseBuiltinFunc}}
+		case types.ClassInt:
+			sig = &builtinCastDecimalAsIntSig{baseIntBuiltinFunc{baseBuiltinFunc}}
+		case types.ClassReal:
+			sig = &builtinCastDecimalAsRealSig{baseRealBuiltinFunc{baseBuiltinFunc}}
+		}
+	}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
@@ -162,6 +209,167 @@ func (b *builtinCastSig) eval(row []types.Datum) (d types.Datum, err error) {
 		return d.ConvertTo(b.ctx.GetSessionVars().StmtCtx, b.tp)
 	}
 	return d, errors.Errorf("unknown cast type - %v", b.tp)
+}
+
+type builtinCastIntAsRealSig struct {
+	baseRealBuiltinFunc
+}
+
+func (b *builtinCastIntAsRealSig) evalReal(row []types.Datum) (res float64, isNull bool, err error) {
+	val, isNull, err := b.args[0].EvalInt(row, b.getCtx().GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	return float64(val), false, nil
+}
+
+type builtinCastIntAsDecimalSig struct {
+	baseDecimalBuiltinFunc
+}
+
+func (b *builtinCastIntAsDecimalSig) evalDecimal(row []types.Datum) (res *types.MyDecimal, isNull bool, err error) {
+	val, isNull, err := b.args[0].EvalInt(row, b.getCtx().GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return nil, isNull, errors.Trace(err)
+	}
+	return types.NewDecFromInt(val), false, nil
+}
+
+type builtinCastIntAsStringSig struct {
+	baseStringBuiltinFunc
+}
+
+func (b *builtinCastIntAsStringSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
+	val, isNull, err := b.args[0].EvalInt(row, b.getCtx().GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
+	}
+	return strconv.FormatInt(val, 10), false, nil
+}
+
+type builtinCastRealAsIntSig struct {
+	baseIntBuiltinFunc
+}
+
+func (b *builtinCastRealAsIntSig) evalInt(row []types.Datum) (res int64, isNull bool, err error) {
+	val, isNull, err := b.args[0].EvalReal(row, b.getCtx().GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	return int64(val), false, nil
+}
+
+type builtinCastRealAsDecimalSig struct {
+	baseDecimalBuiltinFunc
+}
+
+func (b *builtinCastRealAsDecimalSig) evalDecimal(row []types.Datum) (res *types.MyDecimal, isNull bool, err error) {
+	val, isNull, err := b.args[0].EvalReal(row, b.getCtx().GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return nil, isNull, errors.Trace(err)
+	}
+	res = new(types.MyDecimal)
+	err = res.FromFloat64(val)
+	return res, false, errors.Trace(err)
+}
+
+type builtinCastRealAsStringSig struct {
+	baseStringBuiltinFunc
+}
+
+func (b *builtinCastRealAsStringSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
+	val, isNull, err := b.args[0].EvalReal(row, b.getCtx().GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
+	}
+	return strconv.FormatFloat(val, 'f', -1, 64), false, nil
+}
+
+type builtinCastDecimalAsIntSig struct {
+	baseIntBuiltinFunc
+}
+
+func (b *builtinCastDecimalAsIntSig) evalInt(row []types.Datum) (res int64, isNull bool, err error) {
+	val, isNull, err := b.args[0].EvalDecimal(row, b.getCtx().GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	res, err = val.ToInt()
+	return res, false, errors.Trace(err)
+}
+
+func (b *builtinCastDecimalAsRealSig) evalReal(row []types.Datum) (res float64, isNull bool, err error) {
+	val, isNull, err := b.args[0].EvalDecimal(row, b.getCtx().GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	res, err = val.ToFloat64()
+	return res, false, errors.Trace(err)
+}
+
+type builtinCastDecimalAsStringSig struct {
+	baseStringBuiltinFunc
+}
+
+func (b *builtinCastDecimalAsStringSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
+	val, isNull, err := b.args[0].EvalDecimal(row, b.getCtx().GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
+	}
+	return string(val.ToString()), false, nil
+}
+
+type builtinCastDecimalAsRealSig struct {
+	baseRealBuiltinFunc
+}
+
+type builtinCastStringAsIntSig struct {
+	baseIntBuiltinFunc
+}
+
+func (b *builtinCastStringAsIntSig) evalInt(row []types.Datum) (res int64, isNull bool, err error) {
+	if types.IsHybridType(b.args[0].GetType().Tp) {
+		return b.args[0].EvalInt(row, b.getCtx().GetSessionVars().StmtCtx)
+	}
+	val, isNull, err := b.args[0].EvalString(row, b.getCtx().GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	res, err = strconv.ParseInt(val, 10, 64)
+	return res, false, errors.Trace(err)
+}
+
+type builtinCastStringAsRealSig struct {
+	baseRealBuiltinFunc
+}
+
+func (b *builtinCastStringAsRealSig) evalReal(row []types.Datum) (res float64, isNull bool, err error) {
+	if types.IsHybridType(b.args[0].GetType().Tp) {
+		return b.args[0].EvalReal(row, b.getCtx().GetSessionVars().StmtCtx)
+	}
+	val, isNull, err := b.args[0].EvalString(row, b.getCtx().GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	res, err = strconv.ParseFloat(val, 64)
+	return res, false, errors.Trace(err)
+}
+
+type builtinCastStringAsDecimalSig struct {
+	baseDecimalBuiltinFunc
+}
+
+func (b *builtinCastStringAsDecimalSig) evalDecimal(row []types.Datum) (res *types.MyDecimal, isNull bool, err error) {
+	if types.IsHybridType(b.args[0].GetType().Tp) {
+		return b.args[0].EvalDecimal(row, b.getCtx().GetSessionVars().StmtCtx)
+	}
+	val, isNull, err := b.args[0].EvalString(row, b.getCtx().GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return nil, isNull, errors.Trace(err)
+	}
+	res = new(types.MyDecimal)
+	err = res.FromString([]byte(val))
+	return res, false, errors.Trace(err)
 }
 
 type setVarFunctionClass struct {
