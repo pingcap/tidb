@@ -1,5 +1,5 @@
-hash: 73b6865c36f25e9cde2c959daa6043112fa535b7001595c12a7454dd68754d37
-updated: 2017-05-15T10:51:55.986007741+08:00
+hash: 82333112d20ba99960e5466d9aa72ac49df1498b922eb0aa2f215030715d0a23
+updated: 2017-05-15T11:29:00.383564204+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -113,7 +113,7 @@ imports:
   - leveldb/table
   - leveldb/util
 - name: github.com/pingcap/kvproto
-  version: 4aaebd04c815991c575fa55a28b7b5740cf08043
+  version: 751b1a091f1b3d1ea7914b897d83a3fc0fb41da1
   subpackages:
   - pkg/coprocessor
   - pkg/eraftpb
@@ -182,14 +182,17 @@ imports:
   subpackages:
   - rate
 - name: google.golang.org/grpc
-  version: 777daa17ff9b5daef1cfdf915088a2ada3332bf0
+  version: 8050b9cbc271307e5a716a9d782803d09b0d6f2d
   subpackages:
   - codes
   - credentials
   - grpclog
   - internal
+  - keepalive
   - metadata
   - naming
   - peer
+  - stats
+  - tap
   - transport
 testImports: []
