@@ -646,6 +646,18 @@ const (
 // TODO: Add more actions
 )
 
+// LockType is the type for AlterTableSpec.
+// See https://dev.mysql.com/doc/refman/5.7/en/alter-table.html#alter-table-concurrency
+type LockType byte
+
+// Lock Types.
+const (
+	LockTypeNone LockType = iota + 1
+	LockTypeDefault
+	LockTypeShared
+	LockTypeExclusive
+)
+
 // AlterTableSpec represents alter table specification.
 type AlterTableSpec struct {
 	node
@@ -658,6 +670,7 @@ type AlterTableSpec struct {
 	NewColumn     *ColumnDef
 	OldColumnName *ColumnName
 	Position      *ColumnPosition
+	LockType      LockType
 }
 
 // Accept implements Node Accept interface.

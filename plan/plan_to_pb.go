@@ -53,11 +53,11 @@ func (p *Selection) ToPB(ctx context.Context) (*tipb.Executor, error) {
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *Sort) ToPB(ctx context.Context) (*tipb.Executor, error) {
+func (p *TopN) ToPB(ctx context.Context) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
 	topNExec := &tipb.TopN{
-		Limit: p.ExecLimit.Count,
+		Limit: p.Count,
 	}
 	for _, item := range p.ByItems {
 		topNExec.OrderBy = append(topNExec.OrderBy, expression.SortByItemToPB(sc, client, item.Expr, item.Desc))

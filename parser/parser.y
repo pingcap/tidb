@@ -442,6 +442,7 @@ import (
 	engine		"ENGINE"
 	engines		"ENGINES"
 	escape 		"ESCAPE"
+	exclusive       "EXCLUSIVE"
 	execute		"EXECUTE"
 	fields		"FIELDS"
 	first		"FIRST"
@@ -483,6 +484,7 @@ import (
 	serializable	"SERIALIZABLE"
 	session		"SESSION"
 	share		"SHARE"
+	shared       	"SHARED"
 	signed		"SIGNED"
 	snapshot	"SNAPSHOT"
 	space 		"SPACE"
@@ -657,6 +659,7 @@ import (
 	LoadDataStmt		"Load data statement"
 	LocalOpt		"Local opt"
 	LockTablesStmt		"Lock tables statement"
+	LockClause         	"Alter table lock clause"
 	LowPriorityOptional	"LOW_PRIORITY or empty"
 	NumLiteral		"Num/Int/Float/Decimal Literal"
 	NoWriteToBinLogAliasOpt "NO_WRITE_TO_BINLOG alias LOCAL or empty"
@@ -1030,13 +1033,31 @@ AlterTableSpec:
 			NewTable:      $3.(*ast.TableName),
 		}
 	}
-|	"LOCK" eq "NONE"
+|	LockClause
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp:    		ast.AlterTableLock,
+			LockType:   $1.(ast.LockType),
 		}
 	}
 
+LockClause: 
+	"LOCK" eq "NONE"
+	{
+		$$ = ast.LockTypeNone
+	}
+|	"LOCK" eq "DEFAULT"
+	{
+		$$ = ast.LockTypeDefault
+	}
+|       "LOCK" eq "SHARED"
+	{
+		$$ = ast.LockTypeShared
+	}
+|   	"LOCK" eq "EXCLUSIVE"
+	{
+		$$ = ast.LockTypeExclusive
+	}
 
 KeyOrIndex: "KEY" | "INDEX"
 
@@ -2326,7 +2347,7 @@ UnReservedKeyword:
 | "MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION" | "JSON"
 | "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
-| "TIMESTAMPDIFF" | "NONE" | "SUPER"
+| "TIMESTAMPDIFF" | "NONE" | "SUPER" | "SHARED" | "EXCLUSIVE"
 
 ReservedKeyword:
 "ADD" | "ALL" | "ALTER" | "ANALYZE" | "AND" | "AS" | "ASC" | "BETWEEN" | "BIGINT"
@@ -3687,6 +3708,7 @@ GetFormatSelector:
 	{
 		$$ = strings.ToUpper($1)
 	}
+
 
 FunctionNameDateArith:
 	"DATE_ADD"

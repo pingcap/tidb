@@ -386,7 +386,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp.Decimal = v.getFsp(x)
 	case ast.Curdate, ast.CurrentDate, ast.Date, ast.FromDays, ast.MakeDate:
 		tp = types.NewFieldType(mysql.TypeDate)
-	case ast.DateAdd, ast.DateSub, ast.AddDate, ast.SubDate, ast.Timestamp, ast.TimestampAdd, ast.StrToDate:
+	case ast.DateAdd, ast.DateSub, ast.AddDate, ast.SubDate, ast.Timestamp, ast.TimestampAdd, ast.StrToDate, ast.ConvertTz:
 		tp = types.NewFieldType(mysql.TypeDatetime)
 	case ast.Now, ast.Sysdate, ast.CurrentTimestamp, ast.UTCTimestamp:
 		tp = types.NewFieldType(mysql.TypeDatetime)
