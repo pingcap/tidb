@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/pd-client"
-	goctx "golang.org/x/net/context"
 )
 
 // RegionCache caches Regions loaded from PD.
@@ -53,8 +52,6 @@ func NewRegionCache(pdClient pd.Client) *RegionCache {
 
 // RPCContext contains data that is needed to send RPC to a region.
 type RPCContext struct {
-	goctx.Context
-
 	Region RegionVerID
 	KVCtx  *kvrpcpb.Context
 	Addr   string
@@ -90,10 +87,9 @@ func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext,
 		return nil, nil
 	}
 	return &RPCContext{
-		Context: bo.ctx,
-		Region:  id,
-		KVCtx:   kvCtx,
-		Addr:    addr,
+		Region: id,
+		KVCtx:  kvCtx,
+		Addr:   addr,
 	}, nil
 }
 
