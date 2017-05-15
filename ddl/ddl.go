@@ -217,7 +217,7 @@ func (d *ddl) setWorker(ctx goctx.Context, cli *clientv3.Client) {
 		etcdClient: cli,
 	}
 	ctx, d.worker.cancelFunc = goctx.WithCancel(ctx)
-	d.wait.Add(2)
+	d.wait.Add(1)
 	go d.campaignOwners(ctx)
 }
 

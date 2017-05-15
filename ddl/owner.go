@@ -81,6 +81,7 @@ func (w *worker) newSession(ctx goctx.Context, retryCnt int) {
 
 func (d *ddl) campaignOwners(ctx goctx.Context) {
 	d.worker.newSession(ctx, newSessionDefaultRetryCnt)
+	d.wait.Add(1)
 	go d.campaignLoop(ctx, ddlOwnerKey)
 	d.campaignLoop(ctx, bgOwnerKey)
 }
@@ -112,7 +113,7 @@ func (d *ddl) campaignLoop(ctx goctx.Context, key string) {
 		if leader == worker.ddlID {
 			worker.setOwnerVal(key, true)
 		} else {
-			log.Warnf("[ddl] worker %s doesn't the owner", worker.ddlID)
+			log.Warnf("[ddl] worker %s isn't the owner", worker.ddlID)
 			continue
 		}
 
@@ -126,6 +127,7 @@ func (d *ddl) campaignLoop(ctx goctx.Context, key string) {
 		select {
 		case <-worker.etcdSession.Done():
 			// TODO: Create session again?
+			log.Warnf("etcd session is done.")
 		default:
 		}
 	}
@@ -158,7 +160,7 @@ func (w *worker) watchOwner(ctx goctx.Context, key string) {
 				}
 			}
 		case <-w.etcdSession.Done():
-			// TODO: Create session again?
+			return
 		case <-ctx.Done():
 			return
 		}
