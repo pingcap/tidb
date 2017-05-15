@@ -742,6 +742,7 @@ func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) Plan {
 		IsLocal:    ld.IsLocal,
 		Path:       ld.Path,
 		Table:      ld.Table,
+		Columns:    ld.Columns,
 		FieldsInfo: ld.FieldsInfo,
 		LinesInfo:  ld.LinesInfo,
 	}
