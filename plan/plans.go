@@ -159,6 +159,7 @@ type LoadData struct {
 	IsLocal    bool
 	Path       string
 	Table      *ast.TableName
+	Columns    []*ast.ColumnName
 	FieldsInfo *ast.FieldsClause
 	LinesInfo  *ast.LinesClause
 }

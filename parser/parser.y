@@ -565,6 +565,7 @@ import (
 	ColumnName		"column name"
 	ColumnNameList		"column name list"
 	ColumnNameListOpt	"column name list opt"
+	ColumnNameListOptWithBrackets "column name list opt with brackets"
 	ColumnSetValue		"insert statement set value by column name"
 	ColumnSetValueList	"insert statement set value by column name list"
 	CommitStmt		"COMMIT statement"
@@ -1216,6 +1217,16 @@ ColumnNameListOpt:
 |	ColumnNameList
 	{
 		$$ = $1.([]*ast.ColumnName)
+	}
+
+ColumnNameListOptWithBrackets:
+	/* EMPTY */
+	{
+		$$ = []*ast.ColumnName{}
+	}
+|	'(' ColumnNameListOpt ')'
+	{
+		$$ = $2.([]*ast.ColumnName)
 	}
 
 CommitStmt:
@@ -6272,11 +6283,12 @@ RevokeStmt:
  * See https://dev.mysql.com/doc/refman/5.7/en/load-data.html
  *******************************************************************************************/
 LoadDataStmt:
-	"LOAD" "DATA" LocalOpt "INFILE" stringLit "INTO" "TABLE" TableName Fields Lines
+	"LOAD" "DATA" LocalOpt "INFILE" stringLit "INTO" "TABLE" TableName Fields Lines ColumnNameListOptWithBrackets
 	{
 		x := &ast.LoadDataStmt{
 			Path:       $5,
 			Table:      $8.(*ast.TableName),
+			Columns:    $11.([]*ast.ColumnName),
 		}
 		if $3 != nil {
 			x.IsLocal = true
