@@ -46,10 +46,10 @@ func (s *testJSONSuite) TestJSONSerde(c *C) {
 		In  JSON
 		Out JSON
 	}{
-		{In: &jsonNilValue, Out: &jsonNilValue},
-		{In: &jsonBoolValue, Out: &jsonBoolValue},
-		{In: &jsonDoubleValue, Out: &jsonDoubleValue},
-		{In: &jsonStringValue, Out: &jsonStringValue},
+		{In: jsonNilValue, Out: jsonNilValue},
+		{In: jsonBoolValue, Out: jsonBoolValue},
+		{In: jsonDoubleValue, Out: jsonDoubleValue},
+		{In: jsonStringValue, Out: jsonStringValue},
 		{In: j1, Out: j1},
 		{In: j2, Out: j2},
 	}

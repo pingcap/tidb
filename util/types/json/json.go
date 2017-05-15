@@ -23,7 +23,6 @@ import (
 type JSON interface {
 	getTypeCode() byte
 	writeBinaryRepresentation(buffer *bytes.Buffer)
-	readBinaryRepresentation(data []byte) error
 }
 
 // ParseFromString parses a json from string.

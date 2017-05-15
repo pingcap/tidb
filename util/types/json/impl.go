@@ -37,39 +37,29 @@ func dumpToString(j JSON) string {
 func normalize(in interface{}) JSON {
 	switch t := in.(type) {
 	case bool:
-		var literal = new(jsonLiteral)
 		if t {
-			*literal = jsonLiteral(0x01)
+			return jsonLiteral(0x01)
 		} else {
-			*literal = jsonLiteral(0x02)
+			return jsonLiteral(0x02)
 		}
-		return literal
 	case nil:
-		var literal = new(jsonLiteral)
-		*literal = 0x00
-		return literal
+		return jsonLiteral(0x00)
 	case float64:
-		var f64 = new(jsonDouble)
-		*f64 = jsonDouble(t)
-		return f64
+		return jsonDouble(t)
 	case string:
-		var s = new(jsonString)
-		*s = jsonString(t)
-		return s
+		return jsonString(t)
 	case map[string]interface{}:
-		var object = new(jsonObject)
-		*object = make(map[string]JSON, len(t))
+		var object = make(map[string]JSON, len(t))
 		for key, value := range t {
-			(*object)[key] = normalize(value)
+			object[key] = normalize(value)
 		}
-		return object
+		return jsonObject(object)
 	case []interface{}:
-		var array = new(jsonArray)
-		*array = make([]JSON, len(t))
+		var array = make([]JSON, len(t))
 		for i, elem := range t {
-			(*array)[i] = normalize(elem)
+			array[i] = normalize(elem)
 		}
-		return array
+		return jsonArray(array)
 	}
 	return nil
 }

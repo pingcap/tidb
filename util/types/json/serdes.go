@@ -97,6 +97,20 @@ type jsonObject map[string]JSON
 type jsonArray []JSON
 type jsonDouble float64
 
+// jsonDeser is for deserialize json from bytes.
+type jsonDeser interface {
+	readBinaryRepresentation([]byte) error
+}
+
+func jsonDeserFromJSON(j JSON) jsonDeser {
+	if reflect.TypeOf(j).Kind() == reflect.Ptr {
+		if jdeser, ok := j.(jsonDeser); ok {
+			return jdeser
+		}
+	}
+	return nil
+}
+
 func serialize(j JSON) []byte {
 	var buffer = new(bytes.Buffer)
 	buffer.WriteByte(j.getTypeCode())
@@ -106,7 +120,7 @@ func serialize(j JSON) []byte {
 
 func deserialize(data []byte) (j JSON, err error) {
 	j = jsonFromTypeCode(data[0])
-	err = j.readBinaryRepresentation(data[1:])
+	err = jsonDeserFromJSON(j).readBinaryRepresentation(data[1:])
 	return
 }
 
@@ -239,9 +253,9 @@ func (m *jsonObject) readBinaryRepresentation(data []byte) (err error) {
 			var inline = valueOffsets[i]
 			var hdr = reflect.SliceHeader{Data: uintptr(unsafe.Pointer(&inline)), Len: 4, Cap: 4}
 			var buf = *(*[]byte)(unsafe.Pointer(&hdr))
-			value.readBinaryRepresentation(buf)
+			jsonDeserFromJSON(value).readBinaryRepresentation(buf)
 		} else {
-			value.readBinaryRepresentation(data[valueOffsets[i]:])
+			jsonDeserFromJSON(value).readBinaryRepresentation(data[valueOffsets[i]:])
 		}
 		if err != nil {
 			return
@@ -298,9 +312,9 @@ func (a *jsonArray) readBinaryRepresentation(data []byte) (err error) {
 			var inline = valueOffsets[i]
 			var hdr = reflect.SliceHeader{Data: uintptr(unsafe.Pointer(&inline)), Len: 4, Cap: 4}
 			var buf = *(*[]byte)(unsafe.Pointer(&hdr))
-			err = value.readBinaryRepresentation(buf)
+			err = jsonDeserFromJSON(value).readBinaryRepresentation(buf)
 		} else {
-			err = value.readBinaryRepresentation(data[valueOffsets[i]:])
+			err = jsonDeserFromJSON(value).readBinaryRepresentation(data[valueOffsets[i]:])
 		}
 		if err != nil {
 			return
