@@ -25,21 +25,6 @@ type JSON interface {
 	encode(buffer *bytes.Buffer)
 }
 
-// Serialize means serialize itself into bytes.
-func Serialize(j JSON) []byte {
-	var buffer = new(bytes.Buffer)
-	buffer.WriteByte(j.getTypeCode())
-	j.encode(buffer)
-	return buffer.Bytes()
-}
-
-// Deserialize means deserialize a json from bytes.
-func Deserialize(data []byte) (j JSON, err error) {
-	j = jsonFromTypeCode(data[0])
-	err = jsonDeserFromJSON(j).decode(data[1:])
-	return
-}
-
 var (
 	// ErrInvalidJSONText means invalid JSON text.
 	ErrInvalidJSONText = terror.ClassJSON.New(mysql.ErrInvalidJSONText, mysql.MySQLErrName[mysql.ErrInvalidJSONText])
