@@ -20,7 +20,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -31,8 +30,9 @@ import (
 
 // SetExecutor executes set statement.
 type SetExecutor struct {
+	baseExecutor
+
 	vars []*expression.VarAssignment
-	ctx  context.Context
 	done bool
 }
 
@@ -132,16 +132,6 @@ func (e *SetExecutor) executeSet() error {
 			log.Infof("[%d] set system variable %s = %s", sessionVars.ConnectionID, name, valStr)
 		}
 	}
-	return nil
-}
-
-// Schema implements the Executor Schema interface.
-func (e *SetExecutor) Schema() *expression.Schema {
-	return expression.NewSchema()
-}
-
-// Close implements the Executor Close interface.
-func (e *SetExecutor) Close() error {
 	return nil
 }
 
