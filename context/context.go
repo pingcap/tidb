@@ -52,7 +52,7 @@ type Context interface {
 	GetSessionManager() util.SessionManager
 
 	// RefreshTxnCtx commit old transaction without retry,
-	// and create a new transation.
+	// and creates a new transation.
 	// now just for load data and batch insert.
 	RefreshTxnCtx() error
 

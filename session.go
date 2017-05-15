@@ -1072,8 +1072,8 @@ func (s *session) RefreshTxnCtx() error {
 	if err := s.doCommit(); err != nil {
 		return errors.Trace(err)
 	}
-	s.prepareTxnCtx()
-	return errors.Trace(s.ActivePendingTxn())
+
+	return errors.Trace(s.NewTxn())
 }
 
 // ActivePendingTxn implements Context.ActivePendingTxn interface.

@@ -299,30 +299,6 @@ func (e *LoadDataInfo) SetBatchCount(limit int64) {
 	e.insertVal.batchRows = limit
 }
 
-// RefreshTable refreshs table and checks the specified columns.
-func (e *LoadDataInfo) RefreshTable() error {
-	var columns []string
-	// load infoschema
-	is := GetInfoSchema(e.Ctx)
-	tbl, ok := is.TableByID(e.Table.Meta().ID)
-	if !ok {
-		return errors.Errorf("Can not get table %d", e.Table.Meta().ID)
-	}
-	for _, col := range e.columns {
-		columns = append(columns, col.Name.O)
-	}
-
-	cols, err := table.FindCols(tbl.WritableCols(), columns)
-	if err != nil {
-		return errors.Errorf("LOAD DATA %s: %s", e.Table.Meta().Name.O, err)
-	}
-
-	e.insertVal.Table = tbl
-	e.Table = tbl
-	e.columns = cols
-	return nil
-}
-
 // getValidData returns prevData and curData that starts from starting symbol.
 // If the data doesn't have starting symbol, prevData is nil and curData is curData[len(curData)-startingLen+1:].
 // If curData size less than startingLen, curData is returned directly.

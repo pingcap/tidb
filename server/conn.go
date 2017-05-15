@@ -596,10 +596,6 @@ func insertDataWithCommit(prevData, curData []byte, loadDataInfo *executor.LoadD
 		if err = loadDataInfo.Ctx.RefreshTxnCtx(); err != nil {
 			return nil, errors.Trace(err)
 		}
-		// refresh table info
-		if err = loadDataInfo.RefreshTable(); err != nil {
-			return nil, errors.Trace(err)
-		}
 		curData = prevData
 		prevData = nil
 	}
