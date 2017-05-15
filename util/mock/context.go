@@ -111,7 +111,7 @@ func (c *Context) NewTxn() error {
 
 // RefreshTxnCtx implements the context.Context interface.
 func (c *Context) RefreshTxnCtx() error {
-	return errors.Trace(c.ActivePendingTxn())
+	return errors.Trace(c.NewTxn())
 }
 
 // ActivePendingTxn implements the context.Context interface.
