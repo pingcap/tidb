@@ -795,7 +795,7 @@ func (d *Datum) convertToString(sc *variable.StatementContext, target *FieldType
 	case KindMysqlSet:
 		s = d.GetMysqlSet().String()
 	case KindMysqlJSON:
-		s = d.GetMysqlJSON().DumpToString()
+		json.DumpToString(d.GetMysqlJSON())
 	default:
 		return invalidConv(d, target.Tp)
 	}
@@ -1148,7 +1148,7 @@ func (d *Datum) convertToMysqlSet(sc *variable.StatementContext, target *FieldTy
 func (d *Datum) convertToMysqlJSON(sc *variable.StatementContext, target *FieldType) (Datum, error) {
 	var (
 		s   string
-		j   json.JSON = json.CreateJSON(nil)
+		j   json.JSON
 		ret Datum
 		err error
 	)
@@ -1158,7 +1158,7 @@ func (d *Datum) convertToMysqlJSON(sc *variable.StatementContext, target *FieldT
 	default:
 		return invalidConv(d, target.Tp)
 	}
-	err = j.ParseFromString(s)
+	j, err = json.ParseFromString(s)
 	if err == nil {
 		ret.SetValue(j)
 	}
@@ -1388,7 +1388,7 @@ func (d *Datum) ToString() (string, error) {
 	case KindMysqlSet:
 		return d.GetMysqlSet().String(), nil
 	case KindMysqlJSON:
-		return d.GetMysqlJSON().DumpToString(), nil
+		return json.DumpToString(d.GetMysqlJSON()), nil
 	default:
 		return "", errors.Errorf("cannot convert %v(type %T) to string", d.GetValue(), d.GetValue())
 	}

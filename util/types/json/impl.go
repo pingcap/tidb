@@ -18,37 +18,70 @@ import (
 	"strings"
 )
 
-var _ JSON = &jsonImpl{}
-
-type jsonImpl struct {
-	json interface{}
-}
-
-// ParseFromString implements JSON interface.
-func (j *jsonImpl) ParseFromString(s string) (err error) {
+func parseFromString(s string) (JSON, error) {
 	if len(s) == 0 {
-		return ErrInvalidJSONText.GenByArgs("The document is empty")
+		return nil, ErrInvalidJSONText.GenByArgs("The document is empty")
 	}
-	err = json.Unmarshal([]byte(s), &j.json)
-	if err != nil {
-		return ErrInvalidJSONText.GenByArgs(err)
+	var in interface{}
+	if err := json.Unmarshal([]byte(s), &in); err != nil {
+		return nil, ErrInvalidJSONText.GenByArgs(err)
 	}
-	return err
+	return normalize(in), nil
 }
 
-// DumpToString implements JSON interface.
-func (j *jsonImpl) DumpToString() string {
-	bytes, _ := json.Marshal(j.json)
+func dumpToString(j JSON) string {
+	bytes, _ := json.Marshal(j)
 	return strings.Trim(string(bytes), "\n")
 }
 
-// Serialize implements JSON interface.
-func (j *jsonImpl) Serialize() []byte {
-	ret, _ := serialize(j.json)
-	return ret
+func normalize(in interface{}) JSON {
+	switch t := in.(type) {
+	case bool:
+		var literal = new(jsonLiteral)
+		if t {
+			*literal = jsonLiteral(0x01)
+		} else {
+			*literal = jsonLiteral(0x02)
+		}
+		return literal
+	case nil:
+		var literal = new(jsonLiteral)
+		*literal = 0x00
+		return literal
+	case float64:
+		var f64 = new(jsonDouble)
+		*f64 = jsonDouble(t)
+		return f64
+	case string:
+		var s = new(jsonString)
+		*s = jsonString(t)
+		return s
+	case map[string]interface{}:
+		var object = new(jsonObject)
+		*object = make(map[string]JSON, len(t))
+		for key, value := range t {
+			(*object)[key] = normalize(value)
+		}
+		return object
+	case []interface{}:
+		var array = new(jsonArray)
+		*array = make([]JSON, len(t))
+		for i, elem := range t {
+			(*array)[i] = normalize(elem)
+		}
+		return array
+	}
+	return nil
 }
 
-// Deserialize implements JSON interface.
-func (j *jsonImpl) Deserialize(bytes []byte) {
-	j.json, _ = deserialize(bytes)
+// MarshalJSON implements RawMessage.
+func (u jsonLiteral) MarshalJSON() ([]byte, error) {
+	switch u {
+	case 0x00:
+		return []byte("null"), nil
+	case 0x01:
+		return []byte("true"), nil
+	default:
+		return []byte("false"), nil
+	}
 }

@@ -29,32 +29,33 @@ func TestT(t *testing.T) {
 }
 
 func (s *testJSONSuite) TestJSONSerde(c *C) {
-	var j1 interface{}
-	var jstr1 = []byte(`{"a": [1, "2", {"aa": "bb"}, 4.0], "b": true}`)
-	json.Unmarshal(jstr1, &j1)
+	var jstr1 = `{"a": [1, "2", {"aa": "bb"}, 4.0], "b": true}`
+	j1, err := parseFromString(jstr1)
+	c.Assert(err, IsNil)
 
-	var j2 interface{}
-	var jstr2 = []byte(`[{"a": 1, "b": true}, 3, 3.5, "hello, world", nil, true]`)
-	json.Unmarshal(jstr2, &j2)
+	var jstr2 = `[{"a": 1, "b": true}, 3, 3.5, "hello, world", null, true]`
+	j2, err := parseFromString(jstr2)
+	c.Assert(err, IsNil)
+
+	var jsonNilValue = jsonLiteral(0x00)
+	var jsonBoolValue = jsonLiteral(0x01)
+	var jsonDoubleValue = jsonDouble(3.24)
+	var jsonStringValue = jsonString("hello, 世界")
 
 	var testcses = []struct {
-		In  interface{}
-		Out interface{}
+		In  JSON
+		Out JSON
 	}{
-		{In: nil, Out: nil},
-		{In: true, Out: true},
-		{In: false, Out: false},
-		{In: int16(30), Out: int16(30)},
-		{In: uint32(3), Out: uint32(3)},
-		{In: float64(0.5), Out: float64(0.5)},
-		{In: "abcdefg", Out: "abcdefg"},
+		{In: &jsonNilValue, Out: &jsonNilValue},
+		{In: &jsonBoolValue, Out: &jsonBoolValue},
+		{In: &jsonDoubleValue, Out: &jsonDoubleValue},
+		{In: &jsonStringValue, Out: &jsonStringValue},
 		{In: j1, Out: j1},
 		{In: j2, Out: j2},
 	}
 
 	for _, s := range testcses {
-		data, err := serialize(s.In)
-		c.Assert(err, IsNil)
+		data := serialize(s.In)
 		t, err := deserialize(data)
 		c.Assert(err, IsNil)
 
