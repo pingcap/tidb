@@ -210,6 +210,10 @@ func (t *rootTaskProfile) plan() PhysicalPlan {
 }
 
 func (p *Limit) attach2TaskProfile(profiles ...taskProfile) taskProfile {
+	// If task is invalid, keep it remained.
+	if profiles[0].plan() == nil {
+		return profiles[0]
+	}
 	profile := profiles[0].copy()
 	if cop, ok := profile.(*copTaskProfile); ok {
 		// If the task is copTask, the Limit can always be pushed down.
@@ -264,6 +268,10 @@ func (p *Sort) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 }
 
 func (p *TopN) attach2TaskProfile(profiles ...taskProfile) taskProfile {
+	// If task is invalid, keep it remained.
+	if profiles[0].plan() == nil {
+		return profiles[0]
+	}
 	profile := profiles[0].copy()
 	// This is a topN plan.
 	if copTask, ok := profile.(*copTaskProfile); ok && p.canPushDown() {
@@ -389,6 +397,10 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 }
 
 func (p *PhysicalAggregation) attach2TaskProfile(profiles ...taskProfile) taskProfile {
+	// If task is invalid, keep it remained.
+	if profiles[0].plan() == nil {
+		return profiles[0]
+	}
 	// TODO: We only consider hash aggregation here.
 	profile := profiles[0].copy()
 	if cop, ok := profile.(*copTaskProfile); ok {
