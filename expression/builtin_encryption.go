@@ -411,7 +411,7 @@ func (b *builtinPasswordSig) eval(row []types.Datum) (d types.Datum, err error) 
 		return d, errors.Trace(err)
 	}
 
-	if pass == "" {
+	if len(pass) == 0 {
 		d.SetString("")
 		return d, nil
 	}
