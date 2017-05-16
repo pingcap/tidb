@@ -424,7 +424,7 @@ func (b *builtinPasswordSig) eval(row []types.Datum) (d types.Datum, err error) 
 	h2 := sha1.New()
 	h2.Write(hash1)
 	hash2 := h2.Sum(nil)
-	ret := "*" + fmt.Sprintf("%X", hash2)
+	ret := fmt.Sprintf("*%X", hash2)
 	d.SetString(ret)
 
 	return d, nil
