@@ -312,7 +312,7 @@ func (c *mockClient) Send(ctx goctx.Context, _ *kv.Request) kv.Response {
 	return nil
 }
 
-func (c *mockClient) SupportRequestType(reqType, subType int64) bool {
+func (c *mockClient) IsRequestTypeSupported(reqType, subType int64) bool {
 	switch reqType {
 	case kv.ReqTypeSelect, kv.ReqTypeIndex:
 		switch subType {

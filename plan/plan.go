@@ -29,7 +29,7 @@ import (
 
 // useDAGPlanBuilder checks if we use new DAG planner.
 func useDAGPlanBuilder(ctx context.Context) bool {
-	return ctx.GetClient().SupportRequestType(kv.ReqTypeDAG, kv.ReqSubTypeBasic)
+	return ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic)
 }
 
 // Plan is the description of an execution flow.
