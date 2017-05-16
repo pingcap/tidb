@@ -109,6 +109,11 @@ func (c *Context) NewTxn() error {
 	return nil
 }
 
+// RefreshTxnCtx implements the context.Context interface.
+func (c *Context) RefreshTxnCtx() error {
+	return errors.Trace(c.NewTxn())
+}
+
 // ActivePendingTxn implements the context.Context interface.
 func (c *Context) ActivePendingTxn() error {
 	if c.txn != nil {

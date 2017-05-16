@@ -442,6 +442,7 @@ import (
 	engine		"ENGINE"
 	engines		"ENGINES"
 	escape 		"ESCAPE"
+	exclusive       "EXCLUSIVE"
 	execute		"EXECUTE"
 	fields		"FIELDS"
 	first		"FIRST"
@@ -483,6 +484,7 @@ import (
 	serializable	"SERIALIZABLE"
 	session		"SESSION"
 	share		"SHARE"
+	shared       	"SHARED"
 	signed		"SIGNED"
 	snapshot	"SNAPSHOT"
 	space 		"SPACE"
@@ -563,6 +565,7 @@ import (
 	ColumnName		"column name"
 	ColumnNameList		"column name list"
 	ColumnNameListOpt	"column name list opt"
+	ColumnNameListOptWithBrackets "column name list opt with brackets"
 	ColumnSetValue		"insert statement set value by column name"
 	ColumnSetValueList	"insert statement set value by column name list"
 	CommitStmt		"COMMIT statement"
@@ -657,6 +660,7 @@ import (
 	LoadDataStmt		"Load data statement"
 	LocalOpt		"Local opt"
 	LockTablesStmt		"Lock tables statement"
+	LockClause         	"Alter table lock clause"
 	LowPriorityOptional	"LOW_PRIORITY or empty"
 	NumLiteral		"Num/Int/Float/Decimal Literal"
 	NoWriteToBinLogAliasOpt "NO_WRITE_TO_BINLOG alias LOCAL or empty"
@@ -1030,13 +1034,31 @@ AlterTableSpec:
 			NewTable:      $3.(*ast.TableName),
 		}
 	}
-|	"LOCK" eq "NONE"
+|	LockClause
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp:    		ast.AlterTableLock,
+			LockType:   $1.(ast.LockType),
 		}
 	}
 
+LockClause: 
+	"LOCK" eq "NONE"
+	{
+		$$ = ast.LockTypeNone
+	}
+|	"LOCK" eq "DEFAULT"
+	{
+		$$ = ast.LockTypeDefault
+	}
+|       "LOCK" eq "SHARED"
+	{
+		$$ = ast.LockTypeShared
+	}
+|   	"LOCK" eq "EXCLUSIVE"
+	{
+		$$ = ast.LockTypeExclusive
+	}
 
 KeyOrIndex: "KEY" | "INDEX"
 
@@ -1195,6 +1217,16 @@ ColumnNameListOpt:
 |	ColumnNameList
 	{
 		$$ = $1.([]*ast.ColumnName)
+	}
+
+ColumnNameListOptWithBrackets:
+	/* EMPTY */
+	{
+		$$ = []*ast.ColumnName{}
+	}
+|	'(' ColumnNameListOpt ')'
+	{
+		$$ = $2.([]*ast.ColumnName)
 	}
 
 CommitStmt:
@@ -2326,7 +2358,7 @@ UnReservedKeyword:
 | "MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION" | "JSON"
 | "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "SPACE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
-| "TIMESTAMPDIFF" | "NONE" | "SUPER"
+| "TIMESTAMPDIFF" | "NONE" | "SUPER" | "SHARED" | "EXCLUSIVE"
 
 ReservedKeyword:
 "ADD" | "ALL" | "ALTER" | "ANALYZE" | "AND" | "AS" | "ASC" | "BETWEEN" | "BIGINT"
@@ -3687,6 +3719,7 @@ GetFormatSelector:
 	{
 		$$ = strings.ToUpper($1)
 	}
+
 
 FunctionNameDateArith:
 	"DATE_ADD"
@@ -6250,11 +6283,12 @@ RevokeStmt:
  * See https://dev.mysql.com/doc/refman/5.7/en/load-data.html
  *******************************************************************************************/
 LoadDataStmt:
-	"LOAD" "DATA" LocalOpt "INFILE" stringLit "INTO" "TABLE" TableName Fields Lines
+	"LOAD" "DATA" LocalOpt "INFILE" stringLit "INTO" "TABLE" TableName Fields Lines ColumnNameListOptWithBrackets
 	{
 		x := &ast.LoadDataStmt{
 			Path:       $5,
 			Table:      $8.(*ast.TableName),
+			Columns:    $11.([]*ast.ColumnName),
 		}
 		if $3 != nil {
 			x.IsLocal = true

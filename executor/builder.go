@@ -82,6 +82,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildSet(v)
 	case *plan.Sort:
 		return b.buildSort(v)
+	case *plan.TopN:
+		return b.buildTopN(v)
 	case *plan.Union:
 		return b.buildUnion(v)
 	case *plan.Update:
@@ -280,17 +282,25 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 		b.err = errors.Errorf("Can not get table %d", v.Table.TableInfo.ID)
 		return nil
 	}
+	insertVal := &InsertValues{ctx: b.ctx, Table: tbl, Columns: v.Columns}
+	tableCols := tbl.WritableCols()
+	columns, err := insertVal.getColumns(tableCols)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
 
 	return &LoadData{
 		IsLocal: v.IsLocal,
 		loadDataInfo: &LoadDataInfo{
-			row:        make([]types.Datum, len(tbl.Cols())),
-			insertVal:  &InsertValues{ctx: b.ctx, Table: tbl},
+			row:        make([]types.Datum, len(columns)),
+			insertVal:  insertVal,
 			Path:       v.Path,
 			Table:      tbl,
 			FieldsInfo: v.FieldsInfo,
 			LinesInfo:  v.LinesInfo,
 			Ctx:        b.ctx,
+			columns:    columns,
 		},
 	}
 }
@@ -680,6 +690,18 @@ func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
 	return &sortExec
 }
 
+func (b *executorBuilder) buildTopN(v *plan.TopN) Executor {
+	sortExec := SortExec{
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
+		ByItems:      v.ByItems,
+		schema:       v.Schema(),
+	}
+	return &TopnExec{
+		SortExec: sortExec,
+		limit:    &plan.Limit{Count: v.Count, Offset: v.Offset},
+	}
+}
+
 func (b *executorBuilder) buildNestedLoopJoin(v *plan.PhysicalHashJoin) *NestedLoopJoinExec {
 	for _, cond := range v.EqualConditions {
 		cond.GetArgs()[0].(*expression.Column).ResolveIndices(v.Schema())
@@ -916,7 +938,7 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor
 		columns:   is.Columns,
 	}
 
-	for _, col := range v.Schema().Columns {
+	for _, col := range v.OutputColumns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(col.Index))
 	}
 
