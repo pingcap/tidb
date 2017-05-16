@@ -34,21 +34,17 @@ var (
 // Same error code can be used in different error classes.
 type ErrCode int
 
-// Executor error codes.
 const (
+	// Executor error codes.
 	CodeUnknown           ErrCode = -1
 	CodeExecResultIsEmpty         = 3
-)
 
-// Expression error codes.
-const (
-	CodeMissConnectionID ErrCode = iota + 1
-)
+	// Expression error codes.
+	CodeMissConnectionID ErrCode = 1
 
-// Special error codes.
-const (
+	// Special error codes.
 	// CodeResultUndetermined indicates the sql execution result is undetermined.
-	CodeResultUndetermined ErrCode = iota + 2
+	CodeResultUndetermined ErrCode = 2
 )
 
 // ErrClass represents a class of errors.
