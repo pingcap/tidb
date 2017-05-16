@@ -37,9 +37,8 @@ func normalize(in interface{}) JSON {
 	case bool:
 		if t {
 			return jsonLiteralTrue
-		} else {
-			return jsonLiteralFalse
 		}
+		return jsonLiteralFalse
 	case nil:
 		return jsonLiteralNil
 	case float64:
@@ -63,8 +62,8 @@ func normalize(in interface{}) JSON {
 }
 
 // MarshalJSON implements RawMessage.
-func (u jsonLiteral) MarshalJSON() ([]byte, error) {
-	switch u {
+func (j jsonLiteral) MarshalJSON() ([]byte, error) {
+	switch j {
 	case 0x00:
 		return []byte("null"), nil
 	case 0x01:

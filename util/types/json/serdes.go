@@ -141,10 +141,8 @@ type jsonDeser interface {
 }
 
 func jsonDeserFromJSON(j JSON) jsonDeser {
-	if reflect.TypeOf(j).Kind() == reflect.Ptr {
-		if jdeser, ok := j.(jsonDeser); ok {
-			return jdeser
-		}
+	if jdeser, ok := j.(jsonDeser); ok {
+		return jdeser
 	}
 	return nil
 }
@@ -207,9 +205,10 @@ func (m jsonObject) getTypeCode() byte {
 
 func (m jsonObject) encode(buffer *bytes.Buffer) {
 	// object ::= element-count size key-entry* value-entry* key* value*
+	// key-entry ::= key-offset key-length
 	var countAndSize = make([]uint32, 2)
 	var countAndSizeLen = len(countAndSize) * 4
-	var keySlice = keysInMap(m)
+	var keySlice = m.getSortedKeys()
 
 	var keyEntrysLen = (4 + 2) * len(m)
 	var valueEntrysLen = (1 + 4) * len(m)
@@ -227,7 +226,7 @@ func (m jsonObject) encode(buffer *bytes.Buffer) {
 	}
 
 	for _, key := range keySlice {
-		value, _ := m[key]
+		value := m[key]
 		pushValueEntry(value, valueEntrys, values, countAndSizeLen+keyEntrysLen+valueEntrysLen+keys.Len())
 	}
 
@@ -378,12 +377,10 @@ func jsonFromTypeCode(typeCode byte) JSON {
 // Two map are equal if they have same keys and same values.
 // So we sort the keys before serialize in order to keep
 // their binary representations are same.
-func keysInMap(m map[string]JSON) []string {
-	keys := make([]string, len(m))
-	i := 0
+func (m jsonObject) getSortedKeys() []string {
+	keys := make([]string, 0, len(m))
 	for k := range m {
-		keys[i] = k
-		i++
+		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 	return keys
