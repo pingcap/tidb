@@ -109,7 +109,7 @@ func (b *baseBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool
 func (b *baseBuiltinFunc) evalDate(row []types.Datum) (types.Time, bool, error) {
 	val, err := b.self.eval(row)
 	if err != nil || val.IsNull() {
-		return nil, val.IsNull(), errors.Trace(err)
+		return types.Time{}, val.IsNull(), errors.Trace(err)
 	}
 	dateVal, err := val.ConvertTo(b.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeDatetime))
 	return dateVal.GetMysqlTime(), false, errors.Trace(err)
@@ -118,7 +118,7 @@ func (b *baseBuiltinFunc) evalDate(row []types.Datum) (types.Time, bool, error) 
 func (b *baseBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
 	val, err := b.self.eval(row)
 	if err != nil || val.IsNull() {
-		return nil, val.IsNull(), errors.Trace(err)
+		return types.Duration{}, val.IsNull(), errors.Trace(err)
 	}
 	durationVal, err := val.ConvertTo(b.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeDuration))
 	return durationVal.GetMysqlDuration(), false, errors.Trace(err)

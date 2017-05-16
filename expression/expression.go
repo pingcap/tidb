@@ -189,7 +189,7 @@ func evalExprToString(expr Expression, row []types.Datum, _ *variable.StatementC
 func evalExprToDate(expr Expression, row []types.Datum, _ *variable.StatementContext) (res types.Time, isNull bool, err error) {
 	val, err := expr.Eval(row)
 	if val.IsNull() || err != nil {
-		return nil, val.IsNull(), errors.Trace(err)
+		return types.Time{}, val.IsNull(), errors.Trace(err)
 	}
 	switch expr.GetType().Tp {
 	case mysql.TypeDatetime, mysql.TypeDate, mysql.TypeTimestamp:
@@ -203,7 +203,7 @@ func evalExprToDate(expr Expression, row []types.Datum, _ *variable.StatementCon
 func evalExprToDuration(expr Expression, row []types.Datum, _ *variable.StatementContext) (res types.Duration, isNull bool, err error) {
 	val, err := expr.Eval(row)
 	if val.IsNull() || err != nil {
-		return nil, val.IsNull(), errors.Trace(err)
+		return types.Duration{}, val.IsNull(), errors.Trace(err)
 	}
 	if expr.GetType().Tp == mysql.TypeDuration {
 		return val.GetMysqlDuration(), false, nil
