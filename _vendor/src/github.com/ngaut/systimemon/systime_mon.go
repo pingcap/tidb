@@ -3,7 +3,7 @@ package systimemon
 import (
 	"time"
 
-	"github.com/pingcap/tidb/util/log"
+	"github.com/ngaut/log"
 )
 
 // Call systimeErrHandler if system time jump backward.
