@@ -836,7 +836,7 @@ func (s *testDBSuite) mustQuery(c *C, query string, args ...interface{}) [][]int
 }
 
 func matchRows(c *C, rows [][]interface{}, expected [][]interface{}) {
-	c.Assert(len(rows), Equals, len(expected), Commentf("%v", expected))
+	c.Assert(len(rows), Equals, len(expected), Commentf("got %v, expected %v", rows, expected))
 	for i := range rows {
 		match(c, rows[i], expected[i]...)
 	}
