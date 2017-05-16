@@ -340,16 +340,12 @@ LOOP:
 	}
 
 	// test index key
+	expectedRows := make([][]interface{}, 0, len(keys))
 	for _, key := range keys {
-		rows := s.mustQuery(c, "select c1 from t1 where c3 = ?", key)
-		matchRows(c, rows, [][]interface{}{{key}})
+		expectedRows = append(expectedRows, []interface{}{key})
 	}
-
-	// test delete key not in index
-	for key := range deletedKeys {
-		rows := s.mustQuery(c, "select c1 from t1 where c3 = ?", key)
-		matchRows(c, rows, nil)
-	}
+	rows := s.mustQuery(c, "select c1 from t1 where c3 >= 0")
+	matchRows(c, rows, expectedRows)
 
 	// test index range
 	for i := 0; i < 100; i++ {
