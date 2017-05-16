@@ -790,13 +790,13 @@ func (e *InsertValues) checkValueCount(insertValueCount, valueCount, num int, co
 		// "insert into t values (1), ()" is not valid.
 		// "insert into t values (1,2), (1)" is not valid.
 		// So the value count must be same for all insert list.
-		return errors.Errorf("Column count doesn't match value count at row %d", num+1)
+		return ErrWrongValueCountOnRow.GenByArgs(num + 1)
 	}
 	if valueCount == 0 && len(e.Columns) > 0 {
 		// "insert into t (c1) values ()" is not valid.
-		return errors.Errorf("INSERT INTO %s: expected %d value(s), have %d", e.Table.Meta().Name.O, len(e.Columns), 0)
+		return ErrWrongValueCountOnRow.GenByArgs(num + 1)
 	} else if valueCount > 0 && valueCount != len(cols) {
-		return errors.Errorf("INSERT INTO %s: expected %d value(s), have %d", e.Table.Meta().Name.O, len(cols), valueCount)
+		return ErrWrongValueCountOnRow.GenByArgs(num + 1)
 	}
 	return nil
 }
