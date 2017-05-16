@@ -124,7 +124,6 @@ const (
 	getMaxBackoff           = 15000
 	prewriteMaxBackoff      = 15000
 	commitMaxBackoff        = 15000
-	commitPrimaryMaxBackoff = -1
 	cleanupMaxBackoff       = 15000
 	gcMaxBackoff            = 100000
 	gcResolveLockMaxBackoff = 100000
