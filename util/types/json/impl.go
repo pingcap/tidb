@@ -16,6 +16,8 @@ package json
 import (
 	"encoding/json"
 	"strings"
+
+	"github.com/pingcap/tidb/util/hack"
 )
 
 // ParseFromString parses a json from string.
@@ -75,29 +77,29 @@ func (u jsonLiteral) MarshalJSON() ([]byte, error) {
 // String implements JSON interface.
 func (j jsonLiteral) String() string {
 	bytes, _ := json.Marshal(j)
-	return strings.Trim(string(bytes), "\n")
+	return strings.TrimSpace(hack.String(bytes))
 }
 
 // String implements JSON interface.
 func (j jsonDouble) String() string {
 	bytes, _ := json.Marshal(j)
-	return strings.Trim(string(bytes), "\n")
+	return strings.TrimSpace(hack.String(bytes))
 }
 
 // String implements JSON interface.
 func (j jsonString) String() string {
 	bytes, _ := json.Marshal(j)
-	return strings.Trim(string(bytes), "\n")
+	return strings.TrimSpace(hack.String(bytes))
 }
 
 // String implements JSON interface.
 func (j jsonObject) String() string {
 	bytes, _ := json.Marshal(j)
-	return strings.Trim(string(bytes), "\n")
+	return strings.TrimSpace(hack.String(bytes))
 }
 
 // String implements JSON interface.
 func (j jsonArray) String() string {
 	bytes, _ := json.Marshal(j)
-	return strings.Trim(string(bytes), "\n")
+	return strings.TrimSpace(hack.String(bytes))
 }
