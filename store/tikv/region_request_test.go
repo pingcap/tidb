@@ -115,3 +115,30 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithCancelled(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(resp.RawPut, NotNil)
 }
+
+func (s *testRegionRequestSuite) TestNoReloadRegionWhenCtxCanceled(c *C) {
+	req := &tikvrpc.Request{
+		Type: tikvrpc.CmdRawPut,
+		RawPut: &kvrpcpb.RawPutRequest{
+			Key:   []byte("key"),
+			Value: []byte("value"),
+		},
+	}
+	region, err := s.cache.LocateRegionByID(s.bo, s.region)
+	c.Assert(err, IsNil)
+	c.Assert(region, NotNil)
+
+	sender := s.regionRequestSender
+	save := sender.bo
+	bo, cancel := sender.bo.Fork()
+	sender.bo = bo
+	cancel()
+
+	// Call SendKVReq with a canceled context.
+	_, err = sender.SendReq(req, region.Region, time.Second)
+	// Check this kind of error won't cause region cache drop.
+	c.Assert(errors.Cause(err), Equals, goctx.Canceled)
+	c.Assert(sender.regionCache.getRegionByIDFromCache(s.region), NotNil)
+
+	s.bo = save
+}
