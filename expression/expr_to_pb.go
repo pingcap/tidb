@@ -106,14 +106,14 @@ func (pc pbConverter) datumToPBExpr(d types.Datum) *tipb.Expr {
 	default:
 		return nil
 	}
-	if !pc.client.SupportRequestType(kv.ReqTypeSelect, int64(tp)) {
+	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
 		return nil
 	}
 	return &tipb.Expr{Tp: tp, Val: val}
 }
 
 func (pc pbConverter) columnToPBExpr(column *Column) *tipb.Expr {
-	if !pc.client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_ColumnRef)) {
+	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tipb.ExprType_ColumnRef)) {
 		return nil
 	}
 	switch column.GetType().Tp {
@@ -176,7 +176,7 @@ func (pc pbConverter) compareOpsToPBExpr(expr *ScalarFunction) *tipb.Expr {
 }
 
 func (pc pbConverter) likeToPBExpr(expr *ScalarFunction) *tipb.Expr {
-	if !pc.client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_Like)) {
+	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tipb.ExprType_Like)) {
 		return nil
 	}
 	// Only patterns like 'abc', '%abc', 'abc%', '%abc%' can be converted to *tipb.Expr for now.
@@ -265,7 +265,7 @@ func (pc pbConverter) bitwiseFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 }
 
 func (pc pbConverter) inToPBExpr(expr *ScalarFunction) *tipb.Expr {
-	if !pc.client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_In)) {
+	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tipb.ExprType_In)) {
 		return nil
 	}
 
@@ -283,7 +283,7 @@ func (pc pbConverter) inToPBExpr(expr *ScalarFunction) *tipb.Expr {
 }
 
 func (pc pbConverter) constListToPB(list []Expression) *tipb.Expr {
-	if !pc.client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_ValueList)) {
+	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tipb.ExprType_ValueList)) {
 		return nil
 	}
 
@@ -370,7 +370,7 @@ func AggFuncToPBExpr(sc *variable.StatementContext, client kv.Client, aggFunc Ag
 	case ast.AggFuncAvg:
 		tp = tipb.ExprType_Avg
 	}
-	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tp)) {
+	if !client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
 		return nil
 	}
 
@@ -423,7 +423,7 @@ func (pc pbConverter) controlFuncsToPBExpr(expr *ScalarFunction) *tipb.Expr {
 }
 
 func (pc pbConverter) convertToPBExpr(expr *ScalarFunction, tp tipb.ExprType) *tipb.Expr {
-	if !pc.client.SupportRequestType(kv.ReqTypeSelect, int64(tp)) {
+	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
 		return nil
 	}
 	children := make([]*tipb.Expr, 0, len(expr.GetArgs()))
