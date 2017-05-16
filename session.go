@@ -341,7 +341,6 @@ func (s *session) isRetryableError(err error) bool {
 	return kv.IsRetryableError(err) || terror.ErrorEqual(err, domain.ErrInfoSchemaChanged)
 }
 
-// retry will rebuild plan if infoschema changed, otherwise it reuse the statement.
 func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 	connID := s.sessionVars.ConnectionID
 	if s.sessionVars.TxnCtx.ForUpdate {
@@ -364,6 +363,7 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 			st := sr.st
 			txt := st.OriginText()
 			if infoSchemaChanged {
+				// Rebuild plan if infoschema changed, reuse the statement otherwise.
 				charset, collation := s.sessionVars.GetCharsetInfo()
 				stmt, err := s.parser.ParseOneStmt(txt, charset, collation)
 				if err != nil {
