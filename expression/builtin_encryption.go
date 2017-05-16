@@ -550,7 +550,7 @@ type builtinUncompressSig struct {
 	baseBuiltinFunc
 }
 
-// This func is used for uncompress a string compiled with a compression library such as zlib.
+// uncompress is used for uncompress a string compiled with a compression library such as zlib.
 func uncompress(compressStr []byte) ([]byte, error) {
 	reader := bytes.NewReader(compressStr)
 	var out bytes.Buffer

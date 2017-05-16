@@ -75,14 +75,46 @@ func (c *columnProp) equal(nc *columnProp, ctx context.Context) bool {
 	return c.col.Equal(nc.col, ctx) && c.desc == nc.desc
 }
 
-// requriedProp stands for the required order property by parents. It will be all asc or desc.
+// taskType is the type of execution task.
+type taskType int
+
+const (
+	rootTaskType          taskType = iota
+	copSingleReadTaskType          // TableScan and IndexScan
+	copDoubleReadTaskType          // IndexLookUp
+)
+
+// String implements fmt.Stringer interface.
+func (t taskType) String() string {
+	switch t {
+	case rootTaskType:
+		return "rootTask"
+	case copSingleReadTaskType:
+		return "copSingleReadTask"
+	case copDoubleReadTaskType:
+		return "copDoubleReadTask"
+	}
+	return "UnknownTaskType"
+}
+
+// requriedProp stands for the required physical property by parents.
+// It contains the orders, if the order is desc and the task types.
 type requiredProp struct {
 	cols []*expression.Column
 	desc bool
+	// taskTp means the type of task that an operator requires.
+	// It needs to be specified because two different tasks can't be compared with cost directly.
+	// e.g. If a copTask takes less cost than a rootTask, we can't sure that we must choose the former one. Because the copTask
+	// must be finished and increase its cost in sometime, but we can't make sure the finishing time. So the best way
+	// to let the comparision fair is to add taskType to required property.
+	taskTp taskType
 }
 
 func (p *requiredProp) equal(prop *requiredProp) bool {
 	if len(p.cols) != len(prop.cols) || p.desc != prop.desc {
+		return false
+	}
+	if p.taskTp != prop.taskTp {
 		return false
 	}
 	for i := range p.cols {
@@ -99,18 +131,19 @@ func (p *requiredProp) isEmpty() bool {
 
 // getHashKey encodes prop to a unique key. The key will be stored in the memory table.
 func (p *requiredProp) getHashKey() ([]byte, error) {
-	datums := make([]types.Datum, 0, len(p.cols)*2+1)
+	datums := make([]types.Datum, 0, len(p.cols)*2+2)
 	datums = append(datums, types.NewDatum(p.desc))
 	for _, c := range p.cols {
 		datums = append(datums, types.NewDatum(c.FromID), types.NewDatum(c.Position))
 	}
+	datums = append(datums, types.NewDatum(int(p.taskTp)))
 	bytes, err := codec.EncodeValue(nil, datums...)
 	return bytes, errors.Trace(err)
 }
 
 // String implements fmt.Stringer interface. Just for test.
 func (p *requiredProp) String() string {
-	return fmt.Sprintf("Prop{cols: %s, desc: %v}", p.cols, p.desc)
+	return fmt.Sprintf("Prop{cols: %s, desc: %v, taskTp: %s}", p.cols, p.desc, p.taskTp)
 }
 
 type requiredProperty struct {

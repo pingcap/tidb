@@ -444,7 +444,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	x.SetType(tp)
 }
 
-// The return type of a CASE expression is the compatible aggregated type of all return values,
+// handleCaseExpr decides the return type of a CASE expression which is the compatible aggregated type of all return values,
 // but also depends on the context in which it is used.
 // If used in a string context, the result is returned as a string.
 // If used in a numeric context, the result is returned as a decimal, real, or integer value.
@@ -469,7 +469,7 @@ func (v *typeInferrer) handleCaseExpr(x *ast.CaseExpr) {
 	x.SetType(tp)
 }
 
-// like expression expects the target expression and pattern to be a string, if it's not, we add a cast function.
+// handleLikeExpr expects the target expression and pattern to be a string, if it's not, we add a cast function.
 func (v *typeInferrer) handleLikeExpr(x *ast.PatternLikeExpr) {
 	x.SetType(types.NewFieldType(mysql.TypeLonglong))
 	types.SetBinChsClnFlag(&x.Type)
@@ -477,7 +477,7 @@ func (v *typeInferrer) handleLikeExpr(x *ast.PatternLikeExpr) {
 	x.Pattern = v.addCastToString(x.Pattern)
 }
 
-// regexp expression expects the target expression and pattern to be a string, if it's not, we add a cast function.
+// handleRegexpExpr expects the target expression and pattern to be a string, if it's not, we add a cast function.
 func (v *typeInferrer) handleRegexpExpr(x *ast.PatternRegexpExpr) {
 	x.SetType(types.NewFieldType(mysql.TypeLonglong))
 	types.SetBinChsClnFlag(&x.Type)
@@ -485,7 +485,7 @@ func (v *typeInferrer) handleRegexpExpr(x *ast.PatternRegexpExpr) {
 	x.Pattern = v.addCastToString(x.Pattern)
 }
 
-// AddCastToString adds a cast function to string type if the expr charset is not UTF8.
+// addCastToString adds a cast function to string type if the expr charset is not UTF8.
 func (v *typeInferrer) addCastToString(expr ast.ExprNode) ast.ExprNode {
 	if !mysql.IsUTF8Charset(expr.GetType().Charset) {
 		castTp := types.NewFieldType(mysql.TypeString)
@@ -509,7 +509,7 @@ func (v *typeInferrer) addCastToString(expr ast.ExprNode) ast.ExprNode {
 	return expr
 }
 
-// ConvertValueToColumnTypeIfNeeded checks if the expr in PatternInExpr is column name,
+// convertValueToColumnTypeIfNeeded checks if the expr in PatternInExpr is column name,
 // and casts function to the items in the list.
 func (v *typeInferrer) convertValueToColumnTypeIfNeeded(x *ast.PatternInExpr) {
 	if cn, ok := x.Expr.(*ast.ColumnNameExpr); ok && cn.Refer != nil {
