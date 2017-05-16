@@ -18,9 +18,9 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/util/log"
 	"golang.org/x/net/context"
 )
 

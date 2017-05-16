@@ -18,7 +18,6 @@ import (
 	"os"
 	"testing"
 
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/util/log"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/types"
 )

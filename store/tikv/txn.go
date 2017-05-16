@@ -19,8 +19,8 @@ import (
 
 	"github.com/coreos/etcd/pkg/monotime"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/log"
 	"github.com/pingcap/tipb/go-binlog"
 	goctx "golang.org/x/net/context"
 )

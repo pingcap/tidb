@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/util/log"
 )
 
 var smallCount = 100

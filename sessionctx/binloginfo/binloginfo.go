@@ -17,10 +17,10 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/log"
 	"github.com/pingcap/tipb/go-binlog"
 	goctx "golang.org/x/net/context"
 	grpc "google.golang.org/grpc"

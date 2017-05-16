@@ -21,9 +21,9 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore/engine"
+	"github.com/pingcap/tidb/util/log"
 	"github.com/pingcap/tidb/util/segmentmap"
 	"github.com/twinj/uuid"
 )

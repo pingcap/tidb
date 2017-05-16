@@ -21,9 +21,9 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
+	"github.com/pingcap/tidb/util/log"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )

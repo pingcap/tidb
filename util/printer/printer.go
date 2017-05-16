@@ -17,7 +17,7 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/util/log"
 )
 
 // Version information.

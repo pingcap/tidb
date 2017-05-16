@@ -15,11 +15,11 @@ package executor
 
 import (
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/util/log"
 )
 
 // Compiler compiles an ast.StmtNode to a stmt.Statement.

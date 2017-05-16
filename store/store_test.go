@@ -22,13 +22,13 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/util/log"
 	"github.com/pingcap/tidb/util/testleak"
 )
 

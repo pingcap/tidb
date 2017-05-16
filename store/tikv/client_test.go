@@ -17,11 +17,11 @@ import (
 	"net"
 	"testing"
 
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/msgpb"
 	"github.com/pingcap/kvproto/pkg/util"
+	"github.com/pingcap/tidb/util/log"
 	goctx "golang.org/x/net/context"
 )
 

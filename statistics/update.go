@@ -18,8 +18,8 @@ import (
 	"sync"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/log"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 

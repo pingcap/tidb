@@ -21,10 +21,10 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/util/log"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/prometheus/client_golang/prometheus"
 )

@@ -17,13 +17,13 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/log"
 )
 
 // RunWorker indicates if this TiDB server starts DDL worker and can run DDL job.

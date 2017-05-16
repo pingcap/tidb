@@ -17,7 +17,6 @@ import (
 	"sync"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/petar/GoLLRB/llrb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/log"
 	"github.com/pingcap/tidb/util/types"
 )
 

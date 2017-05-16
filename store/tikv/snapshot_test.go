@@ -17,9 +17,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/log"
 )
 
 type testSnapshotSuite struct {

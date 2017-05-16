@@ -21,8 +21,8 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/util/log"
 	"github.com/pingcap/tidb/util/types"
 )
 

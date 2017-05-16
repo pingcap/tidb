@@ -23,8 +23,8 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/util/log"
 )
 
 var (
