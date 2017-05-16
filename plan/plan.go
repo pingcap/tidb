@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
+// useDAGPlanBuilder checks if we use new DAG planner.
 func useDAGPlanBuilder(ctx context.Context) bool {
 	return ctx.GetClient().SupportRequestType(kv.ReqTypeDAG, kv.ReqSubTypeBasic)
 }

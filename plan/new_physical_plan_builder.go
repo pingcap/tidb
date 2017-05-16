@@ -447,7 +447,6 @@ func (p *DataSource) tryToGetMemTask(prop *requiredProp) (task taskProfile, err 
 		retPlan = sel
 	}
 	task = &rootTaskProfile{p: retPlan}
-
 	task = prop.enforceProperty(task, p.ctx, p.allocator)
 	return task, nil
 }
