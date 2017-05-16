@@ -64,9 +64,9 @@ func normalize(in interface{}) JSON {
 // MarshalJSON implements RawMessage.
 func (j jsonLiteral) MarshalJSON() ([]byte, error) {
 	switch j {
-	case 0x00:
+	case jsonLiteralNil:
 		return []byte("null"), nil
-	case 0x01:
+	case jsonLiteralTrue:
 		return []byte("true"), nil
 	default:
 		return []byte("false"), nil
