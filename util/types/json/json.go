@@ -23,6 +23,8 @@ import (
 type JSON interface {
 	getTypeCode() byte
 	encode(buffer *bytes.Buffer)
+	// String returns JSON text.
+	String() string
 }
 
 var (

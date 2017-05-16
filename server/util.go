@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/util/types/json"
 )
 
 func parseLengthEncodedInt(b []byte) (num uint64, isNull bool, n int) {
@@ -350,7 +349,7 @@ func dumpTextValue(mysqlType uint8, value types.Datum) ([]byte, error) {
 	case types.KindMysqlSet:
 		return hack.Slice(value.GetMysqlSet().String()), nil
 	case types.KindMysqlJSON:
-		return hack.Slice(json.DumpToString(value.GetMysqlJSON())), nil
+		return hack.Slice(value.GetMysqlJSON().String()), nil
 	case types.KindMysqlBit:
 		return hack.Slice(value.GetMysqlBit().ToString()), nil
 	case types.KindMysqlHex:

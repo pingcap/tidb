@@ -30,12 +30,6 @@ func ParseFromString(s string) (JSON, error) {
 	return normalize(in), nil
 }
 
-// DumpToString dumps a JSON to JSON text string.
-func DumpToString(j JSON) string {
-	bytes, _ := json.Marshal(j)
-	return strings.Trim(string(bytes), "\n")
-}
-
 func normalize(in interface{}) JSON {
 	switch t := in.(type) {
 	case bool:
@@ -76,4 +70,34 @@ func (u jsonLiteral) MarshalJSON() ([]byte, error) {
 	default:
 		return []byte("false"), nil
 	}
+}
+
+// String implements JSON interface.
+func (j jsonLiteral) String() string {
+	bytes, _ := json.Marshal(j)
+	return strings.Trim(string(bytes), "\n")
+}
+
+// String implements JSON interface.
+func (j jsonDouble) String() string {
+	bytes, _ := json.Marshal(j)
+	return strings.Trim(string(bytes), "\n")
+}
+
+// String implements JSON interface.
+func (j jsonString) String() string {
+	bytes, _ := json.Marshal(j)
+	return strings.Trim(string(bytes), "\n")
+}
+
+// String implements JSON interface.
+func (j jsonObject) String() string {
+	bytes, _ := json.Marshal(j)
+	return strings.Trim(string(bytes), "\n")
+}
+
+// String implements JSON interface.
+func (j jsonArray) String() string {
+	bytes, _ := json.Marshal(j)
+	return strings.Trim(string(bytes), "\n")
 }
