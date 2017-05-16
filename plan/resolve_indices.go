@@ -113,11 +113,22 @@ func (p *PhysicalUnionScan) ResolveIndices() {
 }
 
 // ResolveIndices implements Plan interface.
+func (p *PhysicalTableReader) ResolveIndices() {
+	p.tablePlan.ResolveIndices()
+}
+
+// ResolveIndices implements Plan interface.
 func (p *PhysicalIndexReader) ResolveIndices() {
 	p.indexPlan.ResolveIndices()
 	for _, col := range p.OutputColumns {
 		col.ResolveIndices(p.indexPlan.Schema())
 	}
+}
+
+// ResolveIndices implements Plan interface.
+func (p *PhysicalIndexLookUpReader) ResolveIndices() {
+	p.tablePlan.ResolveIndices()
+	p.indexPlan.ResolveIndices()
 }
 
 // ResolveIndices implements Plan interface.
