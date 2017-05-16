@@ -99,8 +99,13 @@ func (d *ddl) campaignLoop(ctx goctx.Context, key string) {
 	defer d.wait.Done()
 	worker := d.worker
 	for {
-		if d.isClosed() {
+		select {
+		case <-worker.etcdSession.Done():
+			// TODO: Create session again?
+			log.Warnf("etcd session is done.")
+		case <-ctx.Done():
 			return
+		default:
 		}
 
 		elec := concurrency.NewElection(worker.etcdSession, key)
@@ -132,13 +137,6 @@ func (d *ddl) campaignLoop(ctx goctx.Context, key string) {
 		d.hookMu.Lock()
 		d.hook.OnWatched(ctx)
 		d.hookMu.Unlock()
-
-		select {
-		case <-worker.etcdSession.Done():
-			// TODO: Create session again?
-			log.Warnf("etcd session is done.")
-		default:
-		}
 	}
 }
 
