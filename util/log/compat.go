@@ -17,21 +17,17 @@ import (
 	"github.com/Sirupsen/logrus"
 )
 
-// for compatibility with ngaut/log
 const (
-	LOG_FATAL   = logrus.FatalLevel
-	LOG_ERROR   = logrus.ErrorLevel
-	LOG_WARNING = logrus.WarnLevel
-	LOG_INFO    = logrus.InfoLevel
-	LOG_DEBUG   = logrus.DebugLevel
-)
-
-const (
-	LOG_LEVEL_FATAL = logrus.FatalLevel
-	LOG_LEVEL_ERROR = logrus.ErrorLevel
-	LOG_LEVEL_WARN  = logrus.WarnLevel
-	LOG_LEVEL_INFO  = logrus.InfoLevel
-	LOG_LEVEL_DEBUG = logrus.DebugLevel
+	// LevelFatal level. Logs and then calls `os.Exit(1)`.
+	LevelFatal = logrus.FatalLevel
+	// LevelError level. Logs. Used for errors that should definitely be noted.
+	LevelError = logrus.ErrorLevel
+	// LevelWarn level. Non-critical entries that deserve eyes.
+	LevelWarn = logrus.WarnLevel
+	// LevelInfo level. General operational entries about what's going on inside the application.
+	LevelInfo = logrus.InfoLevel
+	// LevelDebug level. Usually only enabled when debugging.
+	LevelDebug = logrus.DebugLevel
 )
 
 // SetFlags does nothing.

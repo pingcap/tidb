@@ -31,7 +31,7 @@ func prepareBenchSession() Session {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.SetLevel(log.LOG_LEVEL_ERROR)
+	log.SetLevel(log.LevelError)
 	se, err := CreateSession(store)
 	if err != nil {
 		log.Fatal(err)

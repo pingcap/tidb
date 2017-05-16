@@ -172,7 +172,7 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 		errMsg := fmt.Sprintf("backoffer.maxSleep %dms is exceeded, errors:", b.maxSleep)
 		for i, err := range b.errors {
 			// Print only last 3 errors for non-DEBUG log levels.
-			if log.GetLogLevel() >= log.LOG_DEBUG || i >= len(b.errors)-3 {
+			if log.GetLogLevel() >= log.LevelDebug || i >= len(b.errors)-3 {
 				errMsg += "\n" + err.Error()
 			}
 		}
