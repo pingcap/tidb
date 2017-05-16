@@ -796,7 +796,7 @@ func (e *InsertValues) checkValueCount(insertValueCount, valueCount, num int, co
 		// "insert into t (c1) values ()" is not valid.
 		return errors.Errorf("INSERT INTO %s: expected %d value(s), have %d", e.Table.Meta().Name.O, len(e.Columns), 0)
 	} else if valueCount > 0 && valueCount != len(cols) {
-		return errors.Errorf("INSERT INTO %s: expected %d value(s), have %d", e.Table.Meta().Name.O, len(cols), valueCount)
+		return ErrWrongValueCountOnRow.GenByArgs(num + 1)
 	}
 	return nil
 }
