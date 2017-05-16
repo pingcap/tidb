@@ -2730,3 +2730,20 @@ func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(se.AffectedRows(), Equals, uint64(1))
 }
+
+func (s *testSessionSuite) TestCommitWhenSchemaChanged(c *C) {
+	defer testleak.AfterTest(c)()
+	dbName := "test_commit_when_schema_changed"
+	s1 := newSession(c, s.store, dbName)
+	mustExecSQL(c, s1, "create table t (a int, b int)")
+
+	s2 := newSession(c, s.store, dbName)
+	mustExecSQL(c, s2, "begin")
+	mustExecSQL(c, s2, "insert into t values (1, 1)")
+
+	mustExecSQL(c, s1, "alter table t drop column b")
+
+	// When s2 commit, it will find schema already changed.
+	mustExecSQL(c, s2, "insert into t values (4, 4)")
+	mustExecFailed(c, s2, "commit")
+}
