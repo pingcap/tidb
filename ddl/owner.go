@@ -20,6 +20,7 @@ import (
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/coreos/etcd/mvcc/mvccpb"
+	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	goctx "golang.org/x/net/context"
 )
@@ -37,7 +38,6 @@ type worker struct {
 	ddlOwner    int32
 	bgOwner     int32
 	ddlID       string
-	cancelFunc  goctx.CancelFunc
 	etcdClient  *clientv3.Client
 	etcdSession *concurrency.Session
 }
@@ -66,24 +66,33 @@ func (w *worker) setBgOwner(isOwner bool) {
 	}
 }
 
-func (w *worker) newSession(ctx goctx.Context, retryCnt int) {
+func (w *worker) newSession(ctx goctx.Context, retryCnt int) error {
+	var err error
 	for i := 0; i < retryCnt; i++ {
-		session, err := concurrency.NewSession(w.etcdClient, concurrency.WithContext(ctx))
+		w.etcdSession, err = concurrency.NewSession(w.etcdClient, concurrency.WithContext(ctx))
 		if err != nil {
 			log.Warnf("[ddl] failed to new session, err %v", err)
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
-		w.etcdSession = session
 		break
 	}
+	return errors.Trace(err)
 }
 
-func (d *ddl) campaignOwners(ctx goctx.Context) {
-	d.worker.newSession(ctx, newSessionDefaultRetryCnt)
-	d.wait.Add(1)
-	go d.campaignLoop(ctx, ddlOwnerKey)
-	d.campaignLoop(ctx, bgOwnerKey)
+func (d *ddl) campaignOwners(ctx goctx.Context) error {
+	err := d.worker.newSession(ctx, newSessionDefaultRetryCnt)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	d.wait.Add(2)
+	ddlCtx, _ := goctx.WithCancel(ctx)
+	go d.campaignLoop(ddlCtx, ddlOwnerKey)
+
+	bgCtx, _ := goctx.WithCancel(ctx)
+	go d.campaignLoop(bgCtx, bgOwnerKey)
+	return nil
 }
 
 func (d *ddl) campaignLoop(ctx goctx.Context, key string) {

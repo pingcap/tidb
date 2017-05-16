@@ -181,7 +181,9 @@ type ddl struct {
 	reorgRowCount int64
 
 	quitCh chan struct{}
-	wait   sync.WaitGroup
+	// TODO: Use cancelFunc instead of quitCh.
+	cancelFunc goctx.CancelFunc
+	wait       sync.WaitGroup
 }
 
 // RegisterEventCh registers passed channel for ddl Event.
@@ -216,9 +218,9 @@ func (d *ddl) setWorker(ctx goctx.Context, cli *clientv3.Client) {
 		ddlID:      d.uuid,
 		etcdClient: cli,
 	}
-	ctx, d.worker.cancelFunc = goctx.WithCancel(ctx)
-	d.wait.Add(1)
-	go d.campaignOwners(ctx)
+
+	ctx, d.cancelFunc = goctx.WithCancel(ctx)
+	d.campaignOwners(ctx)
 }
 
 func newDDL(store kv.Storage, infoHandle *infoschema.Handle, hook Callback, lease time.Duration) *ddl {
@@ -318,7 +320,7 @@ func (d *ddl) close() {
 
 	close(d.quitCh)
 	if d.worker != nil {
-		d.worker.cancelFunc()
+		d.cancelFunc()
 	}
 
 	d.wait.Wait()
