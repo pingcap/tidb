@@ -416,7 +416,7 @@ func (b *builtinPasswordSig) eval(row []types.Datum) (d types.Datum, err error) 
 		return d, nil
 	}
 
-	// Two stage SHA1 hash of the password
+	// Two stages SHA1 hash of the password.
 	h1 := sha1.New()
 	h1.Write([]byte(pass))
 	hash1 := h1.Sum(nil)
