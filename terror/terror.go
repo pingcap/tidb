@@ -36,13 +36,19 @@ type ErrCode int
 
 const (
 	// Executor error codes.
-	CodeUnknown           ErrCode = -1
-	CodeExecResultIsEmpty         = 3
+
+	// CodeUnknown is for errors of unknown reason.
+	CodeUnknown ErrCode = -1
+	// CodeExecResultIsEmpty indicates execution result is empty.
+	CodeExecResultIsEmpty = 3
 
 	// Expression error codes.
+
+	// CodeMissConnectionID indicates connection id is missing.
 	CodeMissConnectionID ErrCode = 1
 
 	// Special error codes.
+
 	// CodeResultUndetermined indicates the sql execution result is undetermined.
 	CodeResultUndetermined ErrCode = 2
 )
