@@ -170,6 +170,16 @@ func (sf *ScalarFunction) EvalString(row []types.Datum, sc *variable.StatementCo
 	return sf.Function.evalString(row)
 }
 
+// EvalDate implements Expression interface.
+func (sf *ScalarFunction) EvalDate(row []types.Datum, sc *variable.StatementContext) (types.Time, bool, error) {
+	return sf.Function.evalDate(row)
+}
+
+// EvalDuration implements Expression interface.
+func (sf *ScalarFunction) EvalDuration(row []types.Datum, sc *variable.StatementContext) (types.Duration, bool, error) {
+	return sf.Function.evalDuration(row)
+}
+
 // HashCode implements Expression interface.
 func (sf *ScalarFunction) HashCode() []byte {
 	var bytes []byte
