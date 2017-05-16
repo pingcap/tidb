@@ -615,7 +615,6 @@ func extractOffsetsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector
 			collector = append(collector, int(idx))
 		}
 		return collector, nil
-		return nil, errInvalid.Gen("column %d not found", idx)
 	}
 	var err error
 	for _, child := range expr.Children {
