@@ -26,6 +26,14 @@ const (
 	LOG_DEBUG   = logrus.DebugLevel
 )
 
+const (
+	LOG_LEVEL_FATAL = logrus.FatalLevel
+	LOG_LEVEL_ERROR = logrus.ErrorLevel
+	LOG_LEVEL_WARN  = logrus.WarnLevel
+	LOG_LEVEL_INFO  = logrus.InfoLevel
+	LOG_LEVEL_DEBUG = logrus.DebugLevel
+)
+
 // SetFlags does nothing.
 func SetFlags(_ int) {
 }

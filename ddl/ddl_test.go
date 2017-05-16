@@ -142,5 +142,4 @@ func testDropIndex(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblI
 func init() {
 	logLevel := os.Getenv("log_level")
 	log.SetLevelByString(logLevel)
-	log.SetFlags(log.LstdFlags | log.Lmicroseconds | log.Lshortfile)
 }
