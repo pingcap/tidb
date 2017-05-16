@@ -21,13 +21,16 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// UseDAGPlanBuilder means we should use new planner and dag pb.
-var UseDAGPlanBuilder = false
+// useDAGPlanBuilder checks if we use new DAG planner.
+func useDAGPlanBuilder(ctx context.Context) bool {
+	return ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic)
+}
 
 // Plan is the description of an execution flow.
 // It is created from ast.Node first, then optimized by the optimizer,
