@@ -438,7 +438,16 @@ func (p *DataSource) tryToGetMemTask(prop *requiredProp) (task taskProfile, err 
 	memTable.SetSchema(p.schema)
 	rb := &ranger.Builder{Sc: p.ctx.GetSessionVars().StmtCtx}
 	memTable.Ranges = rb.BuildTableRanges(ranger.FullRange)
-	task = &rootTaskProfile{p: memTable}
+	var retPlan PhysicalPlan = memTable
+	if len(p.pushedDownConds) > 0 {
+		sel := Selection{
+			Conditions: p.pushedDownConds,
+		}.init(p.allocator, p.ctx)
+		sel.SetSchema(p.schema)
+		sel.SetChildren(memTable)
+		retPlan = sel
+	}
+	task = &rootTaskProfile{p: retPlan}
 	task = prop.enforceProperty(task, p.ctx, p.allocator)
 	return task, nil
 }

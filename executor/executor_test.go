@@ -300,7 +300,6 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	r.Check(testkit.Rows("1 hello"))
 
 	// Test limit + order by
-	tk.MustExec("begin")
 	for i := 3; i <= 10; i += 1 {
 		tk.MustExec(fmt.Sprintf("insert INTO select_order_test VALUES (%d, \"zz\");", i))
 	}
@@ -1131,9 +1130,7 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 }
 
 func (s *testSuite) TestPointGet(c *C) {
-	plan.UseDAGPlanBuilder = true
 	defer func() {
-		plan.UseDAGPlanBuilder = false
 		testleak.AfterTest(c)()
 	}()
 	tk := testkit.NewTestKit(c, s.store)
@@ -1297,9 +1294,7 @@ func (s *testSuite) TestScanControlSelection(c *C) {
 }
 
 func (s *testSuite) TestSimpleDAG(c *C) {
-	plan.UseDAGPlanBuilder = true
 	defer func() {
-		plan.UseDAGPlanBuilder = false
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
