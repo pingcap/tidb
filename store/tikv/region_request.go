@@ -159,14 +159,13 @@ func (s *RegionRequestSender) sendCopReqToRegion(bo *Backoffer, ctx *RPCContext,
 }
 
 func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err error) error {
-	s.regionCache.OnRequestFail(ctx)
-
 	// Retry on request failure when it's not Cancelled.
 	// When a store is not available, the leader of related region should be elected quickly.
 	// TODO: the number of retry time should be limited:since region may be unavailable
 	// when some unrecoverable disaster happened.
 	if errors.Cause(err) != goctx.Canceled {
 		err = bo.Backoff(boTiKVRPC, errors.Errorf("send tikv request error: %v, ctx: %s, try next peer later", err, ctx.KVCtx))
+		s.regionCache.OnRequestFail(ctx)
 	}
 	return errors.Trace(err)
 }

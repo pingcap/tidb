@@ -82,7 +82,7 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithStoreRestart(c *C) {
 	c.Assert(resp.GetCmdRawPutResp(), NotNil)
 }
 
-func (s *testRegionRequestSuite) TestOnSendFailedWithCancelled(c *C) {
+func (s *testRegionRequestSuite) TestOnSendFailedWithCanceled(c *C) {
 	req := &kvrpcpb.Request{
 		Type: kvrpcpb.MessageType_CmdRawPut,
 		CmdRawPutReq: &kvrpcpb.CmdRawPutRequest{
@@ -113,4 +113,26 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithCancelled(c *C) {
 	resp, err = s.regionRequestSender.SendKVReq(s.bo, req, region.Region, time.Second)
 	c.Assert(err, IsNil)
 	c.Assert(resp.GetCmdRawPutResp(), NotNil)
+}
+
+func (s *testRegionRequestSuite) TestNoReloadRegionWhenCtxCanceled(c *C) {
+	req := &kvrpcpb.Request{
+		Type: kvrpcpb.MessageType_CmdRawPut,
+		CmdRawPutReq: &kvrpcpb.CmdRawPutRequest{
+			Key:   []byte("key"),
+			Value: []byte("value"),
+		},
+	}
+	region, err := s.cache.LocateRegionByID(s.bo, s.region)
+	c.Assert(err, IsNil)
+	c.Assert(region, NotNil)
+
+	sender := s.regionRequestSender
+	bo, cancel := s.bo.Fork()
+	cancel()
+	// Call SendKVReq with a canceled context.
+	_, err = sender.SendKVReq(bo, req, region.Region, time.Second)
+	// Check this kind of error won't cause region cache drop.
+	c.Assert(errors.Cause(err), Equals, goctx.Canceled)
+	c.Assert(sender.regionCache.getRegionByIDFromCache(s.region), NotNil)
 }

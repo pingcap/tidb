@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/pd-client"
+	goctx "golang.org/x/net/context"
 )
 
 // RegionCache caches Regions loaded from PD.
@@ -381,6 +382,9 @@ func (c *RegionCache) loadStoreAddr(bo *Backoffer, id uint64) (string, error) {
 	for {
 		store, err := c.pdClient.GetStore(bo.ctx, id)
 		if err != nil {
+			if errors.Cause(err) == goctx.Canceled {
+				return "", errors.Trace(err)
+			}
 			err = errors.Errorf("loadStore from PD failed, id: %d, err: %v", id, err)
 			if err = bo.Backoff(boPDRPC, err); err != nil {
 				return "", errors.Trace(err)
