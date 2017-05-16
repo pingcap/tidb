@@ -36,12 +36,12 @@ func normalize(in interface{}) JSON {
 	switch t := in.(type) {
 	case bool:
 		if t {
-			return jsonLiteral(0x01)
+			return jsonLiteralTrue
 		} else {
-			return jsonLiteral(0x02)
+			return jsonLiteralFalse
 		}
 	case nil:
-		return jsonLiteral(0x00)
+		return jsonLiteralNil
 	case float64:
 		return jsonDouble(t)
 	case string:

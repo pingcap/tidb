@@ -15,6 +15,7 @@ package json
 
 import (
 	"bytes"
+
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 )

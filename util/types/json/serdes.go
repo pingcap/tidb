@@ -122,6 +122,12 @@ const (
 	typeCodeString  byte = 0x0c
 )
 
+const (
+	jsonLiteralNil   = jsonLiteral(0x00)
+	jsonLiteralTrue  = jsonLiteral(0x01)
+	jsonLiteralFalse = jsonLiteral(0x02)
+)
+
 type jsonLiteral byte
 type jsonString string
 type jsonObject map[string]JSON
