@@ -33,9 +33,7 @@ type testAnalyzeSuite struct {
 }
 
 func (s *testAnalyzeSuite) TestAnalyze(c *C) {
-	plan.UseDAGPlanBuilder = true
 	defer func() {
-		plan.UseDAGPlanBuilder = false
 		testleak.AfterTest(c)()
 	}()
 	store, err := newStoreWithBootstrap()

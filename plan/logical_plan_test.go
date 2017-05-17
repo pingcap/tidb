@@ -1689,10 +1689,9 @@ func checkVisitInfo(c *C, v1, v2 []visitInfo, comment CommentInterface) {
 }
 
 func (s *testPlanSuite) TestTopNPushDown(c *C) {
-	UseDAGPlanBuilder = true
+	c.Skip("Only new plan support it.")
 	defer func() {
 		testleak.AfterTest(c)()
-		UseDAGPlanBuilder = false
 	}()
 	tests := []struct {
 		sql  string
