@@ -870,7 +870,7 @@ func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 
 	_, err = exec(se1, "commit")
 	c.Assert(err, NotNil)
-	err = se1.(*session).retry(10)
+	err = se1.(*session).retry(10, false)
 	// retry should fail
 	c.Assert(err, NotNil)
 
