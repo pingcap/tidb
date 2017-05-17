@@ -130,13 +130,13 @@ func (c *RawKVClient) Delete(key []byte) error {
 
 func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 	bo := NewBackoffer(rawkvMaxBackoff, goctx.Background())
-	sender := NewRegionRequestSender(bo, c.regionCache, c.rpcClient)
+	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
 	for {
 		loc, err := c.regionCache.LocateKey(bo, key)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp, err := sender.SendReq(req, loc.Region, readTimeoutShort)
+		resp, err := sender.SendReq(bo, req, loc.Region, readTimeoutShort)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

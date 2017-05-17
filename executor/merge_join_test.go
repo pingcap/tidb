@@ -237,9 +237,7 @@ func checkPlanAndRun(tk *testkit.TestKit, c *C, plan string, sql string) *testki
 }
 
 func (s *testSuite) TestMergeJoin(c *C) {
-	plan.UseDAGPlanBuilder = true
 	defer func() {
-		plan.UseDAGPlanBuilder = false
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()

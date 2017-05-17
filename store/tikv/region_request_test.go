@@ -46,7 +46,7 @@ func (s *testRegionRequestSuite) SetUpTest(c *C) {
 	s.bo = NewBackoffer(1, goctx.Background())
 	s.mvccStore = mocktikv.NewMvccStore()
 	client := mocktikv.NewRPCClient(s.cluster, s.mvccStore)
-	s.regionRequestSender = NewRegionRequestSender(s.bo, s.cache, client)
+	s.regionRequestSender = NewRegionRequestSender(s.cache, client)
 }
 
 func (s *testRegionRequestSuite) TestOnSendFailedWithStoreRestart(c *C) {
@@ -60,13 +60,13 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithStoreRestart(c *C) {
 	region, err := s.cache.LocateRegionByID(s.bo, s.region)
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
-	resp, err := s.regionRequestSender.SendReq(req, region.Region, time.Second)
+	resp, err := s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
 	c.Assert(err, IsNil)
 	c.Assert(resp.RawPut, NotNil)
 
 	// stop store.
 	s.cluster.StopStore(s.store)
-	_, err = s.regionRequestSender.SendReq(req, region.Region, time.Second)
+	_, err = s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
 	c.Assert(err, NotNil)
 	c.Assert(strings.Contains(err.Error(), "try again later"), IsTrue)
 
@@ -78,7 +78,7 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithStoreRestart(c *C) {
 	region, err = s.cache.LocateRegionByID(s.bo, s.region)
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
-	resp, err = s.regionRequestSender.SendReq(req, region.Region, time.Second)
+	resp, err = s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
 	c.Assert(err, IsNil)
 	c.Assert(resp.RawPut, NotNil)
 }
@@ -94,7 +94,7 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithCancelled(c *C) {
 	region, err := s.cache.LocateRegionByID(s.bo, s.region)
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
-	resp, err := s.regionRequestSender.SendReq(req, region.Region, time.Second)
+	resp, err := s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
 	c.Assert(err, IsNil)
 	c.Assert(resp.RawPut, NotNil)
 
@@ -102,7 +102,7 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithCancelled(c *C) {
 	s.cluster.CancelStore(s.store)
 	// locate region again is needed
 	// since last request on the region failed and region's info had been cleared.
-	_, err = s.regionRequestSender.SendReq(req, region.Region, time.Second)
+	_, err = s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
 	c.Assert(err, NotNil)
 	c.Assert(errors.Cause(err), Equals, goctx.Canceled)
 
@@ -111,7 +111,7 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithCancelled(c *C) {
 	region, err = s.cache.LocateRegionByID(s.bo, s.region)
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
-	resp, err = s.regionRequestSender.SendReq(req, region.Region, time.Second)
+	resp, err = s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
 	c.Assert(err, IsNil)
 	c.Assert(resp.RawPut, NotNil)
 }
@@ -129,16 +129,11 @@ func (s *testRegionRequestSuite) TestNoReloadRegionWhenCtxCanceled(c *C) {
 	c.Assert(region, NotNil)
 
 	sender := s.regionRequestSender
-	save := sender.bo
-	bo, cancel := sender.bo.Fork()
-	sender.bo = bo
+	bo, cancel := s.bo.Fork()
 	cancel()
-
 	// Call SendKVReq with a canceled context.
-	_, err = sender.SendReq(req, region.Region, time.Second)
+	_, err = sender.SendReq(bo, req, region.Region, time.Second)
 	// Check this kind of error won't cause region cache drop.
 	c.Assert(errors.Cause(err), Equals, goctx.Canceled)
 	c.Assert(sender.regionCache.getRegionByIDFromCache(s.region), NotNil)
-
-	s.bo = save
 }

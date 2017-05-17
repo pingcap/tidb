@@ -21,6 +21,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -105,6 +106,24 @@ func (b *baseBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool
 	return decVal, false, errors.Trace(err)
 }
 
+func (b *baseBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) {
+	val, err := b.self.eval(row)
+	if err != nil || val.IsNull() {
+		return types.Time{}, val.IsNull(), errors.Trace(err)
+	}
+	dateVal, err := val.ConvertTo(b.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeDatetime))
+	return dateVal.GetMysqlTime(), false, errors.Trace(err)
+}
+
+func (b *baseBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
+	val, err := b.self.eval(row)
+	if err != nil || val.IsNull() {
+		return types.Duration{}, val.IsNull(), errors.Trace(err)
+	}
+	durationVal, err := val.ConvertTo(b.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeDuration))
+	return durationVal.GetMysqlDuration(), false, errors.Trace(err)
+}
+
 // equal only checks if both functions are non-deterministic and if these arguments are same.
 // Function name will be checked outside.
 func (b *baseBuiltinFunc) equal(fun builtinFunc) bool {
@@ -159,6 +178,14 @@ func (b *baseIntBuiltinFunc) evalString(row []types.Datum) (string, bool, error)
 	panic("cannot get STRING result from ClassInt expression")
 }
 
+func (b *baseIntBuiltinFunc) evalTime(row []types.Datum) (*types.MyDecimal, bool, error) {
+	panic("cannot get DATE result from ClassInt expression")
+}
+
+func (b *baseIntBuiltinFunc) evalDuration(row []types.Datum) (string, bool, error) {
+	panic("cannot get DURATION result from ClassInt expression")
+}
+
 // baseRealBuiltinFunc represents the functions which return real values.
 // TODO: baseRealBuiltinFunc will be removed later after all built-in function signatures been implemented.
 type baseRealBuiltinFunc struct {
@@ -189,6 +216,14 @@ func (b *baseRealBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, 
 
 func (b *baseRealBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
 	panic("cannot get STRING result from ClassReal expression")
+}
+
+func (b *baseRealBuiltinFunc) evalTime(row []types.Datum) (*types.MyDecimal, bool, error) {
+	panic("cannot get DATE result from ClassReal expression")
+}
+
+func (b *baseRealBuiltinFunc) evalDuration(row []types.Datum) (string, bool, error) {
+	panic("cannot get DURATION result from ClassReal expression")
 }
 
 // baseDecimalBuiltinFunc represents the functions which return decimal values.
@@ -223,6 +258,14 @@ func (b *baseDecimalBuiltinFunc) evalString(row []types.Datum) (string, bool, er
 	panic("cannot get REAL result from ClassDecimal expression")
 }
 
+func (b *baseDecimalBuiltinFunc) evalTime(row []types.Datum) (float64, bool, error) {
+	panic("cannot get DATE result from ClassDecimal expression")
+}
+
+func (b *baseDecimalBuiltinFunc) evalDuration(row []types.Datum) (string, bool, error) {
+	panic("cannot get DURATION result from ClassDecimal expression")
+}
+
 // baseStringBuiltinFunc represents the functions which return string values.
 // TODO: baseStringBuiltinFunc will be removed later after all built-in function signatures been implemented.
 type baseStringBuiltinFunc struct {
@@ -255,6 +298,88 @@ func (b *baseStringBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal
 	panic("cannot get DECIMAL result from ClassString expression")
 }
 
+func (b *baseStringBuiltinFunc) evalTime(row []types.Datum) (float64, bool, error) {
+	panic("cannot get DATE result from ClassString expression")
+}
+
+func (b *baseStringBuiltinFunc) evalDuration(row []types.Datum) (*types.MyDecimal, bool, error) {
+	panic("cannot get DURATION result from ClassString expression")
+}
+
+type baseDateBuiltinFunc struct {
+	baseBuiltinFunc
+}
+
+func (b *baseDateBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) {
+	val, isNull, err := b.self.evalTime(row)
+	if err != nil || isNull {
+		return d, errors.Trace(err)
+	}
+	d.SetMysqlTime(val)
+	return
+}
+
+func (b *baseDateBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) {
+	return b.self.evalTime(row)
+}
+
+func (b *baseDateBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
+	panic("cannot get STRING result from DATETIME expression")
+}
+
+func (b *baseDateBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
+	panic("cannot get INT result from DATETIME expression")
+}
+
+func (b *baseDateBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
+	panic("cannot get REAL result from DATETIME expression")
+}
+
+func (b *baseDateBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
+	panic("cannot get DECIMAL result from DATETIME expression")
+}
+
+func (b *baseDateBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
+	panic("cannot get DURATION result from DATETIME expression")
+}
+
+type baseDurationBuiltinFunc struct {
+	baseBuiltinFunc
+}
+
+func (b *baseDurationBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) {
+	val, isNull, err := b.self.evalDuration(row)
+	if err != nil || isNull {
+		return d, errors.Trace(err)
+	}
+	d.SetMysqlDuration(val)
+	return
+}
+
+func (b *baseDurationBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
+	return b.self.evalDuration(row)
+}
+
+func (b *baseDurationBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) {
+	panic("cannot get DATE result from DURATION expression")
+}
+
+func (b *baseDurationBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
+	panic("cannot get STRING result from DURATION expression")
+}
+
+func (b *baseDurationBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
+	panic("cannot get INT result from DURATION expression")
+}
+
+func (b *baseDurationBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
+	panic("cannot get REAL result from DURATION expression")
+}
+
+func (b *baseDurationBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
+	panic("cannot get DECIMAL result from DURATION expression")
+}
+
 // builtinFunc stands for a particular function signature.
 type builtinFunc interface {
 	// eval does evaluation by the given row.
@@ -267,6 +392,10 @@ type builtinFunc interface {
 	evalString(row []types.Datum) (val string, isNull bool, err error)
 	// evalDecimal evaluates decimal representation of builtinFunc by given row.
 	evalDecimal(row []types.Datum) (val *types.MyDecimal, isNull bool, err error)
+	// evalTime evaluates DATE/DATETIME/TIMESTAMP representation of builtinFunc by given row.
+	evalTime(row []types.Datum) (val types.Time, isNull bool, err error)
+	// evaTime evaluates duration representation of builtinFunc by given row.
+	evalDuration(row []types.Datum) (val types.Duration, isNull bool, err error)
 	// getArgs returns the arguments expressions.
 	getArgs() []Expression
 	// isDeterministic checks if a function is deterministic.
