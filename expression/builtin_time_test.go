@@ -1426,3 +1426,100 @@ func (s *testEvaluatorSuite) TestSecToTime(c *C) {
 		c.Assert(result, Equals, test.expect)
 	}
 }
+
+func (s *testEvaluatorSuite) TestConvertTz(c *C) {
+	tests := []struct {
+		t       interface{}
+		fromTz  string
+		toTz    string
+		Success bool
+		expect  string
+	}{
+		{"2004-01-01 12:00:00.111", "-00:00", "+12:34", true, "2004-01-02 00:34:00.111"},
+		{"2004-01-01 12:00:00.11", "+00:00", "+12:34", true, "2004-01-02 00:34:00.11"},
+		{"2004-01-01 12:00:00.11111111111", "-00:00", "+12:34", true, "2004-01-02 00:34:00.111111"},
+		{"2004-01-01 12:00:00", "GMT", "MET", true, "2004-01-01 13:00:00"},
+		{"2004-01-01 12:00:00", "-01:00", "-12:00", true, "2004-01-01 01:00:00"},
+		{"2004-01-01 12:00:00", "-00:00", "+13:00", true, "2004-01-02 01:00:00"},
+		{"2004-01-01 12:00:00", "-00:00", "-13:00", true, ""},
+		{"2004-01-01 12:00:00", "-00:00", "-12:88", true, ""},
+		{"2004-01-01 12:00:00", "+10:82", "GMT", false, ""},
+		{"2004-01-01 12:00:00", "+00:00", "GMT", true, ""},
+		{"2004-01-01 12:00:00", "GMT", "+00:00", true, ""},
+		{20040101, "+00:00", "+10:32", true, "2004-01-01 10:32:00"},
+		{3.14159, "+00:00", "+10:32", false, ""},
+	}
+	fc := funcs[ast.ConvertTz]
+	for _, test := range tests {
+		f, err := fc.getFunction(
+			datumsToConstants(
+				[]types.Datum{
+					types.NewDatum(test.t),
+					types.NewStringDatum(test.fromTz),
+					types.NewStringDatum(test.toTz)}),
+			s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+		if test.Success {
+			c.Assert(err, IsNil)
+		} else {
+			c.Assert(err, NotNil)
+		}
+		result, _ := d.ToString()
+		c.Assert(result, Equals, test.expect)
+	}
+}
+
+func (s *testEvaluatorSuite) TestPeriodDiff(c *C) {
+	tests := []struct {
+		Period1 int64
+		Period2 int64
+		Success bool
+		Expect  int64
+	}{
+		{201611, 201611, true, 0},
+		{200802, 200703, true, 11},
+		{0, 999999999, true, -120000086},
+		{9999999, 0, true, 1200086},
+		{411, 200413, true, -2},
+		{197000, 207700, true, -1284},
+		{201701, 201611, true, 2},
+		{201702, 201611, true, 3},
+		{201510, 201611, true, -13},
+		{201702, 1611, true, 3},
+		{197102, 7011, true, 3},
+		{12509, 12323, true, 10},
+		{12509, 12323, true, 10},
+	}
+
+	fc := funcs[ast.PeriodDiff]
+	for _, test := range tests {
+		period1 := types.NewIntDatum(test.Period1)
+		period2 := types.NewIntDatum(test.Period2)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{period1, period2}), s.ctx)
+		c.Assert(err, IsNil)
+		result, err := f.eval(nil)
+		if !test.Success {
+			c.Assert(result.IsNull(), IsTrue)
+			continue
+		}
+		c.Assert(err, IsNil)
+		c.Assert(result.Kind(), Equals, types.KindInt64)
+		value := result.GetInt64()
+		c.Assert(value, Equals, test.Expect)
+	}
+	// nil
+	args := []types.Datum{types.NewDatum(nil), types.NewIntDatum(0)}
+	f, err := fc.getFunction(datumsToConstants(args), s.ctx)
+	c.Assert(err, IsNil)
+	v, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.Kind(), Equals, types.KindNull)
+
+	args = []types.Datum{types.NewIntDatum(0), types.NewDatum(nil)}
+	f, err = fc.getFunction(datumsToConstants(args), s.ctx)
+	c.Assert(err, IsNil)
+	v, err = f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.Kind(), Equals, types.KindNull)
+}

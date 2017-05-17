@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -631,7 +632,7 @@ func (s *testSuite) TestLoadData(c *C) {
 	c.Assert(err, NotNil)
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
 	ctx := tk.Se.(context.Context)
-	ld := makeLoadDataInfo(4, ctx, c)
+	ld := makeLoadDataInfo(4, nil, ctx, c)
 
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
@@ -642,6 +643,12 @@ func (s *testSuite) TestLoadData(c *C) {
 	r := tk.MustQuery(selectSQL)
 	r.Check(nil)
 
+	sc := ctx.GetSessionVars().StmtCtx
+	originIgnoreTruncate := sc.IgnoreTruncate
+	defer func() {
+		sc.IgnoreTruncate = originIgnoreTruncate
+	}()
+	sc.IgnoreTruncate = false
 	// fields and lines are default, InsertData returns data is nil
 	tests := []testCase{
 		// data1 = nil, data2 != nil
@@ -666,6 +673,7 @@ func (s *testSuite) TestLoadData(c *C) {
 		{[]byte("\t2\t3"), []byte("\t4\t5"), nil, []byte("\t2\t3\t4\t5")},
 	}
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
+	c.Assert(sc.WarningCount(), Equals, uint16(3))
 
 	// lines starting symbol is "" and terminated symbol length is 2, InsertData returns data is nil
 	ld.LinesInfo.Terminated = "||"
@@ -782,7 +790,7 @@ func (s *testSuite) TestLoadDataEscape(c *C) {
 	tk.MustExec("CREATE TABLE load_data_test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
 	ctx := tk.Se.(context.Context)
-	ld := makeLoadDataInfo(2, ctx, c)
+	ld := makeLoadDataInfo(2, nil, ctx, c)
 	// test escape
 	tests := []testCase{
 		// data1 = nil, data2 != nil
@@ -798,15 +806,48 @@ func (s *testSuite) TestLoadDataEscape(c *C) {
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 }
 
-func makeLoadDataInfo(column int, ctx context.Context, c *C) (ld *executor.LoadDataInfo) {
+// reuse TestLoadDataEscape's test case :-)
+func (s *testSuite) TestLoadDataSpecifiedCoumns(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test; drop table if exists load_data_test;")
+	tk.MustExec(`create table load_data_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 varchar(255) default "def", c3 int default 0);`)
+	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test (c1, c2)")
+	ctx := tk.Se.(context.Context)
+	ld := makeLoadDataInfo(2, []string{"c1", "c2"}, ctx, c)
+	// test
+	tests := []testCase{
+		// data1 = nil, data2 != nil
+		{nil, []byte("7\ta string\n"), []string{"1|7|a string|0"}, nil},
+		{nil, []byte("8\tstr \\t\n"), []string{"2|8|str \t|0"}, nil},
+		{nil, []byte("9\tstr \\n\n"), []string{"3|9|str \n|0"}, nil},
+		{nil, []byte("10\tboth \\t\\n\n"), []string{"4|10|both \t\n|0"}, nil},
+		{nil, []byte("11\tstr \\\\\n"), []string{"5|11|str \\|0"}, nil},
+		{nil, []byte("12\t\\r\\t\\n\\0\\Z\\b\n"), []string{"6|12|" + string([]byte{'\r', '\t', '\n', 0, 26, '\b'}) + "|0"}, nil},
+	}
+	deleteSQL := "delete from load_data_test"
+	selectSQL := "select * from load_data_test;"
+	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
+}
+
+func makeLoadDataInfo(column int, specifiedColumns []string, ctx context.Context, c *C) (ld *executor.LoadDataInfo) {
 	domain := sessionctx.GetDomain(ctx)
 	is := domain.InfoSchema()
 	c.Assert(is, NotNil)
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("load_data_test"))
 	c.Assert(err, IsNil)
+	columns := tbl.Cols()
+	// filter specified columns
+	if len(specifiedColumns) > 0 {
+		columns, err = table.FindCols(columns, specifiedColumns)
+		c.Assert(err, IsNil)
+	}
 	fields := &ast.FieldsClause{Terminated: "\t"}
 	lines := &ast.LinesClause{Starting: "", Terminated: "\n"}
-	ld = executor.NewLoadDataInfo(make([]types.Datum, column), ctx, tbl)
+	ld = executor.NewLoadDataInfo(make([]types.Datum, column), ctx, tbl, columns)
 	ld.SetBatchCount(0)
 	ld.FieldsInfo = fields
 	ld.LinesInfo = lines

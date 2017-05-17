@@ -135,6 +135,8 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		}
 	case *Projection:
 		str = "Projection"
+	case *TopN:
+		str = fmt.Sprintf("TopN(%s,%d,%d)", x.ByItems, x.Offset, x.Count)
 	case *TableDual:
 		str = "Dual"
 	case *PhysicalAggregation:

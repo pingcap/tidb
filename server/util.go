@@ -353,6 +353,6 @@ func dumpTextValue(mysqlType uint8, value types.Datum) ([]byte, error) {
 	case types.KindMysqlHex:
 		return hack.Slice(value.GetMysqlHex().ToString()), nil
 	default:
-		return nil, errInvalidType.Gen("invalid type %T", value)
+		return nil, errInvalidType.Gen("invalid type %v", value.Kind())
 	}
 }

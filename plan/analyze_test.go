@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -32,13 +33,18 @@ type testAnalyzeSuite struct {
 }
 
 func (s *testAnalyzeSuite) TestAnalyze(c *C) {
+	plan.UseDAGPlanBuilder = true
 	defer func() {
+		plan.UseDAGPlanBuilder = false
 		testleak.AfterTest(c)()
 	}()
 	store, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
-	defer store.Close()
 	testKit := testkit.NewTestKit(c, store)
+	defer func() {
+		testKit.MustExec("drop table t, t1, t2")
+		store.Close()
+	}()
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a int, b int)")
 	testKit.MustExec("create index a on t (a)")
@@ -64,31 +70,36 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		// Test analyze full table.
 		{
 			sql:  "select * from t where t.a <= 2",
-			best: "Table(t)",
+			best: "TableReader(Table(t)->Sel([le(test.t.a, 2)]))",
+		},
+		{
+			sql:  "select * from t where t.a < 2",
+			best: "IndexLookUp(Index(t.a)[[-inf,2)], Table(t))",
 		},
 		{
 			sql:  "select * from t where t.a = 1 and t.b <= 2",
-			best: "Index(t.b)[[-inf,2]]",
+			best: "IndexLookUp(Index(t.b)[[-inf,2]], Table(t)->Sel([eq(test.t.a, 1)]))",
 		},
 		// Test not analyzed table.
 		{
 			sql:  "select * from t1 where t1.a <= 2",
-			best: "Index(t1.a)[[-inf,2]]",
+			best: "IndexLookUp(Index(t1.a)[[-inf,2]], Table(t1))",
 		},
 		{
 			sql:  "select * from t1 where t1.a = 1 and t1.b <= 2",
-			best: "Index(t1.a)[[1,1]]",
+			best: "IndexLookUp(Index(t1.a)[[1,1]], Table(t1)->Sel([le(test.t1.b, 2)]))",
 		},
 		// Test analyze single index.
 		{
 			sql: "select * from t2 where t2.a <= 2",
 			// This is not the best because the histogram for index b is pseudo, then the row count calculated for such
 			// a small table is always tableRowCount/3, so the cost is smaller.
-			best: "Index(t2.b)[[<nil>,+inf]]",
+			// FIXME: Fix it after implementing selectivity estimation for normal column.
+			best: "IndexLookUp(Index(t2.b)[[<nil>,+inf]], Table(t2)->Sel([le(test.t2.a, 2)]))",
 		},
 		{
 			sql:  "select * from t2 where t2.a = 1 and t2.b <= 2",
-			best: "Index(t2.b)[[-inf,2]]",
+			best: "IndexLookUp(Index(t2.b)[[-inf,2]], Table(t2)->Sel([eq(test.t2.a, 1)]))",
 		},
 	}
 	for _, tt := range tests {
@@ -108,10 +119,11 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 }
 
 func newStoreWithBootstrap() (kv.Storage, error) {
-	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
+	store, err := tikv.NewMockTikvStore("")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	tidb.SetSchemaLease(0)
 	_, err = tidb.BootstrapSession(store)
 	return store, errors.Trace(err)
 }
