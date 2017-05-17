@@ -952,6 +952,28 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("1"))
 }
 
+func (s *testSuite) TestJSON(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_json")
+	tk.MustExec("create table test_json (id int, a json)")
+	tk.MustExec(`insert into test_json (id, a) values (1, '{"a":[1,"2",{"aa":"bb"},4],"b":true}')`)
+	tk.MustExec(`insert into test_json (id, a) values (2, "null")`)
+	tk.MustExec(`insert into test_json (id, a) values (3, null)`)
+	tk.MustExec(`insert into test_json (id, a) values (4, 'true')`)
+	tk.MustExec(`insert into test_json (id, a) values (5, '3')`)
+	tk.MustExec(`insert into test_json (id, a) values (6, '"string"')`)
+
+	var result *testkit.Result
+	result = tk.MustQuery(`select tj.a from test_json tj order by tj.id`)
+	result.Check(testkit.Rows(`{"a":[1,"2",{"aa":"bb"},4],"b":true}`, "null", "<nil>", "true", "3", `"string"`))
+}
+
 func (s *testSuite) TestToPBExpr(c *C) {
 	defer func() {
 		s.cleanEnv(c)
