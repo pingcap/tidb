@@ -18,8 +18,8 @@ import (
 	"math/rand"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 )
 
 // RunInNewTxn will run the f in a new transaction environment.

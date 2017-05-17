@@ -17,7 +17,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/ngaut/log"
+	log "github.com/Sirupsen/logrus"
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/msgpb"

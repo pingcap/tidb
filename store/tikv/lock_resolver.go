@@ -17,8 +17,8 @@ import (
 	"container/list"
 	"sync"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	goctx "golang.org/x/net/context"
 )
