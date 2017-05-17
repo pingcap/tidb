@@ -27,7 +27,7 @@ func (k keyType) String() string {
 
 // Manager is the interface for providing privilege related operations.
 type Manager interface {
-	// Show granted privileges for user.
+	// ShowGrants shows granted privileges for user.
 	ShowGrants(ctx context.Context, user string) ([]string, error)
 
 	// RequestVerification verifies user privilege for the request.

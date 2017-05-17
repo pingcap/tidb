@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
+	"github.com/pingcap/tidb/terror"
 	goctx "golang.org/x/net/context"
 )
 
@@ -376,4 +377,44 @@ func (s *testCommitterSuite) TestPrewritePrimaryKeyFailed(c *C) {
 	v, err = txn.Get([]byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("a3"))
+}
+
+// timeoutKVClient wraps rpcClient and returns timeout error for
+// the specified kv commands.
+type timeoutKVClient struct {
+	Client
+	kvTimeouts map[kvrpcpb.MessageType]bool
+}
+
+type sendKVResult struct {
+	resp *kvrpcpb.Response
+	err  error
+}
+
+func (c *timeoutKVClient) SendKVReq(ctx goctx.Context, addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error) {
+	if _, ok := c.kvTimeouts[req.GetType()]; ok {
+		return nil, errors.Errorf("timeout when send kv req %v", req.GetType())
+	}
+	return c.Client.SendKVReq(ctx, addr, req, timeout)
+}
+
+func (s *testCommitterSuite) TestCommitPrimaryError(c *C) {
+	timeouts := map[kvrpcpb.MessageType]bool{
+		kvrpcpb.MessageType_CmdCommit: true,
+	}
+	s.store.client = &timeoutKVClient{
+		Client:     s.store.client,
+		kvTimeouts: timeouts,
+	}
+
+	t, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	txn := t.(*tikvTxn)
+	err = txn.Set([]byte("a"), []byte("b"))
+	c.Assert(err, IsNil)
+
+	err = txn.Commit()
+	c.Assert(err, NotNil)
+
+	c.Assert(terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue)
 }

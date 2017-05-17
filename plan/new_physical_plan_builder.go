@@ -27,8 +27,18 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+// wholeTaskTypes records all possible kinds of task that a plan can return. For Agg, TopN and Limit, we will try to get
+// these tasks one by one.
+var wholeTaskTypes = [...]taskType{rootTaskType, copSingleReadTaskType, copDoubleReadTaskType}
+
+var invalidTask = &rootTaskProfile{cst: math.MaxFloat64}
+
 func (p *requiredProp) enforceProperty(task taskProfile, ctx context.Context, allocator *idAllocator) taskProfile {
 	if p.isEmpty() {
+		return task
+	}
+	// If task is invalid, keep it remained.
+	if task.plan() == nil {
 		return task
 	}
 	sort := Sort{ByItems: make([]*ByItems, 0, len(p.cols))}.init(allocator, ctx)
@@ -43,7 +53,7 @@ func (p *requiredProp) enforceProperty(task taskProfile, ctx context.Context, al
 // When a sort column will be replaced by scalar function, we refuse it.
 // When a sort column will be replaced by a constant, we just remove it.
 func (p *Projection) getPushedProp(prop *requiredProp) (*requiredProp, bool) {
-	newProp := &requiredProp{}
+	newProp := &requiredProp{taskTp: rootTaskType}
 	if prop.isEmpty() {
 		return newProp, false
 	}
@@ -76,6 +86,10 @@ func (p *Projection) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, e
 	}
 	if task != nil {
 		return task, nil
+	}
+	if prop.taskTp != rootTaskType {
+		// Projection cannot be pushed down currently, it can only return rootTask.
+		return invalidTask, p.storeTaskProfile(prop, invalidTask)
 	}
 	// enforceProperty task.
 	task, err = p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{})
@@ -257,6 +271,10 @@ func (p *LogicalJoin) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, 
 	if task != nil {
 		return task, nil
 	}
+	if prop.taskTp != rootTaskType {
+		// Join cannot be pushed down currently, it can only return rootTask.
+		return invalidTask, p.storeTaskProfile(prop, invalidTask)
+	}
 	switch p.JoinType {
 	case SemiJoin, LeftOuterSemiJoin:
 		task, err = p.convert2SemiJoin(prop)
@@ -278,6 +296,7 @@ func (p *LogicalJoin) preferUseMergeJoin() bool {
 	return p.preferMergeJoin && len(p.EqualConditions) == 1
 }
 
+// convert2MergeJoin ...
 // TODO: Now we only process the case that the join has only one equal condition.
 func (p *LogicalJoin) convert2MergeJoin(prop *requiredProp) (taskProfile, error) {
 	lChild := p.children[0].(LogicalPlan)
@@ -288,16 +307,17 @@ func (p *LogicalJoin) convert2MergeJoin(prop *requiredProp) (taskProfile, error)
 		LeftConditions:  p.LeftConditions,
 		RightConditions: p.RightConditions,
 		OtherConditions: p.OtherConditions,
+		DefaultValues:   p.DefaultValues,
 	}.init(p.allocator, p.ctx)
 	mergeJoin.SetSchema(p.schema)
 	lJoinKey := p.EqualConditions[0].GetArgs()[0].(*expression.Column)
-	lProp := &requiredProp{cols: []*expression.Column{lJoinKey}}
+	lProp := &requiredProp{cols: []*expression.Column{lJoinKey}, taskTp: rootTaskType}
 	lTask, err := lChild.convert2NewPhysicalPlan(lProp)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	rJoinKey := p.EqualConditions[0].GetArgs()[1].(*expression.Column)
-	rProp := &requiredProp{cols: []*expression.Column{rJoinKey}}
+	rProp := &requiredProp{cols: []*expression.Column{rJoinKey}, taskTp: rootTaskType}
 	rTask, err := rChild.convert2NewPhysicalPlan(rProp)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -325,11 +345,11 @@ func (p *LogicalJoin) convert2SemiJoin(prop *requiredProp) (taskProfile, error) 
 		Anti:            p.anti,
 	}.init(p.allocator, p.ctx)
 	semiJoin.SetSchema(p.schema)
-	lTask, err := lChild.convert2NewPhysicalPlan(&requiredProp{})
+	lTask, err := lChild.convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	rTask, err := rChild.convert2NewPhysicalPlan(&requiredProp{})
+	rTask, err := rChild.convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -353,11 +373,11 @@ func (p *LogicalJoin) convert2HashJoin(prop *requiredProp) (taskProfile, error) 
 		DefaultValues:   p.DefaultValues,
 	}.init(p.allocator, p.ctx)
 	hashJoin.SetSchema(p.schema)
-	lTask, err := lChild.convert2NewPhysicalPlan(&requiredProp{})
+	lTask, err := lChild.convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	rTask, err := rChild.convert2NewPhysicalPlan(&requiredProp{})
+	rTask, err := rChild.convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -379,7 +399,7 @@ func (p *LogicalJoin) convert2HashJoin(prop *requiredProp) (taskProfile, error) 
 
 // getPropByOrderByItems will check if this sort property can be pushed or not. In order to simplify the problem, we only
 // consider the case that all expression are columns and all of them are asc or desc.
-func getPropByOrderByItems(items []*ByItems) (*requiredProp, bool) {
+func getPropByOrderByItems(items []*ByItems, taskTp taskType) (*requiredProp, bool) {
 	desc := false
 	cols := make([]*expression.Column, 0, len(items))
 	for i, item := range items {
@@ -393,7 +413,7 @@ func getPropByOrderByItems(items []*ByItems) (*requiredProp, bool) {
 			return nil, false
 		}
 	}
-	return &requiredProp{cols, desc}, true
+	return &requiredProp{cols, desc, taskTp}, true
 }
 
 // convert2NewPhysicalPlan implements PhysicalPlan interface.
@@ -407,20 +427,24 @@ func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) 
 	if task != nil {
 		return task, nil
 	}
+	if prop.taskTp != rootTaskType {
+		// TODO: This is a trick here, because an operator that can be pushed to Coprocessor can never be pushed across sort.
+		// e.g. If an aggregation want to be pushed, the SQL is always like select count(*) from t order by ...
+		// The Sort will on top of Aggregation. If the SQL is like select count(*) from (select * from s order by k).
+		// The Aggregation will also be blocked by projection. In the future we will break this restriction.
+		return invalidTask, p.storeTaskProfile(prop, invalidTask)
+	}
 	// enforce branch
 	task, err = p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	task = p.attach2TaskProfile(task)
-	newProp, canPassProp := getPropByOrderByItems(p.ByItems)
+	newProp, canPassProp := getPropByOrderByItems(p.ByItems, rootTaskType)
 	if canPassProp {
 		orderedTask, err := p.children[0].(LogicalPlan).convert2NewPhysicalPlan(newProp)
 		if err != nil {
 			return nil, errors.Trace(err)
-		}
-		if cop, ok := orderedTask.(*copTaskProfile); ok {
-			orderedTask = finishCopTask(cop, p.ctx, p.allocator)
 		}
 		if orderedTask.cost() < task.cost() {
 			task = orderedTask
@@ -430,6 +454,7 @@ func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) 
 	return task, p.storeTaskProfile(prop, task)
 }
 
+// convert2NewPhysicalPlan implements LogicalPlan interface.
 func (p *TopN) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) {
 	task, err := p.getTaskProfile(prop)
 	if err != nil {
@@ -438,26 +463,61 @@ func (p *TopN) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) 
 	if task != nil {
 		return task, nil
 	}
-	// enforce branch
-	task, err = p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{})
-	if err != nil {
-		return nil, errors.Trace(err)
+	if prop.taskTp != rootTaskType {
+		// TopN can only return rootTask.
+		return invalidTask, p.storeTaskProfile(prop, invalidTask)
 	}
-	task = p.attach2TaskProfile(task)
-	newProp, canPassProp := getPropByOrderByItems(p.ByItems)
-	if canPassProp {
-		orderedTask, err := p.children[0].(LogicalPlan).convert2NewPhysicalPlan(newProp)
+	for _, taskTp := range wholeTaskTypes {
+		// Try to enforce topN for child.
+		optTask, err := p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{taskTp: taskTp})
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		limit := Limit{Offset: p.Offset, Count: p.Count}.init(p.allocator, p.ctx)
-		limit.SetSchema(p.schema)
-		orderedTask = limit.attach2TaskProfile(orderedTask)
-		if orderedTask.cost() < task.cost() {
-			task = orderedTask
+		optTask = p.attach2TaskProfile(optTask)
+		// Try to enforce sort to child and add limit for it.
+		newProp, canPassProp := getPropByOrderByItems(p.ByItems, taskTp)
+		if canPassProp {
+			orderedTask, err := p.children[0].(LogicalPlan).convert2NewPhysicalPlan(newProp)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			limit := Limit{Offset: p.Offset, Count: p.Count}.init(p.allocator, p.ctx)
+			limit.SetSchema(p.schema)
+			orderedTask = limit.attach2TaskProfile(orderedTask)
+			if orderedTask.cost() < optTask.cost() {
+				optTask = orderedTask
+			}
+		}
+		optTask = prop.enforceProperty(optTask, p.ctx, p.allocator)
+		if task == nil || task.cost() > optTask.cost() {
+			task = optTask
 		}
 	}
-	task = prop.enforceProperty(task, p.ctx, p.allocator)
+	return task, p.storeTaskProfile(prop, task)
+}
+
+func (p *Limit) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) {
+	task, err := p.getTaskProfile(prop)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if task != nil {
+		return task, nil
+	}
+	if prop.taskTp != rootTaskType {
+		return invalidTask, p.storeTaskProfile(prop, invalidTask)
+	}
+	for _, taskTp := range wholeTaskTypes {
+		optTask, err := p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{taskTp: taskTp})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		optTask = p.attach2TaskProfile(optTask)
+		optTask = prop.enforceProperty(optTask, p.ctx, p.allocator)
+		if task == nil || task.cost() > optTask.cost() {
+			task = optTask
+		}
+	}
 	return task, p.storeTaskProfile(prop, task)
 }
 
@@ -469,6 +529,9 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (taskProfi
 	}
 	if task != nil {
 		return task, nil
+	}
+	if prop.taskTp != rootTaskType {
+		return invalidTask, p.storeTaskProfile(prop, invalidTask)
 	}
 	if len(p.basePlan.children) == 0 {
 		task = &rootTaskProfile{p: p.basePlan.self.(PhysicalPlan)}
@@ -510,7 +573,7 @@ func tryToAddUnionScan(cop *copTaskProfile, conds []expression.Expression, ctx c
 func (p *DataSource) tryToGetMemTask(prop *requiredProp) (task taskProfile, err error) {
 	client := p.ctx.GetClient()
 	memDB := infoschema.IsMemoryDB(p.DBName.L)
-	isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeSelect, 0)
+	isDistReq := !memDB && client != nil && client.IsRequestTypeSupported(kv.ReqTypeSelect, 0)
 	if isDistReq {
 		return nil, nil
 	}
@@ -523,7 +586,16 @@ func (p *DataSource) tryToGetMemTask(prop *requiredProp) (task taskProfile, err 
 	memTable.SetSchema(p.schema)
 	rb := &ranger.Builder{Sc: p.ctx.GetSessionVars().StmtCtx}
 	memTable.Ranges = rb.BuildTableRanges(ranger.FullRange)
-	task = &rootTaskProfile{p: memTable}
+	var retPlan PhysicalPlan = memTable
+	if len(p.pushedDownConds) > 0 {
+		sel := Selection{
+			Conditions: p.pushedDownConds,
+		}.init(p.allocator, p.ctx)
+		sel.SetSchema(p.schema)
+		sel.SetChildren(memTable)
+		retPlan = sel
+	}
+	task = &rootTaskProfile{p: retPlan}
 	task = prop.enforceProperty(task, p.ctx, p.allocator)
 	return task, nil
 }
@@ -592,7 +664,7 @@ func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, e
 	return task, p.storeTaskProfile(prop, task)
 }
 
-// convert2IndexScanner converts the DataSource to index scan with idx.
+// convertToIndexScan converts the DataSource to index scan with idx.
 func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo) (task taskProfile, err error) {
 	is := PhysicalIndexScan{
 		Table:            p.tableInfo,
@@ -632,6 +704,13 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		// On this way, it's double read case.
 		copTask.tablePlan = PhysicalTableScan{Columns: p.Columns, Table: is.Table}.init(p.allocator, p.ctx)
 		copTask.tablePlan.SetSchema(p.schema)
+		// If it's parent requires single read task, return max cost.
+		if prop.taskTp == copSingleReadTaskType {
+			return &copTaskProfile{cst: math.MaxFloat64}, nil
+		}
+	} else if prop.taskTp == copDoubleReadTaskType {
+		// If it's parent requires double read task, return max cost.
+		return &copTaskProfile{cst: math.MaxFloat64}, nil
 	}
 	var indexCols []*expression.Column
 	for _, col := range idx.Columns {
@@ -672,6 +751,9 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		is.addPushedDownSelection(copTask)
 		task = tryToAddUnionScan(copTask, p.pushedDownConds, p.ctx, p.allocator)
 		task = prop.enforceProperty(task, p.ctx, p.allocator)
+	}
+	if prop.taskTp == rootTaskType {
+		task = finishCopTask(task, p.ctx, p.allocator)
 	}
 	return task, nil
 }
@@ -719,6 +801,9 @@ func matchIndicesProp(idxCols []*model.IndexColumn, propCols []*expression.Colum
 
 // convertToTableScan converts the DataSource to table scan.
 func (p *DataSource) convertToTableScan(prop *requiredProp) (task taskProfile, err error) {
+	if prop.taskTp == copDoubleReadTaskType {
+		return &copTaskProfile{cst: math.MaxFloat64}, nil
+	}
 	ts := PhysicalTableScan{
 		Table:       p.tableInfo,
 		Columns:     p.Columns,
@@ -778,6 +863,9 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task taskProfile, e
 		task = tryToAddUnionScan(copTask, p.pushedDownConds, p.ctx, p.allocator)
 		task = prop.enforceProperty(task, p.ctx, p.allocator)
 	}
+	if prop.taskTp == rootTaskType {
+		task = finishCopTask(task, p.ctx, p.allocator)
+	}
 	return task, nil
 }
 
@@ -788,6 +876,10 @@ func (p *Union) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error)
 	}
 	if task != nil {
 		return task, nil
+	}
+	if prop.taskTp != rootTaskType {
+		// Union can only return rootTask.
+		return invalidTask, p.storeTaskProfile(prop, invalidTask)
 	}
 	// Union is a sort blocker. We can only enforce it.
 	tasks := make([]taskProfile, 0, len(p.children))
@@ -839,6 +931,10 @@ func (p *LogicalAggregation) convert2NewPhysicalPlan(prop *requiredProp) (taskPr
 	if task != nil {
 		return task, nil
 	}
+	if prop.taskTp != rootTaskType {
+		// Aggregation can only return rootTask.
+		return invalidTask, p.storeTaskProfile(prop, invalidTask)
+	}
 	task, err = p.convert2HashAggregation(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -846,21 +942,26 @@ func (p *LogicalAggregation) convert2NewPhysicalPlan(prop *requiredProp) (taskPr
 	return task, p.storeTaskProfile(prop, task)
 }
 
-func (p *LogicalAggregation) convert2HashAggregation(prop *requiredProp) (taskProfile, error) {
-	task, err := p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{})
-	if err != nil {
-		return nil, errors.Trace(err)
+func (p *LogicalAggregation) convert2HashAggregation(prop *requiredProp) (bestTask taskProfile, _ error) {
+	for _, taskTp := range wholeTaskTypes {
+		task, err := p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{taskTp: taskTp})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		ha := PhysicalAggregation{
+			GroupByItems: p.GroupByItems,
+			AggFuncs:     p.AggFuncs,
+			HasGby:       len(p.GroupByItems) > 0,
+			AggType:      CompleteAgg,
+		}.init(p.allocator, p.ctx)
+		ha.SetSchema(p.schema)
+		task = ha.attach2TaskProfile(task)
+		task = prop.enforceProperty(task, p.ctx, p.allocator)
+		if bestTask == nil || task.cost() < bestTask.cost() {
+			bestTask = task
+		}
 	}
-	ha := PhysicalAggregation{
-		GroupByItems: p.GroupByItems,
-		AggFuncs:     p.AggFuncs,
-		HasGby:       len(p.GroupByItems) > 0,
-		AggType:      CompleteAgg,
-	}.init(p.allocator, p.ctx)
-	ha.SetSchema(p.schema)
-	task = ha.attach2TaskProfile(task)
-	task = prop.enforceProperty(task, p.ctx, p.allocator)
-	return task, nil
+	return
 }
 
 func (p *LogicalApply) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) {
@@ -871,11 +972,15 @@ func (p *LogicalApply) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile,
 	if task != nil {
 		return task, nil
 	}
-	// TODO: refine this code.
+	if prop.taskTp != rootTaskType {
+		// Apply can only return rootTask.
+		return invalidTask, p.storeTaskProfile(prop, invalidTask)
+	}
+	// TODO: Refine this code.
 	if p.JoinType == SemiJoin || p.JoinType == LeftOuterSemiJoin {
-		task, err = p.convert2SemiJoin(&requiredProp{})
+		task, err = p.convert2SemiJoin(&requiredProp{taskTp: rootTaskType})
 	} else {
-		task, err = p.convert2HashJoin(&requiredProp{})
+		task, err = p.convert2HashJoin(&requiredProp{taskTp: rootTaskType})
 	}
 	if err != nil {
 		return nil, errors.Trace(err)

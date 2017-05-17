@@ -282,17 +282,25 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 		b.err = errors.Errorf("Can not get table %d", v.Table.TableInfo.ID)
 		return nil
 	}
+	insertVal := &InsertValues{ctx: b.ctx, Table: tbl, Columns: v.Columns}
+	tableCols := tbl.WritableCols()
+	columns, err := insertVal.getColumns(tableCols)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
 
 	return &LoadData{
 		IsLocal: v.IsLocal,
 		loadDataInfo: &LoadDataInfo{
-			row:        make([]types.Datum, len(tbl.Cols())),
-			insertVal:  &InsertValues{ctx: b.ctx, Table: tbl},
+			row:        make([]types.Datum, len(columns)),
+			insertVal:  insertVal,
 			Path:       v.Path,
 			Table:      tbl,
 			FieldsInfo: v.FieldsInfo,
 			LinesInfo:  v.LinesInfo,
 			Ctx:        b.ctx,
+			columns:    columns,
 		},
 	}
 }
@@ -590,7 +598,7 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 	}
 	table, _ := b.is.TableByID(v.Table.ID)
 	client := b.ctx.GetClient()
-	supportDesc := client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeDesc)
+	supportDesc := client.IsRequestTypeSupported(kv.ReqTypeSelect, kv.ReqSubTypeDesc)
 	e := &XSelectTableExec{
 		tableInfo:   v.Table,
 		ctx:         b.ctx,
@@ -620,7 +628,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 	}
 	table, _ := b.is.TableByID(v.Table.ID)
 	client := b.ctx.GetClient()
-	supportDesc := client.SupportRequestType(kv.ReqTypeIndex, kv.ReqSubTypeDesc)
+	supportDesc := client.IsRequestTypeSupported(kv.ReqTypeIndex, kv.ReqSubTypeDesc)
 	e := &XSelectIndexExec{
 		tableInfo:            v.Table,
 		ctx:                  b.ctx,
