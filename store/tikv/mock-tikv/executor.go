@@ -29,11 +29,6 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// Error instances.
-var (
-	errInvalid = terror.ClassMockTikv.New(codeInvalid, "invalid operation")
-)
-
 // Error codes.
 const (
 	codeInvalid = 1
