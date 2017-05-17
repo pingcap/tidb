@@ -124,8 +124,6 @@ type DDL interface {
 	GetScope(status string) variable.ScopeFlag
 	// Stop stops DDL worker.
 	Stop() error
-	// Start starts DDL worker.
-	Start() error
 	// RegisterEventCh registers event channel for ddl.
 	RegisterEventCh(chan<- *Event)
 }
@@ -278,19 +276,6 @@ func (d *ddl) Stop() error {
 	log.Infof("stop DDL:%s", d.uuid)
 
 	return errors.Trace(err)
-}
-
-func (d *ddl) Start() error {
-	d.m.Lock()
-	defer d.m.Unlock()
-
-	if !d.isClosed() {
-		return nil
-	}
-
-	d.start()
-
-	return nil
 }
 
 func (d *ddl) start() {
