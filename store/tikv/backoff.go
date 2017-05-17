@@ -151,6 +151,12 @@ func NewBackoffer(maxSleep int, ctx goctx.Context) *Backoffer {
 // Backoff sleeps a while base on the backoffType and records the error message.
 // It returns a retryable error if total sleep time exceeds maxSleep.
 func (b *Backoffer) Backoff(typ backoffType, err error) error {
+	select {
+	case <-b.ctx.Done():
+		return errors.Trace(err)
+	default:
+	}
+
 	backoffCounter.WithLabelValues(typ.String()).Inc()
 	// Lazy initialize.
 	if b.fn == nil {
