@@ -19,6 +19,7 @@ package tikv
 import (
 	"time"
 
+	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/juju/errors"
 	"google.golang.org/grpc"
 )
@@ -37,7 +38,9 @@ func NewConnection(addr string, dialTimeout time.Duration) (*Conn, error) {
 	conn, err := grpc.Dial(
 		addr,
 		grpc.WithInsecure(),
-		grpc.WithTimeout(dialTimeout))
+		grpc.WithTimeout(dialTimeout),
+		grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
+		grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
