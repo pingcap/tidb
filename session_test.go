@@ -22,6 +22,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -2745,5 +2746,6 @@ func (s *testSessionSuite) TestCommitWhenSchemaChanged(c *C) {
 
 	// When s2 commit, it will find schema already changed.
 	mustExecSQL(c, s2, "insert into t values (4, 4)")
-	mustExecFailed(c, s2, "commit")
+	_, err := s2.Execute("commit")
+	c.Assert(terror.ErrorEqual(err, executor.ErrWrongValueCountOnRow), IsTrue)
 }
