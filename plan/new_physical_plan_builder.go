@@ -146,7 +146,7 @@ func joinKeysMatchIndex(keys []*expression.Column, index *model.IndexInfo) []int
 		if !found {
 			return nil
 		}
-		if i + 1 == len(keys) {
+		if i+1 == len(keys) {
 			break
 		}
 	}
