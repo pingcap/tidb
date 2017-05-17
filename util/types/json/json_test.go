@@ -64,3 +64,13 @@ func (s *testJSONSuite) TestJSONSerde(c *C) {
 		c.Assert(string(v1), Equals, string(v2))
 	}
 }
+
+func (s *testJSONSuite) TestParseFromString(c *C) {
+	var jstr1 = `{"a": [1, "2", {"aa": "bb"}, 4, null], "b": true, "c": null}`
+
+	j1, err := ParseFromString(jstr1)
+	c.Assert(err, IsNil)
+
+	var jstr2 = j1.String()
+	c.Assert(jstr2, Equals, `{"a":[1,"2",{"aa":"bb"},4,null],"b":true,"c":null}`)
+}

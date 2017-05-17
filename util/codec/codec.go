@@ -213,7 +213,7 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 		if b, v, err = DecodeCompactBytes(b); err == nil {
 			var j json.JSON
 			if j, err = json.Deserialize(v); err == nil {
-				d.SetValue(j)
+				d.SetMysqlJSON(j)
 			}
 		}
 	case NilFlag:
