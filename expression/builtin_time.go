@@ -1785,8 +1785,36 @@ type builtinAddTimeSig struct {
 
 // eval evals a builtinAddTimeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_addtime
+// ADDTIME(expr1,expr2)
+// only support expr1 is datetime expression ,not time
 func (b *builtinAddTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("ADDTIME")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if args[0].IsNull() || args[1].IsNull() {
+		return d, nil
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg0, err := convertDatumToTime(sc, args[0])
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	s, err := args[1].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	arg1, err := types.ParseDuration(s, getFsp(s))
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	tmpDuration := arg0.Add(&arg1)
+	result, err := tmpDuration.ConvertToTime(arg0.Type)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d.SetMysqlTime(result)
+	return d, nil
 }
 
 type convertTzFunctionClass struct {
