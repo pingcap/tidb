@@ -163,6 +163,14 @@ func (p *Sort) ResolveIndices() {
 }
 
 // ResolveIndices implements Plan interface.
+func (p *TopN) ResolveIndices() {
+	p.basePlan.ResolveIndices()
+	for _, item := range p.ByItems {
+		item.Expr.ResolveIndices(p.children[0].Schema())
+	}
+}
+
+// ResolveIndices implements Plan interface.
 func (p *LogicalApply) ResolveIndices() {
 	p.LogicalJoin.ResolveIndices()
 	for _, col := range p.corCols {

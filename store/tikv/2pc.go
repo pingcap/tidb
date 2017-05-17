@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tipb/go-binlog"
 	goctx "golang.org/x/net/context"
 )
@@ -363,7 +364,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 	}
 }
 
-func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) error {
+func (c *twoPhaseCommitter) doCommitSingleBatch(bo *Backoffer, batch batchKeys) error {
 	req := &pb.Request{
 		Type: pb.MessageType_CmdCommit,
 		CmdCommitReq: &pb.CmdCommitRequest{
@@ -371,15 +372,6 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 			Keys:          batch.keys,
 			CommitVersion: c.commitTS,
 		},
-	}
-
-	// If we fail to receive response for the request that commits primary key, it will be undetermined whether this
-	// transaction has been successfully committed.
-	// Under this circumstance,  we can not declare the commit is complete (may lead to data lost), nor can we throw
-	// an error (may lead to the duplicated key error when upper level restarts the transaction). Currently the best
-	// workaround seems to be an infinite retry until server recovers and returns a success or failure response.
-	if bytes.Compare(batch.keys[0], c.primary()) == 0 {
-		bo = NewBackoffer(commitPrimaryMaxBackoff, bo.ctx)
 	}
 
 	resp, err := c.store.SendKVReq(bo, req, batch.region, readTimeoutShort)
@@ -420,6 +412,21 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 	// We mark transaction's status committed when we receive the first success response.
 	c.mu.committed = true
 	return nil
+}
+
+func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) error {
+	// If we fail to receive response for the request that commits primary key, it will be undetermined whether this
+	// transaction has been successfully committed.
+	// Under this circumstance,  we can not declare the commit is complete (may lead to data lost), nor can we throw
+	// an error (may lead to the duplicated key error when upper level restarts the transaction). Currently the best
+	// solution is to populate this error and let upper layer drop the connection to the corresponding mysql client.
+	isPrimary := bytes.Compare(batch.keys[0], c.primary()) == 0
+	err := c.doCommitSingleBatch(bo, batch)
+	if err != nil && isPrimary {
+		// change the Cause of the error to be returned
+		return errors.Wrap(err, terror.ErrResultUndetermined)
+	}
+	return err
 }
 
 func (c *twoPhaseCommitter) cleanupSingleBatch(bo *Backoffer, batch batchKeys) error {
