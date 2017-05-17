@@ -106,7 +106,7 @@ func (b *baseBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool
 	return decVal, false, errors.Trace(err)
 }
 
-func (b *baseBuiltinFunc) evalDate(row []types.Datum) (types.Time, bool, error) {
+func (b *baseBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) {
 	val, err := b.self.eval(row)
 	if err != nil || val.IsNull() {
 		return types.Time{}, val.IsNull(), errors.Trace(err)
@@ -178,7 +178,7 @@ func (b *baseIntBuiltinFunc) evalString(row []types.Datum) (string, bool, error)
 	panic("cannot get STRING result from ClassInt expression")
 }
 
-func (b *baseIntBuiltinFunc) evalDate(row []types.Datum) (*types.MyDecimal, bool, error) {
+func (b *baseIntBuiltinFunc) evalTime(row []types.Datum) (*types.MyDecimal, bool, error) {
 	panic("cannot get DATE result from ClassInt expression")
 }
 
@@ -218,7 +218,7 @@ func (b *baseRealBuiltinFunc) evalString(row []types.Datum) (string, bool, error
 	panic("cannot get STRING result from ClassReal expression")
 }
 
-func (b *baseRealBuiltinFunc) evalDate(row []types.Datum) (*types.MyDecimal, bool, error) {
+func (b *baseRealBuiltinFunc) evalTime(row []types.Datum) (*types.MyDecimal, bool, error) {
 	panic("cannot get DATE result from ClassReal expression")
 }
 
@@ -258,7 +258,7 @@ func (b *baseDecimalBuiltinFunc) evalString(row []types.Datum) (string, bool, er
 	panic("cannot get REAL result from ClassDecimal expression")
 }
 
-func (b *baseDecimalBuiltinFunc) evalDate(row []types.Datum) (float64, bool, error) {
+func (b *baseDecimalBuiltinFunc) evalTime(row []types.Datum) (float64, bool, error) {
 	panic("cannot get DATE result from ClassDecimal expression")
 }
 
@@ -298,7 +298,7 @@ func (b *baseStringBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal
 	panic("cannot get DECIMAL result from ClassString expression")
 }
 
-func (b *baseStringBuiltinFunc) evalDate(row []types.Datum) (float64, bool, error) {
+func (b *baseStringBuiltinFunc) evalTime(row []types.Datum) (float64, bool, error) {
 	panic("cannot get DATE result from ClassString expression")
 }
 
@@ -311,7 +311,7 @@ type baseDateBuiltinFunc struct {
 }
 
 func (b *baseDateBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error) {
-	val, isNull, err := b.self.evalDate(row)
+	val, isNull, err := b.self.evalTime(row)
 	if err != nil || isNull {
 		return d, errors.Trace(err)
 	}
@@ -319,8 +319,8 @@ func (b *baseDateBuiltinFunc) eval(row []types.Datum) (d types.Datum, err error)
 	return
 }
 
-func (b *baseDateBuiltinFunc) evalDate(row []types.Datum) (types.Time, bool, error) {
-	return b.self.evalDate(row)
+func (b *baseDateBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) {
+	return b.self.evalTime(row)
 }
 
 func (b *baseDateBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
@@ -360,7 +360,7 @@ func (b *baseDurationBuiltinFunc) evalDuration(row []types.Datum) (types.Duratio
 	return b.self.evalDuration(row)
 }
 
-func (b *baseDurationBuiltinFunc) evalDate(row []types.Datum) (types.Time, bool, error) {
+func (b *baseDurationBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) {
 	panic("cannot get DATE result from DURATION expression")
 }
 
@@ -392,8 +392,8 @@ type builtinFunc interface {
 	evalString(row []types.Datum) (val string, isNull bool, err error)
 	// evalDecimal evaluates decimal representation of builtinFunc by given row.
 	evalDecimal(row []types.Datum) (val *types.MyDecimal, isNull bool, err error)
-	// evalDate evaluates date/datetime representation of builtinFunc by given row.
-	evalDate(row []types.Datum) (val types.Time, isNull bool, err error)
+	// evalTime evaluates DATE/DATETIME/TIMESTAMP representation of builtinFunc by given row.
+	evalTime(row []types.Datum) (val types.Time, isNull bool, err error)
 	// evaTime evaluates duration representation of builtinFunc by given row.
 	evalDuration(row []types.Datum) (val types.Duration, isNull bool, err error)
 	// getArgs returns the arguments expressions.

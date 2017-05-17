@@ -66,8 +66,8 @@ type Expression interface {
 	// EvalDecimal returns the decimal representation of expression.
 	EvalDecimal(row []types.Datum, sc *variable.StatementContext) (val *types.MyDecimal, isNull bool, err error)
 
-	// EvalDate returns the date/datetime representation of expression.
-	EvalDate(row []types.Datum, sc *variable.StatementContext) (val types.Time, isNull bool, err error)
+	// EvalTime returns the DATE/DATETIME/TIMESTAMP representation of expression.
+	EvalTime(row []types.Datum, sc *variable.StatementContext) (val types.Time, isNull bool, err error)
 
 	// EvalDuration returns the duration representation of expression.
 	EvalDuration(row []types.Datum, sc *variable.StatementContext) (val types.Duration, isNull bool, err error)
@@ -286,8 +286,8 @@ func (c *Constant) EvalDecimal(_ []types.Datum, sc *variable.StatementContext) (
 	return val, isNull, errors.Trace(err)
 }
 
-// EvalDate returns Date/Datetime representation of Constant.
-func (c *Constant) EvalDate(_ []types.Datum, sc *variable.StatementContext) (types.Time, bool, error) {
+// EvalTime returns DATE/DATETIME/TIMESTAMP representation of Constant.
+func (c *Constant) EvalTime(_ []types.Datum, sc *variable.StatementContext) (types.Time, bool, error) {
 	val, isNull, err := evalExprToDate(c, nil, sc)
 	return val, isNull, errors.Trace(err)
 }

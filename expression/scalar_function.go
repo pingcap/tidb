@@ -170,9 +170,9 @@ func (sf *ScalarFunction) EvalString(row []types.Datum, sc *variable.StatementCo
 	return sf.Function.evalString(row)
 }
 
-// EvalDate implements Expression interface.
-func (sf *ScalarFunction) EvalDate(row []types.Datum, sc *variable.StatementContext) (types.Time, bool, error) {
-	return sf.Function.evalDate(row)
+// EvalTime implements Expression interface.
+func (sf *ScalarFunction) EvalTime(row []types.Datum, sc *variable.StatementContext) (types.Time, bool, error) {
+	return sf.Function.evalTime(row)
 }
 
 // EvalDuration implements Expression interface.

@@ -67,8 +67,8 @@ func (col *CorrelatedColumn) EvalDecimal(row []types.Datum, sc *variable.Stateme
 	return val, isNull, errors.Trace(err)
 }
 
-// EvalDate returns date/datetime representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalDate(row []types.Datum, sc *variable.StatementContext) (types.Time, bool, error) {
+// EvalTime returns DATE/DATETIME/TIMESTAMP representation of CorrelatedColumn.
+func (col *CorrelatedColumn) EvalTime(row []types.Datum, sc *variable.StatementContext) (types.Time, bool, error) {
 	val, isNull, err := evalExprToDate(col, row, sc)
 	return val, isNull, errors.Trace(err)
 }
@@ -186,8 +186,8 @@ func (col *Column) EvalDecimal(row []types.Datum, sc *variable.StatementContext)
 	return val, isNull, errors.Trace(err)
 }
 
-// EvalDate returns Date/Datetime representation of Column.
-func (col *Column) EvalDate(row []types.Datum, sc *variable.StatementContext) (types.Time, bool, error) {
+// EvalTime returns DATE/DATETIME/TIMESTAMP representation of Column.
+func (col *Column) EvalTime(row []types.Datum, sc *variable.StatementContext) (types.Time, bool, error) {
 	val, isNull, err := evalExprToDate(col, row, sc)
 	return val, isNull, errors.Trace(err)
 }
