@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/ngaut/log"
 )
 
 // wholeTaskTypes records all possible kinds of task that a plan can return. For Agg, TopN and Limit, we will try to get
@@ -92,7 +93,7 @@ func (p *Projection) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, e
 		return invalidTask, p.storeTaskProfile(prop, invalidTask)
 	}
 	// enforceProperty task.
-	task, err = p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{})
+	task, err = p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -126,26 +127,31 @@ func (p *LogicalJoin) getIndexJoinKey(inner Plan) []*expression.Column {
 }
 
 // joinKeysMatchIndex checks if the keys match all columns in index.
-func joinKeysMatchIndex(keys []*expression.Column, index *model.IndexInfo) bool {
-	if len(keys) != len(index.Columns) {
-		return false
+func joinKeysMatchIndex(keys []*expression.Column, index *model.IndexInfo) []int {
+	if len(index.Columns) < len(keys) {
+		return nil
 	}
-	for _, key := range keys {
+	matchOffsets := make([]int, len(keys))
+	for i, idxCol := range index.Columns {
+		if idxCol.Length != types.UnspecifiedLength {
+			return nil
+		}
 		found := false
-		for _, idxCol := range index.Columns {
-			if idxCol.Length != types.UnspecifiedLength {
-				return false
-			}
+		for j, key := range keys {
 			if idxCol.Name.L == key.ColName.L {
+				matchOffsets[i] = j
 				found = true
 				break
 			}
 		}
 		if !found {
-			return false
+			return nil
+		}
+		if i + 1 == len(keys) {
+			break
 		}
 	}
-	return true
+	return matchOffsets
 }
 
 func (p *LogicalJoin) convertToIndexJoin(prop *requiredProp, outerIdx int) (taskProfile, error) {
@@ -166,7 +172,7 @@ func (p *LogicalJoin) convertToIndexJoin(prop *requiredProp, outerIdx int) (task
 	if canPassProp {
 		outerTask, err = outerChild.convert2NewPhysicalPlan(prop)
 	} else {
-		outerTask, err = outerChild.convert2NewPhysicalPlan(&requiredProp{})
+		outerTask, err = outerChild.convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -195,19 +201,28 @@ func (p *LogicalJoin) convertToIndexJoin(prop *requiredProp, outerIdx int) (task
 				}
 			}
 			if useTableScan {
-				innerTask, err = x.convertToTableScan(&requiredProp{})
+				innerTask, err = x.convertToTableScan(&requiredProp{taskTp: rootTaskType})
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
 				break
 			}
 			for _, indexInfo := range indices {
-				if joinKeysMatchIndex(innerJoinKeys, indexInfo) {
+				if matchedOffsets := joinKeysMatchIndex(innerJoinKeys, indexInfo); matchedOffsets != nil {
 					usedIndexInfo = indexInfo
+					newOuterJoinKeys := make([]*expression.Column, len(outerJoinKeys))
+					newInnerJoinKeys := make([]*expression.Column, len(innerJoinKeys))
+					for i, offset := range matchedOffsets {
+						newOuterJoinKeys[i] = outerJoinKeys[offset]
+						newInnerJoinKeys[i] = innerJoinKeys[offset]
+					}
+					outerJoinKeys = newOuterJoinKeys
+					innerJoinKeys = newInnerJoinKeys
+					break
 				}
 			}
 			if usedIndexInfo != nil {
-				innerTask, err = x.convertToIndexScan(&requiredProp{}, usedIndexInfo)
+				innerTask, err = x.convertToIndexScan(&requiredProp{taskTp: rootTaskType}, usedIndexInfo)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -249,6 +264,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *requiredProp) (taskProfile, error)
 		if p.JoinType == RightOuterJoin {
 			return nil, nil
 		}
+		log.Warnf("left outer")
 		return p.convertToIndexJoin(prop, 0)
 	}
 	rightOuter := (p.preferINLJ & preferRightAsOuter) > 0
@@ -256,6 +272,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *requiredProp) (taskProfile, error)
 		if p.JoinType == LeftOuterJoin {
 			return nil, nil
 		}
+		log.Warnf("right outer")
 		return p.convertToIndexJoin(prop, 1)
 	}
 	return nil, nil
@@ -435,7 +452,7 @@ func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) 
 		return invalidTask, p.storeTaskProfile(prop, invalidTask)
 	}
 	// enforce branch
-	task, err = p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{})
+	task, err = p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -537,7 +554,7 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (taskProfi
 		task = &rootTaskProfile{p: p.basePlan.self.(PhysicalPlan)}
 	} else {
 		// enforce branch
-		task, err = p.basePlan.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{})
+		task, err = p.basePlan.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -884,7 +901,7 @@ func (p *Union) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error)
 	// Union is a sort blocker. We can only enforce it.
 	tasks := make([]taskProfile, 0, len(p.children))
 	for _, child := range p.children {
-		task, err = child.(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{})
+		task, err = child.(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
