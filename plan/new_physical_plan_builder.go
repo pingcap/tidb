@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/ngaut/log"
 )
 
 // wholeTaskTypes records all possible kinds of task that a plan can return. For Agg, TopN and Limit, we will try to get
@@ -264,7 +263,6 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *requiredProp) (taskProfile, error)
 		if p.JoinType == RightOuterJoin {
 			return nil, nil
 		}
-		log.Warnf("left outer")
 		return p.convertToIndexJoin(prop, 0)
 	}
 	rightOuter := (p.preferINLJ & preferRightAsOuter) > 0
@@ -272,7 +270,6 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *requiredProp) (taskProfile, error)
 		if p.JoinType == LeftOuterJoin {
 			return nil, nil
 		}
-		log.Warnf("right outer")
 		return p.convertToIndexJoin(prop, 1)
 	}
 	return nil, nil
