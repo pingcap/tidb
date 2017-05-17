@@ -23,6 +23,8 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
+
+	"github.com/ngaut/log"
 )
 
 var (
@@ -233,6 +235,7 @@ func (s *builtinCompareSig) eval(row []types.Datum) (d types.Datum, err error) {
 	}
 	sc := s.ctx.GetSessionVars().StmtCtx
 	var a, b = args[0], args[1]
+	log.Errorf("a: %v, b: %v\n", a, b)
 	if s.op != opcode.NullEQ {
 		a, b, err = types.CoerceDatum(sc, a, b)
 		if err != nil {
