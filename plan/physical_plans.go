@@ -465,6 +465,7 @@ type PhysicalHashJoin struct {
 	DefaultValues []types.Datum
 }
 
+// PhysicalIndexJoin represents the plan of index look up join.
 type PhysicalIndexJoin struct {
 	*basePlan
 	basePhysicalPlan
