@@ -70,6 +70,11 @@ func (c *pdClient) GetRegionByID(ctx context.Context, regionID uint64) (*metapb.
 }
 
 func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
 	store := c.cluster.GetStore(storeID)
 	return store, nil
 }

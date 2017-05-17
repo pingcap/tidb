@@ -148,6 +148,7 @@ func (p *LogicalJoin) preferUseMergeJoin() bool {
 	return p.preferMergeJoin && len(p.EqualConditions) == 1
 }
 
+// convert2MergeJoin ...
 // TODO: Now we only process the case that the join has only one equal condition.
 func (p *LogicalJoin) convert2MergeJoin(prop *requiredProp) (taskProfile, error) {
 	lChild := p.children[0].(LogicalPlan)
@@ -424,7 +425,7 @@ func tryToAddUnionScan(cop *copTaskProfile, conds []expression.Expression, ctx c
 func (p *DataSource) tryToGetMemTask(prop *requiredProp) (task taskProfile, err error) {
 	client := p.ctx.GetClient()
 	memDB := infoschema.IsMemoryDB(p.DBName.L)
-	isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeSelect, 0)
+	isDistReq := !memDB && client != nil && client.IsRequestTypeSupported(kv.ReqTypeSelect, 0)
 	if isDistReq {
 		return nil, nil
 	}
@@ -437,7 +438,16 @@ func (p *DataSource) tryToGetMemTask(prop *requiredProp) (task taskProfile, err 
 	memTable.SetSchema(p.schema)
 	rb := &ranger.Builder{Sc: p.ctx.GetSessionVars().StmtCtx}
 	memTable.Ranges = rb.BuildTableRanges(ranger.FullRange)
-	task = &rootTaskProfile{p: memTable}
+	var retPlan PhysicalPlan = memTable
+	if len(p.pushedDownConds) > 0 {
+		sel := Selection{
+			Conditions: p.pushedDownConds,
+		}.init(p.allocator, p.ctx)
+		sel.SetSchema(p.schema)
+		sel.SetChildren(memTable)
+		retPlan = sel
+	}
+	task = &rootTaskProfile{p: retPlan}
 	task = prop.enforceProperty(task, p.ctx, p.allocator)
 	return task, nil
 }
@@ -506,7 +516,7 @@ func (p *DataSource) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, e
 	return task, p.storeTaskProfile(prop, task)
 }
 
-// convert2IndexScanner converts the DataSource to index scan with idx.
+// convertToIndexScan converts the DataSource to index scan with idx.
 func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo) (task taskProfile, err error) {
 	is := PhysicalIndexScan{
 		Table:            p.tableInfo,
