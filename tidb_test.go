@@ -17,6 +17,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -342,6 +343,30 @@ func (s *testMainSuite) TestSchemaValidity(c *C) {
 	err = store.Close()
 	c.Assert(err, IsNil)
 	localstore.MockRemoteStore = false
+}
+
+func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
+	store := newStoreWithBootstrap(c, s.dbName+"goroutine_leak")
+	se, err := createSession(store)
+	c.Assert(err, IsNil)
+
+	// Test an issue that sysSessionPool doesn't call session's Close, cause
+	// asyncGetTSWorker goroutine leak.
+	before := runtime.NumGoroutine()
+	count := 200
+	var wg sync.WaitGroup
+	wg.Add(count)
+	for i := 0; i < count; i++ {
+		go func(se *session) {
+			_, _, err := se.ExecRestrictedSQL(se, "select * from mysql.user limit 1")
+			c.Assert(err, IsNil)
+			wg.Done()
+		}(se)
+	}
+	wg.Wait()
+	se.sysSessionPool().Close()
+	after := runtime.NumGoroutine()
+	c.Assert(after-before < 3, IsTrue)
 }
 
 func sessionExec(c *C, se Session, sql string) ([]ast.RecordSet, error) {

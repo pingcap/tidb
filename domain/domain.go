@@ -34,6 +34,7 @@ import (
 	// TODO: It's used fo update vendor. It will be removed.
 	_ "github.com/coreos/etcd/clientv3/concurrency"
 	_ "github.com/coreos/etcd/mvcc/mvccpb"
+	"github.com/ngaut/pools"
 	goctx "golang.org/x/net/context"
 )
 
@@ -47,7 +48,7 @@ type Domain struct {
 	ddl             ddl.DDL
 	m               sync.Mutex
 	SchemaValidator SchemaValidator
-	sysSessionPool  *sync.Pool
+	sysSessionPool  *pools.ResourcePool
 	exit            chan struct{}
 	etcdClient      *clientv3.Client
 
@@ -310,6 +311,7 @@ func (do *Domain) Close() {
 	if do.etcdClient != nil {
 		do.etcdClient.Close()
 	}
+	do.sysSessionPool.Close()
 }
 
 type ddlCallback struct {
@@ -356,12 +358,12 @@ type etcdBackend interface {
 }
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
-func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
+func NewDomain(store kv.Storage, lease time.Duration, factory pools.Factory) (d *Domain, err error) {
 	d = &Domain{
 		store:           store,
 		SchemaValidator: newSchemaValidator(lease),
 		exit:            make(chan struct{}),
-		sysSessionPool:  &sync.Pool{},
+		sysSessionPool:  pools.NewResourcePool(factory, 1, 200, 3*time.Minute),
 	}
 
 	if ebd, ok := store.(etcdBackend); ok {
@@ -397,7 +399,7 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 }
 
 // SysSessionPool returns the system session pool.
-func (do *Domain) SysSessionPool() *sync.Pool {
+func (do *Domain) SysSessionPool() *pools.ResourcePool {
 	return do.sysSessionPool
 }
 

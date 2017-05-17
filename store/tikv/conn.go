@@ -82,10 +82,11 @@ func (c *Conn) SetWriteDeadline(t time.Time) error {
 }
 
 // Close closes the net.Conn.
-func (c *Conn) Close() {
+func (c *Conn) Close() error {
 	if c.closed {
-		return
+		return nil
 	}
 	c.closed = true
 	c.nc.Close()
+	return nil
 }
