@@ -21,7 +21,6 @@ import (
 
 	"github.com/juju/errors"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/keepalive"
 )
 
 const defaultBufSize = 4 * 1024
@@ -35,15 +34,10 @@ type Conn struct {
 
 // NewConnection creates a Conn with dial timeout.
 func NewConnection(addr string, dialTimeout time.Duration) (*Conn, error) {
-	keepaliveParams := keepalive.ClientParameters{
-		Time:    keepaliveTime,
-		Timeout: keepaliveTimeout,
-	}
 	conn, err := grpc.Dial(
 		addr,
 		grpc.WithInsecure(),
-		grpc.WithTimeout(dialTimeout),
-		grpc.WithKeepaliveParams(keepaliveParams))
+		grpc.WithTimeout(dialTimeout))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

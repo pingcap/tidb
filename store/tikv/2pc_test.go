@@ -373,20 +373,14 @@ func (s *testCommitterSuite) TestPrewritePrimaryKeyFailed(c *C) {
 	c.Assert(v, BytesEquals, []byte("a3"))
 }
 
-// timeoutClient wraps rpcClient and returns timeout error for
-// the specified kv commands.
+// timeoutClient wraps rpcClient and returns timeout error for the specified commands.
 type timeoutClient struct {
 	Client
-	kvTimeouts map[tikvrpc.CmdType]bool
-}
-
-type sendKVResult struct {
-	resp *tikvrpc.Response
-	err  error
+	timeouts map[tikvrpc.CmdType]bool
 }
 
 func (c *timeoutClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-	if _, ok := c.kvTimeouts[req.Type]; ok {
+	if _, ok := c.timeouts[req.Type]; ok {
 		return nil, errors.Errorf("timeout when send kv req %v", req.Type)
 	}
 	return c.Client.SendReq(ctx, addr, req)
@@ -397,8 +391,8 @@ func (s *testCommitterSuite) TestCommitPrimaryError(c *C) {
 		tikvrpc.CmdCommit: true,
 	}
 	s.store.client = &timeoutClient{
-		Client:     s.store.client,
-		kvTimeouts: timeouts,
+		Client:   s.store.client,
+		timeouts: timeouts,
 	}
 
 	t, err := s.store.Begin()
