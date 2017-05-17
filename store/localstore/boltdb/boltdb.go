@@ -186,7 +186,7 @@ func (driver Driver) Open(dbPath string) (engine.DB, error) {
 		return nil, errors.Trace(err)
 	}
 
-	if _, err = tx.CreateBucketIfNotExists(bucketName); err != nil {
+	if _, err := tx.CreateBucketIfNotExists(bucketName); err != nil {
 		tx.Rollback()
 		return nil, errors.Trace(err)
 	}
