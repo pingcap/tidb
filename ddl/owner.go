@@ -34,6 +34,7 @@ const (
 	newSessionDefaultRetryCnt = 3
 )
 
+// worker represents the structure which is used for electing owner.
 type worker struct {
 	ddlOwner    int32
 	bgOwner     int32

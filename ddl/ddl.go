@@ -163,7 +163,8 @@ type ddl struct {
 	hook       Callback
 	hookMu     sync.RWMutex
 	store      kv.Storage
-	worker     *worker
+	// worker is used for electing the owner.
+	worker *worker
 	// lease is schema seconds.
 	lease        time.Duration
 	uuid         string
