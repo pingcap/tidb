@@ -22,6 +22,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -2729,4 +2730,22 @@ func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {
 	err = se.CommitTxn()
 	c.Assert(err, IsNil)
 	c.Assert(se.AffectedRows(), Equals, uint64(1))
+}
+
+func (s *testSessionSuite) TestCommitWhenSchemaChanged(c *C) {
+	defer testleak.AfterTest(c)()
+	dbName := "test_commit_when_schema_changed"
+	s1 := newSession(c, s.store, dbName)
+	mustExecSQL(c, s1, "create table t (a int, b int)")
+
+	s2 := newSession(c, s.store, dbName)
+	mustExecSQL(c, s2, "begin")
+	mustExecSQL(c, s2, "insert into t values (1, 1)")
+
+	mustExecSQL(c, s1, "alter table t drop column b")
+
+	// When s2 commit, it will find schema already changed.
+	mustExecSQL(c, s2, "insert into t values (4, 4)")
+	_, err := s2.Execute("commit")
+	c.Assert(terror.ErrorEqual(err, executor.ErrWrongValueCountOnRow), IsTrue)
 }
