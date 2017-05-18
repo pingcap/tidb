@@ -114,6 +114,7 @@ import (
 	foreign			"FOREIGN"
 	from			"FROM"
 	fulltext		"FULLTEXT"
+	generated		"GENERATED"
 	grants			"GRANTS"
 	group			"GROUP"
 	having			"HAVING"
@@ -197,6 +198,7 @@ import (
 	smallIntType		"SMALLINT"
 	starting		"STARTING"
 	tableKwd		"TABLE"
+	stored			"STORED"
 	terminated		"TERMINATED"
 	then			"THEN"
 	tinyblobType		"TINYBLOB"
@@ -217,6 +219,7 @@ import (
 	values			"VALUES"
 	varcharType		"VARCHAR"
 	varbinaryType		"VARBINARY"
+	virtual			"VIRTUAL"
 	when			"WHEN"
 	where			"WHERE"
 	write			"WRITE"
@@ -232,6 +235,7 @@ import (
 	addTime				"ADDTIME"
 	admin				"ADMIN"
 	aesDecrypt			"AES_DECRYPT"
+	always				"ALWAYS"
 	benchmark			"BENCHMARK"
 	aesEncrypt			"AES_ENCRYPT"
 	asin				"ASIN"
@@ -1286,6 +1290,14 @@ ColumnOption:
 		// The CHECK clause is parsed but ignored by all storage engines.
 		$$ = &ast.ColumnOption{}
 	}
+|	GeneratedAlways "AS" '(' Expression ')' VirtualOrStored
+	{
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionVirtual, Expr:$4.(ast.ExprNode)}
+	}
+
+GeneratedAlways: | "GENERATED" "ALWAYS"
+
+VirtualOrStored: | "VIRTUAL" | "STORED"
 
 ColumnOptionList:
 	ColumnOption

@@ -243,6 +243,7 @@ const (
 	ColumnOptionOnUpdate // For Timestamp and Datetime only.
 	ColumnOptionFulltext
 	ColumnOptionComment
+	ColumnOptionVirtual
 )
 
 // ColumnOption is used for parsing column constraint info from SQL.
