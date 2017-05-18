@@ -431,17 +431,15 @@ func (s *testSuite) TestUnion(c *C) {
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	testSQL := `select 1 union select 0;`
-	tk.MustExec(testSQL)
 
-	testSQL = `drop table if exists union_test; create table union_test(id int);`
+	testSQL := `drop table if exists union_test; create table union_test(id int);`
 	tk.MustExec(testSQL)
 
 	testSQL = `drop table if exists union_test;`
 	tk.MustExec(testSQL)
 	testSQL = `create table union_test(id int);`
 	tk.MustExec(testSQL)
-	testSQL = `insert union_test values (1),(2); select id from union_test union select 1;`
+	testSQL = `insert union_test values (1),(2)`
 	tk.MustExec(testSQL)
 
 	testSQL = `select id from union_test union select id from union_test;`
