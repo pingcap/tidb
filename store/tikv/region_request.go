@@ -14,14 +14,11 @@
 package tikv
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
 )
@@ -55,108 +52,6 @@ func NewRegionRequestSender(regionCache *RegionCache, client Client) *RegionRequ
 	}
 }
 
-func genRegionErrorResp(req *tikvrpc.Request, e *errorpb.Error) (*tikvrpc.Response, error) {
-	resp := &tikvrpc.Response{}
-	resp.Type = req.Type
-	switch req.Type {
-	case tikvrpc.CmdGet:
-		resp.Get = &kvrpcpb.GetResponse{
-			RegionError: e,
-		}
-	case tikvrpc.CmdScan:
-		resp.Scan = &kvrpcpb.ScanResponse{
-			RegionError: e,
-		}
-	case tikvrpc.CmdPrewrite:
-		resp.Prewrite = &kvrpcpb.PrewriteResponse{
-			RegionError: e,
-		}
-	case tikvrpc.CmdCommit:
-		resp.Commit = &kvrpcpb.CommitResponse{
-			RegionError: e,
-		}
-	case tikvrpc.CmdCleanup:
-		resp.Cleanup = &kvrpcpb.CleanupResponse{
-			RegionError: e,
-		}
-	case tikvrpc.CmdBatchGet:
-		resp.BatchGet = &kvrpcpb.BatchGetResponse{
-			RegionError: e,
-		}
-	case tikvrpc.CmdBatchRollback:
-		resp.BatchRollback = &kvrpcpb.BatchRollbackResponse{
-			RegionError: e,
-		}
-	case tikvrpc.CmdScanLock:
-		resp.ScanLock = &kvrpcpb.ScanLockResponse{
-			RegionError: e,
-		}
-	case tikvrpc.CmdResolveLock:
-		resp.ResolveLock = &kvrpcpb.ResolveLockResponse{
-			RegionError: e,
-		}
-	case tikvrpc.CmdGC:
-		resp.GC = &kvrpcpb.GCResponse{
-			RegionError: e,
-		}
-	case tikvrpc.CmdRawGet:
-		resp.RawGet = &kvrpcpb.RawGetResponse{
-			RegionError: e,
-		}
-	case tikvrpc.CmdRawPut:
-		resp.RawPut = &kvrpcpb.RawPutResponse{
-			RegionError: e,
-		}
-	case tikvrpc.CmdRawDelete:
-		resp.RawDelete = &kvrpcpb.RawDeleteResponse{
-			RegionError: e,
-		}
-	case tikvrpc.CmdCop:
-		resp.Cop = &coprocessor.Response{
-			RegionError: e,
-		}
-	default:
-		return nil, fmt.Errorf("invalid request type %v", req.Type)
-	}
-	return resp, nil
-}
-
-func setContext(req *tikvrpc.Request, ctx *kvrpcpb.Context) error {
-	switch req.Type {
-	case tikvrpc.CmdGet:
-		req.Get.Context = ctx
-	case tikvrpc.CmdScan:
-		req.Scan.Context = ctx
-	case tikvrpc.CmdPrewrite:
-		req.Prewrite.Context = ctx
-	case tikvrpc.CmdCommit:
-		req.Commit.Context = ctx
-	case tikvrpc.CmdCleanup:
-		req.Cleanup.Context = ctx
-	case tikvrpc.CmdBatchGet:
-		req.BatchGet.Context = ctx
-	case tikvrpc.CmdBatchRollback:
-		req.BatchRollback.Context = ctx
-	case tikvrpc.CmdScanLock:
-		req.ScanLock.Context = ctx
-	case tikvrpc.CmdResolveLock:
-		req.ResolveLock.Context = ctx
-	case tikvrpc.CmdGC:
-		req.GC.Context = ctx
-	case tikvrpc.CmdRawGet:
-		req.RawGet.Context = ctx
-	case tikvrpc.CmdRawPut:
-		req.RawPut.Context = ctx
-	case tikvrpc.CmdRawDelete:
-		req.RawDelete.Context = ctx
-	case tikvrpc.CmdCop:
-		req.Cop.Context = ctx
-	default:
-		return fmt.Errorf("invalid request type %v", req.Type)
-	}
-	return nil
-}
-
 // SendReq sends a request to tikv server.
 func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
 	for {
@@ -171,7 +66,7 @@ func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regio
 
 			// TODO: Change the returned error to something like "region missing in cache",
 			// and handle this error like StaleEpoch, which means to re-split the request and retry.
-			return genRegionErrorResp(req, &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}})
+			return tikvrpc.GenRegionErrorResp(req, &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}})
 		}
 
 		s.storeAddr = ctx.Addr
@@ -201,7 +96,7 @@ func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regio
 }
 
 func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, req *tikvrpc.Request, timeout time.Duration) (resp *tikvrpc.Response, retry bool, err error) {
-	if e := setContext(req, ctx.KVCtx); e != nil {
+	if e := tikvrpc.SetContext(req, ctx.KVCtx); e != nil {
 		return nil, false, errors.Trace(e)
 	}
 	context, cancel := goctx.WithTimeout(bo.ctx, timeout)

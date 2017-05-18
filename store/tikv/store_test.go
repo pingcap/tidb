@@ -247,7 +247,7 @@ func (c *busyClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Reques
 	defer c.mu.RUnlock()
 
 	if c.mu.isBusy {
-		return genRegionErrorResp(req, &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}})
+		return tikvrpc.GenRegionErrorResp(req, &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}})
 	}
 	return c.client.SendReq(ctx, addr, req)
 }
