@@ -2733,6 +2733,7 @@ func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {
 }
 
 func (s *testSessionSuite) TestCommitWhenSchemaChanged(c *C) {
+	c.Skip("skip localstore when lease is 0")
 	defer testleak.AfterTest(c)()
 	dbName := "test_commit_when_schema_changed"
 	s1 := newSession(c, s.store, dbName)
