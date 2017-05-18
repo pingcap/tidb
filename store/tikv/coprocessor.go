@@ -32,8 +32,8 @@ type CopClient struct {
 	store *tikvStore
 }
 
-// SupportRequestType checks whether reqType is supported.
-func (c *CopClient) SupportRequestType(reqType, subType int64) bool {
+// IsRequestTypeSupported checks whether reqType is supported.
+func (c *CopClient) IsRequestTypeSupported(reqType, subType int64) bool {
 	switch reqType {
 	case kv.ReqTypeSelect, kv.ReqTypeIndex:
 		switch subType {
@@ -304,14 +304,12 @@ type copResponse struct {
 
 const minLogCopTaskTime = 300 * time.Millisecond
 
-// The worker function that get a copTask from channel, handle it and
+// work is a worker function that get a copTask from channel, handle it and
 // send the result back.
 func (it *copIterator) work(ctx goctx.Context, taskCh <-chan *copTask) {
 	defer it.wg.Done()
-	childCtx, cancel := goctx.WithCancel(ctx)
-	defer cancel()
 	for task := range taskCh {
-		bo := NewBackoffer(copNextMaxBackoff, childCtx)
+		bo := NewBackoffer(copNextMaxBackoff, ctx)
 		startTime := time.Now()
 		resps := it.handleTask(bo, task)
 		costTime := time.Since(startTime)
@@ -348,7 +346,11 @@ func (it *copIterator) run(ctx goctx.Context) {
 	it.wg.Add(it.concurrency)
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
-		go it.work(ctx, it.taskCh)
+		go func() {
+			childCtx, cancel := goctx.WithCancel(ctx)
+			defer cancel()
+			it.work(childCtx, it.taskCh)
+		}()
 	}
 
 	go func() {
@@ -382,7 +384,7 @@ func (it *copIterator) sendToTaskCh(ctx goctx.Context, t *copTask) (finished boo
 	return
 }
 
-// Return next coprocessor result.
+// Next returns next coprocessor result.
 func (it *copIterator) Next() ([]byte, error) {
 	coprocessorCounter.WithLabelValues("next").Inc()
 
@@ -420,10 +422,10 @@ func (it *copIterator) Next() ([]byte, error) {
 	return resp.Data, nil
 }
 
-// Handle single copTask.
+// handleTask handles single copTask.
 func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
 	coprocessorCounter.WithLabelValues("handle_task").Inc()
-	sender := NewRegionRequestSender(bo, it.store.regionCache, it.store.client)
+	sender := NewRegionRequestSender(it.store.regionCache, it.store.client)
 	for {
 		select {
 		case <-it.finished:
@@ -436,7 +438,7 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
 			Data:   it.req.Data,
 			Ranges: task.ranges.toPBRanges(),
 		}
-		resp, err := sender.SendCopReq(req, task.region, readTimeoutMedium)
+		resp, err := sender.SendCopReq(bo, req, task.region, readTimeoutMedium)
 		if err != nil {
 			return []copResponse{{err: errors.Trace(err)}}
 		}
@@ -471,7 +473,7 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
 	}
 }
 
-// Rebuild and handle current task. It may be split into multiple tasks (in region split scenario).
+// handleRegionErrorTask handles current task. It may be split into multiple tasks (in region split scenario).
 func (it *copIterator) handleRegionErrorTask(bo *Backoffer, task *copTask) []copResponse {
 	coprocessorCounter.WithLabelValues("rebuild_task").Inc()
 

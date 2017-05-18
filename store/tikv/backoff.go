@@ -124,7 +124,6 @@ const (
 	getMaxBackoff           = 15000
 	prewriteMaxBackoff      = 15000
 	commitMaxBackoff        = 15000
-	commitPrimaryMaxBackoff = -1
 	cleanupMaxBackoff       = 15000
 	gcMaxBackoff            = 100000
 	gcResolveLockMaxBackoff = 100000
@@ -152,6 +151,12 @@ func NewBackoffer(maxSleep int, ctx goctx.Context) *Backoffer {
 // Backoff sleeps a while base on the backoffType and records the error message.
 // It returns a retryable error if total sleep time exceeds maxSleep.
 func (b *Backoffer) Backoff(typ backoffType, err error) error {
+	select {
+	case <-b.ctx.Done():
+		return errors.Trace(err)
+	default:
+	}
+
 	backoffCounter.WithLabelValues(typ.String()).Inc()
 	// Lazy initialize.
 	if b.fn == nil {

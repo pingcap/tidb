@@ -104,6 +104,19 @@ func (p *basePhysicalPlan) attach2TaskProfile(tasks ...taskProfile) taskProfile 
 	return attachPlan2TaskProfile(p.basePlan.self.(PhysicalPlan).Copy(), profile)
 }
 
+func (p *PhysicalIndexJoin) attach2TaskProfile(tasks ...taskProfile) taskProfile {
+	lTask := finishCopTask(tasks[0].copy(), p.ctx, p.allocator)
+	rTask := finishCopTask(tasks[1].copy(), p.ctx, p.allocator)
+	np := p.Copy()
+	np.SetChildren(lTask.plan(), rTask.plan())
+	return &rootTaskProfile{
+		p: np,
+		// TODO: we will estimate the cost and count more precisely.
+		cst: lTask.cost(),
+		cnt: lTask.count() + rTask.count(),
+	}
+}
+
 func (p *PhysicalHashJoin) attach2TaskProfile(tasks ...taskProfile) taskProfile {
 	lTask := finishCopTask(tasks[0].copy(), p.ctx, p.allocator)
 	rTask := finishCopTask(tasks[1].copy(), p.ctx, p.allocator)
@@ -210,6 +223,10 @@ func (t *rootTaskProfile) plan() PhysicalPlan {
 }
 
 func (p *Limit) attach2TaskProfile(profiles ...taskProfile) taskProfile {
+	// If task is invalid, keep it remained.
+	if profiles[0].plan() == nil {
+		return profiles[0]
+	}
 	profile := profiles[0].copy()
 	if cop, ok := profile.(*copTaskProfile); ok {
 		// If the task is copTask, the Limit can always be pushed down.
@@ -230,17 +247,15 @@ func (p *Limit) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 }
 
 func (p *Sort) getCost(count float64) float64 {
-	if p.ExecLimit == nil {
-		return count*cpuFactor + count*memoryFactor
-	}
-	return count*cpuFactor + float64(p.ExecLimit.Count)*memoryFactor
+	return count*cpuFactor + count*memoryFactor
 }
 
-// canPushDown check if this topN can be pushed down. If each of the expression can be converted to pb, it can be pushed.
-func (p *Sort) canPushDown() bool {
-	if p.ExecLimit == nil {
-		return false
-	}
+func (p *TopN) getCost(count float64) float64 {
+	return count*cpuFactor + float64(p.Count)*memoryFactor
+}
+
+// canPushDown checks if this topN can be pushed down. If each of the expression can be converted to pb, it can be pushed.
+func (p *TopN) canPushDown() bool {
 	exprs := make([]expression.Expression, 0, len(p.ByItems))
 	for _, item := range p.ByItems {
 		exprs = append(exprs, item.Expr)
@@ -249,7 +264,7 @@ func (p *Sort) canPushDown() bool {
 	return len(remained) == 0
 }
 
-func (p *Sort) allColsFromSchema(schema *expression.Schema) bool {
+func (p *TopN) allColsFromSchema(schema *expression.Schema) bool {
 	var cols []*expression.Column
 	for _, item := range p.ByItems {
 		cols = append(cols, expression.ExtractColumns(item.Expr)...)
@@ -259,19 +274,23 @@ func (p *Sort) allColsFromSchema(schema *expression.Schema) bool {
 
 func (p *Sort) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 	profile := profiles[0].copy()
-	// If this is a Sort , we cannot push it down.
-	if p.ExecLimit == nil {
-		profile = finishCopTask(profile, p.ctx, p.allocator)
-		profile = attachPlan2TaskProfile(p.Copy(), profile)
-		profile.addCost(p.getCost(profile.count()))
-		return profile
+	profile = finishCopTask(profile, p.ctx, p.allocator)
+	profile = attachPlan2TaskProfile(p.Copy(), profile)
+	profile.addCost(p.getCost(profile.count()))
+	return profile
+}
+
+func (p *TopN) attach2TaskProfile(profiles ...taskProfile) taskProfile {
+	// If task is invalid, keep it remained.
+	if profiles[0].plan() == nil {
+		return profiles[0]
 	}
+	profile := profiles[0].copy()
 	// This is a topN plan.
 	if copTask, ok := profile.(*copTaskProfile); ok && p.canPushDown() {
-		limit := p.ExecLimit
-		pushedDownTopN := p.Copy().(*Sort)
+		pushedDownTopN := p.Copy().(*TopN)
 		// When topN is pushed down, it should remove its offset.
-		pushedDownTopN.ExecLimit = &Limit{Count: limit.Count + limit.Offset}
+		pushedDownTopN.Count, pushedDownTopN.Offset = p.Count+p.Offset, 0
 		// If all columns in topN are from index plan, we can push it to index plan. Or we finish the index plan and
 		// push it to table plan.
 		if !copTask.indexPlanFinished && p.allColsFromSchema(copTask.indexPlan.Schema()) {
@@ -287,12 +306,12 @@ func (p *Sort) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 			pushedDownTopN.SetSchema(copTask.tablePlan.Schema())
 		}
 		copTask.addCost(pushedDownTopN.getCost(profile.count()))
-		copTask.setCount(float64(pushedDownTopN.ExecLimit.Count))
+		copTask.setCount(float64(pushedDownTopN.Count))
 	}
 	profile = finishCopTask(profile, p.ctx, p.allocator)
 	profile = attachPlan2TaskProfile(p.Copy(), profile)
 	profile.addCost(p.getCost(profile.count()))
-	profile.setCount(float64(p.ExecLimit.Count))
+	profile.setCount(float64(p.Count))
 	return profile
 }
 
@@ -353,7 +372,7 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 	gkType := types.NewFieldType(mysql.TypeBlob)
 	gkType.Charset = charset.CharsetBin
 	gkType.Collate = charset.CollationBin
-	partialSchema := expression.NewSchema(&expression.Column{RetType: gkType, FromID: p.id, Index: 0})
+	partialSchema := expression.NewSchema(&expression.Column{RetType: gkType, FromID: p.id, Position: 0})
 	partialAgg.SetSchema(partialSchema)
 	cursor := 0
 	finalAggFuncs := make([]expression.AggregationFunction, len(finalAgg.AggFuncs))
@@ -367,13 +386,13 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 			ft.Flen = 21
 			ft.Charset = charset.CharsetBin
 			ft.Collate = charset.CollationBin
-			partialSchema.Append(&expression.Column{Index: cursor, ColName: colName, RetType: ft})
+			partialSchema.Append(&expression.Column{Position: cursor, ColName: colName, RetType: ft})
 			args = append(args, partialSchema.Columns[cursor].Clone())
 		}
 		if needValue(fun) {
 			cursor++
 			ft := p.schema.Columns[i].GetType()
-			partialSchema.Append(&expression.Column{Index: cursor, ColName: colName, RetType: ft})
+			partialSchema.Append(&expression.Column{Position: cursor, ColName: colName, RetType: ft})
 			args = append(args, partialSchema.Columns[cursor].Clone())
 		}
 		fun.SetArgs(args)
@@ -391,6 +410,10 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 }
 
 func (p *PhysicalAggregation) attach2TaskProfile(profiles ...taskProfile) taskProfile {
+	// If task is invalid, keep it remained.
+	if profiles[0].plan() == nil {
+		return profiles[0]
+	}
 	// TODO: We only consider hash aggregation here.
 	profile := profiles[0].copy()
 	if cop, ok := profile.(*copTaskProfile); ok {

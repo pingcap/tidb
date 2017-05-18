@@ -434,7 +434,10 @@ type ByItems struct {
 
 // String implements fmt.Stringer interface.
 func (by *ByItems) String() string {
-	return fmt.Sprintf("(%s, %v)", by.Expr, by.Desc)
+	if by.Desc {
+		return fmt.Sprintf("%s true", by.Expr)
+	}
+	return by.Expr.String()
 }
 
 func (b *planBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
@@ -474,7 +477,7 @@ func getUintForLimitOffset(sc *variable.StatementContext, val interface{}) (uint
 }
 
 func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan {
-	if UseDAGPlanBuilder {
+	if useDAGPlanBuilder(b.ctx) {
 		b.optFlag = b.optFlag | flagPushDownTopN
 	}
 	var (

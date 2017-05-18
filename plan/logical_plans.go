@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -76,9 +77,9 @@ type LogicalJoin struct {
 	preferMergeJoin bool
 
 	EqualConditions []*expression.ScalarFunction
-	LeftConditions  []expression.Expression
-	RightConditions []expression.Expression
-	OtherConditions []expression.Expression
+	LeftConditions  expression.CNFExprs
+	RightConditions expression.CNFExprs
+	OtherConditions expression.CNFExprs
 
 	// DefaultValues is only used for outer join, which stands for the default values when the outer table cannot find join partner
 	// instead of null padding.
@@ -258,6 +259,18 @@ type DataSource struct {
 	statisticTable *statistics.Table
 }
 
+func (p *DataSource) getPKIsHandleCol() *expression.Column {
+	if !p.tableInfo.PKIsHandle {
+		return nil
+	}
+	for i, col := range p.tableInfo.Columns {
+		if mysql.HasPriKeyFlag(col.Flag) {
+			return p.schema.Columns[i]
+		}
+	}
+	return nil
+}
+
 // TableInfo returns the *TableInfo of data source.
 func (p *DataSource) TableInfo() *model.TableInfo {
 	return p.tableInfo
@@ -277,7 +290,7 @@ type Sort struct {
 	basePhysicalPlan
 
 	ByItems   []*ByItems
-	ExecLimit *Limit
+	ExecLimit *Limit // no longer be used by new plan
 }
 
 func (p *Sort) extractCorrelatedCols() []*expression.CorrelatedColumn {
@@ -286,6 +299,22 @@ func (p *Sort) extractCorrelatedCols() []*expression.CorrelatedColumn {
 		corCols = append(corCols, extractCorColumns(item.Expr)...)
 	}
 	return corCols
+}
+
+// TopN represents a top-n plan.
+type TopN struct {
+	*basePlan
+	baseLogicalPlan
+	basePhysicalPlan
+
+	ByItems []*ByItems
+	Offset  uint64
+	Count   uint64
+}
+
+// isLimit checks if TopN is a limit plan.
+func (t *TopN) isLimit() bool {
+	return len(t.ByItems) == 0
 }
 
 // Update represents Update plan.

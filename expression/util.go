@@ -14,6 +14,9 @@
 package expression
 
 import (
+	"strconv"
+	"strings"
+	"time"
 	"unicode"
 
 	"github.com/juju/errors"
@@ -262,6 +265,20 @@ func ConvertCol2CorCol(cond Expression, corCols []*CorrelatedColumn, outerSchema
 		}
 	}
 	return cond
+}
+
+// timeZone2Duration converts timezone whose format should satisfy the regular condition
+// `(^(+|-)(0?[0-9]|1[0-2]):[0-5]?\d$)|(^+13:00$)` to time.Duration.
+func timeZone2Duration(tz string) time.Duration {
+	sign := 1
+	if strings.HasPrefix(tz, "-") {
+		sign = -1
+	}
+
+	i := strings.Index(tz, ":")
+	h, _ := strconv.Atoi(tz[1:i])
+	m, _ := strconv.Atoi(tz[i+1:])
+	return time.Duration(sign) * (time.Duration(h)*time.Hour + time.Duration(m)*time.Minute)
 }
 
 var oppositeOp = map[string]string{

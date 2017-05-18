@@ -101,6 +101,18 @@ func (d *ddl) getCheckOwnerTimeout(flag JobType) int64 {
 }
 
 func (d *ddl) checkOwner(t *meta.Meta, flag JobType) (*model.Owner, error) {
+	if ChangeOwnerInNewWay {
+		if flag == ddlJobFlag {
+			if d.worker.isOwner() {
+				return nil, nil
+			}
+			return nil, errNotOwner
+		}
+		if d.worker.isBgOwner() {
+			return nil, nil
+		}
+		return nil, errNotOwner
+	}
 	owner, err := d.getJobOwner(t, flag)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -294,6 +306,9 @@ func (d *ddl) handleDDLJobQueue() error {
 
 			// Running job may cost some time, so here we must update owner status to
 			// prevent other become the owner.
+			if ChangeOwnerInNewWay {
+				return nil
+			}
 			owner.LastUpdateTS = time.Now().UnixNano()
 			err = t.SetDDLJobOwner(owner)
 			return errors.Trace(err)
