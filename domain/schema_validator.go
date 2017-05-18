@@ -48,7 +48,7 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, schemaVer int64) {
 
 	s.latestSchemaVer = schemaVer
 	leaseGrantTime := extractPhysicalTime(leaseGrantTS)
-	leaseExpire := leaseGrantTime.Add(s.lease)
+	leaseExpire := leaseGrantTime.Add(s.lease - time.Millisecond)
 
 	// Renewal lease.
 	s.items[schemaVer] = leaseExpire
@@ -69,7 +69,7 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64) bool {
 	defer s.mux.RUnlock()
 
 	if s.lease == 0 {
-		return true
+		return schemaVer == s.latestSchemaVer
 	}
 
 	expire, ok := s.items[schemaVer]
@@ -88,7 +88,10 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64) bool {
 
 // Latest returns the latest schema version it knows.
 func (s *schemaValidator) Latest() int64 {
-	return s.latestSchemaVer
+	s.mux.RLock()
+	ret := s.latestSchemaVer
+	s.mux.RUnlock()
+	return ret
 }
 
 func extractPhysicalTime(ts uint64) time.Time {

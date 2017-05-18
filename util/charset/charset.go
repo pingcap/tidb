@@ -23,7 +23,7 @@ import (
 // Now we only support MySQL.
 type Charset struct {
 	Name             string
-	DefaultCollation *Collation
+	DefaultCollation string
 	Collations       map[string]*Collation
 	Desc             string
 	Maxlen           int
@@ -42,10 +42,11 @@ var charsets = make(map[string]*Charset)
 
 // All the supported charsets should be in the following table.
 var charsetInfos = []*Charset{
-	{"utf8", nil, make(map[string]*Collation), "UTF-8 Unicode", 3},
-	{"latin1", nil, make(map[string]*Collation), "cp1252 West European", 1},
-	{"utf8mb4", nil, make(map[string]*Collation), "UTF-8 Unicode", 4},
-	{"ascii", nil, make(map[string]*Collation), "US ASCII", 1},
+	{CharsetUTF8, CollationUTF8, make(map[string]*Collation), "UTF-8 Unicode", 3},
+	{CharsetUTF8MB4, CollationUTF8MB4, make(map[string]*Collation), "UTF-8 Unicode", 4},
+	{CharsetASCII, CollationASCII, make(map[string]*Collation), "US ASCII", 1},
+	{CharsetLatin1, CollationLatin1, make(map[string]*Collation), "Latin1", 1},
+	{CharsetBin, CollationBin, make(map[string]*Collation), "binary", 1},
 }
 
 func init() {
@@ -58,9 +59,6 @@ func init() {
 			continue
 		}
 		charset.Collations[c.Name] = c
-		if c.IsDefault {
-			charset.DefaultCollation = c
-		}
 	}
 }
 
@@ -83,7 +81,7 @@ func GetAllCharsets() []*Desc {
 		}
 		desc := &Desc{
 			Name:             c.Name,
-			DefaultCollation: c.DefaultCollation.Name,
+			DefaultCollation: c.DefaultCollation,
 			Desc:             c.Desc,
 			Maxlen:           c.Maxlen,
 		}
@@ -126,7 +124,7 @@ func GetDefaultCollation(charset string) (string, error) {
 	if !ok {
 		return "", errors.Errorf("Unknown charset %s", charset)
 	}
-	return c.DefaultCollation.Name, nil
+	return c.DefaultCollation, nil
 }
 
 // GetCharsetInfo returns charset and collation for cs as name.
@@ -135,7 +133,7 @@ func GetCharsetInfo(cs string) (string, string, error) {
 	if !ok {
 		return "", "", errors.Errorf("Unknown charset %s", cs)
 	}
-	return c.Name, c.DefaultCollation.Name, nil
+	return c.Name, c.DefaultCollation, nil
 }
 
 // GetCollations returns a list for all collations.
@@ -151,11 +149,19 @@ const (
 	// CharsetUTF8 is the default charset for string types.
 	CharsetUTF8 = "utf8"
 	// CollationUTF8 is the default collation for CharsetUTF8.
-	CollationUTF8 = "utf8_general_ci"
+	CollationUTF8 = "utf8_bin"
 	// CharsetUTF8MB4 represents 4 bytes utf8, which works the same way as utf8 in Go.
 	CharsetUTF8MB4 = "utf8mb4"
 	// CollationUTF8MB4 is the default collation for CharsetUTF8MB4.
-	CollationUTF8MB4 = "utf8mb4_general_ci"
+	CollationUTF8MB4 = "utf8mb4_bin"
+	// CharsetASCII is a subset of UTF8.
+	CharsetASCII = "ascii"
+	// CollationASCII is the default collation for CharsetACSII.
+	CollationASCII = "ascii_bin"
+	// CharsetLatin1 is a single byte charset.
+	CharsetLatin1 = "latin1"
+	// CollationLatin1 is the default collation for CharsetLatin1.
+	CollationLatin1 = "latin1_bin"
 )
 
 var collations = []*Collation{

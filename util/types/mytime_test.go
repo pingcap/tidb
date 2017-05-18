@@ -10,6 +10,7 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 package types
 
 import (
@@ -31,7 +32,7 @@ func (s *testMyTimeSuite) TestWeekBehaviour(c *C) {
 }
 
 func (s *testMyTimeSuite) TestWeek(c *C) {
-	cases := []struct {
+	tests := []struct {
 		Input  mysqlTime
 		Mode   int
 		Expect int
@@ -41,9 +42,9 @@ func (s *testMyTimeSuite) TestWeek(c *C) {
 		{mysqlTime{2008, 12, 31, 0, 0, 0, 0}, 1, 53},
 	}
 
-	for ith, t := range cases {
-		_, week := calcWeek(&t.Input, weekMode(t.Mode))
-		c.Check(week, Equals, t.Expect, Commentf("%d failed.", ith))
+	for ith, tt := range tests {
+		_, week := calcWeek(&tt.Input, weekMode(tt.Mode))
+		c.Check(week, Equals, tt.Expect, Commentf("%d failed.", ith))
 	}
 }
 
@@ -57,7 +58,7 @@ func (s *testMyTimeSuite) TestCalcDaynr(c *C) {
 }
 
 func (s *testMyTimeSuite) TestCalcTimeDiff(c *C) {
-	cases := []struct {
+	tests := []struct {
 		T1     mysqlTime
 		T2     mysqlTime
 		Sign   int
@@ -78,16 +79,16 @@ func (s *testMyTimeSuite) TestCalcTimeDiff(c *C) {
 		},
 	}
 
-	for i, t := range cases {
-		seconds, microseconds, _ := calcTimeDiff(&t.T1, &t.T2, t.Sign)
+	for i, tt := range tests {
+		seconds, microseconds, _ := calcTimeDiff(&tt.T1, &tt.T2, tt.Sign)
 		var result mysqlTime
 		calcTimeFromSec(&result, seconds, microseconds)
-		c.Assert(result, Equals, t.Expect, Commentf("%d failed.", i))
+		c.Assert(result, Equals, tt.Expect, Commentf("%d failed.", i))
 	}
 }
 
 func (s *testMyTimeSuite) TestCompareTime(c *C) {
-	cases := []struct {
+	tests := []struct {
 		T1     mysqlTime
 		T2     mysqlTime
 		Expect int
@@ -99,8 +100,82 @@ func (s *testMyTimeSuite) TestCompareTime(c *C) {
 		{mysqlTime{9999, 12, 30, 23, 59, 59, 999999}, mysqlTime{0, 1, 2, 3, 4, 5, 6}, 1},
 	}
 
-	for _, t := range cases {
-		c.Assert(compareTime(&t.T1, &t.T2), Equals, t.Expect)
-		c.Assert(compareTime(&t.T2, &t.T1), Equals, -t.Expect)
+	for _, tt := range tests {
+		c.Assert(compareTime(&tt.T1, &tt.T2), Equals, tt.Expect)
+		c.Assert(compareTime(&tt.T2, &tt.T1), Equals, -tt.Expect)
+	}
+}
+
+func (s *testMyTimeSuite) TestGetDateFromDaynr(c *C) {
+	tests := []struct {
+		daynr uint
+		year  uint
+		month uint
+		day   uint
+	}{
+		{730669, 2000, 7, 3},
+		{720195, 1971, 10, 30},
+		{719528, 1970, 01, 01},
+		{719892, 1970, 12, 31},
+		{730850, 2000, 12, 31},
+		{730544, 2000, 2, 29},
+		{204960, 561, 2, 28},
+		{0, 0, 0, 0},
+		{32, 0, 0, 0},
+		{366, 1, 1, 1},
+		{744729, 2038, 12, 31},
+		{3652424, 9999, 12, 31},
+	}
+
+	for _, tt := range tests {
+		yy, mm, dd := getDateFromDaynr(tt.daynr)
+		c.Assert(yy, Equals, tt.year)
+		c.Assert(mm, Equals, tt.month)
+		c.Assert(dd, Equals, tt.day)
+	}
+}
+
+func (s *testMyTimeSuite) TestMixDateAndTime(c *C) {
+	tests := []struct {
+		date   mysqlTime
+		time   mysqlTime
+		neg    bool
+		expect mysqlTime
+	}{
+		{
+			date:   mysqlTime{1896, 3, 4, 0, 0, 0, 0},
+			time:   mysqlTime{0, 0, 0, 12, 23, 24, 5},
+			neg:    false,
+			expect: mysqlTime{1896, 3, 4, 12, 23, 24, 5},
+		},
+		{
+			date:   mysqlTime{1896, 3, 4, 0, 0, 0, 0},
+			time:   mysqlTime{0, 0, 0, 24, 23, 24, 5},
+			neg:    false,
+			expect: mysqlTime{1896, 3, 5, 0, 23, 24, 5},
+		},
+		{
+			date:   mysqlTime{2016, 12, 31, 0, 0, 0, 0},
+			time:   mysqlTime{0, 0, 0, 24, 0, 0, 0},
+			neg:    false,
+			expect: mysqlTime{2017, 1, 1, 0, 0, 0, 0},
+		},
+		{
+			date:   mysqlTime{2016, 12, 0, 0, 0, 0, 0},
+			time:   mysqlTime{0, 0, 0, 24, 0, 0, 0},
+			neg:    false,
+			expect: mysqlTime{2016, 12, 1, 0, 0, 0, 0},
+		},
+		{
+			date:   mysqlTime{2017, 1, 12, 3, 23, 15, 0},
+			time:   mysqlTime{0, 0, 0, 2, 21, 10, 0},
+			neg:    true,
+			expect: mysqlTime{2017, 1, 12, 1, 2, 5, 0},
+		},
+	}
+
+	for ith, t := range tests {
+		mixDateAndTime(&t.date, &t.time, t.neg)
+		c.Assert(compareTime(&t.date, &t.expect), Equals, 0, Commentf("%d", ith))
 	}
 }

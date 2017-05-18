@@ -42,10 +42,27 @@ var (
 			Help:      "Bucketed histogram of processing time (s) in running executor.",
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 13),
 		})
+	schemaLeaseErrorCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "schema_lease_error_counter",
+			Help:      "Counter of schema lease error",
+		}, []string{"type"})
+	sessionRetry = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "session_retry",
+			Help:      "Bucketed histogram of session retry count.",
+			Buckets:   prometheus.LinearBuckets(0, 1, 10),
+		})
 )
 
 func init() {
 	prometheus.MustRegister(sessionExecuteParseDuration)
 	prometheus.MustRegister(sessionExecuteCompileDuration)
 	prometheus.MustRegister(sessionExecuteRunDuration)
+	prometheus.MustRegister(schemaLeaseErrorCounter)
+	prometheus.MustRegister(sessionRetry)
 }

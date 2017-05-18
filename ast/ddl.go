@@ -26,6 +26,7 @@ var (
 	_ DDLNode = &DropDatabaseStmt{}
 	_ DDLNode = &DropIndexStmt{}
 	_ DDLNode = &DropTableStmt{}
+	_ DDLNode = &RenameTableStmt{}
 	_ DDLNode = &TruncateTableStmt{}
 
 	_ Node = &AlterTableSpec{}
@@ -248,9 +249,8 @@ const (
 type ColumnOption struct {
 	node
 
-	Tp ColumnOptionType
-	// The value For Default or On Update.
-	Expr ExprNode
+	Tp   ColumnOptionType
+	Expr ExprNode // The value For Default or On Update.
 }
 
 // Accept implements Node Accept interface.
@@ -317,14 +317,11 @@ type Constraint struct {
 	Tp   ConstraintType
 	Name string
 
-	// Used for PRIMARY KEY, UNIQUE, ......
-	Keys []*IndexColName
+	Keys []*IndexColName // Used for PRIMARY KEY, UNIQUE, ......
 
-	// Used for foreign key.
-	Refer *ReferenceDef
+	Refer *ReferenceDef // Used for foreign key.
 
-	// Index Options
-	Option *IndexOption
+	Option *IndexOption // Index Options
 }
 
 // Accept implements Node Accept interface.
@@ -396,6 +393,7 @@ type CreateTableStmt struct {
 
 	IfNotExists bool
 	Table       *TableName
+	ReferTable  *TableName
 	Cols        []*ColumnDef
 	Constraints []*Constraint
 	Options     []*TableOption
@@ -413,6 +411,13 @@ func (n *CreateTableStmt) Accept(v Visitor) (Node, bool) {
 		return n, false
 	}
 	n.Table = node.(*TableName)
+	if n.ReferTable != nil {
+		node, ok = n.ReferTable.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.ReferTable = node.(*TableName)
+	}
 	for i, val := range n.Cols {
 		node, ok = val.Accept(v)
 		if !ok {
@@ -453,6 +458,35 @@ func (n *DropTableStmt) Accept(v Visitor) (Node, bool) {
 		}
 		n.Tables[i] = node.(*TableName)
 	}
+	return v.Leave(n)
+}
+
+// RenameTableStmt is a statement to rename a table.
+// See http://dev.mysql.com/doc/refman/5.7/en/rename-table.html
+type RenameTableStmt struct {
+	ddlNode
+
+	OldTable *TableName
+	NewTable *TableName
+}
+
+// Accept implements Node Accept interface.
+func (n *RenameTableStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*RenameTableStmt)
+	node, ok := n.OldTable.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.OldTable = node.(*TableName)
+	node, ok = n.NewTable.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.NewTable = node.(*TableName)
 	return v.Leave(n)
 }
 
@@ -568,7 +602,7 @@ const (
 // ColumnPosition represent the position of the newly added column
 type ColumnPosition struct {
 	node
-	// ColumnPositionNone | ColumnPositionFirst | ColumnPositionAfter
+	// Tp is either ColumnPositionNone, ColumnPositionFirst or ColumnPositionAfter.
 	Tp ColumnPositionType
 	// RelativeColumn is the column the newly added column after if type is ColumnPositionAfter
 	RelativeColumn *ColumnName
@@ -605,8 +639,23 @@ const (
 	AlterTableDropForeignKey
 	AlterTableModifyColumn
 	AlterTableChangeColumn
+	AlterTableRenameTable
+	AlterTableAlterColumn
+	AlterTableLock
 
 // TODO: Add more actions
+)
+
+// LockType is the type for AlterTableSpec.
+// See https://dev.mysql.com/doc/refman/5.7/en/alter-table.html#alter-table-concurrency
+type LockType byte
+
+// Lock Types.
+const (
+	LockTypeNone LockType = iota + 1
+	LockTypeDefault
+	LockTypeShared
+	LockTypeExclusive
 )
 
 // AlterTableSpec represents alter table specification.
@@ -617,9 +666,11 @@ type AlterTableSpec struct {
 	Name          string
 	Constraint    *Constraint
 	Options       []*TableOption
+	NewTable      *TableName
 	NewColumn     *ColumnDef
 	OldColumnName *ColumnName
 	Position      *ColumnPosition
+	LockType      LockType
 }
 
 // Accept implements Node Accept interface.
@@ -635,6 +686,13 @@ func (n *AlterTableSpec) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.Constraint = node.(*Constraint)
+	}
+	if n.NewTable != nil {
+		node, ok := n.NewTable.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.NewTable = node.(*TableName)
 	}
 	if n.NewColumn != nil {
 		node, ok := n.NewColumn.Accept(v)

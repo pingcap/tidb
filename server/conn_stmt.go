@@ -141,7 +141,7 @@ func (cc *clientConn) handleStmtExecute(data []byte) (err error) {
 		nullBitmaps = data[pos : pos+nullBitmapLen]
 		pos += nullBitmapLen
 
-		//new param bound flag
+		// new param bound flag
 		if data[pos] == 1 {
 			pos++
 			if len(data) < (pos + (numParams << 1)) {
@@ -151,9 +151,14 @@ func (cc *clientConn) handleStmtExecute(data []byte) (err error) {
 			paramTypes = data[pos : pos+(numParams<<1)]
 			pos += (numParams << 1)
 			paramValues = data[pos:]
+			// Just the first StmtExecute packet contain parameters type,
+			// we need save it for further use.
+			stmt.SetParamsType(paramTypes)
+		} else {
+			paramValues = data[pos+1:]
 		}
 
-		err = parseStmtArgs(args, stmt.BoundParams(), nullBitmaps, paramTypes, paramValues)
+		err = parseStmtArgs(args, stmt.BoundParams(), nullBitmaps, stmt.GetParamsType(), paramValues)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -274,7 +279,7 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 			pos += 8
 			continue
 
-		case mysql.TypeDecimal, mysql.TypeNewDecimal, mysql.TypeVarchar,
+		case mysql.TypeUnspecified, mysql.TypeNewDecimal, mysql.TypeVarchar,
 			mysql.TypeBit, mysql.TypeEnum, mysql.TypeSet, mysql.TypeTinyBlob,
 			mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob,
 			mysql.TypeVarString, mysql.TypeString, mysql.TypeGeometry,

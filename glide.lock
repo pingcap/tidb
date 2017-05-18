@@ -1,5 +1,5 @@
-hash: 7354d469576fe9c413733e7f86f2e82d88120039261121735708ce377b6daad3
-updated: 2016-12-27T20:41:45.64913731+08:00
+hash: 72fc48b4e2b9e8116ca8457e10d1eb0df1c1d1e7d0286f75928f0eb427a9e46c
+updated: 2017-05-02T18:53:14.187450044+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -9,12 +9,18 @@ imports:
   - quantile
 - name: github.com/boltdb/bolt
   version: d97499360d1ecebc492ea66c7447ea948f417620
+- name: github.com/cloudfoundry-incubator/candiedyaml
+  version: 5cef21e2e4f0fd147973b558d4db7395176bcd95
 - name: github.com/coreos/etcd
-  version: e53b99588a05d1f4ef172c178d4ed8e8106b8be4
+  version: ea5f6dab6b1d07e22cf46bf5f5088d567548c124
   subpackages:
   - auth/authpb
   - clientv3
+  - clientv3/concurrency
+  - etcdserver/api/v3rpc/rpctypes
+  - etcdserver/etcdserverpb
   - mvcc/mvccpb
+  - pkg/monotime
   - pkg/tlsutil
 - name: github.com/cznic/golex
   version: da5a7153a51074477ecac5c45a7e5182a0c72448
@@ -32,6 +38,8 @@ imports:
   version: 1eb03e3cc9d345307a45ec82bd3016cde4bd4464
 - name: github.com/cznic/y
   version: 9fdf92d4aac058959f814606bb729ed50f5e4240
+- name: github.com/dustin/go-humanize
+  version: 8929fe90cee4b2cb9deb468b51fb34eba64d1bf0
 - name: github.com/gengo/grpc-gateway
   version: f52d055dc48aec25854ed7d31862f78913cf17d1
   subpackages:
@@ -39,22 +47,28 @@ imports:
   - runtime/internal
   - utilities
 - name: github.com/ghodss/yaml
-  version: 1a6f069841556a7bcaff4a397ca6e8328d266c2f
+  version: 73d445a93680fa1a78ae23a5839bad48f32ba1ee
 - name: github.com/go-sql-driver/mysql
   version: 3dd7008ac1529aca1bcd8a9db75228a71ba23cac
 - name: github.com/gogo/protobuf
-  version: 909568be09de550ed094403c2bf8a261b5bb730a
+  version: 100ba4e885062801d56799d78530b73b178a78f3
   subpackages:
   - proto
 - name: github.com/golang/protobuf
-  version: 874264fbbb43f4d91e999fecb4b40143ed611400
+  version: 8ee79997227bf9b34611aee7946ae64735e6fd93
   subpackages:
   - jsonpb
   - proto
 - name: github.com/golang/snappy
   version: 723cc1e459b8eea2dea4583200fd60757d40097a
+- name: github.com/gorilla/context
+  version: 1ea25387ff6f684839d82767c1733ff4d4d15d0a
+- name: github.com/gorilla/mux
+  version: 599cba5e7b6137d46ddf58fb1765f5d928e69604
+- name: github.com/grpc-ecosystem/go-grpc-prometheus
+  version: 6b7015e65d366bf3f19b2b2a000a831940f0f7e0
 - name: github.com/grpc-ecosystem/grpc-gateway
-  version: c8ec92d0481dd77d9b8c1808eb6476d190aa039a
+  version: 84398b94e188ee336f307779b57b3aa91af7063c
   subpackages:
   - runtime
   - runtime/internal
@@ -99,7 +113,7 @@ imports:
   - leveldb/table
   - leveldb/util
 - name: github.com/pingcap/kvproto
-  version: ed926a15a832c7461a4d18dc50973de98a845cc0
+  version: 289050a4366f95497c93d4dba068989b5dd8781a
   subpackages:
   - pkg/coprocessor
   - pkg/eraftpb
@@ -112,18 +126,15 @@ imports:
   - pkg/raft_serverpb
   - pkg/util
 - name: github.com/pingcap/pd
-  version: 3d5bb2b3a056925b656d29b88a5b216f6f309368
+  version: fea29e342c4a7c5888cdf0b569625fbbf6d3b50f
   subpackages:
   - pd-client
-  - pkg/apiutil
-  - pkg/metricutil
-  - pkg/rpcutil
-  - pkg/timeutil
 - name: github.com/pingcap/tipb
-  version: 7be8865936fd4dfee0591913c31c07be11da5d19
+  version: 37bbffad21f347c02af7d822909832f0eed39c85
   subpackages:
   - go-binlog
   - go-tipb
+  - sharedbytes
 - name: github.com/prometheus/client_golang
   version: c5b7fccd204277076155f10851dad72b76a49317
   subpackages:
@@ -144,16 +155,15 @@ imports:
 - name: github.com/twinj/uuid
   version: 70cac2bcd273ef6a371bb96cde363d28b68734c3
 - name: golang.org/x/net
-  version: e90d6d0afc4c315a0d87a568ae68577cc15149a0
+  version: 6acef71eb69611914f7a30939ea9f6e194c78172
   subpackages:
   - context
   - http2
   - http2/hpack
   - internal/timeseries
-  - lex/httplex
   - trace
 - name: golang.org/x/sys
-  version: 8d1157a435470616f975ff9bb013bea8d0962067
+  version: a646d33e2ee3172a661fc09bca23bb4889a41bc8
   subpackages:
   - unix
 - name: golang.org/x/text
@@ -170,11 +180,11 @@ imports:
   - encoding/unicode
   - transform
 - name: golang.org/x/time
-  version: f51c12702a4d776e4c1fa9b0fabab841babae631
+  version: c06e80d9300e4443158a03817b8a8cb37d230320
   subpackages:
   - rate
 - name: google.golang.org/grpc
-  version: 02fca896ff5f50c6bbbee0860345a49344b37a03
+  version: 777daa17ff9b5daef1cfdf915088a2ada3332bf0
   subpackages:
   - codes
   - credentials

@@ -21,7 +21,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	"golang.org/x/net/context"
+	goctx "golang.org/x/net/context"
 )
 
 const (
@@ -72,6 +72,7 @@ type backoffType int
 const (
 	boTiKVRPC backoffType = iota
 	boTxnLock
+	boTxnLockFast
 	boPDRPC
 	boRegionMiss
 	boServerBusy
@@ -82,7 +83,9 @@ func (t backoffType) createFn() func() int {
 	case boTiKVRPC:
 		return NewBackoffFn(100, 2000, EqualJitter)
 	case boTxnLock:
-		return NewBackoffFn(300, 3000, EqualJitter)
+		return NewBackoffFn(200, 3000, EqualJitter)
+	case boTxnLockFast:
+		return NewBackoffFn(100, 3000, EqualJitter)
 	case boPDRPC:
 		return NewBackoffFn(500, 3000, EqualJitter)
 	case boRegionMiss:
@@ -99,6 +102,8 @@ func (t backoffType) String() string {
 		return "tikvRPC"
 	case boTxnLock:
 		return "txnLock"
+	case boTxnLockFast:
+		return "txnLockFast"
 	case boPDRPC:
 		return "pdRPC"
 	case boRegionMiss:
@@ -113,17 +118,16 @@ func (t backoffType) String() string {
 const (
 	copBuildTaskMaxBackoff  = 5000
 	tsoMaxBackoff           = 5000
-	scannerNextMaxBackoff   = 5000
-	batchGetMaxBackoff      = 10000
-	copNextMaxBackoff       = 10000
-	getMaxBackoff           = 10000
-	prewriteMaxBackoff      = 10000
-	commitMaxBackoff        = 10000
-	commitPrimaryMaxBackoff = -1
-	cleanupMaxBackoff       = 10000
+	scannerNextMaxBackoff   = 15000
+	batchGetMaxBackoff      = 15000
+	copNextMaxBackoff       = 15000
+	getMaxBackoff           = 15000
+	prewriteMaxBackoff      = 15000
+	commitMaxBackoff        = 15000
+	cleanupMaxBackoff       = 15000
 	gcMaxBackoff            = 100000
 	gcResolveLockMaxBackoff = 100000
-	rawkvMaxBackoff         = 5000
+	rawkvMaxBackoff         = 15000
 )
 
 // Backoffer is a utility for retrying queries.
@@ -132,30 +136,28 @@ type Backoffer struct {
 	maxSleep   int
 	totalSleep int
 	errors     []error
-	ctx        context.Context
+	ctx        goctx.Context
+	types      []backoffType
 }
 
 // NewBackoffer creates a Backoffer with maximum sleep time(in ms).
-func NewBackoffer(maxSleep int, ctx context.Context) *Backoffer {
+func NewBackoffer(maxSleep int, ctx goctx.Context) *Backoffer {
 	return &Backoffer{
 		maxSleep: maxSleep,
 		ctx:      ctx,
 	}
 }
 
-// WithCancel returns a cancel function which, when called, would cancel backoffer's context.
-func (b *Backoffer) WithCancel() context.CancelFunc {
-	var cancel context.CancelFunc
-	b.ctx, cancel = context.WithCancel(b.ctx)
-	return cancel
-}
-
 // Backoff sleeps a while base on the backoffType and records the error message.
 // It returns a retryable error if total sleep time exceeds maxSleep.
 func (b *Backoffer) Backoff(typ backoffType, err error) error {
+	select {
+	case <-b.ctx.Done():
+		return errors.Trace(err)
+	default:
+	}
+
 	backoffCounter.WithLabelValues(typ.String()).Inc()
-	start := time.Now()
-	defer func() { backoffHistogram.WithLabelValues(typ.String()).Observe(time.Since(start).Seconds()) }()
 	// Lazy initialize.
 	if b.fn == nil {
 		b.fn = make(map[backoffType]func() int)
@@ -167,6 +169,7 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	}
 
 	b.totalSleep += f()
+	b.types = append(b.types, typ)
 
 	log.Debugf("%v, retry later(totalSleep %dms, maxSleep %dms)", err, b.totalSleep, b.maxSleep)
 	b.errors = append(b.errors, err)
@@ -183,12 +186,21 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	return nil
 }
 
-// Fork creates a new Backoffer which keeps current Backoffer's sleep time and errors.
-func (b *Backoffer) Fork() *Backoffer {
+func (b *Backoffer) String() string {
+	if b.totalSleep == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" backoff(%dms %s)", b.totalSleep, b.types)
+}
+
+// Fork creates a new Backoffer which keeps current Backoffer's sleep time and errors, and holds
+// a child context of current Backoffer's context.
+func (b *Backoffer) Fork() (*Backoffer, goctx.CancelFunc) {
+	ctx, cancel := goctx.WithCancel(b.ctx)
 	return &Backoffer{
 		maxSleep:   b.maxSleep,
 		totalSleep: b.totalSleep,
 		errors:     b.errors,
-		ctx:        b.ctx,
-	}
+		ctx:        ctx,
+	}, cancel
 }

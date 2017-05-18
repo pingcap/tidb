@@ -196,7 +196,8 @@ func dumpBinaryTime(dur time.Duration) (data []byte) {
 
 func dumpBinaryDateTime(t types.Time, loc *time.Location) (data []byte, err error) {
 	if t.Type == mysql.TypeTimestamp && loc != nil {
-		t1, err := t.Time.GoTime()
+		// TODO: Consider time_zone variable.
+		t1, err := t.Time.GoTime(time.Local)
 		if err != nil {
 			return nil, errors.Errorf("FATAL: convert timestamp %v go time return error!", t.Time)
 		}
@@ -324,9 +325,17 @@ func dumpTextValue(mysqlType uint8, value types.Datum) ([]byte, error) {
 	case types.KindUint64:
 		return strconv.AppendUint(nil, value.GetUint64(), 10), nil
 	case types.KindFloat32:
-		return strconv.AppendFloat(nil, value.GetFloat64(), 'f', -1, 32), nil
+		prec := -1
+		if frac := value.Frac(); frac > 0 {
+			prec = frac
+		}
+		return strconv.AppendFloat(nil, value.GetFloat64(), 'f', prec, 32), nil
 	case types.KindFloat64:
-		return strconv.AppendFloat(nil, value.GetFloat64(), 'f', -1, 64), nil
+		prec := -1
+		if frac := value.Frac(); frac > 0 {
+			prec = frac
+		}
+		return strconv.AppendFloat(nil, value.GetFloat64(), 'f', prec, 64), nil
 	case types.KindString, types.KindBytes:
 		return value.GetBytes(), nil
 	case types.KindMysqlTime:
@@ -339,11 +348,13 @@ func dumpTextValue(mysqlType uint8, value types.Datum) ([]byte, error) {
 		return hack.Slice(value.GetMysqlEnum().String()), nil
 	case types.KindMysqlSet:
 		return hack.Slice(value.GetMysqlSet().String()), nil
+	case types.KindMysqlJSON:
+		return hack.Slice(value.GetMysqlJSON().String()), nil
 	case types.KindMysqlBit:
 		return hack.Slice(value.GetMysqlBit().ToString()), nil
 	case types.KindMysqlHex:
 		return hack.Slice(value.GetMysqlHex().ToString()), nil
 	default:
-		return nil, errInvalidType.Gen("invalid type %T", value)
+		return nil, errInvalidType.Gen("invalid type %v", value.Kind())
 	}
 }

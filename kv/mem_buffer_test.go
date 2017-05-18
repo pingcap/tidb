@@ -42,14 +42,12 @@ type testKVSuite struct {
 }
 
 func (s *testKVSuite) SetUpSuite(c *C) {
-	s.bs = make([]MemBuffer, 2)
-	s.bs[0] = NewRBTreeBuffer()
-	s.bs[1] = NewMemDbBuffer()
+	s.bs = make([]MemBuffer, 1)
+	s.bs[0] = NewMemDbBuffer()
 }
 
 func (s *testKVSuite) ResetMembuffers() {
-	s.bs[0] = NewRBTreeBuffer()
-	s.bs[1] = NewMemDbBuffer()
+	s.bs[0] = NewMemDbBuffer()
 }
 
 func insertData(c *C, buffer MemBuffer) {
@@ -218,28 +216,31 @@ func (s *testKVSuite) TestNewIteratorMin(c *C) {
 	s.ResetMembuffers()
 }
 
+func (s *testKVSuite) TestBufferLimit(c *C) {
+	buffer := NewMemDbBuffer().(*memDbBuffer)
+	buffer.bufferSizeLimit = 1000
+	buffer.entrySizeLimit = 500
+	var err error
+
+	err = buffer.Set([]byte("x"), make([]byte, 500))
+	c.Assert(err, NotNil) // entry size limit
+
+	err = buffer.Set([]byte("x"), make([]byte, 499))
+	c.Assert(err, IsNil)
+	err = buffer.Set([]byte("yz"), make([]byte, 499))
+	c.Assert(err, NotNil) // buffer size limit
+
+	buffer = NewMemDbBuffer().(*memDbBuffer)
+	buffer.bufferLenLimit = 10
+	for i := 0; i < 10; i++ {
+		err = buffer.Set([]byte{byte(i)}, []byte{byte(i)})
+		c.Assert(err, IsNil)
+	}
+	err = buffer.Set([]byte("x"), []byte("y"))
+	c.Assert(err, NotNil) // buffer len limit
+}
+
 var opCnt = 100000
-
-func BenchmarkRBTreeBufferSequential(b *testing.B) {
-	data := make([][]byte, opCnt)
-	for i := 0; i < opCnt; i++ {
-		data[i] = encodeInt(i)
-	}
-	buffer := NewRBTreeBuffer()
-	benchmarkSetGet(b, buffer, data)
-	b.ReportAllocs()
-}
-
-func BenchmarkRBTreeBufferRandom(b *testing.B) {
-	data := make([][]byte, opCnt)
-	for i := 0; i < opCnt; i++ {
-		data[i] = encodeInt(i)
-	}
-	shuffle(data)
-	buffer := NewRBTreeBuffer()
-	benchmarkSetGet(b, buffer, data)
-	b.ReportAllocs()
-}
 
 func BenchmarkMemDbBufferSequential(b *testing.B) {
 	data := make([][]byte, opCnt)
@@ -262,22 +263,9 @@ func BenchmarkMemDbBufferRandom(b *testing.B) {
 	b.ReportAllocs()
 }
 
-func BenchmarkRBTreeIter(b *testing.B) {
-	buffer := NewRBTreeBuffer()
-	benchIterator(b, buffer)
-	b.ReportAllocs()
-}
-
 func BenchmarkMemDbIter(b *testing.B) {
 	buffer := NewMemDbBuffer()
 	benchIterator(b, buffer)
-	b.ReportAllocs()
-}
-
-func BenchmarkRBTreeCreation(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		NewRBTreeBuffer()
-	}
 	b.ReportAllocs()
 }
 

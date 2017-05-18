@@ -196,7 +196,7 @@ func checkApplyCreateNonExistsTableDoesNotPanic(c *C, txn kv.Transaction, builde
 	c.Assert(infoschema.ErrTableNotExists.Equal(err), IsTrue)
 }
 
-// Make sure it is safe to concurrently create handle on multiple stores.
+// TestConcurrent makes sure it is safe to concurrently create handle on multiple stores.
 func (testSuite) TestConcurrent(c *C) {
 	defer testleak.AfterTest(c)()
 	storeCount := 5
@@ -224,7 +224,7 @@ func (testSuite) TestConcurrent(c *C) {
 	wg.Wait()
 }
 
-// Make sure that all tables of infomation_schema could be found in infoschema handle.
+// TestInfoTables makes sure that all tables of information_schema could be found in infoschema handle.
 func (*testSuite) TestInfoTables(c *C) {
 	defer testleak.AfterTest(c)()
 	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
@@ -253,6 +253,23 @@ func (*testSuite) TestInfoTables(c *C) {
 		"REFERENTIAL_CONSTRAINTS",
 		"SESSION_VARIABLES",
 		"PLUGINS",
+		"TABLE_CONSTRAINTS",
+		"TRIGGERS",
+		"USER_PRIVILEGES",
+		"ENGINES",
+		"VIEWS",
+		"ROUTINES",
+		"SCHEMA_PRIVILEGES",
+		"COLUMN_PRIVILEGES",
+		"TABLE_PRIVILEGES",
+		"PARAMETERS",
+		"EVENTS",
+		"GLOBAL_STATUS",
+		"GLOBAL_VARIABLES",
+		"SESSION_STATUS",
+		"OPTIMIZER_TRACE",
+		"TABLESPACES",
+		"COLLATION_CHARACTER_SET_APPLICABILITY",
 	}
 	for _, t := range info_tables {
 		tb, err1 := is.TableByName(model.NewCIStr(infoschema.Name), model.NewCIStr(t))

@@ -85,6 +85,14 @@ func (t *mockTxn) Valid() bool {
 	return t.valid
 }
 
+func (t *mockTxn) Len() int {
+	return 0
+}
+
+func (t *mockTxn) Size() int {
+	return 0
+}
+
 // mockStorage is used to start a must commit-failed txn.
 type mockStorage struct {
 }
@@ -95,8 +103,13 @@ func (s *mockStorage) Begin() (Transaction, error) {
 		valid: true,
 	}
 	return tx, nil
-
 }
+
+// BeginWithStartTS begins a transaction with startTS.
+func (s *mockStorage) BeginWithStartTS(startTS uint64) (Transaction, error) {
+	return s.Begin()
+}
+
 func (s *mockStorage) GetSnapshot(ver Version) (Snapshot, error) {
 	return &mockSnapshot{
 		store: NewMemDbBuffer(),

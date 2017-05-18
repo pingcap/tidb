@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
@@ -39,7 +38,7 @@ type testTableSuite struct {
 	d *ddl
 }
 
-// create a test table with num int columns and with no index.
+// testTableInfo creates a test table with num int columns and with no index.
 func testTableInfo(c *C, d *ddl, name string, num int) *model.TableInfo {
 	var err error
 	tblInfo := &model.TableInfo{
@@ -69,10 +68,29 @@ func testTableInfo(c *C, d *ddl, name string, num int) *model.TableInfo {
 
 func testCreateTable(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
 	job := &model.Job{
-		SchemaID: dbInfo.ID,
-		TableID:  tblInfo.ID,
-		Type:     model.ActionCreateTable,
-		Args:     []interface{}{tblInfo},
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionCreateTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{tblInfo},
+	}
+	err := d.doDDLJob(ctx, job)
+	c.Assert(err, IsNil)
+
+	v := getSchemaVer(c, ctx)
+	tblInfo.State = model.StatePublic
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	tblInfo.State = model.StateNone
+	return job
+}
+
+func testRenameTable(c *C, ctx context.Context, d *ddl, newSchemaID, oldSchemaID int64, tblInfo *model.TableInfo) *model.Job {
+	job := &model.Job{
+		SchemaID:   newSchemaID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionRenameTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{oldSchemaID, tblInfo.Name},
 	}
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
@@ -86,9 +104,10 @@ func testCreateTable(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tb
 
 func testDropTable(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
 	job := &model.Job{
-		SchemaID: dbInfo.ID,
-		TableID:  tblInfo.ID,
-		Type:     model.ActionDropTable,
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionDropTable,
+		BinlogInfo: &model.HistoryInfo{},
 	}
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
@@ -102,10 +121,11 @@ func testTruncateTable(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, 
 	newTableID, err := d.genGlobalID()
 	c.Assert(err, IsNil)
 	job := &model.Job{
-		SchemaID: dbInfo.ID,
-		TableID:  tblInfo.ID,
-		Type:     model.ActionTruncateTable,
-		Args:     []interface{}{newTableID},
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionTruncateTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{newTableID},
 	}
 	err = d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
@@ -134,19 +154,34 @@ func testCheckTableState(c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.Tabl
 }
 
 func testGetTable(c *C, d *ddl, schemaID int64, tableID int64) table.Table {
-	var tblInfo *model.TableInfo
-	kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		var err error
-		tblInfo, err = t.GetTable(schemaID, tableID)
-		c.Assert(err, IsNil)
-		c.Assert(tblInfo, NotNil)
-		return nil
-	})
-	alloc := autoid.NewAllocator(d.store, schemaID)
-	tbl, err := table.TableFromMeta(alloc, tblInfo)
+	tbl, err := testGetTableWithError(d, schemaID, tableID)
 	c.Assert(err, IsNil)
 	return tbl
+}
+
+func testGetTableWithError(d *ddl, schemaID, tableID int64) (table.Table, error) {
+	var tblInfo *model.TableInfo
+	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		var err1 error
+		tblInfo, err1 = t.GetTable(schemaID, tableID)
+		if err1 != nil {
+			return errors.Trace(err1)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if tblInfo == nil {
+		return nil, errors.New("table not found")
+	}
+	alloc := autoid.NewAllocator(d.store, schemaID)
+	tbl, err := table.TableFromMeta(alloc, tblInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return tbl, nil
 }
 
 func (s *testTableSuite) SetUpSuite(c *C) {
@@ -154,15 +189,15 @@ func (s *testTableSuite) SetUpSuite(c *C) {
 	s.d = newDDL(s.store, nil, nil, testLease)
 
 	s.dbInfo = testSchemaInfo(c, s.d, "test")
-	testCreateSchema(c, testNewContext(c, s.d), s.d, s.dbInfo)
+	testCreateSchema(c, testNewContext(s.d), s.d, s.dbInfo)
 
 	// Use a smaller limit to prevent the test from consuming too much time.
 	reorgTableDeleteLimit = 2000
 }
 
 func (s *testTableSuite) TearDownSuite(c *C) {
-	testDropSchema(c, testNewContext(c, s.d), s.d, s.dbInfo)
-	s.d.close()
+	testDropSchema(c, testNewContext(s.d), s.d, s.dbInfo)
+	s.d.Stop()
 	s.store.Close()
 
 	reorgTableDeleteLimit = 65536
@@ -172,7 +207,7 @@ func (s *testTableSuite) TestTable(c *C) {
 	defer testleak.AfterTest(c)()
 	d := s.d
 
-	ctx := testNewContext(c, d)
+	ctx := testNewContext(d)
 
 	tblInfo := testTableInfo(c, d, "t", 3)
 	job := testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
@@ -214,12 +249,11 @@ func (s *testTableSuite) TestTable(c *C) {
 	testCheckJobDone(c, d, job, false)
 
 	// Check background ddl info.
-	time.Sleep(testLease * 400)
-	verifyBgJobState(c, d, job, model.JobDone)
+	verifyBgJobState(c, d, job, model.JobDone, testLease*350)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	c.Assert(updatedCount, Equals, 2)
 
-	// For truncate table.
+	// for truncate table
 	tblInfo = testTableInfo(c, d, "tt", 3)
 	job = testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
@@ -227,6 +261,13 @@ func (s *testTableSuite) TestTable(c *C) {
 	job = testTruncateTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, false)
+
+	// for rename table
+	dbInfo1 := testSchemaInfo(c, s.d, "test_rename_table")
+	testCreateSchema(c, testNewContext(s.d), s.d, dbInfo1)
+	job = testRenameTable(c, ctx, d, dbInfo1.ID, s.dbInfo.ID, tblInfo)
+	testCheckTableState(c, d, dbInfo1, tblInfo, model.StatePublic)
+	testCheckJobDone(c, d, job, true)
 }
 
 func (s *testTableSuite) TestTableResume(c *C) {
@@ -237,18 +278,20 @@ func (s *testTableSuite) TestTableResume(c *C) {
 
 	tblInfo := testTableInfo(c, d, "t1", 3)
 	job := &model.Job{
-		SchemaID: s.dbInfo.ID,
-		TableID:  tblInfo.ID,
-		Type:     model.ActionCreateTable,
-		Args:     []interface{}{tblInfo},
+		SchemaID:   s.dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionCreateTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{tblInfo},
 	}
 	testRunInterruptedJob(c, d, job)
 	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
 
 	job = &model.Job{
-		SchemaID: s.dbInfo.ID,
-		TableID:  tblInfo.ID,
-		Type:     model.ActionDropTable,
+		SchemaID:   s.dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionDropTable,
+		BinlogInfo: &model.HistoryInfo{},
 	}
 	testRunInterruptedJob(c, d, job)
 	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StateNone)

@@ -14,7 +14,7 @@
 package kv
 
 import (
-	"io"
+	goctx "golang.org/x/net/context"
 )
 
 // Transaction options
@@ -31,6 +31,18 @@ const (
 	BinlogData
 	// Skip existing check when "prewrite".
 	SkipCheckForWrite
+	// SchemaLeaseChecker is used for schema lease check.
+	SchemaLeaseChecker
+)
+
+// Those limits is enforced to make sure the transaction can be well handled by TiKV.
+var (
+	// TxnEntrySizeLimit is limit of single entry size (len(key) + len(value)).
+	TxnEntrySizeLimit = 6 * 1024 * 1024
+	// TxnEntryCountLimit  is limit of number of entries in the MemBuffer.
+	TxnEntryCountLimit uint64 = 300 * 1000
+	// TxnTotalSizeLimit is limit of the sum of all entry size.
+	TxnTotalSizeLimit = 100 * 1024 * 1024
 )
 
 // Retriever is the interface wraps the basic Get and Seek methods.
@@ -65,12 +77,18 @@ type RetrieverMutator interface {
 }
 
 // MemBuffer is an in-memory kv collection, can be used to buffer write operations.
-type MemBuffer RetrieverMutator
+type MemBuffer interface {
+	RetrieverMutator
+	// Size returns sum of keys and values length.
+	Size() int
+	// Len returns the number of entries in the DB.
+	Len() int
+}
 
 // Transaction defines the interface for operations inside a Transaction.
 // This is not thread safe.
 type Transaction interface {
-	RetrieverMutator
+	MemBuffer
 	// Commit commits the transaction operations to KV store.
 	Commit() error
 	// Rollback undoes the transaction operations to KV store.
@@ -96,16 +114,17 @@ type Transaction interface {
 // Client is used to send request to KV layer.
 type Client interface {
 	// Send sends request to KV layer, returns a Response.
-	Send(req *Request) Response
+	Send(ctx goctx.Context, req *Request) Response
 
-	// SupportRequestType checks if reqType and subType is supported.
-	SupportRequestType(reqType, subType int64) bool
+	// IsRequestTypeSupported checks if reqType and subType is supported.
+	IsRequestTypeSupported(reqType, subType int64) bool
 }
 
 // ReqTypes.
 const (
 	ReqTypeSelect = 101
 	ReqTypeIndex  = 102
+	ReqTypeDAG    = 103
 
 	ReqSubTypeBasic   = 0
 	ReqSubTypeDesc    = 10000
@@ -115,16 +134,15 @@ const (
 
 // Request represents a kv request.
 type Request struct {
-	// The request type.
-	Tp   int64
-	Data []byte
-	// Key Ranges
+	// Tp is the request type.
+	Tp        int64
+	Data      []byte
 	KeyRanges []KeyRange
-	// If KeepOrder is true, the response should be returned in order.
+	// KeepOrder is true, if the response should be returned in order.
 	KeepOrder bool
-	// If desc is true, the request is sent in descending order.
+	// Desc is true, if the request is sent in descending order.
 	Desc bool
-	// If concurrency is 1, it only sends the request to a single storage unit when
+	// Concurrency is 1, if it only sends the request to a single storage unit when
 	// ResponseIterator.Next is called. If concurrency is greater than 1, the request will be
 	// sent to multiple storage units concurrently.
 	Concurrency int
@@ -134,7 +152,8 @@ type Request struct {
 type Response interface {
 	// Next returns a resultSubset from a single storage unit.
 	// When full result set is returned, nil is returned.
-	Next() (resultSubset io.ReadCloser, err error)
+	// TODO: Find a better interface for resultSubset that can avoid allocation and reuse bytes.
+	Next() (resultSubset []byte, err error)
 	// Close response.
 	Close() error
 }
@@ -158,6 +177,8 @@ type Driver interface {
 type Storage interface {
 	// Begin transaction
 	Begin() (Transaction, error)
+	// BeginWithStartTS begins transaction with startTS.
+	BeginWithStartTS(startTS uint64) (Transaction, error)
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
 	GetSnapshot(ver Version) (Snapshot, error)
@@ -165,7 +186,7 @@ type Storage interface {
 	GetClient() Client
 	// Close store
 	Close() error
-	// Storage's unique ID
+	// UUID return a unique ID which represents a Storage.
 	UUID() string
 	// CurrentVersion returns current max committed version.
 	CurrentVersion() (Version, error)

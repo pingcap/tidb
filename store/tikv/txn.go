@@ -17,11 +17,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/coreos/etcd/pkg/monotime"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tipb/go-binlog"
-	"golang.org/x/net/context"
+	goctx "golang.org/x/net/context"
 )
 
 var (
@@ -30,27 +31,41 @@ var (
 
 // tikvTxn implements kv.Transaction.
 type tikvTxn struct {
-	us       kv.UnionStore
-	store    *tikvStore // for connection to region.
-	startTS  uint64
-	commitTS uint64
-	valid    bool
-	lockKeys [][]byte
-	dirty    bool
+	us        kv.UnionStore
+	store     *tikvStore // for connection to region.
+	startTS   uint64
+	startTime monotime.Time // Monotonic timestamp for recording txn time consuming.
+	commitTS  uint64
+	valid     bool
+	lockKeys  [][]byte
+	dirty     bool
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
-	bo := NewBackoffer(tsoMaxBackoff, context.Background())
+	bo := NewBackoffer(tsoMaxBackoff, goctx.Background())
 	startTS, err := store.getTimestampWithRetry(bo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	ver := kv.NewVersion(startTS)
 	return &tikvTxn{
-		us:      kv.NewUnionStore(newTiKVSnapshot(store, ver)),
-		store:   store,
-		startTS: startTS,
-		valid:   true,
+		us:        kv.NewUnionStore(newTiKVSnapshot(store, ver)),
+		store:     store,
+		startTS:   startTS,
+		startTime: monotime.Now(),
+		valid:     true,
+	}, nil
+}
+
+// newTikvTxnWithStartTS creates a txn with startTS.
+func newTikvTxnWithStartTS(store *tikvStore, startTS uint64) (*tikvTxn, error) {
+	ver := kv.NewVersion(startTS)
+	return &tikvTxn{
+		us:        kv.NewUnionStore(newTiKVSnapshot(store, ver)),
+		store:     store,
+		startTS:   startTS,
+		startTime: monotime.Now(),
+		valid:     true,
 	}, nil
 }
 
@@ -175,4 +190,12 @@ func (txn *tikvTxn) StartTS() uint64 {
 
 func (txn *tikvTxn) Valid() bool {
 	return txn.valid
+}
+
+func (txn *tikvTxn) Len() int {
+	return txn.us.Len()
+}
+
+func (txn *tikvTxn) Size() int {
+	return txn.us.Size()
 }

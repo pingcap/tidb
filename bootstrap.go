@@ -29,48 +29,52 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
 
 const (
 	// CreateUserTable is the SQL statement creates User table in system db.
 	CreateUserTable = `CREATE TABLE if not exists mysql.user (
-		Host			CHAR(64),
-		User			CHAR(16),
-		Password		CHAR(41),
-		Select_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
-		Insert_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
-		Update_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
-		Delete_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
-		Create_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
-		Drop_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
-		Grant_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
-		Alter_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
-		Show_db_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
-		Execute_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
-		Index_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
-		Create_user_priv	ENUM('N','Y') NOT NULL  DEFAULT 'N',
+		Host				CHAR(64),
+		User				CHAR(16),
+		Password			CHAR(41),
+		Select_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Insert_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Update_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Delete_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Create_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Drop_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Process_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Grant_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Alter_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Show_db_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Super_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Execute_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Index_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Create_user_priv	ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Trigger_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (Host, User));`
 	// CreateDBPrivTable is the SQL statement creates DB scope privilege table in system db.
 	CreateDBPrivTable = `CREATE TABLE if not exists mysql.db (
-		Host		CHAR(60),
-		DB		CHAR(64),
-		User		CHAR(16),
-		Select_priv	ENUM('N','Y') Not Null  DEFAULT 'N',
-		Insert_priv	ENUM('N','Y') Not Null  DEFAULT 'N',
-		Update_priv	ENUM('N','Y') Not Null  DEFAULT 'N',
-		Delete_priv	ENUM('N','Y') Not Null  DEFAULT 'N',
-		Create_priv	ENUM('N','Y') Not Null  DEFAULT 'N',
-		Drop_priv	ENUM('N','Y') Not Null  DEFAULT 'N',
-		Grant_priv	ENUM('N','Y') Not Null  DEFAULT 'N',
-		Index_priv	ENUM('N','Y') Not Null  DEFAULT 'N',
-		Alter_priv	ENUM('N','Y') Not Null  DEFAULT 'N',
-		Execute_priv	ENUM('N','Y') Not Null  DEFAULT 'N',
+		Host			CHAR(60),
+		DB				CHAR(64),
+		User			CHAR(16),
+		Select_priv		ENUM('N','Y') Not Null DEFAULT 'N',
+		Insert_priv		ENUM('N','Y') Not Null DEFAULT 'N',
+		Update_priv		ENUM('N','Y') Not Null DEFAULT 'N',
+		Delete_priv		ENUM('N','Y') Not Null DEFAULT 'N',
+		Create_priv		ENUM('N','Y') Not Null DEFAULT 'N',
+		Drop_priv		ENUM('N','Y') Not Null DEFAULT 'N',
+		Grant_priv		ENUM('N','Y') Not Null DEFAULT 'N',
+		Index_priv		ENUM('N','Y') Not Null DEFAULT 'N',
+		Alter_priv		ENUM('N','Y') Not Null DEFAULT 'N',
+		Execute_priv	ENUM('N','Y') Not Null DEFAULT 'N',
 		PRIMARY KEY (Host, DB, User));`
 	// CreateTablePrivTable is the SQL statement creates table scope privilege table in system db.
 	CreateTablePrivTable = `CREATE TABLE if not exists mysql.tables_priv (
 		Host		CHAR(60),
-		DB		CHAR(64),
+		DB			CHAR(64),
 		User		CHAR(16),
 		Table_name	CHAR(64),
 		Grantor		CHAR(77),
@@ -81,7 +85,7 @@ const (
 	// CreateColumnPrivTable is the SQL statement creates column scope privilege table in system db.
 	CreateColumnPrivTable = `CREATE TABLE if not exists mysql.columns_priv(
 		Host		CHAR(60),
-		DB		CHAR(64),
+		DB			CHAR(64),
 		User		CHAR(16),
 		Table_name	CHAR(64),
 		Column_name	CHAR(64),
@@ -115,9 +119,44 @@ const (
   		PRIMARY KEY (help_topic_id),
   		UNIQUE KEY name (name)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8 STATS_PERSISTENT=0 COMMENT='help topics';`
+
+	// CreateStatsMetaTable stores the meta of table statistics.
+	CreateStatsMetaTable = `CREATE TABLE if not exists mysql.stats_meta (
+		version bigint(64) unsigned NOT NULL,
+		table_id bigint(64) NOT NULL,
+		modify_count bigint(64) NOT NULL DEFAULT 0,
+		count bigint(64) unsigned NOT NULL DEFAULT 0,
+		index idx_ver(version),
+		unique index tbl(table_id)
+	);`
+
+	// CreateStatsColsTable stores the statistics of table columns.
+	CreateStatsColsTable = `CREATE TABLE if not exists mysql.stats_histograms (
+		table_id bigint(64) NOT NULL,
+		is_index tinyint(2) NOT NULL,
+		hist_id bigint(64) NOT NULL,
+		distinct_count bigint(64) NOT NULL,
+		distinct_ratio double(64) NOT NULL DEFAULT 0,
+		use_count_to_estimate tinyint(2) NOT NULL DEFAULT 0,
+		modify_count bigint(64) NOT NULL DEFAULT 0,
+		version bigint(64) unsigned NOT NULL DEFAULT 0,
+		unique index tbl(table_id, is_index, hist_id)
+	);`
+
+	// CreateStatsBucketsTable stores the histogram info for every table columns.
+	CreateStatsBucketsTable = `CREATE TABLE if not exists mysql.stats_buckets (
+		table_id bigint(64) NOT NULL,
+		is_index tinyint(2) NOT NULL,
+		hist_id bigint(64) NOT NULL,
+		bucket_id bigint(64) NOT NULL,
+		count bigint(64) NOT NULL,
+		repeats bigint(64) NOT NULL,
+		value blob NOT NULL,
+		unique index tbl(table_id, is_index, hist_id, bucket_id)
+	);`
 )
 
-// Bootstrap initiates system DB for a store.
+// bootstrap initiates system DB for a store.
 func bootstrap(s Session) {
 	b, err := checkBootstrapped(s)
 	if err != nil {
@@ -143,6 +182,12 @@ const (
 	// Const for TiDB server version 2.
 	version2 = 2
 	version3 = 3
+	version4 = 4
+	version5 = 5
+	version6 = 6
+	version7 = 7
+	version8 = 8
+	version9 = 9
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -169,7 +214,7 @@ func checkBootstrapped(s Session) (bool, error) {
 	return isBootstrapped, nil
 }
 
-// Get variable value from mysql.tidb table.
+// getTiDBVar gets variable value from mysql.tidb table.
 // Those variables are used by TiDB server.
 func getTiDBVar(s Session, name string) (types.Datum, error) {
 	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s"`,
@@ -182,6 +227,7 @@ func getTiDBVar(s Session, name string) (types.Datum, error) {
 		return types.Datum{}, errors.New("Wrong number of Recordset")
 	}
 	r := rs[0]
+	defer r.Close()
 	row, err := r.Next()
 	if err != nil || row == nil {
 		return types.Datum{}, errors.Trace(err)
@@ -189,7 +235,7 @@ func getTiDBVar(s Session, name string) (types.Datum, error) {
 	return row.Data[0], nil
 }
 
-// When the system is boostrapped by low version TiDB server, we should do some upgrade works.
+// upgrade function  will do some upgrade works, when the system is boostrapped by low version TiDB server
 // For example, add new system variables into mysql.global_variables table.
 func upgrade(s Session) {
 	ver, err := getBootstrapVersion(s)
@@ -198,10 +244,6 @@ func upgrade(s Session) {
 	}
 	if ver >= currentBootstrapVersion {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
-		if err1 := s.CommitTxn(); err1 != nil {
-			// Make sure that doesn't affect the following operations.
-			log.Fatal(errors.Trace(err1))
-		}
 		return
 	}
 	// Do upgrade works then update bootstrap version.
@@ -211,6 +253,29 @@ func upgrade(s Session) {
 	}
 	if ver < version3 {
 		upgradeToVer3(s)
+	}
+	if ver < version4 {
+		upgradeToVer4(s)
+	}
+
+	if ver < version5 {
+		upgradeToVer5(s)
+	}
+
+	if ver < version6 {
+		upgradeToVer6(s)
+	}
+
+	if ver < version7 {
+		upgradeToVer7(s)
+	}
+
+	if ver < version8 {
+		upgradeToVer8(s)
+	}
+
+	if ver < version9 {
+		upgradeToVer9(s)
 	}
 
 	updateBootstrapVer(s)
@@ -225,10 +290,6 @@ func upgrade(s Session) {
 		}
 		if v >= currentBootstrapVersion {
 			// It is already bootstrapped/upgraded by a higher version TiDB server.
-			if err1 := s.CommitTxn(); err1 != nil {
-				// Make sure that doesn't affect the following operations.
-				log.Fatal(errors.Trace(err1))
-			}
 			return
 		}
 		log.Errorf("[Upgrade] upgrade from %d to %d error", ver, currentBootstrapVersion)
@@ -237,11 +298,11 @@ func upgrade(s Session) {
 	return
 }
 
-// Update to version 2.
+// upgradeToVer2 updates to version 2.
 func upgradeToVer2(s Session) {
 	// Version 2 add two system variable for DistSQL concurrency controlling.
 	// Insert distsql related system variable.
-	distSQLVars := []string{variable.DistSQLScanConcurrencyVar, variable.DistSQLJoinConcurrencyVar}
+	distSQLVars := []string{variable.TiDBDistSQLScanConcurrency}
 	values := make([]string, 0, len(distSQLVars))
 	for _, v := range distSQLVars {
 		value := fmt.Sprintf(`("%s", "%s")`, v, variable.SysVars[v].Value)
@@ -252,7 +313,7 @@ func upgradeToVer2(s Session) {
 	mustExecute(s, sql)
 }
 
-// Update to version 3.
+// upgradeToVer3 updates to version 3.
 func upgradeToVer3(s Session) {
 	// Version 3 fix tx_read_only variable value.
 	sql := fmt.Sprintf("UPDATE %s.%s set variable_value = '0' where variable_name = 'tx_read_only';",
@@ -260,7 +321,62 @@ func upgradeToVer3(s Session) {
 	mustExecute(s, sql)
 }
 
-// Update boostrap version variable in mysql.TiDB table.
+// upgradeToVer4 updates to version 4.
+func upgradeToVer4(s Session) {
+	sql := CreateStatsMetaTable
+	mustExecute(s, sql)
+}
+
+func upgradeToVer5(s Session) {
+	mustExecute(s, CreateStatsColsTable)
+	mustExecute(s, CreateStatsBucketsTable)
+}
+
+func upgradeToVer6(s Session) {
+	_, err := s.Execute("ALTER TABLE mysql.user ADD COLUMN `Super_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Show_db_priv`")
+	if terror.ErrorEqual(err, infoschema.ErrColumnExists) {
+		return
+	}
+	if err != nil {
+		log.Fatal(err)
+	}
+	// For reasons of compatibility, set the non-exists privilege column value to 'Y', as TiDB doesn't check them in older versions.
+	mustExecute(s, "UPDATE mysql.user SET Super_priv='Y'")
+}
+
+func upgradeToVer7(s Session) {
+	_, err := s.Execute("ALTER TABLE mysql.user ADD COLUMN `Process_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Drop_priv`")
+	if terror.ErrorEqual(err, infoschema.ErrColumnExists) {
+		return
+	}
+	if err != nil {
+		log.Fatal(err)
+	}
+	// For reasons of compatibility, set the non-exists privilege column value to 'Y', as TiDB doesn't check them in older versions.
+	mustExecute(s, "UPDATE mysql.user SET Process_priv='Y'")
+}
+
+func upgradeToVer8(s Session) {
+	// This is a dummy upgrade, it checks whether upgradeToVer7 success, if not, do it again.
+	if _, err := s.Execute("SELECT `Process_priv` from mysql.user limit 0"); err == nil {
+		return
+	}
+	upgradeToVer7(s)
+}
+
+func upgradeToVer9(s Session) {
+	_, err := s.Execute("ALTER TABLE mysql.user ADD COLUMN `Trigger_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_user_priv`")
+	if terror.ErrorEqual(err, infoschema.ErrColumnExists) {
+		return
+	}
+	if err != nil {
+		log.Fatal(err)
+	}
+	// For reasons of compatibility, set the non-exists privilege column value to 'Y', as TiDB doesn't check them in older versions.
+	s.Execute("UPDATE mysql.user SET Trigger_priv='Y'")
+}
+
+// updateBootstrapVer updates boostrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
 	sql := fmt.Sprintf(`INSERT INTO %s.%s VALUES ("%s", "%d", "TiDB bootstrap version.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE="%d"`,
@@ -268,7 +384,7 @@ func updateBootstrapVer(s Session) {
 	mustExecute(s, sql)
 }
 
-// Gets bootstrap version from mysql.tidb table;
+// getBootstrapVersion gets bootstrap version from mysql.tidb table;
 func getBootstrapVersion(s Session) (int64, error) {
 	d, err := getTiDBVar(s, tidbServerVersionVar)
 	if err != nil {
@@ -280,7 +396,7 @@ func getBootstrapVersion(s Session) (int64, error) {
 	return strconv.ParseInt(d.GetString(), 10, 64)
 }
 
-// Execute DDL statements in bootstrap stage.
+// doDDLWorks executes DDL statements in bootstrap stage.
 func doDDLWorks(s Session) {
 	// Create a test database.
 	mustExecute(s, "CREATE DATABASE IF NOT EXISTS test")
@@ -298,22 +414,31 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateTiDBTable)
 	// Create help table.
 	mustExecute(s, CreateHelpTopic)
+	// Create stats_meta table.
+	mustExecute(s, CreateStatsMetaTable)
+	// Create stats_columns table.
+	mustExecute(s, CreateStatsColsTable)
+	// Create stats_buckets table.
+	mustExecute(s, CreateStatsBucketsTable)
 }
 
-// Execute DML statements in bootstrap stage.
+// doDMLWorks executes DML statements in bootstrap stage.
 // All the statements run in a single transaction.
 func doDMLWorks(s Session) {
 	mustExecute(s, "BEGIN")
 
 	// Insert a default user with empty password.
 	mustExecute(s, `INSERT INTO mysql.user VALUES
-		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
 
 	// Init global system variables table.
 	values := make([]string, 0, len(variable.SysVars))
 	for k, v := range variable.SysVars {
-		value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), v.Value)
-		values = append(values, value)
+		// Session only variable should not be inserted.
+		if v.Scope != variable.ScopeSession {
+			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), v.Value)
+			values = append(values, value)
+		}
 	}
 	sql := fmt.Sprintf("INSERT INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalVariablesTable,
 		strings.Join(values, ", "))
@@ -324,7 +449,7 @@ func doDMLWorks(s Session) {
 		mysql.SystemDB, mysql.TiDBTable, bootstrappedVar, bootstrappedVarTrue, bootstrappedVarTrue)
 	mustExecute(s, sql)
 
-	sql = fmt.Sprintf(`INSERT INTO %s.%s VALUES("%s", "%d", "Bootstrap version. Do not delete")`,
+	sql = fmt.Sprintf(`INSERT INTO %s.%s VALUES("%s", "%d", "Bootstrap version. Do not delete.")`,
 		mysql.SystemDB, mysql.TiDBTable, tidbServerVersionVar, currentBootstrapVersion)
 	mustExecute(s, sql)
 

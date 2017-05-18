@@ -2,13 +2,19 @@ package: github.com/pingcap/tidb
 import:
 - package: github.com/boltdb/bolt
   version: d97499360d1ecebc492ea66c7447ea948f417620
+- package: github.com/cloudfoundry-incubator/candiedyaml
+  version: 5cef21e2e4f0fd147973b558d4db7395176bcd95
 - package: github.com/coreos/etcd
-  version: e53b99588a05d1f4ef172c178d4ed8e8106b8be4
+  version: ea5f6dab6b1d07e22cf46bf5f5088d567548c124
   subpackages:
   - auth/authpb
   - clientv3
+  - clientv3/concurrency
+  - etcdserver/api/v3rpc/rpctypes
+  - etcdserver/etcdserverpb
   - mvcc/mvccpb
   - pkg/tlsutil
+  - pkg/monotime
 - package: github.com/gengo/grpc-gateway
   version: f52d055dc48aec25854ed7d31862f78913cf17d1
   subpackages:
@@ -16,11 +22,11 @@ import:
   - runtime/internal
   - utilities
 - package: github.com/ghodss/yaml
-  version: 1a6f069841556a7bcaff4a397ca6e8328d266c2f
+  version: 73d445a93680fa1a78ae23a5839bad48f32ba1ee
 - package: github.com/go-sql-driver/mysql
   version: 3dd7008ac1529aca1bcd8a9db75228a71ba23cac
 - package: github.com/golang/protobuf
-  version: 874264fbbb43f4d91e999fecb4b40143ed611400
+  version: 8ee79997227bf9b34611aee7946ae64735e6fd93
   subpackages:
   - jsonpb
   - proto
@@ -62,7 +68,7 @@ import:
 - package: github.com/twinj/uuid
   version: 70cac2bcd273ef6a371bb96cde363d28b68734c3
 - package: golang.org/x/net
-  version: e90d6d0afc4c315a0d87a568ae68577cc15149a0
+  version: 6acef71eb69611914f7a30939ea9f6e194c78172
   subpackages:
   - context
   - http2
@@ -83,7 +89,7 @@ import:
   - encoding/unicode
   - transform
 - package: google.golang.org/grpc
-  version: 02fca896ff5f50c6bbbee0860345a49344b37a03
+  version: v1.0.4
   subpackages:
   - codes
   - credentials
@@ -107,8 +113,10 @@ import:
   version: 1eb03e3cc9d345307a45ec82bd3016cde4bd4464
 - package: github.com/cznic/y
   version: 9fdf92d4aac058959f814606bb729ed50f5e4240
+- package: github.com/dustin/go-humanize
+  version: 8929fe90cee4b2cb9deb468b51fb34eba64d1bf0
 - package: github.com/grpc-ecosystem/grpc-gateway
-  version: c8ec92d0481dd77d9b8c1808eb6476d190aa039a
+  version: 84398b94e188ee336f307779b57b3aa91af7063c
   subpackages:
   - runtime
   - utilities
@@ -140,14 +148,15 @@ import:
   subpackages:
   - lex
 - package: github.com/pingcap/pd
-  version: 3d5bb2b3a056925b656d29b88a5b216f6f309368
+  version: fea29e342c4a7c5888cdf0b569625fbbf6d3b50f
 - package: github.com/pingcap/tipb
-  version: 7be8865936fd4dfee0591913c31c07be11da5d19
+  version: 37bbffad21f347c02af7d822909832f0eed39c85
   subpackages:
   - go-binlog
   - go-tipb
+  - sharedbytes
 - package: github.com/pingcap/kvproto
-  version: ed926a15a832c7461a4d18dc50973de98a845cc0
+  version: 289050a4366f95497c93d4dba068989b5dd8781a
 - package: github.com/gogo/protobuf
   version: ^0.3.0
   subpackages:
@@ -160,4 +169,8 @@ import:
   subpackages:
   - rate
 - package: golang.org/x/sys
-  version: 8d1157a435470616f975ff9bb013bea8d0962067
+  version: a646d33e2ee3172a661fc09bca23bb4889a41bc8
+- package: github.com/gorilla/mux
+  version: 599cba5e7b6137d46ddf58fb1765f5d928e69604
+- package: github.com/grpc-ecosystem/go-grpc-prometheus
+  version: 6b7015e65d366bf3f19b2b2a000a831940f0f7e0

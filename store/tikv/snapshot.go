@@ -22,7 +22,7 @@ import (
 	"github.com/ngaut/log"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
-	"golang.org/x/net/context"
+	goctx "golang.org/x/net/context"
 )
 
 var (
@@ -57,7 +57,7 @@ func (s *tikvSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 
 	// We want [][]byte instead of []kv.Key, use some magic to save memory.
 	bytesKeys := *(*[][]byte)(unsafe.Pointer(&keys))
-	bo := NewBackoffer(batchGetMaxBackoff, context.Background())
+	bo := NewBackoffer(batchGetMaxBackoff, goctx.Background())
 
 	// Create a map to collect key-values from region servers.
 	var mu sync.Mutex
@@ -82,6 +82,8 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 		return errors.Trace(err)
 	}
 
+	txnRegionsNumHistogram.WithLabelValues("snapshot").Observe(float64(len(groups)))
+
 	var batches []batchKeys
 	for id, g := range groups {
 		batches = appendBatchBySize(batches, id, g, func([]byte) int { return 1 }, batchGetSize)
@@ -96,7 +98,9 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 	ch := make(chan error)
 	for _, batch := range batches {
 		go func(batch batchKeys) {
-			ch <- s.batchGetSingleRegion(bo.Fork(), batch, collectF)
+			backoffer, cancel := bo.Fork()
+			defer cancel()
+			ch <- s.batchGetSingleRegion(backoffer, batch, collectF)
 		}(batch)
 	}
 	for i := 0; i < len(batches); i++ {
@@ -171,7 +175,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 
 // Get gets the value for key k from snapshot.
 func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
-	val, err := s.get(NewBackoffer(getMaxBackoff, context.Background()), k)
+	val, err := s.get(NewBackoffer(getMaxBackoff, goctx.Background()), k)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -220,7 +224,7 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 				return nil, errors.Trace(err)
 			}
 			if !ok {
-				err = bo.Backoff(boTxnLock, errors.New(keyErr.String()))
+				err = bo.Backoff(boTxnLockFast, errors.New(keyErr.String()))
 				if err != nil {
 					return nil, errors.Trace(err)
 				}

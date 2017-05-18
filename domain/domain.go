@@ -15,33 +15,43 @@ package domain
 
 import (
 	"sync"
-	"sync/atomic"
 	"time"
 
+	"github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/perfschema"
+	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
+	// TODO: It's used fo update vendor. It will be removed.
+	_ "github.com/coreos/etcd/clientv3/concurrency"
+	_ "github.com/coreos/etcd/mvcc/mvccpb"
+	goctx "golang.org/x/net/context"
 )
-
-var ddlLastReloadSchemaTS = "ddl_last_reload_schema_ts"
 
 // Domain represents a storage space. Different domains can use the same database name.
 // Multiple domains can be used in parallel without synchronization.
 type Domain struct {
-	store          kv.Storage
-	infoHandle     *infoschema.Handle
-	ddl            ddl.DDL
-	lastLeaseTS    int64 // nano seconds
-	m              sync.Mutex
-	SchemaValidity *schemaValidityInfo
-	exit           chan struct{}
+	store           kv.Storage
+	infoHandle      *infoschema.Handle
+	privHandle      *privileges.Handle
+	statsHandle     *statistics.Handle
+	ddl             ddl.DDL
+	m               sync.Mutex
+	SchemaValidator SchemaValidator
+	sysSessionPool  *sync.Pool
+	exit            chan struct{}
+	etcdClient      *clientv3.Client
+
+	MockReloadFailed MockFailure // It mocks reload failed.
 }
 
 // loadInfoSchema loads infoschema at startTS into handle, usedSchemaVersion is the currently used
@@ -217,14 +227,6 @@ func (do *Domain) Store() kv.Storage {
 	return do.store
 }
 
-// Stats returns the domain statistic.
-func (do *Domain) Stats() (map[string]interface{}, error) {
-	m := make(map[string]interface{})
-	m[ddlLastReloadSchemaTS] = atomic.LoadInt64(&do.lastLeaseTS) / 1e9
-
-	return m, nil
-}
-
 // GetScope gets the status variables scope.
 func (do *Domain) GetScope(status string) variable.ScopeFlag {
 	// Now domain status variables scope are all default scope.
@@ -232,27 +234,14 @@ func (do *Domain) GetScope(status string) variable.ScopeFlag {
 }
 
 func (do *Domain) mockReloadFailed() error {
-	ver, err := do.store.CurrentVersion()
-	if err != nil {
-		log.Errorf("mock reload failed err:%v", err)
-		return errors.Trace(err)
-	}
-	lease := do.DDL().GetLease()
-	// Make sure that is timed out when checking validity.
-	mockLastSuccTime := time.Now().UnixNano() - int64(lease)
-	log.Warnf("mock lastSuccTS:%v, lease:%v", time.Now(), time.Duration(lease))
-	do.SchemaValidity.updateTimeInfo(mockLastSuccTime, ver.Ver)
 	return errors.New("mock reload failed")
 }
-
-const doReloadSleepTime = 500 * time.Millisecond
-const loadRetryTimes = 5
 
 // Reload reloads InfoSchema.
 // It's public in order to do the test.
 func (do *Domain) Reload() error {
 	// for test
-	if do.SchemaValidity.MockReloadFailed.getValue() {
+	if do.MockReloadFailed.getValue() {
 		return do.mockReloadFailed()
 	}
 
@@ -260,90 +249,45 @@ func (do *Domain) Reload() error {
 	do.m.Lock()
 	defer do.m.Unlock()
 
+	startTime := time.Now()
+
 	var err error
 	var latestSchemaVersion int64
-	for i := 0; i < loadRetryTimes; i++ {
-		startTime := time.Now()
-		var ver kv.Version
-		ver, err = do.store.CurrentVersion()
-		if err == nil {
-			schemaVersion := int64(0)
-			oldInfoSchema := do.infoHandle.Get()
-			if oldInfoSchema != nil {
-				schemaVersion = oldInfoSchema.SchemaMetaVersion()
-			}
-			latestSchemaVersion, err = do.loadInfoSchema(do.infoHandle, schemaVersion, ver.Ver)
-		}
-		if err == nil {
-			atomic.StoreInt64(&do.lastLeaseTS, time.Now().UnixNano())
-			do.SchemaValidity.updateTimeInfo(startTime.UnixNano(), ver.Ver)
-			do.SchemaValidity.updateSchemaVersion(latestSchemaVersion)
-			sub := time.Since(startTime)
-			lease := do.DDL().GetLease()
-			if sub > lease && lease > 0 {
-				log.Infof("[ddl] loading schema takes a long time %v", sub)
-			}
-			break
-		}
-		log.Errorf("[ddl] load schema err %v, ver:%v, retry again", errors.ErrorStack(err), ver.Ver)
-		// TODO: Use a backoff algorithm.
-		time.Sleep(doReloadSleepTime)
+
+	ver, err := do.store.CurrentVersion()
+	if err != nil {
+		return errors.Trace(err)
 	}
 
-	return errors.Trace(err)
-}
-
-func (do *Domain) checkValidityInLoop(lease time.Duration) {
-	timer := time.NewTimer(lease)
-	defer timer.Stop()
-
-	for {
-		select {
-		case <-timer.C:
-			// TODO: Using the local time, it will affect the accuracy of the check when clock transition.
-			lastReloadTime, lastSuccTS := do.SchemaValidity.getTimeInfo()
-			sub := time.Duration(time.Now().UnixNano() - lastReloadTime)
-			if sub > lease {
-				// If sub is greater than a lease,
-				// it means that the schema version hasn't update for a lease.
-				do.SchemaValidity.SetExpireInfo(true, lastSuccTS)
-			} else {
-				do.SchemaValidity.SetExpireInfo(false, lastSuccTS)
-			}
-
-			waitTime := lease
-			if sub > 0 {
-				// If the schema is invalid (sub >= lease), it means reload schema will become frequent.
-				// We need to reduce wait time to check the validity more frequently.
-				if sub >= lease {
-					waitTime = minInterval(lease)
-					log.Warnf("[ddl] check validity in a loop, sub:%v, lease:%v, succ:%v, waitTime:%v",
-						sub, lease, lastSuccTS, waitTime)
-				} else {
-					waitTime -= sub
-				}
-			}
-			log.Debugf("[ddl] check validity in a loop, sub:%v, lease:%v, succ:%v, waitTime:%v",
-				sub, lease, lastSuccTS, waitTime)
-			timer.Reset(waitTime)
-		case <-do.exit:
-			return
-		}
+	schemaVersion := int64(0)
+	oldInfoSchema := do.infoHandle.Get()
+	if oldInfoSchema != nil {
+		schemaVersion = oldInfoSchema.SchemaMetaVersion()
 	}
-}
 
-// minInterval gets a minimal interval.
-// It uses to reload schema and check schema validity after the schema is invalid.
-// If lease is 0, it's used for local store and minimal interval is 5ms.
-func minInterval(lease time.Duration) time.Duration {
-	if lease > 0 {
-		return lease / 4
+	latestSchemaVersion, err = do.loadInfoSchema(do.infoHandle, schemaVersion, ver.Ver)
+	loadSchemaDuration.Observe(time.Since(startTime).Seconds())
+	if err != nil {
+		loadSchemaCounter.WithLabelValues("failed").Inc()
+		return errors.Trace(err)
 	}
-	return 5 * time.Millisecond
+	loadSchemaCounter.WithLabelValues("succ").Inc()
+
+	do.SchemaValidator.Update(ver.Ver, latestSchemaVersion)
+
+	lease := do.DDL().GetLease()
+	sub := time.Since(startTime)
+	if sub > lease && lease > 0 {
+		log.Warnf("[ddl] loading schema takes a long time %v", sub)
+	}
+
+	return nil
 }
 
 func (do *Domain) loadSchemaInLoop(lease time.Duration) {
-	ticker := time.NewTicker(minInterval(lease))
+	// Lease renewal can run at any frequency.
+	// Use lease/2 here as recommend by paper.
+	ticker := time.NewTicker(lease / 2)
 	defer ticker.Stop()
 
 	for {
@@ -363,6 +307,9 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 func (do *Domain) Close() {
 	do.ddl.Stop()
 	close(do.exit)
+	if do.etcdClient != nil {
+		do.etcdClient.Close()
+	}
 }
 
 type ddlCallback struct {
@@ -404,81 +351,30 @@ func (m *MockFailure) getValue() bool {
 	return m.val
 }
 
-type schemaValidityInfo struct {
-	mux         sync.RWMutex
-	isExpired   bool   // Whether information schema is out of date.
-	recoveredTS uint64 // It's used for recording the first txn TS of schema vaild.
-	timeInfo    struct {
-		mux            sync.RWMutex
-		lastReloadTime int64  // It's used for recording the time of last reload schema.
-		lastSuccTS     uint64 // It's used for recording the last txn TS of loading schema succeed.
-	}
-	lastSchemaVer    int64       // It's used for recording the last schema version.
-	MockReloadFailed MockFailure // It mocks reload failed.
-}
-
-func (s *schemaValidityInfo) updateSchemaVersion(version int64) {
-	atomic.StoreInt64(&s.lastSchemaVer, version)
-}
-
-func (s *schemaValidityInfo) updateTimeInfo(lastReloadTime int64, lastSuccTS uint64) {
-	s.timeInfo.mux.Lock()
-	defer s.timeInfo.mux.Unlock()
-
-	s.timeInfo.lastReloadTime = lastReloadTime
-	s.timeInfo.lastSuccTS = lastSuccTS
-}
-
-func (s *schemaValidityInfo) getTimeInfo() (int64, uint64) {
-	s.timeInfo.mux.Lock()
-	defer s.timeInfo.mux.Unlock()
-
-	return s.timeInfo.lastReloadTime, s.timeInfo.lastSuccTS
-}
-
-// SetExpireInfo sets the information of whether information schema is out of date.
-// It's public in order to do the test.
-func (s *schemaValidityInfo) SetExpireInfo(expired bool, lastSuccTS uint64) {
-	s.mux.Lock()
-	if s.isExpired != expired {
-		log.Infof("[ddl] SetExpireInfo, original:%v current:%v lastSuccTS:%v", s.isExpired, expired, lastSuccTS)
-		if expired {
-			log.Errorf("[ddl] SetExpireInfo, information schema is expired %v, lastSuccTS:%v", expired, lastSuccTS)
-			s.recoveredTS = lastSuccTS
-		}
-		s.isExpired = expired
-	}
-	s.mux.Unlock()
-}
-
-// Check checks schema validity. It returns the current schema version and an error.
-func (s *schemaValidityInfo) Check(txnTS uint64, schemaVer int64) (int64, error) {
-	currVer := atomic.LoadInt64(&s.lastSchemaVer)
-	s.mux.RLock()
-	if s.isExpired {
-		s.mux.RUnlock()
-		return currVer, ErrInfoSchemaExpired
-	}
-
-	// txnTS != 0, it means the transition isn't nil.
-	// txnTS <= s.recoveredTS, it means the transition begins before schema is recovered.
-	// schemaVer != currVer, it means the schema version is changed.
-	if txnTS != 0 && txnTS <= s.recoveredTS && schemaVer != currVer {
-		s.mux.RUnlock()
-		log.Warnf("check schema validity, txnTS:%v recordTS:%v schema version original:%v input:%v",
-			txnTS, s.recoveredTS, currVer, schemaVer)
-		return currVer, ErrInfoSchemaChanged
-	}
-	s.mux.RUnlock()
-	return currVer, nil
+type etcdBackend interface {
+	EtcdAddrs() []string
 }
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
 func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 	d = &Domain{
-		store:          store,
-		SchemaValidity: &schemaValidityInfo{},
-		exit:           make(chan struct{}),
+		store:           store,
+		SchemaValidator: newSchemaValidator(lease),
+		exit:            make(chan struct{}),
+		sysSessionPool:  &sync.Pool{},
+	}
+
+	if ebd, ok := store.(etcdBackend); ok {
+		if addrs := ebd.EtcdAddrs(); addrs != nil {
+			cli, err := clientv3.New(clientv3.Config{
+				Endpoints:   addrs,
+				DialTimeout: 5 * time.Second,
+			})
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			d.etcdClient = cli
+		}
 	}
 
 	d.infoHandle, err = infoschema.NewHandle(d.store)
@@ -489,19 +385,125 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 	if err = d.Reload(); err != nil {
 		return nil, errors.Trace(err)
 	}
-	d.SchemaValidity.SetExpireInfo(false, 0)
-
-	variable.RegisterStatistics(d)
 
 	// Only when the store is local that the lease value is 0.
-	// If the store is local, it doesn't need loadSchemaInLoop and checkValidityInLoop.
+	// If the store is local, it doesn't need loadSchemaInLoop.
 	if lease > 0 {
-		go d.checkValidityInLoop(lease)
+		// Local store needs to get the change information for every DDL state in each session.
+		go d.loadSchemaInLoop(lease)
 	}
-	// Local store needs to get the change information for every DDL state in each session.
-	go d.loadSchemaInLoop(lease)
 
 	return d, nil
+}
+
+// SysSessionPool returns the system session pool.
+func (do *Domain) SysSessionPool() *sync.Pool {
+	return do.sysSessionPool
+}
+
+// LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it
+// should be called only once in BootstrapSession.
+func (do *Domain) LoadPrivilegeLoop(ctx context.Context) error {
+	do.privHandle = privileges.NewHandle(ctx)
+	err := do.privHandle.Update()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	var watchCh clientv3.WatchChan
+	duration := 5 * time.Minute
+	if do.etcdClient != nil {
+		watchCh = do.etcdClient.Watch(goctx.Background(), privilegeKey)
+		duration = 10 * time.Minute
+	}
+
+	go func() {
+		for {
+			select {
+			case <-do.exit:
+				return
+			case <-watchCh:
+			case <-time.After(duration):
+			}
+			err := do.privHandle.Update()
+			if err != nil {
+				log.Error("load privilege fail:", errors.ErrorStack(err))
+			}
+		}
+	}()
+	return nil
+}
+
+// PrivilegeHandle returns the MySQLPrivilege.
+func (do *Domain) PrivilegeHandle() *privileges.Handle {
+	return do.privHandle
+}
+
+// StatsHandle returns the statistic handle.
+func (do *Domain) StatsHandle() *statistics.Handle {
+	return do.statsHandle
+}
+
+// CreateStatsHandle is used only for test.
+func (do *Domain) CreateStatsHandle(ctx context.Context) {
+	do.statsHandle = statistics.NewHandle(ctx)
+}
+
+// UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop. It
+// should be called only once in BootstrapSession.
+func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
+	do.statsHandle = statistics.NewHandle(ctx)
+	do.ddl.RegisterEventCh(do.statsHandle.DDLEventCh())
+	err := do.statsHandle.Update(do.InfoSchema())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	lease := do.DDL().GetLease()
+	if lease <= 0 {
+		return nil
+	}
+	deltaUpdateDuration := time.Minute
+	go func(do *Domain) {
+		loadTicker := time.NewTicker(lease)
+		defer loadTicker.Stop()
+		deltaUpdateTicker := time.NewTicker(deltaUpdateDuration)
+		defer deltaUpdateTicker.Stop()
+
+		for {
+			select {
+			case <-loadTicker.C:
+				err := do.statsHandle.Update(do.InfoSchema())
+				if err != nil {
+					log.Error(errors.ErrorStack(err))
+				}
+			case <-do.exit:
+				return
+			// This channel is sent only by ddl owner. Only owner know if this ddl is done or not.
+			case t := <-do.statsHandle.DDLEventCh():
+				err := do.statsHandle.HandleDDLEvent(t)
+				if err != nil {
+					log.Error(errors.ErrorStack(err))
+				}
+			case <-deltaUpdateTicker.C:
+				do.statsHandle.DumpStatsDeltaToKV()
+			}
+		}
+	}(do)
+	return nil
+}
+
+const privilegeKey = "/tidb/privilege"
+
+// NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches
+// the key will get notification.
+func (do *Domain) NotifyUpdatePrivilege(ctx context.Context) {
+	if do.etcdClient != nil {
+		kv := do.etcdClient.KV
+		_, err := kv.Put(goctx.Background(), privilegeKey, "")
+		if err != nil {
+			log.Warn("notify update privilege failed:", err)
+		}
+	}
 }
 
 // Domain error codes.

@@ -18,6 +18,8 @@ import (
 
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util"
+	goctx "golang.org/x/net/context"
 )
 
 // Context is an interface for transaction and executive args environment.
@@ -29,6 +31,9 @@ type Context interface {
 
 	// Txn returns the current transaction which is created before executing a statement.
 	Txn() kv.Transaction
+
+	// GoCtx returns the standard context.Context which is bound with current transaction.
+	GoCtx() goctx.Context
 
 	// GetClient gets a kv.Client.
 	GetClient() kv.Client
@@ -43,6 +48,21 @@ type Context interface {
 	ClearValue(key fmt.Stringer)
 
 	GetSessionVars() *variable.SessionVars
+
+	GetSessionManager() util.SessionManager
+
+	// RefreshTxnCtx commits old transaction without retry,
+	// and creates a new transation.
+	// now just for load data and batch insert.
+	RefreshTxnCtx() error
+
+	// ActivePendingTxn receives the pending transaction from the transaction channel.
+	// It should be called right before we builds an executor.
+	ActivePendingTxn() error
+
+	// InitTxnWithStartTS initializes a transaction with startTS.
+	// It should be called right before we builds an executor.
+	InitTxnWithStartTS(startTS uint64) error
 }
 
 type basicCtxType int

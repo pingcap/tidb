@@ -15,7 +15,6 @@ package localstore
 
 import (
 	"fmt"
-	"io/ioutil"
 	"math"
 	"sort"
 	"testing"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
+	goctx "golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -58,16 +58,17 @@ func (s *testXAPISuite) TestSelect(c *C) {
 	err := prepareTableData(store, tbInfo, count, genValues)
 	c.Check(err, IsNil)
 
+	mockCtx := goctx.Background()
+
 	// Select Table request.
 	txn, err := store.Begin()
 	c.Check(err, IsNil)
 	client := store.GetClient()
 	req, err := prepareSelectRequest(tbInfo, txn.StartTS())
 	c.Check(err, IsNil)
-	resp := client.Send(req)
-	subResp, err := resp.Next()
+	resp := client.Send(mockCtx, req)
+	data, err := resp.Next()
 	c.Check(err, IsNil)
-	data, err := ioutil.ReadAll(subResp)
 	c.Check(err, IsNil)
 	selResp := new(tipb.SelectResponse)
 	proto.Unmarshal(data, selResp)
@@ -82,7 +83,7 @@ func (s *testXAPISuite) TestSelect(c *C) {
 		var expectedEncoded []byte
 		expectedEncoded, err = codec.EncodeValue(nil, expectedDatums...)
 		c.Assert(err, IsNil)
-		c.Assert(chunk.RowsData[dataOffset:dataOffset+rowMeta.Length], BytesEquals, expectedEncoded)
+		c.Assert([]byte(chunk.RowsData[dataOffset:dataOffset+rowMeta.Length]), BytesEquals, expectedEncoded)
 		dataOffset += rowMeta.Length
 	}
 	txn.Commit()
@@ -93,10 +94,8 @@ func (s *testXAPISuite) TestSelect(c *C) {
 	client = store.GetClient()
 	req, err = prepareIndexRequest(tbInfo, txn.StartTS())
 	c.Check(err, IsNil)
-	resp = client.Send(req)
-	subResp, err = resp.Next()
-	c.Check(err, IsNil)
-	data, err = ioutil.ReadAll(subResp)
+	resp = client.Send(mockCtx, req)
+	data, err = resp.Next()
 	c.Check(err, IsNil)
 	idxResp := new(tipb.SelectResponse)
 	proto.Unmarshal(data, idxResp)
@@ -194,7 +193,8 @@ func prepareTableData(store kv.Storage, tbl *simpleTableInfo, count int64, gen g
 func setRow(txn kv.Transaction, handle int64, tbl *simpleTableInfo, gen genValueFunc) error {
 	rowKey := tablecodec.EncodeRowKey(tbl.tID, codec.EncodeInt(nil, handle))
 	columnValues := gen(handle, tbl)
-	value, err := tablecodec.EncodeRow(columnValues, tbl.cIDs)
+	// TODO: Should use session's TimeZone instead of UTC.
+	value, err := tablecodec.EncodeRow(columnValues, tbl.cIDs, time.UTC)
 	if err != nil {
 		return errors.Trace(err)
 	}

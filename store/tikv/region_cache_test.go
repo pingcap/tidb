@@ -19,7 +19,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
-	"golang.org/x/net/context"
+	goctx "golang.org/x/net/context"
 )
 
 type testRegionCacheSuite struct {
@@ -45,7 +45,7 @@ func (s *testRegionCacheSuite) SetUpTest(c *C) {
 	s.peer2 = peerIDs[1]
 	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
 	s.cache = NewRegionCache(pdCli)
-	s.bo = NewBackoffer(5000, context.Background())
+	s.bo = NewBackoffer(5000, goctx.Background())
 }
 
 func (s *testRegionCacheSuite) storeAddr(id uint64) string {
@@ -86,7 +86,7 @@ func (s *testRegionCacheSuite) TestSimple(c *C) {
 }
 
 func (s *testRegionCacheSuite) TestDropStore(c *C) {
-	bo := NewBackoffer(100, context.Background())
+	bo := NewBackoffer(100, goctx.Background())
 	s.cluster.RemoveStore(s.store1)
 	loc, err := s.cache.LocateKey(bo, []byte("a"))
 	c.Assert(err, IsNil)
@@ -202,7 +202,7 @@ func (s *testRegionCacheSuite) TestSplit(c *C) {
 }
 
 func (s *testRegionCacheSuite) TestMerge(c *C) {
-	// ['' - 'm' - 'z']
+	// key range: ['' - 'm' - 'z']
 	region2 := s.cluster.AllocID()
 	newPeers := s.cluster.AllocIDs(2)
 	s.cluster.Split(s.region1, region2, []byte("m"), newPeers, newPeers[0])
@@ -254,6 +254,31 @@ func (s *testRegionCacheSuite) TestRequestFail(c *C) {
 	c.Assert(region.unreachableStores, HasLen, 0)
 }
 
+func (s *testRegionCacheSuite) TestRequestFail2(c *C) {
+	// key range: ['' - 'm' - 'z']
+	region2 := s.cluster.AllocID()
+	newPeers := s.cluster.AllocIDs(2)
+	s.cluster.Split(s.region1, region2, []byte("m"), newPeers, newPeers[0])
+
+	// Check the two regions.
+	loc1, err := s.cache.LocateKey(s.bo, []byte("a"))
+	c.Assert(err, IsNil)
+	c.Assert(loc1.Region.id, Equals, s.region1)
+	loc2, err := s.cache.LocateKey(s.bo, []byte("x"))
+	c.Assert(err, IsNil)
+	c.Assert(loc2.Region.id, Equals, region2)
+
+	// Request should fail on region1.
+	ctx, _ := s.cache.GetRPCContext(s.bo, loc1.Region)
+	c.Assert(s.cache.storeMu.stores, HasLen, 1)
+	s.checkCache(c, 2)
+	s.cache.OnRequestFail(ctx)
+	// Both region2 and store should be dropped from cache.
+	c.Assert(s.cache.storeMu.stores, HasLen, 0)
+	c.Assert(s.cache.getRegionFromCache([]byte("x")), IsNil)
+	s.checkCache(c, 1)
+}
+
 func (s *testRegionCacheSuite) TestUpdateStoreAddr(c *C) {
 	client := &RawKVClient{
 		clusterID:   0,
@@ -273,4 +298,22 @@ func (s *testRegionCacheSuite) TestUpdateStoreAddr(c *C) {
 
 	c.Assert(err, IsNil)
 	c.Assert(getVal, BytesEquals, testValue)
+}
+
+func (s *testRegionCacheSuite) TestListRegionIDsInCache(c *C) {
+	// ['' - 'm' - 'z']
+	region2 := s.cluster.AllocID()
+	newPeers := s.cluster.AllocIDs(2)
+	s.cluster.Split(s.region1, region2, []byte("m"), newPeers, newPeers[0])
+
+	regionIDs, err := s.cache.ListRegionIDsInKeyRange(s.bo, []byte("a"), []byte("z"))
+	c.Assert(err, IsNil)
+	c.Assert(regionIDs, DeepEquals, []uint64{s.region1, region2})
+	regionIDs, err = s.cache.ListRegionIDsInKeyRange(s.bo, []byte("m"), []byte("z"))
+	c.Assert(err, IsNil)
+	c.Assert(regionIDs, DeepEquals, []uint64{region2})
+
+	regionIDs, err = s.cache.ListRegionIDsInKeyRange(s.bo, []byte("a"), []byte("m"))
+	c.Assert(err, IsNil)
+	c.Assert(regionIDs, DeepEquals, []uint64{s.region1, region2})
 }

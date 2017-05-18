@@ -1,11 +1,10 @@
 package localstore
 
 import (
-	"io"
-
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tipb/go-tipb"
+	goctx "golang.org/x/net/context"
 )
 
 type dbClient struct {
@@ -13,7 +12,7 @@ type dbClient struct {
 	regionInfo []*regionInfo
 }
 
-func (c *dbClient) Send(req *kv.Request) kv.Response {
+func (c *dbClient) Send(ctx goctx.Context, req *kv.Request) kv.Response {
 	it := &response{
 		client:      c,
 		concurrency: req.Concurrency,
@@ -36,7 +35,7 @@ func (c *dbClient) Send(req *kv.Request) kv.Response {
 	return it
 }
 
-func (c *dbClient) SupportRequestType(reqType, subType int64) bool {
+func (c *dbClient) IsRequestTypeSupported(reqType, subType int64) bool {
 	switch reqType {
 	case kv.ReqTypeSelect, kv.ReqTypeIndex:
 		switch subType {
@@ -93,28 +92,6 @@ func (c *dbClient) updateRegionInfo() {
 	c.regionInfo = c.store.pd.GetRegionInfo()
 }
 
-type localResponseReader struct {
-	s []byte
-	i int64
-}
-
-func (r *localResponseReader) Read(b []byte) (n int, err error) {
-	if len(b) == 0 {
-		return 0, nil
-	}
-	if r.i >= int64(len(r.s)) {
-		return 0, io.EOF
-	}
-	n = copy(b, r.s[r.i:])
-	r.i += int64(n)
-	return
-}
-
-func (r *localResponseReader) Close() error {
-	r.i = int64(len(r.s))
-	return nil
-}
-
 type response struct {
 	client      *dbClient
 	reqSent     int
@@ -133,7 +110,7 @@ type task struct {
 	region  *localRegion
 }
 
-func (it *response) Next() (resp io.ReadCloser, err error) {
+func (it *response) Next() (resp []byte, err error) {
 	if it.finished {
 		return nil, nil
 	}
@@ -159,7 +136,7 @@ func (it *response) Next() (resp io.ReadCloser, err error) {
 	if it.reqSent == len(it.tasks) && it.respGot == it.reqSent {
 		it.Close()
 	}
-	return &localResponseReader{s: regionResp.data}, nil
+	return regionResp.data, nil
 }
 
 func (it *response) createRetryTasks(resp *regionResponse) []*task {

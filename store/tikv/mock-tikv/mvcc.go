@@ -47,12 +47,12 @@ type mvccLock struct {
 }
 
 type mvccEntry struct {
-	key    mvccKey
+	key    MvccKey
 	values []mvccValue
 	lock   *mvccLock
 }
 
-func newEntry(key mvccKey) *mvccEntry {
+func newEntry(key MvccKey) *mvccEntry {
 	return &mvccEntry{
 		key: key,
 	}
@@ -130,18 +130,18 @@ func (e *mvccEntry) Prewrite(mutation *kvrpcpb.Mutation, startTS uint64, primary
 	return nil
 }
 
-func (e *mvccEntry) checkTxnCommitted(startTS uint64) (uint64, bool) {
+func (e *mvccEntry) getTxnCommitInfo(startTS uint64) *mvccValue {
 	for _, v := range e.values {
-		if v.startTS == startTS && v.valueType != typeRollback {
-			return v.commitTS, true
+		if v.startTS == startTS {
+			return &v
 		}
 	}
-	return 0, false
+	return nil
 }
 
 func (e *mvccEntry) Commit(startTS, commitTS uint64) error {
 	if e.lock == nil || e.lock.startTS != startTS {
-		if _, ok := e.checkTxnCommitted(startTS); ok {
+		if c := e.getTxnCommitInfo(startTS); c != nil && c.valueType != typeRollback {
 			return nil
 		}
 		return ErrRetryable("txn not found")
@@ -165,18 +165,33 @@ func (e *mvccEntry) Commit(startTS, commitTS uint64) error {
 }
 
 func (e *mvccEntry) Rollback(startTS uint64) error {
-	if e.lock == nil || e.lock.startTS != startTS {
-		if commitTS, ok := e.checkTxnCommitted(startTS); ok {
-			return ErrAlreadyCommitted(commitTS)
-		}
+	// If current transaction's lock exist.
+	if e.lock != nil && e.lock.startTS == startTS {
+		e.lock = nil
+		e.values = append([]mvccValue{{
+			valueType: typeRollback,
+			startTS:   startTS,
+			commitTS:  startTS,
+		}}, e.values...)
 		return nil
 	}
+
+	// If current transaction's lock not exist.
+	// If commit info of current transaction exist.
+	if c := e.getTxnCommitInfo(startTS); c != nil {
+		// If current transaction is already committed.
+		if c.valueType != typeRollback {
+			return ErrAlreadyCommitted(c.commitTS)
+		}
+		// If current transaction is already rollback.
+		return nil
+	}
+	// If current transaction is not prewritted before.
 	e.values = append([]mvccValue{{
 		valueType: typeRollback,
 		startTS:   startTS,
 		commitTS:  startTS,
 	}}, e.values...)
-	e.lock = nil
 	return nil
 }
 
@@ -200,10 +215,10 @@ func (s *MvccStore) Get(key []byte, startTS uint64) ([]byte, error) {
 	s.RLock()
 	defer s.RUnlock()
 
-	return s.get(newMvccKey(key), startTS)
+	return s.get(NewMvccKey(key), startTS)
 }
 
-func (s *MvccStore) get(key mvccKey, startTS uint64) ([]byte, error) {
+func (s *MvccStore) get(key MvccKey, startTS uint64) ([]byte, error) {
 	entry := s.tree.Get(newEntry(key))
 	if entry == nil {
 		return nil, nil
@@ -225,7 +240,7 @@ func (s *MvccStore) BatchGet(ks [][]byte, startTS uint64) []Pair {
 
 	var pairs []Pair
 	for _, k := range ks {
-		val, err := s.get(newMvccKey(k), startTS)
+		val, err := s.get(NewMvccKey(k), startTS)
 		if val == nil && err == nil {
 			continue
 		}
@@ -248,8 +263,8 @@ func (s *MvccStore) Scan(startKey, endKey []byte, limit int, startTS uint64) []P
 	s.RLock()
 	defer s.RUnlock()
 
-	startKey = newMvccKey(startKey)
-	endKey = newMvccKey(endKey)
+	startKey = NewMvccKey(startKey)
+	endKey = NewMvccKey(endKey)
 
 	var pairs []Pair
 	iterator := func(item llrb.Item) bool {
@@ -280,8 +295,8 @@ func (s *MvccStore) ReverseScan(startKey, endKey []byte, limit int, startTS uint
 	s.RLock()
 	defer s.RUnlock()
 
-	startKey = newMvccKey(startKey)
-	endKey = newMvccKey(endKey)
+	startKey = NewMvccKey(startKey)
+	endKey = NewMvccKey(endKey)
 
 	var pairs []Pair
 	iterator := func(item llrb.Item) bool {
@@ -330,7 +345,7 @@ func (s *MvccStore) Prewrite(mutations []*kvrpcpb.Mutation, primary []byte, star
 
 	var errs []error
 	for _, m := range mutations {
-		entry := s.getOrNewEntry(newMvccKey(m.Key))
+		entry := s.getOrNewEntry(NewMvccKey(m.Key))
 		err := entry.Prewrite(m, startTS, primary, ttl)
 		s.submit(entry)
 		errs = append(errs, err)
@@ -345,7 +360,7 @@ func (s *MvccStore) Commit(keys [][]byte, startTS, commitTS uint64) error {
 
 	var ents []*mvccEntry
 	for _, k := range keys {
-		entry := s.getOrNewEntry(newMvccKey(k))
+		entry := s.getOrNewEntry(NewMvccKey(k))
 		err := entry.Commit(startTS, commitTS)
 		if err != nil {
 			return err
@@ -361,7 +376,7 @@ func (s *MvccStore) Cleanup(key []byte, startTS uint64) error {
 	s.Lock()
 	defer s.Unlock()
 
-	entry := s.getOrNewEntry(newMvccKey(key))
+	entry := s.getOrNewEntry(NewMvccKey(key))
 	err := entry.Rollback(startTS)
 	if err != nil {
 		return err
@@ -377,7 +392,7 @@ func (s *MvccStore) Rollback(keys [][]byte, startTS uint64) error {
 
 	var ents []*mvccEntry
 	for _, k := range keys {
-		entry := s.getOrNewEntry(newMvccKey(k))
+		entry := s.getOrNewEntry(NewMvccKey(k))
 		err := entry.Rollback(startTS)
 		if err != nil {
 			return err
@@ -469,18 +484,20 @@ func (s *MvccStore) RawDelete(key []byte) {
 	delete(s.rawkv, string(key))
 }
 
+// MvccKey is the encoded key type.
 // On TiKV, keys are encoded before they are saved into storage engine.
-type mvccKey []byte
+type MvccKey []byte
 
-func newMvccKey(key []byte) mvccKey {
+// NewMvccKey encodes a key into MvccKey.
+func NewMvccKey(key []byte) MvccKey {
 	if len(key) == 0 {
 		return nil
 	}
 	return codec.EncodeBytes(nil, key)
 }
 
-// Raw decodes a mvccKey to original key.
-func (key mvccKey) Raw() []byte {
+// Raw decodes a MvccKey to original key.
+func (key MvccKey) Raw() []byte {
 	if len(key) == 0 {
 		return nil
 	}

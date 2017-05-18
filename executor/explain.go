@@ -25,19 +25,20 @@ import (
 // ExplainExec represents an explain executor.
 // See https://dev.mysql.com/doc/refman/5.7/en/explain-output.html
 type ExplainExec struct {
+	baseExecutor
+
 	StmtPlan plan.Plan
-	schema   expression.Schema
 	rows     []*Row
 	cursor   int
 }
 
 // Schema implements the Executor Schema interface.
-func (e *ExplainExec) Schema() expression.Schema {
+func (e *ExplainExec) Schema() *expression.Schema {
 	return e.schema
 }
 
 func (e *ExplainExec) prepareExplainInfo(p plan.Plan, parent plan.Plan) error {
-	for _, child := range p.GetChildren() {
+	for _, child := range p.Children() {
 		err := e.prepareExplainInfo(child, p)
 		if err != nil {
 			return errors.Trace(err)
@@ -49,10 +50,10 @@ func (e *ExplainExec) prepareExplainInfo(p plan.Plan, parent plan.Plan) error {
 	}
 	parentStr := ""
 	if parent != nil {
-		parentStr = parent.GetID()
+		parentStr = parent.ID()
 	}
 	row := &Row{
-		Data: types.MakeDatums(p.GetID(), string(explain), parentStr),
+		Data: types.MakeDatums(p.ID(), string(explain), parentStr),
 	}
 	e.rows = append(e.rows, row)
 	return nil

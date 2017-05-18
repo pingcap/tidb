@@ -42,21 +42,10 @@ func WriteMessage(w io.Writer, msgID uint64, msg proto.Message) error {
 
 // ReadMessage reads a protocol buffer message from reader.
 func ReadMessage(r io.Reader, msg proto.Message) (uint64, error) {
-	var header [msgHeaderSize]byte
-	_, err := io.ReadFull(r, header[:])
+	msgID, msgLen, err := ReadHeader(r)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-
-	if magic := binary.BigEndian.Uint16(header[0:2]); magic != msgMagic {
-		return 0, errors.Errorf("mismatch header magic %x != %x", magic, msgMagic)
-	}
-
-	// skip version now.
-
-	msgLen := binary.BigEndian.Uint32(header[4:8])
-	msgID := binary.BigEndian.Uint64(header[8:])
-
 	body := make([]byte, msgLen)
 	_, err = io.ReadFull(r, body)
 	if err != nil {
@@ -69,4 +58,24 @@ func ReadMessage(r io.Reader, msg proto.Message) (uint64, error) {
 	}
 
 	return msgID, nil
+}
+
+// ReadHeader reads a protocol header from reader.
+func ReadHeader(r io.Reader) (msgID uint64, msgLen uint32, err error) {
+	var header [msgHeaderSize]byte
+	_, err = io.ReadFull(r, header[:])
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+
+	if magic := binary.BigEndian.Uint16(header[0:2]); magic != msgMagic {
+		return 0, 0, errors.Errorf("mismatch header magic %x != %x", magic, msgMagic)
+	}
+
+	// Skip version now.
+	// TODO: check version.
+
+	msgLen = binary.BigEndian.Uint32(header[4:8])
+	msgID = binary.BigEndian.Uint64(header[8:])
+	return
 }

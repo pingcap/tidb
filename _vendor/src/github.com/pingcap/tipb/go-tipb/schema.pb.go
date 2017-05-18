@@ -9,26 +9,25 @@ import (
 
 	proto "github.com/golang/protobuf/proto"
 )
-
 import math "math"
+
+// discarding unused import gogoproto "gogoproto"
 
 import io "io"
 
 // Reference imports to suppress errors if they are not otherwise used.
 var _ = proto.Marshal
-var _ = fmt.Errorf
 var _ = math.Inf
 
 type TableInfo struct {
-	TableId          int64         `protobuf:"varint,1,opt,name=table_id,json=tableId" json:"table_id"`
+	TableId          int64         `protobuf:"varint,1,opt,name=table_id" json:"table_id"`
 	Columns          []*ColumnInfo `protobuf:"bytes,2,rep,name=columns" json:"columns,omitempty"`
 	XXX_unrecognized []byte        `json:"-"`
 }
 
-func (m *TableInfo) Reset()                    { *m = TableInfo{} }
-func (m *TableInfo) String() string            { return proto.CompactTextString(m) }
-func (*TableInfo) ProtoMessage()               {}
-func (*TableInfo) Descriptor() ([]byte, []int) { return fileDescriptorSchema, []int{0} }
+func (m *TableInfo) Reset()         { *m = TableInfo{} }
+func (m *TableInfo) String() string { return proto.CompactTextString(m) }
+func (*TableInfo) ProtoMessage()    {}
 
 func (m *TableInfo) GetTableId() int64 {
 	if m != nil {
@@ -45,21 +44,21 @@ func (m *TableInfo) GetColumns() []*ColumnInfo {
 }
 
 type ColumnInfo struct {
-	ColumnId         int64    `protobuf:"varint,1,opt,name=column_id,json=columnId" json:"column_id"`
+	ColumnId         int64    `protobuf:"varint,1,opt,name=column_id" json:"column_id"`
 	Tp               int32    `protobuf:"varint,2,opt,name=tp" json:"tp"`
 	Collation        int32    `protobuf:"varint,3,opt,name=collation" json:"collation"`
 	ColumnLen        int32    `protobuf:"varint,4,opt,name=columnLen" json:"columnLen"`
 	Decimal          int32    `protobuf:"varint,5,opt,name=decimal" json:"decimal"`
 	Flag             int32    `protobuf:"varint,6,opt,name=flag" json:"flag"`
 	Elems            []string `protobuf:"bytes,7,rep,name=elems" json:"elems,omitempty"`
-	PkHandle         bool     `protobuf:"varint,21,opt,name=pk_handle,json=pkHandle" json:"pk_handle"`
+	DefaultVal       []byte   `protobuf:"bytes,8,opt,name=default_val" json:"default_val,omitempty"`
+	PkHandle         bool     `protobuf:"varint,21,opt,name=pk_handle" json:"pk_handle"`
 	XXX_unrecognized []byte   `json:"-"`
 }
 
-func (m *ColumnInfo) Reset()                    { *m = ColumnInfo{} }
-func (m *ColumnInfo) String() string            { return proto.CompactTextString(m) }
-func (*ColumnInfo) ProtoMessage()               {}
-func (*ColumnInfo) Descriptor() ([]byte, []int) { return fileDescriptorSchema, []int{1} }
+func (m *ColumnInfo) Reset()         { *m = ColumnInfo{} }
+func (m *ColumnInfo) String() string { return proto.CompactTextString(m) }
+func (*ColumnInfo) ProtoMessage()    {}
 
 func (m *ColumnInfo) GetColumnId() int64 {
 	if m != nil {
@@ -110,6 +109,13 @@ func (m *ColumnInfo) GetElems() []string {
 	return nil
 }
 
+func (m *ColumnInfo) GetDefaultVal() []byte {
+	if m != nil {
+		return m.DefaultVal
+	}
+	return nil
+}
+
 func (m *ColumnInfo) GetPkHandle() bool {
 	if m != nil {
 		return m.PkHandle
@@ -118,17 +124,16 @@ func (m *ColumnInfo) GetPkHandle() bool {
 }
 
 type IndexInfo struct {
-	TableId          int64         `protobuf:"varint,1,opt,name=table_id,json=tableId" json:"table_id"`
-	IndexId          int64         `protobuf:"varint,2,opt,name=index_id,json=indexId" json:"index_id"`
+	TableId          int64         `protobuf:"varint,1,opt,name=table_id" json:"table_id"`
+	IndexId          int64         `protobuf:"varint,2,opt,name=index_id" json:"index_id"`
 	Columns          []*ColumnInfo `protobuf:"bytes,3,rep,name=columns" json:"columns,omitempty"`
 	Unique           bool          `protobuf:"varint,4,opt,name=unique" json:"unique"`
 	XXX_unrecognized []byte        `json:"-"`
 }
 
-func (m *IndexInfo) Reset()                    { *m = IndexInfo{} }
-func (m *IndexInfo) String() string            { return proto.CompactTextString(m) }
-func (*IndexInfo) ProtoMessage()               {}
-func (*IndexInfo) Descriptor() ([]byte, []int) { return fileDescriptorSchema, []int{2} }
+func (m *IndexInfo) Reset()         { *m = IndexInfo{} }
+func (m *IndexInfo) String() string { return proto.CompactTextString(m) }
+func (*IndexInfo) ProtoMessage()    {}
 
 func (m *IndexInfo) GetTableId() int64 {
 	if m != nil {
@@ -158,11 +163,31 @@ func (m *IndexInfo) GetUnique() bool {
 	return false
 }
 
-func init() {
-	proto.RegisterType((*TableInfo)(nil), "tipb.TableInfo")
-	proto.RegisterType((*ColumnInfo)(nil), "tipb.ColumnInfo")
-	proto.RegisterType((*IndexInfo)(nil), "tipb.IndexInfo")
+// KeyRange is the encoded index key range, low is closed, high is open. (low <= x < high)
+type KeyRange struct {
+	Low              []byte `protobuf:"bytes,1,opt,name=low" json:"low,omitempty"`
+	High             []byte `protobuf:"bytes,2,opt,name=high" json:"high,omitempty"`
+	XXX_unrecognized []byte `json:"-"`
 }
+
+func (m *KeyRange) Reset()         { *m = KeyRange{} }
+func (m *KeyRange) String() string { return proto.CompactTextString(m) }
+func (*KeyRange) ProtoMessage()    {}
+
+func (m *KeyRange) GetLow() []byte {
+	if m != nil {
+		return m.Low
+	}
+	return nil
+}
+
+func (m *KeyRange) GetHigh() []byte {
+	if m != nil {
+		return m.High
+	}
+	return nil
+}
+
 func (m *TableInfo) Marshal() (data []byte, err error) {
 	size := m.Size()
 	data = make([]byte, size)
@@ -247,6 +272,12 @@ func (m *ColumnInfo) MarshalTo(data []byte) (int, error) {
 			i += copy(data[i:], s)
 		}
 	}
+	if m.DefaultVal != nil {
+		data[i] = 0x42
+		i++
+		i = encodeVarintSchema(data, i, uint64(len(m.DefaultVal)))
+		i += copy(data[i:], m.DefaultVal)
+	}
 	data[i] = 0xa8
 	i++
 	data[i] = 0x1
@@ -304,6 +335,39 @@ func (m *IndexInfo) MarshalTo(data []byte) (int, error) {
 		data[i] = 0
 	}
 	i++
+	if m.XXX_unrecognized != nil {
+		i += copy(data[i:], m.XXX_unrecognized)
+	}
+	return i, nil
+}
+
+func (m *KeyRange) Marshal() (data []byte, err error) {
+	size := m.Size()
+	data = make([]byte, size)
+	n, err := m.MarshalTo(data)
+	if err != nil {
+		return nil, err
+	}
+	return data[:n], nil
+}
+
+func (m *KeyRange) MarshalTo(data []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	if m.Low != nil {
+		data[i] = 0xa
+		i++
+		i = encodeVarintSchema(data, i, uint64(len(m.Low)))
+		i += copy(data[i:], m.Low)
+	}
+	if m.High != nil {
+		data[i] = 0x12
+		i++
+		i = encodeVarintSchema(data, i, uint64(len(m.High)))
+		i += copy(data[i:], m.High)
+	}
 	if m.XXX_unrecognized != nil {
 		i += copy(data[i:], m.XXX_unrecognized)
 	}
@@ -368,6 +432,10 @@ func (m *ColumnInfo) Size() (n int) {
 			n += 1 + l + sovSchema(uint64(l))
 		}
 	}
+	if m.DefaultVal != nil {
+		l = len(m.DefaultVal)
+		n += 1 + l + sovSchema(uint64(l))
+	}
 	n += 3
 	if m.XXX_unrecognized != nil {
 		n += len(m.XXX_unrecognized)
@@ -393,6 +461,23 @@ func (m *IndexInfo) Size() (n int) {
 	return n
 }
 
+func (m *KeyRange) Size() (n int) {
+	var l int
+	_ = l
+	if m.Low != nil {
+		l = len(m.Low)
+		n += 1 + l + sovSchema(uint64(l))
+	}
+	if m.High != nil {
+		l = len(m.High)
+		n += 1 + l + sovSchema(uint64(l))
+	}
+	if m.XXX_unrecognized != nil {
+		n += len(m.XXX_unrecognized)
+	}
+	return n
+}
+
 func sovSchema(x uint64) (n int) {
 	for {
 		n++
@@ -410,12 +495,8 @@ func (m *TableInfo) Unmarshal(data []byte) error {
 	l := len(data)
 	iNdEx := 0
 	for iNdEx < l {
-		preIndex := iNdEx
 		var wire uint64
 		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowSchema
-			}
 			if iNdEx >= l {
 				return io.ErrUnexpectedEOF
 			}
@@ -428,12 +509,6 @@ func (m *TableInfo) Unmarshal(data []byte) error {
 		}
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: TableInfo: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: TableInfo: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
 		switch fieldNum {
 		case 1:
 			if wireType != 0 {
@@ -441,9 +516,6 @@ func (m *TableInfo) Unmarshal(data []byte) error {
 			}
 			m.TableId = 0
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSchema
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -460,9 +532,6 @@ func (m *TableInfo) Unmarshal(data []byte) error {
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSchema
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -473,10 +542,10 @@ func (m *TableInfo) Unmarshal(data []byte) error {
 					break
 				}
 			}
+			postIndex := iNdEx + msglen
 			if msglen < 0 {
 				return ErrInvalidLengthSchema
 			}
-			postIndex := iNdEx + msglen
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
@@ -486,7 +555,15 @@ func (m *TableInfo) Unmarshal(data []byte) error {
 			}
 			iNdEx = postIndex
 		default:
-			iNdEx = preIndex
+			var sizeOfWire int
+			for {
+				sizeOfWire++
+				wire >>= 7
+				if wire == 0 {
+					break
+				}
+			}
+			iNdEx -= sizeOfWire
 			skippy, err := skipSchema(data[iNdEx:])
 			if err != nil {
 				return err
@@ -502,21 +579,14 @@ func (m *TableInfo) Unmarshal(data []byte) error {
 		}
 	}
 
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
 	return nil
 }
 func (m *ColumnInfo) Unmarshal(data []byte) error {
 	l := len(data)
 	iNdEx := 0
 	for iNdEx < l {
-		preIndex := iNdEx
 		var wire uint64
 		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowSchema
-			}
 			if iNdEx >= l {
 				return io.ErrUnexpectedEOF
 			}
@@ -529,12 +599,6 @@ func (m *ColumnInfo) Unmarshal(data []byte) error {
 		}
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: ColumnInfo: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: ColumnInfo: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
 		switch fieldNum {
 		case 1:
 			if wireType != 0 {
@@ -542,9 +606,6 @@ func (m *ColumnInfo) Unmarshal(data []byte) error {
 			}
 			m.ColumnId = 0
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSchema
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -561,9 +622,6 @@ func (m *ColumnInfo) Unmarshal(data []byte) error {
 			}
 			m.Tp = 0
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSchema
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -580,9 +638,6 @@ func (m *ColumnInfo) Unmarshal(data []byte) error {
 			}
 			m.Collation = 0
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSchema
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -599,9 +654,6 @@ func (m *ColumnInfo) Unmarshal(data []byte) error {
 			}
 			m.ColumnLen = 0
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSchema
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -618,9 +670,6 @@ func (m *ColumnInfo) Unmarshal(data []byte) error {
 			}
 			m.Decimal = 0
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSchema
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -637,9 +686,6 @@ func (m *ColumnInfo) Unmarshal(data []byte) error {
 			}
 			m.Flag = 0
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSchema
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -656,9 +702,6 @@ func (m *ColumnInfo) Unmarshal(data []byte) error {
 			}
 			var stringLen uint64
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSchema
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -669,15 +712,39 @@ func (m *ColumnInfo) Unmarshal(data []byte) error {
 					break
 				}
 			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
+			postIndex := iNdEx + int(stringLen)
+			if stringLen < 0 {
 				return ErrInvalidLengthSchema
 			}
-			postIndex := iNdEx + intStringLen
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
 			m.Elems = append(m.Elems, string(data[iNdEx:postIndex]))
+			iNdEx = postIndex
+		case 8:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field DefaultVal", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := data[iNdEx]
+				iNdEx++
+				byteLen |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthSchema
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.DefaultVal = append([]byte{}, data[iNdEx:postIndex]...)
 			iNdEx = postIndex
 		case 21:
 			if wireType != 0 {
@@ -685,9 +752,6 @@ func (m *ColumnInfo) Unmarshal(data []byte) error {
 			}
 			var v int
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSchema
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -700,7 +764,15 @@ func (m *ColumnInfo) Unmarshal(data []byte) error {
 			}
 			m.PkHandle = bool(v != 0)
 		default:
-			iNdEx = preIndex
+			var sizeOfWire int
+			for {
+				sizeOfWire++
+				wire >>= 7
+				if wire == 0 {
+					break
+				}
+			}
+			iNdEx -= sizeOfWire
 			skippy, err := skipSchema(data[iNdEx:])
 			if err != nil {
 				return err
@@ -716,21 +788,14 @@ func (m *ColumnInfo) Unmarshal(data []byte) error {
 		}
 	}
 
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
 	return nil
 }
 func (m *IndexInfo) Unmarshal(data []byte) error {
 	l := len(data)
 	iNdEx := 0
 	for iNdEx < l {
-		preIndex := iNdEx
 		var wire uint64
 		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowSchema
-			}
 			if iNdEx >= l {
 				return io.ErrUnexpectedEOF
 			}
@@ -743,12 +808,6 @@ func (m *IndexInfo) Unmarshal(data []byte) error {
 		}
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: IndexInfo: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: IndexInfo: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
 		switch fieldNum {
 		case 1:
 			if wireType != 0 {
@@ -756,9 +815,6 @@ func (m *IndexInfo) Unmarshal(data []byte) error {
 			}
 			m.TableId = 0
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSchema
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -775,9 +831,6 @@ func (m *IndexInfo) Unmarshal(data []byte) error {
 			}
 			m.IndexId = 0
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSchema
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -794,9 +847,6 @@ func (m *IndexInfo) Unmarshal(data []byte) error {
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSchema
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -807,10 +857,10 @@ func (m *IndexInfo) Unmarshal(data []byte) error {
 					break
 				}
 			}
+			postIndex := iNdEx + msglen
 			if msglen < 0 {
 				return ErrInvalidLengthSchema
 			}
-			postIndex := iNdEx + msglen
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
@@ -825,9 +875,6 @@ func (m *IndexInfo) Unmarshal(data []byte) error {
 			}
 			var v int
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSchema
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -840,7 +887,15 @@ func (m *IndexInfo) Unmarshal(data []byte) error {
 			}
 			m.Unique = bool(v != 0)
 		default:
-			iNdEx = preIndex
+			var sizeOfWire int
+			for {
+				sizeOfWire++
+				wire >>= 7
+				if wire == 0 {
+					break
+				}
+			}
+			iNdEx -= sizeOfWire
 			skippy, err := skipSchema(data[iNdEx:])
 			if err != nil {
 				return err
@@ -856,9 +911,102 @@ func (m *IndexInfo) Unmarshal(data []byte) error {
 		}
 	}
 
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
+	return nil
+}
+func (m *KeyRange) Unmarshal(data []byte) error {
+	l := len(data)
+	iNdEx := 0
+	for iNdEx < l {
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := data[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Low", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := data[iNdEx]
+				iNdEx++
+				byteLen |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthSchema
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Low = append([]byte{}, data[iNdEx:postIndex]...)
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field High", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := data[iNdEx]
+				iNdEx++
+				byteLen |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthSchema
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.High = append([]byte{}, data[iNdEx:postIndex]...)
+			iNdEx = postIndex
+		default:
+			var sizeOfWire int
+			for {
+				sizeOfWire++
+				wire >>= 7
+				if wire == 0 {
+					break
+				}
+			}
+			iNdEx -= sizeOfWire
+			skippy, err := skipSchema(data[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthSchema
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.XXX_unrecognized = append(m.XXX_unrecognized, data[iNdEx:iNdEx+skippy]...)
+			iNdEx += skippy
+		}
 	}
+
 	return nil
 }
 func skipSchema(data []byte) (n int, err error) {
@@ -867,9 +1015,6 @@ func skipSchema(data []byte) (n int, err error) {
 	for iNdEx < l {
 		var wire uint64
 		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return 0, ErrIntOverflowSchema
-			}
 			if iNdEx >= l {
 				return 0, io.ErrUnexpectedEOF
 			}
@@ -883,10 +1028,7 @@ func skipSchema(data []byte) (n int, err error) {
 		wireType := int(wire & 0x7)
 		switch wireType {
 		case 0:
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return 0, ErrIntOverflowSchema
-				}
+			for {
 				if iNdEx >= l {
 					return 0, io.ErrUnexpectedEOF
 				}
@@ -902,9 +1044,6 @@ func skipSchema(data []byte) (n int, err error) {
 		case 2:
 			var length int
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return 0, ErrIntOverflowSchema
-				}
 				if iNdEx >= l {
 					return 0, io.ErrUnexpectedEOF
 				}
@@ -925,9 +1064,6 @@ func skipSchema(data []byte) (n int, err error) {
 				var innerWire uint64
 				var start int = iNdEx
 				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return 0, ErrIntOverflowSchema
-					}
 					if iNdEx >= l {
 						return 0, io.ErrUnexpectedEOF
 					}
@@ -963,33 +1099,4 @@ func skipSchema(data []byte) (n int, err error) {
 
 var (
 	ErrInvalidLengthSchema = fmt.Errorf("proto: negative length found during unmarshaling")
-	ErrIntOverflowSchema   = fmt.Errorf("proto: integer overflow")
 )
-
-func init() { proto.RegisterFile("schema.proto", fileDescriptorSchema) }
-
-var fileDescriptorSchema = []byte{
-	// 340 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0x8c, 0x90, 0xc1, 0x4e, 0x83, 0x30,
-	0x1c, 0xc6, 0x57, 0x60, 0x03, 0xfe, 0x7a, 0x30, 0xcd, 0x96, 0x34, 0xc6, 0x30, 0xe4, 0x84, 0x1e,
-	0x30, 0xf1, 0x11, 0xe6, 0x45, 0x12, 0x0f, 0x66, 0xf1, 0xe0, 0x6d, 0x61, 0xd0, 0xb1, 0x66, 0xd0,
-	0x56, 0x07, 0x89, 0x47, 0xdf, 0x42, 0x1f, 0x69, 0x47, 0x9f, 0xc0, 0x98, 0xf9, 0x22, 0xa6, 0x65,
-	0x64, 0xb8, 0x8b, 0xde, 0xe8, 0xef, 0xfb, 0xf1, 0xa5, 0xfd, 0xe0, 0x78, 0x9d, 0x2e, 0x69, 0x99,
-	0x44, 0xf2, 0x59, 0x54, 0x02, 0x5b, 0x15, 0x93, 0xf3, 0xd3, 0x61, 0x2e, 0x72, 0xa1, 0xc1, 0x95,
-	0xfa, 0x6a, 0xb2, 0xe0, 0x11, 0xdc, 0x87, 0x64, 0x5e, 0xd0, 0x98, 0x2f, 0x04, 0x1e, 0x83, 0x53,
-	0xa9, 0xc3, 0x8c, 0x65, 0x04, 0xf9, 0x28, 0x34, 0x27, 0xd6, 0xe6, 0x73, 0xdc, 0x9b, 0xda, 0x9a,
-	0xc6, 0x19, 0xbe, 0x04, 0x3b, 0x15, 0x45, 0x5d, 0xf2, 0x35, 0x31, 0x7c, 0x33, 0x3c, 0xba, 0x3e,
-	0x89, 0x54, 0x77, 0x74, 0xa3, 0xa1, 0xea, 0x98, 0xb6, 0x42, 0xf0, 0x6a, 0x00, 0xec, 0x39, 0x3e,
-	0x07, 0xb7, 0x49, 0x0e, 0xcb, 0x9d, 0x06, 0xc7, 0x19, 0x1e, 0x82, 0x51, 0x49, 0x62, 0xf8, 0x28,
-	0xec, 0xef, 0x32, 0xa3, 0x92, 0x38, 0xd0, 0x3f, 0x16, 0x49, 0xc5, 0x04, 0x27, 0x66, 0x27, 0xdc,
-	0xe3, 0x9d, 0x53, 0x97, 0xfc, 0x8e, 0x72, 0x62, 0x1d, 0x38, 0x0d, 0xc6, 0x1e, 0xd8, 0x19, 0x4d,
-	0x59, 0x99, 0x14, 0xa4, 0xdf, 0x31, 0x5a, 0x88, 0x09, 0x58, 0x8b, 0x22, 0xc9, 0xc9, 0xa0, 0x13,
-	0x6a, 0x82, 0x87, 0xd0, 0xa7, 0x05, 0x2d, 0xd7, 0xc4, 0xf6, 0xcd, 0xd0, 0x9d, 0x36, 0x07, 0xf5,
-	0x20, 0xb9, 0x9a, 0x2d, 0x13, 0x9e, 0x15, 0x94, 0x8c, 0x7c, 0x14, 0x3a, 0xed, 0x83, 0xe4, 0xea,
-	0x56, 0xd3, 0xe0, 0x0d, 0x81, 0x1b, 0xf3, 0x8c, 0xbe, 0xfc, 0x6f, 0xdd, 0x31, 0x38, 0x4c, 0xd9,
-	0x4a, 0x30, 0xba, 0x82, 0xa6, 0xbf, 0xe7, 0x37, 0xff, 0x98, 0x1f, 0x9f, 0xc1, 0xa0, 0xe6, 0xec,
-	0xa9, 0xa6, 0x7a, 0x8f, 0xf6, 0x6e, 0x3b, 0x36, 0xb9, 0xd8, 0x6c, 0x3d, 0xf4, 0xb1, 0xf5, 0xd0,
-	0xd7, 0xd6, 0x43, 0xef, 0xdf, 0x5e, 0x0f, 0x46, 0xa9, 0x28, 0x23, 0xc9, 0x78, 0x9e, 0x26, 0x32,
-	0xaa, 0x58, 0x36, 0xd7, 0xd5, 0xf7, 0xe8, 0x27, 0x00, 0x00, 0xff, 0xff, 0x0f, 0xcf, 0x18, 0xe5,
-	0x4c, 0x02, 0x00, 0x00,
-}

@@ -52,6 +52,15 @@ func (s *InjectedStore) Begin() (Transaction, error) {
 	}, err
 }
 
+// BeginWithStartTS creates an injected Transaction with startTS.
+func (s *InjectedStore) BeginWithStartTS(startTS uint64) (Transaction, error) {
+	txn, err := s.Storage.BeginWithStartTS(startTS)
+	return &InjectedTransaction{
+		Transaction: txn,
+		cfg:         s.cfg,
+	}, err
+}
+
 // GetSnapshot creates an injected Snapshot.
 func (s *InjectedStore) GetSnapshot(ver Version) (Snapshot, error) {
 	snapshot, err := s.Storage.GetSnapshot(ver)

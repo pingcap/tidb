@@ -14,21 +14,11 @@
 package plan
 
 import (
-	"fmt"
-	"strings"
-
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util/types"
 )
-
-// TableRange represents a range of row handle.
-type TableRange struct {
-	LowVal  int64
-	HighVal int64
-}
 
 // ShowDDL is for showing DDL information.
 type ShowDDL struct {
@@ -42,81 +32,23 @@ type CheckTable struct {
 	Tables []*ast.TableName
 }
 
-// IndexRange represents an index range to be scanned.
-type IndexRange struct {
-	LowVal      []types.Datum
-	LowExclude  bool
-	HighVal     []types.Datum
-	HighExclude bool
-}
-
-// IsPoint returns if the index range is a point.
-func (ir *IndexRange) IsPoint(sc *variable.StatementContext) bool {
-	if len(ir.LowVal) != len(ir.HighVal) {
-		return false
-	}
-	for i := range ir.LowVal {
-		a := ir.LowVal[i]
-		b := ir.HighVal[i]
-		if a.Kind() == types.KindMinNotNull || b.Kind() == types.KindMaxValue {
-			return false
-		}
-		cmp, err := a.CompareDatum(sc, b)
-		if err != nil {
-			return false
-		}
-		if cmp != 0 {
-			return false
-		}
-	}
-	return !ir.LowExclude && !ir.HighExclude
-}
-
-func (ir *IndexRange) String() string {
-	lowStrs := make([]string, 0, len(ir.LowVal))
-	for _, d := range ir.LowVal {
-		if d.Kind() == types.KindMinNotNull {
-			lowStrs = append(lowStrs, "-inf")
-		} else {
-			lowStrs = append(lowStrs, fmt.Sprintf("%v", d.GetValue()))
-		}
-	}
-	highStrs := make([]string, 0, len(ir.LowVal))
-	for _, d := range ir.HighVal {
-		if d.Kind() == types.KindMaxValue {
-			highStrs = append(highStrs, "+inf")
-		} else {
-			highStrs = append(highStrs, fmt.Sprintf("%v", d.GetValue()))
-		}
-	}
-	l, r := "[", "]"
-	if ir.LowExclude {
-		l = "("
-	}
-	if ir.HighExclude {
-		r = ")"
-	}
-	return l + strings.Join(lowStrs, " ") + "," + strings.Join(highStrs, " ") + r
-}
-
 // SelectLock represents a select lock plan.
 type SelectLock struct {
+	*basePlan
 	baseLogicalPlan
+	basePhysicalPlan
 
 	Lock ast.SelectLockType
 }
 
 // Limit represents offset and limit plan.
 type Limit struct {
+	*basePlan
 	baseLogicalPlan
+	basePhysicalPlan
 
 	Offset uint64
 	Count  uint64
-}
-
-// Distinct represents Distinct plan.
-type Distinct struct {
-	baseLogicalPlan
 }
 
 // Prepare represents prepare plan.
@@ -133,7 +65,7 @@ type Execute struct {
 
 	Name      string
 	UsingVars []expression.Expression
-	ID        uint32
+	ExecID    uint32
 }
 
 // Deallocate represents deallocate plan.
@@ -145,7 +77,9 @@ type Deallocate struct {
 
 // Show represents a show plan.
 type Show struct {
+	*basePlan
 	baseLogicalPlan
+	basePhysicalPlan
 
 	Tp     ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName string
@@ -175,10 +109,12 @@ type Simple struct {
 
 // Insert represents an insert plan.
 type Insert struct {
+	*basePlan
 	baseLogicalPlan
+	basePhysicalPlan
 
 	Table       table.Table
-	tableSchema expression.Schema
+	tableSchema *expression.Schema
 	Columns     []*ast.ColumnName
 	Lists       [][]expression.Expression
 	Setlist     []*expression.Assignment
@@ -189,6 +125,33 @@ type Insert struct {
 	Ignore    bool
 }
 
+// AnalyzePKTask is used for analyze pk. Used only when pk is handle.
+type AnalyzePKTask struct {
+	TableInfo *model.TableInfo
+	PKInfo    *model.ColumnInfo
+}
+
+// AnalyzeColumnsTask is used for analyze columns.
+type AnalyzeColumnsTask struct {
+	TableInfo *model.TableInfo
+	ColsInfo  []*model.ColumnInfo
+}
+
+// AnalyzeIndexTask is used for analyze index.
+type AnalyzeIndexTask struct {
+	TableInfo *model.TableInfo
+	IndexInfo *model.IndexInfo
+}
+
+// Analyze represents an analyze plan
+type Analyze struct {
+	basePlan
+
+	PkTasks  []AnalyzePKTask
+	ColTasks []AnalyzeColumnsTask
+	IdxTasks []AnalyzeIndexTask
+}
+
 // LoadData represents a loaddata plan.
 type LoadData struct {
 	basePlan
@@ -196,6 +159,7 @@ type LoadData struct {
 	IsLocal    bool
 	Path       string
 	Table      *ast.TableName
+	Columns    []*ast.ColumnName
 	FieldsInfo *ast.FieldsClause
 	LinesInfo  *ast.LinesClause
 }

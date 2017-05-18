@@ -24,28 +24,40 @@ import (
 
 func (s *testEvaluatorSuite) TestDatabase(c *C) {
 	defer testleak.AfterTest(c)()
+	fc := funcs[ast.Database]
 	ctx := mock.NewContext()
-	d, err := builtinDatabase(types.MakeDatums(), ctx)
+	f, err := fc.getFunction(nil, ctx)
+	c.Assert(err, IsNil)
+	d, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.Kind(), Equals, types.KindNull)
 	ctx.GetSessionVars().CurrentDB = "test"
-	d, err = builtinDatabase(types.MakeDatums(), ctx)
+	d, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "test")
 
 	// Test case for schema().
-	f := Funcs[ast.Schema]
-	c.Assert(f, NotNil)
-	d, err = f.F(types.MakeDatums(), ctx)
+	fc = funcs[ast.Schema]
+	c.Assert(fc, NotNil)
+	f, err = fc.getFunction(nil, ctx)
+	c.Assert(err, IsNil)
+	d, err = f.eval(types.MakeDatums())
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "test")
 }
 
 func (s *testEvaluatorSuite) TestFoundRows(c *C) {
 	defer testleak.AfterTest(c)()
-	d, err := builtinFoundRows(types.MakeDatums(), s.ctx)
+	ctx := mock.NewContext()
+	sessionVars := ctx.GetSessionVars()
+	sessionVars.LastFoundRows = 2
+
+	fc := funcs[ast.FoundRows]
+	f, err := fc.getFunction(nil, ctx)
 	c.Assert(err, IsNil)
-	c.Assert(d.GetUint64(), Equals, uint64(0))
+	d, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(d.GetUint64(), Equals, uint64(2))
 }
 
 func (s *testEvaluatorSuite) TestUser(c *C) {
@@ -54,7 +66,10 @@ func (s *testEvaluatorSuite) TestUser(c *C) {
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.User = "root@localhost"
 
-	d, err := builtinUser(types.MakeDatums(), ctx)
+	fc := funcs[ast.User]
+	f, err := fc.getFunction(nil, ctx)
+	c.Assert(err, IsNil)
+	d, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "root@localhost")
 }
@@ -65,7 +80,10 @@ func (s *testEvaluatorSuite) TestCurrentUser(c *C) {
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.User = "root@localhost"
 
-	d, err := builtinCurrentUser(types.MakeDatums(), ctx)
+	fc := funcs[ast.CurrentUser]
+	f, err := fc.getFunction(nil, ctx)
+	c.Assert(err, IsNil)
+	d, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "root@localhost")
 }
@@ -76,14 +94,20 @@ func (s *testEvaluatorSuite) TestConnectionID(c *C) {
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.ConnectionID = uint64(1)
 
-	d, err := builtinConnectionID(types.MakeDatums(), ctx)
+	fc := funcs[ast.ConnectionID]
+	f, err := fc.getFunction(nil, ctx)
+	c.Assert(err, IsNil)
+	d, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.GetUint64(), Equals, uint64(1))
 }
 
 func (s *testEvaluatorSuite) TestVersion(c *C) {
 	defer testleak.AfterTest(c)()
-	v, err := builtinVersion(nil, s.ctx)
+	fc := funcs[ast.Version]
+	f, err := fc.getFunction(nil, s.ctx)
+	c.Assert(err, IsNil)
+	v, err := f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetString(), Equals, mysql.ServerVersion)
 }

@@ -14,6 +14,8 @@
 package xeval
 
 import (
+	"time"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
@@ -22,13 +24,13 @@ import (
 
 func (s *testEvalSuite) TestEvalCaseWhen(c *C) {
 	colID := int64(1)
-	xevaluator := NewEvaluator(new(variable.StatementContext))
+	xevaluator := NewEvaluator(new(variable.StatementContext), time.Local)
 	xevaluator.Row[colID] = types.NewIntDatum(100)
 	trueCond := types.NewIntDatum(1)
 	falseCond := types.NewIntDatum(0)
 	nullCond := types.Datum{}
 	nullCond.SetNull()
-	cases := []struct {
+	tests := []struct {
 		expr   *tipb.Expr
 		result types.Datum
 	}{
@@ -73,11 +75,11 @@ func (s *testEvalSuite) TestEvalCaseWhen(c *C) {
 			result: types.NewStringDatum("case3"),
 		},
 	}
-	for _, ca := range cases {
-		result, err := xevaluator.Eval(ca.expr)
+	for _, tt := range tests {
+		result, err := xevaluator.Eval(tt.expr)
 		c.Assert(err, IsNil)
-		c.Assert(result.Kind(), Equals, ca.result.Kind())
-		cmp, err := result.CompareDatum(xevaluator.sc, ca.result)
+		c.Assert(result.Kind(), Equals, tt.result.Kind())
+		cmp, err := result.CompareDatum(xevaluator.StatementCtx, tt.result)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}
@@ -85,11 +87,11 @@ func (s *testEvalSuite) TestEvalCaseWhen(c *C) {
 
 func (s *testEvalSuite) TestEvalIf(c *C) {
 	colID := int64(1)
-	xevaluator := NewEvaluator(new(variable.StatementContext))
+	xevaluator := NewEvaluator(new(variable.StatementContext), time.Local)
 	xevaluator.Row[colID] = types.NewIntDatum(100)
 	trueCond, falseCond, null := types.NewIntDatum(1), types.NewIntDatum(0), types.Datum{}
 	expr1, expr2 := types.NewStringDatum("expr1"), types.NewStringDatum("expr2")
-	cases := []struct {
+	tests := []struct {
 		expr   *tipb.Expr
 		result types.Datum
 	}{
@@ -130,11 +132,11 @@ func (s *testEvalSuite) TestEvalIf(c *C) {
 			result: expr2,
 		},
 	}
-	for _, ca := range cases {
-		result, err := xevaluator.Eval(ca.expr)
+	for _, tt := range tests {
+		result, err := xevaluator.Eval(tt.expr)
 		c.Assert(err, IsNil)
-		c.Assert(result.Kind(), Equals, ca.result.Kind())
-		cmp, err := result.CompareDatum(xevaluator.sc, ca.result)
+		c.Assert(result.Kind(), Equals, tt.result.Kind())
+		cmp, err := result.CompareDatum(xevaluator.StatementCtx, tt.result)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}
@@ -142,10 +144,10 @@ func (s *testEvalSuite) TestEvalIf(c *C) {
 
 func (s *testEvalSuite) TestEvalNullIf(c *C) {
 	colID := int64(1)
-	xevaluator := NewEvaluator(new(variable.StatementContext))
+	xevaluator := NewEvaluator(new(variable.StatementContext), time.Local)
 	xevaluator.Row[colID] = types.NewDatum(100)
 	null := types.Datum{}
-	cases := []struct {
+	tests := []struct {
 		expr   *tipb.Expr
 		result types.Datum
 	}{
@@ -170,11 +172,11 @@ func (s *testEvalSuite) TestEvalNullIf(c *C) {
 			result: types.NewIntDatum(123),
 		},
 	}
-	for _, ca := range cases {
-		result, err := xevaluator.Eval(ca.expr)
+	for _, tt := range tests {
+		result, err := xevaluator.Eval(tt.expr)
 		c.Assert(err, IsNil)
-		c.Assert(result.Kind(), Equals, ca.result.Kind())
-		cmp, err := result.CompareDatum(xevaluator.sc, ca.result)
+		c.Assert(result.Kind(), Equals, tt.result.Kind())
+		cmp, err := result.CompareDatum(xevaluator.StatementCtx, tt.result)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}
@@ -182,10 +184,10 @@ func (s *testEvalSuite) TestEvalNullIf(c *C) {
 
 func (s *testEvalSuite) TestEvalIfNull(c *C) {
 	colID := int64(1)
-	xevaluator := NewEvaluator(new(variable.StatementContext))
+	xevaluator := NewEvaluator(new(variable.StatementContext), time.Local)
 	xevaluator.Row[colID] = types.NewDatum(100)
 	null, notNull, expr := types.Datum{}, types.NewStringDatum("left"), types.NewStringDatum("right")
-	cases := []struct {
+	tests := []struct {
 		expr   *tipb.Expr
 		result types.Datum
 	}{
@@ -205,11 +207,11 @@ func (s *testEvalSuite) TestEvalIfNull(c *C) {
 			result: notNull,
 		},
 	}
-	for _, ca := range cases {
-		result, err := xevaluator.Eval(ca.expr)
+	for _, tt := range tests {
+		result, err := xevaluator.Eval(tt.expr)
 		c.Assert(err, IsNil)
-		c.Assert(result.Kind(), Equals, ca.result.Kind())
-		cmp, err := result.CompareDatum(xevaluator.sc, ca.result)
+		c.Assert(result.Kind(), Equals, tt.result.Kind())
+		cmp, err := result.CompareDatum(xevaluator.StatementCtx, tt.result)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}

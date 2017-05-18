@@ -23,13 +23,13 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 )
 
-func (s *testDDLSuite) TestDropSchemaError(c *C) {
+func (s *testDDLSuite) TestDropSchema(c *C) {
 	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_drop_schema")
 	defer store.Close()
 
 	d := newDDL(store, nil, nil, testLease)
-	defer d.close()
+	defer d.Stop()
 
 	job := &model.Job{
 		SchemaID: 1,
@@ -42,20 +42,31 @@ func (s *testDDLSuite) TestDropSchemaError(c *C) {
 	c.Check(err, IsNil)
 	d.startBgJob(job.Type)
 
-	time.Sleep(testLease * 6)
-	verifyBgJobState(c, d, job, model.JobDone)
+	verifyBgJobState(c, d, job, model.JobDone, testLease*2)
 }
 
-func verifyBgJobState(c *C, d *ddl, job *model.Job, state model.JobState) {
-	kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		historyBgJob, err := t.GetHistoryBgJob(job.ID)
-		c.Assert(err, IsNil)
-		c.Assert(historyBgJob, NotNil)
-		c.Assert(historyBgJob.State, Equals, state)
-
-		return nil
-	})
+func verifyBgJobState(c *C, d *ddl, job *model.Job, state model.JobState, sleepTime time.Duration) {
+	time.Sleep(sleepTime)
+	var isDone bool
+	for i := 0; i < 50; i++ {
+		kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+			t := meta.NewMeta(txn)
+			historyBgJob, err := t.GetHistoryBgJob(job.ID)
+			c.Assert(err, IsNil)
+			if historyBgJob != nil {
+				c.Assert(historyBgJob, NotNil)
+				c.Assert(historyBgJob.State, Equals, state)
+				isDone = true
+			}
+			return nil
+		})
+		if isDone {
+			break
+		}
+		c.Logf("historyBgJob is nil, no.%v", i)
+		time.Sleep(testLease)
+	}
+	c.Assert(isDone, IsTrue)
 }
 
 func (s *testDDLSuite) TestDropTableError(c *C) {
@@ -64,10 +75,10 @@ func (s *testDDLSuite) TestDropTableError(c *C) {
 	defer store.Close()
 
 	d := newDDL(store, nil, nil, testLease)
-	defer d.close()
+	defer d.Stop()
 
 	dbInfo := testSchemaInfo(c, d, "test")
-	testCreateSchema(c, testNewContext(c, d), d, dbInfo)
+	testCreateSchema(c, testNewContext(d), d, dbInfo)
 
 	job := &model.Job{
 		SchemaID: dbInfo.ID,
@@ -86,8 +97,7 @@ func (s *testDDLSuite) TestDropTableError(c *C) {
 	c.Check(err, IsNil)
 	d.startBgJob(job.Type)
 
-	time.Sleep(testLease * 6)
-	verifyBgJobState(c, d, job, model.JobCancelled)
+	verifyBgJobState(c, d, job, model.JobCancelled, testLease*2)
 }
 
 func (s *testDDLSuite) TestInvalidBgJobType(c *C) {
@@ -96,12 +106,13 @@ func (s *testDDLSuite) TestInvalidBgJobType(c *C) {
 	defer store.Close()
 
 	d := newDDL(store, nil, nil, testLease)
-	defer d.close()
+	defer d.Stop()
 
 	job := &model.Job{
-		SchemaID: 1,
-		TableID:  1,
-		Type:     model.ActionCreateTable,
+		SchemaID:   1,
+		TableID:    1,
+		Type:       model.ActionCreateTable,
+		BinlogInfo: &model.HistoryInfo{},
 	}
 	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
@@ -110,6 +121,5 @@ func (s *testDDLSuite) TestInvalidBgJobType(c *C) {
 	c.Check(err, IsNil)
 	d.startBgJob(model.ActionDropTable)
 
-	time.Sleep(testLease * 6)
-	verifyBgJobState(c, d, job, model.JobCancelled)
+	verifyBgJobState(c, d, job, model.JobCancelled, testLease*2)
 }

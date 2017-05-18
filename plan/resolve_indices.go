@@ -15,25 +15,24 @@ package plan
 
 import (
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/util/types"
 )
 
-// ResolveIndicesAndCorCols implements LogicalPlan interface.
-func (p *Projection) ResolveIndicesAndCorCols() {
-	p.baseLogicalPlan.ResolveIndicesAndCorCols()
+// ResolveIndices implements Plan interface.
+func (p *Projection) ResolveIndices() {
+	p.basePlan.ResolveIndices()
 	for _, expr := range p.Exprs {
-		expr.ResolveIndices(p.GetChildByIndex(0).GetSchema())
+		expr.ResolveIndices(p.children[0].Schema())
 	}
 }
 
-// ResolveIndicesAndCorCols implements LogicalPlan interface.
-func (p *Join) ResolveIndicesAndCorCols() {
-	p.baseLogicalPlan.ResolveIndicesAndCorCols()
-	lSchema := p.GetChildByIndex(0).GetSchema()
-	rSchema := p.GetChildByIndex(1).GetSchema()
+// ResolveIndices implements Plan interface.
+func (p *LogicalJoin) ResolveIndices() {
+	p.basePlan.ResolveIndices()
+	lSchema := p.children[0].Schema()
+	rSchema := p.children[1].Schema()
 	for _, fun := range p.EqualConditions {
-		fun.Args[0].ResolveIndices(lSchema)
-		fun.Args[1].ResolveIndices(rSchema)
+		fun.GetArgs()[0].ResolveIndices(lSchema)
+		fun.GetArgs()[1].ResolveIndices(rSchema)
 	}
 	for _, expr := range p.LeftConditions {
 		expr.ResolveIndices(lSchema)
@@ -46,80 +45,168 @@ func (p *Join) ResolveIndicesAndCorCols() {
 	}
 }
 
-// ResolveIndicesAndCorCols implements LogicalPlan interface.
-func (p *Selection) ResolveIndicesAndCorCols() {
-	p.baseLogicalPlan.ResolveIndicesAndCorCols()
-	for _, expr := range p.Conditions {
-		expr.ResolveIndices(p.GetChildByIndex(0).GetSchema())
+// ResolveIndices implements Plan interface.
+func (p *PhysicalHashJoin) ResolveIndices() {
+	p.basePlan.ResolveIndices()
+	lSchema := p.children[0].Schema()
+	rSchema := p.children[1].Schema()
+	for _, fun := range p.EqualConditions {
+		fun.GetArgs()[0].ResolveIndices(lSchema)
+		fun.GetArgs()[1].ResolveIndices(rSchema)
+	}
+	for _, expr := range p.LeftConditions {
+		expr.ResolveIndices(lSchema)
+	}
+	for _, expr := range p.RightConditions {
+		expr.ResolveIndices(rSchema)
+	}
+	for _, expr := range p.OtherConditions {
+		expr.ResolveIndices(expression.MergeSchema(lSchema, rSchema))
 	}
 }
 
-// ResolveIndicesAndCorCols implements LogicalPlan interface.
-func (p *Aggregation) ResolveIndicesAndCorCols() {
-	p.baseLogicalPlan.ResolveIndicesAndCorCols()
+// ResolveIndices implements Plan interface.
+func (p *PhysicalHashSemiJoin) ResolveIndices() {
+	p.basePlan.ResolveIndices()
+	lSchema := p.children[0].Schema()
+	rSchema := p.children[1].Schema()
+	for _, fun := range p.EqualConditions {
+		fun.GetArgs()[0].ResolveIndices(lSchema)
+		fun.GetArgs()[1].ResolveIndices(rSchema)
+	}
+	for _, expr := range p.LeftConditions {
+		expr.ResolveIndices(lSchema)
+	}
+	for _, expr := range p.RightConditions {
+		expr.ResolveIndices(rSchema)
+	}
+	for _, expr := range p.OtherConditions {
+		expr.ResolveIndices(expression.MergeSchema(lSchema, rSchema))
+	}
+}
+
+// ResolveIndices implements Plan interface.
+func (p *PhysicalMergeJoin) ResolveIndices() {
+	p.basePlan.ResolveIndices()
+	lSchema := p.children[0].Schema()
+	rSchema := p.children[1].Schema()
+	for _, fun := range p.EqualConditions {
+		fun.GetArgs()[0].ResolveIndices(lSchema)
+		fun.GetArgs()[1].ResolveIndices(rSchema)
+	}
+	for _, expr := range p.LeftConditions {
+		expr.ResolveIndices(lSchema)
+	}
+	for _, expr := range p.RightConditions {
+		expr.ResolveIndices(rSchema)
+	}
+	for _, expr := range p.OtherConditions {
+		expr.ResolveIndices(expression.MergeSchema(lSchema, rSchema))
+	}
+}
+
+// ResolveIndices implements Plan interface.
+func (p *PhysicalUnionScan) ResolveIndices() {
+	for _, expr := range p.Conditions {
+		expr.ResolveIndices(p.children[0].Schema())
+	}
+}
+
+// ResolveIndices implements Plan interface.
+func (p *PhysicalTableReader) ResolveIndices() {
+	p.tablePlan.ResolveIndices()
+}
+
+// ResolveIndices implements Plan interface.
+func (p *PhysicalIndexReader) ResolveIndices() {
+	p.indexPlan.ResolveIndices()
+	for _, col := range p.OutputColumns {
+		col.ResolveIndices(p.indexPlan.Schema())
+	}
+}
+
+// ResolveIndices implements Plan interface.
+func (p *PhysicalIndexLookUpReader) ResolveIndices() {
+	p.tablePlan.ResolveIndices()
+	p.indexPlan.ResolveIndices()
+}
+
+// ResolveIndices implements Plan interface.
+func (p *Selection) ResolveIndices() {
+	p.basePlan.ResolveIndices()
+	for _, expr := range p.Conditions {
+		expr.ResolveIndices(p.children[0].Schema())
+	}
+}
+
+// ResolveIndices implements Plan interface.
+func (p *LogicalAggregation) ResolveIndices() {
+	p.basePlan.ResolveIndices()
 	for _, aggFun := range p.AggFuncs {
 		for _, arg := range aggFun.GetArgs() {
-			arg.ResolveIndices(p.GetChildByIndex(0).GetSchema())
+			arg.ResolveIndices(p.children[0].Schema())
 		}
 	}
 	for _, item := range p.GroupByItems {
-		item.ResolveIndices(p.GetChildByIndex(0).GetSchema())
+		item.ResolveIndices(p.children[0].Schema())
 	}
 }
 
-// ResolveIndicesAndCorCols implements LogicalPlan interface.
-func (p *Sort) ResolveIndicesAndCorCols() {
-	p.baseLogicalPlan.ResolveIndicesAndCorCols()
+// ResolveIndices implements Plan interface.
+func (p *PhysicalAggregation) ResolveIndices() {
+	p.basePlan.ResolveIndices()
+	for _, aggFun := range p.AggFuncs {
+		for _, arg := range aggFun.GetArgs() {
+			arg.ResolveIndices(p.children[0].Schema())
+		}
+	}
+	for _, item := range p.GroupByItems {
+		item.ResolveIndices(p.children[0].Schema())
+	}
+}
+
+// ResolveIndices implements Plan interface.
+func (p *Sort) ResolveIndices() {
+	p.basePlan.ResolveIndices()
 	for _, item := range p.ByItems {
-		item.Expr.ResolveIndices(p.GetChildByIndex(0).GetSchema())
+		item.Expr.ResolveIndices(p.children[0].Schema())
 	}
 }
 
-// ResolveIndicesAndCorCols implements LogicalPlan interface.
-func (p *Apply) ResolveIndicesAndCorCols() {
-	p.baseLogicalPlan.ResolveIndicesAndCorCols()
-	innerPlan := p.children[1].(LogicalPlan)
-	innerPlan.ResolveIndicesAndCorCols()
-	corCols := innerPlan.extractCorrelatedCols()
-	childSchema := p.children[0].GetSchema()
-	resultCorCols := make([]*expression.CorrelatedColumn, childSchema.Len())
-	for _, corCol := range corCols {
-		idx := childSchema.GetColumnIndex(&corCol.Column)
-		if idx != -1 {
-			if resultCorCols[idx] == nil {
-				resultCorCols[idx] = &expression.CorrelatedColumn{
-					Column: *childSchema.Columns[idx],
-					Data:   new(types.Datum),
-				}
-			}
-			corCol.Data = resultCorCols[idx].Data
-		}
-	}
-	// Shrink slice. e.g. [col1, nil, col2, nil] will be changed to [col1, col2]
-	length := 0
-	for _, col := range resultCorCols {
-		if col != nil {
-			resultCorCols[length] = col
-			length++
-		}
-	}
-	p.corCols = resultCorCols[:length]
-
-	if p.Checker != nil {
-		p.Checker.Condition.ResolveIndices(expression.MergeSchema(childSchema, innerPlan.GetSchema()))
+// ResolveIndices implements Plan interface.
+func (p *TopN) ResolveIndices() {
+	p.basePlan.ResolveIndices()
+	for _, item := range p.ByItems {
+		item.Expr.ResolveIndices(p.children[0].Schema())
 	}
 }
 
-// ResolveIndicesAndCorCols implements LogicalPlan interface.
-func (p *Update) ResolveIndicesAndCorCols() {
-	p.baseLogicalPlan.ResolveIndicesAndCorCols()
+// ResolveIndices implements Plan interface.
+func (p *LogicalApply) ResolveIndices() {
+	p.LogicalJoin.ResolveIndices()
+	for _, col := range p.corCols {
+		col.Column.ResolveIndices(p.children[0].Schema())
+	}
+}
+
+// ResolveIndices implements Plan interface.
+func (p *PhysicalApply) ResolveIndices() {
+	p.PhysicalJoin.ResolveIndices()
+	for _, col := range p.OuterSchema {
+		col.Column.ResolveIndices(p.children[0].Schema())
+	}
+}
+
+// ResolveIndices implements Plan interface.
+func (p *Update) ResolveIndices() {
+	p.basePlan.ResolveIndices()
 	orderedList := make([]*expression.Assignment, len(p.OrderedList))
-	schema := p.GetChildByIndex(0).GetSchema()
+	schema := p.children[0].Schema()
 	for _, v := range p.OrderedList {
 		if v == nil {
 			continue
 		}
-		orderedList[schema.GetColumnIndex(v.Col)] = v
+		orderedList[schema.ColumnIndex(v.Col)] = v
 	}
 	for i := 0; i < len(orderedList); i++ {
 		if orderedList[i] == nil {
@@ -131,10 +218,17 @@ func (p *Update) ResolveIndicesAndCorCols() {
 	p.OrderedList = orderedList
 }
 
-// ResolveIndicesAndCorCols implements LogicalPlan interface.
-func (p *Insert) ResolveIndicesAndCorCols() {
-	p.baseLogicalPlan.ResolveIndicesAndCorCols()
+// ResolveIndices implements Plan interface.
+func (p *Insert) ResolveIndices() {
+	p.basePlan.ResolveIndices()
 	for _, asgn := range p.OnDuplicate {
 		asgn.Expr.ResolveIndices(p.tableSchema)
+	}
+}
+
+// ResolveIndices implements Plan interface.
+func (p *basePlan) ResolveIndices() {
+	for _, child := range p.children {
+		child.ResolveIndices()
 	}
 }

@@ -21,54 +21,16 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
-const (
-	// Sel is the type of Selection.
-	Sel = "Selection"
-	// St is the type of Set.
-	St = "Set"
-	// Proj is the type of Projection.
-	Proj = "Projection"
-	// Agg is the type of Aggregation.
-	Agg = "Aggregation"
-	// Jn is the type of Join.
-	Jn = "Join"
-	// Un is the type of Union.
-	Un = "Union"
-	// Tbl is the type of TableScan.
-	Tbl = "TableScan"
-	// Idx is the type of IndexScan.
-	Idx = "IndexScan"
-	// Srt is the type of Sort.
-	Srt = "Sort"
-	// Lim is the type of Limit.
-	Lim = "Limit"
-	// App is the type of Apply.
-	App = "Apply"
-	// Dis is the type of Distinct.
-	Dis = "Distinct"
-	// Trm is the type of Trim.
-	Trm = "Trim"
-	// MOR is the type of MaxOneRow.
-	MOR = "MaxOneRow"
-	// Ext is the type of Exists.
-	Ext = "Exists"
-	// Dual is the type of TableDual.
-	Dual = "TableDual"
-	// Lock is the type of SelectLock.
-	Lock = "SelectLock"
-	// Load is the type of LoadData.
-	Load = "LoadData"
-	// Ins is the type of Insert
-	Ins = "Insert"
-	// Up is the type of Update.
-	Up = "Update"
-	// Del is the type of Delete.
-	Del = "Delete"
-)
+// useDAGPlanBuilder checks if we use new DAG planner.
+func useDAGPlanBuilder(ctx context.Context) bool {
+	return ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic)
+}
 
 // Plan is the description of an execution flow.
 // It is created from ast.Node first, then optimized by the optimizer,
@@ -82,35 +44,29 @@ type Plan interface {
 	ReplaceParent(parent, newPar Plan) error
 	// ReplaceChild means replacing a child with another one.
 	ReplaceChild(children, newChild Plan) error
-	// Retrieve the parent by index.
-	GetParentByIndex(index int) Plan
-	// Retrieve the child by index.
-	GetChildByIndex(index int) Plan
 	// Get all the parents.
-	GetParents() []Plan
+	Parents() []Plan
 	// Get all the children.
-	GetChildren() []Plan
+	Children() []Plan
 	// Set the schema.
-	SetSchema(schema expression.Schema)
+	SetSchema(schema *expression.Schema)
 	// Get the schema.
-	GetSchema() expression.Schema
+	Schema() *expression.Schema
 	// Get the ID.
-	GetID() string
-	// Check whether this plan is correlated or not.
-	IsCorrelated() bool
-	// Set the value of attribute "correlated".
-	// A plan will be correlated if one of its expressions or its child plans is correlated, except Apply.
-	// As for Apply, it will be correlated if the outer plan is correlated or the inner plan has column that the outer doesn't has.
-	// It will be called in the final step of logical plan building and the PhysicalInitialize process after convert2PhysicalPlan process.
-	SetCorrelated()
+	ID() string
+	// Get id allocator
+	Allocator() *idAllocator
 	// SetParents sets the parents for the plan.
 	SetParents(...Plan)
-	// SetParents sets the children for the plan.
+	// SetChildren sets the children for the plan.
 	SetChildren(...Plan)
 
 	context() context.Context
 
 	extractCorrelatedCols() []*expression.CorrelatedColumn
+
+	// ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
+	ResolveIndices()
 }
 
 type columnProp struct {
@@ -120,6 +76,77 @@ type columnProp struct {
 
 func (c *columnProp) equal(nc *columnProp, ctx context.Context) bool {
 	return c.col.Equal(nc.col, ctx) && c.desc == nc.desc
+}
+
+// taskType is the type of execution task.
+type taskType int
+
+const (
+	rootTaskType          taskType = iota
+	copSingleReadTaskType          // TableScan and IndexScan
+	copDoubleReadTaskType          // IndexLookUp
+)
+
+// String implements fmt.Stringer interface.
+func (t taskType) String() string {
+	switch t {
+	case rootTaskType:
+		return "rootTask"
+	case copSingleReadTaskType:
+		return "copSingleReadTask"
+	case copDoubleReadTaskType:
+		return "copDoubleReadTask"
+	}
+	return "UnknownTaskType"
+}
+
+// requriedProp stands for the required physical property by parents.
+// It contains the orders, if the order is desc and the task types.
+type requiredProp struct {
+	cols []*expression.Column
+	desc bool
+	// taskTp means the type of task that an operator requires.
+	// It needs to be specified because two different tasks can't be compared with cost directly.
+	// e.g. If a copTask takes less cost than a rootTask, we can't sure that we must choose the former one. Because the copTask
+	// must be finished and increase its cost in sometime, but we can't make sure the finishing time. So the best way
+	// to let the comparision fair is to add taskType to required property.
+	taskTp taskType
+}
+
+func (p *requiredProp) equal(prop *requiredProp) bool {
+	if len(p.cols) != len(prop.cols) || p.desc != prop.desc {
+		return false
+	}
+	if p.taskTp != prop.taskTp {
+		return false
+	}
+	for i := range p.cols {
+		if !p.cols[i].Equal(prop.cols[i], nil) {
+			return false
+		}
+	}
+	return true
+}
+
+func (p *requiredProp) isEmpty() bool {
+	return len(p.cols) == 0
+}
+
+// getHashKey encodes prop to a unique key. The key will be stored in the memory table.
+func (p *requiredProp) getHashKey() ([]byte, error) {
+	datums := make([]types.Datum, 0, len(p.cols)*2+2)
+	datums = append(datums, types.NewDatum(p.desc))
+	for _, c := range p.cols {
+		datums = append(datums, types.NewDatum(c.FromID), types.NewDatum(c.Position))
+	}
+	datums = append(datums, types.NewDatum(int(p.taskTp)))
+	bytes, err := codec.EncodeValue(nil, datums...)
+	return bytes, errors.Trace(err)
+}
+
+// String implements fmt.Stringer interface. Just for test.
+func (p *requiredProp) String() string {
+	return fmt.Sprintf("Prop{cols: %s, desc: %v, taskTp: %s}", p.cols, p.desc, p.taskTp)
 }
 
 type requiredProperty struct {
@@ -139,10 +166,27 @@ func (p *requiredProperty) getHashKey() ([]byte, error) {
 	return bytes, errors.Trace(err)
 }
 
+// String implements fmt.Stringer interface. Just for test.
+func (p *requiredProperty) String() string {
+	ret := "Prop{"
+	for _, colProp := range p.props {
+		ret += fmt.Sprintf("col: %s, desc %v, ", colProp.col, colProp.desc)
+	}
+	ret += fmt.Sprintf("}, Len: %d", p.sortKeyLen)
+	if p.limit != nil {
+		ret += fmt.Sprintf(", Limit: %d,%d", p.limit.Offset, p.limit.Count)
+	}
+	return ret
+}
+
 type physicalPlanInfo struct {
 	p     PhysicalPlan
 	cost  float64
-	count uint64
+	count float64
+
+	// If the count is calculated by pseudo table, it's not reliable. Otherwise it's reliable.
+	// But if we has limit or maxOneRow, the count is reliable.
+	reliable bool
 }
 
 // LogicalPlan is a tree of logical operators.
@@ -158,14 +202,23 @@ type LogicalPlan interface {
 	// PruneColumns prunes the unused columns.
 	PruneColumns([]*expression.Column)
 
-	// ResolveIndicesAndCorCols resolves the index for columns and initializes the correlated columns.
-	ResolveIndicesAndCorCols()
-
 	// convert2PhysicalPlan converts the logical plan to the physical plan.
 	// It is called recursively from the parent to the children to create the result physical plan.
 	// Some logical plans will convert the children to the physical plans in different ways, and return the one
 	// with the lowest cost.
 	convert2PhysicalPlan(prop *requiredProperty) (*physicalPlanInfo, error)
+
+	// convert2NewPhysicalPlan converts the logical plan to the physical plan. It's a new interface.
+	// It is called recursively from the parent to the children to create the result physical plan.
+	// Some logical plans will convert the children to the physical plans in different ways, and return the one
+	// with the lowest cost.
+	convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error)
+
+	// buildKeyInfo will collect the information of unique keys into schema.
+	buildKeyInfo()
+
+	// pushDownTopN will push down the topN or limit operator during logical optimization.
+	pushDownTopN(topN *TopN) LogicalPlan
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -186,12 +239,31 @@ type PhysicalPlan interface {
 
 	// Copy copies the current plan.
 	Copy() PhysicalPlan
+
+	// attach2TaskProfile makes the current physical plan as the father of task's physicalPlan and updates the cost of
+	// current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
+	attach2TaskProfile(...taskProfile) taskProfile
+
+	// ToPB converts physical plan to tipb executor.
+	ToPB(ctx context.Context) (*tipb.Executor, error)
 }
 
 type baseLogicalPlan struct {
-	basePlan
-	planMap map[string]*physicalPlanInfo
-	self    LogicalPlan
+	basePlan *basePlan
+	planMap  map[string]*physicalPlanInfo
+	taskMap  map[string]taskProfile
+}
+
+type basePhysicalPlan struct {
+	basePlan *basePlan
+}
+
+func (p *baseLogicalPlan) getTaskProfile(prop *requiredProp) (taskProfile, error) {
+	key, err := prop.getHashKey()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return p.taskMap[string(key)], nil
 }
 
 func (p *baseLogicalPlan) getPlanInfo(prop *requiredProperty) (*physicalPlanInfo, error) {
@@ -210,16 +282,25 @@ func (p *baseLogicalPlan) convert2PhysicalPlan(prop *requiredProperty) (*physica
 	if info != nil {
 		return info, nil
 	}
-	if len(p.children) == 0 {
-		return &physicalPlanInfo{p: p.self.(PhysicalPlan)}, nil
+	if len(p.basePlan.children) == 0 {
+		return &physicalPlanInfo{p: p.basePlan.self.(PhysicalPlan)}, nil
 	}
-	child := p.children[0].(LogicalPlan)
+	child := p.basePlan.children[0].(LogicalPlan)
 	info, err = child.convert2PhysicalPlan(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	info = addPlanToResponse(p.self.(PhysicalPlan), info)
+	info = addPlanToResponse(p.basePlan.self.(PhysicalPlan), info)
 	return info, p.storePlanInfo(prop, info)
+}
+
+func (p *baseLogicalPlan) storeTaskProfile(prop *requiredProp, task taskProfile) error {
+	key, err := prop.getHashKey()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	p.taskMap[string(key)] = task
+	return nil
 }
 
 func (p *baseLogicalPlan) storePlanInfo(prop *requiredProperty, info *physicalPlanInfo) error {
@@ -232,33 +313,69 @@ func (p *baseLogicalPlan) storePlanInfo(prop *requiredProperty, info *physicalPl
 	return nil
 }
 
-func newBaseLogicalPlan(tp string, a *idAllocator) baseLogicalPlan {
-	return baseLogicalPlan{
-		planMap: make(map[string]*physicalPlanInfo),
-		basePlan: basePlan{
-			tp:        tp,
-			allocator: a,
-		},
+func (p *baseLogicalPlan) buildKeyInfo() {
+	for _, child := range p.basePlan.children {
+		child.(LogicalPlan).buildKeyInfo()
 	}
+	if len(p.basePlan.children) == 1 {
+		switch p.basePlan.self.(type) {
+		case *Exists, *LogicalAggregation, *Projection:
+			p.basePlan.schema.Keys = nil
+		case *SelectLock:
+			p.basePlan.schema.Keys = p.basePlan.children[0].Schema().Keys
+		default:
+			p.basePlan.schema.Keys = p.basePlan.children[0].Schema().Clone().Keys
+		}
+	} else {
+		p.basePlan.schema.Keys = nil
+	}
+}
+
+func newBasePlan(tp string, allocator *idAllocator, ctx context.Context, p Plan) *basePlan {
+	return &basePlan{
+		tp:        tp,
+		allocator: allocator,
+		id:        tp + allocator.allocID(),
+		ctx:       ctx,
+		self:      p,
+	}
+}
+
+func newBaseLogicalPlan(basePlan *basePlan) baseLogicalPlan {
+	return baseLogicalPlan{
+		planMap:  make(map[string]*physicalPlanInfo),
+		taskMap:  make(map[string]taskProfile),
+		basePlan: basePlan,
+	}
+}
+
+func newBasePhysicalPlan(basePlan *basePlan) basePhysicalPlan {
+	return basePhysicalPlan{
+		basePlan: basePlan,
+	}
+}
+
+func (p *basePhysicalPlan) matchProperty(prop *requiredProperty, childPlanInfo ...*physicalPlanInfo) *physicalPlanInfo {
+	panic("You can't call this function!")
 }
 
 // PredicatePushDown implements LogicalPlan interface.
 func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan, error) {
-	if len(p.GetChildren()) == 0 {
-		return predicates, p.self, nil
+	if len(p.basePlan.children) == 0 {
+		return predicates, p.basePlan.self.(LogicalPlan), nil
 	}
-	child := p.GetChildByIndex(0).(LogicalPlan)
+	child := p.basePlan.children[0].(LogicalPlan)
 	rest, _, err := child.PredicatePushDown(predicates)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	if len(rest) > 0 {
-		err = addSelection(p, child, rest, p.allocator)
+		err = addSelection(p.basePlan.self, child, rest, p.basePlan.allocator)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
 	}
-	return nil, p.self, nil
+	return nil, p.basePlan.self.(LogicalPlan), nil
 }
 
 func (p *basePlan) extractCorrelatedCols() []*expression.CorrelatedColumn {
@@ -269,49 +386,44 @@ func (p *basePlan) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// ResolveIndicesAndCorCols implements LogicalPlan interface.
-func (p *baseLogicalPlan) ResolveIndicesAndCorCols() {
-	for _, child := range p.children {
-		child.(LogicalPlan).ResolveIndicesAndCorCols()
-	}
-	p.schema.InitColumnIndices()
+func (p *basePlan) Allocator() *idAllocator {
+	return p.allocator
 }
 
 // PruneColumns implements LogicalPlan interface.
 func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) {
-	if len(p.children) == 0 {
+	if len(p.basePlan.children) == 0 {
 		return
 	}
-	child := p.GetChildByIndex(0).(LogicalPlan)
+	child := p.basePlan.children[0].(LogicalPlan)
 	child.PruneColumns(parentUsedCols)
-	p.SetSchema(child.GetSchema())
-}
-
-func (p *basePlan) initIDAndContext(ctx context.Context) {
-	p.id = p.tp + p.allocator.allocID()
-	p.ctx = ctx
+	p.basePlan.SetSchema(child.Schema())
 }
 
 // basePlan implements base Plan interface.
 // Should be used as embedded struct in Plan implementations.
 type basePlan struct {
-	correlated bool
-
 	parents  []Plan
 	children []Plan
 
-	schema    expression.Schema
+	schema    *expression.Schema
 	tp        string
 	id        string
 	allocator *idAllocator
 	ctx       context.Context
+	self      Plan
+}
+
+func (p *basePlan) copy() *basePlan {
+	np := *p
+	return &np
 }
 
 // MarshalJSON implements json.Marshaler interface.
 func (p *basePlan) MarshalJSON() ([]byte, error) {
 	children := make([]string, 0, len(p.children))
 	for _, child := range p.children {
-		children = append(children, child.GetID())
+		children = append(children, child.ID())
 	}
 	childrenStrs, err := json.Marshal(children)
 	if err != nil {
@@ -323,29 +435,18 @@ func (p *basePlan) MarshalJSON() ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-// IsCorrelated implements Plan IsCorrelated interface.
-func (p *basePlan) IsCorrelated() bool {
-	return p.correlated
-}
-
-func (p *basePlan) SetCorrelated() {
-	for _, child := range p.children {
-		p.correlated = p.correlated || child.IsCorrelated()
-	}
-}
-
-// GetID implements Plan GetID interface.
-func (p *basePlan) GetID() string {
+// ID implements Plan ID interface.
+func (p *basePlan) ID() string {
 	return p.id
 }
 
 // SetSchema implements Plan SetSchema interface.
-func (p *basePlan) SetSchema(schema expression.Schema) {
+func (p *basePlan) SetSchema(schema *expression.Schema) {
 	p.schema = schema
 }
 
-// GetSchema implements Plan GetSchema interface.
-func (p *basePlan) GetSchema() expression.Schema {
+// Schema implements Plan Schema interface.
+func (p *basePlan) Schema() *expression.Schema {
 	return p.schema
 }
 
@@ -362,7 +463,7 @@ func (p *basePlan) AddChild(child Plan) {
 // ReplaceParent means replace a parent for another one.
 func (p *basePlan) ReplaceParent(parent, newPar Plan) error {
 	for i, par := range p.parents {
-		if par.GetID() == parent.GetID() {
+		if par.ID() == parent.ID() {
 			p.parents[i] = newPar
 			return nil
 		}
@@ -373,7 +474,7 @@ func (p *basePlan) ReplaceParent(parent, newPar Plan) error {
 // ReplaceChild means replace a child with another one.
 func (p *basePlan) ReplaceChild(child, newChild Plan) error {
 	for i, ch := range p.children {
-		if ch.GetID() == child.GetID() {
+		if ch.ID() == child.ID() {
 			p.children[i] = newChild
 			return nil
 		}
@@ -381,38 +482,22 @@ func (p *basePlan) ReplaceChild(child, newChild Plan) error {
 	return SystemInternalErrorType.Gen("ReplaceChildren Failed!")
 }
 
-// GetParentByIndex implements Plan GetParentByIndex interface.
-func (p *basePlan) GetParentByIndex(index int) (parent Plan) {
-	if index < len(p.parents) && index >= 0 {
-		return p.parents[index]
-	}
-	return nil
-}
-
-// GetChildByIndex implements Plan GetChildByIndex interface.
-func (p *basePlan) GetChildByIndex(index int) (parent Plan) {
-	if index < len(p.children) && index >= 0 {
-		return p.children[index]
-	}
-	return nil
-}
-
-// GetParents implements Plan GetParents interface.
-func (p *basePlan) GetParents() []Plan {
+// Parents implements Plan Parents interface.
+func (p *basePlan) Parents() []Plan {
 	return p.parents
 }
 
-// GetChildren implements Plan GetChildren interface.
-func (p *basePlan) GetChildren() []Plan {
+// Children implements Plan Children interface.
+func (p *basePlan) Children() []Plan {
 	return p.children
 }
 
-// RemoveAllParents implements Plan RemoveAllParents interface.
+// SetParents implements Plan SetParents interface.
 func (p *basePlan) SetParents(pars ...Plan) {
 	p.parents = pars
 }
 
-// RemoveAllParents implements Plan RemoveAllParents interface.
+// SetChildren implements Plan SetChildren interface.
 func (p *basePlan) SetChildren(children ...Plan) {
 	p.children = children
 }

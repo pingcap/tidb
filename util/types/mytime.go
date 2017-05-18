@@ -58,7 +58,8 @@ func (t mysqlTime) Microsecond() int {
 }
 
 func (t mysqlTime) Weekday() gotime.Weekday {
-	t1, err := t.GoTime()
+	// TODO: Consider time_zone variable.
+	t1, err := t.GoTime(gotime.Local)
 	if err != nil {
 		return 0
 	}
@@ -86,10 +87,10 @@ func (t mysqlTime) Week(mode int) int {
 	return week
 }
 
-func (t mysqlTime) GoTime() (gotime.Time, error) {
+func (t mysqlTime) GoTime(loc *gotime.Location) (gotime.Time, error) {
 	// gotime.Time can't represent month 0 or day 0, date contains 0 would be converted to a nearest date,
 	// For example, 2006-12-00 00:00:00 would become 2015-11-30 23:59:59.
-	tm := gotime.Date(t.Year(), gotime.Month(t.Month()), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Microsecond()*1000, gotime.Local)
+	tm := gotime.Date(t.Year(), gotime.Month(t.Month()), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Microsecond()*1000, loc)
 	year, month, day := tm.Date()
 	hour, minute, second := tm.Clock()
 	microsec := tm.Nanosecond() / 1000
@@ -122,11 +123,12 @@ func calcTimeFromSec(to *mysqlTime, seconds, microseconds int) {
 	to.microsecond = uint32(microseconds)
 }
 
+const secondsIn24Hour = 86400
+
 // calcTimeDiff calculates difference between two datetime values as seconds + microseconds.
 // t1 and t2 should be TIME/DATE/DATETIME value.
 // sign can be +1 or -1, and t2 is preprocessed with sign first.
 func calcTimeDiff(t1, t2 TimeInternal, sign int) (seconds, microseconds int, neg bool) {
-	const secondsIn24Hour = 86400
 	days := calcDaynr(t1.Year(), t1.Month(), t1.Day())
 	days -= sign * calcDaynr(t2.Year(), t2.Month(), t2.Day())
 
@@ -182,6 +184,11 @@ func calcDaynr(year, month, day int) int {
 	return delsum + year/4 - temp
 }
 
+// DateDiff calculates number of days between two days.
+func DateDiff(startTime, endTime TimeInternal) int {
+	return calcDaynr(startTime.Year(), startTime.Month(), startTime.Day()) - calcDaynr(endTime.Year(), endTime.Month(), endTime.Day())
+}
+
 // calcDaysInYear calculates days in one year, it works with 0 <= year <= 99.
 func calcDaysInYear(year int) int {
 	if (year&3) == 0 && (year%100 != 0 || (year%400 == 0 && (year != 0))) {
@@ -202,10 +209,10 @@ func calcWeekday(daynr int, sundayFirstDayOfWeek bool) int {
 type weekBehaviour uint
 
 const (
-	// If set, Sunday is first day of week, otherwise Monday is first day of week.
+	// weekBehaviourMondayFirst set Monday as first day of week; otherwise Sunday is first day of week
 	weekBehaviourMondayFirst weekBehaviour = 1 << iota
 	// If set, Week is in range 1-53, otherwise Week is in range 0-53.
-	// Note that this flag is only releveant if WEEK_JANUARY is not set.
+	// Note that this flag is only relevant if WEEK_JANUARY is not set.
 	weekBehaviourYear
 	// If not set, Weeks are numbered according to ISO 8601:1988.
 	// If set, the week that contains the first 'first-day-of-week' is week 1.
@@ -269,4 +276,177 @@ func calcWeek(t *mysqlTime, wb weekBehaviour) (year int, week int) {
 	}
 	week = days/7 + 1
 	return
+}
+
+// mixDateAndTime mixes a date value and a time value.
+func mixDateAndTime(date, time *mysqlTime, neg bool) {
+	if !neg && time.hour < 24 {
+		date.hour = time.hour
+		date.minute = time.minute
+		date.second = time.second
+		date.microsecond = time.microsecond
+		return
+	}
+
+	// Time is negative or outside of 24 hours internal.
+	sign := -1
+	if neg {
+		sign = 1
+	}
+	seconds, microseconds, neg := calcTimeDiff(date, time, sign)
+
+	// If we want to use this function with arbitrary dates, this code will need
+	// to cover cases when time is negative and "date < -time".
+
+	days := seconds / secondsIn24Hour
+	calcTimeFromSec(date, seconds%secondsIn24Hour, microseconds)
+	year, month, day := getDateFromDaynr(uint(days))
+	date.year = uint16(year)
+	date.month = uint8(month)
+	date.day = uint8(day)
+}
+
+var daysInMonth = []int{31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
+
+// getDateFromDaynr changes a daynr to year, month and day,
+// daynr 0 is returned as date 00.00.00
+func getDateFromDaynr(daynr uint) (year uint, month uint, day uint) {
+	if daynr <= 365 || daynr >= 3652500 {
+		return
+	}
+
+	year = daynr * 100 / 36525
+	temp := (((year-1)/100 + 1) * 3) / 4
+	dayOfYear := uint(daynr-year*365) - (year-1)/4 + temp
+
+	daysInYear := calcDaysInYear(int(year))
+	for dayOfYear > uint(daysInYear) {
+		dayOfYear -= uint(daysInYear)
+		year++
+		daysInYear = calcDaysInYear(int(year))
+	}
+
+	leapDay := uint(0)
+	if daysInYear == 366 {
+		if dayOfYear > 31+28 {
+			dayOfYear--
+			if dayOfYear == 31+28 {
+				// Handle leapyears leapday.
+				leapDay = 1
+			}
+		}
+	}
+
+	month = 1
+	for _, days := range daysInMonth {
+		if dayOfYear <= uint(days) {
+			break
+		}
+		dayOfYear -= uint(days)
+		month++
+	}
+
+	day = dayOfYear + leapDay
+	return
+}
+
+const (
+	intervalYEAR        = "YEAR"
+	intervalQUARTER     = "QUARTER"
+	intervalMONTH       = "MONTH"
+	intervalWEEK        = "WEEK"
+	intervalDAY         = "DAY"
+	intervalHOUR        = "HOUR"
+	intervalMINUTE      = "MINUTE"
+	intervalSECOND      = "SECOND"
+	intervalMICROSECOND = "MICROSECOND"
+)
+
+func timestampDiff(intervalType string, t1 TimeInternal, t2 TimeInternal) int64 {
+	seconds, microseconds, neg := calcTimeDiff(t2, t1, 1)
+	months := uint(0)
+	if intervalType == intervalYEAR || intervalType == intervalQUARTER ||
+		intervalType == intervalMONTH {
+		var (
+			yearBeg, yearEnd, monthBeg, monthEnd, dayBeg, dayEnd uint
+			secondBeg, secondEnd, microsecondBeg, microsecondEnd uint
+		)
+
+		if neg {
+			yearBeg = uint(t2.Year())
+			yearEnd = uint(t1.Year())
+			monthBeg = uint(t2.Month())
+			monthEnd = uint(t1.Month())
+			dayBeg = uint(t2.Day())
+			dayEnd = uint(t1.Day())
+			secondBeg = uint(t2.Hour()*3600 + t2.Minute()*60 + t2.Second())
+			secondEnd = uint(t1.Hour()*3600 + t1.Minute()*60 + t1.Second())
+			microsecondBeg = uint(t2.Microsecond())
+			microsecondEnd = uint(t1.Microsecond())
+		} else {
+			yearBeg = uint(t1.Year())
+			yearEnd = uint(t2.Year())
+			monthBeg = uint(t1.Month())
+			monthEnd = uint(t2.Month())
+			dayBeg = uint(t1.Day())
+			dayEnd = uint(t2.Day())
+			secondBeg = uint(t1.Hour()*3600 + t1.Minute()*60 + t1.Second())
+			secondEnd = uint(t2.Hour()*3600 + t2.Minute()*60 + t2.Second())
+			microsecondBeg = uint(t1.Microsecond())
+			microsecondEnd = uint(t2.Microsecond())
+		}
+
+		// calc years
+		years := yearEnd - yearBeg
+		if monthEnd < monthBeg ||
+			(monthEnd == monthBeg && dayEnd < dayBeg) {
+			years--
+		}
+
+		// calc months
+		months = 12 * years
+		if monthEnd < monthBeg ||
+			(monthEnd == monthBeg && dayEnd < dayBeg) {
+			months += 12 - (monthBeg - monthEnd)
+		} else {
+			months += (monthEnd - monthBeg)
+		}
+
+		if dayEnd < dayBeg {
+			months--
+		} else if (dayEnd == dayBeg) &&
+			((secondEnd < secondBeg) ||
+				(secondEnd == secondBeg && microsecondEnd < microsecondBeg)) {
+			months--
+		}
+	}
+
+	negV := int64(1)
+	if neg {
+		negV = -1
+	}
+	switch intervalType {
+	case intervalYEAR:
+		return int64(months) / 12 * negV
+	case intervalQUARTER:
+		return int64(months) / 3 * negV
+	case intervalMONTH:
+		return int64(months) * negV
+	case intervalWEEK:
+		return int64(seconds) / secondsIn24Hour / 7 * negV
+	case intervalDAY:
+		return int64(seconds) / secondsIn24Hour * negV
+	case intervalHOUR:
+		return int64(seconds) / 3600 * negV
+	case intervalMINUTE:
+		return int64(seconds) / 60 * negV
+	case intervalSECOND:
+		return int64(seconds) * negV
+	case intervalMICROSECOND:
+		// In MySQL difference between any two valid datetime values
+		// in microseconds fits into longlong.
+		return int64(seconds*1000000+microseconds) * negV
+	}
+
+	return 0
 }

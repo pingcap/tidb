@@ -26,10 +26,16 @@ import (
 	"github.com/pingcap/tidb/terror"
 )
 
+// RunWorker indicates if this TiDB server starts DDL worker and can run DDL job.
+var RunWorker = true
+
 // onDDLWorker is for async online schema changing, it will try to become the owner firstly,
 // then wait or pull the job queue to handle a schema change job.
 func (d *ddl) onDDLWorker() {
 	defer d.wait.Done()
+	if !RunWorker {
+		return
+	}
 
 	// We use 4 * lease time to check owner's timeout, so here, we will update owner's status
 	// every 2 * lease time. If lease is 0, we will use default 10s.
@@ -95,6 +101,18 @@ func (d *ddl) getCheckOwnerTimeout(flag JobType) int64 {
 }
 
 func (d *ddl) checkOwner(t *meta.Meta, flag JobType) (*model.Owner, error) {
+	if ChangeOwnerInNewWay {
+		if flag == ddlJobFlag {
+			if d.worker.isOwner() {
+				return nil, nil
+			}
+			return nil, errNotOwner
+		}
+		if d.worker.isBgOwner() {
+			return nil, nil
+		}
+		return nil, errNotOwner
+	}
 	owner, err := d.getJobOwner(t, flag)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -288,6 +306,9 @@ func (d *ddl) handleDDLJobQueue() error {
 
 			// Running job may cost some time, so here we must update owner status to
 			// prevent other become the owner.
+			if ChangeOwnerInNewWay {
+				return nil
+			}
 			owner.LastUpdateTS = time.Now().UnixNano()
 			err = t.SetDDLJobOwner(owner)
 			return errors.Trace(err)
@@ -368,6 +389,10 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) {
 		err = d.onDropForeignKey(t, job)
 	case model.ActionTruncateTable:
 		err = d.onTruncateTable(t, job)
+	case model.ActionRenameTable:
+		err = d.onRenameTable(t, job)
+	case model.ActionSetDefaultValue:
+		err = d.onSetDefaultValue(t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobCancelled
@@ -399,8 +424,8 @@ func toTError(err error) *terror.Error {
 	return terror.ClassDDL.New(terror.CodeUnknown, err.Error())
 }
 
-// For every lease, we will re-update the whole schema, so we will wait 2 * lease time
-// to guarantee that all servers have already updated schema.
+// waitSchemaChanged waits for the completion of updating all servers' schema. In order to make sure that happens,
+// we wait 2 * lease time.
 func (d *ddl) waitSchemaChanged(waitTime time.Duration) {
 	if waitTime == 0 {
 		return
@@ -430,6 +455,12 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 			return 0, errors.Trace(err)
 		}
 		diff.OldTableID = job.TableID
+	} else if job.Type == model.ActionRenameTable {
+		err = job.DecodeArgs(&diff.OldSchemaID)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		diff.TableID = job.TableID
 	} else {
 		diff.TableID = job.TableID
 	}

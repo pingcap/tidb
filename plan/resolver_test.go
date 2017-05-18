@@ -15,7 +15,6 @@ package plan_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/parser"
@@ -58,30 +57,27 @@ type resolverTestCase struct {
 	valid bool
 }
 
-var resolverTestCases = []resolverTestCase{
+var resolverTests = []resolverTestCase{
 	{"select c1 from t1", true},
 	{"select c3 from t1", false},
 	{"select c1 from t4", false},
-	{"select c1 from t1, t2", false},
 	{"select * from t1", true},
 	{"select t1.* from t1", true},
 	{"select t2.* from t1", false},
-	{"select c1 as a, c2 as a from t1 group by a", false},
 	{"select c1 as a, c1 as a from t1 group by a", true},
 	{"select 1 as a, c1 as a, c2 as a from t1 group by a", true},
-	{"select c1, c2 as c1 from t1 group by c1", false},
 	{"select c1, c2 as c1 from t1 group by c1+1", true},
-	{"select c1, c2 as c1 from t1 order by c1", false},
 	{"select c1, c2 as c1 from t1 order by c1+1", true},
 	{"select * from t1, t2 join t3 on t1.c1 = t2.c1", false},
 	{"select * from t1, t2 join t3 on t2.c1 = t3.c1", true},
 	{"select c1 from t1 group by c1 having c1 = 3", true},
 	{"select c1 from t1 group by c1 having c2 = 3", false},
 	{"select c1 from t1 where exists (select c2)", true},
+	{"select cnt from (select count(c2) as cnt from t1 group by c1) t2 group by cnt", true},
 }
 
 func (ts *testNameResolverSuite) TestNameResolver(c *C) {
-	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
+	store, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	defer store.Close()
 	testKit := testkit.NewTestKit(c, store)
@@ -92,16 +88,16 @@ func (ts *testNameResolverSuite) TestNameResolver(c *C) {
 	ctx := testKit.Se.(context.Context)
 	domain := sessionctx.GetDomain(ctx)
 	ctx.GetSessionVars().CurrentDB = "test"
-	for _, tc := range resolverTestCases {
-		node, err := ts.ParseOneStmt(tc.src, "", "")
+	for _, tt := range resolverTests {
+		node, err := ts.ParseOneStmt(tt.src, "", "")
 		c.Assert(err, IsNil)
 		resolveErr := plan.ResolveName(node, domain.InfoSchema(), ctx)
-		if tc.valid {
+		if tt.valid {
 			c.Assert(resolveErr, IsNil)
-			verifier := &resolverVerifier{c: c, src: tc.src}
+			verifier := &resolverVerifier{c: c, src: tt.src}
 			node.Accept(verifier)
 		} else {
-			c.Assert(resolveErr, NotNil, Commentf("%s", tc.src))
+			c.Assert(resolveErr, NotNil, Commentf("%s", tt.src))
 		}
 	}
 }

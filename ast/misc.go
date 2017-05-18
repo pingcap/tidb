@@ -39,7 +39,8 @@ var (
 	_ StmtNode = &SetStmt{}
 	_ StmtNode = &UseStmt{}
 	_ StmtNode = &AnalyzeTableStmt{}
-	_ StmtNode = &FlushTableStmt{}
+	_ StmtNode = &FlushStmt{}
+	_ StmtNode = &KillStmt{}
 
 	_ Node = &PrivElem{}
 	_ Node = &VariableAssignment{}
@@ -60,7 +61,7 @@ type FloatOpt struct {
 
 // AuthOption is used for parsing create use statement.
 type AuthOption struct {
-	// AuthString/HashString can be empty, so we need to decide which one to use.
+	// ByAuthString set as true, if AuthString is used for authorization. Otherwise, authorization is done by HashString.
 	ByAuthString bool
 	AuthString   string
 	HashString   string
@@ -261,6 +262,7 @@ type VariableAssignment struct {
 	IsGlobal bool
 	IsSystem bool
 
+	// ExtendValue is a way to store extended info.
 	// VariableAssignment should be able to store information for SetCharset/SetPWD Stmt.
 	// For SetCharsetStmt, Value is charset, ExtendValue is collation.
 	// TODO: Use SetStmt to implement set password statement.
@@ -282,23 +284,63 @@ func (n *VariableAssignment) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// FlushTableStmt is the statement to flush table.
-// if Tables is empty, it means flush all tables.
-type FlushTableStmt struct {
+// FlushStmtType is the type for FLUSH statement.
+type FlushStmtType int
+
+// Flush statement types.
+const (
+	FlushNone FlushStmtType = iota
+	FlushTables
+	FlushPrivileges
+)
+
+// FlushStmt is a statement to flush tables/privileges/optimizer costs and so on.
+type FlushStmt struct {
 	stmtNode
 
-	Tables          []*TableName
+	Tp              FlushStmtType // Privileges/Tables/...
 	NoWriteToBinLog bool
+	Tables          []*TableName // For FlushTableStmt, if Tables is empty, it means flush all tables.
 	ReadLock        bool
 }
 
 // Accept implements Node Accept interface.
-func (n *FlushTableStmt) Accept(v Visitor) (Node, bool) {
+func (n *FlushStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNode)
 	}
-	n = newNode.(*FlushTableStmt)
+	n = newNode.(*FlushStmt)
+	return v.Leave(n)
+}
+
+// KillStmt is a statement to kill a query or connection.
+type KillStmt struct {
+	stmtNode
+
+	// Query indicates whether terminate a single query on this connection or the whole connection.
+	// If Query is true, terminates the statement the connection is currently executing, but leaves the connection itself intact.
+	// If Query is false, terminates the connection associated with the given ConnectionID, after terminating any statement the connection is executing.
+	Query        bool
+	ConnectionID uint64
+	// TiDBExtension is used to indicate whether the user knows he is sending kill statement to the right tidb-server.
+	// When the SQL grammar is "KILL TIDB [CONNECTION | QUERY] connectionID", TiDBExtension will be set.
+	// It's a special grammar extension in TiDB. This extension exists because, when the connection is:
+	// client -> LVS proxy -> TiDB, and type Ctrl+C in client, the following action will be executed:
+	// new a connection; kill xxx;
+	// kill command may send to the wrong TiDB, because the exists of LVS proxy, and kill the wrong session.
+	// So, "KILL TIDB" grammar is introduced, and it REQUIRES DIRECT client -> TiDB TOPOLOGY.
+	// TODO: The standard KILL grammar will be supported once we have global connectionID.
+	TiDBExtension bool
+}
+
+// Accept implements Node Accept interface.
+func (n *KillStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*KillStmt)
 	return v.Leave(n)
 }
 
@@ -546,6 +588,33 @@ type GrantLevel struct {
 	TableName string
 }
 
+// RevokeStmt is the struct for REVOKE statement.
+type RevokeStmt struct {
+	stmtNode
+
+	Privs      []*PrivElem
+	ObjectType ObjectTypeType
+	Level      *GrantLevel
+	Users      []*UserSpec
+}
+
+// Accept implements Node Accept interface.
+func (n *RevokeStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*RevokeStmt)
+	for i, val := range n.Privs {
+		node, ok := val.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Privs[i] = node.(*PrivElem)
+	}
+	return v.Leave(n)
+}
+
 // GrantStmt is the struct for GRANT statement.
 type GrantStmt struct {
 	stmtNode
@@ -554,6 +623,7 @@ type GrantStmt struct {
 	ObjectType ObjectTypeType
 	Level      *GrantLevel
 	Users      []*UserSpec
+	WithGrant  bool
 }
 
 // Accept implements Node Accept interface.
@@ -603,6 +673,7 @@ type AnalyzeTableStmt struct {
 	stmtNode
 
 	TableNames []*TableName
+	IndexNames []model.CIStr
 }
 
 // Accept implements Node Accept interface.
@@ -619,5 +690,33 @@ func (n *AnalyzeTableStmt) Accept(v Visitor) (Node, bool) {
 		}
 		n.TableNames[i] = node.(*TableName)
 	}
+	return v.Leave(n)
+}
+
+// SelectStmtOpts wrap around select hints and switches
+type SelectStmtOpts struct {
+	Distinct      bool
+	SQLCache      bool
+	CalcFoundRows bool
+	TableHints    []*TableOptimizerHint
+}
+
+// TableOptimizerHint is Table level optimizer hint
+type TableOptimizerHint struct {
+	node
+	// HintName is the name or alias of the table(s) which the hint will affect.
+	// Table hints has no schema info
+	// It allows only table name or alias (if table has an alias)
+	HintName model.CIStr
+	Tables   []model.CIStr
+}
+
+// Accept implements Node Accept interface.
+func (n *TableOptimizerHint) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*TableOptimizerHint)
 	return v.Leave(n)
 }

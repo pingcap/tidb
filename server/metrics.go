@@ -14,6 +14,10 @@
 package server
 
 import (
+	"strconv"
+
+	"github.com/juju/errors"
+	"github.com/pingcap/tidb/terror"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -33,11 +37,7 @@ var (
 			Subsystem: "server",
 			Name:      "query_total",
 			Help:      "Counter of queries.",
-		}, []string{"type"})
-
-	// Query handle result status.
-	querySucc   = "query_succ"
-	queryFailed = "query_failed"
+		}, []string{"type", "status"})
 
 	connGauge = prometheus.NewGauge(
 		prometheus.GaugeOpts{
@@ -46,10 +46,37 @@ var (
 			Name:      "connections",
 			Help:      "Number of connections.",
 		})
+
+	executeErrorCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "execute_error",
+			Help:      "Counter of execute errors.",
+		}, []string{"type"})
+
+	criticalErrorCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "critical_error",
+			Help:      "Counter of critical errors.",
+		})
 )
 
 func init() {
 	prometheus.MustRegister(queryHistogram)
 	prometheus.MustRegister(queryCounter)
 	prometheus.MustRegister(connGauge)
+	prometheus.MustRegister(criticalErrorCounter)
+}
+
+func executeErrorToLabel(err error) string {
+	err = errors.Cause(err)
+	switch x := err.(type) {
+	case *terror.Error:
+		return x.Class().String() + ":" + strconv.Itoa(int(x.Code()))
+	default:
+		return "unknown"
+	}
 }

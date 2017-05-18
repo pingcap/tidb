@@ -29,10 +29,8 @@
 package server
 
 import (
-	"encoding/json"
 	"math/rand"
 	"net"
-	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -43,9 +41,8 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/arena"
-	"github.com/pingcap/tidb/util/printer"
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 var (
@@ -69,6 +66,11 @@ type Server struct {
 	rwlock            *sync.RWMutex
 	concurrentLimiter *TokenLimiter
 	clients           map[uint32]*clientConn
+
+	// When a critical error occurred, we don't want to exit the process, because there may be
+	// a supervisor automatically restart it, then new client connection will be created, but we can't server it.
+	// So we just stop the listener and store to force clients to chose other TiDB servers.
+	stopListenerCh chan struct{}
 }
 
 // ConnectionCount gets current connection count.
@@ -131,6 +133,7 @@ func NewServer(cfg *Config, driver IDriver) (*Server, error) {
 		concurrentLimiter: NewTokenLimiter(tokenLimit),
 		rwlock:            &sync.RWMutex{},
 		clients:           make(map[uint32]*clientConn),
+		stopListenerCh:    make(chan struct{}, 1),
 	}
 
 	var err error
@@ -157,7 +160,6 @@ func (s *Server) Run() error {
 	if s.cfg.ReportStatus {
 		s.startStatusHTTP()
 	}
-
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
@@ -169,8 +171,26 @@ func (s *Server) Run() error {
 			log.Errorf("accept error %s", err.Error())
 			return errors.Trace(err)
 		}
-
+		if s.shouldStopListener() {
+			conn.Close()
+			break
+		}
 		go s.onConn(conn)
+	}
+	s.listener.Close()
+	s.listener = nil
+	for {
+		log.Errorf("listener stopped, waiting for manual kill.")
+		time.Sleep(time.Minute)
+	}
+}
+
+func (s *Server) shouldStopListener() bool {
+	select {
+	case <-s.stopListenerCh:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -209,49 +229,31 @@ func (s *Server) onConn(c net.Conn) {
 	conn.Run()
 }
 
-var once sync.Once
-
-const defaultStatusAddr = ":10080"
-
-func (s *Server) startStatusHTTP() {
-	once.Do(func() {
-		go func() {
-			http.HandleFunc("/status", func(w http.ResponseWriter, req *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				s := status{
-					Connections: s.ConnectionCount(),
-					Version:     mysql.ServerVersion,
-					GitHash:     printer.TiDBGitHash,
-				}
-				js, err := json.Marshal(s)
-				if err != nil {
-					w.WriteHeader(http.StatusInternalServerError)
-					log.Error("Encode json error", err)
-				} else {
-					w.Write(js)
-				}
-
-			})
-			// HTTP path for prometheus.
-			http.Handle("/metrics", prometheus.Handler())
-			addr := s.cfg.StatusAddr
-			if len(addr) == 0 {
-				addr = defaultStatusAddr
-			}
-			log.Infof("Listening on %v for status and metrics report.", addr)
-			err := http.ListenAndServe(addr, nil)
-			if err != nil {
-				log.Fatal(err)
-			}
-		}()
-	})
+// ShowProcessList implements the SessionManager interface.
+func (s *Server) ShowProcessList() []util.ProcessInfo {
+	var rs []util.ProcessInfo
+	s.rwlock.RLock()
+	for _, client := range s.clients {
+		rs = append(rs, client.ctx.ShowProcess())
+	}
+	s.rwlock.RUnlock()
+	return rs
 }
 
-// TiDB status
-type status struct {
-	Connections int    `json:"connections"`
-	Version     string `json:"version"`
-	GitHash     string `json:"git_hash"`
+// Kill implements the SessionManager interface.
+func (s *Server) Kill(connectionID uint64, query bool) {
+	s.rwlock.Lock()
+	defer s.rwlock.Unlock()
+
+	conn, ok := s.clients[uint32(connectionID)]
+	if !ok {
+		return
+	}
+
+	conn.ctx.Cancel()
+	if !query {
+		conn.killed = true
+	}
 }
 
 // Server error codes.

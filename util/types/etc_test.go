@@ -19,6 +19,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -94,7 +95,7 @@ func (s *testTypeEtcSuite) TestTypeToStr(c *C) {
 	testTypeToStr(c, mysql.TypeDate, "binary", "date")
 	testTypeToStr(c, mysql.TypeTimestamp, "binary", "timestamp")
 	testTypeToStr(c, mysql.TypeNewDecimal, "binary", "decimal")
-	testTypeToStr(c, mysql.TypeDecimal, "binary", "decimal")
+	testTypeToStr(c, mysql.TypeUnspecified, "binary", "unspecified")
 	testTypeToStr(c, 0xdd, "binary", "")
 	testTypeToStr(c, mysql.TypeBit, "binary", "bit")
 	testTypeToStr(c, mysql.TypeEnum, "binary", "enum")
@@ -174,16 +175,21 @@ func (s *testTypeEtcSuite) TestTruncate(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input   float64
+		Flen    int
 		Decimal int
 		Expect  float64
+		Err     error
 	}{
-		{100.114, 2, 100.11},
-		{100.115, 2, 100.11},
-		{100.1156, 2, 100.12},
+		{100.114, 10, 2, 100.11, nil},
+		{100.115, 10, 2, 100.12, nil},
+		{100.1156, 10, 3, 100.116, nil},
+		{100.1156, 3, 1, 99.9, ErrOverflow},
+		{1.36, 10, 2, 1.36, nil},
 	}
 
 	for _, t := range tbl {
-		f := truncateFloat(t.Input, t.Decimal)
+		f, err := TruncateFloat(t.Input, t.Flen, t.Decimal)
 		c.Assert(f, Equals, t.Expect)
+		c.Assert(terror.ErrorEqual(err, t.Err), IsTrue)
 	}
 }

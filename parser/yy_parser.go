@@ -115,6 +115,11 @@ func (parser *Parser) ParseOneStmt(sql, charset, collation string) (ast.StmtNode
 	return stmts[0], nil
 }
 
+// SetSQLMode sets the SQL mode for parser.
+func (parser *Parser) SetSQLMode(mode mysql.SQLMode) {
+	parser.lexer.SetSQLMode(mode)
+}
+
 // The select statement is not at the end of the whole statement, if the last
 // field text was set from its offset to the end of the src string, update
 // the last field text.
@@ -138,8 +143,20 @@ func (parser *Parser) endOffset(v *yySymType) int {
 }
 
 func toInt(l yyLexer, lval *yySymType, str string) int {
-	n, err := strconv.ParseUint(str, 0, 64)
+	n, err := strconv.ParseUint(str, 10, 64)
 	if err != nil {
+		e := err.(*strconv.NumError)
+		if e.Err == strconv.ErrRange {
+			// TODO: toDecimal maybe out of range still.
+			// This kind of error should be throw to higher level, because truncated data maybe legal.
+			// For example, this SQL returns error:
+			// create table test (id decimal(30, 0));
+			// insert into test values(123456789012345678901234567890123094839045793405723406801943850);
+			// While this SQL:
+			// select 1234567890123456789012345678901230948390457934057234068019438509023041874359081325875128590860234789847359871045943057;
+			// get value 99999999999999999999999999999999999999999999999999999999999999999
+			return toDecimal(l, lval, str)
+		}
 		l.Errorf("integer literal: %v", err)
 		return int(unicode.ReplacementChar)
 	}
@@ -200,4 +217,14 @@ func toBit(l yyLexer, lval *yySymType, str string) int {
 	}
 	lval.item = b
 	return bitLit
+}
+
+func getUint64FromNUM(num interface{}) uint64 {
+	switch v := num.(type) {
+	case int64:
+		return uint64(v)
+	case uint64:
+		return uint64(v)
+	}
+	return 0
 }

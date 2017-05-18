@@ -53,28 +53,28 @@ type testCase struct {
 	resultStr string
 }
 
-func (s *testExpressionSuite) runTests(c *C, cases []testCase) {
-	for _, ca := range cases {
-		expr := s.parseExpr(c, ca.exprStr)
+func (s *testExpressionSuite) runTests(c *C, tests []testCase) {
+	for _, tt := range tests {
+		expr := s.parseExpr(c, tt.exprStr)
 		val, err := evalAstExpr(expr, s.ctx)
 		c.Assert(err, IsNil)
 		valStr := fmt.Sprintf("%v", val.GetValue())
-		c.Assert(valStr, Equals, ca.resultStr, Commentf("for %s", ca.exprStr))
+		c.Assert(valStr, Equals, tt.resultStr, Commentf("for %s", tt.exprStr))
 	}
 }
 
 func (s *testExpressionSuite) TestBetween(c *C) {
 	defer testleak.AfterTest(c)()
-	cases := []testCase{
+	tests := []testCase{
 		{exprStr: "1 between 2 and 3", resultStr: "0"},
 		{exprStr: "1 not between 2 and 3", resultStr: "1"},
 	}
-	s.runTests(c, cases)
+	s.runTests(c, tests)
 }
 
 func (s *testExpressionSuite) TestCaseWhen(c *C) {
 	defer testleak.AfterTest(c)()
-	cases := []testCase{
+	tests := []testCase{
 		{
 			exprStr:   "case 1 when 1 then 'str1' when 2 then 'str2' end",
 			resultStr: "str1",
@@ -92,7 +92,7 @@ func (s *testExpressionSuite) TestCaseWhen(c *C) {
 			resultStr: "str3",
 		},
 	}
-	s.runTests(c, cases)
+	s.runTests(c, tests)
 
 	// When expression value changed, result set back to null.
 	valExpr := ast.NewValueExpr(1)
@@ -148,7 +148,7 @@ func (s *testExpressionSuite) TestCast(c *C) {
 
 func (s *testExpressionSuite) TestPatternIn(c *C) {
 	defer testleak.AfterTest(c)()
-	cases := []testCase{
+	tests := []testCase{
 		{
 			exprStr:   "1 not in (1, 2, 3)",
 			resultStr: "0",
@@ -190,12 +190,12 @@ func (s *testExpressionSuite) TestPatternIn(c *C) {
 			resultStr: "0",
 		},
 	}
-	s.runTests(c, cases)
+	s.runTests(c, tests)
 }
 
 func (s *testExpressionSuite) TestIsNull(c *C) {
 	defer testleak.AfterTest(c)()
-	cases := []testCase{
+	tests := []testCase{
 		{
 			exprStr:   "1 IS NULL",
 			resultStr: "0",
@@ -213,12 +213,12 @@ func (s *testExpressionSuite) TestIsNull(c *C) {
 			resultStr: "0",
 		},
 	}
-	s.runTests(c, cases)
+	s.runTests(c, tests)
 }
 
 func (s *testExpressionSuite) TestIsTruth(c *C) {
 	defer testleak.AfterTest(c)()
-	cases := []testCase{
+	tests := []testCase{
 		{
 			exprStr:   "1 IS TRUE",
 			resultStr: "1",
@@ -284,7 +284,7 @@ func (s *testExpressionSuite) TestIsTruth(c *C) {
 			resultStr: "1",
 		},
 	}
-	s.runTests(c, cases)
+	s.runTests(c, tests)
 }
 
 func (s *testExpressionSuite) TestDateArith(c *C) {
@@ -304,6 +304,9 @@ func (s *testExpressionSuite) TestDateArith(c *C) {
 		// nil test
 		{nil, 1, "DAY", nil, nil, false},
 		{"2011-11-11", nil, "DAY", nil, nil, false},
+		// tests for inner function call
+		{"2011-11-11", s.parseExpr(c, "LEAST(1, 2)"), "DAY", "2011-11-12", "2011-11-10", false},
+		{"2011-11-11", s.parseExpr(c, "LEAST(NULL, 2)"), "DAY", nil, nil, false},
 		// tests for different units
 		{"2011-11-11 10:10:10", 1000, "MICROSECOND", "2011-11-11 10:10:10.001000", "2011-11-11 10:10:09.999000", false},
 		{"2011-11-11 10:10:10", "10", "SECOND", "2011-11-11 10:10:20", "2011-11-11 10:10:00", false},
@@ -363,50 +366,42 @@ func (s *testExpressionSuite) TestDateArith(c *C) {
 
 	// run the test cases
 	for _, t := range tests {
-		op := ast.NewValueExpr(ast.DateAdd)
-		dateArithInterval := ast.NewValueExpr(
-			ast.DateArithInterval{
-				Unit:     t.Unit,
-				Interval: ast.NewValueExpr(t.Interval),
-			},
-		)
-		date := ast.NewValueExpr(t.Date)
-		expr := &ast.FuncCallExpr{
-			FnName: model.NewCIStr("DATE_ARITH"),
-			Args: []ast.ExprNode{
-				op,
-				date,
-				dateArithInterval,
-			},
-		}
-		ast.SetFlag(expr)
-		v, err := evalAstExpr(expr, s.ctx)
-		if t.error == true {
-			c.Assert(err, NotNil)
+		var interval ast.ExprNode
+		if n, ok := t.Interval.(ast.ExprNode); ok {
+			interval = n
 		} else {
-			c.Assert(err, IsNil)
-			if v.IsNull() {
-				c.Assert(nil, Equals, t.AddResult)
-			} else {
-				c.Assert(v.Kind(), Equals, types.KindMysqlTime)
-				value := v.GetMysqlTime()
-				c.Assert(value.String(), Equals, t.AddResult)
+			interval = ast.NewValueExpr(t.Interval)
+		}
+		for _, x := range []struct {
+			fnName string
+			result interface{}
+		}{
+			{ast.DateAdd, t.AddResult},
+			{ast.DateSub, t.SubResult},
+			{ast.AddDate, t.AddResult},
+			{ast.SubDate, t.SubResult},
+		} {
+			expr := &ast.FuncCallExpr{
+				FnName: model.NewCIStr(x.fnName),
+				Args: []ast.ExprNode{
+					ast.NewValueExpr(t.Date),
+					interval,
+					ast.NewValueExpr(t.Unit),
+				},
 			}
-		}
-
-		op = ast.NewValueExpr(ast.DateSub)
-		expr.Args[0] = op
-		v, err = evalAstExpr(expr, s.ctx)
-		if t.error == true {
-			c.Assert(err, NotNil)
-		} else {
-			c.Assert(err, IsNil)
-			if v.IsNull() {
-				c.Assert(nil, Equals, t.AddResult)
+			ast.SetFlag(expr)
+			v, err := evalAstExpr(expr, s.ctx)
+			if t.error == true {
+				c.Assert(err, NotNil)
 			} else {
-				c.Assert(v.Kind(), Equals, types.KindMysqlTime)
-				value := v.GetMysqlTime()
-				c.Assert(value.String(), Equals, t.SubResult)
+				c.Assert(err, IsNil)
+				if v.IsNull() {
+					c.Assert(nil, Equals, x.result)
+				} else {
+					c.Assert(v.Kind(), Equals, types.KindMysqlTime)
+					value := v.GetMysqlTime()
+					c.Assert(value.String(), Equals, x.result)
+				}
 			}
 		}
 	}

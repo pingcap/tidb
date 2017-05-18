@@ -57,6 +57,20 @@ func (m *WriteBinlogReq) String() string            { return proto.CompactTextSt
 func (*WriteBinlogReq) ProtoMessage()               {}
 func (*WriteBinlogReq) Descriptor() ([]byte, []int) { return fileDescriptorPump, []int{0} }
 
+func (m *WriteBinlogReq) GetClusterID() uint64 {
+	if m != nil {
+		return m.ClusterID
+	}
+	return 0
+}
+
+func (m *WriteBinlogReq) GetPayload() []byte {
+	if m != nil {
+		return m.Payload
+	}
+	return nil
+}
+
 type WriteBinlogResp struct {
 	// An empty errmsg returned means a successful write.
 	// Otherwise return the error description.
@@ -68,19 +82,31 @@ func (m *WriteBinlogResp) String() string            { return proto.CompactTextS
 func (*WriteBinlogResp) ProtoMessage()               {}
 func (*WriteBinlogResp) Descriptor() ([]byte, []int) { return fileDescriptorPump, []int{1} }
 
+func (m *WriteBinlogResp) GetErrmsg() string {
+	if m != nil {
+		return m.Errmsg
+	}
+	return ""
+}
+
 type PullBinlogReq struct {
 	// Specifies which clusterID of binlog to pull.
 	ClusterID uint64 `protobuf:"varint,1,opt,name=clusterID,proto3" json:"clusterID,omitempty"`
 	// The position from which the binlog will be sent.
 	StartFrom Pos `protobuf:"bytes,2,opt,name=startFrom" json:"startFrom"`
-	// The max number of binlog in a batch to pull.
-	Batch int32 `protobuf:"varint,3,opt,name=batch,proto3" json:"batch,omitempty"`
 }
 
 func (m *PullBinlogReq) Reset()                    { *m = PullBinlogReq{} }
 func (m *PullBinlogReq) String() string            { return proto.CompactTextString(m) }
 func (*PullBinlogReq) ProtoMessage()               {}
 func (*PullBinlogReq) Descriptor() ([]byte, []int) { return fileDescriptorPump, []int{2} }
+
+func (m *PullBinlogReq) GetClusterID() uint64 {
+	if m != nil {
+		return m.ClusterID
+	}
+	return 0
+}
 
 func (m *PullBinlogReq) GetStartFrom() Pos {
 	if m != nil {
@@ -90,10 +116,8 @@ func (m *PullBinlogReq) GetStartFrom() Pos {
 }
 
 type PullBinlogResp struct {
-	// An empty errmsg means that the successful acquisition of binlogs.
-	Errmsg string `protobuf:"bytes,1,opt,name=errmsg,proto3" json:"errmsg,omitempty"`
-	// The binlog entities pulled in a batch
-	Entities []Entity `protobuf:"bytes,2,rep,name=entities" json:"entities"`
+	// The binlog entity that send in a stream
+	Entity Entity `protobuf:"bytes,1,opt,name=entity" json:"entity"`
 }
 
 func (m *PullBinlogResp) Reset()                    { *m = PullBinlogResp{} }
@@ -101,11 +125,11 @@ func (m *PullBinlogResp) String() string            { return proto.CompactTextSt
 func (*PullBinlogResp) ProtoMessage()               {}
 func (*PullBinlogResp) Descriptor() ([]byte, []int) { return fileDescriptorPump, []int{3} }
 
-func (m *PullBinlogResp) GetEntities() []Entity {
+func (m *PullBinlogResp) GetEntity() Entity {
 	if m != nil {
-		return m.Entities
+		return m.Entity
 	}
-	return nil
+	return Entity{}
 }
 
 // Binlogs are stored in a number of sequential files in a directory.
@@ -121,6 +145,20 @@ func (m *Pos) Reset()                    { *m = Pos{} }
 func (m *Pos) String() string            { return proto.CompactTextString(m) }
 func (*Pos) ProtoMessage()               {}
 func (*Pos) Descriptor() ([]byte, []int) { return fileDescriptorPump, []int{4} }
+
+func (m *Pos) GetSuffix() uint64 {
+	if m != nil {
+		return m.Suffix
+	}
+	return 0
+}
+
+func (m *Pos) GetOffset() int64 {
+	if m != nil {
+		return m.Offset
+	}
+	return 0
+}
 
 type Entity struct {
 	// The position of the binlog entity.
@@ -141,6 +179,13 @@ func (m *Entity) GetPos() Pos {
 	return Pos{}
 }
 
+func (m *Entity) GetPayload() []byte {
+	if m != nil {
+		return m.Payload
+	}
+	return nil
+}
+
 func init() {
 	proto.RegisterType((*WriteBinlogReq)(nil), "binlog.WriteBinlogReq")
 	proto.RegisterType((*WriteBinlogResp)(nil), "binlog.WriteBinlogResp")
@@ -156,7 +201,7 @@ var _ grpc.ClientConn
 
 // This is a compile-time assertion to ensure that this generated file
 // is compatible with the grpc package it is being compiled against.
-const _ = grpc.SupportPackageIsVersion3
+const _ = grpc.SupportPackageIsVersion4
 
 // Client API for Pump service
 
@@ -164,8 +209,8 @@ type PumpClient interface {
 	// Writes a binlog to the local file on the pump machine.
 	// A response with an empty errmsg is returned if the binlog is written successfully.
 	WriteBinlog(ctx context.Context, in *WriteBinlogReq, opts ...grpc.CallOption) (*WriteBinlogResp, error)
-	// Obtains a batch of binlog from a given location.
-	PullBinlogs(ctx context.Context, in *PullBinlogReq, opts ...grpc.CallOption) (*PullBinlogResp, error)
+	// Sends binlog stream from a given location.
+	PullBinlogs(ctx context.Context, in *PullBinlogReq, opts ...grpc.CallOption) (Pump_PullBinlogsClient, error)
 }
 
 type pumpClient struct {
@@ -185,13 +230,36 @@ func (c *pumpClient) WriteBinlog(ctx context.Context, in *WriteBinlogReq, opts .
 	return out, nil
 }
 
-func (c *pumpClient) PullBinlogs(ctx context.Context, in *PullBinlogReq, opts ...grpc.CallOption) (*PullBinlogResp, error) {
-	out := new(PullBinlogResp)
-	err := grpc.Invoke(ctx, "/binlog.Pump/PullBinlogs", in, out, c.cc, opts...)
+func (c *pumpClient) PullBinlogs(ctx context.Context, in *PullBinlogReq, opts ...grpc.CallOption) (Pump_PullBinlogsClient, error) {
+	stream, err := grpc.NewClientStream(ctx, &_Pump_serviceDesc.Streams[0], c.cc, "/binlog.Pump/PullBinlogs", opts...)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	x := &pumpPullBinlogsClient{stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+type Pump_PullBinlogsClient interface {
+	Recv() (*PullBinlogResp, error)
+	grpc.ClientStream
+}
+
+type pumpPullBinlogsClient struct {
+	grpc.ClientStream
+}
+
+func (x *pumpPullBinlogsClient) Recv() (*PullBinlogResp, error) {
+	m := new(PullBinlogResp)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 // Server API for Pump service
@@ -200,8 +268,8 @@ type PumpServer interface {
 	// Writes a binlog to the local file on the pump machine.
 	// A response with an empty errmsg is returned if the binlog is written successfully.
 	WriteBinlog(context.Context, *WriteBinlogReq) (*WriteBinlogResp, error)
-	// Obtains a batch of binlog from a given location.
-	PullBinlogs(context.Context, *PullBinlogReq) (*PullBinlogResp, error)
+	// Sends binlog stream from a given location.
+	PullBinlogs(*PullBinlogReq, Pump_PullBinlogsServer) error
 }
 
 func RegisterPumpServer(s *grpc.Server, srv PumpServer) {
@@ -226,22 +294,25 @@ func _Pump_WriteBinlog_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Pump_PullBinlogs_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(PullBinlogReq)
-	if err := dec(in); err != nil {
-		return nil, err
+func _Pump_PullBinlogs_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(PullBinlogReq)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
 	}
-	if interceptor == nil {
-		return srv.(PumpServer).PullBinlogs(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/binlog.Pump/PullBinlogs",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PumpServer).PullBinlogs(ctx, req.(*PullBinlogReq))
-	}
-	return interceptor(ctx, in, info, handler)
+	return srv.(PumpServer).PullBinlogs(m, &pumpPullBinlogsServer{stream})
+}
+
+type Pump_PullBinlogsServer interface {
+	Send(*PullBinlogResp) error
+	grpc.ServerStream
+}
+
+type pumpPullBinlogsServer struct {
+	grpc.ServerStream
+}
+
+func (x *pumpPullBinlogsServer) Send(m *PullBinlogResp) error {
+	return x.ServerStream.SendMsg(m)
 }
 
 var _Pump_serviceDesc = grpc.ServiceDesc{
@@ -252,225 +323,212 @@ var _Pump_serviceDesc = grpc.ServiceDesc{
 			MethodName: "WriteBinlog",
 			Handler:    _Pump_WriteBinlog_Handler,
 		},
+	},
+	Streams: []grpc.StreamDesc{
 		{
-			MethodName: "PullBinlogs",
-			Handler:    _Pump_PullBinlogs_Handler,
+			StreamName:    "PullBinlogs",
+			Handler:       _Pump_PullBinlogs_Handler,
+			ServerStreams: true,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
-	Metadata: fileDescriptorPump,
+	Metadata: "pump.proto",
 }
 
-func (m *WriteBinlogReq) Marshal() (data []byte, err error) {
+func (m *WriteBinlogReq) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
-	data = make([]byte, size)
-	n, err := m.MarshalTo(data)
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
 	if err != nil {
 		return nil, err
 	}
-	return data[:n], nil
+	return dAtA[:n], nil
 }
 
-func (m *WriteBinlogReq) MarshalTo(data []byte) (int, error) {
+func (m *WriteBinlogReq) MarshalTo(dAtA []byte) (int, error) {
 	var i int
 	_ = i
 	var l int
 	_ = l
 	if m.ClusterID != 0 {
-		data[i] = 0x8
+		dAtA[i] = 0x8
 		i++
-		i = encodeVarintPump(data, i, uint64(m.ClusterID))
+		i = encodeVarintPump(dAtA, i, uint64(m.ClusterID))
 	}
 	if len(m.Payload) > 0 {
-		data[i] = 0x12
+		dAtA[i] = 0x12
 		i++
-		i = encodeVarintPump(data, i, uint64(len(m.Payload)))
-		i += copy(data[i:], m.Payload)
+		i = encodeVarintPump(dAtA, i, uint64(len(m.Payload)))
+		i += copy(dAtA[i:], m.Payload)
 	}
 	return i, nil
 }
 
-func (m *WriteBinlogResp) Marshal() (data []byte, err error) {
+func (m *WriteBinlogResp) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
-	data = make([]byte, size)
-	n, err := m.MarshalTo(data)
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
 	if err != nil {
 		return nil, err
 	}
-	return data[:n], nil
+	return dAtA[:n], nil
 }
 
-func (m *WriteBinlogResp) MarshalTo(data []byte) (int, error) {
+func (m *WriteBinlogResp) MarshalTo(dAtA []byte) (int, error) {
 	var i int
 	_ = i
 	var l int
 	_ = l
 	if len(m.Errmsg) > 0 {
-		data[i] = 0xa
+		dAtA[i] = 0xa
 		i++
-		i = encodeVarintPump(data, i, uint64(len(m.Errmsg)))
-		i += copy(data[i:], m.Errmsg)
+		i = encodeVarintPump(dAtA, i, uint64(len(m.Errmsg)))
+		i += copy(dAtA[i:], m.Errmsg)
 	}
 	return i, nil
 }
 
-func (m *PullBinlogReq) Marshal() (data []byte, err error) {
+func (m *PullBinlogReq) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
-	data = make([]byte, size)
-	n, err := m.MarshalTo(data)
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
 	if err != nil {
 		return nil, err
 	}
-	return data[:n], nil
+	return dAtA[:n], nil
 }
 
-func (m *PullBinlogReq) MarshalTo(data []byte) (int, error) {
+func (m *PullBinlogReq) MarshalTo(dAtA []byte) (int, error) {
 	var i int
 	_ = i
 	var l int
 	_ = l
 	if m.ClusterID != 0 {
-		data[i] = 0x8
+		dAtA[i] = 0x8
 		i++
-		i = encodeVarintPump(data, i, uint64(m.ClusterID))
+		i = encodeVarintPump(dAtA, i, uint64(m.ClusterID))
 	}
-	data[i] = 0x12
+	dAtA[i] = 0x12
 	i++
-	i = encodeVarintPump(data, i, uint64(m.StartFrom.Size()))
-	n1, err := m.StartFrom.MarshalTo(data[i:])
+	i = encodeVarintPump(dAtA, i, uint64(m.StartFrom.Size()))
+	n1, err := m.StartFrom.MarshalTo(dAtA[i:])
 	if err != nil {
 		return 0, err
 	}
 	i += n1
-	if m.Batch != 0 {
-		data[i] = 0x18
-		i++
-		i = encodeVarintPump(data, i, uint64(m.Batch))
-	}
 	return i, nil
 }
 
-func (m *PullBinlogResp) Marshal() (data []byte, err error) {
+func (m *PullBinlogResp) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
-	data = make([]byte, size)
-	n, err := m.MarshalTo(data)
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
 	if err != nil {
 		return nil, err
 	}
-	return data[:n], nil
+	return dAtA[:n], nil
 }
 
-func (m *PullBinlogResp) MarshalTo(data []byte) (int, error) {
+func (m *PullBinlogResp) MarshalTo(dAtA []byte) (int, error) {
 	var i int
 	_ = i
 	var l int
 	_ = l
-	if len(m.Errmsg) > 0 {
-		data[i] = 0xa
-		i++
-		i = encodeVarintPump(data, i, uint64(len(m.Errmsg)))
-		i += copy(data[i:], m.Errmsg)
+	dAtA[i] = 0xa
+	i++
+	i = encodeVarintPump(dAtA, i, uint64(m.Entity.Size()))
+	n2, err := m.Entity.MarshalTo(dAtA[i:])
+	if err != nil {
+		return 0, err
 	}
-	if len(m.Entities) > 0 {
-		for _, msg := range m.Entities {
-			data[i] = 0x12
-			i++
-			i = encodeVarintPump(data, i, uint64(msg.Size()))
-			n, err := msg.MarshalTo(data[i:])
-			if err != nil {
-				return 0, err
-			}
-			i += n
-		}
-	}
+	i += n2
 	return i, nil
 }
 
-func (m *Pos) Marshal() (data []byte, err error) {
+func (m *Pos) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
-	data = make([]byte, size)
-	n, err := m.MarshalTo(data)
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
 	if err != nil {
 		return nil, err
 	}
-	return data[:n], nil
+	return dAtA[:n], nil
 }
 
-func (m *Pos) MarshalTo(data []byte) (int, error) {
+func (m *Pos) MarshalTo(dAtA []byte) (int, error) {
 	var i int
 	_ = i
 	var l int
 	_ = l
 	if m.Suffix != 0 {
-		data[i] = 0x8
+		dAtA[i] = 0x8
 		i++
-		i = encodeVarintPump(data, i, uint64(m.Suffix))
+		i = encodeVarintPump(dAtA, i, uint64(m.Suffix))
 	}
 	if m.Offset != 0 {
-		data[i] = 0x10
+		dAtA[i] = 0x10
 		i++
-		i = encodeVarintPump(data, i, uint64(m.Offset))
+		i = encodeVarintPump(dAtA, i, uint64(m.Offset))
 	}
 	return i, nil
 }
 
-func (m *Entity) Marshal() (data []byte, err error) {
+func (m *Entity) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
-	data = make([]byte, size)
-	n, err := m.MarshalTo(data)
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
 	if err != nil {
 		return nil, err
 	}
-	return data[:n], nil
+	return dAtA[:n], nil
 }
 
-func (m *Entity) MarshalTo(data []byte) (int, error) {
+func (m *Entity) MarshalTo(dAtA []byte) (int, error) {
 	var i int
 	_ = i
 	var l int
 	_ = l
-	data[i] = 0xa
+	dAtA[i] = 0xa
 	i++
-	i = encodeVarintPump(data, i, uint64(m.Pos.Size()))
-	n2, err := m.Pos.MarshalTo(data[i:])
+	i = encodeVarintPump(dAtA, i, uint64(m.Pos.Size()))
+	n3, err := m.Pos.MarshalTo(dAtA[i:])
 	if err != nil {
 		return 0, err
 	}
-	i += n2
+	i += n3
 	if len(m.Payload) > 0 {
-		data[i] = 0x12
+		dAtA[i] = 0x12
 		i++
-		i = encodeVarintPump(data, i, uint64(len(m.Payload)))
-		i += copy(data[i:], m.Payload)
+		i = encodeVarintPump(dAtA, i, uint64(len(m.Payload)))
+		i += copy(dAtA[i:], m.Payload)
 	}
 	return i, nil
 }
 
-func encodeFixed64Pump(data []byte, offset int, v uint64) int {
-	data[offset] = uint8(v)
-	data[offset+1] = uint8(v >> 8)
-	data[offset+2] = uint8(v >> 16)
-	data[offset+3] = uint8(v >> 24)
-	data[offset+4] = uint8(v >> 32)
-	data[offset+5] = uint8(v >> 40)
-	data[offset+6] = uint8(v >> 48)
-	data[offset+7] = uint8(v >> 56)
+func encodeFixed64Pump(dAtA []byte, offset int, v uint64) int {
+	dAtA[offset] = uint8(v)
+	dAtA[offset+1] = uint8(v >> 8)
+	dAtA[offset+2] = uint8(v >> 16)
+	dAtA[offset+3] = uint8(v >> 24)
+	dAtA[offset+4] = uint8(v >> 32)
+	dAtA[offset+5] = uint8(v >> 40)
+	dAtA[offset+6] = uint8(v >> 48)
+	dAtA[offset+7] = uint8(v >> 56)
 	return offset + 8
 }
-func encodeFixed32Pump(data []byte, offset int, v uint32) int {
-	data[offset] = uint8(v)
-	data[offset+1] = uint8(v >> 8)
-	data[offset+2] = uint8(v >> 16)
-	data[offset+3] = uint8(v >> 24)
+func encodeFixed32Pump(dAtA []byte, offset int, v uint32) int {
+	dAtA[offset] = uint8(v)
+	dAtA[offset+1] = uint8(v >> 8)
+	dAtA[offset+2] = uint8(v >> 16)
+	dAtA[offset+3] = uint8(v >> 24)
 	return offset + 4
 }
-func encodeVarintPump(data []byte, offset int, v uint64) int {
+func encodeVarintPump(dAtA []byte, offset int, v uint64) int {
 	for v >= 1<<7 {
-		data[offset] = uint8(v&0x7f | 0x80)
+		dAtA[offset] = uint8(v&0x7f | 0x80)
 		v >>= 7
 		offset++
 	}
-	data[offset] = uint8(v)
+	dAtA[offset] = uint8(v)
 	return offset + 1
 }
 func (m *WriteBinlogReq) Size() (n int) {
@@ -504,25 +562,14 @@ func (m *PullBinlogReq) Size() (n int) {
 	}
 	l = m.StartFrom.Size()
 	n += 1 + l + sovPump(uint64(l))
-	if m.Batch != 0 {
-		n += 1 + sovPump(uint64(m.Batch))
-	}
 	return n
 }
 
 func (m *PullBinlogResp) Size() (n int) {
 	var l int
 	_ = l
-	l = len(m.Errmsg)
-	if l > 0 {
-		n += 1 + l + sovPump(uint64(l))
-	}
-	if len(m.Entities) > 0 {
-		for _, e := range m.Entities {
-			l = e.Size()
-			n += 1 + l + sovPump(uint64(l))
-		}
-	}
+	l = m.Entity.Size()
+	n += 1 + l + sovPump(uint64(l))
 	return n
 }
 
@@ -563,8 +610,8 @@ func sovPump(x uint64) (n int) {
 func sozPump(x uint64) (n int) {
 	return sovPump(uint64((x << 1) ^ uint64((int64(x) >> 63))))
 }
-func (m *WriteBinlogReq) Unmarshal(data []byte) error {
-	l := len(data)
+func (m *WriteBinlogReq) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
 		preIndex := iNdEx
@@ -576,7 +623,7 @@ func (m *WriteBinlogReq) Unmarshal(data []byte) error {
 			if iNdEx >= l {
 				return io.ErrUnexpectedEOF
 			}
-			b := data[iNdEx]
+			b := dAtA[iNdEx]
 			iNdEx++
 			wire |= (uint64(b) & 0x7F) << shift
 			if b < 0x80 {
@@ -604,7 +651,7 @@ func (m *WriteBinlogReq) Unmarshal(data []byte) error {
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				m.ClusterID |= (uint64(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -623,7 +670,7 @@ func (m *WriteBinlogReq) Unmarshal(data []byte) error {
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				byteLen |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -637,14 +684,14 @@ func (m *WriteBinlogReq) Unmarshal(data []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Payload = append(m.Payload[:0], data[iNdEx:postIndex]...)
+			m.Payload = append(m.Payload[:0], dAtA[iNdEx:postIndex]...)
 			if m.Payload == nil {
 				m.Payload = []byte{}
 			}
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
-			skippy, err := skipPump(data[iNdEx:])
+			skippy, err := skipPump(dAtA[iNdEx:])
 			if err != nil {
 				return err
 			}
@@ -663,8 +710,8 @@ func (m *WriteBinlogReq) Unmarshal(data []byte) error {
 	}
 	return nil
 }
-func (m *WriteBinlogResp) Unmarshal(data []byte) error {
-	l := len(data)
+func (m *WriteBinlogResp) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
 		preIndex := iNdEx
@@ -676,7 +723,7 @@ func (m *WriteBinlogResp) Unmarshal(data []byte) error {
 			if iNdEx >= l {
 				return io.ErrUnexpectedEOF
 			}
-			b := data[iNdEx]
+			b := dAtA[iNdEx]
 			iNdEx++
 			wire |= (uint64(b) & 0x7F) << shift
 			if b < 0x80 {
@@ -704,7 +751,7 @@ func (m *WriteBinlogResp) Unmarshal(data []byte) error {
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				stringLen |= (uint64(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -719,11 +766,11 @@ func (m *WriteBinlogResp) Unmarshal(data []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Errmsg = string(data[iNdEx:postIndex])
+			m.Errmsg = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
-			skippy, err := skipPump(data[iNdEx:])
+			skippy, err := skipPump(dAtA[iNdEx:])
 			if err != nil {
 				return err
 			}
@@ -742,8 +789,8 @@ func (m *WriteBinlogResp) Unmarshal(data []byte) error {
 	}
 	return nil
 }
-func (m *PullBinlogReq) Unmarshal(data []byte) error {
-	l := len(data)
+func (m *PullBinlogReq) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
 		preIndex := iNdEx
@@ -755,7 +802,7 @@ func (m *PullBinlogReq) Unmarshal(data []byte) error {
 			if iNdEx >= l {
 				return io.ErrUnexpectedEOF
 			}
-			b := data[iNdEx]
+			b := dAtA[iNdEx]
 			iNdEx++
 			wire |= (uint64(b) & 0x7F) << shift
 			if b < 0x80 {
@@ -783,7 +830,7 @@ func (m *PullBinlogReq) Unmarshal(data []byte) error {
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				m.ClusterID |= (uint64(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -802,7 +849,7 @@ func (m *PullBinlogReq) Unmarshal(data []byte) error {
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				msglen |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -816,32 +863,13 @@ func (m *PullBinlogReq) Unmarshal(data []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if err := m.StartFrom.Unmarshal(data[iNdEx:postIndex]); err != nil {
+			if err := m.StartFrom.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
-		case 3:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Batch", wireType)
-			}
-			m.Batch = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPump
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := data[iNdEx]
-				iNdEx++
-				m.Batch |= (int32(b) & 0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
 		default:
 			iNdEx = preIndex
-			skippy, err := skipPump(data[iNdEx:])
+			skippy, err := skipPump(dAtA[iNdEx:])
 			if err != nil {
 				return err
 			}
@@ -860,8 +888,8 @@ func (m *PullBinlogReq) Unmarshal(data []byte) error {
 	}
 	return nil
 }
-func (m *PullBinlogResp) Unmarshal(data []byte) error {
-	l := len(data)
+func (m *PullBinlogResp) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
 		preIndex := iNdEx
@@ -873,7 +901,7 @@ func (m *PullBinlogResp) Unmarshal(data []byte) error {
 			if iNdEx >= l {
 				return io.ErrUnexpectedEOF
 			}
-			b := data[iNdEx]
+			b := dAtA[iNdEx]
 			iNdEx++
 			wire |= (uint64(b) & 0x7F) << shift
 			if b < 0x80 {
@@ -891,36 +919,7 @@ func (m *PullBinlogResp) Unmarshal(data []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Errmsg", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPump
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := data[iNdEx]
-				iNdEx++
-				stringLen |= (uint64(b) & 0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthPump
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Errmsg = string(data[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 2:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Entities", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Entity", wireType)
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
@@ -930,7 +929,7 @@ func (m *PullBinlogResp) Unmarshal(data []byte) error {
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				msglen |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -944,14 +943,13 @@ func (m *PullBinlogResp) Unmarshal(data []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Entities = append(m.Entities, Entity{})
-			if err := m.Entities[len(m.Entities)-1].Unmarshal(data[iNdEx:postIndex]); err != nil {
+			if err := m.Entity.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
-			skippy, err := skipPump(data[iNdEx:])
+			skippy, err := skipPump(dAtA[iNdEx:])
 			if err != nil {
 				return err
 			}
@@ -970,8 +968,8 @@ func (m *PullBinlogResp) Unmarshal(data []byte) error {
 	}
 	return nil
 }
-func (m *Pos) Unmarshal(data []byte) error {
-	l := len(data)
+func (m *Pos) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
 		preIndex := iNdEx
@@ -983,7 +981,7 @@ func (m *Pos) Unmarshal(data []byte) error {
 			if iNdEx >= l {
 				return io.ErrUnexpectedEOF
 			}
-			b := data[iNdEx]
+			b := dAtA[iNdEx]
 			iNdEx++
 			wire |= (uint64(b) & 0x7F) << shift
 			if b < 0x80 {
@@ -1011,7 +1009,7 @@ func (m *Pos) Unmarshal(data []byte) error {
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				m.Suffix |= (uint64(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -1030,7 +1028,7 @@ func (m *Pos) Unmarshal(data []byte) error {
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				m.Offset |= (int64(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -1039,7 +1037,7 @@ func (m *Pos) Unmarshal(data []byte) error {
 			}
 		default:
 			iNdEx = preIndex
-			skippy, err := skipPump(data[iNdEx:])
+			skippy, err := skipPump(dAtA[iNdEx:])
 			if err != nil {
 				return err
 			}
@@ -1058,8 +1056,8 @@ func (m *Pos) Unmarshal(data []byte) error {
 	}
 	return nil
 }
-func (m *Entity) Unmarshal(data []byte) error {
-	l := len(data)
+func (m *Entity) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
 		preIndex := iNdEx
@@ -1071,7 +1069,7 @@ func (m *Entity) Unmarshal(data []byte) error {
 			if iNdEx >= l {
 				return io.ErrUnexpectedEOF
 			}
-			b := data[iNdEx]
+			b := dAtA[iNdEx]
 			iNdEx++
 			wire |= (uint64(b) & 0x7F) << shift
 			if b < 0x80 {
@@ -1099,7 +1097,7 @@ func (m *Entity) Unmarshal(data []byte) error {
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				msglen |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -1113,7 +1111,7 @@ func (m *Entity) Unmarshal(data []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if err := m.Pos.Unmarshal(data[iNdEx:postIndex]); err != nil {
+			if err := m.Pos.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -1129,7 +1127,7 @@ func (m *Entity) Unmarshal(data []byte) error {
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				byteLen |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -1143,14 +1141,14 @@ func (m *Entity) Unmarshal(data []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Payload = append(m.Payload[:0], data[iNdEx:postIndex]...)
+			m.Payload = append(m.Payload[:0], dAtA[iNdEx:postIndex]...)
 			if m.Payload == nil {
 				m.Payload = []byte{}
 			}
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
-			skippy, err := skipPump(data[iNdEx:])
+			skippy, err := skipPump(dAtA[iNdEx:])
 			if err != nil {
 				return err
 			}
@@ -1169,8 +1167,8 @@ func (m *Entity) Unmarshal(data []byte) error {
 	}
 	return nil
 }
-func skipPump(data []byte) (n int, err error) {
-	l := len(data)
+func skipPump(dAtA []byte) (n int, err error) {
+	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
 		var wire uint64
@@ -1181,7 +1179,7 @@ func skipPump(data []byte) (n int, err error) {
 			if iNdEx >= l {
 				return 0, io.ErrUnexpectedEOF
 			}
-			b := data[iNdEx]
+			b := dAtA[iNdEx]
 			iNdEx++
 			wire |= (uint64(b) & 0x7F) << shift
 			if b < 0x80 {
@@ -1199,7 +1197,7 @@ func skipPump(data []byte) (n int, err error) {
 					return 0, io.ErrUnexpectedEOF
 				}
 				iNdEx++
-				if data[iNdEx-1] < 0x80 {
+				if dAtA[iNdEx-1] < 0x80 {
 					break
 				}
 			}
@@ -1216,7 +1214,7 @@ func skipPump(data []byte) (n int, err error) {
 				if iNdEx >= l {
 					return 0, io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				length |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -1239,7 +1237,7 @@ func skipPump(data []byte) (n int, err error) {
 					if iNdEx >= l {
 						return 0, io.ErrUnexpectedEOF
 					}
-					b := data[iNdEx]
+					b := dAtA[iNdEx]
 					iNdEx++
 					innerWire |= (uint64(b) & 0x7F) << shift
 					if b < 0x80 {
@@ -1250,7 +1248,7 @@ func skipPump(data []byte) (n int, err error) {
 				if innerWireType == 4 {
 					break
 				}
-				next, err := skipPump(data[start:])
+				next, err := skipPump(dAtA[start:])
 				if err != nil {
 					return 0, err
 				}
@@ -1277,28 +1275,27 @@ var (
 func init() { proto.RegisterFile("pump.proto", fileDescriptorPump) }
 
 var fileDescriptorPump = []byte{
-	// 357 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0x8c, 0x52, 0xcd, 0x4a, 0xf3, 0x40,
-	0x14, 0x6d, 0xbe, 0xb4, 0xf9, 0xec, 0x8d, 0x56, 0x19, 0x6a, 0x0d, 0x45, 0xaa, 0x8c, 0x1b, 0xdd,
-	0xb4, 0x52, 0x71, 0x2b, 0x52, 0xfc, 0xdd, 0x95, 0xd9, 0x08, 0xee, 0xd2, 0x3a, 0x89, 0x81, 0xb4,
-	0x33, 0xce, 0x4c, 0xc0, 0xbe, 0x81, 0x8f, 0xe0, 0x23, 0x75, 0xe9, 0x13, 0x88, 0xe8, 0x8b, 0x38,
-	0x99, 0xa4, 0x7f, 0x90, 0x82, 0x8b, 0x81, 0x9c, 0x73, 0xef, 0x9c, 0x73, 0xef, 0x9c, 0x00, 0xf0,
-	0x64, 0xc4, 0xdb, 0x5c, 0x30, 0xc5, 0x90, 0x33, 0x88, 0xc6, 0x31, 0x0b, 0x9b, 0xf5, 0x90, 0x85,
-	0xcc, 0x50, 0x9d, 0xf4, 0x2b, 0xab, 0xe2, 0x3b, 0xa8, 0x3d, 0x88, 0x48, 0xd1, 0x9e, 0x69, 0x22,
-	0xf4, 0x05, 0xed, 0x43, 0x75, 0x18, 0x27, 0x52, 0x51, 0x71, 0x7f, 0xe5, 0x59, 0x87, 0xd6, 0x71,
-	0x99, 0x2c, 0x08, 0xe4, 0xc1, 0x7f, 0xee, 0x4f, 0x62, 0xe6, 0x3f, 0x79, 0xff, 0x74, 0x6d, 0x93,
-	0xcc, 0x20, 0x3e, 0x81, 0xed, 0x15, 0x25, 0xc9, 0x51, 0x03, 0x1c, 0x2a, 0xc4, 0x48, 0x86, 0x46,
-	0xa7, 0x4a, 0x72, 0x84, 0x15, 0x6c, 0xf5, 0x93, 0x38, 0xfe, 0xab, 0x67, 0x07, 0xaa, 0x52, 0xf9,
-	0x42, 0xdd, 0x08, 0x36, 0x32, 0xae, 0x6e, 0xd7, 0x6d, 0x67, 0x5b, 0xb5, 0xfb, 0x4c, 0xf6, 0xca,
-	0xd3, 0xcf, 0x83, 0x12, 0x59, 0xf4, 0xa0, 0x3a, 0x54, 0x06, 0xbe, 0x1a, 0x3e, 0x7b, 0xb6, 0x6e,
-	0xae, 0x90, 0x0c, 0xe0, 0x47, 0xa8, 0x2d, 0xbb, 0xae, 0x9f, 0x0f, 0x9d, 0xc2, 0x06, 0x1d, 0xab,
-	0x48, 0x45, 0x54, 0x6a, 0x3f, 0x5b, 0xfb, 0xd5, 0x66, 0x7e, 0xd7, 0x29, 0x3f, 0xc9, 0x2d, 0xe7,
-	0x5d, 0xf8, 0x1c, 0x6c, 0x3d, 0x49, 0x2a, 0x28, 0x93, 0x20, 0x88, 0x5e, 0xf3, 0x25, 0x72, 0x94,
-	0xf2, 0x2c, 0x08, 0x24, 0x55, 0x66, 0x7c, 0x9b, 0xe4, 0x08, 0xdf, 0x82, 0x93, 0x09, 0xa2, 0x23,
-	0xb0, 0x39, 0x93, 0xe6, 0x5a, 0xe1, 0x76, 0x69, 0x75, 0xfd, 0xe3, 0x77, 0xdf, 0x2c, 0x28, 0xf7,
-	0x75, 0xe6, 0xe8, 0x12, 0xdc, 0xa5, 0x14, 0x50, 0x63, 0xa6, 0xb4, 0x1a, 0x72, 0x73, 0xaf, 0x90,
-	0x97, 0x1c, 0x97, 0xd0, 0x05, 0xb8, 0x8b, 0x67, 0x92, 0x68, 0x77, 0x3e, 0xcb, 0x72, 0x62, 0xcd,
-	0x46, 0x11, 0x9d, 0xde, 0xef, 0xed, 0x4c, 0xbf, 0x5b, 0xd6, 0x87, 0x3e, 0x5f, 0xfa, 0xbc, 0xff,
-	0xb4, 0x4a, 0x03, 0xc7, 0xfc, 0x6a, 0x67, 0xbf, 0x01, 0x00, 0x00, 0xff, 0xff, 0x90, 0x3a, 0x1d,
-	0x93, 0x96, 0x02, 0x00, 0x00,
+	// 341 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0x8c, 0x92, 0xcf, 0x4a, 0xf3, 0x40,
+	0x14, 0xc5, 0x3b, 0x5f, 0x4b, 0x3e, 0x7a, 0xa3, 0x55, 0x06, 0xad, 0xa5, 0x48, 0x2c, 0xe3, 0xa6,
+	0x82, 0xb4, 0x52, 0x71, 0x2b, 0x52, 0xfc, 0xbb, 0x0b, 0xd9, 0xb8, 0x13, 0x5a, 0x9d, 0x84, 0x40,
+	0xd2, 0x19, 0xe7, 0x4e, 0xc0, 0xbe, 0x82, 0x4f, 0xe0, 0x23, 0x75, 0xe9, 0x13, 0x88, 0xd4, 0x17,
+	0x91, 0x99, 0x4e, 0x6d, 0x0b, 0x15, 0xdc, 0xe5, 0x9c, 0xb9, 0xf3, 0xbb, 0x27, 0x27, 0x01, 0x90,
+	0x45, 0x2e, 0x3b, 0x52, 0x09, 0x2d, 0xa8, 0x37, 0x4c, 0x47, 0x99, 0x48, 0x9a, 0x3b, 0x89, 0x48,
+	0x84, 0xb5, 0xba, 0xe6, 0x69, 0x76, 0xca, 0x6e, 0xa1, 0x76, 0xaf, 0x52, 0xcd, 0xfb, 0x76, 0x28,
+	0xe2, 0xcf, 0x74, 0x1f, 0xaa, 0x8f, 0x59, 0x81, 0x9a, 0xab, 0xbb, 0xcb, 0x06, 0x69, 0x91, 0x76,
+	0x25, 0x5a, 0x18, 0xb4, 0x01, 0xff, 0xe5, 0x60, 0x9c, 0x89, 0xc1, 0x53, 0xe3, 0x5f, 0x8b, 0xb4,
+	0x37, 0xa2, 0xb9, 0x64, 0x47, 0xb0, 0xb5, 0x42, 0x42, 0x49, 0xeb, 0xe0, 0x71, 0xa5, 0x72, 0x4c,
+	0x2c, 0xa7, 0x1a, 0x39, 0xc5, 0x1e, 0x60, 0x33, 0x2c, 0xb2, 0xec, 0xaf, 0x3b, 0xbb, 0x50, 0x45,
+	0x3d, 0x50, 0xfa, 0x5a, 0x89, 0xdc, 0x6e, 0xf5, 0x7b, 0x7e, 0x67, 0xf6, 0x56, 0x9d, 0x50, 0x60,
+	0xbf, 0x32, 0xf9, 0x38, 0x28, 0x45, 0x8b, 0x19, 0x76, 0x0e, 0xb5, 0x65, 0x3e, 0x4a, 0x7a, 0x0c,
+	0x1e, 0x1f, 0xe9, 0x54, 0x8f, 0x2d, 0xdd, 0xef, 0xd5, 0xe6, 0xf7, 0xaf, 0xac, 0xeb, 0x10, 0x6e,
+	0x86, 0x9d, 0x41, 0x39, 0x14, 0x68, 0xe2, 0x63, 0x11, 0xc7, 0xe9, 0x8b, 0x8b, 0xe4, 0x94, 0xf1,
+	0x45, 0x1c, 0x23, 0xd7, 0x36, 0x4c, 0x39, 0x72, 0x8a, 0xdd, 0x80, 0x37, 0xc3, 0xd1, 0x43, 0x28,
+	0x4b, 0x81, 0x6e, 0xd7, 0x9a, 0xac, 0xe6, 0xf4, 0xf7, 0x2a, 0x7b, 0xaf, 0x04, 0x2a, 0x61, 0x91,
+	0x4b, 0x7a, 0x01, 0xfe, 0x52, 0xa7, 0xb4, 0x3e, 0x27, 0xad, 0x7e, 0xb2, 0xe6, 0xde, 0x5a, 0x1f,
+	0x25, 0x2b, 0x19, 0xc2, 0xa2, 0x0a, 0xa4, 0xbb, 0x3f, 0x59, 0x96, 0xfb, 0x6f, 0xd6, 0xd7, 0xd9,
+	0xe6, 0xfe, 0x09, 0xe9, 0x6f, 0x4f, 0xa6, 0x01, 0x79, 0x9f, 0x06, 0xe4, 0x73, 0x1a, 0x90, 0xb7,
+	0xaf, 0xa0, 0x34, 0xf4, 0xec, 0xaf, 0x73, 0xfa, 0x1d, 0x00, 0x00, 0xff, 0xff, 0xf1, 0x05, 0xc3,
+	0x79, 0x66, 0x02, 0x00, 0x00,
 }

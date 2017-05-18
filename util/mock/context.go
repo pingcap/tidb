@@ -22,19 +22,19 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util"
+	goctx "golang.org/x/net/context"
 )
 
 var _ context.Context = (*Context)(nil)
 
 // Context represents mocked context.Context.
 type Context struct {
-	values map[fmt.Stringer]interface{}
-	// mock global variable
-	txn         kv.Transaction
-	Store       kv.Storage
+	values      map[fmt.Stringer]interface{}
+	txn         kv.Transaction // mock global variable
+	Store       kv.Storage     // mock global variable
 	sessionVars *variable.SessionVars
-	// Fix data race in ddl test.
-	mux sync.Mutex
+	mux         sync.Mutex // fix data race in ddl test.
 }
 
 // SetValue implements context.Context SetValue interface.
@@ -107,6 +107,55 @@ func (c *Context) NewTxn() error {
 	}
 	c.txn = txn
 	return nil
+}
+
+// RefreshTxnCtx implements the context.Context interface.
+func (c *Context) RefreshTxnCtx() error {
+	return errors.Trace(c.NewTxn())
+}
+
+// ActivePendingTxn implements the context.Context interface.
+func (c *Context) ActivePendingTxn() error {
+	if c.txn != nil {
+		return nil
+	}
+	if c.Store != nil {
+		txn, err := c.Store.Begin()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		c.txn = txn
+	}
+	return nil
+}
+
+// InitTxnWithStartTS implements the context.Context interface with startTS.
+func (c *Context) InitTxnWithStartTS(startTS uint64) error {
+	if c.txn != nil {
+		return nil
+	}
+	if c.Store != nil {
+		txn, err := c.Store.BeginWithStartTS(startTS)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		c.txn = txn
+	}
+	return nil
+}
+
+// GetSessionManager implements the context.Context interface.
+func (c *Context) GetSessionManager() util.SessionManager {
+	return nil
+}
+
+// Cancel implements the Session interface.
+func (c *Context) Cancel() {
+}
+
+// GoCtx returns standard context.Context that bind with current transaction.
+func (c *Context) GoCtx() goctx.Context {
+	return goctx.Background()
 }
 
 // NewContext creates a new mocked context.Context.

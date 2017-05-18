@@ -20,7 +20,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	"github.com/pingcap/tidb/util/mock"
@@ -59,37 +58,38 @@ func (*testSuite) TestT(c *C) {
 	is := dom.InfoSchema()
 	c.Assert(is, NotNil)
 
-	m, err := dom.Stats()
-	c.Assert(err, IsNil)
-	c.Assert(m[ddlLastReloadSchemaTS], GreaterEqual, int64(0))
-	c.Assert(dom.GetScope("dummy_status"), Equals, variable.DefaultScopeFlag)
-
 	// for setting lease
 	lease := 100 * time.Millisecond
 
-	// for schemaValidity
-	schemaVer, err := dom.SchemaValidity.Check(0, 0)
+	// for schemaValidator
+	schemaVer := dom.SchemaValidator.Latest()
+	ver, err := store.CurrentVersion()
 	c.Assert(err, IsNil)
-	dom.SchemaValidity.MockReloadFailed.SetValue(true)
+	ts := ver.Ver
+
+	succ := dom.SchemaValidator.Check(ts, schemaVer)
+	c.Assert(succ, IsTrue)
+	dom.MockReloadFailed.SetValue(true)
 	err = dom.Reload()
 	c.Assert(err, NotNil)
+	succ = dom.SchemaValidator.Check(ts, schemaVer)
+	c.Assert(succ, IsTrue)
 	time.Sleep(lease)
-	_, err = dom.SchemaValidity.Check(0, 0)
-	c.Assert(err, NotNil)
-	_, err = dom.SchemaValidity.Check(0, schemaVer)
-	c.Assert(err, NotNil)
-	dom.SchemaValidity.MockReloadFailed.SetValue(false)
-	dom.SchemaValidity.SetExpireInfo(false, 0)
-	_, err = dom.SchemaValidity.Check(1, 0)
-	c.Assert(err, NotNil)
-	schemaVer1, err := dom.SchemaValidity.Check(0, schemaVer)
+
+	ver, err = store.CurrentVersion()
 	c.Assert(err, IsNil)
+	ts = ver.Ver
+	succ = dom.SchemaValidator.Check(ts, schemaVer)
+	c.Assert(succ, IsFalse)
+	dom.MockReloadFailed.SetValue(false)
 	err = dom.Reload()
 	c.Assert(err, IsNil)
-	time.Sleep(lease)
-	schemaVer2, err := dom.SchemaValidity.Check(0, 0)
+	succ = dom.SchemaValidator.Check(ts, schemaVer)
+	c.Assert(succ, IsTrue)
+	ver, err = store.CurrentVersion()
 	c.Assert(err, IsNil)
-	c.Assert(schemaVer1, Equals, schemaVer2)
+	succ = dom.SchemaValidator.Check(ver.Ver, schemaVer)
+	c.Assert(succ, IsTrue)
 
 	err = store.Close()
 	c.Assert(err, IsNil)

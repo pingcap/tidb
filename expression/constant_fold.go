@@ -15,35 +15,27 @@ package expression
 
 import (
 	"github.com/ngaut/log"
-	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/util/types"
 )
 
 // FoldConstant does constant folding optimization on an expression.
-func FoldConstant(ctx context.Context, expr Expression) Expression {
+func FoldConstant(expr Expression) Expression {
 	scalarFunc, ok := expr.(*ScalarFunction)
-	if !ok {
+	if !ok || !scalarFunc.Function.isDeterministic() {
 		return expr
 	}
-	if _, isDynamic := DynamicFuncs[scalarFunc.FuncName.L]; isDynamic {
-		return expr
-	}
-	args := scalarFunc.Args
-	datums := make([]types.Datum, 0, len(args))
+	args := scalarFunc.GetArgs()
 	canFold := true
 	for i := 0; i < len(args); i++ {
-		foldedArg := FoldConstant(ctx, args[i])
-		scalarFunc.Args[i] = foldedArg
-		if con, ok := foldedArg.(*Constant); ok {
-			datums = append(datums, con.Value)
-		} else {
+		foldedArg := FoldConstant(args[i])
+		scalarFunc.GetArgs()[i] = foldedArg
+		if _, ok := foldedArg.(*Constant); !ok {
 			canFold = false
 		}
 	}
 	if !canFold {
 		return expr
 	}
-	value, err := scalarFunc.Function(datums, ctx)
+	value, err := scalarFunc.Eval(nil)
 	if err != nil {
 		log.Warnf("There may exist an error during constant folding. The function name is %s, args are %s", scalarFunc.FuncName, args)
 		return expr

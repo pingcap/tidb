@@ -41,12 +41,25 @@ func IsTypeBlob(tp byte) bool {
 // IsTypeChar returns a boolean indicating
 // whether the tp is the char type like a string type or a varchar type.
 func IsTypeChar(tp byte) bool {
-	switch tp {
-	case mysql.TypeString, mysql.TypeVarchar:
-		return true
-	default:
-		return false
-	}
+	return tp == mysql.TypeString || tp == mysql.TypeVarchar
+}
+
+// IsTypeVarchar returns a boolean indicating
+// whether the tp is the varchar type like a varstring type or a varchar type.
+func IsTypeVarchar(tp byte) bool {
+	return tp == mysql.TypeVarString || tp == mysql.TypeVarchar
+}
+
+// IsTypePrefixable returns a boolean indicating
+// whether an index on a column with the tp can be defined with a prefix.
+func IsTypePrefixable(tp byte) bool {
+	return IsTypeBlob(tp) || IsTypeChar(tp)
+}
+
+// IsTypeFractionable returns a boolean indicating
+// whether the tp can has time fraction.
+func IsTypeFractionable(tp byte) bool {
+	return tp == mysql.TypeDatetime || tp == mysql.TypeDuration || tp == mysql.TypeTimestamp
 }
 
 var type2Str = map[byte]string{
@@ -54,13 +67,14 @@ var type2Str = map[byte]string{
 	mysql.TypeBlob:       "text",
 	mysql.TypeDate:       "date",
 	mysql.TypeDatetime:   "datetime",
-	mysql.TypeDecimal:    "decimal",
+	mysql.TypeDecimal:    "unspecified",
 	mysql.TypeNewDecimal: "decimal",
 	mysql.TypeDouble:     "double",
 	mysql.TypeEnum:       "enum",
 	mysql.TypeFloat:      "float",
 	mysql.TypeGeometry:   "geometry",
 	mysql.TypeInt24:      "mediumint",
+	mysql.TypeJSON:       "json",
 	mysql.TypeLong:       "int",
 	mysql.TypeLonglong:   "bigint",
 	mysql.TypeLongBlob:   "longtext",
@@ -116,7 +130,7 @@ func InvOp2(x, y interface{}, o opcode.Op) (interface{}, error) {
 	return nil, errors.Errorf("Invalid operation: %v %v %v (mismatched types %T and %T)", x, o, y, x, y)
 }
 
-// Overflow returns an overflowed error.
+// overflow returns an overflowed error.
 func overflow(v interface{}, tp byte) error {
-	return errors.Errorf("constant %v overflows %s", v, TypeStr(tp))
+	return ErrOverflow.Gen("constant %v overflows %s", v, TypeStr(tp))
 }

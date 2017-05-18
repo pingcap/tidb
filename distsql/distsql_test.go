@@ -14,10 +14,7 @@
 package distsql
 
 import (
-	"bytes"
 	"errors"
-	"io"
-	"io/ioutil"
 	"runtime"
 	"testing"
 	"time"
@@ -28,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
+	goctx "golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -62,7 +60,7 @@ func (s *testTableCodecSuite) TestGoroutineLeak(c *C) {
 		results: make(chan resultWithErr, 5),
 		closed:  make(chan struct{}),
 	}
-	go sr.Fetch()
+	go sr.Fetch(goctx.TODO())
 	for {
 		// mock test will generate some partial result then return error
 		_, err := sr.Next()
@@ -92,23 +90,23 @@ type mockResponse struct {
 	count int
 }
 
-func (resp *mockResponse) Next() (io.ReadCloser, error) {
+func (resp *mockResponse) Next() ([]byte, error) {
 	resp.count++
 	if resp.count == 100 {
-		return nil, errors.New("error happend")
+		return nil, errors.New("error happened")
 	}
-	return mockReaderCloser(), nil
+	return mockSubresult(), nil
 }
 
 func (resp *mockResponse) Close() error {
 	return nil
 }
 
-func mockReaderCloser() io.ReadCloser {
+func mockSubresult() []byte {
 	resp := new(tipb.SelectResponse)
 	b, err := resp.Marshal()
 	if err != nil {
 		panic(err)
 	}
-	return ioutil.NopCloser(bytes.NewBuffer(b))
+	return b
 }

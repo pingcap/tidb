@@ -18,17 +18,23 @@ import (
 
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 )
 
 // tryToGetJoinGroup tries to fetch a whole join group, which all joins is cartesian join.
-func tryToGetJoinGroup(j *Join) ([]LogicalPlan, bool) {
-	if j.reordered || !j.cartesianJoin {
+func tryToGetJoinGroup(j *LogicalJoin) ([]LogicalPlan, bool) {
+	// Ignore reorder if:
+	// 1. already reordered
+	// 2. not inner join
+	// 3. forced merge join
+	// 4. forced index nested loop join
+	if j.reordered || !j.cartesianJoin || j.preferMergeJoin || j.preferINLJ > 0 {
 		return nil, false
 	}
-	lChild := j.GetChildByIndex(0).(LogicalPlan)
-	rChild := j.GetChildByIndex(1).(LogicalPlan)
-	if nj, ok := lChild.(*Join); ok {
+	lChild := j.children[0].(LogicalPlan)
+	rChild := j.children[1].(LogicalPlan)
+	if nj, ok := lChild.(*LogicalJoin); ok {
 		plans, valid := tryToGetJoinGroup(nj)
 		return append(plans, rChild), valid
 	}
@@ -37,8 +43,7 @@ func tryToGetJoinGroup(j *Join) ([]LogicalPlan, bool) {
 
 func findColumnIndexByGroup(groups []LogicalPlan, col *expression.Column) int {
 	for i, plan := range groups {
-		idx := plan.GetSchema().GetColumnIndex(col)
-		if idx != -1 {
+		if plan.Schema().Contains(col) {
 			return i
 		}
 	}
@@ -53,6 +58,7 @@ type joinReOrderSolver struct {
 	resultJoin LogicalPlan
 	groupRank  []*rankInfo
 	allocator  *idAllocator
+	ctx        context.Context
 }
 
 type edgeList []*rankInfo
@@ -104,8 +110,8 @@ func (e *joinReOrderSolver) reorderJoin(group []LogicalPlan, conds []expression.
 	for _, cond := range conds {
 		if f, ok := cond.(*expression.ScalarFunction); ok {
 			if f.FuncName.L == ast.EQ {
-				lCol, lok := f.Args[0].(*expression.Column)
-				rCol, rok := f.Args[1].(*expression.Column)
+				lCol, lok := f.GetArgs()[0].(*expression.Column)
+				rCol, rok := f.GetArgs()[1].(*expression.Column)
 				if lok && rok {
 					lID := findColumnIndexByGroup(group, lCol)
 					rID := findColumnIndexByGroup(group, rCol)
@@ -179,16 +185,13 @@ func (e *joinReOrderSolver) makeBushyJoin(cartesianJoinGroup []LogicalPlan) {
 	e.resultJoin = cartesianJoinGroup[0]
 }
 
-func (e *joinReOrderSolver) newJoin(lChild, rChild LogicalPlan) *Join {
-	join := &Join{
-		JoinType:        InnerJoin,
-		reordered:       true,
-		baseLogicalPlan: newBaseLogicalPlan(Jn, e.allocator),
-	}
-	join.self = join
-	join.initIDAndContext(lChild.context())
+func (e *joinReOrderSolver) newJoin(lChild, rChild LogicalPlan) *LogicalJoin {
+	join := LogicalJoin{
+		JoinType:  InnerJoin,
+		reordered: true,
+	}.init(e.allocator, e.ctx)
 	join.SetChildren(lChild, rChild)
-	join.SetSchema(expression.MergeSchema(lChild.GetSchema(), rChild.GetSchema()))
+	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 	lChild.SetParents(join)
 	rChild.SetParents(join)
 	return join

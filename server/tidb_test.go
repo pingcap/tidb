@@ -15,7 +15,6 @@
 package server
 
 import (
-	"database/sql"
 	"time"
 
 	"github.com/ngaut/log"
@@ -34,6 +33,8 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	log.SetLevelByString("error")
 	store, err := tidb.NewStore("memory:///tmp/tidb")
 	c.Assert(err, IsNil)
+	_, err = tidb.BootstrapSession(store)
+	c.Assert(err, IsNil)
 	ts.tidbdrv = NewTiDBDriver(store)
 	cfg := &Config{
 		Addr:         ":4001",
@@ -45,21 +46,11 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	ts.server = server
 	go ts.server.Run()
-	waitUntilServerOnline()
+	waitUntilServerOnline(cfg.StatusAddr)
 
 	// Run this test here because parallel would affect the result of it.
 	runTestStmtCount(c)
-}
-
-func waitUntilServerOnline() {
-	for {
-		time.Sleep(time.Millisecond * 10)
-		db, err := sql.Open("mysql", dsn)
-		if err == nil {
-			db.Close()
-			break
-		}
-	}
+	defaultLoadDataBatchCnt = 3
 }
 
 func (ts *TidbTestSuite) TearDownSuite(c *C) {
@@ -116,10 +107,6 @@ func (ts *TidbTestSuite) TestResultFieldTableIsNull(c *C) {
 
 func (ts *TidbTestSuite) TestStatusAPI(c *C) {
 	runTestStatusAPI(c)
-}
-
-func (ts *TidbTestSuite) TestMultiPacket(c *C) {
-	runTestMultiPacket(c)
 }
 
 func (ts *TidbTestSuite) TestMultiStatements(c *C) {

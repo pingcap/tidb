@@ -24,30 +24,33 @@ import (
 	"github.com/pingcap/tidb/mysql"
 )
 
-// Common base error instances.
+// Global error instances.
 var (
-	CommitNotInTransaction   = ClassExecutor.New(CodeCommitNotInTransaction, "commit not in transaction")
-	RollbackNotInTransaction = ClassExecutor.New(CodeRollbackNotInTransaction, "rollback not in transaction")
-	ExecResultIsEmpty        = ClassExecutor.New(CodeExecResultIsEmpty, "exec result is empty")
-
-	MissConnectionID = ClassExpression.New(CodeMissConnectionID, "miss connection id information")
+	ErrCritical           = ClassGlobal.New(CodeExecResultIsEmpty, "critical error %v")
+	ErrResultUndetermined = ClassGlobal.New(CodeResultUndetermined, "execution result undetermined")
 )
 
 // ErrCode represents a specific error type in a error class.
 // Same error code can be used in different error classes.
 type ErrCode int
 
-// Executor error codes.
 const (
-	CodeUnknown                  ErrCode = -1
-	CodeCommitNotInTransaction           = 1
-	CodeRollbackNotInTransaction         = 2
-	CodeExecResultIsEmpty                = 3
-)
+	// Executor error codes.
 
-// Expression error codes.
-const (
-	CodeMissConnectionID ErrCode = iota + 1
+	// CodeUnknown is for errors of unknown reason.
+	CodeUnknown ErrCode = -1
+	// CodeExecResultIsEmpty indicates execution result is empty.
+	CodeExecResultIsEmpty = 3
+
+	// Expression error codes.
+
+	// CodeMissConnectionID indicates connection id is missing.
+	CodeMissConnectionID ErrCode = 1
+
+	// Special error codes.
+
+	// CodeResultUndetermined indicates the sql execution result is undetermined.
+	CodeResultUndetermined ErrCode = 2
 )
 
 // ErrClass represents a class of errors.
@@ -76,6 +79,9 @@ const (
 	ClassXEval
 	ClassTable
 	ClassTypes
+	ClassGlobal
+	ClassMockTikv
+	ClassJSON
 	// Add more as needed.
 )
 
@@ -118,6 +124,10 @@ func (ec ErrClass) String() string {
 		return "table"
 	case ClassTypes:
 		return "types"
+	case ClassGlobal:
+		return "global"
+	case ClassMockTikv:
+		return "mocktikv"
 	}
 	return strconv.Itoa(int(ec))
 }

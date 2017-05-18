@@ -1874,25 +1874,67 @@ func (m *ConfState) Unmarshal(dAtA []byte) error {
 		}
 		switch fieldNum {
 		case 1:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Nodes", wireType)
-			}
-			var v uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowEraftpb
+			if wireType == 0 {
+				var v uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return ErrIntOverflowEraftpb
+					}
+					if iNdEx >= l {
+						return io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					v |= (uint64(b) & 0x7F) << shift
+					if b < 0x80 {
+						break
+					}
 				}
-				if iNdEx >= l {
+				m.Nodes = append(m.Nodes, v)
+			} else if wireType == 2 {
+				var packedLen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return ErrIntOverflowEraftpb
+					}
+					if iNdEx >= l {
+						return io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					packedLen |= (int(b) & 0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if packedLen < 0 {
+					return ErrInvalidLengthEraftpb
+				}
+				postIndex := iNdEx + packedLen
+				if postIndex > l {
 					return io.ErrUnexpectedEOF
 				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				v |= (uint64(b) & 0x7F) << shift
-				if b < 0x80 {
-					break
+				for iNdEx < postIndex {
+					var v uint64
+					for shift := uint(0); ; shift += 7 {
+						if shift >= 64 {
+							return ErrIntOverflowEraftpb
+						}
+						if iNdEx >= l {
+							return io.ErrUnexpectedEOF
+						}
+						b := dAtA[iNdEx]
+						iNdEx++
+						v |= (uint64(b) & 0x7F) << shift
+						if b < 0x80 {
+							break
+						}
+					}
+					m.Nodes = append(m.Nodes, v)
 				}
+			} else {
+				return fmt.Errorf("proto: wrong wireType = %d for field Nodes", wireType)
 			}
-			m.Nodes = append(m.Nodes, v)
 		default:
 			iNdEx = preIndex
 			skippy, err := skipEraftpb(dAtA[iNdEx:])
@@ -2166,7 +2208,7 @@ func init() { proto.RegisterFile("eraftpb.proto", fileDescriptorEraftpb) }
 
 var fileDescriptorEraftpb = []byte{
 	// 765 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0x64, 0x53, 0xc1, 0x6e, 0xdb, 0x46,
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x64, 0x53, 0xc1, 0x6e, 0xdb, 0x46,
 	0x10, 0x35, 0x29, 0xd9, 0x24, 0x87, 0x96, 0xbc, 0xda, 0xaa, 0x09, 0x5d, 0xa0, 0xaa, 0xaa, 0x93,
 	0x60, 0x20, 0x29, 0x62, 0xa0, 0x40, 0xaf, 0x89, 0x50, 0xc0, 0x41, 0x4b, 0x23, 0x65, 0x94, 0x5e,
 	0x85, 0x35, 0x39, 0xa2, 0xd8, 0x8a, 0x5c, 0x76, 0x77, 0x95, 0xda, 0x9f, 0x50, 0xa0, 0x1f, 0xd0,

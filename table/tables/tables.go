@@ -188,7 +188,7 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum
 	colIDs := make([]int64, 0, len(t.WritableCols()))
 	for i, col := range t.WritableCols() {
 		if col.State != model.StatePublic && currentData[i].IsNull() {
-			defaultVal, _, err1 := table.GetColDefaultValue(ctx, col.ToInfo())
+			defaultVal, err1 := table.GetColDefaultValue(ctx, col.ToInfo())
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
@@ -198,11 +198,11 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum
 	}
 	// Set new row data into KV.
 	key := t.RecordKey(h)
-	value, err := tablecodec.EncodeRow(currentData, colIDs)
-	if err = txn.Set(key, value); err != nil {
+	value, err := tablecodec.EncodeRow(currentData, colIDs, ctx.GetSessionVars().GetTimeZone())
+	if err != nil {
 		return errors.Trace(err)
 	}
-	if err = bs.SaveTo(txn); err != nil {
+	if err = bs.Set(key, value); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -236,7 +236,7 @@ func (t *Table) setOnUpdateData(ctx context.Context, touched map[int]bool, data 
 	return nil
 }
 
-// Fill untouched columns with original values.
+// composeNewData fills untouched columns with original values.
 // TODO: consider col state
 func (t *Table) composeNewData(touched map[int]bool, newData []types.Datum, oldData []types.Datum) {
 	for i, od := range oldData {
@@ -321,7 +321,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 		var value types.Datum
 		if col.State == model.StateWriteOnly || col.State == model.StateWriteReorganization {
 			// if col is in write only or write reorganization state, we must add it with its default value.
-			value, _, err = table.GetColDefaultValue(ctx, col.ToInfo())
+			value, err = table.GetColDefaultValue(ctx, col.ToInfo())
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -336,7 +336,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 		row = append(row, value)
 	}
 	key := t.RecordKey(recordID)
-	value, err := tablecodec.EncodeRow(row, colIDs)
+	value, err := tablecodec.EncodeRow(row, colIDs, ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -355,10 +355,11 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 		mutation.Sequence = append(mutation.Sequence, binlog.MutationType_Insert)
 	}
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
+	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.ID, 1, 1)
 	return recordID, nil
 }
 
-// Generate index content string representation.
+// genIndexKeyStr generates index content string representation.
 func (t *Table) genIndexKeyStr(colVals []types.Datum) (string, error) {
 	// Pass pre-composed error to txn.
 	strVals := make([]string, 0, len(colVals))
@@ -376,7 +377,7 @@ func (t *Table) genIndexKeyStr(colVals []types.Datum) (string, error) {
 	return strings.Join(strVals, "-"), nil
 }
 
-// Add data into indices.
+// addIndices adds data into indices.
 func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum, bs *kv.BufferStore) (int64, error) {
 	txn := ctx.Txn()
 	// Clean up lazy check error environment
@@ -450,7 +451,7 @@ func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*table.Column) 
 		}
 		colTps[col.ID] = &col.FieldType
 	}
-	row, err := tablecodec.DecodeRow(value, colTps)
+	row, err := tablecodec.DecodeRow(value, colTps, ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -462,10 +463,22 @@ func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*table.Column) 
 			continue
 		}
 		ri, ok := row[col.ID]
-		if !ok && mysql.HasNotNullFlag(col.Flag) {
+		if ok {
+			v[i] = ri
+			continue
+		}
+
+		if col.OriginDefaultValue != nil && col.State == model.StatePublic {
+			ri, err = table.GetColOriginDefaultValue(ctx, col.ToInfo())
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			v[i] = ri
+			continue
+		}
+		if mysql.HasNotNullFlag(col.Flag) {
 			return nil, errors.New("Miss column")
 		}
-		v[i] = ri
 	}
 	return v, nil
 }
@@ -491,75 +504,33 @@ func (t *Table) RemoveRecord(ctx context.Context, h int64, r []types.Datum) erro
 		return errors.Trace(err)
 	}
 	if shouldWriteBinlog(ctx) {
-		err = t.addDeleteBinlog(ctx, h, r)
+		err = t.addDeleteBinlog(ctx, r)
 	}
 	return errors.Trace(err)
 }
 
 func (t *Table) addUpdateBinlog(ctx context.Context, h int64, old []types.Datum, newValue []byte, colIDs []int64) error {
-	mutation := t.getMutation(ctx)
-	hasPK := false
-	if t.meta.PKIsHandle {
-		hasPK = true
-	} else {
-		for _, idx := range t.meta.Indices {
-			if idx.Primary {
-				hasPK = true
-				break
-			}
-		}
-	}
 	var bin []byte
-	if hasPK {
-		handleData, _ := codec.EncodeValue(nil, types.NewIntDatum(h))
-		bin = append(handleData, newValue...)
-	} else {
-		oldData, err := tablecodec.EncodeRow(old, colIDs)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		bin = append(oldData, newValue...)
+	oldData, err := tablecodec.EncodeRow(old, colIDs, ctx.GetSessionVars().GetTimeZone())
+	if err != nil {
+		return errors.Trace(err)
 	}
+	bin = append(oldData, newValue...)
+	mutation := t.getMutation(ctx)
 	mutation.UpdatedRows = append(mutation.UpdatedRows, bin)
 	mutation.Sequence = append(mutation.Sequence, binlog.MutationType_Update)
 	return nil
 }
 
-func (t *Table) addDeleteBinlog(ctx context.Context, h int64, r []types.Datum) error {
+func (t *Table) addDeleteBinlog(ctx context.Context, r []types.Datum) error {
 	mutation := t.getMutation(ctx)
-	if t.meta.PKIsHandle {
-		mutation.DeletedIds = append(mutation.DeletedIds, h)
-		mutation.Sequence = append(mutation.Sequence, binlog.MutationType_DeleteID)
-		return nil
-	}
-
-	var primaryIdx *model.IndexInfo
-	for _, idx := range t.meta.Indices {
-		if idx.Primary {
-			primaryIdx = idx
-			break
-		}
-	}
 	var data []byte
 	var err error
-	if primaryIdx != nil {
-		indexedValues := make([]types.Datum, len(primaryIdx.Columns))
-		for i := range indexedValues {
-			indexedValues[i] = r[primaryIdx.Columns[i].Offset]
-		}
-		data, err = codec.EncodeKey(nil, indexedValues...)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		mutation.DeletedPks = append(mutation.DeletedPks, data)
-		mutation.Sequence = append(mutation.Sequence, binlog.MutationType_DeletePK)
-		return nil
-	}
 	colIDs := make([]int64, len(t.Cols()))
 	for i, col := range t.Cols() {
 		colIDs[i] = col.ID
 	}
-	data, err = tablecodec.EncodeRow(r, colIDs)
+	data, err = tablecodec.EncodeRow(r, colIDs, ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -577,7 +548,7 @@ func (t *Table) removeRowData(ctx context.Context, h int64) error {
 	return nil
 }
 
-// removeRowAllIndex removes all the indices of a row.
+// removeRowIndices removes all the indices of a row.
 func (t *Table) removeRowIndices(ctx context.Context, h int64, rec []types.Datum) error {
 	for _, v := range t.indices {
 		vals, err := v.FetchValues(rec)
@@ -598,7 +569,7 @@ func (t *Table) removeRowIndices(ctx context.Context, h int64, rec []types.Datum
 	return nil
 }
 
-// RemoveRowIndex implements table.Table RemoveRowIndex interface.
+// removeRowIndex implements table.Table RemoveRowIndex interface.
 func (t *Table) removeRowIndex(rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index) error {
 	if err := idx.Delete(rm, vals, h); err != nil {
 		return errors.Trace(err)
@@ -606,7 +577,7 @@ func (t *Table) removeRowIndex(rm kv.RetrieverMutator, h int64, vals []types.Dat
 	return nil
 }
 
-// BuildIndexForRow implements table.Table BuildIndexForRow interface.
+// buildIndexForRow implements table.Table BuildIndexForRow interface.
 func (t *Table) buildIndexForRow(rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index) error {
 	if idx.Meta().State == model.StateDeleteOnly || idx.Meta().State == model.StateDeleteReorganization {
 		// If the index is in delete only or write reorganization state, we can not add index.
@@ -639,6 +610,7 @@ func (t *Table) IterRecords(ctx context.Context, startKey kv.Key, cols []*table.
 		colMap[col.ID] = &col.FieldType
 	}
 	prefix := t.RecordPrefix()
+	defaultVals := make([]types.Datum, len(cols))
 	for it.Valid() && it.Key().HasPrefix(prefix) {
 		// first kv pair is row lock information.
 		// TODO: check valid lock
@@ -647,16 +619,35 @@ func (t *Table) IterRecords(ctx context.Context, startKey kv.Key, cols []*table.
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rowMap, err := tablecodec.DecodeRow(it.Value(), colMap)
+		rowMap, err := tablecodec.DecodeRow(it.Value(), colMap, ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
 			return errors.Trace(err)
 		}
-		data := make([]types.Datum, 0, len(cols))
+		data := make([]types.Datum, len(cols))
 		for _, col := range cols {
 			if col.IsPKHandleColumn(t.Meta()) {
-				data = append(data, types.NewIntDatum(handle))
+				data[col.Offset] = types.NewIntDatum(handle)
+				continue
+			}
+			if _, ok := rowMap[col.ID]; ok {
+				data[col.Offset] = rowMap[col.ID]
+				continue
+			}
+			if col.OriginDefaultValue == nil && mysql.HasNotNullFlag(col.Flag) {
+				return errors.New("Miss column")
+			}
+			if col.State != model.StatePublic {
+				continue
+			}
+			if defaultVals[col.Offset].IsNull() {
+				d, err := table.GetColOriginDefaultValue(ctx, col.ToInfo())
+				if err != nil {
+					return errors.Trace(err)
+				}
+				data[col.Offset] = d
+				defaultVals[col.Offset] = d
 			} else {
-				data = append(data, rowMap[col.ID])
+				data[col.Offset] = defaultVals[col.Offset]
 			}
 		}
 		more, err := fn(handle, data, cols)

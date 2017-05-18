@@ -46,9 +46,10 @@ func testSchemaInfo(c *C, d *ddl, name string) *model.DBInfo {
 
 func testCreateSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) *model.Job {
 	job := &model.Job{
-		SchemaID: dbInfo.ID,
-		Type:     model.ActionCreateSchema,
-		Args:     []interface{}{dbInfo},
+		SchemaID:   dbInfo.ID,
+		Type:       model.ActionCreateSchema,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{dbInfo},
 	}
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
@@ -62,8 +63,9 @@ func testCreateSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) *
 
 func testDropSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) (*model.Job, int64) {
 	job := &model.Job{
-		SchemaID: dbInfo.ID,
-		Type:     model.ActionDropSchema,
+		SchemaID:   dbInfo.ID,
+		Type:       model.ActionDropSchema,
+		BinlogInfo: &model.HistoryInfo{},
 	}
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
@@ -117,11 +119,11 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	store := testCreateStore(c, "test_schema")
 	defer store.Close()
 	d := newDDL(store, nil, nil, testLease)
-	defer d.close()
-	ctx := testNewContext(c, d)
+	defer d.Stop()
+	ctx := testNewContext(d)
 	dbInfo := testSchemaInfo(c, d, "test")
 
-	// create a table.
+	// create a database.
 	job := testCreateSchema(c, ctx, d, dbInfo)
 	testCheckSchemaState(c, d, dbInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
@@ -174,18 +176,28 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	ids[tblInfo2.ID] = struct{}{}
 	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, db: dbInfo, tblIDs: ids})
 	// check background ddl info
-	time.Sleep(testLease * 400)
-	verifyBgJobState(c, d, job, model.JobDone)
+	verifyBgJobState(c, d, job, model.JobDone, testLease*350)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	c.Assert(updatedCount, Equals, 2)
 
-	// drop a table doesn't exist.
+	// Drop a non-existent database.
 	job = &model.Job{
-		SchemaID: dbInfo.ID,
-		Type:     model.ActionDropSchema,
+		SchemaID:   dbInfo.ID,
+		Type:       model.ActionDropSchema,
+		BinlogInfo: &model.HistoryInfo{},
 	}
 	err := d.doDDLJob(ctx, job)
 	c.Assert(terror.ErrorEqual(err, infoschema.ErrDatabaseDropExists), IsTrue)
+
+	// Drop a database without a table.
+	dbInfo1 := testSchemaInfo(c, d, "test1")
+	job = testCreateSchema(c, ctx, d, dbInfo1)
+	testCheckSchemaState(c, d, dbInfo1, model.StatePublic)
+	testCheckJobDone(c, d, job, true)
+	job, _ = testDropSchema(c, ctx, d, dbInfo1)
+	testCheckSchemaState(c, d, dbInfo1, model.StateNone)
+	testCheckJobDone(c, d, job, false)
+	verifyBgJobState(c, d, job, model.JobDone, testLease*5)
 }
 
 func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
@@ -194,13 +206,13 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 	defer store.Close()
 
 	d1 := newDDL(store, nil, nil, testLease)
-	defer d1.close()
+	defer d1.Stop()
 
 	testCheckOwner(c, d1, true, ddlJobFlag)
 
 	d2 := newDDL(store, nil, nil, testLease*4)
-	defer d2.close()
-	ctx := testNewContext(c, d2)
+	defer d2.Stop()
+	ctx := testNewContext(d2)
 
 	// d2 must not be owner.
 	testCheckOwner(c, d2, false, ddlJobFlag)
@@ -235,7 +247,7 @@ LOOP:
 	for {
 		select {
 		case <-ticker.C:
-			d.close()
+			d.Stop()
 			d.start()
 		case err := <-done:
 			c.Assert(err, IsNil)
@@ -250,23 +262,25 @@ func (s *testSchemaSuite) TestSchemaResume(c *C) {
 	defer store.Close()
 
 	d1 := newDDL(store, nil, nil, testLease)
-	defer d1.close()
+	defer d1.Stop()
 
 	testCheckOwner(c, d1, true, ddlJobFlag)
 
 	dbInfo := testSchemaInfo(c, d1, "test")
 
 	job := &model.Job{
-		SchemaID: dbInfo.ID,
-		Type:     model.ActionCreateSchema,
-		Args:     []interface{}{dbInfo},
+		SchemaID:   dbInfo.ID,
+		Type:       model.ActionCreateSchema,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{dbInfo},
 	}
 
 	testRunInterruptedJob(c, d1, job)
 	testCheckSchemaState(c, d1, dbInfo, model.StatePublic)
 	job = &model.Job{
-		SchemaID: dbInfo.ID,
-		Type:     model.ActionDropSchema,
+		SchemaID:   dbInfo.ID,
+		Type:       model.ActionDropSchema,
+		BinlogInfo: &model.HistoryInfo{},
 	}
 
 	testRunInterruptedJob(c, d1, job)

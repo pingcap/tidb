@@ -63,6 +63,10 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 		{"121231113045.123345", 6, "2012-12-31 11:30:45.123345"},
 		{"20121231113045.123345", 6, "2012-12-31 11:30:45.123345"},
 		{"121231113045.9999999", 6, "2012-12-31 11:30:46.000000"},
+		{"170105084059.575601", 0, "2017-01-05 08:41:00"},
+		{"2017-01-05 23:59:59.575601", 0, "2017-01-06 00:00:00"},
+		{"2017-01-31 23:59:59.575601", 0, "2017-02-01 00:00:00"},
+		{"2017-00-05 23:59:58.575601", 3, "2017-00-05 23:59:58.576"},
 	}
 
 	for _, test := range fspTbl {
@@ -82,6 +86,7 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 		"10000-01-01 00:00:00",
 		"1000-09-31 00:00:00",
 		"1001-02-29 00:00:00",
+		"2017-00-05 08:40:59.575601",
 	}
 
 	for _, test := range errTable {
@@ -332,18 +337,6 @@ func (s *testTimeSuite) TestCodec(c *C) {
 
 	var t1 Time
 	t1.Type = mysql.TypeTimestamp
-
-	z := s.getLocation(c)
-	local = z
-	err = t1.FromPackedUint(packed)
-	c.Assert(err, IsNil)
-	c.Assert(t.String(), Not(Equals), t1.String())
-
-	local = time.Local
-	err = t1.FromPackedUint(packed)
-	c.Assert(err, IsNil)
-	c.Assert(t.String(), Equals, t1.String())
-
 	t1.Time = FromGoTime(time.Now())
 	packed, err = t1.ToPackedUint()
 	c.Assert(err, IsNil)
@@ -633,6 +626,8 @@ func (s *testTimeSuite) TestConvert(c *C) {
 		{"2012-12-31 11:30:45.123456", 6, "11:30:45.123456"},
 		{"2012-12-31 11:30:45.123456", 0, "11:30:45"},
 		{"2012-12-31 11:30:45.999999", 0, "11:30:46"},
+		{"2017-01-05 08:40:59.575601", 0, "08:41:00"},
+		{"2017-01-05 23:59:59.575601", 0, "00:00:00"},
 		{"0000-00-00 00:00:00", 6, "00:00:00"},
 	}
 
@@ -661,7 +656,8 @@ func (s *testTimeSuite) TestConvert(c *C) {
 		n := time.Date(year, month, day, 0, 0, 0, 0, time.Local)
 		t, err := v.ConvertToTime(mysql.TypeDatetime)
 		c.Assert(err, IsNil)
-		t1, _ := t.Time.GoTime()
+		// TODO: Consider time_zone variable.
+		t1, _ := t.Time.GoTime(time.Local)
 		c.Assert(t1.Sub(n), Equals, v.Duration)
 	}
 }
@@ -755,5 +751,44 @@ func (s *testTimeSuite) TestParseDateFormat(c *C) {
 	for _, t := range tbl {
 		r := parseDateFormat(t.Input)
 		c.Assert(r, DeepEquals, t.Result)
+	}
+}
+
+func (s *testTimeSuite) TestTamestampDiff(c *C) {
+	tests := []struct {
+		unit   string
+		t1     TimeInternal
+		t2     TimeInternal
+		expect int64
+	}{
+		{"MONTH", FromDate(2002, 5, 30, 0, 0, 0, 0), FromDate(2001, 1, 1, 0, 0, 0, 0), -16},
+		{"YEAR", FromDate(2002, 5, 1, 0, 0, 0, 0), FromDate(2001, 1, 1, 0, 0, 0, 0), -1},
+		{"MINUTE", FromDate(2003, 2, 1, 0, 0, 0, 0), FromDate(2003, 5, 1, 12, 5, 55, 0), 128885},
+		{"MICROSECOND", FromDate(2002, 5, 30, 0, 0, 0, 0), FromDate(2002, 5, 30, 0, 13, 25, 0), 805000000},
+		{"MICROSECOND", FromDate(2000, 1, 1, 0, 0, 0, 12345), FromDate(2000, 1, 1, 0, 0, 45, 32), 44987687},
+		{"QUARTER", FromDate(2000, 1, 12, 0, 0, 0, 0), FromDate(2016, 1, 1, 0, 0, 0, 0), 63},
+		{"QUARTER", FromDate(2016, 1, 1, 0, 0, 0, 0), FromDate(2000, 1, 12, 0, 0, 0, 0), -63},
+	}
+
+	for _, test := range tests {
+		t1 := Time{test.t1, mysql.TypeDatetime, 6}
+		t2 := Time{test.t2, mysql.TypeDatetime, 6}
+		c.Assert(TimestampDiff(test.unit, t1, t2), Equals, test.expect)
+	}
+}
+
+func (s *testTimeSuite) TestDateFSP(c *C) {
+	tests := []struct {
+		date   string
+		expect int
+	}{
+		{"2004-01-01 12:00:00.111", 3},
+		{"2004-01-01 12:00:00.11", 2},
+		{"2004-01-01 12:00:00.111111", 6},
+		{"2004-01-01 12:00:00", 0},
+	}
+
+	for _, test := range tests {
+		c.Assert(DateFSP(test.date), Equals, test.expect)
 	}
 }

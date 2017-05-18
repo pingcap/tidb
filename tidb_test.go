@@ -17,7 +17,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -27,7 +26,11 @@ import (
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -45,11 +48,10 @@ var _ = Suite(&testMainSuite{})
 
 type testMainSuite struct {
 	dbName         string
-	createDBSQL    string
-	dropDBSQL      string
-	useDBSQL       string
 	createTableSQL string
 	selectSQL      string
+	store          kv.Storage
+	dom            *domain.Domain
 }
 
 type brokenStore struct{}
@@ -61,24 +63,23 @@ func (s *brokenStore) Open(schema string) (kv.Storage, error) {
 func (s *testMainSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	s.dbName = "test_main_db"
-	s.createDBSQL = fmt.Sprintf("create database if not exists %s;", s.dbName)
-	s.dropDBSQL = fmt.Sprintf("drop database %s;", s.dbName)
-	s.useDBSQL = fmt.Sprintf("use %s;", s.dbName)
 	s.createTableSQL = `
     CREATE TABLE tbl_test(id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));
     CREATE TABLE tbl_test1(id INT NOT NULL DEFAULT 2, name varchar(255), PRIMARY KEY(id), INDEX name(name));
     CREATE TABLE tbl_test2(id INT NOT NULL DEFAULT 3, name varchar(255), PRIMARY KEY(id));`
 	s.selectSQL = `SELECT * from tbl_test;`
-	schemaExpiredRetryTimes = 5
-	checkSchemaValiditySleepTime = 20 * time.Millisecond
-	runtime.GOMAXPROCS(runtime.NumCPU())
+	s.store = newStore(c, s.dbName)
+	dom, err := BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+	s.dom = dom
 }
 
 func (s *testMainSuite) TearDownSuite(c *C) {
 	defer testleak.AfterTest(c)()
+	s.dom.Close()
+	err := s.store.Close()
+	c.Assert(err, IsNil)
 	removeStore(c, s.dbName)
-	schemaExpiredRetryTimes = 30
-	checkSchemaValiditySleepTime = 1 * time.Second
 }
 
 func checkResult(c *C, se Session, affectedRows uint64, insertID uint64) {
@@ -91,10 +92,7 @@ func checkResult(c *C, se Session, affectedRows uint64, insertID uint64) {
 
 func (s *testMainSuite) TestConcurrent(c *C) {
 	dbName := "test_concurrent_db"
-	defer removeStore(c, dbName)
-	store := newStore(c, dbName)
-	se := newSession(c, store, dbName)
-	defer store.Close()
+	se := newSession(c, s.store, dbName)
 	// create db
 	createDBSQL := fmt.Sprintf("create database if not exists %s;", dbName)
 	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
@@ -107,7 +105,7 @@ func (s *testMainSuite) TestConcurrent(c *C) {
 	mustExecSQL(c, se, createTableSQL)
 	wg := &sync.WaitGroup{}
 	f := func(start, count int) {
-		sess := newSession(c, store, dbName)
+		sess := newSession(c, s.store, dbName)
 		for i := 0; i < count; i++ {
 			// insert data
 			mustExecSQL(c, sess, fmt.Sprintf(`INSERT INTO test VALUES (%d, "hello");`, start+i))
@@ -124,15 +122,9 @@ func (s *testMainSuite) TestConcurrent(c *C) {
 }
 
 func (s *testMainSuite) TestTableInfoMeta(c *C) {
-	store := newStore(c, s.dbName)
-	se := newSession(c, store, s.dbName)
-	defer store.Close()
-
-	// create db
-	mustExecSQL(c, se, s.createDBSQL)
-
-	// use db
-	mustExecSQL(c, se, s.useDBSQL)
+	dbName := "test_info_meta"
+	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
+	se := newSession(c, s.store, dbName)
 
 	// create table
 	mustExecSQL(c, se, s.createTableSQL)
@@ -154,25 +146,22 @@ func (s *testMainSuite) TestTableInfoMeta(c *C) {
 	mustExecMatch(c, se, s.selectSQL, [][]interface{}{{1, []byte("hello")}})
 
 	// drop db
-	mustExecSQL(c, se, s.dropDBSQL)
+	mustExecSQL(c, se, dropDBSQL)
 }
 
 func (s *testMainSuite) TestInfoSchema(c *C) {
-	store := newStore(c, s.dbName)
-	se := newSession(c, store, s.dbName)
+	se := newSession(c, s.store, "test_info_schema")
 	rs := mustExecSQL(c, se, "SELECT CHARACTER_SET_NAME FROM INFORMATION_SCHEMA.CHARACTER_SETS WHERE CHARACTER_SET_NAME = 'utf8mb4'")
 	row, err := rs.Next()
 	c.Assert(err, IsNil)
 	match(c, row.Data, "utf8mb4")
-
-	err = store.Close()
-	c.Assert(err, IsNil)
 }
 
 func (s *testMainSuite) TestCaseInsensitive(c *C) {
-	store := newStore(c, s.dbName)
-	se := newSession(c, store, s.dbName)
-	defer store.Close()
+	dbName := "test_case_insensitive"
+	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
+
+	se := newSession(c, s.store, dbName)
 	mustExecSQL(c, se, "create table T (a text, B int)")
 	mustExecSQL(c, se, "insert t (A, b) values ('aaa', 1)")
 	rs := mustExecSQL(c, se, "select * from t")
@@ -196,16 +185,12 @@ func (s *testMainSuite) TestCaseInsensitive(c *C) {
 	c.Assert(err, IsNil)
 	match(c, rows[0], 3)
 
-	mustExecSQL(c, se, s.dropDBSQL)
-	err = store.Close()
-	c.Assert(err, IsNil)
+	mustExecSQL(c, se, dropDBSQL)
 }
 
 // Testcase for delete panic
 func (s *testMainSuite) TestDeletePanic(c *C) {
-	store := newStore(c, s.dbName)
-	se := newSession(c, store, s.dbName)
-	defer store.Close()
+	se := newSession(c, s.store, "test_delete_panic")
 	mustExecSQL(c, se, "create table t (c int)")
 	mustExecSQL(c, se, "insert into t values (1), (2), (3)")
 	mustExecSQL(c, se, "delete from `t` where `c` = ?", 1)
@@ -215,9 +200,8 @@ func (s *testMainSuite) TestDeletePanic(c *C) {
 
 // Testcase for arg type.
 func (s *testMainSuite) TestCheckArgs(c *C) {
-	store := newStore(c, s.dbName)
-	se := newSession(c, store, s.dbName)
-	defer store.Close()
+	dbName := "test_check_args"
+	se := newSession(c, s.store, dbName)
 	mustExecSQL(c, se, "create table if not exists t (c datetime)")
 	mustExecSQL(c, se, "insert t values (?)", time.Now())
 	mustExecSQL(c, se, "drop table t")
@@ -265,16 +249,16 @@ func (s *testMainSuite) TestRetryOpenStore(c *C) {
 	c.Assert(uint64(elapse), GreaterEqual, uint64(3*time.Second))
 }
 
-/* TODO: Merge TestIssue1435 in session test.
+// TODO: Merge TestIssue1435 in session test.
 func (s *testMainSuite) TestSchemaValidity(c *C) {
 	localstore.MockRemoteStore = true
-	store := newStore(c, s.dbName+"schema_validity")
-	se := newSession(c, store, s.dbName)
-	se1 := newSession(c, store, s.dbName)
-	se2 := newSession(c, store, s.dbName)
+	store := newStoreWithBootstrap(c, s.dbName+"schema_validity")
+	dbName := "test_schema_validity"
+	se := newSession(c, store, dbName)
+	se1 := newSession(c, store, dbName)
+	se2 := newSession(c, store, dbName)
 
 	ctx := se.(context.Context)
-	sessionctx.GetDomain(ctx).SetLease(20 * time.Millisecond)
 	mustExecSQL(c, se, "drop table if exists t;")
 	mustExecSQL(c, se, "create table t (a int);")
 	mustExecSQL(c, se, "drop table if exists t1;")
@@ -288,12 +272,12 @@ func (s *testMainSuite) TestSchemaValidity(c *C) {
 	execFailedFunc := func(s Session, tbl string, start chan struct{}, end chan error) {
 		// execute successfully
 		_, err := exec(s, "begin;")
+		c.Check(err, IsNil)
 		<-start
 		<-start
-		if err == nil {
-			// execute failed
-			_, err = exec(s, fmt.Sprintf("insert into %s values(1)", tbl))
-		}
+
+		_, err = exec(s, fmt.Sprintf("insert into %s values(1)", tbl))
+		c.Check(err, IsNil)
 
 		// table t1 executes failed
 		// table t2 executes successfully
@@ -315,10 +299,10 @@ func (s *testMainSuite) TestSchemaValidity(c *C) {
 	default:
 	}
 	// Make sure loading information schema is failed and server is invalid.
-	sessionctx.GetDomain(ctx).SchemaValidity.MockReloadFailed.SetValue(true)
+	sessionctx.GetDomain(ctx).MockReloadFailed.SetValue(true)
 	sessionctx.GetDomain(ctx).Reload()
 	lease := sessionctx.GetDomain(ctx).DDL().GetLease()
-	time.Sleep(lease)
+	time.Sleep(lease + time.Millisecond) // time.Sleep maybe not very reliable
 	// Make sure insert to table t1 transaction executes.
 	startCh1 <- struct{}{}
 	// Make sure executing insert statement is failed when server is invalid.
@@ -338,8 +322,8 @@ func (s *testMainSuite) TestSchemaValidity(c *C) {
 	ver, err := store.CurrentVersion()
 	c.Assert(err, IsNil)
 	c.Assert(ver, NotNil)
-	sessionctx.GetDomain(ctx).SchemaValidity.SetExpireInfo(false, ver.Ver)
-	sessionctx.GetDomain(ctx).SchemaValidity.MockReloadFailed.SetValue(false)
+	sessionctx.GetDomain(ctx).MockReloadFailed.SetValue(false)
+	sessionctx.GetDomain(ctx).Reload()
 	mustExecSQL(c, se, "drop table if exists t;")
 	mustExecSQL(c, se, "create table t (a int);")
 	mustExecSQL(c, se, "insert t values (1);")
@@ -354,11 +338,11 @@ func (s *testMainSuite) TestSchemaValidity(c *C) {
 	c.Assert(err, IsNil)
 	err = se2.Close()
 	c.Assert(err, IsNil)
+	sessionctx.GetDomain(ctx).Close()
 	err = store.Close()
 	c.Assert(err, IsNil)
 	localstore.MockRemoteStore = false
 }
-*/
 
 func sessionExec(c *C, se Session, sql string) ([]ast.RecordSet, error) {
 	se.Execute("BEGIN;")
@@ -371,6 +355,12 @@ func sessionExec(c *C, se Session, sql string) ([]ast.RecordSet, error) {
 func newStore(c *C, dbPath string) kv.Storage {
 	store, err := NewStore(*store + "://" + dbPath)
 	c.Assert(err, IsNil)
+	return store
+}
+
+func newStoreWithBootstrap(c *C, dbPath string) kv.Storage {
+	store := newStore(c, dbPath)
+	BootstrapSession(store)
 	return store
 }
 

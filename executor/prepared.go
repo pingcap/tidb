@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"math"
 	"sort"
 
 	"github.com/juju/errors"
@@ -80,12 +81,13 @@ type PrepareExec struct {
 	ID         uint32
 	ParamCount int
 	Err        error
+	Fields     []*ast.ResultField
 }
 
 // Schema implements the Executor Schema interface.
-func (e *PrepareExec) Schema() expression.Schema {
+func (e *PrepareExec) Schema() *expression.Schema {
 	// Will never be called.
-	return expression.NewSchema(nil)
+	return expression.NewSchema()
 }
 
 // Next implements the Executor Next interface.
@@ -94,8 +96,13 @@ func (e *PrepareExec) Next() (*Row, error) {
 	return nil, e.Err
 }
 
-// Close implements plan.Plan Close interface.
+// Close implements the Executor Close interface.
 func (e *PrepareExec) Close() error {
+	return nil
+}
+
+// Open implements the Executor Open interface.
+func (e *PrepareExec) Open() error {
 	return nil
 }
 
@@ -126,16 +133,24 @@ func (e *PrepareExec) DoPrepare() {
 		return
 	}
 	if len(stmts) != 1 {
-		e.Err = ErrPrepareMulti
+		e.Err = errors.Trace(ErrPrepareMulti)
 		return
 	}
 	stmt := stmts[0]
 	if _, ok := stmt.(ast.DDLNode); ok {
-		e.Err = ErrPrepareDDL
+		e.Err = errors.Trace(ErrPrepareDDL)
 		return
 	}
 	var extractor paramMarkerExtractor
 	stmt.Accept(&extractor)
+	err = plan.Preprocess(stmt, e.IS, e.Ctx)
+	if err != nil {
+		e.Err = errors.Trace(err)
+		return
+	}
+	if result, ok := stmt.(ast.ResultSetNode); ok {
+		e.Fields = result.GetResultFields()
+	}
 
 	// The parameter markers are appended in visiting order, which may not
 	// be the same as the position order in the query string. We need to
@@ -175,12 +190,13 @@ type ExecuteExec struct {
 	ID        uint32
 	StmtExec  Executor
 	Stmt      ast.StmtNode
+	Plan      plan.Plan
 }
 
 // Schema implements the Executor Schema interface.
-func (e *ExecuteExec) Schema() expression.Schema {
+func (e *ExecuteExec) Schema() *expression.Schema {
 	// Will never be called.
-	return expression.NewSchema(nil)
+	return expression.NewSchema()
 }
 
 // Next implements the Executor Next interface.
@@ -189,7 +205,12 @@ func (e *ExecuteExec) Next() (*Row, error) {
 	return nil, nil
 }
 
-// Close implements plan.Plan Close interface.
+// Open implements the Executor Open interface.
+func (e *ExecuteExec) Open() error {
+	return nil
+}
+
+// Close implements Executor Close interface.
 func (e *ExecuteExec) Close() error {
 	// Will never be called.
 	return nil
@@ -204,23 +225,22 @@ func (e *ExecuteExec) Build() error {
 	}
 	v := vars.PreparedStmts[e.ID]
 	if v == nil {
-		return ErrStmtNotFound
+		return errors.Trace(ErrStmtNotFound)
 	}
 	prepared := v.(*Prepared)
 
 	if len(prepared.Params) != len(e.UsingVars) {
-		return ErrWrongParamCount
+		return errors.Trace(ErrWrongParamCount)
 	}
 
 	for i, usingVar := range e.UsingVars {
-		val, err := usingVar.Eval(nil, e.Ctx)
+		val, err := usingVar.Eval(nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		prepared.Params[i].SetDatum(val)
 	}
 
-	ast.ResetEvaluatedFlag(prepared.Stmt)
 	if prepared.SchemaVersion != e.IS.SchemaMetaVersion() {
 		// If the schema version has changed we need to prepare it again,
 		// if this time it failed, the real reason for the error is schema changed.
@@ -234,6 +254,14 @@ func (e *ExecuteExec) Build() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if IsPointGetWithPKOrUniqueKeyByAutoCommit(e.Ctx, p) {
+		err = e.Ctx.InitTxnWithStartTS(math.MaxUint64)
+	} else {
+		err = e.Ctx.ActivePendingTxn()
+	}
+	if err != nil {
+		return errors.Trace(err)
+	}
 	b := newExecutorBuilder(e.Ctx, e.IS)
 	stmtExec := b.build(p)
 	if b.err != nil {
@@ -241,6 +269,8 @@ func (e *ExecuteExec) Build() error {
 	}
 	e.StmtExec = stmtExec
 	e.Stmt = prepared.Stmt
+	e.Plan = p
+	stmtCount(e.Stmt, e.Plan)
 	return nil
 }
 
@@ -251,9 +281,9 @@ type DeallocateExec struct {
 }
 
 // Schema implements the Executor Schema interface.
-func (e *DeallocateExec) Schema() expression.Schema {
+func (e *DeallocateExec) Schema() *expression.Schema {
 	// Will never be called.
-	return expression.NewSchema(nil)
+	return expression.NewSchema()
 }
 
 // Next implements the Executor Next interface.
@@ -261,21 +291,26 @@ func (e *DeallocateExec) Next() (*Row, error) {
 	vars := e.ctx.GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]
 	if !ok {
-		return nil, ErrStmtNotFound
+		return nil, errors.Trace(ErrStmtNotFound)
 	}
 	delete(vars.PreparedStmtNameToID, e.Name)
 	delete(vars.PreparedStmts, id)
 	return nil, nil
 }
 
-// Close implements plan.Plan Close interface.
+// Close implements Executor Close interface.
 func (e *DeallocateExec) Close() error {
+	return nil
+}
+
+// Open implements Executor Open interface.
+func (e *DeallocateExec) Open() error {
 	return nil
 }
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
 func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interface{}) ast.Statement {
-	execPlan := &plan.Execute{ID: ID}
+	execPlan := &plan.Execute{ExecID: ID}
 	execPlan.UsingVars = make([]expression.Expression, len(args))
 	for i, val := range args {
 		value := ast.NewValueExpr(val)
@@ -284,6 +319,9 @@ func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interfac
 	sa := &statement{
 		is:   GetInfoSchema(ctx),
 		plan: execPlan,
+	}
+	if prepared, ok := ctx.GetSessionVars().PreparedStmts[ID].(*Prepared); ok {
+		sa.text = prepared.Stmt.Text()
 	}
 	return sa
 }

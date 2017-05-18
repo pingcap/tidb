@@ -27,7 +27,7 @@ import (
 // dirtyDB stores uncommitted write operations for a transaction.
 // It is stored and retrieved by context.Value and context.SetValue method.
 type dirtyDB struct {
-	// Key is tableID.
+	// tables is a map whose key is tableID.
 	tables map[int64]*dirtyTable
 }
 
@@ -66,7 +66,8 @@ func (udb *dirtyDB) getDirtyTable(tid int64) *dirtyTable {
 }
 
 type dirtyTable struct {
-	// key is handle.
+	// addedRows ...
+	// the key is handle.
 	addedRows   map[int64][]types.Datum
 	deletedRows map[int64]struct{}
 	truncated   bool
@@ -86,24 +87,19 @@ func getDirtyDB(ctx context.Context) *dirtyDB {
 
 // UnionScanExec merges the rows from dirty table and the rows from XAPI request.
 type UnionScanExec struct {
-	ctx   context.Context
-	Src   Executor
+	baseExecutor
+
 	dirty *dirtyTable
 	// usedIndex is the column offsets of the index which Src executor has used.
-	usedIndex []int
-	desc      bool
-	condition expression.Expression
+	usedIndex  []int
+	desc       bool
+	conditions []expression.Expression
+	columns    []*model.ColumnInfo
 
 	addedRows   []*Row
 	cursor      int
 	sortErr     error
 	snapshotRow *Row
-	schema      expression.Schema
-}
-
-// Schema implements the Executor Schema interface.
-func (us *UnionScanExec) Schema() expression.Schema {
-	return us.schema
 }
 
 // Next implements Execution Next interface.
@@ -144,7 +140,7 @@ func (us *UnionScanExec) getSnapshotRow() (*Row, error) {
 	var err error
 	if us.snapshotRow == nil {
 		for {
-			us.snapshotRow, err = us.Src.Next()
+			us.snapshotRow, err = us.children[0].Next()
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -200,11 +196,6 @@ func (us *UnionScanExec) pickRow(a, b *Row) (*Row, error) {
 	return row, nil
 }
 
-// Close implements the Executor Close interface.
-func (us *UnionScanExec) Close() error {
-	return us.Src.Close()
-}
-
 func (us *UnionScanExec) compare(a, b *Row) (int, error) {
 	sc := us.ctx.GetSessionVars().StmtCtx
 	for _, colOff := range us.usedIndex {
@@ -235,30 +226,28 @@ func (us *UnionScanExec) buildAndSortAddedRows(t table.Table, asName *model.CISt
 	us.addedRows = make([]*Row, 0, len(us.dirty.addedRows))
 	for h, data := range us.dirty.addedRows {
 		var newData []types.Datum
-		if us.Src.Schema().Len() == len(data) {
+		if us.schema.Len() == len(data) {
 			newData = data
 		} else {
-			newData = make([]types.Datum, 0, us.Src.Schema().Len())
-			var columns []*model.ColumnInfo
-			if t, ok := us.Src.(*XSelectTableExec); ok {
-				columns = t.Columns
-			} else {
-				columns = us.Src.(*XSelectIndexExec).indexPlan.Columns
-			}
-			for _, col := range columns {
+			newData = make([]types.Datum, 0, us.schema.Len())
+			for _, col := range us.columns {
 				newData = append(newData, data[col.Offset])
 			}
 		}
-		if us.condition != nil {
-			matched, err := expression.EvalBool(us.condition, newData, us.ctx)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if !matched {
-				continue
-			}
+		matched, err := expression.EvalBool(us.conditions, newData, us.ctx)
+		if err != nil {
+			return errors.Trace(err)
 		}
-		rowKeyEntry := &RowKeyEntry{Handle: h, Tbl: t, TableAsName: asName}
+		if !matched {
+			continue
+		}
+		rowKeyEntry := &RowKeyEntry{Handle: h, Tbl: t}
+		if asName != nil && asName.L != "" {
+			rowKeyEntry.TableName = asName.L
+		} else {
+			rowKeyEntry.TableName = t.Meta().Name.L
+		}
+
 		row := &Row{Data: newData, RowKeys: []*RowKeyEntry{rowKeyEntry}}
 		us.addedRows = append(us.addedRows, row)
 	}

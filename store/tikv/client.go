@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/msgpb"
 	"github.com/pingcap/kvproto/pkg/util"
+	goctx "golang.org/x/net/context"
 )
 
 // Client is a client that sends RPC.
@@ -32,13 +33,13 @@ type Client interface {
 	// Close should release all data.
 	Close() error
 	// SendKVReq sends kv request.
-	SendKVReq(addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error)
+	SendKVReq(ctx goctx.Context, addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error)
 	// SendCopReq sends coprocessor request.
-	SendCopReq(addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error)
+	SendCopReq(ctx goctx.Context, addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error)
 }
 
 const (
-	maxConnection     = 150
+	maxConnection     = 200
 	dialTimeout       = 5 * time.Second
 	writeTimeout      = 10 * time.Second
 	readTimeoutShort  = 20 * time.Second  // For requests that read/write several key-values.
@@ -61,9 +62,15 @@ func newRPCClient() *rpcClient {
 }
 
 // SendCopReq sends a Request to co-processor and receives Response.
-func (c *rpcClient) SendCopReq(addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
+func (c *rpcClient) SendCopReq(ctx goctx.Context, addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
 	start := time.Now()
 	defer func() { sendReqHistogram.WithLabelValues("cop").Observe(time.Since(start).Seconds()) }()
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
 
 	conn, err := c.p.GetConn(addr)
 	if err != nil {
@@ -87,9 +94,15 @@ func (c *rpcClient) SendCopReq(addr string, req *coprocessor.Request, timeout ti
 }
 
 // SendKVReq sends a Request to kv server and receives Response.
-func (c *rpcClient) SendKVReq(addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error) {
+func (c *rpcClient) SendKVReq(ctx goctx.Context, addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error) {
 	start := time.Now()
 	defer func() { sendReqHistogram.WithLabelValues("kv").Observe(time.Since(start).Seconds()) }()
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
 
 	conn, err := c.p.GetConn(addr)
 	if err != nil {

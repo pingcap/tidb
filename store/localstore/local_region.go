@@ -5,6 +5,7 @@ import (
 	"container/heap"
 	"encoding/binary"
 	"sort"
+	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
@@ -207,7 +208,8 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 			keyRanges: req.ranges,
 			sc:        xeval.FlagsToStatementContext(sel.Flags),
 		}
-		ctx.eval = xeval.NewEvaluator(ctx.sc)
+		loc := time.FixedZone("UTC", int(sel.TimeZoneOffset))
+		ctx.eval = xeval.NewEvaluator(ctx.sc, loc)
 		if sel.Where != nil {
 			ctx.whereColumns = make(map[int64]*tipb.ColumnInfo)
 			collectColumnsInExpr(sel.Where, ctx, ctx.whereColumns)
@@ -533,12 +535,17 @@ func (rs *localRegion) handleRowData(ctx *selectContext, handle int64, value []b
 			values[col.GetColumnId()] = handleData
 		} else {
 			_, ok := values[col.GetColumnId()]
-			if !ok {
-				if mysql.HasNotNullFlag(uint(col.GetFlag())) {
-					return false, errors.New("Miss column")
-				}
-				values[col.GetColumnId()] = []byte{codec.NilFlag}
+			if ok {
+				continue
 			}
+			if len(col.DefaultVal) > 0 {
+				values[col.GetColumnId()] = col.DefaultVal
+				continue
+			}
+			if mysql.HasNotNullFlag(uint(col.Flag)) {
+				return false, errors.New("Miss column")
+			}
+			values[col.GetColumnId()] = []byte{codec.NilFlag}
 		}
 	}
 	return rs.valuesToRow(ctx, handle, values)
@@ -643,7 +650,7 @@ func (rs *localRegion) setColumnValueToCtx(ctx *selectContext, h int64, row map[
 		} else {
 			data := row[colID]
 			ft := distsql.FieldTypeFromPBColumn(col)
-			datum, err := tablecodec.DecodeColumnValue(data, ft)
+			datum, err := tablecodec.DecodeColumnValue(data, ft, ctx.eval.TimeZone)
 			if err != nil {
 				return errors.Trace(err)
 			}

@@ -9,76 +9,26 @@ import (
 
 	proto "github.com/golang/protobuf/proto"
 )
-
 import math "math"
+
+// discarding unused import gogoproto "gogoproto"
+
+import github_com_pingcap_tipb_sharedbytes "github.com/pingcap/tipb/sharedbytes"
 
 import io "io"
 
 // Reference imports to suppress errors if they are not otherwise used.
 var _ = proto.Marshal
-var _ = fmt.Errorf
 var _ = math.Inf
-
-// KeyRange is the encoded index key range, low is closed, high is open. (low <= x < high)
-type KeyRange struct {
-	Low              []byte `protobuf:"bytes,1,opt,name=low" json:"low,omitempty"`
-	High             []byte `protobuf:"bytes,2,opt,name=high" json:"high,omitempty"`
-	XXX_unrecognized []byte `json:"-"`
-}
-
-func (m *KeyRange) Reset()                    { *m = KeyRange{} }
-func (m *KeyRange) String() string            { return proto.CompactTextString(m) }
-func (*KeyRange) ProtoMessage()               {}
-func (*KeyRange) Descriptor() ([]byte, []int) { return fileDescriptorSelect, []int{0} }
-
-func (m *KeyRange) GetLow() []byte {
-	if m != nil {
-		return m.Low
-	}
-	return nil
-}
-
-func (m *KeyRange) GetHigh() []byte {
-	if m != nil {
-		return m.High
-	}
-	return nil
-}
-
-// ByItem type for group by and order by.
-type ByItem struct {
-	Expr             *Expr  `protobuf:"bytes,1,opt,name=expr" json:"expr,omitempty"`
-	Desc             bool   `protobuf:"varint,2,opt,name=desc" json:"desc"`
-	XXX_unrecognized []byte `json:"-"`
-}
-
-func (m *ByItem) Reset()                    { *m = ByItem{} }
-func (m *ByItem) String() string            { return proto.CompactTextString(m) }
-func (*ByItem) ProtoMessage()               {}
-func (*ByItem) Descriptor() ([]byte, []int) { return fileDescriptorSelect, []int{1} }
-
-func (m *ByItem) GetExpr() *Expr {
-	if m != nil {
-		return m.Expr
-	}
-	return nil
-}
-
-func (m *ByItem) GetDesc() bool {
-	if m != nil {
-		return m.Desc
-	}
-	return false
-}
 
 // SelectRequest works like a simplified select statement.
 type SelectRequest struct {
 	// transaction start timestamp.
-	StartTs uint64 `protobuf:"varint,1,opt,name=start_ts,json=startTs" json:"start_ts"`
+	StartTs uint64 `protobuf:"varint,1,opt,name=start_ts" json:"start_ts"`
 	// If table_info is not null, it represents a table scan, index_info would be null.
-	TableInfo *TableInfo `protobuf:"bytes,2,opt,name=table_info,json=tableInfo" json:"table_info,omitempty"`
+	TableInfo *TableInfo `protobuf:"bytes,2,opt,name=table_info" json:"table_info,omitempty"`
 	// If index_info is not null, it represents an index scan, table_info would be null.
-	IndexInfo *IndexInfo `protobuf:"bytes,3,opt,name=index_info,json=indexInfo" json:"index_info,omitempty"`
+	IndexInfo *IndexInfo `protobuf:"bytes,3,opt,name=index_info" json:"index_info,omitempty"`
 	// fields to be selected, fields type can be column reference for simple scan.
 	// or aggregation function. If no fields specified, only handle will be returned.
 	Fields []*Expr `protobuf:"bytes,4,rep,name=fields" json:"fields,omitempty"`
@@ -89,32 +39,31 @@ type SelectRequest struct {
 	// where condition.
 	Where *Expr `protobuf:"bytes,7,opt,name=where" json:"where,omitempty"`
 	// group by clause.
-	GroupBy []*ByItem `protobuf:"bytes,8,rep,name=group_by,json=groupBy" json:"group_by,omitempty"`
+	GroupBy []*ByItem `protobuf:"bytes,8,rep,name=group_by" json:"group_by,omitempty"`
 	// having clause.
 	Having *Expr `protobuf:"bytes,9,opt,name=having" json:"having,omitempty"`
 	// order by clause.
-	OrderBy []*ByItem `protobuf:"bytes,10,rep,name=order_by,json=orderBy" json:"order_by,omitempty"`
+	OrderBy []*ByItem `protobuf:"bytes,10,rep,name=order_by" json:"order_by,omitempty"`
 	// limit the result to be returned.
 	Limit *int64 `protobuf:"varint,12,opt,name=limit" json:"limit,omitempty"`
 	// aggregate functions
 	Aggregates []*Expr `protobuf:"bytes,13,rep,name=aggregates" json:"aggregates,omitempty"`
 	// time zone offset in seconds
-	TimeZoneOffset int64 `protobuf:"varint,14,opt,name=time_zone_offset,json=timeZoneOffset" json:"time_zone_offset"`
+	TimeZoneOffset int64 `protobuf:"varint,14,opt,name=time_zone_offset" json:"time_zone_offset"`
 	// flags is used to store flags that change the execution mode, it contains:
-	// ignore_truncate = 1
-	// truncate error should be ignore if set.
-	// truncate_as_warning = 1 << 1
-	// when ignored_truncate is not set, return warning instead of error if this flag is set.
-	// ...
-	// add more when needed.
+	// 	ignore_truncate = 1
+	// 		truncate error should be ignore if set.
+	// 	truncate_as_warning = 1 << 1
+	// 		when ignored_truncate is not set, return warning instead of error if this flag is set.
+	// 	...
+	// 	add more when needed.
 	Flags            uint64 `protobuf:"varint,15,opt,name=flags" json:"flags"`
 	XXX_unrecognized []byte `json:"-"`
 }
 
-func (m *SelectRequest) Reset()                    { *m = SelectRequest{} }
-func (m *SelectRequest) String() string            { return proto.CompactTextString(m) }
-func (*SelectRequest) ProtoMessage()               {}
-func (*SelectRequest) Descriptor() ([]byte, []int) { return fileDescriptorSelect, []int{2} }
+func (m *SelectRequest) Reset()         { *m = SelectRequest{} }
+func (m *SelectRequest) String() string { return proto.CompactTextString(m) }
+func (*SelectRequest) ProtoMessage()    {}
 
 func (m *SelectRequest) GetStartTs() uint64 {
 	if m != nil {
@@ -221,10 +170,9 @@ type Row struct {
 	XXX_unrecognized []byte `json:"-"`
 }
 
-func (m *Row) Reset()                    { *m = Row{} }
-func (m *Row) String() string            { return proto.CompactTextString(m) }
-func (*Row) ProtoMessage()               {}
-func (*Row) Descriptor() ([]byte, []int) { return fileDescriptorSelect, []int{3} }
+func (m *Row) Reset()         { *m = Row{} }
+func (m *Row) String() string { return proto.CompactTextString(m) }
+func (*Row) ProtoMessage()    {}
 
 func (m *Row) GetHandle() []byte {
 	if m != nil {
@@ -246,10 +194,9 @@ type Error struct {
 	XXX_unrecognized []byte `json:"-"`
 }
 
-func (m *Error) Reset()                    { *m = Error{} }
-func (m *Error) String() string            { return proto.CompactTextString(m) }
-func (*Error) ProtoMessage()               {}
-func (*Error) Descriptor() ([]byte, []int) { return fileDescriptorSelect, []int{4} }
+func (m *Error) Reset()         { *m = Error{} }
+func (m *Error) String() string { return proto.CompactTextString(m) }
+func (*Error) ProtoMessage()    {}
 
 func (m *Error) GetCode() int32 {
 	if m != nil {
@@ -277,10 +224,9 @@ type SelectResponse struct {
 	XXX_unrecognized []byte   `json:"-"`
 }
 
-func (m *SelectResponse) Reset()                    { *m = SelectResponse{} }
-func (m *SelectResponse) String() string            { return proto.CompactTextString(m) }
-func (*SelectResponse) ProtoMessage()               {}
-func (*SelectResponse) Descriptor() ([]byte, []int) { return fileDescriptorSelect, []int{5} }
+func (m *SelectResponse) Reset()         { *m = SelectResponse{} }
+func (m *SelectResponse) String() string { return proto.CompactTextString(m) }
+func (*SelectResponse) ProtoMessage()    {}
 
 func (m *SelectResponse) GetError() *Error {
 	if m != nil {
@@ -313,23 +259,15 @@ func (m *SelectResponse) GetWarnings() []*Error {
 // Chunk contains multiple rows data and rows meta.
 type Chunk struct {
 	// Data for all rows in the chunk.
-	RowsData []byte `protobuf:"bytes,3,opt,name=rows_data,json=rowsData" json:"rows_data,omitempty"`
+	RowsData github_com_pingcap_tipb_sharedbytes.SharedBytes `protobuf:"bytes,3,opt,name=rows_data,customtype=github.com/pingcap/tipb/sharedbytes.SharedBytes" json:"rows_data"`
 	// Meta data for every row.
-	RowsMeta         []RowMeta `protobuf:"bytes,4,rep,name=rows_meta,json=rowsMeta" json:"rows_meta"`
+	RowsMeta         []RowMeta `protobuf:"bytes,4,rep,name=rows_meta" json:"rows_meta"`
 	XXX_unrecognized []byte    `json:"-"`
 }
 
-func (m *Chunk) Reset()                    { *m = Chunk{} }
-func (m *Chunk) String() string            { return proto.CompactTextString(m) }
-func (*Chunk) ProtoMessage()               {}
-func (*Chunk) Descriptor() ([]byte, []int) { return fileDescriptorSelect, []int{6} }
-
-func (m *Chunk) GetRowsData() []byte {
-	if m != nil {
-		return m.RowsData
-	}
-	return nil
-}
+func (m *Chunk) Reset()         { *m = Chunk{} }
+func (m *Chunk) String() string { return proto.CompactTextString(m) }
+func (*Chunk) ProtoMessage()    {}
 
 func (m *Chunk) GetRowsMeta() []RowMeta {
 	if m != nil {
@@ -345,10 +283,9 @@ type RowMeta struct {
 	XXX_unrecognized []byte `json:"-"`
 }
 
-func (m *RowMeta) Reset()                    { *m = RowMeta{} }
-func (m *RowMeta) String() string            { return proto.CompactTextString(m) }
-func (*RowMeta) ProtoMessage()               {}
-func (*RowMeta) Descriptor() ([]byte, []int) { return fileDescriptorSelect, []int{7} }
+func (m *RowMeta) Reset()         { *m = RowMeta{} }
+func (m *RowMeta) String() string { return proto.CompactTextString(m) }
+func (*RowMeta) ProtoMessage()    {}
 
 func (m *RowMeta) GetHandle() int64 {
 	if m != nil {
@@ -364,86 +301,64 @@ func (m *RowMeta) GetLength() int64 {
 	return 0
 }
 
-func init() {
-	proto.RegisterType((*KeyRange)(nil), "tipb.KeyRange")
-	proto.RegisterType((*ByItem)(nil), "tipb.ByItem")
-	proto.RegisterType((*SelectRequest)(nil), "tipb.SelectRequest")
-	proto.RegisterType((*Row)(nil), "tipb.Row")
-	proto.RegisterType((*Error)(nil), "tipb.Error")
-	proto.RegisterType((*SelectResponse)(nil), "tipb.SelectResponse")
-	proto.RegisterType((*Chunk)(nil), "tipb.Chunk")
-	proto.RegisterType((*RowMeta)(nil), "tipb.RowMeta")
-}
-func (m *KeyRange) Marshal() (data []byte, err error) {
-	size := m.Size()
-	data = make([]byte, size)
-	n, err := m.MarshalTo(data)
-	if err != nil {
-		return nil, err
-	}
-	return data[:n], nil
-}
-
-func (m *KeyRange) MarshalTo(data []byte) (int, error) {
-	var i int
-	_ = i
-	var l int
-	_ = l
-	if m.Low != nil {
-		data[i] = 0xa
-		i++
-		i = encodeVarintSelect(data, i, uint64(len(m.Low)))
-		i += copy(data[i:], m.Low)
-	}
-	if m.High != nil {
-		data[i] = 0x12
-		i++
-		i = encodeVarintSelect(data, i, uint64(len(m.High)))
-		i += copy(data[i:], m.High)
-	}
-	if m.XXX_unrecognized != nil {
-		i += copy(data[i:], m.XXX_unrecognized)
-	}
-	return i, nil
+// DAGRequest represents the request that will be handled with DAG mode.
+type DAGRequest struct {
+	// Transaction start timestamp.
+	StartTs uint64 `protobuf:"varint,1,opt,name=start_ts" json:"start_ts"`
+	// It represents push down Executors.
+	Executors []*Executor `protobuf:"bytes,2,rep,name=executors" json:"executors,omitempty"`
+	// time zone offset in seconds
+	TimeZoneOffset int64 `protobuf:"varint,3,opt,name=time_zone_offset" json:"time_zone_offset"`
+	// flags are used to store flags that change the execution mode, it contains:
+	// 	ignore_truncate = 1
+	// 		truncate error should be ignore if set.
+	// 	truncate_as_warning = 1 << 1
+	// 		when ignored_truncate is not set, return warning instead of error if this flag is set.
+	// 	...
+	// 	add more when needed.
+	Flags uint64 `protobuf:"varint,4,opt,name=flags" json:"flags"`
+	// It represents which columns we should output
+	OutputOffsets    []uint32 `protobuf:"varint,5,rep,name=output_offsets" json:"output_offsets,omitempty"`
+	XXX_unrecognized []byte   `json:"-"`
 }
 
-func (m *ByItem) Marshal() (data []byte, err error) {
-	size := m.Size()
-	data = make([]byte, size)
-	n, err := m.MarshalTo(data)
-	if err != nil {
-		return nil, err
+func (m *DAGRequest) Reset()         { *m = DAGRequest{} }
+func (m *DAGRequest) String() string { return proto.CompactTextString(m) }
+func (*DAGRequest) ProtoMessage()    {}
+
+func (m *DAGRequest) GetStartTs() uint64 {
+	if m != nil {
+		return m.StartTs
 	}
-	return data[:n], nil
+	return 0
 }
 
-func (m *ByItem) MarshalTo(data []byte) (int, error) {
-	var i int
-	_ = i
-	var l int
-	_ = l
-	if m.Expr != nil {
-		data[i] = 0xa
-		i++
-		i = encodeVarintSelect(data, i, uint64(m.Expr.Size()))
-		n1, err := m.Expr.MarshalTo(data[i:])
-		if err != nil {
-			return 0, err
-		}
-		i += n1
+func (m *DAGRequest) GetExecutors() []*Executor {
+	if m != nil {
+		return m.Executors
 	}
-	data[i] = 0x10
-	i++
-	if m.Desc {
-		data[i] = 1
-	} else {
-		data[i] = 0
+	return nil
+}
+
+func (m *DAGRequest) GetTimeZoneOffset() int64 {
+	if m != nil {
+		return m.TimeZoneOffset
 	}
-	i++
-	if m.XXX_unrecognized != nil {
-		i += copy(data[i:], m.XXX_unrecognized)
+	return 0
+}
+
+func (m *DAGRequest) GetFlags() uint64 {
+	if m != nil {
+		return m.Flags
 	}
-	return i, nil
+	return 0
+}
+
+func (m *DAGRequest) GetOutputOffsets() []uint32 {
+	if m != nil {
+		return m.OutputOffsets
+	}
+	return nil
 }
 
 func (m *SelectRequest) Marshal() (data []byte, err error) {
@@ -468,21 +383,21 @@ func (m *SelectRequest) MarshalTo(data []byte) (int, error) {
 		data[i] = 0x12
 		i++
 		i = encodeVarintSelect(data, i, uint64(m.TableInfo.Size()))
-		n2, err := m.TableInfo.MarshalTo(data[i:])
+		n1, err := m.TableInfo.MarshalTo(data[i:])
 		if err != nil {
 			return 0, err
 		}
-		i += n2
+		i += n1
 	}
 	if m.IndexInfo != nil {
 		data[i] = 0x1a
 		i++
 		i = encodeVarintSelect(data, i, uint64(m.IndexInfo.Size()))
-		n3, err := m.IndexInfo.MarshalTo(data[i:])
+		n2, err := m.IndexInfo.MarshalTo(data[i:])
 		if err != nil {
 			return 0, err
 		}
-		i += n3
+		i += n2
 	}
 	if len(m.Fields) > 0 {
 		for _, msg := range m.Fields {
@@ -520,11 +435,11 @@ func (m *SelectRequest) MarshalTo(data []byte) (int, error) {
 		data[i] = 0x3a
 		i++
 		i = encodeVarintSelect(data, i, uint64(m.Where.Size()))
-		n4, err := m.Where.MarshalTo(data[i:])
+		n3, err := m.Where.MarshalTo(data[i:])
 		if err != nil {
 			return 0, err
 		}
-		i += n4
+		i += n3
 	}
 	if len(m.GroupBy) > 0 {
 		for _, msg := range m.GroupBy {
@@ -542,11 +457,11 @@ func (m *SelectRequest) MarshalTo(data []byte) (int, error) {
 		data[i] = 0x4a
 		i++
 		i = encodeVarintSelect(data, i, uint64(m.Having.Size()))
-		n5, err := m.Having.MarshalTo(data[i:])
+		n4, err := m.Having.MarshalTo(data[i:])
 		if err != nil {
 			return 0, err
 		}
-		i += n5
+		i += n4
 	}
 	if len(m.OrderBy) > 0 {
 		for _, msg := range m.OrderBy {
@@ -669,11 +584,11 @@ func (m *SelectResponse) MarshalTo(data []byte) (int, error) {
 		data[i] = 0xa
 		i++
 		i = encodeVarintSelect(data, i, uint64(m.Error.Size()))
-		n6, err := m.Error.MarshalTo(data[i:])
+		n5, err := m.Error.MarshalTo(data[i:])
 		if err != nil {
 			return 0, err
 		}
-		i += n6
+		i += n5
 	}
 	if len(m.Rows) > 0 {
 		for _, msg := range m.Rows {
@@ -732,12 +647,14 @@ func (m *Chunk) MarshalTo(data []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
-	if m.RowsData != nil {
-		data[i] = 0x1a
-		i++
-		i = encodeVarintSelect(data, i, uint64(len(m.RowsData)))
-		i += copy(data[i:], m.RowsData)
+	data[i] = 0x1a
+	i++
+	i = encodeVarintSelect(data, i, uint64(m.RowsData.Size()))
+	n6, err := m.RowsData.MarshalTo(data[i:])
+	if err != nil {
+		return 0, err
 	}
+	i += n6
 	if len(m.RowsMeta) > 0 {
 		for _, msg := range m.RowsMeta {
 			data[i] = 0x22
@@ -783,6 +700,55 @@ func (m *RowMeta) MarshalTo(data []byte) (int, error) {
 	return i, nil
 }
 
+func (m *DAGRequest) Marshal() (data []byte, err error) {
+	size := m.Size()
+	data = make([]byte, size)
+	n, err := m.MarshalTo(data)
+	if err != nil {
+		return nil, err
+	}
+	return data[:n], nil
+}
+
+func (m *DAGRequest) MarshalTo(data []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	data[i] = 0x8
+	i++
+	i = encodeVarintSelect(data, i, uint64(m.StartTs))
+	if len(m.Executors) > 0 {
+		for _, msg := range m.Executors {
+			data[i] = 0x12
+			i++
+			i = encodeVarintSelect(data, i, uint64(msg.Size()))
+			n, err := msg.MarshalTo(data[i:])
+			if err != nil {
+				return 0, err
+			}
+			i += n
+		}
+	}
+	data[i] = 0x18
+	i++
+	i = encodeVarintSelect(data, i, uint64(m.TimeZoneOffset))
+	data[i] = 0x20
+	i++
+	i = encodeVarintSelect(data, i, uint64(m.Flags))
+	if len(m.OutputOffsets) > 0 {
+		for _, num := range m.OutputOffsets {
+			data[i] = 0x28
+			i++
+			i = encodeVarintSelect(data, i, uint64(num))
+		}
+	}
+	if m.XXX_unrecognized != nil {
+		i += copy(data[i:], m.XXX_unrecognized)
+	}
+	return i, nil
+}
+
 func encodeFixed64Select(data []byte, offset int, v uint64) int {
 	data[offset] = uint8(v)
 	data[offset+1] = uint8(v >> 8)
@@ -810,37 +776,6 @@ func encodeVarintSelect(data []byte, offset int, v uint64) int {
 	data[offset] = uint8(v)
 	return offset + 1
 }
-func (m *KeyRange) Size() (n int) {
-	var l int
-	_ = l
-	if m.Low != nil {
-		l = len(m.Low)
-		n += 1 + l + sovSelect(uint64(l))
-	}
-	if m.High != nil {
-		l = len(m.High)
-		n += 1 + l + sovSelect(uint64(l))
-	}
-	if m.XXX_unrecognized != nil {
-		n += len(m.XXX_unrecognized)
-	}
-	return n
-}
-
-func (m *ByItem) Size() (n int) {
-	var l int
-	_ = l
-	if m.Expr != nil {
-		l = m.Expr.Size()
-		n += 1 + l + sovSelect(uint64(l))
-	}
-	n += 2
-	if m.XXX_unrecognized != nil {
-		n += len(m.XXX_unrecognized)
-	}
-	return n
-}
-
 func (m *SelectRequest) Size() (n int) {
 	var l int
 	_ = l
@@ -966,10 +901,8 @@ func (m *SelectResponse) Size() (n int) {
 func (m *Chunk) Size() (n int) {
 	var l int
 	_ = l
-	if m.RowsData != nil {
-		l = len(m.RowsData)
-		n += 1 + l + sovSelect(uint64(l))
-	}
+	l = m.RowsData.Size()
+	n += 1 + l + sovSelect(uint64(l))
 	if len(m.RowsMeta) > 0 {
 		for _, e := range m.RowsMeta {
 			l = e.Size()
@@ -993,6 +926,29 @@ func (m *RowMeta) Size() (n int) {
 	return n
 }
 
+func (m *DAGRequest) Size() (n int) {
+	var l int
+	_ = l
+	n += 1 + sovSelect(uint64(m.StartTs))
+	if len(m.Executors) > 0 {
+		for _, e := range m.Executors {
+			l = e.Size()
+			n += 1 + l + sovSelect(uint64(l))
+		}
+	}
+	n += 1 + sovSelect(uint64(m.TimeZoneOffset))
+	n += 1 + sovSelect(uint64(m.Flags))
+	if len(m.OutputOffsets) > 0 {
+		for _, e := range m.OutputOffsets {
+			n += 1 + sovSelect(uint64(e))
+		}
+	}
+	if m.XXX_unrecognized != nil {
+		n += len(m.XXX_unrecognized)
+	}
+	return n
+}
+
 func sovSelect(x uint64) (n int) {
 	for {
 		n++
@@ -1006,233 +962,12 @@ func sovSelect(x uint64) (n int) {
 func sozSelect(x uint64) (n int) {
 	return sovSelect(uint64((x << 1) ^ uint64((int64(x) >> 63))))
 }
-func (m *KeyRange) Unmarshal(data []byte) error {
-	l := len(data)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowSelect
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := data[iNdEx]
-			iNdEx++
-			wire |= (uint64(b) & 0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: KeyRange: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: KeyRange: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Low", wireType)
-			}
-			var byteLen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSelect
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := data[iNdEx]
-				iNdEx++
-				byteLen |= (int(b) & 0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if byteLen < 0 {
-				return ErrInvalidLengthSelect
-			}
-			postIndex := iNdEx + byteLen
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Low = append(m.Low[:0], data[iNdEx:postIndex]...)
-			if m.Low == nil {
-				m.Low = []byte{}
-			}
-			iNdEx = postIndex
-		case 2:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field High", wireType)
-			}
-			var byteLen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSelect
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := data[iNdEx]
-				iNdEx++
-				byteLen |= (int(b) & 0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if byteLen < 0 {
-				return ErrInvalidLengthSelect
-			}
-			postIndex := iNdEx + byteLen
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.High = append(m.High[:0], data[iNdEx:postIndex]...)
-			if m.High == nil {
-				m.High = []byte{}
-			}
-			iNdEx = postIndex
-		default:
-			iNdEx = preIndex
-			skippy, err := skipSelect(data[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if skippy < 0 {
-				return ErrInvalidLengthSelect
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.XXX_unrecognized = append(m.XXX_unrecognized, data[iNdEx:iNdEx+skippy]...)
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
-func (m *ByItem) Unmarshal(data []byte) error {
-	l := len(data)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowSelect
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := data[iNdEx]
-			iNdEx++
-			wire |= (uint64(b) & 0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: ByItem: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: ByItem: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Expr", wireType)
-			}
-			var msglen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSelect
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := data[iNdEx]
-				iNdEx++
-				msglen |= (int(b) & 0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if msglen < 0 {
-				return ErrInvalidLengthSelect
-			}
-			postIndex := iNdEx + msglen
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			if m.Expr == nil {
-				m.Expr = &Expr{}
-			}
-			if err := m.Expr.Unmarshal(data[iNdEx:postIndex]); err != nil {
-				return err
-			}
-			iNdEx = postIndex
-		case 2:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Desc", wireType)
-			}
-			var v int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSelect
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := data[iNdEx]
-				iNdEx++
-				v |= (int(b) & 0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			m.Desc = bool(v != 0)
-		default:
-			iNdEx = preIndex
-			skippy, err := skipSelect(data[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if skippy < 0 {
-				return ErrInvalidLengthSelect
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.XXX_unrecognized = append(m.XXX_unrecognized, data[iNdEx:iNdEx+skippy]...)
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
 func (m *SelectRequest) Unmarshal(data []byte) error {
 	l := len(data)
 	iNdEx := 0
 	for iNdEx < l {
-		preIndex := iNdEx
 		var wire uint64
 		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowSelect
-			}
 			if iNdEx >= l {
 				return io.ErrUnexpectedEOF
 			}
@@ -1245,12 +980,6 @@ func (m *SelectRequest) Unmarshal(data []byte) error {
 		}
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: SelectRequest: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: SelectRequest: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
 		switch fieldNum {
 		case 1:
 			if wireType != 0 {
@@ -1258,9 +987,6 @@ func (m *SelectRequest) Unmarshal(data []byte) error {
 			}
 			m.StartTs = 0
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSelect
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -1277,9 +1003,6 @@ func (m *SelectRequest) Unmarshal(data []byte) error {
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSelect
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -1290,10 +1013,10 @@ func (m *SelectRequest) Unmarshal(data []byte) error {
 					break
 				}
 			}
+			postIndex := iNdEx + msglen
 			if msglen < 0 {
 				return ErrInvalidLengthSelect
 			}
-			postIndex := iNdEx + msglen
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
@@ -1310,9 +1033,6 @@ func (m *SelectRequest) Unmarshal(data []byte) error {
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSelect
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -1323,10 +1043,10 @@ func (m *SelectRequest) Unmarshal(data []byte) error {
 					break
 				}
 			}
+			postIndex := iNdEx + msglen
 			if msglen < 0 {
 				return ErrInvalidLengthSelect
 			}
-			postIndex := iNdEx + msglen
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
@@ -1343,9 +1063,6 @@ func (m *SelectRequest) Unmarshal(data []byte) error {
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSelect
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -1356,10 +1073,10 @@ func (m *SelectRequest) Unmarshal(data []byte) error {
 					break
 				}
 			}
+			postIndex := iNdEx + msglen
 			if msglen < 0 {
 				return ErrInvalidLengthSelect
 			}
-			postIndex := iNdEx + msglen
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
@@ -1374,9 +1091,6 @@ func (m *SelectRequest) Unmarshal(data []byte) error {
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSelect
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -1387,10 +1101,10 @@ func (m *SelectRequest) Unmarshal(data []byte) error {
 					break
 				}
 			}
+			postIndex := iNdEx + msglen
 			if msglen < 0 {
 				return ErrInvalidLengthSelect
 			}
-			postIndex := iNdEx + msglen
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
@@ -1405,9 +1119,6 @@ func (m *SelectRequest) Unmarshal(data []byte) error {
 			}
 			var v int
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSelect
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -1425,9 +1136,6 @@ func (m *SelectRequest) Unmarshal(data []byte) error {
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSelect
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -1438,10 +1146,10 @@ func (m *SelectRequest) Unmarshal(data []byte) error {
 					break
 				}
 			}
+			postIndex := iNdEx + msglen
 			if msglen < 0 {
 				return ErrInvalidLengthSelect
 			}
-			postIndex := iNdEx + msglen
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
@@ -1458,9 +1166,6 @@ func (m *SelectRequest) Unmarshal(data []byte) error {
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSelect
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -1471,10 +1176,10 @@ func (m *SelectRequest) Unmarshal(data []byte) error {
 					break
 				}
 			}
+			postIndex := iNdEx + msglen
 			if msglen < 0 {
 				return ErrInvalidLengthSelect
 			}
-			postIndex := iNdEx + msglen
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
@@ -1489,9 +1194,6 @@ func (m *SelectRequest) Unmarshal(data []byte) error {
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSelect
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -1502,10 +1204,10 @@ func (m *SelectRequest) Unmarshal(data []byte) error {
 					break
 				}
 			}
+			postIndex := iNdEx + msglen
 			if msglen < 0 {
 				return ErrInvalidLengthSelect
 			}
-			postIndex := iNdEx + msglen
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
@@ -1522,9 +1224,6 @@ func (m *SelectRequest) Unmarshal(data []byte) error {
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSelect
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -1535,10 +1234,10 @@ func (m *SelectRequest) Unmarshal(data []byte) error {
 					break
 				}
 			}
+			postIndex := iNdEx + msglen
 			if msglen < 0 {
 				return ErrInvalidLengthSelect
 			}
-			postIndex := iNdEx + msglen
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
@@ -1553,9 +1252,6 @@ func (m *SelectRequest) Unmarshal(data []byte) error {
 			}
 			var v int64
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSelect
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -1573,9 +1269,6 @@ func (m *SelectRequest) Unmarshal(data []byte) error {
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSelect
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -1586,10 +1279,10 @@ func (m *SelectRequest) Unmarshal(data []byte) error {
 					break
 				}
 			}
+			postIndex := iNdEx + msglen
 			if msglen < 0 {
 				return ErrInvalidLengthSelect
 			}
-			postIndex := iNdEx + msglen
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
@@ -1604,9 +1297,6 @@ func (m *SelectRequest) Unmarshal(data []byte) error {
 			}
 			m.TimeZoneOffset = 0
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSelect
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -1623,9 +1313,6 @@ func (m *SelectRequest) Unmarshal(data []byte) error {
 			}
 			m.Flags = 0
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSelect
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -1637,7 +1324,15 @@ func (m *SelectRequest) Unmarshal(data []byte) error {
 				}
 			}
 		default:
-			iNdEx = preIndex
+			var sizeOfWire int
+			for {
+				sizeOfWire++
+				wire >>= 7
+				if wire == 0 {
+					break
+				}
+			}
+			iNdEx -= sizeOfWire
 			skippy, err := skipSelect(data[iNdEx:])
 			if err != nil {
 				return err
@@ -1653,21 +1348,14 @@ func (m *SelectRequest) Unmarshal(data []byte) error {
 		}
 	}
 
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
 	return nil
 }
 func (m *Row) Unmarshal(data []byte) error {
 	l := len(data)
 	iNdEx := 0
 	for iNdEx < l {
-		preIndex := iNdEx
 		var wire uint64
 		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowSelect
-			}
 			if iNdEx >= l {
 				return io.ErrUnexpectedEOF
 			}
@@ -1680,12 +1368,6 @@ func (m *Row) Unmarshal(data []byte) error {
 		}
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: Row: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: Row: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
@@ -1693,9 +1375,6 @@ func (m *Row) Unmarshal(data []byte) error {
 			}
 			var byteLen int
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSelect
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -1713,10 +1392,7 @@ func (m *Row) Unmarshal(data []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Handle = append(m.Handle[:0], data[iNdEx:postIndex]...)
-			if m.Handle == nil {
-				m.Handle = []byte{}
-			}
+			m.Handle = append([]byte{}, data[iNdEx:postIndex]...)
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -1724,9 +1400,6 @@ func (m *Row) Unmarshal(data []byte) error {
 			}
 			var byteLen int
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSelect
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -1744,13 +1417,18 @@ func (m *Row) Unmarshal(data []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Data = append(m.Data[:0], data[iNdEx:postIndex]...)
-			if m.Data == nil {
-				m.Data = []byte{}
-			}
+			m.Data = append([]byte{}, data[iNdEx:postIndex]...)
 			iNdEx = postIndex
 		default:
-			iNdEx = preIndex
+			var sizeOfWire int
+			for {
+				sizeOfWire++
+				wire >>= 7
+				if wire == 0 {
+					break
+				}
+			}
+			iNdEx -= sizeOfWire
 			skippy, err := skipSelect(data[iNdEx:])
 			if err != nil {
 				return err
@@ -1766,21 +1444,14 @@ func (m *Row) Unmarshal(data []byte) error {
 		}
 	}
 
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
 	return nil
 }
 func (m *Error) Unmarshal(data []byte) error {
 	l := len(data)
 	iNdEx := 0
 	for iNdEx < l {
-		preIndex := iNdEx
 		var wire uint64
 		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowSelect
-			}
 			if iNdEx >= l {
 				return io.ErrUnexpectedEOF
 			}
@@ -1793,12 +1464,6 @@ func (m *Error) Unmarshal(data []byte) error {
 		}
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: Error: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: Error: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
 		switch fieldNum {
 		case 1:
 			if wireType != 0 {
@@ -1806,9 +1471,6 @@ func (m *Error) Unmarshal(data []byte) error {
 			}
 			m.Code = 0
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSelect
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -1825,9 +1487,6 @@ func (m *Error) Unmarshal(data []byte) error {
 			}
 			var stringLen uint64
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSelect
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -1838,18 +1497,25 @@ func (m *Error) Unmarshal(data []byte) error {
 					break
 				}
 			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
+			postIndex := iNdEx + int(stringLen)
+			if stringLen < 0 {
 				return ErrInvalidLengthSelect
 			}
-			postIndex := iNdEx + intStringLen
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
 			m.Msg = string(data[iNdEx:postIndex])
 			iNdEx = postIndex
 		default:
-			iNdEx = preIndex
+			var sizeOfWire int
+			for {
+				sizeOfWire++
+				wire >>= 7
+				if wire == 0 {
+					break
+				}
+			}
+			iNdEx -= sizeOfWire
 			skippy, err := skipSelect(data[iNdEx:])
 			if err != nil {
 				return err
@@ -1865,21 +1531,14 @@ func (m *Error) Unmarshal(data []byte) error {
 		}
 	}
 
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
 	return nil
 }
 func (m *SelectResponse) Unmarshal(data []byte) error {
 	l := len(data)
 	iNdEx := 0
 	for iNdEx < l {
-		preIndex := iNdEx
 		var wire uint64
 		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowSelect
-			}
 			if iNdEx >= l {
 				return io.ErrUnexpectedEOF
 			}
@@ -1892,12 +1551,6 @@ func (m *SelectResponse) Unmarshal(data []byte) error {
 		}
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: SelectResponse: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: SelectResponse: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
@@ -1905,9 +1558,6 @@ func (m *SelectResponse) Unmarshal(data []byte) error {
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSelect
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -1918,10 +1568,10 @@ func (m *SelectResponse) Unmarshal(data []byte) error {
 					break
 				}
 			}
+			postIndex := iNdEx + msglen
 			if msglen < 0 {
 				return ErrInvalidLengthSelect
 			}
-			postIndex := iNdEx + msglen
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
@@ -1938,9 +1588,6 @@ func (m *SelectResponse) Unmarshal(data []byte) error {
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSelect
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -1951,10 +1598,10 @@ func (m *SelectResponse) Unmarshal(data []byte) error {
 					break
 				}
 			}
+			postIndex := iNdEx + msglen
 			if msglen < 0 {
 				return ErrInvalidLengthSelect
 			}
-			postIndex := iNdEx + msglen
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
@@ -1969,9 +1616,6 @@ func (m *SelectResponse) Unmarshal(data []byte) error {
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSelect
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -1982,10 +1626,10 @@ func (m *SelectResponse) Unmarshal(data []byte) error {
 					break
 				}
 			}
+			postIndex := iNdEx + msglen
 			if msglen < 0 {
 				return ErrInvalidLengthSelect
 			}
-			postIndex := iNdEx + msglen
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
@@ -2000,9 +1644,6 @@ func (m *SelectResponse) Unmarshal(data []byte) error {
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSelect
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -2013,10 +1654,10 @@ func (m *SelectResponse) Unmarshal(data []byte) error {
 					break
 				}
 			}
+			postIndex := iNdEx + msglen
 			if msglen < 0 {
 				return ErrInvalidLengthSelect
 			}
-			postIndex := iNdEx + msglen
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
@@ -2026,7 +1667,15 @@ func (m *SelectResponse) Unmarshal(data []byte) error {
 			}
 			iNdEx = postIndex
 		default:
-			iNdEx = preIndex
+			var sizeOfWire int
+			for {
+				sizeOfWire++
+				wire >>= 7
+				if wire == 0 {
+					break
+				}
+			}
+			iNdEx -= sizeOfWire
 			skippy, err := skipSelect(data[iNdEx:])
 			if err != nil {
 				return err
@@ -2042,21 +1691,14 @@ func (m *SelectResponse) Unmarshal(data []byte) error {
 		}
 	}
 
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
 	return nil
 }
 func (m *Chunk) Unmarshal(data []byte) error {
 	l := len(data)
 	iNdEx := 0
 	for iNdEx < l {
-		preIndex := iNdEx
 		var wire uint64
 		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowSelect
-			}
 			if iNdEx >= l {
 				return io.ErrUnexpectedEOF
 			}
@@ -2069,12 +1711,6 @@ func (m *Chunk) Unmarshal(data []byte) error {
 		}
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: Chunk: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: Chunk: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
 		switch fieldNum {
 		case 3:
 			if wireType != 2 {
@@ -2082,9 +1718,6 @@ func (m *Chunk) Unmarshal(data []byte) error {
 			}
 			var byteLen int
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSelect
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -2102,9 +1735,8 @@ func (m *Chunk) Unmarshal(data []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.RowsData = append(m.RowsData[:0], data[iNdEx:postIndex]...)
-			if m.RowsData == nil {
-				m.RowsData = []byte{}
+			if err := m.RowsData.Unmarshal(data[iNdEx:postIndex]); err != nil {
+				return err
 			}
 			iNdEx = postIndex
 		case 4:
@@ -2113,9 +1745,6 @@ func (m *Chunk) Unmarshal(data []byte) error {
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSelect
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -2126,10 +1755,10 @@ func (m *Chunk) Unmarshal(data []byte) error {
 					break
 				}
 			}
+			postIndex := iNdEx + msglen
 			if msglen < 0 {
 				return ErrInvalidLengthSelect
 			}
-			postIndex := iNdEx + msglen
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
@@ -2139,7 +1768,15 @@ func (m *Chunk) Unmarshal(data []byte) error {
 			}
 			iNdEx = postIndex
 		default:
-			iNdEx = preIndex
+			var sizeOfWire int
+			for {
+				sizeOfWire++
+				wire >>= 7
+				if wire == 0 {
+					break
+				}
+			}
+			iNdEx -= sizeOfWire
 			skippy, err := skipSelect(data[iNdEx:])
 			if err != nil {
 				return err
@@ -2155,21 +1792,14 @@ func (m *Chunk) Unmarshal(data []byte) error {
 		}
 	}
 
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
 	return nil
 }
 func (m *RowMeta) Unmarshal(data []byte) error {
 	l := len(data)
 	iNdEx := 0
 	for iNdEx < l {
-		preIndex := iNdEx
 		var wire uint64
 		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowSelect
-			}
 			if iNdEx >= l {
 				return io.ErrUnexpectedEOF
 			}
@@ -2182,12 +1812,6 @@ func (m *RowMeta) Unmarshal(data []byte) error {
 		}
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: RowMeta: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: RowMeta: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
 		switch fieldNum {
 		case 1:
 			if wireType != 0 {
@@ -2195,9 +1819,6 @@ func (m *RowMeta) Unmarshal(data []byte) error {
 			}
 			m.Handle = 0
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSelect
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -2214,9 +1835,6 @@ func (m *RowMeta) Unmarshal(data []byte) error {
 			}
 			m.Length = 0
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowSelect
-				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
@@ -2228,7 +1846,15 @@ func (m *RowMeta) Unmarshal(data []byte) error {
 				}
 			}
 		default:
-			iNdEx = preIndex
+			var sizeOfWire int
+			for {
+				sizeOfWire++
+				wire >>= 7
+				if wire == 0 {
+					break
+				}
+			}
+			iNdEx -= sizeOfWire
 			skippy, err := skipSelect(data[iNdEx:])
 			if err != nil {
 				return err
@@ -2244,9 +1870,145 @@ func (m *RowMeta) Unmarshal(data []byte) error {
 		}
 	}
 
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
+	return nil
+}
+func (m *DAGRequest) Unmarshal(data []byte) error {
+	l := len(data)
+	iNdEx := 0
+	for iNdEx < l {
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := data[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		switch fieldNum {
+		case 1:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field StartTs", wireType)
+			}
+			m.StartTs = 0
+			for shift := uint(0); ; shift += 7 {
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := data[iNdEx]
+				iNdEx++
+				m.StartTs |= (uint64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Executors", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := data[iNdEx]
+				iNdEx++
+				msglen |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			postIndex := iNdEx + msglen
+			if msglen < 0 {
+				return ErrInvalidLengthSelect
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Executors = append(m.Executors, &Executor{})
+			if err := m.Executors[len(m.Executors)-1].Unmarshal(data[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field TimeZoneOffset", wireType)
+			}
+			m.TimeZoneOffset = 0
+			for shift := uint(0); ; shift += 7 {
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := data[iNdEx]
+				iNdEx++
+				m.TimeZoneOffset |= (int64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 4:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Flags", wireType)
+			}
+			m.Flags = 0
+			for shift := uint(0); ; shift += 7 {
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := data[iNdEx]
+				iNdEx++
+				m.Flags |= (uint64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 5:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field OutputOffsets", wireType)
+			}
+			var v uint32
+			for shift := uint(0); ; shift += 7 {
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := data[iNdEx]
+				iNdEx++
+				v |= (uint32(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.OutputOffsets = append(m.OutputOffsets, v)
+		default:
+			var sizeOfWire int
+			for {
+				sizeOfWire++
+				wire >>= 7
+				if wire == 0 {
+					break
+				}
+			}
+			iNdEx -= sizeOfWire
+			skippy, err := skipSelect(data[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthSelect
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.XXX_unrecognized = append(m.XXX_unrecognized, data[iNdEx:iNdEx+skippy]...)
+			iNdEx += skippy
+		}
 	}
+
 	return nil
 }
 func skipSelect(data []byte) (n int, err error) {
@@ -2255,9 +2017,6 @@ func skipSelect(data []byte) (n int, err error) {
 	for iNdEx < l {
 		var wire uint64
 		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return 0, ErrIntOverflowSelect
-			}
 			if iNdEx >= l {
 				return 0, io.ErrUnexpectedEOF
 			}
@@ -2271,10 +2030,7 @@ func skipSelect(data []byte) (n int, err error) {
 		wireType := int(wire & 0x7)
 		switch wireType {
 		case 0:
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return 0, ErrIntOverflowSelect
-				}
+			for {
 				if iNdEx >= l {
 					return 0, io.ErrUnexpectedEOF
 				}
@@ -2290,9 +2046,6 @@ func skipSelect(data []byte) (n int, err error) {
 		case 2:
 			var length int
 			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return 0, ErrIntOverflowSelect
-				}
 				if iNdEx >= l {
 					return 0, io.ErrUnexpectedEOF
 				}
@@ -2313,9 +2066,6 @@ func skipSelect(data []byte) (n int, err error) {
 				var innerWire uint64
 				var start int = iNdEx
 				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return 0, ErrIntOverflowSelect
-					}
 					if iNdEx >= l {
 						return 0, io.ErrUnexpectedEOF
 					}
@@ -2351,53 +2101,4 @@ func skipSelect(data []byte) (n int, err error) {
 
 var (
 	ErrInvalidLengthSelect = fmt.Errorf("proto: negative length found during unmarshaling")
-	ErrIntOverflowSelect   = fmt.Errorf("proto: integer overflow")
 )
-
-func init() { proto.RegisterFile("select.proto", fileDescriptorSelect) }
-
-var fileDescriptorSelect = []byte{
-	// 671 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0x6c, 0x54, 0xcb, 0x6e, 0xdb, 0x38,
-	0x14, 0x8d, 0x22, 0xc9, 0x8f, 0x1b, 0xc7, 0x09, 0x88, 0x4c, 0x40, 0x64, 0x32, 0x8e, 0x47, 0x8b,
-	0x99, 0x64, 0x16, 0x9e, 0x4c, 0x76, 0xb3, 0x75, 0x9b, 0x45, 0x50, 0x14, 0x2d, 0xd4, 0xa0, 0x8b,
-	0x6e, 0x0c, 0x5a, 0xba, 0x96, 0x89, 0xca, 0xa4, 0x2a, 0x32, 0x75, 0xdc, 0x2f, 0xe9, 0x07, 0x14,
-	0xfd, 0x96, 0x2c, 0xfb, 0x05, 0x45, 0x91, 0xfe, 0x48, 0xc1, 0x87, 0x0c, 0xa7, 0xe9, 0xee, 0xf2,
-	0x9c, 0xc3, 0x73, 0x79, 0x8f, 0x2e, 0x04, 0x3d, 0x85, 0x25, 0x66, 0x7a, 0x54, 0xd5, 0x52, 0x4b,
-	0x12, 0x69, 0x5e, 0x4d, 0x8f, 0xf6, 0xf1, 0xb6, 0xaa, 0x51, 0x29, 0x2e, 0x85, 0xc3, 0x8f, 0x7a,
-	0x2a, 0x9b, 0xe3, 0x82, 0xf9, 0xd3, 0x41, 0x21, 0x0b, 0x69, 0xcb, 0x7f, 0x4d, 0xe5, 0xd0, 0xe4,
-	0x1c, 0x3a, 0xcf, 0x70, 0x95, 0x32, 0x51, 0x20, 0xd9, 0x87, 0xb0, 0x94, 0x4b, 0x1a, 0x0c, 0x83,
-	0xd3, 0x5e, 0x6a, 0x4a, 0x42, 0x20, 0x9a, 0xf3, 0x62, 0x4e, 0xb7, 0x2d, 0x64, 0xeb, 0x64, 0x0c,
-	0xad, 0xf1, 0xea, 0x4a, 0xe3, 0x82, 0x0c, 0x20, 0x32, 0x3d, 0xed, 0x85, 0x9d, 0x0b, 0x18, 0x99,
-	0x67, 0x8c, 0x2e, 0x6f, 0xab, 0x3a, 0xb5, 0x38, 0xa1, 0x10, 0xe5, 0xa8, 0x32, 0x7b, 0xbb, 0x33,
-	0x8e, 0xee, 0xbe, 0x9e, 0x6c, 0xa5, 0x16, 0x49, 0x3e, 0x45, 0xb0, 0xfb, 0xca, 0x8e, 0x90, 0xe2,
-	0xbb, 0x1b, 0x54, 0x9a, 0x9c, 0x40, 0x47, 0x69, 0x56, 0xeb, 0x89, 0x56, 0xd6, 0x2f, 0xf2, 0xfa,
-	0xb6, 0x45, 0xaf, 0x15, 0x19, 0x01, 0x68, 0x36, 0x2d, 0x71, 0xc2, 0xc5, 0x4c, 0x5a, 0xcb, 0x9d,
-	0x8b, 0x3d, 0xd7, 0xf2, 0xda, 0xe0, 0x57, 0x62, 0x26, 0xd3, 0xae, 0x6e, 0x4a, 0xa3, 0xe7, 0x22,
-	0xc7, 0x5b, 0xa7, 0x0f, 0x37, 0xf5, 0x57, 0x06, 0x77, 0x7a, 0xde, 0x94, 0x24, 0x81, 0xd6, 0x8c,
-	0x63, 0x99, 0x2b, 0x1a, 0x0d, 0xc3, 0x9f, 0xc6, 0xf1, 0x0c, 0xf9, 0x0b, 0x5a, 0xb5, 0x49, 0x4a,
-	0xd1, 0xd8, 0x6a, 0xfa, 0x4e, 0xd3, 0x04, 0x98, 0x7a, 0x96, 0x0c, 0xa1, 0x93, 0x73, 0xa5, 0xb9,
-	0xc8, 0x34, 0x6d, 0x6d, 0x0c, 0xbf, 0x46, 0xc9, 0x10, 0xe2, 0xe5, 0x1c, 0x6b, 0xa4, 0xed, 0x47,
-	0xd9, 0x39, 0x82, 0xfc, 0x0d, 0x9d, 0xa2, 0x96, 0x37, 0xd5, 0x64, 0xba, 0xa2, 0x1d, 0xdb, 0xad,
-	0xe7, 0x44, 0x2e, 0xfc, 0xb4, 0x6d, 0xd9, 0xf1, 0xca, 0x3c, 0x7c, 0xce, 0xde, 0x73, 0x51, 0xd0,
-	0xee, 0x23, 0x2f, 0xcf, 0x18, 0x33, 0x59, 0xe7, 0x58, 0x1b, 0x33, 0xf8, 0x95, 0x99, 0x65, 0xc7,
-	0x2b, 0x72, 0x00, 0x71, 0xc9, 0x17, 0x5c, 0xd3, 0xde, 0x30, 0x38, 0x0d, 0x53, 0x77, 0x20, 0xff,
-	0x00, 0xb0, 0xa2, 0xa8, 0xb1, 0x60, 0x1a, 0x15, 0xdd, 0x7d, 0x94, 0xcf, 0x06, 0x4b, 0x46, 0xb0,
-	0xaf, 0xf9, 0x02, 0x27, 0x1f, 0xa4, 0xc0, 0x89, 0x9c, 0xcd, 0x14, 0x6a, 0xda, 0x37, 0x66, 0x3e,
-	0x83, 0xbe, 0x61, 0xdf, 0x48, 0x81, 0x2f, 0x2c, 0x47, 0x8e, 0x20, 0x9e, 0x95, 0xac, 0x50, 0x74,
-	0x6f, 0xe3, 0xab, 0x3b, 0x28, 0xf9, 0x0f, 0xc2, 0x54, 0x2e, 0xc9, 0xa1, 0x99, 0x50, 0xe4, 0x25,
-	0xfa, 0xd5, 0xf4, 0x27, 0xb3, 0x9d, 0x39, 0xd3, 0xac, 0xd9, 0x4e, 0x53, 0x27, 0xff, 0x43, 0x7c,
-	0x59, 0xd7, 0xd2, 0x2e, 0x5f, 0x26, 0x73, 0x77, 0x25, 0x6e, 0x96, 0xcf, 0x20, 0xe4, 0x10, 0xc2,
-	0x85, 0x2a, 0xec, 0xad, 0xae, 0x27, 0x0c, 0x90, 0x7c, 0x0e, 0xa0, 0xdf, 0x2c, 0xa5, 0xaa, 0xa4,
-	0x50, 0x48, 0xfe, 0x84, 0x18, 0x8d, 0x9b, 0x5f, 0xf1, 0x1d, 0x3f, 0xb3, 0x81, 0x52, 0xc7, 0x90,
-	0x3f, 0x20, 0xaa, 0xe5, 0x52, 0xd1, 0x6d, 0x9b, 0x4a, 0xd7, 0x29, 0x52, 0xb9, 0x4c, 0x2d, 0x4c,
-	0xce, 0xa0, 0x95, 0xcd, 0x6f, 0xc4, 0x5b, 0x45, 0x43, 0x2b, 0xf0, 0x16, 0x4f, 0x0c, 0xe6, 0x9b,
-	0x7b, 0x81, 0xf9, 0x48, 0x4b, 0x56, 0x0b, 0x2e, 0x8a, 0x66, 0x07, 0x1f, 0xf4, 0x5b, 0x93, 0xc9,
-	0x6b, 0x88, 0xed, 0x7d, 0xf2, 0x3b, 0x74, 0x4d, 0x93, 0x89, 0x4d, 0x21, 0xb4, 0x29, 0x74, 0x0c,
-	0xf0, 0x94, 0x69, 0x46, 0xce, 0x3d, 0xb9, 0x40, 0xcd, 0xbc, 0xdf, 0xee, 0xfa, 0x75, 0xcf, 0x51,
-	0xb3, 0x66, 0x29, 0x8d, 0xca, 0x9c, 0x93, 0x4b, 0x68, 0x7b, 0x8a, 0x1c, 0x3f, 0x88, 0xbc, 0xf9,
-	0x76, 0x4d, 0xf0, 0xc7, 0xd0, 0x2a, 0x51, 0x14, 0xda, 0xfd, 0x18, 0xd6, 0xac, 0xc3, 0xc6, 0x67,
-	0x77, 0xf7, 0x83, 0xe0, 0xcb, 0xfd, 0x20, 0xf8, 0x76, 0x3f, 0x08, 0x3e, 0x7e, 0x1f, 0x6c, 0xc1,
-	0x6f, 0x99, 0x5c, 0x8c, 0x2a, 0x2e, 0x8a, 0x8c, 0x55, 0x23, 0xcd, 0xf3, 0xa9, 0x7d, 0xc7, 0xcb,
-	0xe0, 0x47, 0x00, 0x00, 0x00, 0xff, 0xff, 0xf6, 0xaa, 0xb1, 0xcd, 0xc8, 0x04, 0x00, 0x00,
-}

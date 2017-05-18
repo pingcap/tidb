@@ -30,9 +30,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/engine"
@@ -75,6 +73,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		return nil, errors.Trace(err)
 	}
 	dm.domains[key] = d
+
 	return
 }
 
@@ -99,6 +98,9 @@ var (
 	// but you must know that too little may cause badly performance degradation.
 	// For production, you should set a big schema lease, like 300s+.
 	schemaLease = 1 * time.Second
+
+	// The maximum number of retries to recover from retryable errors.
+	commitRetryLimit = 10
 )
 
 // SetSchemaLease changes the default schema lease time for DDL.
@@ -108,11 +110,22 @@ func SetSchemaLease(lease time.Duration) {
 	schemaLease = lease
 }
 
+// SetCommitRetryLimit setups the maximum number of retries when trying to recover
+// from retryable errors.
+// Retryable errors are generally refer to temporary errors that are expected to be
+// reinstated by retry, including network interruption, transaction conflicts, and
+// so on.
+func SetCommitRetryLimit(limit int) {
+	commitRetryLimit = limit
+}
+
 // Parse parses a query string to raw ast.StmtNode.
 func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
 	log.Debug("compiling", src)
 	charset, collation := ctx.GetSessionVars().GetCharsetInfo()
-	stmts, err := parser.New().Parse(src, charset, collation)
+	p := parser.New()
+	p.SetSQLMode(ctx.GetSessionVars().SQLMode)
+	stmts, err := p.Parse(src, charset, collation)
 	if err != nil {
 		log.Warnf("compiling %s, error: %v", src, err)
 		return nil, errors.Trace(err)
@@ -128,57 +141,45 @@ func resetStmtCtx(ctx context.Context, s ast.StmtNode) {
 	case *ast.UpdateStmt, *ast.InsertStmt, *ast.DeleteStmt:
 		sc.IgnoreTruncate = false
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode
-		if _, ok := s.(*ast.UpdateStmt); ok {
-			sc.InUpdateStmt = true
+		if _, ok := s.(*ast.InsertStmt); !ok {
+			sc.InUpdateOrDeleteStmt = true
 		}
+	case *ast.CreateTableStmt, *ast.AlterTableStmt:
+		// Make sure the sql_mode is strict when checking column default value.
+		sc.IgnoreTruncate = false
+		sc.TruncateAsWarning = false
+	case *ast.LoadDataStmt:
+		if variable.GoSQLDriverTest {
+			sc.IgnoreTruncate = true
+			break
+		}
+		sc.IgnoreTruncate = false
+		sc.TruncateAsWarning = !sessVars.StrictSQLMode
 	default:
 		sc.IgnoreTruncate = true
 		if show, ok := s.(*ast.ShowStmt); ok {
 			if show.Tp == ast.ShowWarnings {
+				sc.InShowWarning = true
 				sc.SetWarnings(sessVars.StmtCtx.GetWarnings())
 			}
 		}
 	}
+	if sessVars.LastInsertID > 0 {
+		sessVars.PrevLastInsertID = sessVars.LastInsertID
+		sessVars.LastInsertID = 0
+	}
+	sessVars.InsertID = 0
 	sessVars.StmtCtx = sc
 }
 
 // Compile is safe for concurrent use by multiple goroutines.
 func Compile(ctx context.Context, rawStmt ast.StmtNode) (ast.Statement, error) {
-	err := PrepareTxnCtx(ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	compiler := executor.Compiler{}
 	st, err := compiler.Compile(ctx, rawStmt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return st, nil
-}
-
-// PrepareTxnCtx resets transaction context if session is not in a transaction.
-func PrepareTxnCtx(ctx context.Context) error {
-	se := ctx.(*session)
-	if se.txn == nil || !se.txn.Valid() {
-		is := sessionctx.GetDomain(ctx).InfoSchema()
-		se.sessionVars.TxnCtx = &variable.TransactionContext{
-			InfoSchema:    is,
-			SchemaVersion: is.SchemaMetaVersion(),
-		}
-		var err error
-		se.txn, err = se.store.Begin()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		err = se.loadCommonGlobalVariablesIfNeeded()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if !se.sessionVars.IsAutocommit() {
-			se.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
-		}
-	}
-	return nil
 }
 
 // runStmt executes the ast.Statement and commit or rollback the current transaction.
@@ -188,7 +189,7 @@ func runStmt(ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
 	se := ctx.(*session)
 	rs, err = s.Exec(ctx)
 	// All the history should be added here.
-	getHistory(ctx).add(0, s)
+	getHistory(ctx).add(0, s, se.sessionVars.StmtCtx)
 	if !se.sessionVars.InTxn() {
 		if err != nil {
 			log.Info("RollbackTxn for ddl/autocommit error.")

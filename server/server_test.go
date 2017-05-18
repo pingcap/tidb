@@ -22,13 +22,15 @@ import (
 	"os"
 	"regexp"
 	"strconv"
-	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-sql-driver/mysql"
+	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/executor"
 	tmysql "github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/printer"
 )
 
@@ -248,7 +250,9 @@ func runTestLoadData(c *C) {
 		c.Assert(err, IsNil)
 		err = os.Remove(path)
 		c.Assert(err, IsNil)
+		variable.GoSQLDriverTest = false
 	}()
+	variable.GoSQLDriverTest = true
 	_, err = fp.WriteString(`
 xxx row1_col1	- row1_col2	1abc
 xxx row2_col1	- row2_col2	
@@ -463,6 +467,7 @@ func checkErrorCode(c *C, e error, code uint16) {
 func runTestAuth(c *C) {
 	runTests(c, dsn, func(dbt *DBTest) {
 		dbt.mustExec(`CREATE USER 'test'@'%' IDENTIFIED BY '123';`)
+		dbt.mustExec(`FLUSH PRIVILEGES;`)
 	})
 	newDsn := "test:123@tcp(localhost:4001)/test?strict=true"
 	runTests(c, newDsn, func(dbt *DBTest) {
@@ -473,6 +478,16 @@ func runTestAuth(c *C) {
 	_, err = db.Query("USE mysql;")
 	c.Assert(err, NotNil, Commentf("Wrong password should be failed"))
 	db.Close()
+
+	// Test login use IP that not exists in mysql.user.
+	runTests(c, dsn, func(dbt *DBTest) {
+		dbt.mustExec(`CREATE USER 'xxx'@'localhost' IDENTIFIED BY 'yyy';`)
+		dbt.mustExec(`FLUSH PRIVILEGES;`)
+	})
+	newDsn = "xxx:yyy@tcp(127.0.0.1:4001)/test?strict=true"
+	runTests(c, newDsn, func(dbt *DBTest) {
+		dbt.mustExec(`USE mysql;`)
+	})
 }
 
 func runTestIssues(c *C) {
@@ -505,20 +520,6 @@ func runTestStatusAPI(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(data.Version, Equals, tmysql.ServerVersion)
 	c.Assert(data.GitHash, Equals, printer.TiDBGitHash)
-}
-
-func runTestMultiPacket(c *C) {
-	runTests(c, dsn, func(dbt *DBTest) {
-		dbt.mustExec(fmt.Sprintf("set global max_allowed_packet=%d", 1024*1024*160)) // 160M
-	})
-
-	runTests(c, dsn, func(dbt *DBTest) {
-		dbt.mustExec("create table test (a longtext)")
-		// When i == 30, packet size will be 16777215(2^24−1) bytes.
-		for i := 30; i < 32; i++ {
-			dbt.mustExec("insert into test values ('" + strings.Repeat("x", 1024*1024*16-i) + "')")
-		}
-	})
 }
 
 func runTestMultiStatements(c *C) {
@@ -579,9 +580,12 @@ func runTestStmtCount(t *C) {
 		currentStmtCnt := getStmtCnt(string(getMetrics(t)))
 		t.Assert(currentStmtCnt[executor.CreateTable], Equals, originStmtCnt[executor.CreateTable]+1)
 		t.Assert(currentStmtCnt[executor.Insert], Equals, originStmtCnt[executor.Insert]+5)
-		t.Assert(currentStmtCnt[executor.Delete], Equals, originStmtCnt[executor.Delete]+1)
-		t.Assert(currentStmtCnt[executor.Update], Equals, originStmtCnt[executor.Update]+2)
-		t.Assert(currentStmtCnt[executor.SimpleSelect], Equals, originStmtCnt[executor.SimpleSelect]+3)
+		deleteLabel := "DeleteTableFull"
+		t.Assert(currentStmtCnt[deleteLabel], Equals, originStmtCnt[deleteLabel]+1)
+		updateLabel := "UpdateTableFull"
+		t.Assert(currentStmtCnt[updateLabel], Equals, originStmtCnt[updateLabel]+2)
+		selectLabel := "SelectTableFull"
+		t.Assert(currentStmtCnt[selectLabel], Equals, originStmtCnt[selectLabel]+2)
 	})
 }
 
@@ -603,4 +607,36 @@ func getStmtCnt(content string) (stmtCnt map[string]int) {
 		stmtCnt[v[1]] = cnt
 	}
 	return stmtCnt
+}
+
+const retryTime = 100
+
+func waitUntilServerOnline(statusAddr string) {
+	// connect server
+	retry := 0
+	for ; retry < retryTime; retry++ {
+		time.Sleep(time.Millisecond * 10)
+		db, err := sql.Open("mysql", dsn)
+		if err == nil {
+			db.Close()
+			break
+		}
+	}
+	if retry == retryTime {
+		log.Fatalf("Failed to connect db for %d retries in every 10 ms", retryTime)
+	}
+	// connect http status
+	statusURL := fmt.Sprintf("http://127.0.0.1%s/status", statusAddr)
+	for retry = 0; retry < retryTime; retry++ {
+		resp, err := http.Get(statusURL)
+		if err == nil {
+			ioutil.ReadAll(resp.Body)
+			resp.Body.Close()
+			break
+		}
+		time.Sleep(time.Millisecond * 10)
+	}
+	if retry == retryTime {
+		log.Fatalf("Failed to connect http status for %d retries in every 10 ms", retryTime)
+	}
 }

@@ -20,33 +20,60 @@ import (
 	"github.com/pingcap/tidb/ast"
 )
 
-// Schema stands for the row schema get from input.
-type Schema struct {
-	Columns []*Column
-}
+// KeyInfo stores the columns of one unique key or primary key.
+type KeyInfo []*Column
 
-// String implements fmt.Stringer interface.
-func (s Schema) String() string {
-	colStrs := make([]string, 0, len(s.Columns))
-	for _, col := range s.Columns {
-		colStrs = append(colStrs, col.String())
-	}
-	return "[" + strings.Join(colStrs, ",") + "]"
-}
-
-// Clone copies the total schema.
-func (s Schema) Clone() Schema {
-	result := NewSchema(make([]*Column, 0, s.Len()))
-	for _, col := range s.Columns {
-		newCol := *col
-		result.Append(&newCol)
+// Clone copies the entire UniqueKey.
+func (ki KeyInfo) Clone() KeyInfo {
+	result := make([]*Column, 0, len(ki))
+	for _, col := range ki {
+		result = append(result, col.Clone().(*Column))
 	}
 	return result
 }
 
+// Schema stands for the row schema and unique key information get from input.
+type Schema struct {
+	Columns   []*Column
+	Keys      []KeyInfo
+	MaxOneRow bool
+}
+
+// String implements fmt.Stringer interface.
+func (s *Schema) String() string {
+	colStrs := make([]string, 0, len(s.Columns))
+	for _, col := range s.Columns {
+		colStrs = append(colStrs, col.String())
+	}
+	ukStrs := make([]string, 0, len(s.Keys))
+	for _, key := range s.Keys {
+		ukColStrs := make([]string, 0, len(key))
+		for _, col := range key {
+			ukColStrs = append(ukColStrs, col.String())
+		}
+		ukStrs = append(ukStrs, "["+strings.Join(ukColStrs, ",")+"]")
+	}
+	return "Column: [" + strings.Join(colStrs, ",") + "] Unique key: [" + strings.Join(ukStrs, ",") + "]"
+}
+
+// Clone copies the total schema.
+func (s *Schema) Clone() *Schema {
+	cols := make([]*Column, 0, s.Len())
+	keys := make([]KeyInfo, 0, len(s.Keys))
+	for _, col := range s.Columns {
+		cols = append(cols, col.Clone().(*Column))
+	}
+	for _, key := range s.Keys {
+		keys = append(keys, key.Clone())
+	}
+	schema := NewSchema(cols...)
+	schema.SetUniqueKeys(keys)
+	return schema
+}
+
 // FindColumn finds an Column from schema for a ast.ColumnName. It compares the db/table/column names.
 // If there are more than one result, it will raise ambiguous error.
-func (s Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
+func (s *Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
 	idx := -1
 	for i, col := range s.Columns {
@@ -66,24 +93,27 @@ func (s Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 	return s.Columns[idx], nil
 }
 
-// InitColumnIndices sets indices for columns in schema.
-func (s Schema) InitColumnIndices() {
-	for i, c := range s.Columns {
-		c.Index = i
-	}
-}
-
 // RetrieveColumn retrieves column in expression from the columns in schema.
-func (s Schema) RetrieveColumn(col *Column) *Column {
-	index := s.GetColumnIndex(col)
+func (s *Schema) RetrieveColumn(col *Column) *Column {
+	index := s.ColumnIndex(col)
 	if index != -1 {
 		return s.Columns[index]
 	}
 	return nil
 }
 
-// GetColumnIndex finds the index for a column.
-func (s Schema) GetColumnIndex(col *Column) int {
+// IsUniqueKey checks if this column is a unique key.
+func (s *Schema) IsUniqueKey(col *Column) bool {
+	for _, key := range s.Keys {
+		if len(key) == 1 && key[0].Equal(col, nil) {
+			return true
+		}
+	}
+	return false
+}
+
+// ColumnIndex finds the index for a column.
+func (s *Schema) ColumnIndex(col *Column) int {
 	for i, c := range s.Columns {
 		if c.FromID == col.FromID && c.Position == col.Position {
 			return i
@@ -92,22 +122,51 @@ func (s Schema) GetColumnIndex(col *Column) int {
 	return -1
 }
 
+// Contains checks if the schema contains the column.
+func (s *Schema) Contains(col *Column) bool {
+	return s.ColumnIndex(col) != -1
+}
+
 // Len returns the number of columns in schema.
-func (s Schema) Len() int {
+func (s *Schema) Len() int {
 	return len(s.Columns)
 }
 
 // Append append new column to the columns stored in schema.
-func (s *Schema) Append(col *Column) {
-	s.Columns = append(s.Columns, col)
+func (s *Schema) Append(col ...*Column) {
+	s.Columns = append(s.Columns, col...)
+}
+
+// SetUniqueKeys will set the value of Schema.Keys.
+func (s *Schema) SetUniqueKeys(keys []KeyInfo) {
+	s.Keys = keys
+}
+
+// ColumnsIndices will return a slice which contains the position of each column in schema.
+// If there is one column that doesn't match, nil will be returned.
+func (s *Schema) ColumnsIndices(cols []*Column) (ret []int) {
+	ret = make([]int, 0, len(cols))
+	for _, col := range cols {
+		pos := s.ColumnIndex(col)
+		if pos != -1 {
+			ret = append(ret, pos)
+		} else {
+			return nil
+		}
+	}
+	return
 }
 
 // MergeSchema will merge two schema into one schema.
-func MergeSchema(lSchema, rSchema Schema) Schema {
-	return NewSchema(append(lSchema.Clone().Columns, rSchema.Clone().Columns...))
+func MergeSchema(lSchema, rSchema *Schema) *Schema {
+	tmpL := lSchema.Clone()
+	tmpR := rSchema.Clone()
+	ret := NewSchema(append(tmpL.Columns, tmpR.Columns...)...)
+	ret.SetUniqueKeys(append(tmpL.Keys, tmpR.Keys...))
+	return ret
 }
 
 // NewSchema returns a schema made by its parameter.
-func NewSchema(cols []*Column) Schema {
-	return Schema{Columns: cols}
+func NewSchema(cols ...*Column) *Schema {
+	return &Schema{Columns: cols}
 }

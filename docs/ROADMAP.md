@@ -22,8 +22,11 @@ This document defines the roadmap for TiDB development.
 
 ##### __API__  
 - [x] MySQL protocol server
+- [ ] MySQL X Protocol
 - [ ] PostgreSQL protocol server
 - [ ] JSON support
+- [ ] Document store
+- [ ] Spark connector
 
 
 ##### __Application__  
@@ -40,8 +43,6 @@ This document defines the roadmap for TiDB development.
 ##### __Storage__  
 - [x] BoltDB
 - [x] GoLevelDB
-- [x] RocksDB
-- [x] LMDB
 - [x] Homemade distributed KV ([pingcap/tikv](https://github.com/pingcap/tikv)):
     - [x] Transactions
     - [x] Replicate log using Raft

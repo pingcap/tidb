@@ -14,8 +14,13 @@
 package xeval
 
 import (
+	"time"
+
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -48,14 +53,65 @@ const (
 
 // Evaluator evaluates tipb.Expr.
 type Evaluator struct {
-	Row        map[int64]types.Datum // column values.
-	valueLists map[*tipb.Expr]*decodedValueList
-	sc         *variable.StatementContext
+	Row map[int64]types.Datum // TODO: Remove this field after refactor cop_handler.
+
+	ColVals      []types.Datum
+	ColIDs       map[int64]int
+	ColumnInfos  []*tipb.ColumnInfo
+	fieldTps     []*types.FieldType
+	valueLists   map[*tipb.Expr]*decodedValueList
+	StatementCtx *variable.StatementContext
+	TimeZone     *time.Location
 }
 
 // NewEvaluator creates a new Evaluator instance.
-func NewEvaluator(sc *variable.StatementContext) *Evaluator {
-	return &Evaluator{Row: make(map[int64]types.Datum), sc: sc}
+func NewEvaluator(sc *variable.StatementContext, timeZone *time.Location) *Evaluator {
+	return &Evaluator{
+		Row:          make(map[int64]types.Datum),
+		ColIDs:       make(map[int64]int),
+		StatementCtx: sc,
+		TimeZone:     timeZone,
+	}
+}
+
+// SetColumnInfos sets ColumnInfos.
+func (e *Evaluator) SetColumnInfos(cols []*tipb.ColumnInfo) {
+	e.ColumnInfos = make([]*tipb.ColumnInfo, len(cols))
+	copy(e.ColumnInfos, cols)
+
+	e.ColVals = make([]types.Datum, len(e.ColumnInfos))
+	for i, col := range e.ColumnInfos {
+		e.ColIDs[col.GetColumnId()] = i
+	}
+
+	e.fieldTps = make([]*types.FieldType, 0, len(e.ColumnInfos))
+	for _, col := range e.ColumnInfos {
+		ft := distsql.FieldTypeFromPBColumn(col)
+		e.fieldTps = append(e.fieldTps, ft)
+	}
+}
+
+// SetRowValue puts row value into evaluator, the values will be used for expr evaluation.
+func (e *Evaluator) SetRowValue(handle int64, row [][]byte, relatedColIDs map[int64]int) error {
+	for _, offset := range relatedColIDs {
+		col := e.ColumnInfos[offset]
+		if col.GetPkHandle() {
+			if mysql.HasUnsignedFlag(uint(col.GetFlag())) {
+				e.ColVals[offset] = types.NewUintDatum(uint64(handle))
+			} else {
+				e.ColVals[offset] = types.NewIntDatum(handle)
+			}
+		} else {
+			data := row[offset]
+			ft := e.fieldTps[offset]
+			datum, err := tablecodec.DecodeColumnValue(data, ft, e.TimeZone)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			e.ColVals[offset] = datum
+		}
+	}
+	return nil
 }
 
 type decodedValueList struct {
@@ -113,6 +169,15 @@ func (e *Evaluator) evalTwoChildren(expr *tipb.Expr) (left, right types.Datum, e
 		return types.Datum{}, types.Datum{}, errors.Trace(err)
 	}
 	return
+}
+
+// getTwoChildren makes sure that expr has and only has two children.
+func (e *Evaluator) getTwoChildren(expr *tipb.Expr) (left, right *tipb.Expr, err error) {
+	if len(expr.Children) != 2 {
+		err = ErrInvalid.Gen("%s needs 2 operands but got %d", tipb.ExprType_name[int32(expr.GetTp())], len(expr.Children))
+		return
+	}
+	return expr.Children[0], expr.Children[1], nil
 }
 
 func (e *Evaluator) evalIsNull(expr *tipb.Expr) (types.Datum, error) {

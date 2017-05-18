@@ -17,9 +17,11 @@ import (
 	"bytes"
 	"fmt"
 
+	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -37,8 +39,44 @@ func (col *CorrelatedColumn) Clone() Expression {
 }
 
 // Eval implements Expression interface.
-func (col *CorrelatedColumn) Eval(row []types.Datum, _ context.Context) (types.Datum, error) {
+func (col *CorrelatedColumn) Eval(row []types.Datum) (types.Datum, error) {
 	return *col.Data, nil
+}
+
+// EvalInt returns int representation of CorrelatedColumn.
+func (col *CorrelatedColumn) EvalInt(row []types.Datum, sc *variable.StatementContext) (int64, bool, error) {
+	val, isNull, err := evalExprToInt(col, row, sc)
+	return val, isNull, errors.Trace(err)
+}
+
+// EvalReal returns real representation of CorrelatedColumn.
+func (col *CorrelatedColumn) EvalReal(row []types.Datum, sc *variable.StatementContext) (float64, bool, error) {
+	val, isNull, err := evalExprToReal(col, row, sc)
+	return val, isNull, errors.Trace(err)
+}
+
+// EvalString returns string representation of CorrelatedColumn.
+func (col *CorrelatedColumn) EvalString(row []types.Datum, sc *variable.StatementContext) (string, bool, error) {
+	val, isNull, err := evalExprToString(col, row, sc)
+	return val, isNull, errors.Trace(err)
+}
+
+// EvalDecimal returns decimal representation of CorrelatedColumn.
+func (col *CorrelatedColumn) EvalDecimal(row []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
+	val, isNull, err := evalExprToDecimal(col, row, sc)
+	return val, isNull, errors.Trace(err)
+}
+
+// EvalTime returns DATE/DATETIME/TIMESTAMP representation of CorrelatedColumn.
+func (col *CorrelatedColumn) EvalTime(row []types.Datum, sc *variable.StatementContext) (types.Time, bool, error) {
+	val, isNull, err := evalExprToDate(col, row, sc)
+	return val, isNull, errors.Trace(err)
+}
+
+// EvalDuration returns Duration representation of CorrelatedColumn.
+func (col *CorrelatedColumn) EvalDuration(row []types.Datum, sc *variable.StatementContext) (types.Duration, bool, error) {
+	val, isNull, err := evalExprToDuration(col, row, sc)
+	return val, isNull, errors.Trace(err)
 }
 
 // Equal implements Expression interface.
@@ -55,15 +93,15 @@ func (col *CorrelatedColumn) IsCorrelated() bool {
 }
 
 // Decorrelate implements Expression interface.
-func (col *CorrelatedColumn) Decorrelate(schema Schema) Expression {
-	if schema.GetColumnIndex(&col.Column) == -1 {
+func (col *CorrelatedColumn) Decorrelate(schema *Schema) Expression {
+	if !schema.Contains(&col.Column) {
 		return col
 	}
 	return &col.Column
 }
 
 // ResolveIndices implements Expression interface.
-func (col *CorrelatedColumn) ResolveIndices(_ Schema) {
+func (col *CorrelatedColumn) ResolveIndices(_ *Schema) {
 }
 
 // Column represents a column.
@@ -82,7 +120,7 @@ type Column struct {
 	// If so, this column's name will be the plain sql text.
 	IsAggOrSubq bool
 
-	// Only used for execution.
+	// Index is only used for execution.
 	Index int
 
 	hashcode []byte
@@ -120,8 +158,44 @@ func (col *Column) GetType() *types.FieldType {
 }
 
 // Eval implements Expression interface.
-func (col *Column) Eval(row []types.Datum, _ context.Context) (types.Datum, error) {
+func (col *Column) Eval(row []types.Datum) (types.Datum, error) {
 	return row[col.Index], nil
+}
+
+// EvalInt returns int representation of Column.
+func (col *Column) EvalInt(row []types.Datum, sc *variable.StatementContext) (int64, bool, error) {
+	val, isNull, err := evalExprToInt(col, row, sc)
+	return val, isNull, errors.Trace(err)
+}
+
+// EvalReal returns real representation of Column.
+func (col *Column) EvalReal(row []types.Datum, sc *variable.StatementContext) (float64, bool, error) {
+	val, isNull, err := evalExprToReal(col, row, sc)
+	return val, isNull, errors.Trace(err)
+}
+
+// EvalString returns string representation of Column.
+func (col *Column) EvalString(row []types.Datum, sc *variable.StatementContext) (string, bool, error) {
+	val, isNull, err := evalExprToString(col, row, sc)
+	return val, isNull, errors.Trace(err)
+}
+
+// EvalDecimal returns decimal representation of Column.
+func (col *Column) EvalDecimal(row []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
+	val, isNull, err := evalExprToDecimal(col, row, sc)
+	return val, isNull, errors.Trace(err)
+}
+
+// EvalTime returns DATE/DATETIME/TIMESTAMP representation of Column.
+func (col *Column) EvalTime(row []types.Datum, sc *variable.StatementContext) (types.Time, bool, error) {
+	val, isNull, err := evalExprToDate(col, row, sc)
+	return val, isNull, errors.Trace(err)
+}
+
+// EvalDuration returns Duration representation of Column.
+func (col *Column) EvalDuration(_ []types.Datum, sc *variable.StatementContext) (types.Duration, bool, error) {
+	val, isNull, err := evalExprToDuration(col, nil, sc)
+	return val, isNull, errors.Trace(err)
 }
 
 // Clone implements Expression interface.
@@ -136,7 +210,7 @@ func (col *Column) IsCorrelated() bool {
 }
 
 // Decorrelate implements Expression interface.
-func (col *Column) Decorrelate(_ Schema) Expression {
+func (col *Column) Decorrelate(_ *Schema) Expression {
 	return col
 }
 
@@ -150,8 +224,8 @@ func (col *Column) HashCode() []byte {
 }
 
 // ResolveIndices implements Expression interface.
-func (col *Column) ResolveIndices(schema Schema) {
-	col.Index = schema.GetColumnIndex(col)
+func (col *Column) ResolveIndices(schema *Schema) {
+	col.Index = schema.ColumnIndex(col)
 	// If col's index equals to -1, it means a internal logic error happens.
 	if col.Index == -1 {
 		log.Errorf("Can't find column %s in schema %s", col, schema)

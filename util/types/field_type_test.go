@@ -110,7 +110,7 @@ func (s *testFieldTypeSuite) TestFieldType(c *C) {
 
 func (s *testFieldTypeSuite) TestDefaultTypeForValue(c *C) {
 	defer testleak.AfterTest(c)()
-	cases := []struct {
+	tests := []struct {
 		value interface{}
 		tp    byte
 	}{
@@ -118,7 +118,7 @@ func (s *testFieldTypeSuite) TestDefaultTypeForValue(c *C) {
 		{1, mysql.TypeLonglong},
 		{uint64(1), mysql.TypeLonglong},
 		{"abc", mysql.TypeVarString},
-		{1.1, mysql.TypeNewDecimal},
+		{1.1, mysql.TypeDouble},
 		{[]byte("abc"), mysql.TypeBlob},
 		{Bit{}, mysql.TypeBit},
 		{Hex{}, mysql.TypeVarchar},
@@ -129,9 +129,9 @@ func (s *testFieldTypeSuite) TestDefaultTypeForValue(c *C) {
 		{Set{}, mysql.TypeSet},
 		{nil, mysql.TypeNull},
 	}
-	for _, ca := range cases {
+	for _, tt := range tests {
 		var ft FieldType
-		DefaultTypeForValue(ca.value, &ft)
-		c.Assert(ft.Tp, Equals, ca.tp, Commentf("%v %v", ft, ca))
+		DefaultTypeForValue(tt.value, &ft)
+		c.Assert(ft.Tp, Equals, tt.tp, Commentf("%v %v", ft, tt))
 	}
 }

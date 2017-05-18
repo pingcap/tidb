@@ -14,6 +14,7 @@
 package variable
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/tidb/mysql"
@@ -37,10 +38,10 @@ type SysVar struct {
 	// Scope is for whether can be changed or not
 	Scope ScopeFlag
 
-	// Variable name
+	// Name is the variable name.
 	Name string
 
-	// Variable value
+	// Value is the variable value.
 	Value string
 }
 
@@ -57,14 +58,16 @@ func GetSysVar(name string) *SysVar {
 const (
 	CodeUnknownStatusVar terror.ErrCode = 1
 	CodeUnknownSystemVar terror.ErrCode = 1193
+	CodeIncorrectScope   terror.ErrCode = 1238
+	CodeUnknownTimeZone  terror.ErrCode = 1298
 )
-
-var tidbSysVars map[string]bool
 
 // Variable errors
 var (
-	UnknownStatusVar = terror.ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
-	UnknownSystemVar = terror.ClassVariable.New(CodeUnknownSystemVar, "unknown system variable '%s'")
+	UnknownStatusVar   = terror.ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
+	UnknownSystemVar   = terror.ClassVariable.New(CodeUnknownSystemVar, "unknown system variable '%s'")
+	ErrIncorrectScope  = terror.ClassVariable.New(CodeIncorrectScope, "Incorrect variable scope")
+	ErrUnknownTimeZone = terror.ClassVariable.New(CodeUnknownTimeZone, "unknown or incorrect time zone: %s")
 )
 
 func init() {
@@ -76,15 +79,17 @@ func init() {
 	// Register terror to mysql error map.
 	mySQLErrCodes := map[terror.ErrCode]uint16{
 		CodeUnknownSystemVar: mysql.ErrUnknownSystemVariable,
+		CodeIncorrectScope:   mysql.ErrIncorrectGlobalLocalVar,
+		CodeUnknownTimeZone:  mysql.ErrUnknownTimeZone,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassVariable] = mySQLErrCodes
+}
 
-	tidbSysVars = make(map[string]bool)
-	tidbSysVars[DistSQLScanConcurrencyVar] = true
-	tidbSysVars[DistSQLJoinConcurrencyVar] = true
-	tidbSysVars[TiDBSnapshot] = true
-	tidbSysVars[TiDBSkipConstraintCheck] = true
-	tidbSysVars[TiDBSkipDDLWait] = true
+func boolToIntStr(b bool) string {
+	if b {
+		return "1"
+	}
+	return "0"
 }
 
 // we only support MySQL now
@@ -105,7 +110,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "slave_pending_jobs_size_max", "16777216"},
 	{ScopeNone, "innodb_sync_array_size", "1"},
 	{ScopeSession, "rand_seed2", ""},
-	{ScopeGlobal, "validate_password_number_count", ""},
+	{ScopeGlobal, "validate_password_number_count", "1"},
 	{ScopeSession, "gtid_next", ""},
 	{ScopeGlobal | ScopeSession, "sql_select_limit", "18446744073709551615"},
 	{ScopeGlobal, "ndb_show_foreign_key_mock_tables", ""},
@@ -242,7 +247,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "performance_schema_max_file_classes", "50"},
 	{ScopeGlobal, "expire_logs_days", "0"},
 	{ScopeGlobal | ScopeSession, "binlog_rows_query_log_events", "OFF"},
-	{ScopeGlobal, "validate_password_policy", ""},
+	{ScopeGlobal, "validate_password_policy", "1"},
 	{ScopeGlobal, "default_password_lifetime", ""},
 	{ScopeNone, "pid_file", "/usr/local/mysql/data/localhost.pid"},
 	{ScopeNone, "innodb_undo_tablespaces", "0"},
@@ -406,7 +411,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "innodb_read_only", "OFF"},
 	{ScopeNone, "datetime_format", "%Y-%m-%d %H:%i:%s"},
 	{ScopeGlobal, "log_syslog", ""},
-	{ScopeNone, "version", "5.6.25"},
+	{ScopeNone, "version", mysql.ServerVersion},
 	{ScopeGlobal | ScopeSession, "transaction_alloc_block_size", "8192"},
 	{ScopeGlobal, "sql_slave_skip_counter", "0"},
 	{ScopeNone, "have_openssl", "DISABLED"},
@@ -555,20 +560,20 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "myisam_use_mmap", "OFF"},
 	{ScopeGlobal | ScopeSession, "ndb_join_pushdown", ""},
 	{ScopeGlobal | ScopeSession, "character_set_server", "latin1"},
-	{ScopeGlobal, "validate_password_special_char_count", ""},
+	{ScopeGlobal, "validate_password_special_char_count", "1"},
 	{ScopeNone, "performance_schema_max_thread_instances", "402"},
 	{ScopeGlobal, "slave_rows_search_algorithms", "TABLE_SCAN,INDEX_SCAN"},
 	{ScopeGlobal | ScopeSession, "ndbinfo_show_hidden", ""},
 	{ScopeGlobal | ScopeSession, "net_read_timeout", "30"},
 	{ScopeNone, "innodb_page_size", "16384"},
-	{ScopeGlobal, "max_allowed_packet", "4194304"},
+	{ScopeGlobal, MaxAllowedPacket, "67108864"},
 	{ScopeNone, "innodb_log_file_size", "50331648"},
 	{ScopeGlobal, "sync_relay_log_info", "10000"},
 	{ScopeGlobal | ScopeSession, "optimizer_trace_limit", "1"},
 	{ScopeNone, "innodb_ft_max_token_size", "84"},
-	{ScopeGlobal, "validate_password_length", ""},
+	{ScopeGlobal, "validate_password_length", "8"},
 	{ScopeGlobal, "ndb_log_binlog_index", ""},
-	{ScopeGlobal, "validate_password_mixed_case_count", ""},
+	{ScopeGlobal, "validate_password_mixed_case_count", "1"},
 	{ScopeGlobal, "innodb_api_bk_commit_interval", "5"},
 	{ScopeNone, "innodb_undo_directory", "."},
 	{ScopeNone, "bind_address", "*"},
@@ -588,21 +593,21 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "min_examined_row_limit", "0"},
 	{ScopeGlobal, "sync_frm", "ON"},
 	{ScopeGlobal, "innodb_online_alter_log_max_size", "134217728"},
+	/* TiDB specific variables */
 	{ScopeSession, TiDBSnapshot, ""},
-	{ScopeGlobal | ScopeSession, DistSQLScanConcurrencyVar, "10"},
-	{ScopeGlobal | ScopeSession, DistSQLJoinConcurrencyVar, "5"},
 	{ScopeSession, TiDBSkipConstraintCheck, "0"},
-	{ScopeSession, TiDBSkipDDLWait, "0"},
+	{ScopeSession, TiDBOptAggPushDown, boolToIntStr(DefOptAggPushDown)},
+	{ScopeSession, TiDBOptInSubqUnFolding, boolToIntStr(DefOptInSubqUnfolding)},
+	{ScopeSession, TiDBBuildStatsConcurrency, strconv.Itoa(DefBuildStatsConcurrency)},
+	{ScopeGlobal | ScopeSession, TiDBDistSQLScanConcurrency, strconv.Itoa(DefDistSQLScanConcurrency)},
+	{ScopeGlobal | ScopeSession, TiDBIndexLookupSize, strconv.Itoa(DefIndexLookupSize)},
+	{ScopeGlobal | ScopeSession, TiDBIndexLookupConcurrency, strconv.Itoa(DefIndexLookupConcurrency)},
+	{ScopeGlobal | ScopeSession, TiDBIndexSerialScanConcurrency, strconv.Itoa(DefIndexSerialScanConcurrency)},
+	{ScopeGlobal | ScopeSession, TiDBMaxRowCountForINLJ, strconv.Itoa(DefMaxRowCountForINLJ)},
+	{ScopeGlobal | ScopeSession, TiDBSkipDDLWait, boolToIntStr(DefSkipDDLWait)},
+	{ScopeGlobal | ScopeSession, TiDBSkipUTF8Check, boolToIntStr(DefSkipUTF8Check)},
+	{ScopeSession, TiDBBatchInsert, boolToIntStr(DefBatchInsert)},
 }
-
-// TiDB system variables
-const (
-	TiDBSnapshot              = "tidb_snapshot"
-	DistSQLScanConcurrencyVar = "tidb_distsql_scan_concurrency"
-	DistSQLJoinConcurrencyVar = "tidb_distsql_join_concurrency"
-	TiDBSkipConstraintCheck   = "tidb_skip_constraint_check"
-	TiDBSkipDDLWait           = "tidb_skip_ddl_wait"
-)
 
 // SetNamesVariables is the system variable names related to set names statements.
 var SetNamesVariables = []string{

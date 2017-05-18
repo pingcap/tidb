@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/terror"
 )
 
 // handleBgJobQueue handles the background job queue.
@@ -34,11 +33,8 @@ func (d *ddl) handleBgJobQueue() error {
 	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		owner, err := d.checkOwner(t, bgJobFlag)
-		if terror.ErrorEqual(err, errNotOwner) {
-			return nil
-		}
 		if err != nil {
-			return errors.Trace(err)
+			return errors.Trace(filterError(err, errNotOwner))
 		}
 
 		// Get the first background job and run it.
@@ -60,9 +56,11 @@ func (d *ddl) handleBgJobQueue() error {
 			return errors.Trace(err)
 		}
 
+		if ChangeOwnerInNewWay {
+			return nil
+		}
 		owner.LastUpdateTS = time.Now().UnixNano()
 		err = t.SetBgJobOwner(owner)
-
 		return errors.Trace(err)
 	})
 	if err != nil {
@@ -78,6 +76,7 @@ func (d *ddl) handleBgJobQueue() error {
 
 // runBgJob runs a background job.
 func (d *ddl) runBgJob(t *meta.Meta, job *model.Job) {
+	log.Infof("[ddl] run background job %s", job)
 	job.State = model.JobRunning
 
 	var err error
@@ -107,17 +106,7 @@ func (d *ddl) prepareBgJob(t *meta.Meta, ddlJob *model.Job) error {
 		SchemaID: ddlJob.SchemaID,
 		TableID:  ddlJob.TableID,
 		Type:     ddlJob.Type,
-	}
-
-	// TODO: Remove it.
-	// This is for compatibility with previous version.
-	if len(ddlJob.Args) >= 2 {
-		// ddlJob.Args[0] is the schema version that isn't necessary in background job and
-		// ddlJob.Args[1] is the table information or the database information.
-		// They will make the background job of dropping schema become more complicated to handle.
-		job.Args = ddlJob.Args[2:]
-	} else {
-		job.Args = ddlJob.Args
+		Args:     ddlJob.Args,
 	}
 
 	err := t.EnQueueBgJob(job)
@@ -144,7 +133,7 @@ func (d *ddl) updateBgJob(t *meta.Meta, job *model.Job) error {
 	return errors.Trace(err)
 }
 
-// finishBgJob finishs a background job.
+// finishBgJob finishes a background job.
 func (d *ddl) finishBgJob(t *meta.Meta, job *model.Job) error {
 	log.Infof("[ddl] finish background job %v", job)
 	if _, err := t.DeQueueBgJob(); err != nil {

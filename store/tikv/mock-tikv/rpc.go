@@ -23,14 +23,22 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/util/codec"
+	goctx "golang.org/x/net/context"
 )
+
+const requestMaxSize = 4 * 1024 * 1024
 
 type rpcHandler struct {
 	cluster   *Cluster
 	mvccStore *MvccStore
 	storeID   uint64
-	startKey  []byte
-	endKey    []byte
+	// Used for handling normal request.
+	startKey []byte
+	endKey   []byte
+
+	// Used for handling coprocessor request.
+	rawStartKey []byte
+	rawEndKey   []byte
 }
 
 func newRPCHandler(cluster *Cluster, mvccStore *MvccStore, storeID uint64) *rpcHandler {
@@ -45,6 +53,12 @@ func newRPCHandler(cluster *Cluster, mvccStore *MvccStore, storeID uint64) *rpcH
 func (h *rpcHandler) handleRequest(req *kvrpcpb.Request) *kvrpcpb.Response {
 	var resp kvrpcpb.Response
 	if err := h.checkContext(req.GetContext()); err != nil {
+		resp.RegionError = err
+		return &resp
+	}
+	// TiKV has a limitation on raft log size.
+	// mock-tikv has no raft inside, so we check the request's size instead.
+	if err := h.checkSize(req); err != nil {
 		resp.RegionError = err
 		return &resp
 	}
@@ -65,6 +79,8 @@ func (h *rpcHandler) handleRequest(req *kvrpcpb.Request) *kvrpcpb.Response {
 		resp.CmdResolveLockResp = h.onResolveLock(req.CmdResolveLockReq)
 	case kvrpcpb.MessageType_CmdResolveLock:
 		resp.CmdResolveLockResp = h.onResolveLock(req.CmdResolveLockReq)
+	case kvrpcpb.MessageType_CmdBatchRollback:
+		resp.CmdBatchRollbackResp = h.onBatchRollback(req.CmdBatchRollbackReq)
 
 	case kvrpcpb.MessageType_CmdRawGet:
 		resp.CmdRawGetResp = h.onRawGet(req.CmdRawGetReq)
@@ -147,11 +163,22 @@ func (h *rpcHandler) checkContext(ctx *kvrpcpb.Context) *errorpb.Error {
 		}
 	}
 	h.startKey, h.endKey = region.StartKey, region.EndKey
+	h.rawStartKey = MvccKey(h.startKey).Raw()
+	h.rawEndKey = MvccKey(h.endKey).Raw()
+	return nil
+}
+
+func (h *rpcHandler) checkSize(req *kvrpcpb.Request) *errorpb.Error {
+	if req.Size() >= requestMaxSize {
+		return &errorpb.Error{
+			RaftEntryTooLarge: &errorpb.RaftEntryTooLarge{},
+		}
+	}
 	return nil
 }
 
 func (h *rpcHandler) keyInRegion(key []byte) bool {
-	return regionContains(h.startKey, h.endKey, []byte(newMvccKey(key)))
+	return regionContains(h.startKey, h.endKey, []byte(NewMvccKey(key)))
 }
 
 func (h *rpcHandler) onGet(req *kvrpcpb.CmdGetRequest) *kvrpcpb.CmdGetResponse {
@@ -256,6 +283,16 @@ func (h *rpcHandler) onResolveLock(req *kvrpcpb.CmdResolveLockRequest) *kvrpcpb.
 	return &kvrpcpb.CmdResolveLockResponse{}
 }
 
+func (h *rpcHandler) onBatchRollback(req *kvrpcpb.CmdBatchRollbackRequest) *kvrpcpb.CmdBatchRollbackResponse {
+	err := h.mvccStore.Rollback(req.Keys, req.StartVersion)
+	if err != nil {
+		return &kvrpcpb.CmdBatchRollbackResponse{
+			Error: convertToKeyError(err),
+		}
+	}
+	return &kvrpcpb.CmdBatchRollbackResponse{}
+}
+
 func (h *rpcHandler) onRawGet(req *kvrpcpb.CmdRawGetRequest) *kvrpcpb.CmdRawGetResponse {
 	return &kvrpcpb.CmdRawGetResponse{
 		Value: h.mvccStore.RawGet(req.GetKey()),
@@ -334,27 +371,57 @@ func encodeRegionKey(r *metapb.Region) *metapb.Region {
 
 // RPCClient sends kv RPC calls to mock cluster.
 type RPCClient struct {
-	cluster   *Cluster
-	mvccStore *MvccStore
+	Cluster   *Cluster
+	MvccStore *MvccStore
 }
 
 // SendKVReq sends a kv request to mock cluster.
-func (c *RPCClient) SendKVReq(addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error) {
-	store := c.cluster.GetStoreByAddr(addr)
-	if store == nil {
-		return nil, errors.New("connect fail")
+func (c *RPCClient) SendKVReq(ctx goctx.Context, addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
 	}
-	handler := newRPCHandler(c.cluster, c.mvccStore, store.GetId())
+
+	store, err := c.getAndCheckStoreByAddr(addr)
+	if err != nil {
+		return nil, err
+	}
+
+	handler := newRPCHandler(c.Cluster, c.MvccStore, store.GetId())
 	return handler.handleRequest(req), nil
 }
 
-// SendCopReq sends a coprocessor request to mock cluster.
-func (c *RPCClient) SendCopReq(addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
-	store := c.cluster.GetStoreByAddr(addr)
+func (c *RPCClient) getAndCheckStoreByAddr(addr string) (*metapb.Store, error) {
+	store, err := c.Cluster.GetAndCheckStoreByAddr(addr)
+	if err != nil {
+		return nil, err
+	}
 	if store == nil {
 		return nil, errors.New("connect fail")
 	}
-	handler := newRPCHandler(c.cluster, c.mvccStore, store.GetId())
+	if store.GetState() == metapb.StoreState_Offline ||
+		store.GetState() == metapb.StoreState_Tombstone {
+		return nil, errors.New("connection refused")
+	}
+	return store, nil
+}
+
+// SendCopReq sends a coprocessor request to mock cluster.
+func (c *RPCClient) SendCopReq(ctx goctx.Context, addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
+	store, err := c.getAndCheckStoreByAddr(addr)
+	if err != nil {
+		return nil, err
+	}
+
+	handler := newRPCHandler(c.Cluster, c.MvccStore, store.GetId())
+
 	return handler.handleCopRequest(req)
 }
 
@@ -366,7 +433,7 @@ func (c *RPCClient) Close() error {
 // NewRPCClient creates an RPCClient.
 func NewRPCClient(cluster *Cluster, mvccStore *MvccStore) *RPCClient {
 	return &RPCClient{
-		cluster:   cluster,
-		mvccStore: mvccStore,
+		Cluster:   cluster,
+		MvccStore: mvccStore,
 	}
 }

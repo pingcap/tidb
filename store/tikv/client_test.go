@@ -22,6 +22,7 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/msgpb"
 	"github.com/pingcap/kvproto/pkg/util"
+	goctx "golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -68,7 +69,7 @@ func (s *testClientSuite) TestSendBySelf(c *C) {
 	ver := uint64(0)
 	getReq.Version = ver
 	req.CmdGetReq = getReq
-	resp, err := cli.SendKVReq(":61234", req, readTimeoutShort)
+	resp, err := cli.SendKVReq(goctx.Background(), ":61234", req, readTimeoutShort)
 	c.Assert(err, IsNil)
 	c.Assert(req.GetType(), Equals, resp.GetType())
 }
@@ -85,7 +86,7 @@ func (s *testClientSuite) TestRetryClose(c *C) {
 	defer l.Close()
 	cli := newRPCClient()
 	req := new(pb.Request)
-	resp, err := cli.SendKVReq(":61235", req, readTimeoutShort)
+	resp, err := cli.SendKVReq(goctx.Background(), ":61235", req, readTimeoutShort)
 	c.Assert(err, NotNil)
 	c.Assert(resp, IsNil)
 }
@@ -107,7 +108,7 @@ func (s *testClientSuite) TestRetryReadThenClose(c *C) {
 	cli := newRPCClient()
 	req := new(pb.Request)
 	req.Type = pb.MessageType_CmdGet
-	resp, err := cli.SendKVReq(":61236", req, readTimeoutShort)
+	resp, err := cli.SendKVReq(goctx.Background(), ":61236", req, readTimeoutShort)
 	c.Assert(err, NotNil)
 	c.Assert(resp, IsNil)
 }
@@ -138,9 +139,9 @@ func (s *testClientSuite) TestWrongMessageID(c *C) {
 		Type: pb.MessageType_CmdGet,
 	}
 	// Wrong ID for the first request, correct for the rests.
-	_, err := cli.SendKVReq(":61237", req, readTimeoutShort)
+	_, err := cli.SendKVReq(goctx.Background(), ":61237", req, readTimeoutShort)
 	c.Assert(err, NotNil)
-	resp, err := cli.SendKVReq(":61237", req, readTimeoutShort)
+	resp, err := cli.SendKVReq(goctx.Background(), ":61237", req, readTimeoutShort)
 	c.Assert(err, IsNil)
 	c.Assert(resp.GetType(), Equals, req.GetType())
 }

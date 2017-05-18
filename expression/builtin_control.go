@@ -19,8 +19,84 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+var (
+	_ functionClass = &caseWhenFunctionClass{}
+	_ functionClass = &ifFunctionClass{}
+	_ functionClass = &ifNullFunctionClass{}
+	_ functionClass = &nullIfFunctionClass{}
+)
+
+var (
+	_ builtinFunc = &builtinCaseWhenSig{}
+	_ builtinFunc = &builtinIfSig{}
+	_ builtinFunc = &builtinIfNullSig{}
+	_ builtinFunc = &builtinNullIfSig{}
+)
+
+type caseWhenFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *caseWhenFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	sig := &builtinCaseWhenSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+}
+
+type builtinCaseWhenSig struct {
+	baseBuiltinFunc
+}
+
+// eval evals a builtinCaseWhenSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/case.html
+func (b *builtinCaseWhenSig) eval(row []types.Datum) (d types.Datum, err error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	l := len(args)
+	for i := 0; i < l-1; i += 2 {
+		if args[i].IsNull() {
+			continue
+		}
+		b, err1 := args[i].ToBool(sc)
+		if err1 != nil {
+			return d, errors.Trace(err1)
+		}
+		if b == 1 {
+			d = args[i+1]
+			return
+		}
+	}
+	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
+	// else clause -> args[l-1]
+	// If case clause has else clause, l%2 == 1.
+	if l%2 == 1 {
+		d = args[l-1]
+	}
+	return
+}
+
+type ifFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *ifFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	sig := &builtinIfSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+}
+
+type builtinIfSig struct {
+	baseBuiltinFunc
+}
+
+// eval evals a builtinIfSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_if
-func builtinIf(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+func (s *builtinIfSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := s.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
 	// if(expr1, expr2, expr3)
 	// if expr1 is true, return expr2, otherwise, return expr3
 	v1 := args[0]
@@ -31,7 +107,7 @@ func builtinIf(args []types.Datum, ctx context.Context) (d types.Datum, err erro
 		return v3, nil
 	}
 
-	b, err := v1.ToBool(ctx.GetSessionVars().StmtCtx)
+	b, err := v1.ToBool(s.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
 		d := types.Datum{}
 		return d, errors.Trace(err)
@@ -45,8 +121,26 @@ func builtinIf(args []types.Datum, ctx context.Context) (d types.Datum, err erro
 	return v3, nil
 }
 
+type ifNullFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *ifNullFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	sig := &builtinIfNullSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+}
+
+type builtinIfNullSig struct {
+	baseBuiltinFunc
+}
+
+// eval evals a builtinIfNullSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_ifnull
-func builtinIfNull(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+func (b *builtinIfNullSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
 	// ifnull(expr1, expr2)
 	// if expr1 is not null, return expr1, otherwise, return expr2
 	v1 := args[0]
@@ -59,8 +153,26 @@ func builtinIfNull(args []types.Datum, _ context.Context) (d types.Datum, err er
 	return v2, nil
 }
 
+type nullIfFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *nullIfFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	sig := &builtinNullIfSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+}
+
+type builtinNullIfSig struct {
+	baseBuiltinFunc
+}
+
+// eval evals a builtinNullIfSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_nullif
-func builtinNullIf(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+func (b *builtinNullIfSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
 	// nullif(expr1, expr2)
 	// returns null if expr1 = expr2 is true, otherwise returns expr1
 	v1 := args[0]
@@ -70,7 +182,7 @@ func builtinNullIf(args []types.Datum, ctx context.Context) (d types.Datum, err 
 		return v1, nil
 	}
 
-	if n, err1 := v1.CompareDatum(ctx.GetSessionVars().StmtCtx, v2); err1 != nil || n == 0 {
+	if n, err1 := v1.CompareDatum(b.ctx.GetSessionVars().StmtCtx, v2); err1 != nil || n == 0 {
 		d := types.Datum{}
 		return d, errors.Trace(err1)
 	}

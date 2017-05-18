@@ -20,6 +20,7 @@ import (
 
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/types"
 )
 
 func TestT(t *testing.T) {
@@ -41,7 +43,7 @@ func testCreateStore(c *C, name string) kv.Storage {
 	return store
 }
 
-func testNewContext(c *C, d *ddl) context.Context {
+func testNewContext(d *ddl) context.Context {
 	ctx := mock.NewContext()
 	ctx.Store = d.store
 	return ctx
@@ -79,32 +81,62 @@ func checkHistoryJobArgs(c *C, ctx context.Context, id int64, args *historyJobAr
 	historyJob, err := t.GetHistoryDDLJob(id)
 	c.Assert(err, IsNil)
 
-	var v int64
-	var ids []int64
-	tbl := &model.TableInfo{}
 	if args.tbl != nil {
-		historyJob.DecodeArgs(&v, &tbl)
-		c.Assert(v, Equals, args.ver)
-		checkEqualTable(c, tbl, args.tbl)
+		c.Assert(historyJob.BinlogInfo.SchemaVersion, Equals, args.ver)
+		checkEqualTable(c, historyJob.BinlogInfo.TableInfo, args.tbl)
 		return
 	}
-	// only for create schema job
-	db := &model.DBInfo{}
+
+	// for handling schema job
+	c.Assert(historyJob.BinlogInfo.SchemaVersion, Equals, args.ver)
+	c.Assert(historyJob.BinlogInfo.DBInfo, DeepEquals, args.db)
+	// only for creating schema job
 	if args.db != nil && len(args.tblIDs) == 0 {
-		historyJob.DecodeArgs(&v, &db)
-		c.Assert(v, Equals, args.ver)
-		c.Assert(db, DeepEquals, args.db)
 		return
 	}
-	// only for drop schema job
-	historyJob.DecodeArgs(&v, &db, &ids)
-	c.Assert(v, Equals, args.ver)
-	c.Assert(db, DeepEquals, args.db)
+	// only for dropping schema job
+	var ids []int64
+	historyJob.DecodeArgs(&ids)
 	for _, id := range ids {
 		c.Assert(args.tblIDs, HasKey, id)
 		delete(args.tblIDs, id)
 	}
 	c.Assert(len(args.tblIDs), Equals, 0)
+}
+
+func testCreateIndex(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
+	job := &model.Job{
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionAddIndex,
+		BinlogInfo: &model.HistoryInfo{},
+		Args: []interface{}{unique, model.NewCIStr(indexName),
+			[]*ast.IndexColName{{
+				Column: &ast.ColumnName{Name: model.NewCIStr(colName)},
+				Length: types.UnspecifiedLength}}},
+	}
+
+	err := d.doDDLJob(ctx, job)
+	c.Assert(err, IsNil)
+	v := getSchemaVer(c, ctx)
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	return job
+}
+
+func testDropIndex(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, indexName string) *model.Job {
+	job := &model.Job{
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionDropIndex,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{model.NewCIStr(indexName)},
+	}
+
+	err := d.doDDLJob(ctx, job)
+	c.Assert(err, IsNil)
+	v := getSchemaVer(c, ctx)
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	return job
 }
 
 func init() {
