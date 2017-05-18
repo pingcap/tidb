@@ -19,6 +19,7 @@ package json
 
 import (
 	"bytes"
+	"reflect"
 	"strings"
 )
 
@@ -52,6 +53,24 @@ var jsonTypePrecedences = map[string]int{
 	"NULL":     -12,
 }
 
+func jsonAsFloat64(j JSON) float64 {
+	if j.Type() == "INTEGER" {
+		if reflect.TypeOf(j).Kind() == reflect.Ptr {
+			return float64(*j.(*jsonInt64))
+		} else {
+			return float64(j.(jsonInt64))
+		}
+	} else if j.Type() == "DOUBLE" {
+		if reflect.TypeOf(j).Kind() == reflect.Ptr {
+			return float64(*j.(*jsonDouble))
+		} else {
+			return float64(j.(jsonDouble))
+		}
+	} else {
+		panic("can not convert to float64")
+	}
+}
+
 // CompareJSON compares two json object.
 func CompareJSON(j1 JSON, j2 JSON) (cmp int, err error) {
 	precedence1 := jsonTypePrecedences[j1.Type()]
@@ -67,9 +86,10 @@ func CompareJSON(j1 JSON, j2 JSON) (cmp int, err error) {
 			y := *j2.(*jsonLiteral)
 			// false is less than true.
 			cmp = int(y) - int(x)
-		case jsonDouble:
-			y := *j2.(*jsonDouble)
-			cmp = compareFloat64PrecisionLoss(float64(x), float64(y))
+		case jsonInt64, jsonDouble:
+			left := jsonAsFloat64(j1)
+			right := jsonAsFloat64(j2)
+			cmp = compareFloat64PrecisionLoss(left, right)
 		case jsonString:
 			y := *j2.(*jsonString)
 			cmp = strings.Compare(string(x), string(y))
@@ -97,9 +117,9 @@ func CompareJSON(j1 JSON, j2 JSON) (cmp int, err error) {
 		var x, y float64
 		if precedence1 == -7 {
 			x = float64(j1.(jsonLiteral))
-			y = float64(*j2.(*jsonDouble))
+			y = jsonAsFloat64(j2)
 		} else {
-			x = float64(j1.(jsonDouble))
+			x = jsonAsFloat64(j1)
 			y = float64(*j2.(*jsonLiteral))
 		}
 		cmp = compareFloat64PrecisionLoss(x, y)

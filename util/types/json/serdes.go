@@ -107,17 +107,19 @@ func Deserialize(data []byte) (j JSON, err error) {
 }
 
 var (
-	_ jsonDeser = new(jsonLiteral)
-	_ jsonDeser = new(jsonString)
-	_ jsonDeser = new(jsonArray)
 	_ jsonDeser = new(jsonObject)
+	_ jsonDeser = new(jsonArray)
+	_ jsonDeser = new(jsonLiteral)
+	_ jsonDeser = new(jsonInt64)
 	_ jsonDeser = new(jsonDouble)
+	_ jsonDeser = new(jsonString)
 )
 
 const (
 	typeCodeObject  byte = 0x01
 	typeCodeArray   byte = 0x03
 	typeCodeLiteral byte = 0x04
+	typeCodeInt64   byte = 0x09
 	typeCodeDouble  byte = 0x0b
 	typeCodeString  byte = 0x0c
 )
@@ -128,11 +130,12 @@ const (
 	jsonLiteralFalse = jsonLiteral(0x02)
 )
 
-type jsonLiteral byte
-type jsonString string
 type jsonObject map[string]JSON
 type jsonArray []JSON
+type jsonLiteral byte
+type jsonInt64 int64
 type jsonDouble float64
+type jsonString string
 
 // jsonDeser is for deserialize json from bytes.
 type jsonDeser interface {
@@ -159,6 +162,19 @@ func (b *jsonLiteral) decode(data []byte) error {
 	var bb = (*byte)(unsafe.Pointer(b))
 	*bb = data[0]
 	return nil
+}
+
+func (i jsonInt64) getTypeCode() byte {
+	return typeCodeInt64
+}
+
+func (i jsonInt64) encode(buffer *bytes.Buffer) {
+	binary.Write(buffer, binary.LittleEndian, i)
+}
+
+func (i *jsonInt64) decode(data []byte) error {
+	var reader = bytes.NewReader(data)
+	return binary.Read(reader, binary.LittleEndian, i)
 }
 
 func (f jsonDouble) getTypeCode() byte {
