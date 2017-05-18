@@ -113,7 +113,7 @@ func (p *Projection) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, e
 	return task, p.storeTaskProfile(prop, task)
 }
 
-// joinKeysMatchIndex checks if the keys match all columns in index.
+// joinKeysMatchIndex checks if all keys match columns in index.
 func joinKeysMatchIndex(keys []*expression.Column, index *model.IndexInfo) []int {
 	if len(index.Columns) < len(keys) {
 		return nil
