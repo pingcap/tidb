@@ -1065,7 +1065,7 @@ KeyOrIndex: "KEY" | "INDEX"
 
 KeyOrIndexOpt:
 	{}
-|   KeyOrIndex
+|   	KeyOrIndex
 
 ColumnKeywordOpt:
 	{}
