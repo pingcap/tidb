@@ -459,6 +459,7 @@ import (
 	local		"LOCAL"
 	less		"LESS"
 	level		"LEVEL"
+	lz4		"LZ4"
 	mode		"MODE"
 	modify		"MODIFY"
 	maxRows		"MAX_ROWS"
@@ -515,6 +516,7 @@ import (
 	warnings	"WARNINGS"
 	week		"WEEK"
 	yearType	"YEAR"
+	zlib		"ZLIB"
 
 %token	<item>
 
@@ -573,6 +575,7 @@ import (
 	ColumnOption		"column definition option"
 	ColumnOptionList	"column definition option list"
 	ColumnOptionListOpt	"optional column definition option list"
+	CompressionVal          "alter table compression value"
 	Constraint		"table constraint"
 	ConstraintElem		"table constraint element"
 	ConstraintKeywordOpt	"Constraint Keyword or empty"
@@ -5435,9 +5438,9 @@ TableOption:
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionPassword, StrValue: $3}
 	}
-|	"COMPRESSION" EqOpt Identifier
+|	"COMPRESSION" EqOpt CompressionVal
 	{
-		$$ = &ast.TableOption{Tp: ast.TableOptionCompression, StrValue: $3}
+		$$ = &ast.TableOption{Tp: ast.TableOptionCompression, StrValue: $3.(string)}
 	}
 |	"KEY_BLOCK_SIZE" EqOpt LengthNum
 	{
@@ -5464,6 +5467,20 @@ TableOption:
 		$$ = &ast.TableOption{Tp: ast.TableOptionStatsPersistent}
 	}
 
+CompressionVal:
+	"ZLIB"
+	{
+		$$ = "ZLIB"
+	}
+| 	"LZ4"
+	{
+		$$ = "LZ4"
+	}
+|	"NONE"
+	{
+		$$ = "NONE"
+	}
+	
 StatsPersistentVal:
 	"DEFAULT"
 	{}
