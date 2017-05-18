@@ -18,7 +18,6 @@ import (
 	"sync"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -863,7 +862,6 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 			return
 		}
 		col := table.FindCol(t.(*tables.Table).Columns, colName)
-		log.Warnf("col %v", col)
 		if col == nil {
 			checkOK = true
 			return
