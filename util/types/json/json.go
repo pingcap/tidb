@@ -30,7 +30,7 @@ type JSON interface {
 	Type() string
 }
 
-// CreateJson create a JSON from in. return nil if in is not valid JSON type.
+// CreateJSON create a JSON from in. return nil if in is not valid JSON type.
 func CreateJSON(in interface{}) JSON {
 	return normalize(in)
 }

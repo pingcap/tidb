@@ -26,8 +26,6 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/types/json"
-
-	"github.com/ngaut/log"
 )
 
 // Kind constants.
@@ -638,7 +636,6 @@ func (d *Datum) compareMysqlSet(sc *variable.StatementContext, set Set) (int, er
 }
 
 func (d *Datum) compareMysqlJSON(sc *variable.StatementContext, target json.JSON) (int, error) {
-	log.Errorf("compareMysqlJSON: %v, %v\n", d, target)
 	var origin json.JSON
 
 	switch d.Kind() {
@@ -1177,7 +1174,6 @@ func (d *Datum) convertToMysqlSet(sc *variable.StatementContext, target *FieldTy
 }
 
 func (d *Datum) convertToMysqlJSON(sc *variable.StatementContext, target *FieldType) (ret Datum, err error) {
-	log.Errorf("convertToMysqlJSON is called\n")
 	switch d.k {
 	case KindString, KindBytes:
 		var j json.JSON
@@ -1462,6 +1458,7 @@ func (d *Datum) convergeType(hasUint, hasDecimal, hasFloat *bool) (x Datum) {
 // Else if a or b is Decimal, changes the both to Decimal.
 // Else if a or b is Uint and op is not div, mod, or intDiv changes the both to Uint.
 func CoerceDatum(sc *variable.StatementContext, a, b Datum) (x, y Datum, err error) {
+	//log.Errorf("CoerceDatum is called: %s", string(debug.Stack()))
 	if a.IsNull() || b.IsNull() {
 		return x, y, nil
 	}

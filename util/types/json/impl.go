@@ -111,9 +111,8 @@ func (j jsonArray) String() string {
 func (j jsonLiteral) Type() string {
 	if j == jsonLiteralNil {
 		return "NULL"
-	} else {
-		return "BOOLEAN"
 	}
+	return "BOOLEAN"
 }
 
 // Type implements JSON interface

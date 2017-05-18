@@ -972,6 +972,18 @@ func (s *testSuite) TestJSON(c *C) {
 	var result *testkit.Result
 	result = tk.MustQuery(`select tj.a from test_json tj order by tj.id`)
 	result.Check(testkit.Rows(`{"a":[1,"2",{"aa":"bb"},4],"b":true}`, "null", "<nil>", "true", "3", `"string"`))
+
+	// check json_type function
+	result = tk.MustQuery(`select json_type(a) from test_json tj order by tj.id`)
+	result.Check(testkit.Rows("OBJECT", "NULL", "<nil>", "BOOLEAN", "DOUBLE", "DOUBLE", "STRING"))
+
+	// check json compare with primitives.
+	result = tk.MustQuery(`select a from test_json tj where a = 3`)
+	result.Check(testkit.Rows("3"))
+	result = tk.MustQuery(`select a from test_json tj where a = true`)
+	result.Check(testkit.Rows("true"))
+	result = tk.MustQuery(`select a from test_json tj where a = "string"`)
+	result.Check(testkit.Rows("string"))
 }
 
 func (s *testSuite) TestToPBExpr(c *C) {
