@@ -472,6 +472,35 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Input         string
+		InputDuration string
+		expect        string
+	}{
+		//{"2007-12-31 23:59:59.999999", "1 1:1:1.000002", "2008-01-02 01:01:01.000001"},
+		//{"01:00:00.999999", "02:00:00.999998", "03:00:01.999997"},
+		//{"23:59:59", "00:00:01", "00:00:00.000000"},
+		//{"110:00:00", "1 02:00:00" , "136:00:00"},
+		{"2017-12-01 01:01:01.000001", "1 1:1:1.000002", "2017-12-02 02:02:02.000003"},
+		{"2017-12-31 23:59:59", "00:00:01", "2018-01-01 00:00:00.000000"},
+		{"2007-12-31 23:59:59.999999", "2 1:1:1.000002", "2008-01-03 01:01:01.000001"},
+	}
+	fc := funcs[ast.AddTime]
+	for _, t := range tbl {
+		tmpInput := types.NewStringDatum(t.Input)
+		tmpInputDuration := types.NewStringDatum(t.InputDuration)
+		//tmpResult := types.NewStringDatum(t.result)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{tmpInput, tmpInputDuration}), s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		result, _ := d.ToString()
+		c.Assert(result, Equals, t.expect)
+	}
+}
+
 func (s *testEvaluatorSuite) TestSysDate(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.Sysdate]
