@@ -363,16 +363,7 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 			st := sr.st
 			txt := st.OriginText()
 			if infoSchemaChanged {
-				// Rebuild plan if infoschema changed, reuse the statement otherwise.
-				charset, collation := s.sessionVars.GetCharsetInfo()
-				stmt, err := s.parser.ParseOneStmt(txt, charset, collation)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				st, err = Compile(s, stmt)
-				if err != nil {
-					// If a txn is inserting data when DDL is dropping column,
-					// it would fail to commit and retry, and run here then.
+				if err := statementStaleCheck(st, s, txt); err != nil {
 					return errors.Trace(err)
 				}
 			}
@@ -411,6 +402,34 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 		kv.BackOff(retryCnt)
 	}
 	return err
+}
+
+func statementStaleCheck(st ast.Statement, s *session, txt string) error {
+	if st.IsPrepared() {
+		// TODO: PrepareStmt should validate the arguments count.
+		// This SQL should return error:
+		// create table t (id int);
+		// prepare stmt from 'insert into t values (?, ?)';
+		id, _, _, err := s.PrepareStmt(txt)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		s.DropPreparedStmt(id)
+	} else {
+		// Rebuild plan if infoschema changed, reuse the statement otherwise.
+		charset, collation := s.sessionVars.GetCharsetInfo()
+		stmt, err := s.parser.ParseOneStmt(txt, charset, collation)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		_, err = Compile(s, stmt)
+		if err != nil {
+			// If a txn is inserting data when DDL is dropping column,
+			// it would fail to commit and retry, and run here then.
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 func sqlForLog(sql string) string {
