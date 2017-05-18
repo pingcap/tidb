@@ -243,8 +243,8 @@ func (s *tikvStore) GetClient() kv.Client {
 }
 
 func (s *tikvStore) SendKVReq(bo *Backoffer, req *pb.Request, regionID RegionVerID, timeout time.Duration) (*pb.Response, error) {
-	sender := NewRegionRequestSender(bo, s.regionCache, s.client)
-	return sender.SendKVReq(req, regionID, timeout)
+	sender := NewRegionRequestSender(s.regionCache, s.client)
+	return sender.SendKVReq(bo, req, regionID, timeout)
 }
 
 // ParseEtcdAddr parses path to etcd address list

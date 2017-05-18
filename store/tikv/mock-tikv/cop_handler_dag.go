@@ -164,7 +164,7 @@ func (h *rpcHandler) buildSelection(ctx *dagContext, executor *tipb.Executor) (*
 			return nil, errors.Trace(err)
 		}
 	}
-	conds, err := convertToExprs(ctx.evalCtx.sc, ctx.evalCtx.colIDs, ctx.evalCtx.fieldTps, pbConds)
+	conds, err := convertToExprs(ctx.evalCtx.sc, ctx.evalCtx.fieldTps, pbConds)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -183,7 +183,7 @@ func (h *rpcHandler) buildAggregation(ctx *dagContext, executor *tipb.Executor) 
 	var err error
 	var relatedColOffsets []int
 	for _, expr := range executor.Aggregation.AggFunc {
-		aggExpr, err := expression.NewDistAggFunc(expr, ctx.evalCtx.colIDs, ctx.evalCtx.fieldTps, ctx.evalCtx.sc)
+		aggExpr, err := expression.NewDistAggFunc(expr, ctx.evalCtx.fieldTps, ctx.evalCtx.sc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -199,7 +199,7 @@ func (h *rpcHandler) buildAggregation(ctx *dagContext, executor *tipb.Executor) 
 			return nil, errors.Trace(err)
 		}
 	}
-	groupBys, err := convertToExprs(ctx.evalCtx.sc, ctx.evalCtx.colIDs, ctx.evalCtx.fieldTps, executor.Aggregation.GetGroupBy())
+	groupBys, err := convertToExprs(ctx.evalCtx.sc, ctx.evalCtx.fieldTps, executor.Aggregation.GetGroupBy())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -235,7 +235,7 @@ func (h *rpcHandler) buildTopN(ctx *dagContext, executor *tipb.Executor) (*topNE
 		},
 	}
 
-	conds, err := convertToExprs(ctx.evalCtx.sc, ctx.evalCtx.colIDs, ctx.evalCtx.fieldTps, pbConds)
+	conds, err := convertToExprs(ctx.evalCtx.sc, ctx.evalCtx.fieldTps, pbConds)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

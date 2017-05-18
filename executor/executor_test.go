@@ -431,17 +431,15 @@ func (s *testSuite) TestUnion(c *C) {
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	testSQL := `select 1 union select 0;`
-	tk.MustExec(testSQL)
 
-	testSQL = `drop table if exists union_test; create table union_test(id int);`
+	testSQL := `drop table if exists union_test; create table union_test(id int);`
 	tk.MustExec(testSQL)
 
 	testSQL = `drop table if exists union_test;`
 	tk.MustExec(testSQL)
 	testSQL = `create table union_test(id int);`
 	tk.MustExec(testSQL)
-	testSQL = `insert union_test values (1),(2); select id from union_test union select 1;`
+	testSQL = `insert union_test values (1),(2)`
 	tk.MustExec(testSQL)
 
 	testSQL = `select id from union_test union select id from union_test;`
@@ -950,6 +948,28 @@ func (s *testSuite) TestBuiltin(c *C) {
 	tk.MustQuery("select count(*) from t") // Test ProjectionExec
 	result = tk.MustQuery("select found_rows()")
 	result.Check(testkit.Rows("1"))
+}
+
+func (s *testSuite) TestJSON(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_json")
+	tk.MustExec("create table test_json (id int, a json)")
+	tk.MustExec(`insert into test_json (id, a) values (1, '{"a":[1,"2",{"aa":"bb"},4],"b":true}')`)
+	tk.MustExec(`insert into test_json (id, a) values (2, "null")`)
+	tk.MustExec(`insert into test_json (id, a) values (3, null)`)
+	tk.MustExec(`insert into test_json (id, a) values (4, 'true')`)
+	tk.MustExec(`insert into test_json (id, a) values (5, '3')`)
+	tk.MustExec(`insert into test_json (id, a) values (6, '"string"')`)
+
+	var result *testkit.Result
+	result = tk.MustQuery(`select tj.a from test_json tj order by tj.id`)
+	result.Check(testkit.Rows(`{"a":[1,"2",{"aa":"bb"},4],"b":true}`, "null", "<nil>", "true", "3", `"string"`))
 }
 
 func (s *testSuite) TestToPBExpr(c *C) {
