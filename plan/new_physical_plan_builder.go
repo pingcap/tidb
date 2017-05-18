@@ -143,7 +143,7 @@ func joinKeysMatchIndex(keys []*expression.Column, index *model.IndexInfo) []int
 
 // convertToIndexJoin will generate index join by required properties and outerIndex. OuterIdx points out the outer child,
 // because we will swap the children of join when the right child is outer child.
-// First of all, we will extract th join keys for p's equal conditions. If the join keys can match some of the indices or pk
+// First of all, we will extract the join keys for p's equal conditions. If the join keys can match some of the indices or pk
 // column of inner child, we can apply the index join. Then we convert the inner child to table scan or index scan explicitly.
 func (p *LogicalJoin) convertToIndexJoin(prop *requiredProp, outerIdx int) (taskProfile, error) {
 	outerChild := p.children[outerIdx].(LogicalPlan)
@@ -245,6 +245,8 @@ func (p *LogicalJoin) convertToIndexJoin(prop *requiredProp, outerIdx int) (task
 	return task, nil
 }
 
+// tryToGetIndexJoin tries to get index join plan. If fails, it returns nil.
+// Currently we only check by hint. If we prefer the left index join but the join type is right outer, it will fail to return.
 func (p *LogicalJoin) tryToGetIndexJoin(prop *requiredProp) (taskProfile, error) {
 	if len(p.EqualConditions) == 0 {
 		return nil, nil
