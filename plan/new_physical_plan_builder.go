@@ -234,9 +234,10 @@ func (p *LogicalJoin) convertToIndexJoin(prop *requiredProp, outerIdx int) (task
 		LeftConditions:  leftConds,
 		RightConditions: rightConds,
 		OtherConditions: p.OtherConditions,
-		outer:           p.JoinType != InnerJoin,
-		outerJoinKeys:   outerJoinKeys,
-		innerJoinKeys:   innerJoinKeys,
+		Outer:           p.JoinType != InnerJoin,
+		OuterJoinKeys:   outerJoinKeys,
+		InnerJoinKeys:   innerJoinKeys,
+		DefaultValues:   p.DefaultValues,
 	}.init(p.allocator, p.ctx, p.children[outerIdx], p.children[1-outerIdx])
 	task := join.attach2TaskProfile(outerTask, innerTask)
 	if !canPassProp {

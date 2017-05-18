@@ -172,9 +172,9 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		strs = strs[:idx]
 		idxs = idxs[:last]
 		str = "IndexJoin{" + strings.Join(children, "->") + "}"
-		for i := range x.outerJoinKeys {
-			l := x.outerJoinKeys[i]
-			r := x.innerJoinKeys[i]
+		for i := range x.OuterJoinKeys {
+			l := x.OuterJoinKeys[i]
+			r := x.InnerJoinKeys[i]
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
 	default:
