@@ -113,15 +113,6 @@ type requiredProp struct {
 	taskTp taskType
 }
 
-func (p *requiredProp) checkMatchSchema(schema *expression.Schema) bool {
-	for _, col := range p.cols {
-		if schema.ColumnIndex(col) == -1 {
-			return false
-		}
-	}
-	return true
-}
-
 func (p *requiredProp) equal(prop *requiredProp) bool {
 	if len(p.cols) != len(prop.cols) || p.desc != prop.desc {
 		return false

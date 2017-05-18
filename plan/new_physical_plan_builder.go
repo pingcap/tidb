@@ -113,18 +113,6 @@ func (p *Projection) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, e
 	return task, p.storeTaskProfile(prop, task)
 }
 
-func (p *LogicalJoin) getIndexJoinKey(inner Plan) []*expression.Column {
-	joinKeys := make([]*expression.Column, 0, len(p.EqualConditions))
-	for _, eqCond := range p.EqualConditions {
-		key := eqCond.GetArgs()[0].(*expression.Column)
-		if inner.Schema().ColumnIndex(key) == -1 {
-			key = eqCond.GetArgs()[1].(*expression.Column)
-		}
-		joinKeys = append(joinKeys, key)
-	}
-	return joinKeys
-}
-
 // joinKeysMatchIndex checks if the keys match all columns in index.
 func joinKeysMatchIndex(keys []*expression.Column, index *model.IndexInfo) []int {
 	if len(index.Columns) < len(keys) {
@@ -153,6 +141,10 @@ func joinKeysMatchIndex(keys []*expression.Column, index *model.IndexInfo) []int
 	return matchOffsets
 }
 
+// convertToIndexJoin will generate index join by required properties and outerIndex. OuterIdx points out the outer child,
+// because we will swap the children of join when the right child is outer child.
+// First of all, we will extract th join keys for p's equal conditions. If the join keys can match some of the indices or pk
+// column of inner child, we can apply the index join. Then we convert the inner child to table scan or index scan explicitly.
 func (p *LogicalJoin) convertToIndexJoin(prop *requiredProp, outerIdx int) (taskProfile, error) {
 	outerChild := p.children[outerIdx].(LogicalPlan)
 	innerChild := p.children[1-outerIdx].(LogicalPlan)
@@ -296,7 +288,6 @@ func (p *LogicalJoin) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, 
 		if p.preferUseMergeJoin() {
 			task, err = p.convert2MergeJoin(prop)
 		} else if task, err = p.tryToGetIndexJoin(prop); task == nil && err == nil {
-			// TODO: We will consider index look up join in the future.
 			task, err = p.convert2HashJoin(prop)
 		}
 	}
