@@ -75,7 +75,6 @@ func (s *testDDLSuite) TestCheckOwner(c *C) {
 	err := d2.Stop()
 	c.Assert(err, IsNil)
 	d1.start()
-	d2.start()
 	testCheckOwner(c, d1, true, ddlJobFlag)
 	testCheckOwner(c, d1, true, bgJobFlag)
 
