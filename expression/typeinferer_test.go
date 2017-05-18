@@ -177,6 +177,8 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"weekday('2009-12-31 23:59:59.000010')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"weekofyear('2009-12-31 23:59:59.000010')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"yearweek('2009-12-31 23:59:59.000010')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
+		{"addtime('2007-12-31 23:59:59.999999', '1 1:1:1.000002')", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
+		{"addtime('01:00:00.999999', '02:00:00.999998')", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
 		{"found_rows()", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"length('tidb')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"is_ipv4('192.168.1.1')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
