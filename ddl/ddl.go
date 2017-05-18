@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/twinj/uuid"
+	goctx "golang.org/x/net/context"
 )
 
 var (
@@ -161,6 +163,8 @@ type ddl struct {
 	hook       Callback
 	hookMu     sync.RWMutex
 	store      kv.Storage
+	// worker is used for electing the owner.
+	worker *worker
 	// lease is schema seconds.
 	lease        time.Duration
 	uuid         string
@@ -178,7 +182,9 @@ type ddl struct {
 	reorgRowCount int64
 
 	quitCh chan struct{}
-	wait   sync.WaitGroup
+	// TODO: Use cancelFunc instead of quitCh.
+	cancelFunc goctx.CancelFunc
+	wait       sync.WaitGroup
 }
 
 // RegisterEventCh registers passed channel for ddl Event.
@@ -213,6 +219,17 @@ func (d *ddl) asyncNotifyEvent(e *Event) {
 // NewDDL creates a new DDL.
 func NewDDL(store kv.Storage, infoHandle *infoschema.Handle, hook Callback, lease time.Duration) DDL {
 	return newDDL(store, infoHandle, hook, lease)
+}
+
+// TODO: Move this to the function of newDDL.
+func (d *ddl) setWorker(ctx goctx.Context, cli *clientv3.Client) {
+	d.worker = &worker{
+		ddlID:      d.uuid,
+		etcdClient: cli,
+	}
+
+	ctx, d.cancelFunc = goctx.WithCancel(ctx)
+	d.campaignOwners(ctx)
 }
 
 func newDDL(store kv.Storage, infoHandle *infoschema.Handle, hook Callback, lease time.Duration) *ddl {
@@ -298,6 +315,7 @@ func (d *ddl) start() {
 	d.wait.Add(2)
 	go d.onBackgroundWorker()
 	go d.onDDLWorker()
+
 	// For every start, we will send a fake job to let worker
 	// check owner firstly and try to find whether a job exists and run.
 	asyncNotify(d.ddlJobCh)
@@ -310,6 +328,9 @@ func (d *ddl) close() {
 	}
 
 	close(d.quitCh)
+	if d.worker != nil {
+		d.cancelFunc()
+	}
 
 	d.wait.Wait()
 	log.Infof("close DDL:%s", d.uuid)

@@ -67,6 +67,18 @@ func (col *CorrelatedColumn) EvalDecimal(row []types.Datum, sc *variable.Stateme
 	return val, isNull, errors.Trace(err)
 }
 
+// EvalTime returns DATE/DATETIME/TIMESTAMP representation of CorrelatedColumn.
+func (col *CorrelatedColumn) EvalTime(row []types.Datum, sc *variable.StatementContext) (types.Time, bool, error) {
+	val, isNull, err := evalExprToDate(col, row, sc)
+	return val, isNull, errors.Trace(err)
+}
+
+// EvalDuration returns Duration representation of CorrelatedColumn.
+func (col *CorrelatedColumn) EvalDuration(row []types.Datum, sc *variable.StatementContext) (types.Duration, bool, error) {
+	val, isNull, err := evalExprToDuration(col, row, sc)
+	return val, isNull, errors.Trace(err)
+}
+
 // Equal implements Expression interface.
 func (col *CorrelatedColumn) Equal(expr Expression, ctx context.Context) bool {
 	if cc, ok := expr.(*CorrelatedColumn); ok {
@@ -171,6 +183,18 @@ func (col *Column) EvalString(row []types.Datum, sc *variable.StatementContext) 
 // EvalDecimal returns decimal representation of Column.
 func (col *Column) EvalDecimal(row []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
 	val, isNull, err := evalExprToDecimal(col, row, sc)
+	return val, isNull, errors.Trace(err)
+}
+
+// EvalTime returns DATE/DATETIME/TIMESTAMP representation of Column.
+func (col *Column) EvalTime(row []types.Datum, sc *variable.StatementContext) (types.Time, bool, error) {
+	val, isNull, err := evalExprToDate(col, row, sc)
+	return val, isNull, errors.Trace(err)
+}
+
+// EvalDuration returns Duration representation of Column.
+func (col *Column) EvalDuration(_ []types.Datum, sc *variable.StatementContext) (types.Duration, bool, error) {
+	val, isNull, err := evalExprToDuration(col, nil, sc)
 	return val, isNull, errors.Trace(err)
 }
 

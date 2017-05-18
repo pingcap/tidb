@@ -38,9 +38,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
 
-	plan.UseDAGPlanBuilder = true
 	defer func() {
-		plan.UseDAGPlanBuilder = false
 		testleak.AfterTest(c)()
 	}()
 	tests := []struct {
@@ -176,9 +174,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
 
-	plan.UseDAGPlanBuilder = true
 	defer func() {
-		plan.UseDAGPlanBuilder = false
 		testleak.AfterTest(c)()
 	}()
 	tests := []struct {
@@ -263,9 +259,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
 
-	plan.UseDAGPlanBuilder = true
 	defer func() {
-		plan.UseDAGPlanBuilder = false
 		testleak.AfterTest(c)()
 	}()
 	tests := []struct {
@@ -344,9 +338,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnion(c *C) {
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
 
-	plan.UseDAGPlanBuilder = true
 	defer func() {
-		plan.UseDAGPlanBuilder = false
 		testleak.AfterTest(c)()
 	}()
 	tests := []struct {
@@ -394,9 +386,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
 
-	plan.UseDAGPlanBuilder = true
 	defer func() {
-		plan.UseDAGPlanBuilder = false
 		testleak.AfterTest(c)()
 	}()
 	tests := []struct {
@@ -462,9 +452,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
 
-	plan.UseDAGPlanBuilder = true
 	defer func() {
-		plan.UseDAGPlanBuilder = false
 		testleak.AfterTest(c)()
 	}()
 	tests := []struct {

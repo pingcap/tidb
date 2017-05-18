@@ -66,6 +66,12 @@ type Expression interface {
 	// EvalDecimal returns the decimal representation of expression.
 	EvalDecimal(row []types.Datum, sc *variable.StatementContext) (val *types.MyDecimal, isNull bool, err error)
 
+	// EvalTime returns the DATE/DATETIME/TIMESTAMP representation of expression.
+	EvalTime(row []types.Datum, sc *variable.StatementContext) (val types.Time, isNull bool, err error)
+
+	// EvalDuration returns the duration representation of expression.
+	EvalDuration(row []types.Datum, sc *variable.StatementContext) (val types.Duration, isNull bool, err error)
+
 	// GetType gets the type that the expression returns.
 	GetType() *types.FieldType
 
@@ -135,7 +141,7 @@ func evalExprToInt(expr Expression, row []types.Datum, sc *variable.StatementCon
 		res, err = val.ToInt64(sc)
 		return res, false, errors.Trace(err)
 	}
-	panic(fmt.Sprintf("cannot get INT result from %s expression", tc.String()))
+	panic(fmt.Sprintf("cannot get INT result from %s expression", types.TypeStr(expr.GetType().Tp)))
 }
 
 // evalExprToReal evaluates `expr` to real type.
@@ -151,7 +157,7 @@ func evalExprToReal(expr Expression, row []types.Datum, sc *variable.StatementCo
 		res, err = val.ToFloat64(sc)
 		return res, false, errors.Trace(err)
 	}
-	panic(fmt.Sprintf("cannot get REAL result from %s expression", tc.String()))
+	panic(fmt.Sprintf("cannot get REAL result from %s expression", types.TypeStr(expr.GetType().Tp)))
 }
 
 // evalExprToDecimal evaluates `expr` to decimal type.
@@ -167,7 +173,7 @@ func evalExprToDecimal(expr Expression, row []types.Datum, sc *variable.Statemen
 		res, err = val.ToDecimal(sc)
 		return res, false, errors.Trace(err)
 	}
-	panic(fmt.Sprintf("cannot get DECIMAL result from %s expression", tc.String()))
+	panic(fmt.Sprintf("cannot get DECIMAL result from %s expression", types.TypeStr(expr.GetType().Tp)))
 }
 
 // evalExprToString evaluates `expr` to string type.
@@ -185,7 +191,33 @@ func evalExprToString(expr Expression, row []types.Datum, _ *variable.StatementC
 		res, err = val.ToString()
 		return res, false, errors.Trace(err)
 	}
-	panic(fmt.Sprintf("cannot get STRING result from %s expression", tc.String()))
+	panic(fmt.Sprintf("cannot get STRING result from %s expression", types.TypeStr(expr.GetType().Tp)))
+}
+
+// evalExprToDate evaluates `expr` to DATE type.
+func evalExprToDate(expr Expression, row []types.Datum, _ *variable.StatementContext) (res types.Time, isNull bool, err error) {
+	val, err := expr.Eval(row)
+	if val.IsNull() || err != nil {
+		return types.Time{}, val.IsNull(), errors.Trace(err)
+	}
+	switch expr.GetType().Tp {
+	case mysql.TypeDatetime, mysql.TypeDate, mysql.TypeTimestamp:
+		return val.GetMysqlTime(), false, nil
+	default:
+		panic(fmt.Sprintf("cannot get DATE result from %s expression", types.TypeStr(expr.GetType().Tp)))
+	}
+}
+
+// evalExprToDuration evaluates `expr` to DURATION type.
+func evalExprToDuration(expr Expression, row []types.Datum, _ *variable.StatementContext) (res types.Duration, isNull bool, err error) {
+	val, err := expr.Eval(row)
+	if val.IsNull() || err != nil {
+		return types.Duration{}, val.IsNull(), errors.Trace(err)
+	}
+	if expr.GetType().Tp == mysql.TypeDuration {
+		return val.GetMysqlDuration(), false, nil
+	}
+	panic(fmt.Sprintf("cannot get DURATION result from %s expression", types.TypeStr(expr.GetType().Tp)))
 }
 
 // One stands for a number 1.
@@ -260,6 +292,18 @@ func (c *Constant) EvalString(_ []types.Datum, sc *variable.StatementContext) (s
 // EvalDecimal returns decimal representation of Constant.
 func (c *Constant) EvalDecimal(_ []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
 	val, isNull, err := evalExprToDecimal(c, nil, sc)
+	return val, isNull, errors.Trace(err)
+}
+
+// EvalTime returns DATE/DATETIME/TIMESTAMP representation of Constant.
+func (c *Constant) EvalTime(_ []types.Datum, sc *variable.StatementContext) (types.Time, bool, error) {
+	val, isNull, err := evalExprToDate(c, nil, sc)
+	return val, isNull, errors.Trace(err)
+}
+
+// EvalDuration returns Duration representation of Constant.
+func (c *Constant) EvalDuration(_ []types.Datum, sc *variable.StatementContext) (types.Duration, bool, error) {
+	val, isNull, err := evalExprToDuration(c, nil, sc)
 	return val, isNull, errors.Trace(err)
 }
 
