@@ -680,6 +680,7 @@ var funcs = map[string]functionClass{
 	ast.Encrypt:                  &encryptFunctionClass{baseFunctionClass{ast.Encrypt, 1, 2}},
 	ast.MD5:                      &md5FunctionClass{baseFunctionClass{ast.MD5, 1, 1}},
 	ast.OldPassword:              &oldPasswordFunctionClass{baseFunctionClass{ast.OldPassword, 1, 1}},
+	ast.OldPasswordUpgrade:       &oldPasswordUpgradeFunctionClass{baseFunctionClass{ast.OldPasswordUpgrade, 1, 1}},
 	ast.PasswordFunc:             &passwordFunctionClass{baseFunctionClass{ast.PasswordFunc, 1, 1}},
 	ast.RandomBytes:              &randomBytesFunctionClass{baseFunctionClass{ast.RandomBytes, 1, 1}},
 	ast.SHA1:                     &sha1FunctionClass{baseFunctionClass{ast.SHA1, 1, 1}},

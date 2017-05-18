@@ -87,17 +87,30 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, auth, salt []
 	}
 
 	pwd := record.Password
-	if len(pwd) != 0 && len(pwd) != PWDHashLen {
+	if len(pwd) != 0 && len(pwd) != PWDHashLen+1 {
 		log.Errorf("User [%s] password from SystemDB not like a sha1sum", user)
 		return false
 	}
+
+	// empty password
+	if len(pwd) == 0 && len(auth) == 0 {
+		p.user = user
+		p.host = host
+		return true
+	}
+
+	if len(pwd) == 0 || len(auth) == 0 {
+		return false
+	}
+
 	hpwd, err := util.DecodePassword(pwd)
 	if err != nil {
 		log.Errorf("Decode password string error %v", err)
 		return false
 	}
-	checkAuth := util.CalcPassword(salt, hpwd)
-	if !bytes.Equal(auth, checkAuth) {
+
+	sha2 := util.CalcPassword(salt, hpwd, auth)
+	if !bytes.Equal(hpwd, sha2) {
 		return false
 	}
 	p.user = user

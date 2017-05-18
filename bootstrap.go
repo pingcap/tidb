@@ -180,14 +180,15 @@ const (
 	// It is used for getting the version of the TiDB server which bootstrapped the store.
 	tidbServerVersionVar = "tidb_server_version" //
 	// Const for TiDB server version 2.
-	version2 = 2
-	version3 = 3
-	version4 = 4
-	version5 = 5
-	version6 = 6
-	version7 = 7
-	version8 = 8
-	version9 = 9
+	version2  = 2
+	version3  = 3
+	version4  = 4
+	version5  = 5
+	version6  = 6
+	version7  = 7
+	version8  = 8
+	version9  = 9
+	version10 = 10
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -276,6 +277,10 @@ func upgrade(s Session) {
 
 	if ver < version9 {
 		upgradeToVer9(s)
+	}
+
+	if ver < version10 {
+		upgradeToVer10(s)
 	}
 
 	updateBootstrapVer(s)
@@ -374,6 +379,13 @@ func upgradeToVer9(s Session) {
 	}
 	// For reasons of compatibility, set the non-exists privilege column value to 'Y', as TiDB doesn't check them in older versions.
 	s.Execute("UPDATE mysql.user SET Trigger_priv='Y'")
+}
+
+func upgradeToVer10(s Session) {
+	_, err := s.Execute("UPDATE mysql.user SET `password` = old_password_upgrade(`password`)")
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 // updateBootstrapVer updates boostrap version variable in mysql.TiDB table.

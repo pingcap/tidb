@@ -300,3 +300,23 @@ func (s *testEvaluatorSuite) TestUncompressLength(c *C) {
 		c.Assert(out.GetInt64(), Equals, test.expect)
 	}
 }
+func (s *testEvaluatorSuite) TestOldPasswordUpgrade(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		in     interface{}
+		expect interface{}
+	}{
+		{string(""), string("")},
+		{string("a9993e364706816aba3e25717850c26c9cd0d89d"), string("*0D3CED9BEC10A777AEC23CCC353A8C08A633045E")},
+	}
+
+	fc := funcs[ast.OldPasswordUpgrade]
+	for _, test := range tests {
+		arg := types.NewDatum(test.in)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{arg}), s.ctx)
+		c.Assert(err, IsNil)
+		out, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(out.GetString(), Equals, test.expect)
+	}
+}

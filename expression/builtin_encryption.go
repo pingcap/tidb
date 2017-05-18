@@ -21,13 +21,16 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
+	"encoding/hex"
 	"fmt"
 	"hash"
 	"io"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/encrypt"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -43,6 +46,7 @@ var (
 	_ functionClass = &encryptFunctionClass{}
 	_ functionClass = &md5FunctionClass{}
 	_ functionClass = &oldPasswordFunctionClass{}
+	_ functionClass = &oldPasswordUpgradeFunctionClass{}
 	_ functionClass = &passwordFunctionClass{}
 	_ functionClass = &randomBytesFunctionClass{}
 	_ functionClass = &sha1FunctionClass{}
@@ -63,6 +67,7 @@ var (
 	_ builtinFunc = &builtinEncryptSig{}
 	_ builtinFunc = &builtinMD5Sig{}
 	_ builtinFunc = &builtinOldPasswordSig{}
+	_ builtinFunc = &builtinOldPasswordUpgradeSig{}
 	_ builtinFunc = &builtinPasswordSig{}
 	_ builtinFunc = &builtinRandomBytesSig{}
 	_ builtinFunc = &builtinSHA1Sig{}
@@ -377,6 +382,47 @@ type builtinOldPasswordSig struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_old-password
 func (b *builtinOldPasswordSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errFunctionNotExists.GenByArgs("OLD_PASSWORD")
+}
+
+type oldPasswordUpgradeFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *oldPasswordUpgradeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	sig := &builtinOldPasswordUpgradeSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+}
+
+type builtinOldPasswordUpgradeSig struct {
+	baseBuiltinFunc
+}
+
+// eval evals an upgrade from old password format stored in TIDB to MySQL format
+func (b *builtinOldPasswordUpgradeSig) eval(row []types.Datum) (d types.Datum, err error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	pass, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if len(pass) == 0 {
+		d.SetString("")
+		return d, nil
+	}
+
+	hash1, err := hex.DecodeString(pass)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	hash2 := util.Sha1Hash(hash1)
+	d.SetString(fmt.Sprintf("*%X", hash2))
+	log.Infof("old password: %v new password:%v", pass, fmt.Sprintf("*%X", hash2))
+	return d, nil
 }
 
 type passwordFunctionClass struct {
