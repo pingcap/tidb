@@ -408,15 +408,7 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 func updateStatement(st ast.Statement, s *session, txt string) (ast.Statement, error) {
 	// statement maybe stale because of infoschema changed, this function will return the updated one.
 	if st.IsPrepared() {
-		// TODO: PrepareStmt should validate the arguments count.
-		// This SQL should return error:
-		// create table t (id int);
-		// prepare stmt from 'insert into t values (?, ?)';
-		id, _, _, err := s.PrepareStmt(txt)
-		if err != nil {
-			return st, errors.Trace(err)
-		}
-		s.DropPreparedStmt(id)
+		// TODO: Rebuild plan if infoschema changed, reuse the statement otherwise.
 	} else {
 		// Rebuild plan if infoschema changed, reuse the statement otherwise.
 		charset, collation := s.sessionVars.GetCharsetInfo()

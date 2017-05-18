@@ -2767,8 +2767,7 @@ func (s *testSessionSuite) TestPrepareStmtCommitWhenSchemaChanged(c *C) {
 	_, err := s2.Execute("commit")
 	c.Assert(err, IsNil)
 
-	// TODO: PrepareStmt should validate the arguments count.
-	// Commit find schema change and fail.
+	// TODO: PrepareStmt should handle this.
 	// mustExecSQL(c, s2, "begin")
 	// mustExecSQL(c, s1, "alter table t drop column b")
 	// mustExecSQL(c, s2, "execute stmt using @a, @a")
