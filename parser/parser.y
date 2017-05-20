@@ -5386,7 +5386,7 @@ TableOption:
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionPassword, StrValue: $3}
 	}
-|	"COMPRESSION" EqOpt Identifier
+|	"COMPRESSION" EqOpt stringLit
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionCompression, StrValue: $3}
 	}
