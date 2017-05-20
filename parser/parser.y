@@ -1062,6 +1062,11 @@ LockClause:
 
 KeyOrIndex: "KEY" | "INDEX"
 
+
+KeyOrIndexOpt:
+	{}
+|   	KeyOrIndex
+
 ColumnKeywordOpt:
 	{}
 |	"COLUMN"
@@ -1324,7 +1329,7 @@ ConstraintElem:
 		}
 		$$ = c
 	}
-|	"FULLTEXT" "KEY" IndexName '(' IndexColNameList ')' IndexOptionList
+|	"FULLTEXT" KeyOrIndex IndexName '(' IndexColNameList ')' IndexOptionList
 	{
 		c := &ast.Constraint{
 			Tp:	ast.ConstraintFulltext,
@@ -1336,7 +1341,7 @@ ConstraintElem:
 		}
 		$$ = c
 	}
-|	"INDEX" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
+|	KeyOrIndex IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
 	{
 		c := &ast.Constraint{
 			Tp:	ast.ConstraintIndex,
@@ -1354,64 +1359,10 @@ ConstraintElem:
 		}
 		$$ = c
 	}
-|	"KEY" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
-	{
-		c := &ast.Constraint{
-			Tp:	ast.ConstraintKey,
-			Keys:	$5.([]*ast.IndexColName),
-			Name:	$2.(string),
-		}
-		if $7 != nil {
-			c.Option = $7.(*ast.IndexOption)
-		}
-		if $3 != nil {
-			if c.Option == nil {
-				c.Option = &ast.IndexOption{}
-			}
-			c.Option.Tp = $3.(model.IndexType)
-		}
-		$$ = c
-	}
-|	"UNIQUE" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
+|	"UNIQUE" KeyOrIndexOpt IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
 	{
 		c := &ast.Constraint{
 			Tp:	ast.ConstraintUniq,
-			Keys:	$5.([]*ast.IndexColName),
-			Name:	$2.(string),
-		}
-		if $7 != nil {
-			c.Option = $7.(*ast.IndexOption)
-		}
-		if $3 != nil {
-			if c.Option == nil {
-				c.Option = &ast.IndexOption{}
-			}
-			c.Option.Tp = $3.(model.IndexType)
-		}
-		$$ = c
-	}
-|	"UNIQUE" "INDEX" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
-	{
-		c := &ast.Constraint{
-			Tp:	ast.ConstraintUniqIndex,
-			Keys:	$6.([]*ast.IndexColName),
-			Name:	$3.(string),
-		}
-		if $8 != nil {
-			c.Option = $8.(*ast.IndexOption)
-		}
-		if $4 != nil {
-			if c.Option == nil {
-				c.Option = &ast.IndexOption{}
-			}
-			c.Option.Tp = $4.(model.IndexType)
-		}
-		$$ = c
-	}
-|	"UNIQUE" "KEY" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
-	{
-		c := &ast.Constraint{
-			Tp:	ast.ConstraintUniqKey,
 			Keys:	$6.([]*ast.IndexColName),
 			Name:	$3.(string),
 		}

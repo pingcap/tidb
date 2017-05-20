@@ -1276,6 +1276,14 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED, LOCK=DEFAULT", true},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED, LOCK=SHARED", true},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED, LOCK=EXCLUSIVE", true},
+		{"ALTER TABLE t ADD FULLTEXT KEY `FullText` (`name` ASC)", true},
+		{"ALTER TABLE t ADD FULLTEXT INDEX `FullText` (`name` ASC)", true},
+		{"ALTER TABLE t ADD INDEX (a) USING BTREE COMMENT 'a'", true},
+		{"ALTER TABLE t ADD KEY (a) USING HASH COMMENT 'a'", true},
+		{"ALTER TABLE t ADD PRIMARY KEY (a) COMMENT 'a'", true},
+		{"ALTER TABLE t ADD UNIQUE (a) COMMENT 'a'", true},
+		{"ALTER TABLE t ADD UNIQUE KEY (a) COMMENT 'a'", true},
+		{"ALTER TABLE t ADD UNIQUE INDEX (a) COMMENT 'a'", true},
 
 		// for rename table statement
 		{"RENAME TABLE t TO t1", true},
