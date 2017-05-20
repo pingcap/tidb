@@ -231,14 +231,10 @@ func (s *builtinCompareSig) eval(row []types.Datum) (d types.Datum, err error) {
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
+
 	sc := s.ctx.GetSessionVars().StmtCtx
 	var a, b = args[0], args[1]
-	if s.op != opcode.NullEQ {
-		a, b, err = types.CoerceDatum(sc, a, b)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-	}
+
 	if a.IsNull() || b.IsNull() {
 		// For <=>, if a and b are both nil, return true.
 		// If a or b is nil, return false.
@@ -250,6 +246,13 @@ func (s *builtinCompareSig) eval(row []types.Datum) (d types.Datum, err error) {
 			}
 		}
 		return
+	}
+
+	if s.op != opcode.NullEQ {
+		if aa, bb, err := types.CoerceDatum(sc, a, b); err == nil {
+			a = aa
+			b = bb
+		}
 	}
 
 	n, err := a.CompareDatum(sc, b)

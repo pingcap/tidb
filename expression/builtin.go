@@ -688,4 +688,7 @@ var funcs = map[string]functionClass{
 	ast.Uncompress:               &uncompressFunctionClass{baseFunctionClass{ast.Uncompress, 1, 1}},
 	ast.UncompressedLength:       &uncompressedLengthFunctionClass{baseFunctionClass{ast.UncompressedLength, 1, 1}},
 	ast.ValidatePasswordStrength: &validatePasswordStrengthFunctionClass{baseFunctionClass{ast.ValidatePasswordStrength, 1, 1}},
+
+	// json functions
+	ast.JSONType: &jsonTypeFunctionClass{baseFunctionClass{ast.JSONType, 1, 1}},
 }
