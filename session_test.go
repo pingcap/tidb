@@ -2733,6 +2733,7 @@ func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {
 }
 
 func (s *testSessionSuite) TestCommitWhenSchemaChanged(c *C) {
+	c.Skip("skip localstore when lease is 0")
 	defer testleak.AfterTest(c)()
 	dbName := "test_commit_when_schema_changed"
 	s1 := newSession(c, s.store, dbName)
@@ -2748,4 +2749,29 @@ func (s *testSessionSuite) TestCommitWhenSchemaChanged(c *C) {
 	mustExecSQL(c, s2, "insert into t values (4, 4)")
 	_, err := s2.Execute("commit")
 	c.Assert(terror.ErrorEqual(err, executor.ErrWrongValueCountOnRow), IsTrue)
+}
+
+func (s *testSessionSuite) TestPrepareStmtCommitWhenSchemaChanged(c *C) {
+	defer testleak.AfterTest(c)()
+	dbName := "test_prepare_commit_when_schema_changed"
+	s1 := newSession(c, s.store, dbName)
+	mustExecSQL(c, s1, "create table t (a int, b int)")
+
+	s2 := newSession(c, s.store, dbName)
+	mustExecSQL(c, s2, "prepare stmt from 'insert into t values (?, ?)'")
+	mustExecSQL(c, s2, "set @a = 1")
+
+	// Commit find unrelated schema change.
+	mustExecSQL(c, s2, "begin")
+	mustExecSQL(c, s1, "create table t1 (id int)")
+	mustExecSQL(c, s2, "execute stmt using @a, @a")
+	_, err := s2.Execute("commit")
+	c.Assert(err, IsNil)
+
+	// TODO: PrepareStmt should handle this.
+	// mustExecSQL(c, s2, "begin")
+	// mustExecSQL(c, s1, "alter table t drop column b")
+	// mustExecSQL(c, s2, "execute stmt using @a, @a")
+	// _, err = s2.Execute("commit")
+	// c.Assert(terror.ErrorEqual(err, executor.ErrWrongValueCountOnRow), IsTrue)
 }
