@@ -150,7 +150,7 @@ import:
 - package: github.com/pingcap/pd
   version: fea29e342c4a7c5888cdf0b569625fbbf6d3b50f
 - package: github.com/pingcap/tipb
-  version: 37bbffad21f347c02af7d822909832f0eed39c85
+  version: 11c2044a6a91f947faaa5e4f1a06c9026f333f69
   subpackages:
   - go-binlog
   - go-tipb
@@ -166,11 +166,14 @@ import:
   subpackages:
   - prometheus/push
 - package: golang.org/x/time
+  version: c06e80d9300e4443158a03817b8a8cb37d230320
   subpackages:
   - rate
 - package: golang.org/x/sys
   version: a646d33e2ee3172a661fc09bca23bb4889a41bc8
 - package: github.com/gorilla/mux
   version: 599cba5e7b6137d46ddf58fb1765f5d928e69604
+- package: github.com/gorilla/context
+  version: 1ea25387ff6f684839d82767c1733ff4d4d15d0a
 - package: github.com/grpc-ecosystem/go-grpc-prometheus
   version: 6b7015e65d366bf3f19b2b2a000a831940f0f7e0
