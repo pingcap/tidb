@@ -24,7 +24,7 @@ type Factory func() (Resource, error)
 // Thread synchronization between Close() and IsClosed()
 // is the responsibility the caller.
 type Resource interface {
-	Close() error
+	Close()
 }
 
 // ResourcePool allows you to use a pool of resources.

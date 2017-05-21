@@ -71,7 +71,7 @@ type Session interface {
 	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
 	SetSessionManager(util.SessionManager)
-	Close() error
+	Close()
 	Auth(user string, auth []byte, salt []byte) bool
 	// Cancel the execution of current transaction.
 	Cancel()
@@ -788,14 +788,17 @@ func (s *session) ClearValue(key fmt.Stringer) {
 }
 
 // Close function does some clean work when session end.
-func (s *session) Close() error {
+func (s *session) Close() {
 	if s.txnFutureCh != nil {
 		close(s.txnFutureCh)
 	}
 	if s.statsCollector != nil {
 		s.statsCollector.Delete()
 	}
-	return s.RollbackTxn()
+	if err := s.RollbackTxn(); err != nil {
+		log.Error("session Close error:", errors.ErrorStack(err))
+	}
+	return
 }
 
 // GetSessionVars implements the context.Context interface.

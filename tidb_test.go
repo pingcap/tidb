@@ -333,12 +333,9 @@ func (s *testMainSuite) TestSchemaValidity(c *C) {
 	err = <-endCh2
 	c.Assert(err, IsNil, Commentf("err:%v", err))
 
-	err = se.Close()
-	c.Assert(err, IsNil)
-	err = se1.Close()
-	c.Assert(err, IsNil)
-	err = se2.Close()
-	c.Assert(err, IsNil)
+	se.Close()
+	se1.Close()
+	se2.Close()
 	sessionctx.GetDomain(ctx).Close()
 	err = store.Close()
 	c.Assert(err, IsNil)
