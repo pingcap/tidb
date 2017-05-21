@@ -1018,7 +1018,6 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT ENCRYPT('hello'), ENCRYPT('hello', @salt);`, true},
 		{`SELECT MD5('testing');`, true},
 		{`SELECT OLD_PASSWORD(@str);`, true},
-		{`SELECT OLD_PASSWORD_UPGRADE(@str);`, true},
 		{`SELECT PASSWORD(@str);`, true},
 		{`SELECT RANDOM_BYTES(@len);`, true},
 		{`SELECT SHA1('abc');`, true},

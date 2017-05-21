@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -382,9 +383,37 @@ func upgradeToVer9(s Session) {
 }
 
 func upgradeToVer10(s Session) {
-	_, err := s.Execute("UPDATE mysql.user SET `password` = old_password_upgrade(`password`)")
+	sql := "SELECT user, host, password FROM mysql.user WHERE password != ''"
+	rs, err := s.Execute(sql)
 	if err != nil {
 		log.Fatal(err)
+		return
+	}
+	r := rs[0]
+	sqls := make([]string, 1)
+	defer r.Close()
+	row, err := r.Next()
+	for err == nil && row != nil {
+		user := row.Data[0].GetString()
+		host := row.Data[1].GetString()
+		pass := row.Data[2].GetString()
+		newpass, err := util.OldPasswordUpgrade(pass)
+		if err != nil {
+			log.Fatal(err)
+			return
+		}
+		sql := fmt.Sprintf(`UPDATE mysql.user set password = "%s" where user="%s" and host="%s"`, newpass, user, host)
+		sqls = append(sqls, sql)
+		row, err = r.Next()
+	}
+
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
+
+	for _, sql := range sqls {
+		mustExecute(s, sql)
 	}
 }
 

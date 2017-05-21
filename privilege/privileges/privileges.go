@@ -109,7 +109,7 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, auth, salt []
 		return false
 	}
 
-	sha2 := util.CalcPassword(salt, hpwd, auth)
+	sha2 := util.CheckScramble(salt, hpwd, auth)
 	if !bytes.Equal(hpwd, sha2) {
 		return false
 	}

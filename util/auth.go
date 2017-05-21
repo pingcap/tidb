@@ -21,10 +21,22 @@ import (
 	"github.com/juju/errors"
 )
 
-// CalcPassword is the algorithm convert hashed password to auth string.
-// See https://dev.mysql.com/doc/internals/en/secure-password-authentication.html
-// SHA1( password ) XOR SHA1( "20-bytes random data from server" <concat> SHA1( SHA1( password ) ) )
-func CalcPassword(scramble, hpwd, auth []byte) []byte {
+// CheckScramble check scrambled password received from client.
+// The new authentication is performed in following manner:
+//   SERVER:  public_seed=create_random_string()
+//            send(public_seed)
+//   CLIENT:  recv(public_seed)
+//            hash_stage1=sha1("password")
+//            hash_stage2=sha1(hash_stage1)
+//            reply=xor(hash_stage1, sha1(public_seed,hash_stage2)
+//            // this three steps are done in scramble()
+//            send(reply)
+//   SERVER:  recv(reply)
+//            hash_stage1=xor(reply, sha1(public_seed,hash_stage2))
+//            candidate_hash2=sha1(hash_stage1)
+//            check(candidate_hash2==hash_stage2)
+//            // this three steps are done in check_scramble()
+func CheckScramble(scramble, hpwd, auth []byte) []byte {
 	crypt := sha1.New()
 	crypt.Write(scramble)
 	crypt.Write(hpwd)
@@ -62,4 +74,16 @@ func DecodePassword(pwd string) ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 	return x, nil
+}
+
+// OldPasswordUpgrade upgrade password to MySQL compatible format
+func OldPasswordUpgrade(pass string) (string, error) {
+	hash1, err := hex.DecodeString(pass)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+
+	hash2 := Sha1Hash(hash1)
+	newpass := fmt.Sprintf("*%X", hash2)
+	return newpass, nil
 }

@@ -573,7 +573,6 @@ var tokenMap = map[string]int{
 	"ENCRYPT":                    encrypt,
 	"MD5":                        md5,
 	"OLD_PASSWORD":               oldPassword,
-	"OLD_PASSWORD_UPGRADE":       oldPasswordUpgrade,
 	"RANDOM_BYTES":               randomBytes,
 	"SHA1":                       sha1,
 	"SHA":                        sha,

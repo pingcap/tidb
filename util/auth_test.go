@@ -36,7 +36,7 @@ func (s *testAuthSuite) TestDecodePassword(c *C) {
 	c.Assert(x, DeepEquals, Sha1Hash(Sha1Hash([]byte("123"))))
 }
 
-func (s *testAuthSuite) TestCalcPassword(c *C) {
+func (s *testAuthSuite) TestCheckScramble(c *C) {
 	defer testleak.AfterTest(c)()
 	pwd := "abc"
 	salt := []byte{85, 92, 45, 22, 58, 79, 107, 6, 122, 125, 58, 80, 12, 90, 103, 32, 90, 10, 74, 82}
@@ -45,6 +45,6 @@ func (s *testAuthSuite) TestCalcPassword(c *C) {
 	hpwd, err := DecodePassword(encodepwd)
 	c.Assert(err, IsNil)
 
-	sha2 := CalcPassword(salt, hpwd, auth)
+	sha2 := CheckScramble(salt, hpwd, auth)
 	c.Assert(sha2, DeepEquals, hpwd)
 }
