@@ -26,7 +26,7 @@ func ToString(p Plan) string {
 
 func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 	switch in.(type) {
-	case *LogicalJoin, *Union, *PhysicalHashJoin, *PhysicalHashSemiJoin, *LogicalApply, *PhysicalApply, *PhysicalMergeJoin:
+	case *LogicalJoin, *Union, *PhysicalHashJoin, *PhysicalHashSemiJoin, *LogicalApply, *PhysicalApply, *PhysicalMergeJoin, *PhysicalIndexJoin:
 		idxs = append(idxs, len(strs))
 	}
 
@@ -165,6 +165,18 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = fmt.Sprintf("IndexLookUp(%s, %s)", ToString(x.indexPlan), ToString(x.tablePlan))
 	case *PhysicalUnionScan:
 		str = fmt.Sprintf("UnionScan(%s)", x.Conditions)
+	case *PhysicalIndexJoin:
+		last := len(idxs) - 1
+		idx := idxs[last]
+		children := strs[idx:]
+		strs = strs[:idx]
+		idxs = idxs[:last]
+		str = "IndexJoin{" + strings.Join(children, "->") + "}"
+		for i := range x.outerJoinKeys {
+			l := x.outerJoinKeys[i]
+			r := x.innerJoinKeys[i]
+			str += fmt.Sprintf("(%s,%s)", l, r)
+		}
 	default:
 		str = fmt.Sprintf("%T", in)
 	}
