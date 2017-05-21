@@ -41,6 +41,8 @@ func normalize(in interface{}) JSON {
 		return jsonLiteralFalse
 	case nil:
 		return jsonLiteralNil
+	case int64:
+		return jsonInt64(t)
 	case float64:
 		return jsonDouble(t)
 	case string:
@@ -80,6 +82,12 @@ func (j jsonLiteral) String() string {
 }
 
 // String implements JSON interface.
+func (j jsonInt64) String() string {
+	bytes, _ := json.Marshal(j)
+	return strings.TrimSpace(hack.String(bytes))
+}
+
+// String implements JSON interface.
 func (j jsonDouble) String() string {
 	bytes, _ := json.Marshal(j)
 	return strings.TrimSpace(hack.String(bytes))
@@ -101,4 +109,37 @@ func (j jsonObject) String() string {
 func (j jsonArray) String() string {
 	bytes, _ := json.Marshal(j)
 	return strings.TrimSpace(hack.String(bytes))
+}
+
+// Type implements JSON interface
+func (j jsonLiteral) Type() string {
+	if j == jsonLiteralNil {
+		return "NULL"
+	}
+	return "BOOLEAN"
+}
+
+// Type implements JSON interface
+func (j jsonInt64) Type() string {
+	return "INTEGER"
+}
+
+// Type implements JSON interface
+func (j jsonDouble) Type() string {
+	return "DOUBLE"
+}
+
+// Type implements JSON interface
+func (j jsonString) Type() string {
+	return "STRING"
+}
+
+// Type implements JSON interface
+func (j jsonObject) Type() string {
+	return "OBJECT"
+}
+
+// Type implements JSON interface
+func (j jsonArray) Type() string {
+	return "ARRAY"
 }
