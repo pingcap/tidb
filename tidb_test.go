@@ -363,7 +363,7 @@ func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
 	wg.Wait()
 	se.sysSessionPool().Close()
 	after := runtime.NumGoroutine()
-	c.Assert(after-before < 3, IsTrue)
+	c.Assert(after-before, Less, 3)
 }
 
 func sessionExec(c *C, se Session, sql string) ([]ast.RecordSet, error) {
