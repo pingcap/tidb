@@ -465,6 +465,21 @@ type PhysicalHashJoin struct {
 	DefaultValues []types.Datum
 }
 
+// PhysicalIndexJoin represents the plan of index look up join.
+type PhysicalIndexJoin struct {
+	*basePlan
+	basePhysicalPlan
+
+	outer           bool
+	outerJoinKeys   []*expression.Column
+	innerJoinKeys   []*expression.Column
+	LeftConditions  expression.CNFExprs
+	RightConditions expression.CNFExprs
+	OtherConditions expression.CNFExprs
+
+	DefaultValues []types.Datum
+}
+
 // PhysicalMergeJoin represents merge join for inner/ outer join.
 type PhysicalMergeJoin struct {
 	*basePlan
@@ -780,6 +795,14 @@ func (p *PhysicalHashSemiJoin) MarshalJSON() ([]byte, error) {
 
 // Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalHashJoin) Copy() PhysicalPlan {
+	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
+	return &np
+}
+
+// Copy implements the PhysicalPlan Copy interface.
+func (p *PhysicalIndexJoin) Copy() PhysicalPlan {
 	np := *p
 	np.basePlan = p.basePlan.copy()
 	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
