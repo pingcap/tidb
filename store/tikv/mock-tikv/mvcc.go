@@ -109,11 +109,12 @@ func (e *mvccEntry) Get(ts uint64) ([]byte, error) {
 }
 
 func (e *mvccEntry) Prewrite(mutation *kvrpcpb.Mutation, startTS uint64, primary []byte, ttl uint64) error {
-	if len(e.values) > 0 {
-		if e.values[0].commitTS >= startTS {
+	for _, value := range e.values {
+		if value.commitTS >= startTS {
 			return ErrRetryable("write conflict")
 		}
 	}
+
 	if e.lock != nil {
 		if e.lock.startTS != startTS {
 			return e.lockErr()
