@@ -19,6 +19,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -75,6 +76,8 @@ type resolverContext struct {
 	fieldList []*ast.ResultField
 	// result fields collected in group by clause.
 	groupBy []*ast.ResultField
+	// column defines collected in create/alter statement.
+	columnDefList []*ast.ColumnDef
 
 	// The join node stack is used by on condition to find out
 	// available tables to reference. On condition can only
@@ -106,6 +109,8 @@ type resolverContext struct {
 	inCreateOrDropTable bool
 	// When visiting show statement.
 	inShow bool
+	// When visiting create/alter table statement.
+	inColumnOption bool
 }
 
 // currentContext gets the current resolverContext.
@@ -180,6 +185,11 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 	case *ast.CreateTableStmt:
 		nr.pushContext()
 		nr.currentContext().inCreateOrDropTable = true
+		for _, colDef := range v.Cols {
+			nr.currentContext().columnDefList = append(nr.currentContext().columnDefList, colDef)
+		}
+	case *ast.ColumnOption:
+		nr.currentContext().inColumnOption = true
 	case *ast.DeleteStmt:
 		nr.pushContext()
 	case *ast.DeleteTableList:
@@ -258,6 +268,8 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 		nr.popContext()
 	case *ast.CreateTableStmt:
 		nr.popContext()
+	case *ast.ColumnOption:
+		nr.currentContext().inColumnOption = false
 	case *ast.DeleteTableList:
 		nr.currentContext().inDeleteTableList = false
 	case *ast.DoStmt:
@@ -480,7 +492,13 @@ func (nr *nameResolver) handleColumnName(cn *ast.ColumnNameExpr) {
 		return
 	}
 
-	// Try to resolve the column name form top to bottom in the context stack.
+	if ctx.inColumnOption {
+		// In column option, only columns within current create table statement is available.
+		nr.resolveColumnNameInColumnOption(cn)
+		return
+	}
+
+	// Try to resolve the column name from top to bottom in the context stack.
 	for i := len(nr.contextStack) - 1; i >= 0; i-- {
 		if nr.resolveColumnNameInContext(nr.contextStack[i], cn) {
 			// Column is already resolved or encountered an error.
@@ -592,6 +610,17 @@ func (nr *nameResolver) resolveColumnNameInOnCondition(cn *ast.ColumnNameExpr) {
 	if !nr.resolveColumnInTableSources(cn, tableSources) {
 		nr.Err = errors.Errorf("unknown column name %s", cn.Name.Name.O)
 	}
+}
+
+// resolveColumnNameInColumnOption resolves the column name in the create table statement.
+func (nr *nameResolver) resolveColumnNameInColumnOption(cn *ast.ColumnNameExpr) {
+	ctx := nr.currentContext()
+	for _, colDef := range ctx.columnDefList {
+		if colDef.Name.Name.L == cn.Name.Name.L {
+			return
+		}
+	}
+	nr.Err = ddl.ErrBadField.GenByArgs(cn.Name.Name.O, "generated column function")
 }
 
 func (nr *nameResolver) resolveColumnInTableSources(cn *ast.ColumnNameExpr, tableSources []*ast.TableSource) (done bool) {

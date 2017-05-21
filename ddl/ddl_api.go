@@ -1140,7 +1140,7 @@ func (d *ddl) AlterColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterT
 	// Check whether alter column has existed.
 	col := table.FindCol(t.Cols(), colName.L)
 	if col == nil {
-		return errBadField.GenByArgs(colName, ident.Name)
+		return ErrBadField.GenByArgs(colName, ident.Name)
 	}
 
 	if len(spec.NewColumn.Options) == 0 {
