@@ -285,7 +285,7 @@ import (
 	isNull				"ISNULL"
 	jsonExtract			"JSON_EXTRACT"
 	jsonUnquote			"JSON_UNQUOTE"
-	jsonTypeFunc		"JSON_TYPE"
+	jsonTypeFunc			"JSON_TYPE"
 	kill				"KILL"
 	lastInsertID			"LAST_INSERT_ID"
 	lcase				"LCASE"
