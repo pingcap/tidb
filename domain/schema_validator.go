@@ -69,7 +69,7 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64) bool {
 	defer s.mux.RUnlock()
 
 	if s.lease == 0 {
-		return schemaVer == s.latestSchemaVer
+		return true
 	}
 
 	expire, ok := s.items[schemaVer]
