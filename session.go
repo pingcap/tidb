@@ -363,16 +363,8 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 			st := sr.st
 			txt := st.OriginText()
 			if infoSchemaChanged {
-				// Rebuild plan if infoschema changed, reuse the statement otherwise.
-				charset, collation := s.sessionVars.GetCharsetInfo()
-				stmt, err := s.parser.ParseOneStmt(txt, charset, collation)
+				st, err = updateStatement(st, s, txt)
 				if err != nil {
-					return errors.Trace(err)
-				}
-				st, err = Compile(s, stmt)
-				if err != nil {
-					// If a txn is inserting data when DDL is dropping column,
-					// it would fail to commit and retry, and run here then.
 					return errors.Trace(err)
 				}
 			}
@@ -411,6 +403,27 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 		kv.BackOff(retryCnt)
 	}
 	return err
+}
+
+func updateStatement(st ast.Statement, s *session, txt string) (ast.Statement, error) {
+	// statement maybe stale because of infoschema changed, this function will return the updated one.
+	if st.IsPrepared() {
+		// TODO: Rebuild plan if infoschema changed, reuse the statement otherwise.
+	} else {
+		// Rebuild plan if infoschema changed, reuse the statement otherwise.
+		charset, collation := s.sessionVars.GetCharsetInfo()
+		stmt, err := s.parser.ParseOneStmt(txt, charset, collation)
+		if err != nil {
+			return st, errors.Trace(err)
+		}
+		st, err = Compile(s, stmt)
+		if err != nil {
+			// If a txn is inserting data when DDL is dropping column,
+			// it would fail to commit and retry, and run here then.
+			return st, errors.Trace(err)
+		}
+	}
+	return st, nil
 }
 
 func sqlForLog(sql string) string {
