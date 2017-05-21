@@ -17,11 +17,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/util/log"
 	"github.com/prometheus/client_golang/prometheus"
 )
 

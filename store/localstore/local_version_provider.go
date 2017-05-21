@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/log"
 )
 
 // ErrOverflow is the error returned by CurrentVersion, it describes if

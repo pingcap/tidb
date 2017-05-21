@@ -15,7 +15,7 @@ package kv
 
 import (
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/util/log"
 )
 
 // UnionIter is the iterator on an UnionStore.

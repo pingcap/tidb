@@ -46,13 +46,13 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/log"
 )
 
 var defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |

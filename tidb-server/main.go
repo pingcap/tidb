@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/ngaut/systimemon"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ddl"
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/util/log"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/prometheus/client_golang/prometheus"
@@ -48,6 +48,8 @@ var (
 	store           = flag.String("store", "goleveldb", "registered store name, [memory, goleveldb, boltdb, tikv, mocktikv]")
 	storePath       = flag.String("path", "/tmp/tidb", "tidb storage path")
 	logLevel        = flag.String("L", "info", "log level: info, debug, warn, error, fatal")
+	logFile         = flag.String("log-file", "", "log file path")
+	logFormat       = flag.String("log-format", "text", "log output format, [text, json, console]")
 	host            = flag.String("host", "0.0.0.0", "tidb server host")
 	port            = flag.String("P", "4000", "tidb server port")
 	statusPort      = flag.String("status", "10080", "tidb server status port")
@@ -56,7 +58,6 @@ var (
 	enablePS        = flag.Bool("perfschema", false, "If enable performance schema.")
 	enablePrivilege = flag.Bool("privilege", true, "If enable privilege check feature. This flag will be removed in the future.")
 	reportStatus    = flag.Bool("report-status", true, "If enable status report HTTP service.")
-	logFile         = flag.String("log-file", "", "log file path")
 	joinCon         = flag.Int("join-concurrency", 5, "the number of goroutines that participate joining.")
 	crossJoin       = flag.Bool("cross-join", true, "whether support cartesian product or not.")
 	metricsAddr     = flag.String("metrics-addr", "", "prometheus pushgateway address, leaves it empty will disable prometheus push.")
@@ -108,22 +109,18 @@ func main() {
 	}
 
 	// set log options
-	if len(*logFile) > 0 {
-		err := log.SetOutputByName(*logFile)
-		if err != nil {
-			log.Fatal(errors.ErrorStack(err))
-		}
-		log.SetRotateByDay()
-		log.SetHighlighting(false)
+	err := log.InitLogger(*logFile, *logFormat)
+	if err != nil {
+		log.Fatal(errors.ErrorStack(err))
 	}
+	// Call this before setting log level to make sure that TiDB info could be printed.
+	printer.PrintTiDBInfo()
+	log.SetLevelByString(cfg.LogLevel)
 
 	if joinCon != nil && *joinCon > 0 {
 		plan.JoinConcurrency = *joinCon
 	}
 	plan.AllowCartesianProduct = *crossJoin
-	// Call this before setting log level to make sure that TiDB info could be printed.
-	printer.PrintTiDBInfo()
-	log.SetLevelByString(cfg.LogLevel)
 
 	store := createStore()
 
@@ -137,7 +134,7 @@ func main() {
 	}
 
 	// Bootstrap a session to load information schema.
-	_, err := tidb.BootstrapSession(store)
+	_, err = tidb.BootstrapSession(store)
 	if err != nil {
 		log.Fatal(errors.ErrorStack(err))
 	}
@@ -166,6 +163,7 @@ func main() {
 
 	prometheus.MustRegister(timeJumpBackCounter)
 	go systimemon.StartMonitor(time.Now, func() {
+		log.Errorf("system time jumps backward")
 		timeJumpBackCounter.Inc()
 	})
 

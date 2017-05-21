@@ -19,10 +19,10 @@ import (
 	"sync/atomic"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/log"
 )
 
 // Test needs to change it, so it's a variable.

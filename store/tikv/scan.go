@@ -15,9 +15,9 @@ package tikv
 
 import (
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/log"
 	goctx "golang.org/x/net/context"
 )
 

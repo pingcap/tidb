@@ -20,8 +20,8 @@ import (
 	"strconv"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/log"
 )
 
 // Global error instances.

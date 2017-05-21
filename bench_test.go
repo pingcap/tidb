@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/util/log"
 )
 
 var smallCount = 100
@@ -31,7 +31,7 @@ func prepareBenchSession() Session {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.SetLevel(log.LOG_LEVEL_ERROR)
+	log.SetLevel(log.LevelError)
 	se, err := CreateSession(store)
 	if err != nil {
 		log.Fatal(err)

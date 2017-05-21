@@ -14,10 +14,10 @@
 package plan
 
 import (
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/util/log"
 )
 
 type columnPruner struct {

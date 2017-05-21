@@ -18,7 +18,6 @@ import (
 	"os"
 	"testing"
 
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/util/log"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -142,5 +142,4 @@ func testDropIndex(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblI
 func init() {
 	logLevel := os.Getenv("log_level")
 	log.SetLevelByString(logLevel)
-	log.SetFlags(log.LstdFlags | log.Lmicroseconds | log.Lshortfile)
 }

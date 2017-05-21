@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/util/log"
 )
 
 // RunInNewTxn will run the f in a new transaction environment.

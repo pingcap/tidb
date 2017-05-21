@@ -18,10 +18,10 @@ import (
 	"sync/atomic"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/util/log"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 

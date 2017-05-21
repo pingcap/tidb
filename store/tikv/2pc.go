@@ -22,12 +22,12 @@ import (
 
 	"github.com/coreos/etcd/pkg/monotime"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/log"
 	"github.com/pingcap/tipb/go-binlog"
 	goctx "golang.org/x/net/context"
 )
