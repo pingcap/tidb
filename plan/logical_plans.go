@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -76,9 +77,9 @@ type LogicalJoin struct {
 	preferMergeJoin bool
 
 	EqualConditions []*expression.ScalarFunction
-	LeftConditions  []expression.Expression
-	RightConditions []expression.Expression
-	OtherConditions []expression.Expression
+	LeftConditions  expression.CNFExprs
+	RightConditions expression.CNFExprs
+	OtherConditions expression.CNFExprs
 
 	// DefaultValues is only used for outer join, which stands for the default values when the outer table cannot find join partner
 	// instead of null padding.
@@ -256,6 +257,18 @@ type DataSource struct {
 	pushedDownConds []expression.Expression
 
 	statisticTable *statistics.Table
+}
+
+func (p *DataSource) getPKIsHandleCol() *expression.Column {
+	if !p.tableInfo.PKIsHandle {
+		return nil
+	}
+	for i, col := range p.tableInfo.Columns {
+		if mysql.HasPriKeyFlag(col.Flag) {
+			return p.schema.Columns[i]
+		}
+	}
+	return nil
 }
 
 // TableInfo returns the *TableInfo of data source.
