@@ -853,12 +853,12 @@ func (s *testSuite) TestLoadDataSpecifiedCoumns(c *C) {
 	// test
 	tests := []testCase{
 		// data1 = nil, data2 != nil
-		{nil, []byte("7\ta string\n"), []string{"1|7|a string|0"}, nil},
-		{nil, []byte("8\tstr \\t\n"), []string{"2|8|str \t|0"}, nil},
-		{nil, []byte("9\tstr \\n\n"), []string{"3|9|str \n|0"}, nil},
-		{nil, []byte("10\tboth \\t\\n\n"), []string{"4|10|both \t\n|0"}, nil},
-		{nil, []byte("11\tstr \\\\\n"), []string{"5|11|str \\|0"}, nil},
-		{nil, []byte("12\t\\r\\t\\n\\0\\Z\\b\n"), []string{"6|12|" + string([]byte{'\r', '\t', '\n', 0, 26, '\b'}) + "|0"}, nil},
+		{nil, []byte("7\ta string\n"), []string{fmt.Sprintf("%v %v %v %v", 1, 7, []byte("a string"), 0)}, nil},
+		{nil, []byte("8\tstr \\t\n"), []string{fmt.Sprintf("%v %v %v %v", 2, 8, []byte("str \t"), 0)}, nil},
+		{nil, []byte("9\tstr \\n\n"), []string{fmt.Sprintf("%v %v %v %v", 3, 9, []byte("str \n"), 0)}, nil},
+		{nil, []byte("10\tboth \\t\\n\n"), []string{fmt.Sprintf("%v %v %v %v", 4, 10, []byte("both \t\n"), 0)}, nil},
+		{nil, []byte("11\tstr \\\\\n"), []string{fmt.Sprintf("%v %v %v %v", 5, 11, []byte("str \\"), 0)}, nil},
+		{nil, []byte("12\t\\r\\t\\n\\0\\Z\\b\n"), []string{fmt.Sprintf("%v %v %v %v", 6, 12, []byte{'\r', '\t', '\n', 0, 26, '\b'}, 0)}, nil},
 	}
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
