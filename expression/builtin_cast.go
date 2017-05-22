@@ -15,6 +15,7 @@
 // XX and YY contain the following types:
 // Int, Decimal, Real, String, Time, Duration.
 // For every type, we implement 5 signatures to cast it as the other 5 types.
+// builtinCastXXAsYYSig takes a argument of type XX and returns a value of type YY.
 
 package expression
 
