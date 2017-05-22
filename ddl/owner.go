@@ -41,6 +41,7 @@ type worker struct {
 	ddlID       string
 	etcdClient  *clientv3.Client
 	etcdSession *concurrency.Session
+	cancel      goctx.CancelFunc
 }
 
 func (w *worker) isOwner() bool {
