@@ -14,7 +14,6 @@
 package privileges
 
 import (
-	"bytes"
 	"strings"
 
 	"github.com/juju/errors"
@@ -109,10 +108,10 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, auth, salt []
 		return false
 	}
 
-	sha2 := util.CheckScramble(salt, hpwd, auth)
-	if !bytes.Equal(hpwd, sha2) {
+	if !util.CheckScramble(salt, hpwd, auth) {
 		return false
 	}
+
 	p.user = user
 	p.host = host
 	return true

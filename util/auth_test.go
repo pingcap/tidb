@@ -47,8 +47,8 @@ func (s *testAuthSuite) TestCheckScramble(c *C) {
 	hpwd, err := DecodePassword(encodepwd)
 	c.Assert(err, IsNil)
 
-	sha2 := CheckScramble(salt, hpwd, auth)
-	c.Assert(sha2, DeepEquals, hpwd)
+	res := CheckScramble(salt, hpwd, auth)
+	c.Assert(res, IsTrue)
 }
 
 func (s *testAuthSuite) TestOldPasswordUpgrade(c *C) {

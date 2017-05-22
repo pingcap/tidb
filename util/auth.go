@@ -14,6 +14,7 @@
 package util
 
 import (
+	"bytes"
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
@@ -36,7 +37,7 @@ import (
 //            candidate_hash2=sha1(hash_stage1)
 //            check(candidate_hash2==hash_stage2)
 //            // this three steps are done in check_scramble()
-func CheckScramble(scramble, hpwd, auth []byte) []byte {
+func CheckScramble(scramble, hpwd, auth []byte) bool {
 	crypt := sha1.New()
 	crypt.Write(scramble)
 	crypt.Write(hpwd)
@@ -46,7 +47,7 @@ func CheckScramble(scramble, hpwd, auth []byte) []byte {
 		hash[i] ^= auth[i]
 	}
 
-	return Sha1Hash(hash)
+	return bytes.Equal(hpwd, Sha1Hash(hash))
 }
 
 // Sha1Hash is an util function to calculate sha1 hash.
