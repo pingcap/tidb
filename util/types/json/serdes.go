@@ -370,6 +370,7 @@ var jsonTypeCodeLength = map[byte]int{
 	typeCodeObject:  -1,
 	typeCodeArray:   -1,
 	typeCodeLiteral: 1,
+	typeCodeInt64:   8,
 	typeCodeDouble:  8,
 	typeCodeString:  -1,
 }
@@ -382,12 +383,14 @@ func jsonFromTypeCode(typeCode byte) JSON {
 		return new(jsonArray)
 	case typeCodeLiteral:
 		return new(jsonLiteral)
+	case typeCodeInt64:
+		return new(jsonInt64)
 	case typeCodeDouble:
 		return new(jsonDouble)
 	case typeCodeString:
 		return new(jsonString)
 	}
-	return nil
+	panic("unknown type code")
 }
 
 // Two map are equal if they have same keys and same values.

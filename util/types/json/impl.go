@@ -44,6 +44,11 @@ func normalize(in interface{}) JSON {
 	case int64:
 		return jsonInt64(t)
 	case float64:
+		// json.Unmarshal converts all number to float64,
+		// so we need convert integer back.
+		if float64(int64(t)) == t {
+			return jsonInt64(int64(t))
+		}
 		return jsonDouble(t)
 	case string:
 		return jsonString(t)
@@ -59,8 +64,9 @@ func normalize(in interface{}) JSON {
 			array[i] = normalize(elem)
 		}
 		return jsonArray(array)
+	default:
+		panic("unsupported json type")
 	}
-	return nil
 }
 
 // MarshalJSON implements RawMessage.

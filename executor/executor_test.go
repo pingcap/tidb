@@ -973,7 +973,7 @@ func (s *testSuite) TestJSON(c *C) {
 
 	// check json_type function
 	result = tk.MustQuery(`select json_type(a) from test_json tj order by tj.id`)
-	result.Check(testkit.Rows("OBJECT", "NULL", "<nil>", "BOOLEAN", "DOUBLE", "STRING"))
+	result.Check(testkit.Rows("OBJECT", "NULL", "<nil>", "BOOLEAN", "INTEGER", "STRING"))
 
 	// check json compare with primitives.
 	result = tk.MustQuery(`select a from test_json tj where a = 3`)
