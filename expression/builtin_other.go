@@ -14,8 +14,12 @@
 package expression
 
 import (
+	"strings"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -118,4 +122,139 @@ func (b *builtinRowSig) eval(row []types.Datum) (d types.Datum, err error) {
 	}
 	d.SetRow(args)
 	return
+}
+
+type setVarFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *setVarFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	err := errors.Trace(c.verifyArgs(args))
+	bt := &builtinSetVarSig{newBaseBuiltinFunc(args, ctx)}
+	bt.deterministic = false
+	return bt.setSelf(bt), errors.Trace(err)
+}
+
+type builtinSetVarSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinSetVarSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	sessionVars := b.ctx.GetSessionVars()
+	varName, _ := args[0].ToString()
+	if !args[1].IsNull() {
+		strVal, err := args[1].ToString()
+		if err != nil {
+			return types.Datum{}, errors.Trace(err)
+		}
+		sessionVars.Users[varName] = strings.ToLower(strVal)
+	}
+	return args[1], nil
+}
+
+type getVarFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *getVarFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	err := errors.Trace(c.verifyArgs(args))
+	bt := &builtinGetVarSig{newBaseBuiltinFunc(args, ctx)}
+	bt.deterministic = false
+	return bt.setSelf(bt), errors.Trace(err)
+}
+
+type builtinGetVarSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinGetVarSig) eval(row []types.Datum) (types.Datum, error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	sessionVars := b.ctx.GetSessionVars()
+	varName, _ := args[0].ToString()
+	if v, ok := sessionVars.Users[varName]; ok {
+		return types.NewDatum(v), nil
+	}
+	return types.Datum{}, nil
+}
+
+type valuesFunctionClass struct {
+	baseFunctionClass
+
+	offset int
+}
+
+func (c *valuesFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	err := errors.Trace(c.verifyArgs(args))
+	bt := &builtinValuesSig{newBaseBuiltinFunc(args, ctx), c.offset}
+	bt.deterministic = false
+	return bt.setSelf(bt), errors.Trace(err)
+}
+
+type builtinValuesSig struct {
+	baseBuiltinFunc
+
+	offset int
+}
+
+func (b *builtinValuesSig) eval(_ []types.Datum) (types.Datum, error) {
+	values := b.ctx.GetSessionVars().CurrInsertValues
+	if values == nil {
+		return types.Datum{}, errors.New("Session current insert values is nil")
+	}
+	row := values.([]types.Datum)
+	if len(row) > b.offset {
+		return row[b.offset], nil
+	}
+	return types.Datum{}, errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), b.offset)
+}
+
+type bitCountFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *bitCountFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
+	sig := &builtinBitCountSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+}
+
+type builtinBitCountSig struct {
+	baseBuiltinFunc
+}
+
+// eval evals a builtinBitCountSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/bit-functions.html#function_bit-count
+func (b *builtinBitCountSig) eval(row []types.Datum) (d types.Datum, err error) {
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	arg := args[0]
+	if arg.IsNull() {
+		return d, nil
+	}
+	sc := new(variable.StatementContext)
+	sc.IgnoreTruncate = true
+	bin, err := arg.ToInt64(sc)
+	if err != nil {
+		if terror.ErrorEqual(err, types.ErrOverflow) {
+			d.SetInt64(64)
+			return d, nil
+
+		}
+		return d, errors.Trace(err)
+	}
+	var count int64
+	for bin != 0 {
+		count++
+		bin = (bin - 1) & bin
+	}
+	d.SetInt64(count)
+	return d, nil
 }
