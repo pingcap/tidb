@@ -879,7 +879,10 @@ var MySQLErrName = map[uint16]string{
 	ErrAlterOperationNotSupportedReasonNotNull:               "cannot silently convert NULL values, as required in this SQLMODE",
 	ErrMustChangePasswordLogin:                               "Your password has expired. To log in you must change it using a client that supports expired passwords.",
 	ErrRowInWrongPartition:                                   "Found a row in wrong partition %s",
+	ErrNonDefaultValueForGeneratedColumn:                     "The value specified for generated column '%s' in table '%s' is not allowed.",
+	ErrDependentByGeneratedColumn:                            "Column '%s' has a generated column dependency.",
 	ErrInvalidJSONText:                                       "Invalid JSON text: %-.192s",
 	ErrInvalidJSONPath:                                       "Invalid JSON path expression",
 	ErrInvalidJSONData:                                       "Invalid data type for JSON data",
+	ErrJSONUsedAsKey:                                         "JSON column '%-.192s' cannot be used in key specification.",
 }
