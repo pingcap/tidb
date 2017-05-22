@@ -19,6 +19,7 @@ package ddl
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -35,6 +36,10 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
+)
+
+var (
+	reBlank = regexp.MustCompile(`\s`)
 )
 
 func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
@@ -308,6 +313,9 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 				if err != nil {
 					return nil, nil, errors.Trace(err)
 				}
+			case ast.ColumnOptionGenerated:
+				col.GeneratedExprString = reBlank.ReplaceAllString(v.Expr.Text(), "")
+				// TODO binary encode expr.
 			case ast.ColumnOptionFulltext:
 				// TODO: Support this type.
 			}

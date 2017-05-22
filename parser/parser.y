@@ -1297,7 +1297,11 @@ ColumnOption:
 	}
 |	GeneratedAlways "AS" '(' Expression ')' VirtualOrStored
 	{
-		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionVirtual, Expr:$4.(ast.ExprNode)}
+		startOffset := parser.startOffset(&yyS[yypt-2])
+		endOffset := parser.endOffset(&yyS[yypt-1])
+		expr := $4.(ast.ExprNode)
+		expr.SetText(parser.src[startOffset:endOffset])
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionGenerated, Expr:expr}
 	}
 
 GeneratedAlways: | "GENERATED" "ALWAYS"
