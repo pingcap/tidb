@@ -71,6 +71,14 @@ func jsonAsFloat64(j JSON) float64 {
 	}
 }
 
+func jsonAsString(j JSON) string {
+	if reflect.TypeOf(j).Kind() == reflect.Ptr {
+		return string(*j.(*jsonString))
+	} else {
+		return string(j.(jsonString))
+	}
+}
+
 // CompareJSON compares two json object.
 func CompareJSON(j1 JSON, j2 JSON) (cmp int, err error) {
 	precedence1 := jsonTypePrecedences[j1.Type()]
@@ -83,24 +91,26 @@ func CompareJSON(j1 JSON, j2 JSON) (cmp int, err error) {
 		}
 		switch x := j1.(type) {
 		case jsonLiteral:
-			y := *j2.(*jsonLiteral)
 			// false is less than true.
-			cmp = int(y) - int(x)
+			left := int(x)
+			right := int(j2.(jsonLiteral))
+			cmp = left - right
 		case jsonInt64, jsonDouble:
 			left := jsonAsFloat64(j1)
 			right := jsonAsFloat64(j2)
 			cmp = compareFloat64PrecisionLoss(left, right)
 		case jsonString:
-			y := *j2.(*jsonString)
-			cmp = strings.Compare(string(x), string(y))
+			left := jsonAsString(j1)
+			right := jsonAsString(j2)
+			cmp = strings.Compare(left, right)
 		case jsonArray:
-			y := *j2.(*jsonArray)
+			y := j2.(jsonArray)
 			for i := 0; i < len(x) && i < len(y); i++ {
 				elem1 := x[i]
 				elem2 := y[i]
 				cmp, _ = CompareJSON(elem1, elem2)
 				if cmp != 0 {
-					break
+					return
 				}
 			}
 			cmp = len(x) - len(y)
@@ -114,6 +124,8 @@ func CompareJSON(j1 JSON, j2 JSON) (cmp int, err error) {
 			cmp = 0
 		}
 	} else if (precedence1 == -7 && precedence2 == -11) || (precedence1 == -11 && precedence2 == -7) {
+		// tidb treat boolean as integer, but boolean is different from integer in JSON.
+		// so we need convert them to same type and then compare.
 		var x, y float64
 		if precedence1 == -7 {
 			x = float64(j1.(jsonLiteral))
