@@ -1142,8 +1142,7 @@ func (s *testDBSuite) TestChangeColumnPosition(c *C) {
 	s.tk.MustQuery("select * from position").Check(testkit.Rows("TiDB 2 3.14 1"))
 	s.tk.MustExec("alter table position modify column c double first")
 	s.tk.MustQuery("select * from position").Check(testkit.Rows("3.14 TiDB 2 1"))
-	_, err := s.tk.Exec("alter table position modify column b int after b")
-	c.Assert(err, NotNil)
+	s.testErrorCode(c, "alter table position modify column b int after b", tmysql.ErrBadField)
 
 	s.tk.MustExec("drop table position")
 	s.tk.MustExec("create table position (a int, b int)")
@@ -1154,8 +1153,7 @@ func (s *testDBSuite) TestChangeColumnPosition(c *C) {
 
 	s.tk.MustExec("alter table position change column b c int first")
 	s.tk.MustQuery("select * from position where c = 3").Check(testkit.Rows("3 5"))
-	_, err = s.tk.Exec("alter table position change column c b int after c")
-	c.Assert(err, NotNil)
+	s.testErrorCode(c, "alter table position change column c b int after c", tmysql.ErrBadField)
 
 	s.tk.MustExec("drop table position")
 	s.tk.MustExec("create table position (a int default 2)")
