@@ -19,6 +19,19 @@
 		Aggregation
 		TopN
 		Limit
+		Expr
+		ByItem
+		TableInfo
+		ColumnInfo
+		IndexInfo
+		KeyRange
+		SelectRequest
+		Row
+		Error
+		SelectResponse
+		Chunk
+		RowMeta
+		DAGRequest
 */
 package tipb
 
@@ -26,16 +39,22 @@ import (
 	"fmt"
 
 	proto "github.com/golang/protobuf/proto"
+
+	math "math"
+
+	io "io"
 )
-import math "math"
-
-// discarding unused import gogoproto "gogoproto"
-
-import io "io"
 
 // Reference imports to suppress errors if they are not otherwise used.
 var _ = proto.Marshal
+var _ = fmt.Errorf
 var _ = math.Inf
+
+// This is a compile-time assertion to ensure that this generated file
+// is compatible with the proto package it is being compiled against.
+// A compilation error at this line likely means your copy of the
+// proto package needs to be updated.
+const _ = proto.ProtoPackageIsVersion2 // please upgrade the proto package
 
 type ExecType int32
 
@@ -81,12 +100,13 @@ func (x *ExecType) UnmarshalJSON(data []byte) error {
 	*x = ExecType(value)
 	return nil
 }
+func (ExecType) EnumDescriptor() ([]byte, []int) { return fileDescriptorExecutor, []int{0} }
 
 // It represents a Executor.
 type Executor struct {
 	Tp               ExecType     `protobuf:"varint,1,opt,name=tp,enum=tipb.ExecType" json:"tp"`
-	TblScan          *TableScan   `protobuf:"bytes,2,opt,name=tbl_scan" json:"tbl_scan,omitempty"`
-	IdxScan          *IndexScan   `protobuf:"bytes,3,opt,name=idx_scan" json:"idx_scan,omitempty"`
+	TblScan          *TableScan   `protobuf:"bytes,2,opt,name=tbl_scan,json=tblScan" json:"tbl_scan,omitempty"`
+	IdxScan          *IndexScan   `protobuf:"bytes,3,opt,name=idx_scan,json=idxScan" json:"idx_scan,omitempty"`
 	Selection        *Selection   `protobuf:"bytes,4,opt,name=selection" json:"selection,omitempty"`
 	Aggregation      *Aggregation `protobuf:"bytes,5,opt,name=aggregation" json:"aggregation,omitempty"`
 	TopN             *TopN        `protobuf:"bytes,6,opt,name=topN" json:"topN,omitempty"`
@@ -94,9 +114,10 @@ type Executor struct {
 	XXX_unrecognized []byte       `json:"-"`
 }
 
-func (m *Executor) Reset()         { *m = Executor{} }
-func (m *Executor) String() string { return proto.CompactTextString(m) }
-func (*Executor) ProtoMessage()    {}
+func (m *Executor) Reset()                    { *m = Executor{} }
+func (m *Executor) String() string            { return proto.CompactTextString(m) }
+func (*Executor) ProtoMessage()               {}
+func (*Executor) Descriptor() ([]byte, []int) { return fileDescriptorExecutor, []int{0} }
 
 func (m *Executor) GetTp() ExecType {
 	if m != nil {
@@ -148,15 +169,16 @@ func (m *Executor) GetLimit() *Limit {
 }
 
 type TableScan struct {
-	TableId          int64         `protobuf:"varint,1,opt,name=table_id" json:"table_id"`
+	TableId          int64         `protobuf:"varint,1,opt,name=table_id,json=tableId" json:"table_id"`
 	Columns          []*ColumnInfo `protobuf:"bytes,2,rep,name=columns" json:"columns,omitempty"`
 	Desc             bool          `protobuf:"varint,3,opt,name=desc" json:"desc"`
 	XXX_unrecognized []byte        `json:"-"`
 }
 
-func (m *TableScan) Reset()         { *m = TableScan{} }
-func (m *TableScan) String() string { return proto.CompactTextString(m) }
-func (*TableScan) ProtoMessage()    {}
+func (m *TableScan) Reset()                    { *m = TableScan{} }
+func (m *TableScan) String() string            { return proto.CompactTextString(m) }
+func (*TableScan) ProtoMessage()               {}
+func (*TableScan) Descriptor() ([]byte, []int) { return fileDescriptorExecutor, []int{1} }
 
 func (m *TableScan) GetTableId() int64 {
 	if m != nil {
@@ -180,16 +202,17 @@ func (m *TableScan) GetDesc() bool {
 }
 
 type IndexScan struct {
-	TableId          int64         `protobuf:"varint,1,opt,name=table_id" json:"table_id"`
-	IndexId          int64         `protobuf:"varint,2,opt,name=index_id" json:"index_id"`
+	TableId          int64         `protobuf:"varint,1,opt,name=table_id,json=tableId" json:"table_id"`
+	IndexId          int64         `protobuf:"varint,2,opt,name=index_id,json=indexId" json:"index_id"`
 	Columns          []*ColumnInfo `protobuf:"bytes,3,rep,name=columns" json:"columns,omitempty"`
 	Desc             bool          `protobuf:"varint,4,opt,name=desc" json:"desc"`
 	XXX_unrecognized []byte        `json:"-"`
 }
 
-func (m *IndexScan) Reset()         { *m = IndexScan{} }
-func (m *IndexScan) String() string { return proto.CompactTextString(m) }
-func (*IndexScan) ProtoMessage()    {}
+func (m *IndexScan) Reset()                    { *m = IndexScan{} }
+func (m *IndexScan) String() string            { return proto.CompactTextString(m) }
+func (*IndexScan) ProtoMessage()               {}
+func (*IndexScan) Descriptor() ([]byte, []int) { return fileDescriptorExecutor, []int{2} }
 
 func (m *IndexScan) GetTableId() int64 {
 	if m != nil {
@@ -225,9 +248,10 @@ type Selection struct {
 	XXX_unrecognized []byte  `json:"-"`
 }
 
-func (m *Selection) Reset()         { *m = Selection{} }
-func (m *Selection) String() string { return proto.CompactTextString(m) }
-func (*Selection) ProtoMessage()    {}
+func (m *Selection) Reset()                    { *m = Selection{} }
+func (m *Selection) String() string            { return proto.CompactTextString(m) }
+func (*Selection) ProtoMessage()               {}
+func (*Selection) Descriptor() ([]byte, []int) { return fileDescriptorExecutor, []int{3} }
 
 func (m *Selection) GetConditions() []*Expr {
 	if m != nil {
@@ -238,15 +262,16 @@ func (m *Selection) GetConditions() []*Expr {
 
 type Aggregation struct {
 	// Group by clause.
-	GroupBy []*Expr `protobuf:"bytes,1,rep,name=group_by" json:"group_by,omitempty"`
+	GroupBy []*Expr `protobuf:"bytes,1,rep,name=group_by,json=groupBy" json:"group_by,omitempty"`
 	// Aggregate functions.
-	AggFunc          []*Expr `protobuf:"bytes,2,rep,name=agg_func" json:"agg_func,omitempty"`
+	AggFunc          []*Expr `protobuf:"bytes,2,rep,name=agg_func,json=aggFunc" json:"agg_func,omitempty"`
 	XXX_unrecognized []byte  `json:"-"`
 }
 
-func (m *Aggregation) Reset()         { *m = Aggregation{} }
-func (m *Aggregation) String() string { return proto.CompactTextString(m) }
-func (*Aggregation) ProtoMessage()    {}
+func (m *Aggregation) Reset()                    { *m = Aggregation{} }
+func (m *Aggregation) String() string            { return proto.CompactTextString(m) }
+func (*Aggregation) ProtoMessage()               {}
+func (*Aggregation) Descriptor() ([]byte, []int) { return fileDescriptorExecutor, []int{4} }
 
 func (m *Aggregation) GetGroupBy() []*Expr {
 	if m != nil {
@@ -264,14 +289,15 @@ func (m *Aggregation) GetAggFunc() []*Expr {
 
 type TopN struct {
 	// Order by clause.
-	OrderBy          []*ByItem `protobuf:"bytes,1,rep,name=order_by" json:"order_by,omitempty"`
+	OrderBy          []*ByItem `protobuf:"bytes,1,rep,name=order_by,json=orderBy" json:"order_by,omitempty"`
 	Limit            uint64    `protobuf:"varint,2,opt,name=limit" json:"limit"`
 	XXX_unrecognized []byte    `json:"-"`
 }
 
-func (m *TopN) Reset()         { *m = TopN{} }
-func (m *TopN) String() string { return proto.CompactTextString(m) }
-func (*TopN) ProtoMessage()    {}
+func (m *TopN) Reset()                    { *m = TopN{} }
+func (m *TopN) String() string            { return proto.CompactTextString(m) }
+func (*TopN) ProtoMessage()               {}
+func (*TopN) Descriptor() ([]byte, []int) { return fileDescriptorExecutor, []int{5} }
 
 func (m *TopN) GetOrderBy() []*ByItem {
 	if m != nil {
@@ -293,9 +319,10 @@ type Limit struct {
 	XXX_unrecognized []byte `json:"-"`
 }
 
-func (m *Limit) Reset()         { *m = Limit{} }
-func (m *Limit) String() string { return proto.CompactTextString(m) }
-func (*Limit) ProtoMessage()    {}
+func (m *Limit) Reset()                    { *m = Limit{} }
+func (m *Limit) String() string            { return proto.CompactTextString(m) }
+func (*Limit) ProtoMessage()               {}
+func (*Limit) Descriptor() ([]byte, []int) { return fileDescriptorExecutor, []int{6} }
 
 func (m *Limit) GetLimit() uint64 {
 	if m != nil {
@@ -305,204 +332,211 @@ func (m *Limit) GetLimit() uint64 {
 }
 
 func init() {
+	proto.RegisterType((*Executor)(nil), "tipb.Executor")
+	proto.RegisterType((*TableScan)(nil), "tipb.TableScan")
+	proto.RegisterType((*IndexScan)(nil), "tipb.IndexScan")
+	proto.RegisterType((*Selection)(nil), "tipb.Selection")
+	proto.RegisterType((*Aggregation)(nil), "tipb.Aggregation")
+	proto.RegisterType((*TopN)(nil), "tipb.TopN")
+	proto.RegisterType((*Limit)(nil), "tipb.Limit")
 	proto.RegisterEnum("tipb.ExecType", ExecType_name, ExecType_value)
 }
-func (m *Executor) Marshal() (data []byte, err error) {
+func (m *Executor) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
-	data = make([]byte, size)
-	n, err := m.MarshalTo(data)
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
 	if err != nil {
 		return nil, err
 	}
-	return data[:n], nil
+	return dAtA[:n], nil
 }
 
-func (m *Executor) MarshalTo(data []byte) (int, error) {
+func (m *Executor) MarshalTo(dAtA []byte) (int, error) {
 	var i int
 	_ = i
 	var l int
 	_ = l
-	data[i] = 0x8
+	dAtA[i] = 0x8
 	i++
-	i = encodeVarintExecutor(data, i, uint64(m.Tp))
+	i = encodeVarintExecutor(dAtA, i, uint64(m.Tp))
 	if m.TblScan != nil {
-		data[i] = 0x12
+		dAtA[i] = 0x12
 		i++
-		i = encodeVarintExecutor(data, i, uint64(m.TblScan.Size()))
-		n1, err := m.TblScan.MarshalTo(data[i:])
+		i = encodeVarintExecutor(dAtA, i, uint64(m.TblScan.Size()))
+		n1, err := m.TblScan.MarshalTo(dAtA[i:])
 		if err != nil {
 			return 0, err
 		}
 		i += n1
 	}
 	if m.IdxScan != nil {
-		data[i] = 0x1a
+		dAtA[i] = 0x1a
 		i++
-		i = encodeVarintExecutor(data, i, uint64(m.IdxScan.Size()))
-		n2, err := m.IdxScan.MarshalTo(data[i:])
+		i = encodeVarintExecutor(dAtA, i, uint64(m.IdxScan.Size()))
+		n2, err := m.IdxScan.MarshalTo(dAtA[i:])
 		if err != nil {
 			return 0, err
 		}
 		i += n2
 	}
 	if m.Selection != nil {
-		data[i] = 0x22
+		dAtA[i] = 0x22
 		i++
-		i = encodeVarintExecutor(data, i, uint64(m.Selection.Size()))
-		n3, err := m.Selection.MarshalTo(data[i:])
+		i = encodeVarintExecutor(dAtA, i, uint64(m.Selection.Size()))
+		n3, err := m.Selection.MarshalTo(dAtA[i:])
 		if err != nil {
 			return 0, err
 		}
 		i += n3
 	}
 	if m.Aggregation != nil {
-		data[i] = 0x2a
+		dAtA[i] = 0x2a
 		i++
-		i = encodeVarintExecutor(data, i, uint64(m.Aggregation.Size()))
-		n4, err := m.Aggregation.MarshalTo(data[i:])
+		i = encodeVarintExecutor(dAtA, i, uint64(m.Aggregation.Size()))
+		n4, err := m.Aggregation.MarshalTo(dAtA[i:])
 		if err != nil {
 			return 0, err
 		}
 		i += n4
 	}
 	if m.TopN != nil {
-		data[i] = 0x32
+		dAtA[i] = 0x32
 		i++
-		i = encodeVarintExecutor(data, i, uint64(m.TopN.Size()))
-		n5, err := m.TopN.MarshalTo(data[i:])
+		i = encodeVarintExecutor(dAtA, i, uint64(m.TopN.Size()))
+		n5, err := m.TopN.MarshalTo(dAtA[i:])
 		if err != nil {
 			return 0, err
 		}
 		i += n5
 	}
 	if m.Limit != nil {
-		data[i] = 0x3a
+		dAtA[i] = 0x3a
 		i++
-		i = encodeVarintExecutor(data, i, uint64(m.Limit.Size()))
-		n6, err := m.Limit.MarshalTo(data[i:])
+		i = encodeVarintExecutor(dAtA, i, uint64(m.Limit.Size()))
+		n6, err := m.Limit.MarshalTo(dAtA[i:])
 		if err != nil {
 			return 0, err
 		}
 		i += n6
 	}
 	if m.XXX_unrecognized != nil {
-		i += copy(data[i:], m.XXX_unrecognized)
+		i += copy(dAtA[i:], m.XXX_unrecognized)
 	}
 	return i, nil
 }
 
-func (m *TableScan) Marshal() (data []byte, err error) {
+func (m *TableScan) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
-	data = make([]byte, size)
-	n, err := m.MarshalTo(data)
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
 	if err != nil {
 		return nil, err
 	}
-	return data[:n], nil
+	return dAtA[:n], nil
 }
 
-func (m *TableScan) MarshalTo(data []byte) (int, error) {
+func (m *TableScan) MarshalTo(dAtA []byte) (int, error) {
 	var i int
 	_ = i
 	var l int
 	_ = l
-	data[i] = 0x8
+	dAtA[i] = 0x8
 	i++
-	i = encodeVarintExecutor(data, i, uint64(m.TableId))
+	i = encodeVarintExecutor(dAtA, i, uint64(m.TableId))
 	if len(m.Columns) > 0 {
 		for _, msg := range m.Columns {
-			data[i] = 0x12
+			dAtA[i] = 0x12
 			i++
-			i = encodeVarintExecutor(data, i, uint64(msg.Size()))
-			n, err := msg.MarshalTo(data[i:])
+			i = encodeVarintExecutor(dAtA, i, uint64(msg.Size()))
+			n, err := msg.MarshalTo(dAtA[i:])
 			if err != nil {
 				return 0, err
 			}
 			i += n
 		}
 	}
-	data[i] = 0x18
+	dAtA[i] = 0x18
 	i++
 	if m.Desc {
-		data[i] = 1
+		dAtA[i] = 1
 	} else {
-		data[i] = 0
+		dAtA[i] = 0
 	}
 	i++
 	if m.XXX_unrecognized != nil {
-		i += copy(data[i:], m.XXX_unrecognized)
+		i += copy(dAtA[i:], m.XXX_unrecognized)
 	}
 	return i, nil
 }
 
-func (m *IndexScan) Marshal() (data []byte, err error) {
+func (m *IndexScan) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
-	data = make([]byte, size)
-	n, err := m.MarshalTo(data)
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
 	if err != nil {
 		return nil, err
 	}
-	return data[:n], nil
+	return dAtA[:n], nil
 }
 
-func (m *IndexScan) MarshalTo(data []byte) (int, error) {
+func (m *IndexScan) MarshalTo(dAtA []byte) (int, error) {
 	var i int
 	_ = i
 	var l int
 	_ = l
-	data[i] = 0x8
+	dAtA[i] = 0x8
 	i++
-	i = encodeVarintExecutor(data, i, uint64(m.TableId))
-	data[i] = 0x10
+	i = encodeVarintExecutor(dAtA, i, uint64(m.TableId))
+	dAtA[i] = 0x10
 	i++
-	i = encodeVarintExecutor(data, i, uint64(m.IndexId))
+	i = encodeVarintExecutor(dAtA, i, uint64(m.IndexId))
 	if len(m.Columns) > 0 {
 		for _, msg := range m.Columns {
-			data[i] = 0x1a
+			dAtA[i] = 0x1a
 			i++
-			i = encodeVarintExecutor(data, i, uint64(msg.Size()))
-			n, err := msg.MarshalTo(data[i:])
+			i = encodeVarintExecutor(dAtA, i, uint64(msg.Size()))
+			n, err := msg.MarshalTo(dAtA[i:])
 			if err != nil {
 				return 0, err
 			}
 			i += n
 		}
 	}
-	data[i] = 0x20
+	dAtA[i] = 0x20
 	i++
 	if m.Desc {
-		data[i] = 1
+		dAtA[i] = 1
 	} else {
-		data[i] = 0
+		dAtA[i] = 0
 	}
 	i++
 	if m.XXX_unrecognized != nil {
-		i += copy(data[i:], m.XXX_unrecognized)
+		i += copy(dAtA[i:], m.XXX_unrecognized)
 	}
 	return i, nil
 }
 
-func (m *Selection) Marshal() (data []byte, err error) {
+func (m *Selection) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
-	data = make([]byte, size)
-	n, err := m.MarshalTo(data)
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
 	if err != nil {
 		return nil, err
 	}
-	return data[:n], nil
+	return dAtA[:n], nil
 }
 
-func (m *Selection) MarshalTo(data []byte) (int, error) {
+func (m *Selection) MarshalTo(dAtA []byte) (int, error) {
 	var i int
 	_ = i
 	var l int
 	_ = l
 	if len(m.Conditions) > 0 {
 		for _, msg := range m.Conditions {
-			data[i] = 0xa
+			dAtA[i] = 0xa
 			i++
-			i = encodeVarintExecutor(data, i, uint64(msg.Size()))
-			n, err := msg.MarshalTo(data[i:])
+			i = encodeVarintExecutor(dAtA, i, uint64(msg.Size()))
+			n, err := msg.MarshalTo(dAtA[i:])
 			if err != nil {
 				return 0, err
 			}
@@ -510,32 +544,32 @@ func (m *Selection) MarshalTo(data []byte) (int, error) {
 		}
 	}
 	if m.XXX_unrecognized != nil {
-		i += copy(data[i:], m.XXX_unrecognized)
+		i += copy(dAtA[i:], m.XXX_unrecognized)
 	}
 	return i, nil
 }
 
-func (m *Aggregation) Marshal() (data []byte, err error) {
+func (m *Aggregation) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
-	data = make([]byte, size)
-	n, err := m.MarshalTo(data)
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
 	if err != nil {
 		return nil, err
 	}
-	return data[:n], nil
+	return dAtA[:n], nil
 }
 
-func (m *Aggregation) MarshalTo(data []byte) (int, error) {
+func (m *Aggregation) MarshalTo(dAtA []byte) (int, error) {
 	var i int
 	_ = i
 	var l int
 	_ = l
 	if len(m.GroupBy) > 0 {
 		for _, msg := range m.GroupBy {
-			data[i] = 0xa
+			dAtA[i] = 0xa
 			i++
-			i = encodeVarintExecutor(data, i, uint64(msg.Size()))
-			n, err := msg.MarshalTo(data[i:])
+			i = encodeVarintExecutor(dAtA, i, uint64(msg.Size()))
+			n, err := msg.MarshalTo(dAtA[i:])
 			if err != nil {
 				return 0, err
 			}
@@ -544,10 +578,10 @@ func (m *Aggregation) MarshalTo(data []byte) (int, error) {
 	}
 	if len(m.AggFunc) > 0 {
 		for _, msg := range m.AggFunc {
-			data[i] = 0x12
+			dAtA[i] = 0x12
 			i++
-			i = encodeVarintExecutor(data, i, uint64(msg.Size()))
-			n, err := msg.MarshalTo(data[i:])
+			i = encodeVarintExecutor(dAtA, i, uint64(msg.Size()))
+			n, err := msg.MarshalTo(dAtA[i:])
 			if err != nil {
 				return 0, err
 			}
@@ -555,96 +589,96 @@ func (m *Aggregation) MarshalTo(data []byte) (int, error) {
 		}
 	}
 	if m.XXX_unrecognized != nil {
-		i += copy(data[i:], m.XXX_unrecognized)
+		i += copy(dAtA[i:], m.XXX_unrecognized)
 	}
 	return i, nil
 }
 
-func (m *TopN) Marshal() (data []byte, err error) {
+func (m *TopN) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
-	data = make([]byte, size)
-	n, err := m.MarshalTo(data)
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
 	if err != nil {
 		return nil, err
 	}
-	return data[:n], nil
+	return dAtA[:n], nil
 }
 
-func (m *TopN) MarshalTo(data []byte) (int, error) {
+func (m *TopN) MarshalTo(dAtA []byte) (int, error) {
 	var i int
 	_ = i
 	var l int
 	_ = l
 	if len(m.OrderBy) > 0 {
 		for _, msg := range m.OrderBy {
-			data[i] = 0xa
+			dAtA[i] = 0xa
 			i++
-			i = encodeVarintExecutor(data, i, uint64(msg.Size()))
-			n, err := msg.MarshalTo(data[i:])
+			i = encodeVarintExecutor(dAtA, i, uint64(msg.Size()))
+			n, err := msg.MarshalTo(dAtA[i:])
 			if err != nil {
 				return 0, err
 			}
 			i += n
 		}
 	}
-	data[i] = 0x10
+	dAtA[i] = 0x10
 	i++
-	i = encodeVarintExecutor(data, i, uint64(m.Limit))
+	i = encodeVarintExecutor(dAtA, i, uint64(m.Limit))
 	if m.XXX_unrecognized != nil {
-		i += copy(data[i:], m.XXX_unrecognized)
+		i += copy(dAtA[i:], m.XXX_unrecognized)
 	}
 	return i, nil
 }
 
-func (m *Limit) Marshal() (data []byte, err error) {
+func (m *Limit) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
-	data = make([]byte, size)
-	n, err := m.MarshalTo(data)
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
 	if err != nil {
 		return nil, err
 	}
-	return data[:n], nil
+	return dAtA[:n], nil
 }
 
-func (m *Limit) MarshalTo(data []byte) (int, error) {
+func (m *Limit) MarshalTo(dAtA []byte) (int, error) {
 	var i int
 	_ = i
 	var l int
 	_ = l
-	data[i] = 0x8
+	dAtA[i] = 0x8
 	i++
-	i = encodeVarintExecutor(data, i, uint64(m.Limit))
+	i = encodeVarintExecutor(dAtA, i, uint64(m.Limit))
 	if m.XXX_unrecognized != nil {
-		i += copy(data[i:], m.XXX_unrecognized)
+		i += copy(dAtA[i:], m.XXX_unrecognized)
 	}
 	return i, nil
 }
 
-func encodeFixed64Executor(data []byte, offset int, v uint64) int {
-	data[offset] = uint8(v)
-	data[offset+1] = uint8(v >> 8)
-	data[offset+2] = uint8(v >> 16)
-	data[offset+3] = uint8(v >> 24)
-	data[offset+4] = uint8(v >> 32)
-	data[offset+5] = uint8(v >> 40)
-	data[offset+6] = uint8(v >> 48)
-	data[offset+7] = uint8(v >> 56)
+func encodeFixed64Executor(dAtA []byte, offset int, v uint64) int {
+	dAtA[offset] = uint8(v)
+	dAtA[offset+1] = uint8(v >> 8)
+	dAtA[offset+2] = uint8(v >> 16)
+	dAtA[offset+3] = uint8(v >> 24)
+	dAtA[offset+4] = uint8(v >> 32)
+	dAtA[offset+5] = uint8(v >> 40)
+	dAtA[offset+6] = uint8(v >> 48)
+	dAtA[offset+7] = uint8(v >> 56)
 	return offset + 8
 }
-func encodeFixed32Executor(data []byte, offset int, v uint32) int {
-	data[offset] = uint8(v)
-	data[offset+1] = uint8(v >> 8)
-	data[offset+2] = uint8(v >> 16)
-	data[offset+3] = uint8(v >> 24)
+func encodeFixed32Executor(dAtA []byte, offset int, v uint32) int {
+	dAtA[offset] = uint8(v)
+	dAtA[offset+1] = uint8(v >> 8)
+	dAtA[offset+2] = uint8(v >> 16)
+	dAtA[offset+3] = uint8(v >> 24)
 	return offset + 4
 }
-func encodeVarintExecutor(data []byte, offset int, v uint64) int {
+func encodeVarintExecutor(dAtA []byte, offset int, v uint64) int {
 	for v >= 1<<7 {
-		data[offset] = uint8(v&0x7f | 0x80)
+		dAtA[offset] = uint8(v&0x7f | 0x80)
 		v >>= 7
 		offset++
 	}
-	data[offset] = uint8(v)
+	dAtA[offset] = uint8(v)
 	return offset + 1
 }
 func (m *Executor) Size() (n int) {
@@ -791,16 +825,20 @@ func sovExecutor(x uint64) (n int) {
 func sozExecutor(x uint64) (n int) {
 	return sovExecutor(uint64((x << 1) ^ uint64((int64(x) >> 63))))
 }
-func (m *Executor) Unmarshal(data []byte) error {
-	l := len(data)
+func (m *Executor) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
+		preIndex := iNdEx
 		var wire uint64
 		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowExecutor
+			}
 			if iNdEx >= l {
 				return io.ErrUnexpectedEOF
 			}
-			b := data[iNdEx]
+			b := dAtA[iNdEx]
 			iNdEx++
 			wire |= (uint64(b) & 0x7F) << shift
 			if b < 0x80 {
@@ -809,6 +847,12 @@ func (m *Executor) Unmarshal(data []byte) error {
 		}
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: Executor: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: Executor: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
 		switch fieldNum {
 		case 1:
 			if wireType != 0 {
@@ -816,10 +860,13 @@ func (m *Executor) Unmarshal(data []byte) error {
 			}
 			m.Tp = 0
 			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowExecutor
+				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				m.Tp |= (ExecType(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -832,27 +879,30 @@ func (m *Executor) Unmarshal(data []byte) error {
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowExecutor
+				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				msglen |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			postIndex := iNdEx + msglen
 			if msglen < 0 {
 				return ErrInvalidLengthExecutor
 			}
+			postIndex := iNdEx + msglen
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
 			if m.TblScan == nil {
 				m.TblScan = &TableScan{}
 			}
-			if err := m.TblScan.Unmarshal(data[iNdEx:postIndex]); err != nil {
+			if err := m.TblScan.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -862,27 +912,30 @@ func (m *Executor) Unmarshal(data []byte) error {
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowExecutor
+				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				msglen |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			postIndex := iNdEx + msglen
 			if msglen < 0 {
 				return ErrInvalidLengthExecutor
 			}
+			postIndex := iNdEx + msglen
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
 			if m.IdxScan == nil {
 				m.IdxScan = &IndexScan{}
 			}
-			if err := m.IdxScan.Unmarshal(data[iNdEx:postIndex]); err != nil {
+			if err := m.IdxScan.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -892,27 +945,30 @@ func (m *Executor) Unmarshal(data []byte) error {
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowExecutor
+				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				msglen |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			postIndex := iNdEx + msglen
 			if msglen < 0 {
 				return ErrInvalidLengthExecutor
 			}
+			postIndex := iNdEx + msglen
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
 			if m.Selection == nil {
 				m.Selection = &Selection{}
 			}
-			if err := m.Selection.Unmarshal(data[iNdEx:postIndex]); err != nil {
+			if err := m.Selection.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -922,27 +978,30 @@ func (m *Executor) Unmarshal(data []byte) error {
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowExecutor
+				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				msglen |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			postIndex := iNdEx + msglen
 			if msglen < 0 {
 				return ErrInvalidLengthExecutor
 			}
+			postIndex := iNdEx + msglen
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
 			if m.Aggregation == nil {
 				m.Aggregation = &Aggregation{}
 			}
-			if err := m.Aggregation.Unmarshal(data[iNdEx:postIndex]); err != nil {
+			if err := m.Aggregation.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -952,27 +1011,30 @@ func (m *Executor) Unmarshal(data []byte) error {
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowExecutor
+				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				msglen |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			postIndex := iNdEx + msglen
 			if msglen < 0 {
 				return ErrInvalidLengthExecutor
 			}
+			postIndex := iNdEx + msglen
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
 			if m.TopN == nil {
 				m.TopN = &TopN{}
 			}
-			if err := m.TopN.Unmarshal(data[iNdEx:postIndex]); err != nil {
+			if err := m.TopN.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -982,41 +1044,36 @@ func (m *Executor) Unmarshal(data []byte) error {
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowExecutor
+				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				msglen |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			postIndex := iNdEx + msglen
 			if msglen < 0 {
 				return ErrInvalidLengthExecutor
 			}
+			postIndex := iNdEx + msglen
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
 			if m.Limit == nil {
 				m.Limit = &Limit{}
 			}
-			if err := m.Limit.Unmarshal(data[iNdEx:postIndex]); err != nil {
+			if err := m.Limit.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
 		default:
-			var sizeOfWire int
-			for {
-				sizeOfWire++
-				wire >>= 7
-				if wire == 0 {
-					break
-				}
-			}
-			iNdEx -= sizeOfWire
-			skippy, err := skipExecutor(data[iNdEx:])
+			iNdEx = preIndex
+			skippy, err := skipExecutor(dAtA[iNdEx:])
 			if err != nil {
 				return err
 			}
@@ -1026,23 +1083,30 @@ func (m *Executor) Unmarshal(data []byte) error {
 			if (iNdEx + skippy) > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.XXX_unrecognized = append(m.XXX_unrecognized, data[iNdEx:iNdEx+skippy]...)
+			m.XXX_unrecognized = append(m.XXX_unrecognized, dAtA[iNdEx:iNdEx+skippy]...)
 			iNdEx += skippy
 		}
 	}
 
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
 	return nil
 }
-func (m *TableScan) Unmarshal(data []byte) error {
-	l := len(data)
+func (m *TableScan) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
+		preIndex := iNdEx
 		var wire uint64
 		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowExecutor
+			}
 			if iNdEx >= l {
 				return io.ErrUnexpectedEOF
 			}
-			b := data[iNdEx]
+			b := dAtA[iNdEx]
 			iNdEx++
 			wire |= (uint64(b) & 0x7F) << shift
 			if b < 0x80 {
@@ -1051,6 +1115,12 @@ func (m *TableScan) Unmarshal(data []byte) error {
 		}
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: TableScan: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: TableScan: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
 		switch fieldNum {
 		case 1:
 			if wireType != 0 {
@@ -1058,10 +1128,13 @@ func (m *TableScan) Unmarshal(data []byte) error {
 			}
 			m.TableId = 0
 			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowExecutor
+				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				m.TableId |= (int64(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -1074,25 +1147,28 @@ func (m *TableScan) Unmarshal(data []byte) error {
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowExecutor
+				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				msglen |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			postIndex := iNdEx + msglen
 			if msglen < 0 {
 				return ErrInvalidLengthExecutor
 			}
+			postIndex := iNdEx + msglen
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
 			m.Columns = append(m.Columns, &ColumnInfo{})
-			if err := m.Columns[len(m.Columns)-1].Unmarshal(data[iNdEx:postIndex]); err != nil {
+			if err := m.Columns[len(m.Columns)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -1102,10 +1178,13 @@ func (m *TableScan) Unmarshal(data []byte) error {
 			}
 			var v int
 			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowExecutor
+				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				v |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -1114,16 +1193,8 @@ func (m *TableScan) Unmarshal(data []byte) error {
 			}
 			m.Desc = bool(v != 0)
 		default:
-			var sizeOfWire int
-			for {
-				sizeOfWire++
-				wire >>= 7
-				if wire == 0 {
-					break
-				}
-			}
-			iNdEx -= sizeOfWire
-			skippy, err := skipExecutor(data[iNdEx:])
+			iNdEx = preIndex
+			skippy, err := skipExecutor(dAtA[iNdEx:])
 			if err != nil {
 				return err
 			}
@@ -1133,23 +1204,30 @@ func (m *TableScan) Unmarshal(data []byte) error {
 			if (iNdEx + skippy) > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.XXX_unrecognized = append(m.XXX_unrecognized, data[iNdEx:iNdEx+skippy]...)
+			m.XXX_unrecognized = append(m.XXX_unrecognized, dAtA[iNdEx:iNdEx+skippy]...)
 			iNdEx += skippy
 		}
 	}
 
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
 	return nil
 }
-func (m *IndexScan) Unmarshal(data []byte) error {
-	l := len(data)
+func (m *IndexScan) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
+		preIndex := iNdEx
 		var wire uint64
 		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowExecutor
+			}
 			if iNdEx >= l {
 				return io.ErrUnexpectedEOF
 			}
-			b := data[iNdEx]
+			b := dAtA[iNdEx]
 			iNdEx++
 			wire |= (uint64(b) & 0x7F) << shift
 			if b < 0x80 {
@@ -1158,6 +1236,12 @@ func (m *IndexScan) Unmarshal(data []byte) error {
 		}
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: IndexScan: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: IndexScan: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
 		switch fieldNum {
 		case 1:
 			if wireType != 0 {
@@ -1165,10 +1249,13 @@ func (m *IndexScan) Unmarshal(data []byte) error {
 			}
 			m.TableId = 0
 			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowExecutor
+				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				m.TableId |= (int64(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -1181,10 +1268,13 @@ func (m *IndexScan) Unmarshal(data []byte) error {
 			}
 			m.IndexId = 0
 			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowExecutor
+				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				m.IndexId |= (int64(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -1197,25 +1287,28 @@ func (m *IndexScan) Unmarshal(data []byte) error {
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowExecutor
+				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				msglen |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			postIndex := iNdEx + msglen
 			if msglen < 0 {
 				return ErrInvalidLengthExecutor
 			}
+			postIndex := iNdEx + msglen
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
 			m.Columns = append(m.Columns, &ColumnInfo{})
-			if err := m.Columns[len(m.Columns)-1].Unmarshal(data[iNdEx:postIndex]); err != nil {
+			if err := m.Columns[len(m.Columns)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -1225,10 +1318,13 @@ func (m *IndexScan) Unmarshal(data []byte) error {
 			}
 			var v int
 			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowExecutor
+				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				v |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -1237,16 +1333,8 @@ func (m *IndexScan) Unmarshal(data []byte) error {
 			}
 			m.Desc = bool(v != 0)
 		default:
-			var sizeOfWire int
-			for {
-				sizeOfWire++
-				wire >>= 7
-				if wire == 0 {
-					break
-				}
-			}
-			iNdEx -= sizeOfWire
-			skippy, err := skipExecutor(data[iNdEx:])
+			iNdEx = preIndex
+			skippy, err := skipExecutor(dAtA[iNdEx:])
 			if err != nil {
 				return err
 			}
@@ -1256,23 +1344,30 @@ func (m *IndexScan) Unmarshal(data []byte) error {
 			if (iNdEx + skippy) > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.XXX_unrecognized = append(m.XXX_unrecognized, data[iNdEx:iNdEx+skippy]...)
+			m.XXX_unrecognized = append(m.XXX_unrecognized, dAtA[iNdEx:iNdEx+skippy]...)
 			iNdEx += skippy
 		}
 	}
 
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
 	return nil
 }
-func (m *Selection) Unmarshal(data []byte) error {
-	l := len(data)
+func (m *Selection) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
+		preIndex := iNdEx
 		var wire uint64
 		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowExecutor
+			}
 			if iNdEx >= l {
 				return io.ErrUnexpectedEOF
 			}
-			b := data[iNdEx]
+			b := dAtA[iNdEx]
 			iNdEx++
 			wire |= (uint64(b) & 0x7F) << shift
 			if b < 0x80 {
@@ -1281,6 +1376,12 @@ func (m *Selection) Unmarshal(data []byte) error {
 		}
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: Selection: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: Selection: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
@@ -1288,39 +1389,34 @@ func (m *Selection) Unmarshal(data []byte) error {
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowExecutor
+				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				msglen |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			postIndex := iNdEx + msglen
 			if msglen < 0 {
 				return ErrInvalidLengthExecutor
 			}
+			postIndex := iNdEx + msglen
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
 			m.Conditions = append(m.Conditions, &Expr{})
-			if err := m.Conditions[len(m.Conditions)-1].Unmarshal(data[iNdEx:postIndex]); err != nil {
+			if err := m.Conditions[len(m.Conditions)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
 		default:
-			var sizeOfWire int
-			for {
-				sizeOfWire++
-				wire >>= 7
-				if wire == 0 {
-					break
-				}
-			}
-			iNdEx -= sizeOfWire
-			skippy, err := skipExecutor(data[iNdEx:])
+			iNdEx = preIndex
+			skippy, err := skipExecutor(dAtA[iNdEx:])
 			if err != nil {
 				return err
 			}
@@ -1330,23 +1426,30 @@ func (m *Selection) Unmarshal(data []byte) error {
 			if (iNdEx + skippy) > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.XXX_unrecognized = append(m.XXX_unrecognized, data[iNdEx:iNdEx+skippy]...)
+			m.XXX_unrecognized = append(m.XXX_unrecognized, dAtA[iNdEx:iNdEx+skippy]...)
 			iNdEx += skippy
 		}
 	}
 
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
 	return nil
 }
-func (m *Aggregation) Unmarshal(data []byte) error {
-	l := len(data)
+func (m *Aggregation) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
+		preIndex := iNdEx
 		var wire uint64
 		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowExecutor
+			}
 			if iNdEx >= l {
 				return io.ErrUnexpectedEOF
 			}
-			b := data[iNdEx]
+			b := dAtA[iNdEx]
 			iNdEx++
 			wire |= (uint64(b) & 0x7F) << shift
 			if b < 0x80 {
@@ -1355,6 +1458,12 @@ func (m *Aggregation) Unmarshal(data []byte) error {
 		}
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: Aggregation: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: Aggregation: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
@@ -1362,25 +1471,28 @@ func (m *Aggregation) Unmarshal(data []byte) error {
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowExecutor
+				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				msglen |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			postIndex := iNdEx + msglen
 			if msglen < 0 {
 				return ErrInvalidLengthExecutor
 			}
+			postIndex := iNdEx + msglen
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
 			m.GroupBy = append(m.GroupBy, &Expr{})
-			if err := m.GroupBy[len(m.GroupBy)-1].Unmarshal(data[iNdEx:postIndex]); err != nil {
+			if err := m.GroupBy[len(m.GroupBy)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -1390,39 +1502,34 @@ func (m *Aggregation) Unmarshal(data []byte) error {
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowExecutor
+				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				msglen |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			postIndex := iNdEx + msglen
 			if msglen < 0 {
 				return ErrInvalidLengthExecutor
 			}
+			postIndex := iNdEx + msglen
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
 			m.AggFunc = append(m.AggFunc, &Expr{})
-			if err := m.AggFunc[len(m.AggFunc)-1].Unmarshal(data[iNdEx:postIndex]); err != nil {
+			if err := m.AggFunc[len(m.AggFunc)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
 		default:
-			var sizeOfWire int
-			for {
-				sizeOfWire++
-				wire >>= 7
-				if wire == 0 {
-					break
-				}
-			}
-			iNdEx -= sizeOfWire
-			skippy, err := skipExecutor(data[iNdEx:])
+			iNdEx = preIndex
+			skippy, err := skipExecutor(dAtA[iNdEx:])
 			if err != nil {
 				return err
 			}
@@ -1432,23 +1539,30 @@ func (m *Aggregation) Unmarshal(data []byte) error {
 			if (iNdEx + skippy) > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.XXX_unrecognized = append(m.XXX_unrecognized, data[iNdEx:iNdEx+skippy]...)
+			m.XXX_unrecognized = append(m.XXX_unrecognized, dAtA[iNdEx:iNdEx+skippy]...)
 			iNdEx += skippy
 		}
 	}
 
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
 	return nil
 }
-func (m *TopN) Unmarshal(data []byte) error {
-	l := len(data)
+func (m *TopN) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
+		preIndex := iNdEx
 		var wire uint64
 		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowExecutor
+			}
 			if iNdEx >= l {
 				return io.ErrUnexpectedEOF
 			}
-			b := data[iNdEx]
+			b := dAtA[iNdEx]
 			iNdEx++
 			wire |= (uint64(b) & 0x7F) << shift
 			if b < 0x80 {
@@ -1457,6 +1571,12 @@ func (m *TopN) Unmarshal(data []byte) error {
 		}
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: TopN: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: TopN: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
@@ -1464,25 +1584,28 @@ func (m *TopN) Unmarshal(data []byte) error {
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowExecutor
+				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				msglen |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			postIndex := iNdEx + msglen
 			if msglen < 0 {
 				return ErrInvalidLengthExecutor
 			}
+			postIndex := iNdEx + msglen
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
 			m.OrderBy = append(m.OrderBy, &ByItem{})
-			if err := m.OrderBy[len(m.OrderBy)-1].Unmarshal(data[iNdEx:postIndex]); err != nil {
+			if err := m.OrderBy[len(m.OrderBy)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -1492,10 +1615,13 @@ func (m *TopN) Unmarshal(data []byte) error {
 			}
 			m.Limit = 0
 			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowExecutor
+				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				m.Limit |= (uint64(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -1503,16 +1629,8 @@ func (m *TopN) Unmarshal(data []byte) error {
 				}
 			}
 		default:
-			var sizeOfWire int
-			for {
-				sizeOfWire++
-				wire >>= 7
-				if wire == 0 {
-					break
-				}
-			}
-			iNdEx -= sizeOfWire
-			skippy, err := skipExecutor(data[iNdEx:])
+			iNdEx = preIndex
+			skippy, err := skipExecutor(dAtA[iNdEx:])
 			if err != nil {
 				return err
 			}
@@ -1522,23 +1640,30 @@ func (m *TopN) Unmarshal(data []byte) error {
 			if (iNdEx + skippy) > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.XXX_unrecognized = append(m.XXX_unrecognized, data[iNdEx:iNdEx+skippy]...)
+			m.XXX_unrecognized = append(m.XXX_unrecognized, dAtA[iNdEx:iNdEx+skippy]...)
 			iNdEx += skippy
 		}
 	}
 
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
 	return nil
 }
-func (m *Limit) Unmarshal(data []byte) error {
-	l := len(data)
+func (m *Limit) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
+		preIndex := iNdEx
 		var wire uint64
 		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowExecutor
+			}
 			if iNdEx >= l {
 				return io.ErrUnexpectedEOF
 			}
-			b := data[iNdEx]
+			b := dAtA[iNdEx]
 			iNdEx++
 			wire |= (uint64(b) & 0x7F) << shift
 			if b < 0x80 {
@@ -1547,6 +1672,12 @@ func (m *Limit) Unmarshal(data []byte) error {
 		}
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: Limit: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: Limit: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
 		switch fieldNum {
 		case 1:
 			if wireType != 0 {
@@ -1554,10 +1685,13 @@ func (m *Limit) Unmarshal(data []byte) error {
 			}
 			m.Limit = 0
 			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowExecutor
+				}
 				if iNdEx >= l {
 					return io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				m.Limit |= (uint64(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -1565,16 +1699,8 @@ func (m *Limit) Unmarshal(data []byte) error {
 				}
 			}
 		default:
-			var sizeOfWire int
-			for {
-				sizeOfWire++
-				wire >>= 7
-				if wire == 0 {
-					break
-				}
-			}
-			iNdEx -= sizeOfWire
-			skippy, err := skipExecutor(data[iNdEx:])
+			iNdEx = preIndex
+			skippy, err := skipExecutor(dAtA[iNdEx:])
 			if err != nil {
 				return err
 			}
@@ -1584,23 +1710,29 @@ func (m *Limit) Unmarshal(data []byte) error {
 			if (iNdEx + skippy) > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.XXX_unrecognized = append(m.XXX_unrecognized, data[iNdEx:iNdEx+skippy]...)
+			m.XXX_unrecognized = append(m.XXX_unrecognized, dAtA[iNdEx:iNdEx+skippy]...)
 			iNdEx += skippy
 		}
 	}
 
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
 	return nil
 }
-func skipExecutor(data []byte) (n int, err error) {
-	l := len(data)
+func skipExecutor(dAtA []byte) (n int, err error) {
+	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
 		var wire uint64
 		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return 0, ErrIntOverflowExecutor
+			}
 			if iNdEx >= l {
 				return 0, io.ErrUnexpectedEOF
 			}
-			b := data[iNdEx]
+			b := dAtA[iNdEx]
 			iNdEx++
 			wire |= (uint64(b) & 0x7F) << shift
 			if b < 0x80 {
@@ -1610,12 +1742,15 @@ func skipExecutor(data []byte) (n int, err error) {
 		wireType := int(wire & 0x7)
 		switch wireType {
 		case 0:
-			for {
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return 0, ErrIntOverflowExecutor
+				}
 				if iNdEx >= l {
 					return 0, io.ErrUnexpectedEOF
 				}
 				iNdEx++
-				if data[iNdEx-1] < 0x80 {
+				if dAtA[iNdEx-1] < 0x80 {
 					break
 				}
 			}
@@ -1626,10 +1761,13 @@ func skipExecutor(data []byte) (n int, err error) {
 		case 2:
 			var length int
 			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return 0, ErrIntOverflowExecutor
+				}
 				if iNdEx >= l {
 					return 0, io.ErrUnexpectedEOF
 				}
-				b := data[iNdEx]
+				b := dAtA[iNdEx]
 				iNdEx++
 				length |= (int(b) & 0x7F) << shift
 				if b < 0x80 {
@@ -1646,10 +1784,13 @@ func skipExecutor(data []byte) (n int, err error) {
 				var innerWire uint64
 				var start int = iNdEx
 				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return 0, ErrIntOverflowExecutor
+					}
 					if iNdEx >= l {
 						return 0, io.ErrUnexpectedEOF
 					}
-					b := data[iNdEx]
+					b := dAtA[iNdEx]
 					iNdEx++
 					innerWire |= (uint64(b) & 0x7F) << shift
 					if b < 0x80 {
@@ -1660,7 +1801,7 @@ func skipExecutor(data []byte) (n int, err error) {
 				if innerWireType == 4 {
 					break
 				}
-				next, err := skipExecutor(data[start:])
+				next, err := skipExecutor(dAtA[start:])
 				if err != nil {
 					return 0, err
 				}
@@ -1681,4 +1822,47 @@ func skipExecutor(data []byte) (n int, err error) {
 
 var (
 	ErrInvalidLengthExecutor = fmt.Errorf("proto: negative length found during unmarshaling")
+	ErrIntOverflowExecutor   = fmt.Errorf("proto: integer overflow")
 )
+
+func init() { proto.RegisterFile("executor.proto", fileDescriptorExecutor) }
+
+var fileDescriptorExecutor = []byte{
+	// 561 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x8c, 0x93, 0xc1, 0x8e, 0xd3, 0x30,
+	0x10, 0x86, 0x9b, 0x34, 0x25, 0xe9, 0xb4, 0xdb, 0xcd, 0x1a, 0x90, 0xa2, 0x1e, 0xda, 0x52, 0x40,
+	0x94, 0x4a, 0x14, 0xa9, 0x1c, 0x38, 0x53, 0x04, 0x52, 0x05, 0xaa, 0x50, 0x76, 0x6f, 0x1c, 0xaa,
+	0xc4, 0xf1, 0x06, 0x4b, 0x69, 0x6c, 0x25, 0x8e, 0xd4, 0x3e, 0x07, 0x17, 0xde, 0x82, 0xd7, 0xd8,
+	0x23, 0x4f, 0x80, 0x50, 0x79, 0x11, 0x64, 0x3b, 0x49, 0xb3, 0x5a, 0x24, 0x38, 0xd5, 0xf3, 0xcf,
+	0x37, 0xd3, 0xf1, 0x3f, 0x31, 0x0c, 0xc8, 0x9e, 0xe0, 0x42, 0xb0, 0x6c, 0xc1, 0x33, 0x26, 0x18,
+	0xb2, 0x04, 0xe5, 0xe1, 0xd0, 0x25, 0x7b, 0x9e, 0x91, 0x3c, 0xa7, 0x2c, 0xd5, 0xfa, 0xb0, 0x9f,
+	0xe3, 0x2f, 0x64, 0x17, 0x94, 0xd1, 0x83, 0x98, 0xc5, 0x4c, 0x1d, 0x5f, 0xca, 0x93, 0x56, 0xa7,
+	0xdf, 0x4d, 0x70, 0xde, 0x95, 0xed, 0xd0, 0x13, 0x30, 0x05, 0xf7, 0x8c, 0x89, 0x31, 0x1b, 0x2c,
+	0x07, 0x0b, 0xd9, 0x75, 0x21, 0x73, 0x57, 0x07, 0x4e, 0x56, 0xd6, 0xcd, 0xcf, 0x71, 0xcb, 0x37,
+	0x05, 0x47, 0x73, 0x70, 0x44, 0x98, 0x6c, 0x73, 0x1c, 0xa4, 0x9e, 0x39, 0x31, 0x66, 0xbd, 0xe5,
+	0xb9, 0x66, 0xaf, 0x82, 0x30, 0x21, 0x97, 0x38, 0x48, 0x7d, 0x5b, 0x84, 0x89, 0x3c, 0x48, 0x96,
+	0x46, 0x7b, 0xcd, 0xb6, 0x9b, 0xec, 0x3a, 0x8d, 0xc8, 0x5e, 0xb3, 0x34, 0x52, 0x07, 0xf4, 0x02,
+	0xba, 0x39, 0x49, 0x08, 0x16, 0x94, 0xa5, 0x9e, 0xd5, 0x84, 0x2f, 0x2b, 0xd9, 0x3f, 0x11, 0xe8,
+	0x15, 0xf4, 0x82, 0x38, 0xce, 0x48, 0x1c, 0xa8, 0x82, 0x8e, 0x2a, 0xb8, 0xd0, 0x05, 0x6f, 0x4e,
+	0x09, 0xbf, 0x49, 0xa1, 0x11, 0x58, 0x82, 0xf1, 0x8d, 0x77, 0x4f, 0xd1, 0x50, 0xce, 0xcd, 0xf8,
+	0xc6, 0x57, 0x3a, 0x7a, 0x04, 0x9d, 0x84, 0xee, 0xa8, 0xf0, 0x6c, 0x05, 0xf4, 0x34, 0xf0, 0x51,
+	0x4a, 0xbe, 0xce, 0x4c, 0x33, 0xe8, 0xd6, 0x17, 0x45, 0x63, 0x70, 0x84, 0x0c, 0xb6, 0x34, 0x52,
+	0xbe, 0xb5, 0x4b, 0x9f, 0x6c, 0xa5, 0xae, 0x23, 0x34, 0x07, 0x1b, 0xb3, 0xa4, 0xd8, 0xa5, 0xb9,
+	0x67, 0x4e, 0xda, 0xb3, 0xde, 0xd2, 0xd5, 0x2d, 0xdf, 0x2a, 0x71, 0x9d, 0x5e, 0x33, 0xbf, 0x02,
+	0x90, 0x07, 0x56, 0x44, 0x72, 0xac, 0x8c, 0x72, 0xca, 0x46, 0x4a, 0x99, 0x7e, 0x35, 0xa0, 0x5b,
+	0x3b, 0xf6, 0xef, 0x3f, 0x1d, 0x83, 0x43, 0x25, 0x2d, 0x01, 0xb3, 0x09, 0x28, 0xf5, 0xf6, 0x54,
+	0xed, 0xff, 0x9d, 0xca, 0xba, 0x33, 0xd5, 0x6b, 0xe8, 0xd6, 0x9b, 0x41, 0x73, 0x00, 0xcc, 0xd2,
+	0x88, 0xca, 0x20, 0xf7, 0x0c, 0xd5, 0x15, 0xaa, 0x6f, 0x88, 0x67, 0x7e, 0x23, 0x3b, 0xfd, 0x0c,
+	0xbd, 0xc6, 0x86, 0xd0, 0x53, 0x70, 0xe2, 0x8c, 0x15, 0x7c, 0x1b, 0x1e, 0xfe, 0x52, 0x68, 0xab,
+	0xdc, 0xea, 0x20, 0xb1, 0x20, 0x8e, 0xb7, 0xd7, 0x45, 0x8a, 0x4b, 0x2f, 0x6f, 0x61, 0x41, 0x1c,
+	0xbf, 0x2f, 0x52, 0x3c, 0xfd, 0x00, 0x96, 0x5c, 0x28, 0x7a, 0x06, 0x0e, 0xcb, 0x22, 0x92, 0x9d,
+	0xba, 0xf6, 0x35, 0xbe, 0x3a, 0xac, 0x05, 0xd9, 0xf9, 0xb6, 0xca, 0xae, 0x0e, 0x68, 0x58, 0xed,
+	0x5c, 0x5a, 0x65, 0x95, 0x37, 0x2c, 0x97, 0xfd, 0x18, 0x3a, 0x6a, 0xf9, 0x27, 0xc8, 0xb8, 0x03,
+	0xcd, 0x0b, 0xfd, 0x84, 0xe4, 0x33, 0x41, 0x17, 0x70, 0x26, 0x7f, 0xeb, 0x2f, 0xc4, 0x6d, 0x55,
+	0x52, 0xbd, 0x3f, 0xd7, 0xa8, 0xa4, 0xda, 0x3d, 0xd7, 0x44, 0xf7, 0xe1, 0x5c, 0x4a, 0x0d, 0x5f,
+	0xdc, 0x36, 0xea, 0x83, 0xa3, 0xba, 0x31, 0xbe, 0x71, 0x2d, 0x74, 0x06, 0x5d, 0x19, 0xa9, 0x81,
+	0xdc, 0xce, 0xea, 0xf9, 0xcd, 0x71, 0x64, 0xfc, 0x38, 0x8e, 0x8c, 0x5f, 0xc7, 0x91, 0xf1, 0xed,
+	0xf7, 0xa8, 0x05, 0x0f, 0x31, 0xdb, 0x2d, 0x38, 0x4d, 0x63, 0x1c, 0xf0, 0x85, 0xa0, 0x51, 0xa8,
+	0x2e, 0xfc, 0xc9, 0xf8, 0x13, 0x00, 0x00, 0xff, 0xff, 0x14, 0x99, 0x1e, 0x41, 0x32, 0x04, 0x00,
+	0x00,
+}

@@ -48,3 +48,12 @@ func (s *testAuthSuite) TestCheckScramble(c *C) {
 	sha2 := CheckScramble(salt, hpwd, auth)
 	c.Assert(sha2, DeepEquals, hpwd)
 }
+
+func (s *testAuthSuite) TestOldPasswordUpgrade(c *C) {
+	defer testleak.AfterTest(c)()
+	pwd := "abc"
+	oldpwd := Sha1Hash([]byte(pwd))
+	newpwd, err := OldPasswordUpgrade(oldpwd)
+	c.Assert(err, IsNil)
+	c.Assert(newpwd, Equals, "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E")
+}

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/testleak"
+	goctx "golang.org/x/net/context"
 )
 
 var _ = Suite(&testForeighKeySuite{})
@@ -110,7 +111,7 @@ func getForeignKey(t table.Table, name string) *model.FKInfo {
 
 func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	defer testleak.AfterTest(c)()
-	d := newDDL(s.store, nil, nil, testLease)
+	d := newDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
 	defer d.Stop()
 	s.d = d
 	s.dbInfo = testSchemaInfo(c, d, "test_foreign")
@@ -153,7 +154,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	d.setHook(tc)
 
 	d.Stop()
-	d.start()
+	d.start(goctx.Background())
 
 	job := s.testCreateForeignKey(c, tblInfo, "c1_fk", []string{"c1"}, "t2", []string{"c1"}, ast.ReferOptionCascade, ast.ReferOptionSetNull)
 	testCheckJobDone(c, d, job, true)
@@ -191,7 +192,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	}
 
 	d.Stop()
-	d.start()
+	d.start(goctx.Background())
 
 	job = testDropForeignKey(c, ctx, d, s.dbInfo, tblInfo, "c1_fk")
 	testCheckJobDone(c, d, job, false)
@@ -209,7 +210,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	}
 
 	d.Stop()
-	d.start()
+	d.start(goctx.Background())
 
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)

@@ -92,7 +92,7 @@ func (p *Projection) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, e
 		return invalidTask, p.storeTaskProfile(prop, invalidTask)
 	}
 	// enforceProperty task.
-	task, err = p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{})
+	task, err = p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -111,6 +111,162 @@ func (p *Projection) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, e
 		}
 	}
 	return task, p.storeTaskProfile(prop, task)
+}
+
+// joinKeysMatchIndex checks if all keys match columns in index.
+func joinKeysMatchIndex(keys []*expression.Column, index *model.IndexInfo) []int {
+	if len(index.Columns) < len(keys) {
+		return nil
+	}
+	matchOffsets := make([]int, len(keys))
+	for i, idxCol := range index.Columns {
+		if idxCol.Length != types.UnspecifiedLength {
+			return nil
+		}
+		found := false
+		for j, key := range keys {
+			if idxCol.Name.L == key.ColName.L {
+				matchOffsets[i] = j
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil
+		}
+		if i+1 == len(keys) {
+			break
+		}
+	}
+	return matchOffsets
+}
+
+// convertToIndexJoin will generate index join by required properties and outerIndex. OuterIdx points out the outer child,
+// because we will swap the children of join when the right child is outer child.
+// First of all, we will extract the join keys for p's equal conditions. If the join keys can match some of the indices or pk
+// column of inner child, we can apply the index join. Then we convert the inner child to table scan or index scan explicitly.
+func (p *LogicalJoin) convertToIndexJoin(prop *requiredProp, outerIdx int) (taskProfile, error) {
+	outerChild := p.children[outerIdx].(LogicalPlan)
+	innerChild := p.children[1-outerIdx].(LogicalPlan)
+	canPassProp := len(outerChild.Schema().ColumnsIndices(prop.cols)) > 0
+	var (
+		outerTask     taskProfile
+		useTableScan  bool
+		usedIndexInfo *model.IndexInfo
+		rightConds    expression.CNFExprs
+		leftConds     expression.CNFExprs
+		innerTask     taskProfile
+		err           error
+		innerJoinKeys = make([]*expression.Column, 0, len(p.EqualConditions))
+		outerJoinKeys = make([]*expression.Column, 0, len(p.EqualConditions))
+	)
+	if canPassProp {
+		outerTask, err = outerChild.convert2NewPhysicalPlan(prop)
+	} else {
+		outerTask, err = outerChild.convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
+	}
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if outerIdx == 0 {
+		rightConds = p.RightConditions.Clone()
+		leftConds = p.LeftConditions.Clone()
+	} else {
+		rightConds = p.LeftConditions.Clone()
+		leftConds = p.RightConditions.Clone()
+	}
+	for {
+		switch x := innerChild.(type) {
+		case *DataSource:
+			indices, includeTableScan := availableIndices(x.indexHints, x.tableInfo)
+			for _, cond := range p.EqualConditions {
+				innerJoinKeys = append(innerJoinKeys, cond.GetArgs()[1-outerIdx].(*expression.Column))
+				outerJoinKeys = append(outerJoinKeys, cond.GetArgs()[outerIdx].(*expression.Column))
+			}
+			if includeTableScan {
+				if len(innerJoinKeys) == 1 {
+					pkCol := x.getPKIsHandleCol()
+					if pkCol != nil && innerJoinKeys[0].Equal(pkCol, nil) {
+						useTableScan = true
+					}
+				}
+			}
+			if useTableScan {
+				innerTask, err = x.convertToTableScan(&requiredProp{taskTp: rootTaskType})
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				break
+			}
+			for _, indexInfo := range indices {
+				if matchedOffsets := joinKeysMatchIndex(innerJoinKeys, indexInfo); matchedOffsets != nil {
+					usedIndexInfo = indexInfo
+					newOuterJoinKeys := make([]*expression.Column, len(outerJoinKeys))
+					newInnerJoinKeys := make([]*expression.Column, len(innerJoinKeys))
+					for i, offset := range matchedOffsets {
+						newOuterJoinKeys[i] = outerJoinKeys[offset]
+						newInnerJoinKeys[i] = innerJoinKeys[offset]
+					}
+					outerJoinKeys = newOuterJoinKeys
+					innerJoinKeys = newInnerJoinKeys
+					break
+				}
+			}
+			if usedIndexInfo != nil {
+				innerTask, err = x.convertToIndexScan(&requiredProp{taskTp: rootTaskType}, usedIndexInfo)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				break
+			}
+			return nil, nil
+		case *Selection:
+			rightConds = append(rightConds, x.Conditions...)
+			innerChild = innerChild.Children()[0].(LogicalPlan)
+		default:
+			return nil, nil
+		}
+		if innerTask != nil {
+			break
+		}
+	}
+	join := PhysicalIndexJoin{
+		LeftConditions:  leftConds,
+		RightConditions: rightConds,
+		OtherConditions: p.OtherConditions,
+		outer:           p.JoinType != InnerJoin,
+		outerJoinKeys:   outerJoinKeys,
+		innerJoinKeys:   innerJoinKeys,
+	}.init(p.allocator, p.ctx, p.children[outerIdx], p.children[1-outerIdx])
+	task := join.attach2TaskProfile(outerTask, innerTask)
+	if !canPassProp {
+		task = prop.enforceProperty(task, p.ctx, p.allocator)
+	}
+	return task, nil
+}
+
+// tryToGetIndexJoin tries to get index join plan. If fails, it returns nil.
+// Currently we only check by hint. If we prefer the left index join but the join type is right outer, it will fail to return.
+func (p *LogicalJoin) tryToGetIndexJoin(prop *requiredProp) (taskProfile, error) {
+	if len(p.EqualConditions) == 0 {
+		return nil, nil
+	}
+
+	leftOuter := (p.preferINLJ & preferLeftAsOuter) > 0
+	if leftOuter {
+		if p.JoinType == RightOuterJoin {
+			return nil, nil
+		}
+		return p.convertToIndexJoin(prop, 0)
+	}
+	rightOuter := (p.preferINLJ & preferRightAsOuter) > 0
+	if rightOuter {
+		if p.JoinType == LeftOuterJoin {
+			return nil, nil
+		}
+		return p.convertToIndexJoin(prop, 1)
+	}
+	return nil, nil
 }
 
 // convert2NewPhysicalPlan implements PhysicalPlan interface.
@@ -133,8 +289,7 @@ func (p *LogicalJoin) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, 
 	default:
 		if p.preferUseMergeJoin() {
 			task, err = p.convert2MergeJoin(prop)
-		} else {
-			// TODO: We will consider index look up join in the future.
+		} else if task, err = p.tryToGetIndexJoin(prop); task == nil && err == nil {
 			task, err = p.convert2HashJoin(prop)
 		}
 	}
@@ -287,7 +442,7 @@ func (p *Sort) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error) 
 		return invalidTask, p.storeTaskProfile(prop, invalidTask)
 	}
 	// enforce branch
-	task, err = p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{})
+	task, err = p.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -389,7 +544,7 @@ func (p *baseLogicalPlan) convert2NewPhysicalPlan(prop *requiredProp) (taskProfi
 		task = &rootTaskProfile{p: p.basePlan.self.(PhysicalPlan)}
 	} else {
 		// enforce branch
-		task, err = p.basePlan.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{})
+		task, err = p.basePlan.children[0].(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -736,7 +891,7 @@ func (p *Union) convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error)
 	// Union is a sort blocker. We can only enforce it.
 	tasks := make([]taskProfile, 0, len(p.children))
 	for _, child := range p.children {
-		task, err = child.(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{})
+		task, err = child.(LogicalPlan).convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

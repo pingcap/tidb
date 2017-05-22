@@ -26,6 +26,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -137,8 +138,7 @@ const (
 		is_index tinyint(2) NOT NULL,
 		hist_id bigint(64) NOT NULL,
 		distinct_count bigint(64) NOT NULL,
-		distinct_ratio double(64) NOT NULL DEFAULT 0,
-		use_count_to_estimate tinyint(2) NOT NULL DEFAULT 0,
+		null_count bigint(64) NOT NULL DEFAULT 0,
 		modify_count bigint(64) NOT NULL DEFAULT 0,
 		version bigint(64) unsigned NOT NULL DEFAULT 0,
 		unique index tbl(table_id, is_index, hist_id)
@@ -152,7 +152,8 @@ const (
 		bucket_id bigint(64) NOT NULL,
 		count bigint(64) NOT NULL,
 		repeats bigint(64) NOT NULL,
-		value blob NOT NULL,
+		upper_bound blob NOT NULL,
+		lower_bound blob ,
 		unique index tbl(table_id, is_index, hist_id, bucket_id)
 	);`
 )
@@ -339,25 +340,13 @@ func upgradeToVer5(s Session) {
 }
 
 func upgradeToVer6(s Session) {
-	_, err := s.Execute("ALTER TABLE mysql.user ADD COLUMN `Super_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Show_db_priv`")
-	if terror.ErrorEqual(err, infoschema.ErrColumnExists) {
-		return
-	}
-	if err != nil {
-		log.Fatal(err)
-	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Super_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Show_db_priv`", infoschema.ErrColumnExists)
 	// For reasons of compatibility, set the non-exists privilege column value to 'Y', as TiDB doesn't check them in older versions.
 	mustExecute(s, "UPDATE mysql.user SET Super_priv='Y'")
 }
 
 func upgradeToVer7(s Session) {
-	_, err := s.Execute("ALTER TABLE mysql.user ADD COLUMN `Process_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Drop_priv`")
-	if terror.ErrorEqual(err, infoschema.ErrColumnExists) {
-		return
-	}
-	if err != nil {
-		log.Fatal(err)
-	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Process_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Drop_priv`", infoschema.ErrColumnExists)
 	// For reasons of compatibility, set the non-exists privilege column value to 'Y', as TiDB doesn't check them in older versions.
 	mustExecute(s, "UPDATE mysql.user SET Process_priv='Y'")
 }
@@ -371,18 +360,33 @@ func upgradeToVer8(s Session) {
 }
 
 func upgradeToVer9(s Session) {
-	_, err := s.Execute("ALTER TABLE mysql.user ADD COLUMN `Trigger_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_user_priv`")
-	if terror.ErrorEqual(err, infoschema.ErrColumnExists) {
-		return
-	}
-	if err != nil {
-		log.Fatal(err)
-	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Trigger_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_user_priv`", infoschema.ErrColumnExists)
 	// For reasons of compatibility, set the non-exists privilege column value to 'Y', as TiDB doesn't check them in older versions.
 	s.Execute("UPDATE mysql.user SET Trigger_priv='Y'")
 }
 
+func doReentrantDDL(s Session, sql string, ignorableErrs ...error) {
+	_, err := s.Execute(sql)
+	for _, ignorableErr := range ignorableErrs {
+		if terror.ErrorEqual(err, ignorableErr) {
+			return
+		}
+	}
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
 func upgradeToVer10(s Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets CHANGE COLUMN `value` `upper_bound` BLOB NOT NULL", infoschema.ErrColumnNotExists, infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets ADD COLUMN `lower_bound` BLOB", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `null_count` bigint(64) NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms DROP COLUMN distinct_ratio", ddl.ErrCantDropFieldOrKey)
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms DROP COLUMN use_count_to_estimate", ddl.ErrCantDropFieldOrKey)
+}
+
+func upgradeToVer11(s Session) {
+	s.Execute("BEGIN")
 	sql := "SELECT user, host, password FROM mysql.user WHERE password != ''"
 	rs, err := s.Execute(sql)
 	if err != nil {
@@ -415,9 +419,11 @@ func upgradeToVer10(s Session) {
 	for _, sql := range sqls {
 		mustExecute(s, sql)
 	}
+
+	mustExecute(s, "COMMIT")
 }
 
-// updateBootstrapVer updates boostrap version variable in mysql.TiDB table.
+// updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
 	sql := fmt.Sprintf(`INSERT INTO %s.%s VALUES ("%s", "%d", "TiDB bootstrap version.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE="%d"`,
