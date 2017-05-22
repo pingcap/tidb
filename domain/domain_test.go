@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/juju/errors"
+	"github.com/ngaut/pools"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
@@ -36,12 +38,16 @@ var _ = Suite(&testSuite{})
 type testSuite struct {
 }
 
+func mockFactory() (pools.Resource, error) {
+	return nil, errors.New("mock factory should not be called")
+}
+
 func (*testSuite) TestT(c *C) {
 	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
 	store, err := driver.Open("memory")
 	c.Assert(err, IsNil)
 	defer testleak.AfterTest(c)()
-	dom, err := NewDomain(store, 80*time.Millisecond)
+	dom, err := NewDomain(store, 80*time.Millisecond, mockFactory)
 	c.Assert(err, IsNil)
 	store = dom.Store()
 	ctx := mock.NewContext()

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
+	goctx "golang.org/x/net/context"
 )
 
 var _ = Suite(&testTableSuite{})
@@ -186,7 +187,7 @@ func testGetTableWithError(d *ddl, schemaID, tableID int64) (table.Table, error)
 
 func (s *testTableSuite) SetUpSuite(c *C) {
 	s.store = testCreateStore(c, "test_table")
-	s.d = newDDL(s.store, nil, nil, testLease)
+	s.d = newDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
 
 	s.dbInfo = testSchemaInfo(c, s.d, "test")
 	testCreateSchema(c, testNewContext(s.d), s.d, s.dbInfo)

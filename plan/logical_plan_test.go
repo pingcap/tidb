@@ -312,7 +312,7 @@ func (c *mockClient) Send(ctx goctx.Context, _ *kv.Request) kv.Response {
 	return nil
 }
 
-func (c *mockClient) SupportRequestType(reqType, subType int64) bool {
+func (c *mockClient) IsRequestTypeSupported(reqType, subType int64) bool {
 	switch reqType {
 	case kv.ReqTypeSelect, kv.ReqTypeIndex:
 		switch subType {
@@ -1689,10 +1689,9 @@ func checkVisitInfo(c *C, v1, v2 []visitInfo, comment CommentInterface) {
 }
 
 func (s *testPlanSuite) TestTopNPushDown(c *C) {
-	UseDAGPlanBuilder = true
+	c.Skip("Only new plan support it.")
 	defer func() {
 		testleak.AfterTest(c)()
-		UseDAGPlanBuilder = false
 	}()
 	tests := []struct {
 		sql  string

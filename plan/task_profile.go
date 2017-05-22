@@ -104,6 +104,19 @@ func (p *basePhysicalPlan) attach2TaskProfile(tasks ...taskProfile) taskProfile 
 	return attachPlan2TaskProfile(p.basePlan.self.(PhysicalPlan).Copy(), profile)
 }
 
+func (p *PhysicalIndexJoin) attach2TaskProfile(tasks ...taskProfile) taskProfile {
+	lTask := finishCopTask(tasks[0].copy(), p.ctx, p.allocator)
+	rTask := finishCopTask(tasks[1].copy(), p.ctx, p.allocator)
+	np := p.Copy()
+	np.SetChildren(lTask.plan(), rTask.plan())
+	return &rootTaskProfile{
+		p: np,
+		// TODO: we will estimate the cost and count more precisely.
+		cst: lTask.cost(),
+		cnt: lTask.count() + rTask.count(),
+	}
+}
+
 func (p *PhysicalHashJoin) attach2TaskProfile(tasks ...taskProfile) taskProfile {
 	lTask := finishCopTask(tasks[0].copy(), p.ctx, p.allocator)
 	rTask := finishCopTask(tasks[1].copy(), p.ctx, p.allocator)
@@ -210,6 +223,10 @@ func (t *rootTaskProfile) plan() PhysicalPlan {
 }
 
 func (p *Limit) attach2TaskProfile(profiles ...taskProfile) taskProfile {
+	// If task is invalid, keep it remained.
+	if profiles[0].plan() == nil {
+		return profiles[0]
+	}
 	profile := profiles[0].copy()
 	if cop, ok := profile.(*copTaskProfile); ok {
 		// If the task is copTask, the Limit can always be pushed down.
@@ -264,6 +281,10 @@ func (p *Sort) attach2TaskProfile(profiles ...taskProfile) taskProfile {
 }
 
 func (p *TopN) attach2TaskProfile(profiles ...taskProfile) taskProfile {
+	// If task is invalid, keep it remained.
+	if profiles[0].plan() == nil {
+		return profiles[0]
+	}
 	profile := profiles[0].copy()
 	// This is a topN plan.
 	if copTask, ok := profile.(*copTaskProfile); ok && p.canPushDown() {
@@ -389,6 +410,10 @@ func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *Physi
 }
 
 func (p *PhysicalAggregation) attach2TaskProfile(profiles ...taskProfile) taskProfile {
+	// If task is invalid, keep it remained.
+	if profiles[0].plan() == nil {
+		return profiles[0]
+	}
 	// TODO: We only consider hash aggregation here.
 	profile := profiles[0].copy()
 	if cop, ok := profile.(*copTaskProfile); ok {

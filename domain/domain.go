@@ -20,6 +20,7 @@ import (
 	"github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
@@ -31,9 +32,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
-	// TODO: It's used fo update vendor. It will be removed.
-	_ "github.com/coreos/etcd/clientv3/concurrency"
-	_ "github.com/coreos/etcd/mvcc/mvccpb"
 	goctx "golang.org/x/net/context"
 )
 
@@ -47,7 +45,7 @@ type Domain struct {
 	ddl             ddl.DDL
 	m               sync.Mutex
 	SchemaValidator SchemaValidator
-	sysSessionPool  *sync.Pool
+	sysSessionPool  *pools.ResourcePool
 	exit            chan struct{}
 	etcdClient      *clientv3.Client
 
@@ -310,6 +308,7 @@ func (do *Domain) Close() {
 	if do.etcdClient != nil {
 		do.etcdClient.Close()
 	}
+	do.sysSessionPool.Close()
 }
 
 type ddlCallback struct {
@@ -356,12 +355,15 @@ type etcdBackend interface {
 }
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
-func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
+func NewDomain(store kv.Storage, lease time.Duration, factory pools.Factory) (d *Domain, err error) {
+	minCapacity := 1               // minCapacity for the sysSessionPool size
+	maxCapacity := 500             // maxCapacity for the sysSessionPool size
+	idleTimeout := 3 * time.Minute // sessions in the sysSessionPool will be recycled after idleTimeout
 	d = &Domain{
 		store:           store,
 		SchemaValidator: newSchemaValidator(lease),
 		exit:            make(chan struct{}),
-		sysSessionPool:  &sync.Pool{},
+		sysSessionPool:  pools.NewResourcePool(factory, minCapacity, maxCapacity, idleTimeout),
 	}
 
 	if ebd, ok := store.(etcdBackend); ok {
@@ -381,7 +383,10 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	d.ddl = ddl.NewDDL(d.store, d.infoHandle, &ddlCallback{do: d}, lease)
+	ctx := goctx.Background()
+	callback := &ddlCallback{do: d}
+	// TODO: Use etcd client instead of nil.
+	d.ddl = ddl.NewDDL(ctx, nil, d.store, d.infoHandle, callback, lease)
 	if err = d.Reload(); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -397,7 +402,7 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 }
 
 // SysSessionPool returns the system session pool.
-func (do *Domain) SysSessionPool() *sync.Pool {
+func (do *Domain) SysSessionPool() *pools.ResourcePool {
 	return do.sysSessionPool
 }
 
