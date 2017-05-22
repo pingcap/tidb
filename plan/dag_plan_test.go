@@ -238,6 +238,51 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 			sql:  "select (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t",
 			best: "Apply{TableReader(Table(t))->RightHashJoin{TableReader(Table(t))->Sel([eq(s.a, test.t.a)])->TableReader(Table(t))}(s.a,t1.a)->HashAgg}->Projection",
 		},
+		// Test Index Join + TableScan.
+		{
+			sql:  "select /*+ TIDB_INLJ(t1, t2) */ * from t t1, t t2 where t1.a = t2.a",
+			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)",
+		},
+		// Test Index Join + DoubleRead.
+		{
+			sql:  "select /*+ TIDB_INLJ(t1, t2) */ * from t t1, t t2 where t1.a = t2.c",
+			best: "IndexJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))}(t1.a,t2.c)",
+		},
+		// Test Index Join + SingleRead.
+		{
+			sql:  "select /*+ TIDB_INLJ(t1, t2) */ t1.a , t2.a from t t1, t t2 where t1.a = t2.c",
+			best: "IndexJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[<nil>,+inf]])}(t1.a,t2.c)->Projection",
+		},
+		// Test Index Join + Order by.
+		{
+			sql:  "select /*+ TIDB_INLJ(t1, t2) */ t1.a, t2.a from t t1, t t2 where t1.a = t2.a order by t1.c",
+			best: "IndexJoin{IndexReader(Index(t.c_d_e)[[<nil>,+inf]])->TableReader(Table(t))}(t1.a,t2.a)->Projection->Projection",
+		},
+		// Test Index Join + Order by.
+		{
+			sql:  "select /*+ TIDB_INLJ(t1, t2) */ t1.a, t2.a from t t1, t t2 where t1.a = t2.a order by t2.c",
+			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->Sort->Projection",
+		},
+		// Test Index Join + TableScan + Rotate.
+		{
+			sql:  "select /*+ TIDB_INLJ(t2) */ t1.a , t2.a from t t1, t t2 where t1.a = t2.c",
+			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t2.c,t1.a)->Projection",
+		},
+		// Test Index Join + OuterJoin + TableScan.
+		{
+			sql:  "select /*+ TIDB_INLJ(t1, t2) */ * from t t1 left outer join t t2 on t1.a = t2.a and t2.b < 1",
+			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t)->Sel([lt(t2.b, 1)]))}(t1.a,t2.a)",
+		},
+		// Test Index Join failed.
+		{
+			sql:  "select /*+ TIDB_INLJ(t1, t2) */ * from t t1 left outer join t t2 on t1.a = t2.b",
+			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.b)",
+		},
+		// Test Index Join failed.
+		{
+			sql:  "select /*+ TIDB_INLJ(t1) */ * from t t1 right outer join t t2 on t1.a = t2.b",
+			best: "RightHashJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.b)",
+		},
 	}
 	for _, tt := range tests {
 		comment := Commentf("for %s", tt.sql)
