@@ -461,7 +461,7 @@ func (t *Time) Sub(t1 *Time) Duration {
 
 // Add adds d to t, returns a duration value.
 // Note that add should not be done on different time types.
-func (t *Time) Add(d *Duration) Duration {
+func (t *Time) Add(d Duration) Duration {
 	d.Duration = gotime.Duration(-int64(d.Duration))
 	t2, _ := d.ConvertToTime(t.Type)
 	return t.Sub(&t2)
