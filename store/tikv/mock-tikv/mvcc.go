@@ -15,6 +15,7 @@ package mocktikv
 
 import (
 	"bytes"
+	"sort"
 	"sync"
 
 	"github.com/juju/errors"
@@ -26,7 +27,7 @@ import (
 type mvccValueType int
 
 const (
-	typePut mvccValueType = iota
+	typePut      mvccValueType = iota
 	typeDelete
 	typeRollback
 )
@@ -109,12 +110,11 @@ func (e *mvccEntry) Get(ts uint64) ([]byte, error) {
 }
 
 func (e *mvccEntry) Prewrite(mutation *kvrpcpb.Mutation, startTS uint64, primary []byte, ttl uint64) error {
-	for _, value := range e.values {
-		if value.commitTS >= startTS {
+	if len(e.values) > 0 {
+		if e.values[0].commitTS >= startTS {
 			return ErrRetryable("write conflict")
 		}
 	}
-
 	if e.lock != nil {
 		if e.lock.startTS != startTS {
 			return e.lockErr()
@@ -154,12 +154,12 @@ func (e *mvccEntry) Commit(startTS, commitTS uint64) error {
 		} else {
 			valueType = typeDelete
 		}
-		e.values = append([]mvccValue{{
+		e.addValue(mvccValue{
 			valueType: valueType,
 			startTS:   startTS,
 			commitTS:  commitTS,
 			value:     e.lock.value,
-		}}, e.values...)
+		})
 	}
 	e.lock = nil
 	return nil
@@ -169,11 +169,11 @@ func (e *mvccEntry) Rollback(startTS uint64) error {
 	// If current transaction's lock exist.
 	if e.lock != nil && e.lock.startTS == startTS {
 		e.lock = nil
-		e.values = append([]mvccValue{{
+		e.addValue(mvccValue{
 			valueType: typeRollback,
 			startTS:   startTS,
 			commitTS:  startTS,
-		}}, e.values...)
+		})
 		return nil
 	}
 
@@ -188,12 +188,22 @@ func (e *mvccEntry) Rollback(startTS uint64) error {
 		return nil
 	}
 	// If current transaction is not prewritted before.
-	e.values = append([]mvccValue{{
+	e.addValue(mvccValue{
 		valueType: typeRollback,
 		startTS:   startTS,
 		commitTS:  startTS,
-	}}, e.values...)
+	})
 	return nil
+}
+
+func (e *mvccEntry) addValue(v mvccValue) {
+	i := sort.Search(len(e.values), func(i int) bool { return e.values[i].commitTS <= v.commitTS })
+	if i >= len(e.values) {
+		e.values = append(e.values, v)
+	} else {
+		e.values = append(e.values[:i+1], e.values[i:]...)
+		e.values[i] = v
+	}
 }
 
 // MvccStore is an in-memory, multi-versioned, transaction-supported kv storage.
