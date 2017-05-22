@@ -425,6 +425,10 @@ func upgradeToVer11(s Session) {
 		mustExecute(s, sql)
 	}
 
+	sql = fmt.Sprintf(`INSERT INTO %s.%s VALUES ("%s", "%d", "TiDB bootstrap version.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE="%d"`,
+		mysql.SystemDB, mysql.TiDBTable, tidbServerVersionVar, version11, version11)
+	mustExecute(s, sql)
+
 	mustExecute(s, "COMMIT")
 }
 
