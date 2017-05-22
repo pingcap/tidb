@@ -27,7 +27,7 @@ import (
 type mvccValueType int
 
 const (
-	typePut      mvccValueType = iota
+	typePut mvccValueType = iota
 	typeDelete
 	typeRollback
 )
