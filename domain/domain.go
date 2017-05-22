@@ -360,7 +360,7 @@ type etcdBackend interface {
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
 func NewDomain(store kv.Storage, lease time.Duration, factory pools.Factory) (d *Domain, err error) {
 	minCapacity := 1               // minCapacity for the sysSessionPool size
-	maxCapacity := 200             // maxCapacity for the sysSessionPool size
+	maxCapacity := 500             // maxCapacity for the sysSessionPool size
 	idleTimeout := 3 * time.Minute // sessions in the sysSessionPool will be recycled after idleTimeout
 	d = &Domain{
 		store:           store,
