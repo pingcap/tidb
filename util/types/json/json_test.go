@@ -74,3 +74,38 @@ func (s *testJSONSuite) TestParseFromString(c *C) {
 	var jstr2 = j1.String()
 	c.Assert(jstr2, Equals, `{"a":[1,"2",{"aa":"bb"},4,null],"b":true,"c":null}`)
 }
+
+func (s *testJSONSuite) TestJSONType(c *C) {
+	j1, err := ParseFromString(`{"a": "b"}`)
+	c.Assert(err, IsNil)
+
+	j2, err := ParseFromString(`["a", "b"]`)
+	c.Assert(err, IsNil)
+
+	j3, err := ParseFromString(`3`)
+	c.Assert(err, IsNil)
+
+	j4 := CreateJSON(int64(3))
+
+	j5, err := ParseFromString(`null`)
+	c.Assert(err, IsNil)
+
+	j6, err := ParseFromString(`true`)
+	c.Assert(err, IsNil)
+
+	var jList = []struct {
+		In  JSON
+		Out string
+	}{
+		{j1, "OBJECT"},
+		{j2, "ARRAY"},
+		{j3, "DOUBLE"},
+		{j4, "INTEGER"},
+		{j5, "NULL"},
+		{j6, "BOOLEAN"},
+	}
+
+	for _, j := range jList {
+		c.Assert(j.In.Type(), Equals, j.Out)
+	}
+}
