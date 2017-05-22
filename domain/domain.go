@@ -31,9 +31,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
-	// TODO: It's used fo update vendor. It will be removed.
-	_ "github.com/coreos/etcd/clientv3/concurrency"
-	_ "github.com/coreos/etcd/mvcc/mvccpb"
 	goctx "golang.org/x/net/context"
 )
 
@@ -381,7 +378,10 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	d.ddl = ddl.NewDDL(d.store, d.infoHandle, &ddlCallback{do: d}, lease)
+	ctx := goctx.Background()
+	callback := &ddlCallback{do: d}
+	// TODO: Use etcd client instead of nil.
+	d.ddl = ddl.NewDDL(ctx, nil, d.store, d.infoHandle, callback, lease)
 	if err = d.Reload(); err != nil {
 		return nil, errors.Trace(err)
 	}
