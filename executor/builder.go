@@ -894,15 +894,15 @@ func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) *tipb.DAGRe
 
 func (b *executorBuilder) buildIndexJoin(v *plan.PhysicalIndexJoin) Executor {
 	return &IndexLookUpJoin{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
-		innerExec: b.build(v.Children()[1]).(DataReader),
-		leftJoinKeys: v.OuterJoinKeys,
-		rightJoinKeys: v.InnerJoinKeys,
-		outer: v.Outer,
-		leftConditions: v.LeftConditions,
+		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
+		innerExec:       b.build(v.Children()[1]).(DataReader),
+		outerJoinKeys:   v.OuterJoinKeys,
+		innerJoinKeys:   v.InnerJoinKeys,
+		outer:           v.Outer,
+		leftConditions:  v.LeftConditions,
 		rightConditions: v.RightConditions,
 		otherConditions: v.OtherConditions,
-		defaultValues:  v.DefaultValues,
+		defaultValues:   v.DefaultValues,
 	}
 }
 

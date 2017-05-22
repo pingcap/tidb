@@ -159,7 +159,7 @@ func tableHandlesToKVRanges(tid int64, handles []int64) []kv.KeyRange {
 func indexValuesToKVRanges(tid, idxID int64, values [][]types.Datum) ([]kv.KeyRange, error) {
 	krs := make([]kv.KeyRange, 0, len(values))
 	for _, vals := range values {
-		// TODO: We don't process the case that equal key has different keys.
+		// TODO: We don't process the case that equal key has different types.
 		valKey, err := codec.EncodeKey(nil, vals...)
 		if err != nil {
 			return nil, errors.Trace(nil)

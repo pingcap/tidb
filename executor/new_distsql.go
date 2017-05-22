@@ -32,6 +32,7 @@ var (
 	_ Executor = &IndexLookUpExecutor{}
 )
 
+// DataReader can send requests which ranges are constructed by datums.
 type DataReader interface {
 	Executor
 

@@ -45,6 +45,7 @@ func (e orderedRows) Less(i, j int) bool {
 	return bytes.Compare(e[i].key, e[j].key) < 0
 }
 
+// IndexLookUpJoin fetches batches of data from outer executor and constructs ranges for inner executor.
 type IndexLookUpJoin struct {
 	baseExecutor
 
@@ -57,8 +58,8 @@ type IndexLookUpJoin struct {
 	innerDatums orderedRows
 	exhausted   bool
 
-	leftJoinKeys    []*expression.Column
-	rightJoinKeys   []*expression.Column
+	outerJoinKeys   []*expression.Column
+	innerJoinKeys   []*expression.Column
 	leftConditions  expression.CNFExprs
 	rightConditions expression.CNFExprs
 	otherConditions expression.CNFExprs
@@ -66,12 +67,14 @@ type IndexLookUpJoin struct {
 	outer           bool
 }
 
+// Open implements the Executor Open interface.
 func (e *IndexLookUpJoin) Open() error {
 	e.cursor = 0
 	e.exhausted = false
 	return errors.Trace(e.children[0].Open())
 }
 
+// Close implements the Executor Close interface.
 func (e *IndexLookUpJoin) Close() error {
 	e.resultRows = nil
 	e.outerRows = nil
@@ -79,6 +82,7 @@ func (e *IndexLookUpJoin) Close() error {
 	return errors.Trace(e.children[0].Close())
 }
 
+// Next implements the Executor Next interface.
 func (e *IndexLookUpJoin) Next() (*Row, error) {
 	for e.cursor == len(e.resultRows) {
 		if e.exhausted {
@@ -102,8 +106,8 @@ func (e *IndexLookUpJoin) Next() (*Row, error) {
 				return nil, errors.Trace(err)
 			}
 			if match {
-				joinDatums := make([]types.Datum, 0, len(e.leftJoinKeys))
-				for _, col := range e.leftJoinKeys {
+				joinDatums := make([]types.Datum, 0, len(e.outerJoinKeys))
+				for _, col := range e.outerJoinKeys {
 					datum, _ := col.Eval(outerRow.Data)
 					joinDatums = append(joinDatums, datum)
 				}
@@ -112,7 +116,7 @@ func (e *IndexLookUpJoin) Next() (*Row, error) {
 					return nil, errors.Trace(err)
 				}
 				e.outerRows = append(e.outerRows, orderRow{key: joinOuterEncodeKey, row: outerRow})
-				e.innerDatums = append(e.innerDatums, orderRow{key:joinOuterEncodeKey, row: &Row{Data: joinDatums}})
+				e.innerDatums = append(e.innerDatums, orderRow{key: joinOuterEncodeKey, row: &Row{Data: joinDatums}})
 			} else if e.outer {
 				e.resultRows = append(e.resultRows, e.fillDefaultValues(outerRow))
 			}
@@ -167,8 +171,8 @@ func (e *IndexLookUpJoin) doJoin() error {
 		if !match {
 			continue
 		}
-		joinDatums := make([]types.Datum, 0, len(e.rightJoinKeys))
-		for _, col := range e.rightJoinKeys {
+		joinDatums := make([]types.Datum, 0, len(e.innerJoinKeys))
+		for _, col := range e.innerJoinKeys {
 			datum, _ := col.Eval(innerRow.Data)
 			joinDatums = append(joinDatums, datum)
 		}
