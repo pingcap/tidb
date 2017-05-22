@@ -23,11 +23,13 @@ import (
 	"strings"
 )
 
+// floatEpsilon is for compare two float value allowing precision loss.
+const floatEpsilon float64 = 0.00000001
+
 // compareFloat64 returns an integer comparing the float64 x to y,
 // allowing precision loss.
 func compareFloat64PrecisionLoss(x, y float64) int {
-	var EPSILON = 0.00000001
-	if x-y < EPSILON && y-x < EPSILON {
+	if x-y < floatEpsilon && y-x < floatEpsilon {
 		return 0
 	} else if x-y < 0 {
 		return -1
