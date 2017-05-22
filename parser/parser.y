@@ -576,6 +576,7 @@ import (
 	CompareOp		"Compare opcode"
 	ColumnOption		"column definition option"
 	ColumnOptionList	"column definition option list"
+	VirtualOrStored "indicate generated column is stored or not"
 	ColumnOptionListOpt	"optional column definition option list"
 	Constraint		"table constraint"
 	ConstraintElem		"table constraint element"
@@ -1301,12 +1302,17 @@ ColumnOption:
 		endOffset := parser.endOffset(&yyS[yypt-1])
 		expr := $4.(ast.ExprNode)
 		expr.SetText(parser.src[startOffset:endOffset])
-		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionGenerated, Expr:expr}
+
+		$$ = &ast.ColumnOption{
+			Tp: ast.ColumnOptionGenerated,
+			Expr: expr,
+			Stored: $6.(bool),
+		}
 	}
 
 GeneratedAlways: | "GENERATED" "ALWAYS"
 
-VirtualOrStored: | "VIRTUAL" | "STORED"
+VirtualOrStored: { $$ = false }| "VIRTUAL" { $$ = false }| "STORED" { $$ = true }
 
 ColumnOptionList:
 	ColumnOption

@@ -65,6 +65,7 @@ type ColumnInfo struct {
 	OriginDefaultValue  interface{} `json:"origin_default"`
 	DefaultValue        interface{} `json:"default"`
 	GeneratedExprString string      `json:"generated_expr_string"`
+	GeneratedStored     bool        `json:"generated_stored"`
 	types.FieldType     `json:"type"`
 	State               SchemaState `json:"state"`
 	Comment             string      `json:"comment"`

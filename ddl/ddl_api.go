@@ -315,6 +315,7 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 				}
 			case ast.ColumnOptionGenerated:
 				col.GeneratedExprString = reBlank.ReplaceAllString(v.Expr.Text(), "")
+				col.GeneratedStored = v.Stored
 				// TODO binary encode expr.
 			case ast.ColumnOptionFulltext:
 				// TODO: Support this type.

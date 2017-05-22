@@ -397,7 +397,13 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		buf.WriteString(fmt.Sprintf("  `%s` %s", col.Name.O, col.GetTypeDesc()))
 		if col.GeneratedExprString != "" {
 			// it's a generated column.
-			buf.WriteString(fmt.Sprintf(" GENERATED ALWAYS AS (%s) VIRTUAL", col.GeneratedExprString))
+			buf.WriteString(fmt.Sprintf(" GENERATED ALWAYS AS (%s)", col.GeneratedExprString))
+
+			if col.GeneratedStored {
+				buf.WriteString(" STORED")
+			} else {
+				buf.WriteString(" VIRTUAL")
+			}
 		}
 		if mysql.HasAutoIncrementFlag(col.Flag) {
 			buf.WriteString(" NOT NULL AUTO_INCREMENT")
