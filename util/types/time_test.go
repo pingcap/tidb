@@ -250,21 +250,21 @@ func (s *testTimeSuite) TestDurationAdd(c *C) {
 		c.Assert(err, IsNil)
 		ta, err := ParseDuration(test.InputAdd, test.FspAdd)
 		c.Assert(err, IsNil)
-		result, err := t.Add(&ta)
+		result, err := t.Add(ta)
 		c.Assert(err, IsNil)
 		c.Assert(result.String(), Equals, test.Expect)
 	}
 	t, err := ParseDuration("00:00:00", 0)
 	c.Assert(err, IsNil)
 	ta := new(Duration)
-	result, err := t.Add(ta)
+	result, err := t.Add(*ta)
 	c.Assert(err, IsNil)
 	c.Assert(result.String(), Equals, "00:00:00")
 
 	t = Duration{Duration: math.MaxInt64, Fsp: 0}
 	tatmp, err := ParseDuration("00:01:00", 0)
 	c.Assert(err, IsNil)
-	_, err = t.Add(&tatmp)
+	_, err = t.Add(tatmp)
 	c.Assert(err, NotNil)
 }
 
