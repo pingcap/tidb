@@ -437,17 +437,11 @@ func (d *ddl) onModifyColumn(t *meta.Meta, job *model.Job) error {
 	return errors.Trace(d.doModifyColumn(t, job, newCol, oldColName, pos))
 }
 
-// doModifyColumn update the column information and reorder all column.
+// doModifyColumn updates the column information and reorders all columns.
 func (d *ddl) doModifyColumn(t *meta.Meta, job *model.Job, col *model.ColumnInfo, oldName *model.CIStr, pos *ast.ColumnPosition) error {
 	tblInfo, err := getTableInfo(t, job, job.SchemaID)
 	if err != nil {
 		return errors.Trace(err)
-	}
-
-	if pos.Tp == ast.ColumnPositionAfter && oldName.L == pos.RelativeColumn.Name.L {
-		// `alter table modify column b int after b` will return ErrColumnNotExists.
-		job.State = model.JobCancelled
-		return infoschema.ErrColumnNotExists.GenByArgs(oldName, tblInfo.Name)
 	}
 
 	oldCol := findCol(tblInfo.Columns, oldName.L)
@@ -456,9 +450,15 @@ func (d *ddl) doModifyColumn(t *meta.Meta, job *model.Job, col *model.ColumnInfo
 		return infoschema.ErrColumnNotExists.GenByArgs(oldName, tblInfo.Name)
 	}
 
-	// calculate column's new position.
+	// Calculate column's new position.
 	oldPos, newPos := oldCol.Offset, oldCol.Offset
 	if pos.Tp == ast.ColumnPositionAfter {
+		if oldName.L == pos.RelativeColumn.Name.L {
+			// `alter table tableName modify column b int after b` will return ErrColumnNotExists.
+			job.State = model.JobCancelled
+			return infoschema.ErrColumnNotExists.GenByArgs(oldName, tblInfo.Name)
+		}
+
 		relative := findCol(tblInfo.Columns, pos.RelativeColumn.Name.L)
 		if relative == nil || relative.State != model.StatePublic {
 			job.State = model.JobCancelled
@@ -482,7 +482,7 @@ func (d *ddl) doModifyColumn(t *meta.Meta, job *model.Job, col *model.ColumnInfo
 	} else {
 		cols := tblInfo.Columns
 
-		// reorder columns in place.
+		// Reorder columns in place.
 		if newPos < oldPos {
 			copy(cols[newPos+1:], cols[newPos:oldPos])
 		} else {
@@ -498,7 +498,7 @@ func (d *ddl) doModifyColumn(t *meta.Meta, job *model.Job, col *model.ColumnInfo
 		}
 	}
 
-	// change offset and name in indices.
+	// Change offset and name in indices.
 	for _, idx := range tblInfo.Indices {
 		for _, c := range idx.Columns {
 			if newCol, ok := columnChanged[c.Name.L]; ok {
