@@ -343,6 +343,7 @@ func (s *testMainSuite) TestSchemaValidity(c *C) {
 }
 
 func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
+	// TODO: testleak package should be able to find this leak.
 	store := newStoreWithBootstrap(c, s.dbName+"goroutine_leak")
 	se, err := createSession(store)
 	c.Assert(err, IsNil)
@@ -363,6 +364,8 @@ func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
 	wg.Wait()
 	se.sysSessionPool().Close()
 	after := runtime.NumGoroutine()
+	// After and before should be Equal, but this test may be disturbed by other factors.
+	// So I relax the strict check to make CI more stable.
 	c.Assert(after-before, Less, 3)
 }
 
