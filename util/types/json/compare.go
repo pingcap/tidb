@@ -93,10 +93,10 @@ func CompareJSON(j1 JSON, j2 JSON) (cmp int, err error) {
 		}
 		switch x := j1.(type) {
 		case jsonLiteral:
-			// false is less than true.
 			left := int(x)
 			right := int(j2.(jsonLiteral))
-			cmp = left - right
+			// false is less than true.
+			cmp = right - left
 		case jsonInt64, jsonDouble:
 			left := jsonAsFloat64(j1)
 			right := jsonAsFloat64(j2)
