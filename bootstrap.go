@@ -191,6 +191,7 @@ const (
 	version8  = 8
 	version9  = 9
 	version10 = 10
+	version11 = 11
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -283,6 +284,10 @@ func upgrade(s Session) {
 
 	if ver < version10 {
 		upgradeToVer10(s)
+	}
+
+	if ver < version11 {
+		upgradeToVer11(s)
 	}
 
 	updateBootstrapVer(s)
