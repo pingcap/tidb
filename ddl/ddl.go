@@ -117,7 +117,7 @@ type DDL interface {
 	RenameTable(ctx context.Context, oldTableIdent, newTableIdent ast.Ident) error
 	// SetLease will reset the lease time for online DDL change,
 	// it's a very dangerous function and you must guarantee that all servers have the same lease time.
-	SetLease(lease time.Duration)
+	SetLease(ctx goctx.Context, lease time.Duration)
 	// GetLease returns current schema lease time.
 	GetLease() time.Duration
 	// Stats returns the DDL statistics.
@@ -180,9 +180,7 @@ type ddl struct {
 	reorgRowCount int64
 
 	quitCh chan struct{}
-	// TODO: Use cancelFunc instead of quitCh.
-	cancelFunc goctx.CancelFunc
-	wait       sync.WaitGroup
+	wait   sync.WaitGroup
 }
 
 // RegisterEventCh registers passed channel for ddl Event.
@@ -215,38 +213,38 @@ func (d *ddl) asyncNotifyEvent(e *Event) {
 }
 
 // NewDDL creates a new DDL.
-func NewDDL(store kv.Storage, infoHandle *infoschema.Handle, hook Callback, lease time.Duration) DDL {
-	return newDDL(store, infoHandle, hook, lease)
+func NewDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
+	infoHandle *infoschema.Handle, hook Callback, lease time.Duration) DDL {
+	return newDDL(ctx, etcdCli, store, infoHandle, hook, lease)
 }
 
-// TODO: Move this to the function of newDDL.
-func (d *ddl) setWorker(ctx goctx.Context, cli *clientv3.Client) {
-	d.worker = &worker{
-		ddlID:      d.uuid,
-		etcdClient: cli,
-	}
-
-	ctx, d.cancelFunc = goctx.WithCancel(ctx)
-	d.campaignOwners(ctx)
-}
-
-func newDDL(store kv.Storage, infoHandle *infoschema.Handle, hook Callback, lease time.Duration) *ddl {
+func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
+	infoHandle *infoschema.Handle, hook Callback, lease time.Duration) *ddl {
 	if hook == nil {
 		hook = &BaseCallback{}
+	}
+
+	id := uuid.NewV4().String()
+	ctx, cancelFunc := goctx.WithCancel(ctx)
+	worker := &worker{
+		ddlID:      id,
+		etcdClient: etcdCli,
+		cancel:     cancelFunc,
 	}
 
 	d := &ddl{
 		infoHandle:   infoHandle,
 		hook:         hook,
 		store:        store,
+		uuid:         id,
 		lease:        lease,
-		uuid:         uuid.NewV4().String(),
 		ddlJobCh:     make(chan struct{}, 1),
 		ddlJobDoneCh: make(chan struct{}, 1),
 		bgJobCh:      make(chan struct{}, 1),
+		worker:       worker,
 	}
 
-	d.start()
+	d.start(ctx)
 
 	variable.RegisterStatistics(d)
 	log.Infof("start DDL:%s", d.uuid)
@@ -295,8 +293,12 @@ func (d *ddl) Stop() error {
 	return errors.Trace(err)
 }
 
-func (d *ddl) start() {
+func (d *ddl) start(ctx goctx.Context) {
 	d.quitCh = make(chan struct{})
+	if ChangeOwnerInNewWay {
+		d.campaignOwners(ctx)
+	}
+
 	d.wait.Add(2)
 	go d.onBackgroundWorker()
 	go d.onDDLWorker()
@@ -313,9 +315,7 @@ func (d *ddl) close() {
 	}
 
 	close(d.quitCh)
-	if d.worker != nil {
-		d.cancelFunc()
-	}
+	d.worker.cancel()
 
 	d.wait.Wait()
 	log.Infof("close DDL:%s", d.uuid)
@@ -330,7 +330,7 @@ func (d *ddl) isClosed() bool {
 	}
 }
 
-func (d *ddl) SetLease(lease time.Duration) {
+func (d *ddl) SetLease(ctx goctx.Context, lease time.Duration) {
 	d.m.Lock()
 	defer d.m.Unlock()
 
@@ -349,7 +349,7 @@ func (d *ddl) SetLease(lease time.Duration) {
 	// Close the running worker and start again.
 	d.close()
 	d.lease = lease
-	d.start()
+	d.start(ctx)
 }
 
 func (d *ddl) GetLease() time.Duration {
