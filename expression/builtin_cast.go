@@ -60,7 +60,7 @@ type builtinCastSig struct {
 func (b *builtinCastSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	switch b.tp.Tp {
 	// Parser has restricted this.
@@ -110,7 +110,7 @@ type builtinCastIntAsTimeSig struct {
 func (b *builtinCastIntAsTimeSig) evalTime(row []types.Datum) (res types.Time, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalInt(row, b.getCtx().GetSessionVars().StmtCtx)
 	if isNull || err != nil {
-		return types.Time{}, isNull, errors.Trace(err)
+		return res, isNull, errors.Trace(err)
 	}
 	res, err = types.ParseTimeFromInt64(val)
 	return res, false, errors.Trace(err)
@@ -124,7 +124,7 @@ type builtinCastIntAsDurationSig struct {
 func (b *builtinCastIntAsDurationSig) evalDuration(row []types.Datum) (res types.Duration, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalInt(row, b.getCtx().GetSessionVars().StmtCtx)
 	if isNull || err != nil {
-		return types.Duration{}, isNull, errors.Trace(err)
+		return res, isNull, errors.Trace(err)
 	}
 	res, err = types.ParseDuration(strconv.FormatInt(val, 10), b.fsp)
 	return res, false, errors.Trace(err)
@@ -146,7 +146,7 @@ type builtinCastRealAsDecimalSig struct {
 func (b *builtinCastRealAsDecimalSig) evalDecimal(row []types.Datum) (res *types.MyDecimal, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalReal(row, b.getCtx().GetSessionVars().StmtCtx)
 	if isNull || err != nil {
-		return nil, isNull, errors.Trace(err)
+		return res, isNull, errors.Trace(err)
 	}
 	res = new(types.MyDecimal)
 	err = res.FromFloat64(val)
@@ -182,7 +182,7 @@ type builtinCastRealAsDurationSig struct {
 func (b *builtinCastRealAsDurationSig) evalDuration(row []types.Datum) (res types.Duration, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalReal(row, b.getCtx().GetSessionVars().StmtCtx)
 	if isNull || err != nil {
-		return types.Duration{}, isNull, errors.Trace(err)
+		return res, isNull, errors.Trace(err)
 	}
 	res, err = types.ParseDuration(strconv.FormatFloat(val, 'f', -1, 64), b.fsp)
 	return res, false, errors.Trace(err)
@@ -195,7 +195,7 @@ type builtinCastDecimalAsIntSig struct {
 func (b *builtinCastDecimalAsIntSig) evalInt(row []types.Datum) (res int64, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDecimal(row, b.getCtx().GetSessionVars().StmtCtx)
 	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
+		return res, isNull, errors.Trace(err)
 	}
 	res, err = val.ToInt()
 	return res, false, errors.Trace(err)
@@ -208,7 +208,7 @@ type builtinCastDecimalAsStringSig struct {
 func (b *builtinCastDecimalAsStringSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDecimal(row, b.getCtx().GetSessionVars().StmtCtx)
 	if isNull || err != nil {
-		return "", isNull, errors.Trace(err)
+		return res, isNull, errors.Trace(err)
 	}
 	return string(val.ToString()), false, nil
 }
@@ -220,7 +220,7 @@ type builtinCastDecimalAsRealSig struct {
 func (b *builtinCastDecimalAsRealSig) evalReal(row []types.Datum) (res float64, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDecimal(row, b.getCtx().GetSessionVars().StmtCtx)
 	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
+		return res, isNull, errors.Trace(err)
 	}
 	res, err = val.ToFloat64()
 	return res, false, errors.Trace(err)
@@ -234,7 +234,7 @@ type builtinCastDecimalAsTimeSig struct {
 func (b *builtinCastDecimalAsTimeSig) evalTime(row []types.Datum) (res types.Time, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDecimal(row, b.getCtx().GetSessionVars().StmtCtx)
 	if isNull || err != nil {
-		return types.Time{}, isNull, errors.Trace(err)
+		return res, isNull, errors.Trace(err)
 	}
 	_, fsp := val.PrecisionAndFrac()
 	res, err = types.ParseTime(string(val.ToString()), b.tp, fsp)
@@ -248,7 +248,7 @@ type builtinCastDecimalAsDurationSig struct {
 func (b *builtinCastDecimalAsDurationSig) evalDuration(row []types.Datum) (res types.Duration, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDecimal(row, b.getCtx().GetSessionVars().StmtCtx)
 	if isNull || err != nil {
-		return types.Duration{}, false, errors.Trace(err)
+		return res, false, errors.Trace(err)
 	}
 	_, fsp := val.PrecisionAndFrac()
 	res, err = types.ParseDuration(string(val.ToString()), fsp)
@@ -265,7 +265,7 @@ func (b *builtinCastStringAsIntSig) evalInt(row []types.Datum) (res int64, isNul
 	}
 	val, isNull, err := b.args[0].EvalString(row, b.getCtx().GetSessionVars().StmtCtx)
 	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
+		return res, isNull, errors.Trace(err)
 	}
 	res, err = strconv.ParseInt(val, 10, 64)
 	return res, false, errors.Trace(err)
@@ -281,7 +281,7 @@ func (b *builtinCastStringAsRealSig) evalReal(row []types.Datum) (res float64, i
 	}
 	val, isNull, err := b.args[0].EvalString(row, b.getCtx().GetSessionVars().StmtCtx)
 	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
+		return res, isNull, errors.Trace(err)
 	}
 	res, err = strconv.ParseFloat(val, 64)
 	return res, false, errors.Trace(err)
@@ -297,7 +297,7 @@ func (b *builtinCastStringAsDecimalSig) evalDecimal(row []types.Datum) (res *typ
 	}
 	val, isNull, err := b.args[0].EvalString(row, b.getCtx().GetSessionVars().StmtCtx)
 	if isNull || err != nil {
-		return nil, isNull, errors.Trace(err)
+		return res, isNull, errors.Trace(err)
 	}
 	res = new(types.MyDecimal)
 	err = res.FromString([]byte(val))
@@ -313,7 +313,7 @@ type builtinCastStringAsTimeSig struct {
 func (b *builtinCastStringAsTimeSig) evalTime(row []types.Datum) (res types.Time, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalString(row, b.getCtx().GetSessionVars().StmtCtx)
 	if isNull || err != nil {
-		return types.Time{}, isNull, errors.Trace(err)
+		return res, isNull, errors.Trace(err)
 	}
 	res, err = types.ParseTime(val, b.tp, b.fsp)
 	return res, false, errors.Trace(err)
@@ -327,7 +327,7 @@ type builtinCastStringAsDurationSig struct {
 func (b *builtinCastStringAsDurationSig) evalDuration(row []types.Datum) (res types.Duration, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalString(row, b.getCtx().GetSessionVars().StmtCtx)
 	if isNull || err != nil {
-		return types.Duration{}, isNull, errors.Trace(err)
+		return res, isNull, errors.Trace(err)
 	}
 	res, err = types.ParseDuration(val, b.fsp)
 	return res, false, errors.Trace(err)
@@ -340,7 +340,7 @@ type builtinCastTimeAsIntSig struct {
 func (b *builtinCastTimeAsIntSig) evalInt(row []types.Datum) (res int64, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalTime(row, b.getCtx().GetSessionVars().StmtCtx)
 	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
+		return res, isNull, errors.Trace(err)
 	}
 	res, err = val.ToNumber().ToInt()
 	return res, false, errors.Trace(err)
@@ -353,7 +353,7 @@ type builtinCastTimeAsRealSig struct {
 func (b *builtinCastTimeAsRealSig) evalReal(row []types.Datum) (res float64, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalTime(row, b.getCtx().GetSessionVars().StmtCtx)
 	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
+		return res, isNull, errors.Trace(err)
 	}
 	res, err = val.ToNumber().ToFloat64()
 	return res, false, errors.Trace(err)
@@ -366,7 +366,7 @@ type builtinCastTimeAsDecimalSig struct {
 func (b *builtinCastTimeAsDecimalSig) evalDecimal(row []types.Datum) (res *types.MyDecimal, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalTime(row, b.getCtx().GetSessionVars().StmtCtx)
 	if isNull || err != nil {
-		return nil, isNull, errors.Trace(err)
+		return res, isNull, errors.Trace(err)
 	}
 	return val.ToNumber(), false, errors.Trace(err)
 }
@@ -378,7 +378,7 @@ type builtinCastTimeAsStringSig struct {
 func (b *builtinCastTimeAsStringSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalTime(row, b.getCtx().GetSessionVars().StmtCtx)
 	if isNull || err != nil {
-		return "", isNull, errors.Trace(err)
+		return res, isNull, errors.Trace(err)
 	}
 	return val.String(), false, errors.Trace(err)
 }
@@ -390,7 +390,7 @@ type builtinCastTimeAsDurationSig struct {
 func (b *builtinCastTimeAsDurationSig) evalDuration(row []types.Datum) (res types.Duration, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalTime(row, b.getCtx().GetSessionVars().StmtCtx)
 	if isNull || err != nil {
-		return types.Duration{}, isNull, errors.Trace(err)
+		return res, isNull, errors.Trace(err)
 	}
 	res, err = val.ConvertToDuration()
 	return res, false, errors.Trace(err)
@@ -403,7 +403,7 @@ type builtinCastDurationAsIntSig struct {
 func (b *builtinCastDurationAsIntSig) evalInt(row []types.Datum) (res int64, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDuration(row, b.getCtx().GetSessionVars().StmtCtx)
 	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
+		return res, isNull, errors.Trace(err)
 	}
 	res, err = val.ToNumber().ToInt()
 	return res, false, errors.Trace(err)
@@ -416,7 +416,7 @@ type builtinCastDurationAsRealSig struct {
 func (b *builtinCastDurationAsRealSig) evalReal(row []types.Datum) (res float64, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDuration(row, b.getCtx().GetSessionVars().StmtCtx)
 	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
+		return res, isNull, errors.Trace(err)
 	}
 	res, err = val.ToNumber().ToFloat64()
 	return res, false, errors.Trace(err)
@@ -429,7 +429,7 @@ type builtinCastDurationAsDecimalSig struct {
 func (b *builtinCastDurationAsDecimalSig) evalDecimal(row []types.Datum) (res *types.MyDecimal, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDuration(row, b.getCtx().GetSessionVars().StmtCtx)
 	if isNull || err != nil {
-		return nil, isNull, errors.Trace(err)
+		return res, isNull, errors.Trace(err)
 	}
 	return val.ToNumber(), false, errors.Trace(err)
 }
@@ -441,7 +441,7 @@ type builtinCastDurationAsStringSig struct {
 func (b *builtinCastDurationAsStringSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDuration(row, b.getCtx().GetSessionVars().StmtCtx)
 	if isNull || err != nil {
-		return "", isNull, errors.Trace(err)
+		return res, isNull, errors.Trace(err)
 	}
 	return val.String(), false, errors.Trace(err)
 }
@@ -454,7 +454,7 @@ type builtinCastDurationAsTimeSig struct {
 func (b *builtinCastDurationAsTimeSig) evalTime(row []types.Datum) (res types.Time, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDuration(row, b.getCtx().GetSessionVars().StmtCtx)
 	if isNull || err != nil {
-		return types.Time{}, isNull, errors.Trace(err)
+		return res, isNull, errors.Trace(err)
 	}
 	res, err = val.ConvertToTime(b.tp)
 	return res, false, errors.Trace(err)

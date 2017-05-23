@@ -1106,9 +1106,6 @@ func SetBinChsClnFlag(ft *FieldType) {
 }
 
 // IsHybridType checks whether a ClassString type is hybrid type.
-// For DateTime, Date, NewDate, which is regarded as ClassString in runtime,
-// but we need to convert it to numerical type sometimes.
-// DateTime value like "2000-01-01 12:00:00" will be truncated if we convert it to int as a string value.
 //
 // For ENUM/SET which is consist of a string attribute `Name` and an int attribute `Value`,
 // it will cause an error if we convert ENUM/SET to int as a string value.
@@ -1116,7 +1113,7 @@ func SetBinChsClnFlag(ft *FieldType) {
 // For Bit, we will get a wrong result if we convert it to int as a string value.
 func IsHybridType(tp byte) bool {
 	switch tp {
-	case mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDate, mysql.TypeNewDate, mysql.TypeDuration, mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet:
+	case mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet:
 		return true
 	default:
 		return false

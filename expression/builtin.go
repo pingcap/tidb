@@ -324,23 +324,23 @@ func (b *baseTimeBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, err
 }
 
 func (b *baseTimeBuiltinFunc) evalString(row []types.Datum) (string, bool, error) {
-	panic("cannot get STRING result from DATETIME expression")
+	panic("cannot get STRING result from TIME expression")
 }
 
 func (b *baseTimeBuiltinFunc) evalInt(row []types.Datum) (int64, bool, error) {
-	panic("cannot get INT result from DATETIME expression")
+	panic("cannot get INT result from TIME expression")
 }
 
 func (b *baseTimeBuiltinFunc) evalReal(row []types.Datum) (float64, bool, error) {
-	panic("cannot get REAL result from DATETIME expression")
+	panic("cannot get REAL result from TIME expression")
 }
 
 func (b *baseTimeBuiltinFunc) evalDecimal(row []types.Datum) (*types.MyDecimal, bool, error) {
-	panic("cannot get DECIMAL result from DATETIME expression")
+	panic("cannot get DECIMAL result from TIME expression")
 }
 
 func (b *baseTimeBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
-	panic("cannot get DURATION result from DATETIME expression")
+	panic("cannot get DURATION result from TIME expression")
 }
 
 type baseDurationBuiltinFunc struct {
