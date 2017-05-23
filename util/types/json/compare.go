@@ -67,9 +67,8 @@ func jsonAsFloat64(j JSON) float64 {
 			return float64(*j.(*jsonLiteral))
 		}
 		return float64(j.(jsonLiteral))
-	} else {
-		panic("can not convert to float64")
 	}
+	panic("can not convert to float64")
 }
 
 func jsonAsString(j JSON) string {
