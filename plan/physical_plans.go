@@ -470,9 +470,9 @@ type PhysicalIndexJoin struct {
 	*basePlan
 	basePhysicalPlan
 
-	outer           bool
-	outerJoinKeys   []*expression.Column
-	innerJoinKeys   []*expression.Column
+	Outer           bool
+	OuterJoinKeys   []*expression.Column
+	InnerJoinKeys   []*expression.Column
 	LeftConditions  expression.CNFExprs
 	RightConditions expression.CNFExprs
 	OtherConditions expression.CNFExprs
