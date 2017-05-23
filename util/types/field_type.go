@@ -195,10 +195,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 	case []byte:
 		tp.Tp = mysql.TypeBlob
 		SetBinChsClnFlag(tp)
-	case Bit:
-		tp.Tp = mysql.TypeBit
-		SetBinChsClnFlag(tp)
-	case Hex:
+	case Bit, Hex:
 		tp.Tp = mysql.TypeVarchar
 		SetBinChsClnFlag(tp)
 	case Time:
@@ -1103,4 +1100,19 @@ func SetBinChsClnFlag(ft *FieldType) {
 	ft.Charset = charset.CharsetBin
 	ft.Collate = charset.CollationBin
 	ft.Flag |= mysql.BinaryFlag
+}
+
+// IsHybridType checks whether a ClassString type is hybrid type.
+//
+// For ENUM/SET which is consist of a string attribute `Name` and an int attribute `Value`,
+// it will cause an error if we convert ENUM/SET to int as a string value.
+//
+// For Bit, we will get a wrong result if we convert it to int as a string value.
+func IsHybridType(tp byte) bool {
+	switch tp {
+	case mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet:
+		return true
+	default:
+		return false
+	}
 }
