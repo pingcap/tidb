@@ -294,7 +294,6 @@ type copIterator struct {
 
 	// Otherwise, results are stored in respChan.
 	respChan chan copResponse
-	wg       sync.WaitGroup
 }
 
 type copResponse struct {
@@ -307,7 +306,6 @@ const minLogCopTaskTime = 300 * time.Millisecond
 // work is a worker function that get a copTask from channel, handle it and
 // send the result back.
 func (it *copIterator) work(ctx goctx.Context, taskCh <-chan *copTask) {
-	defer it.wg.Done()
 	for task := range taskCh {
 		bo := NewBackoffer(copNextMaxBackoff, ctx)
 		startTime := time.Now()
@@ -320,36 +318,45 @@ func (it *copIterator) work(ctx goctx.Context, taskCh <-chan *copTask) {
 		if bo.totalSleep > 0 {
 			backoffHistogram.Observe(float64(bo.totalSleep) / 1000)
 		}
-		var ch chan copResponse
+		var exit bool
 		if !it.req.KeepOrder {
-			ch = it.respChan
+			exit = sendCopResponsesToChan(ctx, it.finished, resps, it.respChan)
 		} else {
-			ch = task.respChan
+			exit = sendCopResponsesToChan(ctx, it.finished, resps, task.respChan)
+			close(task.respChan)
 		}
 
-		for _, resp := range resps {
-			select {
-			case ch <- resp:
-			case <-ctx.Done():
-				return
-			case <-it.finished:
-				return
-			}
-		}
-		if it.req.KeepOrder {
-			close(ch)
+		if exit {
+			return
 		}
 	}
 }
 
+// sendCopResponsesToChan sends all the copResponses to the channel, returns a
+// boolean to indicate whether this process is interrupted.
+func sendCopResponsesToChan(ctx goctx.Context, finished chan struct{}, resps []copResponse, ch chan copResponse) bool {
+	for _, resp := range resps {
+		select {
+		case ch <- resp:
+		case <-ctx.Done():
+			return true
+		case <-finished:
+			return true
+		}
+	}
+	return false
+}
+
 func (it *copIterator) run(ctx goctx.Context) {
-	it.wg.Add(it.concurrency)
+	var wg sync.WaitGroup
+	wg.Add(it.concurrency)
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
 		go func() {
 			childCtx, cancel := goctx.WithCancel(ctx)
 			defer cancel()
 			it.work(childCtx, it.taskCh)
+			wg.Done()
 		}()
 	}
 
@@ -366,7 +373,7 @@ func (it *copIterator) run(ctx goctx.Context) {
 		close(it.taskCh)
 
 		// Wait for worker goroutines to exit.
-		it.wg.Wait()
+		wg.Wait()
 		if !it.req.KeepOrder {
 			close(it.respChan)
 		}
@@ -496,7 +503,6 @@ func (it *copIterator) handleRegionErrorTask(bo *Backoffer, task *copTask) []cop
 
 func (it *copIterator) Close() error {
 	close(it.finished)
-	it.wg.Wait()
 	return nil
 }
 
