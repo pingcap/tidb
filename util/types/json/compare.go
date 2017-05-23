@@ -55,15 +55,13 @@ func jsonAsFloat64(j JSON) float64 {
 	if j.Type() == "INTEGER" {
 		if reflect.TypeOf(j).Kind() == reflect.Ptr {
 			return float64(*j.(*jsonInt64))
-		} else {
-			return float64(j.(jsonInt64))
 		}
+		return float64(j.(jsonInt64))
 	} else if j.Type() == "DOUBLE" {
 		if reflect.TypeOf(j).Kind() == reflect.Ptr {
 			return float64(*j.(*jsonDouble))
-		} else {
-			return float64(j.(jsonDouble))
 		}
+		return float64(j.(jsonDouble))
 	} else {
 		panic("can not convert to float64")
 	}
@@ -72,9 +70,8 @@ func jsonAsFloat64(j JSON) float64 {
 func jsonAsString(j JSON) string {
 	if reflect.TypeOf(j).Kind() == reflect.Ptr {
 		return string(*j.(*jsonString))
-	} else {
-		return string(j.(jsonString))
 	}
+	return string(j.(jsonString))
 }
 
 // CompareJSON compares two json object.
