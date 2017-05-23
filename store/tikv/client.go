@@ -76,6 +76,7 @@ func (c *rpcClient) SendCopReq(ctx goctx.Context, addr string, req *coprocessor.
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	connPoolHistogram.WithLabelValues("cop").Observe(time.Since(start).Seconds())
 	defer c.p.PutConn(conn)
 	msg := msgpb.Message{
 		MsgType: msgpb.MessageType_CopReq,
@@ -108,6 +109,7 @@ func (c *rpcClient) SendKVReq(ctx goctx.Context, addr string, req *kvrpcpb.Reque
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	connPoolHistogram.WithLabelValues("kv").Observe(time.Since(start).Seconds())
 	defer c.p.PutConn(conn)
 	msg := msgpb.Message{
 		MsgType: msgpb.MessageType_KvReq,
