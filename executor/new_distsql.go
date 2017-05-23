@@ -295,8 +295,7 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 	}
 }
 
-func (e *IndexLookUpExecutor) pickAndExecTask(workCh <-chan *lookupTableTask) {
-	txnCtx := e.ctx.GoCtx()
+func (e *IndexLookUpExecutor) pickAndExecTask(workCh <-chan *lookupTableTask, txnCtx goctx.Context) {
 	childCtx, cancel := goctx.WithCancel(txnCtx)
 	defer cancel()
 	for {
@@ -307,6 +306,7 @@ func (e *IndexLookUpExecutor) pickAndExecTask(workCh <-chan *lookupTableTask) {
 			}
 			e.executeTask(task, childCtx)
 		case <-childCtx.Done():
+			return
 		}
 	}
 }
@@ -323,11 +323,11 @@ func (e *IndexLookUpExecutor) fetchHandlesAndStartWorkers() {
 	}()
 
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency
+	txnCtx := e.ctx.GoCtx()
 	for i := 0; i < lookupConcurrencyLimit; i++ {
-		go e.pickAndExecTask(workCh)
+		go e.pickAndExecTask(workCh, txnCtx)
 	}
 
-	txnCtx := e.ctx.GoCtx()
 	for {
 		handles, finish, err := extractHandlesFromIndexResult(e.result)
 		if err != nil || finish {
