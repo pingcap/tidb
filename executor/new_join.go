@@ -23,12 +23,12 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-type orderRow struct {
+type orderedRow struct {
 	key []byte
 	row *Row
 }
 
-type orderedRows []orderRow
+type orderedRows []orderedRow
 
 // Len returns the number of rows.
 func (e orderedRows) Len() int {
@@ -55,8 +55,8 @@ type IndexLookUpJoin struct {
 	resultRows  []*Row
 	outerRows   orderedRows
 	innerRows   orderedRows
-	innerDatums orderedRows
-	exhausted   bool
+	innerDatums orderedRows // innerDatums are extracted by innerRows and innerJoinKeys
+	exhausted   bool        // exhausted means whether all data has been extracted
 
 	outerJoinKeys   []*expression.Column
 	innerJoinKeys   []*expression.Column
@@ -83,6 +83,8 @@ func (e *IndexLookUpJoin) Close() error {
 }
 
 // Next implements the Executor Next interface.
+// We will fetch batches of row from outer executor, construct the inner datums and sort them.
+// At the same time we will fetch the inner row by the inner datums and apply merge join.
 func (e *IndexLookUpJoin) Next() (*Row, error) {
 	for e.cursor == len(e.resultRows) {
 		if e.exhausted {
@@ -115,8 +117,8 @@ func (e *IndexLookUpJoin) Next() (*Row, error) {
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
-				e.outerRows = append(e.outerRows, orderRow{key: joinOuterEncodeKey, row: outerRow})
-				e.innerDatums = append(e.innerDatums, orderRow{key: joinOuterEncodeKey, row: &Row{Data: joinDatums}})
+				e.outerRows = append(e.outerRows, orderedRow{key: joinOuterEncodeKey, row: outerRow})
+				e.innerDatums = append(e.innerDatums, orderedRow{key: joinOuterEncodeKey, row: &Row{Data: joinDatums}})
 			} else if e.outer {
 				e.resultRows = append(e.resultRows, e.fillDefaultValues(outerRow))
 			}
@@ -138,7 +140,7 @@ func (e *IndexLookUpJoin) fillDefaultValues(row *Row) *Row {
 	return row
 }
 
-func uniqueOrderedRows(rows orderedRows) [][]types.Datum {
+func getUniqueDatums(rows orderedRows) [][]types.Datum {
 	datums := make([][]types.Datum, 0, rows.Len())
 	sort.Sort(rows)
 	for i := range rows {
@@ -150,8 +152,9 @@ func uniqueOrderedRows(rows orderedRows) [][]types.Datum {
 	return datums
 }
 
+// doJoin will join the outer rows and inner rows and store them to resultRows.
 func (e *IndexLookUpJoin) doJoin() error {
-	err := e.innerExec.doRequestForDatums(uniqueOrderedRows(e.innerDatums), e.ctx.GoCtx())
+	err := e.innerExec.doRequestForDatums(getUniqueDatums(e.innerDatums), e.ctx.GoCtx())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -180,12 +183,13 @@ func (e *IndexLookUpJoin) doJoin() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		e.innerRows = append(e.innerRows, orderRow{key: joinKey, row: innerRow})
+		e.innerRows = append(e.innerRows, orderedRow{key: joinKey, row: innerRow})
 	}
 	sort.Sort(e.innerRows)
 	return e.doMergeJoin()
 }
 
+// getNextCursor will move cursor to the next datum that is different from the previous one and return it.
 func getNextCursor(cursor int, rows orderedRows) int {
 	for {
 		cursor++
@@ -200,6 +204,7 @@ func getNextCursor(cursor int, rows orderedRows) int {
 	return cursor
 }
 
+// doMergeJoin joins the innerRows and outerRows which have been sorted before.
 func (e *IndexLookUpJoin) doMergeJoin() error {
 	var outerCursor, innerCursor int
 	for outerCursor < len(e.outerRows) && innerCursor < len(e.innerRows) {

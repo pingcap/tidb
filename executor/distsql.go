@@ -156,13 +156,14 @@ func tableHandlesToKVRanges(tid int64, handles []int64) []kv.KeyRange {
 	return krs
 }
 
+// indexValuesToKVRanges will convert the index datums to kv ranges.
 func indexValuesToKVRanges(tid, idxID int64, values [][]types.Datum) ([]kv.KeyRange, error) {
 	krs := make([]kv.KeyRange, 0, len(values))
 	for _, vals := range values {
 		// TODO: We don't process the case that equal key has different types.
 		valKey, err := codec.EncodeKey(nil, vals...)
 		if err != nil {
-			return nil, errors.Trace(nil)
+			return nil, errors.Trace(err)
 		}
 		rangeKey := tablecodec.EncodeIndexSeekKey(tid, idxID, valKey)
 		krs = append(krs, kv.KeyRange{StartKey: rangeKey, EndKey: rangeKey})
