@@ -68,6 +68,17 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 	if usedSchemaVersion != 0 && usedSchemaVersion == latestSchemaVersion {
 		return latestSchemaVersion, nil
 	}
+
+	// Update self schema version to etcd.
+	if ddl.ChangeOwnerInNewWay {
+		defer func() {
+			err = do.ddl.SchemaVersionSyncer().UpdateSelfVersion(goctx.Background(), latestSchemaVersion)
+			if err != nil {
+				log.Warnf("update self version from %v to %v failed", usedSchemaVersion, latestSchemaVersion)
+			}
+		}()
+	}
+
 	startTime := time.Now()
 	ok, err := do.tryLoadSchemaDiffs(m, usedSchemaVersion, latestSchemaVersion)
 	if err != nil {
@@ -285,6 +296,7 @@ func (do *Domain) Reload() error {
 func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	// Lease renewal can run at any frequency.
 	// Use lease/2 here as recommend by paper.
+	// TODO: Reset ticker or make interval longer.
 	ticker := time.NewTicker(lease / 2)
 	defer ticker.Stop()
 
@@ -295,6 +307,12 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			if err != nil {
 				log.Errorf("[ddl] reload schema in loop err %v", errors.ErrorStack(err))
 			}
+			// TODO: If ChangeOwnerInNewWay is true, we can remove this comments.
+			//	case <-do.ddl.SchemaVersionSyncer().LatestVerCh:
+			//		err := do.Reload()
+			//		if err != nil {
+			//			log.Errorf("[ddl] reload schema in loop err %v", errors.ErrorStack(err))
+			//		}
 		case <-do.exit:
 			return
 		}
@@ -387,6 +405,11 @@ func NewDomain(store kv.Storage, lease time.Duration, factory pools.Factory) (d 
 	callback := &ddlCallback{do: d}
 	// TODO: Use etcd client instead of nil.
 	d.ddl = ddl.NewDDL(ctx, nil, d.store, d.infoHandle, callback, lease)
+	if ddl.ChangeOwnerInNewWay {
+		if err = d.ddl.SchemaVersionSyncer().Init(ctx); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
 	if err = d.Reload(); err != nil {
 		return nil, errors.Trace(err)
 	}
