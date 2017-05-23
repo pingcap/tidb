@@ -532,7 +532,7 @@ func IsHybridType(expr Expression) bool {
 	case mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet:
 		return true
 	}
-	// For a constant, the field type will be inferred as `varstring` when the kind of it is `HEX` or `BIT`.
+	// For a constant, the field type will be inferred as `VARCHAR` when the kind of it is `HEX` or `BIT`.
 	if con, ok := expr.(*Constant); ok {
 		switch con.Value.Kind() {
 		case types.KindMysqlHex, types.KindMysqlBit:
