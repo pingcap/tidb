@@ -372,8 +372,8 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		switch t {
 		case mysql.TypeDatetime,mysql.TypeDate,mysql.TypeTimestamp:
 			tp = types.NewFieldType(mysql.TypeDatetime)
-		case mysql.TypeTime:
-			tp = types.NewFieldType(mysql.TypeVarString)
+		case mysql.TypeDuration:
+			tp = types.NewFieldType(mysql.TypeDuration)
 		default:
 			tp = types.NewFieldType(mysql.TypeVarString)
 		}
