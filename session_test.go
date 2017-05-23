@@ -657,10 +657,8 @@ func (s *testSessionSuite) TestIssue827(c *C) {
 	c.Assert(lastInsertID+3, Equals, currLastInsertID)
 
 	mustExecSQL(c, se, dropDBSQL)
-	err = se.Close()
-	c.Assert(err, IsNil)
-	err = se1.Close()
-	c.Assert(err, IsNil)
+	se.Close()
+	se1.Close()
 }
 
 func (s *testSessionSuite) TestIssue996(c *C) {
@@ -912,12 +910,9 @@ func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 	c.Assert(err, IsNil)
 
 	mustExecSQL(c, se, dropDBSQL)
-	err = se.Close()
-	c.Assert(err, IsNil)
-	err = se1.Close()
-	c.Assert(err, IsNil)
-	err = se2.Close()
-	c.Assert(err, IsNil)
+	se.Close()
+	se1.Close()
+	se2.Close()
 }
 
 func (s *testSessionSuite) TestRow(c *C) {
@@ -2064,12 +2059,9 @@ func (s *test1435Suite) TestIssue1435(c *C) {
 	err = <-endCh2
 	c.Assert(err, IsNil, Commentf("err:%v", err))
 
-	err = se.Close()
-	c.Assert(err, IsNil)
-	err = se1.Close()
-	c.Assert(err, IsNil)
-	err = se2.Close()
-	c.Assert(err, IsNil)
+	se.Close()
+	se1.Close()
+	se2.Close()
 	sessionctx.GetDomain(ctx).Close()
 	err = store.Close()
 	c.Assert(err, IsNil)
@@ -2085,8 +2077,7 @@ func (s *testSessionSuite) TestSession(c *C) {
 	mustExecSQL(c, se, "ROLLBACK;")
 
 	mustExecSQL(c, se, dropDBSQL)
-	err := se.Close()
-	c.Assert(err, IsNil)
+	se.Close()
 }
 
 func (s *testSessionSuite) TestSessionAuth(c *C) {
@@ -2212,8 +2203,7 @@ func (s *testSessionSuite) TestMultiColumnIndex(c *C) {
 	mustExecMatch(c, se, sql, [][]interface{}{{[]byte("abc"), []byte("def")}})
 
 	mustExecSQL(c, se, dropDBSQL)
-	err := se.Close()
-	c.Assert(err, IsNil)
+	se.Close()
 }
 
 func (s *testSessionSuite) TestSubstringIndexExpr(c *C) {
@@ -2421,8 +2411,7 @@ func (s *testSessionSuite) TestSpecifyIndexPrefixLength(c *C) {
 	mustExecMatch(c, se, "select c from t where a > 'bbcf';", [][]interface{}{{5}, {6}})
 
 	mustExecSQL(c, se, dropDBSQL)
-	err = se.Close()
-	c.Assert(err, IsNil)
+	se.Close()
 }
 
 func (s *testSessionSuite) TestIndexColumnLength(c *C) {
