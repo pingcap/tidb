@@ -137,7 +137,7 @@ func evalExprToInt(expr Expression, row []types.Datum, sc *variable.StatementCon
 	tc := expr.GetType().ToClass()
 	if tc == types.ClassInt {
 		return val.GetInt64(), false, nil
-	} else if types.IsHybridType(expr.GetType().Tp) {
+	} else if IsHybridType(expr) {
 		res, err = val.ToInt64(sc)
 		return res, false, errors.Trace(err)
 	}
@@ -153,7 +153,7 @@ func evalExprToReal(expr Expression, row []types.Datum, sc *variable.StatementCo
 	tc := expr.GetType().ToClass()
 	if tc == types.ClassReal {
 		return val.GetFloat64(), false, nil
-	} else if types.IsHybridType(expr.GetType().Tp) {
+	} else if IsHybridType(expr) {
 		res, err = val.ToFloat64(sc)
 		return res, false, errors.Trace(err)
 	}
@@ -169,7 +169,7 @@ func evalExprToDecimal(expr Expression, row []types.Datum, sc *variable.Statemen
 	tc := expr.GetType().ToClass()
 	if tc == types.ClassDecimal {
 		return val.GetMysqlDecimal(), false, nil
-	} else if types.IsHybridType(expr.GetType().Tp) {
+	} else if IsHybridType(expr) {
 		res, err = val.ToDecimal(sc)
 		return res, false, errors.Trace(err)
 	}
@@ -518,6 +518,28 @@ func NewValuesFunc(offset int, retTp *types.FieldType, ctx context.Context) *Sca
 		RetType:  retTp,
 		Function: bt.setSelf(bt),
 	}
+}
+
+// IsHybridType checks whether a ClassString expression is a hybrid type value which will return different types of value in different context.
+//
+// For ENUM/SET which is consist of a string attribute `Name` and an int attribute `Value`,
+// it will cause an error if we convert ENUM/SET to int as a string value.
+//
+// For Bit/Hex, we will get a wrong result if we convert it to int as a string value.
+// For example, when convert `0b101` to int, the result should be 5, but we will get 101 if we regard it as a string.
+func IsHybridType(expr Expression) bool {
+	switch expr.GetType().Tp {
+	case mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet:
+		return true
+	}
+	// For a constant, the field type will be inferred as `varstring` when the kind of it is `HEX` or `BIT`.
+	if con, ok := expr.(*Constant); ok {
+		switch con.Value.Kind() {
+		case types.KindMysqlHex, types.KindMysqlBit:
+			return true
+		}
+	}
+	return false
 }
 
 func init() {
