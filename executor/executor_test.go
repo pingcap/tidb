@@ -981,7 +981,7 @@ func (s *testSuite) TestJSON(c *C) {
 	result = tk.MustQuery(`select a from test_json tj where a = true`)
 	result.Check(testkit.Rows("true"))
 	result = tk.MustQuery(`select a from test_json tj where a = "string"`)
-	result.Check(testkit.Rows("string"))
+	result.Check(testkit.Rows(`"string"`))
 }
 
 func (s *testSuite) TestToPBExpr(c *C) {
