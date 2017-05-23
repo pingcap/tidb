@@ -257,6 +257,7 @@ func (s *builtinCompareSig) eval(row []types.Datum) (d types.Datum, err error) {
 
 	n, err := a.CompareDatum(sc, b)
 	if err != nil {
+		// TODO: should deal with error here.
 		return d, errors.Trace(err)
 	}
 	var result bool

@@ -62,6 +62,11 @@ func jsonAsFloat64(j JSON) float64 {
 			return float64(*j.(*jsonDouble))
 		}
 		return float64(j.(jsonDouble))
+	} else if j.Type() == "BOOLEAN" {
+		if reflect.TypeOf(j).Kind() == reflect.Ptr {
+			return float64(*j.(*jsonLiteral))
+		}
+		return float64(j.(jsonLiteral))
 	} else {
 		panic("can not convert to float64")
 	}
@@ -122,15 +127,7 @@ func CompareJSON(j1 JSON, j2 JSON) (cmp int, err error) {
 		(precedence1 == jsonTypePrecedences["INTEGER"] && precedence2 == jsonTypePrecedences["BOOLEAN"]) {
 		// tidb treat boolean as integer, but boolean is different from integer in JSON.
 		// so we need convert them to same type and then compare.
-		var x, y float64
-		if precedence1 == jsonTypePrecedences["BOOLEAN"] {
-			x = jsonAsFloat64(j1)
-			y = jsonAsFloat64(j2)
-		} else {
-			x = jsonAsFloat64(j1)
-			y = jsonAsFloat64(j2)
-		}
-		cmp = compareFloat64PrecisionLoss(x, y)
+		cmp = compareFloat64PrecisionLoss(jsonAsFloat64(j1), jsonAsFloat64(j2))
 	} else {
 		cmp = precedence1 - precedence2
 	}
