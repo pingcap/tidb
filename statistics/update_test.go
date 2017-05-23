@@ -148,11 +148,8 @@ func (s *testStatsUpdateSuite) TestMultiSession(c *C) {
 		testKit2.MustExec("delete from test.t1 limit 1")
 	}
 
-	err = testKit.Se.Close()
-	c.Assert(err, IsNil)
-
-	err = testKit2.Se.Close()
-	c.Assert(err, IsNil)
+	testKit.Se.Close()
+	testKit2.Se.Close()
 
 	h.DumpStatsDeltaToKV()
 	h.Update(is)

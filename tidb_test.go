@@ -17,6 +17,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -332,16 +333,40 @@ func (s *testMainSuite) TestSchemaValidity(c *C) {
 	err = <-endCh2
 	c.Assert(err, IsNil, Commentf("err:%v", err))
 
-	err = se.Close()
-	c.Assert(err, IsNil)
-	err = se1.Close()
-	c.Assert(err, IsNil)
-	err = se2.Close()
-	c.Assert(err, IsNil)
+	se.Close()
+	se1.Close()
+	se2.Close()
 	sessionctx.GetDomain(ctx).Close()
 	err = store.Close()
 	c.Assert(err, IsNil)
 	localstore.MockRemoteStore = false
+}
+
+func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
+	// TODO: testleak package should be able to find this leak.
+	store := newStoreWithBootstrap(c, s.dbName+"goroutine_leak")
+	se, err := createSession(store)
+	c.Assert(err, IsNil)
+
+	// Test an issue that sysSessionPool doesn't call session's Close, cause
+	// asyncGetTSWorker goroutine leak.
+	before := runtime.NumGoroutine()
+	count := 200
+	var wg sync.WaitGroup
+	wg.Add(count)
+	for i := 0; i < count; i++ {
+		go func(se *session) {
+			_, _, err := se.ExecRestrictedSQL(se, "select * from mysql.user limit 1")
+			c.Assert(err, IsNil)
+			wg.Done()
+		}(se)
+	}
+	wg.Wait()
+	se.sysSessionPool().Close()
+	after := runtime.NumGoroutine()
+	// After and before should be Equal, but this test may be disturbed by other factors.
+	// So I relax the strict check to make CI more stable.
+	c.Assert(after-before, Less, 3)
 }
 
 func sessionExec(c *C, se Session, sql string) ([]ast.RecordSet, error) {

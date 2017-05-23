@@ -28,6 +28,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
@@ -70,7 +71,7 @@ type Session interface {
 	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
 	SetSessionManager(util.SessionManager)
-	Close() error
+	Close()
 	Auth(user string, auth []byte, salt []byte) bool
 	// Cancel the execution of current transaction.
 	Cancel()
@@ -433,7 +434,7 @@ func sqlForLog(sql string) string {
 	return sql
 }
 
-func (s *session) sysSessionPool() *sync.Pool {
+func (s *session) sysSessionPool() *pools.ResourcePool {
 	return sessionctx.GetDomain(s).SysSessionPool()
 }
 
@@ -443,21 +444,12 @@ func (s *session) sysSessionPool() *sync.Pool {
 // and doesn't write binlog.
 func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) ([]*ast.Row, []*ast.ResultField, error) {
 	// Use special session to execute the sql.
-	var se *session
-	tmp := s.sysSessionPool().Get()
-	if tmp != nil {
-		se = tmp.(*session)
-	} else {
-		var err error
-		se, err = createSession(s.store)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		varsutil.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
-		se.sessionVars.CommonGlobalLoaded = true
-		se.sessionVars.InRestrictedSQL = true
+	tmp, err := s.sysSessionPool().Get()
+	if err != nil {
+		return nil, nil, errors.Trace(err)
 	}
-	defer s.sysSessionPool().Put(se)
+	se := tmp.(*session)
+	defer s.sysSessionPool().Put(tmp)
 
 	recordSets, err := se.Execute(sql)
 	if err != nil {
@@ -487,6 +479,19 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) ([]*ast.Row
 		}
 	}
 	return rows, fields, nil
+}
+
+func createSessionFunc(store kv.Storage) pools.Factory {
+	return func() (pools.Resource, error) {
+		se, err := createSession(store)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		varsutil.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
+		se.sessionVars.CommonGlobalLoaded = true
+		se.sessionVars.InRestrictedSQL = true
+		return se, nil
+	}
 }
 
 func drainRecordSet(rs ast.RecordSet) ([]*ast.Row, error) {
@@ -783,14 +788,17 @@ func (s *session) ClearValue(key fmt.Stringer) {
 }
 
 // Close function does some clean work when session end.
-func (s *session) Close() error {
+func (s *session) Close() {
 	if s.txnFutureCh != nil {
 		close(s.txnFutureCh)
 	}
 	if s.statsCollector != nil {
 		s.statsCollector.Delete()
 	}
-	return s.RollbackTxn()
+	if err := s.RollbackTxn(); err != nil {
+		log.Error("session Close error:", errors.ErrorStack(err))
+	}
+	return
 }
 
 // GetSessionVars implements the context.Context interface.
