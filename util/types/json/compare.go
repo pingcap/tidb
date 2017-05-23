@@ -20,7 +20,7 @@ import (
 )
 
 // floatEpsilon is for compare two float value allowing precision loss.
-const floatEpsilon float64 = 0.00000001
+const floatEpsilon float64 = 1.e-8
 
 // compareFloat64 returns an integer comparing the float64 x to y,
 // allowing precision loss.
@@ -33,7 +33,7 @@ func compareFloat64PrecisionLoss(x, y float64) int {
 	return 1
 }
 
-// jsonTypePrecedences is for compare two json.
+// jsonTypePrecedences is for comparing two json.
 // See: https://dev.mysql.com/doc/refman/5.7/en/json.html#json-comparison
 var jsonTypePrecedences = map[string]int{
 	"BLOB":     -1,
@@ -80,7 +80,7 @@ func CompareJSON(j1 JSON, j2 JSON) (cmp int, err error) {
 	precedence2 := jsonTypePrecedences[j2.Type()]
 
 	if precedence1 == precedence2 {
-		if precedence1 == -12 {
+		if precedence1 == jsonTypePrecedences["NULL"] {
 			// for JSON null.
 			cmp = 0
 		}
@@ -112,22 +112,23 @@ func CompareJSON(j1 JSON, j2 JSON) (cmp int, err error) {
 		case jsonObject:
 			// only equal is defined on two json objects.
 			// larger and smaller are not defined.
-			s1 := Serialize(x)
+			s1 := Serialize(j1)
 			s2 := Serialize(j2)
 			cmp = bytes.Compare(s1, s2)
 		default:
 			cmp = 0
 		}
-	} else if (precedence1 == -7 && precedence2 == -11) || (precedence1 == -11 && precedence2 == -7) {
+	} else if (precedence1 == jsonTypePrecedences["BOOLEAN"] && precedence2 == jsonTypePrecedences["INTEGER"]) ||
+		(precedence1 == jsonTypePrecedences["INTEGER"] && precedence2 == jsonTypePrecedences["BOOLEAN"]) {
 		// tidb treat boolean as integer, but boolean is different from integer in JSON.
 		// so we need convert them to same type and then compare.
 		var x, y float64
-		if precedence1 == -7 {
-			x = float64(j1.(jsonLiteral))
+		if precedence1 == jsonTypePrecedences["BOOLEAN"] {
+			x = jsonAsFloat64(j1)
 			y = jsonAsFloat64(j2)
 		} else {
 			x = jsonAsFloat64(j1)
-			y = float64(*j2.(*jsonLiteral))
+			y = jsonAsFloat64(j2)
 		}
 		cmp = compareFloat64PrecisionLoss(x, y)
 	} else {

@@ -408,7 +408,7 @@ func (d *Datum) SetValue(val interface{}) {
 func (d *Datum) CompareDatum(sc *variable.StatementContext, ad Datum) (int, error) {
 	if d.k == KindMysqlJSON && ad.k != KindMysqlJSON {
 		cmp, err := ad.CompareDatum(sc, *d)
-		return cmp * -1, err
+		return cmp * -1, errors.Trace(err)
 	}
 	switch ad.k {
 	case KindNull:
@@ -642,10 +642,13 @@ func (d *Datum) compareMysqlJSON(sc *variable.StatementContext, target json.JSON
 	case KindMysqlJSON:
 		origin = d.x.(json.JSON)
 	case KindInt64, KindUint64:
-		i64, _ := d.ToInt64(sc)
+		i64 := d.GetInt64()
 		origin = json.CreateJSON(i64)
-	case KindFloat32, KindFloat64, KindMysqlDecimal:
-		f64, _ := d.ToFloat64(sc)
+	case KindFloat32, KindFloat64:
+		f64 := d.GetFloat64()
+		origin = json.CreateJSON(f64)
+	case KindMysqlDecimal:
+		f64, _ := d.GetMysqlDecimal().ToFloat64()
 		origin = json.CreateJSON(f64)
 	case KindString, KindBytes:
 		s := d.GetString()
@@ -1185,7 +1188,7 @@ func (d *Datum) convertToMysqlJSON(sc *variable.StatementContext, target *FieldT
 	default:
 		return invalidConv(d, target.Tp)
 	}
-	return
+	return ret, errors.Trace(err)
 }
 
 // ToBool converts to a bool.

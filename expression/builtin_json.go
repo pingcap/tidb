@@ -57,7 +57,7 @@ func (c *jsonTypeFunctionClass) getFunction(args []Expression, ctx context.Conte
 func (b *builtinJSONTypeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return d, err
+		return d, errors.Trace(err)
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 
@@ -68,5 +68,5 @@ func (b *builtinJSONTypeSig) eval(row []types.Datum) (d types.Datum, err error) 
 			d.SetString(djson.GetMysqlJSON().Type())
 		}
 	}
-	return
+	return d, errors.Trace(err)
 }
