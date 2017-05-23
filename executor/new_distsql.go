@@ -295,6 +295,22 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 	}
 }
 
+func (e *IndexLookUpExecutor) pickAndExecTask(workCh <-chan *lookupTableTask, txnCtx goctx.Context) {
+	childCtx, cancel := goctx.WithCancel(txnCtx)
+	defer cancel()
+	for {
+		select {
+		case task := <-workCh:
+			if task == nil {
+				return
+			}
+			e.executeTask(task, childCtx)
+		case <-childCtx.Done():
+			return
+		}
+	}
+}
+
 // fetchHandlesAndStartWorkers fetches a batch of handles from index data and builds the index lookup tasks.
 // We initialize some workers to execute this tasks concurrently and put the task to taskCh by order.
 func (e *IndexLookUpExecutor) fetchHandlesAndStartWorkers() {
@@ -309,18 +325,7 @@ func (e *IndexLookUpExecutor) fetchHandlesAndStartWorkers() {
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency
 	txnCtx := e.ctx.GoCtx()
 	for i := 0; i < lookupConcurrencyLimit; i++ {
-		go func() {
-			childCtx, cancel := goctx.WithCancel(txnCtx)
-			defer cancel()
-			select {
-			case task := <-workCh:
-				if task == nil {
-					return
-				}
-				e.executeTask(task, childCtx)
-			case <-childCtx.Done():
-			}
-		}()
+		go e.pickAndExecTask(workCh, txnCtx)
 	}
 
 	for {

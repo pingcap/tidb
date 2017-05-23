@@ -193,8 +193,8 @@ func (col *Column) EvalTime(row []types.Datum, sc *variable.StatementContext) (t
 }
 
 // EvalDuration returns Duration representation of Column.
-func (col *Column) EvalDuration(_ []types.Datum, sc *variable.StatementContext) (types.Duration, bool, error) {
-	val, isNull, err := evalExprToDuration(col, nil, sc)
+func (col *Column) EvalDuration(row []types.Datum, sc *variable.StatementContext) (types.Duration, bool, error) {
+	val, isNull, err := evalExprToDuration(col, row, sc)
 	return val, isNull, errors.Trace(err)
 }
 
