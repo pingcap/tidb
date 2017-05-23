@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
+	goctx "golang.org/x/net/context"
 )
 
 var _ = Suite(&testDDLSuite{})
@@ -54,13 +55,13 @@ func (s *testDDLSuite) TestCheckOwner(c *C) {
 	store := testCreateStore(c, "test_owner")
 	defer store.Close()
 
-	d1 := newDDL(store, nil, nil, testLease)
+	d1 := newDDL(goctx.Background(), nil, store, nil, nil, testLease)
 	defer d1.Stop()
 	time.Sleep(testLease)
 	testCheckOwner(c, d1, true, ddlJobFlag)
 	testCheckOwner(c, d1, true, bgJobFlag)
 
-	d2 := newDDL(store, nil, nil, testLease)
+	d2 := newDDL(goctx.Background(), nil, store, nil, nil, testLease)
 	defer d2.Stop()
 
 	// Change the DDL owner.
@@ -71,15 +72,15 @@ func (s *testDDLSuite) TestCheckOwner(c *C) {
 	testCheckOwner(c, d2, true, bgJobFlag)
 
 	// Change the DDL owner.
-	d2.SetLease(1 * time.Second)
+	d2.SetLease(goctx.Background(), 1*time.Second)
 	err := d2.Stop()
 	c.Assert(err, IsNil)
-	d1.start()
+	d1.start(goctx.Background())
 	testCheckOwner(c, d1, true, ddlJobFlag)
 	testCheckOwner(c, d1, true, bgJobFlag)
 
-	d2.SetLease(1 * time.Second)
-	d2.SetLease(2 * time.Second)
+	d2.SetLease(goctx.Background(), 1*time.Second)
+	d2.SetLease(goctx.Background(), 2*time.Second)
 	c.Assert(d2.GetLease(), Equals, 2*time.Second)
 }
 
@@ -88,7 +89,7 @@ func (s *testDDLSuite) TestSchemaError(c *C) {
 	store := testCreateStore(c, "test_schema_error")
 	defer store.Close()
 
-	d := newDDL(store, nil, nil, testLease)
+	d := newDDL(goctx.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
 	ctx := testNewContext(d)
 
@@ -100,7 +101,7 @@ func (s *testDDLSuite) TestTableError(c *C) {
 	store := testCreateStore(c, "test_table_error")
 	defer store.Close()
 
-	d := newDDL(store, nil, nil, testLease)
+	d := newDDL(goctx.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
 	ctx := testNewContext(d)
 
@@ -142,7 +143,7 @@ func (s *testDDLSuite) TestForeignKeyError(c *C) {
 	store := testCreateStore(c, "test_foreign_key_error")
 	defer store.Close()
 
-	d := newDDL(store, nil, nil, testLease)
+	d := newDDL(goctx.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
 	ctx := testNewContext(d)
 
@@ -161,7 +162,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 	store := testCreateStore(c, "test_index_error")
 	defer store.Close()
 
-	d := newDDL(store, nil, nil, testLease)
+	d := newDDL(goctx.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
 	ctx := testNewContext(d)
 
@@ -197,7 +198,7 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_column_error")
 	defer store.Close()
-	d := newDDL(store, nil, nil, testLease)
+	d := newDDL(goctx.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
 	ctx := testNewContext(d)
 

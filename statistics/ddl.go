@@ -141,7 +141,7 @@ func (h *Handle) insertColStats2KV(tableID int64, colInfo *model.ColumnInfo) err
 			return errors.Trace(err)
 		}
 		// There must be only one bucket for this new column and the value is the default value.
-		_, err = exec.Execute(fmt.Sprintf("insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, repeats, count, value) values (%d, 0, %d, 0, %d, %d, X'%X')", tableID, colInfo.ID, count, count, value.GetBytes()))
+		_, err = exec.Execute(fmt.Sprintf("insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, repeats, count, upper_bound) values (%d, 0, %d, 0, %d, %d, X'%X')", tableID, colInfo.ID, count, count, value.GetBytes()))
 		if err != nil {
 			return errors.Trace(err)
 		}
