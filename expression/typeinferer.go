@@ -370,14 +370,13 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	case ast.AddTime:
 		t := x.Args[0].GetType().Tp
 		switch t {
-		case mysql.TypeDatetime,mysql.TypeDate,mysql.TypeTimestamp:
+		case mysql.TypeDatetime, mysql.TypeDate, mysql.TypeTimestamp:
 			tp = types.NewFieldType(mysql.TypeDatetime)
 		case mysql.TypeDuration:
 			tp = types.NewFieldType(mysql.TypeDuration)
 		default:
 			tp = types.NewFieldType(mysql.TypeVarString)
 		}
-
 
 	case ast.Ln, ast.Log, ast.Log2, ast.Log10, ast.Sqrt, ast.PI, ast.Exp, ast.Degrees, ast.Sin, ast.Cos, ast.Tan,
 		ast.Cot, ast.Acos, ast.Asin, ast.Atan, ast.Pow, ast.Power, ast.Rand, ast.Radians:
