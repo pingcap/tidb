@@ -195,10 +195,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 	case []byte:
 		tp.Tp = mysql.TypeBlob
 		SetBinChsClnFlag(tp)
-	case Bit:
-		tp.Tp = mysql.TypeBit
-		SetBinChsClnFlag(tp)
-	case Hex:
+	case Bit, Hex:
 		tp.Tp = mysql.TypeVarchar
 		SetBinChsClnFlag(tp)
 	case Time:
