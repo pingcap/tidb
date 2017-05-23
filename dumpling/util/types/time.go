@@ -997,6 +997,7 @@ func parseDateTimeFromNum(num int64) (Time, error) {
 
 	// Check datetime type.
 	if num >= 10000101000000 {
+		t.Type = mysql.TypeDatetime
 		return getTime(num, t.Type)
 	}
 
