@@ -79,7 +79,7 @@ func (s *schemaVersionSyncer) updateLatestVersion(ctx goctx.Context, version int
 	return s.putKV(ctx, putKeyNoRetry, ddlLatestSchemaVersion, ver)
 }
 
-func isContextDeadline(err error) bool {
+func isContextFinished(err error) bool {
 	if terror.ErrorEqual(err, goctx.Canceled) ||
 		terror.ErrorEqual(err, goctx.DeadlineExceeded) {
 		return true
@@ -98,7 +98,7 @@ func (s *schemaVersionSyncer) checkAllVersions(ctx goctx.Context, latestVer int6
 		}
 
 		resp, err := s.etcdCli.Get(ctx, ddlSelfSchemaVersion, clientv3.WithPrefix())
-		if err != nil && isContextDeadline(err) {
+		if err != nil && isContextFinished(err) {
 			return errors.Trace(err)
 		}
 		if err != nil {

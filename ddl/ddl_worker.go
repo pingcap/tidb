@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/terror"
+	goctx "golang.org/x/net/context"
 )
 
 // RunWorker indicates if this TiDB server starts DDL worker and can run DDL job.
@@ -257,6 +258,8 @@ func (d *ddl) handleDDLJobQueue() error {
 
 		waitTime := 2 * d.lease
 		var job *model.Job
+		var schemaVer int64
+		ctx, cancelFunc := goctx.WithTimeout(goctx.Background(), waitTime)
 		err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 			t := meta.NewMeta(txn)
 			owner, err := d.checkOwner(t, ddlJobFlag)
@@ -279,6 +282,7 @@ func (d *ddl) handleDDLJobQueue() error {
 				// let other servers update the schema.
 				// So here we must check the elapsed time from last update, if < 2 * lease, we must
 				// wait again.
+				// TODO: Use TS instead of time.Now.
 				elapsed := time.Duration(time.Now().UnixNano() - job.LastUpdateTS)
 				if elapsed > 0 && elapsed < waitTime {
 					log.Warnf("[ddl] the elapsed time from last update is %s < %s, wait again", elapsed, waitTime)
@@ -293,7 +297,7 @@ func (d *ddl) handleDDLJobQueue() error {
 
 			// If running job meets error, we will save this error in job Error
 			// and retry later if the job is not cancelled.
-			d.runDDLJob(t, job)
+			schemaVer = d.runDDLJob(t, job)
 			if job.IsFinished() {
 				binloginfo.SetDDLBinlog(txn, job.ID, job.Query)
 				err = d.finishDDLJob(t, job)
@@ -307,12 +311,17 @@ func (d *ddl) handleDDLJobQueue() error {
 			// Running job may cost some time, so here we must update owner status to
 			// prevent other become the owner.
 			if ChangeOwnerInNewWay {
+				err = d.worker.updateLatestVersion(ctx, schemaVer)
+				if err != nil {
+					log.Warnf("update latest schema version %v failed", schemaVer)
+				}
 				return nil
 			}
 			owner.LastUpdateTS = time.Now().UnixNano()
 			err = t.SetDDLJobOwner(owner)
 			return errors.Trace(err)
 		})
+		cancelFunc()
 		if err != nil {
 			return errors.Trace(err)
 		} else if job == nil {
@@ -334,7 +343,7 @@ func (d *ddl) handleDDLJobQueue() error {
 				// Do not need to wait for those DDL, because those DDL do not need to modify data,
 				// So there is no data inconsistent issue.
 			default:
-				d.waitSchemaChanged(waitTime)
+				d.waitSchemaChanged(waitTime, schemaVer)
 			}
 		}
 		if job.IsFinished() {
@@ -353,7 +362,7 @@ func chooseLeaseTime(n1 time.Duration, n2 time.Duration) time.Duration {
 }
 
 // runDDLJob runs a DDL job.
-func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) {
+func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) (ver int64) {
 	log.Infof("[ddl] run DDL job %s", job)
 	if job.IsFinished() {
 		return
@@ -366,33 +375,33 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) {
 	var err error
 	switch job.Type {
 	case model.ActionCreateSchema:
-		err = d.onCreateSchema(t, job)
+		ver, err = d.onCreateSchema(t, job)
 	case model.ActionDropSchema:
-		err = d.onDropSchema(t, job)
+		ver, err = d.onDropSchema(t, job)
 	case model.ActionCreateTable:
-		err = d.onCreateTable(t, job)
+		ver, err = d.onCreateTable(t, job)
 	case model.ActionDropTable:
-		err = d.onDropTable(t, job)
+		ver, err = d.onDropTable(t, job)
 	case model.ActionAddColumn:
-		err = d.onAddColumn(t, job)
+		ver, err = d.onAddColumn(t, job)
 	case model.ActionDropColumn:
-		err = d.onDropColumn(t, job)
+		ver, err = d.onDropColumn(t, job)
 	case model.ActionModifyColumn:
-		err = d.onModifyColumn(t, job)
+		ver, err = d.onModifyColumn(t, job)
 	case model.ActionAddIndex:
-		err = d.onCreateIndex(t, job)
+		ver, err = d.onCreateIndex(t, job)
 	case model.ActionDropIndex:
-		err = d.onDropIndex(t, job)
+		ver, err = d.onDropIndex(t, job)
 	case model.ActionAddForeignKey:
-		err = d.onCreateForeignKey(t, job)
+		ver, err = d.onCreateForeignKey(t, job)
 	case model.ActionDropForeignKey:
-		err = d.onDropForeignKey(t, job)
+		ver, err = d.onDropForeignKey(t, job)
 	case model.ActionTruncateTable:
-		err = d.onTruncateTable(t, job)
+		ver, err = d.onTruncateTable(t, job)
 	case model.ActionRenameTable:
-		err = d.onRenameTable(t, job)
+		ver, err = d.onRenameTable(t, job)
 	case model.ActionSetDefaultValue:
-		err = d.onSetDefaultValue(t, job)
+		ver, err = d.onSetDefaultValue(t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobCancelled
@@ -411,6 +420,7 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) {
 		job.Error = toTError(err)
 		job.ErrorCount++
 	}
+	return
 }
 
 func toTError(err error) *terror.Error {
@@ -426,8 +436,19 @@ func toTError(err error) *terror.Error {
 
 // waitSchemaChanged waits for the completion of updating all servers' schema. In order to make sure that happens,
 // we wait 2 * lease time.
-func (d *ddl) waitSchemaChanged(waitTime time.Duration) {
+func (d *ddl) waitSchemaChanged(waitTime time.Duration, latestSchemaVersion int64) {
 	if waitTime == 0 {
+		return
+	}
+
+	if ChangeOwnerInNewWay {
+		// TODO: Make ctx exits when the d is close.
+		ctx, cancelFunc := goctx.WithTimeout(goctx.Background(), waitTime)
+		defer cancelFunc()
+		err := d.worker.checkAllVersions(ctx, latestSchemaVersion)
+		if err != nil {
+			log.Infof("[ddl] wait schema version %d failed %v", latestSchemaVersion, err)
+		}
 		return
 	}
 

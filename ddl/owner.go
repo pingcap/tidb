@@ -36,6 +36,7 @@ const (
 
 // worker represents the structure which is used for electing owner.
 type worker struct {
+	*schemaVersionSyncer
 	ddlOwner    int32
 	bgOwner     int32
 	ddlID       string
