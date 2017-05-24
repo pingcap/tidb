@@ -992,12 +992,13 @@ AlterTableSpec:
 			Position:	$4.(*ast.ColumnPosition),
 		}
 	}
-|	"CHANGE" ColumnKeywordOpt ColumnName ColumnDef
+|	"CHANGE" ColumnKeywordOpt ColumnName ColumnDef ColumnPosition
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp:    		ast.AlterTableChangeColumn,
 			OldColumnName:	$3.(*ast.ColumnName),
 			NewColumn: 	$4.(*ast.ColumnDef),
+			Position:	$5.(*ast.ColumnPosition),
 		}
 	}
 |	"ALTER" ColumnKeywordOpt ColumnName "SET" "DEFAULT" SignedLiteral
