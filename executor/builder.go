@@ -96,6 +96,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildMergeJoin(v)
 	case *plan.PhysicalHashSemiJoin:
 		return b.buildSemiJoin(v)
+	case *plan.PhysicalIndexJoin:
+		return b.buildIndexJoin(v)
 	case *plan.Selection:
 		return b.buildSelection(v)
 	case *plan.PhysicalAggregation:
@@ -888,6 +890,20 @@ func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) *tipb.DAGRe
 		dagReq.Executors = append(dagReq.Executors, execPB)
 	}
 	return dagReq
+}
+
+func (b *executorBuilder) buildIndexJoin(v *plan.PhysicalIndexJoin) Executor {
+	return &IndexLookUpJoin{
+		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
+		innerExec:       b.build(v.Children()[1]).(DataReader),
+		outerJoinKeys:   v.OuterJoinKeys,
+		innerJoinKeys:   v.InnerJoinKeys,
+		outer:           v.Outer,
+		leftConditions:  v.LeftConditions,
+		rightConditions: v.RightConditions,
+		otherConditions: v.OtherConditions,
+		defaultValues:   v.DefaultValues,
+	}
 }
 
 func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor {

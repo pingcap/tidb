@@ -57,14 +57,13 @@ func TestSingle(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	d := newDDL(store, nil, nil, testLease)
-	defer d.Stop()
 
 	clus := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer clus.Terminate(t)
 	cli := clus.RandClient()
+	d := newDDL(goctx.Background(), cli, store, nil, nil, testLease)
+	defer d.Stop()
 
-	d.setWorker(goctx.Background(), cli)
 	isOwner, isBgOwner := checkOwners(d, true)
 	if !isOwner || !isBgOwner {
 		t.Fatalf("expect true, got isOwner:%v, isBgOwner:%v", isOwner, isBgOwner)
@@ -87,19 +86,16 @@ func TestCluster(t *testing.T) {
 	clus := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 3})
 	defer clus.Terminate(t)
 
-	// There are two ddl workers. Only one become an owner.
-	d := newDDL(store, nil, nil, testLease)
-	defer d.Stop()
-	d1 := newDDL(store, nil, nil, testLease)
-	defer d1.Stop()
 	cli := clus.Client(0)
-	cli1 := clus.Client(1)
-	d.setWorker(goctx.Background(), cli)
+	d := newDDL(goctx.Background(), cli, store, nil, nil, testLease)
+	defer d.Stop()
 	isOwner, isBgOwner := checkOwners(d, true)
 	if !isOwner || !isBgOwner {
 		t.Fatalf("expect true, got isOwner:%v, isBgOwner:%v", isOwner, isBgOwner)
 	}
-	d1.setWorker(goctx.Background(), cli1)
+	cli1 := clus.Client(1)
+	d1 := newDDL(goctx.Background(), cli1, store, nil, nil, testLease)
+	defer d1.Stop()
 	isOwner, isBgOwner = checkOwners(d1, false)
 	if isOwner || isBgOwner {
 		t.Fatalf("expect false, got isOwner:%v, isBgOwner:%v", isOwner, isBgOwner)
