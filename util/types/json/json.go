@@ -26,6 +26,13 @@ type JSON interface {
 	encode(buffer *bytes.Buffer)
 	// String returns JSON text.
 	String() string
+	// Type returns type string.
+	Type() string
+}
+
+// CreateJSON creates a JSON from in. Return nil if in is not a valid JSON type.
+func CreateJSON(in interface{}) JSON {
+	return normalize(in)
 }
 
 var (
