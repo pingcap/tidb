@@ -70,11 +70,10 @@ var (
 	errUnknownFractionLength = terror.ClassDDL.New(codeUnknownFractionLength, "Unknown Length for type tp %d and fraction %d")
 	errFileNotFound          = terror.ClassDDL.New(codeFileNotFound, "Can't find file: './%s/%s.frm'")
 	errErrorOnRename         = terror.ClassDDL.New(codeErrorOnRename, "Error on rename of './%s/%s' to './%s/%s'")
+	errBadField              = terror.ClassDDL.New(codeBadField, "Unknown column '%s' in '%s'")
 	errInvalidDefault        = terror.ClassDDL.New(codeInvalidDefault, "Invalid default value for '%s'")
 	errInvalidUseOfNull      = terror.ClassDDL.New(codeInvalidUseOfNull, "Invalid use of NULL value")
 
-	// ErrBadField returns for bad field.
-	ErrBadField = terror.ClassDDL.New(codeBadField, "Unknown column '%s' in '%s'")
 	// ErrInvalidDBState returns for invalid database state.
 	ErrInvalidDBState = terror.ClassDDL.New(codeInvalidDBState, "invalid database state")
 	// ErrInvalidTableState returns for invalid Table state.

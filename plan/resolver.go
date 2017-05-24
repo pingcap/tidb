@@ -19,7 +19,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -76,8 +75,6 @@ type resolverContext struct {
 	fieldList []*ast.ResultField
 	// result fields collected in group by clause.
 	groupBy []*ast.ResultField
-	// column definitions collected in create/alter statement.
-	columnDefList []*ast.ColumnDef
 
 	// The join node stack is used by on condition to find out
 	// available tables to reference. On condition can only
@@ -185,9 +182,6 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 	case *ast.CreateTableStmt:
 		nr.pushContext()
 		nr.currentContext().inCreateOrDropTable = true
-		for _, colDef := range v.Cols {
-			nr.currentContext().columnDefList = append(nr.currentContext().columnDefList, colDef)
-		}
 	case *ast.ColumnOption:
 		nr.currentContext().inColumnOption = true
 	case *ast.DeleteStmt:
@@ -614,13 +608,6 @@ func (nr *nameResolver) resolveColumnNameInOnCondition(cn *ast.ColumnNameExpr) {
 
 // resolveColumnNameInColumnOption resolves the column name in the create table statement.
 func (nr *nameResolver) resolveColumnNameInColumnOption(cn *ast.ColumnNameExpr) {
-	ctx := nr.currentContext()
-	for _, colDef := range ctx.columnDefList {
-		if colDef.Name.Name.L == cn.Name.Name.L {
-			return
-		}
-	}
-	nr.Err = ddl.ErrBadField.GenByArgs(cn.Name.Name.O, "generated column function")
 }
 
 func (nr *nameResolver) resolveColumnInTableSources(cn *ast.ColumnNameExpr, tableSources []*ast.TableSource) (done bool) {

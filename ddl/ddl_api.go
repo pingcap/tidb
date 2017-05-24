@@ -446,6 +446,55 @@ func checkDuplicateColumn(colDefs []*ast.ColumnDef) error {
 	return nil
 }
 
+func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
+	normalColNames := map[string]bool{}
+	dependedColNames := map[string]bool{}
+	for _, colDef := range colDefs {
+		// TODO fix depend on itself.
+		for _, option := range colDef.Options {
+			if option.Tp == ast.ColumnOptionGenerated {
+				for _, depCol := range findColumnNameInExpr(option.Expr) {
+					dependedColNames[depCol.Name.L] = true
+					if colDef.Name.Name.L == depCol.Name.L {
+						return errBadField.GenByArgs(depCol.Name.L, "generated column function")
+					}
+				}
+				break
+			}
+		}
+		normalColNames[colDef.Name.Name.L] = true
+	}
+	// TODO
+	for name := range dependedColNames {
+		if _, ok := normalColNames[name]; !ok {
+			return errBadField.GenByArgs(name, "generated column function")
+		}
+	}
+	return nil
+}
+
+func findColumnNameInExpr(expr ast.ExprNode) (cols []*ast.ColumnName) {
+	var c generatedColumnChecker
+	expr.Accept(&c)
+	return c.cols
+}
+
+type generatedColumnChecker struct {
+	cols []*ast.ColumnName
+}
+
+func (c *generatedColumnChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
+	return inNode, false
+}
+
+func (c *generatedColumnChecker) Leave(inNode ast.Node) (node ast.Node, ok bool) {
+	switch x := inNode.(type) {
+	case *ast.ColumnName:
+		c.cols = append(c.cols, x)
+	}
+	return inNode, true
+}
+
 func checkTooLongColumn(colDefs []*ast.ColumnDef) error {
 	for _, colDef := range colDefs {
 		if len(colDef.Name.Name.O) > mysql.MaxColumnNameLength {
@@ -658,6 +707,9 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 		return errors.Trace(err)
 	}
 	if err = checkDuplicateColumn(colDefs); err != nil {
+		return errors.Trace(err)
+	}
+	if err = checkGeneratedColumn(colDefs); err != nil {
 		return errors.Trace(err)
 	}
 	if err = checkTooLongColumn(colDefs); err != nil {
@@ -1148,7 +1200,7 @@ func (d *ddl) AlterColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterT
 	// Check whether alter column has existed.
 	col := table.FindCol(t.Cols(), colName.L)
 	if col == nil {
-		return ErrBadField.GenByArgs(colName, ident.Name)
+		return errBadField.GenByArgs(colName, ident.Name)
 	}
 
 	if len(spec.NewColumn.Options) == 0 {
