@@ -157,6 +157,11 @@ func (col *Column) GetType() *types.FieldType {
 	return col.RetType
 }
 
+// GetTypeClass implements Expression interface.
+func (col *Column) GetTypeClass() types.TypeClass {
+	return col.RetType.ToClass()
+}
+
 // Eval implements Expression interface.
 func (col *Column) Eval(row []types.Datum) (types.Datum, error) {
 	return row[col.Index], nil
