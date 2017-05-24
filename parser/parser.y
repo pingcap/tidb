@@ -576,7 +576,7 @@ import (
 	CompareOp		"Compare opcode"
 	ColumnOption		"column definition option"
 	ColumnOptionList	"column definition option list"
-	VirtualOrStored "indicate generated column is stored or not"
+	VirtualOrStored		"indicate generated column is stored or not"
 	ColumnOptionListOpt	"optional column definition option list"
 	Constraint		"table constraint"
 	ConstraintElem		"table constraint element"
