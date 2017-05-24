@@ -94,137 +94,112 @@ import (
 // Serialize means serialize itself into bytes.
 func Serialize(j JSON) []byte {
 	var buffer = new(bytes.Buffer)
-	buffer.WriteByte(j.getTypeCode())
-	j.encode(buffer)
+	buffer.WriteByte(j.typeCode)
+	encode(j, buffer)
 	return buffer.Bytes()
+}
+
+func encode(j JSON, buffer *bytes.Buffer) {
+	switch j.typeCode {
+	case typeCodeObject:
+		encodeJSONObject(j.object, buffer)
+	case typeCodeArray:
+		encodeJSONArray(j.array, buffer)
+	case typeCodeLiteral:
+		encodeJSONLiteral(byte(j.bit64), buffer)
+	case typeCodeInt64:
+		encodeJSONInt64(j.bit64, buffer)
+	case typeCodeFloat64:
+		f64 := *(*float64)(unsafe.Pointer(&j.bit64))
+		encodeJSONFloat64(f64, buffer)
+	case typeCodeString:
+		encodeJSONString(j.str, buffer)
+	default:
+		panic(internalErrorUnknownTypeCode)
+	}
 }
 
 // Deserialize means deserialize a json from bytes.
 func Deserialize(data []byte) (j JSON, err error) {
-	j = jsonFromTypeCode(data[0])
-	err = jsonDeserFromJSON(j).decode(data[1:])
+	return decode(data[0], data[1:])
+}
+
+func decode(typeCode byte, data []byte) (j JSON, err error) {
+	j.typeCode = typeCode
+	switch typeCode {
+	case typeCodeObject:
+		err = decodeJSONObject(&j.object, data)
+	case typeCodeArray:
+		err = decodeJSONArray(&j.array, data)
+	case typeCodeLiteral:
+		pbyte := (*byte)(unsafe.Pointer(&j.bit64))
+		err = decodeJSONLiteral(pbyte, data)
+	case typeCodeInt64:
+		err = decodeJSONInt64(&j.bit64, data)
+	case typeCodeFloat64:
+		pfloat := (*float64)(unsafe.Pointer(&j.bit64))
+		err = decodeJSONFloat64(pfloat, data)
+	case typeCodeString:
+		err = decodeJSONString(&j.str, data)
+	default:
+		panic(internalErrorUnknownTypeCode)
+	}
 	return
 }
 
-var (
-	_ jsonDeser = new(jsonObject)
-	_ jsonDeser = new(jsonArray)
-	_ jsonDeser = new(jsonLiteral)
-	_ jsonDeser = new(jsonInt64)
-	_ jsonDeser = new(jsonDouble)
-	_ jsonDeser = new(jsonString)
-)
-
-const (
-	typeCodeObject  byte = 0x01
-	typeCodeArray   byte = 0x03
-	typeCodeLiteral byte = 0x04
-	typeCodeInt64   byte = 0x09
-	typeCodeDouble  byte = 0x0b
-	typeCodeString  byte = 0x0c
-)
-
-const (
-	jsonLiteralNil   = jsonLiteral(0x00)
-	jsonLiteralTrue  = jsonLiteral(0x01)
-	jsonLiteralFalse = jsonLiteral(0x02)
-)
-
-type jsonObject map[string]JSON
-type jsonArray []JSON
-type jsonLiteral byte
-type jsonInt64 int64
-type jsonDouble float64
-type jsonString string
-
-// jsonDeser is for deserialize json from bytes.
-type jsonDeser interface {
-	JSON
-	decode([]byte) error
+func encodeJSONLiteral(literal byte, buffer *bytes.Buffer) {
+	buffer.WriteByte(literal)
 }
 
-func jsonDeserFromJSON(j JSON) jsonDeser {
-	if jdeser, ok := j.(jsonDeser); ok {
-		return jdeser
-	}
-	return nil
-}
-
-func (b jsonLiteral) getTypeCode() byte {
-	return typeCodeLiteral
-}
-
-func (b jsonLiteral) encode(buffer *bytes.Buffer) {
-	buffer.WriteByte(byte(b))
-}
-
-func (b *jsonLiteral) decode(data []byte) error {
-	var bb = (*byte)(unsafe.Pointer(b))
-	*bb = data[0]
-	return nil
-}
-
-func (i jsonInt64) getTypeCode() byte {
-	return typeCodeInt64
-}
-
-func (i jsonInt64) encode(buffer *bytes.Buffer) {
-	binary.Write(buffer, binary.LittleEndian, i)
-}
-
-func (i *jsonInt64) decode(data []byte) error {
+func decodeJSONLiteral(literal *byte, data []byte) error {
 	var reader = bytes.NewReader(data)
-	return binary.Read(reader, binary.LittleEndian, i)
+	return binary.Read(reader, binary.LittleEndian, literal)
 }
 
-func (f jsonDouble) getTypeCode() byte {
-	return typeCodeDouble
+func encodeJSONInt64(i64 int64, buffer *bytes.Buffer) {
+	binary.Write(buffer, binary.LittleEndian, i64)
 }
 
-func (f jsonDouble) encode(buffer *bytes.Buffer) {
-	binary.Write(buffer, binary.LittleEndian, f)
-}
-
-func (f *jsonDouble) decode(data []byte) error {
+func decodeJSONInt64(i64 *int64, data []byte) error {
 	var reader = bytes.NewReader(data)
-	return binary.Read(reader, binary.LittleEndian, f)
+	return binary.Read(reader, binary.LittleEndian, i64)
 }
 
-func (s jsonString) getTypeCode() byte {
-	return typeCodeString
+func encodeJSONFloat64(f64 float64, buffer *bytes.Buffer) {
+	binary.Write(buffer, binary.LittleEndian, f64)
 }
 
-func (s jsonString) encode(buffer *bytes.Buffer) {
-	var ss = string(s)
+func decodeJSONFloat64(f64 *float64, data []byte) error {
+	var reader = bytes.NewReader(data)
+	return binary.Read(reader, binary.LittleEndian, f64)
+}
+
+func encodeJSONString(s string, buffer *bytes.Buffer) {
+	byteArray := hack.Slice(s)
 	var varIntBuf = make([]byte, 9)
-	var varIntLen = binary.PutUvarint(varIntBuf, uint64(len(hack.Slice(ss))))
+	var varIntLen = binary.PutUvarint(varIntBuf, uint64(len(byteArray)))
 	buffer.Write(varIntBuf[0:varIntLen])
-	buffer.Write(hack.Slice(ss))
+	buffer.Write(byteArray)
 }
 
-func (s *jsonString) decode(data []byte) error {
+func decodeJSONString(s *string, data []byte) (err error) {
 	var reader = bytes.NewReader(data)
-	length, err := binary.ReadUvarint(reader)
-	if err == nil {
+	if length, err := binary.ReadUvarint(reader); err == nil {
 		var buf = make([]byte, length)
 		_, err = reader.Read(buf)
 		if err == nil {
-			*s = jsonString(string(buf))
+			*s = hack.String(buf)
 		}
 	}
-	return err
+	return
 }
 
-func (m jsonObject) getTypeCode() byte {
-	return typeCodeObject
-}
-
-func (m jsonObject) encode(buffer *bytes.Buffer) {
+func encodeJSONObject(m map[string]JSON, buffer *bytes.Buffer) {
 	// object ::= element-count size key-entry* value-entry* key* value*
 	// key-entry ::= key-offset key-length
 	var countAndSize = make([]uint32, 2)
 	var countAndSizeLen = len(countAndSize) * 4
-	var keySlice = m.getSortedKeys()
+	var keySlice = getSortedKeys(m)
 
 	var keyEntrysLen = (4 + 2) * len(m)
 	var valueEntrysLen = (1 + 4) * len(m)
@@ -258,7 +233,7 @@ func (m jsonObject) encode(buffer *bytes.Buffer) {
 	return
 }
 
-func (m *jsonObject) decode(data []byte) (err error) {
+func decodeJSONObject(m *map[string]JSON, data []byte) (err error) {
 	var reader = bytes.NewReader(data)
 
 	var countAndSize = make([]uint32, 2)
@@ -287,15 +262,15 @@ func (m *jsonObject) decode(data []byte) (err error) {
 		}
 
 		var key = string(keyBuffer)
-		var value = jsonFromTypeCode(valueTypes[i])
+		var value JSON
 		typeLen, _ := jsonTypeCodeLength[valueTypes[i]]
 		if typeLen >= 0 && typeLen <= 4 {
 			var inline = valueOffsets[i]
 			var hdr = reflect.SliceHeader{Data: uintptr(unsafe.Pointer(&inline)), Len: 4, Cap: 4}
 			var buf = *(*[]byte)(unsafe.Pointer(&hdr))
-			jsonDeserFromJSON(value).decode(buf)
+			value, err = decode(valueTypes[i], buf)
 		} else {
-			jsonDeserFromJSON(value).decode(data[valueOffsets[i]:])
+			value, err = decode(valueTypes[i], data[valueOffsets[i]:])
 		}
 		if err != nil {
 			return
@@ -305,11 +280,7 @@ func (m *jsonObject) decode(data []byte) (err error) {
 	return
 }
 
-func (a jsonArray) getTypeCode() byte {
-	return typeCodeArray
-}
-
-func (a jsonArray) encode(buffer *bytes.Buffer) {
+func encodeJSONArray(a []JSON, buffer *bytes.Buffer) {
 	// array ::= element-count size value-entry* value*
 	var countAndSize = make([]uint32, 2)
 	var countAndSizeLen = len(countAndSize) * 4
@@ -330,7 +301,7 @@ func (a jsonArray) encode(buffer *bytes.Buffer) {
 	buffer.Write(values.Bytes())
 }
 
-func (a *jsonArray) decode(data []byte) (err error) {
+func decodeJSONArray(a *[]JSON, data []byte) (err error) {
 	var reader = bytes.NewReader(data)
 
 	var countAndSize = make([]uint32, 2)
@@ -346,15 +317,15 @@ func (a *jsonArray) decode(data []byte) (err error) {
 	}
 
 	for i := 0; i < int(countAndSize[0]); i++ {
-		var value = jsonFromTypeCode(valueTypes[i])
+		var value JSON
 		typeLen, _ := jsonTypeCodeLength[valueTypes[i]]
 		if typeLen >= 0 && typeLen <= 4 {
 			var inline = valueOffsets[i]
 			var hdr = reflect.SliceHeader{Data: uintptr(unsafe.Pointer(&inline)), Len: 4, Cap: 4}
 			var buf = *(*[]byte)(unsafe.Pointer(&hdr))
-			err = jsonDeserFromJSON(value).decode(buf)
+			value, err = decode(valueTypes[i], buf)
 		} else {
-			err = jsonDeserFromJSON(value).decode(data[valueOffsets[i]:])
+			value, err = decode(valueTypes[i], data[valueOffsets[i]:])
 		}
 		if err != nil {
 			return
@@ -371,32 +342,14 @@ var jsonTypeCodeLength = map[byte]int{
 	typeCodeArray:   -1,
 	typeCodeLiteral: 1,
 	typeCodeInt64:   8,
-	typeCodeDouble:  8,
+	typeCodeFloat64: 8,
 	typeCodeString:  -1,
-}
-
-func jsonFromTypeCode(typeCode byte) JSON {
-	switch typeCode {
-	case typeCodeObject:
-		return new(jsonObject)
-	case typeCodeArray:
-		return new(jsonArray)
-	case typeCodeLiteral:
-		return new(jsonLiteral)
-	case typeCodeInt64:
-		return new(jsonInt64)
-	case typeCodeDouble:
-		return new(jsonDouble)
-	case typeCodeString:
-		return new(jsonString)
-	}
-	panic("unknown type code")
 }
 
 // Two map are equal if they have same keys and same values.
 // So we sort the keys before serialize in order to keep
 // their binary representations are same.
-func (m jsonObject) getSortedKeys() []string {
+func getSortedKeys(m map[string]JSON) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
@@ -406,23 +359,33 @@ func (m jsonObject) getSortedKeys() []string {
 }
 
 func pushValueEntry(value JSON, valueEntrys *bytes.Buffer, values *bytes.Buffer, prefixLen int) {
-	var typeCode = value.getTypeCode()
+	var typeCode = value.typeCode
 	valueEntrys.WriteByte(typeCode)
 
 	typeLen, _ := jsonTypeCodeLength[typeCode]
 	if typeLen > 0 && typeLen <= 4 {
 		// If the value has length in (0, 4], it could be inline here.
 		// And padding 0x00 to 4 bytes if needed.
-		oldEntryLen := valueEntrys.Len()
-		binary.Write(valueEntrys, binary.LittleEndian, value)
-		newEntryLen := valueEntrys.Len()
-		for i := 0; i < 4-(newEntryLen-oldEntryLen); i++ {
-			valueEntrys.WriteByte(0x00)
-		}
+		pushInlineValue(valueEntrys, value)
 	} else {
 		var valueOffset = uint32(prefixLen + values.Len())
 		binary.Write(valueEntrys, binary.LittleEndian, valueOffset)
-		value.encode(values)
+		encode(value, values)
 	}
 	return
+}
+
+func pushInlineValue(buffer *bytes.Buffer, value JSON) {
+	var oldLen = buffer.Len()
+	switch value.typeCode {
+	case typeCodeLiteral:
+		var v = byte(value.bit64)
+		binary.Write(buffer, binary.LittleEndian, v)
+	default:
+		panic(internalErrorUnknownTypeCode)
+	}
+	var newLen = buffer.Len()
+	for i := 0; i < 4-(newLen-oldLen); i++ {
+		buffer.WriteByte(0x00)
+	}
 }

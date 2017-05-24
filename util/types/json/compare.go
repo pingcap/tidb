@@ -15,8 +15,8 @@ package json
 
 import (
 	"bytes"
-	"reflect"
 	"strings"
+	"unsafe"
 )
 
 // floatEpsilon is for compare two float value allowing precision loss.
@@ -51,31 +51,15 @@ var jsonTypePrecedences = map[string]int{
 	"NULL":     -12,
 }
 
-func jsonAsFloat64(j JSON) float64 {
-	if j.Type() == "INTEGER" {
-		if reflect.TypeOf(j).Kind() == reflect.Ptr {
-			return float64(*j.(*jsonInt64))
-		}
-		return float64(j.(jsonInt64))
-	} else if j.Type() == "DOUBLE" {
-		if reflect.TypeOf(j).Kind() == reflect.Ptr {
-			return float64(*j.(*jsonDouble))
-		}
-		return float64(j.(jsonDouble))
-	} else if j.Type() == "BOOLEAN" {
-		if reflect.TypeOf(j).Kind() == reflect.Ptr {
-			return float64(*j.(*jsonLiteral))
-		}
-		return float64(j.(jsonLiteral))
+func bit64AsFloat64(bit64 *int64, typeCode byte) float64 {
+	switch typeCode {
+	case typeCodeLiteral, typeCodeInt64:
+		return float64(*bit64)
+	case typeCodeFloat64:
+		return *(*float64)(unsafe.Pointer(bit64))
+	default:
+		panic(internalErrorUnknownTypeCode)
 	}
-	panic("can not convert to float64")
-}
-
-func jsonAsString(j JSON) string {
-	if reflect.TypeOf(j).Kind() == reflect.Ptr {
-		return string(*j.(*jsonString))
-	}
-	return string(j.(jsonString))
 }
 
 // CompareJSON compares two json object.
@@ -88,32 +72,33 @@ func CompareJSON(j1 JSON, j2 JSON) (cmp int, err error) {
 			// for JSON null.
 			cmp = 0
 		}
-		switch x := j1.(type) {
-		case jsonLiteral:
-			left := int(x)
-			right := int(j2.(jsonLiteral))
+		switch j1.typeCode {
+		case typeCodeLiteral:
+			left := j1.bit64
+			right := j2.bit64
 			// false is less than true.
-			cmp = right - left
-		case jsonInt64, jsonDouble:
-			left := jsonAsFloat64(j1)
-			right := jsonAsFloat64(j2)
+			cmp = int(right - left)
+		case typeCodeInt64, typeCodeFloat64:
+			left := bit64AsFloat64(&j1.bit64, j1.typeCode)
+			right := bit64AsFloat64(&j2.bit64, j2.typeCode)
 			cmp = compareFloat64PrecisionLoss(left, right)
-		case jsonString:
-			left := jsonAsString(j1)
-			right := jsonAsString(j2)
+		case typeCodeString:
+			left := j1.str
+			right := j2.str
 			cmp = strings.Compare(left, right)
-		case jsonArray:
-			y := j2.(jsonArray)
-			for i := 0; i < len(x) && i < len(y); i++ {
-				elem1 := x[i]
-				elem2 := y[i]
+		case typeCodeArray:
+			left := j1.array
+			right := j2.array
+			for i := 0; i < len(left) && i < len(right); i++ {
+				elem1 := left[i]
+				elem2 := right[i]
 				cmp, _ = CompareJSON(elem1, elem2)
 				if cmp != 0 {
 					return
 				}
 			}
-			cmp = len(x) - len(y)
-		case jsonObject:
+			cmp = len(left) - len(right)
+		case typeCodeObject:
 			// only equal is defined on two json objects.
 			// larger and smaller are not defined.
 			s1 := Serialize(j1)
@@ -126,7 +111,9 @@ func CompareJSON(j1 JSON, j2 JSON) (cmp int, err error) {
 		(precedence1 == jsonTypePrecedences["INTEGER"] && precedence2 == jsonTypePrecedences["BOOLEAN"]) {
 		// tidb treat boolean as integer, but boolean is different from integer in JSON.
 		// so we need convert them to same type and then compare.
-		cmp = compareFloat64PrecisionLoss(jsonAsFloat64(j1), jsonAsFloat64(j2))
+		left := bit64AsFloat64(&j1.bit64, j1.typeCode)
+		right := bit64AsFloat64(&j2.bit64, j2.typeCode)
+		cmp = compareFloat64PrecisionLoss(left, right)
 	} else {
 		cmp = precedence1 - precedence2
 	}

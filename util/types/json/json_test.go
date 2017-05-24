@@ -28,6 +28,11 @@ func TestT(t *testing.T) {
 }
 
 func (s *testJSONSuite) TestJSONSerde(c *C) {
+	var jsonNilValue = CreateJSON(nil)
+	var jsonBoolValue = CreateJSON(true)
+	var jsonDoubleValue = CreateJSON(3.24)
+	var jsonStringValue = CreateJSON("hello, 世界")
+
 	var jstr1 = `{"aaaaaaaaaaa": [1, "2", {"aa": "bb"}, 4.0], "bbbbbbbbbb": true, "ccccccccc": "d"}`
 	j1, err := ParseFromString(jstr1)
 	c.Assert(err, IsNil)
@@ -35,11 +40,6 @@ func (s *testJSONSuite) TestJSONSerde(c *C) {
 	var jstr2 = `[{"a": 1, "b": true}, 3, 3.5, "hello, world", null, true]`
 	j2, err := ParseFromString(jstr2)
 	c.Assert(err, IsNil)
-
-	var jsonNilValue = jsonLiteral(0x00)
-	var jsonBoolValue = jsonLiteral(0x01)
-	var jsonDoubleValue = jsonDouble(3.24)
-	var jsonStringValue = jsonString("hello, 世界")
 
 	var testcses = []struct {
 		In  JSON
