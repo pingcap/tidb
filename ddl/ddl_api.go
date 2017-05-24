@@ -38,9 +38,13 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-var (
-	reBlank = regexp.MustCompile(`\s`)
-)
+var reBlank = regexp.MustCompile(`\s`)
+
+// removeBlanksInExprAndDump removes all blanks in expr, and
+// dupmp it into a string.
+func removeBlanksInExprAndDump(expr ast.ExprNode) string {
+	return reBlank.ReplaceAllString(expr.Text(), "")
+}
 
 func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
 	is := d.GetInformationSchema()
@@ -314,9 +318,8 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 					return nil, nil, errors.Trace(err)
 				}
 			case ast.ColumnOptionGenerated:
-				col.GeneratedExprString = reBlank.ReplaceAllString(v.Expr.Text(), "")
+				col.GeneratedExprString = removeBlanksInExprAndDump(v.Expr)
 				col.GeneratedStored = v.Stored
-				// TODO binary encode expr.
 			case ast.ColumnOptionFulltext:
 				// TODO: Support this type.
 			}
