@@ -308,7 +308,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 				log.Errorf("[ddl] reload schema in loop err %v", errors.ErrorStack(err))
 			}
 			// TODO: If ChangeOwnerInNewWay is true, we can remove this comments.
-			//	case <-do.ddl.SchemaVersionSyncer().LatestVerCh:
+			//	case <-do.ddl.SchemaVersionSyncer().GlobalVerCh:
 			//		err := do.Reload()
 			//		if err != nil {
 			//			log.Errorf("[ddl] reload schema in loop err %v", errors.ErrorStack(err))

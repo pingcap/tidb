@@ -40,7 +40,7 @@ var checkVersFirstWaitTime = 30 * time.Millisecond
 type schemaVersionSyncer struct {
 	selfSchemaVerPath string
 	etcdCli           *clientv3.Client
-	LatestVerCh       clientv3.WatchChan
+	GlobalVerCh       clientv3.WatchChan
 }
 
 func (s *schemaVersionSyncer) putKV(ctx goctx.Context, retryCnt int, key, val string) error {
@@ -65,7 +65,7 @@ func (s *schemaVersionSyncer) Init(ctx goctx.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	s.LatestVerCh = s.etcdCli.Watch(ctx, ddlGlobalSchemaVersion)
+	s.GlobalVerCh = s.etcdCli.Watch(ctx, ddlGlobalSchemaVersion)
 	return s.putKV(ctx, putKeyDefaultRetryCnt, s.selfSchemaVerPath, initialVersion)
 }
 
@@ -74,7 +74,7 @@ func (s *schemaVersionSyncer) UpdateSelfVersion(ctx goctx.Context, version int64
 	return s.putKV(ctx, putKeyNoRetry, s.selfSchemaVerPath, ver)
 }
 
-func (s *schemaVersionSyncer) updateLatestVersion(ctx goctx.Context, version int64) error {
+func (s *schemaVersionSyncer) updateGlobalVersion(ctx goctx.Context, version int64) error {
 	ver := strconv.FormatInt(version, 10)
 	return s.putKV(ctx, putKeyNoRetry, ddlGlobalSchemaVersion, ver)
 }

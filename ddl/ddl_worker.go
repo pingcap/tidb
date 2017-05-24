@@ -311,7 +311,7 @@ func (d *ddl) handleDDLJobQueue() error {
 			// Running job may cost some time, so here we must update owner status to
 			// prevent other become the owner.
 			if ChangeOwnerInNewWay {
-				err = d.worker.updateLatestVersion(ctx, schemaVer)
+				err = d.worker.updateGlobalVersion(ctx, schemaVer)
 				if err != nil {
 					log.Warnf("update latest schema version %v failed", schemaVer)
 				}

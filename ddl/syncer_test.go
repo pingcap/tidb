@@ -82,7 +82,7 @@ func TestSyncerSimple(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		select {
-		case resp := <-d.worker.LatestVerCh:
+		case resp := <-d.worker.GlobalVerCh:
 			if len(resp.Events) < 1 {
 				t.Fatalf("get chan events count less than 1")
 			}
@@ -93,11 +93,11 @@ func TestSyncerSimple(t *testing.T) {
 	}()
 
 	// for update latestSchemaVersion
-	err = d.worker.updateLatestVersion(ctx, currentVer)
+	err = d.worker.updateGlobalVersion(ctx, currentVer)
 	if err != nil {
 		t.Fatalf("update latest schema version failed %v", err)
 	}
-	err = d1.worker.updateLatestVersion(ctx, currentVer)
+	err = d1.worker.updateGlobalVersion(ctx, currentVer)
 	if err != nil {
 		t.Fatalf("update latest schema version failed %v", err)
 	}
