@@ -292,7 +292,7 @@ type builtinCastStringAsIntSig struct {
 }
 
 func (b *builtinCastStringAsIntSig) evalInt(row []types.Datum) (res int64, isNull bool, err error) {
-	if types.IsHybridType(b.args[0].GetType().Tp) {
+	if IsHybridType(b.args[0]) {
 		return b.args[0].EvalInt(row, b.getCtx().GetSessionVars().StmtCtx)
 	}
 	val, isNull, err := b.args[0].EvalString(row, b.getCtx().GetSessionVars().StmtCtx)
@@ -308,7 +308,7 @@ type builtinCastStringAsRealSig struct {
 }
 
 func (b *builtinCastStringAsRealSig) evalReal(row []types.Datum) (res float64, isNull bool, err error) {
-	if types.IsHybridType(b.args[0].GetType().Tp) {
+	if IsHybridType(b.args[0]) {
 		return b.args[0].EvalReal(row, b.getCtx().GetSessionVars().StmtCtx)
 	}
 	val, isNull, err := b.args[0].EvalString(row, b.getCtx().GetSessionVars().StmtCtx)
@@ -324,7 +324,7 @@ type builtinCastStringAsDecimalSig struct {
 }
 
 func (b *builtinCastStringAsDecimalSig) evalDecimal(row []types.Datum) (res *types.MyDecimal, isNull bool, err error) {
-	if types.IsHybridType(b.args[0].GetType().Tp) {
+	if IsHybridType(b.args[0]) {
 		return b.args[0].EvalDecimal(row, b.getCtx().GetSessionVars().StmtCtx)
 	}
 	val, isNull, err := b.args[0].EvalString(row, b.getCtx().GetSessionVars().StmtCtx)
