@@ -19,7 +19,6 @@ package ddl
 
 import (
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -35,16 +34,9 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/types"
 )
-
-var reBlank = regexp.MustCompile(`\s`)
-
-// removeBlanksInExprAndDump removes all blanks in expr, and
-// dupmp it into a string.
-func removeBlanksInExprAndDump(expr ast.ExprNode) string {
-	return reBlank.ReplaceAllString(expr.Text(), "")
-}
 
 func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
 	is := d.GetInformationSchema()
@@ -318,8 +310,10 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 					return nil, nil, errors.Trace(err)
 				}
 			case ast.ColumnOptionGenerated:
-				col.GeneratedExprString = removeBlanksInExprAndDump(v.Expr)
+				col.GeneratedExprString = stringutil.RemoveBlanks(v.Expr.Text())
 				col.GeneratedStored = v.Stored
+				dependColNames, _ := findDependedColumnNames(*colDef)
+				col.Dependences = dependColNames
 			case ast.ColumnOptionFulltext:
 				// TODO: Support this type.
 			}
@@ -451,24 +445,22 @@ func checkDuplicateColumn(colDefs []*ast.ColumnDef) error {
 
 func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 	normalColNames := map[string]bool{}
-	dependedColNames := map[string]bool{}
+	dependColNames := make([]string, 0)
 	for _, colDef := range colDefs {
-		// TODO fix depend on itself.
-		for _, option := range colDef.Options {
-			if option.Tp == ast.ColumnOptionGenerated {
-				for _, depCol := range findColumnNameInExpr(option.Expr) {
-					dependedColNames[depCol.Name.L] = true
-					if colDef.Name.Name.L == depCol.Name.L {
-						return errBadField.GenByArgs(depCol.Name.L, "generated column function")
-					}
-				}
-				break
-			}
+		depCols, err := findDependedColumnNames(*colDef)
+		if err != nil {
+			return err
 		}
 		normalColNames[colDef.Name.Name.L] = true
+		dependColNames = append(dependColNames, depCols...)
 	}
-	// TODO
-	for name := range dependedColNames {
+	return columnNamesCover(normalColNames, dependColNames)
+}
+
+// columnNamesCover checks dependColNames is coverd by normalColNames or not.
+// if not, return a formatted error.
+func columnNamesCover(normalColNames map[string]bool, dependColNames []string) error {
+	for _, name := range dependColNames {
 		if _, ok := normalColNames[name]; !ok {
 			return errBadField.GenByArgs(name, "generated column function")
 		}
@@ -476,7 +468,30 @@ func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 	return nil
 }
 
-func findColumnNameInExpr(expr ast.ExprNode) (cols []*ast.ColumnName) {
+// findDependedColumnNames returns a slice of string, which is depend by colDef.
+// If colDef depends on itself, it will return an error.
+func findDependedColumnNames(colDef ast.ColumnDef) (cols []string, err error) {
+	var colsMap = make(map[string]bool, 0)
+	for _, option := range colDef.Options {
+		if option.Tp == ast.ColumnOptionGenerated {
+			colNames := findColumnNamesInExpr(option.Expr)
+			for _, depCol := range colNames {
+				if colDef.Name.Name.L == depCol.Name.L {
+					err = errBadField.GenByArgs(depCol.Name.L, "generated column function")
+					break
+				}
+				colsMap[depCol.Name.L] = true
+			}
+			for col := range colsMap {
+				cols = append(cols, col)
+			}
+			break
+		}
+	}
+	return
+}
+
+func findColumnNamesInExpr(expr ast.ExprNode) []*ast.ColumnName {
 	var c generatedColumnChecker
 	expr.Accept(&c)
 	return c.cols
@@ -892,6 +907,26 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 		return infoschema.ErrColumnExists.GenByArgs(colName)
 	}
 
+	// If new column is a generated column, do validation.
+	for _, option := range spec.NewColumn.Options {
+		if option.Tp == ast.ColumnOptionGenerated {
+			normalColNames := make(map[string]bool, len(t.Cols()))
+			for _, col := range t.Cols() {
+				normalColNames[col.Name.L] = true
+			}
+			dependColNames, err := findDependedColumnNames(*spec.NewColumn)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if err := columnNamesCover(normalColNames, dependColNames); err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+	//if err := checkGeneratedColumn(append(t.Cols(), spec.NewColumn)); err != nil {
+	//	return errors.Trace(err)
+	//}
+
 	if len(colName) > mysql.MaxColumnNameLength {
 		return ErrTooLongIdent.Gen("too long column %s", colName)
 	}
@@ -946,6 +981,15 @@ func (d *ddl) DropColumn(ctx context.Context, ti ast.Ident, colName model.CIStr)
 	col := table.FindCol(t.Cols(), colName.L)
 	if col == nil {
 		return ErrCantDropFieldOrKey.Gen("column %s doesn't exist", colName)
+	}
+
+	// Check there is other column depend on this column or not.
+	for _, col := range t.Cols() {
+		for _, dep := range col.Dependences {
+			if dep == colName.L {
+				return errDependentByGeneratedColumn.GenByArgs(dep)
+			}
+		}
 	}
 
 	tblInfo := t.Meta()

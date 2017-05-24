@@ -62,17 +62,18 @@ var (
 	errIncorrectPrefixKey   = terror.ClassDDL.New(codeIncorrectPrefixKey, "Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys")
 	errTooLongKey           = terror.ClassDDL.New(codeTooLongKey,
 		fmt.Sprintf("Specified key was too long; max key length is %d bytes", maxPrefixLength))
-	errKeyColumnDoesNotExits = terror.ClassDDL.New(codeKeyColumnDoesNotExits, "this key column doesn't exist in table")
-	errDupKeyName            = terror.ClassDDL.New(codeDupKeyName, "duplicate key name")
-	errWrongDBName           = terror.ClassDDL.New(codeWrongDBName, "Incorrect database name '%s'")
-	errWrongTableName        = terror.ClassDDL.New(codeWrongTableName, "Incorrect table name '%s'")
-	errUnknownTypeLength     = terror.ClassDDL.New(codeUnknownTypeLength, "Unknown length for type tp %d")
-	errUnknownFractionLength = terror.ClassDDL.New(codeUnknownFractionLength, "Unknown Length for type tp %d and fraction %d")
-	errFileNotFound          = terror.ClassDDL.New(codeFileNotFound, "Can't find file: './%s/%s.frm'")
-	errErrorOnRename         = terror.ClassDDL.New(codeErrorOnRename, "Error on rename of './%s/%s' to './%s/%s'")
-	errBadField              = terror.ClassDDL.New(codeBadField, "Unknown column '%s' in '%s'")
-	errInvalidDefault        = terror.ClassDDL.New(codeInvalidDefault, "Invalid default value for '%s'")
-	errInvalidUseOfNull      = terror.ClassDDL.New(codeInvalidUseOfNull, "Invalid use of NULL value")
+	errKeyColumnDoesNotExits      = terror.ClassDDL.New(codeKeyColumnDoesNotExits, "this key column doesn't exist in table")
+	errDupKeyName                 = terror.ClassDDL.New(codeDupKeyName, "duplicate key name")
+	errWrongDBName                = terror.ClassDDL.New(codeWrongDBName, "Incorrect database name '%s'")
+	errWrongTableName             = terror.ClassDDL.New(codeWrongTableName, "Incorrect table name '%s'")
+	errUnknownTypeLength          = terror.ClassDDL.New(codeUnknownTypeLength, "Unknown length for type tp %d")
+	errUnknownFractionLength      = terror.ClassDDL.New(codeUnknownFractionLength, "Unknown Length for type tp %d and fraction %d")
+	errFileNotFound               = terror.ClassDDL.New(codeFileNotFound, "Can't find file: './%s/%s.frm'")
+	errErrorOnRename              = terror.ClassDDL.New(codeErrorOnRename, "Error on rename of './%s/%s' to './%s/%s'")
+	errBadField                   = terror.ClassDDL.New(codeBadField, "Unknown column '%s' in '%s'")
+	errInvalidDefault             = terror.ClassDDL.New(codeInvalidDefault, "Invalid default value for '%s'")
+	errInvalidUseOfNull           = terror.ClassDDL.New(codeInvalidUseOfNull, "Invalid use of NULL value")
+	errDependentByGeneratedColumn = terror.ClassDDL.New(codeDependentByGeneratedColumn, mysql.MySQLErrName[mysql.ErrDependentByGeneratedColumn])
 
 	// ErrInvalidDBState returns for invalid database state.
 	ErrInvalidDBState = terror.ClassDDL.New(codeInvalidDBState, "invalid database state")
@@ -480,44 +481,46 @@ const (
 	codeUnsupportedCharset          = 205
 	codeUnsupportedModifyPrimaryKey = 206
 
-	codeFileNotFound          = 1017
-	codeErrorOnRename         = 1025
-	codeBadNull               = 1048
-	codeBadField              = 1054
-	codeTooLongIdent          = 1059
-	codeDupKeyName            = 1061
-	codeInvalidDefault        = 1067
-	codeTooLongKey            = 1071
-	codeKeyColumnDoesNotExits = 1072
-	codeIncorrectPrefixKey    = 1089
-	codeCantRemoveAllFields   = 1090
-	codeCantDropFieldOrKey    = 1091
-	codeWrongDBName           = 1102
-	codeWrongTableName        = 1103
-	codeInvalidUseOfNull      = 1138
-	codeBlobKeyWithoutLength  = 1170
-	codeInvalidOnUpdate       = 1294
+	codeFileNotFound               = 1017
+	codeErrorOnRename              = 1025
+	codeBadNull                    = 1048
+	codeBadField                   = 1054
+	codeTooLongIdent               = 1059
+	codeDupKeyName                 = 1061
+	codeInvalidDefault             = 1067
+	codeTooLongKey                 = 1071
+	codeKeyColumnDoesNotExits      = 1072
+	codeIncorrectPrefixKey         = 1089
+	codeCantRemoveAllFields        = 1090
+	codeCantDropFieldOrKey         = 1091
+	codeWrongDBName                = 1102
+	codeWrongTableName             = 1103
+	codeInvalidUseOfNull           = 1138
+	codeBlobKeyWithoutLength       = 1170
+	codeInvalidOnUpdate            = 1294
+	codeDependentByGeneratedColumn = 3108
 )
 
 func init() {
 	ddlMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeBadNull:               mysql.ErrBadNull,
-		codeCantRemoveAllFields:   mysql.ErrCantRemoveAllFields,
-		codeCantDropFieldOrKey:    mysql.ErrCantDropFieldOrKey,
-		codeInvalidOnUpdate:       mysql.ErrInvalidOnUpdate,
-		codeBlobKeyWithoutLength:  mysql.ErrBlobKeyWithoutLength,
-		codeIncorrectPrefixKey:    mysql.ErrWrongSubKey,
-		codeTooLongIdent:          mysql.ErrTooLongIdent,
-		codeTooLongKey:            mysql.ErrTooLongKey,
-		codeKeyColumnDoesNotExits: mysql.ErrKeyColumnDoesNotExits,
-		codeDupKeyName:            mysql.ErrDupKeyName,
-		codeWrongDBName:           mysql.ErrWrongDBName,
-		codeWrongTableName:        mysql.ErrWrongTableName,
-		codeFileNotFound:          mysql.ErrFileNotFound,
-		codeErrorOnRename:         mysql.ErrErrorOnRename,
-		codeBadField:              mysql.ErrBadField,
-		codeInvalidDefault:        mysql.ErrInvalidDefault,
-		codeInvalidUseOfNull:      mysql.ErrInvalidUseOfNull,
+		codeBadNull:                    mysql.ErrBadNull,
+		codeCantRemoveAllFields:        mysql.ErrCantRemoveAllFields,
+		codeCantDropFieldOrKey:         mysql.ErrCantDropFieldOrKey,
+		codeInvalidOnUpdate:            mysql.ErrInvalidOnUpdate,
+		codeBlobKeyWithoutLength:       mysql.ErrBlobKeyWithoutLength,
+		codeIncorrectPrefixKey:         mysql.ErrWrongSubKey,
+		codeTooLongIdent:               mysql.ErrTooLongIdent,
+		codeTooLongKey:                 mysql.ErrTooLongKey,
+		codeKeyColumnDoesNotExits:      mysql.ErrKeyColumnDoesNotExits,
+		codeDupKeyName:                 mysql.ErrDupKeyName,
+		codeWrongDBName:                mysql.ErrWrongDBName,
+		codeWrongTableName:             mysql.ErrWrongTableName,
+		codeFileNotFound:               mysql.ErrFileNotFound,
+		codeErrorOnRename:              mysql.ErrErrorOnRename,
+		codeBadField:                   mysql.ErrBadField,
+		codeInvalidDefault:             mysql.ErrInvalidDefault,
+		codeInvalidUseOfNull:           mysql.ErrInvalidUseOfNull,
+		codeDependentByGeneratedColumn: mysql.ErrDependentByGeneratedColumn,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }
