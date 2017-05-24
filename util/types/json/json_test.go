@@ -14,7 +14,6 @@
 package json
 
 import (
-	"encoding/json"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -29,7 +28,7 @@ func TestT(t *testing.T) {
 }
 
 func (s *testJSONSuite) TestJSONSerde(c *C) {
-	var jstr1 = `{"a": [1, "2", {"aa": "bb"}, 4.2], "b": true}`
+	var jstr1 = `{"aaaaaaaaaaa": [1, "2", {"aa": "bb"}, 4.2], "bbbbbbbbbb": true, "ccccccccc": "d"}`
 	j1, err := ParseFromString(jstr1)
 	c.Assert(err, IsNil)
 
@@ -59,9 +58,9 @@ func (s *testJSONSuite) TestJSONSerde(c *C) {
 		t, err := Deserialize(data)
 		c.Assert(err, IsNil)
 
-		v1, _ := json.Marshal(t)
-		v2, _ := json.Marshal(s.Out)
-		c.Assert(string(v1), Equals, string(v2))
+		v1 := t.String()
+		v2 := s.Out.String()
+		c.Assert(v1, Equals, v2)
 	}
 }
 

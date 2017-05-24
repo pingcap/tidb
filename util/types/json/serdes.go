@@ -233,8 +233,8 @@ func (m jsonObject) encode(buffer *bytes.Buffer) {
 	var keys = new(bytes.Buffer)
 	var values = new(bytes.Buffer)
 
-	for i, key := range keySlice {
-		var keyOffset = uint32(countAndSizeLen + keyEntrysLen + valueEntrysLen + (4+2)*i)
+	for _, key := range keySlice {
+		var keyOffset = uint32(countAndSizeLen + keyEntrysLen + valueEntrysLen + keys.Len())
 		var keyLength = uint16(len(hack.Slice(key)))
 		binary.Write(keyEntrys, binary.LittleEndian, keyOffset)
 		binary.Write(keyEntrys, binary.LittleEndian, keyLength)
