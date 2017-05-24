@@ -25,8 +25,8 @@ import (
 )
 
 const (
-	ddlSelfSchemaVersion   = "tidb/ddl/self_schem_version"
-	ddlLatestSchemaVersion = "tidb/ddl/latest_schem_version"
+	ddlAllSchemaVersions   = "/tidb/ddl/all_schem_versions"
+	ddlGlobalSchemaVersion = "/tidb/ddl/global_schem_version"
 	initialVersion         = "0"
 	putKeyDefaultRetryCnt  = 3
 	putKeyNoRetry          = 1
@@ -59,24 +59,24 @@ func (s *schemaVersionSyncer) putKV(ctx goctx.Context, retryCnt int, key, val st
 
 func (s *schemaVersionSyncer) Init(ctx goctx.Context) error {
 	_, err := s.etcdCli.Txn(ctx).
-		If(clientv3.Compare(clientv3.CreateRevision(ddlLatestSchemaVersion), "=", 0)).
-		Then(clientv3.OpPut(ddlLatestSchemaVersion, initialVersion)).
+		If(clientv3.Compare(clientv3.CreateRevision(ddlGlobalSchemaVersion), "=", 0)).
+		Then(clientv3.OpPut(ddlGlobalSchemaVersion, initialVersion)).
 		Commit()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	s.LatestVerCh = s.etcdCli.Watch(ctx, ddlLatestSchemaVersion)
+	s.LatestVerCh = s.etcdCli.Watch(ctx, ddlGlobalSchemaVersion)
 	return s.putKV(ctx, putKeyDefaultRetryCnt, s.selfSchemaVerPath, initialVersion)
 }
 
 func (s *schemaVersionSyncer) UpdateSelfVersion(ctx goctx.Context, version int64) error {
-	ver := strconv.Itoa(int(version))
+	ver := strconv.FormatInt(version, 10)
 	return s.putKV(ctx, putKeyNoRetry, s.selfSchemaVerPath, ver)
 }
 
 func (s *schemaVersionSyncer) updateLatestVersion(ctx goctx.Context, version int64) error {
-	ver := strconv.Itoa(int(version))
-	return s.putKV(ctx, putKeyNoRetry, ddlLatestSchemaVersion, ver)
+	ver := strconv.FormatInt(version, 10)
+	return s.putKV(ctx, putKeyNoRetry, ddlGlobalSchemaVersion, ver)
 }
 
 func isContextFinished(err error) bool {
@@ -97,8 +97,8 @@ func (s *schemaVersionSyncer) checkAllVersions(ctx goctx.Context, latestVer int6
 		default:
 		}
 
-		resp, err := s.etcdCli.Get(ctx, ddlSelfSchemaVersion, clientv3.WithPrefix())
-		if err != nil && isContextFinished(err) {
+		resp, err := s.etcdCli.Get(ctx, ddlAllSchemaVersions, clientv3.WithPrefix())
+		if isContextFinished(err) {
 			return errors.Trace(err)
 		}
 		if err != nil {

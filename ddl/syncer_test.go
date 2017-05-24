@@ -60,17 +60,17 @@ func TestSyncerSimple(t *testing.T) {
 	if err = d.SchemaVersionSyncer().Init(ctx); err != nil {
 		t.Fatalf("schema version syncer init failed %v", err)
 	}
-	resp, err := cli.Get(ctx, ddlSelfSchemaVersion, clientv3.WithPrefix())
+	resp, err := cli.Get(ctx, ddlAllSchemaVersions, clientv3.WithPrefix())
 	if err != nil {
 		t.Fatalf("client get version failed %v", err)
 	}
-	key := ddlSelfSchemaVersion + "/" + d.uuid
+	key := ddlAllSchemaVersions + "/" + d.uuid
 	checkRespKV(t, 1, key, initialVersion, resp.Kvs...)
-	resp, err = cli.Get(ctx, ddlLatestSchemaVersion)
+	resp, err = cli.Get(ctx, ddlGlobalSchemaVersion)
 	if err != nil {
 		t.Fatalf("client get version failed %v", err)
 	}
-	checkRespKV(t, 1, ddlLatestSchemaVersion, initialVersion, resp.Kvs...)
+	checkRespKV(t, 1, ddlGlobalSchemaVersion, initialVersion, resp.Kvs...)
 	if err = d1.SchemaVersionSyncer().Init(ctx); err != nil {
 		t.Fatalf("schema version syncer init failed %v", err)
 	}
@@ -86,7 +86,7 @@ func TestSyncerSimple(t *testing.T) {
 			if len(resp.Events) < 1 {
 				t.Fatalf("get chan events count less than 1")
 			}
-			checkRespKV(t, 1, ddlLatestSchemaVersion, fmt.Sprintf("%v", currentVer), resp.Events[0].Kv)
+			checkRespKV(t, 1, ddlGlobalSchemaVersion, fmt.Sprintf("%v", currentVer), resp.Events[0].Kv)
 		case <-time.After(50 * time.Millisecond):
 			t.Fatalf("get udpate version failed")
 		}

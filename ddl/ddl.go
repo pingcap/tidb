@@ -231,7 +231,7 @@ func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 	worker := &worker{
 		schemaVersionSyncer: &schemaVersionSyncer{
 			etcdCli:           etcdCli,
-			selfSchemaVerPath: fmt.Sprintf("%s/%s", ddlSelfSchemaVersion, id),
+			selfSchemaVerPath: fmt.Sprintf("%s/%s", ddlAllSchemaVersions, id),
 		},
 		ddlID:  id,
 		cancel: cancelFunc,
