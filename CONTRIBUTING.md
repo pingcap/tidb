@@ -1,4 +1,5 @@
-# Contribution Guide #
+# Contribution Guide
+
 TiDB is a community driven open source project and we welcome any contributor. The process of contributing to the TiDB project
 may be different than many other projects you have been involved in. This document outlines some conventions about development workflow, commit message formatting, contact points and other resources to make it easier to get your contribution accepted. This document is the canonical source of truth for things like supported toolchain versions for building and testing TiDB.
 
@@ -42,6 +43,7 @@ After installation, you'll need `GOPATH` defined,
 and `PATH` modified to access your Go binaries.
 
 A common setup is the following but you could always google a setup for your own flavor.
+
 ```sh
 export GOPATH=$HOME/go
 export PATH=$PATH:$GOPATH/bin
@@ -123,10 +125,8 @@ ln -s ../../hooks/pre-commit .
 Sometime, pre-commit hook can not be executable. In such case, you have to make it executable manually.
 
 ```sh
-chmod +x hooks/precommit
+chmod +x hooks/pre-commit
 ```
-
-
 
 ### Step 3: Branch
 
@@ -140,6 +140,7 @@ git rebase upstream/master
 ```
 
 Branch from master:
+
 ```sh
 git checkout -b myfeature
 ```
@@ -175,6 +176,7 @@ Commit your changes.
 ```sh
 git commit
 ```
+
 Likely you'll go back and edit/build/test some more than `commit --amend`
 in a few cycles.
 
@@ -205,12 +207,12 @@ fork.
 Very small PRs are easy to review. Very large PRs are very difficult to
 review.
 
-## Code style ##
+## Code style
 
 The coding style suggested by the Golang community is used in TiDB. See the [style doc](https://github.com/golang/go/wiki/CodeReviewComments) for details.
 
+## Commit message style
 
-## Commit message style ##
 Please follow this style to make TiDB easy to review, maintain and develop.
 
 ```
@@ -239,6 +241,3 @@ you can use one of some generic reasons like "Improve documentation.",
 [go-workspace]: https://golang.org/doc/code.html#Workspaces
 [issue]: https://github.com/pingcap/tidb/issues
 [mercurial]: http://mercurial.selenic.com/wiki/Download
-
-
-
