@@ -427,13 +427,98 @@ func (d *ddl) onSetDefaultValue(t *meta.Meta, job *model.Job) (ver int64, _ erro
 func (d *ddl) onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	newCol := &model.ColumnInfo{}
 	oldColName := &model.CIStr{}
-	err := job.DecodeArgs(newCol, oldColName)
+	pos := &ast.ColumnPosition{}
+	err := job.DecodeArgs(newCol, oldColName, pos)
 	if err != nil {
 		job.State = model.JobCancelled
 		return ver, errors.Trace(err)
 	}
 
-	return d.updateColumn(t, job, newCol, oldColName)
+	return d.doModifyColumn(t, job, newCol, oldColName, pos)
+}
+
+// doModifyColumn updates the column information and reorders all columns.
+func (d *ddl) doModifyColumn(t *meta.Meta, job *model.Job, col *model.ColumnInfo, oldName *model.CIStr, pos *ast.ColumnPosition) (ver int64, _ error) {
+	tblInfo, err := getTableInfo(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	oldCol := findCol(tblInfo.Columns, oldName.L)
+	if oldCol == nil || oldCol.State != model.StatePublic {
+		job.State = model.JobCancelled
+		return ver, infoschema.ErrColumnNotExists.GenByArgs(oldName, tblInfo.Name)
+	}
+
+	// Calculate column's new position.
+	oldPos, newPos := oldCol.Offset, oldCol.Offset
+	if pos.Tp == ast.ColumnPositionAfter {
+		if oldName.L == pos.RelativeColumn.Name.L {
+			// `alter table tableName modify column b int after b` will return ver,ErrColumnNotExists.
+			job.State = model.JobCancelled
+			return ver, infoschema.ErrColumnNotExists.GenByArgs(oldName, tblInfo.Name)
+		}
+
+		relative := findCol(tblInfo.Columns, pos.RelativeColumn.Name.L)
+		if relative == nil || relative.State != model.StatePublic {
+			job.State = model.JobCancelled
+			return ver, infoschema.ErrColumnNotExists.GenByArgs(pos.RelativeColumn, tblInfo.Name)
+		}
+
+		if relative.Offset < oldPos {
+			newPos = relative.Offset + 1
+		} else {
+			newPos = relative.Offset
+		}
+	} else if pos.Tp == ast.ColumnPositionFirst {
+		newPos = 0
+	}
+
+	columnChanged := make(map[string]*model.ColumnInfo)
+	columnChanged[oldName.L] = col
+
+	if newPos == oldPos {
+		tblInfo.Columns[newPos] = col
+	} else {
+		cols := tblInfo.Columns
+
+		// Reorder columns in place.
+		if newPos < oldPos {
+			copy(cols[newPos+1:], cols[newPos:oldPos])
+		} else {
+			copy(cols[oldPos:], cols[oldPos+1:newPos+1])
+		}
+		cols[newPos] = col
+
+		for i, col := range tblInfo.Columns {
+			if col.Offset != i {
+				columnChanged[col.Name.L] = col
+				col.Offset = i
+			}
+		}
+	}
+
+	// Change offset and name in indices.
+	for _, idx := range tblInfo.Indices {
+		for _, c := range idx.Columns {
+			if newCol, ok := columnChanged[c.Name.L]; ok {
+				c.Name = newCol.Name
+				c.Offset = newCol.Offset
+			}
+		}
+	}
+
+	originalState := job.SchemaState
+	job.SchemaState = model.StatePublic
+	ver, err = updateTableInfo(t, job, tblInfo, originalState)
+	if err != nil {
+		job.State = model.JobCancelled
+		return ver, errors.Trace(err)
+	}
+
+	job.State = model.JobDone
+	job.BinlogInfo.AddTableInfo(ver, tblInfo)
+	return ver, nil
 }
 
 func (d *ddl) updateColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldColName *model.CIStr) (ver int64, _ error) {

@@ -461,7 +461,7 @@ func (t *Time) Sub(t1 *Time) Duration {
 
 // Add adds d to t, returns a duration value.
 // Note that add should not be done on different time types.
-func (t *Time) Add(d *Duration) Duration {
+func (t *Time) Add(d Duration) Duration {
 	d.Duration = gotime.Duration(-int64(d.Duration))
 	t2, _ := d.ConvertToTime(t.Type)
 	return t.Sub(&t2)
@@ -997,6 +997,7 @@ func parseDateTimeFromNum(num int64) (Time, error) {
 
 	// Check datetime type.
 	if num >= 10000101000000 {
+		t.Type = mysql.TypeDatetime
 		return getTime(num, t.Type)
 	}
 
