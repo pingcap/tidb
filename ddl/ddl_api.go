@@ -923,9 +923,6 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 			}
 		}
 	}
-	//if err := checkGeneratedColumn(append(t.Cols(), spec.NewColumn)); err != nil {
-	//	return errors.Trace(err)
-	//}
 
 	if len(colName) > mysql.MaxColumnNameLength {
 		return ErrTooLongIdent.Gen("too long column %s", colName)
