@@ -597,6 +597,7 @@ var tokenMap = map[string]int{
 	"UUID":                       uuid,
 	"UUID_SHORT":                 uuidShort,
 	"KILL":                       kill,
+	"SEPARATOR":                  separator,
 }
 
 func isTokenIdentifier(s string, buf *bytes.Buffer) int {

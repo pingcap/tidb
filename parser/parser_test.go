@@ -1005,6 +1005,11 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select count(all c1) from t;`, true},
 		{`select group_concat(c2,c1) from t group by c1;`, true},
 		{`select group_concat(distinct c2,c1) from t group by c1;`, true},
+		{`select group_concat(c2,c1 order by c2 asc) from t group by c1;`, true},
+		{`select group_concat(c2,c1 order by c2 desc separator '!') from t group by c1;`, true},
+		{`select group_concat(c2,c1 order by c2 desc) from t group by c1;`, true},
+		{`select group_concat(c2,c1 order by c2 desc separator) from t group by c1;`, false},
+		{`select group_concat(c2,c1 order by c2) from t group by c1;`, true},
 
 		// for encryption and compression functions
 		{`select AES_ENCRYPT('text',UNHEX('F3229A0B371ED2D9441B830D21A390C3'))`, true},

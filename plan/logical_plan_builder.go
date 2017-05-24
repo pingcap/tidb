@@ -71,7 +71,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 			p = np
 			newArgList = append(newArgList, newArg)
 		}
-		newFunc := expression.NewAggFunction(aggFunc.F, newArgList, aggFunc.Distinct)
+		newFunc := expression.NewAggFunction(aggFunc.F, newArgList, aggFunc.Distinct, aggFunc.Separator)
 		combined := false
 		for j, oldFunc := range agg.AggFuncs {
 			if oldFunc.Equal(newFunc, b.ctx) {
