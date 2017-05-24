@@ -132,11 +132,14 @@ func EvalBool(exprList CNFExprs, row []types.Datum, ctx context.Context) (bool, 
 func evalExprToInt(expr Expression, row []types.Datum, sc *variable.StatementContext) (res int64, isNull bool, err error) {
 	val, err := expr.Eval(row)
 	if val.IsNull() || err != nil {
-		return 0, val.IsNull(), errors.Trace(err)
+		return res, val.IsNull(), errors.Trace(err)
 	}
 	tc := expr.GetType().ToClass()
 	if tc == types.ClassInt {
 		return val.GetInt64(), false, nil
+	} else if types.IsHybridType(expr.GetType().Tp) {
+		res, err = val.ToInt64(sc)
+		return res, false, errors.Trace(err)
 	}
 	panic(fmt.Sprintf("cannot get INT result from %s expression", types.TypeStr(expr.GetType().Tp)))
 }
@@ -145,11 +148,14 @@ func evalExprToInt(expr Expression, row []types.Datum, sc *variable.StatementCon
 func evalExprToReal(expr Expression, row []types.Datum, sc *variable.StatementContext) (res float64, isNull bool, err error) {
 	val, err := expr.Eval(row)
 	if val.IsNull() || err != nil {
-		return 0, val.IsNull(), errors.Trace(err)
+		return res, val.IsNull(), errors.Trace(err)
 	}
 	tc := expr.GetType().ToClass()
 	if tc == types.ClassReal {
 		return val.GetFloat64(), false, nil
+	} else if types.IsHybridType(expr.GetType().Tp) {
+		res, err = val.ToFloat64(sc)
+		return res, false, errors.Trace(err)
 	}
 	panic(fmt.Sprintf("cannot get REAL result from %s expression", types.TypeStr(expr.GetType().Tp)))
 }
@@ -158,11 +164,14 @@ func evalExprToReal(expr Expression, row []types.Datum, sc *variable.StatementCo
 func evalExprToDecimal(expr Expression, row []types.Datum, sc *variable.StatementContext) (res *types.MyDecimal, isNull bool, err error) {
 	val, err := expr.Eval(row)
 	if val.IsNull() || err != nil {
-		return nil, val.IsNull(), errors.Trace(err)
+		return res, val.IsNull(), errors.Trace(err)
 	}
 	tc := expr.GetType().ToClass()
 	if tc == types.ClassDecimal {
 		return val.GetMysqlDecimal(), false, nil
+	} else if types.IsHybridType(expr.GetType().Tp) {
+		res, err = val.ToDecimal(sc)
+		return res, false, errors.Trace(err)
 	}
 	panic(fmt.Sprintf("cannot get DECIMAL result from %s expression", types.TypeStr(expr.GetType().Tp)))
 }
@@ -171,7 +180,7 @@ func evalExprToDecimal(expr Expression, row []types.Datum, sc *variable.Statemen
 func evalExprToString(expr Expression, row []types.Datum, _ *variable.StatementContext) (res string, isNull bool, err error) {
 	val, err := expr.Eval(row)
 	if val.IsNull() || err != nil {
-		return "", val.IsNull(), errors.Trace(err)
+		return res, val.IsNull(), errors.Trace(err)
 	}
 	tc := expr.GetType().ToClass()
 	if tc == types.ClassString {
@@ -189,7 +198,7 @@ func evalExprToString(expr Expression, row []types.Datum, _ *variable.StatementC
 func evalExprToDate(expr Expression, row []types.Datum, _ *variable.StatementContext) (res types.Time, isNull bool, err error) {
 	val, err := expr.Eval(row)
 	if val.IsNull() || err != nil {
-		return types.Time{}, val.IsNull(), errors.Trace(err)
+		return res, val.IsNull(), errors.Trace(err)
 	}
 	switch expr.GetType().Tp {
 	case mysql.TypeDatetime, mysql.TypeDate, mysql.TypeTimestamp:
@@ -203,7 +212,7 @@ func evalExprToDate(expr Expression, row []types.Datum, _ *variable.StatementCon
 func evalExprToDuration(expr Expression, row []types.Datum, _ *variable.StatementContext) (res types.Duration, isNull bool, err error) {
 	val, err := expr.Eval(row)
 	if val.IsNull() || err != nil {
-		return types.Duration{}, val.IsNull(), errors.Trace(err)
+		return res, val.IsNull(), errors.Trace(err)
 	}
 	if expr.GetType().Tp == mysql.TypeDuration {
 		return val.GetMysqlDuration(), false, nil
