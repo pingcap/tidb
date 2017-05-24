@@ -416,6 +416,8 @@ func (c *RegionCache) OnRequestFail(ctx *RPCContext) {
 	delete(c.storeMu.stores, storeID)
 	c.storeMu.Unlock()
 
+	log.Warnf("drop regions from cache due to request fail, storeID: %v", storeID)
+
 	c.mu.Lock()
 	for id, r := range c.mu.regions {
 		if r.peer.GetStoreId() == storeID {
