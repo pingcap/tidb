@@ -267,7 +267,11 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 				// committed asynchronously in backgroud goroutines, we should not
 				// fork a child context and call cancel() while the foreground goroutine exits.
 				// Otherwise the backgroud goroutines will be canceled execeptionally.
-				ch <- singleBatchActionFunc(backoffer, batch)
+				// Here we makes a new clone of the original backoffer for this goroutine
+				// exclusively to avoid the data race when using the same backoffer
+				// in concurrent goroutines.
+				singleBatchBackoffer := backoffer.Clone()
+				ch <- singleBatchActionFunc(singleBatchBackoffer, batch)
 			} else {
 				singleBatchBackoffer, singleBatchCancel := backoffer.Fork()
 				defer singleBatchCancel()
