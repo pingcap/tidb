@@ -19,7 +19,7 @@ import (
 	"unsafe"
 )
 
-// floatEpsilon is for compare two float value allowing precision loss.
+// floatEpsilon is the acceptable error precision when comparing two floating numbers.
 const floatEpsilon float64 = 1.e-8
 
 // compareFloat64 returns an integer comparing the float64 x to y,

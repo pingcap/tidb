@@ -41,10 +41,10 @@ const (
 
 const internalErrorUnknownTypeCode = "unknown type code"
 
-var _ JSONAccess = JSON{}
+var _ AccessMethod = JSON{}
 
-// JSONAccess is for MyQL JSON functions.
-type JSONAccess interface {
+// AccessMethod is for MyQL JSON functions.
+type AccessMethod interface {
 	// Type is for function JSON_TYPE.
 	Type() string
 }
@@ -114,7 +114,7 @@ func (j JSON) String() string {
 	return strings.TrimSpace(hack.String(bytes))
 }
 
-// Type implements JSONAccess interface.
+// Type implements AccessMethod interface.
 func (j JSON) Type() string {
 	switch j.typeCode {
 	case typeCodeObject:
