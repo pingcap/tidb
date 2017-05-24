@@ -76,6 +76,14 @@ func (b *builtinCastSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errors.Errorf("unknown cast type - %v", b.tp)
 }
 
+type builtinCastIntAsIntSig struct {
+	baseIntBuiltinFunc
+}
+
+func (b *builtinCastIntAsIntSig) evalInt(row []types.Datum) (res int64, isNull bool, err error) {
+	return b.args[0].EvalInt(row, b.getCtx().GetSessionVars().StmtCtx)
+}
+
 type builtinCastIntAsRealSig struct {
 	baseRealBuiltinFunc
 }
@@ -128,6 +136,14 @@ func (b *builtinCastIntAsDurationSig) evalDuration(row []types.Datum) (res types
 	}
 	res, err = types.ParseDuration(strconv.FormatInt(val, 10), b.fsp)
 	return res, false, errors.Trace(err)
+}
+
+type builtinCastRealAsRealSig struct {
+	baseRealBuiltinFunc
+}
+
+func (b *builtinCastRealAsIntSig) evalReal(row []types.Datum) (res float64, isNull bool, err error) {
+	return b.args[0].EvalReal(row, b.getCtx().GetSessionVars().StmtCtx)
 }
 
 type builtinCastRealAsIntSig struct {
@@ -186,6 +202,14 @@ func (b *builtinCastRealAsDurationSig) evalDuration(row []types.Datum) (res type
 	}
 	res, err = types.ParseDuration(strconv.FormatFloat(val, 'f', -1, 64), b.fsp)
 	return res, false, errors.Trace(err)
+}
+
+type builtinCastDecimalAsDecimalSig struct {
+	baseDecimalBuiltinFunc
+}
+
+func (b *builtinCastDecimalAsDecimalSig) evalDecimal(row []types.Datum) (res *types.MyDecimal, isNull bool, err error) {
+	return b.args[0].EvalDecimal(row, b.getCtx().GetSessionVars().StmtCtx)
 }
 
 type builtinCastDecimalAsIntSig struct {
@@ -253,6 +277,14 @@ func (b *builtinCastDecimalAsDurationSig) evalDuration(row []types.Datum) (res t
 	_, fsp := val.PrecisionAndFrac()
 	res, err = types.ParseDuration(string(val.ToString()), fsp)
 	return res, false, errors.Trace(err)
+}
+
+type builtinCastStringAsStringSig struct {
+	baseStringBuiltinFunc
+}
+
+func (b *builtinCastStringAsStringSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
+	return b.args[0].EvalString(row, b.getCtx().GetSessionVars().StmtCtx)
 }
 
 type builtinCastStringAsIntSig struct {
@@ -333,6 +365,14 @@ func (b *builtinCastStringAsDurationSig) evalDuration(row []types.Datum) (res ty
 	return res, false, errors.Trace(err)
 }
 
+type builtinCastTimeAsTimeSig struct {
+	baseTimeBuiltinFunc
+}
+
+func (b *builtinCastTimeAsTimeSig) evalInt(row []types.Datum) (res types.Time, isNull bool, err error) {
+	return b.args[0].EvalTime(row, b.getCtx().GetSessionVars().StmtCtx)
+}
+
 type builtinCastTimeAsIntSig struct {
 	baseIntBuiltinFunc
 }
@@ -394,6 +434,14 @@ func (b *builtinCastTimeAsDurationSig) evalDuration(row []types.Datum) (res type
 	}
 	res, err = val.ConvertToDuration()
 	return res, false, errors.Trace(err)
+}
+
+type builtinCastDurationAsDurationSig struct {
+	baseDurationBuiltinFunc
+}
+
+func (b *builtinCastDurationAsDurationSig) evalDuration(row []types.Datum) (res types.Duration, isNull bool, err error) {
+	return b.args[0].EvalDuration(row, b.getCtx().GetSessionVars().StmtCtx)
 }
 
 type builtinCastDurationAsIntSig struct {
