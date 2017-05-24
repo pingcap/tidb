@@ -51,8 +51,7 @@ func normalize(in interface{}) JSON {
 	case float64:
 		return jsonDouble(t)
 	case json.Number:
-		i64, err := t.Int64()
-		if err == nil {
+		if i64, err := t.Int64(); err == nil {
 			return jsonInt64(i64)
 		}
 		f64, _ := t.Float64()
