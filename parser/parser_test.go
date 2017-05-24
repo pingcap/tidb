@@ -1367,6 +1367,9 @@ func (s *testParserSuite) TestType(c *C) {
 		// for https://github.com/pingcap/tidb/issues/312
 		{`create table t (c float(53));`, true},
 		{`create table t (c float(54));`, false},
+
+		// for json type
+		{`create table t (a JSON);`, true},
 	}
 	s.RunTest(c, table)
 }
