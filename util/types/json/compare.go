@@ -19,7 +19,7 @@ import (
 	"unsafe"
 )
 
-// floatEpsilon is the acceptable error precision when comparing two floating numbers.
+// floatEpsilon is the acceptable error quantity when comparing two float numbers.
 const floatEpsilon float64 = 1.e-8
 
 // compareFloat64 returns an integer comparing the float64 x to y,
@@ -51,12 +51,12 @@ var jsonTypePrecedences = map[string]int{
 	"NULL":     -12,
 }
 
-func bit64AsFloat64(bit64 *int64, typeCode byte) float64 {
+func i64AsFloat64(i64 int64, typeCode byte) float64 {
 	switch typeCode {
 	case typeCodeLiteral, typeCodeInt64:
-		return float64(*bit64)
+		return float64(i64)
 	case typeCodeFloat64:
-		return *(*float64)(unsafe.Pointer(bit64))
+		return *(*float64)(unsafe.Pointer(&i64))
 	default:
 		panic(internalErrorUnknownTypeCode)
 	}
@@ -74,13 +74,13 @@ func CompareJSON(j1 JSON, j2 JSON) (cmp int, err error) {
 		}
 		switch j1.typeCode {
 		case typeCodeLiteral:
-			left := j1.bit64
-			right := j2.bit64
+			left := j1.i64
+			right := j2.i64
 			// false is less than true.
 			cmp = int(right - left)
 		case typeCodeInt64, typeCodeFloat64:
-			left := bit64AsFloat64(&j1.bit64, j1.typeCode)
-			right := bit64AsFloat64(&j2.bit64, j2.typeCode)
+			left := i64AsFloat64(j1.i64, j1.typeCode)
+			right := i64AsFloat64(j2.i64, j2.typeCode)
 			cmp = compareFloat64PrecisionLoss(left, right)
 		case typeCodeString:
 			left := j1.str
@@ -111,8 +111,8 @@ func CompareJSON(j1 JSON, j2 JSON) (cmp int, err error) {
 		(precedence1 == jsonTypePrecedences["INTEGER"] && precedence2 == jsonTypePrecedences["BOOLEAN"]) {
 		// tidb treat boolean as integer, but boolean is different from integer in JSON.
 		// so we need convert them to same type and then compare.
-		left := bit64AsFloat64(&j1.bit64, j1.typeCode)
-		right := bit64AsFloat64(&j2.bit64, j2.typeCode)
+		left := i64AsFloat64(j1.i64, j1.typeCode)
+		right := i64AsFloat64(j2.i64, j2.typeCode)
 		cmp = compareFloat64PrecisionLoss(left, right)
 	} else {
 		cmp = precedence1 - precedence2

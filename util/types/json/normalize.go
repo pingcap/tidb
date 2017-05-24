@@ -22,28 +22,28 @@ func normalize(in interface{}) (j JSON) {
 	switch t := in.(type) {
 	case nil:
 		j.typeCode = typeCodeLiteral
-		j.bit64 = int64(jsonLiteralNil)
+		j.i64 = int64(jsonLiteralNil)
 	case bool:
 		j.typeCode = typeCodeLiteral
 		if t {
-			j.bit64 = int64(jsonLiteralTrue)
+			j.i64 = int64(jsonLiteralTrue)
 		} else {
-			j.bit64 = int64(jsonLiteralFalse)
+			j.i64 = int64(jsonLiteralFalse)
 		}
 	case int64:
 		j.typeCode = typeCodeInt64
-		j.bit64 = t
+		j.i64 = t
 	case float64:
 		j.typeCode = typeCodeFloat64
-		*(*float64)(unsafe.Pointer(&j.bit64)) = t
+		*(*float64)(unsafe.Pointer(&j.i64)) = t
 	case json.Number:
 		if i64, err := t.Int64(); err == nil {
 			j.typeCode = typeCodeInt64
-			j.bit64 = i64
+			j.i64 = i64
 		} else {
 			f64, _ := t.Float64()
 			j.typeCode = typeCodeFloat64
-			*(*float64)(unsafe.Pointer(&j.bit64)) = f64
+			*(*float64)(unsafe.Pointer(&j.i64)) = f64
 		}
 	case string:
 		j.typeCode = typeCodeString

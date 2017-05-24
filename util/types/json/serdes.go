@@ -106,11 +106,11 @@ func encode(j JSON, buffer *bytes.Buffer) {
 	case typeCodeArray:
 		encodeJSONArray(j.array, buffer)
 	case typeCodeLiteral:
-		encodeJSONLiteral(byte(j.bit64), buffer)
+		encodeJSONLiteral(byte(j.i64), buffer)
 	case typeCodeInt64:
-		encodeJSONInt64(j.bit64, buffer)
+		encodeJSONInt64(j.i64, buffer)
 	case typeCodeFloat64:
-		f64 := *(*float64)(unsafe.Pointer(&j.bit64))
+		f64 := *(*float64)(unsafe.Pointer(&j.i64))
 		encodeJSONFloat64(f64, buffer)
 	case typeCodeString:
 		encodeJSONString(j.str, buffer)
@@ -132,12 +132,12 @@ func decode(typeCode byte, data []byte) (j JSON, err error) {
 	case typeCodeArray:
 		err = decodeJSONArray(&j.array, data)
 	case typeCodeLiteral:
-		pbyte := (*byte)(unsafe.Pointer(&j.bit64))
+		pbyte := (*byte)(unsafe.Pointer(&j.i64))
 		err = decodeJSONLiteral(pbyte, data)
 	case typeCodeInt64:
-		err = decodeJSONInt64(&j.bit64, data)
+		err = decodeJSONInt64(&j.i64, data)
 	case typeCodeFloat64:
-		pfloat := (*float64)(unsafe.Pointer(&j.bit64))
+		pfloat := (*float64)(unsafe.Pointer(&j.i64))
 		err = decodeJSONFloat64(pfloat, data)
 	case typeCodeString:
 		err = decodeJSONString(&j.str, data)
@@ -346,9 +346,7 @@ var jsonTypeCodeLength = map[byte]int{
 	typeCodeString:  -1,
 }
 
-// Two map are equal if they have same keys and same values.
-// So we sort the keys before serialize in order to keep
-// their binary representations are same.
+// getSortedKeys returns sorted keys of a map.
 func getSortedKeys(m map[string]JSON) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
@@ -379,7 +377,7 @@ func pushInlineValue(buffer *bytes.Buffer, value JSON) {
 	var oldLen = buffer.Len()
 	switch value.typeCode {
 	case typeCodeLiteral:
-		var v = byte(value.bit64)
+		var v = byte(value.i64)
 		binary.Write(buffer, binary.LittleEndian, v)
 	default:
 		panic(internalErrorUnknownTypeCode)

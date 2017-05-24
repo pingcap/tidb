@@ -41,18 +41,10 @@ const (
 
 const internalErrorUnknownTypeCode = "unknown type code"
 
-var _ AccessMethod = JSON{}
-
-// AccessMethod is for MyQL JSON functions.
-type AccessMethod interface {
-	// Type is for function JSON_TYPE.
-	Type() string
-}
-
 // JSON is for MySQL JSON type.
 type JSON struct {
 	typeCode byte
-	bit64    int64
+	i64      int64
 	str      string
 	object   map[string]JSON
 	array    []JSON
@@ -88,7 +80,7 @@ func (j JSON) MarshalJSON() ([]byte, error) {
 	case typeCodeArray:
 		return json.Marshal(j.array)
 	case typeCodeLiteral:
-		switch byte(j.bit64) {
+		switch byte(j.i64) {
 		case jsonLiteralNil:
 			return hack.Slice("null"), nil
 		case jsonLiteralTrue:
@@ -97,9 +89,9 @@ func (j JSON) MarshalJSON() ([]byte, error) {
 			return hack.Slice("false"), nil
 		}
 	case typeCodeInt64:
-		return json.Marshal(j.bit64)
+		return json.Marshal(j.i64)
 	case typeCodeFloat64:
-		f64 := *(*float64)(unsafe.Pointer(&j.bit64))
+		f64 := *(*float64)(unsafe.Pointer(&j.i64))
 		return json.Marshal(f64)
 	case typeCodeString:
 		return json.Marshal(j.str)
@@ -114,7 +106,7 @@ func (j JSON) String() string {
 	return strings.TrimSpace(hack.String(bytes))
 }
 
-// Type implements AccessMethod interface.
+// Type returns type of JSON as string.
 func (j JSON) Type() string {
 	switch j.typeCode {
 	case typeCodeObject:
@@ -122,7 +114,7 @@ func (j JSON) Type() string {
 	case typeCodeArray:
 		return "ARRAY"
 	case typeCodeLiteral:
-		switch byte(j.bit64) {
+		switch byte(j.i64) {
 		case jsonLiteralNil:
 			return "NULL"
 		default:
