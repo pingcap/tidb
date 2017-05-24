@@ -14,7 +14,10 @@
 package json
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/pingcap/tidb/util/hack"
@@ -26,7 +29,9 @@ func ParseFromString(s string) (JSON, error) {
 		return nil, ErrInvalidJSONText.GenByArgs("The document is empty")
 	}
 	var in interface{}
-	if err := json.Unmarshal([]byte(s), &in); err != nil {
+	var decoder = json.NewDecoder(bytes.NewReader(hack.Slice(s)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&in); err != nil {
 		return nil, ErrInvalidJSONText.GenByArgs(err)
 	}
 	return normalize(in), nil
@@ -44,12 +49,14 @@ func normalize(in interface{}) JSON {
 	case int64:
 		return jsonInt64(t)
 	case float64:
-		// json.Unmarshal converts all numbers to float64,
-		// so we need to convert integer back.
-		if float64(int64(t)) == t {
-			return jsonInt64(int64(t))
-		}
 		return jsonDouble(t)
+	case json.Number:
+		i64, err := t.Int64()
+		if err == nil {
+			return jsonInt64(i64)
+		}
+		f64, _ := t.Float64()
+		return jsonDouble(f64)
 	case string:
 		return jsonString(t)
 	case map[string]interface{}:
@@ -65,7 +72,8 @@ func normalize(in interface{}) JSON {
 		}
 		return jsonArray(array)
 	default:
-		panic("unsupported json type")
+		msg := fmt.Sprintf("unsupported json type: %s\n", reflect.TypeOf(in))
+		panic(msg)
 	}
 }
 

@@ -28,7 +28,7 @@ func TestT(t *testing.T) {
 }
 
 func (s *testJSONSuite) TestJSONSerde(c *C) {
-	var jstr1 = `{"aaaaaaaaaaa": [1, "2", {"aa": "bb"}, 4.2], "bbbbbbbbbb": true, "ccccccccc": "d"}`
+	var jstr1 = `{"aaaaaaaaaaa": [1, "2", {"aa": "bb"}, 4.0], "bbbbbbbbbb": true, "ccccccccc": "d"}`
 	j1, err := ParseFromString(jstr1)
 	c.Assert(err, IsNil)
 
@@ -84,10 +84,13 @@ func (s *testJSONSuite) TestJSONType(c *C) {
 	j3, err := ParseFromString(`3`)
 	c.Assert(err, IsNil)
 
-	j4, err := ParseFromString(`null`)
+	j4, err := ParseFromString(`3.0`)
 	c.Assert(err, IsNil)
 
-	j5, err := ParseFromString(`true`)
+	j5, err := ParseFromString(`null`)
+	c.Assert(err, IsNil)
+
+	j6, err := ParseFromString(`true`)
 	c.Assert(err, IsNil)
 
 	var jList = []struct {
@@ -97,8 +100,9 @@ func (s *testJSONSuite) TestJSONType(c *C) {
 		{j1, "OBJECT"},
 		{j2, "ARRAY"},
 		{j3, "INTEGER"},
-		{j4, "NULL"},
-		{j5, "BOOLEAN"},
+		{j4, "DOUBLE"},
+		{j5, "NULL"},
+		{j6, "BOOLEAN"},
 	}
 
 	for _, j := range jList {
