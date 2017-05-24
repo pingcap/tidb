@@ -76,7 +76,7 @@ type resolverContext struct {
 	fieldList []*ast.ResultField
 	// result fields collected in group by clause.
 	groupBy []*ast.ResultField
-	// column defines collected in create/alter statement.
+	// column definitions collected in create/alter statement.
 	columnDefList []*ast.ColumnDef
 
 	// The join node stack is used by on condition to find out
