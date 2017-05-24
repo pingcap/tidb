@@ -262,9 +262,17 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 	ch := make(chan error, len(batches))
 	for _, batch := range batches {
 		go func(batch batchKeys) {
-			singleBatchBackoffer, singleBatchCancel := backoffer.Fork()
-			defer singleBatchCancel()
-			ch <- singleBatchActionFunc(singleBatchBackoffer, batch)
+			if action == actionCommit {
+				// Because the secondary batches of the commit actions are implemented to be
+				// committed asynchronously in backgroud goroutines, we should not
+				// fork a child context and call cancel() while the foreground goroutine exits.
+				// Otherwise the backgroud goroutines will be canceled execeptionally.
+				ch <- singleBatchActionFunc(backoffer, batch)
+			} else {
+				singleBatchBackoffer, singleBatchCancel := backoffer.Fork()
+				defer singleBatchCancel()
+				ch <- singleBatchActionFunc(singleBatchBackoffer, batch)
+			}
 		}(batch)
 	}
 	var err error
