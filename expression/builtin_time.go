@@ -1845,7 +1845,7 @@ func (b *builtinAddTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 		d.SetMysqlTime(result)
 	case types.KindString:
 		ss := args[0].GetString()
-		if strings.Contains(ss,"-") {
+		if strings.Contains(ss, "-") {
 			arg0, err := types.ParseTime(ss, mysql.TypeDatetime, getFsp(ss))
 			if err != nil {
 				return d, errors.Trace(err)
@@ -1867,7 +1867,6 @@ func (b *builtinAddTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 			}
 			d.SetMysqlDuration(result)
 		}
-
 
 	}
 	return d, nil
