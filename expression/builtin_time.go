@@ -1828,7 +1828,7 @@ func (b *builtinAddTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 			return d, errors.Trace(err)
 		}
 		d.SetMysqlTime(result)
-	case types.KindString, types.KindBytes, types.KindMysqlDecimal, types.KindFloat32, types.KindFloat64:
+	case types.KindBytes, types.KindMysqlDecimal, types.KindFloat32, types.KindFloat64:
 		s, err1 := args[0].ToString()
 		if err1 != nil {
 			return d, errors.Trace(err1)
@@ -1843,6 +1843,32 @@ func (b *builtinAddTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 			return d, errors.Trace(err)
 		}
 		d.SetMysqlTime(result)
+	case types.KindString:
+		ss := args[0].GetString()
+		if strings.Contains(ss,"-") {
+			arg0, err := types.ParseTime(ss, mysql.TypeDatetime, getFsp(ss))
+			if err != nil {
+				return d, errors.Trace(err)
+			}
+			tmpDuration := arg0.Add(arg1)
+			result, err := tmpDuration.ConvertToTime(arg0.Type)
+			if err != nil {
+				return d, errors.Trace(err)
+			}
+			d.SetMysqlTime(result)
+		} else {
+			arg0, err := types.ParseDuration(ss, getFsp(ss))
+			if err != nil {
+				return d, errors.Trace(err)
+			}
+			result, err := arg0.Add(arg1)
+			if err != nil {
+				return d, errors.Trace(err)
+			}
+			d.SetMysqlDuration(result)
+		}
+
+
 	}
 	return d, nil
 }
