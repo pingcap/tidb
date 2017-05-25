@@ -137,7 +137,7 @@ func evalExprToInt(expr Expression, row []types.Datum, sc *variable.StatementCon
 	tc := expr.GetType().ToClass()
 	if tc == types.ClassInt {
 		return val.GetInt64(), false, nil
-	} else if types.IsHybridType(expr.GetType().Tp) {
+	} else if IsHybridType(expr) {
 		res, err = val.ToInt64(sc)
 		return res, false, errors.Trace(err)
 	}
@@ -153,7 +153,7 @@ func evalExprToReal(expr Expression, row []types.Datum, sc *variable.StatementCo
 	tc := expr.GetType().ToClass()
 	if tc == types.ClassReal {
 		return val.GetFloat64(), false, nil
-	} else if types.IsHybridType(expr.GetType().Tp) {
+	} else if IsHybridType(expr) {
 		res, err = val.ToFloat64(sc)
 		return res, false, errors.Trace(err)
 	}
@@ -169,7 +169,7 @@ func evalExprToDecimal(expr Expression, row []types.Datum, sc *variable.Statemen
 	tc := expr.GetType().ToClass()
 	if tc == types.ClassDecimal {
 		return val.GetMysqlDecimal(), false, nil
-	} else if types.IsHybridType(expr.GetType().Tp) {
+	} else if IsHybridType(expr) {
 		res, err = val.ToDecimal(sc)
 		return res, false, errors.Trace(err)
 	}
