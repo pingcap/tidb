@@ -59,22 +59,18 @@ func CreateJSON(in interface{}) JSON {
 
 // ParseFromString parses a json from string.
 func ParseFromString(s string) (j JSON, err error) {
+	// TODO: implement the decoder directly.
 	if len(s) == 0 {
 		err = ErrInvalidJSONText.GenByArgs("The document is empty")
 		return
 	}
-	var decoder = json.NewDecoder(bytes.NewReader(hack.Slice(s)))
-	decoder.UseNumber()
-	var in interface{}
-	if err = decoder.Decode(&in); err != nil {
+	if err = j.UnmarshalJSON(hack.Slice(s)); err != nil {
 		err = ErrInvalidJSONText.GenByArgs(err)
-		return
 	}
-	j = normalize(in)
 	return
 }
 
-// MarshalJSON implements RawMessage.
+// MarshalJSON implements Marshaler interface.
 func (j JSON) MarshalJSON() ([]byte, error) {
 	switch j.typeCode {
 	case typeCodeObject:
@@ -101,6 +97,17 @@ func (j JSON) MarshalJSON() ([]byte, error) {
 		msg := fmt.Sprintf(unknownTypeCodeErrorMsg, j.typeCode)
 		panic(msg)
 	}
+}
+
+// UnmarshalJSON implements Unmarshaler interface.
+func (j *JSON) UnmarshalJSON(data []byte) (err error) {
+	var decoder = json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var in interface{}
+	if err = decoder.Decode(&in); err == nil {
+		*j = normalize(in)
+	}
+	return
 }
 
 // String implements fmt.Stringer interface.
