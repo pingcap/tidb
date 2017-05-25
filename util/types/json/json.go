@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 )
 
+// TypeCode indicates JSON type.
 type TypeCode byte
 
 const (
