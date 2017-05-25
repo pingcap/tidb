@@ -1804,10 +1804,6 @@ func (b *builtinAddTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	switch tp := args[0].Kind(); tp {
 	case types.KindMysqlTime:
 		arg0 := args[0].GetMysqlTime()
-		//t, err := arg0.Time.GoTime(getTimeZone(b.ctx))
-		//if err != nil {
-		//	return d, errors.Trace(err)
-		//}
 		tmpDuration := arg0.Add(arg1)
 		result, err := tmpDuration.ConvertToTime(arg0.Type)
 		if err != nil {
@@ -1848,25 +1844,6 @@ func (b *builtinAddTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 		}
 		d.SetMysqlTime(result)
 	}
-
-	//arg0, err := convertDatumToTime(sc, args[0])
-	//if err != nil {
-	//	return d, errors.Trace(err)
-	//}
-	//s, err := args[1].ToString()
-	//if err != nil {
-	//	return d, errors.Trace(err)
-	//}
-	//arg1, err := types.ParseDuration(s, getFsp(s))
-	//if err != nil {
-	//	return d, errors.Trace(err)
-	//}
-	//tmpDuration := arg0.Add(arg1)
-	//result, err := tmpDuration.ConvertToTime(arg0.Type)
-	//if err != nil {
-	//	return d, errors.Trace(err)
-	//}
-	//d.SetMysqlTime(result)
 	return d, nil
 }
 
