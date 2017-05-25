@@ -80,11 +80,11 @@ func (j JSON) MarshalJSON() ([]byte, error) {
 	case typeCodeLiteral:
 		switch byte(j.i64) {
 		case jsonLiteralNil:
-			return hack.Slice("null"), nil
+			return []byte("null"), nil
 		case jsonLiteralTrue:
-			return hack.Slice("true"), nil
+			return []byte("true"), nil
 		default:
-			return hack.Slice("false"), nil
+			return []byte("false"), nil
 		}
 	case typeCodeInt64:
 		return json.Marshal(j.i64)
