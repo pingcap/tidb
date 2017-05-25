@@ -46,16 +46,16 @@ const (
 		Delete_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Drop_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Process_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Process_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Grant_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		References_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		References_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Alter_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Show_db_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Show_db_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Super_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Execute_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Execute_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Index_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Create_user_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Trigger_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Create_user_priv	ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Trigger_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (Host, User));`
 	// CreateDBPrivTable is the SQL statement creates DB scope privilege table in system db.
 	CreateDBPrivTable = `CREATE TABLE if not exists mysql.db (
