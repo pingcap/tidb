@@ -56,9 +56,11 @@ func (d *ddl) handleBgJobQueue() error {
 			return errors.Trace(err)
 		}
 
+		if ChangeOwnerInNewWay {
+			return nil
+		}
 		owner.LastUpdateTS = time.Now().UnixNano()
 		err = t.SetBgJobOwner(owner)
-
 		return errors.Trace(err)
 	})
 	if err != nil {

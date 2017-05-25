@@ -89,14 +89,19 @@ func (a *recordSet) Close() error {
 type statement struct {
 	is infoschema.InfoSchema // The InfoSchema cannot change during execution, so we hold a reference to it.
 
-	ctx       context.Context
-	text      string
-	plan      plan.Plan
-	startTime time.Time
+	ctx            context.Context
+	text           string
+	plan           plan.Plan
+	startTime      time.Time
+	isPreparedStmt bool
 }
 
 func (a *statement) OriginText() string {
 	return a.text
+}
+
+func (a *statement) IsPrepared() bool {
+	return a.isPreparedStmt
 }
 
 // Exec implements the ast.Statement Exec interface.
@@ -135,6 +140,7 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 			return nil, errors.Trace(err)
 		}
 		a.text = executorExec.Stmt.Text()
+		a.isPreparedStmt = true
 		a.plan = executorExec.Plan
 		e = executorExec.StmtExec
 	}

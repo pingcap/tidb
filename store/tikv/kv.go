@@ -137,18 +137,13 @@ func (s *tikvStore) EtcdAddrs() []string {
 }
 
 // NewMockTikvStore creates a mocked tikv store, the path is the file path to store the data.
-// Zero length string represents in memory storage.
+// If path is an empty string, a memory storage will be created.
 func NewMockTikvStore(path string) (kv.Storage, error) {
 	if path != "" {
 		return nil, errors.New("persistent mockTiKV is not supported yet")
 	}
 	cluster := mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(cluster)
-	mvccStore := mocktikv.NewMvccStore()
-	client := mocktikv.NewRPCClient(cluster, mvccStore)
-	uuid := fmt.Sprintf("mock-tikv-store-:%v", time.Now().Unix())
-	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
-	return newTikvStore(uuid, pdCli, client, false)
+	return NewMockTikvStoreWithCluster(cluster)
 }
 
 // NewMockTikvStoreWithCluster creates a mocked tikv store with cluster.
