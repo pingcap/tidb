@@ -25,8 +25,8 @@ import (
 )
 
 const (
-	ddlAllSchemaVersions   = "/tidb/ddl/all_schem_versions"
-	ddlGlobalSchemaVersion = "/tidb/ddl/global_schem_version"
+	ddlAllSchemaVersions   = "/tidb/ddl/all_schema_versions"
+	ddlGlobalSchemaVersion = "/tidb/ddl/global_schema_version"
 	initialVersion         = "0"
 	putKeyDefaultRetryCnt  = 3
 	putKeyNoRetry          = 1
