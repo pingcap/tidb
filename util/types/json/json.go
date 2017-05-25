@@ -16,6 +16,7 @@ package json
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"unsafe"
 
@@ -39,7 +40,8 @@ const (
 	jsonLiteralFalse byte = 0x02
 )
 
-const internalErrorUnknownTypeCode = "unknown type code"
+const internalErrorUnknownTypeCode = "unknown type code: %d"
+const internalErrorUnknownType = "unknown type: %s"
 
 // JSON is for MySQL JSON type.
 type JSON struct {
@@ -96,7 +98,8 @@ func (j JSON) MarshalJSON() ([]byte, error) {
 	case typeCodeString:
 		return json.Marshal(j.str)
 	default:
-		panic(internalErrorUnknownTypeCode)
+		msg := fmt.Sprintf(internalErrorUnknownTypeCode, j.typeCode)
+		panic(msg)
 	}
 }
 
@@ -127,7 +130,8 @@ func (j JSON) Type() string {
 	case typeCodeString:
 		return "STRING"
 	default:
-		panic(internalErrorUnknownTypeCode)
+		msg := fmt.Sprintf(internalErrorUnknownTypeCode, j.typeCode)
+		panic(msg)
 	}
 }
 

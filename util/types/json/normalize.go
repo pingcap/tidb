@@ -15,6 +15,8 @@ package json
 
 import (
 	"encoding/json"
+	"fmt"
+	"reflect"
 	"unsafe"
 )
 
@@ -61,7 +63,8 @@ func normalize(in interface{}) (j JSON) {
 			j.array = append(j.array, normalize(elem))
 		}
 	default:
-		panic(internalErrorUnknownTypeCode)
+		msg := fmt.Sprintf(internalErrorUnknownType, reflect.TypeOf(in))
+		panic(msg)
 	}
 	return
 }

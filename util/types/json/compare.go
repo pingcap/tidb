@@ -15,6 +15,7 @@ package json
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"unsafe"
 )
@@ -58,7 +59,8 @@ func i64AsFloat64(i64 int64, typeCode byte) float64 {
 	case typeCodeFloat64:
 		return *(*float64)(unsafe.Pointer(&i64))
 	default:
-		panic(internalErrorUnknownTypeCode)
+		msg := fmt.Sprintf(internalErrorUnknownTypeCode, typeCode)
+		panic(msg)
 	}
 }
 
