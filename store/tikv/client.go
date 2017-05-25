@@ -17,14 +17,15 @@ package tikv
 import (
 	"time"
 
+	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
+	"google.golang.org/grpc"
 )
 
 const (
-	maxConnection     = 200
 	dialTimeout       = 5 * time.Second
 	readTimeoutShort  = 20 * time.Second  // For requests that read/write several key-values.
 	readTimeoutMedium = 60 * time.Second  // For requests that may need scan region.
@@ -47,14 +48,18 @@ type Client interface {
 // Since we use shared client connection to communicate to the same TiKV, it's possible
 // that there are too many concurrent requests which overload the service of TiKV.
 type rpcClient struct {
-	// TODO: Refactor ConnPools
-	p *Pools
+	p *ConnPool
 }
 
 func newRPCClient() *rpcClient {
 	return &rpcClient{
-		p: NewPools(maxConnection, func(addr string) (*Conn, error) {
-			return NewConnection(addr, dialTimeout)
+		p: NewConnPool(func(addr string) (*grpc.ClientConn, error) {
+			return grpc.Dial(
+				addr,
+				grpc.WithInsecure(),
+				grpc.WithTimeout(dialTimeout),
+				grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
+				grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor))
 		}),
 	}
 }
@@ -68,24 +73,23 @@ func (c *rpcClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 	}
 	defer func() { sendReqHistogram.WithLabelValues(label).Observe(time.Since(start).Seconds()) }()
 
-	conn, err := c.p.GetConn(addr)
+	conn, err := c.p.Get(addr)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	connPoolHistogram.WithLabelValues("cop").Observe(time.Since(start).Seconds())
-	defer c.p.PutConn(conn)
-	resp, err := c.callRPC(ctx, conn, req)
+	connPoolHistogram.WithLabelValues(label).Observe(time.Since(start).Seconds())
+	client := tikvpb.NewTikvClient(conn)
+	resp, err := c.callRPC(ctx, client, req)
+	defer c.p.Put(addr, conn)
 	if err != nil {
-		conn.Close()
 		return nil, errors.Trace(err)
 	}
 	return resp, nil
 }
 
-func (c *rpcClient) callRPC(ctx goctx.Context, conn *Conn, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+func (c *rpcClient) callRPC(ctx goctx.Context, client tikvpb.TikvClient, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 	resp := &tikvrpc.Response{}
 	resp.Type = req.Type
-	client := tikvpb.NewTikvClient(conn.ClientConn)
 	switch req.Type {
 	case tikvrpc.CmdGet:
 		r, err := client.KvGet(ctx, req.Get)

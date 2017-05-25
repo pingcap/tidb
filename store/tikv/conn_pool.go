@@ -17,132 +17,98 @@
 package tikv
 
 import (
+	"fmt"
 	"sync"
-	"time"
+
+	"google.golang.org/grpc"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/pools"
 )
 
-const poolIdleTimeoutSeconds = 120
-
-type createConnFunc func(addr string) (*Conn, error)
-
-// Pool is a TCP connection pool that maintains connections with a specific addr.
-type Pool struct {
-	p *pools.ResourcePool
+// Conn is a simple wrapper of grpc.ClientConn.
+type Conn struct {
+	c *grpc.ClientConn
+	// TODO: add refCount to track how many TiKVClient uses this grpc.ClientConn.
 }
 
-// NewPool creates a Pool.
-func NewPool(addr string, capability int, f createConnFunc) *Pool {
-	poolFunc := func() (pools.Resource, error) {
-		r, err := f(addr)
-		if err == nil && r == nil {
-			return nil, errors.Errorf("cannot create nil connection")
-		}
-		return r, errors.Trace(err)
-	}
-	p := new(Pool)
-	p.p = pools.NewResourcePool(poolFunc, capability, capability, poolIdleTimeoutSeconds*time.Second)
-	return p
-}
+// createConnFunc is the type of functions that can be used to create a grpc.ClientConn.
+type createConnFunc func(addr string) (*grpc.ClientConn, error)
 
-// GetConn takes a connection out of the pool.
-func (p *Pool) GetConn() (*Conn, error) {
-	conn, err := p.p.Get()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return conn.(*Conn), nil
-}
-
-// PutConn puts a connection back to the pool.
-func (p *Pool) PutConn(c *Conn) {
-	if c == nil {
-		return
-	} else if c.closed {
-		// if c is closed, we will put nil
-		p.p.Put(nil)
-	} else {
-		p.p.Put(c)
-	}
-}
-
-// Close closes the pool.
-func (p *Pool) Close() {
-	p.p.Close()
-}
-
-// Pools maintains connections with multiple addrs.
-type Pools struct {
+// ConnPool is a pool that maintains Conn with a specific addr.
+// TODO: Implement background cleanup. It adds a backgroud goroutine to periodically check
+// whether there is any Conn in pool have no usage (refCount == 0), and then
+// close and remove it from pool.
+type ConnPool struct {
 	m struct {
-		sync.Mutex
-		isClosed   bool
-		capability int
-		mpools     map[string]*Pool
+		sync.RWMutex
+		isClosed bool
+		conns    map[string]*Conn
 	}
 	f createConnFunc
 }
 
-// NewPools creates a Pools. It maintains a Pool for each address, and each Pool
-// has the same capability.
-func NewPools(capability int, f createConnFunc) *Pools {
-	p := new(Pools)
+// NewConnPool creates a ConnPool.
+func NewConnPool(f createConnFunc) *ConnPool {
+	p := new(ConnPool)
 	p.f = f
-	p.m.capability = capability
-	p.m.mpools = make(map[string]*Pool)
+	p.m.conns = make(map[string]*Conn)
 	return p
 }
 
-// GetConn takes a connection out of the pool by addr.
-func (p *Pools) GetConn(addr string) (*Conn, error) {
-	p.m.Lock()
+// Get takes a Conn out of the pool by the specific addr.
+func (p *ConnPool) Get(addr string) (*grpc.ClientConn, error) {
+	p.m.RLock()
 	if p.m.isClosed {
-		p.m.Unlock()
-		return nil, errors.Errorf("pools is closed")
+		p.m.RUnlock()
+		return nil, errors.Errorf("ConnPool is closed")
 	}
-	pool, ok := p.m.mpools[addr]
+	conn, ok := p.m.conns[addr]
+	p.m.RUnlock()
 	if !ok {
-		pool = NewPool(addr, p.m.capability, p.f)
-		p.m.mpools[addr] = pool
+		var err error
+		conn, err = p.tryCreate(addr)
+		if err != nil {
+			return nil, err
+		}
 	}
-	p.m.Unlock()
-
-	return pool.GetConn()
+	// TODO: increase refCount for conn.
+	return conn.c, nil
 }
 
-// PutConn puts a connection back to the pool.
-func (p *Pools) PutConn(c *Conn) {
-	if c == nil {
-		return
-	}
-
+func (p *ConnPool) tryCreate(addr string) (*Conn, error) {
 	p.m.Lock()
-	pool, ok := p.m.mpools[c.addr]
-	p.m.Unlock()
+	defer p.m.Unlock()
+	conn, ok := p.m.conns[addr]
 	if !ok {
-		c.Close()
-	} else {
-		pool.PutConn(c)
+		c, err := p.f(addr)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		conn = &Conn{
+			c: c,
+		}
+		p.m.conns[addr] = conn
 	}
+	return conn, nil
+}
+
+// Put puts a Conn back to the pool by the specific addr.
+func (p *ConnPool) Put(addr string, c *grpc.ClientConn) {
+	p.m.RLock()
+	conn, ok := p.m.conns[addr]
+	p.m.RUnlock()
+	if !ok {
+		panic(fmt.Errorf("Attempt to Put for a non-existent addr %s", addr))
+	}
+	if conn.c != c {
+		panic(fmt.Errorf("Attempt to Put a non-existent ClientConn for addr %s", addr))
+	}
+	// TODO: decrease refCount for conn.
 }
 
 // Close closes the pool.
-func (p *Pools) Close() {
-	var pools []*Pool
-
+func (p *ConnPool) Close() {
 	p.m.Lock()
-	for _, pool := range p.m.mpools {
-		pools = append(pools, pool)
-	}
+	defer p.m.Unlock()
 	p.m.isClosed = true
-	p.m.Unlock()
-
-	for _, p := range pools {
-		p.Close()
-	}
-
-	p.m.Lock()
-	p.m.mpools = map[string]*Pool{}
-	p.m.Unlock()
 }
