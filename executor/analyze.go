@@ -185,14 +185,15 @@ func analyzeIndex(exec *XSelectIndexExec) analyzeResult {
 	return analyzeResult{tableID: exec.tableInfo.ID, hist: []*statistics.Histogram{hg}, count: count, isIndex: 1, err: err}
 }
 
-type sampleCollector struct {
+// SampleCollector will collect samples and calculate the count and ndv of an attribute.
+type SampleCollector struct {
 	samples   []types.Datum
 	NullCount int64
 	Count     int64
 	Sketch    *statistics.FMSketch
 }
 
-func (c *sampleCollector) insert(d types.Datum) error {
+func (c *SampleCollector) insert(d types.Datum) error {
 	if d.IsNull() {
 		c.NullCount++
 		return nil
@@ -214,10 +215,10 @@ func (c *sampleCollector) insert(d types.Datum) error {
 // and estimates NDVs using FM Sketch during the collecting process.
 // See https://en.wikipedia.org/wiki/Reservoir_sampling
 // Exported for test.
-func CollectSamplesAndEstimateNDVs(e ast.RecordSet, numCols int) ([]*sampleCollector, error) {
-	collectors := make([]*sampleCollector, numCols)
+func CollectSamplesAndEstimateNDVs(e ast.RecordSet, numCols int) ([]*SampleCollector, error) {
+	collectors := make([]*SampleCollector, numCols)
 	for i := range collectors {
-		collectors[i] = &sampleCollector{
+		collectors[i] = &SampleCollector{
 			Sketch: statistics.NewFMSketch(maxSketchSize),
 		}
 	}
