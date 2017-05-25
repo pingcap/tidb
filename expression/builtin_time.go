@@ -1743,7 +1743,7 @@ func (b *builtinTimestampSig) eval(row []types.Datum) (d types.Datum, err error)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	tmpDuration := arg0.Add(&arg1)
+	tmpDuration := arg0.Add(arg1)
 	result, err := tmpDuration.ConvertToTime(arg0.Type)
 	if err != nil {
 		return d, errors.Trace(err)
