@@ -44,7 +44,10 @@ func (s *testPoolSuite) TestPool(c *C) {
 	count := 0
 	f := func(addr string) (*Conn, error) {
 		count++
-		return &Conn{closed: false, nc: &testDummyConn{}}, nil
+		return &Conn{
+			addr:   addr,
+			closed: false,
+		}, nil
 	}
 
 	capability := 4
@@ -102,7 +105,7 @@ func (s *testPoolSuite) TestPoolsClose(c *C) {
 		return &Conn{
 			addr:   addr,
 			closed: false,
-			nc:     &testDummyConn{}}, nil
+		}, nil
 	}
 
 	capability := 4

@@ -23,6 +23,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
 )
@@ -433,23 +434,26 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
 		default:
 		}
 
-		req := &coprocessor.Request{
-			Tp:     it.req.Tp,
-			Data:   it.req.Data,
-			Ranges: task.ranges.toPBRanges(),
+		req := &tikvrpc.Request{
+			Type: tikvrpc.CmdCop,
+			Cop: &coprocessor.Request{
+				Tp:     it.req.Tp,
+				Data:   it.req.Data,
+				Ranges: task.ranges.toPBRanges(),
+			},
 		}
-		resp, err := sender.SendCopReq(bo, req, task.region, readTimeoutMedium)
+		resp, err := sender.SendReq(bo, req, task.region, readTimeoutMedium)
 		if err != nil {
 			return []copResponse{{err: errors.Trace(err)}}
 		}
-		if regionErr := resp.GetRegionError(); regionErr != nil {
+		if regionErr := resp.Cop.GetRegionError(); regionErr != nil {
 			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return []copResponse{{err: errors.Trace(err)}}
 			}
 			return it.handleRegionErrorTask(bo, task)
 		}
-		if e := resp.GetLocked(); e != nil {
+		if e := resp.Cop.GetLocked(); e != nil {
 			log.Debugf("coprocessor encounters lock: %v", e)
 			ok, err1 := it.store.lockResolver.ResolveLocks(bo, []*Lock{newLock(e)})
 			if err1 != nil {
@@ -463,13 +467,13 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask) []copResponse {
 			}
 			continue
 		}
-		if e := resp.GetOtherError(); e != "" {
+		if e := resp.Cop.GetOtherError(); e != "" {
 			err = errors.Errorf("other error: %s", e)
 			log.Warnf("coprocessor err: %v", err)
 			return []copResponse{{err: errors.Trace(err)}}
 		}
 		task.storeAddr = sender.storeAddr
-		return []copResponse{{Response: resp}}
+		return []copResponse{{Response: resp.Cop}}
 	}
 }
 
