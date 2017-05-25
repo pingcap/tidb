@@ -112,6 +112,7 @@ func (s *testJSONSuite) TestJSONType(c *C) {
 
 func (s *testJSONSuite) TestCompareJSON(c *C) {
 	var cmp int
+	var err error
 
 	// compare two JSON boolean.
 	jBool1, _ := ParseFromString(`true`)
@@ -122,7 +123,8 @@ func (s *testJSONSuite) TestCompareJSON(c *C) {
 	// compare two JSON ARRAY
 	jArray1, _ := ParseFromString(`["a", "c"]`)
 	jArray2, _ := ParseFromString(`["a", "b"]`)
-	cmp, _ = CompareJSON(jArray1, jArray2)
+	cmp, err = CompareJSON(jArray1, jArray2)
+	c.Assert(err, IsNil)
 	c.Assert(cmp > 0, IsTrue)
 
 	// compare two JSON OBJECT

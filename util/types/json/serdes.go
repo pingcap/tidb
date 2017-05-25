@@ -116,7 +116,7 @@ func encode(j JSON, buffer *bytes.Buffer) {
 	case typeCodeString:
 		encodeJSONString(j.str, buffer)
 	default:
-		msg := fmt.Sprintf(internalErrorUnknownTypeCode, j.typeCode)
+		msg := fmt.Sprintf(unknownTypeCodeErrorMsg, j.typeCode)
 		panic(msg)
 	}
 }
@@ -144,7 +144,7 @@ func decode(typeCode byte, data []byte) (j JSON, err error) {
 	case typeCodeString:
 		err = decodeJSONString(&j.str, data)
 	default:
-		msg := fmt.Sprintf(internalErrorUnknownTypeCode, typeCode)
+		msg := fmt.Sprintf(unknownTypeCodeErrorMsg, typeCode)
 		panic(msg)
 	}
 	return
@@ -383,7 +383,7 @@ func pushInlineValue(buffer *bytes.Buffer, value JSON) {
 		var v = byte(value.i64)
 		binary.Write(buffer, binary.LittleEndian, v)
 	default:
-		msg := fmt.Sprintf(internalErrorUnknownTypeCode, value.typeCode)
+		msg := fmt.Sprintf(unknownTypeCodeErrorMsg, value.typeCode)
 		panic(msg)
 	}
 	var newLen = buffer.Len()

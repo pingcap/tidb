@@ -59,12 +59,13 @@ func i64AsFloat64(i64 int64, typeCode byte) float64 {
 	case typeCodeFloat64:
 		return *(*float64)(unsafe.Pointer(&i64))
 	default:
-		msg := fmt.Sprintf(internalErrorUnknownTypeCode, typeCode)
+		msg := fmt.Sprintf(unknownTypeCodeErrorMsg, typeCode)
 		panic(msg)
 	}
 }
 
-// CompareJSON compares two json object.
+// CompareJSON compares two json object. Returns -1 if j1 < j2,
+// 0 if j1 == j2, else returns 1.
 func CompareJSON(j1 JSON, j2 JSON) (cmp int, err error) {
 	precedence1 := jsonTypePrecedences[j1.Type()]
 	precedence2 := jsonTypePrecedences[j2.Type()]
@@ -94,8 +95,8 @@ func CompareJSON(j1 JSON, j2 JSON) (cmp int, err error) {
 			for i := 0; i < len(left) && i < len(right); i++ {
 				elem1 := left[i]
 				elem2 := right[i]
-				cmp, _ = CompareJSON(elem1, elem2)
-				if cmp != 0 {
+				cmp, err = CompareJSON(elem1, elem2)
+				if cmp != 0 || err != nil {
 					return
 				}
 			}

@@ -63,7 +63,7 @@ func normalize(in interface{}) (j JSON) {
 			j.array = append(j.array, normalize(elem))
 		}
 	default:
-		msg := fmt.Sprintf(internalErrorUnknownType, reflect.TypeOf(in))
+		msg := fmt.Sprintf(unknownTypeErrorMsg, reflect.TypeOf(in))
 		panic(msg)
 	}
 	return
