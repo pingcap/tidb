@@ -74,6 +74,7 @@ var (
 	errInvalidDefault             = terror.ClassDDL.New(codeInvalidDefault, "Invalid default value for '%s'")
 	errInvalidUseOfNull           = terror.ClassDDL.New(codeInvalidUseOfNull, "Invalid use of NULL value")
 	errDependentByGeneratedColumn = terror.ClassDDL.New(codeDependentByGeneratedColumn, mysql.MySQLErrName[mysql.ErrDependentByGeneratedColumn])
+	errJSONUsedAsKey              = terror.ClassDDL.New(codeJSONUsedAsKey, mysql.MySQLErrName[mysql.ErrJSONUsedAsKey])
 
 	// ErrInvalidDBState returns for invalid database state.
 	ErrInvalidDBState = terror.ClassDDL.New(codeInvalidDBState, "invalid database state")
@@ -499,6 +500,7 @@ const (
 	codeBlobKeyWithoutLength       = 1170
 	codeInvalidOnUpdate            = 1294
 	codeDependentByGeneratedColumn = 3108
+	codeJSONUsedAsKey              = 3152
 )
 
 func init() {
@@ -521,6 +523,7 @@ func init() {
 		codeInvalidDefault:             mysql.ErrInvalidDefault,
 		codeInvalidUseOfNull:           mysql.ErrInvalidUseOfNull,
 		codeDependentByGeneratedColumn: mysql.ErrDependentByGeneratedColumn,
+		codeJSONUsedAsKey:              mysql.ErrJSONUsedAsKey,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }
