@@ -479,7 +479,7 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 		InputDuration string
 		expect        string
 	}{
-		
+
 		//{"01:00:00.999999", "02:00:00.999998", "03:00:01.999997"},
 		//{"23:59:59", "00:00:01", "00:00:00.000000"},
 		//{"110:00:00", "2 02:00:00" , "136:00:00"},
@@ -502,10 +502,6 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 		c.Assert(result, Equals, t.expect)
 	}
 
-
-
-
-
 	tbl = []struct {
 		Input         string
 		InputDuration string
@@ -513,10 +509,10 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 	}{
 		{"01:00:00.999999", "02:00:00.999998", "03:00:01.999997"},
 		{"23:59:59", "00:00:01", "24:00:00"},
-		{"110:00:00", "1 02:00:00" , "136:00:00"},
+		{"110:00:00", "1 02:00:00", "136:00:00"},
 	}
 	for _, t := range tbl {
-		dur,err := types.ParseDuration(t.Input, getFsp(t.Input))	
+		dur, err := types.ParseDuration(t.Input, getFsp(t.Input))
 		c.Assert(err, IsNil)
 		tmpInput := types.NewDurationDatum(dur)
 		tmpInputDuration := types.NewStringDatum(t.InputDuration)
@@ -527,19 +523,6 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 		result, _ := d.ToString()
 		c.Assert(result, Equals, t.expect)
 	}
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 }
 
