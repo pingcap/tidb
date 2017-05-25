@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/twinj/uuid"
+	goctx "golang.org/x/net/context"
 )
 
 var (
@@ -115,7 +117,7 @@ type DDL interface {
 	RenameTable(ctx context.Context, oldTableIdent, newTableIdent ast.Ident) error
 	// SetLease will reset the lease time for online DDL change,
 	// it's a very dangerous function and you must guarantee that all servers have the same lease time.
-	SetLease(lease time.Duration)
+	SetLease(ctx goctx.Context, lease time.Duration)
 	// GetLease returns current schema lease time.
 	GetLease() time.Duration
 	// Stats returns the DDL statistics.
@@ -124,8 +126,6 @@ type DDL interface {
 	GetScope(status string) variable.ScopeFlag
 	// Stop stops DDL worker.
 	Stop() error
-	// Start starts DDL worker.
-	Start() error
 	// RegisterEventCh registers event channel for ddl.
 	RegisterEventCh(chan<- *Event)
 }
@@ -161,6 +161,8 @@ type ddl struct {
 	hook       Callback
 	hookMu     sync.RWMutex
 	store      kv.Storage
+	// worker is used for electing the owner.
+	worker *worker
 	// lease is schema seconds.
 	lease        time.Duration
 	uuid         string
@@ -211,27 +213,38 @@ func (d *ddl) asyncNotifyEvent(e *Event) {
 }
 
 // NewDDL creates a new DDL.
-func NewDDL(store kv.Storage, infoHandle *infoschema.Handle, hook Callback, lease time.Duration) DDL {
-	return newDDL(store, infoHandle, hook, lease)
+func NewDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
+	infoHandle *infoschema.Handle, hook Callback, lease time.Duration) DDL {
+	return newDDL(ctx, etcdCli, store, infoHandle, hook, lease)
 }
 
-func newDDL(store kv.Storage, infoHandle *infoschema.Handle, hook Callback, lease time.Duration) *ddl {
+func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
+	infoHandle *infoschema.Handle, hook Callback, lease time.Duration) *ddl {
 	if hook == nil {
 		hook = &BaseCallback{}
+	}
+
+	id := uuid.NewV4().String()
+	ctx, cancelFunc := goctx.WithCancel(ctx)
+	worker := &worker{
+		ddlID:      id,
+		etcdClient: etcdCli,
+		cancel:     cancelFunc,
 	}
 
 	d := &ddl{
 		infoHandle:   infoHandle,
 		hook:         hook,
 		store:        store,
+		uuid:         id,
 		lease:        lease,
-		uuid:         uuid.NewV4().String(),
 		ddlJobCh:     make(chan struct{}, 1),
 		ddlJobDoneCh: make(chan struct{}, 1),
 		bgJobCh:      make(chan struct{}, 1),
+		worker:       worker,
 	}
 
-	d.start()
+	d.start(ctx)
 
 	variable.RegisterStatistics(d)
 	log.Infof("start DDL:%s", d.uuid)
@@ -280,24 +293,16 @@ func (d *ddl) Stop() error {
 	return errors.Trace(err)
 }
 
-func (d *ddl) Start() error {
-	d.m.Lock()
-	defer d.m.Unlock()
-
-	if !d.isClosed() {
-		return nil
+func (d *ddl) start(ctx goctx.Context) {
+	d.quitCh = make(chan struct{})
+	if ChangeOwnerInNewWay {
+		d.campaignOwners(ctx)
 	}
 
-	d.start()
-
-	return nil
-}
-
-func (d *ddl) start() {
-	d.quitCh = make(chan struct{})
 	d.wait.Add(2)
 	go d.onBackgroundWorker()
 	go d.onDDLWorker()
+
 	// For every start, we will send a fake job to let worker
 	// check owner firstly and try to find whether a job exists and run.
 	asyncNotify(d.ddlJobCh)
@@ -310,6 +315,7 @@ func (d *ddl) close() {
 	}
 
 	close(d.quitCh)
+	d.worker.cancel()
 
 	d.wait.Wait()
 	log.Infof("close DDL:%s", d.uuid)
@@ -324,7 +330,7 @@ func (d *ddl) isClosed() bool {
 	}
 }
 
-func (d *ddl) SetLease(lease time.Duration) {
+func (d *ddl) SetLease(ctx goctx.Context, lease time.Duration) {
 	d.m.Lock()
 	defer d.m.Unlock()
 
@@ -343,7 +349,7 @@ func (d *ddl) SetLease(lease time.Duration) {
 	// Close the running worker and start again.
 	d.close()
 	d.lease = lease
-	d.start()
+	d.start(ctx)
 }
 
 func (d *ddl) GetLease() time.Duration {

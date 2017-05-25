@@ -431,17 +431,15 @@ func (s *testSuite) TestUnion(c *C) {
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	testSQL := `select 1 union select 0;`
-	tk.MustExec(testSQL)
 
-	testSQL = `drop table if exists union_test; create table union_test(id int);`
+	testSQL := `drop table if exists union_test; create table union_test(id int);`
 	tk.MustExec(testSQL)
 
 	testSQL = `drop table if exists union_test;`
 	tk.MustExec(testSQL)
 	testSQL = `create table union_test(id int);`
 	tk.MustExec(testSQL)
-	testSQL = `insert union_test values (1),(2); select id from union_test union select 1;`
+	testSQL = `insert union_test values (1),(2)`
 	tk.MustExec(testSQL)
 
 	testSQL = `select id from union_test union select id from union_test;`
@@ -967,11 +965,26 @@ func (s *testSuite) TestJSON(c *C) {
 	tk.MustExec(`insert into test_json (id, a) values (3, null)`)
 	tk.MustExec(`insert into test_json (id, a) values (4, 'true')`)
 	tk.MustExec(`insert into test_json (id, a) values (5, '3')`)
+	tk.MustExec(`insert into test_json (id, a) values (5, '4.0')`)
 	tk.MustExec(`insert into test_json (id, a) values (6, '"string"')`)
 
 	var result *testkit.Result
 	result = tk.MustQuery(`select tj.a from test_json tj order by tj.id`)
-	result.Check(testkit.Rows(`{"a":[1,"2",{"aa":"bb"},4],"b":true}`, "null", "<nil>", "true", "3", `"string"`))
+	result.Check(testkit.Rows(`{"a":[1,"2",{"aa":"bb"},4],"b":true}`, "null", "<nil>", "true", "3", "4", `"string"`))
+
+	// check json_type function
+	result = tk.MustQuery(`select json_type(a) from test_json tj order by tj.id`)
+	result.Check(testkit.Rows("OBJECT", "NULL", "<nil>", "BOOLEAN", "INTEGER", "DOUBLE", "STRING"))
+
+	// check json compare with primitives.
+	result = tk.MustQuery(`select a from test_json tj where a = 3`)
+	result.Check(testkit.Rows("3"))
+	result = tk.MustQuery(`select a from test_json tj where a = 4.0`)
+	result.Check(testkit.Rows("4"))
+	result = tk.MustQuery(`select a from test_json tj where a = true`)
+	result.Check(testkit.Rows("true"))
+	result = tk.MustQuery(`select a from test_json tj where a = "string"`)
+	result.Check(testkit.Rows(`"string"`))
 }
 
 func (s *testSuite) TestToPBExpr(c *C) {

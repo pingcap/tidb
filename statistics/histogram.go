@@ -88,7 +88,7 @@ func (hg *Histogram) SaveToStorage(ctx context.Context, tableID int64, count int
 		if err != nil {
 			return errors.Trace(err)
 		}
-		insertSQL := fmt.Sprintf("insert into mysql.stats_buckets values(%d, %d, %d, %d, %d, %d, X'%X')", tableID, isIndex, hg.ID, i, count, bucket.Repeats, val.GetBytes())
+		insertSQL := fmt.Sprintf("insert into mysql.stats_buckets(table_id, is_index, hist_id, bucket_id, count, repeats, upper_bound) values(%d, %d, %d, %d, %d, %d, X'%X')", tableID, isIndex, hg.ID, i, count, bucket.Repeats, val.GetBytes())
 		_, err = exec.Execute(insertSQL)
 		if err != nil {
 			return errors.Trace(err)
@@ -99,7 +99,7 @@ func (hg *Histogram) SaveToStorage(ctx context.Context, tableID int64, count int
 }
 
 func (h *Handle) histogramFromStorage(tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64) (*Histogram, error) {
-	selSQL := fmt.Sprintf("select bucket_id, count, repeats, value from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, colID)
+	selSQL := fmt.Sprintf("select bucket_id, count, repeats, upper_bound from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, colID)
 	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, selSQL)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -145,7 +145,7 @@ func (hg *Histogram) toString(isIndex bool) string {
 	}
 	for _, bucket := range hg.Buckets {
 		strVal, _ := bucket.Value.ToString()
-		strs = append(strs, fmt.Sprintf("num: %d\tvalue: %s\trepeats: %d", bucket.Count, strVal, bucket.Repeats))
+		strs = append(strs, fmt.Sprintf("num: %d\tupper_bound: %s\trepeats: %d", bucket.Count, strVal, bucket.Repeats))
 	}
 	return strings.Join(strs, "\n")
 }

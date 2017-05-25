@@ -72,6 +72,7 @@ func (c *rpcClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	connPoolHistogram.WithLabelValues("cop").Observe(time.Since(start).Seconds())
 	defer c.p.PutConn(conn)
 	resp, err := c.callRPC(ctx, conn, req)
 	if err != nil {
