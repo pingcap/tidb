@@ -193,6 +193,17 @@ func (b *Backoffer) String() string {
 	return fmt.Sprintf(" backoff(%dms %s)", b.totalSleep, b.types)
 }
 
+// Clone creates a new Backoffer which keeps current Backoffer's sleep time and errors, and shares
+// current Backoffer's context.
+func (b *Backoffer) Clone() *Backoffer {
+	return &Backoffer{
+		maxSleep:   b.maxSleep,
+		totalSleep: b.totalSleep,
+		errors:     b.errors,
+		ctx:        b.ctx,
+	}
+}
+
 // Fork creates a new Backoffer which keeps current Backoffer's sleep time and errors, and holds
 // a child context of current Backoffer's context.
 func (b *Backoffer) Fork() (*Backoffer, goctx.CancelFunc) {
