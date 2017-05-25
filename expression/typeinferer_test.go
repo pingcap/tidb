@@ -365,6 +365,57 @@ func (s *testTypeInferrerSuite) TestColumnInfoModified(c *C) {
 	c.Assert(col.Tp, Equals, mysql.TypeLong)
 }
 
+func (s *testTypeInferrerSuite) TestIsHybridType(c *C) {
+	defer testleak.AfterTest(c)()
+	store, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	sql := `create table t (
+		c_enum enum('a', 'b', 'c', 'd'),
+		c_set set('a', 'b', 'c', 'd'),
+		c_bit bit(10),
+		c_dt datetime,
+		c_date date,
+		c_time time,
+		c_int int)`
+	testKit.MustExec(sql)
+	tests := []struct {
+		expr         string
+		tp           byte
+		isHybridType bool
+	}{
+		{"c_enum", mysql.TypeEnum, true},
+		{"c_set", mysql.TypeSet, true},
+		{"c_bit", mysql.TypeBit, true},
+		{"0b1001", mysql.TypeVarchar, true},
+		{"0xFFFF", mysql.TypeVarchar, true},
+		{"c_dt", mysql.TypeDatetime, false},
+		{"c_date", mysql.TypeDate, false},
+		{"c_time", mysql.TypeDuration, false},
+		{"c_int", mysql.TypeLong, false},
+	}
+	for _, tt := range tests {
+		ctx := testKit.Se.(context.Context)
+		stmts, err := tidb.Parse(ctx, "select "+tt.expr+" from t")
+		c.Assert(err, IsNil)
+		c.Assert(stmts, HasLen, 1)
+		stmt := stmts[0].(*ast.SelectStmt)
+		is := sessionctx.GetDomain(ctx).InfoSchema()
+		err = plan.ResolveName(stmt, is, ctx)
+		c.Assert(err, IsNil)
+		expression.InferType(ctx.GetSessionVars().StmtCtx, stmt)
+		tp := stmt.GetResultFields()[0].Column.Tp
+		c.Assert(tp, Equals, tt.tp, Commentf("Tp for %s", tt.expr))
+		p, err := plan.BuildLogicalPlan(ctx, stmt, is)
+		c.Assert(err, IsNil)
+		proj := p.(*plan.Projection)
+		c.Assert(expression.IsHybridType(proj.Exprs[0]), Equals, tt.isHybridType)
+	}
+}
+
 func newStoreWithBootstrap() (kv.Storage, error) {
 	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
 	if err != nil {
