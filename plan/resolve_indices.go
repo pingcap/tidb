@@ -106,6 +106,26 @@ func (p *PhysicalMergeJoin) ResolveIndices() {
 }
 
 // ResolveIndices implements Plan interface.
+func (p *PhysicalIndexJoin) ResolveIndices() {
+	p.basePlan.ResolveIndices()
+	lSchema := p.children[0].Schema()
+	rSchema := p.children[1].Schema()
+	for i := range p.InnerJoinKeys {
+		p.OuterJoinKeys[i].ResolveIndices(lSchema)
+		p.InnerJoinKeys[i].ResolveIndices(rSchema)
+	}
+	for _, expr := range p.LeftConditions {
+		expr.ResolveIndices(lSchema)
+	}
+	for _, expr := range p.RightConditions {
+		expr.ResolveIndices(rSchema)
+	}
+	for _, expr := range p.OtherConditions {
+		expr.ResolveIndices(expression.MergeSchema(lSchema, rSchema))
+	}
+}
+
+// ResolveIndices implements Plan interface.
 func (p *PhysicalUnionScan) ResolveIndices() {
 	for _, expr := range p.Conditions {
 		expr.ResolveIndices(p.children[0].Schema())
