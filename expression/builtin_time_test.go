@@ -479,12 +479,14 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 		InputDuration string
 		expect        string
 	}{
-		//{"2007-12-31 23:59:59.999999", "1 1:1:1.000002", "2008-01-02 01:01:01.000001"},
+		
 		//{"01:00:00.999999", "02:00:00.999998", "03:00:01.999997"},
 		//{"23:59:59", "00:00:01", "00:00:00.000000"},
-		//{"110:00:00", "1 02:00:00" , "136:00:00"},
+		//{"110:00:00", "2 02:00:00" , "136:00:00"},
+		{"2007-12-31 23:59:59.999999", "1 1:1:1.000002", "2008-01-02 01:01:01.000001"},
 		{"2017-12-01 01:01:01.000001", "1 1:1:1.000002", "2017-12-02 02:02:02.000003"},
-		{"2017-12-31 23:59:59", "00:00:01", "2018-01-01 00:00:00.000000"},
+		{"2017-12-31 23:59:59", "00:00:01", "2018-01-01 00:00:00"},
+		//{"2017-12-31 23:59:59", "1", "2018-01-01 00:00:00"},
 		{"2007-12-31 23:59:59.999999", "2 1:1:1.000002", "2008-01-03 01:01:01.000001"},
 	}
 	fc := funcs[ast.AddTime]
@@ -499,6 +501,46 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 		result, _ := d.ToString()
 		c.Assert(result, Equals, t.expect)
 	}
+
+
+
+
+
+	tbl = []struct {
+		Input         string
+		InputDuration string
+		expect        string
+	}{
+		{"01:00:00.999999", "02:00:00.999998", "03:00:01.999997"},
+		{"23:59:59", "00:00:01", "24:00:00"},
+		{"110:00:00", "1 02:00:00" , "136:00:00"},
+	}
+	for _, t := range tbl {
+		dur,err := types.ParseDuration(t.Input, getFsp(t.Input))	
+		c.Assert(err, IsNil)
+		tmpInput := types.NewDurationDatum(dur)
+		tmpInputDuration := types.NewStringDatum(t.InputDuration)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{tmpInput, tmpInputDuration}), s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		result, _ := d.ToString()
+		c.Assert(result, Equals, t.expect)
+	}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 }
 
 func (s *testEvaluatorSuite) TestSysDate(c *C) {

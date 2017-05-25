@@ -1789,31 +1789,84 @@ type builtinAddTimeSig struct {
 // only support expr1 is datetime expression ,not time
 func (b *builtinAddTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
+	//sc := b.ctx.GetSessionVars().StmtCtx
 	if err != nil {
 		return d, errors.Trace(err)
 	}
 	if args[0].IsNull() || args[1].IsNull() {
 		return d, nil
 	}
-	sc := b.ctx.GetSessionVars().StmtCtx
-	arg0, err := convertDatumToTime(sc, args[0])
-	if err != nil {
-		return d, errors.Trace(err)
-	}
 	s, err := args[1].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
 	arg1, err := types.ParseDuration(s, getFsp(s))
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	tmpDuration := arg0.Add(arg1)
-	result, err := tmpDuration.ConvertToTime(arg0.Type)
-	if err != nil {
-		return d, errors.Trace(err)
+	switch tp := args[0].Kind(); tp {
+	case types.KindMysqlTime:
+		arg0 := args[0].GetMysqlTime()
+		//t, err := arg0.Time.GoTime(getTimeZone(b.ctx))
+		//if err != nil {
+		//	return d, errors.Trace(err)
+		//}
+		tmpDuration := arg0.Add(arg1)
+		result, err := tmpDuration.ConvertToTime(arg0.Type)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		d.SetMysqlTime(result)
+	case types.KindMysqlDuration:
+		arg0 := args[0].GetMysqlDuration()
+		result, err := arg0.Add(arg1)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		d.SetMysqlDuration(result)
+	case types.KindInt64, types.KindUint64:
+		arg0, err := types.ParseDatetimeFromNum(args[0].GetInt64())
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		tmpDuration := arg0.Add(arg1)
+		result, err := tmpDuration.ConvertToTime(arg0.Type)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		d.SetMysqlTime(result)
+	case types.KindString, types.KindBytes, types.KindMysqlDecimal, types.KindFloat32, types.KindFloat64:
+		s, err1 := args[0].ToString()
+		if err1 != nil {
+			return d, errors.Trace(err1)
+		}
+		arg0, err := types.ParseTime(s, mysql.TypeDatetime, getFsp(s))
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		tmpDuration := arg0.Add(arg1)
+		result, err := tmpDuration.ConvertToTime(arg0.Type)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		d.SetMysqlTime(result)
 	}
-	d.SetMysqlTime(result)
+
+	//arg0, err := convertDatumToTime(sc, args[0])
+	//if err != nil {
+	//	return d, errors.Trace(err)
+	//}
+	//s, err := args[1].ToString()
+	//if err != nil {
+	//	return d, errors.Trace(err)
+	//}
+	//arg1, err := types.ParseDuration(s, getFsp(s))
+	//if err != nil {
+	//	return d, errors.Trace(err)
+	//}
+	//tmpDuration := arg0.Add(arg1)
+	//result, err := tmpDuration.ConvertToTime(arg0.Type)
+	//if err != nil {
+	//	return d, errors.Trace(err)
+	//}
+	//d.SetMysqlTime(result)
 	return d, nil
 }
 
