@@ -142,9 +142,7 @@ func (s *testRegionRequestSuite) TestNoReloadRegionWhenCtxCanceled(c *C) {
 }
 
 func (s *testRegionRequestSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) {
-	client := NewGrpcContextCanceledClient()
-	sender := NewRegionRequestSender(s.cache, client)
-
+	sender := NewRegionRequestSender(s.cache, newRPCClient())
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdRawPut,
 		RawPut: &kvrpcpb.RawPutRequest{
@@ -161,19 +159,4 @@ func (s *testRegionRequestSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) 
 	_, err = sender.SendReq(bo, req, region.Region, time.Millisecond)
 	c.Assert(grpc.Code(err), Equals, codes.Canceled)
 	c.Assert(s.cache.getRegionByIDFromCache(s.region), NotNil)
-}
-
-type GrpcContextCanceledClient struct {
-}
-
-func NewGrpcContextCanceledClient() *GrpcContextCanceledClient {
-	return &GrpcContextCanceledClient{}
-}
-
-func (c *GrpcContextCanceledClient) SendReq(_ goctx.Context, _ string, _ *tikvrpc.Request) (*tikvrpc.Response, error) {
-	return nil, grpc.Errorf(codes.Canceled, "context canceled error from GrpcContextCanceledClient")
-}
-
-func (c *GrpcContextCanceledClient) Close() error {
-	return nil
 }
