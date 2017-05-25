@@ -17,6 +17,9 @@
 package tikv
 
 import (
+	"sync"
+	"time"
+
 	. "github.com/pingcap/check"
 	"google.golang.org/grpc"
 )
@@ -53,4 +56,33 @@ func (s *testPoolSuite) TestPool(c *C) {
 	conn3, err := p.Get(addr)
 	c.Assert(err, NotNil)
 	c.Assert(conn3, IsNil)
+}
+
+func (s *testPoolSuite) TestPoolCleaner(c *C) {
+	p := new(ConnPool)
+	p.f = func(addr string) (*grpc.ClientConn, error) {
+		return grpc.Dial(
+			addr,
+			grpc.WithInsecure(),
+			grpc.WithTimeout(time.Minute*5))
+	}
+	p.m.conns = make(map[string]*Conn)
+	checkCleanupInterval := time.Millisecond
+	testAddr := "127.0.0.1:26666"
+	closeCh := make(chan int, 1)
+	cleaner := NewConnPoolCleaner(p, checkCleanupInterval, closeCh)
+	conn, err := p.Get(testAddr)
+	c.Assert(err, IsNil)
+	p.Put(testAddr, conn)
+	c.Assert(len(p.m.conns), Equals, 1)
+	wg := new(sync.WaitGroup)
+	wg.Add(1)
+	go func() {
+		cleaner.run()
+		wg.Done()
+	}()
+	time.Sleep(checkCleanupInterval * 2)
+	closeCh <- 1
+	wg.Wait()
+	c.Assert(len(p.m.conns), Equals, 0)
 }

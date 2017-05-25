@@ -19,16 +19,25 @@ package tikv
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"google.golang.org/grpc"
 
 	"github.com/juju/errors"
 )
 
+const (
+	poolIterateMaxCount      = 1000
+	poolCleanupMaxCount      = 200
+	poolCheckCleanupInterval = 10 * time.Minute
+)
+
 // Conn is a simple wrapper of grpc.ClientConn.
 type Conn struct {
 	c *grpc.ClientConn
-	// TODO: add refCount to track how many TiKVClient uses this grpc.ClientConn.
+	// The reference count of how many TiKVClient uses this grpc.ClientConn at present.
+	// It's used for the implementation of backgroud cleanup of idle connections in ConnPool.
+	refCount uint32
 }
 
 // createConnFunc is the type of functions that can be used to create a grpc.ClientConn.
@@ -44,7 +53,9 @@ type ConnPool struct {
 		isClosed bool
 		conns    map[string]*Conn
 	}
-	f createConnFunc
+	f                  createConnFunc
+	backgroudCleanerCh chan int
+	backgroudCleanerWg *sync.WaitGroup
 }
 
 // NewConnPool creates a ConnPool.
@@ -52,6 +63,18 @@ func NewConnPool(f createConnFunc) *ConnPool {
 	p := new(ConnPool)
 	p.f = f
 	p.m.conns = make(map[string]*Conn)
+	// initialize backgroud cleaner
+	closeCh := make(chan int, 1)
+	wg := new(sync.WaitGroup)
+	cleaner := NewConnPoolCleaner(p, poolCheckCleanupInterval, closeCh)
+	wg.Add(1)
+	// spawn the cleaner goroutine
+	go func() {
+		cleaner.run()
+		wg.Done()
+	}()
+	p.backgroudCleanerCh = closeCh
+	p.backgroudCleanerWg = wg
 	return p
 }
 
@@ -63,15 +86,18 @@ func (p *ConnPool) Get(addr string) (*grpc.ClientConn, error) {
 		return nil, errors.Errorf("ConnPool is closed")
 	}
 	conn, ok := p.m.conns[addr]
-	p.m.RUnlock()
-	if !ok {
-		var err error
-		conn, err = p.tryCreate(addr)
-		if err != nil {
-			return nil, err
-		}
+	if ok {
+		// Increase refCount.
+		conn.refCount += 1
+		p.m.RUnlock()
+		return conn.c, nil
 	}
-	// TODO: increase refCount for conn.
+	p.m.RUnlock()
+	var err error
+	conn, err = p.tryCreate(addr)
+	if err != nil {
+		return nil, err
+	}
 	return conn.c, nil
 }
 
@@ -85,7 +111,8 @@ func (p *ConnPool) tryCreate(addr string) (*Conn, error) {
 			return nil, errors.Trace(err)
 		}
 		conn = &Conn{
-			c: c,
+			c:        c,
+			refCount: 1,
 		}
 		p.m.conns[addr] = conn
 	}
@@ -95,20 +122,81 @@ func (p *ConnPool) tryCreate(addr string) (*Conn, error) {
 // Put puts a Conn back to the pool by the specific addr.
 func (p *ConnPool) Put(addr string, c *grpc.ClientConn) {
 	p.m.RLock()
+	defer p.m.RUnlock()
 	conn, ok := p.m.conns[addr]
-	p.m.RUnlock()
 	if !ok {
 		panic(fmt.Errorf("Attempt to Put for a non-existent addr %s", addr))
 	}
 	if conn.c != c {
 		panic(fmt.Errorf("Attempt to Put a non-existent ClientConn for addr %s", addr))
 	}
-	// TODO: decrease refCount for conn.
+	// Decrease refCount.
+	if conn.refCount == 0 {
+		panic(fmt.Errorf("Attempt to Put a ClientConn with refCount 0 for addr %s", addr))
+	}
+	conn.refCount -= 1
 }
 
 // Close closes the pool.
 func (p *ConnPool) Close() {
 	p.m.Lock()
+	if !p.m.isClosed {
+		p.m.isClosed = true
+		p.m.Unlock()
+		// Ask the cleaner to exit and wait for it.
+		select {
+		case p.backgroudCleanerCh <- 1:
+			p.backgroudCleanerWg.Wait()
+		default:
+		}
+		return
+	}
+	p.m.Unlock()
+}
+
+func (p *ConnPool) cleanupIdleConn() {
+	p.m.Lock()
 	defer p.m.Unlock()
-	p.m.isClosed = true
+	iterateCount, cleanupCount := 0, 0
+	for addr, conn := range p.m.conns {
+		if conn.refCount == 0 {
+			delete(p.m.conns, addr)
+			cleanupCount += 1
+			if cleanupCount >= poolCleanupMaxCount {
+				return
+			}
+		}
+		iterateCount += 1
+		if iterateCount >= poolIterateMaxCount {
+			return
+		}
+	}
+}
+
+// ConnPoolCleaner clean up idle connection periodically in specified time interval.
+type ConnPoolCleaner struct {
+	pool     *ConnPool
+	interval time.Duration
+	closeCh  chan int
+}
+
+func NewConnPoolCleaner(pool *ConnPool, interval time.Duration, closeCh chan int) *ConnPoolCleaner {
+	return &ConnPoolCleaner{
+		pool:     pool,
+		interval: interval,
+		closeCh:  closeCh,
+	}
+}
+
+func (c *ConnPoolCleaner) run() {
+	ticker := time.NewTicker(c.interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-c.closeCh:
+			return
+		case <-ticker.C:
+			c.pool.cleanupIdleConn()
+		}
+	}
 }
