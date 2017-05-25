@@ -52,7 +52,7 @@ var jsonTypePrecedences = map[string]int{
 	"NULL":     -12,
 }
 
-func i64AsFloat64(i64 int64, typeCode byte) float64 {
+func i64AsFloat64(i64 int64, typeCode TypeCode) float64 {
 	switch typeCode {
 	case typeCodeLiteral, typeCodeInt64:
 		return float64(i64)

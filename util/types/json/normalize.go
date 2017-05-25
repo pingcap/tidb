@@ -18,9 +18,11 @@ import (
 	"fmt"
 	"reflect"
 	"unsafe"
+
+	"github.com/juju/errors"
 )
 
-func normalize(in interface{}) (j JSON) {
+func normalize(in interface{}) (j JSON, err error) {
 	switch t := in.(type) {
 	case nil:
 		j.typeCode = typeCodeLiteral
@@ -54,17 +56,23 @@ func normalize(in interface{}) (j JSON) {
 		j.typeCode = typeCodeObject
 		j.object = make(map[string]JSON, len(t))
 		for key, value := range t {
-			j.object[key] = normalize(value)
+			if j.object[key], err = normalize(value); err != nil {
+				return
+			}
 		}
 	case []interface{}:
 		j.typeCode = typeCodeArray
 		j.array = make([]JSON, 0, len(t))
 		for _, elem := range t {
-			j.array = append(j.array, normalize(elem))
+			elem1, err := normalize(elem)
+			if err != nil {
+				return j, err
+			}
+			j.array = append(j.array, elem1)
 		}
 	default:
 		msg := fmt.Sprintf(unknownTypeErrorMsg, reflect.TypeOf(in))
-		panic(msg)
+		err = errors.New(msg)
 	}
 	return
 }

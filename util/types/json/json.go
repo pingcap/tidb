@@ -25,13 +25,15 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 )
 
+type TypeCode byte
+
 const (
-	typeCodeObject  byte = 0x01
-	typeCodeArray   byte = 0x03
-	typeCodeLiteral byte = 0x04
-	typeCodeInt64   byte = 0x09
-	typeCodeFloat64 byte = 0x0b
-	typeCodeString  byte = 0x0c
+	typeCodeObject  TypeCode = 0x01
+	typeCodeArray   TypeCode = 0x03
+	typeCodeLiteral TypeCode = 0x04
+	typeCodeInt64   TypeCode = 0x09
+	typeCodeFloat64 TypeCode = 0x0b
+	typeCodeString  TypeCode = 0x0c
 )
 
 const (
@@ -45,16 +47,20 @@ const unknownTypeErrorMsg = "unknown type: %s"
 
 // JSON is for MySQL JSON type.
 type JSON struct {
-	typeCode byte
+	typeCode TypeCode
 	i64      int64
 	str      string
 	object   map[string]JSON
 	array    []JSON
 }
 
-// CreateJSON creates a JSON from in. Return nil if in is not a valid JSON type.
+// CreateJSON creates a JSON from in. Panic if any error occurs.
 func CreateJSON(in interface{}) JSON {
-	return normalize(in)
+	j, err := normalize(in)
+	if err != nil {
+		panic(err)
+	}
+	return j
 }
 
 // ParseFromString parses a json from string.
@@ -105,7 +111,7 @@ func (j *JSON) UnmarshalJSON(data []byte) (err error) {
 	decoder.UseNumber()
 	var in interface{}
 	if err = decoder.Decode(&in); err == nil {
-		*j = normalize(in)
+		*j, err = normalize(in)
 	}
 	return
 }

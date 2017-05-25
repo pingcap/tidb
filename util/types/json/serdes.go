@@ -95,7 +95,7 @@ import (
 // Serialize means serialize itself into bytes.
 func Serialize(j JSON) []byte {
 	var buffer = new(bytes.Buffer)
-	buffer.WriteByte(j.typeCode)
+	buffer.WriteByte(byte(j.typeCode))
 	encode(j, buffer)
 	return buffer.Bytes()
 }
@@ -127,8 +127,8 @@ func Deserialize(data []byte) (j JSON, err error) {
 }
 
 func decode(typeCode byte, data []byte) (j JSON, err error) {
-	j.typeCode = typeCode
-	switch typeCode {
+	j.typeCode = TypeCode(typeCode)
+	switch j.typeCode {
 	case typeCodeObject:
 		err = decodeJSONObject(&j.object, data)
 	case typeCodeArray:
@@ -266,7 +266,7 @@ func decodeJSONObject(m *map[string]JSON, data []byte) (err error) {
 
 		var key = string(keyBuffer)
 		var value JSON
-		typeLen, _ := jsonTypeCodeLength[valueTypes[i]]
+		typeLen, _ := jsonTypeCodeLength[TypeCode(valueTypes[i])]
 		if typeLen >= 0 && typeLen <= 4 {
 			var inline = valueOffsets[i]
 			var hdr = reflect.SliceHeader{Data: uintptr(unsafe.Pointer(&inline)), Len: 4, Cap: 4}
@@ -321,7 +321,7 @@ func decodeJSONArray(a *[]JSON, data []byte) (err error) {
 
 	for i := 0; i < int(countAndSize[0]); i++ {
 		var value JSON
-		typeLen, _ := jsonTypeCodeLength[valueTypes[i]]
+		typeLen, _ := jsonTypeCodeLength[TypeCode(valueTypes[i])]
 		if typeLen >= 0 && typeLen <= 4 {
 			var inline = valueOffsets[i]
 			var hdr = reflect.SliceHeader{Data: uintptr(unsafe.Pointer(&inline)), Len: 4, Cap: 4}
@@ -340,7 +340,7 @@ func decodeJSONArray(a *[]JSON, data []byte) (err error) {
 
 // Every json type has a length which is useful for inline the value
 // in value-entry. -1 means the length is variable.
-var jsonTypeCodeLength = map[byte]int{
+var jsonTypeCodeLength = map[TypeCode]int{
 	typeCodeObject:  -1,
 	typeCodeArray:   -1,
 	typeCodeLiteral: 1,
@@ -361,7 +361,7 @@ func getSortedKeys(m map[string]JSON) []string {
 
 func pushValueEntry(value JSON, valueEntrys *bytes.Buffer, values *bytes.Buffer, prefixLen int) {
 	var typeCode = value.typeCode
-	valueEntrys.WriteByte(typeCode)
+	valueEntrys.WriteByte(byte(typeCode))
 
 	typeLen, _ := jsonTypeCodeLength[typeCode]
 	if typeLen > 0 && typeLen <= 4 {
