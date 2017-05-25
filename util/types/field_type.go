@@ -26,7 +26,7 @@ const (
 	UnspecifiedLength int = -1
 )
 
-// TypeClass classifies types, used for type inference.
+// TypeClass classifies field types, used for type inference.
 type TypeClass byte
 
 // TypeClass values.
