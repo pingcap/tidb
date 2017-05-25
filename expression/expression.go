@@ -137,7 +137,7 @@ func evalExprToInt(expr Expression, row []types.Datum, sc *variable.StatementCon
 	tc := expr.GetType().ToClass()
 	if tc == types.ClassInt {
 		return val.GetInt64(), false, nil
-	} else if types.IsHybridType(expr.GetType().Tp) {
+	} else if IsHybridType(expr) {
 		res, err = val.ToInt64(sc)
 		return res, false, errors.Trace(err)
 	}
@@ -153,7 +153,7 @@ func evalExprToReal(expr Expression, row []types.Datum, sc *variable.StatementCo
 	tc := expr.GetType().ToClass()
 	if tc == types.ClassReal {
 		return val.GetFloat64(), false, nil
-	} else if types.IsHybridType(expr.GetType().Tp) {
+	} else if IsHybridType(expr) {
 		res, err = val.ToFloat64(sc)
 		return res, false, errors.Trace(err)
 	}
@@ -169,7 +169,7 @@ func evalExprToDecimal(expr Expression, row []types.Datum, sc *variable.Statemen
 	tc := expr.GetType().ToClass()
 	if tc == types.ClassDecimal {
 		return val.GetMysqlDecimal(), false, nil
-	} else if types.IsHybridType(expr.GetType().Tp) {
+	} else if IsHybridType(expr) {
 		res, err = val.ToDecimal(sc)
 		return res, false, errors.Trace(err)
 	}
@@ -194,8 +194,8 @@ func evalExprToString(expr Expression, row []types.Datum, _ *variable.StatementC
 	panic(fmt.Sprintf("cannot get STRING result from %s expression", types.TypeStr(expr.GetType().Tp)))
 }
 
-// evalExprToDate evaluates `expr` to DATE type.
-func evalExprToDate(expr Expression, row []types.Datum, _ *variable.StatementContext) (res types.Time, isNull bool, err error) {
+// evalExprToTime evaluates `expr` to TIME type.
+func evalExprToTime(expr Expression, row []types.Datum, _ *variable.StatementContext) (res types.Time, isNull bool, err error) {
 	val, err := expr.Eval(row)
 	if val.IsNull() || err != nil {
 		return res, val.IsNull(), errors.Trace(err)
@@ -297,7 +297,7 @@ func (c *Constant) EvalDecimal(_ []types.Datum, sc *variable.StatementContext) (
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of Constant.
 func (c *Constant) EvalTime(_ []types.Datum, sc *variable.StatementContext) (types.Time, bool, error) {
-	val, isNull, err := evalExprToDate(c, nil, sc)
+	val, isNull, err := evalExprToTime(c, nil, sc)
 	return val, isNull, errors.Trace(err)
 }
 
