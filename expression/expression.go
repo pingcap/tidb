@@ -75,6 +75,9 @@ type Expression interface {
 	// GetType gets the type that the expression returns.
 	GetType() *types.FieldType
 
+	// GetTypeClass gets the TypeClass that the expression returns.
+	GetTypeClass() types.TypeClass
+
 	// Clone copies an expression totally.
 	Clone() Expression
 
@@ -134,8 +137,7 @@ func evalExprToInt(expr Expression, row []types.Datum, sc *variable.StatementCon
 	if val.IsNull() || err != nil {
 		return res, val.IsNull(), errors.Trace(err)
 	}
-	tc := expr.GetType().ToClass()
-	if tc == types.ClassInt {
+	if expr.GetTypeClass() == types.ClassInt {
 		return val.GetInt64(), false, nil
 	} else if IsHybridType(expr) {
 		res, err = val.ToInt64(sc)
@@ -150,8 +152,7 @@ func evalExprToReal(expr Expression, row []types.Datum, sc *variable.StatementCo
 	if val.IsNull() || err != nil {
 		return res, val.IsNull(), errors.Trace(err)
 	}
-	tc := expr.GetType().ToClass()
-	if tc == types.ClassReal {
+	if expr.GetTypeClass() == types.ClassReal {
 		return val.GetFloat64(), false, nil
 	} else if IsHybridType(expr) {
 		res, err = val.ToFloat64(sc)
@@ -166,8 +167,7 @@ func evalExprToDecimal(expr Expression, row []types.Datum, sc *variable.Statemen
 	if val.IsNull() || err != nil {
 		return res, val.IsNull(), errors.Trace(err)
 	}
-	tc := expr.GetType().ToClass()
-	if tc == types.ClassDecimal {
+	if expr.GetTypeClass() == types.ClassDecimal {
 		return val.GetMysqlDecimal(), false, nil
 	} else if IsHybridType(expr) {
 		res, err = val.ToDecimal(sc)
@@ -182,8 +182,7 @@ func evalExprToString(expr Expression, row []types.Datum, _ *variable.StatementC
 	if val.IsNull() || err != nil {
 		return res, val.IsNull(), errors.Trace(err)
 	}
-	tc := expr.GetType().ToClass()
-	if tc == types.ClassString {
+	if expr.GetTypeClass() == types.ClassString {
 		// We cannot use val.GetString() directly.
 		// For example, `Bit` is regarded as ClassString,
 		// while we can not use val.GetString() to get the value of a Bit variable,
@@ -196,6 +195,9 @@ func evalExprToString(expr Expression, row []types.Datum, _ *variable.StatementC
 
 // evalExprToTime evaluates `expr` to TIME type.
 func evalExprToTime(expr Expression, row []types.Datum, _ *variable.StatementContext) (res types.Time, isNull bool, err error) {
+	if IsHybridType(expr) {
+		return res, true, nil
+	}
 	val, err := expr.Eval(row)
 	if val.IsNull() || err != nil {
 		return res, val.IsNull(), errors.Trace(err)
@@ -210,6 +212,9 @@ func evalExprToTime(expr Expression, row []types.Datum, _ *variable.StatementCon
 
 // evalExprToDuration evaluates `expr` to DURATION type.
 func evalExprToDuration(expr Expression, row []types.Datum, _ *variable.StatementContext) (res types.Duration, isNull bool, err error) {
+	if IsHybridType(expr) {
+		return res, true, nil
+	}
 	val, err := expr.Eval(row)
 	if val.IsNull() || err != nil {
 		return res, val.IsNull(), errors.Trace(err)
@@ -264,6 +269,11 @@ func (c *Constant) Clone() Expression {
 // GetType implements Expression interface.
 func (c *Constant) GetType() *types.FieldType {
 	return c.RetType
+}
+
+// GetTypeClass implements Expression interface.
+func (c *Constant) GetTypeClass() types.TypeClass {
+	return c.RetType.ToClass()
 }
 
 // Eval implements Expression interface.
