@@ -48,6 +48,7 @@ const (
 		Drop_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Process_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Grant_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		References_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Alter_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Show_db_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Super_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
@@ -190,6 +191,7 @@ const (
 	version8  = 8
 	version9  = 9
 	version10 = 10
+	version11 = 11
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -284,6 +286,10 @@ func upgrade(s Session) {
 		upgradeToVer10(s)
 	}
 
+	if ver < version11 {
+		upgradeToVer11(s)
+	}
+
 	updateBootstrapVer(s)
 	_, err = s.Execute("COMMIT")
 
@@ -361,7 +367,7 @@ func upgradeToVer8(s Session) {
 func upgradeToVer9(s Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Trigger_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_user_priv`", infoschema.ErrColumnExists)
 	// For reasons of compatibility, set the non-exists privilege column value to 'Y', as TiDB doesn't check them in older versions.
-	s.Execute("UPDATE mysql.user SET Trigger_priv='Y'")
+	mustExecute(s, "UPDATE mysql.user SET Trigger_priv='Y'")
 }
 
 func doReentrantDDL(s Session, sql string, ignorableErrs ...error) {
@@ -382,6 +388,17 @@ func upgradeToVer10(s Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `null_count` bigint(64) NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms DROP COLUMN distinct_ratio", ddl.ErrCantDropFieldOrKey)
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms DROP COLUMN use_count_to_estimate", ddl.ErrCantDropFieldOrKey)
+}
+
+func upgradeToVer11(s Session) {
+	_, err := s.Execute("ALTER TABLE mysql.user ADD COLUMN `References_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Grant_priv`")
+	if err != nil {
+		if terror.ErrorEqual(err, infoschema.ErrColumnExists) {
+			return
+		}
+		log.Fatal(err)
+	}
+	mustExecute(s, "UPDATE mysql.user SET References_priv='Y'")
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
@@ -437,7 +454,7 @@ func doDMLWorks(s Session) {
 
 	// Insert a default user with empty password.
 	mustExecute(s, `INSERT INTO mysql.user VALUES
-		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
 
 	// Init global system variables table.
 	values := make([]string, 0, len(variable.SysVars))
