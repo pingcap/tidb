@@ -326,6 +326,8 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`bit_count(1)`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{`time_to_sec("23:59:59")`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{`inet6_aton('FE80::AAAA:0000:00C2:0002')`, mysql.TypeVarString, charset.CharsetUTF8, 0},
+		{`inet6_ntoa(inet6_aton('FE80::AAAA:0000:00C2:0002'))`, mysql.TypeVarString,
+			charset.CharsetUTF8, 0},
 		{`is_ipv4_mapped(c_varbinary)`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{`json_type('3')`, mysql.TypeVarString, charset.CharsetUTF8, 0},
 	}
