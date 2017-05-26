@@ -21,7 +21,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
@@ -513,8 +512,6 @@ func (m *Meta) GetDDLJob(index int64) (*model.Job, error) {
 }
 
 func (m *Meta) updateDDLJob(index int64, job *model.Job, key []byte) error {
-	// TODO: use timestamp allocated by TSO
-	job.LastUpdateTS = time.Now().UnixNano()
 	b, err := job.Encode()
 	if err != nil {
 		return errors.Trace(err)
