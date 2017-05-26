@@ -101,7 +101,11 @@ func (j *JSON) Set(pathExprs []string, values []JSON) (err error) {
 	for i := 0; i < len(pathExprs); i++ {
 		pathExpr := pathExprs[i]
 		value := values[i]
-		if err = set(j, pathExpr, value); err != nil {
+		indices, err := validateJSONPathExpr(pathExpr)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if *j, err = set(*j, pathExpr, indices, value); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -148,13 +152,13 @@ func (j JSON) Unquote() string {
 }
 
 // extract is used by Extract.
+// NOTE: the return value will share something with j.
 func extract(j JSON, pathExpr string) (ret JSON, found bool, err error) {
 	var indices [][]int
 	if indices, err = validateJSONPathExpr(pathExpr); err != nil {
 		err = errors.Trace(err)
 		return
 	}
-
 	ret = j
 	for _, indice := range indices {
 		found = false
@@ -183,5 +187,33 @@ func extract(j JSON, pathExpr string) (ret JSON, found bool, err error) {
 	return
 }
 
-func set(j *JSON, pathExpr string, value JSON) (err error) {
+func set(j JSON, pathExpr string, indices [][]int, value JSON) (_ JSON, err error) {
+	if len(indices) == 0 {
+		return value, nil
+	}
+	leg := pathExpr[indices[0][0]:indices[0][1]]
+	switch leg[0] {
+	case '[':
+		index, atoiErr := strconv.Atoi(string(leg[1 : len(leg)-1]))
+		if atoiErr != nil {
+			err = errors.Trace(atoiErr)
+		}
+		if j.typeCode == typeCodeArray {
+			if len(j.array) > index {
+				j.array[index], err = set(j.array[index], pathExpr, indices[1:], value)
+			} else if len(indices) == 1 {
+				j.array = append(j.array, value)
+			}
+		}
+	case '.':
+		key := string(leg[1:])
+		if j.typeCode == typeCodeObject {
+			if child, ok := j.object[key]; ok {
+				j.object[key], err = set(child, pathExpr, indices[1:], value)
+			} else if len(indices) == 1 {
+				j.object[key] = value
+			}
+		}
+	}
+	return j, err
 }

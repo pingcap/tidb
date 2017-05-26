@@ -241,3 +241,28 @@ func (s *testJSONSuite) TestJSONMerge(c *C) {
 		c.Assert(cmp, Equals, 0)
 	}
 }
+
+func (s *testJSONSuite) TestJSONSet(c *C) {
+	var base = parseFromStringPanic(`null`)
+	var caseList = []struct {
+		setField string
+		setValue JSON
+		expected JSON
+	}{
+		{"$", parseFromStringPanic(`{}`), parseFromStringPanic(`{}`)},
+		{"$.a", parseFromStringPanic(`[]`), parseFromStringPanic(`{"a": []}`)},
+		{"$.a[1]", parseFromStringPanic(`3`), parseFromStringPanic(`{"a": [3]}`)},
+
+		// won't modify base because path doesn't exist.
+		{"$.b[1]", parseFromStringPanic(`3`), parseFromStringPanic(`{"a": [3]}`)},
+		{"$.a[2].b", parseFromStringPanic(`3`), parseFromStringPanic(`{"a": [3]}`)},
+	}
+	for _, caseItem := range caseList {
+		err := base.Set([]string{caseItem.setField}, []JSON{caseItem.setValue})
+		c.Assert(err, IsNil)
+
+		cmp, err := CompareJSON(base, caseItem.expected)
+		c.Assert(err, IsNil)
+		c.Assert(cmp, Equals, 0)
+	}
+}
