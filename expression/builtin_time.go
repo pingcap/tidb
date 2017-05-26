@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1785,19 +1786,27 @@ type builtinAddTimeSig struct {
 
 // eval evals a builtinAddTimeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_addtime
-// ADDTIME(expr1,expr2)
-// only support expr1 is datetime expression ,not time
 func (b *builtinAddTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
-	//sc := b.ctx.GetSessionVars().StmtCtx
 	if err != nil {
 		return d, errors.Trace(err)
 	}
 	if args[0].IsNull() || args[1].IsNull() {
 		return d, nil
 	}
+
+	switch tp := args[1].Kind(); tp {
+	case types.KindInt64:
+	default:
+	}
+
 	s, err := args[1].ToString()
-	arg1, err := types.ParseDuration(s, getFsp(s))
+	var arg1 types.Duration
+	if getFsp(s) == 0 {
+		arg1, err = types.ParseDuration(s, 0)
+	} else {
+		arg1, err = types.ParseDuration(s, types.MaxFsp)
+	}
 	if err != nil {
 		return d, errors.Trace(err)
 	}
@@ -1817,17 +1826,35 @@ func (b *builtinAddTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 			return d, errors.Trace(err)
 		}
 		d.SetMysqlDuration(result)
-	case types.KindInt64, types.KindUint64:
-		arg0, err := types.ParseDatetimeFromNum(args[0].GetInt64())
-		if err != nil {
-			return d, errors.Trace(err)
+	case types.KindUint64:
+
+	case types.KindInt64:
+		val := args[0].GetInt64()
+		if val <= 999999 {
+			strval := strconv.FormatInt(val, 10)
+			arg0, err := types.ParseDuration(strval, getFsp(strval))
+			if err != nil {
+				return d, errors.Trace(err)
+			}
+			result, err := arg0.Add(arg1)
+			if err != nil {
+				return d, errors.Trace(err)
+			}
+			d.SetMysqlDuration(result)
+		} else {
+			arg0, err := types.ParseDatetimeFromNum(val)
+			if err != nil {
+				return d, errors.Trace(err)
+			}
+
+			tmpDuration := arg0.Add(arg1)
+			result, err := tmpDuration.ConvertToTime(arg0.Type)
+			if err != nil {
+				return d, errors.Trace(err)
+			}
+			d.SetMysqlTime(result)
 		}
-		tmpDuration := arg0.Add(arg1)
-		result, err := tmpDuration.ConvertToTime(arg0.Type)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		d.SetMysqlTime(result)
+
 	case types.KindBytes, types.KindMysqlDecimal, types.KindFloat32, types.KindFloat64:
 		s, err1 := args[0].ToString()
 		if err1 != nil {
