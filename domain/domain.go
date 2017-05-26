@@ -403,8 +403,7 @@ func NewDomain(store kv.Storage, lease time.Duration, factory pools.Factory) (d 
 	}
 	ctx := goctx.Background()
 	callback := &ddlCallback{do: d}
-	// TODO: Use etcd client instead of nil.
-	d.ddl = ddl.NewDDL(ctx, nil, d.store, d.infoHandle, callback, lease)
+	d.ddl = ddl.NewDDL(ctx, d.etcdClient, d.store, d.infoHandle, callback, lease)
 	if ddl.ChangeOwnerInNewWay {
 		if err = d.ddl.SchemaVersionSyncer().Init(ctx); err != nil {
 			return nil, errors.Trace(err)
