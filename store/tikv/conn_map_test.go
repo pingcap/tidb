@@ -21,18 +21,18 @@ import (
 	"google.golang.org/grpc"
 )
 
-type testPoolSuite struct {
+type testMapSuite struct {
 }
 
-var _ = Suite(&testPoolSuite{})
+var _ = Suite(&testMapSuite{})
 
-func (s *testPoolSuite) TestPool(c *C) {
+func (s *testMapSuite) TestMap(c *C) {
 	count := 0
 	f := func(addr string) (*grpc.ClientConn, error) {
 		count++
 		return grpc.Dial(addr, grpc.WithInsecure(), grpc.WithTimeout(dialTimeout))
 	}
-	p := NewConnPool(f)
+	p := NewConnMap(f)
 
 	addr := "127.0.0.1:6379"
 	conn1, err := p.Get(addr)

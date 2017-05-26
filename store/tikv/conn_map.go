@@ -28,17 +28,15 @@ import (
 // Conn is a simple wrapper of grpc.ClientConn.
 type Conn struct {
 	c *grpc.ClientConn
-	// TODO: add refCount to track how many TiKVClient uses this grpc.ClientConn.
 }
 
 // createConnFunc is the type of functions that can be used to create a grpc.ClientConn.
 type createConnFunc func(addr string) (*grpc.ClientConn, error)
 
-// ConnPool is a pool that maintains Conn with a specific addr.
+// ConnMap is a map that maintains the mapping from addresses to their connections.
 // TODO: Implement background cleanup. It adds a backgroud goroutine to periodically check
-// whether there is any Conn in pool have no usage (refCount == 0), and then
-// close and remove it from pool.
-type ConnPool struct {
+// whether there is any connection is idle and then close and remove these idle connections.
+type ConnMap struct {
 	m struct {
 		sync.RWMutex
 		isClosed bool
@@ -47,20 +45,20 @@ type ConnPool struct {
 	f createConnFunc
 }
 
-// NewConnPool creates a ConnPool.
-func NewConnPool(f createConnFunc) *ConnPool {
-	p := new(ConnPool)
+// NewConnMap creates a ConnMap.
+func NewConnMap(f createConnFunc) *ConnMap {
+	p := new(ConnMap)
 	p.f = f
 	p.m.conns = make(map[string]*Conn)
 	return p
 }
 
-// Get takes a Conn out of the pool by the specific addr.
-func (p *ConnPool) Get(addr string) (*grpc.ClientConn, error) {
+// Get takes a grpc.ClientConn out of the map by the specific addr.
+func (p *ConnMap) Get(addr string) (*grpc.ClientConn, error) {
 	p.m.RLock()
 	if p.m.isClosed {
 		p.m.RUnlock()
-		return nil, errors.Errorf("ConnPool is closed")
+		return nil, errors.Errorf("ConnMap is closed")
 	}
 	conn, ok := p.m.conns[addr]
 	p.m.RUnlock()
@@ -75,7 +73,7 @@ func (p *ConnPool) Get(addr string) (*grpc.ClientConn, error) {
 	return conn.c, nil
 }
 
-func (p *ConnPool) tryCreate(addr string) (*Conn, error) {
+func (p *ConnMap) tryCreate(addr string) (*Conn, error) {
 	p.m.Lock()
 	defer p.m.Unlock()
 	conn, ok := p.m.conns[addr]
@@ -92,8 +90,8 @@ func (p *ConnPool) tryCreate(addr string) (*Conn, error) {
 	return conn, nil
 }
 
-// Put puts a Conn back to the pool by the specific addr.
-func (p *ConnPool) Put(addr string, c *grpc.ClientConn) {
+// Put puts a Conn back to the map by the specific addr.
+func (p *ConnMap) Put(addr string, c *grpc.ClientConn) {
 	p.m.RLock()
 	conn, ok := p.m.conns[addr]
 	p.m.RUnlock()
@@ -106,9 +104,9 @@ func (p *ConnPool) Put(addr string, c *grpc.ClientConn) {
 	// TODO: decrease refCount for conn.
 }
 
-// Close closes the pool.
-func (p *ConnPool) Close() {
+// Close closes the map.
+func (p *ConnMap) Close() {
 	p.m.Lock()
-	defer p.m.Unlock()
 	p.m.isClosed = true
+	p.m.Unlock()
 }

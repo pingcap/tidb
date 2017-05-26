@@ -48,12 +48,12 @@ type Client interface {
 // Since we use shared client connection to communicate to the same TiKV, it's possible
 // that there are too many concurrent requests which overload the service of TiKV.
 type rpcClient struct {
-	p *ConnPool
+	p *ConnMap
 }
 
 func newRPCClient() *rpcClient {
 	return &rpcClient{
-		p: NewConnPool(func(addr string) (*grpc.ClientConn, error) {
+		p: NewConnMap(func(addr string) (*grpc.ClientConn, error) {
 			return grpc.Dial(
 				addr,
 				grpc.WithInsecure(),
@@ -77,7 +77,7 @@ func (c *rpcClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	connPoolHistogram.WithLabelValues(label).Observe(time.Since(start).Seconds())
+	connMapHistogram.WithLabelValues(label).Observe(time.Since(start).Seconds())
 	client := tikvpb.NewTikvClient(conn)
 	resp, err := c.callRPC(ctx, client, req)
 	defer c.p.Put(addr, conn)
