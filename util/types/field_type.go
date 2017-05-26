@@ -26,7 +26,7 @@ const (
 	UnspecifiedLength int = -1
 )
 
-// TypeClass classifies types, used for type inference.
+// TypeClass classifies field types, used for type inference.
 type TypeClass byte
 
 // TypeClass values.
@@ -195,10 +195,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 	case []byte:
 		tp.Tp = mysql.TypeBlob
 		SetBinChsClnFlag(tp)
-	case Bit:
-		tp.Tp = mysql.TypeBit
-		SetBinChsClnFlag(tp)
-	case Hex:
+	case Bit, Hex:
 		tp.Tp = mysql.TypeVarchar
 		SetBinChsClnFlag(tp)
 	case Time:

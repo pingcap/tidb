@@ -148,7 +148,6 @@ func joinKeysMatchIndex(keys []*expression.Column, index *model.IndexInfo) []int
 func (p *LogicalJoin) convertToIndexJoin(prop *requiredProp, outerIdx int) (taskProfile, error) {
 	outerChild := p.children[outerIdx].(LogicalPlan)
 	innerChild := p.children[1-outerIdx].(LogicalPlan)
-	canPassProp := len(outerChild.Schema().ColumnsIndices(prop.cols)) > 0
 	var (
 		outerTask     taskProfile
 		useTableScan  bool
@@ -160,11 +159,7 @@ func (p *LogicalJoin) convertToIndexJoin(prop *requiredProp, outerIdx int) (task
 		innerJoinKeys = make([]*expression.Column, 0, len(p.EqualConditions))
 		outerJoinKeys = make([]*expression.Column, 0, len(p.EqualConditions))
 	)
-	if canPassProp {
-		outerTask, err = outerChild.convert2NewPhysicalPlan(prop)
-	} else {
-		outerTask, err = outerChild.convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
-	}
+	outerTask, err = outerChild.convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -234,39 +229,45 @@ func (p *LogicalJoin) convertToIndexJoin(prop *requiredProp, outerIdx int) (task
 		LeftConditions:  leftConds,
 		RightConditions: rightConds,
 		OtherConditions: p.OtherConditions,
-		outer:           p.JoinType != InnerJoin,
-		outerJoinKeys:   outerJoinKeys,
-		innerJoinKeys:   innerJoinKeys,
+		Outer:           p.JoinType != InnerJoin,
+		OuterJoinKeys:   outerJoinKeys,
+		InnerJoinKeys:   innerJoinKeys,
+		DefaultValues:   p.DefaultValues,
 	}.init(p.allocator, p.ctx, p.children[outerIdx], p.children[1-outerIdx])
 	task := join.attach2TaskProfile(outerTask, innerTask)
-	if !canPassProp {
-		task = prop.enforceProperty(task, p.ctx, p.allocator)
-	}
+	task = prop.enforceProperty(task, p.ctx, p.allocator)
 	return task, nil
 }
 
 // tryToGetIndexJoin tries to get index join plan. If fails, it returns nil.
 // Currently we only check by hint. If we prefer the left index join but the join type is right outer, it will fail to return.
-func (p *LogicalJoin) tryToGetIndexJoin(prop *requiredProp) (taskProfile, error) {
+func (p *LogicalJoin) tryToGetIndexJoin(prop *requiredProp) (bestTask taskProfile, err error) {
 	if len(p.EqualConditions) == 0 {
 		return nil, nil
 	}
 
 	leftOuter := (p.preferINLJ & preferLeftAsOuter) > 0
 	if leftOuter {
-		if p.JoinType == RightOuterJoin {
-			return nil, nil
+		if p.JoinType != RightOuterJoin {
+			bestTask, err = p.convertToIndexJoin(prop, 0)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
-		return p.convertToIndexJoin(prop, 0)
 	}
 	rightOuter := (p.preferINLJ & preferRightAsOuter) > 0
 	if rightOuter {
-		if p.JoinType == LeftOuterJoin {
-			return nil, nil
+		if p.JoinType != LeftOuterJoin {
+			task, err := p.convertToIndexJoin(prop, 1)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if bestTask == nil || bestTask.cost() > task.cost() {
+				bestTask = task
+			}
 		}
-		return p.convertToIndexJoin(prop, 1)
 	}
-	return nil, nil
+	return
 }
 
 // convert2NewPhysicalPlan implements PhysicalPlan interface.

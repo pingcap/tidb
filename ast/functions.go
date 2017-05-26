@@ -277,6 +277,20 @@ const (
 	Uncompress               = "uncompress"
 	UncompressedLength       = "uncompressed_length"
 	ValidatePasswordStrength = "validate_password_strength"
+
+	// json functions
+	JSONType     = "json_type"
+	JSONExtract  = "json_extract"
+	JSONUnquote  = "json_unquote"
+	JSONArray    = "json_array"
+	JSONObject   = "json_object"
+	JSONMerge    = "json_merge"
+	JSONValid    = "json_valid"
+	JSONSet      = "json_set"
+	JSONInsert   = "json_insert"
+	JSONReplace  = "json_replace"
+	JSONRemove   = "json_remove"
+	JSONContains = "json_contains"
 )
 
 // FuncCallExpr is for function expression.
