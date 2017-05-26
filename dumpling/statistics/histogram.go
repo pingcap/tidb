@@ -30,8 +30,9 @@ import (
 
 // Histogram represents statistics for a column or index.
 type Histogram struct {
-	ID  int64 // Column ID.
-	NDV int64 // Number of distinct values.
+	ID        int64 // Column ID.
+	NDV       int64 // Number of distinct values.
+	NullCount int64 // Number of null values.
 	// LastUpdateVersion is the version that this histogram updated last time.
 	LastUpdateVersion uint64
 
