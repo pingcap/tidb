@@ -49,6 +49,7 @@ const (
 		Drop_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Process_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Grant_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		References_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Alter_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Show_db_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Super_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
@@ -192,6 +193,7 @@ const (
 	version9  = 9
 	version10 = 10
 	version11 = 11
+	version12 = 12
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -290,6 +292,10 @@ func upgrade(s Session) {
 		upgradeToVer11(s)
 	}
 
+	if ver < version12 {
+		upgradeToVer12(s)
+	}
+
 	updateBootstrapVer(s)
 	_, err = s.Execute("COMMIT")
 
@@ -367,7 +373,7 @@ func upgradeToVer8(s Session) {
 func upgradeToVer9(s Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Trigger_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_user_priv`", infoschema.ErrColumnExists)
 	// For reasons of compatibility, set the non-exists privilege column value to 'Y', as TiDB doesn't check them in older versions.
-	s.Execute("UPDATE mysql.user SET Trigger_priv='Y'")
+	mustExecute(s, "UPDATE mysql.user SET Trigger_priv='Y'")
 }
 
 func doReentrantDDL(s Session, sql string, ignorableErrs ...error) {
@@ -391,6 +397,17 @@ func upgradeToVer10(s Session) {
 }
 
 func upgradeToVer11(s Session) {
+	_, err := s.Execute("ALTER TABLE mysql.user ADD COLUMN `References_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Grant_priv`")
+	if err != nil {
+		if terror.ErrorEqual(err, infoschema.ErrColumnExists) {
+			return
+		}
+		log.Fatal(err)
+	}
+	mustExecute(s, "UPDATE mysql.user SET References_priv='Y'")
+}
+
+func upgradeToVer12(s Session) {
 	s.Execute("BEGIN")
 	sql := "SELECT user, host, password FROM mysql.user WHERE password != ''"
 	rs, err := s.Execute(sql)
@@ -426,7 +443,7 @@ func upgradeToVer11(s Session) {
 	}
 
 	sql = fmt.Sprintf(`INSERT INTO %s.%s VALUES ("%s", "%d", "TiDB bootstrap version.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE="%d"`,
-		mysql.SystemDB, mysql.TiDBTable, tidbServerVersionVar, version11, version11)
+		mysql.SystemDB, mysql.TiDBTable, tidbServerVersionVar, version12, version12)
 	mustExecute(s, sql)
 
 	mustExecute(s, "COMMIT")
@@ -485,7 +502,7 @@ func doDMLWorks(s Session) {
 
 	// Insert a default user with empty password.
 	mustExecute(s, `INSERT INTO mysql.user VALUES
-		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
 
 	// Init global system variables table.
 	values := make([]string, 0, len(variable.SysVars))

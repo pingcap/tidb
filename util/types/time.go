@@ -895,6 +895,9 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 			} else if len(str) == 2 {
 				// SS
 				_, err = fmt.Sscanf(str, "%2d", &second)
+			} else if len(str) == 1 {
+				// 0S
+				_, err = fmt.Sscanf(str, "%1d", &second)
 			} else {
 				// Maybe only contains date.
 				_, err = ParseDate(str)
