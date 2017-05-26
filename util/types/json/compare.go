@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"strings"
 	"unsafe"
+
+	"github.com/juju/errors"
 )
 
 // floatEpsilon is the acceptable error quantity when comparing two float numbers.
@@ -97,7 +99,7 @@ func CompareJSON(j1 JSON, j2 JSON) (cmp int, err error) {
 				elem2 := right[i]
 				cmp, err = CompareJSON(elem1, elem2)
 				if cmp != 0 || err != nil {
-					return
+					return cmp, errors.Trace(err)
 				}
 			}
 			cmp = len(left) - len(right)

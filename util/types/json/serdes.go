@@ -376,6 +376,8 @@ func pushValueEntry(value JSON, valueEntrys *bytes.Buffer, values *bytes.Buffer,
 	return
 }
 
+// pushInlineValue pushes the value into buffer first, and if its
+// length < 4, pads 0x00 until there are 4 bytes written into buffer.
 func pushInlineValue(buffer *bytes.Buffer, value JSON) {
 	var oldLen = buffer.Len()
 	switch value.typeCode {
