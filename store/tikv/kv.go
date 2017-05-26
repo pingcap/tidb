@@ -197,7 +197,7 @@ func (s *tikvStore) Close() error {
 	if s.gcWorker != nil {
 		s.gcWorker.Close()
 	}
-	// Make sure all connections are put back into the pools.
+
 	if err := s.client.Close(); err != nil {
 		return errors.Trace(err)
 	}

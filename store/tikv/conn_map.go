@@ -26,41 +26,40 @@ import (
 )
 
 const (
-	// poolIterateMaxCount specifies at most how many connections are iterated
+	// mapIterateMaxCount specifies at most how many connections are iterated
 	// and checked by the backgroud cleanup goroutine at once.
-	// Both poolIterateMaxCount and poolCleanupMaxCount are used to avoid the cleanup time
+	// Both mapIterateMaxCount and mapCleanupMaxCount are used to avoid the cleanup time
 	// being too long so that the backgroud cleanup will not block the foreground business.
-	poolIterateMaxCount = 1000
-	// poolCleanupMaxCount specifies at most how many idle connections are cleaned up
+	mapIterateMaxCount = 1000
+	// mapCleanupMaxCount specifies at most how many idle connections are cleaned up
 	// by the background cleanup goroutine at once.
-	poolCleanupMaxCount = 200
-	// poolCheckCleanupInterval specifies the time interval that the background cleanup goroutine
+	mapCleanupMaxCount = 200
+	// mapCheckCleanupInterval specifies the time interval that the background cleanup goroutine
 	// periodically wakes up and does the cleanup if necessary.
-	poolCheckCleanupInterval = 5 * time.Minute
-	// When a connection keep idle more than poolCleanupIdleDuration, it would be cleaned up
+	mapCheckCleanupInterval = 5 * time.Minute
+	// When a connection keep idle more than mapCleanupIdleDuration, it would be cleaned up
 	// by the backgroud cleanup goroutine.
-	poolCleanupIdleDuration = 3 * time.Minute
+	mapCleanupIdleDuration = 3 * time.Minute
 )
 
 // Conn is a simple wrapper of grpc.ClientConn.
 type Conn struct {
 	c *grpc.ClientConn
 	// The reference count of how many TiKVClient uses this grpc.ClientConn at present.
-	// It's used for the implementation of backgroud cleanup of idle connections in ConnPool.
+	// It's used for the implementation of backgroud cleanup of idle connections in ConnMap.
 	refCount uint32
 	// The timestamp of this grpc.ClientConn becomes idle (refCount == 0).
-	// It's used for the implementation of backgroud cleanup of idel connections in ConnPool.
+	// It's used for the implementation of backgroud cleanup of idel connections in ConnMap.
 	becomeIdle time.Time
 }
 
 // createConnFunc is the type of functions that can be used to create a grpc.ClientConn.
 type createConnFunc func(addr string) (*grpc.ClientConn, error)
 
-// ConnPool is a pool that maintains Conn with a specific addr.
-// TODO: Implement background cleanup. It adds a backgroud goroutine to periodically check
-// whether there is any Conn in pool have no usage (refCount == 0), and then
-// close and remove it from pool.
-type ConnPool struct {
+// ConnMap is a map that maintains address and their corresponding grpc connections.
+// It has a backgroud goroutine to periodically check whether there is any connection is idle
+// (which is not used outside the map, refCount == 0), and then close and remove these idle connections.
+type ConnMap struct {
 	m struct {
 		sync.RWMutex
 		isClosed bool
@@ -71,15 +70,15 @@ type ConnPool struct {
 	backgroudCleanerWg *sync.WaitGroup
 }
 
-// NewConnPool creates a ConnPool.
-func NewConnPool(f createConnFunc) *ConnPool {
-	p := new(ConnPool)
+// NewConnMap creates a ConnMap.
+func NewConnMap(f createConnFunc) *ConnMap {
+	p := new(ConnMap)
 	p.f = f
 	p.m.conns = make(map[string]*Conn)
 	// initialize backgroud cleaner
 	closeCh := make(chan int, 1)
 	wg := new(sync.WaitGroup)
-	cleaner := newConnPoolCleaner(p, poolCheckCleanupInterval, poolCleanupIdleDuration, closeCh)
+	cleaner := newConnMapCleaner(p, mapCheckCleanupInterval, mapCleanupIdleDuration, closeCh)
 	wg.Add(1)
 	// spawn the cleaner goroutine
 	go func() {
@@ -91,12 +90,12 @@ func NewConnPool(f createConnFunc) *ConnPool {
 	return p
 }
 
-// Get takes a Conn out of the pool by the specific addr.
-func (p *ConnPool) Get(addr string) (*grpc.ClientConn, error) {
+// Get takes a Conn out of the map by the specific addr.
+func (p *ConnMap) Get(addr string) (*grpc.ClientConn, error) {
 	p.m.RLock()
 	if p.m.isClosed {
 		p.m.RUnlock()
-		return nil, errors.Errorf("ConnPool is closed")
+		return nil, errors.Errorf("ConnMap is closed")
 	}
 	conn, ok := p.m.conns[addr]
 	if ok {
@@ -114,7 +113,7 @@ func (p *ConnPool) Get(addr string) (*grpc.ClientConn, error) {
 	return conn.c, nil
 }
 
-func (p *ConnPool) tryCreate(addr string) (*Conn, error) {
+func (p *ConnMap) tryCreate(addr string) (*Conn, error) {
 	p.m.Lock()
 	defer p.m.Unlock()
 	conn, ok := p.m.conns[addr]
@@ -132,8 +131,8 @@ func (p *ConnPool) tryCreate(addr string) (*Conn, error) {
 	return conn, nil
 }
 
-// Put puts a Conn back to the pool by the specific addr.
-func (p *ConnPool) Put(addr string, c *grpc.ClientConn) {
+// Put puts a Conn back to the map by the specific addr.
+func (p *ConnMap) Put(addr string, c *grpc.ClientConn) {
 	p.m.RLock()
 	defer p.m.RUnlock()
 	conn, ok := p.m.conns[addr]
@@ -153,8 +152,8 @@ func (p *ConnPool) Put(addr string, c *grpc.ClientConn) {
 	}
 }
 
-// Close closes the pool.
-func (p *ConnPool) Close() {
+// Close closes the map.
+func (p *ConnMap) Close() {
 	p.m.Lock()
 	if !p.m.isClosed {
 		p.m.isClosed = true
@@ -170,7 +169,7 @@ func (p *ConnPool) Close() {
 	p.m.Unlock()
 }
 
-func (p *ConnPool) cleanupConnIdleAfter(d time.Duration) {
+func (p *ConnMap) cleanupConnIdleAfter(d time.Duration) {
 	now := time.Now()
 	p.m.Lock()
 	defer p.m.Unlock()
@@ -180,40 +179,40 @@ func (p *ConnPool) cleanupConnIdleAfter(d time.Duration) {
 			conn.c.Close()
 			delete(p.m.conns, addr)
 			cleanupCount++
-			if cleanupCount >= poolCleanupMaxCount {
+			if cleanupCount >= mapCleanupMaxCount {
 				return
 			}
 		}
 		iterateCount++
-		if iterateCount >= poolIterateMaxCount {
+		if iterateCount >= mapIterateMaxCount {
 			return
 		}
 	}
 }
 
-// ConnPoolCleaner clean up idle connection periodically in specified time interval.
-type ConnPoolCleaner struct {
-	pool                *ConnPool
+// ConnMapCleaner clean up idle connection periodically in specified time interval.
+type ConnMapCleaner struct {
+	connMap             *ConnMap
 	checkInterval       time.Duration
 	cleanupIdleDuration time.Duration
 	closeCh             chan int
 }
 
-func newConnPoolCleaner(
-	pool *ConnPool,
+func newConnMapCleaner(
+	connMap *ConnMap,
 	checkInterval time.Duration,
 	cleanupIdleDuration time.Duration,
-	closeCh chan int) *ConnPoolCleaner {
+	closeCh chan int) *ConnMapCleaner {
 
-	return &ConnPoolCleaner{
-		pool:                pool,
+	return &ConnMapCleaner{
+		connMap:             connMap,
 		checkInterval:       checkInterval,
 		cleanupIdleDuration: cleanupIdleDuration,
 		closeCh:             closeCh,
 	}
 }
 
-func (c *ConnPoolCleaner) run() {
+func (c *ConnMapCleaner) run() {
 	ticker := time.NewTicker(c.checkInterval)
 	defer ticker.Stop()
 	for {
@@ -221,7 +220,7 @@ func (c *ConnPoolCleaner) run() {
 		case <-c.closeCh:
 			return
 		case <-ticker.C:
-			c.pool.cleanupConnIdleAfter(c.cleanupIdleDuration)
+			c.connMap.cleanupConnIdleAfter(c.cleanupIdleDuration)
 		}
 	}
 }
