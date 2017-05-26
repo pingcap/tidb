@@ -178,6 +178,8 @@ const (
 	ProcessPriv
 	// GrantPriv is the privilege to grant privilege to user.
 	GrantPriv
+	// ReferencesPriv is not checked yet.
+	ReferencesPriv
 	// AlterPriv is the privilege to run alter statement.
 	AlterPriv
 	// ExecutePriv is the privilege to run execute statement.
@@ -205,6 +207,7 @@ var Priv2UserCol = map[PrivilegeType]string{
 	DropPriv:       "Drop_priv",
 	ProcessPriv:    "Process_priv",
 	GrantPriv:      "Grant_priv",
+	ReferencesPriv: "References_priv",
 	AlterPriv:      "Alter_priv",
 	ExecutePriv:    "Execute_priv",
 	IndexPriv:      "Index_priv",
@@ -224,13 +227,14 @@ var Col2PrivType = map[string]PrivilegeType{
 	"Drop_priv":        DropPriv,
 	"Process_priv":     ProcessPriv,
 	"Grant_priv":       GrantPriv,
+	"References_priv":  ReferencesPriv,
 	"Alter_priv":       AlterPriv,
 	"Execute_priv":     ExecutePriv,
 	"Index_priv":       IndexPriv,
 }
 
 // AllGlobalPrivs is all the privileges in global scope.
-var AllGlobalPrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, ProcessPriv, GrantPriv, AlterPriv, ShowDBPriv, SuperPriv, ExecutePriv, IndexPriv, CreateUserPriv, TriggerPriv}
+var AllGlobalPrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, ProcessPriv, GrantPriv, ReferencesPriv, AlterPriv, ShowDBPriv, SuperPriv, ExecutePriv, IndexPriv, CreateUserPriv, TriggerPriv}
 
 // Priv2Str is the map for privilege to string.
 var Priv2Str = map[PrivilegeType]string{
@@ -246,6 +250,7 @@ var Priv2Str = map[PrivilegeType]string{
 	DropPriv:       "Drop",
 	ProcessPriv:    "Process",
 	GrantPriv:      "Grant Option",
+	ReferencesPriv: "References",
 	AlterPriv:      "Alter",
 	ExecutePriv:    "Execute",
 	IndexPriv:      "Index",
