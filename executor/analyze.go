@@ -202,7 +202,7 @@ func (c *SampleCollector) collect(d types.Datum) error {
 	if len(c.samples) < maxSampleCount {
 		c.samples = append(c.samples, d)
 	} else {
-		shouldAdd := rand.Int63n(c.Count-c.NullCount) < maxSampleCount
+		shouldAdd := rand.Int63n(c.Count) < maxSampleCount
 		if shouldAdd {
 			idx := rand.Intn(maxSampleCount)
 			c.samples[idx] = d
