@@ -115,6 +115,11 @@ func (sf *ScalarFunction) GetType() *types.FieldType {
 	return sf.RetType
 }
 
+// GetTypeClass implements Expression interface.
+func (sf *ScalarFunction) GetTypeClass() types.TypeClass {
+	return sf.RetType.ToClass()
+}
+
 // Equal implements Expression interface.
 func (sf *ScalarFunction) Equal(e Expression, ctx context.Context) bool {
 	fun, ok := e.(*ScalarFunction)
