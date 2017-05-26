@@ -15,6 +15,7 @@ package expression
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"math"
 	"net"
 	"strings"
@@ -416,7 +417,32 @@ type builtinInet6NtoaSig struct {
 // eval evals a builtinInet6NtoaSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet6-ntoa
 func (b *builtinInet6NtoaSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("INET6_NTOA")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if args[0].IsNull() {
+		return d, nil
+	}
+
+	ipArg, err := args[0].ToBytes()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	ip := net.IP(ipArg).String()
+	if len(ipArg) == net.IPv6len && !strings.Contains(ip, ":") {
+		ip = fmt.Sprintf("::ffff:%s", ip)
+	}
+
+	if net.ParseIP(ip) == nil {
+		return d, nil
+	}
+
+	d.SetString(ip)
+
+	return d, nil
 }
 
 type isFreeLockFunctionClass struct {
