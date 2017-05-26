@@ -72,9 +72,13 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 	// Update self schema version to etcd.
 	if ddl.ChangeOwnerInNewWay {
 		defer func() {
+			if err != nil {
+				log.Info("[ddl] not udpate self schema version to etcd")
+				return
+			}
 			err = do.ddl.SchemaVersionSyncer().UpdateSelfVersion(goctx.Background(), latestSchemaVersion)
 			if err != nil {
-				log.Warnf("update self version from %v to %v failed", usedSchemaVersion, latestSchemaVersion)
+				log.Infof("[ddl] update self version from %v to %v failed %v", usedSchemaVersion, latestSchemaVersion, err)
 			}
 		}()
 	}

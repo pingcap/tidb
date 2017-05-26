@@ -13,9 +13,9 @@
 
 package ddl
 
+/*
 // TODO: Remove the package of integration.
 // The tests are passed here. But import `integration` will introduce a lot of dependencies.
-/*
 import (
 	"fmt"
 	"sync"

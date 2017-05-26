@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"math"
 	"strconv"
 	"time"
 
@@ -28,14 +29,16 @@ const (
 	ddlAllSchemaVersions   = "/tidb/ddl/all_schema_versions"
 	ddlGlobalSchemaVersion = "/tidb/ddl/global_schema_version"
 	initialVersion         = "0"
-	putKeyDefaultRetryCnt  = 3
 	putKeyNoRetry          = 1
-	putKeyDefaultTimeout   = 3 * time.Second
-	checkVersInterval      = 10 * time.Millisecond
+	putKeyDefaultRetryCnt  = 3
+	putKeyRetryUnlimited   = math.MaxInt64
+	putKeyDefaultTimeout   = 2 * time.Second
+	putKeyRetryInterval    = 30 * time.Millisecond
+	checkVersInterval      = 20 * time.Millisecond
 )
 
 // checkVersFirstWaitTime is used for testing.
-var checkVersFirstWaitTime = 30 * time.Millisecond
+var checkVersFirstWaitTime = 50 * time.Millisecond
 
 type schemaVersionSyncer struct {
 	selfSchemaVerPath string
@@ -45,14 +48,22 @@ type schemaVersionSyncer struct {
 
 func (s *schemaVersionSyncer) putKV(ctx goctx.Context, retryCnt int, key, val string) error {
 	var err error
-	ctx, cancel := goctx.WithTimeout(ctx, putKeyDefaultTimeout*time.Duration(retryCnt))
-	defer cancel()
 	for i := 0; i < retryCnt; i++ {
-		_, err = s.etcdCli.Put(ctx, key, val)
+		select {
+		case <-ctx.Done():
+			return errors.Trace(ctx.Err())
+		default:
+		}
+
+		childCtx, cancel := goctx.WithTimeout(ctx, putKeyDefaultTimeout)
+		_, err = s.etcdCli.Put(childCtx, key, val)
 		if err == nil {
+			cancel()
 			return nil
 		}
+		cancel()
 		log.Warnf("put schema version %s failed %v no.%d", val, err, i)
+		time.Sleep(putKeyRetryInterval)
 	}
 	return errors.Trace(err)
 }
@@ -76,7 +87,7 @@ func (s *schemaVersionSyncer) UpdateSelfVersion(ctx goctx.Context, version int64
 
 func (s *schemaVersionSyncer) updateGlobalVersion(ctx goctx.Context, version int64) error {
 	ver := strconv.FormatInt(version, 10)
-	return s.putKV(ctx, putKeyNoRetry, ddlGlobalSchemaVersion, ver)
+	return s.putKV(ctx, putKeyRetryUnlimited, ddlGlobalSchemaVersion, ver)
 }
 
 func isContextFinished(err error) bool {

@@ -259,7 +259,6 @@ func (d *ddl) handleDDLJobQueue() error {
 		waitTime := 2 * d.lease
 		var job *model.Job
 		var schemaVer int64
-		ctx, cancelFunc := goctx.WithTimeout(goctx.Background(), waitTime)
 		err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 			t := meta.NewMeta(txn)
 			owner, err := d.checkOwner(t, ddlJobFlag)
@@ -308,20 +307,13 @@ func (d *ddl) handleDDLJobQueue() error {
 				return errors.Trace(err)
 			}
 
-			// Running job may cost some time, so here we must update owner status to
-			// prevent other become the owner.
 			if ChangeOwnerInNewWay {
-				err = d.worker.updateGlobalVersion(ctx, schemaVer)
-				if err != nil {
-					log.Warnf("update latest schema version %v failed", schemaVer)
-				}
 				return nil
 			}
 			owner.LastUpdateTS = time.Now().UnixNano()
 			err = t.SetDDLJobOwner(owner)
 			return errors.Trace(err)
 		})
-		cancelFunc()
 		if err != nil {
 			return errors.Trace(err)
 		} else if job == nil {
@@ -441,21 +433,32 @@ func (d *ddl) waitSchemaChanged(waitTime time.Duration, latestSchemaVersion int6
 		return
 	}
 
-	if ChangeOwnerInNewWay {
-		// TODO: Make ctx exits when the d is close.
-		ctx, cancelFunc := goctx.WithTimeout(goctx.Background(), waitTime)
-		defer cancelFunc()
-		err := d.worker.checkAllVersions(ctx, latestSchemaVersion)
-		if err != nil {
-			log.Infof("[ddl] wait schema version %d failed %v", latestSchemaVersion, err)
+	if !ChangeOwnerInNewWay {
+		select {
+		case <-time.After(waitTime):
+		case <-d.quitCh:
 		}
 		return
 	}
 
-	select {
-	case <-time.After(waitTime):
-	case <-d.quitCh:
+	// TODO: Do we need to wait for a while?
+	if latestSchemaVersion == 0 {
+		log.Infof("[ddl] schema version doesn't changed")
+		return
 	}
+	// TODO: Make ctx exits when the d is close.
+	ctx, cancelFunc := goctx.WithTimeout(goctx.Background(), waitTime)
+	defer cancelFunc()
+	err := d.worker.updateGlobalVersion(ctx, latestSchemaVersion)
+	if err != nil {
+		log.Infof("[ddl] udpate latest schema version %d failed %v", latestSchemaVersion, err)
+	}
+
+	err = d.worker.checkAllVersions(ctx, latestSchemaVersion)
+	if err != nil {
+		log.Infof("[ddl] wait latest schema version %d failed %v", latestSchemaVersion, err)
+	}
+	return
 }
 
 // updateSchemaVersion increments the schema version by 1 and sets SchemaDiff.
