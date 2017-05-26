@@ -21,15 +21,25 @@ import (
 	"sync"
 	"time"
 
-	"google.golang.org/grpc"
-
 	"github.com/juju/errors"
+	"google.golang.org/grpc"
 )
 
 const (
-	poolIterateMaxCount      = 1000
-	poolCleanupMaxCount      = 200
-	poolCheckCleanupInterval = 10 * time.Minute
+	// poolIterateMaxCount specifies at most how many connections are iterated
+	// and checked by the backgroud cleanup goroutine at once.
+	// Both poolIterateMaxCount and poolCleanupMaxCount are used to avoid the cleanup time
+	// being too long so that the backgroud cleanup will not block the foreground business.
+	poolIterateMaxCount = 1000
+	// poolCleanupMaxCount specifies at most how many idle connections are cleaned up
+	// by the background cleanup goroutine at once.
+	poolCleanupMaxCount = 200
+	// poolCheckCleanupInterval specifies the time interval that the background cleanup goroutine
+	// periodically wakes up and does the cleanup if necessary.
+	poolCheckCleanupInterval = 5 * time.Minute
+	// When a connection keep idle more than poolCleanupIdleDuration, it would be cleaned up
+	// by the backgroud cleanup goroutine.
+	poolCleanupIdleDuration = 3 * time.Minute
 )
 
 // Conn is a simple wrapper of grpc.ClientConn.
@@ -38,6 +48,9 @@ type Conn struct {
 	// The reference count of how many TiKVClient uses this grpc.ClientConn at present.
 	// It's used for the implementation of backgroud cleanup of idle connections in ConnPool.
 	refCount uint32
+	// The timestamp of this grpc.ClientConn becomes idle (refCount == 0).
+	// It's used for the implementation of backgroud cleanup of idel connections in ConnPool.
+	becomeIdle time.Time
 }
 
 // createConnFunc is the type of functions that can be used to create a grpc.ClientConn.
@@ -66,7 +79,7 @@ func NewConnPool(f createConnFunc) *ConnPool {
 	// initialize backgroud cleaner
 	closeCh := make(chan int, 1)
 	wg := new(sync.WaitGroup)
-	cleaner := NewConnPoolCleaner(p, poolCheckCleanupInterval, closeCh)
+	cleaner := newConnPoolCleaner(p, poolCheckCleanupInterval, poolCleanupIdleDuration, closeCh)
 	wg.Add(1)
 	// spawn the cleaner goroutine
 	go func() {
@@ -88,7 +101,7 @@ func (p *ConnPool) Get(addr string) (*grpc.ClientConn, error) {
 	conn, ok := p.m.conns[addr]
 	if ok {
 		// Increase refCount.
-		conn.refCount += 1
+		conn.refCount++
 		p.m.RUnlock()
 		return conn.c, nil
 	}
@@ -134,7 +147,10 @@ func (p *ConnPool) Put(addr string, c *grpc.ClientConn) {
 	if conn.refCount == 0 {
 		panic(fmt.Errorf("Attempt to Put a ClientConn with refCount 0 for addr %s", addr))
 	}
-	conn.refCount -= 1
+	conn.refCount--
+	if conn.refCount == 0 {
+		conn.becomeIdle = time.Now()
+	}
 }
 
 // Close closes the pool.
@@ -154,19 +170,20 @@ func (p *ConnPool) Close() {
 	p.m.Unlock()
 }
 
-func (p *ConnPool) cleanupIdleConn() {
+func (p *ConnPool) cleanupConnIdleAfter(d time.Duration) {
+	now := time.Now()
 	p.m.Lock()
 	defer p.m.Unlock()
 	iterateCount, cleanupCount := 0, 0
 	for addr, conn := range p.m.conns {
-		if conn.refCount == 0 {
+		if conn.refCount == 0 && now.After(conn.becomeIdle.Add(d)) {
 			delete(p.m.conns, addr)
-			cleanupCount += 1
+			cleanupCount++
 			if cleanupCount >= poolCleanupMaxCount {
 				return
 			}
 		}
-		iterateCount += 1
+		iterateCount++
 		if iterateCount >= poolIterateMaxCount {
 			return
 		}
@@ -175,28 +192,35 @@ func (p *ConnPool) cleanupIdleConn() {
 
 // ConnPoolCleaner clean up idle connection periodically in specified time interval.
 type ConnPoolCleaner struct {
-	pool     *ConnPool
-	interval time.Duration
-	closeCh  chan int
+	pool                *ConnPool
+	checkInterval       time.Duration
+	cleanupIdleDuration time.Duration
+	closeCh             chan int
 }
 
-func NewConnPoolCleaner(pool *ConnPool, interval time.Duration, closeCh chan int) *ConnPoolCleaner {
+func newConnPoolCleaner(
+	pool *ConnPool,
+	checkInterval time.Duration,
+	cleanupIdleDuration time.Duration,
+	closeCh chan int) *ConnPoolCleaner {
+
 	return &ConnPoolCleaner{
-		pool:     pool,
-		interval: interval,
-		closeCh:  closeCh,
+		pool:                pool,
+		checkInterval:       checkInterval,
+		cleanupIdleDuration: cleanupIdleDuration,
+		closeCh:             closeCh,
 	}
 }
 
 func (c *ConnPoolCleaner) run() {
-	ticker := time.NewTicker(c.interval)
+	ticker := time.NewTicker(c.checkInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-c.closeCh:
 			return
 		case <-ticker.C:
-			c.pool.cleanupIdleConn()
+			c.pool.cleanupConnIdleAfter(c.cleanupIdleDuration)
 		}
 	}
 }

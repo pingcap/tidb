@@ -68,9 +68,10 @@ func (s *testPoolSuite) TestPoolCleaner(c *C) {
 	}
 	p.m.conns = make(map[string]*Conn)
 	checkCleanupInterval := time.Millisecond
+	cleanupIdleDuration := time.Millisecond
 	testAddr := "127.0.0.1:26666"
 	closeCh := make(chan int, 1)
-	cleaner := NewConnPoolCleaner(p, checkCleanupInterval, closeCh)
+	cleaner := newConnPoolCleaner(p, checkCleanupInterval, cleanupIdleDuration, closeCh)
 	conn, err := p.Get(testAddr)
 	c.Assert(err, IsNil)
 	p.Put(testAddr, conn)
@@ -81,7 +82,7 @@ func (s *testPoolSuite) TestPoolCleaner(c *C) {
 		cleaner.run()
 		wg.Done()
 	}()
-	time.Sleep(checkCleanupInterval * 2)
+	time.Sleep((checkCleanupInterval + cleanupIdleDuration) * 2)
 	closeCh <- 1
 	wg.Wait()
 	c.Assert(len(p.m.conns), Equals, 0)
