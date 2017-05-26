@@ -165,17 +165,13 @@ func analyzePK(exec *XSelectTableExec) analyzeResult {
 }
 
 func analyzeColumns(exec *XSelectTableExec) analyzeResult {
-	count, sampleRows, colNDVs, err := CollectSamplesAndEstimateNDVs(&recordSet{executor: exec}, len(exec.Columns))
+	collectors, err := CollectSamplesAndEstimateNDVs(&recordSet{executor: exec}, len(exec.Columns))
 	if err != nil {
 		return analyzeResult{err: err}
 	}
-	columnSamples := rowsToColumnSamples(sampleRows)
-	if columnSamples == nil {
-		columnSamples = make([][]types.Datum, len(exec.Columns))
-	}
-	result := analyzeResult{tableID: exec.tableInfo.ID, count: count, isIndex: 0}
+	result := analyzeResult{tableID: exec.tableInfo.ID, count: collectors[0].Count + collectors[0].NullCount, isIndex: 0}
 	for i, col := range exec.Columns {
-		hg, err := statistics.BuildColumn(exec.ctx, defaultBucketCount, col.ID, colNDVs[i], count, columnSamples[i])
+		hg, err := statistics.BuildColumn(exec.ctx, defaultBucketCount, col.ID, collectors[i].Sketch.NDV(), collectors[i].Count, collectors[i].NullCount, collectors[i].samples)
 		result.hist = append(result.hist, hg)
 		if err != nil && result.err == nil {
 			result.err = err
@@ -189,44 +185,59 @@ func analyzeIndex(exec *XSelectIndexExec) analyzeResult {
 	return analyzeResult{tableID: exec.tableInfo.ID, hist: []*statistics.Histogram{hg}, count: count, isIndex: 1, err: err}
 }
 
+// SampleCollector will collect samples and calculate the count and ndv of an attribute.
+type SampleCollector struct {
+	samples   []types.Datum
+	NullCount int64
+	Count     int64
+	Sketch    *statistics.FMSketch
+}
+
+func (c *SampleCollector) collect(d types.Datum) error {
+	if d.IsNull() {
+		c.NullCount++
+		return nil
+	}
+	c.Count++
+	if len(c.samples) < maxSampleCount {
+		c.samples = append(c.samples, d)
+	} else {
+		shouldAdd := rand.Int63n(c.Count) < maxSampleCount
+		if shouldAdd {
+			idx := rand.Intn(maxSampleCount)
+			c.samples[idx] = d
+		}
+	}
+	return errors.Trace(c.Sketch.InsertValue(d))
+}
+
 // CollectSamplesAndEstimateNDVs collects sample from the result set using Reservoir Sampling algorithm,
-// and estimates NDVs using FM Sketch during the collecting process.
+// and estimates NDVs using FM Sketch during the collecting process. It returns the sample collectors which contain total
+// count, null count and distinct values count.
 // See https://en.wikipedia.org/wiki/Reservoir_sampling
 // Exported for test.
-func CollectSamplesAndEstimateNDVs(e ast.RecordSet, numCols int) (count int64, samples []*ast.Row, ndvs []int64, err error) {
-	var sketches []*statistics.FMSketch
-	for i := 0; i < numCols; i++ {
-		sketches = append(sketches, statistics.NewFMSketch(maxSketchSize))
+func CollectSamplesAndEstimateNDVs(e ast.RecordSet, numCols int) ([]*SampleCollector, error) {
+	collectors := make([]*SampleCollector, numCols)
+	for i := range collectors {
+		collectors[i] = &SampleCollector{
+			Sketch: statistics.NewFMSketch(maxSketchSize),
+		}
 	}
 	for {
 		row, err := e.Next()
 		if err != nil {
-			return count, samples, ndvs, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		if row == nil {
-			break
+			return collectors, nil
 		}
 		for i, val := range row.Data {
-			err = sketches[i].InsertValue(val)
+			err = collectors[i].collect(val)
 			if err != nil {
-				return count, samples, ndvs, errors.Trace(err)
+				return nil, errors.Trace(err)
 			}
 		}
-		if len(samples) < maxSampleCount {
-			samples = append(samples, row)
-		} else {
-			shouldAdd := rand.Int63n(count) < maxSampleCount
-			if shouldAdd {
-				idx := rand.Intn(maxSampleCount)
-				samples[idx] = row
-			}
-		}
-		count++
 	}
-	for _, sketch := range sketches {
-		ndvs = append(ndvs, sketch.NDV())
-	}
-	return count, samples, ndvs, nil
 }
 
 func rowsToColumnSamples(rows []*ast.Row) [][]types.Datum {

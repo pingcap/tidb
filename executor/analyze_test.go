@@ -94,8 +94,8 @@ func (s *testSuite) TestCollectSamplesAndEstimateNDVs(c *C) {
 		rs.data[i].SetInt64(rs.data[i].GetInt64() + 2)
 	}
 
-	cnt, _, ndvs, err := executor.CollectSamplesAndEstimateNDVs(rs, 1)
+	collectors, err := executor.CollectSamplesAndEstimateNDVs(rs, 1)
 	c.Assert(err, IsNil)
-	c.Assert(cnt, Equals, int64(rs.count))
-	c.Assert(ndvs[0], Equals, int64(6624))
+	c.Assert(collectors[0].NullCount+collectors[0].Count, Equals, int64(rs.count))
+	c.Assert(collectors[0].Sketch.NDV(), Equals, int64(6624))
 }

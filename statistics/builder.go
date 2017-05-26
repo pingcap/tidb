@@ -112,9 +112,9 @@ func build4SortedColumn(ctx context.Context, numBuckets, id int64, records ast.R
 }
 
 // BuildColumn builds histogram from samples for column.
-func BuildColumn(ctx context.Context, numBuckets, id int64, ndv int64, count int64, samples []types.Datum) (*Histogram, error) {
+func BuildColumn(ctx context.Context, numBuckets, id int64, ndv int64, count int64, nullCount int64, samples []types.Datum) (*Histogram, error) {
 	if count == 0 {
-		return &Histogram{ID: id}, nil
+		return &Histogram{ID: id, NullCount: nullCount}, nil
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	err := types.SortDatums(sc, samples)
@@ -122,9 +122,10 @@ func BuildColumn(ctx context.Context, numBuckets, id int64, ndv int64, count int
 		return nil, errors.Trace(err)
 	}
 	hg := &Histogram{
-		ID:      id,
-		NDV:     ndv,
-		Buckets: make([]Bucket, 1, numBuckets),
+		ID:        id,
+		NDV:       ndv,
+		NullCount: nullCount,
+		Buckets:   make([]Bucket, 1, numBuckets),
 	}
 	valuesPerBucket := float64(count)/float64(numBuckets) + 1
 
