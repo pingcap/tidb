@@ -46,72 +46,6 @@ func (j JSON) Type() string {
 	}
 }
 
-// Merge merges suffixes into j according the following rules:
-// 1) adjacent arrays are merged to a single array;
-// 2) adjacent object are merged to a single object;
-// 3) a scalar value is autowrapped as an array before merge;
-// 4) an adjacent array and object are merged by autowrapping the object as an array.
-func (j *JSON) Merge(suffixes ...JSON) {
-	switch j.typeCode {
-	case typeCodeArray, typeCodeObject:
-	default:
-		firstElem := *j
-		*j = CreateJSON(nil)
-		j.typeCode = typeCodeArray
-		j.array = []JSON{firstElem}
-	}
-	for i := 0; i < len(suffixes); i++ {
-		suffix := suffixes[i]
-		switch j.typeCode {
-		case typeCodeArray:
-			if suffix.typeCode == typeCodeArray {
-				// rule (1)
-				for _, elem := range suffix.array {
-					j.array = append(j.array, elem)
-				}
-			} else {
-				// rule (3), (4)
-				j.array = append(j.array, suffix)
-			}
-		case typeCodeObject:
-			if suffix.typeCode == typeCodeObject {
-				// rule (2)
-				for key := range suffix.object {
-					j.object[key] = suffix.object[key]
-				}
-			} else {
-				// rule (4)
-				firstElem := *j
-				*j = CreateJSON(nil)
-				j.typeCode = typeCodeArray
-				j.array = []JSON{firstElem}
-				i--
-			}
-		}
-	}
-	return
-}
-
-// Set inserts or updates data in j. All path expressions cannot contains * or ** wildcard.
-func (j *JSON) Set(pathExprs []string, values []JSON) (err error) {
-	if len(pathExprs) != len(values) {
-		// TODO should return 1582(42000)
-		return errors.New("Incorrect parameter count")
-	}
-	for i := 0; i < len(pathExprs); i++ {
-		pathExpr := pathExprs[i]
-		value := values[i]
-		indices, err := validateJSONPathExpr(pathExpr)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if *j, err = set(*j, pathExpr, indices, value); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return
-}
-
 // Extract receives several path expressions as arguments, matches them in j, and returns:
 //  ret: target JSON matched any path expressions. maybe autowrapped as an array.
 //  found: true if any path expressions matched.
@@ -185,35 +119,4 @@ func extract(j JSON, pathExpr string) (ret JSON, found bool, err error) {
 		}
 	}
 	return
-}
-
-func set(j JSON, pathExpr string, indices [][]int, value JSON) (_ JSON, err error) {
-	if len(indices) == 0 {
-		return value, nil
-	}
-	leg := pathExpr[indices[0][0]:indices[0][1]]
-	switch leg[0] {
-	case '[':
-		index, atoiErr := strconv.Atoi(string(leg[1 : len(leg)-1]))
-		if atoiErr != nil {
-			err = errors.Trace(atoiErr)
-		}
-		if j.typeCode == typeCodeArray {
-			if len(j.array) > index {
-				j.array[index], err = set(j.array[index], pathExpr, indices[1:], value)
-			} else if len(indices) == 1 {
-				j.array = append(j.array, value)
-			}
-		}
-	case '.':
-		key := string(leg[1:])
-		if j.typeCode == typeCodeObject {
-			if child, ok := j.object[key]; ok {
-				j.object[key], err = set(child, pathExpr, indices[1:], value)
-			} else if len(indices) == 1 {
-				j.object[key] = value
-			}
-		}
-	}
-	return j, err
 }
