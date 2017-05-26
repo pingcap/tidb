@@ -61,7 +61,7 @@ type createConnFunc func(addr string) (*grpc.ClientConn, error)
 // (which is not used outside the map, refCount == 0), and then close and remove these idle connections.
 type ConnMap struct {
 	m struct {
-		sync.RWMutex
+		sync.Mutex
 		isClosed bool
 		conns    map[string]*Conn
 	}
@@ -92,30 +92,28 @@ func NewConnMap(f createConnFunc) *ConnMap {
 
 // Get takes a Conn out of the map by the specific addr.
 func (p *ConnMap) Get(addr string) (*grpc.ClientConn, error) {
-	p.m.RLock()
+	p.m.Lock()
+	defer p.m.Unlock()
 	if p.m.isClosed {
-		p.m.RUnlock()
 		return nil, errors.Errorf("ConnMap is closed")
 	}
 	conn, ok := p.m.conns[addr]
 	if ok {
-		// Increase refCount.
+		// Increase refCount for existing connection.
 		conn.refCount++
-		p.m.RUnlock()
 		return conn.c, nil
 	}
-	p.m.RUnlock()
 	var err error
 	conn, err = p.tryCreate(addr)
 	if err != nil {
 		return nil, err
 	}
+	// Increase refCount for new connection.
+	conn.refCount++
 	return conn.c, nil
 }
 
 func (p *ConnMap) tryCreate(addr string) (*Conn, error) {
-	p.m.Lock()
-	defer p.m.Unlock()
 	conn, ok := p.m.conns[addr]
 	if !ok {
 		c, err := p.f(addr)
@@ -124,7 +122,7 @@ func (p *ConnMap) tryCreate(addr string) (*Conn, error) {
 		}
 		conn = &Conn{
 			c:        c,
-			refCount: 1,
+			refCount: 0,
 		}
 		p.m.conns[addr] = conn
 	}
@@ -133,8 +131,8 @@ func (p *ConnMap) tryCreate(addr string) (*Conn, error) {
 
 // Put puts a Conn back to the map by the specific addr.
 func (p *ConnMap) Put(addr string, c *grpc.ClientConn) {
-	p.m.RLock()
-	defer p.m.RUnlock()
+	p.m.Lock()
+	defer p.m.Unlock()
 	conn, ok := p.m.conns[addr]
 	if !ok {
 		panic(fmt.Errorf("Attempt to Put for a non-existent addr %s", addr))
