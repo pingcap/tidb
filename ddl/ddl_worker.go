@@ -191,7 +191,8 @@ func (d *ddl) getFirstDDLJob(t *meta.Meta) (*model.Job, error) {
 
 // updateDDLJob updates the DDL job information.
 // Every time we enter another state except final state, we must call this function.
-func (d *ddl) updateDDLJob(t *meta.Meta, job *model.Job) error {
+func (d *ddl) updateDDLJob(t *meta.Meta, job *model.Job, updateTS uint64) error {
+	job.LastUpdateTS = int64(updateTS)
 	err := t.UpdateDDLJob(0, job)
 	return errors.Trace(err)
 }
@@ -279,7 +280,7 @@ func (d *ddl) handleDDLJobQueue() error {
 				// let other servers update the schema.
 				// So here we must check the elapsed time from last update, if < 2 * lease, we must
 				// wait again.
-				elapsed := time.Duration(time.Now().UnixNano() - job.LastUpdateTS)
+				elapsed := time.Duration(int64(txn.StartTS()) - job.LastUpdateTS)
 				if elapsed > 0 && elapsed < waitTime {
 					log.Warnf("[ddl] the elapsed time from last update is %s < %s, wait again", elapsed, waitTime)
 					waitTime -= elapsed
@@ -298,7 +299,7 @@ func (d *ddl) handleDDLJobQueue() error {
 				binloginfo.SetDDLBinlog(txn, job.ID, job.Query)
 				err = d.finishDDLJob(t, job)
 			} else {
-				err = d.updateDDLJob(t, job)
+				err = d.updateDDLJob(t, job, txn.StartTS())
 			}
 			if err != nil {
 				return errors.Trace(err)
