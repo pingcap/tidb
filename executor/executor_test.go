@@ -965,11 +965,26 @@ func (s *testSuite) TestJSON(c *C) {
 	tk.MustExec(`insert into test_json (id, a) values (3, null)`)
 	tk.MustExec(`insert into test_json (id, a) values (4, 'true')`)
 	tk.MustExec(`insert into test_json (id, a) values (5, '3')`)
+	tk.MustExec(`insert into test_json (id, a) values (5, '4.0')`)
 	tk.MustExec(`insert into test_json (id, a) values (6, '"string"')`)
 
 	var result *testkit.Result
 	result = tk.MustQuery(`select tj.a from test_json tj order by tj.id`)
-	result.Check(testkit.Rows(`{"a":[1,"2",{"aa":"bb"},4],"b":true}`, "null", "<nil>", "true", "3", `"string"`))
+	result.Check(testkit.Rows(`{"a":[1,"2",{"aa":"bb"},4],"b":true}`, "null", "<nil>", "true", "3", "4", `"string"`))
+
+	// check json_type function
+	result = tk.MustQuery(`select json_type(a) from test_json tj order by tj.id`)
+	result.Check(testkit.Rows("OBJECT", "NULL", "<nil>", "BOOLEAN", "INTEGER", "DOUBLE", "STRING"))
+
+	// check json compare with primitives.
+	result = tk.MustQuery(`select a from test_json tj where a = 3`)
+	result.Check(testkit.Rows("3"))
+	result = tk.MustQuery(`select a from test_json tj where a = 4.0`)
+	result.Check(testkit.Rows("4"))
+	result = tk.MustQuery(`select a from test_json tj where a = true`)
+	result.Check(testkit.Rows("true"))
+	result = tk.MustQuery(`select a from test_json tj where a = "string"`)
+	result.Check(testkit.Rows(`"string"`))
 }
 
 func (s *testSuite) TestToPBExpr(c *C) {

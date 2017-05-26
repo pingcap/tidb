@@ -390,7 +390,7 @@ func mockStatsHistogram(id int64, values []types.Datum, repeat int64) *statistic
 	for i := 0; i < ndv; i++ {
 		histogram.Buckets[i].Repeats = repeat
 		histogram.Buckets[i].Count = repeat * int64(i+1)
-		histogram.Buckets[i].Value = values[i]
+		histogram.Buckets[i].UpperBound = values[i]
 	}
 	return histogram
 }
