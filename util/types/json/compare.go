@@ -66,7 +66,7 @@ func i64AsFloat64(i64 int64, typeCode TypeCode) float64 {
 	}
 }
 
-// CompareJSON compares two json object. Returns -1 if j1 < j2,
+// CompareJSON compares two json objects. Returns -1 if j1 < j2,
 // 0 if j1 == j2, else returns 1.
 func CompareJSON(j1 JSON, j2 JSON) (cmp int, err error) {
 	precedence1 := jsonTypePrecedences[j1.Type()]

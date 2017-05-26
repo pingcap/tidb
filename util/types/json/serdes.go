@@ -21,6 +21,7 @@ import (
 	"sort"
 	"unsafe"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/util/hack"
 )
 
@@ -147,7 +148,7 @@ func decode(typeCode byte, data []byte) (j JSON, err error) {
 		msg := fmt.Sprintf(unknownTypeCodeErrorMsg, typeCode)
 		panic(msg)
 	}
-	return
+	return j, errors.Trace(err)
 }
 
 func encodeJSONLiteral(literal byte, buffer *bytes.Buffer) {
@@ -194,7 +195,7 @@ func decodeJSONString(s *string, data []byte) (err error) {
 			*s = hack.String(buf)
 		}
 	}
-	return
+	return errors.Trace(err)
 }
 
 func encodeJSONObject(m map[string]JSON, buffer *bytes.Buffer) {
@@ -261,7 +262,7 @@ func decodeJSONObject(m *map[string]JSON, data []byte) (err error) {
 	for i := 0; i < int(countAndSize[0]); i++ {
 		var keyBuffer = make([]byte, keyLengths[i])
 		if _, err = reader.Read(keyBuffer); err != nil {
-			return
+			break
 		}
 
 		var key = string(keyBuffer)
@@ -276,11 +277,11 @@ func decodeJSONObject(m *map[string]JSON, data []byte) (err error) {
 			value, err = decode(valueTypes[i], data[valueOffsets[i]:])
 		}
 		if err != nil {
-			return
+			break
 		}
 		(*m)[key] = value
 	}
-	return
+	return errors.Trace(err)
 }
 
 func encodeJSONArray(a []JSON, buffer *bytes.Buffer) {
@@ -331,11 +332,11 @@ func decodeJSONArray(a *[]JSON, data []byte) (err error) {
 			value, err = decode(valueTypes[i], data[valueOffsets[i]:])
 		}
 		if err != nil {
-			return
+			break
 		}
 		(*a)[i] = value
 	}
-	return
+	return errors.Trace(err)
 }
 
 // Every json type has a length which is useful for inline the value
