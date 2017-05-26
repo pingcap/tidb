@@ -80,7 +80,7 @@ func (c *rpcClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 	connPoolHistogram.WithLabelValues(label).Observe(time.Since(start).Seconds())
 	client := tikvpb.NewTikvClient(conn)
 	resp, err := c.callRPC(ctx, client, req)
-	defer c.p.Put(addr, conn)
+	c.p.Put(addr, conn)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

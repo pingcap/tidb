@@ -177,6 +177,7 @@ func (p *ConnPool) cleanupConnIdleAfter(d time.Duration) {
 	iterateCount, cleanupCount := 0, 0
 	for addr, conn := range p.m.conns {
 		if conn.refCount == 0 && now.After(conn.becomeIdle.Add(d)) {
+			conn.c.Close()
 			delete(p.m.conns, addr)
 			cleanupCount++
 			if cleanupCount >= poolCleanupMaxCount {
