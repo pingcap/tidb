@@ -193,6 +193,43 @@ func (s *testEvaluatorSuite) TestInetNtoa(c *C) {
 	c.Assert(r.IsNull(), IsTrue)
 }
 
+func (s *testEvaluatorSuite) TestInet6NtoA(c *C) {
+	tests := []struct {
+		ip     []byte
+		expect interface{}
+	}{
+		// Success cases
+		{[]byte{0x00, 0x00, 0x00, 0x00}, "0.0.0.0"},
+		{[]byte{0x0A, 0x00, 0x05, 0x09}, "10.0.5.9"},
+		{[]byte{0xFD, 0xFE, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x5A, 0x55, 0xCA, 0xFF, 0xFE,
+			0xFA, 0x90, 0x89}, "fdfe::5a55:caff:fefa:9089"},
+		{[]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x01,
+			0x02, 0x03, 0x04}, "::ffff:1.2.3.4"},
+		{[]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF,
+			0xFF, 0xFF, 0xFF}, "::ffff:255.255.255.255"},
+		// Fail cases
+		{[]byte{}, nil},                 // missing bytes
+		{[]byte{0x0A, 0x00, 0x05}, nil}, // missing a byte ipv4
+		{[]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF,
+			0xFF, 0xFF}, nil}, // missing a byte ipv6
+	}
+	fc := funcs[ast.Inet6Ntoa]
+	for _, test := range tests {
+		ip := types.NewDatum(test.ip)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{ip}), s.ctx)
+		c.Assert(err, IsNil)
+		result, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
+	}
+
+	var argNull types.Datum
+	f, _ := fc.getFunction(datumsToConstants([]types.Datum{argNull}), s.ctx)
+	r, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(r.IsNull(), IsTrue)
+}
+
 func (s *testEvaluatorSuite) TestInet6AtoN(c *C) {
 	tests := []struct {
 		ip     string

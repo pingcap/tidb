@@ -69,7 +69,7 @@ func (col *CorrelatedColumn) EvalDecimal(row []types.Datum, sc *variable.Stateme
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of CorrelatedColumn.
 func (col *CorrelatedColumn) EvalTime(row []types.Datum, sc *variable.StatementContext) (types.Time, bool, error) {
-	val, isNull, err := evalExprToDate(col, row, sc)
+	val, isNull, err := evalExprToTime(col, row, sc)
 	return val, isNull, errors.Trace(err)
 }
 
@@ -157,6 +157,11 @@ func (col *Column) GetType() *types.FieldType {
 	return col.RetType
 }
 
+// GetTypeClass implements Expression interface.
+func (col *Column) GetTypeClass() types.TypeClass {
+	return col.RetType.ToClass()
+}
+
 // Eval implements Expression interface.
 func (col *Column) Eval(row []types.Datum) (types.Datum, error) {
 	return row[col.Index], nil
@@ -188,7 +193,7 @@ func (col *Column) EvalDecimal(row []types.Datum, sc *variable.StatementContext)
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of Column.
 func (col *Column) EvalTime(row []types.Datum, sc *variable.StatementContext) (types.Time, bool, error) {
-	val, isNull, err := evalExprToDate(col, row, sc)
+	val, isNull, err := evalExprToTime(col, row, sc)
 	return val, isNull, errors.Trace(err)
 }
 
