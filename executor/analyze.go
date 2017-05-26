@@ -193,7 +193,7 @@ type SampleCollector struct {
 	Sketch    *statistics.FMSketch
 }
 
-func (c *SampleCollector) insert(d types.Datum) error {
+func (c *SampleCollector) collect(d types.Datum) error {
 	if d.IsNull() {
 		c.NullCount++
 		return nil
@@ -212,7 +212,8 @@ func (c *SampleCollector) insert(d types.Datum) error {
 }
 
 // CollectSamplesAndEstimateNDVs collects sample from the result set using Reservoir Sampling algorithm,
-// and estimates NDVs using FM Sketch during the collecting process.
+// and estimates NDVs using FM Sketch during the collecting process. It returns the sample collectors which contain total
+// count, null count and distinct values count.
 // See https://en.wikipedia.org/wiki/Reservoir_sampling
 // Exported for test.
 func CollectSamplesAndEstimateNDVs(e ast.RecordSet, numCols int) ([]*SampleCollector, error) {
@@ -231,7 +232,7 @@ func CollectSamplesAndEstimateNDVs(e ast.RecordSet, numCols int) ([]*SampleColle
 			return collectors, nil
 		}
 		for i, val := range row.Data {
-			err = collectors[i].insert(val)
+			err = collectors[i].collect(val)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

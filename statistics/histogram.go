@@ -32,7 +32,7 @@ import (
 type Histogram struct {
 	ID        int64 // Column ID.
 	NDV       int64 // Number of distinct values.
-	NullCount int64
+	NullCount int64 // Number of null values.
 	// LastUpdateVersion is the version that this histogram updated last time.
 	LastUpdateVersion uint64
 
