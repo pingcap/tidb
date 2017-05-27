@@ -18,7 +18,6 @@ package tikv
 
 import (
 	. "github.com/pingcap/check"
-	"google.golang.org/grpc"
 )
 
 type testMapSuite struct {
@@ -27,27 +26,15 @@ type testMapSuite struct {
 var _ = Suite(&testMapSuite{})
 
 func (s *testMapSuite) TestMap(c *C) {
-	count := 0
-	f := func(addr string) (*grpc.ClientConn, error) {
-		count++
-		return grpc.Dial(addr, grpc.WithInsecure(), grpc.WithTimeout(dialTimeout))
-	}
-	p := NewConnMap(f)
+	p := NewConnMap()
 
 	addr := "127.0.0.1:6379"
 	conn1, err := p.Get(addr)
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, 1)
 
 	conn2, err := p.Get(addr)
 	c.Assert(err, IsNil)
 	c.Assert(conn2, Equals, conn1)
-	c.Assert(count, Equals, 1)
-
-	p.Put(addr, conn1)
-	c.Assert(count, Equals, 1)
-	p.Put(addr, conn2)
-	c.Assert(count, Equals, 1)
 
 	p.Close()
 	conn3, err := p.Get(addr)

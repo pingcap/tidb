@@ -17,21 +17,17 @@
 package tikv
 
 import (
-	"fmt"
 	"sync"
 
-	"google.golang.org/grpc"
-
+	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/juju/errors"
+	"google.golang.org/grpc"
 )
 
 // Conn is a simple wrapper of grpc.ClientConn.
 type Conn struct {
 	c *grpc.ClientConn
 }
-
-// createConnFunc is the type of functions that can be used to create a grpc.ClientConn.
-type createConnFunc func(addr string) (*grpc.ClientConn, error)
 
 // ConnMap is a map that maintains the mapping from addresses to their connections.
 // TODO: Implement background cleanup. It adds a backgroud goroutine to periodically check
@@ -42,13 +38,11 @@ type ConnMap struct {
 		isClosed bool
 		conns    map[string]*Conn
 	}
-	f createConnFunc
 }
 
 // NewConnMap creates a ConnMap.
-func NewConnMap(f createConnFunc) *ConnMap {
+func NewConnMap() *ConnMap {
 	p := new(ConnMap)
-	p.f = f
 	p.m.conns = make(map[string]*Conn)
 	return p
 }
@@ -78,7 +72,12 @@ func (p *ConnMap) tryCreate(addr string) (*Conn, error) {
 	defer p.m.Unlock()
 	conn, ok := p.m.conns[addr]
 	if !ok {
-		c, err := p.f(addr)
+		c, err := grpc.Dial(
+			addr,
+			grpc.WithInsecure(),
+			grpc.WithTimeout(dialTimeout),
+			grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
+			grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -90,23 +89,15 @@ func (p *ConnMap) tryCreate(addr string) (*Conn, error) {
 	return conn, nil
 }
 
-// Put puts a Conn back to the map by the specific addr.
-func (p *ConnMap) Put(addr string, c *grpc.ClientConn) {
-	p.m.RLock()
-	conn, ok := p.m.conns[addr]
-	p.m.RUnlock()
-	if !ok {
-		panic(fmt.Errorf("Attempt to Put for a non-existent addr %s", addr))
-	}
-	if conn.c != c {
-		panic(fmt.Errorf("Attempt to Put a non-existent ClientConn for addr %s", addr))
-	}
-	// TODO: decrease refCount for conn.
-}
-
 // Close closes the map.
 func (p *ConnMap) Close() {
 	p.m.Lock()
-	p.m.isClosed = true
+	if !p.m.isClosed {
+		p.m.isClosed = true
+		// close all connections
+		for _, conn := range p.m.conns {
+			conn.c.Close()
+		}
+	}
 	p.m.Unlock()
 }

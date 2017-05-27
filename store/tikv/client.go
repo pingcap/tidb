@@ -17,12 +17,10 @@ package tikv
 import (
 	"time"
 
-	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
-	"google.golang.org/grpc"
 )
 
 const (
@@ -53,14 +51,7 @@ type rpcClient struct {
 
 func newRPCClient() *rpcClient {
 	return &rpcClient{
-		p: NewConnMap(func(addr string) (*grpc.ClientConn, error) {
-			return grpc.Dial(
-				addr,
-				grpc.WithInsecure(),
-				grpc.WithTimeout(dialTimeout),
-				grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
-				grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor))
-		}),
+		p: NewConnMap(),
 	}
 }
 
@@ -80,7 +71,6 @@ func (c *rpcClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 	connMapHistogram.WithLabelValues(label).Observe(time.Since(start).Seconds())
 	client := tikvpb.NewTikvClient(conn)
 	resp, err := c.callRPC(ctx, client, req)
-	defer c.p.Put(addr, conn)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
