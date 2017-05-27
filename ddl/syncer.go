@@ -51,7 +51,7 @@ var checkVersFirstWaitTime = 50 * time.Millisecond
 
 // schemaVersionSyncer is used to synchronize schema version between DDL worker leader and follower through etcd.
 //
-// For a leader, during doing DDL job, it should update ddlGlobalSchemaVersion to the latest schema version and wai
+// For a leader, during doing DDL job, it should update ddlGlobalSchemaVersion to the latest schema version and wait
 // for all followers to get the latest schema by checking the path ddlAllSchemaVersions on etcd. Then it could move to
 // the next step of the DDL job.
 //
