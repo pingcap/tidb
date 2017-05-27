@@ -3925,7 +3925,7 @@ CastType:
 		x := types.NewFieldType(mysql.TypeString)
 		x.Flen = $2.(int)
 		x.Charset = charset.CharsetBin
-		x.Collate = charset.CharsetBin
+		x.Collate = charset.CollationBin
 		$$ = x
 	}
 |	"CHAR" OptFieldLen OptBinary OptCharset
@@ -3933,6 +3933,10 @@ CastType:
 		x := types.NewFieldType(mysql.TypeString)
 		x.Flen = $2.(int)
 		x.Charset = $4.(string)
+		if x.Charset == "" {
+			x.Charset = charset.CharsetUTF8
+			x.Collate = charset.CollationUTF8
+		}
 		$$ = x
 	}
 |	"DATE"
