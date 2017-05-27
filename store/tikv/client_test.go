@@ -20,24 +20,24 @@ import (
 	. "github.com/pingcap/check"
 )
 
-type testMapSuite struct {
+type testClientSuite struct {
 }
 
-var _ = Suite(&testMapSuite{})
+var _ = Suite(&testClientSuite{})
 
-func (s *testMapSuite) TestMap(c *C) {
-	p := NewConnMap()
+func (s *testClientSuite) TestConn(c *C) {
+	client := newRPCClient()
 
 	addr := "127.0.0.1:6379"
-	conn1, err := p.Get(addr)
+	conn1, err := client.getConn(addr)
 	c.Assert(err, IsNil)
 
-	conn2, err := p.Get(addr)
+	conn2, err := client.getConn(addr)
 	c.Assert(err, IsNil)
 	c.Assert(conn2, Equals, conn1)
 
-	p.Close()
-	conn3, err := p.Get(addr)
+	client.Close()
+	conn3, err := client.getConn(addr)
 	c.Assert(err, NotNil)
 	c.Assert(conn3, IsNil)
 }
