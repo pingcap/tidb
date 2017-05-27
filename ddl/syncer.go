@@ -57,11 +57,10 @@ func (s *schemaVersionSyncer) putKV(ctx goctx.Context, retryCnt int, key, val st
 
 		childCtx, cancel := goctx.WithTimeout(ctx, putKeyDefaultTimeout)
 		_, err = s.etcdCli.Put(childCtx, key, val)
+		cancel()
 		if err == nil {
-			cancel()
 			return nil
 		}
-		cancel()
 		log.Warnf("[syncer] put schema version %s failed %v no.%d", val, err, i)
 		time.Sleep(putKeyRetryInterval)
 	}

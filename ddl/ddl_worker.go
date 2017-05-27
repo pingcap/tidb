@@ -449,7 +449,7 @@ func (d *ddl) waitSchemaChanged(waitTime time.Duration, latestSchemaVersion int6
 
 	// TODO: Do we need to wait for a while?
 	if latestSchemaVersion == 0 {
-		log.Infof("[ddl] schema version doesn't changed")
+		log.Infof("[ddl] schema version doesn't change")
 		return
 	}
 	// TODO: Make ctx exits when the d is close.
