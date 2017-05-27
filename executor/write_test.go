@@ -144,7 +144,7 @@ func (s *testSuite) TestInsert(c *C) {
 	_, err = tk.Exec("insert into t value(0)")
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("insert into t value(1)")
-	c.Assert(types.ErrTruncated.Equal(err), IsTrue)
+	c.Assert(types.ErrOverflow.Equal(err), IsTrue)
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {
