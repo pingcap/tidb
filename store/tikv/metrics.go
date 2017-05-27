@@ -69,15 +69,6 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 18),
 		})
 
-	connMapHistogram = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Namespace: "tidb",
-			Subsystem: "tikvclient",
-			Name:      "get_conn_seconds",
-			Help:      "Bucketed histogram of taking conn from conn map.",
-			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 18),
-		}, []string{"type"})
-
 	sendReqHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
@@ -220,7 +211,6 @@ func init() {
 	prometheus.MustRegister(backoffCounter)
 	prometheus.MustRegister(backoffHistogram)
 	prometheus.MustRegister(sendReqHistogram)
-	prometheus.MustRegister(connMapHistogram)
 	prometheus.MustRegister(coprocessorCounter)
 	prometheus.MustRegister(coprocessorHistogram)
 	prometheus.MustRegister(gcWorkerCounter)

@@ -125,7 +125,6 @@ func (c *rpcClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	connMapHistogram.WithLabelValues(label).Observe(time.Since(start).Seconds())
 	client := tikvpb.NewTikvClient(conn)
 	resp, err := c.callRPC(ctx, client, req)
 	if err != nil {
