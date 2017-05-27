@@ -13,12 +13,7 @@
 
 package json
 
-import (
-	"fmt"
-	"strconv"
-
-	"github.com/juju/errors"
-)
+import "fmt"
 
 // Type returns type of JSON as string.
 func (j JSON) Type() string {
@@ -49,24 +44,18 @@ func (j JSON) Type() string {
 // Extract receives several path expressions as arguments, matches them in j, and returns:
 //  ret: target JSON matched any path expressions. maybe autowrapped as an array.
 //  found: true if any path expressions matched.
-func (j JSON) Extract(pathExprList ...string) (ret JSON, found bool, err error) {
+func (j JSON) Extract(pathExprList []PathExpression) (ret JSON, found bool) {
 	elemList := make([]JSON, 0, len(pathExprList))
 	for _, pathExpr := range pathExprList {
-		elem, elemFound, elemErr := extract(j, pathExpr)
-		if elemErr != nil {
-			err = errors.Trace(elemErr)
-			return
-		}
-		if elemFound {
-			elemList = append(elemList, elem)
-			found = true
-		}
+		elemList = append(elemList, extract(j, pathExpr)...)
 	}
 	if len(elemList) == 0 {
-		return
-	} else if len(pathExprList) == 1 {
+		found = false
+	} else if len(pathExprList) == 1 && len(elemList) == 1 {
+		found = true
 		ret = elemList[0]
 	} else {
+		found = true
 		ret.typeCode = typeCodeArray
 		for _, elem := range elemList {
 			ret.array = append(ret.array, elem)
@@ -87,35 +76,30 @@ func (j JSON) Unquote() string {
 
 // extract is used by Extract.
 // NOTE: the return value will share something with j.
-func extract(j JSON, pathExpr string) (ret JSON, found bool, err error) {
-	var indices [][]int
-	if indices, err = validateJSONPathExpr(pathExpr); err != nil {
-		err = errors.Trace(err)
-		return
+func extract(j JSON, pathExpr PathExpression) (ret []JSON) {
+	if len(pathExpr.legs) == 0 {
+		return []JSON{j}
 	}
-	ret = j
-	for _, indice := range indices {
-		found = false
-		leg := pathExpr[indice[0]:indice[1]]
-		switch leg[0] {
-		case '[':
-			index, atoiErr := strconv.Atoi(string(leg[1 : len(leg)-1]))
-			if atoiErr != nil {
-				err = errors.Trace(atoiErr)
-				return
+	var currentLeg = pathExpr.legs[0]
+	pathExpr.legs = pathExpr.legs[1:]
+	if currentLeg.isArrayIndex && j.typeCode == typeCodeArray {
+		if currentLeg.arrayIndex == -1 {
+			for _, child := range j.array {
+				ret = append(ret, extract(child, pathExpr)...)
 			}
-			if ret.typeCode == typeCodeArray && len(ret.array) > index {
-				ret = ret.array[index]
-				found = true
-			}
-		case '.':
-			key := string(leg[1:])
-			if ret.typeCode == typeCodeObject {
-				ret, found = ret.object[key]
-			}
+		} else if currentLeg.arrayIndex < len(j.array) {
+			childRet := extract(j.array[currentLeg.arrayIndex], pathExpr)
+			ret = append(ret, childRet...)
 		}
-		if !found {
-			break
+	} else if !currentLeg.isArrayIndex && j.typeCode == typeCodeObject {
+		var key = pathExpr.raw[currentLeg.start+1 : currentLeg.end]
+		if len(key) == 1 && key[0] == '*' {
+			for _, child := range j.object {
+				ret = append(ret, extract(child, pathExpr)...)
+			}
+		} else if child, ok := j.object[key]; ok {
+			childRet := extract(child, pathExpr)
+			ret = append(ret, childRet...)
 		}
 	}
 	return

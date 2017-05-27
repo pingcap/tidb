@@ -13,7 +13,12 @@
 
 package json
 
-import "regexp"
+import (
+	"regexp"
+	"strconv"
+
+	"github.com/juju/errors"
+)
 
 /*
 	From MySQL 5.7, JSON path expression grammar:
@@ -42,15 +47,32 @@ import "regexp"
 */
 var jsonPathExprLegRe = regexp.MustCompile(`(\.([a-zA-Z_][a-zA-Z0-9_]*|\*)|(\[([0-9]+|\*)\]))`)
 
-func validateJSONPathExpr(pathExpr string) (indices [][]int, err error) {
+// pathLeg is only used by PathExpression.
+type pathLeg struct {
+	start        int  // start offset of the leg in raw string, inclusive.
+	end          int  // end offset of the leg in raw string, exclusive.
+	isArrayIndex bool // the leg is an array index or not.
+	arrayIndex   int  // if isArrayIndex is true, the value shoud be parsed into here.
+}
+
+// PathExpression is for JSON path expression.
+type PathExpression struct {
+	raw  string
+	legs []pathLeg // [(leg_start, leg_end), [leg_start, leg_end)]
+}
+
+func validateJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 	if pathExpr[0] != '$' {
 		err = ErrInvalidJSONPath.GenByArgs(pathExpr)
 		return
 	}
+	indices := jsonPathExprLegRe.FindAllStringIndex(pathExpr, -1)
+	pe.raw = pathExpr
+	pe.legs = make([]pathLeg, 0, len(indices))
 
-	indices = jsonPathExprLegRe.FindAllStringIndex(pathExpr, -1)
-	lastEnd := -1
-	currentStart := -1
+	// lastEnd and currentStart is for checking all characters between two legs are blank or not.
+	var lastEnd = -1
+	var currentStart = -1
 	for _, indice := range indices {
 		currentStart = indice[0]
 		if lastEnd > 0 {
@@ -63,6 +85,23 @@ func validateJSONPathExpr(pathExpr string) (indices [][]int, err error) {
 			}
 		}
 		lastEnd = indice[1]
+
+		if pathExpr[indice[0]] == '[' {
+			var leg = pathExpr[indice[0]:indice[1]]
+			var indexStr = string(leg[1 : len(leg)-1])
+			var index int
+			if len(indexStr) == 1 && indexStr[0] == '*' {
+				index = -1
+			} else {
+				if index, err = strconv.Atoi(indexStr); err != nil {
+					err = errors.Trace(err)
+					return
+				}
+			}
+			pe.legs = append(pe.legs, pathLeg{indice[0], indice[1], true, index})
+		} else {
+			pe.legs = append(pe.legs, pathLeg{indice[0], indice[1], false, 0})
+		}
 	}
 	return
 }

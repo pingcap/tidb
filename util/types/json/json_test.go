@@ -14,7 +14,6 @@
 package json
 
 import (
-	"bytes"
 	"fmt"
 	"testing"
 
@@ -39,12 +38,8 @@ func parseFromStringPanic(s string) JSON {
 }
 
 func (s *testJSONSuite) TestParseFromString(c *C) {
-	var jstr1 = `{"a": [1, "2", {"aa": "bb"}, 4, null], "b": true, "c": null}`
-
-	j1, err := ParseFromString(jstr1)
-	c.Assert(err, IsNil)
-
-	var jstr2 = j1.String()
+	jstr1 := `{"a": [1, "2", {"aa": "bb"}, 4, null], "b": true, "c": null}`
+	jstr2 := parseFromStringPanic(jstr1).String()
 	c.Assert(jstr2, Equals, `{"a":[1,"2",{"aa":"bb"},4,null],"b":true,"c":null}`)
 }
 
@@ -53,7 +48,6 @@ func (s *testJSONSuite) TestJSONSerde(c *C) {
 	var jsonBoolValue = CreateJSON(true)
 	var jsonDoubleValue = CreateJSON(3.24)
 	var jsonStringValue = CreateJSON("hello, 世界")
-
 	j1 := parseFromStringPanic(`{"aaaaaaaaaaa": [1, "2", {"aa": "bb"}, 4.0], "bbbbbbbbbb": true, "ccccccccc": "d"}`)
 	j2 := parseFromStringPanic(`[{"a": 1, "b": true}, 3, 3.5, "hello, world", null, true]`)
 
@@ -77,31 +71,6 @@ func (s *testJSONSuite) TestJSONSerde(c *C) {
 		v1 := t.String()
 		v2 := s.Out.String()
 		c.Assert(v1, Equals, v2)
-	}
-}
-
-func (s *testJSONSuite) TestJSONType(c *C) {
-	j1 := parseFromStringPanic(`{"a": "b"}`)
-	j2 := parseFromStringPanic(`["a", "b"]`)
-	j3 := parseFromStringPanic(`3`)
-	j4 := parseFromStringPanic(`3.0`)
-	j5 := parseFromStringPanic(`null`)
-	j6 := parseFromStringPanic(`true`)
-
-	var jList = []struct {
-		In  JSON
-		Out string
-	}{
-		{j1, "OBJECT"},
-		{j2, "ARRAY"},
-		{j3, "INTEGER"},
-		{j4, "DOUBLE"},
-		{j5, "NULL"},
-		{j6, "BOOLEAN"},
-	}
-
-	for _, j := range jList {
-		c.Assert(j.In.Type(), Equals, j.Out)
 	}
 }
 
@@ -131,83 +100,9 @@ func (s *testJSONSuite) TestCompareJSON(c *C) {
 		{jArrayLarge, jBoolFalse},
 		{jBoolFalse, jBoolTrue},
 	}
-
 	for _, cmpCase := range caseList {
 		cmp, err := CompareJSON(cmpCase.left, cmpCase.right)
 		c.Assert(err, IsNil)
 		c.Assert(cmp < 0, IsTrue)
-	}
-}
-
-func (s *testJSONSuite) TestJSONPathExprLegRe(c *C) {
-	var pathExpr = "$.key1[3][*].*.key3"
-	matches := jsonPathExprLegRe.FindAllString(pathExpr, -1)
-	c.Assert(len(matches), Equals, 5)
-	c.Assert(matches[0], Equals, ".key1")
-	c.Assert(matches[1], Equals, "[3]")
-	c.Assert(matches[2], Equals, "[*]")
-	c.Assert(matches[3], Equals, ".*")
-	c.Assert(matches[4], Equals, ".key3")
-}
-
-func (s *testJSONSuite) TestValidatePathExpr(c *C) {
-	var pathExpr = "$ .   key1[3]\t[*].*.key3"
-	_, err := validateJSONPathExpr(pathExpr)
-	c.Assert(err, IsNil)
-}
-
-func (s *testJSONSuite) TestJSONExtract(c *C) {
-	j1 := parseFromStringPanic(`{"a": [1, "2", {"aa": "bb"}, 4.0], "b": true, "c": "d"}`)
-	j2 := parseFromStringPanic(`[{"a": 1, "b": true}, 3, 3.5, "hello, world", null, true]`)
-
-	// j3 is for j1.Extract([]string{"$.a", "$[0]")
-	j3 := parseFromStringPanic(`[[1, "2", {"aa": "bb"}, 4.0]]`)
-	// j4 is for j2.Extract([]string{"$.a", "$[0]")
-	j4 := parseFromStringPanic(`[{"a": 1, "b": true}]`)
-
-	var caseList = []struct {
-		j        JSON
-		pathExpr []string
-		expected JSON
-		found    bool
-		err      error
-	}{
-		// test extract with only one path expression.
-		{j1, []string{"$.a"}, j1.object["a"], true, nil},
-		{j2, []string{"$.a"}, CreateJSON(nil), false, nil},
-		{j1, []string{"$[0]"}, CreateJSON(nil), false, nil},
-		{j2, []string{"$[0]"}, j2.array[0], true, nil},
-
-		// test extract with multi path expressions.
-		{j1, []string{"$.a", "$[0]"}, j3, true, nil},
-		{j2, []string{"$.a", "$[0]"}, j4, true, nil},
-	}
-
-	for _, caseItem := range caseList {
-		expected, found, err := caseItem.j.Extract(caseItem.pathExpr...)
-
-		c.Assert(err, Equals, caseItem.err)
-		c.Assert(found, Equals, caseItem.found)
-		if found {
-			b1 := Serialize(expected)
-			b2 := Serialize(caseItem.expected)
-			c.Assert(bytes.Compare(b1, b2), Equals, 0)
-		}
-	}
-}
-
-func (s *testJSONSuite) TestJSONUnquote(c *C) {
-	var caseList = []struct {
-		j        JSON
-		unquoted string
-	}{
-		{j: parseFromStringPanic(`3`), unquoted: "3"},
-		{j: parseFromStringPanic(`"3"`), unquoted: "3"},
-		{j: parseFromStringPanic(`true`), unquoted: "true"},
-		{j: parseFromStringPanic(`null`), unquoted: "null"},
-		{j: parseFromStringPanic(`{"a": [1, 2]}`), unquoted: `{"a":[1,2]}`},
-	}
-	for _, caseItem := range caseList {
-		c.Assert(caseItem.j.Unquote(), Equals, caseItem.unquoted)
 	}
 }
