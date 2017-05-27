@@ -56,10 +56,25 @@ type pathLeg struct {
 	arrayIndex   int  // if isArrayIndex is true, the value shoud be parsed into here.
 }
 
+// pathExpressionFlag holds attributes of PathExpression
+type pathExpressionFlag byte
+
+const (
+	pathExpressionContainsAsterisk       pathExpressionFlag = 0x01
+	pathExpressionContainsDoubleAsterisk pathExpressionFlag = 0x02
+)
+
+func (pef pathExpressionFlag) containsAnyAsterisk() bool {
+	pef &= pathExpressionContainsAsterisk
+	pef &= pathExpressionContainsDoubleAsterisk
+	return byte(pef) != 0
+}
+
 // PathExpression is for JSON path expression.
 type PathExpression struct {
-	raw  string
-	legs []pathLeg // [(leg_start, leg_end), [leg_start, leg_end)]
+	raw   string
+	legs  []pathLeg // [(leg_start, leg_end), [leg_start, leg_end)]
+	flags pathExpressionFlag
 }
 
 func validateJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
@@ -69,8 +84,10 @@ func validateJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 		return
 	}
 	indices := jsonPathExprLegRe.FindAllStringIndex(pathExpr, -1)
+
 	pe.raw = pathExpr
 	pe.legs = make([]pathLeg, 0, len(indices))
+	pe.flags = pathExpressionFlag(0)
 
 	// lastEnd and currentStart is for checking all characters between two legs are blank or not.
 	var lastEnd = -1
@@ -89,6 +106,7 @@ func validateJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 			var indexStr = string(leg[1 : len(leg)-1])
 			var index int
 			if len(indexStr) == 1 && indexStr[0] == '*' {
+				pe.flags |= pathExpressionContainsAsterisk
 				index = -1
 			} else {
 				if index, err = strconv.Atoi(indexStr); err != nil {
@@ -98,6 +116,10 @@ func validateJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 			}
 			pe.legs = append(pe.legs, pathLeg{indice[0], indice[1], true, index})
 		} else {
+			var key = pathExpr[indice[0]+1 : indice[1]]
+			if len(key) == 1 && key[0] == '*' {
+				pe.flags |= pathExpressionContainsDoubleAsterisk
+			}
 			pe.legs = append(pe.legs, pathLeg{indice[0], indice[1], false, 0})
 		}
 	}
