@@ -128,6 +128,8 @@ type DDL interface {
 	Stop() error
 	// RegisterEventCh registers event channel for ddl.
 	RegisterEventCh(chan<- *Event)
+	// SchemaVersionSyncer gets the schema version syncer.
+	SchemaVersionSyncer() *schemaVersionSyncer
 }
 
 // Event is an event that a ddl operation happened.
@@ -227,9 +229,12 @@ func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 	id := uuid.NewV4().String()
 	ctx, cancelFunc := goctx.WithCancel(ctx)
 	worker := &worker{
-		ddlID:      id,
-		etcdClient: etcdCli,
-		cancel:     cancelFunc,
+		schemaVersionSyncer: &schemaVersionSyncer{
+			etcdCli:           etcdCli,
+			selfSchemaVerPath: fmt.Sprintf("%s/%s", ddlAllSchemaVersions, id),
+		},
+		ddlID:  id,
+		cancel: cancelFunc,
 	}
 
 	d := &ddl{
@@ -372,6 +377,10 @@ func (d *ddl) genGlobalID() (int64, error) {
 	})
 
 	return globalID, errors.Trace(err)
+}
+
+func (d *ddl) SchemaVersionSyncer() *schemaVersionSyncer {
+	return d.worker.schemaVersionSyncer
 }
 
 func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
