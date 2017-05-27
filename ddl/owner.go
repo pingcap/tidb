@@ -17,7 +17,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/coreos/etcd/mvcc/mvccpb"
 	"github.com/juju/errors"
@@ -36,10 +35,10 @@ const (
 
 // worker represents the structure which is used for electing owner.
 type worker struct {
+	*schemaVersionSyncer
 	ddlOwner    int32
 	bgOwner     int32
 	ddlID       string
-	etcdClient  *clientv3.Client
 	etcdSession *concurrency.Session
 	cancel      goctx.CancelFunc
 }
@@ -71,7 +70,7 @@ func (w *worker) setBgOwner(isOwner bool) {
 func (w *worker) newSession(ctx goctx.Context, retryCnt int) error {
 	var err error
 	for i := 0; i < retryCnt; i++ {
-		w.etcdSession, err = concurrency.NewSession(w.etcdClient, concurrency.WithContext(ctx))
+		w.etcdSession, err = concurrency.NewSession(w.etcdCli, concurrency.WithContext(ctx))
 		if err != nil {
 			log.Warnf("[ddl] failed to new session, err %v", err)
 			time.Sleep(200 * time.Millisecond)
@@ -125,7 +124,7 @@ func (d *ddl) campaignLoop(ctx goctx.Context, key string) {
 			continue
 		}
 		leader := string(resp.Kvs[0].Value)
-		log.Info("[ddl] %s worker is %s, owner is %v", key, worker.ddlID, leader)
+		log.Infof("[ddl] %s worker is %s, owner is %v", key, worker.ddlID, leader)
 		if leader == worker.ddlID {
 			worker.setOwnerVal(key, true)
 		} else {
@@ -152,7 +151,7 @@ func (w *worker) setOwnerVal(key string, val bool) {
 
 func (w *worker) watchOwner(ctx goctx.Context, key string) {
 	log.Debugf("[ddl] worker %s watch owner key %v", w.ddlID, key)
-	watchCh := w.etcdClient.Watch(ctx, key)
+	watchCh := w.etcdCli.Watch(ctx, key)
 	for {
 		select {
 		case resp := <-watchCh:
