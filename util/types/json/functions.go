@@ -57,9 +57,7 @@ func (j JSON) Extract(pathExprList []PathExpression) (ret JSON, found bool) {
 	} else {
 		found = true
 		ret.typeCode = typeCodeArray
-		for _, elem := range elemList {
-			ret.array = append(ret.array, elem)
-		}
+		ret.array = append(ret.array, elemList...)
 	}
 	return
 }
