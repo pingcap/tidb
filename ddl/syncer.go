@@ -26,24 +26,42 @@ import (
 )
 
 const (
-	ddlAllSchemaVersions   = "/tidb/ddl/all_schema_versions"
+	// ddlAllSchemaVersions is the path on etcd that every tidb-server instance should register its current loaded schema version.
+	// For a tidb-server instance with a id, it should register its schema version on key: ddlAllSchemaVersions/id. And for each time
+	// the latest schema is loaded, it should update the value of this key.
+	ddlAllSchemaVersions = "/tidb/ddl/all_schema_versions"
+	// ddlGlobalSchemaVersion is the key of the latest schema version of the TiDB cluster.
+	// Its value it the latest schema version. Only DDL worker leader can update its value.
+	// DDL worker follower should watch this key's changin and reload schema when it is changed.
 	ddlGlobalSchemaVersion = "/tidb/ddl/global_schema_version"
-	initialVersion         = "0"
-	putKeyNoRetry          = 1
-	putKeyDefaultRetryCnt  = 3
-	putKeyRetryUnlimited   = math.MaxInt64
-	putKeyDefaultTimeout   = 2 * time.Second
-	putKeyRetryInterval    = 30 * time.Millisecond
-	checkVersInterval      = 20 * time.Millisecond
+	// initialVersion is the initial value of a tidb-server instance's schema version.
+	// A tidb-server instance should register initialVersion as its latest schema version to etcd during starting up.
+	// After loading schema from tikv, the instance should update its latest schema version.
+	initialVersion        = "0"
+	putKeyNoRetry         = 1
+	putKeyDefaultRetryCnt = 3
+	putKeyRetryUnlimited  = math.MaxInt64
+	putKeyDefaultTimeout  = 2 * time.Second
+	putKeyRetryInterval   = 30 * time.Millisecond
+	checkVersInterval     = 20 * time.Millisecond
 )
 
 // checkVersFirstWaitTime is used for testing.
 var checkVersFirstWaitTime = 50 * time.Millisecond
 
+// schemaVersionSyncer is used to synchronize schema version between DDL worker leader and follower through etcd.
+//
+// For a leader, during doing DDL job, it should update ddlGlobalSchemaVersion to the latest schema version and wai
+// for all followers to get the latest schema by checking the path ddlAllSchemaVersions on etcd. Then it could move to
+// the next step of the DDL job.
+//
+// For a follower, it should watch ddlGlobalSchemaVersion and reload schema as soon as any change happens. Then it should
+// update it latest schema version to ddlAllSchemaVersions/id on the etcd.
 type schemaVersionSyncer struct {
 	selfSchemaVerPath string
 	etcdCli           *clientv3.Client
-	GlobalVerCh       clientv3.WatchChan
+	// GlobalVerCh is used by follower to watch the latest schema version which is published by DDL worker leader.
+	GlobalVerCh clientv3.WatchChan
 }
 
 func (s *schemaVersionSyncer) putKV(ctx goctx.Context, retryCnt int, key, val string) error {
