@@ -28,6 +28,11 @@ func TestT(t *testing.T) {
 }
 
 func (s *testJSONSuite) TestJSONSerde(c *C) {
+	var jsonNilValue = CreateJSON(nil)
+	var jsonBoolValue = CreateJSON(true)
+	var jsonDoubleValue = CreateJSON(3.24)
+	var jsonStringValue = CreateJSON("hello, 世界")
+
 	var jstr1 = `{"aaaaaaaaaaa": [1, "2", {"aa": "bb"}, 4.0], "bbbbbbbbbb": true, "ccccccccc": "d"}`
 	j1, err := ParseFromString(jstr1)
 	c.Assert(err, IsNil)
@@ -35,11 +40,6 @@ func (s *testJSONSuite) TestJSONSerde(c *C) {
 	var jstr2 = `[{"a": 1, "b": true}, 3, 3.5, "hello, world", null, true]`
 	j2, err := ParseFromString(jstr2)
 	c.Assert(err, IsNil)
-
-	var jsonNilValue = jsonLiteral(0x00)
-	var jsonBoolValue = jsonLiteral(0x01)
-	var jsonDoubleValue = jsonDouble(3.24)
-	var jsonStringValue = jsonString("hello, 世界")
 
 	var testcses = []struct {
 		In  JSON
@@ -111,52 +111,35 @@ func (s *testJSONSuite) TestJSONType(c *C) {
 }
 
 func (s *testJSONSuite) TestCompareJSON(c *C) {
-	var cmp int
+	jNull, _ := ParseFromString(`null`)
+	jBoolTrue, _ := ParseFromString(`true`)
+	jBoolFalse, _ := ParseFromString(`false`)
+	jIntegerLarge, _ := ParseFromString(`5`)
+	jIntegerSmall, _ := ParseFromString(`3`)
+	jStringLarge, _ := ParseFromString(`"hello, world"`)
+	jStringSmall, _ := ParseFromString(`"hello"`)
+	jArrayLarge, _ := ParseFromString(`["a", "c"]`)
+	jArraySmall, _ := ParseFromString(`["a", "b"]`)
+	jObject, _ := ParseFromString(`{"a": "b"}`)
 
-	// compare two JSON boolean.
-	jBool1, _ := ParseFromString(`true`)
-	jBool2, _ := ParseFromString(`false`)
-	cmp, _ = CompareJSON(jBool1, jBool2)
-	c.Assert(cmp > 0, IsTrue)
+	var caseList = []struct {
+		left  JSON
+		right JSON
+	}{
+		{jNull, jIntegerSmall},
+		{jIntegerSmall, jIntegerLarge},
+		{jIntegerLarge, jStringSmall},
+		{jStringSmall, jStringLarge},
+		{jStringLarge, jObject},
+		{jObject, jArraySmall},
+		{jArraySmall, jArrayLarge},
+		{jArrayLarge, jBoolFalse},
+		{jBoolFalse, jBoolTrue},
+	}
 
-	// compare two JSON ARRAY
-	jArray1, _ := ParseFromString(`["a", "c"]`)
-	jArray2, _ := ParseFromString(`["a", "b"]`)
-	cmp, _ = CompareJSON(jArray1, jArray2)
-	c.Assert(cmp > 0, IsTrue)
-
-	// compare two JSON OBJECT
-	jObject1, _ := ParseFromString(`{"a": "b"}`)
-	jObject2, _ := ParseFromString(`{"a": "c"}`)
-	cmp, _ = CompareJSON(jObject1, jObject2)
-	c.Assert(cmp != 0, IsTrue)
-
-	// compare two JSON string
-	jString1, _ := ParseFromString(`"hello"`)
-	jString2, _ := ParseFromString(`"hello, world"`)
-	cmp, _ = CompareJSON(jString1, jString2)
-	c.Assert(cmp < 0, IsTrue)
-
-	// compare two JSON integer
-	jInteger1, _ := ParseFromString(`3`)
-	jInteger2, _ := ParseFromString(`5`)
-	cmp, _ = CompareJSON(jInteger1, jInteger2)
-	c.Assert(cmp < 0, IsTrue)
-
-	jNull1, _ := ParseFromString(`null`)
-	jNull2, _ := ParseFromString(`null`)
-	cmp, _ = CompareJSON(jNull1, jNull2)
-	c.Assert(cmp == 0, IsTrue)
-
-	// compare two JSON with different types.
-	cmp, _ = CompareJSON(jBool1, jArray1)
-	c.Assert(cmp > 0, IsTrue)
-	cmp, _ = CompareJSON(jArray1, jObject1)
-	c.Assert(cmp > 0, IsTrue)
-	cmp, _ = CompareJSON(jObject1, jString1)
-	c.Assert(cmp > 0, IsTrue)
-	cmp, _ = CompareJSON(jString1, jInteger1)
-	c.Assert(cmp > 0, IsTrue)
-	cmp, _ = CompareJSON(jInteger1, jNull1)
-	c.Assert(cmp > 0, IsTrue)
+	for _, cmpCase := range caseList {
+		cmp, err := CompareJSON(cmpCase.left, cmpCase.right)
+		c.Assert(err, IsNil)
+		c.Assert(cmp < 0, IsTrue)
+	}
 }

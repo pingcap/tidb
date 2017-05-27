@@ -30,8 +30,9 @@ import (
 
 // Histogram represents statistics for a column or index.
 type Histogram struct {
-	ID  int64 // Column ID.
-	NDV int64 // Number of distinct values.
+	ID        int64 // Column ID.
+	NDV       int64 // Number of distinct values.
+	NullCount int64 // Number of null values.
 	// LastUpdateVersion is the version that this histogram updated last time.
 	LastUpdateVersion uint64
 
@@ -173,6 +174,13 @@ func (hg *Histogram) equalRowCount(sc *variable.StatementContext, value types.Da
 	if match {
 		return float64(hg.Buckets[index].Repeats), nil
 	}
+	c, err := value.CompareDatum(sc, hg.Buckets[index].LowerBound)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if c < 0 {
+		return 0, nil
+	}
 	return hg.totalRowCount() / float64(hg.NDV), nil
 }
 
@@ -223,6 +231,13 @@ func (hg *Histogram) lessRowCount(sc *variable.StatementContext, value types.Dat
 	lessThanBucketValueCount := curCount - float64(hg.Buckets[index].Repeats)
 	if match {
 		return lessThanBucketValueCount, nil
+	}
+	c, err := value.CompareDatum(sc, hg.Buckets[index].LowerBound)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if c < 0 {
+		return prevCount, nil
 	}
 	return (prevCount + lessThanBucketValueCount) / 2, nil
 }
