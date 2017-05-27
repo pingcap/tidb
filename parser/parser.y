@@ -3955,6 +3955,8 @@ CastType:
 		if fopt.Flen == types.UnspecifiedLength {
 			x.Flen = mysql.GetDefaultFieldLength(mysql.TypeNewDecimal)
 			x.Decimal = mysql.GetDefaultDecimal(mysql.TypeNewDecimal)
+		} else if fopt.Decimal == types.UnspecifiedLength {
+			x.Decimal = mysql.GetDefaultDecimal(mysql.TypeNewDecimal)
 		}
 		$$ = x
 	}
