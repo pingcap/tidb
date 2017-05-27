@@ -6179,6 +6179,10 @@ PrivType:
 	{
 		$$ = mysql.GrantPriv
 	}
+|	"REFERENCES"
+	{
+		$$ = mysql.ReferencesPriv
+	}
 
 ObjectType:
 	{
