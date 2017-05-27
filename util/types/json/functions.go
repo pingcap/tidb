@@ -92,8 +92,9 @@ func extract(j JSON, pathExpr PathExpression) (ret []JSON) {
 	} else if !currentLeg.isArrayIndex && j.typeCode == typeCodeObject {
 		var key = pathExpr.raw[currentLeg.start+1 : currentLeg.end]
 		if len(key) == 1 && key[0] == '*' {
-			for _, child := range j.object {
-				ret = append(ret, extract(child, pathExpr)...)
+			var sortedKeys = getSortedKeys(j.object) // iterate over sorted keys.
+			for _, child := range sortedKeys {
+				ret = append(ret, extract(j.object[child], pathExpr)...)
 			}
 		} else if child, ok := j.object[key]; ok {
 			childRet := extract(child, pathExpr)
