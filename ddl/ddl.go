@@ -128,8 +128,8 @@ type DDL interface {
 	Stop() error
 	// RegisterEventCh registers event channel for ddl.
 	RegisterEventCh(chan<- *Event)
-	// SchemaVersionSyncer gets the schema version syncer.
-	SchemaVersionSyncer() *schemaVersionSyncer
+	// SchemaSyncer gets the schema syncer.
+	SchemaSyncer() SchemaSyncer
 }
 
 // Event is an event that a ddl operation happened.
@@ -163,8 +163,8 @@ type ddl struct {
 	hook       Callback
 	hookMu     sync.RWMutex
 	store      kv.Storage
-	// worker is used for electing the owner.
-	worker *worker
+	// worker is used for DDL access the etcd.
+	worker EtcdWorker
 	// lease is schema seconds.
 	lease        time.Duration
 	uuid         string
@@ -228,15 +228,7 @@ func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 
 	id := uuid.NewV4().String()
 	ctx, cancelFunc := goctx.WithCancel(ctx)
-	worker := &worker{
-		schemaVersionSyncer: &schemaVersionSyncer{
-			etcdCli:           etcdCli,
-			selfSchemaVerPath: fmt.Sprintf("%s/%s", ddlAllSchemaVersions, id),
-		},
-		ddlID:  id,
-		cancel: cancelFunc,
-	}
-
+	worker := NewEtcdWorker(etcdCli, id, cancelFunc)
 	d := &ddl{
 		infoHandle:   infoHandle,
 		hook:         hook,
@@ -301,7 +293,7 @@ func (d *ddl) Stop() error {
 func (d *ddl) start(ctx goctx.Context) {
 	d.quitCh = make(chan struct{})
 	if ChangeOwnerInNewWay {
-		d.campaignOwners(ctx)
+		d.worker.CampaignOwners(ctx, &d.wait)
 	}
 
 	d.wait.Add(2)
@@ -320,7 +312,7 @@ func (d *ddl) close() {
 	}
 
 	close(d.quitCh)
-	d.worker.cancel()
+	d.worker.Cancel()
 
 	d.wait.Wait()
 	log.Infof("close DDL:%s", d.uuid)
@@ -379,8 +371,9 @@ func (d *ddl) genGlobalID() (int64, error) {
 	return globalID, errors.Trace(err)
 }
 
-func (d *ddl) SchemaVersionSyncer() *schemaVersionSyncer {
-	return d.worker.schemaVersionSyncer
+// SchemaSyncer implements DDL.SchemaSyncer interface.
+func (d *ddl) SchemaSyncer() SchemaSyncer {
+	return d.worker
 }
 
 func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {

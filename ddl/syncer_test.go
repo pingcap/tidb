@@ -57,7 +57,7 @@ func TestSyncerSimple(t *testing.T) {
 	defer d1.Stop()
 
 	// for init function
-	if err = d.SchemaVersionSyncer().Init(ctx); err != nil {
+	if err = d.SchemaSyncer().Init(ctx); err != nil {
 		t.Fatalf("schema version syncer init failed %v", err)
 	}
 	resp, err := cli.Get(ctx, ddlAllSchemaVersions, clientv3.WithPrefix())
@@ -71,7 +71,7 @@ func TestSyncerSimple(t *testing.T) {
 		t.Fatalf("client get version failed %v", err)
 	}
 	checkRespKV(t, 1, ddlGlobalSchemaVersion, initialVersion, resp.Kvs...)
-	if err = d1.SchemaVersionSyncer().Init(ctx); err != nil {
+	if err = d1.SchemaSyncer().Init(ctx); err != nil {
 		t.Fatalf("schema version syncer init failed %v", err)
 	}
 
@@ -93,11 +93,11 @@ func TestSyncerSimple(t *testing.T) {
 	}()
 
 	// for update latestSchemaVersion
-	err = d.worker.updateGlobalVersion(ctx, currentVer)
+	err = d.worker.UpdateGlobalVersion(ctx, currentVer)
 	if err != nil {
 		t.Fatalf("update latest schema version failed %v", err)
 	}
-	err = d1.worker.updateGlobalVersion(ctx, currentVer)
+	err = d1.worker.UpdateGlobalVersion(ctx, currentVer)
 	if err != nil {
 		t.Fatalf("update latest schema version failed %v", err)
 	}
@@ -128,7 +128,7 @@ func TestSyncerSimple(t *testing.T) {
 
 	// for checkAllVersions
 	childCtx, cancel = goctx.WithTimeout(ctx, 30*time.Millisecond)
-	err = d.worker.checkAllVersions(childCtx, currentVer)
+	err = d.worker.CheckAllVersions(childCtx, currentVer)
 	if err != nil {
 		t.Fatalf("check all version failed %v", err)
 	}
