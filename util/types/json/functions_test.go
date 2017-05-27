@@ -43,7 +43,7 @@ func (s *testJSONSuite) TestJSONType(c *C) {
 }
 
 func (s *testJSONSuite) TestJSONExtract(c *C) {
-	j1 := parseFromStringPanic(`{"a": [1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}], "b": true, "c": "d"}`)
+	j1 := parseFromStringPanic(`{"a": [1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}], "b": true, "c": ["d"]}`)
 	j2 := parseFromStringPanic(`[{"a": 1, "b": true}, 3, 3.5, "hello, world", null, true]`)
 
 	var caseList = []struct {
@@ -60,6 +60,7 @@ func (s *testJSONSuite) TestJSONExtract(c *C) {
 		{j2, []string{"$[0]"}, j2.array[0], true, nil},
 		{j1, []string{"$.a[2].aa"}, CreateJSON("bb"), true, nil},
 		{j1, []string{"$.a[*].aa"}, parseFromStringPanic(`["bb", "cc"]`), true, nil},
+		{j1, []string{"$.*[0]"}, parseFromStringPanic(`[1, "d"]`), true, nil},
 
 		// test extract with multi path expressions.
 		{j1, []string{"$.a", "$[0]"}, parseFromStringPanic(`[[1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}]]`), true, nil},

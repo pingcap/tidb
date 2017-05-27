@@ -45,6 +45,7 @@ import (
 	TODO:
 		1) add double asterisk support;
 */
+var blankRe = regexp.MustCompile(`\s`)
 var jsonPathExprLegRe = regexp.MustCompile(`(\.([a-zA-Z_][a-zA-Z0-9_]*|\*)|(\[([0-9]+|\*)\]))`)
 
 // pathLeg is only used by PathExpression.
@@ -62,6 +63,7 @@ type PathExpression struct {
 }
 
 func validateJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
+	pathExpr = blankRe.ReplaceAllString(pathExpr, "")
 	if pathExpr[0] != '$' {
 		err = ErrInvalidJSONPath.GenByArgs(pathExpr)
 		return
@@ -75,14 +77,10 @@ func validateJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 	var currentStart = -1
 	for _, indice := range indices {
 		currentStart = indice[0]
-		if lastEnd > 0 {
-			for idx := lastEnd; idx < currentStart; idx++ {
-				c := pathExpr[idx]
-				if c != ' ' && c != '\t' && c != '\n' && c != '\r' {
-					err = ErrInvalidJSONPath.GenByArgs(pathExpr)
-					return
-				}
-			}
+		if lastEnd > 0 && currentStart != lastEnd {
+			// We have already remove all blank characters.
+			err = ErrInvalidJSONPath.GenByArgs(pathExpr)
+			return
 		}
 		lastEnd = indice[1]
 
