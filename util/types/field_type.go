@@ -26,7 +26,7 @@ const (
 	UnspecifiedLength int = -1
 )
 
-// TypeClass classifies types, used for type inference.
+// TypeClass classifies field types, used for type inference.
 type TypeClass byte
 
 // TypeClass values.
@@ -1100,19 +1100,4 @@ func SetBinChsClnFlag(ft *FieldType) {
 	ft.Charset = charset.CharsetBin
 	ft.Collate = charset.CollationBin
 	ft.Flag |= mysql.BinaryFlag
-}
-
-// IsHybridType checks whether a ClassString type is hybrid type.
-//
-// For ENUM/SET which is consist of a string attribute `Name` and an int attribute `Value`,
-// it will cause an error if we convert ENUM/SET to int as a string value.
-//
-// For Bit, we will get a wrong result if we convert it to int as a string value.
-func IsHybridType(tp byte) bool {
-	switch tp {
-	case mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet:
-		return true
-	default:
-		return false
-	}
 }

@@ -212,7 +212,7 @@ type LogicalPlan interface {
 	// It is called recursively from the parent to the children to create the result physical plan.
 	// Some logical plans will convert the children to the physical plans in different ways, and return the one
 	// with the lowest cost.
-	convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error)
+	convert2NewPhysicalPlan(prop *requiredProp) (task, error)
 
 	// buildKeyInfo will collect the information of unique keys into schema.
 	buildKeyInfo()
@@ -240,9 +240,9 @@ type PhysicalPlan interface {
 	// Copy copies the current plan.
 	Copy() PhysicalPlan
 
-	// attach2TaskProfile makes the current physical plan as the father of task's physicalPlan and updates the cost of
+	// attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
 	// current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
-	attach2TaskProfile(...taskProfile) taskProfile
+	attach2Task(...task) task
 
 	// ToPB converts physical plan to tipb executor.
 	ToPB(ctx context.Context) (*tipb.Executor, error)
@@ -251,14 +251,14 @@ type PhysicalPlan interface {
 type baseLogicalPlan struct {
 	basePlan *basePlan
 	planMap  map[string]*physicalPlanInfo
-	taskMap  map[string]taskProfile
+	taskMap  map[string]task
 }
 
 type basePhysicalPlan struct {
 	basePlan *basePlan
 }
 
-func (p *baseLogicalPlan) getTaskProfile(prop *requiredProp) (taskProfile, error) {
+func (p *baseLogicalPlan) getTask(prop *requiredProp) (task, error) {
 	key, err := prop.getHashKey()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -294,7 +294,7 @@ func (p *baseLogicalPlan) convert2PhysicalPlan(prop *requiredProperty) (*physica
 	return info, p.storePlanInfo(prop, info)
 }
 
-func (p *baseLogicalPlan) storeTaskProfile(prop *requiredProp, task taskProfile) error {
+func (p *baseLogicalPlan) storeTask(prop *requiredProp, task task) error {
 	key, err := prop.getHashKey()
 	if err != nil {
 		return errors.Trace(err)
@@ -344,7 +344,7 @@ func newBasePlan(tp string, allocator *idAllocator, ctx context.Context, p Plan)
 func newBaseLogicalPlan(basePlan *basePlan) baseLogicalPlan {
 	return baseLogicalPlan{
 		planMap:  make(map[string]*physicalPlanInfo),
-		taskMap:  make(map[string]taskProfile),
+		taskMap:  make(map[string]task),
 		basePlan: basePlan,
 	}
 }
