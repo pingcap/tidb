@@ -62,7 +62,7 @@ func (s *schemaVersionSyncer) putKV(ctx goctx.Context, retryCnt int, key, val st
 			return nil
 		}
 		cancel()
-		log.Warnf("put schema version %s failed %v no.%d", val, err, i)
+		log.Warnf("[syncer] put schema version %s failed %v no.%d", val, err, i)
 		time.Sleep(putKeyRetryInterval)
 	}
 	return errors.Trace(err)
@@ -113,7 +113,7 @@ func (s *schemaVersionSyncer) checkAllVersions(ctx goctx.Context, latestVer int6
 			return errors.Trace(err)
 		}
 		if err != nil {
-			log.Infof("check all versions failed %v", err)
+			log.Infof("[syncer] check all versions failed %v", err)
 			continue
 		}
 
@@ -125,12 +125,12 @@ func (s *schemaVersionSyncer) checkAllVersions(ctx goctx.Context, latestVer int6
 
 			ver, err := strconv.Atoi(string(kv.Value))
 			if err != nil {
-				log.Infof("ddl %s convert %v to int failed %v", kv.Key, kv.Value, err)
+				log.Infof("[syncer] ddl %s convert %v to int failed %v", kv.Key, kv.Value, err)
 				succ = false
 				break
 			}
 			if int64(ver) != latestVer {
-				log.Infof("ddl %s current ver %v, latest version %v", kv.Key, ver, latestVer)
+				log.Infof("[syncer] ddl %s current ver %v, latest version %v", kv.Key, ver, latestVer)
 				succ = false
 				break
 			}

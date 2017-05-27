@@ -353,7 +353,7 @@ func chooseLeaseTime(n1 time.Duration, n2 time.Duration) time.Duration {
 	return n2
 }
 
-// runDDLJob runs a DDL job.
+// runDDLJob runs a DDL job. It returns the current schema version in this transaction.
 func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) (ver int64) {
 	log.Infof("[ddl] run DDL job %s", job)
 	if job.IsFinished() {
@@ -451,12 +451,12 @@ func (d *ddl) waitSchemaChanged(waitTime time.Duration, latestSchemaVersion int6
 	defer cancelFunc()
 	err := d.worker.updateGlobalVersion(ctx, latestSchemaVersion)
 	if err != nil {
-		log.Infof("[ddl] udpate latest schema version %d failed %v", latestSchemaVersion, err)
+		log.Infof("[ddl] update latest schema version %d failed %v", latestSchemaVersion, err)
 	}
 
 	err = d.worker.checkAllVersions(ctx, latestSchemaVersion)
 	if err != nil {
-		log.Infof("[ddl] wait latest schema version %d failed %v", latestSchemaVersion, err)
+		log.Infof("[ddl] wait latest schema version %d to deadline %v", latestSchemaVersion, err)
 	}
 	return
 }
