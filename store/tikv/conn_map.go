@@ -63,7 +63,6 @@ func (p *ConnMap) Get(addr string) (*grpc.ClientConn, error) {
 			return nil, err
 		}
 	}
-	// TODO: increase refCount for conn.
 	return conn.c, nil
 }
 
