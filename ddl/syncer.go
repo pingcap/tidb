@@ -31,7 +31,7 @@ const (
 	// the latest schema is loaded, it should update the value of this key.
 	ddlAllSchemaVersions = "/tidb/ddl/all_schema_versions"
 	// ddlGlobalSchemaVersion is the key of the latest schema version of the TiDB cluster.
-	// Its value it the latest schema version. Only DDL worker leader can update its value.
+	// Its value is the latest schema version. Only DDL worker leader can update it.
 	// DDL worker follower should watch this key's changin and reload schema when it is changed.
 	ddlGlobalSchemaVersion = "/tidb/ddl/global_schema_version"
 	// initialVersion is the initial value of a tidb-server instance's schema version.
@@ -56,7 +56,7 @@ var checkVersFirstWaitTime = 50 * time.Millisecond
 // the next step of the DDL job.
 //
 // For a follower, it should watch ddlGlobalSchemaVersion and reload schema as soon as any change happens. Then it should
-// update it latest schema version to ddlAllSchemaVersions/id on the etcd.
+// update its latest schema version to ddlAllSchemaVersions/id on the etcd.
 type schemaVersionSyncer struct {
 	selfSchemaVerPath string
 	etcdCli           *clientv3.Client
