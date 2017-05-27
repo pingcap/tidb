@@ -101,18 +101,24 @@ func (d *ddl) getCheckOwnerTimeout(flag JobType) int64 {
 	return timeout
 }
 
+func (d *ddl) isOwner(flag JobType) error {
+	if flag == ddlJobFlag {
+		if d.worker.isOwner() {
+			return nil
+		}
+		log.Infof("[ddl] not %s job owner, self id %s", flag, d.uuid)
+		return errNotOwner
+	}
+	if d.worker.isBgOwner() {
+		return nil
+	}
+	log.Infof("[ddl] not %s job owner, self id %s", flag, d.uuid)
+	return errNotOwner
+}
+
 func (d *ddl) checkOwner(t *meta.Meta, flag JobType) (*model.Owner, error) {
 	if ChangeOwnerInNewWay {
-		if flag == ddlJobFlag {
-			if d.worker.isOwner() {
-				return nil, nil
-			}
-			return nil, errNotOwner
-		}
-		if d.worker.isBgOwner() {
-			return nil, nil
-		}
-		return nil, errNotOwner
+		return nil, errors.Trace(d.isOwner(flag))
 	}
 	owner, err := d.getJobOwner(t, flag)
 	if err != nil {
