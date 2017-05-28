@@ -96,6 +96,10 @@ func (d *ddl) isReorgRunnable(txn kv.Transaction, flag JobType) error {
 		return errInvalidWorker.Gen("worker is closed")
 	}
 
+	if ChangeOwnerInNewWay {
+		return errors.Trace(d.isOwner(flag))
+	}
+
 	t := meta.NewMeta(txn)
 	owner, err := d.getJobOwner(t, flag)
 	if err != nil {
