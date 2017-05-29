@@ -1770,7 +1770,6 @@ func getTimeZone(ctx context.Context) *time.Location {
 	return ret
 }
 
-
 func isDuration(str string) bool {
 	if n := strings.IndexByte(str, ' '); n >= 0 {
 		if strings.Count(str[:n+1], "-") > 1 {
@@ -1882,7 +1881,7 @@ func (b *builtinAddTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 		}
 		if isDuration(ss) {
 			return strDurationAddDuration(ss, arg1)
-		} 
+		}
 		return strDatetimeAddDuration(ss, arg1)
 	}
 }
