@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"math"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -1771,6 +1770,59 @@ func getTimeZone(ctx context.Context) *time.Location {
 	return ret
 }
 
+func IsDuration(str string) bool {
+	if n := strings.IndexByte(str, ' '); n >= 0 {
+		if strings.Count(str[:n+1], "-") > 1 {
+			return false
+		}
+		str = str[n+1:]
+	}
+	if n := strings.IndexByte(str, '.'); n >= 0 {
+		str = str[0:n]
+	}
+	seps := strings.Split(str, ":")
+	switch len(seps) {
+	case 1:
+		if length := len(str); length <= 7 && length >= 1 {
+			return true
+		}
+	case 2:
+		return true
+	case 3:
+		return true
+	default:
+		return false
+	}
+	return false
+}
+
+func strDatetimeAddDuration(d string, arg1 types.Duration) (result types.Datum, err error) {
+	arg0, err := types.ParseTime(d, mysql.TypeDatetime, getFsp(d))
+	if err != nil {
+		return result, err
+	}
+	tmpDuration := arg0.Add(arg1)
+	resultDuration, err := tmpDuration.ConvertToTime(mysql.TypeDatetime)
+	if err != nil {
+		return result, err
+	}
+	result.SetString(resultDuration.String())
+	return result, nil
+}
+
+func strDurationAddDuration(d string, arg1 types.Duration) (result types.Datum, err error) {
+	arg0, err := types.ParseDuration(d, getFsp(d))
+	if err != nil {
+		return result, err
+	}
+	tmpDuration, err := arg0.Add(arg1)
+	if err != nil {
+		return result, err
+	}
+	result.SetString(tmpDuration.String())
+	return result, nil
+}
+
 type addTimeFunctionClass struct {
 	baseFunctionClass
 }
@@ -1794,12 +1846,6 @@ func (b *builtinAddTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	if args[0].IsNull() || args[1].IsNull() {
 		return d, nil
 	}
-
-	switch tp := args[1].Kind(); tp {
-	case types.KindInt64:
-	default:
-	}
-
 	s, err := args[1].ToString()
 	var arg1 types.Duration
 	if getFsp(s) == 0 {
@@ -1819,6 +1865,7 @@ func (b *builtinAddTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 			return d, errors.Trace(err)
 		}
 		d.SetMysqlTime(result)
+		return d, nil
 	case types.KindMysqlDuration:
 		arg0 := args[0].GetMysqlDuration()
 		result, err := arg0.Add(arg1)
@@ -1826,77 +1873,18 @@ func (b *builtinAddTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 			return d, errors.Trace(err)
 		}
 		d.SetMysqlDuration(result)
-	case types.KindUint64:
-
-	case types.KindInt64:
-		val := args[0].GetInt64()
-		if val <= 999999 {
-			strval := strconv.FormatInt(val, 10)
-			arg0, err := types.ParseDuration(strval, getFsp(strval))
-			if err != nil {
-				return d, errors.Trace(err)
-			}
-			result, err := arg0.Add(arg1)
-			if err != nil {
-				return d, errors.Trace(err)
-			}
-			d.SetMysqlDuration(result)
-		} else {
-			arg0, err := types.ParseDatetimeFromNum(val)
-			if err != nil {
-				return d, errors.Trace(err)
-			}
-
-			tmpDuration := arg0.Add(arg1)
-			result, err := tmpDuration.ConvertToTime(arg0.Type)
-			if err != nil {
-				return d, errors.Trace(err)
-			}
-			d.SetMysqlTime(result)
-		}
-
-	case types.KindBytes, types.KindMysqlDecimal, types.KindFloat32, types.KindFloat64:
-		s, err1 := args[0].ToString()
-		if err1 != nil {
-			return d, errors.Trace(err1)
-		}
-		arg0, err := types.ParseTime(s, mysql.TypeDatetime, getFsp(s))
+		return d, nil
+	default:
+		ss, err := args[0].ToString()
 		if err != nil {
 			return d, errors.Trace(err)
 		}
-		tmpDuration := arg0.Add(arg1)
-		result, err := tmpDuration.ConvertToTime(arg0.Type)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		d.SetMysqlTime(result)
-	case types.KindString:
-		ss := args[0].GetString()
-		if strings.Contains(ss, "-") {
-			arg0, err := types.ParseTime(ss, mysql.TypeDatetime, getFsp(ss))
-			if err != nil {
-				return d, errors.Trace(err)
-			}
-			tmpDuration := arg0.Add(arg1)
-			result, err := tmpDuration.ConvertToTime(arg0.Type)
-			if err != nil {
-				return d, errors.Trace(err)
-			}
-			d.SetMysqlTime(result)
+		if IsDuration(ss) {
+			return strDurationAddDuration(ss, arg1)
 		} else {
-			arg0, err := types.ParseDuration(ss, getFsp(ss))
-			if err != nil {
-				return d, errors.Trace(err)
-			}
-			result, err := arg0.Add(arg1)
-			if err != nil {
-				return d, errors.Trace(err)
-			}
-			d.SetMysqlDuration(result)
+			return strDatetimeAddDuration(ss, arg1)
 		}
-
 	}
-	return d, nil
 }
 
 type convertTzFunctionClass struct {
