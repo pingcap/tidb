@@ -48,8 +48,9 @@ type EtcdWorker interface {
 	Cancel()
 }
 
-// ChangeOwnerInNewWay is used for testing.
-var ChangeOwnerInNewWay = false
+// ChangeOwnerInNewWay is used for controlling the way of changing owner.
+// TODO: Remove it.
+var ChangeOwnerInNewWay = true
 
 const (
 	ddlOwnerKey               = "/tidb/ddl/owner"

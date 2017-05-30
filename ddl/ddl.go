@@ -228,7 +228,14 @@ func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 
 	id := uuid.NewV4().String()
 	ctx, cancelFunc := goctx.WithCancel(ctx)
-	worker := NewEtcdWorker(etcdCli, id, cancelFunc)
+	var worker EtcdWorker
+	// If etcdCli is nil, it's the local store, so use the mockEtcdWorker.
+	// It's always used for testing.
+	if etcdCli == nil {
+		worker = NewMockEtcdWorker(etcdCli, id, cancelFunc)
+	} else {
+		worker = NewEtcdWorker(etcdCli, id, cancelFunc)
+	}
 	d := &ddl{
 		infoHandle:   infoHandle,
 		hook:         hook,

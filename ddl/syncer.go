@@ -49,6 +49,8 @@ type SchemaSyncer interface {
 	UpdateSelfVersion(ctx goctx.Context, version int64) error
 	// UpdateGlobalVersion updates the latest version to the global path on etcd.
 	UpdateGlobalVersion(ctx goctx.Context, version int64) error
+	// GlobalVersionCh gets the chan for watching global version.
+	GlobalVersionCh() clientv3.WatchChan
 	// CheckAllVersions checks whether all followers' schema version are equal to
 	// the latest schema version. If the result is false, wait for a while and check again util the processing time reach 2 * lease.
 	CheckAllVersions(ctx goctx.Context, latestVer int64) error
@@ -57,7 +59,7 @@ type SchemaSyncer interface {
 type schemaVersionSyncer struct {
 	selfSchemaVerPath string
 	etcdCli           *clientv3.Client
-	GlobalVerCh       clientv3.WatchChan
+	globalVerCh       clientv3.WatchChan
 }
 
 func (s *schemaVersionSyncer) putKV(ctx goctx.Context, retryCnt int, key, val string) error {
@@ -90,8 +92,13 @@ func (s *schemaVersionSyncer) Init(ctx goctx.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	s.GlobalVerCh = s.etcdCli.Watch(ctx, ddlGlobalSchemaVersion)
+	s.globalVerCh = s.etcdCli.Watch(ctx, ddlGlobalSchemaVersion)
 	return s.putKV(ctx, putKeyDefaultRetryCnt, s.selfSchemaVerPath, initialVersion)
+}
+
+// GlobalVersionCh implements SchemaSyncer.GlobalVersionCh interface.
+func (s *schemaVersionSyncer) GlobalVersionCh() clientv3.WatchChan {
+	return s.globalVerCh
 }
 
 // UpdateSelfVersion implements SchemaSyncer.UpdateSelfVersion interface.
