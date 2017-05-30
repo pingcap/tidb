@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package mock is just for test only.
+// Package ddl is just for test only.
 package ddl
 
 import (
