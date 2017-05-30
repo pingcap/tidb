@@ -854,10 +854,11 @@ func produceStrWithSpecifiedTp(s string, tp *FieldType, sc *variable.StatementCo
 					truncateLen = i
 				}
 			}
-			if truncateLen > 0 {
+			if truncateLen > 0 || flen == 0 {
 				err = ErrDataTooLong.Gen("Data Too Long, field len %d, data len %d", flen, runeCount)
 				s = truncateStr(s, truncateLen)
 			}
+
 		} else if len(s) > flen {
 			err = ErrDataTooLong.Gen("Data Too Long, field len %d, data len %d", flen, len(s))
 			s = truncateStr(s, flen)
