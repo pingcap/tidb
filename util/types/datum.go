@@ -858,7 +858,6 @@ func produceStrWithSpecifiedTp(s string, tp *FieldType, sc *variable.StatementCo
 				err = ErrDataTooLong.Gen("Data Too Long, field len %d, data len %d", flen, runeCount)
 				s = truncateStr(s, truncateLen)
 			}
-
 		} else if len(s) > flen {
 			err = ErrDataTooLong.Gen("Data Too Long, field len %d, data len %d", flen, len(s))
 			s = truncateStr(s, flen)
