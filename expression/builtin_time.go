@@ -1770,6 +1770,7 @@ func getTimeZone(ctx context.Context) *time.Location {
 	return ret
 }
 
+//isDuration returns a boolean indicating whether the str is duration
 func isDuration(str string) bool {
 	if n := strings.IndexByte(str, ' '); n >= 0 {
 		if strings.Count(str[:n+1], "-") > 1 {
@@ -1846,16 +1847,23 @@ func (b *builtinAddTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	if args[0].IsNull() || args[1].IsNull() {
 		return d, nil
 	}
-	s, err := args[1].ToString()
 	var arg1 types.Duration
-	if getFsp(s) == 0 {
-		arg1, err = types.ParseDuration(s, 0)
-	} else {
-		arg1, err = types.ParseDuration(s, types.MaxFsp)
+	switch tp := args[1].Kind(); tp {
+	case types.KindMysqlDuration:
+		arg1 = args[1].GetMysqlDuration()
+	default:
+		s, err := args[1].ToString()
+
+		if getFsp(s) == 0 {
+			arg1, err = types.ParseDuration(s, 0)
+		} else {
+			arg1, err = types.ParseDuration(s, types.MaxFsp)
+		}
+		if err != nil {
+			return d, errors.Trace(err)
+		}
 	}
-	if err != nil {
-		return d, errors.Trace(err)
-	}
+
 	switch tp := args[0].Kind(); tp {
 	case types.KindMysqlTime:
 		arg0 := args[0].GetMysqlTime()
