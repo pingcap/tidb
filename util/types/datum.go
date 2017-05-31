@@ -1056,19 +1056,16 @@ func (d *Datum) convertToMysqlDecimal(sc *variable.StatementContext, target *Fie
 // produceDecToSpecifiedTp produces a new decimal according to `Tp`.
 func produceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *variable.StatementContext) (_ *MyDecimal, err error) {
 	flen, decimal := tp.Flen, tp.Decimal
-	val, err := dec.ToFloat64()
-	if err != nil {
-		dec = nil
-	} else if flen != UnspecifiedLength && decimal != UnspecifiedLength {
+	if flen != UnspecifiedLength && decimal != UnspecifiedLength {
 		prec, frac := dec.PrecisionAndFrac()
-		if val != 0 && prec-frac > flen-decimal {
+		if !dec.IsZero() && prec-frac > flen-decimal {
 			dec = NewMaxOrMinDec(dec.IsNegative(), flen, decimal)
 			// TODO: we may need a OverlowAsWarning.
 			// select (cast 111 as decimal(1)) causes a warning in MySQL.
 			err = ErrOverflow.GenByArgs("DECIMAL", fmt.Sprintf("(%d, %d)", flen, decimal))
 		} else if frac != decimal {
 			dec.Round(dec, decimal, ModeHalfEven)
-			if val != 0 && frac > decimal {
+			if !dec.IsZero() && frac > decimal {
 				err = sc.HandleTruncate(ErrTruncated)
 			}
 		}
