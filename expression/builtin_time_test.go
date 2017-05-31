@@ -472,6 +472,27 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestIsDuration(c *C) {
+	defer testleak.AfterTest(c)
+	tbl := []struct {
+		Input  string
+		expect bool
+	}{
+		{"110:00:00", true},
+		{"1 01:00:00", true},
+		{"01:00:00.999999", true},
+		{"071231235959.999999", false},
+		{"20171231235959.999999", false},
+		{"2017-01-01 01:01:01.11", false},
+		{"07-12-31 23:59:59.999999", false},
+		{"2007-12-31 23:59:59.999999", false},
+	}
+	for _, t := range tbl {
+		result := isDuration(t.Input)
+		c.Assert(result, Equals, t.expect)
+	}
+}
+
 func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
