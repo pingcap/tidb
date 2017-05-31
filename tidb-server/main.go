@@ -137,7 +137,7 @@ func main() {
 	}
 
 	// Bootstrap a session to load information schema.
-	_, err := tidb.BootstrapSession(store)
+	domain, err := tidb.BootstrapSession(store)
 	if err != nil {
 		log.Fatal(errors.ErrorStack(err))
 	}
@@ -161,7 +161,6 @@ func main() {
 		sig := <-sc
 		log.Infof("Got signal [%d] to exit.", sig)
 		svr.Close()
-		os.Exit(0)
 	}()
 
 	prometheus.MustRegister(timeJumpBackCounter)
@@ -172,6 +171,8 @@ func main() {
 	pushMetric(*metricsAddr, time.Duration(*metricsInterval)*time.Second)
 
 	log.Error(svr.Run())
+	domain.Close()
+	os.Exit(0)
 }
 
 func createStore() kv.Storage {

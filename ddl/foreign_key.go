@@ -20,18 +20,18 @@ import (
 	"github.com/pingcap/tidb/model"
 )
 
-func (d *ddl) onCreateForeignKey(t *meta.Meta, job *model.Job) error {
+func (d *ddl) onCreateForeignKey(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfo(t, job, schemaID)
 	if err != nil {
-		return errors.Trace(err)
+		return ver, errors.Trace(err)
 	}
 
 	var fkInfo model.FKInfo
 	err = job.DecodeArgs(&fkInfo)
 	if err != nil {
 		job.State = model.JobCancelled
-		return errors.Trace(err)
+		return ver, errors.Trace(err)
 	}
 	fkInfo.ID = allocateIndexID(tblInfo)
 	tblInfo.ForeignKeys = append(tblInfo.ForeignKeys, &fkInfo)
@@ -45,22 +45,22 @@ func (d *ddl) onCreateForeignKey(t *meta.Meta, job *model.Job) error {
 		fkInfo.State = model.StatePublic
 		ver, err := updateTableInfo(t, job, tblInfo, originalState)
 		if err != nil {
-			return errors.Trace(err)
+			return ver, errors.Trace(err)
 		}
 		// Finish this job.
 		job.State = model.JobDone
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
-		return nil
+		return ver, nil
 	default:
-		return ErrInvalidForeignKeyState.Gen("invalid fk state %v", fkInfo.State)
+		return ver, ErrInvalidForeignKeyState.Gen("invalid fk state %v", fkInfo.State)
 	}
 }
 
-func (d *ddl) onDropForeignKey(t *meta.Meta, job *model.Job) error {
+func (d *ddl) onDropForeignKey(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfo(t, job, schemaID)
 	if err != nil {
-		return errors.Trace(err)
+		return ver, errors.Trace(err)
 	}
 
 	var (
@@ -71,7 +71,7 @@ func (d *ddl) onDropForeignKey(t *meta.Meta, job *model.Job) error {
 	err = job.DecodeArgs(&fkName)
 	if err != nil {
 		job.State = model.JobCancelled
-		return errors.Trace(err)
+		return ver, errors.Trace(err)
 	}
 
 	for _, fk := range tblInfo.ForeignKeys {
@@ -83,7 +83,7 @@ func (d *ddl) onDropForeignKey(t *meta.Meta, job *model.Job) error {
 
 	if !found {
 		job.State = model.JobCancelled
-		return infoschema.ErrForeignKeyNotExists.GenByArgs(fkName)
+		return ver, infoschema.ErrForeignKeyNotExists.GenByArgs(fkName)
 	}
 
 	nfks := tblInfo.ForeignKeys[:0]
@@ -103,14 +103,14 @@ func (d *ddl) onDropForeignKey(t *meta.Meta, job *model.Job) error {
 		fkInfo.State = model.StateNone
 		ver, err := updateTableInfo(t, job, tblInfo, originalState)
 		if err != nil {
-			return errors.Trace(err)
+			return ver, errors.Trace(err)
 		}
 		// Finish this job.
 		job.State = model.JobDone
 		job.BinlogInfo.AddTableInfo(ver, tblInfo)
-		return nil
+		return ver, nil
 	default:
-		return ErrInvalidForeignKeyState.Gen("invalid fk state %v", fkInfo.State)
+		return ver, ErrInvalidForeignKeyState.Gen("invalid fk state %v", fkInfo.State)
 	}
 
 }
