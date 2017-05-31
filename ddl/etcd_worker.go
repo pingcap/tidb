@@ -117,10 +117,14 @@ func (w *worker) SetBgOwner(isOwner bool) {
 	}
 }
 
+// defaultSessionTTL is used for etcd session. It's default value is 10s.
+const defaultSessionTTL = 10
+
 func (w *worker) newSession(ctx goctx.Context, retryCnt int) error {
 	var err error
 	for i := 0; i < retryCnt; i++ {
-		w.etcdSession, err = concurrency.NewSession(w.etcdCli, concurrency.WithContext(ctx))
+		w.etcdSession, err = concurrency.NewSession(w.etcdCli,
+			concurrency.WithTTL(defaultSessionTTL), concurrency.WithContext(ctx))
 		if err != nil {
 			log.Warnf("[ddl] failed to new session, err %v", err)
 			time.Sleep(200 * time.Millisecond)

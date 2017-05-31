@@ -319,6 +319,10 @@ func (d *ddl) close() {
 	}
 
 	close(d.quitCh)
+	err := d.worker.RemoveSelfVersionPath()
+	if err != nil {
+		log.Errorf("[ddl] remove self version pathe failed %v", err)
+	}
 	d.worker.Cancel()
 
 	d.wait.Wait()
@@ -403,7 +407,8 @@ func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
 	jobID := job.ID
 	// For a job from start to end, the state of it will be none -> delete only -> write only -> reorganization -> public
 	// For every state changes, we will wait as lease 2 * lease time, so here the ticker check is 10 * lease.
-	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, 10*time.Second))
+	// But we use etcd to speed up, normally it takes less than 1s now, so we use 3s as the max value.
+	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, 3*time.Second))
 	startTime := time.Now()
 	jobsGauge.WithLabelValues(JobType(ddlJobFlag).String(), job.Type.String()).Inc()
 	defer func() {

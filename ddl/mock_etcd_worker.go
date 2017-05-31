@@ -122,6 +122,11 @@ func (s *mockSchemaSyncer) UpdateGlobalVersion(ctx goctx.Context, version int64)
 	return nil
 }
 
+// RemoveSelfVersionPath implements SchemaSyncer.RemoveSelfVersionPath interface.
+func (s *mockSchemaSyncer) RemoveSelfVersionPath() error {
+	return nil
+}
+
 // CheckAllVersions implements SchemaSyncer.CheckAllVersions interface.
 func (s *mockSchemaSyncer) CheckAllVersions(ctx goctx.Context, latestVer int64) error {
 	for {

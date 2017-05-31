@@ -25,7 +25,7 @@ import (
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/integration"
 	"github.com/coreos/etcd/mvcc/mvccpb"
-	//"github.com/ngaut/log"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	goctx "golang.org/x/net/context"
@@ -133,6 +133,14 @@ func TestSyncerSimple(t *testing.T) {
 		t.Fatalf("check all version failed %v", err)
 	}
 	cancel()
+
+	resp, err := s.etcdCli.Get(goctx.Background(), key)
+	log.Warnf("err %v, resp %v", err, resp)
+	d.worker.RemoveSelfVersionPath()
+	resp, err = s.etcdCli.Get(goctx.Background(), key)
+	if err != nil {
+		log.Warnf("err %v, resp %v", err, resp)
+	}
 }
 
 func checkRespKV(t *testing.T, kvCount int, key, val string,
