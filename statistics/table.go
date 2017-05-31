@@ -80,7 +80,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 	table.TableID = tableInfo.ID
 	table.Count = count
 
-	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count, version from mysql.stats_histograms where table_id = %d", tableInfo.ID)
+	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count, version, null_count from mysql.stats_histograms where table_id = %d", tableInfo.ID)
 	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, selSQL)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -93,13 +93,14 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 		distinct := row.Data[3].GetInt64()
 		histID := row.Data[2].GetInt64()
 		histVer := row.Data[4].GetUint64()
+		nullCount := row.Data[5].GetInt64()
 		if row.Data[1].GetInt64() > 0 {
 			// process index
 			idx := table.Indices[histID]
 			for _, idxInfo := range tableInfo.Indices {
 				if histID == idxInfo.ID {
 					if idx == nil || idx.LastUpdateVersion < histVer {
-						hg, err := h.histogramFromStorage(tableInfo.ID, histID, nil, distinct, 1, histVer)
+						hg, err := h.histogramFromStorage(tableInfo.ID, histID, nil, distinct, 1, histVer, nullCount)
 						if err != nil {
 							return nil, errors.Trace(err)
 						}
@@ -119,7 +120,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, count int64) 
 			for _, colInfo := range tableInfo.Columns {
 				if histID == colInfo.ID {
 					if col == nil || col.LastUpdateVersion < histVer {
-						hg, err := h.histogramFromStorage(tableInfo.ID, histID, &colInfo.FieldType, distinct, 0, histVer)
+						hg, err := h.histogramFromStorage(tableInfo.ID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount)
 						if err != nil {
 							return nil, errors.Trace(err)
 						}
