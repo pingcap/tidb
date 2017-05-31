@@ -27,8 +27,10 @@ import (
 	goctx "golang.org/x/net/context"
 )
 
-// EtcdWorker is an interface for DDL access the etcd.
+// EtcdWorker is an interface for DDL to access the etcd.
 type EtcdWorker interface {
+	SchemaSyncer
+
 	// ID returns the ID of DDL.
 	ID() string
 	// IsOwner returns whether the worker is the DDL owner.
@@ -41,9 +43,6 @@ type EtcdWorker interface {
 	SetBgOwner(isOwner bool)
 	// CampaignOwners campaigns the DDL owner and the background owner.
 	CampaignOwners(ctx goctx.Context, wg *sync.WaitGroup) error
-
-	SchemaSyncer
-
 	// Cancel cancels this etcd worker campaign.
 	Cancel()
 }

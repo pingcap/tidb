@@ -40,13 +40,11 @@ type mockEtcdWorker struct {
 // NewMockEtcdWorker creates a new mockEtcdWorker.
 func NewMockEtcdWorker(etcdCli *clientv3.Client, id string, cancel goctx.CancelFunc) EtcdWorker {
 	return &mockEtcdWorker{
-		mockSchemaSyncer: &mockSchemaSyncer{
-			etcdCli: etcdCli,
-		},
-		ddlID:    id,
-		cancel:   cancel,
-		ddlOwner: int32(1), // Make sure the worker is the DDL owner.
-		bgOwner:  int32(1), // Make sure the worker is the background owner.
+		mockSchemaSyncer: &mockSchemaSyncer{},
+		ddlID:            id,
+		cancel:           cancel,
+		ddlOwner:         int32(1), // Make sure the worker is the DDL owner.
+		bgOwner:          int32(1), // Make sure the worker is the background owner.
 	}
 }
 
@@ -95,7 +93,6 @@ const mockCheckVersInterval = 5 * time.Millisecond
 
 type mockSchemaSyncer struct {
 	selfSchemaVersion int64
-	etcdCli           *clientv3.Client
 	globalVerCh       chan clientv3.WatchResponse
 }
 

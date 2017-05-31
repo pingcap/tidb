@@ -163,7 +163,7 @@ type ddl struct {
 	hook       Callback
 	hookMu     sync.RWMutex
 	store      kv.Storage
-	// worker is used for DDL access the etcd.
+	// worker is used for DDL to access the etcd.
 	worker EtcdWorker
 	// lease is schema seconds.
 	lease        time.Duration
