@@ -14,12 +14,13 @@
 package expression
 
 import (
+	"math"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
-	"math"
 )
 
 var bitCountCases = []struct {

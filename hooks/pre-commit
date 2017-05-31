@@ -13,20 +13,10 @@ readonly green=$(tput bold; tput setaf 2)
 
 exit_code=0
 
-# comment it by default. You can uncomment it.
-# echo -ne "Checking that it builds..."
-# if ! OUT=$(make 2>&1); then
-#     echo
-#     echo "${red}${OUT}"
-#     exit_code=1
-# else
-#     echo "${green}OK"
-# fi
-# echo "${reset}"
+files=($(git diff --cached --name-only --diff-filter ACM | grep "\.go" | grep -v -e "^_vendor"))
 
 echo -ne "Checking for files that need gofmt... "
 files_need_gofmt=()
-files=($(git diff --cached --name-only --diff-filter ACM | grep "\.go" | grep -v -e "^_vendor"))
 for file in "${files[@]}"; do
     # Check for files that fail gofmt.
     diff="$(git show ":${file}" | gofmt -s -d 2>&1)"
@@ -46,12 +36,32 @@ else
 fi
 echo "${reset}"
 
+echo -ne "Checking for files that need goimports... "
+files_need_goimports=()
+for file in "${files[@]}"; do
+    # Check for files that fail goimports.
+    diff="$(git show ":${file}" | goimports -d 2>&1)"
+    if [[ -n "$diff" ]]; then
+        files_need_goimports+=("${file}")
+    fi
+done
+
+if [[ "${#files_need_goimports[@]}" -ne 0 ]]; then
+    echo "${red}ERROR!"
+    echo "Some files have not been goimport'd. To fix these errors, "
+    echo "copy and paste the following:"
+    echo "  goimports -w ${files_need_goimports[@]}"
+    exit_code=1
+else
+    echo "${green}OK"
+fi
+echo "${reset}"
+
 echo -ne "Checking for files that need goword... "
 files_need_goword=()
-files=($(git diff --cached --name-only --diff-filter ACM | grep "\.go" | grep -v -e "^_vendor"))
 for file in "${files[@]}"; do
     # Check for files that fail goword.
-    diff=$(goword ${file})
+    diff="$(git show ":${file}" | goword 2>&1)"
     if [[ -n "$diff" ]]; then
         files_need_goword+=("${file}")
     fi

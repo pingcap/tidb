@@ -23,12 +23,13 @@ MAC       := "Darwin"
 PACKAGES  := $$(go list ./...| grep -vE 'vendor')
 FILES     := $$(find . -name '*.go' | grep -vE 'vendor')
 
+
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-parse HEAD)"
 
 TARGET = ""
 
-.PHONY: all build update parser clean todo test gotest interpreter server dev benchkv benchraw check parserlib checklist
+.PHONY: all build update parser clean todo test gotest interpreter server dev benchkv benchraw check parserlib checklist goimports
 
 default: server buildsucc
 
@@ -86,6 +87,11 @@ goword:
 	go get github.com/chzchzchz/goword
 	@echo "goword"
 	@ goword $(FILES) | awk '{print} END{if(NR>0) {exit 1}}'
+
+goimports:
+	go get golang.org/x/tools/cmd/goimports
+	@echo "goimports"
+	@ goimports -d -w $(FILES)
 
 errcheck:
 	go get github.com/kisielk/errcheck
