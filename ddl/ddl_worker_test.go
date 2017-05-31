@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 	goctx "golang.org/x/net/context"
@@ -31,24 +30,9 @@ import (
 
 var _ = Suite(&testDDLSuite{})
 
-type testDDLSuite struct {
-	originMinBgOwnerTimeout  int64
-	originMinDDLOwnerTimeout int64
-}
+type testDDLSuite struct{}
 
 const testLease = 5 * time.Millisecond
-
-func (s *testDDLSuite) SetUpSuite(c *C) {
-	s.originMinDDLOwnerTimeout = minDDLOwnerTimeout
-	s.originMinBgOwnerTimeout = minBgOwnerTimeout
-	minDDLOwnerTimeout = int64(4 * testLease)
-	minBgOwnerTimeout = int64(4 * testLease)
-}
-
-func (s *testDDLSuite) TearDownSuite(c *C) {
-	minDDLOwnerTimeout = s.originMinDDLOwnerTimeout
-	minBgOwnerTimeout = s.originMinBgOwnerTimeout
-}
 
 func (s *testDDLSuite) TestCheckOwner(c *C) {
 	defer testleak.AfterTest(c)()
@@ -211,17 +195,7 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 }
 
 func testCheckOwner(c *C, d *ddl, isOwner bool, flag JobType) {
-	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		_, err := d.checkOwner(t, flag)
-		return err
-	})
-	if isOwner {
-		c.Assert(err, IsNil)
-		return
-	}
-
-	c.Assert(terror.ErrorEqual(err, errNotOwner), IsTrue)
+	c.Assert(d.isOwner(flag), Equals, isOwner)
 }
 
 func testCheckJobDone(c *C, d *ddl, job *model.Job, isAdd bool) {
