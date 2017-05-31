@@ -45,6 +45,7 @@ import (
 		select json_extract('{"a": "b", "c": [1, "2"]}', '$.*') -> ["b", [1, "2"]]
 	TODO:
 		1) add double asterisk support;
+		2) support '\"' in string literal;
 */
 var jsonPathExprLegRe = regexp.MustCompile(`(\.\s*([a-zA-Z_][a-zA-Z0-9_]*|\*|"[^"]*")|(\[\s*([0-9]+|\*)\s*\]))`)
 

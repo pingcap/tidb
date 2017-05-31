@@ -61,6 +61,7 @@ func (s *testJSONSuite) TestJSONExtract(c *C) {
 		{j1, []string{"$.a[2].aa"}, CreateJSON("bb"), true, nil},
 		{j1, []string{"$.a[*].aa"}, mustParseFromString(`["bb", "cc"]`), true, nil},
 		{j1, []string{"$.*[0]"}, mustParseFromString(`[1, "d"]`), true, nil},
+		{j1, []string{`$.a[*]."aa"`}, mustParseFromString(`["bb", "cc"]`), true, nil},
 
 		// test extract with multi path expressions.
 		{j1, []string{"$.a", "$[0]"}, mustParseFromString(`[[1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}]]`), true, nil},
