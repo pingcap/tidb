@@ -129,6 +129,8 @@ func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 			var key = strings.TrimFunc(pathExprSuffix[indice[0]+1:indice[1]], isBlank)
 			if len(key) == 1 && key[0] == '*' {
 				pe.flags |= pathExpressionContainsAsterisk
+			} else if key[0] == '"' {
+				key = key[1 : len(key)-1]
 			}
 			pe.legs = append(pe.legs, pathLeg{isArrayIndex: false, dotKey: key})
 		}
