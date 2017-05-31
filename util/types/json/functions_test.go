@@ -20,12 +20,12 @@ import (
 )
 
 func (s *testJSONSuite) TestJSONType(c *C) {
-	j1 := parseFromStringPanic(`{"a": "b"}`)
-	j2 := parseFromStringPanic(`["a", "b"]`)
-	j3 := parseFromStringPanic(`3`)
-	j4 := parseFromStringPanic(`3.0`)
-	j5 := parseFromStringPanic(`null`)
-	j6 := parseFromStringPanic(`true`)
+	j1 := mustParseFromString(`{"a": "b"}`)
+	j2 := mustParseFromString(`["a", "b"]`)
+	j3 := mustParseFromString(`3`)
+	j4 := mustParseFromString(`3.0`)
+	j5 := mustParseFromString(`null`)
+	j6 := mustParseFromString(`true`)
 	var jList = []struct {
 		In  JSON
 		Out string
@@ -43,8 +43,8 @@ func (s *testJSONSuite) TestJSONType(c *C) {
 }
 
 func (s *testJSONSuite) TestJSONExtract(c *C) {
-	j1 := parseFromStringPanic(`{"a": [1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}], "b": true, "c": ["d"]}`)
-	j2 := parseFromStringPanic(`[{"a": 1, "b": true}, 3, 3.5, "hello, world", null, true]`)
+	j1 := mustParseFromString(`{"a": [1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}], "b": true, "c": ["d"]}`)
+	j2 := mustParseFromString(`[{"a": 1, "b": true}, 3, 3.5, "hello, world", null, true]`)
 
 	var caseList = []struct {
 		j               JSON
@@ -59,12 +59,12 @@ func (s *testJSONSuite) TestJSONExtract(c *C) {
 		{j1, []string{"$[0]"}, CreateJSON(nil), false, nil},
 		{j2, []string{"$[0]"}, j2.array[0], true, nil},
 		{j1, []string{"$.a[2].aa"}, CreateJSON("bb"), true, nil},
-		{j1, []string{"$.a[*].aa"}, parseFromStringPanic(`["bb", "cc"]`), true, nil},
-		{j1, []string{"$.*[0]"}, parseFromStringPanic(`[1, "d"]`), true, nil},
+		{j1, []string{"$.a[*].aa"}, mustParseFromString(`["bb", "cc"]`), true, nil},
+		{j1, []string{"$.*[0]"}, mustParseFromString(`[1, "d"]`), true, nil},
 
 		// test extract with multi path expressions.
-		{j1, []string{"$.a", "$[0]"}, parseFromStringPanic(`[[1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}]]`), true, nil},
-		{j2, []string{"$.a", "$[0]"}, parseFromStringPanic(`[{"a": 1, "b": true}]`), true, nil},
+		{j1, []string{"$.a", "$[0]"}, mustParseFromString(`[[1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}]]`), true, nil},
+		{j2, []string{"$.a", "$[0]"}, mustParseFromString(`[{"a": 1, "b": true}]`), true, nil},
 	}
 
 	for _, caseItem := range caseList {
@@ -90,11 +90,11 @@ func (s *testJSONSuite) TestJSONUnquote(c *C) {
 		j        JSON
 		unquoted string
 	}{
-		{j: parseFromStringPanic(`3`), unquoted: "3"},
-		{j: parseFromStringPanic(`"3"`), unquoted: "3"},
-		{j: parseFromStringPanic(`true`), unquoted: "true"},
-		{j: parseFromStringPanic(`null`), unquoted: "null"},
-		{j: parseFromStringPanic(`{"a": [1, 2]}`), unquoted: `{"a":[1,2]}`},
+		{j: mustParseFromString(`3`), unquoted: "3"},
+		{j: mustParseFromString(`"3"`), unquoted: "3"},
+		{j: mustParseFromString(`true`), unquoted: "true"},
+		{j: mustParseFromString(`null`), unquoted: "null"},
+		{j: mustParseFromString(`{"a": [1, 2]}`), unquoted: `{"a":[1,2]}`},
 	}
 	for _, caseItem := range caseList {
 		c.Assert(caseItem.j.Unquote(), Equals, caseItem.unquoted)

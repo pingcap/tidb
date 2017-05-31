@@ -28,7 +28,7 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-func parseFromStringPanic(s string) JSON {
+func mustParseFromString(s string) JSON {
 	j, err := ParseFromString(s)
 	if err != nil {
 		msg := fmt.Sprintf("ParseFromString(%s) fail", s)
@@ -39,7 +39,7 @@ func parseFromStringPanic(s string) JSON {
 
 func (s *testJSONSuite) TestParseFromString(c *C) {
 	jstr1 := `{"a": [1, "2", {"aa": "bb"}, 4, null], "b": true, "c": null}`
-	jstr2 := parseFromStringPanic(jstr1).String()
+	jstr2 := mustParseFromString(jstr1).String()
 	c.Assert(jstr2, Equals, `{"a":[1,"2",{"aa":"bb"},4,null],"b":true,"c":null}`)
 }
 
@@ -48,8 +48,8 @@ func (s *testJSONSuite) TestJSONSerde(c *C) {
 	var jsonBoolValue = CreateJSON(true)
 	var jsonDoubleValue = CreateJSON(3.24)
 	var jsonStringValue = CreateJSON("hello, 世界")
-	j1 := parseFromStringPanic(`{"aaaaaaaaaaa": [1, "2", {"aa": "bb"}, 4.0], "bbbbbbbbbb": true, "ccccccccc": "d"}`)
-	j2 := parseFromStringPanic(`[{"a": 1, "b": true}, 3, 3.5, "hello, world", null, true]`)
+	j1 := mustParseFromString(`{"aaaaaaaaaaa": [1, "2", {"aa": "bb"}, 4.0], "bbbbbbbbbb": true, "ccccccccc": "d"}`)
+	j2 := mustParseFromString(`[{"a": 1, "b": true}, 3, 3.5, "hello, world", null, true]`)
 
 	var testcses = []struct {
 		In  JSON
@@ -75,16 +75,16 @@ func (s *testJSONSuite) TestJSONSerde(c *C) {
 }
 
 func (s *testJSONSuite) TestCompareJSON(c *C) {
-	jNull := parseFromStringPanic(`null`)
-	jBoolTrue := parseFromStringPanic(`true`)
-	jBoolFalse := parseFromStringPanic(`false`)
-	jIntegerLarge := parseFromStringPanic(`5`)
-	jIntegerSmall := parseFromStringPanic(`3`)
-	jStringLarge := parseFromStringPanic(`"hello, world"`)
-	jStringSmall := parseFromStringPanic(`"hello"`)
-	jArrayLarge := parseFromStringPanic(`["a", "c"]`)
-	jArraySmall := parseFromStringPanic(`["a", "b"]`)
-	jObject := parseFromStringPanic(`{"a": "b"}`)
+	jNull := mustParseFromString(`null`)
+	jBoolTrue := mustParseFromString(`true`)
+	jBoolFalse := mustParseFromString(`false`)
+	jIntegerLarge := mustParseFromString(`5`)
+	jIntegerSmall := mustParseFromString(`3`)
+	jStringLarge := mustParseFromString(`"hello, world"`)
+	jStringSmall := mustParseFromString(`"hello"`)
+	jArrayLarge := mustParseFromString(`["a", "c"]`)
+	jArraySmall := mustParseFromString(`["a", "b"]`)
+	jObject := mustParseFromString(`{"a": "b"}`)
 
 	var caseList = []struct {
 		left  JSON
