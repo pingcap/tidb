@@ -50,10 +50,9 @@ var jsonPathExprLegRe = regexp.MustCompile(`(\.([a-zA-Z_][a-zA-Z0-9_]*|\*)|(\[([
 
 // pathLeg is only used by PathExpression.
 type pathLeg struct {
-	start        int  // start offset of the leg in raw string, inclusive.
-	end          int  // end offset of the leg in raw string, exclusive.
-	isArrayIndex bool // the leg is an array index or not.
-	arrayIndex   int  // if isArrayIndex is true, the value should be parsed into here.
+	isArrayIndex bool   // the leg is an array index or not.
+	arrayIndex   int    // if isArrayIndex is true, the value should be parsed into here.
+	mapKey       string // if isArrayIndex is false, the key should be parsed into here.
 }
 
 // arrayIndexAsterisk is for parsing `*` into a number.
@@ -125,13 +124,13 @@ func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 					return
 				}
 			}
-			pe.legs = append(pe.legs, pathLeg{indice[0], indice[1], true, index})
+			pe.legs = append(pe.legs, pathLeg{isArrayIndex: true, arrayIndex: index})
 		} else {
 			var key = pathExpr[indice[0]+1 : indice[1]]
 			if len(key) == 1 && key[0] == '*' {
 				pe.flags |= pathExpressionContainsDoubleAsterisk
 			}
-			pe.legs = append(pe.legs, pathLeg{indice[0] + 1, indice[1], false, 0})
+			pe.legs = append(pe.legs, pathLeg{isArrayIndex: false, mapKey: key})
 		}
 	}
 	return
