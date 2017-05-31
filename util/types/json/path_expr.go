@@ -30,7 +30,7 @@ import (
 		arrayLocation ::= '[' (non-negative-integer | '*') ']'
 		keyName ::= ECMAScript-identifier | ECMAScript-string-literal
 
-	And some implemetion limits in MySQL 5.7:
+	And some implementation limits in MySQL 5.7:
 		1) columnReference in scope must be empty now;
 		2) double asterisk(**) could not be last leg;
 
@@ -53,7 +53,7 @@ type pathLeg struct {
 	start        int  // start offset of the leg in raw string, inclusive.
 	end          int  // end offset of the leg in raw string, exclusive.
 	isArrayIndex bool // the leg is an array index or not.
-	arrayIndex   int  // if isArrayIndex is true, the value shoud be parsed into here.
+	arrayIndex   int  // if isArrayIndex is true, the value should be parsed into here.
 }
 
 // arrayIndexAsterisk is for parsing `*` into a number.
@@ -77,12 +77,19 @@ func (pef pathExpressionFlag) containsAnyAsterisk() bool {
 // PathExpression is for JSON path expression.
 type PathExpression struct {
 	raw   string
-	legs  []pathLeg // [(leg_start, leg_end), [leg_start, leg_end)]
+	legs  []pathLeg
 	flags pathExpressionFlag
 }
 
 // ParseJSONPathExpr parses a JSON path expression. Returns a PathExpression
-// object which can be used in JSON_EXTRACT, JSON_SET, ...
+// object which can be used in JSON_EXTRACT, JSON_SET and so on. Examples:
+//  select json_extract('{"a": "b", "c": [1, "2"]}', '$.a') -> "b"
+//  select json_extract('{"a": "b", "c": [1, "2"]}', '$.c') -> [1, "2"]
+//  select json_extract('{"a": "b", "c": [1, "2"]}', '$.a', '$.c') -> ["b", [1, "2"]]
+//  select json_extract('{"a": "b", "c": [1, "2"]}', '$.c[0]') -> 1
+//  select json_extract('{"a": "b", "c": [1, "2"]}', '$.c[2]') -> NULL
+//  select json_extract('{"a": "b", "c": [1, "2"]}', '$.c[*]') -> [1, "2"]
+//  select json_extract('{"a": "b", "c": [1, "2"]}', '$.*') -> ["b", [1, "2"]]
 func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 	pathExpr = blankRe.ReplaceAllString(pathExpr, "")
 	if pathExpr[0] != '$' {
@@ -95,13 +102,11 @@ func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 	pe.legs = make([]pathLeg, 0, len(indices))
 	pe.flags = pathExpressionFlag(0)
 
-	// lastEnd and currentStart is for checking all characters between two legs are blank or not.
-	var lastEnd = -1
-	var currentStart = -1
+	lastEnd, currentStart := -1, -1
 	for _, indice := range indices {
 		currentStart = indice[0]
 		if lastEnd > 0 && currentStart != lastEnd {
-			// We have already remove all blank characters.
+			// We have already removed all blank characters.
 			err = ErrInvalidJSONPath.GenByArgs(pathExpr)
 			return
 		}

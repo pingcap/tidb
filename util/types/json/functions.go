@@ -52,6 +52,8 @@ func (j JSON) Extract(pathExprList []PathExpression) (ret JSON, found bool) {
 	if len(elemList) == 0 {
 		found = false
 	} else if len(pathExprList) == 1 && len(elemList) == 1 {
+		// If pathExpr contains asterisks, len(elemList) won't be 1
+		// even if len(pathExprList) equals to 1.
 		found = true
 		ret = elemList[0]
 	} else {
