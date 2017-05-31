@@ -417,7 +417,7 @@ func upgradeToVer12(s Session) {
 		return
 	}
 	r := rs[0]
-	sqls := make([]string, 1)
+	sqls := make([]string, 0, 1)
 	defer r.Close()
 	row, err := r.Next()
 	for err == nil && row != nil {
