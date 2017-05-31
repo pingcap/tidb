@@ -18,6 +18,7 @@
 package tidb
 
 import (
+	"encoding/hex"
 	"fmt"
 	"runtime/debug"
 	"strconv"
@@ -423,7 +424,7 @@ func upgradeToVer12(s Session) {
 		user := row.Data[0].GetString()
 		host := row.Data[1].GetString()
 		pass := row.Data[2].GetString()
-		newpass, err := util.OldPasswordUpgrade(pass)
+		newpass, err := oldPasswordUpgrade(pass)
 		if err != nil {
 			log.Fatal(err)
 			return
@@ -547,4 +548,16 @@ func mustExecute(s Session, sql string) {
 		debug.PrintStack()
 		log.Fatal(err)
 	}
+}
+
+// oldPasswordUpgrade upgrade password to MySQL compatible format
+func oldPasswordUpgrade(pass string) (string, error) {
+	hash1, err := hex.DecodeString(pass)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+
+	hash2 := util.Sha1Hash(hash1)
+	newpass := fmt.Sprintf("*%X", hash2)
+	return newpass, nil
 }

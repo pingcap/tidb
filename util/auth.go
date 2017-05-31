@@ -76,15 +76,3 @@ func DecodePassword(pwd string) ([]byte, error) {
 	}
 	return x, nil
 }
-
-// OldPasswordUpgrade upgrade password to MySQL compatible format
-func OldPasswordUpgrade(pass string) (string, error) {
-	hash1, err := hex.DecodeString(pass)
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-
-	hash2 := Sha1Hash(hash1)
-	newpass := fmt.Sprintf("*%X", hash2)
-	return newpass, nil
-}

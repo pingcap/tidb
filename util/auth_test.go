@@ -14,8 +14,6 @@
 package util
 
 import (
-	"fmt"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -49,13 +47,4 @@ func (s *testAuthSuite) TestCheckScramble(c *C) {
 
 	res := CheckScrambledPassword(salt, hpwd, auth)
 	c.Assert(res, IsTrue)
-}
-
-func (s *testAuthSuite) TestOldPasswordUpgrade(c *C) {
-	defer testleak.AfterTest(c)()
-	pwd := "abc"
-	oldpwd := fmt.Sprintf("%X", Sha1Hash([]byte(pwd)))
-	newpwd, err := OldPasswordUpgrade(oldpwd)
-	c.Assert(err, IsNil)
-	c.Assert(newpwd, Equals, "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E")
 }
