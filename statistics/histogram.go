@@ -69,7 +69,7 @@ func (hg *Histogram) SaveToStorage(ctx context.Context, tableID int64, count int
 	if err != nil {
 		return errors.Trace(err)
 	}
-	replaceSQL = fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count) values (%d, %d, %d, %d)", tableID, isIndex, hg.ID, hg.NDV)
+	replaceSQL = fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, null_count) values (%d, %d, %d, %d, %d)", tableID, isIndex, hg.ID, hg.NDV, hg.NullCount)
 	_, err = exec.Execute(replaceSQL)
 	if err != nil {
 		return errors.Trace(err)
@@ -104,7 +104,7 @@ func (hg *Histogram) SaveToStorage(ctx context.Context, tableID int64, count int
 	return errors.Trace(err)
 }
 
-func (h *Handle) histogramFromStorage(tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64) (*Histogram, error) {
+func (h *Handle) histogramFromStorage(tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64) (*Histogram, error) {
 	selSQL := fmt.Sprintf("select bucket_id, count, repeats, lower_bound, upper_bound from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, colID)
 	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, selSQL)
 	if err != nil {
@@ -116,6 +116,7 @@ func (h *Handle) histogramFromStorage(tableID int64, colID int64, tp *types.Fiel
 		NDV:               distinct,
 		LastUpdateVersion: ver,
 		Buckets:           make([]Bucket, bucketSize),
+		NullCount:         nullCount,
 	}
 	for i := 0; i < bucketSize; i++ {
 		bucketID := rows[i].Data[0].GetInt64()
