@@ -30,7 +30,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/executor"
 	tmysql "github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/printer"
 )
 
@@ -250,9 +249,7 @@ func runTestLoadData(c *C) {
 		c.Assert(err, IsNil)
 		err = os.Remove(path)
 		c.Assert(err, IsNil)
-		variable.GoSQLDriverTest = false
 	}()
-	variable.GoSQLDriverTest = true
 	_, err = fp.WriteString(`
 xxx row1_col1	- row1_col2	1abc
 xxx row2_col1	- row2_col2	
@@ -262,7 +259,7 @@ xxx row5_col1	- 	row5_col3`)
 	c.Assert(err, IsNil)
 
 	// support ClientLocalFiles capability
-	runTests(c, dsn+"&allowAllFiles=true", func(dbt *DBTest) {
+	runTests(c, dsn+"&allowAllFiles=true&strict=false", func(dbt *DBTest) {
 		dbt.mustExec("create table test (a varchar(255), b varchar(255) default 'default value', c int not null auto_increment, primary key(c))")
 		rs, err := dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test")
 		dbt.Assert(err, IsNil)
