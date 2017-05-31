@@ -84,6 +84,9 @@ type LogicalJoin struct {
 	// DefaultValues is only used for outer join, which stands for the default values when the outer table cannot find join partner
 	// instead of null padding.
 	DefaultValues []types.Datum
+
+	// coalescedSchema is used for select column when specified table name.
+	coalescedSchema *expression.Schema
 }
 
 func (p *LogicalJoin) columnSubstitute(schema *expression.Schema, exprs []expression.Expression) {

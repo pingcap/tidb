@@ -15,6 +15,7 @@ package plan
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -240,7 +241,12 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 		}
 	}
 
-	if join.On != nil {
+	if join.Using != nil {
+		if err := b.buildUsingClause(joinPlan, leftPlan, rightPlan, join); err != nil {
+			b.err = err
+			return nil
+		}
+	} else if join.On != nil {
 		onExpr, _, err := b.rewrite(join.On.Expr, joinPlan, nil, false)
 		if err != nil {
 			b.err = err
@@ -264,6 +270,76 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 		joinPlan.JoinType = InnerJoin
 	}
 	return joinPlan
+}
+
+func (b *planBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, join *ast.Join) error {
+	lsc := leftPlan.Schema().Clone()
+	rsc := rightPlan.Schema().Clone()
+
+	schemaCols := make([]*expression.Column, 0, len(lsc.Columns)+len(rsc.Columns)-len(join.Using))
+	coalescedCols := make([]*expression.Column, 0, len(join.Using))
+	conds := make([]*expression.ScalarFunction, 0, len(join.Using))
+
+	coalesced := make(map[string]bool, len(join.Using))
+	for _, col := range join.Using {
+		var (
+			err    error
+			lc, rc *expression.Column
+			cond   expression.Expression
+		)
+
+		if lc, err = lsc.FindColumn(col); err != nil {
+			return err
+		}
+		if rc, err = rsc.FindColumn(col); err != nil {
+			return err
+		}
+		coalesced[col.Name.L] = true
+		if lc == nil || rc == nil {
+			return ErrUnknownColumn.GenByArgs(col.Name, col.Table)
+		}
+
+		if cond, err = expression.NewFunction(b.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lc, rc); err != nil {
+			return err
+		}
+		conds = append(conds, cond.(*expression.ScalarFunction))
+		if join.Tp == ast.RightJoin {
+			schemaCols = append(schemaCols, rc)
+			coalescedCols = append(coalescedCols, lc)
+		} else {
+			schemaCols = append(schemaCols, lc)
+			coalescedCols = append(coalescedCols, rc)
+		}
+	}
+
+	sort.Slice(schemaCols, func(i, j int) bool {
+		return schemaCols[i].Position < schemaCols[j].Position
+	})
+
+	if join.Tp == ast.RightJoin {
+		lsc, rsc = rsc, lsc
+	}
+	for _, col := range lsc.Columns {
+		if !coalesced[col.ColName.L] {
+			schemaCols = append(schemaCols, col)
+		}
+	}
+	for _, col := range rsc.Columns {
+		if !coalesced[col.ColName.L] {
+			schemaCols = append(schemaCols, col)
+		}
+	}
+
+	p.SetSchema(expression.NewSchema(schemaCols...))
+	p.EqualConditions = append(conds, p.EqualConditions...)
+
+	coalescedSchema := expression.NewSchema(coalescedCols...)
+	if left, ok := leftPlan.(*LogicalJoin); ok && left.coalescedSchema != nil {
+		coalescedSchema = expression.MergeSchema(coalescedSchema, left.coalescedSchema)
+	}
+	p.coalescedSchema = coalescedSchema
+
+	return nil
 }
 
 func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
