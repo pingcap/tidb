@@ -22,7 +22,7 @@ import (
 	"github.com/juju/errors"
 )
 
-// CheckScramble check scrambled password received from client.
+// CheckScrambledPassword check scrambled password received from client.
 // The new authentication is performed in following manner:
 //   SERVER:  public_seed=create_random_string()
 //            send(public_seed)
@@ -37,9 +37,9 @@ import (
 //            candidate_hash2=sha1(hash_stage1)
 //            check(candidate_hash2==hash_stage2)
 //            // this three steps are done in check_scramble()
-func CheckScramble(scramble, hpwd, auth []byte) bool {
+func CheckScrambledPassword(salt, hpwd, auth []byte) bool {
 	crypt := sha1.New()
-	crypt.Write(scramble)
+	crypt.Write(salt)
 	crypt.Write(hpwd)
 	hash := crypt.Sum(nil)
 	// token = scrambleHash XOR stage1Hash

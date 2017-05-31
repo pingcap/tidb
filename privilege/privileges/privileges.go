@@ -108,7 +108,7 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, auth, salt []
 		return false
 	}
 
-	if !util.CheckScramble(salt, hpwd, auth) {
+	if !util.CheckScrambledPassword(salt, hpwd, auth) {
 		return false
 	}
 

@@ -47,7 +47,7 @@ func (s *testAuthSuite) TestCheckScramble(c *C) {
 	hpwd, err := DecodePassword(encodepwd)
 	c.Assert(err, IsNil)
 
-	res := CheckScramble(salt, hpwd, auth)
+	res := CheckScrambledPassword(salt, hpwd, auth)
 	c.Assert(res, IsTrue)
 }
 
