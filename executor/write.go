@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
@@ -523,9 +522,6 @@ func (e *LoadDataInfo) insertData(cols []string) {
 
 func (e *InsertValues) handleLoadDataWarnings(err error, logInfo string) {
 	sc := e.ctx.GetSessionVars().StmtCtx
-	if variable.GoSQLDriverTest {
-		return
-	}
 	sc.AppendWarning(err)
 	log.Warn(logInfo)
 }
