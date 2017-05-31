@@ -116,11 +116,6 @@ func (h *Handle) insertColStats2KV(tableID int64, colInfo *model.ColumnInfo) err
 	// If we didn't update anything by last SQL, it means the stats of this table does not exist.
 	if h.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0 {
 		exec := h.ctx.(sqlexec.SQLExecutor)
-		// If this stats exists, we insert histogram meta first, the distinct_count will always be one.
-		_, err = exec.Execute(fmt.Sprintf("insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count) values (%d, %d, 0, %d, 1)", h.ctx.Txn().StartTS(), tableID, colInfo.ID))
-		if err != nil {
-			return errors.Trace(err)
-		}
 		// By this step we can get the count of this table, then we can sure the count and repeats of bucket.
 		rs, err := exec.Execute(fmt.Sprintf("select count from mysql.stats_meta where table_id = %d", tableID))
 		if err != nil {
@@ -136,14 +131,27 @@ func (h *Handle) insertColStats2KV(tableID int64, colInfo *model.ColumnInfo) err
 		if err != nil {
 			return errors.Trace(err)
 		}
-		value, err = value.ConvertTo(h.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
-		if err != nil {
-			return errors.Trace(err)
-		}
-		// There must be only one bucket for this new column and the value is the default value.
-		_, err = exec.Execute(fmt.Sprintf("insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, repeats, count, lower_bound, upper_bound) values (%d, 0, %d, 0, %d, %d, X'%X', X'%X')", tableID, colInfo.ID, count, count, value.GetBytes(), value.GetBytes()))
-		if err != nil {
-			return errors.Trace(err)
+		if value.IsNull() {
+			// If the adding column has default value null, all the existing rows have null value on the newly added column.
+			_, err = exec.Execute(fmt.Sprintf("insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, null_count) values (%d, %d, 0, %d, 1, %d)", h.ctx.Txn().StartTS(), tableID, colInfo.ID, count))
+			if err != nil {
+				return errors.Trace(err)
+			}
+		} else {
+			// If this stats exists, we insert histogram meta first, the distinct_count will always be one.
+			_, err = exec.Execute(fmt.Sprintf("insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count) values (%d, %d, 0, %d, 1)", h.ctx.Txn().StartTS(), tableID, colInfo.ID))
+			if err != nil {
+				return errors.Trace(err)
+			}
+			value, err = value.ConvertTo(h.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
+			if err != nil {
+				return errors.Trace(err)
+			}
+			// There must be only one bucket for this new column and the value is the default value.
+			_, err = exec.Execute(fmt.Sprintf("insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, repeats, count, lower_bound, upper_bound) values (%d, 0, %d, 0, %d, %d, X'%X', X'%X')", tableID, colInfo.ID, count, count, value.GetBytes(), value.GetBytes()))
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	_, err = exec.Execute("commit")
