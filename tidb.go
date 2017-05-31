@@ -134,6 +134,7 @@ func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
 	return stmts, nil
 }
 
+// resetStmtCtx resets the StmtContext.
 // Before every execution, we must clear statement context.
 func resetStmtCtx(ctx context.Context, s ast.StmtNode) {
 	sessVars := ctx.GetSessionVars()
@@ -150,10 +151,6 @@ func resetStmtCtx(ctx context.Context, s ast.StmtNode) {
 		sc.IgnoreTruncate = false
 		sc.TruncateAsWarning = false
 	case *ast.LoadDataStmt:
-		if variable.GoSQLDriverTest {
-			sc.IgnoreTruncate = true
-			break
-		}
 		sc.IgnoreTruncate = false
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode
 	default:
