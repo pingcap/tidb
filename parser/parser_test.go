@@ -1026,6 +1026,12 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT UNCOMPRESS('any string');`, true},
 		{`SELECT UNCOMPRESSED_LENGTH(@compressed_string);`, true},
 		{`SELECT VALIDATE_PASSWORD_STRENGTH(@str);`, true},
+
+		// For JSON functions.
+		{`SELECT JSON_EXTRACT();`, true},
+		{`SELECT JSON_UNQUOTE();`, true},
+		{`SELECT JSON_TYPE('[123]');`, true},
+		{`SELECT JSON_TYPE();`, true},
 	}
 	s.RunTest(c, table)
 }
