@@ -55,10 +55,6 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 		if col.IsPKHandleColumn(t.Meta()) {
 			newHandle = newData[i]
 		}
-		if col.GeneratedExprString != "" {
-			// Can't update generated columns, be compatible with MySQL 5.7.
-			return ErrBadGeneratedColumn.GenByArgs(col.Name.O, t.Meta().Name.O)
-		}
 		if mysql.HasAutoIncrementFlag(col.Flag) {
 			if newData[i].IsNull() {
 				return errors.Errorf("Column '%v' cannot be null", col.Name.O)
@@ -632,12 +628,6 @@ func (e *InsertExec) Next() (*Row, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	for _, col := range cols {
-		if col.GeneratedExprString != "" {
-			// Can't insert generated columns, be compatible with MySQL 5.7.
-			return nil, ErrBadGeneratedColumn.GenByArgs(col.Name.O, e.Table.Meta().Name.O)
-		}
-	}
 	txn := e.ctx.Txn()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1067,12 +1057,6 @@ func (e *ReplaceExec) Next() (*Row, error) {
 	cols, err := e.getColumns(e.Table.Cols())
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-	for _, col := range cols {
-		if col.GeneratedExprString != "" {
-			// Can't replace generated columns, be compatible with MySQL 5.7.
-			return nil, ErrBadGeneratedColumn.GenByArgs(col.Name.O, e.Table.Meta().Name.O)
-		}
 	}
 
 	var rows [][]types.Datum
