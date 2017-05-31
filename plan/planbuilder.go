@@ -31,26 +31,24 @@ import (
 
 // Error instances.
 var (
-	ErrUnsupportedType         = terror.ClassOptimizerPlan.New(CodeUnsupportedType, "Unsupported type")
-	SystemInternalErrorType    = terror.ClassOptimizerPlan.New(SystemInternalError, "System internal error")
-	ErrUnknownColumn           = terror.ClassOptimizerPlan.New(CodeUnknownColumn, "Unknown column '%s' in '%s'")
-	ErrWrongArguments          = terror.ClassOptimizerPlan.New(CodeWrongArguments, "Incorrect arguments to EXECUTE")
-	ErrAmbiguous               = terror.ClassOptimizerPlan.New(CodeAmbiguous, "Column '%s' in field list is ambiguous")
-	ErrAnalyzeMissIndex        = terror.ClassOptimizerPlan.New(CodeAnalyzeMissIndex, "Index '%s' in field list does not exist in table '%s'")
-	ErrBadValueGeneratedColumn = terror.ClassOptimizerPlan.New(CodeBadValueGeneratedColumn, mysql.MySQLErrName[mysql.ErrBadValueGeneratedColumn])
-	ErrAlterAutoID             = terror.ClassAutoid.New(CodeAlterAutoID, "No support for setting auto_increment using alter_table")
+	ErrUnsupportedType      = terror.ClassOptimizerPlan.New(CodeUnsupportedType, "Unsupported type")
+	SystemInternalErrorType = terror.ClassOptimizerPlan.New(SystemInternalError, "System internal error")
+	ErrUnknownColumn        = terror.ClassOptimizerPlan.New(CodeUnknownColumn, "Unknown column '%s' in '%s'")
+	ErrWrongArguments       = terror.ClassOptimizerPlan.New(CodeWrongArguments, "Incorrect arguments to EXECUTE")
+	ErrAmbiguous            = terror.ClassOptimizerPlan.New(CodeAmbiguous, "Column '%s' in field list is ambiguous")
+	ErrAnalyzeMissIndex     = terror.ClassOptimizerPlan.New(CodeAnalyzeMissIndex, "Index '%s' in field list does not exist in table '%s'")
+	ErrAlterAutoID          = terror.ClassAutoid.New(CodeAlterAutoID, "No support for setting auto_increment using alter_table")
 )
 
 // Error codes.
 const (
-	CodeUnsupportedType         terror.ErrCode = 1
-	SystemInternalError         terror.ErrCode = 2
-	CodeAlterAutoID             terror.ErrCode = 3
-	CodeAnalyzeMissIndex        terror.ErrCode = 4
-	CodeAmbiguous               terror.ErrCode = 1052
-	CodeUnknownColumn           terror.ErrCode = 1054
-	CodeWrongArguments          terror.ErrCode = 1210
-	CodeBadValueGeneratedColumn terror.ErrCode = mysql.ErrBadValueGeneratedColumn
+	CodeUnsupportedType  terror.ErrCode = 1
+	SystemInternalError  terror.ErrCode = 2
+	CodeAlterAutoID      terror.ErrCode = 3
+	CodeAnalyzeMissIndex terror.ErrCode = 4
+	CodeAmbiguous        terror.ErrCode = 1052
+	CodeUnknownColumn    terror.ErrCode = 1054
+	CodeWrongArguments   terror.ErrCode = 1210
 )
 
 func init() {

@@ -67,6 +67,7 @@ var (
 	ErrBuildExecutor        = terror.ClassExecutor.New(codeErrBuildExec, "Failed to build executor")
 	ErrBatchInsertFail      = terror.ClassExecutor.New(codeBatchInsertFail, "Batch insert failed, please clean the table and try again.")
 	ErrWrongValueCountOnRow = terror.ClassExecutor.New(codeWrongValueCountOnRow, "Column count doesn't match value count at row %d")
+	ErrBadGeneratedColumn   = terror.ClassOptimizerPlan.New(codeBadGeneratedColumn, mysql.MySQLErrName[mysql.ErrBadGeneratedColumn])
 )
 
 // Error codes.
@@ -84,6 +85,7 @@ const (
 	CodePasswordNoMatch      terror.ErrCode = 1133 // MySQL error code
 	CodeCannotUser           terror.ErrCode = 1396 // MySQL error code
 	codeWrongValueCountOnRow terror.ErrCode = 1136 // MySQL error code
+	codeBadGeneratedColumn   terror.ErrCode = mysql.ErrBadGeneratedColumn
 )
 
 // Row represents a result set row, it may be returned from a table, a join, or a projection.
@@ -354,6 +356,7 @@ func init() {
 		CodeCannotUser:           mysql.ErrCannotUser,
 		CodePasswordNoMatch:      mysql.ErrPasswordNoMatch,
 		codeWrongValueCountOnRow: mysql.ErrWrongValueCountOnRow,
+		codeBadGeneratedColumn:   mysql.ErrBadGeneratedColumn,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassExecutor] = tableMySQLErrCodes
 }
