@@ -529,7 +529,7 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 		InputDuration int64
 		expect        string
 	}{
-		//{20171010123456, 1, "2017-10-10 12:34:57"},
+		{20171010123456, 1, "2017-10-10 12:34:57"},
 		{123456, 1, "12:34:57"},
 	}
 	for _, t := range tbll {
