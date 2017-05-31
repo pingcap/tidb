@@ -81,6 +81,8 @@ type PathExpression struct {
 	flags pathExpressionFlag
 }
 
+// ParseJSONPathExpr parses a JSON path expression. Returns a PathExpression
+// object which can be used in JSON_EXTRACT, JSON_SET, ...
 func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 	pathExpr = blankRe.ReplaceAllString(pathExpr, "")
 	if pathExpr[0] != '$' {
