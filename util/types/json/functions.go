@@ -81,7 +81,7 @@ func extract(j JSON, pathExpr PathExpression) (ret []JSON) {
 	var currentLeg = pathExpr.legs[0]
 	pathExpr.legs = pathExpr.legs[1:]
 	if currentLeg.isArrayIndex && j.typeCode == typeCodeArray {
-		if currentLeg.arrayIndex == -1 {
+		if currentLeg.arrayIndex == arrayIndexAsterisk {
 			for _, child := range j.array {
 				ret = append(ret, extract(child, pathExpr)...)
 			}
@@ -90,7 +90,7 @@ func extract(j JSON, pathExpr PathExpression) (ret []JSON) {
 			ret = append(ret, childRet...)
 		}
 	} else if !currentLeg.isArrayIndex && j.typeCode == typeCodeObject {
-		var key = pathExpr.raw[currentLeg.start+1 : currentLeg.end]
+		var key = pathExpr.raw[currentLeg.start:currentLeg.end]
 		if len(key) == 1 && key[0] == '*' {
 			var sortedKeys = getSortedKeys(j.object) // iterate over sorted keys.
 			for _, child := range sortedKeys {

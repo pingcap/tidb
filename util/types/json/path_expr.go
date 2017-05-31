@@ -56,6 +56,10 @@ type pathLeg struct {
 	arrayIndex   int  // if isArrayIndex is true, the value shoud be parsed into here.
 }
 
+// arrayIndexAsterisk is for parsing `*` into a number.
+// we need this number represent "all".
+const arrayIndexAsterisk int = -1
+
 // pathExpressionFlag holds attributes of PathExpression
 type pathExpressionFlag byte
 
@@ -77,7 +81,7 @@ type PathExpression struct {
 	flags pathExpressionFlag
 }
 
-func validateJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
+func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 	pathExpr = blankRe.ReplaceAllString(pathExpr, "")
 	if pathExpr[0] != '$' {
 		err = ErrInvalidJSONPath.GenByArgs(pathExpr)
@@ -107,7 +111,7 @@ func validateJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 			var index int
 			if len(indexStr) == 1 && indexStr[0] == '*' {
 				pe.flags |= pathExpressionContainsAsterisk
-				index = -1
+				index = arrayIndexAsterisk
 			} else {
 				if index, err = strconv.Atoi(indexStr); err != nil {
 					err = errors.Trace(err)
@@ -120,7 +124,7 @@ func validateJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 			if len(key) == 1 && key[0] == '*' {
 				pe.flags |= pathExpressionContainsDoubleAsterisk
 			}
-			pe.legs = append(pe.legs, pathLeg{indice[0], indice[1], false, 0})
+			pe.legs = append(pe.legs, pathLeg{indice[0] + 1, indice[1], false, 0})
 		}
 	}
 	return

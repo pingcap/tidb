@@ -70,7 +70,7 @@ func (s *testJSONSuite) TestJSONExtract(c *C) {
 	for _, caseItem := range caseList {
 		var pathExprList = make([]PathExpression, 0)
 		for _, peStr := range caseItem.pathExprStrings {
-			pe, err := validateJSONPathExpr(peStr)
+			pe, err := ParseJSONPathExpr(peStr)
 			c.Assert(err, IsNil)
 			pathExprList = append(pathExprList, pe)
 		}

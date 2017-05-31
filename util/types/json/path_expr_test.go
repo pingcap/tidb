@@ -30,6 +30,6 @@ func (s *testJSONSuite) TestJSONPathExprLegRe(c *C) {
 
 func (s *testJSONSuite) TestValidatePathExpr(c *C) {
 	var pathExprStr = "   $ .   key1  [  3  ]\t[*].*.key3"
-	_, err := validateJSONPathExpr(pathExprStr)
+	_, err := ParseJSONPathExpr(pathExprStr)
 	c.Assert(err, IsNil)
 }
