@@ -46,7 +46,7 @@ func (s *testJSONSuite) TestJSONExtract(c *C) {
 	j1 := mustParseFromString(`{"a": [1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}], "b": true, "c": ["d"]}`)
 	j2 := mustParseFromString(`[{"a": 1, "b": true}, 3, 3.5, "hello, world", null, true]`)
 
-	var caseList = []struct {
+	var tests = []struct {
 		j               JSON
 		pathExprStrings []string
 		expected        JSON
@@ -67,26 +67,26 @@ func (s *testJSONSuite) TestJSONExtract(c *C) {
 		{j2, []string{"$.a", "$[0]"}, mustParseFromString(`[{"a": 1, "b": true}]`), true, nil},
 	}
 
-	for _, caseItem := range caseList {
+	for _, tt := range tests {
 		var pathExprList = make([]PathExpression, 0)
-		for _, peStr := range caseItem.pathExprStrings {
+		for _, peStr := range tt.pathExprStrings {
 			pe, err := ParseJSONPathExpr(peStr)
 			c.Assert(err, IsNil)
 			pathExprList = append(pathExprList, pe)
 		}
 
-		expected, found := caseItem.j.Extract(pathExprList)
-		c.Assert(found, Equals, caseItem.found)
+		expected, found := tt.j.Extract(pathExprList)
+		c.Assert(found, Equals, tt.found)
 		if found {
 			b1 := Serialize(expected)
-			b2 := Serialize(caseItem.expected)
+			b2 := Serialize(tt.expected)
 			c.Assert(bytes.Compare(b1, b2), Equals, 0)
 		}
 	}
 }
 
 func (s *testJSONSuite) TestJSONUnquote(c *C) {
-	var caseList = []struct {
+	var tests = []struct {
 		j        JSON
 		unquoted string
 	}{
@@ -96,7 +96,7 @@ func (s *testJSONSuite) TestJSONUnquote(c *C) {
 		{j: mustParseFromString(`null`), unquoted: "null"},
 		{j: mustParseFromString(`{"a": [1, 2]}`), unquoted: `{"a":[1,2]}`},
 	}
-	for _, caseItem := range caseList {
-		c.Assert(caseItem.j.Unquote(), Equals, caseItem.unquoted)
+	for _, tt := range tests {
+		c.Assert(tt.j.Unquote(), Equals, tt.unquoted)
 	}
 }

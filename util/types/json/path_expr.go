@@ -16,13 +16,14 @@ package json
 import (
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/juju/errors"
 )
 
 /*
 	From MySQL 5.7, JSON path expression grammar:
-		pathExpression ::= scope pathLeg (pathLeg)*
+		pathExpression ::= scope (pathLeg)*
 		scope ::= [ columnReference ] '$'
 		columnReference ::= // omit...
 		pathLeg ::= member | arrayLocation | '**'
@@ -45,14 +46,13 @@ import (
 	TODO:
 		1) add double asterisk support;
 */
-var blankRe = regexp.MustCompile(`\s`)
-var jsonPathExprLegRe = regexp.MustCompile(`(\.([a-zA-Z_][a-zA-Z0-9_]*|\*)|(\[([0-9]+|\*)\]))`)
+var jsonPathExprLegRe = regexp.MustCompile(`(\.\s*([a-zA-Z_][a-zA-Z0-9_]*|\*|"[^"]*")|(\[\s*([0-9]+|\*)\s*\]))`)
 
 // pathLeg is only used by PathExpression.
 type pathLeg struct {
 	isArrayIndex bool   // the leg is an array index or not.
 	arrayIndex   int    // if isArrayIndex is true, the value should be parsed into here.
-	mapKey       string // if isArrayIndex is false, the key should be parsed into here.
+	dotKey       string // if isArrayIndex is false, the key should be parsed into here.
 }
 
 // arrayIndexAsterisk is for parsing `*` into a number.
@@ -75,7 +75,6 @@ func (pef pathExpressionFlag) containsAnyAsterisk() bool {
 
 // PathExpression is for JSON path expression.
 type PathExpression struct {
-	raw   string
 	legs  []pathLeg
 	flags pathExpressionFlag
 }
@@ -90,30 +89,38 @@ type PathExpression struct {
 //  select json_extract('{"a": "b", "c": [1, "2"]}', '$.c[*]') -> [1, "2"]
 //  select json_extract('{"a": "b", "c": [1, "2"]}', '$.*') -> ["b", [1, "2"]]
 func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
-	pathExpr = blankRe.ReplaceAllString(pathExpr, "")
-	if pathExpr[0] != '$' {
+	dollarIndex := strings.Index(pathExpr, "$")
+	if dollarIndex < 0 {
 		err = ErrInvalidJSONPath.GenByArgs(pathExpr)
 		return
 	}
-	indices := jsonPathExprLegRe.FindAllStringIndex(pathExpr, -1)
-
-	pe.raw = pathExpr
-	pe.legs = make([]pathLeg, 0, len(indices))
-	pe.flags = pathExpressionFlag(0)
-
-	lastEnd, currentStart := -1, -1
-	for _, indice := range indices {
-		currentStart = indice[0]
-		if lastEnd > 0 && currentStart != lastEnd {
-			// We have already removed all blank characters.
+	for i := 0; i < dollarIndex; i++ {
+		if !isBlank(rune(pathExpr[i])) {
 			err = ErrInvalidJSONPath.GenByArgs(pathExpr)
 			return
 		}
+	}
+
+	pathExprSuffix := pathExpr[dollarIndex+1:]
+	indices := jsonPathExprLegRe.FindAllStringIndex(pathExprSuffix, -1)
+
+	pe.legs = make([]pathLeg, 0, len(indices))
+	pe.flags = pathExpressionFlag(0)
+
+	lastEnd, currentStart := 0, 0
+	for _, indice := range indices {
+		currentStart = indice[0]
+		for i := lastEnd; i < currentStart; i++ {
+			if !isBlank(rune(pathExprSuffix[i])) {
+				err = ErrInvalidJSONPath.GenByArgs(pathExpr)
+				return
+			}
+		}
 		lastEnd = indice[1]
 
-		if pathExpr[indice[0]] == '[' {
-			var leg = pathExpr[indice[0]:indice[1]]
-			var indexStr = string(leg[1 : len(leg)-1])
+		if pathExprSuffix[indice[0]] == '[' {
+			var leg = strings.TrimFunc(pathExprSuffix[indice[0]+1:indice[1]], isBlank)
+			var indexStr = strings.TrimFunc(leg[0:len(leg)-1], isBlank)
 			var index int
 			if len(indexStr) == 1 && indexStr[0] == '*' {
 				pe.flags |= pathExpressionContainsAsterisk
@@ -126,12 +133,19 @@ func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 			}
 			pe.legs = append(pe.legs, pathLeg{isArrayIndex: true, arrayIndex: index})
 		} else {
-			var key = pathExpr[indice[0]+1 : indice[1]]
+			var key = strings.TrimFunc(pathExprSuffix[indice[0]+1:indice[1]], isBlank)
 			if len(key) == 1 && key[0] == '*' {
-				pe.flags |= pathExpressionContainsDoubleAsterisk
+				pe.flags |= pathExpressionContainsAsterisk
 			}
-			pe.legs = append(pe.legs, pathLeg{isArrayIndex: false, mapKey: key})
+			pe.legs = append(pe.legs, pathLeg{isArrayIndex: false, dotKey: key})
 		}
 	}
 	return
+}
+
+func isBlank(c rune) bool {
+	if c == '\n' || c == '\r' || c == '\t' || c == ' ' {
+		return true
+	}
+	return false
 }

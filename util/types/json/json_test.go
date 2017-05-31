@@ -28,6 +28,8 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
+// mustParseFromString parse a JSON from a string.
+// Panic if string is not a valid JSON.
 func mustParseFromString(s string) JSON {
 	j, err := ParseFromString(s)
 	if err != nil {
@@ -86,7 +88,7 @@ func (s *testJSONSuite) TestCompareJSON(c *C) {
 	jArraySmall := mustParseFromString(`["a", "b"]`)
 	jObject := mustParseFromString(`{"a": "b"}`)
 
-	var caseList = []struct {
+	var tests = []struct {
 		left  JSON
 		right JSON
 	}{
@@ -100,7 +102,7 @@ func (s *testJSONSuite) TestCompareJSON(c *C) {
 		{jArrayLarge, jBoolFalse},
 		{jBoolFalse, jBoolTrue},
 	}
-	for _, cmpCase := range caseList {
+	for _, cmpCase := range tests {
 		cmp, err := CompareJSON(cmpCase.left, cmpCase.right)
 		c.Assert(err, IsNil)
 		c.Assert(cmp < 0, IsTrue)
