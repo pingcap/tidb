@@ -13,7 +13,12 @@
 
 package json
 
-import "fmt"
+import (
+	"bytes"
+	"fmt"
+
+	"github.com/juju/errors"
+)
 
 // Type returns type of JSON as string.
 func (j JSON) Type() string {
@@ -65,13 +70,51 @@ func (j JSON) Extract(pathExprList []PathExpression) (ret JSON, found bool) {
 }
 
 // Unquote is for JSON_UNQUOTE.
-func (j JSON) Unquote() string {
+func (j JSON) Unquote() (string, error) {
 	switch j.typeCode {
 	case typeCodeString:
-		return j.str
+		return unquoteString(j.str)
 	default:
-		return j.String()
+		return j.String(), nil
 	}
+}
+
+// unquoteString recognizes the escape sequences shown in:
+// https://dev.mysql.com/doc/refman/5.7/en/json-modification-functions.html#json-unquote-character-escape-sequences
+func unquoteString(s string) (string, error) {
+	ret := new(bytes.Buffer)
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' {
+			i++
+			if i == len(s) {
+				return "", errors.New("Missing a closing quotation mark in string")
+			}
+			switch s[i] {
+			case '"':
+				ret.WriteByte('"')
+			case 'b':
+				ret.WriteByte('\b')
+			case 'f':
+				ret.WriteByte('\f')
+			case 'n':
+				ret.WriteByte('\n')
+			case 'r':
+				ret.WriteByte('\r')
+			case 't':
+				ret.WriteByte('\t')
+			case '\\':
+				ret.WriteByte('\\')
+			case 'u':
+				// TODO support \uXXXX
+				return "", errors.New("Unknown escaped character")
+			default:
+				ret.WriteByte(s[i])
+			}
+		} else {
+			ret.WriteByte(s[i])
+		}
+	}
+	return ret.String(), nil
 }
 
 // extract is used by Extract.
@@ -80,26 +123,37 @@ func extract(j JSON, pathExpr PathExpression) (ret []JSON) {
 	if len(pathExpr.legs) == 0 {
 		return []JSON{j}
 	}
-	var currentLeg = pathExpr.legs[0]
-	pathExpr.legs = pathExpr.legs[1:]
-	if currentLeg.isArrayIndex && j.typeCode == typeCodeArray {
+	currentLeg, subPathExpr := pathExpr.popOneLeg()
+	if currentLeg.typ == pathLegIndex && j.typeCode == typeCodeArray {
 		if currentLeg.arrayIndex == arrayIndexAsterisk {
 			for _, child := range j.array {
-				ret = append(ret, extract(child, pathExpr)...)
+				ret = append(ret, extract(child, subPathExpr)...)
 			}
 		} else if currentLeg.arrayIndex < len(j.array) {
-			childRet := extract(j.array[currentLeg.arrayIndex], pathExpr)
+			childRet := extract(j.array[currentLeg.arrayIndex], subPathExpr)
 			ret = append(ret, childRet...)
 		}
-	} else if !currentLeg.isArrayIndex && j.typeCode == typeCodeObject {
+	} else if currentLeg.typ == pathLegKey && j.typeCode == typeCodeObject {
 		if len(currentLeg.dotKey) == 1 && currentLeg.dotKey[0] == '*' {
 			var sortedKeys = getSortedKeys(j.object) // iterate over sorted keys.
 			for _, child := range sortedKeys {
-				ret = append(ret, extract(j.object[child], pathExpr)...)
+				ret = append(ret, extract(j.object[child], subPathExpr)...)
 			}
 		} else if child, ok := j.object[currentLeg.dotKey]; ok {
-			childRet := extract(child, pathExpr)
+			childRet := extract(child, subPathExpr)
 			ret = append(ret, childRet...)
+		}
+	} else if currentLeg.typ == pathLegDoubleAsterisk {
+		ret = append(ret, extract(j, subPathExpr)...)
+		if j.typeCode == typeCodeArray {
+			for _, child := range j.array {
+				ret = append(ret, extract(child, pathExpr)...)
+			}
+		} else if j.typeCode == typeCodeObject {
+			var sortedKeys = getSortedKeys(j.object)
+			for _, child := range sortedKeys {
+				ret = append(ret, extract(j.object[child], pathExpr)...)
+			}
 		}
 	}
 	return

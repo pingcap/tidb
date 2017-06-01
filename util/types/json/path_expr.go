@@ -43,17 +43,25 @@ import (
 		select json_extract('{"a": "b", "c": [1, "2"]}', '$.c[2]') -> NULL
 		select json_extract('{"a": "b", "c": [1, "2"]}', '$.c[*]') -> [1, "2"]
 		select json_extract('{"a": "b", "c": [1, "2"]}', '$.*') -> ["b", [1, "2"]]
-	TODO:
-		1) add double asterisk support;
-		2) support '\"' in string literal;
 */
-var jsonPathExprLegRe = regexp.MustCompile(`(\.\s*([a-zA-Z_][a-zA-Z0-9_]*|\*|"[^"]*")|(\[\s*([0-9]+|\*)\s*\]))`)
+
+// [a-zA-Z_][a-zA-Z0-9_]* matches any identifier;
+// "[^"\\]*(\\.[^"\\]*)*" matches any string literal which can carry escaped quotes;
+var jsonPathExprLegRe = regexp.MustCompile(`(\.\s*([a-zA-Z_][a-zA-Z0-9_]*|\*|"[^"\\]*(\\.[^"\\]*)*")|(\[\s*([0-9]+|\*)\s*\])|\*\*)`)
+
+type pathLegType byte
+
+const (
+	pathLegKey            pathLegType = 0x01
+	pathLegIndex          pathLegType = 0x02
+	pathLegDoubleAsterisk pathLegType = 0x03
+)
 
 // pathLeg is only used by PathExpression.
 type pathLeg struct {
-	isArrayIndex bool   // the leg is an array index or not.
-	arrayIndex   int    // if isArrayIndex is true, the value should be parsed into here.
-	dotKey       string // if isArrayIndex is false, the key should be parsed into here.
+	typ        pathLegType
+	arrayIndex int    // if typ is pathLegIndex, the value should be parsed into here.
+	dotKey     string // if typ is pathLegKey, the key should be parsed into here.
 }
 
 // arrayIndexAsterisk is for parsing `*` into a number.
@@ -80,9 +88,28 @@ type PathExpression struct {
 	flags pathExpressionFlag
 }
 
+func (pe PathExpression) popOneLeg() (pathLeg, PathExpression) {
+	newPe := PathExpression{
+		legs:  pe.legs[1:],
+		flags: 0,
+	}
+	for _, leg := range newPe.legs {
+		if leg.typ == pathLegIndex && leg.arrayIndex == -1 {
+			newPe.flags |= pathExpressionContainsAsterisk
+		} else if leg.typ == pathLegKey && leg.dotKey == "*" {
+			newPe.flags |= pathExpressionContainsAsterisk
+		} else if leg.typ == pathLegDoubleAsterisk {
+			newPe.flags |= pathExpressionContainsDoubleAsterisk
+		}
+	}
+	return pe.legs[0], newPe
+}
+
 // ParseJSONPathExpr parses a JSON path expression. Returns a PathExpression
 // object which can be used in JSON_EXTRACT, JSON_SET and so on.
 func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
+	// Find the position of first '$'. If any no-blank characters in
+	// pathExpr[0: dollarIndex), return an ErrInvalidJSONPath error.
 	dollarIndex := strings.Index(pathExpr, "$")
 	if dollarIndex < 0 {
 		err = ErrInvalidJSONPath.GenByArgs(pathExpr)
@@ -103,6 +130,7 @@ func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 
 	lastEnd, currentStart := 0, 0
 	for _, indice := range indices {
+		// Check all characters between two legs are blank.
 		currentStart = indice[0]
 		for i := lastEnd; i < currentStart; i++ {
 			if !isBlank(rune(pathExprSuffix[i])) {
@@ -113,6 +141,7 @@ func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 		lastEnd = indice[1]
 
 		if pathExprSuffix[indice[0]] == '[' {
+			// The leg is an index of a JSON array.
 			var leg = strings.TrimFunc(pathExprSuffix[indice[0]+1:indice[1]], isBlank)
 			var indexStr = strings.TrimFunc(leg[0:len(leg)-1], isBlank)
 			var index int
@@ -125,15 +154,31 @@ func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 					return
 				}
 			}
-			pe.legs = append(pe.legs, pathLeg{isArrayIndex: true, arrayIndex: index})
-		} else {
+			pe.legs = append(pe.legs, pathLeg{typ: pathLegIndex, arrayIndex: index})
+		} else if pathExprSuffix[indice[0]] == '.' {
+			// The leg is a key of a JSON object.
 			var key = strings.TrimFunc(pathExprSuffix[indice[0]+1:indice[1]], isBlank)
 			if len(key) == 1 && key[0] == '*' {
 				pe.flags |= pathExpressionContainsAsterisk
 			} else if key[0] == '"' {
-				key = key[1 : len(key)-1]
+				// We need unquote the origin string.
+				if key, err = unquoteString(key[1 : len(key)-1]); err != nil {
+					err = ErrInvalidJSONPath.GenByArgs(pathExpr)
+					return
+				}
 			}
-			pe.legs = append(pe.legs, pathLeg{isArrayIndex: false, dotKey: key})
+			pe.legs = append(pe.legs, pathLeg{typ: pathLegKey, dotKey: key})
+		} else {
+			// The leg is '**'.
+			pe.flags |= pathExpressionContainsDoubleAsterisk
+			pe.legs = append(pe.legs, pathLeg{typ: pathLegDoubleAsterisk})
+		}
+	}
+	if len(pe.legs) > 0 {
+		// The last leg of a path expression cannot be '**'.
+		if pe.legs[len(pe.legs)-1].typ == pathLegDoubleAsterisk {
+			err = ErrInvalidJSONPath.GenByArgs(pathExpr)
+			return
 		}
 	}
 	return

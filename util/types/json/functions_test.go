@@ -43,7 +43,7 @@ func (s *testJSONSuite) TestJSONType(c *C) {
 }
 
 func (s *testJSONSuite) TestJSONExtract(c *C) {
-	j1 := mustParseFromString(`{"a": [1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}], "b": true, "c": ["d"]}`)
+	j1 := mustParseFromString(`{"a": [1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}], "b": true, "c": ["d"], "\"hello\"": "world"}`)
 	j2 := mustParseFromString(`[{"a": 1, "b": true}, 3, 3.5, "hello, world", null, true]`)
 
 	var tests = []struct {
@@ -62,6 +62,8 @@ func (s *testJSONSuite) TestJSONExtract(c *C) {
 		{j1, []string{"$.a[*].aa"}, mustParseFromString(`["bb", "cc"]`), true, nil},
 		{j1, []string{"$.*[0]"}, mustParseFromString(`[1, "d"]`), true, nil},
 		{j1, []string{`$.a[*]."aa"`}, mustParseFromString(`["bb", "cc"]`), true, nil},
+		{j1, []string{`$."\"hello\""`}, mustParseFromString(`"world"`), true, nil},
+		{j1, []string{`$**[0]`}, mustParseFromString(`[1, "d"]`), true, nil},
 
 		// test extract with multi path expressions.
 		{j1, []string{"$.a", "$[0]"}, mustParseFromString(`[[1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}]]`), true, nil},
@@ -93,11 +95,14 @@ func (s *testJSONSuite) TestJSONUnquote(c *C) {
 	}{
 		{j: mustParseFromString(`3`), unquoted: "3"},
 		{j: mustParseFromString(`"3"`), unquoted: "3"},
+		{j: mustParseFromString(`"hello, \"escaped quotes\" world"`), unquoted: "hello, \"escaped quotes\" world"},
 		{j: mustParseFromString(`true`), unquoted: "true"},
 		{j: mustParseFromString(`null`), unquoted: "null"},
 		{j: mustParseFromString(`{"a": [1, 2]}`), unquoted: `{"a":[1,2]}`},
 	}
 	for _, tt := range tests {
-		c.Assert(tt.j.Unquote(), Equals, tt.unquoted)
+		unquoted, err := tt.j.Unquote()
+		c.Assert(err, IsNil)
+		c.Assert(unquoted, Equals, tt.unquoted)
 	}
 }
