@@ -16,6 +16,7 @@ package json
 import (
 	"bytes"
 	"fmt"
+	"unicode/utf8"
 
 	"github.com/juju/errors"
 )
@@ -105,8 +106,14 @@ func unquoteString(s string) (string, error) {
 			case '\\':
 				ret.WriteByte('\\')
 			case 'u':
-				// TODO support \uXXXX
-				return "", errors.New("Unknown escaped character")
+				if i+4 >= len(s) {
+					return "", errors.New("Invalid unicode")
+				}
+				unicode, size := utf8.DecodeRuneInString(s[i-1 : i+5])
+				utf8Buf := make([]byte, size)
+				utf8.EncodeRune(utf8Buf, unicode)
+				ret.Write(utf8Buf)
+				i += 4
 			default:
 				ret.WriteByte(s[i])
 			}

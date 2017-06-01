@@ -102,8 +102,8 @@ func (s *testJSONSuite) TestCompareJSON(c *C) {
 		{jArrayLarge, jBoolFalse},
 		{jBoolFalse, jBoolTrue},
 	}
-	for _, cmpCase := range tests {
-		cmp, err := CompareJSON(cmpCase.left, cmpCase.right)
+	for _, tt := range tests {
+		cmp, err := CompareJSON(tt.left, tt.right)
 		c.Assert(err, IsNil)
 		c.Assert(cmp < 0, IsTrue)
 	}

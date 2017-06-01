@@ -20,25 +20,20 @@ import (
 )
 
 func (s *testJSONSuite) TestJSONType(c *C) {
-	j1 := mustParseFromString(`{"a": "b"}`)
-	j2 := mustParseFromString(`["a", "b"]`)
-	j3 := mustParseFromString(`3`)
-	j4 := mustParseFromString(`3.0`)
-	j5 := mustParseFromString(`null`)
-	j6 := mustParseFromString(`true`)
-	var jList = []struct {
-		In  JSON
+	var tests = []struct {
+		In  string
 		Out string
 	}{
-		{j1, "OBJECT"},
-		{j2, "ARRAY"},
-		{j3, "INTEGER"},
-		{j4, "DOUBLE"},
-		{j5, "NULL"},
-		{j6, "BOOLEAN"},
+		{`{"a": "b"}`, "OBJECT"},
+		{`["a", "b"]`, "ARRAY"},
+		{`3`, "INTEGER"},
+		{`3.0`, "DOUBLE"},
+		{`null`, "NULL"},
+		{`true`, "BOOLEAN"},
 	}
-	for _, j := range jList {
-		c.Assert(j.In.Type(), Equals, j.Out)
+	for _, tt := range tests {
+		j := mustParseFromString(tt.In)
+		c.Assert(j.Type(), Equals, tt.Out)
 	}
 }
 
@@ -96,6 +91,7 @@ func (s *testJSONSuite) TestJSONUnquote(c *C) {
 		{j: mustParseFromString(`3`), unquoted: "3"},
 		{j: mustParseFromString(`"3"`), unquoted: "3"},
 		{j: mustParseFromString(`"hello, \"escaped quotes\" world"`), unquoted: "hello, \"escaped quotes\" world"},
+		{j: mustParseFromString("\"\\u4f60\""), unquoted: "你"},
 		{j: mustParseFromString(`true`), unquoted: "true"},
 		{j: mustParseFromString(`null`), unquoted: "null"},
 		{j: mustParseFromString(`{"a": [1, 2]}`), unquoted: `{"a":[1,2]}`},
