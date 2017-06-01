@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -52,6 +53,7 @@ const (
 	ddlOwnerKey               = "/tidb/ddl/owner"
 	bgOwnerKey                = "/tidb/ddl/bg/owner"
 	newSessionDefaultRetryCnt = 3
+	newSessionRetryUnlimited  = math.MaxInt64
 )
 
 // ownerManager represents the structure which is used for electing owner.
@@ -115,12 +117,15 @@ func (m *ownerManager) newSession(ctx goctx.Context, retryCnt int) error {
 	var err error
 	for i := 0; i < retryCnt; i++ {
 		m.etcdSession, err = concurrency.NewSession(m.etcdCli, concurrency.WithContext(ctx))
-		if err != nil {
-			log.Warnf("[ddl] failed to new session, err %v", err)
-			time.Sleep(200 * time.Millisecond)
-			continue
+		if err == nil {
+			break
 		}
-		break
+		log.Warnf("[ddl] failed to new session, err %v", err)
+		if isContextFinished(err) {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+		continue
 	}
 	return errors.Trace(err)
 }
@@ -146,9 +151,14 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, key string, wg *sync.Wait
 	for {
 		select {
 		case <-m.etcdSession.Done():
-			// TODO: Create session again?
-			log.Warnf("[ddl] etcd session is done.")
+			log.Info("[ddl] etcd session is done, creates a new one")
+			err := m.newSession(ctx, newSessionRetryUnlimited)
+			if err != nil {
+				log.Infof("[ddl] break %s campaign loop, err %v", key, err)
+				return
+			}
 		case <-ctx.Done():
+			log.Infof("[ddl] break %s campaign loop", key)
 			return
 		default:
 		}
@@ -156,7 +166,11 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, key string, wg *sync.Wait
 		elec := concurrency.NewElection(m.etcdSession, key)
 		err := elec.Campaign(ctx, m.ddlID)
 		if err != nil {
-			log.Infof("[ddl] ownerManager %s failed to campaign, err %v", m.ddlID, err)
+			log.Infof("[ddl] %s ownerManager %s failed to campaign, err %v", key, m.ddlID, err)
+			if isContextFinished(err) {
+				log.Warnf("[ddl] break %s campaign loop, err %v", key, err)
+				return
+			}
 			continue
 		}
 
@@ -164,7 +178,7 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, key string, wg *sync.Wait
 		resp, err := elec.Leader(ctx)
 		if err != nil {
 			// If no leader elected currently, it returns ErrElectionNoLeader.
-			log.Infof("[ddl] failed to get leader, err %v", err)
+			log.Infof("[ddl] failed to get %s leader, err %v", key, err)
 			continue
 		}
 		leader := string(resp.Kvs[0].Value)
@@ -172,7 +186,7 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, key string, wg *sync.Wait
 		if leader == m.ddlID {
 			m.setOwnerVal(key, true)
 		} else {
-			log.Warnf("[ddl] ownerManager %s isn't the owner", m.ddlID)
+			log.Warnf("[ddl] %s ownerManager %s isn't the owner", key, m.ddlID)
 			continue
 		}
 
