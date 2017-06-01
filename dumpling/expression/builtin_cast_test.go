@@ -17,10 +17,61 @@ import (
 	"fmt"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 	"time"
 )
+
+func (s *testEvaluatorSuite) TestCast(c *C) {
+	defer testleak.AfterTest(c)()
+	ctx, sc := s.ctx, s.ctx.GetSessionVars().StmtCtx
+
+	// Test `cast as char[(N)]` and `cast as binary[(N)]`.
+	originIgnoreTruncate := sc.IgnoreTruncate
+	sc.IgnoreTruncate = true
+	defer func() {
+		sc.IgnoreTruncate = originIgnoreTruncate
+	}()
+
+	tp := types.NewFieldType(mysql.TypeString)
+	tp.Flen = 5
+
+	// cast(str as char(N)), N < len([]rune(str)).
+	// cast("你好world" as char(5))
+	f := NewCastFunc(tp, &Constant{Value: types.NewDatum("你好world"), RetType: types.NewFieldType(mysql.TypeString)}, ctx)
+	tp.Charset = charset.CharsetUTF8
+	res, err := f.Eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(res.GetString(), Equals, "你好wor")
+
+	// cast(str as char(N)), N > len([]rune(str)).
+	// cast("a" as char(5))
+	f = NewCastFunc(tp, &Constant{Value: types.NewDatum("a"), RetType: types.NewFieldType(mysql.TypeString)}, ctx)
+	res, err = f.Eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(len(res.GetString()), Equals, 1)
+	c.Assert(res.GetString(), Equals, "a")
+
+	// cast(str as binary(N)), N < len(str).
+	// cast("你好world" as binary(5))
+	str := "你好world"
+	tp.Flag |= mysql.BinaryFlag
+	tp.Charset = charset.CharsetBin
+	tp.Collate = charset.CollationBin
+	f = NewCastFunc(tp, &Constant{Value: types.NewDatum(str), RetType: types.NewFieldType(mysql.TypeString)}, ctx)
+	res, err = f.Eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(res.GetString(), Equals, str[:5])
+
+	// cast(str as binary(N)), N > len([]byte(str)).
+	// cast("a" as binary(5))
+	f = NewCastFunc(tp, &Constant{Value: types.NewDatum("a"), RetType: types.NewFieldType(mysql.TypeString)}, ctx)
+	res, err = f.Eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(len(res.GetString()), Equals, 5)
+	c.Assert(res.GetString(), Equals, string([]byte{'a', 0x00, 0x00, 0x00, 0x00}))
+}
 
 func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	defer testleak.AfterTest(c)()
