@@ -365,6 +365,8 @@ type XSelectIndexExec struct {
 	taskCurr    *lookupTableTask
 	handleCount uint64 // returned handle count in double read.
 
+	closeCh chan struct{}
+
 	where                *tipb.Expr
 	startTS              uint64
 	returnedRows         uint64 // returned row count
@@ -398,6 +400,7 @@ type XSelectIndexExec struct {
 func (e *XSelectIndexExec) Open() error {
 	e.returnedRows = 0
 	e.partialCount = 0
+	e.closeCh = make(chan struct{})
 	return nil
 }
 
@@ -414,6 +417,7 @@ func (e *XSelectIndexExec) Close() error {
 
 	e.taskCurr = nil
 	if e.taskChan != nil {
+		close(e.closeCh)
 		// Consume the task channel in case channel is full.
 		for range e.taskChan {
 		}
@@ -615,6 +619,8 @@ func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<
 
 			select {
 			case <-txnCtx.Done():
+				return
+			case <-e.closeCh:
 				return
 			case workCh <- task:
 			default:
