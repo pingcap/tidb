@@ -78,7 +78,7 @@ import:
   - internal/timeseries
   - trace
 - package: golang.org/x/text
-  version: 4ee4af566555f5fbe026368b75596286a312663a 
+  version: 4ee4af566555f5fbe026368b75596286a312663a
   subpackages:
   - encoding
   - encoding/charmap
