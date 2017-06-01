@@ -3933,6 +3933,9 @@ CastType:
 		x := types.NewFieldType(mysql.TypeString)
 		x.Flen = $2.(int)
 		x.Charset = $4.(string)
+		if $3.(bool) {
+			x.Flag |= mysql.BinaryFlag
+		}
 		if x.Charset == "" {
 			x.Charset = charset.CharsetUTF8
 			x.Collate = charset.CollationUTF8
