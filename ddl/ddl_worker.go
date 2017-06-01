@@ -103,13 +103,13 @@ func (d *ddl) getCheckOwnerTimeout(flag JobType) int64 {
 
 func (d *ddl) isOwner(flag JobType) error {
 	if flag == ddlJobFlag {
-		if d.worker.IsOwner() {
+		if d.ownerManager.IsOwner() {
 			return nil
 		}
 		log.Infof("[ddl] not %s job owner, self id %s", flag, d.uuid)
 		return errNotOwner
 	}
-	if d.worker.IsBgOwner() {
+	if d.ownerManager.IsBgOwner() {
 		return nil
 	}
 	log.Infof("[ddl] not %s job owner, self id %s", flag, d.uuid)
@@ -455,12 +455,12 @@ func (d *ddl) waitSchemaChanged(waitTime time.Duration, latestSchemaVersion int6
 	// TODO: Make ctx exits when the d is close.
 	ctx, cancelFunc := goctx.WithTimeout(goctx.Background(), waitTime)
 	defer cancelFunc()
-	err := d.worker.UpdateGlobalVersion(ctx, latestSchemaVersion)
+	err := d.schemaSyncer.OwnerUpdateGlobalVersion(ctx, latestSchemaVersion)
 	if err != nil {
 		log.Infof("[ddl] update latest schema version %d failed %v", latestSchemaVersion, err)
 	}
 
-	err = d.worker.CheckAllVersions(ctx, latestSchemaVersion)
+	err = d.schemaSyncer.OwnerCheckAllVersions(ctx, latestSchemaVersion)
 	if err != nil {
 		log.Infof("[ddl] wait latest schema version %d to deadline %v", latestSchemaVersion, err)
 	}

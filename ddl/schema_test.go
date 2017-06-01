@@ -216,15 +216,15 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 	ctx := testNewContext(d2)
 
 	// d2 must not be owner.
-	d2.worker.SetOwner(false)
-	d2.worker.SetBgOwner(false)
+	d2.ownerManager.SetOwner(false)
+	d2.ownerManager.SetBgOwner(false)
 
 	dbInfo := testSchemaInfo(c, d2, "test")
 	testCreateSchema(c, ctx, d2, dbInfo)
 	testCheckSchemaState(c, d2, dbInfo, model.StatePublic)
 
 	// d2 must not be owner.
-	c.Assert(d2.worker.IsOwner(), IsFalse)
+	c.Assert(d2.ownerManager.IsOwner(), IsFalse)
 
 	schemaID, err := d2.genGlobalID()
 	c.Assert(err, IsNil)
