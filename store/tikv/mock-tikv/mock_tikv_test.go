@@ -14,6 +14,7 @@
 package mocktikv
 
 import (
+	"strings"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -253,4 +254,25 @@ func (s *testMockTiKVSuite) TestResolveLock(c *C) {
 	s.mustGetOK(c, "p2", 20, "v10")
 	s.mustGetOK(c, "s2", 30, "v10")
 	s.mustScanLock(c, 30, nil)
+}
+
+func (s *testMockTiKVSuite) TestRollbackAndWriteConflict(c *C) {
+	s.mustPutOK(c, "test", "test", 1, 3)
+
+	errs := s.store.Prewrite(putMutations("lock", "lock", "test", "test1"), []byte("test"), 2, 2)
+	s.mustWriteWriteConflict(c, errs, 1)
+
+	s.mustPutOK(c, "test", "test2", 5, 8)
+
+	// simulate `getTxnStatus` for txn 2.
+	err := s.store.Cleanup([]byte("test"), 2)
+	c.Assert(err, IsNil)
+
+	errs = s.store.Prewrite(putMutations("test", "test3"), []byte("test"), 6, 1)
+	s.mustWriteWriteConflict(c, errs, 0)
+}
+
+func (s *testMockTiKVSuite) mustWriteWriteConflict(c *C, errs []error, i int) {
+	c.Assert(errs[i], NotNil)
+	c.Assert(strings.Contains(errs[i].Error(), "write conflict"), IsTrue)
 }

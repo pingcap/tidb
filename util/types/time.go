@@ -461,7 +461,7 @@ func (t *Time) Sub(t1 *Time) Duration {
 
 // Add adds d to t, returns a duration value.
 // Note that add should not be done on different time types.
-func (t *Time) Add(d *Duration) Duration {
+func (t *Time) Add(d Duration) Duration {
 	d.Duration = gotime.Duration(-int64(d.Duration))
 	t2, _ := d.ConvertToTime(t.Type)
 	return t.Sub(&t2)
@@ -673,6 +673,21 @@ type Duration struct {
 	Fsp int
 }
 
+//Add adds d to d, returns a duration value.
+func (d Duration) Add(v Duration) (Duration, error) {
+	if &v == nil {
+		return d, nil
+	}
+	dsum, err := AddInt64(int64(d.Duration), int64(v.Duration))
+	if err != nil {
+		return Duration{}, err
+	}
+	if d.Fsp >= v.Fsp {
+		return Duration{Duration: gotime.Duration(dsum), Fsp: d.Fsp}, nil
+	}
+	return Duration{Duration: gotime.Duration(dsum), Fsp: v.Fsp}, nil
+}
+
 // String returns the time formatted using default TimeFormat and fsp.
 func (d Duration) String() string {
 	var buf bytes.Buffer
@@ -880,6 +895,9 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 			} else if len(str) == 2 {
 				// SS
 				_, err = fmt.Sscanf(str, "%2d", &second)
+			} else if len(str) == 1 {
+				// 0S
+				_, err = fmt.Sscanf(str, "%1d", &second)
 			} else {
 				// Maybe only contains date.
 				_, err = ParseDate(str)
@@ -982,6 +1000,7 @@ func parseDateTimeFromNum(num int64) (Time, error) {
 
 	// Check datetime type.
 	if num >= 10000101000000 {
+		t.Type = mysql.TypeDatetime
 		return getTime(num, t.Type)
 	}
 

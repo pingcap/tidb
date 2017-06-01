@@ -28,6 +28,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/encrypt"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -416,17 +417,7 @@ func (b *builtinPasswordSig) eval(row []types.Datum) (d types.Datum, err error) 
 		return d, nil
 	}
 
-	// Two stages SHA1 hash of the password.
-	h1 := sha1.New()
-	h1.Write([]byte(pass))
-	hash1 := h1.Sum(nil)
-
-	h2 := sha1.New()
-	h2.Write(hash1)
-	hash2 := h2.Sum(nil)
-	ret := fmt.Sprintf("*%X", hash2)
-	d.SetString(ret)
-
+	d.SetString(util.EncodePassword(pass))
 	return d, nil
 }
 

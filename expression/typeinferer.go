@@ -404,8 +404,9 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		ast.Replace, ast.Ucase, ast.Upper, ast.Convert, ast.Substring, ast.Elt,
 		ast.SubstringIndex, ast.Trim, ast.LTrim, ast.RTrim, ast.Reverse, ast.Hex, ast.Unhex,
 		ast.DateFormat, ast.Rpad, ast.Lpad, ast.CharFunc, ast.Conv, ast.MakeSet, ast.Oct, ast.UUID,
-		ast.InsertFunc, ast.Bin, ast.Quote, ast.Format, ast.FromBase64, ast.ToBase64, ast.ExportSet,
-		ast.AesEncrypt, ast.AesDecrypt, ast.SHA2, ast.InetNtoa, ast.Inet6Aton:
+		ast.InsertFunc, ast.Bin, ast.Quote, ast.Format, ast.FromBase64, ast.ToBase64,
+		ast.ExportSet, ast.AesEncrypt, ast.AesDecrypt, ast.SHA2, ast.InetNtoa, ast.Inet6Aton,
+		ast.Inet6Ntoa:
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
 	case ast.RandomBytes:
@@ -423,6 +424,9 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = types.NewFieldType(mysql.TypeBlob)
 	case ast.Uncompress:
 		tp = types.NewFieldType(mysql.TypeLongBlob)
+	case ast.JSONType:
+		tp = types.NewFieldType(mysql.TypeVarString)
+		chs = v.defaultCharset
 	case ast.AnyValue:
 		tp = x.Args[0].GetType()
 	case ast.RowFunc:
@@ -603,4 +607,26 @@ func mergeTypeClass(a, b types.TypeClass, aUnsigned, bUnsigned bool) types.TypeC
 		return types.ClassDecimal
 	}
 	return types.ClassInt
+}
+
+// IsHybridType checks whether a ClassString expression is a hybrid type value which will return different types of value in different context.
+//
+// For ENUM/SET which is consist of a string attribute `Name` and an int attribute `Value`,
+// it will cause an error if we convert ENUM/SET to int as a string value.
+//
+// For Bit/Hex, we will get a wrong result if we convert it to int as a string value.
+// For example, when convert `0b101` to int, the result should be 5, but we will get 101 if we regard it as a string.
+func IsHybridType(expr Expression) bool {
+	switch expr.GetType().Tp {
+	case mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet:
+		return true
+	}
+	// For a constant, the field type will be inferred as `VARCHAR` when the kind of it is `HEX` or `BIT`.
+	if con, ok := expr.(*Constant); ok {
+		switch con.Value.Kind() {
+		case types.KindMysqlHex, types.KindMysqlBit:
+			return true
+		}
+	}
+	return false
 }

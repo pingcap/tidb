@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
+	goctx "golang.org/x/net/context"
 )
 
 var _ = Suite(&testSchemaSuite{})
@@ -118,7 +119,7 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_schema")
 	defer store.Close()
-	d := newDDL(store, nil, nil, testLease)
+	d := newDDL(goctx.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
 	ctx := testNewContext(d)
 	dbInfo := testSchemaInfo(c, d, "test")
@@ -205,12 +206,12 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 	store := testCreateStore(c, "test_schema_wait")
 	defer store.Close()
 
-	d1 := newDDL(store, nil, nil, testLease)
+	d1 := newDDL(goctx.Background(), nil, store, nil, nil, testLease)
 	defer d1.Stop()
 
 	testCheckOwner(c, d1, true, ddlJobFlag)
 
-	d2 := newDDL(store, nil, nil, testLease*4)
+	d2 := newDDL(goctx.Background(), nil, store, nil, nil, testLease*4)
 	defer d2.Stop()
 	ctx := testNewContext(d2)
 
@@ -248,7 +249,7 @@ LOOP:
 		select {
 		case <-ticker.C:
 			d.Stop()
-			d.start()
+			d.start(goctx.Background())
 		case err := <-done:
 			c.Assert(err, IsNil)
 			break LOOP
@@ -261,7 +262,7 @@ func (s *testSchemaSuite) TestSchemaResume(c *C) {
 	store := testCreateStore(c, "test_schema_resume")
 	defer store.Close()
 
-	d1 := newDDL(store, nil, nil, testLease)
+	d1 := newDDL(goctx.Background(), nil, store, nil, nil, testLease)
 	defer d1.Stop()
 
 	testCheckOwner(c, d1, true, ddlJobFlag)

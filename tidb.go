@@ -66,7 +66,8 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	}
 	err = util.RunWithRetry(defaultMaxRetries, retryInterval, func() (retry bool, err1 error) {
 		log.Infof("store %v new domain, lease %v", store.UUID(), lease)
-		d, err1 = domain.NewDomain(store, lease)
+		factory := createSessionFunc(store)
+		d, err1 = domain.NewDomain(store, lease, factory)
 		return true, errors.Trace(err1)
 	})
 	if err != nil {
@@ -133,6 +134,7 @@ func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
 	return stmts, nil
 }
 
+// resetStmtCtx resets the StmtContext.
 // Before every execution, we must clear statement context.
 func resetStmtCtx(ctx context.Context, s ast.StmtNode) {
 	sessVars := ctx.GetSessionVars()
@@ -149,10 +151,6 @@ func resetStmtCtx(ctx context.Context, s ast.StmtNode) {
 		sc.IgnoreTruncate = false
 		sc.TruncateAsWarning = false
 	case *ast.LoadDataStmt:
-		if variable.GoSQLDriverTest {
-			sc.IgnoreTruncate = true
-			break
-		}
 		sc.IgnoreTruncate = false
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode
 	default:

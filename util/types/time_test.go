@@ -14,6 +14,7 @@
 package types
 
 import (
+	"math"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -163,6 +164,7 @@ func (s *testTimeSuite) TestTime(c *C) {
 		{"10:11", "10:11:00"},
 		{"101112.123456", "10:11:12"},
 		{"1112", "00:11:12"},
+		{"1", "00:00:01"},
 		{"12", "00:00:12"},
 		{"1 12", "36:00:00"},
 		{"1 10:11:12", "34:11:12"},
@@ -228,6 +230,43 @@ func (s *testTimeSuite) TestTime(c *C) {
 		ret := t1.Compare(t2)
 		c.Assert(ret, Equals, t.ret)
 	}
+}
+
+func (s *testTimeSuite) TestDurationAdd(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []struct {
+		Input    string
+		Fsp      int
+		InputAdd string
+		FspAdd   int
+		Expect   string
+	}{
+		{"00:00:00.1", 1, "00:00:00.1", 1, "00:00:00.2"},
+		{"00:00:00", 0, "00:00:00.1", 1, "00:00:00.1"},
+		{"00:00:00.09", 2, "00:00:00.01", 2, "00:00:00.10"},
+		{"00:00:00.099", 3, "00:00:00.001", 3, "00:00:00.100"},
+	}
+	for _, test := range table {
+		t, err := ParseDuration(test.Input, test.Fsp)
+		c.Assert(err, IsNil)
+		ta, err := ParseDuration(test.InputAdd, test.FspAdd)
+		c.Assert(err, IsNil)
+		result, err := t.Add(ta)
+		c.Assert(err, IsNil)
+		c.Assert(result.String(), Equals, test.Expect)
+	}
+	t, err := ParseDuration("00:00:00", 0)
+	c.Assert(err, IsNil)
+	ta := new(Duration)
+	result, err := t.Add(*ta)
+	c.Assert(err, IsNil)
+	c.Assert(result.String(), Equals, "00:00:00")
+
+	t = Duration{Duration: math.MaxInt64, Fsp: 0}
+	tatmp, err := ParseDuration("00:01:00", 0)
+	c.Assert(err, IsNil)
+	_, err = t.Add(tatmp)
+	c.Assert(err, NotNil)
 }
 
 func (s *testTimeSuite) TestTimeFsp(c *C) {

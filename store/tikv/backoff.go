@@ -151,6 +151,12 @@ func NewBackoffer(maxSleep int, ctx goctx.Context) *Backoffer {
 // Backoff sleeps a while base on the backoffType and records the error message.
 // It returns a retryable error if total sleep time exceeds maxSleep.
 func (b *Backoffer) Backoff(typ backoffType, err error) error {
+	select {
+	case <-b.ctx.Done():
+		return errors.Trace(err)
+	default:
+	}
+
 	backoffCounter.WithLabelValues(typ.String()).Inc()
 	// Lazy initialize.
 	if b.fn == nil {
@@ -185,6 +191,17 @@ func (b *Backoffer) String() string {
 		return ""
 	}
 	return fmt.Sprintf(" backoff(%dms %s)", b.totalSleep, b.types)
+}
+
+// Clone creates a new Backoffer which keeps current Backoffer's sleep time and errors, and shares
+// current Backoffer's context.
+func (b *Backoffer) Clone() *Backoffer {
+	return &Backoffer{
+		maxSleep:   b.maxSleep,
+		totalSleep: b.totalSleep,
+		errors:     b.errors,
+		ctx:        b.ctx,
+	}
 }
 
 // Fork creates a new Backoffer which keeps current Backoffer's sleep time and errors, and holds

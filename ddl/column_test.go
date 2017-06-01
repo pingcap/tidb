@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
+	goctx "golang.org/x/net/context"
 )
 
 var _ = Suite(&testColumnSuite{})
@@ -44,7 +45,7 @@ type testColumnSuite struct {
 
 func (s *testColumnSuite) SetUpSuite(c *C) {
 	s.store = testCreateStore(c, "test_column")
-	s.d = newDDL(s.store, nil, nil, testLease)
+	s.d = newDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
 
 	s.dbInfo = testSchemaInfo(c, s.d, "test_column")
 	testCreateSchema(c, testNewContext(s.d), s.d, s.dbInfo)
@@ -738,7 +739,7 @@ func (s *testColumnSuite) testGetColumn(t table.Table, name string, isExist bool
 
 func (s *testColumnSuite) TestAddColumn(c *C) {
 	defer testleak.AfterTest(c)()
-	d := newDDL(s.store, nil, nil, testLease)
+	d := newDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
 	tblInfo := testTableInfo(c, d, "t", 3)
 	ctx := testNewContext(d)
 
@@ -797,7 +798,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	s.d.Stop()
 
 	d.Stop()
-	d.start()
+	d.start(goctx.Background())
 
 	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, newColName, &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, defaultColValue)
 
@@ -819,12 +820,12 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	c.Assert(err, IsNil)
 
 	d.Stop()
-	s.d.start()
+	s.d.start(goctx.Background())
 }
 
 func (s *testColumnSuite) TestDropColumn(c *C) {
 	defer testleak.AfterTest(c)()
-	d := newDDL(s.store, nil, nil, testLease)
+	d := newDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
 	tblInfo := testTableInfo(c, d, "t", 4)
 	ctx := testNewContext(d)
 
@@ -873,7 +874,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	s.d.Stop()
 
 	d.Stop()
-	d.start()
+	d.start(goctx.Background())
 
 	job := testDropColumn(c, ctx, s.d, s.dbInfo, tblInfo, colName, false)
 	testCheckJobDone(c, d, job, false)
@@ -894,11 +895,11 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	c.Assert(err, IsNil)
 
 	d.Stop()
-	s.d.start()
+	s.d.start(goctx.Background())
 }
 
 func (s *testColumnSuite) TestModifyColumn(c *C) {
-	d := newDDL(s.store, nil, nil, testLease)
+	d := newDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
 	defer d.Stop()
 	tests := []struct {
 		origin string

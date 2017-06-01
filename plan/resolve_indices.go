@@ -106,10 +106,35 @@ func (p *PhysicalMergeJoin) ResolveIndices() {
 }
 
 // ResolveIndices implements Plan interface.
+func (p *PhysicalIndexJoin) ResolveIndices() {
+	p.basePlan.ResolveIndices()
+	lSchema := p.children[0].Schema()
+	rSchema := p.children[1].Schema()
+	for i := range p.InnerJoinKeys {
+		p.OuterJoinKeys[i].ResolveIndices(lSchema)
+		p.InnerJoinKeys[i].ResolveIndices(rSchema)
+	}
+	for _, expr := range p.LeftConditions {
+		expr.ResolveIndices(lSchema)
+	}
+	for _, expr := range p.RightConditions {
+		expr.ResolveIndices(rSchema)
+	}
+	for _, expr := range p.OtherConditions {
+		expr.ResolveIndices(expression.MergeSchema(lSchema, rSchema))
+	}
+}
+
+// ResolveIndices implements Plan interface.
 func (p *PhysicalUnionScan) ResolveIndices() {
 	for _, expr := range p.Conditions {
 		expr.ResolveIndices(p.children[0].Schema())
 	}
+}
+
+// ResolveIndices implements Plan interface.
+func (p *PhysicalTableReader) ResolveIndices() {
+	p.tablePlan.ResolveIndices()
 }
 
 // ResolveIndices implements Plan interface.
@@ -118,6 +143,12 @@ func (p *PhysicalIndexReader) ResolveIndices() {
 	for _, col := range p.OutputColumns {
 		col.ResolveIndices(p.indexPlan.Schema())
 	}
+}
+
+// ResolveIndices implements Plan interface.
+func (p *PhysicalIndexLookUpReader) ResolveIndices() {
+	p.tablePlan.ResolveIndices()
+	p.indexPlan.ResolveIndices()
 }
 
 // ResolveIndices implements Plan interface.
@@ -156,6 +187,14 @@ func (p *PhysicalAggregation) ResolveIndices() {
 
 // ResolveIndices implements Plan interface.
 func (p *Sort) ResolveIndices() {
+	p.basePlan.ResolveIndices()
+	for _, item := range p.ByItems {
+		item.Expr.ResolveIndices(p.children[0].Schema())
+	}
+}
+
+// ResolveIndices implements Plan interface.
+func (p *TopN) ResolveIndices() {
 	p.basePlan.ResolveIndices()
 	for _, item := range p.ByItems {
 		item.Expr.ResolveIndices(p.children[0].Schema())

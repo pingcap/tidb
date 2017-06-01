@@ -1182,6 +1182,18 @@ func (d *MyDecimal) PrecisionAndFrac() (precision, frac int) {
 	return
 }
 
+// IsZero checks whether it's a zero decimal.
+func (d *MyDecimal) IsZero() bool {
+	isZero := true
+	for _, val := range d.wordBuf {
+		if val != 0 {
+			isZero = false
+			break
+		}
+	}
+	return isZero
+}
+
 // FromBin Restores decimal from its binary fixed-length representation.
 func (d *MyDecimal) FromBin(bin []byte, precision, frac int) (binSize int, err error) {
 	if len(bin) == 0 {

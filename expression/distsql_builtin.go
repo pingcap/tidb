@@ -123,18 +123,14 @@ func reinferFuncType(sc *variable.StatementContext, funcName string, args []Expr
 }
 
 // PBToExpr converts pb structure to expression.
-func PBToExpr(expr *tipb.Expr, colIDs map[int64]int, tps []*types.FieldType, sc *variable.StatementContext) (Expression, error) {
+func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *variable.StatementContext) (Expression, error) {
 	switch expr.Tp {
 	case tipb.ExprType_ColumnRef:
-		_, id, err := codec.DecodeInt(expr.Val)
+		_, offset, err := codec.DecodeInt(expr.Val)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		offset, ok := colIDs[id]
-		if !ok {
-			return nil, errors.Errorf("Can't find column id %d", id)
-		}
-		return &Column{Index: offset, RetType: tps[offset]}, nil
+		return &Column{Index: int(offset), RetType: tps[offset]}, nil
 	case tipb.ExprType_Null:
 		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}, nil
 	case tipb.ExprType_Int64:
@@ -168,7 +164,7 @@ func PBToExpr(expr *tipb.Expr, colIDs map[int64]int, tps []*types.FieldType, sc 
 			args = append(args, results...)
 			continue
 		}
-		arg, err := PBToExpr(child, colIDs, tps, sc)
+		arg, err := PBToExpr(child, tps, sc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

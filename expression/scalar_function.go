@@ -115,6 +115,11 @@ func (sf *ScalarFunction) GetType() *types.FieldType {
 	return sf.RetType
 }
 
+// GetTypeClass implements Expression interface.
+func (sf *ScalarFunction) GetTypeClass() types.TypeClass {
+	return sf.RetType.ToClass()
+}
+
 // Equal implements Expression interface.
 func (sf *ScalarFunction) Equal(e Expression, ctx context.Context) bool {
 	fun, ok := e.(*ScalarFunction)
@@ -168,6 +173,16 @@ func (sf *ScalarFunction) EvalDecimal(row []types.Datum, sc *variable.StatementC
 // EvalString implements Expression interface.
 func (sf *ScalarFunction) EvalString(row []types.Datum, sc *variable.StatementContext) (string, bool, error) {
 	return sf.Function.evalString(row)
+}
+
+// EvalTime implements Expression interface.
+func (sf *ScalarFunction) EvalTime(row []types.Datum, sc *variable.StatementContext) (types.Time, bool, error) {
+	return sf.Function.evalTime(row)
+}
+
+// EvalDuration implements Expression interface.
+func (sf *ScalarFunction) EvalDuration(row []types.Datum, sc *variable.StatementContext) (types.Duration, bool, error) {
+	return sf.Function.evalDuration(row)
 }
 
 // HashCode implements Expression interface.

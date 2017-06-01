@@ -20,6 +20,7 @@ import (
 	"github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
@@ -31,9 +32,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
-	// TODO: It's used fo update vendor. It will be removed.
-	_ "github.com/coreos/etcd/clientv3/concurrency"
-	_ "github.com/coreos/etcd/mvcc/mvccpb"
 	goctx "golang.org/x/net/context"
 )
 
@@ -47,7 +45,7 @@ type Domain struct {
 	ddl             ddl.DDL
 	m               sync.Mutex
 	SchemaValidator SchemaValidator
-	sysSessionPool  *sync.Pool
+	sysSessionPool  *pools.ResourcePool
 	exit            chan struct{}
 	etcdClient      *clientv3.Client
 
@@ -70,6 +68,21 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 	if usedSchemaVersion != 0 && usedSchemaVersion == latestSchemaVersion {
 		return latestSchemaVersion, nil
 	}
+
+	// Update self schema version to etcd.
+	if ddl.ChangeOwnerInNewWay {
+		defer func() {
+			if err != nil {
+				log.Info("[ddl] not update self schema version to etcd")
+				return
+			}
+			err = do.ddl.SchemaVersionSyncer().UpdateSelfVersion(goctx.Background(), latestSchemaVersion)
+			if err != nil {
+				log.Infof("[ddl] update self version from %v to %v failed %v", usedSchemaVersion, latestSchemaVersion, err)
+			}
+		}()
+	}
+
 	startTime := time.Now()
 	ok, err := do.tryLoadSchemaDiffs(m, usedSchemaVersion, latestSchemaVersion)
 	if err != nil {
@@ -287,6 +300,7 @@ func (do *Domain) Reload() error {
 func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	// Lease renewal can run at any frequency.
 	// Use lease/2 here as recommend by paper.
+	// TODO: Reset ticker or make interval longer.
 	ticker := time.NewTicker(lease / 2)
 	defer ticker.Stop()
 
@@ -297,6 +311,12 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			if err != nil {
 				log.Errorf("[ddl] reload schema in loop err %v", errors.ErrorStack(err))
 			}
+			// TODO: If ChangeOwnerInNewWay is true, we can remove this comments.
+			//	case <-do.ddl.SchemaVersionSyncer().GlobalVerCh:
+			//		err := do.Reload()
+			//		if err != nil {
+			//			log.Errorf("[ddl] reload schema in loop err %v", errors.ErrorStack(err))
+			//		}
 		case <-do.exit:
 			return
 		}
@@ -310,6 +330,7 @@ func (do *Domain) Close() {
 	if do.etcdClient != nil {
 		do.etcdClient.Close()
 	}
+	do.sysSessionPool.Close()
 }
 
 type ddlCallback struct {
@@ -356,12 +377,15 @@ type etcdBackend interface {
 }
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
-func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
+func NewDomain(store kv.Storage, lease time.Duration, factory pools.Factory) (d *Domain, err error) {
+	minCapacity := 1               // minCapacity for the sysSessionPool size
+	maxCapacity := 500             // maxCapacity for the sysSessionPool size
+	idleTimeout := 3 * time.Minute // sessions in the sysSessionPool will be recycled after idleTimeout
 	d = &Domain{
 		store:           store,
 		SchemaValidator: newSchemaValidator(lease),
 		exit:            make(chan struct{}),
-		sysSessionPool:  &sync.Pool{},
+		sysSessionPool:  pools.NewResourcePool(factory, minCapacity, maxCapacity, idleTimeout),
 	}
 
 	if ebd, ok := store.(etcdBackend); ok {
@@ -381,7 +405,14 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	d.ddl = ddl.NewDDL(d.store, d.infoHandle, &ddlCallback{do: d}, lease)
+	ctx := goctx.Background()
+	callback := &ddlCallback{do: d}
+	d.ddl = ddl.NewDDL(ctx, d.etcdClient, d.store, d.infoHandle, callback, lease)
+	if ddl.ChangeOwnerInNewWay {
+		if err = d.ddl.SchemaVersionSyncer().Init(ctx); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
 	if err = d.Reload(); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -397,7 +428,7 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 }
 
 // SysSessionPool returns the system session pool.
-func (do *Domain) SysSessionPool() *sync.Pool {
+func (do *Domain) SysSessionPool() *pools.ResourcePool {
 	return do.sysSessionPool
 }
 

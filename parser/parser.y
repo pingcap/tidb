@@ -285,6 +285,7 @@ import (
 	isNull				"ISNULL"
 	jsonExtract			"JSON_EXTRACT"
 	jsonUnquote			"JSON_UNQUOTE"
+	jsonTypeFunc			"JSON_TYPE"
 	kill				"KILL"
 	lastInsertID			"LAST_INSERT_ID"
 	lcase				"LCASE"
@@ -992,12 +993,13 @@ AlterTableSpec:
 			Position:	$4.(*ast.ColumnPosition),
 		}
 	}
-|	"CHANGE" ColumnKeywordOpt ColumnName ColumnDef
+|	"CHANGE" ColumnKeywordOpt ColumnName ColumnDef ColumnPosition
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp:    		ast.AlterTableChangeColumn,
 			OldColumnName:	$3.(*ast.ColumnName),
 			NewColumn: 	$4.(*ast.ColumnDef),
+			Position:	$5.(*ast.ColumnPosition),
 		}
 	}
 |	"ALTER" ColumnKeywordOpt ColumnName "SET" "DEFAULT" SignedLiteral
@@ -1061,6 +1063,11 @@ LockClause:
 	}
 
 KeyOrIndex: "KEY" | "INDEX"
+
+
+KeyOrIndexOpt:
+	{}
+|   	KeyOrIndex
 
 ColumnKeywordOpt:
 	{}
@@ -1324,7 +1331,7 @@ ConstraintElem:
 		}
 		$$ = c
 	}
-|	"FULLTEXT" "KEY" IndexName '(' IndexColNameList ')' IndexOptionList
+|	"FULLTEXT" KeyOrIndex IndexName '(' IndexColNameList ')' IndexOptionList
 	{
 		c := &ast.Constraint{
 			Tp:	ast.ConstraintFulltext,
@@ -1336,7 +1343,7 @@ ConstraintElem:
 		}
 		$$ = c
 	}
-|	"INDEX" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
+|	KeyOrIndex IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
 	{
 		c := &ast.Constraint{
 			Tp:	ast.ConstraintIndex,
@@ -1354,64 +1361,10 @@ ConstraintElem:
 		}
 		$$ = c
 	}
-|	"KEY" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
-	{
-		c := &ast.Constraint{
-			Tp:	ast.ConstraintKey,
-			Keys:	$5.([]*ast.IndexColName),
-			Name:	$2.(string),
-		}
-		if $7 != nil {
-			c.Option = $7.(*ast.IndexOption)
-		}
-		if $3 != nil {
-			if c.Option == nil {
-				c.Option = &ast.IndexOption{}
-			}
-			c.Option.Tp = $3.(model.IndexType)
-		}
-		$$ = c
-	}
-|	"UNIQUE" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
+|	"UNIQUE" KeyOrIndexOpt IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
 	{
 		c := &ast.Constraint{
 			Tp:	ast.ConstraintUniq,
-			Keys:	$5.([]*ast.IndexColName),
-			Name:	$2.(string),
-		}
-		if $7 != nil {
-			c.Option = $7.(*ast.IndexOption)
-		}
-		if $3 != nil {
-			if c.Option == nil {
-				c.Option = &ast.IndexOption{}
-			}
-			c.Option.Tp = $3.(model.IndexType)
-		}
-		$$ = c
-	}
-|	"UNIQUE" "INDEX" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
-	{
-		c := &ast.Constraint{
-			Tp:	ast.ConstraintUniqIndex,
-			Keys:	$6.([]*ast.IndexColName),
-			Name:	$3.(string),
-		}
-		if $8 != nil {
-			c.Option = $8.(*ast.IndexOption)
-		}
-		if $4 != nil {
-			if c.Option == nil {
-				c.Option = &ast.IndexOption{}
-			}
-			c.Option.Tp = $4.(model.IndexType)
-		}
-		$$ = c
-	}
-|	"UNIQUE" "KEY" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
-	{
-		c := &ast.Constraint{
-			Tp:	ast.ConstraintUniqKey,
 			Keys:	$6.([]*ast.IndexColName),
 			Name:	$3.(string),
 		}
@@ -2396,7 +2349,7 @@ NotKeywordToken:
 |	"AES_DECRYPT" | "AES_ENCRYPT" | "QUOTE"
 |	"ANY_VALUE" | "INET_ATON" | "INET_NTOA" | "INET6_ATON" | "INET6_NTOA" | "IS_FREE_LOCK" | "IS_IPV4" | "IS_IPV4_COMPAT" | "IS_IPV4_MAPPED" | "IS_IPV6" | "IS_USED_LOCK" | "MASTER_POS_WAIT" | "NAME_CONST" | "RELEASE_ALL_LOCKS" | "UUID" | "UUID_SHORT"
 |	"COMPRESS" | "DECODE" | "DES_DECRYPT" | "DES_ENCRYPT" | "ENCODE" | "ENCRYPT" | "MD5" | "OLD_PASSWORD" | "RANDOM_BYTES" | "SHA1" | "SHA" | "SHA2" | "UNCOMPRESS" | "UNCOMPRESSED_LENGTH" | "VALIDATE_PASSWORD_STRENGTH"
-|	"JSON_EXTRACT" | "JSON_UNQUOTE"
+|	"JSON_EXTRACT" | "JSON_UNQUOTE" | "JSON_TYPE"
 
 /************************************************************************************
  *
@@ -3689,21 +3642,17 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
-|	"JSON_EXTRACT" '(' Expression ',' ExpressionList ')'
+|	"JSON_EXTRACT" '(' ExpressionListOpt ')'
 	{
-		var args = []ast.ExprNode{$3.(ast.ExprNode)}
-		args = append(args, $5.([]ast.ExprNode)...)
-		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1),
-			Args: args,
-		}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
-|	"JSON_UNQUOTE" '(' Expression ')'
+|	"JSON_UNQUOTE" '(' ExpressionListOpt ')'
 	{
-		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1),
-			Args: []ast.ExprNode{$3.(ast.ExprNode)},
-		}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+	}
+|	"JSON_TYPE" '(' ExpressionListOpt ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
 
 GetFormatSelector:
@@ -3994,6 +3943,8 @@ CastType:
 		x.Decimal = fopt.Decimal
 		if fopt.Flen == types.UnspecifiedLength {
 			x.Flen = mysql.GetDefaultFieldLength(mysql.TypeNewDecimal)
+			x.Decimal = mysql.GetDefaultDecimal(mysql.TypeNewDecimal)
+		} else if fopt.Decimal == types.UnspecifiedLength {
 			x.Decimal = mysql.GetDefaultDecimal(mysql.TypeNewDecimal)
 		}
 		$$ = x
@@ -5435,7 +5386,7 @@ TableOption:
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionPassword, StrValue: $3}
 	}
-|	"COMPRESSION" EqOpt Identifier
+|	"COMPRESSION" EqOpt stringLit
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionCompression, StrValue: $3}
 	}
@@ -6218,6 +6169,10 @@ PrivType:
 |	"GRANT" "OPTION"
 	{
 		$$ = mysql.GrantPriv
+	}
+|	"REFERENCES"
+	{
+		$$ = mysql.ReferencesPriv
 	}
 
 ObjectType:

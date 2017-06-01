@@ -28,6 +28,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
@@ -70,7 +71,7 @@ type Session interface {
 	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
 	SetSessionManager(util.SessionManager)
-	Close() error
+	Close()
 	Auth(user string, auth []byte, salt []byte) bool
 	// Cancel the execution of current transaction.
 	Cancel()
@@ -271,7 +272,7 @@ func (s *session) doCommitWithRetry() error {
 			// We make larger transactions retry less times to prevent cluster resource outage.
 			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
 			maxRetryCount := commitRetryLimit - int(float64(commitRetryLimit-1)*txnSizeRate)
-			err = s.retry(maxRetryCount)
+			err = s.retry(maxRetryCount, terror.ErrorEqual(err, domain.ErrInfoSchemaChanged))
 		}
 	}
 	s.cleanRetryInfo()
@@ -341,7 +342,7 @@ func (s *session) isRetryableError(err error) bool {
 	return kv.IsRetryableError(err) || terror.ErrorEqual(err, domain.ErrInfoSchemaChanged)
 }
 
-func (s *session) retry(maxCnt int) error {
+func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 	connID := s.sessionVars.ConnectionID
 	if s.sessionVars.TxnCtx.ForUpdate {
 		return errors.Errorf("[%d] can not retry select for update statement", connID)
@@ -362,6 +363,13 @@ func (s *session) retry(maxCnt int) error {
 		for i, sr := range nh.history {
 			st := sr.st
 			txt := st.OriginText()
+			if infoSchemaChanged {
+				st, err = updateStatement(st, s, txt)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+
 			if retryCnt == 0 {
 				// We do not have to log the query every time.
 				// We print the queries at the first try only.
@@ -387,6 +395,7 @@ func (s *session) retry(maxCnt int) error {
 			return errors.Trace(err)
 		}
 		retryCnt++
+		infoSchemaChanged = terror.ErrorEqual(err, domain.ErrInfoSchemaChanged)
 		if !s.unlimitedRetryCount && (retryCnt >= maxCnt) {
 			log.Warnf("[%d] Retry reached max count %d", connID, retryCnt)
 			return errors.Trace(err)
@@ -397,6 +406,27 @@ func (s *session) retry(maxCnt int) error {
 	return err
 }
 
+func updateStatement(st ast.Statement, s *session, txt string) (ast.Statement, error) {
+	// statement maybe stale because of infoschema changed, this function will return the updated one.
+	if st.IsPrepared() {
+		// TODO: Rebuild plan if infoschema changed, reuse the statement otherwise.
+	} else {
+		// Rebuild plan if infoschema changed, reuse the statement otherwise.
+		charset, collation := s.sessionVars.GetCharsetInfo()
+		stmt, err := s.parser.ParseOneStmt(txt, charset, collation)
+		if err != nil {
+			return st, errors.Trace(err)
+		}
+		st, err = Compile(s, stmt)
+		if err != nil {
+			// If a txn is inserting data when DDL is dropping column,
+			// it would fail to commit and retry, and run here then.
+			return st, errors.Trace(err)
+		}
+	}
+	return st, nil
+}
+
 func sqlForLog(sql string) string {
 	if len(sql) > sqlLogMaxLen {
 		return sql[:sqlLogMaxLen] + fmt.Sprintf("(len:%d)", len(sql))
@@ -404,7 +434,7 @@ func sqlForLog(sql string) string {
 	return sql
 }
 
-func (s *session) sysSessionPool() *sync.Pool {
+func (s *session) sysSessionPool() *pools.ResourcePool {
 	return sessionctx.GetDomain(s).SysSessionPool()
 }
 
@@ -414,21 +444,12 @@ func (s *session) sysSessionPool() *sync.Pool {
 // and doesn't write binlog.
 func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) ([]*ast.Row, []*ast.ResultField, error) {
 	// Use special session to execute the sql.
-	var se *session
-	tmp := s.sysSessionPool().Get()
-	if tmp != nil {
-		se = tmp.(*session)
-	} else {
-		var err error
-		se, err = createSession(s.store)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		varsutil.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
-		se.sessionVars.CommonGlobalLoaded = true
-		se.sessionVars.InRestrictedSQL = true
+	tmp, err := s.sysSessionPool().Get()
+	if err != nil {
+		return nil, nil, errors.Trace(err)
 	}
-	defer s.sysSessionPool().Put(se)
+	se := tmp.(*session)
+	defer s.sysSessionPool().Put(tmp)
 
 	recordSets, err := se.Execute(sql)
 	if err != nil {
@@ -458,6 +479,19 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) ([]*ast.Row
 		}
 	}
 	return rows, fields, nil
+}
+
+func createSessionFunc(store kv.Storage) pools.Factory {
+	return func() (pools.Resource, error) {
+		se, err := createSession(store)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		varsutil.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
+		se.sessionVars.CommonGlobalLoaded = true
+		se.sessionVars.InRestrictedSQL = true
+		return se, nil
+	}
 }
 
 func drainRecordSet(rs ast.RecordSet) ([]*ast.Row, error) {
@@ -754,14 +788,17 @@ func (s *session) ClearValue(key fmt.Stringer) {
 }
 
 // Close function does some clean work when session end.
-func (s *session) Close() error {
+func (s *session) Close() {
 	if s.txnFutureCh != nil {
 		close(s.txnFutureCh)
 	}
 	if s.statsCollector != nil {
 		s.statsCollector.Delete()
 	}
-	return s.RollbackTxn()
+	if err := s.RollbackTxn(); err != nil {
+		log.Error("session Close error:", errors.ErrorStack(err))
+	}
+	return
 }
 
 // GetSessionVars implements the context.Context interface.
@@ -930,7 +967,7 @@ func createSession(store kv.Storage) (*session, error) {
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 9
+	currentBootstrapVersion = 12
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
