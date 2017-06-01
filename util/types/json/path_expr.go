@@ -52,8 +52,11 @@ var jsonPathExprLegRe = regexp.MustCompile(`(\.\s*([a-zA-Z_][a-zA-Z0-9_]*|\*|"[^
 type pathLegType byte
 
 const (
-	pathLegKey            pathLegType = 0x01
-	pathLegIndex          pathLegType = 0x02
+	// pathLegKey indicates the path leg with '.key'.
+	pathLegKey pathLegType = 0x01
+	// pathLegIndex indicates the path leg with form '[number]'.
+	pathLegIndex pathLegType = 0x02
+	// pathLegDoubleAsterisk indicates the path leg with form '**'.
 	pathLegDoubleAsterisk pathLegType = 0x03
 )
 
@@ -76,6 +79,7 @@ const (
 	pathExpressionContainsDoubleAsterisk pathExpressionFlag = 0x02
 )
 
+// containsAnyAsterisk returns true if pef contains any asterisk.
 func (pef pathExpressionFlag) containsAnyAsterisk() bool {
 	pef &= pathExpressionContainsAsterisk
 	pef &= pathExpressionContainsDoubleAsterisk
@@ -88,6 +92,7 @@ type PathExpression struct {
 	flags pathExpressionFlag
 }
 
+// popOneLeg returns a pathLeg, and a child PathExpression without that leg.
 func (pe PathExpression) popOneLeg() (pathLeg, PathExpression) {
 	newPe := PathExpression{
 		legs:  pe.legs[1:],
