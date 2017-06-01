@@ -135,18 +135,20 @@ func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 
 	lastEnd := 0
 	for _, indice := range indices {
+		start, end := indice[0], indice[1]
+
 		// Check all characters between two legs are blank.
-		for i := lastEnd; i < indice[0]; i++ {
+		for i := lastEnd; i < start; i++ {
 			if !isBlank(rune(pathExprSuffix[i])) {
 				err = ErrInvalidJSONPath.GenByArgs(pathExpr)
 				return
 			}
 		}
-		lastEnd = indice[1]
+		lastEnd = end
 
-		if pathExprSuffix[indice[0]] == '[' {
+		if pathExprSuffix[start] == '[' {
 			// The leg is an index of a JSON array.
-			var leg = strings.TrimFunc(pathExprSuffix[indice[0]+1:indice[1]], isBlank)
+			var leg = strings.TrimFunc(pathExprSuffix[start+1:end], isBlank)
 			var indexStr = strings.TrimFunc(leg[0:len(leg)-1], isBlank)
 			var index int
 			if len(indexStr) == 1 && indexStr[0] == '*' {
@@ -159,9 +161,9 @@ func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 				}
 			}
 			pe.legs = append(pe.legs, pathLeg{typ: pathLegIndex, arrayIndex: index})
-		} else if pathExprSuffix[indice[0]] == '.' {
+		} else if pathExprSuffix[start] == '.' {
 			// The leg is a key of a JSON object.
-			var key = strings.TrimFunc(pathExprSuffix[indice[0]+1:indice[1]], isBlank)
+			var key = strings.TrimFunc(pathExprSuffix[start+1:end], isBlank)
 			if len(key) == 1 && key[0] == '*' {
 				pe.flags |= pathExpressionContainsAsterisk
 			} else if key[0] == '"' {
