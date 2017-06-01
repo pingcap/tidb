@@ -22,13 +22,13 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 )
 
-func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
+func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	dbInfo := &model.DBInfo{}
 	if err := job.DecodeArgs(dbInfo); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobCancelled
-		return errors.Trace(err)
+		return ver, errors.Trace(err)
 	}
 
 	dbInfo.ID = schemaID
@@ -36,7 +36,7 @@ func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
 
 	dbs, err := t.ListDatabases()
 	if err != nil {
-		return errors.Trace(err)
+		return ver, errors.Trace(err)
 	}
 
 	for _, db := range dbs {
@@ -44,15 +44,15 @@ func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
 			if db.ID != schemaID {
 				// The database already exists, can't create it, we should cancel this job now.
 				job.State = model.JobCancelled
-				return infoschema.ErrDatabaseExists.GenByArgs(db.Name)
+				return ver, infoschema.ErrDatabaseExists.GenByArgs(db.Name)
 			}
 			dbInfo = db
 		}
 	}
 
-	ver, err := updateSchemaVersion(t, job)
+	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
-		return errors.Trace(err)
+		return ver, errors.Trace(err)
 	}
 
 	switch dbInfo.State {
@@ -62,31 +62,31 @@ func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
 		dbInfo.State = model.StatePublic
 		err = t.CreateDatabase(dbInfo)
 		if err != nil {
-			return errors.Trace(err)
+			return ver, errors.Trace(err)
 		}
 		// Finish this job.
 		job.State = model.JobDone
 		job.BinlogInfo.AddDBInfo(ver, dbInfo)
-		return nil
+		return ver, nil
 	default:
 		// We can't enter here.
-		return errors.Errorf("invalid db state %v", dbInfo.State)
+		return ver, errors.Errorf("invalid db state %v", dbInfo.State)
 	}
 }
 
-func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) error {
+func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
-		return errors.Trace(err)
+		return ver, errors.Trace(err)
 	}
 	if dbInfo == nil {
 		job.State = model.JobCancelled
-		return infoschema.ErrDatabaseDropExists.GenByArgs("")
+		return ver, infoschema.ErrDatabaseDropExists.GenByArgs("")
 	}
 
-	ver, err := updateSchemaVersion(t, job)
+	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
-		return errors.Trace(err)
+		return ver, errors.Trace(err)
 	}
 
 	switch dbInfo.State {
@@ -104,12 +104,12 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) error {
 		dbInfo.State = model.StateNone
 		tables, err := t.ListTables(job.SchemaID)
 		if err != nil {
-			return errors.Trace(err)
+			return ver, errors.Trace(err)
 		}
 
 		err = t.UpdateDatabase(dbInfo)
 		if err != nil {
-			return errors.Trace(err)
+			return ver, errors.Trace(err)
 		}
 		if err = t.DropDatabase(dbInfo.ID); err != nil {
 			break
@@ -130,7 +130,7 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) error {
 		err = errors.Errorf("invalid db state %v", dbInfo.State)
 	}
 
-	return errors.Trace(err)
+	return ver, errors.Trace(err)
 }
 
 func getIDs(tables []*model.TableInfo) []int64 {
