@@ -85,19 +85,20 @@ func (s *testJSONSuite) TestJSONExtract(c *C) {
 
 func (s *testJSONSuite) TestJSONUnquote(c *C) {
 	var tests = []struct {
-		j        JSON
+		j        string
 		unquoted string
 	}{
-		{j: mustParseFromString(`3`), unquoted: "3"},
-		{j: mustParseFromString(`"3"`), unquoted: "3"},
-		{j: mustParseFromString(`"hello, \"escaped quotes\" world"`), unquoted: "hello, \"escaped quotes\" world"},
-		{j: mustParseFromString("\"\\u4f60\""), unquoted: "你"},
-		{j: mustParseFromString(`true`), unquoted: "true"},
-		{j: mustParseFromString(`null`), unquoted: "null"},
-		{j: mustParseFromString(`{"a": [1, 2]}`), unquoted: `{"a":[1,2]}`},
+		{j: `3`, unquoted: "3"},
+		{j: `"3"`, unquoted: "3"},
+		{j: `"hello, \"escaped quotes\" world"`, unquoted: "hello, \"escaped quotes\" world"},
+		{j: "\"\\u4f60\"", unquoted: "你"},
+		{j: `true`, unquoted: "true"},
+		{j: `null`, unquoted: "null"},
+		{j: `{"a": [1, 2]}`, unquoted: `{"a":[1,2]}`},
 	}
 	for _, tt := range tests {
-		unquoted, err := tt.j.Unquote()
+		j := mustParseFromString(tt.j)
+		unquoted, err := j.Unquote()
 		c.Assert(err, IsNil)
 		c.Assert(unquoted, Equals, tt.unquoted)
 	}
