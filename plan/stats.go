@@ -127,7 +127,7 @@ func getCardinality(cols []*expression.Column, schema *expression.Schema, profil
 		log.Errorf("Cannot find column %s indices from schema %s", cols, schema)
 		return 0
 	}
-	var cardinality float64 = 0
+	var cardinality float64
 	for _, idx := range indices {
 		if cardinality < profile.cardinality[idx] {
 			// It is a very elementary estimation.
