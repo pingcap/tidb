@@ -71,11 +71,11 @@ func asyncNotify(ch chan struct{}) {
 
 func (d *ddl) isOwner(flag JobType) bool {
 	if flag == ddlJobFlag {
-		isOwner := d.worker.IsOwner()
+		isOwner := d.ownerManager.IsOwner()
 		log.Infof("[ddl] it's the %s job owner %v, self id %s", flag, isOwner, d.uuid)
 		return isOwner
 	}
-	isOwner := d.worker.IsBgOwner()
+	isOwner := d.ownerManager.IsBgOwner()
 	log.Infof("[ddl] it's the %s job owner %v, self id %s", flag, isOwner, d.uuid)
 	return isOwner
 }
@@ -360,12 +360,12 @@ func (d *ddl) waitSchemaChanged(waitTime time.Duration, latestSchemaVersion int6
 	// TODO: Make ctx exits when the d is close.
 	ctx, cancelFunc := goctx.WithTimeout(goctx.Background(), waitTime)
 	defer cancelFunc()
-	err := d.worker.UpdateGlobalVersion(ctx, latestSchemaVersion)
+	err := d.schemaSyncer.OwnerUpdateGlobalVersion(ctx, latestSchemaVersion)
 	if err != nil {
 		log.Infof("[ddl] update latest schema version %d failed %v", latestSchemaVersion, err)
 	}
 
-	err = d.worker.CheckAllVersions(ctx, latestSchemaVersion)
+	err = d.schemaSyncer.OwnerCheckAllVersions(ctx, latestSchemaVersion)
 	if err != nil {
 		log.Infof("[ddl] wait latest schema version %d to deadline %v", latestSchemaVersion, err)
 	}

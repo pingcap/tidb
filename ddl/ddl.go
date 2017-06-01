@@ -159,12 +159,12 @@ func (e *Event) String() string {
 type ddl struct {
 	m sync.RWMutex
 
-	infoHandle *infoschema.Handle
-	hook       Callback
-	hookMu     sync.RWMutex
-	store      kv.Storage
-	// worker is used for DDL to access the etcd.
-	worker EtcdWorker
+	infoHandle   *infoschema.Handle
+	hook         Callback
+	hookMu       sync.RWMutex
+	store        kv.Storage
+	ownerManager OwnerManager
+	schemaSyncer SchemaSyncer
 	// lease is schema seconds.
 	lease        time.Duration
 	uuid         string
@@ -228,13 +228,16 @@ func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 
 	id := uuid.NewV4().String()
 	ctx, cancelFunc := goctx.WithCancel(ctx)
-	var worker EtcdWorker
-	// If etcdCli is nil, it's the local store, so use the mockEtcdWorker.
+	var manager OwnerManager
+	var syncer SchemaSyncer
+	// If etcdCli is nil, it's the local store, so use the mockOwnerManager and mockSchemaSyncer.
 	// It's always used for testing.
 	if etcdCli == nil {
-		worker = NewMockEtcdWorker(etcdCli, id, cancelFunc)
+		manager = NewMockOwnerManager(etcdCli, id, cancelFunc)
+		syncer = NewMockSchemaSyncer(etcdCli, id)
 	} else {
-		worker = NewEtcdWorker(etcdCli, id, cancelFunc)
+		manager = NewOwnerManager(etcdCli, id, cancelFunc)
+		syncer = NewSchemaSyncer(etcdCli, id)
 	}
 	d := &ddl{
 		infoHandle:   infoHandle,
@@ -245,7 +248,8 @@ func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 		ddlJobCh:     make(chan struct{}, 1),
 		ddlJobDoneCh: make(chan struct{}, 1),
 		bgJobCh:      make(chan struct{}, 1),
-		worker:       worker,
+		ownerManager: manager,
+		schemaSyncer: syncer,
 	}
 
 	d.start(ctx)
@@ -300,7 +304,7 @@ func (d *ddl) Stop() error {
 func (d *ddl) start(ctx goctx.Context) {
 	d.quitCh = make(chan struct{})
 	if ChangeOwnerInNewWay {
-		d.worker.CampaignOwners(ctx, &d.wait)
+		d.ownerManager.CampaignOwners(ctx, &d.wait)
 	}
 
 	d.wait.Add(2)
@@ -319,11 +323,11 @@ func (d *ddl) close() {
 	}
 
 	close(d.quitCh)
-	err := d.worker.RemoveSelfVersionPath()
+	err := d.schemaSyncer.RemoveSelfVersionPath()
 	if err != nil {
 		log.Errorf("[ddl] remove self version pathe failed %v", err)
 	}
-	d.worker.Cancel()
+	d.ownerManager.Cancel()
 
 	d.wait.Wait()
 	log.Infof("close DDL:%s", d.uuid)
@@ -384,7 +388,7 @@ func (d *ddl) genGlobalID() (int64, error) {
 
 // SchemaSyncer implements DDL.SchemaSyncer interface.
 func (d *ddl) SchemaSyncer() SchemaSyncer {
-	return d.worker
+	return d.schemaSyncer
 }
 
 func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {

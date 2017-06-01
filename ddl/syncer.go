@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 	"time"
@@ -48,21 +49,29 @@ type SchemaSyncer interface {
 	Init(ctx goctx.Context) error
 	// UpdateSelfVersion updates the current version to the self path on etcd.
 	UpdateSelfVersion(ctx goctx.Context, version int64) error
-	// UpdateGlobalVersion updates the latest version to the global path on etcd.
-	UpdateGlobalVersion(ctx goctx.Context, version int64) error
 	// RemoveSelfVersionPath remove the self path from etcd.
 	RemoveSelfVersionPath() error
+	// OwnerUpdateGlobalVersion updates the latest version to the global path on etcd.
+	OwnerUpdateGlobalVersion(ctx goctx.Context, version int64) error
 	// GlobalVersionCh gets the chan for watching global version.
 	GlobalVersionCh() clientv3.WatchChan
-	// CheckAllVersions checks whether all followers' schema version are equal to
+	// OwnerCheckAllVersions checks whether all followers' schema version are equal to
 	// the latest schema version. If the result is false, wait for a while and check again util the processing time reach 2 * lease.
-	CheckAllVersions(ctx goctx.Context, latestVer int64) error
+	OwnerCheckAllVersions(ctx goctx.Context, latestVer int64) error
 }
 
 type schemaVersionSyncer struct {
 	selfSchemaVerPath string
 	etcdCli           *clientv3.Client
 	globalVerCh       clientv3.WatchChan
+}
+
+// NewSchemaSyncer creates a new SchemaSyncer.
+func NewSchemaSyncer(etcdCli *clientv3.Client, id string) SchemaSyncer {
+	return &schemaVersionSyncer{
+		etcdCli:           etcdCli,
+		selfSchemaVerPath: fmt.Sprintf("%s/%s", ddlAllSchemaVersions, id),
+	}
 }
 
 func (s *schemaVersionSyncer) putKV(ctx goctx.Context, retryCnt int, key, val string) error {
@@ -110,8 +119,8 @@ func (s *schemaVersionSyncer) UpdateSelfVersion(ctx goctx.Context, version int64
 	return s.putKV(ctx, putKeyNoRetry, s.selfSchemaVerPath, ver)
 }
 
-// UpdateGlobalVersion implements SchemaSyncer.UpdateGlobalVersion interface.
-func (s *schemaVersionSyncer) UpdateGlobalVersion(ctx goctx.Context, version int64) error {
+// OwnerUpdateGlobalVersion implements SchemaSyncer.OwnerUpdateGlobalVersion interface.
+func (s *schemaVersionSyncer) OwnerUpdateGlobalVersion(ctx goctx.Context, version int64) error {
 	ver := strconv.FormatInt(version, 10)
 	return s.putKV(ctx, putKeyRetryUnlimited, ddlGlobalSchemaVersion, ver)
 }
@@ -138,8 +147,8 @@ func isContextFinished(err error) bool {
 	return false
 }
 
-// CheckAllVersions implements SchemaSyncer.CheckAllVersions interface.
-func (s *schemaVersionSyncer) CheckAllVersions(ctx goctx.Context, latestVer int64) error {
+// OwnerCheckAllVersions implements SchemaSyncer.OwnerCheckAllVersions interface.
+func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx goctx.Context, latestVer int64) error {
 	time.Sleep(checkVersFirstWaitTime)
 	updatedMap := make(map[string]struct{})
 	for {
