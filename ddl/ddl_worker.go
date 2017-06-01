@@ -72,11 +72,11 @@ func asyncNotify(ch chan struct{}) {
 func (d *ddl) isOwner(flag JobType) bool {
 	if flag == ddlJobFlag {
 		isOwner := d.worker.IsOwner()
-		log.Infof("[ddl] it's the %s job owner %v, self id %s", flag, d.uuid, isOwner)
+		log.Infof("[ddl] it's the %s job owner %v, self id %s", flag, isOwner, d.uuid)
 		return isOwner
 	}
 	isOwner := d.worker.IsBgOwner()
-	log.Infof("[ddl] it's the %s job owner %v, self id %s", flag, d.uuid, isOwner)
+	log.Infof("[ddl] it's the %s job owner %v, self id %s", flag, isOwner, d.uuid)
 	return isOwner
 }
 
@@ -213,6 +213,7 @@ func (d *ddl) handleDDLJobQueue() error {
 				if elapsed > 0 && elapsed < waitTime {
 					log.Warnf("[ddl] the elapsed time from last update is %s < %s, wait again", elapsed, waitTime)
 					waitTime -= elapsed
+					time.Sleep(time.Millisecond)
 					return nil
 				}
 			}
@@ -247,14 +248,7 @@ func (d *ddl) handleDDLJobQueue() error {
 		// If the job is done or still running, we will wait 2 * lease time to guarantee other servers to update
 		// the newest schema.
 		if job.State == model.JobRunning || job.State == model.JobDone {
-			switch job.Type {
-			case model.ActionCreateSchema, model.ActionDropSchema, model.ActionCreateTable,
-				model.ActionTruncateTable, model.ActionDropTable:
-				// Do not need to wait for those DDL, because those DDL do not need to modify data,
-				// So there is no data inconsistent issue.
-			default:
-				d.waitSchemaChanged(waitTime, schemaVer)
-			}
+			d.waitSchemaChanged(waitTime, schemaVer)
 		}
 		if job.IsFinished() {
 			d.startBgJob(job.Type)
