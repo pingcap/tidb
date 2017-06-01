@@ -492,11 +492,6 @@ func (s *testEvaluatorSuite) TestIsDuration(c *C) {
 		result := isDuration(t.Input)
 		c.Assert(result, Equals, t.expect)
 	}
-
-	result := isDuration("aa:bb:cc")
-	c.Assert(result, Equals, true)
-	_, err := types.ParseDuration("aa:bb:cc", types.MaxFsp)
-	c.Assert(err, NotNil)
 }
 
 func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
