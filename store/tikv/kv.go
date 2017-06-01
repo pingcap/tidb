@@ -151,7 +151,7 @@ func NewMockTikvStoreWithCluster(cluster *mocktikv.Cluster) (kv.Storage, error) 
 	mocktikv.BootstrapWithSingleStore(cluster)
 	mvccStore := mocktikv.NewMvccStore()
 	client := mocktikv.NewRPCClient(cluster, mvccStore)
-	uuid := fmt.Sprintf("mock-tikv-store-:%v", time.Now().Unix())
+	uuid := fmt.Sprintf("mock-tikv-store-%v-%v", time.Now().Unix(), rand.Intn(10))
 	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
 	return newTikvStore(uuid, pdCli, client, false)
 }
