@@ -1770,7 +1770,7 @@ func getTimeZone(ctx context.Context) *time.Location {
 	return ret
 }
 
-//isDuration returns a boolean indicating whether the str is duration
+// isDuration returns a boolean indicating whether the str is duration.
 func isDuration(str string) bool {
 	if n := strings.IndexByte(str, ' '); n >= 0 {
 		if strings.Count(str[:n+1], "-") > 1 {
@@ -1797,31 +1797,43 @@ func isDuration(str string) bool {
 	return false
 }
 
+// strDatetimeAddDuration adds duration to datetime string, returns a dutam value.
 func strDatetimeAddDuration(d string, arg1 types.Duration) (result types.Datum, err error) {
 	arg0, err := types.ParseTime(d, mysql.TypeDatetime, getFsp(d))
 	if err != nil {
-		return result, err
+		return result, errors.Trace(err)
 	}
 	tmpDuration := arg0.Add(arg1)
 	resultDuration, err := tmpDuration.ConvertToTime(mysql.TypeDatetime)
 	if err != nil {
-		return result, err
+		return result, errors.Trace(err)
+	}
+	if getFsp(d) != 0 {
+		tmpDuration.Fsp = types.MaxFsp
+	} else {
+		tmpDuration.Fsp = 0
 	}
 	result.SetString(resultDuration.String())
-	return result, nil
+	return
 }
 
+// strDurationAddDuration adds duration to duration string, returns a dutam value.
 func strDurationAddDuration(d string, arg1 types.Duration) (result types.Datum, err error) {
 	arg0, err := types.ParseDuration(d, getFsp(d))
 	if err != nil {
-		return result, err
+		return result, errors.Trace(err)
 	}
 	tmpDuration, err := arg0.Add(arg1)
 	if err != nil {
-		return result, err
+		return result, errors.Trace(err)
+	}
+	if getFsp(d) != 0 {
+		tmpDuration.Fsp = types.MaxFsp
+	} else {
+		tmpDuration.Fsp = 0
 	}
 	result.SetString(tmpDuration.String())
-	return result, nil
+	return
 }
 
 type addTimeFunctionClass struct {
@@ -1845,7 +1857,7 @@ func (b *builtinAddTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 		return d, errors.Trace(err)
 	}
 	if args[0].IsNull() || args[1].IsNull() {
-		return d, nil
+		return
 	}
 	var arg1 types.Duration
 	switch tp := args[1].Kind(); tp {
@@ -1853,7 +1865,9 @@ func (b *builtinAddTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 		arg1 = args[1].GetMysqlDuration()
 	default:
 		s, err := args[1].ToString()
-
+		if err != nil {
+			return d, errors.Trace(err)
+		}
 		if getFsp(s) == 0 {
 			arg1, err = types.ParseDuration(s, 0)
 		} else {
@@ -1862,8 +1876,8 @@ func (b *builtinAddTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 		if err != nil {
 			return d, errors.Trace(err)
 		}
-	}
 
+	}
 	switch tp := args[0].Kind(); tp {
 	case types.KindMysqlTime:
 		arg0 := args[0].GetMysqlTime()
@@ -1873,7 +1887,6 @@ func (b *builtinAddTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 			return d, errors.Trace(err)
 		}
 		d.SetMysqlTime(result)
-		return d, nil
 	case types.KindMysqlDuration:
 		arg0 := args[0].GetMysqlDuration()
 		result, err := arg0.Add(arg1)
@@ -1881,7 +1894,6 @@ func (b *builtinAddTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 			return d, errors.Trace(err)
 		}
 		d.SetMysqlDuration(result)
-		return d, nil
 	default:
 		ss, err := args[0].ToString()
 		if err != nil {
@@ -1892,6 +1904,7 @@ func (b *builtinAddTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 		}
 		return strDatetimeAddDuration(ss, arg1)
 	}
+	return
 }
 
 type convertTzFunctionClass struct {

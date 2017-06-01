@@ -479,6 +479,7 @@ func (s *testEvaluatorSuite) TestIsDuration(c *C) {
 		expect bool
 	}{
 		{"110:00:00", true},
+		{"aa:bb:cc", true},
 		{"1 01:00:00", true},
 		{"01:00:00.999999", true},
 		{"071231235959.999999", false},
@@ -491,6 +492,11 @@ func (s *testEvaluatorSuite) TestIsDuration(c *C) {
 		result := isDuration(t.Input)
 		c.Assert(result, Equals, t.expect)
 	}
+
+	result := isDuration("aa:bb:cc")
+	c.Assert(result, Equals, true)
+	_, err := types.ParseDuration("aa:bb:cc", types.MaxFsp)
+	c.Assert(err, NotNil)
 }
 
 func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
