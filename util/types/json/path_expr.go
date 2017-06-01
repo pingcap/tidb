@@ -133,11 +133,10 @@ func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 	pe.legs = make([]pathLeg, 0, len(indices))
 	pe.flags = pathExpressionFlag(0)
 
-	lastEnd, currentStart := 0, 0
+	lastEnd := 0
 	for _, indice := range indices {
 		// Check all characters between two legs are blank.
-		currentStart = indice[0]
-		for i := lastEnd; i < currentStart; i++ {
+		for i := lastEnd; i < indice[0]; i++ {
 			if !isBlank(rune(pathExprSuffix[i])) {
 				err = ErrInvalidJSONPath.GenByArgs(pathExpr)
 				return
