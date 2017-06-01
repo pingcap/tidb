@@ -248,6 +248,20 @@ func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {
 	mustExec(c, se, `DROP TABLE todrop;`)
 }
 
+func (s *testPrivilegeSuite) TestCheckAuthenticate(c *C) {
+	defer testleak.AfterTest(c)()
+
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `CREATE USER 'u1'@'localhost';`)
+	mustExec(c, se, `CREATE USER 'u2'@'localhost' identified by 'abc';`)
+	mustExec(c, se, `FLUSH PRIVILEGES;`)
+	c.Assert(se.Auth("u1@localhost", nil, nil), IsTrue)
+	c.Assert(se.Auth("u2@localhost", nil, nil), IsFalse)
+	salt := []byte{85, 92, 45, 22, 58, 79, 107, 6, 122, 125, 58, 80, 12, 90, 103, 32, 90, 10, 74, 82}
+	auth := []byte{24, 180, 183, 225, 166, 6, 81, 102, 70, 248, 199, 143, 91, 204, 169, 9, 161, 171, 203, 33}
+	c.Assert(se.Auth("u2@localhost", auth, salt), IsTrue)
+}
+
 func mustExec(c *C, se tidb.Session, sql string) {
 	_, err := se.Execute(sql)
 	c.Assert(err, IsNil)
