@@ -1048,20 +1048,29 @@ func (d *Datum) convertToMysqlDecimal(sc *variable.StatementContext, target *Fie
 	default:
 		return invalidConv(d, target.Tp)
 	}
-	if target.Flen != UnspecifiedLength && target.Decimal != UnspecifiedLength {
+	dec, err = produceDecWithSpecifiedTp(dec, target, sc)
+	ret.SetValue(dec)
+	return ret, errors.Trace(err)
+}
+
+// produceDecToSpecifiedTp produces a new decimal according to `Tp`.
+func produceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *variable.StatementContext) (_ *MyDecimal, err error) {
+	flen, decimal := tp.Flen, tp.Decimal
+	if flen != UnspecifiedLength && decimal != UnspecifiedLength {
 		prec, frac := dec.PrecisionAndFrac()
-		if prec-frac > target.Flen-target.Decimal {
-			dec = NewMaxOrMinDec(dec.IsNegative(), target.Flen, target.Decimal)
-			err = ErrOverflow.GenByArgs("DECIMAL", fmt.Sprintf("(%d, %d)", target.Flen, target.Decimal))
-		} else if frac != target.Decimal {
-			dec.Round(dec, target.Decimal, ModeHalfEven)
-			if frac > target.Decimal {
-				err = errors.Trace(handleTruncateError(sc))
+		if !dec.IsZero() && prec-frac > flen-decimal {
+			dec = NewMaxOrMinDec(dec.IsNegative(), flen, decimal)
+			// TODO: we may need a OverlowAsWarning.
+			// select (cast 111 as decimal(1)) causes a warning in MySQL.
+			err = ErrOverflow.GenByArgs("DECIMAL", fmt.Sprintf("(%d, %d)", flen, decimal))
+		} else if frac != decimal {
+			dec.Round(dec, decimal, ModeHalfEven)
+			if !dec.IsZero() && frac > decimal {
+				err = sc.HandleTruncate(ErrTruncated)
 			}
 		}
 	}
-	ret.SetValue(dec)
-	return ret, err
+	return dec, errors.Trace(err)
 }
 
 func (d *Datum) convertToMysqlYear(sc *variable.StatementContext, target *FieldType) (Datum, error) {

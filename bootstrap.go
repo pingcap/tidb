@@ -18,6 +18,7 @@
 package tidb
 
 import (
+	"encoding/hex"
 	"fmt"
 	"runtime/debug"
 	"strconv"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -192,6 +194,7 @@ const (
 	version9  = 9
 	version10 = 10
 	version11 = 11
+	version12 = 12
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -288,6 +291,10 @@ func upgrade(s Session) {
 
 	if ver < version11 {
 		upgradeToVer11(s)
+	}
+
+	if ver < version12 {
+		upgradeToVer12(s)
 	}
 
 	updateBootstrapVer(s)
@@ -401,6 +408,48 @@ func upgradeToVer11(s Session) {
 	mustExecute(s, "UPDATE mysql.user SET References_priv='Y'")
 }
 
+func upgradeToVer12(s Session) {
+	s.Execute("BEGIN")
+	sql := "SELECT user, host, password FROM mysql.user WHERE password != ''"
+	rs, err := s.Execute(sql)
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
+	r := rs[0]
+	sqls := make([]string, 0, 1)
+	defer r.Close()
+	row, err := r.Next()
+	for err == nil && row != nil {
+		user := row.Data[0].GetString()
+		host := row.Data[1].GetString()
+		pass := row.Data[2].GetString()
+		newpass, err := oldPasswordUpgrade(pass)
+		if err != nil {
+			log.Fatal(err)
+			return
+		}
+		sql := fmt.Sprintf(`UPDATE mysql.user set password = "%s" where user="%s" and host="%s"`, newpass, user, host)
+		sqls = append(sqls, sql)
+		row, err = r.Next()
+	}
+
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
+
+	for _, sql := range sqls {
+		mustExecute(s, sql)
+	}
+
+	sql = fmt.Sprintf(`INSERT INTO %s.%s VALUES ("%s", "%d", "TiDB bootstrap version.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE="%d"`,
+		mysql.SystemDB, mysql.TiDBTable, tidbServerVersionVar, version12, version12)
+	mustExecute(s, sql)
+
+	mustExecute(s, "COMMIT")
+}
+
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -499,4 +548,16 @@ func mustExecute(s Session, sql string) {
 		debug.PrintStack()
 		log.Fatal(err)
 	}
+}
+
+// oldPasswordUpgrade upgrade password to MySQL compatible format
+func oldPasswordUpgrade(pass string) (string, error) {
+	hash1, err := hex.DecodeString(pass)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+
+	hash2 := util.Sha1Hash(hash1)
+	newpass := fmt.Sprintf("*%X", hash2)
+	return newpass, nil
 }
