@@ -45,7 +45,7 @@ func (s *testJSONSuite) TestParseFromString(c *C) {
 	c.Assert(jstr2, Equals, `{"a":[1,"2",{"aa":"bb"},4,null],"b":true,"c":null}`)
 }
 
-func (s *testJSONSuite) TestJSONSerde(c *C) {
+func (s *testJSONSuite) TestSerializeAndDeserialize(c *C) {
 	var jsonNilValue = CreateJSON(nil)
 	var jsonBoolValue = CreateJSON(true)
 	var jsonDoubleValue = CreateJSON(3.24)
