@@ -1770,7 +1770,7 @@ func getTimeZone(ctx context.Context) *time.Location {
 	return ret
 }
 
-// isDuration returns a boolean indicating whether the str is duration.
+// isDuration returns a boolean indicating whether the str is the format of duration.
 func isDuration(str string) bool {
 	if n := strings.IndexByte(str, ' '); n >= 0 {
 		if strings.Count(str[:n+1], "-") > 1 {
