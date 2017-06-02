@@ -47,7 +47,7 @@ const ( // GET_FORMAT location.
 	internalLocation = "INTERNAL"
 )
 
-// determine whether to match the format of duration.
+// DurationPattern determine whether to match the format of duration.
 var DurationPattern = regexp.MustCompile(`^(|[-]?)(|\d{1,2}\s)(\d{2,3}:\d{2}:\d{2}|\d{1,2}:\d{2}|\d{1,6})(|\.\d*)$`)
 
 var (
