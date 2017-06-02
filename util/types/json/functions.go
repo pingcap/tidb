@@ -249,9 +249,8 @@ func set(j JSON, pathExpr PathExpression, value JSON, mt ModifyType) JSON {
 	if len(pathExpr.legs) == 0 {
 		if mt&ModifyReplace != 0 {
 			return value
-		} else {
-			return j
 		}
+		return j
 	}
 	currentLeg, subPathExpr := pathExpr.popOneLeg()
 	if currentLeg.typ == pathLegIndex && j.typeCode == typeCodeArray {
