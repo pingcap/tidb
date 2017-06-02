@@ -123,32 +123,6 @@ func (j JSON) String() string {
 	return strings.TrimSpace(hack.String(bytes))
 }
 
-// Type returns type of JSON as string.
-func (j JSON) Type() string {
-	switch j.typeCode {
-	case typeCodeObject:
-		return "OBJECT"
-	case typeCodeArray:
-		return "ARRAY"
-	case typeCodeLiteral:
-		switch byte(j.i64) {
-		case jsonLiteralNil:
-			return "NULL"
-		default:
-			return "BOOLEAN"
-		}
-	case typeCodeInt64:
-		return "INTEGER"
-	case typeCodeFloat64:
-		return "DOUBLE"
-	case typeCodeString:
-		return "STRING"
-	default:
-		msg := fmt.Sprintf(unknownTypeCodeErrorMsg, j.typeCode)
-		panic(msg)
-	}
-}
-
 var (
 	// ErrInvalidJSONText means invalid JSON text.
 	ErrInvalidJSONText = terror.ClassJSON.New(mysql.ErrInvalidJSONText, mysql.MySQLErrName[mysql.ErrInvalidJSONText])
