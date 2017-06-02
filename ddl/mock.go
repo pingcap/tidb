@@ -89,7 +89,7 @@ func (m *mockOwnerManager) CampaignOwners(_ goctx.Context, _ *sync.WaitGroup) er
 	return nil
 }
 
-const mockCheckVersInterval = 5 * time.Millisecond
+const mockCheckVersInterval = 2 * time.Millisecond
 
 type mockSchemaSyncer struct {
 	selfSchemaVersion int64
@@ -132,16 +132,18 @@ func (s *mockSchemaSyncer) OwnerUpdateGlobalVersion(ctx goctx.Context, version i
 
 // OwnerCheckAllVersions implements SchemaSyncer.OwnerCheckAllVersions interface.
 func (s *mockSchemaSyncer) OwnerCheckAllVersions(ctx goctx.Context, latestVer int64) error {
+	ticker := time.NewTicker(mockCheckVersInterval)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return errors.Trace(ctx.Err())
-		default:
+		case <-ticker.C:
+			ver := atomic.LoadInt64(&s.selfSchemaVersion)
+			if ver == latestVer {
+				return nil
+			}
 		}
-		ver := atomic.LoadInt64(&s.selfSchemaVersion)
-		if ver == latestVer {
-			return nil
-		}
-		time.Sleep(mockCheckVersInterval)
 	}
 }
