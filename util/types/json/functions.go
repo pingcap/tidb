@@ -166,7 +166,7 @@ func extract(j JSON, pathExpr PathExpression) (ret []JSON) {
 	return
 }
 
-// autoWrapAsArray wraps input JSON into an array if need.
+// autoWrapAsArray wraps input JSON into an array if needed.
 func autoWrapAsArray(j JSON, hintLength int) JSON {
 	jnew := CreateJSON(nil)
 	jnew.typeCode = typeCodeArray
@@ -245,6 +245,7 @@ func (j JSON) Modify(pathExprList []PathExpression, values []JSON, mt ModifyType
 	return j, nil
 }
 
+// set is for Modify. The result JSON maybe share something with input JSON.
 func set(j JSON, pathExpr PathExpression, value JSON, mt ModifyType) JSON {
 	if len(pathExpr.legs) == 0 {
 		if mt&ModifyReplace != 0 {
@@ -275,6 +276,6 @@ func set(j JSON, pathExpr PathExpression, value JSON, mt ModifyType) JSON {
 	// For these cases, we just return the input JSON back without any change:
 	// 1) we want to insert a new element, but the full path has already exists;
 	// 2) we want to replace an old element, but the full path doesn't exist;
-	// 3) we want to insert or replace something, but the path without last leg doesn't exist;
+	// 3) we want to insert or replace something, but the path without last leg doesn't exist.
 	return j
 }
