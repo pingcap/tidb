@@ -102,7 +102,6 @@ const (
 	DefDistSQLScanConcurrency     = 10
 	DefBuildStatsConcurrency      = 4
 	DefMaxRowCountForINLJ         = 128
-	DefSkipDDLWait                = false
 	DefSkipUTF8Check              = false
 	DefOptAggPushDown             = true
 	DefOptInSubqUnfolding         = false
