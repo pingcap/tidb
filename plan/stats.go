@@ -144,7 +144,7 @@ func (p *Projection) statsProfile() *statsProfile {
 	childProfile := p.children[0].(LogicalPlan).statsProfile()
 	p.profile = &statsProfile{
 		count:       childProfile.count,
-		cardinality: make([]float64, len(childProfile.cardinality)),
+		cardinality: make([]float64, p.schema.Len()),
 	}
 	for i, expr := range p.Exprs {
 		cols := expression.ExtractColumns(expr)
@@ -166,7 +166,7 @@ func (p *LogicalAggregation) statsProfile() *statsProfile {
 	count := getCardinality(gbyCols, p.children[0].Schema(), childProfile)
 	p.profile = &statsProfile{
 		count:       count,
-		cardinality: make([]float64, len(childProfile.cardinality)),
+		cardinality: make([]float64, p.schema.Len()),
 	}
 	// We cannot estimate the cardinality for every output, so we use a conservative strategy.
 	for i := range p.profile.cardinality {
