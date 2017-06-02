@@ -443,6 +443,9 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = x.Args[0].GetType()
 	case ast.RowFunc:
 		tp = x.Args[0].GetType()
+	case ast.PasswordFunc:
+		tp = types.NewFieldType(mysql.TypeVarString)
+		chs = v.defaultCharset
 	default:
 		tp = types.NewFieldType(mysql.TypeUnspecified)
 	}
