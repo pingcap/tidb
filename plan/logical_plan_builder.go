@@ -289,10 +289,10 @@ func (b *planBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan Logic
 		)
 
 		if lc, err = lsc.FindColumn(col); err != nil {
-			return err
+			return errors.Trace(err)
 		}
 		if rc, err = rsc.FindColumn(col); err != nil {
-			return err
+			return errors.Trace(err)
 		}
 		coalesced[col.Name.L] = true
 		if lc == nil || rc == nil {
@@ -300,7 +300,7 @@ func (b *planBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan Logic
 		}
 
 		if cond, err = expression.NewFunction(b.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lc, rc); err != nil {
-			return err
+			return errors.Trace(err)
 		}
 		conds = append(conds, cond.(*expression.ScalarFunction))
 		if join.Tp == ast.RightJoin {
