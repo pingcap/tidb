@@ -830,39 +830,43 @@ func (d *Datum) convertToString(sc *variable.StatementContext, target *FieldType
 	default:
 		return invalidConv(d, target.Tp)
 	}
-
-	var err error
-	if target.Flen >= 0 {
-		// Flen is the rune length, not binary length, for UTF8 charset, we need to calculate the
-		// rune count and truncate to Flen runes if it is too long.
-		if target.Charset == charset.CharsetUTF8 || target.Charset == charset.CharsetUTF8MB4 {
-			var runeCount int
-			var truncateLen int
-			for i := range s {
-				runeCount++
-				if runeCount == target.Flen+1 {
-					// We don't break here because we need to iterate to the end to get runeCount.
-					truncateLen = i
-				}
-			}
-			if truncateLen > 0 {
-				if !sc.IgnoreTruncate {
-					err = ErrDataTooLong.Gen("Data Too Long, field len %d, data len %d", target.Flen, runeCount)
-				}
-				s = truncateStr(s, truncateLen)
-			}
-		} else if len(s) > target.Flen {
-			if !sc.IgnoreTruncate {
-				err = ErrDataTooLong.Gen("Data Too Long, field len %d, data len %d", target.Flen, len(s))
-			}
-			s = truncateStr(s, target.Flen)
-		}
-	}
+	s, err := produceStrWithSpecifiedTp(s, target, sc)
 	ret.SetString(s)
 	if target.Charset == charset.CharsetBin {
 		ret.k = KindBytes
 	}
 	return ret, errors.Trace(err)
+}
+
+// produceStrWithSpecifiedTp produces a new string according to `Tp`.
+func produceStrWithSpecifiedTp(s string, tp *FieldType, sc *variable.StatementContext) (_ string, err error) {
+	flen, chs := tp.Flen, tp.Charset
+	if flen >= 0 {
+		// Flen is the rune length, not binary length, for UTF8 charset, we need to calculate the
+		// rune count and truncate to Flen runes if it is too long.
+		if chs == charset.CharsetUTF8 || chs == charset.CharsetUTF8MB4 {
+			var runeCount int
+			var truncateLen int
+			for i := range s {
+				runeCount++
+				if runeCount == flen+1 {
+					// We don't break here because we need to iterate to the end to get runeCount.
+					truncateLen = i
+				}
+			}
+			if truncateLen > 0 || flen == 0 {
+				err = ErrDataTooLong.Gen("Data Too Long, field len %d, data len %d", flen, runeCount)
+				s = truncateStr(s, truncateLen)
+			}
+		} else if len(s) > flen {
+			err = ErrDataTooLong.Gen("Data Too Long, field len %d, data len %d", flen, len(s))
+			s = truncateStr(s, flen)
+		} else if len(s) < flen {
+			padding := make([]byte, flen-len(s))
+			s = string(append([]byte(s), padding...))
+		}
+	}
+	return s, errors.Trace(sc.HandleTruncate(err))
 }
 
 func (d *Datum) convertToInt(sc *variable.StatementContext, target *FieldType) (Datum, error) {
@@ -1048,20 +1052,29 @@ func (d *Datum) convertToMysqlDecimal(sc *variable.StatementContext, target *Fie
 	default:
 		return invalidConv(d, target.Tp)
 	}
-	if target.Flen != UnspecifiedLength && target.Decimal != UnspecifiedLength {
+	dec, err = produceDecWithSpecifiedTp(dec, target, sc)
+	ret.SetValue(dec)
+	return ret, errors.Trace(err)
+}
+
+// produceDecToSpecifiedTp produces a new decimal according to `Tp`.
+func produceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *variable.StatementContext) (_ *MyDecimal, err error) {
+	flen, decimal := tp.Flen, tp.Decimal
+	if flen != UnspecifiedLength && decimal != UnspecifiedLength {
 		prec, frac := dec.PrecisionAndFrac()
-		if prec-frac > target.Flen-target.Decimal {
-			dec = NewMaxOrMinDec(dec.IsNegative(), target.Flen, target.Decimal)
-			err = ErrOverflow.GenByArgs("DECIMAL", fmt.Sprintf("(%d, %d)", target.Flen, target.Decimal))
-		} else if frac != target.Decimal {
-			dec.Round(dec, target.Decimal, ModeHalfEven)
-			if frac > target.Decimal {
-				err = errors.Trace(handleTruncateError(sc))
+		if !dec.IsZero() && prec-frac > flen-decimal {
+			dec = NewMaxOrMinDec(dec.IsNegative(), flen, decimal)
+			// TODO: we may need a OverlowAsWarning.
+			// select (cast 111 as decimal(1)) causes a warning in MySQL.
+			err = ErrOverflow.GenByArgs("DECIMAL", fmt.Sprintf("(%d, %d)", flen, decimal))
+		} else if frac != decimal {
+			dec.Round(dec, decimal, ModeHalfEven)
+			if !dec.IsZero() && frac > decimal {
+				err = sc.HandleTruncate(ErrTruncated)
 			}
 		}
 	}
-	ret.SetValue(dec)
-	return ret, err
+	return dec, errors.Trace(err)
 }
 
 func (d *Datum) convertToMysqlYear(sc *variable.StatementContext, target *FieldType) (Datum, error) {

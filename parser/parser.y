@@ -3642,28 +3642,17 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
-|	"JSON_EXTRACT" '(' Expression ',' ExpressionList ')'
+|	"JSON_EXTRACT" '(' ExpressionListOpt ')'
 	{
-		var args = []ast.ExprNode{$3.(ast.ExprNode)}
-		args = append(args, $5.([]ast.ExprNode)...)
-		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1),
-			Args: args,
-		}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
-|	"JSON_UNQUOTE" '(' Expression ')'
+|	"JSON_UNQUOTE" '(' ExpressionListOpt ')'
 	{
-		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1),
-			Args: []ast.ExprNode{$3.(ast.ExprNode)},
-		}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
-|	"JSON_TYPE" '(' Expression ')'
+|	"JSON_TYPE" '(' ExpressionListOpt ')'
 	{
-		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($1),
-			Args: []ast.ExprNode{$3.(ast.ExprNode)},
-		}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
 
 GetFormatSelector:
@@ -3925,7 +3914,7 @@ CastType:
 		x := types.NewFieldType(mysql.TypeString)
 		x.Flen = $2.(int)
 		x.Charset = charset.CharsetBin
-		x.Collate = charset.CharsetBin
+		x.Collate = charset.CollationBin
 		$$ = x
 	}
 |	"CHAR" OptFieldLen OptBinary OptCharset
@@ -3933,6 +3922,13 @@ CastType:
 		x := types.NewFieldType(mysql.TypeString)
 		x.Flen = $2.(int)
 		x.Charset = $4.(string)
+		if $3.(bool) {
+			x.Flag |= mysql.BinaryFlag
+		}
+		if x.Charset == "" {
+			x.Charset = charset.CharsetUTF8
+			x.Collate = charset.CollationUTF8
+		}
 		$$ = x
 	}
 |	"DATE"
@@ -3954,6 +3950,8 @@ CastType:
 		x.Decimal = fopt.Decimal
 		if fopt.Flen == types.UnspecifiedLength {
 			x.Flen = mysql.GetDefaultFieldLength(mysql.TypeNewDecimal)
+			x.Decimal = mysql.GetDefaultDecimal(mysql.TypeNewDecimal)
+		} else if fopt.Decimal == types.UnspecifiedLength {
 			x.Decimal = mysql.GetDefaultDecimal(mysql.TypeNewDecimal)
 		}
 		$$ = x
@@ -6178,6 +6176,10 @@ PrivType:
 |	"GRANT" "OPTION"
 	{
 		$$ = mysql.GrantPriv
+	}
+|	"REFERENCES"
+	{
+		$$ = mysql.ReferencesPriv
 	}
 
 ObjectType:

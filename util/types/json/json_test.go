@@ -14,6 +14,7 @@
 package json
 
 import (
+	"fmt"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -27,19 +28,30 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-func (s *testJSONSuite) TestJSONSerde(c *C) {
-	var jstr1 = `{"aaaaaaaaaaa": [1, "2", {"aa": "bb"}, 4.0], "bbbbbbbbbb": true, "ccccccccc": "d"}`
-	j1, err := ParseFromString(jstr1)
-	c.Assert(err, IsNil)
+// mustParseFromString parse a JSON from a string.
+// Panic if string is not a valid JSON.
+func mustParseFromString(s string) JSON {
+	j, err := ParseFromString(s)
+	if err != nil {
+		msg := fmt.Sprintf("ParseFromString(%s) fail", s)
+		panic(msg)
+	}
+	return j
+}
 
-	var jstr2 = `[{"a": 1, "b": true}, 3, 3.5, "hello, world", null, true]`
-	j2, err := ParseFromString(jstr2)
-	c.Assert(err, IsNil)
+func (s *testJSONSuite) TestParseFromString(c *C) {
+	jstr1 := `{"a": [1, "2", {"aa": "bb"}, 4, null], "b": true, "c": null}`
+	jstr2 := mustParseFromString(jstr1).String()
+	c.Assert(jstr2, Equals, `{"a":[1,"2",{"aa":"bb"},4,null],"b":true,"c":null}`)
+}
 
-	var jsonNilValue = jsonLiteral(0x00)
-	var jsonBoolValue = jsonLiteral(0x01)
-	var jsonDoubleValue = jsonDouble(3.24)
-	var jsonStringValue = jsonString("hello, 世界")
+func (s *testJSONSuite) TestSerializeAndDeserialize(c *C) {
+	var jsonNilValue = CreateJSON(nil)
+	var jsonBoolValue = CreateJSON(true)
+	var jsonDoubleValue = CreateJSON(3.24)
+	var jsonStringValue = CreateJSON("hello, 世界")
+	j1 := mustParseFromString(`{"aaaaaaaaaaa": [1, "2", {"aa": "bb"}, 4.0], "bbbbbbbbbb": true, "ccccccccc": "d"}`)
+	j2 := mustParseFromString(`[{"a": 1, "b": true}, 3, 3.5, "hello, world", null, true]`)
 
 	var testcses = []struct {
 		In  JSON
@@ -64,99 +76,35 @@ func (s *testJSONSuite) TestJSONSerde(c *C) {
 	}
 }
 
-func (s *testJSONSuite) TestParseFromString(c *C) {
-	var jstr1 = `{"a": [1, "2", {"aa": "bb"}, 4, null], "b": true, "c": null}`
-
-	j1, err := ParseFromString(jstr1)
-	c.Assert(err, IsNil)
-
-	var jstr2 = j1.String()
-	c.Assert(jstr2, Equals, `{"a":[1,"2",{"aa":"bb"},4,null],"b":true,"c":null}`)
-}
-
-func (s *testJSONSuite) TestJSONType(c *C) {
-	j1, err := ParseFromString(`{"a": "b"}`)
-	c.Assert(err, IsNil)
-
-	j2, err := ParseFromString(`["a", "b"]`)
-	c.Assert(err, IsNil)
-
-	j3, err := ParseFromString(`3`)
-	c.Assert(err, IsNil)
-
-	j4, err := ParseFromString(`3.0`)
-	c.Assert(err, IsNil)
-
-	j5, err := ParseFromString(`null`)
-	c.Assert(err, IsNil)
-
-	j6, err := ParseFromString(`true`)
-	c.Assert(err, IsNil)
-
-	var jList = []struct {
-		In  JSON
-		Out string
-	}{
-		{j1, "OBJECT"},
-		{j2, "ARRAY"},
-		{j3, "INTEGER"},
-		{j4, "DOUBLE"},
-		{j5, "NULL"},
-		{j6, "BOOLEAN"},
-	}
-
-	for _, j := range jList {
-		c.Assert(j.In.Type(), Equals, j.Out)
-	}
-}
-
 func (s *testJSONSuite) TestCompareJSON(c *C) {
-	var cmp int
+	jNull := mustParseFromString(`null`)
+	jBoolTrue := mustParseFromString(`true`)
+	jBoolFalse := mustParseFromString(`false`)
+	jIntegerLarge := mustParseFromString(`5`)
+	jIntegerSmall := mustParseFromString(`3`)
+	jStringLarge := mustParseFromString(`"hello, world"`)
+	jStringSmall := mustParseFromString(`"hello"`)
+	jArrayLarge := mustParseFromString(`["a", "c"]`)
+	jArraySmall := mustParseFromString(`["a", "b"]`)
+	jObject := mustParseFromString(`{"a": "b"}`)
 
-	// compare two JSON boolean.
-	jBool1, _ := ParseFromString(`true`)
-	jBool2, _ := ParseFromString(`false`)
-	cmp, _ = CompareJSON(jBool1, jBool2)
-	c.Assert(cmp > 0, IsTrue)
-
-	// compare two JSON ARRAY
-	jArray1, _ := ParseFromString(`["a", "c"]`)
-	jArray2, _ := ParseFromString(`["a", "b"]`)
-	cmp, _ = CompareJSON(jArray1, jArray2)
-	c.Assert(cmp > 0, IsTrue)
-
-	// compare two JSON OBJECT
-	jObject1, _ := ParseFromString(`{"a": "b"}`)
-	jObject2, _ := ParseFromString(`{"a": "c"}`)
-	cmp, _ = CompareJSON(jObject1, jObject2)
-	c.Assert(cmp != 0, IsTrue)
-
-	// compare two JSON string
-	jString1, _ := ParseFromString(`"hello"`)
-	jString2, _ := ParseFromString(`"hello, world"`)
-	cmp, _ = CompareJSON(jString1, jString2)
-	c.Assert(cmp < 0, IsTrue)
-
-	// compare two JSON integer
-	jInteger1, _ := ParseFromString(`3`)
-	jInteger2, _ := ParseFromString(`5`)
-	cmp, _ = CompareJSON(jInteger1, jInteger2)
-	c.Assert(cmp < 0, IsTrue)
-
-	jNull1, _ := ParseFromString(`null`)
-	jNull2, _ := ParseFromString(`null`)
-	cmp, _ = CompareJSON(jNull1, jNull2)
-	c.Assert(cmp == 0, IsTrue)
-
-	// compare two JSON with different types.
-	cmp, _ = CompareJSON(jBool1, jArray1)
-	c.Assert(cmp > 0, IsTrue)
-	cmp, _ = CompareJSON(jArray1, jObject1)
-	c.Assert(cmp > 0, IsTrue)
-	cmp, _ = CompareJSON(jObject1, jString1)
-	c.Assert(cmp > 0, IsTrue)
-	cmp, _ = CompareJSON(jString1, jInteger1)
-	c.Assert(cmp > 0, IsTrue)
-	cmp, _ = CompareJSON(jInteger1, jNull1)
-	c.Assert(cmp > 0, IsTrue)
+	var tests = []struct {
+		left  JSON
+		right JSON
+	}{
+		{jNull, jIntegerSmall},
+		{jIntegerSmall, jIntegerLarge},
+		{jIntegerLarge, jStringSmall},
+		{jStringSmall, jStringLarge},
+		{jStringLarge, jObject},
+		{jObject, jArraySmall},
+		{jArraySmall, jArrayLarge},
+		{jArrayLarge, jBoolFalse},
+		{jBoolFalse, jBoolTrue},
+	}
+	for _, tt := range tests {
+		cmp, err := CompareJSON(tt.left, tt.right)
+		c.Assert(err, IsNil)
+		c.Assert(cmp < 0, IsTrue)
+	}
 }
