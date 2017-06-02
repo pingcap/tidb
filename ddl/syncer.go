@@ -31,10 +31,9 @@ const (
 	ddlGlobalSchemaVersion = "/tidb/ddl/global_schema_version"
 	initialVersion         = "0"
 	putKeyNoRetry          = 1
-	putKeyDefaultRetryCnt  = 3
-	delKeyDefaultRetryCnt  = 3
+	keyOpDefaultRetryCnt   = 3
 	putKeyRetryUnlimited   = math.MaxInt64
-	putKeyDefaultTimeout   = 2 * time.Second
+	keyOpDefaultTimeout    = 2 * time.Second
 	putKeyRetryInterval    = 30 * time.Millisecond
 	checkVersInterval      = 20 * time.Millisecond
 )
@@ -83,7 +82,7 @@ func (s *schemaVersionSyncer) putKV(ctx goctx.Context, retryCnt int, key, val st
 		default:
 		}
 
-		childCtx, cancel := goctx.WithTimeout(ctx, putKeyDefaultTimeout)
+		childCtx, cancel := goctx.WithTimeout(ctx, keyOpDefaultTimeout)
 		_, err = s.etcdCli.Put(childCtx, key, val)
 		cancel()
 		if err == nil {
@@ -105,7 +104,7 @@ func (s *schemaVersionSyncer) Init(ctx goctx.Context) error {
 		return errors.Trace(err)
 	}
 	s.globalVerCh = s.etcdCli.Watch(ctx, ddlGlobalSchemaVersion)
-	return s.putKV(ctx, putKeyDefaultRetryCnt, s.selfSchemaVerPath, initialVersion)
+	return s.putKV(ctx, keyOpDefaultRetryCnt, s.selfSchemaVerPath, initialVersion)
 }
 
 // GlobalVersionCh implements SchemaSyncer.GlobalVersionCh interface.
@@ -129,8 +128,10 @@ func (s *schemaVersionSyncer) OwnerUpdateGlobalVersion(ctx goctx.Context, versio
 func (s *schemaVersionSyncer) RemoveSelfVersionPath() error {
 	ctx := goctx.Background()
 	var err error
-	for i := 0; i < delKeyDefaultRetryCnt; i++ {
-		_, err = s.etcdCli.Delete(ctx, s.selfSchemaVerPath)
+	for i := 0; i < keyOpDefaultRetryCnt; i++ {
+		childCtx, cancel := goctx.WithTimeout(ctx, keyOpDefaultTimeout)
+		_, err = s.etcdCli.Delete(childCtx, s.selfSchemaVerPath)
+		cancel()
 		if err == nil {
 			return nil
 		}

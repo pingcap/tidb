@@ -181,6 +181,7 @@ func (j JobType) String() string {
 }
 
 func (d *ddl) handleDDLJobQueue() error {
+	once := true
 	for {
 		if d.isClosed() {
 			return nil
@@ -209,14 +210,16 @@ func (d *ddl) handleDDLJobQueue() error {
 				// let other servers update the schema.
 				// So here we must check the elapsed time from last update, if < 2 * lease, we must
 				// wait again.
+				// TODO: Check all versions to handle this.
 				elapsed := time.Duration(int64(txn.StartTS()) - job.LastUpdateTS)
-				if elapsed > 0 && elapsed < waitTime {
+				if once && elapsed > 0 && elapsed < waitTime {
 					log.Warnf("[ddl] the elapsed time from last update is %s < %s, wait again", elapsed, waitTime)
 					waitTime -= elapsed
 					time.Sleep(time.Millisecond)
 					return nil
 				}
 			}
+			once = false
 
 			d.hookMu.Lock()
 			d.hook.OnJobRunBefore(job)
