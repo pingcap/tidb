@@ -165,3 +165,104 @@ func extract(j JSON, pathExpr PathExpression) (ret []JSON) {
 	}
 	return
 }
+
+// Merge merges suffixes into j according the following rules:
+// 1) adjacent arrays are merged to a single array;
+// 2) adjacent object are merged to a single object;
+// 3) a scalar value is autowrapped as an array before merge;
+// 4) an adjacent array and object are merged by autowrapping the object as an array.
+func (j *JSON) Merge(suffixes []JSON) {
+	switch j.typeCode {
+	case typeCodeArray, typeCodeObject:
+	default:
+		firstElem := *j
+		*j = CreateJSON(nil)
+		j.typeCode = typeCodeArray
+		j.array = []JSON{firstElem}
+	}
+	for i := 0; i < len(suffixes); i++ {
+		suffix := suffixes[i]
+		switch j.typeCode {
+		case typeCodeArray:
+			if suffix.typeCode == typeCodeArray {
+				// rule (1)
+				for _, elem := range suffix.array {
+					j.array = append(j.array, elem)
+				}
+			} else {
+				// rule (3), (4)
+				j.array = append(j.array, suffix)
+			}
+		case typeCodeObject:
+			if suffix.typeCode == typeCodeObject {
+				// rule (2)
+				for key := range suffix.object {
+					j.object[key] = suffix.object[key]
+				}
+			} else {
+				// rule (4)
+				firstElem := *j
+				*j = CreateJSON(nil)
+				j.typeCode = typeCodeArray
+				j.array = []JSON{firstElem}
+				i--
+			}
+		}
+	}
+	return
+}
+
+// ModifyType is for modify a JSON. There are three valid values:
+// ModifyInsert, ModifyReplace and ModifySet.
+type ModifyType byte
+
+const (
+	// ModifyInsert is for insert a new element into a JSON.
+	ModifyInsert ModifyType = 0x01
+	// ModifyReplace is for replace an old elemList from a JSON.
+	ModifyReplace ModifyType = 0x02
+	// ModifySet = ModifyInsert | ModifyReplace
+	ModifySet ModifyType = 0x03
+)
+
+// SetInsertReplace modifies a JSON object by insert, replace or set.
+// All path expressions cannot contains * or ** wildcard.
+func (j *JSON) SetInsertReplace(pathExprList []PathExpression, values []JSON, mt ModifyType) (err error) {
+	if len(pathExprList) != len(values) {
+		// TODO should return 1582(42000)
+		return errors.New("Incorrect parameter count")
+	}
+	for i := 0; i < len(pathExprList); i++ {
+		pathExpr := pathExprList[i]
+		if pathExpr.flags.containsAnyAsterisk() {
+			// TODO should return 3149(42000)
+			return errors.New("Invalid path expression")
+		}
+		value := values[i]
+		*j = set(*j, pathExpr, value, mt)
+	}
+	return
+}
+
+func set(j JSON, pathExpr PathExpression, value JSON, mt ModifyType) JSON {
+	if len(pathExpr.legs) == 0 {
+		return value
+	}
+	currentLeg, subPathExpr := pathExpr.popOneLeg()
+	if currentLeg.typ == pathLegIndex && j.typeCode == typeCodeArray {
+		var index = currentLeg.arrayIndex
+		if len(j.array) > index && mt&ModifyReplace != 0 {
+			j.array[index] = set(j.array[index], subPathExpr, value, mt)
+		} else if len(subPathExpr.legs) == 0 && mt&ModifyInsert != 0 {
+			j.array = append(j.array, value)
+		}
+	} else if currentLeg.typ == pathLegKey && j.typeCode == typeCodeObject {
+		var key = currentLeg.dotKey
+		if child, ok := j.object[key]; ok && mt&ModifyReplace != 0 {
+			j.object[key] = set(child, subPathExpr, value, mt)
+		} else if len(subPathExpr.legs) == 0 && mt&ModifyInsert != 0 {
+			j.object[key] = value
+		}
+	}
+	return j
+}

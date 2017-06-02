@@ -103,3 +103,67 @@ func (s *testJSONSuite) TestJSONUnquote(c *C) {
 		c.Assert(unquoted, Equals, tt.unquoted)
 	}
 }
+
+func (s *testJSONSuite) TestJSONMerge(c *C) {
+	var tests = []struct {
+		base     string
+		suffixes []string
+		expected string
+	}{
+		{`{"a": 1}`, []string{`{"b": 2}`}, `{"a": 1, "b": 2}`},
+		{`[1]`, []string{`[2]`}, `[1, 2]`},
+		{`{"a": 1}`, []string{`[1]`}, `[{"a": 1}, 1]`},
+		{`[1]`, []string{`{"a": 1}`}, `[1, {"a": 1}]`},
+		{`{"a": 1}`, []string{`4`}, `[{"a": 1}, 4]`},
+		{`[1]`, []string{`4`}, `[1, 4]`},
+		{`4`, []string{`{"a": 1}`}, `[4, {"a": 1}]`},
+		{`4`, []string{`1`}, `[4, 1]`},
+	}
+
+	for _, tt := range tests {
+		base := mustParseFromString(tt.base)
+		suffixes := make([]JSON, 0, len(tt.suffixes))
+		for _, s := range tt.suffixes {
+			suffixes = append(suffixes, mustParseFromString(s))
+		}
+		base.Merge(suffixes)
+		cmp, err := CompareJSON(base, mustParseFromString(tt.expected))
+		c.Assert(err, IsNil)
+		c.Assert(cmp, Equals, 0)
+	}
+}
+
+func (s *testJSONSuite) TestJSONSetIsertReplace(c *C) {
+	var base = mustParseFromString(`null`)
+	var tests = []struct {
+		setField string
+		setValue string
+		mt       ModifyType
+		expected string
+	}{
+		{"$", `{}`, ModifySet, `{}`},
+		{"$.a", `[]`, ModifySet, `{"a": []}`},
+		{"$.a[1]", `3`, ModifySet, `{"a": [3]}`},
+
+		// won't modify base because path doesn't exist.
+		{"$.b[1]", `3`, ModifySet, `{"a": [3]}`},
+		{"$.a[2].b", `3`, ModifySet, `{"a": [3]}`},
+
+		// won't modify because of modify type.
+		{"$.a[1]", `30`, ModifyInsert, `{"a": [3]}`},
+		{"$.a[2]", `30`, ModifyReplace, `{"a": [3]}`},
+	}
+	for _, tt := range tests {
+		pathExpr, err := ParseJSONPathExpr(tt.setField)
+		c.Assert(err, IsNil)
+
+		value := mustParseFromString(tt.setValue)
+		err = base.SetInsertReplace([]PathExpression{pathExpr}, []JSON{value}, tt.mt)
+		c.Assert(err, IsNil)
+
+		expected := mustParseFromString(tt.expected)
+		cmp, err := CompareJSON(base, expected)
+		c.Assert(err, IsNil)
+		c.Assert(cmp, Equals, 0)
+	}
+}
