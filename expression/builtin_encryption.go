@@ -28,6 +28,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/encrypt"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -395,7 +396,29 @@ type builtinPasswordSig struct {
 // eval evals a builtinPasswordSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
 func (b *builtinPasswordSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("PASSWORD")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	arg := args[0]
+	if arg.IsNull() {
+		d.SetString("")
+		return d, nil
+	}
+
+	pass, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if len(pass) == 0 {
+		d.SetString("")
+		return d, nil
+	}
+
+	d.SetString(util.EncodePassword(pass))
+	return d, nil
 }
 
 type randomBytesFunctionClass struct {
