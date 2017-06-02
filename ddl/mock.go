@@ -11,7 +11,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package ddl is just for test only.
 package ddl
 
 import (
@@ -29,7 +28,7 @@ var _ SchemaSyncer = &mockSchemaSyncer{}
 
 // mockOwnerManager represents the structure which is used for electing owner.
 // It's used for local store and testing.
-// So this worker always the ddl owner and background owner.
+// So this worker will always be the ddl owner and background owner.
 type mockOwnerManager struct {
 	ddlOwner int32
 	bgOwner  int32
@@ -38,12 +37,10 @@ type mockOwnerManager struct {
 }
 
 // NewMockOwnerManager creates a new mock OwnerManager.
-func NewMockOwnerManager(etcdCli *clientv3.Client, id string, cancel goctx.CancelFunc) OwnerManager {
+func NewMockOwnerManager(id string, cancel goctx.CancelFunc) OwnerManager {
 	return &mockOwnerManager{
-		ddlID:    id,
-		cancel:   cancel,
-		ddlOwner: int32(1), // Make sure the worker is the DDL owner.
-		bgOwner:  int32(1), // Make sure the worker is the background owner.
+		ddlID:  id,
+		cancel: cancel,
 	}
 }
 
@@ -86,7 +83,11 @@ func (m *mockOwnerManager) SetBgOwner(isOwner bool) {
 }
 
 // CampaignOwners implements mockOwnerManager.CampaignOwners interface.
-func (m *mockOwnerManager) CampaignOwners(_ goctx.Context, _ *sync.WaitGroup) error { return nil }
+func (m *mockOwnerManager) CampaignOwners(_ goctx.Context, _ *sync.WaitGroup) error {
+	m.SetOwner(true)
+	m.SetBgOwner(true)
+	return nil
+}
 
 const mockCheckVersInterval = 5 * time.Millisecond
 
@@ -96,7 +97,7 @@ type mockSchemaSyncer struct {
 }
 
 // NewMockSchemaSyncer creates a new mock SchemaSyncer.
-func NewMockSchemaSyncer(etcdCli *clientv3.Client, id string) SchemaSyncer {
+func NewMockSchemaSyncer() SchemaSyncer {
 	return &mockSchemaSyncer{}
 }
 

@@ -233,8 +233,8 @@ func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 	// If etcdCli is nil, it's the local store, so use the mockOwnerManager and mockSchemaSyncer.
 	// It's always used for testing.
 	if etcdCli == nil {
-		manager = NewMockOwnerManager(etcdCli, id, cancelFunc)
-		syncer = NewMockSchemaSyncer(etcdCli, id)
+		manager = NewMockOwnerManager(id, cancelFunc)
+		syncer = NewMockSchemaSyncer()
 	} else {
 		manager = NewOwnerManager(etcdCli, id, cancelFunc)
 		syncer = NewSchemaSyncer(etcdCli, id)
