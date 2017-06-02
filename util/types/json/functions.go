@@ -199,12 +199,20 @@ func (j JSON) Merge(suffixes []JSON) JSON {
 			if suffix.typeCode == typeCodeObject {
 				// rule (2)
 				for key := range suffix.object {
-					j.object[key] = suffix.object[key]
+					if child, ok := j.object[key]; ok {
+						j.object[key] = child.Merge([]JSON{suffix.object[key]})
+					} else {
+						j.object[key] = suffix.object[key]
+					}
 				}
 			} else {
-				// rule (4), notice here we should retry that suffix again.
+				// rule (4)
 				j = autoWrapAsArray(j, len(suffixes)+1-i)
-				i--
+				if suffix.typeCode == typeCodeArray {
+					j.array = append(j.array, suffix.array...)
+				} else {
+					j.array = append(j.array, suffix)
+				}
 			}
 		}
 	}

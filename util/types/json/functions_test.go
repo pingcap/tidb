@@ -111,6 +111,7 @@ func (s *testJSONSuite) TestJSONMerge(c *C) {
 		expected string
 	}{
 		{`{"a": 1}`, []string{`{"b": 2}`}, `{"a": 1, "b": 2}`},
+		{`{"a": 1}`, []string{`{"a": 2}`}, `{"a": [1, 2]}`},
 		{`[1]`, []string{`[2]`}, `[1, 2]`},
 		{`{"a": 1}`, []string{`[1]`}, `[{"a": 1}, 1]`},
 		{`[1]`, []string{`{"a": 1}`}, `[1, {"a": 1}]`},
