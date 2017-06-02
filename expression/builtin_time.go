@@ -47,6 +47,9 @@ const ( // GET_FORMAT location.
 	internalLocation = "INTERNAL"
 )
 
+// determine whether to match the format of duration.
+var DurationPattern = regexp.MustCompile(`^(|[-]?)(|\d{1,2}\s)(\d{2,3}:\d{2}:\d{2}|\d{1,2}:\d{2}|\d{1,6})(|\.\d*)$`)
+
 var (
 	_ functionClass = &dateFunctionClass{}
 	_ functionClass = &dateDiffFunctionClass{}
@@ -1770,14 +1773,13 @@ func getTimeZone(ctx context.Context) *time.Location {
 	return ret
 }
 
-// isDuration returns a boolean indicating whether the str is the format of duration.
+// isDuration returns a boolean indicating whether the str matches the format of duration.
+// See https://dev.mysql.com/doc/refman/5.7/en/time.html
 func isDuration(str string) bool {
-	const durationArgReg = `^(|[-]?)(|\d{1,2}\s)(\d{2,3}:\d{2}:\d{2}|\d{1,2}:\d{2}|\d{1,6})(|\.\d*)$`
-	r, _ := regexp.Compile(durationArgReg)
-	return r.MatchString(str)
+	return DurationPattern.MatchString(str)
 }
 
-// strDatetimeAddDuration adds duration to datetime string, returns a dutam value.
+// strDatetimeAddDuration adds duration to datetime string, returns a datum value.
 func strDatetimeAddDuration(d string, arg1 types.Duration) (result types.Datum, err error) {
 	arg0, err := types.ParseTime(d, mysql.TypeDatetime, getFsp(d))
 	if err != nil {
@@ -1797,7 +1799,7 @@ func strDatetimeAddDuration(d string, arg1 types.Duration) (result types.Datum, 
 	return
 }
 
-// strDurationAddDuration adds duration to duration string, returns a dutam value.
+// strDurationAddDuration adds duration to duration string, returns a datum value.
 func strDurationAddDuration(d string, arg1 types.Duration) (result types.Datum, err error) {
 	arg0, err := types.ParseDuration(d, getFsp(d))
 	if err != nil {
