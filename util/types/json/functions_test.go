@@ -126,7 +126,7 @@ func (s *testJSONSuite) TestJSONMerge(c *C) {
 		for _, s := range tt.suffixes {
 			suffixes = append(suffixes, mustParseFromString(s))
 		}
-		base.Merge(suffixes)
+		base = base.Merge(suffixes)
 		cmp, err := CompareJSON(base, mustParseFromString(tt.expected))
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
@@ -140,46 +140,48 @@ func (s *testJSONSuite) TestJSONSetInsertReplace(c *C) {
 		setValue string
 		mt       ModifyType
 		expected string
+		success  bool
 	}{
 		// json_set('null', '$', '{}') => '{}'
-		{"$", `{}`, ModifySet, `{}`},
+		{"$", `{}`, ModifySet, `{}`, true},
 		// json_set('{}', '$.a', '3') => '{"a": 3}'
-		{"$.a", `3`, ModifySet, `{"a": 3}`},
+		{"$.a", `3`, ModifySet, `{"a": 3}`, true},
 		// json_replace('{"a": 3}', '$.a', '[]') => '{"a": []}'
-		{"$.a", `[]`, ModifyReplace, `{"a": []}`},
+		{"$.a", `[]`, ModifyReplace, `{"a": []}`, true},
 		// json_set('{"a": []}', '$.a[0]', '3') => '{"a": [3]}'
-		{"$.a[0]", `3`, ModifySet, `{"a": [3]}`},
+		{"$.a[0]", `3`, ModifySet, `{"a": [3]}`, true},
 		// json_insert('{"a": [3]}', '$.a[1]', '4') => '{"a": [3, 4]}'
-		{"$.a[1]", `4`, ModifyInsert, `{"a": [3, 4]}`},
+		{"$.a[1]", `4`, ModifyInsert, `{"a": [3, 4]}`, true},
 
 		// For these cases, we can't change input JSON at all:
 
 		// json_set('{"a": [3]}', '$.b[1]', '3') => '{"a": [3]}'
 		// because the path without last leg doesn't exist.
-		{"$.b[1]", `3`, ModifySet, `{"a": [3, 4]}`},
+		{"$.b[1]", `3`, ModifySet, `{"a": [3, 4]}`, true},
 		// json_set('{"a": [3]}', '$.a[2].b', '3') => '{"a": [3]}'
 		// because the path without last leg doesn't exist.
-		{"$.a[2].b", `3`, ModifySet, `{"a": [3, 4]}`},
+		{"$.a[2].b", `3`, ModifySet, `{"a": [3, 4]}`, true},
 
 		// json_insert('{"a": [3]}', '$.a[1]', '30') => '{"a": [3]}'
 		// because we want to insert but the full path exists.
-		{"$.a[0]", `30`, ModifyInsert, `{"a": [3, 4]}`},
+		{"$.a[0]", `30`, ModifyInsert, `{"a": [3, 4]}`, true},
 
 		// json_replace('{"a": [3]}', '$.a[1]', '30') =>'{"a": [3]}'
 		// because we want to replace but the full path doesn't exist.
-		{"$.a[2]", `30`, ModifyReplace, `{"a": [3, 4]}`},
+		{"$.a[2]", `30`, ModifyReplace, `{"a": [3, 4]}`, true},
 	}
 	for _, tt := range tests {
 		pathExpr, err := ParseJSONPathExpr(tt.setField)
 		c.Assert(err, IsNil)
 
 		value := mustParseFromString(tt.setValue)
-		err = base.SetInsertReplace([]PathExpression{pathExpr}, []JSON{value}, tt.mt)
-		c.Assert(err, IsNil)
-
-		expected := mustParseFromString(tt.expected)
-		cmp, err := CompareJSON(base, expected)
-		c.Assert(err, IsNil)
-		c.Assert(cmp, Equals, 0)
+		base, err = base.Modify([]PathExpression{pathExpr}, []JSON{value}, tt.mt)
+		if tt.success {
+			c.Assert(err, IsNil)
+			expected := mustParseFromString(tt.expected)
+			cmp, err := CompareJSON(base, expected)
+			c.Assert(err, IsNil)
+			c.Assert(cmp, Equals, 0)
+		}
 	}
 }

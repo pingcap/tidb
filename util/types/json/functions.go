@@ -166,20 +166,23 @@ func extract(j JSON, pathExpr PathExpression) (ret []JSON) {
 	return
 }
 
+// autoWrapAsArray wraps input JSON into an array if need.
+func autoWrapAsArray(j JSON, hintLength int) JSON {
+	jnew := CreateJSON(nil)
+	jnew.typeCode = typeCodeArray
+	jnew.array = make([]JSON, 0, hintLength)
+	jnew.array = append(jnew.array, j)
+	return jnew
+}
+
 // Merge merges suffixes into j according the following rules:
 // 1) adjacent arrays are merged to a single array;
 // 2) adjacent object are merged to a single object;
 // 3) a scalar value is autowrapped as an array before merge;
 // 4) an adjacent array and object are merged by autowrapping the object as an array.
-func (j *JSON) Merge(suffixes []JSON) {
-	switch j.typeCode {
-	case typeCodeArray, typeCodeObject:
-	default:
-		firstElem := *j
-		*j = CreateJSON(nil)
-		j.typeCode = typeCodeArray
-		j.array = make([]JSON, 0, len(suffixes)+1)
-		j.array = append(j.array, firstElem)
+func (j JSON) Merge(suffixes []JSON) JSON {
+	if j.typeCode != typeCodeArray && j.typeCode != typeCodeObject {
+		j = autoWrapAsArray(j, len(suffixes)+1)
 	}
 	for i := 0; i < len(suffixes); i++ {
 		suffix := suffixes[i]
@@ -187,9 +190,7 @@ func (j *JSON) Merge(suffixes []JSON) {
 		case typeCodeArray:
 			if suffix.typeCode == typeCodeArray {
 				// rule (1)
-				for _, elem := range suffix.array {
-					j.array = append(j.array, elem)
-				}
+				j.array = append(j.array, suffix.array...)
 			} else {
 				// rule (3), (4)
 				j.array = append(j.array, suffix)
@@ -201,16 +202,13 @@ func (j *JSON) Merge(suffixes []JSON) {
 					j.object[key] = suffix.object[key]
 				}
 			} else {
-				// rule (4)
-				firstElem := *j
-				*j = CreateJSON(nil)
-				j.typeCode = typeCodeArray
-				j.array = []JSON{firstElem}
+				// rule (4), notice here we should retry that suffix again.
+				j = autoWrapAsArray(j, len(suffixes)+1-i)
 				i--
 			}
 		}
 	}
-	return
+	return j
 }
 
 // ModifyType is for modify a JSON. There are three valid values:
@@ -226,23 +224,25 @@ const (
 	ModifySet ModifyType = 0x03
 )
 
-// SetInsertReplace modifies a JSON object by insert, replace or set.
-// All path expressions cannot contains * or ** wildcard.
-func (j *JSON) SetInsertReplace(pathExprList []PathExpression, values []JSON, mt ModifyType) (err error) {
+// Modify modifies a JSON object by insert, replace or set.
+// All path expressions cannot contain * or ** wildcard.
+// If any error occurs, the input won't be changed.
+func (j JSON) Modify(pathExprList []PathExpression, values []JSON, mt ModifyType) (retj JSON, err error) {
 	if len(pathExprList) != len(values) {
 		// TODO should return 1582(42000)
-		return errors.New("Incorrect parameter count")
+		return retj, errors.New("Incorrect parameter count")
 	}
-	for i := 0; i < len(pathExprList); i++ {
-		pathExpr := pathExprList[i]
+	for _, pathExpr := range pathExprList {
 		if pathExpr.flags.containsAnyAsterisk() {
 			// TODO should return 3149(42000)
-			return errors.New("Invalid path expression")
+			return retj, errors.New("Invalid path expression")
 		}
-		value := values[i]
-		*j = set(*j, pathExpr, value, mt)
 	}
-	return
+	for i := 0; i < len(pathExprList); i++ {
+		pathExpr, value := pathExprList[i], values[i]
+		j = set(j, pathExpr, value, mt)
+	}
+	return j, nil
 }
 
 func set(j JSON, pathExpr PathExpression, value JSON, mt ModifyType) JSON {
