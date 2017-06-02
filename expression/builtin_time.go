@@ -1772,29 +1772,9 @@ func getTimeZone(ctx context.Context) *time.Location {
 
 // isDuration returns a boolean indicating whether the str is the format of duration.
 func isDuration(str string) bool {
-	if n := strings.IndexByte(str, ' '); n >= 0 {
-		if strings.Count(str[:n+1], "-") > 1 {
-			return false
-		}
-		str = str[n+1:]
-	}
-	if n := strings.IndexByte(str, '.'); n >= 0 {
-		str = str[0:n]
-	}
-	seps := strings.Split(str, ":")
-	switch len(seps) {
-	case 1:
-		if length := len(str); length <= 7 && length >= 1 {
-			return true
-		}
-	case 2:
-		return true
-	case 3:
-		return true
-	default:
-		return false
-	}
-	return false
+	const durationArgReg = `^(|[-]?)(|\d{1,2}\s)(\d{2,3}:\d{2}:\d{2}|\d{1,2}:\d{2}|\d{1,6})(|\.\d*)$`
+	r, _ := regexp.Compile(durationArgReg)
+	return r.MatchString(str)
 }
 
 // strDatetimeAddDuration adds duration to datetime string, returns a dutam value.

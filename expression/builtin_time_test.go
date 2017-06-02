@@ -479,7 +479,7 @@ func (s *testEvaluatorSuite) TestIsDuration(c *C) {
 		expect bool
 	}{
 		{"110:00:00", true},
-		{"aa:bb:cc", true},
+		{"aa:bb:cc", false},
 		{"1 01:00:00", true},
 		{"01:00:00.999999", true},
 		{"071231235959.999999", false},
