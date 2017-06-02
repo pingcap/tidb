@@ -296,7 +296,7 @@ func (b *planBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan Logic
 		}
 		coalesced[col.Name.L] = true
 		if lc == nil || rc == nil {
-			return ErrUnknownColumn.GenByArgs(col.Name, col.Table)
+			return ErrUnknownColumn.GenByArgs(col.Name, "from clause")
 		}
 
 		if cond, err = expression.NewFunction(b.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lc, rc); err != nil {
