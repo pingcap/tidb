@@ -31,11 +31,9 @@ import (
 )
 
 func TestSyncerSimple(t *testing.T) {
-	ChangeOwnerInNewWay := true
 	origin := checkVersFirstWaitTime
 	checkVersFirstWaitTime = 0
 	defer func() {
-		ChangeOwnerInNewWay = false
 		checkVersFirstWaitTime = origin
 	}()
 

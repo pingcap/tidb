@@ -344,14 +344,6 @@ func (d *ddl) waitSchemaChanged(waitTime time.Duration, latestSchemaVersion int6
 		return
 	}
 
-	if !ChangeOwnerInNewWay {
-		select {
-		case <-time.After(waitTime):
-		case <-d.quitCh:
-		}
-		return
-	}
-
 	// TODO: Do we need to wait for a while?
 	if latestSchemaVersion == 0 {
 		log.Infof("[ddl] schema version doesn't change")

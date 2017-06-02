@@ -303,9 +303,7 @@ func (d *ddl) Stop() error {
 
 func (d *ddl) start(ctx goctx.Context) {
 	d.quitCh = make(chan struct{})
-	if ChangeOwnerInNewWay {
-		d.ownerManager.CampaignOwners(ctx, &d.wait)
-	}
+	d.ownerManager.CampaignOwners(ctx, &d.wait)
 
 	d.wait.Add(2)
 	go d.onBackgroundWorker()

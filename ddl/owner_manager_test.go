@@ -48,9 +48,6 @@ func checkOwners(d *ddl, val bool) (isOwner bool, isBgOwner bool) {
 }
 
 func TestSingle(t *testing.T) {
-	ChangeOwnerInNewWay := true
-	defer func() { ChangeOwnerInNewWay = false }()
-
 	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
 	store, err := driver.Open("memory://ddl_new_owner")
 	if err != nil {
@@ -71,10 +68,6 @@ func TestSingle(t *testing.T) {
 }
 
 func TestCluster(t *testing.T) {
-	ChangeOwnerInNewWay := true
-	defer func() {
-		ChangeOwnerInNewWay = false
-	}()
 	log.SetLevel(log.LOG_LEVEL_INFO)
 
 	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
