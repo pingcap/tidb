@@ -107,10 +107,14 @@ func (m *ownerManager) SetBgOwner(isOwner bool) {
 	}
 }
 
+// newSessionTTL is the etcd session's TTL in seconds.
+const newSessionTTL = 10
+
 func (m *ownerManager) newSession(ctx goctx.Context, retryCnt int) error {
 	var err error
 	for i := 0; i < retryCnt; i++ {
-		m.etcdSession, err = concurrency.NewSession(m.etcdCli, concurrency.WithContext(ctx))
+		m.etcdSession, err = concurrency.NewSession(m.etcdCli,
+			concurrency.WithTTL(newSessionTTL), concurrency.WithContext(ctx))
 		if err != nil {
 			log.Warnf("[ddl] failed to new session, err %v", err)
 			time.Sleep(200 * time.Millisecond)
@@ -164,7 +168,7 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, key string, wg *sync.Wait
 			continue
 		}
 		leader := string(resp.Kvs[0].Value)
-		log.Info("[ddl] %s ownerManager is %s, owner is %v", key, m.ddlID, leader)
+		log.Infof("[ddl] %s ownerManager is %s, owner is %v", key, m.ddlID, leader)
 		if leader == m.ddlID {
 			m.setOwnerVal(key, true)
 		} else {

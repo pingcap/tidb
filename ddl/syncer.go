@@ -175,12 +175,12 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx goctx.Context, latestVer
 
 			ver, err := strconv.Atoi(string(kv.Value))
 			if err != nil {
-				log.Infof("[syncer] ddl %s convert %v to int failed %v", kv.Key, kv.Value, err)
+				log.Infof("[syncer] check all versions, ddl %s convert %v to int failed %v", kv.Key, kv.Value, err)
 				succ = false
 				break
 			}
 			if int64(ver) != latestVer {
-				log.Infof("[syncer] ddl %s current ver %v, latest version %v", kv.Key, ver, latestVer)
+				log.Infof("[syncer] check all versions, ddl %s current ver %v, latest version %v", kv.Key, ver, latestVer)
 				succ = false
 				break
 			}

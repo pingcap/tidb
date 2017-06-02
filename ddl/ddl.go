@@ -323,7 +323,7 @@ func (d *ddl) close() {
 	close(d.quitCh)
 	err := d.schemaSyncer.RemoveSelfVersionPath()
 	if err != nil {
-		log.Errorf("[ddl] remove self version pathe failed %v", err)
+		log.Errorf("[ddl] remove self version path failed %v", err)
 	}
 	d.ownerManager.Cancel()
 

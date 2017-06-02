@@ -72,11 +72,11 @@ func asyncNotify(ch chan struct{}) {
 func (d *ddl) isOwner(flag JobType) bool {
 	if flag == ddlJobFlag {
 		isOwner := d.ownerManager.IsOwner()
-		log.Infof("[ddl] it's the %s job owner %v, self id %s", flag, isOwner, d.uuid)
+		log.Debugf("[ddl] it's the %s job owner %v, self id %s", flag, isOwner, d.uuid)
 		return isOwner
 	}
 	isOwner := d.ownerManager.IsBgOwner()
-	log.Infof("[ddl] it's the %s job owner %v, self id %s", flag, isOwner, d.uuid)
+	log.Debugf("[ddl] it's the %s job owner %v, self id %s", flag, isOwner, d.uuid)
 	return isOwner
 }
 
