@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/types/json"
 	"github.com/pingcap/tipb/go-tipb"
@@ -45,6 +46,15 @@ var (
 	_ functionClass = &jsonUnquoteFunctionClass{}
 )
 
+// datum2JSON gets or converts internal JSON from datum.
+func datum2JSON(d types.Datum, sc *variable.StatementContext) (j json.JSON, err error) {
+	tp := types.NewFieldType(mysql.TypeJSON)
+	if d, err = d.ConvertTo(sc, tp); err == nil {
+		j = d.GetMysqlJSON()
+	}
+	return
+}
+
 type jsonTypeFunctionClass struct {
 	baseFunctionClass
 }
@@ -58,17 +68,14 @@ func (c *jsonTypeFunctionClass) getFunction(args []Expression, ctx context.Conte
 }
 
 func (b *builtinJSONTypeSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	sc := b.ctx.GetSessionVars().StmtCtx
-
-	if args[0].Kind() != types.KindNull {
-		var djson types.Datum
-		djson, err = args[0].ConvertTo(sc, types.NewFieldType(mysql.TypeJSON))
-		if err == nil {
-			d.SetString(djson.GetMysqlJSON().Type())
+	var args []types.Datum
+	if args, err = b.evalArgs(row); err == nil {
+		if args[0].Kind() != types.KindNull {
+			var djson json.JSON
+			var sc = b.ctx.GetSessionVars().StmtCtx
+			if djson, err = datum2JSON(args[0], sc); err == nil {
+				d.SetString(djson.Type())
+			}
 		}
 	}
 	return d, errors.Trace(err)
@@ -107,11 +114,9 @@ func (b *builtinJSONExtractSig) eval(row []types.Datum) (d types.Datum, err erro
 			pathExprs = append(pathExprs, pathExpr)
 		} else {
 			sc := b.ctx.GetSessionVars().StmtCtx
-			tp := types.NewFieldType(mysql.TypeJSON)
-			if arg, err = arg.ConvertTo(sc, tp); err != nil {
+			if djson, err = datum2JSON(arg, sc); err != nil {
 				return d, errors.Trace(err)
 			}
-			djson = arg.GetMysqlJSON()
 		}
 	}
 	if djson, found := djson.Extract(pathExprs); found {
@@ -133,5 +138,18 @@ func (c *jsonUnquoteFunctionClass) getFunction(args []Expression, ctx context.Co
 }
 
 func (b *builtinJSONUnquoteSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return
+	var args []types.Datum
+	if args, err = b.evalArgs(row); err == nil {
+		if args[0].Kind() != types.KindNull {
+			var djson json.JSON
+			var sc = b.ctx.GetSessionVars().StmtCtx
+			if djson, err = datum2JSON(args[0], sc); err == nil {
+				var unquoted string
+				if unquoted, err = djson.Unquote(); err == nil {
+					d.SetString(unquoted)
+				}
+			}
+		}
+	}
+	return d, errors.Trace(err)
 }
