@@ -246,23 +246,35 @@ func (j *JSON) SetInsertReplace(pathExprList []PathExpression, values []JSON, mt
 
 func set(j JSON, pathExpr PathExpression, value JSON, mt ModifyType) JSON {
 	if len(pathExpr.legs) == 0 {
-		return value
+		if mt&ModifyReplace != 0 {
+			return value
+		} else {
+			return j
+		}
 	}
 	currentLeg, subPathExpr := pathExpr.popOneLeg()
 	if currentLeg.typ == pathLegIndex && j.typeCode == typeCodeArray {
 		var index = currentLeg.arrayIndex
-		if len(j.array) > index && mt&ModifyReplace != 0 {
+		if len(j.array) > index {
+			// e.g. json_replace('[1, 2, 3]', '$[0]', "x") => '["x", 2, 3]'
 			j.array[index] = set(j.array[index], subPathExpr, value, mt)
 		} else if len(subPathExpr.legs) == 0 && mt&ModifyInsert != 0 {
+			// e.g. json_insert('[1, 2, 3]', '$[3]', "x") => '[1, 2, 3, "x"]'
 			j.array = append(j.array, value)
 		}
 	} else if currentLeg.typ == pathLegKey && j.typeCode == typeCodeObject {
 		var key = currentLeg.dotKey
-		if child, ok := j.object[key]; ok && mt&ModifyReplace != 0 {
+		if child, ok := j.object[key]; ok {
+			// e.g. json_replace('{"a": 1}', '$.a', 2) => '{"a": 2}'
 			j.object[key] = set(child, subPathExpr, value, mt)
 		} else if len(subPathExpr.legs) == 0 && mt&ModifyInsert != 0 {
+			// e.g. json_insert('{"a": 1}', '$.b', 2) => '{"a": 1, "b": 2}'
 			j.object[key] = value
 		}
 	}
+	// For these cases, we just return the input JSON back without any change:
+	// 1) we want to insert a new element, but the full path has already exists;
+	// 2) we want to replace an old element, but the full path doesn't exist;
+	// 3) we want to insert or replace something, but the path without last leg doesn't exist;
 	return j
 }

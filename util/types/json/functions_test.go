@@ -141,17 +141,33 @@ func (s *testJSONSuite) TestJSONSetIsertReplace(c *C) {
 		mt       ModifyType
 		expected string
 	}{
+		// json_set('null', '$', '{}') => '{}'
 		{"$", `{}`, ModifySet, `{}`},
-		{"$.a", `[]`, ModifySet, `{"a": []}`},
-		{"$.a[1]", `3`, ModifySet, `{"a": [3]}`},
+		// json_set('{}', '$.a', '3') => '{"a": 3}'
+		{"$.a", `3`, ModifySet, `{"a": 3}`},
+		// json_replace('{"a": 3}', '$.a', '[]') => '{"a": []}'
+		{"$.a", `[]`, ModifyReplace, `{"a": []}`},
+		// json_set('{"a": []}', '$.a[0]', '3') => '{"a": [3]}'
+		{"$.a[0]", `3`, ModifySet, `{"a": [3]}`},
+		// json_insert('{"a": [3]}', '$.a[1]', '4') => '{"a": [3, 4]}'
+		{"$.a[1]", `4`, ModifyInsert, `{"a": [3, 4]}`},
 
-		// won't modify base because path doesn't exist.
-		{"$.b[1]", `3`, ModifySet, `{"a": [3]}`},
-		{"$.a[2].b", `3`, ModifySet, `{"a": [3]}`},
+		// For these cases, we can't change input JSON at all:
 
-		// won't modify because of modify type.
-		{"$.a[1]", `30`, ModifyInsert, `{"a": [3]}`},
-		{"$.a[2]", `30`, ModifyReplace, `{"a": [3]}`},
+		// json_set('{"a": [3]}', '$.b[1]', '3') => '{"a": [3]}'
+		// because the path without last leg doesn't exist.
+		{"$.b[1]", `3`, ModifySet, `{"a": [3, 4]}`},
+		// json_set('{"a": [3]}', '$.a[2].b', '3') => '{"a": [3]}'
+		// because the path without last leg doesn't exist.
+		{"$.a[2].b", `3`, ModifySet, `{"a": [3, 4]}`},
+
+		// json_insert('{"a": [3]}', '$.a[1]', '30') => '{"a": [3]}'
+		// because we want to insert but the full path exists.
+		{"$.a[0]", `30`, ModifyInsert, `{"a": [3, 4]}`},
+
+		// json_replace('{"a": [3]}', '$.a[1]', '30') =>'{"a": [3]}'
+		// because we want to replace but the full path doesn't exist.
+		{"$.a[2]", `30`, ModifyReplace, `{"a": [3, 4]}`},
 	}
 	for _, tt := range tests {
 		pathExpr, err := ParseJSONPathExpr(tt.setField)
