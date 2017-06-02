@@ -228,6 +228,15 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	addChild(joinPlan, rightPlan)
 	joinPlan.SetSchema(newSchema)
 
+	var lCoalesced, rCoalesced *expression.Schema
+	if left, ok := leftPlan.(*LogicalJoin); ok && left.coalescedSchema != nil {
+		lCoalesced = left.coalescedSchema
+	}
+	if right, ok := rightPlan.(*LogicalJoin); ok && right.coalescedSchema != nil {
+		rCoalesced = right.coalescedSchema
+	}
+	joinPlan.coalescedSchema = expression.MergeSchema(lCoalesced, rCoalesced)
+
 	if b.TableHints() != nil {
 		joinPlan.preferMergeJoin = b.TableHints().ifPreferMergeJoin(leftAlias, rightAlias)
 		if b.TableHints().ifPreferINLJ(leftAlias) {
@@ -332,12 +341,7 @@ func (b *planBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan Logic
 
 	p.SetSchema(expression.NewSchema(schemaCols...))
 	p.EqualConditions = append(conds, p.EqualConditions...)
-
-	coalescedSchema := expression.NewSchema(coalescedCols...)
-	if left, ok := leftPlan.(*LogicalJoin); ok && left.coalescedSchema != nil {
-		coalescedSchema = expression.MergeSchema(coalescedSchema, left.coalescedSchema)
-	}
-	p.coalescedSchema = coalescedSchema
+	p.coalescedSchema = expression.MergeSchema(p.coalescedSchema, expression.NewSchema(coalescedCols...))
 
 	return nil
 }
