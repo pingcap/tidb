@@ -178,7 +178,8 @@ func (j *JSON) Merge(suffixes []JSON) {
 		firstElem := *j
 		*j = CreateJSON(nil)
 		j.typeCode = typeCodeArray
-		j.array = []JSON{firstElem}
+		j.array = make([]JSON, 0, len(suffixes)+1)
+		j.array = append(j.array, firstElem)
 	}
 	for i := 0; i < len(suffixes); i++ {
 		suffix := suffixes[i]

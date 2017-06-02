@@ -133,7 +133,7 @@ func (s *testJSONSuite) TestJSONMerge(c *C) {
 	}
 }
 
-func (s *testJSONSuite) TestJSONSetIsertReplace(c *C) {
+func (s *testJSONSuite) TestJSONSetInsertReplace(c *C) {
 	var base = mustParseFromString(`null`)
 	var tests = []struct {
 		setField string
