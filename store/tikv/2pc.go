@@ -264,9 +264,9 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 		go func(batch batchKeys) {
 			if action == actionCommit {
 				// Because the secondary batches of the commit actions are implemented to be
-				// committed asynchronously in backgroud goroutines, we should not
+				// committed asynchronously in background goroutines, we should not
 				// fork a child context and call cancel() while the foreground goroutine exits.
-				// Otherwise the backgroud goroutines will be canceled execeptionally.
+				// Otherwise the background goroutines will be canceled execeptionally.
 				// Here we makes a new clone of the original backoffer for this goroutine
 				// exclusively to avoid the data race when using the same backoffer
 				// in concurrent goroutines.
