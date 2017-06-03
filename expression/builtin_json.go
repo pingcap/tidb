@@ -46,7 +46,7 @@ var (
 	_ functionClass = &jsonUnquoteFunctionClass{}
 )
 
-// datum2JSON gets or converts internal JSON from datum.
+// datum2JSON gets or converts to JSON from datum.
 func datum2JSON(d types.Datum, sc *variable.StatementContext) (j json.JSON, err error) {
 	tp := types.NewFieldType(mysql.TypeJSON)
 	if d, err = d.ConvertTo(sc, tp); err == nil {
@@ -68,17 +68,18 @@ func (c *jsonTypeFunctionClass) getFunction(args []Expression, ctx context.Conte
 }
 
 func (b *builtinJSONTypeSig) eval(row []types.Datum) (d types.Datum, err error) {
-	var args []types.Datum
-	if args, err = b.evalArgs(row); err == nil {
-		if args[0].Kind() != types.KindNull {
-			var djson json.JSON
-			var sc = b.ctx.GetSessionVars().StmtCtx
-			if djson, err = datum2JSON(args[0], sc); err == nil {
-				d.SetString(djson.Type())
-			}
-		}
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
 	}
-	return d, errors.Trace(err)
+	if args[0].Kind() != types.KindNull {
+		djson, err := datum2JSON(args[0], b.ctx.GetSessionVars().StmtCtx)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		d.SetString(djson.Type())
+	}
+	return
 }
 
 type jsonExtractFunctionClass struct {
@@ -98,31 +99,28 @@ func (b *builtinJSONExtractSig) eval(row []types.Datum) (d types.Datum, err erro
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-
-	var djson json.JSON
-	var pathExprs = make([]json.PathExpression, 0, len(args)-1)
-	for i, arg := range args {
+	if args[0].Kind() == types.KindNull {
+		return
+	}
+	djson, err := datum2JSON(args[0], b.ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	pathExprs := make([]json.PathExpression, 0, len(args)-1)
+	for _, arg := range args[1:] {
 		if arg.Kind() == types.KindNull {
-			d.SetNull()
 			return
 		}
-		if i != 0 {
-			pathExpr, err := json.ParseJSONPathExpr(arg.GetString())
-			if err != nil {
-				return d, errors.Trace(err)
-			}
-			pathExprs = append(pathExprs, pathExpr)
-		} else {
-			sc := b.ctx.GetSessionVars().StmtCtx
-			if djson, err = datum2JSON(arg, sc); err != nil {
-				return d, errors.Trace(err)
-			}
+		pathExpr, err := json.ParseJSONPathExpr(arg.GetString())
+		if err != nil {
+			return d, errors.Trace(err)
 		}
+		pathExprs = append(pathExprs, pathExpr)
 	}
 	if djson, found := djson.Extract(pathExprs); found {
 		d.SetMysqlJSON(djson)
 	}
-	return d, errors.Trace(err)
+	return
 }
 
 type jsonUnquoteFunctionClass struct {
@@ -138,18 +136,20 @@ func (c *jsonUnquoteFunctionClass) getFunction(args []Expression, ctx context.Co
 }
 
 func (b *builtinJSONUnquoteSig) eval(row []types.Datum) (d types.Datum, err error) {
-	var args []types.Datum
-	if args, err = b.evalArgs(row); err == nil {
-		if args[0].Kind() != types.KindNull {
-			var djson json.JSON
-			var sc = b.ctx.GetSessionVars().StmtCtx
-			if djson, err = datum2JSON(args[0], sc); err == nil {
-				var unquoted string
-				if unquoted, err = djson.Unquote(); err == nil {
-					d.SetString(unquoted)
-				}
-			}
-		}
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
 	}
-	return d, errors.Trace(err)
+	if args[0].Kind() != types.KindNull {
+		djson, err := datum2JSON(args[0], b.ctx.GetSessionVars().StmtCtx)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		unquoted, err := djson.Unquote()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		d.SetString(unquoted)
+	}
+	return
 }
