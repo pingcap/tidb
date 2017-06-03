@@ -1,5 +1,5 @@
-hash: ca1f420890ff212527d2a6110103d9b02884699fce0c86f326f871d004df742d
-updated: 2017-06-01T16:32:53.758402531+08:00
+hash: 478932cc2dcdc29dfb1d1416e5158bf4d135b727e02aeca74a7d6f73e689c509
+updated: 2017-06-03T12:02:04.946021626+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -59,6 +59,7 @@ imports:
   subpackages:
   - jsonpb
   - proto
+  - ptypes/any
 - name: github.com/golang/snappy
   version: 723cc1e459b8eea2dea4583200fd60757d40097a
 - name: github.com/gorilla/context
@@ -181,11 +182,16 @@ imports:
   version: c06e80d9300e4443158a03817b8a8cb37d230320
   subpackages:
   - rate
+- name: google.golang.org/genproto
+  version: aa2eb687b4d3e17154372564ad8d6bf11c3cf21f
+  subpackages:
+  - googleapis/rpc/status
 - name: google.golang.org/grpc
-  version: 8050b9cbc271307e5a716a9d782803d09b0d6f2d
+  version: 3419b42955675df23457629c75f58eb8dcd56954
   subpackages:
   - codes
   - credentials
+  - grpclb/grpc_lb_v1
   - grpclog
   - internal
   - keepalive
@@ -193,6 +199,7 @@ imports:
   - naming
   - peer
   - stats
+  - status
   - tap
   - transport
 testImports: []
