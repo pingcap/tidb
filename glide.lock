@@ -1,5 +1,5 @@
-hash: 478932cc2dcdc29dfb1d1416e5158bf4d135b727e02aeca74a7d6f73e689c509
-updated: 2017-06-03T12:02:04.946021626+08:00
+hash: 7526be88b2e92170cce8de92c259648e1e58a3f729c3a5974c9dca872ee44ffb
+updated: 2017-06-03T12:17:41.083727021+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -154,19 +154,21 @@ imports:
 - name: github.com/twinj/uuid
   version: 70cac2bcd273ef6a371bb96cde363d28b68734c3
 - name: golang.org/x/net
-  version: 6acef71eb69611914f7a30939ea9f6e194c78172
+  version: d1e1b351919c6738fdeb9893d5c998b161464f0c
   subpackages:
   - context
   - http2
   - http2/hpack
+  - idna
   - internal/timeseries
+  - lex/httplex
   - trace
 - name: golang.org/x/sys
   version: a646d33e2ee3172a661fc09bca23bb4889a41bc8
   subpackages:
   - unix
 - name: golang.org/x/text
-  version: 723492b65e225eafcba054e76ba18bb9c5ac1ea2
+  version: ccbd3f7822129ff389f8ca4858a9b9d4d910531c
   subpackages:
   - encoding
   - encoding/charmap
@@ -177,7 +179,12 @@ imports:
   - encoding/simplifiedchinese
   - encoding/traditionalchinese
   - encoding/unicode
+  - internal/utf8internal
+  - runes
+  - secure/bidirule
   - transform
+  - unicode/bidi
+  - unicode/norm
 - name: golang.org/x/time
   version: c06e80d9300e4443158a03817b8a8cb37d230320
   subpackages:
