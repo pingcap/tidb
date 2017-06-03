@@ -38,7 +38,7 @@ func (s *testJSONSuite) TestJSONType(c *C) {
 }
 
 func (s *testJSONSuite) TestJSONExtract(c *C) {
-	j1 := mustParseFromString(`{"a": [1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}], "b": true, "c": ["d"], "\"hello\"": "world"}`)
+	j1 := mustParseFromString(`{"\"hello\"": "world", "a": [1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}], "b": true, "c": ["d"]}`)
 	j2 := mustParseFromString(`[{"a": 1, "b": true}, 3, 3.5, "hello, world", null, true]`)
 
 	var tests = []struct {
@@ -51,17 +51,17 @@ func (s *testJSONSuite) TestJSONExtract(c *C) {
 		// test extract with only one path expression.
 		{j1, []string{"$.a"}, j1.object["a"], true, nil},
 		{j2, []string{"$.a"}, CreateJSON(nil), false, nil},
-		{j1, []string{"$[0]"}, CreateJSON(nil), false, nil},
+		{j1, []string{"$[0]"}, j1, true, nil}, // in Extract, autowraped j1 as an array.
 		{j2, []string{"$[0]"}, j2.array[0], true, nil},
 		{j1, []string{"$.a[2].aa"}, CreateJSON("bb"), true, nil},
 		{j1, []string{"$.a[*].aa"}, mustParseFromString(`["bb", "cc"]`), true, nil},
-		{j1, []string{"$.*[0]"}, mustParseFromString(`[1, "d"]`), true, nil},
+		{j1, []string{"$.*[0]"}, mustParseFromString(`["world", 1, true, "d"]`), true, nil},
 		{j1, []string{`$.a[*]."aa"`}, mustParseFromString(`["bb", "cc"]`), true, nil},
 		{j1, []string{`$."\"hello\""`}, mustParseFromString(`"world"`), true, nil},
-		{j1, []string{`$**[0]`}, mustParseFromString(`[1, "d"]`), true, nil},
+		{j1, []string{`$**[1]`}, mustParseFromString(`"2"`), true, nil},
 
 		// test extract with multi path expressions.
-		{j1, []string{"$.a", "$[0]"}, mustParseFromString(`[[1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}]]`), true, nil},
+		{j1, []string{"$.a", "$[5]"}, mustParseFromString(`[[1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}]]`), true, nil},
 		{j2, []string{"$.a", "$[0]"}, mustParseFromString(`[{"a": 1, "b": true}]`), true, nil},
 	}
 
@@ -147,6 +147,8 @@ func (s *testJSONSuite) TestJSONModify(c *C) {
 		{`{"a": 3}`, "$.a", `[]`, ModifyReplace, `{"a": []}`},
 		{`{"a": []}`, "$.a[0]", `3`, ModifySet, `{"a": [3]}`},
 		{`{"a": [3]}`, "$.a[1]", `4`, ModifyInsert, `{"a": [3, 4]}`},
+		{`{"a": [3]}`, "$[0]", `4`, ModifySet, `4`},
+		{`{"a": [3]}`, "$[1]", `4`, ModifySet, `[{"a": [3]}, 4]`},
 
 		// nothing changed because the path is empty and we want to insert.
 		{`{}`, "$", `1`, ModifyInsert, `{}`},

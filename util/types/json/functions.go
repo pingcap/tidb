@@ -131,7 +131,11 @@ func extract(j JSON, pathExpr PathExpression) (ret []JSON) {
 		return []JSON{j}
 	}
 	currentLeg, subPathExpr := pathExpr.popOneLeg()
-	if currentLeg.typ == pathLegIndex && j.typeCode == typeCodeArray {
+	if currentLeg.typ == pathLegIndex {
+		// If j is not an array, autowrap that into array.
+		if j.typeCode != typeCodeArray {
+			j = autoWrapAsArray(j, 1)
+		}
 		if currentLeg.arrayIndex == arrayIndexAsterisk {
 			for _, child := range j.array {
 				ret = append(ret, extract(child, subPathExpr)...)
@@ -262,7 +266,14 @@ func set(j JSON, pathExpr PathExpression, value JSON, mt ModifyType) JSON {
 		return j
 	}
 	currentLeg, subPathExpr := pathExpr.popOneLeg()
-	if currentLeg.typ == pathLegIndex && j.typeCode == typeCodeArray {
+	if currentLeg.typ == pathLegIndex {
+		// If j is not an array, we should autowrap that as array.
+		// Then if its length equals to 1, we unwrap it back.
+		var shouldUnwrap = false
+		if j.typeCode != typeCodeArray {
+			j = autoWrapAsArray(j, 1)
+			shouldUnwrap = true
+		}
 		var index = currentLeg.arrayIndex
 		if len(j.array) > index {
 			// e.g. json_replace('[1, 2, 3]', '$[0]', "x") => '["x", 2, 3]'
@@ -270,6 +281,9 @@ func set(j JSON, pathExpr PathExpression, value JSON, mt ModifyType) JSON {
 		} else if len(subPathExpr.legs) == 0 && mt&ModifyInsert != 0 {
 			// e.g. json_insert('[1, 2, 3]', '$[3]', "x") => '[1, 2, 3, "x"]'
 			j.array = append(j.array, value)
+		}
+		if len(j.array) == 1 && shouldUnwrap {
+			j = j.array[0]
 		}
 	} else if currentLeg.typ == pathLegKey && j.typeCode == typeCodeObject {
 		var key = currentLeg.dotKey
