@@ -38,7 +38,7 @@ func (s *testJSONSuite) TestJSONType(c *C) {
 }
 
 func (s *testJSONSuite) TestJSONExtract(c *C) {
-	j1 := mustParseFromString(`{"a": [1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}], "b": true, "c": ["d"], "\"hello\"": "world"}`)
+	j1 := mustParseFromString(`{"\"hello\"": "world", "a": [1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}], "b": true, "c": ["d"]}`)
 	j2 := mustParseFromString(`[{"a": 1, "b": true}, 3, 3.5, "hello, world", null, true]`)
 
 	var tests = []struct {
@@ -51,17 +51,17 @@ func (s *testJSONSuite) TestJSONExtract(c *C) {
 		// test extract with only one path expression.
 		{j1, []string{"$.a"}, j1.object["a"], true, nil},
 		{j2, []string{"$.a"}, CreateJSON(nil), false, nil},
-		{j1, []string{"$[0]"}, CreateJSON(nil), false, nil},
+		{j1, []string{"$[0]"}, j1, true, nil}, // in Extract, autowraped j1 as an array.
 		{j2, []string{"$[0]"}, j2.array[0], true, nil},
 		{j1, []string{"$.a[2].aa"}, CreateJSON("bb"), true, nil},
 		{j1, []string{"$.a[*].aa"}, mustParseFromString(`["bb", "cc"]`), true, nil},
-		{j1, []string{"$.*[0]"}, mustParseFromString(`[1, "d"]`), true, nil},
+		{j1, []string{"$.*[0]"}, mustParseFromString(`["world", 1, true, "d"]`), true, nil},
 		{j1, []string{`$.a[*]."aa"`}, mustParseFromString(`["bb", "cc"]`), true, nil},
 		{j1, []string{`$."\"hello\""`}, mustParseFromString(`"world"`), true, nil},
-		{j1, []string{`$**[0]`}, mustParseFromString(`[1, "d"]`), true, nil},
+		{j1, []string{`$**[1]`}, mustParseFromString(`"2"`), true, nil},
 
 		// test extract with multi path expressions.
-		{j1, []string{"$.a", "$[0]"}, mustParseFromString(`[[1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}]]`), true, nil},
+		{j1, []string{"$.a", "$[5]"}, mustParseFromString(`[[1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}]]`), true, nil},
 		{j2, []string{"$.a", "$[0]"}, mustParseFromString(`[{"a": 1, "b": true}]`), true, nil},
 	}
 
@@ -101,5 +101,79 @@ func (s *testJSONSuite) TestJSONUnquote(c *C) {
 		unquoted, err := j.Unquote()
 		c.Assert(err, IsNil)
 		c.Assert(unquoted, Equals, tt.unquoted)
+	}
+}
+
+func (s *testJSONSuite) TestJSONMerge(c *C) {
+	var tests = []struct {
+		base     string
+		suffixes []string
+		expected string
+	}{
+		{`{"a": 1}`, []string{`{"b": 2}`}, `{"a": 1, "b": 2}`},
+		{`{"a": 1}`, []string{`{"a": 2}`}, `{"a": [1, 2]}`},
+		{`[1]`, []string{`[2]`}, `[1, 2]`},
+		{`{"a": 1}`, []string{`[1]`}, `[{"a": 1}, 1]`},
+		{`[1]`, []string{`{"a": 1}`}, `[1, {"a": 1}]`},
+		{`{"a": 1}`, []string{`4`}, `[{"a": 1}, 4]`},
+		{`[1]`, []string{`4`}, `[1, 4]`},
+		{`4`, []string{`{"a": 1}`}, `[4, {"a": 1}]`},
+		{`4`, []string{`1`}, `[4, 1]`},
+	}
+
+	for _, tt := range tests {
+		base := mustParseFromString(tt.base)
+		suffixes := make([]JSON, 0, len(tt.suffixes))
+		for _, s := range tt.suffixes {
+			suffixes = append(suffixes, mustParseFromString(s))
+		}
+		base = base.Merge(suffixes)
+		cmp, err := CompareJSON(base, mustParseFromString(tt.expected))
+		c.Assert(err, IsNil)
+		c.Assert(cmp, Equals, 0)
+	}
+}
+
+func (s *testJSONSuite) TestJSONModify(c *C) {
+	var tests = []struct {
+		base     string
+		setField string
+		setValue string
+		mt       ModifyType
+		expected string
+	}{
+		{`null`, "$", `{}`, ModifySet, `{}`},
+		{`{}`, "$.a", `3`, ModifySet, `{"a": 3}`},
+		{`{"a": 3}`, "$.a", `[]`, ModifyReplace, `{"a": []}`},
+		{`{"a": []}`, "$.a[0]", `3`, ModifySet, `{"a": [3]}`},
+		{`{"a": [3]}`, "$.a[1]", `4`, ModifyInsert, `{"a": [3, 4]}`},
+		{`{"a": [3]}`, "$[0]", `4`, ModifySet, `4`},
+		{`{"a": [3]}`, "$[1]", `4`, ModifySet, `[{"a": [3]}, 4]`},
+
+		// nothing changed because the path is empty and we want to insert.
+		{`{}`, "$", `1`, ModifyInsert, `{}`},
+		// nothing changed because the path without last leg doesn't exist.
+		{`{"a": [3, 4]}`, "$.b[1]", `3`, ModifySet, `{"a": [3, 4]}`},
+		// nothing changed because the path without last leg doesn't exist.
+		{`{"a": [3, 4]}`, "$.a[2].b", `3`, ModifySet, `{"a": [3, 4]}`},
+		// nothing changed because we want to insert but the full path exists.
+		{`{"a": [3, 4]}`, "$.a[0]", `30`, ModifyInsert, `{"a": [3, 4]}`},
+		// nothing changed because we want to replace but the full path doesn't exist.
+		{`{"a": [3, 4]}`, "$.a[2]", `30`, ModifyReplace, `{"a": [3, 4]}`},
+	}
+	for _, tt := range tests {
+		pathExpr, err := ParseJSONPathExpr(tt.setField)
+		c.Assert(err, IsNil)
+
+		base := mustParseFromString(tt.base)
+		value := mustParseFromString(tt.setValue)
+		expected := mustParseFromString(tt.expected)
+
+		obtain, err := base.Modify([]PathExpression{pathExpr}, []JSON{value}, tt.mt)
+		c.Assert(err, IsNil)
+
+		cmp, err := CompareJSON(obtain, expected)
+		c.Assert(err, IsNil)
+		c.Assert(cmp, Equals, 0)
 	}
 }
