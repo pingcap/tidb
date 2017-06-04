@@ -45,8 +45,10 @@ type OwnerManager interface {
 }
 
 const (
-	ddlOwnerKey               = "/tidb/ddl/owner"
-	bgOwnerKey                = "/tidb/ddl/bg/owner"
+	// DDLOwnerKey is exported for testing.
+	DDLOwnerKey = "/tidb/ddl/owner"
+	// BgOwnerKey is exported for testing.
+	BgOwnerKey                = "/tidb/ddl/bg/owner"
 	newSessionDefaultRetryCnt = 3
 )
 
@@ -134,10 +136,10 @@ func (m *ownerManager) CampaignOwners(ctx goctx.Context, wg *sync.WaitGroup) err
 
 	wg.Add(2)
 	ddlCtx, _ := goctx.WithCancel(ctx)
-	go m.campaignLoop(ddlCtx, ddlOwnerKey, wg)
+	go m.campaignLoop(ddlCtx, DDLOwnerKey, wg)
 
 	bgCtx, _ := goctx.WithCancel(ctx)
-	go m.campaignLoop(bgCtx, bgOwnerKey, wg)
+	go m.campaignLoop(bgCtx, BgOwnerKey, wg)
 	return nil
 }
 
@@ -182,7 +184,7 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, key string, wg *sync.Wait
 }
 
 func (m *ownerManager) setOwnerVal(key string, val bool) {
-	if key == ddlOwnerKey {
+	if key == DDLOwnerKey {
 		m.SetOwner(val)
 	} else {
 		m.SetBgOwner(val)
