@@ -96,22 +96,11 @@ func (d *ddl) isReorgRunnable(txn kv.Transaction, flag JobType) error {
 		return errInvalidWorker.Gen("worker is closed")
 	}
 
-	if ChangeOwnerInNewWay {
-		return errors.Trace(d.isOwner(flag))
-	}
-
-	t := meta.NewMeta(txn)
-	owner, err := d.getJobOwner(t, flag)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if owner == nil || owner.OwnerID != d.uuid {
-		// if no owner, we will try later, so here just return error.
-		// or another server is owner, return error too.
-		log.Infof("[ddl] %s job, self id %s owner %s, txnTS:%d", flag, d.uuid, owner, txn.StartTS())
+	if !d.isOwner(flag) {
+		// If it's not the owner, we will try later, so here just returns an error.
+		log.Infof("[ddl] the %s not the %s job owner, txnTS:%d", d.uuid, flag, txn.StartTS())
 		return errors.Trace(errNotOwner)
 	}
-
 	return nil
 }
 
