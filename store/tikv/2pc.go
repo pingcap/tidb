@@ -23,6 +23,7 @@ import (
 	"github.com/coreos/etcd/pkg/monotime"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/ngaut/pools"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
@@ -73,6 +74,9 @@ type twoPhaseCommitter struct {
 		committed   bool
 	}
 }
+
+// TODO: Should avoid global lock here.
+var twoPhaseCommitGoroutinePool goroutinePool = newGoroutinePool(16*1024, 3*time.Minute)
 
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
 func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
@@ -218,13 +222,12 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	}
 	if action == actionCommit {
 		// Commit secondary batches in background goroutine to reduce latency.
-		go func() {
-			reserveStack(false)
+		twoPhaseCommitGoroutinePool.Go(func() {
 			e := c.doActionOnBatches(bo, action, batches)
 			if e != nil {
 				log.Debugf("2PC async doActionOnBatches %s err: %v", action, e)
 			}
-		}()
+		})
 	} else {
 		err = c.doActionOnBatches(bo, action, batches)
 	}
@@ -273,9 +276,9 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 
 	// Concurrently do the work for each batch.
 	ch := make(chan error, len(batches))
-	for _, batch := range batches {
-		go func(batch batchKeys) {
-			reserveStack(false)
+	for i := 0; i < len(batches); i++ {
+		batch := batches[i]
+		twoPhaseCommitGoroutinePool.Go(func() {
 			if action == actionCommit {
 				// Because the secondary batches of the commit actions are implemented to be
 				// committed asynchronously in backgroud goroutines, we should not
@@ -291,7 +294,7 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 				defer singleBatchCancel()
 				ch <- singleBatchActionFunc(singleBatchBackoffer, batch)
 			}
-		}(batch)
+		})
 	}
 	var err error
 	for i := 0; i < len(batches); i++ {
@@ -522,15 +525,14 @@ func (c *twoPhaseCommitter) execute() error {
 		committed := c.mu.committed
 		c.mu.RUnlock()
 		if !committed {
-			go func() {
-				reserveStack(false)
+			twoPhaseCommitGoroutinePool.Go(func() {
 				err := c.cleanupKeys(NewBackoffer(cleanupMaxBackoff, goctx.Background()), writtenKeys)
 				if err != nil {
 					log.Infof("2PC cleanup err: %v, tid: %d", err, c.startTS)
 				} else {
 					log.Infof("2PC clean up done, tid: %d", c.startTS)
 				}
-			}()
+			})
 		}
 	}()
 
@@ -663,4 +665,64 @@ func appendBatchBySize(b []batchKeys, region RegionVerID, keys [][]byte, sizeFn 
 		})
 	}
 	return b
+}
+
+type goroutinePool struct {
+	*pools.ResourcePool
+}
+
+func newGoroutinePool(cap int, idleTimeout time.Duration) goroutinePool {
+	return goroutinePool{pools.NewResourcePool(newGoroutine, cap, cap, 3*time.Minute)}
+}
+
+// goFunc works like go func(), but goroutines are pooled for reusing.
+// This strategy can avoid runtime.morestack, because pooled goroutine is already enlarged.
+func (gp *goroutinePool) Go(f func()) {
+	g, err := gp.Get()
+	if err != nil {
+		log.Error("get goroutine from goroutine pool fail.")
+		return
+	}
+	g.(*goroutine).Run(f, gp.ResourcePool)
+	// When the goroutine finish f(), it will be put back to pool automatically,
+	// so it doesn't need to call gp.Put() here.
+}
+
+// goroutine implements pools.Resource interface.
+// it's actually a background goroutine, with a channel binded for communication.
+type goroutine struct {
+	ch   chan func()
+	pool *pools.ResourcePool
+}
+
+func (g *goroutine) Run(f func(), gp *pools.ResourcePool) {
+	g.pool = gp
+	g.ch <- f
+}
+
+func (r *goroutine) Close() {
+	close(r.ch)
+}
+
+func newGoroutine() (pools.Resource, error) {
+	g := &goroutine{
+		ch: make(chan func()),
+	}
+	go func(g *goroutine) {
+		for work := range g.ch {
+			work()
+			// Put g back to the pool.
+			// This is the normal usage for a resource pool:
+			//
+			//     obj := pool.Get()
+			//     use(obj)
+			//     pool.Put(obj)
+			//
+			// But when goroutine is used as a resource, we can't pool.Put() immediately,
+			// because the resource(goroutine) maybe still in use.
+			// So, put back resource is done here,  when the goroutine finish its work.
+			g.pool.Put(g)
+		}
+	}(g)
+	return g, nil
 }
