@@ -15,7 +15,6 @@ package executor
 
 import (
 	"strings"
-	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -50,29 +49,20 @@ func (e *DDLExec) Next() (*Row, error) {
 	if e.done {
 		return nil, nil
 	}
-	// For create/drop database, create/drop/truncate table
-	// DDL worker do not wait 2 lease, so we need to wait in executor to make sure
-	// all TiDB server has updated the schema.
-	var needWait bool
 	var err error
 	switch x := e.Statement.(type) {
 	case *ast.TruncateTableStmt:
 		err = e.executeTruncateTable(x)
-		needWait = true
 	case *ast.CreateDatabaseStmt:
 		err = e.executeCreateDatabase(x)
-		needWait = true
 	case *ast.CreateTableStmt:
 		err = e.executeCreateTable(x)
-		needWait = true
 	case *ast.CreateIndexStmt:
 		err = e.executeCreateIndex(x)
 	case *ast.DropDatabaseStmt:
 		err = e.executeDropDatabase(x)
-		needWait = true
 	case *ast.DropTableStmt:
 		err = e.executeDropTable(x)
-		needWait = true
 	case *ast.DropIndexStmt:
 		err = e.executeDropIndex(x)
 	case *ast.AlterTableStmt:
@@ -83,15 +73,8 @@ func (e *DDLExec) Next() (*Row, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if e.ctx.GetSessionVars().SkipDDLWait {
-		needWait = false
-	}
 
 	dom := sessionctx.GetDomain(e.ctx)
-	if needWait {
-		time.Sleep(dom.DDL().GetLease() * 2)
-	}
-
 	// Update InfoSchema in TxnCtx, so it will pass schema check.
 	is := dom.InfoSchema()
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
