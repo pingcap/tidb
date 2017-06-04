@@ -145,6 +145,21 @@ func (s *testSuite) TestInsert(c *C) {
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("insert into t value(1)")
 	c.Assert(types.ErrOverflow.Equal(err), IsTrue)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(c binary(255))")
+	_, err = tk.Exec("insert into t value(1)")
+	c.Assert(err, IsNil)
+	r = tk.MustQuery("select length(c) from t;")
+	r.Check(testkit.Rows("255"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(c varbinary(255))")
+	_, err = tk.Exec("insert into t value(1)")
+	c.Assert(err, IsNil)
+	r = tk.MustQuery("select length(c) from t;")
+	r.Check(testkit.Rows("1"))
+
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {
