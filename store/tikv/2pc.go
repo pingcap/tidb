@@ -231,9 +231,9 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	return errors.Trace(err)
 }
 
-// reserveStack reserves 4KB memory on the stack to avoid runtime.morestack, call it after new a goroutine if necessary.
+// reserveStack reserves 8KB memory on the stack to avoid runtime.morestack, call it after new a goroutine if necessary.
 func reserveStack(dummy bool) {
-	var buf [4 << 10]byte
+	var buf [8 << 10]byte
 	// avoid compiler optimize the buf out.
 	if dummy {
 		for i := range buf {
