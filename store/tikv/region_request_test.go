@@ -17,15 +17,14 @@ import (
 	"strings"
 	"time"
 
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 )
 
 type testRegionRequestSuite struct {
@@ -156,6 +155,7 @@ func (s *testRegionRequestSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) 
 	bo, cancel := s.bo.Fork()
 	cancel()
 	_, err = sender.SendReq(bo, req, region.Region, time.Millisecond)
+	// TODO: refactor this test case to get grpc client return codes.Canceled
 	c.Assert(grpc.Code(err), Equals, codes.Unknown)
 	c.Assert(s.cache.getRegionByIDFromCache(s.region), NotNil)
 }

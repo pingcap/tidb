@@ -1,6 +1,3 @@
-// Copyright 2015 Reborndb Org. All Rights Reserved.
-// Licensed under the MIT (MIT-LICENSE.txt) license.
-//
 // Copyright 2016 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
