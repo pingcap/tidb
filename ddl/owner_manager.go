@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -48,6 +49,7 @@ const (
 	ddlOwnerKey               = "/tidb/ddl/owner"
 	bgOwnerKey                = "/tidb/ddl/bg/owner"
 	newSessionDefaultRetryCnt = 3
+	newSessionRetryUnlimited  = math.MaxInt64
 )
 
 // ownerManager represents the structure which is used for electing owner.
@@ -115,12 +117,15 @@ func (m *ownerManager) newSession(ctx goctx.Context, retryCnt int) error {
 	for i := 0; i < retryCnt; i++ {
 		m.etcdSession, err = concurrency.NewSession(m.etcdCli,
 			concurrency.WithTTL(newSessionTTL), concurrency.WithContext(ctx))
-		if err != nil {
-			log.Warnf("[ddl] failed to new session, err %v", err)
-			time.Sleep(200 * time.Millisecond)
-			continue
+		if err == nil {
+			break
 		}
-		break
+		log.Warnf("[ddl] failed to new session, err %v", err)
+		if isContextFinished(err) {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+		continue
 	}
 	return errors.Trace(err)
 }
@@ -146,9 +151,14 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, key string, wg *sync.Wait
 	for {
 		select {
 		case <-m.etcdSession.Done():
-			// TODO: Create session again?
-			log.Warnf("[ddl] etcd session is done.")
+			log.Info("[ddl] etcd session is done, creates a new one")
+			err := m.newSession(ctx, newSessionRetryUnlimited)
+			if err != nil {
+				log.Infof("[ddl] break %s campaign loop, err %v", key, err)
+				return
+			}
 		case <-ctx.Done():
+			log.Infof("[ddl] break %s campaign loop", key)
 			return
 		default:
 		}
@@ -156,7 +166,11 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, key string, wg *sync.Wait
 		elec := concurrency.NewElection(m.etcdSession, key)
 		err := elec.Campaign(ctx, m.ddlID)
 		if err != nil {
-			log.Infof("[ddl] ownerManager %s failed to campaign, err %v", m.ddlID, err)
+			log.Infof("[ddl] %s ownerManager %s failed to campaign, err %v", key, m.ddlID, err)
+			if isContextFinished(err) {
+				log.Warnf("[ddl] break %s campaign loop, err %v", key, err)
+				return
+			}
 			continue
 		}
 
