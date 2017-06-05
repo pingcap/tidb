@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
+	"strconv"
 	"time"
 )
 
@@ -75,7 +76,12 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 
 func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	defer testleak.AfterTest(c)()
-	ctx := s.ctx
+	ctx, sc := s.ctx, s.ctx.GetSessionVars().StmtCtx
+	originIgnoreTruncate := sc.IgnoreTruncate
+	sc.IgnoreTruncate = true
+	defer func() {
+		sc.IgnoreTruncate = originIgnoreTruncate
+	}()
 	var sig builtinFunc
 
 	// durationDatum indicates duration "12:59:59".
@@ -140,20 +146,102 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		decFunc := baseDecimalBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
 		switch i {
 		case 0:
-			sig = &builtinCastIntAsDecimalSig{decFunc}
+			sig = &builtinCastIntAsDecimalSig{decFunc, types.UnspecifiedLength, types.UnspecifiedLength}
 		case 1:
-			sig = &builtinCastStringAsDecimalSig{decFunc}
+			sig = &builtinCastStringAsDecimalSig{decFunc, types.UnspecifiedLength, types.UnspecifiedLength}
 		case 2:
-			sig = &builtinCastRealAsDecimalSig{decFunc}
+			sig = &builtinCastRealAsDecimalSig{decFunc, types.UnspecifiedLength, types.UnspecifiedLength}
 		case 3:
-			sig = &builtinCastTimeAsDecimalSig{decFunc}
+			sig = &builtinCastTimeAsDecimalSig{decFunc, types.UnspecifiedLength, types.UnspecifiedLength}
 		case 4:
-			sig = &builtinCastDurationAsDecimalSig{decFunc}
+			sig = &builtinCastDurationAsDecimalSig{decFunc, types.UnspecifiedLength, types.UnspecifiedLength}
+		case 5:
+			sig = &builtinCastDecimalAsDecimalSig{decFunc, types.UnspecifiedLength, types.UnspecifiedLength}
 		}
 		res, isNull, err := sig.evalDecimal(t.row)
 		c.Assert(isNull, Equals, false)
 		c.Assert(err, IsNil)
 		c.Assert(res.Compare(t.after), Equals, 0)
+	}
+
+	castToDecCases2 := []struct {
+		before  *Column
+		flen    int
+		decimal int
+		after   *types.MyDecimal
+		row     []types.Datum
+	}{
+		// cast int as decimal.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0},
+			7,
+			3,
+			types.NewDecFromStringForTest("1234.000"),
+			[]types.Datum{types.NewIntDatum(1234)},
+		},
+		// cast string as decimal.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
+			7,
+			3,
+			types.NewDecFromStringForTest("1234.000"),
+			[]types.Datum{types.NewStringDatum("1234")},
+		},
+		// cast real as decimal.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
+			8,
+			4,
+			types.NewDecFromStringForTest("1234.1230"),
+			[]types.Datum{types.NewFloat64Datum(1234.123)},
+		},
+		// cast Time as decimal.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDatetime), Index: 0},
+			15,
+			1,
+			types.NewDecFromStringForTest(strconv.FormatInt(curTimeInt, 10) + ".0"),
+			[]types.Datum{timeDatum},
+		},
+		// cast Duration as decimal.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0},
+			7,
+			1,
+			types.NewDecFromStringForTest("125959.0"),
+			[]types.Datum{durationDatum},
+		},
+		// cast decimal as decimal.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeNewDecimal), Index: 0},
+			7,
+			3,
+			types.NewDecFromStringForTest("1234.000"),
+			[]types.Datum{types.NewDecimalDatum(types.NewDecFromStringForTest("1234"))},
+		},
+	}
+
+	for i, t := range castToDecCases2 {
+		args := []Expression{t.before}
+		decFunc := baseDecimalBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
+		switch i {
+		case 0:
+			sig = &builtinCastIntAsDecimalSig{decFunc, t.flen, t.decimal}
+		case 1:
+			sig = &builtinCastStringAsDecimalSig{decFunc, t.flen, t.decimal}
+		case 2:
+			sig = &builtinCastRealAsDecimalSig{decFunc, t.flen, t.decimal}
+		case 3:
+			sig = &builtinCastTimeAsDecimalSig{decFunc, t.flen, t.decimal}
+		case 4:
+			sig = &builtinCastDurationAsDecimalSig{decFunc, t.flen, t.decimal}
+		case 5:
+			sig = &builtinCastDecimalAsDecimalSig{decFunc, t.flen, t.decimal}
+		}
+		res, isNull, err := sig.evalDecimal(t.row)
+		c.Assert(isNull, Equals, false)
+		c.Assert(err, IsNil)
+		c.Assert(res.ToString(), DeepEquals, t.after.ToString())
 	}
 
 	// Test cast as int.
@@ -296,15 +384,23 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 			"1",
 			[]types.Datum{types.NewIntDatum(1)},
 		},
+		// cast time as string.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDatetime), Index: 0},
 			curTimeString,
 			[]types.Datum{timeDatum},
 		},
+		// cast duration as string.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0},
 			"12:59:59",
 			[]types.Datum{durationDatum},
+		},
+		// cast string as string.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
+			"1234",
+			[]types.Datum{types.NewStringDatum("1234")},
 		},
 	}
 	for i, t := range castToStringCases {
@@ -312,15 +408,90 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		stringFunc := baseStringBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
 		switch i {
 		case 0:
-			sig = &builtinCastRealAsStringSig{stringFunc}
+			sig = &builtinCastRealAsStringSig{stringFunc, types.UnspecifiedLength, charset.CharsetBin}
 		case 1:
-			sig = &builtinCastDecimalAsStringSig{stringFunc}
+			sig = &builtinCastDecimalAsStringSig{stringFunc, types.UnspecifiedLength, charset.CharsetBin}
 		case 2:
-			sig = &builtinCastIntAsStringSig{stringFunc}
+			sig = &builtinCastIntAsStringSig{stringFunc, types.UnspecifiedLength, charset.CharsetBin}
 		case 3:
-			sig = &builtinCastTimeAsStringSig{stringFunc}
+			sig = &builtinCastTimeAsStringSig{stringFunc, types.UnspecifiedLength, charset.CharsetBin}
 		case 4:
-			sig = &builtinCastDurationAsStringSig{stringFunc}
+			sig = &builtinCastDurationAsStringSig{stringFunc, types.UnspecifiedLength, charset.CharsetBin}
+		case 5:
+			sig = &builtinCastStringAsStringSig{stringFunc, types.UnspecifiedLength, charset.CharsetBin}
+		}
+		res, isNull, err := sig.evalString(t.row)
+		c.Assert(isNull, Equals, false)
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, t.after)
+	}
+
+	// Test cast as string.
+	castToStringCases2 := []struct {
+		before *Column
+		after  string
+		flen   int
+		row    []types.Datum
+	}{
+		// cast real as string.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
+			"123",
+			3,
+			[]types.Datum{types.NewFloat64Datum(1234.123)},
+		},
+		// cast decimal as string.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeNewDecimal), Index: 0},
+			"123",
+			3,
+			[]types.Datum{types.NewDecimalDatum(types.NewDecFromStringForTest("1234.123"))},
+		},
+		// cast int as string.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0},
+			"123",
+			3,
+			[]types.Datum{types.NewIntDatum(1234)},
+		},
+		// cast time as string.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDatetime), Index: 0},
+			curTimeString[:3],
+			3,
+			[]types.Datum{timeDatum},
+		},
+		// cast duration as string.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0},
+			"12:",
+			3,
+			[]types.Datum{durationDatum},
+		},
+		// cast string as string.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
+			"你好w",
+			3,
+			[]types.Datum{types.NewStringDatum("你好world")},
+		},
+	}
+	for i, t := range castToStringCases2 {
+		args := []Expression{t.before}
+		stringFunc := baseStringBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
+		switch i {
+		case 0:
+			sig = &builtinCastRealAsStringSig{stringFunc, t.flen, charset.CharsetBin}
+		case 1:
+			sig = &builtinCastDecimalAsStringSig{stringFunc, t.flen, charset.CharsetBin}
+		case 2:
+			sig = &builtinCastIntAsStringSig{stringFunc, t.flen, charset.CharsetBin}
+		case 3:
+			sig = &builtinCastTimeAsStringSig{stringFunc, t.flen, charset.CharsetBin}
+		case 4:
+			sig = &builtinCastDurationAsStringSig{stringFunc, t.flen, charset.CharsetBin}
+		case 5:
+			sig = &builtinCastStringAsStringSig{stringFunc, t.flen, charset.CharsetUTF8}
 		}
 		res, isNull, err := sig.evalString(t.row)
 		c.Assert(isNull, Equals, false)
@@ -447,13 +618,13 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	// null case
 	args := []Expression{&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}}
 	row := []types.Datum{types.NewDatum(nil)}
-	sig = &builtinCastRealAsStringSig{baseStringBuiltinFunc{newBaseBuiltinFunc(args, ctx)}}
+	sig = &builtinCastRealAsStringSig{baseStringBuiltinFunc{newBaseBuiltinFunc(args, ctx)}, types.UnspecifiedLength, charset.CharsetBin}
 	sRes, isNull, err := sig.evalString(row)
-	c.Assert(sRes, Equals, "0")
+	c.Assert(sRes, Equals, "")
 	c.Assert(isNull, Equals, true)
 	c.Assert(err, IsNil)
 
-	// test hybridType cases.
+	// test hybridType case.
 	args = []Expression{&Constant{types.NewDatum(types.Enum{Name: "a", Value: 0}), types.NewFieldType(mysql.TypeEnum)}}
 	sig = &builtinCastStringAsIntSig{baseIntBuiltinFunc{newBaseBuiltinFunc(args, ctx)}}
 	iRes, isNull, err := sig.evalInt(nil)

@@ -830,7 +830,7 @@ func (d *Datum) convertToString(sc *variable.StatementContext, target *FieldType
 	default:
 		return invalidConv(d, target.Tp)
 	}
-	s, err := produceStrWithSpecifiedTp(s, target, sc)
+	s, err := ProduceStrWithSpecifiedTp(s, target.Flen, target.Charset, sc)
 	ret.SetString(s)
 	if target.Charset == charset.CharsetBin {
 		ret.k = KindBytes
@@ -838,9 +838,8 @@ func (d *Datum) convertToString(sc *variable.StatementContext, target *FieldType
 	return ret, errors.Trace(err)
 }
 
-// produceStrWithSpecifiedTp produces a new string according to `Tp`.
-func produceStrWithSpecifiedTp(s string, tp *FieldType, sc *variable.StatementContext) (_ string, err error) {
-	flen, chs := tp.Flen, tp.Charset
+// ProduceStrWithSpecifiedTp produces a new string according to `flen` and `chs`.
+func ProduceStrWithSpecifiedTp(s string, flen int, chs string, sc *variable.StatementContext) (_ string, err error) {
 	if flen >= 0 {
 		// Flen is the rune length, not binary length, for UTF8 charset, we need to calculate the
 		// rune count and truncate to Flen runes if it is too long.
@@ -1052,14 +1051,13 @@ func (d *Datum) convertToMysqlDecimal(sc *variable.StatementContext, target *Fie
 	default:
 		return invalidConv(d, target.Tp)
 	}
-	dec, err = produceDecWithSpecifiedTp(dec, target, sc)
+	dec, err = ProduceDecWithSpecifiedTp(dec, target.Flen, target.Decimal, sc)
 	ret.SetValue(dec)
 	return ret, errors.Trace(err)
 }
 
-// produceDecToSpecifiedTp produces a new decimal according to `Tp`.
-func produceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *variable.StatementContext) (_ *MyDecimal, err error) {
-	flen, decimal := tp.Flen, tp.Decimal
+// ProduceDecToSpecifiedTp produces a new decimal according to `flen` and `decimal`.
+func ProduceDecWithSpecifiedTp(dec *MyDecimal, flen, decimal int, sc *variable.StatementContext) (_ *MyDecimal, err error) {
 	if flen != UnspecifiedLength && decimal != UnspecifiedLength {
 		prec, frac := dec.PrecisionAndFrac()
 		if !dec.IsZero() && prec-frac > flen-decimal {

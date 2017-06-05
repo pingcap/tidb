@@ -25,8 +25,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -97,16 +95,21 @@ func (b *builtinCastIntAsRealSig) evalReal(row []types.Datum) (res float64, isNu
 
 type builtinCastIntAsDecimalSig struct {
 	baseDecimalBuiltinFunc
+	flen    int
+	decimal int
 }
 
 func (b *builtinCastIntAsDecimalSig) evalDecimal(row []types.Datum) (res *types.MyDecimal, isNull bool, err error) {
-	val, isNull, err := b.args[0].EvalInt(row, b.getCtx().GetSessionVars().StmtCtx)
-	return types.NewDecFromInt(val), isNull, errors.Trace(err)
+	sc := b.getCtx().GetSessionVars().StmtCtx
+	val, isNull, err := b.args[0].EvalInt(row, sc)
+	res, err = types.ProduceDecWithSpecifiedTp(types.NewDecFromInt(val), b.flen, b.decimal, sc)
+	return res, isNull, errors.Trace(err)
 }
 
 type builtinCastIntAsStringSig struct {
 	baseStringBuiltinFunc
-	tp *types.FieldType
+	flen int
+	chs  string
 }
 
 func (b *builtinCastIntAsStringSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
@@ -115,7 +118,7 @@ func (b *builtinCastIntAsStringSig) evalString(row []types.Datum) (res string, i
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = produceStrWithSpecifiedTp(strconv.FormatInt(val, 10), b.tp, sc)
+	res, err = types.ProduceStrWithSpecifiedTp(strconv.FormatInt(val, 10), b.flen, b.chs, sc)
 	return res, false, errors.Trace(err)
 }
 
@@ -165,21 +168,29 @@ func (b *builtinCastRealAsIntSig) evalInt(row []types.Datum) (res int64, isNull 
 
 type builtinCastRealAsDecimalSig struct {
 	baseDecimalBuiltinFunc
+	flen    int
+	decimal int
 }
 
 func (b *builtinCastRealAsDecimalSig) evalDecimal(row []types.Datum) (res *types.MyDecimal, isNull bool, err error) {
-	val, isNull, err := b.args[0].EvalReal(row, b.getCtx().GetSessionVars().StmtCtx)
+	sc := b.getCtx().GetSessionVars().StmtCtx
+	val, isNull, err := b.args[0].EvalReal(row, sc)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
 	res = new(types.MyDecimal)
 	err = res.FromFloat64(val)
+	if err != nil {
+		return res, false, errors.Trace(err)
+	}
+	res, err = types.ProduceDecWithSpecifiedTp(res, b.flen, b.decimal, sc)
 	return res, false, errors.Trace(err)
 }
 
 type builtinCastRealAsStringSig struct {
 	baseStringBuiltinFunc
-	tp *types.FieldType
+	flen int
+	chs  string
 }
 
 func (b *builtinCastRealAsStringSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
@@ -188,7 +199,7 @@ func (b *builtinCastRealAsStringSig) evalString(row []types.Datum) (res string, 
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = produceStrWithSpecifiedTp(strconv.FormatFloat(val, 'f', -1, 64), b.tp, sc)
+	res, err = types.ProduceStrWithSpecifiedTp(strconv.FormatFloat(val, 'f', -1, 64), b.flen, b.chs, sc)
 	return res, isNull, errors.Trace(err)
 }
 
@@ -220,10 +231,18 @@ func (b *builtinCastRealAsDurationSig) evalDuration(row []types.Datum) (res type
 
 type builtinCastDecimalAsDecimalSig struct {
 	baseDecimalBuiltinFunc
+	flen    int
+	decimal int
 }
 
 func (b *builtinCastDecimalAsDecimalSig) evalDecimal(row []types.Datum) (res *types.MyDecimal, isNull bool, err error) {
-	return b.args[0].EvalDecimal(row, b.getCtx().GetSessionVars().StmtCtx)
+	sc := b.getCtx().GetSessionVars().StmtCtx
+	res, isNull, err = b.args[0].EvalDecimal(row, sc)
+	if isNull || err != nil {
+		return res, isNull, errors.Trace(err)
+	}
+	res, err = types.ProduceDecWithSpecifiedTp(res, b.flen, b.decimal, sc)
+	return res, false, errors.Trace(err)
 }
 
 type builtinCastDecimalAsIntSig struct {
@@ -241,7 +260,8 @@ func (b *builtinCastDecimalAsIntSig) evalInt(row []types.Datum) (res int64, isNu
 
 type builtinCastDecimalAsStringSig struct {
 	baseStringBuiltinFunc
-	tp *types.FieldType
+	flen int
+	chs  string
 }
 
 func (b *builtinCastDecimalAsStringSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
@@ -250,7 +270,7 @@ func (b *builtinCastDecimalAsStringSig) evalString(row []types.Datum) (res strin
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = produceStrWithSpecifiedTp(string(val.ToString()), b.tp, sc)
+	res, err = types.ProduceStrWithSpecifiedTp(string(val.ToString()), b.flen, b.chs, sc)
 	return res, false, errors.Trace(err)
 }
 
@@ -298,7 +318,8 @@ func (b *builtinCastDecimalAsDurationSig) evalDuration(row []types.Datum) (res t
 
 type builtinCastStringAsStringSig struct {
 	baseStringBuiltinFunc
-	tp *types.FieldType
+	flen int
+	chs  string
 }
 
 func (b *builtinCastStringAsStringSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
@@ -307,7 +328,7 @@ func (b *builtinCastStringAsStringSig) evalString(row []types.Datum) (res string
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = produceStrWithSpecifiedTp(res, b.tp, sc)
+	res, err = types.ProduceStrWithSpecifiedTp(res, b.flen, b.chs, sc)
 	return res, false, errors.Trace(err)
 }
 
@@ -345,18 +366,25 @@ func (b *builtinCastStringAsRealSig) evalReal(row []types.Datum) (res float64, i
 
 type builtinCastStringAsDecimalSig struct {
 	baseDecimalBuiltinFunc
+	flen    int
+	decimal int
 }
 
 func (b *builtinCastStringAsDecimalSig) evalDecimal(row []types.Datum) (res *types.MyDecimal, isNull bool, err error) {
+	sc := b.getCtx().GetSessionVars().StmtCtx
 	if IsHybridType(b.args[0]) {
-		return b.args[0].EvalDecimal(row, b.getCtx().GetSessionVars().StmtCtx)
+		return b.args[0].EvalDecimal(row, sc)
 	}
-	val, isNull, err := b.args[0].EvalString(row, b.getCtx().GetSessionVars().StmtCtx)
+	val, isNull, err := b.args[0].EvalString(row, sc)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
 	res = new(types.MyDecimal)
 	err = res.FromString([]byte(val))
+	if err != nil {
+		return res, false, errors.Trace(err)
+	}
+	res, err = types.ProduceDecWithSpecifiedTp(res, b.flen, b.decimal, sc)
 	return res, false, errors.Trace(err)
 }
 
@@ -425,20 +453,24 @@ func (b *builtinCastTimeAsRealSig) evalReal(row []types.Datum) (res float64, isN
 
 type builtinCastTimeAsDecimalSig struct {
 	baseDecimalBuiltinFunc
-	tp byte
+	flen    int
+	decimal int
 }
 
 func (b *builtinCastTimeAsDecimalSig) evalDecimal(row []types.Datum) (res *types.MyDecimal, isNull bool, err error) {
-	val, isNull, err := b.args[0].EvalTime(row, b.getCtx().GetSessionVars().StmtCtx)
+	sc := b.getCtx().GetSessionVars().StmtCtx
+	val, isNull, err := b.args[0].EvalTime(row, sc)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	return val.ToNumber(), false, errors.Trace(err)
+	res, err = types.ProduceDecWithSpecifiedTp(val.ToNumber(), b.flen, b.decimal, sc)
+	return res, false, errors.Trace(err)
 }
 
 type builtinCastTimeAsStringSig struct {
 	baseStringBuiltinFunc
-	tp *types.FieldType
+	flen int
+	chs  string
 }
 
 func (b *builtinCastTimeAsStringSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
@@ -447,7 +479,7 @@ func (b *builtinCastTimeAsStringSig) evalString(row []types.Datum) (res string, 
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = produceStrWithSpecifiedTp(val.String(), b.tp, sc)
+	res, err = types.ProduceStrWithSpecifiedTp(val.String(), b.flen, b.chs, sc)
 	return res, false, errors.Trace(err)
 }
 
@@ -500,19 +532,24 @@ func (b *builtinCastDurationAsRealSig) evalReal(row []types.Datum) (res float64,
 
 type builtinCastDurationAsDecimalSig struct {
 	baseDecimalBuiltinFunc
+	flen    int
+	decimal int
 }
 
 func (b *builtinCastDurationAsDecimalSig) evalDecimal(row []types.Datum) (res *types.MyDecimal, isNull bool, err error) {
-	val, isNull, err := b.args[0].EvalDuration(row, b.getCtx().GetSessionVars().StmtCtx)
+	sc := b.getCtx().GetSessionVars().StmtCtx
+	val, isNull, err := b.args[0].EvalDuration(row, sc)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	return val.ToNumber(), false, errors.Trace(err)
+	res, err = types.ProduceDecWithSpecifiedTp(val.ToNumber(), b.flen, b.decimal, sc)
+	return res, false, errors.Trace(err)
 }
 
 type builtinCastDurationAsStringSig struct {
 	baseStringBuiltinFunc
-	tp *types.FieldType
+	flen int
+	chs  string
 }
 
 func (b *builtinCastDurationAsStringSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
@@ -521,7 +558,7 @@ func (b *builtinCastDurationAsStringSig) evalString(row []types.Datum) (res stri
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = produceStrWithSpecifiedTp(val.String(), b.tp, sc)
+	res, err = types.ProduceStrWithSpecifiedTp(val.String(), b.flen, b.chs, sc)
 	return res, false, errors.Trace(err)
 }
 
