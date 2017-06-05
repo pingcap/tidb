@@ -121,7 +121,7 @@ type session struct {
 
 	store kv.Storage
 
-	// unlimitedRetryCount is ssed for test only.
+	// unlimitedRetryCount is used for test only.
 	unlimitedRetryCount bool
 
 	// For performance_schema only.
