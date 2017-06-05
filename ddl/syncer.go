@@ -31,9 +31,9 @@ const (
 	ddlGlobalSchemaVersion = "/tidb/ddl/global_schema_version"
 	initialVersion         = "0"
 	putKeyNoRetry          = 1
-	putKeyDefaultRetryCnt  = 3
+	keyOpDefaultRetryCnt   = 3
 	putKeyRetryUnlimited   = math.MaxInt64
-	putKeyDefaultTimeout   = 2 * time.Second
+	keyOpDefaultTimeout    = 2 * time.Second
 	putKeyRetryInterval    = 30 * time.Millisecond
 	checkVersInterval      = 20 * time.Millisecond
 )
@@ -48,6 +48,8 @@ type SchemaSyncer interface {
 	Init(ctx goctx.Context) error
 	// UpdateSelfVersion updates the current version to the self path on etcd.
 	UpdateSelfVersion(ctx goctx.Context, version int64) error
+	// RemoveSelfVersionPath remove the self path from etcd.
+	RemoveSelfVersionPath() error
 	// OwnerUpdateGlobalVersion updates the latest version to the global path on etcd.
 	OwnerUpdateGlobalVersion(ctx goctx.Context, version int64) error
 	// GlobalVersionCh gets the chan for watching global version.
@@ -80,7 +82,7 @@ func (s *schemaVersionSyncer) putKV(ctx goctx.Context, retryCnt int, key, val st
 		default:
 		}
 
-		childCtx, cancel := goctx.WithTimeout(ctx, putKeyDefaultTimeout)
+		childCtx, cancel := goctx.WithTimeout(ctx, keyOpDefaultTimeout)
 		_, err = s.etcdCli.Put(childCtx, key, val)
 		cancel()
 		if err == nil {
@@ -102,7 +104,7 @@ func (s *schemaVersionSyncer) Init(ctx goctx.Context) error {
 		return errors.Trace(err)
 	}
 	s.globalVerCh = s.etcdCli.Watch(ctx, ddlGlobalSchemaVersion)
-	return s.putKV(ctx, putKeyDefaultRetryCnt, s.selfSchemaVerPath, initialVersion)
+	return s.putKV(ctx, keyOpDefaultRetryCnt, s.selfSchemaVerPath, initialVersion)
 }
 
 // GlobalVersionCh implements SchemaSyncer.GlobalVersionCh interface.
@@ -120,6 +122,22 @@ func (s *schemaVersionSyncer) UpdateSelfVersion(ctx goctx.Context, version int64
 func (s *schemaVersionSyncer) OwnerUpdateGlobalVersion(ctx goctx.Context, version int64) error {
 	ver := strconv.FormatInt(version, 10)
 	return s.putKV(ctx, putKeyRetryUnlimited, ddlGlobalSchemaVersion, ver)
+}
+
+// RemoveSelfVersionPath implements SchemaSyncer.RemoveSelfVersionPath interface.
+func (s *schemaVersionSyncer) RemoveSelfVersionPath() error {
+	ctx := goctx.Background()
+	var err error
+	for i := 0; i < keyOpDefaultRetryCnt; i++ {
+		childCtx, cancel := goctx.WithTimeout(ctx, keyOpDefaultTimeout)
+		_, err = s.etcdCli.Delete(childCtx, s.selfSchemaVerPath)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		log.Warnf("remove schema version path %s failed %v no.%d", s.selfSchemaVerPath, err, i)
+	}
+	return errors.Trace(err)
 }
 
 func isContextFinished(err error) bool {
@@ -158,12 +176,12 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx goctx.Context, latestVer
 
 			ver, err := strconv.Atoi(string(kv.Value))
 			if err != nil {
-				log.Infof("[syncer] ddl %s convert %v to int failed %v", kv.Key, kv.Value, err)
+				log.Infof("[syncer] check all versions, ddl %s convert %v to int failed %v", kv.Key, kv.Value, err)
 				succ = false
 				break
 			}
 			if int64(ver) != latestVer {
-				log.Infof("[syncer] ddl %s current ver %v, latest version %v", kv.Key, ver, latestVer)
+				log.Infof("[syncer] check all versions, ddl %s current ver %v, latest version %v", kv.Key, ver, latestVer)
 				succ = false
 				break
 			}

@@ -34,11 +34,11 @@ func checkOwners(d *ddl, val bool) (isOwner bool, isBgOwner bool) {
 	// make sure that campaigning owners is completed.
 	for i := 0; i < 600; i++ {
 		time.Sleep(5 * time.Millisecond)
-		isOwner = d.ownerManager.IsOwner()
+		isOwner = d.worker.IsOwner()
 		if isOwner != val {
 			continue
 		}
-		isBgOwner = d.ownerManager.IsBgOwner()
+		isBgOwner = d.worker.IsBgOwner()
 		if isBgOwner != val {
 			continue
 		}

@@ -25,18 +25,15 @@ import (
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/integration"
 	"github.com/coreos/etcd/mvcc/mvccpb"
-	//"github.com/ngaut/log"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	goctx "golang.org/x/net/context"
 )
 
 func TestSyncerSimple(t *testing.T) {
-	ChangeOwnerInNewWay := true
 	origin := checkVersFirstWaitTime
 	checkVersFirstWaitTime = 0
 	defer func() {
-		ChangeOwnerInNewWay = false
 		checkVersFirstWaitTime = origin
 	}()
 
@@ -82,7 +79,7 @@ func TestSyncerSimple(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		select {
-		case resp := <-d.worker.GlobalVerCh:
+		case resp := <-d.worker.GlobalVersionCh():
 			if len(resp.Events) < 1 {
 				t.Fatalf("get chan events count less than 1")
 			}
@@ -104,9 +101,9 @@ func TestSyncerSimple(t *testing.T) {
 
 	wg.Wait()
 
-	// for checkAllVersions
+	// for CheckAllVersions
 	childCtx, cancel := goctx.WithTimeout(ctx, 20*time.Millisecond)
-	err = d.worker.checkAllVersions(childCtx, currentVer)
+	err = d.worker.CheckAllVersions(childCtx, currentVer)
 	if err == nil {
 		t.Fatalf("check result not match")
 	}
@@ -126,13 +123,27 @@ func TestSyncerSimple(t *testing.T) {
 	}
 	cancel()
 
-	// for checkAllVersions
+	// for CheckAllVersions
 	childCtx, cancel = goctx.WithTimeout(ctx, 30*time.Millisecond)
 	err = d.worker.CheckAllVersions(childCtx, currentVer)
 	if err != nil {
 		t.Fatalf("check all version failed %v", err)
 	}
 	cancel()
+
+	resp, err = cli.Get(goctx.Background(), key)
+	if err != nil {
+		t.Fatalf("get key %s failed %v", key, err)
+	}
+	checkRespKV(t, 1, key, "123", resp.Kvs...)
+	d.worker.RemoveSelfVersionPath()
+	resp, err = cli.Get(goctx.Background(), key)
+	if err != nil {
+		t.Fatalf("get key %s failed %v", key, err)
+	}
+	if len(resp.Kvs) != 0 {
+		t.Fatalf("remove key %s failed %v", key, err)
+	}
 }
 
 func checkRespKV(t *testing.T, kvCount int, key, val string,

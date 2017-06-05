@@ -180,10 +180,6 @@ type SessionVars struct {
 	// SkipUTF8Check check on input value.
 	SkipUTF8Check bool
 
-	// SkipDDLWait can be set to true to skip 2 lease wait after creating/dropping/truncating table, creating/dropping database.
-	// Then if there are multiple TiDB servers, the new table may not be available for other TiDB servers.
-	SkipDDLWait bool
-
 	// BuildStatsConcurrencyVar is used to control statistics building concurrency.
 	BuildStatsConcurrencyVar int
 
@@ -309,10 +305,6 @@ type TableDelta struct {
 	Delta int64
 	Count int64
 }
-
-// GoSQLDriverTest is used for server testing.
-// Because go-sql-driver regards the warnings as errors.
-var GoSQLDriverTest = false
 
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.

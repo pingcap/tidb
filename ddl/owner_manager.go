@@ -45,10 +45,6 @@ type OwnerManager interface {
 	Cancel()
 }
 
-// ChangeOwnerInNewWay is used for controlling the way of changing owner.
-// TODO: Remove it.
-var ChangeOwnerInNewWay = true
-
 const (
 	ddlOwnerKey               = "/tidb/ddl/owner"
 	bgOwnerKey                = "/tidb/ddl/bg/owner"
@@ -113,10 +109,14 @@ func (m *ownerManager) SetBgOwner(isOwner bool) {
 	}
 }
 
+// newSessionTTL is the etcd session's TTL in seconds.
+const newSessionTTL = 10
+
 func (m *ownerManager) newSession(ctx goctx.Context, retryCnt int) error {
 	var err error
 	for i := 0; i < retryCnt; i++ {
-		m.etcdSession, err = concurrency.NewSession(m.etcdCli, concurrency.WithContext(ctx))
+		m.etcdSession, err = concurrency.NewSession(m.etcdCli,
+			concurrency.WithTTL(newSessionTTL), concurrency.WithContext(ctx))
 		if err == nil {
 			break
 		}
@@ -178,15 +178,15 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, key string, wg *sync.Wait
 		resp, err := elec.Leader(ctx)
 		if err != nil {
 			// If no leader elected currently, it returns ErrElectionNoLeader.
-			log.Infof("[ddl] failed to get %s leader, err %v", key, err)
+			log.Infof("[ddl] failed to get leader, err %v", err)
 			continue
 		}
 		leader := string(resp.Kvs[0].Value)
-		log.Info("[ddl] %s ownerManager is %s, owner is %v", key, m.ddlID, leader)
+		log.Infof("[ddl] %s ownerManager is %s, owner is %v", key, m.ddlID, leader)
 		if leader == m.ddlID {
 			m.setOwnerVal(key, true)
 		} else {
-			log.Warnf("[ddl] %s ownerManager %s isn't the owner", key, m.ddlID)
+			log.Warnf("[ddl] ownerManager %s isn't the owner", m.ddlID)
 			continue
 		}
 
