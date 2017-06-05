@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 )
 
+// statsProfile stores the basic information of statistics for the a plan's output. It is used for cost estimation.
 type statsProfile struct {
 	count       float64
 	cardinality []float64
