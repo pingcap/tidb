@@ -32,6 +32,9 @@ const (
 	readTimeoutMedium = 60 * time.Second  // For requests that may need scan region.
 	readTimeoutLong   = 150 * time.Second // For requests that may need scan region multiple times.
 
+	grpcInitialWindowSize     = 1 << 30
+	grpcInitialConnWindowSize = 1 << 30
+
 	rpcLabelKV  = "kv"
 	rpcLabelCop = "cop"
 )
@@ -90,6 +93,8 @@ func (c *rpcClient) createConn(addr string) (*grpc.ClientConn, error) {
 			addr,
 			grpc.WithInsecure(),
 			grpc.WithTimeout(dialTimeout),
+			grpc.WithInitialWindowSize(grpcInitialWindowSize),
+			grpc.WithInitialConnWindowSize(grpcInitialConnWindowSize),
 			grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
 			grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor))
 		if err != nil {
