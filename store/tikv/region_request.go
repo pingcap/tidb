@@ -18,10 +18,11 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 )
 
 // RegionRequestSender sends KV/Cop requests to tikv server. It handles network
@@ -53,8 +54,8 @@ func NewRegionRequestSender(regionCache *RegionCache, client Client) *RegionRequ
 	}
 }
 
-// SendKVReq sends a KV request to tikv server.
-func (s *RegionRequestSender) SendKVReq(bo *Backoffer, req *kvrpcpb.Request, regionID RegionVerID, timeout time.Duration) (*kvrpcpb.Response, error) {
+// SendReq sends a request to tikv server.
+func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
 	for {
 		ctx, err := s.regionCache.GetRPCContext(bo, regionID)
 		if err != nil {
@@ -64,56 +65,14 @@ func (s *RegionRequestSender) SendKVReq(bo *Backoffer, req *kvrpcpb.Request, reg
 			// If the region is not found in cache, it must be out
 			// of date and already be cleaned up. We can skip the
 			// RPC by returning RegionError directly.
-			return &kvrpcpb.Response{
-				Type:        req.GetType(),
-				RegionError: &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}},
-			}, nil
-		}
 
-		resp, retry, err := s.sendKVReqToRegion(bo, ctx, req, timeout)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if retry {
-			continue
-		}
-
-		if regionErr := resp.GetRegionError(); regionErr != nil {
-			retry, err := s.onRegionError(bo, ctx, regionErr)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if retry {
-				continue
-			}
-			return resp, nil
-		}
-
-		if resp.GetType() != req.GetType() {
-			return nil, errors.Trace(errMismatch(resp, req))
-		}
-		return resp, nil
-	}
-}
-
-// SendCopReq sends a coprocessor request to tikv server.
-func (s *RegionRequestSender) SendCopReq(bo *Backoffer, req *coprocessor.Request, regionID RegionVerID, timeout time.Duration) (*coprocessor.Response, error) {
-	for {
-		ctx, err := s.regionCache.GetRPCContext(bo, regionID)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if ctx == nil {
-			// If the region is not found in cache, it must be out
-			// of date and already be cleaned up. We can skip the
-			// RPC by returning RegionError directly.
-			return &coprocessor.Response{
-				RegionError: &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}},
-			}, nil
+			// TODO: Change the returned error to something like "region missing in cache",
+			// and handle this error like StaleEpoch, which means to re-split the request and retry.
+			return tikvrpc.GenRegionErrorResp(req, &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}})
 		}
 
 		s.storeAddr = ctx.Addr
-		resp, retry, err := s.sendCopReqToRegion(bo, ctx, req, timeout)
+		resp, retry, err := s.sendReqToRegion(bo, ctx, req, timeout)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -121,7 +80,11 @@ func (s *RegionRequestSender) SendCopReq(bo *Backoffer, req *coprocessor.Request
 			continue
 		}
 
-		if regionErr := resp.GetRegionError(); regionErr != nil {
+		regionErr, err := resp.GetRegionError()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if regionErr != nil {
 			retry, err := s.onRegionError(bo, ctx, regionErr)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -134,9 +97,13 @@ func (s *RegionRequestSender) SendCopReq(bo *Backoffer, req *coprocessor.Request
 	}
 }
 
-func (s *RegionRequestSender) sendKVReqToRegion(bo *Backoffer, ctx *RPCContext, req *kvrpcpb.Request, timeout time.Duration) (resp *kvrpcpb.Response, retry bool, err error) {
-	req.Context = ctx.KVCtx
-	resp, err = s.client.SendKVReq(bo.ctx, ctx.Addr, req, timeout)
+func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, req *tikvrpc.Request, timeout time.Duration) (resp *tikvrpc.Response, retry bool, err error) {
+	if e := tikvrpc.SetContext(req, ctx.KVCtx); e != nil {
+		return nil, false, errors.Trace(e)
+	}
+	context, cancel := goctx.WithTimeout(bo.ctx, timeout)
+	defer cancel()
+	resp, err = s.client.SendReq(context, ctx.Addr, req)
 	if err != nil {
 		if e := s.onSendFail(bo, ctx, err); e != nil {
 			return nil, false, errors.Trace(e)
@@ -146,27 +113,19 @@ func (s *RegionRequestSender) sendKVReqToRegion(bo *Backoffer, ctx *RPCContext, 
 	return
 }
 
-func (s *RegionRequestSender) sendCopReqToRegion(bo *Backoffer, ctx *RPCContext, req *coprocessor.Request, timeout time.Duration) (resp *coprocessor.Response, retry bool, err error) {
-	req.Context = ctx.KVCtx
-	resp, err = s.client.SendCopReq(bo.ctx, ctx.Addr, req, timeout)
-	if err != nil {
-		if e := s.onSendFail(bo, ctx, err); e != nil {
-			return nil, false, errors.Trace(err)
-		}
-		return nil, true, nil
-	}
-	return
-}
-
 func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err error) error {
-	// Retry on request failure when it's not Cancelled.
+	// If it failed because the context is canceled, don't retry on this error.
+	if errors.Cause(err) == goctx.Canceled || grpc.Code(err) == codes.Canceled {
+		return errors.Trace(err)
+	}
+
+	s.regionCache.OnRequestFail(ctx)
+
+	// Retry on request failure when it's not canceled.
 	// When a store is not available, the leader of related region should be elected quickly.
 	// TODO: the number of retry time should be limited:since region may be unavailable
 	// when some unrecoverable disaster happened.
-	if errors.Cause(err) != goctx.Canceled {
-		err = bo.Backoff(boTiKVRPC, errors.Errorf("send tikv request error: %v, ctx: %s, try next peer later", err, ctx.KVCtx))
-		s.regionCache.OnRequestFail(ctx)
-	}
+	err = bo.Backoff(boTiKVRPC, errors.Errorf("send tikv request error: %v, ctx: %s, try next peer later", err, ctx.KVCtx))
 	return errors.Trace(err)
 }
 

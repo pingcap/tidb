@@ -89,7 +89,7 @@ import:
   - encoding/unicode
   - transform
 - package: google.golang.org/grpc
-  version: v1.0.4
+  version: v1.2.1
   subpackages:
   - codes
   - credentials
@@ -156,7 +156,7 @@ import:
   - go-tipb
   - sharedbytes
 - package: github.com/pingcap/kvproto
-  version: 289050a4366f95497c93d4dba068989b5dd8781a
+  version: grpc
 - package: github.com/gogo/protobuf
   version: ^0.3.0
   subpackages:

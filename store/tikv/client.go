@@ -15,16 +15,25 @@
 package tikv
 
 import (
-	"sync/atomic"
+	"sync"
 	"time"
 
+	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
-	"github.com/pingcap/kvproto/pkg/coprocessor"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/kvproto/pkg/msgpb"
-	"github.com/pingcap/kvproto/pkg/util"
+	"github.com/pingcap/kvproto/pkg/tikvpb"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
+	"google.golang.org/grpc"
+)
+
+const (
+	dialTimeout       = 5 * time.Second
+	readTimeoutShort  = 20 * time.Second  // For requests that read/write several key-values.
+	readTimeoutMedium = 60 * time.Second  // For requests that may need scan region.
+	readTimeoutLong   = 150 * time.Second // For requests that may need scan region multiple times.
+
+	rpcLabelKV  = "kv"
+	rpcLabelCop = "cop"
 )
 
 // Client is a client that sends RPC.
@@ -32,123 +41,206 @@ import (
 type Client interface {
 	// Close should release all data.
 	Close() error
-	// SendKVReq sends kv request.
-	SendKVReq(ctx goctx.Context, addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error)
-	// SendCopReq sends coprocessor request.
-	SendCopReq(ctx goctx.Context, addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error)
+	// SendReq sends Request.
+	SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error)
 }
 
-const (
-	maxConnection     = 200
-	dialTimeout       = 5 * time.Second
-	writeTimeout      = 10 * time.Second
-	readTimeoutShort  = 20 * time.Second  // For requests that read/write several key-values.
-	readTimeoutMedium = 60 * time.Second  // For requests that may need scan region.
-	readTimeoutLong   = 150 * time.Second // For requests that may need scan region multiple times.
-)
-
+// TODO: Add flow control between RPC clients in TiDB ond RPC servers in TiKV.
+// Since we use shared client connection to communicate to the same TiKV, it's possible
+// that there are too many concurrent requests which overload the service of TiKV.
+// TODO: Implement background cleanup. It adds a backgroud goroutine to periodically check
+// whether there is any connection is idle and then close and remove these idle connections.
 type rpcClient struct {
-	msgID uint64
-	p     *Pools
+	sync.RWMutex
+	isClosed bool
+	conns    map[string]*grpc.ClientConn
 }
 
 func newRPCClient() *rpcClient {
 	return &rpcClient{
-		msgID: 0,
-		p: NewPools(maxConnection, func(addr string) (*Conn, error) {
-			return NewConnection(addr, dialTimeout)
-		}),
+		conns: make(map[string]*grpc.ClientConn),
 	}
 }
 
-// SendCopReq sends a Request to co-processor and receives Response.
-func (c *rpcClient) SendCopReq(ctx goctx.Context, addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
+func (c *rpcClient) getConn(addr string) (*grpc.ClientConn, error) {
+	c.RLock()
+	if c.isClosed {
+		c.RUnlock()
+		return nil, errors.Errorf("rpcClient is closed")
+	}
+	conn, ok := c.conns[addr]
+	c.RUnlock()
+	if !ok {
+		var err error
+		conn, err = c.createConn(addr)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return conn, nil
+}
+
+func (c *rpcClient) createConn(addr string) (*grpc.ClientConn, error) {
+	c.Lock()
+	defer c.Unlock()
+	conn, ok := c.conns[addr]
+	if !ok {
+		var err error
+		conn, err = grpc.Dial(
+			addr,
+			grpc.WithInsecure(),
+			grpc.WithTimeout(dialTimeout),
+			grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
+			grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		c.conns[addr] = conn
+	}
+	return conn, nil
+}
+
+func (c *rpcClient) closeConns() {
+	c.Lock()
+	if !c.isClosed {
+		c.isClosed = true
+		// close all connections
+		for _, conn := range c.conns {
+			conn.Close()
+		}
+	}
+	c.Unlock()
+}
+
+// SendReq sends a Request to server and receives Response.
+func (c *rpcClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 	start := time.Now()
-	defer func() { sendReqHistogram.WithLabelValues("cop").Observe(time.Since(start).Seconds()) }()
-
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	default:
+	var label = rpcLabelKV
+	if req.Type == tikvrpc.CmdCop {
+		label = rpcLabelCop
 	}
+	defer func() { sendReqHistogram.WithLabelValues(label).Observe(time.Since(start).Seconds()) }()
 
-	conn, err := c.p.GetConn(addr)
+	conn, err := c.getConn(addr)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	connPoolHistogram.WithLabelValues("cop").Observe(time.Since(start).Seconds())
-	defer c.p.PutConn(conn)
-	msg := msgpb.Message{
-		MsgType: msgpb.MessageType_CopReq,
-		CopReq:  req,
-	}
-	err = c.doSend(conn, &msg, writeTimeout, timeout)
+	client := tikvpb.NewTikvClient(conn)
+	resp, err := c.callRPC(ctx, client, req)
 	if err != nil {
-		conn.Close()
 		return nil, errors.Trace(err)
 	}
-	if msg.GetMsgType() != msgpb.MessageType_CopResp || msg.GetCopResp() == nil {
-		conn.Close()
-		return nil, errors.Trace(errInvalidResponse)
-	}
-	return msg.GetCopResp(), nil
+	return resp, nil
 }
 
-// SendKVReq sends a Request to kv server and receives Response.
-func (c *rpcClient) SendKVReq(ctx goctx.Context, addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error) {
-	start := time.Now()
-	defer func() { sendReqHistogram.WithLabelValues("kv").Observe(time.Since(start).Seconds()) }()
-
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
+func (c *rpcClient) callRPC(ctx goctx.Context, client tikvpb.TikvClient, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+	resp := &tikvrpc.Response{}
+	resp.Type = req.Type
+	switch req.Type {
+	case tikvrpc.CmdGet:
+		r, err := client.KvGet(ctx, req.Get)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		resp.Get = r
+		return resp, nil
+	case tikvrpc.CmdScan:
+		r, err := client.KvScan(ctx, req.Scan)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		resp.Scan = r
+		return resp, nil
+	case tikvrpc.CmdPrewrite:
+		r, err := client.KvPrewrite(ctx, req.Prewrite)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		resp.Prewrite = r
+		return resp, nil
+	case tikvrpc.CmdCommit:
+		r, err := client.KvCommit(ctx, req.Commit)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		resp.Commit = r
+		return resp, nil
+	case tikvrpc.CmdCleanup:
+		r, err := client.KvCleanup(ctx, req.Cleanup)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		resp.Cleanup = r
+		return resp, nil
+	case tikvrpc.CmdBatchGet:
+		r, err := client.KvBatchGet(ctx, req.BatchGet)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		resp.BatchGet = r
+		return resp, nil
+	case tikvrpc.CmdBatchRollback:
+		r, err := client.KvBatchRollback(ctx, req.BatchRollback)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		resp.BatchRollback = r
+		return resp, nil
+	case tikvrpc.CmdScanLock:
+		r, err := client.KvScanLock(ctx, req.ScanLock)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		resp.ScanLock = r
+		return resp, nil
+	case tikvrpc.CmdResolveLock:
+		r, err := client.KvResolveLock(ctx, req.ResolveLock)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		resp.ResolveLock = r
+		return resp, nil
+	case tikvrpc.CmdGC:
+		r, err := client.KvGC(ctx, req.GC)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		resp.GC = r
+		return resp, nil
+	case tikvrpc.CmdRawGet:
+		r, err := client.RawGet(ctx, req.RawGet)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		resp.RawGet = r
+		return resp, nil
+	case tikvrpc.CmdRawPut:
+		r, err := client.RawPut(ctx, req.RawPut)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		resp.RawPut = r
+		return resp, nil
+	case tikvrpc.CmdRawDelete:
+		r, err := client.RawDelete(ctx, req.RawDelete)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		resp.RawDelete = r
+		return resp, nil
+	case tikvrpc.CmdCop:
+		r, err := client.Coprocessor(ctx, req.Cop)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		resp.Cop = r
+		return resp, nil
 	default:
+		return nil, errors.Errorf("invalid request type: %v", req.Type)
 	}
-
-	conn, err := c.p.GetConn(addr)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	connPoolHistogram.WithLabelValues("kv").Observe(time.Since(start).Seconds())
-	defer c.p.PutConn(conn)
-	msg := msgpb.Message{
-		MsgType: msgpb.MessageType_KvReq,
-		KvReq:   req,
-	}
-	err = c.doSend(conn, &msg, writeTimeout, timeout)
-	if err != nil {
-		conn.Close()
-		return nil, errors.Trace(err)
-	}
-	if msg.GetMsgType() != msgpb.MessageType_KvResp || msg.GetKvResp() == nil {
-		conn.Close()
-		return nil, errors.Trace(errInvalidResponse)
-	}
-	return msg.GetKvResp(), nil
-}
-
-func (c *rpcClient) doSend(conn *Conn, msg *msgpb.Message, writeTimeout time.Duration, readTimeout time.Duration) error {
-	curMsgID := atomic.AddUint64(&c.msgID, 1)
-	conn.SetWriteDeadline(time.Now().Add(writeTimeout))
-	if err := util.WriteMessage(conn, curMsgID, msg); err != nil {
-		return errors.Trace(err)
-	}
-	if err := conn.Flush(); err != nil {
-		return errors.Trace(err)
-	}
-	conn.SetReadDeadline(time.Now().Add(readTimeout))
-	msgID, err := util.ReadMessage(conn.BufioReader(), msg)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if curMsgID != msgID {
-		log.Errorf("Sent msgID[%d] mismatches recv msgID[%d]", curMsgID, msgID)
-		return errors.Trace(errInvalidResponse)
-	}
-	return nil
 }
 
 func (c *rpcClient) Close() error {
-	c.p.Close()
+	c.closeConns()
 	return nil
 }
