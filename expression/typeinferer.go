@@ -423,13 +423,6 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	case ast.RandomBytes:
 		tp = types.NewFieldType(mysql.TypeVarString)
 	case ast.If:
-		// TODO: fix this
-		// See https://dev.mysql.com/doc/refman/5.5/en/control-flow-functions.html#function_if
-		// The default return type of IF() (which may matter when it is stored into a temporary table) is calculated as follows.
-		// Expression	Return Value
-		// expr2 or expr3 returns a string	string
-		// expr2 or expr3 returns a floating-point value	floating-point
-		// expr2 or expr3 returns an integer	integer
 		tp = x.Args[1].GetType()
 	case ast.Compress:
 		tp = types.NewFieldType(mysql.TypeBlob)
