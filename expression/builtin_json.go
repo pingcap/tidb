@@ -82,15 +82,40 @@ func parsePathExprs(datums []types.Datum) ([]json.PathExpression, error) {
 	return pathExprs, nil
 }
 
+// createJSONFromDatums creates JSONs from Datums.
 func createJSONFromDatums(datums []types.Datum) ([]json.JSON, error) {
 	jsons := make([]json.JSON, 0, len(datums))
 	for _, datum := range datums {
-		j := json.CreateJSON(datum.GetValue())
+		// TODO Here sematic of creating JSON from datum is same with types.compareMysqlJSON.
+		// But it's different from "CAST sematic" because for string, cast will parse it into
+		// JSON but here and compareMysqlJSON needs a JSON with the string as primitives.
+		// We should rewrite this as a function for here and compareMysqlJSON both can use it.
+		var j json.JSON
+		switch datum.Kind() {
+		case types.KindNull:
+			j = json.CreateJSON(nil)
+		case types.KindInt64, types.KindUint64:
+			j = json.CreateJSON(datum.GetInt64())
+		case types.KindFloat32, types.KindFloat64:
+			j = json.CreateJSON(datum.GetFloat64())
+		case types.KindMysqlDecimal:
+			f64, _ := datum.GetMysqlDecimal().ToFloat64()
+			j = json.CreateJSON(f64)
+		case types.KindString, types.KindBytes:
+			j = json.CreateJSON(datum.GetString())
+		default:
+			s, err := datum.ToString()
+			if err != nil {
+				return jsons, errors.Trace(err)
+			}
+			j = json.CreateJSON(s)
+		}
 		jsons = append(jsons, j)
 	}
 	return jsons, nil
 }
 
+// jsonModify is the portal for modify JSON with path expressions and values.
 func jsonModify(b baseBuiltinFunc, row []types.Datum, mt json.ModifyType) (j json.JSON, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
@@ -103,14 +128,25 @@ func jsonModify(b baseBuiltinFunc, row []types.Datum, mt json.ModifyType) (j jso
 	if err != nil {
 		return j, errors.Trace(err)
 	}
-	pathExprs, err := parsePathExprs(args[1:len(args):2])
+
+	pes := make([]types.Datum, 0, (len(args)-1)/2)
+	vs := make([]types.Datum, 0, (len(args)-1)/2)
+	for i := 1; i < len(args); i++ {
+		if i&1 == 1 {
+			pes = append(pes, args[i])
+		} else {
+			vs = append(vs, args[i])
+		}
+	}
+	pathExprs, err := parsePathExprs(pes)
 	if err != nil {
 		return j, errors.Trace(err)
 	}
-	values, err := createJSONFromDatums(args[2:len(args):2])
+	values, err := createJSONFromDatums(vs)
 	if err != nil {
 		return j, errors.Trace(err)
 	}
+
 	j, err = j.Modify(pathExprs, values, mt)
 	if err != nil {
 		return j, errors.Trace(err)

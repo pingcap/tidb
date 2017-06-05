@@ -693,8 +693,8 @@ var funcs = map[string]functionClass{
 	ast.JSONType:    &jsonTypeFunctionClass{baseFunctionClass{ast.JSONType, 1, 1}},
 	ast.JSONExtract: &jsonExtractFunctionClass{baseFunctionClass{ast.JSONExtract, 2, -1}},
 	ast.JSONUnquote: &jsonUnquoteFunctionClass{baseFunctionClass{ast.JSONUnquote, 1, 1}},
-	ast.JSONSet:     &jsonUnquoteFunctionClass{baseFunctionClass{ast.JSONSet, 3, -1}},
-	ast.JSONInsert:  &jsonUnquoteFunctionClass{baseFunctionClass{ast.JSONInsert, 3, -1}},
-	ast.JSONReplace: &jsonUnquoteFunctionClass{baseFunctionClass{ast.JSONReplace, 3, -1}},
-	ast.JSONMerge:   &jsonUnquoteFunctionClass{baseFunctionClass{ast.JSONMerge, 2, -1}},
+	ast.JSONSet:     &jsonSetFunctionClass{baseFunctionClass{ast.JSONSet, 3, -1}},
+	ast.JSONInsert:  &jsonInsertFunctionClass{baseFunctionClass{ast.JSONInsert, 3, -1}},
+	ast.JSONReplace: &jsonReplaceFunctionClass{baseFunctionClass{ast.JSONReplace, 3, -1}},
+	ast.JSONMerge:   &jsonMergeFunctionClass{baseFunctionClass{ast.JSONMerge, 2, -1}},
 }
