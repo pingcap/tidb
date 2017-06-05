@@ -56,7 +56,7 @@ type selectContext struct {
 
 func (h *rpcHandler) handleCopRequest(req *coprocessor.Request) (*coprocessor.Response, error) {
 	resp := &coprocessor.Response{}
-	if err := h.checkContext(req.GetContext()); err != nil {
+	if err := h.checkRequestContext(req.GetContext()); err != nil {
 		resp.RegionError = err
 		return resp, nil
 	}

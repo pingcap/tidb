@@ -1,5 +1,5 @@
-hash: c2c438f471d5f464977547dee1bb792123ed690c11ac62ceb876e1cfa3972809
-updated: 2017-05-18T18:44:44.003708809+08:00
+hash: ca1f420890ff212527d2a6110103d9b02884699fce0c86f326f871d004df742d
+updated: 2017-06-02T10:48:32.853626296+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -113,18 +113,16 @@ imports:
   - leveldb/table
   - leveldb/util
 - name: github.com/pingcap/kvproto
-  version: 289050a4366f95497c93d4dba068989b5dd8781a
+  version: 32e2b9581312cc0a7ded4911b036ecea01aaf3e0
   subpackages:
   - pkg/coprocessor
   - pkg/eraftpb
   - pkg/errorpb
   - pkg/kvrpcpb
   - pkg/metapb
-  - pkg/msgpb
   - pkg/pdpb
-  - pkg/raft_cmdpb
   - pkg/raft_serverpb
-  - pkg/util
+  - pkg/tikvpb
 - name: github.com/pingcap/pd
   version: fea29e342c4a7c5888cdf0b569625fbbf6d3b50f
   subpackages:
@@ -184,14 +182,17 @@ imports:
   subpackages:
   - rate
 - name: google.golang.org/grpc
-  version: 777daa17ff9b5daef1cfdf915088a2ada3332bf0
+  version: 8050b9cbc271307e5a716a9d782803d09b0d6f2d
   subpackages:
   - codes
   - credentials
   - grpclog
   - internal
+  - keepalive
   - metadata
   - naming
   - peer
+  - stats
+  - tap
   - transport
 testImports: []
