@@ -1052,13 +1052,14 @@ func (d *Datum) convertToMysqlDecimal(sc *variable.StatementContext, target *Fie
 	default:
 		return invalidConv(d, target.Tp)
 	}
-	dec, err = ProduceDecWithSpecifiedTp(dec, target.Flen, target.Decimal, sc)
+	dec, err = ProduceDecWithSpecifiedTp(dec, target, sc)
 	ret.SetValue(dec)
 	return ret, errors.Trace(err)
 }
 
 // ProduceDecWithSpecifiedTp produces a new decimal according to `flen` and `decimal`.
-func ProduceDecWithSpecifiedTp(dec *MyDecimal, flen, decimal int, sc *variable.StatementContext) (_ *MyDecimal, err error) {
+func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *variable.StatementContext) (_ *MyDecimal, err error) {
+	flen, decimal := tp.Flen, tp.Decimal
 	if flen != UnspecifiedLength && decimal != UnspecifiedLength {
 		prec, frac := dec.PrecisionAndFrac()
 		if !dec.IsZero() && prec-frac > flen-decimal {

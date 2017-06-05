@@ -143,20 +143,21 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	}
 	for i, t := range castToDecCases {
 		args := []Expression{t.before}
-		decFunc := baseDecimalBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
+		tp := types.NewFieldType(mysql.TypeNewDecimal)
+		decFunc := baseDecimalBuiltinFunc{newBaseBuiltinFuncWithTp(args, tp, ctx)}
 		switch i {
 		case 0:
-			sig = &builtinCastIntAsDecimalSig{decFunc, types.UnspecifiedLength, types.UnspecifiedLength}
+			sig = &builtinCastIntAsDecimalSig{decFunc}
 		case 1:
-			sig = &builtinCastStringAsDecimalSig{decFunc, types.UnspecifiedLength, types.UnspecifiedLength}
+			sig = &builtinCastStringAsDecimalSig{decFunc}
 		case 2:
-			sig = &builtinCastRealAsDecimalSig{decFunc, types.UnspecifiedLength, types.UnspecifiedLength}
+			sig = &builtinCastRealAsDecimalSig{decFunc}
 		case 3:
-			sig = &builtinCastTimeAsDecimalSig{decFunc, types.UnspecifiedLength, types.UnspecifiedLength}
+			sig = &builtinCastTimeAsDecimalSig{decFunc}
 		case 4:
-			sig = &builtinCastDurationAsDecimalSig{decFunc, types.UnspecifiedLength, types.UnspecifiedLength}
+			sig = &builtinCastDurationAsDecimalSig{decFunc}
 		case 5:
-			sig = &builtinCastDecimalAsDecimalSig{decFunc, types.UnspecifiedLength, types.UnspecifiedLength}
+			sig = &builtinCastDecimalAsDecimalSig{decFunc}
 		}
 		res, isNull, err := sig.evalDecimal(t.row)
 		c.Assert(isNull, Equals, false)
@@ -223,20 +224,22 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 
 	for i, t := range castToDecCases2 {
 		args := []Expression{t.before}
-		decFunc := baseDecimalBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
+		tp := types.NewFieldType(mysql.TypeNewDecimal)
+		tp.Flen, tp.Decimal = t.flen, t.decimal
+		decFunc := baseDecimalBuiltinFunc{newBaseBuiltinFuncWithTp(args, tp, ctx)}
 		switch i {
 		case 0:
-			sig = &builtinCastIntAsDecimalSig{decFunc, t.flen, t.decimal}
+			sig = &builtinCastIntAsDecimalSig{decFunc}
 		case 1:
-			sig = &builtinCastStringAsDecimalSig{decFunc, t.flen, t.decimal}
+			sig = &builtinCastStringAsDecimalSig{decFunc}
 		case 2:
-			sig = &builtinCastRealAsDecimalSig{decFunc, t.flen, t.decimal}
+			sig = &builtinCastRealAsDecimalSig{decFunc}
 		case 3:
-			sig = &builtinCastTimeAsDecimalSig{decFunc, t.flen, t.decimal}
+			sig = &builtinCastTimeAsDecimalSig{decFunc}
 		case 4:
-			sig = &builtinCastDurationAsDecimalSig{decFunc, t.flen, t.decimal}
+			sig = &builtinCastDurationAsDecimalSig{decFunc}
 		case 5:
-			sig = &builtinCastDecimalAsDecimalSig{decFunc, t.flen, t.decimal}
+			sig = &builtinCastDecimalAsDecimalSig{decFunc}
 		}
 		res, isNull, err := sig.evalDecimal(t.row)
 		c.Assert(isNull, Equals, false)
@@ -403,24 +406,24 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 			[]types.Datum{types.NewStringDatum("1234")},
 		},
 	}
-	tp := types.NewFieldType(mysql.TypeVarString)
-	tp.Charset = charset.CharsetBin
 	for i, t := range castToStringCases {
+		tp := types.NewFieldType(mysql.TypeVarString)
+		tp.Charset = charset.CharsetBin
 		args := []Expression{t.before}
-		stringFunc := baseStringBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
+		stringFunc := baseStringBuiltinFunc{newBaseBuiltinFuncWithTp(args, tp, ctx)}
 		switch i {
 		case 0:
-			sig = &builtinCastRealAsStringSig{stringFunc, tp}
+			sig = &builtinCastRealAsStringSig{stringFunc}
 		case 1:
-			sig = &builtinCastDecimalAsStringSig{stringFunc, tp}
+			sig = &builtinCastDecimalAsStringSig{stringFunc}
 		case 2:
-			sig = &builtinCastIntAsStringSig{stringFunc, tp}
+			sig = &builtinCastIntAsStringSig{stringFunc}
 		case 3:
-			sig = &builtinCastTimeAsStringSig{stringFunc, tp}
+			sig = &builtinCastTimeAsStringSig{stringFunc}
 		case 4:
-			sig = &builtinCastDurationAsStringSig{stringFunc, tp}
+			sig = &builtinCastDurationAsStringSig{stringFunc}
 		case 5:
-			sig = &builtinCastStringAsStringSig{stringFunc, tp}
+			sig = &builtinCastStringAsStringSig{stringFunc}
 		}
 		res, isNull, err := sig.evalString(t.row)
 		c.Assert(isNull, Equals, false)
@@ -478,29 +481,25 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 			[]types.Datum{types.NewStringDatum("你好world")},
 		},
 	}
-	tp = types.NewFieldType(mysql.TypeVarString)
 	for i, t := range castToStringCases2 {
 		args := []Expression{t.before}
-		stringFunc := baseStringBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
+		tp := types.NewFieldType(mysql.TypeVarString)
+		tp.Flen, tp.Charset = t.flen, charset.CharsetBin
+		stringFunc := baseStringBuiltinFunc{newBaseBuiltinFuncWithTp(args, tp, ctx)}
 		switch i {
 		case 0:
-			tp.Flen, tp.Charset = t.flen, charset.CharsetBin
-			sig = &builtinCastRealAsStringSig{stringFunc, tp}
+			sig = &builtinCastRealAsStringSig{stringFunc}
 		case 1:
-			tp.Flen, tp.Charset = t.flen, charset.CharsetBin
-			sig = &builtinCastDecimalAsStringSig{stringFunc, tp}
+			sig = &builtinCastDecimalAsStringSig{stringFunc}
 		case 2:
-			tp.Flen, tp.Charset = t.flen, charset.CharsetBin
-			sig = &builtinCastIntAsStringSig{stringFunc, tp}
+			sig = &builtinCastIntAsStringSig{stringFunc}
 		case 3:
-			tp.Flen, tp.Charset = t.flen, charset.CharsetBin
-			sig = &builtinCastTimeAsStringSig{stringFunc, tp}
+			sig = &builtinCastTimeAsStringSig{stringFunc}
 		case 4:
-			tp.Flen, tp.Charset = t.flen, charset.CharsetBin
-			sig = &builtinCastDurationAsStringSig{stringFunc, tp}
+			sig = &builtinCastDurationAsStringSig{stringFunc}
 		case 5:
-			tp.Flen, tp.Charset = t.flen, charset.CharsetUTF8
-			sig = &builtinCastStringAsStringSig{stringFunc, tp}
+			stringFunc.tp.Charset = charset.CharsetUTF8
+			sig = &builtinCastStringAsStringSig{stringFunc}
 		}
 		res, isNull, err := sig.evalString(t.row)
 		c.Assert(isNull, Equals, false)
@@ -627,7 +626,8 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	// null case
 	args := []Expression{&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}}
 	row := []types.Datum{types.NewDatum(nil)}
-	sig = &builtinCastRealAsStringSig{baseStringBuiltinFunc{newBaseBuiltinFunc(args, ctx)}, types.NewFieldType(mysql.TypeString)}
+	tp := types.NewFieldType(mysql.TypeVarString)
+	sig = &builtinCastRealAsStringSig{baseStringBuiltinFunc{newBaseBuiltinFuncWithTp(args, tp, ctx)}}
 	sRes, isNull, err := sig.evalString(row)
 	c.Assert(sRes, Equals, "")
 	c.Assert(isNull, Equals, true)
