@@ -330,6 +330,9 @@ func (b *builtinJSONMergeSig) eval(row []types.Datum) (d types.Datum, err error)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
+	if argsAnyNull(args) {
+		return d, errors.Trace(err)
+	}
 	jsons := make([]json.JSON, 0, len(args))
 	for _, arg := range args {
 		j, err := datum2JSON(arg, b.ctx.GetSessionVars().StmtCtx)

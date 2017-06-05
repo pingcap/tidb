@@ -131,7 +131,7 @@ func (s *testEvaluatorSuite) TestJSONMerge(c *C) {
 		Expected interface{}
 	}{
 		{[]interface{}{nil, nil}, nil},
-		{[]interface{}{`{}`, `[]`}, `[]`},
+		{[]interface{}{`{}`, `[]`}, `[{}]`},
 	}
 	for _, t := range tbl {
 		args := types.MakeDatums(t.Input...)
