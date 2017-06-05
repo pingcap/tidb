@@ -13,9 +13,9 @@
 
 package ddl
 
+/*
 // TODO: Remove the package of integration.
 // The tests are passed here. But import `integration` will introduce a lot of dependencies.
-/*
 import (
 	"testing"
 	"time"
@@ -34,11 +34,11 @@ func checkOwners(d *ddl, val bool) (isOwner bool, isBgOwner bool) {
 	// make sure that campaigning owners is completed.
 	for i := 0; i < 600; i++ {
 		time.Sleep(5 * time.Millisecond)
-		isOwner = d.worker.isOwner()
+		isOwner = d.worker.IsOwner()
 		if isOwner != val {
 			continue
 		}
-		isBgOwner = d.worker.isBgOwner()
+		isBgOwner = d.worker.IsBgOwner()
 		if isBgOwner != val {
 			continue
 		}
@@ -48,9 +48,6 @@ func checkOwners(d *ddl, val bool) (isOwner bool, isBgOwner bool) {
 }
 
 func TestSingle(t *testing.T) {
-	ChangeOwnerInNewWay := true
-	defer func() { ChangeOwnerInNewWay = false }()
-
 	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
 	store, err := driver.Open("memory://ddl_new_owner")
 	if err != nil {
@@ -71,10 +68,6 @@ func TestSingle(t *testing.T) {
 }
 
 func TestCluster(t *testing.T) {
-	ChangeOwnerInNewWay := true
-	defer func() {
-		ChangeOwnerInNewWay = false
-	}()
 	log.SetLevel(log.LOG_LEVEL_INFO)
 
 	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}

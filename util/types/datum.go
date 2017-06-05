@@ -860,7 +860,7 @@ func ProduceStrWithSpecifiedTp(s string, flen int, chs string, sc *variable.Stat
 		} else if len(s) > flen {
 			err = ErrDataTooLong.Gen("Data Too Long, field len %d, data len %d", flen, len(s))
 			s = truncateStr(s, flen)
-		} else if len(s) < flen {
+		} else if tp.Tp == mysql.TypeString && len(s) < flen {
 			padding := make([]byte, flen-len(s))
 			s = string(append([]byte(s), padding...))
 		}

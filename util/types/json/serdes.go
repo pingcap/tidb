@@ -26,7 +26,7 @@ import (
 )
 
 /*
-   The binary jSON format from MySQL 5.7 is as follows:
+   The binary JSON format from MySQL 5.7 is as follows:
 
    JSON doc ::= type value
    type ::=

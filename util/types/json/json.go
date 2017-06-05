@@ -66,7 +66,8 @@ func CreateJSON(in interface{}) JSON {
 
 // ParseFromString parses a json from string.
 func ParseFromString(s string) (j JSON, err error) {
-	// TODO: implement the decoder directly.
+	// TODO: implement the decoder directly. It's important for keeping
+	// keys in object have same order with the original string.
 	if len(s) == 0 {
 		err = ErrInvalidJSONText.GenByArgs("The document is empty")
 		return
