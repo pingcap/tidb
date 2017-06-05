@@ -1057,7 +1057,7 @@ func (d *Datum) convertToMysqlDecimal(sc *variable.StatementContext, target *Fie
 	return ret, errors.Trace(err)
 }
 
-// ProduceDecToSpecifiedTp produces a new decimal according to `flen` and `decimal`.
+// ProduceDecWithSpecifiedTp produces a new decimal according to `flen` and `decimal`.
 func ProduceDecWithSpecifiedTp(dec *MyDecimal, flen, decimal int, sc *variable.StatementContext) (_ *MyDecimal, err error) {
 	if flen != UnspecifiedLength && decimal != UnspecifiedLength {
 		prec, frac := dec.PrecisionAndFrac()
