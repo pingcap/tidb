@@ -39,8 +39,9 @@ func (d *ddl) onDDLWorker() {
 	}
 
 	// We use 4 * lease time to check owner's timeout, so here, we will update owner's status
-	// every 2 * lease time. If lease is 0, we will use default 10s.
-	checkTime := chooseLeaseTime(2*d.lease, 10*time.Second)
+	// every 2 * lease time. If lease is 0, we will use default 1s.
+	// But we use etcd to speed up, normally it takes less than 1s now, so we use 1s as the max value.
+	checkTime := chooseLeaseTime(2*d.lease, 1*time.Second)
 
 	ticker := time.NewTicker(checkTime)
 	defer ticker.Stop()
@@ -68,93 +69,15 @@ func asyncNotify(ch chan struct{}) {
 	}
 }
 
-const maxOwnerTimeout = int64(20 * time.Minute)
-
-// We define minBgOwnerTimeout and minDDLOwnerTimeout as variable,
-// because we need to change them in test.
-var (
-	minBgOwnerTimeout  = int64(20 * time.Second)
-	minDDLOwnerTimeout = int64(4 * time.Second)
-)
-
-func (d *ddl) getCheckOwnerTimeout(flag JobType) int64 {
-	// we must wait 2 * lease time to guarantee other servers update the schema,
-	// the owner will update its owner status every 2 * lease time, so here we use
-	// 4 * lease to check its timeout.
-	timeout := int64(4 * d.lease)
-	if timeout > maxOwnerTimeout {
-		return maxOwnerTimeout
-	}
-
-	// The value of lease may be less than 1 second, so the operation of
-	// checking owner is frequent and it isn't necessary.
-	// So if timeout is less than 4 second, we will use default minDDLOwnerTimeout.
-	if flag == ddlJobFlag && timeout < minDDLOwnerTimeout {
-		return minDDLOwnerTimeout
-	}
-	if flag == bgJobFlag && timeout < minBgOwnerTimeout {
-		// Background job is serial processing, so we can extend the owner timeout to make sure
-		// a batch of rows will be processed before timeout.
-		// If timeout is less than maxBgOwnerTimeout, we will use default minBgOwnerTimeout.
-		return minBgOwnerTimeout
-	}
-	return timeout
-}
-
-func (d *ddl) isOwner(flag JobType) error {
+func (d *ddl) isOwner(flag JobType) bool {
 	if flag == ddlJobFlag {
-		if d.worker.isOwner() {
-			return nil
-		}
-		log.Infof("[ddl] not %s job owner, self id %s", flag, d.uuid)
-		return errNotOwner
+		isOwner := d.ownerManager.IsOwner()
+		log.Debugf("[ddl] it's the %s job owner %v, self id %s", flag, isOwner, d.uuid)
+		return isOwner
 	}
-	if d.worker.isBgOwner() {
-		return nil
-	}
-	log.Infof("[ddl] not %s job owner, self id %s", flag, d.uuid)
-	return errNotOwner
-}
-
-func (d *ddl) checkOwner(t *meta.Meta, flag JobType) (*model.Owner, error) {
-	if ChangeOwnerInNewWay {
-		return nil, errors.Trace(d.isOwner(flag))
-	}
-	owner, err := d.getJobOwner(t, flag)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if owner == nil {
-		owner = &model.Owner{}
-		// try to set onwer
-		owner.OwnerID = d.uuid
-	}
-
-	now := time.Now().UnixNano()
-	maxTimeout := d.getCheckOwnerTimeout(flag)
-	sub := now - owner.LastUpdateTS
-	if owner.OwnerID == d.uuid || sub > maxTimeout {
-		owner.OwnerID = d.uuid
-		owner.LastUpdateTS = now
-		// update status.
-		switch flag {
-		case ddlJobFlag:
-			err = t.SetDDLJobOwner(owner)
-		case bgJobFlag:
-			err = t.SetBgJobOwner(owner)
-		}
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		log.Debugf("[ddl] become %s job owner, owner is %s sub %vs", flag, owner, sub/1e9)
-	}
-
-	if owner.OwnerID != d.uuid {
-		log.Debugf("[ddl] not %s job owner, self id %s owner is %s", flag, d.uuid, owner.OwnerID)
-		return nil, errors.Trace(errNotOwner)
-	}
-
-	return owner, nil
+	isOwner := d.ownerManager.IsBgOwner()
+	log.Debugf("[ddl] it's the %s job owner %v, self id %s", flag, isOwner, d.uuid)
+	return isOwner
 }
 
 func (d *ddl) getJobOwner(t *meta.Meta, flag JobType) (*model.Owner, error) {
@@ -258,6 +181,7 @@ func (j JobType) String() string {
 }
 
 func (d *ddl) handleDDLJobQueue() error {
+	once := true
 	for {
 		if d.isClosed() {
 			return nil
@@ -267,15 +191,13 @@ func (d *ddl) handleDDLJobQueue() error {
 		var job *model.Job
 		var schemaVer int64
 		err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-			t := meta.NewMeta(txn)
-			owner, err := d.checkOwner(t, ddlJobFlag)
-			if terror.ErrorEqual(err, errNotOwner) {
-				// We are not owner, return and retry checking later.
+			// We are not owner, return and retry checking later.
+			if !d.isOwner(ddlJobFlag) {
 				return nil
-			} else if err != nil {
-				return errors.Trace(err)
 			}
 
+			var err error
+			t := meta.NewMeta(txn)
 			// We become the owner. Get the first job and run it.
 			job, err = d.getFirstDDLJob(t)
 			if job == nil || err != nil {
@@ -288,13 +210,16 @@ func (d *ddl) handleDDLJobQueue() error {
 				// let other servers update the schema.
 				// So here we must check the elapsed time from last update, if < 2 * lease, we must
 				// wait again.
+				// TODO: Check all versions to handle this.
 				elapsed := time.Duration(int64(txn.StartTS()) - job.LastUpdateTS)
-				if elapsed > 0 && elapsed < waitTime {
+				if once && elapsed > 0 && elapsed < waitTime {
 					log.Warnf("[ddl] the elapsed time from last update is %s < %s, wait again", elapsed, waitTime)
 					waitTime -= elapsed
+					time.Sleep(time.Millisecond)
 					return nil
 				}
 			}
+			once = false
 
 			d.hookMu.Lock()
 			d.hook.OnJobRunBefore(job)
@@ -309,15 +234,6 @@ func (d *ddl) handleDDLJobQueue() error {
 			} else {
 				err = d.updateDDLJob(t, job, txn.StartTS())
 			}
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			if ChangeOwnerInNewWay {
-				return nil
-			}
-			owner.LastUpdateTS = time.Now().UnixNano()
-			err = t.SetDDLJobOwner(owner)
 			return errors.Trace(err)
 		})
 		if err != nil {
@@ -335,14 +251,7 @@ func (d *ddl) handleDDLJobQueue() error {
 		// If the job is done or still running, we will wait 2 * lease time to guarantee other servers to update
 		// the newest schema.
 		if job.State == model.JobRunning || job.State == model.JobDone {
-			switch job.Type {
-			case model.ActionCreateSchema, model.ActionDropSchema, model.ActionCreateTable,
-				model.ActionTruncateTable, model.ActionDropTable:
-				// Do not need to wait for those DDL, because those DDL do not need to modify data,
-				// So there is no data inconsistent issue.
-			default:
-				d.waitSchemaChanged(waitTime, schemaVer)
-			}
+			d.waitSchemaChanged(waitTime, schemaVer)
 		}
 		if job.IsFinished() {
 			d.startBgJob(job.Type)
@@ -351,12 +260,11 @@ func (d *ddl) handleDDLJobQueue() error {
 	}
 }
 
-func chooseLeaseTime(n1 time.Duration, n2 time.Duration) time.Duration {
-	if n1 > 0 {
-		return n1
+func chooseLeaseTime(t, max time.Duration) time.Duration {
+	if t == 0 || t > max {
+		return max
 	}
-
-	return n2
+	return t
 }
 
 // runDDLJob runs a DDL job. It returns the current schema version in this transaction.
@@ -439,14 +347,6 @@ func (d *ddl) waitSchemaChanged(waitTime time.Duration, latestSchemaVersion int6
 		return
 	}
 
-	if !ChangeOwnerInNewWay {
-		select {
-		case <-time.After(waitTime):
-		case <-d.quitCh:
-		}
-		return
-	}
-
 	// TODO: Do we need to wait for a while?
 	if latestSchemaVersion == 0 {
 		log.Infof("[ddl] schema version doesn't change")
@@ -455,12 +355,12 @@ func (d *ddl) waitSchemaChanged(waitTime time.Duration, latestSchemaVersion int6
 	// TODO: Make ctx exits when the d is close.
 	ctx, cancelFunc := goctx.WithTimeout(goctx.Background(), waitTime)
 	defer cancelFunc()
-	err := d.worker.updateGlobalVersion(ctx, latestSchemaVersion)
+	err := d.schemaSyncer.OwnerUpdateGlobalVersion(ctx, latestSchemaVersion)
 	if err != nil {
 		log.Infof("[ddl] update latest schema version %d failed %v", latestSchemaVersion, err)
 	}
 
-	err = d.worker.checkAllVersions(ctx, latestSchemaVersion)
+	err = d.schemaSyncer.OwnerCheckAllVersions(ctx, latestSchemaVersion)
 	if err != nil {
 		log.Infof("[ddl] wait latest schema version %d to deadline %v", latestSchemaVersion, err)
 	}

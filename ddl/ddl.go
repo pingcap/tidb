@@ -128,8 +128,8 @@ type DDL interface {
 	Stop() error
 	// RegisterEventCh registers event channel for ddl.
 	RegisterEventCh(chan<- *Event)
-	// SchemaVersionSyncer gets the schema version syncer.
-	SchemaVersionSyncer() *schemaVersionSyncer
+	// SchemaSyncer gets the schema syncer.
+	SchemaSyncer() SchemaSyncer
 }
 
 // Event is an event that a ddl operation happened.
@@ -159,12 +159,12 @@ func (e *Event) String() string {
 type ddl struct {
 	m sync.RWMutex
 
-	infoHandle *infoschema.Handle
-	hook       Callback
-	hookMu     sync.RWMutex
-	store      kv.Storage
-	// worker is used for electing the owner.
-	worker *worker
+	infoHandle   *infoschema.Handle
+	hook         Callback
+	hookMu       sync.RWMutex
+	store        kv.Storage
+	ownerManager OwnerManager
+	schemaSyncer SchemaSyncer
 	// lease is schema seconds.
 	lease        time.Duration
 	uuid         string
@@ -228,15 +228,17 @@ func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 
 	id := uuid.NewV4().String()
 	ctx, cancelFunc := goctx.WithCancel(ctx)
-	worker := &worker{
-		schemaVersionSyncer: &schemaVersionSyncer{
-			etcdCli:           etcdCli,
-			selfSchemaVerPath: fmt.Sprintf("%s/%s", ddlAllSchemaVersions, id),
-		},
-		ddlID:  id,
-		cancel: cancelFunc,
+	var manager OwnerManager
+	var syncer SchemaSyncer
+	// If etcdCli is nil, it's the local store, so use the mockOwnerManager and mockSchemaSyncer.
+	// It's always used for testing.
+	if etcdCli == nil {
+		manager = NewMockOwnerManager(id, cancelFunc)
+		syncer = NewMockSchemaSyncer()
+	} else {
+		manager = NewOwnerManager(etcdCli, id, cancelFunc)
+		syncer = NewSchemaSyncer(etcdCli, id)
 	}
-
 	d := &ddl{
 		infoHandle:   infoHandle,
 		hook:         hook,
@@ -246,7 +248,8 @@ func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 		ddlJobCh:     make(chan struct{}, 1),
 		ddlJobDoneCh: make(chan struct{}, 1),
 		bgJobCh:      make(chan struct{}, 1),
-		worker:       worker,
+		ownerManager: manager,
+		schemaSyncer: syncer,
 	}
 
 	d.start(ctx)
@@ -300,9 +303,7 @@ func (d *ddl) Stop() error {
 
 func (d *ddl) start(ctx goctx.Context) {
 	d.quitCh = make(chan struct{})
-	if ChangeOwnerInNewWay {
-		d.campaignOwners(ctx)
-	}
+	d.ownerManager.CampaignOwners(ctx, &d.wait)
 
 	d.wait.Add(2)
 	go d.onBackgroundWorker()
@@ -320,7 +321,11 @@ func (d *ddl) close() {
 	}
 
 	close(d.quitCh)
-	d.worker.cancel()
+	err := d.schemaSyncer.RemoveSelfVersionPath()
+	if err != nil {
+		log.Errorf("[ddl] remove self version path failed %v", err)
+	}
+	d.ownerManager.Cancel()
 
 	d.wait.Wait()
 	log.Infof("close DDL:%s", d.uuid)
@@ -379,8 +384,9 @@ func (d *ddl) genGlobalID() (int64, error) {
 	return globalID, errors.Trace(err)
 }
 
-func (d *ddl) SchemaVersionSyncer() *schemaVersionSyncer {
-	return d.worker.schemaVersionSyncer
+// SchemaSyncer implements DDL.SchemaSyncer interface.
+func (d *ddl) SchemaSyncer() SchemaSyncer {
+	return d.schemaSyncer
 }
 
 func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
@@ -403,7 +409,8 @@ func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
 	jobID := job.ID
 	// For a job from start to end, the state of it will be none -> delete only -> write only -> reorganization -> public
 	// For every state changes, we will wait as lease 2 * lease time, so here the ticker check is 10 * lease.
-	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, 10*time.Second))
+	// But we use etcd to speed up, normally it takes less than 1s now, so we use 3s as the max value.
+	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, 3*time.Second))
 	startTime := time.Now()
 	jobsGauge.WithLabelValues(JobType(ddlJobFlag).String(), job.Type.String()).Inc()
 	defer func() {

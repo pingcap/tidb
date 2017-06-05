@@ -216,21 +216,19 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 	ctx := testNewContext(d2)
 
 	// d2 must not be owner.
-	testCheckOwner(c, d2, false, ddlJobFlag)
+	d2.ownerManager.SetOwner(false)
+	d2.ownerManager.SetBgOwner(false)
 
 	dbInfo := testSchemaInfo(c, d2, "test")
 	testCreateSchema(c, ctx, d2, dbInfo)
 	testCheckSchemaState(c, d2, dbInfo, model.StatePublic)
 
 	// d2 must not be owner.
-	testCheckOwner(c, d2, false, ddlJobFlag)
+	c.Assert(d2.ownerManager.IsOwner(), IsFalse)
 
 	schemaID, err := d2.genGlobalID()
 	c.Assert(err, IsNil)
 	doDDLJobErr(c, schemaID, 0, model.ActionCreateSchema, []interface{}{dbInfo}, ctx, d2)
-
-	// d2 must not be owner.
-	testCheckOwner(c, d2, false, ddlJobFlag)
 }
 
 func testRunInterruptedJob(c *C, d *ddl, job *model.Job) {
