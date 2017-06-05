@@ -66,7 +66,7 @@ func datum2JSON(d types.Datum, sc *variable.StatementContext) (j json.JSON, err 
 	if d, err = d.ConvertTo(sc, tp); err == nil {
 		j = d.GetMysqlJSON()
 	}
-	return
+	return j, errors.Trace(err)
 }
 
 // parsePathExprs parses strings in datums into json.PathExpression.
