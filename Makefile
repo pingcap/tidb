@@ -124,7 +124,7 @@ race: parserlib
 tikv_integration_test: parserlib
 	$(GOTEST) ./store/tikv/. -with-tikv=true
 
-RACE_FLAG = ""
+RACE_FLAG = 
 ifeq ("$(WITH_RACE)", "1")
 	RACE_FLAG = -race
 	GOBUILD   = GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=1 $(GO) build
