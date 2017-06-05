@@ -76,7 +76,7 @@ type twoPhaseCommitter struct {
 }
 
 // TODO: Should avoid global lock here.
-var twoPhaseCommitGoroutinePool goroutinePool = newGoroutinePool(16*1024, 3*time.Minute)
+var twoPhaseCommitGoroutinePool = newGoroutinePool(16*1024, 3*time.Minute)
 
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
 func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
@@ -700,8 +700,8 @@ func (g *goroutine) Run(f func(), gp *pools.ResourcePool) {
 	g.ch <- f
 }
 
-func (r *goroutine) Close() {
-	close(r.ch)
+func (g *goroutine) Close() {
+	close(g.ch)
 }
 
 func newGoroutine() (pools.Resource, error) {
