@@ -3973,6 +3973,11 @@ CastType:
 		x.Flag |= mysql.UnsignedFlag
 		$$ = x
 	}
+|	"JSON"
+	{
+		x := types.NewFieldType(mysql.TypeJSON)
+		$$ = x
+	}
 
 
 PrimaryFactor:
