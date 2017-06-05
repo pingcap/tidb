@@ -162,25 +162,32 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, key string, wg *sync.Wait
 			continue
 		}
 
-		// Get owner information.
-		resp, err := elec.Leader(ctx)
+		ownerKey, err := GetOwnerInfo(ctx, elec, key, m.ddlID)
 		if err != nil {
-			// If no leader elected currently, it returns ErrElectionNoLeader.
-			log.Infof("[ddl] failed to get leader, err %v", err)
 			continue
 		}
-		leader := string(resp.Kvs[0].Value)
-		log.Infof("[ddl] %s ownerManager is %s, owner is %v", key, m.ddlID, leader)
-		if leader == m.ddlID {
-			m.setOwnerVal(key, true)
-		} else {
-			log.Warnf("[ddl] ownerManager %s isn't the owner", m.ddlID)
-			continue
-		}
+		m.setOwnerVal(key, true)
 
-		m.watchOwner(ctx, string(resp.Kvs[0].Key))
+		m.watchOwner(ctx, ownerKey)
 		m.setOwnerVal(key, false)
 	}
+}
+
+func GetOwnerInfo(ctx goctx.Context, elec *concurrency.Election, key, id string) (string, error) {
+	resp, err := elec.Leader(ctx)
+	if err != nil {
+		// If no leader elected currently, it returns ErrElectionNoLeader.
+		log.Infof("[ddl] failed to get leader, err %v", err)
+		return "", errors.Trace(err)
+	}
+	ownerID := string(resp.Kvs[0].Value)
+	log.Infof("[ddl] %s ownerManager is %s, owner is %v", key, id, ownerID)
+	if ownerID != id {
+		log.Warnf("[ddl] ownerManager %s isn't the owner", id)
+		return "", errors.New("ownerInfoNotMatch")
+	}
+
+	return string(resp.Kvs[0].Key), nil
 }
 
 func (m *ownerManager) setOwnerVal(key string, val bool) {
