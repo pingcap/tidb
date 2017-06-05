@@ -424,9 +424,11 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = types.NewFieldType(mysql.TypeBlob)
 	case ast.Uncompress:
 		tp = types.NewFieldType(mysql.TypeLongBlob)
-	case ast.JSONType:
+	case ast.JSONType, ast.JSONUnquote:
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
+	case ast.JSONSet, ast.JSONInsert, ast.JSONReplace, ast.JSONMerge:
+		tp = types.NewFieldType(mysql.TypeJSON)
 	case ast.AnyValue:
 		tp = x.Args[0].GetType()
 	case ast.RowFunc:

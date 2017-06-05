@@ -95,17 +95,19 @@ func (s *testEvaluatorSuite) TestJSONExtract(c *C) {
 // TestJSONSetInsertReplace tests grammar of json_{set,insert,replace}.
 func (s *testEvaluatorSuite) TestJSONSetInsertReplace(c *C) {
 	defer testleak.AfterTest(c)()
-	fc := funcs[ast.JSONSet]
 	tbl := []struct {
+		fc       functionClass
 		Input    []interface{}
 		Expected interface{}
 	}{
-		{[]interface{}{nil, nil, nil}, nil},
-		{[]interface{}{`{}`, `$.a`, 3}, `{"a": 3}`},
+		{funcs[ast.JSONSet], []interface{}{nil, nil, nil}, nil},
+		{funcs[ast.JSONSet], []interface{}{`{}`, `$.a`, 3}, `{"a": 3}`},
+		{funcs[ast.JSONInsert], []interface{}{`{}`, `$.a`, 3}, `{"a": 3}`},
+		{funcs[ast.JSONReplace], []interface{}{`{}`, `$.a`, 3}, `{}`},
 	}
 	for _, t := range tbl {
 		args := types.MakeDatums(t.Input...)
-		f, err := fc.getFunction(datumsToConstants(args), s.ctx)
+		f, err := t.fc.getFunction(datumsToConstants(args), s.ctx)
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
