@@ -189,6 +189,8 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, key string, wg *sync.Wait
 	}
 }
 
+// GetOwnerInfo gets the owner information.
+// And extracting it into a function can improve the test coverage.
 func GetOwnerInfo(ctx goctx.Context, elec *concurrency.Election, key, id string) (string, error) {
 	resp, err := elec.Leader(ctx)
 	if err != nil {
