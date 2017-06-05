@@ -17,8 +17,15 @@
 package tikv
 
 import (
+	"testing"
+
 	. "github.com/pingcap/check"
 )
+
+func TestT(t *testing.T) {
+	CustomVerboseFlag = true
+	TestingT(t)
+}
 
 type testClientSuite struct {
 }

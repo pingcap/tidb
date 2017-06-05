@@ -17,6 +17,8 @@ import (
 	"math"
 	"math/rand"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
@@ -25,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/testleak"
 	goctx "golang.org/x/net/context"
 )
 
@@ -405,4 +408,29 @@ func (s *testCommitterSuite) TestCommitPrimaryError(c *C) {
 	c.Assert(err, NotNil)
 
 	c.Assert(terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue)
+}
+
+func (s *testCommitterSuite) TestGoroutinePool(c *C) {
+	defer testleak.AfterTest(c)()
+	var wg sync.WaitGroup
+	pool := newGoroutinePool(10, 20*time.Second)
+	count := 100
+	var value uint64
+	wg.Add(count)
+	for i := 0; i < count; i++ {
+		pool.Go(func() {
+			atomic.AddUint64(&value, 1)
+			wg.Done()
+		})
+	}
+	wg.Wait()
+	c.Assert(value, Equals, 100)
+	capacity, available, maxCap, waitCount, waitTime, idelTimeout := pool.Stats()
+	c.Assert(capacity, Equals, 10)
+	c.Assert(available, Equals, 10)
+	c.Assert(maxCap, Equals, 10)
+	c.Assert(waitCount, Equals, 0)
+	c.Assert(waitTime, Equals, 0)
+	c.Assert(idelTimeout, Equals, 20*time.Second)
+	pool.Close()
 }
