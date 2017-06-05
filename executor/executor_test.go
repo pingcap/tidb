@@ -31,7 +31,9 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -1419,4 +1421,22 @@ func (s *testSuite) TestTimestampTimeZone(c *C) {
 		tk.MustExec(fmt.Sprintf("set time_zone = '%s'", tt.timezone))
 		tk.MustQuery(fmt.Sprintf("select * from t where ts = '%s'", tt.expect)).Check(testkit.Rows(tt.expect))
 	}
+}
+
+func (s *testSuite) TestTiDBCurrentTS(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
+	tk.MustExec("begin")
+	rows := tk.MustQuery("select @@tidb_current_ts").Rows()
+	tsStr := rows[0][0].(string)
+	c.Assert(tsStr, Equals, fmt.Sprintf("%d", tk.Se.Txn().StartTS()))
+	tk.MustExec("commit")
+	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
+
+	_, err := tk.Exec("set @@tidb_current_ts = '1'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrReadOnly), IsTrue)
 }
