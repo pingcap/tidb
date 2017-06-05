@@ -363,9 +363,17 @@ func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
 	}
 	wg.Wait()
 	se.sysSessionPool().Close()
+	c.Assert(se.sysSessionPool().IsClosed(), Equals, true)
+	for i := 0; i < 300; i++ {
+		// After and before should be Equal, but this test may be disturbed by other factors.
+		// So I relax the strict check to make CI more stable.
+		after := runtime.NumGoroutine()
+		if after-before < 3 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 	after := runtime.NumGoroutine()
-	// After and before should be Equal, but this test may be disturbed by other factors.
-	// So I relax the strict check to make CI more stable.
 	c.Assert(after-before, Less, 3)
 }
 
