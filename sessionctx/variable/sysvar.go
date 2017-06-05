@@ -60,6 +60,7 @@ const (
 	CodeUnknownSystemVar terror.ErrCode = 1193
 	CodeIncorrectScope   terror.ErrCode = 1238
 	CodeUnknownTimeZone  terror.ErrCode = 1298
+	CodeReadOnly         terror.ErrCode = 1621
 )
 
 // Variable errors
@@ -68,6 +69,7 @@ var (
 	UnknownSystemVar   = terror.ClassVariable.New(CodeUnknownSystemVar, "unknown system variable '%s'")
 	ErrIncorrectScope  = terror.ClassVariable.New(CodeIncorrectScope, "Incorrect variable scope")
 	ErrUnknownTimeZone = terror.ClassVariable.New(CodeUnknownTimeZone, "unknown or incorrect time zone: %s")
+	ErrReadOnly        = terror.ClassVariable.New(CodeReadOnly, "variable is read only")
 )
 
 func init() {
@@ -81,6 +83,7 @@ func init() {
 		CodeUnknownSystemVar: mysql.ErrUnknownSystemVariable,
 		CodeIncorrectScope:   mysql.ErrIncorrectGlobalLocalVar,
 		CodeUnknownTimeZone:  mysql.ErrUnknownTimeZone,
+		CodeReadOnly:         mysql.ErrVariableIsReadonly,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassVariable] = mySQLErrCodes
 }
@@ -606,6 +609,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBMaxRowCountForINLJ, strconv.Itoa(DefMaxRowCountForINLJ)},
 	{ScopeGlobal | ScopeSession, TiDBSkipUTF8Check, boolToIntStr(DefSkipUTF8Check)},
 	{ScopeSession, TiDBBatchInsert, boolToIntStr(DefBatchInsert)},
+	{ScopeSession, TiDBCurrentTS, strconv.Itoa(DefCurretTS)},
 }
 
 // SetNamesVariables is the system variable names related to set names statements.
