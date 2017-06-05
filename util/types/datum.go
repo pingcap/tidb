@@ -830,39 +830,43 @@ func (d *Datum) convertToString(sc *variable.StatementContext, target *FieldType
 	default:
 		return invalidConv(d, target.Tp)
 	}
-
-	var err error
-	if target.Flen >= 0 {
-		// Flen is the rune length, not binary length, for UTF8 charset, we need to calculate the
-		// rune count and truncate to Flen runes if it is too long.
-		if target.Charset == charset.CharsetUTF8 || target.Charset == charset.CharsetUTF8MB4 {
-			var runeCount int
-			var truncateLen int
-			for i := range s {
-				runeCount++
-				if runeCount == target.Flen+1 {
-					// We don't break here because we need to iterate to the end to get runeCount.
-					truncateLen = i
-				}
-			}
-			if truncateLen > 0 {
-				if !sc.IgnoreTruncate {
-					err = ErrDataTooLong.Gen("Data Too Long, field len %d, data len %d", target.Flen, runeCount)
-				}
-				s = truncateStr(s, truncateLen)
-			}
-		} else if len(s) > target.Flen {
-			if !sc.IgnoreTruncate {
-				err = ErrDataTooLong.Gen("Data Too Long, field len %d, data len %d", target.Flen, len(s))
-			}
-			s = truncateStr(s, target.Flen)
-		}
-	}
+	s, err := produceStrWithSpecifiedTp(s, target, sc)
 	ret.SetString(s)
 	if target.Charset == charset.CharsetBin {
 		ret.k = KindBytes
 	}
 	return ret, errors.Trace(err)
+}
+
+// produceStrWithSpecifiedTp produces a new string according to `Tp`.
+func produceStrWithSpecifiedTp(s string, tp *FieldType, sc *variable.StatementContext) (_ string, err error) {
+	flen, chs := tp.Flen, tp.Charset
+	if flen >= 0 {
+		// Flen is the rune length, not binary length, for UTF8 charset, we need to calculate the
+		// rune count and truncate to Flen runes if it is too long.
+		if chs == charset.CharsetUTF8 || chs == charset.CharsetUTF8MB4 {
+			var runeCount int
+			var truncateLen int
+			for i := range s {
+				runeCount++
+				if runeCount == flen+1 {
+					// We don't break here because we need to iterate to the end to get runeCount.
+					truncateLen = i
+				}
+			}
+			if truncateLen > 0 || flen == 0 {
+				err = ErrDataTooLong.Gen("Data Too Long, field len %d, data len %d", flen, runeCount)
+				s = truncateStr(s, truncateLen)
+			}
+		} else if len(s) > flen {
+			err = ErrDataTooLong.Gen("Data Too Long, field len %d, data len %d", flen, len(s))
+			s = truncateStr(s, flen)
+		} else if len(s) < flen {
+			padding := make([]byte, flen-len(s))
+			s = string(append([]byte(s), padding...))
+		}
+	}
+	return s, errors.Trace(sc.HandleTruncate(err))
 }
 
 func (d *Datum) convertToInt(sc *variable.StatementContext, target *FieldType) (Datum, error) {
