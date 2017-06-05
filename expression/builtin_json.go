@@ -94,6 +94,8 @@ func createJSONFromDatums(datums []types.Datum) ([]json.JSON, error) {
 		switch datum.Kind() {
 		case types.KindNull:
 			j = json.CreateJSON(nil)
+		case types.KindMysqlJSON:
+			j = datum.GetMysqlJSON()
 		case types.KindInt64, types.KindUint64:
 			j = json.CreateJSON(datum.GetInt64())
 		case types.KindFloat32, types.KindFloat64:

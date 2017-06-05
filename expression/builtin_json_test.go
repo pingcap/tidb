@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/types/json"
 )
 
 func (s *testEvaluatorSuite) TestJSONType(c *C) {
@@ -88,5 +89,66 @@ func (s *testEvaluatorSuite) TestJSONExtract(c *C) {
 		c.Assert(err, IsNil)
 		expected := types.MakeDatums([]interface{}{t.Expected}...)
 		c.Assert(d, testutil.DatumEquals, expected[0])
+	}
+}
+
+// TestJSONSetInsertReplace tests grammar of json_{set,insert,replace}.
+func (s *testEvaluatorSuite) TestJSONSetInsertReplace(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.JSONSet]
+	tbl := []struct {
+		Input    []interface{}
+		Expected interface{}
+	}{
+		{[]interface{}{nil, nil, nil}, nil},
+		{[]interface{}{`{}`, `$.a`, 3}, `{"a": 3}`},
+	}
+	for _, t := range tbl {
+		args := types.MakeDatums(t.Input...)
+		f, err := fc.getFunction(datumsToConstants(args), s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+		c.Assert(err, IsNil)
+
+		switch x := t.Expected.(type) {
+		case nil:
+		case string:
+			j1, err := json.ParseFromString(x)
+			c.Assert(err, IsNil)
+			j2 := d.GetMysqlJSON()
+			cmp, err := json.CompareJSON(j1, j2)
+			c.Assert(err, IsNil)
+			c.Assert(cmp, Equals, 0)
+		}
+	}
+}
+
+func (s *testEvaluatorSuite) TestJSONMerge(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.JSONMerge]
+	tbl := []struct {
+		Input    []interface{}
+		Expected interface{}
+	}{
+		{[]interface{}{nil, nil}, nil},
+		{[]interface{}{`{}`, `[]`}, `[]`},
+	}
+	for _, t := range tbl {
+		args := types.MakeDatums(t.Input...)
+		f, err := fc.getFunction(datumsToConstants(args), s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+		c.Assert(err, IsNil)
+
+		switch x := t.Expected.(type) {
+		case nil:
+		case string:
+			j1, err := json.ParseFromString(x)
+			c.Assert(err, IsNil)
+			j2 := d.GetMysqlJSON()
+			cmp, err := json.CompareJSON(j1, j2)
+			c.Assert(err, IsNil)
+			c.Assert(cmp, Equals, 0)
+		}
 	}
 }
