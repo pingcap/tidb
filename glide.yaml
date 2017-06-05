@@ -68,28 +68,15 @@ import:
 - package: github.com/twinj/uuid
   version: 70cac2bcd273ef6a371bb96cde363d28b68734c3
 - package: golang.org/x/net
-  version: 6acef71eb69611914f7a30939ea9f6e194c78172
+  version: d1e1b351919c6738fdeb9893d5c998b161464f0c
   subpackages:
   - context
   - http2
   - http2/hpack
   - internal/timeseries
   - trace
-- package: golang.org/x/text
-  version: 723492b65e225eafcba054e76ba18bb9c5ac1ea2
-  subpackages:
-  - encoding
-  - encoding/charmap
-  - encoding/internal
-  - encoding/internal/identifier
-  - encoding/japanese
-  - encoding/korean
-  - encoding/simplifiedchinese
-  - encoding/traditionalchinese
-  - encoding/unicode
-  - transform
 - package: google.golang.org/grpc
-  version: v1.2.1
+  version: 3419b42955675df23457629c75f58eb8dcd56954
   subpackages:
   - codes
   - credentials
