@@ -69,7 +69,7 @@ func datum2JSON(d types.Datum, sc *variable.StatementContext) (j json.JSON, err 
 	return
 }
 
-// parsePathExprs parse strings in datums into json.PathExpression.
+// parsePathExprs parses strings in datums into json.PathExpression.
 func parsePathExprs(datums []types.Datum) ([]json.PathExpression, error) {
 	pathExprs := make([]json.PathExpression, 0, len(datums))
 	for _, datum := range datums {
