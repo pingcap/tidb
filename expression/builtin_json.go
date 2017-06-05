@@ -86,8 +86,8 @@ func parsePathExprs(datums []types.Datum) ([]json.PathExpression, error) {
 func createJSONFromDatums(datums []types.Datum) ([]json.JSON, error) {
 	jsons := make([]json.JSON, 0, len(datums))
 	for _, datum := range datums {
-		// TODO Here sematic of creating JSON from datum is same with types.compareMysqlJSON.
-		// But it's different from "CAST sematic" because for string, cast will parse it into
+		// TODO: Here semantic of creating JSON from datum is the same with types.compareMysqlJSON.
+		// But it's different from "CAST semantic" because for string, cast will parse it into
 		// JSON but here and compareMysqlJSON needs a JSON with the string as primitives.
 		// We should rewrite this as a function for here and compareMysqlJSON both can use it.
 		var j json.JSON
@@ -101,7 +101,10 @@ func createJSONFromDatums(datums []types.Datum) ([]json.JSON, error) {
 		case types.KindFloat32, types.KindFloat64:
 			j = json.CreateJSON(datum.GetFloat64())
 		case types.KindMysqlDecimal:
-			f64, _ := datum.GetMysqlDecimal().ToFloat64()
+			f64, err := datum.GetMysqlDecimal().ToFloat64()
+			if err != nil {
+				return jsons, errors.Trace(err)
+			}
 			j = json.CreateJSON(f64)
 		case types.KindString, types.KindBytes:
 			j = json.CreateJSON(datum.GetString())
@@ -124,15 +127,16 @@ func jsonModify(b baseBuiltinFunc, row []types.Datum, mt json.ModifyType) (j jso
 		return j, errors.Trace(err)
 	}
 	if argsAnyNull(args) {
-		return j, errors.Trace(err)
+		return j, nil
 	}
 	j, err = datum2JSON(args[0], b.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
 		return j, errors.Trace(err)
 	}
 
-	pes := make([]types.Datum, 0, (len(args)-1)/2)
-	vs := make([]types.Datum, 0, (len(args)-1)/2)
+	// alloc 1 extra element, for len(args) is an even number.
+	pes := make([]types.Datum, 0, (len(args)-1)/2+1)
+	vs := make([]types.Datum, 0, (len(args)-1)/2+1)
 	for i := 1; i < len(args); i++ {
 		if i&1 == 1 {
 			pes = append(pes, args[i])
@@ -174,7 +178,7 @@ func (b *builtinJSONTypeSig) eval(row []types.Datum) (d types.Datum, err error) 
 		return d, errors.Trace(err)
 	}
 	if argsAnyNull(args) {
-		return d, errors.Trace(err)
+		return d, nil
 	}
 	djson, err := datum2JSON(args[0], b.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
@@ -202,7 +206,7 @@ func (b *builtinJSONExtractSig) eval(row []types.Datum) (d types.Datum, err erro
 		return d, errors.Trace(err)
 	}
 	if argsAnyNull(args) {
-		return d, errors.Trace(err)
+		return d, nil
 	}
 	djson, err := datum2JSON(args[0], b.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
@@ -236,7 +240,7 @@ func (b *builtinJSONUnquoteSig) eval(row []types.Datum) (d types.Datum, err erro
 		return d, errors.Trace(err)
 	}
 	if argsAnyNull(args) {
-		return d, errors.Trace(err)
+		return d, nil
 	}
 	djson, err := datum2JSON(args[0], b.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
@@ -331,7 +335,7 @@ func (b *builtinJSONMergeSig) eval(row []types.Datum) (d types.Datum, err error)
 		return d, errors.Trace(err)
 	}
 	if argsAnyNull(args) {
-		return d, errors.Trace(err)
+		return d, nil
 	}
 	jsons := make([]json.JSON, 0, len(args))
 	for _, arg := range args {

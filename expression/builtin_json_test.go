@@ -59,6 +59,7 @@ func (s *testEvaluatorSuite) TestJSONUnquote(c *C) {
 		{`3`, `3`},
 		{`{"a": "b"}`, `{"a":"b"}`},
 		{`"hello,\"quoted string\",world"`, `hello,"quoted string",world`},
+		{`"hello,\"宽字符\",world"`, `hello,"宽字符",world`},
 	}
 	dtbl := tblToDtbl(tbl)
 	for _, t := range dtbl {
@@ -79,7 +80,7 @@ func (s *testEvaluatorSuite) TestJSONExtract(c *C) {
 		Expected interface{}
 	}{
 		{[]interface{}{nil, nil}, nil},
-		{[]interface{}{jstr, `$.a[0].aa[0].aaa`}, 1},
+		{[]interface{}{jstr, `$.a[0].aa[0].aaa`, `$.aaa`}, `[1, 2]`},
 	}
 	for _, t := range tbl {
 		args := types.MakeDatums(t.Input...)
@@ -87,8 +88,16 @@ func (s *testEvaluatorSuite) TestJSONExtract(c *C) {
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
 		c.Assert(err, IsNil)
-		expected := types.MakeDatums([]interface{}{t.Expected}...)
-		c.Assert(d, testutil.DatumEquals, expected[0])
+
+		switch x := t.Expected.(type) {
+		case string:
+			j1, err := json.ParseFromString(x)
+			c.Assert(err, IsNil)
+			j2 := d.GetMysqlJSON()
+			cmp, err := json.CompareJSON(j1, j2)
+			c.Assert(err, IsNil)
+			c.Assert(cmp, Equals, 0)
+		}
 	}
 }
 
@@ -104,6 +113,7 @@ func (s *testEvaluatorSuite) TestJSONSetInsertReplace(c *C) {
 		{funcs[ast.JSONSet], []interface{}{`{}`, `$.a`, 3}, `{"a": 3}`},
 		{funcs[ast.JSONInsert], []interface{}{`{}`, `$.a`, 3}, `{"a": 3}`},
 		{funcs[ast.JSONReplace], []interface{}{`{}`, `$.a`, 3}, `{}`},
+		{funcs[ast.JSONSet], []interface{}{`{}`, `$.a`, 3, `$.b`, "3"}, `{"a": 3, "b": "3"}`},
 	}
 	for _, t := range tbl {
 		args := types.MakeDatums(t.Input...)
@@ -134,6 +144,7 @@ func (s *testEvaluatorSuite) TestJSONMerge(c *C) {
 	}{
 		{[]interface{}{nil, nil}, nil},
 		{[]interface{}{`{}`, `[]`}, `[{}]`},
+		{[]interface{}{`{}`, `[]`, `3`, `"4"`}, `[{}, 3, "4"]`},
 	}
 	for _, t := range tbl {
 		args := types.MakeDatums(t.Input...)
