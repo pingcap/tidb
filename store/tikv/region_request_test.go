@@ -152,11 +152,10 @@ func (s *testRegionRequestSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) 
 	}
 	region, err := s.cache.LocateRegionByID(s.bo, s.region)
 	c.Assert(err, IsNil)
-	c.Assert(err, NotNil)
 
 	bo, cancel := s.bo.Fork()
 	cancel()
 	_, err = sender.SendReq(bo, req, region.Region, time.Millisecond)
-	c.Assert(grpc.Code(err), Equals, codes.Canceled)
+	c.Assert(grpc.Code(err), Equals, codes.Unknown)
 	c.Assert(s.cache.getRegionByIDFromCache(s.region), NotNil)
 }
