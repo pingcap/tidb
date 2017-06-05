@@ -336,7 +336,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`json_set('{"a": 1}', '$.a', 3)`, mysql.TypeJSON, charset.CharsetBin, mysql.BinaryFlag},
 		{`json_insert('{"a": 1}', '$.a', 3)`, mysql.TypeJSON, charset.CharsetBin, mysql.BinaryFlag},
 		{`json_replace('{"a": 1}', '$.a', 3)`, mysql.TypeJSON, charset.CharsetBin, mysql.BinaryFlag},
-		{`json_replace('{"a": 1}', '3')`, mysql.TypeJSON, charset.CharsetBin, mysql.BinaryFlag},
+		{`json_merge('{"a": 1}', '3')`, mysql.TypeJSON, charset.CharsetBin, mysql.BinaryFlag},
 	}
 	for _, tt := range tests {
 		ctx := testKit.Se.(context.Context)
