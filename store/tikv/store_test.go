@@ -19,14 +19,13 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	pd "github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb"
 	mocktikv "github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
 )
 
@@ -243,32 +242,14 @@ func (c *busyClient) Close() error {
 	return c.client.Close()
 }
 
-func (c *busyClient) SendKVReq(ctx goctx.Context, addr string, req *kvrpcpb.Request, timeout time.Duration) (*kvrpcpb.Response, error) {
+func (c *busyClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
 	if c.mu.isBusy {
-		return &kvrpcpb.Response{
-			RegionError: &errorpb.Error{
-				ServerIsBusy: &errorpb.ServerIsBusy{},
-			},
-		}, nil
+		return tikvrpc.GenRegionErrorResp(req, &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}})
 	}
-	return c.client.SendKVReq(ctx, addr, req, timeout)
-}
-
-func (c *busyClient) SendCopReq(ctx goctx.Context, addr string, req *coprocessor.Request, timeout time.Duration) (*coprocessor.Response, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if c.mu.isBusy {
-		return &coprocessor.Response{
-			RegionError: &errorpb.Error{
-				ServerIsBusy: &errorpb.ServerIsBusy{},
-			},
-		}, nil
-	}
-	return c.client.SendCopReq(ctx, addr, req, timeout)
+	return c.client.SendReq(ctx, addr, req)
 }
 
 type mockPDClient struct {

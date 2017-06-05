@@ -26,6 +26,7 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tipb/go-binlog"
@@ -218,6 +219,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	if action == actionCommit {
 		// Commit secondary batches in background goroutine to reduce latency.
 		go func() {
+			reserveStack(false)
 			e := c.doActionOnBatches(bo, action, batches)
 			if e != nil {
 				log.Debugf("2PC async doActionOnBatches %s err: %v", action, e)
@@ -227,6 +229,17 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 		err = c.doActionOnBatches(bo, action, batches)
 	}
 	return errors.Trace(err)
+}
+
+// reserveStack reserves 4KB memory on the stack to avoid runtime.morestack, call it after new a goroutine if necessary.
+func reserveStack(dummy bool) {
+	var buf [8 << 10]byte
+	// avoid compiler optimize the buf out.
+	if dummy {
+		for i := range buf {
+			buf[i] = byte(i)
+		}
+	}
 }
 
 // doActionOnBatches does action to batches in parallel.
@@ -262,6 +275,7 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 	ch := make(chan error, len(batches))
 	for _, batch := range batches {
 		go func(batch batchKeys) {
+			reserveStack(false)
 			if action == actionCommit {
 				// Because the secondary batches of the commit actions are implemented to be
 				// committed asynchronously in background goroutines, we should not
@@ -285,6 +299,7 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 			log.Debugf("2PC doActionOnBatches %s failed: %v, tid: %d", action, e, c.startTS)
 			// Cancel other requests and return the first error.
 			if cancel != nil {
+				log.Debugf("2PC doActionOnBatches %s to cancel other actions, tid: %d", action, c.startTS)
 				cancel()
 			}
 			if err == nil {
@@ -318,9 +333,9 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 	if skip, ok := optSkipCheck.(bool); ok && skip {
 		skipCheck = true
 	}
-	req := &pb.Request{
-		Type: pb.MessageType_CmdPrewrite,
-		CmdPrewriteReq: &pb.CmdPrewriteRequest{
+	req := &tikvrpc.Request{
+		Type: tikvrpc.CmdPrewrite,
+		Prewrite: &pb.PrewriteRequest{
 			Mutations:           mutations,
 			PrimaryLock:         c.primary(),
 			StartVersion:        c.startTS,
@@ -330,11 +345,15 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 	}
 
 	for {
-		resp, err := c.store.SendKVReq(bo, req, batch.region, readTimeoutShort)
+		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if regionErr := resp.GetRegionError(); regionErr != nil {
+		regionErr, err := resp.GetRegionError()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if regionErr != nil {
 			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)
@@ -342,7 +361,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			err = c.prewriteKeys(bo, batch.keys)
 			return errors.Trace(err)
 		}
-		prewriteResp := resp.GetCmdPrewriteResp()
+		prewriteResp := resp.Prewrite
 		if prewriteResp == nil {
 			return errors.Trace(errBodyMissing)
 		}
@@ -377,20 +396,24 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 }
 
 func (c *twoPhaseCommitter) doCommitSingleBatch(bo *Backoffer, batch batchKeys) error {
-	req := &pb.Request{
-		Type: pb.MessageType_CmdCommit,
-		CmdCommitReq: &pb.CmdCommitRequest{
+	req := &tikvrpc.Request{
+		Type: tikvrpc.CmdCommit,
+		Commit: &pb.CommitRequest{
 			StartVersion:  c.startTS,
 			Keys:          batch.keys,
 			CommitVersion: c.commitTS,
 		},
 	}
 
-	resp, err := c.store.SendKVReq(bo, req, batch.region, readTimeoutShort)
+	resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if regionErr := resp.GetRegionError(); regionErr != nil {
+	regionErr, err := resp.GetRegionError()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if regionErr != nil {
 		err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
 			return errors.Trace(err)
@@ -399,7 +422,7 @@ func (c *twoPhaseCommitter) doCommitSingleBatch(bo *Backoffer, batch batchKeys) 
 		err = c.commitKeys(bo, batch.keys)
 		return errors.Trace(err)
 	}
-	commitResp := resp.GetCmdCommitResp()
+	commitResp := resp.Commit
 	if commitResp == nil {
 		return errors.Trace(errBodyMissing)
 	}
@@ -442,18 +465,22 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 }
 
 func (c *twoPhaseCommitter) cleanupSingleBatch(bo *Backoffer, batch batchKeys) error {
-	req := &pb.Request{
-		Type: pb.MessageType_CmdBatchRollback,
-		CmdBatchRollbackReq: &pb.CmdBatchRollbackRequest{
+	req := &tikvrpc.Request{
+		Type: tikvrpc.CmdBatchRollback,
+		BatchRollback: &pb.BatchRollbackRequest{
 			Keys:         batch.keys,
 			StartVersion: c.startTS,
 		},
 	}
-	resp, err := c.store.SendKVReq(bo, req, batch.region, readTimeoutShort)
+	resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if regionErr := resp.GetRegionError(); regionErr != nil {
+	regionErr, err := resp.GetRegionError()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if regionErr != nil {
 		err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
 			return errors.Trace(err)
@@ -461,7 +488,7 @@ func (c *twoPhaseCommitter) cleanupSingleBatch(bo *Backoffer, batch batchKeys) e
 		err = c.cleanupKeys(bo, batch.keys)
 		return errors.Trace(err)
 	}
-	if keyErr := resp.GetCmdBatchRollbackResp().GetError(); keyErr != nil {
+	if keyErr := resp.BatchRollback.GetError(); keyErr != nil {
 		err = errors.Errorf("2PC cleanup failed: %s", keyErr)
 		log.Debugf("2PC failed cleanup key: %v, tid: %d", err, c.startTS)
 		return errors.Trace(err)
@@ -496,6 +523,7 @@ func (c *twoPhaseCommitter) execute() error {
 		c.mu.RUnlock()
 		if !committed {
 			go func() {
+				reserveStack(false)
 				err := c.cleanupKeys(NewBackoffer(cleanupMaxBackoff, goctx.Background()), writtenKeys)
 				if err != nil {
 					log.Infof("2PC cleanup err: %v, tid: %d", err, c.startTS)
