@@ -154,6 +154,7 @@ endif
 	glide vc --only-code --no-tests
 	mkdir -p _vendor
 	mv vendor _vendor/src
+	ln -s _vendor/src vendor
 
 checklist:
 	cat checklist.md
