@@ -108,8 +108,7 @@ func (b *builtinCastIntAsDecimalSig) evalDecimal(row []types.Datum) (res *types.
 
 type builtinCastIntAsStringSig struct {
 	baseStringBuiltinFunc
-	flen int
-	chs  string
+	tp *types.FieldType
 }
 
 func (b *builtinCastIntAsStringSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
@@ -118,7 +117,7 @@ func (b *builtinCastIntAsStringSig) evalString(row []types.Datum) (res string, i
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = types.ProduceStrWithSpecifiedTp(strconv.FormatInt(val, 10), b.flen, b.chs, sc)
+	res, err = types.ProduceStrWithSpecifiedTp(strconv.FormatInt(val, 10), b.tp, sc)
 	return res, false, errors.Trace(err)
 }
 
@@ -189,8 +188,7 @@ func (b *builtinCastRealAsDecimalSig) evalDecimal(row []types.Datum) (res *types
 
 type builtinCastRealAsStringSig struct {
 	baseStringBuiltinFunc
-	flen int
-	chs  string
+	tp *types.FieldType
 }
 
 func (b *builtinCastRealAsStringSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
@@ -199,7 +197,7 @@ func (b *builtinCastRealAsStringSig) evalString(row []types.Datum) (res string, 
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = types.ProduceStrWithSpecifiedTp(strconv.FormatFloat(val, 'f', -1, 64), b.flen, b.chs, sc)
+	res, err = types.ProduceStrWithSpecifiedTp(strconv.FormatFloat(val, 'f', -1, 64), b.tp, sc)
 	return res, isNull, errors.Trace(err)
 }
 
@@ -260,8 +258,7 @@ func (b *builtinCastDecimalAsIntSig) evalInt(row []types.Datum) (res int64, isNu
 
 type builtinCastDecimalAsStringSig struct {
 	baseStringBuiltinFunc
-	flen int
-	chs  string
+	tp *types.FieldType
 }
 
 func (b *builtinCastDecimalAsStringSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
@@ -270,7 +267,7 @@ func (b *builtinCastDecimalAsStringSig) evalString(row []types.Datum) (res strin
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = types.ProduceStrWithSpecifiedTp(string(val.ToString()), b.flen, b.chs, sc)
+	res, err = types.ProduceStrWithSpecifiedTp(string(val.ToString()), b.tp, sc)
 	return res, false, errors.Trace(err)
 }
 
@@ -318,8 +315,7 @@ func (b *builtinCastDecimalAsDurationSig) evalDuration(row []types.Datum) (res t
 
 type builtinCastStringAsStringSig struct {
 	baseStringBuiltinFunc
-	flen int
-	chs  string
+	tp *types.FieldType
 }
 
 func (b *builtinCastStringAsStringSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
@@ -328,7 +324,7 @@ func (b *builtinCastStringAsStringSig) evalString(row []types.Datum) (res string
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = types.ProduceStrWithSpecifiedTp(res, b.flen, b.chs, sc)
+	res, err = types.ProduceStrWithSpecifiedTp(res, b.tp, sc)
 	return res, false, errors.Trace(err)
 }
 
@@ -469,8 +465,7 @@ func (b *builtinCastTimeAsDecimalSig) evalDecimal(row []types.Datum) (res *types
 
 type builtinCastTimeAsStringSig struct {
 	baseStringBuiltinFunc
-	flen int
-	chs  string
+	tp *types.FieldType
 }
 
 func (b *builtinCastTimeAsStringSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
@@ -479,7 +474,7 @@ func (b *builtinCastTimeAsStringSig) evalString(row []types.Datum) (res string, 
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = types.ProduceStrWithSpecifiedTp(val.String(), b.flen, b.chs, sc)
+	res, err = types.ProduceStrWithSpecifiedTp(val.String(), b.tp, sc)
 	return res, false, errors.Trace(err)
 }
 
@@ -548,8 +543,7 @@ func (b *builtinCastDurationAsDecimalSig) evalDecimal(row []types.Datum) (res *t
 
 type builtinCastDurationAsStringSig struct {
 	baseStringBuiltinFunc
-	flen int
-	chs  string
+	tp *types.FieldType
 }
 
 func (b *builtinCastDurationAsStringSig) evalString(row []types.Datum) (res string, isNull bool, err error) {
@@ -558,7 +552,7 @@ func (b *builtinCastDurationAsStringSig) evalString(row []types.Datum) (res stri
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = types.ProduceStrWithSpecifiedTp(val.String(), b.flen, b.chs, sc)
+	res, err = types.ProduceStrWithSpecifiedTp(val.String(), b.tp, sc)
 	return res, false, errors.Trace(err)
 }
 
