@@ -424,13 +424,11 @@ func (s *testCommitterSuite) TestGoroutinePool(c *C) {
 		})
 	}
 	wg.Wait()
-	c.Assert(value, Equals, 100)
-	capacity, available, maxCap, waitCount, waitTime, idelTimeout := pool.Stats()
-	c.Assert(capacity, Equals, 10)
-	c.Assert(available, Equals, 10)
-	c.Assert(maxCap, Equals, 10)
-	c.Assert(waitCount, Equals, 0)
-	c.Assert(waitTime, Equals, 0)
+	c.Assert(value, Equals, uint64(100))
+	capacity, available, maxCap, _, _, idelTimeout := pool.Stats()
+	c.Assert(capacity, Equals, int64(10))
+	c.Assert(available, Equals, int64(10))
+	c.Assert(maxCap, Equals, int64(10))
 	c.Assert(idelTimeout, Equals, 20*time.Second)
 	pool.Close()
 }

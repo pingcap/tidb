@@ -672,7 +672,7 @@ type goroutinePool struct {
 }
 
 func newGoroutinePool(cap int, idleTimeout time.Duration) goroutinePool {
-	return goroutinePool{pools.NewResourcePool(newGoroutine, cap, cap, 3*time.Minute)}
+	return goroutinePool{pools.NewResourcePool(newGoroutine, cap, cap, idleTimeout)}
 }
 
 // goFunc works like go func(), but goroutines are pooled for reusing.
