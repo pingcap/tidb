@@ -15,13 +15,14 @@ package expression
 
 import (
 	"fmt"
+	"strconv"
+	"time"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
-	"strconv"
-	"time"
 )
 
 func (s *testEvaluatorSuite) TestCast(c *C) {
