@@ -42,7 +42,7 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) (*coprocessor
 	if req.GetTp() != kv.ReqTypeDAG {
 		return resp, nil
 	}
-	if err := h.checkContext(req.GetContext()); err != nil {
+	if err := h.checkRequestContext(req.GetContext()); err != nil {
 		resp.RegionError = err
 		return resp, nil
 	}

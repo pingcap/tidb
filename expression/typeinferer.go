@@ -381,6 +381,17 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = types.NewFieldType(mysql.TypeLonglong)
 		tp.Flag |= mysql.UnsignedFlag
 	// time related
+	case ast.AddTime:
+		t := x.Args[0].GetType().Tp
+		switch t {
+		case mysql.TypeDatetime, mysql.TypeDate, mysql.TypeTimestamp:
+			tp = types.NewFieldType(mysql.TypeDatetime)
+		case mysql.TypeDuration:
+			tp = types.NewFieldType(mysql.TypeDuration)
+		default:
+			tp = types.NewFieldType(mysql.TypeVarString)
+		}
+		tp.Charset, tp.Collate = types.DefaultCharsetForType(tp.Tp)
 	case ast.Curtime, ast.CurrentTime, ast.TimeDiff, ast.MakeTime, ast.SecToTime, ast.UTCTime:
 		tp = types.NewFieldType(mysql.TypeDuration)
 		tp.Decimal = v.getFsp(x)
@@ -424,8 +435,11 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = types.NewFieldType(mysql.TypeBlob)
 	case ast.Uncompress:
 		tp = types.NewFieldType(mysql.TypeLongBlob)
-	case ast.JSONType:
+	case ast.JSONType, ast.JSONUnquote:
 		tp = types.NewFieldType(mysql.TypeVarString)
+		chs = v.defaultCharset
+	case ast.JSONExtract, ast.JSONSet, ast.JSONInsert, ast.JSONReplace, ast.JSONMerge:
+		tp = types.NewFieldType(mysql.TypeJSON)
 		chs = v.defaultCharset
 	case ast.AnyValue:
 		tp = x.Args[0].GetType()

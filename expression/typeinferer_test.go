@@ -177,6 +177,8 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"weekday('2009-12-31 23:59:59.000010')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"weekofyear('2009-12-31 23:59:59.000010')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"yearweek('2009-12-31 23:59:59.000010')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
+		{"addtime(c_datetime, c_time)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
+		{"addtime(c_time, c_time)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag},
 		{"found_rows()", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"length('tidb')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"is_ipv4('192.168.1.1')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
@@ -331,6 +333,12 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`is_ipv4_mapped(c_varbinary)`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{`password("abc")`, mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{`json_type('3')`, mysql.TypeVarString, charset.CharsetUTF8, 0},
+		{`json_extract('{"a": 1}', '$.a')`, mysql.TypeJSON, charset.CharsetUTF8, 0},
+		{`json_unquote('{"a": 1}')`, mysql.TypeVarString, charset.CharsetUTF8, 0},
+		{`json_set('{"a": 1}', '$.a', 3)`, mysql.TypeJSON, charset.CharsetUTF8, 0},
+		{`json_insert('{"a": 1}', '$.a', 3)`, mysql.TypeJSON, charset.CharsetUTF8, 0},
+		{`json_replace('{"a": 1}', '$.a', 3)`, mysql.TypeJSON, charset.CharsetUTF8, 0},
+		{`json_merge('{"a": 1}', '3')`, mysql.TypeJSON, charset.CharsetUTF8, 0},
 	}
 	for _, tt := range tests {
 		ctx := testKit.Se.(context.Context)
