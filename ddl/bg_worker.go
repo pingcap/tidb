@@ -31,12 +31,12 @@ func (d *ddl) handleBgJobQueue() error {
 
 	job := &model.Job{}
 	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		owner, err := d.checkOwner(t, bgJobFlag)
-		if err != nil {
-			return errors.Trace(filterError(err, errNotOwner))
+		if !d.isOwner(bgJobFlag) {
+			return nil
 		}
 
+		var err error
+		t := meta.NewMeta(txn)
 		// Get the first background job and run it.
 		job, err = d.getFirstBgJob(t)
 		if err != nil {
@@ -52,15 +52,6 @@ func (d *ddl) handleBgJobQueue() error {
 		} else {
 			err = d.updateBgJob(t, job)
 		}
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		if ChangeOwnerInNewWay {
-			return nil
-		}
-		owner.LastUpdateTS = time.Now().UnixNano()
-		err = t.SetBgJobOwner(owner)
 		return errors.Trace(err)
 	})
 	if err != nil {

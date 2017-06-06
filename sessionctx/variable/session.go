@@ -81,6 +81,7 @@ type TransactionContext struct {
 	InfoSchema    interface{}
 	Histroy       interface{}
 	SchemaVersion int64
+	StartTS       uint64
 	TableDeltaMap map[int64]TableDelta
 }
 
@@ -179,10 +180,6 @@ type SessionVars struct {
 
 	// SkipUTF8Check check on input value.
 	SkipUTF8Check bool
-
-	// SkipDDLWait can be set to true to skip 2 lease wait after creating/dropping/truncating table, creating/dropping database.
-	// Then if there are multiple TiDB servers, the new table may not be available for other TiDB servers.
-	SkipDDLWait bool
 
 	// BuildStatsConcurrencyVar is used to control statistics building concurrency.
 	BuildStatsConcurrencyVar int

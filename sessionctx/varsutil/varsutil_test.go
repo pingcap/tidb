@@ -103,17 +103,6 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "1")
 
-	// Test case for get TiDBSkipDDLWait session variable.
-	val, err = GetSessionSystemVar(v, variable.TiDBSkipDDLWait)
-	c.Assert(val, Equals, "0")
-	c.Assert(v.SkipDDLWait, IsFalse)
-	SetSessionSystemVar(v, variable.TiDBSkipDDLWait, types.NewStringDatum("0"))
-	c.Assert(v.SkipDDLWait, IsFalse)
-	SetSessionSystemVar(v, variable.TiDBSkipDDLWait, types.NewStringDatum("1"))
-	c.Assert(v.SkipDDLWait, IsTrue)
-	val, err = GetSessionSystemVar(v, variable.TiDBSkipDDLWait)
-	c.Assert(val, Equals, "1")
-
 	// Test case for time_zone session variable.
 	tests := []struct {
 		input        string

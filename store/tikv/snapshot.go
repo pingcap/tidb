@@ -22,6 +22,7 @@ import (
 	"github.com/ngaut/log"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
 )
 
@@ -115,18 +116,22 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collectF func(k, v []byte)) error {
 	pending := batch.keys
 	for {
-		req := &pb.Request{
-			Type: pb.MessageType_CmdBatchGet,
-			CmdBatchGetReq: &pb.CmdBatchGetRequest{
+		req := &tikvrpc.Request{
+			Type: tikvrpc.CmdBatchGet,
+			BatchGet: &pb.BatchGetRequest{
 				Keys:    pending,
 				Version: s.version.Ver,
 			},
 		}
-		resp, err := s.store.SendKVReq(bo, req, batch.region, readTimeoutMedium)
+		resp, err := s.store.SendReq(bo, req, batch.region, readTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if regionErr := resp.GetRegionError(); regionErr != nil {
+		regionErr, err := resp.GetRegionError()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if regionErr != nil {
 			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)
@@ -134,7 +139,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 			err = s.batchGetKeysByRegions(bo, pending, collectF)
 			return errors.Trace(err)
 		}
-		batchGetResp := resp.GetCmdBatchGetResp()
+		batchGetResp := resp.BatchGet
 		if batchGetResp == nil {
 			return errors.Trace(errBodyMissing)
 		}
@@ -186,9 +191,9 @@ func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
 }
 
 func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
-	req := &pb.Request{
-		Type: pb.MessageType_CmdGet,
-		CmdGetReq: &pb.CmdGetRequest{
+	req := &tikvrpc.Request{
+		Type: tikvrpc.CmdGet,
+		Get: &pb.GetRequest{
 			Key:     k,
 			Version: s.version.Ver,
 		},
@@ -198,18 +203,22 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp, err := s.store.SendKVReq(bo, req, loc.Region, readTimeoutShort)
+		resp, err := s.store.SendReq(bo, req, loc.Region, readTimeoutShort)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if regionErr := resp.GetRegionError(); regionErr != nil {
+		regionErr, err := resp.GetRegionError()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if regionErr != nil {
 			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			continue
 		}
-		cmdGetResp := resp.GetCmdGetResp()
+		cmdGetResp := resp.Get
 		if cmdGetResp == nil {
 			return nil, errors.Trace(errBodyMissing)
 		}

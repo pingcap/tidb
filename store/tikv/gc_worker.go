@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/sqlexec"
 	goctx "golang.org/x/net/context"
 )
@@ -276,9 +277,9 @@ func (w *GCWorker) runGCJob(safePoint uint64) {
 func (w *GCWorker) resolveLocks(safePoint uint64) error {
 	gcWorkerCounter.WithLabelValues("resolve_locks").Inc()
 
-	req := &kvrpcpb.Request{
-		Type: kvrpcpb.MessageType_CmdScanLock,
-		CmdScanLockReq: &kvrpcpb.CmdScanLockRequest{
+	req := &tikvrpc.Request{
+		Type: tikvrpc.CmdScanLock,
+		ScanLock: &kvrpcpb.ScanLockRequest{
 			MaxVersion: safePoint,
 		},
 	}
@@ -300,18 +301,22 @@ func (w *GCWorker) resolveLocks(safePoint uint64) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		resp, err := w.store.SendKVReq(bo, req, loc.Region, readTimeoutMedium)
+		resp, err := w.store.SendReq(bo, req, loc.Region, readTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if regionErr := resp.GetRegionError(); regionErr != nil {
+		regionErr, err := resp.GetRegionError()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if regionErr != nil {
 			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)
 			}
 			continue
 		}
-		locksResp := resp.GetCmdScanLockResp()
+		locksResp := resp.ScanLock
 		if locksResp == nil {
 			return errors.Trace(errBodyMissing)
 		}
@@ -350,9 +355,9 @@ func (w *GCWorker) resolveLocks(safePoint uint64) error {
 func (w *GCWorker) DoGC(safePoint uint64) error {
 	gcWorkerCounter.WithLabelValues("do_gc").Inc()
 
-	req := &kvrpcpb.Request{
-		Type: kvrpcpb.MessageType_CmdGC,
-		CmdGcReq: &kvrpcpb.CmdGCRequest{
+	req := &tikvrpc.Request{
+		Type: tikvrpc.CmdGC,
+		GC: &kvrpcpb.GCRequest{
 			SafePoint: safePoint,
 		},
 	}
@@ -374,18 +379,22 @@ func (w *GCWorker) DoGC(safePoint uint64) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		resp, err := w.store.SendKVReq(bo, req, loc.Region, readTimeoutLong)
+		resp, err := w.store.SendReq(bo, req, loc.Region, readTimeoutLong)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if regionErr := resp.GetRegionError(); regionErr != nil {
+		regionErr, err := resp.GetRegionError()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if regionErr != nil {
 			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)
 			}
 			continue
 		}
-		gcResp := resp.GetCmdGcResp()
+		gcResp := resp.GC
 		if gcResp == nil {
 			return errors.Trace(errBodyMissing)
 		}

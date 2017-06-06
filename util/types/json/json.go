@@ -66,7 +66,8 @@ func CreateJSON(in interface{}) JSON {
 
 // ParseFromString parses a json from string.
 func ParseFromString(s string) (j JSON, err error) {
-	// TODO: implement the decoder directly.
+	// TODO: implement the decoder directly. It's important for keeping
+	// keys in object have same order with the original string.
 	if len(s) == 0 {
 		err = ErrInvalidJSONText.GenByArgs("The document is empty")
 		return
@@ -121,32 +122,6 @@ func (j *JSON) UnmarshalJSON(data []byte) (err error) {
 func (j JSON) String() string {
 	bytes, _ := json.Marshal(j)
 	return strings.TrimSpace(hack.String(bytes))
-}
-
-// Type returns type of JSON as string.
-func (j JSON) Type() string {
-	switch j.typeCode {
-	case typeCodeObject:
-		return "OBJECT"
-	case typeCodeArray:
-		return "ARRAY"
-	case typeCodeLiteral:
-		switch byte(j.i64) {
-		case jsonLiteralNil:
-			return "NULL"
-		default:
-			return "BOOLEAN"
-		}
-	case typeCodeInt64:
-		return "INTEGER"
-	case typeCodeFloat64:
-		return "DOUBLE"
-	case typeCodeString:
-		return "STRING"
-	default:
-		msg := fmt.Sprintf(unknownTypeCodeErrorMsg, j.typeCode)
-		panic(msg)
-	}
 }
 
 var (
