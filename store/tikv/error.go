@@ -15,7 +15,6 @@ package tikv
 
 import (
 	"github.com/juju/errors"
-	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 )
 
 var (
@@ -34,9 +33,3 @@ var (
 // Note that it should be only used if i) the error occurs inside a transaction
 // and ii) the error is not totally unexpected and hopefully will recover soon.
 const txnRetryableMark = "[try again later]"
-
-// errMismatch if response mismatches request return error.
-func errMismatch(resp *pb.Response, req *pb.Request) error {
-	return errors.Errorf("message type mismatches, response[%s] request[%s]",
-		resp.GetType(), req.GetType())
-}

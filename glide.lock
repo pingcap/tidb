@@ -1,5 +1,5 @@
-hash: c2c438f471d5f464977547dee1bb792123ed690c11ac62ceb876e1cfa3972809
-updated: 2017-05-18T18:44:44.003708809+08:00
+hash: 7526be88b2e92170cce8de92c259648e1e58a3f729c3a5974c9dca872ee44ffb
+updated: 2017-06-05T18:31:52.433575481+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -59,6 +59,7 @@ imports:
   subpackages:
   - jsonpb
   - proto
+  - ptypes/any
 - name: github.com/golang/snappy
   version: 723cc1e459b8eea2dea4583200fd60757d40097a
 - name: github.com/gorilla/context
@@ -113,18 +114,16 @@ imports:
   - leveldb/table
   - leveldb/util
 - name: github.com/pingcap/kvproto
-  version: 289050a4366f95497c93d4dba068989b5dd8781a
+  version: bedba879c8bcef3487c10347b29b7313cd89efa6
   subpackages:
   - pkg/coprocessor
   - pkg/eraftpb
   - pkg/errorpb
   - pkg/kvrpcpb
   - pkg/metapb
-  - pkg/msgpb
   - pkg/pdpb
-  - pkg/raft_cmdpb
   - pkg/raft_serverpb
-  - pkg/util
+  - pkg/tikvpb
 - name: github.com/pingcap/pd
   version: fea29e342c4a7c5888cdf0b569625fbbf6d3b50f
   subpackages:
@@ -155,19 +154,21 @@ imports:
 - name: github.com/twinj/uuid
   version: 70cac2bcd273ef6a371bb96cde363d28b68734c3
 - name: golang.org/x/net
-  version: 6acef71eb69611914f7a30939ea9f6e194c78172
+  version: d1e1b351919c6738fdeb9893d5c998b161464f0c
   subpackages:
   - context
   - http2
   - http2/hpack
+  - idna
   - internal/timeseries
+  - lex/httplex
   - trace
 - name: golang.org/x/sys
   version: a646d33e2ee3172a661fc09bca23bb4889a41bc8
   subpackages:
   - unix
 - name: golang.org/x/text
-  version: 723492b65e225eafcba054e76ba18bb9c5ac1ea2
+  version: ccbd3f7822129ff389f8ca4858a9b9d4d910531c
   subpackages:
   - encoding
   - encoding/charmap
@@ -178,20 +179,34 @@ imports:
   - encoding/simplifiedchinese
   - encoding/traditionalchinese
   - encoding/unicode
+  - internal/utf8internal
+  - runes
+  - secure/bidirule
   - transform
+  - unicode/bidi
+  - unicode/norm
 - name: golang.org/x/time
   version: c06e80d9300e4443158a03817b8a8cb37d230320
   subpackages:
   - rate
+- name: google.golang.org/genproto
+  version: aa2eb687b4d3e17154372564ad8d6bf11c3cf21f
+  subpackages:
+  - googleapis/rpc/status
 - name: google.golang.org/grpc
-  version: 777daa17ff9b5daef1cfdf915088a2ada3332bf0
+  version: 3419b42955675df23457629c75f58eb8dcd56954
   subpackages:
   - codes
   - credentials
+  - grpclb/grpc_lb_v1
   - grpclog
   - internal
+  - keepalive
   - metadata
   - naming
   - peer
+  - stats
+  - status
+  - tap
   - transport
 testImports: []

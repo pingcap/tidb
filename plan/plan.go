@@ -219,6 +219,9 @@ type LogicalPlan interface {
 
 	// pushDownTopN will push down the topN or limit operator during logical optimization.
 	pushDownTopN(topN *TopN) LogicalPlan
+
+	// statsProfile will return the stats for this plan.
+	statsProfile() *statsProfile
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -252,6 +255,7 @@ type baseLogicalPlan struct {
 	basePlan *basePlan
 	planMap  map[string]*physicalPlanInfo
 	taskMap  map[string]task
+	profile  *statsProfile
 }
 
 type basePhysicalPlan struct {
