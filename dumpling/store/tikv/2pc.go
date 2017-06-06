@@ -110,11 +110,6 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// Transactions without Put/Del, only Locks are readonly.
-	// We can skip commit directly.
-	if len(keys) == 0 {
-		return nil, nil
-	}
 	for _, lockKey := range txn.lockKeys {
 		if _, ok := mutations[string(lockKey)]; !ok {
 			mutations[string(lockKey)] = &pb.Mutation{
@@ -125,6 +120,9 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 			keys = append(keys, lockKey)
 			size += len(lockKey)
 		}
+	}
+	if len(keys) == 0 {
+		return nil, nil
 	}
 	entrylimit := atomic.LoadUint64(&kv.TxnEntryCountLimit)
 	if len(keys) > int(entrylimit) || size > kv.TxnTotalSizeLimit {
