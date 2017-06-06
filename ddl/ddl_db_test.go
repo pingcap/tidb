@@ -318,6 +318,12 @@ LOOP:
 			}
 			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
 		case <-ticker.C:
+			// When the server performance is particularly poor,
+			// the adding index operation can not be completed.
+			// So here is a limit to the number of rows inserted.
+			if num > defaultBatchSize*10 {
+				break
+			}
 			step := 10
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
