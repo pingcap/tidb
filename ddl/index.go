@@ -376,7 +376,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 func (d *ddl) fetchRowColVals(txn kv.Transaction, t table.Table, taskOpInfo *indexTaskOpInfo, handleInfo *handleInfo) (
 	[]*indexRecord, *taskResult) {
-	now := time.Now()
+	startTime := time.Now()
 	handleCnt := defaultTaskHandleCnt
 	rawRecords := make([][]byte, 0, handleCnt)
 	idxRecords := make([]*indexRecord, 0, handleCnt)
@@ -410,7 +410,7 @@ func (d *ddl) fetchRowColVals(txn kv.Transaction, t table.Table, taskOpInfo *ind
 		handleInfo.endHandle = ret.doneHandle
 		handleInfo.isSent = true
 	}
-	log.Debugf("[ddl] txn %v fetches handle info %v takes time %v", txn.StartTS(), handleInfo, time.Since(now))
+	log.Debugf("[ddl] txn %v fetches handle info %v takes time %v", txn.StartTS(), handleInfo, time.Since(startTime))
 	if ret.count == 0 {
 		return nil, ret
 	}
@@ -510,8 +510,6 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 		wg := sync.WaitGroup{}
 		for i := 0; i < taskCnt; i++ {
 			wg.Add(1)
-			log.Debugf("[ddl] add index starts backfill index task, start handle %d",
-				taskStartHandle)
 			go d.doBackfillIndexTask(t, taskOpInfo, taskStartHandle, &wg)
 			doneHandle := <-taskOpInfo.nextCh
 			// There is no data to seek.
@@ -595,10 +593,10 @@ func getCountAndHandle(taskOpInfo *indexTaskOpInfo) (int64, int64, error) {
 func (d *ddl) doBackfillIndexTask(t table.Table, taskOpInfo *indexTaskOpInfo, startHandle int64, wg *sync.WaitGroup) {
 	defer wg.Done()
 
+	startTime := time.Now()
 	ret := new(taskResult)
 	handleInfo := &handleInfo{startHandle: startHandle}
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-		log.Debugf("[ddl] txn %v starts backfill index task", txn.StartTS())
 		err1 := d.isReorgRunnable(txn, ddlJobFlag)
 		if err1 != nil {
 			return errors.Trace(err1)
@@ -607,21 +605,20 @@ func (d *ddl) doBackfillIndexTask(t table.Table, taskOpInfo *indexTaskOpInfo, st
 		if ret.err != nil {
 			return errors.Trace(ret.err)
 		}
-		log.Debugf("[ddl] txn %v completes backfill index task", txn.StartTS())
 		return nil
 	})
 	if err != nil {
 		ret.err = errors.Trace(err)
 	}
 
-	log.Debugf("[ddl] add index completes backfill index task, handle info %v",
-		handleInfo)
 	// It's failed to fetch row keys.
 	if !handleInfo.isSent {
 		taskOpInfo.nextCh <- startHandle
 	}
 
 	taskOpInfo.taskRetCh <- ret
+	log.Debugf("[ddl] add index completes backfill index task %v takes time %v",
+		handleInfo, time.Since(startTime))
 }
 
 // doBackfillIndexTaskInTxn deals with a part of backfilling index data in a Transaction.
