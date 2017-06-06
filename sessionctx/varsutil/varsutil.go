@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"fmt"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -33,6 +34,12 @@ func GetSessionSystemVar(s *variable.SessionVars, key string) (string, error) {
 	if sysVar == nil {
 		return "", variable.UnknownSystemVar.GenByArgs(key)
 	}
+	// For virtual system varaibles:
+	switch sysVar.Name {
+	case variable.TiDBCurrentTS:
+		return fmt.Sprintf("%d", s.TxnCtx.StartTS), nil
+	}
+
 	sVal, ok := s.Systems[key]
 	if ok {
 		return sVal, nil
@@ -137,6 +144,8 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		vars.BatchInsert = tidbOptOn(sVal)
 	case variable.TiDBMaxRowCountForINLJ:
 		vars.MaxRowCountForINLJ = tidbOptPositiveInt(sVal, variable.DefMaxRowCountForINLJ)
+	case variable.TiDBCurrentTS:
+		return variable.ErrReadOnly
 	}
 	vars.Systems[name] = sVal
 	return nil

@@ -19,6 +19,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/pd/pd-client"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
 )
 
@@ -54,17 +55,17 @@ func (c *RawKVClient) Get(key []byte) ([]byte, error) {
 	start := time.Now()
 	defer func() { rawkvCmdHistogram.WithLabelValues("get").Observe(time.Since(start).Seconds()) }()
 
-	req := &kvrpcpb.Request{
-		Type: kvrpcpb.MessageType_CmdRawGet,
-		CmdRawGetReq: &kvrpcpb.CmdRawGetRequest{
+	req := &tikvrpc.Request{
+		Type: tikvrpc.CmdRawGet,
+		RawGet: &kvrpcpb.RawGetRequest{
 			Key: key,
 		},
 	}
-	resp, err := c.sendKVReq(key, req)
+	resp, err := c.sendReq(key, req)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	cmdResp := resp.GetCmdRawGetResp()
+	cmdResp := resp.RawGet
 	if cmdResp == nil {
 		return nil, errors.Trace(errBodyMissing)
 	}
@@ -81,18 +82,18 @@ func (c *RawKVClient) Put(key, value []byte) error {
 	rawkvSizeHistogram.WithLabelValues("key").Observe(float64(len(key)))
 	rawkvSizeHistogram.WithLabelValues("value").Observe(float64(len(value)))
 
-	req := &kvrpcpb.Request{
-		Type: kvrpcpb.MessageType_CmdRawPut,
-		CmdRawPutReq: &kvrpcpb.CmdRawPutRequest{
+	req := &tikvrpc.Request{
+		Type: tikvrpc.CmdRawPut,
+		RawPut: &kvrpcpb.RawPutRequest{
 			Key:   key,
 			Value: value,
 		},
 	}
-	resp, err := c.sendKVReq(key, req)
+	resp, err := c.sendReq(key, req)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cmdResp := resp.GetCmdRawPutResp()
+	cmdResp := resp.RawPut
 	if cmdResp == nil {
 		return errors.Trace(errBodyMissing)
 	}
@@ -107,17 +108,17 @@ func (c *RawKVClient) Delete(key []byte) error {
 	start := time.Now()
 	defer func() { rawkvCmdHistogram.WithLabelValues("delete").Observe(time.Since(start).Seconds()) }()
 
-	req := &kvrpcpb.Request{
-		Type: kvrpcpb.MessageType_CmdRawDelete,
-		CmdRawDeleteReq: &kvrpcpb.CmdRawDeleteRequest{
+	req := &tikvrpc.Request{
+		Type: tikvrpc.CmdRawDelete,
+		RawDelete: &kvrpcpb.RawDeleteRequest{
 			Key: key,
 		},
 	}
-	resp, err := c.sendKVReq(key, req)
+	resp, err := c.sendReq(key, req)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cmdResp := resp.GetCmdRawDeleteResp()
+	cmdResp := resp.RawDelete
 	if cmdResp == nil {
 		return errors.Trace(errBodyMissing)
 	}
@@ -127,7 +128,7 @@ func (c *RawKVClient) Delete(key []byte) error {
 	return nil
 }
 
-func (c *RawKVClient) sendKVReq(key []byte, req *kvrpcpb.Request) (*kvrpcpb.Response, error) {
+func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 	bo := NewBackoffer(rawkvMaxBackoff, goctx.Background())
 	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
 	for {
@@ -135,11 +136,15 @@ func (c *RawKVClient) sendKVReq(key []byte, req *kvrpcpb.Request) (*kvrpcpb.Resp
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp, err := sender.SendKVReq(bo, req, loc.Region, readTimeoutShort)
+		resp, err := sender.SendReq(bo, req, loc.Region, readTimeoutShort)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if regionErr := resp.GetRegionError(); regionErr != nil {
+		regionErr, err := resp.GetRegionError()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if regionErr != nil {
 			err := bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return nil, errors.Trace(err)
