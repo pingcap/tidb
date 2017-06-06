@@ -486,7 +486,7 @@ func (c *RPCClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 			resp.Cop = &coprocessor.Response{RegionError: err}
 			return resp, nil
 		}
-		res, err := handler.handleCopRequest(r)
+		res, err := handler.handleCopDAGRequest(r)
 		if err != nil {
 			return nil, err
 		}

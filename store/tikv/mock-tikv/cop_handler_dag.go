@@ -14,19 +14,24 @@
 package mocktikv
 
 import (
+	"bytes"
 	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
+
+var dummySlice = make([]byte, 0)
 
 type dagContext struct {
 	dagReq    *tipb.DAGRequest
@@ -299,4 +304,129 @@ func flagsToStatementContext(flags uint64) *variable.StatementContext {
 	sc.IgnoreTruncate = (flags & FlagIgnoreTruncate) > 0
 	sc.TruncateAsWarning = (flags & FlagTruncateAsWarning) > 0
 	return sc
+}
+
+func buildResp(chunks []tipb.Chunk, err error) (*coprocessor.Response, error) {
+	resp := &coprocessor.Response{}
+	selResp := &tipb.SelectResponse{
+		Error:  toPBError(err),
+		Chunks: chunks,
+	}
+	if err != nil {
+		if locked, ok := errors.Cause(err).(*ErrLocked); ok {
+			resp.Locked = &kvrpcpb.LockInfo{
+				Key:         locked.Key,
+				PrimaryLock: locked.Primary,
+				LockVersion: locked.StartTS,
+				LockTtl:     locked.TTL,
+			}
+		} else {
+			resp.OtherError = err.Error()
+		}
+	}
+	data, err := proto.Marshal(selResp)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	resp.Data = data
+	return resp, nil
+}
+
+func toPBError(err error) *tipb.Error {
+	if err == nil {
+		return nil
+	}
+	perr := new(tipb.Error)
+	perr.Code = int32(1)
+	errStr := err.Error()
+	perr.Msg = errStr
+	return perr
+}
+
+// extractKVRanges extracts kv.KeyRanges slice from a SelectRequest.
+func (h *rpcHandler) extractKVRanges(keyRanges []*coprocessor.KeyRange, descScan bool) (kvRanges []kv.KeyRange) {
+	for _, kran := range keyRanges {
+		upperKey := kran.GetEnd()
+		if bytes.Compare(upperKey, h.rawStartKey) <= 0 {
+			continue
+		}
+		lowerKey := kran.GetStart()
+		if len(h.rawEndKey) != 0 && bytes.Compare([]byte(lowerKey), h.rawEndKey) >= 0 {
+			break
+		}
+		var kvr kv.KeyRange
+		kvr.StartKey = kv.Key(maxStartKey(lowerKey, h.rawStartKey))
+		kvr.EndKey = kv.Key(minEndKey(upperKey, h.rawEndKey))
+		kvRanges = append(kvRanges, kvr)
+	}
+	if descScan {
+		reverseKVRanges(kvRanges)
+	}
+	return
+}
+
+func reverseKVRanges(kvRanges []kv.KeyRange) {
+	for i := 0; i < len(kvRanges)/2; i++ {
+		j := len(kvRanges) - i - 1
+		kvRanges[i], kvRanges[j] = kvRanges[j], kvRanges[i]
+	}
+}
+
+const rowsPerChunk = 64
+
+func appendRow(chunks []tipb.Chunk, handle int64, data []byte) []tipb.Chunk {
+	if len(chunks) == 0 || len(chunks[len(chunks)-1].RowsMeta) >= rowsPerChunk {
+		chunks = append(chunks, tipb.Chunk{})
+	}
+	cur := &chunks[len(chunks)-1]
+	cur.RowsMeta = append(cur.RowsMeta, tipb.RowMeta{Handle: handle, Length: int64(len(data))})
+	cur.RowsData = append(cur.RowsData, data...)
+	return chunks
+}
+
+func maxStartKey(rangeStartKey kv.Key, regionStartKey []byte) []byte {
+	if bytes.Compare([]byte(rangeStartKey), regionStartKey) > 0 {
+		return []byte(rangeStartKey)
+	}
+	return regionStartKey
+}
+
+func minEndKey(rangeEndKey kv.Key, regionEndKey []byte) []byte {
+	if len(regionEndKey) == 0 || bytes.Compare([]byte(rangeEndKey), regionEndKey) < 0 {
+		return []byte(rangeEndKey)
+	}
+	return regionEndKey
+}
+
+func isDuplicated(offsets []int, offset int) bool {
+	for _, idx := range offsets {
+		if idx == offset {
+			return true
+		}
+	}
+	return false
+}
+
+func extractOffsetsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector []int) ([]int, error) {
+	if expr == nil {
+		return nil, nil
+	}
+	if expr.GetTp() == tipb.ExprType_ColumnRef {
+		_, idx, err := codec.DecodeInt(expr.Val)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if !isDuplicated(collector, int(idx)) {
+			collector = append(collector, int(idx))
+		}
+		return collector, nil
+	}
+	var err error
+	for _, child := range expr.Children {
+		collector, err = extractOffsetsInExpr(child, columns, collector)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return collector, nil
 }
