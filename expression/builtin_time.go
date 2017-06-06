@@ -390,11 +390,14 @@ type builtinFromDaysSig struct {
 func (b *builtinFromDaysSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	days, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
 	d.SetMysqlTime(types.TimeFromDays(days))
-	return d, nil
+	return
 }
 
 type hourFunctionClass struct {
@@ -1672,7 +1675,7 @@ func (b *builtinUnixTimestampSig) eval(row []types.Datum) (d types.Datum, err er
 	t1, err = t.Time.GoTime(getTimeZone(b.ctx))
 	if err != nil {
 		d.SetInt64(0)
-		return
+		return d, errors.Trace(err)
 	}
 
 	if t.Time.Microsecond() > 0 {
