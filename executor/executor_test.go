@@ -1440,3 +1440,68 @@ func (s *testSuite) TestTiDBCurrentTS(c *C) {
 	_, err := tk.Exec("set @@tidb_current_ts = '1'")
 	c.Assert(terror.ErrorEqual(err, variable.ErrReadOnly), IsTrue)
 }
+
+func (s *testSuite) TestSelectForUpdate(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+
+	tk.MustExec("drop table if exists t, t1")
+
+	c.Assert(tk.Se.Txn(), IsNil)
+	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
+	tk.MustExec("insert t values (11, 2, 3)")
+	tk.MustExec("insert t values (12, 2, 3)")
+	tk.MustExec("insert t values (13, 2, 3)")
+
+	tk.MustExec("create table t1 (c1 int)")
+	tk.MustExec("insert t1 values (11)")
+
+	// conflict
+	tk1.MustExec("begin")
+	tk1.MustQuery("select * from t where c1=11 for update")
+
+	tk2.MustExec("begin")
+	tk2.MustExec("update t set c2=211 where c1=11")
+	tk2.MustExec("commit")
+
+	_, err := tk1.Exec("commit")
+	c.Assert(err, NotNil)
+
+	// no conflict for subquery.
+	tk1.MustExec("begin")
+	tk1.MustQuery("select * from t where exists(select null from t1 where t1.c1=t.c1) for update")
+
+	tk2.MustExec("begin")
+	tk2.MustExec("update t set c2=211 where c1=12")
+	tk2.MustExec("commit")
+
+	tk1.MustExec("commit")
+
+	// not conflict
+	tk1.MustExec("begin")
+	tk1.MustQuery("select * from t where c1=11 for update")
+
+	tk2.MustExec("begin")
+	tk2.MustExec("update t set c2=22 where c1=12")
+	tk2.MustExec("commit")
+
+	tk1.MustExec("commit")
+
+	// not conflict, auto commit
+	tk1.MustExec("set @@autocommit=1;")
+	tk1.MustQuery("select * from t where c1=11 for update")
+
+	tk2.MustExec("begin")
+	tk2.MustExec("update t set c2=211 where c1=11")
+	tk2.MustExec("commit")
+
+	tk1.MustExec("commit")
+}
