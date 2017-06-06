@@ -394,7 +394,7 @@ func (b *builtinFromDaysSig) eval(row []types.Datum) (d types.Datum, err error) 
 	}
 	days, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
 	d.SetMysqlTime(types.TimeFromDays(days))
-	return d, err
+	return d, nil
 }
 
 type hourFunctionClass struct {
