@@ -230,10 +230,10 @@ type builtinDateSig struct {
 
 // eval evals a builtinDateSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date
-func (b *builtinDateSig) eval(row []types.Datum) (types.Datum, error) {
+func (b *builtinDateSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	return convertToTime(b.ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
 }
@@ -266,7 +266,7 @@ type builtinDateDiffSig struct {
 func (b *builtinDateDiffSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	if args[0].IsNull() || args[1].IsNull() {
 		return
@@ -309,7 +309,7 @@ type builtinTimeDiffSig struct {
 func (b *builtinTimeDiffSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	if args[0].IsNull() || args[1].IsNull() {
 		return
@@ -344,10 +344,10 @@ type builtinDateFormatSig struct {
 
 // eval evals a builtinDateFormatSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-format
-func (b *builtinDateFormatSig) eval(row []types.Datum) (types.Datum, error) {
+func (b *builtinDateFormatSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	return builtinDateFormat(args, b.ctx)
 }
@@ -390,7 +390,7 @@ type builtinFromDaysSig struct {
 func (b *builtinFromDaysSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	days, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
 	d.SetMysqlTime(types.TimeFromDays(days))
@@ -415,7 +415,7 @@ type builtinHourSig struct {
 func (b *builtinHourSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	d, err = convertToDuration(b.ctx.GetSessionVars().StmtCtx, args[0], types.MaxFsp)
 	if err != nil || d.IsNull() {
@@ -446,7 +446,7 @@ type builtinMinuteSig struct {
 func (b *builtinMinuteSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	d, err = convertToDuration(b.ctx.GetSessionVars().StmtCtx, args[0], types.MaxFsp)
 	if err != nil || d.IsNull() {
@@ -477,7 +477,7 @@ type builtinSecondSig struct {
 func (b *builtinSecondSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	d, err = convertToDuration(b.ctx.GetSessionVars().StmtCtx, args[0], types.MaxFsp)
 	if err != nil || d.IsNull() {
@@ -508,7 +508,7 @@ type builtinMicroSecondSig struct {
 func (b *builtinMicroSecondSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	d, err = convertToDuration(b.ctx.GetSessionVars().StmtCtx, args[0], types.MaxFsp)
 	if err != nil || d.IsNull() {
@@ -534,10 +534,10 @@ type builtinMonthSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinMonthSig) eval(row []types.Datum) (types.Datum, error) {
+func (b *builtinMonthSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	return builtinMonth(args, b.ctx)
 }
@@ -575,10 +575,10 @@ type builtinMonthNameSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinMonthNameSig) eval(row []types.Datum) (types.Datum, error) {
+func (b *builtinMonthNameSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	return builtinMonthName(args, b.ctx)
 }
@@ -617,10 +617,10 @@ type builtinNowSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinNowSig) eval(row []types.Datum) (types.Datum, error) {
+func (b *builtinNowSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	return builtinNow(args, b.ctx)
 }
@@ -665,7 +665,7 @@ type builtinDayNameSig struct {
 func (b *builtinDayNameSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	d, err = builtinWeekDay(args, b.ctx)
 	if err != nil || d.IsNull() {
@@ -698,7 +698,7 @@ type builtinDayOfMonthSig struct {
 func (b *builtinDayOfMonthSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	// TODO: some invalid format like 2000-00-00 will return 0 too.
 	d, err = convertToTime(b.ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
@@ -735,7 +735,7 @@ type builtinDayOfWeekSig struct {
 func (b *builtinDayOfWeekSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	d, err = convertToTime(b.ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
 	if err != nil || d.IsNull() {
@@ -773,7 +773,7 @@ type builtinDayOfYearSig struct {
 func (b *builtinDayOfYearSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	d, err = convertToTime(b.ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
 	if err != nil || d.IsNull() {
@@ -805,10 +805,10 @@ type builtinWeekSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinWeekSig) eval(row []types.Datum) (types.Datum, error) {
+func (b *builtinWeekSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	return builtinWeek(args, b.ctx)
 }
@@ -857,10 +857,10 @@ type builtinWeekDaySig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinWeekDaySig) eval(row []types.Datum) (types.Datum, error) {
+func (b *builtinWeekDaySig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	return builtinWeekDay(args, b.ctx)
 }
@@ -904,13 +904,12 @@ type builtinWeekOfYearSig struct {
 
 // eval evals a builtinWeekOfYearSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_weekofyear
-func (b *builtinWeekOfYearSig) eval(row []types.Datum) (types.Datum, error) {
+func (b *builtinWeekOfYearSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	// WeekOfYear is equivalent to to Week(date, 3)
-	d := types.Datum{}
 	d.SetInt64(3)
 	return builtinWeek([]types.Datum{args[0], d}, b.ctx)
 }
@@ -933,7 +932,7 @@ type builtinYearSig struct {
 func (b *builtinYearSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	d, err = convertToTime(b.ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
 	if err != nil || d.IsNull() {
@@ -969,7 +968,7 @@ type builtinYearWeekSig struct {
 func (b *builtinYearWeekSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	d, err = convertToTime(b.ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
 	if err != nil || d.IsNull() {
@@ -1019,7 +1018,7 @@ type builtinFromUnixTimeSig struct {
 func (b *builtinFromUnixTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	unixTimeStamp, err := args[0].ToDecimal(sc)
@@ -1167,7 +1166,7 @@ type builtinStrToDateSig struct {
 func (b *builtinStrToDateSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	date := args[0].GetString()
 	format := args[1].GetString()
@@ -1198,10 +1197,10 @@ type builtinSysDateSig struct {
 
 // eval evals a builtinSysDateSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_sysdate
-func (b *builtinSysDateSig) eval(row []types.Datum) (types.Datum, error) {
+func (b *builtinSysDateSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	// SYSDATE is not the same as NOW if NOW is used in a stored function or trigger.
 	// But here we can just think they are the same because we don't support stored function
@@ -1251,7 +1250,7 @@ type builtinCurrentTimeSig struct {
 func (b *builtinCurrentTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	fsp := 0
 	sc := b.ctx.GetSessionVars().StmtCtx
@@ -1283,7 +1282,7 @@ type builtinTimeSig struct {
 func (b *builtinTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	if args[0].IsNull() {
 		return
@@ -1349,7 +1348,7 @@ type builtinUTCTimestampSig struct {
 func (b *builtinUTCTimestampSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 
 	fsp := 0
@@ -1387,7 +1386,7 @@ type builtinExtractSig struct {
 func (b *builtinExtractSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	unit := args[0].GetString()
 	vd := args[1]
@@ -1456,7 +1455,7 @@ type builtinDateArithSig struct {
 func (b *builtinDateArithSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	// args[0] -> Date
 	// args[1] -> Interval Value
@@ -1586,7 +1585,7 @@ type builtinTimestampDiffSig struct {
 func (b *builtinTimestampDiffSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	if args[1].IsNull() || args[2].IsNull() {
 		return
@@ -1703,7 +1702,7 @@ type builtinTimestampSig struct {
 func (b *builtinTimestampSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	if args[0].IsNull() {
 		return
@@ -2249,7 +2248,7 @@ type builtinQuarterSig struct {
 func (b *builtinQuarterSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 
 	d, err = builtinMonth(args, b.ctx)
@@ -2593,7 +2592,7 @@ func (b *builtinUTCTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	const utctimeFormat = "15:04:05.000000"
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	fsp := 0
 	sc := b.ctx.GetSessionVars().StmtCtx
