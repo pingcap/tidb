@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -240,7 +241,6 @@ func (e *ExecuteExec) Build() error {
 		}
 		prepared.Params[i].SetDatum(val)
 	}
-
 	if prepared.SchemaVersion != e.IS.SchemaMetaVersion() {
 		// If the schema version has changed we need to prepare it again,
 		// if this time it failed, the real reason for the error is schema changed.
@@ -270,6 +270,7 @@ func (e *ExecuteExec) Build() error {
 	e.StmtExec = stmtExec
 	e.Stmt = prepared.Stmt
 	e.Plan = p
+	ResetStmtCtx(e.Ctx, e.Stmt)
 	stmtCount(e.Stmt, e.Plan)
 	return nil
 }
@@ -324,4 +325,40 @@ func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interfac
 		sa.text = prepared.Stmt.Text()
 	}
 	return sa
+}
+
+// ResetStmtCtx resets the StmtContext.
+// Before every execution, we must clear statement context.
+func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
+	sessVars := ctx.GetSessionVars()
+	sc := new(variable.StatementContext)
+	switch s.(type) {
+	case *ast.UpdateStmt, *ast.InsertStmt, *ast.DeleteStmt:
+		sc.IgnoreTruncate = false
+		sc.TruncateAsWarning = !sessVars.StrictSQLMode
+		if _, ok := s.(*ast.InsertStmt); !ok {
+			sc.InUpdateOrDeleteStmt = true
+		}
+	case *ast.CreateTableStmt, *ast.AlterTableStmt:
+		// Make sure the sql_mode is strict when checking column default value.
+		sc.IgnoreTruncate = false
+		sc.TruncateAsWarning = false
+	case *ast.LoadDataStmt:
+		sc.IgnoreTruncate = false
+		sc.TruncateAsWarning = !sessVars.StrictSQLMode
+	default:
+		sc.IgnoreTruncate = true
+		if show, ok := s.(*ast.ShowStmt); ok {
+			if show.Tp == ast.ShowWarnings {
+				sc.InShowWarning = true
+				sc.SetWarnings(sessVars.StmtCtx.GetWarnings())
+			}
+		}
+	}
+	if sessVars.LastInsertID > 0 {
+		sessVars.PrevLastInsertID = sessVars.LastInsertID
+		sessVars.LastInsertID = 0
+	}
+	sessVars.InsertID = 0
+	sessVars.StmtCtx = sc
 }
