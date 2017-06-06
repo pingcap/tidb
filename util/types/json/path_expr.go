@@ -127,8 +127,12 @@ func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 		}
 	}
 
-	pathExprSuffix := pathExpr[dollarIndex+1:]
+	pathExprSuffix := strings.TrimFunc(pathExpr[dollarIndex+1:], isBlank)
 	indices := jsonPathExprLegRe.FindAllStringIndex(pathExprSuffix, -1)
+	if len(indices) == 0 && len(pathExprSuffix) != 0 {
+		err = ErrInvalidJSONPath.GenByArgs(pathExpr)
+		return
+	}
 
 	pe.legs = make([]pathLeg, 0, len(indices))
 	pe.flags = pathExpressionFlag(0)
