@@ -293,6 +293,12 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 				if err != nil {
 					return nil, nil, ErrColumnBadNull.Gen("invalid default value - %s", err)
 				}
+				if value != nil && (col.Tp == mysql.TypeJSON ||
+					col.Tp == mysql.TypeTinyBlob || col.Tp == mysql.TypeMediumBlob ||
+					col.Tp == mysql.TypeLongBlob || col.Tp == mysql.TypeBlob) {
+					// TEXT/BLOB/JSON can't have not null default values.
+					return nil, nil, errBlobCantHaveDefault.GenByArgs(col.Name.O)
+				}
 				col.DefaultValue = value
 				hasDefaultValue = true
 				removeOnUpdateNowFlag(col)
@@ -1093,6 +1099,12 @@ func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast
 			if err != nil {
 				return ErrColumnBadNull.Gen("invalid default value - %s", err)
 			}
+			if value != nil && (col.Tp == mysql.TypeJSON ||
+				col.Tp == mysql.TypeTinyBlob || col.Tp == mysql.TypeMediumBlob ||
+				col.Tp == mysql.TypeLongBlob || col.Tp == mysql.TypeBlob) {
+				// TEXT/BLOB/JSON can't have not null default values.
+				return errBlobCantHaveDefault.GenByArgs(col.Name.O)
+			}
 			col.DefaultValue = value
 			hasDefaultValue = true
 		case ast.ColumnOptionComment:
@@ -1109,7 +1121,6 @@ func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast
 			if !expression.IsCurrentTimeExpr(opt.Expr) {
 				return ErrInvalidOnUpdate.Gen("invalid ON UPDATE for - %s", col.Name)
 			}
-
 			col.Flag |= mysql.OnUpdateNowFlag
 			setOnUpdateNow = true
 		default:

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -221,4 +222,13 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	ver, err = getBootstrapVersion(se2)
 	c.Assert(err, IsNil)
 	c.Assert(ver, Equals, int64(currentBootstrapVersion))
+}
+
+func (s *testBootstrapSuite) TestOldPasswordUpgrade(c *C) {
+	defer testleak.AfterTest(c)()
+	pwd := "abc"
+	oldpwd := fmt.Sprintf("%X", util.Sha1Hash([]byte(pwd)))
+	newpwd, err := oldPasswordUpgrade(oldpwd)
+	c.Assert(err, IsNil)
+	c.Assert(newpwd, Equals, "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E")
 }

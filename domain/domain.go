@@ -70,18 +70,16 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 	}
 
 	// Update self schema version to etcd.
-	if ddl.ChangeOwnerInNewWay {
-		defer func() {
-			if err != nil {
-				log.Info("[ddl] not update self schema version to etcd")
-				return
-			}
-			err = do.ddl.SchemaVersionSyncer().UpdateSelfVersion(goctx.Background(), latestSchemaVersion)
-			if err != nil {
-				log.Infof("[ddl] update self version from %v to %v failed %v", usedSchemaVersion, latestSchemaVersion, err)
-			}
-		}()
-	}
+	defer func() {
+		if err != nil {
+			log.Info("[ddl] not update self schema version to etcd")
+			return
+		}
+		err = do.ddl.SchemaSyncer().UpdateSelfVersion(goctx.Background(), latestSchemaVersion)
+		if err != nil {
+			log.Infof("[ddl] update self version from %v to %v failed %v", usedSchemaVersion, latestSchemaVersion, err)
+		}
+	}()
 
 	startTime := time.Now()
 	ok, err := do.tryLoadSchemaDiffs(m, usedSchemaVersion, latestSchemaVersion)
@@ -311,12 +309,11 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			if err != nil {
 				log.Errorf("[ddl] reload schema in loop err %v", errors.ErrorStack(err))
 			}
-			// TODO: If ChangeOwnerInNewWay is true, we can remove this comments.
-			//	case <-do.ddl.SchemaVersionSyncer().GlobalVerCh:
-			//		err := do.Reload()
-			//		if err != nil {
-			//			log.Errorf("[ddl] reload schema in loop err %v", errors.ErrorStack(err))
-			//		}
+		case <-do.ddl.SchemaSyncer().GlobalVersionCh():
+			err := do.Reload()
+			if err != nil {
+				log.Errorf("[ddl] reload schema in loop err %v", errors.ErrorStack(err))
+			}
 		case <-do.exit:
 			return
 		}
@@ -378,14 +375,13 @@ type etcdBackend interface {
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
 func NewDomain(store kv.Storage, lease time.Duration, factory pools.Factory) (d *Domain, err error) {
-	minCapacity := 1               // minCapacity for the sysSessionPool size
-	maxCapacity := 500             // maxCapacity for the sysSessionPool size
+	capacity := 200                // capacity of the sysSessionPool size
 	idleTimeout := 3 * time.Minute // sessions in the sysSessionPool will be recycled after idleTimeout
 	d = &Domain{
 		store:           store,
 		SchemaValidator: newSchemaValidator(lease),
 		exit:            make(chan struct{}),
-		sysSessionPool:  pools.NewResourcePool(factory, minCapacity, maxCapacity, idleTimeout),
+		sysSessionPool:  pools.NewResourcePool(factory, capacity, capacity, idleTimeout),
 	}
 
 	if ebd, ok := store.(etcdBackend); ok {
@@ -408,10 +404,8 @@ func NewDomain(store kv.Storage, lease time.Duration, factory pools.Factory) (d 
 	ctx := goctx.Background()
 	callback := &ddlCallback{do: d}
 	d.ddl = ddl.NewDDL(ctx, d.etcdClient, d.store, d.infoHandle, callback, lease)
-	if ddl.ChangeOwnerInNewWay {
-		if err = d.ddl.SchemaVersionSyncer().Init(ctx); err != nil {
-			return nil, errors.Trace(err)
-		}
+	if err = d.ddl.SchemaSyncer().Init(ctx); err != nil {
+		return nil, errors.Trace(err)
 	}
 	if err = d.Reload(); err != nil {
 		return nil, errors.Trace(err)
