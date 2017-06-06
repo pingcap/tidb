@@ -78,25 +78,30 @@ func (s *testEvaluatorSuite) TestJSONExtract(c *C) {
 	tbl := []struct {
 		Input    []interface{}
 		Expected interface{}
+		Success  bool
 	}{
-		{[]interface{}{nil, nil}, nil},
-		{[]interface{}{jstr, `$.a[0].aa[0].aaa`, `$.aaa`}, `[1, 2]`},
+		{[]interface{}{nil, nil}, nil, true},
+		{[]interface{}{jstr, `$.a[0].aa[0].aaa`, `$.aaa`}, `[1, 2]`, true},
+		{[]interface{}{jstr, `$.a[0].aa[0].aaa`, `$InvalidPath`}, nil, false},
 	}
 	for _, t := range tbl {
 		args := types.MakeDatums(t.Input...)
 		f, err := fc.getFunction(datumsToConstants(args), s.ctx)
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
-		c.Assert(err, IsNil)
-
-		switch x := t.Expected.(type) {
-		case string:
-			j1, err := json.ParseFromString(x)
+		if t.Success {
 			c.Assert(err, IsNil)
-			j2 := d.GetMysqlJSON()
-			cmp, err := json.CompareJSON(j1, j2)
-			c.Assert(err, IsNil)
-			c.Assert(cmp, Equals, 0)
+			switch x := t.Expected.(type) {
+			case string:
+				j1, err := json.ParseFromString(x)
+				c.Assert(err, IsNil)
+				j2 := d.GetMysqlJSON()
+				cmp, err := json.CompareJSON(j1, j2)
+				c.Assert(err, IsNil)
+				c.Assert(cmp, Equals, 0)
+			}
+		} else {
+			c.Assert(err, NotNil)
 		}
 	}
 }
@@ -108,29 +113,34 @@ func (s *testEvaluatorSuite) TestJSONSetInsertReplace(c *C) {
 		fc       functionClass
 		Input    []interface{}
 		Expected interface{}
+		Success  bool
 	}{
-		{funcs[ast.JSONSet], []interface{}{nil, nil, nil}, nil},
-		{funcs[ast.JSONSet], []interface{}{`{}`, `$.a`, 3}, `{"a": 3}`},
-		{funcs[ast.JSONInsert], []interface{}{`{}`, `$.a`, 3}, `{"a": 3}`},
-		{funcs[ast.JSONReplace], []interface{}{`{}`, `$.a`, 3}, `{}`},
-		{funcs[ast.JSONSet], []interface{}{`{}`, `$.a`, 3, `$.b`, "3"}, `{"a": 3, "b": "3"}`},
+		{funcs[ast.JSONSet], []interface{}{nil, nil, nil}, nil, true},
+		{funcs[ast.JSONSet], []interface{}{`{}`, `$.a`, 3}, `{"a": 3}`, true},
+		{funcs[ast.JSONInsert], []interface{}{`{}`, `$.a`, 3}, `{"a": 3}`, true},
+		{funcs[ast.JSONReplace], []interface{}{`{}`, `$.a`, 3}, `{}`, true},
+		{funcs[ast.JSONSet], []interface{}{`{}`, `$.a`, 3, `$.b`, "3"}, `{"a": 3, "b": "3"}`, true},
+		{funcs[ast.JSONSet], []interface{}{`{}`, `$.a`, 3, `$.b`}, nil, false},
+		{funcs[ast.JSONSet], []interface{}{`{}`, `$InvalidPath`, 3}, nil, false},
 	}
 	for _, t := range tbl {
 		args := types.MakeDatums(t.Input...)
 		f, err := t.fc.getFunction(datumsToConstants(args), s.ctx)
 		c.Assert(err, IsNil)
 		d, err := f.eval(nil)
-		c.Assert(err, IsNil)
-
-		switch x := t.Expected.(type) {
-		case nil:
-		case string:
-			j1, err := json.ParseFromString(x)
+		if t.Success {
 			c.Assert(err, IsNil)
-			j2 := d.GetMysqlJSON()
-			cmp, err := json.CompareJSON(j1, j2)
-			c.Assert(err, IsNil)
-			c.Assert(cmp, Equals, 0)
+			switch x := t.Expected.(type) {
+			case string:
+				j1, err := json.ParseFromString(x)
+				c.Assert(err, IsNil)
+				j2 := d.GetMysqlJSON()
+				cmp, err := json.CompareJSON(j1, j2)
+				c.Assert(err, IsNil)
+				c.Assert(cmp, Equals, 0)
+			}
+		} else {
+			c.Assert(err, NotNil)
 		}
 	}
 }
@@ -154,7 +164,6 @@ func (s *testEvaluatorSuite) TestJSONMerge(c *C) {
 		c.Assert(err, IsNil)
 
 		switch x := t.Expected.(type) {
-		case nil:
 		case string:
 			j1, err := json.ParseFromString(x)
 			c.Assert(err, IsNil)
