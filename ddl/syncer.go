@@ -27,19 +27,26 @@ import (
 )
 
 const (
-	ddlAllSchemaVersions   = "/tidb/ddl/all_schema_versions"
-	ddlGlobalSchemaVersion = "/tidb/ddl/global_schema_version"
-	initialVersion         = "0"
-	putKeyNoRetry          = 1
-	keyOpDefaultRetryCnt   = 3
-	putKeyRetryUnlimited   = math.MaxInt64
-	keyOpDefaultTimeout    = 2 * time.Second
-	putKeyRetryInterval    = 30 * time.Millisecond
-	checkVersInterval      = 20 * time.Millisecond
+	// DDLAllSchemaVersions is the path on etcd that is used to store all servers current schema versions.
+	// It's exported for testing.
+	DDLAllSchemaVersions = "/tidb/ddl/all_schema_versions"
+	// DDLGlobalSchemaVersion is the path on etcd that is used to store the latest schema versions.
+	// It's exported for testing.
+	DDLGlobalSchemaVersion = "/tidb/ddl/global_schema_version"
+	// InitialVersion is the initial schema version for every server.
+	// It's exported for testing.
+	InitialVersion       = "0"
+	putKeyNoRetry        = 1
+	keyOpDefaultRetryCnt = 3
+	putKeyRetryUnlimited = math.MaxInt64
+	keyOpDefaultTimeout  = 2 * time.Second
+	putKeyRetryInterval  = 30 * time.Millisecond
+	checkVersInterval    = 20 * time.Millisecond
 )
 
-// checkVersFirstWaitTime is used for testing.
-var checkVersFirstWaitTime = 50 * time.Millisecond
+// CheckVersFirstWaitTime is a waitting time before the owner checks all the servers of the schema version,
+// and it's an exported variable for testing.
+var CheckVersFirstWaitTime = 50 * time.Millisecond
 
 // SchemaSyncer is used to synchronize schema version between the DDL worker leader and followers through etcd.
 type SchemaSyncer interface {
@@ -69,7 +76,7 @@ type schemaVersionSyncer struct {
 func NewSchemaSyncer(etcdCli *clientv3.Client, id string) SchemaSyncer {
 	return &schemaVersionSyncer{
 		etcdCli:           etcdCli,
-		selfSchemaVerPath: fmt.Sprintf("%s/%s", ddlAllSchemaVersions, id),
+		selfSchemaVerPath: fmt.Sprintf("%s/%s", DDLAllSchemaVersions, id),
 	}
 }
 
@@ -97,14 +104,14 @@ func (s *schemaVersionSyncer) putKV(ctx goctx.Context, retryCnt int, key, val st
 // Init implements SchemaSyncer.Init interface.
 func (s *schemaVersionSyncer) Init(ctx goctx.Context) error {
 	_, err := s.etcdCli.Txn(ctx).
-		If(clientv3.Compare(clientv3.CreateRevision(ddlGlobalSchemaVersion), "=", 0)).
-		Then(clientv3.OpPut(ddlGlobalSchemaVersion, initialVersion)).
+		If(clientv3.Compare(clientv3.CreateRevision(DDLGlobalSchemaVersion), "=", 0)).
+		Then(clientv3.OpPut(DDLGlobalSchemaVersion, InitialVersion)).
 		Commit()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	s.globalVerCh = s.etcdCli.Watch(ctx, ddlGlobalSchemaVersion)
-	return s.putKV(ctx, keyOpDefaultRetryCnt, s.selfSchemaVerPath, initialVersion)
+	s.globalVerCh = s.etcdCli.Watch(ctx, DDLGlobalSchemaVersion)
+	return s.putKV(ctx, keyOpDefaultRetryCnt, s.selfSchemaVerPath, InitialVersion)
 }
 
 // GlobalVersionCh implements SchemaSyncer.GlobalVersionCh interface.
@@ -121,7 +128,7 @@ func (s *schemaVersionSyncer) UpdateSelfVersion(ctx goctx.Context, version int64
 // OwnerUpdateGlobalVersion implements SchemaSyncer.OwnerUpdateGlobalVersion interface.
 func (s *schemaVersionSyncer) OwnerUpdateGlobalVersion(ctx goctx.Context, version int64) error {
 	ver := strconv.FormatInt(version, 10)
-	return s.putKV(ctx, putKeyRetryUnlimited, ddlGlobalSchemaVersion, ver)
+	return s.putKV(ctx, putKeyRetryUnlimited, DDLGlobalSchemaVersion, ver)
 }
 
 // RemoveSelfVersionPath implements SchemaSyncer.RemoveSelfVersionPath interface.
@@ -150,7 +157,7 @@ func isContextFinished(err error) bool {
 
 // OwnerCheckAllVersions implements SchemaSyncer.OwnerCheckAllVersions interface.
 func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx goctx.Context, latestVer int64) error {
-	time.Sleep(checkVersFirstWaitTime)
+	time.Sleep(CheckVersFirstWaitTime)
 	updatedMap := make(map[string]struct{})
 	for {
 		select {
@@ -159,7 +166,7 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx goctx.Context, latestVer
 		default:
 		}
 
-		resp, err := s.etcdCli.Get(ctx, ddlAllSchemaVersions, clientv3.WithPrefix())
+		resp, err := s.etcdCli.Get(ctx, DDLAllSchemaVersions, clientv3.WithPrefix())
 		if isContextFinished(err) {
 			return errors.Trace(err)
 		}
