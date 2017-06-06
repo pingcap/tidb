@@ -56,12 +56,11 @@ const (
 
 // ownerManager represents the structure which is used for electing owner.
 type ownerManager struct {
-	ddlOwner    int32
-	bgOwner     int32
-	ddlID       string // id is the ID of DDL.
-	etcdCli     *clientv3.Client
-	etcdSession *concurrency.Session
-	cancel      goctx.CancelFunc
+	ddlOwner int32
+	bgOwner  int32
+	ddlID    string // id is the ID of DDL.
+	etcdCli  *clientv3.Client
+	cancel   goctx.CancelFunc
 }
 
 // NewOwnerManager creates a new OwnerManager.
@@ -114,14 +113,13 @@ func (m *ownerManager) SetBgOwner(isOwner bool) {
 // NewSessionTTL is the etcd session's TTL in seconds. It's exported for testing.
 var NewSessionTTL = 10
 
-func (m *ownerManager) newSession(ctx goctx.Context, retryCnt int) error {
+func (m *ownerManager) newSession(ctx goctx.Context, retryCnt int) (*concurrency.Session, error) {
 	var err error
-	var session *concurrency.Session
+	var etcdSession *concurrency.Session
 	for i := 0; i < retryCnt; i++ {
-		session, err = concurrency.NewSession(m.etcdCli,
+		etcdSession, err = concurrency.NewSession(m.etcdCli,
 			concurrency.WithTTL(NewSessionTTL), concurrency.WithContext(ctx))
 		if err == nil {
-			m.etcdSession = session
 			break
 		}
 		log.Warnf("[ddl] failed to new session, err %v", err)
@@ -131,32 +129,37 @@ func (m *ownerManager) newSession(ctx goctx.Context, retryCnt int) error {
 		time.Sleep(200 * time.Millisecond)
 		continue
 	}
-	return errors.Trace(err)
+	return etcdSession, errors.Trace(err)
 }
 
 // CampaignOwners implements OwnerManager.CampaignOwners interface.
 func (m *ownerManager) CampaignOwners(ctx goctx.Context, wg *sync.WaitGroup) error {
-	err := m.newSession(ctx, newSessionDefaultRetryCnt)
+	ddlSession, err := m.newSession(ctx, newSessionDefaultRetryCnt)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	bgSession, err := m.newSession(ctx, newSessionDefaultRetryCnt)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	wg.Add(2)
 	ddlCtx, _ := goctx.WithCancel(ctx)
-	go m.campaignLoop(ddlCtx, DDLOwnerKey, wg)
+	go m.campaignLoop(ddlCtx, ddlSession, DDLOwnerKey, wg)
 
 	bgCtx, _ := goctx.WithCancel(ctx)
-	go m.campaignLoop(bgCtx, BgOwnerKey, wg)
+	go m.campaignLoop(bgCtx, bgSession, BgOwnerKey, wg)
 	return nil
 }
 
-func (m *ownerManager) campaignLoop(ctx goctx.Context, key string, wg *sync.WaitGroup) {
+func (m *ownerManager) campaignLoop(ctx goctx.Context, etcdSession *concurrency.Session, key string, wg *sync.WaitGroup) {
 	defer wg.Done()
+	var err error
 	for {
 		select {
-		case <-m.etcdSession.Done():
+		case <-etcdSession.Done():
 			log.Info("[ddl] %s etcd session is done, creates a new one", key)
-			err := m.newSession(ctx, newSessionRetryUnlimited)
+			etcdSession, err = m.newSession(ctx, newSessionRetryUnlimited)
 			if err != nil {
 				log.Infof("[ddl] break %s campaign loop, err %v", key, err)
 				return
@@ -167,8 +170,8 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, key string, wg *sync.Wait
 		default:
 		}
 
-		elec := concurrency.NewElection(m.etcdSession, key)
-		err := elec.Campaign(ctx, m.ddlID)
+		elec := concurrency.NewElection(etcdSession, key)
+		err = elec.Campaign(ctx, m.ddlID)
 		if err != nil {
 			log.Infof("[ddl] %s ownerManager %s failed to campaign, err %v", key, m.ddlID, err)
 			if isContextFinished(err) {
@@ -184,7 +187,7 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, key string, wg *sync.Wait
 		}
 		m.setOwnerVal(key, true)
 
-		m.watchOwner(ctx, ownerKey)
+		m.watchOwner(ctx, etcdSession, ownerKey)
 		m.setOwnerVal(key, false)
 	}
 }
@@ -215,7 +218,7 @@ func (m *ownerManager) setOwnerVal(key string, val bool) {
 	}
 }
 
-func (m *ownerManager) watchOwner(ctx goctx.Context, key string) {
+func (m *ownerManager) watchOwner(ctx goctx.Context, etcdSession *concurrency.Session, key string) {
 	log.Debugf("[ddl] ownerManager %s watch owner key %v", m.ddlID, key)
 	watchCh := m.etcdCli.Watch(ctx, key)
 	for {
@@ -233,7 +236,7 @@ func (m *ownerManager) watchOwner(ctx goctx.Context, key string) {
 					return
 				}
 			}
-		case <-m.etcdSession.Done():
+		case <-etcdSession.Done():
 			return
 		case <-ctx.Done():
 			return
