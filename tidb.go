@@ -102,6 +102,7 @@ var (
 	// For production, you should set a big schema lease, like 300s+.
 	schemaLease = 1 * time.Second
 
+	// statsLease is the time for reload stats table.
 	statsLease = 1 * time.Second
 
 	// The maximum number of retries to recover from retryable errors.
@@ -115,6 +116,7 @@ func SetSchemaLease(lease time.Duration) {
 	schemaLease = lease
 }
 
+// SetStatsLease changes the default stats lease time for loading stats info.
 func SetStatsLease(lease time.Duration) {
 	statsLease = lease
 }
