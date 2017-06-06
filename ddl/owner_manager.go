@@ -46,8 +46,10 @@ type OwnerManager interface {
 }
 
 const (
-	ddlOwnerKey               = "/tidb/ddl/owner"
-	bgOwnerKey                = "/tidb/ddl/bg/owner"
+	// DDLOwnerKey is the ddl owner path that is saved to etcd, and it's exported for testing.
+	DDLOwnerKey = "/tidb/ddl/fg/owner"
+	// BgOwnerKey is the background owner path that is saved to etcd, and it's exported for testing.
+	BgOwnerKey                = "/tidb/ddl/bg/owner"
 	newSessionDefaultRetryCnt = 3
 	newSessionRetryUnlimited  = math.MaxInt64
 )
@@ -109,15 +111,17 @@ func (m *ownerManager) SetBgOwner(isOwner bool) {
 	}
 }
 
-// newSessionTTL is the etcd session's TTL in seconds.
-const newSessionTTL = 10
+// NewSessionTTL is the etcd session's TTL in seconds. It's exported for testing.
+var NewSessionTTL = 10
 
 func (m *ownerManager) newSession(ctx goctx.Context, retryCnt int) error {
 	var err error
+	var session *concurrency.Session
 	for i := 0; i < retryCnt; i++ {
-		m.etcdSession, err = concurrency.NewSession(m.etcdCli,
-			concurrency.WithTTL(newSessionTTL), concurrency.WithContext(ctx))
+		session, err = concurrency.NewSession(m.etcdCli,
+			concurrency.WithTTL(NewSessionTTL), concurrency.WithContext(ctx))
 		if err == nil {
+			m.etcdSession = session
 			break
 		}
 		log.Warnf("[ddl] failed to new session, err %v", err)
@@ -139,10 +143,10 @@ func (m *ownerManager) CampaignOwners(ctx goctx.Context, wg *sync.WaitGroup) err
 
 	wg.Add(2)
 	ddlCtx, _ := goctx.WithCancel(ctx)
-	go m.campaignLoop(ddlCtx, ddlOwnerKey, wg)
+	go m.campaignLoop(ddlCtx, DDLOwnerKey, wg)
 
 	bgCtx, _ := goctx.WithCancel(ctx)
-	go m.campaignLoop(bgCtx, bgOwnerKey, wg)
+	go m.campaignLoop(bgCtx, BgOwnerKey, wg)
 	return nil
 }
 
@@ -151,7 +155,7 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, key string, wg *sync.Wait
 	for {
 		select {
 		case <-m.etcdSession.Done():
-			log.Info("[ddl] etcd session is done, creates a new one")
+			log.Info("[ddl] %s etcd session is done, creates a new one", key)
 			err := m.newSession(ctx, newSessionRetryUnlimited)
 			if err != nil {
 				log.Infof("[ddl] break %s campaign loop, err %v", key, err)
@@ -174,29 +178,37 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, key string, wg *sync.Wait
 			continue
 		}
 
-		// Get owner information.
-		resp, err := elec.Leader(ctx)
+		ownerKey, err := GetOwnerInfo(ctx, elec, key, m.ddlID)
 		if err != nil {
-			// If no leader elected currently, it returns ErrElectionNoLeader.
-			log.Infof("[ddl] failed to get leader, err %v", err)
 			continue
 		}
-		leader := string(resp.Kvs[0].Value)
-		log.Infof("[ddl] %s ownerManager is %s, owner is %v", key, m.ddlID, leader)
-		if leader == m.ddlID {
-			m.setOwnerVal(key, true)
-		} else {
-			log.Warnf("[ddl] ownerManager %s isn't the owner", m.ddlID)
-			continue
-		}
+		m.setOwnerVal(key, true)
 
-		m.watchOwner(ctx, string(resp.Kvs[0].Key))
+		m.watchOwner(ctx, ownerKey)
 		m.setOwnerVal(key, false)
 	}
 }
 
+// GetOwnerInfo gets the owner information.
+func GetOwnerInfo(ctx goctx.Context, elec *concurrency.Election, key, id string) (string, error) {
+	resp, err := elec.Leader(ctx)
+	if err != nil {
+		// If no leader elected currently, it returns ErrElectionNoLeader.
+		log.Infof("[ddl] failed to get leader, err %v", err)
+		return "", errors.Trace(err)
+	}
+	ownerID := string(resp.Kvs[0].Value)
+	log.Infof("[ddl] %s ownerManager is %s, owner is %v", key, id, ownerID)
+	if ownerID != id {
+		log.Warnf("[ddl] ownerManager %s isn't the owner", id)
+		return "", errors.New("ownerInfoNotMatch")
+	}
+
+	return string(resp.Kvs[0].Key), nil
+}
+
 func (m *ownerManager) setOwnerVal(key string, val bool) {
-	if key == ddlOwnerKey {
+	if key == DDLOwnerKey {
 		m.SetOwner(val)
 	} else {
 		m.SetBgOwner(val)
