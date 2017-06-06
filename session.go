@@ -63,9 +63,9 @@ type Session interface {
 	String() string                              // For debug
 	CommitTxn() error
 	RollbackTxn() error
-	// For execute prepare statement in binary protocol.
+	// PrepareStmt executes prepare statement in binary protocol.
 	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error)
-	// Execute a prepared statement.
+	// ExecutePreparedStmt executes a prepared statement.
 	ExecutePreparedStmt(stmtID uint32, param ...interface{}) (ast.RecordSet, error)
 	DropPreparedStmt(stmtID uint32) error
 	SetClientCapability(uint32) // Set client capability flags.
@@ -105,12 +105,12 @@ func (h *stmtHistory) add(stmtID uint32, st ast.Statement, stmtCtx *variable.Sta
 }
 
 type session struct {
-	// It's used by ShowProcess(), and should be modified atomically.
+	// processInfo is used by ShowProcess(), and should be modified atomically.
 	processInfo atomic.Value
 	txn         kv.Transaction // current transaction
 	txnFuture   *txnFuture
 	txnFutureCh chan *txnFuture
-	// For cancel the execution of current transaction.
+	// goCtx is used for cancelling the execution of current transaction.
 	goCtx      goctx.Context
 	cancelFunc goctx.CancelFunc
 
@@ -121,7 +121,7 @@ type session struct {
 
 	store kv.Storage
 
-	// Used for test only.
+	// unlimitedRetryCount is used for test only.
 	unlimitedRetryCount bool
 
 	// For performance_schema only.
@@ -632,7 +632,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 	return rs, nil
 }
 
-// For execute prepare statement in binary protocol
+// PrepareStmt is used for executing prepare statement in binary protocol
 func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error) {
 	if s.sessionVars.TxnCtx.InfoSchema == nil {
 		// We don't need to create a transaction for prepare statement, just get information schema will do.
@@ -715,6 +715,7 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 	return nil
 }
 
+// GetTxn gets the current transaction or creates a new transaction.
 // If forceNew is true, GetTxn() must return a new transaction.
 // In this situation, if current transaction is still in progress,
 // there will be an implicit commit and create a new transaction.
@@ -1025,7 +1026,7 @@ const loadCommonGlobalVarsSQL = "select * from mysql.global_variables where vari
 	variable.TiDBMaxRowCountForINLJ + quoteCommaQuote +
 	variable.TiDBDistSQLScanConcurrency + "')"
 
-// LoadCommonGlobalVariableIfNeeded loads and applies commonly used global variables for the session.
+// loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
 func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	vars := s.sessionVars
 	if vars.CommonGlobalLoaded {
@@ -1128,6 +1129,7 @@ func (s *session) ActivePendingTxn() error {
 		return errors.Trace(future.err)
 	}
 	s.txn = future.txn
+	s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
 	err := s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
 		return errors.Trace(err)

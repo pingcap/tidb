@@ -47,6 +47,9 @@ const ( // GET_FORMAT location.
 	internalLocation = "INTERNAL"
 )
 
+// DurationPattern determine whether to match the format of duration.
+var DurationPattern = regexp.MustCompile(`^(|[-]?)(|\d{1,2}\s)(\d{2,3}:\d{2}:\d{2}|\d{1,2}:\d{2}|\d{1,6})(|\.\d*)$`)
+
 var (
 	_ functionClass = &dateFunctionClass{}
 	_ functionClass = &dateDiffFunctionClass{}
@@ -1770,6 +1773,51 @@ func getTimeZone(ctx context.Context) *time.Location {
 	return ret
 }
 
+// isDuration returns a boolean indicating whether the str matches the format of duration.
+// See https://dev.mysql.com/doc/refman/5.7/en/time.html
+func isDuration(str string) bool {
+	return DurationPattern.MatchString(str)
+}
+
+// strDatetimeAddDuration adds duration to datetime string, returns a datum value.
+func strDatetimeAddDuration(d string, arg1 types.Duration) (result types.Datum, err error) {
+	arg0, err := types.ParseTime(d, mysql.TypeDatetime, getFsp(d))
+	if err != nil {
+		return result, errors.Trace(err)
+	}
+	tmpDuration := arg0.Add(arg1)
+	resultDuration, err := tmpDuration.ConvertToTime(mysql.TypeDatetime)
+	if err != nil {
+		return result, errors.Trace(err)
+	}
+	if getFsp(d) != 0 {
+		tmpDuration.Fsp = types.MaxFsp
+	} else {
+		tmpDuration.Fsp = 0
+	}
+	result.SetString(resultDuration.String())
+	return
+}
+
+// strDurationAddDuration adds duration to duration string, returns a datum value.
+func strDurationAddDuration(d string, arg1 types.Duration) (result types.Datum, err error) {
+	arg0, err := types.ParseDuration(d, getFsp(d))
+	if err != nil {
+		return result, errors.Trace(err)
+	}
+	tmpDuration, err := arg0.Add(arg1)
+	if err != nil {
+		return result, errors.Trace(err)
+	}
+	if getFsp(d) != 0 {
+		tmpDuration.Fsp = types.MaxFsp
+	} else {
+		tmpDuration.Fsp = 0
+	}
+	result.SetString(tmpDuration.String())
+	return
+}
+
 type addTimeFunctionClass struct {
 	baseFunctionClass
 }
@@ -1786,7 +1834,59 @@ type builtinAddTimeSig struct {
 // eval evals a builtinAddTimeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_addtime
 func (b *builtinAddTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("ADDTIME")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if args[0].IsNull() || args[1].IsNull() {
+		return
+	}
+	var arg1 types.Duration
+	switch tp := args[1].Kind(); tp {
+	case types.KindMysqlDuration:
+		arg1 = args[1].GetMysqlDuration()
+	default:
+		s, err := args[1].ToString()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		if getFsp(s) == 0 {
+			arg1, err = types.ParseDuration(s, 0)
+		} else {
+			arg1, err = types.ParseDuration(s, types.MaxFsp)
+		}
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+
+	}
+	switch tp := args[0].Kind(); tp {
+	case types.KindMysqlTime:
+		arg0 := args[0].GetMysqlTime()
+		tmpDuration := arg0.Add(arg1)
+		result, err := tmpDuration.ConvertToTime(arg0.Type)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		d.SetMysqlTime(result)
+	case types.KindMysqlDuration:
+		arg0 := args[0].GetMysqlDuration()
+		result, err := arg0.Add(arg1)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		d.SetMysqlDuration(result)
+	default:
+		ss, err := args[0].ToString()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		if isDuration(ss) {
+			return strDurationAddDuration(ss, arg1)
+		}
+		return strDatetimeAddDuration(ss, arg1)
+	}
+	return
 }
 
 type convertTzFunctionClass struct {
