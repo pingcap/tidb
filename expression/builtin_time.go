@@ -393,6 +393,9 @@ func (b *builtinFromDaysSig) eval(row []types.Datum) (d types.Datum, err error) 
 		return d, errors.Trace(err)
 	}
 	days, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
 	d.SetMysqlTime(types.TimeFromDays(days))
 	return d, nil
 }
