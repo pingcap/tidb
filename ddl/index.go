@@ -409,6 +409,7 @@ func (d *ddl) fetchRowColVals(txn kv.Transaction, t table.Table, taskOpInfo *ind
 		handleInfo.endHandle = ret.doneHandle
 		handleInfo.isSent = true
 	}
+	log.Debugf("[ddl] txn %v fetches handle info %v", txn.StartTS(), handleInfo)
 	if ret.count == 0 {
 		return nil, ret
 	}
@@ -593,6 +594,7 @@ func (d *ddl) doBackfillIndexTask(t table.Table, taskOpInfo *indexTaskOpInfo, st
 	ret := new(taskResult)
 	handleInfo := &handleInfo{startHandle: startHandle}
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+		log.Debugf("[ddl] txn %v starts backfill index task", txn.StartTS())
 		err1 := d.isReorgRunnable(txn, ddlJobFlag)
 		if err1 != nil {
 			return errors.Trace(err1)
@@ -601,6 +603,7 @@ func (d *ddl) doBackfillIndexTask(t table.Table, taskOpInfo *indexTaskOpInfo, st
 		if ret.err != nil {
 			return errors.Trace(ret.err)
 		}
+		log.Debugf("[ddl] txn %v completes backfill index task", txn.StartTS())
 		return nil
 	})
 	if err != nil {
@@ -626,7 +629,7 @@ func (d *ddl) doBackfillIndexTaskInTxn(t table.Table, txn kv.Transaction, taskOp
 	}
 
 	for _, idxRecord := range idxRecords {
-		log.Debug("[ddl] backfill index...", idxRecord.handle)
+		log.Debugf("[ddl] txn %v backfill index handle...%v", txn.StartTS(), idxRecord.handle)
 		err := txn.LockKeys(idxRecord.key)
 		if err != nil {
 			taskRet.err = errors.Trace(err)
