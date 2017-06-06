@@ -137,6 +137,8 @@ type DDL interface {
 	RegisterEventCh(chan<- *Event)
 	// SchemaSyncer gets the schema syncer.
 	SchemaSyncer() SchemaSyncer
+	// OwnerManager gets the owner manager, and it's used for testing.
+	OwnerManager() OwnerManager
 }
 
 // Event is an event that a ddl operation happened.
@@ -394,6 +396,11 @@ func (d *ddl) genGlobalID() (int64, error) {
 // SchemaSyncer implements DDL.SchemaSyncer interface.
 func (d *ddl) SchemaSyncer() SchemaSyncer {
 	return d.schemaSyncer
+}
+
+// OwnerManager implements DDL.OwnerManager interface.
+func (d *ddl) OwnerManager() OwnerManager {
+	return d.ownerManager
 }
 
 func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
