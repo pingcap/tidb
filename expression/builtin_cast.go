@@ -47,7 +47,7 @@ func (c *castFunctionClass) getFunction(args []Expression, ctx context.Context) 
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
-// old built-in cast signature, will be removed later.
+// builtinCastSig is old built-in cast signature and will be removed later.
 type builtinCastSig struct {
 	baseBuiltinFunc
 
