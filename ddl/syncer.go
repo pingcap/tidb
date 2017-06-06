@@ -27,11 +27,14 @@ import (
 )
 
 const (
-	// DDLAllSchemaVersions is exported for testing.
+	// DDLAllSchemaVersions is the path on etcd that is used to store all servers current schema versions.
+	// It's exported for testing.
 	DDLAllSchemaVersions = "/tidb/ddl/all_schema_versions"
-	// DDLGlobalSchemaVersion is exported for testing.
+	// DDLGlobalSchemaVersion is the path on etcd that is used to store the latest schema versions.
+	// It's exported for testing.
 	DDLGlobalSchemaVersion = "/tidb/ddl/global_schema_version"
-	// InitialVersion is exported for testing.
+	// InitialVersion is the initial schema version for every server.
+	// It's exported for testing.
 	InitialVersion       = "0"
 	putKeyNoRetry        = 1
 	keyOpDefaultRetryCnt = 3
@@ -41,7 +44,8 @@ const (
 	checkVersInterval    = 20 * time.Millisecond
 )
 
-// CheckVersFirstWaitTime is used for testing.
+// CheckVersFirstWaitTime is a waitting time before the owner checks all the servers of the schema version,
+// and it's an exported variable for testing.
 var CheckVersFirstWaitTime = 50 * time.Millisecond
 
 // SchemaSyncer is used to synchronize schema version between the DDL worker leader and followers through etcd.

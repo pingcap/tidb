@@ -46,9 +46,9 @@ type OwnerManager interface {
 }
 
 const (
-	// DDLOwnerKey is exported for testing.
-	DDLOwnerKey = "/tidb/ddl/owner"
-	// BgOwnerKey is exported for testing.
+	// DDLOwnerKey is the ddl owner path that is saved to etcd, and it's exported for testing.
+	DDLOwnerKey = "/tidb/ddl/fg/owner"
+	// BgOwnerKey is the background owner path that is saved to etcd, and it's exported for testing.
 	BgOwnerKey                = "/tidb/ddl/bg/owner"
 	newSessionDefaultRetryCnt = 3
 	newSessionRetryUnlimited  = math.MaxInt64
@@ -190,7 +190,6 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, key string, wg *sync.Wait
 }
 
 // GetOwnerInfo gets the owner information.
-// And extracting it into a function can improve the test coverage.
 func GetOwnerInfo(ctx goctx.Context, elec *concurrency.Election, key, id string) (string, error) {
 	resp, err := elec.Leader(ctx)
 	if err != nil {
