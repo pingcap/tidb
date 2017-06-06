@@ -14,6 +14,8 @@
 package plan
 
 import (
+	"math"
+
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/expression"
 )
@@ -176,4 +178,62 @@ func (p *LogicalAggregation) statsProfile() *statsProfile {
 	return p.profile
 }
 
-// TODO: Implement Join, Exists, MaxOneRow plan.
+func (p *LogicalJoin) statsProfile() *statsProfile {
+	if p.profile != nil {
+		return p.profile
+	}
+	leftProfile := p.children[0].(LogicalPlan).statsProfile()
+	rightProfile := p.children[1].(LogicalPlan).statsProfile()
+	if p.JoinType == SemiJoin {
+		p.profile = &statsProfile{
+			count:       leftProfile.count * selectionFactor,
+			cardinality: make([]float64, len(leftProfile.cardinality)),
+		}
+		for i := range p.profile.cardinality {
+			p.profile.cardinality[i] = leftProfile.cardinality[i] * selectionFactor
+		}
+		return p.profile
+	}
+	if p.JoinType == LeftOuterSemiJoin {
+		p.profile = &statsProfile{
+			count:       leftProfile.count,
+			cardinality: make([]float64, p.schema.Len()),
+		}
+		copy(p.profile.cardinality, leftProfile.cardinality)
+		p.profile.cardinality[len(p.profile.cardinality)-1] = 2.0
+		return p.profile
+	}
+	if 0 == len(p.EqualConditions) {
+		p.profile = &statsProfile{
+			count:       leftProfile.count * rightProfile.count,
+			cardinality: append(leftProfile.cardinality, rightProfile.cardinality...),
+		}
+		return p.profile
+	}
+	var leftKeys, rightKeys []*expression.Column
+	for _, eqCond := range p.EqualConditions {
+		leftKeys = append(leftKeys, eqCond.GetArgs()[0].(*expression.Column))
+		rightKeys = append(rightKeys, eqCond.GetArgs()[1].(*expression.Column))
+	}
+	leftKeyCardinality := getCardinality(leftKeys, p.children[0].Schema(), leftProfile)
+	rightKeyCardinality := getCardinality(rightKeys, p.children[1].Schema(), rightProfile)
+	count := (leftProfile.count * rightProfile.count / leftKeyCardinality / rightKeyCardinality) * math.Min(leftKeyCardinality, rightKeyCardinality)
+	if p.JoinType == LeftOuterJoin {
+		count = math.Max(count, leftProfile.count)
+	} else if p.JoinType == RightOuterJoin {
+		count = math.Max(count, rightProfile.count)
+	}
+	cardinality := make([]float64, 0, p.schema.Len())
+	cardinality = append(cardinality, leftProfile.cardinality...)
+	cardinality = append(cardinality, rightProfile.cardinality...)
+	for i := range cardinality {
+		cardinality[i] = math.Min(cardinality[i], count)
+	}
+	p.profile = &statsProfile{
+		count:       count,
+		cardinality: cardinality,
+	}
+	return p.profile
+}
+
+// TODO: Implement Exists, MaxOneRow plan.
