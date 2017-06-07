@@ -999,6 +999,10 @@ func (s *testSuite) TestJSON(c *C) {
 	c.Assert(err, NotNil)
 	_, err = tk.Exec(`create table test_bad_json(id int, a json, key (a))`)
 	c.Assert(err, NotNil)
+
+	// check CAST AS JSON.
+	result = tk.MustQuery(`select CAST('3' AS JSON), CAST('{}' AS JSON), CAST(null AS JSON)`)
+	result.Check(testkit.Rows(`3 {} <nil>`))
 }
 
 func (s *testSuite) TestToPBExpr(c *C) {

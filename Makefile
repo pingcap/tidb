@@ -124,11 +124,17 @@ race: parserlib
 tikv_integration_test: parserlib
 	$(GOTEST) ./store/tikv/. -with-tikv=true
 
+RACE_FLAG = 
+ifeq ("$(WITH_RACE)", "1")
+	RACE_FLAG = -race
+	GOBUILD   = GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=1 $(GO) build
+endif
+
 server: parserlib
 ifeq ($(TARGET), "")
-	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/tidb-server tidb-server/main.go
+	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -o bin/tidb-server tidb-server/main.go
 else
-	$(GOBUILD) -ldflags '$(LDFLAGS)' -o '$(TARGET)' tidb-server/main.go
+	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -o '$(TARGET)' tidb-server/main.go
 endif
 
 benchkv:

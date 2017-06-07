@@ -122,6 +122,7 @@ func newStoreWithBootstrap() (kv.Storage, error) {
 		return nil, errors.Trace(err)
 	}
 	tidb.SetSchemaLease(0)
+	tidb.SetStatsLease(0)
 	_, err = tidb.BootstrapSession(store)
 	return store, errors.Trace(err)
 }

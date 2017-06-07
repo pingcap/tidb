@@ -309,7 +309,13 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 		// TODO: A dummy implement
 	case ast.FlushPrivileges:
 		dom := sessionctx.GetDomain(e.ctx)
-		err := dom.PrivilegeHandle().Update()
+		sysSessionPool := dom.SysSessionPool()
+		ctx, err := sysSessionPool.Get()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		defer sysSessionPool.Put(ctx)
+		err = dom.PrivilegeHandle().Update(ctx.(context.Context))
 		return errors.Trace(err)
 	}
 	return nil
