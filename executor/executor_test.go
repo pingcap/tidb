@@ -988,6 +988,10 @@ func (s *testSuite) TestJSON(c *C) {
 	result.Check(testkit.Rows("true"))
 	result = tk.MustQuery(`select a from test_json tj where a = "string"`)
 	result.Check(testkit.Rows(`"string"`))
+
+	// check CAST AS JSON.
+	result = tk.MustQuery(`select CAST('3' AS JSON), CAST('{}' AS JSON), CAST(null AS JSON)`)
+	result.Check(testkit.Rows(`3 {} <nil>`))
 }
 
 func (s *testSuite) TestToPBExpr(c *C) {
