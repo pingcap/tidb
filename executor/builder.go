@@ -20,6 +20,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/inspectkv"
@@ -813,6 +814,33 @@ func (b *executorBuilder) buildTableScanForAnalyze(tblInfo *model.TableInfo, col
 	table, _ := b.is.TableByID(tblInfo.ID)
 	schema := expression.NewSchema(expression.ColumnInfos2Columns(tblInfo.Name, cols)...)
 	ranges := []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}
+	if b.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic) {
+		e := &TableReaderExecutor{
+			table:   table,
+			tableID: tblInfo.ID,
+			ranges:  ranges,
+			dagPB: &tipb.DAGRequest{
+				StartTs:        b.getStartTS(),
+				TimeZoneOffset: timeZoneOffset(b.ctx),
+				Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
+			},
+			schema:  schema,
+			columns: cols,
+			ctx:     b.ctx,
+		}
+		for i := range schema.Columns {
+			e.dagPB.OutputOffsets = append(e.dagPB.OutputOffsets, uint32(i))
+		}
+		e.dagPB.Executors = append(e.dagPB.Executors, &tipb.Executor{
+			Tp: tipb.ExecType_TypeTableScan,
+			TblScan: &tipb.TableScan{
+				TableId: tblInfo.ID,
+				Columns: distsql.ColumnsToProto(cols, tblInfo.PKIsHandle),
+			},
+		})
+		b.err = setPBColumnsDefaultValue(b.ctx, e.dagPB.Executors[0].TblScan.Columns, cols)
+		return e
+	}
 	e := &XSelectTableExec{
 		tableInfo: tblInfo,
 		ctx:       b.ctx,
@@ -838,6 +866,35 @@ func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idx
 	schema := expression.NewSchema(expression.ColumnInfos2Columns(tblInfo.Name, cols)...)
 	idxRange := &types.IndexRange{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.MaxValueDatum()}}
 	scanConcurrency := b.ctx.GetSessionVars().IndexSerialScanConcurrency
+	if b.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic) {
+		e := &IndexReaderExecutor{
+			table:   table,
+			index:   idxInfo,
+			tableID: tblInfo.ID,
+			ranges:  []*types.IndexRange{idxRange},
+			dagPB: &tipb.DAGRequest{
+				StartTs:        b.getStartTS(),
+				TimeZoneOffset: timeZoneOffset(b.ctx),
+				Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
+			},
+			schema:  schema,
+			columns: cols,
+			ctx:     b.ctx,
+		}
+		for i := range schema.Columns {
+			e.dagPB.OutputOffsets = append(e.dagPB.OutputOffsets, uint32(i))
+		}
+		e.dagPB.Executors = append(e.dagPB.Executors, &tipb.Executor{
+			Tp: tipb.ExecType_TypeIndexScan,
+			IdxScan: &tipb.IndexScan{
+				TableId: tblInfo.ID,
+				IndexId: idxInfo.ID,
+				Columns: distsql.ColumnsToProto(cols, tblInfo.PKIsHandle),
+			},
+		})
+		b.err = setPBColumnsDefaultValue(b.ctx, e.dagPB.Executors[0].IdxScan.Columns, cols)
+		return e
+	}
 	e := &XSelectIndexExec{
 		tableInfo:       tblInfo,
 		ctx:             b.ctx,
@@ -858,19 +915,31 @@ func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idx
 func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	e := &AnalyzeExec{
 		ctx:   b.ctx,
-		tasks: make([]analyzeTask, 0, len(v.Children())),
+		tasks: make([]*analyzeTask, 0, len(v.Children())),
 	}
 	for _, task := range v.PkTasks {
-		e.tasks = append(e.tasks, analyzeTask{taskType: pkTask,
-			src: b.buildTableScanForAnalyze(task.TableInfo, []*model.ColumnInfo{task.PKInfo})})
+		e.tasks = append(e.tasks, &analyzeTask{
+			taskType:  pkTask,
+			src:       b.buildTableScanForAnalyze(task.TableInfo, []*model.ColumnInfo{task.PKInfo}),
+			tableInfo: task.TableInfo,
+			Columns:   []*model.ColumnInfo{task.PKInfo},
+		})
 	}
 	for _, task := range v.ColTasks {
-		e.tasks = append(e.tasks, analyzeTask{taskType: colTask,
-			src: b.buildTableScanForAnalyze(task.TableInfo, task.ColsInfo)})
+		e.tasks = append(e.tasks, &analyzeTask{
+			taskType:  colTask,
+			src:       b.buildTableScanForAnalyze(task.TableInfo, task.ColsInfo),
+			tableInfo: task.TableInfo,
+			Columns:   task.ColsInfo,
+		})
 	}
 	for _, task := range v.IdxTasks {
-		e.tasks = append(e.tasks, analyzeTask{taskType: idxTask,
-			src: b.buildIndexScanForAnalyze(task.TableInfo, task.IndexInfo)})
+		e.tasks = append(e.tasks, &analyzeTask{
+			taskType:  idxTask,
+			src:       b.buildIndexScanForAnalyze(task.TableInfo, task.IndexInfo),
+			indexInfo: task.IndexInfo,
+			tableInfo: task.TableInfo,
+		})
 	}
 	return e
 }
