@@ -224,6 +224,8 @@ func buildColumnAndConstraint(ctx context.Context, offset int,
 	return col, cts, nil
 }
 
+// checkColumnCantHaveDefaultValue checks the column can have value as default or not.
+// Now, TEXT/BLOB/JSON can't have not null value as default.
 func checkColumnCantHaveDefaultValue(col *table.Column, value interface{}) (err error) {
 	if value != nil && (col.Tp == mysql.TypeJSON ||
 		col.Tp == mysql.TypeTinyBlob || col.Tp == mysql.TypeMediumBlob ||
