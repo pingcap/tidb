@@ -186,7 +186,11 @@ func (e *TopnExec) Next() (*Row, error) {
 	if !e.fetched {
 		e.Idx = int(e.limit.Offset)
 		e.totalCount = int(e.limit.Offset + e.limit.Count)
-		e.Rows = make([]*orderByRow, 0, e.totalCount+1)
+		cap := e.totalCount + 1
+		if cap > 1024 {
+			cap = 1024
+		}
+		e.Rows = make([]*orderByRow, 0, cap)
 		e.heapSize = 0
 		for {
 			srcRow, err := e.children[0].Next()

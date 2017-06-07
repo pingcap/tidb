@@ -169,6 +169,7 @@ func (s *testBootstrapSuite) testBootstrapWithError(c *C) {
 func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	defer testleak.AfterTest(c)()
 	store := newStoreWithBootstrap(c, s.dbName)
+	defer store.Close()
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "USE mysql;")
 
