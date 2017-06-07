@@ -16,6 +16,7 @@ package binloginfo_test
 import (
 	"net"
 	"os"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -79,8 +80,7 @@ func (s *testBinlogSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.store = store
 	tidb.SetSchemaLease(0)
-	s.unixFile = "/tmp/mock-binlog-pump"
-	os.Remove(s.unixFile)
+	s.unixFile = "/tmp/mock-binlog-pump" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	l, err := net.Listen("unix", s.unixFile)
 	c.Assert(err, IsNil)
 	s.serv = grpc.NewServer()
