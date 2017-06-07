@@ -121,9 +121,6 @@ race: parserlib
 	@export log_level=debug; \
 	$(GOTEST) -race $(PACKAGES)
 
-echo:
-	echo $(PACKAGES)
-
 leak: parserlib
 	@export log_level=debug; \
 	for dir in $(PACKAGES); do \
