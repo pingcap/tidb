@@ -333,6 +333,12 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`is_ipv4_mapped(c_varbinary)`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{`password("abc")`, mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{`json_type('3')`, mysql.TypeVarString, charset.CharsetUTF8, 0},
+		{`json_extract('{"a": 1}', '$.a')`, mysql.TypeJSON, charset.CharsetUTF8, 0},
+		{`json_unquote('{"a": 1}')`, mysql.TypeVarString, charset.CharsetUTF8, 0},
+		{`json_set('{"a": 1}', '$.a', 3)`, mysql.TypeJSON, charset.CharsetUTF8, 0},
+		{`json_insert('{"a": 1}', '$.a', 3)`, mysql.TypeJSON, charset.CharsetUTF8, 0},
+		{`json_replace('{"a": 1}', '$.a', 3)`, mysql.TypeJSON, charset.CharsetUTF8, 0},
+		{`json_merge('{"a": 1}', '3')`, mysql.TypeJSON, charset.CharsetUTF8, 0},
 	}
 	for _, tt := range tests {
 		ctx := testKit.Se.(context.Context)
