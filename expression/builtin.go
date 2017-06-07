@@ -32,6 +32,7 @@ type baseBuiltinFunc struct {
 	argValues     []types.Datum
 	ctx           context.Context
 	deterministic bool
+	tp            *types.FieldType
 	// self points to the built-in function signature which contains this baseBuiltinFunc.
 	// TODO: self will be removed after all built-in function signatures implement EvalXXX().
 	self builtinFunc
@@ -43,6 +44,21 @@ func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc 
 		argValues:     make([]types.Datum, len(args)),
 		ctx:           ctx,
 		deterministic: true,
+		tp:            types.NewFieldType(mysql.TypeUnspecified),
+	}
+}
+
+// newBaseBuiltinFuncWithTp will be renamed to newBaseBuiltinFunc and replaces the older one later.
+// We'll move the type infer work to expression writer,
+// thus the `tp` attribute is needed for `baseBuiltinFunc`
+// to obtain the FieldType of a ScalarFunction.
+func newBaseBuiltinFuncWithTp(args []Expression, tp *types.FieldType, ctx context.Context) baseBuiltinFunc {
+	return baseBuiltinFunc{
+		args:          args,
+		argValues:     make([]types.Datum, len(args)),
+		ctx:           ctx,
+		deterministic: true,
+		tp:            tp,
 	}
 }
 
@@ -394,7 +410,7 @@ type builtinFunc interface {
 	evalDecimal(row []types.Datum) (val *types.MyDecimal, isNull bool, err error)
 	// evalTime evaluates DATE/DATETIME/TIMESTAMP representation of builtinFunc by given row.
 	evalTime(row []types.Datum) (val types.Time, isNull bool, err error)
-	// evaTime evaluates duration representation of builtinFunc by given row.
+	// evalDuration evaluates duration representation of builtinFunc by given row.
 	evalDuration(row []types.Datum) (val types.Duration, isNull bool, err error)
 	// getArgs returns the arguments expressions.
 	getArgs() []Expression
@@ -690,5 +706,11 @@ var funcs = map[string]functionClass{
 	ast.ValidatePasswordStrength: &validatePasswordStrengthFunctionClass{baseFunctionClass{ast.ValidatePasswordStrength, 1, 1}},
 
 	// json functions
-	ast.JSONType: &jsonTypeFunctionClass{baseFunctionClass{ast.JSONType, 1, 1}},
+	ast.JSONType:    &jsonTypeFunctionClass{baseFunctionClass{ast.JSONType, 1, 1}},
+	ast.JSONExtract: &jsonExtractFunctionClass{baseFunctionClass{ast.JSONExtract, 2, -1}},
+	ast.JSONUnquote: &jsonUnquoteFunctionClass{baseFunctionClass{ast.JSONUnquote, 1, 1}},
+	ast.JSONSet:     &jsonSetFunctionClass{baseFunctionClass{ast.JSONSet, 3, -1}},
+	ast.JSONInsert:  &jsonInsertFunctionClass{baseFunctionClass{ast.JSONInsert, 3, -1}},
+	ast.JSONReplace: &jsonReplaceFunctionClass{baseFunctionClass{ast.JSONReplace, 3, -1}},
+	ast.JSONMerge:   &jsonMergeFunctionClass{baseFunctionClass{ast.JSONMerge, 2, -1}},
 }
