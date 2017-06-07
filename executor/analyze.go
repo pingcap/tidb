@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
@@ -34,7 +35,7 @@ var _ Executor = &AnalyzeExec{}
 // AnalyzeExec represents Analyze executor.
 type AnalyzeExec struct {
 	ctx   context.Context
-	tasks []analyzeTask
+	tasks []*analyzeTask
 }
 
 const (
@@ -76,10 +77,10 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	taskCh := make(chan analyzeTask, len(e.tasks))
+	taskCh := make(chan *analyzeTask, len(e.tasks))
 	resultCh := make(chan analyzeResult, len(e.tasks))
 	for i := 0; i < concurrency; i++ {
-		go analyzeWorker(taskCh, resultCh)
+		go e.analyzeWorker(taskCh, resultCh)
 	}
 	for _, task := range e.tasks {
 		taskCh <- task
@@ -134,8 +135,11 @@ const (
 )
 
 type analyzeTask struct {
-	taskType taskType
-	src      Executor
+	taskType  taskType
+	tableInfo *model.TableInfo
+	indexInfo *model.IndexInfo
+	Columns   []*model.ColumnInfo
+	src       Executor
 }
 
 type analyzeResult struct {
@@ -146,32 +150,32 @@ type analyzeResult struct {
 	err     error
 }
 
-func analyzeWorker(taskCh <-chan analyzeTask, resultCh chan<- analyzeResult) {
+func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- analyzeResult) {
 	for task := range taskCh {
 		switch task.taskType {
 		case pkTask:
-			resultCh <- analyzePK(task.src.(*XSelectTableExec))
+			resultCh <- e.analyzePK(task)
 		case colTask:
-			resultCh <- analyzeColumns(task.src.(*XSelectTableExec))
+			resultCh <- e.analyzeColumns(task)
 		case idxTask:
-			resultCh <- analyzeIndex(task.src.(*XSelectIndexExec))
+			resultCh <- e.analyzeIndex(task)
 		}
 	}
 }
 
-func analyzePK(exec *XSelectTableExec) analyzeResult {
-	count, hg, err := statistics.BuildPK(exec.ctx, defaultBucketCount, exec.Columns[0].ID, &recordSet{executor: exec})
-	return analyzeResult{tableID: exec.tableInfo.ID, hist: []*statistics.Histogram{hg}, count: count, isIndex: 0, err: err}
+func (e *AnalyzeExec) analyzePK(task *analyzeTask) analyzeResult {
+	count, hg, err := statistics.BuildPK(e.ctx, defaultBucketCount, task.Columns[0].ID, &recordSet{executor: task.src})
+	return analyzeResult{tableID: task.tableInfo.ID, hist: []*statistics.Histogram{hg}, count: count, isIndex: 0, err: err}
 }
 
-func analyzeColumns(exec *XSelectTableExec) analyzeResult {
-	collectors, err := CollectSamplesAndEstimateNDVs(&recordSet{executor: exec}, len(exec.Columns))
+func (e *AnalyzeExec) analyzeColumns(task *analyzeTask) analyzeResult {
+	collectors, err := CollectSamplesAndEstimateNDVs(&recordSet{executor: task.src}, len(task.Columns))
 	if err != nil {
 		return analyzeResult{err: err}
 	}
-	result := analyzeResult{tableID: exec.tableInfo.ID, count: collectors[0].Count + collectors[0].NullCount, isIndex: 0}
-	for i, col := range exec.Columns {
-		hg, err := statistics.BuildColumn(exec.ctx, defaultBucketCount, col.ID, collectors[i].Sketch.NDV(), collectors[i].Count, collectors[i].NullCount, collectors[i].samples)
+	result := analyzeResult{tableID: task.tableInfo.ID, count: collectors[0].Count + collectors[0].NullCount, isIndex: 0}
+	for i, col := range task.Columns {
+		hg, err := statistics.BuildColumn(e.ctx, defaultBucketCount, col.ID, collectors[i].Sketch.NDV(), collectors[i].Count, collectors[i].NullCount, collectors[i].samples)
 		result.hist = append(result.hist, hg)
 		if err != nil && result.err == nil {
 			result.err = err
@@ -180,9 +184,9 @@ func analyzeColumns(exec *XSelectTableExec) analyzeResult {
 	return result
 }
 
-func analyzeIndex(exec *XSelectIndexExec) analyzeResult {
-	count, hg, err := statistics.BuildIndex(exec.ctx, defaultBucketCount, exec.index.ID, &recordSet{executor: exec})
-	return analyzeResult{tableID: exec.tableInfo.ID, hist: []*statistics.Histogram{hg}, count: count, isIndex: 1, err: err}
+func (e *AnalyzeExec) analyzeIndex(task *analyzeTask) analyzeResult {
+	count, hg, err := statistics.BuildIndex(e.ctx, defaultBucketCount, task.indexInfo.ID, &recordSet{executor: task.src})
+	return analyzeResult{tableID: task.tableInfo.ID, hist: []*statistics.Histogram{hg}, count: count, isIndex: 1, err: err}
 }
 
 // SampleCollector will collect samples and calculate the count and ndv of an attribute.
