@@ -316,6 +316,7 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 					return nil, nil, errors.Trace(err)
 				}
 			case ast.ColumnOptionGenerated:
+				col.GeneratedExpr = v.Expr
 				col.GeneratedExprString = stringutil.RemoveBlanks(v.Expr.Text())
 				col.GeneratedStored = v.Stored
 				dependColNames, _ := findDependedColumnNames(*colDef)
