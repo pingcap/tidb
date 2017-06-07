@@ -14,7 +14,7 @@
 // We implement CastXXAsYY built-in function signatures in this file.
 // XX and YY contain the following types:
 // Int, Decimal, Real, String, Time, Duration.
-// For every type, we implement 5 signatures to cast it as the other 5 types.
+// For every type, we implement 6 signatures to cast it as all the 6 types.
 // builtinCastXXAsYYSig takes a argument of type XX and returns a value of type YY.
 
 package expression
@@ -23,7 +23,9 @@ import (
 	"strconv"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -74,6 +76,193 @@ func (b *builtinCastSig) eval(row []types.Datum) (d types.Datum, err error) {
 		return d.ConvertTo(b.ctx.GetSessionVars().StmtCtx, b.tp)
 	}
 	return d, errors.Errorf("unknown cast type - %v", b.tp)
+}
+
+type  castAsIntFunctionClass struct {
+	baseFunctionClass
+
+	tp *types.FieldType
+}
+
+func (b *castAsIntFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+	bf := baseIntBuiltinFunc{newBaseBuiltinFuncWithTp(args, b.tp, ctx)}
+	if IsHybridType(args[0]) {
+		return builtinCastIntAsIntSig{bf}, nil
+	}
+	switch args[0].GetTypeClass() {
+	case types.ClassInt:
+		sig = builtinCastIntAsIntSig{bf}
+	case types.ClassReal:
+		sig = builtinCastRealAsIntSig{bf}
+	case types.ClassDecimal:
+		sig = builtinCastDecimalAsIntSig{bf}
+	case types.ClassString:
+		switch args[0].GetType() {
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+			sig = builtinCastTimeAsIntSig{bf}
+		case mysql.TypeDuration:
+			sig = builtinCastDurationAsIntSig{bf}
+		default:
+			sig = builtinCastStringAsIntSig{bf}
+		}
+	}
+	return bf, errors.Trace(b.verifyArgs(args))
+}
+
+type castAsRealFunctionClass struct {
+	baseFunctionClass
+
+	tp *types.FieldType
+}
+
+func (b *castAsRealFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+	bf := baseRealBuiltinFunc{newBaseBuiltinFuncWithTp(args, b.tp, ctx)}
+	if IsHybridType(args[0]) {
+		return builtinCastRealAsRealSig{bf}, nil
+	}
+	switch args[0].GetTypeClass() {
+	case types.ClassInt:
+		sig = builtinCastIntAsRealSig{bf}
+	case types.ClassReal:
+		sig = builtinCastRealAsRealSig{bf}
+	case types.ClassDecimal:
+		sig = builtinCastDecimalAsRealSig{bf}
+	case types.ClassString:
+		switch args[0].GetType() {
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+			sig = builtinCastTimeAsRealSig{bf}
+		case mysql.TypeDuration:
+			sig = builtinCastDurationAsRealSig{bf}
+		default:
+			sig = builtinCastStringAsRealSig{bf}
+		}
+	}
+	return bf, errors.Trace(b.verifyArgs(args))
+}
+
+type castAsDecimalFunctionClass struct {
+	baseFunctionClass
+
+	tp *types.FieldType
+}
+
+func (b *castAsDecimalFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+	bf := baseDecimalBuiltinFunc{newBaseBuiltinFuncWithTp(args, b.tp, ctx)}
+	if IsHybridType(args[0]) {
+		return builtinCastDecimalAsDecimalSig{bf}, nil
+	}
+	switch args[0].GetTypeClass() {
+	case types.ClassInt:
+		sig = builtinCastIntAsDecimalSig{bf}
+	case types.ClassReal:
+		sig = builtinCastRealAsDecimalSig{bf}
+	case types.ClassDecimal:
+		sig = builtinCastDecimalAsDecimalSig{bf}
+	case types.ClassString:
+		switch args[0].GetType() {
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+			sig = builtinCastTimeAsDecimalSig{bf}
+		case mysql.TypeDuration:
+			sig = builtinCastDurationAsDecimalSig{bf}
+		default:
+			sig = builtinCastStringAsDecimalSig{bf}
+		}
+	}
+	return bf, errors.Trace(b.verifyArgs(args))
+}
+
+type castAsStringFunctionClass struct {
+	baseFunctionClass
+
+	tp *types.FieldType
+}
+
+func (b *castAsStringFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+	bf := baseStringBuiltinFunc{newBaseBuiltinFuncWithTp(args, b.tp, ctx)}
+	if IsHybridType(args[0]) {
+		return builtinCastStringAsStringSig{bf}, nil
+	}
+	switch args[0].GetTypeClass() {
+	case types.ClassInt:
+		sig = builtinCastIntAsStringSig{bf}
+	case types.ClassReal:
+		sig = builtinCastRealAsStringSig{bf}
+	case types.ClassDecimal:
+		sig = builtinCastDecimalAsStringSig{bf}
+	case types.ClassString:
+		switch args[0].GetType() {
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+			sig = builtinCastTimeAsStringSig{bf}
+		case mysql.TypeDuration:
+			sig = builtinCastDurationAsStringSig{bf}
+		default:
+			sig = builtinCastStringAsStringSig{bf}
+		}
+	}
+	return bf, errors.Trace(b.verifyArgs(args))
+}
+
+type castAsTimeFunctionClass struct {
+	baseFunctionClass
+
+	tp *types.FieldType
+}
+
+func (b *castAsTimeFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+	bf := baseTimeBuiltinFunc{newBaseBuiltinFuncWithTp(args, b.tp, ctx)}
+	if IsHybridType(args[0]) {
+		return builtinCastTimeAsTimeSig{bf}, nil
+	}
+	switch args[0].GetTypeClass() {
+	case types.ClassInt:
+		sig = builtinCastTimeAsTimeSig{bf}
+	case types.ClassReal:
+		sig = builtinCastRealAsTimeSig{bf}
+	case types.ClassDecimal:
+		sig = builtinCastDecimalAsTimeSig{bf}
+	case types.ClassString:
+		switch args[0].GetType() {
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+			sig = builtinCastTimeAsTimeSig{bf}
+		case mysql.TypeDuration:
+			sig = builtinCastDurationAsTimeSig{bf}
+		default:
+			sig = builtinCastStringAsTimeSig{bf}
+		}
+	}
+	return bf, errors.Trace(b.verifyArgs(args))
+}
+
+type castAsDurationFunctionClass struct {
+	baseFunctionClass
+
+	tp *types.FieldType
+}
+
+func (b *castAsDurationFunctionClass) getFunction(args []Expression, ctx context.Context) (sig builtinFunc, err error) {
+	// todo: change newBaseBuiltinFunc tp newBaseBuiltinFuncWithTp
+	bf := baseDurationBuiltinFunc{newBaseBuiltinFuncWithTp(args, b.tp, ctx)}
+	if IsHybridType(args[0]) {
+		return builtinCastDurationAsDurationSig{bf}, nil
+	}
+	switch args[0].GetTypeClass() {
+	case types.ClassInt:
+		sig = builtinCastIntAsDurationSig{bf}
+	case types.ClassReal:
+		sig = builtinCastRealAsDurationSig{bf}
+	case types.ClassDecimal:
+		sig = builtinCastDecimalAsDurationSig{bf}
+	case types.ClassString:
+		switch args[0].GetType() {
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+			sig = builtinCastTimeAsDurationSig{bf}
+		case mysql.TypeDuration:
+			sig = builtinCastDurationAsDurationSig{bf}
+		default:
+			sig = builtinCastStringAsDurationSig{bf}
+		}
+	}
+	return bf, errors.Trace(b.verifyArgs(args))
 }
 
 type builtinCastIntAsIntSig struct {
@@ -506,4 +695,120 @@ func (b *builtinCastDurationAsTimeSig) evalTime(row []types.Datum) (res types.Ti
 	}
 	res, err = val.ConvertToTime(b.tp)
 	return res, false, errors.Trace(err)
+}
+
+type castType byte
+
+const (
+	castAsInt castType = iota
+	castAsDecimal
+	castAsString
+	castAsReal
+	castAsTime
+	castAsDuration
+)
+
+func buildCastFunction(expr Expression, tp *types.FieldType, target castType, ctx context.Context) (*ScalarFunction, error) {
+	var fc functionClass
+	switch target {
+	case castAsInt:
+		fc = castAsIntFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+	case castAsDecimal:
+		fc = castAsDecimalFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+	case castAsString:
+		fc = castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+	case castAsReal:
+		fc = castAsRealFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+	case castAsTime:
+		fc = castAsTimeFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+	case castAsDuration:
+		fc = castAsDurationFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+	}
+	f, err := fc.getFunction([]Expression{expr}, ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &ScalarFunction{
+		FuncName: model.NewCIStr(ast.Cast),
+		RetType:  tp,
+		Function: f,
+	}, nil
+}
+
+// WrapWithCastAsInt wraps `expr` with `cast` if the return type
+// of expr is not type int,
+// otherwise, returns `expr` directly.
+func WrapWithCastAsInt(expr Expression, ctx context.Context) (Expression, error) {
+	if expr.GetTypeClass() == types.ClassInt {
+		return expr, nil
+	}
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	return buildCastFunction(expr, tp, castAsInt, ctx)
+}
+
+// WrapWithCastAsReal wraps `expr` with `cast` if the return type
+// of expr is not type real,
+// otherwise, returns `expr` directly.
+func WrapWithCastAsReal(expr Expression, ctx context.Context) (Expression, error) {
+	if expr.GetTypeClass() == types.ClassReal {
+		return expr, nil
+	}
+	tp := types.NewFieldType(mysql.TypeDouble)
+	return buildCastFunction(expr, tp, castAsReal, ctx)
+}
+
+// WrapWithCastAsDecimal wraps `expr` with `cast` if the return type
+// of expr is not type decimal,
+// otherwise, returns `expr` directly.
+func WrapWithCastAsDecimal(expr Expression, ctx context.Context) (Expression, error) {
+	if expr.GetTypeClass() == types.ClassDecimal {
+		return expr, nil
+	}
+	tp := types.NewFieldType(mysql.TypeNewDecimal)
+	return buildCastFunction(expr, tp, castAsDecimal, ctx)
+}
+
+// WrapWithCastAsString wraps `expr` with `cast` if the return type
+// of expr is not type string,
+// otherwise, returns `expr` directly.
+func WrapWithCastAsString(expr Expression, ctx context.Context) (Expression, error) {
+	if expr.GetTypeClass() == types.ClassString {
+		return expr, nil
+	}
+	tp := types.NewFieldType(mysql.TypeVarString)
+	tp.Charset, tp.Collate = expr.GetType().Charset, expr.GetType().Collate
+	return buildCastFunction(expr, tp, castAsString, ctx)
+}
+
+// WrapWithCastAsTime wraps `expr` with `cast` if the return type
+// of expr is not same as type of the specified `tp` ,
+// otherwise, returns `expr` directly.
+func WrapWithCastAsTime(expr Expression, tp *types.FieldType, ctx context.Context) (Expression, error) {
+	if expr.GetType().Tp == tp.Tp {
+		return expr, nil
+	}
+	switch x := expr.GetType(); x {
+	case mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeNewDate, mysql.TypeDate, mysql.TypeDuration:
+		tp.Decimal = x.Decimal
+	default:
+		tp.Decimal = types.MaxFsp
+	}
+	return buildCastFunction(expr, tp, castAsTime, ctx)
+}
+
+// WrapWithCastAsDuration wraps `expr` with `cast` if the return type
+// of expr is not type duration,
+// otherwise, returns `expr` directly.
+func WrapWithCastAsDuration(expr Expression, ctx context.Context) (Expression, error) {
+	if expr.GetType().Tp == mysql.TypeDuration {
+		return expr, nil
+	}
+	tp := types.NewFieldType(mysql.TypeDuration)
+	switch x := expr.GetType(); x {
+	case mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeNewDate, mysql.TypeDate:
+		tp.Decimal = x.Decimal
+	default:
+		tp.Decimal = types.MaxFsp
+	}
+	return buildCastFunction(expr, tp, castAsDuration, ctx)
 }
