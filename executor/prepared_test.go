@@ -80,6 +80,12 @@ func (s *testSuite) TestPrepared(c *C) {
 	_, err = tk.Se.ExecutePreparedStmt(stmtId, 1)
 	c.Assert(executor.ErrSchemaChanged.Equal(err), IsTrue)
 
+	// issue 3381
+	tk.MustExec("create table prepare3 (a decimal(1))")
+	tk.MustExec("prepare stmt from 'insert into prepare3 value(123)'")
+	_, err = tk.Exec("execute stmt")
+	c.Assert(err, NotNil)
+
 	// Coverage.
 	exec := &executor.ExecuteExec{}
 	exec.Next()
