@@ -66,7 +66,7 @@ func (b *builtinCastSig) eval(row []types.Datum) (d types.Datum, err error) {
 	// Parser has restricted this.
 	// TypeDouble is used during plan optimization.
 	case mysql.TypeString, mysql.TypeDuration, mysql.TypeDatetime,
-		mysql.TypeDate, mysql.TypeLonglong, mysql.TypeNewDecimal, mysql.TypeDouble:
+		mysql.TypeDate, mysql.TypeLonglong, mysql.TypeNewDecimal, mysql.TypeDouble, mysql.TypeJSON:
 		d = args[0]
 		if d.IsNull() {
 			return
