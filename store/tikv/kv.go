@@ -23,12 +23,12 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
 )
 
@@ -199,7 +199,7 @@ func (s *tikvStore) Close() error {
 	if s.gcWorker != nil {
 		s.gcWorker.Close()
 	}
-	// Make sure all connections are put back into the pools.
+
 	if err := s.client.Close(); err != nil {
 		return errors.Trace(err)
 	}
@@ -239,9 +239,9 @@ func (s *tikvStore) GetClient() kv.Client {
 	}
 }
 
-func (s *tikvStore) SendKVReq(bo *Backoffer, req *pb.Request, regionID RegionVerID, timeout time.Duration) (*pb.Response, error) {
+func (s *tikvStore) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
 	sender := NewRegionRequestSender(s.regionCache, s.client)
-	return sender.SendKVReq(bo, req, regionID, timeout)
+	return sender.SendReq(bo, req, regionID, timeout)
 }
 
 // ParseEtcdAddr parses path to etcd address list
