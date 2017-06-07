@@ -1195,9 +1195,6 @@ func (d *Datum) convertToMysqlJSON(sc *variable.StatementContext, target *FieldT
 		var j json.JSON
 		if j, err = json.ParseFromString(d.GetString()); err == nil {
 			ret.SetMysqlJSON(j)
-		} else {
-			// If parse fail, create a JSON with the string primitive.
-			ret.SetMysqlJSON(json.CreateJSON(d.GetString()))
 		}
 	case KindInt64, KindUint64:
 		i64 := d.GetInt64()
