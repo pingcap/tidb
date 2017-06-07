@@ -273,8 +273,16 @@ func (v *typeInferrer) unaryOperation(x *ast.UnaryOperationExpr) {
 	types.SetBinChsClnFlag(&x.Type)
 }
 
+func fixDecimals(value interface{}, tp *types.FieldType) {
+	switch x := value.(type) {
+	case *types.MyDecimal:
+		tp.Decimal = int(x.GetDigitsFrac())
+	}
+}
+
 func (v *typeInferrer) handleValueExpr(x *ast.ValueExpr) {
 	types.DefaultTypeForValue(x.GetValue(), x.GetType())
+	fixDecimals(x.GetValue(), x.GetType())
 }
 
 func (v *typeInferrer) handleValuesExpr(x *ast.ValuesExpr) {
@@ -353,6 +361,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	case ast.FromUnixTime:
 		if len(x.Args) == 1 {
 			tp = types.NewFieldType(mysql.TypeDatetime)
+			tp.Decimal = x.Args[0].GetType().Decimal
 		} else {
 			tp = types.NewFieldType(mysql.TypeVarString)
 			chs = v.defaultCharset
