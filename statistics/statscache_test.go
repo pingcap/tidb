@@ -196,7 +196,7 @@ func (s *testStatsCacheSuite) TestVersion(c *C) {
 	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	tableInfo1 := tbl1.Meta()
-	h := statistics.NewHandle(testKit.Se)
+	h := statistics.NewHandle(testKit.Se, 0)
 	testKit.MustExec("update mysql.stats_meta set version = 2 where table_id = ?", tableInfo1.ID)
 
 	h.Update(is)

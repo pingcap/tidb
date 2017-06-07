@@ -47,6 +47,9 @@ const ( // GET_FORMAT location.
 	internalLocation = "INTERNAL"
 )
 
+// DurationPattern determine whether to match the format of duration.
+var DurationPattern = regexp.MustCompile(`^(|[-]?)(|\d{1,2}\s)(\d{2,3}:\d{2}:\d{2}|\d{1,2}:\d{2}|\d{1,6})(|\.\d*)$`)
+
 var (
 	_ functionClass = &dateFunctionClass{}
 	_ functionClass = &dateDiffFunctionClass{}
@@ -177,14 +180,14 @@ func convertToTimeWithFsp(sc *variable.StatementContext, arg types.Datum, tp byt
 	}
 
 	if d.IsNull() {
-		return d, nil
+		return
 	}
 
 	if d.Kind() != types.KindMysqlTime {
 		d.SetNull()
 		return d, errors.Errorf("need time type, but got %T", d.GetValue())
 	}
-	return d, nil
+	return
 }
 
 func convertToTime(sc *variable.StatementContext, arg types.Datum, tp byte) (d types.Datum, err error) {
@@ -202,14 +205,14 @@ func convertToDuration(sc *variable.StatementContext, arg types.Datum, fsp int) 
 	}
 
 	if d.IsNull() {
-		return d, nil
+		return
 	}
 
 	if d.Kind() != types.KindMysqlDuration {
 		d.SetNull()
 		return d, errors.Errorf("need duration type, but got %T", d.GetValue())
 	}
-	return d, nil
+	return
 }
 
 type dateFunctionClass struct {
@@ -227,10 +230,10 @@ type builtinDateSig struct {
 
 // eval evals a builtinDateSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date
-func (b *builtinDateSig) eval(row []types.Datum) (types.Datum, error) {
+func (b *builtinDateSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	return convertToTime(b.ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
 }
@@ -263,10 +266,10 @@ type builtinDateDiffSig struct {
 func (b *builtinDateDiffSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	if args[0].IsNull() || args[1].IsNull() {
-		return d, nil
+		return
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	t1, err := convertDatumToTime(sc, args[0])
@@ -280,12 +283,12 @@ func (b *builtinDateDiffSig) eval(row []types.Datum) (d types.Datum, err error) 
 	}
 
 	if t1.Time.Month() == 0 || t1.Time.Day() == 0 || t2.Time.Month() == 0 || t2.Time.Day() == 0 {
-		return d, nil
+		return
 	}
 
 	r := types.DateDiff(t1.Time, t2.Time)
 	d.SetInt64(int64(r))
-	return d, nil
+	return
 }
 
 type timeDiffFunctionClass struct {
@@ -306,10 +309,10 @@ type builtinTimeDiffSig struct {
 func (b *builtinTimeDiffSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	if args[0].IsNull() || args[1].IsNull() {
-		return d, nil
+		return
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	t1, err := convertDatumToTime(sc, args[0])
@@ -323,7 +326,7 @@ func (b *builtinTimeDiffSig) eval(row []types.Datum) (d types.Datum, err error) 
 
 	t := t1.Sub(&t2)
 	d.SetMysqlDuration(t)
-	return d, nil
+	return
 }
 
 type dateFormatFunctionClass struct {
@@ -341,25 +344,24 @@ type builtinDateFormatSig struct {
 
 // eval evals a builtinDateFormatSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-format
-func (b *builtinDateFormatSig) eval(row []types.Datum) (types.Datum, error) {
+func (b *builtinDateFormatSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	return builtinDateFormat(args, b.ctx)
 }
 
 // builtinDateFormat ...
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-format
-func builtinDateFormat(args []types.Datum, ctx context.Context) (types.Datum, error) {
-	var d types.Datum
+func builtinDateFormat(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	date, err := convertToTime(ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDatetime)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
 
 	if date.IsNull() {
-		return d, nil
+		return
 	}
 	t := date.GetMysqlTime()
 	str, err := t.DateFormat(args[1].GetString())
@@ -367,7 +369,7 @@ func builtinDateFormat(args []types.Datum, ctx context.Context) (types.Datum, er
 		return d, errors.Trace(err)
 	}
 	d.SetString(str)
-	return d, nil
+	return
 }
 
 type fromDaysFunctionClass struct {
@@ -388,7 +390,7 @@ type builtinFromDaysSig struct {
 func (b *builtinFromDaysSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	days, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
 	d.SetMysqlTime(types.TimeFromDays(days))
@@ -410,12 +412,12 @@ type builtinHourSig struct {
 
 // eval evals a builtinHourSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_hour
-func (b *builtinHourSig) eval(row []types.Datum) (types.Datum, error) {
+func (b *builtinHourSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
-	d, err := convertToDuration(b.ctx.GetSessionVars().StmtCtx, args[0], types.MaxFsp)
+	d, err = convertToDuration(b.ctx.GetSessionVars().StmtCtx, args[0], types.MaxFsp)
 	if err != nil || d.IsNull() {
 		return d, errors.Trace(err)
 	}
@@ -423,7 +425,7 @@ func (b *builtinHourSig) eval(row []types.Datum) (types.Datum, error) {
 	// No need to check type here.
 	h := int64(d.GetMysqlDuration().Hour())
 	d.SetInt64(h)
-	return d, nil
+	return
 }
 
 type minuteFunctionClass struct {
@@ -441,12 +443,12 @@ type builtinMinuteSig struct {
 
 // eval evals a builtinMinuteSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_minute
-func (b *builtinMinuteSig) eval(row []types.Datum) (types.Datum, error) {
+func (b *builtinMinuteSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
-	d, err := convertToDuration(b.ctx.GetSessionVars().StmtCtx, args[0], types.MaxFsp)
+	d, err = convertToDuration(b.ctx.GetSessionVars().StmtCtx, args[0], types.MaxFsp)
 	if err != nil || d.IsNull() {
 		return d, errors.Trace(err)
 	}
@@ -454,7 +456,7 @@ func (b *builtinMinuteSig) eval(row []types.Datum) (types.Datum, error) {
 	// No need to check type here.
 	m := int64(d.GetMysqlDuration().Minute())
 	d.SetInt64(m)
-	return d, nil
+	return
 }
 
 type secondFunctionClass struct {
@@ -472,12 +474,12 @@ type builtinSecondSig struct {
 
 // eval evals a builtinSecondSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_second
-func (b *builtinSecondSig) eval(row []types.Datum) (types.Datum, error) {
+func (b *builtinSecondSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
-	d, err := convertToDuration(b.ctx.GetSessionVars().StmtCtx, args[0], types.MaxFsp)
+	d, err = convertToDuration(b.ctx.GetSessionVars().StmtCtx, args[0], types.MaxFsp)
 	if err != nil || d.IsNull() {
 		return d, errors.Trace(err)
 	}
@@ -485,7 +487,7 @@ func (b *builtinSecondSig) eval(row []types.Datum) (types.Datum, error) {
 	// No need to check type here.
 	s := int64(d.GetMysqlDuration().Second())
 	d.SetInt64(s)
-	return d, nil
+	return
 }
 
 type microSecondFunctionClass struct {
@@ -503,12 +505,12 @@ type builtinMicroSecondSig struct {
 
 // eval evals a builtinMicroSecondSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_microsecond
-func (b *builtinMicroSecondSig) eval(row []types.Datum) (types.Datum, error) {
+func (b *builtinMicroSecondSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
-	d, err := convertToDuration(b.ctx.GetSessionVars().StmtCtx, args[0], types.MaxFsp)
+	d, err = convertToDuration(b.ctx.GetSessionVars().StmtCtx, args[0], types.MaxFsp)
 	if err != nil || d.IsNull() {
 		return d, errors.Trace(err)
 	}
@@ -516,7 +518,7 @@ func (b *builtinMicroSecondSig) eval(row []types.Datum) (types.Datum, error) {
 	// No need to check type here.
 	m := int64(d.GetMysqlDuration().MicroSecond())
 	d.SetInt64(m)
-	return d, nil
+	return
 }
 
 type monthFunctionClass struct {
@@ -532,18 +534,18 @@ type builtinMonthSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinMonthSig) eval(row []types.Datum) (types.Datum, error) {
+func (b *builtinMonthSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	return builtinMonth(args, b.ctx)
 }
 
 // builtinMonth ...
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_month
-func builtinMonth(args []types.Datum, ctx context.Context) (types.Datum, error) {
-	d, err := convertToTime(ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
+func builtinMonth(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	d, err = convertToTime(ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
 	if err != nil || d.IsNull() {
 		return d, errors.Trace(err)
 	}
@@ -553,11 +555,11 @@ func builtinMonth(args []types.Datum, ctx context.Context) (types.Datum, error) 
 	i := int64(0)
 	if t.IsZero() {
 		d.SetInt64(i)
-		return d, nil
+		return
 	}
 	i = int64(t.Time.Month())
 	d.SetInt64(i)
-	return d, nil
+	return
 }
 
 type monthNameFunctionClass struct {
@@ -573,18 +575,18 @@ type builtinMonthNameSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinMonthNameSig) eval(row []types.Datum) (types.Datum, error) {
+func (b *builtinMonthNameSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	return builtinMonthName(args, b.ctx)
 }
 
 // builtinMonthName ...
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_monthname
-func builtinMonthName(args []types.Datum, ctx context.Context) (types.Datum, error) {
-	d, err := builtinMonth(args, ctx)
+func builtinMonthName(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	d, err = builtinMonth(args, ctx)
 	if err != nil || d.IsNull() {
 		return d, errors.Trace(err)
 	}
@@ -593,13 +595,13 @@ func builtinMonthName(args []types.Datum, ctx context.Context) (types.Datum, err
 	if mon <= 0 || mon > len(types.MonthNames) {
 		d.SetNull()
 		if mon == 0 {
-			return d, nil
+			return
 		}
 		return d, errors.Errorf("no name for invalid month: %d.", mon)
 	}
 	d.SetString(types.MonthNames[mon-1])
 
-	return d, nil
+	return
 }
 
 type nowFunctionClass struct {
@@ -615,10 +617,10 @@ type builtinNowSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinNowSig) eval(row []types.Datum) (types.Datum, error) {
+func (b *builtinNowSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	return builtinNow(args, b.ctx)
 }
@@ -642,7 +644,7 @@ func builtinNow(args []types.Datum, ctx context.Context) (d types.Datum, err err
 	}
 
 	d.SetMysqlTime(t)
-	return d, nil
+	return
 }
 
 type dayNameFunctionClass struct {
@@ -660,12 +662,12 @@ type builtinDayNameSig struct {
 
 // eval evals a builtinDayNameSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayname
-func (b *builtinDayNameSig) eval(row []types.Datum) (types.Datum, error) {
+func (b *builtinDayNameSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
-	d, err := builtinWeekDay(args, b.ctx)
+	d, err = builtinWeekDay(args, b.ctx)
 	if err != nil || d.IsNull() {
 		return d, errors.Trace(err)
 	}
@@ -675,7 +677,7 @@ func (b *builtinDayNameSig) eval(row []types.Datum) (types.Datum, error) {
 		return d, errors.Errorf("no name for invalid weekday: %d.", weekday)
 	}
 	d.SetString(types.WeekdayNames[weekday])
-	return d, nil
+	return
 }
 
 type dayOfMonthFunctionClass struct {
@@ -696,7 +698,7 @@ type builtinDayOfMonthSig struct {
 func (b *builtinDayOfMonthSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	// TODO: some invalid format like 2000-00-00 will return 0 too.
 	d, err = convertToTime(b.ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
@@ -708,11 +710,11 @@ func (b *builtinDayOfMonthSig) eval(row []types.Datum) (d types.Datum, err error
 	t := d.GetMysqlTime()
 	if t.IsZero() {
 		d.SetInt64(int64(0))
-		return d, nil
+		return
 	}
 
 	d.SetInt64(int64(t.Time.Day()))
-	return d, nil
+	return
 }
 
 type dayOfWeekFunctionClass struct {
@@ -733,7 +735,7 @@ type builtinDayOfWeekSig struct {
 func (b *builtinDayOfWeekSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	d, err = convertToTime(b.ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
 	if err != nil || d.IsNull() {
@@ -745,12 +747,12 @@ func (b *builtinDayOfWeekSig) eval(row []types.Datum) (d types.Datum, err error)
 	if t.IsZero() {
 		d.SetNull()
 		// TODO: log warning or return error?
-		return d, nil
+		return
 	}
 
 	// 1 is Sunday, 2 is Monday, .... 7 is Saturday
 	d.SetInt64(int64(t.Time.Weekday() + 1))
-	return d, nil
+	return
 }
 
 type dayOfYearFunctionClass struct {
@@ -768,12 +770,12 @@ type builtinDayOfYearSig struct {
 
 // eval evals a builtinDayOfYearSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayofyear
-func (b *builtinDayOfYearSig) eval(row []types.Datum) (types.Datum, error) {
+func (b *builtinDayOfYearSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
-	d, err := convertToTime(b.ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
+	d, err = convertToTime(b.ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
 	if err != nil || d.IsNull() {
 		return d, errors.Trace(err)
 	}
@@ -782,12 +784,12 @@ func (b *builtinDayOfYearSig) eval(row []types.Datum) (types.Datum, error) {
 	if t.InvalidZero() {
 		// TODO: log warning or return error?
 		d.SetNull()
-		return d, nil
+		return
 	}
 
 	yd := int64(t.Time.YearDay())
 	d.SetInt64(yd)
-	return d, nil
+	return
 }
 
 type weekFunctionClass struct {
@@ -803,18 +805,18 @@ type builtinWeekSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinWeekSig) eval(row []types.Datum) (types.Datum, error) {
+func (b *builtinWeekSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	return builtinWeek(args, b.ctx)
 }
 
 // builtinWeek ...
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_week
-func builtinWeek(args []types.Datum, ctx context.Context) (types.Datum, error) {
-	d, err := convertToTime(ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
+func builtinWeek(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	d, err = convertToTime(ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
 	if err != nil || d.IsNull() {
 		return d, errors.Trace(err)
 	}
@@ -824,7 +826,7 @@ func builtinWeek(args []types.Datum, ctx context.Context) (types.Datum, error) {
 	if t.IsZero() {
 		// TODO: log warning or return error?
 		d.SetNull()
-		return d, nil
+		return
 	}
 
 	var mode int
@@ -839,7 +841,7 @@ func builtinWeek(args []types.Datum, ctx context.Context) (types.Datum, error) {
 	week := t.Time.Week(mode)
 	wi := int64(week)
 	d.SetInt64(wi)
-	return d, nil
+	return
 }
 
 type weekDayFunctionClass struct {
@@ -855,18 +857,18 @@ type builtinWeekDaySig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinWeekDaySig) eval(row []types.Datum) (types.Datum, error) {
+func (b *builtinWeekDaySig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	return builtinWeekDay(args, b.ctx)
 }
 
 // builtinWeekDay ...
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_weekday
-func builtinWeekDay(args []types.Datum, ctx context.Context) (types.Datum, error) {
-	d, err := convertToTime(ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
+func builtinWeekDay(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	d, err = convertToTime(ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
 	if err != nil || d.IsNull() {
 		return d, errors.Trace(err)
 	}
@@ -876,7 +878,7 @@ func builtinWeekDay(args []types.Datum, ctx context.Context) (types.Datum, error
 	if t.IsZero() {
 		// TODO: log warning or return error?
 		d.SetNull()
-		return d, nil
+		return
 	}
 
 	// Monday is 0, ... Sunday = 6 in MySQL
@@ -884,7 +886,7 @@ func builtinWeekDay(args []types.Datum, ctx context.Context) (types.Datum, error
 	// w will do a conversion.
 	w := (int64(t.Time.Weekday()) + 6) % 7
 	d.SetInt64(w)
-	return d, nil
+	return
 }
 
 type weekOfYearFunctionClass struct {
@@ -902,13 +904,12 @@ type builtinWeekOfYearSig struct {
 
 // eval evals a builtinWeekOfYearSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_weekofyear
-func (b *builtinWeekOfYearSig) eval(row []types.Datum) (types.Datum, error) {
+func (b *builtinWeekOfYearSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	// WeekOfYear is equivalent to to Week(date, 3)
-	d := types.Datum{}
 	d.SetInt64(3)
 	return builtinWeek([]types.Datum{args[0], d}, b.ctx)
 }
@@ -928,12 +929,12 @@ type builtinYearSig struct {
 
 // eval evals a builtinYearSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_year
-func (b *builtinYearSig) eval(row []types.Datum) (types.Datum, error) {
+func (b *builtinYearSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
-	d, err := convertToTime(b.ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
+	d, err = convertToTime(b.ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
 	if err != nil || d.IsNull() {
 		return d, errors.Trace(err)
 	}
@@ -942,11 +943,11 @@ func (b *builtinYearSig) eval(row []types.Datum) (types.Datum, error) {
 	t := d.GetMysqlTime()
 	if t.IsZero() {
 		d.SetInt64(0)
-		return d, nil
+		return
 	}
 
 	d.SetInt64(int64(t.Time.Year()))
-	return d, nil
+	return
 }
 
 type yearWeekFunctionClass struct {
@@ -964,12 +965,12 @@ type builtinYearWeekSig struct {
 
 // eval evals a builtinYearWeekSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_yearweek
-func (b *builtinYearWeekSig) eval(row []types.Datum) (types.Datum, error) {
+func (b *builtinYearWeekSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
-	d, err := convertToTime(b.ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
+	d, err = convertToTime(b.ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDate)
 	if err != nil || d.IsNull() {
 		return d, errors.Trace(err)
 	}
@@ -979,7 +980,7 @@ func (b *builtinYearWeekSig) eval(row []types.Datum) (types.Datum, error) {
 	if t.InvalidZero() {
 		d.SetNull()
 		// TODO: log warning or return error?
-		return d, nil
+		return
 	}
 
 	var mode int64
@@ -996,7 +997,7 @@ func (b *builtinYearWeekSig) eval(row []types.Datum) (types.Datum, error) {
 	if d.GetInt64() < 0 {
 		d.SetInt64(math.MaxUint32)
 	}
-	return d, nil
+	return
 }
 
 type fromUnixTimeFunctionClass struct {
@@ -1017,7 +1018,7 @@ type builtinFromUnixTimeSig struct {
 func (b *builtinFromUnixTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	unixTimeStamp, err := args[0].ToDecimal(sc)
@@ -1144,7 +1145,7 @@ func (b *builtinGetFormatSig) eval(row []types.Datum) (d types.Datum, err error)
 		}
 	}
 
-	return d, nil
+	return
 }
 
 type strToDateFunctionClass struct {
@@ -1162,26 +1163,23 @@ type builtinStrToDateSig struct {
 
 // eval evals a builtinStrToDateSig.
 // See https://dev.mysql.com/doc/refman/5.5/en/date-and-time-functions.html#function_str-to-date
-func (b *builtinStrToDateSig) eval(row []types.Datum) (types.Datum, error) {
+func (b *builtinStrToDateSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	date := args[0].GetString()
 	format := args[1].GetString()
-	var (
-		d types.Datum
-		t types.Time
-	)
+	var t types.Time
 
 	succ := t.StrToDate(date, format)
 	if !succ {
 		d.SetNull()
-		return d, nil
+		return
 	}
 
 	d.SetMysqlTime(t)
-	return d, nil
+	return
 }
 
 type sysDateFunctionClass struct {
@@ -1199,10 +1197,10 @@ type builtinSysDateSig struct {
 
 // eval evals a builtinSysDateSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_sysdate
-func (b *builtinSysDateSig) eval(row []types.Datum) (types.Datum, error) {
+func (b *builtinSysDateSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	// SYSDATE is not the same as NOW if NOW is used in a stored function or trigger.
 	// But here we can just think they are the same because we don't support stored function
@@ -1231,7 +1229,7 @@ func (b *builtinCurrentDateSig) eval(_ []types.Datum) (d types.Datum, err error)
 		Time: types.FromDate(year, int(month), day, 0, 0, 0, 0),
 		Type: mysql.TypeDate, Fsp: 0}
 	d.SetMysqlTime(t)
-	return d, nil
+	return
 }
 
 type currentTimeFunctionClass struct {
@@ -1252,7 +1250,7 @@ type builtinCurrentTimeSig struct {
 func (b *builtinCurrentTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	fsp := 0
 	sc := b.ctx.GetSessionVars().StmtCtx
@@ -1284,7 +1282,7 @@ type builtinTimeSig struct {
 func (b *builtinTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	if args[0].IsNull() {
 		return
@@ -1329,7 +1327,7 @@ func (b *builtinUTCDateSig) eval(_ []types.Datum) (d types.Datum, err error) {
 		Time: types.FromGoTime(time.Date(year, month, day, 0, 0, 0, 0, time.UTC)),
 		Type: mysql.TypeDate, Fsp: types.UnspecifiedFsp}
 	d.SetMysqlTime(t)
-	return d, nil
+	return
 }
 
 type utcTimestampFunctionClass struct {
@@ -1350,7 +1348,7 @@ type builtinUTCTimestampSig struct {
 func (b *builtinUTCTimestampSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 
 	fsp := 0
@@ -1367,7 +1365,7 @@ func (b *builtinUTCTimestampSig) eval(row []types.Datum) (d types.Datum, err err
 	}
 
 	d.SetMysqlTime(t)
-	return d, nil
+	return
 }
 
 type extractFunctionClass struct {
@@ -1388,14 +1386,14 @@ type builtinExtractSig struct {
 func (b *builtinExtractSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	unit := args[0].GetString()
 	vd := args[1]
 
 	if vd.IsNull() {
 		d.SetNull()
-		return d, nil
+		return
 	}
 
 	f := types.NewFieldType(mysql.TypeDatetime)
@@ -1407,7 +1405,7 @@ func (b *builtinExtractSig) eval(row []types.Datum) (d types.Datum, err error) {
 	}
 	if val.IsNull() {
 		d.SetNull()
-		return d, nil
+		return
 	}
 
 	if val.Kind() != types.KindMysqlTime {
@@ -1421,7 +1419,7 @@ func (b *builtinExtractSig) eval(row []types.Datum) (d types.Datum, err error) {
 		return d, errors.Trace(err1)
 	}
 	d.SetInt64(n)
-	return d, nil
+	return
 }
 
 func checkFsp(sc *variable.StatementContext, arg types.Datum) (int, error) {
@@ -1457,20 +1455,20 @@ type builtinDateArithSig struct {
 func (b *builtinDateArithSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	// args[0] -> Date
 	// args[1] -> Interval Value
 	// args[2] -> Interval Unit
 	// health check for date and interval
 	if args[0].IsNull() || args[1].IsNull() {
-		return d, nil
+		return
 	}
 	nodeDate := args[0]
 	nodeIntervalValue := args[1]
 	nodeIntervalUnit := args[2].GetString()
 	if nodeIntervalValue.IsNull() {
-		return d, nil
+		return
 	}
 	// parse date
 	fieldType := mysql.TypeDate
@@ -1549,7 +1547,7 @@ func (b *builtinDateArithSig) eval(row []types.Datum) (d types.Datum, err error)
 	}
 	result.Time = types.FromGoTime(t)
 	d.SetMysqlTime(result)
-	return d, nil
+	return
 }
 
 var reg = regexp.MustCompile(`[\d]+`)
@@ -1587,10 +1585,10 @@ type builtinTimestampDiffSig struct {
 func (b *builtinTimestampDiffSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	if args[1].IsNull() || args[2].IsNull() {
-		return d, nil
+		return
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	t1, err := convertDatumToTime(sc, args[1])
@@ -1639,7 +1637,7 @@ type builtinUnixTimestampSig struct {
 func (b *builtinUnixTimestampSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	if len(args) == 0 {
 		now := time.Now().Unix()
@@ -1704,7 +1702,7 @@ type builtinTimestampSig struct {
 func (b *builtinTimestampSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	if args[0].IsNull() {
 		return
@@ -1770,6 +1768,51 @@ func getTimeZone(ctx context.Context) *time.Location {
 	return ret
 }
 
+// isDuration returns a boolean indicating whether the str matches the format of duration.
+// See https://dev.mysql.com/doc/refman/5.7/en/time.html
+func isDuration(str string) bool {
+	return DurationPattern.MatchString(str)
+}
+
+// strDatetimeAddDuration adds duration to datetime string, returns a datum value.
+func strDatetimeAddDuration(d string, arg1 types.Duration) (result types.Datum, err error) {
+	arg0, err := types.ParseTime(d, mysql.TypeDatetime, getFsp(d))
+	if err != nil {
+		return result, errors.Trace(err)
+	}
+	tmpDuration := arg0.Add(arg1)
+	resultDuration, err := tmpDuration.ConvertToTime(mysql.TypeDatetime)
+	if err != nil {
+		return result, errors.Trace(err)
+	}
+	if getFsp(d) != 0 {
+		tmpDuration.Fsp = types.MaxFsp
+	} else {
+		tmpDuration.Fsp = 0
+	}
+	result.SetString(resultDuration.String())
+	return
+}
+
+// strDurationAddDuration adds duration to duration string, returns a datum value.
+func strDurationAddDuration(d string, arg1 types.Duration) (result types.Datum, err error) {
+	arg0, err := types.ParseDuration(d, getFsp(d))
+	if err != nil {
+		return result, errors.Trace(err)
+	}
+	tmpDuration, err := arg0.Add(arg1)
+	if err != nil {
+		return result, errors.Trace(err)
+	}
+	if getFsp(d) != 0 {
+		tmpDuration.Fsp = types.MaxFsp
+	} else {
+		tmpDuration.Fsp = 0
+	}
+	result.SetString(tmpDuration.String())
+	return
+}
+
 type addTimeFunctionClass struct {
 	baseFunctionClass
 }
@@ -1786,7 +1829,59 @@ type builtinAddTimeSig struct {
 // eval evals a builtinAddTimeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_addtime
 func (b *builtinAddTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("ADDTIME")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if args[0].IsNull() || args[1].IsNull() {
+		return
+	}
+	var arg1 types.Duration
+	switch tp := args[1].Kind(); tp {
+	case types.KindMysqlDuration:
+		arg1 = args[1].GetMysqlDuration()
+	default:
+		s, err := args[1].ToString()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		if getFsp(s) == 0 {
+			arg1, err = types.ParseDuration(s, 0)
+		} else {
+			arg1, err = types.ParseDuration(s, types.MaxFsp)
+		}
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+
+	}
+	switch tp := args[0].Kind(); tp {
+	case types.KindMysqlTime:
+		arg0 := args[0].GetMysqlTime()
+		tmpDuration := arg0.Add(arg1)
+		result, err := tmpDuration.ConvertToTime(arg0.Type)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		d.SetMysqlTime(result)
+	case types.KindMysqlDuration:
+		arg0 := args[0].GetMysqlDuration()
+		result, err := arg0.Add(arg1)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		d.SetMysqlDuration(result)
+	default:
+		ss, err := args[0].ToString()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		if isDuration(ss) {
+			return strDurationAddDuration(ss, arg1)
+		}
+		return strDatetimeAddDuration(ss, arg1)
+	}
+	return
 }
 
 type convertTzFunctionClass struct {
@@ -1901,7 +1996,7 @@ func (b *builtinMakeDateSig) eval(row []types.Datum) (d types.Datum, err error) 
 		return d, errors.Trace(err)
 	}
 	if args[0].IsNull() || args[1].IsNull() {
-		return d, nil
+		return
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	year, err := args[0].ToInt64(sc)
@@ -1913,7 +2008,7 @@ func (b *builtinMakeDateSig) eval(row []types.Datum) (d types.Datum, err error) 
 		return d, errors.Trace(err)
 	}
 	if dayOfYear <= 0 || year < 0 || year > 9999 {
-		return d, nil
+		return
 	}
 	if year < 70 {
 		year += 2000
@@ -1931,10 +2026,10 @@ func (b *builtinMakeDateSig) eval(row []types.Datum) (d types.Datum, err error) 
 	}
 	ret := types.TimeFromDays(retTimestamp + dayOfYear - 1)
 	if ret.IsZero() || ret.Time.Year() > 9999 {
-		return d, nil
+		return
 	}
 	d.SetMysqlTime(ret)
-	return d, nil
+	return
 }
 
 type makeTimeFunctionClass struct {
@@ -1959,7 +2054,7 @@ func (b *builtinMakeTimeSig) eval(row []types.Datum) (d types.Datum, err error) 
 	}
 	// MAKETIME(hour, minute, second)
 	if args[0].IsNull() || args[1].IsNull() || args[2].IsNull() {
-		return d, nil
+		return
 	}
 
 	var (
@@ -1982,12 +2077,12 @@ func (b *builtinMakeTimeSig) eval(row []types.Datum) (d types.Datum, err error) 
 
 	minute, _ = args[1].ToInt64(sc)
 	if minute < 0 || minute >= 60 {
-		return d, nil
+		return
 	}
 
 	second, _ = args[2].ToFloat64(sc)
 	if second < 0 || second >= 60 {
-		return d, nil
+		return
 	}
 	if hour == -838 || hour == 838 {
 		if second > 59 {
@@ -2015,7 +2110,7 @@ func (b *builtinMakeTimeSig) eval(row []types.Datum) (d types.Datum, err error) 
 		return d, errors.Trace(err)
 	}
 	d.SetMysqlDuration(dur)
-	return d, nil
+	return
 }
 
 type periodAddFunctionClass struct {
@@ -2052,7 +2147,7 @@ func (b *builtinPeriodAddSig) eval(row []types.Datum) (d types.Datum, err error)
 	//Check zero
 	if period <= 0 {
 		d.SetInt64(0)
-		return d, nil
+		return
 	}
 
 	y, m := getYearAndMonth(period)
@@ -2068,7 +2163,7 @@ func (b *builtinPeriodAddSig) eval(row []types.Datum) (d types.Datum, err error)
 
 	ret := int64(t.Year())*100 + int64(t.Month())
 	d.SetInt64(ret)
-	return d, nil
+	return
 }
 
 type periodDiffFunctionClass struct {
@@ -2093,7 +2188,7 @@ func (b *builtinPeriodDiffSig) eval(row []types.Datum) (d types.Datum, err error
 	}
 
 	if args[0].IsNull() || args[1].IsNull() {
-		return d, nil
+		return
 	}
 
 	sc := b.ctx.GetSessionVars().StmtCtx
@@ -2108,7 +2203,7 @@ func (b *builtinPeriodDiffSig) eval(row []types.Datum) (d types.Datum, err error
 	}
 
 	d.SetInt64(getMonth(period) - getMonth(period2))
-	return d, nil
+	return
 }
 
 func getYearAndMonth(period int64) (int64, int64) {
@@ -2153,7 +2248,7 @@ type builtinQuarterSig struct {
 func (b *builtinQuarterSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 
 	d, err = builtinMonth(args, b.ctx)
@@ -2178,8 +2273,7 @@ func (b *builtinQuarterSig) eval(row []types.Datum) (d types.Datum, err error) {
 		d.SetNull()
 		return d, errors.Errorf("no quarter for invalid month: %d.", mon)
 	}
-
-	return d, nil
+	return
 }
 
 type secToTimeFunctionClass struct {
@@ -2203,7 +2297,7 @@ func (b *builtinSecToTimeSig) eval(row []types.Datum) (d types.Datum, err error)
 		return d, errors.Trace(err)
 	}
 	if args[0].IsNull() {
-		return d, nil
+		return
 	}
 
 	var (
@@ -2259,7 +2353,7 @@ func (b *builtinSecToTimeSig) eval(row []types.Datum) (d types.Datum, err error)
 		return d, errors.Trace(err)
 	}
 	d.SetMysqlDuration(dur)
-	return d, nil
+	return
 }
 
 type subTimeFunctionClass struct {
@@ -2333,8 +2427,7 @@ func (b *builtinTimeToSecSig) eval(row []types.Datum) (d types.Datum, err error)
 	} else {
 		d.SetInt64(int64(t.Hour()*3600 + t.Minute()*60 + t.Second()))
 	}
-
-	return d, nil
+	return
 }
 
 type timestampAddFunctionClass struct {
@@ -2362,7 +2455,7 @@ func (b *builtinTimestampAddSig) eval(row []types.Datum) (d types.Datum, err err
 		return d, errors.Trace(err)
 	}
 	if args[1].IsNull() || args[2].IsNull() {
-		return d, nil
+		return
 	}
 	v := args[1].GetInt64()
 	sc := b.ctx.GetSessionVars().StmtCtx
@@ -2405,7 +2498,7 @@ func (b *builtinTimestampAddSig) eval(row []types.Datum) (d types.Datum, err err
 		return d, errorOrWarning(err, b.ctx)
 	}
 	d.SetMysqlTime(r)
-	return d, nil
+	return
 }
 
 type toDaysFunctionClass struct {
@@ -2429,7 +2522,7 @@ func (b *builtinToDaysSig) eval(row []types.Datum) (d types.Datum, err error) {
 		return d, errors.Trace(err)
 	}
 	if args[0].IsNull() {
-		return d, nil
+		return
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	date, err := convertDatumToTime(sc, args[0])
@@ -2441,7 +2534,7 @@ func (b *builtinToDaysSig) eval(row []types.Datum) (d types.Datum, err error) {
 		return d, errorOrWarning(types.ErrInvalidTimeFormat, b.ctx)
 	}
 	d.SetInt64(ret)
-	return d, nil
+	return
 }
 
 type toSecondsFunctionClass struct {
@@ -2465,7 +2558,7 @@ func (b *builtinToSecondsSig) eval(row []types.Datum) (d types.Datum, err error)
 		return d, errors.Trace(err)
 	}
 	if args[0].IsNull() {
-		return d, nil
+		return
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	date, err := convertDatumToTime(sc, args[0])
@@ -2477,7 +2570,7 @@ func (b *builtinToSecondsSig) eval(row []types.Datum) (d types.Datum, err error)
 		return d, errorOrWarning(types.ErrInvalidTimeFormat, b.ctx)
 	}
 	d.SetInt64(ret)
-	return d, nil
+	return
 }
 
 type utcTimeFunctionClass struct {
@@ -2499,7 +2592,7 @@ func (b *builtinUTCTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 	const utctimeFormat = "15:04:05.000000"
 	args, err := b.evalArgs(row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	fsp := 0
 	sc := b.ctx.GetSessionVars().StmtCtx
