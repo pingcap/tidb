@@ -2623,7 +2623,7 @@ func (s *testSessionSuite) TestRetryCleanTxn(c *C) {
 	stmtNode, err := parser.New().ParseOneStmt("insert retrytxn values (2, 'a')", "", "")
 	c.Assert(err, IsNil)
 	stmt, err := Compile(se, stmtNode)
-	resetStmtCtx(se, stmtNode)
+	executor.ResetStmtCtx(se, stmtNode)
 	history.add(0, stmt, se.sessionVars.StmtCtx)
 	_, err = se.Execute("commit")
 	c.Assert(err, NotNil)
