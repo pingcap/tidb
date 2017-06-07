@@ -989,9 +989,13 @@ func (s *testSuite) TestJSON(c *C) {
 	result = tk.MustQuery(`select a from test_json tj where a = "string"`)
 	result.Check(testkit.Rows(`"string"`))
 
-	// check some DDL limits for JSON column.
+	// check some DDL limits for TEXT/BLOB/JSON column.
 	var err error
 	_, err = tk.Exec(`create table test_bad_json(a json default '{}')`)
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(`create table test_bad_json(a blob default 'hello')`)
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(`create table test_bad_json(a text default 'world')`)
 	c.Assert(err, NotNil)
 	_, err = tk.Exec(`create table test_bad_json(id int, a json, key (a))`)
 	c.Assert(err, NotNil)
