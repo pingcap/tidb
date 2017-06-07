@@ -269,6 +269,29 @@ func (s *testTimeSuite) TestDurationAdd(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testTimeSuite) TestDurationSub(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []struct {
+		Input    string
+		Fsp      int
+		InputAdd string
+		FspAdd   int
+		Expect   string
+	}{
+		{"00:00:00.1", 1, "00:00:00.1", 1, "00:00:00.0"},
+		{"00:00:00", 0, "00:00:00.1", 1, "-00:00:00.1"},
+	}
+	for _, test := range table {
+		t, err := ParseDuration(test.Input, test.Fsp)
+		c.Assert(err, IsNil)
+		ta, err := ParseDuration(test.InputAdd, test.FspAdd)
+		c.Assert(err, IsNil)
+		result, err := t.Sub(ta)
+		c.Assert(err, IsNil)
+		c.Assert(result.String(), Equals, test.Expect)
+	}
+}
+
 func (s *testTimeSuite) TestTimeFsp(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []struct {

@@ -688,6 +688,21 @@ func (d Duration) Add(v Duration) (Duration, error) {
 	return Duration{Duration: gotime.Duration(dsum), Fsp: v.Fsp}, nil
 }
 
+// Sub subtracts d to d, returns a duration value.
+func (d Duration) Sub(v Duration) (Duration, error) {
+	if &v == nil {
+		return d, nil
+	}
+	dsum, err := SubInt64(int64(d.Duration), int64(v.Duration))
+	if err != nil {
+		return Duration{}, err
+	}
+	if d.Fsp >= v.Fsp {
+		return Duration{Duration: gotime.Duration(dsum), Fsp: d.Fsp}, nil
+	}
+	return Duration{Duration: gotime.Duration(dsum), Fsp: v.Fsp}, nil
+}
+
 // String returns the time formatted using default TimeFormat and fsp.
 func (d Duration) String() string {
 	var buf bytes.Buffer
