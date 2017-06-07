@@ -394,7 +394,7 @@ type builtinFunc interface {
 	evalDecimal(row []types.Datum) (val *types.MyDecimal, isNull bool, err error)
 	// evalTime evaluates DATE/DATETIME/TIMESTAMP representation of builtinFunc by given row.
 	evalTime(row []types.Datum) (val types.Time, isNull bool, err error)
-	// evaTime evaluates duration representation of builtinFunc by given row.
+	// evalDuration evaluates duration representation of builtinFunc by given row.
 	evalDuration(row []types.Datum) (val types.Duration, isNull bool, err error)
 	// getArgs returns the arguments expressions.
 	getArgs() []Expression
