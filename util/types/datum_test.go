@@ -184,7 +184,7 @@ func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
 	c.Assert(converted.GetFloat64(), Equals, datum.GetFloat64())
 }
 
-// mustParseTime is similar to ParseTime but panic if any error occurs.
+// mustParseTimeIntoDatum is similar to ParseTime but panic if any error occurs.
 func mustParseTimeIntoDatum(s string, tp byte, fsp int) (d Datum) {
 	t, err := ParseTime(s, tp, fsp)
 	if err != nil {
