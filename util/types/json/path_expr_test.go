@@ -29,8 +29,10 @@ func (s *testJSONSuite) TestValidatePathExpr(c *C) {
 		{`$."key1 string"[  3  ][*].*.key3`, true, 5},
 		{`$."hello \"escaped quotes\" world\\n"[3][*].*.key3`, true, 5},
 
-		{`$.\"escaped quotes\"[3][*].*.key3`, false, 5},
-		{`$.hello \"escaped quotes\" world[3][*].*.key3`, false, 5},
+		{`$.\"escaped quotes\"[3][*].*.key3`, false, 0},
+		{`$.hello \"escaped quotes\" world[3][*].*.key3`, false, 0},
+		{`$NoValidLegsHere`, false, 0},
+		{`$        No Valid Legs Here .a.b.c`, false, 0},
 	}
 
 	for _, tt := range tests {

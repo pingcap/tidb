@@ -566,15 +566,12 @@ func appendUserPrivilegesTableRow(rows [][]types.Datum, user userRecord) [][]typ
 
 // Handle wraps MySQLPrivilege providing thread safe access.
 type Handle struct {
-	ctx  context.Context
 	priv atomic.Value
 }
 
 // NewHandle returns a Handle.
-func NewHandle(ctx context.Context) *Handle {
-	return &Handle{
-		ctx: ctx,
-	}
+func NewHandle() *Handle {
+	return &Handle{}
 }
 
 // Get the MySQLPrivilege for read.
@@ -583,9 +580,9 @@ func (h *Handle) Get() *MySQLPrivilege {
 }
 
 // Update loads all the privilege info from kv storage.
-func (h *Handle) Update() error {
+func (h *Handle) Update(ctx context.Context) error {
 	var priv MySQLPrivilege
-	err := priv.LoadAll(h.ctx)
+	err := priv.LoadAll(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}

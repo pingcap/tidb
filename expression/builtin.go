@@ -394,7 +394,7 @@ type builtinFunc interface {
 	evalDecimal(row []types.Datum) (val *types.MyDecimal, isNull bool, err error)
 	// evalTime evaluates DATE/DATETIME/TIMESTAMP representation of builtinFunc by given row.
 	evalTime(row []types.Datum) (val types.Time, isNull bool, err error)
-	// evaTime evaluates duration representation of builtinFunc by given row.
+	// evalDuration evaluates duration representation of builtinFunc by given row.
 	evalDuration(row []types.Datum) (val types.Duration, isNull bool, err error)
 	// getArgs returns the arguments expressions.
 	getArgs() []Expression
@@ -690,5 +690,11 @@ var funcs = map[string]functionClass{
 	ast.ValidatePasswordStrength: &validatePasswordStrengthFunctionClass{baseFunctionClass{ast.ValidatePasswordStrength, 1, 1}},
 
 	// json functions
-	ast.JSONType: &jsonTypeFunctionClass{baseFunctionClass{ast.JSONType, 1, 1}},
+	ast.JSONType:    &jsonTypeFunctionClass{baseFunctionClass{ast.JSONType, 1, 1}},
+	ast.JSONExtract: &jsonExtractFunctionClass{baseFunctionClass{ast.JSONExtract, 2, -1}},
+	ast.JSONUnquote: &jsonUnquoteFunctionClass{baseFunctionClass{ast.JSONUnquote, 1, 1}},
+	ast.JSONSet:     &jsonSetFunctionClass{baseFunctionClass{ast.JSONSet, 3, -1}},
+	ast.JSONInsert:  &jsonInsertFunctionClass{baseFunctionClass{ast.JSONInsert, 3, -1}},
+	ast.JSONReplace: &jsonReplaceFunctionClass{baseFunctionClass{ast.JSONReplace, 3, -1}},
+	ast.JSONMerge:   &jsonMergeFunctionClass{baseFunctionClass{ast.JSONMerge, 2, -1}},
 }

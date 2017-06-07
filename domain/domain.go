@@ -431,8 +431,8 @@ func (do *Domain) SysSessionPool() *pools.ResourcePool {
 // LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it
 // should be called only once in BootstrapSession.
 func (do *Domain) LoadPrivilegeLoop(ctx context.Context) error {
-	do.privHandle = privileges.NewHandle(ctx)
-	err := do.privHandle.Update()
+	do.privHandle = privileges.NewHandle()
+	err := do.privHandle.Update(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -452,7 +452,7 @@ func (do *Domain) LoadPrivilegeLoop(ctx context.Context) error {
 			case <-watchCh:
 			case <-time.After(duration):
 			}
-			err := do.privHandle.Update()
+			err := do.privHandle.Update(ctx)
 			if err != nil {
 				log.Error("load privilege fail:", errors.ErrorStack(err))
 			}
