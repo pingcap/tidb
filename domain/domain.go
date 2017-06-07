@@ -42,6 +42,7 @@ type Domain struct {
 	infoHandle      *infoschema.Handle
 	privHandle      *privileges.Handle
 	statsHandle     *statistics.Handle
+	statsLease      time.Duration
 	ddl             ddl.DDL
 	m               sync.Mutex
 	SchemaValidator SchemaValidator
@@ -374,14 +375,15 @@ type etcdBackend interface {
 }
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
-func NewDomain(store kv.Storage, lease time.Duration, factory pools.Factory) (d *Domain, err error) {
+func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, factory pools.Factory) (d *Domain, err error) {
 	capacity := 200                // capacity of the sysSessionPool size
 	idleTimeout := 3 * time.Minute // sessions in the sysSessionPool will be recycled after idleTimeout
 	d = &Domain{
 		store:           store,
-		SchemaValidator: newSchemaValidator(lease),
+		SchemaValidator: newSchemaValidator(ddlLease),
 		exit:            make(chan struct{}),
 		sysSessionPool:  pools.NewResourcePool(factory, capacity, capacity, idleTimeout),
+		statsLease:      statsLease,
 	}
 
 	if ebd, ok := store.(etcdBackend); ok {
@@ -403,7 +405,7 @@ func NewDomain(store kv.Storage, lease time.Duration, factory pools.Factory) (d 
 	}
 	ctx := goctx.Background()
 	callback := &ddlCallback{do: d}
-	d.ddl = ddl.NewDDL(ctx, d.etcdClient, d.store, d.infoHandle, callback, lease)
+	d.ddl = ddl.NewDDL(ctx, d.etcdClient, d.store, d.infoHandle, callback, ddlLease)
 	if err = d.ddl.SchemaSyncer().Init(ctx); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -413,9 +415,9 @@ func NewDomain(store kv.Storage, lease time.Duration, factory pools.Factory) (d 
 
 	// Only when the store is local that the lease value is 0.
 	// If the store is local, it doesn't need loadSchemaInLoop.
-	if lease > 0 {
+	if ddlLease > 0 {
 		// Local store needs to get the change information for every DDL state in each session.
-		go d.loadSchemaInLoop(lease)
+		go d.loadSchemaInLoop(ddlLease)
 	}
 
 	return d, nil
@@ -471,19 +473,19 @@ func (do *Domain) StatsHandle() *statistics.Handle {
 
 // CreateStatsHandle is used only for test.
 func (do *Domain) CreateStatsHandle(ctx context.Context) {
-	do.statsHandle = statistics.NewHandle(ctx)
+	do.statsHandle = statistics.NewHandle(ctx, do.statsLease)
 }
 
 // UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop. It
 // should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
-	do.statsHandle = statistics.NewHandle(ctx)
+	do.statsHandle = statistics.NewHandle(ctx, do.statsLease)
 	do.ddl.RegisterEventCh(do.statsHandle.DDLEventCh())
 	err := do.statsHandle.Update(do.InfoSchema())
 	if err != nil {
 		return errors.Trace(err)
 	}
-	lease := do.DDL().GetLease()
+	lease := do.statsLease
 	if lease <= 0 {
 		return nil
 	}

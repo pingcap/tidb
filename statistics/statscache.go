@@ -16,6 +16,7 @@ package statistics
 import (
 	"fmt"
 	"sync/atomic"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -45,6 +46,8 @@ type Handle struct {
 	listHead *SessionStatsCollector
 	// We collect the delta map and merge them with globalMap.
 	globalMap tableDeltaMap
+
+	Lease time.Duration
 }
 
 // Clear the statsCache, only for test.
@@ -55,12 +58,13 @@ func (h *Handle) Clear() {
 }
 
 // NewHandle creates a Handle for update stats.
-func NewHandle(ctx context.Context) *Handle {
+func NewHandle(ctx context.Context, lease time.Duration) *Handle {
 	handle := &Handle{
 		ctx:        ctx,
 		ddlEventCh: make(chan *ddl.Event, 100),
 		listHead:   &SessionStatsCollector{mapper: make(tableDeltaMap)},
 		globalMap:  make(tableDeltaMap),
+		Lease:      lease,
 	}
 	handle.statsCache.Store(statsCache{})
 	return handle

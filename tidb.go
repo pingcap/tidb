@@ -59,14 +59,16 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		return
 	}
 
-	lease := time.Duration(0)
+	ddlLease := time.Duration(0)
+	statisticLease := time.Duration(0)
 	if !localstore.IsLocalStore(store) {
-		lease = schemaLease
+		ddlLease = schemaLease
+		statisticLease = statsLease
 	}
 	err = util.RunWithRetry(defaultMaxRetries, retryInterval, func() (retry bool, err1 error) {
-		log.Infof("store %v new domain, lease %v", store.UUID(), lease)
+		log.Infof("store %v new domain, ddl lease %v, stats lease", store.UUID(), ddlLease, statisticLease)
 		factory := createSessionFunc(store)
-		d, err1 = domain.NewDomain(store, lease, factory)
+		d, err1 = domain.NewDomain(store, ddlLease, statisticLease, factory)
 		return true, errors.Trace(err1)
 	})
 	if err != nil {
@@ -99,6 +101,9 @@ var (
 	// For production, you should set a big schema lease, like 300s+.
 	schemaLease = 1 * time.Second
 
+	// statsLease is the time for reload stats table.
+	statsLease = 1 * time.Second
+
 	// The maximum number of retries to recover from retryable errors.
 	commitRetryLimit = 10
 )
@@ -108,6 +113,11 @@ var (
 // SetSchemaLease only affects not local storage after bootstrapped.
 func SetSchemaLease(lease time.Duration) {
 	schemaLease = lease
+}
+
+// SetStatsLease changes the default stats lease time for loading stats info.
+func SetStatsLease(lease time.Duration) {
+	statsLease = lease
 }
 
 // SetCommitRetryLimit setups the maximum number of retries when trying to recover
