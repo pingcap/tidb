@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/engine"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
@@ -132,42 +131,6 @@ func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
 		return nil, errors.Trace(err)
 	}
 	return stmts, nil
-}
-
-// resetStmtCtx resets the StmtContext.
-// Before every execution, we must clear statement context.
-func resetStmtCtx(ctx context.Context, s ast.StmtNode) {
-	sessVars := ctx.GetSessionVars()
-	sc := new(variable.StatementContext)
-	switch s.(type) {
-	case *ast.UpdateStmt, *ast.InsertStmt, *ast.DeleteStmt:
-		sc.IgnoreTruncate = false
-		sc.TruncateAsWarning = !sessVars.StrictSQLMode
-		if _, ok := s.(*ast.InsertStmt); !ok {
-			sc.InUpdateOrDeleteStmt = true
-		}
-	case *ast.CreateTableStmt, *ast.AlterTableStmt:
-		// Make sure the sql_mode is strict when checking column default value.
-		sc.IgnoreTruncate = false
-		sc.TruncateAsWarning = false
-	case *ast.LoadDataStmt:
-		sc.IgnoreTruncate = false
-		sc.TruncateAsWarning = !sessVars.StrictSQLMode
-	default:
-		sc.IgnoreTruncate = true
-		if show, ok := s.(*ast.ShowStmt); ok {
-			if show.Tp == ast.ShowWarnings {
-				sc.InShowWarning = true
-				sc.SetWarnings(sessVars.StmtCtx.GetWarnings())
-			}
-		}
-	}
-	if sessVars.LastInsertID > 0 {
-		sessVars.PrevLastInsertID = sessVars.LastInsertID
-		sessVars.LastInsertID = 0
-	}
-	sessVars.InsertID = 0
-	sessVars.StmtCtx = sc
 }
 
 // Compile is safe for concurrent use by multiple goroutines.
