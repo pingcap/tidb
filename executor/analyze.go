@@ -103,7 +103,7 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 		}
 	}
 	dom := sessionctx.GetDomain(e.ctx)
-	lease := dom.DDL().GetLease()
+	lease := dom.StatsHandle().Lease
 	if lease > 0 {
 		// We sleep two lease to make sure other tidb node has updated this node.
 		time.Sleep(lease * 2)
