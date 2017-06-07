@@ -124,6 +124,8 @@ func (p *TopN) statsProfile() *statsProfile {
 	return p.profile
 }
 
+// getCardinality will return the cardinality of a couple of columns. We simply return the max one, because we cannot know
+// the cardinality for multi-dimension attributes properly. This is a simple and naive scheme of cardinality estimation.
 func getCardinality(cols []*expression.Column, schema *expression.Schema, profile *statsProfile) float64 {
 	indices := schema.ColumnsIndices(cols)
 	if indices == nil {
@@ -178,6 +180,12 @@ func (p *LogicalAggregation) statsProfile() *statsProfile {
 	return p.profile
 }
 
+// If the type of join is SemiJoin, the selectivity of it will be same as selection's.
+// If the type of join is LeftOuterSemiJoin, it will not add or remove any row. The last column is a boolean value, whose cardinality should be two.
+// If the type of join is inner/outer join, the output of join(s, t) should be N(s) * N(t) / (V(s.key) * V(t.key)) * Min(s.key, t.key).
+// N(s) stands for the number of rows in relation s. V(s.key) means the cardinality of join key in s.
+// This is a quite simple strategy: We assume every bucket of relation which will participate join has the same number of rows, and apply cross join for
+// every matched bucket.
 func (p *LogicalJoin) statsProfile() *statsProfile {
 	if p.profile != nil {
 		return p.profile
