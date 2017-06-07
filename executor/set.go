@@ -155,7 +155,7 @@ func validateSnapshot(ctx context.Context, snapshotTS uint64) error {
 		return errors.Trace(err)
 	}
 	if len(rows) != 1 {
-		return errors.New("can not get 'tikv_gc_safe_point.")
+		return errors.New("can not get 'tikv_gc_safe_point'")
 	}
 	safePointString := rows[0].Data[0].GetString()
 	const gcTimeFormat = "20060102-15:04:05 -0700 MST"
