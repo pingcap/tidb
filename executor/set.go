@@ -126,16 +126,16 @@ func (e *SetExecutor) executeSet() error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			olsSnapshotTS := sessionVars.SnapshotTS
+			oldSnapshotTS := sessionVars.SnapshotTS
 			err = varsutil.SetSessionSystemVar(sessionVars, name, value)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			newSnapshotIsSet := sessionVars.SnapshotTS > 0 && sessionVars.SnapshotTS != olsSnapshotTS
+			newSnapshotIsSet := sessionVars.SnapshotTS > 0 && sessionVars.SnapshotTS != oldSnapshotTS
 			if newSnapshotIsSet {
 				err = validateSnapshot(e.ctx, sessionVars.SnapshotTS)
 				if err != nil {
-					sessionVars.SnapshotTS = olsSnapshotTS
+					sessionVars.SnapshotTS = oldSnapshotTS
 					return errors.Trace(err)
 				}
 			}
