@@ -308,7 +308,7 @@ func roundTime(t gotime.Time, fsp int) gotime.Time {
 	return t.Round(d)
 }
 
-func (t Time) roundFrac(fsp int) (Time, error) {
+func (t Time) RoundFrac(fsp int) (Time, error) {
 	if t.Type == mysql.TypeDate {
 		// date type has no fsp
 		return t, nil

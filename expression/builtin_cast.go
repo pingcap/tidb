@@ -127,13 +127,12 @@ func (b *builtinCastIntAsTimeSig) evalTime(row []types.Datum) (res types.Time, i
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = types.ParseTimeFromInt64(val)
+	res, err = types.ParseTime(strconv.FormatInt(val, 10), b.tp.Tp, b.tp.Decimal)
 	return res, false, errors.Trace(err)
 }
 
 type builtinCastIntAsDurationSig struct {
 	baseDurationBuiltinFunc
-	fsp int
 }
 
 func (b *builtinCastIntAsDurationSig) evalDuration(row []types.Datum) (res types.Duration, isNull bool, err error) {
@@ -141,7 +140,7 @@ func (b *builtinCastIntAsDurationSig) evalDuration(row []types.Datum) (res types
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = types.ParseDuration(strconv.FormatInt(val, 10), b.fsp)
+	res, err = types.ParseDuration(strconv.FormatInt(val, 10), b.tp.Decimal)
 	return res, false, errors.Trace(err)
 }
 
@@ -197,19 +196,16 @@ func (b *builtinCastRealAsStringSig) evalString(row []types.Datum) (res string, 
 
 type builtinCastRealAsTimeSig struct {
 	baseTimeBuiltinFunc
-	tp  byte
-	fsp int
 }
 
 func (b *builtinCastRealAsTimeSig) evalTime(row []types.Datum) (res types.Time, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalReal(row, b.getCtx().GetSessionVars().StmtCtx)
-	res, err = types.ParseTime(strconv.FormatFloat(val, 'f', -1, 64), b.tp, b.fsp)
+	res, err = types.ParseTime(strconv.FormatFloat(val, 'f', -1, 64), b.tp.Tp, b.tp.Decimal)
 	return res, false, errors.Trace(err)
 }
 
 type builtinCastRealAsDurationSig struct {
 	baseDurationBuiltinFunc
-	fsp int
 }
 
 func (b *builtinCastRealAsDurationSig) evalDuration(row []types.Datum) (res types.Duration, isNull bool, err error) {
@@ -217,7 +213,7 @@ func (b *builtinCastRealAsDurationSig) evalDuration(row []types.Datum) (res type
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = types.ParseDuration(strconv.FormatFloat(val, 'f', -1, 64), b.fsp)
+	res, err = types.ParseDuration(strconv.FormatFloat(val, 'f', -1, 64), b.tp.Decimal)
 	return res, false, errors.Trace(err)
 }
 
@@ -277,7 +273,6 @@ func (b *builtinCastDecimalAsRealSig) evalReal(row []types.Datum) (res float64, 
 
 type builtinCastDecimalAsTimeSig struct {
 	baseTimeBuiltinFunc
-	tp byte
 }
 
 func (b *builtinCastDecimalAsTimeSig) evalTime(row []types.Datum) (res types.Time, isNull bool, err error) {
@@ -285,8 +280,7 @@ func (b *builtinCastDecimalAsTimeSig) evalTime(row []types.Datum) (res types.Tim
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	_, fsp := val.PrecisionAndFrac()
-	res, err = types.ParseTime(string(val.ToString()), b.tp, fsp)
+	res, err = types.ParseTime(string(val.ToString()), b.tp.Tp, b.tp.Decimal)
 	return res, false, errors.Trace(err)
 }
 
@@ -299,8 +293,7 @@ func (b *builtinCastDecimalAsDurationSig) evalDuration(row []types.Datum) (res t
 	if isNull || err != nil {
 		return res, false, errors.Trace(err)
 	}
-	_, fsp := val.PrecisionAndFrac()
-	res, err = types.ParseDuration(string(val.ToString()), fsp)
+	res, err = types.ParseDuration(string(val.ToString()), b.tp.Decimal)
 	return res, false, errors.Trace(err)
 }
 
@@ -374,8 +367,6 @@ func (b *builtinCastStringAsDecimalSig) evalDecimal(row []types.Datum) (res *typ
 
 type builtinCastStringAsTimeSig struct {
 	baseTimeBuiltinFunc
-	tp  byte
-	fsp int
 }
 
 func (b *builtinCastStringAsTimeSig) evalTime(row []types.Datum) (res types.Time, isNull bool, err error) {
@@ -383,13 +374,12 @@ func (b *builtinCastStringAsTimeSig) evalTime(row []types.Datum) (res types.Time
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = types.ParseTime(val, b.tp, b.fsp)
+	res, err = types.ParseTime(val, b.tp.Tp, b.tp.Decimal)
 	return res, false, errors.Trace(err)
 }
 
 type builtinCastStringAsDurationSig struct {
 	baseDurationBuiltinFunc
-	fsp int
 }
 
 func (b *builtinCastStringAsDurationSig) evalDuration(row []types.Datum) (res types.Duration, isNull bool, err error) {
@@ -397,7 +387,7 @@ func (b *builtinCastStringAsDurationSig) evalDuration(row []types.Datum) (res ty
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = types.ParseDuration(val, b.fsp)
+	res, err = types.ParseDuration(val, b.tp.Decimal)
 	return res, false, errors.Trace(err)
 }
 
@@ -405,8 +395,13 @@ type builtinCastTimeAsTimeSig struct {
 	baseTimeBuiltinFunc
 }
 
-func (b *builtinCastTimeAsTimeSig) evalInt(row []types.Datum) (res types.Time, isNull bool, err error) {
-	return b.args[0].EvalTime(row, b.getCtx().GetSessionVars().StmtCtx)
+func (b *builtinCastTimeAsTimeSig) evalTime(row []types.Datum) (res types.Time, isNull bool, err error) {
+	res, isNull, err = b.args[0].EvalTime(row, b.getCtx().GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return res, isNull, errors.Trace(err)
+	}
+	res, err = res.RoundFrac(b.tp.Decimal)
+	return res, false, errors.Trace(err)
 }
 
 type builtinCastTimeAsIntSig struct {
@@ -473,6 +468,10 @@ func (b *builtinCastTimeAsDurationSig) evalDuration(row []types.Datum) (res type
 		return res, isNull, errors.Trace(err)
 	}
 	res, err = val.ConvertToDuration()
+	if err != nil {
+		return res, false, errors.Trace(err)
+	}
+	res, err = res.RoundFrac(b.tp.Decimal)
 	return res, false, errors.Trace(err)
 }
 
@@ -481,7 +480,12 @@ type builtinCastDurationAsDurationSig struct {
 }
 
 func (b *builtinCastDurationAsDurationSig) evalDuration(row []types.Datum) (res types.Duration, isNull bool, err error) {
-	return b.args[0].EvalDuration(row, b.getCtx().GetSessionVars().StmtCtx)
+	res, isNull, err = b.args[0].EvalDuration(row, b.getCtx().GetSessionVars().StmtCtx)
+	if isNull || err != nil {
+		return res, isNull, errors.Trace(err)
+	}
+	res, err = res.RoundFrac(b.tp.Decimal)
+	return res, false, errors.Trace(err)
 }
 
 type builtinCastDurationAsIntSig struct {
@@ -540,7 +544,6 @@ func (b *builtinCastDurationAsStringSig) evalString(row []types.Datum) (res stri
 
 type builtinCastDurationAsTimeSig struct {
 	baseTimeBuiltinFunc
-	tp byte
 }
 
 func (b *builtinCastDurationAsTimeSig) evalTime(row []types.Datum) (res types.Time, isNull bool, err error) {
@@ -548,6 +551,10 @@ func (b *builtinCastDurationAsTimeSig) evalTime(row []types.Datum) (res types.Ti
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = val.ConvertToTime(b.tp)
+	res, err = val.ConvertToTime(b.tp.Tp)
+	if err != nil {
+		return res, false, errors.Trace(err)
+	}
+	res, err = res.RoundFrac(b.tp.Decimal)
 	return res, false, errors.Trace(err)
 }

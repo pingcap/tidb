@@ -957,14 +957,14 @@ func (d *Datum) convertToMysqlTime(sc *variable.StatementContext, target *FieldT
 			ret.SetValue(t)
 			return ret, errors.Trace(err)
 		}
-		t, err = t.roundFrac(fsp)
+		t, err = t.RoundFrac(fsp)
 	case KindMysqlDuration:
 		t, err = d.GetMysqlDuration().ConvertToTime(tp)
 		if err != nil {
 			ret.SetValue(t)
 			return ret, errors.Trace(err)
 		}
-		t, err = t.roundFrac(fsp)
+		t, err = t.RoundFrac(fsp)
 	case KindString, KindBytes:
 		t, err = ParseTime(d.GetString(), tp, fsp)
 	case KindInt64:

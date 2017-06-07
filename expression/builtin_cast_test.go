@@ -92,7 +92,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		Fsp:      types.DefaultFsp}
 	durationDatum.SetMysqlDuration(duration)
 
-	// timeDuration indicates datetime "curYear-curMonth-curDay 12:59:59".
+	// timeDatum indicates datetime "curYear-curMonth-curDay 12:59:59".
 	timeDatum := types.Datum{}
 	year, month, day := time.Now().Date()
 	tm := types.Time{
@@ -100,6 +100,14 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		Type: mysql.TypeDatetime,
 		Fsp:  types.DefaultFsp}
 	timeDatum.SetMysqlTime(tm)
+
+	// dateDatum indicates date "curYear-curMonth-curDay"
+	dateDatum := types.Datum{}
+	dt := types.Time{
+		Time: types.FromDate(year, int(month), day, 0, 0, 0, 0),
+		Type: mysql.TypeDate,
+		Fsp:  types.DefaultFsp}
+	dateDatum.SetMysqlTime(dt)
 
 	curDateInt := int64(year*10000 + int(month)*100 + day)
 	curTimeInt := int64(curDateInt*1000000 + 125959)
@@ -543,27 +551,124 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 			tm,
 			[]types.Datum{durationDatum},
 		},
+		// cast Time as Time.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDatetime), Index: 0},
+			tm,
+			[]types.Datum{timeDatum},
+		},
 	}
 	for i, t := range castToTimeCases {
 		args := []Expression{t.before}
-		timeFunc := baseTimeBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
-		tp, fsp := mysql.TypeDatetime, types.DefaultFsp
+		tp := types.NewFieldType(mysql.TypeDatetime)
+		tp.Decimal = types.DefaultFsp
+		timeFunc := baseTimeBuiltinFunc{newBaseBuiltinFuncWithTp(args, tp, ctx)}
 		switch i {
 		case 0:
-			sig = &builtinCastRealAsTimeSig{timeFunc, tp, fsp}
+			sig = &builtinCastRealAsTimeSig{timeFunc}
 		case 1:
-			sig = &builtinCastDecimalAsTimeSig{timeFunc, tp}
+			sig = &builtinCastDecimalAsTimeSig{timeFunc}
 		case 2:
 			sig = &builtinCastIntAsTimeSig{timeFunc}
 		case 3:
-			sig = &builtinCastStringAsTimeSig{timeFunc, tp, fsp}
+			sig = &builtinCastStringAsTimeSig{timeFunc}
 		case 4:
-			sig = &builtinCastDurationAsTimeSig{timeFunc, tp}
+			sig = &builtinCastDurationAsTimeSig{timeFunc}
+		case 5:
+			sig = &builtinCastTimeAsTimeSig{timeFunc}
 		}
 		res, isNull, err := sig.evalTime(t.row)
 		c.Assert(isNull, Equals, false)
 		c.Assert(err, IsNil)
 		c.Assert(res.String(), Equals, t.after.String())
+	}
+
+	castToTimeCases2 := []struct {
+		before *Column
+		after  types.Time
+		row    []types.Datum
+		fsp    int
+		tp     byte
+	}{
+		// cast real as Time(0).
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
+			dt,
+			[]types.Datum{types.NewFloat64Datum(float64(curTimeInt))},
+			types.DefaultFsp,
+			mysql.TypeDate,
+		},
+		// cast decimal as Date.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeNewDecimal), Index: 0},
+			dt,
+			[]types.Datum{types.NewDecimalDatum(types.NewDecFromInt(curTimeInt))},
+			types.DefaultFsp,
+			mysql.TypeDate,
+		},
+		// cast int as Datetime(6).
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0},
+			tm,
+			[]types.Datum{types.NewIntDatum(curTimeInt)},
+			types.MaxFsp,
+			mysql.TypeDatetime,
+		},
+		// cast string as Datetime(6).
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
+			tm,
+			[]types.Datum{types.NewStringDatum(curTimeString)},
+			types.MaxFsp,
+			mysql.TypeDatetime,
+		},
+		// cast Duration as Date.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0},
+			dt,
+			[]types.Datum{durationDatum},
+			types.DefaultFsp,
+			mysql.TypeDate,
+		},
+		// cast Time as Date.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDatetime), Index: 0},
+			tm,
+			[]types.Datum{timeDatum},
+			types.DefaultFsp,
+			mysql.TypeDate,
+		},
+	}
+	for i, t := range castToTimeCases2 {
+		args := []Expression{t.before}
+		tp := types.NewFieldType(t.tp)
+		tp.Decimal = t.fsp
+		timeFunc := baseTimeBuiltinFunc{newBaseBuiltinFuncWithTp(args, tp, ctx)}
+		switch i {
+		case 0:
+			sig = &builtinCastRealAsTimeSig{timeFunc}
+		case 1:
+			sig = &builtinCastDecimalAsTimeSig{timeFunc}
+		case 2:
+			sig = &builtinCastIntAsTimeSig{timeFunc}
+		case 3:
+			sig = &builtinCastStringAsTimeSig{timeFunc}
+		case 4:
+			sig = &builtinCastDurationAsTimeSig{timeFunc}
+		case 5:
+			sig = &builtinCastTimeAsTimeSig{timeFunc}
+		}
+		res, isNull, err := sig.evalTime(t.row)
+		c.Assert(isNull, Equals, false)
+		c.Assert(err, IsNil)
+		resAfter := t.after.String()
+		if t.fsp > 0 {
+			resAfter += "."
+			for i := 0; i < t.fsp; i++ {
+				resAfter += "0"
+			}
+		}
+		c.Assert(res.String(), Equals, resAfter)
 	}
 
 	castToDurationCases := []struct {
@@ -601,27 +706,117 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 			duration,
 			[]types.Datum{timeDatum},
 		},
+		// cast Duration as Duration.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0},
+			duration,
+			[]types.Datum{durationDatum},
+		},
 	}
 	for i, t := range castToDurationCases {
 		args := []Expression{t.before}
-		durationFunc := baseDurationBuiltinFunc{newBaseBuiltinFunc(args, ctx)}
-		fsp := types.DefaultFsp
+		tp := types.NewFieldType(mysql.TypeDuration)
+		tp.Decimal = types.DefaultFsp
+		durationFunc := baseDurationBuiltinFunc{newBaseBuiltinFuncWithTp(args, tp, ctx)}
 		switch i {
 		case 0:
-			sig = &builtinCastRealAsDurationSig{durationFunc, fsp}
+			sig = &builtinCastRealAsDurationSig{durationFunc}
 		case 1:
 			sig = &builtinCastDecimalAsDurationSig{durationFunc}
 		case 2:
-			sig = &builtinCastIntAsDurationSig{durationFunc, fsp}
+			sig = &builtinCastIntAsDurationSig{durationFunc}
 		case 3:
-			sig = &builtinCastStringAsDurationSig{durationFunc, fsp}
+			sig = &builtinCastStringAsDurationSig{durationFunc}
 		case 4:
 			sig = &builtinCastTimeAsDurationSig{durationFunc}
+		case 5:
+			sig = &builtinCastDurationAsDurationSig{durationFunc}
 		}
 		res, isNull, err := sig.evalDuration(t.row)
 		c.Assert(isNull, Equals, false)
 		c.Assert(err, IsNil)
 		c.Assert(res.String(), Equals, t.after.String())
+	}
+
+	castToDurationCases2 := []struct {
+		before *Column
+		after  types.Duration
+		row    []types.Datum
+		fsp    int
+	}{
+		// cast real as Duration.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
+			duration,
+			[]types.Datum{types.NewFloat64Datum(125959)},
+			1,
+		},
+		// cast decimal as Duration.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeNewDecimal), Index: 0},
+			duration,
+			[]types.Datum{types.NewDecimalDatum(types.NewDecFromInt(125959))},
+			2,
+		},
+		// cast int as Duration.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0},
+			duration,
+			[]types.Datum{types.NewIntDatum(125959)},
+			3,
+		},
+		// cast string as Duration.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
+			duration,
+			[]types.Datum{types.NewStringDatum("12:59:59")},
+			4,
+		},
+		// cast Time as Duration.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDatetime), Index: 0},
+			duration,
+			[]types.Datum{timeDatum},
+			5,
+		},
+		// cast Duration as Duration.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0},
+			duration,
+			[]types.Datum{durationDatum},
+			6,
+		},
+	}
+	for i, t := range castToDurationCases2 {
+		args := []Expression{t.before}
+		tp := types.NewFieldType(mysql.TypeDuration)
+		tp.Decimal = t.fsp
+		durationFunc := baseDurationBuiltinFunc{newBaseBuiltinFuncWithTp(args, tp, ctx)}
+		switch i {
+		case 0:
+			sig = &builtinCastRealAsDurationSig{durationFunc}
+		case 1:
+			sig = &builtinCastDecimalAsDurationSig{durationFunc}
+		case 2:
+			sig = &builtinCastIntAsDurationSig{durationFunc}
+		case 3:
+			sig = &builtinCastStringAsDurationSig{durationFunc}
+		case 4:
+			sig = &builtinCastTimeAsDurationSig{durationFunc}
+		case 5:
+			sig = &builtinCastDurationAsDurationSig{durationFunc}
+		}
+		res, isNull, err := sig.evalDuration(t.row)
+		c.Assert(isNull, Equals, false)
+		c.Assert(err, IsNil)
+		resAfter := t.after.String()
+		if t.fsp > 0 {
+			resAfter += "."
+			for j := 0; j < t.fsp; j++ {
+				resAfter += "0"
+			}
+		}
+		c.Assert(res.String(), Equals, resAfter)
 	}
 
 	// null case
