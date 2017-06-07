@@ -395,6 +395,16 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	var pkCol *table.Column
 	for i, col := range tb.Cols() {
 		buf.WriteString(fmt.Sprintf("  `%s` %s", col.Name.O, col.GetTypeDesc()))
+		if col.GeneratedExprString != "" {
+			// it's a generated column.
+			buf.WriteString(fmt.Sprintf(" GENERATED ALWAYS AS (%s)", col.GeneratedExprString))
+
+			if col.GeneratedStored {
+				buf.WriteString(" STORED")
+			} else {
+				buf.WriteString(" VIRTUAL")
+			}
+		}
 		if mysql.HasAutoIncrementFlag(col.Flag) {
 			buf.WriteString(" NOT NULL AUTO_INCREMENT")
 		} else {
@@ -404,7 +414,8 @@ func (e *ShowExec) fetchShowCreateTable() error {
 			if !mysql.HasNoDefaultValueFlag(col.Flag) {
 				switch col.DefaultValue {
 				case nil:
-					if !mysql.HasNotNullFlag(col.Flag) {
+					if !mysql.HasNotNullFlag(col.Flag) && col.GeneratedExprString == "" {
+						// generated column can't have default value
 						if mysql.HasTimestampFlag(col.Flag) {
 							buf.WriteString(" NULL")
 						}

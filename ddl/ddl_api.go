@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -292,6 +293,12 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 				if err != nil {
 					return nil, nil, ErrColumnBadNull.Gen("invalid default value - %s", err)
 				}
+				if value != nil && (col.Tp == mysql.TypeJSON ||
+					col.Tp == mysql.TypeTinyBlob || col.Tp == mysql.TypeMediumBlob ||
+					col.Tp == mysql.TypeLongBlob || col.Tp == mysql.TypeBlob) {
+					// TEXT/BLOB/JSON can't have not null default values.
+					return nil, nil, errBlobCantHaveDefault.GenByArgs(col.Name.O)
+				}
 				col.DefaultValue = value
 				hasDefaultValue = true
 				removeOnUpdateNowFlag(col)
@@ -308,6 +315,12 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 				if err != nil {
 					return nil, nil, errors.Trace(err)
 				}
+			case ast.ColumnOptionGenerated:
+				col.GeneratedExpr = v.Expr
+				col.GeneratedExprString = stringutil.RemoveBlanks(v.Expr.Text())
+				col.GeneratedStored = v.Stored
+				dependColNames, _ := findDependedColumnNames(*colDef)
+				col.Dependences = dependColNames
 			case ast.ColumnOptionFulltext:
 				// TODO: Support this type.
 			}
@@ -435,6 +448,76 @@ func checkDuplicateColumn(colDefs []*ast.ColumnDef) error {
 		colNames[nameLower] = true
 	}
 	return nil
+}
+
+func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
+	normalColNames := map[string]bool{}
+	dependColNames := make([]string, 0)
+	for _, colDef := range colDefs {
+		depCols, err := findDependedColumnNames(*colDef)
+		if err != nil {
+			return err
+		}
+		normalColNames[colDef.Name.Name.L] = true
+		dependColNames = append(dependColNames, depCols...)
+	}
+	return columnNamesCover(normalColNames, dependColNames)
+}
+
+// columnNamesCover checks dependColNames is coverd by normalColNames or not.
+// if not, return a formatted error.
+func columnNamesCover(normalColNames map[string]bool, dependColNames []string) error {
+	for _, name := range dependColNames {
+		if _, ok := normalColNames[name]; !ok {
+			return errBadField.GenByArgs(name, "generated column function")
+		}
+	}
+	return nil
+}
+
+// findDependedColumnNames returns a slice of string, which is depend by colDef.
+// If colDef depends on itself, it will return an error.
+func findDependedColumnNames(colDef ast.ColumnDef) (cols []string, err error) {
+	var colsMap = make(map[string]bool, 0)
+	for _, option := range colDef.Options {
+		if option.Tp == ast.ColumnOptionGenerated {
+			colNames := findColumnNamesInExpr(option.Expr)
+			for _, depCol := range colNames {
+				if colDef.Name.Name.L == depCol.Name.L {
+					err = errBadField.GenByArgs(depCol.Name.L, "generated column function")
+					break
+				}
+				colsMap[depCol.Name.L] = true
+			}
+			for col := range colsMap {
+				cols = append(cols, col)
+			}
+			break
+		}
+	}
+	return
+}
+
+func findColumnNamesInExpr(expr ast.ExprNode) []*ast.ColumnName {
+	var c generatedColumnChecker
+	expr.Accept(&c)
+	return c.cols
+}
+
+type generatedColumnChecker struct {
+	cols []*ast.ColumnName
+}
+
+func (c *generatedColumnChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
+	return inNode, false
+}
+
+func (c *generatedColumnChecker) Leave(inNode ast.Node) (node ast.Node, ok bool) {
+	switch x := inNode.(type) {
+	case *ast.ColumnName:
+		c.cols = append(c.cols, x)
+	}
+	return inNode, true
 }
 
 func checkTooLongColumn(colDefs []*ast.ColumnDef) error {
@@ -651,6 +734,9 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 	if err = checkDuplicateColumn(colDefs); err != nil {
 		return errors.Trace(err)
 	}
+	if err = checkGeneratedColumn(colDefs); err != nil {
+		return errors.Trace(err)
+	}
 	if err = checkTooLongColumn(colDefs); err != nil {
 		return errors.Trace(err)
 	}
@@ -828,6 +914,23 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 		return infoschema.ErrColumnExists.GenByArgs(colName)
 	}
 
+	// If new column is a generated column, do validation.
+	for _, option := range spec.NewColumn.Options {
+		if option.Tp == ast.ColumnOptionGenerated {
+			normalColNames := make(map[string]bool, len(t.Cols()))
+			for _, col := range t.Cols() {
+				normalColNames[col.Name.L] = true
+			}
+			dependColNames, err := findDependedColumnNames(*spec.NewColumn)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if err := columnNamesCover(normalColNames, dependColNames); err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+
 	if len(colName) > mysql.MaxColumnNameLength {
 		return ErrTooLongIdent.Gen("too long column %s", colName)
 	}
@@ -882,6 +985,15 @@ func (d *ddl) DropColumn(ctx context.Context, ti ast.Ident, colName model.CIStr)
 	col := table.FindCol(t.Cols(), colName.L)
 	if col == nil {
 		return ErrCantDropFieldOrKey.Gen("column %s doesn't exist", colName)
+	}
+
+	// Check there is other column depend on this column or not.
+	for _, col := range t.Cols() {
+		for _, dep := range col.Dependences {
+			if dep == colName.L {
+				return errDependentByGeneratedColumn.GenByArgs(dep)
+			}
+		}
 	}
 
 	tblInfo := t.Meta()
@@ -988,6 +1100,12 @@ func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast
 			if err != nil {
 				return ErrColumnBadNull.Gen("invalid default value - %s", err)
 			}
+			if value != nil && (col.Tp == mysql.TypeJSON ||
+				col.Tp == mysql.TypeTinyBlob || col.Tp == mysql.TypeMediumBlob ||
+				col.Tp == mysql.TypeLongBlob || col.Tp == mysql.TypeBlob) {
+				// TEXT/BLOB/JSON can't have not null default values.
+				return errBlobCantHaveDefault.GenByArgs(col.Name.O)
+			}
 			col.DefaultValue = value
 			hasDefaultValue = true
 		case ast.ColumnOptionComment:
@@ -1004,7 +1122,6 @@ func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast
 			if !expression.IsCurrentTimeExpr(opt.Expr) {
 				return ErrInvalidOnUpdate.Gen("invalid ON UPDATE for - %s", col.Name)
 			}
-
 			col.Flag |= mysql.OnUpdateNowFlag
 			setOnUpdateNow = true
 		default:

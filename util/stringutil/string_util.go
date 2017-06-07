@@ -14,6 +14,7 @@
 package stringutil
 
 import (
+	"regexp"
 	"strings"
 	"unicode/utf8"
 
@@ -238,4 +239,11 @@ func DoMatch(str string, patChars, patTypes []byte) bool {
 		}
 	}
 	return sIdx == len(str)
+}
+
+var reBlank = regexp.MustCompile(`\s`)
+
+// RemoveBlanks remove all blanks, returns a new string.
+func RemoveBlanks(s string) string {
+	return reBlank.ReplaceAllString(s, "")
 }

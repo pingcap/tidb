@@ -64,9 +64,15 @@ type ColumnInfo struct {
 	Offset             int         `json:"offset"`
 	OriginDefaultValue interface{} `json:"origin_default"`
 	DefaultValue       interface{} `json:"default"`
-	types.FieldType    `json:"type"`
-	State              SchemaState `json:"state"`
-	Comment            string      `json:"comment"`
+	// GeneratedExpr is ast.ExprNode. Because we cannot import
+	// that package here, so we let here be an interface.
+	GeneratedExpr       interface{}
+	GeneratedExprString string   `json:"generated_expr_string"`
+	GeneratedStored     bool     `json:"generated_stored"`
+	Dependences         []string `json:"dependences"`
+	types.FieldType     `json:"type"`
+	State               SchemaState `json:"state"`
+	Comment             string      `json:"comment"`
 }
 
 // Clone clones ColumnInfo.
