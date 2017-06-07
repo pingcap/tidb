@@ -882,7 +882,7 @@ var MySQLErrName = map[uint16]string{
 	ErrBadGeneratedColumn:                                    "The value specified for generated column '%s' in table '%s' is not allowed.",
 	ErrDependentByGeneratedColumn:                            "Column '%s' has a generated column dependency.",
 	ErrInvalidJSONText:                                       "Invalid JSON text: %-.192s",
-	ErrInvalidJSONPath:                                       "Invalid JSON path expression",
+	ErrInvalidJSONPath:                                       "Invalid JSON path expression %s.",
 	ErrInvalidJSONData:                                       "Invalid data type for JSON data",
 	ErrJSONUsedAsKey:                                         "JSON column '%-.192s' cannot be used in key specification.",
 }
