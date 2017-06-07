@@ -78,7 +78,7 @@ func (b *builtinCastSig) eval(row []types.Datum) (d types.Datum, err error) {
 	return d, errors.Errorf("unknown cast type - %v", b.tp)
 }
 
-type  castAsIntFunctionClass struct {
+type castAsIntFunctionClass struct {
 	baseFunctionClass
 
 	tp *types.FieldType

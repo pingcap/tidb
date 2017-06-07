@@ -18,10 +18,12 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
+	"testing"
 )
 
 func (s *testEvaluatorSuite) TestCast(c *C) {
@@ -461,4 +463,118 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	c.Assert(isNull, Equals, false)
 	c.Assert(err, IsNil)
 	c.Assert(iRes, Equals, int64(0))
+}
+
+func (s *testEvaluatorSuite) TestWrapWithCastAsInt(c *C) {
+	defer testleak.AfterTest(c)()
+	ctx, sc := s.ctx, s.ctx.GetSessionVars().StmtCtx
+
+	commonIntRes, commonRealRes, commonDecRes, commonStringRes := int64(123), float64(123), types.NewDecFromStringForTest("123"), "123"
+
+	cases := []struct {
+		expr      Expression
+		row       []types.Datum
+		intRes    int64
+		realRes   float64
+		decRes    *types.MyDecimal
+		stringRes string
+	}{
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeLong), Index: 0},
+			[]types.Datum{types.NewDatum(123)},
+			commonIntRes, commonRealRes, commonDecRes, commonStringRes,
+		},
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
+			[]types.Datum{types.NewDatum(123.123)},
+			commonIntRes, commonRealRes, commonDecRes, commonStringRes,
+		},
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDecimal), Index: 0},
+			[]types.Datum{types.NewDecimalDatum(types.NewDecFromStringForTest("123.123"))},
+			commonIntRes, commonRealRes, commonDecRes, commonStringRes,
+		},
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeVarString), Index: 0},
+			[]types.Datum{types.NewStringDatum("123.123")},
+			commonIntRes, commonRealRes, commonDecRes, commonStringRes,
+		},
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDatetime), Index: 0},
+			[]types.Datum{},
+			commonIntRes, commonRealRes, commonDecRes, commonStringRes,
+		},
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0},
+			[]types.Datum{},
+			commonIntRes, commonRealRes, commonDecRes, commonStringRes,
+		},
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeEnum), Index: 0},
+			[]types.Datum{types.NewDatum(types.Enum{Name: "a", Value: 123})},
+			commonIntRes, commonRealRes, commonDecRes, "a",
+		},
+		{
+			&Constant{RetType: types.NewFieldType(mysql.TypeLonglong), Value: types.NewDatum(types.Hex{Value: 0x61})},
+			nil,
+			commonIntRes, commonRealRes, commonDecRes, "a",
+		},
+	}
+	for _, t := range cases {
+		// Test wrapping with CastAsInt.
+		intExpr, err := WrapWithCastAsInt(t.expr, ctx)
+		c.Assert(err, IsNil)
+		c.Assert(intExpr.GetTypeClass(), Equals, types.ClassInt)
+		if sf, ok := intExpr.(*ScalarFunction); ok {
+			c.Assert(sf.FuncName.O, Equals, ast.Cast)
+		} else {
+			c.Assert(intExpr.Equal(t.expr, ctx), Equals, true)
+		}
+		intRes, isNull, err := intExpr.EvalInt(t.row, sc)
+		c.Assert(err, IsNil)
+		c.Assert(isNull, Equals, false)
+		c.Assert(intRes, Equals, t.intRes)
+
+		// Test wrapping with CastAsReal.
+		realExpr, err := WrapWithCastAsReal(t.expr, ctx)
+		c.Assert(err, IsNil)
+		c.Assert(realExpr.GetTypeClass(), Equals, types.ClassReal)
+		if sf, ok := realExpr.(*ScalarFunction); ok {
+			c.Assert(sf.FuncName.O, Equals, ast.Cast)
+		} else {
+			c.Assert(realExpr.Equal(t.expr, ctx), Equals, true)
+		}
+		realRes, isNull, err := realExpr.EvalReal(t.row, sc)
+		c.Assert(err, IsNil)
+		c.Assert(isNull, Equals, false)
+		c.Assert(realRes, Equals, t.realRes)
+
+		// Test wrapping with CastAsDecimal.
+		decExpr, err := WrapWithCastAsDecimal(t.expr, ctx)
+		c.Assert(err, IsNil)
+		c.Assert(decExpr.GetTypeClass(), Equals, types.ClassReal)
+		if sf, ok := decExpr.(*ScalarFunction); ok {
+			c.Assert(sf.FuncName.O, Equals, ast.Cast)
+		} else {
+			c.Assert(decExpr.Equal(t.expr, ctx), Equals, true)
+		}
+		decRes, isNull, err := decExpr.EvalDecimal(t.row, sc)
+		c.Assert(err, IsNil)
+		c.Assert(isNull, Equals, false)
+		c.Assert(decRes, Equals, t.decRes)
+
+		// Test wrapping with CastAsString.
+		strExpr, err := WrapWithCastAsString(t.expr, ctx)
+		c.Assert(err, IsNil)
+		c.Assert(decExpr.GetTypeClass(), Equals, types.ClassReal)
+		if sf, ok := strExpr.(*ScalarFunction); ok {
+			c.Assert(sf.FuncName.O, Equals, ast.Cast)
+		} else {
+			c.Assert(strExpr.Equal(t.expr, ctx), Equals, true)
+		}
+		strRes, isNull, err := strExpr.EvalString(t.row, sc)
+		c.Assert(err, IsNil)
+		c.Assert(isNull, Equals, false)
+		c.Assert(strRes, Equals, t.stringRes)
+	}
 }
