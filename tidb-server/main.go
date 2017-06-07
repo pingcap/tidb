@@ -52,7 +52,7 @@ var (
 	port            = flag.String("P", "4000", "tidb server port")
 	statusPort      = flag.String("status", "10080", "tidb server status port")
 	ddlLease        = flag.String("lease", "1s", "schema lease duration, very dangerous to change only if you know what you do")
-	statsLease      = flag.String("stasLease", "1s", "stats lease duration, very dangerous to change only if you know what you do")
+	statsLease      = flag.String("stasLease", "3s", "stats lease duration, which inflences the time of analyze and stats load.")
 	socket          = flag.String("socket", "", "The socket file to use for connection.")
 	enablePS        = flag.Bool("perfschema", false, "If enable performance schema.")
 	enablePrivilege = flag.Bool("privilege", true, "If enable privilege check feature. This flag will be removed in the future.")

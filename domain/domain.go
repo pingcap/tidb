@@ -383,6 +383,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		SchemaValidator: newSchemaValidator(ddlLease),
 		exit:            make(chan struct{}),
 		sysSessionPool:  pools.NewResourcePool(factory, capacity, capacity, idleTimeout),
+		statsLease:      statsLease,
 	}
 
 	if ebd, ok := store.(etcdBackend); ok {
@@ -472,7 +473,7 @@ func (do *Domain) StatsHandle() *statistics.Handle {
 
 // CreateStatsHandle is used only for test.
 func (do *Domain) CreateStatsHandle(ctx context.Context) {
-	do.statsHandle = statistics.NewHandle(ctx, 0)
+	do.statsHandle = statistics.NewHandle(ctx, do.statsLease)
 }
 
 // UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop. It
