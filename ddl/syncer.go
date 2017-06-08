@@ -158,6 +158,8 @@ func isContextFinished(err error) bool {
 // OwnerCheckAllVersions implements SchemaSyncer.OwnerCheckAllVersions interface.
 func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx goctx.Context, latestVer int64) error {
 	time.Sleep(CheckVersFirstWaitTime)
+	notMatchVerCnt := 0
+	intervalCnt := int(time.Second / checkVersInterval)
 	updatedMap := make(map[string]struct{})
 	for {
 		select {
@@ -188,8 +190,12 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx goctx.Context, latestVer
 				break
 			}
 			if int64(ver) != latestVer {
-				log.Infof("[syncer] check all versions, ddl %s current ver %v, latest version %v", kv.Key, ver, latestVer)
+				if notMatchVerCnt%intervalCnt == 0 {
+					log.Infof("[syncer] check all versions, ddl %s current ver %v, latest version %v",
+						kv.Key, ver, latestVer)
+				}
 				succ = false
+				notMatchVerCnt++
 				break
 			}
 			updatedMap[string(kv.Key)] = struct{}{}
