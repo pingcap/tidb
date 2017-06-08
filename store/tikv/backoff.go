@@ -115,7 +115,7 @@ func (t backoffType) String() string {
 }
 
 // Maximum total sleep time(in ms) for kv/cop commands.
-var (
+const (
 	copBuildTaskMaxBackoff  = 5000
 	tsoMaxBackoff           = 5000
 	scannerNextMaxBackoff   = 15000

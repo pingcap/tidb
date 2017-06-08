@@ -420,7 +420,6 @@ func (c *commitWithUndeterminedErrClient) SendReq(ctx goctx.Context, addr string
 }
 
 func (s *testCommitterSuite) TestCommitTimeout(c *C) {
-	commitMaxBackoff = 10
 	s.store.client = &commitWithUndeterminedErrClient{
 		Client: s.store.client,
 	}
