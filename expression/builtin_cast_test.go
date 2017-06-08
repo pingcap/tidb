@@ -627,7 +627,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		// cast Time as Date.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDatetime), Index: 0},
-			tm,
+			dt,
 			[]types.Datum{timeDatum},
 			types.DefaultFsp,
 			mysql.TypeDate,
