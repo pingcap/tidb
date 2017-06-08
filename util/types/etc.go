@@ -63,7 +63,7 @@ func IsTypeFractionable(tp byte) bool {
 }
 
 // IsTypeTime returns a boolean indicating
-// whether the tp can has time type like datetime, date or timestamp.
+// whether the tp is time type like datetime, date or timestamp.
 func IsTypeTime(tp byte) bool {
 	return tp == mysql.TypeDatetime || tp == mysql.TypeDate || tp == mysql.TypeNewDate || tp == mysql.TypeTimestamp
 }
