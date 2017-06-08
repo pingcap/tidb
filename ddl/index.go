@@ -49,6 +49,11 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 			return nil, errKeyColumnDoesNotExits.Gen("column does not exist: %s", ic.Column.Name)
 		}
 
+		// JSON column cannot index.
+		if col.FieldType.Tp == mysql.TypeJSON {
+			return nil, errors.Trace(errJSONUsedAsKey.GenByArgs(col.Name.O))
+		}
+
 		// Length must be specified for BLOB and TEXT column indexes.
 		if types.IsTypeBlob(col.FieldType.Tp) && ic.Length == types.UnspecifiedLength {
 			return nil, errors.Trace(errBlobKeyWithoutLength)
@@ -376,6 +381,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 func (d *ddl) fetchRowColVals(txn kv.Transaction, t table.Table, taskOpInfo *indexTaskOpInfo, handleInfo *handleInfo) (
 	[]*indexRecord, *taskResult) {
+	startTime := time.Now()
 	handleCnt := defaultTaskHandleCnt
 	rawRecords := make([][]byte, 0, handleCnt)
 	idxRecords := make([]*indexRecord, 0, handleCnt)
@@ -409,6 +415,7 @@ func (d *ddl) fetchRowColVals(txn kv.Transaction, t table.Table, taskOpInfo *ind
 		handleInfo.endHandle = ret.doneHandle
 		handleInfo.isSent = true
 	}
+	log.Debugf("[ddl] txn %v fetches handle info %v takes time %v", txn.StartTS(), handleInfo, time.Since(startTime))
 	if ret.count == 0 {
 		return nil, ret
 	}
@@ -502,6 +509,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 
 	addedCount := job.GetRowCount()
 	taskStartHandle := reorgInfo.Handle
+
 	for {
 		startTime := time.Now()
 		wg := sync.WaitGroup{}
@@ -590,6 +598,7 @@ func getCountAndHandle(taskOpInfo *indexTaskOpInfo) (int64, int64, error) {
 func (d *ddl) doBackfillIndexTask(t table.Table, taskOpInfo *indexTaskOpInfo, startHandle int64, wg *sync.WaitGroup) {
 	defer wg.Done()
 
+	startTime := time.Now()
 	ret := new(taskResult)
 	handleInfo := &handleInfo{startHandle: startHandle}
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
@@ -613,6 +622,8 @@ func (d *ddl) doBackfillIndexTask(t table.Table, taskOpInfo *indexTaskOpInfo, st
 	}
 
 	taskOpInfo.taskRetCh <- ret
+	log.Debugf("[ddl] add index completes backfill index task %v takes time %v",
+		handleInfo, time.Since(startTime))
 }
 
 // doBackfillIndexTaskInTxn deals with a part of backfilling index data in a Transaction.
@@ -626,7 +637,7 @@ func (d *ddl) doBackfillIndexTaskInTxn(t table.Table, txn kv.Transaction, taskOp
 	}
 
 	for _, idxRecord := range idxRecords {
-		log.Debug("[ddl] backfill index...", idxRecord.handle)
+		log.Debugf("[ddl] txn %v backfill index handle...%v", txn.StartTS(), idxRecord.handle)
 		err := txn.LockKeys(idxRecord.key)
 		if err != nil {
 			taskRet.err = errors.Trace(err)

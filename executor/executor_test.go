@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
@@ -988,6 +990,35 @@ func (s *testSuite) TestJSON(c *C) {
 	result.Check(testkit.Rows("true"))
 	result = tk.MustQuery(`select a from test_json tj where a = "string"`)
 	result.Check(testkit.Rows(`"string"`))
+
+	// check some DDL limits for TEXT/BLOB/JSON column.
+	var err error
+	var terr *terror.Error
+
+	_, err = tk.Exec(`create table test_bad_json(a json default '{}')`)
+	c.Assert(err, NotNil)
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBlobCantHaveDefault))
+
+	_, err = tk.Exec(`create table test_bad_json(a blob default 'hello')`)
+	c.Assert(err, NotNil)
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBlobCantHaveDefault))
+
+	_, err = tk.Exec(`create table test_bad_json(a text default 'world')`)
+	c.Assert(err, NotNil)
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBlobCantHaveDefault))
+
+	// check json fields cannot be used as key.
+	_, err = tk.Exec(`create table test_bad_json(id int, a json, key (a))`)
+	c.Assert(err, NotNil)
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrJSONUsedAsKey))
+
+	// check CAST AS JSON.
+	result = tk.MustQuery(`select CAST('3' AS JSON), CAST('{}' AS JSON), CAST(null AS JSON)`)
+	result.Check(testkit.Rows(`3 {} <nil>`))
 }
 
 func (s *testSuite) TestToPBExpr(c *C) {
@@ -1281,6 +1312,22 @@ func (s *testSuite) TestHistoryRead(c *C) {
 	tk.MustExec("drop table if exists history_read")
 	tk.MustExec("create table history_read (a int)")
 	tk.MustExec("insert history_read values (1)")
+
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20060102-15:04:05 -0700 MST"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+
+	// Set snapshot to a time before save point will fail.
+	_, err := tk.Exec("set @@tidb_snapshot = '2006-01-01 15:04:05.999999'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrSnapshotTooOld), IsTrue)
+	// SnapshotTS Is not updated if check failed.
+	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, uint64(0))
+
 	curVer1, _ := s.store.CurrentVersion()
 	time.Sleep(time.Millisecond)
 	snapshotTime := time.Now()
@@ -1294,7 +1341,7 @@ func (s *testSuite) TestHistoryRead(c *C) {
 	c.Assert(snapshotTS, Greater, curVer1.Ver)
 	c.Assert(snapshotTS, Less, curVer2.Ver)
 	tk.MustQuery("select * from history_read").Check(testkit.Rows("1"))
-	_, err := tk.Exec("insert history_read values (2)")
+	_, err = tk.Exec("insert history_read values (2)")
 	c.Assert(err, NotNil)
 	_, err = tk.Exec("update history_read set a = 3 where a = 1")
 	c.Assert(err, NotNil)
@@ -1439,4 +1486,69 @@ func (s *testSuite) TestTiDBCurrentTS(c *C) {
 
 	_, err := tk.Exec("set @@tidb_current_ts = '1'")
 	c.Assert(terror.ErrorEqual(err, variable.ErrReadOnly), IsTrue)
+}
+
+func (s *testSuite) TestSelectForUpdate(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+
+	tk.MustExec("drop table if exists t, t1")
+
+	c.Assert(tk.Se.Txn(), IsNil)
+	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
+	tk.MustExec("insert t values (11, 2, 3)")
+	tk.MustExec("insert t values (12, 2, 3)")
+	tk.MustExec("insert t values (13, 2, 3)")
+
+	tk.MustExec("create table t1 (c1 int)")
+	tk.MustExec("insert t1 values (11)")
+
+	// conflict
+	tk1.MustExec("begin")
+	tk1.MustQuery("select * from t where c1=11 for update")
+
+	tk2.MustExec("begin")
+	tk2.MustExec("update t set c2=211 where c1=11")
+	tk2.MustExec("commit")
+
+	_, err := tk1.Exec("commit")
+	c.Assert(err, NotNil)
+
+	// no conflict for subquery.
+	tk1.MustExec("begin")
+	tk1.MustQuery("select * from t where exists(select null from t1 where t1.c1=t.c1) for update")
+
+	tk2.MustExec("begin")
+	tk2.MustExec("update t set c2=211 where c1=12")
+	tk2.MustExec("commit")
+
+	tk1.MustExec("commit")
+
+	// not conflict
+	tk1.MustExec("begin")
+	tk1.MustQuery("select * from t where c1=11 for update")
+
+	tk2.MustExec("begin")
+	tk2.MustExec("update t set c2=22 where c1=12")
+	tk2.MustExec("commit")
+
+	tk1.MustExec("commit")
+
+	// not conflict, auto commit
+	tk1.MustExec("set @@autocommit=1;")
+	tk1.MustQuery("select * from t where c1=11 for update")
+
+	tk2.MustExec("begin")
+	tk2.MustExec("update t set c2=211 where c1=11")
+	tk2.MustExec("commit")
+
+	tk1.MustExec("commit")
 }

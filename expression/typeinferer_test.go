@@ -187,6 +187,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"now()", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
 		{"from_unixtime(1447430881)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
 		{"from_unixtime(1447430881, '%Y %D %M %h:%i:%s %x')", mysql.TypeVarString, charset.CharsetUTF8, 0},
+		{`from_unixtime(12.1) + 1`, mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag},
 		{"sysdate()", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
 		{"dayname('2007-02-03')", mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{"version()", mysql.TypeVarString, charset.CharsetUTF8, 0},
@@ -333,6 +334,12 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`is_ipv4_mapped(c_varbinary)`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{`password("abc")`, mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{`json_type('3')`, mysql.TypeVarString, charset.CharsetUTF8, 0},
+		{`json_extract('{"a": 1}', '$.a')`, mysql.TypeJSON, charset.CharsetUTF8, 0},
+		{`json_unquote('{"a": 1}')`, mysql.TypeVarString, charset.CharsetUTF8, 0},
+		{`json_set('{"a": 1}', '$.a', 3)`, mysql.TypeJSON, charset.CharsetUTF8, 0},
+		{`json_insert('{"a": 1}', '$.a', 3)`, mysql.TypeJSON, charset.CharsetUTF8, 0},
+		{`json_replace('{"a": 1}', '$.a', 3)`, mysql.TypeJSON, charset.CharsetUTF8, 0},
+		{`json_merge('{"a": 1}', '3')`, mysql.TypeJSON, charset.CharsetUTF8, 0},
 	}
 	for _, tt := range tests {
 		ctx := testKit.Se.(context.Context)
