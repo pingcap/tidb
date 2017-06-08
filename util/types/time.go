@@ -680,7 +680,7 @@ func (d Duration) Add(v Duration) (Duration, error) {
 	}
 	dsum, err := AddInt64(int64(d.Duration), int64(v.Duration))
 	if err != nil {
-		return Duration{}, err
+		return Duration{}, errors.Trace(err)
 	}
 	if d.Fsp >= v.Fsp {
 		return Duration{Duration: gotime.Duration(dsum), Fsp: d.Fsp}, nil
@@ -695,7 +695,7 @@ func (d Duration) Sub(v Duration) (Duration, error) {
 	}
 	dsum, err := SubInt64(int64(d.Duration), int64(v.Duration))
 	if err != nil {
-		return Duration{}, err
+		return Duration{}, errors.Trace(err)
 	}
 	if d.Fsp >= v.Fsp {
 		return Duration{Duration: gotime.Duration(dsum), Fsp: d.Fsp}, nil
