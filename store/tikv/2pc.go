@@ -207,7 +207,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	}
 
 	firstIsPrimary := bytes.Equal(keys[0], c.primary())
-	if firstIsPrimary && action != actionPrewrite {
+	if firstIsPrimary && (action == actionCommit || action == actionCleanup) {
 		// primary should be committed/cleanup first.
 		err = c.doActionOnBatches(bo, action, batches[:1])
 		if err != nil {
@@ -369,6 +369,8 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			// We need to cleanup all written keys if transaction aborts.
 			c.mu.Lock()
 			defer c.mu.Unlock()
+			// Primary key should always been in the front since in `cleanup` we
+			// would check whether the `writtenKeys`'s first key is primary key.
 			if bytes.Equal(batch.keys[0], c.primary()) {
 				tmpKeys := make([][]byte, 0, len(batch.keys)+len(c.mu.writtenKeys))
 				tmpKeys = append(tmpKeys, batch.keys...)
