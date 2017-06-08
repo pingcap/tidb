@@ -111,7 +111,7 @@ func (m *ownerManager) SetBgOwner(isOwner bool) {
 }
 
 // NewSessionTTL is the etcd session's TTL in seconds. It's exported for testing.
-var NewSessionTTL = 10
+var NewSessionTTL = 60
 
 func (m *ownerManager) newSession(ctx goctx.Context, retryCnt int) (*concurrency.Session, error) {
 	var err error
