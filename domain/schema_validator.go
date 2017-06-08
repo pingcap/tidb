@@ -16,6 +16,8 @@ package domain
 import (
 	"sync"
 	"time"
+
+	"github.com/ngaut/log"
 )
 
 // SchemaValidator is the interface for checking the validity of schema version.
@@ -27,7 +29,9 @@ type SchemaValidator interface {
 	Check(txnTS uint64, schemaVer int64) bool
 	// Latest returns the latest schema version it knows, but not necessary a valid one.
 	Latest() int64
+	// Stop stops checking the valid of transaction.
 	Stop()
+	// Restart restarts the schema validator after it is stopped.
 	Restart()
 }
 
@@ -46,6 +50,7 @@ func newSchemaValidator(lease time.Duration) SchemaValidator {
 }
 
 func (s *schemaValidator) Stop() {
+	log.Infof("the schema validator stops")
 	s.mux.Lock()
 	defer s.mux.Lock()
 	s.items = nil
@@ -53,6 +58,7 @@ func (s *schemaValidator) Stop() {
 }
 
 func (s *schemaValidator) Restart() {
+	log.Infof("the schema validator restarts")
 	s.mux.Lock()
 	defer s.mux.Lock()
 	s.items = make(map[int64]time.Time)
@@ -62,6 +68,7 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, schemaVer int64) {
 	s.mux.Lock()
 
 	if s.items == nil {
+		log.Infof("the schema validator stopped before updating")
 		return
 	}
 
@@ -88,6 +95,7 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64) bool {
 	defer s.mux.RUnlock()
 
 	if s.items == nil {
+		log.Infof("the schema validator stopped before checking")
 		return false
 	}
 

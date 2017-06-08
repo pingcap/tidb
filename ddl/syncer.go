@@ -51,8 +51,7 @@ var (
 	CheckVersFirstWaitTime = 50 * time.Millisecond
 	// SyncerSessionTTL is the etcd session's TTL in seconds.
 	// and it's an exported variable for testing.
-	// SyncerSessionTTL = 30 * 60
-	SyncerSessionTTL = 6
+	SyncerSessionTTL = 30 * 60
 )
 
 // SchemaSyncer is used to synchronize schema version between the DDL worker leader and followers through etcd.
@@ -68,7 +67,9 @@ type SchemaSyncer interface {
 	OwnerUpdateGlobalVersion(ctx goctx.Context, version int64) error
 	// GlobalVersionCh gets the chan for watching global version.
 	GlobalVersionCh() clientv3.WatchChan
+	// Done() returns a channel that closes when the syncer is no longer being refreshed.
 	Done() <-chan struct{}
+	// Restart restarts the syncer when it's on longer being refreshed.
 	Restart(ctx goctx.Context) error
 	// OwnerCheckAllVersions checks whether all followers' schema version are equal to
 	// the latest schema version. If the result is false, wait for a while and check again util the processing time reach 2 * lease.
@@ -130,14 +131,20 @@ func (s *schemaVersionSyncer) Init(ctx goctx.Context) error {
 		clientv3.WithLease(s.session.Lease()))
 }
 
+// Done implements SchemaSyncer.Done interface.
 func (s *schemaVersionSyncer) Done() <-chan struct{} {
 	return s.session.Done()
 }
 
+// Restart implements SchemaSyncer.Restart interface.
 func (s *schemaVersionSyncer) Restart(ctx goctx.Context) error {
 	var err error
 	s.session, err = newSession(ctx, s.etcdCli, newSessionRetryUnlimited, SyncerSessionTTL)
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return s.putKV(ctx, putKeyRetryUnlimited, s.selfSchemaVerPath, InitialVersion,
+		clientv3.WithLease(s.session.Lease()))
 }
 
 // GlobalVersionCh implements SchemaSyncer.GlobalVersionCh interface.
