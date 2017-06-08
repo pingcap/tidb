@@ -43,6 +43,9 @@ const (
 	codeFunctionNotExists                      = 1305
 )
 
+// TurnOnNewExprEval indicates whether turn on the new expression evaluation architecture.
+var TurnOnNewExprEval bool
+
 // EvalAstExpr evaluates ast expression directly.
 var EvalAstExpr func(expr ast.ExprNode, ctx context.Context) (types.Datum, error)
 
