@@ -17,10 +17,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
+	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
@@ -993,25 +993,28 @@ func (s *testSuite) TestJSON(c *C) {
 
 	// check some DDL limits for TEXT/BLOB/JSON column.
 	var err error
-	var expectedErrMsg = fmt.Sprintf(mysql.MySQLErrName[mysql.ErrBlobCantHaveDefault], "a")
+	var terr *terror.Error
 
 	_, err = tk.Exec(`create table test_bad_json(a json default '{}')`)
 	c.Assert(err, NotNil)
-	c.Assert(strings.Contains(fmt.Sprintf("%s", err), expectedErrMsg), IsTrue)
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBlobCantHaveDefault))
 
 	_, err = tk.Exec(`create table test_bad_json(a blob default 'hello')`)
 	c.Assert(err, NotNil)
-	c.Assert(strings.Contains(fmt.Sprintf("%s", err), expectedErrMsg), IsTrue)
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBlobCantHaveDefault))
 
 	_, err = tk.Exec(`create table test_bad_json(a text default 'world')`)
 	c.Assert(err, NotNil)
-	c.Assert(strings.Contains(fmt.Sprintf("%s", err), expectedErrMsg), IsTrue)
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBlobCantHaveDefault))
 
 	// check json fields cannot be used as key.
-	expectedErrMsg = fmt.Sprintf(mysql.MySQLErrName[mysql.ErrJSONUsedAsKey], "a")
 	_, err = tk.Exec(`create table test_bad_json(id int, a json, key (a))`)
 	c.Assert(err, NotNil)
-	c.Assert(strings.Contains(fmt.Sprintf("%s", err), expectedErrMsg), IsTrue)
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrJSONUsedAsKey))
 
 	// check CAST AS JSON.
 	result = tk.MustQuery(`select CAST('3' AS JSON), CAST('{}' AS JSON), CAST(null AS JSON)`)
