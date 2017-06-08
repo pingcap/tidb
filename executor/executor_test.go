@@ -17,6 +17,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
@@ -991,14 +993,25 @@ func (s *testSuite) TestJSON(c *C) {
 
 	// check some DDL limits for TEXT/BLOB/JSON column.
 	var err error
+	var expectedErrMsg = fmt.Sprintf(mysql.MySQLErrName[mysql.ErrBlobCantHaveDefault], "a")
+
 	_, err = tk.Exec(`create table test_bad_json(a json default '{}')`)
 	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(fmt.Sprintf("%s", err), expectedErrMsg), IsTrue)
+
 	_, err = tk.Exec(`create table test_bad_json(a blob default 'hello')`)
 	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(fmt.Sprintf("%s", err), expectedErrMsg), IsTrue)
+
 	_, err = tk.Exec(`create table test_bad_json(a text default 'world')`)
 	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(fmt.Sprintf("%s", err), expectedErrMsg), IsTrue)
+
+	// check json fields cannot be used as key.
+	expectedErrMsg = fmt.Sprintf(mysql.MySQLErrName[mysql.ErrJSONUsedAsKey], "a")
 	_, err = tk.Exec(`create table test_bad_json(id int, a json, key (a))`)
 	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(fmt.Sprintf("%s", err), expectedErrMsg), IsTrue)
 
 	// check CAST AS JSON.
 	result = tk.MustQuery(`select CAST('3' AS JSON), CAST('{}' AS JSON), CAST(null AS JSON)`)
