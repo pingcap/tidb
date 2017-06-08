@@ -1285,6 +1285,22 @@ func (s *testSuite) TestHistoryRead(c *C) {
 	tk.MustExec("drop table if exists history_read")
 	tk.MustExec("create table history_read (a int)")
 	tk.MustExec("insert history_read values (1)")
+
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20060102-15:04:05 -0700 MST"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+
+	// Set snapshot to a time before save point will fail.
+	_, err := tk.Exec("set @@tidb_snapshot = '2006-01-01 15:04:05.999999'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrSnapshotTooOld), IsTrue)
+	// SnapshotTS Is not updated if check failed.
+	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, uint64(0))
+
 	curVer1, _ := s.store.CurrentVersion()
 	time.Sleep(time.Millisecond)
 	snapshotTime := time.Now()
@@ -1298,7 +1314,7 @@ func (s *testSuite) TestHistoryRead(c *C) {
 	c.Assert(snapshotTS, Greater, curVer1.Ver)
 	c.Assert(snapshotTS, Less, curVer2.Ver)
 	tk.MustQuery("select * from history_read").Check(testkit.Rows("1"))
-	_, err := tk.Exec("insert history_read values (2)")
+	_, err = tk.Exec("insert history_read values (2)")
 	c.Assert(err, NotNil)
 	_, err = tk.Exec("update history_read set a = 3 where a = 1")
 	c.Assert(err, NotNil)
