@@ -21,6 +21,7 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -373,36 +374,73 @@ func (s *testCommitterSuite) TestPrewritePrimaryKeyFailed(c *C) {
 	c.Assert(v, BytesEquals, []byte("a3"))
 }
 
-// timeoutClient wraps rpcClient and returns timeout error for the specified commands.
-type timeoutClient struct {
+// interceptCommitClient wraps rpcClient and returns specified response and error for commit command.
+type interceptCommitClient struct {
 	Client
-	timeouts map[tikvrpc.CmdType]bool
+	resp *tikvrpc.Response
+	err  error
 }
 
-func (c *timeoutClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-	if _, ok := c.timeouts[req.Type]; ok {
-		return nil, errors.Errorf("timeout when send kv req %v", req.Type)
+func (c *interceptCommitClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+	if req.Type == tikvrpc.CmdCommit {
+		return c.resp, c.err
 	}
 	return c.Client.SendReq(ctx, addr, req)
 }
 
-func (s *testCommitterSuite) TestCommitPrimaryError(c *C) {
-	timeouts := map[tikvrpc.CmdType]bool{
-		tikvrpc.CmdCommit: true,
+// TestCommitPrimaryErrors tests various errors are handled properly
+// when committing primary region task.
+func (s *testCommitterSuite) TestCommitPrimaryErrors(c *C) {
+	save := s.store.client
+	interceptClient := &interceptCommitClient{
+		Client: save,
+		resp:   nil,
+		err:    errors.Errorf("timeout"),
 	}
-	s.store.client = &timeoutClient{
-		Client:   s.store.client,
-		timeouts: timeouts,
-	}
+	s.store.client = interceptClient
+	// restore the original rpc client after running this test case
+	defer func() {
+		s.store.client = save
+	}()
 
-	t, err := s.store.Begin()
+	// Ensure it returns ErrResultUndetermined for rpc error.
+	t1 := s.begin(c)
+	err := t1.Set([]byte("a"), []byte("a1"))
 	c.Assert(err, IsNil)
-	txn := t.(*tikvTxn)
-	err = txn.Set([]byte("a"), []byte("b"))
-	c.Assert(err, IsNil)
-
-	err = txn.Commit()
+	err = t1.Commit()
 	c.Assert(err, NotNil)
-
 	c.Assert(terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue)
+
+	// Ensure it returns ErrResultUndetermined if it exceeds max retry timeout on RegionError.
+	interceptClient.resp = &tikvrpc.Response{
+		Type: tikvrpc.CmdCommit,
+		Commit: &kvrpcpb.CommitResponse{
+			RegionError: &errorpb.Error{
+				NotLeader: &errorpb.NotLeader{},
+			},
+		},
+	}
+	interceptClient.err = nil
+	t2 := s.begin(c)
+	err = t2.Set([]byte("b"), []byte("b1"))
+	c.Assert(err, IsNil)
+	err = t2.Commit()
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue)
+
+	// Ensure it returns the original error without wrapped to ErrResultUndetermined
+	// if it meets KeyError.
+	interceptClient.resp = &tikvrpc.Response{
+		Type: tikvrpc.CmdCommit,
+		Commit: &kvrpcpb.CommitResponse{
+			Error: &kvrpcpb.KeyError{},
+		},
+	}
+	interceptClient.err = nil
+	t3 := s.begin(c)
+	err = t3.Set([]byte("c"), []byte("c1"))
+	c.Assert(err, IsNil)
+	err = t3.Commit()
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorNotEqual(err, terror.ErrResultUndetermined), IsTrue)
 }
