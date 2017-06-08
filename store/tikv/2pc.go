@@ -402,14 +402,6 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 	}
 }
 
-func wrapErr(isPrimary bool, err error) error {
-	if isPrimary {
-		// change the Cause of the error to be returned
-		return errors.Wrap(err, terror.ErrResultUndetermined)
-	}
-	return errors.Trace(err)
-}
-
 func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) error {
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdCommit,
@@ -429,7 +421,11 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 
 	resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 	if err != nil {
-		return wrapErr(isPrimary, err)
+		if isPrimary {
+			// change the Cause of the error to be returned
+			return errors.Trace(errors.Wrap(err, terror.ErrResultUndetermined))
+		}
+		return errors.Trace(err)
 	}
 	regionErr, err := resp.GetRegionError()
 	if err != nil {
@@ -438,7 +434,7 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 	if regionErr != nil {
 		err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
-			return wrapErr(isPrimary, err)
+			return errors.Trace(err)
 		}
 		// re-split keys and commit again.
 		err = c.commitKeys(bo, batch.keys)

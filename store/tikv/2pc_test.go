@@ -411,7 +411,8 @@ func (s *testCommitterSuite) TestCommitPrimaryErrors(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue)
 
-	// Ensure it returns ErrResultUndetermined if it exceeds max retry timeout on RegionError.
+	// Ensure it returns the original error without wrapped to ErrResultUndetermined
+	// if it exceeds max retry timeout on RegionError.
 	interceptClient.resp = &tikvrpc.Response{
 		Type: tikvrpc.CmdCommit,
 		Commit: &kvrpcpb.CommitResponse{
@@ -426,7 +427,7 @@ func (s *testCommitterSuite) TestCommitPrimaryErrors(c *C) {
 	c.Assert(err, IsNil)
 	err = t2.Commit()
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue)
+	c.Assert(terror.ErrorNotEqual(err, terror.ErrResultUndetermined), IsTrue)
 
 	// Ensure it returns the original error without wrapped to ErrResultUndetermined
 	// if it meets KeyError.
