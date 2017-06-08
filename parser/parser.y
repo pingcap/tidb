@@ -1318,7 +1318,18 @@ ColumnOption:
 
 GeneratedAlways: | "GENERATED" "ALWAYS"
 
-VirtualOrStored: { $$ = false }| "VIRTUAL" { $$ = false }| "STORED" { $$ = true }
+VirtualOrStored:
+	{
+	    $$ = false
+	}
+|	"VIRTUAL"
+	{
+	    $$ = false
+	}
+|	"STORED"
+	{
+	    $$ = true
+	}
 
 ColumnOptionList:
 	ColumnOption
