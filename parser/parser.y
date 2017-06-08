@@ -114,6 +114,7 @@ import (
 	foreign			"FOREIGN"
 	from			"FROM"
 	fulltext		"FULLTEXT"
+	generated		"GENERATED"
 	grants			"GRANTS"
 	group			"GROUP"
 	having			"HAVING"
@@ -197,6 +198,7 @@ import (
 	smallIntType		"SMALLINT"
 	starting		"STARTING"
 	tableKwd		"TABLE"
+	stored			"STORED"
 	terminated		"TERMINATED"
 	then			"THEN"
 	tinyblobType		"TINYBLOB"
@@ -217,6 +219,7 @@ import (
 	values			"VALUES"
 	varcharType		"VARCHAR"
 	varbinaryType		"VARBINARY"
+	virtual			"VIRTUAL"
 	when			"WHEN"
 	where			"WHERE"
 	write			"WRITE"
@@ -408,6 +411,7 @@ import (
 	/* the following tokens belong to UnReservedKeyword*/
 	action		"ACTION"
 	after		"AFTER"
+	always		"ALWAYS"
 	any 		"ANY"
 	ascii		"ASCII"
 	at		"AT"
@@ -577,6 +581,7 @@ import (
 	CompareOp		"Compare opcode"
 	ColumnOption		"column definition option"
 	ColumnOptionList	"column definition option list"
+	VirtualOrStored		"indicate generated column is stored or not"
 	ColumnOptionListOpt	"optional column definition option list"
 	Constraint		"table constraint"
 	ConstraintElem		"table constraint element"
@@ -1297,6 +1302,23 @@ ColumnOption:
 		// The CHECK clause is parsed but ignored by all storage engines.
 		$$ = &ast.ColumnOption{}
 	}
+|	GeneratedAlways "AS" '(' Expression ')' VirtualOrStored
+	{
+		startOffset := parser.startOffset(&yyS[yypt-2])
+		endOffset := parser.endOffset(&yyS[yypt-1])
+		expr := $4.(ast.ExprNode)
+		expr.SetText(parser.src[startOffset:endOffset])
+
+		$$ = &ast.ColumnOption{
+			Tp: ast.ColumnOptionGenerated,
+			Expr: expr,
+			Stored: $6.(bool),
+		}
+	}
+
+GeneratedAlways: | "GENERATED" "ALWAYS"
+
+VirtualOrStored: { $$ = false }| "VIRTUAL" { $$ = false }| "STORED" { $$ = true }
 
 ColumnOptionList:
 	ColumnOption
