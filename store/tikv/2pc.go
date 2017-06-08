@@ -370,7 +370,9 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			c.mu.Lock()
 			defer c.mu.Unlock()
 			if bytes.Equal(batch.keys[0], c.primary()) {
-				c.mu.writtenKeys = append(batch.keys, c.mu.writtenKeys...)
+				tmpKeys := make([][]byte, 0, len(batch.keys)+len(c.mu.writtenKeys))
+				tmpKeys = append(tmpKeys, batch.keys...)
+				c.mu.writtenKeys = append(tmpKeys, c.mu.writtenKeys...)
 			} else {
 				c.mu.writtenKeys = append(c.mu.writtenKeys, batch.keys...)
 			}
