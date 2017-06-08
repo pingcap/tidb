@@ -254,6 +254,7 @@ func (s *testMainSuite) TestRetryOpenStore(c *C) {
 func (s *testMainSuite) TestSchemaValidity(c *C) {
 	localstore.MockRemoteStore = true
 	store := newStoreWithBootstrap(c, s.dbName+"schema_validity")
+	defer store.Close()
 	dbName := "test_schema_validity"
 	se := newSession(c, store, dbName)
 	se1 := newSession(c, store, dbName)
@@ -345,6 +346,7 @@ func (s *testMainSuite) TestSchemaValidity(c *C) {
 func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
 	// TODO: testleak package should be able to find this leak.
 	store := newStoreWithBootstrap(c, s.dbName+"goroutine_leak")
+	defer store.Close()
 	se, err := createSession(store)
 	c.Assert(err, IsNil)
 
