@@ -16,15 +16,18 @@ package executor
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -123,14 +126,46 @@ func (e *SetExecutor) executeSet() error {
 			if err != nil {
 				return errors.Trace(err)
 			}
+			oldSnapshotTS := sessionVars.SnapshotTS
 			err = varsutil.SetSessionSystemVar(sessionVars, name, value)
 			if err != nil {
 				return errors.Trace(err)
+			}
+			newSnapshotIsSet := sessionVars.SnapshotTS > 0 && sessionVars.SnapshotTS != oldSnapshotTS
+			if newSnapshotIsSet {
+				err = validateSnapshot(e.ctx, sessionVars.SnapshotTS)
+				if err != nil {
+					sessionVars.SnapshotTS = oldSnapshotTS
+					return errors.Trace(err)
+				}
 			}
 			e.loadSnapshotInfoSchemaIfNeeded(name)
 			valStr, _ := value.ToString()
 			log.Infof("[%d] set system variable %s = %s", sessionVars.ConnectionID, name, valStr)
 		}
+	}
+	return nil
+}
+
+// validateSnapshot checks that the newly set snapshot time is after GC safe point time.
+func validateSnapshot(ctx context.Context, snapshotTS uint64) error {
+	sql := "SELECT variable_value FROM mysql.tidb WHERE variable_name = 'tikv_gc_safe_point'"
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(rows) != 1 {
+		return errors.New("can not get 'tikv_gc_safe_point'")
+	}
+	safePointString := rows[0].Data[0].GetString()
+	const gcTimeFormat = "20060102-15:04:05 -0700 MST"
+	safePointTime, err := time.Parse(gcTimeFormat, safePointString)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	safePointTS := varsutil.GoTimeToTS(safePointTime)
+	if safePointTS > snapshotTS {
+		return variable.ErrSnapshotTooOld.GenByArgs(safePointString)
 	}
 	return nil
 }
