@@ -201,7 +201,12 @@ func setSnapshotTS(s *variable.SessionVars, sVal string) error {
 	}
 	// TODO: Consider time_zone variable.
 	t1, err := t.Time.GoTime(time.Local)
-	ts := (t1.UnixNano() / int64(time.Millisecond)) << epochShiftBits
-	s.SnapshotTS = uint64(ts)
+	s.SnapshotTS = GoTimeToTS(t1)
 	return errors.Trace(err)
+}
+
+// GoTimeToTS converts a Go time to uint64 timestamp.
+func GoTimeToTS(t time.Time) uint64 {
+	ts := (t.UnixNano() / int64(time.Millisecond)) << epochShiftBits
+	return uint64(ts)
 }

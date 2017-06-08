@@ -25,12 +25,14 @@ import (
 const (
 	codeCantGetValidID terror.ErrCode = 1
 	codeCantSetToNull  terror.ErrCode = 2
+	codeSnapshotTooOld terror.ErrCode = 3
 )
 
 // Error instances.
 var (
 	errCantGetValidID = terror.ClassVariable.New(codeCantGetValidID, "cannot get valid auto-increment id in retry")
 	ErrCantSetToNull  = terror.ClassVariable.New(codeCantSetToNull, "cannot set variable to null")
+	ErrSnapshotTooOld = terror.ClassVariable.New(codeSnapshotTooOld, "snapshot is older than GC safe point %s")
 )
 
 // RetryInfo saves retry information.
