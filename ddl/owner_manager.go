@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"math"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -40,7 +39,7 @@ type OwnerManager interface {
 	// SetOwner sets whether the ownerManager is the background owner.
 	SetBgOwner(isOwner bool)
 	// CampaignOwners campaigns the DDL owner and the background owner.
-	CampaignOwners(ctx goctx.Context, wg *sync.WaitGroup) error
+	CampaignOwners(ctx goctx.Context) error
 	// Cancel cancels this etcd ownerManager campaign.
 	Cancel()
 }
@@ -133,7 +132,7 @@ func (m *ownerManager) newSession(ctx goctx.Context, retryCnt int) (*concurrency
 }
 
 // CampaignOwners implements OwnerManager.CampaignOwners interface.
-func (m *ownerManager) CampaignOwners(ctx goctx.Context, wg *sync.WaitGroup) error {
+func (m *ownerManager) CampaignOwners(ctx goctx.Context) error {
 	ddlSession, err := m.newSession(ctx, newSessionDefaultRetryCnt)
 	if err != nil {
 		return errors.Trace(err)
@@ -143,17 +142,15 @@ func (m *ownerManager) CampaignOwners(ctx goctx.Context, wg *sync.WaitGroup) err
 		return errors.Trace(err)
 	}
 
-	wg.Add(2)
 	ddlCtx, _ := goctx.WithCancel(ctx)
-	go m.campaignLoop(ddlCtx, ddlSession, DDLOwnerKey, wg)
+	go m.campaignLoop(ddlCtx, ddlSession, DDLOwnerKey)
 
 	bgCtx, _ := goctx.WithCancel(ctx)
-	go m.campaignLoop(bgCtx, bgSession, BgOwnerKey, wg)
+	go m.campaignLoop(bgCtx, bgSession, BgOwnerKey)
 	return nil
 }
 
-func (m *ownerManager) campaignLoop(ctx goctx.Context, etcdSession *concurrency.Session, key string, wg *sync.WaitGroup) {
-	defer wg.Done()
+func (m *ownerManager) campaignLoop(ctx goctx.Context, etcdSession *concurrency.Session, key string) {
 	var err error
 	for {
 		select {
