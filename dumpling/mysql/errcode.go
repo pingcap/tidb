@@ -885,4 +885,5 @@ const (
 	ErrInvalidJSONText                                              = 3140
 	ErrInvalidJSONPath                                              = 3143
 	ErrInvalidJSONData                                              = 3146
+	ErrJSONUsedAsKey                                                = 3152
 )
