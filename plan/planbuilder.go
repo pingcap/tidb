@@ -27,6 +27,8 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
+
+	"github.com/ngaut/log"
 )
 
 // Error instances.
@@ -38,24 +40,27 @@ var (
 	ErrAmbiguous            = terror.ClassOptimizerPlan.New(CodeAmbiguous, "Column '%s' in field list is ambiguous")
 	ErrAnalyzeMissIndex     = terror.ClassOptimizerPlan.New(CodeAnalyzeMissIndex, "Index '%s' in field list does not exist in table '%s'")
 	ErrAlterAutoID          = terror.ClassAutoid.New(CodeAlterAutoID, "No support for setting auto_increment using alter_table")
+	ErrBadGeneratedColumn   = terror.ClassOptimizerPlan.New(CodeBadGeneratedColumn, mysql.MySQLErrName[mysql.ErrBadGeneratedColumn])
 )
 
 // Error codes.
 const (
-	CodeUnsupportedType  terror.ErrCode = 1
-	SystemInternalError  terror.ErrCode = 2
-	CodeAlterAutoID      terror.ErrCode = 3
-	CodeAnalyzeMissIndex terror.ErrCode = 4
-	CodeAmbiguous        terror.ErrCode = 1052
-	CodeUnknownColumn    terror.ErrCode = 1054
-	CodeWrongArguments   terror.ErrCode = 1210
+	CodeUnsupportedType    terror.ErrCode = 1
+	SystemInternalError    terror.ErrCode = 2
+	CodeAlterAutoID        terror.ErrCode = 3
+	CodeAnalyzeMissIndex   terror.ErrCode = 4
+	CodeAmbiguous          terror.ErrCode = 1052
+	CodeUnknownColumn      terror.ErrCode = 1054
+	CodeWrongArguments     terror.ErrCode = 1210
+	CodeBadGeneratedColumn terror.ErrCode = mysql.ErrBadGeneratedColumn
 )
 
 func init() {
 	tableMySQLErrCodes := map[terror.ErrCode]uint16{
-		CodeUnknownColumn:  mysql.ErrBadField,
-		CodeAmbiguous:      mysql.ErrNonUniq,
-		CodeWrongArguments: mysql.ErrWrongArguments,
+		CodeUnknownColumn:      mysql.ErrBadField,
+		CodeAmbiguous:          mysql.ErrNonUniq,
+		CodeWrongArguments:     mysql.ErrWrongArguments,
+		CodeBadGeneratedColumn: mysql.ErrBadGeneratedColumn,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizerPlan] = tableMySQLErrCodes
 }
@@ -640,6 +645,12 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		b.err = errors.Errorf("Can't get table %s.", tableInfo.Name.O)
 		return nil
 	}
+
+	columnInfoByName := make(map[string]*model.ColumnInfo, len(tableInfo.Columns))
+	for _, colInfo := range tableInfo.Columns {
+		columnInfoByName[colInfo.Name.L] = colInfo
+	}
+
 	insertPlan := Insert{
 		Table:       table,
 		Columns:     insert.Columns,
@@ -655,7 +666,21 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		table:     tableInfo.Name.L,
 	})
 
+	// Check insert.Columns contains generated columns or not.
+	// It's for INSERT INTO t (...) VALUES (...)
+	if len(insert.Columns) > 0 {
+		for _, col := range insert.Columns {
+			if colInfo, ok := columnInfoByName[col.Name.L]; ok {
+				if len(colInfo.GeneratedExprString) != 0 {
+					b.err = ErrBadGeneratedColumn.GenByArgs(col.Name.O, tableInfo.Name.O)
+					return nil
+				}
+			}
+		}
+	}
+
 	cols := table.Cols()
+	maxElementIndexInRow := 0
 	for _, valuesItem := range insert.Lists {
 		exprList := make([]expression.Expression, 0, len(valuesItem))
 		for i, valueItem := range valuesItem {
@@ -668,6 +693,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 					expr, err = b.getDefaultValue(cols[i])
 				}
 			} else if val, ok := valueItem.(*ast.ValueExpr); ok {
+				log.Errorf("insert value: %v\n", val.Datum.GetValue())
 				expr = &expression.Constant{
 					Value:   val.Datum,
 					RetType: &val.Type,
@@ -679,9 +705,24 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 				b.err = errors.Trace(err)
 			}
 			exprList = append(exprList, expr)
+			if i > maxElementIndexInRow {
+				maxElementIndexInRow = i
+			}
 		}
 		insertPlan.Lists = append(insertPlan.Lists, exprList)
 	}
+
+	// It's for INSERT INTO t VALUES (...)
+	if len(insert.Columns) == 0 {
+		for i := 0; i <= maxElementIndexInRow; i++ {
+			col := tableInfo.Columns[i]
+			if len(col.GeneratedExprString) != 0 {
+				b.err = ErrBadGeneratedColumn.GenByArgs(col.Name.O, tableInfo.Name.O)
+				return nil
+			}
+		}
+	}
+
 	for _, assign := range insert.Setlist {
 		col, err := schema.FindColumn(assign.Column)
 		if err != nil {
@@ -690,6 +731,11 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		}
 		if col == nil {
 			b.err = errors.Errorf("Can't find column %s", assign.Column)
+			return nil
+		}
+		// Check set list contains generated column or not.
+		if len(columnInfoByName[assign.Column.Name.L].GeneratedExprString) != 0 {
+			b.err = ErrBadGeneratedColumn.GenByArgs(assign.Column.Name.O, tableInfo.Name.O)
 			return nil
 		}
 		// Here we keep different behaviours with MySQL. MySQL allow set a = b, b = a and the result is NULL, NULL.
@@ -714,6 +760,11 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		}
 		if col == nil {
 			b.err = errors.Errorf("Can't find column %s", assign.Column)
+			return nil
+		}
+		// Check "on duplicate set list" contains generated column or not.
+		if len(columnInfoByName[assign.Column.Name.L].GeneratedExprString) != 0 {
+			b.err = ErrBadGeneratedColumn.GenByArgs(assign.Column.Name.O, tableInfo.Name.O)
 			return nil
 		}
 		expr, _, err := b.rewrite(assign.Expr, mockTablePlan, nil, true)
