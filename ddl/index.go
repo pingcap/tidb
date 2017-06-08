@@ -49,6 +49,11 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 			return nil, errKeyColumnDoesNotExits.Gen("column does not exist: %s", ic.Column.Name)
 		}
 
+		// JSON column cannot index.
+		if col.FieldType.Tp == mysql.TypeJSON {
+			return nil, errors.Trace(errJSONUsedAsKey.GenByArgs(col.Name.O))
+		}
+
 		// Length must be specified for BLOB and TEXT column indexes.
 		if types.IsTypeBlob(col.FieldType.Tp) && ic.Length == types.UnspecifiedLength {
 			return nil, errors.Trace(errBlobKeyWithoutLength)
