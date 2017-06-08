@@ -155,7 +155,7 @@ func (t *Table) String() string {
 	return strings.Join(strs, "\n")
 }
 
-// columnIsInvalid checks if this column is invalid.
+// ColumnIsInValid checks if this column is invalid.
 func (t *Table) ColumnIsInValid(colInfo *model.ColumnInfo) bool {
 	if t.Pseudo {
 		return true
