@@ -128,6 +128,7 @@ func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		store.gcWorker.Start()
 	}
 	return store, nil
 }

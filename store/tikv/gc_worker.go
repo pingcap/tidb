@@ -63,7 +63,6 @@ func NewGCWorker(store kv.Storage) (*GCWorker, error) {
 		quit:        make(chan struct{}),
 		done:        make(chan error),
 	}
-	go worker.start()
 	return worker, nil
 }
 
@@ -101,53 +100,56 @@ var gcVariableComments = map[string]string{
 	gcSafePointKey:   "All versions after safe point can be accessed. (DO NOT EDIT)",
 }
 
-func (w *GCWorker) start() {
+// Start starts the GcWorker in background goroutines.
+func (w *GCWorker) Start() {
 	log.Infof("[gc worker] %s start.", w.uuid)
 	ticker := time.NewTicker(gcWorkerTickInterval)
-	for {
-		select {
-		case <-ticker.C:
-			if w.session == nil {
-				if !w.storeIsBootstrapped() {
-					break
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				if w.session == nil {
+					if !w.storeIsBootstrapped() {
+						break
+					}
+					var err error
+					w.session, err = tidb.CreateSession(w.store)
+					if err != nil {
+						log.Warnf("[gc worker] create session err: %v", err)
+						break
+					}
+					// Disable privilege check for gc worker session.
+					privilege.BindPrivilegeManager(w.session, nil)
 				}
-				var err error
-				w.session, err = tidb.CreateSession(w.store)
-				if err != nil {
-					log.Warnf("[gc worker] create session err: %v", err)
-					break
-				}
-				// Disable privilege check for gc worker session.
-				privilege.BindPrivilegeManager(w.session, nil)
-			}
 
-			isLeader, err := w.checkLeader()
-			if err != nil {
-				log.Warnf("[gc worker] check leader err: %v", err)
-				break
-			}
-			if isLeader {
-				err = w.leaderTick()
+				isLeader, err := w.checkLeader()
 				if err != nil {
-					log.Warnf("[gc worker] leader tick err: %v", err)
+					log.Warnf("[gc worker] check leader err: %v", err)
+					break
 				}
-			} else {
-				// Config metrics should always be updated by leader.
-				gcConfigGauge.WithLabelValues(gcRunIntervalKey).Set(0)
-				gcConfigGauge.WithLabelValues(gcLifeTimeKey).Set(0)
+				if isLeader {
+					err = w.leaderTick()
+					if err != nil {
+						log.Warnf("[gc worker] leader tick err: %v", err)
+					}
+				} else {
+					// Config metrics should always be updated by leader.
+					gcConfigGauge.WithLabelValues(gcRunIntervalKey).Set(0)
+					gcConfigGauge.WithLabelValues(gcLifeTimeKey).Set(0)
+				}
+			case err := <-w.done:
+				w.gcIsRunning = false
+				w.lastFinish = time.Now()
+				if err != nil {
+					log.Errorf("[gc worker] runGCJob error: %v", err)
+					break
+				}
+			case <-w.quit:
+				log.Infof("[gc worker] (%s) quit.", w.uuid)
+				return
 			}
-		case err := <-w.done:
-			w.gcIsRunning = false
-			w.lastFinish = time.Now()
-			if err != nil {
-				log.Errorf("[gc worker] runGCJob error: %v", err)
-				break
-			}
-		case <-w.quit:
-			log.Infof("[gc worker] (%s) quit.", w.uuid)
-			return
 		}
-	}
+	}()
 }
 
 const notBootstrappedVer = 0
@@ -259,17 +261,25 @@ func (w *GCWorker) calculateNewSafePoint(now time.Time) (*time.Time, error) {
 	return &safePoint, nil
 }
 
-func (w *GCWorker) runGCJob(safePoint uint64) {
+// RunGCJob sends GC command to KV, it is exported for testing purpose.
+func (w *GCWorker) RunGCJob(safePoint uint64) error {
 	gcWorkerCounter.WithLabelValues("run_job").Inc()
-
 	err := w.resolveLocks(safePoint)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = w.doGC(safePoint)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (w *GCWorker) runGCJob(safePoint uint64) {
+	err := w.RunGCJob(safePoint)
 	if err != nil {
 		w.done <- errors.Trace(err)
 		return
-	}
-	err = w.DoGC(safePoint)
-	if err != nil {
-		w.done <- errors.Trace(err)
 	}
 	w.done <- nil
 }
@@ -351,8 +361,7 @@ func (w *GCWorker) resolveLocks(safePoint uint64) error {
 	return nil
 }
 
-// DoGC sends GC command to KV, it is exported for testing purpose.
-func (w *GCWorker) DoGC(safePoint uint64) error {
+func (w *GCWorker) doGC(safePoint uint64) error {
 	gcWorkerCounter.WithLabelValues("do_gc").Inc()
 
 	req := &tikvrpc.Request{

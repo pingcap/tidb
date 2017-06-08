@@ -283,7 +283,7 @@ func (ut *benchDB) manualGC(done chan bool) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	err = ut.gcWorker.DoGC(ver.Ver)
+	err = ut.gcWorker.RunGCJob(ver.Ver)
 	if err != nil {
 		log.Fatal(err)
 	}
