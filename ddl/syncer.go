@@ -57,12 +57,13 @@ type SchemaSyncer interface {
 	UpdateSelfVersion(ctx goctx.Context, version int64) error
 	// RemoveSelfVersionPath remove the self path from etcd.
 	RemoveSelfVersionPath() error
-	// OwnerUpdateGlobalVersion updates the latest version to the global path on etcd.
+	// OwnerUpdateGlobalVersion updates the latest version to the global path on etcd until updating is successful or the ctx is done.
 	OwnerUpdateGlobalVersion(ctx goctx.Context, version int64) error
 	// GlobalVersionCh gets the chan for watching global version.
 	GlobalVersionCh() clientv3.WatchChan
 	// OwnerCheckAllVersions checks whether all followers' schema version are equal to
 	// the latest schema version. If the result is false, wait for a while and check again util the processing time reach 2 * lease.
+	// It returns until all servers' versions are equal to the latest version or the ctx is done.
 	OwnerCheckAllVersions(ctx goctx.Context, latestVer int64) error
 }
 
@@ -158,6 +159,8 @@ func isContextFinished(err error) bool {
 // OwnerCheckAllVersions implements SchemaSyncer.OwnerCheckAllVersions interface.
 func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx goctx.Context, latestVer int64) error {
 	time.Sleep(CheckVersFirstWaitTime)
+	notMatchVerCnt := 0
+	intervalCnt := int(time.Second / checkVersInterval)
 	updatedMap := make(map[string]struct{})
 	for {
 		select {
@@ -188,8 +191,12 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx goctx.Context, latestVer
 				break
 			}
 			if int64(ver) != latestVer {
-				log.Infof("[syncer] check all versions, ddl %s current ver %v, latest version %v", kv.Key, ver, latestVer)
+				if notMatchVerCnt%intervalCnt == 0 {
+					log.Infof("[syncer] check all versions, ddl %s current ver %v, latest version %v",
+						kv.Key, ver, latestVer)
+				}
 				succ = false
+				notMatchVerCnt++
 				break
 			}
 			updatedMap[string(kv.Key)] = struct{}{}

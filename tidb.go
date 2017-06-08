@@ -66,7 +66,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		statisticLease = statsLease
 	}
 	err = util.RunWithRetry(defaultMaxRetries, retryInterval, func() (retry bool, err1 error) {
-		log.Infof("store %v new domain, ddl lease %v, stats lease", store.UUID(), ddlLease, statisticLease)
+		log.Infof("store %v new domain, ddl lease %v, stats lease %d", store.UUID(), ddlLease, statisticLease)
 		factory := createSessionFunc(store)
 		d, err1 = domain.NewDomain(store, ddlLease, statisticLease, factory)
 		return true, errors.Trace(err1)

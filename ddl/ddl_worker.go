@@ -358,11 +358,21 @@ func (d *ddl) waitSchemaChanged(waitTime time.Duration, latestSchemaVersion int6
 	err := d.schemaSyncer.OwnerUpdateGlobalVersion(ctx, latestSchemaVersion)
 	if err != nil {
 		log.Infof("[ddl] update latest schema version %d failed %v", latestSchemaVersion, err)
+		if terror.ErrorEqual(err, goctx.DeadlineExceeded) {
+			return
+		}
 	}
 
 	err = d.schemaSyncer.OwnerCheckAllVersions(ctx, latestSchemaVersion)
 	if err != nil {
 		log.Infof("[ddl] wait latest schema version %d to deadline %v", latestSchemaVersion, err)
+		if terror.ErrorEqual(err, goctx.DeadlineExceeded) {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		}
 	}
 	return
 }
