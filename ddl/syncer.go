@@ -51,7 +51,7 @@ var (
 	CheckVersFirstWaitTime = 50 * time.Millisecond
 	// SyncerSessionTTL is the etcd session's TTL in seconds.
 	// and it's an exported variable for testing.
-	SyncerSessionTTL = 30 * 60
+	SyncerSessionTTL = 10 * 60
 )
 
 // SchemaSyncer is used to synchronize schema version between the DDL worker leader and followers through etcd.
