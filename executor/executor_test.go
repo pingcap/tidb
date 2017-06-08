@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
@@ -988,6 +990,31 @@ func (s *testSuite) TestJSON(c *C) {
 	result.Check(testkit.Rows("true"))
 	result = tk.MustQuery(`select a from test_json tj where a = "string"`)
 	result.Check(testkit.Rows(`"string"`))
+
+	// check some DDL limits for TEXT/BLOB/JSON column.
+	var err error
+	var terr *terror.Error
+
+	_, err = tk.Exec(`create table test_bad_json(a json default '{}')`)
+	c.Assert(err, NotNil)
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBlobCantHaveDefault))
+
+	_, err = tk.Exec(`create table test_bad_json(a blob default 'hello')`)
+	c.Assert(err, NotNil)
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBlobCantHaveDefault))
+
+	_, err = tk.Exec(`create table test_bad_json(a text default 'world')`)
+	c.Assert(err, NotNil)
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBlobCantHaveDefault))
+
+	// check json fields cannot be used as key.
+	_, err = tk.Exec(`create table test_bad_json(id int, a json, key (a))`)
+	c.Assert(err, NotNil)
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrJSONUsedAsKey))
 
 	// check CAST AS JSON.
 	result = tk.MustQuery(`select CAST('3' AS JSON), CAST('{}' AS JSON), CAST(null AS JSON)`)
