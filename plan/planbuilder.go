@@ -27,8 +27,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
-
-	"github.com/ngaut/log"
 )
 
 // Error instances.
@@ -693,7 +691,6 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 					expr, err = b.getDefaultValue(cols[i])
 				}
 			} else if val, ok := valueItem.(*ast.ValueExpr); ok {
-				log.Errorf("insert value: %v\n", val.Datum.GetValue())
 				expr = &expression.Constant{
 					Value:   val.Datum,
 					RetType: &val.Type,
