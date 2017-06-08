@@ -41,13 +41,9 @@ type tikvTxn struct {
 	dirty     bool
 }
 
-const tsoTimeout = 5 * time.Second
-
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
-	ctx, cancel := goctx.WithTimeout(goctx.Background(), tsoTimeout)
-	bo := NewBackoffer(tsoMaxBackoff, ctx)
+	bo := NewBackoffer(tsoMaxBackoff, goctx.Background())
 	startTS, err := store.getTimestampWithRetry(bo)
-	cancel()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
