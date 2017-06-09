@@ -243,14 +243,19 @@ const (
 	ColumnOptionOnUpdate // For Timestamp and Datetime only.
 	ColumnOptionFulltext
 	ColumnOptionComment
+	ColumnOptionGenerated
 )
 
 // ColumnOption is used for parsing column constraint info from SQL.
 type ColumnOption struct {
 	node
 
-	Tp   ColumnOptionType
-	Expr ExprNode // The value For Default or On Update.
+	Tp ColumnOptionType
+	// For ColumnOptionDefaultValue or ColumnOptionOnUpdate, it's the target value.
+	// For ColumnOptionGenerated, it's the target expression.
+	Expr ExprNode
+	// Stored is only for ColumnOptionGenerated, default is false.
+	Stored bool
 }
 
 // Accept implements Node Accept interface.
