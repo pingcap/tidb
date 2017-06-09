@@ -27,10 +27,11 @@ import (
 )
 
 const (
-	dialTimeout       = 5 * time.Second
-	readTimeoutShort  = 20 * time.Second  // For requests that read/write several key-values.
-	readTimeoutMedium = 60 * time.Second  // For requests that may need scan region.
-	readTimeoutLong   = 150 * time.Second // For requests that may need scan region multiple times.
+	maxConnectionNumber = 100
+	dialTimeout         = 5 * time.Second
+	readTimeoutShort    = 20 * time.Second  // For requests that read/write several key-values.
+	readTimeoutMedium   = 60 * time.Second  // For requests that may need scan region.
+	readTimeoutLong     = 150 * time.Second // For requests that may need scan region multiple times.
 
 	grpcInitialWindowSize     = 1 << 30
 	grpcInitialConnWindowSize = 1 << 30
@@ -48,49 +49,32 @@ type Client interface {
 	SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error)
 }
 
-// TODO: Add flow control between RPC clients in TiDB ond RPC servers in TiKV.
-// Since we use shared client connection to communicate to the same TiKV, it's possible
-// that there are too many concurrent requests which overload the service of TiKV.
-// TODO: Implement background cleanup. It adds a backgroud goroutine to periodically check
-// whether there is any connection is idle and then close and remove these idle connections.
-type rpcClient struct {
-	sync.RWMutex
-	isClosed bool
-	conns    map[string]*grpc.ClientConn
+type connArray struct {
+	lock    *sync.Mutex
+	addr    string
+	maxSize uint32
+	index   uint32
+	v       []*grpc.ClientConn
 }
 
-func newRPCClient() *rpcClient {
-	return &rpcClient{
-		conns: make(map[string]*grpc.ClientConn),
+func newConnArray(maxSize uint32, addr string) *connArray {
+	return &connArray{
+		lock:    &sync.Mutex{},
+		addr:    addr,
+		maxSize: maxSize,
+		index:   0,
+		v:       make([]*grpc.ClientConn, maxSize),
 	}
 }
 
-func (c *rpcClient) getConn(addr string) (*grpc.ClientConn, error) {
-	c.RLock()
-	if c.isClosed {
-		c.RUnlock()
-		return nil, errors.Errorf("rpcClient is closed")
-	}
-	conn, ok := c.conns[addr]
-	c.RUnlock()
-	if !ok {
-		var err error
-		conn, err = c.createConn(addr)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return conn, nil
-}
-
-func (c *rpcClient) createConn(addr string) (*grpc.ClientConn, error) {
-	c.Lock()
-	defer c.Unlock()
-	conn, ok := c.conns[addr]
-	if !ok {
+func (a *connArray) Get() (*grpc.ClientConn, error) {
+	a.lock.Lock()
+	defer a.lock.Unlock()
+	conn := a.v[a.index]
+	if conn == nil {
 		var err error
 		conn, err = grpc.Dial(
-			addr,
+			a.addr,
 			grpc.WithInsecure(),
 			grpc.WithTimeout(dialTimeout),
 			grpc.WithInitialWindowSize(grpcInitialWindowSize),
@@ -100,9 +84,67 @@ func (c *rpcClient) createConn(addr string) (*grpc.ClientConn, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		c.conns[addr] = conn
+		a.v[a.index] = conn
 	}
+	a.index = (a.index + 1) % a.maxSize
 	return conn, nil
+}
+
+func (a *connArray) Close() {
+	a.lock.Lock()
+	for i := uint32(0); i < a.maxSize; i++ {
+		if a.v[i] != nil {
+			a.v[i].Close()
+			a.v[i] = nil
+		}
+	}
+	a.lock.Unlock()
+}
+
+// TODO: Add flow control between RPC clients in TiDB ond RPC servers in TiKV.
+// Since we use shared client connection to communicate to the same TiKV, it's possible
+// that there are too many concurrent requests which overload the service of TiKV.
+// TODO: Implement background cleanup. It adds a backgroud goroutine to periodically check
+// whether there is any connection is idle and then close and remove these idle connections.
+type rpcClient struct {
+	sync.RWMutex
+	isClosed bool
+	conns    map[string]*connArray
+}
+
+func newRPCClient() *rpcClient {
+	return &rpcClient{
+		conns: make(map[string]*connArray),
+	}
+}
+
+func (c *rpcClient) getConn(addr string) (*grpc.ClientConn, error) {
+	c.RLock()
+	if c.isClosed {
+		c.RUnlock()
+		return nil, errors.Errorf("rpcClient is closed")
+	}
+	array, ok := c.conns[addr]
+	c.RUnlock()
+	if !ok {
+		var err error
+		array, err = c.createConnArray(addr)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return array.Get()
+}
+
+func (c *rpcClient) createConnArray(addr string) (*connArray, error) {
+	c.Lock()
+	defer c.Unlock()
+	array, ok := c.conns[addr]
+	if !ok {
+		array = newConnArray(maxConnectionNumber, addr)
+		c.conns[addr] = array
+	}
+	return array, nil
 }
 
 func (c *rpcClient) closeConns() {
@@ -110,8 +152,8 @@ func (c *rpcClient) closeConns() {
 	if !c.isClosed {
 		c.isClosed = true
 		// close all connections
-		for _, conn := range c.conns {
-			conn.Close()
+		for _, array := range c.conns {
+			array.Close()
 		}
 	}
 	c.Unlock()
