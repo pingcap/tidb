@@ -108,6 +108,8 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"c_timestamp + 1", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"c_timestamp + 1.1", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag},
 		{"c_timestamp + '1.1'", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag},
+		{"c_set + 1", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag},
+		{"c_enum + 1", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag},
 		{"1.1 + now()", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag},
 		{"1 + now()", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"1 div 2", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
