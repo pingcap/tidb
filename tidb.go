@@ -96,10 +96,10 @@ var (
 	// schemaLease is the time for re-updating remote schema.
 	// In online DDL, we must wait 2 * SchemaLease time to guarantee
 	// all servers get the neweset schema.
-	// Default schema lease time is 1 second, you can change it with a proper time,
+	// Default schema lease time is 10 second, you can change it with a proper time,
 	// but you must know that too little may cause badly performance degradation.
 	// For production, you should set a big schema lease, like 300s+.
-	schemaLease = 1 * time.Second
+	schemaLease = 10 * time.Second
 
 	// statsLease is the time for reload stats table.
 	statsLease = 1 * time.Second
