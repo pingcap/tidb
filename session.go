@@ -233,18 +233,21 @@ func (s *session) doCommit() error {
 		s.txn = nil
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}()
-	if binloginfo.PumpClient != nil {
+	if s.sessionVars.BinlogClient != nil {
 		prewriteValue := binloginfo.GetPrewriteValue(s, false)
 		if prewriteValue != nil {
 			prewriteData, err := prewriteValue.Marshal()
 			if err != nil {
 				return errors.Trace(err)
 			}
-			bin := &binlog.Binlog{
-				Tp:            binlog.BinlogType_Prewrite,
-				PrewriteValue: prewriteData,
+			info := &binloginfo.BinlogInfo{
+				Data: &binlog.Binlog{
+					Tp:            binlog.BinlogType_Prewrite,
+					PrewriteValue: prewriteData,
+				},
+				Client: s.sessionVars.BinlogClient.(binlog.PumpClient),
 			}
-			s.txn.SetOption(kv.BinlogData, bin)
+			s.txn.SetOption(kv.BinlogInfo, info)
 		}
 	}
 
@@ -962,7 +965,7 @@ func createSession(store kv.Storage) (*session, error) {
 	sessionctx.BindDomain(s, domain)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
-
+	s.sessionVars.BinlogClient = binloginfo.GetPumpClient()
 	return s, nil
 }
 

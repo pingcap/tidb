@@ -224,6 +224,18 @@ func buildColumnAndConstraint(ctx context.Context, offset int,
 	return col, cts, nil
 }
 
+// checkColumnCantHaveDefaultValue checks the column can have value as default or not.
+// Now, TEXT/BLOB/JSON can't have not null value as default.
+func checkColumnCantHaveDefaultValue(col *table.Column, value interface{}) (err error) {
+	if value != nil && (col.Tp == mysql.TypeJSON ||
+		col.Tp == mysql.TypeTinyBlob || col.Tp == mysql.TypeMediumBlob ||
+		col.Tp == mysql.TypeLongBlob || col.Tp == mysql.TypeBlob) {
+		// TEXT/BLOB/JSON can't have not null default values.
+		return errBlobCantHaveDefault.GenByArgs(col.Name.O)
+	}
+	return nil
+}
+
 // columnDefToCol converts ColumnDef to Col and TableConstraints.
 func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*table.Column, []*ast.Constraint, error) {
 	constraints := []*ast.Constraint{}
@@ -291,6 +303,9 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 				value, err := getDefaultValue(ctx, v, colDef.Tp.Tp, colDef.Tp.Decimal)
 				if err != nil {
 					return nil, nil, ErrColumnBadNull.Gen("invalid default value - %s", err)
+				}
+				if err = checkColumnCantHaveDefaultValue(col, value); err != nil {
+					return nil, nil, errors.Trace(err)
 				}
 				col.DefaultValue = value
 				hasDefaultValue = true
@@ -988,6 +1003,9 @@ func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast
 			if err != nil {
 				return ErrColumnBadNull.Gen("invalid default value - %s", err)
 			}
+			if err = checkColumnCantHaveDefaultValue(col, value); err != nil {
+				return errors.Trace(err)
+			}
 			col.DefaultValue = value
 			hasDefaultValue = true
 		case ast.ColumnOptionComment:
@@ -1004,7 +1022,6 @@ func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast
 			if !expression.IsCurrentTimeExpr(opt.Expr) {
 				return ErrInvalidOnUpdate.Gen("invalid ON UPDATE for - %s", col.Name)
 			}
-
 			col.Flag |= mysql.OnUpdateNowFlag
 			setOnUpdateNow = true
 		default:
