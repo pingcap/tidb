@@ -35,6 +35,8 @@ type Client interface {
 	GetClusterID(ctx context.Context) uint64
 	// GetTS gets a timestamp from PD.
 	GetTS(ctx context.Context) (int64, int64, error)
+	// GetTSAsync gets a timestamp from PD, without block the caller.
+	GetTSAsync(ctx context.Context) TSFuture
 	// GetRegion gets a region and its leader Peer from PD by key.
 	// The region may expire after split. Caller is responsible for caching and
 	// taking care of region change.
@@ -52,6 +54,8 @@ type Client interface {
 }
 
 type tsoRequest struct {
+	start    time.Time
+	ctx      context.Context
 	done     chan error
 	physical int64
 	logical  int64
@@ -296,6 +300,7 @@ func (c *client) tsLoop() {
 			stream, err = c.leaderClient().Tso(ctx)
 			if err != nil {
 				log.Errorf("[pd] create tso stream error: %v", err)
+				c.scheduleCheckLeader()
 				cancel()
 				c.revokeTSORequest(err)
 				select {
@@ -334,6 +339,7 @@ func (c *client) tsLoop() {
 
 		if err != nil {
 			log.Errorf("[pd] getTS error: %v", err)
+			c.scheduleCheckLeader()
 			cancel()
 			stream, cancel = nil, nil
 		}
@@ -342,20 +348,17 @@ func (c *client) tsLoop() {
 
 func (c *client) processTSORequests(stream pdpb.PD_TsoClient, requests []*tsoRequest) error {
 	start := time.Now()
-	//	ctx, cancel := context.WithTimeout(c.ctx, pdTimeout)
 	req := &pdpb.TsoRequest{
 		Header: c.requestHeader(),
 		Count:  uint32(len(requests)),
 	}
 	if err := stream.Send(req); err != nil {
 		c.finishTSORequest(requests, 0, 0, err)
-		c.scheduleCheckLeader()
 		return errors.Trace(err)
 	}
 	resp, err := stream.Recv()
 	if err != nil {
 		c.finishTSORequest(requests, 0, 0, errors.Trace(err))
-		c.scheduleCheckLeader()
 		return errors.Trace(err)
 	}
 	requestDuration.WithLabelValues("tso").Observe(time.Since(start).Seconds())
@@ -430,25 +433,42 @@ var tsoReqPool = sync.Pool{
 	},
 }
 
-func (c *client) GetTS(ctx context.Context) (int64, int64, error) {
-	start := time.Now()
-	defer func() { cmdDuration.WithLabelValues("tso").Observe(time.Since(start).Seconds()) }()
-
+func (c *client) GetTSAsync(ctx context.Context) TSFuture {
 	req := tsoReqPool.Get().(*tsoRequest)
+	req.start = time.Now()
+	req.ctx = ctx
+	req.physical = 0
+	req.logical = 0
 	c.tsoRequests <- req
 
+	return req
+}
+
+// TSFuture is a future which promises to return a TSO.
+type TSFuture interface {
+	// Wait gets the physical and logical time, it would block caller if data is not available yet.
+	Wait() (int64, int64, error)
+}
+
+func (req *tsoRequest) Wait() (int64, int64, error) {
+	defer func() { cmdDuration.WithLabelValues("tso").Observe(time.Since(req.start).Seconds()) }()
 	select {
 	case err := <-req.done:
 		if err != nil {
-			cmdFailedDuration.WithLabelValues("tso").Observe(time.Since(start).Seconds())
+			cmdFailedDuration.WithLabelValues("tso").Observe(time.Since(req.start).Seconds())
 			return 0, 0, errors.Trace(err)
 		}
 		physical, logical := req.physical, req.logical
 		tsoReqPool.Put(req)
 		return physical, logical, err
-	case <-ctx.Done():
-		return 0, 0, errors.Trace(ctx.Err())
+	case <-req.ctx.Done():
+		return 0, 0, errors.Trace(req.ctx.Err())
 	}
+}
+
+func (c *client) GetTS(ctx context.Context) (int64, int64, error) {
+	resp := c.GetTSAsync(ctx)
+	return resp.Wait()
 }
 
 func (c *client) GetRegion(ctx context.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
