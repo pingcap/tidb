@@ -458,83 +458,29 @@ func checkDuplicateColumn(colDefs []*ast.ColumnDef) error {
 }
 
 func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
-	var normalColNames = make(map[string]struct{}, 0)                    // normal columns.
-	var generatedColNames = make([]string, 0)                            // generated columns.
-	var generatedColDependents = make(map[string]map[string]struct{}, 0) // generated columns' dependences.
-
-	for _, colDef := range colDefs {
+	var colName2Generation = make(map[string]columnGenerationInDDL, 0)
+	for i, colDef := range colDefs {
 		generated, depCols := findDependedColumnNames(*colDef)
 		if !generated {
-			normalColNames[colDef.Name.Name.L] = struct{}{}
+			colName2Generation[colDef.Name.Name.L] = columnGenerationInDDL{
+				position:  i,
+				generated: false,
+			}
 		} else {
-			generatedColNames = append(generatedColNames, colDef.Name.Name.L)
-			generatedColDependents[colDef.Name.Name.L] = depCols
+			colName2Generation[colDef.Name.Name.L] = columnGenerationInDDL{
+				position:    i,
+				generated:   true,
+				dependences: depCols,
+			}
 		}
 	}
-	for _, generatedCol := range generatedColNames {
-		depCols := generatedColDependents[generatedCol]
-		if err := columnNamesCover(normalColNames, depCols); err != nil {
+	for i, colDef := range colDefs {
+		colName := colDef.Name.Name.L
+		if err := verifyColumnGeneration(colName2Generation, colName, i); err != nil {
 			return errors.Trace(err)
 		}
-		for col := range depCols {
-			// A generated column definition can refer to other generated columns
-			// occurring earilier in the table definition. So after a generated column
-			// has been checked, we add it into normalColNames in order to refer it later.
-			normalColNames[col] = struct{}{}
-		}
 	}
 	return nil
-}
-
-// columnNamesCover checks whether dependColNames is covered by normalColNames or not.
-// if not, return a formatted error.
-func columnNamesCover(normalColNames map[string]struct{}, dependColNames map[string]struct{}) error {
-	for name := range dependColNames {
-		if _, ok := normalColNames[name]; !ok {
-			return errBadField.GenByArgs(name, "generated column function")
-		}
-	}
-	return nil
-}
-
-// findDependedColumnNames returns a slice of string, which indicates
-// the names of the columns that are depended by colDef.
-func findDependedColumnNames(colDef ast.ColumnDef) (generated bool, colsMap map[string]struct{}) {
-	colsMap = make(map[string]struct{}, 0)
-	for _, option := range colDef.Options {
-		if option.Tp == ast.ColumnOptionGenerated {
-			generated = true
-			colNames := findColumnNamesInExpr(option.Expr)
-			for _, depCol := range colNames {
-				colsMap[depCol.Name.L] = struct{}{}
-			}
-			break
-		}
-	}
-	return
-}
-
-// findColumnNamesInExpr returns a slice of ast.ColumnName which is refered in expr.
-func findColumnNamesInExpr(expr ast.ExprNode) []*ast.ColumnName {
-	var c generatedColumnChecker
-	expr.Accept(&c)
-	return c.cols
-}
-
-type generatedColumnChecker struct {
-	cols []*ast.ColumnName
-}
-
-func (c *generatedColumnChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
-	return inNode, false
-}
-
-func (c *generatedColumnChecker) Leave(inNode ast.Node) (node ast.Node, ok bool) {
-	switch x := inNode.(type) {
-	case *ast.ColumnName:
-		c.cols = append(c.cols, x)
-	}
-	return inNode, true
 }
 
 func checkTooLongColumn(colDefs []*ast.ColumnDef) error {
