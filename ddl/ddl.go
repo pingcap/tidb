@@ -75,6 +75,8 @@ var (
 	errInvalidDefault        = terror.ClassDDL.New(codeInvalidDefault, "Invalid default value for '%s'")
 	errInvalidUseOfNull      = terror.ClassDDL.New(codeInvalidUseOfNull, "Invalid use of NULL value")
 
+	// errGeneratedColumnNonPrior forbiddens to refer generated column non prior to it.
+	errGeneratedColumnNonPrior = terror.ClassDDL.New(codeGeneratedColumnNonPrior, mysql.MySQLErrName[mysql.ErrGeneratedColumnNonPrior])
 	// errDependentByGeneratedColumn forbiddens to delete columns which are dependent by generated columns.
 	errDependentByGeneratedColumn = terror.ClassDDL.New(codeDependentByGeneratedColumn, mysql.MySQLErrName[mysql.ErrDependentByGeneratedColumn])
 	// errJSONUsedAsKey forbiddens to use JSON as key or index.
@@ -538,6 +540,7 @@ const (
 	codeInvalidUseOfNull           = 1138
 	codeBlobKeyWithoutLength       = 1170
 	codeInvalidOnUpdate            = 1294
+	codeGeneratedColumnNonPrior    = 3107
 	codeDependentByGeneratedColumn = 3108
 	codeJSONUsedAsKey              = 3152
 	codeBlobCantHaveDefault        = 1101
@@ -562,6 +565,7 @@ func init() {
 		codeBadField:                   mysql.ErrBadField,
 		codeInvalidDefault:             mysql.ErrInvalidDefault,
 		codeInvalidUseOfNull:           mysql.ErrInvalidUseOfNull,
+		codeGeneratedColumnNonPrior:    mysql.ErrGeneratedColumnNonPrior,
 		codeDependentByGeneratedColumn: mysql.ErrDependentByGeneratedColumn,
 		codeJSONUsedAsKey:              mysql.ErrJSONUsedAsKey,
 		codeBlobCantHaveDefault:        mysql.ErrBlobCantHaveDefault,

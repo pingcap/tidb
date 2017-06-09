@@ -241,7 +241,7 @@ func DoMatch(str string, patChars, patTypes []byte) bool {
 	return sIdx == len(str)
 }
 
-// RemoveBlanks remove all blanks, returns a new string.
+// RemoveBlanks removes all blanks, returns a new string.
 func RemoveBlanks(s string) string {
 	var buf = new(bytes.Buffer)
 	var cbuf [6]byte

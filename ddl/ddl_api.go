@@ -316,7 +316,6 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 				if !expression.IsCurrentTimeExpr(v.Expr) {
 					return nil, nil, ErrInvalidOnUpdate.Gen("invalid ON UPDATE for - %s", col.Name)
 				}
-
 				col.Flag |= mysql.OnUpdateNowFlag
 				setOnUpdateNow = true
 			case ast.ColumnOptionComment:
@@ -327,7 +326,7 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 			case ast.ColumnOptionGenerated:
 				col.GeneratedExprString = stringutil.RemoveBlanks(v.Expr.Text())
 				col.GeneratedStored = v.Stored
-				dependColNames, _ := findDependedColumnNames(*colDef)
+				_, dependColNames := findDependedColumnNames(*colDef)
 				col.Dependences = dependColNames
 			case ast.ColumnOptionFulltext:
 				// TODO: Support this type.
@@ -459,73 +458,29 @@ func checkDuplicateColumn(colDefs []*ast.ColumnDef) error {
 }
 
 func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
-	normalColNames := map[string]bool{}
-	dependColNames := make([]string, 0)
-	for _, colDef := range colDefs {
-		depCols, err := findDependedColumnNames(*colDef)
-		if err != nil {
-			return err
+	var colName2Generation = make(map[string]columnGenerationInDDL, 0)
+	for i, colDef := range colDefs {
+		generated, depCols := findDependedColumnNames(*colDef)
+		if !generated {
+			colName2Generation[colDef.Name.Name.L] = columnGenerationInDDL{
+				position:  i,
+				generated: false,
+			}
+		} else {
+			colName2Generation[colDef.Name.Name.L] = columnGenerationInDDL{
+				position:    i,
+				generated:   true,
+				dependences: depCols,
+			}
 		}
-		normalColNames[colDef.Name.Name.L] = true
-		dependColNames = append(dependColNames, depCols...)
 	}
-	return columnNamesCover(normalColNames, dependColNames)
-}
-
-// columnNamesCover checks dependColNames is coverd by normalColNames or not.
-// if not, return a formatted error.
-func columnNamesCover(normalColNames map[string]bool, dependColNames []string) error {
-	for _, name := range dependColNames {
-		if _, ok := normalColNames[name]; !ok {
-			return errBadField.GenByArgs(name, "generated column function")
+	for i, colDef := range colDefs {
+		colName := colDef.Name.Name.L
+		if err := verifyColumnGeneration(colName2Generation, colName, i); err != nil {
+			return errors.Trace(err)
 		}
 	}
 	return nil
-}
-
-// findDependedColumnNames returns a slice of string, which is depend by colDef.
-// If colDef depends on itself, it will return an error.
-func findDependedColumnNames(colDef ast.ColumnDef) (cols []string, err error) {
-	var colsMap = make(map[string]bool, 0)
-	for _, option := range colDef.Options {
-		if option.Tp == ast.ColumnOptionGenerated {
-			colNames := findColumnNamesInExpr(option.Expr)
-			for _, depCol := range colNames {
-				if colDef.Name.Name.L == depCol.Name.L {
-					err = errBadField.GenByArgs(depCol.Name.L, "generated column function")
-					break
-				}
-				colsMap[depCol.Name.L] = true
-			}
-			for col := range colsMap {
-				cols = append(cols, col)
-			}
-			break
-		}
-	}
-	return
-}
-
-func findColumnNamesInExpr(expr ast.ExprNode) []*ast.ColumnName {
-	var c generatedColumnChecker
-	expr.Accept(&c)
-	return c.cols
-}
-
-type generatedColumnChecker struct {
-	cols []*ast.ColumnName
-}
-
-func (c *generatedColumnChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
-	return inNode, false
-}
-
-func (c *generatedColumnChecker) Leave(inNode ast.Node) (node ast.Node, ok bool) {
-	switch x := inNode.(type) {
-	case *ast.ColumnName:
-		c.cols = append(c.cols, x)
-	}
-	return inNode, true
 }
 
 func checkTooLongColumn(colDefs []*ast.ColumnDef) error {
@@ -925,14 +880,11 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 	// If new column is a generated column, do validation.
 	for _, option := range spec.NewColumn.Options {
 		if option.Tp == ast.ColumnOptionGenerated {
-			normalColNames := make(map[string]bool, len(t.Cols()))
+			normalColNames := make(map[string]struct{}, len(t.Cols()))
 			for _, col := range t.Cols() {
-				normalColNames[col.Name.L] = true
+				normalColNames[col.Name.L] = struct{}{}
 			}
-			dependColNames, err := findDependedColumnNames(*spec.NewColumn)
-			if err != nil {
-				return errors.Trace(err)
-			}
+			_, dependColNames := findDependedColumnNames(*spec.NewColumn)
 			if err := columnNamesCover(normalColNames, dependColNames); err != nil {
 				return errors.Trace(err)
 			}
@@ -995,9 +947,9 @@ func (d *ddl) DropColumn(ctx context.Context, ti ast.Ident, colName model.CIStr)
 		return ErrCantDropFieldOrKey.Gen("column %s doesn't exist", colName)
 	}
 
-	// Check there is other column depend on this column or not.
+	// Check whether there are other columns depend on this column or not.
 	for _, col := range t.Cols() {
-		for _, dep := range col.Dependences {
+		for dep := range col.Dependences {
 			if dep == colName.L {
 				return errDependentByGeneratedColumn.GenByArgs(dep)
 			}

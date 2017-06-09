@@ -1059,6 +1059,11 @@ func (s *testSuite) TestGeneratedColumnDDL(c *C) {
 	c.Assert(err, NotNil)
 	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBadField))
+
+	_, err = tk.Exec(`create table test_json_ddl_bad (a int, b int as (c+1), c int as (a+1))`)
+	c.Assert(err, NotNil)
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrGeneratedColumnNonPrior))
 }
 
 func (s *testSuite) TestGeneratedColumnWrite(c *C) {
