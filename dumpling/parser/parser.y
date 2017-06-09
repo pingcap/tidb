@@ -114,6 +114,7 @@ import (
 	foreign			"FOREIGN"
 	from			"FROM"
 	fulltext		"FULLTEXT"
+	generated		"GENERATED"
 	grants			"GRANTS"
 	group			"GROUP"
 	having			"HAVING"
@@ -197,6 +198,7 @@ import (
 	smallIntType		"SMALLINT"
 	starting		"STARTING"
 	tableKwd		"TABLE"
+	stored			"STORED"
 	terminated		"TERMINATED"
 	then			"THEN"
 	tinyblobType		"TINYBLOB"
@@ -217,6 +219,7 @@ import (
 	values			"VALUES"
 	varcharType		"VARCHAR"
 	varbinaryType		"VARBINARY"
+	virtual			"VIRTUAL"
 	when			"WHEN"
 	where			"WHERE"
 	write			"WRITE"
@@ -408,6 +411,7 @@ import (
 	/* the following tokens belong to UnReservedKeyword*/
 	action		"ACTION"
 	after		"AFTER"
+	always		"ALWAYS"
 	any 		"ANY"
 	ascii		"ASCII"
 	at		"AT"
@@ -577,6 +581,7 @@ import (
 	CompareOp		"Compare opcode"
 	ColumnOption		"column definition option"
 	ColumnOptionList	"column definition option list"
+	VirtualOrStored		"indicate generated column is stored or not"
 	ColumnOptionListOpt	"optional column definition option list"
 	Constraint		"table constraint"
 	ConstraintElem		"table constraint element"
@@ -1296,6 +1301,34 @@ ColumnOption:
 		// See https://dev.mysql.com/doc/refman/5.7/en/create-table.html
 		// The CHECK clause is parsed but ignored by all storage engines.
 		$$ = &ast.ColumnOption{}
+	}
+|	GeneratedAlways "AS" '(' Expression ')' VirtualOrStored
+	{
+		startOffset := parser.startOffset(&yyS[yypt-2])
+		endOffset := parser.endOffset(&yyS[yypt-1])
+		expr := $4.(ast.ExprNode)
+		expr.SetText(parser.src[startOffset:endOffset])
+
+		$$ = &ast.ColumnOption{
+			Tp: ast.ColumnOptionGenerated,
+			Expr: expr,
+			Stored: $6.(bool),
+		}
+	}
+
+GeneratedAlways: | "GENERATED" "ALWAYS"
+
+VirtualOrStored:
+	{
+	    $$ = false
+	}
+|	"VIRTUAL"
+	{
+	    $$ = false
+	}
+|	"STORED"
+	{
+	    $$ = true
 	}
 
 ColumnOptionList:
@@ -2305,7 +2338,7 @@ IdentifierOrReservedKeyword:
 Identifier | ReservedKeyword
 
 UnReservedKeyword:
- "ACTION" | "ASCII" | "AUTO_INCREMENT" | "AFTER" | "AT" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "CHARSET"
+ "ACTION" | "ASCII" | "AUTO_INCREMENT" | "AFTER" | "ALWAYS" | "AT" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "CHARSET"
 | "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED" | "CONSISTENT" | "DATA" | "DATE" | "DATETIME" | "DEALLOCATE" | "DO"
 | "DYNAMIC"| "END" | "ENGINE" | "ENGINES" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FORMAT" | "FULL" |"GLOBAL"
 | "HASH" | "LESS" | "LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT"
@@ -2325,7 +2358,7 @@ ReservedKeyword:
 | "DAY_MINUTE" | "DAY_SECOND" | "DECIMAL" | "DEFAULT" | "DELETE" | "DESC" | "DESCRIBE"
 | "DISTINCT" | "DIV" | "DOUBLE" | "DROP" | "DUAL" | "ELSE" | "ENCLOSED" | "ESCAPED"
 | "EXISTS" | "EXPLAIN" | "FALSE" | "FLOAT" | "FOR" | "FORCE" | "FOREIGN" | "FROM"
-| "FULLTEXT" | "GRANT" | "GROUP" | "HAVING" | "HOUR_MICROSECOND" | "HOUR_MINUTE"
+| "FULLTEXT" | "GENERATED" | "GRANT" | "GROUP" | "HAVING" | "HOUR_MICROSECOND" | "HOUR_MINUTE"
 | "HOUR_SECOND" | "IF" | "IGNORE" | "IN" | "INDEX" | "INFILE" | "INNER" | "INSERT" | "INT" | "INTO" | "INTEGER"
 | "INTERVAL" | "IS" | "JOIN" | "KEY" | "KEYS" | "KILL" | "LEADING" | "LEFT" | "LIKE" | "LIMIT" | "LINES" | "LOAD"
 | "LOCALTIME" | "LOCALTIMESTAMP" | "LOCK" | "LONGBLOB" | "LONGTEXT" | "MAXVALUE" | "MEDIUMBLOB" | "MEDIUMINT" | "MEDIUMTEXT"
@@ -2333,9 +2366,9 @@ ReservedKeyword:
 | "ON" | "OPTION" | "OR" | "ORDER" | "OUTER" | "PARTITION" | "PRECISION" | "PRIMARY" | "PROCEDURE" | "RANGE" | "READ" 
 | "REAL" | "REFERENCES" | "REGEXP" | "RENAME" | "REPEAT" | "REPLACE" | "RESTRICT" | "REVOKE" | "RIGHT" | "RLIKE"
 | "SCHEMA" | "SCHEMAS" | "SECOND_MICROSECOND" | "SELECT" | "SET" | "SHOW" | "SMALLINT"
-| "STARTING" | "TABLE" | "TERMINATED" | "THEN" | "TINYBLOB" | "TINYINT" | "TINYTEXT" | "TO"
+| "STARTING" | "TABLE" | "STORED" | "TERMINATED" | "THEN" | "TINYBLOB" | "TINYINT" | "TINYTEXT" | "TO"
 | "TRAILING" | "TRIGGER" | "TRUE" | "UNION" | "UNIQUE" | "UNLOCK" | "UNSIGNED"
-| "UPDATE" | "USE" | "USING" | "UTC_DATE" | "UTC_TIMESTAMP" | "VALUES" | "VARBINARY" | "VARCHAR"
+| "UPDATE" | "USE" | "USING" | "UTC_DATE" | "UTC_TIMESTAMP" | "VALUES" | "VARBINARY" | "VARCHAR" | "VIRTUAL"
 | "WHEN" | "WHERE" | "WRITE" | "XOR" | "YEAR_MONTH" | "ZEROFILL"
  /*
 | "DELAYED" | "HIGH_PRIORITY" | "LOW_PRIORITY"| "WITH"
