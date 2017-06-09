@@ -406,3 +406,38 @@ func (s *testCommitterSuite) TestCommitPrimaryError(c *C) {
 
 	c.Assert(terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue)
 }
+
+type commitWithUndeterminedErrClient struct {
+	Client
+}
+
+func (c *commitWithUndeterminedErrClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+	resp, err := c.Client.SendReq(ctx, addr, req)
+	if err != nil || req.Type != tikvrpc.CmdCommit {
+		return resp, err
+	}
+	return nil, terror.ErrResultUndetermined
+}
+
+func (s *testCommitterSuite) TestCommitTimeout(c *C) {
+	s.store.client = &commitWithUndeterminedErrClient{
+		Client: s.store.client,
+	}
+	txn := s.begin(c)
+	err := txn.Set([]byte("a"), []byte("a1"))
+	c.Assert(err, IsNil)
+	err = txn.Set([]byte("b"), []byte("b1"))
+	c.Assert(err, IsNil)
+	err = txn.Set([]byte("c"), []byte("c1"))
+	c.Assert(err, IsNil)
+	err = txn.Commit()
+	c.Assert(err, NotNil)
+
+	txn2 := s.begin(c)
+	value, err := txn2.Get([]byte("a"))
+	c.Assert(err, IsNil)
+	c.Assert(len(value), Greater, 0)
+	_, err = txn2.Get([]byte("b"))
+	c.Assert(err, IsNil)
+	c.Assert(len(value), Greater, 0)
+}
