@@ -477,13 +477,16 @@ func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 			return errors.Trace(err)
 		}
 		for col := range depCols {
+			// A generated column definition can refer to other generated columns
+			// occurring earilier in the table definition. So after a generated column
+			// has been checked, we add it into normalColNames in order to refer it later.
 			normalColNames[col] = struct{}{}
 		}
 	}
 	return nil
 }
 
-// columnNamesCover checks dependColNames is coverd by normalColNames or not.
+// columnNamesCover checks whether dependColNames is covered by normalColNames or not.
 // if not, return a formatted error.
 func columnNamesCover(normalColNames map[string]struct{}, dependColNames map[string]struct{}) error {
 	for name := range dependColNames {
@@ -494,8 +497,8 @@ func columnNamesCover(normalColNames map[string]struct{}, dependColNames map[str
 	return nil
 }
 
-// findDependedColumnNames returns a slice of string, which is depend by colDef.
-// If colDef depends on itself, it will return an error.
+// findDependedColumnNames returns a slice of string, which indicates
+// the names of the columns that are depended by colDef.
 func findDependedColumnNames(colDef ast.ColumnDef) (generated bool, colsMap map[string]struct{}) {
 	colsMap = make(map[string]struct{}, 0)
 	for _, option := range colDef.Options {
@@ -511,6 +514,7 @@ func findDependedColumnNames(colDef ast.ColumnDef) (generated bool, colsMap map[
 	return
 }
 
+// findColumnNamesInExpr returns a slice of ast.ColumnName which is refered in expr.
 func findColumnNamesInExpr(expr ast.ExprNode) []*ast.ColumnName {
 	var c generatedColumnChecker
 	expr.Accept(&c)
@@ -997,7 +1001,7 @@ func (d *ddl) DropColumn(ctx context.Context, ti ast.Ident, colName model.CIStr)
 		return ErrCantDropFieldOrKey.Gen("column %s doesn't exist", colName)
 	}
 
-	// Check there is other column depend on this column or not.
+	// Check whether there are other columns depend on this column or not.
 	for _, col := range t.Cols() {
 		for dep := range col.Dependences {
 			if dep == colName.L {
