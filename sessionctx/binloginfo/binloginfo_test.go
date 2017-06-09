@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testkit"
@@ -93,26 +92,26 @@ func (s *testBinlogSuite) SetUpSuite(c *C) {
 	clientCon, err := grpc.Dial(s.unixFile, opt, grpc.WithInsecure())
 	c.Assert(err, IsNil)
 	c.Assert(clientCon, NotNil)
-	binloginfo.PumpClient = binlog.NewPumpClient(clientCon)
 	s.tk = testkit.NewTestKit(c, s.store)
 	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	s.tk.MustExec("use test")
 	domain := sessionctx.GetDomain(s.tk.Se.(context.Context))
 	s.ddl = domain.DDL()
+
+	binlogClient := binlog.NewPumpClient(clientCon)
+	s.tk.Se.GetSessionVars().BinlogClient = binlogClient
+	s.ddl.WorkerVars().BinlogClient = binlogClient
 }
 
 func (s *testBinlogSuite) TearDownSuite(c *C) {
 	s.ddl.Stop()
-	binloginfo.PumpClient = nil
 	s.serv.Stop()
 	os.Remove(s.unixFile)
 	s.store.Close()
 }
 
 func (s *testBinlogSuite) TestBinlog(c *C) {
-	// TODO: find a way to avoid this parallel test issue and remove skip.
-	c.Skip("Some other package may run tests in parallel, makes the test fail.")
 	tk := s.tk
 	pump := s.pump
 	tk.MustExec("drop table if exists local_binlog")

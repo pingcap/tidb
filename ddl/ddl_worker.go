@@ -229,7 +229,7 @@ func (d *ddl) handleDDLJobQueue() error {
 			// and retry later if the job is not cancelled.
 			schemaVer = d.runDDLJob(t, job)
 			if job.IsFinished() {
-				binloginfo.SetDDLBinlog(txn, job.ID, job.Query)
+				binloginfo.SetDDLBinlog(d.workerVars.BinlogClient, txn, job.ID, job.Query)
 				err = d.finishDDLJob(t, job)
 			} else {
 				err = d.updateDDLJob(t, job, txn.StartTS())
