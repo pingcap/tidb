@@ -47,7 +47,7 @@ func (*testSuite) TestT(c *C) {
 	store, err := driver.Open("memory")
 	c.Assert(err, IsNil)
 	defer testleak.AfterTest(c)()
-	dom, err := NewDomain(store, 80*time.Millisecond, mockFactory)
+	dom, err := NewDomain(store, 80*time.Millisecond, 0, mockFactory)
 	c.Assert(err, IsNil)
 	store = dom.Store()
 	ctx := mock.NewContext()

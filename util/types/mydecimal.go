@@ -176,6 +176,11 @@ func (d *MyDecimal) IsNegative() bool {
 	return d.negative
 }
 
+// GetDigitsFrac returns the digitsFrac.
+func (d *MyDecimal) GetDigitsFrac() int8 {
+	return d.digitsFrac
+}
+
 // String returns the decimal string representation rounded to resultFrac.
 func (d *MyDecimal) String() string {
 	tmp := *d

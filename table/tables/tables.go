@@ -696,7 +696,7 @@ func (t *Table) Seek(ctx context.Context, h int64) (int64, bool, error) {
 }
 
 func shouldWriteBinlog(ctx context.Context) bool {
-	if binloginfo.PumpClient == nil {
+	if ctx.GetSessionVars().BinlogClient == nil {
 		return false
 	}
 	return !ctx.GetSessionVars().InRestrictedSQL

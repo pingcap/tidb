@@ -51,7 +51,8 @@ var (
 	host            = flag.String("host", "0.0.0.0", "tidb server host")
 	port            = flag.String("P", "4000", "tidb server port")
 	statusPort      = flag.String("status", "10080", "tidb server status port")
-	lease           = flag.String("lease", "10s", "schema lease duration, very dangerous to change only if you know what you do")
+	ddlLease        = flag.String("lease", "10s", "schema lease duration, very dangerous to change only if you know what you do")
+	statsLease      = flag.String("stasLease", "3s", "stats lease duration, which inflences the time of analyze and stats load.")
 	socket          = flag.String("socket", "", "The socket file to use for connection.")
 	enablePS        = flag.Bool("perfschema", false, "If enable performance schema.")
 	enablePrivilege = flag.Bool("privilege", true, "If enable privilege check feature. This flag will be removed in the future.")
@@ -92,8 +93,10 @@ func main() {
 		os.Exit(-1)
 	}
 
-	leaseDuration := parseLease()
-	tidb.SetSchemaLease(leaseDuration)
+	ddlLeaseDuration := parseLease(*ddlLease)
+	tidb.SetSchemaLease(ddlLeaseDuration)
+	statsLeaseDuration := parseLease(*statsLease)
+	tidb.SetStatsLease(statsLeaseDuration)
 	ddl.RunWorker = *runDDL
 	tidb.SetCommitRetryLimit(*retryLimit)
 
@@ -192,14 +195,14 @@ func createBinlogClient() {
 	if err != nil {
 		log.Fatal(errors.ErrorStack(err))
 	}
-	binloginfo.PumpClient = binlog.NewPumpClient(clientCon)
+	binloginfo.SetPumpClient(binlog.NewPumpClient(clientCon))
 	log.Infof("created binlog client at %s", *binlogSocket)
 }
 
 // Prometheus push.
 const zeroDuration = time.Duration(0)
 
-// PushMetric pushs metircs in background.
+// pushMetric pushs metircs in background.
 func pushMetric(addr string, interval time.Duration) {
 	if interval == zeroDuration || len(addr) == 0 {
 		log.Info("disable Prometheus push client")
@@ -209,7 +212,7 @@ func pushMetric(addr string, interval time.Duration) {
 	go prometheusPushClient(addr, interval)
 }
 
-// PrometheusPushClient pushs metrics to Prometheus Pushgateway.
+// prometheusPushClient pushs metrics to Prometheus Pushgateway.
 func prometheusPushClient(addr string, interval time.Duration) {
 	// TODO: TiDB do not have uniq name, so we use host+port to compose a name.
 	job := "tidb"
@@ -227,13 +230,13 @@ func prometheusPushClient(addr string, interval time.Duration) {
 }
 
 // parseLease parses lease argument string.
-func parseLease() time.Duration {
-	dur, err := time.ParseDuration(*lease)
+func parseLease(lease string) time.Duration {
+	dur, err := time.ParseDuration(lease)
 	if err != nil {
-		dur, err = time.ParseDuration(*lease + "s")
+		dur, err = time.ParseDuration(lease + "s")
 	}
 	if err != nil || dur < 0 {
-		log.Fatalf("invalid lease duration %s", *lease)
+		log.Fatalf("invalid lease duration %s", lease)
 	}
 	return dur
 }

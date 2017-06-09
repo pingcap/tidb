@@ -14,7 +14,6 @@
 package ddl
 
 import (
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -83,7 +82,7 @@ func (m *mockOwnerManager) SetBgOwner(isOwner bool) {
 }
 
 // CampaignOwners implements mockOwnerManager.CampaignOwners interface.
-func (m *mockOwnerManager) CampaignOwners(_ goctx.Context, _ *sync.WaitGroup) error {
+func (m *mockOwnerManager) CampaignOwners(_ goctx.Context) error {
 	m.SetOwner(true)
 	m.SetBgOwner(true)
 	return nil
