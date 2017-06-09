@@ -150,6 +150,9 @@ type SessionVars struct {
 	// version, we load an old version schema for query.
 	SnapshotInfoschema interface{}
 
+	// BinlogClient is used to write binlog.
+	BinlogClient interface{}
+
 	// GlobalVarsAccessor is used to set and get global variables.
 	GlobalVarsAccessor GlobalVarAccessor
 
