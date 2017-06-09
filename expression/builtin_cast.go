@@ -90,7 +90,17 @@ type builtinCastIntAsRealSig struct {
 
 func (b *builtinCastIntAsRealSig) evalReal(row []types.Datum) (res float64, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalInt(row, b.getCtx().GetSessionVars().StmtCtx)
-	return float64(val), isNull, errors.Trace(err)
+	if isNull || err != nil {
+		return res, isNull, errors.Trace(err)
+	}
+	if !mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
+		res = float64(val)
+	} else {
+		var uVal uint64
+		uVal, err = types.ConvertIntToUint(val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
+		res = float64(uVal)
+	}
+	return res, false, errors.Trace(err)
 }
 
 type builtinCastIntAsDecimalSig struct {
@@ -100,7 +110,19 @@ type builtinCastIntAsDecimalSig struct {
 func (b *builtinCastIntAsDecimalSig) evalDecimal(row []types.Datum) (res *types.MyDecimal, isNull bool, err error) {
 	sc := b.getCtx().GetSessionVars().StmtCtx
 	val, isNull, err := b.args[0].EvalInt(row, sc)
-	res, err = types.ProduceDecWithSpecifiedTp(types.NewDecFromInt(val), b.tp, sc)
+	if isNull || err != nil {
+		return res, isNull, errors.Trace(err)
+	}
+	if !mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
+		res = types.NewDecFromInt(val)
+	} else {
+		uVal, err := types.ConvertIntToUint(val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
+		if err != nil {
+			return res, false, errors.Trace(err)
+		}
+		res = types.NewDecFromUint(uVal)
+	}
+	res, err = types.ProduceDecWithSpecifiedTp(res, b.tp, sc)
 	return res, isNull, errors.Trace(err)
 }
 
@@ -114,7 +136,16 @@ func (b *builtinCastIntAsStringSig) evalString(row []types.Datum) (res string, i
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = types.ProduceStrWithSpecifiedTp(strconv.FormatInt(val, 10), b.tp, sc)
+	if !mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
+		res = strconv.FormatInt(val, 10)
+	} else {
+		uVal, err := types.ConvertIntToUint(val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
+		if err != nil {
+			return res, false, errors.Trace(err)
+		}
+		res = strconv.FormatUint(uVal, 10)
+	}
+	res, err = types.ProduceStrWithSpecifiedTp(res, b.tp, sc)
 	return res, false, errors.Trace(err)
 }
 
@@ -158,7 +189,18 @@ type builtinCastRealAsIntSig struct {
 
 func (b *builtinCastRealAsIntSig) evalInt(row []types.Datum) (res int64, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalReal(row, b.getCtx().GetSessionVars().StmtCtx)
-	return int64(val), isNull, errors.Trace(err)
+	if isNull || err != nil {
+		return res, isNull, errors.Trace(err)
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	if !mysql.HasUnsignedFlag(b.tp.Flag) {
+		res, err = types.ConvertFloatToInt(sc, val, types.SignedLowerBound[mysql.TypeLonglong], types.SignedUpperBound[mysql.TypeLonglong], mysql.TypeDouble)
+	} else {
+		var uintVal uint64
+		uintVal, err = types.ConvertFloatToUint(sc, val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeDouble)
+		res = int64(uintVal)
+	}
+	return res, isNull, errors.Trace(err)
 }
 
 type builtinCastRealAsDecimalSig struct {
@@ -236,11 +278,26 @@ type builtinCastDecimalAsIntSig struct {
 }
 
 func (b *builtinCastDecimalAsIntSig) evalInt(row []types.Datum) (res int64, isNull bool, err error) {
-	val, isNull, err := b.args[0].EvalDecimal(row, b.getCtx().GetSessionVars().StmtCtx)
+	sc := b.getCtx().GetSessionVars().StmtCtx
+	val, isNull, err := b.args[0].EvalDecimal(row, sc)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = val.ToInt()
+	if mysql.HasUnsignedFlag(b.tp.Flag) {
+		var (
+			floatVal float64
+			uintRes  uint64
+		)
+		floatVal, err = val.ToFloat64()
+		if err != nil {
+			return res, false, errors.Trace(err)
+		}
+		uintRes, err = types.ConvertFloatToUint(sc, floatVal, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeDouble)
+		res = int64(uintRes)
+	} else {
+		val.Round(val, 0, types.ModeHalfEven)
+		res, err = val.ToInt()
+	}
 	return res, false, errors.Trace(err)
 }
 
@@ -316,14 +373,21 @@ type builtinCastStringAsIntSig struct {
 }
 
 func (b *builtinCastStringAsIntSig) evalInt(row []types.Datum) (res int64, isNull bool, err error) {
+	sc := b.getCtx().GetSessionVars().StmtCtx
 	if IsHybridType(b.args[0]) {
-		return b.args[0].EvalInt(row, b.getCtx().GetSessionVars().StmtCtx)
+		return b.args[0].EvalInt(row, sc)
 	}
 	val, isNull, err := b.args[0].EvalString(row, b.getCtx().GetSessionVars().StmtCtx)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = strconv.ParseInt(val, 10, 64)
+	if mysql.HasUnsignedFlag(b.tp.Flag) {
+		var ures uint64
+		ures, err = types.StrToUint(sc, val)
+		res = int64(ures)
+	} else {
+		res, err = types.StrToInt(sc, val)
+	}
 	return res, false, errors.Trace(err)
 }
 
@@ -413,7 +477,9 @@ func (b *builtinCastTimeAsIntSig) evalInt(row []types.Datum) (res int64, isNull 
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = val.ToNumber().ToInt()
+	dec := val.ToNumber()
+	dec.Round(dec, 0, types.ModeHalfEven)
+	res, err = dec.ToInt()
 	return res, false, errors.Trace(err)
 }
 
@@ -497,7 +563,9 @@ func (b *builtinCastDurationAsIntSig) evalInt(row []types.Datum) (res int64, isN
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = val.ToNumber().ToInt()
+	dec := val.ToNumber()
+	dec.Round(dec, 0, types.ModeHalfEven)
+	res, err = dec.ToInt()
 	return res, false, errors.Trace(err)
 }
 
