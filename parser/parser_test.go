@@ -1130,11 +1130,6 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table t (c int) PARTITION BY RANGE (Year(VDate)) (PARTITION p1980 VALUES LESS THAN (1980) ENGINE = MyISAM, PARTITION p1990 VALUES LESS THAN (1990) ENGINE = MyISAM, PARTITION pothers VALUES LESS THAN MAXVALUE ENGINE = MyISAM)", true},
 		{"create table t (c int, `create_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '') PARTITION BY RANGE (UNIX_TIMESTAMP(create_time)) (PARTITION p201610 VALUES LESS THAN(1477929600), PARTITION p201611 VALUES LESS THAN(1480521600),PARTITION p201612 VALUES LESS THAN(1483200000),PARTITION p201701 VALUES LESS THAN(1485878400),PARTITION p201702 VALUES LESS THAN(1488297600),PARTITION p201703 VALUES LESS THAN(1490976000))", true},
 
-		// for generated column
-		{"create table t (c int, d int generated always as (c + 1) virtual)", true},
-		{"create table t (c int, d int as (c + 1) virtual)", true},
-		{"create table t (c int, d int as (c + 1) stored)", true},
-
 		// for check clause
 		{"create table t (c1 bool, c2 bool, check (c1 in (0, 1)), check (c2 in (0, 1)))", true},
 		{"CREATE TABLE Customer (SD integer CHECK (SD > 0), First_Name varchar(30));", true},
@@ -1697,4 +1692,35 @@ func (s *testParserSuite) TestAnalyze(c *C) {
 		{"analyze table t1 index a,b", true},
 	}
 	s.RunTest(c, table)
+}
+
+func (s *testParserSuite) TestGeneratedColumn(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		input string
+		ok    bool
+		expr  string
+	}{
+		{"create table t (c int, d int generated always as (c + 1) virtual)", true, "c + 1"},
+		{"create table t (c int, d int as (   c + 1   ) virtual)", true, "c + 1"},
+		{"create table t (c int, d int as (1 + 1) stored)", true, "1 + 1"},
+	}
+	parser := New()
+	for _, tt := range tests {
+		stmtNodes, err := parser.Parse(tt.input, "", "")
+		if tt.ok {
+			c.Assert(err, IsNil)
+			stmtNode := stmtNodes[0]
+			for _, col := range stmtNode.(*ast.CreateTableStmt).Cols {
+				for _, opt := range col.Options {
+					if opt.Tp == ast.ColumnOptionGenerated {
+						c.Assert(opt.Expr.Text(), Equals, tt.expr)
+					}
+				}
+			}
+		} else {
+			c.Assert(err, NotNil)
+		}
+	}
+
 }
