@@ -27,8 +27,8 @@ const (
 	// PresumeKeyNotExistsError is the option key for error.
 	// When PresumeKeyNotExists is set and condition is not match, should throw the error.
 	PresumeKeyNotExistsError
-	// BinlogData is the binlog data to write.
-	BinlogData
+	// BinlogInfo contains the binlog data and client.
+	BinlogInfo
 	// Skip existing check when "prewrite".
 	SkipCheckForWrite
 	// SchemaLeaseChecker is used for schema lease check.

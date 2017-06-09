@@ -615,12 +615,13 @@ func (c *twoPhaseCommitter) prewriteBinlog() chan error {
 	}
 	ch := make(chan error, 1)
 	go func() {
-		bin := c.txn.us.GetOption(kv.BinlogData).(*binlog.Binlog)
+		binInfo := c.txn.us.GetOption(kv.BinlogInfo).(*binloginfo.BinlogInfo)
+		bin := binInfo.Data
 		bin.StartTs = int64(c.startTS)
 		if bin.Tp == binlog.BinlogType_Prewrite {
 			bin.PrewriteKey = c.keys[0]
 		}
-		err := binloginfo.WriteBinlog(bin, c.store.clusterID)
+		err := binInfo.WriteBinlog(c.store.clusterID)
 		ch <- errors.Trace(err)
 	}()
 	return ch
@@ -630,11 +631,11 @@ func (c *twoPhaseCommitter) writeFinishBinlog(tp binlog.BinlogType, commitTS int
 	if !c.shouldWriteBinlog() {
 		return
 	}
-	bin := c.txn.us.GetOption(kv.BinlogData).(*binlog.Binlog)
-	bin.Tp = tp
-	bin.CommitTs = commitTS
+	binInfo := c.txn.us.GetOption(kv.BinlogInfo).(*binloginfo.BinlogInfo)
+	binInfo.Data.Tp = tp
+	binInfo.Data.CommitTs = commitTS
 	go func() {
-		err := binloginfo.WriteBinlog(bin, c.store.clusterID)
+		err := binInfo.WriteBinlog(c.store.clusterID)
 		if err != nil {
 			log.Errorf("failed to write binlog: %v", err)
 		}
@@ -642,11 +643,7 @@ func (c *twoPhaseCommitter) writeFinishBinlog(tp binlog.BinlogType, commitTS int
 }
 
 func (c *twoPhaseCommitter) shouldWriteBinlog() bool {
-	if binloginfo.PumpClient == nil {
-		return false
-	}
-	_, ok := c.txn.us.GetOption(kv.BinlogData).(*binlog.Binlog)
-	return ok
+	return c.txn.us.GetOption(kv.BinlogInfo) != nil
 }
 
 // TiKV recommends each RPC packet should be less than ~1MB. We keep each packet's
