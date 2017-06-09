@@ -155,45 +155,57 @@ func (t *Table) String() string {
 	return strings.Join(strs, "\n")
 }
 
-// columnIsInvalid checks if this column is invalid.
-func (t *Table) columnIsInvalid(colInfo *model.ColumnInfo) bool {
+// ColumnIsInvalid checks if this column is invalid.
+func (t *Table) ColumnIsInvalid(colInfo *model.ColumnInfo) bool {
 	if t.Pseudo {
 		return true
 	}
-	_, ok := t.Columns[colInfo.ID]
-	return !ok
+	col, ok := t.Columns[colInfo.ID]
+	return !ok || len(col.Buckets) == 0
 }
 
 // ColumnGreaterRowCount estimates the row count where the column greater than value.
 func (t *Table) ColumnGreaterRowCount(sc *variable.StatementContext, value types.Datum, colInfo *model.ColumnInfo) (float64, error) {
-	if t.columnIsInvalid(colInfo) {
+	if t.ColumnIsInvalid(colInfo) {
 		return float64(t.Count) / pseudoLessRate, nil
 	}
-	return t.Columns[colInfo.ID].greaterRowCount(sc, value)
+	hist := t.Columns[colInfo.ID]
+	result, err := hist.greaterRowCount(sc, value)
+	result *= hist.getIncreaseFactor(t.Count)
+	return result, errors.Trace(err)
 }
 
 // ColumnLessRowCount estimates the row count where the column less than value.
 func (t *Table) ColumnLessRowCount(sc *variable.StatementContext, value types.Datum, colInfo *model.ColumnInfo) (float64, error) {
-	if t.columnIsInvalid(colInfo) {
+	if t.ColumnIsInvalid(colInfo) {
 		return float64(t.Count) / pseudoLessRate, nil
 	}
-	return t.Columns[colInfo.ID].lessRowCount(sc, value)
+	hist := t.Columns[colInfo.ID]
+	result, err := hist.lessRowCount(sc, value)
+	result *= hist.getIncreaseFactor(t.Count)
+	return result, errors.Trace(err)
 }
 
 // ColumnBetweenRowCount estimates the row count where column greater or equal to a and less than b.
 func (t *Table) ColumnBetweenRowCount(sc *variable.StatementContext, a, b types.Datum, colInfo *model.ColumnInfo) (float64, error) {
-	if t.columnIsInvalid(colInfo) {
+	if t.ColumnIsInvalid(colInfo) {
 		return float64(t.Count) / pseudoBetweenRate, nil
 	}
-	return t.Columns[colInfo.ID].betweenRowCount(sc, a, b)
+	hist := t.Columns[colInfo.ID]
+	result, err := hist.betweenRowCount(sc, a, b)
+	result *= hist.getIncreaseFactor(t.Count)
+	return result, errors.Trace(err)
 }
 
 // ColumnEqualRowCount estimates the row count where the column equals to value.
 func (t *Table) ColumnEqualRowCount(sc *variable.StatementContext, value types.Datum, colInfo *model.ColumnInfo) (float64, error) {
-	if t.columnIsInvalid(colInfo) {
+	if t.ColumnIsInvalid(colInfo) {
 		return float64(t.Count) / pseudoEqualRate, nil
 	}
-	return t.Columns[colInfo.ID].equalRowCount(sc, value)
+	hist := t.Columns[colInfo.ID]
+	result, err := hist.equalRowCount(sc, value)
+	result *= hist.getIncreaseFactor(t.Count)
+	return result, errors.Trace(err)
 }
 
 // GetRowCountByIntColumnRanges estimates the row count by a slice of IntColumnRange.
@@ -211,7 +223,9 @@ func (t *Table) GetRowCountByIndexRanges(sc *variable.StatementContext, idxID in
 	if t.Pseudo || idx == nil || len(idx.Buckets) == 0 {
 		return getPseudoRowCountByIndexRanges(sc, indexRanges, inAndEQCnt, float64(t.Count))
 	}
-	return idx.getRowCount(sc, indexRanges, inAndEQCnt)
+	result, err := idx.getRowCount(sc, indexRanges, inAndEQCnt)
+	result *= idx.getIncreaseFactor(t.Count)
+	return result, errors.Trace(err)
 }
 
 // PseudoTable creates a pseudo table statistics when statistic can not be found in KV store.
