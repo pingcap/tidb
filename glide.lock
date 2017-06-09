@@ -1,5 +1,5 @@
-hash: 7526be88b2e92170cce8de92c259648e1e58a3f729c3a5974c9dca872ee44ffb
-updated: 2017-06-05T18:31:52.433575481+08:00
+hash: f1088ed50769a58cf4e9de95fac279530c47a4b35082414024a99d2ddc599865
+updated: 2017-06-08T15:30:41.381147472+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -125,7 +125,7 @@ imports:
   - pkg/raft_serverpb
   - pkg/tikvpb
 - name: github.com/pingcap/pd
-  version: fea29e342c4a7c5888cdf0b569625fbbf6d3b50f
+  version: 83d0e46737a1ca4470c89ea8b9fd7ceb1f80b4d5
   subpackages:
   - pd-client
 - name: github.com/pingcap/tipb
@@ -151,6 +151,8 @@ imports:
   - model
 - name: github.com/prometheus/procfs
   version: abf152e5f3e97f2fafac028d2cc06c1feb87ffa5
+- name: github.com/Sirupsen/logrus
+  version: ba1b36c82c5e05c4f912a88eab0dcd91a171688f
 - name: github.com/twinj/uuid
   version: 70cac2bcd273ef6a371bb96cde363d28b68734c3
 - name: golang.org/x/net
@@ -168,7 +170,7 @@ imports:
   subpackages:
   - unix
 - name: golang.org/x/text
-  version: ccbd3f7822129ff389f8ca4858a9b9d4d910531c
+  version: 4ee4af566555f5fbe026368b75596286a312663a
   subpackages:
   - encoding
   - encoding/charmap
