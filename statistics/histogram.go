@@ -323,6 +323,7 @@ func (hg *Histogram) mergeBuckets(bucketIdx int64) {
 	return
 }
 
+// getIncreaseFactor will return a factor of data increasing after the last analysis.
 func (hg *Histogram) getIncreaseFactor(totalCount int64) float64 {
 	columnCount := hg.Buckets[len(hg.Buckets)-1].Count + hg.NullCount
 	if columnCount == 0 {
