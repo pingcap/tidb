@@ -779,6 +779,14 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		if b.err != nil {
 			return nil
 		}
+		// If the schema of selectPlan contains any generated column, raises error.
+		for i := 0; i < selectPlan.Schema().Len(); i++ {
+			col := tableInfo.Columns[i]
+			if len(col.GeneratedExprString) != 0 {
+				b.err = ErrBadGeneratedColumn.GenByArgs(col.Name.O, tableInfo.Name.O)
+				return nil
+			}
+		}
 		addChild(insertPlan, selectPlan)
 	}
 	insertPlan.SetSchema(expression.NewSchema())

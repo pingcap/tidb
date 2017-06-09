@@ -1081,6 +1081,16 @@ func (s *testSuite) TestGeneratedColumnWrite(c *C) {
 	terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBadGeneratedColumn))
 
+	_, err = tk.Exec(`insert into test_gv_write values (1, 1)`)
+	c.Assert(err, NotNil)
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBadGeneratedColumn))
+
+	_, err = tk.Exec(`insert into test_gv_write select 1, 1`)
+	c.Assert(err, NotNil)
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBadGeneratedColumn))
+
 	_, err = tk.Exec(`insert into test_gv_write (a) values (3) on duplicate key update b=2`)
 	c.Assert(err, NotNil)
 	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
