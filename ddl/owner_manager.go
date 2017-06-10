@@ -117,7 +117,7 @@ var ManagerSessionTTL = 60
 // setManagerSessionTTL sets the ManagerSessionTTL value, it's used for testing.
 func setManagerSessionTTL() error {
 	ttl := os.Getenv("manager_ttl")
-	if ttl == "" {
+	if len(ttl) == 0 {
 		return nil
 	}
 	var err error
