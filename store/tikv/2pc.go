@@ -402,7 +402,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 	}
 }
 
-func (c *twoPhaseCommitter) doCommitSingleBatch(bo *Backoffer, batch batchKeys) error {
+func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) error {
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdCommit,
 		Commit: &pb.CommitRequest{
@@ -412,8 +412,19 @@ func (c *twoPhaseCommitter) doCommitSingleBatch(bo *Backoffer, batch batchKeys) 
 		},
 	}
 
+	// If we fail to receive response for the request that commits primary key, it will be undetermined whether this
+	// transaction has been successfully committed.
+	// Under this circumstance,  we can not declare the commit is complete (may lead to data lost), nor can we throw
+	// an error (may lead to the duplicated key error when upper level restarts the transaction). Currently the best
+	// solution is to populate this error and let upper layer drop the connection to the corresponding mysql client.
+	isPrimary := bytes.Compare(batch.keys[0], c.primary()) == 0
+
 	resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 	if err != nil {
+		if isPrimary {
+			// change the Cause of the error to be returned
+			return errors.Trace(errors.Wrap(err, terror.ErrResultUndetermined))
+		}
 		return errors.Trace(err)
 	}
 	regionErr, err := resp.GetRegionError()
@@ -454,21 +465,6 @@ func (c *twoPhaseCommitter) doCommitSingleBatch(bo *Backoffer, batch batchKeys) 
 	// We mark transaction's status committed when we receive the first success response.
 	c.mu.committed = true
 	return nil
-}
-
-func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) error {
-	// If we fail to receive response for the request that commits primary key, it will be undetermined whether this
-	// transaction has been successfully committed.
-	// Under this circumstance,  we can not declare the commit is complete (may lead to data lost), nor can we throw
-	// an error (may lead to the duplicated key error when upper level restarts the transaction). Currently the best
-	// solution is to populate this error and let upper layer drop the connection to the corresponding mysql client.
-	isPrimary := bytes.Compare(batch.keys[0], c.primary()) == 0
-	err := c.doCommitSingleBatch(bo, batch)
-	if err != nil && isPrimary {
-		// change the Cause of the error to be returned
-		return errors.Wrap(err, terror.ErrResultUndetermined)
-	}
-	return err
 }
 
 func (c *twoPhaseCommitter) cleanupSingleBatch(bo *Backoffer, batch batchKeys) error {
