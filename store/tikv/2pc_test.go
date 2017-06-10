@@ -403,13 +403,12 @@ func (s *testCommitterSuite) TestCommitPrimaryErrors(c *C) {
 		s.store.client = save
 	}()
 
-	// Ensure it returns ErrResultUndetermined for rpc error.
+	// The rpc error may be wrapped to ErrResultUndetermined.
 	t1 := s.begin(c)
 	err := t1.Set([]byte("a"), []byte("a1"))
 	c.Assert(err, IsNil)
 	err = t1.Commit()
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue, Commentf("%s", errors.ErrorStack(err)))
 
 	// Ensure it returns the original error without wrapped to ErrResultUndetermined
 	// if it exceeds max retry timeout on RegionError.
