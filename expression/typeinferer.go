@@ -202,11 +202,11 @@ func toArithType(ft *types.FieldType) (tp byte) {
 func mergeArithType(fta, ftb *types.FieldType) byte {
 	a, b := toArithType(fta), toArithType(ftb)
 	switch a {
-	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat:
+	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeEnum, mysql.TypeSet:
 		return mysql.TypeDouble
 	}
 	switch b {
-	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat:
+	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeEnum, mysql.TypeSet:
 		return mysql.TypeDouble
 	}
 	if a == mysql.TypeNewDecimal || b == mysql.TypeNewDecimal {

@@ -60,6 +60,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"trailing", "true", "union", "unique", "unlock", "unsigned",
 		"update", "use", "using", "utc_date", "values", "varbinary", "varchar",
 		"when", "where", "write", "xor", "year_month", "zerofill",
+		"generated", "virtual", "stored",
 		// TODO: support the following keywords
 		// "delayed" , "high_priority" , "low_priority", "with",
 	}
@@ -92,6 +93,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest", "least",
 		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events", "less", "than", "timediff",
 		"ln", "log", "log2", "log10", "timestampdiff", "pi", "quote", "none", "super", "default", "shared", "exclusive",
+		"always",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -1692,4 +1694,35 @@ func (s *testParserSuite) TestAnalyze(c *C) {
 		{"analyze table t1 index a,b", true},
 	}
 	s.RunTest(c, table)
+}
+
+func (s *testParserSuite) TestGeneratedColumn(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		input string
+		ok    bool
+		expr  string
+	}{
+		{"create table t (c int, d int generated always as (c + 1) virtual)", true, "c + 1"},
+		{"create table t (c int, d int as (   c + 1   ) virtual)", true, "c + 1"},
+		{"create table t (c int, d int as (1 + 1) stored)", true, "1 + 1"},
+	}
+	parser := New()
+	for _, tt := range tests {
+		stmtNodes, err := parser.Parse(tt.input, "", "")
+		if tt.ok {
+			c.Assert(err, IsNil)
+			stmtNode := stmtNodes[0]
+			for _, col := range stmtNode.(*ast.CreateTableStmt).Cols {
+				for _, opt := range col.Options {
+					if opt.Tp == ast.ColumnOptionGenerated {
+						c.Assert(opt.Expr.Text(), Equals, tt.expr)
+					}
+				}
+			}
+		} else {
+			c.Assert(err, NotNil)
+		}
+	}
+
 }
