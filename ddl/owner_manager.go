@@ -114,7 +114,7 @@ func (m *ownerManager) SetBgOwner(isOwner bool) {
 // ManagerSessionTTL is the etcd session's TTL in seconds. It's exported for testing.
 var ManagerSessionTTL = 60
 
-// setManagerSessionTTL set the ManagerSessionTTL value, it's used for testing.
+// setManagerSessionTTL sets the ManagerSessionTTL value, it's used for testing.
 func setManagerSessionTTL() error {
 	ttl := os.Getenv("manager_ttl")
 	if ttl == "" {
