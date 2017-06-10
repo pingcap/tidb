@@ -127,8 +127,10 @@ func (b *baseBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) 
 	if err != nil || val.IsNull() {
 		return types.Time{}, val.IsNull(), errors.Trace(err)
 	}
-	dateVal, err := val.ConvertTo(b.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeDatetime))
-	return dateVal.GetMysqlTime(), false, errors.Trace(err)
+	if val.Kind() != types.KindMysqlTime {
+		val, err = val.ConvertTo(b.ctx.GetSessionVars().StmtCtx, &types.FieldType{Tp: mysql.TypeDatetime, Decimal: types.MaxFsp})
+	}
+	return val.GetMysqlTime(), false, errors.Trace(err)
 }
 
 func (b *baseBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
@@ -136,8 +138,10 @@ func (b *baseBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool,
 	if err != nil || val.IsNull() {
 		return types.Duration{}, val.IsNull(), errors.Trace(err)
 	}
-	durationVal, err := val.ConvertTo(b.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeDuration))
-	return durationVal.GetMysqlDuration(), false, errors.Trace(err)
+	if val.Kind() != types.KindMysqlDuration {
+		val, err = val.ConvertTo(b.ctx.GetSessionVars().StmtCtx, &types.FieldType{Tp: mysql.TypeDuration, Decimal: types.MaxFsp})
+	}
+	return val.GetMysqlDuration(), false, errors.Trace(err)
 }
 
 // equal only checks if both functions are non-deterministic and if these arguments are same.
