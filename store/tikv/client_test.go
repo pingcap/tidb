@@ -33,11 +33,12 @@ func (s *testClientSuite) TestConn(c *C) {
 	client := newRPCClient()
 
 	addr := "127.0.0.1:6379"
-	_, err := client.getConn(addr)
+	conn1, err := client.getConn(addr)
 	c.Assert(err, IsNil)
 
-	_, err = client.getConn(addr)
+	conn2, err := client.getConn(addr)
 	c.Assert(err, IsNil)
+	c.Assert(conn2, Not(Equals), conn1)
 
 	client.Close()
 	conn3, err := client.getConn(addr)
