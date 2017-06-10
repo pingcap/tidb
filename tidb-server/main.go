@@ -195,14 +195,14 @@ func createBinlogClient() {
 	if err != nil {
 		log.Fatal(errors.ErrorStack(err))
 	}
-	binloginfo.PumpClient = binlog.NewPumpClient(clientCon)
+	binloginfo.SetPumpClient(binlog.NewPumpClient(clientCon))
 	log.Infof("created binlog client at %s", *binlogSocket)
 }
 
 // Prometheus push.
 const zeroDuration = time.Duration(0)
 
-// PushMetric pushs metircs in background.
+// pushMetric pushs metircs in background.
 func pushMetric(addr string, interval time.Duration) {
 	if interval == zeroDuration || len(addr) == 0 {
 		log.Info("disable Prometheus push client")
@@ -212,7 +212,7 @@ func pushMetric(addr string, interval time.Duration) {
 	go prometheusPushClient(addr, interval)
 }
 
-// PrometheusPushClient pushs metrics to Prometheus Pushgateway.
+// prometheusPushClient pushs metrics to Prometheus Pushgateway.
 func prometheusPushClient(addr string, interval time.Duration) {
 	// TODO: TiDB do not have uniq name, so we use host+port to compose a name.
 	job := "tidb"
