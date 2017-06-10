@@ -409,7 +409,7 @@ func (s *testCommitterSuite) TestCommitPrimaryErrors(c *C) {
 	c.Assert(err, IsNil)
 	err = t1.Commit()
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue)
+	c.Assert(terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue, Commentf("%s", errors.ErrorStack(err)))
 
 	// Ensure it returns the original error without wrapped to ErrResultUndetermined
 	// if it exceeds max retry timeout on RegionError.
