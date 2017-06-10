@@ -15,6 +15,8 @@ package ddl
 
 import (
 	"math"
+	"os"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -112,6 +114,17 @@ func (m *ownerManager) SetBgOwner(isOwner bool) {
 // ManagerSessionTTL is the etcd session's TTL in seconds. It's exported for testing.
 var ManagerSessionTTL = 60
 
+// setManagerSessionTTL set the ManagerSessionTTL value, it's used for testing.
+func setManagerSessionTTL() error {
+	ttl := os.Getenv("manager_ttl")
+	if ttl == "" {
+		return nil
+	}
+	var err error
+	ManagerSessionTTL, err = strconv.Atoi(ttl)
+	return errors.Trace(err)
+}
+
 func newSession(ctx goctx.Context, etcdCli *clientv3.Client, retryCnt, ttl int) (*concurrency.Session, error) {
 	var err error
 	var etcdSession *concurrency.Session
@@ -133,6 +146,11 @@ func newSession(ctx goctx.Context, etcdCli *clientv3.Client, retryCnt, ttl int) 
 
 // CampaignOwners implements OwnerManager.CampaignOwners interface.
 func (m *ownerManager) CampaignOwners(ctx goctx.Context) error {
+	err := setManagerSessionTTL()
+	if err != nil {
+		log.Warnf("[ddl] set manager session TTL failed %v", err)
+		return errors.Trace(err)
+	}
 	ddlSession, err := newSession(ctx, m.etcdCli, newSessionDefaultRetryCnt, ManagerSessionTTL)
 	if err != nil {
 		return errors.Trace(err)
@@ -162,8 +180,13 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, etcdSession *concurrency.
 				return
 			}
 		case <-ctx.Done():
-			log.Infof("[ddl] break %s campaign loop", key)
-			return
+			// Revoke the session lease.
+			// If revoke takes longer than the ttl, lease is expired anyway.
+			ctx, cancel := goctx.WithTimeout(goctx.Background(),
+				time.Duration(ManagerSessionTTL)*time.Second)
+			_, err = m.etcdCli.Revoke(ctx, etcdSession.Lease())
+			cancel()
+			log.Infof("[ddl] break %s campaign loop err %v", key, err)
 		default:
 		}
 
