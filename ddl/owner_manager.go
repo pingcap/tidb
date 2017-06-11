@@ -116,13 +116,16 @@ var ManagerSessionTTL = 60
 
 // setManagerSessionTTL sets the ManagerSessionTTL value, it's used for testing.
 func setManagerSessionTTL() error {
-	ttl := os.Getenv("manager_ttl")
-	if len(ttl) == 0 {
+	ttlStr := os.Getenv("manager_ttl")
+	if len(ttlStr) == 0 {
 		return nil
 	}
-	var err error
-	ManagerSessionTTL, err = strconv.Atoi(ttl)
-	return errors.Trace(err)
+	ttl, err := strconv.Atoi(ttlStr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ManagerSessionTTL = ttl
+	return nil
 }
 
 func newSession(ctx goctx.Context, etcdCli *clientv3.Client, retryCnt, ttl int) (*concurrency.Session, error) {
@@ -146,11 +149,6 @@ func newSession(ctx goctx.Context, etcdCli *clientv3.Client, retryCnt, ttl int) 
 
 // CampaignOwners implements OwnerManager.CampaignOwners interface.
 func (m *ownerManager) CampaignOwners(ctx goctx.Context) error {
-	err := setManagerSessionTTL()
-	if err != nil {
-		log.Warnf("[ddl] set manager session TTL failed %v", err)
-		return errors.Trace(err)
-	}
 	ddlSession, err := newSession(ctx, m.etcdCli, newSessionDefaultRetryCnt, ManagerSessionTTL)
 	if err != nil {
 		return errors.Trace(err)
@@ -261,5 +259,12 @@ func (m *ownerManager) watchOwner(ctx goctx.Context, etcdSession *concurrency.Se
 		case <-ctx.Done():
 			return
 		}
+	}
+}
+
+func init() {
+	err := setManagerSessionTTL()
+	if err != nil {
+		log.Warnf("[ddl] set manager session TTL failed %v", err)
 	}
 }
