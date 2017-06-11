@@ -34,6 +34,7 @@ func truncateStr(str string, flen int) string {
 	return str
 }
 
+// UnsignedUpperBound indicates the max uint64 values of different mysql types.
 var UnsignedUpperBound = map[byte]uint64{
 	mysql.TypeTiny:     math.MaxUint8,
 	mysql.TypeShort:    math.MaxUint16,
@@ -45,6 +46,7 @@ var UnsignedUpperBound = map[byte]uint64{
 	mysql.TypeSet:      math.MaxUint64,
 }
 
+// SignedUpperBound indicates the max int64 values of different mysql types.
 var SignedUpperBound = map[byte]int64{
 	mysql.TypeTiny:     math.MaxInt8,
 	mysql.TypeShort:    math.MaxInt16,
@@ -53,6 +55,7 @@ var SignedUpperBound = map[byte]int64{
 	mysql.TypeLonglong: math.MaxInt64,
 }
 
+// SignedLowerBound indicates the min int64 values of different mysql types.
 var SignedLowerBound = map[byte]int64{
 	mysql.TypeTiny:     math.MinInt8,
 	mysql.TypeShort:    math.MinInt16,
@@ -61,6 +64,7 @@ var SignedLowerBound = map[byte]int64{
 	mysql.TypeLonglong: math.MinInt64,
 }
 
+// ConvertFloatToInt converts a float64 value to a int value.
 func ConvertFloatToInt(sc *variable.StatementContext, fval float64, lowerBound, upperBound int64, tp byte) (int64, error) {
 	val := RoundFloat(fval)
 	if val < float64(lowerBound) {
@@ -73,6 +77,7 @@ func ConvertFloatToInt(sc *variable.StatementContext, fval float64, lowerBound, 
 	return int64(val), nil
 }
 
+// ConvertIntToInt converts an int value to another int value of different precision.
 func ConvertIntToInt(val int64, lowerBound int64, upperBound int64, tp byte) (int64, error) {
 	if val < lowerBound {
 		return lowerBound, overflow(val, tp)
@@ -85,6 +90,7 @@ func ConvertIntToInt(val int64, lowerBound int64, upperBound int64, tp byte) (in
 	return val, nil
 }
 
+// ConvertUintToInt converts an uint value to an int value.
 func ConvertUintToInt(val uint64, upperBound int64, tp byte) (int64, error) {
 	if val > uint64(upperBound) {
 		return upperBound, overflow(val, tp)
@@ -93,6 +99,7 @@ func ConvertUintToInt(val uint64, upperBound int64, tp byte) (int64, error) {
 	return int64(val), nil
 }
 
+// ConvertIntToUint converts an int value to an uint value.
 func ConvertIntToUint(val int64, upperBound uint64, tp byte) (uint64, error) {
 	if val < 0 {
 		return 0, overflow(val, tp)
@@ -105,6 +112,7 @@ func ConvertIntToUint(val int64, upperBound uint64, tp byte) (uint64, error) {
 	return uint64(val), nil
 }
 
+// ConvertUintToUint converts an uint value to another uint value of different precision.
 func ConvertUintToUint(val uint64, upperBound uint64, tp byte) (uint64, error) {
 	if val > upperBound {
 		return upperBound, overflow(val, tp)
@@ -113,6 +121,7 @@ func ConvertUintToUint(val uint64, upperBound uint64, tp byte) (uint64, error) {
 	return val, nil
 }
 
+// ConvertFloatToUint converts a float value to an uint value.
 func ConvertFloatToUint(sc *variable.StatementContext, fval float64, upperBound uint64, tp byte) (uint64, error) {
 	val := RoundFloat(fval)
 	if val < 0 {
