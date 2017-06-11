@@ -284,6 +284,10 @@ func (c *mockPDClient) GetTS(ctx goctx.Context) (int64, int64, error) {
 	return c.client.GetTS(ctx)
 }
 
+func (c *mockPDClient) GetTSAsync(ctx goctx.Context) pd.TSFuture {
+	return nil
+}
+
 func (c *mockPDClient) GetRegion(ctx goctx.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
 	c.RLock()
 	defer c.RUnlock()
