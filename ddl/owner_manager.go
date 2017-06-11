@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"math"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -40,26 +39,27 @@ type OwnerManager interface {
 	// SetOwner sets whether the ownerManager is the background owner.
 	SetBgOwner(isOwner bool)
 	// CampaignOwners campaigns the DDL owner and the background owner.
-	CampaignOwners(ctx goctx.Context, wg *sync.WaitGroup) error
+	CampaignOwners(ctx goctx.Context) error
 	// Cancel cancels this etcd ownerManager campaign.
 	Cancel()
 }
 
 const (
-	ddlOwnerKey               = "/tidb/ddl/owner"
-	bgOwnerKey                = "/tidb/ddl/bg/owner"
+	// DDLOwnerKey is the ddl owner path that is saved to etcd, and it's exported for testing.
+	DDLOwnerKey = "/tidb/ddl/fg/owner"
+	// BgOwnerKey is the background owner path that is saved to etcd, and it's exported for testing.
+	BgOwnerKey                = "/tidb/ddl/bg/owner"
 	newSessionDefaultRetryCnt = 3
 	newSessionRetryUnlimited  = math.MaxInt64
 )
 
 // ownerManager represents the structure which is used for electing owner.
 type ownerManager struct {
-	ddlOwner    int32
-	bgOwner     int32
-	ddlID       string // id is the ID of DDL.
-	etcdCli     *clientv3.Client
-	etcdSession *concurrency.Session
-	cancel      goctx.CancelFunc
+	ddlOwner int32
+	bgOwner  int32
+	ddlID    string // id is the ID of DDL.
+	etcdCli  *clientv3.Client
+	cancel   goctx.CancelFunc
 }
 
 // NewOwnerManager creates a new OwnerManager.
@@ -109,14 +109,15 @@ func (m *ownerManager) SetBgOwner(isOwner bool) {
 	}
 }
 
-// newSessionTTL is the etcd session's TTL in seconds.
-const newSessionTTL = 10
+// NewSessionTTL is the etcd session's TTL in seconds. It's exported for testing.
+var NewSessionTTL = 60
 
-func (m *ownerManager) newSession(ctx goctx.Context, retryCnt int) error {
+func (m *ownerManager) newSession(ctx goctx.Context, retryCnt int) (*concurrency.Session, error) {
 	var err error
+	var etcdSession *concurrency.Session
 	for i := 0; i < retryCnt; i++ {
-		m.etcdSession, err = concurrency.NewSession(m.etcdCli,
-			concurrency.WithTTL(newSessionTTL), concurrency.WithContext(ctx))
+		etcdSession, err = concurrency.NewSession(m.etcdCli,
+			concurrency.WithTTL(NewSessionTTL), concurrency.WithContext(ctx))
 		if err == nil {
 			break
 		}
@@ -127,32 +128,35 @@ func (m *ownerManager) newSession(ctx goctx.Context, retryCnt int) error {
 		time.Sleep(200 * time.Millisecond)
 		continue
 	}
-	return errors.Trace(err)
+	return etcdSession, errors.Trace(err)
 }
 
 // CampaignOwners implements OwnerManager.CampaignOwners interface.
-func (m *ownerManager) CampaignOwners(ctx goctx.Context, wg *sync.WaitGroup) error {
-	err := m.newSession(ctx, newSessionDefaultRetryCnt)
+func (m *ownerManager) CampaignOwners(ctx goctx.Context) error {
+	ddlSession, err := m.newSession(ctx, newSessionDefaultRetryCnt)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	bgSession, err := m.newSession(ctx, newSessionDefaultRetryCnt)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	wg.Add(2)
 	ddlCtx, _ := goctx.WithCancel(ctx)
-	go m.campaignLoop(ddlCtx, ddlOwnerKey, wg)
+	go m.campaignLoop(ddlCtx, ddlSession, DDLOwnerKey)
 
 	bgCtx, _ := goctx.WithCancel(ctx)
-	go m.campaignLoop(bgCtx, bgOwnerKey, wg)
+	go m.campaignLoop(bgCtx, bgSession, BgOwnerKey)
 	return nil
 }
 
-func (m *ownerManager) campaignLoop(ctx goctx.Context, key string, wg *sync.WaitGroup) {
-	defer wg.Done()
+func (m *ownerManager) campaignLoop(ctx goctx.Context, etcdSession *concurrency.Session, key string) {
+	var err error
 	for {
 		select {
-		case <-m.etcdSession.Done():
-			log.Info("[ddl] etcd session is done, creates a new one")
-			err := m.newSession(ctx, newSessionRetryUnlimited)
+		case <-etcdSession.Done():
+			log.Info("[ddl] %s etcd session is done, creates a new one", key)
+			etcdSession, err = m.newSession(ctx, newSessionRetryUnlimited)
 			if err != nil {
 				log.Infof("[ddl] break %s campaign loop, err %v", key, err)
 				return
@@ -163,8 +167,8 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, key string, wg *sync.Wait
 		default:
 		}
 
-		elec := concurrency.NewElection(m.etcdSession, key)
-		err := elec.Campaign(ctx, m.ddlID)
+		elec := concurrency.NewElection(etcdSession, key)
+		err = elec.Campaign(ctx, m.ddlID)
 		if err != nil {
 			log.Infof("[ddl] %s ownerManager %s failed to campaign, err %v", key, m.ddlID, err)
 			if isContextFinished(err) {
@@ -174,36 +178,44 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, key string, wg *sync.Wait
 			continue
 		}
 
-		// Get owner information.
-		resp, err := elec.Leader(ctx)
+		ownerKey, err := GetOwnerInfo(ctx, elec, key, m.ddlID)
 		if err != nil {
-			// If no leader elected currently, it returns ErrElectionNoLeader.
-			log.Infof("[ddl] failed to get leader, err %v", err)
 			continue
 		}
-		leader := string(resp.Kvs[0].Value)
-		log.Infof("[ddl] %s ownerManager is %s, owner is %v", key, m.ddlID, leader)
-		if leader == m.ddlID {
-			m.setOwnerVal(key, true)
-		} else {
-			log.Warnf("[ddl] ownerManager %s isn't the owner", m.ddlID)
-			continue
-		}
+		m.setOwnerVal(key, true)
 
-		m.watchOwner(ctx, string(resp.Kvs[0].Key))
+		m.watchOwner(ctx, etcdSession, ownerKey)
 		m.setOwnerVal(key, false)
 	}
 }
 
+// GetOwnerInfo gets the owner information.
+func GetOwnerInfo(ctx goctx.Context, elec *concurrency.Election, key, id string) (string, error) {
+	resp, err := elec.Leader(ctx)
+	if err != nil {
+		// If no leader elected currently, it returns ErrElectionNoLeader.
+		log.Infof("[ddl] failed to get leader, err %v", err)
+		return "", errors.Trace(err)
+	}
+	ownerID := string(resp.Kvs[0].Value)
+	log.Infof("[ddl] %s ownerManager is %s, owner is %v", key, id, ownerID)
+	if ownerID != id {
+		log.Warnf("[ddl] ownerManager %s isn't the owner", id)
+		return "", errors.New("ownerInfoNotMatch")
+	}
+
+	return string(resp.Kvs[0].Key), nil
+}
+
 func (m *ownerManager) setOwnerVal(key string, val bool) {
-	if key == ddlOwnerKey {
+	if key == DDLOwnerKey {
 		m.SetOwner(val)
 	} else {
 		m.SetBgOwner(val)
 	}
 }
 
-func (m *ownerManager) watchOwner(ctx goctx.Context, key string) {
+func (m *ownerManager) watchOwner(ctx goctx.Context, etcdSession *concurrency.Session, key string) {
 	log.Debugf("[ddl] ownerManager %s watch owner key %v", m.ddlID, key)
 	watchCh := m.etcdCli.Watch(ctx, key)
 	for {
@@ -221,7 +233,7 @@ func (m *ownerManager) watchOwner(ctx goctx.Context, key string) {
 					return
 				}
 			}
-		case <-m.etcdSession.Done():
+		case <-etcdSession.Done():
 			return
 		case <-ctx.Done():
 			return
