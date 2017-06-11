@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
+	"math"
 )
 
 func (s *testEvaluatorSuite) TestCast(c *C) {
@@ -852,6 +853,11 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 		},
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
+			[]types.Datum{types.NewDatum(123.555)},
+			124, 123.555, types.NewDecFromFloatForTest(123.555), "123.555",
+		},
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
 			[]types.Datum{types.NewDatum(123.123)},
 			123, 123.123, types.NewDecFromFloatForTest(123.123), "123.123",
 		},
@@ -931,6 +937,40 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 		c.Assert(isNull, Equals, false)
 		c.Assert(strRes, Equals, t.stringRes)
 	}
+
+	unsignedIntExpr := &Column{RetType: &types.FieldType{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}, Index: 0}
+
+	// test cast unsigned int as string.
+	strExpr, err := WrapWithCastAsString(unsignedIntExpr, ctx)
+	c.Assert(err, IsNil)
+	c.Assert(strExpr.GetTypeClass(), Equals, types.ClassString)
+	strRes, isNull, err := strExpr.EvalString([]types.Datum{types.NewUintDatum(math.MaxUint64)}, sc)
+	// overflow
+	c.Assert(err, NotNil)
+	c.Assert(isNull, Equals, false)
+
+	strRes, isNull, err = strExpr.EvalString([]types.Datum{types.NewUintDatum(1234)}, sc)
+	c.Assert(err, IsNil)
+	c.Assert(isNull, Equals, false)
+	c.Assert(strRes, Equals, strconv.FormatUint(uint64(1234), 10))
+
+	// test cast unsigned int as decimal.
+	decExpr, err := WrapWithCastAsDecimal(unsignedIntExpr, ctx)
+	c.Assert(err, IsNil)
+	c.Assert(decExpr.GetTypeClass(), Equals, types.ClassDecimal)
+	decRes, isNull, err := decExpr.EvalDecimal([]types.Datum{types.NewUintDatum(uint64(1234))}, sc)
+	c.Assert(err, IsNil)
+	c.Assert(isNull, Equals, false)
+	c.Assert(decRes.Compare(types.NewDecFromUint(uint64(1234))), Equals, 0)
+
+	// test cast unsigned int as Time.
+	timeExpr, err := WrapWithCastAsTime(unsignedIntExpr, types.NewFieldType(mysql.TypeDatetime), ctx)
+	c.Assert(err, IsNil)
+	c.Assert(timeExpr.GetType().Tp, Equals, mysql.TypeDatetime)
+	timeRes, isNull, err := timeExpr.EvalTime([]types.Datum{types.NewUintDatum(uint64(curTimeInt))}, sc)
+	c.Assert(err, IsNil)
+	c.Assert(isNull, Equals, false)
+	c.Assert(timeRes.Compare(tm), Equals, 0)
 }
 
 func (s *testEvaluatorSuite) TestWrapWithCastAsTime(c *C) {
