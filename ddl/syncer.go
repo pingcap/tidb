@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
+	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/terror"
@@ -44,9 +45,14 @@ const (
 	checkVersInterval    = 20 * time.Millisecond
 )
 
-// CheckVersFirstWaitTime is a waitting time before the owner checks all the servers of the schema version,
-// and it's an exported variable for testing.
-var CheckVersFirstWaitTime = 50 * time.Millisecond
+var (
+	// CheckVersFirstWaitTime is a waitting time before the owner checks all the servers of the schema version,
+	// and it's an exported variable for testing.
+	CheckVersFirstWaitTime = 50 * time.Millisecond
+	// SyncerSessionTTL is the etcd session's TTL in seconds.
+	// and it's an exported variable for testing.
+	SyncerSessionTTL = 10 * 60
+)
 
 // SchemaSyncer is used to synchronize schema version between the DDL worker leader and followers through etcd.
 type SchemaSyncer interface {
@@ -61,6 +67,10 @@ type SchemaSyncer interface {
 	OwnerUpdateGlobalVersion(ctx goctx.Context, version int64) error
 	// GlobalVersionCh gets the chan for watching global version.
 	GlobalVersionCh() clientv3.WatchChan
+	// Done() returns a channel that closes when the syncer is no longer being refreshed.
+	Done() <-chan struct{}
+	// Restart restarts the syncer when it's on longer being refreshed.
+	Restart(ctx goctx.Context) error
 	// OwnerCheckAllVersions checks whether all followers' schema version are equal to
 	// the latest schema version. If the result is false, wait for a while and check again util the processing time reach 2 * lease.
 	// It returns until all servers' versions are equal to the latest version or the ctx is done.
@@ -70,6 +80,7 @@ type SchemaSyncer interface {
 type schemaVersionSyncer struct {
 	selfSchemaVerPath string
 	etcdCli           *clientv3.Client
+	session           *concurrency.Session
 	globalVerCh       clientv3.WatchChan
 }
 
@@ -81,7 +92,8 @@ func NewSchemaSyncer(etcdCli *clientv3.Client, id string) SchemaSyncer {
 	}
 }
 
-func (s *schemaVersionSyncer) putKV(ctx goctx.Context, retryCnt int, key, val string) error {
+func (s *schemaVersionSyncer) putKV(ctx goctx.Context, retryCnt int, key, val string,
+	opts ...clientv3.OpOption) error {
 	var err error
 	for i := 0; i < retryCnt; i++ {
 		select {
@@ -91,7 +103,7 @@ func (s *schemaVersionSyncer) putKV(ctx goctx.Context, retryCnt int, key, val st
 		}
 
 		childCtx, cancel := goctx.WithTimeout(ctx, keyOpDefaultTimeout)
-		_, err = s.etcdCli.Put(childCtx, key, val)
+		_, err = s.etcdCli.Put(childCtx, key, val, opts...)
 		cancel()
 		if err == nil {
 			return nil
@@ -111,8 +123,29 @@ func (s *schemaVersionSyncer) Init(ctx goctx.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	s.session, err = newSession(ctx, s.etcdCli, newSessionDefaultRetryCnt, SyncerSessionTTL)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	s.globalVerCh = s.etcdCli.Watch(ctx, DDLGlobalSchemaVersion)
-	return s.putKV(ctx, keyOpDefaultRetryCnt, s.selfSchemaVerPath, InitialVersion)
+	return s.putKV(ctx, keyOpDefaultRetryCnt, s.selfSchemaVerPath, InitialVersion,
+		clientv3.WithLease(s.session.Lease()))
+}
+
+// Done implements SchemaSyncer.Done interface.
+func (s *schemaVersionSyncer) Done() <-chan struct{} {
+	return s.session.Done()
+}
+
+// Restart implements SchemaSyncer.Restart interface.
+func (s *schemaVersionSyncer) Restart(ctx goctx.Context) error {
+	var err error
+	s.session, err = newSession(ctx, s.etcdCli, newSessionRetryUnlimited, SyncerSessionTTL)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return s.putKV(ctx, putKeyRetryUnlimited, s.selfSchemaVerPath, InitialVersion,
+		clientv3.WithLease(s.session.Lease()))
 }
 
 // GlobalVersionCh implements SchemaSyncer.GlobalVersionCh interface.
@@ -123,7 +156,8 @@ func (s *schemaVersionSyncer) GlobalVersionCh() clientv3.WatchChan {
 // UpdateSelfVersion implements SchemaSyncer.UpdateSelfVersion interface.
 func (s *schemaVersionSyncer) UpdateSelfVersion(ctx goctx.Context, version int64) error {
 	ver := strconv.FormatInt(version, 10)
-	return s.putKV(ctx, putKeyNoRetry, s.selfSchemaVerPath, ver)
+	return s.putKV(ctx, putKeyNoRetry, s.selfSchemaVerPath, ver,
+		clientv3.WithLease(s.session.Lease()))
 }
 
 // OwnerUpdateGlobalVersion implements SchemaSyncer.OwnerUpdateGlobalVersion interface.

@@ -302,6 +302,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	// TODO: Reset ticker or make interval longer.
 	ticker := time.NewTicker(lease / 2)
 	defer ticker.Stop()
+	syncer := do.ddl.SchemaSyncer()
 
 	for {
 		select {
@@ -310,11 +311,20 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			if err != nil {
 				log.Errorf("[ddl] reload schema in loop err %v", errors.ErrorStack(err))
 			}
-		case <-do.ddl.SchemaSyncer().GlobalVersionCh():
+		case <-syncer.GlobalVersionCh():
 			err := do.Reload()
 			if err != nil {
 				log.Errorf("[ddl] reload schema in loop err %v", errors.ErrorStack(err))
 			}
+		case <-syncer.Done():
+			// The schema syncer stops, we need stop the schema validator to synchronize the schema version.
+			do.SchemaValidator.Stop()
+			err := syncer.Restart(goctx.Background())
+			if err != nil {
+				log.Errorf("[ddl] reload schema in loop, schema syncer restart err %v", errors.ErrorStack(err))
+				break
+			}
+			do.SchemaValidator.Restart()
 		case <-do.exit:
 			return
 		}
