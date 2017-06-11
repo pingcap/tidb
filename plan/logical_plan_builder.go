@@ -228,14 +228,17 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	addChild(joinPlan, rightPlan)
 	joinPlan.SetSchema(newSchema)
 
-	var lCoalesced, rCoalesced *expression.Schema
-	if left, ok := leftPlan.(*LogicalJoin); ok && left.coalescedSchema != nil {
-		lCoalesced = left.coalescedSchema
+	// Merge sub join's redundantSchema into this join plan. When handle query like
+	// select t2.a from (t1 join t2 using (a)) join t3 using (a);
+	// we can simply search in the top level join plan to find redundant column.
+	var lRedundant, rRedundant *expression.Schema
+	if left, ok := leftPlan.(*LogicalJoin); ok && left.redundantSchema != nil {
+		lRedundant = left.redundantSchema
 	}
-	if right, ok := rightPlan.(*LogicalJoin); ok && right.coalescedSchema != nil {
-		rCoalesced = right.coalescedSchema
+	if right, ok := rightPlan.(*LogicalJoin); ok && right.redundantSchema != nil {
+		rRedundant = right.redundantSchema
 	}
-	joinPlan.coalescedSchema = expression.MergeSchema(lCoalesced, rCoalesced)
+	joinPlan.redundantSchema = expression.MergeSchema(lRedundant, rRedundant)
 
 	if b.TableHints() != nil {
 		joinPlan.preferMergeJoin = b.TableHints().ifPreferMergeJoin(leftAlias, rightAlias)
@@ -281,15 +284,20 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	return joinPlan
 }
 
+// buildUsingClause do redundant column elimination and column ordering based on using clause.
+// According to standard SQL, producing this display order:
+// First, coalesced common columns of the two joined tables, in the order in which they occur in the first table.
+// Second, columns unique to the first table, in order in which they occur in that table.
+// Third, columns unique to the second table, in order in which they occur in that table.
 func (b *planBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, join *ast.Join) error {
 	lsc := leftPlan.Schema().Clone()
 	rsc := rightPlan.Schema().Clone()
 
 	schemaCols := make([]*expression.Column, 0, len(lsc.Columns)+len(rsc.Columns)-len(join.Using))
-	coalescedCols := make([]*expression.Column, 0, len(join.Using))
+	redundantCols := make([]*expression.Column, 0, len(join.Using))
 	conds := make([]*expression.ScalarFunction, 0, len(join.Using))
 
-	coalesced := make(map[string]bool, len(join.Using))
+	redundant := make(map[string]bool, len(join.Using))
 	for _, col := range join.Using {
 		var (
 			err    error
@@ -303,8 +311,9 @@ func (b *planBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan Logic
 		if rc, err = rsc.FindColumn(col); err != nil {
 			return errors.Trace(err)
 		}
-		coalesced[col.Name.L] = true
+		redundant[col.Name.L] = true
 		if lc == nil || rc == nil {
+			// Same as MySQL.
 			return ErrUnknownColumn.GenByArgs(col.Name, "from clause")
 		}
 
@@ -312,15 +321,17 @@ func (b *planBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan Logic
 			return errors.Trace(err)
 		}
 		conds = append(conds, cond.(*expression.ScalarFunction))
+
 		if join.Tp == ast.RightJoin {
 			schemaCols = append(schemaCols, rc)
-			coalescedCols = append(coalescedCols, lc)
+			redundantCols = append(redundantCols, lc)
 		} else {
 			schemaCols = append(schemaCols, lc)
-			coalescedCols = append(coalescedCols, rc)
+			redundantCols = append(redundantCols, rc)
 		}
 	}
 
+	// Columns in using clause may not ordered in the order in which they occur in the first table, so reorder them.
 	sort.Slice(schemaCols, func(i, j int) bool {
 		return schemaCols[i].Position < schemaCols[j].Position
 	})
@@ -329,19 +340,21 @@ func (b *planBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan Logic
 		lsc, rsc = rsc, lsc
 	}
 	for _, col := range lsc.Columns {
-		if !coalesced[col.ColName.L] {
+		if !redundant[col.ColName.L] {
 			schemaCols = append(schemaCols, col)
 		}
 	}
 	for _, col := range rsc.Columns {
-		if !coalesced[col.ColName.L] {
+		if !redundant[col.ColName.L] {
 			schemaCols = append(schemaCols, col)
 		}
 	}
 
 	p.SetSchema(expression.NewSchema(schemaCols...))
 	p.EqualConditions = append(conds, p.EqualConditions...)
-	p.coalescedSchema = expression.MergeSchema(p.coalescedSchema, expression.NewSchema(coalescedCols...))
+
+	// p.redundantSchema may contains columns which are merged from sub join, so merge it with redundantCols.
+	p.redundantSchema = expression.MergeSchema(p.redundantSchema, expression.NewSchema(redundantCols...))
 
 	return nil
 }

@@ -85,8 +85,9 @@ type LogicalJoin struct {
 	// instead of null padding.
 	DefaultValues []types.Datum
 
-	// coalescedSchema is used for select column when specified table name.
-	coalescedSchema *expression.Schema
+	// redundantSchema contains columns which are eliminated in join.
+	// For select * from a join b using (c); a.c will in output schema, and b.c will in redundantSchema.
+	redundantSchema *expression.Schema
 }
 
 func (p *LogicalJoin) columnSubstitute(schema *expression.Schema, exprs []expression.Expression) {
