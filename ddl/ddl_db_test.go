@@ -143,7 +143,16 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrKeyColumnDoesNotExits)
 	s.tk.Exec("alter table test_error_code_succ add index idx (c1)")
 	sql = "alter table test_error_code_succ add index idx (c1)"
+	//add empty index
 	s.testErrorCode(c, sql, tmysql.ErrDupKeyName)
+	sql = "alter table test_error_code_succ add index ()"
+	s.testErrorCode(c, sql, tmysql.ErrWrongArguments)
+	sql = "alter table test_error_code_succ add unique ()"
+	s.testErrorCode(c, sql, tmysql.ErrWrongArguments)
+	sql = "alter table test_error_code_succ add unique index ()"
+	s.testErrorCode(c, sql, tmysql.ErrWrongArguments)
+	sql = "alter table test_error_code_succ add unique KEY ()"
+	s.testErrorCode(c, sql, tmysql.ErrWrongArguments)
 	// drop index
 	sql = "alter table test_error_code_succ drop index idx_not_exist"
 	s.testErrorCode(c, sql, tmysql.ErrCantDropFieldOrKey)
