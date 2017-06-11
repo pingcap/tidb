@@ -75,6 +75,10 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"alter table t add column c int auto_increment key, auto_increment=10", true,
 			errors.New("[autoid:3]No support for setting auto_increment using alter_table")},
 		{"alter table t add column c int auto_increment key", true, nil},
+		{"alter table t add index ()", true, errors.New("[11:1210]Incorrect arguments to EXECUTE")},
+		{"alter table t add unique ()", true, errors.New("[11:1210]Incorrect arguments to EXECUTE")},
+		{"alter table t add unique index ()", true, errors.New("[11:1210]Incorrect arguments to EXECUTE")},
+		{"alter table t add unique key ()", true, errors.New("[11:1210]Incorrect arguments to EXECUTE")},
 	}
 
 	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
