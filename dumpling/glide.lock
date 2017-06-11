@@ -1,5 +1,5 @@
-hash: f1088ed50769a58cf4e9de95fac279530c47a4b35082414024a99d2ddc599865
-updated: 2017-06-08T15:30:41.381147472+08:00
+hash: fe2e65de3cd881bf8fdcca9e939cf0774ee41c1184c582ec73bed744b90ed8a1
+updated: 2017-06-10T16:33:32.010158071+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -125,7 +125,7 @@ imports:
   - pkg/raft_serverpb
   - pkg/tikvpb
 - name: github.com/pingcap/pd
-  version: afddac5065cd49052455c4e152b37596fb84ff48
+  version: ce8db87a8c3f2560750232e85ad5152a0a1c69df
   subpackages:
   - pd-client
 - name: github.com/pingcap/tipb
@@ -183,6 +183,7 @@ imports:
   - encoding/unicode
   - internal/utf8internal
   - runes
+  - secure
   - secure/bidirule
   - transform
   - unicode/bidi

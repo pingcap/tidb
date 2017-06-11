@@ -135,7 +135,7 @@ import:
   subpackages:
   - lex
 - package: github.com/pingcap/pd
-  version: afddac5065cd49052455c4e152b37596fb84ff48
+  version: ce8db87a8c3f2560750232e85ad5152a0a1c69df
 - package: github.com/pingcap/tipb
   version: 11c2044a6a91f947faaa5e4f1a06c9026f333f69
   subpackages:
@@ -156,6 +156,23 @@ import:
   version: c06e80d9300e4443158a03817b8a8cb37d230320
   subpackages:
   - rate
+- package: golang.org/x/text
+  version: 4ee4af566555f5fbe026368b75596286a312663a
+  subpackages:
+  - encoding
+  - encoding/charmap
+  - encoding/internal
+  - encoding/internal/identifier
+  - encoding/japanese
+  - encoding/korean
+  - encoding/simplifiedchinese
+  - encoding/traditionalchinese
+  - encoding/unicode
+  - secure/bidirule
+  - secure
+  - transform
+  - unicode/bidi
+  - unicode/norm
 - package: golang.org/x/sys
   version: a646d33e2ee3172a661fc09bca23bb4889a41bc8
 - package: github.com/gorilla/mux
