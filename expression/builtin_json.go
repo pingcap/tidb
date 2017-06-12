@@ -216,8 +216,8 @@ func (b *builtinJSONExtractSig) eval(row []types.Datum) (d types.Datum, err erro
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	if djson, found := djson.Extract(pathExprs); found {
-		d.SetMysqlJSON(djson)
+	if djson1, found := djson.Extract(pathExprs); found {
+		d.SetMysqlJSON(djson1)
 	}
 	return
 }
