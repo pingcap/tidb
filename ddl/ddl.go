@@ -334,11 +334,11 @@ func (d *ddl) close() {
 	}
 
 	close(d.quitCh)
+	d.ownerManager.Cancel()
 	err := d.schemaSyncer.RemoveSelfVersionPath()
 	if err != nil {
 		log.Errorf("[ddl] remove self version path failed %v", err)
 	}
-	d.ownerManager.Cancel()
 
 	d.wait.Wait()
 	log.Infof("close DDL:%s", d.uuid)
