@@ -84,6 +84,10 @@ type LogicalJoin struct {
 	// DefaultValues is only used for outer join, which stands for the default values when the outer table cannot find join partner
 	// instead of null padding.
 	DefaultValues []types.Datum
+
+	// redundantSchema contains columns which are eliminated in join.
+	// For select * from a join b using (c); a.c will in output schema, and b.c will in redundantSchema.
+	redundantSchema *expression.Schema
 }
 
 func (p *LogicalJoin) columnSubstitute(schema *expression.Schema, exprs []expression.Expression) {

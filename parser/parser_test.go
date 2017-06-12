@@ -309,6 +309,9 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"select * from t1 join t2 left join t3 on t2.id = t3.id", true},
 		{"select * from t1 right join t2 on t1.id = t2.id left join t3 on t3.id = t2.id", true},
 		{"select * from t1 right join t2 on t1.id = t2.id left join t3", false},
+		{"select * from t1 join t2 left join t3 using (id)", true},
+		{"select * from t1 right join t2 using (id) left join t3 using (id)", true},
+		{"select * from t1 right join t2 using (id) left join t3", false},
 
 		// for admin
 		{"admin show ddl;", true},
