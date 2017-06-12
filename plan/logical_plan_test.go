@@ -21,12 +21,14 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
@@ -60,7 +62,7 @@ func newStringType() types.FieldType {
 	return *ft
 }
 
-func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
+func MockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 	indices := []*model.IndexInfo{
 		{
 			Name: model.NewCIStr("c_d_e"),
@@ -158,6 +160,27 @@ func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 			},
 			State: model.StatePublic,
 		},
+		{
+			Name: model.NewCIStr("e_d_c_str_prefix"),
+			Columns: []*model.IndexColumn{
+				{
+					Name:   model.NewCIStr("e_str"),
+					Length: types.UnspecifiedLength,
+					Offset: 7,
+				},
+				{
+					Name:   model.NewCIStr("d_str"),
+					Length: types.UnspecifiedLength,
+					Offset: 6,
+				},
+				{
+					Name:   model.NewCIStr("c_str"),
+					Length: 10,
+					Offset: 5,
+				},
+			},
+			State: model.StatePublic,
+		},
 	}
 	pkColumn := &model.ColumnInfo{
 		State:     model.StatePublic,
@@ -239,7 +262,7 @@ func mockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 	if err != nil {
 		return nil, err
 	}
-	return is, InferType(ctx.GetSessionVars().StmtCtx, node)
+	return is, expression.InferType(ctx.GetSessionVars().StmtCtx, node)
 }
 
 func supportExpr(exprType tipb.ExprType) bool {
@@ -289,7 +312,7 @@ func (c *mockClient) Send(ctx goctx.Context, _ *kv.Request) kv.Response {
 	return nil
 }
 
-func (c *mockClient) SupportRequestType(reqType, subType int64) bool {
+func (c *mockClient) IsRequestTypeSupported(reqType, subType int64) bool {
 	switch reqType {
 	case kv.ReqTypeSelect, kv.ReqTypeIndex:
 		switch subType {
@@ -341,8 +364,35 @@ func mockContext() context.Context {
 		client: &mockClient{},
 	}
 	do := &domain.Domain{}
+	do.CreateStatsHandle(ctx)
 	sessionctx.BindDomain(ctx, do)
 	return ctx
+}
+
+func mockStatsTable(tbl *model.TableInfo, rowCount int64) *statistics.Table {
+	statsTbl := &statistics.Table{
+		TableID: tbl.ID,
+		Count:   rowCount,
+		Columns: make(map[int64]*statistics.Column, len(tbl.Columns)),
+		Indices: make(map[int64]*statistics.Index, len(tbl.Indices)),
+	}
+	return statsTbl
+}
+
+// mockStatsHistogram will create a statistics.Histogram, of which the data is uniform distribution.
+func mockStatsHistogram(id int64, values []types.Datum, repeat int64) *statistics.Histogram {
+	ndv := len(values)
+	histogram := &statistics.Histogram{
+		ID:      id,
+		NDV:     int64(ndv),
+		Buckets: make([]statistics.Bucket, ndv),
+	}
+	for i := 0; i < ndv; i++ {
+		histogram.Buckets[i].Repeats = repeat
+		histogram.Buckets[i].Count = repeat * int64(i+1)
+		histogram.Buckets[i].UpperBound = values[i]
+	}
+	return histogram
 }
 
 func (s *testPlanSuite) TestPredicatePushDown(c *C) {
@@ -486,7 +536,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil, comment)
 
 		builder := &planBuilder{
@@ -600,7 +650,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "analyze table t, t",
-			plan: "*plan.Analyze->*plan.Analyze->*plan.Analyze",
+			plan: "*plan.Analyze",
 		},
 	}
 	for _, ca := range tests {
@@ -608,7 +658,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
@@ -662,7 +712,7 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
@@ -768,7 +818,7 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
@@ -781,7 +831,7 @@ func (s *testPlanSuite) TestAggPushDown(c *C) {
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
 		p, err = logicalOptimize(flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagAggregationOptimize, lp.(LogicalPlan), builder.ctx, builder.allocator)
-		lp.ResolveIndicesAndCorCols()
+		lp.ResolveIndices()
 		c.Assert(err, IsNil)
 		c.Assert(ToString(lp), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -985,7 +1035,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
@@ -1123,7 +1173,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil, comment)
 
 		builder := &planBuilder{
@@ -1254,7 +1304,7 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		comment := Commentf("for %s", sql)
 		stmt, err := s.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil, comment)
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 		builder := &planBuilder{
 			allocator: new(idAllocator),
@@ -1358,7 +1408,7 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
@@ -1407,7 +1457,7 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
@@ -1571,7 +1621,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{
@@ -1639,10 +1689,9 @@ func checkVisitInfo(c *C, v1, v2 []visitInfo, comment CommentInterface) {
 }
 
 func (s *testPlanSuite) TestTopNPushDown(c *C) {
-	UseDAGPlanBuilder = true
+	c.Skip("Only new plan support it.")
 	defer func() {
 		testleak.AfterTest(c)()
-		UseDAGPlanBuilder = false
 	}()
 	tests := []struct {
 		sql  string
@@ -1651,7 +1700,7 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		// Test TopN + Selection.
 		{
 			sql:  "select * from t where a < 1 order by b limit 5",
-			best: "DataScan(t)->Sort + Limit(5) + Offset(0)->Projection",
+			best: "DataScan(t)->TopN([test.t.b],0,5)->Projection",
 		},
 		// Test Limit + Selection.
 		{
@@ -1666,12 +1715,12 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		// Test TopN + Agg + Proj .
 		{
 			sql:  "select a, count(b) from t group by b order by c limit 5",
-			best: "DataScan(t)->Aggr(count(test.t.b),firstrow(test.t.a),firstrow(test.t.c))->Sort + Limit(5) + Offset(0)->Projection->Projection",
+			best: "DataScan(t)->Aggr(count(test.t.b),firstrow(test.t.a),firstrow(test.t.c))->TopN([test.t.c],0,5)->Projection->Projection",
 		},
 		// Test TopN + Join + Proj.
 		{
 			sql:  "select * from t, t s order by t.a limit 5",
-			best: "Join{DataScan(t)->DataScan(s)}->Sort + Limit(5) + Offset(0)->Projection",
+			best: "Join{DataScan(t)->DataScan(s)}->TopN([test.t.a],0,5)->Projection",
 		},
 		// Test Limit + Join + Proj.
 		{
@@ -1681,12 +1730,12 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		// Test TopN + Left Join + Proj.
 		{
 			sql:  "select * from t left outer join t s on t.a = s.a order by t.a limit 5",
-			best: "Join{DataScan(t)->Sort + Limit(5) + Offset(0)->DataScan(s)}(test.t.a,s.a)->Sort + Limit(5) + Offset(0)->Projection",
+			best: "Join{DataScan(t)->TopN([test.t.a],0,5)->DataScan(s)}(test.t.a,s.a)->TopN([test.t.a],0,5)->Projection",
 		},
 		// Test TopN + Left Join + Proj.
 		{
 			sql:  "select * from t left outer join t s on t.a = s.a order by t.a limit 5, 5",
-			best: "Join{DataScan(t)->Sort + Limit(10) + Offset(0)->DataScan(s)}(test.t.a,s.a)->Sort + Limit(5) + Offset(5)->Projection",
+			best: "Join{DataScan(t)->TopN([test.t.a],0,10)->DataScan(s)}(test.t.a,s.a)->TopN([test.t.a],5,5)->Projection",
 		},
 		// Test Limit + Left Join + Proj.
 		{
@@ -1701,42 +1750,42 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		// Test TopN + Left Join Apply + Proj.
 		{
 			sql:  "select (select s.a from t s where t.a = s.a) from t order by t.a limit 5",
-			best: "Join{DataScan(t)->Sort + Limit(5) + Offset(0)->DataScan(s)}(test.t.a,s.a)->Sort + Limit(5) + Offset(0)->Projection->Projection->Projection",
+			best: "Join{DataScan(t)->TopN([test.t.a],0,5)->DataScan(s)}(test.t.a,s.a)->TopN([test.t.a],0,5)->Projection->Projection->Projection",
 		},
 		// Test TopN + Left Semi Join Apply + Proj.
 		{
 			sql:  "select exists (select s.a from t s where t.a = s.a) from t order by t.a limit 5",
-			best: "Join{DataScan(t)->Sort + Limit(5) + Offset(0)->DataScan(s)}(test.t.a,s.a)->Sort + Limit(5) + Offset(0)->Projection->Projection",
+			best: "Join{DataScan(t)->TopN([test.t.a],0,5)->DataScan(s)}(test.t.a,s.a)->TopN([test.t.a],0,5)->Projection->Projection",
 		},
 		// Test TopN + Semi Join Apply + Proj.
 		{
 			sql:  "select * from t where exists (select s.a from t s where t.a = s.a) order by t.a limit 5",
-			best: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Sort + Limit(5) + Offset(0)->Projection",
+			best: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->TopN([test.t.a],0,5)->Projection",
 		},
 		// Test TopN + Right Join + Proj.
 		{
 			sql:  "select * from t right outer join t s on t.a = s.a order by s.a limit 5",
-			best: "Join{DataScan(t)->DataScan(s)->Sort + Limit(5) + Offset(0)}(test.t.a,s.a)->Sort + Limit(5) + Offset(0)->Projection",
+			best: "Join{DataScan(t)->DataScan(s)->TopN([s.a],0,5)}(test.t.a,s.a)->TopN([s.a],0,5)->Projection",
 		},
 		// Test Limit + Right Join + Proj.
 		{
 			sql:  "select * from t right outer join t s on t.a = s.a order by s.a,t.b limit 5",
-			best: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Sort + Limit(5) + Offset(0)->Projection",
+			best: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->TopN([s.a test.t.b],0,5)->Projection",
 		},
 		// Test TopN + UA + Proj.
 		{
 			sql:  "select * from t union all (select * from t s) order by a,b limit 5",
-			best: "UnionAll{DataScan(t)->Sort + Limit(5) + Offset(0)->Projection->DataScan(s)->Sort + Limit(5) + Offset(0)->Projection}->Sort + Limit(5) + Offset(0)",
+			best: "UnionAll{DataScan(t)->TopN([test.t.a test.t.b],0,5)->Projection->DataScan(s)->TopN([s.a s.b],0,5)->Projection}->TopN([t.a t.b],0,5)",
 		},
 		// Test TopN + UA + Proj.
 		{
 			sql:  "select * from t union all (select * from t s) order by a,b limit 5, 5",
-			best: "UnionAll{DataScan(t)->Sort + Limit(10) + Offset(0)->Projection->DataScan(s)->Sort + Limit(10) + Offset(0)->Projection}->Sort + Limit(5) + Offset(5)",
+			best: "UnionAll{DataScan(t)->TopN([test.t.a test.t.b],0,10)->Projection->DataScan(s)->TopN([s.a s.b],0,10)->Projection}->TopN([t.a t.b],5,5)",
 		},
 		// Test Limit + UA + Proj + Sort.
 		{
 			sql:  "select * from t union all (select * from t s order by a) limit 5",
-			best: "UnionAll{DataScan(t)->Limit->Projection->DataScan(s)->Sort + Limit(5) + Offset(0)->Projection->Projection}->Limit",
+			best: "UnionAll{DataScan(t)->Limit->Projection->DataScan(s)->TopN([s.a],0,5)->Projection->Projection}->Limit",
 		},
 	}
 	for _, tt := range tests {
@@ -1744,7 +1793,7 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		is, err := mockResolve(stmt)
+		is, err := MockResolve(stmt)
 		c.Assert(err, IsNil)
 
 		builder := &planBuilder{

@@ -243,6 +243,7 @@ const (
 	ColumnOptionOnUpdate // For Timestamp and Datetime only.
 	ColumnOptionFulltext
 	ColumnOptionComment
+	ColumnOptionGenerated
 )
 
 // ColumnOption is used for parsing column constraint info from SQL.
@@ -250,8 +251,11 @@ type ColumnOption struct {
 	node
 
 	Tp ColumnOptionType
-	// The value For Default or On Update.
+	// For ColumnOptionDefaultValue or ColumnOptionOnUpdate, it's the target value.
+	// For ColumnOptionGenerated, it's the target expression.
 	Expr ExprNode
+	// Stored is only for ColumnOptionGenerated, default is false.
+	Stored bool
 }
 
 // Accept implements Node Accept interface.
@@ -318,14 +322,11 @@ type Constraint struct {
 	Tp   ConstraintType
 	Name string
 
-	// Used for PRIMARY KEY, UNIQUE, ......
-	Keys []*IndexColName
+	Keys []*IndexColName // Used for PRIMARY KEY, UNIQUE, ......
 
-	// Used for foreign key.
-	Refer *ReferenceDef
+	Refer *ReferenceDef // Used for foreign key.
 
-	// Index Options
-	Option *IndexOption
+	Option *IndexOption // Index Options
 }
 
 // Accept implements Node Accept interface.
@@ -606,7 +607,7 @@ const (
 // ColumnPosition represent the position of the newly added column
 type ColumnPosition struct {
 	node
-	// ColumnPositionNone | ColumnPositionFirst | ColumnPositionAfter
+	// Tp is either ColumnPositionNone, ColumnPositionFirst or ColumnPositionAfter.
 	Tp ColumnPositionType
 	// RelativeColumn is the column the newly added column after if type is ColumnPositionAfter
 	RelativeColumn *ColumnName
@@ -650,6 +651,18 @@ const (
 // TODO: Add more actions
 )
 
+// LockType is the type for AlterTableSpec.
+// See https://dev.mysql.com/doc/refman/5.7/en/alter-table.html#alter-table-concurrency
+type LockType byte
+
+// Lock Types.
+const (
+	LockTypeNone LockType = iota + 1
+	LockTypeDefault
+	LockTypeShared
+	LockTypeExclusive
+)
+
 // AlterTableSpec represents alter table specification.
 type AlterTableSpec struct {
 	node
@@ -662,6 +675,7 @@ type AlterTableSpec struct {
 	NewColumn     *ColumnDef
 	OldColumnName *ColumnName
 	Position      *ColumnPosition
+	LockType      LockType
 }
 
 // Accept implements Node Accept interface.

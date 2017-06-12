@@ -14,13 +14,14 @@
 package expression
 
 import (
-	"errors"
 	"strings"
 	"time"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
@@ -933,6 +934,7 @@ func (s *testEvaluatorSuite) TestFindInSet(c *C) {
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.str, t.strlst)), s.ctx)
 		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
+		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
 	}
 }
@@ -960,6 +962,7 @@ func (s *testEvaluatorSuite) TestField(c *C) {
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.argLst...)), s.ctx)
 		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
+		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
 	}
 }
@@ -1322,6 +1325,7 @@ func (s *testEvaluatorSuite) TestOrd(c *C) {
 	f, err := fc.getFunction(datumsToConstants([]types.Datum{argNull}), s.ctx)
 	c.Assert(err, IsNil)
 	r, err := f.eval(nil)
+	c.Assert(err, IsNil)
 	c.Assert(r.IsNull(), IsTrue)
 }
 
@@ -1344,7 +1348,37 @@ func (s *testEvaluatorSuite) TestElt(c *C) {
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.argLst...)), s.ctx)
 		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
+		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
+	}
+}
+
+func (s *testEvaluatorSuite) TestExportSet(c *C) {
+	defer testleak.AfterTest(c)()
+
+	estd := []struct {
+		argLst []interface{}
+		res    string
+	}{
+		{[]interface{}{-9223372036854775807, "Y", "N", ",", 5}, "Y,N,N,N,N"},
+		{[]interface{}{-6, "Y", "N", ",", 5}, "N,Y,N,Y,Y"},
+		{[]interface{}{5, "Y", "N", ",", 4}, "Y,N,Y,N"},
+		{[]interface{}{5, "Y", "N", ",", 0}, ""},
+		{[]interface{}{5, "Y", "N", ",", 1}, "Y"},
+		{[]interface{}{6, "1", "0", ",", 10}, "0,1,1,0,0,0,0,0,0,0"},
+		{[]interface{}{333333, "Ysss", "sN", "---", 9}, "Ysss---sN---Ysss---sN---Ysss---sN---sN---sN---sN"},
+		{[]interface{}{7, "Y", "N"}, "Y,Y,Y,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N"},
+		{[]interface{}{7, "Y", "N", 6}, "Y6Y6Y6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N"},
+		{[]interface{}{7, "Y", "N", 6, 133}, "Y6Y6Y6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N"},
+	}
+	fc := funcs[ast.ExportSet]
+	for _, t := range estd {
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.argLst...)), s.ctx)
+		c.Assert(err, IsNil)
+		exportSetRes, err := f.eval(nil)
+		res, err := exportSetRes.ToString()
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, t.res)
 	}
 }
 
@@ -1369,10 +1403,13 @@ func (s *testEvaluatorSuite) TestBin(c *C) {
 	}
 	fc := funcs[ast.Bin]
 	dtbl := tblToDtbl(tbl)
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
 	for _, t := range dtbl {
-		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t["Input"])), s.ctx)
+		f, err := fc.getFunction(datumsToConstants(t["Input"]), ctx)
 		c.Assert(err, IsNil)
 		r, err := f.eval(nil)
+		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t["Expected"][0]))
 	}
 }
@@ -1442,5 +1479,37 @@ func (s *testEvaluatorSuite) TestToBase64(c *C) {
 			expect, _ := test.expect.(string)
 			c.Assert(result.GetString(), Equals, expect)
 		}
+	}
+}
+
+func (s *testEvaluatorSuite) TestStringRight(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.Right]
+	tests := []struct {
+		str    interface{}
+		length interface{}
+		expect interface{}
+	}{
+		{"helloworld", 5, "world"},
+		{"helloworld", 10, "helloworld"},
+		{"helloworld", 11, "helloworld"},
+		{"helloworld", -1, ""},
+		{"", 2, ""},
+		{nil, 2, nil},
+	}
+
+	for _, test := range tests {
+		str := types.NewDatum(test.str)
+		length := types.NewDatum(test.length)
+		f, _ := fc.getFunction(datumsToConstants([]types.Datum{str, length}), s.ctx)
+		result, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		if result.IsNull() {
+			c.Assert(test.expect, IsNil)
+			continue
+		}
+		res, err := result.ToString()
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, test.expect)
 	}
 }

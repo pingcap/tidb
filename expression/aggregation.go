@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tipb/go-tipb"
+	tipb "github.com/pingcap/tipb/go-tipb"
 )
 
 // AggregationFunction stands for aggregate functions.
@@ -65,8 +65,8 @@ type AggregationFunction interface {
 	// SetArgs sets argument by index.
 	SetArgs(args []Expression)
 
-	// Clear collects the mapper's memory.
-	Clear()
+	// Reset resets this aggregate function.
+	Reset()
 
 	// IsDistinct indicates if the aggregate function contains distinct attribute.
 	IsDistinct() bool
@@ -120,10 +120,10 @@ func NewAggFunction(funcType string, funcArgs []Expression, distinct bool) Aggre
 }
 
 // NewDistAggFunc creates new Aggregate function for mock tikv.
-func NewDistAggFunc(expr *tipb.Expr, colsID map[int64]int, sc *variable.StatementContext) (AggregationFunction, error) {
+func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, sc *variable.StatementContext) (AggregationFunction, error) {
 	args := make([]Expression, 0, len(expr.Children))
 	for _, child := range expr.Children {
-		arg, err := PBToExpr(child, colsID, sc)
+		arg, err := PBToExpr(child, fieldTps, sc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -227,8 +227,8 @@ func (af *aggFunction) IsDistinct() bool {
 	return af.Distinct
 }
 
-// Clear implements AggregationFunction interface.
-func (af *aggFunction) Clear() {
+// Reset implements AggregationFunction interface.
+func (af *aggFunction) Reset() {
 	af.resultMapper = make(aggCtxMapper, 0)
 	af.streamCtx = nil
 }
@@ -617,7 +617,7 @@ func (af *avgFunction) calculateResult(ctx *aggEvaluateContext) (d types.Datum) 
 		y := types.NewDecFromInt(ctx.Count)
 		to := new(types.MyDecimal)
 		types.DecimalDiv(x, y, to, types.DivFracIncr)
-		to.Round(to, ctx.Value.Frac()+types.DivFracIncr)
+		to.Round(to, ctx.Value.Frac()+types.DivFracIncr, types.ModeHalfEven)
 		d.SetMysqlDecimal(to)
 	}
 	return

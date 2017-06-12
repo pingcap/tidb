@@ -23,35 +23,24 @@ type pushDownTopNOptimizer struct {
 }
 
 func (s *pushDownTopNOptimizer) optimize(p LogicalPlan, ctx context.Context, allocator *idAllocator) (LogicalPlan, error) {
-	return p.pushDownTopN(Sort{}.init(allocator, ctx)), nil
+	return p.pushDownTopN(nil), nil
 }
 
-func (s *baseLogicalPlan) pushDownTopN(topN *Sort) LogicalPlan {
+func (s *baseLogicalPlan) pushDownTopN(topN *TopN) LogicalPlan {
 	p := s.basePlan.self.(LogicalPlan)
 	for i, child := range p.Children() {
-		p.Children()[i] = child.(LogicalPlan).pushDownTopN(Sort{}.init(topN.allocator, topN.ctx))
+		p.Children()[i] = child.(LogicalPlan).pushDownTopN(nil)
 		p.Children()[i].SetParents(p)
 	}
-	return topN.setChild(p)
+	if topN != nil {
+		return topN.setChild(p)
+	}
+	return p
 }
 
-func (s *Sort) isEmpty() bool {
-	return s.ExecLimit == nil && len(s.ByItems) == 0
-}
-
-func (s *Sort) isLimit() bool {
-	return len(s.ByItems) == 0 && s.ExecLimit != nil
-}
-
-func (s *Sort) isTopN() bool {
-	return len(s.ByItems) != 0 && s.ExecLimit != nil
-}
-
-func (s *Sort) setChild(p LogicalPlan) LogicalPlan {
-	if s.isEmpty() {
-		return p
-	} else if s.isLimit() {
-		limit := Limit{Count: s.ExecLimit.Count, Offset: s.ExecLimit.Offset}.init(s.allocator, s.ctx)
+func (s *TopN) setChild(p LogicalPlan) LogicalPlan {
+	if s.isLimit() {
+		limit := Limit{Count: s.Count, Offset: s.Offset}.init(s.allocator, s.ctx)
 		limit.SetChildren(p)
 		p.SetParents(limit)
 		limit.SetSchema(p.Schema().Clone())
@@ -64,43 +53,54 @@ func (s *Sort) setChild(p LogicalPlan) LogicalPlan {
 	return s
 }
 
-func (s *Sort) pushDownTopN(topN *Sort) LogicalPlan {
-	if topN.isLimit() {
-		s.ExecLimit = topN.ExecLimit
+func (s *Sort) pushDownTopN(topN *TopN) LogicalPlan {
+	if topN == nil {
+		return s.baseLogicalPlan.pushDownTopN(nil)
+	} else if topN.isLimit() {
+		topN.ByItems = s.ByItems
 		// If a Limit is pushed down, the Sort should be converted to topN and be pushed again.
-		return s.children[0].(LogicalPlan).pushDownTopN(s)
-	} else if topN.isEmpty() {
-		// If nothing is pushed down, just continue to push nothing to its child.
-		return s.baseLogicalPlan.pushDownTopN(topN)
+		return s.children[0].(LogicalPlan).pushDownTopN(topN)
 	}
 	// If a TopN is pushed down, this sort is useless.
 	return s.children[0].(LogicalPlan).pushDownTopN(topN)
 }
 
-func (p *Limit) pushDownTopN(topN *Sort) LogicalPlan {
-	child := p.children[0].(LogicalPlan).pushDownTopN(Sort{ExecLimit: p}.init(p.allocator, p.ctx))
-	return topN.setChild(child)
+func (p *Limit) convertToTopN() *TopN {
+	return TopN{Offset: p.Offset, Count: p.Count}.init(p.allocator, p.ctx)
 }
 
-func (p *Union) pushDownTopN(topN *Sort) LogicalPlan {
+func (p *Limit) pushDownTopN(topN *TopN) LogicalPlan {
+	child := p.children[0].(LogicalPlan).pushDownTopN(p.convertToTopN())
+	if topN != nil {
+		return topN.setChild(child)
+	}
+	return child
+}
+
+func (p *Union) pushDownTopN(topN *TopN) LogicalPlan {
 	for i, child := range p.children {
-		newTopN := Sort{}.init(p.allocator, p.ctx)
-		for _, by := range topN.ByItems {
-			newExpr := expression.ColumnSubstitute(by.Expr, p.schema, expression.Column2Exprs(child.Schema().Columns))
-			newTopN.ByItems = append(newTopN.ByItems, &ByItems{newExpr, by.Desc})
-		}
-		if !topN.isEmpty() {
-			newTopN.ExecLimit = &Limit{Count: topN.ExecLimit.Count + topN.ExecLimit.Offset}
+		var newTopN *TopN
+		if topN != nil {
+			newTopN = TopN{Count: topN.Count + topN.Offset}.init(p.allocator, p.ctx)
+			for _, by := range topN.ByItems {
+				newExpr := expression.ColumnSubstitute(by.Expr, p.schema, expression.Column2Exprs(child.Schema().Columns))
+				newTopN.ByItems = append(newTopN.ByItems, &ByItems{newExpr, by.Desc})
+			}
 		}
 		p.children[i] = child.(LogicalPlan).pushDownTopN(newTopN)
 		p.children[i].SetParents(p)
 	}
-	return topN.setChild(p)
+	if topN != nil {
+		return topN.setChild(p)
+	}
+	return p
 }
 
-func (p *Projection) pushDownTopN(topN *Sort) LogicalPlan {
-	for _, by := range topN.ByItems {
-		by.Expr = expression.ColumnSubstitute(by.Expr, p.schema, p.Exprs)
+func (p *Projection) pushDownTopN(topN *TopN) LogicalPlan {
+	if topN != nil {
+		for _, by := range topN.ByItems {
+			by.Expr = expression.ColumnSubstitute(by.Expr, p.schema, p.Exprs)
+		}
 	}
 	child := p.children[0].(LogicalPlan).pushDownTopN(topN)
 	p.SetChildren(child)
@@ -108,35 +108,37 @@ func (p *Projection) pushDownTopN(topN *Sort) LogicalPlan {
 	return p
 }
 
-func (p *LogicalJoin) pushDownTopNToChild(topN *Sort, idx int) LogicalPlan {
-	canPush := true
-	for _, by := range topN.ByItems {
-		cols := expression.ExtractColumns(by.Expr)
-		if len(p.children[1-idx].Schema().ColumnsIndices(cols)) != 0 {
-			canPush = false
-			break
+// pushDownTopNToChild will push a topN to one child of join. The idx stands for join child index. 0 is for left child.
+func (p *LogicalJoin) pushDownTopNToChild(topN *TopN, idx int) LogicalPlan {
+	var newTopN *TopN
+	if topN != nil {
+		canPush := true
+		for _, by := range topN.ByItems {
+			cols := expression.ExtractColumns(by.Expr)
+			if len(p.children[1-idx].Schema().ColumnsIndices(cols)) != 0 {
+				canPush = false
+				break
+			}
 		}
-	}
-	newTopN := Sort{}.init(topN.allocator, topN.ctx)
-	if canPush {
-		if !topN.isEmpty() {
-			newTopN.ExecLimit = &Limit{Count: topN.ExecLimit.Count + topN.ExecLimit.Offset}
+		if canPush {
+			newTopN = TopN{
+				Count:   topN.Count + topN.Offset,
+				ByItems: make([]*ByItems, len(topN.ByItems)),
+			}.init(topN.allocator, topN.ctx)
+			copy(newTopN.ByItems, topN.ByItems)
 		}
-		newTopN.ByItems = make([]*ByItems, len(topN.ByItems))
-		copy(newTopN.ByItems, topN.ByItems)
 	}
 	return p.children[idx].(LogicalPlan).pushDownTopN(newTopN)
 }
 
-func (p *LogicalJoin) pushDownTopN(topN *Sort) LogicalPlan {
+func (p *LogicalJoin) pushDownTopN(topN *TopN) LogicalPlan {
 	var leftChild, rightChild LogicalPlan
-	emptySort := Sort{}.init(p.allocator, p.ctx)
 	switch p.JoinType {
 	case LeftOuterJoin, LeftOuterSemiJoin:
 		leftChild = p.pushDownTopNToChild(topN, 0)
-		rightChild = p.children[1].(LogicalPlan).pushDownTopN(emptySort)
+		rightChild = p.children[1].(LogicalPlan).pushDownTopN(nil)
 	case RightOuterJoin:
-		leftChild = p.children[0].(LogicalPlan).pushDownTopN(emptySort)
+		leftChild = p.children[0].(LogicalPlan).pushDownTopN(nil)
 		rightChild = p.pushDownTopNToChild(topN, 1)
 	default:
 		return p.baseLogicalPlan.pushDownTopN(topN)
@@ -146,5 +148,8 @@ func (p *LogicalJoin) pushDownTopN(topN *Sort) LogicalPlan {
 	self := p.self.(LogicalPlan)
 	leftChild.SetParents(self)
 	rightChild.SetParents(self)
-	return topN.setChild(self)
+	if topN != nil {
+		return topN.setChild(self)
+	}
+	return self
 }

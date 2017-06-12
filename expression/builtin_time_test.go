@@ -472,6 +472,101 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestIsDuration(c *C) {
+	defer testleak.AfterTest(c)
+	tbl := []struct {
+		Input  string
+		expect bool
+	}{
+		{"110:00:00", true},
+		{"aa:bb:cc", false},
+		{"1 01:00:00", true},
+		{"01:00:00.999999", true},
+		{"071231235959.999999", false},
+		{"20171231235959.999999", false},
+		{"2017-01-01 01:01:01.11", false},
+		{"07-12-31 23:59:59.999999", false},
+		{"2007-12-31 23:59:59.999999", false},
+	}
+	for _, t := range tbl {
+		result := isDuration(t.Input)
+		c.Assert(result, Equals, t.expect)
+	}
+}
+
+func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Input         string
+		InputDuration string
+		expect        string
+	}{
+		{"01:00:00.999999", "02:00:00.999998", "03:00:01.999997"},
+		{"110:00:00", "1 02:00:00", "136:00:00"},
+		{"2017-01-01 01:01:01.11", "01:01:01.11111", "2017-01-01 02:02:02.221110"},
+		{"2007-12-31 23:59:59.999999", "1 1:1:1.000002", "2008-01-02 01:01:01.000001"},
+		{"2017-12-01 01:01:01.000001", "1 1:1:1.000002", "2017-12-02 02:02:02.000003"},
+		{"2017-12-31 23:59:59", "00:00:01", "2018-01-01 00:00:00"},
+		{"2017-12-31 23:59:59", "1", "2018-01-01 00:00:00"},
+		{"2007-12-31 23:59:59.999999", "2 1:1:1.000002", "2008-01-03 01:01:01.000001"},
+	}
+	fc := funcs[ast.AddTime]
+	for _, t := range tbl {
+		tmpInput := types.NewStringDatum(t.Input)
+		tmpInputDuration := types.NewStringDatum(t.InputDuration)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{tmpInput, tmpInputDuration}), s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		result, _ := d.ToString()
+		c.Assert(result, Equals, t.expect)
+	}
+
+	tbl = []struct {
+		Input         string
+		InputDuration string
+		expect        string
+	}{
+		{"01:00:00.999999", "02:00:00.999998", "03:00:01.999997"},
+		{"23:59:59", "00:00:01", "24:00:00"},
+		{"235959", "00:00:01", "24:00:00"},
+		{"110:00:00", "1 02:00:00", "136:00:00"},
+		{"-110:00:00", "1 02:00:00", "-84:00:00"},
+	}
+	for _, t := range tbl {
+		dur, err := types.ParseDuration(t.Input, getFsp(t.Input))
+		c.Assert(err, IsNil)
+		tmpInput := types.NewDurationDatum(dur)
+		tmpInputDuration := types.NewStringDatum(t.InputDuration)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{tmpInput, tmpInputDuration}), s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		result, _ := d.ToString()
+		c.Assert(result, Equals, t.expect)
+	}
+
+	tbll := []struct {
+		Input         int64
+		InputDuration int64
+		expect        string
+	}{
+		{20171010123456, 1, "2017-10-10 12:34:57"},
+		{123456, 1, "12:34:57"},
+	}
+	for _, t := range tbll {
+		tmpInput := types.NewIntDatum(t.Input)
+		tmpInputDuration := types.NewIntDatum(t.InputDuration)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{tmpInput, tmpInputDuration}), s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		result, _ := d.ToString()
+		c.Assert(result, Equals, t.expect)
+	}
+
+}
+
 func (s *testEvaluatorSuite) TestSysDate(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.Sysdate]
@@ -609,6 +704,33 @@ func (s *testEvaluatorSuite) TestCurrentTime(c *C) {
 	c.Assert(err, IsNil)
 	_, err = f.eval(nil)
 	c.Assert(err, NotNil)
+}
+
+func (s *testEvaluatorSuite) TestUTCTime(c *C) {
+	defer testleak.AfterTest(c)()
+
+	tfStr := "15:04:05"
+	last := time.Now().UTC()
+	fc := funcs[ast.UTCTime]
+
+	tests := []struct {
+		param  interface{}
+		expect int
+	}{{nil, 8}, {0, 8}, {3, 12}, {6, 15}, {-1, 0}, {7, 0}}
+
+	for _, test := range tests {
+		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(test.param)), s.ctx)
+		c.Assert(err, IsNil)
+		v, err := f.eval(nil)
+		if test.expect > 0 {
+			c.Assert(err, IsNil)
+			n := v.GetMysqlDuration()
+			c.Assert(n.String(), HasLen, test.expect)
+			c.Assert(n.String(), GreaterEqual, last.Format(tfStr))
+		} else {
+			c.Assert(err, NotNil)
+		}
+	}
 }
 
 func (s *testEvaluatorSuite) TestUTCDate(c *C) {
@@ -1014,6 +1136,46 @@ func (s *testEvaluatorSuite) TestTimestamp(c *C) {
 	c.Assert(d.Kind(), Equals, types.KindNull)
 }
 
+func (s *testEvaluatorSuite) TestMakeDate(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Args []interface{}
+		Want interface{}
+	}{
+		{[]interface{}{71, 1}, "1971-01-01"},
+		{[]interface{}{99, 1}, "1999-01-01"},
+		{[]interface{}{100, 1}, "0100-01-01"},
+		{[]interface{}{69, 1}, "2069-01-01"},
+		{[]interface{}{70, 1}, "1970-01-01"},
+		{[]interface{}{1000, 1}, "1000-01-01"},
+		{[]interface{}{-1, 3660}, nil},
+		{[]interface{}{10000, 3660}, nil},
+		{[]interface{}{2060, 2900025}, "9999-12-31"},
+		{[]interface{}{2060, 2900026}, nil},
+		{[]interface{}{nil, 2900025}, nil},
+		{[]interface{}{2060, nil}, nil},
+		{[]interface{}{nil, nil}, nil},
+		{[]interface{}{"71", 1}, "1971-01-01"},
+		{[]interface{}{71, "1"}, "1971-01-01"},
+		{[]interface{}{"71", "1"}, "1971-01-01"},
+	}
+	Dtbl := tblToDtbl(tbl)
+	maketime := funcs[ast.MakeDate]
+	for idx, t := range Dtbl {
+		f, err := maketime.getFunction(datumsToConstants(t["Args"]), s.ctx)
+		c.Assert(err, IsNil)
+		got, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		if t["Want"][0].Kind() == types.KindNull {
+			c.Assert(got.Kind(), Equals, types.KindNull, Commentf("[%v] - args:%v", idx, t["Args"]))
+		} else {
+			want, err := t["Want"][0].ToString()
+			c.Assert(err, IsNil)
+			c.Assert(got.GetMysqlTime().String(), Equals, want, Commentf("[%v] - args:%v", idx, t["Args"]))
+		}
+	}
+}
+
 func (s *testEvaluatorSuite) TestMakeTime(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
@@ -1120,6 +1282,7 @@ func (s *testEvaluatorSuite) TestQuarter(c *C) {
 	f, err := fc.getFunction(datumsToConstants([]types.Datum{argInvalid}), s.ctx)
 	c.Assert(err, IsNil)
 	result, err := f.eval(nil)
+	c.Assert(err, NotNil)
 	c.Assert(result.IsNull(), IsTrue)
 }
 
@@ -1357,4 +1520,101 @@ func (s *testEvaluatorSuite) TestSecToTime(c *C) {
 		result, _ := d.ToString()
 		c.Assert(result, Equals, test.expect)
 	}
+}
+
+func (s *testEvaluatorSuite) TestConvertTz(c *C) {
+	tests := []struct {
+		t       interface{}
+		fromTz  string
+		toTz    string
+		Success bool
+		expect  string
+	}{
+		{"2004-01-01 12:00:00.111", "-00:00", "+12:34", true, "2004-01-02 00:34:00.111"},
+		{"2004-01-01 12:00:00.11", "+00:00", "+12:34", true, "2004-01-02 00:34:00.11"},
+		{"2004-01-01 12:00:00.11111111111", "-00:00", "+12:34", true, "2004-01-02 00:34:00.111111"},
+		{"2004-01-01 12:00:00", "GMT", "MET", true, "2004-01-01 13:00:00"},
+		{"2004-01-01 12:00:00", "-01:00", "-12:00", true, "2004-01-01 01:00:00"},
+		{"2004-01-01 12:00:00", "-00:00", "+13:00", true, "2004-01-02 01:00:00"},
+		{"2004-01-01 12:00:00", "-00:00", "-13:00", true, ""},
+		{"2004-01-01 12:00:00", "-00:00", "-12:88", true, ""},
+		{"2004-01-01 12:00:00", "+10:82", "GMT", false, ""},
+		{"2004-01-01 12:00:00", "+00:00", "GMT", true, ""},
+		{"2004-01-01 12:00:00", "GMT", "+00:00", true, ""},
+		{20040101, "+00:00", "+10:32", true, "2004-01-01 10:32:00"},
+		{3.14159, "+00:00", "+10:32", false, ""},
+	}
+	fc := funcs[ast.ConvertTz]
+	for _, test := range tests {
+		f, err := fc.getFunction(
+			datumsToConstants(
+				[]types.Datum{
+					types.NewDatum(test.t),
+					types.NewStringDatum(test.fromTz),
+					types.NewStringDatum(test.toTz)}),
+			s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+		if test.Success {
+			c.Assert(err, IsNil)
+		} else {
+			c.Assert(err, NotNil)
+		}
+		result, _ := d.ToString()
+		c.Assert(result, Equals, test.expect)
+	}
+}
+
+func (s *testEvaluatorSuite) TestPeriodDiff(c *C) {
+	tests := []struct {
+		Period1 int64
+		Period2 int64
+		Success bool
+		Expect  int64
+	}{
+		{201611, 201611, true, 0},
+		{200802, 200703, true, 11},
+		{0, 999999999, true, -120000086},
+		{9999999, 0, true, 1200086},
+		{411, 200413, true, -2},
+		{197000, 207700, true, -1284},
+		{201701, 201611, true, 2},
+		{201702, 201611, true, 3},
+		{201510, 201611, true, -13},
+		{201702, 1611, true, 3},
+		{197102, 7011, true, 3},
+		{12509, 12323, true, 10},
+		{12509, 12323, true, 10},
+	}
+
+	fc := funcs[ast.PeriodDiff]
+	for _, test := range tests {
+		period1 := types.NewIntDatum(test.Period1)
+		period2 := types.NewIntDatum(test.Period2)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{period1, period2}), s.ctx)
+		c.Assert(err, IsNil)
+		result, err := f.eval(nil)
+		if !test.Success {
+			c.Assert(result.IsNull(), IsTrue)
+			continue
+		}
+		c.Assert(err, IsNil)
+		c.Assert(result.Kind(), Equals, types.KindInt64)
+		value := result.GetInt64()
+		c.Assert(value, Equals, test.Expect)
+	}
+	// nil
+	args := []types.Datum{types.NewDatum(nil), types.NewIntDatum(0)}
+	f, err := fc.getFunction(datumsToConstants(args), s.ctx)
+	c.Assert(err, IsNil)
+	v, err := f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.Kind(), Equals, types.KindNull)
+
+	args = []types.Datum{types.NewIntDatum(0), types.NewDatum(nil)}
+	f, err = fc.getFunction(datumsToConstants(args), s.ctx)
+	c.Assert(err, IsNil)
+	v, err = f.eval(nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.Kind(), Equals, types.KindNull)
 }

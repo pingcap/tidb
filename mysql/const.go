@@ -170,10 +170,16 @@ const (
 	SuperPriv
 	// CreateUserPriv is the privilege to create user.
 	CreateUserPriv
+	// TriggerPriv is not checked yet.
+	TriggerPriv
 	// DropPriv is the privilege to drop schema/table.
 	DropPriv
+	// ProcessPriv pertains to display of information about the threads executing within the server.
+	ProcessPriv
 	// GrantPriv is the privilege to grant privilege to user.
 	GrantPriv
+	// ReferencesPriv is not checked yet.
+	ReferencesPriv
 	// AlterPriv is the privilege to run alter statement.
 	AlterPriv
 	// ExecutePriv is the privilege to run execute statement.
@@ -197,8 +203,11 @@ var Priv2UserCol = map[PrivilegeType]string{
 	ShowDBPriv:     "Show_db_priv",
 	SuperPriv:      "Super_priv",
 	CreateUserPriv: "Create_user_priv",
+	TriggerPriv:    "Trigger_priv",
 	DropPriv:       "Drop_priv",
+	ProcessPriv:    "Process_priv",
 	GrantPriv:      "Grant_priv",
+	ReferencesPriv: "References_priv",
 	AlterPriv:      "Alter_priv",
 	ExecutePriv:    "Execute_priv",
 	IndexPriv:      "Index_priv",
@@ -214,15 +223,18 @@ var Col2PrivType = map[string]PrivilegeType{
 	"Show_db_priv":     ShowDBPriv,
 	"Super_priv":       SuperPriv,
 	"Create_user_priv": CreateUserPriv,
+	"Trigger_priv":     TriggerPriv,
 	"Drop_priv":        DropPriv,
+	"Process_priv":     ProcessPriv,
 	"Grant_priv":       GrantPriv,
+	"References_priv":  ReferencesPriv,
 	"Alter_priv":       AlterPriv,
 	"Execute_priv":     ExecutePriv,
 	"Index_priv":       IndexPriv,
 }
 
 // AllGlobalPrivs is all the privileges in global scope.
-var AllGlobalPrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, GrantPriv, AlterPriv, ShowDBPriv, SuperPriv, ExecutePriv, IndexPriv, CreateUserPriv}
+var AllGlobalPrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, ProcessPriv, GrantPriv, ReferencesPriv, AlterPriv, ShowDBPriv, SuperPriv, ExecutePriv, IndexPriv, CreateUserPriv, TriggerPriv}
 
 // Priv2Str is the map for privilege to string.
 var Priv2Str = map[PrivilegeType]string{
@@ -234,8 +246,11 @@ var Priv2Str = map[PrivilegeType]string{
 	ShowDBPriv:     "Show Databases",
 	SuperPriv:      "Super",
 	CreateUserPriv: "Create User",
+	TriggerPriv:    "Trigger",
 	DropPriv:       "Drop",
+	ProcessPriv:    "Process",
 	GrantPriv:      "Grant Option",
+	ReferencesPriv: "References",
 	AlterPriv:      "Alter",
 	ExecutePriv:    "Execute",
 	IndexPriv:      "Index",

@@ -23,12 +23,12 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
 )
 
@@ -77,6 +77,22 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	return s, nil
 }
 
+// MockDriver is in memory mock TiKV driver.
+type MockDriver struct {
+}
+
+// Open creates a MockTiKV storage.
+func (d MockDriver) Open(path string) (kv.Storage, error) {
+	u, err := url.Parse(path)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if !strings.EqualFold(u.Scheme, "mocktikv") {
+		return nil, errors.Errorf("Uri scheme expected(mocktikv) but found (%s)", u.Scheme)
+	}
+	return NewMockTikvStore(u.Path)
+}
+
 // update oracle's lastTS every 2000ms.
 var oracleUpdateInterval = 2000
 
@@ -89,6 +105,7 @@ type tikvStore struct {
 	lockResolver *LockResolver
 	gcWorker     *GCWorker
 	etcdAddrs    []string
+	mock         bool
 }
 
 func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool) (*tikvStore, error) {
@@ -96,13 +113,14 @@ func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
+	_, mock := client.(*mocktikv.RPCClient)
 	store := &tikvStore{
 		clusterID:   pdClient.GetClusterID(goctx.TODO()),
 		uuid:        uuid,
 		oracle:      oracle,
 		client:      client,
 		regionCache: NewRegionCache(pdClient),
+		mock:        mock,
 	}
 	store.lockResolver = newLockResolver(store)
 	if enableGC {
@@ -118,15 +136,14 @@ func (s *tikvStore) EtcdAddrs() []string {
 	return s.etcdAddrs
 }
 
-// NewMockTikvStore creates a mocked tikv store.
-func NewMockTikvStore() (kv.Storage, error) {
+// NewMockTikvStore creates a mocked tikv store, the path is the file path to store the data.
+// If path is an empty string, a memory storage will be created.
+func NewMockTikvStore(path string) (kv.Storage, error) {
+	if path != "" {
+		return nil, errors.New("persistent mockTiKV is not supported yet")
+	}
 	cluster := mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(cluster)
-	mvccStore := mocktikv.NewMvccStore()
-	client := mocktikv.NewRPCClient(cluster, mvccStore)
-	uuid := fmt.Sprintf("mock-tikv-store-:%v", time.Now().Unix())
-	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
-	return newTikvStore(uuid, pdCli, client, false)
+	return NewMockTikvStoreWithCluster(cluster)
 }
 
 // NewMockTikvStoreWithCluster creates a mocked tikv store with cluster.
@@ -134,7 +151,9 @@ func NewMockTikvStoreWithCluster(cluster *mocktikv.Cluster) (kv.Storage, error) 
 	mocktikv.BootstrapWithSingleStore(cluster)
 	mvccStore := mocktikv.NewMvccStore()
 	client := mocktikv.NewRPCClient(cluster, mvccStore)
-	uuid := fmt.Sprintf("mock-tikv-store-:%v", time.Now().Unix())
+	// Make sure the uuid is unique.
+	partID := fmt.Sprintf("%05d", rand.Intn(100000))
+	uuid := fmt.Sprintf("mock-tikv-store-%v-%v", time.Now().Unix(), partID)
 	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
 	return newTikvStore(uuid, pdCli, client, false)
 }
@@ -180,7 +199,7 @@ func (s *tikvStore) Close() error {
 	if s.gcWorker != nil {
 		s.gcWorker.Close()
 	}
-	// Make sure all connections are put back into the pools.
+
 	if err := s.client.Close(); err != nil {
 		return errors.Trace(err)
 	}
@@ -220,9 +239,9 @@ func (s *tikvStore) GetClient() kv.Client {
 	}
 }
 
-func (s *tikvStore) SendKVReq(bo *Backoffer, req *pb.Request, regionID RegionVerID, timeout time.Duration) (*pb.Response, error) {
-	sender := NewRegionRequestSender(bo, s.regionCache, s.client)
-	return sender.SendKVReq(req, regionID, timeout)
+func (s *tikvStore) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
+	sender := NewRegionRequestSender(s.regionCache, s.client)
+	return sender.SendReq(bo, req, regionID, timeout)
 }
 
 // ParseEtcdAddr parses path to etcd address list

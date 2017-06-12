@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"fmt"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -33,6 +34,12 @@ func GetSessionSystemVar(s *variable.SessionVars, key string) (string, error) {
 	if sysVar == nil {
 		return "", variable.UnknownSystemVar.GenByArgs(key)
 	}
+	// For virtual system varaibles:
+	switch sysVar.Name {
+	case variable.TiDBCurrentTS:
+		return fmt.Sprintf("%d", s.TxnCtx.StartTS), nil
+	}
+
 	sVal, ok := s.Systems[key]
 	if ok {
 		return sVal, nil
@@ -87,7 +94,10 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 	}
 	switch name {
 	case variable.TimeZone:
-		vars.TimeZone = parseTimeZone(sVal)
+		vars.TimeZone, err = parseTimeZone(sVal)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	case variable.SQLModeVar:
 		sVal = strings.ToUpper(sVal)
 		// TODO: Remove this latter.
@@ -118,8 +128,6 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		vars.SkipConstraintCheck = tidbOptOn(sVal)
 	case variable.TiDBSkipUTF8Check:
 		vars.SkipUTF8Check = tidbOptOn(sVal)
-	case variable.TiDBSkipDDLWait:
-		vars.SkipDDLWait = tidbOptOn(sVal)
 	case variable.TiDBOptAggPushDown:
 		vars.AllowAggPushDown = tidbOptOn(sVal)
 	case variable.TiDBOptInSubqUnFolding:
@@ -134,12 +142,16 @@ func SetSessionSystemVar(vars *variable.SessionVars, name string, value types.Da
 		vars.IndexSerialScanConcurrency = tidbOptPositiveInt(sVal, variable.DefIndexSerialScanConcurrency)
 	case variable.TiDBBatchInsert:
 		vars.BatchInsert = tidbOptOn(sVal)
+	case variable.TiDBMaxRowCountForINLJ:
+		vars.MaxRowCountForINLJ = tidbOptPositiveInt(sVal, variable.DefMaxRowCountForINLJ)
+	case variable.TiDBCurrentTS:
+		return variable.ErrReadOnly
 	}
 	vars.Systems[name] = sVal
 	return nil
 }
 
-// For all tidb session variable options, we use "ON"/1 to turn on the options.
+// tidbOptOn could be used for all tidb session variable options, we use "ON"/1 to turn on those options.
 func tidbOptOn(opt string) bool {
 	return strings.EqualFold(opt, "ON") || opt == "1"
 }
@@ -152,26 +164,30 @@ func tidbOptPositiveInt(opt string, defaultVal int) int {
 	return val
 }
 
-func parseTimeZone(s string) *time.Location {
+func parseTimeZone(s string) (*time.Location, error) {
 	if s == "SYSTEM" {
 		// TODO: Support global time_zone variable, it should be set to global time_zone value.
-		return time.Local
+		return time.Local, nil
 	}
 
 	loc, err := time.LoadLocation(s)
 	if err == nil {
-		return loc
+		return loc, nil
 	}
 
 	// The value can be given as a string indicating an offset from UTC, such as '+10:00' or '-6:00'.
 	if strings.HasPrefix(s, "+") || strings.HasPrefix(s, "-") {
 		d, err := types.ParseDuration(s[1:], 0)
 		if err == nil {
-			return time.FixedZone("UTC", int(d.Duration/time.Second))
+			ofst := int(d.Duration / time.Second)
+			if s[0] == '-' {
+				ofst = -ofst
+			}
+			return time.FixedZone("UTC", ofst), nil
 		}
 	}
 
-	return nil
+	return nil, variable.ErrUnknownTimeZone.GenByArgs(s)
 }
 
 func setSnapshotTS(s *variable.SessionVars, sVal string) error {
@@ -185,7 +201,12 @@ func setSnapshotTS(s *variable.SessionVars, sVal string) error {
 	}
 	// TODO: Consider time_zone variable.
 	t1, err := t.Time.GoTime(time.Local)
-	ts := (t1.UnixNano() / int64(time.Millisecond)) << epochShiftBits
-	s.SnapshotTS = uint64(ts)
+	s.SnapshotTS = GoTimeToTS(t1)
 	return errors.Trace(err)
+}
+
+// GoTimeToTS converts a Go time to uint64 timestamp.
+func GoTimeToTS(t time.Time) uint64 {
+	ts := (t.UnixNano() / int64(time.Millisecond)) << epochShiftBits
+	return uint64(ts)
 }

@@ -125,16 +125,31 @@ type Insert struct {
 	Ignore    bool
 }
 
+// AnalyzePKTask is used for analyze pk. Used only when pk is handle.
+type AnalyzePKTask struct {
+	TableInfo *model.TableInfo
+	PKInfo    *model.ColumnInfo
+}
+
+// AnalyzeColumnsTask is used for analyze columns.
+type AnalyzeColumnsTask struct {
+	TableInfo *model.TableInfo
+	ColsInfo  []*model.ColumnInfo
+}
+
+// AnalyzeIndexTask is used for analyze index.
+type AnalyzeIndexTask struct {
+	TableInfo *model.TableInfo
+	IndexInfo *model.IndexInfo
+}
+
 // Analyze represents an analyze plan
 type Analyze struct {
-	*basePlan
-	baseLogicalPlan
-	basePhysicalPlan
+	basePlan
 
-	TableInfo   *model.TableInfo
-	IndicesInfo []*model.IndexInfo
-	ColsInfo    []*model.ColumnInfo
-	PkInfo      *model.ColumnInfo // Used only when pk is handle.
+	PkTasks  []AnalyzePKTask
+	ColTasks []AnalyzeColumnsTask
+	IdxTasks []AnalyzeIndexTask
 }
 
 // LoadData represents a loaddata plan.
@@ -144,6 +159,7 @@ type LoadData struct {
 	IsLocal    bool
 	Path       string
 	Table      *ast.TableName
+	Columns    []*ast.ColumnName
 	FieldsInfo *ast.FieldsClause
 	LinesInfo  *ast.LinesClause
 }

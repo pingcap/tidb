@@ -53,7 +53,7 @@ func (s *testSuite) TestPrepared(c *C) {
 
 	// Use parameter marker with argument will run prepared statement.
 	result := tk.MustQuery("select distinct c1, c2 from prepare_test where c1 = ?", 1)
-	result.Check([][]interface{}{{1, nil}})
+	result.Check(testkit.Rows("1 <nil>"))
 
 	// Call Session PrepareStmt directly to get stmtId.
 	query := "select c1, c2 from prepare_test where c1 = ?"
@@ -79,6 +79,12 @@ func (s *testSuite) TestPrepared(c *C) {
 	// There should be schema changed error.
 	_, err = tk.Se.ExecutePreparedStmt(stmtId, 1)
 	c.Assert(executor.ErrSchemaChanged.Equal(err), IsTrue)
+
+	// issue 3381
+	tk.MustExec("create table prepare3 (a decimal(1))")
+	tk.MustExec("prepare stmt from 'insert into prepare3 value(123)'")
+	_, err = tk.Exec("execute stmt")
+	c.Assert(err, NotNil)
 
 	// Coverage.
 	exec := &executor.ExecuteExec{}

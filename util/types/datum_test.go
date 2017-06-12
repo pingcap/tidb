@@ -184,6 +184,53 @@ func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
 	c.Assert(converted.GetFloat64(), Equals, datum.GetFloat64())
 }
 
+// mustParseTimeIntoDatum is similar to ParseTime but panic if any error occurs.
+func mustParseTimeIntoDatum(s string, tp byte, fsp int) (d Datum) {
+	t, err := ParseTime(s, tp, fsp)
+	if err != nil {
+		panic("ParseTime fail")
+	}
+	d.SetMysqlTime(t)
+	return
+}
+
+func (ts *testDatumSuite) TestToJSON(c *C) {
+	ft := NewFieldType(mysql.TypeJSON)
+	sc := new(variable.StatementContext)
+	tests := []struct {
+		datum    Datum
+		expected string
+		success  bool
+	}{
+		{NewIntDatum(1), `1.0`, true},
+		{NewFloat64Datum(2), `2`, true},
+		{NewStringDatum("\"hello, 世界\""), `"hello, 世界"`, true},
+		{NewStringDatum("[1, 2, 3]"), `[1, 2, 3]`, true},
+		{NewStringDatum("{}"), `{}`, true},
+		{NewIntDatum(1), `true`, true},
+		{mustParseTimeIntoDatum("2011-11-10 11:11:11.111111", mysql.TypeTimestamp, 6), `"2011-11-10 11:11:11.111111"`, true},
+
+		// can not parse JSON from this string, so error occurs.
+		{NewStringDatum("hello, 世界"), "", false},
+	}
+	for _, tt := range tests {
+		obtain, err := tt.datum.ConvertTo(sc, ft)
+		if tt.success {
+			c.Assert(err, IsNil)
+
+			sd := NewStringDatum(tt.expected)
+			expected, err := sd.ConvertTo(sc, ft)
+			c.Assert(err, IsNil)
+
+			cmp, err := obtain.CompareDatum(sc, expected)
+			c.Assert(err, IsNil)
+			c.Assert(cmp, Equals, 0)
+		} else {
+			c.Assert(err, NotNil)
+		}
+	}
+}
+
 func (ts *testDatumSuite) TestIsNull(c *C) {
 	tests := []struct {
 		data   interface{}

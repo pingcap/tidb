@@ -26,7 +26,7 @@ func ToString(p Plan) string {
 
 func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 	switch in.(type) {
-	case *LogicalJoin, *Union, *PhysicalHashJoin, *PhysicalHashSemiJoin, *LogicalApply, *PhysicalApply, *PhysicalMergeJoin:
+	case *LogicalJoin, *Union, *PhysicalHashJoin, *PhysicalHashSemiJoin, *LogicalApply, *PhysicalApply, *PhysicalMergeJoin, *PhysicalIndexJoin:
 		idxs = append(idxs, len(strs))
 	}
 
@@ -130,11 +130,13 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		}
 	case *Selection:
 		str = "Selection"
-		if UseDAGPlanBuilder {
+		if useDAGPlanBuilder(x.ctx) {
 			str = fmt.Sprintf("Sel(%s)", x.Conditions)
 		}
 	case *Projection:
 		str = "Projection"
+	case *TopN:
+		str = fmt.Sprintf("TopN(%s,%d,%d)", x.ByItems, x.Offset, x.Count)
 	case *TableDual:
 		str = "Dual"
 	case *PhysicalAggregation:
@@ -156,11 +158,25 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 	case *Cache:
 		str = "Cache"
 	case *PhysicalTableReader:
-		str = fmt.Sprintf("TableReader(%s)", ToString(x.copPlan))
+		str = fmt.Sprintf("TableReader(%s)", ToString(x.tablePlan))
 	case *PhysicalIndexReader:
-		str = fmt.Sprintf("IndexReader(%s)", ToString(x.copPlan))
+		str = fmt.Sprintf("IndexReader(%s)", ToString(x.indexPlan))
 	case *PhysicalIndexLookUpReader:
 		str = fmt.Sprintf("IndexLookUp(%s, %s)", ToString(x.indexPlan), ToString(x.tablePlan))
+	case *PhysicalUnionScan:
+		str = fmt.Sprintf("UnionScan(%s)", x.Conditions)
+	case *PhysicalIndexJoin:
+		last := len(idxs) - 1
+		idx := idxs[last]
+		children := strs[idx:]
+		strs = strs[:idx]
+		idxs = idxs[:last]
+		str = "IndexJoin{" + strings.Join(children, "->") + "}"
+		for i := range x.OuterJoinKeys {
+			l := x.OuterJoinKeys[i]
+			r := x.InnerJoinKeys[i]
+			str += fmt.Sprintf("(%s,%s)", l, r)
+		}
 	default:
 		str = fmt.Sprintf("%T", in)
 	}

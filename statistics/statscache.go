@@ -16,6 +16,7 @@ package statistics
 import (
 	"fmt"
 	"sync/atomic"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -45,6 +46,8 @@ type Handle struct {
 	listHead *SessionStatsCollector
 	// We collect the delta map and merge them with globalMap.
 	globalMap tableDeltaMap
+
+	Lease time.Duration
 }
 
 // Clear the statsCache, only for test.
@@ -55,12 +58,13 @@ func (h *Handle) Clear() {
 }
 
 // NewHandle creates a Handle for update stats.
-func NewHandle(ctx context.Context) *Handle {
+func NewHandle(ctx context.Context, lease time.Duration) *Handle {
 	handle := &Handle{
 		ctx:        ctx,
 		ddlEventCh: make(chan *ddl.Event, 100),
 		listHead:   &SessionStatsCollector{mapper: make(tableDeltaMap)},
 		globalMap:  make(tableDeltaMap),
+		Lease:      lease,
 	}
 	handle.statsCache.Store(statsCache{})
 	return handle
@@ -75,11 +79,13 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 	}
 	h.PrevLastVersion = h.LastVersion
 	tables := make([]*Table, 0, len(rows))
+	deletedTableIDs := make([]int64, 0, len(rows))
 	for _, row := range rows {
 		version, tableID, count := row.Data[0].GetUint64(), row.Data[1].GetInt64(), row.Data[2].GetInt64()
 		table, ok := is.TableByID(tableID)
 		if !ok {
 			log.Debugf("Unknown table ID %d in stats meta table, maybe it has been dropped", tableID)
+			deletedTableIDs = append(deletedTableIDs, tableID)
 			continue
 		}
 		tableInfo := table.Meta()
@@ -89,10 +95,14 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 			log.Errorf("Error occurred when read table stats for table id %d. The error message is %s.", tableID, err.Error())
 			continue
 		}
+		if tbl == nil {
+			deletedTableIDs = append(deletedTableIDs, tableID)
+			continue
+		}
 		tables = append(tables, tbl)
 		h.LastVersion = version
 	}
-	h.updateTableStats(tables)
+	h.UpdateTableStats(tables, deletedTableIDs)
 	return nil
 }
 
@@ -114,12 +124,15 @@ func (h *Handle) copyFromOldCache() statsCache {
 	return newCache
 }
 
-// updateTableStats updates the statistics table cache using copy on write.
-func (h *Handle) updateTableStats(tables []*Table) {
+// UpdateTableStats updates the statistics table cache using copy on write.
+func (h *Handle) UpdateTableStats(tables []*Table, deletedIDs []int64) {
 	newCache := h.copyFromOldCache()
 	for _, tbl := range tables {
-		id := tbl.tableID
+		id := tbl.TableID
 		newCache[id] = tbl
+	}
+	for _, id := range deletedIDs {
+		delete(newCache, id)
 	}
 	h.statsCache.Store(newCache)
 }

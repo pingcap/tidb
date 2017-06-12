@@ -56,7 +56,6 @@ var (
 	_ PhysicalPlan = &Limit{}
 	_ PhysicalPlan = &Show{}
 	_ PhysicalPlan = &Insert{}
-	_ PhysicalPlan = &Analyze{}
 	_ PhysicalPlan = &PhysicalIndexScan{}
 	_ PhysicalPlan = &PhysicalTableScan{}
 	_ PhysicalPlan = &PhysicalAggregation{}
@@ -73,7 +72,9 @@ type PhysicalTableReader struct {
 	*basePlan
 	basePhysicalPlan
 
-	copPlan PhysicalPlan
+	// TablePlans flats the tablePlan to construct executor pb.
+	TablePlans []PhysicalPlan
+	tablePlan  PhysicalPlan
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -89,7 +90,12 @@ type PhysicalIndexReader struct {
 	*basePlan
 	basePhysicalPlan
 
-	copPlan PhysicalPlan
+	// IndexPlans flats the indexPlan to construct executor pb.
+	IndexPlans []PhysicalPlan
+	indexPlan  PhysicalPlan
+
+	// OutputColumns represents the columns that index reader should return.
+	OutputColumns []*expression.Column
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -105,8 +111,12 @@ type PhysicalIndexLookUpReader struct {
 	*basePlan
 	basePhysicalPlan
 
-	indexPlan PhysicalPlan
-	tablePlan PhysicalPlan
+	// IndexPlans flats the indexPlan to construct executor pb.
+	IndexPlans []PhysicalPlan
+	// TablePlans flats the tablePlan to construct executor pb.
+	TablePlans []PhysicalPlan
+	indexPlan  PhysicalPlan
+	tablePlan  PhysicalPlan
 }
 
 // Copy implements the PhysicalPlan Copy interface.
@@ -132,12 +142,16 @@ type PhysicalIndexScan struct {
 	// If the query requires the columns that don't belong to index, DoubleRead will be true.
 	DoubleRead bool
 
-	// All conditions in AccessCondition[accessEqualCount:accessInAndEqCount] are IN expressions or equal conditions.
+	// accessInAndEqCount is counter of all conditions in AccessCondition[accessEqualCount:accessInAndEqCount].
 	accessInAndEqCount int
-	// All conditions in AccessCondition[:accessEqualCount] are equal conditions.
+	// accessEqualCount is counter of all conditions in AccessCondition[:accessEqualCount].
 	accessEqualCount int
 
 	TableAsName *model.CIStr
+
+	// dataSourceSchema is the original schema of DataSource. The schema of index scan in KV and index reader in TiDB
+	// will be different. The schema of index scan will decode all columns of index but the TiDB only need some of them.
+	dataSourceSchema *expression.Schema
 }
 
 // PhysicalMemTable reads memory table.
@@ -166,7 +180,6 @@ type physicalDistSQLPlan interface {
 	addAggregation(ctx context.Context, agg *PhysicalAggregation) *expression.Schema
 	addTopN(ctx context.Context, prop *requiredProperty) bool
 	addLimit(limit *Limit)
-	// scanCount means the original row count that need to be scanned and resultCount means the row count after scanning.
 	calculateCost(resultCount float64, scanCount float64) float64
 }
 
@@ -220,6 +233,7 @@ type physicalTableSource struct {
 	SortItemsPB []*tipb.ByItem
 
 	// The following fields are used for explaining and testing. Because pb structures are not human-readable.
+
 	aggFuncs              []expression.AggregationFunction
 	gbyItems              []expression.Expression
 	sortItems             []*ByItems
@@ -306,7 +320,7 @@ func (p *physicalTableSource) tryToAddUnionScan(resultPlan PhysicalPlan) Physica
 	}
 	conditions := append(p.indexFilterConditions, p.tableFilterConditions...)
 	us := PhysicalUnionScan{
-		Condition: expression.ComposeCNFCondition(p.ctx, append(conditions, p.AccessCondition...)...),
+		Conditions: append(conditions, p.AccessCondition...),
 	}.init(p.allocator, p.ctx)
 	us.SetChildren(resultPlan)
 	us.SetSchema(resultPlan.Schema())
@@ -325,7 +339,7 @@ func (p *physicalTableSource) addTopN(ctx context.Context, prop *requiredPropert
 		p.addLimit(prop.limit)
 		return true
 	}
-	if p.client == nil || !p.client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeTopN) {
+	if p.client == nil || !p.client.IsRequestTypeSupported(kv.ReqTypeSelect, kv.ReqSubTypeTopN) {
 		return false
 	}
 	if prop.limit == nil {
@@ -335,7 +349,7 @@ func (p *physicalTableSource) addTopN(ctx context.Context, prop *requiredPropert
 	count := int64(prop.limit.Count + prop.limit.Offset)
 	p.LimitCount = &count
 	for _, prop := range prop.props {
-		item := sortByItemToPB(sc, p.client, prop.col, prop.desc)
+		item := expression.SortByItemToPB(sc, p.client, prop.col, prop.desc)
 		if item == nil {
 			// When we fail to convert any sortItem to PB struct, we should clear the environments.
 			p.clearForTopnPushDown()
@@ -353,7 +367,7 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	for _, f := range agg.AggFuncs {
-		pb := aggFuncToPBExpr(sc, p.client, f)
+		pb := expression.AggFuncToPBExpr(sc, p.client, f)
 		if pb == nil {
 			// When we fail to convert any agg function to PB struct, we should clear the environments.
 			p.clearForAggPushDown()
@@ -363,7 +377,7 @@ func (p *physicalTableSource) addAggregation(ctx context.Context, agg *PhysicalA
 		p.aggFuncs = append(p.aggFuncs, f.Clone())
 	}
 	for _, item := range agg.GroupByItems {
-		pb := groupByItemToPB(sc, p.client, item)
+		pb := expression.GroupByItemToPB(sc, p.client, item)
 		if pb == nil {
 			// When we fail to convert any group-by item to PB struct, we should clear the environments.
 			p.clearForAggPushDown()
@@ -421,7 +435,7 @@ type PhysicalTableScan struct {
 
 	TableAsName *model.CIStr
 
-	// If sort data by scanning pkcol, KeepOrder should be true.
+	// KeepOrder is true, if sort data by scanning pkcol,
 	KeepOrder bool
 }
 
@@ -447,6 +461,21 @@ type PhysicalHashJoin struct {
 	OtherConditions []expression.Expression
 	SmallTable      int
 	Concurrency     int
+
+	DefaultValues []types.Datum
+}
+
+// PhysicalIndexJoin represents the plan of index look up join.
+type PhysicalIndexJoin struct {
+	*basePlan
+	basePhysicalPlan
+
+	Outer           bool
+	OuterJoinKeys   []*expression.Column
+	InnerJoinKeys   []*expression.Column
+	LeftConditions  expression.CNFExprs
+	RightConditions expression.CNFExprs
+	OtherConditions expression.CNFExprs
 
 	DefaultValues []types.Datum
 }
@@ -509,7 +538,7 @@ type PhysicalUnionScan struct {
 	*basePlan
 	basePhysicalPlan
 
-	Condition expression.Expression
+	Conditions []expression.Expression
 }
 
 // Cache plan is a physical plan which stores the result of its child node.
@@ -773,6 +802,14 @@ func (p *PhysicalHashJoin) Copy() PhysicalPlan {
 }
 
 // Copy implements the PhysicalPlan Copy interface.
+func (p *PhysicalIndexJoin) Copy() PhysicalPlan {
+	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
+	return &np
+}
+
+// Copy implements the PhysicalPlan Copy interface.
 func (p *PhysicalMergeJoin) Copy() PhysicalPlan {
 	np := *p
 	np.basePlan = p.basePlan.copy()
@@ -957,6 +994,15 @@ func (p *Sort) Copy() PhysicalPlan {
 	return &np
 }
 
+// Copy implements the PhysicalPlan Copy interface.
+func (p *TopN) Copy() PhysicalPlan {
+	np := *p
+	np.basePlan = p.basePlan.copy()
+	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
+	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
+	return &np
+}
+
 // MarshalJSON implements json.Marshaler interface.
 func (p *Sort) MarshalJSON() ([]byte, error) {
 	exprs, err := json.Marshal(p.ByItems)
@@ -1061,15 +1107,6 @@ func (p *PhysicalUnionScan) Copy() PhysicalPlan {
 func (p *Cache) Copy() PhysicalPlan {
 	np := *p
 	np.basePlan = p.basePlan.copy()
-	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
-	return &np
-}
-
-// Copy implements the PhysicalPlan Copy interface.
-func (p *Analyze) Copy() PhysicalPlan {
-	np := *p
-	np.basePlan = p.basePlan.copy()
-	np.baseLogicalPlan = newBaseLogicalPlan(np.basePlan)
 	np.basePhysicalPlan = newBasePhysicalPlan(np.basePlan)
 	return &np
 }

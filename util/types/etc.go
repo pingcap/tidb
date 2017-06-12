@@ -62,6 +62,12 @@ func IsTypeFractionable(tp byte) bool {
 	return tp == mysql.TypeDatetime || tp == mysql.TypeDuration || tp == mysql.TypeTimestamp
 }
 
+// IsTypeTime returns a boolean indicating
+// whether the tp is time type like datetime, date or timestamp.
+func IsTypeTime(tp byte) bool {
+	return tp == mysql.TypeDatetime || tp == mysql.TypeDate || tp == mysql.TypeNewDate || tp == mysql.TypeTimestamp
+}
+
 var type2Str = map[byte]string{
 	mysql.TypeBit:        "bit",
 	mysql.TypeBlob:       "text",
@@ -74,6 +80,7 @@ var type2Str = map[byte]string{
 	mysql.TypeFloat:      "float",
 	mysql.TypeGeometry:   "geometry",
 	mysql.TypeInt24:      "mediumint",
+	mysql.TypeJSON:       "json",
 	mysql.TypeLong:       "int",
 	mysql.TypeLonglong:   "bigint",
 	mysql.TypeLongBlob:   "longtext",
@@ -129,7 +136,7 @@ func InvOp2(x, y interface{}, o opcode.Op) (interface{}, error) {
 	return nil, errors.Errorf("Invalid operation: %v %v %v (mismatched types %T and %T)", x, o, y, x, y)
 }
 
-// Overflow returns an overflowed error.
+// overflow returns an overflowed error.
 func overflow(v interface{}, tp byte) error {
-	return errors.Errorf("constant %v overflows %s", v, TypeStr(tp))
+	return ErrOverflow.Gen("constant %v overflows %s", v, TypeStr(tp))
 }

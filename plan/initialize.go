@@ -13,7 +13,10 @@
 
 package plan
 
-import "github.com/pingcap/tidb/context"
+import (
+	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression"
+)
 
 const (
 	// TypeSel is the type of Selection.
@@ -46,6 +49,8 @@ const (
 	TypeIdxScan = "IndexScan"
 	// TypeSort is the type of Sort.
 	TypeSort = "Sort"
+	// TypeTopN is the type of TopN.
+	TypeTopN = "TopN"
 	// TypeLimit is the type of Limit.
 	TypeLimit = "Limit"
 	// TypeHashSemiJoin is the type of hash semi join.
@@ -56,6 +61,8 @@ const (
 	TypeHashRightJoin = "HashRightJoin"
 	// TypeMergeJoin is the type of merge join.
 	TypeMergeJoin = "MergeJoin"
+	// TypeIndexJoin is the type of index look up join.
+	TypeIndexJoin = "IndexJoin"
 	// TypeApply is the type of Apply.
 	TypeApply = "Apply"
 	// TypeMaxOneRow is the type of MaxOneRow.
@@ -72,8 +79,6 @@ const (
 	TypeUpate = "Update"
 	// TypeDelete is the type of Delete.
 	TypeDelete = "Delete"
-	// TypeAnalyze is the type of Analyze.
-	TypeAnalyze = "Analyze"
 	// TypeIndexLookUp is the type of IndexLookUp.
 	TypeIndexLookUp = "IndexLookUp"
 	// TypeTableReader is the type of TableReader.
@@ -134,6 +139,13 @@ func (p Sort) init(allocator *idAllocator, ctx context.Context) *Sort {
 	return &p
 }
 
+func (p TopN) init(allocator *idAllocator, ctx context.Context) *TopN {
+	p.basePlan = newBasePlan(TypeTopN, allocator, ctx, &p)
+	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	return &p
+}
+
 func (p Limit) init(allocator *idAllocator, ctx context.Context) *Limit {
 	p.basePlan = newBasePlan(TypeLimit, allocator, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
@@ -185,13 +197,6 @@ func (p Insert) init(allocator *idAllocator, ctx context.Context) *Insert {
 
 func (p Show) init(allocator *idAllocator, ctx context.Context) *Show {
 	p.basePlan = newBasePlan(TypeShow, allocator, ctx, &p)
-	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
-	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
-	return &p
-}
-
-func (p Analyze) init(allocator *idAllocator, ctx context.Context) *Analyze {
-	p.basePlan = newBasePlan(TypeAnalyze, allocator, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
@@ -275,17 +280,55 @@ func (p PhysicalUnionScan) init(allocator *idAllocator, ctx context.Context) *Ph
 func (p PhysicalIndexLookUpReader) init(allocator *idAllocator, ctx context.Context) *PhysicalIndexLookUpReader {
 	p.basePlan = newBasePlan(TypeIndexLookUp, allocator, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.TablePlans = flattenPushDownPlan(p.tablePlan)
+	p.IndexPlans = flattenPushDownPlan(p.indexPlan)
+	p.schema = p.tablePlan.Schema()
 	return &p
 }
 
 func (p PhysicalTableReader) init(allocator *idAllocator, ctx context.Context) *PhysicalTableReader {
 	p.basePlan = newBasePlan(TypeTableReader, allocator, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.TablePlans = flattenPushDownPlan(p.tablePlan)
+	p.schema = p.tablePlan.Schema()
 	return &p
 }
 
 func (p PhysicalIndexReader) init(allocator *idAllocator, ctx context.Context) *PhysicalIndexReader {
 	p.basePlan = newBasePlan(TypeIndexReader, allocator, ctx, &p)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.IndexPlans = flattenPushDownPlan(p.indexPlan)
+	if _, ok := p.indexPlan.(*PhysicalAggregation); ok {
+		p.schema = p.indexPlan.Schema()
+	} else {
+		is := p.IndexPlans[0].(*PhysicalIndexScan)
+		p.schema = is.dataSourceSchema
+	}
+	p.OutputColumns = p.schema.Columns
 	return &p
+}
+
+func (p PhysicalIndexJoin) init(allocator *idAllocator, ctx context.Context, children ...Plan) *PhysicalIndexJoin {
+	p.basePlan = newBasePlan(TypeIndexJoin, allocator, ctx, &p)
+	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.children = children
+	p.schema = expression.MergeSchema(p.children[0].Schema(), p.children[1].Schema())
+	return &p
+}
+
+// flattenPushDownPlan converts a plan tree to a list, whose head is the leaf node like table scan.
+func flattenPushDownPlan(p PhysicalPlan) []PhysicalPlan {
+	plans := make([]PhysicalPlan, 0, 5)
+	for {
+		plans = append(plans, p)
+		if len(p.Children()) == 0 {
+			break
+		}
+		p = p.Children()[0].(PhysicalPlan)
+	}
+	for i := 0; i < len(plans)/2; i++ {
+		j := len(plans) - i - 1
+		plans[i], plans[j] = plans[j], plans[i]
+	}
+	return plans
 }

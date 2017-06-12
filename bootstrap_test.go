@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -48,7 +49,7 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	row, err := r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
-	match(c, row.Data, []byte("%"), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	match(c, row.Data, []byte("%"), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
 
 	c.Assert(se.Auth("root@anyhost", []byte(""), []byte("")), IsTrue)
 	mustExecSQL(c, se, "USE test;")
@@ -105,7 +106,7 @@ func globalVarsCount() int64 {
 	return count
 }
 
-// Create a new session on store but only do ddl works.
+// bootstrapWithOnlyDDLWork creates a new session on store but only do ddl works.
 func (s *testBootstrapSuite) bootstrapWithOnlyDDLWork(store kv.Storage, c *C) {
 	ss := &session{
 		store:       store,
@@ -126,6 +127,7 @@ func (s *testBootstrapSuite) bootstrapWithOnlyDDLWork(store kv.Storage, c *C) {
 	// Leave dml unfinished.
 }
 
+// testBootstrapWithError :
 // When a session failed in bootstrap process (for example, the session is killed after doDDLWorks()).
 // We should make sure that the following session could finish the bootstrap process.
 func (s *testBootstrapSuite) testBootstrapWithError(c *C) {
@@ -140,7 +142,7 @@ func (s *testBootstrapSuite) testBootstrapWithError(c *C) {
 	row, err := r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
-	match(c, row.Data, []byte("%"), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	match(c, row.Data, []byte("%"), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
 	mustExecSQL(c, se, "USE test;")
 	// Check privilege tables.
 	mustExecSQL(c, se, "SELECT * from mysql.db;")
@@ -163,10 +165,11 @@ func (s *testBootstrapSuite) testBootstrapWithError(c *C) {
 	c.Assert(err, IsNil)
 }
 
-// Test case for upgrade
+// TestUpgrade tests upgrading
 func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	defer testleak.AfterTest(c)()
 	store := newStoreWithBootstrap(c, s.dbName)
+	defer store.Close()
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "USE mysql;")
 
@@ -220,4 +223,13 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	ver, err = getBootstrapVersion(se2)
 	c.Assert(err, IsNil)
 	c.Assert(ver, Equals, int64(currentBootstrapVersion))
+}
+
+func (s *testBootstrapSuite) TestOldPasswordUpgrade(c *C) {
+	defer testleak.AfterTest(c)()
+	pwd := "abc"
+	oldpwd := fmt.Sprintf("%X", util.Sha1Hash([]byte(pwd)))
+	newpwd, err := oldPasswordUpgrade(oldpwd)
+	c.Assert(err, IsNil)
+	c.Assert(newpwd, Equals, "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E")
 }

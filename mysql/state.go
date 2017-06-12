@@ -246,4 +246,8 @@ var MySQLState = map[uint16]string{
 	ErrAlterOperationNotSupported:          "0A000",
 	ErrAlterOperationNotSupportedReason:    "0A000",
 	ErrDupUnknownInIndex:                   "23000",
+	ErrInvalidJSONText:                     "22032",
+	ErrInvalidJSONPath:                     "42000",
+	ErrInvalidJSONData:                     "22032",
+	ErrJSONUsedAsKey:                       "42000",
 }

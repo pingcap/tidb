@@ -198,7 +198,7 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum
 	}
 	// Set new row data into KV.
 	key := t.RecordKey(h)
-	value, err := tablecodec.EncodeRow(currentData, colIDs)
+	value, err := tablecodec.EncodeRow(currentData, colIDs, ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -236,7 +236,7 @@ func (t *Table) setOnUpdateData(ctx context.Context, touched map[int]bool, data 
 	return nil
 }
 
-// Fill untouched columns with original values.
+// composeNewData fills untouched columns with original values.
 // TODO: consider col state
 func (t *Table) composeNewData(touched map[int]bool, newData []types.Datum, oldData []types.Datum) {
 	for i, od := range oldData {
@@ -336,7 +336,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 		row = append(row, value)
 	}
 	key := t.RecordKey(recordID)
-	value, err := tablecodec.EncodeRow(row, colIDs)
+	value, err := tablecodec.EncodeRow(row, colIDs, ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -359,7 +359,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 	return recordID, nil
 }
 
-// Generate index content string representation.
+// genIndexKeyStr generates index content string representation.
 func (t *Table) genIndexKeyStr(colVals []types.Datum) (string, error) {
 	// Pass pre-composed error to txn.
 	strVals := make([]string, 0, len(colVals))
@@ -377,7 +377,7 @@ func (t *Table) genIndexKeyStr(colVals []types.Datum) (string, error) {
 	return strings.Join(strVals, "-"), nil
 }
 
-// Add data into indices.
+// addIndices adds data into indices.
 func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum, bs *kv.BufferStore) (int64, error) {
 	txn := ctx.Txn()
 	// Clean up lazy check error environment
@@ -451,7 +451,7 @@ func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*table.Column) 
 		}
 		colTps[col.ID] = &col.FieldType
 	}
-	row, err := tablecodec.DecodeRow(value, colTps)
+	row, err := tablecodec.DecodeRow(value, colTps, ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -511,7 +511,7 @@ func (t *Table) RemoveRecord(ctx context.Context, h int64, r []types.Datum) erro
 
 func (t *Table) addUpdateBinlog(ctx context.Context, h int64, old []types.Datum, newValue []byte, colIDs []int64) error {
 	var bin []byte
-	oldData, err := tablecodec.EncodeRow(old, colIDs)
+	oldData, err := tablecodec.EncodeRow(old, colIDs, ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -530,7 +530,7 @@ func (t *Table) addDeleteBinlog(ctx context.Context, r []types.Datum) error {
 	for i, col := range t.Cols() {
 		colIDs[i] = col.ID
 	}
-	data, err = tablecodec.EncodeRow(r, colIDs)
+	data, err = tablecodec.EncodeRow(r, colIDs, ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -548,7 +548,7 @@ func (t *Table) removeRowData(ctx context.Context, h int64) error {
 	return nil
 }
 
-// removeRowAllIndex removes all the indices of a row.
+// removeRowIndices removes all the indices of a row.
 func (t *Table) removeRowIndices(ctx context.Context, h int64, rec []types.Datum) error {
 	for _, v := range t.indices {
 		vals, err := v.FetchValues(rec)
@@ -569,7 +569,7 @@ func (t *Table) removeRowIndices(ctx context.Context, h int64, rec []types.Datum
 	return nil
 }
 
-// RemoveRowIndex implements table.Table RemoveRowIndex interface.
+// removeRowIndex implements table.Table RemoveRowIndex interface.
 func (t *Table) removeRowIndex(rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index) error {
 	if err := idx.Delete(rm, vals, h); err != nil {
 		return errors.Trace(err)
@@ -577,7 +577,7 @@ func (t *Table) removeRowIndex(rm kv.RetrieverMutator, h int64, vals []types.Dat
 	return nil
 }
 
-// BuildIndexForRow implements table.Table BuildIndexForRow interface.
+// buildIndexForRow implements table.Table BuildIndexForRow interface.
 func (t *Table) buildIndexForRow(rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index) error {
 	if idx.Meta().State == model.StateDeleteOnly || idx.Meta().State == model.StateDeleteReorganization {
 		// If the index is in delete only or write reorganization state, we can not add index.
@@ -619,7 +619,7 @@ func (t *Table) IterRecords(ctx context.Context, startKey kv.Key, cols []*table.
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rowMap, err := tablecodec.DecodeRow(it.Value(), colMap)
+		rowMap, err := tablecodec.DecodeRow(it.Value(), colMap, ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -696,7 +696,7 @@ func (t *Table) Seek(ctx context.Context, h int64) (int64, bool, error) {
 }
 
 func shouldWriteBinlog(ctx context.Context) bool {
-	if binloginfo.PumpClient == nil {
+	if ctx.GetSessionVars().BinlogClient == nil {
 		return false
 	}
 	return !ctx.GetSessionVars().InRestrictedSQL

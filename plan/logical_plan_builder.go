@@ -434,7 +434,10 @@ type ByItems struct {
 
 // String implements fmt.Stringer interface.
 func (by *ByItems) String() string {
-	return fmt.Sprintf("(%s, %v)", by.Expr, by.Desc)
+	if by.Desc {
+		return fmt.Sprintf("%s true", by.Expr)
+	}
+	return by.Expr.String()
 }
 
 func (b *planBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
@@ -474,7 +477,7 @@ func getUintForLimitOffset(sc *variable.StatementContext, val interface{}) (uint
 }
 
 func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan {
-	if UseDAGPlanBuilder {
+	if useDAGPlanBuilder(b.ctx) {
 		b.optFlag = b.optFlag | flagPushDownTopN
 	}
 	var (
@@ -681,6 +684,9 @@ func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool
 	return n, true
 }
 
+// resolveHavingAndOrderBy will process aggregate functions and resolve the columns that don't exist in select fields.
+// If we found some columns that are not in select fields, we will append it to select fields and update the colMapper.
+// When we rewrite the order by / having expression, we will find column in map at first.
 func (b *planBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan) (
 	map[*ast.AggregateFuncExpr]int, map[*ast.AggregateFuncExpr]int) {
 	extractor := &havingAndOrderbyExprResolver{
@@ -863,6 +869,7 @@ func (b *planBuilder) popTableHints() {
 	b.tableHintInfo = b.tableHintInfo[:len(b.tableHintInfo)-1]
 }
 
+// TableHints returns the *tableHintInfo of PlanBuilder.
 func (b *planBuilder) TableHints() *tableHintInfo {
 	if b.tableHintInfo == nil || len(b.tableHintInfo) == 0 {
 		return nil
@@ -1155,7 +1162,6 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, dbName, t.Name.L, "")
 	}
 
-	_, _ = b.resolveHavingAndOrderBy(sel, p)
 	if sel.Where != nil {
 		p = b.buildSelection(p, sel.Where, nil)
 		if b.err != nil {
@@ -1221,7 +1227,6 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) LogicalPlan {
 		return nil
 	}
 
-	_, _ = b.resolveHavingAndOrderBy(sel, p)
 	if sel.Where != nil {
 		p = b.buildSelection(p, sel.Where, nil)
 		if b.err != nil {

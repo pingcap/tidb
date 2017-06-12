@@ -14,6 +14,7 @@
 package types
 
 import (
+	"math"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -163,6 +164,7 @@ func (s *testTimeSuite) TestTime(c *C) {
 		{"10:11", "10:11:00"},
 		{"101112.123456", "10:11:12"},
 		{"1112", "00:11:12"},
+		{"1", "00:00:01"},
 		{"12", "00:00:12"},
 		{"1 12", "36:00:00"},
 		{"1 10:11:12", "34:11:12"},
@@ -227,6 +229,66 @@ func (s *testTimeSuite) TestTime(c *C) {
 		t2 := Duration{time.Duration(t.rhs), DefaultFsp}
 		ret := t1.Compare(t2)
 		c.Assert(ret, Equals, t.ret)
+	}
+}
+
+func (s *testTimeSuite) TestDurationAdd(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []struct {
+		Input    string
+		Fsp      int
+		InputAdd string
+		FspAdd   int
+		Expect   string
+	}{
+		{"00:00:00.1", 1, "00:00:00.1", 1, "00:00:00.2"},
+		{"00:00:00", 0, "00:00:00.1", 1, "00:00:00.1"},
+		{"00:00:00.09", 2, "00:00:00.01", 2, "00:00:00.10"},
+		{"00:00:00.099", 3, "00:00:00.001", 3, "00:00:00.100"},
+	}
+	for _, test := range table {
+		t, err := ParseDuration(test.Input, test.Fsp)
+		c.Assert(err, IsNil)
+		ta, err := ParseDuration(test.InputAdd, test.FspAdd)
+		c.Assert(err, IsNil)
+		result, err := t.Add(ta)
+		c.Assert(err, IsNil)
+		c.Assert(result.String(), Equals, test.Expect)
+	}
+	t, err := ParseDuration("00:00:00", 0)
+	c.Assert(err, IsNil)
+	ta := new(Duration)
+	result, err := t.Add(*ta)
+	c.Assert(err, IsNil)
+	c.Assert(result.String(), Equals, "00:00:00")
+
+	t = Duration{Duration: math.MaxInt64, Fsp: 0}
+	tatmp, err := ParseDuration("00:01:00", 0)
+	c.Assert(err, IsNil)
+	_, err = t.Add(tatmp)
+	c.Assert(err, NotNil)
+}
+
+func (s *testTimeSuite) TestDurationSub(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []struct {
+		Input    string
+		Fsp      int
+		InputAdd string
+		FspAdd   int
+		Expect   string
+	}{
+		{"00:00:00.1", 1, "00:00:00.1", 1, "00:00:00.0"},
+		{"00:00:00", 0, "00:00:00.1", 1, "-00:00:00.1"},
+	}
+	for _, test := range table {
+		t, err := ParseDuration(test.Input, test.Fsp)
+		c.Assert(err, IsNil)
+		ta, err := ParseDuration(test.InputAdd, test.FspAdd)
+		c.Assert(err, IsNil)
+		result, err := t.Sub(ta)
+		c.Assert(err, IsNil)
+		c.Assert(result.String(), Equals, test.Expect)
 	}
 }
 
@@ -337,18 +399,6 @@ func (s *testTimeSuite) TestCodec(c *C) {
 
 	var t1 Time
 	t1.Type = mysql.TypeTimestamp
-
-	z := s.getLocation(c)
-	local = z
-	err = t1.FromPackedUint(packed)
-	c.Assert(err, IsNil)
-	c.Assert(t.String(), Not(Equals), t1.String())
-
-	local = time.Local
-	err = t1.FromPackedUint(packed)
-	c.Assert(err, IsNil)
-	c.Assert(t.String(), Equals, t1.String())
-
 	t1.Time = FromGoTime(time.Now())
 	packed, err = t1.ToPackedUint()
 	c.Assert(err, IsNil)
@@ -600,7 +650,7 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 	for _, t := range tbl {
 		v, err := ParseTime(t.Input, mysql.TypeDatetime, MaxFsp)
 		c.Assert(err, IsNil)
-		nv, err := v.roundFrac(t.Fsp)
+		nv, err := v.RoundFrac(t.Fsp)
 		c.Assert(err, IsNil)
 		c.Assert(nv.String(), Equals, t.Except)
 	}
@@ -786,5 +836,21 @@ func (s *testTimeSuite) TestTamestampDiff(c *C) {
 		t1 := Time{test.t1, mysql.TypeDatetime, 6}
 		t2 := Time{test.t2, mysql.TypeDatetime, 6}
 		c.Assert(TimestampDiff(test.unit, t1, t2), Equals, test.expect)
+	}
+}
+
+func (s *testTimeSuite) TestDateFSP(c *C) {
+	tests := []struct {
+		date   string
+		expect int
+	}{
+		{"2004-01-01 12:00:00.111", 3},
+		{"2004-01-01 12:00:00.11", 2},
+		{"2004-01-01 12:00:00.111111", 6},
+		{"2004-01-01 12:00:00", 0},
+	}
+
+	for _, test := range tests {
+		c.Assert(DateFSP(test.date), Equals, test.expect)
 	}
 }

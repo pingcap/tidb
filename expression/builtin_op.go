@@ -45,7 +45,8 @@ type andandFunctionClass struct {
 }
 
 func (c *andandFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinAndAndSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinAndAndSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinAndAndSig struct {
@@ -95,7 +96,8 @@ type ororFunctionClass struct {
 }
 
 func (c *ororFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinOrOrSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinOrOrSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinOrOrSig struct {
@@ -145,7 +147,8 @@ type logicXorFunctionClass struct {
 }
 
 func (c *logicXorFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinLogicXorSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinLogicXorSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinLogicXorSig struct {
@@ -187,7 +190,8 @@ type bitOpFunctionClass struct {
 }
 
 func (c *bitOpFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinBitOpSig{newBaseBuiltinFunc(args, ctx), c.op}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinBitOpSig{newBaseBuiltinFunc(args, ctx), c.op}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinBitOpSig struct {
@@ -245,7 +249,8 @@ type isTrueOpFunctionClass struct {
 }
 
 func (c *isTrueOpFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinIsTrueOpSig{newBaseBuiltinFunc(args, ctx), c.op}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinIsTrueOpSig{newBaseBuiltinFunc(args, ctx), c.op}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinIsTrueOpSig struct {
@@ -280,7 +285,8 @@ type unaryOpFunctionClass struct {
 }
 
 func (c *unaryOpFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinUnaryOpSig{newBaseBuiltinFunc(args, ctx), c.op}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinUnaryOpSig{newBaseBuiltinFunc(args, ctx), c.op}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinUnaryOpSig struct {
@@ -390,13 +396,15 @@ type isNullFunctionClass struct {
 }
 
 func (c *isNullFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinIsNullSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinIsNullSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinIsNullSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinIsNullSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_isnull
 func (b *builtinIsNullSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)

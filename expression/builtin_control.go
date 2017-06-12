@@ -38,13 +38,15 @@ type caseWhenFunctionClass struct {
 }
 
 func (c *caseWhenFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinCaseWhenSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinCaseWhenSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinCaseWhenSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinCaseWhenSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/case.html
 func (b *builtinCaseWhenSig) eval(row []types.Datum) (d types.Datum, err error) {
 	args, err := b.evalArgs(row)
@@ -80,13 +82,15 @@ type ifFunctionClass struct {
 }
 
 func (c *ifFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinIfSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinIfSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinIfSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinIfSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_if
 func (s *builtinIfSig) eval(row []types.Datum) (types.Datum, error) {
 	args, err := s.evalArgs(row)
@@ -122,13 +126,15 @@ type ifNullFunctionClass struct {
 }
 
 func (c *ifNullFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinIfNullSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinIfNullSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinIfNullSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinIfNullSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_ifnull
 func (b *builtinIfNullSig) eval(row []types.Datum) (types.Datum, error) {
 	args, err := b.evalArgs(row)
@@ -152,13 +158,15 @@ type nullIfFunctionClass struct {
 }
 
 func (c *nullIfFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinNullIfSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinNullIfSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinNullIfSig struct {
 	baseBuiltinFunc
 }
 
+// eval evals a builtinNullIfSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_nullif
 func (b *builtinNullIfSig) eval(row []types.Datum) (types.Datum, error) {
 	args, err := b.evalArgs(row)

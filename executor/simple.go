@@ -21,7 +21,6 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -38,15 +37,11 @@ import (
 // `BeginStmt`, `CommitStmt`, `RollbackStmt`.
 // TODO: list all simple statements.
 type SimpleExec struct {
+	baseExecutor
+
 	Statement ast.StmtNode
-	ctx       context.Context
 	done      bool
 	is        infoschema.InfoSchema
-}
-
-// Schema implements the Executor Schema interface.
-func (e *SimpleExec) Schema() *expression.Schema {
-	return expression.NewSchema()
 }
 
 // Next implements Execution Next interface.
@@ -85,11 +80,6 @@ func (e *SimpleExec) Next() (*Row, error) {
 	}
 	e.done = true
 	return nil, nil
-}
-
-// Close implements the Executor Close interface.
-func (e *SimpleExec) Close() error {
-	return nil
 }
 
 func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
@@ -262,7 +252,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 	return nil
 }
 
-// parse user string into username and host
+// parseUser parses user string into username and host
 // root@localhost -> root, localhost
 func parseUser(user string) (string, string) {
 	strs := strings.Split(user, "@")
@@ -319,7 +309,13 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 		// TODO: A dummy implement
 	case ast.FlushPrivileges:
 		dom := sessionctx.GetDomain(e.ctx)
-		err := dom.PrivilegeHandle().Update()
+		sysSessionPool := dom.SysSessionPool()
+		ctx, err := sysSessionPool.Get()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		defer sysSessionPool.Put(ctx)
+		err = dom.PrivilegeHandle().Update(ctx.(context.Context))
 		return errors.Trace(err)
 	}
 	return nil

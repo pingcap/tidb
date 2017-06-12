@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"math"
 	"strconv"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
@@ -34,7 +35,7 @@ type testClusterSuite struct {
 }
 
 func (s *testClusterSuite) TestClusterSplit(c *C) {
-	store, err := tikv.NewMockTikvStore()
+	store, err := tikv.NewMockTikvStore("")
 	c.Assert(err, IsNil)
 
 	txn, err := store.Begin()
@@ -48,7 +49,8 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 	for i := 0; i < 1000; i++ {
 		rowKey := tablecodec.EncodeRowKeyWithHandle(tblID, handle)
 		colValue := types.NewStringDatum(strconv.Itoa(int(handle)))
-		rowValue, err1 := tablecodec.EncodeRow([]types.Datum{colValue}, []int64{colID})
+		// TODO: Should use session's TimeZone instead of UTC.
+		rowValue, err1 := tablecodec.EncodeRow([]types.Datum{colValue}, []int64{colID}, time.UTC)
 		c.Assert(err1, IsNil)
 		txn.Set(rowKey, rowValue)
 
