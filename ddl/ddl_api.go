@@ -878,14 +878,17 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 	}
 
 	// If new column is a generated column, do validation.
+	// NOTE: because now we can only append columns to table,
+	// we dont't need check whether the column refers other
+	// generated columns occurring later in table.
 	for _, option := range spec.NewColumn.Options {
 		if option.Tp == ast.ColumnOptionGenerated {
-			normalColNames := make(map[string]struct{}, len(t.Cols()))
+			referableColNames := make(map[string]struct{}, len(t.Cols()))
 			for _, col := range t.Cols() {
-				normalColNames[col.Name.L] = struct{}{}
+				referableColNames[col.Name.L] = struct{}{}
 			}
 			_, dependColNames := findDependedColumnNames(*spec.NewColumn)
-			if err := columnNamesCover(normalColNames, dependColNames); err != nil {
+			if err := columnNamesCover(referableColNames, dependColNames); err != nil {
 				return errors.Trace(err)
 			}
 		}

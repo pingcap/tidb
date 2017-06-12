@@ -1003,5 +1003,16 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			return
 		}
 	}
+	if join, ok := er.p.(*LogicalJoin); ok && join.redundantSchema != nil {
+		column, err := join.redundantSchema.FindColumn(v)
+		if err != nil {
+			er.err = errors.Trace(err)
+			return
+		}
+		if column != nil {
+			er.ctxStack = append(er.ctxStack, column.Clone())
+			return
+		}
+	}
 	er.err = errors.Errorf("Unknown column %s %s %s.", v.Schema.L, v.Table.L, v.Name.L)
 }

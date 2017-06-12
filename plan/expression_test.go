@@ -19,6 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
@@ -39,6 +40,11 @@ type testExpressionSuite struct {
 func (s *testExpressionSuite) SetUpSuite(c *C) {
 	s.Parser = parser.New()
 	s.ctx = mock.NewContext()
+	expression.TurnOnNewExprEval = true
+}
+
+func (s *testExpressionSuite) TearDownSuite(c *C) {
+	expression.TurnOnNewExprEval = false
 }
 
 func (s *testExpressionSuite) parseExpr(c *C, expr string) ast.ExprNode {
