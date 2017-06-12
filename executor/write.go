@@ -1017,7 +1017,7 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]
 	// evaluate assignment
 	newData := make([]types.Datum, len(data))
 	copy(newData, data)
-	for i, _ := range row {
+	for i := range row {
 		// on duplicate key update f1 = 3, f2 = f1 should set both f1 and f2 to 3.
 		if asgn, ok := cols[i]; ok {
 			val, err1 := asgn.Expr.Eval(newData)
