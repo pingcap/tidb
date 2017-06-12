@@ -880,7 +880,7 @@ var MySQLErrName = map[uint16]string{
 	ErrMustChangePasswordLogin:                               "Your password has expired. To log in you must change it using a client that supports expired passwords.",
 	ErrRowInWrongPartition:                                   "Found a row in wrong partition %s",
 	ErrBadGeneratedColumn:                                    "The value specified for generated column '%s' in table '%s' is not allowed.",
-	ErrGeneratedColumnNonPrior:                               "Generated column can refer only to generated columns dfined prior to it.",
+	ErrGeneratedColumnNonPrior:                               "Generated column can refer only to generated columns defined prior to it.",
 	ErrDependentByGeneratedColumn:                            "Column '%s' has a generated column dependency.",
 	ErrInvalidJSONText:                                       "Invalid JSON text: %-.192s",
 	ErrInvalidJSONPath:                                       "Invalid JSON path expression %s.",
