@@ -1382,9 +1382,14 @@ ConstraintElem:
 	}
 |	KeyOrIndex IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
 	{
+        keys := $5.([]*ast.IndexColName)
+        if len(keys) < 1{
+            yylex.Errorf("IndexColNameList List can't be empty.")
+            return 1
+        }
 		c := &ast.Constraint{
 			Tp:	ast.ConstraintIndex,
-			Keys:	$5.([]*ast.IndexColName),
+			Keys:	keys,
 			Name:	$2.(string),
 		}
 		if $7 != nil {
@@ -1400,9 +1405,14 @@ ConstraintElem:
 	}
 |	"UNIQUE" KeyOrIndexOpt IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
 	{
+	    keys := $6.([]*ast.IndexColName)
+        if len(keys) < 1{
+            yylex.Errorf("IndexColNameList List can't be empty.")
+            return 1
+        }
 		c := &ast.Constraint{
 			Tp:	ast.ConstraintUniq,
-			Keys:	$6.([]*ast.IndexColName),
+			Keys:	keys,
 			Name:	$3.(string),
 		}
 		if $8 != nil {

@@ -264,10 +264,6 @@ func (v *validator) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 			switch spec.Constraint.Tp {
 			case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqIndex,
 				ast.ConstraintUniqKey:
-				if len(spec.Constraint.Keys) < 1 {
-					v.err = errors.Trace(ErrWrongArguments)
-					return
-				}
 				v.err = checkDuplicateColumnName(spec.Constraint.Keys)
 				if v.err != nil {
 					return
