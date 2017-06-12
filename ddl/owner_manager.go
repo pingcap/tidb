@@ -15,6 +15,8 @@ package ddl
 
 import (
 	"math"
+	"os"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -109,15 +111,29 @@ func (m *ownerManager) SetBgOwner(isOwner bool) {
 	}
 }
 
-// NewSessionTTL is the etcd session's TTL in seconds. It's exported for testing.
-var NewSessionTTL = 60
+// ManagerSessionTTL is the etcd session's TTL in seconds. It's exported for testing.
+var ManagerSessionTTL = 60
 
-func (m *ownerManager) newSession(ctx goctx.Context, retryCnt int) (*concurrency.Session, error) {
+// setManagerSessionTTL sets the ManagerSessionTTL value, it's used for testing.
+func setManagerSessionTTL() error {
+	ttlStr := os.Getenv("tidb_manager_ttl")
+	if len(ttlStr) == 0 {
+		return nil
+	}
+	ttl, err := strconv.Atoi(ttlStr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ManagerSessionTTL = ttl
+	return nil
+}
+
+func newSession(ctx goctx.Context, etcdCli *clientv3.Client, retryCnt, ttl int) (*concurrency.Session, error) {
 	var err error
 	var etcdSession *concurrency.Session
 	for i := 0; i < retryCnt; i++ {
-		etcdSession, err = concurrency.NewSession(m.etcdCli,
-			concurrency.WithTTL(NewSessionTTL), concurrency.WithContext(ctx))
+		etcdSession, err = concurrency.NewSession(etcdCli,
+			concurrency.WithTTL(ttl), concurrency.WithContext(ctx))
 		if err == nil {
 			break
 		}
@@ -133,11 +149,11 @@ func (m *ownerManager) newSession(ctx goctx.Context, retryCnt int) (*concurrency
 
 // CampaignOwners implements OwnerManager.CampaignOwners interface.
 func (m *ownerManager) CampaignOwners(ctx goctx.Context) error {
-	ddlSession, err := m.newSession(ctx, newSessionDefaultRetryCnt)
+	ddlSession, err := newSession(ctx, m.etcdCli, newSessionDefaultRetryCnt, ManagerSessionTTL)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	bgSession, err := m.newSession(ctx, newSessionDefaultRetryCnt)
+	bgSession, err := newSession(ctx, m.etcdCli, newSessionDefaultRetryCnt, ManagerSessionTTL)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -156,14 +172,19 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, etcdSession *concurrency.
 		select {
 		case <-etcdSession.Done():
 			log.Info("[ddl] %s etcd session is done, creates a new one", key)
-			etcdSession, err = m.newSession(ctx, newSessionRetryUnlimited)
+			etcdSession, err = newSession(ctx, m.etcdCli, newSessionRetryUnlimited, ManagerSessionTTL)
 			if err != nil {
 				log.Infof("[ddl] break %s campaign loop, err %v", key, err)
 				return
 			}
 		case <-ctx.Done():
-			log.Infof("[ddl] break %s campaign loop", key)
-			return
+			// Revoke the session lease.
+			// If revoke takes longer than the ttl, lease is expired anyway.
+			ctx, cancel := goctx.WithTimeout(goctx.Background(),
+				time.Duration(ManagerSessionTTL)*time.Second)
+			_, err = m.etcdCli.Revoke(ctx, etcdSession.Lease())
+			cancel()
+			log.Infof("[ddl] break %s campaign loop err %v", key, err)
 		default:
 		}
 
@@ -238,5 +259,12 @@ func (m *ownerManager) watchOwner(ctx goctx.Context, etcdSession *concurrency.Se
 		case <-ctx.Done():
 			return
 		}
+	}
+}
+
+func init() {
+	err := setManagerSessionTTL()
+	if err != nil {
+		log.Warnf("[ddl] set manager session TTL failed %v", err)
 	}
 }

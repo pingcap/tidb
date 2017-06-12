@@ -117,6 +117,14 @@ func (s *mockSchemaSyncer) UpdateSelfVersion(ctx goctx.Context, version int64) e
 	return nil
 }
 
+// Done implements SchemaSyncer.Done interface.
+func (s *mockSchemaSyncer) Done() <-chan struct{} {
+	return make(chan struct{}, 1)
+}
+
+// Restart implements SchemaSyncer.Restart interface.
+func (s *mockSchemaSyncer) Restart(_ goctx.Context) error { return nil }
+
 // RemoveSelfVersionPath implements SchemaSyncer.RemoveSelfVersionPath interface.
 func (s *mockSchemaSyncer) RemoveSelfVersionPath() error { return nil }
 
