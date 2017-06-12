@@ -15,6 +15,7 @@ package plan
 
 import (
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression"
 )
 
 const (
@@ -48,6 +49,8 @@ const (
 	TypeIdxScan = "IndexScan"
 	// TypeSort is the type of Sort.
 	TypeSort = "Sort"
+	// TypeTopN is the type of TopN.
+	TypeTopN = "TopN"
 	// TypeLimit is the type of Limit.
 	TypeLimit = "Limit"
 	// TypeHashSemiJoin is the type of hash semi join.
@@ -58,6 +61,8 @@ const (
 	TypeHashRightJoin = "HashRightJoin"
 	// TypeMergeJoin is the type of merge join.
 	TypeMergeJoin = "MergeJoin"
+	// TypeIndexJoin is the type of index look up join.
+	TypeIndexJoin = "IndexJoin"
 	// TypeApply is the type of Apply.
 	TypeApply = "Apply"
 	// TypeMaxOneRow is the type of MaxOneRow.
@@ -129,6 +134,13 @@ func (p Union) init(allocator *idAllocator, ctx context.Context) *Union {
 
 func (p Sort) init(allocator *idAllocator, ctx context.Context) *Sort {
 	p.basePlan = newBasePlan(TypeSort, allocator, ctx, &p)
+	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
+	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	return &p
+}
+
+func (p TopN) init(allocator *idAllocator, ctx context.Context) *TopN {
+	p.basePlan = newBasePlan(TypeTopN, allocator, ctx, &p)
 	p.baseLogicalPlan = newBaseLogicalPlan(p.basePlan)
 	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
 	return &p
@@ -289,15 +301,18 @@ func (p PhysicalIndexReader) init(allocator *idAllocator, ctx context.Context) *
 	if _, ok := p.indexPlan.(*PhysicalAggregation); ok {
 		p.schema = p.indexPlan.Schema()
 	} else {
-		// The IndexScan running in KV Layer will read all columns from storage. But TiDB Only needs some of them.
-		// So their schemas are different, we need to resolve indices again.
-		schemaInKV := p.indexPlan.Schema()
 		is := p.IndexPlans[0].(*PhysicalIndexScan)
 		p.schema = is.dataSourceSchema
-		for _, col := range p.schema.Columns {
-			col.ResolveIndices(schemaInKV)
-		}
 	}
+	p.OutputColumns = p.schema.Columns
+	return &p
+}
+
+func (p PhysicalIndexJoin) init(allocator *idAllocator, ctx context.Context, children ...Plan) *PhysicalIndexJoin {
+	p.basePlan = newBasePlan(TypeIndexJoin, allocator, ctx, &p)
+	p.basePhysicalPlan = newBasePhysicalPlan(p.basePlan)
+	p.children = children
+	p.schema = expression.MergeSchema(p.children[0].Schema(), p.children[1].Schema())
 	return &p
 }
 

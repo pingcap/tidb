@@ -259,7 +259,7 @@ xxx row5_col1	- 	row5_col3`)
 	c.Assert(err, IsNil)
 
 	// support ClientLocalFiles capability
-	runTests(c, dsn+"&allowAllFiles=true", func(dbt *DBTest) {
+	runTests(c, dsn+"&allowAllFiles=true&strict=false", func(dbt *DBTest) {
 		dbt.mustExec("create table test (a varchar(255), b varchar(255) default 'default value', c int not null auto_increment, primary key(c))")
 		rs, err := dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test")
 		dbt.Assert(err, IsNil)

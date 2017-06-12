@@ -26,7 +26,7 @@ const (
 	UnspecifiedLength int = -1
 )
 
-// TypeClass classifies types, used for type inference.
+// TypeClass classifies field types, used for type inference.
 type TypeClass byte
 
 // TypeClass values.
@@ -72,6 +72,21 @@ func (ft *FieldType) ToClass() TypeClass {
 		return ClassReal
 	default:
 		return ClassString
+	}
+}
+
+func (tc TypeClass) String() string {
+	switch tc {
+	case ClassString:
+		return "ClassString"
+	case ClassReal:
+		return "ClassReal"
+	case ClassInt:
+		return "ClassInt"
+	case ClassDecimal:
+		return "ClassDecimal"
+	default:
+		return "ClassRow"
 	}
 }
 
@@ -180,10 +195,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 	case []byte:
 		tp.Tp = mysql.TypeBlob
 		SetBinChsClnFlag(tp)
-	case Bit:
-		tp.Tp = mysql.TypeBit
-		SetBinChsClnFlag(tp)
-	case Hex:
+	case Bit, Hex:
 		tp.Tp = mysql.TypeVarchar
 		SetBinChsClnFlag(tp)
 	case Time:

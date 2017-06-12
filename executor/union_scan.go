@@ -87,24 +87,19 @@ func getDirtyDB(ctx context.Context) *dirtyDB {
 
 // UnionScanExec merges the rows from dirty table and the rows from XAPI request.
 type UnionScanExec struct {
-	ctx   context.Context
-	Src   Executor
+	baseExecutor
+
 	dirty *dirtyTable
 	// usedIndex is the column offsets of the index which Src executor has used.
 	usedIndex  []int
 	desc       bool
 	conditions []expression.Expression
+	columns    []*model.ColumnInfo
 
 	addedRows   []*Row
 	cursor      int
 	sortErr     error
 	snapshotRow *Row
-	schema      *expression.Schema
-}
-
-// Schema implements the Executor Schema interface.
-func (us *UnionScanExec) Schema() *expression.Schema {
-	return us.schema
 }
 
 // Next implements Execution Next interface.
@@ -145,7 +140,7 @@ func (us *UnionScanExec) getSnapshotRow() (*Row, error) {
 	var err error
 	if us.snapshotRow == nil {
 		for {
-			us.snapshotRow, err = us.Src.Next()
+			us.snapshotRow, err = us.children[0].Next()
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -201,11 +196,6 @@ func (us *UnionScanExec) pickRow(a, b *Row) (*Row, error) {
 	return row, nil
 }
 
-// Close implements the Executor Close interface.
-func (us *UnionScanExec) Close() error {
-	return us.Src.Close()
-}
-
 func (us *UnionScanExec) compare(a, b *Row) (int, error) {
 	sc := us.ctx.GetSessionVars().StmtCtx
 	for _, colOff := range us.usedIndex {
@@ -236,17 +226,11 @@ func (us *UnionScanExec) buildAndSortAddedRows(t table.Table, asName *model.CISt
 	us.addedRows = make([]*Row, 0, len(us.dirty.addedRows))
 	for h, data := range us.dirty.addedRows {
 		var newData []types.Datum
-		if us.Src.Schema().Len() == len(data) {
+		if us.schema.Len() == len(data) {
 			newData = data
 		} else {
-			newData = make([]types.Datum, 0, us.Src.Schema().Len())
-			var columns []*model.ColumnInfo
-			if t, ok := us.Src.(*XSelectTableExec); ok {
-				columns = t.Columns
-			} else {
-				columns = us.Src.(*XSelectIndexExec).columns
-			}
-			for _, col := range columns {
+			newData = make([]types.Datum, 0, us.schema.Len())
+			for _, col := range us.columns {
 				newData = append(newData, data[col.Offset])
 			}
 		}

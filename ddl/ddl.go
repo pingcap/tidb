@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
@@ -31,9 +32,11 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/twinj/uuid"
+	goctx "golang.org/x/net/context"
 )
 
 var (
@@ -71,6 +74,10 @@ var (
 	errBadField              = terror.ClassDDL.New(codeBadField, "Unknown column '%s' in '%s'")
 	errInvalidDefault        = terror.ClassDDL.New(codeInvalidDefault, "Invalid default value for '%s'")
 	errInvalidUseOfNull      = terror.ClassDDL.New(codeInvalidUseOfNull, "Invalid use of NULL value")
+	// errJSONUsedAsKey forbiddens to use JSON as key or index.
+	errJSONUsedAsKey = terror.ClassDDL.New(codeJSONUsedAsKey, mysql.MySQLErrName[mysql.ErrJSONUsedAsKey])
+	// errBlobCantHaveDefault forbiddens to give not null default value to TEXT/BLOB/JSON.
+	errBlobCantHaveDefault = terror.ClassDDL.New(codeBlobCantHaveDefault, mysql.MySQLErrName[mysql.ErrBlobCantHaveDefault])
 
 	// ErrInvalidDBState returns for invalid database state.
 	ErrInvalidDBState = terror.ClassDDL.New(codeInvalidDBState, "invalid database state")
@@ -115,7 +122,7 @@ type DDL interface {
 	RenameTable(ctx context.Context, oldTableIdent, newTableIdent ast.Ident) error
 	// SetLease will reset the lease time for online DDL change,
 	// it's a very dangerous function and you must guarantee that all servers have the same lease time.
-	SetLease(lease time.Duration)
+	SetLease(ctx goctx.Context, lease time.Duration)
 	// GetLease returns current schema lease time.
 	GetLease() time.Duration
 	// Stats returns the DDL statistics.
@@ -124,10 +131,14 @@ type DDL interface {
 	GetScope(status string) variable.ScopeFlag
 	// Stop stops DDL worker.
 	Stop() error
-	// Start starts DDL worker.
-	Start() error
 	// RegisterEventCh registers event channel for ddl.
 	RegisterEventCh(chan<- *Event)
+	// SchemaSyncer gets the schema syncer.
+	SchemaSyncer() SchemaSyncer
+	// OwnerManager gets the owner manager, and it's used for testing.
+	OwnerManager() OwnerManager
+	// WorkerVars gets the session variables for DDL worker.
+	WorkerVars() *variable.SessionVars
 }
 
 // Event is an event that a ddl operation happened.
@@ -157,10 +168,12 @@ func (e *Event) String() string {
 type ddl struct {
 	m sync.RWMutex
 
-	infoHandle *infoschema.Handle
-	hook       Callback
-	hookMu     sync.RWMutex
-	store      kv.Storage
+	infoHandle   *infoschema.Handle
+	hook         Callback
+	hookMu       sync.RWMutex
+	store        kv.Storage
+	ownerManager OwnerManager
+	schemaSyncer SchemaSyncer
 	// lease is schema seconds.
 	lease        time.Duration
 	uuid         string
@@ -179,6 +192,8 @@ type ddl struct {
 
 	quitCh chan struct{}
 	wait   sync.WaitGroup
+
+	workerVars *variable.SessionVars
 }
 
 // RegisterEventCh registers passed channel for ddl Event.
@@ -190,6 +205,14 @@ func (d *ddl) RegisterEventCh(ch chan<- *Event) {
 // give up notify and log it.
 func (d *ddl) asyncNotifyEvent(e *Event) {
 	if d.ddlEventCh != nil {
+		if d.lease == 0 {
+			// If lease is 0, it's always used in test.
+			select {
+			case d.ddlEventCh <- e:
+			default:
+			}
+			return
+		}
 		for i := 0; i < 10; i++ {
 			select {
 			case d.ddlEventCh <- e:
@@ -203,27 +226,46 @@ func (d *ddl) asyncNotifyEvent(e *Event) {
 }
 
 // NewDDL creates a new DDL.
-func NewDDL(store kv.Storage, infoHandle *infoschema.Handle, hook Callback, lease time.Duration) DDL {
-	return newDDL(store, infoHandle, hook, lease)
+func NewDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
+	infoHandle *infoschema.Handle, hook Callback, lease time.Duration) DDL {
+	return newDDL(ctx, etcdCli, store, infoHandle, hook, lease)
 }
 
-func newDDL(store kv.Storage, infoHandle *infoschema.Handle, hook Callback, lease time.Duration) *ddl {
+func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
+	infoHandle *infoschema.Handle, hook Callback, lease time.Duration) *ddl {
 	if hook == nil {
 		hook = &BaseCallback{}
 	}
 
+	id := uuid.NewV4().String()
+	ctx, cancelFunc := goctx.WithCancel(ctx)
+	var manager OwnerManager
+	var syncer SchemaSyncer
+	// If etcdCli is nil, it's the local store, so use the mockOwnerManager and mockSchemaSyncer.
+	// It's always used for testing.
+	if etcdCli == nil {
+		manager = NewMockOwnerManager(id, cancelFunc)
+		syncer = NewMockSchemaSyncer()
+	} else {
+		manager = NewOwnerManager(etcdCli, id, cancelFunc)
+		syncer = NewSchemaSyncer(etcdCli, id)
+	}
 	d := &ddl{
 		infoHandle:   infoHandle,
 		hook:         hook,
 		store:        store,
+		uuid:         id,
 		lease:        lease,
-		uuid:         uuid.NewV4().String(),
 		ddlJobCh:     make(chan struct{}, 1),
 		ddlJobDoneCh: make(chan struct{}, 1),
 		bgJobCh:      make(chan struct{}, 1),
+		ownerManager: manager,
+		schemaSyncer: syncer,
+		workerVars:   variable.NewSessionVars(),
 	}
+	d.workerVars.BinlogClient = binloginfo.GetPumpClient()
 
-	d.start()
+	d.start(ctx)
 
 	variable.RegisterStatistics(d)
 	log.Infof("start DDL:%s", d.uuid)
@@ -272,24 +314,14 @@ func (d *ddl) Stop() error {
 	return errors.Trace(err)
 }
 
-func (d *ddl) Start() error {
-	d.m.Lock()
-	defer d.m.Unlock()
-
-	if !d.isClosed() {
-		return nil
-	}
-
-	d.start()
-
-	return nil
-}
-
-func (d *ddl) start() {
+func (d *ddl) start(ctx goctx.Context) {
 	d.quitCh = make(chan struct{})
+	d.ownerManager.CampaignOwners(ctx)
+
 	d.wait.Add(2)
 	go d.onBackgroundWorker()
 	go d.onDDLWorker()
+
 	// For every start, we will send a fake job to let worker
 	// check owner firstly and try to find whether a job exists and run.
 	asyncNotify(d.ddlJobCh)
@@ -302,6 +334,11 @@ func (d *ddl) close() {
 	}
 
 	close(d.quitCh)
+	err := d.schemaSyncer.RemoveSelfVersionPath()
+	if err != nil {
+		log.Errorf("[ddl] remove self version path failed %v", err)
+	}
+	d.ownerManager.Cancel()
 
 	d.wait.Wait()
 	log.Infof("close DDL:%s", d.uuid)
@@ -316,7 +353,7 @@ func (d *ddl) isClosed() bool {
 	}
 }
 
-func (d *ddl) SetLease(lease time.Duration) {
+func (d *ddl) SetLease(ctx goctx.Context, lease time.Duration) {
 	d.m.Lock()
 	defer d.m.Unlock()
 
@@ -335,7 +372,7 @@ func (d *ddl) SetLease(lease time.Duration) {
 	// Close the running worker and start again.
 	d.close()
 	d.lease = lease
-	d.start()
+	d.start(ctx)
 }
 
 func (d *ddl) GetLease() time.Duration {
@@ -360,6 +397,16 @@ func (d *ddl) genGlobalID() (int64, error) {
 	return globalID, errors.Trace(err)
 }
 
+// SchemaSyncer implements DDL.SchemaSyncer interface.
+func (d *ddl) SchemaSyncer() SchemaSyncer {
+	return d.schemaSyncer
+}
+
+// OwnerManager implements DDL.OwnerManager interface.
+func (d *ddl) OwnerManager() OwnerManager {
+	return d.ownerManager
+}
+
 func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
 	// For every DDL, we must commit current transaction.
 	if err := ctx.NewTxn(); err != nil {
@@ -380,7 +427,8 @@ func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
 	jobID := job.ID
 	// For a job from start to end, the state of it will be none -> delete only -> write only -> reorganization -> public
 	// For every state changes, we will wait as lease 2 * lease time, so here the ticker check is 10 * lease.
-	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, 10*time.Second))
+	// But we use etcd to speed up, normally it takes less than 1s now, so we use 3s as the max value.
+	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, 3*time.Second))
 	startTime := time.Now()
 	jobsGauge.WithLabelValues(JobType(ddlJobFlag).String(), job.Type.String()).Inc()
 	defer func() {
@@ -433,6 +481,10 @@ func (d *ddl) setHook(h Callback) {
 	d.hook = h
 }
 
+func (d *ddl) WorkerVars() *variable.SessionVars {
+	return d.workerVars
+}
+
 func filterError(err, exceptErr error) error {
 	if terror.ErrorEqual(err, exceptErr) {
 		return nil
@@ -483,6 +535,8 @@ const (
 	codeInvalidUseOfNull      = 1138
 	codeBlobKeyWithoutLength  = 1170
 	codeInvalidOnUpdate       = 1294
+	codeJSONUsedAsKey         = 3152
+	codeBlobCantHaveDefault   = 1101
 )
 
 func init() {
@@ -504,6 +558,8 @@ func init() {
 		codeBadField:              mysql.ErrBadField,
 		codeInvalidDefault:        mysql.ErrInvalidDefault,
 		codeInvalidUseOfNull:      mysql.ErrInvalidUseOfNull,
+		codeJSONUsedAsKey:         mysql.ErrJSONUsedAsKey,
+		codeBlobCantHaveDefault:   mysql.ErrBlobCantHaveDefault,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

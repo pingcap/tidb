@@ -108,6 +108,8 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"c_timestamp + 1", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"c_timestamp + 1.1", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag},
 		{"c_timestamp + '1.1'", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag},
+		{"c_set + 1", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag},
+		{"c_enum + 1", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag},
 		{"1.1 + now()", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag},
 		{"1 + now()", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"1 div 2", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
@@ -177,13 +179,17 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"weekday('2009-12-31 23:59:59.000010')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"weekofyear('2009-12-31 23:59:59.000010')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"yearweek('2009-12-31 23:59:59.000010')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
+		{"addtime(c_datetime, c_time)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
+		{"addtime(c_time, c_time)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag},
 		{"found_rows()", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"length('tidb')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"is_ipv4('192.168.1.1')", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"period_add(199206, 2)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
+		{"period_diff(199206, 199006)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{"now()", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
 		{"from_unixtime(1447430881)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
 		{"from_unixtime(1447430881, '%Y %D %M %h:%i:%s %x')", mysql.TypeVarString, charset.CharsetUTF8, 0},
+		{`from_unixtime(12.1) + 1`, mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag},
 		{"sysdate()", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
 		{"dayname('2007-02-03')", mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{"version()", mysql.TypeVarString, charset.CharsetUTF8, 0},
@@ -276,11 +282,14 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"conv('TiDB',36,10)", mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{"timestamp('2003-12-31 12:00:00')", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
 		{"timestamp('2003-12-31 12:00:00','12:00:00')", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
+		{"convert_tz('2003-12-31 12:00:00','GMT', 'MET')", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
 		{"timestampadd(WEEK,40,'2003-01-01 01:01:01.000011')", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag},
 		{`aes_encrypt("pingcap", "fit2cloud@2014")`, mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{`aes_decrypt("pingcap", "fit2cloud@2014")`, mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{`md5(123)`, mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{`compress('love')`, mysql.TypeBlob, charset.CharsetBin, mysql.BinaryFlag},
+		{`uncompress('love')`, mysql.TypeLongBlob, charset.CharsetBin, mysql.BinaryFlag},
+		{`uncompressed_length('love')`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{`sha1(123)`, mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{`sha(123)`, mysql.TypeVarString, charset.CharsetUTF8, 0},
 		{`sha2(123, 256)`, mysql.TypeVarString, charset.CharsetUTF8, 0},
@@ -322,7 +331,17 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{`bit_count(1)`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{`time_to_sec("23:59:59")`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
 		{`inet6_aton('FE80::AAAA:0000:00C2:0002')`, mysql.TypeVarString, charset.CharsetUTF8, 0},
+		{`inet6_ntoa(inet6_aton('FE80::AAAA:0000:00C2:0002'))`, mysql.TypeVarString,
+			charset.CharsetUTF8, 0},
 		{`is_ipv4_mapped(c_varbinary)`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag},
+		{`password("abc")`, mysql.TypeVarString, charset.CharsetUTF8, 0},
+		{`json_type('3')`, mysql.TypeVarString, charset.CharsetUTF8, 0},
+		{`json_extract('{"a": 1}', '$.a')`, mysql.TypeJSON, charset.CharsetUTF8, 0},
+		{`json_unquote('{"a": 1}')`, mysql.TypeVarString, charset.CharsetUTF8, 0},
+		{`json_set('{"a": 1}', '$.a', 3)`, mysql.TypeJSON, charset.CharsetUTF8, 0},
+		{`json_insert('{"a": 1}', '$.a', 3)`, mysql.TypeJSON, charset.CharsetUTF8, 0},
+		{`json_replace('{"a": 1}', '$.a', 3)`, mysql.TypeJSON, charset.CharsetUTF8, 0},
+		{`json_merge('{"a": 1}', '3')`, mysql.TypeJSON, charset.CharsetUTF8, 0},
 	}
 	for _, tt := range tests {
 		ctx := testKit.Se.(context.Context)
@@ -358,6 +377,57 @@ func (s *testTypeInferrerSuite) TestColumnInfoModified(c *C) {
 	tbl, _ := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tab0"))
 	col := table.FindCol(tbl.Cols(), "col1")
 	c.Assert(col.Tp, Equals, mysql.TypeLong)
+}
+
+func (s *testTypeInferrerSuite) TestIsHybridType(c *C) {
+	defer testleak.AfterTest(c)()
+	store, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	sql := `create table t (
+		c_enum enum('a', 'b', 'c', 'd'),
+		c_set set('a', 'b', 'c', 'd'),
+		c_bit bit(10),
+		c_dt datetime,
+		c_date date,
+		c_time time,
+		c_int int)`
+	testKit.MustExec(sql)
+	tests := []struct {
+		expr         string
+		tp           byte
+		isHybridType bool
+	}{
+		{"c_enum", mysql.TypeEnum, true},
+		{"c_set", mysql.TypeSet, true},
+		{"c_bit", mysql.TypeBit, true},
+		{"0b1001", mysql.TypeVarchar, true},
+		{"0xFFFF", mysql.TypeVarchar, true},
+		{"c_dt", mysql.TypeDatetime, false},
+		{"c_date", mysql.TypeDate, false},
+		{"c_time", mysql.TypeDuration, false},
+		{"c_int", mysql.TypeLong, false},
+	}
+	for _, tt := range tests {
+		ctx := testKit.Se.(context.Context)
+		stmts, err := tidb.Parse(ctx, "select "+tt.expr+" from t")
+		c.Assert(err, IsNil)
+		c.Assert(stmts, HasLen, 1)
+		stmt := stmts[0].(*ast.SelectStmt)
+		is := sessionctx.GetDomain(ctx).InfoSchema()
+		err = plan.ResolveName(stmt, is, ctx)
+		c.Assert(err, IsNil)
+		expression.InferType(ctx.GetSessionVars().StmtCtx, stmt)
+		tp := stmt.GetResultFields()[0].Column.Tp
+		c.Assert(tp, Equals, tt.tp, Commentf("Tp for %s", tt.expr))
+		p, err := plan.BuildLogicalPlan(ctx, stmt, is)
+		c.Assert(err, IsNil)
+		proj := p.(*plan.Projection)
+		c.Assert(expression.IsHybridType(proj.Exprs[0]), Equals, tt.isHybridType)
+	}
 }
 
 func newStoreWithBootstrap() (kv.Storage, error) {

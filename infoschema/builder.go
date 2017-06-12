@@ -86,7 +86,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) error {
 	return nil
 }
 
-// CopySortedTables copies sortedTables for old table and new table for later modification.
+// copySortedTables copies sortedTables for old table and new table for later modification.
 func (b *Builder) copySortedTables(oldTableID, newTableID int64) {
 	buckets := b.is.sortedTablesBuckets
 	if tableIDIsValid(oldTableID) {
@@ -206,8 +206,8 @@ func (b *Builder) copySchemasMap(oldIS *infoSchema) {
 	}
 }
 
-// When a table in the database has changed, we should create a new schemaTables instance, then do modifications
-// on the new one. Because old schemaTables must be read-only.
+// copySchemaTables creates a new schemaTables instance when a table in the database has changed.
+// It also does modifications on the new one because old schemaTables must be read-only.
 func (b *Builder) copySchemaTables(dbName string) {
 	oldSchemaTables := b.is.schemaMap[dbName]
 	newSchemaTables := &schemaTables{

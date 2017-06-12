@@ -136,7 +136,10 @@ func (t *TableInfo) GetPkName() CIStr {
 type IndexColumn struct {
 	Name   CIStr `json:"name"`   // Index name
 	Offset int   `json:"offset"` // Index offset
-	Length int   `json:"length"` // Index length
+	// Length of prefix when using column prefix
+	// for indexing;
+	// UnspecifedLength if not using prefix indexing
+	Length int `json:"length"`
 }
 
 // Clone clones IndexColumn.

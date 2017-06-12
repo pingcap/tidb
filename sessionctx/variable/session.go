@@ -25,12 +25,14 @@ import (
 const (
 	codeCantGetValidID terror.ErrCode = 1
 	codeCantSetToNull  terror.ErrCode = 2
+	codeSnapshotTooOld terror.ErrCode = 3
 )
 
 // Error instances.
 var (
 	errCantGetValidID = terror.ClassVariable.New(codeCantGetValidID, "cannot get valid auto-increment id in retry")
 	ErrCantSetToNull  = terror.ClassVariable.New(codeCantSetToNull, "cannot set variable to null")
+	ErrSnapshotTooOld = terror.ClassVariable.New(codeSnapshotTooOld, "snapshot is older than GC safe point %s")
 )
 
 // RetryInfo saves retry information.
@@ -81,6 +83,7 @@ type TransactionContext struct {
 	InfoSchema    interface{}
 	Histroy       interface{}
 	SchemaVersion int64
+	StartTS       uint64
 	TableDeltaMap map[int64]TableDelta
 }
 
@@ -147,6 +150,9 @@ type SessionVars struct {
 	// version, we load an old version schema for query.
 	SnapshotInfoschema interface{}
 
+	// BinlogClient is used to write binlog.
+	BinlogClient interface{}
+
 	// GlobalVarsAccessor is used to set and get global variables.
 	GlobalVarsAccessor GlobalVarAccessor
 
@@ -179,10 +185,6 @@ type SessionVars struct {
 
 	// SkipUTF8Check check on input value.
 	SkipUTF8Check bool
-
-	// SkipDDLWait can be set to true to skip 2 lease wait after creating/dropping/truncating table, creating/dropping database.
-	// Then if there are multiple TiDB servers, the new table may not be available for other TiDB servers.
-	SkipDDLWait bool
 
 	// BuildStatsConcurrencyVar is used to control statistics building concurrency.
 	BuildStatsConcurrencyVar int

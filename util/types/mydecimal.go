@@ -176,6 +176,11 @@ func (d *MyDecimal) IsNegative() bool {
 	return d.negative
 }
 
+// GetDigitsFrac returns the digitsFrac.
+func (d *MyDecimal) GetDigitsFrac() int8 {
+	return d.digitsFrac
+}
+
 // String returns the decimal string representation rounded to resultFrac.
 func (d *MyDecimal) String() string {
 	tmp := *d
@@ -1180,6 +1185,18 @@ func (d *MyDecimal) PrecisionAndFrac() (precision, frac int) {
 		precision = 1
 	}
 	return
+}
+
+// IsZero checks whether it's a zero decimal.
+func (d *MyDecimal) IsZero() bool {
+	isZero := true
+	for _, val := range d.wordBuf {
+		if val != 0 {
+			isZero = false
+			break
+		}
+	}
+	return isZero
 }
 
 // FromBin Restores decimal from its binary fixed-length representation.

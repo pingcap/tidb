@@ -60,6 +60,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"trailing", "true", "union", "unique", "unlock", "unsigned",
 		"update", "use", "using", "utc_date", "values", "varbinary", "varchar",
 		"when", "where", "write", "xor", "year_month", "zerofill",
+		"generated", "virtual", "stored",
 		// TODO: support the following keywords
 		// "delayed" , "high_priority" , "low_priority", "with",
 	}
@@ -91,7 +92,8 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache", "action", "round",
 		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest", "least",
 		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events", "less", "than", "timediff",
-		"ln", "log", "log2", "log10", "timestampdiff", "pi", "quote", "none", "super",
+		"ln", "log", "log2", "log10", "timestampdiff", "pi", "quote", "none", "super", "default", "shared", "exclusive",
+		"always",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -287,6 +289,16 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"load data local infile '/tmp/t.csv' into table t lines starting by 'ab' terminated by 'xy'", true},
 		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' lines terminated by 'xy'", true},
 		{"load data local infile '/tmp/t.csv' into table t terminated by 'xy' fields terminated by 'ab'", false},
+		{"load data infile '/tmp/t.csv' into table t (a,b)", true},
+		{"load data local infile '/tmp/t.csv' into table t (a,b)", true},
+		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' (a,b)", true},
+		{"load data local infile '/tmp/t.csv' into table t columns terminated by 'ab' (a,b)", true},
+		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b' (a,b)", true},
+		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b' escaped by '*' (a,b)", true},
+		{"load data local infile '/tmp/t.csv' into table t lines starting by 'ab' (a,b)", true},
+		{"load data local infile '/tmp/t.csv' into table t lines starting by 'ab' terminated by 'xy' (a,b)", true},
+		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' lines terminated by 'xy' (a,b)", true},
+		{"load data local infile '/tmp/t.csv' into table t (a,b) fields terminated by 'ab'", false},
 
 		// select for update
 		{"SELECT * from t for update", true},
@@ -626,6 +638,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 
 		// for cast with charset
 		{"SELECT *, CAST(data AS CHAR CHARACTER SET utf8) FROM t;", true},
+
+		// for cast as JSON
+		{"SELECT *, CAST(data AS JSON) FROM t;", true},
 
 		// for last_insert_id
 		{"SELECT last_insert_id();", true},
@@ -1016,6 +1031,12 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT UNCOMPRESS('any string');`, true},
 		{`SELECT UNCOMPRESSED_LENGTH(@compressed_string);`, true},
 		{`SELECT VALIDATE_PASSWORD_STRENGTH(@str);`, true},
+
+		// For JSON functions.
+		{`SELECT JSON_EXTRACT();`, true},
+		{`SELECT JSON_UNQUOTE();`, true},
+		{`SELECT JSON_TYPE('[123]');`, true},
+		{`SELECT JSON_TYPE();`, true},
 	}
 	s.RunTest(c, table)
 }
@@ -1082,8 +1103,8 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table t (c int) avg_row_length 3", true},
 		{"create table t (c int) checksum = 0", true},
 		{"create table t (c int) checksum 1", true},
-		{"create table t (c int) compression = none", true},
-		{"create table t (c int) compression lz4", true},
+		{"create table t (c int) compression = 'NONE'", true},
+		{"create table t (c int) compression 'lz4'", true},
 		{"create table t (c int) connection = 'abc'", true},
 		{"create table t (c int) connection 'abc'", true},
 		{"create table t (c int) key_block_size = 1024", true},
@@ -1249,6 +1270,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t ENABLE KEYS", true},
 		{"ALTER TABLE t MODIFY COLUMN a varchar(255)", true},
 		{"ALTER TABLE t CHANGE COLUMN a b varchar(255)", true},
+		{"ALTER TABLE t CHANGE COLUMN a b varchar(255) FIRST", true},
 		{"ALTER TABLE db.t RENAME to db1.t1", true},
 		{"ALTER TABLE t RENAME as t1", true},
 		{"ALTER TABLE t ALTER COLUMN a SET DEFAULT 1", true},
@@ -1259,6 +1281,21 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t ALTER COLUMN a DROP DEFAULT", true},
 		{"ALTER TABLE t ALTER a DROP DEFAULT", true},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED, lock=none", true},
+		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED, lock=default", true},
+		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED, lock=shared", true},
+		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED, lock=exclusive", true},
+		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED, LOCK=NONE", true},
+		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED, LOCK=DEFAULT", true},
+		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED, LOCK=SHARED", true},
+		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED, LOCK=EXCLUSIVE", true},
+		{"ALTER TABLE t ADD FULLTEXT KEY `FullText` (`name` ASC)", true},
+		{"ALTER TABLE t ADD FULLTEXT INDEX `FullText` (`name` ASC)", true},
+		{"ALTER TABLE t ADD INDEX (a) USING BTREE COMMENT 'a'", true},
+		{"ALTER TABLE t ADD KEY (a) USING HASH COMMENT 'a'", true},
+		{"ALTER TABLE t ADD PRIMARY KEY (a) COMMENT 'a'", true},
+		{"ALTER TABLE t ADD UNIQUE (a) COMMENT 'a'", true},
+		{"ALTER TABLE t ADD UNIQUE KEY (a) COMMENT 'a'", true},
+		{"ALTER TABLE t ADD UNIQUE INDEX (a) COMMENT 'a'", true},
 
 		// for rename table statement
 		{"RENAME TABLE t TO t1", true},
@@ -1341,6 +1378,9 @@ func (s *testParserSuite) TestType(c *C) {
 		// for https://github.com/pingcap/tidb/issues/312
 		{`create table t (c float(53));`, true},
 		{`create table t (c float(54));`, false},
+
+		// for json type
+		{`create table t (a JSON);`, true},
 	}
 	s.RunTest(c, table)
 }
@@ -1654,4 +1694,35 @@ func (s *testParserSuite) TestAnalyze(c *C) {
 		{"analyze table t1 index a,b", true},
 	}
 	s.RunTest(c, table)
+}
+
+func (s *testParserSuite) TestGeneratedColumn(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		input string
+		ok    bool
+		expr  string
+	}{
+		{"create table t (c int, d int generated always as (c + 1) virtual)", true, "c + 1"},
+		{"create table t (c int, d int as (   c + 1   ) virtual)", true, "c + 1"},
+		{"create table t (c int, d int as (1 + 1) stored)", true, "1 + 1"},
+	}
+	parser := New()
+	for _, tt := range tests {
+		stmtNodes, err := parser.Parse(tt.input, "", "")
+		if tt.ok {
+			c.Assert(err, IsNil)
+			stmtNode := stmtNodes[0]
+			for _, col := range stmtNode.(*ast.CreateTableStmt).Cols {
+				for _, opt := range col.Options {
+					if opt.Tp == ast.ColumnOptionGenerated {
+						c.Assert(opt.Expr.Text(), Equals, tt.expr)
+					}
+				}
+			}
+		} else {
+			c.Assert(err, NotNil)
+		}
+	}
+
 }

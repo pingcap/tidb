@@ -137,7 +137,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 		}
 		is.AccessCondition, newSel.Conditions, is.accessEqualCount, is.accessInAndEqCount = ranger.DetachIndexScanConditions(conds, is.Index)
 		memDB := infoschema.IsMemoryDB(p.DBName.L)
-		isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeIndex, 0)
+		isDistReq := !memDB && client != nil && client.IsRequestTypeSupported(kv.ReqTypeIndex, 0)
 		if isDistReq {
 			idxConds, tblConds := ranger.DetachIndexFilterConditions(newSel.Conditions, is.Index.Columns, is.Table)
 			is.IndexConditionPBExpr, is.indexFilterConditions, idxConds = expression.ExpressionsToPB(sc, idxConds, client)
@@ -214,7 +214,7 @@ func (p *DataSource) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlan
 	}
 	client := p.ctx.GetClient()
 	memDB := infoschema.IsMemoryDB(p.DBName.L)
-	isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeSelect, 0)
+	isDistReq := !memDB && client != nil && client.IsRequestTypeSupported(kv.ReqTypeSelect, 0)
 	if !isDistReq {
 		memTable := PhysicalMemTable{
 			DBName:      p.DBName,
@@ -792,7 +792,7 @@ func compareTypeForOrder(lhs *types.FieldType, rhs *types.FieldType) bool {
 	return true
 }
 
-// Generate all possible combinations from join conditions for cost evaluation
+// constructPropertyByJoin generates all possible combinations from join conditions for cost evaluation
 // It will try all keys in join conditions
 func constructPropertyByJoin(join *LogicalJoin) ([][]*requiredProperty, []int, error) {
 	var result [][]*requiredProperty
@@ -1367,7 +1367,7 @@ func (p *Selection) convert2PhysicalPlanPushOrder(prop *requiredProperty) (*phys
 	} else {
 		client := p.ctx.GetClient()
 		memDB := infoschema.IsMemoryDB(ds.DBName.L)
-		isDistReq := !memDB && client != nil && client.SupportRequestType(kv.ReqTypeSelect, 0)
+		isDistReq := !memDB && client != nil && client.IsRequestTypeSupported(kv.ReqTypeSelect, 0)
 		if !isDistReq {
 			info = p.appendSelToInfo(info)
 		}

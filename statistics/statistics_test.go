@@ -125,12 +125,15 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	ctx := mock.NewContext()
 	sc := ctx.GetSessionVars().StmtCtx
 
-	col, err := BuildColumn(ctx, bucketCount, 2, ndv, s.count, s.samples)
+	col, err := BuildColumn(ctx, bucketCount, 2, ndv, s.count, 0, s.samples)
 	c.Check(err, IsNil)
 	c.Check(len(col.Buckets), Equals, 232)
 	count, err := col.equalRowCount(sc, types.NewIntDatum(1000))
 	c.Check(err, IsNil)
-	c.Check(int(count), Equals, 1)
+	c.Check(int(count), Equals, 0)
+	count, err = col.lessRowCount(sc, types.NewIntDatum(1000))
+	c.Check(err, IsNil)
+	c.Check(int(count), Equals, 10000)
 	count, err = col.lessRowCount(sc, types.NewIntDatum(2000))
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 19964)

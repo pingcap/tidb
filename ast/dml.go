@@ -657,6 +657,7 @@ type LoadDataStmt struct {
 	IsLocal    bool
 	Path       string
 	Table      *TableName
+	Columns    []*ColumnName
 	FieldsInfo *FieldsClause
 	LinesInfo  *LinesClause
 }
@@ -674,6 +675,13 @@ func (n *LoadDataStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.Table = node.(*TableName)
+	}
+	for i, val := range n.Columns {
+		node, ok := val.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Columns[i] = node.(*ColumnName)
 	}
 	return v.Leave(n)
 }

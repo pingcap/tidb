@@ -318,6 +318,12 @@ LOOP:
 			}
 			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
 		case <-ticker.C:
+			// When the server performance is particularly poor,
+			// the adding index operation can not be completed.
+			// So here is a limit to the number of rows inserted.
+			if num > defaultBatchSize*10 {
+				break
+			}
 			step := 10
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
@@ -340,16 +346,12 @@ LOOP:
 	}
 
 	// test index key
+	expectedRows := make([][]interface{}, 0, len(keys))
 	for _, key := range keys {
-		rows := s.mustQuery(c, "select c1 from t1 where c3 = ?", key)
-		matchRows(c, rows, [][]interface{}{{key}})
+		expectedRows = append(expectedRows, []interface{}{key})
 	}
-
-	// test delete key not in index
-	for key := range deletedKeys {
-		rows := s.mustQuery(c, "select c1 from t1 where c3 = ?", key)
-		matchRows(c, rows, nil)
-	}
+	rows := s.mustQuery(c, "select c1 from t1 where c3 >= 0")
+	matchRows(c, rows, expectedRows)
 
 	// test index range
 	for i := 0; i < 100; i++ {
@@ -840,7 +842,7 @@ func (s *testDBSuite) mustQuery(c *C, query string, args ...interface{}) [][]int
 }
 
 func matchRows(c *C, rows [][]interface{}, expected [][]interface{}) {
-	c.Assert(len(rows), Equals, len(expected), Commentf("%v", expected))
+	c.Assert(len(rows), Equals, len(expected), Commentf("got %v, expected %v", rows, expected))
 	for i := range rows {
 		match(c, rows[i], expected[i]...)
 	}
@@ -1117,4 +1119,61 @@ func (s *testDBSuite) TestIssue2858And2717(c *C) {
 	s.tk.MustExec("insert into t_issue_2858_hex values (123), (0x321)")
 	s.tk.MustQuery("select a from t_issue_2858_hex").Check(testkit.Rows("291", "123", "801"))
 	s.tk.MustExec(`alter table t_issue_2858_hex alter column a set default 0x321`)
+}
+
+func (s *testDBSuite) TestChangeColumnPosition(c *C) {
+	defer testleak.AfterTest(c)()
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+
+	s.tk.MustExec("create table position (a int default 1, b int default 2)")
+	s.tk.MustExec("insert into position value ()")
+	s.tk.MustExec("insert into position values (3,4)")
+	s.tk.MustQuery("select * from position").Check(testkit.Rows("1 2", "3 4"))
+	s.tk.MustExec("alter table position modify column b int first")
+	s.tk.MustQuery("select * from position").Check(testkit.Rows("2 1", "4 3"))
+	s.tk.MustExec("insert into position value ()")
+	s.tk.MustQuery("select * from position").Check(testkit.Rows("2 1", "4 3", "<nil> 1"))
+
+	s.tk.MustExec("drop table position")
+	s.tk.MustExec("create table position (a int, b int, c double, d varchar(5))")
+	s.tk.MustExec(`insert into position value (1, 2, 3.14, 'TiDB')`)
+	s.tk.MustExec("alter table position modify column d varchar(5) after a")
+	s.tk.MustQuery("select * from position").Check(testkit.Rows("1 TiDB 2 3.14"))
+	s.tk.MustExec("alter table position modify column a int after c")
+	s.tk.MustQuery("select * from position").Check(testkit.Rows("TiDB 2 3.14 1"))
+	s.tk.MustExec("alter table position modify column c double first")
+	s.tk.MustQuery("select * from position").Check(testkit.Rows("3.14 TiDB 2 1"))
+	s.testErrorCode(c, "alter table position modify column b int after b", tmysql.ErrBadField)
+
+	s.tk.MustExec("drop table position")
+	s.tk.MustExec("create table position (a int, b int)")
+	s.tk.MustExec("alter table position add index t(a, b)")
+	s.tk.MustExec("alter table position modify column b int first")
+	s.tk.MustExec("insert into position value (3, 5)")
+	s.tk.MustQuery("select a from position where a = 3").Check(testkit.Rows())
+
+	s.tk.MustExec("alter table position change column b c int first")
+	s.tk.MustQuery("select * from position where c = 3").Check(testkit.Rows("3 5"))
+	s.testErrorCode(c, "alter table position change column c b int after c", tmysql.ErrBadField)
+
+	s.tk.MustExec("drop table position")
+	s.tk.MustExec("create table position (a int default 2)")
+	s.tk.MustExec("alter table position modify column a int default 5 first")
+	s.tk.MustExec("insert into position value ()")
+	s.tk.MustQuery("select * from position").Check(testkit.Rows("5"))
+
+	s.tk.MustExec("drop table position")
+	s.tk.MustExec("create table position (a int, b int)")
+	s.tk.MustExec("alter table position add index t(b)")
+	s.tk.MustExec("alter table position change column b c int first")
+	createSQL := s.tk.MustQuery("show create table position").Rows()[0][1]
+	exceptedSQL := []string{
+		"CREATE TABLE `position` (",
+		"  `c` int(11) DEFAULT NULL,",
+		"  `a` int(11) DEFAULT NULL,",
+		"  KEY `t` (`c`)",
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
+	}
+	c.Assert(createSQL, Equals, strings.Join(exceptedSQL, "\n"))
 }

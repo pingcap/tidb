@@ -202,11 +202,11 @@ func toArithType(ft *types.FieldType) (tp byte) {
 func mergeArithType(fta, ftb *types.FieldType) byte {
 	a, b := toArithType(fta), toArithType(ftb)
 	switch a {
-	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat:
+	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeEnum, mysql.TypeSet:
 		return mysql.TypeDouble
 	}
 	switch b {
-	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat:
+	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeEnum, mysql.TypeSet:
 		return mysql.TypeDouble
 	}
 	if a == mysql.TypeNewDecimal || b == mysql.TypeNewDecimal {
@@ -273,8 +273,16 @@ func (v *typeInferrer) unaryOperation(x *ast.UnaryOperationExpr) {
 	types.SetBinChsClnFlag(&x.Type)
 }
 
+func fixDecimals(value interface{}, tp *types.FieldType) {
+	switch x := value.(type) {
+	case *types.MyDecimal:
+		tp.Decimal = int(x.GetDigitsFrac())
+	}
+}
+
 func (v *typeInferrer) handleValueExpr(x *ast.ValueExpr) {
 	types.DefaultTypeForValue(x.GetValue(), x.GetType())
+	fixDecimals(x.GetValue(), x.GetType())
 }
 
 func (v *typeInferrer) handleValuesExpr(x *ast.ValuesExpr) {
@@ -353,6 +361,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	case ast.FromUnixTime:
 		if len(x.Args) == 1 {
 			tp = types.NewFieldType(mysql.TypeDatetime)
+			tp.Decimal = x.Args[0].GetType().Decimal
 		} else {
 			tp = types.NewFieldType(mysql.TypeVarString)
 			chs = v.defaultCharset
@@ -375,18 +384,29 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		ast.FoundRows, ast.Length, ast.Extract, ast.Locate, ast.UnixTimestamp, ast.Quarter, ast.IsIPv4, ast.ToDays,
 		ast.ToSeconds, ast.Strcmp, ast.IsNull, ast.BitLength, ast.CharLength, ast.CRC32, ast.TimestampDiff,
 		ast.Sign, ast.IsIPv6, ast.Ord, ast.Instr, ast.BitCount, ast.TimeToSec, ast.FindInSet, ast.Field,
-		ast.GetLock, ast.ReleaseLock, ast.Interval, ast.Position, ast.PeriodAdd, ast.IsIPv4Mapped:
+		ast.GetLock, ast.ReleaseLock, ast.Interval, ast.Position, ast.PeriodAdd, ast.PeriodDiff, ast.IsIPv4Mapped, ast.UncompressedLength:
 		tp = types.NewFieldType(mysql.TypeLonglong)
 	case ast.ConnectionID, ast.InetAton:
 		tp = types.NewFieldType(mysql.TypeLonglong)
 		tp.Flag |= mysql.UnsignedFlag
 	// time related
+	case ast.AddTime:
+		t := x.Args[0].GetType().Tp
+		switch t {
+		case mysql.TypeDatetime, mysql.TypeDate, mysql.TypeTimestamp:
+			tp = types.NewFieldType(mysql.TypeDatetime)
+		case mysql.TypeDuration:
+			tp = types.NewFieldType(mysql.TypeDuration)
+		default:
+			tp = types.NewFieldType(mysql.TypeVarString)
+		}
+		tp.Charset, tp.Collate = types.DefaultCharsetForType(tp.Tp)
 	case ast.Curtime, ast.CurrentTime, ast.TimeDiff, ast.MakeTime, ast.SecToTime, ast.UTCTime:
 		tp = types.NewFieldType(mysql.TypeDuration)
 		tp.Decimal = v.getFsp(x)
 	case ast.Curdate, ast.CurrentDate, ast.Date, ast.FromDays, ast.MakeDate:
 		tp = types.NewFieldType(mysql.TypeDate)
-	case ast.DateAdd, ast.DateSub, ast.AddDate, ast.SubDate, ast.Timestamp, ast.TimestampAdd, ast.StrToDate:
+	case ast.DateAdd, ast.DateSub, ast.AddDate, ast.SubDate, ast.Timestamp, ast.TimestampAdd, ast.StrToDate, ast.ConvertTz:
 		tp = types.NewFieldType(mysql.TypeDatetime)
 	case ast.Now, ast.Sysdate, ast.CurrentTimestamp, ast.UTCTimestamp:
 		tp = types.NewFieldType(mysql.TypeDatetime)
@@ -404,8 +424,9 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		ast.Replace, ast.Ucase, ast.Upper, ast.Convert, ast.Substring, ast.Elt,
 		ast.SubstringIndex, ast.Trim, ast.LTrim, ast.RTrim, ast.Reverse, ast.Hex, ast.Unhex,
 		ast.DateFormat, ast.Rpad, ast.Lpad, ast.CharFunc, ast.Conv, ast.MakeSet, ast.Oct, ast.UUID,
-		ast.InsertFunc, ast.Bin, ast.Quote, ast.Format, ast.FromBase64, ast.ToBase64, ast.ExportSet,
-		ast.AesEncrypt, ast.AesDecrypt, ast.SHA2, ast.InetNtoa, ast.Inet6Aton:
+		ast.InsertFunc, ast.Bin, ast.Quote, ast.Format, ast.FromBase64, ast.ToBase64,
+		ast.ExportSet, ast.AesEncrypt, ast.AesDecrypt, ast.SHA2, ast.InetNtoa, ast.Inet6Aton,
+		ast.Inet6Ntoa:
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
 	case ast.RandomBytes:
@@ -421,10 +442,21 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = x.Args[1].GetType()
 	case ast.Compress:
 		tp = types.NewFieldType(mysql.TypeBlob)
+	case ast.Uncompress:
+		tp = types.NewFieldType(mysql.TypeLongBlob)
+	case ast.JSONType, ast.JSONUnquote:
+		tp = types.NewFieldType(mysql.TypeVarString)
+		chs = v.defaultCharset
+	case ast.JSONExtract, ast.JSONSet, ast.JSONInsert, ast.JSONReplace, ast.JSONMerge:
+		tp = types.NewFieldType(mysql.TypeJSON)
+		chs = v.defaultCharset
 	case ast.AnyValue:
 		tp = x.Args[0].GetType()
 	case ast.RowFunc:
 		tp = x.Args[0].GetType()
+	case ast.PasswordFunc:
+		tp = types.NewFieldType(mysql.TypeVarString)
+		chs = v.defaultCharset
 	default:
 		tp = types.NewFieldType(mysql.TypeUnspecified)
 	}
@@ -442,7 +474,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	x.SetType(tp)
 }
 
-// The return type of a CASE expression is the compatible aggregated type of all return values,
+// handleCaseExpr decides the return type of a CASE expression which is the compatible aggregated type of all return values,
 // but also depends on the context in which it is used.
 // If used in a string context, the result is returned as a string.
 // If used in a numeric context, the result is returned as a decimal, real, or integer value.
@@ -467,7 +499,7 @@ func (v *typeInferrer) handleCaseExpr(x *ast.CaseExpr) {
 	x.SetType(tp)
 }
 
-// like expression expects the target expression and pattern to be a string, if it's not, we add a cast function.
+// handleLikeExpr expects the target expression and pattern to be a string, if it's not, we add a cast function.
 func (v *typeInferrer) handleLikeExpr(x *ast.PatternLikeExpr) {
 	x.SetType(types.NewFieldType(mysql.TypeLonglong))
 	types.SetBinChsClnFlag(&x.Type)
@@ -475,7 +507,7 @@ func (v *typeInferrer) handleLikeExpr(x *ast.PatternLikeExpr) {
 	x.Pattern = v.addCastToString(x.Pattern)
 }
 
-// regexp expression expects the target expression and pattern to be a string, if it's not, we add a cast function.
+// handleRegexpExpr expects the target expression and pattern to be a string, if it's not, we add a cast function.
 func (v *typeInferrer) handleRegexpExpr(x *ast.PatternRegexpExpr) {
 	x.SetType(types.NewFieldType(mysql.TypeLonglong))
 	types.SetBinChsClnFlag(&x.Type)
@@ -483,7 +515,7 @@ func (v *typeInferrer) handleRegexpExpr(x *ast.PatternRegexpExpr) {
 	x.Pattern = v.addCastToString(x.Pattern)
 }
 
-// AddCastToString adds a cast function to string type if the expr charset is not UTF8.
+// addCastToString adds a cast function to string type if the expr charset is not UTF8.
 func (v *typeInferrer) addCastToString(expr ast.ExprNode) ast.ExprNode {
 	if !mysql.IsUTF8Charset(expr.GetType().Charset) {
 		castTp := types.NewFieldType(mysql.TypeString)
@@ -507,7 +539,7 @@ func (v *typeInferrer) addCastToString(expr ast.ExprNode) ast.ExprNode {
 	return expr
 }
 
-// ConvertValueToColumnTypeIfNeeded checks if the expr in PatternInExpr is column name,
+// convertValueToColumnTypeIfNeeded checks if the expr in PatternInExpr is column name,
 // and casts function to the items in the list.
 func (v *typeInferrer) convertValueToColumnTypeIfNeeded(x *ast.PatternInExpr) {
 	if cn, ok := x.Expr.(*ast.ColumnNameExpr); ok && cn.Refer != nil {
@@ -598,4 +630,26 @@ func mergeTypeClass(a, b types.TypeClass, aUnsigned, bUnsigned bool) types.TypeC
 		return types.ClassDecimal
 	}
 	return types.ClassInt
+}
+
+// IsHybridType checks whether a ClassString expression is a hybrid type value which will return different types of value in different context.
+//
+// For ENUM/SET which is consist of a string attribute `Name` and an int attribute `Value`,
+// it will cause an error if we convert ENUM/SET to int as a string value.
+//
+// For Bit/Hex, we will get a wrong result if we convert it to int as a string value.
+// For example, when convert `0b101` to int, the result should be 5, but we will get 101 if we regard it as a string.
+func IsHybridType(expr Expression) bool {
+	switch expr.GetType().Tp {
+	case mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet:
+		return true
+	}
+	// For a constant, the field type will be inferred as `VARCHAR` when the kind of it is `HEX` or `BIT`.
+	if con, ok := expr.(*Constant); ok {
+		switch con.Value.Kind() {
+		case types.KindMysqlHex, types.KindMysqlBit:
+			return true
+		}
+	}
+	return false
 }

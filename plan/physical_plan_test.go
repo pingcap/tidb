@@ -89,7 +89,7 @@ func (s *testPlanSuite) TestPushDownAggregation(c *C) {
 		lp.PruneColumns(lp.Schema().Columns)
 		solver := &aggregationOptimizer{builder.allocator, builder.ctx}
 		solver.aggPushDown(lp)
-		lp.ResolveIndicesAndCorCols()
+		lp.ResolveIndices()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
 		c.Assert(ToString(info.p), Equals, tt.best, Commentf("for %s", tt.sql))
@@ -158,13 +158,13 @@ func (s *testPlanSuite) TestPushDownOrderByAndLimit(c *C) {
 		{
 			sql:          "select * from t order by d limit 1",
 			best:         "Table(t)->Sort + Limit(1) + Offset(0)",
-			orderByItmes: "[(test.t.d, false)]",
+			orderByItmes: "[test.t.d]",
 			limit:        "1",
 		},
 		{
 			sql:          "select * from t where c > 0 order by d limit 1",
 			best:         "Index(t.c_d_e)[(0 +inf,+inf +inf]]->Sort + Limit(1) + Offset(0)",
-			orderByItmes: "[(test.t.d, false)]",
+			orderByItmes: "[test.t.d]",
 			limit:        "1",
 		},
 		{
@@ -321,7 +321,7 @@ func (s *testPlanSuite) TestPushDownExpression(c *C) {
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
 		lp.PruneColumns(lp.Schema().Columns)
-		lp.ResolveIndicesAndCorCols()
+		lp.ResolveIndices()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
 		p = info.p
@@ -541,7 +541,7 @@ func (s *testPlanSuite) TestCBO(c *C) {
 		c.Assert(builder.err, IsNil)
 		lp := p.(LogicalPlan)
 		lp, err = logicalOptimize(builder.optFlag, lp, builder.ctx, builder.allocator)
-		lp.ResolveIndicesAndCorCols()
+		lp.ResolveIndices()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
 		c.Assert(ToString(EliminateProjection(info.p)), Equals, tt.best, Commentf("for %s", tt.sql))
@@ -654,7 +654,7 @@ func (s *testPlanSuite) TestProjectionElimination(c *C) {
 		p := builder.build(stmt)
 		c.Assert(builder.err, IsNil)
 		lp, err := logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagDecorrelate, p.(LogicalPlan), builder.ctx, builder.allocator)
-		lp.ResolveIndicesAndCorCols()
+		lp.ResolveIndices()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		p = EliminateProjection(info.p)
 		c.Assert(ToString(p), Equals, tt.ans, Commentf("for %s", tt.sql))
@@ -752,7 +752,7 @@ func (s *testPlanSuite) TestFilterConditionPushDown(c *C) {
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
 		lp.PruneColumns(lp.Schema().Columns)
-		lp.ResolveIndicesAndCorCols()
+		lp.ResolveIndices()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		c.Assert(err, IsNil)
 		p = info.p
@@ -807,7 +807,7 @@ func (s *testPlanSuite) TestAddCache(c *C) {
 		_, lp, err = lp.PredicatePushDown(nil)
 		c.Assert(err, IsNil)
 		lp.PruneColumns(lp.Schema().Columns)
-		lp.ResolveIndicesAndCorCols()
+		lp.ResolveIndices()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		pp := info.p
 		pp = EliminateProjection(pp)
@@ -859,7 +859,7 @@ func (s *testPlanSuite) TestScanController(c *C) {
 		dSolver := &decorrelateSolver{}
 		lp, err = dSolver.optimize(lp, mockContext(), new(idAllocator))
 		c.Assert(err, IsNil)
-		lp.ResolveIndicesAndCorCols()
+		lp.ResolveIndices()
 		info, err := lp.convert2PhysicalPlan(&requiredProperty{})
 		pp := info.p
 		pp = EliminateProjection(pp)

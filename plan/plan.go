@@ -21,13 +21,16 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// UseDAGPlanBuilder means we should use new planner and dag pb.
-var UseDAGPlanBuilder = false
+// useDAGPlanBuilder checks if we use new DAG planner.
+func useDAGPlanBuilder(ctx context.Context) bool {
+	return ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic)
+}
 
 // Plan is the description of an execution flow.
 // It is created from ast.Node first, then optimized by the optimizer,
@@ -61,6 +64,9 @@ type Plan interface {
 	context() context.Context
 
 	extractCorrelatedCols() []*expression.CorrelatedColumn
+
+	// ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
+	ResolveIndices()
 }
 
 type columnProp struct {
@@ -72,14 +78,46 @@ func (c *columnProp) equal(nc *columnProp, ctx context.Context) bool {
 	return c.col.Equal(nc.col, ctx) && c.desc == nc.desc
 }
 
-// requriedProp stands for the required order property by parents. It will be all asc or desc.
+// taskType is the type of execution task.
+type taskType int
+
+const (
+	rootTaskType          taskType = iota
+	copSingleReadTaskType          // TableScan and IndexScan
+	copDoubleReadTaskType          // IndexLookUp
+)
+
+// String implements fmt.Stringer interface.
+func (t taskType) String() string {
+	switch t {
+	case rootTaskType:
+		return "rootTask"
+	case copSingleReadTaskType:
+		return "copSingleReadTask"
+	case copDoubleReadTaskType:
+		return "copDoubleReadTask"
+	}
+	return "UnknownTaskType"
+}
+
+// requriedProp stands for the required physical property by parents.
+// It contains the orders, if the order is desc and the task types.
 type requiredProp struct {
 	cols []*expression.Column
 	desc bool
+	// taskTp means the type of task that an operator requires.
+	// It needs to be specified because two different tasks can't be compared with cost directly.
+	// e.g. If a copTask takes less cost than a rootTask, we can't sure that we must choose the former one. Because the copTask
+	// must be finished and increase its cost in sometime, but we can't make sure the finishing time. So the best way
+	// to let the comparison fair is to add taskType to required property.
+	taskTp taskType
 }
 
 func (p *requiredProp) equal(prop *requiredProp) bool {
 	if len(p.cols) != len(prop.cols) || p.desc != prop.desc {
+		return false
+	}
+	if p.taskTp != prop.taskTp {
 		return false
 	}
 	for i := range p.cols {
@@ -96,18 +134,19 @@ func (p *requiredProp) isEmpty() bool {
 
 // getHashKey encodes prop to a unique key. The key will be stored in the memory table.
 func (p *requiredProp) getHashKey() ([]byte, error) {
-	datums := make([]types.Datum, 0, len(p.cols)*2+1)
+	datums := make([]types.Datum, 0, len(p.cols)*2+2)
 	datums = append(datums, types.NewDatum(p.desc))
 	for _, c := range p.cols {
 		datums = append(datums, types.NewDatum(c.FromID), types.NewDatum(c.Position))
 	}
+	datums = append(datums, types.NewDatum(int(p.taskTp)))
 	bytes, err := codec.EncodeValue(nil, datums...)
 	return bytes, errors.Trace(err)
 }
 
 // String implements fmt.Stringer interface. Just for test.
 func (p *requiredProp) String() string {
-	return fmt.Sprintf("Prop{cols: %s, desc: %v}", p.cols, p.desc)
+	return fmt.Sprintf("Prop{cols: %s, desc: %v, taskTp: %s}", p.cols, p.desc, p.taskTp)
 }
 
 type requiredProperty struct {
@@ -163,9 +202,6 @@ type LogicalPlan interface {
 	// PruneColumns prunes the unused columns.
 	PruneColumns([]*expression.Column)
 
-	// ResolveIndicesAndCorCols resolves the index for columns and initializes the correlated columns.
-	ResolveIndicesAndCorCols()
-
 	// convert2PhysicalPlan converts the logical plan to the physical plan.
 	// It is called recursively from the parent to the children to create the result physical plan.
 	// Some logical plans will convert the children to the physical plans in different ways, and return the one
@@ -176,13 +212,16 @@ type LogicalPlan interface {
 	// It is called recursively from the parent to the children to create the result physical plan.
 	// Some logical plans will convert the children to the physical plans in different ways, and return the one
 	// with the lowest cost.
-	convert2NewPhysicalPlan(prop *requiredProp) (taskProfile, error)
+	convert2NewPhysicalPlan(prop *requiredProp) (task, error)
 
 	// buildKeyInfo will collect the information of unique keys into schema.
 	buildKeyInfo()
 
 	// pushDownTopN will push down the topN or limit operator during logical optimization.
-	pushDownTopN(topN *Sort) LogicalPlan
+	pushDownTopN(topN *TopN) LogicalPlan
+
+	// statsProfile will return the stats for this plan.
+	statsProfile() *statsProfile
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -204,9 +243,9 @@ type PhysicalPlan interface {
 	// Copy copies the current plan.
 	Copy() PhysicalPlan
 
-	// attach2TaskProfile makes the current physical plan as the father of task's physicalPlan and updates the cost of
+	// attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
 	// current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
-	attach2TaskProfile(...taskProfile) taskProfile
+	attach2Task(...task) task
 
 	// ToPB converts physical plan to tipb executor.
 	ToPB(ctx context.Context) (*tipb.Executor, error)
@@ -215,14 +254,15 @@ type PhysicalPlan interface {
 type baseLogicalPlan struct {
 	basePlan *basePlan
 	planMap  map[string]*physicalPlanInfo
-	taskMap  map[string]taskProfile
+	taskMap  map[string]task
+	profile  *statsProfile
 }
 
 type basePhysicalPlan struct {
 	basePlan *basePlan
 }
 
-func (p *baseLogicalPlan) getTaskProfile(prop *requiredProp) (taskProfile, error) {
+func (p *baseLogicalPlan) getTask(prop *requiredProp) (task, error) {
 	key, err := prop.getHashKey()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -258,7 +298,7 @@ func (p *baseLogicalPlan) convert2PhysicalPlan(prop *requiredProperty) (*physica
 	return info, p.storePlanInfo(prop, info)
 }
 
-func (p *baseLogicalPlan) storeTaskProfile(prop *requiredProp, task taskProfile) error {
+func (p *baseLogicalPlan) storeTask(prop *requiredProp, task task) error {
 	key, err := prop.getHashKey()
 	if err != nil {
 		return errors.Trace(err)
@@ -308,7 +348,7 @@ func newBasePlan(tp string, allocator *idAllocator, ctx context.Context, p Plan)
 func newBaseLogicalPlan(basePlan *basePlan) baseLogicalPlan {
 	return baseLogicalPlan{
 		planMap:  make(map[string]*physicalPlanInfo),
-		taskMap:  make(map[string]taskProfile),
+		taskMap:  make(map[string]task),
 		basePlan: basePlan,
 	}
 }
@@ -352,13 +392,6 @@ func (p *basePlan) extractCorrelatedCols() []*expression.CorrelatedColumn {
 
 func (p *basePlan) Allocator() *idAllocator {
 	return p.allocator
-}
-
-// ResolveIndicesAndCorCols implements LogicalPlan interface.
-func (p *baseLogicalPlan) ResolveIndicesAndCorCols() {
-	for _, child := range p.basePlan.children {
-		child.(LogicalPlan).ResolveIndicesAndCorCols()
-	}
 }
 
 // PruneColumns implements LogicalPlan interface.
