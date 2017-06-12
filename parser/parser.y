@@ -1382,10 +1382,9 @@ ConstraintElem:
 	}
 |	KeyOrIndex IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
 	{
-        keys := $5.([]*ast.IndexColName)
 		c := &ast.Constraint{
 			Tp:	ast.ConstraintIndex,
-			Keys:	keys,
+			Keys:	$5.([]*ast.IndexColName),
 			Name:	$2.(string),
 		}
 		if $7 != nil {
@@ -1401,10 +1400,9 @@ ConstraintElem:
 	}
 |	"UNIQUE" KeyOrIndexOpt IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOptionList
 	{
-	    keys := $6.([]*ast.IndexColName)
 		c := &ast.Constraint{
 			Tp:	ast.ConstraintUniq,
-			Keys:	keys,
+			Keys:	$6.([]*ast.IndexColName),
 			Name:	$3.(string),
 		}
 		if $8 != nil {
