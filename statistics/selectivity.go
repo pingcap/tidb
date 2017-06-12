@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 )
 
+// If one condition can't be calculated, we will assume that the selectivity of this condition is 0.8.
 const selectionFactor = 0.8
 
 // indexBlock is used when calculating selectivity.
