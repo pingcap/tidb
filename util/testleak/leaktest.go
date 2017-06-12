@@ -14,6 +14,7 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
+// +build leak
 
 package testleak
 
@@ -42,6 +43,10 @@ func interestingGoroutines() (gs []string) {
 			strings.Contains(stack, "localstore.(*dbStore).scheduler") ||
 			strings.Contains(stack, "ddl.(*ddl).start") ||
 			strings.Contains(stack, "domain.NewDomain") ||
+			strings.Contains(stack, "testing.(*T).Run") ||
+			strings.Contains(stack, "tidb.asyncGetTSWorker") || // TODO: remove it
+			strings.Contains(stack, "domain.(*Domain).LoadPrivilegeLoop") ||
+			strings.Contains(stack, "domain.(*Domain).UpdateTableStatsLoop") ||
 			strings.Contains(stack, "testing.Main(") ||
 			strings.Contains(stack, "runtime.goexit") ||
 			strings.Contains(stack, "created by runtime.gc") ||
@@ -85,6 +90,7 @@ func AfterTest(c *check.C) func() {
 
 		var leaked []string
 		for i := 0; i < 50; i++ {
+			leaked = leaked[:0]
 			for _, g := range interestingGoroutines() {
 				if !beforeTestGorountines[g] {
 					leaked = append(leaked, g)
@@ -93,7 +99,6 @@ func AfterTest(c *check.C) func() {
 			// Bad stuff found, but goroutines might just still be
 			// shutting down, so give it some time.
 			if len(leaked) != 0 {
-				leaked = leaked[:0]
 				time.Sleep(50 * time.Millisecond)
 				continue
 			}

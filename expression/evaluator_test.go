@@ -44,6 +44,11 @@ type testEvaluatorSuite struct {
 func (s *testEvaluatorSuite) SetUpSuite(c *C) {
 	s.Parser = parser.New()
 	s.ctx = mock.NewContext()
+	TurnOnNewExprEval = true
+}
+
+func (s *testEvaluatorSuite) TearDownSuite(c *C) {
+	TurnOnNewExprEval = false
 }
 
 func (s *testEvaluatorSuite) TestSleep(c *C) {

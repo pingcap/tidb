@@ -308,7 +308,8 @@ func roundTime(t gotime.Time, fsp int) gotime.Time {
 	return t.Round(d)
 }
 
-func (t Time) roundFrac(fsp int) (Time, error) {
+// RoundFrac rounds the fraction part of a time-type value according to `fsp`.
+func (t Time) RoundFrac(fsp int) (Time, error) {
 	if t.Type == mysql.TypeDate {
 		// date type has no fsp
 		return t, nil
@@ -680,7 +681,22 @@ func (d Duration) Add(v Duration) (Duration, error) {
 	}
 	dsum, err := AddInt64(int64(d.Duration), int64(v.Duration))
 	if err != nil {
-		return Duration{}, err
+		return Duration{}, errors.Trace(err)
+	}
+	if d.Fsp >= v.Fsp {
+		return Duration{Duration: gotime.Duration(dsum), Fsp: d.Fsp}, nil
+	}
+	return Duration{Duration: gotime.Duration(dsum), Fsp: v.Fsp}, nil
+}
+
+// Sub subtracts d to d, returns a duration value.
+func (d Duration) Sub(v Duration) (Duration, error) {
+	if &v == nil {
+		return d, nil
+	}
+	dsum, err := SubInt64(int64(d.Duration), int64(v.Duration))
+	if err != nil {
+		return Duration{}, errors.Trace(err)
 	}
 	if d.Fsp >= v.Fsp {
 		return Duration{Duration: gotime.Duration(dsum), Fsp: d.Fsp}, nil

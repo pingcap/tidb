@@ -32,6 +32,7 @@ type baseBuiltinFunc struct {
 	argValues     []types.Datum
 	ctx           context.Context
 	deterministic bool
+	tp            *types.FieldType
 	// self points to the built-in function signature which contains this baseBuiltinFunc.
 	// TODO: self will be removed after all built-in function signatures implement EvalXXX().
 	self builtinFunc
@@ -43,6 +44,21 @@ func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc 
 		argValues:     make([]types.Datum, len(args)),
 		ctx:           ctx,
 		deterministic: true,
+		tp:            types.NewFieldType(mysql.TypeUnspecified),
+	}
+}
+
+// newBaseBuiltinFuncWithTp will be renamed to newBaseBuiltinFunc and replaces the older one later.
+// We'll move the type infer work to expression writer,
+// thus the `tp` attribute is needed for `baseBuiltinFunc`
+// to obtain the FieldType of a ScalarFunction.
+func newBaseBuiltinFuncWithTp(args []Expression, tp *types.FieldType, ctx context.Context) baseBuiltinFunc {
+	return baseBuiltinFunc{
+		args:          args,
+		argValues:     make([]types.Datum, len(args)),
+		ctx:           ctx,
+		deterministic: true,
+		tp:            tp,
 	}
 }
 
@@ -111,8 +127,10 @@ func (b *baseBuiltinFunc) evalTime(row []types.Datum) (types.Time, bool, error) 
 	if err != nil || val.IsNull() {
 		return types.Time{}, val.IsNull(), errors.Trace(err)
 	}
-	dateVal, err := val.ConvertTo(b.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeDatetime))
-	return dateVal.GetMysqlTime(), false, errors.Trace(err)
+	if val.Kind() != types.KindMysqlTime {
+		val, err = val.ConvertTo(b.ctx.GetSessionVars().StmtCtx, &types.FieldType{Tp: mysql.TypeDatetime, Decimal: types.MaxFsp})
+	}
+	return val.GetMysqlTime(), false, errors.Trace(err)
 }
 
 func (b *baseBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool, error) {
@@ -120,8 +138,10 @@ func (b *baseBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool,
 	if err != nil || val.IsNull() {
 		return types.Duration{}, val.IsNull(), errors.Trace(err)
 	}
-	durationVal, err := val.ConvertTo(b.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeDuration))
-	return durationVal.GetMysqlDuration(), false, errors.Trace(err)
+	if val.Kind() != types.KindMysqlDuration {
+		val, err = val.ConvertTo(b.ctx.GetSessionVars().StmtCtx, &types.FieldType{Tp: mysql.TypeDuration, Decimal: types.MaxFsp})
+	}
+	return val.GetMysqlDuration(), false, errors.Trace(err)
 }
 
 // equal only checks if both functions are non-deterministic and if these arguments are same.
@@ -394,7 +414,7 @@ type builtinFunc interface {
 	evalDecimal(row []types.Datum) (val *types.MyDecimal, isNull bool, err error)
 	// evalTime evaluates DATE/DATETIME/TIMESTAMP representation of builtinFunc by given row.
 	evalTime(row []types.Datum) (val types.Time, isNull bool, err error)
-	// evaTime evaluates duration representation of builtinFunc by given row.
+	// evalDuration evaluates duration representation of builtinFunc by given row.
 	evalDuration(row []types.Datum) (val types.Duration, isNull bool, err error)
 	// getArgs returns the arguments expressions.
 	getArgs() []Expression
@@ -690,5 +710,11 @@ var funcs = map[string]functionClass{
 	ast.ValidatePasswordStrength: &validatePasswordStrengthFunctionClass{baseFunctionClass{ast.ValidatePasswordStrength, 1, 1}},
 
 	// json functions
-	ast.JSONType: &jsonTypeFunctionClass{baseFunctionClass{ast.JSONType, 1, 1}},
+	ast.JSONType:    &jsonTypeFunctionClass{baseFunctionClass{ast.JSONType, 1, 1}},
+	ast.JSONExtract: &jsonExtractFunctionClass{baseFunctionClass{ast.JSONExtract, 2, -1}},
+	ast.JSONUnquote: &jsonUnquoteFunctionClass{baseFunctionClass{ast.JSONUnquote, 1, 1}},
+	ast.JSONSet:     &jsonSetFunctionClass{baseFunctionClass{ast.JSONSet, 3, -1}},
+	ast.JSONInsert:  &jsonInsertFunctionClass{baseFunctionClass{ast.JSONInsert, 3, -1}},
+	ast.JSONReplace: &jsonReplaceFunctionClass{baseFunctionClass{ast.JSONReplace, 3, -1}},
+	ast.JSONMerge:   &jsonMergeFunctionClass{baseFunctionClass{ast.JSONMerge, 2, -1}},
 }

@@ -43,6 +43,9 @@ const (
 	codeFunctionNotExists                      = 1305
 )
 
+// TurnOnNewExprEval indicates whether turn on the new expression evaluation architecture.
+var TurnOnNewExprEval bool
+
 // EvalAstExpr evaluates ast expression directly.
 var EvalAstExpr func(expr ast.ExprNode, ctx context.Context) (types.Datum, error)
 
@@ -202,12 +205,10 @@ func evalExprToTime(expr Expression, row []types.Datum, _ *variable.StatementCon
 	if val.IsNull() || err != nil {
 		return res, val.IsNull(), errors.Trace(err)
 	}
-	switch expr.GetType().Tp {
-	case mysql.TypeDatetime, mysql.TypeDate, mysql.TypeTimestamp:
+	if types.IsTypeTime(expr.GetType().Tp) {
 		return val.GetMysqlTime(), false, nil
-	default:
-		panic(fmt.Sprintf("cannot get DATE result from %s expression", types.TypeStr(expr.GetType().Tp)))
 	}
+	panic(fmt.Sprintf("cannot get DATE result from %s expression", types.TypeStr(expr.GetType().Tp)))
 }
 
 // evalExprToDuration evaluates `expr` to DURATION type.

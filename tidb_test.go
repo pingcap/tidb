@@ -254,6 +254,7 @@ func (s *testMainSuite) TestRetryOpenStore(c *C) {
 func (s *testMainSuite) TestSchemaValidity(c *C) {
 	localstore.MockRemoteStore = true
 	store := newStoreWithBootstrap(c, s.dbName+"schema_validity")
+	defer store.Close()
 	dbName := "test_schema_validity"
 	se := newSession(c, store, dbName)
 	se1 := newSession(c, store, dbName)
@@ -345,6 +346,7 @@ func (s *testMainSuite) TestSchemaValidity(c *C) {
 func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
 	// TODO: testleak package should be able to find this leak.
 	store := newStoreWithBootstrap(c, s.dbName+"goroutine_leak")
+	defer store.Close()
 	se, err := createSession(store)
 	c.Assert(err, IsNil)
 
@@ -363,9 +365,17 @@ func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
 	}
 	wg.Wait()
 	se.sysSessionPool().Close()
+	c.Assert(se.sysSessionPool().IsClosed(), Equals, true)
+	for i := 0; i < 300; i++ {
+		// After and before should be Equal, but this test may be disturbed by other factors.
+		// So I relax the strict check to make CI more stable.
+		after := runtime.NumGoroutine()
+		if after-before < 3 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 	after := runtime.NumGoroutine()
-	// After and before should be Equal, but this test may be disturbed by other factors.
-	// So I relax the strict check to make CI more stable.
 	c.Assert(after-before, Less, 3)
 }
 
@@ -396,7 +406,6 @@ func newSession(c *C, store kv.Storage, dbName string) Session {
 	id := atomic.AddUint64(&testConnID, 1)
 	se.SetConnectionID(id)
 	c.Assert(err, IsNil)
-	se.GetSessionVars().SkipDDLWait = true
 	se.Auth(`root@%`, nil, []byte("012345678901234567890"))
 	mustExecSQL(c, se, "create database if not exists "+dbName)
 	mustExecSQL(c, se, "use "+dbName)

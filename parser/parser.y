@@ -114,6 +114,7 @@ import (
 	foreign			"FOREIGN"
 	from			"FROM"
 	fulltext		"FULLTEXT"
+	generated		"GENERATED"
 	grants			"GRANTS"
 	group			"GROUP"
 	having			"HAVING"
@@ -197,6 +198,7 @@ import (
 	smallIntType		"SMALLINT"
 	starting		"STARTING"
 	tableKwd		"TABLE"
+	stored			"STORED"
 	terminated		"TERMINATED"
 	then			"THEN"
 	tinyblobType		"TINYBLOB"
@@ -217,6 +219,7 @@ import (
 	values			"VALUES"
 	varcharType		"VARCHAR"
 	varbinaryType		"VARBINARY"
+	virtual			"VIRTUAL"
 	when			"WHEN"
 	where			"WHERE"
 	write			"WRITE"
@@ -286,6 +289,10 @@ import (
 	jsonExtract			"JSON_EXTRACT"
 	jsonUnquote			"JSON_UNQUOTE"
 	jsonTypeFunc			"JSON_TYPE"
+	jsonSet				"JSON_SET"
+	jsonInsert			"JSON_INSERT"
+	jsonReplace			"JSON_REPLACE"
+	jsonMerge			"JSON_MERGE"
 	kill				"KILL"
 	lastInsertID			"LAST_INSERT_ID"
 	lcase				"LCASE"
@@ -404,6 +411,7 @@ import (
 	/* the following tokens belong to UnReservedKeyword*/
 	action		"ACTION"
 	after		"AFTER"
+	always		"ALWAYS"
 	any 		"ANY"
 	ascii		"ASCII"
 	at		"AT"
@@ -573,6 +581,7 @@ import (
 	CompareOp		"Compare opcode"
 	ColumnOption		"column definition option"
 	ColumnOptionList	"column definition option list"
+	VirtualOrStored		"indicate generated column is stored or not"
 	ColumnOptionListOpt	"optional column definition option list"
 	Constraint		"table constraint"
 	ConstraintElem		"table constraint element"
@@ -1292,6 +1301,34 @@ ColumnOption:
 		// See https://dev.mysql.com/doc/refman/5.7/en/create-table.html
 		// The CHECK clause is parsed but ignored by all storage engines.
 		$$ = &ast.ColumnOption{}
+	}
+|	GeneratedAlways "AS" '(' Expression ')' VirtualOrStored
+	{
+		startOffset := parser.startOffset(&yyS[yypt-2])
+		endOffset := parser.endOffset(&yyS[yypt-1])
+		expr := $4.(ast.ExprNode)
+		expr.SetText(parser.src[startOffset:endOffset])
+
+		$$ = &ast.ColumnOption{
+			Tp: ast.ColumnOptionGenerated,
+			Expr: expr,
+			Stored: $6.(bool),
+		}
+	}
+
+GeneratedAlways: | "GENERATED" "ALWAYS"
+
+VirtualOrStored:
+	{
+	    $$ = false
+	}
+|	"VIRTUAL"
+	{
+	    $$ = false
+	}
+|	"STORED"
+	{
+	    $$ = true
 	}
 
 ColumnOptionList:
@@ -2301,7 +2338,7 @@ IdentifierOrReservedKeyword:
 Identifier | ReservedKeyword
 
 UnReservedKeyword:
- "ACTION" | "ASCII" | "AUTO_INCREMENT" | "AFTER" | "AT" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "CHARSET"
+ "ACTION" | "ASCII" | "AUTO_INCREMENT" | "AFTER" | "ALWAYS" | "AT" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "CHARSET"
 | "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED" | "CONSISTENT" | "DATA" | "DATE" | "DATETIME" | "DEALLOCATE" | "DO"
 | "DYNAMIC"| "END" | "ENGINE" | "ENGINES" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FORMAT" | "FULL" |"GLOBAL"
 | "HASH" | "LESS" | "LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT"
@@ -2321,7 +2358,7 @@ ReservedKeyword:
 | "DAY_MINUTE" | "DAY_SECOND" | "DECIMAL" | "DEFAULT" | "DELETE" | "DESC" | "DESCRIBE"
 | "DISTINCT" | "DIV" | "DOUBLE" | "DROP" | "DUAL" | "ELSE" | "ENCLOSED" | "ESCAPED"
 | "EXISTS" | "EXPLAIN" | "FALSE" | "FLOAT" | "FOR" | "FORCE" | "FOREIGN" | "FROM"
-| "FULLTEXT" | "GRANT" | "GROUP" | "HAVING" | "HOUR_MICROSECOND" | "HOUR_MINUTE"
+| "FULLTEXT" | "GENERATED" | "GRANT" | "GROUP" | "HAVING" | "HOUR_MICROSECOND" | "HOUR_MINUTE"
 | "HOUR_SECOND" | "IF" | "IGNORE" | "IN" | "INDEX" | "INFILE" | "INNER" | "INSERT" | "INT" | "INTO" | "INTEGER"
 | "INTERVAL" | "IS" | "JOIN" | "KEY" | "KEYS" | "KILL" | "LEADING" | "LEFT" | "LIKE" | "LIMIT" | "LINES" | "LOAD"
 | "LOCALTIME" | "LOCALTIMESTAMP" | "LOCK" | "LONGBLOB" | "LONGTEXT" | "MAXVALUE" | "MEDIUMBLOB" | "MEDIUMINT" | "MEDIUMTEXT"
@@ -2329,9 +2366,9 @@ ReservedKeyword:
 | "ON" | "OPTION" | "OR" | "ORDER" | "OUTER" | "PARTITION" | "PRECISION" | "PRIMARY" | "PROCEDURE" | "RANGE" | "READ" 
 | "REAL" | "REFERENCES" | "REGEXP" | "RENAME" | "REPEAT" | "REPLACE" | "RESTRICT" | "REVOKE" | "RIGHT" | "RLIKE"
 | "SCHEMA" | "SCHEMAS" | "SECOND_MICROSECOND" | "SELECT" | "SET" | "SHOW" | "SMALLINT"
-| "STARTING" | "TABLE" | "TERMINATED" | "THEN" | "TINYBLOB" | "TINYINT" | "TINYTEXT" | "TO"
+| "STARTING" | "TABLE" | "STORED" | "TERMINATED" | "THEN" | "TINYBLOB" | "TINYINT" | "TINYTEXT" | "TO"
 | "TRAILING" | "TRIGGER" | "TRUE" | "UNION" | "UNIQUE" | "UNLOCK" | "UNSIGNED"
-| "UPDATE" | "USE" | "USING" | "UTC_DATE" | "UTC_TIMESTAMP" | "VALUES" | "VARBINARY" | "VARCHAR"
+| "UPDATE" | "USE" | "USING" | "UTC_DATE" | "UTC_TIMESTAMP" | "VALUES" | "VARBINARY" | "VARCHAR" | "VIRTUAL"
 | "WHEN" | "WHERE" | "WRITE" | "XOR" | "YEAR_MONTH" | "ZEROFILL"
  /*
 | "DELAYED" | "HIGH_PRIORITY" | "LOW_PRIORITY"| "WITH"
@@ -2349,7 +2386,7 @@ NotKeywordToken:
 |	"AES_DECRYPT" | "AES_ENCRYPT" | "QUOTE"
 |	"ANY_VALUE" | "INET_ATON" | "INET_NTOA" | "INET6_ATON" | "INET6_NTOA" | "IS_FREE_LOCK" | "IS_IPV4" | "IS_IPV4_COMPAT" | "IS_IPV4_MAPPED" | "IS_IPV6" | "IS_USED_LOCK" | "MASTER_POS_WAIT" | "NAME_CONST" | "RELEASE_ALL_LOCKS" | "UUID" | "UUID_SHORT"
 |	"COMPRESS" | "DECODE" | "DES_DECRYPT" | "DES_ENCRYPT" | "ENCODE" | "ENCRYPT" | "MD5" | "OLD_PASSWORD" | "RANDOM_BYTES" | "SHA1" | "SHA" | "SHA2" | "UNCOMPRESS" | "UNCOMPRESSED_LENGTH" | "VALIDATE_PASSWORD_STRENGTH"
-|	"JSON_EXTRACT" | "JSON_UNQUOTE" | "JSON_TYPE"
+|	"JSON_EXTRACT" | "JSON_UNQUOTE" | "JSON_TYPE" | "JSON_MERGE" | "JSON_SET" | "JSON_INSERT" | "JSON_REPLACE"
 
 /************************************************************************************
  *
@@ -3654,6 +3691,22 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
+|	"JSON_SET" '(' ExpressionListOpt ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+	}
+|	"JSON_INSERT" '(' ExpressionListOpt ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+	}
+|	"JSON_REPLACE" '(' ExpressionListOpt ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+	}
+|	"JSON_MERGE" '(' ExpressionListOpt ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+	}
 
 GetFormatSelector:
 	"DATE"
@@ -3914,7 +3967,7 @@ CastType:
 		x := types.NewFieldType(mysql.TypeString)
 		x.Flen = $2.(int)
 		x.Charset = charset.CharsetBin
-		x.Collate = charset.CharsetBin
+		x.Collate = charset.CollationBin
 		$$ = x
 	}
 |	"CHAR" OptFieldLen OptBinary OptCharset
@@ -3922,6 +3975,13 @@ CastType:
 		x := types.NewFieldType(mysql.TypeString)
 		x.Flen = $2.(int)
 		x.Charset = $4.(string)
+		if $3.(bool) {
+			x.Flag |= mysql.BinaryFlag
+		}
+		if x.Charset == "" {
+			x.Charset = charset.CharsetUTF8
+			x.Collate = charset.CollationUTF8
+		}
 		$$ = x
 	}
 |	"DATE"
@@ -3964,6 +4024,11 @@ CastType:
 	{
 		x := types.NewFieldType(mysql.TypeLonglong)
 		x.Flag |= mysql.UnsignedFlag
+		$$ = x
+	}
+|	"JSON"
+	{
+		x := types.NewFieldType(mysql.TypeJSON)
 		$$ = x
 	}
 

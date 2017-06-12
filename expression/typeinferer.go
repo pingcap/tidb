@@ -202,11 +202,11 @@ func toArithType(ft *types.FieldType) (tp byte) {
 func mergeArithType(fta, ftb *types.FieldType) byte {
 	a, b := toArithType(fta), toArithType(ftb)
 	switch a {
-	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat:
+	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeEnum, mysql.TypeSet:
 		return mysql.TypeDouble
 	}
 	switch b {
-	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat:
+	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeEnum, mysql.TypeSet:
 		return mysql.TypeDouble
 	}
 	if a == mysql.TypeNewDecimal || b == mysql.TypeNewDecimal {
@@ -273,8 +273,16 @@ func (v *typeInferrer) unaryOperation(x *ast.UnaryOperationExpr) {
 	types.SetBinChsClnFlag(&x.Type)
 }
 
+func fixDecimals(value interface{}, tp *types.FieldType) {
+	switch x := value.(type) {
+	case *types.MyDecimal:
+		tp.Decimal = int(x.GetDigitsFrac())
+	}
+}
+
 func (v *typeInferrer) handleValueExpr(x *ast.ValueExpr) {
 	types.DefaultTypeForValue(x.GetValue(), x.GetType())
+	fixDecimals(x.GetValue(), x.GetType())
 }
 
 func (v *typeInferrer) handleValuesExpr(x *ast.ValuesExpr) {
@@ -353,6 +361,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	case ast.FromUnixTime:
 		if len(x.Args) == 1 {
 			tp = types.NewFieldType(mysql.TypeDatetime)
+			tp.Decimal = x.Args[0].GetType().Decimal
 		} else {
 			tp = types.NewFieldType(mysql.TypeVarString)
 			chs = v.defaultCharset
@@ -381,6 +390,17 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = types.NewFieldType(mysql.TypeLonglong)
 		tp.Flag |= mysql.UnsignedFlag
 	// time related
+	case ast.AddTime:
+		t := x.Args[0].GetType().Tp
+		switch t {
+		case mysql.TypeDatetime, mysql.TypeDate, mysql.TypeTimestamp:
+			tp = types.NewFieldType(mysql.TypeDatetime)
+		case mysql.TypeDuration:
+			tp = types.NewFieldType(mysql.TypeDuration)
+		default:
+			tp = types.NewFieldType(mysql.TypeVarString)
+		}
+		tp.Charset, tp.Collate = types.DefaultCharsetForType(tp.Tp)
 	case ast.Curtime, ast.CurrentTime, ast.TimeDiff, ast.MakeTime, ast.SecToTime, ast.UTCTime:
 		tp = types.NewFieldType(mysql.TypeDuration)
 		tp.Decimal = v.getFsp(x)
@@ -424,13 +444,19 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = types.NewFieldType(mysql.TypeBlob)
 	case ast.Uncompress:
 		tp = types.NewFieldType(mysql.TypeLongBlob)
-	case ast.JSONType:
+	case ast.JSONType, ast.JSONUnquote:
 		tp = types.NewFieldType(mysql.TypeVarString)
+		chs = v.defaultCharset
+	case ast.JSONExtract, ast.JSONSet, ast.JSONInsert, ast.JSONReplace, ast.JSONMerge:
+		tp = types.NewFieldType(mysql.TypeJSON)
 		chs = v.defaultCharset
 	case ast.AnyValue:
 		tp = x.Args[0].GetType()
 	case ast.RowFunc:
 		tp = x.Args[0].GetType()
+	case ast.PasswordFunc:
+		tp = types.NewFieldType(mysql.TypeVarString)
+		chs = v.defaultCharset
 	default:
 		tp = types.NewFieldType(mysql.TypeUnspecified)
 	}

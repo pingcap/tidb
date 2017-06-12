@@ -116,7 +116,7 @@ var MySQLErrName = map[uint16]string{
 	ErrNoUniqueLogFile:                          "Can't generate a unique log-filename %-.200s.(1-999)\n",
 	ErrTableNotLockedForWrite:                   "Table '%-.192s' was locked with a READ lock and can't be updated",
 	ErrTableNotLocked:                           "Table '%-.192s' was not locked with LOCK TABLES",
-	ErrBlobCantHaveDefault:                      "BLOB/TEXT column '%-.192s' can't have a default value",
+	ErrBlobCantHaveDefault:                      "BLOB/TEXT/JSON column '%-.192s' can't have a default value",
 	ErrWrongDBName:                              "Incorrect database name '%-.100s'",
 	ErrWrongTableName:                           "Incorrect table name '%-.100s'",
 	ErrTooBigSelect:                             "The SELECT would examine more than MAXJOINSIZE rows; check your WHERE and use SET SQLBIGSELECTS=1 or SET MAXJOINSIZE=# if the SELECT is okay",
@@ -880,6 +880,7 @@ var MySQLErrName = map[uint16]string{
 	ErrMustChangePasswordLogin:                               "Your password has expired. To log in you must change it using a client that supports expired passwords.",
 	ErrRowInWrongPartition:                                   "Found a row in wrong partition %s",
 	ErrInvalidJSONText:                                       "Invalid JSON text: %-.192s",
-	ErrInvalidJSONPath:                                       "Invalid JSON path expression",
+	ErrInvalidJSONPath:                                       "Invalid JSON path expression %s.",
 	ErrInvalidJSONData:                                       "Invalid data type for JSON data",
+	ErrJSONUsedAsKey:                                         "JSON column '%-.192s' cannot be used in key specification.",
 }

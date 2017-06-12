@@ -69,7 +69,7 @@ func (hg *Histogram) SaveToStorage(ctx context.Context, tableID int64, count int
 	if err != nil {
 		return errors.Trace(err)
 	}
-	replaceSQL = fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, null_count) values (%d, %d, %d, %d, %d)", tableID, isIndex, hg.ID, hg.NDV, hg.NullCount)
+	replaceSQL = fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count) values (%d, %d, %d, %d, %d, %d)", tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount)
 	_, err = exec.Execute(replaceSQL)
 	if err != nil {
 		return errors.Trace(err)
@@ -321,6 +321,16 @@ func (hg *Histogram) mergeBuckets(bucketIdx int64) {
 	}
 	hg.Buckets = hg.Buckets[:curBuck]
 	return
+}
+
+// getIncreaseFactor will return a factor of data increasing after the last analysis.
+func (hg *Histogram) getIncreaseFactor(totalCount int64) float64 {
+	columnCount := hg.Buckets[len(hg.Buckets)-1].Count + hg.NullCount
+	if columnCount == 0 {
+		// avoid dividing by 0
+		return 1.0
+	}
+	return float64(totalCount) / float64(columnCount)
 }
 
 // Column represents a column histogram.

@@ -44,6 +44,10 @@ func evalAstExpr(expr ast.ExprNode, ctx context.Context) (types.Datum, error) {
 	if ctx.GetSessionVars().TxnCtx.InfoSchema != nil {
 		b.is = ctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	}
+	err := expression.InferType(ctx.GetSessionVars().StmtCtx, expr)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
 	newExpr, _, err := b.rewrite(expr, nil, nil, true)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)

@@ -109,7 +109,7 @@ type requiredProp struct {
 	// It needs to be specified because two different tasks can't be compared with cost directly.
 	// e.g. If a copTask takes less cost than a rootTask, we can't sure that we must choose the former one. Because the copTask
 	// must be finished and increase its cost in sometime, but we can't make sure the finishing time. So the best way
-	// to let the comparision fair is to add taskType to required property.
+	// to let the comparison fair is to add taskType to required property.
 	taskTp taskType
 }
 
@@ -219,6 +219,9 @@ type LogicalPlan interface {
 
 	// pushDownTopN will push down the topN or limit operator during logical optimization.
 	pushDownTopN(topN *TopN) LogicalPlan
+
+	// statsProfile will return the stats for this plan.
+	statsProfile() *statsProfile
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -252,6 +255,7 @@ type baseLogicalPlan struct {
 	basePlan *basePlan
 	planMap  map[string]*physicalPlanInfo
 	taskMap  map[string]task
+	profile  *statsProfile
 }
 
 type basePhysicalPlan struct {
