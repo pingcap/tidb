@@ -222,7 +222,7 @@ func (s *testStatisticsSuite) TestColumnRange(c *C) {
 	ctx := mock.NewContext()
 	sc := ctx.GetSessionVars().StmtCtx
 
-	hg, err := BuildColumn(ctx, bucketCount, 5, ndv, s.count, s.samples)
+	hg, err := BuildColumn(ctx, bucketCount, 5, ndv, s.count, 0, s.samples)
 	c.Check(err, IsNil)
 	col := &Column{Histogram: *hg}
 	ran := types.ColumnRange{
@@ -238,10 +238,10 @@ func (s *testStatisticsSuite) TestColumnRange(c *C) {
 	ran.HighExcl = true
 	count, err = col.getColumnRowCount(sc, ran)
 	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 9768)
+	c.Assert(int(count), Equals, 9964)
 	ran.LowExcl = false
 	ran.HighExcl = false
 	count, err = col.getColumnRowCount(sc, ran)
 	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 9771)
+	c.Assert(int(count), Equals, 9965)
 }
