@@ -882,7 +882,7 @@ import (
 /* A dummy token to force the priority of TableRef production in a join. */
 %left   tableRefPriority
 %precedence lowerThanOn
-%precedence on
+%precedence on using
 %right  assignmentEq
 %left 	oror or
 %left 	xor
@@ -4502,12 +4502,19 @@ JoinTable:
 		on := &ast.OnCondition{Expr: $5.(ast.ExprNode)}
 		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $3.(ast.ResultSetNode), Tp: ast.CrossJoin, On: on}
 	}
+|	TableRef CrossOpt TableRef "USING" '(' ColumnNameList ')'
+	{
+		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $3.(ast.ResultSetNode), Tp: ast.CrossJoin, Using: $6.([]*ast.ColumnName)}
+	}
 |	TableRef JoinType OuterOpt "JOIN" TableRef "ON" Expression
 	{
 		on := &ast.OnCondition{Expr: $7.(ast.ExprNode)}
 		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $5.(ast.ResultSetNode), Tp: $2.(ast.JoinType), On: on}
 	}
-	/* Support Using */
+|	TableRef JoinType OuterOpt "JOIN" TableRef "USING" '(' ColumnNameList ')'
+	{
+		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $5.(ast.ResultSetNode), Tp: $2.(ast.JoinType), Using: $8.([]*ast.ColumnName)}
+	}
 
 JoinType:
 	"LEFT"
