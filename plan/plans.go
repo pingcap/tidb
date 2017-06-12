@@ -131,7 +131,8 @@ type Insert struct {
 	IsReplace bool
 	Priority  int
 	Ignore    bool
-	GenCols   *InsertGeneratedColumns
+
+	GenCols *InsertGeneratedColumns
 }
 
 // AnalyzePKTask is used for analyze pk. Used only when pk is handle.

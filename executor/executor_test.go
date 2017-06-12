@@ -1120,13 +1120,19 @@ func (s *testSuite) TestGeneratedColumnRead(c *C) {
 	tk.MustExec(`CREATE TABLE test_gv_read(a int primary key, b int, c int as (a+b), d int as (a*b) stored)`)
 
 	// Insert only column a and b, leave c and d be calculated from them.
-	tk.MustExec(`INSERT INTO test_gv_read (a, b) values (0, null)`)
-	tk.MustExec(`INSERT INTO test_gv_read (a, b) values (1, 2)`)
-	tk.MustExec(`INSERT INTO test_gv_read (a, b) values (3, 4)`)
-	tk.MustExec(`INSERT INTO test_gv_read set a = 5, b = 6`)
-
+	tk.MustExec(`INSERT INTO test_gv_read (a, b) VALUES (0, null)`)
+	tk.MustExec(`INSERT INTO test_gv_read (a, b) VALUES (1, 2)`)
+	tk.MustExec(`INSERT INTO test_gv_read (a, b) VALUES (3, 4)`)
 	result := tk.MustQuery(`SELECT * FROM test_gv_read ORDER BY a`)
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`))
+
+	tk.MustExec(`INSERT INTO test_gv_read SET a = 5, b = 6`)
+	result = tk.MustQuery(`SELECT * FROM test_gv_read ORDER BY a`)
 	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`, `5 6 11 30`))
+
+	tk.MustExec(`INSERT INTO test_gv_read (a, b) VALUES (5, 8) ON DUPLICATE KEY UPDATE b = 9`)
+	result = tk.MustQuery(`SELECT * FROM test_gv_read ORDER BY a`)
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`, `5 9 14 45`))
 
 	// result = tk.MustQuery(`SELECT * FROM test_gv_read WHERE c = 7 ORDER BY a`)
 	// result.Check(testkit.Rows(`3 4 7 12`))

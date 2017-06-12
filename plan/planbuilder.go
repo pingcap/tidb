@@ -749,6 +749,8 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	}
 	mockTablePlan := TableDual{}.init(b.allocator, b.ctx)
 	mockTablePlan.SetSchema(schema)
+
+	onDupColNames := make([]string, 0)
 	for _, assign := range insert.OnDuplicate {
 		col, err := schema.FindColumn(assign.Column)
 		if err != nil {
@@ -773,6 +775,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 			Col:  col,
 			Expr: expr,
 		})
+		onDupColNames = append(onDupColNames, assign.Column.Name.O)
 	}
 	if insert.Select != nil {
 		selectPlan := b.build(insert.Select)
@@ -817,21 +820,40 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 				}
 			} else if len(insertPlan.Setlist) != 0 {
 				// for insert ... setlist.
-				colNameExpr := &ast.ColumnNameExpr{Name: columnName}
-				colExpr, _, err := b.rewrite(colNameExpr, mockTablePlan, nil, true)
+				col, err := schema.FindColumn(columnName)
 				if err != nil {
 					b.err = errors.Trace(err)
 					return nil
 				}
 				assign := &expression.Assignment{
-					Col:  colExpr.(*expression.Column),
+					Col:  col,
 					Expr: expr,
 				}
 				insertPlan.GenCols.Setlist = append(insertPlan.GenCols.Setlist, assign)
 			}
+			// for on duplicate
+			if len(insertPlan.OnDuplicate) != 0 {
+				depChanged := false
+				for _, colName := range onDupColNames {
+					if _, ok := column.Dependences[colName]; ok {
+						depChanged = true
+						break
+					}
+				}
+				if depChanged {
+					col, err := schema.FindColumn(columnName)
+					if err != nil {
+						b.err = errors.Trace(err)
+						return nil
+					}
+					insertPlan.OnDuplicate = append(insertPlan.OnDuplicate, &expression.Assignment{
+						Col:  col,
+						Expr: expr,
+					})
+				}
+			}
 		}
 	}
-
 	insertPlan.SetSchema(expression.NewSchema())
 	return insertPlan
 }

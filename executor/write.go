@@ -1016,17 +1016,16 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]
 	e.ctx.GetSessionVars().CurrInsertValues = row
 	// evaluate assignment
 	newData := make([]types.Datum, len(data))
-	for i, c := range row {
-		asgn, ok := cols[i]
-		if !ok {
-			newData[i] = c
-			continue
+	copy(newData, data)
+	for i, _ := range row {
+		// on duplicate key update f1 = 3, f2 = f1 should set both f1 and f2 to 3.
+		if asgn, ok := cols[i]; ok {
+			val, err1 := asgn.Expr.Eval(newData)
+			if err1 != nil {
+				return errors.Trace(err1)
+			}
+			newData[i] = val
 		}
-		val, err1 := asgn.Expr.Eval(data)
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-		newData[i] = val
 	}
 
 	assignFlag := make([]bool, len(e.Table.Cols()))
