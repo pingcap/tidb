@@ -846,6 +846,9 @@ type XSelectTableExec struct {
 	startTS      uint64
 	orderByList  []*tipb.ByItem
 
+	// GenValues is for calculating virtual generated columns.
+	GenValues map[int]expression.Expression
+
 	/*
 	   The following attributes are used for aggregation push down.
 	   aggFuncs is the aggregation functions in protobuf format. They will be added to distsql request msg.
@@ -972,6 +975,16 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 		err = decodeRawValues(values, e.schema, e.ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		// Calculate generated columns here.
+		for i, col := range e.Columns {
+			if len(col.GeneratedExprString) != 0 && !col.GeneratedStored {
+				val, err := e.GenValues[i].Eval(values)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				values[i] = val
+			}
 		}
 		if e.aggregate {
 			// compose aggregate row

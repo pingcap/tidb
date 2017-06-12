@@ -1022,6 +1022,116 @@ func (s *testSuite) TestJSON(c *C) {
 	result.Check(testkit.Rows(`3 {} <nil>`))
 }
 
+func (s *testSuite) TestGeneratedColumnDDL(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// check create table with generated column.
+	tk.MustExec(`CREATE TABLE test_json_ddl(a int, b int as (a+8) virtual)`)
+
+	// check desc table with generated column.
+	result := tk.MustQuery(`DESC test_json_ddl`)
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`))
+
+	// check show create table with generated column.
+	result = tk.MustQuery(`show create table test_json_ddl`)
+	result.Check(testkit.Rows(
+		"test_json_ddl CREATE TABLE `test_json_ddl` (\n  `a` int(11) DEFAULT NULL,\n  `b` int(11) GENERATED ALWAYS AS (a+8) VIRTUAL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
+	))
+
+	// check alter table add a generated column.
+	tk.MustExec(`alter table test_json_ddl add column c int as (b+2) stored`)
+	result = tk.MustQuery(`DESC test_json_ddl`)
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
+
+	// check drop columns dependent by other column.
+	_, err := tk.Exec(`alter table test_json_ddl drop column a`)
+	c.Assert(err, NotNil)
+	terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDependentByGeneratedColumn))
+
+	// check reference bad columns in generation expression.
+	_, err = tk.Exec(`create table test_json_ddl_bad (a int, b int as (c+8))`)
+	c.Assert(err, NotNil)
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBadField))
+
+	_, err = tk.Exec(`create table test_json_ddl_bad (a int, b int as (c+1), c int as (a+1))`)
+	c.Assert(err, NotNil)
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrGeneratedColumnNonPrior))
+}
+
+func (s *testSuite) TestGeneratedColumnWrite(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE test_gv_write(a int primary key, b int as (a+8) virtual)`)
+
+	// check insert into table with explicit modify generated column.
+	_, err := tk.Exec(`insert into test_gv_write (a, b) values (1, 1)`)
+	c.Assert(err, NotNil)
+	terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBadGeneratedColumn))
+
+	_, err = tk.Exec(`insert into test_gv_write values (1, 1)`)
+	c.Assert(err, NotNil)
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBadGeneratedColumn))
+
+	_, err = tk.Exec(`insert into test_gv_write select 1, 1`)
+	c.Assert(err, NotNil)
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBadGeneratedColumn))
+
+	_, err = tk.Exec(`insert into test_gv_write (a) values (3) on duplicate key update b=2`)
+	c.Assert(err, NotNil)
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBadGeneratedColumn))
+
+	_, err = tk.Exec(`insert into test_gv_write set a = 1, b = 2`)
+	c.Assert(err, NotNil)
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBadGeneratedColumn))
+
+	// check update table with explicit modify generated column.
+	_, err = tk.Exec(`update test_gv_write set a = 1, b = 2`)
+	c.Assert(err, NotNil)
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBadGeneratedColumn))
+}
+
+// TestGeneratedColumnRead tests select generated columns from table.
+// They should be calculated from their generation expressions.
+func (s *testSuite) TestGeneratedColumnRead(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE test_gv_read(a int primary key, b int, c int as (a+b), d int as (a*b) stored)`)
+
+	// Insert only column a and b, leave c and d be calculated from them.
+	tk.MustExec(`INSERT INTO test_gv_read (a, b) values (0, null)`)
+	tk.MustExec(`INSERT INTO test_gv_read (a, b) values (1, 2)`)
+	tk.MustExec(`INSERT INTO test_gv_read (a, b) values (3, 4)`)
+	tk.MustExec(`INSERT INTO test_gv_read set a = 5, b = 6`)
+
+	result := tk.MustQuery(`SELECT * FROM test_gv_read ORDER BY a`)
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`, `5 6 11 30`))
+
+	// result = tk.MustQuery(`SELECT * FROM test_gv_read WHERE c = 7 ORDER BY a`)
+	// result.Check(testkit.Rows(`3 4 7 12`))
+}
+
 func (s *testSuite) TestToPBExpr(c *C) {
 	defer func() {
 		s.cleanEnv(c)
