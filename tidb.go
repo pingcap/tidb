@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/engine"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
@@ -60,13 +59,16 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		return
 	}
 
-	lease := time.Duration(0)
+	ddlLease := time.Duration(0)
+	statisticLease := time.Duration(0)
 	if !localstore.IsLocalStore(store) {
-		lease = schemaLease
+		ddlLease = schemaLease
+		statisticLease = statsLease
 	}
 	err = util.RunWithRetry(defaultMaxRetries, retryInterval, func() (retry bool, err1 error) {
-		log.Infof("store %v new domain, lease %v", store.UUID(), lease)
-		d, err1 = domain.NewDomain(store, lease)
+		log.Infof("store %v new domain, ddl lease %v, stats lease %d", store.UUID(), ddlLease, statisticLease)
+		factory := createSessionFunc(store)
+		d, err1 = domain.NewDomain(store, ddlLease, statisticLease, factory)
 		return true, errors.Trace(err1)
 	})
 	if err != nil {
@@ -99,6 +101,9 @@ var (
 	// For production, you should set a big schema lease, like 300s+.
 	schemaLease = 1 * time.Second
 
+	// statsLease is the time for reload stats table.
+	statsLease = 1 * time.Second
+
 	// The maximum number of retries to recover from retryable errors.
 	commitRetryLimit = 10
 )
@@ -108,6 +113,11 @@ var (
 // SetSchemaLease only affects not local storage after bootstrapped.
 func SetSchemaLease(lease time.Duration) {
 	schemaLease = lease
+}
+
+// SetStatsLease changes the default stats lease time for loading stats info.
+func SetStatsLease(lease time.Duration) {
+	statsLease = lease
 }
 
 // SetCommitRetryLimit setups the maximum number of retries when trying to recover
@@ -131,38 +141,6 @@ func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
 		return nil, errors.Trace(err)
 	}
 	return stmts, nil
-}
-
-// Before every execution, we must clear statement context.
-func resetStmtCtx(ctx context.Context, s ast.StmtNode) {
-	sessVars := ctx.GetSessionVars()
-	sc := new(variable.StatementContext)
-	switch s.(type) {
-	case *ast.UpdateStmt, *ast.InsertStmt, *ast.DeleteStmt:
-		sc.IgnoreTruncate = false
-		sc.TruncateAsWarning = !sessVars.StrictSQLMode
-		if _, ok := s.(*ast.InsertStmt); !ok {
-			sc.InUpdateOrDeleteStmt = true
-		}
-	case *ast.CreateTableStmt, *ast.AlterTableStmt:
-		// Make sure the sql_mode is strict when checking column default value.
-		sc.IgnoreTruncate = false
-		sc.TruncateAsWarning = false
-	default:
-		sc.IgnoreTruncate = true
-		if show, ok := s.(*ast.ShowStmt); ok {
-			if show.Tp == ast.ShowWarnings {
-				sc.InShowWarning = true
-				sc.SetWarnings(sessVars.StmtCtx.GetWarnings())
-			}
-		}
-	}
-	if sessVars.LastInsertID > 0 {
-		sessVars.PrevLastInsertID = sessVars.LastInsertID
-		sessVars.LastInsertID = 0
-	}
-	sessVars.InsertID = 0
-	sessVars.StmtCtx = sc
 }
 
 // Compile is safe for concurrent use by multiple goroutines.

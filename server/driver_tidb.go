@@ -217,8 +217,9 @@ func (tc *TiDBContext) SetClientCapability(flags uint32) {
 }
 
 // Close implements QueryCtx Close method.
-func (tc *TiDBContext) Close() (err error) {
-	return tc.session.Close()
+func (tc *TiDBContext) Close() error {
+	tc.session.Close()
+	return nil
 }
 
 // Auth implements QueryCtx Auth method.

@@ -23,20 +23,9 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
-)
-
-// Error instances.
-var (
-	errInvalid = terror.ClassMockTikv.New(codeInvalid, "invalid operation")
-)
-
-// Error codes.
-const (
-	codeInvalid = 1
 )
 
 type executor interface {
@@ -607,20 +596,14 @@ func extractOffsetsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector
 		return nil, nil
 	}
 	if expr.GetTp() == tipb.ExprType_ColumnRef {
-		_, i, err := codec.DecodeInt(expr.Val)
+		_, idx, err := codec.DecodeInt(expr.Val)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		for idx, c := range columns {
-			if c.GetColumnId() != i {
-				continue
-			}
-			if !isDuplicated(collector, idx) {
-				collector = append(collector, idx)
-			}
-			return collector, nil
+		if !isDuplicated(collector, int(idx)) {
+			collector = append(collector, int(idx))
 		}
-		return nil, errInvalid.Gen("column %d not found", i)
+		return collector, nil
 	}
 	var err error
 	for _, child := range expr.Children {
@@ -632,10 +615,10 @@ func extractOffsetsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector
 	return collector, nil
 }
 
-func convertToExprs(sc *variable.StatementContext, colIDs map[int64]int, fieldTps []*types.FieldType, pbExprs []*tipb.Expr) ([]expression.Expression, error) {
+func convertToExprs(sc *variable.StatementContext, fieldTps []*types.FieldType, pbExprs []*tipb.Expr) ([]expression.Expression, error) {
 	exprs := make([]expression.Expression, 0, len(pbExprs))
 	for _, expr := range pbExprs {
-		e, err := expression.PBToExpr(expr, colIDs, fieldTps, sc)
+		e, err := expression.PBToExpr(expr, fieldTps, sc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

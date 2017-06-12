@@ -22,6 +22,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -318,6 +319,7 @@ func checkAutocommit(c *C, se Session, expectStatus uint16) {
 	c.Assert(ret, Equals, expectStatus)
 }
 
+// TestAutocommit ...
 // See https://dev.mysql.com/doc/internals/en/status-flags.html
 func (s *testSessionSuite) TestAutocommit(c *C) {
 	defer testleak.AfterTest(c)()
@@ -359,6 +361,7 @@ func checkInTrans(c *C, se Session, stmt string, expectStatus uint16) {
 	c.Assert(ret, Equals, expectStatus)
 }
 
+// TestInTrans ...
 // See https://dev.mysql.com/doc/internals/en/status-flags.html
 func (s *testSessionSuite) TestInTrans(c *C) {
 	defer testleak.AfterTest(c)()
@@ -393,6 +396,7 @@ func (s *testSessionSuite) TestInTrans(c *C) {
 	mustExecSQL(c, se, dropDBSQL)
 }
 
+// testRowLock ...
 // See http://dev.mysql.com/doc/refman/5.7/en/commit.html
 func (s *testSessionSuite) testRowLock(c *C) {
 	defer testleak.AfterTest(c)()
@@ -656,10 +660,8 @@ func (s *testSessionSuite) TestIssue827(c *C) {
 	c.Assert(lastInsertID+3, Equals, currLastInsertID)
 
 	mustExecSQL(c, se, dropDBSQL)
-	err = se.Close()
-	c.Assert(err, IsNil)
-	err = se1.Close()
-	c.Assert(err, IsNil)
+	se.Close()
+	se1.Close()
 }
 
 func (s *testSessionSuite) TestIssue996(c *C) {
@@ -838,85 +840,6 @@ func (s *testSessionSuite) TestIssue1114(c *C) {
 	match(c, row.Data, 1)
 
 	mustExecSQL(c, se, dropDBSQL)
-}
-
-func (s *testSessionSuite) TestSelectForUpdate(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_select_for_update"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	se1 := newSession(c, s.store, dbName)
-	se2 := newSession(c, s.store, dbName)
-
-	mustExecSQL(c, se, "drop table if exists t")
-	c.Assert(se.(*session).txn, IsNil)
-	mustExecSQL(c, se, "create table t (c1 int, c2 int, c3 int)")
-	mustExecSQL(c, se, "insert t values (11, 2, 3)")
-	mustExecSQL(c, se, "insert t values (12, 2, 3)")
-	mustExecSQL(c, se, "insert t values (13, 2, 3)")
-
-	mustExecSQL(c, se, "create table t1 (c1 int)")
-	mustExecSQL(c, se, "insert t1 values (11)")
-
-	// conflict
-	mustExecSQL(c, se1, "begin")
-	rs, err := exec(se1, "select * from t where c1=11 for update")
-	c.Assert(err, IsNil)
-	_, err = GetRows(rs)
-
-	mustExecSQL(c, se2, "begin")
-	mustExecSQL(c, se2, "update t set c2=211 where c1=11")
-	mustExecSQL(c, se2, "commit")
-
-	_, err = exec(se1, "commit")
-	c.Assert(err, NotNil)
-	err = se1.(*session).retry(10)
-	// retry should fail
-	c.Assert(err, NotNil)
-
-	// no conflict for subquery.
-	mustExecSQL(c, se1, "begin")
-	rs, err = exec(se1, "select * from t where exists(select null from t1 where t1.c1=t.c1) for update")
-	c.Assert(err, IsNil)
-	_, err = GetRows(rs)
-
-	mustExecSQL(c, se2, "begin")
-	mustExecSQL(c, se2, "update t set c2=211 where c1=12")
-	mustExecSQL(c, se2, "commit")
-
-	_, err = exec(se1, "commit")
-	c.Assert(err, IsNil)
-
-	// not conflict
-	mustExecSQL(c, se1, "begin")
-	rs, err = exec(se1, "select * from t where c1=11 for update")
-	_, err = GetRows(rs)
-
-	mustExecSQL(c, se2, "begin")
-	mustExecSQL(c, se2, "update t set c2=22 where c1=12")
-	mustExecSQL(c, se2, "commit")
-
-	mustExecSQL(c, se1, "commit")
-
-	// not conflict, auto commit
-	mustExecSQL(c, se1, "set @@autocommit=1;")
-	rs, err = exec(se1, "select * from t where c1=11 for update")
-	_, err = GetRows(rs)
-
-	mustExecSQL(c, se2, "begin")
-	mustExecSQL(c, se2, "update t set c2=211 where c1=11")
-	mustExecSQL(c, se2, "commit")
-
-	_, err = exec(se1, "commit")
-	c.Assert(err, IsNil)
-
-	mustExecSQL(c, se, dropDBSQL)
-	err = se.Close()
-	c.Assert(err, IsNil)
-	err = se1.Close()
-	c.Assert(err, IsNil)
-	err = se2.Close()
-	c.Assert(err, IsNil)
 }
 
 func (s *testSessionSuite) TestRow(c *C) {
@@ -1823,6 +1746,7 @@ func (s *testSessionSuite) TestIssue456(c *C) {
 	mustExecSQL(c, se, dropDBSQL)
 }
 
+// TestIssue571 ...
 // For https://github.com/pingcap/tidb/issues/571
 func (s *testSessionSuite) TestIssue571(c *C) {
 	defer testleak.AfterTest(c)()
@@ -2063,19 +1987,17 @@ func (s *test1435Suite) TestIssue1435(c *C) {
 	err = <-endCh2
 	c.Assert(err, IsNil, Commentf("err:%v", err))
 
-	err = se.Close()
-	c.Assert(err, IsNil)
-	err = se1.Close()
-	c.Assert(err, IsNil)
-	err = se2.Close()
-	c.Assert(err, IsNil)
+	se.Close()
+	se1.Close()
+	se2.Close()
 	sessionctx.GetDomain(ctx).Close()
 	err = store.Close()
 	c.Assert(err, IsNil)
 	localstore.MockRemoteStore = false
 }
 
-// Testcase for session
+/* Test cases for session. */
+
 func (s *testSessionSuite) TestSession(c *C) {
 	defer testleak.AfterTest(c)()
 	dbName := "test_session"
@@ -2084,8 +2006,7 @@ func (s *testSessionSuite) TestSession(c *C) {
 	mustExecSQL(c, se, "ROLLBACK;")
 
 	mustExecSQL(c, se, dropDBSQL)
-	err := se.Close()
-	c.Assert(err, IsNil)
+	se.Close()
 }
 
 func (s *testSessionSuite) TestSessionAuth(c *C) {
@@ -2211,8 +2132,7 @@ func (s *testSessionSuite) TestMultiColumnIndex(c *C) {
 	mustExecMatch(c, se, sql, [][]interface{}{{[]byte("abc"), []byte("def")}})
 
 	mustExecSQL(c, se, dropDBSQL)
-	err := se.Close()
-	c.Assert(err, IsNil)
+	se.Close()
 }
 
 func (s *testSessionSuite) TestSubstringIndexExpr(c *C) {
@@ -2420,8 +2340,7 @@ func (s *testSessionSuite) TestSpecifyIndexPrefixLength(c *C) {
 	mustExecMatch(c, se, "select c from t where a > 'bbcf';", [][]interface{}{{5}, {6}})
 
 	mustExecSQL(c, se, dropDBSQL)
-	err = se.Close()
-	c.Assert(err, IsNil)
+	se.Close()
 }
 
 func (s *testSessionSuite) TestIndexColumnLength(c *C) {
@@ -2593,7 +2512,7 @@ func (s *testSessionSuite) TestXAggregateWithIndexScan(c *C) {
 	mustExecSQL(c, se, dropDBSQL)
 }
 
-// Select with groupby but without aggregate function.
+// TestXAggregateWithoutAggFunc tests select with groupby but without aggregate function.
 func (s *testSessionSuite) TestXAggregateWithoutAggFunc(c *C) {
 	// TableScan
 	initSQL := `
@@ -2619,7 +2538,7 @@ func (s *testSessionSuite) TestXAggregateWithoutAggFunc(c *C) {
 	mustExecSQL(c, se, dropDBSQL)
 }
 
-// Test select with having.
+// TestSelectHaving tests select with having.
 // Move from executor to prevent from using mock-tikv.
 func (s *testSessionSuite) TestSelectHaving(c *C) {
 	defer testleak.AfterTest(c)()
@@ -2655,7 +2574,7 @@ func (s *testSessionSuite) TestQueryString(c *C) {
 	mustExecSQL(c, se, dropDBSQL)
 }
 
-// Test that the auto_increment ID does not reuse the old table's allocator.
+// TestTruncateAlloc tests that the auto_increment ID does not reuse the old table's allocator.
 func (s *testSessionSuite) TestTruncateAlloc(c *C) {
 	dbName := "test_truncate_alloc"
 	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
@@ -2673,7 +2592,7 @@ func (s *testSessionSuite) TestTruncateAlloc(c *C) {
 	mustExecSQL(c, se, dropDBSQL)
 }
 
-// Test information_schema.columns.
+// TestISColumns tests information_schema.columns.
 func (s *testSessionSuite) TestISColumns(c *C) {
 	defer testleak.AfterTest(c)()
 	dbName := "test_is_columns"
@@ -2704,7 +2623,7 @@ func (s *testSessionSuite) TestRetryCleanTxn(c *C) {
 	stmtNode, err := parser.New().ParseOneStmt("insert retrytxn values (2, 'a')", "", "")
 	c.Assert(err, IsNil)
 	stmt, err := Compile(se, stmtNode)
-	resetStmtCtx(se, stmtNode)
+	executor.ResetStmtCtx(se, stmtNode)
 	history.add(0, stmt, se.sessionVars.StmtCtx)
 	_, err = se.Execute("commit")
 	c.Assert(err, NotNil)
@@ -2729,4 +2648,48 @@ func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {
 	err = se.CommitTxn()
 	c.Assert(err, IsNil)
 	c.Assert(se.AffectedRows(), Equals, uint64(1))
+}
+
+func (s *testSessionSuite) TestCommitWhenSchemaChanged(c *C) {
+	c.Skip("skip localstore when lease is 0")
+	defer testleak.AfterTest(c)()
+	dbName := "test_commit_when_schema_changed"
+	s1 := newSession(c, s.store, dbName)
+	mustExecSQL(c, s1, "create table t (a int, b int)")
+
+	s2 := newSession(c, s.store, dbName)
+	mustExecSQL(c, s2, "begin")
+	mustExecSQL(c, s2, "insert into t values (1, 1)")
+
+	mustExecSQL(c, s1, "alter table t drop column b")
+
+	// When s2 commit, it will find schema already changed.
+	mustExecSQL(c, s2, "insert into t values (4, 4)")
+	_, err := s2.Execute("commit")
+	c.Assert(terror.ErrorEqual(err, executor.ErrWrongValueCountOnRow), IsTrue)
+}
+
+func (s *testSessionSuite) TestPrepareStmtCommitWhenSchemaChanged(c *C) {
+	defer testleak.AfterTest(c)()
+	dbName := "test_prepare_commit_when_schema_changed"
+	s1 := newSession(c, s.store, dbName)
+	mustExecSQL(c, s1, "create table t (a int, b int)")
+
+	s2 := newSession(c, s.store, dbName)
+	mustExecSQL(c, s2, "prepare stmt from 'insert into t values (?, ?)'")
+	mustExecSQL(c, s2, "set @a = 1")
+
+	// Commit find unrelated schema change.
+	mustExecSQL(c, s2, "begin")
+	mustExecSQL(c, s1, "create table t1 (id int)")
+	mustExecSQL(c, s2, "execute stmt using @a, @a")
+	_, err := s2.Execute("commit")
+	c.Assert(err, IsNil)
+
+	// TODO: PrepareStmt should handle this.
+	// mustExecSQL(c, s2, "begin")
+	// mustExecSQL(c, s1, "alter table t drop column b")
+	// mustExecSQL(c, s2, "execute stmt using @a, @a")
+	// _, err = s2.Execute("commit")
+	// c.Assert(terror.ErrorEqual(err, executor.ErrWrongValueCountOnRow), IsTrue)
 }

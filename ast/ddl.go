@@ -243,14 +243,19 @@ const (
 	ColumnOptionOnUpdate // For Timestamp and Datetime only.
 	ColumnOptionFulltext
 	ColumnOptionComment
+	ColumnOptionGenerated
 )
 
 // ColumnOption is used for parsing column constraint info from SQL.
 type ColumnOption struct {
 	node
 
-	Tp   ColumnOptionType
-	Expr ExprNode // The value For Default or On Update.
+	Tp ColumnOptionType
+	// For ColumnOptionDefaultValue or ColumnOptionOnUpdate, it's the target value.
+	// For ColumnOptionGenerated, it's the target expression.
+	Expr ExprNode
+	// Stored is only for ColumnOptionGenerated, default is false.
+	Stored bool
 }
 
 // Accept implements Node Accept interface.
@@ -646,6 +651,18 @@ const (
 // TODO: Add more actions
 )
 
+// LockType is the type for AlterTableSpec.
+// See https://dev.mysql.com/doc/refman/5.7/en/alter-table.html#alter-table-concurrency
+type LockType byte
+
+// Lock Types.
+const (
+	LockTypeNone LockType = iota + 1
+	LockTypeDefault
+	LockTypeShared
+	LockTypeExclusive
+)
+
 // AlterTableSpec represents alter table specification.
 type AlterTableSpec struct {
 	node
@@ -658,6 +675,7 @@ type AlterTableSpec struct {
 	NewColumn     *ColumnDef
 	OldColumnName *ColumnName
 	Position      *ColumnPosition
+	LockType      LockType
 }
 
 // Accept implements Node Accept interface.

@@ -53,8 +53,6 @@ func NewRegionCache(pdClient pd.Client) *RegionCache {
 
 // RPCContext contains data that is needed to send RPC to a region.
 type RPCContext struct {
-	goctx.Context
-
 	Region RegionVerID
 	KVCtx  *kvrpcpb.Context
 	Addr   string
@@ -90,10 +88,9 @@ func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext,
 		return nil, nil
 	}
 	return &RPCContext{
-		Context: bo.ctx,
-		Region:  id,
-		KVCtx:   kvCtx,
-		Addr:    addr,
+		Region: id,
+		KVCtx:  kvCtx,
+		Addr:   addr,
 	}, nil
 }
 
@@ -385,6 +382,9 @@ func (c *RegionCache) loadStoreAddr(bo *Backoffer, id uint64) (string, error) {
 	for {
 		store, err := c.pdClient.GetStore(bo.ctx, id)
 		if err != nil {
+			if errors.Cause(err) == goctx.Canceled {
+				return "", errors.Trace(err)
+			}
 			err = errors.Errorf("loadStore from PD failed, id: %d, err: %v", id, err)
 			if err = bo.Backoff(boPDRPC, err); err != nil {
 				return "", errors.Trace(err)
@@ -415,6 +415,8 @@ func (c *RegionCache) OnRequestFail(ctx *RPCContext) {
 	c.storeMu.Lock()
 	delete(c.storeMu.stores, storeID)
 	c.storeMu.Unlock()
+
+	log.Warnf("drop regions from cache due to request fail, storeID: %v", storeID)
 
 	c.mu.Lock()
 	for id, r := range c.mu.regions {

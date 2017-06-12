@@ -23,10 +23,12 @@ import (
 	"crypto/sha512"
 	"fmt"
 	"hash"
+	"io"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/encrypt"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -84,7 +86,7 @@ func (c *aesDecryptFunctionClass) getFunction(args []Expression, ctx context.Con
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinAesDecryptSig{newBaseBuiltinFunc(args, ctx)}
 	bt.deterministic = true
-	return bt, errors.Trace(err)
+	return bt.setSelf(bt), errors.Trace(err)
 }
 
 type builtinAesDecryptSig struct {
@@ -131,7 +133,7 @@ type aesEncryptFunctionClass struct {
 func (c *aesEncryptFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinAesEncryptSig{newBaseBuiltinFunc(args, ctx)}
-	return bt, errors.Trace(err)
+	return bt.setSelf(bt), errors.Trace(err)
 }
 
 type builtinAesEncryptSig struct {
@@ -191,7 +193,8 @@ type compressFunctionClass struct {
 }
 
 func (c *compressFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinCompressSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinCompressSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinCompressSig struct {
@@ -215,7 +218,11 @@ func (b *builtinCompressSig) eval(row []types.Datum) (d types.Datum, err error) 
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-
+	// Empty strings are stored as empty strings.
+	if len(compressStr) == 0 {
+		d.SetString("")
+		return d, nil
+	}
 	var in bytes.Buffer
 	w := zlib.NewWriter(&in)
 	w.Write(compressStr)
@@ -229,7 +236,8 @@ type decodeFunctionClass struct {
 }
 
 func (c *decodeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinDecodeSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinDecodeSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinDecodeSig struct {
@@ -247,7 +255,8 @@ type desDecryptFunctionClass struct {
 }
 
 func (c *desDecryptFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinDesDecryptSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinDesDecryptSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinDesDecryptSig struct {
@@ -265,7 +274,8 @@ type desEncryptFunctionClass struct {
 }
 
 func (c *desEncryptFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinDesEncryptSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinDesEncryptSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinDesEncryptSig struct {
@@ -283,7 +293,8 @@ type encodeFunctionClass struct {
 }
 
 func (c *encodeFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinEncodeSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinEncodeSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinEncodeSig struct {
@@ -301,7 +312,8 @@ type encryptFunctionClass struct {
 }
 
 func (c *encryptFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinEncryptSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinEncryptSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinEncryptSig struct {
@@ -319,7 +331,8 @@ type md5FunctionClass struct {
 }
 
 func (c *md5FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinMD5Sig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinMD5Sig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinMD5Sig struct {
@@ -353,7 +366,8 @@ type oldPasswordFunctionClass struct {
 }
 
 func (c *oldPasswordFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinOldPasswordSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinOldPasswordSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinOldPasswordSig struct {
@@ -371,7 +385,8 @@ type passwordFunctionClass struct {
 }
 
 func (c *passwordFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinPasswordSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinPasswordSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinPasswordSig struct {
@@ -381,7 +396,29 @@ type builtinPasswordSig struct {
 // eval evals a builtinPasswordSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
 func (b *builtinPasswordSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("PASSWORD")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	arg := args[0]
+	if arg.IsNull() {
+		d.SetString("")
+		return d, nil
+	}
+
+	pass, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if len(pass) == 0 {
+		d.SetString("")
+		return d, nil
+	}
+
+	d.SetString(util.EncodePassword(pass))
+	return d, nil
 }
 
 type randomBytesFunctionClass struct {
@@ -389,7 +426,8 @@ type randomBytesFunctionClass struct {
 }
 
 func (c *randomBytesFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinRandomBytesSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinRandomBytesSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinRandomBytesSig struct {
@@ -426,7 +464,8 @@ type sha1FunctionClass struct {
 }
 
 func (c *sha1FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinSHA1Sig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinSHA1Sig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinSHA1Sig struct {
@@ -462,7 +501,8 @@ type sha2FunctionClass struct {
 }
 
 func (c *sha2FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinSHA2Sig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinSHA2Sig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinSHA2Sig struct {
@@ -525,17 +565,52 @@ type uncompressFunctionClass struct {
 }
 
 func (c *uncompressFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinUncompressSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinUncompressSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinUncompressSig struct {
 	baseBuiltinFunc
 }
 
+// uncompress is used for uncompress a string compiled with a compression library such as zlib.
+func uncompress(compressStr []byte) ([]byte, error) {
+	reader := bytes.NewReader(compressStr)
+	var out bytes.Buffer
+	r, err := zlib.NewReader(reader)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	io.Copy(&out, r)
+	r.Close()
+	return out.Bytes(), nil
+}
+
 // eval evals a builtinUncompressSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_uncompress
 func (b *builtinUncompressSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("UNCOMPRESS")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	arg := args[0]
+	if arg.IsNull() {
+		return d, nil
+	}
+	compressStr, err := arg.ToBytes()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if len(compressStr) == 0 {
+		d.SetString("")
+		return d, nil
+	}
+	bytes, err := uncompress(compressStr)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d.SetBytes(bytes)
+	return d, nil
 }
 
 type uncompressedLengthFunctionClass struct {
@@ -543,7 +618,8 @@ type uncompressedLengthFunctionClass struct {
 }
 
 func (c *uncompressedLengthFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinUncompressedLengthSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinUncompressedLengthSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinUncompressedLengthSig struct {
@@ -553,7 +629,28 @@ type builtinUncompressedLengthSig struct {
 // eval evals a builtinUncompressedLengthSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_uncompressed-length
 func (b *builtinUncompressedLengthSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("UNCOMPRESSED_LENGTH")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	arg := args[0]
+	if arg.IsNull() {
+		return d, nil
+	}
+	compressStr, err := arg.ToBytes()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if len(compressStr) == 0 {
+		d.SetInt64(0)
+		return d, nil
+	}
+	bytes, err := uncompress(compressStr)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d.SetInt64(int64(len(bytes)))
+	return d, nil
 }
 
 type validatePasswordStrengthFunctionClass struct {
@@ -561,7 +658,8 @@ type validatePasswordStrengthFunctionClass struct {
 }
 
 func (c *validatePasswordStrengthFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinValidatePasswordStrengthSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinValidatePasswordStrengthSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinValidatePasswordStrengthSig struct {

@@ -27,8 +27,17 @@ import (
 )
 
 var (
-	_ = &TableReaderExecutor{}
+	_ Executor = &TableReaderExecutor{}
+	_ Executor = &IndexReaderExecutor{}
+	_ Executor = &IndexLookUpExecutor{}
 )
+
+// DataReader can send requests which ranges are constructed by datums.
+type DataReader interface {
+	Executor
+
+	doRequestForDatums(datums [][]types.Datum, goCtx goctx.Context) error
+}
 
 // TableReaderExecutor sends dag request and reads table data from kv layer.
 type TableReaderExecutor struct {
@@ -41,6 +50,8 @@ type TableReaderExecutor struct {
 	dagPB     *tipb.DAGRequest
 	ctx       context.Context
 	schema    *expression.Schema
+	// columns are only required by union scan.
+	columns []*model.ColumnInfo
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result        distsql.SelectResult
@@ -99,7 +110,8 @@ func (e *TableReaderExecutor) Next() (*Row, error) {
 	}
 }
 
-func (e *TableReaderExecutor) doRequest() error {
+// Open implements the Executor Open interface.
+func (e *TableReaderExecutor) Open() error {
 	kvRanges := tableRangesToKVRanges(e.tableID, e.ranges)
 	var err error
 	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), goctx.Background(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc)
@@ -122,6 +134,16 @@ func (e *TableReaderExecutor) doRequestForHandles(handles []int64, goCtx goctx.C
 	return nil
 }
 
+// doRequestForDatums constructs kv ranges by Datums. It is used by index look up executor.
+// Every lens for `datums` will always be one and must be type of int64.
+func (e *TableReaderExecutor) doRequestForDatums(datums [][]types.Datum, goCtx goctx.Context) error {
+	handles := make([]int64, 0, len(datums))
+	for _, datum := range datums {
+		handles = append(handles, datum[0].GetInt64())
+	}
+	return errors.Trace(e.doRequestForHandles(handles, goCtx))
+}
+
 // IndexReaderExecutor sends dag request and reads index data from kv layer.
 type IndexReaderExecutor struct {
 	asName    *model.CIStr
@@ -138,6 +160,8 @@ type IndexReaderExecutor struct {
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result        distsql.SelectResult
 	partialResult distsql.PartialResult
+	// columns are only required by union scan.
+	columns []*model.ColumnInfo
 }
 
 // Schema implements the Executor Schema interface.
@@ -192,7 +216,8 @@ func (e *IndexReaderExecutor) Next() (*Row, error) {
 	}
 }
 
-func (e *IndexReaderExecutor) doRequest() error {
+// Open implements the Executor Open interface.
+func (e *IndexReaderExecutor) Open() error {
 	fieldTypes := make([]*types.FieldType, len(e.index.Columns))
 	for i, v := range e.index.Columns {
 		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)
@@ -206,6 +231,20 @@ func (e *IndexReaderExecutor) doRequest() error {
 		return errors.Trace(err)
 	}
 	e.result.Fetch(e.ctx.GoCtx())
+	return nil
+}
+
+// doRequestForDatums constructs kv ranges by datums. It is used by index look up executor.
+func (e *IndexReaderExecutor) doRequestForDatums(values [][]types.Datum, goCtx goctx.Context) error {
+	kvRanges, err := indexValuesToKVRanges(e.tableID, e.index.ID, values)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	e.result.Fetch(goCtx)
 	return nil
 }
 
@@ -230,9 +269,12 @@ type IndexLookUpExecutor struct {
 	taskCurr *lookupTableTask
 
 	tableRequest *tipb.DAGRequest
+	// columns are only required by union scan.
+	columns []*model.ColumnInfo
 }
 
-func (e *IndexLookUpExecutor) doRequest() error {
+// Open implements the Executor Open interface.
+func (e *IndexLookUpExecutor) Open() error {
 	fieldTypes := make([]*types.FieldType, len(e.index.Columns))
 	for i, v := range e.index.Columns {
 		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)
@@ -252,6 +294,20 @@ func (e *IndexLookUpExecutor) doRequest() error {
 	// run concurrently.
 	e.taskChan = make(chan *lookupTableTask, LookupTableTaskChannelSize)
 	go e.fetchHandlesAndStartWorkers()
+	return nil
+}
+
+// doRequestForDatums constructs kv ranges by datums. It is used by index look up executor.
+func (e *IndexLookUpExecutor) doRequestForDatums(values [][]types.Datum, goCtx goctx.Context) error {
+	kvRanges, err := indexValuesToKVRanges(e.tableID, e.index.ID, values)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	e.result, err = distsql.SelectDAG(e.ctx.GetClient(), e.ctx.GoCtx(), e.dagPB, kvRanges, e.ctx.GetSessionVars().DistSQLScanConcurrency, e.keepOrder, e.desc)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	e.result.Fetch(goCtx)
 	return nil
 }
 
@@ -284,6 +340,22 @@ func (e *IndexLookUpExecutor) executeTask(task *lookupTableTask, goCtx goctx.Con
 	}
 }
 
+func (e *IndexLookUpExecutor) pickAndExecTask(workCh <-chan *lookupTableTask, txnCtx goctx.Context) {
+	childCtx, cancel := goctx.WithCancel(txnCtx)
+	defer cancel()
+	for {
+		select {
+		case task := <-workCh:
+			if task == nil {
+				return
+			}
+			e.executeTask(task, childCtx)
+		case <-childCtx.Done():
+			return
+		}
+	}
+}
+
 // fetchHandlesAndStartWorkers fetches a batch of handles from index data and builds the index lookup tasks.
 // We initialize some workers to execute this tasks concurrently and put the task to taskCh by order.
 func (e *IndexLookUpExecutor) fetchHandlesAndStartWorkers() {
@@ -298,18 +370,7 @@ func (e *IndexLookUpExecutor) fetchHandlesAndStartWorkers() {
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency
 	txnCtx := e.ctx.GoCtx()
 	for i := 0; i < lookupConcurrencyLimit; i++ {
-		go func() {
-			childCtx, cancel := goctx.WithCancel(txnCtx)
-			defer cancel()
-			select {
-			case task := <-workCh:
-				if task == nil {
-					return
-				}
-				e.executeTask(task, childCtx)
-			case <-childCtx.Done():
-			}
-		}()
+		go e.pickAndExecTask(workCh, txnCtx)
 	}
 
 	for {

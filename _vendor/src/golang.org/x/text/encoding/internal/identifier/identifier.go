@@ -36,8 +36,8 @@ package identifier
 // - http://www.ietf.org/rfc/rfc2978.txt
 // - http://www.unicode.org/reports/tr22/
 // - http://www.w3.org/TR/encoding/
-// - http://www.w3.org/TR/encoding/indexes/encodings.json
 // - https://encoding.spec.whatwg.org/
+// - https://encoding.spec.whatwg.org/encodings.json
 // - https://tools.ietf.org/html/rfc6657#section-5
 
 // Interface can be implemented by Encodings to define the CCS or CES for which
@@ -70,7 +70,8 @@ const (
 	// Unofficial marks the start of encodings not registered by IANA.
 	Unofficial MIB = 10000 + iota
 
-	// TODO: add Replacement?
+	// Replacement is the WhatWG replacement encoding.
+	Replacement
 
 	// XUserDefined is the code for x-user-defined.
 	XUserDefined

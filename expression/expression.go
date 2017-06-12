@@ -66,8 +66,17 @@ type Expression interface {
 	// EvalDecimal returns the decimal representation of expression.
 	EvalDecimal(row []types.Datum, sc *variable.StatementContext) (val *types.MyDecimal, isNull bool, err error)
 
+	// EvalTime returns the DATE/DATETIME/TIMESTAMP representation of expression.
+	EvalTime(row []types.Datum, sc *variable.StatementContext) (val types.Time, isNull bool, err error)
+
+	// EvalDuration returns the duration representation of expression.
+	EvalDuration(row []types.Datum, sc *variable.StatementContext) (val types.Duration, isNull bool, err error)
+
 	// GetType gets the type that the expression returns.
 	GetType() *types.FieldType
+
+	// GetTypeClass gets the TypeClass that the expression returns.
+	GetTypeClass() types.TypeClass
 
 	// Clone copies an expression totally.
 	Clone() Expression
@@ -126,56 +135,92 @@ func EvalBool(exprList CNFExprs, row []types.Datum, ctx context.Context) (bool, 
 func evalExprToInt(expr Expression, row []types.Datum, sc *variable.StatementContext) (res int64, isNull bool, err error) {
 	val, err := expr.Eval(row)
 	if val.IsNull() || err != nil {
-		return 0, val.IsNull(), errors.Trace(err)
+		return res, val.IsNull(), errors.Trace(err)
 	}
-	tc := expr.GetType().ToClass()
-	if tc == types.ClassInt {
+	if expr.GetTypeClass() == types.ClassInt {
 		return val.GetInt64(), false, nil
+	} else if IsHybridType(expr) {
+		res, err = val.ToInt64(sc)
+		return res, false, errors.Trace(err)
 	}
-	res, err = val.ToInt64(sc)
-	return res, false, errors.Trace(err)
+	panic(fmt.Sprintf("cannot get INT result from %s expression", types.TypeStr(expr.GetType().Tp)))
 }
 
 // evalExprToReal evaluates `expr` to real type.
 func evalExprToReal(expr Expression, row []types.Datum, sc *variable.StatementContext) (res float64, isNull bool, err error) {
 	val, err := expr.Eval(row)
 	if val.IsNull() || err != nil {
-		return 0, val.IsNull(), errors.Trace(err)
+		return res, val.IsNull(), errors.Trace(err)
 	}
-	tc := expr.GetType().ToClass()
-	if tc == types.ClassReal {
+	if expr.GetTypeClass() == types.ClassReal {
 		return val.GetFloat64(), false, nil
+	} else if IsHybridType(expr) {
+		res, err = val.ToFloat64(sc)
+		return res, false, errors.Trace(err)
 	}
-	res, err = val.ToFloat64(sc)
-	return res, false, errors.Trace(err)
+	panic(fmt.Sprintf("cannot get REAL result from %s expression", types.TypeStr(expr.GetType().Tp)))
 }
 
 // evalExprToDecimal evaluates `expr` to decimal type.
 func evalExprToDecimal(expr Expression, row []types.Datum, sc *variable.StatementContext) (res *types.MyDecimal, isNull bool, err error) {
 	val, err := expr.Eval(row)
 	if val.IsNull() || err != nil {
-		return nil, val.IsNull(), errors.Trace(err)
+		return res, val.IsNull(), errors.Trace(err)
 	}
-	tc := expr.GetType().ToClass()
-	if tc == types.ClassDecimal {
+	if expr.GetTypeClass() == types.ClassDecimal {
 		return val.GetMysqlDecimal(), false, nil
+	} else if IsHybridType(expr) {
+		res, err = val.ToDecimal(sc)
+		return res, false, errors.Trace(err)
 	}
-	res, err = val.ToDecimal(sc)
-	return res, false, errors.Trace(err)
+	panic(fmt.Sprintf("cannot get DECIMAL result from %s expression", types.TypeStr(expr.GetType().Tp)))
 }
 
 // evalExprToString evaluates `expr` to string type.
 func evalExprToString(expr Expression, row []types.Datum, _ *variable.StatementContext) (res string, isNull bool, err error) {
 	val, err := expr.Eval(row)
 	if val.IsNull() || err != nil {
-		return "", val.IsNull(), errors.Trace(err)
+		return res, val.IsNull(), errors.Trace(err)
 	}
-	tc := expr.GetType().ToClass()
-	if tc == types.ClassString {
-		return val.GetString(), false, nil
+	if expr.GetTypeClass() == types.ClassString {
+		// We cannot use val.GetString() directly.
+		// For example, `Bit` is regarded as ClassString,
+		// while we can not use val.GetString() to get the value of a Bit variable,
+		// because value of `Bit` is stored in Datum.i while val.GetString() get value from Datum.b.
+		res, err = val.ToString()
+		return res, false, errors.Trace(err)
 	}
-	res, err = val.ToString()
-	return res, false, errors.Trace(err)
+	panic(fmt.Sprintf("cannot get STRING result from %s expression", types.TypeStr(expr.GetType().Tp)))
+}
+
+// evalExprToTime evaluates `expr` to TIME type.
+func evalExprToTime(expr Expression, row []types.Datum, _ *variable.StatementContext) (res types.Time, isNull bool, err error) {
+	if IsHybridType(expr) {
+		return res, true, nil
+	}
+	val, err := expr.Eval(row)
+	if val.IsNull() || err != nil {
+		return res, val.IsNull(), errors.Trace(err)
+	}
+	if types.IsTypeTime(expr.GetType().Tp) {
+		return val.GetMysqlTime(), false, nil
+	}
+	panic(fmt.Sprintf("cannot get DATE result from %s expression", types.TypeStr(expr.GetType().Tp)))
+}
+
+// evalExprToDuration evaluates `expr` to DURATION type.
+func evalExprToDuration(expr Expression, row []types.Datum, _ *variable.StatementContext) (res types.Duration, isNull bool, err error) {
+	if IsHybridType(expr) {
+		return res, true, nil
+	}
+	val, err := expr.Eval(row)
+	if val.IsNull() || err != nil {
+		return res, val.IsNull(), errors.Trace(err)
+	}
+	if expr.GetType().Tp == mysql.TypeDuration {
+		return val.GetMysqlDuration(), false, nil
+	}
+	panic(fmt.Sprintf("cannot get DURATION result from %s expression", types.TypeStr(expr.GetType().Tp)))
 }
 
 // One stands for a number 1.
@@ -224,6 +269,11 @@ func (c *Constant) GetType() *types.FieldType {
 	return c.RetType
 }
 
+// GetTypeClass implements Expression interface.
+func (c *Constant) GetTypeClass() types.TypeClass {
+	return c.RetType.ToClass()
+}
+
 // Eval implements Expression interface.
 func (c *Constant) Eval(_ []types.Datum) (types.Datum, error) {
 	return c.Value, nil
@@ -250,6 +300,18 @@ func (c *Constant) EvalString(_ []types.Datum, sc *variable.StatementContext) (s
 // EvalDecimal returns decimal representation of Constant.
 func (c *Constant) EvalDecimal(_ []types.Datum, sc *variable.StatementContext) (*types.MyDecimal, bool, error) {
 	val, isNull, err := evalExprToDecimal(c, nil, sc)
+	return val, isNull, errors.Trace(err)
+}
+
+// EvalTime returns DATE/DATETIME/TIMESTAMP representation of Constant.
+func (c *Constant) EvalTime(_ []types.Datum, sc *variable.StatementContext) (types.Time, bool, error) {
+	val, isNull, err := evalExprToTime(c, nil, sc)
+	return val, isNull, errors.Trace(err)
+}
+
+// EvalDuration returns Duration representation of Constant.
+func (c *Constant) EvalDuration(_ []types.Datum, sc *variable.StatementContext) (types.Duration, bool, error) {
+	val, isNull, err := evalExprToDuration(c, nil, sc)
 	return val, isNull, errors.Trace(err)
 }
 
@@ -451,7 +513,7 @@ func NewCastFunc(tp *types.FieldType, arg Expression, ctx context.Context) *Scal
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(ast.Cast),
 		RetType:  tp,
-		Function: bt,
+		Function: bt.setSelf(bt),
 	}
 }
 
@@ -462,7 +524,7 @@ func NewValuesFunc(offset int, retTp *types.FieldType, ctx context.Context) *Sca
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(ast.Values),
 		RetType:  retTp,
-		Function: bt,
+		Function: bt.setSelf(bt),
 	}
 }
 

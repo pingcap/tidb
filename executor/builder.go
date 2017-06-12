@@ -20,6 +20,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/inspectkv"
@@ -82,6 +83,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildSet(v)
 	case *plan.Sort:
 		return b.buildSort(v)
+	case *plan.TopN:
+		return b.buildTopN(v)
 	case *plan.Union:
 		return b.buildUnion(v)
 	case *plan.Update:
@@ -94,6 +97,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildMergeJoin(v)
 	case *plan.PhysicalHashSemiJoin:
 		return b.buildSemiJoin(v)
+	case *plan.PhysicalIndexJoin:
+		return b.buildIndexJoin(v)
 	case *plan.Selection:
 		return b.buildSelection(v)
 	case *plan.PhysicalAggregation:
@@ -135,8 +140,7 @@ func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
 	// next will be called after transaction has been committed.
 	// We need the transaction to get DDLInfo.
 	e := &ShowDDLExec{
-		ctx:    b.ctx,
-		schema: v.Schema(),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
 	}
 	ddlInfo, err := inspectkv.GetDDLInfo(e.ctx.Txn())
 	if err != nil {
@@ -178,21 +182,17 @@ func (b *executorBuilder) buildSelectLock(v *plan.SelectLock) Executor {
 		return src
 	}
 	e := &SelectLockExec{
-		Src:    src,
-		Lock:   v.Lock,
-		ctx:    b.ctx,
-		schema: v.Schema(),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
+		Lock:         v.Lock,
 	}
 	return e
 }
 
 func (b *executorBuilder) buildLimit(v *plan.Limit) Executor {
-	src := b.build(v.Children()[0])
 	e := &LimitExec{
-		Src:    src,
-		Offset: v.Offset,
-		Count:  v.Count,
-		schema: v.Schema(),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
+		Offset:       v.Offset,
+		Count:        v.Count,
 	}
 	return e
 }
@@ -218,17 +218,16 @@ func (b *executorBuilder) buildExecute(v *plan.Execute) Executor {
 
 func (b *executorBuilder) buildShow(v *plan.Show) Executor {
 	e := &ShowExec{
-		Tp:          v.Tp,
-		DBName:      model.NewCIStr(v.DBName),
-		Table:       v.Table,
-		Column:      v.Column,
-		User:        v.User,
-		Flag:        v.Flag,
-		Full:        v.Full,
-		GlobalScope: v.GlobalScope,
-		ctx:         b.ctx,
-		is:          b.is,
-		schema:      v.Schema(),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		Tp:           v.Tp,
+		DBName:       model.NewCIStr(v.DBName),
+		Table:        v.Table,
+		Column:       v.Column,
+		User:         v.User,
+		Flag:         v.Flag,
+		Full:         v.Full,
+		GlobalScope:  v.GlobalScope,
+		is:           b.is,
 	}
 	if e.Tp == ast.ShowGrants && len(e.User) == 0 {
 		e.User = e.ctx.GetSessionVars().User
@@ -243,13 +242,17 @@ func (b *executorBuilder) buildSimple(v *plan.Simple) Executor {
 	case *ast.RevokeStmt:
 		return b.buildRevoke(s)
 	}
-	return &SimpleExec{Statement: v.Statement, ctx: b.ctx, is: b.is}
+	return &SimpleExec{
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		Statement:    v.Statement,
+		is:           b.is,
+	}
 }
 
 func (b *executorBuilder) buildSet(v *plan.Set) Executor {
 	return &SetExecutor{
-		ctx:  b.ctx,
-		vars: v.VarAssigns,
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		vars:         v.VarAssigns,
 	}
 }
 
@@ -282,17 +285,25 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 		b.err = errors.Errorf("Can not get table %d", v.Table.TableInfo.ID)
 		return nil
 	}
+	insertVal := &InsertValues{ctx: b.ctx, Table: tbl, Columns: v.Columns}
+	tableCols := tbl.WritableCols()
+	columns, err := insertVal.getColumns(tableCols)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
 
 	return &LoadData{
 		IsLocal: v.IsLocal,
 		loadDataInfo: &LoadDataInfo{
-			row:        make([]types.Datum, len(tbl.Cols())),
-			insertVal:  &InsertValues{ctx: b.ctx, Table: tbl},
+			row:        make([]types.Datum, len(columns)),
+			insertVal:  insertVal,
 			Path:       v.Path,
 			Table:      tbl,
 			FieldsInfo: v.FieldsInfo,
 			LinesInfo:  v.LinesInfo,
 			Ctx:        b.ctx,
+			columns:    columns,
 		},
 	}
 }
@@ -332,8 +343,8 @@ func (b *executorBuilder) buildDDL(v *plan.DDL) Executor {
 
 func (b *executorBuilder) buildExplain(v *plan.Explain) Executor {
 	return &ExplainExec{
-		StmtPlan: v.StmtPlan,
-		schema:   v.Schema(),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		StmtPlan:     v.StmtPlan,
 	}
 }
 
@@ -342,12 +353,19 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 	if b.err != nil {
 		return nil
 	}
-	us := &UnionScanExec{ctx: b.ctx, Src: src, schema: v.Schema()}
+	us := &UnionScanExec{baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src)}
 	switch x := src.(type) {
 	case *XSelectTableExec:
 		us.desc = x.desc
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
+		us.columns = x.Columns
+		us.buildAndSortAddedRows(x.table, x.asName)
+	case *TableReaderExecutor:
+		us.desc = x.desc
+		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
+		us.conditions = v.Conditions
+		us.columns = x.columns
 		us.buildAndSortAddedRows(x.table, x.asName)
 	case *XSelectIndexExec:
 		us.desc = x.desc
@@ -361,6 +379,35 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 		}
 		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
+		us.columns = x.columns
+		us.buildAndSortAddedRows(x.table, x.asName)
+	case *IndexReaderExecutor:
+		us.desc = x.desc
+		for _, ic := range x.index.Columns {
+			for i, col := range x.schema.Columns {
+				if col.ColName.L == ic.Name.L {
+					us.usedIndex = append(us.usedIndex, i)
+					break
+				}
+			}
+		}
+		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
+		us.conditions = v.Conditions
+		us.columns = x.columns
+		us.buildAndSortAddedRows(x.table, x.asName)
+	case *IndexLookUpExecutor:
+		us.desc = x.desc
+		for _, ic := range x.index.Columns {
+			for i, col := range x.schema.Columns {
+				if col.ColName.L == ic.Name.L {
+					us.usedIndex = append(us.usedIndex, i)
+					break
+				}
+			}
+		}
+		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
+		us.conditions = v.Conditions
+		us.columns = x.columns
 		us.buildAndSortAddedRows(x.table, x.asName)
 	default:
 		// The mem table will not be written by sql directly, so we can omit the union scan to avoid err reporting.
@@ -483,19 +530,16 @@ func (b *executorBuilder) buildSemiJoin(v *plan.PhysicalHashSemiJoin) *HashSemiJ
 }
 
 func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor {
-	src := b.build(v.Children()[0])
 	if v.AggType == plan.StreamedAgg {
 		return &StreamAggExec{
-			Src:          src,
-			schema:       v.Schema(),
+			baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
 			StmtCtx:      b.ctx.GetSessionVars().StmtCtx,
 			AggFuncs:     v.AggFuncs,
 			GroupByItems: v.GroupByItems,
 		}
 	}
 	return &HashAggExec{
-		Src:          src,
-		schema:       v.Schema(),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
 		sc:           b.ctx.GetSessionVars().StmtCtx,
 		AggFuncs:     v.AggFuncs,
 		GroupByItems: v.GroupByItems,
@@ -506,9 +550,7 @@ func (b *executorBuilder) buildAggregation(v *plan.PhysicalAggregation) Executor
 
 func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
 	exec := &SelectionExec{
-		Src:            b.build(v.Children()[0]),
-		schema:         v.Schema(),
-		ctx:            b.ctx,
+		baseExecutor:   newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
 		scanController: v.ScanController,
 		Conditions:     v.Conditions,
 	}
@@ -517,15 +559,16 @@ func (b *executorBuilder) buildSelection(v *plan.Selection) Executor {
 
 func (b *executorBuilder) buildProjection(v *plan.Projection) Executor {
 	return &ProjectionExec{
-		Src:    b.build(v.Children()[0]),
-		ctx:    b.ctx,
-		exprs:  v.Exprs,
-		schema: v.Schema(),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
+		exprs:        v.Exprs,
 	}
 }
 
 func (b *executorBuilder) buildTableDual(v *plan.TableDual) Executor {
-	return &TableDualExec{schema: v.Schema(), rowCount: v.RowCount}
+	return &TableDualExec{
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		rowCount:     v.RowCount,
+	}
 }
 
 func (b *executorBuilder) getStartTS() uint64 {
@@ -558,7 +601,7 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 	}
 	table, _ := b.is.TableByID(v.Table.ID)
 	client := b.ctx.GetClient()
-	supportDesc := client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeDesc)
+	supportDesc := client.IsRequestTypeSupported(kv.ReqTypeSelect, kv.ReqSubTypeDesc)
 	e := &XSelectTableExec{
 		tableInfo:   v.Table,
 		ctx:         b.ctx,
@@ -588,7 +631,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 	}
 	table, _ := b.is.TableByID(v.Table.ID)
 	client := b.ctx.GetClient()
-	supportDesc := client.SupportRequestType(kv.ReqTypeIndex, kv.ReqSubTypeDesc)
+	supportDesc := client.IsRequestTypeSupported(kv.ReqTypeIndex, kv.ReqSubTypeDesc)
 	e := &XSelectIndexExec{
 		tableInfo:            v.Table,
 		ctx:                  b.ctx,
@@ -636,22 +679,29 @@ func (b *executorBuilder) buildIndexScan(v *plan.PhysicalIndexScan) Executor {
 }
 
 func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
-	src := b.build(v.Children()[0])
+	sortExec := SortExec{
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
+		ByItems:      v.ByItems,
+		schema:       v.Schema(),
+	}
 	if v.ExecLimit != nil {
 		return &TopnExec{
-			SortExec: SortExec{
-				Src:     src,
-				ByItems: v.ByItems,
-				ctx:     b.ctx,
-				schema:  v.Schema()},
-			limit: v.ExecLimit,
+			SortExec: sortExec,
+			limit:    v.ExecLimit,
 		}
 	}
-	return &SortExec{
-		Src:     src,
-		ByItems: v.ByItems,
-		ctx:     b.ctx,
-		schema:  v.Schema(),
+	return &sortExec
+}
+
+func (b *executorBuilder) buildTopN(v *plan.TopN) Executor {
+	sortExec := SortExec{
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
+		ByItems:      v.ByItems,
+		schema:       v.Schema(),
+	}
+	return &TopnExec{
+		SortExec: sortExec,
+		limit:    &plan.Limit{Count: v.Count, Offset: v.Offset},
 	}
 }
 
@@ -711,51 +761,48 @@ func (b *executorBuilder) buildApply(v *plan.PhysicalApply) Executor {
 
 func (b *executorBuilder) buildExists(v *plan.Exists) Executor {
 	return &ExistsExec{
-		schema: v.Schema(),
-		Src:    b.build(v.Children()[0]),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
 	}
 }
 
 func (b *executorBuilder) buildMaxOneRow(v *plan.MaxOneRow) Executor {
 	return &MaxOneRowExec{
-		schema: v.Schema(),
-		Src:    b.build(v.Children()[0]),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
 	}
 }
 
 func (b *executorBuilder) buildUnion(v *plan.Union) Executor {
-	e := &UnionExec{
-		schema: v.Schema(),
-		Srcs:   make([]Executor, len(v.Children())),
-		ctx:    b.ctx,
-	}
+	srcs := make([]Executor, len(v.Children()))
 	for i, sel := range v.Children() {
 		selExec := b.build(sel)
-		e.Srcs[i] = selExec
+		srcs[i] = selExec
+	}
+	e := &UnionExec{
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, srcs...),
 	}
 	return e
 }
 
 func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
-	selExec := b.build(v.Children()[0])
-	return &UpdateExec{ctx: b.ctx, SelectExec: selExec, OrderedList: v.OrderedList}
+	return &UpdateExec{
+		baseExecutor: newBaseExecutor(nil, b.ctx),
+		SelectExec:   b.build(v.Children()[0]),
+		OrderedList:  v.OrderedList,
+	}
 }
 
 func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
-	selExec := b.build(v.Children()[0])
 	return &DeleteExec{
-		ctx:          b.ctx,
-		SelectExec:   selExec,
+		baseExecutor: newBaseExecutor(nil, b.ctx),
+		SelectExec:   b.build(v.Children()[0]),
 		Tables:       v.Tables,
 		IsMultiTable: v.IsMultiTable,
 	}
 }
 
 func (b *executorBuilder) buildCache(v *plan.Cache) Executor {
-	src := b.build(v.Children()[0])
 	return &CacheExec{
-		schema: v.Schema(),
-		Src:    src,
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
 	}
 }
 
@@ -767,6 +814,33 @@ func (b *executorBuilder) buildTableScanForAnalyze(tblInfo *model.TableInfo, col
 	table, _ := b.is.TableByID(tblInfo.ID)
 	schema := expression.NewSchema(expression.ColumnInfos2Columns(tblInfo.Name, cols)...)
 	ranges := []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}
+	if b.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic) {
+		e := &TableReaderExecutor{
+			table:   table,
+			tableID: tblInfo.ID,
+			ranges:  ranges,
+			dagPB: &tipb.DAGRequest{
+				StartTs:        b.getStartTS(),
+				TimeZoneOffset: timeZoneOffset(b.ctx),
+				Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
+			},
+			schema:  schema,
+			columns: cols,
+			ctx:     b.ctx,
+		}
+		for i := range schema.Columns {
+			e.dagPB.OutputOffsets = append(e.dagPB.OutputOffsets, uint32(i))
+		}
+		e.dagPB.Executors = append(e.dagPB.Executors, &tipb.Executor{
+			Tp: tipb.ExecType_TypeTableScan,
+			TblScan: &tipb.TableScan{
+				TableId: tblInfo.ID,
+				Columns: distsql.ColumnsToProto(cols, tblInfo.PKIsHandle),
+			},
+		})
+		b.err = setPBColumnsDefaultValue(b.ctx, e.dagPB.Executors[0].TblScan.Columns, cols)
+		return e
+	}
 	e := &XSelectTableExec{
 		tableInfo: tblInfo,
 		ctx:       b.ctx,
@@ -792,6 +866,35 @@ func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idx
 	schema := expression.NewSchema(expression.ColumnInfos2Columns(tblInfo.Name, cols)...)
 	idxRange := &types.IndexRange{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.MaxValueDatum()}}
 	scanConcurrency := b.ctx.GetSessionVars().IndexSerialScanConcurrency
+	if b.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic) {
+		e := &IndexReaderExecutor{
+			table:   table,
+			index:   idxInfo,
+			tableID: tblInfo.ID,
+			ranges:  []*types.IndexRange{idxRange},
+			dagPB: &tipb.DAGRequest{
+				StartTs:        b.getStartTS(),
+				TimeZoneOffset: timeZoneOffset(b.ctx),
+				Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
+			},
+			schema:  schema,
+			columns: cols,
+			ctx:     b.ctx,
+		}
+		for i := range schema.Columns {
+			e.dagPB.OutputOffsets = append(e.dagPB.OutputOffsets, uint32(i))
+		}
+		e.dagPB.Executors = append(e.dagPB.Executors, &tipb.Executor{
+			Tp: tipb.ExecType_TypeIndexScan,
+			IdxScan: &tipb.IndexScan{
+				TableId: tblInfo.ID,
+				IndexId: idxInfo.ID,
+				Columns: distsql.ColumnsToProto(cols, tblInfo.PKIsHandle),
+			},
+		})
+		b.err = setPBColumnsDefaultValue(b.ctx, e.dagPB.Executors[0].IdxScan.Columns, cols)
+		return e
+	}
 	e := &XSelectIndexExec{
 		tableInfo:       tblInfo,
 		ctx:             b.ctx,
@@ -812,19 +915,31 @@ func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idx
 func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	e := &AnalyzeExec{
 		ctx:   b.ctx,
-		tasks: make([]analyzeTask, 0, len(v.Children())),
+		tasks: make([]*analyzeTask, 0, len(v.Children())),
 	}
 	for _, task := range v.PkTasks {
-		e.tasks = append(e.tasks, analyzeTask{taskType: pkTask,
-			src: b.buildTableScanForAnalyze(task.TableInfo, []*model.ColumnInfo{task.PKInfo})})
+		e.tasks = append(e.tasks, &analyzeTask{
+			taskType:  pkTask,
+			src:       b.buildTableScanForAnalyze(task.TableInfo, []*model.ColumnInfo{task.PKInfo}),
+			tableInfo: task.TableInfo,
+			Columns:   []*model.ColumnInfo{task.PKInfo},
+		})
 	}
 	for _, task := range v.ColTasks {
-		e.tasks = append(e.tasks, analyzeTask{taskType: colTask,
-			src: b.buildTableScanForAnalyze(task.TableInfo, task.ColsInfo)})
+		e.tasks = append(e.tasks, &analyzeTask{
+			taskType:  colTask,
+			src:       b.buildTableScanForAnalyze(task.TableInfo, task.ColsInfo),
+			tableInfo: task.TableInfo,
+			Columns:   task.ColsInfo,
+		})
 	}
 	for _, task := range v.IdxTasks {
-		e.tasks = append(e.tasks, analyzeTask{taskType: idxTask,
-			src: b.buildIndexScanForAnalyze(task.TableInfo, task.IndexInfo)})
+		e.tasks = append(e.tasks, &analyzeTask{
+			taskType:  idxTask,
+			src:       b.buildIndexScanForAnalyze(task.TableInfo, task.IndexInfo),
+			indexInfo: task.IndexInfo,
+			tableInfo: task.TableInfo,
+		})
 	}
 	return e
 }
@@ -846,6 +961,20 @@ func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) *tipb.DAGRe
 	return dagReq
 }
 
+func (b *executorBuilder) buildIndexJoin(v *plan.PhysicalIndexJoin) Executor {
+	return &IndexLookUpJoin{
+		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, b.build(v.Children()[0])),
+		innerExec:       b.build(v.Children()[1]).(DataReader),
+		outerJoinKeys:   v.OuterJoinKeys,
+		innerJoinKeys:   v.InnerJoinKeys,
+		outer:           v.Outer,
+		leftConditions:  v.LeftConditions,
+		rightConditions: v.RightConditions,
+		otherConditions: v.OtherConditions,
+		defaultValues:   v.DefaultValues,
+	}
+}
+
 func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor {
 	dagReq := b.constructDAGReq(v.TablePlans)
 	if b.err != nil {
@@ -863,13 +992,13 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 		keepOrder: ts.KeepOrder,
 		desc:      ts.Desc,
 		ranges:    ts.Ranges,
+		columns:   ts.Columns,
 	}
 
 	for i := range v.Schema().Columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
 
-	b.err = e.doRequest()
 	return e
 }
 
@@ -891,13 +1020,13 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) Executor
 		keepOrder: !is.OutOfOrder,
 		desc:      is.Desc,
 		ranges:    is.Ranges,
+		columns:   is.Columns,
 	}
 
-	for _, col := range v.Schema().Columns {
+	for _, col := range v.OutputColumns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(col.Index))
 	}
 
-	b.err = e.doRequest()
 	return e
 }
 
@@ -929,7 +1058,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 		desc:         is.Desc,
 		ranges:       is.Ranges,
 		tableRequest: tableReq,
+		columns:      is.Columns,
 	}
-	b.err = e.doRequest()
 	return e
 }

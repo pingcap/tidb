@@ -120,7 +120,7 @@ func (s *testFieldTypeSuite) TestDefaultTypeForValue(c *C) {
 		{"abc", mysql.TypeVarString},
 		{1.1, mysql.TypeDouble},
 		{[]byte("abc"), mysql.TypeBlob},
-		{Bit{}, mysql.TypeBit},
+		{Bit{}, mysql.TypeVarchar},
 		{Hex{}, mysql.TypeVarchar},
 		{Time{Type: mysql.TypeDatetime}, mysql.TypeDatetime},
 		{Duration{}, mysql.TypeDuration},

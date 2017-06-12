@@ -15,6 +15,7 @@ package expression
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"math"
 	"net"
 	"strings"
@@ -81,7 +82,7 @@ func (c *sleepFunctionClass) getFunction(args []Expression, ctx context.Context)
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinSleepSig{newBaseBuiltinFunc(args, ctx)}
 	bt.deterministic = false
-	return bt, errors.Trace(err)
+	return bt.setSelf(bt), errors.Trace(err)
 }
 
 type builtinSleepSig struct {
@@ -135,7 +136,8 @@ type lockFunctionClass struct {
 }
 
 func (c *lockFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinLockSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinLockSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinLockSig struct {
@@ -156,7 +158,8 @@ type releaseLockFunctionClass struct {
 }
 
 func (c *releaseLockFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinReleaseLockSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinReleaseLockSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinReleaseLockSig struct {
@@ -177,7 +180,8 @@ type anyValueFunctionClass struct {
 }
 
 func (c *anyValueFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinAnyValueSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinAnyValueSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinAnyValueSig struct {
@@ -200,7 +204,8 @@ type defaultFunctionClass struct {
 }
 
 func (c *defaultFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinDefaultSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinDefaultSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinDefaultSig struct {
@@ -218,7 +223,8 @@ type inetAtonFunctionClass struct {
 }
 
 func (c *inetAtonFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinInetAtonSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinInetAtonSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinInetAtonSig struct {
@@ -288,7 +294,8 @@ type inetNtoaFunctionClass struct {
 }
 
 func (c *inetNtoaFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinInetNtoaSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinInetNtoaSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinInetNtoaSig struct {
@@ -333,7 +340,8 @@ type inet6AtonFunctionClass struct {
 }
 
 func (c *inet6AtonFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinInet6AtonSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinInet6AtonSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinInet6AtonSig struct {
@@ -398,7 +406,8 @@ type inet6NtoaFunctionClass struct {
 }
 
 func (c *inet6NtoaFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinInet6NtoaSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinInet6NtoaSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinInet6NtoaSig struct {
@@ -408,7 +417,32 @@ type builtinInet6NtoaSig struct {
 // eval evals a builtinInet6NtoaSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet6-ntoa
 func (b *builtinInet6NtoaSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("INET6_NTOA")
+	args, err := b.evalArgs(row)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	if args[0].IsNull() {
+		return d, nil
+	}
+
+	ipArg, err := args[0].ToBytes()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+
+	ip := net.IP(ipArg).String()
+	if len(ipArg) == net.IPv6len && !strings.Contains(ip, ":") {
+		ip = fmt.Sprintf("::ffff:%s", ip)
+	}
+
+	if net.ParseIP(ip) == nil {
+		return d, nil
+	}
+
+	d.SetString(ip)
+
+	return d, nil
 }
 
 type isFreeLockFunctionClass struct {
@@ -416,7 +450,8 @@ type isFreeLockFunctionClass struct {
 }
 
 func (c *isFreeLockFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinIsFreeLockSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinIsFreeLockSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinIsFreeLockSig struct {
@@ -434,7 +469,8 @@ type isIPv4FunctionClass struct {
 }
 
 func (c *isIPv4FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinIsIPv4Sig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinIsIPv4Sig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinIsIPv4Sig struct {
@@ -498,7 +534,8 @@ type isIPv4CompatFunctionClass struct {
 }
 
 func (c *isIPv4CompatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinIsIPv4CompatSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinIsIPv4CompatSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinIsIPv4CompatSig struct {
@@ -516,7 +553,8 @@ type isIPv4MappedFunctionClass struct {
 }
 
 func (c *isIPv4MappedFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinIsIPv4MappedSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinIsIPv4MappedSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinIsIPv4MappedSig struct {
@@ -561,7 +599,8 @@ type isIPv6FunctionClass struct {
 }
 
 func (c *isIPv6FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinIsIPv6Sig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinIsIPv6Sig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinIsIPv6Sig struct {
@@ -599,7 +638,8 @@ type isUsedLockFunctionClass struct {
 }
 
 func (c *isUsedLockFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinIsUsedLockSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinIsUsedLockSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinIsUsedLockSig struct {
@@ -617,7 +657,8 @@ type masterPosWaitFunctionClass struct {
 }
 
 func (c *masterPosWaitFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinMasterPosWaitSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinMasterPosWaitSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinMasterPosWaitSig struct {
@@ -635,7 +676,8 @@ type nameConstFunctionClass struct {
 }
 
 func (c *nameConstFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinNameConstSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinNameConstSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinNameConstSig struct {
@@ -653,7 +695,8 @@ type releaseAllLocksFunctionClass struct {
 }
 
 func (c *releaseAllLocksFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinReleaseAllLocksSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinReleaseAllLocksSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinReleaseAllLocksSig struct {
@@ -674,7 +717,7 @@ func (c *uuidFunctionClass) getFunction(args []Expression, ctx context.Context) 
 	err := errors.Trace(c.verifyArgs(args))
 	bt := &builtinUUIDSig{newBaseBuiltinFunc(args, ctx)}
 	bt.deterministic = false
-	return bt, errors.Trace(err)
+	return bt.setSelf(bt), errors.Trace(err)
 }
 
 type builtinUUIDSig struct {
@@ -693,7 +736,8 @@ type uuidShortFunctionClass struct {
 }
 
 func (c *uuidShortFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinUUIDShortSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinUUIDShortSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinUUIDShortSig struct {

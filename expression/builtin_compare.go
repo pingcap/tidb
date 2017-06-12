@@ -46,7 +46,8 @@ type coalesceFunctionClass struct {
 }
 
 func (c *coalesceFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinCoalesceSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinCoalesceSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinCoalesceSig struct {
@@ -78,7 +79,8 @@ type greatestFunctionClass struct {
 }
 
 func (c *greatestFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinGreatestSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinGreatestSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinGreatestSig struct {
@@ -120,7 +122,8 @@ type leastFunctionClass struct {
 }
 
 func (c *leastFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinLeastSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinLeastSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinLeastSig struct {
@@ -162,7 +165,8 @@ type intervalFunctionClass struct {
 }
 
 func (c *intervalFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinIntervalSig{newBaseBuiltinFunc(args, ctx)}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinIntervalSig{newBaseBuiltinFunc(args, ctx)}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinIntervalSig struct {
@@ -212,7 +216,8 @@ type compareFunctionClass struct {
 }
 
 func (c *compareFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	return &builtinCompareSig{newBaseBuiltinFunc(args, ctx), c.op}, errors.Trace(c.verifyArgs(args))
+	sig := &builtinCompareSig{newBaseBuiltinFunc(args, ctx), c.op}
+	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
 type builtinCompareSig struct {
@@ -226,14 +231,10 @@ func (s *builtinCompareSig) eval(row []types.Datum) (d types.Datum, err error) {
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
+
 	sc := s.ctx.GetSessionVars().StmtCtx
 	var a, b = args[0], args[1]
-	if s.op != opcode.NullEQ {
-		a, b, err = types.CoerceDatum(sc, a, b)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-	}
+
 	if a.IsNull() || b.IsNull() {
 		// For <=>, if a and b are both nil, return true.
 		// If a or b is nil, return false.
@@ -247,8 +248,16 @@ func (s *builtinCompareSig) eval(row []types.Datum) (d types.Datum, err error) {
 		return
 	}
 
+	if s.op != opcode.NullEQ {
+		if aa, bb, err := types.CoerceDatum(sc, a, b); err == nil {
+			a = aa
+			b = bb
+		}
+	}
+
 	n, err := a.CompareDatum(sc, b)
 	if err != nil {
+		// TODO: should deal with error here.
 		return d, errors.Trace(err)
 	}
 	var result bool

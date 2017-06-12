@@ -156,6 +156,21 @@ func tableHandlesToKVRanges(tid int64, handles []int64) []kv.KeyRange {
 	return krs
 }
 
+// indexValuesToKVRanges will convert the index datums to kv ranges.
+func indexValuesToKVRanges(tid, idxID int64, values [][]types.Datum) ([]kv.KeyRange, error) {
+	krs := make([]kv.KeyRange, 0, len(values))
+	for _, vals := range values {
+		// TODO: We don't process the case that equal key has different types.
+		valKey, err := codec.EncodeKey(nil, vals...)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		rangeKey := tablecodec.EncodeIndexSeekKey(tid, idxID, valKey)
+		krs = append(krs, kv.KeyRange{StartKey: rangeKey, EndKey: rangeKey})
+	}
+	return krs, nil
+}
+
 func indexRangesToKVRanges(sc *variable.StatementContext, tid, idxID int64, ranges []*types.IndexRange, fieldTypes []*types.FieldType) ([]kv.KeyRange, error) {
 	krs := make([]kv.KeyRange, 0, len(ranges))
 	for _, ran := range ranges {
@@ -350,6 +365,8 @@ type XSelectIndexExec struct {
 	taskCurr    *lookupTableTask
 	handleCount uint64 // returned handle count in double read.
 
+	closeCh chan struct{}
+
 	where                *tipb.Expr
 	startTS              uint64
 	returnedRows         uint64 // returned row count
@@ -379,6 +396,14 @@ type XSelectIndexExec struct {
 	partialCount    int
 }
 
+// Open implements the Executor Open interface.
+func (e *XSelectIndexExec) Open() error {
+	e.returnedRows = 0
+	e.partialCount = 0
+	e.closeCh = make(chan struct{})
+	return nil
+}
+
 // Schema implements Exec Schema interface.
 func (e *XSelectIndexExec) Schema() *expression.Schema {
 	return e.schema
@@ -392,13 +417,12 @@ func (e *XSelectIndexExec) Close() error {
 
 	e.taskCurr = nil
 	if e.taskChan != nil {
+		close(e.closeCh)
 		// Consume the task channel in case channel is full.
 		for range e.taskChan {
 		}
 		e.taskChan = nil
 	}
-	e.returnedRows = 0
-	e.partialCount = 0
 	return errors.Trace(err)
 }
 
@@ -465,7 +489,9 @@ func (e *XSelectIndexExec) nextForSingleRead() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = decodeRawValues(values, schema, e.ctx.GetSessionVars().GetTimeZone())
+		// Use time.UTC instead of session's timezone because coprocessor evaluator has
+		// already handle the timezone.
+		err = decodeRawValues(values, schema, time.UTC)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -593,6 +619,8 @@ func (e *XSelectIndexExec) fetchHandles(idxResult distsql.SelectResult, ch chan<
 
 			select {
 			case <-txnCtx.Done():
+				return
+			case <-e.closeCh:
 				return
 			case workCh <- task:
 			default:
@@ -748,7 +776,9 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = decodeRawValues(values, e.Schema(), e.ctx.GetSessionVars().GetTimeZone())
+		// Use time.UTC instead of session's timezone because coprocessor evaluator has
+		// already handle the timezone.
+		err = decodeRawValues(values, e.Schema(), time.UTC)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -877,6 +907,13 @@ func (e *XSelectTableExec) Close() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	e.result = nil
+	e.partialResult = nil
+	return nil
+}
+
+// Open implements the Executor interface.
+func (e *XSelectTableExec) Open() error {
 	e.result = nil
 	e.partialResult = nil
 	e.returnedRows = 0

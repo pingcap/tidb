@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessionctx/varsutil"
@@ -34,7 +35,7 @@ var _ Executor = &AnalyzeExec{}
 // AnalyzeExec represents Analyze executor.
 type AnalyzeExec struct {
 	ctx   context.Context
-	tasks []analyzeTask
+	tasks []*analyzeTask
 }
 
 const (
@@ -46,6 +47,17 @@ const (
 // Schema implements the Executor Schema interface.
 func (e *AnalyzeExec) Schema() *expression.Schema {
 	return expression.NewSchema()
+}
+
+// Open implements the Executor Open interface.
+func (e *AnalyzeExec) Open() error {
+	for _, task := range e.tasks {
+		err := task.src.Open()
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 // Close implements the Executor Close interface.
@@ -65,10 +77,10 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	taskCh := make(chan analyzeTask, len(e.tasks))
+	taskCh := make(chan *analyzeTask, len(e.tasks))
 	resultCh := make(chan analyzeResult, len(e.tasks))
 	for i := 0; i < concurrency; i++ {
-		go analyzeWorker(taskCh, resultCh)
+		go e.analyzeWorker(taskCh, resultCh)
 	}
 	for _, task := range e.tasks {
 		taskCh <- task
@@ -91,7 +103,7 @@ func (e *AnalyzeExec) Next() (*Row, error) {
 		}
 	}
 	dom := sessionctx.GetDomain(e.ctx)
-	lease := dom.DDL().GetLease()
+	lease := dom.StatsHandle().Lease
 	if lease > 0 {
 		// We sleep two lease to make sure other tidb node has updated this node.
 		time.Sleep(lease * 2)
@@ -123,8 +135,11 @@ const (
 )
 
 type analyzeTask struct {
-	taskType taskType
-	src      Executor
+	taskType  taskType
+	tableInfo *model.TableInfo
+	indexInfo *model.IndexInfo
+	Columns   []*model.ColumnInfo
+	src       Executor
 }
 
 type analyzeResult struct {
@@ -135,36 +150,32 @@ type analyzeResult struct {
 	err     error
 }
 
-func analyzeWorker(taskCh <-chan analyzeTask, resultCh chan<- analyzeResult) {
+func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- analyzeResult) {
 	for task := range taskCh {
 		switch task.taskType {
 		case pkTask:
-			resultCh <- analyzePK(task.src.(*XSelectTableExec))
+			resultCh <- e.analyzePK(task)
 		case colTask:
-			resultCh <- analyzeColumns(task.src.(*XSelectTableExec))
+			resultCh <- e.analyzeColumns(task)
 		case idxTask:
-			resultCh <- analyzeIndex(task.src.(*XSelectIndexExec))
+			resultCh <- e.analyzeIndex(task)
 		}
 	}
 }
 
-func analyzePK(exec *XSelectTableExec) analyzeResult {
-	count, hg, err := statistics.BuildPK(exec.ctx, defaultBucketCount, exec.Columns[0].ID, &recordSet{executor: exec})
-	return analyzeResult{tableID: exec.tableInfo.ID, hist: []*statistics.Histogram{hg}, count: count, isIndex: 0, err: err}
+func (e *AnalyzeExec) analyzePK(task *analyzeTask) analyzeResult {
+	count, hg, err := statistics.BuildPK(e.ctx, defaultBucketCount, task.Columns[0].ID, &recordSet{executor: task.src})
+	return analyzeResult{tableID: task.tableInfo.ID, hist: []*statistics.Histogram{hg}, count: count, isIndex: 0, err: err}
 }
 
-func analyzeColumns(exec *XSelectTableExec) analyzeResult {
-	count, sampleRows, colNDVs, err := CollectSamplesAndEstimateNDVs(&recordSet{executor: exec}, len(exec.Columns))
+func (e *AnalyzeExec) analyzeColumns(task *analyzeTask) analyzeResult {
+	collectors, err := CollectSamplesAndEstimateNDVs(&recordSet{executor: task.src}, len(task.Columns))
 	if err != nil {
 		return analyzeResult{err: err}
 	}
-	columnSamples := rowsToColumnSamples(sampleRows)
-	if columnSamples == nil {
-		columnSamples = make([][]types.Datum, len(exec.Columns))
-	}
-	result := analyzeResult{tableID: exec.tableInfo.ID, count: count, isIndex: 0}
-	for i, col := range exec.Columns {
-		hg, err := statistics.BuildColumn(exec.ctx, defaultBucketCount, col.ID, colNDVs[i], count, columnSamples[i])
+	result := analyzeResult{tableID: task.tableInfo.ID, count: collectors[0].Count + collectors[0].NullCount, isIndex: 0}
+	for i, col := range task.Columns {
+		hg, err := statistics.BuildColumn(e.ctx, defaultBucketCount, col.ID, collectors[i].Sketch.NDV(), collectors[i].Count, collectors[i].NullCount, collectors[i].samples)
 		result.hist = append(result.hist, hg)
 		if err != nil && result.err == nil {
 			result.err = err
@@ -173,49 +184,64 @@ func analyzeColumns(exec *XSelectTableExec) analyzeResult {
 	return result
 }
 
-func analyzeIndex(exec *XSelectIndexExec) analyzeResult {
-	count, hg, err := statistics.BuildIndex(exec.ctx, defaultBucketCount, exec.index.ID, &recordSet{executor: exec})
-	return analyzeResult{tableID: exec.tableInfo.ID, hist: []*statistics.Histogram{hg}, count: count, isIndex: 1, err: err}
+func (e *AnalyzeExec) analyzeIndex(task *analyzeTask) analyzeResult {
+	count, hg, err := statistics.BuildIndex(e.ctx, defaultBucketCount, task.indexInfo.ID, &recordSet{executor: task.src})
+	return analyzeResult{tableID: task.tableInfo.ID, hist: []*statistics.Histogram{hg}, count: count, isIndex: 1, err: err}
+}
+
+// SampleCollector will collect samples and calculate the count and ndv of an attribute.
+type SampleCollector struct {
+	samples   []types.Datum
+	NullCount int64
+	Count     int64
+	Sketch    *statistics.FMSketch
+}
+
+func (c *SampleCollector) collect(d types.Datum) error {
+	if d.IsNull() {
+		c.NullCount++
+		return nil
+	}
+	c.Count++
+	if len(c.samples) < maxSampleCount {
+		c.samples = append(c.samples, d)
+	} else {
+		shouldAdd := rand.Int63n(c.Count) < maxSampleCount
+		if shouldAdd {
+			idx := rand.Intn(maxSampleCount)
+			c.samples[idx] = d
+		}
+	}
+	return errors.Trace(c.Sketch.InsertValue(d))
 }
 
 // CollectSamplesAndEstimateNDVs collects sample from the result set using Reservoir Sampling algorithm,
-// and estimates NDVs using FM Sketch during the collecting process.
+// and estimates NDVs using FM Sketch during the collecting process. It returns the sample collectors which contain total
+// count, null count and distinct values count.
 // See https://en.wikipedia.org/wiki/Reservoir_sampling
 // Exported for test.
-func CollectSamplesAndEstimateNDVs(e ast.RecordSet, numCols int) (count int64, samples []*ast.Row, ndvs []int64, err error) {
-	var sketches []*statistics.FMSketch
-	for i := 0; i < numCols; i++ {
-		sketches = append(sketches, statistics.NewFMSketch(maxSketchSize))
+func CollectSamplesAndEstimateNDVs(e ast.RecordSet, numCols int) ([]*SampleCollector, error) {
+	collectors := make([]*SampleCollector, numCols)
+	for i := range collectors {
+		collectors[i] = &SampleCollector{
+			Sketch: statistics.NewFMSketch(maxSketchSize),
+		}
 	}
 	for {
 		row, err := e.Next()
 		if err != nil {
-			return count, samples, ndvs, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		if row == nil {
-			break
+			return collectors, nil
 		}
 		for i, val := range row.Data {
-			err = sketches[i].InsertValue(val)
+			err = collectors[i].collect(val)
 			if err != nil {
-				return count, samples, ndvs, errors.Trace(err)
+				return nil, errors.Trace(err)
 			}
 		}
-		if len(samples) < maxSampleCount {
-			samples = append(samples, row)
-		} else {
-			shouldAdd := rand.Int63n(count) < maxSampleCount
-			if shouldAdd {
-				idx := rand.Intn(maxSampleCount)
-				samples[idx] = row
-			}
-		}
-		count++
 	}
-	for _, sketch := range sketches {
-		ndvs = append(ndvs, sketch.NDV())
-	}
-	return count, samples, ndvs, nil
 }
 
 func rowsToColumnSamples(rows []*ast.Row) [][]types.Datum {
