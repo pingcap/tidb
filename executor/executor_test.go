@@ -1029,30 +1029,44 @@ func (s *testSuite) TestGeneratedColumnWrite(c *C) {
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec(`CREATE TABLE test_gv_write(a int primary key, b int as (a+8) virtual)`)
+	tk.MustExec(`CREATE TABLE test_gc_write (a int primary key, b int as (a+8) virtual)`)
+	tk.MustExec(`CREATE TABLE test_gc_write_1 (a int primary key, b int)`)
 
 	tests := []struct {
 		stmt string
 		err  int
 	}{
 		// we can't modify generated column by values.
-		{`insert into test_gv_write (a, b) values (1, 1)`, mysql.ErrBadGeneratedColumn},
+		{`insert into test_gc_write (a, b) values (1, 1)`, mysql.ErrBadGeneratedColumn},
 		// we can't modify generated column by values.
-		{`insert into test_gv_write values (1, 1)`, mysql.ErrBadGeneratedColumn},
+		{`insert into test_gc_write values (1, 1)`, mysql.ErrBadGeneratedColumn},
 		// we can't modify generated column by select clause.
-		{`insert into test_gv_write select 1, 1`, mysql.ErrBadGeneratedColumn},
+		{`insert into test_gc_write select 1, 1`, mysql.ErrBadGeneratedColumn},
 		// we can't modify generated column by on duplicate clause.
-		{`insert into test_gv_write (a) values (3) on duplicate key update b=2`, mysql.ErrBadGeneratedColumn},
+		{`insert into test_gc_write (a) values (3) on duplicate key update b=2`, mysql.ErrBadGeneratedColumn},
 		// we can't modify generated column by set.
-		{`insert into test_gv_write set a = 1, b = 2`, mysql.ErrBadGeneratedColumn},
+		{`insert into test_gc_write set a = 1, b = 2`, mysql.ErrBadGeneratedColumn},
 		// we can't modify generated column by update clause.
-		{`update test_gv_write set a = 1, b = 2`, mysql.ErrBadGeneratedColumn},
+		{`update test_gc_write set b = 2`, mysql.ErrBadGeneratedColumn},
+		// we can't modify generated column by multi-table update clause.
+		{`update test_gc_write, test_gc_write_1 set test_gc_write.b = 2`, mysql.ErrBadGeneratedColumn},
+
+		// we can insert without generated columns.
+		{`insert into test_gc_write (a) values (1)`, 0},
+		{`insert into test_gc_write set a = 2`, 0},
+		// we can update without generated columns.
+		{`update test_gc_write set a = 3 where a = 2`, 0},
+		{`update test_gc_write, test_gc_write_1 set test_gc_write_1.b = 2`, 0},
 	}
 	for _, tt := range tests {
 		_, err := tk.Exec(tt.stmt)
-		c.Assert(err, NotNil)
-		terr := err.(*errors.Err).Cause().(*terror.Error)
-		c.Assert(terr.Code(), Equals, terror.ErrCode(tt.err))
+		if tt.err != 0 {
+			c.Assert(err, NotNil)
+			terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+			c.Assert(terr.Code(), Equals, terror.ErrCode(tt.err))
+		} else {
+			c.Assert(err, IsNil)
+		}
 	}
 }
 

@@ -1302,12 +1302,17 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 			b.err = errors.Trace(errors.Errorf("could not find column %s.%s", col.TblName, col.ColName))
 			return nil, nil
 		}
+	checkGeneratedLoop:
 		for _, tn := range tableList {
 			if tn.Schema.L == col.DBName.L && tn.Name.L == col.TblName.L {
 				tableInfo := tn.TableInfo
-				for _, col := range tableInfo.Columns {
-					if len(col.GeneratedExprString) != 0 {
-						b.err = ErrBadGeneratedColumn.GenByArgs(col.Name.O, tableInfo.Name.O)
+				for _, colInfo := range tableInfo.Columns {
+					if colInfo.Name.L == col.ColName.L {
+						if len(colInfo.GeneratedExprString) != 0 {
+							b.err = ErrBadGeneratedColumn.GenByArgs(colInfo.Name.O, tableInfo.Name.O)
+							return nil, nil
+						}
+						break checkGeneratedLoop
 					}
 				}
 			}
