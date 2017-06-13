@@ -251,16 +251,16 @@ func DetachIndexScanConditions(conditions []expression.Expression, index *model.
 	return accessConds, filterConds, accessEqualCount, accessInAndEqCount
 }
 
-// DetachTableScanConditions distinguishes between access conditions and filter conditions from conditions.
-func DetachTableScanConditions(conditions []expression.Expression, pkName model.CIStr) ([]expression.Expression, []expression.Expression) {
-	if pkName.L == "" {
+// DetachColumnConditions distinguishes between access conditions and filter conditions from conditions.
+func DetachColumnConditions(conditions []expression.Expression, colName model.CIStr) ([]expression.Expression, []expression.Expression) {
+	if colName.L == "" {
 		return nil, conditions
 	}
 
 	var accessConditions, filterConditions []expression.Expression
 	checker := conditionChecker{
-		pkName: pkName,
-		length: types.UnspecifiedLength,
+		colName: colName,
+		length:  types.UnspecifiedLength,
 	}
 	for _, cond := range conditions {
 		cond = expression.PushDownNot(cond, false, nil)
@@ -300,11 +300,34 @@ func BuildTableRange(accessConditions []expression.Expression, sc *variable.Stat
 	return ranges, nil
 }
 
+// BuildColumnRange builds the range for sampling histogram to calculate the row count.
+func BuildColumnRange(conds []expression.Expression, colName model.CIStr, sc *variable.StatementContext,
+	tp *types.FieldType) (ranges []*types.ColumnRange, usedConds, unusedConds []expression.Expression, _ error) {
+	usedConds, unusedConds = DetachColumnConditions(conds, colName)
+	if len(usedConds) == 0 {
+		return []*types.ColumnRange{{Low: types.Datum{}, High: types.MaxValueDatum()}}, nil, conds, nil
+	}
+
+	rb := Builder{Sc: sc}
+	rangePoints := FullRange
+	for _, cond := range usedConds {
+		rangePoints = rb.intersection(rangePoints, rb.build(cond))
+		if rb.err != nil {
+			return nil, nil, nil, errors.Trace(rb.err)
+		}
+	}
+	ranges = rb.buildColumnRanges(rangePoints, tp)
+	if rb.err != nil {
+		return nil, nil, nil, errors.Trace(rb.err)
+	}
+	return
+}
+
 // conditionChecker checks if this condition can be pushed to index plan.
 type conditionChecker struct {
 	idx           *model.IndexInfo
 	columnOffset  int // the offset of the indexed column to be checked.
-	pkName        model.CIStr
+	colName       model.CIStr
 	shouldReserve bool // check if a access condition should be reserved in filter conditions.
 	length        int
 }
@@ -446,8 +469,8 @@ func (c *conditionChecker) checkColumn(expr expression.Expression) bool {
 	if !ok {
 		return false
 	}
-	if c.pkName.L != "" {
-		return c.pkName.L == col.ColName.L
+	if c.colName.L != "" {
+		return c.colName.L == col.ColName.L
 	}
 	if c.idx != nil {
 		return col.ColName.L == c.idx.Columns[c.columnOffset].Name.L
