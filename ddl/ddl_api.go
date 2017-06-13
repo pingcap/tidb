@@ -878,7 +878,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 	}
 
 	// If new column is a generated column, do validation.
-	// NOTE: because now we can only append columns to table,
+	// NOTE: Because now we can only append columns to table,
 	// we dont't need check whether the column refers other
 	// generated columns occurring later in table.
 	for _, option := range spec.NewColumn.Options {
