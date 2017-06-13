@@ -1210,6 +1210,12 @@ func (s *testDBSuite) TestGeneratedColumnDDL(c *C) {
 	terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDependentByGeneratedColumn))
 
+	// Check alter table modify generated column to non-generated compatible types.
+	tk.MustExec(`alter table test_gv_ddl modify column b bigint`)
+	tk.MustExec(`alter table test_gv_ddl modify column c bigint`)
+	result = tk.MustQuery(`DESC test_gv_ddl`)
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(21) YES  <nil> `, `c bigint(21) YES  <nil> `))
+
 	genExprTests := []struct {
 		stmt string
 		err  int
