@@ -140,7 +140,13 @@ func checkModifyGeneratedColumn(originCols []*table.Column, oldCol, newCol *tabl
 	}
 	// We always need test all columns, even if it's not changed
 	// because other can depend on it so its name can't be changed.
-	for colName := range colName2Generation {
+	for _, column := range originCols {
+		var colName string
+		if column == oldCol {
+			colName = newCol.Name.L
+		} else {
+			colName = column.Name.L
+		}
 		if err := verifyColumnGeneration(colName2Generation, colName); err != nil {
 			return errors.Trace(err)
 		}

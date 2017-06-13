@@ -1226,8 +1226,7 @@ func (s *testDBSuite) TestGeneratedColumnDDL(c *C) {
 		// refer generated columns non prior.
 		{`create table test_gv_ddl_bad (a int, b int as (c+1), c int as (a+1))`, mysql.ErrGeneratedColumnNonPrior},
 	}
-	for i, tt := range genExprTests {
-		fmt.Printf("i: %d\n", i)
+	for _, tt := range genExprTests {
 		s.testErrorCode(c, tt.stmt, tt.err)
 	}
 }
