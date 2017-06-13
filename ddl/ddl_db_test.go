@@ -1229,4 +1229,17 @@ func (s *testDBSuite) TestGeneratedColumnDDL(c *C) {
 	for _, tt := range genExprTests {
 		s.testErrorCode(c, tt.stmt, tt.err)
 	}
+
+	// Check alter table modify/change generated column.
+	s.tk.MustExec(`alter table test_gv_ddl modify column c bigint as (b+200) stored`)
+	result = s.tk.MustQuery(`DESC test_gv_ddl`)
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c bigint(21) YES  <nil> STORED GENERATED`))
+
+	s.tk.MustExec(`alter table test_gv_ddl change column b b bigint as (a+100) virtual`)
+	result = s.tk.MustQuery(`DESC test_gv_ddl`)
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(21) YES  <nil> VIRTUAL GENERATED`, `c bigint(21) YES  <nil> STORED GENERATED`))
+
+	s.tk.MustExec(`alter table test_gv_ddl change column c cnew bigint`)
+	result = s.tk.MustQuery(`DESC test_gv_ddl`)
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(21) YES  <nil> VIRTUAL GENERATED`, `cnew bigint(21) YES  <nil> `))
 }
