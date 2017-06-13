@@ -644,6 +644,7 @@ func (n *Assignment) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// PriorityEnum is defined for Priority const values.
 type PriorityEnum int
 
 // Priority const values.
