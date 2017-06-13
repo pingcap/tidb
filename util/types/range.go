@@ -55,8 +55,23 @@ func (tr IntColumnRange) String() string {
 type ColumnRange struct {
 	Low      Datum
 	High     Datum
-	lowExcl  bool
-	highExcl bool
+	LowExcl  bool
+	HighExcl bool
+}
+
+func (cr *ColumnRange) String() string {
+	var l, r string
+	if cr.LowExcl {
+		l = "("
+	} else {
+		l = "["
+	}
+	if cr.HighExcl {
+		r = ")"
+	} else {
+		r = "]"
+	}
+	return l + formatDatum(cr.Low) + "," + formatDatum(cr.High) + r
 }
 
 // IndexRange represents a range for an index.
