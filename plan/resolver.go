@@ -106,6 +106,8 @@ type resolverContext struct {
 	inCreateOrDropTable bool
 	// When visiting show statement.
 	inShow bool
+	// When visiting create/alter table statement.
+	inColumnOption bool
 }
 
 // currentContext gets the current resolverContext.
@@ -180,6 +182,8 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 	case *ast.CreateTableStmt:
 		nr.pushContext()
 		nr.currentContext().inCreateOrDropTable = true
+	case *ast.ColumnOption:
+		nr.currentContext().inColumnOption = true
 	case *ast.DeleteStmt:
 		nr.pushContext()
 	case *ast.DeleteTableList:
@@ -258,6 +262,8 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 		nr.popContext()
 	case *ast.CreateTableStmt:
 		nr.popContext()
+	case *ast.ColumnOption:
+		nr.currentContext().inColumnOption = false
 	case *ast.DeleteTableList:
 		nr.currentContext().inDeleteTableList = false
 	case *ast.DoStmt:
@@ -480,7 +486,13 @@ func (nr *nameResolver) handleColumnName(cn *ast.ColumnNameExpr) {
 		return
 	}
 
-	// Try to resolve the column name form top to bottom in the context stack.
+	if ctx.inColumnOption {
+		// In column option, only columns in current create table statement
+		// is available. But we check it in ddl/ddl_api.go.
+		return
+	}
+
+	// Try to resolve the column name from top to bottom in the context stack.
 	for i := len(nr.contextStack) - 1; i >= 0; i-- {
 		if nr.resolveColumnNameInContext(nr.contextStack[i], cn) {
 			// Column is already resolved or encountered an error.
