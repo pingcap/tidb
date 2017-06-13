@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -315,7 +316,6 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 				if !expression.IsCurrentTimeExpr(v.Expr) {
 					return nil, nil, ErrInvalidOnUpdate.Gen("invalid ON UPDATE for - %s", col.Name)
 				}
-
 				col.Flag |= mysql.OnUpdateNowFlag
 				setOnUpdateNow = true
 			case ast.ColumnOptionComment:
@@ -323,6 +323,11 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 				if err != nil {
 					return nil, nil, errors.Trace(err)
 				}
+			case ast.ColumnOptionGenerated:
+				col.GeneratedExprString = stringutil.RemoveBlanks(v.Expr.Text())
+				col.GeneratedStored = v.Stored
+				_, dependColNames := findDependedColumnNames(colDef)
+				col.Dependences = dependColNames
 			case ast.ColumnOptionFulltext:
 				// TODO: Support this type.
 			}
@@ -448,6 +453,32 @@ func checkDuplicateColumn(colDefs []*ast.ColumnDef) error {
 			return infoschema.ErrColumnExists.GenByArgs(colDef.Name.Name)
 		}
 		colNames[nameLower] = true
+	}
+	return nil
+}
+
+func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
+	var colName2Generation = make(map[string]columnGenerationInDDL, len(colDefs))
+	for i, colDef := range colDefs {
+		generated, depCols := findDependedColumnNames(colDef)
+		if !generated {
+			colName2Generation[colDef.Name.Name.L] = columnGenerationInDDL{
+				position:  i,
+				generated: false,
+			}
+		} else {
+			colName2Generation[colDef.Name.Name.L] = columnGenerationInDDL{
+				position:    i,
+				generated:   true,
+				dependences: depCols,
+			}
+		}
+	}
+	for _, colDef := range colDefs {
+		colName := colDef.Name.Name.L
+		if err := verifyColumnGeneration(colName2Generation, colName); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	return nil
 }
@@ -666,6 +697,9 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 	if err = checkDuplicateColumn(colDefs); err != nil {
 		return errors.Trace(err)
 	}
+	if err = checkGeneratedColumn(colDefs); err != nil {
+		return errors.Trace(err)
+	}
 	if err = checkTooLongColumn(colDefs); err != nil {
 		return errors.Trace(err)
 	}
@@ -843,6 +877,23 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 		return infoschema.ErrColumnExists.GenByArgs(colName)
 	}
 
+	// If new column is a generated column, do validation.
+	// NOTE: Because now we can only append columns to table,
+	// we dont't need check whether the column refers other
+	// generated columns occurring later in table.
+	for _, option := range spec.NewColumn.Options {
+		if option.Tp == ast.ColumnOptionGenerated {
+			referableColNames := make(map[string]struct{}, len(t.Cols()))
+			for _, col := range t.Cols() {
+				referableColNames[col.Name.L] = struct{}{}
+			}
+			_, dependColNames := findDependedColumnNames(spec.NewColumn)
+			if err := columnNamesCover(referableColNames, dependColNames); err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+
 	if len(colName) > mysql.MaxColumnNameLength {
 		return ErrTooLongIdent.Gen("too long column %s", colName)
 	}
@@ -897,6 +948,15 @@ func (d *ddl) DropColumn(ctx context.Context, ti ast.Ident, colName model.CIStr)
 	col := table.FindCol(t.Cols(), colName.L)
 	if col == nil {
 		return ErrCantDropFieldOrKey.Gen("column %s doesn't exist", colName)
+	}
+
+	// Check whether there are other columns depend on this column or not.
+	for _, col := range t.Cols() {
+		for dep := range col.Dependences {
+			if dep == colName.L {
+				return errDependentByGeneratedColumn.GenByArgs(dep)
+			}
+		}
 	}
 
 	tblInfo := t.Meta()
@@ -990,6 +1050,7 @@ func setColumnComment(ctx context.Context, col *table.Column, option *ast.Column
 	return errors.Trace(err)
 }
 
+// setDefaultAndComment is only used in getModifiableColumnJob.
 func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast.ColumnOption) error {
 	if len(options) == 0 {
 		return nil
@@ -1024,6 +1085,13 @@ func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast
 			}
 			col.Flag |= mysql.OnUpdateNowFlag
 			setOnUpdateNow = true
+		case ast.ColumnOptionGenerated:
+			col.GeneratedExprString = stringutil.RemoveBlanks(opt.Expr.Text())
+			col.GeneratedStored = opt.Stored
+			col.Dependences = make(map[string]struct{})
+			for _, colName := range findColumnNamesInExpr(opt.Expr) {
+				col.Dependences[colName.Name.L] = struct{}{}
+			}
 		default:
 			// TODO: Support other types.
 			return errors.Trace(errUnsupportedModifyColumn)
@@ -1065,6 +1133,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 		State:              col.State,
 		OriginDefaultValue: col.OriginDefaultValue,
 		FieldType:          *spec.NewColumn.Tp,
+		Name:               spec.NewColumn.Name.Name,
 	}
 	err = setCharsetCollationFlenDecimal(&newCol.FieldType)
 	if err != nil {
@@ -1081,8 +1150,11 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 	if !mysql.HasNotNullFlag(col.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
 		return nil, errUnsupportedModifyColumn.GenByArgs("null to not null")
 	}
+	// As same with MySQL, we don't support modifying the stored status for generated columns.
+	if err = checkModifyGeneratedColumn(t.Cols(), col, newCol); err != nil {
+		return nil, errors.Trace(err)
+	}
 
-	newCol.Name = spec.NewColumn.Name.Name
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
