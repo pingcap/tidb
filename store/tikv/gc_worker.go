@@ -260,7 +260,7 @@ func (w *GCWorker) calculateNewSafePoint(now time.Time) (*time.Time, error) {
 	return &safePoint, nil
 }
 
-// RunGCJob sends GC command to KV, it is exported for testing purpose.
+// RunGCJob sends GC command to KV. it is exported for testing purpose, do not use it with GCWorker at the same time.
 func RunGCJob(ctx goctx.Context, store kv.Storage, safePoint uint64, identifier string) error {
 	s, ok := store.(*tikvStore)
 	if !ok {
