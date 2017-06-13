@@ -1568,10 +1568,7 @@ IndexColName:
 	}
 
 IndexColNameList:
-	{
-		$$ = []*ast.IndexColName{}
-	}
-|	IndexColName
+	IndexColName
 	{
 		$$ = []*ast.IndexColName{$1.(*ast.IndexColName)}
 	}
