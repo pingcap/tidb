@@ -825,7 +825,7 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 		for _, cond := range p.pushedDownConds {
 			conds = append(conds, cond.Clone())
 		}
-		ts.AccessCondition, ts.filterCondition = ranger.DetachTableScanConditions(conds, p.tableInfo.GetPkName())
+		ts.AccessCondition, ts.filterCondition = ranger.DetachColumnConditions(conds, p.tableInfo.GetPkName())
 		ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sc)
 		if err != nil {
 			return nil, errors.Trace(err)
