@@ -159,6 +159,15 @@ func (s *Schema) ColumnsIndices(cols []*Column) (ret []int) {
 
 // MergeSchema will merge two schema into one schema.
 func MergeSchema(lSchema, rSchema *Schema) *Schema {
+	if lSchema == nil && rSchema == nil {
+		return nil
+	}
+	if lSchema == nil {
+		return rSchema.Clone()
+	}
+	if rSchema == nil {
+		return lSchema.Clone()
+	}
 	tmpL := lSchema.Clone()
 	tmpR := rSchema.Clone()
 	ret := NewSchema(append(tmpL.Columns, tmpR.Columns...)...)
