@@ -791,7 +791,13 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 			return nil
 		}
 		// If the schema of selectPlan contains any generated column, raises error.
-		for i := 0; i < selectPlan.Schema().Len(); i++ {
+		var effectiveSelectLen int
+		if selectPlan.Schema().Len() <= len(tableInfo.Columns) {
+			effectiveSelectLen = selectPlan.Schema().Len()
+		} else {
+			effectiveSelectLen = len(tableInfo.Columns)
+		}
+		for i := 0; i < effectiveSelectLen; i++ {
 			col := tableInfo.Columns[i]
 			if len(col.GeneratedExprString) != 0 {
 				b.err = ErrBadGeneratedColumn.GenByArgs(col.Name.O, tableInfo.Name.O)
