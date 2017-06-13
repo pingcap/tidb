@@ -638,19 +638,14 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	}
 	tableInfo := tn.TableInfo
 	schema := expression.TableInfo2Schema(tableInfo)
-	table, ok := b.is.TableByID(tableInfo.ID)
+	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
 	if !ok {
 		b.err = errors.Errorf("Can't get table %s.", tableInfo.Name.O)
 		return nil
 	}
 
-	columnInfoByName := make(map[string]*model.ColumnInfo, len(tableInfo.Columns))
-	for _, colInfo := range tableInfo.Columns {
-		columnInfoByName[colInfo.Name.L] = colInfo
-	}
-
 	insertPlan := Insert{
-		Table:       table,
+		Table:       tableInPlan,
 		Columns:     insert.Columns,
 		tableSchema: schema,
 		IsReplace:   insert.IsReplace,
@@ -664,12 +659,17 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		table:     tableInfo.Name.L,
 	})
 
+	columnByName := make(map[string]*table.Column, len(insertPlan.Table.Cols()))
+	for _, col := range insertPlan.Table.Cols() {
+		columnByName[col.Name.L] = col
+	}
+
 	// Check insert.Columns contains generated columns or not.
 	// It's for INSERT INTO t (...) VALUES (...)
 	if len(insert.Columns) > 0 {
 		for _, col := range insert.Columns {
-			if colInfo, ok := columnInfoByName[col.Name.L]; ok {
-				if len(colInfo.GeneratedExprString) != 0 {
+			if column, ok := columnByName[col.Name.L]; ok {
+				if len(column.GeneratedExprString) != 0 {
 					b.err = ErrBadGeneratedColumn.GenByArgs(col.Name.O, tableInfo.Name.O)
 					return nil
 				}
@@ -677,7 +677,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		}
 	}
 
-	cols := table.Cols()
+	cols := insertPlan.Table.Cols()
 	maxElementIndexInRow := 0
 	for _, valuesItem := range insert.Lists {
 		exprList := make([]expression.Expression, 0, len(valuesItem))
@@ -739,7 +739,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 			return nil
 		}
 		// Check set list contains generated column or not.
-		if len(columnInfoByName[assign.Column.Name.L].GeneratedExprString) != 0 {
+		if len(columnByName[assign.Column.Name.L].GeneratedExprString) != 0 {
 			b.err = ErrBadGeneratedColumn.GenByArgs(assign.Column.Name.O, tableInfo.Name.O)
 			return nil
 		}
@@ -768,7 +768,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 			return nil
 		}
 		// Check "on duplicate set list" contains generated column or not.
-		if len(columnInfoByName[assign.Column.Name.L].GeneratedExprString) != 0 {
+		if len(columnByName[assign.Column.Name.L].GeneratedExprString) != 0 {
 			b.err = ErrBadGeneratedColumn.GenByArgs(assign.Column.Name.O, tableInfo.Name.O)
 			return nil
 		}
