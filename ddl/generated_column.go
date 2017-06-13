@@ -61,7 +61,7 @@ func columnNamesCover(normalColNames map[string]struct{}, dependColNames map[str
 // findDependedColumnNames returns a set of string, which indicates
 // the names of the columns that are depended by colDef.
 func findDependedColumnNames(colDef *ast.ColumnDef) (generated bool, colsMap map[string]struct{}) {
-	colsMap = make(map[string]struct{}, 0)
+	colsMap = make(map[string]struct{})
 	for _, option := range colDef.Options {
 		if option.Tp == ast.ColumnOptionGenerated {
 			generated = true
