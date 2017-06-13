@@ -206,6 +206,19 @@ func (o *mockOracle) GetTimestamp(goctx.Context) (uint64, error) {
 	return ts, nil
 }
 
+type mockOracleFuture struct {
+	o   *mockOracle
+	ctx goctx.Context
+}
+
+func (m *mockOracleFuture) Wait() (uint64, error) {
+	return m.o.GetTimestamp(m.ctx)
+}
+
+func (o *mockOracle) GetTimestampAsync(ctx goctx.Context) oracle.Future {
+	return &mockOracleFuture{o, ctx}
+}
+
 func (o *mockOracle) IsExpired(lockTimestamp uint64, TTL uint64) bool {
 	o.RLock()
 	defer o.RUnlock()
