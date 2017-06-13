@@ -626,3 +626,27 @@ func (r *Builder) BuildTableRanges(rangePoints []point) []types.IntColumnRange {
 	}
 	return tableRanges
 }
+
+func (r *Builder) buildColumnRanges(points []point, tp *types.FieldType) []*types.ColumnRange {
+	columnRanges := make([]*types.ColumnRange, 0, len(points)/2)
+	for i := 0; i < len(points); i += 2 {
+		startPoint := r.convertPoint(points[i], tp)
+		endPoint := r.convertPoint(points[i+1], tp)
+		less, err := rangePointLess(r.Sc, startPoint, endPoint)
+		if err != nil {
+			r.err = errors.Trace(err)
+			return nil
+		}
+		if !less {
+			continue
+		}
+		cr := &types.ColumnRange{
+			Low:      startPoint.value,
+			LowExcl:  startPoint.excl,
+			High:     endPoint.value,
+			HighExcl: endPoint.excl,
+		}
+		columnRanges = append(columnRanges, cr)
+	}
+	return columnRanges
+}

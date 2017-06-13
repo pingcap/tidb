@@ -60,7 +60,16 @@ func (c *pdClient) GetTS(context.Context) (int64, int64, error) {
 }
 
 func (c *pdClient) GetTSAsync(ctx context.Context) pd.TSFuture {
-	return nil
+	return &mockTSFuture{c, ctx}
+}
+
+type mockTSFuture struct {
+	pdc *pdClient
+	ctx context.Context
+}
+
+func (m *mockTSFuture) Wait() (int64, int64, error) {
+	return m.pdc.GetTS(m.ctx)
 }
 
 func (c *pdClient) GetRegion(ctx context.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
