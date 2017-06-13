@@ -1,8 +1,4 @@
-// Copyright 2017 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2017 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,7 +18,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 )
 
-// columnGenerationInDDL is a struct for validate generated columns in DDL.
+// columnGenerationInDDL is a struct for validating generated columns in DDL.
 type columnGenerationInDDL struct {
 	position    int
 	generated   bool
@@ -64,7 +60,7 @@ func columnNamesCover(normalColNames map[string]struct{}, dependColNames map[str
 
 // findDependedColumnNames returns a set of string, which indicates
 // the names of the columns that are depended by colDef.
-func findDependedColumnNames(colDef ast.ColumnDef) (generated bool, colsMap map[string]struct{}) {
+func findDependedColumnNames(colDef *ast.ColumnDef) (generated bool, colsMap map[string]struct{}) {
 	colsMap = make(map[string]struct{}, 0)
 	for _, option := range colDef.Options {
 		if option.Tp == ast.ColumnOptionGenerated {
