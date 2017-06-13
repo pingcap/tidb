@@ -1,3 +1,12 @@
+# This is the official list of people who can contribute
+# (and typically have contributed) code to the TiDB repository.
+
+# Names should be added to this file like so:
+#     Individual's name <submission email address>
+#     Individual's name <submission email address> <email2> <emailN>
+#
+# Please keep the list sorted.
+
 8cbx <hu849238686@.com>
 Akihiro Suda <suda.akihiro@lab.ntt.co.jp>
 Arthur Yang <980224951@qq.com>
@@ -103,8 +112,6 @@ maxwell <710028463@qq.com>
 morefreeze <morefreeze@gmail.com>
 netroby <netroby@gmail.com>
 nieyy <nieyuanyuan@huawei.com>
-nolouch <nolouch@gmail.com>
-overvenus <overvenus@gmail.com>
 silenceper <silenceper@gmail.com>
 sllt <shenlongml@gmail.com>
 ueizhou <ueizhou@gmail.com>
