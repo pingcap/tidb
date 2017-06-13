@@ -1075,37 +1075,29 @@ func (s *testSuite) TestGeneratedColumnWrite(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec(`CREATE TABLE test_gv_write(a int primary key, b int as (a+8) virtual)`)
 
-	// check insert into table with explicit modify generated column.
-	_, err := tk.Exec(`insert into test_gv_write (a, b) values (1, 1)`)
-	c.Assert(err, NotNil)
-	terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBadGeneratedColumn))
-
-	_, err = tk.Exec(`insert into test_gv_write values (1, 1)`)
-	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBadGeneratedColumn))
-
-	_, err = tk.Exec(`insert into test_gv_write select 1, 1`)
-	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBadGeneratedColumn))
-
-	_, err = tk.Exec(`insert into test_gv_write (a) values (3) on duplicate key update b=2`)
-	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBadGeneratedColumn))
-
-	_, err = tk.Exec(`insert into test_gv_write set a = 1, b = 2`)
-	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBadGeneratedColumn))
-
-	// check update table with explicit modify generated column.
-	_, err = tk.Exec(`update test_gv_write set a = 1, b = 2`)
-	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBadGeneratedColumn))
+	tests := []struct {
+		stmt string
+		err  int
+	}{
+		// we can't modify generated column by values.
+		{`insert into test_gv_write (a, b) values (1, 1)`, mysql.ErrBadGeneratedColumn},
+		// we can't modify generated column by values.
+		{`insert into test_gv_write values (1, 1)`, mysql.ErrBadGeneratedColumn},
+		// we can't modify generated column by select clause.
+		{`insert into test_gv_write select 1, 1`, mysql.ErrBadGeneratedColumn},
+		// we can't modify generated column by on duplicate clause.
+		{`insert into test_gv_write (a) values (3) on duplicate key update b=2`, mysql.ErrBadGeneratedColumn},
+		// we can't modify generated column by set.
+		{`insert into test_gv_write set a = 1, b = 2`, mysql.ErrBadGeneratedColumn},
+		// we can't modify generated column by update clause.
+		{`update test_gv_write set a = 1, b = 2`, mysql.ErrBadGeneratedColumn},
+	}
+	for _, tt := range tests {
+		_, err := tk.Exec(tt.stmt)
+		c.Assert(err, NotNil)
+		terr := err.(*errors.Err).Cause().(*terror.Error)
+		c.Assert(terr.Code(), Equals, terror.ErrCode(tt.err))
+	}
 }
 
 func (s *testSuite) TestToPBExpr(c *C) {
