@@ -247,6 +247,7 @@ var MySQLState = map[uint16]string{
 	ErrAlterOperationNotSupportedReason:    "0A000",
 	ErrDupUnknownInIndex:                   "23000",
 	ErrBadGeneratedColumn:                  "HY000",
+	ErrUnsupportedOnGeneratedColumn:        "HY000",
 	ErrGeneratedColumnNonPrior:             "HY000",
 	ErrDependentByGeneratedColumn:          "HY000",
 	ErrInvalidJSONText:                     "22032",
