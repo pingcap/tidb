@@ -639,6 +639,7 @@ import (
 	GroupByClause		"GROUP BY clause"
 	HashString		"Hashed string"
 	HavingClause		"HAVING clause"
+	HighPriorityOptional	"HIGH_PRIORITY or empty"
 	IfExists		"If Exists"
 	IfNotExists		"If Not Exists"
 	IgnoreOptional		"IGNORE or empty"
@@ -2398,7 +2399,7 @@ InsertIntoStmt:
 	"INSERT" Priority IgnoreOptional IntoOpt TableName InsertValues OnDuplicateKeyUpdate
 	{
 		x := $6.(*ast.InsertStmt)
-		x.Priority = $2.(int)
+		x.Priority = $2.(ast.PriorityEnum)
 		x.Ignore = $3.(bool)
 		// Wraps many layers here so that it can be processed the same way as select statement.
 		ts := &ast.TableSource{Source: $5.(*ast.TableName)}
@@ -2514,7 +2515,7 @@ ReplaceIntoStmt:
 	{
 		x := $5.(*ast.InsertStmt)
 		x.IsReplace = true
-		x.Priority = $2.(int)
+		x.Priority = $2.(ast.PriorityEnum)
 		ts := &ast.TableSource{Source: $4.(*ast.TableName)}
 		x.Table = &ast.TableRefsClause{TableRefs: &ast.Join{Left: ts}}
 		$$ = x
@@ -4111,6 +4112,15 @@ LowPriorityOptional:
 		$$ = true
 	}
 
+HighPriorityOptional:
+	{
+		$$ = ast.NoPriority
+	}
+|	"HIGH_PRIORITY"
+	{
+		$$ = ast.HighPriority
+	}
+
 TableName:
 	Identifier
 	{
@@ -4233,6 +4243,7 @@ SelectStmt:
 	"SELECT" SelectStmtOpts SelectStmtFieldList SelectStmtLimit SelectLockOpt
 	{
 		st := &ast.SelectStmt {
+			SelectStmtOpts: $2.(*ast.SelectStmtOpts),
 			Distinct:      $2.(*ast.SelectStmtOpts).Distinct,
 			Fields:        $3.(*ast.FieldList),
 			LockTp:	       $5.(ast.SelectLockType),
@@ -4261,6 +4272,7 @@ SelectStmt:
 |	"SELECT" SelectStmtOpts SelectStmtFieldList FromDual WhereClauseOptional SelectStmtLimit SelectLockOpt
 	{
 		st := &ast.SelectStmt {
+			SelectStmtOpts: $2.(*ast.SelectStmtOpts),
 			Distinct:      $2.(*ast.SelectStmtOpts).Distinct,
 			Fields:        $3.(*ast.FieldList),
 			LockTp:	       $7.(ast.SelectLockType),
@@ -4284,6 +4296,7 @@ SelectStmt:
 	{
 		opts := $2.(*ast.SelectStmtOpts)
 		st := &ast.SelectStmt{
+			SelectStmtOpts: $2.(*ast.SelectStmtOpts),
 			Distinct:		opts.Distinct,
 			Fields:		$3.(*ast.FieldList),
 			From:		$5.(*ast.TableRefsClause),
@@ -4588,7 +4601,7 @@ SelectStmtDistinct:
 	}
 
 SelectStmtOpts:
-	TableOptimizerHints SelectStmtDistinct SelectStmtSQLCache SelectStmtCalcFoundRows
+	TableOptimizerHints SelectStmtDistinct HighPriorityOptional SelectStmtSQLCache SelectStmtCalcFoundRows
 	{
 		opt := &ast.SelectStmtOpts{}
 		if $1 != nil {
@@ -4598,10 +4611,13 @@ SelectStmtOpts:
 		    opt.Distinct = $2.(bool)
 		}
 		if $3 != nil {
-		    opt.SQLCache = $3.(bool)
+		    opt.Priority = $3.(ast.PriorityEnum)
 		}
 		if $4 != nil {
-		    opt.CalcFoundRows = $4.(bool)
+		    opt.SQLCache = $4.(bool)
+		}
+		if $5 != nil {
+		    opt.CalcFoundRows = $5.(bool)
 		}
 
 		$$ = opt

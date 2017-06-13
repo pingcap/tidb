@@ -445,7 +445,9 @@ type SelectStmt struct {
 	dmlNode
 	resultSetNode
 
-	// Distinct represents if the select has distinct option.
+	// SelectStmtOpts wrap around select hints and switches
+	*SelectStmtOpts
+	// Distinct represents whether the select has distinct option.
 	Distinct bool
 	// From is the from clause of the query.
 	From *TableRefsClause
@@ -642,10 +644,12 @@ func (n *Assignment) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+type PriorityEnum int
+
 // Priority const values.
 // See https://dev.mysql.com/doc/refman/5.7/en/insert.html
 const (
-	NoPriority = iota
+	NoPriority PriorityEnum = iota
 	LowPriority
 	HighPriority
 	DelayedPriority
@@ -712,7 +716,7 @@ type InsertStmt struct {
 	Columns     []*ColumnName
 	Lists       [][]ExprNode
 	Setlist     []*Assignment
-	Priority    int
+	Priority    PriorityEnum
 	OnDuplicate []*Assignment
 	Select      ResultSetNode
 }
