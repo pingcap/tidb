@@ -233,6 +233,45 @@ func (s *testSuite) TestJoin(c *C) {
 
 }
 
+func (s *testSuite) TestUsing(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3, t4")
+	tk.MustExec("create table t1 (a int, c int)")
+	tk.MustExec("create table t2 (a int, d int)")
+	tk.MustExec("create table t3 (a int)")
+	tk.MustExec("create table t4 (a int)")
+	tk.MustExec("insert t1 values (2, 4), (1, 3)")
+	tk.MustExec("insert t2 values (2, 5), (3, 6)")
+	tk.MustExec("insert t3 values (1)")
+
+	tk.MustQuery("select * from t1 join t2 using (a)").Check(testkit.Rows("2 4 5"))
+	tk.MustQuery("select t1.a, t2.a from t1 join t2 using (a)").Check(testkit.Rows("2 2"))
+
+	tk.MustQuery("select * from t1 right join t2 using (a) order by a").Check(testkit.Rows("2 5 4", "3 6 <nil>"))
+	tk.MustQuery("select t1.a, t2.a from t1 right join t2 using (a) order by t2.a").Check(testkit.Rows("2 2", "<nil> 3"))
+
+	tk.MustQuery("select * from t1 left join t2 using (a) order by a").Check(testkit.Rows("1 3 <nil>", "2 4 5"))
+	tk.MustQuery("select t1.a, t2.a from t1 left join t2 using (a) order by t1.a").Check(testkit.Rows("1 <nil>", "2 2"))
+
+	tk.MustQuery("select * from t1 join t2 using (a) right join t3 using (a)").Check(testkit.Rows("1 <nil> <nil>"))
+	tk.MustQuery("select * from t1 join t2 using (a) right join t3 on (t2.a = t3.a)").Check(testkit.Rows("<nil> <nil> <nil> 1"))
+	tk.MustQuery("select t2.a from t1 join t2 using (a) right join t3 on (t1.a = t3.a)").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select t1.a, t2.a, t3.a from t1 join t2 using (a) right join t3 using (a)").Check(testkit.Rows("<nil> <nil> 1"))
+	tk.MustQuery("select t1.c, t2.d from t1 join t2 using (a) right join t3 using (a)").Check(testkit.Rows("<nil> <nil>"))
+
+	tk.MustExec("alter table t1 add column b int default 1 after a")
+	tk.MustExec("alter table t2 add column b int default 1 after a")
+	tk.MustQuery("select * from t1 join t2 using (b, a)").Check(testkit.Rows("2 1 4 5"))
+
+	tk.MustExec("select * from (t1 join t2 using (a)) join (t3 join t4 using (a)) on (t2.a = t4.a and t1.a = t3.a)")
+}
+
 func (s *testSuite) TestMultiJoin(c *C) {
 	defer func() {
 		s.cleanEnv(c)
