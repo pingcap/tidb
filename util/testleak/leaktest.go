@@ -44,7 +44,6 @@ func interestingGoroutines() (gs []string) {
 			strings.Contains(stack, "ddl.(*ddl).start") ||
 			strings.Contains(stack, "domain.NewDomain") ||
 			strings.Contains(stack, "testing.(*T).Run") ||
-			strings.Contains(stack, "tidb.asyncGetTSWorker") || // TODO: remove it
 			strings.Contains(stack, "domain.(*Domain).LoadPrivilegeLoop") ||
 			strings.Contains(stack, "domain.(*Domain).UpdateTableStatsLoop") ||
 			strings.Contains(stack, "testing.Main(") ||
