@@ -1,12 +1,12 @@
-# This is the official list of people who can contribute
-# (and typically have contributed) code to the TiDB repository.
 
-# Names should be added to this file like so:
+
+#
 #     Individual's name <submission email address>
 #     Individual's name <submission email address> <email2> <emailN>
-#
+# (and typically have contributed) code to the TiDB repository.
+# Names should be added to this file like so:
 # Please keep the list sorted.
-
+# This is the official list of people who can contribute
 8cbx <hu849238686@.com>
 Akihiro Suda <suda.akihiro@lab.ntt.co.jp>
 Arthur Yang <980224951@qq.com>
@@ -81,6 +81,7 @@ Xuanwo <xuanwo.cn@gmail.com>
 Xuelian Wu <wuxuelian@pingcap.com>
 Yanzhe Chen <yanzhe.cn@gmail.com>
 Yiding Cui <cuiyiding@pingcap.com>
+Yin Liu <liuyin@pingcap.com>
 Yiyan Lu <yiyan.lu@me.com>
 Yu Liu <idlesummerbreeze@gmail.com>
 Yuwen Shen <xxssww3013@gmail.com>
@@ -101,7 +102,6 @@ fud <fud@yunduo.com>
 fudali <fudali113@gmail.com>
 gowink <82091309@qq.com>
 hiwjd <hiwjd0@gmail.com>
-iamxy <kenneth.liu.xy@gmail.com>
 insion <insion@live.com>
 jacky liu <liugang8440265@163.com>
 jinhelin <linjinhe33@gmail.com>
