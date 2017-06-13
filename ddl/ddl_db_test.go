@@ -1204,25 +1204,30 @@ func (s *testDBSuite) TestGeneratedColumnDDL(c *C) {
 	result = s.tk.MustQuery(`DESC test_gv_ddl`)
 	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
 
-	// Check drop columns dependent by other column.
-	s.testErrorCode(c, `alter table test_gv_ddl drop column a`, mysql.ErrDependentByGeneratedColumn)
-
-	// Check alter table modify generated column to non-generated compatible types.
-	s.tk.MustExec(`alter table test_gv_ddl modify column b bigint`)
-	s.tk.MustExec(`alter table test_gv_ddl modify column c bigint`)
-	result = s.tk.MustQuery(`DESC test_gv_ddl`)
-	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(21) YES  <nil> `, `c bigint(21) YES  <nil> `))
-
 	genExprTests := []struct {
 		stmt string
 		err  int
 	}{
-		// Check reference not exist columns in generation expression.
+		// drop/rename columns dependent by other column.
+		{`alter table test_gv_ddl drop column a`, mysql.ErrDependentByGeneratedColumn},
+		{`alter table test_gv_ddl change column a anew int`, mysql.ErrBadField},
+
+		// modify/change stored status of generated columns.
+		{`alter table test_gv_ddl modify column b bigint`, mysql.ErrUnsupportedOnGeneratedColumn},
+		{`alter table test_gv_ddl change column c cnew bigint as (a+100)`, mysql.ErrUnsupportedOnGeneratedColumn},
+
+		// modify/change generated columns breaking prior.
+		{`alter table test_gv_ddl modify column b int as (c+100)`, mysql.ErrGeneratedColumnNonPrior},
+		{`alter table test_gv_ddl change column b bnew int as (c+100)`, mysql.ErrGeneratedColumnNonPrior},
+
+		// refer not exist columns in generation expression.
 		{`create table test_gv_ddl_bad (a int, b int as (c+8))`, mysql.ErrBadField},
-		// Check reference generated columns non prior.
+
+		// refer generated columns non prior.
 		{`create table test_gv_ddl_bad (a int, b int as (c+1), c int as (a+1))`, mysql.ErrGeneratedColumnNonPrior},
 	}
-	for _, tt := range genExprTests {
+	for i, tt := range genExprTests {
+		fmt.Printf("i: %d\n", i)
 		s.testErrorCode(c, tt.stmt, tt.err)
 	}
 }

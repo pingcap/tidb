@@ -883,6 +883,7 @@ const (
 	ErrRowInWrongPartition                                          = 1863
 	ErrErrorLast                                                    = 1863
 	ErrBadGeneratedColumn                                           = 3105
+	ErrUnsupportedOnGeneratedColumn                                 = 3106
 	ErrGeneratedColumnNonPrior                                      = 3107
 	ErrDependentByGeneratedColumn                                   = 3108
 	ErrInvalidJSONText                                              = 3140
