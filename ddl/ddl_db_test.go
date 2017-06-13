@@ -1187,25 +1187,25 @@ func (s *testDBSuite) TestGeneratedColumnDDL(c *C) {
 	tk.MustExec("use test")
 
 	// Check create table with virtual generated column.
-	tk.MustExec(`CREATE TABLE test_json_ddl(a int, b int as (a+8) virtual)`)
+	tk.MustExec(`CREATE TABLE test_gv_ddl(a int, b int as (a+8) virtual)`)
 
 	// Check desc table with virtual generated column.
-	result := tk.MustQuery(`DESC test_json_ddl`)
+	result := tk.MustQuery(`DESC test_gv_ddl`)
 	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`))
 
 	// Check show create table with virtual generated column.
-	result = tk.MustQuery(`show create table test_json_ddl`)
+	result = tk.MustQuery(`show create table test_gv_ddl`)
 	result.Check(testkit.Rows(
-		"test_json_ddl CREATE TABLE `test_json_ddl` (\n  `a` int(11) DEFAULT NULL,\n  `b` int(11) GENERATED ALWAYS AS (a+8) VIRTUAL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
+		"test_gv_ddl CREATE TABLE `test_gv_ddl` (\n  `a` int(11) DEFAULT NULL,\n  `b` int(11) GENERATED ALWAYS AS (a+8) VIRTUAL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
 	))
 
 	// Check alter table add a stored generated column.
-	tk.MustExec(`alter table test_json_ddl add column c int as (b+2) stored`)
-	result = tk.MustQuery(`DESC test_json_ddl`)
+	tk.MustExec(`alter table test_gv_ddl add column c int as (b+2) stored`)
+	result = tk.MustQuery(`DESC test_gv_ddl`)
 	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
 
 	// Check drop columns dependent by other column.
-	_, err := tk.Exec(`alter table test_json_ddl drop column a`)
+	_, err := tk.Exec(`alter table test_gv_ddl drop column a`)
 	c.Assert(err, NotNil)
 	terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDependentByGeneratedColumn))
@@ -1215,9 +1215,9 @@ func (s *testDBSuite) TestGeneratedColumnDDL(c *C) {
 		err  int
 	}{
 		// Check reference not exist columns in generation expression.
-		{`create table test_json_ddl_bad (a int, b int as (c+8))`, mysql.ErrBadField},
+		{`create table test_gv_ddl_bad (a int, b int as (c+8))`, mysql.ErrBadField},
 		// Check reference generated columns non prior.
-		{`create table test_json_ddl_bad (a int, b int as (c+1), c int as (a+1))`, mysql.ErrGeneratedColumnNonPrior},
+		{`create table test_gv_ddl_bad (a int, b int as (c+1), c int as (a+1))`, mysql.ErrGeneratedColumnNonPrior},
 	}
 	for _, tt := range genExprTests {
 		_, err = tk.Exec(tt.stmt)
