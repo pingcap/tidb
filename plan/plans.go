@@ -121,7 +121,7 @@ type Insert struct {
 	OnDuplicate []*expression.Assignment
 
 	IsReplace bool
-	Priority  int
+	Priority  ast.PriorityEnum
 	Ignore    bool
 }
 

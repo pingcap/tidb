@@ -604,7 +604,7 @@ type InsertExec struct {
 
 	OnDuplicate []*expression.Assignment
 
-	Priority int
+	Priority ast.PriorityEnum
 	Ignore   bool
 
 	finished bool
