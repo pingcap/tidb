@@ -326,7 +326,7 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 			case ast.ColumnOptionGenerated:
 				col.GeneratedExprString = stringutil.RemoveBlanks(v.Expr.Text())
 				col.GeneratedStored = v.Stored
-				_, dependColNames := findDependedColumnNames(*colDef)
+				_, dependColNames := findDependedColumnNames(colDef)
 				col.Dependences = dependColNames
 			case ast.ColumnOptionFulltext:
 				// TODO: Support this type.
@@ -460,7 +460,7 @@ func checkDuplicateColumn(colDefs []*ast.ColumnDef) error {
 func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 	var colName2Generation = make(map[string]columnGenerationInDDL, 0)
 	for i, colDef := range colDefs {
-		generated, depCols := findDependedColumnNames(*colDef)
+		generated, depCols := findDependedColumnNames(colDef)
 		if !generated {
 			colName2Generation[colDef.Name.Name.L] = columnGenerationInDDL{
 				position:  i,
@@ -887,7 +887,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 			for _, col := range t.Cols() {
 				referableColNames[col.Name.L] = struct{}{}
 			}
-			_, dependColNames := findDependedColumnNames(*spec.NewColumn)
+			_, dependColNames := findDependedColumnNames(spec.NewColumn)
 			if err := columnNamesCover(referableColNames, dependColNames); err != nil {
 				return errors.Trace(err)
 			}
