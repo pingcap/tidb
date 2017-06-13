@@ -376,6 +376,7 @@ func (c *Column) getIntColumnRowCount(sc *variable.StatementContext, intRanges [
 	return rowCount, nil
 }
 
+// getColumnRowCount estimates the row count by a slice of ColumnRange.
 func (c *Column) getColumnRowCount(sc *variable.StatementContext, ranges ...types.ColumnRange) (float64, error) {
 	var rowCount float64
 	for _, rg := range ranges {

@@ -259,8 +259,8 @@ func DetachColumnConditions(conditions []expression.Expression, colName model.CI
 
 	var accessConditions, filterConditions []expression.Expression
 	checker := conditionChecker{
-		pkName: colName,
-		length: types.UnspecifiedLength,
+		colName: colName,
+		length:  types.UnspecifiedLength,
 	}
 	for _, cond := range conditions {
 		cond = expression.PushDownNot(cond, false, nil)
@@ -327,7 +327,7 @@ func BuildColumnRange(conds []expression.Expression, colName model.CIStr, sc *va
 type conditionChecker struct {
 	idx           *model.IndexInfo
 	columnOffset  int // the offset of the indexed column to be checked.
-	pkName        model.CIStr
+	colName       model.CIStr
 	shouldReserve bool // check if a access condition should be reserved in filter conditions.
 	length        int
 }
@@ -469,8 +469,8 @@ func (c *conditionChecker) checkColumn(expr expression.Expression) bool {
 	if !ok {
 		return false
 	}
-	if c.pkName.L != "" {
-		return c.pkName.L == col.ColName.L
+	if c.colName.L != "" {
+		return c.colName.L == col.ColName.L
 	}
 	if c.idx != nil {
 		return col.ColName.L == c.idx.Columns[c.columnOffset].Name.L
