@@ -1133,12 +1133,8 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 		State:              col.State,
 		OriginDefaultValue: col.OriginDefaultValue,
 		FieldType:          *spec.NewColumn.Tp,
-<<<<<<< HEAD
-	})
-=======
 		Name:               spec.NewColumn.Name.Name,
-	}
->>>>>>> qupeng/generated-column-write
+	})
 	err = setCharsetCollationFlenDecimal(&newCol.FieldType)
 	if err != nil {
 		return nil, errors.Trace(err)
