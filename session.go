@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/localstore"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
@@ -109,7 +110,6 @@ type session struct {
 	processInfo atomic.Value
 	txn         kv.Transaction // current transaction
 	txnFuture   *txnFuture
-	txnFutureCh chan *txnFuture
 	// goCtx is used for cancelling the execution of current transaction.
 	goCtx      goctx.Context
 	cancelFunc goctx.CancelFunc
@@ -793,9 +793,6 @@ func (s *session) ClearValue(key fmt.Stringer) {
 
 // Close function does some clean work when session end.
 func (s *session) Close() {
-	if s.txnFutureCh != nil {
-		close(s.txnFutureCh)
-	}
 	if s.statsCollector != nil {
 		s.statsCollector.Delete()
 	}
@@ -1059,30 +1056,24 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 
 // txnFuture is a promise, which promises to return a txn in future.
 type txnFuture struct {
-	sync.WaitGroup
-	txn kv.Transaction
-	err error
+	future oracle.Future
+	store  kv.Storage
+}
+
+func (tf *txnFuture) wait() (kv.Transaction, error) {
+	startTS, err := tf.future.Wait()
+	if err == nil {
+		return tf.store.BeginWithStartTS(startTS)
+	}
+
+	// It would retry get timestamp.
+	return tf.store.Begin()
 }
 
 func (s *session) getTxnFuture() *txnFuture {
-	if s.txnFutureCh == nil {
-		s.txnFutureCh = make(chan *txnFuture, 1)
-		go asyncGetTSWorker(s.store, s.txnFutureCh)
-	}
-
-	future := &txnFuture{}
-	future.Add(1)
-	s.txnFutureCh <- future
-	return future
-}
-
-func asyncGetTSWorker(store kv.Storage, ch chan *txnFuture) {
-	for future := range ch {
-		txn, err := store.Begin()
-		future.txn = txn
-		future.err = err
-		future.Done()
-	}
+	oracle := s.store.GetOracle()
+	tsFuture := oracle.GetTimestampAsync(s.goCtx)
+	return &txnFuture{tsFuture, s.store}
 }
 
 // prepareTxnCtx starts a goroutine to begin a transaction if needed, and creates a new transaction context.
@@ -1095,9 +1086,8 @@ func (s *session) prepareTxnCtx() {
 		return
 	}
 
-	txnFuture := s.getTxnFuture()
-	goCtx, cancelFunc := goctx.WithCancel(goctx.Background())
-	s.txnFuture, s.goCtx, s.cancelFunc = txnFuture, goCtx, cancelFunc
+	s.goCtx, s.cancelFunc = goctx.WithCancel(goctx.Background())
+	s.txnFuture = s.getTxnFuture()
 	is := sessionctx.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		InfoSchema:    is,
@@ -1127,13 +1117,13 @@ func (s *session) ActivePendingTxn() error {
 	}
 	future := s.txnFuture
 	s.txnFuture = nil
-	future.Wait()
-	if future.err != nil {
-		return errors.Trace(future.err)
+	txn, err := future.wait()
+	if err != nil {
+		return errors.Trace(err)
 	}
-	s.txn = future.txn
+	s.txn = txn
 	s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
-	err := s.loadCommonGlobalVariablesIfNeeded()
+	err = s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -14,6 +14,7 @@
 package kv
 
 import (
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	goctx "golang.org/x/net/context"
 )
 
@@ -190,6 +191,8 @@ type Storage interface {
 	UUID() string
 	// CurrentVersion returns current max committed version.
 	CurrentVersion() (Version, error)
+	// GetOracle gets a timestamp oracle client.
+	GetOracle() oracle.Oracle
 }
 
 // FnKeyCmp is the function for iterator the keys
