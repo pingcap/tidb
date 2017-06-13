@@ -711,7 +711,15 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 
 	// It's for INSERT INTO t VALUES (...)
 	if len(insert.Columns) == 0 {
-		for i := 0; i <= maxElementIndexInRow; i++ {
+		// The length of VALUES list maybe exceed table width,
+		// we ignore this here but do checking in executor.
+		var effectiveValuesLen int
+		if maxElementIndexInRow+1 <= len(tableInfo.Columns) {
+			effectiveValuesLen = maxElementIndexInRow + 1
+		} else {
+			effectiveValuesLen = len(tableInfo.Columns)
+		}
+		for i := 0; i < effectiveValuesLen; i++ {
 			col := tableInfo.Columns[i]
 			if len(col.GeneratedExprString) != 0 {
 				b.err = ErrBadGeneratedColumn.GenByArgs(col.Name.O, tableInfo.Name.O)
