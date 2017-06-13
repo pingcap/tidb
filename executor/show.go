@@ -396,7 +396,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	for i, col := range tb.Cols() {
 		buf.WriteString(fmt.Sprintf("  `%s` %s", col.Name.O, col.GetTypeDesc()))
 		if len(col.GeneratedExprString) != 0 {
-			// it's a generated column.
+			// It's a generated column.
 			buf.WriteString(fmt.Sprintf(" GENERATED ALWAYS AS (%s)", col.GeneratedExprString))
 			if col.GeneratedStored {
 				buf.WriteString(" STORED")
