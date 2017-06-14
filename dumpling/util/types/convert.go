@@ -94,10 +94,6 @@ func convertUintToInt(val uint64, upperBound int64, tp byte) (int64, error) {
 }
 
 func convertIntToUint(val int64, upperBound uint64, tp byte) (uint64, error) {
-	if val < 0 {
-		return 0, overflow(val, tp)
-	}
-
 	if uint64(val) > upperBound {
 		return upperBound, overflow(val, tp)
 	}
