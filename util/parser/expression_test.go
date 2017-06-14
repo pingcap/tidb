@@ -18,6 +18,8 @@ import (
 	"github.com/pingcap/tidb/ast"
 )
 
+type testParserSuite struct{}
+
 func (s *testParserSuite) TestParseExpression(c *C) {
 	tests := []struct {
 		input   string

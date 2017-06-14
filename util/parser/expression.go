@@ -18,8 +18,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-
-	logger "github.com/ngaut/log"
+	"github.com/pingcap/tidb/parser"
 )
 
 // getDefaultCharsetAndCollate is copyed from ddl/ddl_api.go.
@@ -33,10 +32,9 @@ func getDefaultCharsetAndCollate() (string, string) {
 //   Because some ColumnInfos have attribute `GeneratedExprString`,
 //   we need to parse that string into ast.ExprNode.
 func ParseExpression(expr string) (node ast.ExprNode, err error) {
-	logger.Infof("ParseExpression is called\n")
 	expr = fmt.Sprintf("select %s", expr)
 	charset, collation := getDefaultCharsetAndCollate()
-	stmts, err := New().Parse(expr, charset, collation)
+	stmts, err := parser.New().Parse(expr, charset, collation)
 	if err == nil {
 		sel := stmts[0].(*ast.SelectStmt)
 		node = sel.Fields.Fields[0].Expr

@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/types"
 )
 
