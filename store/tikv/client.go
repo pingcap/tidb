@@ -50,20 +50,18 @@ type Client interface {
 }
 
 type connArray struct {
-	lock    *sync.Mutex
-	addr    string
-	maxSize uint32
-	index   uint32
-	v       []*grpc.ClientConn
+	lock  *sync.Mutex
+	addr  string
+	index uint32
+	v     []*grpc.ClientConn
 }
 
 func newConnArray(maxSize uint32, addr string) *connArray {
 	return &connArray{
-		lock:    &sync.Mutex{},
-		addr:    addr,
-		maxSize: maxSize,
-		index:   0,
-		v:       make([]*grpc.ClientConn, maxSize),
+		lock:  &sync.Mutex{},
+		addr:  addr,
+		index: 0,
+		v:     make([]*grpc.ClientConn, maxSize),
 	}
 }
 
@@ -86,15 +84,15 @@ func (a *connArray) Get() (*grpc.ClientConn, error) {
 		}
 		a.v[a.index] = conn
 	}
-	a.index = (a.index + 1) % a.maxSize
+	a.index = (a.index + 1) % uint32(len(a.v))
 	return conn, nil
 }
 
 func (a *connArray) Close() {
 	a.lock.Lock()
-	for i := uint32(0); i < a.maxSize; i++ {
-		if a.v[i] != nil {
-			a.v[i].Close()
+	for i, c := range a.v {
+		if c != nil {
+			c.Close()
 			a.v[i] = nil
 		}
 	}
