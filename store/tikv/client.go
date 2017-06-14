@@ -61,13 +61,13 @@ func newConnArray(maxSize uint32, addr string) (*connArray, error) {
 		index: 0,
 		v:     make([]*grpc.ClientConn, maxSize),
 	}
-	if err := a.Init(maxSize, addr); err != nil {
+	if err := a.Init(addr); err != nil {
 		return nil, err
 	}
 	return a, nil
 }
 
-func (a *connArray) Init(maxSize uint32, addr string) error {
+func (a *connArray) Init(addr string) error {
 	for i := range a.v {
 		conn, err := grpc.Dial(
 			addr,
