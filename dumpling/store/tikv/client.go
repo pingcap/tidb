@@ -27,10 +27,11 @@ import (
 )
 
 const (
-	dialTimeout       = 5 * time.Second
-	readTimeoutShort  = 20 * time.Second  // For requests that read/write several key-values.
-	readTimeoutMedium = 60 * time.Second  // For requests that may need scan region.
-	readTimeoutLong   = 150 * time.Second // For requests that may need scan region multiple times.
+	maxConnectionNumber = 16
+	dialTimeout         = 5 * time.Second
+	readTimeoutShort    = 20 * time.Second  // For requests that read/write several key-values.
+	readTimeoutMedium   = 60 * time.Second  // For requests that may need scan region.
+	readTimeoutLong     = 150 * time.Second // For requests that may need scan region multiple times.
 
 	grpcInitialWindowSize     = 1 << 30
 	grpcInitialConnWindowSize = 1 << 30
@@ -48,6 +49,67 @@ type Client interface {
 	SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error)
 }
 
+type connArray struct {
+	lock  *sync.Mutex
+	index uint32
+	v     []*grpc.ClientConn
+}
+
+func newConnArray(maxSize uint32, addr string) (*connArray, error) {
+	a := &connArray{
+		lock:  &sync.Mutex{},
+		index: 0,
+		v:     make([]*grpc.ClientConn, maxSize),
+	}
+	if err := a.Init(addr); err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+
+func (a *connArray) Init(addr string) error {
+	for i := range a.v {
+		conn, err := grpc.Dial(
+			addr,
+			grpc.WithInsecure(),
+			grpc.WithTimeout(dialTimeout),
+			grpc.WithInitialWindowSize(grpcInitialWindowSize),
+			grpc.WithInitialConnWindowSize(grpcInitialConnWindowSize),
+			grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
+			grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor))
+		if err != nil {
+			// Cleanup if the initialization fails.
+			a.doClose()
+			return errors.Trace(err)
+		}
+		a.v[i] = conn
+	}
+	return nil
+}
+
+func (a *connArray) Get() *grpc.ClientConn {
+	a.lock.Lock()
+	defer a.lock.Unlock()
+	conn := a.v[a.index]
+	a.index = (a.index + 1) % uint32(len(a.v))
+	return conn
+}
+
+func (a *connArray) doClose() {
+	for i, c := range a.v {
+		if c != nil {
+			c.Close()
+			a.v[i] = nil
+		}
+	}
+}
+
+func (a *connArray) Close() {
+	a.lock.Lock()
+	a.doClose()
+	a.lock.Unlock()
+}
+
 // TODO: Add flow control between RPC clients in TiDB ond RPC servers in TiKV.
 // Since we use shared client connection to communicate to the same TiKV, it's possible
 // that there are too many concurrent requests which overload the service of TiKV.
@@ -56,12 +118,12 @@ type Client interface {
 type rpcClient struct {
 	sync.RWMutex
 	isClosed bool
-	conns    map[string]*grpc.ClientConn
+	conns    map[string]*connArray
 }
 
 func newRPCClient() *rpcClient {
 	return &rpcClient{
-		conns: make(map[string]*grpc.ClientConn),
+		conns: make(map[string]*connArray),
 	}
 }
 
@@ -71,38 +133,31 @@ func (c *rpcClient) getConn(addr string) (*grpc.ClientConn, error) {
 		c.RUnlock()
 		return nil, errors.Errorf("rpcClient is closed")
 	}
-	conn, ok := c.conns[addr]
+	array, ok := c.conns[addr]
 	c.RUnlock()
 	if !ok {
 		var err error
-		conn, err = c.createConn(addr)
+		array, err = c.createConnArray(addr)
 		if err != nil {
 			return nil, err
 		}
 	}
-	return conn, nil
+	return array.Get(), nil
 }
 
-func (c *rpcClient) createConn(addr string) (*grpc.ClientConn, error) {
+func (c *rpcClient) createConnArray(addr string) (*connArray, error) {
 	c.Lock()
 	defer c.Unlock()
-	conn, ok := c.conns[addr]
+	array, ok := c.conns[addr]
 	if !ok {
 		var err error
-		conn, err = grpc.Dial(
-			addr,
-			grpc.WithInsecure(),
-			grpc.WithTimeout(dialTimeout),
-			grpc.WithInitialWindowSize(grpcInitialWindowSize),
-			grpc.WithInitialConnWindowSize(grpcInitialConnWindowSize),
-			grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
-			grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor))
+		array, err = newConnArray(maxConnectionNumber, addr)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
-		c.conns[addr] = conn
+		c.conns[addr] = array
 	}
-	return conn, nil
+	return array, nil
 }
 
 func (c *rpcClient) closeConns() {
@@ -110,8 +165,8 @@ func (c *rpcClient) closeConns() {
 	if !c.isClosed {
 		c.isClosed = true
 		// close all connections
-		for _, conn := range c.conns {
-			conn.Close()
+		for _, array := range c.conns {
+			array.Close()
 		}
 	}
 	c.Unlock()
