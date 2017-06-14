@@ -17,6 +17,7 @@ import (
 	"math"
 	"math/rand"
 	"runtime"
+	
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
