@@ -1333,9 +1333,12 @@ func (d *Datum) toSignedInteger(sc *variable.StatementContext, tp byte) (int64, 
 		return i64, errors.Trace(err)
 	case KindMysqlTime:
 		// 2011-11-10 11:11:11.999999 -> 20111110111112
-		dec := d.GetMysqlTime().ToNumber()
-		dec.Round(dec, 0, ModeHalfEven)
-		ival, err := dec.ToInt()
+		// 2011-11-10 11:59:59.999999 -> 20111110120000
+		t, err := d.GetMysqlTime().RoundFrac(DefaultFsp)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		ival, err := t.ToNumber().ToInt()
 		ival, err2 := ConvertIntToInt(ival, lowerBound, upperBound, tp)
 		if err == nil {
 			err = err2
@@ -1343,9 +1346,12 @@ func (d *Datum) toSignedInteger(sc *variable.StatementContext, tp byte) (int64, 
 		return ival, err
 	case KindMysqlDuration:
 		// 11:11:11.999999 -> 111112
-		dec := d.GetMysqlDuration().ToNumber()
-		dec.Round(dec, 0, ModeHalfEven)
-		ival, err := dec.ToInt()
+		// 11:59:59.999999 -> 120000
+		dur, err := d.GetMysqlDuration().RoundFrac(DefaultFsp)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		ival, err := dur.ToNumber().ToInt()
 		ival, err2 := ConvertIntToInt(ival, lowerBound, upperBound, tp)
 		if err == nil {
 			err = err2

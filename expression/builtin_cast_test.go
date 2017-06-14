@@ -15,6 +15,7 @@ package expression
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 
@@ -23,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
-	"math"
 )
 
 func (s *testEvaluatorSuite) TestCast(c *C) {
@@ -77,22 +77,35 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 }
 
 var (
-	year, month, day = time.Now().Date()
-	curDateInt       = int64(year*10000 + int(month)*100 + day)
-	curTimeInt       = int64(curDateInt*1000000 + 125959)
-	curTimeString    = fmt.Sprintf("%4d-%02d-%02d 12:59:59", year, int(month), day)
-	tm               = types.Time{
+	year, month, day     = time.Now().Date()
+	curDateInt           = int64(year*10000 + int(month)*100 + day)
+	curTimeInt           = int64(curDateInt*1000000 + 125959)
+	curTimeWithFspReal   = float64(curTimeInt) + 0.555
+	curTimeString        = fmt.Sprintf("%4d-%02d-%02d 12:59:59", year, int(month), day)
+	curTimeWithFspString = fmt.Sprintf("%4d-%02d-%02d 12:59:59.555000", year, int(month), day)
+	tm                   = types.Time{
 		Time: types.FromDate(year, int(month), day, 12, 59, 59, 0),
 		Type: mysql.TypeDatetime,
 		Fsp:  types.DefaultFsp}
+	tmWithFsp = types.Time{
+		Time: types.FromDate(year, int(month), day, 12, 59, 59, 555000),
+		Type: mysql.TypeDatetime,
+		Fsp:  types.MaxFsp}
 	// timeDatum indicates datetime "curYear-curMonth-curDay 12:59:59".
 	timeDatum = types.NewDatum(tm)
-	duration  = types.Duration{
+	// timeWithFspDatum indicates datetime "curYear-curMonth-curDay 12:59:59.555000".
+	timeWithFspDatum = types.NewDatum(tmWithFsp)
+	duration         = types.Duration{
 		Duration: time.Duration(12*time.Hour + 59*time.Minute + 59*time.Second),
 		Fsp:      types.DefaultFsp}
 	// durationDatum indicates duration "12:59:59".
-	durationDatum = types.NewDatum(duration)
-	dt            = types.Time{
+	durationDatum   = types.NewDatum(duration)
+	durationWithFsp = types.Duration{
+		Duration: time.Duration(12*time.Hour + 59*time.Minute + 59*time.Second + 555*time.Millisecond),
+		Fsp:      3}
+	// durationWithFspDatum indicates duration "12:59:59.555"
+	durationWithFspDatum = types.NewDatum(durationWithFsp)
+	dt                   = types.Time{
 		Time: types.FromDate(year, int(month), day, 0, 0, 0, 0),
 		Type: mysql.TypeDate,
 		Fsp:  types.DefaultFsp}
@@ -862,9 +875,14 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 			123, 123.123, types.NewDecFromFloatForTest(123.123), "123.123",
 		},
 		{
-			&Column{RetType: types.NewFieldType(mysql.TypeDecimal), Index: 0},
+			&Column{RetType: types.NewFieldType(mysql.TypeNewDecimal), Index: 0},
 			[]types.Datum{types.NewDecimalDatum(types.NewDecFromStringForTest("123.123"))},
 			123, 123.123, types.NewDecFromFloatForTest(123.123), "123.123",
+		},
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeNewDecimal), Index: 0},
+			[]types.Datum{types.NewDecimalDatum(types.NewDecFromStringForTest("123.555"))},
+			124, 123.555, types.NewDecFromFloatForTest(123.555), "123.555",
 		},
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeVarString), Index: 0},
@@ -877,9 +895,19 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 			curTimeInt, float64(curTimeInt), types.NewDecFromInt(curTimeInt), curTimeString,
 		},
 		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDatetime), Index: 0},
+			[]types.Datum{timeWithFspDatum},
+			int64(curDateInt*1000000 + 130000), curTimeWithFspReal, types.NewDecFromFloatForTest(curTimeWithFspReal), curTimeWithFspString,
+		},
+		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0},
 			[]types.Datum{durationDatum},
 			125959, 125959, types.NewDecFromFloatForTest(125959), "12:59:59",
+		},
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0},
+			[]types.Datum{durationWithFspDatum},
+			130000, 125959.555, types.NewDecFromFloatForTest(125959.555), "12:59:59.555",
 		},
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeEnum), Index: 0},
@@ -892,7 +920,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 			97, 97, types.NewDecFromInt(97), "a",
 		},
 	}
-	for _, t := range cases {
+	for i, t := range cases {
 		// Test wrapping with CastAsInt.
 		intExpr, err := WrapWithCastAsInt(t.expr, ctx)
 		c.Assert(err, IsNil)
@@ -991,7 +1019,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTime(c *C) {
 			tm,
 		},
 		{
-			&Constant{RetType: types.NewFieldType(mysql.TypeDecimal), Value: types.NewDecimalDatum(types.NewDecFromInt(curTimeInt))},
+			&Constant{RetType: types.NewFieldType(mysql.TypeNewDecimal), Value: types.NewDecimalDatum(types.NewDecFromInt(curTimeInt))},
 			types.NewFieldType(mysql.TypeDate),
 			dt,
 		},
@@ -1036,7 +1064,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsDuration(c *C) {
 			&Constant{RetType: types.NewFieldType(mysql.TypeDouble), Value: types.NewFloat64Datum(125959)},
 		},
 		{
-			&Constant{RetType: types.NewFieldType(mysql.TypeDecimal), Value: types.NewDecimalDatum(types.NewDecFromInt(125959))},
+			&Constant{RetType: types.NewFieldType(mysql.TypeNewDecimal), Value: types.NewDecimalDatum(types.NewDecFromInt(125959))},
 		},
 		{
 			&Constant{RetType: types.NewFieldType(mysql.TypeVarString), Value: types.NewStringDatum("125959")},

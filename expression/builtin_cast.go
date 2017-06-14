@@ -25,6 +25,7 @@ import (
 	"strconv"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
@@ -541,8 +542,9 @@ func (b *builtinCastDecimalAsIntSig) evalInt(row []types.Datum) (res int64, isNu
 		uintRes, err = types.ConvertFloatToUint(sc, floatVal, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeDouble)
 		res = int64(uintRes)
 	} else {
-		val.Round(val, 0, types.ModeHalfEven)
-		res, err = val.ToInt()
+		var to types.MyDecimal
+		val.Round(&to, 0, types.ModeHalfEven)
+		res, err = to.ToInt()
 	}
 	return res, false, errors.Trace(err)
 }
@@ -567,10 +569,12 @@ type builtinCastDecimalAsRealSig struct {
 
 func (b *builtinCastDecimalAsRealSig) evalReal(row []types.Datum) (res float64, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDecimal(row, b.getCtx().GetSessionVars().StmtCtx)
+	log.Warning(b.args[0].String())
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
 	res, err = val.ToFloat64()
+	log.Warning(val.String(), res)
 	return res, false, errors.Trace(err)
 }
 
@@ -736,9 +740,11 @@ func (b *builtinCastTimeAsIntSig) evalInt(row []types.Datum) (res int64, isNull 
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	dec := val.ToNumber()
-	dec.Round(dec, 0, types.ModeHalfEven)
-	res, err = dec.ToInt()
+	t, err := val.RoundFrac(types.DefaultFsp)
+	if err != nil {
+		return res, false, errors.Trace(err)
+	}
+	res, err = t.ToNumber().ToInt()
 	return res, false, errors.Trace(err)
 }
 
@@ -822,9 +828,11 @@ func (b *builtinCastDurationAsIntSig) evalInt(row []types.Datum) (res int64, isN
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	dec := val.ToNumber()
-	dec.Round(dec, 0, types.ModeHalfEven)
-	res, err = dec.ToInt()
+	dur, err := val.RoundFrac(types.DefaultFsp)
+	if err != nil {
+		return res, false, errors.Trace(err)
+	}
+	res, err = dur.ToNumber().ToInt()
 	return res, false, errors.Trace(err)
 }
 
