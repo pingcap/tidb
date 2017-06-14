@@ -776,6 +776,22 @@ func (s *testSuite) TestUnsignedPKColumn(c *C) {
 	result.Check(testkit.Rows("1 1 2"))
 }
 
+func (s *testSuite) TestStringBuiltin(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// for concat
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b double, c datetime, d time, e char(20))")
+	tk.MustExec(`insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef")`)
+	result := tk.MustQuery("select concat(a, b, c, d, e) from t")
+	result.Check(testkit.Rows("11.12017-01-01 12:01:0112:01:01abcdef"))
+}
+
 func (s *testSuite) TestBuiltin(c *C) {
 	defer func() {
 		s.cleanEnv(c)

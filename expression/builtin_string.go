@@ -202,12 +202,33 @@ type concatFunctionClass struct {
 }
 
 func (c *concatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinConcatSig{newBaseBuiltinFunc(args, ctx)}
+	sig := &builtinConcatSig{
+		baseStringBuiltinFunc{
+			newBaseBuiltinFuncWithTp(args, c.inferType(args), ctx),
+		},
+	}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
+func (c *concatFunctionClass) inferType(args []Expression) *types.FieldType {
+	existsBinStr, tp := false, mysql.TypeVarString
+	for i := 0; i < len(args); i++ {
+		curArgTp := args[i].GetType()
+		tp = types.MergeFieldType(tp, curArgTp.Tp)
+		if types.IsBinaryStr(curArgTp) {
+			existsBinStr = true
+		}
+	}
+	retType := types.NewFieldType(tp)
+	types.DefaultCharsetForType(tp)
+	if existsBinStr {
+		retType.Flag |= mysql.BinaryFlag
+	}
+	return retType
+}
+
 type builtinConcatSig struct {
-	baseBuiltinFunc
+	baseStringBuiltinFunc
 }
 
 // eval evals a builtinConcatSig.
@@ -231,6 +252,22 @@ func (b *builtinConcatSig) eval(row []types.Datum) (d types.Datum, err error) {
 	}
 	d.SetBytesAsString(s)
 	return d, nil
+}
+
+func (b *builtinConcatSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+	var s []byte
+	for _, a := range b.getArgs() {
+		a, err = WrapWithCastAsString(a, b.ctx)
+		if err != nil {
+			return d, false, errors.Trace(err)
+		}
+		d, isNull, err = a.EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+		if isNull || err != nil {
+			return d, isNull, errors.Trace(err)
+		}
+		s = append(s, []byte(d)...)
+	}
+	return string(s), false, nil
 }
 
 type concatWSFunctionClass struct {

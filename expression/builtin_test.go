@@ -16,8 +16,11 @@ package expression
 import (
 	"reflect"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
@@ -210,4 +213,24 @@ func (s *testEvaluatorSuite) TestLock(c *C) {
 	v, err = f.eval(nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(1))
+}
+
+// newFunctionForTest creates a new ScalarFunction using funcName and arguments,
+// it is different from expression.NewFunction which needs an additional retType argument.
+func newFunctionForTest(ctx context.Context, funcName string, args ...Expression) (Expression, error) {
+	fc, ok := funcs[funcName]
+	if !ok {
+		return nil, errFunctionNotExists.GenByArgs(funcName)
+	}
+	funcArgs := make([]Expression, len(args))
+	copy(funcArgs, args)
+	f, err := fc.getFunction(funcArgs, ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &ScalarFunction{
+		FuncName: model.NewCIStr(funcName),
+		RetType:  f.getRetTp(),
+		Function: f,
+	}, nil
 }

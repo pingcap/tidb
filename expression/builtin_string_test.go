@@ -96,34 +96,66 @@ func (s *testEvaluatorSuite) TestASCII(c *C) {
 
 func (s *testEvaluatorSuite) TestConcat(c *C) {
 	defer testleak.AfterTest(c)()
-	args := []interface{}{nil}
+	cases := []struct {
+		args   []interface{}
+		isNil  bool
+		getErr bool
+		res    string
+	}{
+		{
+			[]interface{}{nil},
+			true, false, "",
+		},
+		{
+			[]interface{}{"a", "b", "c"},
+			false, false, "abc",
+		},
+		{
+			[]interface{}{1, 2, 3},
+			false, false, "123",
+		},
+		{
+			[]interface{}{1.1, 1.2, 1.3},
+			false, false, "1.11.21.3",
+		},
+		{
+			[]interface{}{"a", "b", nil, "c"},
+			true, false, "",
+		},
+		{
+			[]interface{}{errors.New("must error")},
+			false, true, "",
+		},
+		{
+			[]interface{}{types.Time{
+				Time: types.FromDate(2000, 1, 1, 12, 01, 01, 0),
+				Type: mysql.TypeDatetime,
+				Fsp:  types.DefaultFsp}},
+			false, false, "2000-01-01 12:01:01",
+		},
+		{
+			[]interface{}{types.Duration{
+				Duration: time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second),
+				Fsp:      types.DefaultFsp}},
+			false, false, "12:01:01",
+		},
+	}
 
-	fc := funcs[ast.Concat]
-	f, err := fc.getFunction(datumsToConstants(types.MakeDatums(args...)), s.ctx)
-	c.Assert(err, IsNil)
-	v, err := f.eval(nil)
-	c.Assert(err, IsNil)
-	c.Assert(v.Kind(), Equals, types.KindNull)
-
-	args = []interface{}{"a", "b", "c"}
-	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(args...)), s.ctx)
-	c.Assert(err, IsNil)
-	v, err = f.eval(nil)
-	c.Assert(err, IsNil)
-	c.Assert(v.GetString(), Equals, "abc")
-
-	args = []interface{}{"a", "b", nil, "c"}
-	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(args...)), s.ctx)
-	c.Assert(err, IsNil)
-	v, err = f.eval(nil)
-	c.Assert(err, IsNil)
-	c.Assert(v.Kind(), Equals, types.KindNull)
-
-	args = []interface{}{errors.New("must error")}
-	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(args...)), s.ctx)
-	c.Assert(err, IsNil)
-	_, err = f.eval(nil)
-	c.Assert(err, NotNil)
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Concat, primitiveValsToConstants(t.args)...)
+		c.Assert(err, IsNil)
+		v, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(v.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(v.GetString(), Equals, t.res)
+			}
+		}
+	}
 }
 
 func (s *testEvaluatorSuite) TestConcatWS(c *C) {
