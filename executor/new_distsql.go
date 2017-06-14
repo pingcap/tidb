@@ -14,6 +14,8 @@
 package executor
 
 import (
+	"time"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/distsql"
@@ -208,7 +210,10 @@ func (e *IndexReaderExecutor) Next() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = decodeRawValues(values, e.schema, e.ctx.GetSessionVars().GetTimeZone())
+		// Use time.UTC instead of session's timezone because coprocessor evaluator has
+		// already handle the timezone.
+		// TODO: Coprocessor should receive and return data in UTC.
+		err = decodeRawValues(values, e.schema, time.UTC)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
