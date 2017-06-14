@@ -68,7 +68,7 @@ func newConnArray(maxSize uint32, addr string) (*connArray, error) {
 }
 
 func (a *connArray) Init(maxSize uint32, addr string) error {
-	for i, _ := range a.v {
+	for i := range a.v {
 		conn, err := grpc.Dial(
 			addr,
 			grpc.WithInsecure(),
