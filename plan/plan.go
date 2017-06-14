@@ -222,6 +222,8 @@ type LogicalPlan interface {
 
 	// statsProfile will return the stats for this plan.
 	statsProfile() *statsProfile
+
+	getAllPossibleOrderCols() [][]int
 }
 
 // PhysicalPlan is a tree of the physical operators.
