@@ -74,6 +74,13 @@ var (
 	errBadField              = terror.ClassDDL.New(codeBadField, "Unknown column '%s' in '%s'")
 	errInvalidDefault        = terror.ClassDDL.New(codeInvalidDefault, "Invalid default value for '%s'")
 	errInvalidUseOfNull      = terror.ClassDDL.New(codeInvalidUseOfNull, "Invalid use of NULL value")
+
+	// errUnsupportedOnGeneratedColumn is for unsupported actions on generated columns.
+	errUnsupportedOnGeneratedColumn = terror.ClassDDL.New(codeUnsupportedOnGeneratedColumn, mysql.MySQLErrName[mysql.ErrUnsupportedOnGeneratedColumn])
+	// errGeneratedColumnNonPrior forbiddens to refer generated column non prior to it.
+	errGeneratedColumnNonPrior = terror.ClassDDL.New(codeGeneratedColumnNonPrior, mysql.MySQLErrName[mysql.ErrGeneratedColumnNonPrior])
+	// errDependentByGeneratedColumn forbiddens to delete columns which are dependent by generated columns.
+	errDependentByGeneratedColumn = terror.ClassDDL.New(codeDependentByGeneratedColumn, mysql.MySQLErrName[mysql.ErrDependentByGeneratedColumn])
 	// errJSONUsedAsKey forbiddens to use JSON as key or index.
 	errJSONUsedAsKey = terror.ClassDDL.New(codeJSONUsedAsKey, mysql.MySQLErrName[mysql.ErrJSONUsedAsKey])
 	// errBlobCantHaveDefault forbiddens to give not null default value to TEXT/BLOB/JSON.
@@ -518,48 +525,54 @@ const (
 	codeUnsupportedCharset          = 205
 	codeUnsupportedModifyPrimaryKey = 206
 
-	codeFileNotFound          = 1017
-	codeErrorOnRename         = 1025
-	codeBadNull               = 1048
-	codeBadField              = 1054
-	codeTooLongIdent          = 1059
-	codeDupKeyName            = 1061
-	codeInvalidDefault        = 1067
-	codeTooLongKey            = 1071
-	codeKeyColumnDoesNotExits = 1072
-	codeIncorrectPrefixKey    = 1089
-	codeCantRemoveAllFields   = 1090
-	codeCantDropFieldOrKey    = 1091
-	codeWrongDBName           = 1102
-	codeWrongTableName        = 1103
-	codeInvalidUseOfNull      = 1138
-	codeBlobKeyWithoutLength  = 1170
-	codeInvalidOnUpdate       = 1294
-	codeJSONUsedAsKey         = 3152
-	codeBlobCantHaveDefault   = 1101
+	codeFileNotFound                 = 1017
+	codeErrorOnRename                = 1025
+	codeBadNull                      = 1048
+	codeBadField                     = 1054
+	codeTooLongIdent                 = 1059
+	codeDupKeyName                   = 1061
+	codeInvalidDefault               = 1067
+	codeTooLongKey                   = 1071
+	codeKeyColumnDoesNotExits        = 1072
+	codeIncorrectPrefixKey           = 1089
+	codeCantRemoveAllFields          = 1090
+	codeCantDropFieldOrKey           = 1091
+	codeWrongDBName                  = 1102
+	codeWrongTableName               = 1103
+	codeInvalidUseOfNull             = 1138
+	codeBlobKeyWithoutLength         = 1170
+	codeInvalidOnUpdate              = 1294
+	codeUnsupportedOnGeneratedColumn = 3106
+	codeGeneratedColumnNonPrior      = 3107
+	codeDependentByGeneratedColumn   = 3108
+	codeJSONUsedAsKey                = 3152
+	codeBlobCantHaveDefault          = 1101
 )
 
 func init() {
 	ddlMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeBadNull:               mysql.ErrBadNull,
-		codeCantRemoveAllFields:   mysql.ErrCantRemoveAllFields,
-		codeCantDropFieldOrKey:    mysql.ErrCantDropFieldOrKey,
-		codeInvalidOnUpdate:       mysql.ErrInvalidOnUpdate,
-		codeBlobKeyWithoutLength:  mysql.ErrBlobKeyWithoutLength,
-		codeIncorrectPrefixKey:    mysql.ErrWrongSubKey,
-		codeTooLongIdent:          mysql.ErrTooLongIdent,
-		codeTooLongKey:            mysql.ErrTooLongKey,
-		codeKeyColumnDoesNotExits: mysql.ErrKeyColumnDoesNotExits,
-		codeDupKeyName:            mysql.ErrDupKeyName,
-		codeWrongDBName:           mysql.ErrWrongDBName,
-		codeWrongTableName:        mysql.ErrWrongTableName,
-		codeFileNotFound:          mysql.ErrFileNotFound,
-		codeErrorOnRename:         mysql.ErrErrorOnRename,
-		codeBadField:              mysql.ErrBadField,
-		codeInvalidDefault:        mysql.ErrInvalidDefault,
-		codeInvalidUseOfNull:      mysql.ErrInvalidUseOfNull,
-		codeJSONUsedAsKey:         mysql.ErrJSONUsedAsKey,
-		codeBlobCantHaveDefault:   mysql.ErrBlobCantHaveDefault,
+		codeBadNull:                      mysql.ErrBadNull,
+		codeCantRemoveAllFields:          mysql.ErrCantRemoveAllFields,
+		codeCantDropFieldOrKey:           mysql.ErrCantDropFieldOrKey,
+		codeInvalidOnUpdate:              mysql.ErrInvalidOnUpdate,
+		codeBlobKeyWithoutLength:         mysql.ErrBlobKeyWithoutLength,
+		codeIncorrectPrefixKey:           mysql.ErrWrongSubKey,
+		codeTooLongIdent:                 mysql.ErrTooLongIdent,
+		codeTooLongKey:                   mysql.ErrTooLongKey,
+		codeKeyColumnDoesNotExits:        mysql.ErrKeyColumnDoesNotExits,
+		codeDupKeyName:                   mysql.ErrDupKeyName,
+		codeWrongDBName:                  mysql.ErrWrongDBName,
+		codeWrongTableName:               mysql.ErrWrongTableName,
+		codeFileNotFound:                 mysql.ErrFileNotFound,
+		codeErrorOnRename:                mysql.ErrErrorOnRename,
+		codeBadField:                     mysql.ErrBadField,
+		codeInvalidDefault:               mysql.ErrInvalidDefault,
+		codeInvalidUseOfNull:             mysql.ErrInvalidUseOfNull,
+		codeUnsupportedOnGeneratedColumn: mysql.ErrUnsupportedOnGeneratedColumn,
+		codeGeneratedColumnNonPrior:      mysql.ErrGeneratedColumnNonPrior,
+		codeDependentByGeneratedColumn:   mysql.ErrDependentByGeneratedColumn,
+		codeJSONUsedAsKey:                mysql.ErrJSONUsedAsKey,
+		codeBlobCantHaveDefault:          mysql.ErrBlobCantHaveDefault,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }
