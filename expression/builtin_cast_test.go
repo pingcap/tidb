@@ -945,8 +945,8 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(strExpr.GetTypeClass(), Equals, types.ClassString)
 	strRes, isNull, err := strExpr.EvalString([]types.Datum{types.NewUintDatum(math.MaxUint64)}, sc)
-	// overflow
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
+	c.Assert(strRes, Equals, strconv.FormatUint(math.MaxUint64, 10))
 	c.Assert(isNull, Equals, false)
 
 	strRes, isNull, err = strExpr.EvalString([]types.Datum{types.NewUintDatum(1234)}, sc)
