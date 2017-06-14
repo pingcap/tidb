@@ -309,6 +309,9 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"select * from t1 join t2 left join t3 on t2.id = t3.id", true},
 		{"select * from t1 right join t2 on t1.id = t2.id left join t3 on t3.id = t2.id", true},
 		{"select * from t1 right join t2 on t1.id = t2.id left join t3", false},
+		{"select * from t1 join t2 left join t3 using (id)", true},
+		{"select * from t1 right join t2 using (id) left join t3 using (id)", true},
+		{"select * from t1 right join t2 using (id) left join t3", false},
 
 		// for admin
 		{"admin show ddl;", true},
@@ -1304,6 +1307,12 @@ func (s *testParserSuite) TestDDL(c *C) {
 		// for truncate statement
 		{"TRUNCATE TABLE t1", true},
 		{"TRUNCATE t1", true},
+
+		// for empty alert table index
+		{"ALTER TABLE t ADD INDEX () ", false},
+		{"ALTER TABLE t ADD UNIQUE ()", false},
+		{"ALTER TABLE t ADD UNIQUE INDEX ()", false},
+		{"ALTER TABLE t ADD UNIQUE KEY ()", false},
 	}
 	s.RunTest(c, table)
 }

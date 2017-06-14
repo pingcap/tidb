@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
@@ -331,6 +332,10 @@ type mockStore struct {
 
 func (m *mockStore) GetClient() kv.Client {
 	return m.client
+}
+
+func (m *mockStore) GetOracle() oracle.Oracle {
+	return nil
 }
 
 func (m *mockStore) Begin() (kv.Transaction, error) {

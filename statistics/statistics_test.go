@@ -184,6 +184,9 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	count, err = col.lessAndEqRowCount(sc, types.NewIntDatum(99999))
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 100000)
+	count, err = col.lessAndEqRowCount(sc, types.Datum{})
+	c.Check(err, IsNil)
+	c.Check(int(count), Equals, 256)
 	count, err = col.greaterRowCount(sc, types.NewIntDatum(1001))
 	c.Check(err, IsNil)
 	c.Check(int(count), Equals, 99231)
@@ -211,4 +214,34 @@ func (s *testStatisticsSuite) TestPseudoTable(c *C) {
 	count, err = tbl.ColumnBetweenRowCount(sc, types.NewIntDatum(1000), types.NewIntDatum(5000), colInfo)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 250000)
+}
+
+func (s *testStatisticsSuite) TestColumnRange(c *C) {
+	bucketCount := int64(256)
+	_, ndv, _ := buildFMSketch(s.rc.(*recordSet).data, 1000)
+	ctx := mock.NewContext()
+	sc := ctx.GetSessionVars().StmtCtx
+
+	hg, err := BuildColumn(ctx, bucketCount, 5, ndv, s.count, 0, s.samples)
+	c.Check(err, IsNil)
+	col := &Column{Histogram: *hg}
+	ran := types.ColumnRange{
+		Low:  types.Datum{},
+		High: types.Datum{},
+	}
+	count, err := col.getColumnRowCount(sc, ran)
+	c.Assert(err, IsNil)
+	c.Assert(int(count), Equals, 10000)
+	ran.Low = types.NewIntDatum(1000)
+	ran.LowExcl = true
+	ran.High = types.NewIntDatum(2000)
+	ran.HighExcl = true
+	count, err = col.getColumnRowCount(sc, ran)
+	c.Assert(err, IsNil)
+	c.Assert(int(count), Equals, 9964)
+	ran.LowExcl = false
+	ran.HighExcl = false
+	count, err = col.getColumnRowCount(sc, ran)
+	c.Assert(err, IsNil)
+	c.Assert(int(count), Equals, 9965)
 }

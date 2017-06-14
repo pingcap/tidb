@@ -47,14 +47,7 @@ func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	ver := kv.NewVersion(startTS)
-	return &tikvTxn{
-		us:        kv.NewUnionStore(newTiKVSnapshot(store, ver)),
-		store:     store,
-		startTS:   startTS,
-		startTime: monotime.Now(),
-		valid:     true,
-	}, nil
+	return newTikvTxnWithStartTS(store, startTS)
 }
 
 // newTikvTxnWithStartTS creates a txn with startTS.
