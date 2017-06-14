@@ -19,7 +19,6 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
@@ -172,7 +171,6 @@ func evalExprToDecimal(expr Expression, row []types.Datum, sc *variable.Statemen
 		return res, val.IsNull(), errors.Trace(err)
 	}
 	if expr.GetTypeClass() == types.ClassDecimal {
-		log.Warning(val.GetMysqlDecimal().String())
 		return val.GetMysqlDecimal(), false, nil
 	} else if IsHybridType(expr) {
 		res, err = val.ToDecimal(sc)

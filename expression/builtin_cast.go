@@ -25,7 +25,6 @@ import (
 	"strconv"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
@@ -569,12 +568,10 @@ type builtinCastDecimalAsRealSig struct {
 
 func (b *builtinCastDecimalAsRealSig) evalReal(row []types.Datum) (res float64, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDecimal(row, b.getCtx().GetSessionVars().StmtCtx)
-	log.Warning(b.args[0].String())
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
 	res, err = val.ToFloat64()
-	log.Warning(val.String(), res)
 	return res, false, errors.Trace(err)
 }
 

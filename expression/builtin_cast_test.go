@@ -920,7 +920,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 			97, 97, types.NewDecFromInt(97), "a",
 		},
 	}
-	for i, t := range cases {
+	for _, t := range cases {
 		// Test wrapping with CastAsInt.
 		intExpr, err := WrapWithCastAsInt(t.expr, ctx)
 		c.Assert(err, IsNil)
