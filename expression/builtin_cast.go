@@ -756,7 +756,11 @@ func (b *builtinCastDurationAsIntSig) evalInt(row []types.Datum) (res int64, isN
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = val.ToNumber().ToInt()
+	dur, err := val.RoundFrac(val.Fsp)
+	if err != nil {
+		return res, false, errors.Trace(err)
+	}
+	res, err = dur.ToNumber().ToInt()
 	return res, false, errors.Trace(err)
 }
 
