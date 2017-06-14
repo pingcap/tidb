@@ -451,15 +451,15 @@ type TSFuture interface {
 }
 
 func (req *tsoRequest) Wait() (int64, int64, error) {
-	defer func() { cmdDuration.WithLabelValues("tso").Observe(time.Since(req.start).Seconds()) }()
 	select {
 	case err := <-req.done:
+		defer tsoReqPool.Put(req)
 		if err != nil {
 			cmdFailedDuration.WithLabelValues("tso").Observe(time.Since(req.start).Seconds())
 			return 0, 0, errors.Trace(err)
 		}
 		physical, logical := req.physical, req.logical
-		tsoReqPool.Put(req)
+		cmdDuration.WithLabelValues("tso").Observe(time.Since(req.start).Seconds())
 		return physical, logical, err
 	case <-req.ctx.Done():
 		return 0, 0, errors.Trace(req.ctx.Err())
