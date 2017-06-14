@@ -58,6 +58,11 @@ func (m *MockExec) Open() error {
 }
 
 func (s *testSuite) TestAggregation(c *C) {
+	origin := expression.TurnOnNewExprEval
+	expression.TurnOnNewExprEval = false
+	defer func() {
+		expression.TurnOnNewExprEval = origin
+	}()
 	plan.JoinConcurrency = 1
 	defer func() {
 		plan.JoinConcurrency = 5
