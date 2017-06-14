@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
@@ -596,6 +597,8 @@ type InsertValues struct {
 	Lists     [][]expression.Expression
 	Setlist   []*expression.Assignment
 	IsPrepare bool
+
+	GenValues *plan.InsertGeneratedColumns
 }
 
 // InsertExec represents an insert executor.
@@ -632,7 +635,7 @@ func (e *InsertExec) Next() (*Row, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	toUpdateColumns, err := getOnDuplicateUpdateColumns(e.OnDuplicate, e.Table)
+	toUpdateColumns, toUpdateColumnsOrder, err := getOnDuplicateUpdateColumns(e.OnDuplicate, e.Table)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -680,7 +683,7 @@ func (e *InsertExec) Next() (*Row, error) {
 				continue
 			}
 			if len(e.OnDuplicate) > 0 {
-				if err = e.onDuplicateUpdate(row, h, toUpdateColumns); err != nil {
+				if err = e.onDuplicateUpdate(row, h, toUpdateColumns, toUpdateColumnsOrder); err != nil {
 					return nil, errors.Trace(err)
 				}
 				continue
@@ -729,7 +732,11 @@ func (e *InsertValues) getColumns(tableCols []*table.Column) ([]*table.Column, e
 		for _, v := range e.Setlist {
 			columns = append(columns, v.Col.ColName.O)
 		}
-
+		if e.GenValues != nil {
+			for _, v := range e.GenValues.Setlist {
+				columns = append(columns, v.Col.ColName.O)
+			}
+		}
 		cols, err = table.FindCols(tableCols, columns)
 		if err != nil {
 			return nil, errors.Errorf("INSERT INTO %s: %s", e.Table.Meta().Name.O, err)
@@ -743,6 +750,11 @@ func (e *InsertValues) getColumns(tableCols []*table.Column) ([]*table.Column, e
 		columns := make([]string, 0, len(e.Columns))
 		for _, v := range e.Columns {
 			columns = append(columns, v.Name.O)
+		}
+		if e.GenValues != nil {
+			for _, v := range e.GenValues.Columns {
+				columns = append(columns, v.Name.O)
+			}
 		}
 		cols, err = table.FindCols(tableCols, columns)
 		if err != nil {
@@ -775,6 +787,16 @@ func (e *InsertValues) fillValueList() error {
 		}
 		e.Lists = append(e.Lists, l)
 	}
+	if e.GenValues != nil && len(e.GenValues.Setlist) > 0 {
+		if len(e.GenValues.Lists) > 0 {
+			return errors.Errorf("INSERT INTO %s: set type should not use values", e.Table)
+		}
+		l := make([]expression.Expression, 0, len(e.GenValues.Setlist))
+		for _, v := range e.GenValues.Setlist {
+			l = append(l, v.Expr)
+		}
+		e.GenValues.Lists = append(e.GenValues.Lists, l)
+	}
 	return nil
 }
 
@@ -805,7 +827,13 @@ func (e *InsertValues) getRows(cols []*table.Column) (rows [][]types.Datum, err 
 
 	rows = make([][]types.Datum, len(e.Lists))
 	length := len(e.Lists[0])
+	if e.GenValues != nil {
+		length += len(e.GenValues.Lists[0])
+	}
 	for i, list := range e.Lists {
+		if e.GenValues != nil {
+			list = append(list, e.GenValues.Lists[i]...)
+		}
 		if err = e.checkValueCount(length, len(list), i, cols); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -819,21 +847,38 @@ func (e *InsertValues) getRows(cols []*table.Column) (rows [][]types.Datum, err 
 }
 
 func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression) ([]types.Datum, error) {
-	vals := make([]types.Datum, len(list))
-	for i, expr := range list {
+	length := len(e.Lists[0]) // It's length of elements coming from values(...) explicitly.
+	vals := make([]types.Datum, length)
+	for i, expr := range list[0:length] {
 		val, err := expr.Eval(nil)
-		vals[i] = val
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		vals[i] = val
 	}
-	return e.fillRowData(cols, vals, false)
+	datums, err := e.fillRowData(cols, vals, false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// For generated column, we should eval expr with a datum list
+	// which has same schema with e.Table. And, we can eval them one
+	// by one, because they can only refer generated columns occurring
+	// earilier in the table.
+	for i, expr := range list[length:] {
+		val, err := expr.Eval(datums)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		offset := cols[length+i].Offset
+		datums[offset] = val
+	}
+	return datums, nil
 }
 
 func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, error) {
 	// process `insert|replace into ... select ... from ...`
 	if e.SelectExec.Schema().Len() != len(cols) {
-		return nil, errors.Errorf("Column count %d doesn't match value count %d", len(cols), e.SelectExec.Schema().Len())
+		return nil, ErrWrongValueCountOnRow.GenByArgs(1)
 	}
 	var rows [][]types.Datum
 	for {
@@ -939,6 +984,9 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 			if !e.ctx.GetSessionVars().RetryInfo.Retrying {
 				e.ctx.GetSessionVars().RetryInfo.AddAutoIncrementID(recordID)
 			}
+		} else if len(c.GeneratedExprString) != 0 {
+			// just leave generated column as null.
+			row[i].SetNull()
 		} else {
 			var err error
 			row[i], err = table.GetColDefaultValue(e.ctx, c.ToInfo())
@@ -958,7 +1006,7 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 
 // onDuplicateUpdate updates the duplicate row.
 // TODO: Report rows affected and last insert id.
-func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]*expression.Assignment) error {
+func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]*expression.Assignment, colsOrder []int) error {
 	data, err := e.Table.Row(e.ctx, h)
 	if err != nil {
 		return errors.Trace(err)
@@ -968,17 +1016,17 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]
 	e.ctx.GetSessionVars().CurrInsertValues = row
 	// evaluate assignment
 	newData := make([]types.Datum, len(data))
-	for i, c := range row {
-		asgn, ok := cols[i]
-		if !ok {
-			newData[i] = c
-			continue
+	copy(newData, data)
+	for _, i := range colsOrder {
+		if asgn, ok := cols[i]; ok {
+			// "on duplicate key update f1 = 3, f2 = f1" should
+			// set both f1 and f2 to 3, so we eval Expr by newData.
+			val, err1 := asgn.Expr.Eval(newData)
+			if err1 != nil {
+				return errors.Trace(err1)
+			}
+			newData[i] = val
 		}
-		val, err1 := asgn.Expr.Eval(data)
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-		newData[i] = val
 	}
 
 	assignFlag := make([]bool, len(e.Table.Cols()))
@@ -1007,18 +1055,20 @@ func findColumnByName(t table.Table, tableName, colName string) (*table.Column, 
 	return c, nil
 }
 
-func getOnDuplicateUpdateColumns(assignList []*expression.Assignment, t table.Table) (map[int]*expression.Assignment, error) {
+func getOnDuplicateUpdateColumns(assignList []*expression.Assignment, t table.Table) (map[int]*expression.Assignment, []int, error) {
 	m := make(map[int]*expression.Assignment, len(assignList))
+	a := make([]int, 0, len(assignList)) // store order of assignment.
 
 	for _, v := range assignList {
 		col := v.Col
 		c, err := findColumnByName(t, col.TblName.L, col.ColName.L)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
 		m[c.Offset] = v
+		a = append(a, c.Offset)
 	}
-	return m, nil
+	return m, a, nil
 }
 
 // ReplaceExec represents a replace executor.

@@ -261,6 +261,10 @@ type DataSource struct {
 	pushedDownConds []expression.Expression
 
 	statisticTable *statistics.Table
+
+	// GenValues is for virtual generated columns without indices.
+	// the key is the offset in row datums, like expression.Column.Index.
+	GenValues map[int]expression.Expression
 }
 
 func (p *DataSource) getPKIsHandleCol() *expression.Column {

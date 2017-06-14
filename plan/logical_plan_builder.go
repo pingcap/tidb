@@ -1105,6 +1105,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		tableInfo:      tableInfo,
 		statisticTable: statisticTable,
 		DBName:         schemaName,
+		GenValues:      make(map[int]expression.Expression, 0),
 	}.init(b.allocator, b.ctx)
 
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, schemaName.L, tableInfo.Name.L, "")
@@ -1128,10 +1129,23 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 			TblName:  tableInfo.Name,
 			DBName:   schemaName,
 			RetType:  &col.FieldType,
-			Position: i,
+			Position: i, // NOTE: Position can be discontinuous?
 			ID:       col.ID})
 	}
 	p.SetSchema(schema)
+	// for not stored generated column
+	for _, col := range schema.Columns {
+		idx := col.Position
+		colInfo := tableInfo.Columns[idx]
+		if len(colInfo.GeneratedExprString) != 0 && !colInfo.GeneratedStored {
+			expr, _, err := b.rewrite(tbl.Cols()[idx].GeneratedExpr, p, nil, true)
+			if err != nil {
+				b.err = errors.Trace(err)
+				return nil
+			}
+			p.GenValues[idx] = expr
+		}
+	}
 	return p
 }
 
@@ -1273,7 +1287,7 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 			return nil
 		}
 	}
-	orderedList, np := b.buildUpdateLists(update.List, p)
+	orderedList, np := b.buildUpdateLists(tableList, update.List, p)
 	if b.err != nil {
 		return nil
 	}
@@ -1284,9 +1298,10 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 	return updt
 }
 
-func (b *planBuilder) buildUpdateLists(list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, LogicalPlan) {
+func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, LogicalPlan) {
 	schema := p.Schema()
 	newList := make([]*expression.Assignment, schema.Len())
+	modifyColumns := make(map[string]struct{}, schema.Len()) // which columns are in set list.
 	for _, assign := range list {
 		col, err := schema.FindColumn(assign.Column)
 		if err != nil {
@@ -1309,6 +1324,19 @@ func (b *planBuilder) buildUpdateLists(list []*ast.Assignment, p LogicalPlan) ([
 		}
 		p = np
 		newList[offset] = &expression.Assignment{Col: col.Clone().(*expression.Column), Expr: newExpr}
+		columnFullName := fmt.Sprintf("%s.%s.%s", col.DBName.L, col.TblName.L, col.ColName)
+		modifyColumns[columnFullName] = struct{}{}
+	}
+	// If columnes in set list contains generated columns, raise error.
+	for _, tn := range tableList {
+		tableInfo := tn.TableInfo
+		for _, colInfo := range tableInfo.Columns {
+			columnFullName := fmt.Sprintf("%s.%s.%s", tn.Schema.L, tn.Name.L, colInfo.Name.L)
+			if _, ok := modifyColumns[columnFullName]; ok && len(colInfo.GeneratedExprString) != 0 {
+				b.err = ErrBadGeneratedColumn.GenByArgs(colInfo.Name.O, tableInfo.Name.O)
+				return nil, nil
+			}
+		}
 	}
 	return newList, p
 }

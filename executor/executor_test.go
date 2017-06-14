@@ -1022,6 +1022,97 @@ func (s *testSuite) TestJSON(c *C) {
 	result.Check(testkit.Rows(`3 {} <nil>`))
 }
 
+func (s *testSuite) TestGeneratedColumnWrite(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE test_gc_write (a int primary key, b int, c int as (a+8) virtual)`)
+	tk.MustExec(`CREATE TABLE test_gc_write_1 (a int primary key, b int, c int)`)
+
+	tests := []struct {
+		stmt string
+		err  int
+	}{
+		// Can't modify generated column by values.
+		{`insert into test_gc_write (a, b, c) values (1, 1, 1)`, mysql.ErrBadGeneratedColumn},
+		{`insert into test_gc_write values (1, 1, 1)`, mysql.ErrBadGeneratedColumn},
+		// Can't modify generated column by select clause.
+		{`insert into test_gc_write select 1, 1, 1`, mysql.ErrBadGeneratedColumn},
+		// Can't modify generated column by on duplicate clause.
+		{`insert into test_gc_write (a, b) values (1, 1) on duplicate key update c = 1`, mysql.ErrBadGeneratedColumn},
+		// Can't modify generated column by set.
+		{`insert into test_gc_write set a = 1, b = 1, c = 1`, mysql.ErrBadGeneratedColumn},
+		// Can't modify generated column by update clause.
+		{`update test_gc_write set c = 1`, mysql.ErrBadGeneratedColumn},
+		// Can't modify generated column by multi-table update clause.
+		{`update test_gc_write, test_gc_write_1 set test_gc_write.c = 1`, mysql.ErrBadGeneratedColumn},
+
+		// Can insert without generated columns.
+		{`insert into test_gc_write (a, b) values (1, 1)`, 0},
+		{`insert into test_gc_write set a = 2, b = 2`, 0},
+		// Can update without generated columns.
+		{`update test_gc_write set b = 2 where a = 2`, 0},
+		{`update test_gc_write t1, test_gc_write_1 t2 set t1.b = 3, t2.b = 4`, 0},
+
+		// But now we can't do this, just as same with MySQL 5.7:
+		{`insert into test_gc_write values (1, 1)`, mysql.ErrWrongValueCountOnRow},
+		{`insert into test_gc_write select 1, 1`, mysql.ErrWrongValueCountOnRow},
+	}
+	for _, tt := range tests {
+		_, err := tk.Exec(tt.stmt)
+		if tt.err != 0 {
+			c.Assert(err, NotNil)
+			terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+			c.Assert(terr.Code(), Equals, terror.ErrCode(tt.err))
+		} else {
+			c.Assert(err, IsNil)
+		}
+	}
+}
+
+// TestGeneratedColumnRead tests select generated columns from table.
+// They should be calculated from their generation expressions.
+func (s *testSuite) TestGeneratedColumnRead(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE test_gv_read(a int primary key, b int, c int as (a+b), d int as (a*b) stored)`)
+
+	// Insert only column a and b, leave c and d be calculated from them.
+	tk.MustExec(`INSERT INTO test_gv_read (a, b) VALUES (0, null)`)
+	tk.MustExec(`INSERT INTO test_gv_read (a, b) VALUES (1, 2)`)
+	tk.MustExec(`INSERT INTO test_gv_read (a, b) VALUES (3, 4)`)
+	result := tk.MustQuery(`SELECT * FROM test_gv_read ORDER BY a`)
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`))
+
+	tk.MustExec(`INSERT INTO test_gv_read SET a = 5, b = 6`)
+	result = tk.MustQuery(`SELECT * FROM test_gv_read ORDER BY a`)
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`, `5 6 11 30`))
+
+	tk.MustExec(`INSERT INTO test_gv_read (a, b) VALUES (5, 8) ON DUPLICATE KEY UPDATE b = 9`)
+	result = tk.MustQuery(`SELECT * FROM test_gv_read ORDER BY a`)
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`, `5 9 14 45`))
+
+	// test order of on duplicate key update list.
+	tk.MustExec(`INSERT INTO test_gv_read (a, b) VALUES (5, 8) ON DUPLICATE KEY UPDATE a = 6, b = a`)
+	result = tk.MustQuery(`SELECT * FROM test_gv_read ORDER BY a`)
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`, `6 6 12 36`))
+
+	tk.MustExec(`INSERT INTO test_gv_read (a, b) VALUES (6, 8) ON DUPLICATE KEY UPDATE b = 8, a = b`)
+	result = tk.MustQuery(`SELECT * FROM test_gv_read ORDER BY a`)
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`, `8 8 16 64`))
+
+	// TODO: support generated column information pushdown.
+	// result = tk.MustQuery(`SELECT * FROM test_gv_read WHERE c = 7 ORDER BY a`)
+	// result.Check(testkit.Rows(`3 4 7 12`))
+}
+
 func (s *testSuite) TestToPBExpr(c *C) {
 	defer func() {
 		s.cleanEnv(c)
