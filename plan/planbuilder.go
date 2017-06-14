@@ -678,7 +678,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	}
 
 	cols := insertPlan.Table.Cols()
-	maxElementIndexInRow := 0
+	maxValuesItemLength := 0 // the max length of items in VALUES list.
 	for _, valuesItem := range insert.Lists {
 		exprList := make([]expression.Expression, 0, len(valuesItem))
 		for i, valueItem := range valuesItem {
@@ -702,9 +702,9 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 				b.err = errors.Trace(err)
 			}
 			exprList = append(exprList, expr)
-			if i > maxElementIndexInRow {
-				maxElementIndexInRow = i
-			}
+		}
+		if len(valuesItem) > maxValuesItemLength {
+			maxValuesItemLength = len(valuesItem)
 		}
 		insertPlan.Lists = append(insertPlan.Lists, exprList)
 	}
@@ -714,8 +714,8 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		// The length of VALUES list maybe exceed table width,
 		// we ignore this here but do checking in executor.
 		var effectiveValuesLen int
-		if maxElementIndexInRow+1 <= len(tableInfo.Columns) {
-			effectiveValuesLen = maxElementIndexInRow + 1
+		if maxValuesItemLength <= len(tableInfo.Columns) {
+			effectiveValuesLen = maxValuesItemLength
 		} else {
 			effectiveValuesLen = len(tableInfo.Columns)
 		}
@@ -755,6 +755,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 			Expr: expr,
 		})
 	}
+
 	mockTablePlan := TableDual{}.init(b.allocator, b.ctx)
 	mockTablePlan.SetSchema(schema)
 

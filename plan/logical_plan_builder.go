@@ -1301,6 +1301,7 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
 func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, LogicalPlan) {
 	schema := p.Schema()
 	newList := make([]*expression.Assignment, schema.Len())
+	modifyColumns := make(map[string]struct{}, schema.Len()) // which columns are in set list.
 	for _, assign := range list {
 		col, err := schema.FindColumn(assign.Column)
 		if err != nil {
@@ -1316,16 +1317,6 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 			b.err = errors.Trace(errors.Errorf("could not find column %s.%s", col.TblName, col.ColName))
 			return nil, nil
 		}
-		for _, tn := range tableList {
-			if tn.Schema.L == col.DBName.L && tn.Name.L == col.TblName.L {
-				tableInfo := tn.TableInfo
-				for _, col := range tableInfo.Columns {
-					if len(col.GeneratedExprString) != 0 {
-						b.err = ErrBadGeneratedColumn.GenByArgs(col.Name.O, tableInfo.Name.O)
-					}
-				}
-			}
-		}
 		newExpr, np, err := b.rewrite(assign.Expr, p, nil, false)
 		if err != nil {
 			b.err = errors.Trace(err)
@@ -1333,6 +1324,19 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 		}
 		p = np
 		newList[offset] = &expression.Assignment{Col: col.Clone().(*expression.Column), Expr: newExpr}
+		columnFullName := fmt.Sprintf("%s.%s.%s", col.DBName.L, col.TblName.L, col.ColName)
+		modifyColumns[columnFullName] = struct{}{}
+	}
+	// If columnes in set list contains generated columns, raise error.
+	for _, tn := range tableList {
+		tableInfo := tn.TableInfo
+		for _, colInfo := range tableInfo.Columns {
+			columnFullName := fmt.Sprintf("%s.%s.%s", tn.Schema.L, tn.Name.L, colInfo.Name.L)
+			if _, ok := modifyColumns[columnFullName]; ok && len(colInfo.GeneratedExprString) != 0 {
+				b.err = ErrBadGeneratedColumn.GenByArgs(colInfo.Name.O, tableInfo.Name.O)
+				return nil, nil
+			}
+		}
 	}
 	return newList, p
 }
