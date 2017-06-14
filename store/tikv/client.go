@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	maxConnectionNumber = 100
+	maxConnectionNumber = 16
 	dialTimeout         = 5 * time.Second
 	readTimeoutShort    = 20 * time.Second  // For requests that read/write several key-values.
 	readTimeoutMedium   = 60 * time.Second  // For requests that may need scan region.
@@ -51,28 +51,26 @@ type Client interface {
 
 type connArray struct {
 	lock  *sync.Mutex
-	addr  string
 	index uint32
 	v     []*grpc.ClientConn
 }
 
-func newConnArray(maxSize uint32, addr string) *connArray {
-	return &connArray{
+func newConnArray(maxSize uint32, addr string) (*connArray, error) {
+	a := &connArray{
 		lock:  &sync.Mutex{},
-		addr:  addr,
 		index: 0,
 		v:     make([]*grpc.ClientConn, maxSize),
 	}
+	if err := a.Init(maxSize, addr); err != nil {
+		return nil, err
+	}
+	return a, nil
 }
 
-func (a *connArray) Get() (*grpc.ClientConn, error) {
-	a.lock.Lock()
-	defer a.lock.Unlock()
-	conn := a.v[a.index]
-	if conn == nil {
-		var err error
-		conn, err = grpc.Dial(
-			a.addr,
+func (a *connArray) Init(maxSize uint32, addr string) error {
+	for i, _ := range a.v {
+		conn, err := grpc.Dial(
+			addr,
 			grpc.WithInsecure(),
 			grpc.WithTimeout(dialTimeout),
 			grpc.WithInitialWindowSize(grpcInitialWindowSize),
@@ -80,22 +78,35 @@ func (a *connArray) Get() (*grpc.ClientConn, error) {
 			grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
 			grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor))
 		if err != nil {
-			return nil, errors.Trace(err)
+			// Cleanup if the initialization fails.
+			a.doClose()
+			return errors.Trace(err)
 		}
-		a.v[a.index] = conn
+		a.v[i] = conn
 	}
-	a.index = (a.index + 1) % uint32(len(a.v))
-	return conn, nil
+	return nil
 }
 
-func (a *connArray) Close() {
+func (a *connArray) Get() *grpc.ClientConn {
 	a.lock.Lock()
+	defer a.lock.Unlock()
+	conn := a.v[a.index]
+	a.index = (a.index + 1) % uint32(len(a.v))
+	return conn
+}
+
+func (a *connArray) doClose() {
 	for i, c := range a.v {
 		if c != nil {
 			c.Close()
 			a.v[i] = nil
 		}
 	}
+}
+
+func (a *connArray) Close() {
+	a.lock.Lock()
+	a.doClose()
 	a.lock.Unlock()
 }
 
@@ -131,7 +142,7 @@ func (c *rpcClient) getConn(addr string) (*grpc.ClientConn, error) {
 			return nil, err
 		}
 	}
-	return array.Get()
+	return array.Get(), nil
 }
 
 func (c *rpcClient) createConnArray(addr string) (*connArray, error) {
@@ -139,7 +150,11 @@ func (c *rpcClient) createConnArray(addr string) (*connArray, error) {
 	defer c.Unlock()
 	array, ok := c.conns[addr]
 	if !ok {
-		array = newConnArray(maxConnectionNumber, addr)
+		var err error
+		array, err = newConnArray(maxConnectionNumber, addr)
+		if err != nil {
+			return nil, err
+		}
 		c.conns[addr] = array
 	}
 	return array, nil
