@@ -1099,6 +1099,16 @@ func (s *testSuite) TestGeneratedColumnRead(c *C) {
 	result = tk.MustQuery(`SELECT * FROM test_gv_read ORDER BY a`)
 	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`, `5 9 14 45`))
 
+	// test order of on duplicate key update list.
+	tk.MustExec(`INSERT INTO test_gv_read (a, b) VALUES (5, 8) ON DUPLICATE KEY UPDATE a = 6, b = a`)
+	result = tk.MustQuery(`SELECT * FROM test_gv_read ORDER BY a`)
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`, `6 6 12 36`))
+
+	tk.MustExec(`INSERT INTO test_gv_read (a, b) VALUES (6, 8) ON DUPLICATE KEY UPDATE b = 8, a = b`)
+	result = tk.MustQuery(`SELECT * FROM test_gv_read ORDER BY a`)
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`, `8 8 16 64`))
+
+	// TODO: support generated column information pushdown.
 	// result = tk.MustQuery(`SELECT * FROM test_gv_read WHERE c = 7 ORDER BY a`)
 	// result.Check(testkit.Rows(`3 4 7 12`))
 }
