@@ -1307,6 +1307,12 @@ func (s *testParserSuite) TestDDL(c *C) {
 		// for truncate statement
 		{"TRUNCATE TABLE t1", true},
 		{"TRUNCATE t1", true},
+
+		// for empty alert table index
+		{"ALTER TABLE t ADD INDEX () ", false},
+		{"ALTER TABLE t ADD UNIQUE ()", false},
+		{"ALTER TABLE t ADD UNIQUE INDEX ()", false},
+		{"ALTER TABLE t ADD UNIQUE KEY ()", false},
 	}
 	s.RunTest(c, table)
 }
