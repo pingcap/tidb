@@ -1788,7 +1788,7 @@ func strDatetimeAddDuration(d string, arg1 types.Duration) (result types.Datum, 
 	if getFsp(d) != 0 {
 		tmpDuration.Fsp = types.MaxFsp
 	} else {
-		tmpDuration.Fsp = 0
+		tmpDuration.Fsp = types.MinFsp
 	}
 	result.SetString(resultDuration.String())
 	return
@@ -1807,13 +1807,13 @@ func strDurationAddDuration(d string, arg1 types.Duration) (result types.Datum, 
 	if getFsp(d) != 0 {
 		tmpDuration.Fsp = types.MaxFsp
 	} else {
-		tmpDuration.Fsp = 0
+		tmpDuration.Fsp = types.MinFsp
 	}
 	result.SetString(tmpDuration.String())
 	return
 }
 
-// strDatetimeSubDuration subs duration to datetime string, returns a datum value.
+// strDatetimeSubDuration subtracts duration from datetime string, returns a datum value.
 func strDatetimeSubDuration(d string, arg1 types.Duration) (result types.Datum, err error) {
 	arg0, err := types.ParseTime(d, mysql.TypeDatetime, getFsp(d))
 	if err != nil {
@@ -1831,13 +1831,13 @@ func strDatetimeSubDuration(d string, arg1 types.Duration) (result types.Datum, 
 	if getFsp(d) != 0 {
 		tmpDuration.Fsp = types.MaxFsp
 	} else {
-		tmpDuration.Fsp = 0
+		tmpDuration.Fsp = types.MinFsp
 	}
 	result.SetString(resultDuration.String())
 	return
 }
 
-// strDurationSubDuration subs duration to duration string, returns a datum value.
+// strDurationSubDuration subtracts duration from duration string, returns a datum value.
 func strDurationSubDuration(d string, arg1 types.Duration) (result types.Datum, err error) {
 	arg0, err := types.ParseDuration(d, getFsp(d))
 	if err != nil {
@@ -1850,7 +1850,7 @@ func strDurationSubDuration(d string, arg1 types.Duration) (result types.Datum, 
 	if getFsp(d) != 0 {
 		tmpDuration.Fsp = types.MaxFsp
 	} else {
-		tmpDuration.Fsp = 0
+		tmpDuration.Fsp = types.MinFsp
 	}
 	result.SetString(tmpDuration.String())
 	return

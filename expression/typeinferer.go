@@ -395,8 +395,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp.Flag |= mysql.UnsignedFlag
 	// time related
 	case ast.AddTime:
-		t := x.Args[0].GetType().Tp
-		switch t {
+		switch t := x.Args[0].GetType().Tp; t {
 		case mysql.TypeDatetime, mysql.TypeDate, mysql.TypeTimestamp:
 			tp = types.NewFieldType(mysql.TypeDatetime)
 		case mysql.TypeDuration:
@@ -406,8 +405,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		}
 		tp.Charset, tp.Collate = types.DefaultCharsetForType(tp.Tp)
 	case ast.SubTime:
-		t := x.Args[0].GetType().Tp
-		switch t {
+		switch t := x.Args[0].GetType().Tp; t {
 		case mysql.TypeDatetime, mysql.TypeDate, mysql.TypeTimestamp:
 			tp = types.NewFieldType(mysql.TypeDatetime)
 		case mysql.TypeDuration:
