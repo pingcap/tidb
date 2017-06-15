@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-binlog"
 )
@@ -71,6 +72,11 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 		}
 
 		col := table.ToColumn(colInfo)
+		if len(colInfo.GeneratedExprString) != 0 {
+			// here we can ignore error because GeneratedExprString has been already
+			// checked when this table or column was added.
+			col.GeneratedExpr, _ = parser.ParseExpression(colInfo.GeneratedExprString)
+		}
 		columns = append(columns, col)
 	}
 
