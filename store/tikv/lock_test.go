@@ -14,14 +14,15 @@
 package tikv
 
 import (
+	"math"
+	"runtime"
+	"time"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
-	"math"
-	"runtime"
-	"time"
 )
 
 type testLockSuite struct {
