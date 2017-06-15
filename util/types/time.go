@@ -908,6 +908,9 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 			} else if len(str) == 4 {
 				// MMSS
 				_, err = fmt.Sscanf(str, "%2d%2d", &minute, &second)
+			} else if len(str) == 3 {
+				// MSS
+				_, err = fmt.Sscanf(str, "%1d%2d", &minute, &second)
 			} else if len(str) == 2 {
 				// SS
 				_, err = fmt.Sscanf(str, "%2d", &second)
