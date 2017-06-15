@@ -230,19 +230,6 @@ func (s JobState) String() string {
 	}
 }
 
-// Owner is for DDL Owner.
-type Owner struct {
-	OwnerID string `json:"owner_id"`
-	// LastUpdateTS now uses unix nano seconds
-	// TODO: Use timestamp allocated by TSO.
-	LastUpdateTS int64 `json:"last_update_ts"`
-}
-
-// String implements fmt.Stringer interface.
-func (o *Owner) String() string {
-	return fmt.Sprintf("ID:%s, LastUpdateTS:%d", o.OwnerID, o.LastUpdateTS)
-}
-
 // SchemaDiff contains the schema modification at a particular schema version.
 // It is used to reduce schema reload cost.
 type SchemaDiff struct {
