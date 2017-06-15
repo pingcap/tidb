@@ -135,6 +135,18 @@ func (t *TableInfo) GetPkName() CIStr {
 	return CIStr{}
 }
 
+// ColumnIsInIndex tests c is included in any indices of t or not.
+func (t *TableInfo) ColumnIsInIndex(c *ColumnInfo) bool {
+	for _, index := range t.Indices {
+		for _, column := range index.Columns {
+			if column.Name == c.Name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // IndexColumn provides index column info.
 type IndexColumn struct {
 	Name   CIStr `json:"name"`   // Index name
