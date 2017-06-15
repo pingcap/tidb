@@ -17,6 +17,7 @@ import (
 	"math"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -685,23 +686,28 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 	statsTbl := p.statisticTable
 	rowCount := float64(statsTbl.Count)
 	sc := p.ctx.GetSessionVars().StmtCtx
+	idxCols, colLengths := expression.IndexInfo2Cols(p.Schema().Columns, idx)
+	rb := ranger.Builder{Sc: sc}
+	is.Ranges = rb.BuildIndexRanges(ranger.FullRange, types.NewFieldType(mysql.TypeNull))
 	if len(p.pushedDownConds) > 0 {
 		conds := make([]expression.Expression, 0, len(p.pushedDownConds))
 		for _, cond := range p.pushedDownConds {
 			conds = append(conds, cond.Clone())
 		}
-		is.AccessCondition, is.filterCondition, is.accessEqualCount, is.accessInAndEqCount = ranger.DetachIndexScanConditions(conds, idx)
-		is.Ranges, err = ranger.BuildIndexRange(sc, is.Table, is.Index, is.accessInAndEqCount, is.AccessCondition)
-		if err != nil {
-			return nil, errors.Trace(err)
+		if len(idxCols) > 0 {
+			var ranges []types.Range
+			ranges, is.AccessCondition, is.filterCondition, err = ranger.BuildRange(sc, conds, ranger.IndexRange, idxCols, colLengths)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			is.Ranges = ranger.Range2IndexRange(ranges)
+			rowCount, err = statsTbl.GetRowCountByIndexRanges(sc, is.Index.ID, is.Ranges, len(is.AccessCondition))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		} else {
+			is.filterCondition = conds
 		}
-		rowCount, err = statsTbl.GetRowCountByIndexRanges(sc, is.Index.ID, is.Ranges, is.accessInAndEqCount)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	} else {
-		rb := ranger.Builder{Sc: sc}
-		is.Ranges = rb.BuildIndexRanges(ranger.FullRange, types.NewFieldType(mysql.TypeNull))
 	}
 	cop := &copTask{
 		cnt:       rowCount,
@@ -741,7 +747,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 			if col.Name.L == prop.cols[0].ColName.L {
 				matchProperty = matchIndicesProp(idx.Columns[i:], prop.cols)
 				break
-			} else if i >= is.accessEqualCount {
+			} else if i >= len(is.AccessCondition) || is.AccessCondition[i].(*expression.ScalarFunction).FuncName.L != ast.EQ {
 				matchProperty = false
 				break
 			}
@@ -820,18 +826,23 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 	}.init(p.allocator, p.ctx)
 	ts.SetSchema(p.schema)
 	sc := p.ctx.GetSessionVars().StmtCtx
+	ts.Ranges = []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}
+	pkColumn := expression.ColInfo2Col(ts.schema.Columns, ts.Table.GetPkColInfo())
 	if len(p.pushedDownConds) > 0 {
 		conds := make([]expression.Expression, 0, len(p.pushedDownConds))
 		for _, cond := range p.pushedDownConds {
 			conds = append(conds, cond.Clone())
 		}
-		ts.AccessCondition, ts.filterCondition = ranger.DetachColumnConditions(conds, p.tableInfo.GetPkName())
-		ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sc)
-		if err != nil {
-			return nil, errors.Trace(err)
+		if pkColumn != nil {
+			var ranges []types.Range
+			ranges, ts.AccessCondition, ts.filterCondition, err = ranger.BuildRange(sc, conds, ranger.IntRange, []*expression.Column{pkColumn}, nil)
+			ts.Ranges = ranger.Range2IntRange(ranges)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		} else {
+			ts.filterCondition = conds
 		}
-	} else {
-		ts.Ranges = []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}
 	}
 	statsTbl := p.statisticTable
 	rowCount := float64(statsTbl.Count)

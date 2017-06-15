@@ -22,6 +22,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
+// Range is the interface of the three type of range.
+type Range interface {
+	fmt.Stringer
+}
+
 // IntColumnRange represents a range for a integer column, both low and high are inclusive.
 type IntColumnRange struct {
 	LowVal  int64

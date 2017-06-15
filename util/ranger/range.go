@@ -36,6 +36,13 @@ const (
 	CodeUnsupportedType terror.ErrCode = 1
 )
 
+// Range type.
+const (
+	IntRange = iota
+	ColumnRange
+	IndexRange
+)
+
 // Point is the end point of range interval.
 type point struct {
 	value types.Datum
