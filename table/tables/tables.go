@@ -75,7 +75,10 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 		if len(colInfo.GeneratedExprString) != 0 {
 			// here we can ignore error because GeneratedExprString has been already
 			// checked when this table or column was added.
-			col.GeneratedExpr, _ = parser.ParseExpression(colInfo.GeneratedExprString)
+			var err error
+			if col.GeneratedExpr, _ = parser.ParseExpression(colInfo.GeneratedExprString); err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 		columns = append(columns, col)
 	}
