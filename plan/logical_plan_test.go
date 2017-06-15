@@ -63,7 +63,7 @@ func newStringType() types.FieldType {
 	return *ft
 }
 
-func MockResolve(node ast.Node) (infoschema.InfoSchema, error) {
+func MockTable() *model.TableInfo {
 	indices := []*model.IndexInfo{
 		{
 			Name: model.NewCIStr("c_d_e"),
@@ -257,7 +257,11 @@ func MockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 		Name:       model.NewCIStr("t"),
 		PKIsHandle: true,
 	}
-	is := infoschema.MockInfoSchema([]*model.TableInfo{table})
+	return table
+}
+
+func MockResolve(node ast.Node) (infoschema.InfoSchema, error) {
+	is := infoschema.MockInfoSchema([]*model.TableInfo{MockTable()})
 	ctx := mockContext()
 	err := MockResolveName(node, is, "test", ctx)
 	if err != nil {
