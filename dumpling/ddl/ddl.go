@@ -285,40 +285,9 @@ func (d *ddl) Stop() error {
 	defer d.m.Unlock()
 
 	d.close()
-
-	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		owner, err1 := t.GetDDLJobOwner()
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-		if owner == nil || owner.OwnerID != d.uuid {
-			return nil
-		}
-
-		// DDL job's owner is me, clean it so other servers can complete it quickly.
-		return t.SetDDLJobOwner(&model.Owner{})
-	})
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	err = kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		owner, err1 := t.GetBgJobOwner()
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-		if owner == nil || owner.OwnerID != d.uuid {
-			return nil
-		}
-
-		// Background job's owner is me, clean it so other servers can complete it quickly.
-		return t.SetBgJobOwner(&model.Owner{})
-	})
 	log.Infof("stop DDL:%s", d.uuid)
 
-	return errors.Trace(err)
+	return nil
 }
 
 func (d *ddl) start(ctx goctx.Context) {
