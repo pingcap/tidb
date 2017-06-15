@@ -220,8 +220,9 @@ func (c *concatFunctionClass) inferType(args []Expression) *types.FieldType {
 		}
 	}
 	retType := types.NewFieldType(tp)
-	types.DefaultCharsetForType(tp)
+	retType.Charset, retType.Collate = charset.CharsetUTF8, charset.CollationUTF8
 	if existsBinStr {
+		retType.Charset, retType.Collate = charset.CharsetBin, charset.CollationBin
 		retType.Flag |= mysql.BinaryFlag
 	}
 	return retType
