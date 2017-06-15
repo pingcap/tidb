@@ -532,6 +532,7 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 		{"235959", "00:00:01", "24:00:00"},
 		{"110:00:00", "1 02:00:00", "136:00:00"},
 		{"-110:00:00", "1 02:00:00", "-84:00:00"},
+		{"234", "1.123", "00:02:35.123000"},
 	}
 	for _, t := range tbl {
 		dur, err := types.ParseDuration(t.Input, getFsp(t.Input))
