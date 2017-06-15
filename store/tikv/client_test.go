@@ -38,7 +38,7 @@ func (s *testClientSuite) TestConn(c *C) {
 
 	conn2, err := client.getConn(addr)
 	c.Assert(err, IsNil)
-	c.Assert(conn2, Equals, conn1)
+	c.Assert(conn2, Not(Equals), conn1)
 
 	client.Close()
 	conn3, err := client.getConn(addr)
