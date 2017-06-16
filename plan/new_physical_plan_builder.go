@@ -699,8 +699,6 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 			return nil, errors.Trace(err)
 		}
 	} else {
-		// rb := ranger.builder{Sc: sc}
-		// is.Ranges = rb.buildIndexRanges(ranger.fullRangePoints, types.NewFieldType(mysql.TypeNull))
 		is.Ranges = ranger.FullIndexRange
 	}
 	cop := &copTask{
