@@ -230,13 +230,6 @@ func (s *testSuite) TestDDL(c *C) {
 
 	t := meta.NewMeta(txn)
 
-	owner := &model.Owner{OwnerID: "1"}
-	err = t.SetDDLJobOwner(owner)
-	c.Assert(err, IsNil)
-	ov, err := t.GetDDLJobOwner()
-	c.Assert(err, IsNil)
-	c.Assert(owner, DeepEquals, ov)
-
 	job := &model.Job{ID: 1}
 	err = t.EnQueueDDLJob(job)
 	c.Assert(err, IsNil)
@@ -281,13 +274,6 @@ func (s *testSuite) TestDDL(c *C) {
 		c.Assert(job.ID, Greater, lastID)
 		lastID = job.ID
 	}
-
-	// DDL background job test
-	err = t.SetBgJobOwner(owner)
-	c.Assert(err, IsNil)
-	ov, err = t.GetBgJobOwner()
-	c.Assert(err, IsNil)
-	c.Assert(owner, DeepEquals, ov)
 
 	bgJob := &model.Job{ID: 1}
 	err = t.EnQueueBgJob(bgJob)

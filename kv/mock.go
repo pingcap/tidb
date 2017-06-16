@@ -15,6 +15,7 @@ package kv
 
 import (
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
 // mockTxn is a txn that returns a retryAble error when called Commit.
@@ -130,6 +131,10 @@ func (s *mockStorage) CurrentVersion() (Version, error) {
 }
 
 func (s *mockStorage) GetClient() Client {
+	return nil
+}
+
+func (s *mockStorage) GetOracle() oracle.Oracle {
 	return nil
 }
 

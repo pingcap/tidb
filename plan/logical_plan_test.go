@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
@@ -62,7 +63,7 @@ func newStringType() types.FieldType {
 	return *ft
 }
 
-func MockResolve(node ast.Node) (infoschema.InfoSchema, error) {
+func MockTable() *model.TableInfo {
 	indices := []*model.IndexInfo{
 		{
 			Name: model.NewCIStr("c_d_e"),
@@ -256,7 +257,11 @@ func MockResolve(node ast.Node) (infoschema.InfoSchema, error) {
 		Name:       model.NewCIStr("t"),
 		PKIsHandle: true,
 	}
-	is := infoschema.MockInfoSchema([]*model.TableInfo{table})
+	return table
+}
+
+func MockResolve(node ast.Node) (infoschema.InfoSchema, error) {
+	is := infoschema.MockInfoSchema([]*model.TableInfo{MockTable()})
 	ctx := mockContext()
 	err := MockResolveName(node, is, "test", ctx)
 	if err != nil {
@@ -331,6 +336,10 @@ type mockStore struct {
 
 func (m *mockStore) GetClient() kv.Client {
 	return m.client
+}
+
+func (m *mockStore) GetOracle() oracle.Oracle {
+	return nil
 }
 
 func (m *mockStore) Begin() (kv.Transaction, error) {

@@ -420,6 +420,9 @@ func (it *copIterator) Next() ([]byte, error) {
 	if resp.err != nil {
 		return nil, errors.Trace(resp.err)
 	}
+	if resp.Data == nil {
+		return []byte{}, nil
+	}
 	return resp.Data, nil
 }
 
