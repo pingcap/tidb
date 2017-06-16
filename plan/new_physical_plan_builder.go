@@ -700,7 +700,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			is.Ranges = ranger.Range2IndexRange(ranges)
+			is.Ranges = ranger.RangeSlice2IndexRangeSlice(ranges)
 			rowCount, err = statsTbl.GetRowCountByIndexRanges(sc, is.Index.ID, is.Ranges, len(is.AccessCondition))
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -836,7 +836,7 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 		if pkColumn != nil {
 			var ranges []ranger.Range
 			ranges, ts.AccessCondition, ts.filterCondition, err = ranger.BuildRange(sc, conds, ranger.IntRangeType, []*expression.Column{pkColumn}, nil)
-			ts.Ranges = ranger.Range2IntRange(ranges)
+			ts.Ranges = ranger.RangeSlice2IntRangeSlice(ranges)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

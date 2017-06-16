@@ -243,8 +243,8 @@ func BuildRange(sc *variable.StatementContext, conds []expression.Expression, ra
 	return
 }
 
-// Range2IntRange changes []types.Range to []types.IntColumnRange
-func Range2IntRange(ranges []Range) []IntColumnRange {
+// RangeSlice2IntRangeSlice changes []types.Range to []types.IntColumnRange
+func RangeSlice2IntRangeSlice(ranges []Range) []IntColumnRange {
 	retRanges := make([]IntColumnRange, 0, len(ranges))
 	for _, ran := range ranges {
 		retRanges = append(retRanges, ran.Convert2IntRange())
@@ -252,8 +252,8 @@ func Range2IntRange(ranges []Range) []IntColumnRange {
 	return retRanges
 }
 
-// Range2ColumnRange changes []types.Range to []types.ColumnRange
-func Range2ColumnRange(ranges []Range) []*ColumnRange {
+// RangeSlice2ColumnRangeSlice changes []types.Range to []*types.ColumnRange
+func RangeSlice2ColumnRangeSlice(ranges []Range) []*ColumnRange {
 	retRanges := make([]*ColumnRange, 0, len(ranges))
 	for _, ran := range ranges {
 		retRanges = append(retRanges, ran.Convert2ColumnRange())
@@ -261,8 +261,8 @@ func Range2ColumnRange(ranges []Range) []*ColumnRange {
 	return retRanges
 }
 
-// Range2IndexRange changes []types.Range to []*types.IndexRange
-func Range2IndexRange(ranges []Range) []*IndexRange {
+// RangeSlice2IndexRangeSlice changes []types.Range to []*types.IndexRange
+func RangeSlice2IndexRangeSlice(ranges []Range) []*IndexRange {
 	retRanges := make([]*IndexRange, 0, len(ranges))
 	for _, ran := range ranges {
 		retRanges = append(retRanges, ran.Convert2IndexRange())
