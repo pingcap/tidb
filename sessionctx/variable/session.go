@@ -329,6 +329,9 @@ type StatementContext struct {
 		foundRows    uint64
 		warnings     []error
 	}
+
+	// Copied from SessionVars.TimeZone
+	TimeZone *time.Location
 }
 
 // AddAffectedRows adds affected rows.
