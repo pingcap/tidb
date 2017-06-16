@@ -132,18 +132,6 @@ func (t *TableInfo) GetPkName() CIStr {
 	return CIStr{}
 }
 
-// GetPkColInfo gets the ColumnInfo of pk if exists.
-func (t *TableInfo) GetPkColInfo() *ColumnInfo {
-	if t.PKIsHandle {
-		for _, colInfo := range t.Columns {
-			if mysql.HasPriKeyFlag(colInfo.Flag) {
-				return colInfo
-			}
-		}
-	}
-	return nil
-}
-
 // IndexColumn provides index column info.
 type IndexColumn struct {
 	Name   CIStr `json:"name"`   // Index name

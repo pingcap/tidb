@@ -246,19 +246,6 @@ func Column2Exprs(cols []*Column) []Expression {
 	return result
 }
 
-// ColInfo2Col finds the correspond column of the ColumnInfo in a column slice.
-func ColInfo2Col(cols []*Column, col *model.ColumnInfo) *Column {
-	if col == nil {
-		return nil
-	}
-	for _, c := range cols {
-		if c.ColName.L == col.Name.L {
-			return c
-		}
-	}
-	return nil
-}
-
 // indexCol2Col finds the correspond column of the IndexColumn in a column slice.
 func indexCol2Col(cols []*Column, col *model.IndexColumn) *Column {
 	for _, c := range cols {
