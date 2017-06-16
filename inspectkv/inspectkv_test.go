@@ -124,7 +124,7 @@ func (s *testSuite) TearDownSuite(c *C) {
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
 
-	err = t.DropTable(s.dbInfo.ID, s.tbInfo.ID)
+	err = t.DropTable(s.dbInfo.ID, s.tbInfo.ID, true)
 	c.Assert(err, IsNil)
 	err = t.DropDatabase(s.dbInfo.ID)
 	c.Assert(err, IsNil)

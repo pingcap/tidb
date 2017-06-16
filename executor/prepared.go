@@ -332,6 +332,7 @@ func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interfac
 func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 	sessVars := ctx.GetSessionVars()
 	sc := new(variable.StatementContext)
+	sc.TimeZone = sessVars.GetTimeZone()
 	switch s.(type) {
 	case *ast.UpdateStmt, *ast.InsertStmt, *ast.DeleteStmt:
 		sc.IgnoreTruncate = false
