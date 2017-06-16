@@ -26,7 +26,7 @@ func getDefaultCharsetAndCollate() (string, string) {
 	return "utf8", "utf8_bin"
 }
 
-// ParseExpression parses an ExprNode from string.
+// ParseExpression parses an ExprNode from a string.
 // Where should we use this?
 //   When TiDB bootstraps, it'll load infoschema from TiKV.
 //   Because some ColumnInfos have attribute `GeneratedExprString`,
