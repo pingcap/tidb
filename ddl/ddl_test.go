@@ -76,7 +76,7 @@ func checkEqualTable(c *C, t1, t2 *model.TableInfo) {
 }
 
 func checkHistoryJob(c *C, job *model.Job) {
-	c.Assert(job.State, Equals, model.JobWaited)
+	c.Assert(job.State, Equals, model.JobSynced)
 }
 
 func checkHistoryJobArgs(c *C, ctx context.Context, id int64, args *historyJobArgs) {

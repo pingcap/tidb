@@ -188,7 +188,7 @@ func (d *ddl) handleDDLJobQueue() error {
 				return errors.Trace(err)
 			}
 
-			if job.IsRunning() || job.IsWaited() {
+			if job.IsRunning() || job.IsSynced() {
 				// If we enter a new state, crash when waiting 2 * lease time, and restart quickly,
 				// we may run the job immediately again, but we don't wait enough 2 * lease time to
 				// let other servers update the schema.
@@ -206,7 +206,7 @@ func (d *ddl) handleDDLJobQueue() error {
 			once = false
 
 			if job.IsDone() {
-				job.State = model.JobWaited
+				job.State = model.JobSynced
 				err = d.finishDDLJob(t, job)
 				return errors.Trace(err)
 			}
@@ -245,7 +245,7 @@ func (d *ddl) handleDDLJobQueue() error {
 		if job.State == model.JobRunning || job.State == model.JobDone {
 			d.waitSchemaChanged(waitTime, schemaVer)
 		}
-		if job.IsWaited() {
+		if job.IsSynced() {
 			d.startBgJob(job.Type)
 			asyncNotify(d.ddlJobDoneCh)
 		}

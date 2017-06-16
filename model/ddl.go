@@ -194,9 +194,9 @@ func (job *Job) IsCancelled() bool {
 	return job.State == JobCancelled || job.State == JobRollbackDone
 }
 
-// IsWaited returns whether the job is waited or not.
-func (job *Job) IsWaited() bool {
-	return job.State == JobWaited
+// IsSynced returns whether the job is waited or not.
+func (job *Job) IsSynced() bool {
+	return job.State == JobSynced
 }
 
 // IsDone returns whether job is done.
@@ -223,8 +223,9 @@ const (
 	JobRollbackDone
 	JobDone
 	JobCancelled
-	// TODO: complete comments.
-	JobWaited
+	// JobSynced is used to mark the information about the completion of this job
+	// has been synchronized to all servers.
+	JobSynced
 )
 
 // String implements fmt.Stringer interface.
@@ -240,8 +241,8 @@ func (s JobState) String() string {
 		return "done"
 	case JobCancelled:
 		return "cancelled"
-	case JobWaited:
-		return "waited"
+	case JobSynced:
+		return "synced"
 	default:
 		return "none"
 	}

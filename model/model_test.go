@@ -125,7 +125,7 @@ func (*testSuite) TestJobCodec(c *C) {
 	c.Assert(job.IsDone(), IsTrue)
 	c.Assert(job.IsFinished(), IsTrue)
 	c.Assert(job.IsRunning(), IsFalse)
-	c.Assert(job.IsWaited(), IsFalse)
+	c.Assert(job.IsSynced(), IsFalse)
 }
 
 func (testSuite) TestState(c *C) {
