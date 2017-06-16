@@ -611,7 +611,7 @@ func (s *testEvaluatorSuite) TestSubTimeSig(c *C) {
 		c.Assert(err, IsNil)
 		result, _ := d.ToString()
 		c.Assert(result, Equals, t.expect)
-	}	
+	}
 	tbll := []struct {
 		Input         int64
 		InputDuration int64
