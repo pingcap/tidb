@@ -211,7 +211,6 @@ func (s *testSuite) TestMeta(c *C) {
 
 	err = txn.Commit()
 	c.Assert(err, IsNil)
-
 }
 
 func (s *testSuite) TestSnapshot(c *C) {
