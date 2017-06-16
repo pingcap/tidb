@@ -122,6 +122,7 @@ func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 
 func (v *typeInferrer) selectStmt(x *ast.SelectStmt) {
 	rf := x.GetResultFields()
+
 	for _, val := range rf {
 		// column ID is 0 means it is not a real column from table, but a temporary column,
 		// so its type is not pre-defined, we need to set it.

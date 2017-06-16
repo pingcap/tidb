@@ -58,7 +58,9 @@ func (s *testSuite) TestIndexDoubleReadClose(c *C) {
 	keyword := "pickAndExecTask"
 	c.Check(checkGoroutineExists(keyword), IsTrue)
 	rs.Close()
-	time.Sleep(time.Millisecond * 50)
+	for i := 0; i < 50; i++ {
+		time.Sleep(time.Millisecond * 1)
+	}
 	c.Check(checkGoroutineExists(keyword), IsFalse)
 	executor.LookupTableTaskChannelSize = originSize
 }
