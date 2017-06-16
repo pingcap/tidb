@@ -776,9 +776,7 @@ func (e *XSelectIndexExec) extractRowsFromPartialResult(t table.Table, partialRe
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		// Use time.UTC instead of session's timezone because coprocessor evaluator has
-		// already handle the timezone.
-		err = decodeRawValues(values, e.Schema(), time.UTC)
+		err = decodeRawValues(values, e.Schema(), e.ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
