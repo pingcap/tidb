@@ -395,7 +395,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp.Flag |= mysql.UnsignedFlag
 	// time related
 	case ast.AddTime:
-		switch t := x.Args[0].GetType().Tp; t {
+		switch x.Args[0].GetType().Tp {
 		case mysql.TypeDatetime, mysql.TypeDate, mysql.TypeTimestamp:
 			tp = types.NewFieldType(mysql.TypeDatetime)
 		case mysql.TypeDuration:

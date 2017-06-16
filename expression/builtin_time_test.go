@@ -631,7 +631,6 @@ func (s *testEvaluatorSuite) TestSubTimeSig(c *C) {
 		result, _ := d.ToString()
 		c.Assert(result, Equals, t.expect)
 	}
-
 }
 
 func (s *testEvaluatorSuite) TestSysDate(c *C) {

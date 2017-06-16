@@ -2423,7 +2423,7 @@ func (b *builtinSubTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 		return
 	}
 	var arg1 types.Duration
-	switch tp := args[1].Kind(); tp {
+	switch args[1].Kind() {
 	case types.KindMysqlDuration:
 		arg1 = args[1].GetMysqlDuration()
 	default:
@@ -2441,7 +2441,7 @@ func (b *builtinSubTimeSig) eval(row []types.Datum) (d types.Datum, err error) {
 		}
 
 	}
-	switch tp := args[0].Kind(); tp {
+	switch args[0].Kind() {
 	case types.KindMysqlTime:
 		arg0 := args[0].GetMysqlTime()
 		arg1time, err := arg1.ConvertToTime(uint8(getFsp(arg1.String())))
