@@ -240,11 +240,11 @@ func checkColumnCantHaveDefaultValue(col *table.Column, value interface{}) (err 
 // columnDefToCol converts ColumnDef to Col and TableConstraints.
 func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*table.Column, []*ast.Constraint, error) {
 	constraints := []*ast.Constraint{}
-	col := &table.Column{
+	col := table.ToColumn(&model.ColumnInfo{
 		Offset:    offset,
 		Name:      colDef.Name.Name,
 		FieldType: *colDef.Tp,
-	}
+	})
 
 	// Check and set TimestampFlag and OnUpdateNowFlag.
 	if col.Tp == mysql.TypeTimestamp {
@@ -1127,14 +1127,14 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 		return nil, errors.Trace(errUnsupportedModifyColumn)
 	}
 
-	newCol := &table.Column{
+	newCol := table.ToColumn(&model.ColumnInfo{
 		ID:                 col.ID,
 		Offset:             col.Offset,
 		State:              col.State,
 		OriginDefaultValue: col.OriginDefaultValue,
 		FieldType:          *spec.NewColumn.Tp,
 		Name:               spec.NewColumn.Name.Name,
-	}
+	})
 	err = setCharsetCollationFlenDecimal(&newCol.FieldType)
 	if err != nil {
 		return nil, errors.Trace(err)
