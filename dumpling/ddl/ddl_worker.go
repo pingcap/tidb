@@ -331,6 +331,7 @@ func (d *ddl) waitSchemaChanged(waitTime time.Duration, latestSchemaVersion int6
 		return
 	}
 
+	timeStart := time.Now()
 	// TODO: Do we need to wait for a while?
 	if latestSchemaVersion == 0 {
 		log.Infof("[ddl] schema version doesn't change")
@@ -358,6 +359,7 @@ func (d *ddl) waitSchemaChanged(waitTime time.Duration, latestSchemaVersion int6
 			return
 		}
 	}
+	log.Infof("[ddl] wait latest schema version %v changed, take time %v", latestSchemaVersion, time.Since(timeStart))
 	return
 }
 
