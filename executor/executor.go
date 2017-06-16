@@ -171,18 +171,13 @@ func (e *ShowDDLExec) Next() (*Row, error) {
 	if e.done {
 		return nil, nil
 	}
+
+	// TODO: Get the DDL owner information.
 	var ddlOwner, ddlJob string
-	if e.ddlInfo.Owner != nil {
-		ddlOwner = e.ddlInfo.Owner.String()
-	}
 	if e.ddlInfo.Job != nil {
 		ddlJob = e.ddlInfo.Job.String()
 	}
-
 	var bgOwner, bgJob string
-	if e.bgInfo.Owner != nil {
-		bgOwner = e.bgInfo.Owner.String()
-	}
 	if e.bgInfo.Job != nil {
 		bgJob = e.bgInfo.Job.String()
 	}

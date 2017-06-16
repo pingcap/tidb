@@ -430,40 +430,10 @@ func (m *Meta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
 // to operate DDL jobs, and dispatch them to MR Jobs.
 
 var (
-	mDDLJobOwnerKey   = []byte("DDLJobOwner")
 	mDDLJobListKey    = []byte("DDLJobList")
 	mDDLJobHistoryKey = []byte("DDLJobHistory")
 	mDDLJobReorgKey   = []byte("DDLJobReorg")
 )
-
-func (m *Meta) getJobOwner(key []byte) (*model.Owner, error) {
-	value, err := m.txn.Get(key)
-	if err != nil || value == nil {
-		return nil, errors.Trace(err)
-	}
-
-	owner := &model.Owner{}
-	err = json.Unmarshal(value, owner)
-	return owner, errors.Trace(err)
-}
-
-// GetDDLJobOwner gets the current owner for DDL.
-func (m *Meta) GetDDLJobOwner() (*model.Owner, error) {
-	return m.getJobOwner(mDDLJobOwnerKey)
-}
-
-func (m *Meta) setJobOwner(key []byte, o *model.Owner) error {
-	b, err := json.Marshal(o)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return m.txn.Set(key, b)
-}
-
-// SetDDLJobOwner sets the current owner for DDL.
-func (m *Meta) SetDDLJobOwner(o *model.Owner) error {
-	return m.setJobOwner(mDDLJobOwnerKey, o)
-}
 
 func (m *Meta) enQueueDDLJob(key []byte, job *model.Job) error {
 	b, err := job.Encode()
@@ -643,7 +613,6 @@ func (m *Meta) GetDDLReorgHandle(job *model.Job) (int64, error) {
 // to operate background job, and dispatch them to MR background job.
 
 var (
-	mBgJobOwnerKey   = []byte("BgJobOwner")
 	mBgJobListKey    = []byte("BgJobList")
 	mBgJobHistoryKey = []byte("BgJobHistory")
 )
@@ -683,16 +652,6 @@ func (m *Meta) GetHistoryBgJob(id int64) (*model.Job, error) {
 // DeQueueBgJob pops a background job from the list.
 func (m *Meta) DeQueueBgJob() (*model.Job, error) {
 	return m.deQueueDDLJob(mBgJobListKey)
-}
-
-// GetBgJobOwner gets the current background job owner.
-func (m *Meta) GetBgJobOwner() (*model.Owner, error) {
-	return m.getJobOwner(mBgJobOwnerKey)
-}
-
-// SetBgJobOwner sets the current background job owner.
-func (m *Meta) SetBgJobOwner(o *model.Owner) error {
-	return m.setJobOwner(mBgJobOwnerKey, o)
 }
 
 func (m *Meta) tableStatsKey(tableID int64) []byte {
