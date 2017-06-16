@@ -171,7 +171,7 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, etcdSession *concurrency.
 	for {
 		select {
 		case <-etcdSession.Done():
-			log.Info("[ddl] %s etcd session is done, creates a new one", key)
+			log.Infof("[ddl] %s etcd session is done, creates a new one", key)
 			etcdSession, err = newSession(ctx, m.etcdCli, newSessionRetryUnlimited, ManagerSessionTTL)
 			if err != nil {
 				log.Infof("[ddl] break %s campaign loop, err %v", key, err)

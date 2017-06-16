@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -57,6 +58,7 @@ type testSuite struct {
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
 
 func (s *testSuite) SetUpSuite(c *C) {
+	expression.TurnOnNewExprEval = true
 	s.Parser = parser.New()
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
@@ -79,6 +81,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 
 func (s *testSuite) TearDownSuite(c *C) {
 	s.store.Close()
+	expression.TurnOnNewExprEval = false
 }
 
 func (s *testSuite) cleanEnv(c *C) {
@@ -957,7 +960,11 @@ func (s *testSuite) TestBuiltin(c *C) {
 }
 
 func (s *testSuite) TestJSON(c *C) {
+	// This will be opened after implementing cast as json.
+	origin := expression.TurnOnNewExprEval
+	expression.TurnOnNewExprEval = false
 	defer func() {
+		expression.TurnOnNewExprEval = origin
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
@@ -1277,11 +1284,15 @@ func (s *testSuite) TestPointGet(c *C) {
 		ret := executor.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, plan)
 		c.Assert(ret, Equals, result)
 	}
-
 }
 
 func (s *testSuite) TestRow(c *C) {
+	// There exists a constant folding problem when the arguments of compare functions are Rows,
+	// the switch will be opened after the problem be fixed.
+	origin := expression.TurnOnNewExprEval
+	expression.TurnOnNewExprEval = false
 	defer func() {
+		expression.TurnOnNewExprEval = origin
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()

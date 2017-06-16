@@ -16,6 +16,7 @@ package tikv
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
@@ -50,14 +51,12 @@ type Client interface {
 }
 
 type connArray struct {
-	lock  *sync.Mutex
 	index uint32
 	v     []*grpc.ClientConn
 }
 
 func newConnArray(maxSize uint32, addr string) (*connArray, error) {
 	a := &connArray{
-		lock:  &sync.Mutex{},
 		index: 0,
 		v:     make([]*grpc.ClientConn, maxSize),
 	}
@@ -79,7 +78,7 @@ func (a *connArray) Init(addr string) error {
 			grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor))
 		if err != nil {
 			// Cleanup if the initialization fails.
-			a.doClose()
+			a.Close()
 			return errors.Trace(err)
 		}
 		a.v[i] = conn
@@ -88,26 +87,17 @@ func (a *connArray) Init(addr string) error {
 }
 
 func (a *connArray) Get() *grpc.ClientConn {
-	a.lock.Lock()
-	defer a.lock.Unlock()
-	conn := a.v[a.index]
-	a.index = (a.index + 1) % uint32(len(a.v))
-	return conn
+	next := atomic.AddUint32(&a.index, 1) % uint32(len(a.v))
+	return a.v[next]
 }
 
-func (a *connArray) doClose() {
+func (a *connArray) Close() {
 	for i, c := range a.v {
 		if c != nil {
 			c.Close()
 			a.v[i] = nil
 		}
 	}
-}
-
-func (a *connArray) Close() {
-	a.lock.Lock()
-	a.doClose()
-	a.lock.Unlock()
 }
 
 // TODO: Add flow control between RPC clients in TiDB ond RPC servers in TiKV.
