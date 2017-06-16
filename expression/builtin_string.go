@@ -232,29 +232,7 @@ type builtinConcatSig struct {
 	baseStringBuiltinFunc
 }
 
-// eval evals a builtinConcatSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat
-func (b *builtinConcatSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	var s []byte
-	for _, a := range args {
-		if a.IsNull() {
-			return d, nil
-		}
-		var ss string
-		ss, err = a.ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		s = append(s, []byte(ss)...)
-	}
-	d.SetBytesAsString(s)
-	return d, nil
-}
-
 func (b *builtinConcatSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
 	var s []byte
 	for _, a := range b.getArgs() {

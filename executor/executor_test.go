@@ -790,6 +790,10 @@ func (s *testSuite) TestStringBuiltin(c *C) {
 	tk.MustExec(`insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef")`)
 	result := tk.MustQuery("select concat(a, b, c, d, e) from t")
 	result.Check(testkit.Rows("11.12017-01-01 12:01:0112:01:01abcdef"))
+	result = tk.MustQuery("select concat(null)")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select concat(null, a, b) from t")
+	result.Check(testkit.Rows("<nil>"))
 }
 
 func (s *testSuite) TestBuiltin(c *C) {
