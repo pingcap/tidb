@@ -199,7 +199,8 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 		for _, cond := range selection.Conditions {
 			conds = append(conds, expression.PushDownNot(cond, false, ctx))
 		}
-		col := selection.Children()[0].(*plan.DataSource).Schema().Columns[0]
+		tbl := selection.Children()[0].(*plan.DataSource).TableInfo()
+		col := expression.ColInfo2Col(selection.Schema().Columns, tbl.Columns[0])
 		c.Assert(col, NotNil)
 		result, _, _, err := ranger.BuildRange(new(variable.StatementContext), conds, ranger.IntRangeType, []*expression.Column{col}, nil)
 		c.Assert(err, IsNil)
@@ -459,7 +460,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 		for _, cond := range sel.Conditions {
 			conds = append(conds, expression.PushDownNot(cond, false, ctx))
 		}
-		col := ds.Schema().Columns[0]
+		col := expression.ColInfo2Col(sel.Schema().Columns, ds.TableInfo().Columns[0])
 		c.Assert(col, NotNil)
 		result, _, _, err := ranger.BuildRange(new(variable.StatementContext), conds, ranger.ColumnRangeType, []*expression.Column{col}, nil)
 		c.Assert(err, IsNil)

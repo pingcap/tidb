@@ -827,7 +827,7 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 	ts.SetSchema(p.schema)
 	sc := p.ctx.GetSessionVars().StmtCtx
 	ts.Ranges = []ranger.IntColumnRange{{math.MinInt64, math.MaxInt64}}
-	pkColumn := p.getPKIsHandleCol()
+	pkColumn := expression.ColInfo2Col(ts.schema.Columns, ts.Table.GetPkColInfo())
 	if len(p.pushedDownConds) > 0 {
 		conds := make([]expression.Expression, 0, len(p.pushedDownConds))
 		for _, cond := range p.pushedDownConds {
