@@ -38,7 +38,7 @@ const (
 
 // Range type.
 const (
-	IntRangeType         = iota
+	IntRangeType = iota
 	ColumnRangeType
 	IndexRangeType
 )

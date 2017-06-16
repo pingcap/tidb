@@ -22,9 +22,9 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/util/ranger"
 )
 
 const (

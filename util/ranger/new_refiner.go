@@ -247,7 +247,7 @@ func BuildRange(sc *variable.StatementContext, conds []expression.Expression, ra
 func Range2IntRange(ranges []Range) []IntColumnRange {
 	retRanges := make([]IntColumnRange, 0, len(ranges))
 	for _, ran := range ranges {
-		retRanges = append(retRanges, ran.(IntColumnRange))
+		retRanges = append(retRanges, ran.Convert2IntRange())
 	}
 	return retRanges
 }
@@ -256,7 +256,7 @@ func Range2IntRange(ranges []Range) []IntColumnRange {
 func Range2ColumnRange(ranges []Range) []*ColumnRange {
 	retRanges := make([]*ColumnRange, 0, len(ranges))
 	for _, ran := range ranges {
-		retRanges = append(retRanges, ran.(*ColumnRange))
+		retRanges = append(retRanges, ran.Convert2ColumnRange())
 	}
 	return retRanges
 }
@@ -265,7 +265,7 @@ func Range2ColumnRange(ranges []Range) []*ColumnRange {
 func Range2IndexRange(ranges []Range) []*IndexRange {
 	retRanges := make([]*IndexRange, 0, len(ranges))
 	for _, ran := range ranges {
-		retRanges = append(retRanges, ran.(*IndexRange))
+		retRanges = append(retRanges, ran.Convert2IndexRange())
 	}
 	return retRanges
 }
