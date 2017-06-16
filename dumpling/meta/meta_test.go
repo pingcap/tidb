@@ -135,13 +135,49 @@ func (s *testSuite) TestMeta(c *C) {
 	tables, err := t.ListTables(1)
 	c.Assert(err, IsNil)
 	c.Assert(tables, DeepEquals, []*model.TableInfo{tbInfo, tbInfo2})
-
-	err = t.DropTable(1, 2)
+	// Generate an auto id.
+	n, err = t.GenAutoTableID(1, 2, 10)
 	c.Assert(err, IsNil)
+	c.Assert(n, Equals, int64(10))
+	// Make sure the auto id key-value entry is there.
+	n, err = t.GetAutoTableID(1, 2)
+	c.Assert(err, IsNil)
+	c.Assert(n, Equals, int64(10))
+
+	err = t.DropTable(1, 2, true)
+	c.Assert(err, IsNil)
+	// Make sure auto id key-value entry is gone.
+	n, err = t.GetAutoTableID(1, 2)
+	c.Assert(err, IsNil)
+	c.Assert(n, Equals, int64(0))
 
 	tables, err = t.ListTables(1)
 	c.Assert(err, IsNil)
 	c.Assert(tables, DeepEquals, []*model.TableInfo{tbInfo})
+
+	// Test case for drop a table without delete auto id key-value entry.
+	tid := int64(100)
+	tbInfo100 := &model.TableInfo{
+		ID:   tid,
+		Name: model.NewCIStr("t_rename"),
+	}
+	// Create table.
+	err = t.CreateTable(1, tbInfo100)
+	c.Assert(err, IsNil)
+	// Update auto id.
+	n, err = t.GenAutoTableID(1, tid, 10)
+	c.Assert(err, IsNil)
+	c.Assert(n, Equals, int64(10))
+	n, err = t.GetAutoTableID(1, tid)
+	c.Assert(err, IsNil)
+	c.Assert(n, Equals, int64(10))
+	// Drop table without touch auto id key-value entry.
+	err = t.DropTable(1, 100, false)
+	c.Assert(err, IsNil)
+	// Make sure that auto id key-value entry is still there.
+	n, err = t.GetAutoTableID(1, tid)
+	c.Assert(err, IsNil)
+	c.Assert(n, Equals, int64(10))
 
 	err = t.DropDatabase(1)
 	c.Assert(err, IsNil)
