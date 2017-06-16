@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-binlog"
 )
@@ -71,6 +72,13 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 		}
 
 		col := table.ToColumn(colInfo)
+		if len(colInfo.GeneratedExprString) != 0 {
+			expr, err := parser.ParseExpression(colInfo.GeneratedExprString)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			col.GeneratedExpr = expr
+		}
 		columns = append(columns, col)
 	}
 
