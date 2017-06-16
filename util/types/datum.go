@@ -717,7 +717,9 @@ func (d *Datum) ConvertTo(sc *variable.StatementContext, target *FieldType) (Dat
 	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
 		mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString:
 		return d.convertToString(sc, target)
-	case mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDate, mysql.TypeNewDate:
+	case mysql.TypeTimestamp:
+		return d.convertToMysqlTimestamp(sc, target)
+	case mysql.TypeDatetime, mysql.TypeDate, mysql.TypeNewDate:
 		return d.convertToMysqlTime(sc, target)
 	case mysql.TypeDuration:
 		return d.convertToMysqlDuration(sc, target)
@@ -939,6 +941,68 @@ func (d *Datum) convertToUint(sc *variable.StatementContext, target *FieldType) 
 	return ret, nil
 }
 
+func (d *Datum) convertToMysqlTimestamp(sc *variable.StatementContext, target *FieldType) (Datum, error) {
+	var (
+		ret Datum
+		t   Time
+		err error
+	)
+	fsp := DefaultFsp
+	if target.Decimal != UnspecifiedLength {
+		fsp = target.Decimal
+	}
+	loc := sc.TimeZone
+	switch d.k {
+	case KindMysqlTime:
+		t = d.GetMysqlTime()
+		switch {
+		case t.TimeZone == nil:
+			t.TimeZone = loc
+		case t.TimeZone == time.UTC:
+			// Convert to session timezone
+			if !t.IsZero() {
+				raw, err := t.Time.GoTime(time.UTC)
+				if err != nil {
+					return ret, errors.Trace(err)
+				}
+				converted := raw.In(loc)
+				t.Time = FromGoTime(converted)
+			}
+			t.TimeZone = loc
+		case t.TimeZone == sc.TimeZone:
+			break
+		default:
+			return ret, errors.New("something wrong")
+		}
+		t, err = t.RoundFrac(fsp)
+		if err != nil {
+			ret.SetValue(t)
+			return ret, errors.Trace(err)
+		}
+	case KindMysqlDuration:
+		t, err = d.GetMysqlDuration().ConvertToTime(mysql.TypeTimestamp)
+		if err != nil {
+			ret.SetValue(t)
+			return ret, errors.Trace(err)
+		}
+		t, err = t.RoundFrac(fsp)
+		t.TimeZone = loc
+	case KindString, KindBytes:
+		t, err = ParseTime(d.GetString(), mysql.TypeTimestamp, fsp)
+		t.TimeZone = loc
+	case KindInt64:
+		t, err = ParseTimeFromNum(d.GetInt64(), mysql.TypeTimestamp, fsp)
+		t.TimeZone = loc
+	default:
+		return invalidConv(d, mysql.TypeTimestamp)
+	}
+	ret.SetMysqlTime(t)
+	if err != nil {
+		return ret, errors.Trace(err)
+	}
+	return ret, nil
+}
+
 func (d *Datum) convertToMysqlTime(sc *variable.StatementContext, target *FieldType) (Datum, error) {
 	tp := target.Tp
 	fsp := DefaultFsp
@@ -950,6 +1014,9 @@ func (d *Datum) convertToMysqlTime(sc *variable.StatementContext, target *FieldT
 		t   Time
 		err error
 	)
+	if tp == mysql.TypeTimestamp {
+		return ret, errors.New("should not run to here")
+	}
 	switch d.k {
 	case KindMysqlTime:
 		t, err = d.GetMysqlTime().Convert(tp)

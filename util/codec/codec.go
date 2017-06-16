@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/types/json"
 )
@@ -52,7 +53,18 @@ func encode(b []byte, vals []types.Datum, comparable bool) ([]byte, error) {
 			b = encodeBytes(b, val.GetBytes(), comparable)
 		case types.KindMysqlTime:
 			b = append(b, uintFlag)
-			v, err := val.GetMysqlTime().ToPackedUint()
+			t := val.GetMysqlTime()
+			// Encoding timestamp need to consider timezone.
+			// if it's not in UTC, transform to UTC first.
+			if t.Type == mysql.TypeTimestamp && t.TimeZone != time.UTC && !t.IsZero() {
+				raw, err := t.Time.GoTime(t.TimeZone)
+				if err != nil {
+					return b, errors.Trace(err)
+				}
+				converted := raw.In(time.UTC)
+				t.Time = types.FromGoTime(converted)
+			}
+			v, err := t.ToPackedUint()
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

@@ -40,6 +40,7 @@ type invalidMockType struct {
 func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
 	d := NewDatum(val)
 	sc := new(variable.StatementContext)
+	sc.TimeZone = time.UTC
 	ret, err := d.ConvertTo(sc, target)
 	if err != nil {
 		return ret.GetValue(), errors.Trace(err)

@@ -163,6 +163,9 @@ type Time struct {
 	// Fsp is short for Fractional Seconds Precision.
 	// See http://dev.mysql.com/doc/refman/5.7/en/fractional-seconds.html
 	Fsp int
+	// TODO: Define a type for timestamp, remove its representation from here.
+	// TimeZone is valid when Type is mysql.Timestamp, it's meaningless for date/datetime.
+	TimeZone *gotime.Location
 }
 
 // CurrentTime returns current time with type tp.
@@ -326,8 +329,15 @@ func (t Time) RoundFrac(fsp int) (Time, error) {
 	}
 
 	var nt TimeInternal
-	// TODO: Consider time_zone variable.
-	if t1, err := t.Time.GoTime(gotime.Local); err == nil {
+	var loc *gotime.Location
+	if t.Type == mysql.TypeTimestamp {
+		loc = t.TimeZone
+	} else {
+		// TODO: Consider time_zone variable.
+		loc = gotime.Local
+	}
+
+	if t1, err := t.Time.GoTime(loc); err == nil {
 		t1 = roundTime(t1, fsp)
 		nt = FromGoTime(t1)
 	} else {
@@ -346,7 +356,7 @@ func (t Time) RoundFrac(fsp int) (Time, error) {
 		nt = FromDate(t.Time.Year(), t.Time.Month(), t.Time.Day(), hour, minute, second, microsecond)
 	}
 
-	return Time{Time: nt, Type: t.Type, Fsp: fsp}, nil
+	return Time{Time: nt, Type: t.Type, Fsp: fsp, TimeZone: loc}, nil
 }
 
 // RoundFrac rounds fractional seconds precision with new fsp and returns a new one.
@@ -411,6 +421,7 @@ func (t *Time) FromPackedUint(packed uint64) error {
 	if err := t.check(); err != nil {
 		return errors.Trace(err)
 	}
+	t.TimeZone = gotime.UTC
 
 	return nil
 }

@@ -418,6 +418,7 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 			}
 			converted := raw.In(loc)
 			t.Time = types.FromGoTime(converted)
+			t.TimeZone = loc
 		}
 		datum.SetMysqlTime(t)
 		return datum, nil
