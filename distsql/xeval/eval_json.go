@@ -43,5 +43,5 @@ func (e *Evaluator) evalJSONFunctions(expr *tipb.Expr) (d types.Datum, _ error) 
 	if fn, ok := jsonFunctions[expr.GetTp()]; ok {
 		return fn(args, e.StatementCtx)
 	}
-	return d, errors.Errorf("the xeval.%d is not implemented", expr.GetTp())
+	return d, errors.Errorf("the ExprType %d is not implemented", expr.GetTp())
 }
