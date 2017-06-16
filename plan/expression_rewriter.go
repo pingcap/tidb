@@ -64,8 +64,9 @@ func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*a
 	return b.rewriteWithPreprocess(expr, p, aggMapper, asScalar, nil)
 }
 
-// rewriteWithPreprocess can be used for if we need to adjust expr but can't do that inplace.
-// so we call er.preprocess on expr, and return a new ast.ExprNode respectively.
+// rewriteWithPreprocess is for handling the situation that we need to adjust the input ast tree
+// before really using its node in `expressionRewriter.Leave`. In that case, we first call
+// er.preprocess(expr), which returns a new expr. Then we use the new expr in `Leave`.
 func (b *planBuilder) rewriteWithPreprocess(expr ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool, preprocess func(ast.Node) ast.Node) (
 	expression.Expression, LogicalPlan, error) {
 	er := &expressionRewriter{
