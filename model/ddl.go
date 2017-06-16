@@ -144,11 +144,14 @@ func (job *Job) GetRowCount() int64 {
 }
 
 // Encode encodes job with json format.
-func (job *Job) Encode() ([]byte, error) {
+// updateRawArgs is used to determine whether to update the raw args.
+func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 	var err error
-	job.RawArgs, err = json.Marshal(job.Args)
-	if err != nil {
-		return nil, errors.Trace(err)
+	if updateRawArgs {
+		job.RawArgs, err = json.Marshal(job.Args)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	var b []byte
@@ -186,6 +189,16 @@ func (job *Job) IsFinished() bool {
 	return job.State == JobDone || job.State == JobRollbackDone || job.State == JobCancelled
 }
 
+// IsCancelled returns whether the job is cancelled or not.
+func (job *Job) IsCancelled() bool {
+	return job.State == JobCancelled || job.State == JobRollbackDone
+}
+
+// IsWaited returns whether the job is waited or not.
+func (job *Job) IsWaited() bool {
+	return job.State == JobWaited
+}
+
 // IsDone returns whether job is done.
 func (job *Job) IsDone() bool {
 	return job.State == JobDone
@@ -210,6 +223,8 @@ const (
 	JobRollbackDone
 	JobDone
 	JobCancelled
+	// TODO: complete comments.
+	JobWaited
 )
 
 // String implements fmt.Stringer interface.
@@ -225,6 +240,8 @@ func (s JobState) String() string {
 		return "done"
 	case JobCancelled:
 		return "cancelled"
+	case JobWaited:
+		return "waited"
 	default:
 		return "none"
 	}
