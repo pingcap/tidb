@@ -75,7 +75,7 @@ func (s *Schema) Clone() *Schema {
 // If there are more than one result, it will raise ambiguous error.
 func (s *Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 	col, _, err := s.FindColumnAndIndex(astCol)
-	return col, err
+	return col, errors.Trace(err)
 }
 
 // FindColumnAndIndex finds an Column and its index from schema for a ast.ColumnName.
