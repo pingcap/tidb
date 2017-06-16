@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -57,6 +58,7 @@ type testSuite struct {
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
 
 func (s *testSuite) SetUpSuite(c *C) {
+	expression.TurnOnNewExprEval = true
 	s.Parser = parser.New()
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
@@ -79,6 +81,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 
 func (s *testSuite) TearDownSuite(c *C) {
 	s.store.Close()
+	expression.TurnOnNewExprEval = false
 }
 
 func (s *testSuite) cleanEnv(c *C) {
@@ -957,7 +960,11 @@ func (s *testSuite) TestBuiltin(c *C) {
 }
 
 func (s *testSuite) TestJSON(c *C) {
+	// This will be opened after implementing cast as json.
+	origin := expression.TurnOnNewExprEval
+	expression.TurnOnNewExprEval = false
 	defer func() {
+		expression.TurnOnNewExprEval = origin
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()
@@ -1020,6 +1027,57 @@ func (s *testSuite) TestJSON(c *C) {
 	// check CAST AS JSON.
 	result = tk.MustQuery(`select CAST('3' AS JSON), CAST('{}' AS JSON), CAST(null AS JSON)`)
 	result.Check(testkit.Rows(`3 {} <nil>`))
+}
+
+func (s *testSuite) TestGeneratedColumnWrite(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE test_gc_write (a int primary key, b int, c int as (a+8) virtual)`)
+	tk.MustExec(`CREATE TABLE test_gc_write_1 (a int primary key, b int, c int)`)
+
+	tests := []struct {
+		stmt string
+		err  int
+	}{
+		// Can't modify generated column by values.
+		{`insert into test_gc_write (a, b, c) values (1, 1, 1)`, mysql.ErrBadGeneratedColumn},
+		{`insert into test_gc_write values (1, 1, 1)`, mysql.ErrBadGeneratedColumn},
+		// Can't modify generated column by select clause.
+		{`insert into test_gc_write select 1, 1, 1`, mysql.ErrBadGeneratedColumn},
+		// Can't modify generated column by on duplicate clause.
+		{`insert into test_gc_write (a, b) values (1, 1) on duplicate key update c = 1`, mysql.ErrBadGeneratedColumn},
+		// Can't modify generated column by set.
+		{`insert into test_gc_write set a = 1, b = 1, c = 1`, mysql.ErrBadGeneratedColumn},
+		// Can't modify generated column by update clause.
+		{`update test_gc_write set c = 1`, mysql.ErrBadGeneratedColumn},
+		// Can't modify generated column by multi-table update clause.
+		{`update test_gc_write, test_gc_write_1 set test_gc_write.c = 1`, mysql.ErrBadGeneratedColumn},
+
+		// Can insert without generated columns.
+		{`insert into test_gc_write (a, b) values (1, 1)`, 0},
+		{`insert into test_gc_write set a = 2, b = 2`, 0},
+		// Can update without generated columns.
+		{`update test_gc_write set b = 2 where a = 2`, 0},
+		{`update test_gc_write t1, test_gc_write_1 t2 set t1.b = 3, t2.b = 4`, 0},
+
+		// But now we can't do this, just as same with MySQL 5.7:
+		{`insert into test_gc_write values (1, 1)`, mysql.ErrWrongValueCountOnRow},
+		{`insert into test_gc_write select 1, 1`, mysql.ErrWrongValueCountOnRow},
+	}
+	for _, tt := range tests {
+		_, err := tk.Exec(tt.stmt)
+		if tt.err != 0 {
+			c.Assert(err, NotNil)
+			terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+			c.Assert(terr.Code(), Equals, terror.ErrCode(tt.err))
+		} else {
+			c.Assert(err, IsNil)
+		}
+	}
 }
 
 func (s *testSuite) TestToPBExpr(c *C) {
@@ -1226,11 +1284,15 @@ func (s *testSuite) TestPointGet(c *C) {
 		ret := executor.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, plan)
 		c.Assert(ret, Equals, result)
 	}
-
 }
 
 func (s *testSuite) TestRow(c *C) {
+	// There exists a constant folding problem when the arguments of compare functions are Rows,
+	// the switch will be opened after the problem be fixed.
+	origin := expression.TurnOnNewExprEval
+	expression.TurnOnNewExprEval = false
 	defer func() {
+		expression.TurnOnNewExprEval = origin
 		s.cleanEnv(c)
 		testleak.AfterTest(c)()
 	}()

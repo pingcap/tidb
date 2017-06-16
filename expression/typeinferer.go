@@ -43,6 +43,10 @@ type typeInferrer struct {
 }
 
 func (v *typeInferrer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch in.(type) {
+	case *ast.ColumnOption:
+		return in, true
+	}
 	return in, false
 }
 
