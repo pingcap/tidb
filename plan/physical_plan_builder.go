@@ -83,7 +83,7 @@ func (p *DataSource) convert2TableScan(prop *requiredProperty) (*physicalPlanInf
 			resultPlan = newSel
 		}
 	} else {
-		ts.Ranges = []ranger.IntColumnRange{{math.MinInt64, math.MaxInt64}}
+		ts.Ranges = []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}
 	}
 	statsTbl := p.statisticTable
 	rowCount := float64(statsTbl.Count)

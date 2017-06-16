@@ -33,9 +33,9 @@ var FullRange = []point{
 
 // BuildIndexRange will build range of index for PhysicalIndexScan
 func BuildIndexRange(sc *variable.StatementContext, tblInfo *model.TableInfo, index *model.IndexInfo,
-	accessInAndEqCount int, accessCondition []expression.Expression) ([]*IndexRange, error) {
+	accessInAndEqCount int, accessCondition []expression.Expression) ([]*types.IndexRange, error) {
 	rb := Builder{Sc: sc}
-	var ranges []*IndexRange
+	var ranges []*types.IndexRange
 	for i := 0; i < accessInAndEqCount; i++ {
 		// Build ranges for equal or in access conditions.
 		point := rb.build(accessCondition[i])
@@ -89,7 +89,7 @@ func BuildIndexRange(sc *variable.StatementContext, tblInfo *model.TableInfo, in
 }
 
 // refineRange changes the IndexRange taking prefix index length into consideration.
-func refineRange(v *IndexRange, idxInfo *model.IndexInfo) {
+func refineRange(v *types.IndexRange, idxInfo *model.IndexInfo) {
 	for i := 0; i < len(v.LowVal); i++ {
 		refineRangeDatum(&v.LowVal[i], idxInfo.Columns[i])
 		v.LowExclude = false
@@ -280,9 +280,9 @@ func DetachColumnConditions(conditions []expression.Expression, colName model.CI
 }
 
 // BuildTableRange will build range of pk for PhysicalTableScan
-func BuildTableRange(accessConditions []expression.Expression, sc *variable.StatementContext) ([]IntColumnRange, error) {
+func BuildTableRange(accessConditions []expression.Expression, sc *variable.StatementContext) ([]types.IntColumnRange, error) {
 	if len(accessConditions) == 0 {
-		return []IntColumnRange{{LowVal: math.MinInt64, HighVal: math.MaxInt64}}, nil
+		return []types.IntColumnRange{{LowVal: math.MinInt64, HighVal: math.MaxInt64}}, nil
 	}
 
 	rb := Builder{Sc: sc}

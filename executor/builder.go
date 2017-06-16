@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -814,7 +813,7 @@ func (b *executorBuilder) buildTableScanForAnalyze(tblInfo *model.TableInfo, col
 	}
 	table, _ := b.is.TableByID(tblInfo.ID)
 	schema := expression.NewSchema(expression.ColumnInfos2Columns(tblInfo.Name, cols)...)
-	ranges := []ranger.IntColumnRange{{math.MinInt64, math.MaxInt64}}
+	ranges := []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}
 	if b.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic) {
 		e := &TableReaderExecutor{
 			table:   table,
@@ -865,14 +864,14 @@ func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idx
 		cols[i] = tblInfo.Columns[col.Offset]
 	}
 	schema := expression.NewSchema(expression.ColumnInfos2Columns(tblInfo.Name, cols)...)
-	idxRange := &ranger.IndexRange{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.MaxValueDatum()}}
+	idxRange := &types.IndexRange{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.MaxValueDatum()}}
 	scanConcurrency := b.ctx.GetSessionVars().IndexSerialScanConcurrency
 	if b.ctx.GetClient().IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic) {
 		e := &IndexReaderExecutor{
 			table:   table,
 			index:   idxInfo,
 			tableID: tblInfo.ID,
-			ranges:  []*ranger.IndexRange{idxRange},
+			ranges:  []*types.IndexRange{idxRange},
 			dagPB: &tipb.DAGRequest{
 				StartTs:        b.getStartTS(),
 				TimeZoneOffset: timeZoneOffset(b.ctx),
@@ -904,7 +903,7 @@ func (b *executorBuilder) buildIndexScanForAnalyze(tblInfo *model.TableInfo, idx
 		startTS:         startTS,
 		idxColsSchema:   schema,
 		schema:          schema,
-		ranges:          []*ranger.IndexRange{idxRange},
+		ranges:          []*types.IndexRange{idxRange},
 		columns:         cols,
 		index:           idxInfo,
 		outOfOrder:      false,

@@ -15,7 +15,6 @@ package statistics
 
 import (
 	"testing"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
@@ -23,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -226,7 +224,7 @@ func (s *testStatisticsSuite) TestColumnRange(c *C) {
 	hg, err := BuildColumn(ctx, bucketCount, 5, ndv, s.count, 0, s.samples)
 	c.Check(err, IsNil)
 	col := &Column{Histogram: *hg}
-	ran := ranger.ColumnRange{
+	ran := types.ColumnRange{
 		Low:  types.Datum{},
 		High: types.Datum{},
 	}

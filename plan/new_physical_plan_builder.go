@@ -695,7 +695,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 			conds = append(conds, cond.Clone())
 		}
 		if len(idxCols) > 0 {
-			var ranges []ranger.Range
+			var ranges []types.Range
 			ranges, is.AccessCondition, is.filterCondition, err = ranger.BuildRange(sc, conds, ranger.IndexRangeType, idxCols, colLengths)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -826,7 +826,7 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 	}.init(p.allocator, p.ctx)
 	ts.SetSchema(p.schema)
 	sc := p.ctx.GetSessionVars().StmtCtx
-	ts.Ranges = []ranger.IntColumnRange{{math.MinInt64, math.MaxInt64}}
+	ts.Ranges = []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}
 	pkColumn := expression.ColInfo2Col(ts.schema.Columns, ts.Table.GetPkColInfo())
 	if len(p.pushedDownConds) > 0 {
 		conds := make([]expression.Expression, 0, len(p.pushedDownConds))
@@ -834,7 +834,7 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 			conds = append(conds, cond.Clone())
 		}
 		if pkColumn != nil {
-			var ranges []ranger.Range
+			var ranges []types.Range
 			ranges, ts.AccessCondition, ts.filterCondition, err = ranger.BuildRange(sc, conds, ranger.IntRangeType, []*expression.Column{pkColumn}, nil)
 			ts.Ranges = ranger.RangeSlice2IntRangeSlice(ranges)
 			if err != nil {

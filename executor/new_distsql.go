@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
@@ -47,7 +46,7 @@ type TableReaderExecutor struct {
 	tableID   int64
 	keepOrder bool
 	desc      bool
-	ranges    []ranger.IntColumnRange
+	ranges    []types.IntColumnRange
 	dagPB     *tipb.DAGRequest
 	ctx       context.Context
 	schema    *expression.Schema
@@ -153,7 +152,7 @@ type IndexReaderExecutor struct {
 	tableID   int64
 	keepOrder bool
 	desc      bool
-	ranges    []*ranger.IndexRange
+	ranges    []*types.IndexRange
 	dagPB     *tipb.DAGRequest
 	ctx       context.Context
 	schema    *expression.Schema
@@ -257,7 +256,7 @@ type IndexLookUpExecutor struct {
 	tableID   int64
 	keepOrder bool
 	desc      bool
-	ranges    []*ranger.IndexRange
+	ranges    []*types.IndexRange
 	dagPB     *tipb.DAGRequest
 	ctx       context.Context
 	schema    *expression.Schema

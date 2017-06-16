@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -134,7 +133,7 @@ type PhysicalIndexScan struct {
 
 	Table      *model.TableInfo
 	Index      *model.IndexInfo
-	Ranges     []*ranger.IndexRange
+	Ranges     []*types.IndexRange
 	Columns    []*model.ColumnInfo
 	DBName     model.CIStr
 	Desc       bool
@@ -163,7 +162,7 @@ type PhysicalMemTable struct {
 	DBName      model.CIStr
 	Table       *model.TableInfo
 	Columns     []*model.ColumnInfo
-	Ranges      []ranger.IntColumnRange
+	Ranges      []types.IntColumnRange
 	TableAsName *model.CIStr
 }
 
@@ -431,7 +430,7 @@ type PhysicalTableScan struct {
 	Columns []*model.ColumnInfo
 	DBName  model.CIStr
 	Desc    bool
-	Ranges  []ranger.IntColumnRange
+	Ranges  []types.IntColumnRange
 	pkCol   *expression.Column
 
 	TableAsName *model.CIStr

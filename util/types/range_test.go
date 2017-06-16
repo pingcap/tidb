@@ -11,14 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ranger
+package types
 
 import (
 	"math"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/types"
 )
 
 var _ = Suite(&testRangeSuite{})
@@ -33,23 +32,23 @@ func (s *testRangeSuite) TestRange(c *C) {
 	}{
 		{
 			ran: IndexRange{
-				LowVal:  []types.Datum{types.NewIntDatum(1)},
-				HighVal: []types.Datum{types.NewIntDatum(1)},
+				LowVal:  []Datum{NewIntDatum(1)},
+				HighVal: []Datum{NewIntDatum(1)},
 			},
 			str: "[1 <nil>,1 +inf]",
 		},
 		{
 			ran: IndexRange{
-				LowVal:      []types.Datum{types.NewIntDatum(1)},
-				HighVal:     []types.Datum{types.NewIntDatum(1)},
+				LowVal:      []Datum{NewIntDatum(1)},
+				HighVal:     []Datum{NewIntDatum(1)},
 				HighExclude: true,
 			},
 			str: "[1 <nil>,1 <nil>)",
 		},
 		{
 			ran: IndexRange{
-				LowVal:      []types.Datum{types.NewIntDatum(1)},
-				HighVal:     []types.Datum{types.NewIntDatum(2)},
+				LowVal:      []Datum{NewIntDatum(1)},
+				HighVal:     []Datum{NewIntDatum(2)},
 				LowExclude:  true,
 				HighExclude: true,
 			},
@@ -57,16 +56,16 @@ func (s *testRangeSuite) TestRange(c *C) {
 		},
 		{
 			ran: IndexRange{
-				LowVal:      []types.Datum{types.NewFloat64Datum(1.1)},
-				HighVal:     []types.Datum{types.NewFloat64Datum(1.9)},
+				LowVal:      []Datum{NewFloat64Datum(1.1)},
+				HighVal:     []Datum{NewFloat64Datum(1.9)},
 				HighExclude: true,
 			},
 			str: "[1.1 <nil>,1.9 <nil>)",
 		},
 		{
 			ran: IndexRange{
-				LowVal:      []types.Datum{types.MinNotNullDatum()},
-				HighVal:     []types.Datum{types.NewIntDatum(1)},
+				LowVal:      []Datum{MinNotNullDatum()},
+				HighVal:     []Datum{NewIntDatum(1)},
 				HighExclude: true,
 			},
 			str: "[-inf <nil>,1 <nil>)",
@@ -83,45 +82,45 @@ func (s *testRangeSuite) TestRange(c *C) {
 	}{
 		{
 			ran: IndexRange{
-				LowVal:  []types.Datum{types.NewIntDatum(1)},
-				HighVal: []types.Datum{types.NewIntDatum(1)},
+				LowVal:  []Datum{NewIntDatum(1)},
+				HighVal: []Datum{NewIntDatum(1)},
 			},
 			isPoint: true,
 		},
 		{
 			ran: IndexRange{
-				LowVal:  []types.Datum{types.NewStringDatum("abc")},
-				HighVal: []types.Datum{types.NewStringDatum("abc")},
+				LowVal:  []Datum{NewStringDatum("abc")},
+				HighVal: []Datum{NewStringDatum("abc")},
 			},
 			isPoint: true,
 		},
 		{
 			ran: IndexRange{
-				LowVal:  []types.Datum{types.NewIntDatum(1)},
-				HighVal: []types.Datum{types.NewIntDatum(1), types.NewIntDatum(1)},
+				LowVal:  []Datum{NewIntDatum(1)},
+				HighVal: []Datum{NewIntDatum(1), NewIntDatum(1)},
 			},
 			isPoint: false,
 		},
 		{
 			ran: IndexRange{
-				LowVal:     []types.Datum{types.NewIntDatum(1)},
-				HighVal:    []types.Datum{types.NewIntDatum(1)},
+				LowVal:     []Datum{NewIntDatum(1)},
+				HighVal:    []Datum{NewIntDatum(1)},
 				LowExclude: true,
 			},
 			isPoint: false,
 		},
 		{
 			ran: IndexRange{
-				LowVal:      []types.Datum{types.NewIntDatum(1)},
-				HighVal:     []types.Datum{types.NewIntDatum(1)},
+				LowVal:      []Datum{NewIntDatum(1)},
+				HighVal:     []Datum{NewIntDatum(1)},
 				HighExclude: true,
 			},
 			isPoint: false,
 		},
 		{
 			ran: IndexRange{
-				LowVal:  []types.Datum{types.NewIntDatum(1)},
-				HighVal: []types.Datum{types.NewIntDatum(2)},
+				LowVal:  []Datum{NewIntDatum(1)},
+				HighVal: []Datum{NewIntDatum(2)},
 			},
 			isPoint: false,
 		},
@@ -164,24 +163,24 @@ func (s *testRangeSuite) TestColumnRangeString(c *C) {
 	}{
 		{
 			ran: ColumnRange{
-				Low:      types.NewStringDatum("a"),
-				High:     types.MaxValueDatum(),
+				Low:      NewStringDatum("a"),
+				High:     MaxValueDatum(),
 				HighExcl: true,
 			},
 			ans: "[a,+inf)",
 		},
 		{
 			ran: ColumnRange{
-				Low:     types.NewFloat64Datum(3.2),
+				Low:     NewFloat64Datum(3.2),
 				LowExcl: true,
-				High:    types.NewFloat64Datum(6.4),
+				High:    NewFloat64Datum(6.4),
 			},
 			ans: "(3.2,6.4]",
 		},
 		{
 			ran: ColumnRange{
-				Low:  types.Datum{},
-				High: types.Datum{},
+				Low:  Datum{},
+				High: Datum{},
 			},
 			ans: "[<nil>,<nil>]",
 		},
