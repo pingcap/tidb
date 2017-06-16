@@ -532,7 +532,6 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 		{"235959", "00:00:01", "24:00:00"},
 		{"110:00:00", "1 02:00:00", "136:00:00"},
 		{"-110:00:00", "1 02:00:00", "-84:00:00"},
-		{"234", "1.123", "00:02:35.123000"},
 	}
 	for _, t := range tbl {
 		dur, err := types.ParseDuration(t.Input, getFsp(t.Input))
@@ -566,6 +565,71 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 		c.Assert(result, Equals, t.expect)
 	}
 
+}
+
+func (s *testEvaluatorSuite) TestSubTimeSig(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Input         string
+		InputDuration string
+		expect        string
+	}{
+		{"01:00:00.999999", "02:00:00.999998", "-00:59:59.999999"},
+		{"110:00:00", "1 02:00:00", "84:00:00"},
+		{"2017-01-01 01:01:01.11", "01:01:01.11111", "2016-12-31 23:59:59.998890"},
+		{"2007-12-31 23:59:59.999999", "1 1:1:1.000002", "2007-12-30 22:58:58.999997"},
+	}
+	fc := funcs[ast.SubTime]
+	for _, t := range tbl {
+		tmpInput := types.NewStringDatum(t.Input)
+		tmpInputDuration := types.NewStringDatum(t.InputDuration)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{tmpInput, tmpInputDuration}), s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		result, _ := d.ToString()
+		c.Assert(result, Equals, t.expect)
+	}
+
+	tbl = []struct {
+		Input         string
+		InputDuration string
+		expect        string
+	}{
+		{"03:00:00.999999", "02:00:00.999998", "01:00:00.000001"},
+		{"23:59:59", "00:00:01", "23:59:58"},
+		{"235959", "00:00:01", "23:59:58"},
+	}
+	for _, t := range tbl {
+		dur, err := types.ParseDuration(t.Input, getFsp(t.Input))
+		c.Assert(err, IsNil)
+		tmpInput := types.NewDurationDatum(dur)
+		tmpInputDuration := types.NewStringDatum(t.InputDuration)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{tmpInput, tmpInputDuration}), s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		result, _ := d.ToString()
+		c.Assert(result, Equals, t.expect)
+	}
+	tbll := []struct {
+		Input         int64
+		InputDuration int64
+		expect        string
+	}{
+		{20171010123456, 1, "2017-10-10 12:34:55"},
+		{123456, 1, "12:34:55"},
+	}
+	for _, t := range tbll {
+		tmpInput := types.NewIntDatum(t.Input)
+		tmpInputDuration := types.NewIntDatum(t.InputDuration)
+		f, err := fc.getFunction(datumsToConstants([]types.Datum{tmpInput, tmpInputDuration}), s.ctx)
+		c.Assert(err, IsNil)
+		d, err := f.eval(nil)
+		c.Assert(err, IsNil)
+		result, _ := d.ToString()
+		c.Assert(result, Equals, t.expect)
+	}
 }
 
 func (s *testEvaluatorSuite) TestSysDate(c *C) {
