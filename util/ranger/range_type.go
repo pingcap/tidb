@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package types
+package ranger
 
 import (
 	"fmt"
@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // Range is the interface of the three type of range.
@@ -58,8 +59,8 @@ func (tr IntColumnRange) String() string {
 
 // ColumnRange represents a range for a column.
 type ColumnRange struct {
-	Low      Datum
-	High     Datum
+	Low      types.Datum
+	High     types.Datum
 	LowExcl  bool
 	HighExcl bool
 }
@@ -81,8 +82,8 @@ func (cr *ColumnRange) String() string {
 
 // IndexRange represents a range for an index.
 type IndexRange struct {
-	LowVal  []Datum
-	HighVal []Datum
+	LowVal  []types.Datum
+	HighVal []types.Datum
 
 	LowExclude  bool // Low value is exclusive.
 	HighExclude bool // High value is exclusive.
@@ -96,7 +97,7 @@ func (ir *IndexRange) IsPoint(sc *variable.StatementContext) bool {
 	for i := range ir.LowVal {
 		a := ir.LowVal[i]
 		b := ir.HighVal[i]
-		if a.Kind() == KindMinNotNull || b.Kind() == KindMaxValue {
+		if a.Kind() == types.KindMinNotNull || b.Kind() == types.KindMaxValue {
 			return false
 		}
 		cmp, err := a.CompareDatum(sc, b)
@@ -133,25 +134,25 @@ func (ir *IndexRange) String() string {
 func (ir *IndexRange) Align(numColumns int) {
 	for i := len(ir.LowVal); i < numColumns; i++ {
 		if ir.LowExclude {
-			ir.LowVal = append(ir.LowVal, MaxValueDatum())
+			ir.LowVal = append(ir.LowVal, types.MaxValueDatum())
 		} else {
-			ir.LowVal = append(ir.LowVal, Datum{})
+			ir.LowVal = append(ir.LowVal, types.Datum{})
 		}
 	}
 	for i := len(ir.HighVal); i < numColumns; i++ {
 		if ir.HighExclude {
-			ir.HighVal = append(ir.HighVal, Datum{})
+			ir.HighVal = append(ir.HighVal, types.Datum{})
 		} else {
-			ir.HighVal = append(ir.HighVal, MaxValueDatum())
+			ir.HighVal = append(ir.HighVal, types.MaxValueDatum())
 		}
 	}
 }
 
-func formatDatum(d Datum) string {
-	if d.Kind() == KindMinNotNull {
+func formatDatum(d types.Datum) string {
+	if d.Kind() == types.KindMinNotNull {
 		return "-inf"
 	}
-	if d.Kind() == KindMaxValue {
+	if d.Kind() == types.KindMaxValue {
 		return "+inf"
 	}
 	return fmt.Sprintf("%v", d.GetValue())

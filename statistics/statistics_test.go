@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/ranger"
 )
 
 func TestT(t *testing.T) {
@@ -225,7 +226,7 @@ func (s *testStatisticsSuite) TestColumnRange(c *C) {
 	hg, err := BuildColumn(ctx, bucketCount, 5, ndv, s.count, 0, s.samples)
 	c.Check(err, IsNil)
 	col := &Column{Histogram: *hg}
-	ran := types.ColumnRange{
+	ran := ranger.ColumnRange{
 		Low:  types.Datum{},
 		High: types.Datum{},
 	}

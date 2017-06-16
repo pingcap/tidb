@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/ranger"
 )
 
 const (
@@ -209,7 +210,7 @@ func (t *Table) ColumnEqualRowCount(sc *variable.StatementContext, value types.D
 }
 
 // GetRowCountByIntColumnRanges estimates the row count by a slice of IntColumnRange.
-func (t *Table) GetRowCountByIntColumnRanges(sc *variable.StatementContext, colID int64, intRanges []types.IntColumnRange) (float64, error) {
+func (t *Table) GetRowCountByIntColumnRanges(sc *variable.StatementContext, colID int64, intRanges []ranger.IntColumnRange) (float64, error) {
 	c := t.Columns[colID]
 	if t.Pseudo || c == nil || len(c.Buckets) == 0 {
 		return getPseudoRowCountByIntRanges(intRanges, float64(t.Count)), nil
@@ -218,7 +219,7 @@ func (t *Table) GetRowCountByIntColumnRanges(sc *variable.StatementContext, colI
 }
 
 // GetRowCountByIndexRanges estimates the row count by a slice of IndexRange.
-func (t *Table) GetRowCountByIndexRanges(sc *variable.StatementContext, idxID int64, indexRanges []*types.IndexRange, inAndEQCnt int) (float64, error) {
+func (t *Table) GetRowCountByIndexRanges(sc *variable.StatementContext, idxID int64, indexRanges []*ranger.IndexRange, inAndEQCnt int) (float64, error) {
 	idx := t.Indices[idxID]
 	if t.Pseudo || idx == nil || len(idx.Buckets) == 0 {
 		return getPseudoRowCountByIndexRanges(sc, indexRanges, inAndEQCnt, float64(t.Count))
@@ -237,7 +238,7 @@ func PseudoTable(tableID int64) *Table {
 	return t
 }
 
-func getPseudoRowCountByIndexRanges(sc *variable.StatementContext, indexRanges []*types.IndexRange, inAndEQCnt int,
+func getPseudoRowCountByIndexRanges(sc *variable.StatementContext, indexRanges []*ranger.IndexRange, inAndEQCnt int,
 	tableRowCount float64) (float64, error) {
 	var totalCount float64
 	for _, indexRange := range indexRanges {
@@ -246,7 +247,7 @@ func getPseudoRowCountByIndexRanges(sc *variable.StatementContext, indexRanges [
 		if i > inAndEQCnt {
 			i = inAndEQCnt
 		}
-		colRange := types.ColumnRange{Low: indexRange.LowVal[i], High: indexRange.HighVal[i]}
+		colRange := ranger.ColumnRange{Low: indexRange.LowVal[i], High: indexRange.HighVal[i]}
 		rowCount, err := getPseudoRowCountByColumnRange(sc, tableRowCount, colRange)
 		if err != nil {
 			return 0, errors.Trace(err)
@@ -270,7 +271,7 @@ func getPseudoRowCountByIndexRanges(sc *variable.StatementContext, indexRanges [
 	return totalCount, nil
 }
 
-func getPseudoRowCountByColumnRange(sc *variable.StatementContext, tableRowCount float64, ran types.ColumnRange) (float64, error) {
+func getPseudoRowCountByColumnRange(sc *variable.StatementContext, tableRowCount float64, ran ranger.ColumnRange) (float64, error) {
 	var rowCount float64
 	var err error
 	if ran.Low.Kind() == types.KindNull && ran.High.Kind() == types.KindMaxValue {
@@ -303,7 +304,7 @@ func getPseudoRowCountByColumnRange(sc *variable.StatementContext, tableRowCount
 	return rowCount, nil
 }
 
-func getPseudoRowCountByIntRanges(intRanges []types.IntColumnRange, tableRowCount float64) float64 {
+func getPseudoRowCountByIntRanges(intRanges []ranger.IntColumnRange, tableRowCount float64) float64 {
 	var rowCount float64
 	for _, rg := range intRanges {
 		var cnt float64

@@ -199,9 +199,9 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 		for _, cond := range selection.Conditions {
 			conds = append(conds, expression.PushDownNot(cond, false, ctx))
 		}
-		col := selection.Children()[0].(*plan.DataSource).Columns[0]
+		col := selection.Children()[0].(*plan.DataSource).Schema().Columns[0]
 		c.Assert(col, NotNil)
-		result, _, _, err := ranger.BuildRange(new(variable.StatementContext), conds, ranger.IntRange, []*expression.Column{col}, nil)
+		result, _, _, err := ranger.BuildRange(new(variable.StatementContext), conds, ranger.IntRangeType, []*expression.Column{col}, nil)
 		c.Assert(err, IsNil)
 		got := fmt.Sprintf("%v", result)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
@@ -302,7 +302,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		}
 		cols, lengths := expression.IndexInfo2Cols(selection.Schema().Columns, tbl.Indices[0])
 		c.Assert(cols, NotNil)
-		result, _, _, err := ranger.BuildRange(new(variable.StatementContext), conds, ranger.IndexRange, cols, lengths)
+		result, _, _, err := ranger.BuildRange(new(variable.StatementContext), conds, ranger.IndexRangeType, cols, lengths)
 		c.Assert(err, IsNil)
 		got := fmt.Sprintf("%v", result)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
@@ -461,7 +461,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 		}
 		col := ds.Schema().Columns[0]
 		c.Assert(col, NotNil)
-		result, _, _, err := ranger.BuildRange(new(variable.StatementContext), conds, ranger.ColumnRange, []*expression.Column{col}, nil)
+		result, _, _, err := ranger.BuildRange(new(variable.StatementContext), conds, ranger.ColumnRangeType, []*expression.Column{col}, nil)
 		c.Assert(err, IsNil)
 		got := fmt.Sprintf("%s", result)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))

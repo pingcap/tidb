@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/util/ranger"
 )
 
 // Histogram represents statistics for a column or index.
@@ -343,7 +344,7 @@ func (c *Column) String() string {
 }
 
 // getIntColumnRowCount estimates the row count by a slice of IntColumnRange.
-func (c *Column) getIntColumnRowCount(sc *variable.StatementContext, intRanges []types.IntColumnRange,
+func (c *Column) getIntColumnRowCount(sc *variable.StatementContext, intRanges []ranger.IntColumnRange,
 	totalRowCount float64) (float64, error) {
 	var rowCount float64
 	for _, rg := range intRanges {
@@ -377,7 +378,7 @@ func (c *Column) getIntColumnRowCount(sc *variable.StatementContext, intRanges [
 }
 
 // getColumnRowCount estimates the row count by a slice of ColumnRange.
-func (c *Column) getColumnRowCount(sc *variable.StatementContext, ranges ...types.ColumnRange) (float64, error) {
+func (c *Column) getColumnRowCount(sc *variable.StatementContext, ranges ...ranger.ColumnRange) (float64, error) {
 	var rowCount float64
 	for _, rg := range ranges {
 		cmp, err := rg.Low.CompareDatum(sc, rg.High)
@@ -434,7 +435,7 @@ func (idx *Index) String() string {
 	return idx.Histogram.toString(true)
 }
 
-func (idx *Index) getRowCount(sc *variable.StatementContext, indexRanges []*types.IndexRange, inAndEQCnt int) (float64, error) {
+func (idx *Index) getRowCount(sc *variable.StatementContext, indexRanges []*ranger.IndexRange, inAndEQCnt int) (float64, error) {
 	totalCount := float64(0)
 	for _, indexRange := range indexRanges {
 		indexRange.Align(idx.NumColumns)

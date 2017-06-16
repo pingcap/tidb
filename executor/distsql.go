@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
+	"github.com/pingcap/tidb/util/ranger"
 )
 
 const (
@@ -111,7 +112,7 @@ func (s *rowsSorter) Swap(i, j int) {
 	s.rows[i], s.rows[j] = s.rows[j], s.rows[i]
 }
 
-func tableRangesToKVRanges(tid int64, tableRanges []types.IntColumnRange) []kv.KeyRange {
+func tableRangesToKVRanges(tid int64, tableRanges []ranger.IntColumnRange) []kv.KeyRange {
 	krs := make([]kv.KeyRange, 0, len(tableRanges))
 	for _, tableRange := range tableRanges {
 		startKey := tablecodec.EncodeRowKeyWithHandle(tid, tableRange.LowVal)
@@ -171,7 +172,7 @@ func indexValuesToKVRanges(tid, idxID int64, values [][]types.Datum) ([]kv.KeyRa
 	return krs, nil
 }
 
-func indexRangesToKVRanges(sc *variable.StatementContext, tid, idxID int64, ranges []*types.IndexRange, fieldTypes []*types.FieldType) ([]kv.KeyRange, error) {
+func indexRangesToKVRanges(sc *variable.StatementContext, tid, idxID int64, ranges []*ranger.IndexRange, fieldTypes []*types.FieldType) ([]kv.KeyRange, error) {
 	krs := make([]kv.KeyRange, 0, len(ranges))
 	for _, ran := range ranges {
 		err := convertIndexRangeTypes(sc, ran, fieldTypes)
@@ -200,7 +201,7 @@ func indexRangesToKVRanges(sc *variable.StatementContext, tid, idxID int64, rang
 	return krs, nil
 }
 
-func convertIndexRangeTypes(sc *variable.StatementContext, ran *types.IndexRange, fieldTypes []*types.FieldType) error {
+func convertIndexRangeTypes(sc *variable.StatementContext, ran *ranger.IndexRange, fieldTypes []*types.FieldType) error {
 	for i := range ran.LowVal {
 		if ran.LowVal[i].Kind() == types.KindMinNotNull || ran.LowVal[i].Kind() == types.KindMaxValue {
 			continue
@@ -371,7 +372,7 @@ type XSelectIndexExec struct {
 	startTS              uint64
 	returnedRows         uint64 // returned row count
 	schema               *expression.Schema
-	ranges               []*types.IndexRange
+	ranges               []*ranger.IndexRange
 	limitCount           *int64
 	sortItemsPB          []*tipb.ByItem
 	columns              []*model.ColumnInfo
@@ -838,7 +839,7 @@ type XSelectTableExec struct {
 	where        *tipb.Expr
 	Columns      []*model.ColumnInfo
 	schema       *expression.Schema
-	ranges       []types.IntColumnRange
+	ranges       []ranger.IntColumnRange
 	desc         bool
 	limitCount   *int64
 	returnedRows uint64 // returned rowCount
