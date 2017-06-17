@@ -186,6 +186,9 @@ func (s *testColumnSuite) TestGetZeroValue(c *C) {
 }
 
 func (s *testColumnSuite) TestGetDefaultValue(c *C) {
+	ctx := mock.NewContext()
+	zeroTimestamp := types.ZeroTimestamp
+	zeroTimestamp.TimeZone = ctx.GetSessionVars().GetTimeZone()
 	tests := []struct {
 		colInfo *model.ColumnInfo
 		strict  bool
@@ -246,7 +249,7 @@ func (s *testColumnSuite) TestGetDefaultValue(c *C) {
 				DefaultValue: "0000-00-00 00:00:00",
 			},
 			false,
-			types.NewDatum(types.ZeroTimestamp),
+			types.NewDatum(zeroTimestamp),
 			nil,
 		},
 		{
@@ -257,7 +260,7 @@ func (s *testColumnSuite) TestGetDefaultValue(c *C) {
 				},
 			},
 			true,
-			types.NewDatum(types.ZeroTimestamp),
+			types.NewDatum(zeroTimestamp),
 			errNoDefaultValue,
 		},
 		{
@@ -272,8 +275,6 @@ func (s *testColumnSuite) TestGetDefaultValue(c *C) {
 			nil,
 		},
 	}
-
-	ctx := mock.NewContext()
 
 	for _, tt := range tests {
 		ctx.GetSessionVars().StrictSQLMode = tt.strict
