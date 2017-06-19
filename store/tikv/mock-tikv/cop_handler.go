@@ -39,14 +39,14 @@ type selectContext struct {
 	eval         *xeval.Evaluator
 	whereColumns map[int64]*tipb.ColumnInfo
 	aggColumns   map[int64]*tipb.ColumnInfo
-	topnColumns  map[int64]*tipb.ColumnInfo
+	topNColumns  map[int64]*tipb.ColumnInfo
 	groups       map[string]struct{}
 	groupKeys    [][]byte
 	aggregates   []*aggregateFuncExpr
 	aggregate    bool
 	descScan     bool
-	topn         bool
-	topnHeap     *topnHeap
+	topN         bool
+	topNHeap     *topNHeap
 	keyRanges    []*coprocessor.KeyRange
 
 	// Use for DecodeRow.
@@ -89,21 +89,21 @@ func (h *rpcHandler) handleCopRequest(req *coprocessor.Request) (*coprocessor.Re
 				if sel.Limit == nil {
 					return nil, errors.New("We don't support pushing down Sort without Limit")
 				}
-				ctx.topn = true
-				ctx.topnHeap = &topnHeap{
+				ctx.topN = true
+				ctx.topNHeap = &topNHeap{
 					totalCount: int(*sel.Limit),
-					topnSorter: topnSorter{
+					topNSorter: topNSorter{
 						orderByItems: sel.OrderBy,
 						sc:           ctx.sc,
 					},
 				}
-				ctx.topnColumns = make(map[int64]*tipb.ColumnInfo)
+				ctx.topNColumns = make(map[int64]*tipb.ColumnInfo)
 				for _, item := range sel.OrderBy {
-					collectColumnsInExpr(item.Expr, ctx, ctx.topnColumns)
+					collectColumnsInExpr(item.Expr, ctx, ctx.topNColumns)
 				}
 				for k := range ctx.whereColumns {
 					// It will be handled in where.
-					delete(ctx.topnColumns, k)
+					delete(ctx.topNColumns, k)
 				}
 			}
 		}
@@ -139,7 +139,7 @@ func (h *rpcHandler) handleCopRequest(req *coprocessor.Request) (*coprocessor.Re
 			}
 			chunks, err = h.getChunksFromIndexReq(ctx)
 		}
-		if ctx.topn {
+		if ctx.topN {
 			chunks = h.setTopNDataForCtx(ctx)
 		}
 		resp, err = buildResp(chunks, err)
@@ -177,9 +177,9 @@ func buildResp(chunks []tipb.Chunk, err error) (*coprocessor.Response, error) {
 }
 
 func (h *rpcHandler) setTopNDataForCtx(ctx *selectContext) []tipb.Chunk {
-	sort.Sort(&ctx.topnHeap.topnSorter)
-	chunks := make([]tipb.Chunk, 0, len(ctx.topnHeap.rows)/rowsPerChunk)
-	for _, row := range ctx.topnHeap.rows {
+	sort.Sort(&ctx.topNHeap.topNSorter)
+	chunks := make([]tipb.Chunk, 0, len(ctx.topNHeap.rows)/rowsPerChunk)
+	for _, row := range ctx.topNHeap.rows {
 		var data []byte
 		for _, d := range row.data {
 			data = append(data, d...)
@@ -468,7 +468,7 @@ func (h *rpcHandler) valuesToRow(ctx *selectContext, handle int64, values map[in
 	if !match {
 		return nil, nil
 	}
-	if ctx.topn {
+	if ctx.topN {
 		return nil, errors.Trace(h.evalTopN(ctx, handle, values, columns))
 	}
 	data := dummySlice
