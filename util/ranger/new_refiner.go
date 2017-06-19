@@ -80,11 +80,11 @@ func hasPrefix(lengths []int) bool {
 
 func fixPrefixColRange(ranges []*types.IndexRange, lengths []int) {
 	for _, ran := range ranges {
-		for i := 0; i < len(ran.LowVal); i++ {
+		for i := 0; i < len(ran.LowVal) && i < len(lengths); i++ {
 			fixRangeDatum(&ran.LowVal[i], lengths[i])
 		}
 		ran.LowExclude = false
-		for i := 0; i < len(ran.HighVal); i++ {
+		for i := 0; i < len(ran.HighVal) && i < len(lengths); i++ {
 			fixRangeDatum(&ran.HighVal[i], lengths[i])
 		}
 	}
@@ -145,7 +145,7 @@ func detachIndexScanConditions(conditions []expression.Expression, cols []*expre
 			accessEqualCount = i
 			break
 		}
-		if lengths[i] != types.UnspecifiedLength {
+		if i < len(lengths) && lengths[i] != types.UnspecifiedLength {
 			filterConds = append(filterConds, cond)
 		}
 		if i == len(accessConds)-1 {
@@ -157,10 +157,14 @@ func detachIndexScanConditions(conditions []expression.Expression, cols []*expre
 	conditions = removeAccessConditions(conditions, accessConds)
 	var curIndex int
 	for curIndex = accessEqualCount; curIndex < len(cols); curIndex++ {
+		length := types.UnspecifiedLength
+		if curIndex < len(lengths) && lengths[curIndex] != types.UnspecifiedLength {
+			length = types.UnspecifiedLength
+		}
 		checker := &conditionChecker{
 			cols:         cols,
 			columnOffset: curIndex,
-			length:       lengths[curIndex],
+			length:       length,
 		}
 		// First of all, we should extract all of in/eq expressions from rest conditions for every continuous index column.
 		// e.g. For index (a,b,c) and conditions a in (1,2) and b < 1 and c in (3,4), we should only extract column a in (1,2).
@@ -172,7 +176,7 @@ func detachIndexScanConditions(conditions []expression.Expression, cols []*expre
 		}
 		accessInAndEqCount++
 		accessConds = append(accessConds, conditions[accessIdx])
-		if lengths[curIndex] != types.UnspecifiedLength {
+		if length != types.UnspecifiedLength {
 			filterConds = append(filterConds, conditions[accessIdx])
 		}
 		conditions = append(conditions[:accessIdx], conditions[accessIdx+1:]...)
