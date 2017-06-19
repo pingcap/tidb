@@ -162,7 +162,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 			resultPlan = newSel
 		}
 	} else {
-		is.Ranges = ranger.FullIndexRange
+		is.Ranges = ranger.FullIndexRange()
 	}
 	is.DoubleRead = !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
 	return resultPlan.matchProperty(prop, &physicalPlanInfo{count: rowCount, reliable: !statsTbl.Pseudo}), nil
@@ -222,7 +222,7 @@ func (p *DataSource) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlan
 			TableAsName: p.TableAsName,
 		}.init(p.allocator, p.ctx)
 		memTable.SetSchema(p.schema)
-		memTable.Ranges = ranger.FullIntRange
+		memTable.Ranges = ranger.FullIntRange()
 		info = &physicalPlanInfo{p: memTable}
 		info = enforceProperty(prop, info)
 		p.storePlanInfo(prop, info)

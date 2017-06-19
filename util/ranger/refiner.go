@@ -32,13 +32,14 @@ var fullRange = []point{
 }
 
 // FullIntRange is (-∞, +∞) for IntColumnRange.
-var FullIntRange = []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}
+func FullIntRange() []types.IntColumnRange {
+	return []types.IntColumnRange{{LowVal: math.MinInt64, HighVal: math.MaxInt64}}
+}
 
 // FullIndexRange is (-∞, +∞) for IndexRange.
-var FullIndexRange = []*types.IndexRange{{
-	LowVal:  []types.Datum{{}},
-	HighVal: []types.Datum{types.MaxValueDatum()},
-}}
+func FullIndexRange() []*types.IndexRange {
+	return []*types.IndexRange{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}}}
+}
 
 // BuildIndexRange will build range of index for PhysicalIndexScan
 func BuildIndexRange(sc *variable.StatementContext, tblInfo *model.TableInfo, index *model.IndexInfo,
@@ -291,7 +292,7 @@ func DetachColumnConditions(conditions []expression.Expression, colName model.CI
 // BuildTableRange will build range of pk for PhysicalTableScan
 func BuildTableRange(accessConditions []expression.Expression, sc *variable.StatementContext) ([]types.IntColumnRange, error) {
 	if len(accessConditions) == 0 {
-		return FullIntRange, nil
+		return FullIntRange(), nil
 	}
 
 	rb := builder{sc: sc}
