@@ -25,16 +25,16 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-// fullRange is (-∞, +∞) and nil value.
+// fullRange is (-∞, +∞).
 var fullRange = []point{
 	{start: true},
 	{value: types.MaxValueDatum()},
 }
 
-// FullIntRange is (-∞, +∞).
+// FullIntRange is (-∞, +∞) for IntColumnRange.
 var FullIntRange = []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}
 
-// FullIndexRange is (-∞, +∞) and nil value.
+// FullIndexRange is (-∞, +∞) for IndexRange.
 var FullIndexRange = []*types.IndexRange{{
 	LowVal:  []types.Datum{{}},
 	HighVal: []types.Datum{types.MaxValueDatum()},
