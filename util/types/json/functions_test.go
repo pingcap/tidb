@@ -83,6 +83,24 @@ func (s *testJSONSuite) TestJSONExtract(c *C) {
 	}
 }
 
+// Why we need this? Because some escaped string have been already dealed
+// by go JSON parser, so we can't touch those cases in TestJSONUnquote.
+func (s *testJSONSuite) TestUnquoteString(c *C) {
+	var tests = []struct {
+		input  string
+		output string
+	}{
+		{"bad escaped: \\a", "bad escaped: \\a"},
+		{"good escaped: \\b \\f \\n \\r \\t \\\\ \u4f60", "good escaped: \b \f \n \r \t \\ 你"},
+		{"quoted string: hello \\\"quoted\\\" world", "quoted string: hello \"quoted\" world"},
+	}
+	for _, tt := range tests {
+		unquoted, err := unquoteString(tt.input)
+		c.Assert(err, IsNil)
+		c.Assert(unquoted, Equals, tt.output)
+	}
+}
+
 func (s *testJSONSuite) TestJSONUnquote(c *C) {
 	var tests = []struct {
 		j        string

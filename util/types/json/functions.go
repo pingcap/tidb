@@ -15,10 +15,13 @@ package json
 
 import (
 	"bytes"
+	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"unicode/utf8"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 // Type returns type of JSON as string.
@@ -106,15 +109,17 @@ func unquoteString(s string) (string, error) {
 			case '\\':
 				ret.WriteByte('\\')
 			case 'u':
-				if i+4 >= len(s) {
-					return "", errors.New("Invalid unicode")
+				if i+5 > len(s) {
+					return "", errors.Errorf("Invalid unicode: %s", s[i+1:])
 				}
-				unicode, size := utf8.DecodeRuneInString(s[i-1 : i+5])
-				utf8Buf := make([]byte, size)
-				utf8.EncodeRune(utf8Buf, unicode)
-				ret.Write(utf8Buf)
-				i += 4
+				char, err := decodeEscapedUnicode(hack.Slice(s[i+1 : i+5]))
+				if err != nil {
+					return "", errors.Trace(err)
+				}
+				ret.Write(char)
+				i += 5
 			default:
+				ret.WriteByte('\\')
 				ret.WriteByte(s[i])
 			}
 		} else {
@@ -122,6 +127,20 @@ func unquoteString(s string) (string, error) {
 		}
 	}
 	return ret.String(), nil
+}
+
+func decodeEscapedUnicode(s []byte) (char []byte, err error) {
+	var buffer [6]byte
+	_, err = hex.Decode(buffer[0:2], s)
+	if err != nil {
+		return char, errors.Trace(err)
+	}
+	var unicode rune
+	binary.Read(bytes.NewReader(buffer[0:2]), binary.BigEndian, &unicode)
+
+	char = make([]byte, utf8.RuneLen(unicode))
+	utf8.EncodeRune(char, unicode)
+	return
 }
 
 // extract is used by Extract.
