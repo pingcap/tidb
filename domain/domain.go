@@ -318,6 +318,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			}
 		case <-syncer.Done():
 			// The schema syncer stops, we need stop the schema validator to synchronize the schema version.
+			log.Info("[ddl] reload schema in loop, schema syncer need restart")
 			do.SchemaValidator.Stop()
 			err := syncer.Restart(goctx.Background())
 			if err != nil {
