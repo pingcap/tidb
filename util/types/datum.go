@@ -1312,11 +1312,6 @@ func (d *Datum) ToInt64(sc *variable.StatementContext) (int64, error) {
 	return d.toSignedInteger(sc, mysql.TypeLonglong)
 }
 
-// ToInt64WithTp converts to a int64 of target type
-func (d *Datum) ToInt64WithTp(sc *variable.StatementContext, tp byte) (int64, error) {
-	return d.toSignedInteger(sc, mysql.TypeLong)
-}
-
 func (d *Datum) toSignedInteger(sc *variable.StatementContext, tp byte) (int64, error) {
 	lowerBound := SignedLowerBound[tp]
 	upperBound := SignedUpperBound[tp]
