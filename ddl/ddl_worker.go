@@ -188,7 +188,7 @@ func (d *ddl) handleDDLJobQueue() error {
 				return errors.Trace(err)
 			}
 
-			if job.IsRunning() || job.IsSynced() {
+			if job.IsRunning() || job.IsDone() {
 				// If we enter a new state, crash when waiting 2 * lease time, and restart quickly,
 				// we may run the job immediately again, but we don't wait enough 2 * lease time to
 				// let other servers update the schema.
