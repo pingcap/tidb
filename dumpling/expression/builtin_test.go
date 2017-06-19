@@ -16,8 +16,13 @@ package expression
 import (
 	"reflect"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
@@ -211,3 +216,46 @@ func (s *testEvaluatorSuite) TestLock(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(1))
 }
+
+// newFunctionForTest creates a new ScalarFunction using funcName and arguments,
+// it is different from expression.NewFunction which needs an additional retType argument.
+func newFunctionForTest(ctx context.Context, funcName string, args ...Expression) (Expression, error) {
+	fc, ok := funcs[funcName]
+	if !ok {
+		return nil, errFunctionNotExists.GenByArgs(funcName)
+	}
+	funcArgs := make([]Expression, len(args))
+	copy(funcArgs, args)
+	f, err := fc.getFunction(funcArgs, ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &ScalarFunction{
+		FuncName: model.NewCIStr(funcName),
+		RetType:  f.getRetTp(),
+		Function: f,
+	}, nil
+}
+
+var (
+	// MySQL int8.
+	int8Con = &Constant{RetType: &types.FieldType{Tp: mysql.TypeLonglong, Charset: charset.CharsetBin, Collate: charset.CollationBin}}
+	// MySQL decimal.
+	decimalCon = &Constant{RetType: &types.FieldType{Tp: mysql.TypeNewDecimal, Charset: charset.CharsetBin, Collate: charset.CollationBin}}
+	// MySQL float.
+	floatCon = &Constant{RetType: &types.FieldType{Tp: mysql.TypeFloat, Charset: charset.CharsetBin, Collate: charset.CollationBin}}
+	// MySQL double.
+	doubleCon = &Constant{RetType: &types.FieldType{Tp: mysql.TypeDouble, Charset: charset.CharsetBin, Collate: charset.CollationBin}}
+	// MySQL char.
+	charCon = &Constant{RetType: &types.FieldType{Tp: mysql.TypeString, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8}}
+	// MySQL binary.
+	binaryCon = &Constant{RetType: &types.FieldType{Tp: mysql.TypeString, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag}}
+	// MySQL varchar.
+	varcharCon = &Constant{RetType: &types.FieldType{Tp: mysql.TypeVarchar, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8}}
+	// MySQL varbinary.
+	varbinaryCon = &Constant{RetType: &types.FieldType{Tp: mysql.TypeVarchar, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag}}
+	// MySQL text.
+	textCon = &Constant{RetType: &types.FieldType{Tp: mysql.TypeBlob, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8}}
+	// MySQL blob.
+	blobCon = &Constant{RetType: &types.FieldType{Tp: mysql.TypeBlob, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag}}
+)
