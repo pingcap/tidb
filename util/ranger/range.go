@@ -123,7 +123,7 @@ func (r *builder) build(expr expression.Expression) []point {
 		return r.buildFromConstant(x)
 	}
 
-	return fullRangePoints
+	return fullRange
 }
 
 func (r *builder) buildFromConstant(expr *expression.Constant) []point {
@@ -140,7 +140,7 @@ func (r *builder) buildFromConstant(expr *expression.Constant) []point {
 	if val == 0 {
 		return nil
 	}
-	return fullRangePoints
+	return fullRange
 }
 
 func (r *builder) buildFromColumn(expr *expression.Column) []point {
@@ -259,7 +259,7 @@ func (r *builder) newBuildFromIn(expr *expression.ScalarFunction) []point {
 		v, ok := e.(*expression.Constant)
 		if !ok {
 			r.err = ErrUnsupportedType.Gen("expr:%v is not constant", e)
-			return fullRangePoints
+			return fullRange
 		}
 		startPoint := point{value: types.NewDatum(v.Value.GetValue()), start: true}
 		endPoint := point{value: types.NewDatum(v.Value.GetValue())}
@@ -301,7 +301,7 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []poi
 	pattern, err := expr.GetArgs()[1].(*expression.Constant).Value.ToString()
 	if err != nil {
 		r.err = errors.Trace(err)
-		return fullRangePoints
+		return fullRange
 	}
 	if pattern == "" {
 		startPoint := point{value: types.NewStringDatum(""), start: true}
@@ -374,11 +374,11 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []point {
 	case ast.In:
 		// Pattern not in is not supported.
 		r.err = ErrUnsupportedType.Gen("NOT IN is not supported")
-		return fullRangePoints
+		return fullRange
 	case ast.Like:
 		// Pattern not like is not supported.
 		r.err = ErrUnsupportedType.Gen("NOT LIKE is not supported.")
-		return fullRangePoints
+		return fullRange
 	case ast.IsNull:
 		startPoint := point{value: types.MinNotNullDatum(), start: true}
 		endPoint := point{value: types.MaxValueDatum()}

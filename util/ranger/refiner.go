@@ -25,8 +25,8 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-// fullRangePoints is (-∞, +∞) and nil value.
-var fullRangePoints = []point{
+// fullRange is (-∞, +∞) and nil value.
+var fullRange = []point{
 	{start: true},
 	{value: types.MaxValueDatum()},
 }
@@ -56,7 +56,7 @@ func BuildIndexRange(sc *variable.StatementContext, tblInfo *model.TableInfo, in
 			ranges = rb.appendIndexRanges(ranges, point, tp)
 		}
 	}
-	rangePoints := fullRangePoints
+	rangePoints := fullRange
 	// Build rangePoints for non-equal access conditions.
 	for i := accessInAndEqCount; i < len(accessCondition); i++ {
 		rangePoints = rb.intersection(rangePoints, rb.build(accessCondition[i]))
@@ -295,7 +295,7 @@ func BuildTableRange(accessConditions []expression.Expression, sc *variable.Stat
 	}
 
 	rb := builder{sc: sc}
-	rangePoints := fullRangePoints
+	rangePoints := fullRange
 	for _, cond := range accessConditions {
 		rangePoints = rb.intersection(rangePoints, rb.build(cond))
 		if rb.err != nil {
@@ -318,7 +318,7 @@ func BuildColumnRange(conds []expression.Expression, colName model.CIStr, sc *va
 	}
 
 	rb := builder{sc: sc}
-	rangePoints := fullRangePoints
+	rangePoints := fullRange
 	for _, cond := range usedConds {
 		rangePoints = rb.intersection(rangePoints, rb.build(cond))
 		if rb.err != nil {
