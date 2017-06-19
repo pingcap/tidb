@@ -827,15 +827,18 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 	ts.SetSchema(p.schema)
 	sc := p.ctx.GetSessionVars().StmtCtx
 	ts.Ranges = []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}
-	pkColumn := expression.ColInfo2Col(ts.schema.Columns, ts.Table.GetPkColInfo())
+	var pkCol *expression.Column
+	if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
+		pkCol = expression.ColInfo2Col(ts.schema.Columns, pkColInfo)
+	}
 	if len(p.pushedDownConds) > 0 {
 		conds := make([]expression.Expression, 0, len(p.pushedDownConds))
 		for _, cond := range p.pushedDownConds {
 			conds = append(conds, cond.Clone())
 		}
-		if pkColumn != nil {
+		if pkCol != nil {
 			var ranges []types.Range
-			ranges, ts.AccessCondition, ts.filterCondition, err = ranger.BuildRange(sc, conds, ranger.IntRangeType, []*expression.Column{pkColumn}, nil)
+			ranges, ts.AccessCondition, ts.filterCondition, err = ranger.BuildRange(sc, conds, ranger.IntRangeType, []*expression.Column{pkCol}, nil)
 			ts.Ranges = ranger.RangeSlice2IntRangeSlice(ranges)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -846,19 +849,10 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 	}
 	statsTbl := p.statisticTable
 	rowCount := float64(statsTbl.Count)
-	var pkCol *expression.Column
-	if p.tableInfo.PKIsHandle {
-		for i, colInfo := range ts.Columns {
-			if mysql.HasPriKeyFlag(colInfo.Flag) {
-				pkCol = p.Schema().Columns[i]
-				break
-			}
-		}
-		if pkCol != nil {
-			rowCount, err = statsTbl.GetRowCountByIntColumnRanges(sc, pkCol.ID, ts.Ranges)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+	if pkCol != nil {
+		rowCount, err = statsTbl.GetRowCountByIntColumnRanges(sc, pkCol.ID, ts.Ranges)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 	cost := rowCount * scanFactor
