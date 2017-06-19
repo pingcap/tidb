@@ -422,7 +422,7 @@ func (e *aggregateExec) aggregate(value [][]byte) error {
 }
 
 type topNExec struct {
-	heap              *topnHeap
+	heap              *topNHeap
 	evalCtx           *evalContext
 	relatedColOffsets []int
 	orderByExprs      []expression.Expression
@@ -468,7 +468,7 @@ func (e *topNExec) Next() (handle int64, value [][]byte, err error) {
 	if e.cursor >= len(e.heap.rows) {
 		return 0, nil, nil
 	}
-	sort.Sort(&e.heap.topnSorter)
+	sort.Sort(&e.heap.topNSorter)
 	row := e.heap.rows[e.cursor]
 	e.cursor++
 

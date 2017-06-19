@@ -876,7 +876,7 @@ func (d *Datum) convertToInt(sc *variable.StatementContext, target *FieldType) (
 
 func (d *Datum) convertToUint(sc *variable.StatementContext, target *FieldType) (Datum, error) {
 	tp := target.Tp
-	upperBound := unsignedUpperBound[tp]
+	upperBound := UnsignedUpperBound[tp]
 	var (
 		val uint64
 		err error
@@ -884,17 +884,17 @@ func (d *Datum) convertToUint(sc *variable.StatementContext, target *FieldType) 
 	)
 	switch d.k {
 	case KindInt64:
-		val, err = convertIntToUint(d.GetInt64(), upperBound, tp)
+		val, err = ConvertIntToUint(d.GetInt64(), upperBound, tp)
 	case KindUint64:
-		val, err = convertUintToUint(d.GetUint64(), upperBound, tp)
+		val, err = ConvertUintToUint(d.GetUint64(), upperBound, tp)
 	case KindFloat32, KindFloat64:
-		val, err = convertFloatToUint(sc, d.GetFloat64(), upperBound, tp)
+		val, err = ConvertFloatToUint(sc, d.GetFloat64(), upperBound, tp)
 	case KindString, KindBytes:
 		val, err = StrToUint(sc, d.GetString())
 		if err != nil {
 			return ret, errors.Trace(err)
 		}
-		val, err = convertUintToUint(val, upperBound, tp)
+		val, err = ConvertUintToUint(val, upperBound, tp)
 		if err != nil {
 			return ret, errors.Trace(err)
 		}
@@ -903,7 +903,7 @@ func (d *Datum) convertToUint(sc *variable.StatementContext, target *FieldType) 
 		dec := d.GetMysqlTime().ToNumber()
 		dec.Round(dec, 0, ModeHalfEven)
 		ival, err1 := dec.ToInt()
-		val, err = convertIntToUint(ival, upperBound, tp)
+		val, err = ConvertIntToUint(ival, upperBound, tp)
 		if err == nil {
 			err = err1
 		}
@@ -913,22 +913,22 @@ func (d *Datum) convertToUint(sc *variable.StatementContext, target *FieldType) 
 		var ival int64
 		ival, err = dec.ToInt()
 		if err == nil {
-			val, err = convertIntToUint(ival, upperBound, tp)
+			val, err = ConvertIntToUint(ival, upperBound, tp)
 		}
 	case KindMysqlDecimal:
 		fval, err1 := d.GetMysqlDecimal().ToFloat64()
-		val, err = convertFloatToUint(sc, fval, upperBound, tp)
+		val, err = ConvertFloatToUint(sc, fval, upperBound, tp)
 		if err == nil {
 			err = err1
 		}
 	case KindMysqlHex:
-		val, err = convertFloatToUint(sc, d.GetMysqlHex().ToNumber(), upperBound, tp)
+		val, err = ConvertFloatToUint(sc, d.GetMysqlHex().ToNumber(), upperBound, tp)
 	case KindMysqlBit:
-		val, err = convertFloatToUint(sc, d.GetMysqlBit().ToNumber(), upperBound, tp)
+		val, err = ConvertFloatToUint(sc, d.GetMysqlBit().ToNumber(), upperBound, tp)
 	case KindMysqlEnum:
-		val, err = convertFloatToUint(sc, d.GetMysqlEnum().ToNumber(), upperBound, tp)
+		val, err = ConvertFloatToUint(sc, d.GetMysqlEnum().ToNumber(), upperBound, tp)
 	case KindMysqlSet:
-		val, err = convertFloatToUint(sc, d.GetMysqlSet().ToNumber(), upperBound, tp)
+		val, err = ConvertFloatToUint(sc, d.GetMysqlSet().ToNumber(), upperBound, tp)
 	default:
 		return invalidConv(d, target.Tp)
 	}
@@ -1313,40 +1313,46 @@ func (d *Datum) ToInt64(sc *variable.StatementContext) (int64, error) {
 }
 
 func (d *Datum) toSignedInteger(sc *variable.StatementContext, tp byte) (int64, error) {
-	lowerBound := signedLowerBound[tp]
-	upperBound := signedUpperBound[tp]
+	lowerBound := SignedLowerBound[tp]
+	upperBound := SignedUpperBound[tp]
 	switch d.Kind() {
 	case KindInt64:
-		return convertIntToInt(d.GetInt64(), lowerBound, upperBound, tp)
+		return ConvertIntToInt(d.GetInt64(), lowerBound, upperBound, tp)
 	case KindUint64:
-		return convertUintToInt(d.GetUint64(), upperBound, tp)
+		return ConvertUintToInt(d.GetUint64(), upperBound, tp)
 	case KindFloat32:
-		return convertFloatToInt(sc, float64(d.GetFloat32()), lowerBound, upperBound, tp)
+		return ConvertFloatToInt(sc, float64(d.GetFloat32()), lowerBound, upperBound, tp)
 	case KindFloat64:
-		return convertFloatToInt(sc, d.GetFloat64(), lowerBound, upperBound, tp)
+		return ConvertFloatToInt(sc, d.GetFloat64(), lowerBound, upperBound, tp)
 	case KindString, KindBytes:
 		iVal, err := StrToInt(sc, d.GetString())
 		if err != nil {
 			return iVal, errors.Trace(err)
 		}
-		i64, err := convertIntToInt(iVal, lowerBound, upperBound, tp)
+		i64, err := ConvertIntToInt(iVal, lowerBound, upperBound, tp)
 		return i64, errors.Trace(err)
 	case KindMysqlTime:
 		// 2011-11-10 11:11:11.999999 -> 20111110111112
-		dec := d.GetMysqlTime().ToNumber()
-		dec.Round(dec, 0, ModeHalfEven)
-		ival, err := dec.ToInt()
-		ival, err2 := convertIntToInt(ival, lowerBound, upperBound, tp)
+		// 2011-11-10 11:59:59.999999 -> 20111110120000
+		t, err := d.GetMysqlTime().RoundFrac(DefaultFsp)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		ival, err := t.ToNumber().ToInt()
+		ival, err2 := ConvertIntToInt(ival, lowerBound, upperBound, tp)
 		if err == nil {
 			err = err2
 		}
 		return ival, err
 	case KindMysqlDuration:
 		// 11:11:11.999999 -> 111112
-		dec := d.GetMysqlDuration().ToNumber()
-		dec.Round(dec, 0, ModeHalfEven)
-		ival, err := dec.ToInt()
-		ival, err2 := convertIntToInt(ival, lowerBound, upperBound, tp)
+		// 11:59:59.999999 -> 120000
+		dur, err := d.GetMysqlDuration().RoundFrac(DefaultFsp)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		ival, err := dur.ToNumber().ToInt()
+		ival, err2 := ConvertIntToInt(ival, lowerBound, upperBound, tp)
 		if err == nil {
 			err = err2
 		}
@@ -1355,23 +1361,23 @@ func (d *Datum) toSignedInteger(sc *variable.StatementContext, tp byte) (int64, 
 		var to MyDecimal
 		d.GetMysqlDecimal().Round(&to, 0, ModeHalfEven)
 		ival, err := to.ToInt()
-		ival, err2 := convertIntToInt(ival, lowerBound, upperBound, tp)
+		ival, err2 := ConvertIntToInt(ival, lowerBound, upperBound, tp)
 		if err == nil {
 			err = err2
 		}
 		return ival, err
 	case KindMysqlHex:
 		fval := d.GetMysqlHex().ToNumber()
-		return convertFloatToInt(sc, fval, lowerBound, upperBound, tp)
+		return ConvertFloatToInt(sc, fval, lowerBound, upperBound, tp)
 	case KindMysqlBit:
 		fval := d.GetMysqlBit().ToNumber()
-		return convertFloatToInt(sc, fval, lowerBound, upperBound, tp)
+		return ConvertFloatToInt(sc, fval, lowerBound, upperBound, tp)
 	case KindMysqlEnum:
 		fval := d.GetMysqlEnum().ToNumber()
-		return convertFloatToInt(sc, fval, lowerBound, upperBound, tp)
+		return ConvertFloatToInt(sc, fval, lowerBound, upperBound, tp)
 	case KindMysqlSet:
 		fval := d.GetMysqlSet().ToNumber()
-		return convertFloatToInt(sc, fval, lowerBound, upperBound, tp)
+		return ConvertFloatToInt(sc, fval, lowerBound, upperBound, tp)
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to int64", d.GetValue(), d.GetValue())
 	}
