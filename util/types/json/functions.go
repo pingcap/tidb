@@ -129,6 +129,9 @@ func unquoteString(s string) (string, error) {
 	return ret.String(), nil
 }
 
+// decodeEscapedUnicode decodes unicode into utf8 bytes. e.g.
+// decodeEscapedUnicode("4321") -> "䌡"
+// decodeEscapedUnicode("0034") -> "4"
 func decodeEscapedUnicode(s []byte) (char []byte, err error) {
 	var buffer [6]byte
 	_, err = hex.Decode(buffer[0:2], s)
