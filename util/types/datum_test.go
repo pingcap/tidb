@@ -14,6 +14,8 @@
 package types
 
 import (
+	"math"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -131,6 +133,15 @@ func testDatumToInt64(c *C, val interface{}, expect int64) {
 	c.Assert(b, Equals, expect)
 }
 
+func testDatumToInt64WithTargetType(c *C, val interface{}, tp byte, expectErr Checker, expectVal int64) {
+	d := NewDatum(val)
+	sc := new(variable.StatementContext)
+	sc.IgnoreTruncate = true
+	b, err := d.ToInt64WithTp(sc, tp)
+	c.Assert(err, expectErr)
+	c.Assert(b, Equals, expectVal)
+}
+
 func (ts *testTypeConvertSuite) TestToInt64(c *C) {
 	testDatumToInt64(c, "0", int64(0))
 	testDatumToInt64(c, int(0), int64(0))
@@ -156,6 +167,11 @@ func (ts *testTypeConvertSuite) TestToInt64(c *C) {
 	v, err := Convert(3.1415926, ft)
 	c.Assert(err, IsNil)
 	testDatumToInt64(c, v, int64(3))
+}
+
+func (ts *testTypeConvertSuite) TestToInt64WithTargetType(c *C) {
+	// test overflow
+	testDatumToInt64WithTargetType(c, "1343545435346432587475", mysql.TypeLong, NotNil, math.MaxInt32)
 }
 
 func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
