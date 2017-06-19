@@ -227,9 +227,9 @@ func (h *rpcHandler) buildTopN(ctx *dagContext, executor *tipb.Executor) (*topNE
 		}
 		pbConds[i] = item.Expr
 	}
-	heap := &topnHeap{
+	heap := &topNHeap{
 		totalCount: int(topN.Limit),
-		topnSorter: topnSorter{
+		topNSorter: topNSorter{
 			orderByItems: topN.OrderBy,
 			sc:           ctx.evalCtx.sc,
 		},
