@@ -137,11 +137,9 @@ func (t *TableInfo) GetPkName() CIStr {
 
 // GetPkColInfo gets the ColumnInfo of pk if exists.
 func (t *TableInfo) GetPkColInfo() *ColumnInfo {
-	if t.PKIsHandle {
-		for _, colInfo := range t.Columns {
-			if mysql.HasPriKeyFlag(colInfo.Flag) {
-				return colInfo
-			}
+	for _, colInfo := range t.Columns {
+		if mysql.HasPriKeyFlag(colInfo.Flag) {
+			return colInfo
 		}
 	}
 	return nil
