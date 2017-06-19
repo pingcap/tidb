@@ -1615,3 +1615,17 @@ func (s *testSuite) TestSelectForUpdate(c *C) {
 
 	tk1.MustExec("commit")
 }
+
+func (s *testSuite) TestCastTimeAsSig(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	// Issue#3471
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("USE test;")
+	tk.MustExec("create table t(a time(6));")
+	tk.MustExec("insert into t value('12:59:59.999999')")
+	result := tk.MustQuery("select cast(a as signed) from t")
+	result.Check(testkit.Rows("130000"))
+}
