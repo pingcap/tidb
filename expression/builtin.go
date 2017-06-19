@@ -144,6 +144,10 @@ func (b *baseBuiltinFunc) evalDuration(row []types.Datum) (types.Duration, bool,
 	return val.GetMysqlDuration(), false, errors.Trace(err)
 }
 
+func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
+	return b.tp
+}
+
 // equal only checks if both functions are non-deterministic and if these arguments are same.
 // Function name will be checked outside.
 func (b *baseBuiltinFunc) equal(fun builtinFunc) bool {
@@ -426,6 +430,8 @@ type builtinFunc interface {
 	equal(builtinFunc) bool
 	// getCtx returns this function's context.
 	getCtx() context.Context
+	// getRetTp returns the return type of the built-in function.
+	getRetTp() *types.FieldType
 	// setSelf sets a pointer to itself.
 	setSelf(builtinFunc) builtinFunc
 }
@@ -445,10 +451,16 @@ func (b *baseFunctionClass) verifyArgs(args []Expression) error {
 	return nil
 }
 
+func (b *baseFunctionClass) inferType(args []Expression) *types.FieldType {
+	return nil
+}
+
 // functionClass is the interface for a function which may contains multiple functions.
 type functionClass interface {
 	// getFunction gets a function signature by the types and the counts of given arguments.
 	getFunction(args []Expression, ctx context.Context) (builtinFunc, error)
+	// inferType infers the return type of a function.
+	inferType(args []Expression) *types.FieldType
 }
 
 // BuiltinFunc is the function signature for builtin functions
