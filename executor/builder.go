@@ -685,7 +685,7 @@ func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
 		schema:       v.Schema(),
 	}
 	if v.ExecLimit != nil {
-		return &TopnExec{
+		return &TopNExec{
 			SortExec: sortExec,
 			limit:    v.ExecLimit,
 		}
@@ -699,7 +699,7 @@ func (b *executorBuilder) buildTopN(v *plan.TopN) Executor {
 		ByItems:      v.ByItems,
 		schema:       v.Schema(),
 	}
-	return &TopnExec{
+	return &TopNExec{
 		SortExec: sortExec,
 		limit:    &plan.Limit{Count: v.Count, Offset: v.Offset},
 	}
