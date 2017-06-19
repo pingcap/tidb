@@ -384,6 +384,15 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 			s.sessionVars.StmtCtx.ResetForRetry()
 			_, err = st.Exec(s)
 			if err != nil {
+				// begin
+				// insert xxx
+				// update xxx
+				// commit
+				//
+				// update xxx need to read data first, if it meets error, we should reset txn before next retry.
+				// otherwise, we'll get duplicate key error during next retry because insert operation has already done.
+				s.txn = nil
+				s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 				break
 			}
 		}
