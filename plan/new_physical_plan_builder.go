@@ -593,8 +593,7 @@ func (p *DataSource) tryToGetMemTask(prop *requiredProp) (task task, err error) 
 		TableAsName: p.TableAsName,
 	}.init(p.allocator, p.ctx)
 	memTable.SetSchema(p.schema)
-	rb := &ranger.Builder{Sc: p.ctx.GetSessionVars().StmtCtx}
-	memTable.Ranges = rb.BuildTableRanges(ranger.FullRange)
+	memTable.Ranges = ranger.FullIntRange()
 	var retPlan PhysicalPlan = memTable
 	if len(p.pushedDownConds) > 0 {
 		sel := Selection{
@@ -687,8 +686,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 	rowCount := float64(statsTbl.Count)
 	sc := p.ctx.GetSessionVars().StmtCtx
 	idxCols, colLengths := expression.IndexInfo2Cols(p.Schema().Columns, idx)
-	rb := ranger.Builder{Sc: sc}
-	is.Ranges = rb.BuildIndexRanges(ranger.FullRange, types.NewFieldType(mysql.TypeNull))
+	is.Ranges = ranger.FullIndexRange()
 	if len(p.pushedDownConds) > 0 {
 		conds := make([]expression.Expression, 0, len(p.pushedDownConds))
 		for _, cond := range p.pushedDownConds {
@@ -826,7 +824,7 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 	}.init(p.allocator, p.ctx)
 	ts.SetSchema(p.schema)
 	sc := p.ctx.GetSessionVars().StmtCtx
-	ts.Ranges = []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}
+	ts.Ranges = ranger.FullIntRange()
 	var pkCol *expression.Column
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {

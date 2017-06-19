@@ -23,24 +23,24 @@ import (
 
 func buildIndexRange(sc *variable.StatementContext, cols []*expression.Column, lengths []int, inAndEqCount int,
 	accessCondition []expression.Expression) ([]*types.IndexRange, error) {
-	rb := Builder{Sc: sc}
+	rb := builder{sc: sc}
 	var ranges []*types.IndexRange
 	for i := 0; i < inAndEqCount; i++ {
 		// Build ranges for equal or in access conditions.
 		point := rb.build(accessCondition[i])
 		if i == 0 {
-			ranges = rb.BuildIndexRanges(point, cols[i].RetType)
+			ranges = rb.buildIndexRanges(point, cols[i].RetType)
 		} else {
 			ranges = rb.appendIndexRanges(ranges, point, cols[i].RetType)
 		}
 	}
-	rangePoints := FullRange
+	rangePoints := fullRange
 	// Build rangePoints for non-equal access conditions.
 	for i := inAndEqCount; i < len(accessCondition); i++ {
 		rangePoints = rb.intersection(rangePoints, rb.build(accessCondition[i]))
 	}
 	if inAndEqCount == 0 {
-		ranges = rb.BuildIndexRanges(rangePoints, cols[0].RetType)
+		ranges = rb.buildIndexRanges(rangePoints, cols[0].RetType)
 	} else if inAndEqCount < len(accessCondition) {
 		ranges = rb.appendIndexRanges(ranges, rangePoints, cols[inAndEqCount].RetType)
 	}
@@ -190,8 +190,8 @@ func buildColumnRange(conds []expression.Expression, sc *variable.StatementConte
 		return []*types.ColumnRange{{Low: types.Datum{}, High: types.MaxValueDatum()}}, nil
 	}
 
-	rb := Builder{Sc: sc}
-	rangePoints := FullRange
+	rb := builder{sc: sc}
+	rangePoints := fullRange
 	for _, cond := range conds {
 		rangePoints = rb.intersection(rangePoints, rb.build(cond))
 		if rb.err != nil {
