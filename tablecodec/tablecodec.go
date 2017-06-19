@@ -189,7 +189,7 @@ func flatten(data types.Datum, loc *time.Location) (types.Datum, error) {
 	case types.KindMysqlTime:
 		// for mysql datetime, timestamp and date type
 		t := data.GetMysqlTime()
-		if t.Type == mysql.TypeTimestamp && !t.IsZero() {
+		if t.Type == mysql.TypeTimestamp && !t.IsZero() && loc != time.UTC {
 			raw, err := t.Time.GoTime(loc)
 			if err != nil {
 				return data, errors.Trace(err)

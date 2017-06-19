@@ -1566,6 +1566,8 @@ func (s *testSuite) TestTimestampTimeZone(c *C) {
 	r.Check(testkit.Rows("123381351 2014-03-31 08:57:10"))
 	r = tk.MustQuery(`select * from t1;`)
 	r.Check(testkit.Rows("123381351 2014-03-31 08:57:10"))
+	r = tk.MustQuery("select datetime from t1 where datetime='2014-03-31 08:57:10';")
+	r.Check(testkit.Rows("2014-03-31 08:57:10"))
 }
 
 func (s *testSuite) TestTiDBCurrentTS(c *C) {
