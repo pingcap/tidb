@@ -592,8 +592,7 @@ func (p *DataSource) tryToGetMemTask(prop *requiredProp) (task task, err error) 
 		TableAsName: p.TableAsName,
 	}.init(p.allocator, p.ctx)
 	memTable.SetSchema(p.schema)
-	rb := &ranger.Builder{Sc: p.ctx.GetSessionVars().StmtCtx}
-	memTable.Ranges = rb.BuildTableRanges(ranger.FullRange)
+	memTable.Ranges = ranger.FullIntRange()
 	var retPlan PhysicalPlan = memTable
 	if len(p.pushedDownConds) > 0 {
 		sel := Selection{
@@ -700,8 +699,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 			return nil, errors.Trace(err)
 		}
 	} else {
-		rb := ranger.Builder{Sc: sc}
-		is.Ranges = rb.BuildIndexRanges(ranger.FullRange, types.NewFieldType(mysql.TypeNull))
+		is.Ranges = ranger.FullIndexRange()
 	}
 	cop := &copTask{
 		cnt:       rowCount,
