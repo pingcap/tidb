@@ -330,7 +330,7 @@ type StatementContext struct {
 		warnings     []error
 	}
 
-	// Copied from SessionVars.TimeZone
+	// Copied from SessionVars.TimeZone.
 	TimeZone *time.Location
 }
 
