@@ -438,8 +438,8 @@ var (
 	mDDLJobReorgKey   = []byte("DDLJobReorg")
 )
 
-func (m *Meta) enQueueDDLJob(key []byte, job *model.Job) error {
-	b, err := job.Encode()
+func (m *Meta) enQueueDDLJob(key []byte, job *model.Job, updateRawArgs bool) error {
+	b, err := job.Encode(updateRawArgs)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -448,7 +448,7 @@ func (m *Meta) enQueueDDLJob(key []byte, job *model.Job) error {
 
 // EnQueueDDLJob adds a DDL job to the list.
 func (m *Meta) EnQueueDDLJob(job *model.Job) error {
-	return m.enQueueDDLJob(mDDLJobListKey, job)
+	return m.enQueueDDLJob(mDDLJobListKey, job, true)
 }
 
 func (m *Meta) deQueueDDLJob(key []byte) (*model.Job, error) {
@@ -485,7 +485,7 @@ func (m *Meta) GetDDLJob(index int64) (*model.Job, error) {
 }
 
 func (m *Meta) updateDDLJob(index int64, job *model.Job, key []byte) error {
-	b, err := job.Encode()
+	b, err := job.Encode(true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -509,7 +509,7 @@ func (m *Meta) jobIDKey(id int64) []byte {
 }
 
 func (m *Meta) addHistoryDDLJob(key []byte, job *model.Job) error {
-	b, err := job.Encode()
+	b, err := job.Encode(true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -634,7 +634,11 @@ func (m *Meta) GetBgJob(index int64) (*model.Job, error) {
 
 // EnQueueBgJob adds a background job to the list.
 func (m *Meta) EnQueueBgJob(job *model.Job) error {
-	return m.enQueueDDLJob(mBgJobListKey, job)
+	var updateRawArgs bool
+	if job.RawArgs == nil {
+		updateRawArgs = true
+	}
+	return m.enQueueDDLJob(mBgJobListKey, job, updateRawArgs)
 }
 
 // BgJobQueueLen returns the background job queue length.
