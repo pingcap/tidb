@@ -421,7 +421,9 @@ func (d *ddl) fetchRowColVals(txn kv.Transaction, t table.Table, taskOpInfo *ind
 	}
 
 	cols := t.Cols()
+	ctx := d.newContext()
 	idxInfo := taskOpInfo.tblIndex.Meta()
+	defaultVals := make([]types.Datum, len(cols))
 	for i, idxRecord := range idxRecords {
 		rowMap, err := tablecodec.DecodeRow(rawRecords[i], taskOpInfo.colMap, time.UTC)
 		if err != nil {
@@ -431,7 +433,17 @@ func (d *ddl) fetchRowColVals(txn kv.Transaction, t table.Table, taskOpInfo *ind
 		idxVal := make([]types.Datum, 0, len(idxInfo.Columns))
 		for _, v := range idxInfo.Columns {
 			col := cols[v.Offset]
-			idxVal = append(idxVal, rowMap[col.ID])
+			idxColumnVal := rowMap[col.ID]
+			if _, ok := rowMap[col.ID]; ok {
+				idxVal = append(idxVal, idxColumnVal)
+				continue
+			}
+			idxColumnVal, ret.err = tables.GetColDefaultValue(ctx, col, defaultVals)
+			if ret.err != nil {
+				ret.err = errors.Trace(ret.err)
+				return nil, ret
+			}
+			idxVal = append(idxVal, idxColumnVal)
 		}
 		idxRecord.vals = idxVal
 	}

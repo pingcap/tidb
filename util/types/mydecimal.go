@@ -2122,6 +2122,11 @@ func NewDecFromInt(i int64) *MyDecimal {
 	return new(MyDecimal).FromInt(i)
 }
 
+// NewDecFromUint creates a MyDecimal from uint.
+func NewDecFromUint(i uint64) *MyDecimal {
+	return new(MyDecimal).FromUint(i)
+}
+
 // NewDecFromFloatForTest creates a MyDecimal from float, as it returns no error, it should only be used in test.
 func NewDecFromFloatForTest(f float64) *MyDecimal {
 	dec := new(MyDecimal)
