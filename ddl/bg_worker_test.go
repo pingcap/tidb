@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"encoding/json"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -91,7 +92,10 @@ func (s *testDDLSuite) TestDropTableError(c *C) {
 				Name: model.CIStr{O: "t"},
 			}},
 	}
-	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+	var err error
+	job.RawArgs, err = json.Marshal(job.Args)
+	c.Assert(err, IsNil)
+	err = kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		return d.prepareBgJob(t, job)
 	})

@@ -16,6 +16,7 @@ package expression
 import (
 	"math"
 	"math/rand"
+	"runtime"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
@@ -79,7 +80,7 @@ func (s *testEvaluatorSuite) TestCeil(c *C) {
 
 func (s *testEvaluatorSuite) TestExp(c *C) {
 	defer testleak.AfterTest(c)()
-	for _, t := range []struct {
+	testcases := []struct {
 		num interface{}
 		ret interface{}
 		err Checker
@@ -95,7 +96,11 @@ func (s *testEvaluatorSuite) TestExp(c *C) {
 		{nil, nil, IsNil},
 		{"abce", nil, NotNil},
 		{"", nil, NotNil},
-	} {
+	}
+	for _, t := range testcases {
+		if runtime.GOARCH == "ppc64le" && t.num == int64(1) {
+			t.ret = float64(2.7182818284590455)
+		}
 		fc := funcs[ast.Exp]
 		f, err := fc.getFunction(datumsToConstants(types.MakeDatums(t.num)), s.ctx)
 		c.Assert(err, IsNil)
