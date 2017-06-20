@@ -141,25 +141,32 @@ func (s *testJSONSuite) TestJSONModify(c *C) {
 		setValue string
 		mt       ModifyType
 		expected string
+		success  bool
 	}{
-		{`null`, "$", `{}`, ModifySet, `{}`},
-		{`{}`, "$.a", `3`, ModifySet, `{"a": 3}`},
-		{`{"a": 3}`, "$.a", `[]`, ModifyReplace, `{"a": []}`},
-		{`{"a": []}`, "$.a[0]", `3`, ModifySet, `{"a": [3]}`},
-		{`{"a": [3]}`, "$.a[1]", `4`, ModifyInsert, `{"a": [3, 4]}`},
-		{`{"a": [3]}`, "$[0]", `4`, ModifySet, `4`},
-		{`{"a": [3]}`, "$[1]", `4`, ModifySet, `[{"a": [3]}, 4]`},
+		{`null`, "$", `{}`, ModifySet, `{}`, true},
+		{`{}`, "$.a", `3`, ModifySet, `{"a": 3}`, true},
+		{`{"a": 3}`, "$.a", `[]`, ModifyReplace, `{"a": []}`, true},
+		{`{"a": []}`, "$.a[0]", `3`, ModifySet, `{"a": [3]}`, true},
+		{`{"a": [3]}`, "$.a[1]", `4`, ModifyInsert, `{"a": [3, 4]}`, true},
+		{`{"a": [3]}`, "$[0]", `4`, ModifySet, `4`, true},
+		{`{"a": [3]}`, "$[1]", `4`, ModifySet, `[{"a": [3]}, 4]`, true},
 
 		// nothing changed because the path is empty and we want to insert.
-		{`{}`, "$", `1`, ModifyInsert, `{}`},
+		{`{}`, "$", `1`, ModifyInsert, `{}`, true},
 		// nothing changed because the path without last leg doesn't exist.
-		{`{"a": [3, 4]}`, "$.b[1]", `3`, ModifySet, `{"a": [3, 4]}`},
+		{`{"a": [3, 4]}`, "$.b[1]", `3`, ModifySet, `{"a": [3, 4]}`, true},
 		// nothing changed because the path without last leg doesn't exist.
-		{`{"a": [3, 4]}`, "$.a[2].b", `3`, ModifySet, `{"a": [3, 4]}`},
+		{`{"a": [3, 4]}`, "$.a[2].b", `3`, ModifySet, `{"a": [3, 4]}`, true},
 		// nothing changed because we want to insert but the full path exists.
-		{`{"a": [3, 4]}`, "$.a[0]", `30`, ModifyInsert, `{"a": [3, 4]}`},
+		{`{"a": [3, 4]}`, "$.a[0]", `30`, ModifyInsert, `{"a": [3, 4]}`, true},
 		// nothing changed because we want to replace but the full path doesn't exist.
-		{`{"a": [3, 4]}`, "$.a[2]", `30`, ModifyReplace, `{"a": [3, 4]}`},
+		{`{"a": [3, 4]}`, "$.a[2]", `30`, ModifyReplace, `{"a": [3, 4]}`, true},
+
+		// bad path expression.
+		{"null", "$.*", "{}", ModifySet, "null", false},
+		{"null", "$[*]", "{}", ModifySet, "null", false},
+		{"null", "$**.a", "{}", ModifySet, "null", false},
+		{"null", "$**[3]", "{}", ModifySet, "null", false},
 	}
 	for _, tt := range tests {
 		pathExpr, err := ParseJSONPathExpr(tt.setField)
@@ -170,10 +177,13 @@ func (s *testJSONSuite) TestJSONModify(c *C) {
 		expected := mustParseFromString(tt.expected)
 
 		obtain, err := base.Modify([]PathExpression{pathExpr}, []JSON{value}, tt.mt)
-		c.Assert(err, IsNil)
-
-		cmp, err := CompareJSON(obtain, expected)
-		c.Assert(err, IsNil)
-		c.Assert(cmp, Equals, 0)
+		if tt.success {
+			c.Assert(err, IsNil)
+			cmp, err := CompareJSON(obtain, expected)
+			c.Assert(err, IsNil)
+			c.Assert(cmp, Equals, 0)
+		} else {
+			c.Assert(err, NotNil)
+		}
 	}
 }
