@@ -251,7 +251,7 @@ func getPseudoRowCountByIndexRanges(sc *variable.StatementContext, indexRanges [
 		} else {
 			i = len(indexRange.HighVal) - 1
 		}
-		for pos := 0; pos <= i; pos ++ {
+		for pos := 0; pos <= i; pos++ {
 			cmp, err := indexRange.LowVal[pos].CompareDatum(sc, indexRange.HighVal[pos])
 			if err != nil {
 				return 0.0, errors.Trace(err)
