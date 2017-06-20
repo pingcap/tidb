@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
@@ -140,6 +141,22 @@ func (ir *IndexRange) Align(numColumns int) {
 			ir.HighVal = append(ir.HighVal, MaxValueDatum())
 		}
 	}
+}
+
+// PrefixEqualLen tells you how long the prefix of the range is a point.
+// e.g. If this range is (1 2 3, 1 2 +inf), then the return value is 2.
+func (ir *IndexRange) PrefixEqualLen(sc *variable.StatementContext) (int, error) {
+	// Here, len(ir.LowVal) always equal to len(ir.HighVal)
+	for i := 0; i < len(ir.LowVal); i++ {
+		cmp, err := ir.LowVal[i].CompareDatum(sc, ir.HighVal[i])
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if cmp != 0 {
+			return i, nil
+		}
+	}
+	return len(ir.LowVal), nil
 }
 
 func formatDatum(d Datum) string {
