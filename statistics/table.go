@@ -245,21 +245,12 @@ func getPseudoRowCountByIndexRanges(sc *variable.StatementContext, indexRanges [
 	var totalCount float64
 	for _, indexRange := range indexRanges {
 		count := tableRowCount
-		var i int
-		if len(indexRange.LowVal) < len(indexRange.HighVal) {
-			i = len(indexRange.LowVal) - 1
-		} else {
-			i = len(indexRange.HighVal) - 1
+		i, err := indexRange.PrefixEqualLen(sc)
+		if err != nil {
+			return 0, errors.Trace(err)
 		}
-		for pos := 0; pos <= i; pos++ {
-			cmp, err := indexRange.LowVal[pos].CompareDatum(sc, indexRange.HighVal[pos])
-			if err != nil {
-				return 0.0, errors.Trace(err)
-			}
-			if cmp != 0 {
-				i = pos
-				break
-			}
+		if i >= len(indexRange.LowVal) {
+			i = len(indexRange.LowVal) - 1
 		}
 		colRange := types.ColumnRange{Low: indexRange.LowVal[i], High: indexRange.HighVal[i]}
 		rowCount, err := getPseudoRowCountByColumnRange(sc, tableRowCount, colRange)
