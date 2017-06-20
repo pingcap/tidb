@@ -476,9 +476,6 @@ func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*table.Column) 
 			v[i] = ri
 			continue
 		}
-		if mysql.HasNotNullFlag(col.Flag) {
-			return nil, errors.New("Miss column")
-		}
 		v[i], err = GetColDefaultValue(ctx, col, defaultVals)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -661,6 +658,8 @@ func (t *Table) IterRecords(ctx context.Context, startKey kv.Key, cols []*table.
 	return nil
 }
 
+// GetColDefaultValue gets a column default value.
+// The defaultVals is used to avoid calculating the default value multiple times.
 func GetColDefaultValue(ctx context.Context, col *table.Column, defaultVals []types.Datum) (
 	colVal types.Datum, err error) {
 	if col.OriginDefaultValue == nil && mysql.HasNotNullFlag(col.Flag) {
