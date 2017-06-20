@@ -25,16 +25,26 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-// FullRange is (-∞, +∞).
-var FullRange = []point{
+// fullRange is (-∞, +∞).
+var fullRange = []point{
 	{start: true},
 	{value: types.MaxValueDatum()},
+}
+
+// FullIntRange is (-∞, +∞) for IntColumnRange.
+func FullIntRange() []types.IntColumnRange {
+	return []types.IntColumnRange{{LowVal: math.MinInt64, HighVal: math.MaxInt64}}
+}
+
+// FullIndexRange is (-∞, +∞) for IndexRange.
+func FullIndexRange() []*types.IndexRange {
+	return []*types.IndexRange{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}}}
 }
 
 // BuildIndexRange will build range of index for PhysicalIndexScan
 func BuildIndexRange(sc *variable.StatementContext, tblInfo *model.TableInfo, index *model.IndexInfo,
 	accessInAndEqCount int, accessCondition []expression.Expression) ([]*types.IndexRange, error) {
-	rb := Builder{Sc: sc}
+	rb := builder{sc: sc}
 	var ranges []*types.IndexRange
 	for i := 0; i < accessInAndEqCount; i++ {
 		// Build ranges for equal or in access conditions.
@@ -42,12 +52,12 @@ func BuildIndexRange(sc *variable.StatementContext, tblInfo *model.TableInfo, in
 		colOff := index.Columns[i].Offset
 		tp := &tblInfo.Columns[colOff].FieldType
 		if i == 0 {
-			ranges = rb.BuildIndexRanges(point, tp)
+			ranges = rb.buildIndexRanges(point, tp)
 		} else {
 			ranges = rb.appendIndexRanges(ranges, point, tp)
 		}
 	}
-	rangePoints := FullRange
+	rangePoints := fullRange
 	// Build rangePoints for non-equal access conditions.
 	for i := accessInAndEqCount; i < len(accessCondition); i++ {
 		rangePoints = rb.intersection(rangePoints, rb.build(accessCondition[i]))
@@ -55,7 +65,7 @@ func BuildIndexRange(sc *variable.StatementContext, tblInfo *model.TableInfo, in
 	if accessInAndEqCount == 0 {
 		colOff := index.Columns[0].Offset
 		tp := &tblInfo.Columns[colOff].FieldType
-		ranges = rb.BuildIndexRanges(rangePoints, tp)
+		ranges = rb.buildIndexRanges(rangePoints, tp)
 	} else if accessInAndEqCount < len(accessCondition) {
 		colOff := index.Columns[accessInAndEqCount].Offset
 		tp := &tblInfo.Columns[colOff].FieldType
@@ -282,18 +292,18 @@ func DetachColumnConditions(conditions []expression.Expression, colName model.CI
 // BuildTableRange will build range of pk for PhysicalTableScan
 func BuildTableRange(accessConditions []expression.Expression, sc *variable.StatementContext) ([]types.IntColumnRange, error) {
 	if len(accessConditions) == 0 {
-		return []types.IntColumnRange{{math.MinInt64, math.MaxInt64}}, nil
+		return FullIntRange(), nil
 	}
 
-	rb := Builder{Sc: sc}
-	rangePoints := FullRange
+	rb := builder{sc: sc}
+	rangePoints := fullRange
 	for _, cond := range accessConditions {
 		rangePoints = rb.intersection(rangePoints, rb.build(cond))
 		if rb.err != nil {
 			return nil, errors.Trace(rb.err)
 		}
 	}
-	ranges := rb.BuildTableRanges(rangePoints)
+	ranges := rb.buildTableRanges(rangePoints)
 	if rb.err != nil {
 		return nil, errors.Trace(rb.err)
 	}
@@ -308,8 +318,8 @@ func BuildColumnRange(conds []expression.Expression, colName model.CIStr, sc *va
 		return []*types.ColumnRange{{Low: types.Datum{}, High: types.MaxValueDatum()}}, nil, conds, nil
 	}
 
-	rb := Builder{Sc: sc}
-	rangePoints := FullRange
+	rb := builder{sc: sc}
+	rangePoints := fullRange
 	for _, cond := range usedConds {
 		rangePoints = rb.intersection(rangePoints, rb.build(cond))
 		if rb.err != nil {

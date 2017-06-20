@@ -405,6 +405,8 @@ func (s *session) retry(maxCnt int, infoSchemaChanged bool) error {
 		}
 		log.Warnf("[%d] retryable error: %v, txn: %v", connID, err, s.txn)
 		kv.BackOff(retryCnt)
+		s.txn = nil
+		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}
 	return err
 }

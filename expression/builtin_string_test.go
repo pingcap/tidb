@@ -21,6 +21,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -96,34 +97,86 @@ func (s *testEvaluatorSuite) TestASCII(c *C) {
 
 func (s *testEvaluatorSuite) TestConcat(c *C) {
 	defer testleak.AfterTest(c)()
-	args := []interface{}{nil}
+	cases := []struct {
+		args   []interface{}
+		isNil  bool
+		getErr bool
+		res    string
+	}{
+		{
+			[]interface{}{nil},
+			true, false, "",
+		},
+		{
+			[]interface{}{"a", "b",
+				1, 2,
+				1.1, 1.2,
+				types.NewDecFromFloatForTest(1.1),
+				types.Time{
+					Time: types.FromDate(2000, 1, 1, 12, 01, 01, 0),
+					Type: mysql.TypeDatetime,
+					Fsp:  types.DefaultFsp},
+				types.Duration{
+					Duration: time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second),
+					Fsp:      types.DefaultFsp},
+			},
+			false, false, "ab121.11.21.12000-01-01 12:01:0112:01:01",
+		},
+		{
+			[]interface{}{"a", "b", nil, "c"},
+			true, false, "",
+		},
+		{
+			[]interface{}{errors.New("must error")},
+			false, true, "",
+		},
+	}
+	fcName := ast.Concat
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, fcName, primitiveValsToConstants(t.args)...)
+		c.Assert(err, IsNil)
+		v, err := f.Eval(nil)
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(v.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(v.GetString(), Equals, t.res)
+			}
+		}
+	}
 
-	fc := funcs[ast.Concat]
-	f, err := fc.getFunction(datumsToConstants(types.MakeDatums(args...)), s.ctx)
-	c.Assert(err, IsNil)
-	v, err := f.eval(nil)
-	c.Assert(err, IsNil)
-	c.Assert(v.Kind(), Equals, types.KindNull)
-
-	args = []interface{}{"a", "b", "c"}
-	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(args...)), s.ctx)
-	c.Assert(err, IsNil)
-	v, err = f.eval(nil)
-	c.Assert(err, IsNil)
-	c.Assert(v.GetString(), Equals, "abc")
-
-	args = []interface{}{"a", "b", nil, "c"}
-	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(args...)), s.ctx)
-	c.Assert(err, IsNil)
-	v, err = f.eval(nil)
-	c.Assert(err, IsNil)
-	c.Assert(v.Kind(), Equals, types.KindNull)
-
-	args = []interface{}{errors.New("must error")}
-	f, err = fc.getFunction(datumsToConstants(types.MakeDatums(args...)), s.ctx)
-	c.Assert(err, IsNil)
-	_, err = f.eval(nil)
-	c.Assert(err, NotNil)
+	fc := funcs[fcName]
+	typeCases := []struct {
+		args    []Expression
+		retType *types.FieldType
+	}{
+		{
+			[]Expression{int8Con, decimalCon, charCon, floatCon, doubleCon},
+			&types.FieldType{Tp: mysql.TypeVarchar, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8},
+		},
+		{
+			[]Expression{varcharCon, binaryCon},
+			&types.FieldType{Tp: mysql.TypeVarchar, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
+		},
+		{
+			[]Expression{int8Con, blobCon, charCon},
+			&types.FieldType{Tp: mysql.TypeBlob, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
+		},
+		{
+			[]Expression{varbinaryCon, textCon},
+			&types.FieldType{Tp: mysql.TypeBlob, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
+		},
+	}
+	for _, t := range typeCases {
+		retType := fc.inferType(t.args)
+		c.Assert(retType.Tp, Equals, t.retType.Tp)
+		c.Assert(retType.Charset, Equals, t.retType.Charset)
+		c.Assert(retType.Collate, Equals, t.retType.Collate)
+		c.Assert(retType.Flag, Equals, t.retType.Flag)
+	}
 }
 
 func (s *testEvaluatorSuite) TestConcatWS(c *C) {

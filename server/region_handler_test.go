@@ -151,8 +151,8 @@ func (ts *TidbRegionHandlerTestSuite) TestListTableRegionsWithError(c *C) {
 	ts.startServer(c)
 	defer ts.stopServer(c)
 	resp, err := http.Get("http://127.0.0.1:10090/tables/fdsfds/aaa/regions")
-	defer resp.Body.Close()
 	c.Assert(err, IsNil)
+	defer resp.Body.Close()
 	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
 }
 

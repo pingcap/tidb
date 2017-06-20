@@ -290,7 +290,9 @@ func (m *Meta) DropDatabase(dbID int64) error {
 }
 
 // DropTable drops table in database.
-func (m *Meta) DropTable(dbID int64, tableID int64) error {
+// If delAutoID is true, it will delete the auto_increment id key-value of the table.
+// For rename table, we do not need to rename auto_increment id key-value.
+func (m *Meta) DropTable(dbID int64, tableID int64, delAutoID bool) error {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -307,10 +309,11 @@ func (m *Meta) DropTable(dbID int64, tableID int64) error {
 		return errors.Trace(err)
 	}
 
-	if err := m.txn.HDel(dbKey, m.autoTalbeIDKey(tableID)); err != nil {
-		return errors.Trace(err)
+	if delAutoID {
+		if err := m.txn.HDel(dbKey, m.autoTalbeIDKey(tableID)); err != nil {
+			return errors.Trace(err)
+		}
 	}
-
 	return nil
 }
 
