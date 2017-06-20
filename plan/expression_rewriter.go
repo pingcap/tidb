@@ -61,12 +61,21 @@ func evalAstExpr(expr ast.ExprNode, ctx context.Context) (types.Datum, error) {
 // And this function returns a result expression, a new plan that may have apply or semi-join.
 func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool) (
 	expression.Expression, LogicalPlan, error) {
+	return b.rewriteWithPreprocess(expr, p, aggMapper, asScalar, nil)
+}
+
+// rewriteWithPreprocess is for handling the situation that we need to adjust the input ast tree
+// before really using its node in `expressionRewriter.Leave`. In that case, we first call
+// er.preprocess(expr), which returns a new expr. Then we use the new expr in `Leave`.
+func (b *planBuilder) rewriteWithPreprocess(expr ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool, preprocess func(ast.Node) ast.Node) (
+	expression.Expression, LogicalPlan, error) {
 	er := &expressionRewriter{
-		p:        p,
-		aggrMap:  aggMapper,
-		b:        b,
-		asScalar: asScalar,
-		ctx:      b.ctx,
+		p:          p,
+		aggrMap:    aggMapper,
+		b:          b,
+		asScalar:   asScalar,
+		ctx:        b.ctx,
+		preprocess: preprocess,
 	}
 	if p != nil {
 		er.schema = p.Schema()
@@ -98,6 +107,9 @@ type expressionRewriter struct {
 	ctx      context.Context
 	// asScalar means the return value must be a scalar value.
 	asScalar bool
+
+	// preprocess is called for every ast.Node in Leave.
+	preprocess func(ast.Node) ast.Node
 }
 
 func getRowLen(e expression.Expression) int {
@@ -599,11 +611,14 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 }
 
 // Leave implements Visitor interface.
-func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool) {
+func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok bool) {
 	if er.err != nil {
 		return retNode, false
 	}
-
+	var inNode = originInNode
+	if er.preprocess != nil {
+		inNode = er.preprocess(inNode)
+	}
 	switch v := inNode.(type) {
 	case *ast.AggregateFuncExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause,
 		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr:
@@ -658,7 +673,7 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 	if er.err != nil {
 		return retNode, false
 	}
-	return inNode, true
+	return originInNode, true
 }
 
 func datumToConstant(d types.Datum, tp byte) *expression.Constant {
