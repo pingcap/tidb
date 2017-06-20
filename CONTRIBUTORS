@@ -1,12 +1,11 @@
-
-
+# This is the official list of people who can contribute
+# (and typically have contributed) code to the TiDB repository.
 #
+# Names should be added to this file like so:
 #     Individual's name <submission email address>
 #     Individual's name <submission email address> <email2> <emailN>
-# (and typically have contributed) code to the TiDB repository.
-# Names should be added to this file like so:
+#
 # Please keep the list sorted.
-# This is the official list of people who can contribute
 8cbx <hu849238686@.com>
 Akihiro Suda <suda.akihiro@lab.ntt.co.jp>
 Arthur Yang <980224951@qq.com>
