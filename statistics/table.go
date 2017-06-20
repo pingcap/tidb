@@ -239,6 +239,9 @@ func PseudoTable(tableID int64) *Table {
 
 func getPseudoRowCountByIndexRanges(sc *variable.StatementContext, indexRanges []*types.IndexRange, inAndEQCnt int,
 	tableRowCount float64) (float64, error) {
+	if tableRowCount == 0 {
+		return 0, nil
+	}
 	var totalCount float64
 	for _, indexRange := range indexRanges {
 		count := tableRowCount

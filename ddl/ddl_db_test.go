@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/localstore"
@@ -154,6 +155,18 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrWrongDBName)
 	sql = "alter table test_error_code_succ modify t.c1 bigint"
 	s.testErrorCode(c, sql, tmysql.ErrWrongTableName)
+}
+
+func (s *testDBSuite) TestAddIndexAfterAddColumn(c *C) {
+	defer testleak.AfterTest(c)()
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+
+	s.tk.MustExec("create table test_add_index_after_add_col(a int, b int not null default '0')")
+	s.tk.MustExec("insert into test_add_index_after_add_col values(1, 2),(2,2)")
+	s.tk.MustExec("alter table test_add_index_after_add_col add column c int not null default '0'")
+	sql := "alter table test_add_index_after_add_col add unique index cc(c) "
+	s.testErrorCode(c, sql, tmysql.ErrDupEntry)
 }
 
 func (s *testDBSuite) TestIndex(c *C) {
@@ -1176,4 +1189,69 @@ func (s *testDBSuite) TestChangeColumnPosition(c *C) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
 	}
 	c.Assert(createSQL, Equals, strings.Join(exceptedSQL, "\n"))
+}
+
+func (s *testDBSuite) TestGeneratedColumnDDL(c *C) {
+	defer func() {
+		testleak.AfterTest(c)()
+	}()
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+
+	// Check create table with virtual generated column.
+	s.tk.MustExec(`CREATE TABLE test_gv_ddl(a int, b int as (a+8) virtual)`)
+
+	// Check desc table with virtual generated column.
+	result := s.tk.MustQuery(`DESC test_gv_ddl`)
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`))
+
+	// Check show create table with virtual generated column.
+	result = s.tk.MustQuery(`show create table test_gv_ddl`)
+	result.Check(testkit.Rows(
+		"test_gv_ddl CREATE TABLE `test_gv_ddl` (\n  `a` int(11) DEFAULT NULL,\n  `b` int(11) GENERATED ALWAYS AS (a+8) VIRTUAL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
+	))
+
+	// Check alter table add a stored generated column.
+	s.tk.MustExec(`alter table test_gv_ddl add column c int as (b+2) stored`)
+	result = s.tk.MustQuery(`DESC test_gv_ddl`)
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
+
+	genExprTests := []struct {
+		stmt string
+		err  int
+	}{
+		// drop/rename columns dependent by other column.
+		{`alter table test_gv_ddl drop column a`, mysql.ErrDependentByGeneratedColumn},
+		{`alter table test_gv_ddl change column a anew int`, mysql.ErrBadField},
+
+		// modify/change stored status of generated columns.
+		{`alter table test_gv_ddl modify column b bigint`, mysql.ErrUnsupportedOnGeneratedColumn},
+		{`alter table test_gv_ddl change column c cnew bigint as (a+100)`, mysql.ErrUnsupportedOnGeneratedColumn},
+
+		// modify/change generated columns breaking prior.
+		{`alter table test_gv_ddl modify column b int as (c+100)`, mysql.ErrGeneratedColumnNonPrior},
+		{`alter table test_gv_ddl change column b bnew int as (c+100)`, mysql.ErrGeneratedColumnNonPrior},
+
+		// refer not exist columns in generation expression.
+		{`create table test_gv_ddl_bad (a int, b int as (c+8))`, mysql.ErrBadField},
+
+		// refer generated columns non prior.
+		{`create table test_gv_ddl_bad (a int, b int as (c+1), c int as (a+1))`, mysql.ErrGeneratedColumnNonPrior},
+	}
+	for _, tt := range genExprTests {
+		s.testErrorCode(c, tt.stmt, tt.err)
+	}
+
+	// Check alter table modify/change generated column.
+	s.tk.MustExec(`alter table test_gv_ddl modify column c bigint as (b+200) stored`)
+	result = s.tk.MustQuery(`DESC test_gv_ddl`)
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c bigint(21) YES  <nil> STORED GENERATED`))
+
+	s.tk.MustExec(`alter table test_gv_ddl change column b b bigint as (a+100) virtual`)
+	result = s.tk.MustQuery(`DESC test_gv_ddl`)
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(21) YES  <nil> VIRTUAL GENERATED`, `c bigint(21) YES  <nil> STORED GENERATED`))
+
+	s.tk.MustExec(`alter table test_gv_ddl change column c cnew bigint`)
+	result = s.tk.MustQuery(`DESC test_gv_ddl`)
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(21) YES  <nil> VIRTUAL GENERATED`, `cnew bigint(21) YES  <nil> `))
 }

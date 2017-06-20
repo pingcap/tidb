@@ -127,7 +127,7 @@ func (ft *FieldType) CompactStr() string {
 			es = append(es, e)
 		}
 		suffix = fmt.Sprintf("('%s')", strings.Join(es, "','"))
-	case mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDate:
+	case mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDate, mysql.TypeDuration:
 		if ft.Decimal != UnspecifiedLength && ft.Decimal != 0 {
 			suffix = fmt.Sprintf("(%d)", ft.Decimal)
 		}

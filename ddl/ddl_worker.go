@@ -80,22 +80,6 @@ func (d *ddl) isOwner(flag JobType) bool {
 	return isOwner
 }
 
-func (d *ddl) getJobOwner(t *meta.Meta, flag JobType) (*model.Owner, error) {
-	var owner *model.Owner
-	var err error
-
-	switch flag {
-	case ddlJobFlag:
-		owner, err = t.GetDDLJobOwner()
-	case bgJobFlag:
-		owner, err = t.GetBgJobOwner()
-	default:
-		err = errInvalidJobFlag
-	}
-
-	return owner, errors.Trace(err)
-}
-
 // addDDLJob gets a global job ID and puts the DDL job in the DDL queue.
 func (d *ddl) addDDLJob(ctx context.Context, job *model.Job) error {
 	job.Query, _ = ctx.Value(context.QueryString).(string)
@@ -204,7 +188,7 @@ func (d *ddl) handleDDLJobQueue() error {
 				return errors.Trace(err)
 			}
 
-			if job.IsRunning() {
+			if job.IsRunning() || job.IsDone() {
 				// If we enter a new state, crash when waiting 2 * lease time, and restart quickly,
 				// we may run the job immediately again, but we don't wait enough 2 * lease time to
 				// let other servers update the schema.
@@ -221,6 +205,12 @@ func (d *ddl) handleDDLJobQueue() error {
 			}
 			once = false
 
+			if job.IsDone() {
+				job.State = model.JobSynced
+				err = d.finishDDLJob(t, job)
+				return errors.Trace(err)
+			}
+
 			d.hookMu.Lock()
 			d.hook.OnJobRunBefore(job)
 			d.hookMu.Unlock()
@@ -230,10 +220,12 @@ func (d *ddl) handleDDLJobQueue() error {
 			schemaVer = d.runDDLJob(t, job)
 			if job.IsFinished() {
 				binloginfo.SetDDLBinlog(d.workerVars.BinlogClient, txn, job.ID, job.Query)
-				err = d.finishDDLJob(t, job)
-			} else {
-				err = d.updateDDLJob(t, job, txn.StartTS())
+				if job.IsCancelled() {
+					err = d.finishDDLJob(t, job)
+					return errors.Trace(err)
+				}
 			}
+			err = d.updateDDLJob(t, job, txn.StartTS())
 			return errors.Trace(err)
 		})
 		if err != nil {
@@ -253,7 +245,7 @@ func (d *ddl) handleDDLJobQueue() error {
 		if job.State == model.JobRunning || job.State == model.JobDone {
 			d.waitSchemaChanged(waitTime, schemaVer)
 		}
-		if job.IsFinished() {
+		if job.IsSynced() {
 			d.startBgJob(job.Type)
 			asyncNotify(d.ddlJobDoneCh)
 		}
@@ -347,6 +339,7 @@ func (d *ddl) waitSchemaChanged(waitTime time.Duration, latestSchemaVersion int6
 		return
 	}
 
+	timeStart := time.Now()
 	// TODO: Do we need to wait for a while?
 	if latestSchemaVersion == 0 {
 		log.Infof("[ddl] schema version doesn't change")
@@ -374,6 +367,7 @@ func (d *ddl) waitSchemaChanged(waitTime time.Duration, latestSchemaVersion int6
 			return
 		}
 	}
+	log.Infof("[ddl] wait latest schema version %v changed, take time %v", latestSchemaVersion, time.Since(timeStart))
 	return
 }
 

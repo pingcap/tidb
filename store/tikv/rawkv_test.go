@@ -67,11 +67,8 @@ func (s *testRawKVSuite) TestSimple(c *C) {
 	s.mustGet(c, []byte("key"), []byte("value"))
 	s.mustDelete(c, []byte("key"))
 	s.mustNotExist(c, []byte("key"))
-
-	s.mustPut(c, []byte("key"), []byte(""))
-	s.mustGet(c, []byte("key"), []byte(""))
-	s.mustPut(c, []byte("key"), nil)
-	s.mustGet(c, []byte("key"), []byte(""))
+	err := s.client.Put([]byte("key"), []byte(""))
+	c.Assert(err, NotNil)
 }
 
 func (s *testRawKVSuite) TestSplit(c *C) {
