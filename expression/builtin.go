@@ -451,16 +451,10 @@ func (b *baseFunctionClass) verifyArgs(args []Expression) error {
 	return nil
 }
 
-func (b *baseFunctionClass) inferType(args []Expression) *types.FieldType {
-	return nil
-}
-
 // functionClass is the interface for a function which may contains multiple functions.
 type functionClass interface {
 	// getFunction gets a function signature by the types and the counts of given arguments.
 	getFunction(args []Expression, ctx context.Context) (builtinFunc, error)
-	// inferType infers the return type of a function.
-	inferType(args []Expression) *types.FieldType
 }
 
 // BuiltinFunc is the function signature for builtin functions
