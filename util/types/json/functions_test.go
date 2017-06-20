@@ -83,6 +83,39 @@ func (s *testJSONSuite) TestJSONExtract(c *C) {
 	}
 }
 
+func (s *testJSONSuite) TestDecodeEscapedUnicode(c *C) {
+	var tests = []struct {
+		input  string
+		output string
+	}{
+		{"0034", "4"},
+		{"4321", "䌡"},
+		{"4dc0", "䷀"},
+	}
+	for _, tt := range tests {
+		decoded, size, err := decodeEscapedUnicode([]byte(tt.input))
+		c.Assert(err, IsNil)
+		s := string(decoded[0:size])
+		c.Assert(s, Equals, tt.output)
+	}
+}
+
+func (s *testJSONSuite) TestUnquoteString(c *C) {
+	var tests = []struct {
+		input  string
+		output string
+	}{
+		{"bad escaped: \\a", "bad escaped: \\a"},
+		{"good escaped: \\b \\f \\n \\r \\t \\\\ \u4f60", "good escaped: \b \f \n \r \t \\ 你"},
+		{"quoted string: hello \\\"quoted\\\" world", "quoted string: hello \"quoted\" world"},
+	}
+	for _, tt := range tests {
+		unquoted, err := unquoteString(tt.input)
+		c.Assert(err, IsNil)
+		c.Assert(unquoted, Equals, tt.output)
+	}
+}
+
 func (s *testJSONSuite) TestJSONUnquote(c *C) {
 	var tests = []struct {
 		j        string
