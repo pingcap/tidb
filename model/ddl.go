@@ -144,11 +144,14 @@ func (job *Job) GetRowCount() int64 {
 }
 
 // Encode encodes job with json format.
-func (job *Job) Encode() ([]byte, error) {
+// updateRawArgs is used to determine whether to update the raw args.
+func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 	var err error
-	job.RawArgs, err = json.Marshal(job.Args)
-	if err != nil {
-		return nil, errors.Trace(err)
+	if updateRawArgs {
+		job.RawArgs, err = json.Marshal(job.Args)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	var b []byte
@@ -186,6 +189,16 @@ func (job *Job) IsFinished() bool {
 	return job.State == JobDone || job.State == JobRollbackDone || job.State == JobCancelled
 }
 
+// IsCancelled returns whether the job is cancelled or not.
+func (job *Job) IsCancelled() bool {
+	return job.State == JobCancelled || job.State == JobRollbackDone
+}
+
+// IsSynced returns whether the DDL modification is synced among all TiDB servers.
+func (job *Job) IsSynced() bool {
+	return job.State == JobSynced
+}
+
 // IsDone returns whether job is done.
 func (job *Job) IsDone() bool {
 	return job.State == JobDone
@@ -210,6 +223,9 @@ const (
 	JobRollbackDone
 	JobDone
 	JobCancelled
+	// JobSynced is used to mark the information about the completion of this job
+	// has been synchronized to all servers.
+	JobSynced
 )
 
 // String implements fmt.Stringer interface.
@@ -225,6 +241,8 @@ func (s JobState) String() string {
 		return "done"
 	case JobCancelled:
 		return "cancelled"
+	case JobSynced:
+		return "synced"
 	default:
 		return "none"
 	}

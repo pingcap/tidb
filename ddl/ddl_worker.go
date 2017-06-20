@@ -188,7 +188,7 @@ func (d *ddl) handleDDLJobQueue() error {
 				return errors.Trace(err)
 			}
 
-			if job.IsRunning() {
+			if job.IsRunning() || job.IsDone() {
 				// If we enter a new state, crash when waiting 2 * lease time, and restart quickly,
 				// we may run the job immediately again, but we don't wait enough 2 * lease time to
 				// let other servers update the schema.
@@ -205,6 +205,12 @@ func (d *ddl) handleDDLJobQueue() error {
 			}
 			once = false
 
+			if job.IsDone() {
+				job.State = model.JobSynced
+				err = d.finishDDLJob(t, job)
+				return errors.Trace(err)
+			}
+
 			d.hookMu.Lock()
 			d.hook.OnJobRunBefore(job)
 			d.hookMu.Unlock()
@@ -214,10 +220,12 @@ func (d *ddl) handleDDLJobQueue() error {
 			schemaVer = d.runDDLJob(t, job)
 			if job.IsFinished() {
 				binloginfo.SetDDLBinlog(d.workerVars.BinlogClient, txn, job.ID, job.Query)
-				err = d.finishDDLJob(t, job)
-			} else {
-				err = d.updateDDLJob(t, job, txn.StartTS())
+				if job.IsCancelled() {
+					err = d.finishDDLJob(t, job)
+					return errors.Trace(err)
+				}
 			}
+			err = d.updateDDLJob(t, job, txn.StartTS())
 			return errors.Trace(err)
 		})
 		if err != nil {
@@ -237,7 +245,7 @@ func (d *ddl) handleDDLJobQueue() error {
 		if job.State == model.JobRunning || job.State == model.JobDone {
 			d.waitSchemaChanged(waitTime, schemaVer)
 		}
-		if job.IsFinished() {
+		if job.IsSynced() {
 			d.startBgJob(job.Type)
 			asyncNotify(d.ddlJobDoneCh)
 		}

@@ -75,6 +75,10 @@ func checkEqualTable(c *C, t1, t2 *model.TableInfo) {
 	c.Assert(t1.AutoIncID, DeepEquals, t2.AutoIncID)
 }
 
+func checkHistoryJob(c *C, job *model.Job) {
+	c.Assert(job.State, Equals, model.JobSynced)
+}
+
 func checkHistoryJobArgs(c *C, ctx context.Context, id int64, args *historyJobArgs) {
 	c.Assert(ctx.NewTxn(), IsNil)
 	t := meta.NewMeta(ctx.Txn())
@@ -94,14 +98,6 @@ func checkHistoryJobArgs(c *C, ctx context.Context, id int64, args *historyJobAr
 	if args.db != nil && len(args.tblIDs) == 0 {
 		return
 	}
-	// only for dropping schema job
-	var ids []int64
-	historyJob.DecodeArgs(&ids)
-	for _, id := range ids {
-		c.Assert(args.tblIDs, HasKey, id)
-		delete(args.tblIDs, id)
-	}
-	c.Assert(len(args.tblIDs), Equals, 0)
 }
 
 func testCreateIndex(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
