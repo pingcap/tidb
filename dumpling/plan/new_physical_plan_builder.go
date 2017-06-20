@@ -694,7 +694,7 @@ func (p *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInfo
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		rowCount, err = statsTbl.GetRowCountByIndexRanges(sc, is.Index.ID, is.Ranges, is.accessInAndEqCount)
+		rowCount, err = statsTbl.GetRowCountByIndexRanges(sc, is.Index.ID, is.Ranges)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

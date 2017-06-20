@@ -1052,7 +1052,7 @@ func (s *testPlanSuite) TestIssue3337(c *C) {
 	tbl := tb.Meta()
 	statsTbl := mockStatsTable(tbl, 0)
 	ran := ranger.FullIndexRange()
-	rowCount, err := statsTbl.GetRowCountByIndexRanges(new(variable.StatementContext), 1, ran, 1)
+	rowCount, err := statsTbl.GetRowCountByIndexRanges(new(variable.StatementContext), 1, ran)
 	c.Assert(err, IsNil)
 	c.Assert(rowCount, Equals, float64(0))
 }
