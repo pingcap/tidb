@@ -83,8 +83,23 @@ func (s *testJSONSuite) TestJSONExtract(c *C) {
 	}
 }
 
-// Why we need this? Because some escaped string have been already dealed
-// by go JSON parser, so we can't touch those cases in TestJSONUnquote.
+func (s *testJSONSuite) TestDecodeEscapedUnicode(c *C) {
+	var tests = []struct {
+		input  string
+		output string
+	}{
+		{"0034", "4"},
+		{"4321", "䌡"},
+		{"4dc0", "䷀"},
+	}
+	for _, tt := range tests {
+		decoded, size, err := decodeEscapedUnicode([]byte(tt.input))
+		c.Assert(err, IsNil)
+		s := string(decoded[0:size])
+		c.Assert(s, Equals, tt.output)
+	}
+}
+
 func (s *testJSONSuite) TestUnquoteString(c *C) {
 	var tests = []struct {
 		input  string

@@ -112,11 +112,11 @@ func unquoteString(s string) (string, error) {
 				if i+5 > len(s) {
 					return "", errors.Errorf("Invalid unicode: %s", s[i+1:])
 				}
-				char, err := decodeEscapedUnicode(hack.Slice(s[i+1 : i+5]))
+				char, size, err := decodeEscapedUnicode(hack.Slice(s[i+1 : i+5]))
 				if err != nil {
 					return "", errors.Trace(err)
 				}
-				ret.Write(char)
+				ret.Write(char[0:size])
 				i += 5
 			default:
 				ret.WriteByte('\\')
@@ -129,20 +129,19 @@ func unquoteString(s string) (string, error) {
 	return ret.String(), nil
 }
 
-// decodeEscapedUnicode decodes unicode into utf8 bytes. e.g.
-// decodeEscapedUnicode("4321") -> "䌡"
-// decodeEscapedUnicode("0034") -> "4"
-func decodeEscapedUnicode(s []byte) (char []byte, err error) {
-	var buffer [6]byte
-	_, err = hex.Decode(buffer[0:2], s)
-	if err != nil {
-		return char, errors.Trace(err)
+// decodeEscapedUnicode decodes unicode into utf8 bytes specified in RFC 3629.
+// According RFC 3629, the max length of utf8 characters is 4 bytes.
+// And MySQL use 4 bytes to represent the unicode which must be in [0, 65536).
+func decodeEscapedUnicode(s []byte) (char [4]byte, size int, err error) {
+	size, err = hex.Decode(char[0:2], s)
+	if err != nil || size != 2 {
+		// The unicode must can be represented in 2 bytes.
+		return char, 0, errors.Trace(err)
 	}
-	var unicode rune
-	binary.Read(bytes.NewReader(buffer[0:2]), binary.BigEndian, &unicode)
-
-	char = make([]byte, utf8.RuneLen(unicode))
-	utf8.EncodeRune(char, unicode)
+	var unicode uint16
+	binary.Read(bytes.NewReader(char[0:2]), binary.BigEndian, &unicode)
+	size = utf8.RuneLen(rune(unicode))
+	utf8.EncodeRune(char[0:size], rune(unicode))
 	return
 }
 
