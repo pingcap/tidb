@@ -121,17 +121,13 @@ func createJSONFromDatums(datums []types.Datum) ([]json.JSON, error) {
 }
 
 // jsonModify is the portal for modify JSON with path expressions and values.
-func jsonModify(b baseBuiltinFunc, row []types.Datum, mt json.ModifyType) (j json.JSON, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return j, errors.Trace(err)
-	}
+func jsonModify(args []types.Datum, mt json.ModifyType, sc *variable.StatementContext) (d types.Datum, err error) {
 	if argsAnyNull(args) {
-		return j, nil
+		return d, nil
 	}
-	j, err = datum2JSON(args[0], b.ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return j, errors.Trace(err)
+	var j json.JSON
+	if j, err = datum2JSON(args[0], sc); err != nil {
+		return d, errors.Trace(err)
 	}
 
 	// alloc 1 extra element, for len(args) is an even number.
@@ -146,18 +142,99 @@ func jsonModify(b baseBuiltinFunc, row []types.Datum, mt json.ModifyType) (j jso
 	}
 	pathExprs, err := parsePathExprs(pes)
 	if err != nil {
-		return j, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	values, err := createJSONFromDatums(vs)
 	if err != nil {
-		return j, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
-
 	j, err = j.Modify(pathExprs, values, mt)
 	if err != nil {
-		return j, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
-	return j, nil
+	d.SetMysqlJSON(j)
+	return d, nil
+}
+
+// JSONType is for json_type builtin function.
+func JSONType(args []types.Datum, sc *variable.StatementContext) (d types.Datum, err error) {
+	if argsAnyNull(args) {
+		return d, nil
+	}
+	djson, err := datum2JSON(args[0], sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d.SetString(djson.Type())
+	return
+}
+
+// JSONExtract is for json_extract builtin function.
+func JSONExtract(args []types.Datum, sc *variable.StatementContext) (d types.Datum, err error) {
+	if argsAnyNull(args) {
+		return d, nil
+	}
+	djson, err := datum2JSON(args[0], sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	pathExprs, err := parsePathExprs(args[1:])
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	if djson1, found := djson.Extract(pathExprs); found {
+		d.SetMysqlJSON(djson1)
+	}
+	return
+}
+
+// JSONUnquote is for json_unquote builtin function.
+func JSONUnquote(args []types.Datum, sc *variable.StatementContext) (d types.Datum, err error) {
+	if argsAnyNull(args) {
+		return d, nil
+	}
+	djson, err := datum2JSON(args[0], sc)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	unquoted, err := djson.Unquote()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	d.SetString(unquoted)
+	return
+}
+
+// JSONSet is for json_set builtin function.
+func JSONSet(args []types.Datum, sc *variable.StatementContext) (d types.Datum, err error) {
+	return jsonModify(args, json.ModifySet, sc)
+}
+
+// JSONInsert is for json_insert builtin function.
+func JSONInsert(args []types.Datum, sc *variable.StatementContext) (d types.Datum, err error) {
+	return jsonModify(args, json.ModifyInsert, sc)
+}
+
+// JSONReplace is for json_replace builtin function.
+func JSONReplace(args []types.Datum, sc *variable.StatementContext) (d types.Datum, err error) {
+	return jsonModify(args, json.ModifyReplace, sc)
+}
+
+// JSONMerge is for json_merge builtin function.
+func JSONMerge(args []types.Datum, sc *variable.StatementContext) (d types.Datum, err error) {
+	if argsAnyNull(args) {
+		return d, nil
+	}
+	jsons := make([]json.JSON, 0, len(args))
+	for _, arg := range args {
+		j, err := datum2JSON(arg, sc)
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		jsons = append(jsons, j)
+	}
+	d.SetMysqlJSON(jsons[0].Merge(jsons[1:]))
+	return
 }
 
 type jsonTypeFunctionClass struct {
@@ -177,15 +254,7 @@ func (b *builtinJSONTypeSig) eval(row []types.Datum) (d types.Datum, err error) 
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	if argsAnyNull(args) {
-		return d, nil
-	}
-	djson, err := datum2JSON(args[0], b.ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	d.SetString(djson.Type())
-	return
+	return JSONType(args, b.ctx.GetSessionVars().StmtCtx)
 }
 
 type jsonExtractFunctionClass struct {
@@ -205,21 +274,7 @@ func (b *builtinJSONExtractSig) eval(row []types.Datum) (d types.Datum, err erro
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	if argsAnyNull(args) {
-		return d, nil
-	}
-	djson, err := datum2JSON(args[0], b.ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	pathExprs, err := parsePathExprs(args[1:])
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	if djson1, found := djson.Extract(pathExprs); found {
-		d.SetMysqlJSON(djson1)
-	}
-	return
+	return JSONExtract(args, b.ctx.GetSessionVars().StmtCtx)
 }
 
 type jsonUnquoteFunctionClass struct {
@@ -239,19 +294,7 @@ func (b *builtinJSONUnquoteSig) eval(row []types.Datum) (d types.Datum, err erro
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	if argsAnyNull(args) {
-		return d, nil
-	}
-	djson, err := datum2JSON(args[0], b.ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	unquoted, err := djson.Unquote()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	d.SetString(unquoted)
-	return
+	return JSONUnquote(args, b.ctx.GetSessionVars().StmtCtx)
 }
 
 type jsonSetFunctionClass struct {
@@ -267,12 +310,11 @@ func (c *jsonSetFunctionClass) getFunction(args []Expression, ctx context.Contex
 }
 
 func (b *builtinJSONSetSig) eval(row []types.Datum) (d types.Datum, err error) {
-	j, err := jsonModify(b.baseBuiltinFunc, row, json.ModifySet)
+	args, err := b.evalArgs(row)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	d.SetMysqlJSON(j)
-	return
+	return JSONSet(args, b.ctx.GetSessionVars().StmtCtx)
 }
 
 type jsonInsertFunctionClass struct {
@@ -288,12 +330,11 @@ func (c *jsonInsertFunctionClass) getFunction(args []Expression, ctx context.Con
 }
 
 func (b *builtinJSONInsertSig) eval(row []types.Datum) (d types.Datum, err error) {
-	j, err := jsonModify(b.baseBuiltinFunc, row, json.ModifyInsert)
+	args, err := b.evalArgs(row)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	d.SetMysqlJSON(j)
-	return
+	return JSONInsert(args, b.ctx.GetSessionVars().StmtCtx)
 }
 
 type jsonReplaceFunctionClass struct {
@@ -309,12 +350,11 @@ func (c *jsonReplaceFunctionClass) getFunction(args []Expression, ctx context.Co
 }
 
 func (b *builtinJSONReplaceSig) eval(row []types.Datum) (d types.Datum, err error) {
-	j, err := jsonModify(b.baseBuiltinFunc, row, json.ModifyReplace)
+	args, err := b.evalArgs(row)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	d.SetMysqlJSON(j)
-	return
+	return JSONReplace(args, b.ctx.GetSessionVars().StmtCtx)
 }
 
 type jsonMergeFunctionClass struct {
@@ -334,17 +374,5 @@ func (b *builtinJSONMergeSig) eval(row []types.Datum) (d types.Datum, err error)
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	if argsAnyNull(args) {
-		return d, nil
-	}
-	jsons := make([]json.JSON, 0, len(args))
-	for _, arg := range args {
-		j, err := datum2JSON(arg, b.ctx.GetSessionVars().StmtCtx)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		jsons = append(jsons, j)
-	}
-	d.SetMysqlJSON(jsons[0].Merge(jsons[1:]))
-	return
+	return JSONMerge(args, b.ctx.GetSessionVars().StmtCtx)
 }
