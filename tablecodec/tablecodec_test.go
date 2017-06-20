@@ -143,16 +143,22 @@ func (s *testTableCodecSuite) TestTimeCodec(c *C) {
 	c1 := &column{id: 1, tp: types.NewFieldType(mysql.TypeLonglong)}
 	c2 := &column{id: 2, tp: types.NewFieldType(mysql.TypeVarchar)}
 	c3 := &column{id: 3, tp: types.NewFieldType(mysql.TypeTimestamp)}
-	cols := []*column{c1, c2, c3}
+	c4 := &column{id: 4, tp: types.NewFieldType(mysql.TypeDuration)}
+	cols := []*column{c1, c2, c3, c4}
+	colLen := len(cols)
 
-	row := make([]types.Datum, 3)
+	row := make([]types.Datum, colLen)
 	row[0] = types.NewIntDatum(100)
 	row[1] = types.NewBytesDatum([]byte("abc"))
 	ts, err := types.ParseTimestamp("2016-06-23 11:30:45")
 	c.Assert(err, IsNil)
 	row[2] = types.NewDatum(ts)
+	du, err := types.ParseDuration("12:59:59.999999", 6)
+	c.Assert(err, IsNil)
+	row[3] = types.NewDatum(du)
+
 	// Encode
-	colIDs := make([]int64, 0, 3)
+	colIDs := make([]int64, 0, colLen)
 	for _, col := range cols {
 		colIDs = append(colIDs, col.id)
 	}
@@ -161,14 +167,14 @@ func (s *testTableCodecSuite) TestTimeCodec(c *C) {
 	c.Assert(bs, NotNil)
 
 	// Decode
-	colMap := make(map[int64]*types.FieldType, 3)
+	colMap := make(map[int64]*types.FieldType, colLen)
 	for _, col := range cols {
 		colMap[col.id] = col.tp
 	}
 	r, err := DecodeRow(bs, colMap, time.Local)
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
-	c.Assert(r, HasLen, 3)
+	c.Assert(r, HasLen, colLen)
 	sc := new(variable.StatementContext)
 	// Compare decoded row and original row
 	for i, col := range cols {

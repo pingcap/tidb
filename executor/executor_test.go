@@ -835,6 +835,12 @@ func (s *testSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("11:11:11"))
 	result = tk.MustQuery("select * from t where a > cast(2 as decimal)")
 	result.Check(testkit.Rows("3 2"))
+	// fixed issue #3471
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a time(6));")
+	tk.MustExec("insert into t value('12:59:59.999999')")
+	result = tk.MustQuery("select cast(a as signed) from t")
+	result.Check(testkit.Rows("130000"))
 
 	// test unhex and hex
 	result = tk.MustQuery("select unhex('4D7953514C')")
@@ -1176,9 +1182,9 @@ func (s *testSuite) TestDatumXAPI(c *C) {
 	tk.MustExec("insert t values ('11:11:12', '11:11:12')")
 	tk.MustExec("insert t values ('11:11:13', '11:11:13')")
 	result = tk.MustQuery("select * from t where a > '11:11:11.5'")
-	result.Check(testkit.Rows("11:11:12 11:11:12", "11:11:13 11:11:13"))
+	result.Check(testkit.Rows("11:11:12.000 11:11:12", "11:11:13.000 11:11:13"))
 	result = tk.MustQuery("select * from t where b > '11:11:11.5'")
-	result.Check(testkit.Rows("11:11:12 11:11:12", "11:11:13 11:11:13"))
+	result.Check(testkit.Rows("11:11:12.000 11:11:12", "11:11:13.000 11:11:13"))
 }
 
 func (s *testSuite) TestSQLMode(c *C) {
