@@ -586,6 +586,9 @@ func parseDatetime(str string, fsp int) (Time, error) {
 	case 3:
 		// YYYY-MM-DD
 		err = scanTimeArgs(seps, &year, &month, &day)
+	case 5:
+		// YYYY-MM-DD HH-MM
+		err = scanTimeArgs(seps, &year, &month, &day, &hour, &minute)
 	case 6:
 		// We don't have fractional seconds part.
 		// YYYY-MM-DD HH-MM-SS
