@@ -437,6 +437,9 @@ type PhysicalTableScan struct {
 
 	// KeepOrder is true, if sort data by scanning pkcol,
 	KeepOrder bool
+
+	// GenValues is for virtual generated columns without indices.
+	GenValues map[int]expression.Expression
 }
 
 // PhysicalApply represents apply plan, only used for subquery.

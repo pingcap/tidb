@@ -56,6 +56,9 @@ type TableReaderExecutor struct {
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result        distsql.SelectResult
 	partialResult distsql.PartialResult
+
+	// GenValues is for calculating virtual generated columns.
+	GenValues map[int]expression.Expression
 }
 
 // Schema implements the Executor Schema interface.
@@ -105,6 +108,16 @@ func (e *TableReaderExecutor) Next() (*Row, error) {
 		err = decodeRawValues(values, e.schema, e.ctx.GetSessionVars().GetTimeZone())
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		// Calculate generated columns here.
+		for i, col := range e.columns {
+			if len(col.GeneratedExprString) != 0 && !col.GeneratedStored {
+				val, err := e.GenValues[i].Eval(values)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				values[i] = val
+			}
 		}
 		return resultRowToRow(e.table, h, values, e.asName), nil
 	}

@@ -487,8 +487,8 @@ func (nr *nameResolver) handleColumnName(cn *ast.ColumnNameExpr) {
 	}
 
 	if ctx.inColumnOption {
-		// In column option, only columns in current create table statement
-		// is available. But we check it in ddl/ddl_api.go.
+		// In column option, only columns within current create table statement is available.
+		nr.resolveColumnNameInColumnOption(cn)
 		return
 	}
 
@@ -604,6 +604,10 @@ func (nr *nameResolver) resolveColumnNameInOnCondition(cn *ast.ColumnNameExpr) {
 	if !nr.resolveColumnInTableSources(cn, tableSources) {
 		nr.Err = errors.Errorf("unknown column name %s", cn.Name.Name.O)
 	}
+}
+
+// resolveColumnNameInColumnOption resolves the column name in the create table statement.
+func (nr *nameResolver) resolveColumnNameInColumnOption(cn *ast.ColumnNameExpr) {
 }
 
 func (nr *nameResolver) resolveColumnInTableSources(cn *ast.ColumnNameExpr, tableSources []*ast.TableSource) (done bool) {

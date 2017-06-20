@@ -1106,6 +1106,59 @@ func (s *testSuite) TestGeneratedColumnWrite(c *C) {
 	}
 }
 
+// TestGeneratedColumnRead tests select generated columns from table.
+// They should be calculated from their generation expressions.
+func (s *testSuite) TestGeneratedColumnRead(c *C) {
+	defer func() {
+		s.cleanEnv(c)
+		testleak.AfterTest(c)()
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE test_gv_read(a int primary key, b int, c int as (a+b), d int as (a*b) stored)`)
+
+	// Insert only column a and b, leave c and d be calculated from them.
+	tk.MustExec(`INSERT INTO test_gv_read (a, b) VALUES (0, null)`)
+	tk.MustExec(`INSERT INTO test_gv_read (a, b) VALUES (1, 2)`)
+	tk.MustExec(`INSERT INTO test_gv_read (a, b) VALUES (3, 4)`)
+	result := tk.MustQuery(`SELECT * FROM test_gv_read ORDER BY a`)
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`))
+
+	tk.MustExec(`INSERT INTO test_gv_read SET a = 5, b = 6`)
+	result = tk.MustQuery(`SELECT * FROM test_gv_read ORDER BY a`)
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`, `5 6 11 30`))
+
+	tk.MustExec(`INSERT INTO test_gv_read (a, b) VALUES (5, 8) ON DUPLICATE KEY UPDATE b = 9`)
+	result = tk.MustQuery(`SELECT * FROM test_gv_read ORDER BY a`)
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`, `5 9 14 45`))
+
+	// Test order of on duplicate key update list.
+	tk.MustExec(`INSERT INTO test_gv_read (a, b) VALUES (5, 8) ON DUPLICATE KEY UPDATE a = 6, b = a`)
+	result = tk.MustQuery(`SELECT * FROM test_gv_read ORDER BY a`)
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`, `6 6 12 36`))
+
+	tk.MustExec(`INSERT INTO test_gv_read (a, b) VALUES (6, 8) ON DUPLICATE KEY UPDATE b = 8, a = b`)
+	result = tk.MustQuery(`SELECT * FROM test_gv_read ORDER BY a`)
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`, `8 8 16 64`))
+
+	// Test where-conditions on virtual/stored generated column.
+	result = tk.MustQuery(`SELECT * FROM test_gv_read WHERE c = 7`)
+	result.Check(testkit.Rows(`3 4 7 12`))
+
+	result = tk.MustQuery(`SELECT * FROM test_gv_read WHERE d = 64`)
+	result.Check(testkit.Rows(`8 8 16 64`))
+
+	// Test on-conditions on virtual/stored generated column.
+	tk.MustExec(`CREATE TABLE test_gv_help(a int primary key, b int, c int, d int)`)
+	tk.MustExec(`INSERT INTO test_gv_help(a, b, c, d) SELECT * FROM test_gv_read`)
+
+	result = tk.MustQuery(`SELECT t1.* FROM test_gv_read t1 JOIN test_gv_help t2 ON t1.c = t2.c ORDER BY t1.a`)
+	result.Check(testkit.Rows(`1 2 3 2`, `3 4 7 12`, `8 8 16 64`))
+
+	result = tk.MustQuery(`SELECT t1.* FROM test_gv_read t1 JOIN test_gv_help t2 ON t1.d = t2.d ORDER BY t1.a`)
+	result.Check(testkit.Rows(`1 2 3 2`, `3 4 7 12`, `8 8 16 64`))
+}
+
 func (s *testSuite) TestToPBExpr(c *C) {
 	defer func() {
 		s.cleanEnv(c)

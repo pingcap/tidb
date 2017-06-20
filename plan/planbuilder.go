@@ -758,6 +758,8 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 
 	mockTablePlan := TableDual{}.init(b.allocator, b.ctx)
 	mockTablePlan.SetSchema(schema)
+
+	onDupColNames := make([]string, 0)
 	for _, assign := range insert.OnDuplicate {
 		col, err := schema.FindColumn(assign.Column)
 		if err != nil {
@@ -782,6 +784,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 			Col:  col,
 			Expr: expr,
 		})
+		onDupColNames = append(onDupColNames, assign.Column.Name.O)
 	}
 	if insert.Select != nil {
 		selectPlan := b.build(insert.Select)
@@ -803,6 +806,70 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 			}
 		}
 		addChild(insertPlan, selectPlan)
+	}
+
+	// Calculate generated columns if (1) it's stored or (2) there are indices on that.
+	for _, column := range insertPlan.Table.Cols() {
+		if len(column.GeneratedExprString) == 0 {
+			continue
+		}
+		if column.GeneratedStored || tableInfo.ColumnIsInIndex(column.ToInfo()) {
+			if insertPlan.GenCols == nil {
+				insertPlan.GenCols = &InsertGeneratedColumns{
+					Columns: make([]*ast.ColumnName, 0),
+					Lists:   make([][]expression.Expression, len(insertPlan.Lists)),
+					Setlist: make([]*expression.Assignment, 0),
+				}
+			}
+			columnName := &ast.ColumnName{Name: column.Name}
+			columnName.SetText(column.Name.O)
+			expr, _, err := b.rewrite(column.GeneratedExpr, mockTablePlan, nil, true)
+			if err != nil {
+				b.err = errors.Trace(err)
+				return nil
+			}
+			// here we only store the expression, we'll eval that in executor.
+			if len(insertPlan.Columns) != 0 {
+				// for insert ... values (...).
+				insertPlan.GenCols.Columns = append(insertPlan.GenCols.Columns, columnName)
+				for i, exprList := range insertPlan.GenCols.Lists {
+					insertPlan.GenCols.Lists[i] = append(exprList, expr)
+				}
+			} else if len(insertPlan.Setlist) != 0 {
+				// for insert ... setlist.
+				col, err := schema.FindColumn(columnName)
+				if err != nil {
+					b.err = errors.Trace(err)
+					return nil
+				}
+				assign := &expression.Assignment{
+					Col:  col,
+					Expr: expr,
+				}
+				insertPlan.GenCols.Setlist = append(insertPlan.GenCols.Setlist, assign)
+			}
+			// for on duplicate
+			if len(insertPlan.OnDuplicate) != 0 {
+				depChanged := false
+				for _, colName := range onDupColNames {
+					if _, ok := column.Dependences[colName]; ok {
+						depChanged = true
+						break
+					}
+				}
+				if depChanged {
+					col, err := schema.FindColumn(columnName)
+					if err != nil {
+						b.err = errors.Trace(err)
+						return nil
+					}
+					insertPlan.OnDuplicate = append(insertPlan.OnDuplicate, &expression.Assignment{
+						Col:  col,
+						Expr: expr,
+					})
+				}
+			}
+		}
 	}
 	insertPlan.SetSchema(expression.NewSchema())
 	return insertPlan

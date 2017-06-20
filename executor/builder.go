@@ -258,10 +258,11 @@ func (b *executorBuilder) buildSet(v *plan.Set) Executor {
 
 func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	ivs := &InsertValues{
-		ctx:     b.ctx,
-		Columns: v.Columns,
-		Lists:   v.Lists,
-		Setlist: v.Setlist,
+		ctx:       b.ctx,
+		Columns:   v.Columns,
+		Lists:     v.Lists,
+		Setlist:   v.Setlist,
+		GenValues: v.GenCols,
 	}
 	if len(v.Children()) > 0 {
 		ivs.SelectExec = b.build(v.Children()[0])
@@ -620,6 +621,7 @@ func (b *executorBuilder) buildTableScan(v *plan.PhysicalTableScan) Executor {
 		aggFuncs:    v.AggFuncsPB,
 		byItems:     v.GbyItemsPB,
 		orderByList: v.SortItemsPB,
+		GenValues:   v.GenValues,
 	}
 	return e
 }
@@ -993,6 +995,7 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) Executor
 		desc:      ts.Desc,
 		ranges:    ts.Ranges,
 		columns:   ts.Columns,
+		GenValues: ts.GenValues,
 	}
 
 	for i := range v.Schema().Columns {

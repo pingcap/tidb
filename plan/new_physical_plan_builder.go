@@ -815,6 +815,7 @@ func (p *DataSource) convertToTableScan(prop *requiredProp) (task task, err erro
 		Columns:     p.Columns,
 		TableAsName: p.TableAsName,
 		DBName:      p.DBName,
+		GenValues:   p.GenValues,
 	}.init(p.allocator, p.ctx)
 	ts.SetSchema(p.schema)
 	sc := p.ctx.GetSessionVars().StmtCtx
