@@ -963,7 +963,7 @@ func (d *Datum) convertToMysqlTimestamp(sc *variable.StatementContext, target *F
 			t.ConvertTimeZone(time.UTC, loc)
 		case t.TimeZone == sc.TimeZone:
 		default:
-			return ret, errors.New("convertToMysqlTimestamp get a wrong input")
+			return ret, errors.New("get a wrong input")
 		}
 		t, err = t.RoundFrac(fsp)
 	case KindMysqlDuration:

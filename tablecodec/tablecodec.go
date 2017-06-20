@@ -189,7 +189,7 @@ func flatten(data types.Datum, loc *time.Location) (types.Datum, error) {
 	case types.KindMysqlTime:
 		// for mysql datetime, timestamp and date type
 		t := data.GetMysqlTime()
-		if t.Type == mysql.TypeTimestamp && !t.IsZero() && loc != time.UTC {
+		if t.Type == mysql.TypeTimestamp && loc != time.UTC {
 			t.ConvertTimeZone(loc, time.UTC)
 		}
 		v, err := t.ToPackedUint()
