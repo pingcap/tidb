@@ -173,6 +173,21 @@ func CurrentTime(tp uint8) Time {
 	return Time{Time: FromGoTime(gotime.Now()), Type: tp, Fsp: 0}
 }
 
+// ConvertTimeZone converts the time value from one timezone to another.
+// The input time should be a valid timestamp.
+func (t *Time) ConvertTimeZone(from, to *gotime.Location) error {
+	if !t.IsZero() {
+		raw, err := t.Time.GoTime(from)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		converted := raw.In(to)
+		t.Time = FromGoTime(converted)
+	}
+	t.TimeZone = to
+	return nil
+}
+
 func (t Time) String() string {
 	if t.Type == mysql.TypeDate {
 		// We control the format, so no error would occur.

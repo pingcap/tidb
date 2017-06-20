@@ -56,13 +56,8 @@ func encode(b []byte, vals []types.Datum, comparable bool) ([]byte, error) {
 			t := val.GetMysqlTime()
 			// Encoding timestamp need to consider timezone.
 			// If it's not in UTC, transform to UTC first.
-			if t.Type == mysql.TypeTimestamp && t.TimeZone != time.UTC && !t.IsZero() {
-				raw, err := t.Time.GoTime(t.TimeZone)
-				if err != nil {
-					return b, errors.Trace(err)
-				}
-				converted := raw.In(time.UTC)
-				t.Time = types.FromGoTime(converted)
+			if t.Type == mysql.TypeTimestamp && t.TimeZone != time.UTC {
+				t.ConvertTimeZone(t.TimeZone, time.UTC)
 			}
 			v, err := t.ToPackedUint()
 			if err != nil {

@@ -960,23 +960,12 @@ func (d *Datum) convertToMysqlTimestamp(sc *variable.StatementContext, target *F
 			t.TimeZone = loc
 		case t.TimeZone == time.UTC:
 			// Convert to session timezone.
-			if !t.IsZero() {
-				raw, err := t.Time.GoTime(time.UTC)
-				if err != nil {
-					return ret, errors.Trace(err)
-				}
-				converted := raw.In(loc)
-				t.Time = FromGoTime(converted)
-			}
-			t.TimeZone = loc
+			t.ConvertTimeZone(time.UTC, loc)
 		case t.TimeZone == sc.TimeZone:
-			break
+		default:
+			return ret, errors.New("convertToMysqlTimestamp get a wrong input")
 		}
 		t, err = t.RoundFrac(fsp)
-		if err != nil {
-			ret.SetValue(t)
-			return ret, errors.Trace(err)
-		}
 	case KindMysqlDuration:
 		t, err = d.GetMysqlDuration().ConvertToTime(mysql.TypeTimestamp)
 		if err != nil {
@@ -984,16 +973,14 @@ func (d *Datum) convertToMysqlTimestamp(sc *variable.StatementContext, target *F
 			return ret, errors.Trace(err)
 		}
 		t, err = t.RoundFrac(fsp)
-		t.TimeZone = loc
 	case KindString, KindBytes:
 		t, err = ParseTime(d.GetString(), mysql.TypeTimestamp, fsp)
-		t.TimeZone = loc
 	case KindInt64:
 		t, err = ParseTimeFromNum(d.GetInt64(), mysql.TypeTimestamp, fsp)
-		t.TimeZone = loc
 	default:
 		return invalidConv(d, mysql.TypeTimestamp)
 	}
+	t.TimeZone = loc
 	ret.SetMysqlTime(t)
 	if err != nil {
 		return ret, errors.Trace(err)
