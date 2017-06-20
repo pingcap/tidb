@@ -97,7 +97,7 @@ func (d *ddl) prepareBgJob(t *meta.Meta, ddlJob *model.Job) error {
 		SchemaID: ddlJob.SchemaID,
 		TableID:  ddlJob.TableID,
 		Type:     ddlJob.Type,
-		Args:     ddlJob.Args,
+		RawArgs:  ddlJob.RawArgs,
 	}
 
 	err := t.EnQueueBgJob(job)
