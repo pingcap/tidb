@@ -157,6 +157,18 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrWrongTableName)
 }
 
+func (s *testDBSuite) TestAddIndexAfterAddColumn(c *C) {
+	defer testleak.AfterTest(c)()
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+
+	s.tk.MustExec("create table test_add_index_after_add_col(a int, b int not null default '0')")
+	s.tk.MustExec("insert into test_add_index_after_add_col values(1, 2),(2,2)")
+	s.tk.MustExec("alter table test_add_index_after_add_col add column c int not null default '0'")
+	sql := "alter table test_add_index_after_add_col add unique index cc(c) "
+	s.testErrorCode(c, sql, tmysql.ErrDupEntry)
+}
+
 func (s *testDBSuite) TestIndex(c *C) {
 	defer testleak.AfterTest(c)()
 	s.tk = testkit.NewTestKit(c, s.store)

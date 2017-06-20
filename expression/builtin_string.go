@@ -202,35 +202,51 @@ type concatFunctionClass struct {
 }
 
 func (c *concatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinConcatSig{newBaseBuiltinFunc(args, ctx)}
+	sig := &builtinConcatSig{
+		baseStringBuiltinFunc{
+			newBaseBuiltinFuncWithTp(args, c.inferType(args), ctx),
+		},
+	}
 	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
 }
 
-type builtinConcatSig struct {
-	baseBuiltinFunc
+func (c *concatFunctionClass) inferType(args []Expression) *types.FieldType {
+	existsBinStr, tp := false, mysql.TypeVarString
+	for i := 0; i < len(args); i++ {
+		curArgTp := args[i].GetType()
+		tp = types.MergeFieldType(tp, curArgTp.Tp)
+		if types.IsBinaryStr(curArgTp) {
+			existsBinStr = true
+		}
+	}
+	retType := types.NewFieldType(tp)
+	retType.Charset, retType.Collate = charset.CharsetUTF8, charset.CollationUTF8
+	if existsBinStr {
+		retType.Charset, retType.Collate = charset.CharsetBin, charset.CollationBin
+		retType.Flag |= mysql.BinaryFlag
+	}
+	return retType
 }
 
-// eval evals a builtinConcatSig.
+type builtinConcatSig struct {
+	baseStringBuiltinFunc
+}
+
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat
-func (b *builtinConcatSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
+func (b *builtinConcatSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
 	var s []byte
-	for _, a := range args {
-		if a.IsNull() {
-			return d, nil
-		}
-		var ss string
-		ss, err = a.ToString()
+	for _, a := range b.getArgs() {
+		a, err = WrapWithCastAsString(a, b.ctx)
 		if err != nil {
-			return d, errors.Trace(err)
+			return d, false, errors.Trace(err)
 		}
-		s = append(s, []byte(ss)...)
+		d, isNull, err = a.EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+		if isNull || err != nil {
+			return d, isNull, errors.Trace(err)
+		}
+		s = append(s, []byte(d)...)
 	}
-	d.SetBytesAsString(s)
-	return d, nil
+	return string(s), false, nil
 }
 
 type concatWSFunctionClass struct {

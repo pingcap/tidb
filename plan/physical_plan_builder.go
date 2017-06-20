@@ -162,8 +162,7 @@ func (p *DataSource) convert2IndexScan(prop *requiredProperty, index *model.Inde
 			resultPlan = newSel
 		}
 	} else {
-		rb := ranger.Builder{Sc: p.ctx.GetSessionVars().StmtCtx}
-		is.Ranges = rb.BuildIndexRanges(ranger.FullRange, types.NewFieldType(mysql.TypeNull))
+		is.Ranges = ranger.FullIndexRange()
 	}
 	is.DoubleRead = !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle)
 	return resultPlan.matchProperty(prop, &physicalPlanInfo{count: rowCount, reliable: !statsTbl.Pseudo}), nil
@@ -223,8 +222,7 @@ func (p *DataSource) convert2PhysicalPlan(prop *requiredProperty) (*physicalPlan
 			TableAsName: p.TableAsName,
 		}.init(p.allocator, p.ctx)
 		memTable.SetSchema(p.schema)
-		rb := &ranger.Builder{Sc: p.ctx.GetSessionVars().StmtCtx}
-		memTable.Ranges = rb.BuildTableRanges(ranger.FullRange)
+		memTable.Ranges = ranger.FullIntRange()
 		info = &physicalPlanInfo{p: memTable}
 		info = enforceProperty(prop, info)
 		p.storePlanInfo(prop, info)

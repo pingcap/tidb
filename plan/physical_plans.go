@@ -175,7 +175,7 @@ func (p *PhysicalMemTable) Copy() PhysicalPlan {
 }
 
 // physicalDistSQLPlan means the plan that can be executed distributively.
-// We can push down other plan like selection, limit, aggregation, topn into this plan.
+// We can push down other plan like selection, limit, aggregation, topN into this plan.
 type physicalDistSQLPlan interface {
 	addAggregation(ctx context.Context, agg *PhysicalAggregation) *expression.Schema
 	addTopN(ctx context.Context, prop *requiredProperty) bool
