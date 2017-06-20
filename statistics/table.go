@@ -218,12 +218,12 @@ func (t *Table) GetRowCountByIntColumnRanges(sc *variable.StatementContext, colI
 }
 
 // GetRowCountByIndexRanges estimates the row count by a slice of IndexRange.
-func (t *Table) GetRowCountByIndexRanges(sc *variable.StatementContext, idxID int64, indexRanges []*types.IndexRange, inAndEQCnt int) (float64, error) {
+func (t *Table) GetRowCountByIndexRanges(sc *variable.StatementContext, idxID int64, indexRanges []*types.IndexRange) (float64, error) {
 	idx := t.Indices[idxID]
 	if t.Pseudo || idx == nil || len(idx.Buckets) == 0 {
-		return getPseudoRowCountByIndexRanges(sc, indexRanges, inAndEQCnt, float64(t.Count))
+		return getPseudoRowCountByIndexRanges(sc, indexRanges, float64(t.Count))
 	}
-	result, err := idx.getRowCount(sc, indexRanges, inAndEQCnt)
+	result, err := idx.getRowCount(sc, indexRanges)
 	result *= idx.getIncreaseFactor(t.Count)
 	return result, errors.Trace(err)
 }
@@ -237,7 +237,7 @@ func PseudoTable(tableID int64) *Table {
 	return t
 }
 
-func getPseudoRowCountByIndexRanges(sc *variable.StatementContext, indexRanges []*types.IndexRange, inAndEQCnt int,
+func getPseudoRowCountByIndexRanges(sc *variable.StatementContext, indexRanges []*types.IndexRange,
 	tableRowCount float64) (float64, error) {
 	if tableRowCount == 0 {
 		return 0, nil
@@ -245,9 +245,21 @@ func getPseudoRowCountByIndexRanges(sc *variable.StatementContext, indexRanges [
 	var totalCount float64
 	for _, indexRange := range indexRanges {
 		count := tableRowCount
-		i := len(indexRange.LowVal) - 1
-		if i > inAndEQCnt {
-			i = inAndEQCnt
+		var i int
+		if len(indexRange.LowVal) < len(indexRange.HighVal) {
+			i = len(indexRange.LowVal) - 1
+		} else {
+			i = len(indexRange.HighVal) - 1
+		}
+		for pos := 0; pos <= i; pos ++ {
+			cmp, err := indexRange.LowVal[pos].CompareDatum(sc, indexRange.HighVal[pos])
+			if err != nil {
+				return 0.0, errors.Trace(err)
+			}
+			if cmp != 0 {
+				i = pos
+				break
+			}
 		}
 		colRange := types.ColumnRange{Low: indexRange.LowVal[i], High: indexRange.HighVal[i]}
 		rowCount, err := getPseudoRowCountByColumnRange(sc, tableRowCount, colRange)
