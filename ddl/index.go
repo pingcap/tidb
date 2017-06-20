@@ -440,7 +440,7 @@ func (d *ddl) fetchRowColVals(txn kv.Transaction, t table.Table, taskOpInfo *ind
 			}
 			idxColumnVal, ret.err = tables.GetColDefaultValue(ctx, col, defaultVals)
 			if ret.err != nil {
-				ret.err = errors.Trace(err)
+				ret.err = errors.Trace(ret.err)
 				return nil, ret
 			}
 			idxVal = append(idxVal, idxColumnVal)
