@@ -1541,7 +1541,7 @@ func (s *testSuite) TestTimestampTimeZone(c *C) {
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (ts timestamp)")
 	tk.MustExec("set time_zone = '+00:00'")
 	tk.MustExec("insert into t values ('2017-04-27 22:40:42')")
@@ -1555,8 +1555,45 @@ func (s *testSuite) TestTimestampTimeZone(c *C) {
 	}
 	for _, tt := range tests {
 		tk.MustExec(fmt.Sprintf("set time_zone = '%s'", tt.timezone))
-		tk.MustQuery(fmt.Sprintf("select * from t where ts = '%s'", tt.expect)).Check(testkit.Rows(tt.expect))
+		tk.MustQuery("select * from t").Check(testkit.Rows(tt.expect))
 	}
+
+	// For issue https://github.com/pingcap/tidb/issues/3467
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec(`CREATE TABLE t1 (
+ 	      id bigint(20) NOT NULL AUTO_INCREMENT,
+ 	      uid int(11) DEFAULT NULL,
+ 	      datetime timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ 	      ip varchar(128) DEFAULT NULL,
+ 	    PRIMARY KEY (id),
+ 	      KEY i_datetime (datetime),
+ 	      KEY i_userid (uid)
+ 	    );`)
+	tk.MustExec(`INSERT INTO t1 VALUES (123381351,1734,"2014-03-31 08:57:10","127.0.0.1");`)
+	r := tk.MustQuery("select datetime from t1;") // Cover TableReaderExec
+	r.Check(testkit.Rows("2014-03-31 08:57:10"))
+	r = tk.MustQuery("select datetime from t1 where datetime='2014-03-31 08:57:10';")
+	r.Check(testkit.Rows("2014-03-31 08:57:10")) // Cover IndexReaderExec
+	r = tk.MustQuery("select * from t1 where datetime='2014-03-31 08:57:10';")
+	r.Check(testkit.Rows("123381351 1734 2014-03-31 08:57:10 127.0.0.1")) // Cover IndexLookupExec
+
+	// For issue https://github.com/pingcap/tidb/issues/3485
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec(`CREATE TABLE t1 (
+	    id bigint(20) NOT NULL AUTO_INCREMENT,
+	    datetime timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	    PRIMARY KEY (id)
+	  );`)
+	tk.MustExec(`INSERT INTO t1 VALUES (123381351,"2014-03-31 08:57:10");`)
+	r = tk.MustQuery(`select * from t1 where datetime="2014-03-31 08:57:10";`)
+	r.Check(testkit.Rows("123381351 2014-03-31 08:57:10"))
+	tk.MustExec(`alter table t1 add key i_datetime (datetime);`)
+	r = tk.MustQuery(`select * from t1 where datetime="2014-03-31 08:57:10";`)
+	r.Check(testkit.Rows("123381351 2014-03-31 08:57:10"))
+	r = tk.MustQuery(`select * from t1;`)
+	r.Check(testkit.Rows("123381351 2014-03-31 08:57:10"))
+	r = tk.MustQuery("select datetime from t1 where datetime='2014-03-31 08:57:10';")
+	r.Check(testkit.Rows("2014-03-31 08:57:10"))
 }
 
 func (s *testSuite) TestTiDBCurrentTS(c *C) {
