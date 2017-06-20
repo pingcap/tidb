@@ -19,6 +19,7 @@ package tables
 
 import (
 	"strings"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -193,7 +194,6 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum
 
 	// Compose new row
 	t.composeNewData(touched, currentData, oldData)
-	colIDs := make([]int64, 0, len(t.WritableCols()))
 	for i, col := range t.WritableCols() {
 		if col.State != model.StatePublic && currentData[i].IsNull() {
 			defaultVal, err1 := table.GetColDefaultValue(ctx, col.ToInfo())
@@ -202,11 +202,10 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum
 			}
 			currentData[i] = defaultVal
 		}
-		colIDs = append(colIDs, col.ID)
 	}
 	// Set new row data into KV.
 	key := t.RecordKey(h)
-	value, err := tablecodec.EncodeRow(currentData, colIDs, ctx.GetSessionVars().GetTimeZone())
+	value, err := t.encodeRow(currentData, ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -224,7 +223,7 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum
 		return errors.Trace(err)
 	}
 	if shouldWriteBinlog(ctx) {
-		t.addUpdateBinlog(ctx, h, oldData, value, colIDs)
+		t.addUpdateBinlog(ctx, h, oldData, value)
 	}
 	return nil
 }
@@ -319,9 +318,8 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 		return h, errors.Trace(err)
 	}
 
-	colIDs := make([]int64, 0, len(r))
-	row := make([]types.Datum, 0, len(r))
 	// Set public and write only column value.
+	var row = make([]types.Datum, 0, len(t.WritableCols()))
 	for _, col := range t.WritableCols() {
 		if col.IsPKHandleColumn(t.meta) {
 			continue
@@ -333,18 +331,13 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
+			row = append(row, value)
 		} else {
-			value = r[col.Offset]
-			if col.DefaultValue == nil && r[col.Offset].IsNull() {
-				// Save storage space by not storing null value.
-				continue
-			}
+			row = append(row, r[col.Offset])
 		}
-		colIDs = append(colIDs, col.ID)
-		row = append(row, value)
 	}
 	key := t.RecordKey(recordID)
-	value, err := tablecodec.EncodeRow(row, colIDs, ctx.GetSessionVars().GetTimeZone())
+	value, err := t.encodeRow(row, ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -517,9 +510,9 @@ func (t *Table) RemoveRecord(ctx context.Context, h int64, r []types.Datum) erro
 	return errors.Trace(err)
 }
 
-func (t *Table) addUpdateBinlog(ctx context.Context, h int64, old []types.Datum, newValue []byte, colIDs []int64) error {
+func (t *Table) addUpdateBinlog(ctx context.Context, h int64, old []types.Datum, newValue []byte) error {
 	var bin []byte
-	oldData, err := tablecodec.EncodeRow(old, colIDs, ctx.GetSessionVars().GetTimeZone())
+	oldData, err := t.encodeRow(old, ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -538,7 +531,7 @@ func (t *Table) addDeleteBinlog(ctx context.Context, r []types.Datum) error {
 	for i, col := range t.Cols() {
 		colIDs[i] = col.ID
 	}
-	data, err = tablecodec.EncodeRow(r, colIDs, ctx.GetSessionVars().GetTimeZone())
+	data, err = t.encodeRow(r, ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -720,6 +713,28 @@ func (t *Table) getMutation(ctx context.Context) *binlog.TableMutation {
 	idx := len(bin.Mutations)
 	bin.Mutations = append(bin.Mutations, binlog.TableMutation{TableId: t.ID})
 	return &bin.Mutations[idx]
+}
+
+// encodeRow encodes the row into bytes. The row is compacted according such rules:
+// 1. omit default null values;
+// 2. omit not-stored generated columns.
+func (t *Table) encodeRow(r []types.Datum, loc *time.Location) ([]byte, error) {
+	var row = make([]types.Datum, 0, len(r))
+	var colIDs = make([]int64, 0, len(r))
+	for _, col := range t.WritableCols() {
+		if col.IsPKHandleColumn(t.meta) {
+			continue
+		}
+		if col.DefaultValue == nil && r[col.Offset].IsNull() {
+			continue
+		}
+		if len(col.GeneratedExprString) != 0 && !col.GeneratedStored {
+			continue
+		}
+		colIDs = append(colIDs, col.ID)
+		row = append(row, r[col.Offset])
+	}
+	return tablecodec.EncodeRow(row, colIDs, loc)
 }
 
 var (
