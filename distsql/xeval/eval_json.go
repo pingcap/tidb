@@ -15,20 +15,20 @@ package xeval
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/expression/xeval"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
 var jsonFunctions = map[tipb.ExprType]func([]types.Datum, *variable.StatementContext) (types.Datum, error){
-	tipb.ExprType_JsonType:    xeval.JSONType,
-	tipb.ExprType_JsonExtract: xeval.JSONExtract,
-	tipb.ExprType_JsonUnquote: xeval.JSONUnquote,
-	tipb.ExprType_JsonMerge:   xeval.JSONMerge,
-	tipb.ExprType_JsonSet:     xeval.JSONSet,
-	tipb.ExprType_JsonInsert:  xeval.JSONInsert,
-	tipb.ExprType_JsonReplace: xeval.JSONReplace,
+	tipb.ExprType_JsonType:    expression.JSONType,
+	tipb.ExprType_JsonExtract: expression.JSONExtract,
+	tipb.ExprType_JsonUnquote: expression.JSONUnquote,
+	tipb.ExprType_JsonMerge:   expression.JSONMerge,
+	tipb.ExprType_JsonSet:     expression.JSONSet,
+	tipb.ExprType_JsonInsert:  expression.JSONInsert,
+	tipb.ExprType_JsonReplace: expression.JSONReplace,
 }
 
 func (e *Evaluator) evalJSONFunctions(expr *tipb.Expr) (d types.Datum, _ error) {
