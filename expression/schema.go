@@ -74,6 +74,13 @@ func (s *Schema) Clone() *Schema {
 // FindColumn finds an Column from schema for a ast.ColumnName. It compares the db/table/column names.
 // If there are more than one result, it will raise ambiguous error.
 func (s *Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
+	col, _, err := s.FindColumnAndIndex(astCol)
+	return col, errors.Trace(err)
+}
+
+// FindColumnAndIndex finds an Column and its index from schema for a ast.ColumnName.
+// It compares the db/table/column names. If there are more than one result, raise ambiguous error.
+func (s *Schema) FindColumnAndIndex(astCol *ast.ColumnName) (*Column, int, error) {
 	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
 	idx := -1
 	for i, col := range s.Columns {
@@ -83,14 +90,14 @@ func (s *Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 			if idx == -1 {
 				idx = i
 			} else {
-				return nil, errors.Errorf("Column %s is ambiguous", col.String())
+				return nil, -1, errors.Errorf("Column %s is ambiguous", col.String())
 			}
 		}
 	}
 	if idx == -1 {
-		return nil, nil
+		return nil, idx, nil
 	}
-	return s.Columns[idx], nil
+	return s.Columns[idx], idx, nil
 }
 
 // RetrieveColumn retrieves column in expression from the columns in schema.
