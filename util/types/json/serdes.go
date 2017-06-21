@@ -93,6 +93,43 @@ import (
                              // lengths up to 16383, and so on...
 */
 
+const (
+	typeCodeLen      int = 1
+	compoundCountLen     = 4
+	compoundSizeLen      = 4
+)
+
+// PeekBytesAsJSON trys to peek some bytes from b, until
+// we can deserialize a JSON from those bytes.
+func PeekBytesAsJSON(b []byte) (n int, err error) {
+	if len(b) > 0 {
+		switch c := b[0]; c {
+		case byte(typeCodeObject), byte(typeCodeArray):
+			if len(b) >= typeCodeLen+compoundCountLen+compoundSizeLen {
+				var size uint32
+				start := typeCodeLen + compoundCountLen
+				end := typeCodeLen + compoundCountLen + compoundSizeLen
+				binary.Read(bytes.NewReader(b[start:end]), binary.LittleEndian, &size)
+				n = int(size) + typeCodeLen
+				return
+			}
+		case byte(typeCodeString):
+			var size uint64
+			reader := bytes.NewReader(b[typeCodeLen:])
+			size, err = binary.ReadUvarint(reader)
+			if err == nil {
+				n = int(size) + int(reader.Size()) - int(reader.Len()) + typeCodeLen
+				return
+			}
+		case byte(typeCodeInt64), byte(typeCodeFloat64), byte(typeCodeLiteral):
+			n = jsonTypeCodeLength[TypeCode(c)] + typeCodeLen
+			return
+		}
+	}
+	err = errors.New("Invalid JSON bytes")
+	return
+}
+
 // Serialize means serialize itself into bytes.
 func Serialize(j JSON) []byte {
 	var buffer = new(bytes.Buffer)
