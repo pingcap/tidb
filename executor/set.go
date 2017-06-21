@@ -114,6 +114,7 @@ func (e *SetExecutor) executeSet() error {
 			if err != nil {
 				return errors.Trace(err)
 			}
+			log.Infof("[%d] set global system variable %s = %s", sessionVars.ConnectionID, name, svalue)
 		} else {
 			// Set session scope system variable.
 			if sysVar.Scope&variable.ScopeSession == 0 {
@@ -129,7 +130,7 @@ func (e *SetExecutor) executeSet() error {
 			}
 			e.loadSnapshotInfoSchemaIfNeeded(name)
 			valStr, _ := value.ToString()
-			log.Infof("[%d] set system variable %s = %s", sessionVars.ConnectionID, name, valStr)
+			log.Infof("[%d] set session system variable %s = %s", sessionVars.ConnectionID, name, valStr)
 		}
 	}
 	return nil
