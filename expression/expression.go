@@ -180,7 +180,6 @@ func evalExprToDecimal(expr Expression, row []types.Datum, sc *variable.Statemen
 		// but what we actually get is store as float64 in Datum.
 		// So if we wrap `CastDecimalAsInt` upon the result, we'll get <nil> when call `arg.EvalDecimal()`.
 		// This will be fixed after all built-in functions be rewrite correctlly.
-		// return val.GetMysqlDecimal(), false, nil
 	} else if IsHybridType(expr) {
 		res, err = val.ToDecimal(sc)
 		return res, false, errors.Trace(err)

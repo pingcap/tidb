@@ -60,7 +60,7 @@ func newBaseBuiltinFunc(args []Expression, ctx context.Context) baseBuiltinFunc 
 	}
 }
 
-// newBaseBuiltinFuncWithTp create a built-in function signature with specified types of arguments and return type.
+// newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.
 // argTps indicates the types of the args, retType indicates the return type of the built-in function.
 // Every built-in function needs determined argTps and retType when we create it.
 func newBaseBuiltinFuncWithTp(args []Expression, retType *types.FieldType, ctx context.Context, argTps ...argTp) (bf baseBuiltinFunc, err error) {
@@ -82,9 +82,9 @@ func newBaseBuiltinFuncWithTp(args []Expression, retType *types.FieldType, ctx c
 		case tpDuration:
 			args[i], err = WrapWithCastAsDuration(args[i], ctx)
 		}
-	}
-	if err != nil {
-		return bf, errors.Trace(err)
+		if err != nil {
+			return bf, errors.Trace(err)
+		}
 	}
 	return baseBuiltinFunc{
 		args:          args,
